@@ -13,6 +13,8 @@ git push origin v0.2.0
 
 流水线先执行格式、lint、类型、单元、集成、浏览器流程和生产构建，然后并行构建四个平台。任一质量检查或目标失败，`publish` job 都不会运行。Release 先作为 draft 创建，全部资产上传后才转为正式版本。
 
+`amd64` 目标运行在 `ubuntu-24.04`，`arm64` 目标运行在 GitHub-hosted 原生 `ubuntu-24.04-arm`。后端和 Agent 都不使用 QEMU 做跨架构模拟；本地没有对应原生硬件时可以只验证当前架构，正式四平台结果以 Release matrix 为准。
+
 ## 资产矩阵
 
 每个版本包含以下四个 variant：

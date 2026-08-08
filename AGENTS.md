@@ -358,6 +358,7 @@ pnpm build
 - 后端离线 Docker 镜像和 Runner Agent 二进制都必须生成 `amd64`、`arm64`、`amd64-musl`、`arm64-musl` 四个明确命名的资产。
 - 后端标准版基于固定 digest 的 Debian/glibc Node 镜像，musl 版基于固定 digest 的 Alpine/musl Node 镜像；不得仅复制或重命名同一个镜像伪造变体。
 - Agent 使用 `CGO_ENABLED=0` 静态构建。标准版和 musl 版均不得动态链接 libc，但仍保留独立文件名与嵌入式 variant 信息以匹配统一发布矩阵。
+- GitHub Actions 的 `amd64*` 目标使用 `ubuntu-24.04`，`arm64*` 目标使用原生 `ubuntu-24.04-arm`；不得在 GitHub-hosted Release 流水线中用 QEMU 模拟已有原生 runner 的架构。
 - Release 同时包含每项资产的 SPDX JSON SBOM、统一 `SHA256SUMS` 和机器可读 `release-manifest.json`。
 - GitHub Actions 与基础镜像使用不可变 commit SHA 或镜像 digest；版本升级要单独审查并完成构建验证。
 - 发布脚本必须能在本地构建并验证单个平台；正式四平台集合由 GitHub Actions matrix 生成，任何一个目标失败都不得发布部分 Release。

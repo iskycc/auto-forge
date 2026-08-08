@@ -105,12 +105,20 @@ jobs:
   agent:
     name: Agent ${{ matrix.variant }}
     needs: [prepare, quality]
-    runs-on: ubuntu-24.04
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
-        variant: [amd64, arm64, amd64-musl, arm64-musl]
+        include:
+          - variant: amd64
+            runner: ubuntu-24.04
+          - variant: arm64
+            runner: ubuntu-24.04-arm
+          - variant: amd64-musl
+            runner: ubuntu-24.04
+          - variant: arm64-musl
+            runner: ubuntu-24.04-arm
     env:
       AUTOFORGE_RELEASE_REVISION: ${{ needs.prepare.outputs.revision }}
       SOURCE_DATE_EPOCH: ${{ needs.prepare.outputs.source_date_epoch }}
@@ -150,15 +158,29 @@ jobs:
   backend:
     name: Backend ${{ matrix.variant }}
     needs: [prepare, quality]
-    runs-on: ubuntu-24.04
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
-        variant: [amd64, arm64, amd64-musl, arm64-musl]
+        include:
+          - variant: amd64
+            runner: ubuntu-24.04
+            platform: linux/amd64
+          - variant: arm64
+            runner: ubuntu-24.04-arm
+            platform: linux/arm64
+          - variant: amd64-musl
+            runner: ubuntu-24.04
+            platform: linux/amd64
+          - variant: arm64-musl
+            runner: ubuntu-24.04-arm
+            platform: linux/arm64
     env:
       AUTOFORGE_KEEP_DOCKER_TAR: "1"
       AUTOFORGE_RELEASE_REVISION: ${{ needs.prepare.outputs.revision }}
+      BACKEND_IMAGE: autoforge/backend:${{ needs.prepare.outputs.version }}-${{ matrix.variant }}
+      BACKEND_PLATFORM: ${{ matrix.platform }}
       SOURCE_DATE_EPOCH: ${{ needs.prepare.outputs.source_date_epoch }}
     steps:
       - name: Check out tagged source
@@ -166,22 +188,8 @@ jobs:
         with:
           ref: ${{ needs.prepare.outputs.tag }}
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
-        with:
-          platforms: arm64
-
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
-
-      - name: Resolve image platform
-        run: |
-          case "${{ matrix.variant }}" in
-            amd64 | amd64-musl) platform="linux/amd64" ;;
-            arm64 | arm64-musl) platform="linux/arm64" ;;
-          esac
-          echo "BACKEND_PLATFORM=${platform}" >> "${GITHUB_ENV}"
-          echo "BACKEND_IMAGE=autoforge/backend:${{ needs.prepare.outputs.version }}-${{ matrix.variant }}" >> "${GITHUB_ENV}"
 
       - name: Build compressed offline image
         run: bash scripts/release/build-backend-image.sh "${{ needs.prepare.outputs.version }}" "${{ matrix.variant }}" dist/release
