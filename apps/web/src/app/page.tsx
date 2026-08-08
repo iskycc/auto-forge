@@ -1,0 +1,260 @@
+import {
+  Activity,
+  ArrowRight,
+  BookOpenText,
+  Box,
+  CheckCircle2,
+  CircleDashed,
+  FileArchive,
+  Server,
+  Sparkles,
+} from "lucide-react";
+import Link from "next/link";
+import type { CSSProperties } from "react";
+
+import { PlannedBadge } from "@/components/status-badge";
+import { getPlatformServices } from "@/lib/services";
+
+export const dynamic = "force-dynamic";
+
+function formatDate(value: string): string {
+  return new Intl.DateTimeFormat("zh-CN", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(new Date(value));
+}
+
+export default async function DashboardPage() {
+  const { catalog } = getPlatformServices();
+  const [summary, recentSources] = await Promise.all([
+    catalog.getDashboardSummary(),
+    catalog.listRecentSources(5),
+  ]);
+  const enabledRate =
+    summary.methodCount === 0
+      ? 0
+      : Math.round((summary.enabledMethodCount / summary.methodCount) * 1000) / 10;
+
+  return (
+    <div className="page-stack">
+      <section className="page-hero">
+        <div>
+          <span className="eyebrow">AutoForge · Lite</span>
+          <h1>自动化用例工作台</h1>
+          <p>从 TestNG JAR 发现测试类，构建可追踪、可执行的用例资产。</p>
+        </div>
+        <Link className="button button-primary button-large" href="/cases/import">
+          <FileArchive size={18} aria-hidden="true" /> 导入 TestNG JAR
+        </Link>
+      </section>
+
+      <section className="bento-grid" aria-label="平台概览">
+        <article className="card bento-quality">
+          <div className="card-heading compact">
+            <div>
+              <span className="eyebrow">当前资产</span>
+              <h2>用例发现概览</h2>
+            </div>
+            <span className="soft-icon blue">
+              <Sparkles size={19} />
+            </span>
+          </div>
+          <div className="quality-value">
+            <strong>{summary.caseCount}</strong>
+            <span>个 TestNG 测试类</span>
+          </div>
+          <div className="mini-chart" aria-label={`已启用测试方法占比 ${enabledRate}%`}>
+            <div className="mini-chart-line" style={{ width: `${Math.max(enabledRate, 2)}%` }} />
+          </div>
+          <div className="metric-strip">
+            <div>
+              <span>JAR 来源</span>
+              <strong>{summary.sourceCount}</strong>
+            </div>
+            <div>
+              <span>测试方法</span>
+              <strong>{summary.methodCount}</strong>
+            </div>
+            <div>
+              <span>已启用</span>
+              <strong>{summary.enabledMethodCount}</strong>
+            </div>
+            <div>
+              <span>启用占比</span>
+              <strong>{enabledRate}%</strong>
+            </div>
+          </div>
+        </article>
+
+        <article className="card bento-active">
+          <div className="card-heading compact">
+            <div>
+              <span className="eyebrow">执行</span>
+              <h2>活动执行</h2>
+            </div>
+            <PlannedBadge />
+          </div>
+          <div className="empty-state compact-empty">
+            <span className="empty-icon">
+              <Activity size={24} />
+            </span>
+            <strong>执行链路尚未启用</strong>
+            <p>Runner Agent 协议已经完成设计，将在后续里程碑接入。</p>
+          </div>
+        </article>
+
+        <article className="card bento-library">
+          <div className="card-heading compact">
+            <div>
+              <span className="eyebrow">用例库</span>
+              <h2>已发现内容</h2>
+            </div>
+            <span className="soft-icon violet">
+              <BookOpenText size={19} />
+            </span>
+          </div>
+          <dl className="stat-list">
+            <div>
+              <dt>
+                <Box size={15} /> JAR 包
+              </dt>
+              <dd>{summary.sourceCount}</dd>
+            </div>
+            <div>
+              <dt>
+                <BookOpenText size={15} /> 测试类
+              </dt>
+              <dd>{summary.caseCount}</dd>
+            </div>
+            <div>
+              <dt>
+                <CheckCircle2 size={15} /> 测试方法
+              </dt>
+              <dd>{summary.methodCount}</dd>
+            </div>
+          </dl>
+          <Link className="text-link" href="/cases">
+            打开用例库 <ArrowRight size={15} />
+          </Link>
+        </article>
+
+        <article className="card bento-runners">
+          <div className="card-heading compact">
+            <div>
+              <span className="eyebrow">执行资源</span>
+              <h2>执行机群</h2>
+            </div>
+            <span className="soft-icon green">
+              <Server size={19} />
+            </span>
+          </div>
+          <div className="runner-zero">
+            <div className="runner-orbit">
+              <Server size={28} />
+              <span>0</span>
+            </div>
+            <div>
+              <strong>尚未注册执行机</strong>
+              <p>本地 Runner Agent 将通过 HTTPS 控制协议接入。</p>
+            </div>
+          </div>
+          <div className="runner-summary">
+            <span>
+              <i className="dot green-dot" /> 在线 0
+            </span>
+            <span>
+              <i className="dot amber-dot" /> 繁忙 0
+            </span>
+            <span>
+              <i className="dot gray-dot" /> 离线 0
+            </span>
+          </div>
+        </article>
+
+        <article className="card bento-insight">
+          <div className="card-heading compact">
+            <div>
+              <span className="eyebrow">发现质量</span>
+              <h2>导入状态</h2>
+            </div>
+            <span className="soft-icon amber">
+              <CircleDashed size={19} />
+            </span>
+          </div>
+          {summary.methodCount === 0 ? (
+            <div className="empty-state compact-empty">
+              <span className="empty-icon">
+                <FileArchive size={24} />
+              </span>
+              <strong>等待首个 JAR</strong>
+              <p>上传包含 TestNG `@Test` 注解的测试 JAR 开始构建用例库。</p>
+            </div>
+          ) : (
+            <div className="donut-layout">
+              <div
+                className="donut"
+                style={{ "--donut-value": `${enabledRate * 3.6}deg` } as CSSProperties}
+              >
+                <span>
+                  <strong>{enabledRate}%</strong>
+                  <small>已启用</small>
+                </span>
+              </div>
+              <div className="donut-legend">
+                <span>
+                  <i className="dot green-dot" /> 已启用 {summary.enabledMethodCount}
+                </span>
+                <span>
+                  <i className="dot gray-dot" /> 已禁用{" "}
+                  {summary.methodCount - summary.enabledMethodCount}
+                </span>
+              </div>
+            </div>
+          )}
+        </article>
+
+        <article className="card bento-recent">
+          <div className="card-heading compact">
+            <div>
+              <span className="eyebrow">最近动态</span>
+              <h2>JAR 导入记录</h2>
+            </div>
+            {recentSources.length > 0 && (
+              <Link className="text-link" href="/cases">
+                查看全部
+              </Link>
+            )}
+          </div>
+          {recentSources.length === 0 ? (
+            <div className="empty-state compact-empty">
+              <span className="empty-icon">
+                <FileArchive size={24} />
+              </span>
+              <strong>暂无导入记录</strong>
+              <p>导入后会在这里展示来源、类数量和扫描时间。</p>
+            </div>
+          ) : (
+            <div className="activity-list">
+              {recentSources.map((source) => (
+                <div className="activity-row" key={source.id}>
+                  <span className="activity-icon">
+                    <FileArchive size={16} />
+                  </span>
+                  <span>
+                    <strong>{source.displayName}</strong>
+                    <small>
+                      {source.classCount} 个类 · {source.methodCount} 个方法
+                    </small>
+                  </span>
+                  <time dateTime={source.createdAt}>{formatDate(source.createdAt)}</time>
+                </div>
+              ))}
+            </div>
+          )}
+        </article>
+      </section>
+    </div>
+  );
+}

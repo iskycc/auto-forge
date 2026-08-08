@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "attemptId": "local-java-diagnostic",
+  "command": {
+    "executable": "/usr/bin/java",
+    "args": ["-version"]
+  },
+  "environment": {},
+  "limits": {
+    "timeoutMs": 10000,
+    "maxLogBytes": 1048576,
+    "terminationGraceMs": 2000
+  }
+}

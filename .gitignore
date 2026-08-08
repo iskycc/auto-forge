@@ -1,0 +1,43 @@
+# JavaScript and Next.js
+node_modules/
+.pnpm-store/
+.next/
+out/
+dist/
+.turbo/
+*.tsbuildinfo
+
+# Tests and diagnostics
+coverage/
+playwright-report/
+test-results/
+*.prof
+*.test
+
+# Local configuration and secrets. Versioned examples stay tracked.
+.env*
+!.env.example
+!**/.env.example
+
+# AutoForge runtime state
+data/
+autoforge-agent-data/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+*.sqlite-journal
+
+# Local release output and manually built Agent binaries
+/release/
+apps/runner-agent/autoforge-agent
+apps/runner-agent/autoforge-agent.exe
+
+# Logs, temporary files, editors and operating systems
+*.log
+*.tmp
+*.swp
+*~
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

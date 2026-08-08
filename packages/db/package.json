@@ -1,0 +1,23 @@
+{
+  "name": "@autoforge/db",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@autoforge/application": "workspace:*",
+    "@autoforge/contracts": "workspace:*",
+    "@autoforge/domain": "workspace:*",
+    "better-sqlite3": "13.0.3",
+    "drizzle-orm": "0.45.2"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "9.6.0",
+    "typescript": "5.9.3"
+  }
+}

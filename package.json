@@ -1,0 +1,36 @@
+{
+  "name": "autoforge",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.20.0",
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "scripts": {
+    "dev": "pnpm --filter @autoforge/web dev",
+    "build": "pnpm --filter @autoforge/web build && go -C apps/runner-agent build ./...",
+    "start": "pnpm --filter @autoforge/web start",
+    "format": "prettier --write \"**/*.{ts,tsx,js,mjs,json,css,yaml,yml}\" && go -C apps/runner-agent fmt ./...",
+    "format:check": "prettier --check \"**/*.{ts,tsx,js,mjs,json,css,yaml,yml}\" && bash scripts/quality/check-go-format.sh",
+    "lint": "eslint . --max-warnings=0 && go -C apps/runner-agent vet ./...",
+    "typecheck": "pnpm -r --if-present typecheck && tsc --noEmit -p tsconfig.tests.json",
+    "test": "vitest run --exclude \"**/*.integration.test.ts\" && go -C apps/runner-agent test ./... && node --test scripts/release/create-manifest.test.mjs",
+    "test:integration": "vitest run integration.test",
+    "test:e2e": "playwright test",
+    "release:agent": "bash scripts/release/build-agent.sh",
+    "release:backend": "bash scripts/release/build-backend-image.sh"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.62.1",
+    "@types/node": "24.13.3",
+    "@types/react": "19.2.18",
+    "@types/react-dom": "19.2.4",
+    "eslint": "9.39.5",
+    "eslint-config-next": "16.3.0",
+    "fflate": "0.8.3",
+    "prettier": "3.9.6",
+    "typescript": "5.9.3",
+    "vitest": "4.1.10"
+  }
+}
