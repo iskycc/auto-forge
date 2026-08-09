@@ -4,6 +4,8 @@ import type { CaseSuite, RunBatch, Runner } from "@autoforge/domain";
 import { Activity, Check, Cpu, MemoryStick, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
+import { runBatchCoveragePercent, runBatchStatusLabel } from "@/lib/run-batch-presentation";
+
 type SchedulerPolicy = {
   maximumCpuUtilizationPercent: number;
   maximumMemoryUtilizationPercent: number;
@@ -287,20 +289,19 @@ export function RunBatchPlanner({
           </span>
         </div>
         <div className="implementation-notice">
-          当前阶段只生成执行分配和 RunAttempt，Agent 领取、TestNG 执行及结果回收将在执行闭环中接入。
+          已接通 Agent 领取、lease 续租、TestNG 类级执行和结果回收；流式日志与产物上传仍在建设中。
         </div>
         {batches.length === 0 ? (
           <div className="inline-empty history-empty">尚未创建执行批次。</div>
         ) : (
           <div className="batch-list">
             {batches.map((batch) => {
-              const progress =
-                batch.totalRuns === 0 ? 0 : (batch.assignedRuns / batch.totalRuns) * 100;
+              const progress = runBatchCoveragePercent(batch);
               return (
                 <article className="batch-row" key={batch.id}>
                   <div className="batch-row-main">
                     <span className={`batch-status batch-status-${batch.status}`}>
-                      {batchStatusLabel(batch.status)}
+                      {runBatchStatusLabel(batch.status)}
                     </span>
                     <span>
                       <strong>{batch.suiteName}</strong>
@@ -341,19 +342,6 @@ function stateLabel(state: Runner["state"]): string {
   if (state === "online") return "在线";
   if (state === "offline") return "离线";
   return "已禁用";
-}
-
-function batchStatusLabel(status: RunBatch["status"]): string {
-  const labels: Record<RunBatch["status"], string> = {
-    queued: "等待资源",
-    dispatching: "分配中",
-    scheduled: "已生成分配",
-    running: "执行中",
-    succeeded: "已成功",
-    failed: "已失败",
-    cancelled: "已取消",
-  };
-  return labels[status];
 }
 
 function formatDate(value: string): string {

@@ -10,6 +10,7 @@ readonly postgres_image="postgres:15-alpine@sha256:df7bca0066e6f60cc3dd32faa70ca
 readonly redis_image="redis:7-alpine@sha256:6ab0b6e7381779332f97b8ca76193e45b0756f38d4c0dcda72dbb3c32061ab99"
 readonly nats_archive_sha256="f3d0c820c749f81d717310fb00d4903919e70e3e66b268bd352a088b9788eb93"
 readonly minio_binary_sha256="53e2a2cb16c5366ea6fbbc479c19ddb4c6a0948273e752f740fb1fbf27bb817c"
+readonly readiness_attempts=240
 
 nats_pid=""
 minio_pid=""
@@ -48,7 +49,7 @@ terminate_process_group() {
 wait_until() {
   local description="${1}"
   shift
-  for _ in $(seq 1 120); do
+  for _ in $(seq 1 "${readiness_attempts}"); do
     if "$@" >/dev/null 2>&1; then
       return 0
     fi

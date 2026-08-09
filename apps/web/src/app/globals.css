@@ -543,12 +543,14 @@ a.nav-item-active:hover {
 
 .topbar-actions {
   display: flex;
+  flex: 0 0 auto;
   align-items: center;
   gap: 8px;
 }
 
 .icon-button {
   display: inline-grid;
+  flex: 0 0 36px;
   width: 36px;
   height: 36px;
   place-items: center;
@@ -585,8 +587,24 @@ button.icon-button:disabled {
 }
 
 .admin-label {
+  max-width: 180px;
+  overflow: hidden;
   font-size: 13px;
   font-weight: 560;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  border: 0;
+  white-space: nowrap;
 }
 
 .main-content {
@@ -783,23 +801,73 @@ button.icon-button:disabled {
 }
 
 .bento-quality {
-  grid-column: span 5;
-  grid-row: span 2;
+  grid-column: 1 / span 5;
 }
 .bento-active {
-  grid-column: span 4;
+  grid-column: 6 / span 4;
 }
 .bento-library {
-  grid-column: span 3;
+  grid-column: 10 / span 3;
 }
 .bento-runners {
-  grid-column: span 5;
+  grid-column: 1 / span 5;
 }
 .bento-insight {
-  grid-column: span 4;
+  grid-column: 6 / span 4;
 }
 .bento-recent {
-  grid-column: span 3;
+  grid-column: 10 / span 3;
+}
+
+.dashboard-batch {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  justify-content: center;
+  margin-top: 20px;
+}
+
+.dashboard-batch-title {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.dashboard-batch-title > span:last-child {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.dashboard-batch-title strong,
+.dashboard-batch-title small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dashboard-batch-title small {
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+}
+
+.dashboard-batch-progress {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-top: 28px;
+}
+
+.dashboard-batch-progress strong {
+  font-size: 36px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.05em;
+}
+
+.dashboard-batch-progress span {
+  color: var(--color-text-secondary);
+  font-size: 12px;
 }
 
 .quality-value {

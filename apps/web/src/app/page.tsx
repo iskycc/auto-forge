@@ -12,9 +12,13 @@ import {
 import Link from "next/link";
 import type { CSSProperties } from "react";
 
-import { PlannedBadge } from "@/components/status-badge";
 import { getPlatformServices } from "@/lib/services";
 import { requirePagePermission } from "@/lib/auth";
+import {
+  isActiveRunBatch,
+  runBatchCompletionPercent,
+  runBatchStatusLabel,
+} from "@/lib/run-batch-presentation";
 
 export const dynamic = "force-dynamic";
 
@@ -31,10 +35,11 @@ export default async function DashboardPage() {
   await requirePagePermission("case.read");
   const services = await getPlatformServices();
   const { catalog, config } = services;
-  const [summary, recentSources, runners] = await Promise.all([
+  const [summary, recentSources, runners, recentBatches] = await Promise.all([
     catalog.getDashboardSummary(),
     catalog.listRecentSources(5),
     services.runnerControl.list(),
+    services.runBatches.list(5),
   ]);
   const onlineRunners = runners.filter((runner) => runner.state === "online").length;
   const busyRunners = runners.filter((runner) => runner.busySlots > 0).length;
@@ -42,6 +47,13 @@ export default async function DashboardPage() {
     summary.methodCount === 0
       ? 0
       : Math.round((summary.enabledMethodCount / summary.methodCount) * 1000) / 10;
+  const activeBatch = recentBatches.find((batch) => isActiveRunBatch(batch.status));
+  const activeBatchCompletedRuns = activeBatch
+    ? activeBatch.succeededRuns +
+      activeBatch.failedRuns +
+      activeBatch.timedOutRuns +
+      activeBatch.cancelledRuns
+    : 0;
 
   return (
     <div className="page-stack">
@@ -100,15 +112,54 @@ export default async function DashboardPage() {
               <span className="eyebrow">执行</span>
               <h2>活动执行</h2>
             </div>
-            <PlannedBadge />
+            <Link className="text-link" href="/run-batches">
+              查看全部
+            </Link>
           </div>
-          <div className="empty-state compact-empty">
-            <span className="empty-icon">
-              <Activity size={24} />
-            </span>
-            <strong>执行链路尚未启用</strong>
-            <p>Runner Agent 协议已经完成设计，将在后续里程碑接入。</p>
-          </div>
+          {activeBatch ? (
+            <div className="dashboard-batch">
+              <div className="dashboard-batch-title">
+                <span className={`batch-status batch-status-${activeBatch.status}`}>
+                  {runBatchStatusLabel(activeBatch.status)}
+                </span>
+                <span>
+                  <strong>{activeBatch.suiteName}</strong>
+                  <small>
+                    任务 v{activeBatch.suiteVersion} · {activeBatch.selectedRunnerIds.length}{" "}
+                    台执行机
+                  </small>
+                </span>
+              </div>
+              <div className="dashboard-batch-progress">
+                <strong>{runBatchCompletionPercent(activeBatch)}%</strong>
+                <span>
+                  已完成 {activeBatchCompletedRuns} / {activeBatch.totalRuns}
+                </span>
+              </div>
+              <div className="batch-progress-line">
+                <span style={{ width: `${runBatchCompletionPercent(activeBatch)}%` }} />
+              </div>
+              <div className="batch-counts">
+                <span>执行中 {activeBatch.runningRuns}</span>
+                <span>已完成 {activeBatchCompletedRuns}</span>
+                <span>
+                  待执行{" "}
+                  {Math.max(
+                    0,
+                    activeBatch.totalRuns - activeBatch.runningRuns - activeBatchCompletedRuns,
+                  )}
+                </span>
+              </div>
+            </div>
+          ) : (
+            <div className="empty-state compact-empty">
+              <span className="empty-icon">
+                <Activity size={24} />
+              </span>
+              <strong>当前没有活动批次</strong>
+              <p>从用例批跑选择任务与执行机，即可创建可追踪的执行分配。</p>
+            </div>
+          )}
         </article>
 
         <article className="card bento-library">

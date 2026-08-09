@@ -115,8 +115,6 @@ services:
       - core
     security_opt:
       - no-new-privileges:true
-    cap_drop:
-      - ALL
     stop_grace_period: 30s
 
   minio:
@@ -153,8 +151,8 @@ services:
     entrypoint: ["/bin/sh", "-eu", "-c"]
     command:
       - >-
-        mc alias set autoforge http://minio:9000 "$${MINIO_ROOT_USER}" "$${MINIO_ROOT_PASSWORD}";
-        mc mb --ignore-existing --region "$${MINIO_REGION}" "autoforge/$${MINIO_BUCKET}"
+        mc --config-dir /tmp/.mc alias set autoforge http://minio:9000 "$${MINIO_ROOT_USER}" "$${MINIO_ROOT_PASSWORD}";
+        mc --config-dir /tmp/.mc mb --ignore-existing --region "$${MINIO_REGION}" "autoforge/$${MINIO_BUCKET}"
     environment:
       MINIO_ROOT_USER: ${AUTOFORGE_MINIO_ACCESS_KEY:?set the MinIO access key}
       MINIO_ROOT_PASSWORD: ${AUTOFORGE_MINIO_SECRET_KEY:?set the MinIO secret key}
