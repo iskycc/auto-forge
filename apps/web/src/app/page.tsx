@@ -14,6 +14,7 @@ import type { CSSProperties } from "react";
 
 import { PlannedBadge } from "@/components/status-badge";
 import { getPlatformServices } from "@/lib/services";
+import { requirePagePermission } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 
@@ -27,6 +28,7 @@ function formatDate(value: string): string {
 }
 
 export default async function DashboardPage() {
+  await requirePagePermission("case.read");
   const services = await getPlatformServices();
   const { catalog, config } = services;
   const [summary, recentSources, runners] = await Promise.all([

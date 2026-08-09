@@ -2,6 +2,7 @@ import { Clock3, Server, ShieldCheck } from "lucide-react";
 
 import { RunnerTerminal } from "@/components/runner-terminal";
 import { getPlatformServices } from "@/lib/services";
+import { requirePagePermission } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 
@@ -17,6 +18,7 @@ function formatDate(value: string): string {
 }
 
 export default async function RunnersPage() {
+  await requirePagePermission("runner.read");
   const services = await getPlatformServices();
   const runners = await services.runnerControl.list(500);
   const onlineCount = runners.filter((runner) => runner.state === "online").length;

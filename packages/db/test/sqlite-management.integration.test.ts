@@ -8,6 +8,7 @@ import { createSqliteDatabase } from "../src/database";
 import { SqliteCaseCatalogRepository } from "../src/sqlite-case-catalog";
 import { SqliteCaseSuiteRepository } from "../src/sqlite-case-suite";
 import { SqliteRunBatchRepository } from "../src/sqlite-run-batch";
+import { SqliteExecutionControlRepository } from "../src/sqlite-execution-control";
 import { SqliteRunnerRepository } from "../src/sqlite-runner";
 import { scheduleExecutionRuns } from "@autoforge/domain";
 import { RunBatchSchedulingService } from "@autoforge/application";
@@ -63,6 +64,7 @@ describe("SQLite management repositories", () => {
         agentVersion: "0.1.0",
         protocolVersion: 1,
         labels: ["java"],
+        capabilities: [],
         maxConcurrency: 2,
         terminalEnabled: false,
         recordedAt: timestamp,
@@ -78,6 +80,7 @@ describe("SQLite management repositories", () => {
           agentVersion: "0.1.0",
           protocolVersion: 1,
           labels: [],
+          capabilities: [],
           maxConcurrency: 1,
           terminalEnabled: false,
           recordedAt: timestamp,
@@ -88,6 +91,7 @@ describe("SQLite management repositories", () => {
       const heartbeat = await runners.heartbeat({
         runnerId: "runner-1",
         labels: ["java", "testng"],
+        capabilities: [],
         maxConcurrency: 2,
         busySlots: 1,
         agentVersion: "0.1.1",
@@ -98,6 +102,7 @@ describe("SQLite management repositories", () => {
       const terminalDisabled = await runners.heartbeat({
         runnerId: "runner-1",
         labels: ["java"],
+        capabilities: [],
         maxConcurrency: 2,
         busySlots: 0,
         agentVersion: "0.1.1",
@@ -141,6 +146,7 @@ describe("SQLite management repositories", () => {
         agentVersion: "0.2.0",
         protocolVersion: 1,
         labels: ["java"],
+        capabilities: [],
         maxConcurrency: 1,
         terminalEnabled: false,
         recordedAt: timestamp,
@@ -148,6 +154,7 @@ describe("SQLite management repositories", () => {
       await runners.heartbeat({
         runnerId: "runner-scheduling",
         labels: ["java", "testng"],
+        capabilities: ["executor:testng-v1"],
         maxConcurrency: 1,
         busySlots: 0,
         agentVersion: "0.2.0",
@@ -194,7 +201,11 @@ describe("SQLite management repositories", () => {
       });
       await batches.reserveAssignments({
         batchId: "batch-1",
-        decisions: plan.decisions.map((decision) => ({ ...decision, attemptId: "attempt-1" })),
+        decisions: plan.decisions.map((decision) => ({
+          ...decision,
+          attemptId: "attempt-1",
+          assignmentId: "assignment-1",
+        })),
         thresholds,
         offlineBefore: "2026-08-09T00:00:30.000Z",
         metricsFreshAfter: "2026-08-09T00:00:30.000Z",
@@ -233,6 +244,7 @@ describe("SQLite management repositories", () => {
         agentVersion: "0.2.0",
         protocolVersion: 1,
         labels: ["testng"],
+        capabilities: ["executor:testng-v1"],
         maxConcurrency: 1,
         terminalEnabled: false,
         recordedAt: "2026-08-09T00:01:00.000Z",
@@ -262,6 +274,25 @@ describe("SQLite management repositories", () => {
       await runners.heartbeat({
         runnerId: "runner-dynamic",
         labels: ["testng"],
+        capabilities: [],
+        maxConcurrency: 1,
+        busySlots: 0,
+        agentVersion: "0.2.0",
+        terminalEnabled: false,
+        resourceSnapshot: {
+          cpuUtilizationPercent: 15,
+          memoryUtilizationPercent: 25,
+          loadAverage1m: 0.25,
+          logicalCpuCount: 2,
+          observedAt: "2026-08-09T00:01:00.000Z",
+        },
+        recordedAt: "2026-08-09T00:01:00.000Z",
+      });
+      expect(await scheduler.scheduleForRunner("runner-dynamic")).toBe(0);
+      await runners.heartbeat({
+        runnerId: "runner-dynamic",
+        labels: ["testng"],
+        capabilities: ["executor:testng-v1"],
         maxConcurrency: 1,
         busySlots: 0,
         agentVersion: "0.2.0",
@@ -279,6 +310,344 @@ describe("SQLite management repositories", () => {
       expect(await scheduler.get(queued.id)).toMatchObject({
         status: "scheduled",
         assignedRuns: 1,
+      });
+    } finally {
+      handle.close();
+    }
+  });
+
+  it("claims, renews, completes and deduplicates an assignment atomically", async () => {
+    const { handle, runners, batches, executions } = await fixture();
+    try {
+      await runners.register({
+        id: "runner-control",
+        bootstrapTokenHash: "bootstrap-control",
+        credentialHash: "credential-control",
+        name: "control-runner",
+        os: "linux",
+        architecture: "amd64",
+        agentVersion: "0.2.0",
+        protocolVersion: 1,
+        labels: ["java", "testng"],
+        capabilities: ["executor:testng-v1"],
+        maxConcurrency: 1,
+        terminalEnabled: false,
+        recordedAt: timestamp,
+      });
+      await runners.heartbeat({
+        runnerId: "runner-control",
+        labels: ["java", "testng"],
+        capabilities: ["executor:testng-v1"],
+        maxConcurrency: 1,
+        busySlots: 0,
+        agentVersion: "0.2.0",
+        terminalEnabled: false,
+        resourceSnapshot: {
+          cpuUtilizationPercent: 10,
+          memoryUtilizationPercent: 20,
+          loadAverage1m: 0.1,
+          logicalCpuCount: 2,
+          observedAt: "2026-08-09T00:01:00.000Z",
+        },
+        recordedAt: "2026-08-09T00:01:00.000Z",
+      });
+      await batches.create({
+        id: "batch-control",
+        suiteId: "suite-snapshot",
+        suiteName: "Control",
+        suiteVersion: 1,
+        retryLimit: 1,
+        environmentVariables: [],
+        runnerIds: ["runner-control"],
+        runs: [
+          {
+            id: "run-control",
+            caseDefinitionId: "case-1",
+            caseVersion: 1,
+            displayName: "Control",
+            className: "com.example.SmokeTest",
+          },
+        ],
+        createdAt: "2026-08-09T00:01:00.000Z",
+      });
+      await batches.reserveAssignments({
+        batchId: "batch-control",
+        decisions: [
+          {
+            executionRunId: "run-control",
+            runnerId: "runner-control",
+            score: 1,
+            attemptId: "attempt-control",
+            assignmentId: "assignment-control",
+          },
+        ],
+        thresholds: {
+          maximumCpuUtilizationPercent: 80,
+          maximumMemoryUtilizationPercent: 85,
+          maximumLoadPerCpu: 1,
+        },
+        offlineBefore: "2026-08-09T00:00:30.000Z",
+        metricsFreshAfter: "2026-08-09T00:00:30.000Z",
+        scheduledAt: "2026-08-09T00:01:01.000Z",
+      });
+
+      const claimInput = {
+        runnerId: "runner-control",
+        requestId: "claim-control",
+        availableSlots: 1,
+        labels: ["java", "testng"],
+        capabilities: ["executor:testng-v1"],
+        leaseSeeds: [
+          {
+            id: "lease-control",
+            eventId: "event-claim-control",
+            tokenHash: "lease-token-hash",
+            tokenEncrypted: "encrypted-lease-token",
+          },
+        ],
+        now: "2026-08-09T00:01:02.000Z",
+        leaseExpiresAt: "2026-08-09T00:01:47.000Z",
+      };
+      const claimed = await executions.claim(claimInput);
+      expect(claimed).toHaveLength(1);
+      await expect(
+        executions.resolveAttemptInput({
+          runnerId: "runner-control",
+          attemptId: "attempt-control",
+          inputId: "source-1",
+          leaseTokenHash: "lease-token-hash",
+          now: "2026-08-09T00:01:03.000Z",
+        }),
+      ).resolves.toEqual({
+        objectKey: "jars/aa/source.jar",
+        sizeBytes: 128,
+        sha256: "a".repeat(64),
+      });
+      await expect(
+        executions.resolveAttemptInput({
+          runnerId: "runner-control",
+          attemptId: "attempt-control",
+          inputId: "source-1",
+          leaseTokenHash: "wrong-token-hash",
+          now: "2026-08-09T00:01:03.000Z",
+        }),
+      ).rejects.toMatchObject({ code: "ATTEMPT_INPUT_FORBIDDEN" });
+      await expect(executions.claim(claimInput)).resolves.toEqual(claimed);
+      await expect(
+        executions.reconcile({
+          runnerId: "runner-control",
+          request: {
+            schemaVersion: 1,
+            requestId: "reconcile-control",
+            attempts: [{ attemptId: "attempt-control", localState: "running" }],
+          },
+          now: "2026-08-09T00:01:05.000Z",
+        }),
+      ).resolves.toMatchObject({ decisions: [{ action: "continue" }] });
+
+      const renewed = await executions.renewLease({
+        runnerId: "runner-control",
+        leaseId: "lease-control",
+        tokenHash: "lease-token-hash",
+        expectedVersion: 1,
+        now: "2026-08-09T00:01:10.000Z",
+        expiresAt: "2026-08-09T00:01:55.000Z",
+      });
+      expect(renewed).toMatchObject({ leaseVersion: 2, instruction: "continue" });
+
+      const completion = await executions.completeAttempt({
+        runnerId: "runner-control",
+        attemptId: "attempt-control",
+        completionId: "completion-control",
+        leaseTokenHash: "lease-token-hash",
+        resultDigest: "result-digest",
+        result: {
+          status: "failed",
+          resultCode: "TEST_ASSERTION_FAILED",
+          summary: "assertion failed",
+          durationMs: 1_000,
+          artifacts: [],
+        },
+        eventId: "event-complete-control",
+        acceptedAt: "2026-08-09T00:01:20.000Z",
+      });
+      expect(completion).toMatchObject({ disposition: "accepted", retryScheduled: true });
+      await expect(
+        executions.completeAttempt({
+          runnerId: "runner-control",
+          attemptId: "attempt-control",
+          completionId: "completion-control",
+          leaseTokenHash: "lease-token-hash",
+          resultDigest: "result-digest",
+          result: {
+            status: "failed",
+            resultCode: "TEST_ASSERTION_FAILED",
+            summary: "assertion failed",
+            durationMs: 1_000,
+            artifacts: [],
+          },
+          eventId: "unused-event",
+          acceptedAt: "2026-08-09T00:01:21.000Z",
+        }),
+      ).resolves.toMatchObject({ disposition: "duplicate" });
+      expect(await batches.get("batch-control")).toMatchObject({ status: "queued", queuedRuns: 1 });
+
+      await batches.reserveAssignments({
+        batchId: "batch-control",
+        decisions: [
+          {
+            executionRunId: "run-control",
+            runnerId: "runner-control",
+            score: 1,
+            attemptId: "attempt-control-2",
+            assignmentId: "assignment-control-2",
+          },
+        ],
+        thresholds: {
+          maximumCpuUtilizationPercent: 80,
+          maximumMemoryUtilizationPercent: 85,
+          maximumLoadPerCpu: 1,
+        },
+        offlineBefore: "2026-08-09T00:00:30.000Z",
+        metricsFreshAfter: "2026-08-09T00:00:30.000Z",
+        scheduledAt: "2026-08-09T00:01:21.000Z",
+      });
+      await executions.claim({
+        ...claimInput,
+        requestId: "claim-control-2",
+        leaseSeeds: [
+          {
+            id: "lease-control-2",
+            eventId: "event-claim-control-2",
+            tokenHash: "lease-token-hash-2",
+            tokenEncrypted: "encrypted-lease-token-2",
+          },
+        ],
+        now: "2026-08-09T00:01:22.000Z",
+        leaseExpiresAt: "2026-08-09T00:02:07.000Z",
+      });
+      await executions.cancelRun({
+        runId: "run-control",
+        actorId: "administrator",
+        reason: "operator cancellation",
+        eventId: "event-cancel-control",
+        requestedAt: "2026-08-09T00:01:23.000Z",
+      });
+      await expect(
+        executions.renewLease({
+          runnerId: "runner-control",
+          leaseId: "lease-control-2",
+          tokenHash: "lease-token-hash-2",
+          expectedVersion: 1,
+          now: "2026-08-09T00:01:24.000Z",
+          expiresAt: "2026-08-09T00:02:09.000Z",
+        }),
+      ).resolves.toMatchObject({ instruction: "cancel" });
+      await executions.completeAttempt({
+        runnerId: "runner-control",
+        attemptId: "attempt-control-2",
+        completionId: "completion-control-2",
+        leaseTokenHash: "lease-token-hash-2",
+        resultDigest: "result-digest-2",
+        result: {
+          status: "succeeded",
+          resultCode: "PASSED",
+          summary: "late success after cancellation",
+          durationMs: 500,
+          artifacts: [],
+        },
+        eventId: "event-complete-control-2",
+        acceptedAt: "2026-08-09T00:01:25.000Z",
+      });
+      expect(await batches.get("batch-control")).toMatchObject({
+        status: "cancelled",
+        cancelledRuns: 1,
+      });
+
+      await batches.create({
+        id: "batch-expiry-control",
+        suiteId: "suite-1",
+        suiteName: "Expiry suite",
+        suiteVersion: 1,
+        retryLimit: 0,
+        environmentVariables: [],
+        runnerIds: ["runner-control"],
+        runs: [
+          {
+            id: "run-expiry-control",
+            caseDefinitionId: "case-1",
+            caseVersion: 1,
+            displayName: "Expiry",
+            className: "com.example.ExpiryTest",
+          },
+        ],
+        createdAt: "2026-08-09T00:02:00.000Z",
+      });
+      await batches.reserveAssignments({
+        batchId: "batch-expiry-control",
+        decisions: [
+          {
+            executionRunId: "run-expiry-control",
+            runnerId: "runner-control",
+            score: 1,
+            attemptId: "attempt-expiry-control",
+            assignmentId: "assignment-expiry-control",
+          },
+        ],
+        thresholds: {
+          maximumCpuUtilizationPercent: 80,
+          maximumMemoryUtilizationPercent: 85,
+          maximumLoadPerCpu: 1,
+        },
+        offlineBefore: "2026-08-09T00:00:30.000Z",
+        metricsFreshAfter: "2026-08-09T00:00:30.000Z",
+        scheduledAt: "2026-08-09T00:02:01.000Z",
+      });
+      await executions.claim({
+        ...claimInput,
+        requestId: "claim-expiry-control",
+        leaseSeeds: [
+          {
+            id: "lease-expiry-control",
+            eventId: "event-claim-expiry-control",
+            tokenHash: "lease-expiry-token-hash",
+            tokenEncrypted: "encrypted-expiry-lease-token",
+          },
+        ],
+        now: "2026-08-09T00:02:02.000Z",
+        leaseExpiresAt: "2026-08-09T00:02:47.000Z",
+      });
+      await expect(
+        executions.recoverExpired({
+          now: "2026-08-09T00:02:48.000Z",
+          eventIds: ["event-expire-control"],
+          limit: 1,
+        }),
+      ).resolves.toBe(1);
+      expect(await batches.get("batch-expiry-control")).toMatchObject({
+        status: "failed",
+        timedOutRuns: 1,
+      });
+      const lateCompletion = await executions.completeAttempt({
+        runnerId: "runner-control",
+        attemptId: "attempt-expiry-control",
+        completionId: "completion-expiry-control",
+        leaseTokenHash: "lease-expiry-token-hash",
+        resultDigest: "late-result-digest",
+        result: {
+          status: "succeeded",
+          resultCode: "PASSED",
+          summary: "late success after lease expiry",
+          durationMs: 500,
+          artifacts: [],
+        },
+        eventId: "unused-late-event",
+        acceptedAt: "2026-08-09T00:02:49.000Z",
+      });
+      expect(lateCompletion).toMatchObject({ disposition: "late", retryScheduled: false });
+      expect(await batches.get("batch-expiry-control")).toMatchObject({
+        status: "failed",
+        timedOutRuns: 1,
       });
     } finally {
       handle.close();
@@ -367,5 +736,6 @@ async function fixture() {
     suites: new SqliteCaseSuiteRepository(handle),
     runners: new SqliteRunnerRepository(handle),
     batches: new SqliteRunBatchRepository(handle),
+    executions: new SqliteExecutionControlRepository(handle),
   };
 }

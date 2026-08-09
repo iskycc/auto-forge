@@ -2,10 +2,12 @@ import { Activity } from "lucide-react";
 
 import { RunBatchPlanner } from "@/components/run-batch-planner";
 import { getPlatformServices } from "@/lib/services";
+import { requirePagePermission } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 
 export default async function RunBatchesPage() {
+  await requirePagePermission("run.read");
   const services = await getPlatformServices();
   const [suites, runners, batches] = await Promise.all([
     services.caseSuites.list(200),

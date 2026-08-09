@@ -19,6 +19,14 @@ test("imports TestNG methods from a JAR into the case library", async ({ page })
     "testng.xml": new TextEncoder().encode('<suite name="AutoForge fixture" />'),
   });
 
+  await page.goto("/setup");
+  await page.getByLabel("一次性管理员引导令牌").fill("e2e-admin-bootstrap-token-00000000000000");
+  await page.getByLabel("用户名").fill("e2e-admin");
+  await page.getByLabel("显示名称").fill("E2E Administrator");
+  await page.getByLabel("管理员密码").fill("E2e!Administrator123");
+  await page.getByRole("button", { name: "创建系统管理员" }).click();
+  await expect(page).toHaveURL(/\/$/, { timeout: 20_000 });
+
   await page.goto("/cases/import");
   await expect(page.getByRole("heading", { name: "导入 TestNG JAR" })).toBeVisible();
 
@@ -67,7 +75,8 @@ test("imports TestNG methods from a JAR into the case library", async ({ page })
     data: {
       schemaVersion: 1,
       name: "E2E Runner",
-      labels: ["linux", "testng"],
+      labels: ["linux", "java", "testng"],
+      capabilities: ["executor:testng-v1", "java:21.0.8", "testng:7.11.0"],
       maxConcurrency: 2,
       os: "linux",
       architecture: "amd64",
@@ -85,7 +94,8 @@ test("imports TestNG methods from a JAR into the case library", async ({ page })
       data: {
         schemaVersion: 1,
         busySlots: 1,
-        labels: ["linux", "testng"],
+        labels: ["linux", "java", "testng"],
+        capabilities: ["executor:testng-v1", "java:21.0.8", "testng:7.11.0"],
         maxConcurrency: 2,
         agentVersion: "0.2.0",
         terminalEnabled: true,
@@ -132,7 +142,6 @@ test("imports TestNG methods from a JAR into the case library", async ({ page })
   await page.goto("/runners");
   await expect(page.getByText("E2E Runner")).toBeVisible();
   await page.getByRole("button", { name: "终端浮窗" }).click();
-  await page.getByLabel("终端访问令牌").fill("e2e-terminal-access-token-000000000000");
 
   const openCommand = new Promise<Record<string, unknown>>((resolve, reject) => {
     const timeout = setTimeout(

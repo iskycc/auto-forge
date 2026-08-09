@@ -24,11 +24,13 @@ export class SqliteRunnerRepository implements RunnerRepository {
           credentialHash: record.credentialHash,
           name: record.name,
           disabled: false,
+          draining: false,
           os: record.os,
           architecture: record.architecture,
           agentVersion: record.agentVersion,
           protocolVersion: record.protocolVersion,
           labelsJson: JSON.stringify(record.labels),
+          capabilitiesJson: JSON.stringify(record.capabilities),
           maxConcurrency: record.maxConcurrency,
           busySlots: 0,
           lastSeenAt: record.recordedAt,
@@ -54,6 +56,7 @@ export class SqliteRunnerRepository implements RunnerRepository {
   async heartbeat(input: {
     runnerId: string;
     labels: string[];
+    capabilities: string[];
     maxConcurrency: number;
     busySlots: number;
     agentVersion: string;
@@ -71,6 +74,7 @@ export class SqliteRunnerRepository implements RunnerRepository {
       .update(runners)
       .set({
         labelsJson: JSON.stringify(input.labels),
+        capabilitiesJson: JSON.stringify(input.capabilities),
         maxConcurrency: input.maxConcurrency,
         busySlots: input.busySlots,
         agentVersion: input.agentVersion,
@@ -107,5 +111,24 @@ export class SqliteRunnerRepository implements RunnerRepository {
   async get(runnerId: string, offlineBefore: string): Promise<Runner | null> {
     const row = this.handle.db.select().from(runners).where(eq(runners.id, runnerId)).get();
     return row ? mapStoredRunner(row, offlineBefore) : null;
+  }
+
+  async setLifecycleState(input: {
+    runnerId: string;
+    state: "active" | "draining" | "disabled";
+    updatedAt: string;
+  }): Promise<Runner> {
+    const row = this.handle.db
+      .update(runners)
+      .set({
+        disabled: input.state === "disabled",
+        draining: input.state === "draining",
+        updatedAt: input.updatedAt,
+      })
+      .where(eq(runners.id, input.runnerId))
+      .returning()
+      .get();
+    if (!row) throw new Error(`Runner ${input.runnerId} does not exist.`);
+    return mapStoredRunner(row);
   }
 }

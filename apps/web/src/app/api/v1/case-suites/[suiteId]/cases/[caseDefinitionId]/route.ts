@@ -1,16 +1,27 @@
 import { apiErrorResponse } from "@/lib/api-response";
 import { getPlatformServices } from "@/lib/services";
 import { NextResponse } from "next/server";
+import { authorizeRequest, requestId, requireSameOrigin } from "@/lib/auth";
 
 type Context = { params: Promise<{ suiteId: string; caseDefinitionId: string }> };
 
-export async function DELETE(_request: Request, context: Context): Promise<NextResponse> {
+export async function DELETE(request: Request, context: Context): Promise<NextResponse> {
+  const currentRequestId = requestId(request);
   try {
+    requireSameOrigin(request);
+    const identity = await authorizeRequest(request, "case_suite.manage");
     const { suiteId, caseDefinitionId } = await context.params;
-    return NextResponse.json(
-      await (await getPlatformServices()).caseSuites.removeCase(suiteId, caseDefinitionId),
-    );
+    const services = await getPlatformServices();
+    const suite = await services.caseSuites.removeCase(suiteId, caseDefinitionId);
+    await services.identityAccess.recordAuthorizedOperation(identity, {
+      action: "case_suite.remove_case",
+      resourceType: "case_suite",
+      resourceId: suiteId,
+      requestId: currentRequestId,
+      details: { caseDefinitionId },
+    });
+    return NextResponse.json(suite);
   } catch (error) {
-    return apiErrorResponse(error);
+    return apiErrorResponse(error, currentRequestId);
   }
 }

@@ -138,9 +138,7 @@ func printUsage(writer io.Writer) {
 	fmt.Fprintln(writer, "  version    Print build and target information as JSON")
 	fmt.Fprintln(writer, "  doctor     Validate local configuration and writable directories")
 	fmt.Fprintln(writer, "  run-once   Execute one local versioned spec without a shell")
-	fmt.Fprintln(writer, "  start      Register with the control plane and send heartbeats")
-	fmt.Fprintln(writer, "")
-	fmt.Fprintln(writer, "Task claim and lease execution are not implemented in this milestone.")
+	fmt.Fprintln(writer, "  start      Register, reconcile, claim and execute control-plane assignments")
 }
 
 type stringListFlag []string

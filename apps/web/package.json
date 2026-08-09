@@ -15,11 +15,11 @@
     "@autoforge/db": "workspace:*",
     "@autoforge/domain": "workspace:*",
     "@autoforge/object-store": "workspace:*",
+    "@autoforge/runner-sdk": "workspace:*",
     "@autoforge/testng-discovery": "workspace:*",
     "@xterm/addon-fit": "0.11.0",
     "@xterm/xterm": "6.0.0",
-    "@xterm/addon-fit": "0.11.0",
-    "@xterm/xterm": "6.0.0",
+    "ldapts": "8.1.5",
     "lucide-react": "1.30.0",
     "nats": "2.29.3",
     "next": "16.3.0",
@@ -28,14 +28,12 @@
     "redis": "6.2.0",
     "server-only": "0.0.1",
     "ws": "8.21.3",
-    "ws": "8.21.3",
     "zod": "4.4.3"
   },
   "devDependencies": {
     "@types/node": "24.13.3",
     "@types/react": "19.2.18",
     "@types/react-dom": "19.2.4",
-    "@types/ws": "8.18.1",
     "@types/ws": "8.18.1",
     "typescript": "5.9.3"
   }

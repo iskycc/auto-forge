@@ -10,6 +10,7 @@ export type TerminalTicket = {
   role: TerminalTicketRole;
   runnerId: string;
   sessionId?: string;
+  actorId?: string;
   columns?: number;
   rows?: number;
   expiresAtEpochSeconds: number;
@@ -20,6 +21,7 @@ type IssueTerminalTicketInput = {
   role: TerminalTicketRole;
   runnerId: string;
   sessionId?: string;
+  actorId?: string;
   columns?: number;
   rows?: number;
   ttlSeconds: number;
@@ -33,7 +35,7 @@ export function issueTerminalTicket(secret: string, input: IssueTerminalTicketIn
   }
   if (
     input.role === "browser" &&
-    (!input.sessionId || !validTerminalSize(input.columns, input.rows))
+    (!input.sessionId || !input.actorId || !validTerminalSize(input.columns, input.rows))
   ) {
     throw new Error("Browser terminal tickets require a session ID and valid dimensions.");
   }
@@ -43,6 +45,7 @@ export function issueTerminalTicket(secret: string, input: IssueTerminalTicketIn
     role: input.role,
     runnerId: input.runnerId,
     ...(input.sessionId ? { sessionId: input.sessionId } : {}),
+    ...(input.actorId ? { actorId: input.actorId } : {}),
     ...(input.columns ? { columns: input.columns } : {}),
     ...(input.rows ? { rows: input.rows } : {}),
     expiresAtEpochSeconds: Math.floor(now.getTime() / 1000) + input.ttlSeconds,
@@ -110,6 +113,9 @@ function isTerminalTicket(value: unknown): value is TerminalTicket {
       (role === "browser" &&
         typeof sessionId === "string" &&
         sessionId.length > 0 &&
+        typeof candidate.actorId === "string" &&
+        candidate.actorId.length > 0 &&
+        candidate.actorId.length <= 128 &&
         validTerminalSize(candidate.columns, candidate.rows)))
   );
 }

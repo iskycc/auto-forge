@@ -30,6 +30,7 @@ export const runnerRegistrationInputSchema = z.object({
   schemaVersion: z.literal(1),
   name: z.string().trim().min(1).max(128),
   labels: z.array(z.string().trim().min(1).max(64)).max(64),
+  capabilities: z.array(z.string().trim().min(1).max(128)).max(128).default([]),
   maxConcurrency: z.number().int().min(1).max(64),
   os: z.string().trim().min(1).max(64),
   architecture: z.string().trim().min(1).max(64),
@@ -49,6 +50,7 @@ export const runnerHeartbeatInputSchema = z.object({
   schemaVersion: z.literal(1),
   busySlots: z.number().int().min(0).max(64),
   labels: z.array(z.string().trim().min(1).max(64)).max(64),
+  capabilities: z.array(z.string().trim().min(1).max(128)).max(128).default([]),
   maxConcurrency: z.number().int().min(1).max(64),
   agentVersion: z.string().trim().min(1).max(64),
   terminalEnabled: z.boolean(),
@@ -69,6 +71,10 @@ export const runnerHeartbeatResultSchema = z.object({
   heartbeatIntervalSeconds: z.number().int().min(5).max(300),
   draining: z.boolean(),
   terminalConnectionToken: z.string().min(1).optional(),
+});
+
+export const updateRunnerLifecycleInputSchema = z.object({
+  state: z.enum(["active", "draining", "disabled"]),
 });
 
 export const createTerminalSessionInputSchema = z.object({

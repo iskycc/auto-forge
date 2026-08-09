@@ -19,6 +19,8 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
 
+import { LogoutButton } from "./logout-button";
+
 type NavigationItem = {
   label: string;
   href?: string;
@@ -40,8 +42,17 @@ function isActive(pathname: string, href: string): boolean {
   return pathname === href || pathname.startsWith(`${href}/`);
 }
 
-export function AppShell({ children, mode }: { children: ReactNode; mode: "lite" | "full" }) {
+export function AppShell({
+  children,
+  mode,
+  userName,
+}: {
+  children: ReactNode;
+  mode: "lite" | "full";
+  userName?: string;
+}) {
   const pathname = usePathname();
+  if (pathname === "/login" || pathname === "/setup") return children;
 
   return (
     <div className="app-shell">
@@ -86,11 +97,13 @@ export function AppShell({ children, mode }: { children: ReactNode; mode: "lite"
               <small>{mode === "lite" ? "SQLite · 本地存储" : "PostgreSQL · MinIO"}</small>
             </span>
           </div>
-          <span className="nav-item nav-item-disabled" aria-disabled="true">
+          <Link
+            className={`nav-item ${isActive(pathname, "/settings") ? "nav-item-active" : ""}`}
+            href="/settings/access"
+          >
             <Settings size={19} aria-hidden="true" />
             <span>系统设置</span>
-            <span className="nav-soon">规划中</span>
-          </span>
+          </Link>
         </div>
       </aside>
 
@@ -112,7 +125,8 @@ export function AppShell({ children, mode }: { children: ReactNode; mode: "lite"
             <span className="avatar" aria-hidden="true">
               <Bot size={17} />
             </span>
-            <span className="admin-label">本地管理员</span>
+            <span className="admin-label">{userName ?? "未登录"}</span>
+            {userName ? <LogoutButton /> : null}
           </div>
         </header>
         <main className="main-content">{children}</main>

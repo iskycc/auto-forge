@@ -11,6 +11,7 @@ describe("terminal tickets", () => {
       role: "browser",
       runnerId: "runner-1",
       sessionId: "session-1",
+      actorId: "user-1",
       columns: 120,
       rows: 32,
       ttlSeconds: 30,
@@ -22,6 +23,7 @@ describe("terminal tickets", () => {
       role: "browser",
       runnerId: "runner-1",
       sessionId: "session-1",
+      actorId: "user-1",
       columns: 120,
       rows: 32,
     });

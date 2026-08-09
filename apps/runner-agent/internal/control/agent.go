@@ -59,6 +59,11 @@ func Run(ctx context.Context, configuration config.Config, info buildinfo.Info, 
 		go terminalConnector.Run(ctx)
 	}
 	resourceCollector := metrics.NewCollector()
+	supervisor := newAttemptSupervisor(client, identity, configuration, diagnostics)
+	if err := supervisor.Start(ctx); err != nil {
+		return fmt.Errorf("start assignment supervisor: %w", err)
+	}
+	defer supervisor.Close()
 
 	for {
 		var resourceSnapshot *metrics.Snapshot
@@ -68,7 +73,7 @@ func Run(ctx context.Context, configuration config.Config, info buildinfo.Info, 
 		} else {
 			resourceSnapshot = &collected
 		}
-		response, heartbeatErr := client.Heartbeat(ctx, identity, configuration, info, resourceSnapshot)
+		response, heartbeatErr := client.Heartbeat(ctx, identity, configuration, info, supervisor.BusySlots(), resourceSnapshot)
 		if heartbeatErr != nil {
 			if ctx.Err() != nil {
 				return nil
@@ -80,7 +85,7 @@ func Run(ctx context.Context, configuration config.Config, info buildinfo.Info, 
 				terminalConnector.UpdateToken(response.TerminalConnectionToken)
 			}
 			if response.Draining {
-				return errors.New("control plane requested runner draining")
+				supervisor.BeginDrain()
 			}
 		}
 		timer := time.NewTimer(interval)

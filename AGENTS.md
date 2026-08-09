@@ -4,7 +4,7 @@
 
 ## 1. 当前阶段
 
-仓库已实现 Lite/Full 用例资产管理和资源感知批跑调度里程碑：Next.js 主平台、TestNG JAR 静态扫描、SQLite/PostgreSQL 用例库、本地/MinIO 对象存储、用例任务编排、`RunBatch`/`ExecutionRun`/初始 `RunAttempt` 持久化，以及 Runner 注册、资源心跳和阈值调度已经落地。Go Runner Agent 已实现配置诊断、受控单次命令执行、控制面注册、资源心跳和直连终端；assignment claim、lease、真实批跑执行、失败结果触发重跑、远程日志/产物闭环、JetStream 调度消息、Redis 业务缓存和分析仍是目标能力。README 中的目标架构不代表这些能力已经完成。
+仓库已实现 Lite/Full 用例资产、统一身份/RBAC、可选 LDAP 和控制面执行协议里程碑：Next.js 主平台、TestNG JAR 静态扫描、双数据库用例/身份/执行仓储、本地/MinIO 对象存储、资源感知调度和权威执行状态机已经落地。Go Runner Agent 已实现注册/资源心跳、assignment claim、lease 续租、启动 reconcile、权威 JAR 下载校验、离线 TestNG 类级执行、取消/进程组清理、完成上报和直连终端；日志 spool/确认重传、产物闭环、方法 descriptor 精确选择、Linux 资源硬限制、JetStream 调度消息、Redis 业务缓存、多租户隔离和分析仍是目标能力。README 中的目标架构不代表这些能力已经完成。
 
 在添加脚手架或功能时：
 

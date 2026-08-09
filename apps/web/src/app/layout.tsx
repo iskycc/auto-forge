@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import type { ReactNode } from "react";
 
 import { AppShell } from "@/components/app-shell";
+import { currentIdentity } from "@/lib/auth";
 import { getPlatformServices } from "@/lib/services";
 
 import "@xterm/xterm/css/xterm.css";
@@ -16,11 +17,17 @@ export const metadata: Metadata = {
 };
 
 export default async function RootLayout({ children }: Readonly<{ children: ReactNode }>) {
-  const mode = (await getPlatformServices()).config.mode;
+  const services = await getPlatformServices();
+  const identity = await currentIdentity();
   return (
     <html lang="zh-CN">
       <body>
-        <AppShell mode={mode}>{children}</AppShell>
+        <AppShell
+          mode={services.config.mode}
+          {...(identity ? { userName: identity.user.displayName } : {})}
+        >
+          {children}
+        </AppShell>
       </body>
     </html>
   );

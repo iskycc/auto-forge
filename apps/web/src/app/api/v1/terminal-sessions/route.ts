@@ -1,10 +1,9 @@
-import { timingSafeEqual } from "node:crypto";
-
 import { createTerminalSessionInputSchema } from "@autoforge/contracts";
 import { DomainError } from "@autoforge/domain";
 import { NextResponse } from "next/server";
 
-import { apiErrorResponse, bearerToken, readJsonBody, rejectRateLimited } from "@/lib/api-response";
+import { authenticateRequest, requestId, requireSameOrigin } from "@/lib/auth";
+import { apiErrorResponse, readJsonBody, rejectRateLimited } from "@/lib/api-response";
 import { getPlatformServices } from "@/lib/services";
 import { issueTerminalTicket } from "@/lib/terminal-ticket";
 import { uuidV7 } from "@/lib/uuid-v7";
@@ -12,7 +11,9 @@ import { uuidV7 } from "@/lib/uuid-v7";
 const SESSION_TICKET_TTL_SECONDS = 30;
 
 export async function POST(request: Request): Promise<NextResponse> {
+  const currentRequestId = requestId(request);
   try {
+    requireSameOrigin(request);
     const services = await getPlatformServices();
     if (!services.config.terminalAccessToken) {
       throw new DomainError("TERMINAL_DISABLED", "平台未启用直连终端。请先配置终端访问令牌。");
@@ -20,9 +21,8 @@ export async function POST(request: Request): Promise<NextResponse> {
     rejectRateLimited(
       await services.runnerRequestLimiter.allow("terminal:authorize:v1", 30, 60_000),
     );
-    if (!secureEqual(bearerToken(request), services.config.terminalAccessToken)) {
-      throw new DomainError("TERMINAL_AUTH_REJECTED", "终端访问令牌无效。");
-    }
+    const identity = await authenticateRequest(request);
+    services.identityAccess.authorize(identity, "runner.terminal");
     const input = createTerminalSessionInputSchema.parse(await readJsonBody(request, 16 * 1024));
     rejectRateLimited(
       await services.runnerRequestLimiter.allow(
@@ -40,6 +40,12 @@ export async function POST(request: Request): Promise<NextResponse> {
     }
     const sessionId = uuidV7();
     const issuedAt = new Date();
+    await services.identityAccess.recordTerminalSession(
+      identity,
+      runner.id,
+      sessionId,
+      currentRequestId,
+    );
     return NextResponse.json({
       schemaVersion: 1,
       sessionId,
@@ -47,6 +53,7 @@ export async function POST(request: Request): Promise<NextResponse> {
         role: "browser",
         runnerId: runner.id,
         sessionId,
+        actorId: identity.user.id,
         columns: input.columns,
         rows: input.rows,
         ttlSeconds: SESSION_TICKET_TTL_SECONDS,
@@ -56,13 +63,6 @@ export async function POST(request: Request): Promise<NextResponse> {
       expiresAt: new Date(issuedAt.getTime() + SESSION_TICKET_TTL_SECONDS * 1000).toISOString(),
     });
   } catch (error) {
-    return apiErrorResponse(error);
+    return apiErrorResponse(error, currentRequestId);
   }
-}
-
-function secureEqual(left: string, right: string): boolean {
-  if (!left || !right) return false;
-  const leftBytes = Buffer.from(left);
-  const rightBytes = Buffer.from(right);
-  return leftBytes.length === rightBytes.length && timingSafeEqual(leftBytes, rightBytes);
 }

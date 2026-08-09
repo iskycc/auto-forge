@@ -15,6 +15,7 @@ func TestLoadAcceptsHTTPSAndDeduplicatesLabels(t *testing.T) {
 		"AUTOFORGE_AGENT_LABELS":          "linux, java,linux",
 		"AUTOFORGE_AGENT_MAX_CONCURRENCY": "4",
 		"AUTOFORGE_AGENT_BOOTSTRAP_TOKEN": "secret-that-must-not-be-returned",
+		"AUTOFORGE_AGENT_CLAIM_WAIT":      "10s",
 	}
 
 	loaded, err := Load(mapLookup(environment))
@@ -29,6 +30,19 @@ func TestLoadAcceptsHTTPSAndDeduplicatesLabels(t *testing.T) {
 	}
 	if !loaded.HasBootstrap {
 		t.Fatal("HasBootstrap = false, want true")
+	}
+	if loaded.Claim.WaitDuration != 10*time.Second || loaded.Claim.MaximumBackoff != 30*time.Second {
+		t.Fatalf("Claim policy = %#v", loaded.Claim)
+	}
+}
+
+func TestLoadRejectsOutOfRangeClaimPolicy(t *testing.T) {
+	_, err := Load(mapLookup(map[string]string{
+		"AUTOFORGE_SERVER_URL":       "https://autoforge.internal",
+		"AUTOFORGE_AGENT_CLAIM_WAIT": "31s",
+	}))
+	if err == nil {
+		t.Fatal("Load() accepted an out-of-range claim wait duration")
 	}
 }
 

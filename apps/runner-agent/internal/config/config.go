@@ -30,7 +30,45 @@ type Config struct {
 	CAFile         string
 	BootstrapToken string
 	HasBootstrap   bool
+	Toolchain      ToolchainConfig
+	Claim          ClaimConfig
 	Terminal       TerminalConfig
+}
+
+func (configuration Config) RunnerLabels() []string {
+	result := append([]string(nil), configuration.Labels...)
+	if configuration.Toolchain.Enabled() {
+		result = append(result, "java", "testng")
+	}
+	return labels(strings.Join(result, ","))
+}
+
+type ToolchainConfig struct {
+	JavaExecutable string
+	Classpath      []string
+	JavaVersion    string
+	TestNGVersion  string
+}
+
+type ClaimConfig struct {
+	WaitDuration        time.Duration
+	MaximumBackoff      time.Duration
+	ShutdownGracePeriod time.Duration
+}
+
+func (configuration ToolchainConfig) Enabled() bool {
+	return configuration.JavaExecutable != "" && len(configuration.Classpath) > 0
+}
+
+func (configuration ToolchainConfig) Capabilities() []string {
+	if !configuration.Enabled() {
+		return nil
+	}
+	return []string{
+		"executor:testng-v1",
+		"java:" + configuration.JavaVersion,
+		"testng:" + configuration.TestNGVersion,
+	}
 }
 
 type TerminalConfig struct {
@@ -68,6 +106,14 @@ func Load(lookup LookupEnvironment) (Config, error) {
 	}
 
 	bootstrapToken := environmentValue(lookup, "AUTOFORGE_AGENT_BOOTSTRAP_TOKEN")
+	toolchain, err := toolchainConfig(lookup)
+	if err != nil {
+		return Config{}, err
+	}
+	claim, err := claimConfig(lookup)
+	if err != nil {
+		return Config{}, err
+	}
 	terminal, err := terminalConfig(lookup, dataDirectory)
 	if err != nil {
 		return Config{}, err
@@ -81,7 +127,65 @@ func Load(lookup LookupEnvironment) (Config, error) {
 		CAFile:         caFile,
 		BootstrapToken: bootstrapToken,
 		HasBootstrap:   bootstrapToken != "",
+		Toolchain:      toolchain,
+		Claim:          claim,
 		Terminal:       terminal,
+	}, nil
+}
+
+func claimConfig(lookup LookupEnvironment) (ClaimConfig, error) {
+	waitDuration, err := boundedDuration(environmentValue(lookup, "AUTOFORGE_AGENT_CLAIM_WAIT"), 20*time.Second, time.Second, 30*time.Second)
+	if err != nil {
+		return ClaimConfig{}, fmt.Errorf("AUTOFORGE_AGENT_CLAIM_WAIT is invalid: %w", err)
+	}
+	maximumBackoff, err := boundedDuration(environmentValue(lookup, "AUTOFORGE_AGENT_CLAIM_MAX_BACKOFF"), 30*time.Second, time.Second, 5*time.Minute)
+	if err != nil {
+		return ClaimConfig{}, fmt.Errorf("AUTOFORGE_AGENT_CLAIM_MAX_BACKOFF is invalid: %w", err)
+	}
+	shutdownGracePeriod, err := boundedDuration(environmentValue(lookup, "AUTOFORGE_AGENT_SHUTDOWN_GRACE"), 30*time.Second, time.Second, 10*time.Minute)
+	if err != nil {
+		return ClaimConfig{}, fmt.Errorf("AUTOFORGE_AGENT_SHUTDOWN_GRACE is invalid: %w", err)
+	}
+	return ClaimConfig{WaitDuration: waitDuration, MaximumBackoff: maximumBackoff, ShutdownGracePeriod: shutdownGracePeriod}, nil
+}
+
+func toolchainConfig(lookup LookupEnvironment) (ToolchainConfig, error) {
+	javaExecutable := environmentValue(lookup, "AUTOFORGE_AGENT_JAVA_EXECUTABLE")
+	classpathValue := environmentValue(lookup, "AUTOFORGE_AGENT_TESTNG_CLASSPATH")
+	javaVersion := environmentValue(lookup, "AUTOFORGE_AGENT_JAVA_VERSION")
+	testNGVersion := environmentValue(lookup, "AUTOFORGE_AGENT_TESTNG_VERSION")
+	configuredValues := 0
+	for _, value := range []string{javaExecutable, classpathValue, javaVersion, testNGVersion} {
+		if value != "" {
+			configuredValues++
+		}
+	}
+	if configuredValues == 0 {
+		return ToolchainConfig{}, nil
+	}
+	if configuredValues != 4 {
+		return ToolchainConfig{}, errors.New("Java executable, classpath, Java version and TestNG version must be configured together")
+	}
+	if len(javaVersion) > 100 || len(testNGVersion) > 100 {
+		return ToolchainConfig{}, errors.New("Java and TestNG versions must not exceed 100 bytes")
+	}
+	if !filepath.IsAbs(javaExecutable) {
+		return ToolchainConfig{}, errors.New("AUTOFORGE_AGENT_JAVA_EXECUTABLE must be an absolute path")
+	}
+	classpath := filepath.SplitList(classpathValue)
+	if len(classpath) == 0 || len(classpath) > 128 {
+		return ToolchainConfig{}, errors.New("AUTOFORGE_AGENT_TESTNG_CLASSPATH must contain 1-128 paths")
+	}
+	for _, entry := range classpath {
+		if !filepath.IsAbs(entry) {
+			return ToolchainConfig{}, errors.New("AUTOFORGE_AGENT_TESTNG_CLASSPATH entries must be absolute paths")
+		}
+	}
+	return ToolchainConfig{
+		JavaExecutable: filepath.Clean(javaExecutable),
+		Classpath:      classpath,
+		JavaVersion:    javaVersion,
+		TestNGVersion:  testNGVersion,
 	}, nil
 }
 

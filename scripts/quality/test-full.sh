@@ -133,6 +133,8 @@ start_full_platform() {
   AUTOFORGE_MINIO_BUCKET=autoforge-objects \
   AUTOFORGE_MINIO_REGION=us-east-1 \
   AUTOFORGE_RUNNER_BOOTSTRAP_TOKEN=full-ci-bootstrap-token-000000000000 \
+  AUTOFORGE_ADMIN_BOOTSTRAP_TOKEN=full-ci-admin-bootstrap-token-000000000000 \
+  AUTOFORGE_MASTER_KEY=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA= \
   HOSTNAME=127.0.0.1 \
   PORT=3199 \
     setsid pnpm --filter @autoforge/web dev \

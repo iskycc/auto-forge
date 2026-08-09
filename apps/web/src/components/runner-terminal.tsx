@@ -3,7 +3,7 @@
 import { apiErrorSchema, createTerminalSessionResultSchema } from "@autoforge/contracts";
 import type { FitAddon } from "@xterm/addon-fit";
 import type { Terminal } from "@xterm/xterm";
-import { KeyRound, LoaderCircle, Maximize2, TerminalSquare, X } from "lucide-react";
+import { LoaderCircle, Maximize2, ShieldCheck, TerminalSquare, X } from "lucide-react";
 import { FormEvent, useEffect, useRef, useState } from "react";
 
 type ConnectionState = "authorization" | "connecting" | "connected" | "closed";
@@ -24,7 +24,6 @@ export function RunnerTerminal({
   runnerOnline,
 }: RunnerTerminalProps) {
   const [open, setOpen] = useState(false);
-  const [accessToken, setAccessToken] = useState("");
   const [connectionState, setConnectionState] = useState<ConnectionState>("authorization");
   const [error, setError] = useState<string | null>(null);
   const viewportRef = useRef<HTMLDivElement>(null);
@@ -34,7 +33,7 @@ export function RunnerTerminal({
 
   const available = platformEnabled && runnerEnabled && runnerOnline;
   const unavailableReason = !platformEnabled
-    ? "平台未配置终端访问令牌"
+    ? "平台未启用终端网关"
     : !runnerEnabled
       ? "Agent 未启用直连终端"
       : !runnerOnline
@@ -143,10 +142,7 @@ export function RunnerTerminal({
     try {
       const response = await fetch("/api/v1/terminal-sessions", {
         method: "POST",
-        headers: {
-          authorization: `Bearer ${accessToken}`,
-          "content-type": "application/json",
-        },
+        headers: { "content-type": "application/json" },
         body: JSON.stringify({ runnerId, columns: terminal.cols, rows: terminal.rows }),
       });
       const payload: unknown = await response.json().catch(() => null);
@@ -159,7 +155,6 @@ export function RunnerTerminal({
         );
       }
       const session = createTerminalSessionResultSchema.parse(payload);
-      setAccessToken("");
       openWebSocket(session.websocketPath, session.connectionToken);
     } catch (caught) {
       setConnectionState("authorization");
@@ -213,7 +208,6 @@ export function RunnerTerminal({
     }
     socket?.close(1000, "Terminal window closed");
     setOpen(false);
-    setAccessToken("");
     setConnectionState("authorization");
     setError(null);
   }
@@ -263,22 +257,10 @@ export function RunnerTerminal({
               {(connectionState === "authorization" || connectionState === "connecting") && (
                 <form className="terminal-auth-card" onSubmit={connect}>
                   <span className="terminal-auth-icon">
-                    <KeyRound size={20} />
+                    <ShieldCheck size={20} />
                   </span>
-                  <strong>授权访问执行机</strong>
-                  <p>访问令牌只用于换取一次性会话票据，不会保存在浏览器中。</p>
-                  <label>
-                    <span>终端访问令牌</span>
-                    <input
-                      type="password"
-                      autoComplete="current-password"
-                      value={accessToken}
-                      minLength={32}
-                      required
-                      autoFocus
-                      onChange={(event) => setAccessToken(event.target.value)}
-                    />
-                  </label>
+                  <strong>打开受控终端</strong>
+                  <p>将使用当前登录会话和独立终端权限换取一次性短时票据。</p>
                   {error && <span className="terminal-auth-error">{error}</span>}
                   <button
                     className="button button-primary"
@@ -361,5 +343,5 @@ function connectionLabel(state: ConnectionState): string {
   if (state === "connected") return "已连接";
   if (state === "connecting") return "连接中";
   if (state === "closed") return "已断开";
-  return "待授权";
+  return "待连接";
 }

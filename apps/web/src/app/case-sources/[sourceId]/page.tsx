@@ -3,12 +3,14 @@ import Link from "next/link";
 
 import { SourceActions } from "@/components/source-actions";
 import { getPlatformServices } from "@/lib/services";
+import { requirePagePermission } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 
 type Props = { params: Promise<{ sourceId: string }> };
 
 export default async function CaseSourcePage({ params }: Props) {
+  await requirePagePermission("case_source.read");
   const { sourceId } = await params;
   const { source, inspection } = await (await getPlatformServices()).caseSources.get(sourceId);
   return (

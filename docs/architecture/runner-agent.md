@@ -279,12 +279,11 @@ Agent 配置同样集中解析和校验，秘密不得出现在命令行参数�
 - 模式：同一 Agent 测试套件分别连接 Lite 与 Full 控制面。
 - 离线：禁止出站网络，从离线包安装、注册并完成一个命令用例。
 
-## 后续实现顺序
+## 当前实现顺序
 
-1. 固化 assignment、lease、日志和产物协议 schema、错误码及兼容策略。
-2. 实现 assignment 与 lease 应用用例和控制面端点。
-3. 将现有 process supervisor 和安全工作目录接入 Agent claim loop。
-4. 将现有有界输出扩展为有序日志、服务端去重、本地 spool 和断线恢复。
-5. 取消、超时、结果幂等和租约 Reconciler。
-6. 本地/MinIO 产物上传适配。
-7. 安装服务、兼容矩阵、资源限制和离线验收。
+assignment/lease 契约、控制面端点、Agent claim/续租、process supervisor、JAR 输入、取消、幂等完成和启动 reconcile 已落地。后续按以下顺序继续，未列为完成的能力不得用于生产声明：
+
+1. 将现有有界输出扩展为有序日志、服务端去重、本地 spool、双层脱敏和断线恢复。
+2. 实现安全产物发现，以及本地/MinIO 受控上传适配。
+3. 完成方法 JVM descriptor 精确选择和结构化 TestNG 报告解析。
+4. 增加 cgroup/ulimit 资源硬限制、安装服务、兼容矩阵和离线验收。

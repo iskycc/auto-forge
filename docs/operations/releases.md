@@ -68,10 +68,14 @@ AUTOFORGE_AGENT_DATA_DIR=/var/lib/autoforge-agent \
 AUTOFORGE_SERVER_URL=https://autoforge.internal \
 AUTOFORGE_AGENT_DATA_DIR=/var/lib/autoforge-agent \
 AUTOFORGE_AGENT_BOOTSTRAP_TOKEN='replace-with-bootstrap-secret' \
+AUTOFORGE_AGENT_JAVA_EXECUTABLE=/opt/autoforge-toolchain/jdk/bin/java \
+AUTOFORGE_AGENT_TESTNG_CLASSPATH=/opt/autoforge-toolchain/testng/testng.jar:/opt/autoforge-toolchain/testng/jcommander.jar \
+AUTOFORGE_AGENT_JAVA_VERSION=21.0.8 \
+AUTOFORGE_AGENT_TESTNG_VERSION=7.11.0 \
 ./autoforge-agent-0.2.0-amd64 start
 ```
 
-当前 `start` 已实现注册、CPU/内存/负载心跳和显式启用的直连终端；平台可依据资源快照生成初始调度分配，但 assignment 领取、lease、实际用例执行、日志与产物上报仍未实现。
+当前 `start` 已实现注册、资源心跳、assignment claim、lease 续租、启动 reconcile、JAR 下载校验、离线 TestNG 类级执行、取消/进程组清理和完成上报。Java/TestNG 及其依赖必须预置，Agent 不会联网下载；未配置四项工具链变量时不会声明 TestNG capability，也不会进入 TestNG 调度候选。日志确认重传、产物上传、方法级精确选择和 Linux 资源硬限制仍未实现。
 
 ## 本地构建与验证
 

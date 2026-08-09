@@ -1,4 +1,4 @@
-export type RunnerState = "online" | "offline" | "disabled";
+export type RunnerState = "online" | "offline" | "draining" | "disabled";
 
 export type RunnerResourceSnapshot = {
   cpuUtilizationPercent: number;
@@ -17,6 +17,7 @@ export type Runner = {
   agentVersion: string;
   protocolVersion: number;
   labels: string[];
+  capabilities: string[];
   maxConcurrency: number;
   busySlots: number;
   lastSeenAt: string;

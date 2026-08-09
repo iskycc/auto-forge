@@ -5,12 +5,16 @@ import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import {
   CaseSourceService,
   CaseSuiteService,
+  ExecutionControlService,
   ImportTestNgJarService,
+  IdentityAccessService,
   RunBatchSchedulingService,
   RunnerControlService,
   type CaseCatalogRepository,
   type CaseSuiteRepository,
   type JarObjectStorePort,
+  type IdentityAccessRepository,
+  type ExecutionControlRepository,
   type RunBatchRepository,
   type RunnerRepository,
 } from "@autoforge/application";
@@ -18,15 +22,21 @@ import {
   createSqliteDatabase,
   SqliteCaseCatalogRepository,
   SqliteCaseSuiteRepository,
+  SqliteExecutionControlRepository,
+  SqliteIdentityAccessRepository,
   SqliteRunBatchRepository,
   SqliteRunnerRepository,
 } from "@autoforge/db/sqlite";
 import { LocalObjectStore } from "@autoforge/object-store/local";
 import { TestNgJarDiscovery } from "@autoforge/testng-discovery";
+import { RunnerProtocolController } from "@autoforge/runner-sdk";
 
 import { loadAppConfig } from "./config";
+import { LdapDirectory } from "./ldap-directory";
+import { ScryptPasswordHasher } from "./password-hasher";
 import { MemoryRequestLimiter, RedisRequestLimiter, type RequestLimiter } from "./request-limiter";
 import { uuidV7 } from "./uuid-v7";
+import { AesGcmSecretCipher } from "./secret-cipher";
 
 export type PlatformServices = Awaited<ReturnType<typeof createPlatformServices>>;
 
@@ -40,6 +50,8 @@ async function createPlatformServices() {
   let catalog: CaseCatalogRepository;
   let suites: CaseSuiteRepository;
   let runners: RunnerRepository;
+  let identities: IdentityAccessRepository;
+  let executions: ExecutionControlRepository;
   let batches: RunBatchRepository;
   let objectStore: JarObjectStorePort;
   let runnerRequestLimiter: RequestLimiter = new MemoryRequestLimiter();
@@ -52,6 +64,8 @@ async function createPlatformServices() {
     catalog = new SqliteCaseCatalogRepository(database);
     suites = new SqliteCaseSuiteRepository(database);
     runners = new SqliteRunnerRepository(database);
+    identities = new SqliteIdentityAccessRepository(database);
+    executions = new SqliteExecutionControlRepository(database);
     batches = new SqliteRunBatchRepository(database);
     objectStore = new LocalObjectStore(config.dataDirectory);
   } else {
@@ -60,6 +74,8 @@ async function createPlatformServices() {
         createPostgresDatabase,
         PostgresCaseCatalogRepository,
         PostgresCaseSuiteRepository,
+        PostgresIdentityAccessRepository,
+        PostgresExecutionControlRepository,
         PostgresRunBatchRepository,
         PostgresRunnerRepository,
       },
@@ -119,6 +135,8 @@ async function createPlatformServices() {
     catalog = new PostgresCaseCatalogRepository(database);
     suites = new PostgresCaseSuiteRepository(database);
     runners = new PostgresRunnerRepository(database);
+    identities = new PostgresIdentityAccessRepository(database);
+    executions = new PostgresExecutionControlRepository(database);
     batches = new PostgresRunBatchRepository(database);
     objectStore = new MinioObjectStore(config.minio);
   }
@@ -134,16 +152,12 @@ async function createPlatformServices() {
   });
   const caseSources = new CaseSourceService(catalog, objectStore);
   const caseSuites = new CaseSuiteService(suites, catalog, clock, ids);
-  const runnerControl = new RunnerControlService(
-    runners,
-    {
-      issue: () => randomBytes(32).toString("base64url"),
-      hash: (value) => createHash("sha256").update(value).digest("hex"),
-      verifyBootstrapToken: (value) => secureEqual(value, config.runnerBootstrapToken ?? ""),
-    },
-    clock,
-    ids,
-  );
+  const runnerCredentials = {
+    issue: () => randomBytes(32).toString("base64url"),
+    hash: (value: string) => createHash("sha256").update(value).digest("hex"),
+    verifyBootstrapToken: (value: string) => secureEqual(value, config.runnerBootstrapToken ?? ""),
+  };
+  const runnerControl = new RunnerControlService(runners, runnerCredentials, clock, ids);
   const runBatches = new RunBatchSchedulingService(
     batches,
     suites,
@@ -157,6 +171,31 @@ async function createPlatformServices() {
     },
     config.scheduler.metricsMaximumAgeSeconds,
   );
+  const secretCipher = new AesGcmSecretCipher(config.masterKey);
+  const identityAccess = new IdentityAccessService(
+    identities,
+    new ScryptPasswordHasher(),
+    {
+      issue: () => randomBytes(32).toString("base64url"),
+      hash: (value) => createHash("sha256").update(value).digest("hex"),
+      verifyBootstrapToken: (value) => secureEqual(value, config.adminBootstrapToken ?? ""),
+    },
+    secretCipher,
+    new LdapDirectory(),
+    clock,
+    ids,
+    config.sessionTtlHours,
+  );
+  await identityAccess.initialize();
+  const executionControl = new ExecutionControlService(
+    executions,
+    runners,
+    runnerCredentials,
+    secretCipher,
+    clock,
+    ids,
+  );
+  const runnerProtocol = new RunnerProtocolController(executionControl);
 
   return {
     config,
@@ -168,7 +207,12 @@ async function createPlatformServices() {
     suites,
     caseSuites,
     runners,
+    identities,
+    executions,
+    identityAccess,
     runnerControl,
+    executionControl,
+    runnerProtocol,
     runBatches,
     runnerRequestLimiter,
     fullInfrastructure,

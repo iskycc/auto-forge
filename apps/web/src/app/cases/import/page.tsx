@@ -1,12 +1,14 @@
 import type { Metadata } from "next";
 
 import { JarImporter } from "@/components/jar-importer";
+import { requirePagePermission } from "@/lib/auth";
 import { getPlatformServices } from "@/lib/services";
 
 export const metadata: Metadata = { title: "导入 TestNG JAR" };
 export const dynamic = "force-dynamic";
 
 export default async function ImportJarPage() {
+  await requirePagePermission("case_source.manage");
   const { config } = await getPlatformServices();
   return (
     <div className="page-stack narrow-page">

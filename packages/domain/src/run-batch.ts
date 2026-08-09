@@ -24,6 +24,11 @@ export type RunBatch = {
   totalRuns: number;
   queuedRuns: number;
   assignedRuns: number;
+  runningRuns: number;
+  succeededRuns: number;
+  failedRuns: number;
+  timedOutRuns: number;
+  cancelledRuns: number;
   createdAt: string;
   updatedAt: string;
 };
@@ -39,6 +44,9 @@ export type ExecutionRun = {
   assignedRunnerId?: string;
   attemptCount: number;
   schedulingScore?: number;
+  terminalOutcome?: "succeeded" | "failed" | "timed_out" | "cancelled";
+  cancelRequestedAt?: string;
+  version: number;
   createdAt: string;
   assignedAt?: string;
   updatedAt: string;
@@ -51,6 +59,12 @@ export type RunAttempt = {
   attemptNumber: number;
   status: RunAttemptStatus;
   schedulingScore: number;
+  version: number;
+  startedAt?: string;
+  finishedAt?: string;
+  outcome?: "succeeded" | "failed" | "timed_out" | "cancelled";
+  resultCode?: string;
+  resultSummary?: string;
   createdAt: string;
 };
 

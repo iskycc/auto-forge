@@ -30,6 +30,7 @@ export class RunnerControlService {
       agentVersion: input.agentVersion,
       protocolVersion: input.protocolVersion,
       labels: [...new Set(input.labels)],
+      capabilities: [...new Set(input.capabilities)],
       maxConcurrency: input.maxConcurrency,
       terminalEnabled: input.terminalEnabled,
       recordedAt,
@@ -57,6 +58,7 @@ export class RunnerControlService {
     await this.runners.heartbeat({
       runnerId: runner.id,
       labels: [...new Set(input.labels)],
+      capabilities: [...new Set(input.capabilities)],
       maxConcurrency: input.maxConcurrency,
       busySlots: input.busySlots,
       agentVersion: input.agentVersion,
@@ -70,7 +72,7 @@ export class RunnerControlService {
       schemaVersion: 1 as const,
       acceptedAt,
       heartbeatIntervalSeconds: HEARTBEAT_INTERVAL_SECONDS,
-      draining: runner.state === "disabled",
+      draining: runner.state === "disabled" || runner.state === "draining",
     };
   }
 
@@ -82,6 +84,15 @@ export class RunnerControlService {
     const runner = await this.runners.get(runnerId, this.offlineBefore());
     if (!runner) throw new DomainError("RUNNER_NOT_FOUND", "指定的执行机不存在。");
     return runner;
+  }
+
+  async setLifecycleState(runnerId: string, state: "active" | "draining" | "disabled") {
+    await this.get(runnerId);
+    return this.runners.setLifecycleState({
+      runnerId,
+      state,
+      updatedAt: this.clock.now().toISOString(),
+    });
   }
 
   private async authenticate(runnerId: string, credential: string) {

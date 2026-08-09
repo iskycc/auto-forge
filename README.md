@@ -7,7 +7,9 @@ AutoForge 是一个面向自动化测试场景的用例工厂，用于统一管�
 - **完整模式（Full）**：使用 PostgreSQL、NATS JetStream、MinIO 和 Redis，适合多执行机、较高并发和生产集群。
 - **极简模式（Lite）**：仅需 Node.js 和一个可写数据目录；以 SQLite 保存业务数据和持久任务，本地文件系统保存产物，不依赖任何外部基础设施。
 
-> 当前状态：用例资产管理和批跑动态调度已经同时落地 Lite 与 Full 适配器。平台可从用例任务创建 `RunBatch`/`ExecutionRun`，按用户勾选范围及 Agent 的 CPU、内存、单位 CPU 负载和空闲槽位生成 `RunAttempt` 分配。Go Runner Agent 已接入注册、资源心跳和可选直连终端协议。Agent 领取、执行租约、TestNG 命令执行、远程日志/产物闭环和分析仍是后续能力；当前“已生成分配”不能理解为用例已经执行。
+> 当前状态：用例资产、身份/RBAC、可选 LDAP 和控制面 Runner Protocol v1 已同时落地 Lite 与 Full 适配器。Go Runner Agent 已接入有界 claim、独立 lease 续租、启动 reconcile、权威 JAR 受控下载、离线 TestNG 类级执行、取消/进程组清理和幂等完成上报。日志分段重传、产物上传、方法级 descriptor 精确选择及 cgroup/ulimit 资源硬限制仍未完成，因此尚未达到生产执行闭环。
+
+完整的未完成事项、依赖顺序和阶段验收门见 [AutoForge 待办路线图](./Todo.md)。
 
 ## 当前已实现
 
@@ -20,15 +22,20 @@ AutoForge 是一个面向自动化测试场景的用例工厂，用于统一管�
 - 用例勾选、用例任务创建、任务详情以及任务内用例新增/删除。
 - Runner Agent 注册、身份凭据落盘、周期心跳、在线/离线判定和执行机控制台。
 - 批跑配置页面、执行环境快照、失败重跑上限，以及共享的资源感知调度算法。
+- 本地账号首次管理员引导、scrypt 密码、本地/LDAP 登录、安全会话、锁定/解锁、密码恢复、六种内置角色和服务端 RBAC。
+- LDAP 的 LDAPS/StartTLS、私有 CA、多服务器、分页上限、即时建号、组角色映射、手动同步和离职停用；bind 密码使用主密钥加密。
+- SQLite/PostgreSQL assignment、lease、状态事件、完成回执、日志水位和产物元数据，以及原子 claim、续租、回收、reconcile、取消、失败重排和批次聚合。
+- `packages/runner-sdk` 中的 Runner Protocol v1 输入校验、兼容协商和有界长轮询控制器。
 - Agent 上报 CPU、内存、1 分钟负载与逻辑 CPU 数；调度阈值集中配置，过载或指标过期的节点不会获得新分配。
-- 可选的 Agent 直连终端：方案 E 浮窗使用 xterm.js，平台通过短时票据和同源 WebSocket 中继到 Agent 的受控 PTY，不新增 ShellHub 一类外部服务。
+- 可选的 Agent 直连终端：方案 E 浮窗使用 xterm.js，登录会话通过独立 `runner.terminal` 权限换取一次性短时票据，再由同源 WebSocket 中继到 Agent 的受控 PTY，不新增 ShellHub 一类外部服务。
 - Full 模式按需连接 PostgreSQL、NATS、MinIO、Redis，readiness 实际检查四项依赖；Lite 启动不加载 Full 客户端。
 - `/api/v1` 管理接口，以及 liveness/readiness 健康检查。
 - TestNG 解析单元测试、SQLite/PostgreSQL/本地对象/MinIO 集成测试和浏览器管理闭环测试。
 - Go 1.26 Runner Agent 的版本信息、配置诊断、受控工作目录、无 Shell 命令执行、日志上限、超时与 Linux 进程组清理。
+- Agent 的有界 claim/退避/并发槽位、独立 lease 续租、重启 reconcile、权威 JAR 下载校验、离线工具链 capability 和类级 TestNG 完成上报。
 - GitHub Actions CI，以及后端离线镜像和 Agent 四变体 GitHub Release 流水线。
 
-尚未实现：SQLite/JetStream 调度消息、assignment claim 与 lease、Agent 远程领取和 TestNG 执行、失败结果触发重跑、日志/产物重传、统一平台用户鉴权、多租户及分析页面。NATS 和 Redis 当前用于 Full 运行边界与健康检查，尚未承载队列和缓存业务语义。Agent 的 `run-once` 仅用于验证执行安全核心，不能冒充平台已经执行了调度结果。直连终端具有独立访问令牌，但它不等同于完整的平台用户与 RBAC 系统。
+尚未实现：SQLite/JetStream 后台任务、Agent 日志/产物传输、方法级 TestNG descriptor 精确执行、Linux 资源硬限制、多租户全量数据隔离、API 服务账号、LDAP 计划同步和分析页面。NATS 和 Redis 当前用于 Full 运行边界与健康检查，尚未承载队列和缓存业务语义。
 
 ## TestNG JAR 用例发现
 
@@ -41,7 +48,7 @@ AutoForge 是一个面向自动化测试场景的用例工厂，用于统一管�
 - 只解析字节码注解，不推断工厂、监听器或运行时动态生成的测试。
 - 检测根目录 `testng.xml`，但尚不解析 suite 的 include/exclude、参数或 package 选择规则。
 - 尚不解析 JAR 外部父类中的继承测试，也会忽略 `META-INF/versions` 中的多版本 class 并返回扫描警告。
-- 导入只建立用例资产；JAR 还不能在 Runner Agent 上执行。
+- 导入后的权威 JAR 可由有效 lease 的 Runner 经控制面下载并执行；当前仅支持 TestNG 类级执行，方法级精确选择仍待实现。
 
 当前 HTTP 接口：
 
@@ -64,7 +71,12 @@ AutoForge 是一个面向自动化测试场景的用例工厂，用于统一管�
 | `GET`  | `/api/v1/run-batches`              | 查询批跑调度记录                                     |
 | `POST` | `/api/v1/run-batches`              | 创建批次并尝试资源感知分配                           |
 | `GET`  | `/api/v1/run-batches/{batchId}`    | 查询批次、ExecutionRun 与 RunAttempt                 |
-| `POST` | `/api/v1/terminal-sessions`        | 使用终端访问令牌换取一次性 WebSocket 会话票据        |
+| `POST` | `/api/v1/run-batches/{batchId}/cancel` | 取消批次及其未完成执行                           |
+| `POST` | `/api/v1/runner-agents/{runnerId}/claims` | 认证长轮询并原子领取 assignment               |
+| `POST` | `/api/v1/runner-agents/{runnerId}/leases/{leaseId}/renew` | 续租并获取取消/排空指令       |
+| `POST` | `/api/v1/runner-agents/{runnerId}/reconcile` | Agent 重启后的 attempt 恢复协商                 |
+| `POST` | `/api/v1/run-attempts/{attemptId}/complete` | 幂等完成上报与失败重排                        |
+| `POST` | `/api/v1/terminal-sessions`        | 登录用户按 RBAC 换取一次性 WebSocket 会话票据        |
 | `WS`   | `/api/v1/terminal-stream`          | 中继浏览器终端与 Agent 主动建立的终端通道             |
 | `GET`  | `/api/v1/health/live`              | 进程存活检查                                         |
 | `GET`  | `/api/v1/health/ready`             | 检查当前模式要求的数据库、对象存储及 Full 服务       |
@@ -73,7 +85,7 @@ AutoForge 是一个面向自动化测试场景的用例工厂，用于统一管�
 
 “用例批跑”页面按“选择用例任务 → 勾选执行机 → 设置失败重跑次数 → 填写非密文测试环境变量 → 开始调度”创建批次。每个启用用例固化为一个 `ExecutionRun`；平台只在用户勾选范围内选择 Runner，并根据在线状态、资源快照新鲜度、空闲并发槽位、CPU、内存和 1 分钟单位 CPU 负载进行准入与评分。每次心跳会继续尝试分配等待资源的用例。
 
-当前 `scheduled` 只表示已经持久化初始 `RunAttempt`，不表示 Agent 已领取或执行。精确评分、并发防超卖、双模式语义和失败重跑边界见[批跑动态调度设计](./docs/architecture/run-scheduling.md)。
+`scheduled` 表示 assignment 已持久化但尚未领取，`running` 表示 Agent 已取得有效 lease。控制面已支持 claim、续租、回收、取消、reconcile 和完成上报；Go Agent 尚未接入这些端点，所以当前 UI 创建的 assignment 不会自动启动 TestNG。精确评分、并发防超卖、双模式语义和失败重跑边界见[批跑动态调度设计](./docs/architecture/run-scheduling.md)。
 
 ## 核心目标
 
@@ -192,9 +204,9 @@ Full 面向生产和集群环境：
 
 MinIO 上游仓库已于 2026 年 4 月归档。AutoForge 继续通过标准 S3 兼容接口支持用户指定的 MinIO 方案，但生产部署必须锁定已验证版本和摘要，并单独评估安全维护、升级来源与替代发行版。
 
-### Runner Agent（注册/心跳与本地执行核心已实现）
+### Runner Agent 与控制面协议
 
-Runner Agent 是安装在执行机上的 Go 守护进程。`start` 会通过 bootstrap token 注册、以 `0600` 权限保存 Runner 身份，并周期性发送认证心跳及 Linux CPU、内存和负载快照；`version`、`doctor` 和本地 `run-once` 用于诊断与验证执行核心。执行规格经过版本化校验，只允许本机白名单中的可执行文件，以参数数组直接启动，不经过 Shell，并限制工作目录、运行时间和日志大小。任务领取、续租、日志重传和产物上传尚未实现。
+Runner Agent 是安装在执行机上的 Go 守护进程。`start` 会通过 bootstrap token 注册、以 `0600` 权限保存身份和在途 attempt，发送 Linux CPU、内存和负载快照，并运行有界 assignment claim 与独立 lease 续租循环。Agent 只在离线 Java/TestNG 工具链配置完整时上报精确版本 capability；领取后经控制面下载权威 JAR，校验大小、可用空间和 SHA-256，再在独立工作目录中以参数数组调用 Java，不经过 Shell。启动时先 reconcile 本地状态，未获服务端决定不会自行重跑。当前日志只受本地字节上限保护，尚未实现分流 spool/确认重传和产物上传。
 
 最终协议仍坚持 Agent 只主动连接 AutoForge 控制面，不直接访问业务数据库、NATS、Redis，也不持有 MinIO 长期凭据，因此同一个 Agent 将连接 Lite 或 Full。
 
@@ -257,7 +269,7 @@ queued -> dispatching -> running -> succeeded
 | ------------ | ----------------------------------------------------- |
 | 运行时       | Node.js 24 LTS，约束为 `>=24 <25`                     |
 | 主平台       | Next.js 16 App Router + React + TypeScript strict     |
-| Runner Agent | Go 1.26.x；发布工具链固定为 Go 1.26.5；未来使用 HTTPS Runner Protocol |
+| Runner Agent | Go 1.26.x；发布工具链固定为 Go 1.26.5；使用 HTTPS Runner Protocol v1 |
 | 包管理       | pnpm workspace，提交唯一锁文件                        |
 | 数据访问     | Drizzle ORM；PostgreSQL 与 SQLite 使用独立驱动和迁移  |
 | 消息         | NATS JetStream                                        |
@@ -315,7 +327,11 @@ autoforge/
 | `AUTOFORGE_DATA_DIR`               | `./data`   | Lite 数据库、对象和临时文件根目录                  |
 | `AUTOFORGE_MAX_JAR_BYTES`          | `33554432` | 单个 JAR 的最大字节数，范围 1 MiB–256 MiB          |
 | `AUTOFORGE_RUNNER_BOOTSTRAP_TOKEN` | 未设置     | 至少 32 字符；一个值只允许成功注册一台 Runner      |
-| `AUTOFORGE_TERMINAL_ACCESS_TOKEN`  | 未设置     | 至少 32 字符；未设置时直连终端网关关闭             |
+| `AUTOFORGE_RUNNER_CLAIM_RATE_LIMIT_PER_MINUTE` | `120` | 单台 Runner 每分钟 claim 请求上限，范围 1–10000 |
+| `AUTOFORGE_ADMIN_BOOTSTRAP_TOKEN`  | 未设置     | 首位系统管理员的一次性离线引导令牌                 |
+| `AUTOFORGE_MASTER_KEY`             | 未设置     | Base64 编码的 32 字节主密钥，用于 LDAP/lease 密文  |
+| `AUTOFORGE_SESSION_TTL_HOURS`      | `12`       | 登录会话有效期，范围 1–168 小时                    |
+| `AUTOFORGE_TERMINAL_ACCESS_TOKEN`  | 未设置     | Web/终端网关内部签名密钥；不是用户登录凭据         |
 | `AUTOFORGE_SCHEDULER_MAX_CPU_PERCENT` | `85`    | 新分配允许的最大 CPU 使用率，范围 1–100            |
 | `AUTOFORGE_SCHEDULER_MAX_MEMORY_PERCENT` | `85` | 新分配允许的最大内存使用率，范围 1–100             |
 | `AUTOFORGE_SCHEDULER_MAX_LOAD_PER_CPU` | `1`   | 1 分钟负载除以逻辑 CPU 数后的最大值，范围 0.1–100  |
@@ -341,8 +357,15 @@ Runner Agent 使用独立配置，不复用服务端数据库或基础设施凭�
 | `AUTOFORGE_AGENT_NAME`            | 用户可识别的执行机名称             |
 | `AUTOFORGE_AGENT_LABELS`          | 调度标签                           |
 | `AUTOFORGE_AGENT_MAX_CONCURRENCY` | 本机最大并发                       |
+| `AUTOFORGE_AGENT_CLAIM_WAIT` | claim 长轮询时长，范围 1s–30s；默认 20s |
+| `AUTOFORGE_AGENT_CLAIM_MAX_BACKOFF` | claim 失败指数退避上限；默认 30s |
+| `AUTOFORGE_AGENT_SHUTDOWN_GRACE` | 停止领取后等待在途任务的时间；默认 30s |
 | `AUTOFORGE_AGENT_BOOTSTRAP_TOKEN` | 仅首次注册使用，成功后移除         |
 | `AUTOFORGE_AGENT_CA_FILE`         | 离线内网私有 CA 文件               |
+| `AUTOFORGE_AGENT_JAVA_EXECUTABLE` | 预置 Java 可执行文件绝对路径；与下列三项同时配置 |
+| `AUTOFORGE_AGENT_TESTNG_CLASSPATH` | 预置 TestNG 及依赖的系统路径分隔列表 |
+| `AUTOFORGE_AGENT_JAVA_VERSION` | capability 使用的精确 Java 版本 |
+| `AUTOFORGE_AGENT_TESTNG_VERSION` | capability 使用的精确 TestNG 版本 |
 | `AUTOFORGE_AGENT_TERMINAL_ENABLED` | 是否允许平台打开交互终端；默认 `false` |
 | `AUTOFORGE_AGENT_TERMINAL_SHELL` | 固定终端 Shell 绝对路径；默认 `/bin/sh` |
 | `AUTOFORGE_AGENT_TERMINAL_MAX_SESSIONS` | 同时终端数，范围 1–4；默认 1 |
@@ -402,7 +425,7 @@ AUTOFORGE_AGENT_BOOTSTRAP_TOKEN='replace-with-bootstrap-secret' \
 1. **基础骨架（已完成）**：workspace、Next.js、类型化配置、质量工具和基础 UI。
 2. **TestNG 用例资产（已完成首版）**：JAR 静态扫描、SQLite 用例库、本地来源对象和导入 UI。
 3. **Lite 执行闭环**：执行领域、SQLite 队列、本地执行、本地产物和基本结果页。
-4. **Runner Agent（注册、资源心跳、动态调度、直连终端和执行核心已完成）**：继续实现任务领取、租约、日志/产物和断线恢复。
+4. **Runner 控制面（已完成首版）**：assignment、claim、lease、reconcile、取消、幂等完成、失败重排与批次聚合已落地；继续实现 Go Agent 领取、执行、日志/产物和断线恢复。
 5. **Full 资产适配器（已完成）**：PostgreSQL、MinIO 及双模式管理契约；继续实现 JetStream 队列与 Redis 缓存业务端口。
 6. **分析能力**：趋势、筛选、失败分类、批次对比和数据保留策略。
 7. **离线交付（构建流水线已完成）**：继续补齐安装升级、备份恢复和断网端到端验收。

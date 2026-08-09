@@ -4,6 +4,7 @@ import type {
   RunBatchRepository,
   SchedulingSnapshot,
 } from "@autoforge/application";
+import type { ExecutionSpec } from "@autoforge/contracts";
 import {
   evaluateRunnerForScheduling,
   type ExecutionEnvironmentVariable,
@@ -17,7 +18,16 @@ import { and, count, desc, eq, inArray, sql } from "drizzle-orm";
 
 import type { SqliteDatabaseHandle } from "./database";
 import { mapStoredRunner } from "./runner-mapper";
-import { executionRuns, runAttempts, runBatchRunners, runBatches, runners } from "./schema";
+import {
+  assignments,
+  caseDefinitions,
+  caseSources,
+  executionRuns,
+  runAttempts,
+  runBatchRunners,
+  runBatches,
+  runners,
+} from "./schema";
 
 const activeAttemptStatuses = ["assigned", "running"] as const;
 
@@ -149,13 +159,16 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
         ? []
         : this.handle.db.select().from(runners).where(inArray(runners.id, selectedRunnerIds)).all();
     const reservations = activeReservations(this.handle, selectedRunnerIds);
+    const candidates = runnerRows
+      .map((row) => ({
+        runner: mapStoredRunner(row, offlineBefore),
+        reservedSlots: reservations.get(row.id) ?? 0,
+      }))
+      .filter((candidate) => supportsTestNGExecution(candidate.runner.capabilities));
     return {
       batch,
       queuedRuns: batch.runs.filter((run) => run.status === "queued"),
-      candidates: runnerRows.map((row) => ({
-        runner: mapStoredRunner(row, offlineBefore),
-        reservedSlots: reservations.get(row.id) ?? 0,
-      })),
+      candidates,
     };
   }
 
@@ -179,9 +192,11 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
           .get();
         if (!runnerRow) continue;
         const reservations = activeReservations(this.handle, [decision.runnerId]);
+        const runner = mapStoredRunner(runnerRow, input.offlineBefore);
+        if (!supportsTestNGExecution(runner.capabilities)) continue;
         const evaluation = evaluateRunnerForScheduling(
           {
-            runner: mapStoredRunner(runnerRow, input.offlineBefore),
+            runner,
             reservedSlots: reservations.get(decision.runnerId) ?? 0,
           },
           input.thresholds,
@@ -206,9 +221,24 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
               eq(executionRuns.status, "queued"),
             ),
           )
-          .returning({ attemptCount: executionRuns.attemptCount })
+          .returning({
+            attemptCount: executionRuns.attemptCount,
+            caseDefinitionId: executionRuns.caseDefinitionId,
+            className: executionRuns.className,
+          })
           .get();
         if (!updatedRun) continue;
+        const source = this.handle.db
+          .select({
+            id: caseSources.id,
+            sha256: caseSources.sha256,
+            sizeBytes: caseSources.sizeBytes,
+          })
+          .from(caseDefinitions)
+          .innerJoin(caseSources, eq(caseSources.id, caseDefinitions.sourceId))
+          .where(eq(caseDefinitions.id, updatedRun.caseDefinitionId))
+          .get();
+        if (!source) throw new Error("Cannot schedule a case without its source JAR.");
         this.handle.db
           .insert(runAttempts)
           .values({
@@ -219,6 +249,38 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
             status: "assigned",
             schedulingScore: evaluation.score,
             createdAt: input.scheduledAt,
+          })
+          .run();
+        const batch = this.handle.db
+          .select({ environmentJson: runBatches.environmentJson, priority: runBatches.priority })
+          .from(runBatches)
+          .where(eq(runBatches.id, input.batchId))
+          .get();
+        if (!batch) continue;
+        this.handle.db
+          .insert(assignments)
+          .values({
+            id: decision.assignmentId,
+            attemptId: decision.attemptId,
+            executionRunId: decision.executionRunId,
+            batchId: input.batchId,
+            runnerId: decision.runnerId,
+            status: "pending",
+            priority: batch.priority,
+            executionSpecJson: JSON.stringify(
+              executionSpec({
+                attemptId: decision.attemptId,
+                executionRunId: decision.executionRunId,
+                batchId: input.batchId,
+                className: updatedRun.className,
+                source,
+                environment: environmentVariables(batch.environmentJson),
+              }),
+            ),
+            availableAt: input.scheduledAt,
+            claimDeadlineAt: addMilliseconds(input.scheduledAt, 5 * 60_000),
+            createdAt: input.scheduledAt,
+            updatedAt: input.scheduledAt,
           })
           .run();
         accepted += 1;
@@ -249,6 +311,11 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
       .groupBy(executionRuns.status)
       .all();
     const byStatus = new Map(statusCounts.map((entry) => [entry.status, entry.value]));
+    const runOutcomes = this.handle.db
+      .select({ status: executionRuns.status, terminalOutcome: executionRuns.terminalOutcome })
+      .from(executionRuns)
+      .where(eq(executionRuns.batchId, row.id))
+      .all();
     return {
       id: row.id,
       suiteId: row.suiteId,
@@ -261,10 +328,63 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
       totalRuns: row.totalRuns,
       queuedRuns: byStatus.get("queued") ?? 0,
       assignedRuns: (byStatus.get("assigned") ?? 0) + (byStatus.get("running") ?? 0),
+      runningRuns: byStatus.get("running") ?? 0,
+      succeededRuns: byStatus.get("succeeded") ?? 0,
+      failedRuns: runOutcomes.filter(
+        (run) => run.status === "failed" && run.terminalOutcome !== "timed_out",
+      ).length,
+      timedOutRuns: runOutcomes.filter((run) => run.terminalOutcome === "timed_out").length,
+      cancelledRuns: byStatus.get("cancelled") ?? 0,
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
     };
   }
+}
+
+function executionSpec(input: {
+  attemptId: string;
+  executionRunId: string;
+  batchId: string;
+  className: string;
+  source: { id: string; sha256: string; sizeBytes: number };
+  environment: ExecutionEnvironmentVariable[];
+}): ExecutionSpec {
+  return {
+    schemaVersion: 1,
+    executor: "testng",
+    attemptId: input.attemptId,
+    executionRunId: input.executionRunId,
+    batchId: input.batchId,
+    className: input.className,
+    methodDescriptors: [],
+    inputs: [
+      {
+        inputId: input.source.id,
+        kind: "test-jar",
+        targetPath: "inputs/tests.jar",
+        mediaType: "application/java-archive",
+        sizeBytes: input.source.sizeBytes,
+        sha256: input.source.sha256,
+      },
+    ],
+    environment: input.environment.map((entry) => ({ ...entry, secret: false })),
+    requiredLabels: ["java", "testng"],
+    requiredCapabilities: ["executor:testng-v1"],
+    timeoutMs: 3_600_000,
+    uploadTimeoutMs: 600_000,
+    resourceLimits: {
+      cpuMillicores: 2_000,
+      memoryBytes: 2_147_483_648,
+      diskBytes: 10_737_418_240,
+      processCount: 256,
+      logBytes: 1_073_741_824,
+      artifactBytes: 10_737_418_240,
+    },
+  };
+}
+
+function addMilliseconds(timestamp: string, milliseconds: number): string {
+  return new Date(new Date(timestamp).getTime() + milliseconds).toISOString();
 }
 
 function activeReservations(
@@ -319,6 +439,10 @@ function environmentVariables(json: string): ExecutionEnvironmentVariable[] {
   );
 }
 
+function supportsTestNGExecution(capabilities: readonly string[]): boolean {
+  return capabilities.includes("executor:testng-v1");
+}
+
 function toExecutionRun(row: typeof executionRuns.$inferSelect): ExecutionRun {
   return {
     id: row.id,
@@ -331,6 +455,9 @@ function toExecutionRun(row: typeof executionRuns.$inferSelect): ExecutionRun {
     ...(row.assignedRunnerId ? { assignedRunnerId: row.assignedRunnerId } : {}),
     attemptCount: row.attemptCount,
     ...(row.schedulingScore === null ? {} : { schedulingScore: row.schedulingScore }),
+    ...(row.terminalOutcome ? { terminalOutcome: row.terminalOutcome } : {}),
+    ...(row.cancelRequestedAt ? { cancelRequestedAt: row.cancelRequestedAt } : {}),
+    version: row.version,
     createdAt: row.createdAt,
     ...(row.assignedAt ? { assignedAt: row.assignedAt } : {}),
     updatedAt: row.updatedAt,
@@ -345,6 +472,12 @@ function toRunAttempt(row: typeof runAttempts.$inferSelect): RunAttempt {
     attemptNumber: row.attemptNumber,
     status: row.status,
     schedulingScore: row.schedulingScore,
+    version: row.version,
+    ...(row.startedAt ? { startedAt: row.startedAt } : {}),
+    ...(row.finishedAt ? { finishedAt: row.finishedAt } : {}),
+    ...(row.outcome ? { outcome: row.outcome } : {}),
+    ...(row.resultCode ? { resultCode: row.resultCode } : {}),
+    ...(row.resultSummary ? { resultSummary: row.resultSummary } : {}),
     createdAt: row.createdAt,
   };
 }

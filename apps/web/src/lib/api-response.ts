@@ -28,7 +28,7 @@ export async function readJarUpload(request: Request, maxJarBytes: number): Prom
   };
 }
 
-export function apiErrorResponse(error: unknown, requestId = randomUUID()): NextResponse {
+export function apiErrorResponse(error: unknown, requestId: string = randomUUID()): NextResponse {
   if (error instanceof DomainError || error instanceof JarInspectionError) {
     const status = domainErrorStatus(error.code);
     return NextResponse.json(
@@ -88,10 +88,18 @@ function redactSecrets(value: string): string {
 function domainErrorStatus(code: string): number {
   if (code === "REQUEST_BODY_TOO_LARGE") return 413;
   if (code === "RATE_LIMITED") return 429;
+  if (code === "AUTH_REQUIRED" || code === "AUTHENTICATION_FAILED") return 401;
+  if (code === "AUTH_FORBIDDEN" || code === "CSRF_REJECTED") return 403;
+  if (code === "AUTH_BOOTSTRAP_REJECTED") return 403;
+  if (code.endsWith("_CONFLICT") || code === "ROLE_IN_USE" || code === "LAST_ADMIN_REQUIRED") {
+    return 409;
+  }
   if (code.endsWith("_NOT_FOUND")) return 404;
   if (code === "RUNNER_AUTH_REQUIRED" || code === "RUNNER_AUTH_REJECTED") return 401;
   if (code === "RUNNER_BOOTSTRAP_REJECTED") return 403;
   if (code === "RUNNER_DISABLED") return 403;
+  if (code === "LEASE_AUTH_REJECTED") return 401;
+  if (code === "LEASE_EXPIRED") return 409;
   if (code === "TERMINAL_AUTH_REJECTED") return 401;
   if (code === "TERMINAL_DISABLED" || code === "RUNNER_TERMINAL_DISABLED") return 403;
   return 400;

@@ -2,10 +2,12 @@ import { Layers3 } from "lucide-react";
 
 import { CaseSuiteManager } from "@/components/case-suite-manager";
 import { getPlatformServices } from "@/lib/services";
+import { requirePagePermission } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 
 export default async function CaseSuitesPage() {
+  await requirePagePermission("case_suite.read");
   const suites = await (await getPlatformServices()).caseSuites.list();
   return (
     <div className="page-stack">

@@ -1,0 +1,244 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { resolve } from "node:path";
+
+import { IdentityAccessService, type DirectoryIdentity } from "@autoforge/application";
+import { DEFAULT_PROJECT_ID } from "@autoforge/domain";
+import { afterEach, describe, expect, it } from "vitest";
+
+import { createSqliteDatabase } from "../src/database";
+import { SqliteIdentityAccessRepository } from "../src/sqlite-identity-access";
+
+const temporaryDirectories: string[] = [];
+
+afterEach(async () => {
+  await Promise.all(
+    temporaryDirectories
+      .splice(0)
+      .map((directory) => rm(directory, { recursive: true, force: true })),
+  );
+});
+
+describe("SQLite identity access", () => {
+  it("bootstraps once, locks and unlocks local users, revokes sessions and maps LDAP groups", async () => {
+    const directory = await mkdtemp(resolve(tmpdir(), "autoforge-identity-"));
+    temporaryDirectories.push(directory);
+    const handle = createSqliteDatabase({
+      databasePath: resolve(directory, "identity.db"),
+      migrationsFolder: resolve(import.meta.dirname, "../drizzle/sqlite"),
+    });
+    const repository = new SqliteIdentityAccessRepository(handle);
+    const clock = new MutableClock("2026-08-09T00:00:00.000Z");
+    const ids = new SequentialIds();
+    const tokens = new TestTokens();
+    const directoryIdentity: DirectoryIdentity = {
+      subject: "directory-subject-1",
+      username: "ldap.user",
+      displayName: "LDAP User",
+      email: "ldap.user@example.test",
+      distinguishedName: "uid=ldap.user,ou=people,dc=example,dc=test",
+      groupDns: ["cn=autoforge-viewers,ou=groups,dc=example,dc=test"],
+      attributes: { uid: "ldap.user", entryUUID: "directory-subject-1" },
+    };
+    let directoryUsers = [directoryIdentity];
+    const service = new IdentityAccessService(
+      repository,
+      {
+        hash: async (password) => `password:${password}`,
+        verify: async (password, encoded) => encoded === `password:${password}`,
+      },
+      tokens,
+      {
+        available: true,
+        encrypt: (plaintext, purpose) =>
+          `${purpose}:${Buffer.from(plaintext).toString("base64url")}`,
+        decrypt: (ciphertext, purpose) => {
+          const prefix = `${purpose}:`;
+          if (!ciphertext.startsWith(prefix)) throw new Error("cipher purpose mismatch");
+          return Buffer.from(ciphertext.slice(prefix.length), "base64url").toString();
+        },
+      },
+      {
+        test: async () => undefined,
+        authenticate: async (_configuration, username, password) => {
+          if (username !== "ldap.user" || password !== "Directory!123") {
+            throw new Error("invalid directory credential");
+          }
+          return directoryIdentity;
+        },
+        listUsers: async () => directoryUsers,
+      },
+      clock,
+      ids,
+      8,
+    );
+
+    try {
+      await service.initialize();
+      expect(await service.setupRequired()).toBe(true);
+      const bootstrap = await service.bootstrap({
+        bootstrapToken: TestTokens.bootstrapToken,
+        username: "administrator",
+        displayName: "Administrator",
+        password: "Admin!Password123",
+      });
+      const administrator = await service.authenticateSession(bootstrap.token);
+      expect(administrator.systemPermissions).toContain("user.manage");
+      expect(await service.setupRequired()).toBe(false);
+      await expect(
+        service.bootstrap({
+          bootstrapToken: TestTokens.bootstrapToken,
+          username: "second-admin",
+          displayName: "Second",
+          password: "Admin!Password456",
+        }),
+      ).rejects.toMatchObject({ code: "AUTH_BOOTSTRAP_REJECTED" });
+
+      const localUser = await service.createUser(administrator, {
+        username: "operator",
+        displayName: "Operator",
+        password: "Operator!12345",
+        forcePasswordChange: true,
+      });
+      for (let attempt = 0; attempt < 5; attempt += 1) {
+        await expect(
+          service.login({ username: "operator", password: "incorrect", provider: "local" }),
+        ).rejects.toMatchObject({ code: "AUTHENTICATION_FAILED" });
+      }
+      await expect(
+        service.login({ username: "operator", password: "Operator!12345", provider: "local" }),
+      ).rejects.toMatchObject({ code: "AUTHENTICATION_FAILED" });
+      await service.updateUserStatus(administrator, localUser.id, "active");
+      const localSession = await service.login({
+        username: "operator",
+        password: "Operator!12345",
+        provider: "local",
+      });
+      expect(await service.authenticateSession(localSession.token)).toMatchObject({
+        user: { id: localUser.id },
+      });
+      await service.resetPassword(administrator, localUser.id, "Replacement!12345", true);
+      await expect(service.authenticateSession(localSession.token)).rejects.toMatchObject({
+        code: "AUTH_REQUIRED",
+      });
+
+      const roles = await service.listRoles(administrator);
+      const viewer = roles.find((role) => role.key === "viewer");
+      expect(viewer).toBeDefined();
+      await service.saveLdapConfiguration(administrator, {
+        enabled: true,
+        urls: ["ldaps://ldap.example.test:636"],
+        tlsMode: "ldaps",
+        connectTimeoutMs: 5_000,
+        operationTimeoutMs: 10_000,
+        pageSize: 500,
+        maximumUsers: 5_000,
+        bindDn: "cn=service,dc=example,dc=test",
+        bindPassword: "Bind!Password123",
+        userBaseDn: "ou=people,dc=example,dc=test",
+        userFilter: "(&(objectClass=person)(uid={username}))",
+        userIdAttribute: "entryUUID",
+        usernameAttribute: "uid",
+        displayNameAttribute: "displayName",
+        emailAttribute: "mail",
+        groupBaseDn: "ou=groups,dc=example,dc=test",
+        groupFilter: "(&(objectClass=groupOfNames)(member={userDn}))",
+        groupMemberAttribute: "member",
+      });
+      await service.addLdapGroupMapping(administrator, {
+        groupDn: "cn=autoforge-viewers,ou=groups,dc=example,dc=test",
+        roleId: viewer!.id,
+        projectId: DEFAULT_PROJECT_ID,
+        priority: 100,
+      });
+      const ldapSession = await service.login({
+        username: "ldap.user",
+        password: "Directory!123",
+        provider: "ldap",
+      });
+      const ldapIdentity = await service.authenticateSession(ldapSession.token);
+      expect(ldapIdentity.user).toMatchObject({ source: "ldap", username: "ldap.user" });
+      expect(ldapIdentity.projectPermissions[DEFAULT_PROJECT_ID]).toContain("case.read");
+      const sessions = await service.listSessions(administrator, ldapIdentity.user.id);
+      expect(sessions).toHaveLength(1);
+      await service.revokeManagedSession(administrator, sessions[0]!.id);
+      await expect(service.authenticateSession(ldapSession.token)).rejects.toMatchObject({
+        code: "AUTH_REQUIRED",
+      });
+      await expect(
+        service.removeSystemRole(
+          administrator,
+          administrator.user.id,
+          "00000000-0000-7000-8100-000000000001",
+        ),
+      ).rejects.toMatchObject({ code: "LAST_ADMIN_REQUIRED" });
+
+      const project = await service.createProject(administrator, {
+        name: "Archived project",
+        slug: "archived-project",
+      });
+      await expect(service.archiveProject(administrator, project.id)).resolves.toMatchObject({
+        archived: true,
+      });
+
+      const activeLdapSession = await service.login({
+        username: "ldap.user",
+        password: "Directory!123",
+        provider: "ldap",
+      });
+      directoryUsers = [];
+      const sync = await service.synchronizeLdap(administrator);
+      expect(sync.disabledUserIds).toContain(ldapIdentity.user.id);
+      await expect(service.authenticateSession(activeLdapSession.token)).rejects.toMatchObject({
+        code: "AUTH_REQUIRED",
+      });
+
+      const audit = await service.listAudit(administrator, { limit: 100 });
+      expect(audit.items).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ action: "auth.bootstrap", result: "succeeded" }),
+          expect.objectContaining({ action: "user.password_reset" }),
+          expect.objectContaining({ action: "ldap.configure" }),
+          expect.objectContaining({ action: "ldap.synchronize" }),
+        ]),
+      );
+    } finally {
+      handle.close();
+    }
+  });
+});
+
+class MutableClock {
+  constructor(private instant: string) {}
+
+  now(): Date {
+    return new Date(this.instant);
+  }
+}
+
+class SequentialIds {
+  private sequence = 0;
+
+  next(): string {
+    this.sequence += 1;
+    return `00000000-0000-7000-9000-${String(this.sequence).padStart(12, "0")}`;
+  }
+}
+
+class TestTokens {
+  static readonly bootstrapToken = "bootstrap-token-with-at-least-thirty-two-characters";
+  private sequence = 0;
+
+  issue(): string {
+    this.sequence += 1;
+    return `session-token-${this.sequence}`;
+  }
+
+  hash(value: string): string {
+    return `digest:${value}`;
+  }
+
+  verifyBootstrapToken(value: string): boolean {
+    return value === TestTokens.bootstrapToken;
+  }
+}

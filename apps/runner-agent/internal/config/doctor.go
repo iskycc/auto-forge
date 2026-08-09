@@ -17,6 +17,7 @@ type Diagnostic struct {
 	HasBootstrap    bool     `json:"hasBootstrapToken"`
 	TerminalEnabled bool     `json:"terminalEnabled"`
 	TerminalShell   string   `json:"terminalShell,omitempty"`
+	Capabilities    []string `json:"capabilities"`
 }
 
 func CheckLocalEnvironment(configuration Config) (Diagnostic, error) {
@@ -52,6 +53,20 @@ func CheckLocalEnvironment(configuration Config) (Diagnostic, error) {
 			return Diagnostic{}, fmt.Errorf("configured CA file is not a regular file: %s", configuration.CAFile)
 		}
 	}
+	if configuration.Toolchain.Enabled() {
+		if err := requireExecutable(configuration.Toolchain.JavaExecutable); err != nil {
+			return Diagnostic{}, fmt.Errorf("validate Java executable: %w", err)
+		}
+		for _, entry := range configuration.Toolchain.Classpath {
+			info, statErr := os.Stat(entry)
+			if statErr != nil {
+				return Diagnostic{}, fmt.Errorf("inspect TestNG classpath entry %s: %w", entry, statErr)
+			}
+			if !info.Mode().IsRegular() && !info.IsDir() {
+				return Diagnostic{}, fmt.Errorf("TestNG classpath entry is not a file or directory: %s", entry)
+			}
+		}
+	}
 	if configuration.Terminal.Enabled {
 		terminalShell = configuration.Terminal.Shell
 		info, statErr := os.Stat(configuration.Terminal.Shell)
@@ -80,5 +95,17 @@ func CheckLocalEnvironment(configuration Config) (Diagnostic, error) {
 		HasBootstrap:    configuration.HasBootstrap,
 		TerminalEnabled: configuration.Terminal.Enabled,
 		TerminalShell:   terminalShell,
+		Capabilities:    configuration.Toolchain.Capabilities(),
 	}, nil
+}
+
+func requireExecutable(path string) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() || info.Mode().Perm()&0o111 == 0 {
+		return fmt.Errorf("not an executable regular file: %s", path)
+	}
+	return nil
 }

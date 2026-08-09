@@ -13,9 +13,10 @@ import (
 )
 
 type RunOptions struct {
-	DataDirectory string
-	KeepWorkspace bool
-	Policy        Policy
+	DataDirectory    string
+	KeepWorkspace    bool
+	Policy           Policy
+	PrepareWorkspace func(string) error
 }
 
 type Result struct {
@@ -55,6 +56,11 @@ func Run(ctx context.Context, spec Spec, options RunOptions) (result Result, ret
 			returnErr = errors.Join(returnErr, fmt.Errorf("remove attempt workspace: %w", cleanupErr))
 		}
 	}()
+	if options.PrepareWorkspace != nil {
+		if err := options.PrepareWorkspace(workspace); err != nil {
+			return Result{}, fmt.Errorf("prepare attempt workspace: %w", err)
+		}
+	}
 
 	workingDirectory, err := prepareWorkingDirectory(workspace, spec.Command.CwdRelative)
 	if err != nil {

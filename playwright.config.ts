@@ -26,7 +26,8 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: "pnpm --filter @autoforge/web dev",
+    command:
+      "pnpm --filter @autoforge/web build && NODE_ENV=production pnpm --filter @autoforge/web start",
     url: "http://127.0.0.1:3100",
     reuseExistingServer: true,
     timeout: 120_000,
@@ -35,8 +36,11 @@ export default defineConfig({
       AUTOFORGE_MODE: "lite",
       AUTOFORGE_DATA_DIR: e2eDataDirectory,
       AUTOFORGE_RUNNER_BOOTSTRAP_TOKEN: "e2e-runner-bootstrap-token-000000000000",
+      AUTOFORGE_ADMIN_BOOTSTRAP_TOKEN: "e2e-admin-bootstrap-token-00000000000000",
+      AUTOFORGE_MASTER_KEY: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
       AUTOFORGE_TERMINAL_ACCESS_TOKEN: "e2e-terminal-access-token-000000000000",
       HOSTNAME: "127.0.0.1",
+      NODE_ENV: "production",
       PORT: "3100",
     },
   },

@@ -3,6 +3,7 @@ import Link from "next/link";
 
 import { SourceActions } from "@/components/source-actions";
 import { getPlatformServices } from "@/lib/services";
+import { requirePagePermission } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 
@@ -23,6 +24,7 @@ function formatDate(value: string): string {
 }
 
 export default async function ObjectsPage() {
+  await requirePagePermission("case_source.read");
   const services = await getPlatformServices();
   const [objects, sources] = await Promise.all([
     services.caseSources.listObjects({ limit: 100 }),

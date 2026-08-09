@@ -21,6 +21,7 @@ type Logger = (level: "info" | "warn" | "error", message: string, fields?: objec
 
 type Session = {
   runnerId: string;
+  actorId: string;
   browser: WebSocket;
   agent: WebSocket;
 };
@@ -213,7 +214,12 @@ export class TerminalGateway {
       websocket.close(4009, "Terminal session already exists");
       return;
     }
-    this.sessions.set(sessionId, { runnerId: ticket.runnerId, browser: websocket, agent });
+    this.sessions.set(sessionId, {
+      runnerId: ticket.runnerId,
+      actorId: ticket.actorId!,
+      browser: websocket,
+      agent,
+    });
     websocket.on("message", (data, binary) => {
       if (binary || !(data instanceof Buffer)) {
         websocket.close(1003, "Text JSON messages are required");
@@ -236,6 +242,11 @@ export class TerminalGateway {
       if (!active || active.browser !== websocket) return;
       this.sessions.delete(sessionId);
       this.send(agent, { schemaVersion: 1, type: "close", sessionId });
+      this.logger("info", "Browser terminal session disconnected", {
+        runnerId: ticket.runnerId,
+        sessionId,
+        actorId: ticket.actorId,
+      });
     });
     websocket.on("error", (error) => {
       this.logger("warn", "Browser terminal channel error", {
@@ -254,6 +265,7 @@ export class TerminalGateway {
     this.logger("info", "Browser terminal session connected", {
       runnerId: ticket.runnerId,
       sessionId,
+      actorId: ticket.actorId,
     });
   }
 
@@ -263,6 +275,12 @@ export class TerminalGateway {
     this.sessions.delete(sessionId);
     this.send(session.agent, { schemaVersion: 1, type: "close", sessionId });
     if (session.browser.readyState === WebSocket.OPEN) session.browser.close(code, reason);
+    this.logger("info", "Browser terminal session finished", {
+      runnerId: session.runnerId,
+      sessionId,
+      actorId: session.actorId,
+      reason,
+    });
   }
 
   private send(peer: WebSocket, message: AgentCommand | BrowserEvent): void {

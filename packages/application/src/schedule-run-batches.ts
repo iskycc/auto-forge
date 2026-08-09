@@ -87,6 +87,7 @@ export class RunBatchSchedulingService {
           decisions: plan.decisions.map((decision) => ({
             ...decision,
             attemptId: this.ids.next(),
+            assignmentId: this.ids.next(),
           })),
           thresholds: this.thresholds,
           offlineBefore: offlineBefore(now),

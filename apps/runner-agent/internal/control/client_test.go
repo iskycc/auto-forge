@@ -1,6 +1,7 @@
 package control
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -15,6 +16,41 @@ import (
 	"github.com/iskycc/auto-forge/apps/runner-agent/internal/config"
 	"github.com/iskycc/auto-forge/apps/runner-agent/internal/metrics"
 )
+
+func TestClientDownloadsOnlyTheDeclaredInputSizeWithRunnerAndLeaseCredentials(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/api/v1/run-attempts/attempt-1/inputs/source-1" {
+			http.NotFound(writer, request)
+			return
+		}
+		if request.Header.Get("Authorization") != "Bearer runner-credential" || request.Header.Get("X-AutoForge-Runner-Id") != "runner-1" || request.Header.Get("X-AutoForge-Lease-Token") != "lease-token" {
+			http.Error(writer, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		writer.Header().Set("Content-Length", "3")
+		_, _ = writer.Write([]byte("jar"))
+	}))
+	defer server.Close()
+	client, err := NewClient(testConfiguration(t, server.URL))
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+	var destination bytes.Buffer
+	err = client.DownloadInput(
+		context.Background(),
+		Identity{RunnerID: "runner-1", Credential: "runner-credential"},
+		"attempt-1",
+		Lease{Token: "lease-token"},
+		ExecutionInput{InputID: "source-1", SizeBytes: 3},
+		&destination,
+	)
+	if err != nil {
+		t.Fatalf("DownloadInput() error = %v", err)
+	}
+	if destination.String() != "jar" {
+		t.Fatalf("downloaded input = %q", destination.String())
+	}
+}
 
 func TestClientRegistersAndSendsAuthenticatedHeartbeat(t *testing.T) {
 	requests := 0
@@ -52,7 +88,7 @@ func TestClientRegistersAndSendsAuthenticatedHeartbeat(t *testing.T) {
 		t.Fatalf("Register() error = %v", err)
 	}
 	snapshot := &metrics.Snapshot{CPUUtilizationPercent: 20, MemoryUtilizationPercent: 30, LoadAverage1m: 0.5, LogicalCPUCount: 4, ObservedAt: "2026-08-09T00:00:00Z"}
-	if _, err := client.Heartbeat(context.Background(), identity, configuration, buildinfo.Info{Version: "0.2.0"}, snapshot); err != nil {
+	if _, err := client.Heartbeat(context.Background(), identity, configuration, buildinfo.Info{Version: "0.2.0"}, 1, snapshot); err != nil {
 		t.Fatalf("Heartbeat() error = %v", err)
 	}
 	if requests != 2 {

@@ -14,6 +14,15 @@ const environmentSchema = z
       .max(268_435_456)
       .default(33_554_432),
     AUTOFORGE_RUNNER_BOOTSTRAP_TOKEN: z.string().min(32).optional(),
+    AUTOFORGE_RUNNER_CLAIM_RATE_LIMIT_PER_MINUTE: z.coerce
+      .number()
+      .int()
+      .min(1)
+      .max(10_000)
+      .default(120),
+    AUTOFORGE_ADMIN_BOOTSTRAP_TOKEN: z.string().min(32).optional(),
+    AUTOFORGE_MASTER_KEY: z.string().min(40).max(128).optional(),
+    AUTOFORGE_SESSION_TTL_HOURS: z.coerce.number().int().min(1).max(168).default(12),
     AUTOFORGE_TERMINAL_ACCESS_TOKEN: z.string().min(32).optional(),
     AUTOFORGE_SCHEDULER_MAX_CPU_PERCENT: z.coerce.number().min(1).max(100).default(85),
     AUTOFORGE_SCHEDULER_MAX_MEMORY_PERCENT: z.coerce.number().min(1).max(100).default(85),
@@ -57,7 +66,11 @@ type CommonConfig = {
   workspaceRoot: string;
   maxJarBytes: number;
   runnerBootstrapToken?: string;
+  adminBootstrapToken?: string;
+  masterKey?: string;
+  sessionTtlHours: number;
   terminalAccessToken?: string;
+  runnerClaimRateLimitPerMinute: number;
   scheduler: {
     maximumCpuUtilizationPercent: number;
     maximumMemoryUtilizationPercent: number;
@@ -110,9 +123,15 @@ export function loadAppConfig(environment: NodeJS.ProcessEnv = process.env): App
   const common = {
     workspaceRoot,
     maxJarBytes: parsed.AUTOFORGE_MAX_JAR_BYTES,
+    runnerClaimRateLimitPerMinute: parsed.AUTOFORGE_RUNNER_CLAIM_RATE_LIMIT_PER_MINUTE,
     ...(parsed.AUTOFORGE_RUNNER_BOOTSTRAP_TOKEN
       ? { runnerBootstrapToken: parsed.AUTOFORGE_RUNNER_BOOTSTRAP_TOKEN }
       : {}),
+    ...(parsed.AUTOFORGE_ADMIN_BOOTSTRAP_TOKEN
+      ? { adminBootstrapToken: parsed.AUTOFORGE_ADMIN_BOOTSTRAP_TOKEN }
+      : {}),
+    ...(parsed.AUTOFORGE_MASTER_KEY ? { masterKey: parsed.AUTOFORGE_MASTER_KEY } : {}),
+    sessionTtlHours: parsed.AUTOFORGE_SESSION_TTL_HOURS,
     ...(parsed.AUTOFORGE_TERMINAL_ACCESS_TOKEN
       ? { terminalAccessToken: parsed.AUTOFORGE_TERMINAL_ACCESS_TOKEN }
       : {}),

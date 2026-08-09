@@ -3,6 +3,7 @@ import Link from "next/link";
 
 import { CaseSelectionTable } from "@/components/case-selection-table";
 import { getPlatformServices } from "@/lib/services";
+import { requirePagePermission } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 
@@ -18,6 +19,7 @@ function single(value: string | string[] | undefined): string | undefined {
 }
 
 export default async function CasesPage({ searchParams }: CasesPageProps) {
+  await requirePagePermission("case.read");
   const parameters = await searchParams;
   const query = single(parameters.query)?.trim();
   const cursor = single(parameters.cursor);

@@ -3,12 +3,14 @@ import Link from "next/link";
 
 import { CaseSuiteDetailsView } from "@/components/case-suite-details";
 import { getPlatformServices } from "@/lib/services";
+import { requirePagePermission } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 
 type Props = { params: Promise<{ suiteId: string }> };
 
 export default async function CaseSuitePage({ params }: Props) {
+  await requirePagePermission("case_suite.read");
   const { suiteId } = await params;
   const suite = await (await getPlatformServices()).caseSuites.get(suiteId);
   return (

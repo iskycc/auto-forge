@@ -4,6 +4,7 @@ import type {
   RunBatchRepository,
   SchedulingSnapshot,
 } from "@autoforge/application";
+import type { ExecutionSpec } from "@autoforge/contracts";
 import {
   evaluateRunnerForScheduling,
   type ExecutionEnvironmentVariable,
@@ -17,7 +18,10 @@ import { and, count, desc, eq, inArray, sql } from "drizzle-orm";
 
 import type { PostgresDatabaseHandle } from "./postgres-database";
 import {
+  pgCaseDefinitions,
+  pgCaseSources,
   pgExecutionRuns,
+  pgAssignments,
   pgRunAttempts,
   pgRunBatchRunners,
   pgRunBatches,
@@ -152,13 +156,16 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
             .from(pgRunners)
             .where(inArray(pgRunners.id, batch.selectedRunnerIds));
     const reservations = await this.activeReservations(batch.selectedRunnerIds);
+    const candidates = runnerRows
+      .map((row) => ({
+        runner: mapStoredRunner(row, offlineBefore),
+        reservedSlots: reservations.get(row.id) ?? 0,
+      }))
+      .filter((candidate) => supportsTestNGExecution(candidate.runner.capabilities));
     return {
       batch,
       queuedRuns: batch.runs.filter((run) => run.status === "queued"),
-      candidates: runnerRows.map((row) => ({
-        runner: mapStoredRunner(row, offlineBefore),
-        reservedSlots: reservations.get(row.id) ?? 0,
-      })),
+      candidates,
     };
   }
 
@@ -208,9 +215,11 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
       for (const decision of input.decisions) {
         const runnerRow = runnerById.get(decision.runnerId);
         if (!runnerRow) continue;
+        const runner = mapStoredRunner(runnerRow, input.offlineBefore);
+        if (!supportsTestNGExecution(runner.capabilities)) continue;
         const evaluation = evaluateRunnerForScheduling(
           {
-            runner: mapStoredRunner(runnerRow, input.offlineBefore),
+            runner,
             reservedSlots: reservations.get(decision.runnerId) ?? 0,
           },
           input.thresholds,
@@ -234,8 +243,23 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
               eq(pgExecutionRuns.status, "queued"),
             ),
           )
-          .returning({ attemptCount: pgExecutionRuns.attemptCount });
+          .returning({
+            attemptCount: pgExecutionRuns.attemptCount,
+            caseDefinitionId: pgExecutionRuns.caseDefinitionId,
+            className: pgExecutionRuns.className,
+          });
         if (!updatedRun) continue;
+        const [source] = await transaction
+          .select({
+            id: pgCaseSources.id,
+            sha256: pgCaseSources.sha256,
+            sizeBytes: pgCaseSources.sizeBytes,
+          })
+          .from(pgCaseDefinitions)
+          .innerJoin(pgCaseSources, eq(pgCaseSources.id, pgCaseDefinitions.sourceId))
+          .where(eq(pgCaseDefinitions.id, updatedRun.caseDefinitionId))
+          .limit(1);
+        if (!source) throw new Error("Cannot schedule a case without its source JAR.");
         await transaction.insert(pgRunAttempts).values({
           id: decision.attemptId,
           executionRunId: decision.executionRunId,
@@ -244,6 +268,38 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
           status: "assigned",
           schedulingScore: evaluation.score,
           createdAt: input.scheduledAt,
+        });
+        const [batch] = await transaction
+          .select({
+            environmentJson: pgRunBatches.environmentJson,
+            priority: pgRunBatches.priority,
+          })
+          .from(pgRunBatches)
+          .where(eq(pgRunBatches.id, input.batchId))
+          .limit(1);
+        if (!batch) continue;
+        await transaction.insert(pgAssignments).values({
+          id: decision.assignmentId,
+          attemptId: decision.attemptId,
+          executionRunId: decision.executionRunId,
+          batchId: input.batchId,
+          runnerId: decision.runnerId,
+          status: "pending",
+          priority: batch.priority,
+          executionSpecJson: JSON.stringify(
+            executionSpec({
+              attemptId: decision.attemptId,
+              executionRunId: decision.executionRunId,
+              batchId: input.batchId,
+              className: updatedRun.className,
+              source,
+              environment: environmentVariables(batch.environmentJson),
+            }),
+          ),
+          availableAt: input.scheduledAt,
+          claimDeadlineAt: addMilliseconds(input.scheduledAt, 5 * 60_000),
+          createdAt: input.scheduledAt,
+          updatedAt: input.scheduledAt,
         });
         reservations.set(decision.runnerId, (reservations.get(decision.runnerId) ?? 0) + 1);
         accepted += 1;
@@ -291,6 +347,10 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
         .groupBy(pgExecutionRuns.status),
     ]);
     const byStatus = new Map(statusCounts.map((entry) => [entry.status, entry.value]));
+    const runOutcomes = await this.handle.db
+      .select({ status: pgExecutionRuns.status, terminalOutcome: pgExecutionRuns.terminalOutcome })
+      .from(pgExecutionRuns)
+      .where(eq(pgExecutionRuns.batchId, row.id));
     return {
       id: row.id,
       suiteId: row.suiteId,
@@ -303,6 +363,13 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
       totalRuns: row.totalRuns,
       queuedRuns: byStatus.get("queued") ?? 0,
       assignedRuns: (byStatus.get("assigned") ?? 0) + (byStatus.get("running") ?? 0),
+      runningRuns: byStatus.get("running") ?? 0,
+      succeededRuns: byStatus.get("succeeded") ?? 0,
+      failedRuns: runOutcomes.filter(
+        (run) => run.status === "failed" && run.terminalOutcome !== "timed_out",
+      ).length,
+      timedOutRuns: runOutcomes.filter((run) => run.terminalOutcome === "timed_out").length,
+      cancelledRuns: byStatus.get("cancelled") ?? 0,
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
     };
@@ -327,6 +394,52 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
   }
 }
 
+function executionSpec(input: {
+  attemptId: string;
+  executionRunId: string;
+  batchId: string;
+  className: string;
+  source: { id: string; sha256: string; sizeBytes: number };
+  environment: ExecutionEnvironmentVariable[];
+}): ExecutionSpec {
+  return {
+    schemaVersion: 1,
+    executor: "testng",
+    attemptId: input.attemptId,
+    executionRunId: input.executionRunId,
+    batchId: input.batchId,
+    className: input.className,
+    methodDescriptors: [],
+    inputs: [
+      {
+        inputId: input.source.id,
+        kind: "test-jar",
+        targetPath: "inputs/tests.jar",
+        mediaType: "application/java-archive",
+        sizeBytes: input.source.sizeBytes,
+        sha256: input.source.sha256,
+      },
+    ],
+    environment: input.environment.map((entry) => ({ ...entry, secret: false })),
+    requiredLabels: ["java", "testng"],
+    requiredCapabilities: ["executor:testng-v1"],
+    timeoutMs: 3_600_000,
+    uploadTimeoutMs: 600_000,
+    resourceLimits: {
+      cpuMillicores: 2_000,
+      memoryBytes: 2_147_483_648,
+      diskBytes: 10_737_418_240,
+      processCount: 256,
+      logBytes: 1_073_741_824,
+      artifactBytes: 10_737_418_240,
+    },
+  };
+}
+
+function addMilliseconds(timestamp: string, milliseconds: number): string {
+  return new Date(new Date(timestamp).getTime() + milliseconds).toISOString();
+}
+
 function environmentVariables(json: string): ExecutionEnvironmentVariable[] {
   const parsed: unknown = JSON.parse(json);
   if (!Array.isArray(parsed)) return [];
@@ -337,6 +450,10 @@ function environmentVariables(json: string): ExecutionEnvironmentVariable[] {
       typeof (value as { name?: unknown }).name === "string" &&
       typeof (value as { value?: unknown }).value === "string",
   );
+}
+
+function supportsTestNGExecution(capabilities: readonly string[]): boolean {
+  return capabilities.includes("executor:testng-v1");
 }
 
 function toExecutionRun(row: typeof pgExecutionRuns.$inferSelect): ExecutionRun {
@@ -351,6 +468,9 @@ function toExecutionRun(row: typeof pgExecutionRuns.$inferSelect): ExecutionRun 
     ...(row.assignedRunnerId ? { assignedRunnerId: row.assignedRunnerId } : {}),
     attemptCount: row.attemptCount,
     ...(row.schedulingScore === null ? {} : { schedulingScore: row.schedulingScore }),
+    ...(row.terminalOutcome ? { terminalOutcome: row.terminalOutcome } : {}),
+    ...(row.cancelRequestedAt ? { cancelRequestedAt: row.cancelRequestedAt } : {}),
+    version: row.version,
     createdAt: row.createdAt,
     ...(row.assignedAt ? { assignedAt: row.assignedAt } : {}),
     updatedAt: row.updatedAt,
@@ -365,6 +485,12 @@ function toRunAttempt(row: typeof pgRunAttempts.$inferSelect): RunAttempt {
     attemptNumber: row.attemptNumber,
     status: row.status,
     schedulingScore: row.schedulingScore,
+    version: row.version,
+    ...(row.startedAt ? { startedAt: row.startedAt } : {}),
+    ...(row.finishedAt ? { finishedAt: row.finishedAt } : {}),
+    ...(row.outcome ? { outcome: row.outcome } : {}),
+    ...(row.resultCode ? { resultCode: row.resultCode } : {}),
+    ...(row.resultSummary ? { resultSummary: row.resultSummary } : {}),
     createdAt: row.createdAt,
   };
 }

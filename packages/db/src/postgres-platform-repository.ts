@@ -477,11 +477,13 @@ export class PostgresRunnerRepository implements RunnerRepository {
           credentialHash: record.credentialHash,
           name: record.name,
           disabled: false,
+          draining: false,
           os: record.os,
           architecture: record.architecture,
           agentVersion: record.agentVersion,
           protocolVersion: record.protocolVersion,
           labelsJson: JSON.stringify(record.labels),
+          capabilitiesJson: JSON.stringify(record.capabilities),
           maxConcurrency: record.maxConcurrency,
           busySlots: 0,
           lastSeenAt: record.recordedAt,
@@ -508,6 +510,7 @@ export class PostgresRunnerRepository implements RunnerRepository {
   async heartbeat(input: {
     runnerId: string;
     labels: string[];
+    capabilities: string[];
     maxConcurrency: number;
     busySlots: number;
     agentVersion: string;
@@ -526,6 +529,7 @@ export class PostgresRunnerRepository implements RunnerRepository {
       .update(pgRunners)
       .set({
         labelsJson: JSON.stringify(input.labels),
+        capabilitiesJson: JSON.stringify(input.capabilities),
         maxConcurrency: input.maxConcurrency,
         busySlots: input.busySlots,
         agentVersion: input.agentVersion,
@@ -563,5 +567,24 @@ export class PostgresRunnerRepository implements RunnerRepository {
       .where(eq(pgRunners.id, runnerId))
       .limit(1);
     return row ? mapStoredRunner(row, offlineBefore) : null;
+  }
+
+  async setLifecycleState(input: {
+    runnerId: string;
+    state: "active" | "draining" | "disabled";
+    updatedAt: string;
+  }): Promise<Runner> {
+    await this.ready();
+    const [row] = await this.handle.db
+      .update(pgRunners)
+      .set({
+        disabled: input.state === "disabled",
+        draining: input.state === "draining",
+        updatedAt: input.updatedAt,
+      })
+      .where(eq(pgRunners.id, input.runnerId))
+      .returning();
+    if (!row) throw new Error(`Runner ${input.runnerId} does not exist.`);
+    return mapStoredRunner(row);
   }
 }
