@@ -17,7 +17,10 @@ web_pid=""
 
 cleanup() {
   set +e
-  for process_id in "${web_pid}" "${minio_pid}" "${nats_pid}"; do
+  if [[ -n "${web_pid}" ]]; then
+    terminate_process_group "${web_pid}"
+  fi
+  for process_id in "${minio_pid}" "${nats_pid}"; do
     if [[ -n "${process_id}" ]]; then
       kill "${process_id}" >/dev/null 2>&1
       wait "${process_id}" >/dev/null 2>&1
@@ -27,6 +30,20 @@ cleanup() {
   rm -rf -- "${temporary_directory}"
 }
 trap cleanup EXIT
+
+terminate_process_group() {
+  local group_leader="${1}"
+  kill -TERM -- "-${group_leader}" >/dev/null 2>&1
+  for _ in $(seq 1 50); do
+    if ! kill -0 -- "-${group_leader}" >/dev/null 2>&1; then
+      wait "${group_leader}" >/dev/null 2>&1
+      return
+    fi
+    sleep 0.1
+  done
+  kill -KILL -- "-${group_leader}" >/dev/null 2>&1
+  wait "${group_leader}" >/dev/null 2>&1
+}
 
 wait_until() {
   local description="${1}"
@@ -105,6 +122,7 @@ create_platform_bucket() {
 }
 
 start_full_platform() {
+  # Keep pnpm and the spawned Next server in one isolated group so cleanup releases the dev lock.
   AUTOFORGE_MODE=full \
   AUTOFORGE_DATABASE_URL=postgresql://autoforge:autoforge@127.0.0.1:55439/autoforge \
   AUTOFORGE_NATS_SERVERS=nats://127.0.0.1:54229 \
@@ -117,7 +135,7 @@ start_full_platform() {
   AUTOFORGE_RUNNER_BOOTSTRAP_TOKEN=full-ci-bootstrap-token-000000000000 \
   HOSTNAME=127.0.0.1 \
   PORT=3199 \
-    pnpm --filter @autoforge/web dev \
+    setsid pnpm --filter @autoforge/web dev \
     >"${temporary_directory}/web.log" 2>&1 &
   web_pid="$!"
   wait_until "Full platform" curl --fail --silent http://127.0.0.1:3199/api/v1/health/ready
