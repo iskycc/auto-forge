@@ -91,6 +91,7 @@ jobs:
           pnpm test
           pnpm test:integration
           pnpm test:full
+          pnpm test:deployment
           pnpm build
 
       - name: Locate preinstalled Chromium
@@ -249,6 +250,9 @@ jobs:
           pattern: release-*
           path: release
           merge-multiple: true
+
+      - name: Build versioned Compose deployment bundle
+        run: bash scripts/release/build-deployment-bundle.sh "${{ needs.prepare.outputs.version }}" release
 
       - name: Create release manifest and checksums
         run: node scripts/release/create-manifest.mjs "${{ needs.prepare.outputs.version }}" release

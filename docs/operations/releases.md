@@ -1,6 +1,6 @@
 # Release 与离线交付
 
-AutoForge 使用 `.github/workflows/release.yml` 从不可变 Git tag 构建 GitHub Release。当前 Release 交付同时支持 Lite/Full 组合根的后端镜像和 Go Runner Agent。PostgreSQL、NATS、MinIO 与 Redis 属于外部基础设施，不混入 AutoForge 自身镜像；离线部署必须另行镜像、锁定版本并遵守各项目许可。直连终端所需的前端、WebSocket 和 PTY 依赖已经进入 AutoForge 自身 lockfile、二进制与镜像，不需要额外服务。
+AutoForge 使用 `.github/workflows/release.yml` 从不可变 Git tag 构建 GitHub Release。当前 Release 交付同时支持 Lite/Full 组合根的后端镜像、Go Runner Agent 和版本化 Compose 部署包。PostgreSQL、NATS、MinIO 与 Redis 属于外部基础设施，不混入 AutoForge 自身镜像；离线部署必须另行导出镜像、锁定版本并遵守各项目许可。直连终端所需的前端、WebSocket 和 PTY 依赖已经进入 AutoForge 自身 lockfile、二进制与镜像，不需要额外服务。
 
 ## 发布条件
 
@@ -33,7 +33,7 @@ git push origin v0.2.0
 - `autoforge-agent-VERSION-VARIANT`：Linux Go 静态二进制；
 - `autoforge-agent-VERSION-VARIANT.spdx.json`：Agent SBOM。
 
-Release 根目录还包含 `release-manifest.json` 和 `SHA256SUMS`。GitHub 的构建来源证明绑定 `SHA256SUMS` 中记录的资产摘要。
+每个版本还生成一份 `autoforge-deploy-VERSION.tar.gz`，其中包含 Lite/Full `docker-compose.yml`、环境模板、固定的基础设施镜像摘要和离线启动说明。Release 根目录同时包含 `release-manifest.json` 和 `SHA256SUMS`。GitHub 的构建来源证明绑定 `SHA256SUMS` 中记录的全部资产摘要。
 
 ## 离线校验与启动
 
@@ -48,6 +48,19 @@ docker run --detach \
   --volume autoforge-data:/var/lib/autoforge \
   autoforge/backend:0.2.0-amd64
 ```
+
+也可以解压同版本 Compose 部署包，从对应模式的环境模板开始配置：
+
+```bash
+tar -xzf autoforge-deploy-0.2.0.tar.gz
+cd autoforge-deploy-0.2.0/lite
+cp .env.example .env
+# 替换所有示例凭据后：
+docker compose config --quiet
+docker compose up --detach
+```
+
+Full 部署还需提前导入部署包说明中列出的 PostgreSQL、NATS、MinIO、MinIO Client 和 Redis 固定摘要镜像。Compose 设置了 `pull_policy: never`，因此缺少镜像时直接失败，不会在隔离区尝试联网。
 
 musl 归档的镜像标签相应为 `autoforge/backend:0.2.0-amd64-musl`。必须持久化 `/var/lib/autoforge`；删除该卷会删除 Lite 数据库和本地对象。
 
@@ -87,6 +100,9 @@ SOURCE_DATE_EPOCH=0 AUTOFORGE_RELEASE_REVISION=local \
 
 SOURCE_DATE_EPOCH=0 AUTOFORGE_RELEASE_REVISION=local \
   bash scripts/release/build-backend-image.sh 0.2.0 amd64 dist/release
+
+SOURCE_DATE_EPOCH=0 \
+  bash scripts/release/build-deployment-bundle.sh 0.2.0 dist/release
 ```
 
 正式构建由 GitHub Actions 固定 Node、Go、pnpm、基础镜像 digest、Action commit 和 Syft 版本。构建阶段可以获取锁定依赖；生成的运行时镜像与 Agent 二进制在离线运行时不会下载依赖或发送遥测。

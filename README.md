@@ -458,15 +458,25 @@ pnpm typecheck
 pnpm test
 pnpm test:integration
 pnpm test:full
+pnpm test:deployment
 pnpm test:e2e
 pnpm build
 ```
+
+## Docker Compose 部署
+
+仓库提供两套不会混淆运行边界的单机模板：
+
+- [Lite Compose](./deploy/compose/lite/docker-compose.yml) 只启动 AutoForge，持久化 SQLite 和本地对象目录；
+- [Full Compose](./deploy/compose/full/docker-compose.yml) 启动 AutoForge、PostgreSQL、NATS JetStream、MinIO 和 Redis，并通过一次性初始化任务创建对象 bucket。
+
+两套模板都直接使用 Release 中导入的 AutoForge 镜像，并设置 `pull_policy: never`。Full 的基础设施镜像也固定到精确 digest，不会在离线启动时回退到可变 tag 或自动拉取。凭据生成、镜像准备、启动、升级和卷保护步骤见 [Compose 部署说明](./deploy/compose/README.md)。
 
 Playwright 首次运行需要已有 Chromium。联网开发机可按 Playwright 官方方式准备浏览器；离线环境应随测试工具包预置浏览器，并通过 `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` 指向该可执行文件，运行时不会自动下载。
 
 ## GitHub Release 与离线包
 
-仓库的 `Release` workflow 由 `vX.Y.Z` tag 触发，在完整质量门禁通过后，为后端 Docker 离线镜像和 Go Agent 分别构建 `amd64`、`arm64`、`amd64-musl`、`arm64-musl`。Release 还包含每个资产的 SPDX JSON SBOM、`SHA256SUMS`、机器可读清单和构建来源证明。
+仓库的 `Release` workflow 由 `vX.Y.Z` tag 触发，在完整质量门禁通过后，为后端 Docker 离线镜像和 Go Agent 分别构建 `amd64`、`arm64`、`amd64-musl`、`arm64-musl`。Release 还包含版本化 Lite/Full Compose 部署包、每个二进制/镜像资产的 SPDX JSON SBOM、`SHA256SUMS`、机器可读清单和构建来源证明。
 
 后端标准版使用 Debian/glibc，musl 版使用 Alpine/musl；Agent 四个文件均为 `CGO_ENABLED=0` 的 Linux 静态二进制，其中 musl 后缀表示发布目标而不是动态链接 musl。正式 Release 发布 AutoForge 自身镜像，不重新分发 PostgreSQL、NATS、MinIO 或 Redis 镜像；xterm.js、WebSocket 和 PTY 库已经固定版本并打入 AutoForge 发布物，不产生运行时下载。
 

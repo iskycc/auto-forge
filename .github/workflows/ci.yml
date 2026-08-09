@@ -44,6 +44,7 @@ jobs:
           pnpm test
           pnpm test:integration
           pnpm test:full
+          pnpm test:deployment
 
       - name: Locate preinstalled Chromium
         run: |

@@ -1,0 +1,187 @@
+name: autoforge-full
+
+services:
+  autoforge:
+    image: ${AUTOFORGE_BACKEND_IMAGE:?set AUTOFORGE_BACKEND_IMAGE to a loaded AutoForge image}
+    pull_policy: never
+    init: true
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    environment:
+      AUTOFORGE_MODE: full
+      AUTOFORGE_DATA_DIR: /var/lib/autoforge
+      AUTOFORGE_DATABASE_URL: postgresql://autoforge:${AUTOFORGE_POSTGRES_PASSWORD:?set a URL-safe PostgreSQL password}@postgres:5432/autoforge
+      AUTOFORGE_NATS_SERVERS: nats://nats:4222
+      AUTOFORGE_REDIS_URL: redis://redis:6379
+      AUTOFORGE_MINIO_ENDPOINT: http://minio:9000
+      AUTOFORGE_MINIO_ACCESS_KEY: ${AUTOFORGE_MINIO_ACCESS_KEY:?set the MinIO access key}
+      AUTOFORGE_MINIO_SECRET_KEY: ${AUTOFORGE_MINIO_SECRET_KEY:?set the MinIO secret key}
+      AUTOFORGE_MINIO_BUCKET: ${AUTOFORGE_MINIO_BUCKET:-autoforge-objects}
+      AUTOFORGE_MINIO_REGION: ${AUTOFORGE_MINIO_REGION:-us-east-1}
+      AUTOFORGE_MAX_JAR_BYTES: ${AUTOFORGE_MAX_JAR_BYTES:-33554432}
+      AUTOFORGE_RUNNER_BOOTSTRAP_TOKEN: ${AUTOFORGE_RUNNER_BOOTSTRAP_TOKEN:?set a runner bootstrap token of at least 32 characters}
+      AUTOFORGE_RUNNER_CLAIM_RATE_LIMIT_PER_MINUTE: ${AUTOFORGE_RUNNER_CLAIM_RATE_LIMIT_PER_MINUTE:-120}
+      AUTOFORGE_ADMIN_BOOTSTRAP_TOKEN: ${AUTOFORGE_ADMIN_BOOTSTRAP_TOKEN:?set an admin bootstrap token of at least 32 characters}
+      AUTOFORGE_MASTER_KEY: ${AUTOFORGE_MASTER_KEY:?set a Base64-encoded 32-byte master key}
+      AUTOFORGE_SESSION_TTL_HOURS: ${AUTOFORGE_SESSION_TTL_HOURS:-12}
+      AUTOFORGE_TERMINAL_ACCESS_TOKEN: ${AUTOFORGE_TERMINAL_ACCESS_TOKEN:?set a terminal access token of at least 32 characters}
+      AUTOFORGE_SCHEDULER_MAX_CPU_PERCENT: ${AUTOFORGE_SCHEDULER_MAX_CPU_PERCENT:-85}
+      AUTOFORGE_SCHEDULER_MAX_MEMORY_PERCENT: ${AUTOFORGE_SCHEDULER_MAX_MEMORY_PERCENT:-85}
+      AUTOFORGE_SCHEDULER_MAX_LOAD_PER_CPU: ${AUTOFORGE_SCHEDULER_MAX_LOAD_PER_CPU:-1}
+      AUTOFORGE_SCHEDULER_METRICS_MAX_AGE_SECONDS: ${AUTOFORGE_SCHEDULER_METRICS_MAX_AGE_SECONDS:-45}
+    ports:
+      - "${AUTOFORGE_HTTP_BIND:-0.0.0.0}:${AUTOFORGE_HTTP_PORT:-3000}:3000"
+    volumes:
+      - autoforge-data:/var/lib/autoforge
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m,mode=1777
+    networks:
+      - edge
+      - core
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    stop_grace_period: 30s
+
+  postgres:
+    image: postgres:15-alpine@sha256:df7bca0066e6f60cc3dd32faa70caddec20e2c22b58932f79498e5704b23854a
+    pull_policy: never
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: autoforge
+      POSTGRES_USER: autoforge
+      POSTGRES_PASSWORD: ${AUTOFORGE_POSTGRES_PASSWORD:?set a URL-safe PostgreSQL password}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U autoforge -d autoforge"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+    networks:
+      - core
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 30s
+
+  nats:
+    image: nats:2.14.3-alpine3.22@sha256:c11af972c99ae542de8925e6a7d9c533aa1eb039660420d2074beed6089b3bf0
+    pull_policy: never
+    restart: unless-stopped
+    command:
+      - --jetstream
+      - --store_dir=/data
+      - --http_port=8222
+    volumes:
+      - nats-data:/data
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--spider", "http://127.0.0.1:8222/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+    networks:
+      - core
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    stop_grace_period: 30s
+
+  redis:
+    image: redis:7-alpine@sha256:6ab0b6e7381779332f97b8ca76193e45b0756f38d4c0dcda72dbb3c32061ab99
+    pull_policy: never
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--save", "60", "1"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+    networks:
+      - core
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    stop_grace_period: 30s
+
+  minio:
+    image: quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z@sha256:a1ea29fa28355559ef137d71fc570e508a214ec84ff8083e39bc5428980b015e
+    pull_policy: never
+    restart: unless-stopped
+    command: ["server", "/data", "--address", ":9000", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: ${AUTOFORGE_MINIO_ACCESS_KEY:?set the MinIO access key}
+      MINIO_ROOT_PASSWORD: ${AUTOFORGE_MINIO_SECRET_KEY:?set the MinIO secret key}
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:9000/minio/health/live"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+    networks:
+      - core
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    stop_grace_period: 30s
+
+  minio-init:
+    image: quay.io/minio/mc:RELEASE.2025-04-16T18-13-26Z@sha256:aead63c77f9db9107f1696fb08ecb0faeda23729cde94b0f663edf4fe09728e3
+    pull_policy: never
+    depends_on:
+      minio:
+        condition: service_healthy
+    restart: "no"
+    entrypoint: ["/bin/sh", "-eu", "-c"]
+    command:
+      - >-
+        mc alias set autoforge http://minio:9000 "$${MINIO_ROOT_USER}" "$${MINIO_ROOT_PASSWORD}";
+        mc mb --ignore-existing --region "$${MINIO_REGION}" "autoforge/$${MINIO_BUCKET}"
+    environment:
+      MINIO_ROOT_USER: ${AUTOFORGE_MINIO_ACCESS_KEY:?set the MinIO access key}
+      MINIO_ROOT_PASSWORD: ${AUTOFORGE_MINIO_SECRET_KEY:?set the MinIO secret key}
+      MINIO_BUCKET: ${AUTOFORGE_MINIO_BUCKET:-autoforge-objects}
+      MINIO_REGION: ${AUTOFORGE_MINIO_REGION:-us-east-1}
+    networks:
+      - core
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+volumes:
+  autoforge-data:
+    name: ${AUTOFORGE_DATA_VOLUME:-autoforge-full-data}
+  postgres-data:
+    name: ${AUTOFORGE_POSTGRES_VOLUME:-autoforge-postgres-data}
+  nats-data:
+    name: ${AUTOFORGE_NATS_VOLUME:-autoforge-nats-data}
+  redis-data:
+    name: ${AUTOFORGE_REDIS_VOLUME:-autoforge-redis-data}
+  minio-data:
+    name: ${AUTOFORGE_MINIO_VOLUME:-autoforge-minio-data}
+
+networks:
+  edge:
+    name: ${AUTOFORGE_EDGE_NETWORK:-autoforge-edge}
+  core:
+    name: ${AUTOFORGE_CORE_NETWORK:-autoforge-core}
+    internal: true

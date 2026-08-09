@@ -1,8 +1,18 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { zipSync } from "fflate";
+import { mkdir } from "node:fs/promises";
+import { resolve } from "node:path";
 import WebSocket from "ws";
 
 import { buildClassFile } from "../../packages/testng-discovery/test/class-fixture";
+
+async function captureUi(page: Page, name: string): Promise<void> {
+  const screenshotDirectory = process.env.AUTOFORGE_UI_SCREENSHOT_DIR;
+  if (!screenshotDirectory) return;
+  const absoluteDirectory = resolve(screenshotDirectory);
+  await mkdir(absoluteDirectory, { recursive: true });
+  await page.screenshot({ path: resolve(absoluteDirectory, `${name}.png`), fullPage: true });
+}
 
 test("imports TestNG methods from a JAR into the case library", async ({ page }) => {
   test.setTimeout(300_000);
@@ -46,6 +56,7 @@ test("imports TestNG methods from a JAR into the case library", async ({ page })
 
   await page.getByRole("link", { name: "查看用例库" }).click();
   await expect(page.getByText("com.example.CheckoutTest")).toBeVisible();
+  await captureUi(page, "case-library");
 
   await page.goto("/case-suites");
   await page.getByLabel("任务名称").fill("每日冒烟测试");
@@ -128,6 +139,7 @@ test("imports TestNG methods from a JAR into the case library", async ({ page })
   await page.getByRole("button", { name: "开始调度" }).click();
   await expect(page.getByText("已生成分配", { exact: true })).toBeVisible();
   await expect(page.getByText("已分配 1", { exact: true })).toBeVisible();
+  await captureUi(page, "run-batch-planner");
 
   const agentSocket = new WebSocket(
     "ws://127.0.0.1:3100/api/v1/terminal-stream",
@@ -170,6 +182,11 @@ test("imports TestNG methods from a JAR into the case library", async ({ page })
   );
   await expect(page.locator(".terminal-viewport")).toContainText("direct-terminal-ready");
   await expect(page.getByText("已连接", { exact: true })).toBeVisible();
+  await captureUi(page, "runner-terminal");
   await page.getByRole("button", { name: "关闭终端" }).click();
   agentSocket.close();
+
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: "自动化用例工作台" })).toBeVisible();
+  await captureUi(page, "dashboard");
 });

@@ -19,6 +19,7 @@ test("creates a deterministic manifest and checksum list", async () => {
       await writeFile(resolve(directory, `${backendName}.docker.tar.zst`), `image-${variant}`);
       await writeFile(resolve(directory, `${backendName}.spdx.json`), "{}");
     }
+    await writeFile(resolve(directory, "autoforge-deploy-1.2.3.tar.gz"), "compose");
     await createReleaseMetadata("1.2.3", directory);
 
     const manifest = JSON.parse(
@@ -26,10 +27,11 @@ test("creates a deterministic manifest and checksum list", async () => {
     );
     assert.equal(manifest.schemaVersion, 1);
     assert.equal(manifest.version, "1.2.3");
-    assert.equal(manifest.artifacts.length, 16);
+    assert.equal(manifest.artifacts.length, 17);
 
     const checksums = await readFile(resolve(directory, "SHA256SUMS"), "utf8");
     assert.match(checksums, /autoforge-agent-1\.2\.3-amd64/);
+    assert.match(checksums, /autoforge-deploy-1\.2\.3\.tar\.gz/);
     assert.match(checksums, /release-manifest\.json/);
   } finally {
     if (originalEpoch === undefined) {

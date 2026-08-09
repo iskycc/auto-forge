@@ -35,7 +35,7 @@ async function artifact(directory, name) {
 }
 
 function expectedArtifactNames(version) {
-  return releaseVariants.flatMap((variant) => {
+  const platformArtifacts = releaseVariants.flatMap((variant) => {
     const agentName = `autoforge-agent-${version}-${variant}`;
     const backendName = `autoforge-backend-${version}-${variant}`;
     return [
@@ -45,6 +45,7 @@ function expectedArtifactNames(version) {
       `${backendName}.spdx.json`,
     ];
   });
+  return [...platformArtifacts, `autoforge-deploy-${version}.tar.gz`];
 }
 
 function verifyArtifactSet(version, names) {

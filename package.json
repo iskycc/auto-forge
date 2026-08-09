@@ -1,6 +1,6 @@
 {
   "name": "autoforge",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@11.20.0",
@@ -15,12 +15,14 @@
     "format:check": "prettier --check \"**/*.{ts,tsx,js,mjs,json,css,yaml,yml}\" && bash scripts/quality/check-go-format.sh",
     "lint": "eslint . --max-warnings=0 && go -C apps/runner-agent vet ./...",
     "typecheck": "pnpm -r --if-present typecheck && tsc --noEmit -p tsconfig.tests.json",
-    "test": "vitest run --exclude \"**/*.integration.test.ts\" && go -C apps/runner-agent test ./... && node --test scripts/release/create-manifest.test.mjs",
+    "test": "vitest run --exclude \"**/*.integration.test.ts\" && go -C apps/runner-agent test ./... && node --test scripts/release/*.test.mjs",
     "test:integration": "vitest run integration.test",
     "test:full": "bash scripts/quality/test-full.sh",
+    "test:deployment": "bash scripts/quality/test-deployment.sh",
     "test:e2e": "playwright test",
     "release:agent": "bash scripts/release/build-agent.sh",
-    "release:backend": "bash scripts/release/build-backend-image.sh"
+    "release:backend": "bash scripts/release/build-backend-image.sh",
+    "release:deploy": "bash scripts/release/build-deployment-bundle.sh"
   },
   "devDependencies": {
     "@playwright/test": "1.62.1",
