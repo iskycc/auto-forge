@@ -38,7 +38,7 @@ ARG REVISION=unknown
 ARG CREATED=1970-01-01T00:00:00Z
 
 LABEL org.opencontainers.image.title="AutoForge Backend" \
-      org.opencontainers.image.description="Offline-first AutoForge Lite control plane" \
+      org.opencontainers.image.description="Offline-first AutoForge Lite and Full control plane" \
       org.opencontainers.image.version="${VERSION}" \
       org.opencontainers.image.revision="${REVISION}" \
       org.opencontainers.image.created="${CREATED}" \
@@ -55,8 +55,12 @@ WORKDIR /app
 
 COPY --from=builder --chown=node:node /workspace/apps/web/.next/standalone ./
 COPY --from=builder --chown=node:node /workspace/apps/web/.next/static ./apps/web/.next/static
+COPY --from=builder --chown=node:node /workspace/apps/web/dist-server ./apps/web/dist-server
+COPY --from=builder --chown=node:node /workspace/node_modules/.pnpm/ws@8.21.3/node_modules/ws ./apps/web/node_modules/ws
 COPY --from=builder --chown=node:node /workspace/pnpm-workspace.yaml ./pnpm-workspace.yaml
 
+RUN ln -s ../../../node_modules/.pnpm/better-sqlite3@13.0.3/node_modules/better-sqlite3 \
+      ./apps/web/node_modules/better-sqlite3
 RUN mkdir -p /var/lib/autoforge && chown node:node /var/lib/autoforge
 
 USER node
@@ -67,4 +71,4 @@ VOLUME ["/var/lib/autoforge"]
 HEALTHCHECK --interval=10s --timeout=3s --start-period=10s --retries=6 \
   CMD ["node", "-e", "fetch('http://127.0.0.1:3000/api/v1/health/ready').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
 
-CMD ["node", "apps/web/server.js"]
+CMD ["node", "apps/web/dist-server/server/index.js"]

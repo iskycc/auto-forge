@@ -7,7 +7,7 @@ const nextConfig: NextConfig = {
   output: "standalone",
   outputFileTracingRoot: workspaceRoot,
   outputFileTracingIncludes: {
-    "/*": ["../../packages/db/drizzle/sqlite/*.sql"],
+    "/*": ["../../packages/db/drizzle/sqlite/*.sql", "../../packages/db/drizzle/postgresql/*.sql"],
   },
   reactStrictMode: true,
   serverExternalPackages: ["better-sqlite3"],

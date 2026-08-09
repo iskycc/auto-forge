@@ -8,10 +8,13 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"path/filepath"
+	"syscall"
 
 	"github.com/iskycc/auto-forge/apps/runner-agent/internal/buildinfo"
 	"github.com/iskycc/auto-forge/apps/runner-agent/internal/config"
+	"github.com/iskycc/auto-forge/apps/runner-agent/internal/control"
 	"github.com/iskycc/auto-forge/apps/runner-agent/internal/executor"
 )
 
@@ -35,6 +38,8 @@ func Run(arguments []string, stdout, stderr io.Writer, info buildinfo.Info) int 
 		err = runDoctor(stdout)
 	case "run-once":
 		err = runOnce(arguments[1:], stdout, stderr)
+	case "start":
+		err = runAgent(stdout, info)
 	case "help", "-h", "--help":
 		printUsage(stdout)
 		return exitSuccess
@@ -48,6 +53,16 @@ func Run(arguments []string, stdout, stderr io.Writer, info buildinfo.Info) int 
 		return exitFailure
 	}
 	return exitSuccess
+}
+
+func runAgent(diagnostics io.Writer, info buildinfo.Info) error {
+	configuration, err := config.Load(os.LookupEnv)
+	if err != nil {
+		return fmt.Errorf("load configuration: %w", err)
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	return control.Run(ctx, configuration, info, diagnostics)
 }
 
 func runDoctor(stdout io.Writer) error {
@@ -123,8 +138,9 @@ func printUsage(writer io.Writer) {
 	fmt.Fprintln(writer, "  version    Print build and target information as JSON")
 	fmt.Fprintln(writer, "  doctor     Validate local configuration and writable directories")
 	fmt.Fprintln(writer, "  run-once   Execute one local versioned spec without a shell")
+	fmt.Fprintln(writer, "  start      Register with the control plane and send heartbeats")
 	fmt.Fprintln(writer, "")
-	fmt.Fprintln(writer, "The control-plane claim/lease protocol is not implemented in this milestone.")
+	fmt.Fprintln(writer, "Task claim and lease execution are not implemented in this milestone.")
 }
 
 type stringListFlag []string

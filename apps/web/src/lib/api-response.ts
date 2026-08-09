@@ -30,9 +30,10 @@ export async function readJarUpload(request: Request, maxJarBytes: number): Prom
 
 export function apiErrorResponse(error: unknown, requestId = randomUUID()): NextResponse {
   if (error instanceof DomainError || error instanceof JarInspectionError) {
+    const status = domainErrorStatus(error.code);
     return NextResponse.json(
       { error: { code: error.code, message: error.message, requestId } },
-      { status: 400 },
+      { status },
     );
   }
   if (error instanceof ZodError) {
@@ -48,6 +49,7 @@ export function apiErrorResponse(error: unknown, requestId = randomUUID()): Next
       { status: 400 },
     );
   }
+  logInternalError(error, requestId);
   return NextResponse.json(
     {
       error: {
@@ -58,4 +60,78 @@ export function apiErrorResponse(error: unknown, requestId = randomUUID()): Next
     },
     { status: 500 },
   );
+}
+
+function logInternalError(error: unknown, requestId: string): void {
+  const diagnostic = error instanceof Error ? error.message : "Unknown server error";
+  process.stderr.write(
+    `${JSON.stringify({
+      timestamp: new Date().toISOString(),
+      level: "error",
+      message: "API request failed",
+      requestId,
+      error: redactSecrets(diagnostic),
+    })}\n`,
+  );
+}
+
+function redactSecrets(value: string): string {
+  return value
+    .replace(/([a-z][a-z0-9+.-]*:\/\/)[^@\s/]+@/gi, "$1***@")
+    .replace(/((?:password|token|secret|authorization)=)[^\s&]+/gi, "$1***");
+}
+
+function domainErrorStatus(code: string): number {
+  if (code === "REQUEST_BODY_TOO_LARGE") return 413;
+  if (code === "RATE_LIMITED") return 429;
+  if (code.endsWith("_NOT_FOUND")) return 404;
+  if (code === "RUNNER_AUTH_REQUIRED" || code === "RUNNER_AUTH_REJECTED") return 401;
+  if (code === "RUNNER_BOOTSTRAP_REJECTED") return 403;
+  if (code === "RUNNER_DISABLED") return 403;
+  if (code === "TERMINAL_AUTH_REJECTED") return 401;
+  if (code === "TERMINAL_DISABLED" || code === "RUNNER_TERMINAL_DISABLED") return 403;
+  return 400;
+}
+
+export function rejectRateLimited(allowed: boolean): void {
+  if (!allowed) throw new DomainError("RATE_LIMITED", "请求过于频繁，请稍后重试。");
+}
+
+export async function readJsonBody(request: Request, maximumBytes: number): Promise<unknown> {
+  const contentLength = Number(request.headers.get("content-length"));
+  if (Number.isFinite(contentLength) && contentLength > maximumBytes) {
+    throw new DomainError("REQUEST_BODY_TOO_LARGE", "请求体超过允许的大小。");
+  }
+  if (!request.body) throw new DomainError("INVALID_JSON", "请求体必须是 JSON。");
+
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let totalBytes = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    totalBytes += value.byteLength;
+    if (totalBytes > maximumBytes) {
+      await reader.cancel();
+      throw new DomainError("REQUEST_BODY_TOO_LARGE", "请求体超过允许的大小。");
+    }
+    chunks.push(value);
+  }
+
+  const body = new Uint8Array(totalBytes);
+  let offset = 0;
+  for (const chunk of chunks) {
+    body.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  try {
+    return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(body));
+  } catch (error) {
+    throw new DomainError("INVALID_JSON", "请求体必须是有效的 UTF-8 JSON。", { cause: error });
+  }
+}
+
+export function bearerToken(request: Request): string {
+  const authorization = request.headers.get("authorization") ?? "";
+  return authorization.startsWith("Bearer ") ? authorization.slice(7).trim() : "";
 }

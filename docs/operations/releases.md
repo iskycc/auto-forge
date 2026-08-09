@@ -1,6 +1,6 @@
 # Release 与离线交付
 
-AutoForge 使用 `.github/workflows/release.yml` 从不可变 Git tag 构建 GitHub Release。当前 Release 交付 Lite 后端镜像和 Go Runner Agent；Full 服务镜像要等 Full 适配器实际可用后再加入，不能以占位镜像冒充。
+AutoForge 使用 `.github/workflows/release.yml` 从不可变 Git tag 构建 GitHub Release。当前 Release 交付同时支持 Lite/Full 组合根的后端镜像和 Go Runner Agent。PostgreSQL、NATS、MinIO 与 Redis 属于外部基础设施，不混入 AutoForge 自身镜像；离线部署必须另行镜像、锁定版本并遵守各项目许可。直连终端所需的前端、WebSocket 和 PTY 依赖已经进入 AutoForge 自身 lockfile、二进制与镜像，不需要额外服务。
 
 ## 发布条件
 
@@ -11,7 +11,7 @@ git tag -s v0.2.0 -m "AutoForge v0.2.0"
 git push origin v0.2.0
 ```
 
-流水线先执行格式、lint、类型、单元、集成、浏览器流程和生产构建，然后并行构建四个平台。任一质量检查或目标失败，`publish` job 都不会运行。Release 先作为 draft 创建，全部资产上传后才转为正式版本。
+流水线先执行格式、lint、类型、单元、Lite/Full 集成、浏览器流程和生产构建，然后并行构建四个平台。Full 集成使用校验和或镜像摘要锁定的 PostgreSQL、NATS JetStream、MinIO 与 Redis，并验证 Full readiness 和一次性 Runner 注册。任一质量检查或目标失败，`publish` job 都不会运行。Release 先作为 draft 创建，全部资产上传后才转为正式版本。
 
 `amd64` 目标运行在 `ubuntu-24.04`，`arm64` 目标运行在 GitHub-hosted 原生 `ubuntu-24.04-arm`。后端和 Agent 都不使用 QEMU 做跨架构模拟；本地没有对应原生硬件时可以只验证当前架构，正式四平台结果以 Release matrix 为准。
 
@@ -58,13 +58,20 @@ chmod 0755 autoforge-agent-0.2.0-amd64
 ./autoforge-agent-0.2.0-amd64 version
 ```
 
-`doctor` 会检查控制面 URL、私有 CA 和本地目录，但当前控制面协议尚未实现，因此不能注册或领取任务：
+`doctor` 会检查控制面 URL、私有 CA 和本地目录。新 Agent 使用 bootstrap token 执行一次注册，身份保存后再次启动无需继续提供 bootstrap token：
 
 ```bash
 AUTOFORGE_SERVER_URL=https://autoforge.internal \
 AUTOFORGE_AGENT_DATA_DIR=/var/lib/autoforge-agent \
 ./autoforge-agent-0.2.0-amd64 doctor
+
+AUTOFORGE_SERVER_URL=https://autoforge.internal \
+AUTOFORGE_AGENT_DATA_DIR=/var/lib/autoforge-agent \
+AUTOFORGE_AGENT_BOOTSTRAP_TOKEN='replace-with-bootstrap-secret' \
+./autoforge-agent-0.2.0-amd64 start
 ```
+
+当前 `start` 已实现注册、心跳和显式启用的直连终端；assignment 领取、lease、日志与产物上报仍未实现。
 
 ## 本地构建与验证
 

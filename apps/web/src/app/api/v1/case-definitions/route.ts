@@ -19,7 +19,9 @@ export async function GET(request: Request): Promise<NextResponse> {
       cursor: url.searchParams.get("cursor") ?? undefined,
       limit: url.searchParams.get("limit") ?? undefined,
     });
-    const page = await getPlatformServices().catalog.listCases({
+    const page = await (
+      await getPlatformServices()
+    ).catalog.listCases({
       limit: input.limit,
       ...(input.query === undefined ? {} : { query: input.query }),
       ...(input.cursor === undefined ? {} : { cursor: input.cursor }),

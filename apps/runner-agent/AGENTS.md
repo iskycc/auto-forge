@@ -6,5 +6,5 @@
 - 发布目标仅为 Linux `amd64` 与 `arm64`；标准版和 musl 版均使用 `CGO_ENABLED=0` 构建静态二进制。
 - 命令执行必须使用 `exec.Command` 的 executable/args 形式，禁止调用 Shell 或接受拼接命令。
 - 工作目录、日志、超时、环境变量和进程树都必须有上限、校验和测试。
-- 当前控制面尚未实现 Runner Protocol；不得把本地 `run-once` 执行核心描述为已连接平台的完整 Agent。
+- 当前控制面实现 Runner Protocol v1 的注册、心跳和可选直连终端；不得把 `run-once` 或交互终端描述为已经具备 assignment、lease、日志和产物闭环的完整 Agent。
 - Go 文件必须通过 `gofmt`、`go vet`、`go test`；跨架构发布脚本还必须验证目标二进制格式。

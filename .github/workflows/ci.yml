@@ -43,6 +43,7 @@ jobs:
           pnpm typecheck
           pnpm test
           pnpm test:integration
+          pnpm test:full
 
       - name: Locate preinstalled Chromium
         run: |

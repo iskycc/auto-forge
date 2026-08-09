@@ -17,6 +17,7 @@
     "typecheck": "pnpm -r --if-present typecheck && tsc --noEmit -p tsconfig.tests.json",
     "test": "vitest run --exclude \"**/*.integration.test.ts\" && go -C apps/runner-agent test ./... && node --test scripts/release/create-manifest.test.mjs",
     "test:integration": "vitest run integration.test",
+    "test:full": "bash scripts/quality/test-full.sh",
     "test:e2e": "playwright test",
     "release:agent": "bash scripts/release/build-agent.sh",
     "release:backend": "bash scripts/release/build-backend-image.sh"
@@ -26,11 +27,13 @@
     "@types/node": "24.13.3",
     "@types/react": "19.2.18",
     "@types/react-dom": "19.2.4",
+    "@types/ws": "8.18.1",
     "eslint": "9.39.5",
     "eslint-config-next": "16.3.0",
     "fflate": "0.8.3",
     "prettier": "3.9.6",
     "typescript": "5.9.3",
-    "vitest": "4.1.10"
+    "vitest": "4.1.10",
+    "ws": "8.21.3"
   }
 }

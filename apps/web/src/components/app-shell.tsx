@@ -10,6 +10,8 @@ import {
   PlayCircle,
   Search,
   Server,
+  FolderOpen,
+  Layers3,
   Settings,
   Sparkles,
 } from "lucide-react";
@@ -26,8 +28,10 @@ type NavigationItem = {
 const navigation: NavigationItem[] = [
   { label: "首页", href: "/", icon: Home },
   { label: "用例库", href: "/cases", icon: BookOpenText },
+  { label: "用例任务", href: "/case-suites", icon: Layers3 },
+  { label: "文件来源", href: "/objects", icon: FolderOpen },
   { label: "执行记录", icon: PlayCircle },
-  { label: "执行机", icon: Server },
+  { label: "执行机", href: "/runners", icon: Server },
   { label: "洞察", icon: BarChart3 },
 ];
 
@@ -36,7 +40,7 @@ function isActive(pathname: string, href: string): boolean {
   return pathname === href || pathname.startsWith(`${href}/`);
 }
 
-export function AppShell({ children }: { children: ReactNode }) {
+export function AppShell({ children, mode }: { children: ReactNode; mode: "lite" | "full" }) {
   const pathname = usePathname();
 
   return (
@@ -78,8 +82,8 @@ export function AppShell({ children }: { children: ReactNode }) {
           <div className="mode-card">
             <span className="mode-indicator" aria-hidden="true" />
             <span>
-              <strong>Lite 模式</strong>
-              <small>SQLite · 本地存储</small>
+              <strong>{mode === "lite" ? "Lite 模式" : "Full 模式"}</strong>
+              <small>{mode === "lite" ? "SQLite · 本地存储" : "PostgreSQL · MinIO"}</small>
             </span>
           </div>
           <span className="nav-item nav-item-disabled" aria-disabled="true">

@@ -6,8 +6,11 @@ export const runtime = "nodejs";
 
 export async function GET(): Promise<NextResponse> {
   try {
-    await getPlatformServices().catalog.getDashboardSummary();
-    return NextResponse.json({ status: "ready", mode: "lite" });
+    const services = await getPlatformServices();
+    await services.catalog.getDashboardSummary();
+    await services.objectStore.ready();
+    await services.fullInfrastructure?.ready();
+    return NextResponse.json({ status: "ready", mode: services.config.mode });
   } catch (error) {
     return apiErrorResponse(error);
   }

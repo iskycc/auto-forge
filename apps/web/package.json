@@ -4,10 +4,10 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "next dev",
-    "build": "next build",
-    "start": "next start",
-    "typecheck": "next typegen && tsc --noEmit"
+    "dev": "node server/index.ts",
+    "build": "next build && tsc -p tsconfig.server.json",
+    "start": "node dist-server/server/index.js",
+    "typecheck": "next typegen && tsc --noEmit && tsc --noEmit -p tsconfig.server.json"
   },
   "dependencies": {
     "@autoforge/application": "workspace:*",
@@ -16,17 +16,27 @@
     "@autoforge/domain": "workspace:*",
     "@autoforge/object-store": "workspace:*",
     "@autoforge/testng-discovery": "workspace:*",
+    "@xterm/addon-fit": "0.11.0",
+    "@xterm/xterm": "6.0.0",
+    "@xterm/addon-fit": "0.11.0",
+    "@xterm/xterm": "6.0.0",
     "lucide-react": "1.30.0",
+    "nats": "2.29.3",
     "next": "16.3.0",
     "react": "19.2.8",
     "react-dom": "19.2.8",
+    "redis": "6.2.0",
     "server-only": "0.0.1",
+    "ws": "8.21.3",
+    "ws": "8.21.3",
     "zod": "4.4.3"
   },
   "devDependencies": {
     "@types/node": "24.13.3",
     "@types/react": "19.2.18",
     "@types/react-dom": "19.2.4",
+    "@types/ws": "8.18.1",
+    "@types/ws": "8.18.1",
     "typescript": "5.9.3"
   }
 }

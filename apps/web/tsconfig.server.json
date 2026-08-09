@@ -1,0 +1,15 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM"],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "rootDir": ".",
+    "outDir": "dist-server",
+    "types": ["node"],
+    "rewriteRelativeImportExtensions": true,
+    "noEmit": false
+  },
+  "include": ["server/**/*.ts", "src/lib/terminal-ticket.ts"]
+}

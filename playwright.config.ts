@@ -1,4 +1,9 @@
 import { defineConfig, devices } from "@playwright/test";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+const e2eDataDirectory = mkdtempSync(join(tmpdir(), "autoforge-e2e-"));
 
 export default defineConfig({
   testDir: "./tests/e2e",
@@ -21,14 +26,18 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: "pnpm --filter @autoforge/web exec next dev --hostname 127.0.0.1 --port 3100",
+    command: "pnpm --filter @autoforge/web dev",
     url: "http://127.0.0.1:3100",
     reuseExistingServer: true,
     timeout: 120_000,
     env: {
       ...process.env,
       AUTOFORGE_MODE: "lite",
-      AUTOFORGE_DATA_DIR: "./data/e2e",
+      AUTOFORGE_DATA_DIR: e2eDataDirectory,
+      AUTOFORGE_RUNNER_BOOTSTRAP_TOKEN: "e2e-runner-bootstrap-token-000000000000",
+      AUTOFORGE_TERMINAL_ACCESS_TOKEN: "e2e-terminal-access-token-000000000000",
+      HOSTNAME: "127.0.0.1",
+      PORT: "3100",
     },
   },
 });

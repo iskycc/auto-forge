@@ -6,7 +6,7 @@ export const runtime = "nodejs";
 
 export async function POST(request: Request): Promise<NextResponse> {
   try {
-    const services = getPlatformServices();
+    const services = await getPlatformServices();
     const upload = await readJarUpload(request, services.config.maxJarBytes);
     const result = await services.importTestNgJar.execute(upload);
     return NextResponse.json(result, { status: result.duplicate ? 200 : 201 });

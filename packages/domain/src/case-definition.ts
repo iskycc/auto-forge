@@ -41,5 +41,6 @@ export type CaseSource = {
   methodCount: number;
   status: "ready" | "failed";
   warningCount: number;
+  authoritative: boolean;
   createdAt: string;
 };

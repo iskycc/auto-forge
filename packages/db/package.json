@@ -4,7 +4,9 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./sqlite": "./src/sqlite.ts",
+    "./postgres": "./src/postgres.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"
@@ -14,10 +16,12 @@
     "@autoforge/contracts": "workspace:*",
     "@autoforge/domain": "workspace:*",
     "better-sqlite3": "13.0.3",
-    "drizzle-orm": "0.45.2"
+    "drizzle-orm": "0.45.2",
+    "pg": "8.23.0"
   },
   "devDependencies": {
     "@types/better-sqlite3": "9.6.0",
+    "@types/pg": "8.18.0",
     "typescript": "5.9.3"
   }
 }

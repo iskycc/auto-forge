@@ -111,8 +111,12 @@ function objectStoreFake(): JarObjectStorePort & {
   delete: ReturnType<typeof vi.fn>;
 } {
   return {
+    storageKind: "local",
     putJar: vi.fn().mockResolvedValue({ objectKey: "jars/aa/source.jar", created: true }),
     delete: vi.fn().mockResolvedValue(undefined),
+    list: vi.fn(),
+    read: vi.fn(),
+    ready: vi.fn(),
   };
 }
 
@@ -127,7 +131,11 @@ function catalogFake(
       if (importError) throw importError;
     }),
     listCases: vi.fn(),
+    findExistingCaseIds: vi.fn(),
     listRecentSources: vi.fn(),
+    listSources: vi.fn(),
+    getSource: vi.fn(),
+    setAuthoritativeSource: vi.fn(),
     getDashboardSummary: vi.fn(),
   };
 }

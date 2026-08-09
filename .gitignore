@@ -4,6 +4,7 @@ node_modules/
 .next/
 out/
 dist/
+apps/web/dist-server/
 .turbo/
 *.tsbuildinfo
 

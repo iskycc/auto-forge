@@ -37,5 +37,15 @@ describe("LocalObjectStore", () => {
     await expect(
       readFile(resolve(directory, "objects", results[0]?.objectKey ?? "missing")),
     ).resolves.toEqual(Buffer.from(content));
+
+    const page = await store.list({ limit: 20, prefix: "jars/" });
+    expect(page.items).toHaveLength(1);
+    expect(page.items[0]).toMatchObject({
+      objectKey: `jars/${sha256.slice(0, 2)}/${sha256}.jar`,
+      sizeBytes: content.byteLength,
+    });
+    await expect(store.read(page.items[0]?.objectKey ?? "missing")).resolves.toEqual(
+      Buffer.from(content),
+    );
   });
 });

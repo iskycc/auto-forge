@@ -1,0 +1,105 @@
+import { AlertCircle, Archive, ArrowLeft, CheckCircle2 } from "lucide-react";
+import Link from "next/link";
+
+import { SourceActions } from "@/components/source-actions";
+import { getPlatformServices } from "@/lib/services";
+
+export const dynamic = "force-dynamic";
+
+type Props = { params: Promise<{ sourceId: string }> };
+
+export default async function CaseSourcePage({ params }: Props) {
+  const { sourceId } = await params;
+  const { source, inspection } = await (await getPlatformServices()).caseSources.get(sourceId);
+  return (
+    <div className="page-stack narrow-page">
+      <section className="page-hero">
+        <div>
+          <Link className="back-link" href="/objects">
+            <ArrowLeft size={15} /> 文件与来源
+          </Link>
+          <h1>{source.originalFileName}</h1>
+          <p>
+            {inspection.testClassCount} 个测试类、{inspection.testMethodCount}{" "}
+            个测试方法，扫描快照可随时在线查看。
+          </p>
+        </div>
+        <SourceActions sourceId={source.id} authoritative={source.authoritative} />
+      </section>
+      <section className="card source-summary-card">
+        <div className="source-meta-grid">
+          <div>
+            <span>对象键</span>
+            <code>{source.objectKey}</code>
+          </div>
+          <div>
+            <span>SHA-256</span>
+            <code>{source.sha256}</code>
+          </div>
+          <div>
+            <span>文件大小</span>
+            <strong>{source.sizeBytes.toLocaleString()} B</strong>
+          </div>
+          <div>
+            <span>扫描模式</span>
+            <strong>{inspection.discoveryMode}</strong>
+          </div>
+        </div>
+      </section>
+      {inspection.warnings.length > 0 && (
+        <div className="warning-list">
+          {inspection.warnings.map((warning, index) => (
+            <div key={`${warning.code}-${index}`}>
+              <AlertCircle size={15} />
+              <span>
+                {warning.message}
+                {warning.entry ? `（${warning.entry}）` : ""}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+      <section className="card inspection-card">
+        <div className="card-heading">
+          <div>
+            <span className="eyebrow">持久化预览</span>
+            <h2>测试类与方法</h2>
+          </div>
+          <Archive size={22} />
+        </div>
+        <div className="class-preview-list">
+          {inspection.classes.map((candidate) => (
+            <details
+              className="class-preview"
+              key={candidate.className}
+              open={inspection.classes.length <= 5}
+            >
+              <summary>
+                <span className="class-icon">
+                  <Archive size={16} />
+                </span>
+                <span className="class-title">
+                  <strong>{candidate.simpleName}</strong>
+                  <small>{candidate.className}</small>
+                </span>
+                <span className="method-count">{candidate.methods.length} 个方法</span>
+              </summary>
+              <div className="method-list">
+                {candidate.methods.map((method) => (
+                  <div className="method-row" key={`${method.methodName}${method.descriptor}`}>
+                    <CheckCircle2 size={14} className={method.enabled ? "text-success" : "muted"} />
+                    <code>{method.methodName}</code>
+                    <span className="method-descriptor">{method.descriptor}</span>
+                    <span className="method-origin">
+                      {method.annotationSource === "class" ? "类级 @Test" : "方法级 @Test"}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </details>
+          ))}
+        </div>
+      </section>
+    </div>
+  );
+}

@@ -6,6 +6,12 @@ import type {
   ExistingSource,
   ImportCatalogRecord,
 } from "@autoforge/application";
+import {
+  jarInspectionSchema,
+  jarInspectionWarningSchema,
+  testNgClassCandidateSchema,
+  type JarInspection,
+} from "@autoforge/contracts";
 import type { CaseDefinitionWithMethods, CaseSource, TestMethod } from "@autoforge/domain";
 import { and, count, desc, eq, inArray, like, lt, or, type SQL } from "drizzle-orm";
 
@@ -13,15 +19,23 @@ import type { SqliteDatabaseHandle } from "./database";
 import { caseDefinitions, caseSources, caseVersions, testMethods } from "./schema";
 
 function stringArray(json: string): string[] {
-  const parsed: unknown = JSON.parse(json);
+  const parsed = safeJson(json);
   return Array.isArray(parsed)
     ? parsed.filter((item): item is string => typeof item === "string")
     : [];
 }
 
 function jsonArrayLength(json: string): number {
-  const parsed: unknown = JSON.parse(json);
+  const parsed = safeJson(json);
   return Array.isArray(parsed) ? parsed.length : 0;
+}
+
+function safeJson(json: string): unknown {
+  try {
+    return JSON.parse(json) as unknown;
+  } catch {
+    return undefined;
+  }
 }
 
 function toTestMethod(row: typeof testMethods.$inferSelect): TestMethod {
@@ -40,6 +54,23 @@ function toTestMethod(row: typeof testMethods.$inferSelect): TestMethod {
   if (row.dataProvider) method.dataProvider = row.dataProvider;
   if (row.priority !== null) method.priority = row.priority;
   return method;
+}
+
+function toCaseSource(row: typeof caseSources.$inferSelect): CaseSource {
+  return {
+    id: row.id,
+    displayName: row.displayName,
+    originalFileName: row.originalFileName,
+    objectKey: row.objectKey,
+    sha256: row.sha256,
+    sizeBytes: row.sizeBytes,
+    classCount: row.classCount,
+    methodCount: row.methodCount,
+    status: row.status,
+    warningCount: jsonArrayLength(row.warningsJson),
+    authoritative: row.authoritative,
+    createdAt: row.createdAt,
+  };
 }
 
 export class SqliteCaseCatalogRepository implements CaseCatalogRepository {
@@ -73,6 +104,8 @@ export class SqliteCaseCatalogRepository implements CaseCatalogRepository {
           methodCount: record.inspection.testMethodCount,
           status: "ready",
           warningsJson: JSON.stringify(record.inspection.warnings),
+          inspectionJson: JSON.stringify(record.inspection),
+          authoritative: false,
           createdAt: record.importedAt,
         })
         .run();
@@ -199,6 +232,16 @@ export class SqliteCaseCatalogRepository implements CaseCatalogRepository {
     return result;
   }
 
+  async findExistingCaseIds(caseDefinitionIds: string[]): Promise<string[]> {
+    if (caseDefinitionIds.length === 0) return [];
+    return this.handle.db
+      .select({ id: caseDefinitions.id })
+      .from(caseDefinitions)
+      .where(inArray(caseDefinitions.id, caseDefinitionIds))
+      .all()
+      .map((row) => row.id);
+  }
+
   async listRecentSources(limit: number): Promise<CaseSource[]> {
     return this.handle.db
       .select()
@@ -206,19 +249,35 @@ export class SqliteCaseCatalogRepository implements CaseCatalogRepository {
       .orderBy(desc(caseSources.createdAt))
       .limit(limit)
       .all()
-      .map((row) => ({
-        id: row.id,
-        displayName: row.displayName,
-        originalFileName: row.originalFileName,
-        objectKey: row.objectKey,
-        sha256: row.sha256,
-        sizeBytes: row.sizeBytes,
-        classCount: row.classCount,
-        methodCount: row.methodCount,
-        status: row.status,
-        warningCount: jsonArrayLength(row.warningsJson),
-        createdAt: row.createdAt,
-      }));
+      .map(toCaseSource);
+  }
+
+  async listSources(limit: number): Promise<CaseSource[]> {
+    return this.listRecentSources(limit);
+  }
+
+  async getSource(sourceId: string) {
+    const row = this.handle.db.select().from(caseSources).where(eq(caseSources.id, sourceId)).get();
+    if (!row) return null;
+    const inspection = jarInspectionSchema.safeParse(safeJson(row.inspectionJson));
+    return {
+      source: toCaseSource(row),
+      inspection: inspection.success ? inspection.data : this.reconstructLegacyInspection(row),
+    };
+  }
+
+  async setAuthoritativeSource(sourceId: string): Promise<CaseSource> {
+    return this.handle.client.transaction(() => {
+      this.handle.db.update(caseSources).set({ authoritative: false }).run();
+      const updated = this.handle.db
+        .update(caseSources)
+        .set({ authoritative: true })
+        .where(eq(caseSources.id, sourceId))
+        .returning()
+        .get();
+      if (!updated) throw new Error(`Case source ${sourceId} does not exist.`);
+      return toCaseSource(updated);
+    })();
   }
 
   async getDashboardSummary(): Promise<DashboardSummary> {
@@ -235,5 +294,38 @@ export class SqliteCaseCatalogRepository implements CaseCatalogRepository {
         .where(eq(testMethods.enabled, true))
         .get()?.value ?? 0;
     return { sourceCount, caseCount, methodCount, enabledMethodCount };
+  }
+
+  private reconstructLegacyInspection(row: typeof caseSources.$inferSelect): JarInspection {
+    const snapshots = this.handle.db
+      .select({ snapshotJson: caseVersions.snapshotJson })
+      .from(caseVersions)
+      .innerJoin(caseDefinitions, eq(caseVersions.caseDefinitionId, caseDefinitions.id))
+      .where(eq(caseDefinitions.sourceId, row.id))
+      .all();
+    const classes = snapshots.flatMap(({ snapshotJson }) => {
+      const parsed = testNgClassCandidateSchema.safeParse(safeJson(snapshotJson));
+      return parsed.success ? [parsed.data] : [];
+    });
+    const storedWarnings = jarInspectionWarningSchema.array().safeParse(safeJson(row.warningsJson));
+    return {
+      schemaVersion: 1,
+      fileName: row.originalFileName,
+      sha256: row.sha256,
+      sizeBytes: row.sizeBytes,
+      classFileCount: row.classCount,
+      testClassCount: row.classCount,
+      testMethodCount: row.methodCount,
+      hasRootTestNgXml: false,
+      discoveryMode: "bytecode-annotations",
+      classes,
+      warnings: [
+        ...(storedWarnings.success ? storedWarnings.data : []),
+        {
+          code: "LEGACY_INSPECTION_RECONSTRUCTED",
+          message: "该来源由旧版数据库升级，预览由用例版本重建；testng.xml 状态未知。",
+        },
+      ],
+    };
   }
 }

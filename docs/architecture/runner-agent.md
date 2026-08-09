@@ -1,10 +1,10 @@
 # Runner Agent 架构设计
 
-状态：Go 执行核心已实现；Runner Protocol、任务闭环、spool 和产物协议仍待实现。
+状态：Go 执行核心及 Runner Protocol v1 注册、心跳、可选直连终端已实现；任务领取、lease、spool 和产物协议仍待实现。
 
 本文中的 **Runner Agent** 指安装在执行机上的 AutoForge 守护进程，不是参与仓库开发的编码代理。Runner Agent 从控制面领取执行任务，以受控子进程运行命令，采集日志和产物，并上报执行结果。
 
-当前 `apps/runner-agent` 使用 Go 1.26.x，实现了构建信息、集中配置诊断、版本化本地执行规格、可执行文件白名单、独立工作目录、有界 stdout/stderr、超时和 Linux 进程组清理。`run-once` 是执行核心的诊断入口，不会领取平台任务；以下控制面交互仍是目标架构。
+当前 `apps/runner-agent` 使用 Go 1.26.x，实现了构建信息、集中配置诊断、版本化本地执行规格、可执行文件白名单、独立工作目录、有界 stdout/stderr、超时和 Linux 进程组清理。`start` 支持 bootstrap 注册、受限权限身份存储、认证心跳和可选的出站终端 WebSocket；`run-once` 是执行核心的诊断入口，不会领取平台任务。下文除注册、心跳和直连终端外的控制面交互仍是目标架构。
 
 ## 目标
 
@@ -33,6 +33,8 @@ flowchart LR
     APP --> OBJ[ObjectStorePort]
 
     AGENT[Runner Agent] -->|HTTPS: register / claim / renew / report| API
+    AGENT -->|WSS: optional terminal channel| API
+    UI -->|WSS: short-lived terminal session| API
     AGENT --> PROC[Child Process]
     PROC --> LOG[stdout / stderr]
     PROC --> FILES[Artifacts]
@@ -109,14 +111,16 @@ claim -> prepare -> start -> stream logs -> collect artifacts -> report result -
 
 ## Runner Protocol
 
-初始协议基于 HTTPS JSON。任务领取使用有界长轮询；WebSocket 可作为后续降低取消延迟的优化，但不能成为正确性依赖。
+任务协议基于 HTTPS JSON，任务领取使用有界长轮询；WebSocket 不参与任务执行正确性。当前 WebSocket 只承载管理员显式打开的交互终端，断开即终止对应 PTY，会话不能转化为 assignment 或 lease。
 
-计划中的端点：
+协议端点（前两项已实现，其余为计划）：
 
 | 方法与路径 | 用途 |
 | --- | --- |
 | `POST /api/v1/runner-agents/register` | 使用 bootstrap token 注册 |
 | `POST /api/v1/runner-agents/{runnerId}/heartbeat` | 上报在线、容量和能力摘要 |
+| `POST /api/v1/terminal-sessions` | 管理员使用独立访问令牌换取 30 秒一次性终端票据 |
+| `WS /api/v1/terminal-stream` | Agent 出站通道与同源浏览器浮窗的有界终端中继 |
 | `POST /api/v1/runner-agents/{runnerId}/claims` | 长轮询并原子领取 assignment |
 | `POST /api/v1/runner-agents/{runnerId}/leases/{leaseId}/renew` | 续租并获取取消/排空指令 |
 | `POST /api/v1/run-attempts/{attemptId}/logs` | 批量上报日志块 |
@@ -238,6 +242,10 @@ AUTOFORGE_AGENT_DATA_DIR/
 | `AUTOFORGE_AGENT_MAX_CONCURRENCY` | 本机最大并发，必须有安全上限 |
 | `AUTOFORGE_AGENT_BOOTSTRAP_TOKEN` | 仅首次注册使用，成功后移除 |
 | `AUTOFORGE_AGENT_CA_FILE` | 私有 CA 文件，支持离线内网 TLS |
+| `AUTOFORGE_AGENT_TERMINAL_ENABLED` | 显式开启交互终端；默认关闭 |
+| `AUTOFORGE_AGENT_TERMINAL_SHELL` | 固定 Shell 绝对路径；默认 `/bin/sh` |
+| `AUTOFORGE_AGENT_TERMINAL_MAX_SESSIONS` | 并发终端上限，范围 1–4 |
+| `AUTOFORGE_AGENT_TERMINAL_MAX_DURATION` | 单会话时限，范围 1m–8h |
 | `AUTOFORGE_AGENT_LOG_LEVEL` | Agent 自身日志级别，不影响用例日志 |
 
 Agent 配置同样集中解析和校验，秘密不得出现在命令行参数、进程列表或日志中。
@@ -273,8 +281,8 @@ Agent 配置同样集中解析和校验，秘密不得出现在命令行参数�
 
 ## 后续实现顺序
 
-1. 固化 Runner 协议 schema、错误码和兼容策略。
-2. 控制面注册、心跳、assignment 与 lease 应用用例。
+1. 固化 assignment、lease、日志和产物协议 schema、错误码及兼容策略。
+2. 实现 assignment 与 lease 应用用例和控制面端点。
 3. 将现有 process supervisor 和安全工作目录接入 Agent claim loop。
 4. 将现有有界输出扩展为有序日志、服务端去重、本地 spool 和断线恢复。
 5. 取消、超时、结果幂等和租约 Reconciler。

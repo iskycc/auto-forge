@@ -4,7 +4,7 @@
 
 ## 1. 当前阶段
 
-仓库已进入首个可运行的 Lite 里程碑：Next.js 主平台、TestNG JAR 静态扫描、SQLite 用例库和本地 JAR 对象存储已经实现。Go Runner Agent 已实现配置诊断和受控单次命令执行核心，但控制面协议、任务闭环、Full 适配器和分析仍是目标能力；README 中的目标架构不代表这些能力已经完成。
+仓库已实现 Lite/Full 用例资产管理里程碑：Next.js 主平台、TestNG JAR 静态扫描、SQLite/PostgreSQL 用例库、本地/MinIO 对象存储、用例任务编排以及 Runner 注册和心跳已经落地。Go Runner Agent 已实现配置诊断、受控单次命令执行、控制面注册、心跳和默认关闭的直连终端；assignment、lease、远程日志/产物闭环、JetStream 调度、Redis 业务缓存和分析仍是目标能力。README 中的目标架构不代表这些能力已经完成。
 
 在添加脚手架或功能时：
 
@@ -266,7 +266,7 @@ UI / HTTP / Worker entrypoints
 
 协议与生命周期遵循 [Runner Agent 架构设计](./docs/architecture/runner-agent.md)。实现不得悄悄改变以下约束：
 
-- Agent 只主动连接控制面；基线传输为 HTTPS JSON 与有界长轮询，WebSocket 只能作为延迟优化。
+- Agent 只主动连接控制面；任务协议基线为 HTTPS JSON 与有界长轮询。WebSocket 可降低控制延迟并承载管理员显式开启的交互终端，但不得成为 assignment、lease 或执行结果正确性的依赖。
 - 心跳表示 Agent 活性，lease 表示某次 attempt 的有效执行权，两者不得复用。
 - Agent 重启后先 reconcile 本地 attempt；未经服务端确认不得自行重跑。
 - Agent/Server 协议携带 `schemaVersion`，不兼容时明确拒绝并上报可操作错误。
@@ -327,6 +327,7 @@ pnpm lint
 pnpm typecheck
 pnpm test
 pnpm test:integration
+pnpm test:full
 pnpm test:e2e
 pnpm build
 ```

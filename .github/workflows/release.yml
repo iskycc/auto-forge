@@ -49,10 +49,12 @@ jobs:
             echo "The workflow ref (${GITHUB_SHA}) must be the requested tagged commit (${revision})." >&2
             exit 1
           fi
-          echo "revision=${revision}" >> "${GITHUB_OUTPUT}"
-          echo "tag=${REQUESTED_TAG}" >> "${GITHUB_OUTPUT}"
-          echo "version=${REQUESTED_TAG#v}" >> "${GITHUB_OUTPUT}"
-          echo "source_date_epoch=$(git show -s --format=%ct "${REQUESTED_TAG}^{commit}")" >> "${GITHUB_OUTPUT}"
+          {
+            echo "revision=${revision}"
+            echo "tag=${REQUESTED_TAG}"
+            echo "version=${REQUESTED_TAG#v}"
+            echo "source_date_epoch=$(git show -s --format=%ct "${REQUESTED_TAG}^{commit}")"
+          } >> "${GITHUB_OUTPUT}"
 
   quality:
     name: Release quality gate
@@ -88,6 +90,7 @@ jobs:
           pnpm typecheck
           pnpm test
           pnpm test:integration
+          pnpm test:full
           pnpm build
 
       - name: Locate preinstalled Chromium

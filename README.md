@@ -7,22 +7,26 @@ AutoForge 是一个面向自动化测试场景的用例工厂，用于统一管�
 - **完整模式（Full）**：使用 PostgreSQL、NATS JetStream、MinIO 和 Redis，适合多执行机、较高并发和生产集群。
 - **极简模式（Lite）**：仅需 Node.js 和一个可写数据目录；以 SQLite 保存业务数据和持久任务，本地文件系统保存产物，不依赖任何外部基础设施。
 
-> 当前状态：首个可运行的 Lite 里程碑已经落地。现在可以启动主平台、静态扫描 TestNG JAR、预览测试类与方法并导入 SQLite 用例库。Go Runner Agent 已有配置诊断和受控单次命令执行核心，但尚未接入控制面。执行任务闭环、Full 基础设施适配器和分析能力仍处于后续里程碑；以 `AUTOFORGE_MODE=full` 启动会明确失败，不会静默回退 Lite。
+> 当前状态：用例资产管理已经同时落地 Lite 与 Full 适配器。平台可浏览受管对象、保存 JAR 扫描结果、指定一个权威全量来源、将勾选用例加入或移出用例任务，并展示 Runner 注册与心跳状态。Go Runner Agent 已接入注册、心跳和可选直连终端协议。执行租约、平台调度、远程日志/产物闭环和分析仍是后续能力，不能把当前用例任务误认为已经可远程执行。
 
 ## 当前已实现
 
 - Next.js 16.3.0 App Router 主平台，采用已选方案 E 的 Apple-like Bento 工作台。
 - TestNG JAR 上传、静态检查、导入和 SHA-256 去重。
 - `CaseDefinition`、不可变 `CaseVersion`、测试方法契约及应用用例。
-- Drizzle ORM + SQLite 持久化，使用版本化 SQL 迁移并启用外键、WAL 与 busy timeout。
-- Lite 本地对象存储：JAR 按内容摘要保存到 `AUTOFORGE_DATA_DIR/objects/jars`。
-- 仪表盘、用例库、导入预览、加载/错误/空状态和响应式导航。
-- `/api/v1` JAR 与用例接口，以及 liveness/readiness 健康检查。
-- TestNG class 解析单元测试、真实 SQLite 集成测试和 JAR 导入浏览器闭环测试。
+- Drizzle ORM + SQLite/PostgreSQL 持久化，两种方言使用独立版本化迁移；SQLite 启用外键、WAL 与 busy timeout。
+- Lite 本地对象存储和 Full MinIO 对象存储：JAR 按内容摘要保存，页面只浏览 AutoForge 纳管的对象空间。
+- JAR 来源列表、持久化扫描预览和唯一权威全量来源设置。
+- 用例勾选、用例任务创建、任务详情以及任务内用例新增/删除。
+- Runner Agent 注册、身份凭据落盘、周期心跳、在线/离线判定和执行机控制台。
+- 可选的 Agent 直连终端：方案 E 浮窗使用 xterm.js，平台通过短时票据和同源 WebSocket 中继到 Agent 的受控 PTY，不新增 ShellHub 一类外部服务。
+- Full 模式按需连接 PostgreSQL、NATS、MinIO、Redis，readiness 实际检查四项依赖；Lite 启动不加载 Full 客户端。
+- `/api/v1` 管理接口，以及 liveness/readiness 健康检查。
+- TestNG 解析单元测试、SQLite/PostgreSQL/本地对象/MinIO 集成测试和浏览器管理闭环测试。
 - Go 1.26 Runner Agent 的版本信息、配置诊断、受控工作目录、无 Shell 命令执行、日志上限、超时与 Linux 进程组清理。
 - GitHub Actions CI，以及后端离线镜像和 Agent 四变体 GitHub Release 流水线。
 
-尚未实现：执行批次与任务、SQLite 队列、控制面 Runner Protocol、远程日志/产物收集、鉴权、多租户、PostgreSQL/NATS/MinIO/Redis 适配器及分析页面。当前界面中的这些入口会明确标为“规划中”。Agent 的 `run-once` 仅用于验证执行安全核心，不能冒充平台已能调度 JAR。
+尚未实现：`RunBatch`/`ExecutionRun` 执行闭环、SQLite/JetStream 调度队列、assignment 与 lease、Agent 远程领取和执行、日志/产物重传、统一平台用户鉴权、多租户及分析页面。NATS 和 Redis 当前用于 Full 运行边界与健康检查，尚未承载队列和缓存业务语义。Agent 的 `run-once` 仅用于验证执行安全核心，不能冒充平台已能调度 JAR。直连终端具有独立访问令牌，但它不等同于完整的平台用户与 RBAC 系统。
 
 ## TestNG JAR 用例发现
 
@@ -44,8 +48,21 @@ AutoForge 是一个面向自动化测试场景的用例工厂，用于统一管�
 | `POST` | `/api/v1/case-sources/jar/inspect` | 上传 `multipart/form-data` 的 `file`，只扫描不持久化 |
 | `POST` | `/api/v1/case-sources/jar/import`  | 扫描、内容寻址保存并事务性导入用例                   |
 | `GET`  | `/api/v1/case-definitions`         | 游标分页查询用例，可使用 `query`、`cursor`、`limit`  |
+| `GET`  | `/api/v1/case-sources`             | 查询 JAR 来源及权威全量来源状态                      |
+| `GET`  | `/api/v1/case-sources/{sourceId}`  | 读取已持久化的 JAR 扫描结果                          |
+| `PUT`  | `/api/v1/case-sources/{sourceId}/authoritative` | 将一个 JAR 设为唯一权威全量来源            |
+| `GET`  | `/api/v1/objects`                  | 浏览本地对象目录或 MinIO bucket 中的受管对象         |
+| `POST` | `/api/v1/case-suites`              | 创建用例任务                                         |
+| `GET`  | `/api/v1/case-suites/{suiteId}`    | 查询用例任务及其用例                                 |
+| `POST` | `/api/v1/case-suites/{suiteId}/cases` | 批量添加勾选用例                                  |
+| `DELETE` | `/api/v1/case-suites/{suiteId}/cases/{caseDefinitionId}` | 删除任务内用例                     |
+| `POST` | `/api/v1/runner-agents/register`   | 使用 bootstrap token 注册 Agent                      |
+| `POST` | `/api/v1/runner-agents/{runnerId}/heartbeat` | Agent 认证心跳与容量上报                   |
+| `GET`  | `/api/v1/runners`                  | 查询执行机及在线状态                                 |
+| `POST` | `/api/v1/terminal-sessions`        | 使用终端访问令牌换取一次性 WebSocket 会话票据        |
+| `WS`   | `/api/v1/terminal-stream`          | 中继浏览器终端与 Agent 主动建立的终端通道             |
 | `GET`  | `/api/v1/health/live`              | 进程存活检查                                         |
-| `GET`  | `/api/v1/health/ready`             | Lite 数据目录和 SQLite 就绪检查                      |
+| `GET`  | `/api/v1/health/ready`             | 检查当前模式要求的数据库、对象存储及 Full 服务       |
 
 ## 核心目标
 
@@ -153,19 +170,20 @@ Lite 是默认开发模式，也是低资源环境的正式部署模式：
 
 Lite 不承诺多应用实例横向扩展。需要多实例或大量执行机时，应迁移到 Full。
 
-### Full 模式（目标形态）
+### Full 模式
 
 Full 面向生产和集群环境：
 
-- PostgreSQL 保存权威业务状态和分析数据。
-- NATS JetStream 持久化执行任务和事件，消费者显式确认，任务可重投。
-- MinIO 保存日志归档、报告、截图、录像等大对象。
-- Redis 用于缓存、速率限制、短期锁和临时状态，但不作为唯一事实来源。
-- Web/API、调度器和工作器可以独立扩容。
+- PostgreSQL 已保存当前用例资产、用例任务和 Runner 状态，使用独立迁移历史。
+- MinIO 已保存和浏览 JAR 对象，接口语义与 Lite 本地对象存储一致。
+- NATS 与 Redis 已纳入 Full 配置、连接生命周期和 readiness，但 JetStream 调度与缓存端口仍待执行闭环实现。
+- 未来的执行事实仍保存到 PostgreSQL；Redis 不作为唯一事实来源。
 
-### Runner Agent（执行核心已实现，控制协议待实现）
+MinIO 上游仓库已于 2026 年 4 月归档。AutoForge 继续通过标准 S3 兼容接口支持用户指定的 MinIO 方案，但生产部署必须锁定已验证版本和摘要，并单独评估安全维护、升级来源与替代发行版。
 
-Runner Agent 是安装在执行机上的 Go 守护进程。当前程序可以执行 `version`、`doctor` 和本地 `run-once`：执行规格经过版本化校验，只允许本机白名单中的可执行文件，以参数数组直接启动，不经过 Shell，并限制工作目录、运行时间和日志大小。控制面注册、领取、续租、日志重传和产物上传尚未实现。
+### Runner Agent（注册/心跳与本地执行核心已实现）
+
+Runner Agent 是安装在执行机上的 Go 守护进程。`start` 会通过 bootstrap token 注册、以 `0600` 权限保存 Runner 身份并周期性发送认证心跳；`version`、`doctor` 和本地 `run-once` 用于诊断与验证执行核心。执行规格经过版本化校验，只允许本机白名单中的可执行文件，以参数数组直接启动，不经过 Shell，并限制工作目录、运行时间和日志大小。任务领取、续租、日志重传和产物上传尚未实现。
 
 最终协议仍坚持 Agent 只主动连接 AutoForge 控制面，不直接访问业务数据库、NATS、Redis，也不持有 MinIO 长期凭据，因此同一个 Agent 将连接 Lite 或 Full。
 
@@ -280,13 +298,17 @@ autoforge/
 
 应用只通过集中配置选择适配器。当前可用变量以 `.env.example` 为准：
 
-| 变量                      | 默认值     | 说明                                      |
-| ------------------------- | ---------- | ----------------------------------------- |
-| `AUTOFORGE_MODE`          | `lite`     | 当前只接受 `lite`；`full` 会拒绝启动      |
-| `AUTOFORGE_DATA_DIR`      | `./data`   | Lite 数据库、对象和临时文件根目录         |
-| `AUTOFORGE_MAX_JAR_BYTES` | `33554432` | 单个 JAR 的最大字节数，范围 1 MiB–256 MiB |
-
-`DATABASE_URL`、`NATS_URL`、`MINIO_*`、`REDIS_URL` 和服务端密钥等 Full 配置将在相应适配器实现时加入，不会提前读取或伪装为已支持。
+| 变量                               | 默认值     | 说明                                               |
+| ---------------------------------- | ---------- | -------------------------------------------------- |
+| `AUTOFORGE_MODE`                   | `lite`     | `lite` 或 `full`；模式只在组合根选择适配器         |
+| `AUTOFORGE_DATA_DIR`               | `./data`   | Lite 数据库、对象和临时文件根目录                  |
+| `AUTOFORGE_MAX_JAR_BYTES`          | `33554432` | 单个 JAR 的最大字节数，范围 1 MiB–256 MiB          |
+| `AUTOFORGE_RUNNER_BOOTSTRAP_TOKEN` | 未设置     | 至少 32 字符；一个值只允许成功注册一台 Runner      |
+| `AUTOFORGE_TERMINAL_ACCESS_TOKEN`  | 未设置     | 至少 32 字符；未设置时直连终端网关关闭             |
+| `AUTOFORGE_DATABASE_URL`           | 无         | Full PostgreSQL URL                                |
+| `AUTOFORGE_NATS_SERVERS`           | 无         | Full NATS 地址，多个地址以逗号分隔                 |
+| `AUTOFORGE_REDIS_URL`              | 无         | Full `redis://` 或 `rediss://` URL                 |
+| `AUTOFORGE_MINIO_*`                | 无         | Full endpoint、access key、secret key、bucket/region |
 
 规则：
 
@@ -306,6 +328,21 @@ Runner Agent 使用独立配置，不复用服务端数据库或基础设施凭�
 | `AUTOFORGE_AGENT_MAX_CONCURRENCY` | 本机最大并发                       |
 | `AUTOFORGE_AGENT_BOOTSTRAP_TOKEN` | 仅首次注册使用，成功后移除         |
 | `AUTOFORGE_AGENT_CA_FILE`         | 离线内网私有 CA 文件               |
+| `AUTOFORGE_AGENT_TERMINAL_ENABLED` | 是否允许平台打开交互终端；默认 `false` |
+| `AUTOFORGE_AGENT_TERMINAL_SHELL` | 固定终端 Shell 绝对路径；默认 `/bin/sh` |
+| `AUTOFORGE_AGENT_TERMINAL_MAX_SESSIONS` | 同时终端数，范围 1–4；默认 1 |
+| `AUTOFORGE_AGENT_TERMINAL_MAX_DURATION` | 单会话最长时长，范围 1m–8h；默认 1h |
+
+Agent 启动注册与心跳：
+
+```bash
+AUTOFORGE_SERVER_URL=https://autoforge.internal \
+AUTOFORGE_AGENT_DATA_DIR=/var/lib/autoforge-agent \
+AUTOFORGE_AGENT_BOOTSTRAP_TOKEN='replace-with-bootstrap-secret' \
+./autoforge-agent start
+```
+
+直连终端不使用 SSH 协议，也不要求执行机开放入站端口：Agent 使用自身身份主动建立 WebSocket，平台只中继当前浮窗的输入输出。配置、反向代理和安全边界见 [Runner 直连终端](./docs/operations/direct-terminal.md)。
 
 ## 离线部署要求
 
@@ -341,6 +378,7 @@ Runner Agent 使用独立配置，不复用服务端数据库或基础设施凭�
 - 校验上传对象名，阻止路径穿越和覆盖任意文件。
 - 控制面与执行机之间使用短期凭据和可轮换身份。
 - Runner Agent 只建立出站连接，不接收数据库、NATS、Redis 或 MinIO 长期凭据。
+- 直连终端默认关闭；启用后 Shell 只以 Agent 服务账户运行，并受本机最大会话数、最长时长、固定 Shell、环境变量白名单和进程组清理约束。
 
 容器隔离并不自动等于安全沙箱。执行不可信代码时，应结合专用主机、容器/虚拟机隔离和最小权限策略。
 
@@ -349,8 +387,8 @@ Runner Agent 使用独立配置，不复用服务端数据库或基础设施凭�
 1. **基础骨架（已完成）**：workspace、Next.js、类型化配置、质量工具和基础 UI。
 2. **TestNG 用例资产（已完成首版）**：JAR 静态扫描、SQLite 用例库、本地来源对象和导入 UI。
 3. **Lite 执行闭环**：执行领域、SQLite 队列、本地执行、本地产物和基本结果页。
-4. **Runner Agent（执行核心已完成）**：继续实现注册、心跳、能力调度、租约、日志/产物和断线恢复。
-5. **Full 适配器**：PostgreSQL、JetStream、MinIO、Redis 及双模式契约测试。
+4. **Runner Agent（注册、心跳、直连终端和执行核心已完成）**：继续实现能力调度、租约、日志/产物和断线恢复。
+5. **Full 资产适配器（已完成）**：PostgreSQL、MinIO 及双模式管理契约；继续实现 JetStream 队列与 Redis 缓存业务端口。
 6. **分析能力**：趋势、筛选、失败分类、批次对比和数据保留策略。
 7. **离线交付（构建流水线已完成）**：继续补齐安装升级、备份恢复和断网端到端验收。
 
@@ -373,7 +411,7 @@ pnpm build
 pnpm start
 ```
 
-首次访问数据库的入口时会按顺序执行仓库内版本化 SQLite SQL 迁移；不会使用 schema push。当前质量命令为：
+首次访问数据库入口时会按顺序执行当前方言的版本化 SQL 迁移；不会使用 schema push。Full 模式必须提供 `.env.example` 中列出的 PostgreSQL、NATS、MinIO 和 Redis 配置。当前质量命令为：
 
 ```bash
 pnpm format:check
@@ -381,7 +419,9 @@ pnpm lint
 pnpm typecheck
 pnpm test
 pnpm test:integration
+pnpm test:full
 pnpm test:e2e
+pnpm build
 ```
 
 Playwright 首次运行需要已有 Chromium。联网开发机可按 Playwright 官方方式准备浏览器；离线环境应随测试工具包预置浏览器，并通过 `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` 指向该可执行文件，运行时不会自动下载。
@@ -390,7 +430,7 @@ Playwright 首次运行需要已有 Chromium。联网开发机可按 Playwright 
 
 仓库的 `Release` workflow 由 `vX.Y.Z` tag 触发，在完整质量门禁通过后，为后端 Docker 离线镜像和 Go Agent 分别构建 `amd64`、`arm64`、`amd64-musl`、`arm64-musl`。Release 还包含每个资产的 SPDX JSON SBOM、`SHA256SUMS`、机器可读清单和构建来源证明。
 
-后端标准版使用 Debian/glibc，musl 版使用 Alpine/musl；Agent 四个文件均为 `CGO_ENABLED=0` 的 Linux 静态二进制，其中 musl 后缀表示发布目标而不是动态链接 musl。正式 Release 不包含 Full 基础设施镜像，因为 Full 适配器尚未实现。
+后端标准版使用 Debian/glibc，musl 版使用 Alpine/musl；Agent 四个文件均为 `CGO_ENABLED=0` 的 Linux 静态二进制，其中 musl 后缀表示发布目标而不是动态链接 musl。正式 Release 发布 AutoForge 自身镜像，不重新分发 PostgreSQL、NATS、MinIO 或 Redis 镜像；xterm.js、WebSocket 和 PTY 库已经固定版本并打入 AutoForge 发布物，不产生运行时下载。
 
 具体资产命名、tag 流程、校验、离线导入和本地构建命令见 [Release 与离线交付](./docs/operations/releases.md)。
 

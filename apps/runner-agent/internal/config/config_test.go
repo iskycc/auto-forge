@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestLoadAcceptsHTTPSAndDeduplicatesLabels(t *testing.T) {
@@ -40,6 +41,26 @@ func TestLoadRejectsInsecureRemoteHTTP(t *testing.T) {
 	}
 }
 
+func TestLoadEnablesTerminalWithBoundedPolicy(t *testing.T) {
+	loaded, err := Load(mapLookup(map[string]string{
+		"AUTOFORGE_SERVER_URL":                  "https://autoforge.internal",
+		"AUTOFORGE_AGENT_DATA_DIR":              t.TempDir(),
+		"AUTOFORGE_AGENT_TERMINAL_ENABLED":      "true",
+		"AUTOFORGE_AGENT_TERMINAL_SHELL":        "/bin/sh",
+		"AUTOFORGE_AGENT_TERMINAL_MAX_SESSIONS": "2",
+		"AUTOFORGE_AGENT_TERMINAL_MAX_DURATION": "30m",
+	}))
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if !loaded.Terminal.Enabled || loaded.Terminal.Shell != "/bin/sh" {
+		t.Fatalf("Terminal = %#v", loaded.Terminal)
+	}
+	if loaded.Terminal.MaxSessions != 2 || loaded.Terminal.MaximumDuration != 30*time.Minute {
+		t.Fatalf("Terminal policy = %#v", loaded.Terminal)
+	}
+}
+
 func TestCheckLocalEnvironmentCreatesPrivateDirectories(t *testing.T) {
 	dataDirectory := filepath.Join(t.TempDir(), "agent")
 	configuration := Config{
@@ -53,7 +74,7 @@ func TestCheckLocalEnvironmentCreatesPrivateDirectories(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CheckLocalEnvironment() error = %v", err)
 	}
-	if diagnostic.Status != "ready-for-protocol-integration" {
+	if diagnostic.Status != "ready" {
 		t.Fatalf("Status = %q", diagnostic.Status)
 	}
 	for _, directory := range []string{"identity", "spool", "work"} {

@@ -8,24 +8,37 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 )
 
 const (
-	defaultDataDirectory = "./autoforge-agent-data"
-	defaultConcurrency   = 1
-	maximumConcurrency   = 64
+	defaultDataDirectory    = "./autoforge-agent-data"
+	defaultConcurrency      = 1
+	maximumConcurrency      = 64
+	defaultTerminalShell    = "/bin/sh"
+	maximumTerminalSessions = 4
 )
 
 type LookupEnvironment func(string) (string, bool)
 
 type Config struct {
-	ServerURL     *url.URL
-	DataDirectory string
-	Name          string
-	Labels        []string
-	MaxConcurrent int
-	CAFile        string
-	HasBootstrap  bool
+	ServerURL      *url.URL
+	DataDirectory  string
+	Name           string
+	Labels         []string
+	MaxConcurrent  int
+	CAFile         string
+	BootstrapToken string
+	HasBootstrap   bool
+	Terminal       TerminalConfig
+}
+
+type TerminalConfig struct {
+	Enabled         bool
+	Shell           string
+	WorkDirectory   string
+	MaxSessions     int
+	MaximumDuration time.Duration
 }
 
 func Load(lookup LookupEnvironment) (Config, error) {
@@ -55,14 +68,59 @@ func Load(lookup LookupEnvironment) (Config, error) {
 	}
 
 	bootstrapToken := environmentValue(lookup, "AUTOFORGE_AGENT_BOOTSTRAP_TOKEN")
+	terminal, err := terminalConfig(lookup, dataDirectory)
+	if err != nil {
+		return Config{}, err
+	}
 	return Config{
-		ServerURL:     serverURL,
-		DataDirectory: dataDirectory,
-		Name:          name,
-		Labels:        labels(environmentValue(lookup, "AUTOFORGE_AGENT_LABELS")),
-		MaxConcurrent: maxConcurrent,
-		CAFile:        caFile,
-		HasBootstrap:  bootstrapToken != "",
+		ServerURL:      serverURL,
+		DataDirectory:  dataDirectory,
+		Name:           name,
+		Labels:         labels(environmentValue(lookup, "AUTOFORGE_AGENT_LABELS")),
+		MaxConcurrent:  maxConcurrent,
+		CAFile:         caFile,
+		BootstrapToken: bootstrapToken,
+		HasBootstrap:   bootstrapToken != "",
+		Terminal:       terminal,
+	}, nil
+}
+
+func terminalConfig(lookup LookupEnvironment, dataDirectory string) (TerminalConfig, error) {
+	enabled, err := optionalBoolean(environmentValue(lookup, "AUTOFORGE_AGENT_TERMINAL_ENABLED"))
+	if err != nil {
+		return TerminalConfig{}, fmt.Errorf("AUTOFORGE_AGENT_TERMINAL_ENABLED is invalid: %w", err)
+	}
+	shell := environmentValue(lookup, "AUTOFORGE_AGENT_TERMINAL_SHELL")
+	if shell == "" {
+		shell = defaultTerminalShell
+	}
+	if !filepath.IsAbs(shell) {
+		return TerminalConfig{}, errors.New("AUTOFORGE_AGENT_TERMINAL_SHELL must be an absolute path")
+	}
+	maxSessions, err := boundedInteger(
+		environmentValue(lookup, "AUTOFORGE_AGENT_TERMINAL_MAX_SESSIONS"),
+		1,
+		1,
+		maximumTerminalSessions,
+	)
+	if err != nil {
+		return TerminalConfig{}, fmt.Errorf("AUTOFORGE_AGENT_TERMINAL_MAX_SESSIONS is invalid: %w", err)
+	}
+	maximumDuration, err := boundedDuration(
+		environmentValue(lookup, "AUTOFORGE_AGENT_TERMINAL_MAX_DURATION"),
+		time.Hour,
+		time.Minute,
+		8*time.Hour,
+	)
+	if err != nil {
+		return TerminalConfig{}, fmt.Errorf("AUTOFORGE_AGENT_TERMINAL_MAX_DURATION is invalid: %w", err)
+	}
+	return TerminalConfig{
+		Enabled:         enabled,
+		Shell:           filepath.Clean(shell),
+		WorkDirectory:   filepath.Join(dataDirectory, "work", "terminal"),
+		MaxSessions:     maxSessions,
+		MaximumDuration: maximumDuration,
 	}, nil
 }
 
@@ -132,6 +190,39 @@ func concurrency(raw string) (int, error) {
 	parsed, err := strconv.Atoi(raw)
 	if err != nil || parsed < 1 || parsed > maximumConcurrency {
 		return 0, fmt.Errorf("AUTOFORGE_AGENT_MAX_CONCURRENCY must be an integer from 1 to %d", maximumConcurrency)
+	}
+	return parsed, nil
+}
+
+func optionalBoolean(raw string) (bool, error) {
+	if raw == "" {
+		return false, nil
+	}
+	parsed, err := strconv.ParseBool(raw)
+	if err != nil {
+		return false, errors.New("must be true or false")
+	}
+	return parsed, nil
+}
+
+func boundedInteger(raw string, fallback, minimum, maximum int) (int, error) {
+	if raw == "" {
+		return fallback, nil
+	}
+	parsed, err := strconv.Atoi(raw)
+	if err != nil || parsed < minimum || parsed > maximum {
+		return 0, fmt.Errorf("must be an integer from %d to %d", minimum, maximum)
+	}
+	return parsed, nil
+}
+
+func boundedDuration(raw string, fallback, minimum, maximum time.Duration) (time.Duration, error) {
+	if raw == "" {
+		return fallback, nil
+	}
+	parsed, err := time.ParseDuration(raw)
+	if err != nil || parsed < minimum || parsed > maximum {
+		return 0, fmt.Errorf("must be a duration from %s to %s", minimum, maximum)
 	}
 	return parsed, nil
 }

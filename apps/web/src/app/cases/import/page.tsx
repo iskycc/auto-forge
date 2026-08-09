@@ -6,8 +6,8 @@ import { getPlatformServices } from "@/lib/services";
 export const metadata: Metadata = { title: "导入 TestNG JAR" };
 export const dynamic = "force-dynamic";
 
-export default function ImportJarPage() {
-  const { config } = getPlatformServices();
+export default async function ImportJarPage() {
+  const { config } = await getPlatformServices();
   return (
     <div className="page-stack narrow-page">
       <section className="page-hero">

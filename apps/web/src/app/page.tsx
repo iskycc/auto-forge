@@ -27,11 +27,15 @@ function formatDate(value: string): string {
 }
 
 export default async function DashboardPage() {
-  const { catalog } = getPlatformServices();
-  const [summary, recentSources] = await Promise.all([
+  const services = await getPlatformServices();
+  const { catalog, config } = services;
+  const [summary, recentSources, runners] = await Promise.all([
     catalog.getDashboardSummary(),
     catalog.listRecentSources(5),
+    services.runnerControl.list(),
   ]);
+  const onlineRunners = runners.filter((runner) => runner.state === "online").length;
+  const busyRunners = runners.filter((runner) => runner.busySlots > 0).length;
   const enabledRate =
     summary.methodCount === 0
       ? 0
@@ -41,7 +45,7 @@ export default async function DashboardPage() {
     <div className="page-stack">
       <section className="page-hero">
         <div>
-          <span className="eyebrow">AutoForge · Lite</span>
+          <span className="eyebrow">AutoForge · {config.mode === "lite" ? "Lite" : "Full"}</span>
           <h1>自动化用例工作台</h1>
           <p>从 TestNG JAR 发现测试类，构建可追踪、可执行的用例资产。</p>
         </div>
@@ -153,24 +157,33 @@ export default async function DashboardPage() {
           <div className="runner-zero">
             <div className="runner-orbit">
               <Server size={28} />
-              <span>0</span>
+              <span>{runners.length}</span>
             </div>
             <div>
-              <strong>尚未注册执行机</strong>
-              <p>本地 Runner Agent 将通过 HTTPS 控制协议接入。</p>
+              <strong>
+                {runners.length === 0 ? "尚未注册执行机" : `${onlineRunners} 台执行机在线`}
+              </strong>
+              <p>
+                {runners.length === 0
+                  ? "启动 Runner Agent 后会通过 HTTPS 控制协议接入。"
+                  : "心跳状态与容量信息已同步到控制台。"}
+              </p>
             </div>
           </div>
           <div className="runner-summary">
             <span>
-              <i className="dot green-dot" /> 在线 0
+              <i className="dot green-dot" /> 在线 {onlineRunners}
             </span>
             <span>
-              <i className="dot amber-dot" /> 繁忙 0
+              <i className="dot amber-dot" /> 繁忙 {busyRunners}
             </span>
             <span>
-              <i className="dot gray-dot" /> 离线 0
+              <i className="dot gray-dot" /> 离线 {runners.length - onlineRunners}
             </span>
           </div>
+          <Link className="text-link" href="/runners">
+            管理执行机 <ArrowRight size={15} />
+          </Link>
         </article>
 
         <article className="card bento-insight">
