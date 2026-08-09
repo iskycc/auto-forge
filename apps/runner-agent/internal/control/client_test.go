@@ -13,6 +13,7 @@ import (
 
 	"github.com/iskycc/auto-forge/apps/runner-agent/internal/buildinfo"
 	"github.com/iskycc/auto-forge/apps/runner-agent/internal/config"
+	"github.com/iskycc/auto-forge/apps/runner-agent/internal/metrics"
 )
 
 func TestClientRegistersAndSendsAuthenticatedHeartbeat(t *testing.T) {
@@ -50,7 +51,8 @@ func TestClientRegistersAndSendsAuthenticatedHeartbeat(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Register() error = %v", err)
 	}
-	if _, err := client.Heartbeat(context.Background(), identity, configuration, buildinfo.Info{Version: "0.2.0"}); err != nil {
+	snapshot := &metrics.Snapshot{CPUUtilizationPercent: 20, MemoryUtilizationPercent: 30, LoadAverage1m: 0.5, LogicalCPUCount: 4, ObservedAt: "2026-08-09T00:00:00Z"}
+	if _, err := client.Heartbeat(context.Background(), identity, configuration, buildinfo.Info{Version: "0.2.0"}, snapshot); err != nil {
 		t.Fatalf("Heartbeat() error = %v", err)
 	}
 	if requests != 2 {

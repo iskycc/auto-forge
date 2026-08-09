@@ -7,7 +7,10 @@ import { afterEach, describe, expect, it } from "vitest";
 import { createSqliteDatabase } from "../src/database";
 import { SqliteCaseCatalogRepository } from "../src/sqlite-case-catalog";
 import { SqliteCaseSuiteRepository } from "../src/sqlite-case-suite";
+import { SqliteRunBatchRepository } from "../src/sqlite-run-batch";
 import { SqliteRunnerRepository } from "../src/sqlite-runner";
+import { scheduleExecutionRuns } from "@autoforge/domain";
+import { RunBatchSchedulingService } from "@autoforge/application";
 
 const temporaryDirectories: string[] = [];
 
@@ -124,6 +127,163 @@ describe("SQLite management repositories", () => {
       handle.close();
     }
   });
+
+  it("reserves only eligible runner capacity and persists the scheduling attempt", async () => {
+    const { handle, runners, batches } = await fixture();
+    try {
+      await runners.register({
+        id: "runner-scheduling",
+        bootstrapTokenHash: "bootstrap-scheduling",
+        credentialHash: "credential-scheduling",
+        name: "scheduler-runner",
+        os: "linux",
+        architecture: "amd64",
+        agentVersion: "0.2.0",
+        protocolVersion: 1,
+        labels: ["java"],
+        maxConcurrency: 1,
+        terminalEnabled: false,
+        recordedAt: timestamp,
+      });
+      await runners.heartbeat({
+        runnerId: "runner-scheduling",
+        labels: ["java", "testng"],
+        maxConcurrency: 1,
+        busySlots: 0,
+        agentVersion: "0.2.0",
+        terminalEnabled: false,
+        resourceSnapshot: {
+          cpuUtilizationPercent: 20,
+          memoryUtilizationPercent: 30,
+          loadAverage1m: 0.5,
+          logicalCpuCount: 2,
+          observedAt: "2026-08-09T00:01:00.000Z",
+        },
+        recordedAt: "2026-08-09T00:01:00.000Z",
+      });
+      await batches.create({
+        id: "batch-1",
+        suiteId: "suite-snapshot",
+        suiteName: "Smoke",
+        suiteVersion: 3,
+        retryLimit: 2,
+        environmentVariables: [{ name: "TEST_ENV", value: "staging" }],
+        runnerIds: ["runner-scheduling"],
+        runs: [
+          {
+            id: "run-1",
+            caseDefinitionId: "case-1",
+            caseVersion: 1,
+            displayName: "SmokeTest",
+            className: "com.example.SmokeTest",
+          },
+        ],
+        createdAt: "2026-08-09T00:01:00.000Z",
+      });
+      const thresholds = {
+        maximumCpuUtilizationPercent: 80,
+        maximumMemoryUtilizationPercent: 85,
+        maximumLoadPerCpu: 1,
+      };
+      const snapshot = await batches.getSchedulingSnapshot("batch-1", "2026-08-09T00:00:30.000Z");
+      const plan = scheduleExecutionRuns({
+        runs: snapshot!.queuedRuns,
+        candidates: snapshot!.candidates,
+        thresholds,
+        metricsFreshAfter: "2026-08-09T00:00:30.000Z",
+      });
+      await batches.reserveAssignments({
+        batchId: "batch-1",
+        decisions: plan.decisions.map((decision) => ({ ...decision, attemptId: "attempt-1" })),
+        thresholds,
+        offlineBefore: "2026-08-09T00:00:30.000Z",
+        metricsFreshAfter: "2026-08-09T00:00:30.000Z",
+        scheduledAt: "2026-08-09T00:01:01.000Z",
+      });
+
+      const batch = await batches.get("batch-1");
+      expect(batch).toMatchObject({ status: "scheduled", queuedRuns: 0, assignedRuns: 1 });
+      expect(batch?.runs[0]).toMatchObject({
+        status: "assigned",
+        assignedRunnerId: "runner-scheduling",
+        attemptCount: 1,
+      });
+      expect(batch?.attempts[0]).toMatchObject({ id: "attempt-1", attemptNumber: 1 });
+    } finally {
+      handle.close();
+    }
+  });
+
+  it("retries queued batches when a selected runner reports fresh metrics", async () => {
+    const { handle, suites, runners, batches } = await fixture();
+    try {
+      await suites.create({ id: "suite-dynamic", name: "Dynamic", createdAt: timestamp });
+      await suites.addCases({
+        suiteId: "suite-dynamic",
+        items: [{ id: "suite-item-dynamic", caseDefinitionId: "case-1" }],
+        updatedAt: timestamp,
+      });
+      await runners.register({
+        id: "runner-dynamic",
+        bootstrapTokenHash: "bootstrap-dynamic",
+        credentialHash: "credential-dynamic",
+        name: "dynamic-runner",
+        os: "linux",
+        architecture: "amd64",
+        agentVersion: "0.2.0",
+        protocolVersion: 1,
+        labels: ["testng"],
+        maxConcurrency: 1,
+        terminalEnabled: false,
+        recordedAt: "2026-08-09T00:01:00.000Z",
+      });
+      let nextId = 0;
+      const scheduler = new RunBatchSchedulingService(
+        batches,
+        suites,
+        runners,
+        { now: () => new Date("2026-08-09T00:01:00.000Z") },
+        { next: () => `dynamic-${++nextId}` },
+        {
+          maximumCpuUtilizationPercent: 80,
+          maximumMemoryUtilizationPercent: 85,
+          maximumLoadPerCpu: 1,
+        },
+        45,
+      );
+      const queued = await scheduler.create({
+        suiteId: "suite-dynamic",
+        runnerIds: ["runner-dynamic"],
+        retryLimit: 1,
+        environmentVariables: [],
+      });
+      expect(queued.status).toBe("queued");
+
+      await runners.heartbeat({
+        runnerId: "runner-dynamic",
+        labels: ["testng"],
+        maxConcurrency: 1,
+        busySlots: 0,
+        agentVersion: "0.2.0",
+        terminalEnabled: false,
+        resourceSnapshot: {
+          cpuUtilizationPercent: 15,
+          memoryUtilizationPercent: 25,
+          loadAverage1m: 0.25,
+          logicalCpuCount: 2,
+          observedAt: "2026-08-09T00:01:00.000Z",
+        },
+        recordedAt: "2026-08-09T00:01:00.000Z",
+      });
+      expect(await scheduler.scheduleForRunner("runner-dynamic")).toBe(1);
+      expect(await scheduler.get(queued.id)).toMatchObject({
+        status: "scheduled",
+        assignedRuns: 1,
+      });
+    } finally {
+      handle.close();
+    }
+  });
 });
 
 const timestamp = "2026-08-09T00:00:00.000Z";
@@ -206,5 +366,6 @@ async function fixture() {
     catalog,
     suites: new SqliteCaseSuiteRepository(handle),
     runners: new SqliteRunnerRepository(handle),
+    batches: new SqliteRunBatchRepository(handle),
   };
 }

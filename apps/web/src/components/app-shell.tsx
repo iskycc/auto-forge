@@ -30,7 +30,7 @@ const navigation: NavigationItem[] = [
   { label: "用例库", href: "/cases", icon: BookOpenText },
   { label: "用例任务", href: "/case-suites", icon: Layers3 },
   { label: "文件来源", href: "/objects", icon: FolderOpen },
-  { label: "执行记录", icon: PlayCircle },
+  { label: "用例批跑", href: "/run-batches", icon: PlayCircle },
   { label: "执行机", href: "/runners", icon: Server },
   { label: "洞察", icon: BarChart3 },
 ];

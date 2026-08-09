@@ -6,16 +6,19 @@ import {
   CaseSourceService,
   CaseSuiteService,
   ImportTestNgJarService,
+  RunBatchSchedulingService,
   RunnerControlService,
   type CaseCatalogRepository,
   type CaseSuiteRepository,
   type JarObjectStorePort,
+  type RunBatchRepository,
   type RunnerRepository,
 } from "@autoforge/application";
 import {
   createSqliteDatabase,
   SqliteCaseCatalogRepository,
   SqliteCaseSuiteRepository,
+  SqliteRunBatchRepository,
   SqliteRunnerRepository,
 } from "@autoforge/db/sqlite";
 import { LocalObjectStore } from "@autoforge/object-store/local";
@@ -37,6 +40,7 @@ async function createPlatformServices() {
   let catalog: CaseCatalogRepository;
   let suites: CaseSuiteRepository;
   let runners: RunnerRepository;
+  let batches: RunBatchRepository;
   let objectStore: JarObjectStorePort;
   let runnerRequestLimiter: RequestLimiter = new MemoryRequestLimiter();
   let fullInfrastructure: FullInfrastructure | undefined;
@@ -48,6 +52,7 @@ async function createPlatformServices() {
     catalog = new SqliteCaseCatalogRepository(database);
     suites = new SqliteCaseSuiteRepository(database);
     runners = new SqliteRunnerRepository(database);
+    batches = new SqliteRunBatchRepository(database);
     objectStore = new LocalObjectStore(config.dataDirectory);
   } else {
     const [
@@ -55,6 +60,7 @@ async function createPlatformServices() {
         createPostgresDatabase,
         PostgresCaseCatalogRepository,
         PostgresCaseSuiteRepository,
+        PostgresRunBatchRepository,
         PostgresRunnerRepository,
       },
       { MinioObjectStore },
@@ -113,6 +119,7 @@ async function createPlatformServices() {
     catalog = new PostgresCaseCatalogRepository(database);
     suites = new PostgresCaseSuiteRepository(database);
     runners = new PostgresRunnerRepository(database);
+    batches = new PostgresRunBatchRepository(database);
     objectStore = new MinioObjectStore(config.minio);
   }
   const discovery = new TestNgJarDiscovery({ maxJarBytes: config.maxJarBytes });
@@ -137,6 +144,19 @@ async function createPlatformServices() {
     clock,
     ids,
   );
+  const runBatches = new RunBatchSchedulingService(
+    batches,
+    suites,
+    runners,
+    clock,
+    ids,
+    {
+      maximumCpuUtilizationPercent: config.scheduler.maximumCpuUtilizationPercent,
+      maximumMemoryUtilizationPercent: config.scheduler.maximumMemoryUtilizationPercent,
+      maximumLoadPerCpu: config.scheduler.maximumLoadPerCpu,
+    },
+    config.scheduler.metricsMaximumAgeSeconds,
+  );
 
   return {
     config,
@@ -149,6 +169,7 @@ async function createPlatformServices() {
     caseSuites,
     runners,
     runnerControl,
+    runBatches,
     runnerRequestLimiter,
     fullInfrastructure,
   };

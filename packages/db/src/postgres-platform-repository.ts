@@ -22,6 +22,7 @@ import type {
 import { and, count, desc, eq, inArray, like, lt, or, sql, type SQL } from "drizzle-orm";
 
 import type { PostgresDatabaseHandle } from "./postgres-database";
+import { mapStoredRunner } from "./runner-mapper";
 import {
   pgCaseDefinitions,
   pgCaseSources,
@@ -86,29 +87,6 @@ function toSuite(row: typeof pgCaseSuites.$inferSelect, caseCount: number): Case
     ...(row.description ? { description: row.description } : {}),
     version: row.version,
     caseCount,
-    createdAt: row.createdAt,
-    updatedAt: row.updatedAt,
-  };
-}
-
-function toRunner(row: typeof pgRunners.$inferSelect, offlineBefore?: string): Runner {
-  return {
-    id: row.id,
-    name: row.name,
-    state: row.disabled
-      ? "disabled"
-      : offlineBefore && row.lastSeenAt < offlineBefore
-        ? "offline"
-        : "online",
-    os: row.os,
-    architecture: row.architecture,
-    agentVersion: row.agentVersion,
-    protocolVersion: row.protocolVersion,
-    labels: stringArray(row.labelsJson),
-    maxConcurrency: row.maxConcurrency,
-    busySlots: row.busySlots,
-    lastSeenAt: row.lastSeenAt,
-    terminalEnabled: row.terminalEnabled,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
@@ -513,7 +491,7 @@ export class PostgresRunnerRepository implements RunnerRepository {
         })
         .returning();
       if (!row) throw new Error("PostgreSQL did not return the registered runner.");
-      return toRunner(row);
+      return mapStoredRunner(row);
     });
   }
 
@@ -524,7 +502,7 @@ export class PostgresRunnerRepository implements RunnerRepository {
       .from(pgRunners)
       .where(eq(pgRunners.credentialHash, credentialHash))
       .limit(1);
-    return row ? toRunner(row) : null;
+    return row ? mapStoredRunner(row) : null;
   }
 
   async heartbeat(input: {
@@ -534,6 +512,13 @@ export class PostgresRunnerRepository implements RunnerRepository {
     busySlots: number;
     agentVersion: string;
     terminalEnabled: boolean;
+    resourceSnapshot?: {
+      cpuUtilizationPercent: number;
+      memoryUtilizationPercent: number;
+      loadAverage1m: number;
+      logicalCpuCount: number;
+      observedAt: string;
+    };
     recordedAt: string;
   }): Promise<Runner> {
     await this.ready();
@@ -545,20 +530,29 @@ export class PostgresRunnerRepository implements RunnerRepository {
         busySlots: input.busySlots,
         agentVersion: input.agentVersion,
         terminalEnabled: input.terminalEnabled,
+        ...(input.resourceSnapshot
+          ? {
+              cpuUtilizationPercent: input.resourceSnapshot.cpuUtilizationPercent,
+              memoryUtilizationPercent: input.resourceSnapshot.memoryUtilizationPercent,
+              loadAverage1m: input.resourceSnapshot.loadAverage1m,
+              logicalCpuCount: input.resourceSnapshot.logicalCpuCount,
+              metricsObservedAt: input.resourceSnapshot.observedAt,
+            }
+          : {}),
         lastSeenAt: input.recordedAt,
         updatedAt: input.recordedAt,
       })
       .where(eq(pgRunners.id, input.runnerId))
       .returning();
     if (!row) throw new Error(`Runner ${input.runnerId} does not exist.`);
-    return toRunner(row);
+    return mapStoredRunner(row);
   }
 
   async list(offlineBefore: string, limit: number): Promise<Runner[]> {
     await this.ready();
     return (
       await this.handle.db.select().from(pgRunners).orderBy(desc(pgRunners.lastSeenAt)).limit(limit)
-    ).map((row) => toRunner(row, offlineBefore));
+    ).map((row) => mapStoredRunner(row, offlineBefore));
   }
 
   async get(runnerId: string, offlineBefore: string): Promise<Runner | null> {
@@ -568,6 +562,6 @@ export class PostgresRunnerRepository implements RunnerRepository {
       .from(pgRunners)
       .where(eq(pgRunners.id, runnerId))
       .limit(1);
-    return row ? toRunner(row, offlineBefore) : null;
+    return row ? mapStoredRunner(row, offlineBefore) : null;
   }
 }

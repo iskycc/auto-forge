@@ -1,10 +1,10 @@
 # Runner Agent 架构设计
 
-状态：Go 执行核心及 Runner Protocol v1 注册、心跳、可选直连终端已实现；任务领取、lease、spool 和产物协议仍待实现。
+状态：Go 执行核心及 Runner Protocol v1 注册、CPU/内存/负载心跳、资源感知初始调度和可选直连终端已实现；任务领取、lease、实际 TestNG 执行、spool 和产物协议仍待实现。
 
 本文中的 **Runner Agent** 指安装在执行机上的 AutoForge 守护进程，不是参与仓库开发的编码代理。Runner Agent 从控制面领取执行任务，以受控子进程运行命令，采集日志和产物，并上报执行结果。
 
-当前 `apps/runner-agent` 使用 Go 1.26.x，实现了构建信息、集中配置诊断、版本化本地执行规格、可执行文件白名单、独立工作目录、有界 stdout/stderr、超时和 Linux 进程组清理。`start` 支持 bootstrap 注册、受限权限身份存储、认证心跳和可选的出站终端 WebSocket；`run-once` 是执行核心的诊断入口，不会领取平台任务。下文除注册、心跳和直连终端外的控制面交互仍是目标架构。
+当前 `apps/runner-agent` 使用 Go 1.26.x，实现了构建信息、集中配置诊断、版本化本地执行规格、可执行文件白名单、独立工作目录、有界 stdout/stderr、超时和 Linux 进程组清理。`start` 支持 bootstrap 注册、受限权限身份存储、认证资源心跳和可选的出站终端 WebSocket；控制面可据此生成初始调度分配。`run-once` 是执行核心的诊断入口，不会领取平台任务。下文除注册、资源心跳、初始调度和直连终端外的控制面交互仍是目标架构。
 
 ## 目标
 

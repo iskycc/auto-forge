@@ -1,0 +1,119 @@
+import { describe, expect, it } from "vitest";
+
+import { scheduleExecutionRuns } from "../src/scheduler";
+import { statusAfterFailedAttempt, type ExecutionRun } from "../src/run-batch";
+import type { Runner } from "../src/runner";
+
+const thresholds = {
+  maximumCpuUtilizationPercent: 80,
+  maximumMemoryUtilizationPercent: 85,
+  maximumLoadPerCpu: 1,
+};
+const freshAfter = "2026-08-09T00:00:00.000Z";
+
+describe("dynamic execution scheduler", () => {
+  it("filters overloaded runners and spreads runs as capacity scores decline", () => {
+    const plan = scheduleExecutionRuns({
+      runs: [run("run-1"), run("run-2"), run("run-3")],
+      candidates: [
+        {
+          runner: runner("runner-a", { cpu: 20, memory: 30, load: 0.4, concurrency: 2 }),
+          reservedSlots: 0,
+        },
+        {
+          runner: runner("runner-b", { cpu: 25, memory: 35, load: 0.5, concurrency: 2 }),
+          reservedSlots: 0,
+        },
+        {
+          runner: runner("runner-hot", { cpu: 91, memory: 30, load: 0.2, concurrency: 4 }),
+          reservedSlots: 0,
+        },
+      ],
+      thresholds,
+      metricsFreshAfter: freshAfter,
+    });
+
+    expect(plan.decisions).toHaveLength(3);
+    expect(new Set(plan.decisions.map((decision) => decision.runnerId))).toEqual(
+      new Set(["runner-a", "runner-b"]),
+    );
+    expect(
+      plan.evaluations.find((value) => value.runnerId === "runner-hot")?.blockReasons,
+    ).toContain("cpu_limit_exceeded");
+    expect(plan.unassignedRunIds).toEqual([]);
+  });
+
+  it("keeps runs queued when metrics are stale or capacity is exhausted", () => {
+    const stale = runner("runner-stale", { cpu: 10, memory: 20, load: 0.1, concurrency: 1 });
+    stale.resourceSnapshot = { ...stale.resourceSnapshot!, observedAt: "2026-08-08T23:59:00.000Z" };
+    const full = runner("runner-full", { cpu: 10, memory: 20, load: 0.1, concurrency: 1 });
+    full.busySlots = 1;
+
+    const plan = scheduleExecutionRuns({
+      runs: [run("run-1")],
+      candidates: [
+        { runner: stale, reservedSlots: 0 },
+        { runner: full, reservedSlots: 0 },
+      ],
+      thresholds,
+      metricsFreshAfter: freshAfter,
+    });
+
+    expect(plan.decisions).toEqual([]);
+    expect(plan.unassignedRunIds).toEqual(["run-1"]);
+    expect(plan.evaluations.map((value) => value.blockReasons)).toEqual([
+      ["metrics_stale"],
+      ["capacity_exhausted"],
+    ]);
+  });
+
+  it("allows exactly the configured number of retries", () => {
+    expect(statusAfterFailedAttempt(1, 2)).toBe("queued");
+    expect(statusAfterFailedAttempt(2, 2)).toBe("queued");
+    expect(statusAfterFailedAttempt(3, 2)).toBe("failed");
+  });
+});
+
+function run(id: string): ExecutionRun {
+  return {
+    id,
+    batchId: "batch-1",
+    caseDefinitionId: `case-${id}`,
+    caseVersion: 1,
+    displayName: id,
+    className: `example.${id}`,
+    status: "queued",
+    attemptCount: 0,
+    createdAt: freshAfter,
+    updatedAt: freshAfter,
+  };
+}
+
+function runner(
+  id: string,
+  values: { cpu: number; memory: number; load: number; concurrency: number },
+): Runner {
+  return {
+    id,
+    name: id,
+    state: "online",
+    os: "linux",
+    architecture: "amd64",
+    agentVersion: "test",
+    protocolVersion: 1,
+    labels: [],
+    maxConcurrency: values.concurrency,
+    busySlots: 0,
+    lastSeenAt: "2026-08-09T00:00:10.000Z",
+    resourceSnapshot: {
+      cpuUtilizationPercent: values.cpu,
+      memoryUtilizationPercent: values.memory,
+      loadAverage1m: values.load,
+      logicalCpuCount: 1,
+      observedAt: "2026-08-09T00:00:10.000Z",
+    },
+    terminalEnabled: false,
+    createdAt: freshAfter,
+    updatedAt: freshAfter,
+  };
+}

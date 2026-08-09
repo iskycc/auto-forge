@@ -1,5 +1,13 @@
 export type RunnerState = "online" | "offline" | "disabled";
 
+export type RunnerResourceSnapshot = {
+  cpuUtilizationPercent: number;
+  memoryUtilizationPercent: number;
+  loadAverage1m: number;
+  logicalCpuCount: number;
+  observedAt: string;
+};
+
 export type Runner = {
   id: string;
   name: string;
@@ -12,6 +20,7 @@ export type Runner = {
   maxConcurrency: number;
   busySlots: number;
   lastSeenAt: string;
+  resourceSnapshot?: RunnerResourceSnapshot;
   terminalEnabled: boolean;
   createdAt: string;
   updatedAt: string;

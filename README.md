@@ -7,7 +7,7 @@ AutoForge 是一个面向自动化测试场景的用例工厂，用于统一管�
 - **完整模式（Full）**：使用 PostgreSQL、NATS JetStream、MinIO 和 Redis，适合多执行机、较高并发和生产集群。
 - **极简模式（Lite）**：仅需 Node.js 和一个可写数据目录；以 SQLite 保存业务数据和持久任务，本地文件系统保存产物，不依赖任何外部基础设施。
 
-> 当前状态：用例资产管理已经同时落地 Lite 与 Full 适配器。平台可浏览受管对象、保存 JAR 扫描结果、指定一个权威全量来源、将勾选用例加入或移出用例任务，并展示 Runner 注册与心跳状态。Go Runner Agent 已接入注册、心跳和可选直连终端协议。执行租约、平台调度、远程日志/产物闭环和分析仍是后续能力，不能把当前用例任务误认为已经可远程执行。
+> 当前状态：用例资产管理和批跑动态调度已经同时落地 Lite 与 Full 适配器。平台可从用例任务创建 `RunBatch`/`ExecutionRun`，按用户勾选范围及 Agent 的 CPU、内存、单位 CPU 负载和空闲槽位生成 `RunAttempt` 分配。Go Runner Agent 已接入注册、资源心跳和可选直连终端协议。Agent 领取、执行租约、TestNG 命令执行、远程日志/产物闭环和分析仍是后续能力；当前“已生成分配”不能理解为用例已经执行。
 
 ## 当前已实现
 
@@ -19,6 +19,8 @@ AutoForge 是一个面向自动化测试场景的用例工厂，用于统一管�
 - JAR 来源列表、持久化扫描预览和唯一权威全量来源设置。
 - 用例勾选、用例任务创建、任务详情以及任务内用例新增/删除。
 - Runner Agent 注册、身份凭据落盘、周期心跳、在线/离线判定和执行机控制台。
+- 批跑配置页面、执行环境快照、失败重跑上限，以及共享的资源感知调度算法。
+- Agent 上报 CPU、内存、1 分钟负载与逻辑 CPU 数；调度阈值集中配置，过载或指标过期的节点不会获得新分配。
 - 可选的 Agent 直连终端：方案 E 浮窗使用 xterm.js，平台通过短时票据和同源 WebSocket 中继到 Agent 的受控 PTY，不新增 ShellHub 一类外部服务。
 - Full 模式按需连接 PostgreSQL、NATS、MinIO、Redis，readiness 实际检查四项依赖；Lite 启动不加载 Full 客户端。
 - `/api/v1` 管理接口，以及 liveness/readiness 健康检查。
@@ -26,7 +28,7 @@ AutoForge 是一个面向自动化测试场景的用例工厂，用于统一管�
 - Go 1.26 Runner Agent 的版本信息、配置诊断、受控工作目录、无 Shell 命令执行、日志上限、超时与 Linux 进程组清理。
 - GitHub Actions CI，以及后端离线镜像和 Agent 四变体 GitHub Release 流水线。
 
-尚未实现：`RunBatch`/`ExecutionRun` 执行闭环、SQLite/JetStream 调度队列、assignment 与 lease、Agent 远程领取和执行、日志/产物重传、统一平台用户鉴权、多租户及分析页面。NATS 和 Redis 当前用于 Full 运行边界与健康检查，尚未承载队列和缓存业务语义。Agent 的 `run-once` 仅用于验证执行安全核心，不能冒充平台已能调度 JAR。直连终端具有独立访问令牌，但它不等同于完整的平台用户与 RBAC 系统。
+尚未实现：SQLite/JetStream 调度消息、assignment claim 与 lease、Agent 远程领取和 TestNG 执行、失败结果触发重跑、日志/产物重传、统一平台用户鉴权、多租户及分析页面。NATS 和 Redis 当前用于 Full 运行边界与健康检查，尚未承载队列和缓存业务语义。Agent 的 `run-once` 仅用于验证执行安全核心，不能冒充平台已经执行了调度结果。直连终端具有独立访问令牌，但它不等同于完整的平台用户与 RBAC 系统。
 
 ## TestNG JAR 用例发现
 
@@ -59,10 +61,19 @@ AutoForge 是一个面向自动化测试场景的用例工厂，用于统一管�
 | `POST` | `/api/v1/runner-agents/register`   | 使用 bootstrap token 注册 Agent                      |
 | `POST` | `/api/v1/runner-agents/{runnerId}/heartbeat` | Agent 认证心跳与容量上报                   |
 | `GET`  | `/api/v1/runners`                  | 查询执行机及在线状态                                 |
+| `GET`  | `/api/v1/run-batches`              | 查询批跑调度记录                                     |
+| `POST` | `/api/v1/run-batches`              | 创建批次并尝试资源感知分配                           |
+| `GET`  | `/api/v1/run-batches/{batchId}`    | 查询批次、ExecutionRun 与 RunAttempt                 |
 | `POST` | `/api/v1/terminal-sessions`        | 使用终端访问令牌换取一次性 WebSocket 会话票据        |
 | `WS`   | `/api/v1/terminal-stream`          | 中继浏览器终端与 Agent 主动建立的终端通道             |
 | `GET`  | `/api/v1/health/live`              | 进程存活检查                                         |
 | `GET`  | `/api/v1/health/ready`             | 检查当前模式要求的数据库、对象存储及 Full 服务       |
+
+## 批跑动态调度
+
+“用例批跑”页面按“选择用例任务 → 勾选执行机 → 设置失败重跑次数 → 填写非密文测试环境变量 → 开始调度”创建批次。每个启用用例固化为一个 `ExecutionRun`；平台只在用户勾选范围内选择 Runner，并根据在线状态、资源快照新鲜度、空闲并发槽位、CPU、内存和 1 分钟单位 CPU 负载进行准入与评分。每次心跳会继续尝试分配等待资源的用例。
+
+当前 `scheduled` 只表示已经持久化初始 `RunAttempt`，不表示 Agent 已领取或执行。精确评分、并发防超卖、双模式语义和失败重跑边界见[批跑动态调度设计](./docs/architecture/run-scheduling.md)。
 
 ## 核心目标
 
@@ -183,7 +194,7 @@ MinIO 上游仓库已于 2026 年 4 月归档。AutoForge 继续通过标准 S3 
 
 ### Runner Agent（注册/心跳与本地执行核心已实现）
 
-Runner Agent 是安装在执行机上的 Go 守护进程。`start` 会通过 bootstrap token 注册、以 `0600` 权限保存 Runner 身份并周期性发送认证心跳；`version`、`doctor` 和本地 `run-once` 用于诊断与验证执行核心。执行规格经过版本化校验，只允许本机白名单中的可执行文件，以参数数组直接启动，不经过 Shell，并限制工作目录、运行时间和日志大小。任务领取、续租、日志重传和产物上传尚未实现。
+Runner Agent 是安装在执行机上的 Go 守护进程。`start` 会通过 bootstrap token 注册、以 `0600` 权限保存 Runner 身份，并周期性发送认证心跳及 Linux CPU、内存和负载快照；`version`、`doctor` 和本地 `run-once` 用于诊断与验证执行核心。执行规格经过版本化校验，只允许本机白名单中的可执行文件，以参数数组直接启动，不经过 Shell，并限制工作目录、运行时间和日志大小。任务领取、续租、日志重传和产物上传尚未实现。
 
 最终协议仍坚持 Agent 只主动连接 AutoForge 控制面，不直接访问业务数据库、NATS、Redis，也不持有 MinIO 长期凭据，因此同一个 Agent 将连接 Lite 或 Full。
 
@@ -305,6 +316,10 @@ autoforge/
 | `AUTOFORGE_MAX_JAR_BYTES`          | `33554432` | 单个 JAR 的最大字节数，范围 1 MiB–256 MiB          |
 | `AUTOFORGE_RUNNER_BOOTSTRAP_TOKEN` | 未设置     | 至少 32 字符；一个值只允许成功注册一台 Runner      |
 | `AUTOFORGE_TERMINAL_ACCESS_TOKEN`  | 未设置     | 至少 32 字符；未设置时直连终端网关关闭             |
+| `AUTOFORGE_SCHEDULER_MAX_CPU_PERCENT` | `85`    | 新分配允许的最大 CPU 使用率，范围 1–100            |
+| `AUTOFORGE_SCHEDULER_MAX_MEMORY_PERCENT` | `85` | 新分配允许的最大内存使用率，范围 1–100             |
+| `AUTOFORGE_SCHEDULER_MAX_LOAD_PER_CPU` | `1`   | 1 分钟负载除以逻辑 CPU 数后的最大值，范围 0.1–100  |
+| `AUTOFORGE_SCHEDULER_METRICS_MAX_AGE_SECONDS` | `45` | 资源快照最长有效期，范围 15–300 秒            |
 | `AUTOFORGE_DATABASE_URL`           | 无         | Full PostgreSQL URL                                |
 | `AUTOFORGE_NATS_SERVERS`           | 无         | Full NATS 地址，多个地址以逗号分隔                 |
 | `AUTOFORGE_REDIS_URL`              | 无         | Full `redis://` 或 `rediss://` URL                 |
@@ -387,7 +402,7 @@ AUTOFORGE_AGENT_BOOTSTRAP_TOKEN='replace-with-bootstrap-secret' \
 1. **基础骨架（已完成）**：workspace、Next.js、类型化配置、质量工具和基础 UI。
 2. **TestNG 用例资产（已完成首版）**：JAR 静态扫描、SQLite 用例库、本地来源对象和导入 UI。
 3. **Lite 执行闭环**：执行领域、SQLite 队列、本地执行、本地产物和基本结果页。
-4. **Runner Agent（注册、心跳、直连终端和执行核心已完成）**：继续实现能力调度、租约、日志/产物和断线恢复。
+4. **Runner Agent（注册、资源心跳、动态调度、直连终端和执行核心已完成）**：继续实现任务领取、租约、日志/产物和断线恢复。
 5. **Full 资产适配器（已完成）**：PostgreSQL、MinIO 及双模式管理契约；继续实现 JetStream 队列与 Redis 缓存业务端口。
 6. **分析能力**：趋势、筛选、失败分类、批次对比和数据保留策略。
 7. **离线交付（构建流水线已完成）**：继续补齐安装升级、备份恢复和断网端到端验收。

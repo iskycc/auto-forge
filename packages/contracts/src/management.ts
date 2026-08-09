@@ -52,6 +52,15 @@ export const runnerHeartbeatInputSchema = z.object({
   maxConcurrency: z.number().int().min(1).max(64),
   agentVersion: z.string().trim().min(1).max(64),
   terminalEnabled: z.boolean(),
+  resourceSnapshot: z
+    .object({
+      cpuUtilizationPercent: z.number().finite().min(0).max(100),
+      memoryUtilizationPercent: z.number().finite().min(0).max(100),
+      loadAverage1m: z.number().finite().nonnegative().max(100_000),
+      logicalCpuCount: z.number().int().min(1).max(4_096),
+      observedAt: z.string().datetime(),
+    })
+    .optional(),
 });
 
 export const runnerHeartbeatResultSchema = z.object({

@@ -71,7 +71,7 @@ AUTOFORGE_AGENT_BOOTSTRAP_TOKEN='replace-with-bootstrap-secret' \
 ./autoforge-agent-0.2.0-amd64 start
 ```
 
-当前 `start` 已实现注册、心跳和显式启用的直连终端；assignment 领取、lease、日志与产物上报仍未实现。
+当前 `start` 已实现注册、CPU/内存/负载心跳和显式启用的直连终端；平台可依据资源快照生成初始调度分配，但 assignment 领取、lease、实际用例执行、日志与产物上报仍未实现。
 
 ## 本地构建与验证
 

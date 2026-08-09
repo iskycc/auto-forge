@@ -49,7 +49,7 @@ export function apiErrorResponse(error: unknown, requestId = randomUUID()): Next
       { status: 400 },
     );
   }
-  logInternalError(error, requestId);
+  logServerError(error, requestId);
   return NextResponse.json(
     {
       error: {
@@ -62,13 +62,17 @@ export function apiErrorResponse(error: unknown, requestId = randomUUID()): Next
   );
 }
 
-function logInternalError(error: unknown, requestId: string): void {
+export function logServerError(
+  error: unknown,
+  requestId: string,
+  message = "API request failed",
+): void {
   const diagnostic = error instanceof Error ? error.message : "Unknown server error";
   process.stderr.write(
     `${JSON.stringify({
       timestamp: new Date().toISOString(),
       level: "error",
-      message: "API request failed",
+      message,
       requestId,
       error: redactSecrets(diagnostic),
     })}\n`,

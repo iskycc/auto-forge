@@ -4,7 +4,13 @@ import type {
   CaseSource,
   CaseSuite,
   CaseSuiteDetails,
+  ExecutionEnvironmentVariable,
+  ExecutionRun,
+  RunBatch,
+  RunBatchDetails,
   Runner,
+  SchedulingDecision,
+  SchedulingThresholds,
 } from "@autoforge/domain";
 
 export interface JarDiscoveryPort {
@@ -131,6 +137,13 @@ export interface RunnerRepository {
     busySlots: number;
     agentVersion: string;
     terminalEnabled: boolean;
+    resourceSnapshot?: {
+      cpuUtilizationPercent: number;
+      memoryUtilizationPercent: number;
+      loadAverage1m: number;
+      logicalCpuCount: number;
+      observedAt: string;
+    };
     recordedAt: string;
   }): Promise<Runner>;
   list(offlineBefore: string, limit: number): Promise<Runner[]>;
@@ -149,4 +162,47 @@ export interface RunnerCredentialPort {
   issue(): string;
   hash(value: string): string;
   verifyBootstrapToken(value: string): boolean;
+}
+
+export type CreateRunBatchRecord = {
+  id: string;
+  suiteId: string;
+  suiteName: string;
+  suiteVersion: number;
+  retryLimit: number;
+  environmentVariables: ExecutionEnvironmentVariable[];
+  runnerIds: string[];
+  runs: Array<{
+    id: string;
+    caseDefinitionId: string;
+    caseVersion: number;
+    displayName: string;
+    className: string;
+  }>;
+  createdAt: string;
+};
+
+export type SchedulingSnapshot = {
+  batch: RunBatch;
+  queuedRuns: ExecutionRun[];
+  candidates: Array<{ runner: Runner; reservedSlots: number }>;
+};
+
+export type ReserveSchedulingAssignmentsInput = {
+  batchId: string;
+  decisions: Array<SchedulingDecision & { attemptId: string }>;
+  thresholds: SchedulingThresholds;
+  offlineBefore: string;
+  metricsFreshAfter: string;
+  scheduledAt: string;
+};
+
+export interface RunBatchRepository {
+  create(record: CreateRunBatchRecord): Promise<RunBatchDetails>;
+  list(limit: number): Promise<RunBatch[]>;
+  get(batchId: string): Promise<RunBatchDetails | null>;
+  listSchedulableBatchIds(limit: number): Promise<string[]>;
+  listSchedulableBatchIdsForRunner(runnerId: string, limit: number): Promise<string[]>;
+  getSchedulingSnapshot(batchId: string, offlineBefore: string): Promise<SchedulingSnapshot | null>;
+  reserveAssignments(input: ReserveSchedulingAssignmentsInput): Promise<number>;
 }

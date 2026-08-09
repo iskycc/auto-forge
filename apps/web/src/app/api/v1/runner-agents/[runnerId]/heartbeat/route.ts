@@ -1,5 +1,13 @@
+import { randomUUID } from "node:crypto";
+
 import { runnerHeartbeatInputSchema } from "@autoforge/contracts";
-import { apiErrorResponse, bearerToken, readJsonBody, rejectRateLimited } from "@/lib/api-response";
+import {
+  apiErrorResponse,
+  bearerToken,
+  logServerError,
+  readJsonBody,
+  rejectRateLimited,
+} from "@/lib/api-response";
 import { getPlatformServices } from "@/lib/services";
 import { issueTerminalTicket } from "@/lib/terminal-ticket";
 import { NextResponse } from "next/server";
@@ -15,6 +23,11 @@ export async function POST(request: Request, context: Context): Promise<NextResp
       await services.runnerRequestLimiter.allow(`runner:heartbeat:v1:${runnerId}`, 120, 60_000),
     );
     const heartbeat = await services.runnerControl.heartbeat(runnerId, bearerToken(request), input);
+    try {
+      await services.runBatches.scheduleForRunner(runnerId);
+    } catch (error) {
+      logServerError(error, randomUUID(), "Heartbeat-triggered scheduling failed");
+    }
     const terminalConnectionToken =
       input.terminalEnabled && services.config.terminalAccessToken
         ? issueTerminalTicket(services.config.terminalAccessToken, {

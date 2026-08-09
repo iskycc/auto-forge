@@ -61,6 +61,9 @@ export class RunnerControlService {
       busySlots: input.busySlots,
       agentVersion: input.agentVersion,
       terminalEnabled: input.terminalEnabled,
+      ...(input.resourceSnapshot
+        ? { resourceSnapshot: { ...input.resourceSnapshot, observedAt: acceptedAt } }
+        : {}),
       recordedAt: acceptedAt,
     });
     return {

@@ -15,6 +15,15 @@ const environmentSchema = z
       .default(33_554_432),
     AUTOFORGE_RUNNER_BOOTSTRAP_TOKEN: z.string().min(32).optional(),
     AUTOFORGE_TERMINAL_ACCESS_TOKEN: z.string().min(32).optional(),
+    AUTOFORGE_SCHEDULER_MAX_CPU_PERCENT: z.coerce.number().min(1).max(100).default(85),
+    AUTOFORGE_SCHEDULER_MAX_MEMORY_PERCENT: z.coerce.number().min(1).max(100).default(85),
+    AUTOFORGE_SCHEDULER_MAX_LOAD_PER_CPU: z.coerce.number().min(0.1).max(100).default(1),
+    AUTOFORGE_SCHEDULER_METRICS_MAX_AGE_SECONDS: z.coerce
+      .number()
+      .int()
+      .min(15)
+      .max(300)
+      .default(45),
     AUTOFORGE_DATABASE_URL: z.string().min(1).optional(),
     AUTOFORGE_NATS_SERVERS: z.string().min(1).optional(),
     AUTOFORGE_REDIS_URL: z.url().optional(),
@@ -49,6 +58,12 @@ type CommonConfig = {
   maxJarBytes: number;
   runnerBootstrapToken?: string;
   terminalAccessToken?: string;
+  scheduler: {
+    maximumCpuUtilizationPercent: number;
+    maximumMemoryUtilizationPercent: number;
+    maximumLoadPerCpu: number;
+    metricsMaximumAgeSeconds: number;
+  };
 };
 
 export type AppConfig = CommonConfig &
@@ -101,6 +116,12 @@ export function loadAppConfig(environment: NodeJS.ProcessEnv = process.env): App
     ...(parsed.AUTOFORGE_TERMINAL_ACCESS_TOKEN
       ? { terminalAccessToken: parsed.AUTOFORGE_TERMINAL_ACCESS_TOKEN }
       : {}),
+    scheduler: {
+      maximumCpuUtilizationPercent: parsed.AUTOFORGE_SCHEDULER_MAX_CPU_PERCENT,
+      maximumMemoryUtilizationPercent: parsed.AUTOFORGE_SCHEDULER_MAX_MEMORY_PERCENT,
+      maximumLoadPerCpu: parsed.AUTOFORGE_SCHEDULER_MAX_LOAD_PER_CPU,
+      metricsMaximumAgeSeconds: parsed.AUTOFORGE_SCHEDULER_METRICS_MAX_AGE_SECONDS,
+    },
   };
   if (parsed.AUTOFORGE_MODE === "full") {
     const endpoint = new URL(parsed.AUTOFORGE_MINIO_ENDPOINT!);

@@ -18,6 +18,7 @@ import (
 
 	"github.com/iskycc/auto-forge/apps/runner-agent/internal/buildinfo"
 	"github.com/iskycc/auto-forge/apps/runner-agent/internal/config"
+	"github.com/iskycc/auto-forge/apps/runner-agent/internal/metrics"
 )
 
 const (
@@ -51,12 +52,13 @@ type registrationResponse struct {
 }
 
 type heartbeatRequest struct {
-	SchemaVersion   int      `json:"schemaVersion"`
-	BusySlots       int      `json:"busySlots"`
-	Labels          []string `json:"labels"`
-	MaxConcurrency  int      `json:"maxConcurrency"`
-	AgentVersion    string   `json:"agentVersion"`
-	TerminalEnabled bool     `json:"terminalEnabled"`
+	SchemaVersion    int               `json:"schemaVersion"`
+	BusySlots        int               `json:"busySlots"`
+	Labels           []string          `json:"labels"`
+	MaxConcurrency   int               `json:"maxConcurrency"`
+	AgentVersion     string            `json:"agentVersion"`
+	TerminalEnabled  bool              `json:"terminalEnabled"`
+	ResourceSnapshot *metrics.Snapshot `json:"resourceSnapshot,omitempty"`
 }
 
 type HeartbeatResponse struct {
@@ -134,14 +136,15 @@ func (client *Client) Register(ctx context.Context, configuration config.Config,
 	}, heartbeatInterval(response.HeartbeatIntervalSecond), nil
 }
 
-func (client *Client) Heartbeat(ctx context.Context, identity Identity, configuration config.Config, info buildinfo.Info) (HeartbeatResponse, error) {
+func (client *Client) Heartbeat(ctx context.Context, identity Identity, configuration config.Config, info buildinfo.Info, snapshot *metrics.Snapshot) (HeartbeatResponse, error) {
 	request := heartbeatRequest{
-		SchemaVersion:   protocolVersion,
-		BusySlots:       0,
-		Labels:          configuration.Labels,
-		MaxConcurrency:  configuration.MaxConcurrent,
-		AgentVersion:    info.Version,
-		TerminalEnabled: configuration.Terminal.Enabled,
+		SchemaVersion:    protocolVersion,
+		BusySlots:        0,
+		Labels:           configuration.Labels,
+		MaxConcurrency:   configuration.MaxConcurrent,
+		AgentVersion:     info.Version,
+		TerminalEnabled:  configuration.Terminal.Enabled,
+		ResourceSnapshot: snapshot,
 	}
 	var response HeartbeatResponse
 	path := fmt.Sprintf("/api/v1/runner-agents/%s/heartbeat", url.PathEscape(identity.RunnerID))

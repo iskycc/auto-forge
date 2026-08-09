@@ -10,6 +10,7 @@ import (
 
 	"github.com/iskycc/auto-forge/apps/runner-agent/internal/buildinfo"
 	"github.com/iskycc/auto-forge/apps/runner-agent/internal/config"
+	"github.com/iskycc/auto-forge/apps/runner-agent/internal/metrics"
 	"github.com/iskycc/auto-forge/apps/runner-agent/internal/terminal"
 )
 
@@ -57,9 +58,17 @@ func Run(ctx context.Context, configuration config.Config, info buildinfo.Info, 
 		terminalConnector = newTerminalConnector(client, terminalManager)
 		go terminalConnector.Run(ctx)
 	}
+	resourceCollector := metrics.NewCollector()
 
 	for {
-		response, heartbeatErr := client.Heartbeat(ctx, identity, configuration, info)
+		var resourceSnapshot *metrics.Snapshot
+		collected, metricsErr := resourceCollector.Collect()
+		if metricsErr != nil {
+			fmt.Fprintf(diagnostics, "resource metrics unavailable: %v\n", metricsErr)
+		} else {
+			resourceSnapshot = &collected
+		}
+		response, heartbeatErr := client.Heartbeat(ctx, identity, configuration, info, resourceSnapshot)
 		if heartbeatErr != nil {
 			if ctx.Err() != nil {
 				return nil

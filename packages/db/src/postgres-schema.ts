@@ -1,5 +1,13 @@
 import { sql } from "drizzle-orm";
-import { boolean, index, integer, pgTable, text, uniqueIndex } from "drizzle-orm/pg-core";
+import {
+  boolean,
+  doublePrecision,
+  index,
+  integer,
+  pgTable,
+  text,
+  uniqueIndex,
+} from "drizzle-orm/pg-core";
 
 export const pgCaseSources = pgTable(
   "case_sources",
@@ -141,6 +149,11 @@ export const pgRunners = pgTable(
     maxConcurrency: integer("max_concurrency").notNull(),
     busySlots: integer("busy_slots").notNull(),
     lastSeenAt: text("last_seen_at").notNull(),
+    cpuUtilizationPercent: doublePrecision("cpu_utilization_percent"),
+    memoryUtilizationPercent: doublePrecision("memory_utilization_percent"),
+    loadAverage1m: doublePrecision("load_average_1m"),
+    logicalCpuCount: integer("logical_cpu_count"),
+    metricsObservedAt: text("metrics_observed_at"),
     terminalEnabled: boolean("terminal_enabled").notNull().default(false),
     createdAt: text("created_at").notNull(),
     updatedAt: text("updated_at").notNull(),
@@ -156,6 +169,97 @@ export const pgRunnerBootstrapUses = pgTable("runner_bootstrap_uses", {
   usedAt: text("used_at").notNull(),
 });
 
+export const pgRunBatches = pgTable(
+  "run_batches",
+  {
+    id: text("id").primaryKey(),
+    suiteId: text("suite_id").notNull(),
+    suiteName: text("suite_name").notNull(),
+    suiteVersion: integer("suite_version").notNull(),
+    status: text("status", {
+      enum: ["queued", "dispatching", "scheduled", "running", "succeeded", "failed", "cancelled"],
+    }).notNull(),
+    retryLimit: integer("retry_limit").notNull(),
+    environmentJson: text("environment_json").notNull(),
+    totalRuns: integer("total_runs").notNull(),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [
+    index("run_batches_status_created_at_idx").on(table.status, table.createdAt),
+    index("run_batches_suite_id_idx").on(table.suiteId),
+  ],
+);
+
+export const pgRunBatchRunners = pgTable(
+  "run_batch_runners",
+  {
+    batchId: text("batch_id")
+      .notNull()
+      .references(() => pgRunBatches.id, { onDelete: "cascade" }),
+    runnerId: text("runner_id")
+      .notNull()
+      .references(() => pgRunners.id, { onDelete: "restrict" }),
+  },
+  (table) => [
+    uniqueIndex("run_batch_runners_batch_runner_uq").on(table.batchId, table.runnerId),
+    index("run_batch_runners_runner_idx").on(table.runnerId),
+  ],
+);
+
+export const pgExecutionRuns = pgTable(
+  "execution_runs",
+  {
+    id: text("id").primaryKey(),
+    batchId: text("batch_id")
+      .notNull()
+      .references(() => pgRunBatches.id, { onDelete: "cascade" }),
+    caseDefinitionId: text("case_definition_id").notNull(),
+    caseVersion: integer("case_version").notNull(),
+    displayName: text("display_name").notNull(),
+    className: text("class_name").notNull(),
+    status: text("status", {
+      enum: ["queued", "assigned", "running", "succeeded", "failed", "cancelled"],
+    }).notNull(),
+    assignedRunnerId: text("assigned_runner_id").references(() => pgRunners.id, {
+      onDelete: "restrict",
+    }),
+    attemptCount: integer("attempt_count").notNull(),
+    schedulingScore: doublePrecision("scheduling_score"),
+    createdAt: text("created_at").notNull(),
+    assignedAt: text("assigned_at"),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("execution_runs_batch_case_uq").on(table.batchId, table.caseDefinitionId),
+    index("execution_runs_batch_status_idx").on(table.batchId, table.status),
+    index("execution_runs_runner_status_idx").on(table.assignedRunnerId, table.status),
+  ],
+);
+
+export const pgRunAttempts = pgTable(
+  "run_attempts",
+  {
+    id: text("id").primaryKey(),
+    executionRunId: text("execution_run_id")
+      .notNull()
+      .references(() => pgExecutionRuns.id, { onDelete: "cascade" }),
+    runnerId: text("runner_id")
+      .notNull()
+      .references(() => pgRunners.id, { onDelete: "restrict" }),
+    attemptNumber: integer("attempt_number").notNull(),
+    status: text("status", {
+      enum: ["assigned", "running", "succeeded", "failed", "timed_out", "cancelled"],
+    }).notNull(),
+    schedulingScore: doublePrecision("scheduling_score").notNull(),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("run_attempts_run_number_uq").on(table.executionRunId, table.attemptNumber),
+    index("run_attempts_runner_status_idx").on(table.runnerId, table.status),
+  ],
+);
+
 export const postgresSchema = {
   caseSources: pgCaseSources,
   caseDefinitions: pgCaseDefinitions,
@@ -165,4 +269,8 @@ export const postgresSchema = {
   caseSuiteItems: pgCaseSuiteItems,
   runners: pgRunners,
   runnerBootstrapUses: pgRunnerBootstrapUses,
+  runBatches: pgRunBatches,
+  runBatchRunners: pgRunBatchRunners,
+  executionRuns: pgExecutionRuns,
+  runAttempts: pgRunAttempts,
 };

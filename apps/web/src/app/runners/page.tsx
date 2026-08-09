@@ -66,6 +66,7 @@ export default async function RunnersPage() {
                   <th>执行机</th>
                   <th>平台</th>
                   <th>容量</th>
+                  <th>资源</th>
                   <th>状态</th>
                   <th>最近心跳</th>
                   <th>终端</th>
@@ -88,6 +89,23 @@ export default async function RunnersPage() {
                       </td>
                       <td>
                         {runner.busySlots} / {runner.maxConcurrency}
+                      </td>
+                      <td>
+                        {runner.resourceSnapshot ? (
+                          <span className="runner-resource-cell">
+                            <small>CPU {runner.resourceSnapshot.cpuUtilizationPercent}%</small>
+                            <small>内存 {runner.resourceSnapshot.memoryUtilizationPercent}%</small>
+                            <small>
+                              负载/CPU{" "}
+                              {(
+                                runner.resourceSnapshot.loadAverage1m /
+                                runner.resourceSnapshot.logicalCpuCount
+                              ).toFixed(2)}
+                            </small>
+                          </span>
+                        ) : (
+                          <span className="muted">等待上报</span>
+                        )}
                       </td>
                       <td>
                         <span className={`runner-state runner-state-${runner.state}`}>

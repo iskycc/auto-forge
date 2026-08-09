@@ -3,38 +3,8 @@ import type { Runner } from "@autoforge/domain";
 import { desc, eq } from "drizzle-orm";
 
 import type { SqliteDatabaseHandle } from "./database";
+import { mapStoredRunner } from "./runner-mapper";
 import { runnerBootstrapUses, runners } from "./schema";
-
-function labels(json: string): string[] {
-  const parsed: unknown = JSON.parse(json);
-  return Array.isArray(parsed)
-    ? parsed.filter((item): item is string => typeof item === "string")
-    : [];
-}
-
-function toRunner(row: typeof runners.$inferSelect, offlineBefore?: string): Runner {
-  const state = row.disabled
-    ? "disabled"
-    : offlineBefore && row.lastSeenAt < offlineBefore
-      ? "offline"
-      : "online";
-  return {
-    id: row.id,
-    name: row.name,
-    state,
-    os: row.os,
-    architecture: row.architecture,
-    agentVersion: row.agentVersion,
-    protocolVersion: row.protocolVersion,
-    labels: labels(row.labelsJson),
-    maxConcurrency: row.maxConcurrency,
-    busySlots: row.busySlots,
-    lastSeenAt: row.lastSeenAt,
-    terminalEnabled: row.terminalEnabled,
-    createdAt: row.createdAt,
-    updatedAt: row.updatedAt,
-  };
-}
 
 export class SqliteRunnerRepository implements RunnerRepository {
   constructor(private readonly handle: SqliteDatabaseHandle) {}
@@ -68,7 +38,7 @@ export class SqliteRunnerRepository implements RunnerRepository {
         })
         .returning()
         .get();
-      return toRunner(row);
+      return mapStoredRunner(row);
     })();
   }
 
@@ -78,7 +48,7 @@ export class SqliteRunnerRepository implements RunnerRepository {
       .from(runners)
       .where(eq(runners.credentialHash, credentialHash))
       .get();
-    return row ? toRunner(row) : null;
+    return row ? mapStoredRunner(row) : null;
   }
 
   async heartbeat(input: {
@@ -88,6 +58,13 @@ export class SqliteRunnerRepository implements RunnerRepository {
     busySlots: number;
     agentVersion: string;
     terminalEnabled: boolean;
+    resourceSnapshot?: {
+      cpuUtilizationPercent: number;
+      memoryUtilizationPercent: number;
+      loadAverage1m: number;
+      logicalCpuCount: number;
+      observedAt: string;
+    };
     recordedAt: string;
   }): Promise<Runner> {
     const row = this.handle.db
@@ -98,6 +75,15 @@ export class SqliteRunnerRepository implements RunnerRepository {
         busySlots: input.busySlots,
         agentVersion: input.agentVersion,
         terminalEnabled: input.terminalEnabled,
+        ...(input.resourceSnapshot
+          ? {
+              cpuUtilizationPercent: input.resourceSnapshot.cpuUtilizationPercent,
+              memoryUtilizationPercent: input.resourceSnapshot.memoryUtilizationPercent,
+              loadAverage1m: input.resourceSnapshot.loadAverage1m,
+              logicalCpuCount: input.resourceSnapshot.logicalCpuCount,
+              metricsObservedAt: input.resourceSnapshot.observedAt,
+            }
+          : {}),
         lastSeenAt: input.recordedAt,
         updatedAt: input.recordedAt,
       })
@@ -105,7 +91,7 @@ export class SqliteRunnerRepository implements RunnerRepository {
       .returning()
       .get();
     if (!row) throw new Error(`Runner ${input.runnerId} does not exist.`);
-    return toRunner(row);
+    return mapStoredRunner(row);
   }
 
   async list(offlineBefore: string, limit: number): Promise<Runner[]> {
@@ -115,11 +101,11 @@ export class SqliteRunnerRepository implements RunnerRepository {
       .orderBy(desc(runners.lastSeenAt))
       .limit(limit)
       .all()
-      .map((row) => toRunner(row, offlineBefore));
+      .map((row) => mapStoredRunner(row, offlineBefore));
   }
 
   async get(runnerId: string, offlineBefore: string): Promise<Runner | null> {
     const row = this.handle.db.select().from(runners).where(eq(runners.id, runnerId)).get();
-    return row ? toRunner(row, offlineBefore) : null;
+    return row ? mapStoredRunner(row, offlineBefore) : null;
   }
 }

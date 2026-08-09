@@ -5,7 +5,7 @@ import WebSocket from "ws";
 import { buildClassFile } from "../../packages/testng-discovery/test/class-fixture";
 
 test("imports TestNG methods from a JAR into the case library", async ({ page }) => {
-  test.setTimeout(120_000);
+  test.setTimeout(300_000);
   const jar = zipSync({
     "com/example/CheckoutTest.class": buildClassFile({
       className: "com.example.CheckoutTest",
@@ -89,12 +89,35 @@ test("imports TestNG methods from a JAR into the case library", async ({ page })
         maxConcurrency: 2,
         agentVersion: "0.2.0",
         terminalEnabled: true,
+        resourceSnapshot: {
+          cpuUtilizationPercent: 24,
+          memoryUtilizationPercent: 38,
+          loadAverage1m: 0.6,
+          logicalCpuCount: 4,
+          observedAt: new Date().toISOString(),
+        },
       },
     },
   );
   expect(heartbeat.status()).toBe(200);
   const heartbeatResult = (await heartbeat.json()) as { terminalConnectionToken: string };
   expect(heartbeatResult.terminalConnectionToken).toBeTruthy();
+
+  await page.goto("/cases");
+  await page.getByLabel("选择 CheckoutTest").check();
+  await page.getByRole("button", { name: "加入任务" }).click();
+  await expect(page.getByRole("status")).toContainText("已将 1 个用例加入任务");
+
+  await page.goto("/run-batches");
+  const runnerChoice = page.locator(".runner-choice").filter({ hasText: "E2E Runner" });
+  await runnerChoice.locator('input[type="checkbox"]').check();
+  await page.getByLabel("失败用例重跑次数").selectOption("2");
+  await page.getByRole("button", { name: "添加变量" }).click();
+  await page.getByLabel("环境变量名").fill("TEST_ENV");
+  await page.getByLabel("环境变量值").fill("e2e");
+  await page.getByRole("button", { name: "开始调度" }).click();
+  await expect(page.getByText("已生成分配", { exact: true })).toBeVisible();
+  await expect(page.getByText("已分配 1", { exact: true })).toBeVisible();
 
   const agentSocket = new WebSocket(
     "ws://127.0.0.1:3100/api/v1/terminal-stream",
