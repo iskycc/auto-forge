@@ -4,8 +4,11 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -52,6 +55,62 @@ func TestRunTerminatesProcessGroupOnTimeout(t *testing.T) {
 	}
 	if time.Since(started) > time.Second {
 		t.Fatal("timed out helper was not terminated promptly")
+	}
+}
+
+func TestRunTreatsShellMetacharactersAsLiteralArguments(t *testing.T) {
+	executable := testExecutable(t)
+	marker := filepath.Join(t.TempDir(), "must-not-exist")
+	spec := helperSpec(executable, "argument")
+	spec.Command.Args = append(spec.Command.Args, "; touch "+marker)
+
+	result, err := Run(context.Background(), spec, RunOptions{
+		DataDirectory: t.TempDir(),
+		Policy:        Policy{AllowedExecutables: []string{executable}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(result.Stdout, "; touch "+marker) {
+		t.Fatalf("literal argument was not preserved: %q", result.Stdout)
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("shell metacharacters created marker file: %v", err)
+	}
+}
+
+func TestRunTerminatesDescendantProcessTreeOnTimeout(t *testing.T) {
+	executable := testExecutable(t)
+	pidPath := filepath.Join(t.TempDir(), "descendant.pid")
+	spec := helperSpec(executable, "tree")
+	spec.Command.Args = append(spec.Command.Args, pidPath)
+	spec.Limits.TimeoutMs = 100
+	spec.Limits.TerminationGraceMs = 10
+
+	result, err := Run(context.Background(), spec, RunOptions{
+		DataDirectory: t.TempDir(),
+		Policy:        Policy{AllowedExecutables: []string{executable}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Termination != "timeout" {
+		t.Fatalf("termination = %q, want timeout", result.Termination)
+	}
+	payload, err := os.ReadFile(pidPath)
+	if err != nil {
+		t.Fatalf("read descendant pid: %v", err)
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(payload)))
+	if err != nil {
+		t.Fatalf("parse descendant pid: %v", err)
+	}
+	deadline := time.Now().Add(time.Second)
+	for processExists(pid) && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if processExists(pid) {
+		t.Fatalf("descendant process %d survived timeout cleanup", pid)
 	}
 }
 
@@ -115,10 +174,30 @@ func TestHelperProcess(t *testing.T) {
 		fmt.Fprint(os.Stderr, "stderr-data")
 	case "sleep":
 		time.Sleep(5 * time.Second)
+	case "argument":
+		fmt.Fprint(os.Stdout, os.Args[len(os.Args)-1])
+	case "tree":
+		pidPath := os.Args[len(os.Args)-1]
+		child := exec.Command(os.Args[0], "-test.run=TestHelperProcess", "--", "leaf")
+		child.Env = append(os.Environ(), "AUTOFORGE_TEST_HELPER=1")
+		if err := child.Start(); err != nil {
+			os.Exit(3)
+		}
+		if err := os.WriteFile(pidPath, []byte(strconv.Itoa(child.Process.Pid)), 0o600); err != nil {
+			os.Exit(4)
+		}
+		time.Sleep(5 * time.Second)
+	case "leaf":
+		time.Sleep(5 * time.Second)
 	default:
 		os.Exit(2)
 	}
 	os.Exit(0)
+}
+
+func processExists(pid int) bool {
+	err := syscall.Kill(pid, 0)
+	return err == nil || err == syscall.EPERM
 }
 
 func helperSpec(executable, mode string) Spec {
@@ -131,7 +210,7 @@ func helperSpec(executable, mode string) Spec {
 		},
 		Environment: map[string]string{"AUTOFORGE_TEST_HELPER": "1"},
 		Limits: Limits{
-			TimeoutMs:   1_000,
+			TimeoutMs:   5_000,
 			MaxLogBytes: 1_024,
 		},
 	}

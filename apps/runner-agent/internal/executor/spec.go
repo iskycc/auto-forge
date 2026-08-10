@@ -52,6 +52,11 @@ type Limits struct {
 	TimeoutMs          int64 `json:"timeoutMs"`
 	MaxLogBytes        int64 `json:"maxLogBytes"`
 	TerminationGraceMs int64 `json:"terminationGraceMs,omitempty"`
+	CPUMillicores      int64 `json:"cpuMillicores,omitempty"`
+	MemoryBytes        int64 `json:"memoryBytes,omitempty"`
+	DiskBytes          int64 `json:"diskBytes,omitempty"`
+	ProcessCount       int64 `json:"processCount,omitempty"`
+	FileCount          int64 `json:"fileCount,omitempty"`
 }
 
 type Policy struct {
@@ -162,6 +167,12 @@ func validateLimits(limits Limits) error {
 	gracePeriod := terminationGracePeriod(limits)
 	if gracePeriod < 0 || gracePeriod > 30*time.Second {
 		return errors.New("limits.terminationGraceMs must be between 0 and 30000")
+	}
+	if limits.CPUMillicores < 0 || limits.CPUMillicores > 1_000_000 {
+		return errors.New("limits.cpuMillicores must be between 0 and 1000000")
+	}
+	if limits.MemoryBytes < 0 || limits.DiskBytes < 0 || limits.ProcessCount < 0 || limits.ProcessCount > 4_096 || limits.FileCount < 0 || limits.FileCount > 1_000_000 {
+		return errors.New("execution resource limits are outside the supported range")
 	}
 	return nil
 }

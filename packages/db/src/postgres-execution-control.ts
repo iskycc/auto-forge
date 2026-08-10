@@ -1,14 +1,31 @@
 import type { ClaimedAssignmentRecord, ExecutionControlRepository } from "@autoforge/application";
 import {
+  attemptEventPageSchema,
   completeAttemptResponseSchema,
   executionSpecSchema,
   reconcileAttemptsResponseSchema,
+  type ArtifactDeclaration,
   type AssignmentDto,
   type CompleteAttemptResponse,
   type CompletionResult,
   type ReconcileAttemptsResponse,
 } from "@autoforge/contracts";
-import { aggregateBatchStatus, DomainError, outcomeAfterCompletion } from "@autoforge/domain";
+import {
+  aggregateBatchStatus,
+  DomainError,
+  isTerminalAttemptStatus,
+  isTerminalRunStatus,
+  outcomeAfterCompletion,
+  transitionAssignment,
+  transitionExecutionRun,
+  transitionLease,
+  transitionRunBatch,
+  transitionRunAttempt,
+  type AssignmentStatus,
+  type ExecutionRunStatus,
+  type RunAttemptStatus,
+  type RunBatchStatus,
+} from "@autoforge/domain";
 import type { PoolClient } from "pg";
 
 import type { PostgresDatabaseHandle } from "./postgres-database";
@@ -19,7 +36,7 @@ type AssignmentRow = {
   execution_run_id: string;
   batch_id: string;
   runner_id: string;
-  status: string;
+  status: AssignmentStatus;
   priority: number;
   execution_spec_json: string;
   available_at: string;
@@ -50,12 +67,41 @@ type AttemptControlRow = {
   execution_run_id: string;
   runner_id: string;
   attempt_number: number;
-  status: string;
-  run_status: string;
+  status: RunAttemptStatus;
+  run_status: ExecutionRunStatus;
   retry_limit: number;
   batch_id: string;
+  project_id: string;
   run_cancel_requested_at: string | null;
 };
+
+type ArtifactRow = {
+  id: string;
+  attempt_id: string;
+  relative_path: string;
+  object_key: string | null;
+  media_type: string;
+  size_bytes: string;
+  sha256: string;
+  required: boolean;
+  status: "declared" | "uploaded" | "rejected";
+};
+
+type AttemptEventRow = {
+  id: string;
+  attempt_id: string;
+  event_type: string;
+  from_status: string | null;
+  to_status: string | null;
+  reason_code: string | null;
+  actor_type: "user" | "runner" | "system";
+  actor_id: string | null;
+  details_json: string;
+  recorded_at: string;
+};
+
+type AttemptExpirationReason =
+  "claim_timeout" | "lease_expired" | "execution_timeout" | "upload_timeout";
 
 export class PostgresExecutionControlRepository implements ExecutionControlRepository {
   constructor(private readonly handle: PostgresDatabaseHandle) {}
@@ -125,7 +171,13 @@ export class PostgresExecutionControlRepository implements ExecutionControlRepos
           details: { assignmentId: assignment.id, leaseId: seed.id },
           recordedAt: input.now,
         });
-        await updateBatchStatus(client, assignment.batch_id, input.now);
+        await updateBatchStatus(
+          client,
+          assignment.batch_id,
+          input.now,
+          seed.eventId,
+          "assignment.claimed",
+        );
         claimed.push({
           assignment: mapAssignment({
             ...assignment,
@@ -202,79 +254,105 @@ export class PostgresExecutionControlRepository implements ExecutionControlRepos
     input: Parameters<ExecutionControlRepository["completeAttempt"]>[0],
   ): Promise<CompleteAttemptResponse> {
     await this.handle.ready;
-    return this.transaction(async (client) => {
-      const existing = await client.query<{ result_digest: string; response_json: string }>(
-        "SELECT result_digest, response_json FROM attempt_completion_receipts WHERE attempt_id = $1 FOR UPDATE",
-        [input.attemptId],
-      );
-      if (existing.rows[0]) {
-        if (existing.rows[0].result_digest !== input.resultDigest) {
-          throw new DomainError("ATTEMPT_COMPLETION_CONFLICT", "该执行尝试已收到不同的完成结果。");
+    const result = await this.transaction(
+      async (client): Promise<{ response: CompleteAttemptResponse } | { conflict: true }> => {
+        const control = await requiredAttemptControl(client, input.attemptId, true);
+        const assignment = await assignmentForAttempt(client, input.attemptId);
+        const lease = assignment
+          ? await latestLeaseForAssignment(client, assignment.id)
+          : undefined;
+        if (
+          !assignment ||
+          !lease ||
+          lease.runner_id !== input.runnerId ||
+          lease.token_hash !== input.leaseTokenHash
+        ) {
+          throw new DomainError("LEASE_AUTH_REJECTED", "完成上报的租约凭据无效。");
         }
-        return {
-          ...completeAttemptResponseSchema.parse(JSON.parse(existing.rows[0].response_json)),
-          disposition: "duplicate" as const,
-        };
-      }
-      const control = await requiredAttemptControl(client, input.attemptId, true);
-      const assignment = await assignmentForAttempt(client, input.attemptId);
-      const lease = assignment ? await latestLeaseForAssignment(client, assignment.id) : undefined;
-      if (
-        !assignment ||
-        !lease ||
-        lease.runner_id !== input.runnerId ||
-        lease.token_hash !== input.leaseTokenHash
-      ) {
-        throw new DomainError("LEASE_AUTH_REJECTED", "完成上报的租约凭据无效。");
-      }
-      const current = await client.query<{ value: number }>(
-        "SELECT MAX(attempt_number)::integer AS value FROM run_attempts WHERE execution_run_id = $1",
-        [control.execution_run_id],
-      );
-      const isLate =
-        lease.status !== "active" ||
-        lease.expires_at <= input.acceptedAt ||
-        current.rows[0]?.value !== control.attempt_number ||
-        isTerminalRunStatus(control.run_status);
-      const response: CompleteAttemptResponse = {
-        schemaVersion: 1,
-        completionId: input.completionId,
-        acceptedAt: input.acceptedAt,
-        disposition: isLate ? "late" : "accepted",
-        retryScheduled: false,
-      };
-      if (!isLate) {
-        const effectiveResult = cancellationResult(input.result, control.run_cancel_requested_at);
-        const decision = outcomeAfterCompletion({
-          outcome: effectiveResult.status,
-          attemptNumber: control.attempt_number,
-          retryLimit: control.retry_limit,
-          cancellationRequested: control.run_cancel_requested_at !== null,
-        });
-        response.retryScheduled = decision.retryScheduled;
-        await persistCompletion(
-          client,
-          control,
-          assignment,
-          lease,
-          effectiveResult,
-          input,
-          decision.runStatus,
+        const existing = await client.query<{ result_digest: string; response_json: string }>(
+          "SELECT result_digest, response_json FROM attempt_completion_receipts WHERE attempt_id = $1 FOR UPDATE",
+          [input.attemptId],
         );
-      }
-      await client.query(
-        `INSERT INTO attempt_completion_receipts
+        if (existing.rows[0]) {
+          if (existing.rows[0].result_digest !== input.resultDigest) {
+            await appendAttemptEvent(client, {
+              id: input.eventId,
+              attemptId: input.attemptId,
+              eventType: "attempt.completion_conflict",
+              fromStatus: control.status,
+              toStatus: control.status,
+              reasonCode: "ATTEMPT_COMPLETION_CONFLICT",
+              actorType: "runner",
+              actorId: input.runnerId,
+              details: {
+                completionId: input.completionId,
+                receivedDigest: input.resultDigest,
+                storedDigest: existing.rows[0].result_digest,
+              },
+              recordedAt: input.acceptedAt,
+            });
+            return { conflict: true };
+          }
+          return {
+            response: {
+              ...completeAttemptResponseSchema.parse(JSON.parse(existing.rows[0].response_json)),
+              disposition: "duplicate" as const,
+            },
+          };
+        }
+        const current = await client.query<{ value: number }>(
+          "SELECT MAX(attempt_number)::integer AS value FROM run_attempts WHERE execution_run_id = $1",
+          [control.execution_run_id],
+        );
+        const isLate =
+          lease.status !== "active" ||
+          lease.expires_at <= input.acceptedAt ||
+          current.rows[0]?.value !== control.attempt_number ||
+          isTerminalRunStatus(control.run_status);
+        const response: CompleteAttemptResponse = {
+          schemaVersion: 1 as const,
+          completionId: input.completionId,
+          acceptedAt: input.acceptedAt,
+          disposition: isLate ? "late" : "accepted",
+          retryScheduled: false,
+        };
+        if (!isLate) {
+          const effectiveResult = cancellationResult(input.result, control.run_cancel_requested_at);
+          const decision = outcomeAfterCompletion({
+            outcome: effectiveResult.status,
+            attemptNumber: control.attempt_number,
+            retryLimit: control.retry_limit,
+            cancellationRequested: control.run_cancel_requested_at !== null,
+          });
+          response.retryScheduled = decision.retryScheduled;
+          await persistCompletion(
+            client,
+            control,
+            assignment,
+            lease,
+            effectiveResult,
+            input,
+            decision.runStatus,
+          );
+        }
+        await client.query(
+          `INSERT INTO attempt_completion_receipts
          (attempt_id, completion_id, result_digest, response_json, accepted_at) VALUES ($1, $2, $3, $4, $5)`,
-        [
-          input.attemptId,
-          input.completionId,
-          input.resultDigest,
-          JSON.stringify(response),
-          input.acceptedAt,
-        ],
-      );
-      return response;
-    });
+          [
+            input.attemptId,
+            input.completionId,
+            input.resultDigest,
+            JSON.stringify(response),
+            input.acceptedAt,
+          ],
+        );
+        return { response };
+      },
+    );
+    if ("conflict" in result) {
+      throw new DomainError("ATTEMPT_COMPLETION_CONFLICT", "该执行尝试已收到不同的完成结果。");
+    }
+    return result.response;
   }
 
   async reconcile(
@@ -320,37 +398,320 @@ export class PostgresExecutionControlRepository implements ExecutionControlRepos
     input: Parameters<ExecutionControlRepository["resolveAttemptInput"]>[0],
   ): ReturnType<ExecutionControlRepository["resolveAttemptInput"]> {
     await this.handle.ready;
+    let context: Awaited<ReturnType<typeof authorizedTransferContext>>;
+    try {
+      context = await authorizedTransferContext(this.handle.pool, input);
+    } catch (error) {
+      if (error instanceof DomainError && error.code === "ATTEMPT_TRANSFER_FORBIDDEN") {
+        throw new DomainError("ATTEMPT_INPUT_FORBIDDEN", "输入不存在或任务租约无效。", {
+          cause: error,
+        });
+      }
+      throw error;
+    }
+    const declaredInput = parseSpec(context.assignment).inputs.find(
+      (candidate) => candidate.inputId === input.inputId,
+    );
+    if (!declaredInput) {
+      throw new DomainError("ATTEMPT_INPUT_FORBIDDEN", "输入未在执行快照中声明。");
+    }
     const result = await this.handle.pool.query<{
       object_key: string;
       size_bytes: number;
       sha256: string;
-      token_hash: string;
-      lease_status: string;
-      expires_at: string;
-      runner_id: string;
     }>(
-      `SELECT s.object_key, s.size_bytes, s.sha256, l.token_hash, l.status AS lease_status,
-              l.expires_at, a.runner_id
-       FROM assignments a
-       JOIN assignment_leases l ON l.assignment_id = a.id
-       JOIN execution_runs r ON r.id = a.execution_run_id
-       JOIN case_definitions d ON d.id = r.case_definition_id
-       JOIN case_sources s ON s.id = d.source_id
-       WHERE a.attempt_id = $1 AND s.id = $2
-       ORDER BY l.created_at DESC LIMIT 1`,
-      [input.attemptId, input.inputId],
+      `SELECT object_key, size_bytes, sha256
+       FROM case_sources
+       WHERE id = $1`,
+      [input.inputId],
     );
     const row = result.rows[0];
-    if (
-      !row ||
-      row.runner_id !== input.runnerId ||
-      row.token_hash !== input.leaseTokenHash ||
-      row.lease_status !== "active" ||
-      row.expires_at <= input.now
-    ) {
-      throw new DomainError("ATTEMPT_INPUT_FORBIDDEN", "输入不存在或任务租约无效。");
+    if (!row || row.size_bytes !== declaredInput.sizeBytes || row.sha256 !== declaredInput.sha256) {
+      throw new DomainError("ATTEMPT_INPUT_INVALID", "执行输入与权威对象元数据不一致。");
     }
     return { objectKey: row.object_key, sizeBytes: row.size_bytes, sha256: row.sha256 };
+  }
+
+  async resolveAttemptSecrets(
+    input: Parameters<ExecutionControlRepository["resolveAttemptSecrets"]>[0],
+  ): ReturnType<ExecutionControlRepository["resolveAttemptSecrets"]> {
+    await this.handle.ready;
+    const context = await authorizedTransferContext(this.handle.pool, input);
+    return readAttemptSecrets(this.handle.pool, context.assignment, "redaction");
+  }
+
+  async acquireAttemptSecrets(
+    input: Parameters<ExecutionControlRepository["acquireAttemptSecrets"]>[0],
+  ): ReturnType<ExecutionControlRepository["acquireAttemptSecrets"]> {
+    await this.handle.ready;
+    const context = await authorizedTransferContext(this.handle.pool, input);
+    return readAttemptSecrets(this.handle.pool, context.assignment, "acquisition");
+  }
+
+  async recordAttemptSecretAccess(
+    input: Parameters<ExecutionControlRepository["recordAttemptSecretAccess"]>[0],
+  ): Promise<void> {
+    await this.handle.ready;
+    const result = await this.handle.pool.query(
+      `INSERT INTO audit_events
+       (id, actor_type, actor_id, action, resource_type, resource_id, project_id,
+        result, request_id, details_json, recorded_at)
+       SELECT $1, 'runner', $2, 'execution_secret.access', 'run_attempt', a.id, b.project_id,
+              'succeeded', $3, $4, $5
+       FROM run_attempts a
+       JOIN execution_runs r ON r.id = a.execution_run_id
+       JOIN run_batches b ON b.id = r.batch_id
+       WHERE a.id = $6`,
+      [
+        input.id,
+        input.runnerId,
+        input.requestId,
+        JSON.stringify({ secretCount: input.secretIds.length, secretIds: input.secretIds }),
+        input.recordedAt,
+        input.attemptId,
+      ],
+    );
+    if (result.rowCount !== 1) {
+      throw new DomainError("RUN_ATTEMPT_NOT_FOUND", "指定的执行尝试不存在。");
+    }
+  }
+
+  async appendLogChunks(
+    input: Parameters<ExecutionControlRepository["appendLogChunks"]>[0],
+  ): ReturnType<ExecutionControlRepository["appendLogChunks"]> {
+    await this.handle.ready;
+    return this.transaction(async (client) => {
+      await authorizedTransferContext(client, { ...input, now: input.receivedAt }, true);
+      for (const chunk of input.chunks) {
+        const existing = await client.query<{ content: string; recorded_at: string }>(
+          `SELECT content, recorded_at::text FROM attempt_log_chunks
+           WHERE attempt_id = $1 AND stream = $2 AND sequence = $3`,
+          [input.attemptId, chunk.stream, chunk.sequence],
+        );
+        if (existing.rows[0]) {
+          const recordedAt = new Date(existing.rows[0].recorded_at).toISOString();
+          if (existing.rows[0].content !== chunk.content || recordedAt !== chunk.recordedAt) {
+            throw new DomainError("LOG_CHUNK_CONFLICT", "相同日志序号已保存不同内容。");
+          }
+          continue;
+        }
+        await client.query(
+          `INSERT INTO attempt_log_chunks
+           (attempt_id, stream, sequence, content, size_bytes, recorded_at, received_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+          [
+            input.attemptId,
+            chunk.stream,
+            chunk.sequence,
+            chunk.content,
+            Buffer.byteLength(chunk.content, "utf8"),
+            chunk.recordedAt,
+            input.receivedAt,
+          ],
+        );
+      }
+      const [stdout, stderr, agent] = await Promise.all([
+        advanceLogWatermark(client, input.attemptId, "stdout", input.receivedAt),
+        advanceLogWatermark(client, input.attemptId, "stderr", input.receivedAt),
+        advanceLogWatermark(client, input.attemptId, "agent", input.receivedAt),
+      ]);
+      return {
+        schemaVersion: 1 as const,
+        acknowledgedSequence: { stdout, stderr, agent },
+      };
+    });
+  }
+
+  async listLogChunks(
+    input: Parameters<ExecutionControlRepository["listLogChunks"]>[0],
+  ): ReturnType<ExecutionControlRepository["listLogChunks"]> {
+    await this.handle.ready;
+    const attempt = await this.handle.pool.query<{ result_code: string | null }>(
+      "SELECT result_code FROM run_attempts WHERE id = $1",
+      [input.attemptId],
+    );
+    if (!attempt.rows[0]) {
+      throw new DomainError("RUN_ATTEMPT_NOT_FOUND", "指定的执行尝试不存在。");
+    }
+    const parameters: Array<string | number> = [input.attemptId, input.stream, input.afterSequence];
+    const queryClause = input.query ? `AND POSITION($4 IN content) > 0` : "";
+    if (input.query) parameters.push(input.query);
+    parameters.push(input.limit + 1);
+    const limitParameter = parameters.length;
+    const result = await this.handle.pool.query<{
+      stream: "stdout" | "stderr" | "agent";
+      sequence: string;
+      content: string;
+      recorded_at: string;
+    }>(
+      `SELECT stream, sequence, content, recorded_at::text FROM attempt_log_chunks
+       WHERE attempt_id = $1 AND stream = $2 AND sequence > $3 ${queryClause}
+       ORDER BY sequence ASC LIMIT $${limitParameter}`,
+      parameters,
+    );
+    const watermark = await this.handle.pool.query<{ acknowledged_sequence: string }>(
+      `SELECT acknowledged_sequence FROM attempt_log_watermarks
+       WHERE attempt_id = $1 AND stream = $2`,
+      [input.attemptId, input.stream],
+    );
+    const hasMore = result.rows.length > input.limit;
+    const page = result.rows.slice(0, input.limit);
+    return {
+      items: page.map((row) => ({
+        stream: row.stream,
+        sequence: Number(row.sequence),
+        content: row.content,
+        recordedAt: new Date(row.recorded_at).toISOString(),
+      })),
+      acknowledgedSequence: Number(watermark.rows[0]?.acknowledged_sequence ?? -1),
+      ...(hasMore && page.length > 0
+        ? { nextSequence: Number(page.at(-1)?.sequence ?? input.afterSequence) }
+        : {}),
+      truncated: attempt.rows[0].result_code === "LOG_LIMIT_EXCEEDED",
+    };
+  }
+
+  async resolveAttemptProjectId(attemptId: string): Promise<string | null> {
+    await this.handle.ready;
+    const result = await this.handle.pool.query<{ project_id: string }>(
+      `SELECT b.project_id FROM run_attempts a
+       JOIN execution_runs r ON r.id = a.execution_run_id
+       JOIN run_batches b ON b.id = r.batch_id
+       WHERE a.id = $1`,
+      [attemptId],
+    );
+    return result.rows[0]?.project_id ?? null;
+  }
+
+  async resolveExecutionRunProjectId(runId: string): Promise<string | null> {
+    await this.handle.ready;
+    const result = await this.handle.pool.query<{ project_id: string }>(
+      `SELECT b.project_id FROM execution_runs r
+       JOIN run_batches b ON b.id = r.batch_id WHERE r.id = $1`,
+      [runId],
+    );
+    return result.rows[0]?.project_id ?? null;
+  }
+
+  async listAttemptEvents(
+    input: Parameters<ExecutionControlRepository["listAttemptEvents"]>[0],
+  ): ReturnType<ExecutionControlRepository["listAttemptEvents"]> {
+    await this.handle.ready;
+    const attempt = await this.handle.pool.query("SELECT id FROM run_attempts WHERE id = $1", [
+      input.attemptId,
+    ]);
+    if (!attempt.rows[0]) {
+      throw new DomainError("RUN_ATTEMPT_NOT_FOUND", "指定的执行尝试不存在。");
+    }
+    let cursor: { recorded_at: string; id: string } | undefined;
+    if (input.afterEventId) {
+      const cursorResult = await this.handle.pool.query<{ recorded_at: string; id: string }>(
+        `SELECT recorded_at, id FROM attempt_state_events
+         WHERE attempt_id = $1 AND id = $2`,
+        [input.attemptId, input.afterEventId],
+      );
+      cursor = cursorResult.rows[0];
+      if (!cursor) throw new DomainError("ATTEMPT_EVENT_CURSOR_INVALID", "执行事件游标无效。");
+    }
+    const parameters: Array<string | number> = [input.attemptId];
+    const cursorClause = cursor ? "AND (recorded_at > $2 OR (recorded_at = $2 AND id > $3))" : "";
+    if (cursor) parameters.push(cursor.recorded_at, cursor.id);
+    parameters.push(input.limit + 1);
+    const result = await this.handle.pool.query<AttemptEventRow>(
+      `SELECT * FROM attempt_state_events WHERE attempt_id = $1 ${cursorClause}
+       ORDER BY recorded_at, id LIMIT $${parameters.length}`,
+      parameters,
+    );
+    const hasMore = result.rows.length > input.limit;
+    const page = result.rows.slice(0, input.limit);
+    return attemptEventPageSchema.parse({
+      items: page.map(mapAttemptEvent),
+      ...(hasMore && page.at(-1) ? { nextEventId: page.at(-1)?.id } : {}),
+    });
+  }
+
+  async declareArtifacts(
+    input: Parameters<ExecutionControlRepository["declareArtifacts"]>[0],
+  ): ReturnType<ExecutionControlRepository["declareArtifacts"]> {
+    await this.handle.ready;
+    return this.transaction(async (client) => {
+      await authorizedTransferContext(client, { ...input, now: input.declaredAt }, true);
+      await client.query(
+        `UPDATE run_attempts
+         SET upload_started_at = COALESCE(upload_started_at, $1), version = version + 1
+         WHERE id = $2 AND status = 'running'`,
+        [input.declaredAt, input.attemptId],
+      );
+      const declared = [];
+      for (const artifact of input.artifacts) {
+        const existing = await artifactRow(client, input.attemptId, artifact.artifactId);
+        if (existing) {
+          if (!sameArtifact(existing, artifact) || existing.status === "rejected") {
+            throw new DomainError("ARTIFACT_DECLARATION_CONFLICT", "产物声明与已保存元数据冲突。");
+          }
+          declared.push({ ...artifact, status: existing.status });
+          continue;
+        }
+        await client.query(
+          `INSERT INTO attempt_artifacts
+           (id, attempt_id, relative_path, media_type, size_bytes, sha256, required, status, created_at, updated_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, 'declared', $8, $8)`,
+          [
+            artifact.artifactId,
+            input.attemptId,
+            artifact.relativePath,
+            artifact.mediaType,
+            artifact.sizeBytes,
+            artifact.sha256,
+            artifact.required,
+            input.declaredAt,
+          ],
+        );
+        declared.push({ ...artifact, status: "declared" as const });
+      }
+      return declared;
+    });
+  }
+
+  async resolveArtifactUpload(
+    input: Parameters<ExecutionControlRepository["resolveArtifactUpload"]>[0],
+  ): ReturnType<ExecutionControlRepository["resolveArtifactUpload"]> {
+    await this.handle.ready;
+    await authorizedTransferContext(this.handle.pool, input);
+    const row = await artifactRow(this.handle.pool, input.attemptId, input.artifactId);
+    if (!row) throw new DomainError("ARTIFACT_NOT_FOUND", "指定的产物声明不存在。");
+    if (row.status === "rejected") {
+      throw new DomainError("ARTIFACT_REJECTED", "指定的产物声明已被拒绝。");
+    }
+    return { ...mapArtifactRow(row), status: row.status };
+  }
+
+  async markArtifactUploaded(
+    input: Parameters<ExecutionControlRepository["markArtifactUploaded"]>[0],
+  ): Promise<void> {
+    await this.handle.ready;
+    const result = await this.handle.pool.query(
+      `UPDATE attempt_artifacts SET object_key = $1, status = 'uploaded', updated_at = $2
+       WHERE id = $3 AND attempt_id = $4 AND status IN ('declared', 'uploaded')`,
+      [input.objectKey, input.uploadedAt, input.artifactId, input.attemptId],
+    );
+    if (result.rowCount !== 1)
+      throw new DomainError("ARTIFACT_NOT_FOUND", "指定的产物声明不存在。");
+  }
+
+  async listArtifacts(attemptId: string): ReturnType<ExecutionControlRepository["listArtifacts"]> {
+    await this.handle.ready;
+    const attempt = await this.handle.pool.query("SELECT id FROM run_attempts WHERE id = $1", [
+      attemptId,
+    ]);
+    if (!attempt.rows[0]) {
+      throw new DomainError("RUN_ATTEMPT_NOT_FOUND", "指定的执行尝试不存在。");
+    }
+    const result = await this.handle.pool.query<ArtifactRow>(
+      "SELECT * FROM attempt_artifacts WHERE attempt_id = $1 ORDER BY relative_path, id",
+      [attemptId],
+    );
+    return result.rows.map(mapArtifactRow);
   }
 
   async recoverExpired(
@@ -358,25 +719,76 @@ export class PostgresExecutionControlRepository implements ExecutionControlRepos
   ): Promise<number> {
     await this.handle.ready;
     return this.transaction(async (client) => {
+      const queued = await client.query<{ id: string; batch_id: string }>(
+        `SELECT id, batch_id FROM execution_runs
+         WHERE status = 'queued' AND queue_deadline_at IS NOT NULL
+           AND queue_deadline_at::timestamptz <= $1::timestamptz
+         ORDER BY queue_deadline_at::timestamptz, id
+         LIMIT $2 FOR UPDATE SKIP LOCKED`,
+        [input.now, input.limit],
+      );
+      let recovered = 0;
+      for (const run of queued.rows) {
+        const eventId = input.eventIds[recovered];
+        if (!eventId) break;
+        const update = await client.query(
+          `UPDATE execution_runs SET status = 'failed', terminal_outcome = 'timed_out',
+           terminal_reason_code = 'QUEUE_TIMEOUT', updated_at = $1, version = version + 1
+           WHERE id = $2 AND status = 'queued'
+             AND queue_deadline_at::timestamptz <= $1::timestamptz`,
+          [input.now, run.id],
+        );
+        if (update.rowCount !== 1) continue;
+        await updateBatchStatus(client, run.batch_id, input.now, eventId, "run.queue_timed_out");
+        recovered += 1;
+      }
       const active = await client.query<{
         lease_id: string;
         assignment_id: string;
         attempt_id: string;
+        expiration_reason: AttemptExpirationReason;
       }>(
-        `SELECT l.id AS lease_id, a.id AS assignment_id, a.attempt_id
-         FROM assignment_leases l JOIN assignments a ON a.id = l.assignment_id
-         WHERE l.status = 'active' AND l.expires_at <= $1 ORDER BY l.expires_at
-         FOR UPDATE OF l SKIP LOCKED LIMIT $2`,
-        [input.now, input.limit],
+        `SELECT l.id AS lease_id, a.id AS assignment_id, a.attempt_id,
+           CASE WHEN ra.upload_started_at IS NOT NULL
+             AND ra.upload_started_at::timestamptz + r.upload_timeout_ms * interval '1 millisecond' <= $1::timestamptz
+             THEN 'upload_timeout'
+           WHEN ra.upload_started_at IS NULL AND ra.started_at IS NOT NULL
+             AND ra.started_at::timestamptz + r.execution_timeout_ms * interval '1 millisecond' <= $1::timestamptz
+             THEN 'execution_timeout' ELSE 'lease_expired' END AS expiration_reason
+         FROM assignment_leases l
+         JOIN assignments a ON a.id = l.assignment_id
+         JOIN run_attempts ra ON ra.id = a.attempt_id
+         JOIN execution_runs r ON r.id = a.execution_run_id
+         WHERE l.status = 'active' AND (
+           l.expires_at::timestamptz <= $1::timestamptz OR (
+             ra.upload_started_at IS NOT NULL
+             AND ra.upload_started_at::timestamptz + r.upload_timeout_ms * interval '1 millisecond' <= $1::timestamptz
+           ) OR (
+             ra.upload_started_at IS NULL AND ra.started_at IS NOT NULL
+             AND ra.started_at::timestamptz + r.execution_timeout_ms * interval '1 millisecond' <= $1::timestamptz
+           )
+         )
+         ORDER BY LEAST(
+           l.expires_at::timestamptz,
+           COALESCE(
+             ra.upload_started_at::timestamptz + r.upload_timeout_ms * interval '1 millisecond',
+             ra.started_at::timestamptz + r.execution_timeout_ms * interval '1 millisecond'
+           )
+         )
+         LIMIT $2 FOR UPDATE OF l SKIP LOCKED`,
+        [input.now, Math.max(0, input.limit - recovered)],
       );
-      const remaining = Math.max(0, input.limit - active.rows.length);
-      const unclaimed = await client.query<{ assignment_id: string; attempt_id: string }>(
-        `SELECT id AS assignment_id, attempt_id FROM assignments
+      const remaining = Math.max(0, input.limit - recovered - active.rows.length);
+      const unclaimed = await client.query<{
+        assignment_id: string;
+        attempt_id: string;
+        expiration_reason: AttemptExpirationReason;
+      }>(
+        `SELECT id AS assignment_id, attempt_id, 'claim_timeout' AS expiration_reason FROM assignments
          WHERE status = 'pending' AND claim_deadline_at <= $1 ORDER BY claim_deadline_at
-         FOR UPDATE SKIP LOCKED LIMIT $2`,
+         LIMIT $2 FOR UPDATE SKIP LOCKED`,
         [input.now, remaining],
       );
-      let recovered = 0;
       for (const expired of [...active.rows, ...unclaimed.rows]) {
         const eventId = input.eventIds[recovered];
         if (!eventId) break;
@@ -387,7 +799,14 @@ export class PostgresExecutionControlRepository implements ExecutionControlRepos
           );
         }
         if (
-          await expireAttempt(client, expired.assignment_id, expired.attempt_id, input.now, eventId)
+          await expireAttempt(
+            client,
+            expired.assignment_id,
+            expired.attempt_id,
+            input.now,
+            eventId,
+            expired.expiration_reason,
+          )
         ) {
           recovered += 1;
         }
@@ -405,17 +824,35 @@ export class PostgresExecutionControlRepository implements ExecutionControlRepos
         "SELECT id FROM execution_runs WHERE batch_id = $1 AND status NOT IN ('succeeded', 'failed', 'cancelled') FOR UPDATE",
         [input.batchId],
       );
-      await client.query(
-        "UPDATE run_batches SET cancel_requested_at = $1, updated_at = $1 WHERE id = $2",
-        [input.requestedAt, input.batchId],
+      const batch = await client.query<{ version: number }>(
+        "SELECT version FROM run_batches WHERE id = $1 FOR UPDATE",
+        [input.batchId],
       );
+      const batchVersion = batch.rows[0]?.version;
+      if (batchVersion === undefined) {
+        throw new DomainError("RUN_BATCH_NOT_FOUND", "指定的执行批次不存在。");
+      }
+      const cancellation = await client.query(
+        `UPDATE run_batches SET cancel_requested_at = $1, updated_at = $1, version = version + 1
+         WHERE id = $2 AND version = $3`,
+        [input.requestedAt, input.batchId, batchVersion],
+      );
+      if (cancellation.rowCount !== 1) {
+        throw new DomainError("RUN_BATCH_VERSION_CONFLICT", "执行批次已被并发修改。");
+      }
       let changed = 0;
       for (const [index, run] of runs.rows.entries()) {
         const eventId = input.eventIds[index];
         if (!eventId) break;
         changed += (await cancelRun(client, { ...input, runId: run.id, eventId })) ? 1 : 0;
       }
-      await updateBatchStatus(client, input.batchId, input.requestedAt);
+      await updateBatchStatus(
+        client,
+        input.batchId,
+        input.requestedAt,
+        input.eventIds[changed] ?? input.batchId,
+        "batch.cancelled",
+      );
       return changed;
     });
   }
@@ -486,6 +923,100 @@ export class PostgresExecutionControlRepository implements ExecutionControlRepos
   }
 }
 
+async function authorizedTransferContext(
+  client: Pick<PoolClient, "query">,
+  input: { runnerId: string; attemptId: string; leaseTokenHash: string; now: string },
+  lock = false,
+): Promise<{ assignment: AssignmentRow }> {
+  const result = await client.query<
+    AssignmentRow & { token_hash: string; lease_status: string; expires_at: string }
+  >(
+    `SELECT a.*, l.token_hash, l.status AS lease_status, l.expires_at
+     FROM assignments a JOIN assignment_leases l ON l.assignment_id = a.id
+     WHERE a.attempt_id = $1 ORDER BY l.created_at DESC LIMIT 1${lock ? " FOR UPDATE OF l" : ""}`,
+    [input.attemptId],
+  );
+  const row = result.rows[0];
+  if (
+    !row ||
+    row.runner_id !== input.runnerId ||
+    row.token_hash !== input.leaseTokenHash ||
+    row.lease_status !== "active" ||
+    new Date(row.expires_at).toISOString() <= input.now
+  ) {
+    throw new DomainError("ATTEMPT_TRANSFER_FORBIDDEN", "日志或产物传输未获得有效租约授权。");
+  }
+  return { assignment: row };
+}
+
+async function advanceLogWatermark(
+  client: PoolClient,
+  attemptId: string,
+  stream: "stdout" | "stderr" | "agent",
+  updatedAt: string,
+): Promise<number> {
+  const existing = await client.query<{ acknowledged_sequence: string }>(
+    `SELECT acknowledged_sequence FROM attempt_log_watermarks
+     WHERE attempt_id = $1 AND stream = $2 FOR UPDATE`,
+    [attemptId, stream],
+  );
+  let acknowledged = Number(existing.rows[0]?.acknowledged_sequence ?? -1);
+  const sequences = await client.query<{ sequence: string }>(
+    `SELECT sequence FROM attempt_log_chunks
+     WHERE attempt_id = $1 AND stream = $2 AND sequence > $3 ORDER BY sequence`,
+    [attemptId, stream, acknowledged],
+  );
+  for (const row of sequences.rows) {
+    const sequence = Number(row.sequence);
+    if (sequence !== acknowledged + 1) break;
+    acknowledged = sequence;
+  }
+  await client.query(
+    `INSERT INTO attempt_log_watermarks (attempt_id, stream, acknowledged_sequence, updated_at)
+     VALUES ($1, $2, $3, $4)
+     ON CONFLICT(attempt_id, stream) DO UPDATE SET
+     acknowledged_sequence = GREATEST(attempt_log_watermarks.acknowledged_sequence, EXCLUDED.acknowledged_sequence),
+     updated_at = EXCLUDED.updated_at`,
+    [attemptId, stream, acknowledged, updatedAt],
+  );
+  return acknowledged;
+}
+
+async function artifactRow(
+  client: Pick<PoolClient, "query">,
+  attemptId: string,
+  artifactId: string,
+): Promise<ArtifactRow | undefined> {
+  const result = await client.query<ArtifactRow>(
+    "SELECT * FROM attempt_artifacts WHERE attempt_id = $1 AND id = $2",
+    [attemptId, artifactId],
+  );
+  return result.rows[0];
+}
+
+function sameArtifact(row: ArtifactRow, artifact: ArtifactDeclaration): boolean {
+  return (
+    row.relative_path === artifact.relativePath &&
+    row.media_type === artifact.mediaType &&
+    Number(row.size_bytes) === artifact.sizeBytes &&
+    row.sha256 === artifact.sha256 &&
+    row.required === artifact.required
+  );
+}
+
+function mapArtifactRow(row: ArtifactRow) {
+  return {
+    artifactId: row.id,
+    relativePath: row.relative_path,
+    mediaType: row.media_type,
+    sizeBytes: Number(row.size_bytes),
+    sha256: row.sha256,
+    required: row.required,
+    status: row.status,
+    ...(row.object_key ? { objectKey: row.object_key } : {}),
+  };
+}
+
 async function persistCompletion(
   client: PoolClient,
   control: AttemptControlRow,
@@ -495,35 +1026,44 @@ async function persistCompletion(
   input: Parameters<ExecutionControlRepository["completeAttempt"]>[0],
   runStatus: "queued" | "succeeded" | "failed" | "cancelled",
 ): Promise<void> {
+  const attemptStatus = transitionRunAttempt(control.status, result.status);
+  const assignmentStatus = transitionAssignment(assignment.status, "completed");
+  const leaseStatus = transitionLease(lease.status, "released");
+  const executionRunStatus = transitionExecutionRun(control.run_status, runStatus);
   await client.query(
     `UPDATE run_attempts SET status = $1, outcome = $1, result_code = $2, result_summary = $3,
-     completion_digest = $4, finished_at = $5, version = version + 1
-     WHERE id = $6 AND status IN ('assigned', 'running')`,
+     completion_digest = $4, duration_ms = $5, testng_result_json = $6, finished_at = $7,
+     version = version + 1
+     WHERE id = $8 AND status IN ('assigned', 'running')`,
     [
-      result.status,
+      attemptStatus,
       result.resultCode,
       result.summary,
       input.resultDigest,
+      result.durationMs,
+      result.testNg ? JSON.stringify(result.testNg) : null,
       input.acceptedAt,
       input.attemptId,
     ],
   );
   await client.query(
-    `UPDATE assignments SET status = 'completed', completed_at = $1, updated_at = $1, version = version + 1
-     WHERE id = $2 AND status IN ('claimed', 'running')`,
-    [input.acceptedAt, assignment.id],
+    `UPDATE assignments SET status = $1, completed_at = $2, updated_at = $2, version = version + 1
+     WHERE id = $3 AND status IN ('claimed', 'running')`,
+    [assignmentStatus, input.acceptedAt, assignment.id],
   );
   await client.query(
-    "UPDATE assignment_leases SET status = 'released' WHERE id = $1 AND status = 'active'",
-    [lease.id],
+    "UPDATE assignment_leases SET status = $1 WHERE id = $2 AND status = 'active'",
+    [leaseStatus, lease.id],
   );
   await client.query(
     `UPDATE execution_runs SET status = $1, terminal_outcome = $2, assigned_runner_id = $3,
-     updated_at = $4, version = version + 1 WHERE id = $5 AND status IN ('assigned', 'running')`,
+     terminal_reason_code = $4, updated_at = $5, version = version + 1
+     WHERE id = $6 AND status IN ('assigned', 'running')`,
     [
-      runStatus,
-      runStatus === "queued" ? null : result.status,
-      runStatus === "queued" ? null : control.runner_id,
+      executionRunStatus,
+      executionRunStatus === "queued" ? null : attemptStatus,
+      executionRunStatus === "queued" ? null : control.runner_id,
+      executionRunStatus === "queued" ? null : result.resultCode,
       input.acceptedAt,
       control.execution_run_id,
     ],
@@ -534,13 +1074,29 @@ async function persistCompletion(
     attemptId: input.attemptId,
     eventType: "attempt.completed",
     fromStatus: control.status,
-    toStatus: result.status,
+    toStatus: attemptStatus,
     actorType: "runner",
     actorId: input.runnerId,
     details: { resultCode: result.resultCode, retryScheduled: runStatus === "queued" },
     recordedAt: input.acceptedAt,
   });
-  await updateBatchStatus(client, control.batch_id, input.acceptedAt);
+  if (runStatus === "queued") {
+    await appendRetryAudit(client, {
+      id: input.auditEventId ?? input.eventId,
+      runId: control.execution_run_id,
+      projectId: control.project_id,
+      attemptNumber: control.attempt_number,
+      resultCode: result.resultCode,
+      recordedAt: input.acceptedAt,
+    });
+  }
+  await updateBatchStatus(
+    client,
+    control.batch_id,
+    input.acceptedAt,
+    input.eventId,
+    "attempt.completed",
+  );
 }
 
 async function persistCompletionMetadata(
@@ -587,6 +1143,7 @@ async function expireAttempt(
   attemptId: string,
   recordedAt: string,
   eventId: string,
+  expirationReason: AttemptExpirationReason,
 ): Promise<boolean> {
   const control = await findAttemptControl(client, attemptId);
   if (!control || isTerminalAttemptStatus(control.status)) return false;
@@ -596,22 +1153,29 @@ async function expireAttempt(
     retryLimit: control.retry_limit,
     cancellationRequested: control.run_cancel_requested_at !== null,
   });
+  const attemptStatus = transitionRunAttempt(control.status, "timed_out");
+  const runStatus = transitionExecutionRun(control.run_status, decision.runStatus);
+  const assignment = await requiredAssignment(client, assignmentId);
+  const assignmentStatus = transitionAssignment(assignment.status, "expired");
+  const expiration = attemptExpiration(expirationReason);
   await client.query(
-    "UPDATE assignments SET status = 'expired', updated_at = $1, version = version + 1 WHERE id = $2 AND status IN ('pending', 'claimed', 'running')",
-    [recordedAt, assignmentId],
+    "UPDATE assignments SET status = $1, updated_at = $2, version = version + 1 WHERE id = $3 AND status IN ('pending', 'claimed', 'running')",
+    [assignmentStatus, recordedAt, assignmentId],
   );
   await client.query(
-    `UPDATE run_attempts SET status = 'timed_out', outcome = 'timed_out', result_code = 'LEASE_EXPIRED',
-     result_summary = 'Assignment lease or claim deadline expired.', finished_at = $1, version = version + 1
-     WHERE id = $2 AND status IN ('assigned', 'running')`,
-    [recordedAt, attemptId],
+    `UPDATE run_attempts SET status = 'timed_out', outcome = 'timed_out', result_code = $1,
+     result_summary = $2, finished_at = $3, version = version + 1
+     WHERE id = $4 AND status IN ('assigned', 'running')`,
+    [expiration.resultCode, expiration.summary, recordedAt, attemptId],
   );
   await client.query(
     `UPDATE execution_runs SET status = $1, terminal_outcome = $2, assigned_runner_id = NULL,
-     updated_at = $3, version = version + 1 WHERE id = $4 AND status IN ('assigned', 'running')`,
+     terminal_reason_code = $3, updated_at = $4, version = version + 1
+     WHERE id = $5 AND status IN ('assigned', 'running')`,
     [
-      decision.runStatus,
-      decision.runStatus === "queued" ? null : "timed_out",
+      runStatus,
+      runStatus === "queued" ? null : attemptStatus,
+      runStatus === "queued" ? null : expiration.resultCode,
       recordedAt,
       control.execution_run_id,
     ],
@@ -619,14 +1183,25 @@ async function expireAttempt(
   await appendAttemptEvent(client, {
     id: eventId,
     attemptId,
-    eventType: "lease.expired",
+    eventType: expiration.eventType,
     fromStatus: control.status,
-    toStatus: "timed_out",
+    toStatus: attemptStatus,
+    reasonCode: expiration.resultCode,
     actorType: "system",
     details: { retryScheduled: decision.retryScheduled },
     recordedAt,
   });
-  await updateBatchStatus(client, control.batch_id, recordedAt);
+  if (decision.retryScheduled) {
+    await appendRetryAudit(client, {
+      id: eventId,
+      runId: control.execution_run_id,
+      projectId: control.project_id,
+      attemptNumber: control.attempt_number,
+      resultCode: expiration.resultCode,
+      recordedAt,
+    });
+  }
+  await updateBatchStatus(client, control.batch_id, recordedAt, eventId, expiration.eventType);
   return true;
 }
 
@@ -640,14 +1215,15 @@ async function cancelRun(
     requestedAt: string;
   },
 ): Promise<boolean> {
-  const result = await client.query<{ id: string; batch_id: string; status: string }>(
-    "SELECT id, batch_id, status FROM execution_runs WHERE id = $1 FOR UPDATE",
-    [input.runId],
-  );
+  const result = await client.query<{
+    id: string;
+    batch_id: string;
+    status: ExecutionRunStatus;
+  }>("SELECT id, batch_id, status FROM execution_runs WHERE id = $1 FOR UPDATE", [input.runId]);
   const run = result.rows[0];
   if (!run) return false;
   if (isTerminalRunStatus(run.status)) return true;
-  const attemptResult = await client.query<{ id: string; status: string }>(
+  const attemptResult = await client.query<{ id: string; status: RunAttemptStatus }>(
     "SELECT id, status FROM run_attempts WHERE execution_run_id = $1 ORDER BY attempt_number DESC LIMIT 1",
     [input.runId],
   );
@@ -666,9 +1242,10 @@ async function cancelRun(
     return true;
   }
   if (assignment) {
+    const assignmentStatus = transitionAssignment(assignment.status, "cancelled");
     await client.query(
-      "UPDATE assignments SET status = 'cancelled', cancel_requested_at = $1, updated_at = $1, version = version + 1 WHERE id = $2",
-      [input.requestedAt, assignment.id],
+      "UPDATE assignments SET status = $1, cancel_requested_at = $2, updated_at = $2, version = version + 1 WHERE id = $3",
+      [assignmentStatus, input.requestedAt, assignment.id],
     );
     await client.query(
       "UPDATE assignment_leases SET status = 'revoked' WHERE assignment_id = $1 AND status = 'active'",
@@ -676,6 +1253,7 @@ async function cancelRun(
     );
   }
   if (attempt && !isTerminalAttemptStatus(attempt.status)) {
+    const attemptStatus = transitionRunAttempt(attempt.status, "cancelled");
     await client.query(
       `UPDATE run_attempts SET status = 'cancelled', outcome = 'cancelled', result_code = 'CANCELLED_BY_USER',
        result_summary = $1, finished_at = $2, version = version + 1 WHERE id = $3`,
@@ -686,19 +1264,21 @@ async function cancelRun(
       attemptId: attempt.id,
       eventType: "attempt.cancelled",
       fromStatus: attempt.status,
-      toStatus: "cancelled",
+      toStatus: attemptStatus,
       actorType: "user",
       actorId: input.actorId,
       details: { reason: input.reason },
       recordedAt: input.requestedAt,
     });
   }
+  const runStatus = transitionExecutionRun(run.status, "cancelled");
   await client.query(
-    `UPDATE execution_runs SET status = 'cancelled', terminal_outcome = 'cancelled',
-     cancel_requested_at = $1, updated_at = $1, version = version + 1 WHERE id = $2`,
-    [input.requestedAt, input.runId],
+    `UPDATE execution_runs SET status = $1, terminal_outcome = 'cancelled',
+     terminal_reason_code = 'CANCELLED_BY_USER', cancel_requested_at = $2,
+     updated_at = $2, version = version + 1 WHERE id = $3`,
+    [runStatus, input.requestedAt, input.runId],
   );
-  await updateBatchStatus(client, run.batch_id, input.requestedAt);
+  await updateBatchStatus(client, run.batch_id, input.requestedAt, input.eventId, "run.cancelled");
   return true;
 }
 
@@ -762,12 +1342,37 @@ async function findAttemptControl(
   const result = await client.query<AttemptControlRow>(
     `SELECT a.id, a.execution_run_id, a.runner_id, a.attempt_number, a.status,
      r.status AS run_status, r.cancel_requested_at AS run_cancel_requested_at,
-     b.retry_limit, b.id AS batch_id
+     b.retry_limit, b.id AS batch_id, b.project_id
      FROM run_attempts a JOIN execution_runs r ON r.id = a.execution_run_id
      JOIN run_batches b ON b.id = r.batch_id WHERE a.id = $1${lock ? " FOR UPDATE OF a, r" : ""}`,
     [attemptId],
   );
   return result.rows[0];
+}
+
+async function appendRetryAudit(
+  client: PoolClient,
+  input: {
+    id: string;
+    runId: string;
+    projectId: string;
+    attemptNumber: number;
+    resultCode: string;
+    recordedAt: string;
+  },
+): Promise<void> {
+  await client.query(
+    `INSERT INTO audit_events
+     (id, actor_type, action, resource_type, resource_id, project_id, result, details_json, recorded_at)
+     VALUES ($1, 'system', 'execution_run.retry_scheduled', 'execution_run', $2, $3, 'succeeded', $4, $5)`,
+    [
+      input.id,
+      input.runId,
+      input.projectId,
+      JSON.stringify({ attemptNumber: input.attemptNumber, resultCode: input.resultCode }),
+      input.recordedAt,
+    ],
+  );
 }
 
 async function appendAttemptEvent(
@@ -778,6 +1383,7 @@ async function appendAttemptEvent(
     eventType: string;
     fromStatus?: string;
     toStatus?: string;
+    reasonCode?: string;
     actorType: "user" | "runner" | "system";
     actorId?: string;
     details: Record<string, unknown>;
@@ -786,14 +1392,15 @@ async function appendAttemptEvent(
 ): Promise<void> {
   await client.query(
     `INSERT INTO attempt_state_events
-     (id, attempt_id, event_type, from_status, to_status, actor_type, actor_id, details_json, recorded_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+     (id, attempt_id, event_type, from_status, to_status, reason_code, actor_type, actor_id, details_json, recorded_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
     [
       input.id,
       input.attemptId,
       input.eventType,
       input.fromStatus ?? null,
       input.toStatus ?? null,
+      input.reasonCode ?? null,
       input.actorType,
       input.actorId ?? null,
       JSON.stringify(input.details),
@@ -821,16 +1428,37 @@ async function updateBatchStatus(
   client: PoolClient,
   batchId: string,
   updatedAt: string,
+  eventId: string,
+  reason: string,
 ): Promise<void> {
   const result = await client.query<{ status: string }>(
     "SELECT status FROM execution_runs WHERE batch_id = $1",
     [batchId],
   );
-  await client.query("UPDATE run_batches SET status = $1, updated_at = $2 WHERE id = $3", [
-    aggregateBatchStatus(result.rows.map((row) => row.status)),
-    updatedAt,
-    batchId,
-  ]);
+  const batch = await client.query<{ status: RunBatchStatus; version: number }>(
+    "SELECT status, version FROM run_batches WHERE id = $1 FOR UPDATE",
+    [batchId],
+  );
+  const batchState = batch.rows[0];
+  if (!batchState) throw new DomainError("RUN_BATCH_NOT_FOUND", "指定的执行批次不存在。");
+  const status = aggregateBatchStatus(result.rows.map((row) => row.status));
+  transitionRunBatch(batchState.status, status);
+  const update = await client.query(
+    `UPDATE run_batches SET status = $1, updated_at = $2, version = version + 1
+     WHERE id = $3 AND version = $4`,
+    [status, updatedAt, batchId, batchState.version],
+  );
+  if (update.rowCount !== 1) {
+    throw new DomainError("RUN_BATCH_VERSION_CONFLICT", "执行批次已被并发修改。");
+  }
+  if (batchState.status !== status) {
+    await client.query(
+      `INSERT INTO run_batch_status_events
+       (id, batch_id, from_status, to_status, batch_version, reason, recorded_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      [eventId, batchId, batchState.status, status, batchState.version + 1, reason, updatedAt],
+    );
+  }
 }
 
 function mapAssignment(row: AssignmentRow): AssignmentDto {
@@ -851,6 +1479,48 @@ function parseSpec(row: AssignmentRow) {
   return executionSpecSchema.parse(JSON.parse(row.execution_spec_json));
 }
 
+async function readAttemptSecrets(
+  client: Pick<PoolClient, "query">,
+  assignment: AssignmentRow,
+  purpose: "redaction" | "acquisition",
+): Promise<
+  Array<{
+    name: string;
+    secretId: string;
+    secretVersionId: string;
+    valueEncrypted: string;
+  }>
+> {
+  const secrets = [] as Array<{
+    name: string;
+    secretId: string;
+    secretVersionId: string;
+    valueEncrypted: string;
+  }>;
+  for (const reference of parseSpec(assignment).secretReferences) {
+    const result = await client.query<{ value_encrypted: string }>(
+      `SELECT v.value_encrypted
+       FROM execution_secret_versions v
+       JOIN execution_secrets s ON s.id = v.secret_id
+       JOIN run_batches b ON b.id = $1 AND b.project_id = s.project_id
+       WHERE v.id = $2 AND v.secret_id = $3
+         AND ($4::boolean = false OR s.status = 'active')`,
+      [
+        assignment.batch_id,
+        reference.secretVersionId,
+        reference.secretId,
+        purpose === "acquisition",
+      ],
+    );
+    const row = result.rows[0];
+    if (!row) {
+      throw new DomainError("EXECUTION_SECRET_UNAVAILABLE", "执行所需密文不可用或已撤销。");
+    }
+    secrets.push({ ...reference, valueEncrypted: row.value_encrypted });
+  }
+  return secrets;
+}
+
 function matchesAgent(
   spec: ReturnType<typeof parseSpec>,
   labels: readonly string[],
@@ -864,6 +1534,54 @@ function matchesAgent(
   );
 }
 
+function attemptExpiration(reason: AttemptExpirationReason): {
+  eventType: string;
+  resultCode: string;
+  summary: string;
+} {
+  switch (reason) {
+    case "claim_timeout":
+      return {
+        eventType: "assignment.claim_timed_out",
+        resultCode: "ASSIGNMENT_CLAIM_TIMEOUT",
+        summary: "Assignment was not claimed before its deadline.",
+      };
+    case "execution_timeout":
+      return {
+        eventType: "attempt.execution_timed_out",
+        resultCode: "EXECUTION_TIMEOUT",
+        summary: "Execution exceeded its configured timeout.",
+      };
+    case "upload_timeout":
+      return {
+        eventType: "attempt.upload_timed_out",
+        resultCode: "UPLOAD_TIMEOUT",
+        summary: "Artifact upload and completion exceeded the configured timeout.",
+      };
+    case "lease_expired":
+      return {
+        eventType: "lease.expired",
+        resultCode: "LEASE_EXPIRED",
+        summary: "Assignment lease expired before completion.",
+      };
+  }
+}
+
+function mapAttemptEvent(row: AttemptEventRow) {
+  return {
+    eventId: row.id,
+    attemptId: row.attempt_id,
+    eventType: row.event_type,
+    ...(row.from_status ? { fromStatus: row.from_status } : {}),
+    ...(row.to_status ? { toStatus: row.to_status } : {}),
+    ...(row.reason_code ? { reasonCode: row.reason_code } : {}),
+    actorType: row.actor_type,
+    ...(row.actor_id ? { actorId: row.actor_id } : {}),
+    details: JSON.parse(row.details_json) as unknown,
+    recordedAt: new Date(row.recorded_at).toISOString(),
+  };
+}
+
 function cancellationResult(
   result: CompletionResult,
   cancelRequestedAt: string | null,
@@ -875,12 +1593,4 @@ function cancellationResult(
     resultCode: "CANCELLED_BY_CONTROL_PLANE",
     summary: "控制面取消请求先于完成上报生效。",
   };
-}
-
-function isTerminalRunStatus(status: string): boolean {
-  return ["succeeded", "failed", "cancelled"].includes(status);
-}
-
-function isTerminalAttemptStatus(status: string): boolean {
-  return ["succeeded", "failed", "timed_out", "cancelled"].includes(status);
 }

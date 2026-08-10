@@ -113,7 +113,11 @@ function objectStoreFake(): JarObjectStorePort & {
   return {
     storageKind: "local",
     putJar: vi.fn().mockResolvedValue({ objectKey: "jars/aa/source.jar", created: true }),
+    putArtifact: vi.fn(),
+    prepareArtifactUpload: vi.fn().mockResolvedValue({ kind: "control-plane" }),
+    verifyArtifactUpload: vi.fn(),
     delete: vi.fn().mockResolvedValue(undefined),
+    exists: vi.fn().mockResolvedValue(true),
     list: vi.fn(),
     read: vi.fn(),
     ready: vi.fn(),

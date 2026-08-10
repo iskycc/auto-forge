@@ -1,9 +1,12 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 )
 
 type Diagnostic struct {
@@ -18,6 +21,7 @@ type Diagnostic struct {
 	TerminalEnabled bool     `json:"terminalEnabled"`
 	TerminalShell   string   `json:"terminalShell,omitempty"`
 	Capabilities    []string `json:"capabilities"`
+	ResourceControl string   `json:"resourceControl"`
 }
 
 func CheckLocalEnvironment(configuration Config) (Diagnostic, error) {
@@ -67,6 +71,13 @@ func CheckLocalEnvironment(configuration Config) (Diagnostic, error) {
 			}
 		}
 	}
+	resourceControl := "disabled"
+	if configuration.Resources.Enabled() {
+		if err := checkCgroupDelegation(configuration.Resources.CgroupRoot); err != nil {
+			return Diagnostic{}, fmt.Errorf("validate cgroup v2 delegation: %w", err)
+		}
+		resourceControl = configuration.Resources.CgroupRoot
+	}
 	if configuration.Terminal.Enabled {
 		terminalShell = configuration.Terminal.Shell
 		info, statErr := os.Stat(configuration.Terminal.Shell)
@@ -95,8 +106,67 @@ func CheckLocalEnvironment(configuration Config) (Diagnostic, error) {
 		HasBootstrap:    configuration.HasBootstrap,
 		TerminalEnabled: configuration.Terminal.Enabled,
 		TerminalShell:   terminalShell,
-		Capabilities:    configuration.Toolchain.Capabilities(),
+		Capabilities:    configuration.Capabilities(),
+		ResourceControl: resourceControl,
 	}, nil
+}
+
+func checkCgroupDelegation(root string) error {
+	controllers, err := os.ReadFile(filepath.Join(root, "cgroup.controllers"))
+	if err != nil {
+		return fmt.Errorf("read cgroup.controllers: %w", err)
+	}
+	for _, required := range []string{"cpu", "memory", "pids"} {
+		if !containsWord(string(controllers), required) {
+			return fmt.Errorf("controller %s is not delegated", required)
+		}
+	}
+	agentLeaf := filepath.Join(root, ".autoforge-agent")
+	if err := os.Mkdir(agentLeaf, 0o700); err != nil && !errors.Is(err, os.ErrExist) {
+		return fmt.Errorf("create Agent leaf cgroup: %w", err)
+	}
+	if err := writeCgroupControl(agentLeaf, "cgroup.procs", strconv.Itoa(os.Getpid())); err != nil {
+		return fmt.Errorf("move Agent into leaf cgroup: %w", err)
+	}
+	if err := writeCgroupControl(root, "cgroup.subtree_control", "+cpu +memory +pids"); err != nil {
+		return fmt.Errorf("enable delegated controllers: %w", err)
+	}
+	probe, err := os.MkdirTemp(root, ".autoforge-doctor-")
+	if err != nil {
+		return fmt.Errorf("create delegated child cgroup: %w", err)
+	}
+	defer os.Remove(probe)
+	for _, name := range []string{"cpu.max", "memory.max", "memory.swap.max", "memory.oom.group", "pids.max", "cgroup.procs"} {
+		file, openErr := os.OpenFile(filepath.Join(probe, name), os.O_WRONLY, 0)
+		if openErr != nil {
+			return fmt.Errorf("open delegated %s: %w", name, openErr)
+		}
+		if closeErr := file.Close(); closeErr != nil {
+			return fmt.Errorf("close delegated %s: %w", name, closeErr)
+		}
+	}
+	return nil
+}
+
+func writeCgroupControl(directory, name, value string) error {
+	file, err := os.OpenFile(filepath.Join(directory, name), os.O_WRONLY, 0)
+	if err != nil {
+		return err
+	}
+	if _, err := file.WriteString(value); err != nil {
+		file.Close()
+		return err
+	}
+	return file.Close()
+}
+
+func containsWord(value, wanted string) bool {
+	for _, word := range strings.Fields(value) {
+		if word == wanted {
+			return true
+		}
+	}
+	return false
 }
 
 func requireExecutable(path string) error {

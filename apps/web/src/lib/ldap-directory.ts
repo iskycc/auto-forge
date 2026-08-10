@@ -7,12 +7,16 @@ import type {
 } from "@autoforge/application";
 import { DomainError } from "@autoforge/domain";
 
+import { combinedLdapFailure, ldapDiagnostic, type LdapOperationPhase } from "./ldap-diagnostics";
+
 type LdapClient = InstanceType<(typeof import("ldapts"))["Client"]>;
 type SearchEntry = Record<string, unknown> & { dn?: string };
 
 export class LdapDirectory implements DirectoryPort {
   async test(configuration: DirectoryConfiguration): Promise<void> {
-    await withServiceClient(configuration, async () => undefined);
+    await withServiceClient(configuration, async (client) => {
+      await validateSearchAccess(client, configuration);
+    });
   }
 
   async authenticate(
@@ -56,24 +60,36 @@ async function withServiceClient<T>(
   configuration: DirectoryConfiguration,
   work: (client: LdapClient, url: string) => Promise<T>,
 ): Promise<T> {
-  const failures: Error[] = [];
+  const failures: DomainError[] = [];
   for (const url of configuration.urls) {
     let client: LdapClient | undefined;
     try {
-      client = await connect(configuration, url);
-      await client.bind(configuration.bindDn, configuration.bindPassword);
-      return await work(client, url);
-    } catch (error) {
-      failures.push(error instanceof Error ? error : new Error("Unknown LDAP error"));
+      client = await runLdapPhase("connect", () => connect(configuration, url));
+      await runLdapPhase("bind", () =>
+        client!.bind(configuration.bindDn, configuration.bindPassword),
+      );
+      return await runLdapPhase("search", () => work(client!, url));
+    } catch (failure) {
+      failures.push(
+        failure instanceof DomainError
+          ? failure
+          : new DomainError("LDAP_DIRECTORY_UNAVAILABLE", "LDAP 目录操作失败。", {
+              cause: failure,
+            }),
+      );
     } finally {
       await client?.unbind().catch(() => undefined);
     }
   }
-  throw new DomainError(
-    "LDAP_DIRECTORY_UNAVAILABLE",
-    "无法连接或绑定 LDAP 目录，请检查地址、TLS、CA 和 bind 凭据。",
-    { cause: new AggregateError(failures, "All configured LDAP servers failed") },
-  );
+  throw combinedLdapFailure(failures);
+}
+
+async function runLdapPhase<T>(phase: LdapOperationPhase, operation: () => Promise<T>): Promise<T> {
+  try {
+    return await operation();
+  } catch (error) {
+    throw ldapDiagnostic(error, phase);
+  }
 }
 
 async function connect(configuration: DirectoryConfiguration, url: string): Promise<LdapClient> {
@@ -146,6 +162,30 @@ async function findGroups(
   return (result.searchEntries as SearchEntry[]).flatMap((entry) =>
     typeof entry.dn === "string" ? [entry.dn] : [],
   );
+}
+
+async function validateSearchAccess(
+  client: LdapClient,
+  configuration: DirectoryConfiguration,
+): Promise<void> {
+  await client.search(configuration.userBaseDn, {
+    scope: "sub",
+    filter: configuration.userFilter.replaceAll("{username}", "*"),
+    attributes: [configuration.userIdAttribute],
+    sizeLimit: 1,
+    timeLimit: Math.max(1, Math.ceil(configuration.operationTimeoutMs / 1_000)),
+  });
+  if (!configuration.groupBaseDn || !configuration.groupFilter) return;
+  await client.search(configuration.groupBaseDn, {
+    scope: "sub",
+    filter: configuration.groupFilter.replaceAll(
+      "{userDn}",
+      escapeFilterValue(configuration.bindDn),
+    ),
+    attributes: [],
+    sizeLimit: 1,
+    timeLimit: Math.max(1, Math.ceil(configuration.operationTimeoutMs / 1_000)),
+  });
 }
 
 function mapDirectoryIdentity(

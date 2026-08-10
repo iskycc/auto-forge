@@ -3,8 +3,14 @@ import { describe, expect, it } from "vitest";
 import {
   aggregateBatchStatus,
   assertActiveLease,
+  assertExecutionRunInvariant,
+  assertRunAttemptInvariant,
   outcomeAfterCompletion,
   transitionAssignment,
+  transitionExecutionRun,
+  transitionLease,
+  transitionRunBatch,
+  transitionRunAttempt,
 } from "../src/execution";
 
 describe("execution state machine", () => {
@@ -12,6 +18,63 @@ describe("execution state machine", () => {
     expect(transitionAssignment("pending", "claimed")).toBe("claimed");
     expect(() => transitionAssignment("completed", "running")).toThrow(
       "Assignment cannot transition",
+    );
+  });
+
+  it("protects terminal run, attempt, and lease states", () => {
+    expect(transitionExecutionRun("running", "succeeded")).toBe("succeeded");
+    expect(transitionRunAttempt("assigned", "timed_out")).toBe("timed_out");
+    expect(transitionLease("active", "revoked")).toBe("revoked");
+    expect(() => transitionExecutionRun("succeeded", "running")).toThrow(
+      "EXECUTION_RUN cannot transition",
+    );
+    expect(() => transitionRunAttempt("failed", "running")).toThrow(
+      "RUN_ATTEMPT cannot transition",
+    );
+    expect(() => transitionLease("released", "active")).toThrow("LEASE cannot transition");
+  });
+
+  it("protects terminal batch states while allowing retry scheduling", () => {
+    expect(transitionRunBatch("running", "queued")).toBe("queued");
+    expect(transitionRunBatch("scheduled", "running")).toBe("running");
+    expect(() => transitionRunBatch("succeeded", "running")).toThrow("RUN_BATCH cannot transition");
+  });
+
+  it("requires terminal results to be complete and internally consistent", () => {
+    const run = {
+      id: "run-1",
+      batchId: "batch-1",
+      caseDefinitionId: "case-1",
+      caseVersion: 1,
+      displayName: "Run",
+      className: "example.RunTest",
+      status: "failed" as const,
+      attemptCount: 1,
+      terminalOutcome: "timed_out" as const,
+      version: 2,
+      createdAt: "2026-08-09T00:00:00.000Z",
+      updatedAt: "2026-08-09T00:01:00.000Z",
+    };
+    expect(() => assertExecutionRunInvariant(run)).not.toThrow();
+    expect(() =>
+      assertExecutionRunInvariant({ ...run, status: "succeeded", terminalOutcome: "failed" }),
+    ).toThrow("成功状态必须对应成功结果");
+
+    const attempt = {
+      id: "attempt-1",
+      executionRunId: "run-1",
+      runnerId: "runner-1",
+      attemptNumber: 1,
+      status: "timed_out" as const,
+      schedulingScore: 1,
+      version: 2,
+      finishedAt: "2026-08-09T00:01:00.000Z",
+      outcome: "timed_out" as const,
+      createdAt: "2026-08-09T00:00:00.000Z",
+    };
+    expect(() => assertRunAttemptInvariant(attempt)).not.toThrow();
+    expect(() => assertRunAttemptInvariant({ ...attempt, outcome: "failed" })).toThrow(
+      "状态与结果不一致",
     );
   });
 

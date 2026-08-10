@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -25,12 +27,15 @@ type attemptSupervisor struct {
 	identity      Identity
 	configuration config.Config
 	store         attemptStore
+	logSpool      *logSpool
+	artifactSpool *artifactSpool
 	diagnostics   io.Writer
 	draining      atomic.Bool
 	busy          atomic.Int32
 	waitGroup     sync.WaitGroup
 	mutex         sync.Mutex
 	cancellations map[string]context.CancelFunc
+	runExecution  func(context.Context, executor.Spec, executor.RunOptions) (executor.Result, error)
 }
 
 func newAttemptSupervisor(client *Client, identity Identity, configuration config.Config, diagnostics io.Writer) *attemptSupervisor {
@@ -41,10 +46,29 @@ func newAttemptSupervisor(client *Client, identity Identity, configuration confi
 		store:         newAttemptStore(configuration.DataDirectory),
 		diagnostics:   diagnostics,
 		cancellations: make(map[string]context.CancelFunc),
+		runExecution:  executor.Run,
 	}
 }
 
 func (supervisor *attemptSupervisor) Start(ctx context.Context) error {
+	spool, err := newLogSpool(
+		supervisor.configuration.DataDirectory,
+		supervisor.configuration.Spool,
+		supervisor.configuration.MaxConcurrent,
+	)
+	if err != nil {
+		return err
+	}
+	supervisor.logSpool = spool
+	supervisor.store.budget = spool.budget
+	if err := supervisor.store.removeTemporaryFiles(); err != nil {
+		return err
+	}
+	artifactSpool, err := newArtifactSpool(supervisor.configuration.DataDirectory, spool.budget)
+	if err != nil {
+		return err
+	}
+	supervisor.artifactSpool = artifactSpool
 	if err := supervisor.reconcile(ctx); err != nil {
 		return err
 	}
@@ -122,8 +146,7 @@ func (supervisor *attemptSupervisor) startAttempt(claimed ClaimedAssignment) err
 	if err := validateClaimedAssignment(
 		claimed,
 		supervisor.identity.RunnerID,
-		supervisor.configuration.RunnerLabels(),
-		supervisor.configuration.Toolchain.Capabilities(),
+		supervisor.configuration,
 	); err != nil {
 		return err
 	}
@@ -170,55 +193,376 @@ func (supervisor *attemptSupervisor) executeAttempt(ctx context.Context, cancel 
 	}
 	reportAllowed := &atomic.Bool{}
 	reportAllowed.Store(true)
+	stateMutex := &sync.Mutex{}
 	renewContext, stopRenewal := context.WithCancel(context.Background())
 	renewed := make(chan struct{})
 	go func() {
 		defer close(renewed)
-		supervisor.renewLease(renewContext, cancel, &state, reportAllowed)
+		supervisor.renewLease(renewContext, cancel, &state, stateMutex, reportAllowed)
 	}()
 
-	result := supervisor.runTestNG(ctx, state.Claimed)
+	persistProgress := func(result completionResult, uploads []artifactUploadState) error {
+		stateMutex.Lock()
+		defer stateMutex.Unlock()
+		if state.CompletionID == "" {
+			completionID, err := randomIdentifier()
+			if err != nil {
+				return err
+			}
+			state.CompletionID = completionID
+		}
+		state.LocalState = "uploading"
+		state.Result = &result
+		state.ArtifactUploads = append([]artifactUploadState(nil), uploads...)
+		return supervisor.store.save(state)
+	}
+	result := supervisor.runTestNG(ctx, state.Claimed, persistProgress)
 	stopRenewal()
 	<-renewed
-	if !reportAllowed.Load() {
-		fmt.Fprintf(supervisor.diagnostics, "attempt %s lost its lease; completion retained locally\n", state.Claimed.Assignment.AttemptID)
-		return
-	}
-	completionID, err := randomIdentifier()
-	if err != nil {
-		fmt.Fprintf(supervisor.diagnostics, "create completion ID for %s: %v\n", state.Claimed.Assignment.AttemptID, err)
-		return
+	stateMutex.Lock()
+	if state.CompletionID == "" {
+		completionID, err := randomIdentifier()
+		if err != nil {
+			stateMutex.Unlock()
+			fmt.Fprintf(supervisor.diagnostics, "create completion ID for %s: %v\n", state.Claimed.Assignment.AttemptID, err)
+			return
+		}
+		state.CompletionID = completionID
 	}
 	state.LocalState = "finishing"
-	state.CompletionID = completionID
 	state.Result = &result
 	if err := supervisor.store.save(state); err != nil {
+		stateMutex.Unlock()
 		fmt.Fprintf(supervisor.diagnostics, "persist completion for %s: %v\n", state.Claimed.Assignment.AttemptID, err)
+		return
+	}
+	stateMutex.Unlock()
+	if !reportAllowed.Load() {
+		fmt.Fprintf(supervisor.diagnostics, "attempt %s lost its lease; completion retained locally\n", state.Claimed.Assignment.AttemptID)
 		return
 	}
 	supervisor.reportCompletion(context.Background(), state)
 }
 
-func (supervisor *attemptSupervisor) runTestNG(ctx context.Context, claimed ClaimedAssignment) completionResult {
-	specification, input, err := testNGExecutorSpec(claimed.Assignment.ExecutionSpec, supervisor.configuration.Toolchain)
+func (supervisor *attemptSupervisor) runTestNG(
+	ctx context.Context,
+	claimed ClaimedAssignment,
+	persistProgress func(completionResult, []artifactUploadState) error,
+) completionResult {
+	executionSpec, err := supervisor.executionSpecWithSecrets(ctx, claimed)
+	if err != nil {
+		return platformFailure("EXECUTION_SECRET_ACQUISITION_FAILED", err)
+	}
+	specification, inputs, err := testNGExecutorSpec(executionSpec, supervisor.configuration.Toolchain)
 	if err != nil {
 		return platformFailure("EXECUTION_SPEC_REJECTED", err)
 	}
-	result, err := executor.Run(ctx, specification, executor.RunOptions{
+	collector := newAttemptLogCollector(
+		claimed.Assignment.AttemptID,
+		supervisor.logSpool,
+		executionSpec.Environment,
+	)
+	_ = collector.Write(executor.LogChunk{
+		Stream:     "agent",
+		Content:    "AutoForge Runner Agent started the attempt.\n",
+		RecordedAt: time.Now().UTC(),
+	})
+	result, runErr := supervisor.runExecution(ctx, specification, executor.RunOptions{
 		DataDirectory: supervisor.configuration.DataDirectory,
+		KeepWorkspace: true,
 		Policy:        executor.Policy{AllowedExecutables: []string{supervisor.configuration.Toolchain.JavaExecutable}},
+		ResourcePolicy: executor.ResourcePolicy{
+			CgroupRoot:    supervisor.configuration.Resources.CgroupRoot,
+			RequireCgroup: true,
+		},
+		LogSink: collector.Write,
 		PrepareWorkspace: func(workspace string) error {
-			return downloadAttemptInput(ctx, supervisor.client, supervisor.identity, claimed, input, workspace)
+			if err := downloadAttemptInputs(ctx, supervisor.client, supervisor.identity, claimed, inputs, workspace); err != nil {
+				return err
+			}
+			return prepareTestNGLauncher(
+				workspace,
+				claimed.Assignment.ExecutionSpec.MethodDescriptors,
+				claimed.Assignment.ExecutionSpec.Parameters,
+			)
 		},
 	})
-	if err != nil {
-		return platformFailure("PROCESS_START_FAILED", err)
+	if closeErr := collector.Close(time.Now().UTC().Format(time.RFC3339Nano)); closeErr != nil {
+		if errors.Is(closeErr, errLogSpoolQuotaExceeded) {
+			return platformFailure("LOG_SPOOL_QUOTA_EXCEEDED", closeErr)
+		}
+		return platformFailure("LOG_SPOOL_WRITE_FAILED", closeErr)
 	}
-	return mapExecutionResult(result)
+	if runErr != nil {
+		if errors.Is(runErr, executor.ErrResourceIsolationUnavailable) {
+			return platformFailure("RESOURCE_ISOLATION_UNAVAILABLE", runErr)
+		}
+		return platformFailure("PROCESS_START_FAILED", runErr)
+	}
+	defer func() {
+		if removeErr := os.RemoveAll(result.WorkspacePath); removeErr != nil {
+			fmt.Fprintf(supervisor.diagnostics, "clean attempt workspace %s: %v\n", claimed.Assignment.AttemptID, removeErr)
+		}
+	}()
+	reportSummary, reportFound, reportErr := executor.ReadTestNGReport(result.WorkspacePath)
+	artifactRules := make([]executor.ArtifactRule, 0, len(claimed.Assignment.ExecutionSpec.ArtifactRules))
+	for _, rule := range claimed.Assignment.ExecutionSpec.ArtifactRules {
+		artifactRules = append(artifactRules, executor.ArtifactRule{
+			Pattern: rule.Pattern, Required: rule.Required, MediaType: rule.MediaType,
+		})
+	}
+	artifacts := make([]executor.Artifact, 0)
+	var artifactDiscoveryErr error
+	artifactDiscoveryCode := ""
+	if len(artifactRules) > 0 {
+		artifactContext, cancelArtifactScan := context.WithTimeout(
+			ctx,
+			time.Duration(claimed.Assignment.ExecutionSpec.UploadTimeoutMs)*time.Millisecond,
+		)
+		discovered, artifactErr := executor.DiscoverArtifacts(
+			artifactContext,
+			result.WorkspacePath,
+			artifactRules,
+			claimed.Assignment.ExecutionSpec.ResourceLimits.ArtifactBytes,
+		)
+		cancelArtifactScan()
+		if artifactErr != nil {
+			artifactDiscoveryErr = artifactErr
+			artifactDiscoveryCode = "ARTIFACT_DISCOVERY_REJECTED"
+			var missing *executor.RequiredArtifactMissingError
+			if errors.As(artifactErr, &missing) {
+				artifactDiscoveryCode = "REQUIRED_ARTIFACT_MISSING"
+			}
+		} else {
+			artifacts = discovered
+		}
+	}
+	watermarks, uploadErr := supervisor.flushAttemptLogs(
+		ctx,
+		claimed,
+		time.Duration(claimed.Assignment.ExecutionSpec.UploadTimeoutMs)*time.Millisecond,
+	)
+	if uploadErr != nil {
+		return platformFailure("LOG_UPLOAD_FAILED", uploadErr)
+	}
+	mapped := mapExecutionResult(result)
+	if reportErr != nil {
+		mapped.Status = "failed"
+		mapped.ResultCode = "TESTNG_REPORT_INVALID"
+		mapped.Summary = boundedSummary(reportErr.Error())
+	} else if reportFound {
+		mapTestNGReport(&mapped, result, reportSummary)
+	}
+	if artifactDiscoveryErr != nil {
+		mapped.Status = "failed"
+		mapped.ResultCode = artifactDiscoveryCode
+		mapped.Summary = boundedSummary(artifactDiscoveryErr.Error())
+	}
+	mapped.LogWatermarks = &watermarks
+	uploads := make([]artifactUploadState, 0, len(artifacts))
+	for _, artifact := range artifacts {
+		artifactID, err := randomIdentifier()
+		if err != nil {
+			return platformFailure("ARTIFACT_ID_FAILED", err)
+		}
+		declaration := artifactDeclaration{
+			ArtifactID: artifactID, RelativePath: artifact.RelativePath,
+			MediaType: artifact.MediaType, SizeBytes: artifact.SizeBytes,
+			SHA256: artifact.SHA256, Required: artifact.Required,
+		}
+		mapped.Artifacts = append(mapped.Artifacts, declaration)
+		if err := supervisor.artifactSpool.stage(claimed.Assignment.AttemptID, declaration, artifact.AbsolutePath); err != nil {
+			_ = supervisor.artifactSpool.removeAttempt(claimed.Assignment.AttemptID)
+			code := "ARTIFACT_SPOOL_WRITE_FAILED"
+			if errors.Is(err, errSpoolQuotaExceeded) {
+				code = "ARTIFACT_SPOOL_QUOTA_EXCEEDED"
+			}
+			return platformFailure(code, err)
+		}
+		uploads = append(uploads, artifactUploadState{Artifact: declaration})
+	}
+	if err := persistProgress(mapped, uploads); err != nil {
+		_ = supervisor.artifactSpool.removeAttempt(claimed.Assignment.AttemptID)
+		return platformFailure("RESULT_SPOOL_WRITE_FAILED", err)
+	}
+	if err := supervisor.uploadArtifacts(
+		ctx,
+		claimed,
+		uploads,
+		time.Duration(claimed.Assignment.ExecutionSpec.UploadTimeoutMs)*time.Millisecond,
+		func(updated []artifactUploadState) error { return persistProgress(mapped, updated) },
+	); err != nil {
+		code := "OPTIONAL_ARTIFACT_UPLOAD_FAILED"
+		var transferError *artifactTransferError
+		if errors.As(err, &transferError) && transferError.required {
+			code = "REQUIRED_ARTIFACT_UPLOAD_FAILED"
+		}
+		return platformFailure(code, err)
+	}
+	return mapped
 }
 
-func (supervisor *attemptSupervisor) renewLease(ctx context.Context, cancelExecution context.CancelFunc, state *attemptState, reportAllowed *atomic.Bool) {
+func (supervisor *attemptSupervisor) executionSpecWithSecrets(
+	ctx context.Context,
+	claimed ClaimedAssignment,
+) (ExecutionSpec, error) {
+	specification := claimed.Assignment.ExecutionSpec
+	secrets, err := supervisor.client.AcquireSecrets(
+		ctx,
+		supervisor.identity,
+		claimed.Assignment.AttemptID,
+		claimed.Lease,
+		specification.SecretReferences,
+	)
+	if err != nil {
+		return ExecutionSpec{}, err
+	}
+	specification.Environment = append(
+		append([]EnvironmentEntry(nil), specification.Environment...),
+		secrets...,
+	)
+	return specification, nil
+}
+
+type artifactTransferError struct {
+	required bool
+	cause    error
+}
+
+func (problem *artifactTransferError) Error() string { return problem.cause.Error() }
+func (problem *artifactTransferError) Unwrap() error { return problem.cause }
+
+func (supervisor *attemptSupervisor) uploadArtifacts(
+	ctx context.Context,
+	claimed ClaimedAssignment,
+	uploads []artifactUploadState,
+	timeout time.Duration,
+	persistProgress func([]artifactUploadState) error,
+) error {
+	artifacts := make([]artifactDeclaration, 0, len(uploads))
+	for _, upload := range uploads {
+		if err := supervisor.artifactSpool.verify(claimed.Assignment.AttemptID, upload.Artifact); err != nil {
+			return &artifactTransferError{required: upload.Artifact.Required, cause: err}
+		}
+		artifacts = append(artifacts, upload.Artifact)
+	}
+	uploadContext, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	declared, err := supervisor.client.DeclareArtifacts(
+		uploadContext,
+		supervisor.identity,
+		claimed.Assignment.AttemptID,
+		claimed.Lease.Token,
+		artifacts,
+	)
+	if err != nil {
+		return &artifactTransferError{required: hasRequiredArtifact(artifacts), cause: err}
+	}
+	byID := make(map[string]int, len(uploads))
+	for index, upload := range uploads {
+		byID[upload.Artifact.ArtifactID] = index
+	}
+	for _, accepted := range declared.Artifacts {
+		index, exists := byID[accepted.ArtifactID]
+		if !exists {
+			return &artifactTransferError{required: true, cause: errors.New("control plane returned an unknown artifact declaration")}
+		}
+		artifact := uploads[index].Artifact
+		if accepted.Status == "uploaded" {
+			uploads[index].Uploaded = true
+			if err := persistProgress(uploads); err != nil {
+				return &artifactTransferError{required: artifact.Required, cause: err}
+			}
+			continue
+		}
+		backoff := time.Second
+		for {
+			err := supervisor.client.UploadArtifact(
+				uploadContext,
+				supervisor.identity,
+				claimed.Lease,
+				accepted,
+				supervisor.artifactSpool.path(claimed.Assignment.AttemptID, artifact.ArtifactID),
+			)
+			if err == nil {
+				break
+			}
+			if !waitFor(uploadContext, backoff) {
+				return &artifactTransferError{required: artifact.Required, cause: err}
+			}
+			backoff = min(backoff*2, 10*time.Second)
+		}
+		uploads[index].Uploaded = true
+		if err := persistProgress(uploads); err != nil {
+			return &artifactTransferError{required: artifact.Required, cause: err}
+		}
+	}
+	for _, upload := range uploads {
+		if !upload.Uploaded {
+			return &artifactTransferError{required: upload.Artifact.Required, cause: errors.New("control plane omitted a declared artifact")}
+		}
+	}
+	return nil
+}
+
+func hasRequiredArtifact(artifacts []artifactDeclaration) bool {
+	for _, artifact := range artifacts {
+		if artifact.Required {
+			return true
+		}
+	}
+	return false
+}
+
+func (supervisor *attemptSupervisor) flushAttemptLogs(ctx context.Context, claimed ClaimedAssignment, timeout time.Duration) (logWatermark, error) {
+	watermarks := logWatermark{Stdout: -1, Stderr: -1, Agent: -1}
+	uploadContext, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	backoff := time.Second
+	uploadBatch := supervisor.configuration.Spool.UploadBatch
+	if uploadBatch == 0 {
+		uploadBatch = 128
+	}
+	for {
+		chunks, err := supervisor.logSpool.list(claimed.Assignment.AttemptID, uploadBatch)
+		if err != nil {
+			return watermarks, err
+		}
+		if len(chunks) == 0 {
+			return watermarks, nil
+		}
+		response, uploadErr := supervisor.client.UploadLogs(
+			uploadContext,
+			supervisor.identity,
+			claimed.Assignment.AttemptID,
+			claimed.Lease.Token,
+			chunks,
+		)
+		if uploadErr == nil {
+			watermarks = response.AcknowledgedSequence
+			if err := supervisor.logSpool.acknowledge(claimed.Assignment.AttemptID, watermarks); err != nil {
+				return watermarks, err
+			}
+			backoff = time.Second
+			continue
+		}
+		if !waitFor(uploadContext, backoff) {
+			return watermarks, fmt.Errorf("upload attempt logs before deadline: %w", uploadErr)
+		}
+		backoff = min(backoff*2, 10*time.Second)
+	}
+}
+
+func (supervisor *attemptSupervisor) renewLease(
+	ctx context.Context,
+	cancelExecution context.CancelFunc,
+	state *attemptState,
+	stateMutex *sync.Mutex,
+	reportAllowed *atomic.Bool,
+) {
+	stateMutex.Lock()
 	lease := state.Claimed.Lease
+	stateMutex.Unlock()
 	for {
 		expiresAt, err := time.Parse(time.RFC3339Nano, lease.ExpiresAt)
 		if err != nil {
@@ -252,10 +596,12 @@ func (supervisor *attemptSupervisor) renewLease(ctx context.Context, cancelExecu
 		}
 		lease.Version = response.LeaseVersion
 		lease.ExpiresAt = response.ExpiresAt
+		stateMutex.Lock()
 		state.Claimed.Lease = lease
 		if err := supervisor.store.save(*state); err != nil {
 			fmt.Fprintf(supervisor.diagnostics, "persist renewed lease for %s: %v\n", state.Claimed.Assignment.AttemptID, err)
 		}
+		stateMutex.Unlock()
 		switch response.Instruction {
 		case "cancel":
 			cancelExecution()
@@ -299,7 +645,7 @@ func (supervisor *attemptSupervisor) reportCompletion(ctx context.Context, state
 		)
 		if completeErr == nil {
 			if response.Disposition == "accepted" || response.Disposition == "duplicate" || response.Disposition == "late" {
-				if removeErr := supervisor.store.remove(state.Claimed.Assignment.AttemptID); removeErr != nil {
+				if removeErr := supervisor.cleanAttemptSpool(state.Claimed.Assignment.AttemptID); removeErr != nil {
 					fmt.Fprintf(supervisor.diagnostics, "clean completed attempt %s: %v\n", state.Claimed.Assignment.AttemptID, removeErr)
 				}
 				return
@@ -341,10 +687,18 @@ func (supervisor *attemptSupervisor) reconcile(ctx context.Context) error {
 		}
 		switch decision.Action {
 		case "clean":
-			if err := supervisor.store.remove(decision.AttemptID); err != nil {
+			if err := supervisor.cleanAttemptSpool(decision.AttemptID); err != nil {
 				return err
 			}
 		case "continue", "cancel", "retransmit":
+			if decision.AcknowledgedLogSequence != nil {
+				if err := supervisor.logSpool.acknowledge(
+					decision.AttemptID,
+					*decision.AcknowledgedLogSequence,
+				); err != nil {
+					return fmt.Errorf("apply confirmed log watermark for %s: %w", decision.AttemptID, err)
+				}
+			}
 			if state.Result == nil {
 				result := completionResult{Status: "failed", ResultCode: "AGENT_RESTARTED_DURING_EXECUTION", Summary: "Runner Agent restarted before the attempt completed.", DurationMs: 0}
 				if decision.Action == "cancel" {
@@ -363,10 +717,57 @@ func (supervisor *attemptSupervisor) reconcile(ctx context.Context) error {
 					return err
 				}
 			}
+			if len(state.ArtifactUploads) > 0 {
+				state.LocalState = "uploading"
+				if err := supervisor.store.save(state); err != nil {
+					return err
+				}
+				uploadErr := supervisor.uploadArtifacts(
+					ctx,
+					state.Claimed,
+					state.ArtifactUploads,
+					time.Duration(state.Claimed.Assignment.ExecutionSpec.UploadTimeoutMs)*time.Millisecond,
+					func(updated []artifactUploadState) error {
+						state.ArtifactUploads = append([]artifactUploadState(nil), updated...)
+						return supervisor.store.save(state)
+					},
+				)
+				if uploadErr != nil {
+					return fmt.Errorf("retransmit artifacts for %s: %w", decision.AttemptID, uploadErr)
+				}
+			}
+			watermarks, uploadErr := supervisor.flushAttemptLogs(
+				ctx,
+				state.Claimed,
+				time.Duration(state.Claimed.Assignment.ExecutionSpec.UploadTimeoutMs)*time.Millisecond,
+			)
+			if uploadErr != nil {
+				return fmt.Errorf("retransmit logs for %s: %w", decision.AttemptID, uploadErr)
+			}
+			state.Result.LogWatermarks = &watermarks
+			state.LocalState = "finishing"
+			if err := supervisor.store.save(state); err != nil {
+				return err
+			}
 			supervisor.reportCompletion(ctx, state)
 		}
 	}
 	return nil
+}
+
+func (supervisor *attemptSupervisor) cleanAttemptSpool(attemptID string) error {
+	if err := supervisor.artifactSpool.removeAttempt(attemptID); err != nil {
+		return err
+	}
+	maximumSequence := int64(^uint64(0) >> 1)
+	if err := supervisor.logSpool.acknowledge(attemptID, logWatermark{
+		Stdout: maximumSequence,
+		Stderr: maximumSequence,
+		Agent:  maximumSequence,
+	}); err != nil {
+		return err
+	}
+	return supervisor.store.remove(attemptID)
 }
 
 func validateReconcileDecisions(decisions []ReconcileDecision, states map[string]attemptState) error {
@@ -386,7 +787,11 @@ func validateReconcileDecisions(decisions []ReconcileDecision, states map[string
 	return nil
 }
 
-func validateClaimedAssignment(claimed ClaimedAssignment, runnerID string, labels, capabilities []string) error {
+func validateClaimedAssignment(
+	claimed ClaimedAssignment,
+	runnerID string,
+	configuration config.Config,
+) error {
 	if claimed.Assignment.SchemaVersion != protocolVersion || claimed.Assignment.ExecutionSpec.SchemaVersion != protocolVersion {
 		return errors.New("assignment uses an unsupported schema version")
 	}
@@ -396,25 +801,89 @@ func validateClaimedAssignment(claimed ClaimedAssignment, runnerID string, label
 	if !localIdentifierPattern.MatchString(claimed.Assignment.AssignmentID) || !localIdentifierPattern.MatchString(claimed.Assignment.AttemptID) {
 		return errors.New("assignment identifiers are invalid")
 	}
-	if !containsAll(labels, claimed.Assignment.ExecutionSpec.RequiredLabels) || !containsAll(capabilities, claimed.Assignment.ExecutionSpec.RequiredCapabilities) {
+	if !containsAll(configuration.RunnerLabels(), claimed.Assignment.ExecutionSpec.RequiredLabels) || !containsAll(configuration.Capabilities(), claimed.Assignment.ExecutionSpec.RequiredCapabilities) {
 		return errors.New("assignment requirements exceed local Runner capabilities")
 	}
 	specification := claimed.Assignment.ExecutionSpec
+	if err := validateSecretReferences(specification.Environment, specification.SecretReferences); err != nil {
+		return err
+	}
+	runtimeRequirements := specification.RuntimeRequirements
+	if runtimeRequirements.OS != runtime.GOOS || !containsAll(runtimeRequirements.Architectures, []string{runtime.GOARCH}) {
+		return errors.New("assignment runtime platform is incompatible with the local Runner")
+	}
+	if !configuration.Toolchain.Supports(
+		runtimeRequirements.MinimumJavaMajorVersion,
+		runtimeRequirements.TestNGVersion,
+	) {
+		return errors.New("assignment toolchain requirements exceed the local Runner toolchain")
+	}
 	if specification.Executor != "testng" || specification.ClassName == "" || len(specification.ClassName) > 1_024 || specification.TimeoutMs < 1_000 || specification.TimeoutMs > 86_400_000 {
 		return errors.New("assignment execution specification is invalid")
 	}
-	if len(specification.Inputs) != 1 {
-		return errors.New("assignment must contain exactly one execution input")
+	if specification.ResourceLimits.CPUMillicores <= 0 || specification.ResourceLimits.MemoryBytes <= 0 || specification.ResourceLimits.DiskBytes <= 0 || specification.ResourceLimits.ProcessCount <= 0 || specification.ResourceLimits.FileCount <= 0 {
+		return errors.New("assignment resource limits are invalid")
 	}
-	input := specification.Inputs[0]
-	if !localIdentifierPattern.MatchString(input.InputID) || input.Kind != "test-jar" || input.MediaType != "application/java-archive" || !filepath.IsLocal(input.TargetPath) || input.SizeBytes <= 0 || !sha256Pattern.MatchString(input.SHA256) {
-		return errors.New("assignment execution input is invalid")
+	if len(specification.Inputs) < 1 || len(specification.Inputs) > 128 {
+		return errors.New("assignment must contain 1-128 execution inputs")
+	}
+	inputIDs := make(map[string]struct{}, len(specification.Inputs))
+	targetPaths := make(map[string]struct{}, len(specification.Inputs))
+	testJARs := 0
+	var totalInputBytes int64
+	for _, input := range specification.Inputs {
+		if !localIdentifierPattern.MatchString(input.InputID) || input.MediaType != "application/java-archive" || !filepath.IsLocal(input.TargetPath) || strings.ToLower(filepath.Ext(input.TargetPath)) != ".jar" || input.SizeBytes <= 0 || !sha256Pattern.MatchString(input.SHA256) {
+			return errors.New("assignment execution input is invalid")
+		}
+		if input.Kind == "test-jar" {
+			testJARs++
+		} else if input.Kind != "dependency-jar" {
+			return errors.New("assignment execution input kind is unsupported")
+		}
+		if _, duplicate := inputIDs[input.InputID]; duplicate {
+			return errors.New("assignment execution input identifier is duplicated")
+		}
+		if _, duplicate := targetPaths[input.TargetPath]; duplicate {
+			return errors.New("assignment execution input target path is duplicated")
+		}
+		inputIDs[input.InputID] = struct{}{}
+		targetPaths[input.TargetPath] = struct{}{}
+		if totalInputBytes > specification.ResourceLimits.DiskBytes-input.SizeBytes {
+			return errors.New("assignment execution inputs exceed the disk limit")
+		}
+		totalInputBytes += input.SizeBytes
+	}
+	if testJARs != 1 {
+		return errors.New("assignment must contain exactly one test JAR")
 	}
 	if claimed.Lease.LeaseID == "" || len(claimed.Lease.Token) < 32 || claimed.Lease.Version < 1 {
 		return errors.New("assignment lease is incomplete")
 	}
 	if _, err := time.Parse(time.RFC3339Nano, claimed.Lease.ExpiresAt); err != nil {
 		return errors.New("assignment lease expiry is invalid")
+	}
+	return nil
+}
+
+func validateSecretReferences(
+	environment []EnvironmentEntry,
+	references []SecretReference,
+) error {
+	if len(references) > 64 {
+		return errors.New("assignment secret references exceed 64 entries")
+	}
+	names := make(map[string]struct{}, len(environment)+len(references))
+	for _, entry := range environment {
+		names[entry.Name] = struct{}{}
+	}
+	for _, reference := range references {
+		if !executionEnvironmentName.MatchString(reference.Name) || reference.SecretID == "" || reference.SecretVersionID == "" {
+			return errors.New("assignment contains an invalid secret reference")
+		}
+		if _, duplicate := names[reference.Name]; duplicate {
+			return errors.New("assignment contains a duplicate environment name")
+		}
+		names[reference.Name] = struct{}{}
 	}
 	return nil
 }
@@ -448,6 +917,9 @@ func mapExecutionResult(result executor.Result) completionResult {
 	exitCode := result.ExitCode
 	mapped := completionResult{DurationMs: result.DurationMs, ExitCode: &exitCode}
 	switch {
+	case result.Termination == "resource_exceeded":
+		mapped.Status = "failed"
+		mapped.ResultCode, mapped.Summary = resourceLimitResult(result.ResourceLimit)
 	case result.Termination == "timeout":
 		mapped.Status = "timed_out"
 		mapped.ResultCode = "EXECUTION_TIMEOUT"
@@ -470,6 +942,102 @@ func mapExecutionResult(result executor.Result) completionResult {
 		mapped.Summary = fmt.Sprintf("TestNG exited with code %d.", result.ExitCode)
 	}
 	return mapped
+}
+
+func resourceLimitResult(resource string) (string, string) {
+	switch resource {
+	case "memory":
+		return "RESOURCE_MEMORY_EXCEEDED", "The execution exceeded its cgroup memory limit."
+	case "processes":
+		return "RESOURCE_PROCESS_LIMIT_EXCEEDED", "The execution exceeded its cgroup process limit."
+	case "disk":
+		return "RESOURCE_DISK_EXCEEDED", "The execution exceeded its workspace byte limit."
+	case "files":
+		return "RESOURCE_FILE_LIMIT_EXCEEDED", "The execution exceeded its workspace file limit."
+	default:
+		return "RESOURCE_MONITOR_FAILED", "The Agent could not safely enforce workspace resource limits."
+	}
+}
+
+func mapTestNGReport(mapped *completionResult, result executor.Result, summary executor.TestNGReportSummary) {
+	mapped.TestNG = &testNGResultSummary{
+		testNGResultCounts: testNGResultCounts{
+			Total: summary.Total, Passed: summary.Passed, Failed: summary.Failed,
+			Skipped: summary.Skipped, ConfigurationFailures: summary.ConfigurationFailures,
+		},
+		DetailsTruncated: summary.DetailsTruncated,
+		Suites:           mapTestNGSuites(summary.Suites),
+	}
+	if result.Termination != "completed" || result.LogsTruncated {
+		return
+	}
+	switch {
+	case summary.ConfigurationFailures > 0:
+		mapped.Status = "failed"
+		mapped.ResultCode = "TESTNG_CONFIGURATION_FAILED"
+		mapped.Summary = fmt.Sprintf("TestNG reported %d configuration failure(s).", summary.ConfigurationFailures)
+	case summary.Failed > 0:
+		mapped.Status = "failed"
+		mapped.ResultCode = "TESTNG_ASSERTIONS_FAILED"
+		mapped.Summary = fmt.Sprintf("TestNG reported %d failed test method(s).", summary.Failed)
+	case result.ExitCode != 0:
+		// A non-zero process exit remains authoritative when the XML contains no failure.
+	case summary.Total == 0:
+		mapped.Status = "failed"
+		mapped.ResultCode = "TESTNG_NO_TESTS"
+		mapped.Summary = "TestNG completed without reporting any test methods."
+	case summary.Passed == 0 && summary.Skipped > 0:
+		mapped.Status = "succeeded"
+		mapped.ResultCode = "TESTNG_ALL_SKIPPED"
+		mapped.Summary = fmt.Sprintf("TestNG skipped all %d test method(s).", summary.Skipped)
+	case summary.Skipped > 0:
+		mapped.Status = "succeeded"
+		mapped.ResultCode = "TESTNG_SUCCEEDED_WITH_SKIPS"
+		mapped.Summary = fmt.Sprintf("TestNG passed %d and skipped %d test method(s).", summary.Passed, summary.Skipped)
+	default:
+		mapped.Status = "succeeded"
+		mapped.ResultCode = "TESTNG_SUCCEEDED"
+		mapped.Summary = fmt.Sprintf("TestNG passed %d test method(s).", summary.Passed)
+	}
+}
+
+func mapTestNGSuites(suites []executor.TestNGSuiteResult) []testNGSuiteResult {
+	mapped := make([]testNGSuiteResult, 0, len(suites))
+	for _, suite := range suites {
+		tests := make([]testNGTestResult, 0, len(suite.Tests))
+		for _, test := range suite.Tests {
+			classes := make([]testNGClassResult, 0, len(test.Classes))
+			for _, classResult := range test.Classes {
+				methods := make([]testNGMethodResult, 0, len(classResult.Methods))
+				for _, method := range classResult.Methods {
+					methods = append(methods, testNGMethodResult{
+						Name: method.Name, Signature: method.Signature, Status: method.Status,
+						Configuration: method.Configuration, DurationMs: method.DurationMs,
+					})
+				}
+				classes = append(classes, testNGClassResult{
+					testNGResultCounts: testNGCounts(classResult.TestNGResultCounts),
+					Name:               classResult.Name, DurationMs: classResult.DurationMs, Methods: methods,
+				})
+			}
+			tests = append(tests, testNGTestResult{
+				testNGResultCounts: testNGCounts(test.TestNGResultCounts),
+				Name:               test.Name, DurationMs: test.DurationMs, Classes: classes,
+			})
+		}
+		mapped = append(mapped, testNGSuiteResult{
+			testNGResultCounts: testNGCounts(suite.TestNGResultCounts),
+			Name:               suite.Name, DurationMs: suite.DurationMs, Tests: tests,
+		})
+	}
+	return mapped
+}
+
+func testNGCounts(counts executor.TestNGResultCounts) testNGResultCounts {
+	return testNGResultCounts{
+		Total: counts.Total, Passed: counts.Passed, Failed: counts.Failed,
+		Skipped: counts.Skipped, ConfigurationFailures: counts.ConfigurationFailures,
+	}
 }
 
 func waitFor(ctx context.Context, duration time.Duration) bool {

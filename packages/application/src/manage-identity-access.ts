@@ -13,6 +13,7 @@ import {
   DEFAULT_PROJECT_ID,
   DomainError,
   hasPermission,
+  projectIdsForPermission,
   isPermission,
   type AuditEvent,
   type AuthenticatedIdentity,
@@ -151,6 +152,15 @@ export class IdentityAccessService {
     }
   }
 
+  projectScope(identity: AuthenticatedIdentity, permission: Permission): string[] | undefined {
+    const projectIds = projectIdsForPermission(identity, permission);
+    if (!projectIds) return undefined;
+    if (projectIds.length === 0) {
+      throw new DomainError("AUTH_FORBIDDEN", "当前账号没有执行此操作的权限。");
+    }
+    return projectIds;
+  }
+
   async logout(identity: AuthenticatedIdentity, requestId?: string): Promise<void> {
     const revokedAt = this.now();
     await this.repository.revokeSession(identity.sessionId, revokedAt);
@@ -253,6 +263,26 @@ export class IdentityAccessService {
       details: { forcePasswordChange },
     });
     return user;
+  }
+
+  async revokeUserSessions(
+    actor: AuthenticatedIdentity,
+    userId: string,
+    requestId?: string,
+  ): Promise<void> {
+    this.authorize(actor, "user.manage");
+    await this.requiredUser(userId);
+    const revokedAt = this.now();
+    await this.repository.revokeUserSessions(userId, revokedAt);
+    await this.audit({
+      actorId: actor.user.id,
+      action: "user.sessions_revoke",
+      resourceType: "user",
+      resourceId: userId,
+      result: "succeeded",
+      requestId,
+      details: {},
+    });
   }
 
   async changePassword(
@@ -766,17 +796,48 @@ export class IdentityAccessService {
     actor: AuthenticatedIdentity,
     runnerId: string,
     sessionId: string,
+    projectId: string,
     requestId?: string,
   ): Promise<void> {
-    this.authorize(actor, "runner.terminal");
+    this.authorize(actor, "runner.terminal", projectId);
     await this.audit({
       actorId: actor.user.id,
       action: "terminal.session_create",
       resourceType: "runner",
       resourceId: runnerId,
+      projectId,
       result: "succeeded",
       requestId,
       details: { sessionId },
+    });
+  }
+
+  async recordTerminalLifecycle(input: {
+    actorId: string;
+    runnerId: string;
+    sessionId: string;
+    action: "terminal.session_started" | "terminal.session_finished";
+    reason?: string;
+    inputMessages?: number;
+    inputBytes?: number;
+    outputBytes?: number;
+  }): Promise<void> {
+    await this.repository.appendAudit({
+      id: this.ids.next(),
+      actorType: "user",
+      actorId: input.actorId,
+      action: input.action,
+      resourceType: "runner",
+      resourceId: input.runnerId,
+      result: "succeeded",
+      details: {
+        sessionId: input.sessionId,
+        ...(input.reason ? { reason: input.reason } : {}),
+        ...(input.inputMessages === undefined ? {} : { inputMessages: input.inputMessages }),
+        ...(input.inputBytes === undefined ? {} : { inputBytes: input.inputBytes }),
+        ...(input.outputBytes === undefined ? {} : { outputBytes: input.outputBytes }),
+      },
+      recordedAt: this.now(),
     });
   }
 
@@ -910,6 +971,16 @@ export class IdentityAccessService {
         password,
       );
     } catch (error) {
+      if (error instanceof DomainError && error.code !== "LDAP_CREDENTIAL_REJECTED") {
+        await this.audit({
+          action: "auth.login",
+          resourceType: "session",
+          result: "failed",
+          requestId,
+          details: { provider: "ldap", reasonCode: error.code },
+        });
+        throw error;
+      }
       return this.rejectedLogin("ldap", undefined, requestId, error);
     }
     const existing = await this.repository.findExternalIdentity(

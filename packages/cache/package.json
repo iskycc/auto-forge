@@ -1,0 +1,19 @@
+{
+  "name": "@autoforge/cache",
+  "version": "0.2.2",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./memory": "./src/memory.ts",
+    "./redis": "./src/redis.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@autoforge/application": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "5.9.3"
+  }
+}

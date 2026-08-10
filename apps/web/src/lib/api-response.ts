@@ -32,7 +32,16 @@ export function apiErrorResponse(error: unknown, requestId: string = randomUUID(
   if (error instanceof DomainError || error instanceof JarInspectionError) {
     const status = domainErrorStatus(error.code);
     return NextResponse.json(
-      { error: { code: error.code, message: error.message, requestId } },
+      {
+        error: {
+          code: error.code,
+          message: error.message,
+          requestId,
+          ...(error instanceof DomainError && error.details !== undefined
+            ? { details: error.details }
+            : {}),
+        },
+      },
       { status },
     );
   }

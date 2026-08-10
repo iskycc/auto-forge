@@ -1,0 +1,117 @@
+import { describe, expect, it, vi } from "vitest";
+
+import type { ClaimedJob, JobQueuePort } from "../src/ports";
+import { JobWorker, type JobHandler } from "../src/run-job-worker";
+
+describe("JobWorker", () => {
+  it("acknowledges a completed job and drains after shutdown", async () => {
+    const delivery = dispatchDelivery();
+    const queue = new FakeQueue([delivery]);
+    const handled: string[] = [];
+    const abort = new AbortController();
+    const worker = createWorker(queue, async (job) => {
+      handled.push(job.messageId);
+      abort.abort();
+    });
+
+    await worker.run(abort.signal);
+
+    expect(handled).toEqual([delivery.job.messageId]);
+    expect(queue.acknowledged).toEqual([delivery.deliveryId]);
+    expect(queue.rejected).toEqual([]);
+  });
+
+  it("releases a failed delivery for bounded retry", async () => {
+    const delivery = dispatchDelivery();
+    const queue = new FakeQueue([delivery]);
+    const abort = new AbortController();
+    queue.afterReject = () => abort.abort();
+    const worker = createWorker(queue, async () => {
+      throw new Error("database unavailable");
+    });
+
+    await worker.run(abort.signal);
+
+    expect(queue.acknowledged).toEqual([]);
+    expect(queue.rejected).toEqual([delivery.deliveryId]);
+  });
+});
+
+function createWorker(queue: JobQueuePort, handler: JobHandler) {
+  return new JobWorker(
+    queue,
+    { "dispatch-run": handler },
+    { now: () => new Date("2026-08-10T00:00:00.000Z") },
+    {
+      workerId: "worker-1",
+      concurrency: 1,
+      leaseDurationMs: 30_000,
+      minimumPollMs: 1,
+      maximumPollMs: 2,
+    },
+    { info: vi.fn(), error: vi.fn() },
+  );
+}
+
+function dispatchDelivery(): ClaimedJob {
+  return {
+    job: {
+      schemaVersion: 1,
+      messageId: "message-1",
+      runId: "batch-1",
+      attempt: 1,
+      createdAt: "2026-08-10T00:00:00.000Z",
+      priority: 0,
+      deduplicationKey: "dispatch-batch:batch-1:1",
+      kind: "dispatch-run",
+      payload: { batchId: "batch-1" },
+    },
+    deliveryId: "delivery-1",
+    leaseExpiresAt: "2026-08-10T00:00:30.000Z",
+    deliveryAttempt: 1,
+  };
+}
+
+class FakeQueue implements JobQueuePort {
+  readonly acknowledged: string[] = [];
+  readonly rejected: string[] = [];
+  afterReject?: () => void;
+  private claimed = false;
+
+  constructor(private readonly deliveries: ClaimedJob[]) {}
+
+  async publish() {
+    return "published" as const;
+  }
+
+  async claim(): Promise<ClaimedJob[]> {
+    if (this.claimed) return [];
+    this.claimed = true;
+    return this.deliveries;
+  }
+
+  async renew(): Promise<boolean> {
+    return true;
+  }
+
+  async acknowledge(input: { deliveryId: string }): Promise<void> {
+    this.acknowledged.push(input.deliveryId);
+  }
+
+  async reject(input: { deliveryId: string }): Promise<"retrying"> {
+    this.rejected.push(input.deliveryId);
+    this.afterReject?.();
+    return "retrying";
+  }
+
+  async recoverExpired(): Promise<number> {
+    return 0;
+  }
+
+  async depth() {
+    return { available: 0, leased: 0, deadLetter: 0 };
+  }
+
+  async ready(): Promise<void> {}
+  async close(): Promise<void> {}
+}

@@ -3,6 +3,7 @@ import {
   DEFAULT_PROJECT_ID,
   hasPermission,
   permissionCatalog,
+  projectIdsForPermission,
   type AuthenticatedIdentity,
   type Permission,
   type User,
@@ -50,6 +51,46 @@ describe("identity permissions", () => {
     expect(hasPermission(auditor, "audit.export", DEFAULT_PROJECT_ID)).toBe(true);
     expect(hasPermission(auditor, "user.read")).toBe(false);
   });
+
+  it("derives a stable project filter without broadening system access", () => {
+    const scoped = identity([], {
+      "project-b": role("viewer").permissions,
+      "project-a": role("execution-operator").permissions,
+      "project-c": ["audit.read"],
+    });
+    expect(projectIdsForPermission(scoped, "run.read")).toEqual(["project-a", "project-b"]);
+    expect(projectIdsForPermission(scoped, "artifact.read")).toEqual(["project-a", "project-b"]);
+    expect(projectIdsForPermission(scoped, "case.manage")).toEqual([]);
+    expect(projectIdsForPermission(identity(["run.read"], {}), "run.read")).toBeUndefined();
+  });
+
+  it.each([
+    ["system-admin", true, true, true, true],
+    ["project-admin", true, true, true, true],
+    ["test-manager", true, true, true, false],
+    ["execution-operator", true, true, true, false],
+    ["viewer", true, false, true, false],
+    ["auditor", true, false, true, false],
+  ] as const)(
+    "%s enforces the page, API, artifact, and terminal WebSocket matrix",
+    (roleKey, pageAllowed, createApiAllowed, artifactAllowed, terminalAllowed) => {
+      const definition = role(roleKey);
+      const scopedIdentity =
+        definition.scope === "system"
+          ? identity(definition.permissions, {})
+          : identity([], { [DEFAULT_PROJECT_ID]: definition.permissions });
+      expect(hasPermission(scopedIdentity, "run.read", DEFAULT_PROJECT_ID)).toBe(pageAllowed);
+      expect(hasPermission(scopedIdentity, "run.create", DEFAULT_PROJECT_ID)).toBe(
+        createApiAllowed,
+      );
+      expect(hasPermission(scopedIdentity, "artifact.read", DEFAULT_PROJECT_ID)).toBe(
+        artifactAllowed,
+      );
+      expect(hasPermission(scopedIdentity, "runner.terminal", DEFAULT_PROJECT_ID)).toBe(
+        terminalAllowed,
+      );
+    },
+  );
 });
 
 function role(key: string) {

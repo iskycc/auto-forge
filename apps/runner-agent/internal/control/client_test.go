@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -49,6 +51,142 @@ func TestClientDownloadsOnlyTheDeclaredInputSizeWithRunnerAndLeaseCredentials(t 
 	}
 	if destination.String() != "jar" {
 		t.Fatalf("downloaded input = %q", destination.String())
+	}
+}
+
+func TestClientAcquiresOnlyExpectedSecretsWithRunnerAndLeaseCredentials(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/api/v1/run-attempts/attempt-1/secrets" {
+			http.NotFound(writer, request)
+			return
+		}
+		if request.Header.Get("Authorization") != "Bearer runner-credential" || request.Header.Get("X-AutoForge-Runner-Id") != "runner-1" {
+			http.Error(writer, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		var acquisition acquireSecretsRequest
+		if err := json.NewDecoder(request.Body).Decode(&acquisition); err != nil {
+			t.Errorf("decode secret request: %v", err)
+			return
+		}
+		if acquisition.LeaseToken != "lease-token" || acquisition.SchemaVersion != protocolVersion {
+			t.Errorf("secret request = %#v", acquisition)
+		}
+		writer.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(writer).Encode(acquireSecretsResponse{
+			SchemaVersion: protocolVersion,
+			RequestID:     acquisition.RequestID,
+			Secrets:       []EnvironmentEntry{{Name: "API_TOKEN", Value: "execution-secret"}},
+		})
+	}))
+	defer server.Close()
+	client, err := NewClient(testConfiguration(t, server.URL))
+	if err != nil {
+		t.Fatal(err)
+	}
+	secrets, err := client.AcquireSecrets(
+		context.Background(),
+		Identity{RunnerID: "runner-1", Credential: "runner-credential"},
+		"attempt-1",
+		Lease{Token: "lease-token"},
+		[]SecretReference{{
+			Name: "API_TOKEN", SecretID: "secret-1", SecretVersionID: "secret-version-1",
+		}},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(secrets) != 1 || secrets[0].Value != "execution-secret" || !secrets[0].Secret {
+		t.Fatalf("AcquireSecrets() = %#v", secrets)
+	}
+}
+
+func TestClientRejectsUnexpectedSecretResponse(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		var acquisition acquireSecretsRequest
+		_ = json.NewDecoder(request.Body).Decode(&acquisition)
+		writer.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(writer).Encode(acquireSecretsResponse{
+			SchemaVersion: protocolVersion,
+			RequestID:     acquisition.RequestID,
+			Secrets:       []EnvironmentEntry{{Name: "UNDECLARED_TOKEN", Value: "must-not-be-used"}},
+		})
+	}))
+	defer server.Close()
+	client, err := NewClient(testConfiguration(t, server.URL))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = client.AcquireSecrets(
+		context.Background(),
+		Identity{RunnerID: "runner-1", Credential: "runner-credential"},
+		"attempt-1",
+		Lease{Token: "lease-token"},
+		[]SecretReference{{
+			Name: "API_TOKEN", SecretID: "secret-1", SecretVersionID: "secret-version-1",
+		}},
+	)
+	if err == nil || !strings.Contains(err.Error(), "unexpected variable") {
+		t.Fatalf("AcquireSecrets() error = %v", err)
+	}
+}
+
+func TestClientUploadsDirectArtifactWithoutLeakingCredentialsAndFinalizes(t *testing.T) {
+	artifactReceived := false
+	objectServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.Header.Get("Authorization") != "" || request.Header.Get("X-AutoForge-Lease-Token") != "" || request.Header.Get("X-AutoForge-Runner-Id") != "" {
+			t.Error("direct upload leaked control-plane credentials")
+		}
+		content := new(bytes.Buffer)
+		if _, err := content.ReadFrom(request.Body); err != nil {
+			t.Error(err)
+		}
+		artifactReceived = content.String() == "artifact"
+		writer.WriteHeader(http.StatusOK)
+	}))
+	defer objectServer.Close()
+
+	finalized := false
+	controlServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/api/v1/run-attempts/attempt-1/artifacts/artifact-1/finalize" {
+			http.NotFound(writer, request)
+			return
+		}
+		if request.Header.Get("Authorization") != "Bearer runner-credential" || request.Header.Get("X-AutoForge-Lease-Token") != "lease-token" || request.Header.Get("X-AutoForge-Runner-Id") != "runner-1" {
+			http.Error(writer, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		finalized = true
+		writer.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(writer).Encode(uploadArtifactResponse{ArtifactID: "artifact-1", Status: "uploaded"})
+	}))
+	defer controlServer.Close()
+
+	client, err := NewClient(testConfiguration(t, controlServer.URL))
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "artifact.xml")
+	if err := os.WriteFile(path, []byte("artifact"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	err = client.UploadArtifact(
+		context.Background(),
+		Identity{RunnerID: "runner-1", Credential: "runner-credential"},
+		Lease{Token: "lease-token"},
+		declaredArtifact{
+			artifactDeclaration: artifactDeclaration{ArtifactID: "artifact-1", MediaType: "application/xml", SizeBytes: 8},
+			UploadMethod:        "direct",
+			UploadPath:          objectServer.URL + "/signed-object",
+			FinalizePath:        "/api/v1/run-attempts/attempt-1/artifacts/artifact-1/finalize",
+		},
+		path,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !artifactReceived || !finalized {
+		t.Fatalf("artifactReceived=%v finalized=%v", artifactReceived, finalized)
 	}
 }
 
@@ -93,6 +231,120 @@ func TestClientRegistersAndSendsAuthenticatedHeartbeat(t *testing.T) {
 	}
 	if requests != 2 {
 		t.Fatalf("requests = %d, want 2", requests)
+	}
+}
+
+func TestClientReturnsStableErrorForRevokedRunnerCredential(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		writer.WriteHeader(http.StatusUnauthorized)
+		_ = json.NewEncoder(writer).Encode(map[string]any{
+			"error": map[string]any{
+				"code": "RUNNER_AUTH_REJECTED", "message": "credential revoked", "requestId": "request-1",
+			},
+		})
+	}))
+	defer server.Close()
+	client, err := NewClient(testConfiguration(t, server.URL))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = client.Heartbeat(
+		context.Background(),
+		Identity{RunnerID: "runner-1", Credential: "revoked-credential"},
+		testConfiguration(t, server.URL),
+		buildinfo.Info{Version: "0.2.2"},
+		0,
+		nil,
+	)
+	var problem *APIError
+	if !errors.As(err, &problem) || problem.Code != "RUNNER_AUTH_REJECTED" {
+		t.Fatalf("Heartbeat() error = %#v, want RUNNER_AUTH_REJECTED", err)
+	}
+}
+
+func TestClientUsesSameProtocolForLiteAndFullControlPlanes(t *testing.T) {
+	for _, mode := range []string{"lite", "full"} {
+		t.Run(mode, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+				if request.URL.Path != "/api/v1/runner-agents/runner-1/claims" {
+					http.NotFound(writer, request)
+					return
+				}
+				if request.Header.Get("Authorization") != "Bearer runner-credential" {
+					http.Error(writer, "unauthorized", http.StatusUnauthorized)
+					return
+				}
+				var claim claimRequest
+				if err := json.NewDecoder(request.Body).Decode(&claim); err != nil {
+					t.Errorf("decode claim request: %v", err)
+					return
+				}
+				if claim.SchemaVersion != protocolVersion {
+					t.Errorf("claim schemaVersion = %d, want %d", claim.SchemaVersion, protocolVersion)
+				}
+				writer.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(writer).Encode(map[string]any{
+					"schemaVersion":            protocolVersion,
+					"requestId":                claim.RequestID,
+					"assignments":              []any{},
+					"retryAfterMs":             1_000,
+					"optionalServerPatchField": mode,
+				})
+			}))
+			defer server.Close()
+
+			configuration := testConfiguration(t, server.URL)
+			client, err := NewClient(configuration)
+			if err != nil {
+				t.Fatalf("NewClient() error = %v", err)
+			}
+			response, err := client.Claim(
+				context.Background(),
+				Identity{RunnerID: "runner-1", Credential: "runner-credential"},
+				configuration,
+				1,
+			)
+			if err != nil {
+				t.Fatalf("Claim() error = %v", err)
+			}
+			if response.SchemaVersion != protocolVersion || len(response.Assignments) != 0 {
+				t.Fatalf("Claim() response = %#v", response)
+			}
+		})
+	}
+}
+
+func TestClientRejectsIncompatibleClaimResponseVersion(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		var claim claimRequest
+		if err := json.NewDecoder(request.Body).Decode(&claim); err != nil {
+			t.Errorf("decode claim request: %v", err)
+			return
+		}
+		writer.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(writer).Encode(map[string]any{
+			"schemaVersion": 2,
+			"requestId":     claim.RequestID,
+			"assignments":   []any{},
+			"retryAfterMs":  1_000,
+		})
+	}))
+	defer server.Close()
+
+	configuration := testConfiguration(t, server.URL)
+	client, err := NewClient(configuration)
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+	_, err = client.Claim(
+		context.Background(),
+		Identity{RunnerID: "runner-1", Credential: "runner-credential"},
+		configuration,
+		1,
+	)
+	if err == nil || !strings.Contains(err.Error(), "incompatible protocol response") {
+		t.Fatalf("Claim() error = %v, want incompatible protocol response", err)
 	}
 }
 

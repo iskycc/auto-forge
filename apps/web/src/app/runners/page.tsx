@@ -1,8 +1,14 @@
 import { Clock3, Server, ShieldCheck } from "lucide-react";
+import { assessRunnerCompatibility } from "@autoforge/domain";
 
 import { RunnerTerminal } from "@/components/runner-terminal";
 import { getPlatformServices } from "@/lib/services";
 import { requirePagePermission } from "@/lib/auth";
+import {
+  runnerCompatibilityLabel,
+  runnerCompatibilitySummary,
+  runnerToolchainSummary,
+} from "@/lib/runner-compatibility";
 
 export const dynamic = "force-dynamic";
 
@@ -22,13 +28,21 @@ export default async function RunnersPage() {
   const services = await getPlatformServices();
   const runners = await services.runnerControl.list(500);
   const onlineCount = runners.filter((runner) => runner.state === "online").length;
+  const incompatibleCount = runners.filter(
+    (runner) => !assessRunnerCompatibility(runner).compatible,
+  ).length;
   return (
     <div className="page-stack">
       <section className="page-hero">
         <div>
           <span className="eyebrow">Runner Control</span>
           <h1>执行机</h1>
-          <p>Agent 主动注册并持续上报心跳；45 秒未上报会显示离线。</p>
+          <p>
+            Agent 主动注册并持续上报心跳；45 秒未上报会显示离线。不兼容节点不会获得新任务
+            {incompatibleCount > 0
+              ? `；当前有 ${incompatibleCount} 台需从离线 Release 介质选择匹配架构资产升级并先运行 doctor。`
+              : "。"}
+          </p>
         </div>
         <span className="storage-pill">
           <span className="live-dot" /> 在线 {onlineCount} / {runners.length}
@@ -67,6 +81,7 @@ export default async function RunnersPage() {
                 <tr>
                   <th>执行机</th>
                   <th>平台</th>
+                  <th>兼容性</th>
                   <th>容量</th>
                   <th>资源</th>
                   <th>状态</th>
@@ -76,6 +91,7 @@ export default async function RunnersPage() {
               </thead>
               <tbody>
                 {runners.map((runner) => {
+                  const compatibility = assessRunnerCompatibility(runner);
                   return (
                     <tr key={runner.id}>
                       <td>
@@ -87,7 +103,19 @@ export default async function RunnersPage() {
                       <td>
                         {runner.os} · {runner.architecture}
                         <br />
-                        <small className="muted">Agent {runner.agentVersion}</small>
+                        <small className="muted">
+                          Agent {runner.agentVersion} · 协议 v{runner.protocolVersion}
+                        </small>
+                      </td>
+                      <td>
+                        <span
+                          className={`runner-state runner-compatibility-${compatibility.status}`}
+                          title={runnerCompatibilitySummary(compatibility)}
+                        >
+                          <i /> {runnerCompatibilityLabel(compatibility.status)}
+                        </span>
+                        <br />
+                        <small className="muted">{runnerToolchainSummary(compatibility)}</small>
                       </td>
                       <td>
                         {runner.busySlots} / {runner.maxConcurrency}
@@ -114,9 +142,11 @@ export default async function RunnersPage() {
                           <i />
                           {runner.state === "online"
                             ? "在线"
-                            : runner.state === "disabled"
-                              ? "已禁用"
-                              : "离线"}
+                            : runner.state === "draining"
+                              ? "排空中"
+                              : runner.state === "disabled"
+                                ? "已禁用"
+                                : "离线"}
                         </span>
                       </td>
                       <td>

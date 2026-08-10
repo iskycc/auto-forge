@@ -9,7 +9,7 @@ export async function GET(): Promise<NextResponse> {
     const services = await getPlatformServices();
     await services.catalog.getDashboardSummary();
     await services.objectStore.ready();
-    await services.fullInfrastructure?.ready();
+    await services.infrastructure.ready();
     return NextResponse.json({ status: "ready", mode: services.config.mode });
   } catch (error) {
     return apiErrorResponse(error);

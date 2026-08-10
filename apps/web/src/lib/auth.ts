@@ -56,6 +56,22 @@ export async function requirePagePermission(
   }
 }
 
+export async function requirePageProjectScope(permission: Permission): Promise<{
+  identity: AuthenticatedIdentity;
+  projectIds: string[] | undefined;
+}> {
+  const services = await getPlatformServices();
+  const identity = await currentIdentity();
+  if (!identity) {
+    redirect((await services.identityAccess.setupRequired()) ? "/setup" : "/login");
+  }
+  try {
+    return { identity, projectIds: services.identityAccess.projectScope(identity, permission) };
+  } catch {
+    redirect("/forbidden");
+  }
+}
+
 export function requireSameOrigin(request: Request): void {
   const originValue = request.headers.get("origin");
   if (!originValue) {

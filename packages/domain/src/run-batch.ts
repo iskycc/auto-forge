@@ -1,3 +1,8 @@
+import type {
+  ExecutionEnvironmentSecretBinding,
+  ExecutionEnvironmentVariable,
+} from "./environment";
+
 export type RunBatchStatus =
   "queued" | "dispatching" | "scheduled" | "running" | "succeeded" | "failed" | "cancelled";
 
@@ -7,19 +12,61 @@ export type ExecutionRunStatus =
 export type RunAttemptStatus =
   "assigned" | "running" | "succeeded" | "failed" | "timed_out" | "cancelled";
 
-export type ExecutionEnvironmentVariable = {
+export type TestNgResultCounts = {
+  total: number;
+  passed: number;
+  failed: number;
+  skipped: number;
+  configurationFailures: number;
+};
+
+export type TestNgMethodResult = {
   name: string;
-  value: string;
+  signature?: string | undefined;
+  status: "passed" | "failed" | "skipped";
+  configuration: boolean;
+  durationMs: number;
+};
+
+export type TestNgClassResult = TestNgResultCounts & {
+  name: string;
+  durationMs: number;
+  methods: TestNgMethodResult[];
+};
+
+export type TestNgTestResult = TestNgResultCounts & {
+  name: string;
+  durationMs: number;
+  classes: TestNgClassResult[];
+};
+
+export type TestNgSuiteResult = TestNgResultCounts & {
+  name: string;
+  durationMs: number;
+  tests: TestNgTestResult[];
+};
+
+export type TestNgResultDetails = TestNgResultCounts & {
+  detailsTruncated: boolean;
+  suites: TestNgSuiteResult[];
 };
 
 export type RunBatch = {
   id: string;
+  projectId: string;
+  environmentId?: string;
+  environmentVersionId?: string;
   suiteId: string;
   suiteName: string;
   suiteVersion: number;
   status: RunBatchStatus;
   retryLimit: number;
+  queueTimeoutMs: number;
+  claimTimeoutMs: number;
+  executionTimeoutMs: number;
+  uploadTimeoutMs: number;
   environmentVariables: ExecutionEnvironmentVariable[];
+  secretBindings: ExecutionEnvironmentSecretBinding[];
   selectedRunnerIds: string[];
   totalRuns: number;
   queuedRuns: number;
@@ -29,8 +76,19 @@ export type RunBatch = {
   failedRuns: number;
   timedOutRuns: number;
   cancelledRuns: number;
+  version: number;
   createdAt: string;
   updatedAt: string;
+};
+
+export type RunBatchStatusEvent = {
+  id: string;
+  batchId: string;
+  fromStatus?: RunBatchStatus;
+  toStatus: RunBatchStatus;
+  batchVersion: number;
+  reason: string;
+  recordedAt: string;
 };
 
 export type ExecutionRun = {
@@ -45,6 +103,7 @@ export type ExecutionRun = {
   attemptCount: number;
   schedulingScore?: number;
   terminalOutcome?: "succeeded" | "failed" | "timed_out" | "cancelled";
+  terminalReasonCode?: string;
   cancelRequestedAt?: string;
   version: number;
   createdAt: string;
@@ -65,12 +124,15 @@ export type RunAttempt = {
   outcome?: "succeeded" | "failed" | "timed_out" | "cancelled";
   resultCode?: string;
   resultSummary?: string;
+  durationMs?: number;
+  testNg?: TestNgResultDetails;
   createdAt: string;
 };
 
 export type RunBatchDetails = RunBatch & {
   runs: ExecutionRun[];
   attempts: RunAttempt[];
+  statusHistory: RunBatchStatusEvent[];
 };
 
 export function statusAfterFailedAttempt(

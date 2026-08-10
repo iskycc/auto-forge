@@ -1,0 +1,24 @@
+{
+  "name": "@autoforge/worker",
+  "version": "0.2.2",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "vite build",
+    "start": "node dist/worker.mjs",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@autoforge/application": "workspace:*",
+    "@autoforge/db": "workspace:*",
+    "@autoforge/ids": "workspace:*",
+    "@autoforge/queue": "workspace:*",
+    "nats": "2.29.3",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "24.13.3",
+    "typescript": "5.9.3",
+    "vite": "8.2.1"
+  }
+}

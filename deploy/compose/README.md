@@ -3,7 +3,7 @@
 本目录包含共享同一 AutoForge 后端镜像的两种部署方式：
 
 - `lite/docker-compose.yml`：只启动 AutoForge，使用 SQLite、本地对象目录和进程内能力；
-- `full/docker-compose.yml`：启动 AutoForge、PostgreSQL、NATS JetStream、MinIO、Redis，以及一次性创建 MinIO bucket 的初始化任务。
+- `full/docker-compose.yml`：启动 AutoForge Web、独立 dispatcher worker、PostgreSQL、NATS JetStream、MinIO、Redis，以及一次性创建 MinIO bucket 的初始化任务。
 
 ## 准备离线镜像
 
@@ -42,6 +42,8 @@ docker compose up --detach
 docker compose ps
 curl --fail http://127.0.0.1:3000/api/v1/health/ready
 ```
+
+Full 的 `worker` 不暴露宿主机端口，Compose 通过容器内的 `/health/live` 与 `/health/ready` 检查其生命周期。创建批次时 Web 在 PostgreSQL 同一事务写 outbox；worker 发布 JetStream 消息、持久化 assignment 后立即确认，不会在 Runner 执行期间持有队列确认。
 
 首次管理员引导入口是 `/setup`。成功创建管理员后，引导 token 会被消费；Runner bootstrap token 同样只允许成功注册一台执行机。
 

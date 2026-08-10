@@ -4,7 +4,7 @@
 
 ## 1. 当前阶段
 
-仓库已实现 Lite/Full 用例资产、统一身份/RBAC、可选 LDAP 和控制面执行协议里程碑：Next.js 主平台、TestNG JAR 静态扫描、双数据库用例/身份/执行仓储、本地/MinIO 对象存储、资源感知调度和权威执行状态机已经落地。Go Runner Agent 已实现注册/资源心跳、assignment claim、lease 续租、启动 reconcile、权威 JAR 下载校验、离线 TestNG 类级执行、取消/进程组清理、完成上报和直连终端；日志 spool/确认重传、产物闭环、方法 descriptor 精确选择、Linux 资源硬限制、JetStream 调度消息、Redis 业务缓存、多租户隔离和分析仍是目标能力。README 中的目标架构不代表这些能力已经完成。
+仓库已实现 Lite/Full 用例资产、统一身份/RBAC、可选 LDAP、版本化执行环境、加密密文引用/lease 按需领取、逐项执行预检和控制面执行协议里程碑：Next.js 主平台、TestNG JAR 静态扫描、双数据库用例/身份/执行仓储、本地/MinIO 对象存储、资源感知调度、版本条件保护的权威执行状态机、四阶段超时恢复和批次/attempt 状态历史已经落地。Go Runner Agent 已实现注册/资源心跳、版本与工具链兼容提示、assignment claim、lease 续租、启动 reconcile、权威测试/依赖 JAR 下载校验、离线 TestNG 类/方法执行与参数注入、cgroup v2/rlimit 资源限制、日志 spool/确认重传、双层脱敏、安全产物上传、取消/进程组清理、完成上报和直连终端；SQLite 持久队列、Lite 嵌入式工作器、PostgreSQL outbox、JetStream 调度和 Redis 可重建缓存也已接通首版，SQLite/JetStream 共享队列契约测试已落地。严格总磁盘配额、多租户隔离、分析和完整离线验收仍是目标能力。README 中的目标架构不代表这些能力已经完成。
 
 在添加脚手架或功能时：
 

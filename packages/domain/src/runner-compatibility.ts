@@ -1,0 +1,106 @@
+import type { Runner } from "./runner";
+
+export const CURRENT_RUNNER_PROTOCOL_VERSION = 1;
+export const MINIMUM_JAVA_MAJOR_VERSION = 11;
+export const SUPPORTED_TESTNG_VERSION = "7.11.0";
+export const ON_DEMAND_SECRET_CAPABILITY = "secrets:on-demand-v1";
+export const REQUIRED_EXECUTION_CAPABILITIES = [
+  "executor:testng-v1",
+  "isolation:cgroup-v2",
+  `testng:${SUPPORTED_TESTNG_VERSION}`,
+] as const;
+export const REQUIRED_EXECUTION_LABELS = ["java", "testng"] as const;
+export const DEFAULT_EXECUTION_RESOURCE_LIMITS = {
+  cpuMillicores: 2_000,
+  memoryBytes: 2_147_483_648,
+  diskBytes: 10_737_418_240,
+  processCount: 256,
+  fileCount: 10_000,
+  logBytes: 1_073_741_824,
+  artifactBytes: 10_737_418_240,
+} as const;
+
+export type RunnerCompatibilityIssue =
+  | "protocol_unsupported"
+  | "platform_unsupported"
+  | "testng_executor_missing"
+  | "resource_isolation_missing"
+  | "java_version_unknown"
+  | "java_version_unsupported"
+  | "testng_version_unknown"
+  | "testng_version_unsupported"
+  | "agent_version_unversioned";
+
+export type RunnerCompatibility = {
+  compatible: boolean;
+  status: "compatible" | "attention" | "incompatible";
+  issues: RunnerCompatibilityIssue[];
+  javaVersion?: string;
+  testNgVersion?: string;
+};
+
+const supportedPlatforms = new Set(["linux/amd64", "linux/arm64"]);
+const semanticVersionPattern = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
+
+export function assessRunnerCompatibility(
+  runner: Pick<Runner, "agentVersion" | "architecture" | "capabilities" | "os" | "protocolVersion">,
+): RunnerCompatibility {
+  const capabilities = new Set(runner.capabilities);
+  const issues: RunnerCompatibilityIssue[] = [];
+  if (runner.protocolVersion !== CURRENT_RUNNER_PROTOCOL_VERSION) {
+    issues.push("protocol_unsupported");
+  }
+  if (!supportedPlatforms.has(`${runner.os.toLowerCase()}/${runner.architecture.toLowerCase()}`)) {
+    issues.push("platform_unsupported");
+  }
+  if (!capabilities.has("executor:testng-v1")) {
+    issues.push("testng_executor_missing");
+  }
+  if (!capabilities.has("isolation:cgroup-v2")) {
+    issues.push("resource_isolation_missing");
+  }
+  const javaVersion = capabilityVersion(runner.capabilities, "java:");
+  if (!javaVersion) issues.push("java_version_unknown");
+  else if ((javaMajorVersion(javaVersion) ?? 0) < MINIMUM_JAVA_MAJOR_VERSION) {
+    issues.push("java_version_unsupported");
+  }
+  const testNgVersion = capabilityVersion(runner.capabilities, "testng:");
+  if (!testNgVersion) issues.push("testng_version_unknown");
+  else if (testNgVersion !== SUPPORTED_TESTNG_VERSION) {
+    issues.push("testng_version_unsupported");
+  }
+  if (!semanticVersionPattern.test(runner.agentVersion)) {
+    issues.push("agent_version_unversioned");
+  }
+  const blockingIssues = new Set<RunnerCompatibilityIssue>([
+    "protocol_unsupported",
+    "platform_unsupported",
+    "testng_executor_missing",
+    "resource_isolation_missing",
+    "java_version_unknown",
+    "java_version_unsupported",
+    "testng_version_unknown",
+    "testng_version_unsupported",
+  ]);
+  const compatible = !issues.some((issue) => blockingIssues.has(issue));
+  return {
+    compatible,
+    status: compatible ? (issues.length === 0 ? "compatible" : "attention") : "incompatible",
+    issues,
+    ...(javaVersion ? { javaVersion } : {}),
+    ...(testNgVersion ? { testNgVersion } : {}),
+  };
+}
+
+function javaMajorVersion(version: string): number | undefined {
+  const parts = version.match(/\d+/g)?.map(Number);
+  if (!parts || parts.length === 0) return undefined;
+  return parts[0] === 1 && parts.length > 1 ? parts[1] : parts[0];
+}
+
+function capabilityVersion(capabilities: readonly string[], prefix: string): string | undefined {
+  return capabilities
+    .filter((capability) => capability.startsWith(prefix) && capability.length > prefix.length)
+    .map((capability) => capability.slice(prefix.length))
+    .sort()[0];
+}

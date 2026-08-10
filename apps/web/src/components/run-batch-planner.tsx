@@ -1,10 +1,18 @@
 "use client";
 
-import type { CaseSuite, RunBatch, Runner } from "@autoforge/domain";
+import {
+  assessRunnerCompatibility,
+  type CaseSuite,
+  type RunBatch,
+  type Runner,
+} from "@autoforge/domain";
+import type { RunBatchPreflightResult } from "@autoforge/contracts";
 import { Activity, Check, Cpu, MemoryStick, Plus, RefreshCw, Trash2 } from "lucide-react";
+import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
 import { runBatchCoveragePercent, runBatchStatusLabel } from "@/lib/run-batch-presentation";
+import { runnerCompatibilityLabel, runnerCompatibilitySummary } from "@/lib/runner-compatibility";
 
 type SchedulerPolicy = {
   maximumCpuUtilizationPercent: number;
@@ -34,6 +42,9 @@ export function RunBatchPlanner({
   const [batches, setBatches] = useState(initialBatches);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
+  const [preflightBlockers, setPreflightBlockers] = useState<RunBatchPreflightResult["blockers"]>(
+    [],
+  );
   const [refreshPaused, setRefreshPaused] = useState(false);
   const selectedSuite = useMemo(
     () => initialSuites.find((suite) => suite.id === suiteId),
@@ -58,6 +69,7 @@ export function RunBatchPlanner({
   async function createBatch(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError("");
+    setPreflightBlockers([]);
     if (!suiteId || runnerIds.length === 0) {
       setError("请选择用例任务和至少一台执行机。");
       return;
@@ -67,10 +79,24 @@ export function RunBatchPlanner({
       .filter((variable) => variable.name.length > 0);
     setSubmitting(true);
     try {
+      const requestBody = { suiteId, runnerIds, retryLimit, environmentVariables };
+      const preflightResponse = await fetch("/api/v1/run-batches/preflight", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(requestBody),
+      });
+      const preflightResult: unknown = await preflightResponse.json();
+      if (!preflightResponse.ok) throw new Error(apiMessage(preflightResult));
+      const preflight = asPreflightResult(preflightResult);
+      if (!preflight.ready) {
+        setPreflightBlockers(preflight.blockers);
+        setError("执行配置仍有阻塞项，请逐项处理后重试。");
+        return;
+      }
       const response = await fetch("/api/v1/run-batches", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ suiteId, runnerIds, retryLimit, environmentVariables }),
+        body: JSON.stringify(requestBody),
       });
       const result: unknown = await response.json();
       if (!response.ok) throw new Error(apiMessage(result));
@@ -141,15 +167,18 @@ export function RunBatchPlanner({
             initialRunners.map((runner) => {
               const metrics = runner.resourceSnapshot;
               const selected = runnerIds.includes(runner.id);
+              const compatibility = assessRunnerCompatibility(runner);
+              const unavailable = runner.state === "disabled" || !compatibility.compatible;
               return (
                 <label
-                  className={`runner-choice ${selected ? "runner-choice-selected" : ""} ${runner.state === "disabled" ? "runner-choice-disabled" : ""}`}
+                  className={`runner-choice ${selected ? "runner-choice-selected" : ""} ${unavailable ? "runner-choice-disabled" : ""}`}
                   key={runner.id}
+                  title={runnerCompatibilitySummary(compatibility)}
                 >
                   <input
                     type="checkbox"
                     checked={selected}
-                    disabled={runner.state === "disabled"}
+                    disabled={unavailable}
                     onChange={() => toggleRunner(runner.id)}
                   />
                   <span className="runner-choice-title">
@@ -176,7 +205,8 @@ export function RunBatchPlanner({
                     </small>
                   </span>
                   <span className="runner-choice-capacity">
-                    槽位 {runner.busySlots}/{runner.maxConcurrency}
+                    槽位 {runner.busySlots}/{runner.maxConcurrency} ·{" "}
+                    {runnerCompatibilityLabel(compatibility.status)}
                   </span>
                 </label>
               );
@@ -266,6 +296,16 @@ export function RunBatchPlanner({
             ))
           )}
         </div>
+        {preflightBlockers.length > 0 ? (
+          <ul className="preflight-blockers" aria-label="执行配置阻塞项">
+            {preflightBlockers.map((blocker, index) => (
+              <li key={`${blocker.code}-${blocker.runnerId ?? blocker.sourceId ?? index}`}>
+                <strong>{preflightCategoryLabel(blocker.category)}</strong>
+                <span>{blocker.message}</span>
+              </li>
+            ))}
+          </ul>
+        ) : null}
         {error ? <p className="form-error">{error}</p> : null}
         <button
           className="button button-primary run-batch-submit"
@@ -289,7 +329,7 @@ export function RunBatchPlanner({
           </span>
         </div>
         <div className="implementation-notice">
-          已接通 Agent 领取、lease 续租、TestNG 类级执行和结果回收；流式日志与产物上传仍在建设中。
+          执行机领取、租约续期、TestNG 执行、日志续传和产物上传均使用同一执行闭环。
         </div>
         {batches.length === 0 ? (
           <div className="inline-empty history-empty">尚未创建执行批次。</div>
@@ -319,6 +359,7 @@ export function RunBatchPlanner({
                     <span>已分配 {batch.assignedRuns}</span>
                     <span>等待资源 {batch.queuedRuns}</span>
                     <span>总计 {batch.totalRuns}</span>
+                    <Link href={`/run-batches/${encodeURIComponent(batch.id)}`}>查看详情</Link>
                   </div>
                 </article>
               );
@@ -338,9 +379,32 @@ function apiMessage(value: unknown): string {
   return typeof message === "string" ? message : "创建执行批次失败。";
 }
 
+function asPreflightResult(value: unknown): RunBatchPreflightResult {
+  if (typeof value !== "object" || value === null) {
+    throw new Error("执行配置预检响应无效。");
+  }
+  const candidate = value as { ready?: unknown; blockers?: unknown };
+  if (typeof candidate.ready !== "boolean" || !Array.isArray(candidate.blockers)) {
+    throw new Error("执行配置预检响应无效。");
+  }
+  return value as RunBatchPreflightResult;
+}
+
+function preflightCategoryLabel(
+  category: RunBatchPreflightResult["blockers"][number]["category"],
+): string {
+  if (category === "environment") return "环境";
+  if (category === "runner") return "执行机";
+  if (category === "toolchain") return "工具链";
+  if (category === "input") return "执行输入";
+  if (category === "resource") return "资源";
+  return "参数";
+}
+
 function stateLabel(state: Runner["state"]): string {
   if (state === "online") return "在线";
   if (state === "offline") return "离线";
+  if (state === "draining") return "排空中";
   return "已禁用";
 }
 

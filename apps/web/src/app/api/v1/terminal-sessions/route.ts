@@ -1,12 +1,12 @@
 import { createTerminalSessionInputSchema } from "@autoforge/contracts";
-import { DomainError } from "@autoforge/domain";
+import { DEFAULT_PROJECT_ID, DomainError } from "@autoforge/domain";
 import { NextResponse } from "next/server";
 
 import { authenticateRequest, requestId, requireSameOrigin } from "@/lib/auth";
 import { apiErrorResponse, readJsonBody, rejectRateLimited } from "@/lib/api-response";
 import { getPlatformServices } from "@/lib/services";
 import { issueTerminalTicket } from "@/lib/terminal-ticket";
-import { uuidV7 } from "@/lib/uuid-v7";
+import { uuidV7 } from "@autoforge/ids";
 
 const SESSION_TICKET_TTL_SECONDS = 30;
 
@@ -22,7 +22,7 @@ export async function POST(request: Request): Promise<NextResponse> {
       await services.runnerRequestLimiter.allow("terminal:authorize:v1", 30, 60_000),
     );
     const identity = await authenticateRequest(request);
-    services.identityAccess.authorize(identity, "runner.terminal");
+    services.identityAccess.authorize(identity, "runner.terminal", DEFAULT_PROJECT_ID);
     const input = createTerminalSessionInputSchema.parse(await readJsonBody(request, 16 * 1024));
     rejectRateLimited(
       await services.runnerRequestLimiter.allow(
@@ -44,6 +44,7 @@ export async function POST(request: Request): Promise<NextResponse> {
       identity,
       runner.id,
       sessionId,
+      DEFAULT_PROJECT_ID,
       currentRequestId,
     );
     return NextResponse.json({

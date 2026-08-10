@@ -1,0 +1,42 @@
+[Unit]
+Description=AutoForge Runner Agent
+Documentation=file:/opt/autoforge-agent/docs/runner-agent-install.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=autoforge-agent
+Group=autoforge-agent
+EnvironmentFile=/etc/autoforge-agent/agent.env
+ExecStart=/opt/autoforge-agent/bin/autoforge-agent start
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=45s
+KillMode=mixed
+StateDirectory=autoforge-agent
+StateDirectoryMode=0700
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+# The Agent owns only its delegated subtree and creates one child cgroup per attempt.
+ProtectControlGroups=false
+Delegate=cpu memory pids
+TasksMax=8192
+LimitNOFILE=1048576
+ProtectClock=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

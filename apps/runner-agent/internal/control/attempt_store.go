@@ -16,15 +16,22 @@ const attemptStateSchemaVersion = 1
 var localIdentifierPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
 
 type attemptState struct {
-	SchemaVersion int               `json:"schemaVersion"`
-	Claimed       ClaimedAssignment `json:"claimed"`
-	LocalState    string            `json:"localState"`
-	CompletionID  string            `json:"completionId,omitempty"`
-	Result        *completionResult `json:"result,omitempty"`
+	SchemaVersion   int                   `json:"schemaVersion"`
+	Claimed         ClaimedAssignment     `json:"claimed"`
+	LocalState      string                `json:"localState"`
+	CompletionID    string                `json:"completionId,omitempty"`
+	Result          *completionResult     `json:"result,omitempty"`
+	ArtifactUploads []artifactUploadState `json:"artifactUploads,omitempty"`
+}
+
+type artifactUploadState struct {
+	Artifact artifactDeclaration `json:"artifact"`
+	Uploaded bool                `json:"uploaded"`
 }
 
 type attemptStore struct {
 	directory string
+	budget    *spoolBudget
 }
 
 func newAttemptStore(dataDirectory string) attemptStore {
@@ -38,6 +45,30 @@ func (store attemptStore) save(state attemptState) error {
 	if err := os.MkdirAll(store.directory, 0o700); err != nil {
 		return fmt.Errorf("create attempt spool: %w", err)
 	}
+	payload, err := json.Marshal(state)
+	if err != nil {
+		return fmt.Errorf("encode attempt state: %w", err)
+	}
+	if len(payload) > 2<<20 {
+		return errors.New("attempt state exceeds 2 MiB")
+	}
+	path := store.path(state.Claimed.Assignment.AttemptID)
+	var previousSize int64
+	if info, statErr := os.Stat(path); statErr == nil {
+		previousSize = info.Size()
+	} else if !errors.Is(statErr, os.ErrNotExist) {
+		return fmt.Errorf("inspect previous attempt state: %w", statErr)
+	}
+	newSize := int64(len(payload))
+	if err := store.budget.reserve(newSize); err != nil {
+		return err
+	}
+	reserved := newSize > 0
+	defer func() {
+		if reserved {
+			store.budget.release(newSize)
+		}
+	}()
 	temporary, err := os.CreateTemp(store.directory, ".attempt-*.tmp")
 	if err != nil {
 		return fmt.Errorf("create temporary attempt state: %w", err)
@@ -48,9 +79,9 @@ func (store attemptStore) save(state attemptState) error {
 		temporary.Close()
 		return fmt.Errorf("secure attempt state: %w", err)
 	}
-	if err := json.NewEncoder(temporary).Encode(state); err != nil {
+	if _, err := temporary.Write(payload); err != nil {
 		temporary.Close()
-		return fmt.Errorf("encode attempt state: %w", err)
+		return fmt.Errorf("write attempt state: %w", err)
 	}
 	if err := temporary.Sync(); err != nil {
 		temporary.Close()
@@ -59,10 +90,11 @@ func (store attemptStore) save(state attemptState) error {
 	if err := temporary.Close(); err != nil {
 		return fmt.Errorf("close attempt state: %w", err)
 	}
-	path := store.path(state.Claimed.Assignment.AttemptID)
 	if err := os.Rename(temporaryPath, path); err != nil {
 		return fmt.Errorf("publish attempt state: %w", err)
 	}
+	reserved = false
+	store.budget.release(previousSize)
 	if err := os.Chmod(path, 0o600); err != nil {
 		return fmt.Errorf("secure attempt state: %w", err)
 	}
@@ -133,7 +165,7 @@ func (store attemptStore) list() ([]attemptState, error) {
 
 func validLocalAttemptState(state string) bool {
 	switch state {
-	case "claimed", "running", "finishing", "completed":
+	case "claimed", "running", "uploading", "finishing", "completed":
 		return true
 	default:
 		return false
@@ -144,8 +176,41 @@ func (store attemptStore) remove(attemptID string) error {
 	if !localIdentifierPattern.MatchString(attemptID) {
 		return errors.New("invalid attempt identifier")
 	}
-	if err := os.Remove(store.path(attemptID)); err != nil && !errors.Is(err, os.ErrNotExist) {
+	path := store.path(attemptID)
+	info, statErr := os.Stat(path)
+	if statErr != nil && !errors.Is(statErr, os.ErrNotExist) {
+		return fmt.Errorf("inspect attempt state: %w", statErr)
+	}
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("remove attempt state: %w", err)
+	}
+	if info != nil {
+		store.budget.release(info.Size())
+	}
+	return nil
+}
+
+func (store attemptStore) removeTemporaryFiles() error {
+	entries, err := os.ReadDir(store.directory)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read attempt spool for cleanup: %w", err)
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) == ".json" {
+			continue
+		}
+		path := filepath.Join(store.directory, entry.Name())
+		info, statErr := os.Lstat(path)
+		if statErr != nil {
+			return statErr
+		}
+		if err := os.Remove(path); err != nil {
+			return fmt.Errorf("remove incomplete attempt state: %w", err)
+		}
+		store.budget.release(info.Size())
 	}
 	return nil
 }

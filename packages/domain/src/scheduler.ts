@@ -1,5 +1,6 @@
 import type { ExecutionRun } from "./run-batch";
 import type { Runner } from "./runner";
+import { assessRunnerCompatibility } from "./runner-compatibility";
 
 export type SchedulingThresholds = {
   maximumCpuUtilizationPercent: number;
@@ -9,6 +10,7 @@ export type SchedulingThresholds = {
 
 export type SchedulingBlockReason =
   | "runner_not_online"
+  | "runner_incompatible"
   | "metrics_unavailable"
   | "metrics_stale"
   | "capacity_exhausted"
@@ -82,6 +84,7 @@ export function evaluateRunnerForScheduling(
   const metrics = runner.resourceSnapshot;
 
   if (runner.state !== "online") reasons.push("runner_not_online");
+  if (!assessRunnerCompatibility(runner).compatible) reasons.push("runner_incompatible");
   if (availableSlots === 0) reasons.push("capacity_exhausted");
   if (!metrics) {
     reasons.push("metrics_unavailable");

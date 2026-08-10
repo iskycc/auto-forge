@@ -49,6 +49,9 @@ importers:
       "@autoforge/application":
         specifier: workspace:*
         version: link:../../packages/application
+      "@autoforge/cache":
+        specifier: workspace:*
+        version: link:../../packages/cache
       "@autoforge/contracts":
         specifier: workspace:*
         version: link:../../packages/contracts
@@ -58,9 +61,15 @@ importers:
       "@autoforge/domain":
         specifier: workspace:*
         version: link:../../packages/domain
+      "@autoforge/ids":
+        specifier: workspace:*
+        version: link:../../packages/ids
       "@autoforge/object-store":
         specifier: workspace:*
         version: link:../../packages/object-store
+      "@autoforge/queue":
+        specifier: workspace:*
+        version: link:../../packages/queue
       "@autoforge/runner-sdk":
         specifier: workspace:*
         version: link:../../packages/runner-sdk
@@ -120,6 +129,37 @@ importers:
         specifier: 5.9.3
         version: 5.9.3
 
+  apps/worker:
+    dependencies:
+      "@autoforge/application":
+        specifier: workspace:*
+        version: link:../../packages/application
+      "@autoforge/db":
+        specifier: workspace:*
+        version: link:../../packages/db
+      "@autoforge/ids":
+        specifier: workspace:*
+        version: link:../../packages/ids
+      "@autoforge/queue":
+        specifier: workspace:*
+        version: link:../../packages/queue
+      nats:
+        specifier: 2.29.3
+        version: 2.29.3
+      zod:
+        specifier: 4.4.3
+        version: 4.4.3
+    devDependencies:
+      "@types/node":
+        specifier: 24.13.3
+        version: 24.13.3
+      typescript:
+        specifier: 5.9.3
+        version: 5.9.3
+      vite:
+        specifier: 8.2.1
+        version: 8.2.1(@types/node@24.13.3)
+
   packages/application:
     dependencies:
       "@autoforge/contracts":
@@ -128,6 +168,16 @@ importers:
       "@autoforge/domain":
         specifier: workspace:*
         version: link:../domain
+    devDependencies:
+      typescript:
+        specifier: 5.9.3
+        version: 5.9.3
+
+  packages/cache:
+    dependencies:
+      "@autoforge/application":
+        specifier: workspace:*
+        version: link:../application
     devDependencies:
       typescript:
         specifier: 5.9.3
@@ -180,6 +230,12 @@ importers:
         specifier: 5.9.3
         version: 5.9.3
 
+  packages/ids:
+    devDependencies:
+      typescript:
+        specifier: 5.9.3
+        version: 5.9.3
+
   packages/object-store:
     dependencies:
       "@autoforge/application":
@@ -191,6 +247,25 @@ importers:
       minio:
         specifier: 8.0.7
         version: 8.0.7
+    devDependencies:
+      typescript:
+        specifier: 5.9.3
+        version: 5.9.3
+
+  packages/queue:
+    dependencies:
+      "@autoforge/application":
+        specifier: workspace:*
+        version: link:../application
+      "@autoforge/contracts":
+        specifier: workspace:*
+        version: link:../contracts
+      "@autoforge/db":
+        specifier: workspace:*
+        version: link:../db
+      nats:
+        specifier: 2.29.3
+        version: 2.29.3
     devDependencies:
       typescript:
         specifier: 5.9.3
@@ -599,6 +674,7 @@ packages:
       }
     cpu: [arm64]
     os: [linux]
+    libc: [musl]
 
   "@img/sharp-libvips-linuxmusl-x64@1.3.2":
     resolution:
@@ -617,6 +693,7 @@ packages:
     engines: { node: ">=20.9.0" }
     cpu: [arm64]
     os: [linux]
+    libc: [glibc]
 
   "@img/sharp-linux-arm@0.35.3":
     resolution:
@@ -626,6 +703,7 @@ packages:
     engines: { node: ">=20.9.0" }
     cpu: [arm]
     os: [linux]
+    libc: [glibc]
 
   "@img/sharp-linux-ppc64@0.35.3":
     resolution:
@@ -645,6 +723,7 @@ packages:
     engines: { node: ">=20.9.0" }
     cpu: [riscv64]
     os: [linux]
+    libc: [glibc]
 
   "@img/sharp-linux-s390x@0.35.3":
     resolution:
@@ -836,6 +915,7 @@ packages:
     engines: { node: ">= 10" }
     cpu: [x64]
     os: [linux]
+    libc: [musl]
 
   "@next/swc-win32-arm64-msvc@16.3.0":
     resolution:
@@ -1057,7 +1137,6 @@ packages:
     engines: { node: ^20.19.0 || >=22.12.0 }
     cpu: [x64]
     os: [linux]
-    libc: [musl]
 
   "@rolldown/binding-openharmony-arm64@1.2.3":
     resolution:
@@ -1353,6 +1432,7 @@ packages:
       }
     cpu: [loong64]
     os: [linux]
+    libc: [glibc]
 
   "@unrs/resolver-binding-linux-loong64-musl@1.12.2":
     resolution:
@@ -1361,6 +1441,7 @@ packages:
       }
     cpu: [loong64]
     os: [linux]
+    libc: [musl]
 
   "@unrs/resolver-binding-linux-ppc64-gnu@1.12.2":
     resolution:
@@ -1369,6 +1450,7 @@ packages:
       }
     cpu: [ppc64]
     os: [linux]
+    libc: [glibc]
 
   "@unrs/resolver-binding-linux-riscv64-gnu@1.12.2":
     resolution:
@@ -3210,6 +3292,7 @@ packages:
         integrity: sha512-tOQCRCwC74DgBTk4pWZ9V45sk4d7peoE2njVprMRCBXrhJ5q5cYM7i6W+Uvw2qUrcfOSnuisrX7bEx3b3Wx4QA==,
       }
     engines: { node: ">= 14.0.0" }
+    deprecated: Package moved. Use @nats-io/transport-node from https://github.com/nats-io/nats.js
 
   natural-compare@1.4.0:
     resolution:

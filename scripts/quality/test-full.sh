@@ -15,11 +15,15 @@ readonly readiness_attempts=240
 nats_pid=""
 minio_pid=""
 web_pid=""
+worker_pid=""
 
 cleanup() {
   set +e
   if [[ -n "${web_pid}" ]]; then
     terminate_process_group "${web_pid}"
+  fi
+  if [[ -n "${worker_pid}" ]]; then
+    terminate_process_group "${worker_pid}"
   fi
   for process_id in "${minio_pid}" "${nats_pid}"; do
     if [[ -n "${process_id}" ]]; then
@@ -112,9 +116,11 @@ run_adapter_tests() {
   AUTOFORGE_TEST_MINIO_ENDPOINT=http://127.0.0.1:59009 \
   AUTOFORGE_TEST_MINIO_ACCESS_KEY=autoforge \
   AUTOFORGE_TEST_MINIO_SECRET_KEY=autoforge-secret \
+  AUTOFORGE_TEST_NATS_URL=nats://127.0.0.1:54229 \
     pnpm exec vitest run \
       packages/db/test/postgres-platform.integration.test.ts \
-      packages/object-store/test/minio-object-store.integration.test.ts
+      packages/object-store/test/minio-object-store.integration.test.ts \
+      packages/queue/test/jetstream-job-queue.integration.test.ts
 }
 
 create_platform_bucket() {
@@ -144,6 +150,19 @@ start_full_platform() {
   wait_until "Full platform" curl --fail --silent http://127.0.0.1:3199/api/v1/health/ready
 }
 
+start_full_worker() {
+  pnpm --filter @autoforge/worker build >/dev/null
+  AUTOFORGE_DATABASE_URL=postgresql://autoforge:autoforge@127.0.0.1:55439/autoforge \
+  AUTOFORGE_NATS_SERVERS=nats://127.0.0.1:54229 \
+  AUTOFORGE_WORKER_ID=full-ci-worker \
+  AUTOFORGE_WORKER_HEALTH_PORT=3201 \
+  AUTOFORGE_POSTGRES_MIGRATIONS_DIR="${repository_root}/packages/db/drizzle/postgresql" \
+    setsid node apps/worker/dist/worker.mjs \
+    >"${temporary_directory}/worker.log" 2>&1 &
+  worker_pid="$!"
+  wait_until "Full worker" curl --fail --silent http://127.0.0.1:3201/health/ready
+}
+
 verify_runner_registration() {
   local request='{"schemaVersion":1,"name":"full-ci-runner","labels":["full"],"maxConcurrency":1,"os":"linux","architecture":"amd64","agentVersion":"ci","protocolVersion":1,"terminalEnabled":false}'
   local first_status
@@ -166,6 +185,7 @@ download_dependencies
 start_dependencies
 run_adapter_tests
 create_platform_bucket
+start_full_worker
 start_full_platform
 verify_runner_registration
 printf 'Full mode integration passed.\n'

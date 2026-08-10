@@ -16,7 +16,16 @@ type RunOptions struct {
 	DataDirectory    string
 	KeepWorkspace    bool
 	Policy           Policy
+	ResourcePolicy   ResourcePolicy
 	PrepareWorkspace func(string) error
+	LogSink          func(LogChunk) error
+}
+
+type LogChunk struct {
+	Stream     string
+	Sequence   int64
+	Content    string
+	RecordedAt time.Time
 }
 
 type Result struct {
@@ -30,6 +39,7 @@ type Result struct {
 	Stderr        string `json:"stderr"`
 	LogsTruncated bool   `json:"logsTruncated"`
 	WorkspacePath string `json:"workspacePath,omitempty"`
+	ResourceLimit string `json:"resourceLimit,omitempty"`
 }
 
 func Run(ctx context.Context, spec Spec, options RunOptions) (result Result, returnErr error) {
@@ -49,7 +59,7 @@ func Run(ctx context.Context, spec Spec, options RunOptions) (result Result, ret
 		return Result{}, fmt.Errorf("create attempt workspace: %w", err)
 	}
 	defer func() {
-		if options.KeepWorkspace {
+		if options.KeepWorkspace && returnErr == nil {
 			return
 		}
 		if cleanupErr := os.RemoveAll(workspace); cleanupErr != nil {
@@ -66,14 +76,35 @@ func Run(ctx context.Context, spec Spec, options RunOptions) (result Result, ret
 	if err != nil {
 		return Result{}, err
 	}
-	command := exec.Command(spec.Command.Executable, spec.Command.Args...)
+	resourceScope, err := prepareResourceScope(
+		options.ResourcePolicy,
+		resourceScopeName(workspace),
+		spec.Limits,
+	)
+	if err != nil {
+		return Result{}, err
+	}
+	defer func() {
+		if cleanupErr := resourceScope.close(); cleanupErr != nil {
+			returnErr = errors.Join(returnErr, cleanupErr)
+		}
+	}()
+	command, handshake, err := resourceCommand(
+		spec.Command,
+		commandEnvironment(spec.Environment),
+		resourceScope,
+		spec.Limits,
+	)
+	if err != nil {
+		return Result{}, err
+	}
+	defer handshake.close()
 	command.Dir = workingDirectory
-	command.Env = commandEnvironment(spec.Environment)
 	configureProcessGroup(command)
 
 	budget := newLogBudget(spec.Limits.MaxLogBytes)
-	stdout := &boundedBuffer{budget: budget}
-	stderr := &boundedBuffer{budget: budget}
+	stdout := newStreamBuffer("stdout", budget, options.LogSink)
+	stderr := newStreamBuffer("stderr", budget, options.LogSink)
 	command.Stdout = stdout
 	command.Stderr = stderr
 
@@ -81,12 +112,49 @@ func Run(ctx context.Context, spec Spec, options RunOptions) (result Result, ret
 	if err := command.Start(); err != nil {
 		return Result{}, fmt.Errorf("start executable %q: %w", spec.Command.Executable, err)
 	}
+	if err := handshake.afterStart(); err != nil {
+		killProcessGroup(command.Process.Pid)
+		resourceScope.forceKill()
+		_ = command.Wait()
+		return Result{}, errors.Join(err, stdout.Close(), stderr.Close())
+	}
 
 	executionContext, cancel := context.WithTimeout(ctx, time.Duration(spec.Limits.TimeoutMs)*time.Millisecond)
 	defer cancel()
-	waitErr, termination := waitForProcess(executionContext, command, terminationGracePeriod(spec.Limits))
+	processContext, resourceCancel := context.WithCancel(executionContext)
+	monitorContext, stopMonitor := context.WithCancel(context.Background())
+	resourceViolations := make(chan workspaceViolation, 1)
+	if resourceScope != nil {
+		go func() {
+			violation, exists := <-monitorWorkspace(monitorContext, workspace, spec.Limits)
+			if exists {
+				resourceViolations <- violation
+				resourceScope.forceKill()
+				resourceCancel()
+			}
+		}()
+	}
+	waitErr, termination := waitForProcess(processContext, command, terminationGracePeriod(spec.Limits), resourceScope)
+	stopMonitor()
+	resourceCancel()
 	finishedAt := time.Now().UTC()
+	logErr := errors.Join(stdout.Close(), stderr.Close())
+	if logErr != nil {
+		return Result{}, fmt.Errorf("persist execution logs: %w", logErr)
+	}
 
+	resourceLimit := resourceScope.violation()
+	select {
+	case violation := <-resourceViolations:
+		resourceLimit = violation.resource
+	default:
+	}
+	if resourceLimit == "" {
+		resourceLimit = signalResourceViolation(waitErr)
+	}
+	if resourceLimit != "" {
+		termination = "resource_exceeded"
+	}
 	result = Result{
 		AttemptID:     spec.AttemptID,
 		ExitCode:      exitCode(command, waitErr),
@@ -97,6 +165,7 @@ func Run(ctx context.Context, spec Spec, options RunOptions) (result Result, ret
 		Stdout:        strings.ToValidUTF8(stdout.String(), "�"),
 		Stderr:        strings.ToValidUTF8(stderr.String(), "�"),
 		LogsTruncated: budget.wasTruncated(),
+		ResourceLimit: resourceLimit,
 	}
 	if options.KeepWorkspace {
 		result.WorkspacePath = workspace
@@ -141,7 +210,7 @@ func commandEnvironment(overrides map[string]string) []string {
 	return result
 }
 
-func waitForProcess(ctx context.Context, command *exec.Cmd, gracePeriod time.Duration) (error, string) {
+func waitForProcess(ctx context.Context, command *exec.Cmd, gracePeriod time.Duration, resourceScope *resourceScope) (error, string) {
 	wait := make(chan error, 1)
 	go func() {
 		wait <- command.Wait()
@@ -163,6 +232,7 @@ func waitForProcess(ctx context.Context, command *exec.Cmd, gracePeriod time.Dur
 			return err, termination
 		case <-timer.C:
 			killProcessGroup(command.Process.Pid)
+			resourceScope.forceKill()
 			return <-wait, termination
 		}
 	}

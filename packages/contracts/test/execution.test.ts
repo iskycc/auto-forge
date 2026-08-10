@@ -1,21 +1,19 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  acquireAttemptSecretsInputSchema,
+  attemptEventPageSchema,
   claimAssignmentsInputSchema,
   completeAttemptInputSchema,
   executionSpecSchema,
+  uploadLogChunksInputSchema,
 } from "../src/execution";
 
 describe("Runner Protocol v1 contracts", () => {
   it("accepts a bounded TestNG execution specification", () => {
     expect(
       executionSpecSchema.parse({
-        schemaVersion: 1,
-        executor: "testng",
-        attemptId: "attempt-1",
-        executionRunId: "run-1",
-        batchId: "batch-1",
-        className: "com.example.SmokeTest",
+        ...validExecutionSpec(),
         inputs: [
           {
             inputId: "source-1",
@@ -25,19 +23,73 @@ describe("Runner Protocol v1 contracts", () => {
             sizeBytes: 1_024,
             sha256: "a".repeat(64),
           },
+          {
+            inputId: "dependency-1",
+            kind: "dependency-jar",
+            targetPath: "inputs/lib/support.jar",
+            mediaType: "application/java-archive",
+            sizeBytes: 2_048,
+            sha256: "b".repeat(64),
+          },
         ],
-        timeoutMs: 60_000,
-        uploadTimeoutMs: 10_000,
-        resourceLimits: {
-          cpuMillicores: 1_000,
-          memoryBytes: 536_870_912,
-          diskBytes: 1_073_741_824,
-          processCount: 64,
-          logBytes: 1_048_576,
-          artifactBytes: 10_485_760,
-        },
       }),
-    ).toMatchObject({ schemaVersion: 1, methodDescriptors: [], environment: [] });
+    ).toMatchObject({
+      schemaVersion: 1,
+      methodDescriptors: [],
+      environment: [],
+      inputs: [{ kind: "test-jar" }, { kind: "dependency-jar" }],
+      runtimeRequirements: {
+        os: "linux",
+        architectures: ["amd64", "arm64"],
+        minimumJavaMajorVersion: 11,
+        testNgVersion: "7.11.0",
+      },
+      resourceLimits: { fileCount: 10_000 },
+    });
+  });
+
+  it("requires one test JAR and unique bounded dependency inputs", () => {
+    const specification = validExecutionSpec();
+    const testJAR = specification.inputs[0]!;
+    const dependencyJAR = {
+      ...testJAR,
+      inputId: "dependency-1",
+      kind: "dependency-jar" as const,
+      targetPath: "inputs/dependency.jar",
+      sha256: "b".repeat(64),
+    };
+
+    expect(() => executionSpecSchema.parse({ ...specification, inputs: [dependencyJAR] })).toThrow(
+      /只能包含一个/,
+    );
+    expect(() =>
+      executionSpecSchema.parse({
+        ...specification,
+        inputs: [testJAR, { ...testJAR, inputId: "source-2", targetPath: "inputs/tests-2.jar" }],
+      }),
+    ).toThrow(/只能包含一个/);
+    expect(() =>
+      executionSpecSchema.parse({
+        ...specification,
+        inputs: [testJAR, { ...dependencyJAR, inputId: testJAR.inputId }],
+      }),
+    ).toThrow(/inputId/);
+    expect(() =>
+      executionSpecSchema.parse({
+        ...specification,
+        inputs: [
+          { ...testJAR, sizeBytes: 9 * 1_024 * 1_024 },
+          { ...dependencyJAR, sizeBytes: 9 * 1_024 * 1_024 },
+        ],
+        resourceLimits: { ...specification.resourceLimits, diskBytes: 16 * 1_024 * 1_024 },
+      }),
+    ).toThrow(/磁盘限制/);
+    expect(() =>
+      executionSpecSchema.parse({
+        ...specification,
+        resourceLimits: { ...specification.resourceLimits, fileCount: 15 },
+      }),
+    ).toThrow();
   });
 
   it("rejects incompatible versions and unbounded claim inputs", () => {
@@ -58,6 +110,80 @@ describe("Runner Protocol v1 contracts", () => {
     ).toThrow();
   });
 
+  it("carries only secret references in assignments and bounds lease acquisition", () => {
+    const specification = executionSpecSchema.parse({
+      ...validExecutionSpec(),
+      secretReferences: [
+        {
+          name: "API_TOKEN",
+          secretId: "secret-1",
+          secretVersionId: "secret-version-1",
+        },
+      ],
+    });
+    expect(specification.secretReferences).toEqual([
+      {
+        name: "API_TOKEN",
+        secretId: "secret-1",
+        secretVersionId: "secret-version-1",
+      },
+    ]);
+    expect(JSON.stringify(specification)).not.toContain("secret-value");
+    expect(
+      acquireAttemptSecretsInputSchema.parse({
+        schemaVersion: 1,
+        requestId: "secret-request-1",
+        leaseToken: "l".repeat(32),
+      }),
+    ).toMatchObject({ requestId: "secret-request-1" });
+  });
+
+  it("validates explicit runtime and offline toolchain requirements", () => {
+    const specification = validExecutionSpec();
+    expect(() =>
+      executionSpecSchema.parse({
+        ...specification,
+        runtimeRequirements: {
+          os: "linux",
+          architectures: ["amd64", "amd64"],
+          minimumJavaMajorVersion: 11,
+          testNgVersion: "7.11.0",
+        },
+      }),
+    ).toThrow();
+    expect(() =>
+      executionSpecSchema.parse({
+        ...specification,
+        runtimeRequirements: {
+          os: "linux",
+          architectures: ["amd64"],
+          minimumJavaMajorVersion: 8,
+          testNgVersion: "7.11.0",
+        },
+      }),
+    ).toThrow();
+  });
+
+  it("requires method names with valid JVM descriptors for exact selection", () => {
+    const base = validExecutionSpec();
+    expect(
+      executionSpecSchema.parse({
+        ...base,
+        methodDescriptors: ["smoke()V", "smoke(Ljava/lang/String;[I)Z"],
+        parameters: { browser: "chromium", region: "offline=west" },
+      }),
+    ).toMatchObject({
+      methodDescriptors: ["smoke()V", "smoke(Ljava/lang/String;[I)Z"],
+      parameters: { browser: "chromium", region: "offline=west" },
+    });
+    for (const invalid of ["()V", "smoke", "smoke(V)V", "smoke()", "smoke()Vignored"]) {
+      expect(() => executionSpecSchema.parse({ ...base, methodDescriptors: [invalid] })).toThrow();
+    }
+    expect(() =>
+      executionSpecSchema.parse({ ...base, parameters: { "invalid name": "value" } }),
+    ).toThrow();
+  });
+
   it("limits completion metadata and requires a lease credential", () => {
     expect(() =>
       completeAttemptInputSchema.parse({
@@ -73,4 +199,151 @@ describe("Runner Protocol v1 contracts", () => {
       }),
     ).toThrow();
   });
+
+  it("validates bounded hierarchical TestNG results and their counts", () => {
+    const input = {
+      schemaVersion: 1,
+      completionId: "completion-1",
+      leaseToken: "x".repeat(32),
+      result: {
+        status: "succeeded",
+        resultCode: "TESTNG_SUCCEEDED",
+        summary: "passed",
+        durationMs: 12,
+        testNg: testNgResult(),
+      },
+    };
+    expect(completeAttemptInputSchema.parse(input)).toMatchObject({
+      result: {
+        testNg: {
+          total: 1,
+          suites: [{ tests: [{ classes: [{ methods: [{ name: "passes" }] }] }] }],
+        },
+      },
+    });
+    expect(() =>
+      completeAttemptInputSchema.parse({
+        ...input,
+        result: {
+          ...input.result,
+          testNg: { ...input.result.testNg, total: 2 },
+        },
+      }),
+    ).toThrow(/计数不一致/);
+  });
+
+  it("bounds ordered log uploads", () => {
+    expect(
+      uploadLogChunksInputSchema.parse({
+        schemaVersion: 1,
+        requestId: "logs-1",
+        leaseToken: "x".repeat(32),
+        chunks: [
+          {
+            stream: "stdout",
+            sequence: 0,
+            content: "hello",
+            recordedAt: "2026-08-09T00:00:00.000Z",
+          },
+        ],
+      }),
+    ).toMatchObject({ chunks: [{ stream: "stdout", sequence: 0 }] });
+    expect(() =>
+      uploadLogChunksInputSchema.parse({
+        schemaVersion: 1,
+        requestId: "logs-1",
+        leaseToken: "x".repeat(32),
+        chunks: [],
+      }),
+    ).toThrow();
+  });
+
+  it("validates bounded attempt state event pages", () => {
+    expect(
+      attemptEventPageSchema.parse({
+        items: [
+          {
+            eventId: "event-1",
+            attemptId: "attempt-1",
+            eventType: "attempt.completed",
+            fromStatus: "running",
+            toStatus: "succeeded",
+            actorType: "runner",
+            actorId: "runner-1",
+            details: { resultCode: "PASSED" },
+            recordedAt: "2026-08-09T00:00:00.000Z",
+          },
+        ],
+      }),
+    ).toMatchObject({ items: [{ eventType: "attempt.completed" }] });
+  });
 });
+
+function testNgResult() {
+  const counts = { total: 1, passed: 1, failed: 0, skipped: 0, configurationFailures: 0 };
+  return {
+    ...counts,
+    detailsTruncated: false,
+    suites: [
+      {
+        ...counts,
+        name: "Smoke suite",
+        durationMs: 12,
+        tests: [
+          {
+            ...counts,
+            name: "Smoke test",
+            durationMs: 12,
+            classes: [
+              {
+                ...counts,
+                name: "example.SmokeTest",
+                durationMs: 12,
+                methods: [
+                  {
+                    name: "passes",
+                    signature: "passes()",
+                    status: "passed" as const,
+                    configuration: false,
+                    durationMs: 12,
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    ],
+  };
+}
+
+function validExecutionSpec() {
+  return {
+    schemaVersion: 1,
+    executor: "testng" as const,
+    attemptId: "attempt-1",
+    executionRunId: "run-1",
+    batchId: "batch-1",
+    className: "com.example.SmokeTest",
+    inputs: [
+      {
+        inputId: "source-1",
+        kind: "test-jar" as const,
+        targetPath: "inputs/tests.jar",
+        mediaType: "application/java-archive" as const,
+        sizeBytes: 1_024,
+        sha256: "a".repeat(64),
+      },
+    ],
+    timeoutMs: 60_000,
+    uploadTimeoutMs: 10_000,
+    resourceLimits: {
+      cpuMillicores: 1_000,
+      memoryBytes: 536_870_912,
+      diskBytes: 1_073_741_824,
+      processCount: 64,
+      logBytes: 1_048_576,
+      artifactBytes: 10_485_760,
+    },
+  };
+}

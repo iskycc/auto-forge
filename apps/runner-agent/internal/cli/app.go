@@ -83,6 +83,7 @@ func runOnce(arguments []string, stdout, stderr io.Writer) error {
 	specPath := flags.String("spec", "", "path to a schemaVersion 1 execution spec")
 	dataDirectory := flags.String("data-dir", "", "agent data directory")
 	keepWorkspace := flags.Bool("keep-workspace", false, "retain the attempt workspace after execution")
+	cgroupRoot := flags.String("cgroup-root", "", "delegated cgroup v2 root for resource enforcement")
 	allowedExecutables := stringListFlag{}
 	flags.Var(&allowedExecutables, "allow-executable", "exact executable allowed by local policy; repeatable")
 	if err := flags.Parse(arguments); err != nil {
@@ -108,6 +109,10 @@ func runOnce(arguments []string, stdout, stderr io.Writer) error {
 		KeepWorkspace: *keepWorkspace,
 		Policy: executor.Policy{
 			AllowedExecutables: allowedExecutables,
+		},
+		ResourcePolicy: executor.ResourcePolicy{
+			CgroupRoot:    *cgroupRoot,
+			RequireCgroup: *cgroupRoot != "",
 		},
 	})
 	if err != nil {

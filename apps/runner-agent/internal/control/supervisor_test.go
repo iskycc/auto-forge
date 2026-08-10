@@ -10,12 +10,53 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/iskycc/auto-forge/apps/runner-agent/internal/config"
+	"github.com/iskycc/auto-forge/apps/runner-agent/internal/executor"
 )
+
+func TestExecutionSecretsStayOutOfPersistedClaimAndEnterOnlyLocalSpec(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		var acquisition acquireSecretsRequest
+		if err := json.NewDecoder(request.Body).Decode(&acquisition); err != nil {
+			t.Errorf("decode acquisition: %v", err)
+			return
+		}
+		writer.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(writer).Encode(acquireSecretsResponse{
+			SchemaVersion: protocolVersion,
+			RequestID:     acquisition.RequestID,
+			Secrets:       []EnvironmentEntry{{Name: "API_TOKEN", Value: "execution-secret"}},
+		})
+	}))
+	defer server.Close()
+	client, err := NewClient(testConfiguration(t, server.URL))
+	if err != nil {
+		t.Fatal(err)
+	}
+	claimed := testClaimedAssignment(strings.Repeat("a", 64))
+	claimed.Assignment.ExecutionSpec.SecretReferences = []SecretReference{{
+		Name: "API_TOKEN", SecretID: "secret-1", SecretVersionID: "secret-version-1",
+	}}
+	supervisor := &attemptSupervisor{
+		client:   client,
+		identity: Identity{RunnerID: "runner-1", Credential: "runner-credential"},
+	}
+	localSpec, err := supervisor.executionSpecWithSecrets(context.Background(), claimed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(localSpec.Environment) != 1 || localSpec.Environment[0].Value != "execution-secret" {
+		t.Fatalf("local environment = %#v", localSpec.Environment)
+	}
+	if len(claimed.Assignment.ExecutionSpec.Environment) != 0 {
+		t.Fatalf("persisted claim was mutated: %#v", claimed.Assignment.ExecutionSpec.Environment)
+	}
+}
 
 func TestSupervisorClaimsDownloadsExecutesAndCompletesAssignment(t *testing.T) {
 	inputContent := []byte("jar")
@@ -47,6 +88,26 @@ func TestSupervisorClaimsDownloadsExecutesAndCompletesAssignment(t *testing.T) {
 			}
 			completed <- completion
 			_ = json.NewEncoder(writer).Encode(CompleteAttemptResponse{SchemaVersion: 1, CompletionID: completion.CompletionID, AcceptedAt: time.Now().UTC().Format(time.RFC3339Nano), Disposition: "accepted"})
+		case "/api/v1/run-attempts/attempt-1/logs":
+			var upload uploadLogChunksRequest
+			if err := json.NewDecoder(request.Body).Decode(&upload); err != nil {
+				http.Error(writer, err.Error(), http.StatusBadRequest)
+				return
+			}
+			_ = json.NewEncoder(writer).Encode(uploadLogChunksResponse{
+				SchemaVersion:        1,
+				AcknowledgedSequence: logWatermark{Stdout: -1, Stderr: -1, Agent: 0},
+			})
+		case "/api/v1/run-attempts/attempt-1/artifacts":
+			var declaration declareArtifactsRequest
+			if err := json.NewDecoder(request.Body).Decode(&declaration); err != nil {
+				http.Error(writer, err.Error(), http.StatusBadRequest)
+				return
+			}
+			_ = json.NewEncoder(writer).Encode(declareArtifactsResponse{
+				SchemaVersion: 1,
+				Artifacts:     []declaredArtifact{},
+			})
 		default:
 			http.NotFound(writer, request)
 		}
@@ -66,7 +127,7 @@ func TestSupervisorClaimsDownloadsExecutesAndCompletesAssignment(t *testing.T) {
 		ServerURL: mustParseURL(t, server.URL), DataDirectory: dataDirectory, Name: "runner-1",
 		MaxConcurrent: 1,
 		Toolchain: config.ToolchainConfig{
-			JavaExecutable: "/bin/true", Classpath: []string{classpathEntry}, JavaVersion: "test", TestNGVersion: "test",
+			JavaExecutable: "/bin/true", Classpath: []string{classpathEntry}, JavaVersion: "21.0.8", TestNGVersion: "7.11.0",
 		},
 	}
 	client, err := NewClient(configuration)
@@ -76,6 +137,14 @@ func TestSupervisorClaimsDownloadsExecutesAndCompletesAssignment(t *testing.T) {
 	defer client.Close()
 	identity := Identity{RunnerID: "runner-1", Credential: "runner-credential-with-more-than-32-bytes", ServerURL: server.URL}
 	supervisor := newAttemptSupervisor(client, identity, configuration, os.Stderr)
+	supervisor.runExecution = func(
+		ctx context.Context,
+		specification executor.Spec,
+		options executor.RunOptions,
+	) (executor.Result, error) {
+		options.ResourcePolicy = executor.ResourcePolicy{}
+		return executor.Run(ctx, specification, options)
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	if err := supervisor.Start(ctx); err != nil {
 		t.Fatalf("Start() error = %v", err)
@@ -101,9 +170,53 @@ func TestPermanentLeaseRejectionStopsExecutionAuthority(t *testing.T) {
 	}
 }
 
+func TestResourceLimitResultUsesStableCodes(t *testing.T) {
+	for resource, expected := range map[string]string{
+		"memory":    "RESOURCE_MEMORY_EXCEEDED",
+		"processes": "RESOURCE_PROCESS_LIMIT_EXCEEDED",
+		"disk":      "RESOURCE_DISK_EXCEEDED",
+		"files":     "RESOURCE_FILE_LIMIT_EXCEEDED",
+		"monitor":   "RESOURCE_MONITOR_FAILED",
+	} {
+		code, _ := resourceLimitResult(resource)
+		if code != expected {
+			t.Fatalf("resourceLimitResult(%q) = %q, want %q", resource, code, expected)
+		}
+	}
+}
+
+func TestClaimedAssignmentRejectsIncompatiblePlatformAndToolchain(t *testing.T) {
+	configuration := config.Config{Toolchain: config.ToolchainConfig{
+		JavaExecutable: "/opt/jdk/bin/java",
+		Classpath:      []string{"/opt/testng/testng.jar"},
+		JavaVersion:    "21.0.8",
+		TestNGVersion:  "7.11.0",
+	}}
+	claimed := testClaimedAssignment(strings.Repeat("a", 64))
+	claimed.Assignment.ExecutionSpec.RuntimeRequirements.Architectures = []string{"unsupported"}
+	if err := validateClaimedAssignment(claimed, "runner-1", configuration); err == nil {
+		t.Fatal("validateClaimedAssignment accepted an incompatible architecture")
+	}
+
+	claimed = testClaimedAssignment(strings.Repeat("a", 64))
+	claimed.Assignment.ExecutionSpec.RuntimeRequirements.TestNGVersion = "7.10.2"
+	if err := validateClaimedAssignment(claimed, "runner-1", configuration); err == nil {
+		t.Fatal("validateClaimedAssignment accepted an incompatible TestNG toolchain")
+	}
+}
+
 func testClaimedAssignment(inputDigest string) ClaimedAssignment {
 	specification := testExecutionSpec()
 	specification.Inputs[0].SHA256 = inputDigest
+	specification.ResourceLimits = ResourceLimits{
+		CPUMillicores: 1_000,
+		MemoryBytes:   256 << 20,
+		DiskBytes:     1 << 20,
+		ProcessCount:  64,
+		FileCount:     1_024,
+		LogBytes:      1 << 20,
+		ArtifactBytes: 1 << 20,
+	}
 	return ClaimedAssignment{
 		Assignment: Assignment{
 			SchemaVersion: 1, AssignmentID: "assignment-1", AttemptID: "attempt-1", RunnerID: "runner-1",

@@ -9,9 +9,11 @@ import { SqliteCaseCatalogRepository } from "../src/sqlite-case-catalog";
 import { SqliteCaseSuiteRepository } from "../src/sqlite-case-suite";
 import { SqliteRunBatchRepository } from "../src/sqlite-run-batch";
 import { SqliteExecutionControlRepository } from "../src/sqlite-execution-control";
+import { SqliteExecutionEnvironmentRepository } from "../src/sqlite-execution-environment";
+import { SqliteExecutionSecretRepository } from "../src/sqlite-execution-secret";
 import { SqliteRunnerRepository } from "../src/sqlite-runner";
 import { scheduleExecutionRuns } from "@autoforge/domain";
-import { RunBatchSchedulingService } from "@autoforge/application";
+import { RunBatchSchedulingService, type JarObjectStorePort } from "@autoforge/application";
 
 const temporaryDirectories: string[] = [];
 
@@ -154,7 +156,13 @@ describe("SQLite management repositories", () => {
       await runners.heartbeat({
         runnerId: "runner-scheduling",
         labels: ["java", "testng"],
-        capabilities: ["executor:testng-v1"],
+        capabilities: [
+          "executor:testng-v1",
+          "isolation:cgroup-v2",
+          "java:21.0.8",
+          "testng:7.11.0",
+          "secrets:on-demand-v1",
+        ],
         maxConcurrency: 1,
         busySlots: 0,
         agentVersion: "0.2.0",
@@ -213,20 +221,57 @@ describe("SQLite management repositories", () => {
       });
 
       const batch = await batches.get("batch-1");
-      expect(batch).toMatchObject({ status: "scheduled", queuedRuns: 0, assignedRuns: 1 });
+      expect(batch).toMatchObject({
+        status: "scheduled",
+        queuedRuns: 0,
+        assignedRuns: 1,
+        version: 2,
+        statusHistory: [
+          { toStatus: "queued", batchVersion: 1 },
+          { fromStatus: "queued", toStatus: "scheduled", batchVersion: 2 },
+        ],
+      });
       expect(batch?.runs[0]).toMatchObject({
         status: "assigned",
         assignedRunnerId: "runner-scheduling",
         attemptCount: 1,
       });
       expect(batch?.attempts[0]).toMatchObject({ id: "attempt-1", attemptNumber: 1 });
+
+      await batches.create({
+        id: "batch-project-b",
+        projectId: "project-b",
+        suiteId: "suite-project-b",
+        suiteName: "Project B suite",
+        suiteVersion: 1,
+        retryLimit: 0,
+        environmentVariables: [],
+        runnerIds: ["runner-scheduling"],
+        runs: [
+          {
+            id: "run-project-b",
+            caseDefinitionId: "case-project-b",
+            caseVersion: 1,
+            displayName: "Project B case",
+            className: "com.example.ProjectBTest",
+          },
+        ],
+        createdAt: "2026-08-09T00:02:00.000Z",
+      });
+      await expect(batches.list(10, ["project-b"])).resolves.toMatchObject([
+        { id: "batch-project-b", projectId: "project-b" },
+      ]);
+      await expect(batches.get("batch-1", ["project-b"])).resolves.toBeNull();
+      await expect(executionsProjectId(handle, "attempt-1")).resolves.toBe(
+        "00000000-0000-7000-8000-000000000001",
+      );
     } finally {
       handle.close();
     }
   });
 
   it("retries queued batches when a selected runner reports fresh metrics", async () => {
-    const { handle, suites, runners, batches } = await fixture();
+    const { handle, catalog, suites, runners, batches } = await fixture();
     try {
       await suites.create({ id: "suite-dynamic", name: "Dynamic", createdAt: timestamp });
       await suites.addCases({
@@ -243,13 +288,47 @@ describe("SQLite management repositories", () => {
         architecture: "amd64",
         agentVersion: "0.2.0",
         protocolVersion: 1,
-        labels: ["testng"],
-        capabilities: ["executor:testng-v1"],
+        labels: ["java", "testng"],
+        capabilities: ["executor:testng-v1", "isolation:cgroup-v2", "java:21.0.8", "testng:7.11.0"],
         maxConcurrency: 1,
         terminalEnabled: false,
         recordedAt: "2026-08-09T00:01:00.000Z",
       });
       let nextId = 0;
+      handle.client
+        .prepare(
+          `INSERT INTO users
+           (id, username, normalized_username, display_name, source, status,
+            force_password_change, failed_login_attempts, created_at, updated_at, version)
+           VALUES ('dynamic-actor', 'dynamic-actor', 'dynamic-actor', 'Dynamic Actor',
+                   'local', 'active', 0, 0, ?, ?, 1)`,
+        )
+        .run(timestamp, timestamp);
+      const secrets = new SqliteExecutionSecretRepository(handle);
+      await secrets.create({
+        id: "dynamic-secret",
+        versionId: "dynamic-secret-version-1",
+        projectId: "00000000-0000-7000-8000-000000000001",
+        name: "Dynamic token",
+        normalizedName: "dynamic token",
+        description: "",
+        valueEncrypted: "encrypted-dynamic-secret",
+        actorId: "dynamic-actor",
+        recordedAt: timestamp,
+      });
+      const environments = new SqliteExecutionEnvironmentRepository(handle);
+      await environments.create({
+        id: "dynamic-environment",
+        versionId: "dynamic-environment-version-1",
+        projectId: "00000000-0000-7000-8000-000000000001",
+        name: "Dynamic staging",
+        normalizedName: "dynamic staging",
+        description: "",
+        variables: [{ name: "BASE_URL", value: "https://first.example.test" }],
+        secretBindings: [{ name: "API_TOKEN", secretId: "dynamic-secret" }],
+        actorId: "dynamic-actor",
+        recordedAt: timestamp,
+      });
       const scheduler = new RunBatchSchedulingService(
         batches,
         suites,
@@ -262,18 +341,101 @@ describe("SQLite management repositories", () => {
           maximumLoadPerCpu: 1,
         },
         45,
+        environments,
+        {
+          catalog,
+          objectStore: { exists: async () => true } as unknown as JarObjectStorePort,
+        },
       );
+      await expect(
+        scheduler.create({
+          suiteId: "suite-dynamic",
+          runnerIds: ["runner-dynamic"],
+          retryLimit: 1,
+          environmentVersionId: "dynamic-environment-version-1",
+        }),
+      ).rejects.toMatchObject({
+        code: "RUN_BATCH_PREFLIGHT_FAILED",
+        details: {
+          ready: false,
+          blockers: [expect.objectContaining({ code: "RUNNER_SECRET_CAPABILITY_MISSING" })],
+        },
+      });
+      await runners.heartbeat({
+        runnerId: "runner-dynamic",
+        labels: ["java", "testng"],
+        capabilities: [
+          "executor:testng-v1",
+          "isolation:cgroup-v2",
+          "java:21.0.8",
+          "testng:7.11.0",
+          "secrets:on-demand-v1",
+        ],
+        maxConcurrency: 1,
+        busySlots: 0,
+        agentVersion: "0.2.0",
+        terminalEnabled: false,
+        recordedAt: "2026-08-09T00:01:00.000Z",
+      });
       const queued = await scheduler.create({
         suiteId: "suite-dynamic",
         runnerIds: ["runner-dynamic"],
         retryLimit: 1,
-        environmentVariables: [],
+        environmentVersionId: "dynamic-environment-version-1",
       });
-      expect(queued.status).toBe("queued");
+      expect(queued).toMatchObject({
+        status: "queued",
+        environmentId: "dynamic-environment",
+        environmentVersionId: "dynamic-environment-version-1",
+        environmentVariables: [{ name: "BASE_URL", value: "https://first.example.test" }],
+        secretBindings: [
+          {
+            name: "API_TOKEN",
+            secretId: "dynamic-secret",
+            secretVersionId: "dynamic-secret-version-1",
+          },
+        ],
+      });
+      await environments.update({
+        environmentId: "dynamic-environment",
+        expectedRevision: 1,
+        actorId: "dynamic-actor",
+        recordedAt: "2026-08-09T00:01:00.500Z",
+        nextVersion: {
+          id: "dynamic-environment-version-2",
+          variables: [{ name: "BASE_URL", value: "https://second.example.test" }],
+        },
+      });
+      await expect(
+        environments.listVersions("dynamic-environment", ["00000000-0000-7000-8000-000000000001"]),
+      ).resolves.toMatchObject([{ version: 2 }, { version: 1 }]);
+      await expect(
+        environments.listReferences(
+          "dynamic-environment",
+          ["00000000-0000-7000-8000-000000000001"],
+          10,
+        ),
+      ).resolves.toMatchObject({
+        total: 1,
+        items: [
+          {
+            batchId: queued.id,
+            environmentVersionId: "dynamic-environment-version-1",
+            suiteName: "Dynamic",
+          },
+        ],
+      });
+      await expect(
+        environments.listReferences("dynamic-environment", ["another-project"], 10),
+      ).resolves.toEqual({ items: [], total: 0 });
+      await expect(scheduler.get(queued.id)).resolves.toMatchObject({
+        environmentVersionId: "dynamic-environment-version-1",
+        environmentVariables: [{ value: "https://first.example.test" }],
+      });
 
       await runners.heartbeat({
         runnerId: "runner-dynamic",
-        labels: ["testng"],
+        labels: ["java", "testng"],
         capabilities: [],
         maxConcurrency: 1,
         busySlots: 0,
@@ -291,8 +453,14 @@ describe("SQLite management repositories", () => {
       expect(await scheduler.scheduleForRunner("runner-dynamic")).toBe(0);
       await runners.heartbeat({
         runnerId: "runner-dynamic",
-        labels: ["testng"],
-        capabilities: ["executor:testng-v1"],
+        labels: ["java", "testng"],
+        capabilities: [
+          "executor:testng-v1",
+          "isolation:cgroup-v2",
+          "java:21.0.8",
+          "testng:7.11.0",
+          "secrets:on-demand-v1",
+        ],
         maxConcurrency: 1,
         busySlots: 0,
         agentVersion: "0.2.0",
@@ -329,7 +497,13 @@ describe("SQLite management repositories", () => {
         agentVersion: "0.2.0",
         protocolVersion: 1,
         labels: ["java", "testng"],
-        capabilities: ["executor:testng-v1"],
+        capabilities: [
+          "executor:testng-v1",
+          "isolation:cgroup-v2",
+          "java:21.0.8",
+          "testng:7.11.0",
+          "secrets:on-demand-v1",
+        ],
         maxConcurrency: 1,
         terminalEnabled: false,
         recordedAt: timestamp,
@@ -337,7 +511,13 @@ describe("SQLite management repositories", () => {
       await runners.heartbeat({
         runnerId: "runner-control",
         labels: ["java", "testng"],
-        capabilities: ["executor:testng-v1"],
+        capabilities: [
+          "executor:testng-v1",
+          "isolation:cgroup-v2",
+          "java:21.0.8",
+          "testng:7.11.0",
+          "secrets:on-demand-v1",
+        ],
         maxConcurrency: 1,
         busySlots: 0,
         agentVersion: "0.2.0",
@@ -351,6 +531,27 @@ describe("SQLite management repositories", () => {
         },
         recordedAt: "2026-08-09T00:01:00.000Z",
       });
+      handle.client
+        .prepare(
+          `INSERT INTO users
+           (id, username, normalized_username, display_name, source, status,
+            force_password_change, failed_login_attempts, created_at, updated_at, version)
+           VALUES ('control-actor', 'control-actor', 'control-actor', 'Control Actor',
+                   'local', 'active', 0, 0, ?, ?, 1)`,
+        )
+        .run(timestamp, timestamp);
+      const secrets = new SqliteExecutionSecretRepository(handle);
+      await secrets.create({
+        id: "control-secret",
+        versionId: "control-secret-version",
+        projectId: "00000000-0000-7000-8000-000000000001",
+        name: "Control token",
+        normalizedName: "control token",
+        description: "",
+        valueEncrypted: "encrypted-control-secret",
+        actorId: "control-actor",
+        recordedAt: timestamp,
+      });
       await batches.create({
         id: "batch-control",
         suiteId: "suite-snapshot",
@@ -358,6 +559,13 @@ describe("SQLite management repositories", () => {
         suiteVersion: 1,
         retryLimit: 1,
         environmentVariables: [],
+        secretBindings: [
+          {
+            name: "API_TOKEN",
+            secretId: "control-secret",
+            secretVersionId: "control-secret-version",
+          },
+        ],
         runnerIds: ["runner-control"],
         runs: [
           {
@@ -390,13 +598,53 @@ describe("SQLite management repositories", () => {
         metricsFreshAfter: "2026-08-09T00:00:30.000Z",
         scheduledAt: "2026-08-09T00:01:01.000Z",
       });
+      handle.client
+        .prepare(
+          `INSERT INTO case_sources (
+             id, display_name, original_file_name, object_key, sha256, size_bytes,
+             class_count, method_count, status, warnings_json, inspection_json,
+             authoritative, created_at
+           ) VALUES (?, ?, ?, ?, ?, ?, 0, 0, 'ready', '[]', '{}', 0, ?)`,
+        )
+        .run(
+          "dependency-1",
+          "Support dependency",
+          "support.jar",
+          "jars/bb/support.jar",
+          "b".repeat(64),
+          64,
+          "2026-08-09T00:01:01.000Z",
+        );
+      const assignmentSnapshot = handle.client
+        .prepare("SELECT execution_spec_json FROM assignments WHERE id = ?")
+        .get("assignment-control") as { execution_spec_json: string };
+      const executionSpec = JSON.parse(assignmentSnapshot.execution_spec_json) as {
+        inputs: Array<Record<string, unknown>>;
+      };
+      executionSpec.inputs.push({
+        inputId: "dependency-1",
+        kind: "dependency-jar",
+        targetPath: "inputs/lib/support.jar",
+        mediaType: "application/java-archive",
+        sizeBytes: 64,
+        sha256: "b".repeat(64),
+      });
+      handle.client
+        .prepare("UPDATE assignments SET execution_spec_json = ? WHERE id = ?")
+        .run(JSON.stringify(executionSpec), "assignment-control");
 
       const claimInput = {
         runnerId: "runner-control",
         requestId: "claim-control",
         availableSlots: 1,
         labels: ["java", "testng"],
-        capabilities: ["executor:testng-v1"],
+        capabilities: [
+          "executor:testng-v1",
+          "isolation:cgroup-v2",
+          "java:21.0.8",
+          "testng:7.11.0",
+          "secrets:on-demand-v1",
+        ],
         leaseSeeds: [
           {
             id: "lease-control",
@@ -410,6 +658,84 @@ describe("SQLite management repositories", () => {
       };
       const claimed = await executions.claim(claimInput);
       expect(claimed).toHaveLength(1);
+      expect(claimed[0]?.assignment.executionSpec).toMatchObject({
+        environment: [],
+        secretReferences: [
+          {
+            name: "API_TOKEN",
+            secretId: "control-secret",
+            secretVersionId: "control-secret-version",
+          },
+        ],
+      });
+      await expect(
+        executions.acquireAttemptSecrets({
+          runnerId: "runner-control",
+          attemptId: "attempt-control",
+          leaseTokenHash: "lease-token-hash",
+          now: "2026-08-09T00:01:02.500Z",
+        }),
+      ).resolves.toEqual([
+        {
+          name: "API_TOKEN",
+          secretId: "control-secret",
+          secretVersionId: "control-secret-version",
+          valueEncrypted: "encrypted-control-secret",
+        },
+      ]);
+      await executions.recordAttemptSecretAccess({
+        id: "secret-audit-control",
+        runnerId: "runner-control",
+        attemptId: "attempt-control",
+        requestId: "secret-request-control",
+        secretIds: ["control-secret"],
+        recordedAt: "2026-08-09T00:01:02.500Z",
+      });
+      expect(
+        handle.client
+          .prepare(
+            "SELECT actor_type, actor_id, action, resource_id, details_json FROM audit_events WHERE id = ?",
+          )
+          .get("secret-audit-control"),
+      ).toEqual({
+        actor_type: "runner",
+        actor_id: "runner-control",
+        action: "execution_secret.access",
+        resource_id: "attempt-control",
+        details_json: JSON.stringify({ secretCount: 1, secretIds: ["control-secret"] }),
+      });
+      await expect(
+        executions.acquireAttemptSecrets({
+          runnerId: "runner-control",
+          attemptId: "attempt-control",
+          leaseTokenHash: "wrong-token-hash",
+          now: "2026-08-09T00:01:02.600Z",
+        }),
+      ).rejects.toMatchObject({ code: "ATTEMPT_TRANSFER_FORBIDDEN" });
+      expect(
+        handle.client
+          .prepare("SELECT COUNT(*) AS count FROM audit_events WHERE id = ?")
+          .get("secret-audit-rejected"),
+      ).toEqual({ count: 0 });
+      await secrets.setStatus({
+        secretId: "control-secret",
+        expectedRevision: 1,
+        status: "disabled",
+        recordedAt: "2026-08-09T00:01:02.700Z",
+      });
+      await expect(
+        executions.acquireAttemptSecrets({
+          runnerId: "runner-control",
+          attemptId: "attempt-control",
+          leaseTokenHash: "lease-token-hash",
+          now: "2026-08-09T00:01:02.800Z",
+        }),
+      ).rejects.toMatchObject({ code: "EXECUTION_SECRET_UNAVAILABLE" });
+      expect(
+        handle.client
+          .prepare("SELECT COUNT(*) AS count FROM audit_events WHERE id = ?")
+          .get("secret-audit-disabled"),
+      ).toEqual({ count: 0 });
       await expect(
         executions.resolveAttemptInput({
           runnerId: "runner-control",
@@ -427,12 +753,167 @@ describe("SQLite management repositories", () => {
         executions.resolveAttemptInput({
           runnerId: "runner-control",
           attemptId: "attempt-control",
+          inputId: "dependency-1",
+          leaseTokenHash: "lease-token-hash",
+          now: "2026-08-09T00:01:03.000Z",
+        }),
+      ).resolves.toEqual({
+        objectKey: "jars/bb/support.jar",
+        sizeBytes: 64,
+        sha256: "b".repeat(64),
+      });
+      await expect(
+        executions.resolveAttemptInput({
+          runnerId: "runner-control",
+          attemptId: "attempt-control",
+          inputId: "undeclared-source",
+          leaseTokenHash: "lease-token-hash",
+          now: "2026-08-09T00:01:03.000Z",
+        }),
+      ).rejects.toMatchObject({ code: "ATTEMPT_INPUT_FORBIDDEN" });
+      handle.client
+        .prepare("UPDATE case_sources SET sha256 = ? WHERE id = ?")
+        .run("c".repeat(64), "dependency-1");
+      await expect(
+        executions.resolveAttemptInput({
+          runnerId: "runner-control",
+          attemptId: "attempt-control",
+          inputId: "dependency-1",
+          leaseTokenHash: "lease-token-hash",
+          now: "2026-08-09T00:01:03.000Z",
+        }),
+      ).rejects.toMatchObject({ code: "ATTEMPT_INPUT_INVALID" });
+      await expect(
+        executions.resolveAttemptInput({
+          runnerId: "runner-control",
+          attemptId: "attempt-control",
           inputId: "source-1",
           leaseTokenHash: "wrong-token-hash",
           now: "2026-08-09T00:01:03.000Z",
         }),
       ).rejects.toMatchObject({ code: "ATTEMPT_INPUT_FORBIDDEN" });
       await expect(executions.claim(claimInput)).resolves.toEqual(claimed);
+
+      const gap = await executions.appendLogChunks({
+        runnerId: "runner-control",
+        attemptId: "attempt-control",
+        leaseTokenHash: "lease-token-hash",
+        chunks: [
+          {
+            stream: "stdout",
+            sequence: 1,
+            content: "second",
+            recordedAt: "2026-08-09T00:01:03.000Z",
+          },
+        ],
+        receivedAt: "2026-08-09T00:01:03.100Z",
+      });
+      expect(gap.acknowledgedSequence.stdout).toBe(-1);
+
+      const contiguous = await executions.appendLogChunks({
+        runnerId: "runner-control",
+        attemptId: "attempt-control",
+        leaseTokenHash: "lease-token-hash",
+        chunks: [
+          {
+            stream: "stdout",
+            sequence: 0,
+            content: "first",
+            recordedAt: "2026-08-09T00:01:02.500Z",
+          },
+          {
+            stream: "stdout",
+            sequence: 1,
+            content: "second",
+            recordedAt: "2026-08-09T00:01:03.000Z",
+          },
+        ],
+        receivedAt: "2026-08-09T00:01:03.200Z",
+      });
+      expect(contiguous.acknowledgedSequence.stdout).toBe(1);
+      await expect(
+        executions.appendLogChunks({
+          runnerId: "runner-control",
+          attemptId: "attempt-control",
+          leaseTokenHash: "lease-token-hash",
+          chunks: [
+            {
+              stream: "stdout",
+              sequence: 1,
+              content: "conflicting",
+              recordedAt: "2026-08-09T00:01:03.000Z",
+            },
+          ],
+          receivedAt: "2026-08-09T00:01:03.300Z",
+        }),
+      ).rejects.toMatchObject({ code: "LOG_CHUNK_CONFLICT" });
+      await expect(
+        executions.listLogChunks({
+          attemptId: "attempt-control",
+          stream: "stdout",
+          afterSequence: -1,
+          limit: 10,
+        }),
+      ).resolves.toMatchObject({
+        acknowledgedSequence: 1,
+        items: [
+          { sequence: 0, content: "first" },
+          { sequence: 1, content: "second" },
+        ],
+      });
+      const artifact = {
+        artifactId: "artifact-control",
+        relativePath: "reports/testng-results.xml",
+        mediaType: "application/xml",
+        sizeBytes: 12,
+        sha256: "b".repeat(64),
+        required: true,
+      };
+      await expect(
+        executions.declareArtifacts({
+          runnerId: "runner-control",
+          attemptId: "attempt-control",
+          leaseTokenHash: "lease-token-hash",
+          artifacts: [artifact],
+          declaredAt: "2026-08-09T00:01:03.400Z",
+        }),
+      ).resolves.toEqual([{ ...artifact, status: "declared" }]);
+      await expect(
+        executions.declareArtifacts({
+          runnerId: "runner-control",
+          attemptId: "attempt-control",
+          leaseTokenHash: "lease-token-hash",
+          artifacts: [artifact],
+          declaredAt: "2026-08-09T00:01:03.450Z",
+        }),
+      ).resolves.toEqual([{ ...artifact, status: "declared" }]);
+      await expect(
+        executions.declareArtifacts({
+          runnerId: "runner-control",
+          attemptId: "attempt-control",
+          leaseTokenHash: "lease-token-hash",
+          artifacts: [{ ...artifact, sha256: "c".repeat(64) }],
+          declaredAt: "2026-08-09T00:01:03.460Z",
+        }),
+      ).rejects.toMatchObject({ code: "ARTIFACT_DECLARATION_CONFLICT" });
+      await expect(
+        executions.resolveArtifactUpload({
+          runnerId: "runner-control",
+          attemptId: "attempt-control",
+          artifactId: artifact.artifactId,
+          leaseTokenHash: "lease-token-hash",
+          now: "2026-08-09T00:01:03.500Z",
+        }),
+      ).resolves.toMatchObject(artifact);
+      await executions.markArtifactUploaded({
+        attemptId: "attempt-control",
+        artifactId: artifact.artifactId,
+        objectKey: `artifacts/attempt-control/artifact-control/${artifact.sha256}`,
+        uploadedAt: "2026-08-09T00:01:03.600Z",
+      });
+      await expect(executions.listArtifacts("attempt-control")).resolves.toMatchObject([
+        { ...artifact, status: "uploaded" },
+      ]);
       await expect(
         executions.reconcile({
           runnerId: "runner-control",
@@ -466,12 +947,54 @@ describe("SQLite management repositories", () => {
           resultCode: "TEST_ASSERTION_FAILED",
           summary: "assertion failed",
           durationMs: 1_000,
+          testNg: structuredTestNgResult("failed"),
           artifacts: [],
         },
         eventId: "event-complete-control",
         acceptedAt: "2026-08-09T00:01:20.000Z",
       });
       expect(completion).toMatchObject({ disposition: "accepted", retryScheduled: true });
+      expect(
+        handle.client
+          .prepare(
+            `SELECT actor_type, action, resource_type, resource_id, project_id, result, details_json
+             FROM audit_events WHERE action = 'execution_run.retry_scheduled' AND resource_id = ?`,
+          )
+          .all("run-control"),
+      ).toEqual([
+        {
+          actor_type: "system",
+          action: "execution_run.retry_scheduled",
+          resource_type: "execution_run",
+          resource_id: "run-control",
+          project_id: "00000000-0000-7000-8000-000000000001",
+          result: "succeeded",
+          details_json: JSON.stringify({
+            attemptNumber: 1,
+            resultCode: "TEST_ASSERTION_FAILED",
+          }),
+        },
+      ]);
+      expect(await batches.get("batch-control")).toMatchObject({
+        status: "queued",
+        version: 4,
+        statusHistory: [
+          { toStatus: "queued", batchVersion: 1, reason: "batch.created" },
+          { fromStatus: "queued", toStatus: "scheduled", batchVersion: 2 },
+          { fromStatus: "scheduled", toStatus: "running", batchVersion: 3 },
+          { fromStatus: "running", toStatus: "queued", batchVersion: 4 },
+        ],
+        attempts: [
+          {
+            id: "attempt-control",
+            durationMs: 1_000,
+            testNg: {
+              failed: 1,
+              suites: [{ tests: [{ classes: [{ methods: [{ name: "fails" }] }] }] }],
+            },
+          },
+        ],
+      });
       await expect(
         executions.completeAttempt({
           runnerId: "runner-control",
@@ -490,6 +1013,66 @@ describe("SQLite management repositories", () => {
           acceptedAt: "2026-08-09T00:01:21.000Z",
         }),
       ).resolves.toMatchObject({ disposition: "duplicate" });
+      expect(
+        handle.client
+          .prepare(
+            "SELECT COUNT(*) AS count FROM audit_events WHERE action = 'execution_run.retry_scheduled' AND resource_id = ?",
+          )
+          .get("run-control"),
+      ).toEqual({ count: 1 });
+      await expect(
+        executions.completeAttempt({
+          runnerId: "runner-control",
+          attemptId: "attempt-control",
+          completionId: "completion-control-conflict",
+          leaseTokenHash: "lease-token-hash",
+          resultDigest: "different-result-digest",
+          result: {
+            status: "succeeded",
+            resultCode: "PASSED",
+            summary: "conflicting result",
+            durationMs: 1_000,
+            artifacts: [],
+          },
+          eventId: "event-completion-conflict",
+          acceptedAt: "2026-08-09T00:01:21.500Z",
+        }),
+      ).rejects.toMatchObject({ code: "ATTEMPT_COMPLETION_CONFLICT" });
+      expect(
+        handle.client
+          .prepare(
+            "SELECT event_type, reason_code FROM attempt_state_events WHERE id = ? AND attempt_id = ?",
+          )
+          .get("event-completion-conflict", "attempt-control"),
+      ).toEqual({
+        event_type: "attempt.completion_conflict",
+        reason_code: "ATTEMPT_COMPLETION_CONFLICT",
+      });
+      const firstEventPage = await executions.listAttemptEvents({
+        attemptId: "attempt-control",
+        limit: 2,
+      });
+      expect(firstEventPage).toMatchObject({
+        items: [
+          { eventType: "assignment.claimed", toStatus: "running" },
+          { eventType: "attempt.completed", toStatus: "failed" },
+        ],
+        nextEventId: "event-complete-control",
+      });
+      await expect(
+        executions.listAttemptEvents({
+          attemptId: "attempt-control",
+          afterEventId: firstEventPage.nextEventId!,
+          limit: 2,
+        }),
+      ).resolves.toMatchObject({
+        items: [
+          {
+            eventType: "attempt.completion_conflict",
+            reasonCode: "ATTEMPT_COMPLETION_CONFLICT",
+          },
+        ],
+      });
       expect(await batches.get("batch-control")).toMatchObject({ status: "queued", queuedRuns: 1 });
 
       await batches.reserveAssignments({
@@ -649,11 +1232,476 @@ describe("SQLite management repositories", () => {
         status: "failed",
         timedOutRuns: 1,
       });
+
+      await batches.create({
+        id: "batch-execution-timeout",
+        suiteId: "suite-1",
+        suiteName: "Execution timeout suite",
+        suiteVersion: 1,
+        retryLimit: 0,
+        environmentVariables: [],
+        runnerIds: ["runner-control"],
+        runs: [
+          {
+            id: "run-execution-timeout",
+            caseDefinitionId: "case-1",
+            caseVersion: 1,
+            displayName: "Execution timeout",
+            className: "com.example.ExecutionTimeoutTest",
+          },
+        ],
+        createdAt: "2026-08-09T00:03:00.000Z",
+      });
+      await batches.reserveAssignments({
+        batchId: "batch-execution-timeout",
+        decisions: [
+          {
+            executionRunId: "run-execution-timeout",
+            runnerId: "runner-control",
+            score: 1,
+            attemptId: "attempt-execution-timeout",
+            assignmentId: "assignment-execution-timeout",
+          },
+        ],
+        thresholds: {
+          maximumCpuUtilizationPercent: 80,
+          maximumMemoryUtilizationPercent: 85,
+          maximumLoadPerCpu: 1,
+        },
+        offlineBefore: "2026-08-09T00:00:30.000Z",
+        metricsFreshAfter: "2026-08-09T00:00:30.000Z",
+        scheduledAt: "2026-08-09T00:03:01.000Z",
+      });
+      handle.client
+        .prepare("UPDATE execution_runs SET execution_timeout_ms = ? WHERE id = ?")
+        .run(1_000, "run-execution-timeout");
+      await executions.claim({
+        ...claimInput,
+        requestId: "claim-execution-timeout",
+        leaseSeeds: [
+          {
+            id: "lease-execution-timeout",
+            eventId: "event-claim-execution-timeout",
+            tokenHash: "lease-execution-timeout-token-hash",
+            tokenEncrypted: "encrypted-execution-timeout-lease-token",
+          },
+        ],
+        now: "2026-08-09T00:03:02.000Z",
+        leaseExpiresAt: "2026-08-09T00:04:00.000Z",
+      });
+      await expect(
+        executions.recoverExpired({
+          now: "2026-08-09T00:03:03.001Z",
+          eventIds: ["event-execution-timeout"],
+          limit: 1,
+        }),
+      ).resolves.toBe(1);
+      expect(
+        handle.client
+          .prepare("SELECT status, result_code FROM run_attempts WHERE id = ?")
+          .get("attempt-execution-timeout"),
+      ).toEqual({ status: "timed_out", result_code: "EXECUTION_TIMEOUT" });
+      expect(
+        handle.client
+          .prepare("SELECT event_type, reason_code FROM attempt_state_events WHERE id = ?")
+          .get("event-execution-timeout"),
+      ).toEqual({
+        event_type: "attempt.execution_timed_out",
+        reason_code: "EXECUTION_TIMEOUT",
+      });
+      await expect(
+        executions.completeAttempt({
+          runnerId: "runner-control",
+          attemptId: "attempt-execution-timeout",
+          completionId: "completion-after-execution-timeout",
+          leaseTokenHash: "lease-execution-timeout-token-hash",
+          resultDigest: "late-execution-timeout-digest",
+          result: {
+            status: "succeeded",
+            resultCode: "PASSED",
+            summary: "late success after execution timeout",
+            durationMs: 1_500,
+            artifacts: [],
+          },
+          eventId: "unused-late-execution-timeout-event",
+          acceptedAt: "2026-08-09T00:03:03.100Z",
+        }),
+      ).resolves.toMatchObject({ disposition: "late", retryScheduled: false });
+      await expect(
+        executions.recoverExpired({
+          now: "2026-08-09T00:03:04.000Z",
+          eventIds: ["unused-second-execution-timeout-event"],
+          limit: 1,
+        }),
+      ).resolves.toBe(0);
+      expect(await batches.get("batch-execution-timeout")).toMatchObject({
+        status: "failed",
+        failedRuns: 0,
+        timedOutRuns: 1,
+        runs: [expect.objectContaining({ terminalOutcome: "timed_out" })],
+        attempts: [
+          expect.objectContaining({
+            status: "timed_out",
+            outcome: "timed_out",
+            resultCode: "EXECUTION_TIMEOUT",
+          }),
+        ],
+      });
+
+      await batches.create({
+        id: "batch-queue-timeout",
+        suiteId: "suite-1",
+        suiteName: "Queue timeout suite",
+        suiteVersion: 1,
+        retryLimit: 0,
+        queueTimeoutMs: 1_000,
+        environmentVariables: [],
+        runnerIds: ["runner-control"],
+        runs: [
+          {
+            id: "run-queue-timeout",
+            caseDefinitionId: "case-1",
+            caseVersion: 1,
+            displayName: "Queue timeout",
+            className: "com.example.QueueTimeoutTest",
+          },
+        ],
+        createdAt: "2026-08-09T00:03:10.000Z",
+      });
+      await expect(
+        batches.reserveAssignments({
+          batchId: "batch-queue-timeout",
+          decisions: [
+            {
+              executionRunId: "run-queue-timeout",
+              runnerId: "runner-control",
+              score: 1,
+              attemptId: "unused-attempt-after-queue-timeout",
+              assignmentId: "unused-assignment-after-queue-timeout",
+            },
+          ],
+          thresholds: {
+            maximumCpuUtilizationPercent: 80,
+            maximumMemoryUtilizationPercent: 85,
+            maximumLoadPerCpu: 1,
+          },
+          offlineBefore: "2026-08-09T00:00:30.000Z",
+          metricsFreshAfter: "2026-08-09T00:00:30.000Z",
+          scheduledAt: "2026-08-09T00:03:11.001Z",
+        }),
+      ).resolves.toBe(0);
+      await expect(
+        executions.recoverExpired({
+          now: "2026-08-09T00:03:11.001Z",
+          eventIds: ["event-queue-timeout"],
+          limit: 1,
+        }),
+      ).resolves.toBe(1);
+      expect(await batches.get("batch-queue-timeout")).toMatchObject({
+        status: "failed",
+        timedOutRuns: 1,
+        runs: [
+          expect.objectContaining({
+            status: "failed",
+            terminalOutcome: "timed_out",
+            terminalReasonCode: "QUEUE_TIMEOUT",
+          }),
+        ],
+        statusHistory: [
+          { toStatus: "queued", batchVersion: 1 },
+          { fromStatus: "queued", toStatus: "failed", reason: "run.queue_timed_out" },
+        ],
+      });
+
+      await batches.create({
+        id: "batch-claim-timeout",
+        suiteId: "suite-1",
+        suiteName: "Claim timeout suite",
+        suiteVersion: 1,
+        retryLimit: 0,
+        claimTimeoutMs: 1_000,
+        environmentVariables: [],
+        runnerIds: ["runner-control"],
+        runs: [
+          {
+            id: "run-claim-timeout",
+            caseDefinitionId: "case-1",
+            caseVersion: 1,
+            displayName: "Claim timeout",
+            className: "com.example.ClaimTimeoutTest",
+          },
+        ],
+        createdAt: "2026-08-09T00:03:20.000Z",
+      });
+      await batches.reserveAssignments({
+        batchId: "batch-claim-timeout",
+        decisions: [
+          {
+            executionRunId: "run-claim-timeout",
+            runnerId: "runner-control",
+            score: 1,
+            attemptId: "attempt-claim-timeout",
+            assignmentId: "assignment-claim-timeout",
+          },
+        ],
+        thresholds: {
+          maximumCpuUtilizationPercent: 80,
+          maximumMemoryUtilizationPercent: 85,
+          maximumLoadPerCpu: 1,
+        },
+        offlineBefore: "2026-08-09T00:00:30.000Z",
+        metricsFreshAfter: "2026-08-09T00:00:30.000Z",
+        scheduledAt: "2026-08-09T00:03:21.000Z",
+      });
+      await expect(
+        executions.recoverExpired({
+          now: "2026-08-09T00:03:22.001Z",
+          eventIds: ["event-claim-timeout"],
+          limit: 1,
+        }),
+      ).resolves.toBe(1);
+      expect(
+        handle.client
+          .prepare("SELECT status, result_code FROM run_attempts WHERE id = ?")
+          .get("attempt-claim-timeout"),
+      ).toEqual({ status: "timed_out", result_code: "ASSIGNMENT_CLAIM_TIMEOUT" });
+
+      await batches.create({
+        id: "batch-upload-timeout",
+        suiteId: "suite-1",
+        suiteName: "Upload timeout suite",
+        suiteVersion: 1,
+        retryLimit: 0,
+        uploadTimeoutMs: 1_000,
+        environmentVariables: [],
+        runnerIds: ["runner-control"],
+        runs: [
+          {
+            id: "run-upload-timeout",
+            caseDefinitionId: "case-1",
+            caseVersion: 1,
+            displayName: "Upload timeout",
+            className: "com.example.UploadTimeoutTest",
+          },
+        ],
+        createdAt: "2026-08-09T00:03:30.000Z",
+      });
+      await batches.reserveAssignments({
+        batchId: "batch-upload-timeout",
+        decisions: [
+          {
+            executionRunId: "run-upload-timeout",
+            runnerId: "runner-control",
+            score: 1,
+            attemptId: "attempt-upload-timeout",
+            assignmentId: "assignment-upload-timeout",
+          },
+        ],
+        thresholds: {
+          maximumCpuUtilizationPercent: 80,
+          maximumMemoryUtilizationPercent: 85,
+          maximumLoadPerCpu: 1,
+        },
+        offlineBefore: "2026-08-09T00:00:30.000Z",
+        metricsFreshAfter: "2026-08-09T00:00:30.000Z",
+        scheduledAt: "2026-08-09T00:03:31.000Z",
+      });
+      await executions.claim({
+        ...claimInput,
+        requestId: "claim-upload-timeout",
+        leaseSeeds: [
+          {
+            id: "lease-upload-timeout",
+            eventId: "event-claim-upload-timeout",
+            tokenHash: "lease-upload-timeout-token-hash",
+            tokenEncrypted: "encrypted-upload-timeout-lease-token",
+          },
+        ],
+        now: "2026-08-09T00:03:32.000Z",
+        leaseExpiresAt: "2026-08-09T00:04:30.000Z",
+      });
+      await executions.declareArtifacts({
+        runnerId: "runner-control",
+        attemptId: "attempt-upload-timeout",
+        leaseTokenHash: "lease-upload-timeout-token-hash",
+        artifacts: [],
+        declaredAt: "2026-08-09T00:03:33.000Z",
+      });
+      await expect(
+        executions.recoverExpired({
+          now: "2026-08-09T00:03:34.001Z",
+          eventIds: ["event-upload-timeout"],
+          limit: 1,
+        }),
+      ).resolves.toBe(1);
+      expect(
+        handle.client
+          .prepare("SELECT status, result_code FROM run_attempts WHERE id = ?")
+          .get("attempt-upload-timeout"),
+      ).toEqual({ status: "timed_out", result_code: "UPLOAD_TIMEOUT" });
+      expect(
+        handle.client
+          .prepare("SELECT event_type, reason_code FROM attempt_state_events WHERE id = ?")
+          .get("event-upload-timeout"),
+      ).toEqual({
+        event_type: "attempt.upload_timed_out",
+        reason_code: "UPLOAD_TIMEOUT",
+      });
+
+      await batches.create({
+        id: "batch-cancel-queued",
+        suiteId: "suite-1",
+        suiteName: "Queued cancellation suite",
+        suiteVersion: 1,
+        retryLimit: 0,
+        environmentVariables: [],
+        runnerIds: ["runner-control"],
+        runs: [
+          {
+            id: "run-cancel-queued",
+            caseDefinitionId: "case-1",
+            caseVersion: 1,
+            displayName: "Queued cancellation",
+            className: "com.example.QueuedCancellationTest",
+          },
+        ],
+        createdAt: "2026-08-09T00:04:00.000Z",
+      });
+      await expect(
+        executions.cancelBatch({
+          batchId: "batch-cancel-queued",
+          actorId: "administrator",
+          reason: "operator cancelled queued batch",
+          eventIds: ["event-cancel-queued"],
+          requestedAt: "2026-08-09T00:04:01.000Z",
+        }),
+      ).resolves.toBe(1);
+      expect(await batches.get("batch-cancel-queued")).toMatchObject({
+        status: "cancelled",
+        cancelledRuns: 1,
+        statusHistory: [
+          { toStatus: "queued", batchVersion: 1 },
+          { fromStatus: "queued", toStatus: "cancelled", batchVersion: 3 },
+        ],
+        runs: [expect.objectContaining({ id: "run-cancel-queued", status: "cancelled" })],
+        attempts: [],
+      });
+
+      await batches.create({
+        id: "batch-cancel-assigned",
+        suiteId: "suite-1",
+        suiteName: "Assigned cancellation suite",
+        suiteVersion: 1,
+        retryLimit: 0,
+        environmentVariables: [],
+        runnerIds: ["runner-control"],
+        runs: [
+          {
+            id: "run-cancel-assigned",
+            caseDefinitionId: "case-1",
+            caseVersion: 1,
+            displayName: "Assigned cancellation",
+            className: "com.example.AssignedCancellationTest",
+          },
+        ],
+        createdAt: "2026-08-09T00:04:02.000Z",
+      });
+      await batches.reserveAssignments({
+        batchId: "batch-cancel-assigned",
+        decisions: [
+          {
+            executionRunId: "run-cancel-assigned",
+            runnerId: "runner-control",
+            score: 1,
+            attemptId: "attempt-cancel-assigned",
+            assignmentId: "assignment-cancel-assigned",
+          },
+        ],
+        thresholds: {
+          maximumCpuUtilizationPercent: 80,
+          maximumMemoryUtilizationPercent: 85,
+          maximumLoadPerCpu: 1,
+        },
+        offlineBefore: "2026-08-09T00:00:30.000Z",
+        metricsFreshAfter: "2026-08-09T00:00:30.000Z",
+        scheduledAt: "2026-08-09T00:04:03.000Z",
+      });
+      await expect(
+        executions.cancelBatch({
+          batchId: "batch-cancel-assigned",
+          actorId: "administrator",
+          reason: "operator cancelled assigned batch",
+          eventIds: ["event-cancel-assigned"],
+          requestedAt: "2026-08-09T00:04:04.000Z",
+        }),
+      ).resolves.toBe(1);
+      expect(await batches.get("batch-cancel-assigned")).toMatchObject({
+        status: "cancelled",
+        cancelledRuns: 1,
+        runs: [expect.objectContaining({ id: "run-cancel-assigned", status: "cancelled" })],
+        attempts: [
+          expect.objectContaining({
+            id: "attempt-cancel-assigned",
+            status: "cancelled",
+            resultCode: "CANCELLED_BY_USER",
+          }),
+        ],
+      });
     } finally {
       handle.close();
     }
   });
 });
+
+function structuredTestNgResult(status: "passed" | "failed") {
+  const counts = {
+    total: 1,
+    passed: status === "passed" ? 1 : 0,
+    failed: status === "failed" ? 1 : 0,
+    skipped: 0,
+    configurationFailures: 0,
+  };
+  return {
+    ...counts,
+    detailsTruncated: false,
+    suites: [
+      {
+        ...counts,
+        name: "Control suite",
+        durationMs: 1_000,
+        tests: [
+          {
+            ...counts,
+            name: "Control test",
+            durationMs: 1_000,
+            classes: [
+              {
+                ...counts,
+                name: "example.ControlTest",
+                durationMs: 1_000,
+                methods: [
+                  {
+                    name: status === "passed" ? "passes" : "fails",
+                    status,
+                    configuration: false,
+                    durationMs: 1_000,
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    ],
+  };
+}
+
+async function executionsProjectId(
+  handle: ReturnType<typeof createSqliteDatabase>,
+  attemptId: string,
+): Promise<string | null> {
+  return new SqliteExecutionControlRepository(handle).resolveAttemptProjectId(attemptId);
+}
 
 const timestamp = "2026-08-09T00:00:00.000Z";
 

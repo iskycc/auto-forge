@@ -1,7 +1,7 @@
 "use client";
 
 import type { AuditEvent, Project, Role, User, UserSession } from "@autoforge/domain";
-import { Network, Plus, RefreshCw, Shield, UserRound } from "lucide-react";
+import { Network, Plus, RefreshCw, Search, Shield, UserRound } from "lucide-react";
 import { useState, type FormEvent } from "react";
 
 type LdapView = {
@@ -35,6 +35,9 @@ export function AccessSettings({
   ldapMappings,
   sessions,
   auditEvents,
+  userQuery,
+  userSource,
+  nextUserCursor,
 }: {
   users: User[];
   roles: Role[];
@@ -49,6 +52,9 @@ export function AccessSettings({
   }>;
   sessions: UserSession[];
   auditEvents: AuditEvent[];
+  userQuery: string;
+  userSource: "" | "local" | "ldap";
+  nextUserCursor: string | undefined;
 }) {
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
@@ -211,6 +217,23 @@ export function AccessSettings({
             <Plus size={16} /> 创建本地用户
           </button>
         </form>
+        <form action="/settings/access" className="settings-user-filter" method="get">
+          <label>
+            搜索用户
+            <input defaultValue={userQuery} maxLength={120} name="query" />
+          </label>
+          <label>
+            账号来源
+            <select defaultValue={userSource} name="source">
+              <option value="">全部来源</option>
+              <option value="local">本地</option>
+              <option value="ldap">LDAP</option>
+            </select>
+          </label>
+          <button className="secondary-button" type="submit">
+            <Search size={16} /> 筛选
+          </button>
+        </form>
         <div className="table-scroll">
           <table className="data-table">
             <thead>
@@ -227,7 +250,10 @@ export function AccessSettings({
                 <tr key={user.id}>
                   <td>
                     <strong>{user.displayName}</strong>
-                    <small>{user.username}</small>
+                    <small>
+                      {user.username}
+                      {user.email ? ` · ${user.email}` : ""} · {user.id}
+                    </small>
                   </td>
                   <td>{user.source === "ldap" ? "LDAP" : "本地"}</td>
                   <td>{user.status === "active" ? "启用" : "禁用"}</td>
@@ -249,12 +275,34 @@ export function AccessSettings({
                     >
                       {user.status === "active" ? "禁用" : "启用/解锁"}
                     </button>
+                    <button
+                      className="table-action"
+                      disabled={pending}
+                      onClick={() =>
+                        void request(
+                          `/api/v1/users/${user.id}/sessions`,
+                          { method: "DELETE" },
+                          "该用户的全部会话已撤销。",
+                        )
+                      }
+                      type="button"
+                    >
+                      撤销会话
+                    </button>
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
+        {nextUserCursor ? (
+          <a
+            className="secondary-button settings-next-page"
+            href={userPageHref(userQuery, userSource, nextUserCursor)}
+          >
+            下一页
+          </a>
+        ) : null}
         <form className="settings-grid-form settings-subform" onSubmit={submitPasswordReset}>
           <label>
             本地用户
@@ -755,4 +803,11 @@ function ldapPayload(form: FormData) {
     groupFilter: optional("groupFilter"),
     groupMemberAttribute: "member",
   };
+}
+
+function userPageHref(query: string, source: string, cursor: string): string {
+  const parameters = new URLSearchParams({ cursor });
+  if (query) parameters.set("query", query);
+  if (source) parameters.set("source", source);
+  return `/settings/access?${parameters}`;
 }

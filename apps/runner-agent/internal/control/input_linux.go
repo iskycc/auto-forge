@@ -13,6 +13,36 @@ import (
 	"syscall"
 )
 
+func downloadAttemptInputs(
+	ctx context.Context,
+	client *Client,
+	identity Identity,
+	claimed ClaimedAssignment,
+	inputs []ExecutionInput,
+	workspace string,
+) error {
+	var totalBytes int64
+	for _, input := range inputs {
+		if input.SizeBytes <= 0 || totalBytes > claimed.Assignment.ExecutionSpec.ResourceLimits.DiskBytes-input.SizeBytes {
+			return errors.New("execution inputs exceed the attempt disk limit")
+		}
+		totalBytes += input.SizeBytes
+	}
+	available, err := availableBytes(workspace)
+	if err != nil {
+		return fmt.Errorf("inspect available workspace capacity: %w", err)
+	}
+	if totalBytes > available {
+		return fmt.Errorf("execution inputs require %d bytes but only %d bytes are available", totalBytes, available)
+	}
+	for _, input := range inputs {
+		if err := downloadAttemptInput(ctx, client, identity, claimed, input, workspace); err != nil {
+			return fmt.Errorf("download execution input %s: %w", input.InputID, err)
+		}
+	}
+	return nil
+}
+
 func downloadAttemptInput(
 	ctx context.Context,
 	client *Client,

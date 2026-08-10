@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -46,12 +47,53 @@ func TestLoadRejectsOutOfRangeClaimPolicy(t *testing.T) {
 	}
 }
 
+func TestLoadRejectsJavaWithoutSourceFileMode(t *testing.T) {
+	_, err := Load(mapLookup(map[string]string{
+		"AUTOFORGE_SERVER_URL":             "https://autoforge.internal",
+		"AUTOFORGE_AGENT_JAVA_EXECUTABLE":  "/opt/jdk/bin/java",
+		"AUTOFORGE_AGENT_TESTNG_CLASSPATH": "/opt/testng/testng.jar",
+		"AUTOFORGE_AGENT_JAVA_VERSION":     "1.8.0_452",
+		"AUTOFORGE_AGENT_TESTNG_VERSION":   "7.11.0",
+	}))
+	if err == nil {
+		t.Fatal("Load() accepted Java 8 for the TestNG source-file launcher")
+	}
+}
+
 func TestLoadRejectsInsecureRemoteHTTP(t *testing.T) {
 	_, err := Load(mapLookup(map[string]string{
 		"AUTOFORGE_SERVER_URL": "http://runner.example.test",
 	}))
 	if err == nil {
 		t.Fatal("Load() error = nil, want insecure URL error")
+	}
+}
+
+func TestLoadAddsCgroupIsolationCapability(t *testing.T) {
+	loaded, err := Load(mapLookup(map[string]string{
+		"AUTOFORGE_SERVER_URL":            "https://autoforge.internal",
+		"AUTOFORGE_AGENT_CGROUP_ROOT":     "/sys/fs/cgroup/autoforge-agent.service",
+		"AUTOFORGE_AGENT_DATA_DIR":        t.TempDir(),
+		"AUTOFORGE_AGENT_MAX_CONCURRENCY": "1",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsWord(strings.Join(loaded.Capabilities(), " "), "isolation:cgroup-v2") {
+		t.Fatalf("Capabilities() = %#v", loaded.Capabilities())
+	}
+	if !containsWord(strings.Join(loaded.Capabilities(), " "), "secrets:on-demand-v1") {
+		t.Fatalf("Capabilities() = %#v, want on-demand secret support", loaded.Capabilities())
+	}
+}
+
+func TestLoadRejectsCgroupRootOutsideKernelHierarchy(t *testing.T) {
+	_, err := Load(mapLookup(map[string]string{
+		"AUTOFORGE_SERVER_URL":        "https://autoforge.internal",
+		"AUTOFORGE_AGENT_CGROUP_ROOT": "/tmp/not-a-cgroup",
+	}))
+	if err == nil {
+		t.Fatal("Load() accepted a cgroup root outside /sys/fs/cgroup")
 	}
 }
 

@@ -19,11 +19,27 @@ const MAXIMUM_UPGRADES_PER_WINDOW = 120;
 
 type Logger = (level: "info" | "warn" | "error", message: string, fields?: object) => void;
 
+export type TerminalAuditEvent = {
+  actorId: string;
+  runnerId: string;
+  sessionId: string;
+  action: "terminal.session_started" | "terminal.session_finished";
+  reason?: string;
+  inputMessages?: number;
+  inputBytes?: number;
+  outputBytes?: number;
+};
+
+type TerminalAuditor = (event: TerminalAuditEvent) => Promise<void>;
+
 type Session = {
   runnerId: string;
   actorId: string;
   browser: WebSocket;
   agent: WebSocket;
+  inputMessages: number;
+  inputBytes: number;
+  outputBytes: number;
 };
 
 type UpgradeWindow = { startedAt: number; attempts: number };
@@ -39,13 +55,16 @@ export class TerminalGateway {
   private readonly peerLiveness = new Map<WebSocket, boolean>();
   private readonly consumedNonces = new Map<string, number>();
   private readonly upgradeWindows = new Map<string, UpgradeWindow>();
+  private readonly pendingAudits = new Set<Promise<void>>();
   private readonly keepalive: NodeJS.Timeout;
   private readonly secret: string | undefined;
   private readonly logger: Logger;
+  private readonly auditor: TerminalAuditor;
 
-  constructor(secret: string | undefined, logger: Logger) {
+  constructor(secret: string | undefined, logger: Logger, auditor: TerminalAuditor) {
     this.secret = secret;
     this.logger = logger;
+    this.auditor = auditor;
     this.keepalive = setInterval(() => this.pingPeers(), KEEPALIVE_INTERVAL_MS);
     this.keepalive.unref();
   }
@@ -83,8 +102,11 @@ export class TerminalGateway {
     });
   }
 
-  close(): void {
+  async close(): Promise<void> {
     clearInterval(this.keepalive);
+    for (const sessionId of [...this.sessions.keys()]) {
+      this.finishSession(sessionId, 1001, "Control plane is shutting down");
+    }
     for (const peer of this.peerLiveness.keys()) {
       peer.close(1001, "Control plane is shutting down");
     }
@@ -92,6 +114,7 @@ export class TerminalGateway {
     this.agents.clear();
     this.sessions.clear();
     this.server.close();
+    await Promise.allSettled([...this.pendingAudits]);
   }
 
   private authenticate(request: IncomingMessage): TerminalTicket | null {
@@ -159,6 +182,7 @@ export class TerminalGateway {
         return;
       }
       if (message.type === "output") {
+        session.outputBytes += Buffer.byteLength(message.data, "utf8");
         this.send(session.browser, { schemaVersion: 1, type: "output", data: message.data });
         return;
       }
@@ -219,6 +243,9 @@ export class TerminalGateway {
       actorId: ticket.actorId!,
       browser: websocket,
       agent,
+      inputMessages: 0,
+      inputBytes: 0,
+      outputBytes: 0,
     });
     websocket.on("message", (data, binary) => {
       if (binary || !(data instanceof Buffer)) {
@@ -234,19 +261,20 @@ export class TerminalGateway {
         this.finishSession(sessionId, 1000, "Browser closed terminal");
         return;
       }
+      if (message.type === "input") {
+        const session = this.sessions.get(sessionId);
+        if (session) {
+          session.inputMessages += 1;
+          session.inputBytes += Buffer.byteLength(message.data, "utf8");
+        }
+      }
       this.send(agent, { ...message, sessionId } satisfies AgentCommand);
     });
     websocket.on("close", () => {
       this.peerLiveness.delete(websocket);
       const active = this.sessions.get(sessionId);
       if (!active || active.browser !== websocket) return;
-      this.sessions.delete(sessionId);
-      this.send(agent, { schemaVersion: 1, type: "close", sessionId });
-      this.logger("info", "Browser terminal session disconnected", {
-        runnerId: ticket.runnerId,
-        sessionId,
-        actorId: ticket.actorId,
-      });
+      this.finishSession(sessionId, 1000, "Browser disconnected");
     });
     websocket.on("error", (error) => {
       this.logger("warn", "Browser terminal channel error", {
@@ -267,6 +295,12 @@ export class TerminalGateway {
       sessionId,
       actorId: ticket.actorId,
     });
+    this.audit({
+      actorId: ticket.actorId!,
+      runnerId: ticket.runnerId,
+      sessionId,
+      action: "terminal.session_started",
+    });
   }
 
   private finishSession(sessionId: string, code: number, reason: string): void {
@@ -281,6 +315,32 @@ export class TerminalGateway {
       actorId: session.actorId,
       reason,
     });
+    this.audit({
+      actorId: session.actorId,
+      runnerId: session.runnerId,
+      sessionId,
+      action: "terminal.session_finished",
+      reason,
+      inputMessages: session.inputMessages,
+      inputBytes: session.inputBytes,
+      outputBytes: session.outputBytes,
+    });
+  }
+
+  private audit(event: TerminalAuditEvent): void {
+    const persistence = this.auditor(event)
+      .catch((error: unknown) => {
+        this.logger("error", "Terminal audit persistence failed", {
+          runnerId: event.runnerId,
+          sessionId: event.sessionId,
+          action: event.action,
+          error: error instanceof Error ? error.message : "Unknown error",
+        });
+      })
+      .finally(() => {
+        this.pendingAudits.delete(persistence);
+      });
+    this.pendingAudits.add(persistence);
   }
 
   private send(peer: WebSocket, message: AgentCommand | BrowserEvent): void {

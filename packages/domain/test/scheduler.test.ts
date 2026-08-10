@@ -67,6 +67,26 @@ describe("dynamic execution scheduler", () => {
     ]);
   });
 
+  it("explains incompatible Runner capabilities without assigning work", () => {
+    const incompatible = runner("runner-incompatible", {
+      cpu: 10,
+      memory: 20,
+      load: 0.1,
+      concurrency: 1,
+    });
+    incompatible.capabilities = ["executor:testng-v1"];
+
+    const plan = scheduleExecutionRuns({
+      runs: [run("run-1")],
+      candidates: [{ runner: incompatible, reservedSlots: 0 }],
+      thresholds,
+      metricsFreshAfter: freshAfter,
+    });
+
+    expect(plan.decisions).toEqual([]);
+    expect(plan.evaluations[0]?.blockReasons).toContain("runner_incompatible");
+  });
+
   it("allows exactly the configured number of retries", () => {
     expect(statusAfterFailedAttempt(1, 2)).toBe("queued");
     expect(statusAfterFailedAttempt(2, 2)).toBe("queued");
@@ -102,6 +122,7 @@ function runner(
     agentVersion: "test",
     protocolVersion: 1,
     labels: [],
+    capabilities: ["executor:testng-v1", "isolation:cgroup-v2", "java:21.0.8", "testng:7.11.0"],
     maxConcurrency: values.concurrency,
     busySlots: 0,
     lastSeenAt: "2026-08-09T00:00:10.000Z",

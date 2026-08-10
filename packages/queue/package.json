@@ -1,0 +1,23 @@
+{
+  "name": "@autoforge/queue",
+  "version": "0.2.2",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./sqlite": "./src/sqlite.ts",
+    "./jetstream": "./src/jetstream.ts",
+    "./outbox": "./src/postgres-outbox-relay.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@autoforge/application": "workspace:*",
+    "@autoforge/contracts": "workspace:*",
+    "@autoforge/db": "workspace:*",
+    "nats": "2.29.3"
+  },
+  "devDependencies": {
+    "typescript": "5.9.3"
+  }
+}

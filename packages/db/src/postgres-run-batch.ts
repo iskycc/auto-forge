@@ -4,17 +4,28 @@ import type {
   RunBatchRepository,
   SchedulingSnapshot,
 } from "@autoforge/application";
-import type { ExecutionSpec } from "@autoforge/contracts";
+import { testNgResultDetailsSchema, type ExecutionSpec } from "@autoforge/contracts";
 import {
+  assessRunnerCompatibility,
+  DEFAULT_EXECUTION_RESOURCE_LIMITS,
+  DomainError,
   evaluateRunnerForScheduling,
+  MINIMUM_JAVA_MAJOR_VERSION,
+  ON_DEMAND_SECRET_CAPABILITY,
+  REQUIRED_EXECUTION_CAPABILITIES,
+  REQUIRED_EXECUTION_LABELS,
+  SUPPORTED_TESTNG_VERSION,
+  transitionRunBatch,
   type ExecutionEnvironmentVariable,
+  type ExecutionEnvironmentSecretBinding,
   type ExecutionRun,
   type RunAttempt,
   type RunBatch,
   type RunBatchDetails,
+  type RunBatchStatusEvent,
   type RunBatchStatus,
 } from "@autoforge/domain";
-import { and, count, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, count, desc, eq, gt, inArray, isNull, or, sql } from "drizzle-orm";
 
 import type { PostgresDatabaseHandle } from "./postgres-database";
 import {
@@ -25,6 +36,7 @@ import {
   pgRunAttempts,
   pgRunBatchRunners,
   pgRunBatches,
+  pgRunBatchStatusEvents,
   pgRunners,
 } from "./postgres-schema";
 import { mapStoredRunner } from "./runner-mapper";
@@ -36,18 +48,39 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
 
   async create(record: CreateRunBatchRecord): Promise<RunBatchDetails> {
     await this.ready();
+    const queueTimeoutMs = record.queueTimeoutMs ?? 86_400_000;
+    const claimTimeoutMs = record.claimTimeoutMs ?? 300_000;
+    const executionTimeoutMs = record.executionTimeoutMs ?? 3_600_000;
+    const uploadTimeoutMs = record.uploadTimeoutMs ?? 600_000;
     await this.handle.db.transaction(async (transaction) => {
       await transaction.insert(pgRunBatches).values({
         id: record.id,
+        projectId: record.projectId,
+        environmentId: record.environmentId,
+        environmentVersionId: record.environmentVersionId,
         suiteId: record.suiteId,
         suiteName: record.suiteName,
         suiteVersion: record.suiteVersion,
         status: "queued",
         retryLimit: record.retryLimit,
+        queueTimeoutMs,
+        claimTimeoutMs,
+        executionTimeoutMs,
+        uploadTimeoutMs,
         environmentJson: JSON.stringify(record.environmentVariables),
+        secretBindingsJson: JSON.stringify(record.secretBindings ?? []),
         totalRuns: record.runs.length,
         createdAt: record.createdAt,
         updatedAt: record.createdAt,
+      });
+      await transaction.insert(pgRunBatchStatusEvents).values({
+        id: record.eventId ?? record.id,
+        batchId: record.id,
+        fromStatus: null,
+        toStatus: "queued",
+        batchVersion: 1,
+        reason: "batch.created",
+        recordedAt: record.createdAt,
       });
       await transaction
         .insert(pgRunBatchRunners)
@@ -60,31 +93,55 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
           assignedRunnerId: null,
           attemptCount: 0,
           schedulingScore: null,
+          queueDeadlineAt: addMilliseconds(record.createdAt, queueTimeoutMs),
+          executionTimeoutMs,
+          uploadTimeoutMs,
           createdAt: record.createdAt,
           assignedAt: null,
           updatedAt: record.createdAt,
         })),
       );
+      if (record.dispatchJob) {
+        await transaction.execute(sql`
+          INSERT INTO transactional_outbox
+            (message_id, run_id, attempt, schema_version, subject, payload_json,
+             deduplication_key, created_at, available_at)
+          VALUES
+            (${record.dispatchJob.messageId}, ${record.dispatchJob.runId},
+             ${record.dispatchJob.attempt}, ${record.dispatchJob.schemaVersion},
+             ${"autoforge.jobs.v1.ready"},
+             ${JSON.stringify(record.dispatchJob)}::jsonb,
+             ${record.dispatchJob.deduplicationKey}, ${record.dispatchJob.createdAt},
+             ${record.dispatchJob.createdAt})
+        `);
+      }
     });
     return this.requiredBatch(record.id);
   }
 
-  async list(limit: number): Promise<RunBatch[]> {
+  async list(limit: number, projectIds?: readonly string[]): Promise<RunBatch[]> {
     await this.ready();
+    if (projectIds?.length === 0) return [];
     const rows = await this.handle.db
       .select()
       .from(pgRunBatches)
+      .where(projectIds ? inArray(pgRunBatches.projectId, [...projectIds]) : undefined)
       .orderBy(desc(pgRunBatches.createdAt))
       .limit(limit);
     return Promise.all(rows.map((row) => this.mapBatch(row)));
   }
 
-  async get(batchId: string): Promise<RunBatchDetails | null> {
+  async get(batchId: string, projectIds?: readonly string[]): Promise<RunBatchDetails | null> {
     await this.ready();
+    if (projectIds?.length === 0) return null;
     const [batchRow] = await this.handle.db
       .select()
       .from(pgRunBatches)
-      .where(eq(pgRunBatches.id, batchId))
+      .where(
+        projectIds
+          ? and(eq(pgRunBatches.id, batchId), inArray(pgRunBatches.projectId, [...projectIds]))
+          : eq(pgRunBatches.id, batchId),
+      )
       .limit(1);
     if (!batchRow) return null;
     const runRows = await this.handle.db
@@ -105,10 +162,18 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
               ),
             )
             .orderBy(pgRunAttempts.createdAt, pgRunAttempts.id);
+    const statusHistory = (
+      await this.handle.db
+        .select()
+        .from(pgRunBatchStatusEvents)
+        .where(eq(pgRunBatchStatusEvents.batchId, batchId))
+        .orderBy(pgRunBatchStatusEvents.recordedAt, pgRunBatchStatusEvents.id)
+    ).map(toRunBatchStatusEvent);
     return {
       ...(await this.mapBatch(batchRow)),
       runs: runRows.map(toExecutionRun),
       attempts: attemptRows.map(toRunAttempt),
+      statusHistory,
     };
   }
 
@@ -156,12 +221,10 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
             .from(pgRunners)
             .where(inArray(pgRunners.id, batch.selectedRunnerIds));
     const reservations = await this.activeReservations(batch.selectedRunnerIds);
-    const candidates = runnerRows
-      .map((row) => ({
-        runner: mapStoredRunner(row, offlineBefore),
-        reservedSlots: reservations.get(row.id) ?? 0,
-      }))
-      .filter((candidate) => supportsTestNGExecution(candidate.runner.capabilities));
+    const candidates = runnerRows.map((row) => ({
+      runner: mapStoredRunner(row, offlineBefore),
+      reservedSlots: reservations.get(row.id) ?? 0,
+    }));
     return {
       batch,
       queuedRuns: batch.runs.filter((run) => run.status === "queued"),
@@ -216,7 +279,7 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
         const runnerRow = runnerById.get(decision.runnerId);
         if (!runnerRow) continue;
         const runner = mapStoredRunner(runnerRow, input.offlineBefore);
-        if (!supportsTestNGExecution(runner.capabilities)) continue;
+        if (!assessRunnerCompatibility(runner).compatible) continue;
         const evaluation = evaluateRunnerForScheduling(
           {
             runner,
@@ -241,6 +304,10 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
               eq(pgExecutionRuns.id, decision.executionRunId),
               eq(pgExecutionRuns.batchId, input.batchId),
               eq(pgExecutionRuns.status, "queued"),
+              or(
+                isNull(pgExecutionRuns.queueDeadlineAt),
+                gt(pgExecutionRuns.queueDeadlineAt, input.scheduledAt),
+              ),
             ),
           )
           .returning({
@@ -272,7 +339,11 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
         const [batch] = await transaction
           .select({
             environmentJson: pgRunBatches.environmentJson,
+            secretBindingsJson: pgRunBatches.secretBindingsJson,
             priority: pgRunBatches.priority,
+            claimTimeoutMs: pgRunBatches.claimTimeoutMs,
+            executionTimeoutMs: pgRunBatches.executionTimeoutMs,
+            uploadTimeoutMs: pgRunBatches.uploadTimeoutMs,
           })
           .from(pgRunBatches)
           .where(eq(pgRunBatches.id, input.batchId))
@@ -294,10 +365,13 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
               className: updatedRun.className,
               source,
               environment: environmentVariables(batch.environmentJson),
+              secretBindings: secretBindings(batch.secretBindingsJson),
+              executionTimeoutMs: batch.executionTimeoutMs,
+              uploadTimeoutMs: batch.uploadTimeoutMs,
             }),
           ),
           availableAt: input.scheduledAt,
-          claimDeadlineAt: addMilliseconds(input.scheduledAt, 5 * 60_000),
+          claimDeadlineAt: addMilliseconds(input.scheduledAt, batch.claimTimeoutMs),
           createdAt: input.scheduledAt,
           updatedAt: input.scheduledAt,
         });
@@ -315,10 +389,35 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
       const assigned = (byStatus.get("assigned") ?? 0) + (byStatus.get("running") ?? 0);
       const status: RunBatchStatus =
         queued === 0 ? "scheduled" : assigned > 0 ? "dispatching" : "queued";
-      await transaction
+      const [batchState] = await transaction
+        .select({ status: pgRunBatches.status, version: pgRunBatches.version })
+        .from(pgRunBatches)
+        .where(eq(pgRunBatches.id, input.batchId))
+        .for("update");
+      if (!batchState) throw new DomainError("RUN_BATCH_NOT_FOUND", "指定的执行批次不存在。");
+      transitionRunBatch(batchState.status, status);
+      const nextVersion = batchState.version + 1;
+      const [updatedBatch] = await transaction
         .update(pgRunBatches)
-        .set({ status, updatedAt: input.scheduledAt })
-        .where(eq(pgRunBatches.id, input.batchId));
+        .set({ status, updatedAt: input.scheduledAt, version: nextVersion })
+        .where(
+          and(eq(pgRunBatches.id, input.batchId), eq(pgRunBatches.version, batchState.version)),
+        )
+        .returning({ id: pgRunBatches.id });
+      if (!updatedBatch) {
+        throw new DomainError("RUN_BATCH_VERSION_CONFLICT", "执行批次已被并发修改。");
+      }
+      if (batchState.status !== status) {
+        await transaction.insert(pgRunBatchStatusEvents).values({
+          id: input.eventId ?? input.decisions[0]?.assignmentId ?? input.batchId,
+          batchId: input.batchId,
+          fromStatus: batchState.status,
+          toStatus: status,
+          batchVersion: nextVersion,
+          reason: "scheduling.updated",
+          recordedAt: input.scheduledAt,
+        });
+      }
       return accepted;
     });
   }
@@ -353,12 +452,20 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
       .where(eq(pgExecutionRuns.batchId, row.id));
     return {
       id: row.id,
+      projectId: row.projectId,
+      ...(row.environmentId ? { environmentId: row.environmentId } : {}),
+      ...(row.environmentVersionId ? { environmentVersionId: row.environmentVersionId } : {}),
       suiteId: row.suiteId,
       suiteName: row.suiteName,
       suiteVersion: row.suiteVersion,
       status: row.status,
       retryLimit: row.retryLimit,
+      queueTimeoutMs: row.queueTimeoutMs,
+      claimTimeoutMs: row.claimTimeoutMs,
+      executionTimeoutMs: row.executionTimeoutMs,
+      uploadTimeoutMs: row.uploadTimeoutMs,
       environmentVariables: environmentVariables(row.environmentJson),
+      secretBindings: secretBindings(row.secretBindingsJson),
       selectedRunnerIds: selectedRunners.map((runner) => runner.runnerId),
       totalRuns: row.totalRuns,
       queuedRuns: byStatus.get("queued") ?? 0,
@@ -370,6 +477,7 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
       ).length,
       timedOutRuns: runOutcomes.filter((run) => run.terminalOutcome === "timed_out").length,
       cancelledRuns: byStatus.get("cancelled") ?? 0,
+      version: row.version,
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
     };
@@ -394,6 +502,20 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
   }
 }
 
+function toRunBatchStatusEvent(
+  row: typeof pgRunBatchStatusEvents.$inferSelect,
+): RunBatchStatusEvent {
+  return {
+    id: row.id,
+    batchId: row.batchId,
+    ...(row.fromStatus ? { fromStatus: row.fromStatus } : {}),
+    toStatus: row.toStatus,
+    batchVersion: row.batchVersion,
+    reason: row.reason,
+    recordedAt: row.recordedAt,
+  };
+}
+
 function executionSpec(input: {
   attemptId: string;
   executionRunId: string;
@@ -401,6 +523,9 @@ function executionSpec(input: {
   className: string;
   source: { id: string; sha256: string; sizeBytes: number };
   environment: ExecutionEnvironmentVariable[];
+  secretBindings: ExecutionEnvironmentSecretBinding[];
+  executionTimeoutMs: number;
+  uploadTimeoutMs: number;
 }): ExecutionSpec {
   return {
     schemaVersion: 1,
@@ -410,6 +535,7 @@ function executionSpec(input: {
     batchId: input.batchId,
     className: input.className,
     methodDescriptors: [],
+    parameters: {},
     inputs: [
       {
         inputId: input.source.id,
@@ -421,18 +547,24 @@ function executionSpec(input: {
       },
     ],
     environment: input.environment.map((entry) => ({ ...entry, secret: false })),
-    requiredLabels: ["java", "testng"],
-    requiredCapabilities: ["executor:testng-v1"],
-    timeoutMs: 3_600_000,
-    uploadTimeoutMs: 600_000,
-    resourceLimits: {
-      cpuMillicores: 2_000,
-      memoryBytes: 2_147_483_648,
-      diskBytes: 10_737_418_240,
-      processCount: 256,
-      logBytes: 1_073_741_824,
-      artifactBytes: 10_737_418_240,
+    secretReferences: input.secretBindings,
+    runtimeRequirements: {
+      os: "linux",
+      architectures: ["amd64", "arm64"],
+      minimumJavaMajorVersion: MINIMUM_JAVA_MAJOR_VERSION,
+      testNgVersion: SUPPORTED_TESTNG_VERSION,
     },
+    requiredLabels: [...REQUIRED_EXECUTION_LABELS],
+    requiredCapabilities: [
+      ...REQUIRED_EXECUTION_CAPABILITIES,
+      ...(input.secretBindings.length > 0 ? [ON_DEMAND_SECRET_CAPABILITY] : []),
+    ],
+    artifactRules: [
+      { pattern: "reports/testng/**", required: false, mediaType: "application/xml" },
+    ],
+    timeoutMs: input.executionTimeoutMs,
+    uploadTimeoutMs: input.uploadTimeoutMs,
+    resourceLimits: { ...DEFAULT_EXECUTION_RESOURCE_LIMITS },
   };
 }
 
@@ -452,8 +584,17 @@ function environmentVariables(json: string): ExecutionEnvironmentVariable[] {
   );
 }
 
-function supportsTestNGExecution(capabilities: readonly string[]): boolean {
-  return capabilities.includes("executor:testng-v1");
+function secretBindings(json: string): ExecutionEnvironmentSecretBinding[] {
+  const parsed: unknown = JSON.parse(json);
+  if (!Array.isArray(parsed)) return [];
+  return parsed.filter(
+    (value): value is ExecutionEnvironmentSecretBinding =>
+      typeof value === "object" &&
+      value !== null &&
+      typeof (value as { name?: unknown }).name === "string" &&
+      typeof (value as { secretId?: unknown }).secretId === "string" &&
+      typeof (value as { secretVersionId?: unknown }).secretVersionId === "string",
+  );
 }
 
 function toExecutionRun(row: typeof pgExecutionRuns.$inferSelect): ExecutionRun {
@@ -469,6 +610,7 @@ function toExecutionRun(row: typeof pgExecutionRuns.$inferSelect): ExecutionRun 
     attemptCount: row.attemptCount,
     ...(row.schedulingScore === null ? {} : { schedulingScore: row.schedulingScore }),
     ...(row.terminalOutcome ? { terminalOutcome: row.terminalOutcome } : {}),
+    ...(row.terminalReasonCode ? { terminalReasonCode: row.terminalReasonCode } : {}),
     ...(row.cancelRequestedAt ? { cancelRequestedAt: row.cancelRequestedAt } : {}),
     version: row.version,
     createdAt: row.createdAt,
@@ -491,6 +633,20 @@ function toRunAttempt(row: typeof pgRunAttempts.$inferSelect): RunAttempt {
     ...(row.outcome ? { outcome: row.outcome } : {}),
     ...(row.resultCode ? { resultCode: row.resultCode } : {}),
     ...(row.resultSummary ? { resultSummary: row.resultSummary } : {}),
+    ...(row.durationMs === null ? {} : { durationMs: row.durationMs }),
+    ...(row.testNgResultJson ? { testNg: storedTestNgResult(row.testNgResultJson, row.id) } : {}),
     createdAt: row.createdAt,
   };
+}
+
+function storedTestNgResult(json: string, attemptId: string): NonNullable<RunAttempt["testNg"]> {
+  try {
+    return testNgResultDetailsSchema.parse(JSON.parse(json));
+  } catch (error) {
+    throw new DomainError(
+      "STORED_TESTNG_RESULT_INVALID",
+      `执行尝试 ${attemptId} 的 TestNG 结果无法读取。`,
+      { cause: error },
+    );
+  }
 }

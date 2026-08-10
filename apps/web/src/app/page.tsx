@@ -32,14 +32,20 @@ function formatDate(value: string): string {
 }
 
 export default async function DashboardPage() {
-  await requirePagePermission("case.read");
+  const identity = await requirePagePermission("case.read");
   const services = await getPlatformServices();
   const { catalog, config } = services;
+  let runProjectIds: string[] | undefined = [];
+  try {
+    runProjectIds = services.identityAccess.projectScope(identity, "run.read");
+  } catch {
+    // The dashboard remains useful to asset-only roles without exposing execution data.
+  }
   const [summary, recentSources, runners, recentBatches] = await Promise.all([
     catalog.getDashboardSummary(),
     catalog.listRecentSources(5),
     services.runnerControl.list(),
-    services.runBatches.list(5),
+    services.runBatches.list(5, runProjectIds),
   ]);
   const onlineRunners = runners.filter((runner) => runner.state === "online").length;
   const busyRunners = runners.filter((runner) => runner.busySlots > 0).length;

@@ -34,6 +34,8 @@ describe("LocalObjectStore", () => {
     expect(new Set(results.map((result) => result.objectKey))).toEqual(
       new Set([`jars/${sha256.slice(0, 2)}/${sha256}.jar`]),
     );
+    await expect(store.exists(results[0]?.objectKey ?? "missing")).resolves.toBe(true);
+    await expect(store.exists("jars/00/missing.jar")).resolves.toBe(false);
     await expect(
       readFile(resolve(directory, "objects", results[0]?.objectKey ?? "missing")),
     ).resolves.toEqual(Buffer.from(content));
@@ -48,4 +50,56 @@ describe("LocalObjectStore", () => {
       Buffer.from(content),
     );
   });
+
+  it("streams an artifact and rejects a mismatched digest", async () => {
+    const directory = await mkdtemp(resolve(tmpdir(), "autoforge-artifacts-"));
+    temporaryDirectories.push(directory);
+    const content = new TextEncoder().encode("testng report");
+    const sha256 = createHash("sha256").update(content).digest("hex");
+    const store = new LocalObjectStore(directory);
+
+    await expect(
+      store.prepareArtifactUpload({
+        attemptId: "attempt-1",
+        artifactId: "artifact-1",
+        sha256,
+        sizeBytes: content.byteLength,
+        mediaType: "application/xml",
+      }),
+    ).resolves.toEqual({ kind: "control-plane" });
+
+    const stored = await store.putArtifact({
+      attemptId: "attempt-1",
+      artifactId: "artifact-1",
+      sha256,
+      sizeBytes: content.byteLength,
+      mediaType: "application/xml",
+      content: chunks(content),
+    });
+    await expect(store.read(stored.objectKey)).resolves.toEqual(Buffer.from(content));
+    await expect(
+      store.verifyArtifactUpload({
+        attemptId: "attempt-1",
+        artifactId: "artifact-1",
+        sha256,
+        sizeBytes: content.byteLength,
+        mediaType: "application/xml",
+      }),
+    ).resolves.toMatchObject({ objectKey: stored.objectKey });
+    await expect(
+      store.putArtifact({
+        attemptId: "attempt-2",
+        artifactId: "artifact-2",
+        sha256: "0".repeat(64),
+        sizeBytes: content.byteLength,
+        mediaType: "application/xml",
+        content: chunks(content),
+      }),
+    ).rejects.toThrow("SHA-256");
+  });
 });
+
+async function* chunks(content: Uint8Array): AsyncGenerator<Uint8Array> {
+  yield content.subarray(0, 3);
+  yield content.subarray(3);
+}

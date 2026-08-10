@@ -1,0 +1,10 @@
+AutoForge
+Copyright 2026 AutoForge contributors
+
+This product includes software developed by third parties. Their license
+identifiers, names, and exact versions are listed in THIRD_PARTY_LICENSES.json.
+Third-party components remain subject to their respective license terms.
+
+Release publishers must distribute LICENSE, NOTICE, THIRD_PARTY_LICENSES.json,
+the generated SBOMs, and any license texts or source-code offers required by
+the concrete binaries included in that release.

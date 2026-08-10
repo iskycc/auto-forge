@@ -32,6 +32,8 @@ type Config struct {
 	HasBootstrap   bool
 	Toolchain      ToolchainConfig
 	Claim          ClaimConfig
+	Spool          SpoolConfig
+	Resources      ResourceConfig
 	Terminal       TerminalConfig
 }
 
@@ -41,6 +43,15 @@ func (configuration Config) RunnerLabels() []string {
 		result = append(result, "java", "testng")
 	}
 	return labels(strings.Join(result, ","))
+}
+
+func (configuration Config) Capabilities() []string {
+	result := configuration.Toolchain.Capabilities()
+	result = append(result, "secrets:on-demand-v1")
+	if configuration.Resources.Enabled() {
+		result = append(result, "isolation:cgroup-v2")
+	}
+	return result
 }
 
 type ToolchainConfig struct {
@@ -56,6 +67,20 @@ type ClaimConfig struct {
 	ShutdownGracePeriod time.Duration
 }
 
+type SpoolConfig struct {
+	MaximumBytes int64
+	Retention    time.Duration
+	UploadBatch  int
+}
+
+type ResourceConfig struct {
+	CgroupRoot string
+}
+
+func (configuration ResourceConfig) Enabled() bool {
+	return configuration.CgroupRoot != ""
+}
+
 func (configuration ToolchainConfig) Enabled() bool {
 	return configuration.JavaExecutable != "" && len(configuration.Classpath) > 0
 }
@@ -69,6 +94,17 @@ func (configuration ToolchainConfig) Capabilities() []string {
 		"java:" + configuration.JavaVersion,
 		"testng:" + configuration.TestNGVersion,
 	}
+}
+
+func (configuration ToolchainConfig) Supports(
+	minimumJavaMajorVersion int,
+	testNGVersion string,
+) bool {
+	if !configuration.Enabled() || configuration.TestNGVersion != testNGVersion {
+		return false
+	}
+	javaMajor, err := majorJavaVersion(configuration.JavaVersion)
+	return err == nil && javaMajor >= minimumJavaMajorVersion
 }
 
 type TerminalConfig struct {
@@ -114,6 +150,14 @@ func Load(lookup LookupEnvironment) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	spool, err := spoolConfig(lookup)
+	if err != nil {
+		return Config{}, err
+	}
+	resources, err := resourceConfig(lookup)
+	if err != nil {
+		return Config{}, err
+	}
 	terminal, err := terminalConfig(lookup, dataDirectory)
 	if err != nil {
 		return Config{}, err
@@ -129,8 +173,41 @@ func Load(lookup LookupEnvironment) (Config, error) {
 		HasBootstrap:   bootstrapToken != "",
 		Toolchain:      toolchain,
 		Claim:          claim,
+		Spool:          spool,
+		Resources:      resources,
 		Terminal:       terminal,
 	}, nil
+}
+
+func spoolConfig(lookup LookupEnvironment) (SpoolConfig, error) {
+	maximumBytes, err := boundedInt64(
+		environmentValue(lookup, "AUTOFORGE_AGENT_SPOOL_MAX_BYTES"),
+		512<<20,
+		1<<20,
+		100<<30,
+	)
+	if err != nil {
+		return SpoolConfig{}, fmt.Errorf("AUTOFORGE_AGENT_SPOOL_MAX_BYTES is invalid: %w", err)
+	}
+	retention, err := boundedDuration(
+		environmentValue(lookup, "AUTOFORGE_AGENT_SPOOL_RETENTION"),
+		7*24*time.Hour,
+		time.Hour,
+		365*24*time.Hour,
+	)
+	if err != nil {
+		return SpoolConfig{}, fmt.Errorf("AUTOFORGE_AGENT_SPOOL_RETENTION is invalid: %w", err)
+	}
+	uploadBatch, err := boundedInteger(
+		environmentValue(lookup, "AUTOFORGE_AGENT_LOG_UPLOAD_BATCH"),
+		128,
+		1,
+		256,
+	)
+	if err != nil {
+		return SpoolConfig{}, fmt.Errorf("AUTOFORGE_AGENT_LOG_UPLOAD_BATCH is invalid: %w", err)
+	}
+	return SpoolConfig{MaximumBytes: maximumBytes, Retention: retention, UploadBatch: uploadBatch}, nil
 }
 
 func claimConfig(lookup LookupEnvironment) (ClaimConfig, error) {
@@ -169,6 +246,10 @@ func toolchainConfig(lookup LookupEnvironment) (ToolchainConfig, error) {
 	if len(javaVersion) > 100 || len(testNGVersion) > 100 {
 		return ToolchainConfig{}, errors.New("Java and TestNG versions must not exceed 100 bytes")
 	}
+	javaMajor, err := majorJavaVersion(javaVersion)
+	if err != nil || javaMajor < 11 {
+		return ToolchainConfig{}, errors.New("AUTOFORGE_AGENT_JAVA_VERSION must identify Java 11 or newer")
+	}
 	if !filepath.IsAbs(javaExecutable) {
 		return ToolchainConfig{}, errors.New("AUTOFORGE_AGENT_JAVA_EXECUTABLE must be an absolute path")
 	}
@@ -187,6 +268,20 @@ func toolchainConfig(lookup LookupEnvironment) (ToolchainConfig, error) {
 		JavaVersion:    javaVersion,
 		TestNGVersion:  testNGVersion,
 	}, nil
+}
+
+func majorJavaVersion(version string) (int, error) {
+	parts := strings.FieldsFunc(version, func(character rune) bool {
+		return character < '0' || character > '9'
+	})
+	if len(parts) == 0 {
+		return 0, errors.New("Java version does not contain a major number")
+	}
+	majorIndex := 0
+	if parts[0] == "1" && len(parts) > 1 {
+		majorIndex = 1
+	}
+	return strconv.Atoi(parts[majorIndex])
 }
 
 func terminalConfig(lookup LookupEnvironment, dataDirectory string) (TerminalConfig, error) {
@@ -314,6 +409,17 @@ func boundedInteger(raw string, fallback, minimum, maximum int) (int, error) {
 		return fallback, nil
 	}
 	parsed, err := strconv.Atoi(raw)
+	if err != nil || parsed < minimum || parsed > maximum {
+		return 0, fmt.Errorf("must be an integer from %d to %d", minimum, maximum)
+	}
+	return parsed, nil
+}
+
+func boundedInt64(raw string, fallback, minimum, maximum int64) (int64, error) {
+	if raw == "" {
+		return fallback, nil
+	}
+	parsed, err := strconv.ParseInt(raw, 10, 64)
 	if err != nil || parsed < minimum || parsed > maximum {
 		return 0, fmt.Errorf("must be an integer from %d to %d", minimum, maximum)
 	}

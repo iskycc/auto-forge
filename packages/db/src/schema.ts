@@ -299,6 +299,93 @@ export const runnerBootstrapUses = sqliteTable("runner_bootstrap_uses", {
   usedAt: text("used_at").notNull(),
 });
 
+export const executionEnvironments = sqliteTable(
+  "execution_environments",
+  {
+    id: text("id").primaryKey(),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "restrict" }),
+    name: text("name").notNull(),
+    normalizedName: text("normalized_name").notNull(),
+    description: text("description").notNull(),
+    status: text("status", { enum: ["active", "disabled"] }).notNull(),
+    currentVersion: integer("current_version").notNull(),
+    revision: integer("revision").notNull().default(1),
+    createdBy: text("created_by")
+      .notNull()
+      .references(() => users.id, { onDelete: "restrict" }),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("execution_environments_project_name_uq").on(table.projectId, table.normalizedName),
+    index("execution_environments_project_status_idx").on(table.projectId, table.status),
+  ],
+);
+
+export const executionEnvironmentVersions = sqliteTable(
+  "execution_environment_versions",
+  {
+    id: text("id").primaryKey(),
+    environmentId: text("environment_id")
+      .notNull()
+      .references(() => executionEnvironments.id, { onDelete: "restrict" }),
+    version: integer("version").notNull(),
+    variablesJson: text("variables_json").notNull(),
+    secretBindingsJson: text("secret_bindings_json").notNull().default("[]"),
+    createdBy: text("created_by")
+      .notNull()
+      .references(() => users.id, { onDelete: "restrict" }),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("execution_environment_versions_number_uq").on(table.environmentId, table.version),
+  ],
+);
+
+export const executionSecrets = sqliteTable(
+  "execution_secrets",
+  {
+    id: text("id").primaryKey(),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "restrict" }),
+    name: text("name").notNull(),
+    normalizedName: text("normalized_name").notNull(),
+    description: text("description").notNull(),
+    status: text("status", { enum: ["active", "disabled"] }).notNull(),
+    currentVersion: integer("current_version").notNull(),
+    revision: integer("revision").notNull().default(1),
+    createdBy: text("created_by")
+      .notNull()
+      .references(() => users.id, { onDelete: "restrict" }),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("execution_secrets_project_name_uq").on(table.projectId, table.normalizedName),
+    index("execution_secrets_project_status_idx").on(table.projectId, table.status),
+  ],
+);
+
+export const executionSecretVersions = sqliteTable(
+  "execution_secret_versions",
+  {
+    id: text("id").primaryKey(),
+    secretId: text("secret_id")
+      .notNull()
+      .references(() => executionSecrets.id, { onDelete: "restrict" }),
+    version: integer("version").notNull(),
+    valueEncrypted: text("value_encrypted").notNull(),
+    createdBy: text("created_by")
+      .notNull()
+      .references(() => users.id, { onDelete: "restrict" }),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [uniqueIndex("execution_secret_versions_number_uq").on(table.secretId, table.version)],
+);
+
 export const runBatches = sqliteTable(
   "run_batches",
   {
@@ -310,17 +397,52 @@ export const runBatches = sqliteTable(
       enum: ["queued", "dispatching", "scheduled", "running", "succeeded", "failed", "cancelled"],
     }).notNull(),
     retryLimit: integer("retry_limit").notNull(),
+    queueTimeoutMs: integer("queue_timeout_ms").notNull().default(86_400_000),
+    claimTimeoutMs: integer("claim_timeout_ms").notNull().default(300_000),
+    executionTimeoutMs: integer("execution_timeout_ms").notNull().default(3_600_000),
+    uploadTimeoutMs: integer("upload_timeout_ms").notNull().default(600_000),
     environmentJson: text("environment_json").notNull(),
+    secretBindingsJson: text("secret_bindings_json").notNull().default("[]"),
     totalRuns: integer("total_runs").notNull(),
     projectId: text("project_id").notNull().default("00000000-0000-7000-8000-000000000001"),
+    environmentId: text("environment_id").references(() => executionEnvironments.id, {
+      onDelete: "restrict",
+    }),
+    environmentVersionId: text("environment_version_id").references(
+      () => executionEnvironmentVersions.id,
+      { onDelete: "restrict" },
+    ),
     priority: integer("priority").notNull().default(0),
     cancelRequestedAt: text("cancel_requested_at"),
+    version: integer("version").notNull().default(1),
     createdAt: text("created_at").notNull(),
     updatedAt: text("updated_at").notNull(),
   },
   (table) => [
     index("run_batches_status_created_at_idx").on(table.status, table.createdAt),
     index("run_batches_suite_id_idx").on(table.suiteId),
+  ],
+);
+
+export const runBatchStatusEvents = sqliteTable(
+  "run_batch_status_events",
+  {
+    id: text("id").primaryKey(),
+    batchId: text("batch_id")
+      .notNull()
+      .references(() => runBatches.id, { onDelete: "cascade" }),
+    fromStatus: text("from_status", {
+      enum: ["queued", "dispatching", "scheduled", "running", "succeeded", "failed", "cancelled"],
+    }),
+    toStatus: text("to_status", {
+      enum: ["queued", "dispatching", "scheduled", "running", "succeeded", "failed", "cancelled"],
+    }).notNull(),
+    batchVersion: integer("batch_version").notNull(),
+    reason: text("reason").notNull(),
+    recordedAt: text("recorded_at").notNull(),
+  },
+  (table) => [
+    index("run_batch_status_events_batch_idx").on(table.batchId, table.recordedAt, table.id),
   ],
 );
 
@@ -364,9 +486,11 @@ export const executionRuns = sqliteTable(
     terminalOutcome: text("terminal_outcome", {
       enum: ["succeeded", "failed", "timed_out", "cancelled"],
     }),
+    terminalReasonCode: text("terminal_reason_code"),
     cancelRequestedAt: text("cancel_requested_at"),
     queueDeadlineAt: text("queue_deadline_at"),
     executionTimeoutMs: integer("execution_timeout_ms").notNull().default(3_600_000),
+    uploadTimeoutMs: integer("upload_timeout_ms").notNull().default(600_000),
     assignedAt: text("assigned_at"),
     updatedAt: text("updated_at").notNull(),
   },
@@ -395,11 +519,14 @@ export const runAttempts = sqliteTable(
     createdAt: text("created_at").notNull(),
     version: integer("version").notNull().default(1),
     startedAt: text("started_at"),
+    uploadStartedAt: text("upload_started_at"),
     finishedAt: text("finished_at"),
     outcome: text("outcome", { enum: ["succeeded", "failed", "timed_out", "cancelled"] }),
     resultCode: text("result_code"),
     resultSummary: text("result_summary"),
     completionDigest: text("completion_digest"),
+    durationMs: integer("duration_ms"),
+    testNgResultJson: text("testng_result_json"),
   },
   (table) => [
     uniqueIndex("run_attempts_run_number_uq").on(table.executionRunId, table.attemptNumber),
@@ -658,7 +785,12 @@ export const schema = {
   caseSuiteItems,
   runners,
   runnerBootstrapUses,
+  executionEnvironments,
+  executionEnvironmentVersions,
+  executionSecrets,
+  executionSecretVersions,
   runBatches,
+  runBatchStatusEvents,
   runBatchRunners,
   executionRuns,
   runAttempts,

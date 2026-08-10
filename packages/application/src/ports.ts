@@ -1,13 +1,18 @@
 import type {
   AssignmentDto,
+  ArtifactDeclaration,
+  AttemptEventPage,
   CompleteAttemptResponse,
   CompletionResult,
   ExecutionSpec,
+  LogChunk,
   JarInspection,
+  JobEnvelope,
   ObjectEntry,
   ReconcileAttemptsInput,
   ReconcileAttemptsResponse,
   RenewLeaseResponse,
+  UploadLogChunksResponse,
   TestNgClassCandidate,
 } from "@autoforge/contracts";
 import type {
@@ -18,7 +23,15 @@ import type {
   CaseSource,
   CaseSuite,
   CaseSuiteDetails,
+  ExecutionEnvironment,
+  ExecutionEnvironmentDetails,
+  ExecutionEnvironmentReference,
+  ExecutionEnvironmentSecretBinding,
   ExecutionEnvironmentVariable,
+  ExecutionEnvironmentVersion,
+  ExecutionEnvironmentStatus,
+  ExecutionSecret,
+  ExecutionSecretStatus,
   ExecutionRun,
   ExternalIdentity,
   Permission,
@@ -275,6 +288,7 @@ export interface ExecutionControlRepository {
     resultDigest: string;
     result: CompletionResult;
     eventId: string;
+    auditEventId?: string;
     acceptedAt: string;
   }): Promise<CompleteAttemptResponse>;
   reconcile(input: {
@@ -289,6 +303,94 @@ export interface ExecutionControlRepository {
     leaseTokenHash: string;
     now: string;
   }): Promise<{ objectKey: string; sizeBytes: number; sha256: string }>;
+  resolveAttemptSecrets(input: {
+    runnerId: string;
+    attemptId: string;
+    leaseTokenHash: string;
+    now: string;
+  }): Promise<
+    Array<{
+      name: string;
+      secretId: string;
+      secretVersionId: string;
+      valueEncrypted: string;
+    }>
+  >;
+  acquireAttemptSecrets(input: {
+    runnerId: string;
+    attemptId: string;
+    leaseTokenHash: string;
+    now: string;
+  }): Promise<
+    Array<{
+      name: string;
+      secretId: string;
+      secretVersionId: string;
+      valueEncrypted: string;
+    }>
+  >;
+  recordAttemptSecretAccess(input: {
+    id: string;
+    runnerId: string;
+    attemptId: string;
+    requestId: string;
+    secretIds: string[];
+    recordedAt: string;
+  }): Promise<void>;
+  appendLogChunks(input: {
+    runnerId: string;
+    attemptId: string;
+    leaseTokenHash: string;
+    chunks: LogChunk[];
+    receivedAt: string;
+  }): Promise<UploadLogChunksResponse>;
+  resolveAttemptProjectId(attemptId: string): Promise<string | null>;
+  resolveExecutionRunProjectId(runId: string): Promise<string | null>;
+  listLogChunks(input: {
+    attemptId: string;
+    stream: LogChunk["stream"];
+    afterSequence: number;
+    limit: number;
+    query?: string;
+  }): Promise<{
+    items: LogChunk[];
+    acknowledgedSequence: number;
+    nextSequence?: number;
+    truncated: boolean;
+  }>;
+  listAttemptEvents(input: {
+    attemptId: string;
+    afterEventId?: string;
+    limit: number;
+  }): Promise<AttemptEventPage>;
+  declareArtifacts(input: {
+    runnerId: string;
+    attemptId: string;
+    leaseTokenHash: string;
+    artifacts: ArtifactDeclaration[];
+    declaredAt: string;
+  }): Promise<Array<ArtifactDeclaration & { status: "declared" | "uploaded" }>>;
+  resolveArtifactUpload(input: {
+    runnerId: string;
+    attemptId: string;
+    artifactId: string;
+    leaseTokenHash: string;
+    now: string;
+  }): Promise<ArtifactDeclaration & { status: "declared" | "uploaded"; objectKey?: string }>;
+  markArtifactUploaded(input: {
+    attemptId: string;
+    artifactId: string;
+    objectKey: string;
+    uploadedAt: string;
+  }): Promise<void>;
+  listArtifacts(attemptId: string): Promise<
+    Array<
+      ArtifactDeclaration & {
+        status: "declared" | "uploaded" | "rejected";
+        objectKey?: string;
+      }
+    >
+  >;
   recoverExpired(input: { now: string; eventIds: string[]; limit: number }): Promise<number>;
   cancelBatch(input: {
     batchId: string;
@@ -354,9 +456,31 @@ export type ObjectWriteResult = {
   created: boolean;
 };
 
+export type ArtifactUploadTarget =
+  { kind: "control-plane" } | { kind: "direct"; uploadUrl: string; objectKey: string };
+
+export type ArtifactObjectIdentity = {
+  attemptId: string;
+  artifactId: string;
+  sha256: string;
+  sizeBytes: number;
+  mediaType: string;
+};
+
 export interface JarObjectStorePort {
   putJar(sha256: string, content: Uint8Array): Promise<ObjectWriteResult>;
+  putArtifact(input: {
+    attemptId: string;
+    artifactId: string;
+    sha256: string;
+    sizeBytes: number;
+    mediaType: string;
+    content: AsyncIterable<Uint8Array>;
+  }): Promise<ObjectWriteResult>;
+  prepareArtifactUpload(input: ArtifactObjectIdentity): Promise<ArtifactUploadTarget>;
+  verifyArtifactUpload(input: ArtifactObjectIdentity): Promise<ObjectWriteResult>;
   delete(objectKey: string): Promise<void>;
+  exists(objectKey: string): Promise<boolean>;
   list(input: { cursor?: string; limit: number; prefix?: string }): Promise<{
     items: ObjectEntry[];
     nextCursor?: string;
@@ -503,13 +627,181 @@ export interface RunnerCredentialPort {
   verifyBootstrapToken(value: string): boolean;
 }
 
+export type ClaimedJob = {
+  job: JobEnvelope;
+  deliveryId: string;
+  leaseExpiresAt: string;
+  deliveryAttempt: number;
+};
+
+export interface JobQueuePort {
+  publish(job: JobEnvelope, availableAt?: string): Promise<"published" | "duplicate">;
+  claim(input: {
+    workerId: string;
+    now: string;
+    leaseExpiresAt: string;
+    limit: number;
+  }): Promise<ClaimedJob[]>;
+  renew(input: {
+    workerId: string;
+    deliveryId: string;
+    now: string;
+    leaseExpiresAt: string;
+  }): Promise<boolean>;
+  acknowledge(input: {
+    workerId: string;
+    deliveryId: string;
+    acknowledgedAt: string;
+  }): Promise<void>;
+  reject(input: {
+    workerId: string;
+    deliveryId: string;
+    errorCode: string;
+    errorSummary: string;
+    retryAt?: string;
+    rejectedAt: string;
+  }): Promise<"retrying" | "dead_letter">;
+  recoverExpired(now: string, limit: number): Promise<number>;
+  depth(): Promise<{ available: number; leased: number; deadLetter: number }>;
+  ready(): Promise<void>;
+  close(): Promise<void>;
+}
+
+export interface CachePort {
+  get(
+    namespace: string,
+    tenantId: string,
+    schemaVersion: number,
+    key: string,
+  ): Promise<string | null>;
+  set(input: {
+    namespace: string;
+    tenantId: string;
+    schemaVersion: number;
+    key: string;
+    value: string;
+    ttlMs: number;
+  }): Promise<void>;
+  delete(namespace: string, tenantId: string, schemaVersion: number, key: string): Promise<void>;
+  close(): Promise<void>;
+}
+
+export type CreateExecutionEnvironmentRecord = {
+  id: string;
+  versionId: string;
+  projectId: string;
+  name: string;
+  normalizedName: string;
+  description: string;
+  variables: ExecutionEnvironmentVariable[];
+  secretBindings: Array<{ name: string; secretId: string; secretVersionId?: string }>;
+  actorId: string;
+  recordedAt: string;
+};
+
+export type UpdateExecutionEnvironmentRecord = {
+  environmentId: string;
+  expectedRevision: number;
+  actorId: string;
+  recordedAt: string;
+  name?: string;
+  normalizedName?: string;
+  description?: string;
+  nextVersion?: {
+    id: string;
+    variables?: ExecutionEnvironmentVariable[];
+    secretBindings?: Array<{ name: string; secretId: string }>;
+  };
+};
+
+export interface ExecutionEnvironmentRepository {
+  create(record: CreateExecutionEnvironmentRecord): Promise<ExecutionEnvironmentDetails>;
+  list(projectIds?: readonly string[]): Promise<ExecutionEnvironment[]>;
+  get(
+    environmentId: string,
+    projectIds?: readonly string[],
+  ): Promise<ExecutionEnvironmentDetails | null>;
+  getVersion(
+    versionId: string,
+    projectId: string,
+  ): Promise<{
+    environment: ExecutionEnvironment;
+    version: ExecutionEnvironmentVersion;
+  } | null>;
+  listVersions(
+    environmentId: string,
+    projectIds?: readonly string[],
+  ): Promise<ExecutionEnvironmentVersion[]>;
+  listReferences(
+    environmentId: string,
+    projectIds?: readonly string[],
+    limit?: number,
+  ): Promise<{ items: ExecutionEnvironmentReference[]; total: number }>;
+  assertSecretsAvailableForExecution(
+    projectId: string,
+    bindings: readonly ExecutionEnvironmentSecretBinding[],
+  ): Promise<void>;
+  findUnavailableSecretsForExecution(
+    projectId: string,
+    bindings: readonly ExecutionEnvironmentSecretBinding[],
+  ): Promise<ExecutionEnvironmentSecretBinding[]>;
+  update(record: UpdateExecutionEnvironmentRecord): Promise<ExecutionEnvironmentDetails>;
+  setStatus(input: {
+    environmentId: string;
+    expectedRevision: number;
+    status: ExecutionEnvironmentStatus;
+    recordedAt: string;
+  }): Promise<ExecutionEnvironmentDetails>;
+}
+
+export type CreateExecutionSecretRecord = {
+  id: string;
+  versionId: string;
+  projectId: string;
+  name: string;
+  normalizedName: string;
+  description: string;
+  valueEncrypted: string;
+  actorId: string;
+  recordedAt: string;
+};
+
+export interface ExecutionSecretRepository {
+  create(record: CreateExecutionSecretRecord): Promise<ExecutionSecret>;
+  list(projectIds?: readonly string[]): Promise<ExecutionSecret[]>;
+  get(secretId: string, projectIds?: readonly string[]): Promise<ExecutionSecret | null>;
+  rotate(input: {
+    secretId: string;
+    versionId: string;
+    expectedRevision: number;
+    valueEncrypted: string;
+    actorId: string;
+    recordedAt: string;
+  }): Promise<ExecutionSecret>;
+  setStatus(input: {
+    secretId: string;
+    expectedRevision: number;
+    status: ExecutionSecretStatus;
+    recordedAt: string;
+  }): Promise<ExecutionSecret>;
+}
+
 export type CreateRunBatchRecord = {
   id: string;
+  projectId?: string;
+  environmentId?: string;
+  environmentVersionId?: string;
+  eventId?: string;
   suiteId: string;
   suiteName: string;
   suiteVersion: number;
   retryLimit: number;
+  queueTimeoutMs?: number;
+  claimTimeoutMs?: number;
+  executionTimeoutMs?: number;
+  uploadTimeoutMs?: number;
   environmentVariables: ExecutionEnvironmentVariable[];
+  secretBindings?: ExecutionEnvironmentSecretBinding[];
   runnerIds: string[];
   runs: Array<{
     id: string;
@@ -518,6 +810,7 @@ export type CreateRunBatchRecord = {
     displayName: string;
     className: string;
   }>;
+  dispatchJob?: JobEnvelope;
   createdAt: string;
 };
 
@@ -529,6 +822,7 @@ export type SchedulingSnapshot = {
 
 export type ReserveSchedulingAssignmentsInput = {
   batchId: string;
+  eventId?: string;
   decisions: Array<SchedulingDecision & { attemptId: string; assignmentId: string }>;
   thresholds: SchedulingThresholds;
   offlineBefore: string;
@@ -538,8 +832,8 @@ export type ReserveSchedulingAssignmentsInput = {
 
 export interface RunBatchRepository {
   create(record: CreateRunBatchRecord): Promise<RunBatchDetails>;
-  list(limit: number): Promise<RunBatch[]>;
-  get(batchId: string): Promise<RunBatchDetails | null>;
+  list(limit: number, projectIds?: readonly string[]): Promise<RunBatch[]>;
+  get(batchId: string, projectIds?: readonly string[]): Promise<RunBatchDetails | null>;
   listSchedulableBatchIds(limit: number): Promise<string[]>;
   listSchedulableBatchIdsForRunner(runnerId: string, limit: number): Promise<string[]>;
   getSchedulingSnapshot(batchId: string, offlineBefore: string): Promise<SchedulingSnapshot | null>;

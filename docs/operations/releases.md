@@ -88,7 +88,7 @@ AUTOFORGE_AGENT_TESTNG_VERSION=7.11.0 \
 ./autoforge-agent-0.2.2-amd64 start
 ```
 
-当前 `start` 已实现注册、资源心跳、assignment claim、lease 续租、启动 reconcile、JAR 下载校验、离线 TestNG 类级执行、取消/进程组清理和完成上报。Java/TestNG 及其依赖必须预置，Agent 不会联网下载；未配置四项工具链变量时不会声明 TestNG capability，也不会进入 TestNG 调度候选。日志确认重传、产物上传、方法级精确选择和 Linux 资源硬限制仍未实现。
+当前 `start` 已实现注册、资源心跳、assignment claim、lease 续租、启动 reconcile、JAR 下载校验、离线 TestNG 类/方法执行与参数注入、cgroup v2/rlimit 资源限制、取消/进程组清理、日志确认重传、产物上传和完成上报。Java/TestNG 及其依赖必须预置，Agent 不会联网下载；未配置四项工具链变量时不会声明 TestNG capability，也不会进入 TestNG 调度候选。未获得 cgroup 委派时不声明隔离 capability；严格工作目录容量仍需专用文件系统或项目配额。
 
 ## 本地构建与验证
 

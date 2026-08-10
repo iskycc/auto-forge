@@ -1,9 +1,12 @@
 import type { ExecutionControlService } from "@autoforge/application";
 import {
+  acquireAttemptSecretsInputSchema,
   claimAssignmentsInputSchema,
   completeAttemptInputSchema,
+  declareArtifactsInputSchema,
   reconcileAttemptsInputSchema,
   renewLeaseInputSchema,
+  uploadLogChunksInputSchema,
   RUNNER_PROTOCOL_VERSION,
 } from "@autoforge/contracts";
 import { DomainError } from "@autoforge/domain";
@@ -52,6 +55,33 @@ export class RunnerProtocolController {
       runnerId,
       credential,
       reconcileAttemptsInputSchema.parse(rawInput),
+    );
+  }
+
+  uploadLogs(runnerId: string, credential: string, attemptId: string, rawInput: unknown) {
+    return this.executions.uploadLogs(
+      runnerId,
+      credential,
+      attemptId,
+      uploadLogChunksInputSchema.parse(rawInput),
+    );
+  }
+
+  acquireSecrets(runnerId: string, credential: string, attemptId: string, rawInput: unknown) {
+    return this.executions.acquireSecrets(
+      runnerId,
+      credential,
+      attemptId,
+      acquireAttemptSecretsInputSchema.parse(rawInput),
+    );
+  }
+
+  declareArtifacts(runnerId: string, credential: string, attemptId: string, rawInput: unknown) {
+    return this.executions.declareArtifacts(
+      runnerId,
+      credential,
+      attemptId,
+      declareArtifactsInputSchema.parse(rawInput),
     );
   }
 

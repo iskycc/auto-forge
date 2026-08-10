@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"regexp"
 	"runtime"
 	"strings"
 	"time"
@@ -23,10 +24,13 @@ import (
 )
 
 const (
-	protocolVersion       = 1
-	maximumResponseBytes  = 2 * 1024 * 1024
-	defaultRequestTimeout = 20 * time.Second
+	protocolVersion               = 1
+	maximumResponseBytes          = 2 * 1024 * 1024
+	defaultRequestTimeout         = 20 * time.Second
+	maximumSecretEnvironmentBytes = 64 << 10
 )
+
+var executionEnvironmentName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 type Client struct {
 	baseURL *url.URL
@@ -130,7 +134,7 @@ func (client *Client) Register(ctx context.Context, configuration config.Config,
 		SchemaVersion:   protocolVersion,
 		Name:            configuration.Name,
 		Labels:          configuration.RunnerLabels(),
-		Capabilities:    configuration.Toolchain.Capabilities(),
+		Capabilities:    configuration.Capabilities(),
 		MaxConcurrency:  configuration.MaxConcurrent,
 		OS:              runtime.GOOS,
 		Architecture:    runtime.GOARCH,
@@ -158,7 +162,7 @@ func (client *Client) Heartbeat(ctx context.Context, identity Identity, configur
 		SchemaVersion:    protocolVersion,
 		BusySlots:        busySlots,
 		Labels:           configuration.RunnerLabels(),
-		Capabilities:     configuration.Toolchain.Capabilities(),
+		Capabilities:     configuration.Capabilities(),
 		MaxConcurrency:   configuration.MaxConcurrent,
 		AgentVersion:     info.Version,
 		TerminalEnabled:  configuration.Terminal.Enabled,
@@ -188,7 +192,7 @@ func (client *Client) Claim(ctx context.Context, identity Identity, configuratio
 		RequestID:      requestID,
 		AvailableSlots: availableSlots,
 		Labels:         configuration.RunnerLabels(),
-		Capabilities:   configuration.Toolchain.Capabilities(),
+		Capabilities:   configuration.Capabilities(),
 		WaitSeconds:    int(configuration.Claim.WaitDuration / time.Second),
 	}
 	var response ClaimResponse
@@ -233,6 +237,211 @@ func (client *Client) Complete(ctx context.Context, identity Identity, attemptID
 		return CompleteAttemptResponse{}, errors.New("complete attempt: incompatible protocol response")
 	}
 	return response, nil
+}
+
+func (client *Client) UploadLogs(ctx context.Context, identity Identity, attemptID, leaseToken string, chunks []logChunk) (uploadLogChunksResponse, error) {
+	requestID, err := randomIdentifier()
+	if err != nil {
+		return uploadLogChunksResponse{}, fmt.Errorf("create log upload request identifier: %w", err)
+	}
+	request := uploadLogChunksRequest{
+		SchemaVersion: protocolVersion,
+		RequestID:     requestID,
+		LeaseToken:    leaseToken,
+		Chunks:        chunks,
+	}
+	var response uploadLogChunksResponse
+	path := fmt.Sprintf("/api/v1/run-attempts/%s/logs", url.PathEscape(attemptID))
+	if err := client.postForRunner(ctx, path, identity.Credential, identity.RunnerID, request, &response); err != nil {
+		return uploadLogChunksResponse{}, fmt.Errorf("upload logs: %w", err)
+	}
+	if response.SchemaVersion != protocolVersion || !validLogWatermark(response.AcknowledgedSequence) {
+		return uploadLogChunksResponse{}, errors.New("upload logs: incompatible protocol response")
+	}
+	return response, nil
+}
+
+func (client *Client) AcquireSecrets(
+	ctx context.Context,
+	identity Identity,
+	attemptID string,
+	lease Lease,
+	references []SecretReference,
+) ([]EnvironmentEntry, error) {
+	if len(references) == 0 {
+		return nil, nil
+	}
+	requestID, err := randomIdentifier()
+	if err != nil {
+		return nil, fmt.Errorf("create secret request identifier: %w", err)
+	}
+	request := acquireSecretsRequest{
+		SchemaVersion: protocolVersion,
+		RequestID:     requestID,
+		LeaseToken:    lease.Token,
+	}
+	var response acquireSecretsResponse
+	path := fmt.Sprintf("/api/v1/run-attempts/%s/secrets", url.PathEscape(attemptID))
+	if err := client.postForRunner(ctx, path, identity.Credential, identity.RunnerID, request, &response); err != nil {
+		return nil, fmt.Errorf("acquire execution secrets: %w", err)
+	}
+	if response.SchemaVersion != protocolVersion || response.RequestID != requestID {
+		return nil, errors.New("acquire execution secrets: incompatible protocol response")
+	}
+	expectedNames := make(map[string]struct{}, len(references))
+	for _, reference := range references {
+		if !executionEnvironmentName.MatchString(reference.Name) || reference.SecretID == "" || reference.SecretVersionID == "" {
+			return nil, errors.New("acquire execution secrets: assignment contains an invalid secret reference")
+		}
+		if _, duplicate := expectedNames[reference.Name]; duplicate {
+			return nil, errors.New("acquire execution secrets: assignment contains duplicate secret names")
+		}
+		expectedNames[reference.Name] = struct{}{}
+	}
+	if len(response.Secrets) != len(expectedNames) {
+		return nil, errors.New("acquire execution secrets: response count does not match the assignment")
+	}
+	totalBytes := 0
+	seenNames := make(map[string]struct{}, len(response.Secrets))
+	for index := range response.Secrets {
+		secret := &response.Secrets[index]
+		if _, expected := expectedNames[secret.Name]; !expected {
+			return nil, errors.New("acquire execution secrets: response contains an unexpected variable")
+		}
+		if _, duplicate := seenNames[secret.Name]; duplicate {
+			return nil, errors.New("acquire execution secrets: response contains duplicate variables")
+		}
+		if strings.ContainsRune(secret.Value, '\x00') {
+			return nil, errors.New("acquire execution secrets: response contains a NUL byte")
+		}
+		totalBytes += len(secret.Name) + len(secret.Value)
+		if totalBytes > maximumSecretEnvironmentBytes {
+			return nil, errors.New("acquire execution secrets: response exceeds the environment limit")
+		}
+		secret.Secret = true
+		seenNames[secret.Name] = struct{}{}
+	}
+	return response.Secrets, nil
+}
+
+func (client *Client) DeclareArtifacts(ctx context.Context, identity Identity, attemptID, leaseToken string, artifacts []artifactDeclaration) (declareArtifactsResponse, error) {
+	requestID, err := randomIdentifier()
+	if err != nil {
+		return declareArtifactsResponse{}, fmt.Errorf("create artifact declaration request identifier: %w", err)
+	}
+	request := declareArtifactsRequest{
+		SchemaVersion: protocolVersion,
+		RequestID:     requestID,
+		LeaseToken:    leaseToken,
+		Artifacts:     artifacts,
+	}
+	var response declareArtifactsResponse
+	path := fmt.Sprintf("/api/v1/run-attempts/%s/artifacts", url.PathEscape(attemptID))
+	if err := client.postForRunner(ctx, path, identity.Credential, identity.RunnerID, request, &response); err != nil {
+		return declareArtifactsResponse{}, fmt.Errorf("declare artifacts: %w", err)
+	}
+	if response.SchemaVersion != protocolVersion || len(response.Artifacts) != len(artifacts) {
+		return declareArtifactsResponse{}, errors.New("declare artifacts: incompatible protocol response")
+	}
+	return response, nil
+}
+
+func (client *Client) UploadArtifact(ctx context.Context, identity Identity, lease Lease, artifact declaredArtifact, path string) error {
+	file, err := os.Open(path)
+	if err != nil {
+		return fmt.Errorf("open artifact upload: %w", err)
+	}
+	defer file.Close()
+	endpoint, direct, err := client.artifactUploadURL(artifact)
+	if err != nil {
+		return fmt.Errorf("resolve artifact upload target: %w", err)
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPut, endpoint, file)
+	if err != nil {
+		return fmt.Errorf("create artifact upload request: %w", err)
+	}
+	request.ContentLength = artifact.SizeBytes
+	if !direct {
+		request.Header.Set("Authorization", "Bearer "+identity.Credential)
+		request.Header.Set("X-AutoForge-Runner-Id", identity.RunnerID)
+		request.Header.Set("X-AutoForge-Lease-Token", lease.Token)
+	}
+	request.Header.Set("Content-Type", artifact.MediaType)
+	request.Header.Set("User-Agent", "AutoForge-Runner-Agent")
+	response, err := client.http.Do(request)
+	if err != nil {
+		return fmt.Errorf("upload artifact: %w", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return client.responseError(response)
+	}
+	if direct {
+		if artifact.FinalizePath == "" {
+			return errors.New("upload artifact: direct target is missing finalize path")
+		}
+		return client.finalizeArtifact(ctx, identity, lease, artifact)
+	}
+	var result uploadArtifactResponse
+	if err := json.NewDecoder(io.LimitReader(response.Body, maximumResponseBytes+1)).Decode(&result); err != nil {
+		return fmt.Errorf("decode artifact upload response: %w", err)
+	}
+	if result.ArtifactID != artifact.ArtifactID || result.Status != "uploaded" {
+		return errors.New("upload artifact: incompatible protocol response")
+	}
+	return nil
+}
+
+func (client *Client) artifactUploadURL(artifact declaredArtifact) (string, bool, error) {
+	method := artifact.UploadMethod
+	if method == "" {
+		method = "control-plane"
+	}
+	target, err := url.Parse(artifact.UploadPath)
+	if err != nil || artifact.UploadPath == "" {
+		return "", false, errors.New("invalid artifact upload path")
+	}
+	if method == "direct" {
+		if !target.IsAbs() || (target.Scheme != "http" && target.Scheme != "https") || target.Host == "" {
+			return "", false, errors.New("invalid direct artifact upload URL")
+		}
+		return target.String(), true, nil
+	}
+	if method != "control-plane" || target.IsAbs() || !strings.HasPrefix(target.Path, "/api/v1/") {
+		return "", false, errors.New("invalid control-plane artifact upload path")
+	}
+	return client.baseURL.ResolveReference(target).String(), false, nil
+}
+
+func (client *Client) finalizeArtifact(ctx context.Context, identity Identity, lease Lease, artifact declaredArtifact) error {
+	target, err := url.Parse(artifact.FinalizePath)
+	if err != nil || target.IsAbs() || !strings.HasPrefix(target.Path, "/api/v1/") {
+		return errors.New("finalize artifact: invalid control-plane path")
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, client.baseURL.ResolveReference(target).String(), nil)
+	if err != nil {
+		return fmt.Errorf("create artifact finalize request: %w", err)
+	}
+	request.Header.Set("Authorization", "Bearer "+identity.Credential)
+	request.Header.Set("X-AutoForge-Runner-Id", identity.RunnerID)
+	request.Header.Set("X-AutoForge-Lease-Token", lease.Token)
+	request.Header.Set("User-Agent", "AutoForge-Runner-Agent")
+	response, err := client.http.Do(request)
+	if err != nil {
+		return fmt.Errorf("finalize artifact: %w", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return client.responseError(response)
+	}
+	var result uploadArtifactResponse
+	if err := json.NewDecoder(io.LimitReader(response.Body, maximumResponseBytes+1)).Decode(&result); err != nil {
+		return fmt.Errorf("decode artifact finalize response: %w", err)
+	}
+	if result.ArtifactID != artifact.ArtifactID || result.Status != "uploaded" {
+		return errors.New("finalize artifact: incompatible protocol response")
+	}
+	return nil
 }
 
 func (client *Client) Reconcile(ctx context.Context, identity Identity, attempts []localAttempt) (ReconcileResponse, error) {
@@ -366,4 +575,8 @@ func heartbeatInterval(seconds int) time.Duration {
 
 func validHeartbeatInterval(seconds int) bool {
 	return seconds >= 5 && seconds <= 300
+}
+
+func validLogWatermark(watermark logWatermark) bool {
+	return watermark.Stdout >= -1 && watermark.Stderr >= -1 && watermark.Agent >= -1
 }

@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 
 import { IdentityAccessService, type DirectoryIdentity } from "@autoforge/application";
-import { DEFAULT_PROJECT_ID } from "@autoforge/domain";
+import { DEFAULT_PROJECT_ID, DomainError } from "@autoforge/domain";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { createSqliteDatabase } from "../src/database";
@@ -41,6 +41,7 @@ describe("SQLite identity access", () => {
       attributes: { uid: "ldap.user", entryUUID: "directory-subject-1" },
     };
     let directoryUsers = [directoryIdentity];
+    let directoryAvailable = true;
     const service = new IdentityAccessService(
       repository,
       {
@@ -61,6 +62,9 @@ describe("SQLite identity access", () => {
       {
         test: async () => undefined,
         authenticate: async (_configuration, username, password) => {
+          if (!directoryAvailable) {
+            throw new DomainError("LDAP_CONNECTION_TIMEOUT", "LDAP directory timed out.");
+          }
           if (username !== "ldap.user" || password !== "Directory!123") {
             throw new Error("invalid directory credential");
           }
@@ -121,10 +125,50 @@ describe("SQLite identity access", () => {
       await expect(service.authenticateSession(localSession.token)).rejects.toMatchObject({
         code: "AUTH_REQUIRED",
       });
+      const replacementSession = await service.login({
+        username: "operator",
+        password: "Replacement!12345",
+        provider: "local",
+      });
+      await service.revokeUserSessions(administrator, localUser.id);
+      await expect(service.authenticateSession(replacementSession.token)).rejects.toMatchObject({
+        code: "AUTH_REQUIRED",
+      });
 
       const roles = await service.listRoles(administrator);
       const viewer = roles.find((role) => role.key === "viewer");
       expect(viewer).toBeDefined();
+      const permissionUser = await service.createUser(administrator, {
+        username: "permission-user",
+        displayName: "Permission User",
+        password: "Permission!12345",
+        forcePasswordChange: false,
+      });
+      await service.assignProjectRole(
+        administrator,
+        permissionUser.id,
+        DEFAULT_PROJECT_ID,
+        viewer!.id,
+      );
+      const permissionSession = await service.login({
+        username: "permission-user",
+        password: "Permission!12345",
+        provider: "local",
+      });
+      expect(
+        (await service.authenticateSession(permissionSession.token)).projectPermissions[
+          DEFAULT_PROJECT_ID
+        ],
+      ).toContain("run.read");
+      await service.removeProjectRole(
+        administrator,
+        permissionUser.id,
+        DEFAULT_PROJECT_ID,
+        viewer!.id,
+      );
+      await expect(service.authenticateSession(permissionSession.token)).rejects.toMatchObject({
+        code: "AUTH_REQUIRED",
+      });
       await service.saveLdapConfiguration(administrator, {
         enabled: true,
         urls: ["ldaps://ldap.example.test:636"],
@@ -159,6 +203,37 @@ describe("SQLite identity access", () => {
       const ldapIdentity = await service.authenticateSession(ldapSession.token);
       expect(ldapIdentity.user).toMatchObject({ source: "ldap", username: "ldap.user" });
       expect(ldapIdentity.projectPermissions[DEFAULT_PROJECT_ID]).toContain("case.read");
+      await expect(
+        service.recordTerminalSession(
+          ldapIdentity,
+          "runner-forbidden",
+          "terminal-forbidden",
+          DEFAULT_PROJECT_ID,
+        ),
+      ).rejects.toMatchObject({ code: "AUTH_FORBIDDEN" });
+      await expect(
+        service.recordTerminalSession(
+          administrator,
+          "runner-authorized",
+          "terminal-authorized",
+          DEFAULT_PROJECT_ID,
+        ),
+      ).resolves.toBeUndefined();
+      directoryAvailable = false;
+      await expect(service.authenticateSession(ldapSession.token)).resolves.toMatchObject({
+        user: { id: ldapIdentity.user.id },
+      });
+      await expect(
+        service.login({
+          username: "ldap.user",
+          password: "Directory!123",
+          provider: "ldap",
+        }),
+      ).rejects.toMatchObject({ code: "LDAP_CONNECTION_TIMEOUT" });
+      await expect(service.authenticateSession(bootstrap.token)).resolves.toMatchObject({
+        user: { id: administrator.user.id },
+      });
+      directoryAvailable = true;
       const sessions = await service.listSessions(administrator, ldapIdentity.user.id);
       expect(sessions).toHaveLength(1);
       await service.revokeManagedSession(administrator, sessions[0]!.id);
@@ -192,16 +267,40 @@ describe("SQLite identity access", () => {
       await expect(service.authenticateSession(activeLdapSession.token)).rejects.toMatchObject({
         code: "AUTH_REQUIRED",
       });
+      await service.recordTerminalLifecycle({
+        actorId: administrator.user.id,
+        runnerId: "runner-audit",
+        sessionId: "terminal-session-audit",
+        action: "terminal.session_finished",
+        reason: "Browser disconnected",
+        inputMessages: 2,
+        inputBytes: 16,
+        outputBytes: 32,
+      });
 
       const audit = await service.listAudit(administrator, { limit: 100 });
       expect(audit.items).toEqual(
         expect.arrayContaining([
           expect.objectContaining({ action: "auth.bootstrap", result: "succeeded" }),
           expect.objectContaining({ action: "user.password_reset" }),
+          expect.objectContaining({ action: "user.sessions_revoke" }),
           expect.objectContaining({ action: "ldap.configure" }),
           expect.objectContaining({ action: "ldap.synchronize" }),
+          expect.objectContaining({
+            action: "terminal.session_finished",
+            details: expect.objectContaining({ inputMessages: 2, outputBytes: 32 }),
+          }),
         ]),
       );
+      const expiringSession = await service.login({
+        username: "permission-user",
+        password: "Permission!12345",
+        provider: "local",
+      });
+      clock.advanceHours(9);
+      await expect(service.authenticateSession(expiringSession.token)).rejects.toMatchObject({
+        code: "AUTH_REQUIRED",
+      });
     } finally {
       handle.close();
     }
@@ -213,6 +312,10 @@ class MutableClock {
 
   now(): Date {
     return new Date(this.instant);
+  }
+
+  advanceHours(hours: number): void {
+    this.instant = new Date(new Date(this.instant).getTime() + hours * 3_600_000).toISOString();
   }
 }
 

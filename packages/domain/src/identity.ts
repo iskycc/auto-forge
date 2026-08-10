@@ -256,6 +256,17 @@ export function hasPermission(
   return identity.projectPermissions[projectId]?.includes(permission) ?? false;
 }
 
+export function projectIdsForPermission(
+  identity: AuthenticatedIdentity,
+  permission: Permission,
+): string[] | undefined {
+  if (identity.systemPermissions.includes(permission)) return undefined;
+  return Object.entries(identity.projectPermissions)
+    .filter(([, permissions]) => permissions.includes(permission))
+    .map(([projectId]) => projectId)
+    .sort();
+}
+
 export function isPermission(value: string): value is Permission {
   return (permissionCatalog as readonly string[]).includes(value);
 }

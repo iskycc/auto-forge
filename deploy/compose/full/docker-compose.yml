@@ -52,6 +52,49 @@ services:
       - ALL
     stop_grace_period: 30s
 
+  worker:
+    image: ${AUTOFORGE_BACKEND_IMAGE:?set AUTOFORGE_BACKEND_IMAGE to a loaded AutoForge image}
+    pull_policy: never
+    command: ["node", "apps/worker/dist/worker.mjs"]
+    init: true
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+    environment:
+      AUTOFORGE_DATABASE_URL: postgresql://autoforge:${AUTOFORGE_POSTGRES_PASSWORD:?set a URL-safe PostgreSQL password}@postgres:5432/autoforge
+      AUTOFORGE_NATS_SERVERS: nats://nats:4222
+      AUTOFORGE_WORKER_ID: full-worker-1
+      AUTOFORGE_WORKER_CONCURRENCY: ${AUTOFORGE_WORKER_CONCURRENCY:-16}
+      AUTOFORGE_WORKER_HEALTH_PORT: 3001
+      AUTOFORGE_WORKER_METRICS_ENABLED: ${AUTOFORGE_WORKER_METRICS_ENABLED:-0}
+      AUTOFORGE_POSTGRES_MIGRATIONS_DIR: /app/packages/db/drizzle/postgresql
+      AUTOFORGE_SCHEDULER_MAX_CPU_PERCENT: ${AUTOFORGE_SCHEDULER_MAX_CPU_PERCENT:-85}
+      AUTOFORGE_SCHEDULER_MAX_MEMORY_PERCENT: ${AUTOFORGE_SCHEDULER_MAX_MEMORY_PERCENT:-85}
+      AUTOFORGE_SCHEDULER_MAX_LOAD_PER_CPU: ${AUTOFORGE_SCHEDULER_MAX_LOAD_PER_CPU:-1}
+      AUTOFORGE_SCHEDULER_METRICS_MAX_AGE_SECONDS: ${AUTOFORGE_SCHEDULER_METRICS_MAX_AGE_SECONDS:-45}
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3001/health/ready').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))",
+        ]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 10s
+    networks:
+      - core
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    stop_grace_period: 30s
+
   postgres:
     image: postgres:15-alpine@sha256:df7bca0066e6f60cc3dd32faa70caddec20e2c22b58932f79498e5704b23854a
     pull_policy: never

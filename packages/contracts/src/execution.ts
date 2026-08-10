@@ -13,11 +13,26 @@ const workspaceRelativePathSchema = z
     (value) => !value.split("/").some((segment) => segment === "." || segment === ".."),
     "路径必须保持在 attempt 工作目录内。",
   );
+const artifactPatternSchema = z
+  .string()
+  .regex(/^[A-Za-z0-9*?][A-Za-z0-9._/*?-]{0,511}$/)
+  .refine(
+    (value) => !value.split("/").some((segment) => segment === "." || segment === ".."),
+    "产物规则必须保持在 attempt 工作目录内。",
+  );
+const jvmMethodSelectorSchema = z
+  .string()
+  .min(4)
+  .max(2_048)
+  .refine(isJvmMethodSelector, "方法选择器必须包含方法名和有效的 JVM descriptor。");
 
 export const executionInputSchema = z.object({
   inputId: identifierSchema,
-  kind: z.literal("test-jar"),
-  targetPath: workspaceRelativePathSchema,
+  kind: z.enum(["test-jar", "dependency-jar"]),
+  targetPath: workspaceRelativePathSchema.refine(
+    (value) => value.toLowerCase().endsWith(".jar"),
+    "执行输入必须使用 .jar 目标路径。",
+  ),
   mediaType: z.literal("application/java-archive"),
   sizeBytes: z.number().int().positive().max(2_147_483_648),
   sha256: sha256Schema,
@@ -39,37 +54,139 @@ export const executionEnvironmentSchema = z
     }
   });
 
-export const executionSpecSchema = z.object({
-  schemaVersion: protocolVersionSchema,
-  executor: z.literal("testng"),
-  attemptId: identifierSchema,
-  executionRunId: identifierSchema,
-  batchId: identifierSchema,
-  className: z.string().trim().min(1).max(1_024),
-  methodDescriptors: z.array(z.string().min(1).max(2_048)).max(1_024).default([]),
-  inputs: z.array(executionInputSchema).length(1),
-  environment: executionEnvironmentSchema.default([]),
-  requiredLabels: z.array(z.string().trim().min(1).max(64)).max(64).default([]),
-  requiredCapabilities: z.array(z.string().trim().min(1).max(128)).max(64).default([]),
-  timeoutMs: z.number().int().min(1_000).max(86_400_000),
-  uploadTimeoutMs: z.number().int().min(1_000).max(3_600_000),
-  resourceLimits: z.object({
-    cpuMillicores: z.number().int().min(1).max(1_000_000),
-    memoryBytes: z
-      .number()
-      .int()
-      .min(16 * 1_024 * 1_024)
-      .max(1_099_511_627_776),
-    diskBytes: z
-      .number()
-      .int()
-      .min(16 * 1_024 * 1_024)
-      .max(10_995_116_277_760),
-    processCount: z.number().int().min(1).max(4_096),
-    logBytes: z.number().int().min(1_024).max(10_737_418_240),
-    artifactBytes: z.number().int().min(1_024).max(109_951_162_777_600),
-  }),
+export const executionSecretReferenceSchema = z.object({
+  name: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]{0,127}$/),
+  secretId: identifierSchema,
+  secretVersionId: identifierSchema,
 });
+
+export const acquireAttemptSecretsInputSchema = z.object({
+  schemaVersion: protocolVersionSchema,
+  requestId: identifierSchema,
+  leaseToken: z.string().min(32).max(512),
+});
+
+export const acquireAttemptSecretsResponseSchema = z.object({
+  schemaVersion: protocolVersionSchema,
+  requestId: identifierSchema,
+  secrets: z
+    .array(
+      z.object({ name: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]{0,127}$/), value: z.string() }),
+    )
+    .max(64),
+});
+
+const testNgParametersSchema = z
+  .record(z.string().regex(/^[A-Za-z_][A-Za-z0-9_.-]{0,127}$/), z.string().max(4_096))
+  .refine((parameters) => Object.keys(parameters).length <= 128, "TestNG 参数不能超过 128 项。");
+
+const runtimeRequirementsSchema = z.object({
+  os: z.literal("linux").default("linux"),
+  architectures: z
+    .array(z.enum(["amd64", "arm64"]))
+    .min(1)
+    .max(2)
+    .refine((architectures) => new Set(architectures).size === architectures.length)
+    .default(["amd64", "arm64"]),
+  minimumJavaMajorVersion: z.number().int().min(11).max(100).default(11),
+  testNgVersion: z
+    .string()
+    .regex(/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/)
+    .default("7.11.0"),
+});
+
+export const executionSpecSchema = z
+  .object({
+    schemaVersion: protocolVersionSchema,
+    executor: z.literal("testng"),
+    attemptId: identifierSchema,
+    executionRunId: identifierSchema,
+    batchId: identifierSchema,
+    className: z.string().trim().min(1).max(1_024),
+    methodDescriptors: z.array(jvmMethodSelectorSchema).max(1_024).default([]),
+    parameters: testNgParametersSchema.default({}),
+    inputs: z.array(executionInputSchema).min(1).max(128),
+    environment: executionEnvironmentSchema.default([]),
+    secretReferences: z.array(executionSecretReferenceSchema).max(64).default([]),
+    runtimeRequirements: runtimeRequirementsSchema.default({
+      os: "linux",
+      architectures: ["amd64", "arm64"],
+      minimumJavaMajorVersion: 11,
+      testNgVersion: "7.11.0",
+    }),
+    requiredLabels: z.array(z.string().trim().min(1).max(64)).max(64).default([]),
+    requiredCapabilities: z.array(z.string().trim().min(1).max(128)).max(64).default([]),
+    artifactRules: z
+      .array(
+        z.object({
+          pattern: artifactPatternSchema,
+          required: z.boolean().default(false),
+          mediaType: z.string().trim().min(1).max(255).optional(),
+        }),
+      )
+      .max(64)
+      .default([]),
+    timeoutMs: z.number().int().min(1_000).max(86_400_000),
+    uploadTimeoutMs: z.number().int().min(1_000).max(3_600_000),
+    resourceLimits: z.object({
+      cpuMillicores: z.number().int().min(1).max(1_000_000),
+      memoryBytes: z
+        .number()
+        .int()
+        .min(16 * 1_024 * 1_024)
+        .max(1_099_511_627_776),
+      diskBytes: z
+        .number()
+        .int()
+        .min(16 * 1_024 * 1_024)
+        .max(10_995_116_277_760),
+      processCount: z.number().int().min(1).max(4_096),
+      fileCount: z.number().int().min(16).max(1_000_000).default(10_000),
+      logBytes: z.number().int().min(1_024).max(10_737_418_240),
+      artifactBytes: z.number().int().min(1_024).max(109_951_162_777_600),
+    }),
+  })
+  .superRefine((specification, context) => {
+    const environmentNames = [
+      ...specification.environment.map((entry) => entry.name),
+      ...specification.secretReferences.map((entry) => entry.name),
+    ];
+    if (new Set(environmentNames).size !== environmentNames.length) {
+      context.addIssue({
+        code: "custom",
+        path: ["secretReferences"],
+        message: "执行变量名不能重复。",
+      });
+    }
+    if (specification.inputs.filter((input) => input.kind === "test-jar").length !== 1) {
+      context.addIssue({
+        code: "custom",
+        path: ["inputs"],
+        message: "TestNG 执行必须且只能包含一个权威 test JAR。",
+      });
+    }
+    for (const field of ["inputId", "targetPath"] as const) {
+      const values = specification.inputs.map((input) => input[field]);
+      if (new Set(values).size !== values.length) {
+        context.addIssue({
+          code: "custom",
+          path: ["inputs"],
+          message: `执行输入 ${field} 不能重复。`,
+        });
+      }
+    }
+    const totalInputBytes = specification.inputs.reduce(
+      (total, input) => total + input.sizeBytes,
+      0,
+    );
+    if (totalInputBytes > specification.resourceLimits.diskBytes) {
+      context.addIssue({
+        code: "custom",
+        path: ["inputs"],
+        message: "执行输入总大小超过 attempt 磁盘限制。",
+      });
+    }
+  });
 
 export const assignmentSchema = z.object({
   schemaVersion: protocolVersionSchema,
@@ -140,9 +257,55 @@ export const uploadLogChunksInputSchema = z.object({
   chunks: z.array(logChunkSchema).min(1).max(256),
 });
 
+export const uploadLogChunksResponseSchema = z.object({
+  schemaVersion: protocolVersionSchema,
+  acknowledgedSequence: z.object({
+    stdout: z.number().int().min(-1),
+    stderr: z.number().int().min(-1),
+    agent: z.number().int().min(-1),
+  }),
+});
+
+export const attemptLogQuerySchema = z.object({
+  stream: z.enum(["stdout", "stderr", "agent"]).default("stdout"),
+  afterSequence: z.coerce.number().int().min(-1).default(-1),
+  limit: z.coerce.number().int().min(1).max(500).default(200),
+  query: z.string().trim().min(1).max(256).optional(),
+});
+
+export const attemptLogPageSchema = z.object({
+  items: z.array(logChunkSchema).max(500),
+  acknowledgedSequence: z.number().int().min(-1),
+  nextSequence: z.number().int().min(0).optional(),
+  truncated: z.boolean(),
+});
+
+export const attemptEventQuerySchema = z.object({
+  afterEventId: identifierSchema.optional(),
+  limit: z.coerce.number().int().min(1).max(200).default(100),
+});
+
+export const attemptStateEventSchema = z.object({
+  eventId: identifierSchema,
+  attemptId: identifierSchema,
+  eventType: z.string().trim().min(1).max(128),
+  fromStatus: z.string().max(64).optional(),
+  toStatus: z.string().max(64).optional(),
+  reasonCode: z.string().max(128).optional(),
+  actorType: z.enum(["user", "runner", "system"]),
+  actorId: identifierSchema.optional(),
+  details: z.record(z.string(), z.unknown()),
+  recordedAt: isoTimestampSchema,
+});
+
+export const attemptEventPageSchema = z.object({
+  items: z.array(attemptStateEventSchema).max(200),
+  nextEventId: identifierSchema.optional(),
+});
+
 export const artifactDeclarationSchema = z.object({
   artifactId: identifierSchema,
-  relativePath: z.string().min(1).max(1_024),
+  relativePath: workspaceRelativePathSchema,
   mediaType: z.string().min(1).max(255),
   sizeBytes: z.number().int().min(0).max(109_951_162_777_600),
   sha256: sha256Schema,
@@ -156,12 +319,109 @@ export const declareArtifactsInputSchema = z.object({
   artifacts: z.array(artifactDeclarationSchema).max(256),
 });
 
+export const declareArtifactsResponseSchema = z.object({
+  schemaVersion: protocolVersionSchema,
+  artifacts: z
+    .array(
+      artifactDeclarationSchema.extend({
+        uploadPath: z.string().min(1).max(1_024),
+        uploadMethod: z.enum(["control-plane", "direct"]).default("control-plane"),
+        finalizePath: z.string().min(1).max(1_024).optional(),
+        status: z.enum(["declared", "uploaded"]),
+      }),
+    )
+    .max(256),
+});
+
+export const attemptArtifactListSchema = z.object({
+  items: z.array(
+    artifactDeclarationSchema.extend({
+      status: z.enum(["declared", "uploaded", "rejected"]),
+      downloadPath: z.string().min(1).optional(),
+    }),
+  ),
+});
+
+const testNgCountsSchema = z.object({
+  total: z.number().int().min(0).max(1_000_000),
+  passed: z.number().int().min(0).max(1_000_000),
+  failed: z.number().int().min(0).max(1_000_000),
+  skipped: z.number().int().min(0).max(1_000_000),
+  configurationFailures: z.number().int().min(0).max(1_000_000),
+});
+
+const testNgMethodResultSchema = z.object({
+  name: z.string().trim().min(1).max(256),
+  signature: z.string().trim().max(512).optional(),
+  status: z.enum(["passed", "failed", "skipped"]),
+  configuration: z.boolean(),
+  durationMs: z.number().int().min(0).max(86_400_000),
+});
+
+const testNgClassResultSchema = testNgCountsSchema.extend({
+  name: z.string().trim().min(1).max(512),
+  durationMs: z.number().int().min(0).max(86_400_000),
+  methods: z.array(testNgMethodResultSchema).max(256),
+});
+
+const testNgTestResultSchema = testNgCountsSchema.extend({
+  name: z.string().trim().min(1).max(512),
+  durationMs: z.number().int().min(0).max(86_400_000),
+  classes: z.array(testNgClassResultSchema).max(128),
+});
+
+const testNgSuiteResultSchema = testNgCountsSchema.extend({
+  name: z.string().trim().min(1).max(512),
+  durationMs: z.number().int().min(0).max(86_400_000),
+  tests: z.array(testNgTestResultSchema).max(64),
+});
+
+export const testNgResultDetailsSchema = testNgCountsSchema
+  .extend({
+    detailsTruncated: z.boolean(),
+    suites: z.array(testNgSuiteResultSchema).max(32),
+  })
+  .superRefine((result, context) => {
+    let tests = 0;
+    let classes = 0;
+    let methods = 0;
+    validateTestNgCounts(result, context, ["testNg"]);
+    for (const [suiteIndex, suite] of result.suites.entries()) {
+      validateTestNgCounts(suite, context, ["testNg", "suites", suiteIndex]);
+      tests += suite.tests.length;
+      for (const [testIndex, test] of suite.tests.entries()) {
+        validateTestNgCounts(test, context, ["testNg", "suites", suiteIndex, "tests", testIndex]);
+        classes += test.classes.length;
+        for (const [classIndex, classResult] of test.classes.entries()) {
+          validateTestNgCounts(classResult, context, [
+            "testNg",
+            "suites",
+            suiteIndex,
+            "tests",
+            testIndex,
+            "classes",
+            classIndex,
+          ]);
+          methods += classResult.methods.length;
+        }
+      }
+    }
+    if (tests > 64 || classes > 128 || methods > 256) {
+      context.addIssue({
+        code: "custom",
+        path: ["testNg", "suites"],
+        message: "TestNG 结构化结果超过明细上限。",
+      });
+    }
+  });
+
 export const completionResultSchema = z.object({
   status: z.enum(["succeeded", "failed", "timed_out", "cancelled"]),
   resultCode: z.string().trim().min(1).max(128),
   summary: z.string().max(4_096),
   durationMs: z.number().int().min(0).max(86_400_000),
   exitCode: z.number().int().min(-1).max(255).optional(),
+  testNg: testNgResultDetailsSchema.optional(),
   logWatermarks: z
     .object({
       stdout: z.number().int().min(-1),
@@ -233,6 +493,8 @@ export const cancelExecutionInputSchema = z.object({
 });
 
 export type ExecutionSpec = z.infer<typeof executionSpecSchema>;
+export type AcquireAttemptSecretsInput = z.infer<typeof acquireAttemptSecretsInputSchema>;
+export type AcquireAttemptSecretsResponse = z.infer<typeof acquireAttemptSecretsResponseSchema>;
 export type ExecutionInput = z.infer<typeof executionInputSchema>;
 export type AssignmentDto = z.infer<typeof assignmentSchema>;
 export type ClaimAssignmentsInput = z.infer<typeof claimAssignmentsInputSchema>;
@@ -240,7 +502,69 @@ export type ClaimAssignmentsResponse = z.infer<typeof claimAssignmentsResponseSc
 export type RenewLeaseInput = z.infer<typeof renewLeaseInputSchema>;
 export type RenewLeaseResponse = z.infer<typeof renewLeaseResponseSchema>;
 export type CompletionResult = z.infer<typeof completionResultSchema>;
+export type TestNgResultDetails = z.infer<typeof testNgResultDetailsSchema>;
 export type CompleteAttemptInput = z.infer<typeof completeAttemptInputSchema>;
 export type CompleteAttemptResponse = z.infer<typeof completeAttemptResponseSchema>;
 export type ReconcileAttemptsInput = z.infer<typeof reconcileAttemptsInputSchema>;
 export type ReconcileAttemptsResponse = z.infer<typeof reconcileAttemptsResponseSchema>;
+export type LogChunk = z.infer<typeof logChunkSchema>;
+export type UploadLogChunksInput = z.infer<typeof uploadLogChunksInputSchema>;
+export type UploadLogChunksResponse = z.infer<typeof uploadLogChunksResponseSchema>;
+export type AttemptLogQuery = z.infer<typeof attemptLogQuerySchema>;
+export type AttemptLogPage = z.infer<typeof attemptLogPageSchema>;
+export type AttemptEventQuery = z.infer<typeof attemptEventQuerySchema>;
+export type AttemptStateEvent = z.infer<typeof attemptStateEventSchema>;
+export type AttemptEventPage = z.infer<typeof attemptEventPageSchema>;
+export type ArtifactDeclaration = z.infer<typeof artifactDeclarationSchema>;
+export type DeclareArtifactsInput = z.infer<typeof declareArtifactsInputSchema>;
+export type DeclareArtifactsResponse = z.infer<typeof declareArtifactsResponseSchema>;
+export type AttemptArtifactList = z.infer<typeof attemptArtifactListSchema>;
+
+function validateTestNgCounts(
+  counts: z.infer<typeof testNgCountsSchema>,
+  context: z.RefinementCtx,
+  path: Array<string | number>,
+): void {
+  if (counts.total !== counts.passed + counts.failed + counts.skipped) {
+    context.addIssue({
+      code: "custom",
+      path,
+      message: "TestNG 结果计数不一致。",
+    });
+  }
+}
+
+function isJvmMethodSelector(value: string): boolean {
+  const descriptorStart = value.indexOf("(");
+  if (descriptorStart < 1 || !isJvmMethodName(value.slice(0, descriptorStart))) return false;
+  const descriptor = value.slice(descriptorStart);
+  let position = 1;
+  while (position < descriptor.length && descriptor[position] !== ")") {
+    const next = consumeJvmType(descriptor, position, false);
+    if (next === null) return false;
+    position = next;
+  }
+  if (descriptor[position] !== ")") return false;
+  const returnEnd = consumeJvmType(descriptor, position + 1, true);
+  return returnEnd === descriptor.length;
+}
+
+function isJvmMethodName(value: string): boolean {
+  return value.length <= 256 && !/[.;[/<>\s\p{Cc}]/u.test(value);
+}
+
+function consumeJvmType(descriptor: string, start: number, allowVoid: boolean): number | null {
+  let position = start;
+  while (descriptor[position] === "[") position += 1;
+  const arrayDepth = position - start;
+  if (arrayDepth > 255 || position >= descriptor.length) return null;
+  const marker = descriptor[position];
+  if (marker && "BCDFIJSZ".includes(marker)) return position + 1;
+  if (marker === "V") return allowVoid && arrayDepth === 0 ? position + 1 : null;
+  if (marker !== "L") return null;
+  const end = descriptor.indexOf(";", position + 1);
+  if (end <= position + 1) return null;
+  const className = descriptor.slice(position + 1, end);
+  if (className.split("/").some((segment) => !segment || /[.;[]/.test(segment))) return null;
+  return end + 1;
+}
