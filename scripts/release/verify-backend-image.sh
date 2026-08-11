@@ -19,7 +19,8 @@ for _ in $(seq 1 60); do
   status="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}missing{{end}}' "${container_id}")"
   case "${status}" in
     healthy)
-      docker exec "${container_id}" test -f /app/apps/web/dist-server/server/migrate.js
+      docker exec "${container_id}" node /app/apps/web/dist-server/server/migrate.js \
+        --data-dir=/tmp/autoforge-migration-check
       docker exec "${container_id}" node -e '
         const { createHash } = require("node:crypto");
         const { readFileSync } = require("node:fs");

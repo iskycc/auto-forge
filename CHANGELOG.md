@@ -4,7 +4,7 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
-## Unreleased
+## 0.3.1 - 2026-08-11
 
 ### Added
 
@@ -23,6 +23,11 @@ and known limitations.
 - GitHub Releases publish four backend image variants with embedded Agent resources and no standalone
   Agent binaries.
 - JAR and execution-artifact object keys are explicitly scoped by project.
+
+### Fixed
+
+- Package the production workspace dependencies required by the custom Next.js server and verify the
+  database migration entry point inside every release image.
 
 ### Database migrations
 

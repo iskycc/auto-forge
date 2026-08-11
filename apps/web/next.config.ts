@@ -1,14 +1,6 @@
 import type { NextConfig } from "next";
-import { resolve } from "node:path";
-
-const workspaceRoot = resolve(import.meta.dirname, "../..");
 
 const nextConfig: NextConfig = {
-  output: "standalone",
-  outputFileTracingRoot: workspaceRoot,
-  outputFileTracingIncludes: {
-    "/*": ["../../packages/db/drizzle/sqlite/*.sql", "../../packages/db/drizzle/postgresql/*.sql"],
-  },
   reactStrictMode: true,
   serverExternalPackages: ["better-sqlite3"],
   async headers() {

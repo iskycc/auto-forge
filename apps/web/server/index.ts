@@ -15,7 +15,7 @@ const hostname = platformConfiguration.web.hostname;
 const port = platformConfiguration.web.port;
 const webDirectory = findWebDirectory(process.cwd());
 
-if (!development) configureStandaloneRuntime(webDirectory);
+if (!development) configureProductionRuntime(webDirectory);
 
 const createNext = next as unknown as typeof import("next/dist/server/next.js").default;
 const app = createNext({ dev: development, dir: webDirectory, hostname, port });
@@ -121,12 +121,12 @@ function findWebDirectory(startDirectory: string): string {
   throw new Error("Unable to locate the AutoForge Next.js application directory.");
 }
 
-function configureStandaloneRuntime(directory: string): void {
+function configureProductionRuntime(directory: string): void {
   const requiredFilesPath = join(directory, ".next", "required-server-files.json");
   const requiredFiles = JSON.parse(readFileSync(requiredFilesPath, "utf8")) as {
     config?: unknown;
   };
-  if (!requiredFiles.config) throw new Error("Next.js standalone configuration is missing.");
+  if (!requiredFiles.config) throw new Error("Next.js production configuration is missing.");
   process.env.__NEXT_PRIVATE_STANDALONE_CONFIG = JSON.stringify(requiredFiles.config);
 }
 

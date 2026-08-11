@@ -5,6 +5,7 @@ ARG NODE_IMAGE=node:24.16.0-bookworm-slim@sha256:2c87ef9bd3c6a3bd4b472b4bec2ce9d
 FROM ${NODE_IMAGE} AS dependencies
 
 ENV NEXT_TELEMETRY_DISABLED=1 \
+    CI=1 \
     PNPM_HOME=/pnpm \
     PATH=/pnpm:${PATH}
 
@@ -31,6 +32,7 @@ RUN --network=none pnpm install --offline --frozen-lockfile
 RUN --network=none pnpm rebuild better-sqlite3
 RUN --network=none pnpm --filter @autoforge/web build
 RUN --network=none pnpm --filter @autoforge/worker build
+RUN --network=none pnpm install --offline --frozen-lockfile --prod --ignore-scripts
 
 FROM ${NODE_IMAGE} AS runtime
 
@@ -50,18 +52,19 @@ ENV NEXT_TELEMETRY_DISABLED=1 \
 
 WORKDIR /app
 
-COPY --from=builder --chown=node:node /workspace/apps/web/.next/standalone ./
-COPY --from=builder --chown=node:node /workspace/apps/web/.next/static ./apps/web/.next/static
+COPY --from=builder --chown=node:node /workspace/node_modules ./node_modules
+COPY --from=builder --chown=node:node /workspace/packages ./packages
+COPY --from=builder --chown=node:node /workspace/apps/web/node_modules ./apps/web/node_modules
+COPY --from=builder --chown=node:node /workspace/apps/web/package.json ./apps/web/package.json
+COPY --from=builder --chown=node:node /workspace/apps/web/.next ./apps/web/.next
 COPY --from=builder --chown=node:node /workspace/apps/web/dist-server ./apps/web/dist-server
+COPY --from=builder --chown=node:node /workspace/apps/worker/node_modules ./apps/worker/node_modules
+COPY --from=builder --chown=node:node /workspace/apps/worker/package.json ./apps/worker/package.json
 COPY --from=builder --chown=node:node /workspace/apps/worker/dist ./apps/worker/dist
-COPY --from=builder --chown=node:node /workspace/packages/db/drizzle ./packages/db/drizzle
 COPY --from=builder --chown=node:node /workspace/resources/agents ./resources/agents
-COPY --from=builder --chown=node:node /workspace/node_modules/.pnpm/ws@8.21.3/node_modules/ws ./apps/web/node_modules/ws
 COPY --from=builder --chown=node:node /workspace/pnpm-workspace.yaml ./pnpm-workspace.yaml
 COPY --from=builder --chown=node:node /workspace/LICENSE /workspace/NOTICE /workspace/THIRD_PARTY_LICENSES.json ./
 
-RUN ln -s ../../../node_modules/.pnpm/better-sqlite3@13.0.3/node_modules/better-sqlite3 \
-      ./apps/web/node_modules/better-sqlite3
 RUN mkdir -p /var/lib/autoforge && chown node:node /var/lib/autoforge
 
 USER node

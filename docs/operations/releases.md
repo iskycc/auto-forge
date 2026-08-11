@@ -15,6 +15,8 @@ git push origin v0.2.2
 
 `amd64` 目标运行在 `ubuntu-24.04`，`arm64` 目标运行在 GitHub-hosted 原生 `ubuntu-24.04-arm`。后端不使用 QEMU 做跨架构模拟；内置 Agent 由 Go 原生交叉编译为两个静态架构，并在每个镜像中校验资源清单。
 
+Web 进程为同源终端 WebSocket 使用 Next.js 自定义 Server。Next.js 不支持用 standalone 输出追踪自定义 Server，因此发布镜像使用常规生产构建，并在构建完成后将 workspace 安装裁剪为仅生产依赖；镜像验证会实际启动 Web 并执行数据库迁移入口，防止遗漏自定义 Server 的运行时依赖。
+
 ## 资产矩阵
 
 每个版本包含以下四个 variant：
