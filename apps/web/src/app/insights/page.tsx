@@ -1,3 +1,5 @@
+import { Button, Input, Select } from "@/components/ui";
+
 import type { AnalyticsFilter } from "@autoforge/contracts";
 import { BarChart3, FlaskConical, TrendingUp } from "lucide-react";
 import Link from "next/link";
@@ -48,66 +50,66 @@ export default async function InsightsPage({
       <form className="content-card insight-filter" method="get">
         <label>
           项目
-          <select defaultValue={filter.projectId ?? ""} name="projectId">
+          <Select defaultValue={filter.projectId ?? ""} name="projectId">
             <option value="">全部可访问项目</option>
             {visibleProjects.map((project) => (
               <option key={project.id} value={project.id}>
                 {project.name}
               </option>
             ))}
-          </select>
+          </Select>
         </label>
         <label>
           用例任务
-          <select defaultValue={filter.suiteId ?? ""} name="suiteId">
+          <Select defaultValue={filter.suiteId ?? ""} name="suiteId">
             <option value="">全部任务</option>
             {suites.map((suite) => (
               <option key={suite.id} value={suite.id}>
                 {suite.name}
               </option>
             ))}
-          </select>
+          </Select>
         </label>
         <label>
           Runner
-          <select defaultValue={filter.runnerId ?? ""} name="runnerId">
+          <Select defaultValue={filter.runnerId ?? ""} name="runnerId">
             <option value="">全部 Runner</option>
             {runners.map((runner) => (
               <option key={runner.id} value={runner.id}>
                 {runner.name}
               </option>
             ))}
-          </select>
+          </Select>
         </label>
         <label>
           结果
-          <select defaultValue={filter.outcome ?? ""} name="outcome">
+          <Select defaultValue={filter.outcome ?? ""} name="outcome">
             <option value="">全部结果</option>
             <option value="succeeded">成功</option>
             <option value="failed">失败</option>
             <option value="timed_out">超时</option>
             <option value="cancelled">取消</option>
-          </select>
+          </Select>
         </label>
         <label>
           用例 ID
-          <input defaultValue={filter.caseDefinitionId ?? ""} name="caseDefinitionId" />
+          <Input defaultValue={filter.caseDefinitionId ?? ""} name="caseDefinitionId" />
         </label>
         <label>
           标签
-          <input defaultValue={filter.tag ?? ""} name="tag" />
+          <Input defaultValue={filter.tag ?? ""} name="tag" />
         </label>
         <label>
           环境版本 ID
-          <input defaultValue={filter.environmentVersionId ?? ""} name="environmentVersionId" />
+          <Input defaultValue={filter.environmentVersionId ?? ""} name="environmentVersionId" />
         </label>
         <label>
           失败签名
-          <input defaultValue={filter.failureSignature ?? ""} name="failureSignature" />
+          <Input defaultValue={filter.failureSignature ?? ""} name="failureSignature" />
         </label>
         <label>
           开始时间（UTC）
-          <input
+          <Input
             defaultValue={dateTimeLocal(filter.completedAfter)}
             name="completedAfter"
             type="datetime-local"
@@ -115,15 +117,15 @@ export default async function InsightsPage({
         </label>
         <label>
           结束时间（UTC）
-          <input
+          <Input
             defaultValue={dateTimeLocal(filter.completedBefore)}
             name="completedBefore"
             type="datetime-local"
           />
         </label>
-        <button className="button button-primary" type="submit">
+        <Button className="button button-primary" type="submit">
           应用筛选
-        </button>
+        </Button>
       </form>
 
       <section className="content-card">
@@ -134,21 +136,21 @@ export default async function InsightsPage({
           </div>
         </div>
         <form className="batch-comparison-form" method="get">
-          <input
+          <Input
             name="leftBatchId"
             defaultValue={stringParameter(parameters.leftBatchId)}
             placeholder="基准批次 ID"
             required
           />
-          <input
+          <Input
             name="rightBatchId"
             defaultValue={stringParameter(parameters.rightBatchId)}
             placeholder="对比批次 ID"
             required
           />
-          <button className="button button-secondary" type="submit">
+          <Button className="button button-secondary" type="submit">
             开始对比
-          </button>
+          </Button>
         </form>
         {comparison ? (
           <>

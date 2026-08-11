@@ -1,3 +1,5 @@
+import { Button, Input, Select } from "@/components/ui";
+
 import { Activity } from "lucide-react";
 
 import { RunBatchPlanner } from "@/components/run-batch-planner";
@@ -46,55 +48,55 @@ export default async function RunBatchesPage({
       <form className="content-card run-history-filter" method="get">
         <label>
           项目
-          <select defaultValue={filter.projectId ?? ""} name="projectId">
+          <Select defaultValue={filter.projectId ?? ""} name="projectId">
             <option value="">全部可访问项目</option>
             {visibleProjects.map((project) => (
               <option key={project.id} value={project.id}>
                 {project.name}
               </option>
             ))}
-          </select>
+          </Select>
         </label>
         <label>
           用例任务
-          <select defaultValue={filter.suiteId ?? ""} name="suiteId">
+          <Select defaultValue={filter.suiteId ?? ""} name="suiteId">
             <option value="">全部任务</option>
             {suites.map((suite) => (
               <option key={suite.id} value={suite.id}>
                 {suite.name}
               </option>
             ))}
-          </select>
+          </Select>
         </label>
         <label>
           用例 ID
-          <input defaultValue={filter.caseDefinitionId ?? ""} name="caseDefinitionId" />
+          <Input defaultValue={filter.caseDefinitionId ?? ""} name="caseDefinitionId" />
         </label>
         <label>
           状态
-          <select defaultValue={filter.status ?? ""} name="status">
+          <Select defaultValue={filter.status ?? ""} name="status">
             <option value="">全部状态</option>
             <option value="queued">排队中</option>
             <option value="running">执行中</option>
             <option value="succeeded">成功</option>
             <option value="failed">失败</option>
             <option value="cancelled">已取消</option>
-          </select>
+          </Select>
         </label>
         <label>
           Runner
-          <select defaultValue={filter.runnerId ?? ""} name="runnerId">
+          <Select defaultValue={filter.runnerId ?? ""} name="runnerId">
             <option value="">全部 Runner</option>
             {runners.map((runner) => (
               <option key={runner.id} value={runner.id}>
                 {runner.name}
               </option>
             ))}
-          </select>
+          </Select>
         </label>
         <label>
           开始时间
-          <input
+          <Input
             defaultValue={localDateTime(filter.createdAfter)}
             name="createdAfter"
             type="datetime-local"
@@ -102,15 +104,15 @@ export default async function RunBatchesPage({
         </label>
         <label>
           结束时间
-          <input
+          <Input
             defaultValue={localDateTime(filter.createdBefore)}
             name="createdBefore"
             type="datetime-local"
           />
         </label>
-        <button className="button button-secondary" type="submit">
+        <Button className="button button-secondary" type="submit">
           筛选记录
-        </button>
+        </Button>
       </form>
       <RunBatchPlanner
         initialSuites={suites}

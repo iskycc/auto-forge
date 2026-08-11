@@ -1,5 +1,7 @@
 "use client";
 
+import { Button } from "@/components/ui";
+
 import { apiErrorSchema } from "@autoforge/contracts";
 import { Check, LoaderCircle } from "lucide-react";
 import { useRouter } from "next/navigation";
@@ -45,7 +47,7 @@ export function SourceActions({
 
   return (
     <span className="inline-action-stack">
-      <button
+      <Button
         className={`button ${authoritative ? "button-success" : "button-secondary"}`}
         type="button"
         disabled={authoritative || pending}
@@ -53,7 +55,7 @@ export function SourceActions({
       >
         {pending ? <LoaderCircle className="spin" size={15} /> : <Check size={15} />}
         {authoritative ? "当前全量来源" : "设为全量来源"}
-      </button>
+      </Button>
       {error && <small className="inline-error">{error}</small>}
     </span>
   );

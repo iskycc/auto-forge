@@ -1,3 +1,5 @@
+import { Button, Input } from "@/components/ui";
+
 import { FileArchive, Import, Search } from "lucide-react";
 import Link from "next/link";
 
@@ -50,16 +52,16 @@ export default async function CasesPage({ searchParams }: CasesPageProps) {
         <div className="table-toolbar">
           <form className="case-search" action="/cases" role="search">
             <Search size={17} aria-hidden="true" />
-            <input
+            <Input
               name="query"
               type="search"
               defaultValue={query}
               placeholder="按类名或包名搜索"
               aria-label="搜索用例"
             />
-            <button className="button button-secondary" type="submit">
+            <Button className="button button-secondary" type="submit">
               搜索
-            </button>
+            </Button>
           </form>
           <span className="table-count">本页 {page.items.length} 个测试类</span>
         </div>

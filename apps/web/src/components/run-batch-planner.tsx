@@ -1,5 +1,7 @@
 "use client";
 
+import { Button, Input, Select } from "@/components/ui";
+
 import {
   assessRunnerCompatibility,
   type CaseSuite,
@@ -144,14 +146,14 @@ export function RunBatchPlanner({
         </div>
         <label className="field-stack">
           <span>用例任务</span>
-          <select value={suiteId} onChange={(event) => setSuiteId(event.target.value)} required>
+          <Select value={suiteId} onChange={(event) => setSuiteId(event.target.value)} required>
             {initialSuites.length === 0 ? <option value="">暂无可执行任务</option> : null}
             {initialSuites.map((suite) => (
               <option key={suite.id} value={suite.id}>
                 {suite.name} · {suite.caseCount} 个用例 · v{suite.version}
               </option>
             ))}
-          </select>
+          </Select>
         </label>
         {selectedSuite ? (
           <div className="selection-summary">
@@ -195,7 +197,7 @@ export function RunBatchPlanner({
                   key={runner.id}
                   title={runnerCompatibilitySummary(compatibility)}
                 >
-                  <input
+                  <Input
                     type="checkbox"
                     checked={selected}
                     disabled={unavailable}
@@ -237,7 +239,7 @@ export function RunBatchPlanner({
         <div className="form-grid scheduler-step">
           <label className="field-stack">
             <span>失败用例重跑次数</span>
-            <select
+            <Select
               value={retryLimit}
               onChange={(event) =>
                 setRetryLimit(event.target.value === "" ? "" : Number(event.target.value))
@@ -251,7 +253,7 @@ export function RunBatchPlanner({
                   {value === 0 ? "不重跑" : `${value} 次`}
                 </option>
               ))}
-            </select>
+            </Select>
           </label>
           <div className="policy-summary" aria-label="当前调度阈值">
             <strong>当前准入阈值</strong>
@@ -266,13 +268,13 @@ export function RunBatchPlanner({
             <span className="step-label">03</span>
             <h2>测试环境变量</h2>
           </div>
-          <button
+          <Button
             className="button button-secondary compact-button"
             type="button"
             onClick={addEnvironmentRow}
           >
             <Plus size={15} /> 添加变量
-          </button>
+          </Button>
         </div>
         <p className="field-hint">
           变量会随批次保存为快照；当前未提供密文存储，请勿填写密码或令牌。
@@ -283,7 +285,7 @@ export function RunBatchPlanner({
           ) : (
             environmentRows.map((row) => (
               <div className="environment-row" key={row.id}>
-                <input
+                <Input
                   aria-label="环境变量名"
                   placeholder="TEST_ENV"
                   value={row.name}
@@ -295,7 +297,7 @@ export function RunBatchPlanner({
                     )
                   }
                 />
-                <input
+                <Input
                   aria-label="环境变量值"
                   placeholder="staging"
                   value={row.value}
@@ -307,7 +309,7 @@ export function RunBatchPlanner({
                     )
                   }
                 />
-                <button
+                <Button
                   className="icon-button small-icon-button"
                   type="button"
                   aria-label="删除环境变量"
@@ -316,7 +318,7 @@ export function RunBatchPlanner({
                   }
                 >
                   <Trash2 size={15} />
-                </button>
+                </Button>
               </div>
             ))
           )}
@@ -332,14 +334,14 @@ export function RunBatchPlanner({
           </ul>
         ) : null}
         {error ? <p className="form-error">{error}</p> : null}
-        <button
+        <Button
           className="button button-primary run-batch-submit"
           type="submit"
           disabled={submitting || initialSuites.length === 0 || runnerIds.length === 0}
         >
           {submitting ? <RefreshCw className="spin" size={17} /> : <Activity size={17} />}
           {submitting ? "正在计算分配…" : "开始调度"}
-        </button>
+        </Button>
       </form>
 
       <section className="card run-batch-history">

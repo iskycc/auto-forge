@@ -1,5 +1,7 @@
 "use client";
 
+import { Button } from "@/components/ui";
+
 import type { SystemDiagnostic } from "@autoforge/contracts";
 import { Download, RefreshCw, Stethoscope } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
@@ -94,14 +96,14 @@ export function SystemDiagnostics() {
         </>
       ) : null}
       <div className="settings-form-actions">
-        <button
+        <Button
           className="button button-secondary"
           disabled={loading}
           onClick={() => void refresh()}
           type="button"
         >
           <RefreshCw size={16} /> 刷新诊断
-        </button>
+        </Button>
         <a className="button button-secondary" href="/api/v1/settings/diagnostics?download=1">
           <Download size={16} /> 下载脱敏诊断包
         </a>

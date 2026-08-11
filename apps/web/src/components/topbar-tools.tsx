@@ -1,5 +1,7 @@
 "use client";
 
+import { Button, Input } from "@/components/ui";
+
 import type { GlobalSearchResult, Notification } from "@autoforge/contracts";
 import { Bell, Check, Search, X } from "lucide-react";
 import Link from "next/link";
@@ -95,7 +97,7 @@ export function TopbarTools() {
       <div className="global-search-shell">
         <div className="global-search" role="search">
           <Search size={17} aria-hidden="true" />
-          <input
+          <Input
             aria-label="全局搜索"
             onChange={(event) => updateQuery(event.target.value)}
             onFocus={() => query.trim().length >= 2 && setSearchOpen(true)}
@@ -122,9 +124,9 @@ export function TopbarTools() {
           >
             <div className="popover-heading">
               <strong>全局搜索</strong>
-              <button aria-label="关闭搜索结果" onClick={() => setSearchOpen(false)} type="button">
+              <Button aria-label="关闭搜索结果" onClick={() => setSearchOpen(false)} type="button">
                 <X size={15} />
-              </button>
+              </Button>
             </div>
             {searchItems.length === 0 ? (
               <p className="popover-empty">没有匹配的可访问资源。</p>
@@ -149,7 +151,7 @@ export function TopbarTools() {
         ) : null}
       </div>
       <div className="notification-shell">
-        <button
+        <Button
           aria-expanded={notificationsOpen}
           aria-label={unreadCount > 0 ? `${unreadCount} 条未读通知` : "通知"}
           className="icon-button"
@@ -158,24 +160,24 @@ export function TopbarTools() {
         >
           <Bell size={19} />
           {unreadCount > 0 ? <span className="notification-count">{unreadCount}</span> : null}
-        </button>
+        </Button>
         {notificationsOpen ? (
           <div className="topbar-popover notification-panel">
             <div className="popover-heading">
               <strong>通知中心</strong>
-              <button
+              <Button
                 aria-label="关闭通知"
                 onClick={() => setNotificationsOpen(false)}
                 type="button"
               >
                 <X size={15} />
-              </button>
+              </Button>
             </div>
             {notifications.length === 0 ? (
               <p className="popover-empty">暂时没有站内通知。</p>
             ) : (
               notifications.map((notification) => (
-                <button
+                <Button
                   className={notification.readAt ? "notification-item read" : "notification-item"}
                   key={notification.id}
                   onClick={() => void markRead(notification)}
@@ -188,7 +190,7 @@ export function TopbarTools() {
                     <time>{formatDate(notification.createdAt)}</time>
                   </span>
                   {notification.readAt ? <Check size={14} aria-label="已读" /> : null}
-                </button>
+                </Button>
               ))
             )}
           </div>

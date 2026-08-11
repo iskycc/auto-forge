@@ -1,5 +1,7 @@
 "use client";
 
+import { Button, Input, Textarea } from "@/components/ui";
+
 import { apiErrorSchema } from "@autoforge/contracts";
 import type { CaseDefinitionWithMethods } from "@autoforge/domain";
 import { LoaderCircle, Save } from "lucide-react";
@@ -58,15 +60,15 @@ export function CaseDefinitionEditor({ definition }: { definition: CaseDefinitio
     <form className="settings-grid-form" onSubmit={(event) => void submit(event)}>
       <label>
         显示名称
-        <input name="displayName" required maxLength={200} defaultValue={definition.displayName} />
+        <Input name="displayName" required maxLength={200} defaultValue={definition.displayName} />
       </label>
       <label>
         标签（逗号分隔）
-        <input name="tags" maxLength={2000} defaultValue={definition.tags.join(", ")} />
+        <Input name="tags" maxLength={2000} defaultValue={definition.tags.join(", ")} />
       </label>
       <label className="settings-wide-field">
         描述
-        <textarea
+        <Textarea
           name="description"
           rows={3}
           maxLength={2000}
@@ -74,11 +76,11 @@ export function CaseDefinitionEditor({ definition }: { definition: CaseDefinitio
         />
       </label>
       <label className="checkbox-field">
-        <input name="enabled" type="checkbox" defaultChecked={definition.enabled} />
+        <Input name="enabled" type="checkbox" defaultChecked={definition.enabled} />
         启用（禁用后新建批次不再执行该用例）
       </label>
       <label className="checkbox-field">
-        <input name="archived" type="checkbox" defaultChecked={definition.archived} />
+        <Input name="archived" type="checkbox" defaultChecked={definition.archived} />
         归档（保留历史记录，从日常列表中隐藏）
       </label>
       <div className="settings-form-actions">
@@ -92,9 +94,9 @@ export function CaseDefinitionEditor({ definition }: { definition: CaseDefinitio
             {message}
           </small>
         ) : null}
-        <button className="primary-button" disabled={pending} type="submit">
+        <Button className="primary-button" disabled={pending} type="submit">
           {pending ? <LoaderCircle className="spin" size={15} /> : <Save size={15} />} 保存修改
-        </button>
+        </Button>
       </div>
     </form>
   );

@@ -1,8 +1,12 @@
 "use client";
 
+import { apiErrorSchema, bootstrapAdminInputSchema, loginInputSchema } from "@autoforge/contracts";
 import { LockKeyhole, Network, ShieldCheck, UserRound } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
+
+import { Button, Input } from "@/components/ui";
+import { authEntryValidationMessage } from "@/lib/auth-entry-validation";
 
 type AuthMode = "login" | "setup";
 
@@ -20,28 +24,41 @@ export function AuthEntryForm({ mode, ldapEnabled }: { mode: AuthMode; ldapEnabl
     const payload =
       mode === "setup"
         ? {
-            bootstrapToken: form.get("bootstrapToken"),
-            username: form.get("username"),
-            displayName: form.get("displayName"),
-            password: form.get("password"),
+            bootstrapToken: stringValue(form, "bootstrapToken"),
+            username: stringValue(form, "username"),
+            displayName: stringValue(form, "displayName"),
+            password: stringValue(form, "password"),
           }
         : {
-            username: form.get("username"),
-            password: form.get("password"),
+            username: stringValue(form, "username"),
+            password: stringValue(form, "password"),
             provider,
           };
     try {
+      const parsed = (mode === "setup" ? bootstrapAdminInputSchema : loginInputSchema).safeParse(
+        payload,
+      );
+      if (!parsed.success) {
+        throw new Error(
+          authEntryValidationMessage(parsed.error.issues) ?? "请检查账号和凭据字段。",
+        );
+      }
       const response = await fetch(
         mode === "setup" ? "/api/v1/auth/bootstrap" : "/api/v1/auth/login",
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
+          body: JSON.stringify(parsed.data),
         },
       );
       if (!response.ok) {
-        const body = (await response.json()) as { error?: { message?: string } };
-        throw new Error(body.error?.message ?? "请求未成功。");
+        const apiError = apiErrorSchema.safeParse(await response.json());
+        throw new Error(
+          (apiError.success
+            ? (authEntryValidationMessage(apiError.data.error.details) ??
+              apiError.data.error.message)
+            : undefined) ?? "请求未成功。",
+        );
       }
       router.push("/");
     } catch (cause) {
@@ -51,49 +68,70 @@ export function AuthEntryForm({ mode, ldapEnabled }: { mode: AuthMode; ldapEnabl
   }
 
   return (
-    <form className="auth-form" onSubmit={submit}>
+    <form className="auth-form" noValidate onSubmit={submit}>
       {mode === "login" && ldapEnabled ? (
         <div className="auth-provider" role="group" aria-label="登录来源">
-          <button
+          <Button
             className={provider === "local" ? "auth-provider-active" : ""}
             onClick={() => setProvider("local")}
             type="button"
+            variant="ghost"
           >
             <UserRound size={16} aria-hidden="true" /> 本地账号
-          </button>
-          <button
+          </Button>
+          <Button
             className={provider === "ldap" ? "auth-provider-active" : ""}
             onClick={() => setProvider("ldap")}
             type="button"
+            variant="ghost"
           >
             <Network size={16} aria-hidden="true" /> LDAP
-          </button>
+          </Button>
         </div>
       ) : null}
 
       {mode === "setup" ? (
         <label>
           <span>一次性管理员引导令牌</span>
-          <input autoComplete="off" name="bootstrapToken" required type="password" />
+          <Input
+            autoComplete="off"
+            maxLength={1024}
+            minLength={32}
+            name="bootstrapToken"
+            placeholder="粘贴 initial-admin-token 的完整内容"
+            required
+            type="password"
+          />
         </label>
       ) : null}
 
       <label>
         <span>用户名</span>
-        <input autoComplete="username" name="username" required />
+        <Input
+          autoComplete="username"
+          maxLength={64}
+          minLength={3}
+          name="username"
+          pattern="[A-Za-z0-9][A-Za-z0-9._-]*"
+          required
+        />
+        {mode === "setup" ? (
+          <small>3–64 位，以字母或数字开头，可使用字母、数字、点、下划线和短横线。</small>
+        ) : null}
       </label>
 
       {mode === "setup" ? (
         <label>
           <span>显示名称</span>
-          <input autoComplete="name" name="displayName" required />
+          <Input autoComplete="name" maxLength={120} name="displayName" required />
         </label>
       ) : null}
 
       <label>
         <span>{mode === "setup" ? "管理员密码" : "密码"}</span>
-        <input
+        <Input
           autoComplete={mode === "setup" ? "new-password" : "current-password"}
+          maxLength={mode === "setup" ? 128 : 1024}
           minLength={mode === "setup" ? 12 : 1}
           name="password"
           required
@@ -108,10 +146,20 @@ export function AuthEntryForm({ mode, ldapEnabled }: { mode: AuthMode; ldapEnabl
         </p>
       ) : null}
 
-      <button className="primary-button auth-submit" disabled={pending} type="submit">
+      <Button
+        className="auth-submit"
+        disabled={pending}
+        size="large"
+        type="submit"
+        variant="primary"
+      >
         {mode === "setup" ? <ShieldCheck size={17} /> : <LockKeyhole size={17} />}
         {pending ? "正在处理…" : mode === "setup" ? "创建系统管理员" : "登录"}
-      </button>
+      </Button>
     </form>
   );
+}
+
+function stringValue(form: FormData, name: string): string {
+  return String(form.get(name) ?? "");
 }

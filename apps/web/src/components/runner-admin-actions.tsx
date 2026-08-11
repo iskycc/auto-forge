@@ -1,5 +1,7 @@
 "use client";
 
+import { Button } from "@/components/ui";
+
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
@@ -74,7 +76,7 @@ export function RunnerAdminActions({
   return (
     <span className="runner-admin-actions">
       {state === "draining" || state === "disabled" ? (
-        <button
+        <Button
           className="text-button"
           disabled={pending || credentialRevoked}
           onClick={() =>
@@ -83,9 +85,9 @@ export function RunnerAdminActions({
           type="button"
         >
           恢复接单
-        </button>
+        </Button>
       ) : (
-        <button
+        <Button
           className="text-button"
           disabled={pending || credentialRevoked}
           onClick={() =>
@@ -97,10 +99,10 @@ export function RunnerAdminActions({
           type="button"
         >
           排空
-        </button>
+        </Button>
       )}
       {state !== "disabled" ? (
-        <button
+        <Button
           className="danger-text-button"
           disabled={pending}
           onClick={() =>
@@ -112,13 +114,13 @@ export function RunnerAdminActions({
           type="button"
         >
           禁用
-        </button>
+        </Button>
       ) : null}
       {credentialRevoked ? (
         <small className="muted">凭据已撤销</small>
       ) : (
         <>
-          <button
+          <Button
             className="text-button"
             disabled={pending || credentialRotationRequested}
             onClick={() =>
@@ -130,8 +132,8 @@ export function RunnerAdminActions({
             type="button"
           >
             {credentialRotationRequested ? "等待轮换" : "轮换凭据"}
-          </button>
-          <button
+          </Button>
+          <Button
             className="danger-text-button"
             disabled={pending}
             onClick={() =>
@@ -143,10 +145,10 @@ export function RunnerAdminActions({
             type="button"
           >
             撤销凭据
-          </button>
+          </Button>
         </>
       )}
-      <button
+      <Button
         className="danger-text-button"
         disabled={pending}
         onClick={() =>
@@ -158,7 +160,7 @@ export function RunnerAdminActions({
         type="button"
       >
         注销
-      </button>
+      </Button>
       {error ? (
         <small className="form-error" role="alert">
           {error}

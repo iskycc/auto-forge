@@ -1,5 +1,7 @@
 "use client";
 
+import { Button, Input, Select } from "@/components/ui";
+
 import type {
   ApiToken,
   RetentionPolicy,
@@ -170,36 +172,36 @@ export function OperationsSettings({
               <strong>请立即复制并离线保管</strong>
               <code>{issuedToken}</code>
             </span>
-            <button
+            <Button
               className="button button-secondary"
               onClick={() => void navigator.clipboard.writeText(issuedToken)}
               type="button"
             >
               复制
-            </button>
+            </Button>
           </div>
         ) : null}
         {canManageTokens ? (
           <form className="settings-grid-form" onSubmit={createAccount}>
             <label>
               账号名称
-              <input name="name" required />
+              <Input name="name" required />
             </label>
             <label>
               用途说明
-              <input name="description" />
+              <Input name="description" />
             </label>
             <label className="settings-wide-field">
               系统权限
-              <select multiple name="permissions" required size={6}>
+              <Select multiple name="permissions" required size={6}>
                 {permissionCatalog.map((permission) => (
                   <option key={permission}>{permission}</option>
                 ))}
-              </select>
+              </Select>
             </label>
-            <button className="button button-primary" disabled={pending} type="submit">
+            <Button className="button button-primary" disabled={pending} type="submit">
               <Plus size={16} /> 创建服务账号
-            </button>
+            </Button>
           </form>
         ) : (
           <div className="implementation-notice">当前身份没有服务账号管理权限。</div>
@@ -217,14 +219,14 @@ export function OperationsSettings({
                       {account.description || "无说明"} · {account.status}
                     </small>
                   </span>
-                  <button
+                  <Button
                     className="button button-secondary compact-button"
                     disabled={pending}
                     onClick={() => void loadTokens(account.id)}
                     type="button"
                   >
                     <RefreshCw size={14} /> 令牌
-                  </button>
+                  </Button>
                 </div>
                 <div className="permission-chip-row">
                   {account.systemPermissions.map((permission) => (
@@ -238,11 +240,11 @@ export function OperationsSettings({
                   >
                     <label>
                       令牌名称
-                      <input name="name" required />
+                      <Input name="name" required />
                     </label>
                     <label>
                       过期时间
-                      <input
+                      <Input
                         min={new Date().toISOString().slice(0, 16)}
                         name="expiresAt"
                         required
@@ -251,7 +253,7 @@ export function OperationsSettings({
                     </label>
                     <label>
                       作用域
-                      <select multiple name="scopes" required size={4}>
+                      <Select multiple name="scopes" required size={4}>
                         {[
                           ...new Set([
                             ...account.systemPermissions,
@@ -260,11 +262,11 @@ export function OperationsSettings({
                         ].map((scope) => (
                           <option key={scope}>{scope}</option>
                         ))}
-                      </select>
+                      </Select>
                     </label>
-                    <button className="button button-primary" disabled={pending} type="submit">
+                    <Button className="button button-primary" disabled={pending} type="submit">
                       签发
-                    </button>
+                    </Button>
                   </form>
                 ) : null}
                 {(tokens[account.id] ?? []).map((token) => (
@@ -283,13 +285,13 @@ export function OperationsSettings({
                           : "从未使用"}
                     </span>
                     {!token.revokedAt && canManageTokens ? (
-                      <button
+                      <Button
                         aria-label={`撤销 ${token.name}`}
                         onClick={() => void revokeToken(token)}
                         type="button"
                       >
                         <Trash2 size={15} />
-                      </button>
+                      </Button>
                     ) : null}
                   </div>
                 ))}
@@ -319,7 +321,7 @@ export function OperationsSettings({
               </small>
               <label>
                 保留天数
-                <input
+                <Input
                   defaultValue={policy.retentionDays}
                   disabled={!canManageSettings}
                   max={policy.maximumDays}
@@ -335,22 +337,22 @@ export function OperationsSettings({
                 </p>
               ) : null}
               <span>
-                <button
+                <Button
                   className="button button-secondary compact-button"
                   disabled={pending}
                   onClick={() => void previewRetention(policy)}
                   type="button"
                 >
                   影响预览
-                </button>
+                </Button>
                 {canManageSettings ? (
-                  <button
+                  <Button
                     className="button button-primary compact-button"
                     disabled={pending}
                     type="submit"
                   >
                     保存
-                  </button>
+                  </Button>
                 ) : null}
               </span>
             </form>

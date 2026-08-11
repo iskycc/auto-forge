@@ -1,5 +1,7 @@
 "use client";
 
+import { Button, Input, Textarea } from "@/components/ui";
+
 import { apiErrorSchema } from "@autoforge/contracts";
 import type { CaseSuite } from "@autoforge/domain";
 import { ArrowRight, Layers3, LoaderCircle, Plus } from "lucide-react";
@@ -55,7 +57,7 @@ export function CaseSuiteManager({ initialSuites }: { initialSuites: CaseSuite[]
         <form className="stack-form" onSubmit={createSuite}>
           <label>
             <span>任务名称</span>
-            <input
+            <Input
               value={name}
               onChange={(event) => setName(event.target.value)}
               maxLength={120}
@@ -65,7 +67,7 @@ export function CaseSuiteManager({ initialSuites }: { initialSuites: CaseSuite[]
           </label>
           <label>
             <span>说明</span>
-            <textarea
+            <Textarea
               value={description}
               onChange={(event) => setDescription(event.target.value)}
               maxLength={500}
@@ -78,13 +80,13 @@ export function CaseSuiteManager({ initialSuites }: { initialSuites: CaseSuite[]
               {error}
             </span>
           )}
-          <button
+          <Button
             className="button button-primary"
             type="submit"
             disabled={pending || !name.trim()}
           >
             {pending ? <LoaderCircle className="spin" size={16} /> : <Plus size={16} />} 创建任务
-          </button>
+          </Button>
         </form>
       </section>
       <section className="suite-list" aria-label="用例任务列表">

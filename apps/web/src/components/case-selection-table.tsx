@@ -1,5 +1,7 @@
 "use client";
 
+import { Button, Input, Select } from "@/components/ui";
+
 import { apiErrorSchema } from "@autoforge/contracts";
 import type { CaseDefinitionWithMethods, CaseSuite } from "@autoforge/domain";
 import { Check, Layers3, LoaderCircle } from "lucide-react";
@@ -77,7 +79,7 @@ export function CaseSelectionTable({
           </Link>
         ) : (
           <span className="selection-actions">
-            <select
+            <Select
               value={suiteId}
               onChange={(event) => setSuiteId(event.target.value)}
               aria-label="目标用例任务"
@@ -87,15 +89,15 @@ export function CaseSelectionTable({
                   {suite.name}
                 </option>
               ))}
-            </select>
-            <button
+            </Select>
+            <Button
               className="button button-primary"
               type="button"
               disabled={selected.size === 0 || pending}
               onClick={addToSuite}
             >
               {pending ? <LoaderCircle className="spin" size={15} /> : <Check size={15} />} 加入任务
-            </button>
+            </Button>
           </span>
         )}
       </div>
@@ -109,7 +111,7 @@ export function CaseSelectionTable({
           <thead>
             <tr>
               <th className="checkbox-cell">
-                <input
+                <Input
                   type="checkbox"
                   aria-label="选择本页全部用例"
                   checked={allSelected}
@@ -129,7 +131,7 @@ export function CaseSelectionTable({
             {cases.map((item) => (
               <tr className={selected.has(item.id) ? "selected-row" : ""} key={item.id}>
                 <td className="checkbox-cell">
-                  <input
+                  <Input
                     type="checkbox"
                     aria-label={`选择 ${item.displayName}`}
                     checked={selected.has(item.id)}

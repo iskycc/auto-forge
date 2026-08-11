@@ -1,5 +1,7 @@
 "use client";
 
+import { Button } from "@/components/ui";
+
 import { LogOut } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
@@ -15,7 +17,7 @@ export function LogoutButton() {
   }
 
   return (
-    <button
+    <Button
       className="icon-button"
       disabled={pending}
       onClick={logout}
@@ -24,6 +26,6 @@ export function LogoutButton() {
     >
       <LogOut size={17} aria-hidden="true" />
       <span className="visually-hidden">退出登录</span>
-    </button>
+    </Button>
   );
 }

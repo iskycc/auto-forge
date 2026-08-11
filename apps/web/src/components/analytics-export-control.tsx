@@ -1,5 +1,7 @@
 "use client";
 
+import { Button } from "@/components/ui";
+
 import type { AnalyticsExportJob, AnalyticsFilter } from "@autoforge/contracts";
 import { Download, LoaderCircle, X } from "lucide-react";
 import { useEffect, useState } from "react";
@@ -64,22 +66,22 @@ export function AnalyticsExportControl({ filter }: Props) {
   return (
     <div className="analytics-export-control" aria-live="polite">
       {!job || ["failed", "cancelled"].includes(job.status) ? (
-        <button className="button button-secondary" onClick={() => void start()} type="button">
+        <Button className="button button-secondary" onClick={() => void start()} type="button">
           <Download size={17} /> 导出当前范围
-        </button>
+        </Button>
       ) : null}
       {active ? (
         <div className="analytics-export-progress">
           <LoaderCircle className="spin" size={17} aria-hidden="true" />
           <span>正在生成 {job.progressPercent}%</span>
-          <button
+          <Button
             className="icon-button"
             onClick={() => void cancel()}
             title="取消导出"
             type="button"
           >
             <X size={16} />
-          </button>
+          </Button>
         </div>
       ) : null}
       {job?.status === "succeeded" ? (

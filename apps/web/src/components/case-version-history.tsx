@@ -1,5 +1,7 @@
 "use client";
 
+import { Button } from "@/components/ui";
+
 import { apiErrorSchema } from "@autoforge/contracts";
 import type { CaseVersion } from "@autoforge/domain";
 import { History, LoaderCircle } from "lucide-react";
@@ -102,7 +104,7 @@ export function CaseVersionHistory({
                   {version.version === currentVersion ? (
                     <span className="muted">—</span>
                   ) : (
-                    <button
+                    <Button
                       className="secondary-button"
                       disabled={pendingVersion !== null}
                       onClick={() => void restore(version.version)}
@@ -114,7 +116,7 @@ export function CaseVersionHistory({
                         <History size={14} />
                       )}
                       从该版本创建
-                    </button>
+                    </Button>
                   )}
                 </td>
               ) : null}

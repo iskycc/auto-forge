@@ -1,5 +1,7 @@
 "use client";
 
+import { Button, Input, Textarea } from "@/components/ui";
+
 import {
   runnerAgentInstallationResultSchema,
   runnerHostProbeResultSchema,
@@ -119,7 +121,7 @@ export function RunnerAgentInstaller({ controlPlaneUrl }: RunnerAgentInstallerPr
       <div className="runner-installer-grid">
         <label>
           执行机 IP / 主机名
-          <input
+          <Input
             autoComplete="off"
             disabled={Boolean(pending)}
             onChange={(event) => connectionChanged(() => setHost(event.target.value))}
@@ -129,7 +131,7 @@ export function RunnerAgentInstaller({ controlPlaneUrl }: RunnerAgentInstallerPr
         </label>
         <label>
           SSH 端口
-          <input
+          <Input
             disabled={Boolean(pending)}
             max={65_535}
             min={1}
@@ -140,7 +142,7 @@ export function RunnerAgentInstaller({ controlPlaneUrl }: RunnerAgentInstallerPr
         </label>
         <label>
           用户名
-          <input
+          <Input
             autoComplete="username"
             disabled={Boolean(pending)}
             onChange={(event) => connectionChanged(() => setUsername(event.target.value))}
@@ -150,7 +152,7 @@ export function RunnerAgentInstaller({ controlPlaneUrl }: RunnerAgentInstallerPr
         </label>
         <label>
           SSH / sudo 密码
-          <input
+          <Input
             autoComplete="current-password"
             disabled={Boolean(pending)}
             onChange={(event) => connectionChanged(() => setPassword(event.target.value))}
@@ -161,14 +163,14 @@ export function RunnerAgentInstaller({ controlPlaneUrl }: RunnerAgentInstallerPr
       </div>
 
       <div className="runner-installer-actions">
-        <button
+        <Button
           className="button-secondary"
           disabled={!controlPlaneUrl || !host || !username || !password || Boolean(pending)}
           onClick={() => void probeHost()}
           type="button"
         >
           <Search size={16} /> {pending === "probe" ? "正在探测…" : "探测并核验主机"}
-        </button>
+        </Button>
         <small>支持 Ubuntu、openSUSE Leap/Tumbleweed，以及 amd64、arm64。</small>
       </div>
 
@@ -191,7 +193,7 @@ export function RunnerAgentInstaller({ controlPlaneUrl }: RunnerAgentInstallerPr
             </span>
           </div>
           <label className="checkbox-row runner-fingerprint-confirmation">
-            <input
+            <Input
               checked={fingerprintConfirmed}
               onChange={(event) => setFingerprintConfirmed(event.target.checked)}
               type="checkbox"
@@ -202,15 +204,15 @@ export function RunnerAgentInstaller({ controlPlaneUrl }: RunnerAgentInstallerPr
           <div className="runner-installer-grid runner-install-options">
             <label>
               执行机名称
-              <input onChange={(event) => setName(event.target.value)} value={name} />
+              <Input onChange={(event) => setName(event.target.value)} value={name} />
             </label>
             <label>
               标签（逗号分隔）
-              <input onChange={(event) => setLabels(event.target.value)} value={labels} />
+              <Input onChange={(event) => setLabels(event.target.value)} value={labels} />
             </label>
             <label>
               最大并发
-              <input
+              <Input
                 max={64}
                 min={1}
                 onChange={(event) => setMaxConcurrency(Number(event.target.value))}
@@ -219,7 +221,7 @@ export function RunnerAgentInstaller({ controlPlaneUrl }: RunnerAgentInstallerPr
               />
             </label>
             <label className="checkbox-field">
-              <input
+              <Input
                 checked={terminalEnabled}
                 onChange={(event) => setTerminalEnabled(event.target.checked)}
                 type="checkbox"
@@ -229,7 +231,7 @@ export function RunnerAgentInstaller({ controlPlaneUrl }: RunnerAgentInstallerPr
           </div>
           <label>
             私有 CA 证书（可选，PEM）
-            <textarea
+            <Textarea
               onChange={(event) => setCaCertificatePem(event.target.value)}
               placeholder="控制面使用私有 CA 时粘贴；公有可信证书请留空。"
               rows={4}
@@ -237,7 +239,7 @@ export function RunnerAgentInstaller({ controlPlaneUrl }: RunnerAgentInstallerPr
             />
           </label>
           <div className="runner-installer-actions">
-            <button
+            <Button
               className="button-primary"
               disabled={!fingerprintConfirmed || !name.trim() || Boolean(pending)}
               onClick={() => void installAgent()}
@@ -245,7 +247,7 @@ export function RunnerAgentInstaller({ controlPlaneUrl }: RunnerAgentInstallerPr
             >
               <HardDriveDownload size={16} />
               {pending === "install" ? "正在安装并启动…" : "安装内置 Agent"}
-            </button>
+            </Button>
             <small>安装过程不会调用系统包管理器，也不会下载任何外部依赖。</small>
           </div>
         </div>

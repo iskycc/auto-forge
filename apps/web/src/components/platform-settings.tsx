@@ -1,5 +1,7 @@
 "use client";
 
+import { Button, Input, Select, Textarea } from "@/components/ui";
+
 import type { PlatformConfigurationView } from "@autoforge/contracts";
 import { Save, ServerCog } from "lucide-react";
 import { useState, type FormEvent } from "react";
@@ -104,18 +106,18 @@ export function PlatformSettings({
           <div className="settings-grid-form">
             <label>
               部署模式
-              <select value={mode} onChange={(event) => setMode(event.target.value as typeof mode)}>
+              <Select value={mode} onChange={(event) => setMode(event.target.value as typeof mode)}>
                 <option value="lite">Lite · SQLite 与本地对象</option>
                 <option value="full">Full · PostgreSQL/NATS/MinIO/Redis</option>
-              </select>
+              </Select>
             </label>
             <label>
               监听地址
-              <input defaultValue={initial.web.hostname} name="hostname" required />
+              <Input defaultValue={initial.web.hostname} name="hostname" required />
             </label>
             <label>
               HTTP 端口
-              <input
+              <Input
                 defaultValue={initial.web.port}
                 min={1}
                 max={65_535}
@@ -125,7 +127,7 @@ export function PlatformSettings({
             </label>
             <label>
               外部访问地址
-              <input
+              <Input
                 defaultValue={initial.web.publicBaseUrl ?? ""}
                 name="publicBaseUrl"
                 placeholder="https://autoforge.internal"
@@ -134,7 +136,7 @@ export function PlatformSettings({
             </label>
             <label>
               公开大盘刷新间隔（秒）
-              <input
+              <Input
                 defaultValue={initial.web.publicDashboardRefreshSeconds}
                 min={5}
                 max={300}
@@ -166,12 +168,12 @@ export function PlatformSettings({
               />
               <label>
                 NATS 地址（逗号或换行分隔）
-                <textarea name="natsServers" placeholder="nats://nats:4222" />
+                <Textarea name="natsServers" placeholder="nats://nats:4222" />
               </label>
               <SecretInput label="Redis URL" name="redisUrl" configured={initial.fullConfigured} />
               <label>
                 MinIO 地址
-                <input name="minioEndpoint" placeholder="http://minio:9000" type="url" />
+                <Input name="minioEndpoint" placeholder="http://minio:9000" type="url" />
               </label>
               <SecretInput
                 label="MinIO Access Key"
@@ -185,11 +187,11 @@ export function PlatformSettings({
               />
               <label>
                 MinIO Bucket
-                <input name="minioBucket" placeholder="autoforge-objects" />
+                <Input name="minioBucket" placeholder="autoforge-objects" />
               </label>
               <label>
                 MinIO Region
-                <input name="minioRegion" placeholder="us-east-1" />
+                <Input name="minioRegion" placeholder="us-east-1" />
               </label>
             </div>
           </section>
@@ -270,7 +272,7 @@ export function PlatformSettings({
               value={initial.worker.shutdownGraceMs}
             />
             <label className="checkbox-field">
-              <input
+              <Input
                 defaultChecked={initial.worker.metricsEnabled}
                 name="workerMetricsEnabled"
                 type="checkbox"
@@ -279,9 +281,9 @@ export function PlatformSettings({
             </label>
           </div>
           <div className="settings-form-actions">
-            <button className="primary-button" disabled={pending} type="submit">
+            <Button className="primary-button" disabled={pending} type="submit">
               <Save size={16} aria-hidden="true" /> {pending ? "正在保存…" : "保存平台配置"}
-            </button>
+            </Button>
           </div>
         </section>
       </fieldset>
@@ -303,7 +305,7 @@ function NumberInput({
   return (
     <label>
       {label}
-      <input defaultValue={value} name={name} step={step} type="number" />
+      <Input defaultValue={value} name={name} step={step} type="number" />
     </label>
   );
 }
@@ -320,7 +322,7 @@ function SecretInput({
   return (
     <label>
       {label}
-      <input
+      <Input
         autoComplete="off"
         name={name}
         placeholder={configured ? "留空以保留现有值" : "首次配置必填"}

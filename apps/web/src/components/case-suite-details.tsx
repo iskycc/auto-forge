@@ -1,5 +1,7 @@
 "use client";
 
+import { Button } from "@/components/ui";
+
 import { apiErrorSchema } from "@autoforge/contracts";
 import type { CaseSuiteDetails } from "@autoforge/domain";
 import { LoaderCircle, Trash2 } from "lucide-react";
@@ -82,7 +84,7 @@ export function CaseSuiteDetailsView({ initialSuite }: { initialSuite: CaseSuite
                     </span>
                   </td>
                   <td>
-                    <button
+                    <Button
                       className="button button-danger-quiet"
                       type="button"
                       disabled={removing === item.caseDefinition.id}
@@ -94,7 +96,7 @@ export function CaseSuiteDetailsView({ initialSuite }: { initialSuite: CaseSuite
                         <Trash2 size={15} />
                       )}{" "}
                       移除
-                    </button>
+                    </Button>
                   </td>
                 </tr>
               ))}

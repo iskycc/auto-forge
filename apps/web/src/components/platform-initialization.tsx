@@ -1,8 +1,15 @@
 "use client";
 
-import type { PlatformConfigurationView } from "@autoforge/contracts";
-import { Database, RotateCw } from "lucide-react";
+import {
+  apiErrorSchema,
+  initializePlatformConfigurationInputSchema,
+  type PlatformConfigurationView,
+} from "@autoforge/contracts";
+import { Boxes, Database, RotateCw, Server } from "lucide-react";
 import { useState, type FormEvent } from "react";
+
+import { Button, Input } from "@/components/ui";
+import { platformInitializationValidationMessage } from "@/lib/platform-initialization-validation";
 
 export function PlatformInitialization({ initial }: { initial: PlatformConfigurationView }) {
   const [mode, setMode] = useState(initial.mode);
@@ -16,29 +23,43 @@ export function PlatformInitialization({ initial }: { initial: PlatformConfigura
     setError("");
     const form = new FormData(event.currentTarget);
     try {
+      const parsed = initializePlatformConfigurationInputSchema.safeParse({
+        bootstrapToken: stringValue(form, "bootstrapToken"),
+        configuration: {
+          revision: initial.revision,
+          mode,
+          web: {
+            ...initial.web,
+            ...(stringValue(form, "publicBaseUrl")
+              ? { publicBaseUrl: stringValue(form, "publicBaseUrl") }
+              : {}),
+          },
+          limits: initial.limits,
+          scheduler: initial.scheduler,
+          worker: initial.worker,
+          ...(mode === "full" ? { full: fullConfiguration(form) } : {}),
+        },
+      });
+      if (!parsed.success) {
+        throw new Error(
+          platformInitializationValidationMessage(parsed.error.issues) ?? "请检查平台初始化字段。",
+        );
+      }
       const response = await fetch("/api/v1/auth/setup-platform", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          bootstrapToken: stringValue(form, "bootstrapToken"),
-          configuration: {
-            revision: initial.revision,
-            mode,
-            web: {
-              ...initial.web,
-              ...(stringValue(form, "publicBaseUrl")
-                ? { publicBaseUrl: stringValue(form, "publicBaseUrl") }
-                : {}),
-            },
-            limits: initial.limits,
-            scheduler: initial.scheduler,
-            worker: initial.worker,
-            ...(mode === "full" ? { full: fullConfiguration(form) } : {}),
-          },
-        }),
+        body: JSON.stringify(parsed.data),
       });
-      const body = (await response.json()) as { error?: { message?: string } };
-      if (!response.ok) throw new Error(body.error?.message ?? "首次平台配置失败。");
+      const body: unknown = await response.json();
+      if (!response.ok) {
+        const apiError = apiErrorSchema.safeParse(body);
+        throw new Error(
+          (apiError.success
+            ? (platformInitializationValidationMessage(apiError.data.error.details) ??
+              apiError.data.error.message)
+            : undefined) ?? "首次平台配置失败。",
+        );
+      }
       setCompleted(true);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "首次平台配置失败。");
@@ -47,52 +68,89 @@ export function PlatformInitialization({ initial }: { initial: PlatformConfigura
   }
 
   return (
-    <section className="auth-card setup-platform-card" aria-labelledby="platform-setup-title">
-      <div className="auth-brand-mark setup-platform-mark" aria-hidden="true">
-        <Database size={22} />
+    <section className="setup-card setup-runtime-card" aria-labelledby="platform-setup-title">
+      <div className="setup-card-heading">
+        <span className="setup-step-number">01</span>
+        <span className="setup-heading-icon setup-heading-icon-blue" aria-hidden="true">
+          <Database size={20} />
+        </span>
+        <div>
+          <span className="setup-kicker">运行环境</span>
+          <h2 id="platform-setup-title">配置部署模式</h2>
+          <p>Lite 开箱即用；需要集群能力时再接入 Full 基础设施。</p>
+        </div>
+        <span className="setup-optional-badge">可选</span>
       </div>
-      <p className="eyebrow">运行模式初始化</p>
-      <h1 id="platform-setup-title">先配置平台（可选）</h1>
-      <p className="auth-intro">
-        默认 Lite 已可独立运行。需要 Full 或自动安装 Agent
-        时，可在创建管理员前配置基础设施与执行机可访问地址；保存后重启平台，再继续管理员初始化。
-      </p>
       {completed ? (
         <div className="inline-success setup-restart-message" role="status">
           <RotateCw size={18} />{" "}
           配置已安全写入。请重启主平台；重启后仍使用同一个一次性令牌创建管理员。
         </div>
       ) : (
-        <form className="auth-form" onSubmit={submit}>
-          <label>
-            平台配置引导令牌
-            <input autoComplete="off" name="bootstrapToken" required type="password" />
-          </label>
-          <label>
-            部署模式
-            <select value={mode} onChange={(event) => setMode(event.target.value as typeof mode)}>
-              <option value="lite">Lite · 单机独立运行</option>
-              <option value="full">Full · 外部基础设施</option>
-            </select>
-          </label>
-          <label>
-            执行机可访问地址
-            <input
-              defaultValue={initial.web.publicBaseUrl ?? ""}
-              name="publicBaseUrl"
-              placeholder="https://autoforge.internal"
-              type="url"
-            />
-            <small>自动安装 Agent 前必须设置 HTTPS 地址；本机开发可使用 loopback HTTP。</small>
-          </label>
+        <form className="setup-form" noValidate onSubmit={submit}>
+          <fieldset className="setup-mode-fieldset">
+            <legend>部署模式</legend>
+            <div className="setup-mode-grid">
+              <Button
+                aria-pressed={mode === "lite"}
+                className="setup-mode-option"
+                onClick={() => setMode("lite")}
+                type="button"
+                variant="ghost"
+              >
+                <Server size={18} />
+                <span>
+                  <strong>Lite</strong>
+                  <small>SQLite · 本地对象 · 进程内工作器</small>
+                </span>
+              </Button>
+              <Button
+                aria-pressed={mode === "full"}
+                className="setup-mode-option"
+                onClick={() => setMode("full")}
+                type="button"
+                variant="ghost"
+              >
+                <Boxes size={18} />
+                <span>
+                  <strong>Full</strong>
+                  <small>PostgreSQL · NATS · MinIO · Redis</small>
+                </span>
+              </Button>
+            </div>
+          </fieldset>
+          <div className="setup-field-grid">
+            <label>
+              <span>平台配置引导令牌</span>
+              <Input
+                autoComplete="off"
+                minLength={32}
+                name="bootstrapToken"
+                placeholder="粘贴 initial-admin-token 的完整内容"
+                required
+                type="password"
+              />
+              <small>与管理员创建使用同一个一次性令牌，不会写入日志。</small>
+            </label>
+            <label>
+              <span>执行机可访问地址</span>
+              <Input
+                defaultValue={initial.web.publicBaseUrl ?? ""}
+                name="publicBaseUrl"
+                placeholder="https://autoforge.internal"
+                type="url"
+              />
+              <small>自动安装 Agent 前设置；生产环境应使用可信 HTTPS。</small>
+            </label>
+          </div>
           {mode === "full" ? (
             <FullInfrastructureFields configured={initial.fullConfigured} />
           ) : null}
-          <button className="button button-secondary auth-submit" disabled={pending} type="submit">
+          <Button disabled={pending} size="large" type="submit" variant="secondary">
             {pending ? "正在保存…" : "保存平台配置"}
-          </button>
+          </Button>
           {error ? (
-            <p className="auth-error" role="alert">
+            <p className="setup-form-error" role="alert">
               {error}
             </p>
           ) : null}
@@ -104,39 +162,69 @@ export function PlatformInitialization({ initial }: { initial: PlatformConfigura
 
 function FullInfrastructureFields({ configured }: { configured: boolean }) {
   const placeholder = configured ? "已配置；留空保留" : "首次启用必填";
+  const required = !configured;
   return (
     <div className="setup-full-fields">
       <label>
         PostgreSQL URL
-        <input autoComplete="off" name="databaseUrl" placeholder={placeholder} type="password" />
+        <Input
+          autoComplete="off"
+          name="databaseUrl"
+          placeholder={placeholder}
+          required={required}
+          type="password"
+        />
       </label>
       <label>
         NATS 地址（逗号分隔）
-        <input name="natsServers" placeholder="nats://nats:4222" />
+        <Input name="natsServers" placeholder="nats://nats:4222" required={required} />
       </label>
       <label>
         Redis URL
-        <input autoComplete="off" name="redisUrl" placeholder={placeholder} type="password" />
+        <Input
+          autoComplete="off"
+          name="redisUrl"
+          placeholder={placeholder}
+          required={required}
+          type="password"
+        />
       </label>
       <label>
         MinIO 地址
-        <input name="minioEndpoint" placeholder="http://minio:9000" type="url" />
+        <Input
+          name="minioEndpoint"
+          placeholder="http://minio:9000"
+          required={required}
+          type="url"
+        />
       </label>
       <label>
         MinIO Access Key
-        <input autoComplete="off" name="minioAccessKey" placeholder={placeholder} type="password" />
+        <Input
+          autoComplete="off"
+          name="minioAccessKey"
+          placeholder={placeholder}
+          required={required}
+          type="password"
+        />
       </label>
       <label>
         MinIO Secret Key
-        <input autoComplete="off" name="minioSecretKey" placeholder={placeholder} type="password" />
+        <Input
+          autoComplete="off"
+          name="minioSecretKey"
+          placeholder={placeholder}
+          required={required}
+          type="password"
+        />
       </label>
       <label>
         MinIO Bucket
-        <input name="minioBucket" placeholder="autoforge-objects" />
+        <Input name="minioBucket" placeholder="autoforge-objects" required={required} />
       </label>
       <label>
         MinIO Region
-        <input name="minioRegion" placeholder="us-east-1" />
+        <Input name="minioRegion" placeholder="us-east-1" required={required} />
       </label>
     </div>
   );

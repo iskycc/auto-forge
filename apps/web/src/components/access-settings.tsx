@@ -1,5 +1,7 @@
 "use client";
 
+import { Button, Input, Select, Textarea } from "@/components/ui";
+
 import type { AuditEvent, Project, Role, User, UserSession } from "@autoforge/domain";
 import { Network, Plus, RefreshCw, Search, Shield, UserRound } from "lucide-react";
 import { useState, type FormEvent } from "react";
@@ -227,40 +229,40 @@ export function AccessSettings({
         <form className="settings-grid-form" onSubmit={submitUser}>
           <label>
             用户名
-            <input name="username" required />
+            <Input name="username" required />
           </label>
           <label>
             显示名称
-            <input name="displayName" required />
+            <Input name="displayName" required />
           </label>
           <label>
             邮箱（可选）
-            <input name="email" type="email" />
+            <Input name="email" type="email" />
           </label>
           <label>
             初始密码
-            <input minLength={12} name="password" required type="password" />
+            <Input minLength={12} name="password" required type="password" />
           </label>
-          <button className="primary-button" disabled={pending} type="submit">
+          <Button className="primary-button" disabled={pending} type="submit">
             <Plus size={16} /> 创建本地用户
-          </button>
+          </Button>
         </form>
         <form action="/settings/access" className="settings-user-filter" method="get">
           <label>
             搜索用户
-            <input defaultValue={userQuery} maxLength={120} name="query" />
+            <Input defaultValue={userQuery} maxLength={120} name="query" />
           </label>
           <label>
             账号来源
-            <select defaultValue={userSource} name="source">
+            <Select defaultValue={userSource} name="source">
               <option value="">全部来源</option>
               <option value="local">本地</option>
               <option value="ldap">LDAP</option>
-            </select>
+            </Select>
           </label>
-          <button className="secondary-button" type="submit">
+          <Button className="secondary-button" type="submit">
             <Search size={16} /> 筛选
-          </button>
+          </Button>
         </form>
         <div className="table-scroll">
           <table className="data-table">
@@ -287,7 +289,7 @@ export function AccessSettings({
                   <td>{user.status === "active" ? "启用" : "禁用"}</td>
                   <td>{user.lastLoginAt ? new Date(user.lastLoginAt).toLocaleString() : "—"}</td>
                   <td>
-                    <button
+                    <Button
                       className="table-action"
                       disabled={pending}
                       onClick={() =>
@@ -302,8 +304,8 @@ export function AccessSettings({
                       type="button"
                     >
                       {user.status === "active" ? "禁用" : "启用/解锁"}
-                    </button>
-                    <button
+                    </Button>
+                    <Button
                       className="table-action"
                       disabled={pending}
                       onClick={() =>
@@ -316,7 +318,7 @@ export function AccessSettings({
                       type="button"
                     >
                       撤销会话
-                    </button>
+                    </Button>
                   </td>
                 </tr>
               ))}
@@ -334,7 +336,7 @@ export function AccessSettings({
         <form className="settings-grid-form settings-subform" onSubmit={submitPasswordReset}>
           <label>
             本地用户
-            <select name="userId" required>
+            <Select name="userId" required>
               {users
                 .filter((user) => user.source === "local")
                 .map((user) => (
@@ -342,15 +344,15 @@ export function AccessSettings({
                     {user.displayName} · {user.username}
                   </option>
                 ))}
-            </select>
+            </Select>
           </label>
           <label>
             新密码
-            <input minLength={12} name="password" required type="password" />
+            <Input minLength={12} name="password" required type="password" />
           </label>
-          <button className="secondary-button" disabled={pending} type="submit">
+          <Button className="secondary-button" disabled={pending} type="submit">
             重置密码并撤销会话
-          </button>
+          </Button>
         </form>
       </section>
 
@@ -365,66 +367,66 @@ export function AccessSettings({
         <div className="settings-paired-forms">
           <form className="settings-grid-form settings-subform" onSubmit={submitSystemRole}>
             <label>
-              用户<select name="userId">{users.map(userOption)}</select>
+              用户<Select name="userId">{users.map(userOption)}</Select>
             </label>
             <label>
               系统角色
-              <select name="roleId">
+              <Select name="roleId">
                 {roles.filter((role) => role.scope === "system" && role.active).map(roleOption)}
-              </select>
+              </Select>
             </label>
-            <button className="secondary-button" disabled={pending} type="submit">
+            <Button className="secondary-button" disabled={pending} type="submit">
               分配系统角色
-            </button>
+            </Button>
           </form>
           <form className="settings-grid-form settings-subform" onSubmit={submitProjectRole}>
             <label>
-              用户<select name="userId">{users.map(userOption)}</select>
+              用户<Select name="userId">{users.map(userOption)}</Select>
             </label>
             <label>
               项目
-              <select name="projectId">
+              <Select name="projectId">
                 {projects.filter((project) => !project.archived).map(projectOption)}
-              </select>
+              </Select>
             </label>
             <label>
               项目角色
-              <select name="roleId">
+              <Select name="roleId">
                 {roles.filter((role) => role.scope === "project" && role.active).map(roleOption)}
-              </select>
+              </Select>
             </label>
-            <button className="secondary-button" disabled={pending} type="submit">
+            <Button className="secondary-button" disabled={pending} type="submit">
               分配项目角色
-            </button>
+            </Button>
           </form>
         </div>
         <form className="settings-grid-form" onSubmit={submitRole}>
           <label>
             角色标识
-            <input name="key" placeholder="release-operator" required />
+            <Input name="key" placeholder="release-operator" required />
           </label>
           <label>
             角色名称
-            <input name="name" required />
+            <Input name="name" required />
           </label>
           <label>
             作用域
-            <select defaultValue="project" name="scope">
+            <Select defaultValue="project" name="scope">
               <option value="project">项目</option>
               <option value="system">系统</option>
-            </select>
+            </Select>
           </label>
           <label className="settings-wide-field">
             权限（英文逗号分隔）
-            <input name="permissions" placeholder="case.read,run.read,run.create" required />
+            <Input name="permissions" placeholder="case.read,run.read,run.create" required />
           </label>
           <label className="settings-wide-field">
             描述
-            <input name="description" />
+            <Input name="description" />
           </label>
-          <button className="primary-button" disabled={pending} type="submit">
+          <Button className="primary-button" disabled={pending} type="submit">
             <Plus size={16} /> 创建角色
-          </button>
+          </Button>
         </form>
         <div className="role-grid">
           {roles.map((role) => (
@@ -451,15 +453,15 @@ export function AccessSettings({
                   >
                     <label>
                       新角色标识
-                      <input defaultValue={`${role.key}-copy`} name="key" required />
+                      <Input defaultValue={`${role.key}-copy`} name="key" required />
                     </label>
                     <label>
                       新角色名称
-                      <input defaultValue={`${role.name} 副本`} name="name" required />
+                      <Input defaultValue={`${role.name} 副本`} name="name" required />
                     </label>
-                    <button className="secondary-button" disabled={pending} type="submit">
+                    <Button className="secondary-button" disabled={pending} type="submit">
                       创建副本
-                    </button>
+                    </Button>
                   </form>
                 </details>
                 {!role.builtIn ? (
@@ -472,11 +474,11 @@ export function AccessSettings({
                       >
                         <label>
                           角色名称
-                          <input defaultValue={role.name} name="name" required />
+                          <Input defaultValue={role.name} name="name" required />
                         </label>
                         <label className="settings-wide-field">
                           权限（英文逗号分隔）
-                          <input
+                          <Input
                             defaultValue={role.permissions.join(",")}
                             name="permissions"
                             required
@@ -484,14 +486,14 @@ export function AccessSettings({
                         </label>
                         <label className="settings-wide-field">
                           描述
-                          <input defaultValue={role.description} name="description" />
+                          <Input defaultValue={role.description} name="description" />
                         </label>
-                        <button className="secondary-button" disabled={pending} type="submit">
+                        <Button className="secondary-button" disabled={pending} type="submit">
                           保存角色
-                        </button>
+                        </Button>
                       </form>
                     </details>
-                    <button
+                    <Button
                       className="table-action"
                       disabled={pending}
                       onClick={() =>
@@ -506,8 +508,8 @@ export function AccessSettings({
                       type="button"
                     >
                       {role.active ? "停用角色" : "启用角色"}
-                    </button>
-                    <button
+                    </Button>
+                    <Button
                       className="danger-text-button"
                       disabled={pending}
                       onClick={() =>
@@ -520,7 +522,7 @@ export function AccessSettings({
                       type="button"
                     >
                       删除角色
-                    </button>
+                    </Button>
                   </>
                 ) : null}
               </div>
@@ -539,15 +541,15 @@ export function AccessSettings({
         <form className="settings-grid-form" onSubmit={submitProject}>
           <label>
             项目名称
-            <input name="name" required />
+            <Input name="name" required />
           </label>
           <label>
             Slug
-            <input name="slug" pattern="[a-z0-9]+(?:-[a-z0-9]+)*" required />
+            <Input name="slug" pattern="[a-z0-9]+(?:-[a-z0-9]+)*" required />
           </label>
-          <button className="primary-button" disabled={pending} type="submit">
+          <Button className="primary-button" disabled={pending} type="submit">
             <Plus size={16} /> 创建项目
-          </button>
+          </Button>
         </form>
         <div className="project-settings-list">
           {projects.map((project) => (
@@ -577,19 +579,19 @@ export function AccessSettings({
                     );
                   }}
                 >
-                  <select defaultValue={project.ownerUserId ?? ""} name="ownerUserId" required>
+                  <Select defaultValue={project.ownerUserId ?? ""} name="ownerUserId" required>
                     <option disabled value="">
                       选择新负责人
                     </option>
                     {users.filter((user) => user.status === "active").map(userOption)}
-                  </select>
-                  <button className="secondary-button" disabled={pending} type="submit">
+                  </Select>
+                  <Button className="secondary-button" disabled={pending} type="submit">
                     转移负责人
-                  </button>
+                  </Button>
                 </form>
               ) : null}
               {!project.isDefault && !project.archived ? (
-                <button
+                <Button
                   className="danger-text-button"
                   disabled={pending}
                   onClick={() =>
@@ -602,7 +604,7 @@ export function AccessSettings({
                   type="button"
                 >
                   归档
-                </button>
+                </Button>
               ) : null}
             </div>
           ))}
@@ -625,19 +627,19 @@ export function AccessSettings({
           }}
         >
           <label className="checkbox-field">
-            <input defaultChecked={ldap?.enabled ?? false} name="enabled" type="checkbox" />
+            <Input defaultChecked={ldap?.enabled ?? false} name="enabled" type="checkbox" />
             启用 LDAP 登录
           </label>
           <label>
             TLS 模式
-            <select defaultValue={ldap?.tlsMode ?? "ldaps"} name="tlsMode">
+            <Select defaultValue={ldap?.tlsMode ?? "ldaps"} name="tlsMode">
               <option value="ldaps">LDAPS</option>
               <option value="starttls">StartTLS</option>
-            </select>
+            </Select>
           </label>
           <label className="settings-wide-field">
             服务器地址（每行一个）
-            <textarea
+            <Textarea
               defaultValue={ldap?.urls.join("\n") ?? "ldaps://ldap.internal:636"}
               name="urls"
               required
@@ -646,11 +648,11 @@ export function AccessSettings({
           </label>
           <label>
             Bind DN
-            <input defaultValue={ldap?.bindDn} name="bindDn" required />
+            <Input defaultValue={ldap?.bindDn} name="bindDn" required />
           </label>
           <label>
             Bind 密码
-            <input
+            <Input
               name="bindPassword"
               placeholder={ldap?.bindPasswordConfigured ? "留空以保持现有密文" : "必填"}
               required={!ldap?.bindPasswordConfigured}
@@ -659,7 +661,7 @@ export function AccessSettings({
           </label>
           <label>
             LDAP 分页大小
-            <input
+            <Input
               defaultValue={ldap?.pageSize ?? 500}
               max={1000}
               min={50}
@@ -669,7 +671,7 @@ export function AccessSettings({
           </label>
           <label>
             单次同步用户上限
-            <input
+            <Input
               defaultValue={ldap?.maximumUsers ?? 5000}
               max={50000}
               min={1}
@@ -679,7 +681,7 @@ export function AccessSettings({
           </label>
           <label>
             计划同步间隔（分钟，0 为关闭）
-            <input
+            <Input
               defaultValue={ldap?.synchronizationIntervalMinutes ?? 0}
               max={10080}
               min={0}
@@ -689,11 +691,11 @@ export function AccessSettings({
           </label>
           <label className="settings-wide-field">
             用户 Base DN
-            <input defaultValue={ldap?.userBaseDn} name="userBaseDn" required />
+            <Input defaultValue={ldap?.userBaseDn} name="userBaseDn" required />
           </label>
           <label className="settings-wide-field">
             用户过滤器
-            <input
+            <Input
               defaultValue={ldap?.userFilter ?? "(&(objectClass=person)(uid={username}))"}
               name="userFilter"
               required
@@ -701,37 +703,37 @@ export function AccessSettings({
           </label>
           <label>
             稳定 ID 属性
-            <input defaultValue={ldap?.userIdAttribute ?? "entryUUID"} name="userIdAttribute" />
+            <Input defaultValue={ldap?.userIdAttribute ?? "entryUUID"} name="userIdAttribute" />
           </label>
           <label>
             用户名属性
-            <input defaultValue={ldap?.usernameAttribute ?? "uid"} name="usernameAttribute" />
+            <Input defaultValue={ldap?.usernameAttribute ?? "uid"} name="usernameAttribute" />
           </label>
           <label>
             显示名属性
-            <input
+            <Input
               defaultValue={ldap?.displayNameAttribute ?? "displayName"}
               name="displayNameAttribute"
             />
           </label>
           <label>
             邮箱属性
-            <input defaultValue={ldap?.emailAttribute ?? "mail"} name="emailAttribute" />
+            <Input defaultValue={ldap?.emailAttribute ?? "mail"} name="emailAttribute" />
           </label>
           <label className="settings-wide-field">
             组 Base DN（可选）
-            <input defaultValue={ldap?.groupBaseDn} name="groupBaseDn" />
+            <Input defaultValue={ldap?.groupBaseDn} name="groupBaseDn" />
           </label>
           <label className="settings-wide-field">
             组过滤器（可选，使用 {"{userDn}"}）
-            <input defaultValue={ldap?.groupFilter} name="groupFilter" />
+            <Input defaultValue={ldap?.groupFilter} name="groupFilter" />
           </label>
           <label className="settings-wide-field">
             私有 CA PEM（可选）
-            <textarea defaultValue={ldap?.caPem} name="caPem" rows={5} />
+            <Textarea defaultValue={ldap?.caPem} name="caPem" rows={5} />
           </label>
           <div className="settings-form-actions">
-            <button
+            <Button
               className="secondary-button"
               disabled={pending}
               onClick={(event) => {
@@ -741,14 +743,14 @@ export function AccessSettings({
               type="button"
             >
               <RefreshCw size={16} /> 测试连接
-            </button>
-            <button className="primary-button" disabled={pending} type="submit">
+            </Button>
+            <Button className="primary-button" disabled={pending} type="submit">
               保存 LDAP 配置
-            </button>
+            </Button>
           </div>
         </form>
         <div className="settings-directory-actions">
-          <button
+          <Button
             className="secondary-button"
             disabled={pending || !ldap?.enabled}
             onClick={() =>
@@ -761,30 +763,30 @@ export function AccessSettings({
             type="button"
           >
             <RefreshCw size={16} /> 立即同步目录
-          </button>
+          </Button>
         </div>
         <form className="settings-grid-form settings-subform" onSubmit={submitLdapMapping}>
           <label className="settings-wide-field">
             LDAP 组 DN
-            <input name="groupDn" required />
+            <Input name="groupDn" required />
           </label>
           <label>
-            角色<select name="roleId">{roles.map(roleOption)}</select>
+            角色<Select name="roleId">{roles.map(roleOption)}</Select>
           </label>
           <label>
             项目（系统角色留空）
-            <select defaultValue="" name="projectId">
+            <Select defaultValue="" name="projectId">
               <option value="">系统作用域</option>
               {projects.filter((project) => !project.archived).map(projectOption)}
-            </select>
+            </Select>
           </label>
           <label>
             优先级
-            <input defaultValue={0} max={1000} min={-1000} name="priority" type="number" />
+            <Input defaultValue={0} max={1000} min={-1000} name="priority" type="number" />
           </label>
-          <button className="secondary-button" disabled={pending} type="submit">
+          <Button className="secondary-button" disabled={pending} type="submit">
             添加组映射
-          </button>
+          </Button>
         </form>
         <div className="permission-list">
           {ldapMappings.map((mapping) => (
@@ -824,7 +826,7 @@ export function AccessSettings({
                   <td>{new Date(session.lastSeenAt).toLocaleString()}</td>
                   <td>{new Date(session.expiresAt).toLocaleString()}</td>
                   <td>
-                    <button
+                    <Button
                       className="danger-text-button"
                       disabled={pending}
                       onClick={() =>
@@ -837,7 +839,7 @@ export function AccessSettings({
                       type="button"
                     >
                       终止
-                    </button>
+                    </Button>
                   </td>
                 </tr>
               ))}

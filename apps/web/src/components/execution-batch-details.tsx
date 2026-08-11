@@ -1,5 +1,7 @@
 "use client";
 
+import { Button, Input, Select } from "@/components/ui";
+
 import type { AttemptArtifactList, AttemptEventPage, AttemptLogPage } from "@autoforge/contracts";
 import type { RunBatchDetails } from "@autoforge/domain";
 import {
@@ -238,7 +240,7 @@ export function ExecutionBatchDetails({
           </div>
           <div className="button-row">
             {canCancelRuns && activeBatch ? (
-              <button
+              <Button
                 className="button button-danger-quiet"
                 disabled={actionPending !== undefined}
                 onClick={() => void cancelBatch()}
@@ -246,10 +248,10 @@ export function ExecutionBatchDetails({
               >
                 <XCircle size={16} />
                 {actionPending === "cancel" ? "正在取消…" : "取消批次"}
-              </button>
+              </Button>
             ) : null}
             {canCreateRuns && !activeBatch ? (
-              <button
+              <Button
                 className="button button-primary"
                 disabled={actionPending !== undefined || retryBlockedByLegacySecrets}
                 onClick={() => void retryBatch()}
@@ -257,7 +259,7 @@ export function ExecutionBatchDetails({
               >
                 <RotateCcw size={16} />
                 {actionPending === "retry" ? "正在创建…" : "再次执行"}
-              </button>
+              </Button>
             ) : null}
           </div>
           {actionError ? (
@@ -305,13 +307,13 @@ export function ExecutionBatchDetails({
                     </td>
                     <td>
                       {attempt ? (
-                        <button
+                        <Button
                           className="button button-secondary compact-button"
                           type="button"
                           onClick={() => setAttemptId(attempt.id)}
                         >
                           #{attempt.attemptNumber}
-                        </button>
+                        </Button>
                       ) : (
                         "-"
                       )}
@@ -356,7 +358,7 @@ export function ExecutionBatchDetails({
             <span className="step-label">OUTPUT</span>
             <h2>日志与产物</h2>
           </div>
-          <select
+          <Select
             aria-label="执行尝试"
             value={attemptId}
             onChange={(event) => setAttemptId(event.target.value)}
@@ -366,7 +368,7 @@ export function ExecutionBatchDetails({
                 Attempt #{attempt.attemptNumber} · {attempt.status}
               </option>
             ))}
-          </select>
+          </Select>
         </div>
         {!attemptId ? (
           <div className="inline-empty">批次尚未生成执行尝试。</div>
@@ -375,7 +377,7 @@ export function ExecutionBatchDetails({
             <div className="log-toolbar">
               <div className="segmented-control" aria-label="日志流">
                 {(["stdout", "stderr", "agent"] as const).map((value) => (
-                  <button
+                  <Button
                     aria-pressed={stream === value}
                     className={stream === value ? "active" : ""}
                     key={value}
@@ -383,7 +385,7 @@ export function ExecutionBatchDetails({
                     type="button"
                   >
                     {value}
-                  </button>
+                  </Button>
                 ))}
               </div>
               <form
@@ -399,36 +401,36 @@ export function ExecutionBatchDetails({
                 }}
               >
                 <Search size={15} />
-                <input
+                <Input
                   aria-label="搜索日志"
                   placeholder="搜索当前日志流"
                   value={query}
                   onChange={(event) => setQuery(event.target.value)}
                 />
-                <input
+                <Input
                   aria-label="日志开始时间"
                   type="datetime-local"
                   value={recordedAfter}
                   onChange={(event) => setRecordedAfter(event.target.value)}
                 />
-                <input
+                <Input
                   aria-label="日志结束时间"
                   type="datetime-local"
                   value={recordedBefore}
                   onChange={(event) => setRecordedBefore(event.target.value)}
                 />
-                <button className="button button-secondary compact-button" type="submit">
+                <Button className="button button-secondary compact-button" type="submit">
                   筛选
-                </button>
+                </Button>
               </form>
-              <button
+              <Button
                 aria-pressed={darkLogs}
                 className="button button-secondary compact-button"
                 onClick={() => setDarkLogs((current) => !current)}
                 type="button"
               >
                 {darkLogs ? "浅色日志" : "深色日志"}
-              </button>
+              </Button>
             </div>
             {error ? <p className="form-error">{error}</p> : null}
             {logsTruncated ? (
@@ -460,7 +462,7 @@ export function ExecutionBatchDetails({
               <div className="inline-empty">当前账号没有读取执行日志的权限。</div>
             )}
             {nextSequence !== undefined ? (
-              <button
+              <Button
                 className="button button-secondary compact-button"
                 disabled={loading}
                 onClick={() =>
@@ -476,7 +478,7 @@ export function ExecutionBatchDetails({
                 type="button"
               >
                 <RefreshCw size={15} /> 加载更多
-              </button>
+              </Button>
             ) : null}
             <div className="artifact-list">
               {!canReadArtifacts ? (

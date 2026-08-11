@@ -1,5 +1,7 @@
 "use client";
 
+import { Button, Input } from "@/components/ui";
+
 import {
   apiErrorSchema,
   jarImportResultSchema,
@@ -179,7 +181,7 @@ export function JarImporter({ maxJarBytes }: { maxJarBytes: number }) {
           className={`file-dropzone ${file ? "file-dropzone-selected" : ""}`}
           htmlFor={inputId}
         >
-          <input
+          <Input
             id={inputId}
             type="file"
             accept=".jar,application/java-archive"
@@ -203,7 +205,7 @@ export function JarImporter({ maxJarBytes }: { maxJarBytes: number }) {
         </label>
 
         <div className="button-row">
-          <button
+          <Button
             className="button button-primary"
             type="button"
             onClick={inspectJar}
@@ -215,16 +217,16 @@ export function JarImporter({ maxJarBytes }: { maxJarBytes: number }) {
               <ScanSearch size={17} aria-hidden="true" />
             )}
             {phase === "inspecting" ? "正在扫描" : "扫描测试类"}
-          </button>
+          </Button>
           {file && (
-            <button
+            <Button
               className="button button-secondary"
               type="button"
               onClick={() => chooseFile(null)}
               disabled={busy}
             >
               <RotateCcw size={16} aria-hidden="true" /> 重置
-            </button>
+            </Button>
           )}
         </div>
       </section>
@@ -245,14 +247,14 @@ export function JarImporter({ maxJarBytes }: { maxJarBytes: number }) {
           <progress max={100} value={job.progressPercent} />
           <div className="button-row">
             {["queued", "running", "cancel_requested"].includes(job.status) ? (
-              <button className="button button-secondary" type="button" onClick={cancelImport}>
+              <Button className="button button-secondary" type="button" onClick={cancelImport}>
                 取消导入
-              </button>
+              </Button>
             ) : null}
             {job.status === "failed" || job.status === "cancelled" ? (
-              <button className="button button-secondary" type="button" onClick={retryImport}>
+              <Button className="button button-secondary" type="button" onClick={retryImport}>
                 幂等重试
-              </button>
+              </Button>
             ) : null}
           </div>
         </section>
@@ -352,7 +354,7 @@ export function JarImporter({ maxJarBytes }: { maxJarBytes: number }) {
               <strong>将创建 {inspection.testClassCount} 个用例定义</strong>
               <span>JAR 使用 SHA-256 内容寻址保存，重复文件不会重复导入。</span>
             </div>
-            <button
+            <Button
               className="button button-primary"
               type="button"
               onClick={importJar}
@@ -364,7 +366,7 @@ export function JarImporter({ maxJarBytes }: { maxJarBytes: number }) {
                 <Check size={17} />
               )}
               {phase === "importing" ? "正在导入" : "确认导入"}
-            </button>
+            </Button>
           </div>
         </section>
       )}

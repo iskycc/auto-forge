@@ -1,5 +1,7 @@
 "use client";
 
+import { Button, Input, Select, Textarea } from "@/components/ui";
+
 import type {
   ExecutionEnvironment,
   ExecutionEnvironmentDetails,
@@ -287,20 +289,20 @@ export function EnvironmentSettings({
   return (
     <div className="environment-settings-stack">
       <div className="segmented-control environment-view-switch" aria-label="管理对象">
-        <button
+        <Button
           className={view === "environments" ? "active" : ""}
           type="button"
           onClick={() => setView("environments")}
         >
           <Boxes size={15} /> 环境
-        </button>
-        <button
+        </Button>
+        <Button
           className={view === "secrets" ? "active" : ""}
           type="button"
           onClick={() => setView("secrets")}
         >
           <KeyRound size={15} /> 密文
-        </button>
+        </Button>
       </div>
       {error ? <p className="form-error settings-feedback">{error}</p> : null}
       {notice ? <p className="form-success settings-feedback">{notice}</p> : null}
@@ -393,7 +395,7 @@ function EnvironmentPanel(props: {
             <h2>执行环境</h2>
           </div>
           {props.environmentProjectOptions.length > 0 ? (
-            <button
+            <Button
               className="icon-button"
               type="button"
               aria-label="创建执行环境"
@@ -401,7 +403,7 @@ function EnvironmentPanel(props: {
               onClick={() => setShowCreate((current) => !current)}
             >
               <Plus size={17} />
-            </button>
+            </Button>
           ) : null}
         </div>
         {showCreate ? (
@@ -419,7 +421,7 @@ function EnvironmentPanel(props: {
             <div className="inline-empty">暂无可见执行环境。</div>
           ) : (
             props.environments.map((environment) => (
-              <button
+              <Button
                 className={environment.id === props.selectedEnvironmentId ? "selected" : ""}
                 key={environment.id}
                 type="button"
@@ -430,7 +432,7 @@ function EnvironmentPanel(props: {
                   <small>v{environment.currentVersion}</small>
                 </span>
                 <StatusLabel status={environment.status} />
-              </button>
+              </Button>
             ))
           )}
         </div>
@@ -449,7 +451,7 @@ function EnvironmentPanel(props: {
               <div className="environment-detail-actions">
                 <StatusLabel status={props.details.status} />
                 {props.canManage ? (
-                  <button
+                  <Button
                     className="icon-button"
                     type="button"
                     aria-label={props.details.status === "active" ? "停用环境" : "启用环境"}
@@ -458,7 +460,7 @@ function EnvironmentPanel(props: {
                     onClick={props.toggleEnvironmentStatus}
                   >
                     <Power size={17} />
-                  </button>
+                  </Button>
                 ) : null}
               </div>
             </div>
@@ -468,7 +470,7 @@ function EnvironmentPanel(props: {
                 <h3>元数据</h3>
                 <label className="field-stack">
                   <span>名称</span>
-                  <input
+                  <Input
                     value={props.metadataName}
                     disabled={!props.canManage || props.busy}
                     onChange={(event) => props.setMetadataName(event.target.value)}
@@ -476,7 +478,7 @@ function EnvironmentPanel(props: {
                 </label>
                 <label className="field-stack">
                   <span>说明</span>
-                  <textarea
+                  <Textarea
                     rows={3}
                     value={props.metadataDescription}
                     disabled={!props.canManage || props.busy}
@@ -490,7 +492,7 @@ function EnvironmentPanel(props: {
                 <h3>普通变量新版本</h3>
                 <label className="field-stack">
                   <span>变量</span>
-                  <textarea
+                  <Textarea
                     rows={6}
                     value={props.variableDraft}
                     disabled={!props.canManage || props.busy}
@@ -504,7 +506,7 @@ function EnvironmentPanel(props: {
                 <div className="compact-section-heading">
                   <h3>密文绑定新版本</h3>
                   {props.canManage ? (
-                    <button
+                    <Button
                       className="icon-button small-icon-button"
                       type="button"
                       aria-label="添加密文绑定"
@@ -520,7 +522,7 @@ function EnvironmentPanel(props: {
                       onClick={() => props.addBinding(props.details?.projectId ?? "")}
                     >
                       <Plus size={15} />
-                    </button>
+                    </Button>
                   ) : null}
                 </div>
                 <div className="secret-binding-list">
@@ -529,7 +531,7 @@ function EnvironmentPanel(props: {
                   ) : (
                     props.bindingRows.map((row) => (
                       <div className="secret-binding-row" key={row.id}>
-                        <input
+                        <Input
                           aria-label="注入变量名"
                           value={row.name}
                           disabled={!props.canManage || props.busy}
@@ -541,7 +543,7 @@ function EnvironmentPanel(props: {
                             )
                           }
                         />
-                        <select
+                        <Select
                           aria-label="执行密文"
                           value={row.secretId}
                           disabled={!props.canManage || props.busy}
@@ -566,9 +568,9 @@ function EnvironmentPanel(props: {
                                 {secret.name} · v{secret.currentVersion}
                               </option>
                             ))}
-                        </select>
+                        </Select>
                         {props.canManage ? (
-                          <button
+                          <Button
                             className="icon-button small-icon-button"
                             type="button"
                             aria-label="移除密文绑定"
@@ -580,7 +582,7 @@ function EnvironmentPanel(props: {
                             }
                           >
                             <Trash2 size={14} />
-                          </button>
+                          </Button>
                         ) : null}
                       </div>
                     ))
@@ -594,16 +596,16 @@ function EnvironmentPanel(props: {
                   <h3>复制环境</h3>
                   <label className="field-stack">
                     <span>新环境名称</span>
-                    <input
+                    <Input
                       required
                       value={props.copyName}
                       disabled={props.busy}
                       onChange={(event) => props.setCopyName(event.target.value)}
                     />
                   </label>
-                  <button className="button button-secondary" type="submit" disabled={props.busy}>
+                  <Button className="button button-secondary" type="submit" disabled={props.busy}>
                     <Copy size={15} /> 复制
-                  </button>
+                  </Button>
                 </form>
               ) : null}
             </div>
@@ -712,25 +714,25 @@ function CreateEnvironmentForm({
     <form className="compact-create-form" onSubmit={submit}>
       <label className="field-stack">
         <span>项目</span>
-        <select value={projectId} onChange={(event) => setProjectId(event.target.value)}>
+        <Select value={projectId} onChange={(event) => setProjectId(event.target.value)}>
           {projects.map((project) => (
             <option key={project.id} value={project.id}>
               {project.name}
             </option>
           ))}
-        </select>
+        </Select>
       </label>
       <label className="field-stack">
         <span>名称</span>
-        <input required value={name} onChange={(event) => setName(event.target.value)} />
+        <Input required value={name} onChange={(event) => setName(event.target.value)} />
       </label>
       <label className="field-stack">
         <span>说明</span>
-        <input value={description} onChange={(event) => setDescription(event.target.value)} />
+        <Input value={description} onChange={(event) => setDescription(event.target.value)} />
       </label>
       <label className="field-stack">
         <span>普通变量</span>
-        <textarea
+        <Textarea
           rows={4}
           value={variables}
           onChange={(event) => setVariables(event.target.value)}
@@ -738,7 +740,7 @@ function CreateEnvironmentForm({
       </label>
       <div className="compact-section-heading">
         <strong>密文绑定</strong>
-        <button
+        <Button
           className="icon-button small-icon-button"
           type="button"
           aria-label="添加密文绑定"
@@ -752,11 +754,11 @@ function CreateEnvironmentForm({
           }}
         >
           <Plus size={14} />
-        </button>
+        </Button>
       </div>
       {bindings.map((binding) => (
         <div className="secret-binding-row" key={binding.id}>
-          <input
+          <Input
             aria-label="注入变量名"
             value={binding.name}
             onChange={(event) =>
@@ -767,7 +769,7 @@ function CreateEnvironmentForm({
               )
             }
           />
-          <select
+          <Select
             aria-label="执行密文"
             value={binding.secretId}
             onChange={(event) =>
@@ -783,8 +785,8 @@ function CreateEnvironmentForm({
                 {secret.name}
               </option>
             ))}
-          </select>
-          <button
+          </Select>
+          <Button
             className="icon-button small-icon-button"
             type="button"
             aria-label="移除密文绑定"
@@ -793,7 +795,7 @@ function CreateEnvironmentForm({
             }
           >
             <Trash2 size={14} />
-          </button>
+          </Button>
         </div>
       ))}
       {error ? <p className="form-error">{error}</p> : null}
@@ -916,25 +918,25 @@ function SecretPanel(props: {
           <form onSubmit={createSecret}>
             <label className="field-stack">
               <span>项目</span>
-              <select value={projectId} onChange={(event) => setProjectId(event.target.value)}>
+              <Select value={projectId} onChange={(event) => setProjectId(event.target.value)}>
                 {props.projects.map((project) => (
                   <option key={project.id} value={project.id}>
                     {project.name}
                   </option>
                 ))}
-              </select>
+              </Select>
             </label>
             <label className="field-stack">
               <span>名称</span>
-              <input required value={name} onChange={(event) => setName(event.target.value)} />
+              <Input required value={name} onChange={(event) => setName(event.target.value)} />
             </label>
             <label className="field-stack">
               <span>说明</span>
-              <input value={description} onChange={(event) => setDescription(event.target.value)} />
+              <Input value={description} onChange={(event) => setDescription(event.target.value)} />
             </label>
             <label className="field-stack">
               <span>密文值</span>
-              <input
+              <Input
                 required
                 autoComplete="new-password"
                 type="password"
@@ -959,7 +961,7 @@ function SecretPanel(props: {
             <div className="inline-empty">暂无可管理执行密文。</div>
           ) : (
             props.secrets.map((secret) => (
-              <button
+              <Button
                 className={secret.id === props.selectedSecretId ? "selected" : ""}
                 key={secret.id}
                 type="button"
@@ -970,7 +972,7 @@ function SecretPanel(props: {
                   <small>v{secret.currentVersion}</small>
                 </span>
                 <StatusLabel status={secret.status} />
-              </button>
+              </Button>
             ))
           )}
         </div>
@@ -995,7 +997,7 @@ function SecretPanel(props: {
                 <form className="secret-rotation-form" onSubmit={rotateSecret}>
                   <label className="field-stack">
                     <span>新密文值</span>
-                    <input
+                    <Input
                       required
                       autoComplete="new-password"
                       type="password"
@@ -1003,11 +1005,11 @@ function SecretPanel(props: {
                       onChange={(event) => setRotationValue(event.target.value)}
                     />
                   </label>
-                  <button className="button button-secondary" type="submit" disabled={props.busy}>
+                  <Button className="button button-secondary" type="submit" disabled={props.busy}>
                     <RotateCcw size={15} /> 轮换
-                  </button>
+                  </Button>
                 </form>
-                <button
+                <Button
                   className="button button-secondary"
                   type="button"
                   disabled={props.busy}
@@ -1015,7 +1017,7 @@ function SecretPanel(props: {
                 >
                   <Power size={15} />
                   {props.selectedSecret.status === "active" ? "停用" : "启用"}
-                </button>
+                </Button>
               </>
             ) : null}
           </div>
@@ -1027,10 +1029,10 @@ function SecretPanel(props: {
 
 function SubmitButton({ busy, label }: { busy: boolean; label: string }) {
   return (
-    <button className="button button-primary" type="submit" disabled={busy}>
+    <Button className="button button-primary" type="submit" disabled={busy}>
       {busy ? <RefreshCw className="spin" size={15} /> : <Save size={15} />}
       {label}
-    </button>
+    </Button>
   );
 }
 

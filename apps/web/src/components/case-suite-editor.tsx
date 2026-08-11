@@ -1,5 +1,7 @@
 "use client";
 
+import { Button, Input, Select, Textarea } from "@/components/ui";
+
 import { apiErrorSchema, type CaseSuiteSchedule } from "@autoforge/contracts";
 import type { CaseSuiteDetails } from "@autoforge/domain";
 import { CalendarClock, Copy, LoaderCircle, Save, Trash2 } from "lucide-react";
@@ -164,11 +166,11 @@ export function CaseSuiteEditor({
         <form className="settings-grid-form" onSubmit={(event) => void submit(event)}>
           <label>
             任务名称
-            <input name="name" required maxLength={120} defaultValue={suite.name} />
+            <Input name="name" required maxLength={120} defaultValue={suite.name} />
           </label>
           <label>
             优先级（-100 到 100）
-            <input
+            <Input
               name="priority"
               type="number"
               min={-100}
@@ -179,7 +181,7 @@ export function CaseSuiteEditor({
           </label>
           <label>
             并发度（同时在途执行数）
-            <input
+            <Input
               name="concurrency"
               type="number"
               min={1}
@@ -190,7 +192,7 @@ export function CaseSuiteEditor({
           </label>
           <label>
             重试次数上限
-            <input
+            <Input
               name="retryLimit"
               type="number"
               min={0}
@@ -201,7 +203,7 @@ export function CaseSuiteEditor({
           </label>
           <label>
             排队超时（分钟）
-            <input
+            <Input
               name="queueTimeoutMinutes"
               type="number"
               min={1}
@@ -212,7 +214,7 @@ export function CaseSuiteEditor({
           </label>
           <label>
             执行超时（分钟）
-            <input
+            <Input
               name="executionTimeoutMinutes"
               type="number"
               min={1}
@@ -223,14 +225,14 @@ export function CaseSuiteEditor({
           </label>
           <label>
             执行器
-            <select name="executor" defaultValue={suite.policy.executor}>
+            <Select name="executor" defaultValue={suite.policy.executor}>
               <option value="testng">Process · 主机工具链</option>
               <option value="testng-container">Container · 离线不可变镜像</option>
-            </select>
+            </Select>
           </label>
           <label>
             Runner 标签（逗号分隔）
-            <input
+            <Input
               name="runnerLabels"
               maxLength={2000}
               defaultValue={suite.policy.runnerLabels.join(", ")}
@@ -238,7 +240,7 @@ export function CaseSuiteEditor({
           </label>
           <label className="settings-wide-field">
             任务说明
-            <textarea
+            <Textarea
               name="description"
               rows={2}
               maxLength={500}
@@ -247,7 +249,7 @@ export function CaseSuiteEditor({
           </label>
           <label className="settings-wide-field">
             参数模板（每行一个 KEY=VALUE，用例参数优先）
-            <textarea
+            <Textarea
               name="parameters"
               rows={3}
               defaultValue={Object.entries(suite.policy.parameters)
@@ -257,18 +259,18 @@ export function CaseSuiteEditor({
           </label>
           <label className="settings-wide-field">
             产物规则（每行一个相对路径 glob）
-            <textarea
+            <Textarea
               name="artifactPatterns"
               rows={2}
               defaultValue={suite.policy.artifactPatterns.join("\n")}
             />
           </label>
           <label className="checkbox-field">
-            <input name="enabled" type="checkbox" defaultChecked={suite.enabled} />
+            <Input name="enabled" type="checkbox" defaultChecked={suite.enabled} />
             启用（停用后不能创建新批次，在途批次继续）
           </label>
           <label className="checkbox-field">
-            <input name="archived" type="checkbox" defaultChecked={suite.status === "archived"} />
+            <Input name="archived" type="checkbox" defaultChecked={suite.status === "archived"} />
             归档（保留历史记录，不能创建新批次）
           </label>
           <div className="settings-form-actions">
@@ -282,19 +284,19 @@ export function CaseSuiteEditor({
                 {message}
               </small>
             ) : null}
-            <button className="primary-button" disabled={pending} type="submit">
+            <Button className="primary-button" disabled={pending} type="submit">
               {pending ? <LoaderCircle className="spin" size={15} /> : <Save size={15} />} 保存修改
-            </button>
+            </Button>
           </div>
         </form>
         <form className="settings-inline-form" onSubmit={(event) => void copySuite(event)}>
           <label>
             复制为新任务
-            <input name="copyName" required maxLength={120} placeholder={`${suite.name} 副本`} />
+            <Input name="copyName" required maxLength={120} placeholder={`${suite.name} 副本`} />
           </label>
-          <button className="button button-secondary" disabled={copying} type="submit">
+          <Button className="button button-secondary" disabled={copying} type="submit">
             {copying ? <LoaderCircle className="spin" size={15} /> : <Copy size={15} />} 复制任务
-          </button>
+          </Button>
         </form>
         <form className="schedule-form" onSubmit={(event) => void saveSchedule(event)}>
           <div className="section-title-row">
@@ -312,7 +314,7 @@ export function CaseSuiteEditor({
           </div>
           <label>
             Cron（分 时 日 月 周）
-            <input
+            <Input
               defaultValue={schedule?.cronExpression ?? "0 9 * * 1-5"}
               name="cronExpression"
               required
@@ -320,7 +322,7 @@ export function CaseSuiteEditor({
           </label>
           <label>
             IANA 时区
-            <input
+            <Input
               defaultValue={schedule?.timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone}
               name="timeZone"
               required
@@ -328,13 +330,13 @@ export function CaseSuiteEditor({
           </label>
           <label>
             错过触发
-            <select defaultValue={schedule?.missedRunPolicy ?? "run-once"} name="missedRunPolicy">
+            <Select defaultValue={schedule?.missedRunPolicy ?? "run-once"} name="missedRunPolicy">
               <option value="run-once">恢复后补跑一次</option>
               <option value="skip">跳过错过时刻</option>
-            </select>
+            </Select>
           </label>
           <label className="checkbox-field">
-            <input
+            <Input
               defaultChecked={schedule?.enabled ?? true}
               name="scheduleEnabled"
               type="checkbox"
@@ -342,18 +344,18 @@ export function CaseSuiteEditor({
             启用计划
           </label>
           <span className="schedule-actions">
-            <button className="button button-primary" disabled={pending} type="submit">
+            <Button className="button button-primary" disabled={pending} type="submit">
               <Save size={15} /> 保存计划
-            </button>
+            </Button>
             {schedule ? (
-              <button
+              <Button
                 className="button button-danger"
                 disabled={pending}
                 onClick={() => void deleteSchedule()}
                 type="button"
               >
                 <Trash2 size={15} /> 删除
-              </button>
+              </Button>
             ) : null}
           </span>
         </form>

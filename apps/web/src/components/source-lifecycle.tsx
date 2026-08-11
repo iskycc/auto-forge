@@ -1,5 +1,7 @@
 "use client";
 
+import { Button } from "@/components/ui";
+
 import { apiErrorSchema } from "@autoforge/contracts";
 import type { CaseSourceComparisonResult } from "@autoforge/contracts";
 import { Archive, GitCompareArrows, LoaderCircle, RefreshCcw, Trash2 } from "lucide-react";
@@ -123,7 +125,7 @@ export function SourceLifecyclePanel({
       </div>
       <div className="inline-action-stack">
         {comparable && (
-          <button
+          <Button
             className="button button-secondary"
             type="button"
             disabled={pendingAction !== null}
@@ -135,10 +137,10 @@ export function SourceLifecyclePanel({
               <GitCompareArrows size={15} />
             )}
             对比权威来源
-          </button>
+          </Button>
         )}
         {lifecycleStatus === "active" && (
-          <button
+          <Button
             className="button button-secondary"
             type="button"
             disabled={pendingAction !== null}
@@ -150,10 +152,10 @@ export function SourceLifecyclePanel({
               <Archive size={15} />
             )}
             归档来源
-          </button>
+          </Button>
         )}
         {lifecycleStatus === "archived" && (
-          <button
+          <Button
             className="button button-secondary"
             type="button"
             disabled={pendingAction !== null}
@@ -165,10 +167,10 @@ export function SourceLifecyclePanel({
               <RefreshCcw size={15} />
             )}
             恢复为活跃
-          </button>
+          </Button>
         )}
         {!authoritative && lifecycleStatus === "active" && (
-          <button
+          <Button
             className="danger-text-button"
             type="button"
             disabled={pendingAction !== null}
@@ -180,7 +182,7 @@ export function SourceLifecyclePanel({
               <Trash2 size={15} />
             )}
             删除来源
-          </button>
+          </Button>
         )}
         {lifecycleStatus === "deleting" && <small>来源正在删除，JAR 对象将由后台任务清理。</small>}
       </div>
@@ -209,7 +211,7 @@ export function SourceLifecyclePanel({
             entries={comparison.conflicts.map((entry) => entry.className)}
           />
           <div className="inline-action-stack">
-            <button
+            <Button
               className="button button-success"
               type="button"
               disabled={pendingAction !== null}
@@ -221,7 +223,7 @@ export function SourceLifecyclePanel({
                 <GitCompareArrows size={15} />
               )}
               确认同步为权威来源
-            </button>
+            </Button>
           </div>
         </div>
       )}

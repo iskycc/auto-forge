@@ -1,5 +1,7 @@
 "use client";
 
+import { Button } from "@/components/ui";
+
 import { apiErrorSchema, createTerminalSessionResultSchema } from "@autoforge/contracts";
 import type { FitAddon } from "@xterm/addon-fit";
 import type { Terminal } from "@xterm/xterm";
@@ -214,7 +216,7 @@ export function RunnerTerminal({
 
   return (
     <>
-      <button
+      <Button
         className="button button-secondary"
         type="button"
         disabled={!available}
@@ -222,7 +224,7 @@ export function RunnerTerminal({
         onClick={() => setOpen(true)}
       >
         <TerminalSquare size={15} /> 终端浮窗
-      </button>
+      </Button>
       {open && (
         <div className="terminal-backdrop" role="presentation" onMouseDown={closeTerminal}>
           <section
@@ -248,9 +250,9 @@ export function RunnerTerminal({
                 {connectionLabel(connectionState)}
               </span>
               <Maximize2 aria-hidden="true" size={14} />
-              <button type="button" aria-label="关闭终端" onClick={closeTerminal}>
+              <Button type="button" aria-label="关闭终端" onClick={closeTerminal}>
                 <X size={16} />
-              </button>
+              </Button>
             </header>
             <div className="terminal-stage">
               <div className="terminal-viewport" ref={viewportRef} />
@@ -262,7 +264,7 @@ export function RunnerTerminal({
                   <strong>打开受控终端</strong>
                   <p>将使用当前登录会话和独立终端权限换取一次性短时票据。</p>
                   {error && <span className="terminal-auth-error">{error}</span>}
-                  <button
+                  <Button
                     className="button button-primary"
                     type="submit"
                     disabled={connectionState === "connecting"}
@@ -273,16 +275,16 @@ export function RunnerTerminal({
                       <TerminalSquare size={15} />
                     )}
                     {connectionState === "connecting" ? "正在连接" : "连接终端"}
-                  </button>
+                  </Button>
                 </form>
               )}
               {connectionState === "closed" && (
                 <div className="terminal-closed-card">
                   <strong>终端连接已结束</strong>
                   <p>{error ?? "关闭浮窗后可重新创建受控会话。"}</p>
-                  <button className="button button-secondary" type="button" onClick={closeTerminal}>
+                  <Button className="button button-secondary" type="button" onClick={closeTerminal}>
                     关闭
-                  </button>
+                  </Button>
                 </div>
               )}
             </div>

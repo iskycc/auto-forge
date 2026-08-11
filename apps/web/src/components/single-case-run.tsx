@@ -1,5 +1,7 @@
 "use client";
 
+import { Button, Input, Select, Textarea } from "@/components/ui";
+
 import type { RunBatchDetails, Runner } from "@autoforge/domain";
 import { LoaderCircle, Play } from "lucide-react";
 import { useRouter } from "next/navigation";
@@ -55,38 +57,38 @@ export function SingleCaseRun({
       </div>
       <label>
         Runner（可多选）
-        <select multiple name="runnerIds" required size={Math.min(5, Math.max(2, runners.length))}>
+        <Select multiple name="runnerIds" required size={Math.min(5, Math.max(2, runners.length))}>
           {runners.map((runner) => (
             <option disabled={runner.state !== "online"} key={runner.id} value={runner.id}>
               {runner.name} · {runner.state} · {runner.agentVersion}
             </option>
           ))}
-        </select>
+        </Select>
       </label>
       <label>
         失败重试
-        <input defaultValue={0} max={10} min={0} name="retryLimit" type="number" />
+        <Input defaultValue={0} max={10} min={0} name="retryLimit" type="number" />
       </label>
       <label>
         执行超时（分钟）
-        <input defaultValue={60} max={1440} min={1} name="executionTimeoutMinutes" type="number" />
+        <Input defaultValue={60} max={1440} min={1} name="executionTimeoutMinutes" type="number" />
       </label>
       <label className="single-run-parameters">
         参数覆盖（每行 KEY=VALUE）
-        <textarea name="parameters" rows={3} />
+        <Textarea name="parameters" rows={3} />
       </label>
       {error ? (
         <p className="form-error" role="alert">
           {error}
         </p>
       ) : null}
-      <button
+      <Button
         className="button button-primary"
         disabled={pending || runners.every((runner) => runner.state !== "online")}
         type="submit"
       >
         {pending ? <LoaderCircle className="spin" size={16} /> : <Play size={16} />} 立即执行
-      </button>
+      </Button>
     </form>
   );
 }
