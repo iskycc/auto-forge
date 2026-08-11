@@ -461,11 +461,6 @@ test("imports TestNG methods from a JAR into the case library", async ({ page })
   await expect(page.getByText("没有访问权限")).toBeVisible();
   await expectUiConsistency(page);
 
-  await page.getByRole("button", { name: "退出登录" }).click();
-  await expect(page).toHaveURL(/\/login$/);
-  await expect(page.getByRole("heading", { name: "欢迎回来" })).toBeVisible();
-  await expectUiConsistency(page);
-
   const secondaryBaseUrl = process.env.E2E_SECONDARY_BASE_URL;
   if (secondaryBaseUrl) {
     await page.goto(new URL("/", secondaryBaseUrl).toString());
@@ -475,6 +470,11 @@ test("imports TestNG methods from a JAR into the case library", async ({ page })
     );
     expect(secondaryReadiness.status()).toBe(200);
   }
+
+  await page.getByRole("button", { name: "退出登录" }).click();
+  await expect(page).toHaveURL(/\/login$/);
+  await expect(page.getByRole("heading", { name: "欢迎回来" })).toBeVisible();
+  await expectUiConsistency(page);
 });
 
 function requiredTestSecret(name: string): string {
