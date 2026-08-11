@@ -6,7 +6,7 @@ export default function ForbiddenPage() {
       <div className="empty-state-card">
         <strong>没有访问权限</strong>
         <p>当前账号无权查看此内容。请联系项目或系统管理员调整角色。</p>
-        <Link className="secondary-button" href="/">
+        <Link className="button button-secondary" href="/">
           返回首页
         </Link>
       </div>

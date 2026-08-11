@@ -38,11 +38,16 @@ test("imports TestNG methods from a JAR into the case library", async ({ page })
   await expect(page.getByRole("heading", { name: /汇聚到一个可信控制面/ })).toBeVisible();
   await expect(page.getByText("平台数据实时同步")).toBeVisible();
   await expectDesktopLayoutFits(page, 1024, 768);
+  await expectUiConsistency(page);
   const publicStatistics = await page.request.get("/api/v1/public/statistics");
   expect(publicStatistics.status()).toBe(200);
   expect(await publicStatistics.json()).not.toHaveProperty("secrets");
 
   await page.goto("/setup");
+  await page.getByRole("button", { name: /^Full/ }).click();
+  await expect(page.getByLabel("PostgreSQL URL")).toBeVisible();
+  await expectUiConsistency(page);
+  await page.getByRole("button", { name: /^Lite/ }).click();
   await page.getByLabel("一次性管理员引导令牌").fill(adminBootstrapToken);
   await page.getByLabel("用户名").fill("e2e-admin");
   await page.getByLabel("显示名称").fill("E2E Administrator");
@@ -52,6 +57,7 @@ test("imports TestNG methods from a JAR into the case library", async ({ page })
 
   await page.goto("/cases/import");
   await expect(page.getByRole("heading", { name: "导入 TestNG JAR" })).toBeVisible();
+  await expectUiConsistency(page);
 
   await page.locator('input[type="file"]').setInputFiles({
     name: "checkout-tests.jar",
@@ -71,7 +77,12 @@ test("imports TestNG methods from a JAR into the case library", async ({ page })
 
   await page.getByRole("link", { name: "查看用例库" }).click();
   await expect(page.getByText("com.example.CheckoutTest")).toBeVisible();
+  await expectUiConsistency(page);
   await captureUi(page, "case-library");
+
+  await page.getByRole("link", { name: "CheckoutTest" }).click();
+  await expect(page.getByRole("heading", { name: "CheckoutTest" })).toBeVisible();
+  await expectUiConsistency(page);
 
   await page.goto("/case-suites");
   await page.getByLabel("任务名称").fill("每日冒烟测试");
@@ -85,6 +96,7 @@ test("imports TestNG methods from a JAR into the case library", async ({ page })
   await expect(page.getByRole("option", { name: /每日冒烟测试/ })).toBeVisible();
   await globalSearch.press("ArrowDown");
   await expect(page.getByRole("option", { name: /每日冒烟测试/ })).toBeFocused();
+  await expectUiConsistency(page);
 
   await page.goto("/cases");
   await page.getByLabel("选择 CheckoutTest").check();
@@ -93,13 +105,16 @@ test("imports TestNG methods from a JAR into the case library", async ({ page })
 
   await page.goto("/case-suites");
   await page.getByRole("link", { name: /每日冒烟测试/ }).click();
+  await expectUiConsistency(page);
   await page.getByRole("button", { name: "移除" }).click();
   await expect(page.getByText("任务中还没有用例")).toBeVisible({ timeout: 20_000 });
 
   await page.goto("/objects");
   await expect(page.getByText("checkout-tests.jar")).toBeVisible();
+  await expectUiConsistency(page);
   await page.getByRole("link", { name: "预览" }).first().click();
   await expect(page.getByRole("heading", { name: "测试类与方法" })).toBeVisible();
+  await expectUiConsistency(page);
   await page.getByRole("button", { name: "设为全量来源" }).click();
   await expect(page.getByRole("button", { name: "当前全量来源" })).toBeVisible();
 
@@ -158,6 +173,7 @@ test("imports TestNG methods from a JAR into the case library", async ({ page })
   await page.getByRole("button", { name: "添加变量" }).click();
   await page.getByLabel("环境变量名").fill("TEST_ENV");
   await page.getByLabel("环境变量值").fill("e2e");
+  await expectUiConsistency(page);
   const createBatchResponse = page.waitForResponse(
     (response) =>
       response.request().method() === "POST" &&
@@ -337,11 +353,13 @@ test("imports TestNG methods from a JAR into the case library", async ({ page })
   );
   await expect(page.getByText("reports/testng/e2e-report.txt")).toBeVisible();
   await expect(page.getByLabel("下载 reports/testng/e2e-report.txt")).toBeVisible();
+  await expectUiConsistency(page);
 
   await page.goto("/insights");
   await expect(
     page.getByText("执行样本").locator("..").getByText("2", { exact: true }),
   ).toBeVisible();
+  await expectUiConsistency(page);
 
   const agentSocket = new WebSocket(terminalStreamUrl(), "autoforge-runner-terminal-v1", {
     headers: { authorization: `Bearer ${heartbeatResult.terminalConnectionToken}` },
@@ -353,6 +371,7 @@ test("imports TestNG methods from a JAR into the case library", async ({ page })
 
   await page.goto("/runners");
   await expect(page.getByText("E2E Runner")).toBeVisible();
+  await expectUiConsistency(page);
   await page.getByRole("button", { name: "终端浮窗" }).click();
 
   const openCommand = new Promise<Record<string, unknown>>((resolve, reject) => {
@@ -382,6 +401,7 @@ test("imports TestNG methods from a JAR into the case library", async ({ page })
   );
   await expect(page.locator(".terminal-viewport")).toContainText("direct-terminal-ready");
   await expect(page.getByText("已连接", { exact: true })).toBeVisible();
+  await expectUiConsistency(page);
   await captureUi(page, "runner-terminal");
   await page.getByRole("button", { name: "关闭终端" }).click();
   agentSocket.close();
@@ -399,7 +419,51 @@ test("imports TestNG methods from a JAR into the case library", async ({ page })
   await page.evaluate(() => {
     document.documentElement.style.zoom = "";
   });
+  await expectUiConsistency(page);
   await captureUi(page, "dashboard");
+
+  await page.getByRole("button", { name: "通知" }).click();
+  await expect(page.getByText("通知中心")).toBeVisible();
+  await expectUiConsistency(page);
+  await page.getByRole("button", { name: "关闭通知" }).click();
+
+  for (const route of ["/settings/platform", "/settings/access", "/settings/environments"]) {
+    await page.goto(route);
+    await expect(page.getByRole("navigation", { name: "系统设置分类" })).toBeVisible();
+    await expectUiConsistency(page);
+    if (route === "/settings/environments") {
+      await page.getByRole("button", { name: "密文", exact: true }).click();
+      await expect(page.getByRole("heading", { name: "创建执行密文" })).toBeVisible();
+      await expectUiConsistency(page);
+
+      const secretCreatePanel = page.locator(".secret-create-panel");
+      await secretCreatePanel.getByLabel("名称").fill("E2E API Token");
+      await secretCreatePanel.getByLabel("说明").fill("UI consistency fixture");
+      await secretCreatePanel.getByLabel("密文值").fill("e2e-secret-value");
+      await secretCreatePanel.getByRole("button", { name: "创建密文" }).click();
+      await expect(page.getByText("执行密文已创建。")).toBeVisible();
+      await expectUiConsistency(page);
+
+      await page.getByRole("button", { name: "环境", exact: true }).click();
+      await page.getByRole("button", { name: "创建执行环境" }).click();
+      const environmentCreateForm = page.locator(".compact-create-form");
+      await environmentCreateForm.getByLabel("名称").fill("E2E Staging");
+      await environmentCreateForm.getByLabel("说明").fill("UI consistency fixture");
+      await environmentCreateForm.getByLabel("普通变量").fill("BASE_URL=https://staging.invalid");
+      await environmentCreateForm.getByRole("button", { name: "创建环境" }).click();
+      await expect(page.getByRole("heading", { name: "E2E Staging" })).toBeVisible();
+      await expectUiConsistency(page);
+    }
+  }
+
+  await page.goto("/forbidden");
+  await expect(page.getByText("没有访问权限")).toBeVisible();
+  await expectUiConsistency(page);
+
+  await page.getByRole("button", { name: "退出登录" }).click();
+  await expect(page).toHaveURL(/\/login$/);
+  await expect(page.getByRole("heading", { name: "欢迎回来" })).toBeVisible();
+  await expectUiConsistency(page);
 
   const secondaryBaseUrl = process.env.E2E_SECONDARY_BASE_URL;
   if (secondaryBaseUrl) {
@@ -556,4 +620,77 @@ async function expectDesktopLayoutFits(page: Page, width: number, height: number
       })),
     )
     .toEqual({ viewportWidth: width, documentWidth: width });
+}
+
+async function expectUiConsistency(page: Page): Promise<void> {
+  const report = await page.evaluate(() => {
+    const minimumFontSize = 12;
+    const minimumControlSize = 32;
+    const isVisible = (element: HTMLElement) => {
+      const style = window.getComputedStyle(element);
+      const bounds = element.getBoundingClientRect();
+      return (
+        style.display !== "none" &&
+        style.visibility !== "hidden" &&
+        Number(style.opacity) > 0 &&
+        bounds.width > 0 &&
+        bounds.height > 0
+      );
+    };
+    const label = (element: HTMLElement) =>
+      (element.getAttribute("aria-label") ?? element.textContent ?? element.tagName)
+        .trim()
+        .replace(/\s+/g, " ")
+        .slice(0, 80);
+    const hasDirectText = (element: HTMLElement) =>
+      Array.from(element.childNodes).some(
+        (node) => node.nodeType === Node.TEXT_NODE && Boolean(node.textContent?.trim()),
+      );
+
+    const fontViolations = Array.from(document.body.querySelectorAll<HTMLElement>("*"))
+      .filter((element) => isVisible(element) && hasDirectText(element))
+      .map((element) => ({
+        element: element.tagName.toLowerCase(),
+        fontSize: Number.parseFloat(window.getComputedStyle(element).fontSize),
+        label: label(element),
+      }))
+      .filter(({ fontSize }) => fontSize > 0 && fontSize < minimumFontSize)
+      .slice(0, 20);
+
+    const controlSelector = [
+      "button",
+      'input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="hidden"])',
+      "select",
+      "textarea",
+      "a.button",
+      "a.primary-button",
+      "a.secondary-button",
+      "a.icon-button",
+    ].join(",");
+    const controlViolations = Array.from(
+      document.body.querySelectorAll<HTMLElement>(controlSelector),
+    )
+      .filter(isVisible)
+      .map((element) => {
+        const bounds = element.getBoundingClientRect();
+        return {
+          element: element.tagName.toLowerCase(),
+          height: Math.round(bounds.height * 10) / 10,
+          label: label(element),
+        };
+      })
+      .filter(({ height }) => height < minimumControlSize)
+      .slice(0, 20);
+
+    return {
+      controlViolations,
+      documentWidth: document.documentElement.scrollWidth,
+      fontViolations,
+      viewportWidth: window.innerWidth,
+    };
+  });
+
+  expect(report.fontViolations, "visible text smaller than 12px").toEqual([]);
+  expect(report.controlViolations, "visible controls shorter than 32px").toEqual([]);
+  expect(report.documentWidth, "page-level horizontal overflow").toBe(report.viewportWidth);
 }

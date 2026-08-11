@@ -24,7 +24,11 @@ export default async function SetupPage() {
             <span className="setup-offline-badge">
               <WifiOff size={14} /> 离线就绪
             </span>
-            <h1>把自动化执行能力，安全地带进内网。</h1>
+            <h1>
+              <span>把自动化执行</span>
+              <span>能力，安全地</span>
+              <span>带进内网。</span>
+            </h1>
             <p>两步完成本地初始化。配置只写入数据目录，不连接遥测、CDN 或在线配置服务。</p>
           </div>
           <ol className="setup-progress-list">
