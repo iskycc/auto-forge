@@ -3,7 +3,7 @@ import "server-only";
 import { randomUUID } from "node:crypto";
 
 import type { AuthenticatedIdentity, Permission } from "@autoforge/domain";
-import { DEFAULT_PROJECT_ID, DomainError } from "@autoforge/domain";
+import { DEFAULT_PROJECT_ID, DomainError, isPermission } from "@autoforge/domain";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
@@ -12,8 +12,44 @@ import { getPlatformServices } from "./services";
 export const SESSION_COOKIE_NAME = "autoforge_session";
 
 export async function authenticateRequest(request: Request): Promise<AuthenticatedIdentity> {
-  const token = requestCookie(request, SESSION_COOKIE_NAME);
-  return (await getPlatformServices()).identityAccess.authenticateSession(token);
+  const services = await getPlatformServices();
+  const sessionToken = requestCookie(request, SESSION_COOKIE_NAME);
+  if (sessionToken) return services.identityAccess.authenticateSession(sessionToken);
+  const apiToken = request.headers.get("authorization")?.startsWith("Bearer af_api_")
+    ? request.headers.get("authorization")?.slice(7).trim()
+    : undefined;
+  if (!apiToken) throw new DomainError("AUTH_REQUIRED", "需要登录或提供 API 令牌。");
+  const authenticated = await services.platformOperations.authenticateApiToken(apiToken);
+  if (!authenticated || authenticated.effectiveScopes.length === 0) {
+    throw new DomainError("AUTHENTICATION_FAILED", "API 令牌无效、已过期或已撤销。");
+  }
+  const effective = new Set(authenticated.effectiveScopes);
+  return {
+    user: {
+      id: authenticated.serviceAccount.id,
+      username: `service-${authenticated.serviceAccount.id}`,
+      displayName: authenticated.serviceAccount.name,
+      source: "local",
+      status: "active",
+      forcePasswordChange: false,
+      failedLoginAttempts: 0,
+      createdAt: authenticated.serviceAccount.createdAt,
+      updatedAt: authenticated.serviceAccount.updatedAt,
+      version: authenticated.serviceAccount.revision,
+    },
+    sessionId: `api-token:${authenticated.token.id}`,
+    systemPermissions: authenticated.serviceAccount.systemPermissions
+      .filter(isPermission)
+      .filter((permission) => effective.has(permission)),
+    projectPermissions: Object.fromEntries(
+      Object.entries(authenticated.serviceAccount.projectPermissions).map(
+        ([projectId, permissions]) => [
+          projectId,
+          permissions.filter(isPermission).filter((permission) => effective.has(permission)),
+        ],
+      ),
+    ),
+  };
 }
 
 export async function authorizeRequest(
@@ -22,9 +58,7 @@ export async function authorizeRequest(
   projectId: string | undefined = DEFAULT_PROJECT_ID,
 ): Promise<AuthenticatedIdentity> {
   const services = await getPlatformServices();
-  const identity = await services.identityAccess.authenticateSession(
-    requestCookie(request, SESSION_COOKIE_NAME),
-  );
+  const identity = await authenticateRequest(request);
   services.identityAccess.authorize(identity, permission, projectId);
   return identity;
 }
@@ -73,6 +107,7 @@ export async function requirePageProjectScope(permission: Permission): Promise<{
 }
 
 export function requireSameOrigin(request: Request): void {
+  if (request.headers.get("authorization")?.startsWith("Bearer af_api_")) return;
   const originValue = request.headers.get("origin");
   if (!originValue) {
     throw new DomainError("CSRF_REJECTED", "缺少请求来源信息。");

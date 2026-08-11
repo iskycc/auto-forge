@@ -18,6 +18,7 @@ import {
   type Project,
   type Role,
   type RoleScope,
+  type SystemRoleBindingView,
   type User,
   type UserSession,
   type UserStatus,
@@ -52,6 +53,7 @@ type RoleDatabaseRow = QueryResultRow & {
   description: string;
   scope: "system" | "project";
   built_in: boolean;
+  active: boolean;
   permissions_json: string;
   created_at: string;
   updated_at: string;
@@ -63,6 +65,7 @@ type ProjectDatabaseRow = QueryResultRow & {
   slug: string;
   is_default: boolean;
   archived: boolean;
+  owner_user_id: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -79,13 +82,14 @@ export class PostgresIdentityAccessRepository implements IdentityAccessRepositor
       for (const role of definitions) {
         await client.query(
           `INSERT INTO roles (
-             id, role_key, name, description, scope, built_in, permissions_json, created_at, updated_at
-           ) VALUES ($1, $2, $3, $4, $5, TRUE, $6, $7, $7)
+             id, role_key, name, description, scope, built_in, active, permissions_json, created_at, updated_at
+           ) VALUES ($1, $2, $3, $4, $5, TRUE, TRUE, $6, $7, $7)
            ON CONFLICT (id) DO UPDATE SET
              name = EXCLUDED.name,
              description = EXCLUDED.description,
              scope = EXCLUDED.scope,
              built_in = TRUE,
+             active = TRUE,
              permissions_json = EXCLUDED.permissions_json,
              updated_at = EXCLUDED.updated_at`,
           [
@@ -344,12 +348,12 @@ export class PostgresIdentityAccessRepository implements IdentityAccessRepositor
     const [system, project] = await Promise.all([
       this.handle.pool.query<{ permissions_json: string }>(
         `SELECT r.permissions_json FROM user_system_roles b
-         JOIN roles r ON r.id = b.role_id WHERE b.user_id = $1`,
+         JOIN roles r ON r.id = b.role_id AND r.active = TRUE WHERE b.user_id = $1`,
         [user.id],
       ),
       this.handle.pool.query<{ project_id: string; permissions_json: string }>(
         `SELECT b.project_id, r.permissions_json FROM project_role_bindings b
-         JOIN roles r ON r.id = b.role_id WHERE b.user_id = $1`,
+         JOIN roles r ON r.id = b.role_id AND r.active = TRUE WHERE b.user_id = $1`,
         [user.id],
       ),
     ]);
@@ -575,6 +579,7 @@ export class PostgresIdentityAccessRepository implements IdentityAccessRepositor
     description?: string;
     scope?: RoleScope;
     permissions?: Permission[];
+    active?: boolean;
     updatedAt: string;
   }): Promise<Role> {
     await this.ready();
@@ -583,13 +588,14 @@ export class PostgresIdentityAccessRepository implements IdentityAccessRepositor
       throw new DomainError("ROLE_NOT_FOUND", "指定自定义角色不存在。");
     const result = await this.handle.pool.query<RoleDatabaseRow>(
       `UPDATE roles SET name = $1, description = $2, scope = $3,
-       permissions_json = $4, updated_at = $5
-       WHERE id = $6 AND built_in = FALSE RETURNING *`,
+       permissions_json = $4, active = $5, updated_at = $6
+       WHERE id = $7 AND built_in = FALSE RETURNING *`,
       [
         input.name ?? current.name,
         input.description ?? current.description,
         input.scope ?? current.scope,
         JSON.stringify(input.permissions ?? current.permissions),
+        input.active ?? current.active,
         input.updatedAt,
         input.id,
       ],
@@ -685,56 +691,26 @@ export class PostgresIdentityAccessRepository implements IdentityAccessRepositor
 
   async listProjects(): Promise<Project[]> {
     await this.ready();
-    const result = await this.handle.pool.query<{
-      id: string;
-      name: string;
-      slug: string;
-      is_default: boolean;
-      archived: boolean;
-      created_at: string;
-      updated_at: string;
-    }>("SELECT * FROM projects ORDER BY name");
-    return result.rows.map((row) => ({
-      id: row.id,
-      name: row.name,
-      slug: row.slug,
-      isDefault: row.is_default,
-      archived: row.archived,
-      createdAt: row.created_at,
-      updatedAt: row.updated_at,
-    }));
+    const result = await this.handle.pool.query<ProjectDatabaseRow>(
+      "SELECT * FROM projects ORDER BY name",
+    );
+    return result.rows.map(mapProjectRow);
   }
 
   async createProject(input: {
     id: string;
     name: string;
     slug: string;
+    ownerUserId?: string;
     createdAt: string;
   }): Promise<Project> {
     await this.ready();
-    const result = await this.handle.pool.query<{
-      id: string;
-      name: string;
-      slug: string;
-      is_default: boolean;
-      archived: boolean;
-      created_at: string;
-      updated_at: string;
-    }>(
-      `INSERT INTO projects (id, name, slug, is_default, archived, created_at, updated_at)
-       VALUES ($1, $2, $3, FALSE, FALSE, $4, $4) RETURNING *`,
-      [input.id, input.name, input.slug, input.createdAt],
+    const result = await this.handle.pool.query<ProjectDatabaseRow>(
+      `INSERT INTO projects (id, name, slug, is_default, archived, owner_user_id, created_at, updated_at)
+       VALUES ($1, $2, $3, FALSE, FALSE, $4, $5, $5) RETURNING *`,
+      [input.id, input.name, input.slug, input.ownerUserId ?? null, input.createdAt],
     );
-    const row = requiredRow(result.rows[0], "PostgreSQL did not return project.");
-    return {
-      id: row.id,
-      name: row.name,
-      slug: row.slug,
-      isDefault: row.is_default,
-      archived: row.archived,
-      createdAt: row.created_at,
-      updatedAt: row.updated_at,
-    };
+    return mapProjectRow(requiredRow(result.rows[0], "PostgreSQL did not return project."));
   }
 
   async archiveProject(projectId: string, archivedAt: string): Promise<Project> {
@@ -745,6 +721,40 @@ export class PostgresIdentityAccessRepository implements IdentityAccessRepositor
     );
     if (!result.rows[0]) throw new DomainError("PROJECT_NOT_FOUND", "指定项目不存在。");
     return mapProjectRow(result.rows[0]);
+  }
+
+  async transferProjectOwner(input: {
+    projectId: string;
+    ownerUserId: string;
+    updatedAt: string;
+  }): Promise<Project> {
+    await this.ready();
+    const result = await this.handle.pool.query<ProjectDatabaseRow>(
+      `UPDATE projects SET owner_user_id = $1, updated_at = $2 WHERE id = $3 RETURNING *`,
+      [input.ownerUserId, input.updatedAt, input.projectId],
+    );
+    if (!result.rows[0]) throw new DomainError("PROJECT_NOT_FOUND", "指定项目不存在。");
+    return mapProjectRow(result.rows[0]);
+  }
+
+  async listSystemRoleBindingsForActiveUsers(): Promise<SystemRoleBindingView[]> {
+    await this.ready();
+    const result = await this.handle.pool.query<{
+      user_id: string;
+      role_id: string;
+      permissions_json: string;
+    }>(
+      `SELECT b.user_id, b.role_id, r.permissions_json
+       FROM user_system_roles b
+       JOIN roles r ON r.id = b.role_id AND r.active = TRUE
+       JOIN users u ON u.id = b.user_id
+       WHERE u.status = 'active'`,
+    );
+    return result.rows.map((row) => ({
+      userId: row.user_id,
+      roleId: row.role_id,
+      permissions: permissions(row.permissions_json),
+    }));
   }
 
   async getLdapConfiguration(): Promise<StoredLdapConfiguration | null> {
@@ -764,18 +774,19 @@ export class PostgresIdentityAccessRepository implements IdentityAccessRepositor
     const result = await this.handle.pool.query<LdapDatabaseRow>(
       `INSERT INTO ldap_configurations (
          id, enabled, urls_json, tls_mode, ca_pem, connect_timeout_ms, operation_timeout_ms,
-         page_size, maximum_users, bind_dn, bind_password_encrypted, user_base_dn, user_filter, user_id_attribute,
+         page_size, maximum_users, synchronization_interval_minutes, bind_dn, bind_password_encrypted, user_base_dn, user_filter, user_id_attribute,
          username_attribute, display_name_attribute, email_attribute, group_base_dn,
          group_filter, group_member_attribute, created_at, updated_at, version
        ) VALUES (
          'default', $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
-         $14, $15, $16, $17, $18, $19, $20, $20, 1
+         $14, $15, $16, $17, $18, $19, $20, $21, $21, 1
        ) ON CONFLICT (id) DO UPDATE SET
          enabled = EXCLUDED.enabled, urls_json = EXCLUDED.urls_json,
          tls_mode = EXCLUDED.tls_mode, ca_pem = EXCLUDED.ca_pem,
          connect_timeout_ms = EXCLUDED.connect_timeout_ms,
          operation_timeout_ms = EXCLUDED.operation_timeout_ms,
          page_size = EXCLUDED.page_size, maximum_users = EXCLUDED.maximum_users,
+         synchronization_interval_minutes = EXCLUDED.synchronization_interval_minutes,
          bind_dn = EXCLUDED.bind_dn,
          bind_password_encrypted = EXCLUDED.bind_password_encrypted,
          user_base_dn = EXCLUDED.user_base_dn, user_filter = EXCLUDED.user_filter,
@@ -796,6 +807,7 @@ export class PostgresIdentityAccessRepository implements IdentityAccessRepositor
         input.operationTimeoutMs,
         input.pageSize,
         input.maximumUsers,
+        input.synchronizationIntervalMinutes,
         input.bindDn,
         input.bindPasswordEncrypted ?? null,
         input.userBaseDn,
@@ -1031,6 +1043,7 @@ type LdapDatabaseRow = QueryResultRow & {
   operation_timeout_ms: number;
   page_size: number;
   maximum_users: number;
+  synchronization_interval_minutes: number;
   bind_dn: string;
   bind_password_encrypted: string | null;
   user_base_dn: string;
@@ -1146,6 +1159,7 @@ function mapProjectRow(row: ProjectDatabaseRow): Project {
     slug: row.slug,
     isDefault: row.is_default,
     archived: row.archived,
+    ...(row.owner_user_id ? { ownerUserId: row.owner_user_id } : {}),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -1159,6 +1173,7 @@ function mapRoleRow(row: RoleDatabaseRow): Role {
     description: row.description,
     scope: row.scope,
     builtIn: row.built_in,
+    active: row.active,
     permissions: permissions(row.permissions_json),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -1175,6 +1190,7 @@ function mapLdapRow(row: LdapDatabaseRow): StoredLdapConfiguration {
     operationTimeoutMs: row.operation_timeout_ms,
     pageSize: row.page_size,
     maximumUsers: row.maximum_users,
+    synchronizationIntervalMinutes: row.synchronization_interval_minutes,
     bindDn: row.bind_dn,
     ...(row.bind_password_encrypted ? { bindPasswordEncrypted: row.bind_password_encrypted } : {}),
     userBaseDn: row.user_base_dn,

@@ -19,6 +19,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     );
     const input = bootstrapAdminInputSchema.parse(await readJsonBody(request, 16 * 1024));
     const session = await services.identityAccess.bootstrap(input, currentRequestId);
+    services.configurationStore.consumeInitialAdminTokenFile();
     const response = NextResponse.json({ userId: session.userId }, { status: 201 });
     response.cookies.set(sessionCookie(session.token, session.expiresAt));
     return response;

@@ -168,7 +168,11 @@ export class PostgresExecutionControlRepository implements ExecutionControlRepos
           toStatus: "running",
           actorType: "runner",
           actorId: input.runnerId,
-          details: { assignmentId: assignment.id, leaseId: seed.id },
+          details: {
+            assignmentId: assignment.id,
+            leaseId: seed.id,
+            leaseExpiresAt: input.leaseExpiresAt,
+          },
           recordedAt: input.now,
         });
         await updateBatchStatus(
@@ -534,10 +538,22 @@ export class PostgresExecutionControlRepository implements ExecutionControlRepos
       throw new DomainError("RUN_ATTEMPT_NOT_FOUND", "指定的执行尝试不存在。");
     }
     const parameters: Array<string | number> = [input.attemptId, input.stream, input.afterSequence];
-    const queryClause = input.query ? `AND POSITION($4 IN content) > 0` : "";
-    if (input.query) parameters.push(input.query);
+    const clauses: string[] = [];
+    if (input.query) {
+      parameters.push(input.query);
+      clauses.push(`POSITION($${parameters.length} IN content) > 0`);
+    }
+    if (input.recordedAfter) {
+      parameters.push(input.recordedAfter);
+      clauses.push(`recorded_at >= $${parameters.length}::timestamptz`);
+    }
+    if (input.recordedBefore) {
+      parameters.push(input.recordedBefore);
+      clauses.push(`recorded_at <= $${parameters.length}::timestamptz`);
+    }
     parameters.push(input.limit + 1);
     const limitParameter = parameters.length;
+    const filters = clauses.length > 0 ? `AND ${clauses.join(" AND ")}` : "";
     const result = await this.handle.pool.query<{
       stream: "stdout" | "stderr" | "agent";
       sequence: string;
@@ -545,7 +561,7 @@ export class PostgresExecutionControlRepository implements ExecutionControlRepos
       recorded_at: string;
     }>(
       `SELECT stream, sequence, content, recorded_at::text FROM attempt_log_chunks
-       WHERE attempt_id = $1 AND stream = $2 AND sequence > $3 ${queryClause}
+       WHERE attempt_id = $1 AND stream = $2 AND sequence > $3 ${filters}
        ORDER BY sequence ASC LIMIT $${limitParameter}`,
       parameters,
     );

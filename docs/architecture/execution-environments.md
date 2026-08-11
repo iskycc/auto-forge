@@ -10,7 +10,7 @@
 
 ## 执行密文
 
-`ExecutionSecret` 只公开项目、名称、说明、状态、当前版本号、revision 和时间等元数据。`/api/v1/execution-secrets` 的创建与轮换请求接收一次明文值，响应、列表、详情和审计均不返回该值。值使用 `AUTOFORGE_MASTER_KEY` 通过 AES-256-GCM 加密，密文版本 ID 作为 AAD 用途绑定；SQLite/PostgreSQL 只保存加密结果。未配置主密钥时，密文写入和执行期解密明确失败。
+`ExecutionSecret` 只公开项目、名称、说明、状态、当前版本号、revision 和时间等元数据。`/api/v1/execution-secrets` 的创建与轮换请求接收一次明文值，响应、列表、详情和审计均不返回该值。值使用首次启动生成并保存在私有 `platform.json` 中的主密钥通过 AES-256-GCM 加密，密文版本 ID 作为 AAD 用途绑定；SQLite/PostgreSQL 只保存加密结果。主密钥不可读或配置校验失败时，平台拒绝启动，不会退化为明文。
 
 环境版本保存 `{ name, secretId, secretVersionId }`，不会复制密文。创建环境版本时，服务端在同一项目内解析密文的当前启用版本；轮换密文不会改写已有环境版本，只有显式更新绑定才引用新版本。停用密文后不能创建新环境引用、创建新批次或由 Agent 领取；历史元数据和引用仍可审计。
 
@@ -30,6 +30,6 @@ Agent 校验返回名称必须与 assignment 完全一致且总大小有界，�
 
 `POST /api/v1/run-batches/preflight` 与正式批次创建复用 `RunBatchSchedulingService` 的同一预检规则。结构不完整时也返回 `{ ready, blockers[] }`，不会只报告第一个错误；每个 blocker 具有稳定 `code`、类别、消息和可选字段路径、Runner、用例或来源 ID。页面保留已填内容并逐条显示，只有 `ready=true` 才提交创建。
 
-预检覆盖必需批次参数和超时范围、普通/密文变量名与重复项、环境项目/状态、每个密文版本可用性、Runner 协议/平台/标签/capability、Java/TestNG 版本、来源 JAR 状态/摘要/大小和对象存在性，以及 JAR 是否超过当前固定 attempt 磁盘限制。当前 TestNG 参数模板尚未进入任务策略；其必填声明和模板值将在 AF-SUITE-002 中复用同一 blocker 契约，不能由浏览器自行声明为已满足。
+预检覆盖必需批次参数和超时范围、普通/密文变量名与重复项、环境项目/状态、每个密文版本可用性、Runner 协议/平台/标签/capability、Java/TestNG 版本、来源 JAR 状态/摘要/大小和对象存在性，以及 JAR 是否超过当前固定 attempt 磁盘限制。任务策略中的参数模板与用例参数在服务端合并并固化到执行快照；策略并发度、重试、超时、Runner 标签和产物规则也由同一预检及调度路径校验，不能由浏览器自行声明为已满足。
 
 预检不把 Runner 当前离线、指标暂缺或暂时过载视为配置错误，这些状态允许批次进入持久队列并由资源调度器恢复。对象、密文或 Runner 状态仍可能在预检后改变，因此调度写入、assignment claim、JAR 下载和密文领取继续各自执行权威复核；预检不是安全授权的替代品。

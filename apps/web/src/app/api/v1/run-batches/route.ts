@@ -6,16 +6,39 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { authenticateRequest, requestId, requireSameOrigin } from "@/lib/auth";
 
-const querySchema = z.object({ limit: z.coerce.number().int().min(1).max(200).default(100) });
+const querySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(200).default(50),
+  cursor: z.string().max(512).optional(),
+  projectId: z.string().min(1).max(128).optional(),
+  suiteId: z.string().min(1).max(128).optional(),
+  caseDefinitionId: z.string().min(1).max(128).optional(),
+  status: z.enum(["queued", "running", "succeeded", "failed", "cancelled"]).optional(),
+  runnerId: z.string().min(1).max(128).optional(),
+  createdAfter: z.string().datetime().optional(),
+  createdBefore: z.string().datetime().optional(),
+});
 
 export async function GET(request: Request): Promise<NextResponse> {
   try {
     const identity = await authenticateRequest(request);
     const url = new URL(request.url);
-    const { limit } = querySchema.parse({ limit: url.searchParams.get("limit") ?? undefined });
+    const query = querySchema.parse(Object.fromEntries(url.searchParams));
     const services = await getPlatformServices();
     const projectIds = services.identityAccess.projectScope(identity, "run.read");
-    return NextResponse.json({ items: await services.runBatches.list(limit, projectIds) });
+    return NextResponse.json(
+      await services.runBatches.listPage({
+        limit: query.limit,
+        ...(projectIds ? { projectIds } : {}),
+        ...(query.cursor ? { cursor: query.cursor } : {}),
+        ...(query.projectId ? { projectId: query.projectId } : {}),
+        ...(query.suiteId ? { suiteId: query.suiteId } : {}),
+        ...(query.caseDefinitionId ? { caseDefinitionId: query.caseDefinitionId } : {}),
+        ...(query.status ? { status: query.status } : {}),
+        ...(query.runnerId ? { runnerId: query.runnerId } : {}),
+        ...(query.createdAfter ? { createdAfter: query.createdAfter } : {}),
+        ...(query.createdBefore ? { createdBefore: query.createdBefore } : {}),
+      }),
+    );
   } catch (error) {
     return apiErrorResponse(error);
   }

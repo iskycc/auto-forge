@@ -30,6 +30,7 @@ export type RoleRow = {
   description: string;
   scope: "system" | "project";
   builtIn: boolean;
+  active: boolean;
   permissionsJson: string;
   createdAt: string;
   updatedAt: string;
@@ -41,6 +42,7 @@ export type ProjectRow = {
   slug: string;
   isDefault: boolean;
   archived: boolean;
+  ownerUserId: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -85,6 +87,7 @@ export function mapRole(row: RoleRow): Role {
     description: row.description,
     scope: row.scope,
     builtIn: row.builtIn,
+    active: row.active,
     permissions: parsePermissions(row.permissionsJson),
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
@@ -92,7 +95,8 @@ export function mapRole(row: RoleRow): Role {
 }
 
 export function mapProject(row: ProjectRow): Project {
-  return { ...row };
+  const { ownerUserId, ...project } = row;
+  return { ...project, ...(ownerUserId ? { ownerUserId } : {}) };
 }
 
 export function mapAuditEvent(row: AuditRow): AuditEvent {

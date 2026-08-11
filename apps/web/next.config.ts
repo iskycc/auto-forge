@@ -30,6 +30,7 @@ const nextConfig: NextConfig = {
     "@autoforge/db",
     "@autoforge/domain",
     "@autoforge/object-store",
+    "@autoforge/platform-config",
     "@autoforge/runner-sdk",
     "@autoforge/testng-discovery",
   ],

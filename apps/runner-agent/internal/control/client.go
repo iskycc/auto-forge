@@ -57,6 +57,13 @@ type registrationResponse struct {
 	HeartbeatIntervalSecond int    `json:"heartbeatIntervalSeconds"`
 }
 
+type rotateCredentialResponse struct {
+	SchemaVersion                int    `json:"schemaVersion"`
+	Credential                   string `json:"credential"`
+	CredentialVersion            int    `json:"credentialVersion"`
+	PreviousCredentialValidUntil string `json:"previousCredentialValidUntil"`
+}
+
 type heartbeatRequest struct {
 	SchemaVersion    int               `json:"schemaVersion"`
 	BusySlots        int               `json:"busySlots"`
@@ -73,6 +80,7 @@ type HeartbeatResponse struct {
 	AcceptedAt              string `json:"acceptedAt"`
 	HeartbeatIntervalSecond int    `json:"heartbeatIntervalSeconds"`
 	Draining                bool   `json:"draining"`
+	RotateCredential        bool   `json:"rotateCredential"`
 	TerminalConnectionToken string `json:"terminalConnectionToken,omitempty"`
 }
 
@@ -155,6 +163,29 @@ func (client *Client) Register(ctx context.Context, configuration config.Config,
 		Credential:    response.Credential,
 		ServerURL:     client.baseURL.String(),
 	}, heartbeatInterval(response.HeartbeatIntervalSecond), nil
+}
+
+// RotateCredential exchanges the current credential for a newly issued one.
+// The previous credential remains valid for a short grace period, so callers
+// may retry this method with the old identity when persisting fails.
+func (client *Client) RotateCredential(ctx context.Context, identity Identity) (Identity, error) {
+	var response rotateCredentialResponse
+	path := fmt.Sprintf("/api/v1/runner-agents/%s/credentials/rotate", url.PathEscape(identity.RunnerID))
+	if err := client.post(ctx, path, identity.Credential, struct{}{}, &response); err != nil {
+		return Identity{}, fmt.Errorf("rotate credential: %w", err)
+	}
+	if response.SchemaVersion != protocolVersion || len(response.Credential) < 32 || response.CredentialVersion < 1 {
+		return Identity{}, errors.New("rotate credential: control plane returned an incompatible response")
+	}
+	if _, err := time.Parse(time.RFC3339Nano, response.PreviousCredentialValidUntil); err != nil {
+		return Identity{}, errors.New("rotate credential: control plane returned an invalid grace deadline")
+	}
+	return Identity{
+		SchemaVersion: identitySchemaVersion,
+		RunnerID:      identity.RunnerID,
+		Credential:    response.Credential,
+		ServerURL:     identity.ServerURL,
+	}, nil
 }
 
 func (client *Client) Heartbeat(ctx context.Context, identity Identity, configuration config.Config, info buildinfo.Info, busySlots int, snapshot *metrics.Snapshot) (HeartbeatResponse, error) {

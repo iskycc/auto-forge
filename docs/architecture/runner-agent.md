@@ -1,6 +1,6 @@
 # Runner Agent 架构设计
 
-状态：Go Runner Protocol v1 的注册、资源心跳、任务领取、lease 续期、reconcile、权威测试/依赖 JAR 获取、TestNG 类/方法执行与参数注入、cgroup v2/rlimit 资源限制、日志 spool/确认重传、安全产物上传、完成上报和可选直连终端已实现；严格磁盘配额和完整离线验收仍待部署验证。
+状态：Go Runner Protocol v1 的注册、资源心跳、任务领取、lease 续期、reconcile、权威测试/依赖 JAR 获取、TestNG 类/方法执行与参数注入、cgroup v2/rlimit 资源限制、日志 spool/确认重传、安全产物上传、完成上报和可选直连终端已实现；新版本不可变 Release 资产的 Gate E 实机记录仍须在打标签后完成。
 
 本文中的 **Runner Agent** 指安装在执行机上的 AutoForge 守护进程，不是参与仓库开发的编码代理。Runner Agent 从控制面领取执行任务，以受控子进程运行命令，采集日志和产物，并上报执行结果。
 
@@ -89,6 +89,8 @@ unregistered -> registering -> online -> draining -> offline
 - `draining` 停止领取新任务，已有任务在时限内完成。
 - 服务端禁用后，Agent 不得继续领取或执行任务。
 - Agent/协议版本不兼容时进入 `incompatible`，界面提供明确升级提示。
+- Agent 通过 `POST /api/v1/runner-agents/{runnerId}/credentials/rotate` 轮换凭据（CLI `autoforge-agent rotate-credential`）：控制面签发新凭据并递增 `credentialVersion`，旧凭据保留 15 分钟宽限期，Agent 保存新身份失败时可用旧凭据安全重试；宽限期内新旧凭据均可通过认证。
+- 管理员可在执行机列表撤销凭据（`credential_revoked_at`）或注销执行机（`deregistered_at`）：两者都会立即使全部 Runner Protocol 认证失败，注销还会禁用执行机并把活跃租约立即到期，由统一的过期回收重新排队。
 
 ## 一次执行的流程
 
@@ -294,8 +296,8 @@ Agent 配置同样集中解析和校验，秘密不得出现在命令行参数�
 
 ## 当前实现顺序
 
-assignment/lease、Agent claim/续期、process supervisor、权威测试/依赖 JAR 输入、TestNG descriptor 精确方法选择与参数注入、取消、reconcile、有序日志、双层脱敏、有界 spool、产物上传、幂等完成和结构化 TestNG 报告解析已落地。结构化报告采用有界流式 XML 解析，拒绝 DTD/实体扩展，明细达到上限后继续累计汇总；控制面在双数据库保存结果，原始 XML 按产物规则上传。后续按以下顺序继续，未列为完成的能力不得用于生产声明：
+assignment/lease、Agent claim/续期、process supervisor、权威测试/依赖 JAR 输入、TestNG descriptor 精确方法选择与参数注入、取消、reconcile、有序日志、双层脱敏、有界 spool、产物上传、幂等完成、结构化 TestNG 报告解析、凭据轮换（15 分钟宽限期）与管理员撤销/注销已落地。结构化报告采用有界流式 XML 解析，拒绝 DTD/实体扩展，明细达到上限后继续累计汇总；控制面在双数据库保存结果，原始 XML 按产物规则上传。后续按以下顺序继续，未列为完成的能力不得用于生产声明：
 
-1. 补齐凭据轮换、离线服务安装和相邻版本兼容矩阵。
+1. 补齐离线服务安装和相邻版本兼容矩阵。
 2. 完成专用文件系统/项目配额部署验证。
 3. 完成 Lite/Full 断网端到端与故障恢复验收。

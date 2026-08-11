@@ -39,6 +39,7 @@ export default async function EnvironmentSettingsPage() {
           <p>管理项目级不可变环境版本、密文元数据和执行引用。</p>
         </div>
         <nav className="settings-tabs" aria-label="系统设置分类">
+          <Link href="/settings/platform">平台配置</Link>
           <Link href="/settings/access">身份与访问</Link>
           <Link aria-current="page" href="/settings/environments">
             环境与密文

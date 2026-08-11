@@ -59,11 +59,22 @@ export async function GET(request: Request, context: Context): Promise<NextRespo
     if (createHash("sha256").update(content).digest("hex") !== artifact.sha256) {
       throw new DomainError("ARTIFACT_CONTENT_INVALID", "产物摘要与元数据不一致。");
     }
+    const previewRequested = new URL(request.url).searchParams.get("preview") === "1";
+    const previewMediaType = previewableMediaType(artifact.mediaType);
+    if (previewRequested && !previewMediaType) {
+      throw new DomainError("ARTIFACT_PREVIEW_UNSUPPORTED", "该产物类型不允许在浏览器内预览。");
+    }
     return new NextResponse(Buffer.from(content), {
       headers: {
-        "Content-Type": safeMediaType(artifact.mediaType),
+        "Content-Type": previewMediaType ?? safeDownloadMediaType(artifact.mediaType),
         "Content-Length": String(content.byteLength),
-        "Content-Disposition": `attachment; filename="${safeFileName(artifact.relativePath)}"`,
+        "Content-Disposition": `${previewRequested ? "inline" : "attachment"}; filename="${safeFileName(artifact.relativePath)}"`,
+        ...(previewRequested
+          ? {
+              "Content-Security-Policy":
+                "sandbox; default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'",
+            }
+          : {}),
         "X-Content-Type-Options": "nosniff",
         "Cache-Control": "private, no-store",
       },
@@ -86,10 +97,21 @@ async function* requestContent(body: ReadableStream<Uint8Array>): AsyncGenerator
   }
 }
 
-function safeMediaType(mediaType: string): string {
-  return mediaType.startsWith("image/") || mediaType === "application/pdf"
+function previewableMediaType(mediaType: string): string | undefined {
+  return [
+    "image/png",
+    "image/jpeg",
+    "image/webp",
+    "image/gif",
+    "application/pdf",
+    "text/plain",
+  ].includes(mediaType)
     ? mediaType
-    : "application/octet-stream";
+    : undefined;
+}
+
+function safeDownloadMediaType(mediaType: string): string {
+  return previewableMediaType(mediaType) ?? "application/octet-stream";
 }
 
 function safeFileName(relativePath: string): string {

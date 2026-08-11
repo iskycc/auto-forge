@@ -39,6 +39,7 @@ export default async function AccessSettingsPage({
           <p>管理本地账号、LDAP、角色、项目作用域和安全审计。</p>
         </div>
         <nav className="settings-tabs" aria-label="系统设置分类">
+          <Link href="/settings/platform">平台配置</Link>
           <Link aria-current="page" href="/settings/access">
             身份与访问
           </Link>

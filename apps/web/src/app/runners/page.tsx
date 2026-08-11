@@ -1,6 +1,8 @@
 import { Clock3, Server, ShieldCheck } from "lucide-react";
-import { assessRunnerCompatibility } from "@autoforge/domain";
+import { assessRunnerCompatibility, hasPermission, type RunBatch } from "@autoforge/domain";
 
+import { RunnerAdminActions } from "@/components/runner-admin-actions";
+import { RunnerAgentInstaller } from "@/components/runner-agent-installer";
 import { RunnerTerminal } from "@/components/runner-terminal";
 import { getPlatformServices } from "@/lib/services";
 import { requirePagePermission } from "@/lib/auth";
@@ -24,9 +26,22 @@ function formatDate(value: string): string {
 }
 
 export default async function RunnersPage() {
-  await requirePagePermission("runner.read");
+  const identity = await requirePagePermission("runner.read");
+  const canManage = hasPermission(identity, "runner.manage");
   const services = await getPlatformServices();
   const runners = await services.runnerControl.list(500);
+  let recentBatches: Awaited<ReturnType<typeof services.runBatches.listPage>>["items"] = [];
+  try {
+    const projectIds = services.identityAccess.projectScope(identity, "run.read");
+    recentBatches = (
+      await services.runBatches.listPage({
+        limit: 200,
+        ...(projectIds ? { projectIds } : {}),
+      })
+    ).items;
+  } catch {
+    // Runner operators without run.read can manage node lifecycle without seeing project execution data.
+  }
   const onlineCount = runners.filter((runner) => runner.state === "online").length;
   const incompatibleCount = runners.filter(
     (runner) => !assessRunnerCompatibility(runner).compatible,
@@ -40,7 +55,7 @@ export default async function RunnersPage() {
           <p>
             Agent 主动注册并持续上报心跳；45 秒未上报会显示离线。不兼容节点不会获得新任务
             {incompatibleCount > 0
-              ? `；当前有 ${incompatibleCount} 台需从离线 Release 介质选择匹配架构资产升级并先运行 doctor。`
+              ? `；当前有 ${incompatibleCount} 台需要通过平台内置 Agent 资源重新安装或升级。`
               : "。"}
           </p>
         </div>
@@ -48,6 +63,9 @@ export default async function RunnersPage() {
           <span className="live-dot" /> 在线 {onlineCount} / {runners.length}
         </span>
       </section>
+      {canManage ? (
+        <RunnerAgentInstaller controlPlaneUrl={services.config.web.publicBaseUrl} />
+      ) : null}
       <section className="runner-metrics">
         <div className="card">
           <Server size={20} />
@@ -72,7 +90,7 @@ export default async function RunnersPage() {
               <Server size={26} />
             </span>
             <strong>尚未注册执行机</strong>
-            <p>设置 Runner bootstrap token，启动 `autoforge-agent start` 后会自动出现。</p>
+            <p>在上方填写执行机连接信息并完成自动安装后，Agent 会自动注册并出现在这里。</p>
           </div>
         ) : (
           <div className="table-scroll">
@@ -86,7 +104,9 @@ export default async function RunnersPage() {
                   <th>资源</th>
                   <th>状态</th>
                   <th>最近心跳</th>
+                  <th>Lease / 最近任务</th>
                   <th>终端</th>
+                  {canManage ? <th>操作</th> : null}
                 </tr>
               </thead>
               <tbody>
@@ -98,6 +118,9 @@ export default async function RunnersPage() {
                         <span className="class-cell">
                           <strong>{runner.name}</strong>
                           <small>{runner.labels.join(" · ") || "无标签"}</small>
+                          <small title={runner.capabilities.join(", ")}>
+                            {runner.capabilities.join(" · ") || "未声明能力"}
+                          </small>
                         </span>
                       </td>
                       <td>
@@ -140,17 +163,35 @@ export default async function RunnersPage() {
                       <td>
                         <span className={`runner-state runner-state-${runner.state}`}>
                           <i />
-                          {runner.state === "online"
-                            ? "在线"
-                            : runner.state === "draining"
-                              ? "排空中"
-                              : runner.state === "disabled"
-                                ? "已禁用"
-                                : "离线"}
+                          {runner.deregisteredAt
+                            ? "已注销"
+                            : runner.state === "online"
+                              ? "在线"
+                              : runner.state === "draining"
+                                ? "排空中"
+                                : runner.state === "disabled"
+                                  ? "已禁用"
+                                  : "离线"}
                         </span>
+                        {runner.credentialRevokedAt && !runner.deregisteredAt ? (
+                          <>
+                            <br />
+                            <small className="muted">凭据已撤销</small>
+                          </>
+                        ) : null}
                       </td>
                       <td>
                         <time dateTime={runner.lastSeenAt}>{formatDate(runner.lastSeenAt)}</time>
+                      </td>
+                      <td>
+                        <span className="class-cell">
+                          <strong>
+                            {runner.busySlots > 0
+                              ? `${runner.busySlots} 个活跃槽位`
+                              : "无活跃 Lease"}
+                          </strong>
+                          <small>{recentBatchLabel(recentBatches, runner.id)}</small>
+                        </span>
                       </td>
                       <td>
                         <RunnerTerminal
@@ -158,9 +199,23 @@ export default async function RunnersPage() {
                           runnerName={runner.name}
                           platformEnabled={Boolean(services.config.terminalAccessToken)}
                           runnerEnabled={runner.terminalEnabled}
-                          runnerOnline={runner.state === "online"}
+                          runnerOnline={runner.state === "online" && !runner.deregisteredAt}
                         />
                       </td>
+                      {canManage ? (
+                        <td>
+                          <RunnerAdminActions
+                            runnerId={runner.id}
+                            runnerName={runner.name}
+                            credentialRevoked={Boolean(runner.credentialRevokedAt)}
+                            credentialRotationRequested={Boolean(
+                              runner.credentialRotationRequestedAt,
+                            )}
+                            deregistered={Boolean(runner.deregisteredAt)}
+                            state={runner.state}
+                          />
+                        </td>
+                      ) : null}
                     </tr>
                   );
                 })}
@@ -171,4 +226,9 @@ export default async function RunnersPage() {
       </section>
     </div>
   );
+}
+
+function recentBatchLabel(batches: RunBatch[], runnerId: string): string {
+  const batch = batches.find((candidate) => candidate.selectedRunnerIds.includes(runnerId));
+  return batch ? `${batch.suiteName} · ${batch.status}` : "暂无可见任务";
 }

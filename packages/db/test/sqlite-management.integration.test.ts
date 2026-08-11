@@ -26,6 +26,85 @@ afterEach(async () => {
 });
 
 describe("SQLite management repositories", () => {
+  it("persists, deduplicates, cancels and retries background JAR imports", async () => {
+    const { handle, catalog } = await fixture();
+    try {
+      const createdAt = "2026-08-09T00:10:00.000Z";
+      const job = {
+        id: "import-job-1",
+        projectId: "00000000-0000-7000-8000-000000000001",
+        fileName: "large-tests.jar",
+        sha256: "b".repeat(64),
+        sizeBytes: 10_000,
+        status: "queued" as const,
+        progressPercent: 0,
+        requestedBy: "user-admin",
+        createdAt,
+        updatedAt: createdAt,
+      };
+      const dispatchJob = {
+        schemaVersion: 1 as const,
+        messageId: "import-message-1",
+        runId: job.id,
+        attempt: 1,
+        createdAt,
+        priority: 0,
+        deduplicationKey: "jar-import:large-tests",
+        kind: "jar-import" as const,
+        payload: { jobId: job.id },
+      };
+      await expect(
+        catalog.createJarImportJob({
+          job,
+          objectKey: `jars/${job.sha256}.jar`,
+          idempotencyKey: "large-tests",
+          dispatchJob,
+        }),
+      ).resolves.toMatchObject({ id: job.id, status: "queued" });
+      await expect(
+        catalog.createJarImportJob({
+          job: { ...job, id: "import-job-duplicate" },
+          objectKey: `jars/${job.sha256}.jar`,
+          idempotencyKey: "large-tests",
+          dispatchJob: { ...dispatchJob, messageId: "import-message-duplicate" },
+        }),
+      ).resolves.toMatchObject({ id: job.id });
+      expect(
+        handle.client
+          .prepare("SELECT COUNT(*) AS count FROM queue_jobs WHERE kind = 'jar-import'")
+          .get(),
+      ).toEqual({ count: 1 });
+      await expect(
+        catalog.requestJarImportCancellation({ jobId: job.id, updatedAt: createdAt }),
+      ).resolves.toMatchObject({ status: "cancelled" });
+      await expect(
+        catalog.retryJarImportJob({
+          jobId: job.id,
+          dispatchJob: {
+            ...dispatchJob,
+            messageId: "import-message-retry",
+            deduplicationKey: "jar-import:large-tests:retry",
+          },
+          updatedAt: "2026-08-09T00:11:00.000Z",
+        }),
+      ).resolves.toMatchObject({ status: "queued", progressPercent: 0 });
+      await expect(
+        catalog.claimJarImportJob({ jobId: job.id, startedAt: "2026-08-09T00:11:01.000Z" }),
+      ).resolves.toMatchObject({
+        job: { status: "running", progressPercent: 5 },
+        objectKey: `jars/${job.sha256}.jar`,
+      });
+      await expect(
+        catalog.requestJarImportCancellation({
+          jobId: job.id,
+          updatedAt: "2026-08-09T00:11:02.000Z",
+        }),
+      ).resolves.toMatchObject({ status: "cancel_requested" });
+    } finally {
+      handle.close();
+    }
+  });
+
   it("switches the authoritative source and adds and removes suite cases transactionally", async () => {
     const { handle, catalog, suites } = await fixture();
     try {
@@ -37,6 +116,7 @@ describe("SQLite management repositories", () => {
       const withCase = await suites.addCases({
         suiteId: "suite-1",
         items: [{ id: "item-1", caseDefinitionId: "case-1" }],
+        versionId: "suite-version-2",
         updatedAt: timestamp,
       });
       expect(withCase).toMatchObject({ caseCount: 1, version: 2 });
@@ -45,6 +125,7 @@ describe("SQLite management repositories", () => {
       const empty = await suites.removeCase({
         suiteId: "suite-1",
         caseDefinitionId: "case-1",
+        versionId: "suite-version-3",
         updatedAt: "2026-08-09T00:01:00.000Z",
       });
       expect(empty).toMatchObject({ caseCount: 0, version: 3 });
@@ -112,6 +193,166 @@ describe("SQLite management repositories", () => {
         recordedAt: "2026-08-09T00:02:00.000Z",
       });
       expect(terminalDisabled.terminalEnabled).toBe(false);
+    } finally {
+      handle.close();
+    }
+  });
+
+  it("rotates, revokes and deregisters runner credentials", async () => {
+    const { handle, runners, batches, executions } = await fixture();
+    try {
+      await runners.register({
+        id: "runner-rotate",
+        bootstrapTokenHash: "bootstrap-rotate",
+        credentialHash: "credential-v1",
+        name: "rotating-runner",
+        os: "linux",
+        architecture: "amd64",
+        agentVersion: "0.2.0",
+        protocolVersion: 1,
+        labels: ["java", "testng"],
+        capabilities: ["executor:testng-v1", "isolation:cgroup-v2", "java:21", "testng:7.11.0"],
+        maxConcurrency: 1,
+        terminalEnabled: false,
+        recordedAt: timestamp,
+      });
+      expect(
+        (await runners.findByCredentialHash("credential-v1", "2026-08-09T00:00:30.000Z"))?.id,
+      ).toBe("runner-rotate");
+
+      const requested = await runners.requestCredentialRotation({
+        runnerId: "runner-rotate",
+        requestedAt: "2026-08-09T00:00:45.000Z",
+      });
+      expect(requested.credentialRotationRequestedAt).toBe("2026-08-09T00:00:45.000Z");
+
+      const rotated = await runners.rotateCredential({
+        runnerId: "runner-rotate",
+        credentialHash: "credential-v2",
+        previousCredentialValidUntil: "2026-08-09T00:15:00.000Z",
+        rotatedAt: "2026-08-09T00:01:00.000Z",
+      });
+      expect(rotated.credentialVersion).toBe(2);
+      expect(rotated.credentialRotationRequestedAt).toBeUndefined();
+      expect(
+        (await runners.findByCredentialHash("credential-v1", "2026-08-09T00:10:00.000Z"))?.id,
+      ).toBe("runner-rotate");
+      expect(
+        await runners.findByCredentialHash("credential-v1", "2026-08-09T00:16:00.000Z"),
+      ).toBeNull();
+      expect(
+        (await runners.findByCredentialHash("credential-v2", "2026-08-09T00:16:00.000Z"))?.id,
+      ).toBe("runner-rotate");
+
+      const revoked = await runners.revokeCredential({
+        runnerId: "runner-rotate",
+        revokedAt: "2026-08-09T00:20:00.000Z",
+      });
+      expect(revoked.credentialRevokedAt).toBe("2026-08-09T00:20:00.000Z");
+      expect(
+        await runners.findByCredentialHash("credential-v1", "2026-08-09T00:10:00.000Z"),
+      ).toBeNull();
+
+      await runners.heartbeat({
+        runnerId: "runner-rotate",
+        labels: ["java", "testng"],
+        capabilities: ["executor:testng-v1", "isolation:cgroup-v2", "java:21", "testng:7.11.0"],
+        maxConcurrency: 1,
+        busySlots: 0,
+        agentVersion: "0.2.0",
+        terminalEnabled: false,
+        resourceSnapshot: {
+          cpuUtilizationPercent: 10,
+          memoryUtilizationPercent: 20,
+          loadAverage1m: 0.1,
+          logicalCpuCount: 2,
+          observedAt: "2026-08-09T00:20:30.000Z",
+        },
+        recordedAt: "2026-08-09T00:20:30.000Z",
+      });
+      await batches.create({
+        id: "batch-rotate",
+        suiteId: "suite-snapshot",
+        suiteName: "Rotate",
+        suiteVersion: 1,
+        retryLimit: 1,
+        environmentVariables: [],
+        runnerIds: ["runner-rotate"],
+        runs: [
+          {
+            id: "run-rotate",
+            caseDefinitionId: "case-1",
+            caseVersion: 1,
+            displayName: "Rotate",
+            className: "com.example.SmokeTest",
+          },
+        ],
+        createdAt: "2026-08-09T00:20:31.000Z",
+      });
+      await batches.reserveAssignments({
+        batchId: "batch-rotate",
+        decisions: [
+          {
+            executionRunId: "run-rotate",
+            runnerId: "runner-rotate",
+            score: 1,
+            attemptId: "attempt-rotate",
+            assignmentId: "assignment-rotate",
+          },
+        ],
+        thresholds: {
+          maximumCpuUtilizationPercent: 80,
+          maximumMemoryUtilizationPercent: 85,
+          maximumLoadPerCpu: 1,
+        },
+        offlineBefore: "2026-08-09T00:20:00.000Z",
+        metricsFreshAfter: "2026-08-09T00:20:00.000Z",
+        scheduledAt: "2026-08-09T00:20:32.000Z",
+      });
+      const claimed = await executions.claim({
+        runnerId: "runner-rotate",
+        requestId: "claim-rotate",
+        availableSlots: 1,
+        labels: ["java", "testng"],
+        capabilities: ["executor:testng-v1", "isolation:cgroup-v2", "java:21", "testng:7.11.0"],
+        leaseSeeds: [
+          {
+            id: "lease-rotate",
+            eventId: "event-claim-rotate",
+            tokenHash: "lease-token-rotate",
+            tokenEncrypted: "encrypted-lease-token-rotate",
+          },
+        ],
+        now: "2026-08-09T00:20:33.000Z",
+        leaseExpiresAt: "2026-08-09T00:21:18.000Z",
+      });
+      expect(claimed).toHaveLength(1);
+
+      const deregistered = await runners.deregister({
+        runnerId: "runner-rotate",
+        deregisteredAt: "2026-08-09T00:21:00.000Z",
+      });
+      expect(deregistered.deregisteredAt).toBe("2026-08-09T00:21:00.000Z");
+      expect(deregistered.state).toBe("disabled");
+      const lease = handle.client
+        .prepare("SELECT expires_at, status FROM assignment_leases WHERE id = ?")
+        .get("lease-rotate") as { expires_at: string; status: string };
+      expect(lease.expires_at).toBe("2026-08-09T00:21:00.000Z");
+
+      const recovered = await executions.recoverExpired({
+        now: "2026-08-09T00:21:00.001Z",
+        eventIds: ["event-recover-rotate"],
+        limit: 10,
+      });
+      expect(recovered).toBe(1);
+      const leaseAfter = handle.client
+        .prepare("SELECT status FROM assignment_leases WHERE id = ?")
+        .get("lease-rotate") as { status: string };
+      expect(leaseAfter.status).toBe("expired");
+      const run = handle.client
+        .prepare("SELECT status FROM execution_runs WHERE id = ?")
+        .get("run-rotate") as { status: string };
+      expect(run.status).toBe("queued");
     } finally {
       handle.close();
     }
@@ -261,6 +502,26 @@ describe("SQLite management repositories", () => {
       await expect(batches.list(10, ["project-b"])).resolves.toMatchObject([
         { id: "batch-project-b", projectId: "project-b" },
       ]);
+      await expect(
+        batches.listPage({
+          projectIds: ["project-b"],
+          caseDefinitionId: "case-project-b",
+          suiteId: "suite-project-b",
+          createdAfter: "2026-08-09T00:01:30.000Z",
+          createdBefore: "2026-08-09T00:02:30.000Z",
+          limit: 10,
+        }),
+      ).resolves.toMatchObject({ items: [{ id: "batch-project-b" }] });
+      const firstPage = await batches.listPage({ limit: 1 });
+      expect(firstPage.items).toMatchObject([{ id: "batch-project-b" }]);
+      expect(firstPage.nextCursor).toBeTruthy();
+      await expect(
+        batches.listPage({
+          cursor: firstPage.nextCursor!,
+          runnerId: "runner-scheduling",
+          limit: 1,
+        }),
+      ).resolves.toMatchObject({ items: [{ id: "batch-1" }] });
       await expect(batches.get("batch-1", ["project-b"])).resolves.toBeNull();
       await expect(executionsProjectId(handle, "attempt-1")).resolves.toBe(
         "00000000-0000-7000-8000-000000000001",
@@ -277,6 +538,7 @@ describe("SQLite management repositories", () => {
       await suites.addCases({
         suiteId: "suite-dynamic",
         items: [{ id: "suite-item-dynamic", caseDefinitionId: "case-1" }],
+        versionId: "suite-version-dynamic",
         updatedAt: timestamp,
       });
       await runners.register({

@@ -55,7 +55,12 @@ describe("execution secret acquisition", () => {
     const service = new ExecutionControlService(
       executions,
       runners,
-      { issue: vi.fn(), hash: (value) => `hash:${value}`, verifyBootstrapToken: vi.fn() },
+      {
+        issue: vi.fn(),
+        issueBootstrapToken: vi.fn(),
+        hash: (value) => `hash:${value}`,
+        verifyBootstrapToken: vi.fn(),
+      },
       { available: true, encrypt: vi.fn(), decrypt },
       {} as JarObjectStorePort,
       { now: () => new Date("2026-08-09T00:00:00.000Z") },
@@ -108,7 +113,12 @@ describe("execution data scope", () => {
     const service = new ExecutionControlService(
       executions,
       {} as RunnerRepository,
-      { issue: vi.fn(), hash: (value) => `hash:${value}`, verifyBootstrapToken: vi.fn() },
+      {
+        issue: vi.fn(),
+        issueBootstrapToken: vi.fn(),
+        hash: (value) => `hash:${value}`,
+        verifyBootstrapToken: vi.fn(),
+      },
       { available: true, encrypt: vi.fn(), decrypt: vi.fn() },
       {} as JarObjectStorePort,
       { now: () => new Date("2026-08-09T00:00:00.000Z") },
@@ -153,7 +163,12 @@ describe("Runner execution compatibility", () => {
     const service = new ExecutionControlService(
       executions,
       runners,
-      { issue: vi.fn(), hash: (value) => `hash:${value}`, verifyBootstrapToken: vi.fn() },
+      {
+        issue: vi.fn(),
+        issueBootstrapToken: vi.fn(),
+        hash: (value) => `hash:${value}`,
+        verifyBootstrapToken: vi.fn(),
+      },
       { available: true, encrypt: vi.fn(), decrypt: vi.fn() },
       {} as JarObjectStorePort,
       { now: () => new Date("2026-08-09T00:00:00.000Z") },
@@ -185,6 +200,7 @@ describe("artifact transfer orchestration", () => {
       required: true,
     };
     const executions = {
+      resolveAttemptProjectId: vi.fn().mockResolvedValue("project-1"),
       declareArtifacts: vi.fn().mockResolvedValue([{ ...artifact, status: "declared" }]),
       resolveArtifactUpload: vi.fn().mockResolvedValue({ ...artifact, status: "declared" }),
       markArtifactUploaded: vi.fn().mockResolvedValue(undefined),
@@ -212,17 +228,22 @@ describe("artifact transfer orchestration", () => {
       prepareArtifactUpload: vi.fn().mockResolvedValue({
         kind: "direct",
         uploadUrl: "https://minio.internal/signed-object",
-        objectKey: `artifacts/attempt-1/artifact-1/${artifact.sha256}`,
+        objectKey: `projects/project-1/artifacts/attempt-1/artifact-1/${artifact.sha256}`,
       }),
       verifyArtifactUpload: vi.fn().mockResolvedValue({
-        objectKey: `artifacts/attempt-1/artifact-1/${artifact.sha256}`,
+        objectKey: `projects/project-1/artifacts/attempt-1/artifact-1/${artifact.sha256}`,
         created: true,
       }),
     } as unknown as JarObjectStorePort;
     const service = new ExecutionControlService(
       executions,
       runners,
-      { issue: vi.fn(), hash: (value) => `hash:${value}`, verifyBootstrapToken: vi.fn() },
+      {
+        issue: vi.fn(),
+        issueBootstrapToken: vi.fn(),
+        hash: (value) => `hash:${value}`,
+        verifyBootstrapToken: vi.fn(),
+      },
       { available: true, encrypt: vi.fn(), decrypt: vi.fn() },
       objectStore,
       { now: () => new Date("2026-08-09T00:00:00.000Z") },

@@ -13,12 +13,31 @@ cleanup() {
 }
 trap cleanup EXIT
 
-container_id="$(docker run --detach --platform "${platform}" "${image_reference}")"
+container_id="$(docker run --detach --network none --platform "${platform}" "${image_reference}")"
 
 for _ in $(seq 1 60); do
   status="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}missing{{end}}' "${container_id}")"
   case "${status}" in
     healthy)
+      docker exec "${container_id}" test -f /app/apps/web/dist-server/server/migrate.js
+      docker exec "${container_id}" node -e '
+        const { createHash } = require("node:crypto");
+        const { readFileSync } = require("node:fs");
+        const root = "/app/resources/agents";
+        const manifest = JSON.parse(readFileSync(`${root}/manifest.json`, "utf8"));
+        for (const key of ["linux-amd64", "linux-arm64", "installer"]) {
+          const entry = manifest.files[key];
+          const content = readFileSync(`${root}/${entry.path}`);
+          if (content.length !== entry.size || createHash("sha256").update(content).digest("hex") !== entry.sha256) process.exit(1);
+        }
+      '
+      case "${platform}" in
+        linux/amd64) agent_architecture="amd64" ;;
+        linux/arm64) agent_architecture="arm64" ;;
+        *) echo "unsupported backend platform: ${platform}" >&2; exit 1 ;;
+      esac
+      docker exec "${container_id}" \
+        "/app/resources/agents/linux-${agent_architecture}/autoforge-agent" version >/dev/null
       exit 0
       ;;
     unhealthy | missing)

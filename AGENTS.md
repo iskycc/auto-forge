@@ -4,7 +4,7 @@
 
 ## 1. 当前阶段
 
-仓库已实现 Lite/Full 用例资产、统一身份/RBAC、可选 LDAP、版本化执行环境、加密密文引用/lease 按需领取、逐项执行预检和控制面执行协议里程碑：Next.js 主平台、TestNG JAR 静态扫描、双数据库用例/身份/执行仓储、本地/MinIO 对象存储、资源感知调度、版本条件保护的权威执行状态机、四阶段超时恢复和批次/attempt 状态历史已经落地。Go Runner Agent 已实现注册/资源心跳、版本与工具链兼容提示、assignment claim、lease 续租、启动 reconcile、权威测试/依赖 JAR 下载校验、离线 TestNG 类/方法执行与参数注入、cgroup v2/rlimit 资源限制、日志 spool/确认重传、双层脱敏、安全产物上传、取消/进程组清理、完成上报和直连终端；SQLite 持久队列、Lite 嵌入式工作器、PostgreSQL outbox、JetStream 调度和 Redis 可重建缓存也已接通首版，SQLite/JetStream 共享队列契约测试已落地。严格总磁盘配额、多租户隔离、分析和完整离线验收仍是目标能力。README 中的目标架构不代表这些能力已经完成。
+仓库已实现 Lite/Full 用例资产、统一身份/RBAC（含自定义角色与项目成员管理）、可选 LDAP、版本化执行环境、加密密文引用/lease 按需领取、逐项执行预检和控制面执行协议里程碑：Next.js 主平台、TestNG JAR 静态扫描（含 testng.xml 选择规则、JAR 内继承、Multi-Release 版本选择和工厂/动态语义有界警告）、双数据库用例/身份/执行仓储、本地/MinIO 对象存储、资源感知调度、版本条件保护的权威执行状态机、四阶段超时恢复和批次/attempt 状态历史已经落地；用例元数据编辑与版本历史恢复、任务生命周期（复制/归档/启停/版本快照）与执行策略、来源目录对比/确认同步（保留语义）/归档/守卫式删除与对象异步清理也已接通。Go Runner Agent 已实现注册/资源心跳、版本与工具链兼容提示、assignment claim、lease 续租、启动 reconcile、权威测试/依赖 JAR 下载校验、离线 TestNG 类/方法执行与参数注入、cgroup v2/rlimit 资源限制、日志 spool/确认重传、双层脱敏、安全产物上传、取消/进程组清理、完成上报和直连终端，Runner 凭据轮换/撤销/禁用/排空/注销已在双数据库落地；SQLite 持久队列、Lite 嵌入式工作器、PostgreSQL outbox、JetStream 调度和 Redis 可重建缓存也已接通首版，SQLite/JetStream 共享队列契约测试已落地。严格总磁盘配额、多租户隔离、分析和完整离线验收仍是目标能力。README 中的目标架构不代表这些能力已经完成。
 
 在添加脚手架或功能时：
 
@@ -347,7 +347,7 @@ pnpm build
 
 - 环境变量必须集中定义、校验和文档化；业务模块不得零散访问 `process.env`。
 - 可选依赖必须真的可选。Lite 的模块图和启动路径不能因顶层 import 加载 Full 驱动。
-- Runner Agent 的配置、Go module、依赖和发布物与服务端分离；不得通过环境变量向 Agent 传递数据库、NATS、Redis 或 MinIO 长期凭据。
+- Runner Agent 的源码模块、配置和运行职责与服务端分离；主平台发布物内置受校验的 Agent 资源，不再单独发布 Agent Release 资产。不得向 Agent 传递数据库、NATS、Redis 或 MinIO 长期凭据。
 - Agent 需要的浏览器、驱动和 SDK 必须由版本化 Runner 镜像或预置工具链提供，不允许运行时自动下载。
 - 新增生产依赖前检查维护状态、许可证、体积、Node 24 支持、原生构建和离线打包。
 - 优先采用标准 API 和小型依赖，避免多个库解决同一问题。
@@ -356,11 +356,11 @@ pnpm build
 ### 14.1 发布与平台矩阵
 
 - GitHub Release 只从已存在且指向当前提交的语义版本 tag（`vX.Y.Z`）发布，禁止从未标记分支或可变引用生成正式包。
-- 后端离线 Docker 镜像和 Runner Agent 二进制都必须生成 `amd64`、`arm64`、`amd64-musl`、`arm64-musl` 四个明确命名的资产。
+- 后端离线 Docker 镜像必须生成 `amd64`、`arm64`、`amd64-musl`、`arm64-musl` 四个明确命名的资产；每个镜像都内置 Linux `amd64` 与 `arm64` 两个静态 Agent 资源，不生成独立 Agent Release 资产。
 - 后端标准版基于固定 digest 的 Debian/glibc Node 镜像，musl 版基于固定 digest 的 Alpine/musl Node 镜像；不得仅复制或重命名同一个镜像伪造变体。
-- Agent 使用 `CGO_ENABLED=0` 静态构建。标准版和 musl 版均不得动态链接 libc，但仍保留独立文件名与嵌入式 variant 信息以匹配统一发布矩阵。
+- 内置 Agent 使用 `CGO_ENABLED=0` 静态构建，不动态链接 libc；资源清单记录版本、架构、大小和 SHA-256，安装前后均须校验。
 - GitHub Actions 的 `amd64*` 目标使用 `ubuntu-24.04`，`arm64*` 目标使用原生 `ubuntu-24.04-arm`；不得在 GitHub-hosted Release 流水线中用 QEMU 模拟已有原生 runner 的架构。
-- Release 同时包含每项资产的 SPDX JSON SBOM、统一 `SHA256SUMS` 和机器可读 `release-manifest.json`。
+- Release 同时包含每个后端/部署资产的 SPDX JSON SBOM、统一 `SHA256SUMS` 和机器可读 `release-manifest.json`；镜像 SBOM 覆盖其中的内置 Agent。
 - GitHub Actions 与基础镜像使用不可变 commit SHA 或镜像 digest；版本升级要单独审查并完成构建验证。
 - 发布脚本必须能在本地构建并验证单个平台；正式四平台集合由 GitHub Actions matrix 生成，任何一个目标失败都不得发布部分 Release。
 

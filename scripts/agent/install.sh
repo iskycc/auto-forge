@@ -1,0 +1,131 @@
+#!/bin/sh
+
+set -eu
+
+readonly agent_binary="${1:?Agent binary path is required}"
+readonly agent_configuration="${2:?Agent configuration path is required}"
+readonly service_unit="${3:?systemd service unit path is required}"
+readonly ca_certificate="${4:-}"
+readonly install_root="/opt/autoforge"
+readonly installed_binary="${install_root}/bin/autoforge-agent"
+readonly configuration_root="/etc/autoforge-agent"
+readonly installed_configuration="${configuration_root}/config.json"
+readonly installed_ca_certificate="${configuration_root}/control-plane-ca.pem"
+readonly installed_service_unit="/etc/systemd/system/autoforge-agent.service"
+readonly service_account="autoforge-agent"
+
+if [ "$(id -u)" -ne 0 ]; then
+  echo "the installer must run as root" >&2
+  exit 1
+fi
+
+if [ ! -r /etc/os-release ]; then
+  echo "/etc/os-release is required" >&2
+  exit 1
+fi
+
+# shellcheck disable=SC1091
+. /etc/os-release
+case "${ID:-}" in
+  ubuntu | opensuse | opensuse-leap | opensuse-tumbleweed) ;;
+  *)
+    echo "unsupported operating system: ${ID:-unknown}" >&2
+    exit 1
+    ;;
+esac
+
+case "$(uname -m)" in
+  x86_64 | aarch64 | arm64) ;;
+  *)
+    echo "unsupported architecture: $(uname -m)" >&2
+    exit 1
+    ;;
+esac
+
+for required_command in install systemctl id; do
+  if ! command -v "${required_command}" >/dev/null 2>&1; then
+    echo "required command is unavailable: ${required_command}" >&2
+    exit 1
+  fi
+done
+if [ ! -r /sys/fs/cgroup/cgroup.controllers ]; then
+  echo "cgroup v2 is required" >&2
+  exit 1
+fi
+
+if ! id -u "${service_account}" >/dev/null 2>&1; then
+  if ! command -v useradd >/dev/null 2>&1; then
+    echo "useradd is required to create the unprivileged service account" >&2
+    exit 1
+  fi
+  nologin_shell="/bin/false"
+  for candidate in /usr/sbin/nologin /sbin/nologin; do
+    if [ -x "${candidate}" ]; then
+      nologin_shell="${candidate}"
+      break
+    fi
+  done
+  useradd --system --home-dir /var/lib/autoforge-agent --shell "${nologin_shell}" \
+    --user-group --comment "AutoForge Runner Agent" "${service_account}"
+fi
+readonly service_group="$(id -gn "${service_account}")"
+
+"${agent_binary}" version >/dev/null
+install -d -m 0755 "${install_root}/bin"
+install -d -m 0700 -o "${service_account}" -g "${service_group}" \
+  "${configuration_root}" /var/lib/autoforge-agent
+
+backup_suffix=".autoforge-previous"
+for target in "${installed_binary}" "${installed_configuration}" "${installed_service_unit}"; do
+  if [ -e "${target}" ]; then
+    cp -p "${target}" "${target}${backup_suffix}"
+  else
+    rm -f "${target}${backup_suffix}"
+  fi
+done
+if [ -n "${ca_certificate}" ] && [ -e "${installed_ca_certificate}" ]; then
+  cp -p "${installed_ca_certificate}" "${installed_ca_certificate}${backup_suffix}"
+fi
+
+rollback_installation() {
+  for target in "${installed_binary}" "${installed_configuration}" "${installed_service_unit}"; do
+    if [ -e "${target}${backup_suffix}" ]; then
+      mv -f "${target}${backup_suffix}" "${target}"
+    else
+      rm -f "${target}"
+    fi
+  done
+  if [ -e "${installed_ca_certificate}${backup_suffix}" ]; then
+    mv -f "${installed_ca_certificate}${backup_suffix}" "${installed_ca_certificate}"
+  elif [ -n "${ca_certificate}" ]; then
+    rm -f "${installed_ca_certificate}"
+  fi
+  systemctl daemon-reload || true
+  systemctl restart autoforge-agent.service || true
+}
+
+install -m 0755 "${agent_binary}" "${installed_binary}"
+install -m 0600 -o "${service_account}" -g "${service_group}" \
+  "${agent_configuration}" "${installed_configuration}"
+install -m 0644 "${service_unit}" "${installed_service_unit}"
+if [ -n "${ca_certificate}" ]; then
+  install -m 0600 -o "${service_account}" -g "${service_group}" \
+    "${ca_certificate}" "${installed_ca_certificate}"
+fi
+
+if ! systemctl daemon-reload ||
+  ! systemctl enable autoforge-agent.service ||
+  ! systemctl restart autoforge-agent.service ||
+  ! systemctl is-active --quiet autoforge-agent.service; then
+  echo "Agent service failed to start; restoring the previous installation" >&2
+  rollback_installation
+  exit 1
+fi
+
+rm -f \
+  "${installed_binary}${backup_suffix}" \
+  "${installed_configuration}${backup_suffix}" \
+  "${installed_service_unit}${backup_suffix}" \
+  "${installed_ca_certificate}${backup_suffix}"
+
+printf '%s\n' "AutoForge Agent installation completed"

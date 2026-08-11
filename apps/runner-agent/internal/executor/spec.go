@@ -37,6 +37,7 @@ var (
 type Spec struct {
 	SchemaVersion int               `json:"schemaVersion"`
 	AttemptID     string            `json:"attemptId"`
+	Isolation     string            `json:"isolation,omitempty"`
 	Command       Command           `json:"command"`
 	Environment   map[string]string `json:"environment,omitempty"`
 	Limits        Limits            `json:"limits"`
@@ -61,6 +62,14 @@ type Limits struct {
 
 type Policy struct {
 	AllowedExecutables []string
+	Container          ContainerPolicy
+}
+
+type ContainerPolicy struct {
+	RuntimeExecutable string
+	ImageReference    string
+	SeccompProfile    string
+	User              string
 }
 
 func ReadSpec(path string) (Spec, error) {
@@ -92,6 +101,17 @@ func Validate(spec Spec, policy Policy) error {
 	}
 	if !attemptIDPattern.MatchString(spec.AttemptID) {
 		return errors.New("attemptId must contain 1-128 safe identifier characters")
+	}
+	if spec.Isolation == "" {
+		spec.Isolation = "process"
+	}
+	if spec.Isolation != "process" && spec.Isolation != "container" {
+		return errors.New("isolation must be process or container")
+	}
+	if spec.Isolation == "container" {
+		if err := validateContainerPolicy(policy.Container, spec); err != nil {
+			return err
+		}
 	}
 	if err := validateCommand(spec.Command, policy); err != nil {
 		return err

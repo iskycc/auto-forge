@@ -8,7 +8,7 @@ export async function GET(): Promise<NextResponse> {
     const services = await getPlatformServices();
     return NextResponse.json({
       setupRequired: await services.identityAccess.setupRequired(),
-      bootstrapEnabled: Boolean(services.config.adminBootstrapToken),
+      bootstrapEnabled: true,
     });
   } catch (error) {
     return apiErrorResponse(error);

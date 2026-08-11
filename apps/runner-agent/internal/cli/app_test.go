@@ -39,3 +39,15 @@ func TestUnknownCommandReturnsUsageError(t *testing.T) {
 		t.Fatalf("stderr = %q", stderr.String())
 	}
 }
+
+func TestHealthLiveDoesNotRequireConfiguration(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	exitCode := Run([]string{"health", "live"}, &stdout, &stderr, buildinfo.Info{})
+	if exitCode != exitSuccess {
+		t.Fatalf("exitCode = %d, stderr = %q", exitCode, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), `"status":"live"`) {
+		t.Fatalf("stdout = %q", stdout.String())
+	}
+}

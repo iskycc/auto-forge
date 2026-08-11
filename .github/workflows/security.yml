@@ -1,0 +1,90 @@
+name: Dependency security
+
+on:
+  push:
+  pull_request:
+  schedule:
+    - cron: "23 3 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  dependency-review:
+    name: Vulnerability and license reports
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.16.0
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: 1.26.5
+          cache-dependency-path: apps/runner-agent/go.mod
+
+      - name: Install locked dependencies
+        run: |
+          corepack enable
+          pnpm install --frozen-lockfile
+
+      - name: Generate JavaScript vulnerability and dependency reports
+        id: javascript
+        shell: bash
+        run: |
+          mkdir -p security-reports
+          set +e
+          pnpm audit --prod --audit-level high --json >security-reports/pnpm-audit.json
+          audit_status=$?
+          set -e
+          pnpm list --prod --depth Infinity --json >security-reports/pnpm-dependencies.json
+          cp THIRD_PARTY_LICENSES.json security-reports/third-party-licenses.json
+          echo "status=${audit_status}" >>"${GITHUB_OUTPUT}"
+
+      - name: Generate Go vulnerability and module reports
+        id: golang
+        shell: bash
+        working-directory: apps/runner-agent
+        run: |
+          mkdir -p ../../security-reports
+          go install golang.org/x/vuln/cmd/govulncheck@v1.1.2
+          set +e
+          govulncheck -format sarif ./... >../../security-reports/govulncheck.sarif
+          vulnerability_status=$?
+          set -e
+          go list -m -json all >../../security-reports/go-modules.json
+          echo "status=${vulnerability_status}" >>"${GITHUB_OUTPUT}"
+
+      - name: Verify generated license inventory
+        run: pnpm licenses:check
+
+      - name: Upload security reports
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: dependency-security-${{ github.run_id }}
+          path: security-reports
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Enforce vulnerability policy
+        if: always()
+        env:
+          JAVASCRIPT_STATUS: ${{ steps.javascript.outputs.status }}
+          GOLANG_STATUS: ${{ steps.golang.outputs.status }}
+        run: |
+          if [[ "${JAVASCRIPT_STATUS}" != "0" || "${GOLANG_STATUS}" != "0" ]]; then
+            echo "A High/Critical JavaScript advisory or reachable Go vulnerability was found." >&2
+            exit 1
+          fi

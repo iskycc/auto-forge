@@ -2,17 +2,23 @@ import { ArrowLeft, BookOpenText } from "lucide-react";
 import Link from "next/link";
 
 import { CaseSuiteDetailsView } from "@/components/case-suite-details";
+import { CaseSuiteEditor } from "@/components/case-suite-editor";
 import { getPlatformServices } from "@/lib/services";
 import { requirePagePermission } from "@/lib/auth";
+import { hasPermission } from "@autoforge/domain";
 
 export const dynamic = "force-dynamic";
 
 type Props = { params: Promise<{ suiteId: string }> };
 
 export default async function CaseSuitePage({ params }: Props) {
-  await requirePagePermission("case_suite.read");
+  const identity = await requirePagePermission("case_suite.read");
   const { suiteId } = await params;
-  const suite = await (await getPlatformServices()).caseSuites.get(suiteId);
+  const services = await getPlatformServices();
+  const suite = await services.caseSuites.get(suiteId);
+  const schedule = (await services.platformOperations.listSchedules(identity)).find(
+    (candidate) => candidate.suiteId === suiteId,
+  );
   return (
     <div className="page-stack">
       <section className="page-hero">
@@ -27,6 +33,11 @@ export default async function CaseSuitePage({ params }: Props) {
           <BookOpenText size={17} /> 添加用例
         </Link>
       </section>
+      <CaseSuiteEditor
+        canManage={hasPermission(identity, "case_suite.manage", suite.projectId)}
+        {...(schedule ? { schedule } : {})}
+        suite={suite}
+      />
       <CaseSuiteDetailsView initialSuite={suite} />
     </div>
   );

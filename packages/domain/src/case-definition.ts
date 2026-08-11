@@ -1,14 +1,31 @@
 export type CaseDefinition = {
   id: string;
+  projectId: string;
   sourceId: string;
   className: string;
   packageName: string;
   displayName: string;
+  description: string;
+  tags: string[];
   enabled: boolean;
+  archived: boolean;
   groups: string[];
+  parameters: Record<string, string>;
   currentVersion: number;
+  revision: number;
+  updatedBy?: string;
   createdAt: string;
   updatedAt: string;
+};
+
+export type CaseVersion = {
+  id: string;
+  caseDefinitionId: string;
+  version: number;
+  snapshot: unknown;
+  changeReason: string;
+  createdBy?: string;
+  createdAt: string;
 };
 
 export type TestMethod = {
@@ -32,6 +49,7 @@ export type CaseDefinitionWithMethods = CaseDefinition & {
 
 export type CaseSource = {
   id: string;
+  projectId: string;
   displayName: string;
   originalFileName: string;
   objectKey: string;
@@ -42,5 +60,9 @@ export type CaseSource = {
   status: "ready" | "failed";
   warningCount: number;
   authoritative: boolean;
+  lifecycleStatus: "active" | "archived" | "deleting";
+  revision: number;
+  importedBy?: string;
   createdAt: string;
+  updatedAt: string;
 };

@@ -25,22 +25,15 @@ Runner Agent -> bounded PTY -> configured shell
 
 ## 启用
 
-服务端配置一个与 Runner bootstrap token 不同的离线随机密钥：
+首次启动会在私有 `platform.json` 中生成与 Runner bootstrap 凭据不同的终端签名密钥，不需要
+设置应用环境变量。该值只用于控制面签发和校验短时票据，不发送给浏览器，也不是用户凭据；
+Runner 本地终端策略默认关闭，因此仅有该密钥不会开放 Shell。登录用户必须具有独立的
+`runner.terminal` 权限，调用
+`POST /api/v1/terminal-sessions` 后取得 30 秒一次性浏览器票据。
 
-```bash
-AUTOFORGE_TERMINAL_ACCESS_TOKEN=replace-with-at-least-32-random-characters
-```
-
-未设置时终端 API 与 WebSocket 网关关闭，页面按钮会显示不可用。该值只用于控制面签发和校验短时票据，不发送给浏览器，也不是用户凭据。登录用户必须具有独立的 `runner.terminal` 权限，调用 `POST /api/v1/terminal-sessions` 后取得 30 秒一次性浏览器票据。
-
-每台允许交互登录的 Runner 还需显式开启本地策略：
-
-```bash
-AUTOFORGE_AGENT_TERMINAL_ENABLED=true
-AUTOFORGE_AGENT_TERMINAL_SHELL=/bin/sh
-AUTOFORGE_AGENT_TERMINAL_MAX_SESSIONS=1
-AUTOFORGE_AGENT_TERMINAL_MAX_DURATION=1h
-```
+每台允许交互登录的 Runner 还需在 `/etc/autoforge-agent/config.json` 显式开启本地策略，指定固定
+Shell、最大会话数和最长时限。后台自动安装默认关闭终端；管理员必须在受控配置变更中开启，本地
+策略只能收紧控制面设置。
 
 Agent 启动诊断会验证 Shell 是可执行的普通文件，并创建权限为 `0700` 的终端工作目录。PTY 只接收固定 Shell，不接收控制面下发的可执行文件或启动参数；环境变量使用白名单，AutoForge 和 Runner 凭据不会注入 Shell。
 
@@ -64,6 +57,11 @@ location /api/v1/terminal-stream {
 浏览器连接执行严格同源校验。反向代理应覆盖而不是透传客户端伪造的 `X-Forwarded-Host` 和 `X-Forwarded-Proto`。访问日志必须隐藏 `Authorization` 与 `Sec-WebSocket-Protocol`，后者包含短时浏览器票据。
 
 当前单进程 Lite 和单副本 Full 可直接使用。Full 多 Web 副本部署终端时，负载均衡器必须让同一 Runner 通道和对应浏览器会话落到同一控制面实例；任务与心跳 API 不需要这项亲和。后续如通过 NATS 实现跨实例终端中继，应先新增协议与威胁模型 ADR。
+
+浏览器刷新不会恢复旧 PTY，而是结束旧会话并要求新票据；Agent WebSocket 重连后只接受新会话。
+票据/会话过期、Web 进程关闭、平台重启和任何 Agent 网关断开都会向 Agent 发送关闭或触发连接级
+`CloseAll`，随后终止 PTY 进程组。若 Web 副本异常崩溃，Agent 的 ping/读超时负责清理；不会把
+断开的 Shell 保留为可重连孤儿进程。
 
 ## 安全边界
 

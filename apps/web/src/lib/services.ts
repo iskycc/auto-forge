@@ -1,8 +1,10 @@
 import "server-only";
 
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
+import { join } from "node:path";
 
 import {
+  CaseDefinitionService,
   CaseSourceService,
   CaseSuiteService,
   ExecutionControlService,
@@ -11,6 +13,8 @@ import {
   ImportTestNgJarService,
   IdentityAccessService,
   JobWorker,
+  PublicPlatformStatisticsService,
+  PlatformOperationsService,
   RunBatchSchedulingService,
   RunnerControlService,
   type CaseCatalogRepository,
@@ -24,6 +28,8 @@ import {
   type JobQueuePort,
   type RunBatchRepository,
   type RunnerRepository,
+  type PlatformStatisticsRepository,
+  type PlatformOperationsRepository,
 } from "@autoforge/application";
 import { MemoryCache } from "@autoforge/cache/memory";
 import {
@@ -36,6 +42,8 @@ import {
   SqliteIdentityAccessRepository,
   SqliteRunBatchRepository,
   SqliteRunnerRepository,
+  SqlitePlatformStatisticsRepository,
+  SqlitePlatformOperationsRepository,
 } from "@autoforge/db/sqlite";
 import { LocalObjectStore } from "@autoforge/object-store/local";
 import { SqliteJobQueue } from "@autoforge/queue/sqlite";
@@ -43,10 +51,14 @@ import { TestNgJarDiscovery } from "@autoforge/testng-discovery";
 import { RunnerProtocolController } from "@autoforge/runner-sdk";
 import { uuidV7 } from "@autoforge/ids";
 
-import { loadAppConfig } from "./config";
+import { appConfigurationStore, loadAppConfig } from "./config";
 import { LdapDirectory } from "./ldap-directory";
 import { ScryptPasswordHasher } from "./password-hasher";
 import { MemoryRequestLimiter, RedisRequestLimiter, type RequestLimiter } from "./request-limiter";
+import { natsReconnectOptions, redisReconnectDelay } from "./resilient-connections";
+import { RunnerAgentInstaller } from "./runner-agent-installer";
+import { RunnerAgentResourceStore } from "./runner-agent-resources";
+import { issueRunnerBootstrapToken, verifyRunnerBootstrapToken } from "./runner-bootstrap-token";
 import { AesGcmSecretCipher } from "./secret-cipher";
 
 export type PlatformServices = Awaited<ReturnType<typeof createPlatformServices>>;
@@ -58,6 +70,7 @@ type RuntimeInfrastructure = {
 
 async function createPlatformServices() {
   const config = loadAppConfig();
+  const configurationStore = appConfigurationStore(config);
   let catalog: CaseCatalogRepository;
   let suites: CaseSuiteRepository;
   let runners: RunnerRepository;
@@ -69,6 +82,8 @@ async function createPlatformServices() {
   let objectStore: JarObjectStorePort;
   let jobQueue: JobQueuePort;
   let cache: CachePort;
+  let statisticsRepository: PlatformStatisticsRepository;
+  let operationsRepository: PlatformOperationsRepository;
   let closeDatabase: () => Promise<void>;
   let runnerRequestLimiter: RequestLimiter = new MemoryRequestLimiter();
   let infrastructure: RuntimeInfrastructure | undefined;
@@ -88,6 +103,8 @@ async function createPlatformServices() {
     objectStore = new LocalObjectStore(config.dataDirectory);
     jobQueue = new SqliteJobQueue(database);
     cache = new MemoryCache();
+    statisticsRepository = new SqlitePlatformStatisticsRepository(database);
+    operationsRepository = new SqlitePlatformOperationsRepository(database);
     closeDatabase = async () => database.close();
   } else {
     const [
@@ -101,6 +118,8 @@ async function createPlatformServices() {
         PostgresExecutionSecretRepository,
         PostgresRunBatchRepository,
         PostgresRunnerRepository,
+        PostgresPlatformStatisticsRepository,
+        PostgresPlatformOperationsRepository,
       },
       { MinioObjectStore },
       { JetStreamJobQueue },
@@ -124,7 +143,7 @@ async function createPlatformServices() {
       const nats = await connect({
         servers: config.natsServers,
         timeout: 5_000,
-        reconnect: false,
+        ...natsReconnectOptions,
       });
       const jetStreamManager = await nats.jetstreamManager().catch(async (error: unknown) => {
         await nats.close();
@@ -135,7 +154,7 @@ async function createPlatformServices() {
         url: config.redisUrl,
         socket: {
           connectTimeout: 5_000,
-          reconnectStrategy: false,
+          reconnectStrategy: redisReconnectDelay,
         },
       });
       redis.on("error", () => {
@@ -177,8 +196,13 @@ async function createPlatformServices() {
     secrets = new PostgresExecutionSecretRepository(database);
     batches = new PostgresRunBatchRepository(database);
     objectStore = new MinioObjectStore(config.minio);
+    statisticsRepository = new PostgresPlatformStatisticsRepository(database);
+    operationsRepository = new PostgresPlatformOperationsRepository(database);
   }
-  const discovery = new TestNgJarDiscovery({ maxJarBytes: config.maxJarBytes });
+  const discovery = new TestNgJarDiscovery({
+    maxJarBytes: config.maxJarBytes,
+    targetJavaVersion: config.testNgTargetJavaVersion,
+  });
   const clock = { now: () => new Date() };
   const ids = { next: () => uuidV7() };
   const importTestNgJar = new ImportTestNgJarService({
@@ -188,14 +212,24 @@ async function createPlatformServices() {
     clock,
     ids,
   });
-  const caseSources = new CaseSourceService(catalog, objectStore);
+  const caseSources = new CaseSourceService(catalog, objectStore, clock, ids, jobQueue);
   const caseSuites = new CaseSuiteService(suites, catalog, clock, ids);
+  const caseDefinitions = new CaseDefinitionService(catalog, clock, ids);
   const runnerCredentials = {
     issue: () => randomBytes(32).toString("base64url"),
+    issueBootstrapToken: () => issueRunnerBootstrapToken(config.masterKey, clock.now()),
     hash: (value: string) => createHash("sha256").update(value).digest("hex"),
-    verifyBootstrapToken: (value: string) => secureEqual(value, config.runnerBootstrapToken ?? ""),
+    verifyBootstrapToken: (value: string) =>
+      secureEqual(value, config.runnerBootstrapToken ?? "") ||
+      verifyRunnerBootstrapToken(value, config.masterKey, clock.now()),
   };
-  const runnerControl = new RunnerControlService(runners, runnerCredentials, clock, ids);
+  const runnerControl = new RunnerControlService(
+    runners,
+    runnerCredentials,
+    executions,
+    clock,
+    ids,
+  );
   const runBatches = new RunBatchSchedulingService(
     batches,
     suites,
@@ -210,7 +244,21 @@ async function createPlatformServices() {
     config.scheduler.metricsMaximumAgeSeconds,
     environments,
     { catalog, objectStore },
+    config.scheduler.projectMaximumConcurrency,
+    config.scheduler.priorityAgingIntervalMinutes,
   );
+  const platformOperations = new PlatformOperationsService(
+    operationsRepository,
+    clock,
+    ids,
+    {
+      issue: () => `af_api_${randomBytes(32).toString("base64url")}`,
+      hash: (value) => createHash("sha256").update(value).digest("hex"),
+    },
+    objectStore,
+    batches,
+  );
+  await platformOperations.initialize();
   if (config.mode === "lite") {
     const workerAbort = new AbortController();
     let workerFailure: unknown;
@@ -222,6 +270,9 @@ async function createPlatformServices() {
           if (typeof batchId !== "string") throw new Error("Dispatch job batchId is invalid.");
           await runBatches.schedule(batchId);
         },
+        "object-cleanup": caseSources.objectCleanupHandler(),
+        "jar-import": importTestNgJar.jobHandler(),
+        "analytics-export": platformOperations.analyticsExportJobHandler(),
       },
       clock,
       {
@@ -254,7 +305,6 @@ async function createPlatformServices() {
     };
   }
   if (!infrastructure) throw new Error("Runtime infrastructure was not initialized.");
-  globalServices.__autoforgeClosePlatformServices = infrastructure.close;
   const secretCipher = new AesGcmSecretCipher(config.masterKey);
   const identityAccess = new IdentityAccessService(
     identities,
@@ -285,9 +335,67 @@ async function createPlatformServices() {
     ids,
   );
   const runnerProtocol = new RunnerProtocolController(executionControl);
+  const publicStatistics = new PublicPlatformStatisticsService(
+    statisticsRepository,
+    clock,
+    60_000,
+    config.publicDashboardRefreshSeconds,
+  );
+  const scheduleAbort = new AbortController();
+  const scheduleLoop =
+    config.mode === "lite"
+      ? runPeriodic(scheduleAbort.signal, 30_000, async () => {
+          await platformOperations.triggerDueSchedules(async (schedule) => {
+            const candidates = (await runners.list(offlineCutoff(clock.now()), 500)).filter(
+              (runner) => runner.state === "online",
+            );
+            if (candidates.length === 0) {
+              throw new Error("No online Runner is available for schedule.");
+            }
+            const batch = await runBatches.create({
+              projectId: schedule.projectId,
+              suiteId: schedule.suiteId,
+              runnerIds: candidates.map((runner) => runner.id),
+              environmentVariables: [],
+            });
+            return batch.id;
+          });
+          await platformOperations.generateNotifications();
+          await operationsRepository.rebuildAnalyticsFacts(1_000);
+        })
+      : Promise.resolve();
+  const retentionLoop =
+    config.mode === "lite"
+      ? runPeriodic(scheduleAbort.signal, 3_600_000, async () => {
+          await platformOperations.runRetentionCycle();
+        })
+      : Promise.resolve();
+  const ldapSynchronizationLoop = runPeriodic(scheduleAbort.signal, 60_000, async () => {
+    const ldap = await identities.getLdapConfiguration();
+    if (!ldap?.enabled || ldap.synchronizationIntervalMinutes <= 0) return;
+    await platformOperations.runDueLdapSynchronization(ldap.synchronizationIntervalMinutes, () =>
+      identityAccess.synchronizeLdapAsSystem(),
+    );
+  });
+  const runtimeInfrastructure = infrastructure;
+  infrastructure = {
+    ready: () => runtimeInfrastructure.ready(),
+    close: async () => {
+      scheduleAbort.abort();
+      await Promise.all([scheduleLoop, retentionLoop, ldapSynchronizationLoop]);
+      await runtimeInfrastructure.close();
+    },
+  };
+  globalServices.__autoforgeClosePlatformServices = infrastructure.close;
+  const runnerAgentInstaller = new RunnerAgentInstaller({
+    resources: new RunnerAgentResourceStore(join(config.workspaceRoot, "resources", "agents")),
+    controlPlaneUrl: config.web.publicBaseUrl,
+    issueBootstrapToken: () => runnerControl.issueBootstrapToken(),
+  });
 
   return {
     config,
+    configurationStore,
     catalog,
     discovery,
     objectStore,
@@ -295,6 +403,7 @@ async function createPlatformServices() {
     caseSources,
     suites,
     caseSuites,
+    caseDefinitions,
     runners,
     identities,
     executions,
@@ -304,8 +413,11 @@ async function createPlatformServices() {
     executionSecrets,
     identityAccess,
     runnerControl,
+    runnerAgentInstaller,
     executionControl,
     runnerProtocol,
+    publicStatistics,
+    platformOperations,
     runBatches,
     runnerRequestLimiter,
     jobQueue,
@@ -338,6 +450,42 @@ function secureEqual(left: string, right: string): boolean {
   const leftBytes = Buffer.from(left);
   const rightBytes = Buffer.from(right);
   return leftBytes.length === rightBytes.length && timingSafeEqual(leftBytes, rightBytes);
+}
+
+async function runPeriodic(
+  signal: AbortSignal,
+  intervalMs: number,
+  operation: () => Promise<void>,
+): Promise<void> {
+  while (!signal.aborted) {
+    try {
+      await operation();
+    } catch (error) {
+      workerLogger.error("periodic platform operation failed", {
+        error: error instanceof Error ? error.message : "unknown error",
+      });
+    }
+    await abortableDelay(signal, intervalMs);
+  }
+}
+
+function abortableDelay(signal: AbortSignal, delayMs: number): Promise<void> {
+  if (signal.aborted) return Promise.resolve();
+  return new Promise((resolve) => {
+    const timeout = setTimeout(resolve, delayMs);
+    signal.addEventListener(
+      "abort",
+      () => {
+        clearTimeout(timeout);
+        resolve();
+      },
+      { once: true },
+    );
+  });
+}
+
+function offlineCutoff(now: Date): string {
+  return new Date(now.getTime() - 90_000).toISOString();
 }
 
 const globalServices = globalThis as typeof globalThis & {

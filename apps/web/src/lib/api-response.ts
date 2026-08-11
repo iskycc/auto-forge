@@ -97,10 +97,22 @@ function redactSecrets(value: string): string {
 function domainErrorStatus(code: string): number {
   if (code === "REQUEST_BODY_TOO_LARGE") return 413;
   if (code === "RATE_LIMITED") return 429;
+  if (code === "RUNNER_AGENT_RESOURCE_UNAVAILABLE") return 503;
+  if (code === "RUNNER_HOST_CONNECTION_FAILED" || code === "RUNNER_INSTALLATION_FAILED") {
+    return 502;
+  }
   if (code === "AUTH_REQUIRED" || code === "AUTHENTICATION_FAILED") return 401;
   if (code === "AUTH_FORBIDDEN" || code === "CSRF_REJECTED") return 403;
   if (code === "AUTH_BOOTSTRAP_REJECTED") return 403;
-  if (code.endsWith("_CONFLICT") || code === "ROLE_IN_USE" || code === "LAST_ADMIN_REQUIRED") {
+  if (
+    code.endsWith("_CONFLICT") ||
+    code === "ROLE_IN_USE" ||
+    code === "LAST_ADMIN_REQUIRED" ||
+    code === "CASE_SOURCE_IN_USE" ||
+    code === "CASE_SOURCE_AUTHORITATIVE" ||
+    code === "CASE_SOURCE_SYNC_STALE" ||
+    code === "CASE_SOURCE_NOT_DELETABLE"
+  ) {
     return 409;
   }
   if (code.endsWith("_NOT_FOUND")) return 404;

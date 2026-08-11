@@ -49,6 +49,8 @@ type ScheduleExecutionRunsInput = {
   candidates: SchedulingCandidate[];
   thresholds: SchedulingThresholds;
   metricsFreshAfter: string;
+  // 批次策略的并发上限换算成本轮最多新增的 assignment 数；缺省表示不限制。
+  maxAssignments?: number;
 };
 
 export function scheduleExecutionRuns(input: ScheduleExecutionRunsInput): SchedulingPlan {
@@ -58,8 +60,13 @@ export function scheduleExecutionRuns(input: ScheduleExecutionRunsInput): Schedu
   );
   const decisions: SchedulingDecision[] = [];
   const unassignedRunIds: string[] = [];
+  const maxAssignments = input.maxAssignments ?? Number.POSITIVE_INFINITY;
 
   for (const run of input.runs) {
+    if (decisions.length >= maxAssignments) {
+      unassignedRunIds.push(run.id);
+      continue;
+    }
     const selected = bestCandidate(candidates, input.thresholds, input.metricsFreshAfter);
     if (!selected) {
       unassignedRunIds.push(run.id);

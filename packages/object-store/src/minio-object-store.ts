@@ -23,9 +23,10 @@ export class MinioObjectStore implements JarObjectStorePort {
     this.bucket = options.bucket;
   }
 
-  async putJar(sha256: string, content: Uint8Array): Promise<ObjectWriteResult> {
+  async putJar(projectId: string, sha256: string, content: Uint8Array): Promise<ObjectWriteResult> {
+    validateScopeId(projectId);
     if (!/^[a-f0-9]{64}$/.test(sha256)) throw new Error("Object SHA-256 is invalid.");
-    const objectKey = `jars/${sha256.slice(0, 2)}/${sha256}.jar`;
+    const objectKey = `projects/${projectId}/jars/${sha256.slice(0, 2)}/${sha256}.jar`;
     try {
       await this.client.statObject(this.bucket, objectKey);
       return { objectKey, created: false };
@@ -39,7 +40,48 @@ export class MinioObjectStore implements JarObjectStorePort {
     return { objectKey, created: true };
   }
 
+  async putObject(input: {
+    objectKey: string;
+    sha256: string;
+    sizeBytes: number;
+    mediaType: string;
+    content: AsyncIterable<Uint8Array>;
+  }): Promise<ObjectWriteResult> {
+    validateObjectKey(input.objectKey);
+    validateObjectMetadata(input.sha256, input.sizeBytes);
+    try {
+      const existing = await this.client.statObject(this.bucket, input.objectKey);
+      if (existing.size !== input.sizeBytes) throw new Error("Existing object size is invalid.");
+      return { objectKey: input.objectKey, created: false };
+    } catch (error) {
+      if (!isMissingObject(error)) throw error;
+    }
+    const digest = createHash("sha256");
+    let sizeBytes = 0;
+    const verifiedContent = async function* () {
+      for await (const chunk of input.content) {
+        sizeBytes += chunk.byteLength;
+        if (sizeBytes > input.sizeBytes) throw new Error("Object exceeds its declared size.");
+        digest.update(chunk);
+        yield Buffer.from(chunk);
+      }
+    };
+    await this.client.putObject(
+      this.bucket,
+      input.objectKey,
+      Readable.from(verifiedContent()),
+      input.sizeBytes,
+      { "Content-Type": input.mediaType, "X-Amz-Meta-Sha256": input.sha256 },
+    );
+    if (sizeBytes !== input.sizeBytes || digest.digest("hex") !== input.sha256) {
+      await this.client.removeObject(this.bucket, input.objectKey);
+      throw new Error("Object content does not match its declaration.");
+    }
+    return { objectKey: input.objectKey, created: true };
+  }
+
   async putArtifact(input: {
+    projectId: string;
     attemptId: string;
     artifactId: string;
     sha256: string;
@@ -181,9 +223,10 @@ export class MinioObjectStore implements JarObjectStorePort {
 }
 
 function artifactObjectKey(
-  input: Pick<ArtifactObjectIdentity, "attemptId" | "artifactId" | "sha256">,
+  input: Pick<ArtifactObjectIdentity, "projectId" | "attemptId" | "artifactId" | "sha256">,
 ) {
-  return `artifacts/${input.attemptId}/${input.artifactId}/${input.sha256}`;
+  validateScopeId(input.projectId);
+  return `projects/${input.projectId}/artifacts/${input.attemptId}/${input.artifactId}/${input.sha256}`;
 }
 
 function validateObjectKey(objectKey: string): void {
@@ -209,6 +252,18 @@ function validateArtifactIdentity(
   }
   if (!/^[a-f0-9]{64}$/.test(sha256) || !Number.isSafeInteger(sizeBytes) || sizeBytes < 0) {
     throw new Error("Artifact metadata is invalid.");
+  }
+}
+
+function validateObjectMetadata(sha256: string, sizeBytes: number): void {
+  if (!/^[a-f0-9]{64}$/.test(sha256) || !Number.isSafeInteger(sizeBytes) || sizeBytes < 0) {
+    throw new Error("Object metadata is invalid.");
+  }
+}
+
+function validateScopeId(value: string): void {
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(value)) {
+    throw new Error("Object project scope is invalid.");
   }
 }
 

@@ -19,7 +19,7 @@ export class AesGcmSecretCipher implements SecretCipherPort {
     }
     const key = Buffer.from(base64Key, "base64");
     if (key.length !== 32) {
-      throw new Error("AUTOFORGE_MASTER_KEY 必须是 32 字节随机值的 Base64 编码。");
+      throw new Error("平台主密钥必须是 32 字节随机值的 Base64 编码。");
     }
     this.key = key;
     this.available = true;

@@ -70,6 +70,7 @@ export const createRoleInputSchema = z.object({
 export const updateRoleInputSchema = createRoleInputSchema
   .omit({ key: true })
   .partial()
+  .extend({ active: z.boolean().optional() })
   .refine((value) => Object.keys(value).length > 0, "至少提供一个修改字段。");
 
 export const assignSystemRoleInputSchema = z.object({
@@ -90,6 +91,10 @@ export const createProjectInputSchema = z.object({
     .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/),
 });
 
+export const transferProjectOwnerInputSchema = z.object({
+  ownerUserId: z.string().min(1).max(128),
+});
+
 export const ldapConfigurationInputSchema = z
   .object({
     enabled: z.boolean(),
@@ -100,6 +105,7 @@ export const ldapConfigurationInputSchema = z
     operationTimeoutMs: z.number().int().min(500).max(60_000).default(10_000),
     pageSize: z.number().int().min(50).max(1_000).default(500),
     maximumUsers: z.number().int().min(1).max(50_000).default(5_000),
+    synchronizationIntervalMinutes: z.number().int().min(0).max(10_080).default(0),
     bindDn: z.string().trim().min(1).max(1024),
     bindPassword: z.string().min(1).max(4096).optional(),
     userBaseDn: z.string().trim().min(1).max(1024),
@@ -156,6 +162,7 @@ export type CreateUserInput = z.infer<typeof createUserInputSchema>;
 export type CreateRoleInput = z.infer<typeof createRoleInputSchema>;
 export type UpdateRoleInput = z.infer<typeof updateRoleInputSchema>;
 export type CreateProjectInput = z.infer<typeof createProjectInputSchema>;
+export type TransferProjectOwnerInput = z.infer<typeof transferProjectOwnerInputSchema>;
 export type LdapConfigurationInput = z.infer<typeof ldapConfigurationInputSchema>;
 export type LdapGroupMappingInput = z.infer<typeof ldapGroupMappingInputSchema>;
 export type ChangePasswordInput = z.infer<typeof changePasswordInputSchema>;

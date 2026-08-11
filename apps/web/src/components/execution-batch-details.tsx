@@ -2,32 +2,56 @@
 
 import type { AttemptArtifactList, AttemptEventPage, AttemptLogPage } from "@autoforge/contracts";
 import type { RunBatchDetails } from "@autoforge/domain";
-import { Activity, Download, FileText, RefreshCw, Search, TestTube2 } from "lucide-react";
+import {
+  Activity,
+  Download,
+  Eye,
+  FileText,
+  RefreshCw,
+  RotateCcw,
+  Search,
+  TestTube2,
+  XCircle,
+} from "lucide-react";
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { runBatchStatusLabel } from "@/lib/run-batch-presentation";
+import { parseSafeAnsi } from "@/lib/safe-ansi";
 
 type LogStream = "stdout" | "stderr" | "agent";
 
 export function ExecutionBatchDetails({
   batch,
+  canCancelRuns,
+  canCreateRuns,
   canReadLogs,
   canReadArtifacts,
 }: {
   batch: RunBatchDetails;
+  canCancelRuns: boolean;
+  canCreateRuns: boolean;
   canReadLogs: boolean;
   canReadArtifacts: boolean;
 }) {
+  const router = useRouter();
   const [attemptId, setAttemptId] = useState(batch.attempts.at(-1)?.id ?? "");
   const [stream, setStream] = useState<LogStream>("stdout");
   const [query, setQuery] = useState("");
   const [activeQuery, setActiveQuery] = useState("");
+  const [recordedAfter, setRecordedAfter] = useState("");
+  const [recordedBefore, setRecordedBefore] = useState("");
+  const [activeTimeRange, setActiveTimeRange] = useState({ after: "", before: "" });
+  const [darkLogs, setDarkLogs] = useState(true);
   const [logs, setLogs] = useState<AttemptLogPage["items"]>([]);
   const [nextSequence, setNextSequence] = useState<number | undefined>();
+  const [logsTruncated, setLogsTruncated] = useState(false);
   const [artifacts, setArtifacts] = useState<AttemptArtifactList["items"]>([]);
   const [events, setEvents] = useState<AttemptEventPage["items"]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [actionError, setActionError] = useState("");
+  const [actionPending, setActionPending] = useState<"cancel" | "retry" | undefined>();
   const attemptsByRun = useMemo(
     () => new Map(batch.attempts.map((attempt) => [attempt.executionRunId, attempt])),
     [batch.attempts],
@@ -36,12 +60,75 @@ export function ExecutionBatchDetails({
     () => batch.attempts.find((attempt) => attempt.id === attemptId),
     [attemptId, batch.attempts],
   );
+  const selectedLease = useMemo(() => {
+    const claimed = [...events].reverse().find((event) => event.eventType === "assignment.claimed");
+    if (!claimed) return undefined;
+    const leaseId = stringDetail(claimed.details, "leaseId");
+    const expiresAt = stringDetail(claimed.details, "leaseExpiresAt");
+    return leaseId ? { leaseId, expiresAt } : undefined;
+  }, [events]);
+  const activeBatch = ["queued", "dispatching", "scheduled", "running"].includes(batch.status);
+  const retryBlockedByLegacySecrets =
+    batch.secretBindings.length > 0 && batch.environmentVersionId === undefined;
+
+  async function cancelBatch(): Promise<void> {
+    if (!window.confirm("取消后，尚未结束的执行将收到停止请求。确认取消当前批次？")) return;
+    setActionPending("cancel");
+    setActionError("");
+    try {
+      const response = await fetch(`/api/v1/run-batches/${encodeURIComponent(batch.id)}/cancel`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ reason: "Cancelled from execution details." }),
+      });
+      if (!response.ok) throw new Error(await responseMessage(response, "取消批次失败。"));
+      router.refresh();
+    } catch (actionFailure) {
+      setActionError(actionFailure instanceof Error ? actionFailure.message : "取消批次失败。");
+    } finally {
+      setActionPending(undefined);
+    }
+  }
+
+  async function retryBatch(): Promise<void> {
+    setActionPending("retry");
+    setActionError("");
+    try {
+      const response = await fetch("/api/v1/run-batches", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          projectId: batch.projectId,
+          suiteId: batch.suiteId,
+          runnerIds: batch.selectedRunnerIds,
+          retryLimit: batch.retryLimit,
+          priority: batch.priority,
+          queueTimeoutMs: batch.queueTimeoutMs,
+          claimTimeoutMs: batch.claimTimeoutMs,
+          executionTimeoutMs: batch.executionTimeoutMs,
+          uploadTimeoutMs: batch.uploadTimeoutMs,
+          ...(batch.environmentVersionId
+            ? { environmentVersionId: batch.environmentVersionId }
+            : { environmentVariables: batch.environmentVariables }),
+        }),
+      });
+      if (!response.ok) throw new Error(await responseMessage(response, "重新执行失败。"));
+      const created = (await response.json()) as { id?: string };
+      if (!created.id) throw new Error("平台未返回新批次标识。");
+      router.push(`/run-batches/${encodeURIComponent(created.id)}`);
+    } catch (actionFailure) {
+      setActionError(actionFailure instanceof Error ? actionFailure.message : "重新执行失败。");
+    } finally {
+      setActionPending(undefined);
+    }
+  }
 
   const loadAttempt = useCallback(
     async (
       selectedAttemptId: string,
       selectedStream: LogStream,
       search: string,
+      timeRange: { after: string; before: string },
       afterSequence: number,
       replace: boolean,
     ) => {
@@ -55,6 +142,10 @@ export function ExecutionBatchDetails({
           limit: "200",
         });
         if (search.trim()) parameters.set("query", search.trim());
+        const afterTimestamp = toIsoFilter(timeRange.after);
+        const beforeTimestamp = toIsoFilter(timeRange.before);
+        if (afterTimestamp) parameters.set("recordedAfter", afterTimestamp);
+        if (beforeTimestamp) parameters.set("recordedBefore", beforeTimestamp);
         const [logResponse, artifactResponse, eventResponse] = await Promise.all([
           canReadLogs
             ? fetch(
@@ -84,6 +175,7 @@ export function ExecutionBatchDetails({
           const logPage = (await logResponse.json()) as AttemptLogPage;
           setLogs((current) => (replace ? logPage.items : [...current, ...logPage.items]));
           setNextSequence(logPage.nextSequence);
+          setLogsTruncated(logPage.truncated);
         }
         if (artifactResponse) {
           const artifactList = (await artifactResponse.json()) as AttemptArtifactList;
@@ -103,10 +195,26 @@ export function ExecutionBatchDetails({
   useEffect(() => {
     if (!attemptId) return;
     const scheduledLoad = window.setTimeout(() => {
-      void loadAttempt(attemptId, stream, activeQuery, -1, true);
+      void loadAttempt(attemptId, stream, activeQuery, activeTimeRange, -1, true);
     }, 0);
     return () => window.clearTimeout(scheduledLoad);
-  }, [activeQuery, attemptId, canReadArtifacts, canReadLogs, loadAttempt, stream]);
+  }, [activeQuery, activeTimeRange, attemptId, canReadArtifacts, canReadLogs, loadAttempt, stream]);
+
+  const sequenceGaps = useMemo(() => {
+    const gaps: Array<{ after: number; before: number }> = [];
+    for (let index = 1; index < logs.length; index += 1) {
+      const previous = logs[index - 1];
+      const current = logs[index];
+      if (previous && current && current.sequence > previous.sequence + 1) {
+        gaps.push({ after: previous.sequence, before: current.sequence });
+      }
+    }
+    return gaps;
+  }, [logs]);
+  const renderedLogs = useMemo(
+    () => parseSafeAnsi(logs.map((chunk) => chunk.content).join("")),
+    [logs],
+  );
 
   return (
     <div className="execution-detail-layout">
@@ -117,6 +225,48 @@ export function ExecutionBatchDetails({
         <Summary label="失败" value={String(batch.failedRuns + batch.timedOutRuns)} />
         <Summary label="创建时间" value={formatDate(batch.createdAt)} />
       </section>
+
+      {(canCancelRuns || canCreateRuns) && (
+        <section className="execution-detail-actions" aria-label="批次操作">
+          <div>
+            <strong>{activeBatch ? "批次仍在执行" : "批次已进入终态"}</strong>
+            <span>
+              {retryBlockedByLegacySecrets
+                ? "历史批次包含无法重放的密文绑定，请从任务页面重新选择环境。"
+                : "重新执行会创建新批次，并保留当前策略快照供审计对比。"}
+            </span>
+          </div>
+          <div className="button-row">
+            {canCancelRuns && activeBatch ? (
+              <button
+                className="button button-danger-quiet"
+                disabled={actionPending !== undefined}
+                onClick={() => void cancelBatch()}
+                type="button"
+              >
+                <XCircle size={16} />
+                {actionPending === "cancel" ? "正在取消…" : "取消批次"}
+              </button>
+            ) : null}
+            {canCreateRuns && !activeBatch ? (
+              <button
+                className="button button-primary"
+                disabled={actionPending !== undefined || retryBlockedByLegacySecrets}
+                onClick={() => void retryBatch()}
+                type="button"
+              >
+                <RotateCcw size={16} />
+                {actionPending === "retry" ? "正在创建…" : "再次执行"}
+              </button>
+            ) : null}
+          </div>
+          {actionError ? (
+            <p className="form-error" role="alert">
+              {actionError}
+            </p>
+          ) : null}
+        </section>
+      )}
 
       <section className="execution-runs-section">
         <div className="section-heading">
@@ -133,7 +283,7 @@ export function ExecutionBatchDetails({
                 <th>用例</th>
                 <th>状态</th>
                 <th>Runner</th>
-                <th>结果</th>
+                <th>结果 / 失败阶段</th>
                 <th>耗时</th>
                 <th>尝试</th>
               </tr>
@@ -149,7 +299,7 @@ export function ExecutionBatchDetails({
                     </td>
                     <td>{run.status}</td>
                     <td>{run.assignedRunnerId ?? "等待分配"}</td>
-                    <td>{attempt?.resultCode ?? "-"}</td>
+                    <td>{attempt?.resultCode ?? run.terminalReasonCode ?? "-"}</td>
                     <td>
                       {attempt?.durationMs === undefined ? "-" : formatDuration(attempt.durationMs)}
                     </td>
@@ -184,6 +334,19 @@ export function ExecutionBatchDetails({
             <TestTube2 size={19} aria-hidden="true" />
           </div>
           <TestNgResults result={selectedAttempt.testNg} />
+        </section>
+      ) : null}
+
+      {selectedAttempt ? (
+        <section className="execution-attempt-metadata" aria-label="当前尝试与租约">
+          <Summary label="Attempt ID" value={selectedAttempt.id} />
+          <Summary label="Runner" value={selectedAttempt.runnerId} />
+          <Summary label="状态" value={selectedAttempt.status} />
+          <Summary label="Lease ID" value={selectedLease?.leaseId ?? "尚未领取或已无租约"} />
+          <Summary
+            label="初始租约到期（UTC）"
+            value={selectedLease?.expiresAt ?? "等待 Runner 领取"}
+          />
         </section>
       ) : null}
 
@@ -228,10 +391,11 @@ export function ExecutionBatchDetails({
                 onSubmit={(event) => {
                   event.preventDefault();
                   if (query === activeQuery) {
-                    void loadAttempt(attemptId, stream, activeQuery, -1, true);
+                    void loadAttempt(attemptId, stream, activeQuery, activeTimeRange, -1, true);
                   } else {
                     setActiveQuery(query);
                   }
+                  setActiveTimeRange({ after: recordedAfter, before: recordedBefore });
                 }}
               >
                 <Search size={15} />
@@ -241,13 +405,53 @@ export function ExecutionBatchDetails({
                   value={query}
                   onChange={(event) => setQuery(event.target.value)}
                 />
+                <input
+                  aria-label="日志开始时间"
+                  type="datetime-local"
+                  value={recordedAfter}
+                  onChange={(event) => setRecordedAfter(event.target.value)}
+                />
+                <input
+                  aria-label="日志结束时间"
+                  type="datetime-local"
+                  value={recordedBefore}
+                  onChange={(event) => setRecordedBefore(event.target.value)}
+                />
+                <button className="button button-secondary compact-button" type="submit">
+                  筛选
+                </button>
               </form>
+              <button
+                aria-pressed={darkLogs}
+                className="button button-secondary compact-button"
+                onClick={() => setDarkLogs((current) => !current)}
+                type="button"
+              >
+                {darkLogs ? "浅色日志" : "深色日志"}
+              </button>
             </div>
             {error ? <p className="form-error">{error}</p> : null}
+            {logsTruncated ? (
+              <p className="status-warning" role="status">
+                日志已达到保留上限，后续内容被明确截断。
+              </p>
+            ) : null}
+            {sequenceGaps.length > 0 ? (
+              <p className="status-warning" role="status">
+                检测到 {sequenceGaps.length} 个序号缺口；Agent 补传后刷新即可恢复连续内容。
+              </p>
+            ) : null}
             {canReadLogs ? (
-              <pre className="execution-log" aria-live="polite">
+              <pre
+                className={`execution-log ${darkLogs ? "execution-log-dark" : ""}`}
+                aria-live="polite"
+              >
                 {logs.length > 0
-                  ? logs.map((chunk) => chunk.content).join("")
+                  ? renderedLogs.map((segment, index) => (
+                      <span className={segment.classes.join(" ")} key={index}>
+                        {segment.text}
+                      </span>
+                    ))
                   : loading
                     ? "正在读取日志..."
                     : "当前日志流暂无内容。"}
@@ -260,7 +464,14 @@ export function ExecutionBatchDetails({
                 className="button button-secondary compact-button"
                 disabled={loading}
                 onClick={() =>
-                  void loadAttempt(attemptId, stream, activeQuery, nextSequence, false)
+                  void loadAttempt(
+                    attemptId,
+                    stream,
+                    activeQuery,
+                    activeTimeRange,
+                    nextSequence,
+                    false,
+                  )
                 }
                 type="button"
               >
@@ -285,13 +496,26 @@ export function ExecutionBatchDetails({
                         </small>
                       </span>
                       {artifact.downloadPath ? (
-                        <a
-                          className="icon-button small-icon-button"
-                          href={artifact.downloadPath}
-                          aria-label={`下载 ${artifact.relativePath}`}
-                        >
-                          <Download size={15} />
-                        </a>
+                        <span className="artifact-actions">
+                          {isPreviewable(artifact.mediaType) ? (
+                            <a
+                              className="icon-button small-icon-button"
+                              href={`${artifact.downloadPath}?preview=1`}
+                              target="_blank"
+                              rel="noreferrer"
+                              aria-label={`预览 ${artifact.relativePath}`}
+                            >
+                              <Eye size={15} />
+                            </a>
+                          ) : null}
+                          <a
+                            className="icon-button small-icon-button"
+                            href={artifact.downloadPath}
+                            aria-label={`下载 ${artifact.relativePath}`}
+                          >
+                            <Download size={15} />
+                          </a>
+                        </span>
                       ) : null}
                     </div>
                   ))
@@ -337,6 +561,23 @@ export function ExecutionBatchDetails({
       </section>
     </div>
   );
+}
+
+function toIsoFilter(value: string): string | undefined {
+  if (!value) return undefined;
+  const timestamp = new Date(value);
+  return Number.isNaN(timestamp.getTime()) ? undefined : timestamp.toISOString();
+}
+
+function isPreviewable(mediaType: string): boolean {
+  return [
+    "image/png",
+    "image/jpeg",
+    "image/webp",
+    "image/gif",
+    "application/pdf",
+    "text/plain",
+  ].includes(mediaType);
 }
 
 function Summary({ label, value }: { label: string; value: string }) {
@@ -465,4 +706,9 @@ function eventLabel(eventType: string): string {
     "lease.expired": "租约已过期",
   };
   return labels[eventType] ?? eventType;
+}
+
+function stringDetail(details: Record<string, unknown>, key: string): string | undefined {
+  const value = details[key];
+  return typeof value === "string" && value.length > 0 ? value : undefined;
 }

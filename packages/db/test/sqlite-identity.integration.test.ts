@@ -177,6 +177,7 @@ describe("SQLite identity access", () => {
         operationTimeoutMs: 10_000,
         pageSize: 500,
         maximumUsers: 5_000,
+        synchronizationIntervalMinutes: 0,
         bindDn: "cn=service,dc=example,dc=test",
         bindPassword: "Bind!Password123",
         userBaseDn: "ou=people,dc=example,dc=test",
@@ -301,6 +302,144 @@ describe("SQLite identity access", () => {
       await expect(service.authenticateSession(expiringSession.token)).rejects.toMatchObject({
         code: "AUTH_REQUIRED",
       });
+    } finally {
+      handle.close();
+    }
+  });
+
+  it("enforces role deactivation, administrator guards and project ownership", async () => {
+    const directory = await mkdtemp(resolve(tmpdir(), "autoforge-roles-"));
+    temporaryDirectories.push(directory);
+    const handle = createSqliteDatabase({
+      databasePath: resolve(directory, "identity.db"),
+      migrationsFolder: resolve(import.meta.dirname, "../drizzle/sqlite"),
+    });
+    const repository = new SqliteIdentityAccessRepository(handle);
+    const clock = new MutableClock("2026-08-09T00:00:00.000Z");
+    const service = new IdentityAccessService(
+      repository,
+      {
+        hash: async (password) => `password:${password}`,
+        verify: async (password, encoded) => encoded === `password:${password}`,
+      },
+      new TestTokens(),
+      {
+        available: true,
+        encrypt: (plaintext, purpose) =>
+          `${purpose}:${Buffer.from(plaintext).toString("base64url")}`,
+        decrypt: (ciphertext, purpose) => {
+          const prefix = `${purpose}:`;
+          if (!ciphertext.startsWith(prefix)) throw new Error("cipher purpose mismatch");
+          return Buffer.from(ciphertext.slice(prefix.length), "base64url").toString();
+        },
+      },
+      {
+        test: async () => undefined,
+        authenticate: async () => {
+          throw new Error("directory unavailable");
+        },
+        listUsers: async () => [],
+      },
+      clock,
+      new SequentialIds(),
+      8,
+    );
+
+    try {
+      await service.initialize();
+      const bootstrap = await service.bootstrap({
+        bootstrapToken: TestTokens.bootstrapToken,
+        username: "administrator",
+        displayName: "Administrator",
+        password: "Admin!Password123",
+      });
+      const administrator = await service.authenticateSession(bootstrap.token);
+
+      const recoveryRole = await service.createRole(administrator, {
+        key: "recovery-admin",
+        name: "Recovery Admin",
+        description: "Custom recovery administrator",
+        scope: "system",
+        permissions: ["user.manage", "role.manage"],
+      });
+      expect(recoveryRole.active).toBe(true);
+      const secondAdmin = await service.createUser(administrator, {
+        username: "second-admin",
+        displayName: "Second Admin",
+        password: "Second!Password1",
+        forcePasswordChange: false,
+      });
+      await service.assignSystemRole(administrator, secondAdmin.id, recoveryRole.id);
+      const secondSession = await service.login({
+        username: "second-admin",
+        password: "Second!Password1",
+        provider: "local",
+      });
+      expect((await service.authenticateSession(secondSession.token)).systemPermissions).toContain(
+        "user.manage",
+      );
+
+      await service.updateRole(administrator, recoveryRole.id, { active: false });
+      await expect(service.authenticateSession(secondSession.token)).rejects.toMatchObject({
+        code: "AUTH_REQUIRED",
+      });
+      const relogin = await service.login({
+        username: "second-admin",
+        password: "Second!Password1",
+        provider: "local",
+      });
+      expect((await service.authenticateSession(relogin.token)).systemPermissions).not.toContain(
+        "user.manage",
+      );
+      await expect(
+        service.assignSystemRole(administrator, secondAdmin.id, recoveryRole.id),
+      ).rejects.toMatchObject({ code: "ROLE_INACTIVE" });
+
+      // 自定义角色已停用，bootstrap 管理员是唯一剩余管理员，移除其绑定必须被拒绝。
+      await expect(
+        service.removeSystemRole(
+          administrator,
+          administrator.user.id,
+          "00000000-0000-7000-8100-000000000001",
+        ),
+      ).rejects.toMatchObject({ code: "LAST_ADMIN_REQUIRED" });
+
+      await service.updateRole(administrator, recoveryRole.id, { active: true });
+      // 重新启用后绑定可再次生效，且守卫不误伤非最后管理员的移除。
+      await service.assignSystemRole(administrator, secondAdmin.id, recoveryRole.id);
+      await expect(
+        service.removeSystemRole(administrator, secondAdmin.id, recoveryRole.id),
+      ).resolves.toBeUndefined();
+      const secondAdminRelogin = await service.login({
+        username: "second-admin",
+        password: "Second!Password1",
+        provider: "local",
+      });
+      expect(
+        (await service.authenticateSession(secondAdminRelogin.token)).systemPermissions,
+      ).not.toContain("user.manage");
+
+      // bootstrap 管理员仍持有内置系统角色，项目操作不受影响。
+      const project = await service.createProject(administrator, {
+        name: "Owned project",
+        slug: "owned-project",
+      });
+      expect(project.ownerUserId).toBe(administrator.user.id);
+      await service.updateUserStatus(administrator, secondAdmin.id, "disabled");
+      await expect(
+        service.transferProjectOwner(administrator, project.id, {
+          ownerUserId: secondAdmin.id,
+        }),
+      ).rejects.toMatchObject({ code: "PROJECT_OWNER_INACTIVE" });
+      await service.updateUserStatus(administrator, secondAdmin.id, "active");
+      const transferred = await service.transferProjectOwner(administrator, project.id, {
+        ownerUserId: secondAdmin.id,
+      });
+      expect(transferred.ownerUserId).toBe(secondAdmin.id);
+      expect(
+        (await service.listProjects(administrator)).find((candidate) => candidate.id === project.id)
+          ?.ownerUserId,
+      ).toBe(secondAdmin.id);
     } finally {
       handle.close();
     }

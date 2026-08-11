@@ -20,8 +20,12 @@ trap cleanup EXIT
 release_created_at >/dev/null
 mkdir -p -- "${output_directory}"
 cp -R -- "${repository_root}/deploy/compose" "${staging_directory}/${package_name}"
+cp -R -- "${repository_root}/scripts/operations" "${staging_directory}/${package_name}/operations"
+cp -R -- "${repository_root}/docs" "${staging_directory}/${package_name}/docs"
 cp -- "${repository_root}/LICENSE" "${repository_root}/NOTICE" \
-  "${repository_root}/THIRD_PARTY_LICENSES.json" "${staging_directory}/${package_name}/"
+  "${repository_root}/THIRD_PARTY_LICENSES.json" "${repository_root}/CHANGELOG.md" \
+  "${repository_root}/COMPATIBILITY.md" "${repository_root}/release-signing-public-key.pem" \
+  "${staging_directory}/${package_name}/"
 
 while IFS= read -r environment_example; do
   sed -i "s/VERSION/${version}/g" "${environment_example}"

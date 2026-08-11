@@ -1,10 +1,14 @@
 import { expect, test, type Page } from "@playwright/test";
 import { zipSync } from "fflate";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import { resolve } from "node:path";
 import WebSocket from "ws";
 
 import { buildClassFile } from "../../packages/testng-discovery/test/class-fixture";
+
+const adminBootstrapToken = requiredTestSecret("E2E_ADMIN_BOOTSTRAP_TOKEN");
+const runnerBootstrapToken = requiredTestSecret("E2E_RUNNER_BOOTSTRAP_TOKEN");
 
 async function captureUi(page: Page, name: string): Promise<void> {
   const screenshotDirectory = process.env.AUTOFORGE_UI_SCREENSHOT_DIR;
@@ -16,6 +20,7 @@ async function captureUi(page: Page, name: string): Promise<void> {
 
 test("imports TestNG methods from a JAR into the case library", async ({ page }) => {
   test.setTimeout(300_000);
+  await page.emulateMedia({ reducedMotion: "reduce" });
   const jar = zipSync({
     "com/example/CheckoutTest.class": buildClassFile({
       className: "com.example.CheckoutTest",
@@ -29,8 +34,16 @@ test("imports TestNG methods from a JAR into the case library", async ({ page })
     "testng.xml": new TextEncoder().encode('<suite name="AutoForge fixture" />'),
   });
 
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: /汇聚到一个可信控制面/ })).toBeVisible();
+  await expect(page.getByText("平台数据实时同步")).toBeVisible();
+  await expectDesktopLayoutFits(page, 1024, 768);
+  const publicStatistics = await page.request.get("/api/v1/public/statistics");
+  expect(publicStatistics.status()).toBe(200);
+  expect(await publicStatistics.json()).not.toHaveProperty("secrets");
+
   await page.goto("/setup");
-  await page.getByLabel("一次性管理员引导令牌").fill("e2e-admin-bootstrap-token-00000000000000");
+  await page.getByLabel("一次性管理员引导令牌").fill(adminBootstrapToken);
   await page.getByLabel("用户名").fill("e2e-admin");
   await page.getByLabel("显示名称").fill("E2E Administrator");
   await page.getByLabel("管理员密码").fill("E2e!Administrator123");
@@ -52,7 +65,9 @@ test("imports TestNG methods from a JAR into the case library", async ({ page })
   await expect(page.getByText("smoke", { exact: true })).toBeVisible();
 
   await page.getByRole("button", { name: "确认导入" }).click();
-  await expect(page.getByRole("status")).toContainText(/已导入|已返回现有用例/);
+  await expect(page.getByRole("status")).toContainText(/已导入|已返回现有用例/, {
+    timeout: 60_000,
+  });
 
   await page.getByRole("link", { name: "查看用例库" }).click();
   await expect(page.getByText("com.example.CheckoutTest")).toBeVisible();
@@ -63,6 +78,13 @@ test("imports TestNG methods from a JAR into the case library", async ({ page })
   await page.getByLabel("说明").fill("E2E 创建的可复用任务");
   await page.getByRole("button", { name: "创建任务" }).click();
   await expect(page.getByRole("link", { name: /每日冒烟测试/ })).toBeVisible();
+  await page.keyboard.press("Control+K");
+  const globalSearch = page.getByLabel("全局搜索");
+  await expect(globalSearch).toBeFocused();
+  await globalSearch.fill("每日冒烟");
+  await expect(page.getByRole("option", { name: /每日冒烟测试/ })).toBeVisible();
+  await globalSearch.press("ArrowDown");
+  await expect(page.getByRole("option", { name: /每日冒烟测试/ })).toBeFocused();
 
   await page.goto("/cases");
   await page.getByLabel("选择 CheckoutTest").check();
@@ -82,12 +104,12 @@ test("imports TestNG methods from a JAR into the case library", async ({ page })
   await expect(page.getByRole("button", { name: "当前全量来源" })).toBeVisible();
 
   const registration = await page.request.post("/api/v1/runner-agents/register", {
-    headers: { authorization: "Bearer e2e-runner-bootstrap-token-000000000000" },
+    headers: { authorization: `Bearer ${runnerBootstrapToken}` },
     data: {
       schemaVersion: 1,
       name: "E2E Runner",
       labels: ["linux", "java", "testng"],
-      capabilities: ["executor:testng-v1", "java:21.0.8", "testng:7.11.0"],
+      capabilities: ["executor:testng-v1", "isolation:cgroup-v2", "java:21.0.8", "testng:7.11.0"],
       maxConcurrency: 2,
       os: "linux",
       architecture: "amd64",
@@ -106,7 +128,7 @@ test("imports TestNG methods from a JAR into the case library", async ({ page })
         schemaVersion: 1,
         busySlots: 1,
         labels: ["linux", "java", "testng"],
-        capabilities: ["executor:testng-v1", "java:21.0.8", "testng:7.11.0"],
+        capabilities: ["executor:testng-v1", "isolation:cgroup-v2", "java:21.0.8", "testng:7.11.0"],
         maxConcurrency: 2,
         agentVersion: "0.2.0",
         terminalEnabled: true,
@@ -136,16 +158,194 @@ test("imports TestNG methods from a JAR into the case library", async ({ page })
   await page.getByRole("button", { name: "添加变量" }).click();
   await page.getByLabel("环境变量名").fill("TEST_ENV");
   await page.getByLabel("环境变量值").fill("e2e");
+  const createBatchResponse = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      new URL(response.url()).pathname === "/api/v1/run-batches",
+  );
   await page.getByRole("button", { name: "开始调度" }).click();
+  const batch = (await (await createBatchResponse).json()) as { id: string };
   await expect(page.getByText("已生成分配", { exact: true })).toBeVisible();
   await expect(page.getByText("已分配 1", { exact: true })).toBeVisible();
   await captureUi(page, "run-batch-planner");
 
-  const agentSocket = new WebSocket(
-    "ws://127.0.0.1:3100/api/v1/terminal-stream",
-    "autoforge-runner-terminal-v1",
-    { headers: { authorization: `Bearer ${heartbeatResult.terminalConnectionToken}` } },
+  const firstClaim = await claimAssignment(page, identity);
+  const firstAttemptId = firstClaim.assignment.attemptId;
+  const testJarInput = firstClaim.assignment.executionSpec.inputs.find(
+    (input) => input.kind === "test-jar",
   );
+  expect(testJarInput).toBeTruthy();
+  const downloadedInput = await page.request.get(
+    `/api/v1/run-attempts/${encodeURIComponent(firstAttemptId)}/inputs/${encodeURIComponent(testJarInput!.inputId)}`,
+    { headers: runnerHeaders(identity, firstClaim.lease.token) },
+  );
+  expect(downloadedInput.status()).toBe(200);
+  const downloadedJar = await downloadedInput.body();
+  expect(downloadedJar.byteLength).toBe(testJarInput!.sizeBytes);
+  expect(createHash("sha256").update(downloadedJar).digest("hex")).toBe(testJarInput!.sha256);
+
+  const firstLog = await page.request.post(
+    `/api/v1/run-attempts/${encodeURIComponent(firstAttemptId)}/logs`,
+    {
+      headers: runnerHeaders(identity),
+      data: {
+        schemaVersion: 1,
+        requestId: "e2e-log-first",
+        leaseToken: firstClaim.lease.token,
+        chunks: [
+          {
+            stream: "stdout",
+            sequence: 0,
+            content: "\u001b[31mfirst attempt assertion failed\u001b[0m\n",
+            recordedAt: new Date().toISOString(),
+          },
+        ],
+      },
+    },
+  );
+  expect(firstLog.status()).toBe(200);
+  expect(await firstLog.json()).toMatchObject({ acknowledgedSequence: { stdout: 0 } });
+
+  const report = Buffer.from("AutoForge E2E report\n", "utf8");
+  const reportDeclaration = {
+    artifactId: "e2e-report",
+    relativePath: "reports/testng/e2e-report.txt",
+    mediaType: "text/plain",
+    sizeBytes: report.byteLength,
+    sha256: createHash("sha256").update(report).digest("hex"),
+    required: false,
+  };
+  const artifactDeclaration = await page.request.post(
+    `/api/v1/run-attempts/${encodeURIComponent(firstAttemptId)}/artifacts`,
+    {
+      headers: runnerHeaders(identity),
+      data: {
+        schemaVersion: 1,
+        requestId: "e2e-artifact-declare",
+        leaseToken: firstClaim.lease.token,
+        artifacts: [reportDeclaration],
+      },
+    },
+  );
+  expect(artifactDeclaration.status()).toBe(200);
+  const declaredArtifact = (
+    (await artifactDeclaration.json()) as {
+      artifacts: Array<{ uploadPath: string; uploadMethod: string; finalizePath?: string }>;
+    }
+  ).artifacts[0]!;
+  if (declaredArtifact.uploadMethod === "control-plane") {
+    const artifactUpload = await page.request.put(declaredArtifact.uploadPath, {
+      headers: runnerHeaders(identity, firstClaim.lease.token),
+      data: report,
+    });
+    expect(artifactUpload.status()).toBe(200);
+  } else {
+    expect(declaredArtifact.uploadMethod).toBe("direct");
+    expect(declaredArtifact.finalizePath).toBeTruthy();
+    const directUpload = await page.request.put(declaredArtifact.uploadPath, { data: report });
+    expect([200, 204]).toContain(directUpload.status());
+    const finalize = await page.request.post(declaredArtifact.finalizePath!, {
+      headers: runnerHeaders(identity, firstClaim.lease.token),
+    });
+    expect(finalize.status()).toBe(200);
+  }
+
+  const failedCompletion = await completeAttempt(page, identity, firstClaim, {
+    completionId: "e2e-completion-failed",
+    status: "failed",
+    resultCode: "TEST_ASSERTION_FAILED",
+    summary: "E2E intentional failure",
+    durationMs: 200,
+    artifacts: [reportDeclaration],
+  });
+  expect(failedCompletion).toMatchObject({
+    disposition: "accepted",
+    retryScheduled: true,
+  });
+
+  const retryHeartbeat = await postHeartbeat(page, identity, 0);
+  expect(retryHeartbeat.status()).toBe(200);
+  const secondClaim = await claimAssignment(page, identity);
+  expect(secondClaim.assignment.attemptId).not.toBe(firstAttemptId);
+  expect(secondClaim.assignment.executionSpec.executionRunId).toBe(
+    firstClaim.assignment.executionSpec.executionRunId,
+  );
+  const secondLog = await page.request.post(
+    `/api/v1/run-attempts/${encodeURIComponent(secondClaim.assignment.attemptId)}/logs`,
+    {
+      headers: runnerHeaders(identity),
+      data: {
+        schemaVersion: 1,
+        requestId: "e2e-log-retry",
+        leaseToken: secondClaim.lease.token,
+        chunks: [
+          {
+            stream: "stdout",
+            sequence: 0,
+            content: "retry passed\n",
+            recordedAt: new Date().toISOString(),
+          },
+        ],
+      },
+    },
+  );
+  expect(secondLog.status()).toBe(200);
+  const successfulCompletion = await completeAttempt(page, identity, secondClaim, {
+    completionId: "e2e-completion-succeeded",
+    status: "succeeded",
+    resultCode: "TESTNG_SUCCEEDED",
+    summary: "E2E retry passed",
+    durationMs: 120,
+    artifacts: [],
+  });
+  expect(successfulCompletion).toMatchObject({
+    disposition: "accepted",
+    retryScheduled: false,
+  });
+
+  const userHeaders = await browserSessionHeaders(page);
+  await expect
+    .poll(async () => {
+      const response = await page.request.get(
+        `/api/v1/run-batches/${encodeURIComponent(batch.id)}`,
+        { headers: userHeaders },
+      );
+      expect(response.status()).toBe(200);
+      return (await response.json()) as {
+        status: string;
+        succeededRuns: number;
+        attempts: Array<{ id: string; attemptNumber: number }>;
+      };
+    })
+    .toMatchObject({ status: "succeeded", succeededRuns: 1, attempts: [{}, {}] });
+
+  const artifactDownload = await page.request.get(
+    `/api/v1/run-attempts/${encodeURIComponent(firstAttemptId)}/artifacts/e2e-report`,
+    { headers: userHeaders },
+  );
+  expect(artifactDownload.status()).toBe(200);
+  expect(artifactDownload.headers()["content-disposition"]).toContain("attachment");
+  expect(await artifactDownload.body()).toEqual(report);
+
+  await page.goto(`/run-batches/${encodeURIComponent(batch.id)}`);
+  await expect(page.getByText("成功", { exact: true }).first()).toBeVisible();
+  await page.getByLabel("执行尝试").selectOption(firstAttemptId);
+  await expect(page.locator(".execution-log")).toContainText("first attempt assertion failed");
+  await expect(page.locator(".execution-log")).toHaveClass(/execution-log-dark/);
+  await expect(page.locator(".execution-log .ansi-red")).toContainText(
+    "first attempt assertion failed",
+  );
+  await expect(page.getByText("reports/testng/e2e-report.txt")).toBeVisible();
+  await expect(page.getByLabel("下载 reports/testng/e2e-report.txt")).toBeVisible();
+
+  await page.goto("/insights");
+  await expect(
+    page.getByText("执行样本").locator("..").getByText("2", { exact: true }),
+  ).toBeVisible();
+
+  const agentSocket = new WebSocket(terminalStreamUrl(), "autoforge-runner-terminal-v1", {
+    headers: { authorization: `Bearer ${heartbeatResult.terminalConnectionToken}` },
+  });
   await new Promise<void>((resolve, reject) => {
     agentSocket.once("open", resolve);
     agentSocket.once("error", reject);
@@ -188,5 +388,172 @@ test("imports TestNG methods from a JAR into the case library", async ({ page })
 
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "自动化用例工作台" })).toBeVisible();
+  await expectDesktopLayoutFits(page, 1024, 768);
+  await expectDesktopLayoutFits(page, 1920, 1080);
+  await page.setViewportSize({ width: 1920, height: 1080 });
+  await page.evaluate(() => {
+    document.documentElement.style.zoom = "2";
+  });
+  await expect(page.getByRole("heading", { name: "自动化用例工作台" })).toBeVisible();
+  await expect(page.getByLabel("全局搜索")).toBeVisible();
+  await page.evaluate(() => {
+    document.documentElement.style.zoom = "";
+  });
   await captureUi(page, "dashboard");
+
+  const secondaryBaseUrl = process.env.E2E_SECONDARY_BASE_URL;
+  if (secondaryBaseUrl) {
+    await page.goto(new URL("/", secondaryBaseUrl).toString());
+    await expect(page.getByRole("heading", { name: "自动化用例工作台" })).toBeVisible();
+    const secondaryReadiness = await page.request.get(
+      new URL("/api/v1/health/ready", secondaryBaseUrl).toString(),
+    );
+    expect(secondaryReadiness.status()).toBe(200);
+  }
 });
+
+function requiredTestSecret(name: string): string {
+  const value = process.env[name];
+  if (!value) throw new Error(`${name} was not initialized by Playwright configuration.`);
+  return value;
+}
+
+function terminalStreamUrl(): string {
+  const url = new URL(
+    "/api/v1/terminal-stream",
+    process.env.E2E_BASE_URL ?? "http://127.0.0.1:3100",
+  );
+  url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+  return url.toString();
+}
+
+type RunnerIdentity = { runnerId: string; credential: string };
+
+type ClaimedAssignment = {
+  assignment: {
+    attemptId: string;
+    executionSpec: {
+      executionRunId: string;
+      inputs: Array<{ inputId: string; kind: string; sizeBytes: number; sha256: string }>;
+    };
+  };
+  lease: { token: string };
+};
+
+async function claimAssignment(page: Page, identity: RunnerIdentity): Promise<ClaimedAssignment> {
+  const deadline = Date.now() + 15_000;
+  let requestNumber = 0;
+  while (Date.now() < deadline) {
+    requestNumber += 1;
+    const response = await page.request.post(
+      `/api/v1/runner-agents/${encodeURIComponent(identity.runnerId)}/claims`,
+      {
+        headers: { authorization: `Bearer ${identity.credential}` },
+        data: {
+          schemaVersion: 1,
+          requestId: `e2e-claim-${requestNumber}-${randomUUID()}`,
+          availableSlots: 1,
+          labels: ["linux", "java", "testng"],
+          capabilities: [
+            "executor:testng-v1",
+            "isolation:cgroup-v2",
+            "java:21.0.8",
+            "testng:7.11.0",
+          ],
+          waitSeconds: 0,
+        },
+      },
+    );
+    expect(response.status()).toBe(200);
+    const body = (await response.json()) as { assignments: ClaimedAssignment[] };
+    if (body.assignments[0]) return body.assignments[0];
+    await page.waitForTimeout(250);
+  }
+  throw new Error("Runner did not receive an assignment within 15 seconds.");
+}
+
+async function completeAttempt(
+  page: Page,
+  identity: RunnerIdentity,
+  claim: ClaimedAssignment,
+  result: {
+    completionId: string;
+    status: "succeeded" | "failed" | "timed_out" | "cancelled";
+    resultCode: string;
+    summary: string;
+    durationMs: number;
+    artifacts: Array<Record<string, unknown>>;
+  },
+): Promise<Record<string, unknown>> {
+  const response = await page.request.post(
+    `/api/v1/run-attempts/${encodeURIComponent(claim.assignment.attemptId)}/complete`,
+    {
+      headers: runnerHeaders(identity),
+      data: {
+        schemaVersion: 1,
+        completionId: result.completionId,
+        leaseToken: claim.lease.token,
+        result: {
+          status: result.status,
+          resultCode: result.resultCode,
+          summary: result.summary,
+          durationMs: result.durationMs,
+          logWatermarks: { stdout: 0, stderr: -1, agent: -1 },
+          artifacts: result.artifacts,
+        },
+      },
+    },
+  );
+  expect(response.status()).toBe(200);
+  return (await response.json()) as Record<string, unknown>;
+}
+
+async function postHeartbeat(page: Page, identity: RunnerIdentity, busySlots: number) {
+  return page.request.post(
+    `/api/v1/runner-agents/${encodeURIComponent(identity.runnerId)}/heartbeat`,
+    {
+      headers: { authorization: `Bearer ${identity.credential}` },
+      data: {
+        schemaVersion: 1,
+        busySlots,
+        labels: ["linux", "java", "testng"],
+        capabilities: ["executor:testng-v1", "isolation:cgroup-v2", "java:21.0.8", "testng:7.11.0"],
+        maxConcurrency: 2,
+        agentVersion: "0.2.0",
+        terminalEnabled: true,
+        resourceSnapshot: {
+          cpuUtilizationPercent: 24,
+          memoryUtilizationPercent: 38,
+          loadAverage1m: 0.6,
+          logicalCpuCount: 4,
+          observedAt: new Date().toISOString(),
+        },
+      },
+    },
+  );
+}
+
+function runnerHeaders(identity: RunnerIdentity, leaseToken?: string): Record<string, string> {
+  return {
+    authorization: `Bearer ${identity.credential}`,
+    "x-autoforge-runner-id": identity.runnerId,
+    ...(leaseToken ? { "x-autoforge-lease-token": leaseToken } : {}),
+  };
+}
+
+async function browserSessionHeaders(page: Page): Promise<Record<string, string>> {
+  const cookies = await page.context().cookies();
+  return { cookie: cookies.map(({ name, value }) => `${name}=${value}`).join("; ") };
+}
+
+async function expectDesktopLayoutFits(page: Page, width: number, height: number): Promise<void> {
+  await page.setViewportSize({ width, height });
+  await expect
+    .poll(() =>
+      page.evaluate(() => ({
+        viewportWidth: window.innerWidth,
+        documentWidth: document.documentElement.scrollWidth,
+      })),
+    )
+    .toEqual({ viewportWidth: width, documentWidth: width });
+}

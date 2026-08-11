@@ -3,8 +3,10 @@
 import {
   apiErrorSchema,
   jarImportResultSchema,
+  jarImportJobSchema,
   jarInspectionSchema,
   type JarImportResult,
+  type JarImportJob,
   type JarInspection,
 } from "@autoforge/contracts";
 import {
@@ -20,7 +22,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useId, useState } from "react";
+import { useEffect, useId, useState } from "react";
 
 type Phase = "idle" | "inspecting" | "ready" | "importing" | "done";
 
@@ -43,12 +45,14 @@ export function JarImporter({ maxJarBytes }: { maxJarBytes: number }) {
   const [phase, setPhase] = useState<Phase>("idle");
   const [inspection, setInspection] = useState<JarInspection | null>(null);
   const [result, setResult] = useState<JarImportResult | null>(null);
+  const [job, setJob] = useState<JarImportJob | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   function chooseFile(nextFile: File | null): void {
     setFile(nextFile);
     setInspection(null);
     setResult(null);
+    setJob(null);
     setError(null);
     setPhase("idle");
   }
@@ -91,14 +95,70 @@ export function JarImporter({ maxJarBytes }: { maxJarBytes: number }) {
     try {
       const response = await sendFile("/api/v1/case-sources/jar/import");
       if (!response.ok) throw new Error(await errorMessage(response));
-      const parsed = jarImportResultSchema.parse(await response.json());
-      setResult(parsed);
-      setPhase("done");
-      router.refresh();
+      const parsed = jarImportJobSchema.parse(await response.json());
+      setJob(parsed);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "导入 JAR 失败。");
       setPhase("ready");
     }
+  }
+
+  useEffect(() => {
+    if (!job || ["succeeded", "failed", "cancelled"].includes(job.status)) return;
+    const interval = window.setInterval(async () => {
+      try {
+        const response = await fetch(
+          `/api/v1/case-sources/jar/imports/${encodeURIComponent(job.id)}`,
+          { cache: "no-store" },
+        );
+        if (!response.ok) throw new Error(await errorMessage(response));
+        const updated = jarImportJobSchema.parse(await response.json());
+        setJob(updated);
+        if (updated.status === "succeeded" && updated.result) {
+          setResult(jarImportResultSchema.parse(updated.result));
+          setPhase("done");
+          router.refresh();
+        } else if (updated.status === "failed") {
+          setError(updated.errorSummary ?? "后台导入失败。");
+          setPhase("ready");
+        } else if (updated.status === "cancelled") {
+          setError("导入任务已取消，可重新发起。");
+          setPhase("ready");
+        }
+      } catch (caught) {
+        setError(caught instanceof Error ? caught.message : "读取导入进度失败。");
+      }
+    }, 1_000);
+    return () => window.clearInterval(interval);
+  }, [job, router]);
+
+  async function cancelImport(): Promise<void> {
+    if (!job) return;
+    const response = await fetch(
+      `/api/v1/case-sources/jar/imports/${encodeURIComponent(job.id)}/cancel`,
+      { method: "POST" },
+    );
+    if (!response.ok) {
+      setError(await errorMessage(response));
+      return;
+    }
+    setJob(jarImportJobSchema.parse(await response.json()));
+  }
+
+  async function retryImport(): Promise<void> {
+    if (!job) return;
+    setError(null);
+    setPhase("importing");
+    const response = await fetch(
+      `/api/v1/case-sources/jar/imports/${encodeURIComponent(job.id)}/retry`,
+      { method: "POST" },
+    );
+    if (!response.ok) {
+      setError(await errorMessage(response));
+      setPhase("ready");
+      return;
+    }
+    setJob(jarImportJobSchema.parse(await response.json()));
   }
 
   const busy = phase === "inspecting" || phase === "importing";
@@ -175,6 +235,28 @@ export function JarImporter({ maxJarBytes }: { maxJarBytes: number }) {
           <span>{error}</span>
         </div>
       )}
+
+      {job && phase !== "done" ? (
+        <section className="card import-progress" aria-live="polite">
+          <div>
+            <strong>后台导入 · {job.progressPercent}%</strong>
+            <span>{importJobStatus(job.status)}</span>
+          </div>
+          <progress max={100} value={job.progressPercent} />
+          <div className="button-row">
+            {["queued", "running", "cancel_requested"].includes(job.status) ? (
+              <button className="button button-secondary" type="button" onClick={cancelImport}>
+                取消导入
+              </button>
+            ) : null}
+            {job.status === "failed" || job.status === "cancelled" ? (
+              <button className="button button-secondary" type="button" onClick={retryImport}>
+                幂等重试
+              </button>
+            ) : null}
+          </div>
+        </section>
+      ) : null}
 
       {inspection && (
         <section className="card inspection-card">
@@ -300,4 +382,15 @@ export function JarImporter({ maxJarBytes }: { maxJarBytes: number }) {
       )}
     </div>
   );
+}
+
+function importJobStatus(status: JarImportJob["status"]): string {
+  return {
+    queued: "已持久化，等待后台工作器",
+    running: "正在执行有界静态发现与目录写入",
+    cancel_requested: "已请求取消，将在安全阶段边界停止",
+    cancelled: "已取消",
+    succeeded: "已完成",
+    failed: "失败，保留诊断并可幂等重试",
+  }[status];
 }

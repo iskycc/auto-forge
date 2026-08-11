@@ -24,19 +24,39 @@ test("builds a versioned deployment bundle with both Compose modes", async () =>
     await execute("tar", ["-xzf", archivePath, "-C", extractedDirectory]);
 
     const packageDirectory = resolve(extractedDirectory, "autoforge-deploy-1.2.3");
-    assert.match(
-      await readFile(resolve(packageDirectory, "lite/docker-compose.yml"), "utf8"),
-      /AUTOFORGE_MODE: lite/,
+    const liteCompose = await readFile(
+      resolve(packageDirectory, "lite/docker-compose.yml"),
+      "utf8",
     );
-    assert.match(
-      await readFile(resolve(packageDirectory, "full/docker-compose.yml"), "utf8"),
-      /AUTOFORGE_MODE: full/,
+    const fullCompose = await readFile(
+      resolve(packageDirectory, "full/docker-compose.yml"),
+      "utf8",
     );
+    assert.doesNotMatch(liteCompose, /AUTOFORGE_MODE|AUTOFORGE_MASTER_KEY/);
+    assert.doesNotMatch(fullCompose, /AUTOFORGE_DATABASE_URL|AUTOFORGE_MASTER_KEY/);
+    assert.match(fullCompose, /POSTGRES_PASSWORD_FILE/);
+    assert.match(fullCompose, /--data-dir=\/var\/lib\/autoforge/);
     assert.match(
       await readFile(resolve(packageDirectory, "lite/.env.example"), "utf8"),
       /autoforge\/backend:1\.2\.3-amd64/,
     );
     assert.equal(await readFile(resolve(packageDirectory, "VERSION"), "utf8"), "1.2.3\n");
+    assert.match(
+      await readFile(resolve(packageDirectory, "release-signing-public-key.pem"), "utf8"),
+      /BEGIN PUBLIC KEY/,
+    );
+    assert.match(
+      await readFile(resolve(packageDirectory, "operations/lite-backup.sh"), "utf8"),
+      /--platform-stopped/,
+    );
+    assert.match(
+      await readFile(resolve(packageDirectory, "operations/migrate.sh"), "utf8"),
+      /migrate\.js/,
+    );
+    assert.match(
+      await readFile(resolve(packageDirectory, "docs/manuals/administrator.md"), "utf8"),
+      /备份与恢复/,
+    );
   } finally {
     await rm(outputDirectory, { recursive: true, force: true });
     await rm(extractedDirectory, { recursive: true, force: true });

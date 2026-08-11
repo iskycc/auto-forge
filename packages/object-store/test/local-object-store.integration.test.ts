@@ -26,13 +26,18 @@ describe("LocalObjectStore", () => {
     const store = new LocalObjectStore(directory);
 
     const results = await Promise.all([
-      store.putJar(sha256, content),
-      store.putJar(sha256, content),
+      store.putJar("project-1", sha256, content),
+      store.putJar("project-1", sha256, content),
     ]);
+    const secondProject = await store.putJar("project-2", sha256, content);
 
     expect(results.filter((result) => result.created)).toHaveLength(1);
+    expect(secondProject).toMatchObject({
+      created: true,
+      objectKey: `projects/project-2/jars/${sha256.slice(0, 2)}/${sha256}.jar`,
+    });
     expect(new Set(results.map((result) => result.objectKey))).toEqual(
-      new Set([`jars/${sha256.slice(0, 2)}/${sha256}.jar`]),
+      new Set([`projects/project-1/jars/${sha256.slice(0, 2)}/${sha256}.jar`]),
     );
     await expect(store.exists(results[0]?.objectKey ?? "missing")).resolves.toBe(true);
     await expect(store.exists("jars/00/missing.jar")).resolves.toBe(false);
@@ -40,10 +45,10 @@ describe("LocalObjectStore", () => {
       readFile(resolve(directory, "objects", results[0]?.objectKey ?? "missing")),
     ).resolves.toEqual(Buffer.from(content));
 
-    const page = await store.list({ limit: 20, prefix: "jars/" });
+    const page = await store.list({ limit: 20, prefix: "projects/project-1/jars/" });
     expect(page.items).toHaveLength(1);
     expect(page.items[0]).toMatchObject({
-      objectKey: `jars/${sha256.slice(0, 2)}/${sha256}.jar`,
+      objectKey: `projects/project-1/jars/${sha256.slice(0, 2)}/${sha256}.jar`,
       sizeBytes: content.byteLength,
     });
     await expect(store.read(page.items[0]?.objectKey ?? "missing")).resolves.toEqual(
@@ -60,6 +65,7 @@ describe("LocalObjectStore", () => {
 
     await expect(
       store.prepareArtifactUpload({
+        projectId: "project-1",
         attemptId: "attempt-1",
         artifactId: "artifact-1",
         sha256,
@@ -69,6 +75,7 @@ describe("LocalObjectStore", () => {
     ).resolves.toEqual({ kind: "control-plane" });
 
     const stored = await store.putArtifact({
+      projectId: "project-1",
       attemptId: "attempt-1",
       artifactId: "artifact-1",
       sha256,
@@ -79,6 +86,7 @@ describe("LocalObjectStore", () => {
     await expect(store.read(stored.objectKey)).resolves.toEqual(Buffer.from(content));
     await expect(
       store.verifyArtifactUpload({
+        projectId: "project-1",
         attemptId: "attempt-1",
         artifactId: "artifact-1",
         sha256,
@@ -88,6 +96,7 @@ describe("LocalObjectStore", () => {
     ).resolves.toMatchObject({ objectKey: stored.objectKey });
     await expect(
       store.putArtifact({
+        projectId: "project-1",
         attemptId: "attempt-2",
         artifactId: "artifact-2",
         sha256: "0".repeat(64),
@@ -96,6 +105,34 @@ describe("LocalObjectStore", () => {
         content: chunks(content),
       }),
     ).rejects.toThrow("SHA-256");
+  });
+
+  it("stores a scoped generated report and validates its declaration", async () => {
+    const directory = await mkdtemp(resolve(tmpdir(), "autoforge-reports-"));
+    temporaryDirectories.push(directory);
+    const content = new TextEncoder().encode("project_id,result\nproject-1,passed\n");
+    const sha256 = createHash("sha256").update(content).digest("hex");
+    const store = new LocalObjectStore(directory);
+
+    const result = await store.putObject({
+      objectKey: "tenants/project-1/analytics-exports/user-1/export-1.csv",
+      sha256,
+      sizeBytes: content.byteLength,
+      mediaType: "text/csv",
+      content: chunks(content),
+    });
+
+    expect(result.created).toBe(true);
+    await expect(store.read(result.objectKey)).resolves.toEqual(Buffer.from(content));
+    await expect(
+      store.putObject({
+        objectKey: "../escape.csv",
+        sha256,
+        sizeBytes: content.byteLength,
+        mediaType: "text/csv",
+        content: chunks(content),
+      }),
+    ).rejects.toThrow("Object key");
   });
 });
 

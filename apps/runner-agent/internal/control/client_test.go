@@ -208,7 +208,7 @@ func TestClientRegistersAndSendsAuthenticatedHeartbeat(t *testing.T) {
 				t.Errorf("heartbeat Authorization = %q", request.Header.Get("Authorization"))
 			}
 			json.NewEncoder(writer).Encode(map[string]any{
-				"schemaVersion": 1, "acceptedAt": "2026-08-09T00:00:00.000Z", "heartbeatIntervalSeconds": 15, "draining": false,
+				"schemaVersion": 1, "acceptedAt": "2026-08-09T00:00:00.000Z", "heartbeatIntervalSeconds": 15, "draining": false, "rotateCredential": true,
 			})
 		default:
 			http.NotFound(writer, request)
@@ -226,11 +226,78 @@ func TestClientRegistersAndSendsAuthenticatedHeartbeat(t *testing.T) {
 		t.Fatalf("Register() error = %v", err)
 	}
 	snapshot := &metrics.Snapshot{CPUUtilizationPercent: 20, MemoryUtilizationPercent: 30, LoadAverage1m: 0.5, LogicalCPUCount: 4, ObservedAt: "2026-08-09T00:00:00Z"}
-	if _, err := client.Heartbeat(context.Background(), identity, configuration, buildinfo.Info{Version: "0.2.0"}, 1, snapshot); err != nil {
+	heartbeat, err := client.Heartbeat(context.Background(), identity, configuration, buildinfo.Info{Version: "0.2.0"}, 1, snapshot)
+	if err != nil {
 		t.Fatalf("Heartbeat() error = %v", err)
+	}
+	if !heartbeat.RotateCredential {
+		t.Fatal("Heartbeat() did not preserve the credential rotation instruction")
 	}
 	if requests != 2 {
 		t.Fatalf("requests = %d, want 2", requests)
+	}
+}
+
+func TestClientRotatesCredentialAndKeepsRunnerIdentity(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		if request.URL.Path != "/api/v1/runner-agents/runner-1/credentials/rotate" {
+			http.NotFound(writer, request)
+			return
+		}
+		if request.Header.Get("Authorization") != "Bearer old-credential-with-more-than-32-bytes" {
+			t.Errorf("rotate Authorization = %q", request.Header.Get("Authorization"))
+		}
+		json.NewEncoder(writer).Encode(map[string]any{
+			"schemaVersion":                1,
+			"credential":                   "new-credential-with-more-than-32-bytes",
+			"credentialVersion":            2,
+			"previousCredentialValidUntil": "2026-08-09T00:15:00.000Z",
+		})
+	}))
+	defer server.Close()
+
+	client, err := NewClient(testConfiguration(t, server.URL))
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity := Identity{
+		SchemaVersion: identitySchemaVersion,
+		RunnerID:      "runner-1",
+		Credential:    "old-credential-with-more-than-32-bytes",
+		ServerURL:     server.URL,
+	}
+	rotated, err := client.RotateCredential(context.Background(), identity)
+	if err != nil {
+		t.Fatalf("RotateCredential() error = %v", err)
+	}
+	if rotated.RunnerID != "runner-1" || rotated.Credential != "new-credential-with-more-than-32-bytes" {
+		t.Fatalf("RotateCredential() identity = %#v", rotated)
+	}
+	if rotated.ServerURL != identity.ServerURL || rotated.SchemaVersion != identitySchemaVersion {
+		t.Fatalf("RotateCredential() identity metadata = %#v", rotated)
+	}
+}
+
+func TestClientRejectsRotationResponseWithInvalidGraceDeadline(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(writer).Encode(map[string]any{
+			"schemaVersion":                1,
+			"credential":                   "new-credential-with-more-than-32-bytes",
+			"credentialVersion":            2,
+			"previousCredentialValidUntil": "not-a-timestamp",
+		})
+	}))
+	defer server.Close()
+
+	client, err := NewClient(testConfiguration(t, server.URL))
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity := Identity{SchemaVersion: identitySchemaVersion, RunnerID: "runner-1", Credential: "old-credential-with-more-than-32-bytes"}
+	if _, err := client.RotateCredential(context.Background(), identity); err == nil {
+		t.Fatal("RotateCredential() succeeded with an invalid grace deadline")
 	}
 }
 

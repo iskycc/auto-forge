@@ -1,7 +1,7 @@
 type AnnotationValueSpec = string | boolean | number | string[];
 
 export type AnnotationSpec = {
-  type: "Test" | "Ignore";
+  type: "Test" | "Ignore" | "Factory" | "DataProvider" | "Listeners";
   values?: Record<string, AnnotationValueSpec>;
 };
 
@@ -14,6 +14,7 @@ export type MethodSpec = {
 
 export type ClassSpec = {
   className: string;
+  superClassName?: string;
   annotations?: AnnotationSpec[];
   methods: MethodSpec[];
 };
@@ -71,7 +72,7 @@ class ConstantPoolBuilder {
 }
 
 function annotationDescriptor(type: AnnotationSpec["type"]): string {
-  return type === "Test" ? "Lorg/testng/annotations/Test;" : "Lorg/testng/annotations/Ignore;";
+  return `Lorg/testng/annotations/${type};`;
 }
 
 function registerAnnotation(pool: ConstantPoolBuilder, annotation: AnnotationSpec): void {
@@ -124,7 +125,9 @@ export function buildClassFile(spec: ClassSpec): Uint8Array {
   const pool = new ConstantPoolBuilder();
   const internalClassName = spec.className.replaceAll(".", "/");
   const thisClass = pool.classInfo(internalClassName);
-  const superClass = pool.classInfo("java/lang/Object");
+  const superClass = pool.classInfo(
+    (spec.superClassName ?? "java.lang.Object").replaceAll(".", "/"),
+  );
   pool.utf8("RuntimeVisibleAnnotations");
   for (const annotation of spec.annotations ?? []) registerAnnotation(pool, annotation);
   for (const method of spec.methods) {

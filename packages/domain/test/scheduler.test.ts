@@ -43,6 +43,43 @@ describe("dynamic execution scheduler", () => {
     expect(plan.unassignedRunIds).toEqual([]);
   });
 
+  it("caps new assignments by the batch concurrency budget", () => {
+    const plan = scheduleExecutionRuns({
+      runs: [run("run-1"), run("run-2"), run("run-3")],
+      candidates: [
+        {
+          runner: runner("runner-a", { cpu: 20, memory: 30, load: 0.4, concurrency: 8 }),
+          reservedSlots: 0,
+        },
+      ],
+      thresholds,
+      metricsFreshAfter: freshAfter,
+      maxAssignments: 2,
+    });
+
+    expect(plan.decisions).toHaveLength(2);
+    expect(plan.decisions.map((decision) => decision.executionRunId)).toEqual(["run-1", "run-2"]);
+    expect(plan.unassignedRunIds).toEqual(["run-3"]);
+  });
+
+  it("assigns nothing when the batch concurrency budget is exhausted", () => {
+    const plan = scheduleExecutionRuns({
+      runs: [run("run-1")],
+      candidates: [
+        {
+          runner: runner("runner-a", { cpu: 20, memory: 30, load: 0.4, concurrency: 8 }),
+          reservedSlots: 0,
+        },
+      ],
+      thresholds,
+      metricsFreshAfter: freshAfter,
+      maxAssignments: 0,
+    });
+
+    expect(plan.decisions).toEqual([]);
+    expect(plan.unassignedRunIds).toEqual(["run-1"]);
+  });
+
   it("keeps runs queued when metrics are stale or capacity is exhausted", () => {
     const stale = runner("runner-stale", { cpu: 10, memory: 20, load: 0.1, concurrency: 1 });
     stale.resourceSnapshot = { ...stale.resourceSnapshot!, observedAt: "2026-08-08T23:59:00.000Z" };

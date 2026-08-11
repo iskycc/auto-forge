@@ -6,10 +6,12 @@ import type {
   LdapConfigurationInput,
   LdapGroupMappingInput,
   LoginInput,
+  TransferProjectOwnerInput,
   UpdateRoleInput,
 } from "@autoforge/contracts";
 import {
   builtInRoleDefinitions,
+  countSystemAdministrators,
   DEFAULT_PROJECT_ID,
   DomainError,
   hasPermission,
@@ -78,6 +80,37 @@ export class IdentityAccessService {
 
   async setupRequired(): Promise<boolean> {
     return !(await this.repository.hasUsers());
+  }
+
+  async authorizeBootstrapConfiguration(bootstrapToken: string, requestId?: string): Promise<void> {
+    const allowed =
+      this.tokens.verifyBootstrapToken(bootstrapToken) && (await this.setupRequired());
+    if (!allowed) {
+      await this.audit({
+        action: "settings.platform.bootstrap",
+        resourceType: "platform_configuration",
+        result: "rejected",
+        requestId,
+        details: { reason: "invalid_or_initialized" },
+      });
+      throw new DomainError(
+        "AUTH_BOOTSTRAP_REJECTED",
+        "管理员引导令牌无效，或平台已经完成初始化。",
+      );
+    }
+  }
+
+  async recordBootstrapConfiguration(
+    input: { mode: "lite" | "full"; revision: number },
+    requestId?: string,
+  ): Promise<void> {
+    await this.audit({
+      action: "settings.platform.bootstrap",
+      resourceType: "platform_configuration",
+      result: "succeeded",
+      requestId,
+      details: { ...input, restartRequired: true },
+    });
   }
 
   async bootstrap(input: BootstrapAdminInput, requestId?: string): Promise<SessionResult> {
@@ -353,6 +386,22 @@ export class IdentityAccessService {
     return this.repository.listRoles();
   }
 
+  async recordPlatformConfigurationChange(
+    actor: AuthenticatedIdentity,
+    input: { mode: "lite" | "full"; revision: number },
+    requestId?: string,
+  ): Promise<void> {
+    this.authorize(actor, "settings.manage");
+    await this.audit({
+      actorId: actor.user.id,
+      action: "settings.platform.update",
+      resourceType: "platform_configuration",
+      result: "succeeded",
+      requestId,
+      details: { mode: input.mode, revision: input.revision, restartRequired: true },
+    });
+  }
+
   async createRole(actor: AuthenticatedIdentity, input: CreateRoleInput, requestId?: string) {
     this.authorize(actor, "role.manage");
     const permissions = validatedPermissions(input.permissions);
@@ -389,12 +438,16 @@ export class IdentityAccessService {
     if (existing.builtIn) {
       throw new DomainError("BUILT_IN_ROLE_IMMUTABLE", "内置角色不能修改。");
     }
+    if (input.active === false) {
+      await this.ensureSystemAdministratorsRemain({ roleId });
+    }
     const role = await this.repository.updateRole({
       id: roleId,
       ...(input.name ? { name: input.name } : {}),
       ...(input.description !== undefined ? { description: input.description } : {}),
       ...(input.scope ? { scope: input.scope } : {}),
       ...(input.permissions ? { permissions: validatedPermissions(input.permissions) } : {}),
+      ...(input.active !== undefined ? { active: input.active } : {}),
       updatedAt: this.now(),
     });
     await this.repository.revokeUserSessionsForRole(roleId, this.now());
@@ -405,7 +458,10 @@ export class IdentityAccessService {
       resourceId: role.id,
       result: "succeeded",
       requestId,
-      details: {},
+      details: {
+        ...(input.active !== undefined ? { active: input.active } : {}),
+        ...(input.permissions ? { permissionCount: input.permissions.length } : {}),
+      },
     });
     return role;
   }
@@ -441,6 +497,9 @@ export class IdentityAccessService {
     this.authorize(actor, "role.manage");
     await this.requiredUser(userId);
     const role = await this.requiredRole(roleId);
+    if (!role.active) {
+      throw new DomainError("ROLE_INACTIVE", "已停用的角色不能分配。");
+    }
     if (role.scope !== "system") {
       throw new DomainError("ROLE_SCOPE_INVALID", "项目角色不能分配为系统角色。");
     }
@@ -468,6 +527,9 @@ export class IdentityAccessService {
     this.authorize(actor, "project.manage", projectId);
     await this.requiredUser(userId);
     const role = await this.requiredRole(roleId);
+    if (!role.active) {
+      throw new DomainError("ROLE_INACTIVE", "已停用的角色不能分配。");
+    }
     if (role.scope !== "project") {
       throw new DomainError("ROLE_SCOPE_INVALID", "系统角色不能分配为项目角色。");
     }
@@ -499,6 +561,7 @@ export class IdentityAccessService {
     requestId?: string,
   ): Promise<void> {
     this.authorize(actor, "role.manage");
+    await this.ensureSystemAdministratorsRemain({ userId, roleId });
     if (!(await this.repository.removeSystemRole(userId, roleId, this.now()))) {
       throw new DomainError("ROLE_BINDING_NOT_FOUND", "指定的系统角色绑定不存在。");
     }
@@ -554,6 +617,7 @@ export class IdentityAccessService {
       id: this.ids.next(),
       name: input.name,
       slug: input.slug,
+      ownerUserId: actor.user.id,
       createdAt: this.now(),
     });
     await this.audit({
@@ -565,6 +629,35 @@ export class IdentityAccessService {
       result: "succeeded",
       requestId,
       details: { slug: project.slug },
+    });
+    return project;
+  }
+
+  async transferProjectOwner(
+    actor: AuthenticatedIdentity,
+    projectId: string,
+    input: TransferProjectOwnerInput,
+    requestId?: string,
+  ) {
+    this.authorize(actor, "project.manage", projectId);
+    const owner = await this.requiredUser(input.ownerUserId);
+    if (owner.status !== "active") {
+      throw new DomainError("PROJECT_OWNER_INACTIVE", "项目负责人必须是启用状态的用户。");
+    }
+    const project = await this.repository.transferProjectOwner({
+      projectId,
+      ownerUserId: owner.id,
+      updatedAt: this.now(),
+    });
+    await this.audit({
+      actorId: actor.user.id,
+      action: "project.transfer_owner",
+      resourceType: "project",
+      resourceId: projectId,
+      projectId,
+      result: "succeeded",
+      requestId,
+      details: { ownerUserId: owner.id },
     });
     return project;
   }
@@ -623,6 +716,7 @@ export class IdentityAccessService {
       operationTimeoutMs: input.operationTimeoutMs,
       pageSize: input.pageSize,
       maximumUsers: input.maximumUsers,
+      synchronizationIntervalMinutes: input.synchronizationIntervalMinutes,
       bindDn: input.bindDn,
       bindPasswordEncrypted,
       userBaseDn: input.userBaseDn,
@@ -665,6 +759,7 @@ export class IdentityAccessService {
       operationTimeoutMs: input.operationTimeoutMs,
       pageSize: input.pageSize,
       maximumUsers: input.maximumUsers,
+      synchronizationIntervalMinutes: input.synchronizationIntervalMinutes,
       bindDn: input.bindDn,
       bindPassword,
       userBaseDn: input.userBaseDn,
@@ -730,6 +825,14 @@ export class IdentityAccessService {
 
   async synchronizeLdap(actor: AuthenticatedIdentity, requestId?: string) {
     this.authorize(actor, "ldap.manage");
+    return this.performLdapSynchronization(actor.user.id, requestId);
+  }
+
+  async synchronizeLdapAsSystem() {
+    return this.performLdapSynchronization();
+  }
+
+  private async performLdapSynchronization(actorId?: string, requestId?: string) {
     const configuration = await this.repository.getLdapConfiguration();
     if (!configuration?.enabled) {
       throw new DomainError("LDAP_DISABLED", "LDAP 未启用，不能执行同步。");
@@ -764,7 +867,7 @@ export class IdentityAccessService {
       recordedAt: synchronizedAt,
     });
     await this.audit({
-      actorId: actor.user.id,
+      ...(actorId ? { actorId } : {}),
       action: "ldap.synchronize",
       resourceType: "ldap_configuration",
       resourceId: "default",
@@ -1081,6 +1184,19 @@ export class IdentityAccessService {
     const role = await this.repository.findRole(roleId);
     if (!role) throw new DomainError("ROLE_NOT_FOUND", "指定角色不存在。");
     return role;
+  }
+
+  private async ensureSystemAdministratorsRemain(exclusion: {
+    userId?: string;
+    roleId?: string;
+  }): Promise<void> {
+    const bindings = await this.repository.listSystemRoleBindingsForActiveUsers();
+    if (countSystemAdministrators(bindings, exclusion) === 0) {
+      throw new DomainError(
+        "LAST_ADMIN_REQUIRED",
+        "该操作会使系统失去最后一位可管理用户与角色的管理员。",
+      );
+    }
   }
 
   private async audit(input: AuditInput): Promise<void> {

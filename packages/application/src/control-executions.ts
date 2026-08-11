@@ -20,6 +20,7 @@ import type {
   SecretCipherPort,
 } from "./ports";
 import { executionSecretPurpose } from "./manage-execution-environments";
+import { assertRunnerAuthenticated } from "./manage-runners";
 
 const LEASE_DURATION_MS = 45_000;
 const RECOVERY_SCAN_LIMIT = 100;
@@ -238,6 +239,8 @@ export class ExecutionControlService {
     afterSequence: number;
     limit: number;
     query?: string;
+    recordedAfter?: string;
+    recordedBefore?: string;
     projectIds?: readonly string[];
   }) {
     await this.assertAttemptScope(input.attemptId, input.projectIds);
@@ -261,6 +264,7 @@ export class ExecutionControlService {
     input: DeclareArtifactsInput,
   ) {
     await this.authenticateRunner(runnerId, credential);
+    const projectId = await this.requiredAttemptProjectId(attemptId);
     const artifacts = await this.executions.declareArtifacts({
       runnerId,
       attemptId,
@@ -282,6 +286,7 @@ export class ExecutionControlService {
             };
           }
           const target = await this.objectStore.prepareArtifactUpload({
+            projectId,
             attemptId,
             artifactId: artifact.artifactId,
             sha256: artifact.sha256,
@@ -324,7 +329,9 @@ export class ExecutionControlService {
       now: this.clock.now().toISOString(),
     });
     if (declaration.status === "uploaded" && declaration.objectKey) return declaration;
+    const projectId = await this.requiredAttemptProjectId(input.attemptId);
     const stored = await this.objectStore.putArtifact({
+      projectId,
       attemptId: input.attemptId,
       artifactId: input.artifactId,
       sha256: declaration.sha256,
@@ -357,7 +364,9 @@ export class ExecutionControlService {
       now: this.clock.now().toISOString(),
     });
     if (declaration.status === "uploaded" && declaration.objectKey) return declaration;
+    const projectId = await this.requiredAttemptProjectId(input.attemptId);
     const stored = await this.objectStore.verifyArtifactUpload({
+      projectId,
       attemptId: input.attemptId,
       artifactId: input.artifactId,
       sha256: declaration.sha256,
@@ -387,6 +396,12 @@ export class ExecutionControlService {
     if (!projectId || !projectIds.includes(projectId)) {
       throw new DomainError("RUN_ATTEMPT_NOT_FOUND", "指定的执行尝试不存在。");
     }
+  }
+
+  private async requiredAttemptProjectId(attemptId: string): Promise<string> {
+    const projectId = await this.executions.resolveAttemptProjectId(attemptId);
+    if (!projectId) throw new DomainError("RUN_ATTEMPT_NOT_FOUND", "指定的执行尝试不存在。");
+    return projectId;
   }
 
   private decryptSecrets(
@@ -444,17 +459,15 @@ export class ExecutionControlService {
 
   private async authenticateRunner(runnerId: string, credential: string) {
     if (!credential) throw new DomainError("RUNNER_AUTH_REQUIRED", "缺少执行机凭据。");
-    const runner = await this.runners.findByCredentialHash(this.credentials.hash(credential));
-    if (!runner || runner.id !== runnerId) {
-      throw new DomainError("RUNNER_AUTH_REJECTED", "执行机凭据无效。");
-    }
-    if (runner.state === "disabled") {
-      throw new DomainError("RUNNER_DISABLED", "执行机已被禁用。");
-    }
-    if (runner.protocolVersion !== 1) {
+    const runner = await this.runners.findByCredentialHash(
+      this.credentials.hash(credential),
+      this.clock.now().toISOString(),
+    );
+    const authenticated = assertRunnerAuthenticated(runner, runnerId);
+    if (authenticated.protocolVersion !== 1) {
       throw new DomainError("RUNNER_PROTOCOL_UNSUPPORTED", "Runner Protocol 版本不兼容。");
     }
-    return runner;
+    return authenticated;
   }
 }
 

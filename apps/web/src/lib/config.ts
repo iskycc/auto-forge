@@ -1,81 +1,38 @@
-import { existsSync } from "node:fs";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { resolve } from "node:path";
 
-import { z } from "zod";
-
-const environmentSchema = z
-  .object({
-    AUTOFORGE_MODE: z.enum(["lite", "full"]).default("lite"),
-    AUTOFORGE_DATA_DIR: z.string().min(1).optional(),
-    AUTOFORGE_MAX_JAR_BYTES: z.coerce
-      .number()
-      .int()
-      .min(1_048_576)
-      .max(268_435_456)
-      .default(33_554_432),
-    AUTOFORGE_RUNNER_BOOTSTRAP_TOKEN: z.string().min(32).optional(),
-    AUTOFORGE_RUNNER_CLAIM_RATE_LIMIT_PER_MINUTE: z.coerce
-      .number()
-      .int()
-      .min(1)
-      .max(10_000)
-      .default(120),
-    AUTOFORGE_ADMIN_BOOTSTRAP_TOKEN: z.string().min(32).optional(),
-    AUTOFORGE_MASTER_KEY: z.string().min(40).max(128).optional(),
-    AUTOFORGE_SESSION_TTL_HOURS: z.coerce.number().int().min(1).max(168).default(12),
-    AUTOFORGE_TERMINAL_ACCESS_TOKEN: z.string().min(32).optional(),
-    AUTOFORGE_SCHEDULER_MAX_CPU_PERCENT: z.coerce.number().min(1).max(100).default(85),
-    AUTOFORGE_SCHEDULER_MAX_MEMORY_PERCENT: z.coerce.number().min(1).max(100).default(85),
-    AUTOFORGE_SCHEDULER_MAX_LOAD_PER_CPU: z.coerce.number().min(0.1).max(100).default(1),
-    AUTOFORGE_SCHEDULER_METRICS_MAX_AGE_SECONDS: z.coerce
-      .number()
-      .int()
-      .min(15)
-      .max(300)
-      .default(45),
-    AUTOFORGE_DATABASE_URL: z.string().min(1).optional(),
-    AUTOFORGE_NATS_SERVERS: z.string().min(1).optional(),
-    AUTOFORGE_REDIS_URL: z.url().optional(),
-    AUTOFORGE_MINIO_ENDPOINT: z.url().optional(),
-    AUTOFORGE_MINIO_ACCESS_KEY: z.string().min(1).optional(),
-    AUTOFORGE_MINIO_SECRET_KEY: z.string().min(1).optional(),
-    AUTOFORGE_MINIO_BUCKET: z.string().min(3).max(63).optional(),
-    AUTOFORGE_MINIO_REGION: z.string().min(1).optional(),
-  })
-  .superRefine((value, context) => {
-    if (value.AUTOFORGE_MODE !== "full") return;
-    for (const key of [
-      "AUTOFORGE_DATABASE_URL",
-      "AUTOFORGE_NATS_SERVERS",
-      "AUTOFORGE_REDIS_URL",
-      "AUTOFORGE_MINIO_ENDPOINT",
-      "AUTOFORGE_MINIO_ACCESS_KEY",
-      "AUTOFORGE_MINIO_SECRET_KEY",
-      "AUTOFORGE_MINIO_BUCKET",
-    ] as const) {
-      if (!value[key])
-        context.addIssue({
-          code: "custom",
-          path: [key],
-          message: `${key} is required in full mode`,
-        });
-    }
-  });
+import {
+  PlatformConfigurationStore,
+  loadPlatformConfiguration,
+  type LoadPlatformConfigurationOptions,
+} from "@autoforge/platform-config";
 
 type CommonConfig = {
   workspaceRoot: string;
+  dataDirectory: string;
+  configurationFile: string;
+  configurationRevision: number;
   maxJarBytes: number;
-  runnerBootstrapToken?: string;
-  adminBootstrapToken?: string;
-  masterKey?: string;
+  testNgTargetJavaVersion: number;
+  runnerBootstrapToken: string;
+  adminBootstrapToken: string;
+  masterKey: string;
   sessionTtlHours: number;
-  terminalAccessToken?: string;
+  terminalAccessToken: string;
   runnerClaimRateLimitPerMinute: number;
+  publicDashboardRefreshSeconds: number;
+  metricsEnabled: boolean;
+  web: {
+    hostname: string;
+    port: number;
+    publicBaseUrl?: string;
+  };
   scheduler: {
     maximumCpuUtilizationPercent: number;
     maximumMemoryUtilizationPercent: number;
     maximumLoadPerCpu: number;
     metricsMaximumAgeSeconds: number;
+    projectMaximumConcurrency: number;
+    priorityAgingIntervalMinutes: number;
   };
 };
 
@@ -83,7 +40,6 @@ export type AppConfig = CommonConfig &
   (
     | {
         mode: "lite";
-        dataDirectory: string;
         databasePath: string;
         migrationsFolder: string;
       }
@@ -100,101 +56,85 @@ export type AppConfig = CommonConfig &
           accessKey: string;
           secretKey: string;
           bucket: string;
-          region?: string;
+          region: string;
         };
       }
   );
 
-function findWorkspaceRoot(startDirectory: string): string {
-  let current = resolve(startDirectory);
-  for (;;) {
-    if (existsSync(join(current, "pnpm-workspace.yaml"))) return current;
-    const parent = dirname(current);
-    if (parent === current) {
-      throw new Error("无法定位包含 pnpm-workspace.yaml 的 AutoForge 工作区根目录。");
-    }
-    current = parent;
-  }
-}
-
-export function loadAppConfig(environment: NodeJS.ProcessEnv = process.env): AppConfig {
-  const parsed = environmentSchema.parse(environment);
-  const workspaceRoot = findWorkspaceRoot(process.cwd());
-  const common = {
-    workspaceRoot,
-    maxJarBytes: parsed.AUTOFORGE_MAX_JAR_BYTES,
-    runnerClaimRateLimitPerMinute: parsed.AUTOFORGE_RUNNER_CLAIM_RATE_LIMIT_PER_MINUTE,
-    ...(parsed.AUTOFORGE_RUNNER_BOOTSTRAP_TOKEN
-      ? { runnerBootstrapToken: parsed.AUTOFORGE_RUNNER_BOOTSTRAP_TOKEN }
-      : {}),
-    ...(parsed.AUTOFORGE_ADMIN_BOOTSTRAP_TOKEN
-      ? { adminBootstrapToken: parsed.AUTOFORGE_ADMIN_BOOTSTRAP_TOKEN }
-      : {}),
-    ...(parsed.AUTOFORGE_MASTER_KEY ? { masterKey: parsed.AUTOFORGE_MASTER_KEY } : {}),
-    sessionTtlHours: parsed.AUTOFORGE_SESSION_TTL_HOURS,
-    ...(parsed.AUTOFORGE_TERMINAL_ACCESS_TOKEN
-      ? { terminalAccessToken: parsed.AUTOFORGE_TERMINAL_ACCESS_TOKEN }
-      : {}),
-    scheduler: {
-      maximumCpuUtilizationPercent: parsed.AUTOFORGE_SCHEDULER_MAX_CPU_PERCENT,
-      maximumMemoryUtilizationPercent: parsed.AUTOFORGE_SCHEDULER_MAX_MEMORY_PERCENT,
-      maximumLoadPerCpu: parsed.AUTOFORGE_SCHEDULER_MAX_LOAD_PER_CPU,
-      metricsMaximumAgeSeconds: parsed.AUTOFORGE_SCHEDULER_METRICS_MAX_AGE_SECONDS,
+export function loadAppConfig(options: LoadPlatformConfigurationOptions = {}): AppConfig {
+  const runtime = loadPlatformConfiguration(options);
+  const { persisted } = runtime;
+  const common: CommonConfig = {
+    workspaceRoot: runtime.workspaceRoot,
+    dataDirectory: runtime.paths.dataDirectory,
+    configurationFile: runtime.paths.configurationFile,
+    configurationRevision: persisted.revision,
+    maxJarBytes: persisted.limits.maxJarBytes,
+    testNgTargetJavaVersion: persisted.limits.testNgTargetJavaVersion,
+    runnerClaimRateLimitPerMinute: persisted.limits.runnerClaimRateLimitPerMinute,
+    runnerBootstrapToken: persisted.secrets.runnerBootstrapToken,
+    adminBootstrapToken: persisted.secrets.adminBootstrapToken,
+    masterKey: persisted.secrets.masterKey,
+    sessionTtlHours: persisted.limits.sessionTtlHours,
+    terminalAccessToken: persisted.secrets.terminalAccessToken,
+    publicDashboardRefreshSeconds: persisted.web.publicDashboardRefreshSeconds,
+    metricsEnabled: persisted.worker.metricsEnabled,
+    web: {
+      hostname: persisted.web.hostname,
+      port: persisted.web.port,
+      ...(persisted.web.publicBaseUrl ? { publicBaseUrl: persisted.web.publicBaseUrl } : {}),
     },
+    scheduler: { ...persisted.scheduler },
   };
-  if (parsed.AUTOFORGE_MODE === "full") {
-    const endpoint = new URL(parsed.AUTOFORGE_MINIO_ENDPOINT!);
-    if (endpoint.protocol !== "http:" && endpoint.protocol !== "https:") {
-      throw new Error("AUTOFORGE_MINIO_ENDPOINT 必须使用 HTTP 或 HTTPS。");
-    }
-    if (endpoint.pathname !== "/" || endpoint.search || endpoint.hash) {
-      throw new Error("AUTOFORGE_MINIO_ENDPOINT 只能包含协议、主机和端口。");
-    }
+  if (persisted.mode === "lite") {
+    if (!runtime.databasePath) throw new Error("Lite 模式缺少 SQLite 数据库路径。");
     return {
       ...common,
-      mode: "full",
-      databaseUrl: parsed.AUTOFORGE_DATABASE_URL!,
-      natsServers: parseServerList(parsed.AUTOFORGE_NATS_SERVERS!),
-      redisUrl: validatedRedisUrl(parsed.AUTOFORGE_REDIS_URL!),
-      migrationsFolder: join(workspaceRoot, "packages", "db", "drizzle", "postgresql"),
-      minio: {
-        endPoint: endpoint.hostname,
-        ...(endpoint.port ? { port: Number(endpoint.port) } : {}),
-        useSSL: endpoint.protocol === "https:",
-        accessKey: parsed.AUTOFORGE_MINIO_ACCESS_KEY!,
-        secretKey: parsed.AUTOFORGE_MINIO_SECRET_KEY!,
-        bucket: parsed.AUTOFORGE_MINIO_BUCKET!,
-        ...(parsed.AUTOFORGE_MINIO_REGION ? { region: parsed.AUTOFORGE_MINIO_REGION } : {}),
-      },
+      mode: "lite",
+      databasePath: runtime.databasePath,
+      migrationsFolder: runtime.migrationsFolder,
     };
   }
-  const configuredDataDirectory = parsed.AUTOFORGE_DATA_DIR ?? "./data";
-  const dataDirectory = isAbsolute(configuredDataDirectory)
-    ? configuredDataDirectory
-    : resolve(workspaceRoot, configuredDataDirectory);
-
+  if (!persisted.full) throw new Error("Full 模式缺少基础设施配置。");
+  const endpoint = validatedHttpEndpoint(persisted.full.minio.endpoint);
   return {
     ...common,
-    mode: "lite",
-    dataDirectory,
-    databasePath: join(dataDirectory, "db", "autoforge.sqlite"),
-    migrationsFolder: join(workspaceRoot, "packages", "db", "drizzle", "sqlite"),
+    mode: "full",
+    databaseUrl: persisted.full.databaseUrl,
+    natsServers: [...persisted.full.natsServers],
+    redisUrl: validatedRedisUrl(persisted.full.redisUrl),
+    migrationsFolder: runtime.migrationsFolder,
+    minio: {
+      endPoint: endpoint.hostname,
+      ...(endpoint.port ? { port: Number(endpoint.port) } : {}),
+      useSSL: endpoint.protocol === "https:",
+      accessKey: persisted.full.minio.accessKey,
+      secretKey: persisted.full.minio.secretKey,
+      bucket: persisted.full.minio.bucket,
+      region: persisted.full.minio.region,
+    },
   };
 }
 
-function parseServerList(value: string): string[] {
-  const servers = value
-    .split(",")
-    .map((server) => server.trim())
-    .filter(Boolean);
-  if (servers.length === 0) throw new Error("AUTOFORGE_NATS_SERVERS 至少需要一个地址。");
-  return servers;
+export function appConfigurationStore(config: Pick<AppConfig, "dataDirectory">) {
+  return new PlatformConfigurationStore(resolve(config.dataDirectory));
+}
+
+function validatedHttpEndpoint(value: string): URL {
+  const endpoint = new URL(value);
+  if (endpoint.protocol !== "http:" && endpoint.protocol !== "https:") {
+    throw new Error("MinIO 地址必须使用 HTTP 或 HTTPS。");
+  }
+  if (endpoint.pathname !== "/" || endpoint.search || endpoint.hash) {
+    throw new Error("MinIO 地址只能包含协议、主机和端口。");
+  }
+  return endpoint;
 }
 
 function validatedRedisUrl(value: string): string {
   const url = new URL(value);
   if (url.protocol !== "redis:" && url.protocol !== "rediss:") {
-    throw new Error("AUTOFORGE_REDIS_URL 必须使用 redis 或 rediss 协议。");
+    throw new Error("Redis 地址必须使用 redis 或 rediss 协议。");
   }
   return url.toString();
 }

@@ -31,7 +31,7 @@ func Run(ctx context.Context, configuration config.Config, info buildinfo.Info, 
 	interval := 15 * time.Second
 	if !exists {
 		if configuration.BootstrapToken == "" {
-			return errors.New("runner is not registered and AUTOFORGE_AGENT_BOOTSTRAP_TOKEN is missing")
+			return errors.New("runner is not registered and the bootstrap token is missing")
 		}
 		identity, interval, err = client.Register(ctx, configuration, info)
 		if err != nil {
@@ -41,9 +41,22 @@ func Run(ctx context.Context, configuration config.Config, info buildinfo.Info, 
 			return err
 		}
 		_ = os.Unsetenv("AUTOFORGE_AGENT_BOOTSTRAP_TOKEN")
+		if configuration.ConfigurationFile != "" {
+			if err := config.ConsumeBootstrapToken(configuration.ConfigurationFile); err != nil {
+				return fmt.Errorf("consume bootstrap token after registration: %w", err)
+			}
+		}
+		configuration.BootstrapToken = ""
+		configuration.HasBootstrap = false
 		fmt.Fprintf(diagnostics, "runner registered: %s\n", identity.RunnerID)
 	} else if identity.ServerURL != configuration.ServerURL.String() {
 		return errors.New("stored runner identity belongs to a different control-plane URL")
+	} else if configuration.ConfigurationFile != "" && configuration.HasBootstrap {
+		if err := config.ConsumeBootstrapToken(configuration.ConfigurationFile); err != nil {
+			return fmt.Errorf("consume bootstrap token from registered runner: %w", err)
+		}
+		configuration.BootstrapToken = ""
+		configuration.HasBootstrap = false
 	}
 
 	var terminalConnector *terminalConnector
@@ -87,6 +100,18 @@ func Run(ctx context.Context, configuration config.Config, info buildinfo.Info, 
 			if response.Draining {
 				supervisor.BeginDrain()
 			}
+			if response.RotateCredential {
+				rotated, rotationErr := client.RotateCredential(ctx, identity)
+				if rotationErr != nil {
+					fmt.Fprintf(diagnostics, "credential rotation failed: %v\n", rotationErr)
+				} else if persistErr := persistRotatedIdentity(ctx, store, rotated, diagnostics); persistErr != nil {
+					return persistErr
+				} else {
+					identity = rotated
+					supervisor.UpdateIdentity(rotated)
+					fmt.Fprintln(diagnostics, "runner credential rotated")
+				}
+			}
 		}
 		timer := time.NewTimer(interval)
 		select {
@@ -97,5 +122,26 @@ func Run(ctx context.Context, configuration config.Config, info buildinfo.Info, 
 			return nil
 		case <-timer.C:
 		}
+	}
+}
+
+func persistRotatedIdentity(ctx context.Context, store IdentityStore, identity Identity, diagnostics io.Writer) error {
+	backoff := time.Second
+	for {
+		if err := store.Save(identity); err == nil {
+			return nil
+		} else {
+			fmt.Fprintf(diagnostics, "persist rotated runner identity: %v; retrying\n", err)
+		}
+		timer := time.NewTimer(backoff)
+		select {
+		case <-ctx.Done():
+			if !timer.Stop() {
+				<-timer.C
+			}
+			return fmt.Errorf("persist rotated runner identity: %w", ctx.Err())
+		case <-timer.C:
+		}
+		backoff = min(backoff*2, 30*time.Second)
 	}
 }

@@ -7,6 +7,8 @@ import type {
   ExecutionSpec,
   LogChunk,
   JarInspection,
+  JarImportJob,
+  JarImportResult,
   JobEnvelope,
   ObjectEntry,
   ReconcileAttemptsInput,
@@ -14,6 +16,18 @@ import type {
   RenewLeaseResponse,
   UploadLogChunksResponse,
   TestNgClassCandidate,
+  AnalyticsFilter,
+  AnalyticsExportJob,
+  AnalyticsSummary,
+  ApiToken,
+  CaseSuiteSchedule,
+  GlobalSearchResult,
+  LdapSyncJob,
+  Notification,
+  RetentionCategory,
+  RetentionPolicy,
+  RetentionPreview,
+  ServiceAccount,
 } from "@autoforge/contracts";
 import type {
   AuditEvent,
@@ -21,8 +35,13 @@ import type {
   BuiltInRoleDefinition,
   CaseDefinitionWithMethods,
   CaseSource,
+  CaseSourceComparison,
+  CaseSourceSnapshotEntry,
   CaseSuite,
   CaseSuiteDetails,
+  CaseSuiteExecutionPolicy,
+  CaseVersion,
+  CleanupJob,
   ExecutionEnvironment,
   ExecutionEnvironmentDetails,
   ExecutionEnvironmentReference,
@@ -40,9 +59,11 @@ import type {
   RoleScope,
   RunBatch,
   RunBatchDetails,
+  RunBatchExecutionPolicy,
   Runner,
   SchedulingDecision,
   SchedulingThresholds,
+  SystemRoleBindingView,
   User,
   UserSession,
   UserStatus,
@@ -57,6 +78,7 @@ export type StoredLdapConfiguration = {
   operationTimeoutMs: number;
   pageSize: number;
   maximumUsers: number;
+  synchronizationIntervalMinutes: number;
   bindDn: string;
   bindPasswordEncrypted?: string;
   userBaseDn: string;
@@ -182,6 +204,7 @@ export interface IdentityAccessRepository {
     description?: string;
     scope?: RoleScope;
     permissions?: Permission[];
+    active?: boolean;
     updatedAt: string;
   }): Promise<Role>;
   deleteRole(roleId: string): Promise<boolean>;
@@ -206,9 +229,16 @@ export interface IdentityAccessRepository {
     id: string;
     name: string;
     slug: string;
+    ownerUserId?: string;
     createdAt: string;
   }): Promise<Project>;
   archiveProject(projectId: string, archivedAt: string): Promise<Project>;
+  transferProjectOwner(input: {
+    projectId: string;
+    ownerUserId: string;
+    updatedAt: string;
+  }): Promise<Project>;
+  listSystemRoleBindingsForActiveUsers(): Promise<SystemRoleBindingView[]>;
   getLdapConfiguration(): Promise<StoredLdapConfiguration | null>;
   saveLdapConfiguration(
     input: Omit<StoredLdapConfiguration, "createdAt" | "updatedAt" | "version"> & {
@@ -352,6 +382,8 @@ export interface ExecutionControlRepository {
     afterSequence: number;
     limit: number;
     query?: string;
+    recordedAfter?: string;
+    recordedBefore?: string;
   }): Promise<{
     items: LogChunk[];
     acknowledgedSequence: number;
@@ -460,6 +492,7 @@ export type ArtifactUploadTarget =
   { kind: "control-plane" } | { kind: "direct"; uploadUrl: string; objectKey: string };
 
 export type ArtifactObjectIdentity = {
+  projectId: string;
   attemptId: string;
   artifactId: string;
   sha256: string;
@@ -468,8 +501,16 @@ export type ArtifactObjectIdentity = {
 };
 
 export interface JarObjectStorePort {
-  putJar(sha256: string, content: Uint8Array): Promise<ObjectWriteResult>;
+  putJar(projectId: string, sha256: string, content: Uint8Array): Promise<ObjectWriteResult>;
+  putObject(input: {
+    objectKey: string;
+    sha256: string;
+    sizeBytes: number;
+    mediaType: string;
+    content: AsyncIterable<Uint8Array>;
+  }): Promise<ObjectWriteResult>;
   putArtifact(input: {
+    projectId: string;
     attemptId: string;
     artifactId: string;
     sha256: string;
@@ -502,6 +543,8 @@ export type ImportCaseRecord = {
 
 export type ImportCatalogRecord = {
   sourceId: string;
+  projectId?: string;
+  importedBy?: string;
   objectKey: string;
   displayName: string;
   importedAt: string;
@@ -516,6 +559,7 @@ export type ExistingSource = {
 };
 
 export type CaseListQuery = {
+  projectIds?: readonly string[];
   query?: string;
   cursor?: string;
   limit: number;
@@ -533,20 +577,153 @@ export type DashboardSummary = {
   enabledMethodCount: number;
 };
 
+export type PublicPlatformStatisticsSnapshot = DashboardSummary & {
+  runnerCount: number;
+  onlineRunnerCount: number;
+  busyRunnerCount: number;
+  activeBatchCount: number;
+  completedBatchCount: number;
+  totalRunCount: number;
+  succeededRunCount: number;
+  failedRunCount: number;
+};
+
+export interface PlatformStatisticsRepository {
+  read(onlineSince: string): Promise<PublicPlatformStatisticsSnapshot>;
+}
+
 export interface CaseCatalogRepository {
-  findSourceBySha256(sha256: string): Promise<ExistingSource | null>;
+  createJarImportJob(record: {
+    job: JarImportJob;
+    objectKey: string;
+    idempotencyKey: string;
+    dispatchJob: JobEnvelope;
+  }): Promise<JarImportJob>;
+  getJarImportJob(jobId: string, projectIds?: readonly string[]): Promise<JarImportJob | null>;
+  claimJarImportJob(input: {
+    jobId: string;
+    startedAt: string;
+  }): Promise<{ job: JarImportJob; objectKey: string } | null>;
+  updateJarImportJob(input: {
+    jobId: string;
+    status: JarImportJob["status"];
+    progressPercent: number;
+    result?: JarImportResult;
+    errorCode?: string;
+    errorSummary?: string;
+    updatedAt: string;
+    finishedAt?: string;
+  }): Promise<JarImportJob>;
+  requestJarImportCancellation(input: {
+    jobId: string;
+    projectIds?: readonly string[];
+    updatedAt: string;
+  }): Promise<JarImportJob>;
+  retryJarImportJob(input: {
+    jobId: string;
+    projectIds?: readonly string[];
+    dispatchJob: JobEnvelope;
+    updatedAt: string;
+  }): Promise<JarImportJob>;
+  findSourceBySha256(sha256: string, projectId?: string): Promise<ExistingSource | null>;
   importCatalog(record: ImportCatalogRecord): Promise<void>;
   listCases(query: CaseListQuery): Promise<CaseListPage>;
-  findExistingCaseIds(caseDefinitionIds: string[]): Promise<string[]>;
-  listRecentSources(limit: number): Promise<CaseSource[]>;
-  listSources(limit: number): Promise<CaseSource[]>;
-  getSource(sourceId: string): Promise<{ source: CaseSource; inspection: JarInspection } | null>;
-  setAuthoritativeSource(sourceId: string): Promise<CaseSource>;
-  getDashboardSummary(): Promise<DashboardSummary>;
+  getCaseDefinition(
+    caseDefinitionId: string,
+    projectIds?: readonly string[],
+  ): Promise<CaseDefinitionWithMethods | null>;
+  updateCaseDefinition(input: {
+    caseDefinitionId: string;
+    expectedRevision: number;
+    displayName?: string;
+    description?: string;
+    tags?: string[];
+    enabled?: boolean;
+    archived?: boolean;
+    actorId: string;
+    updatedAt: string;
+  }): Promise<CaseDefinitionWithMethods>;
+  listCaseVersions(caseDefinitionId: string, limit: number): Promise<CaseVersion[]>;
+  getCaseVersion(caseDefinitionId: string, version: number): Promise<CaseVersion | null>;
+  restoreCaseVersion(input: {
+    caseDefinitionId: string;
+    expectedRevision: number;
+    versionId: string;
+    version: number;
+    snapshot: TestNgClassCandidate;
+    changeReason: string;
+    methodIds: string[];
+    actorId: string;
+    restoredAt: string;
+  }): Promise<CaseDefinitionWithMethods>;
+  findExistingCaseIds(caseDefinitionIds: string[], projectId?: string): Promise<string[]>;
+  listRecentSources(limit: number, projectIds?: readonly string[]): Promise<CaseSource[]>;
+  listSources(limit: number, projectIds?: readonly string[]): Promise<CaseSource[]>;
+  getSource(
+    sourceId: string,
+    projectIds?: readonly string[],
+  ): Promise<{ source: CaseSource; inspection: JarInspection } | null>;
+  setAuthoritativeSource(sourceId: string, projectId?: string): Promise<CaseSource>;
+  getDashboardSummary(projectIds?: readonly string[]): Promise<DashboardSummary>;
+  getAuthoritativeSource(projectId: string): Promise<CaseSource | null>;
+  // 返回来源当前版本用例的 (className, snapshotJson)，用于来源间目录对比。
+  listSourceCaseSnapshots(
+    sourceId: string,
+  ): Promise<Array<{ caseDefinitionId: string; className: string; snapshotJson: string }>>;
+  createSourceComparison(record: CreateSourceComparisonRecord): Promise<CaseSourceComparison>;
+  getSourceComparison(comparisonId: string): Promise<CaseSourceComparison | null>;
+  // 带修订号条件切换权威来源；冲突抛 CASE_SOURCE_REVISION_CONFLICT / CASE_SOURCE_NOT_FOUND。
+  promoteAuthoritativeSource(input: {
+    sourceId: string;
+    expectedRevision: number;
+    updatedAt: string;
+  }): Promise<CaseSource>;
+  updateSourceLifecycle(input: {
+    sourceId: string;
+    expectedRevision: number;
+    lifecycleStatus: "active" | "archived" | "deleting";
+    updatedAt: string;
+  }): Promise<CaseSource>;
+  countSourceReferences(
+    sourceId: string,
+  ): Promise<{ caseDefinitions: number; executionRuns: number }>;
+  // 同事务把来源置为 deleting 并写入对象清理任务；修订冲突同上。
+  enqueueSourceDeletion(input: {
+    sourceId: string;
+    expectedRevision: number;
+    cleanupJobId: string;
+    objectKey: string;
+    availableAt: string;
+    updatedAt: string;
+  }): Promise<CaseSource>;
+  getCleanupJob(cleanupJobId: string): Promise<CleanupJob | null>;
+  completeCleanupJob(input: {
+    id: string;
+    status: "succeeded" | "failed";
+    attemptCount: number;
+    errorSummary?: string;
+    finishedAt: string;
+  }): Promise<void>;
 }
+
+export type CreateSourceComparisonRecord = {
+  id: string;
+  projectId: string;
+  currentSourceId?: string;
+  candidateSourceId: string;
+  added: CaseSourceSnapshotEntry[];
+  changed: CaseSourceSnapshotEntry[];
+  removed: CaseSourceSnapshotEntry[];
+  conflicts: CaseSourceSnapshotEntry[];
+  truncated: boolean;
+  createdBy?: string;
+  createdAt: string;
+};
 
 export type CreateCaseSuiteRecord = {
   id: string;
+  projectId?: string;
+  actorId?: string;
   name: string;
   description?: string;
   createdAt: string;
@@ -554,19 +731,55 @@ export type CreateCaseSuiteRecord = {
 
 export interface CaseSuiteRepository {
   create(record: CreateCaseSuiteRecord): Promise<CaseSuite>;
-  list(limit: number): Promise<CaseSuite[]>;
-  get(suiteId: string): Promise<CaseSuiteDetails | null>;
+  list(limit: number, projectIds?: readonly string[]): Promise<CaseSuite[]>;
+  get(suiteId: string, projectIds?: readonly string[]): Promise<CaseSuiteDetails | null>;
+  updateSuite(input: UpdateCaseSuiteRecord): Promise<CaseSuiteDetails>;
+  copySuite(input: CopyCaseSuiteRecord): Promise<CaseSuiteDetails>;
   addCases(input: {
     suiteId: string;
     items: Array<{ id: string; caseDefinitionId: string }>;
+    versionId: string;
+    actorId?: string;
     updatedAt: string;
   }): Promise<CaseSuiteDetails>;
   removeCase(input: {
     suiteId: string;
     caseDefinitionId: string;
+    versionId: string;
+    actorId?: string;
     updatedAt: string;
   }): Promise<CaseSuiteDetails>;
 }
+
+export type UpdateCaseSuiteRecord = {
+  suiteId: string;
+  expectedRevision: number;
+  // versionId 是新 case_suite_versions 行的 ID，由应用层生成。
+  versionId: string;
+  changeReason: string;
+  actorId?: string;
+  updatedAt: string;
+  name?: string;
+  // undefined 保持不变，null 清空描述。
+  description?: string | null;
+  enabled?: boolean;
+  archived?: boolean;
+  // policy 必须是与现有策略合并后的完整策略。
+  policy?: CaseSuiteExecutionPolicy;
+};
+
+export type CopyCaseSuiteRecord = {
+  id: string;
+  projectId?: string;
+  name: string;
+  description?: string;
+  // 复制继承源任务的完整策略与用例清单；ID 均由应用层生成。
+  policy: CaseSuiteExecutionPolicy;
+  items: Array<{ id: string; caseDefinitionId: string }>;
+  versionId: string;
+  actorId?: string;
+  createdAt: string;
+};
 
 export type RegisterRunnerRecord = {
   id: string;
@@ -586,7 +799,7 @@ export type RegisterRunnerRecord = {
 
 export interface RunnerRepository {
   register(record: RegisterRunnerRecord): Promise<Runner | null>;
-  findByCredentialHash(credentialHash: string): Promise<Runner | null>;
+  findByCredentialHash(credentialHash: string, now: string): Promise<Runner | null>;
   heartbeat(input: {
     runnerId: string;
     labels: string[];
@@ -611,6 +824,15 @@ export interface RunnerRepository {
     state: "active" | "draining" | "disabled";
     updatedAt: string;
   }): Promise<Runner>;
+  requestCredentialRotation(input: { runnerId: string; requestedAt: string }): Promise<Runner>;
+  rotateCredential(input: {
+    runnerId: string;
+    credentialHash: string;
+    previousCredentialValidUntil: string;
+    rotatedAt: string;
+  }): Promise<Runner>;
+  revokeCredential(input: { runnerId: string; revokedAt: string }): Promise<Runner>;
+  deregister(input: { runnerId: string; deregisteredAt: string }): Promise<Runner>;
 }
 
 export type Clock = {
@@ -623,6 +845,7 @@ export type IdGenerator = {
 
 export interface RunnerCredentialPort {
   issue(): string;
+  issueBootstrapToken(): string;
   hash(value: string): string;
   verifyBootstrapToken(value: string): boolean;
 }
@@ -796,6 +1019,7 @@ export type CreateRunBatchRecord = {
   suiteName: string;
   suiteVersion: number;
   retryLimit: number;
+  priority?: number;
   queueTimeoutMs?: number;
   claimTimeoutMs?: number;
   executionTimeoutMs?: number;
@@ -803,12 +1027,15 @@ export type CreateRunBatchRecord = {
   environmentVariables: ExecutionEnvironmentVariable[];
   secretBindings?: ExecutionEnvironmentSecretBinding[];
   runnerIds: string[];
+  // 创建时固化的执行策略快照；缺省保持历史行为（不限并发、内置标签与默认产物规则）。
+  policy?: RunBatchExecutionPolicy;
   runs: Array<{
     id: string;
     caseDefinitionId: string;
     caseVersion: number;
     displayName: string;
     className: string;
+    parameters?: Record<string, string>;
   }>;
   dispatchJob?: JobEnvelope;
   createdAt: string;
@@ -818,11 +1045,13 @@ export type SchedulingSnapshot = {
   batch: RunBatch;
   queuedRuns: ExecutionRun[];
   candidates: Array<{ runner: Runner; reservedSlots: number }>;
+  projectActiveRuns: number;
 };
 
 export type ReserveSchedulingAssignmentsInput = {
   batchId: string;
   eventId?: string;
+  projectMaximumConcurrency?: number;
   decisions: Array<SchedulingDecision & { attemptId: string; assignmentId: string }>;
   thresholds: SchedulingThresholds;
   offlineBefore: string;
@@ -830,12 +1059,236 @@ export type ReserveSchedulingAssignmentsInput = {
   scheduledAt: string;
 };
 
+export type RunBatchListQuery = {
+  projectIds?: readonly string[];
+  projectId?: string;
+  suiteId?: string;
+  caseDefinitionId?: string;
+  status?: RunBatch["status"];
+  runnerId?: string;
+  createdAfter?: string;
+  createdBefore?: string;
+  cursor?: string;
+  limit: number;
+};
+
+export type RunBatchListPage = {
+  items: RunBatch[];
+  nextCursor?: string;
+};
+
 export interface RunBatchRepository {
   create(record: CreateRunBatchRecord): Promise<RunBatchDetails>;
   list(limit: number, projectIds?: readonly string[]): Promise<RunBatch[]>;
+  listPage(input: RunBatchListQuery): Promise<RunBatchListPage>;
   get(batchId: string, projectIds?: readonly string[]): Promise<RunBatchDetails | null>;
-  listSchedulableBatchIds(limit: number): Promise<string[]>;
-  listSchedulableBatchIdsForRunner(runnerId: string, limit: number): Promise<string[]>;
+  listSchedulableBatchIds(
+    limit: number,
+    now?: string,
+    agingIntervalMinutes?: number,
+  ): Promise<string[]>;
+  listSchedulableBatchIdsForRunner(
+    runnerId: string,
+    limit: number,
+    now?: string,
+    agingIntervalMinutes?: number,
+  ): Promise<string[]>;
   getSchedulingSnapshot(batchId: string, offlineBefore: string): Promise<SchedulingSnapshot | null>;
   reserveAssignments(input: ReserveSchedulingAssignmentsInput): Promise<number>;
+}
+
+export type ApiTokenAuthentication = {
+  serviceAccount: ServiceAccount;
+  token: ApiToken;
+  effectiveScopes: Permission[];
+};
+
+export interface PlatformOperationsRepository {
+  readOperationalMetrics(): Promise<{
+    activeLeases: number;
+    runnerCapacity: number;
+    runnerBusySlots: number;
+    storedLogBytes: number;
+    uploadedArtifacts: number;
+    failedAttempts: number;
+    pendingCleanupJobs: number;
+    deadLetterCleanupJobs: number;
+  }>;
+  listServiceAccounts(): Promise<ServiceAccount[]>;
+  createServiceAccount(record: ServiceAccount): Promise<ServiceAccount>;
+  updateServiceAccount(input: {
+    accountId: string;
+    expectedRevision: number;
+    name?: string;
+    description?: string;
+    status?: "active" | "disabled";
+    systemPermissions?: Permission[];
+    projectPermissions?: Record<string, Permission[]>;
+    updatedAt: string;
+  }): Promise<ServiceAccount>;
+  listApiTokens(accountId: string): Promise<ApiToken[]>;
+  createApiToken(record: ApiToken & { tokenHash: string }): Promise<ApiToken>;
+  revokeApiToken(input: { tokenId: string; revokedAt: string }): Promise<ApiToken>;
+  authenticateApiToken(input: {
+    tokenHash: string;
+    usedAt: string;
+  }): Promise<ApiTokenAuthentication | null>;
+
+  listSchedules(projectIds?: readonly string[]): Promise<CaseSuiteSchedule[]>;
+  findScheduleBySuite(suiteId: string): Promise<CaseSuiteSchedule | null>;
+  upsertSchedule(record: CaseSuiteSchedule, expectedRevision?: number): Promise<CaseSuiteSchedule>;
+  deleteSchedule(scheduleId: string, expectedRevision: number): Promise<void>;
+  listDueSchedules(now: string, limit: number): Promise<CaseSuiteSchedule[]>;
+  claimScheduleTrigger(input: {
+    scheduleId: string;
+    scheduledFor: string;
+    claimId: string;
+    claimedAt: string;
+    leaseExpiresAt: string;
+  }): Promise<boolean>;
+  completeScheduleTrigger(input: {
+    scheduleId: string;
+    scheduledFor: string;
+    claimId: string;
+    batchId?: string;
+    status: "created" | "skipped" | "failed";
+    nextTriggerAt: string;
+    recordedAt: string;
+  }): Promise<boolean>;
+
+  createLdapSyncJob(record: LdapSyncJob): Promise<LdapSyncJob>;
+  updateLdapSyncJob(input: {
+    jobId: string;
+    status: LdapSyncJob["status"];
+    checkpoint?: Record<string, unknown>;
+    processedUsers?: number;
+    disabledUsers?: number;
+    errorCode?: string;
+    errorSummary?: string;
+    startedAt?: string;
+    finishedAt?: string;
+    updatedAt: string;
+  }): Promise<LdapSyncJob>;
+  listLdapSyncJobs(limit: number): Promise<LdapSyncJob[]>;
+  claimScheduledLdapSync(input: {
+    claimId: string;
+    now: string;
+    leaseExpiresAt: string;
+  }): Promise<boolean>;
+  completeScheduledLdapSync(input: {
+    claimId: string;
+    nextAt: string;
+    completedAt: string;
+  }): Promise<boolean>;
+
+  listNotifications(input: {
+    userId: string;
+    projectIds?: readonly string[];
+    unreadOnly: boolean;
+    cursor?: string;
+    limit: number;
+  }): Promise<{ items: Notification[]; nextCursor?: string }>;
+  createNotification(record: Notification): Promise<Notification>;
+  generateNotifications(input: {
+    now: string;
+    runnerOfflineBefore: string;
+    limit: number;
+  }): Promise<number>;
+  markNotificationRead(input: {
+    notificationId: string;
+    userId: string;
+    readAt: string;
+  }): Promise<void>;
+
+  ensureRetentionPolicies(records: RetentionPolicy[]): Promise<void>;
+  listRetentionPolicies(): Promise<RetentionPolicy[]>;
+  updateRetentionPolicy(input: {
+    category: RetentionCategory;
+    retentionDays: number;
+    expectedRevision: number;
+    actorId: string;
+    updatedAt: string;
+  }): Promise<RetentionPolicy>;
+  previewRetention(category: RetentionCategory, cutoffAt: string): Promise<RetentionPreview>;
+  executeRetention(input: {
+    category: RetentionCategory;
+    cutoffAt: string;
+    limit: number;
+    recordedAt: string;
+  }): Promise<{ deletedRecords: number; objectKeys: string[] }>;
+  claimRetentionCleanupJobs(input: {
+    owner: string;
+    now: string;
+    leaseExpiresAt: string;
+    limit: number;
+  }): Promise<
+    Array<{
+      id: string;
+      category: string;
+      resourceType: string;
+      resourceId: string;
+      objectKey: string;
+      attemptCount: number;
+    }>
+  >;
+  completeRetentionCleanupJob(input: {
+    id: string;
+    owner: string;
+    status: "succeeded" | "failed" | "dead_letter";
+    errorSummary?: string;
+    availableAt: string;
+    updatedAt: string;
+  }): Promise<void>;
+
+  rebuildAnalyticsFacts(limit: number): Promise<number>;
+  readAnalytics(input: {
+    filter: AnalyticsFilter;
+    projectIds?: readonly string[];
+    generatedAt: string;
+  }): Promise<AnalyticsSummary>;
+  exportAnalytics(input: {
+    filter: AnalyticsFilter;
+    projectIds?: readonly string[];
+    maximumRows: number;
+  }): Promise<Array<Record<string, string | number | null>>>;
+  createAnalyticsExportJob(record: {
+    job: AnalyticsExportJob;
+    projectIds?: readonly string[];
+    idempotencyKey: string;
+    dispatchJob: JobEnvelope;
+  }): Promise<AnalyticsExportJob>;
+  getAnalyticsExportJob(jobId: string, requestedBy: string): Promise<AnalyticsExportJob | null>;
+  claimAnalyticsExportJob(input: {
+    jobId: string;
+    startedAt: string;
+  }): Promise<{ job: AnalyticsExportJob; projectIds?: string[] } | null>;
+  updateAnalyticsExportJob(input: {
+    jobId: string;
+    status: AnalyticsExportJob["status"];
+    progressPercent: number;
+    rowCount?: number;
+    sizeBytes?: number;
+    sha256?: string;
+    objectKey?: string;
+    fileName?: string;
+    errorCode?: string;
+    errorSummary?: string;
+    updatedAt: string;
+    finishedAt?: string;
+  }): Promise<AnalyticsExportJob>;
+  requestAnalyticsExportCancellation(input: {
+    jobId: string;
+    requestedBy: string;
+    updatedAt: string;
+  }): Promise<AnalyticsExportJob>;
+  resolveAnalyticsExportObject(input: { jobId: string; requestedBy: string }): Promise<{
+    job: AnalyticsExportJob;
+    objectKey: string;
+    mediaType: string;
+  } | null>;
+  globalSearch(input: {
+    query: string;
+    limit: number;
+    projectIds?: readonly string[];
+  }): Promise<GlobalSearchResult>;
 }

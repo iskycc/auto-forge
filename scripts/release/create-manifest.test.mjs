@@ -12,14 +12,22 @@ test("creates a deterministic manifest and checksum list", async () => {
   process.env.SOURCE_DATE_EPOCH = "1786233600";
   try {
     for (const variant of ["amd64", "arm64", "amd64-musl", "arm64-musl"]) {
-      const agentName = `autoforge-agent-1.2.3-${variant}`;
       const backendName = `autoforge-backend-1.2.3-${variant}`;
-      await writeFile(resolve(directory, agentName), `agent-${variant}`);
-      await writeFile(resolve(directory, `${agentName}.spdx.json`), "{}");
       await writeFile(resolve(directory, `${backendName}.docker.tar.zst`), `image-${variant}`);
+      await writeFile(resolve(directory, `${backendName}.image.json`), "{}");
       await writeFile(resolve(directory, `${backendName}.spdx.json`), "{}");
     }
     await writeFile(resolve(directory, "autoforge-deploy-1.2.3.tar.gz"), "compose");
+    for (const fileName of [
+      "CHANGELOG.md",
+      "COMPATIBILITY.md",
+      "LICENSE",
+      "NOTICE",
+      "release-signing-public-key.pem",
+      "THIRD_PARTY_LICENSES.json",
+    ]) {
+      await writeFile(resolve(directory, fileName), fileName);
+    }
     await createReleaseMetadata("1.2.3", directory);
 
     const manifest = JSON.parse(
@@ -27,12 +35,13 @@ test("creates a deterministic manifest and checksum list", async () => {
     );
     assert.equal(manifest.schemaVersion, 1);
     assert.equal(manifest.version, "1.2.3");
-    assert.equal(manifest.artifacts.length, 17);
+    assert.equal(manifest.artifacts.length, 19);
 
     const checksums = await readFile(resolve(directory, "SHA256SUMS"), "utf8");
-    assert.match(checksums, /autoforge-agent-1\.2\.3-amd64/);
+    assert.doesNotMatch(checksums, /autoforge-agent/);
     assert.match(checksums, /autoforge-deploy-1\.2\.3\.tar\.gz/);
     assert.match(checksums, /release-manifest\.json/);
+    assert.match(checksums, /release-signing-public-key\.pem/);
   } finally {
     if (originalEpoch === undefined) {
       delete process.env.SOURCE_DATE_EPOCH;

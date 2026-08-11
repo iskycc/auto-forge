@@ -51,6 +51,27 @@ export type TestNgResultDetails = TestNgResultCounts & {
   suites: TestNgSuiteResult[];
 };
 
+// 批次创建时从用例任务策略固化的执行配置快照；缺省（历史数据）表示不限制并发、
+// 仅使用内置必需标签与默认产物规则。
+export type RunBatchExecutionPolicy = {
+  executor: "testng" | "testng-container";
+  concurrency: number;
+  runnerLabels: string[];
+  artifactPatterns: string[];
+};
+
+// 产物规则的媒体类型只是上传提示，按扩展名做保守推断，未知一律 octet-stream。
+export function artifactMediaType(pattern: string): string {
+  if (pattern.endsWith(".xml")) return "application/xml";
+  if (pattern.endsWith(".json")) return "application/json";
+  if (pattern.endsWith(".html") || pattern.endsWith(".htm")) return "text/html";
+  if (pattern.endsWith(".txt") || pattern.endsWith(".log")) return "text/plain";
+  if (pattern.endsWith(".png")) return "image/png";
+  if (pattern.endsWith(".jpg") || pattern.endsWith(".jpeg")) return "image/jpeg";
+  if (pattern.endsWith(".zip")) return "application/zip";
+  return "application/octet-stream";
+}
+
 export type RunBatch = {
   id: string;
   projectId: string;
@@ -60,6 +81,7 @@ export type RunBatch = {
   suiteName: string;
   suiteVersion: number;
   status: RunBatchStatus;
+  priority: number;
   retryLimit: number;
   queueTimeoutMs: number;
   claimTimeoutMs: number;
@@ -68,6 +90,7 @@ export type RunBatch = {
   environmentVariables: ExecutionEnvironmentVariable[];
   secretBindings: ExecutionEnvironmentSecretBinding[];
   selectedRunnerIds: string[];
+  policy?: RunBatchExecutionPolicy;
   totalRuns: number;
   queuedRuns: number;
   assignedRuns: number;

@@ -27,16 +27,20 @@ export function RunBatchPlanner({
   initialSuites,
   initialRunners,
   initialBatches,
+  historyRefreshUrl,
+  nextPageHref,
   policy,
 }: {
   initialSuites: CaseSuite[];
   initialRunners: Runner[];
   initialBatches: RunBatch[];
+  historyRefreshUrl: string;
+  nextPageHref?: string;
   policy: SchedulerPolicy;
 }) {
   const [suiteId, setSuiteId] = useState(initialSuites[0]?.id ?? "");
   const [runnerIds, setRunnerIds] = useState<string[]>([]);
-  const [retryLimit, setRetryLimit] = useState(0);
+  const [retryLimit, setRetryLimit] = useState<number | "">("");
   const [environmentRows, setEnvironmentRows] = useState<EnvironmentRow[]>([]);
   const [nextEnvironmentId, setNextEnvironmentId] = useState(1);
   const [batches, setBatches] = useState(initialBatches);
@@ -54,7 +58,7 @@ export function RunBatchPlanner({
   useEffect(() => {
     const interval = window.setInterval(async () => {
       try {
-        const response = await fetch("/api/v1/run-batches?limit=100", { cache: "no-store" });
+        const response = await fetch(historyRefreshUrl, { cache: "no-store" });
         if (!response.ok) return;
         const result = (await response.json()) as { items: RunBatch[] };
         setBatches(result.items);
@@ -64,7 +68,7 @@ export function RunBatchPlanner({
       }
     }, 5_000);
     return () => window.clearInterval(interval);
-  }, []);
+  }, [historyRefreshUrl]);
 
   async function createBatch(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -79,7 +83,12 @@ export function RunBatchPlanner({
       .filter((variable) => variable.name.length > 0);
     setSubmitting(true);
     try {
-      const requestBody = { suiteId, runnerIds, retryLimit, environmentVariables };
+      const requestBody = {
+        suiteId,
+        runnerIds,
+        ...(retryLimit === "" ? {} : { retryLimit }),
+        environmentVariables,
+      };
       const preflightResponse = await fetch("/api/v1/run-batches/preflight", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -152,6 +161,17 @@ export function RunBatchPlanner({
             </span>
           </div>
         ) : null}
+        {selectedSuite ? (
+          <p className="field-hint">
+            任务策略：优先级 {selectedSuite.policy.priority} · 并发{" "}
+            {selectedSuite.policy.concurrency} · 重跑 {selectedSuite.policy.retryLimit} 次 · 排队{" "}
+            {Math.round(selectedSuite.policy.queueTimeoutMs / 60_000)} 分钟 · 执行{" "}
+            {Math.round(selectedSuite.policy.executionTimeoutMs / 60_000)} 分钟
+            {selectedSuite.policy.runnerLabels.length > 0
+              ? ` · 要求标签 ${selectedSuite.policy.runnerLabels.join("、")}`
+              : ""}
+          </p>
+        ) : null}
 
         <div className="section-heading scheduler-step">
           <div>
@@ -219,8 +239,13 @@ export function RunBatchPlanner({
             <span>失败用例重跑次数</span>
             <select
               value={retryLimit}
-              onChange={(event) => setRetryLimit(Number(event.target.value))}
+              onChange={(event) =>
+                setRetryLimit(event.target.value === "" ? "" : Number(event.target.value))
+              }
             >
+              <option value="">
+                继承任务策略{selectedSuite ? `（${selectedSuite.policy.retryLimit} 次）` : ""}
+              </option>
               {Array.from({ length: 11 }, (_, value) => (
                 <option key={value} value={value}>
                   {value === 0 ? "不重跑" : `${value} 次`}
@@ -366,6 +391,11 @@ export function RunBatchPlanner({
             })}
           </div>
         )}
+        {nextPageHref ? (
+          <Link className="button button-secondary batch-next-page" href={nextPageHref}>
+            查看更早记录
+          </Link>
+        ) : null}
       </section>
     </div>
   );

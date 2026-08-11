@@ -1,0 +1,362 @@
+"use client";
+
+import type { PlatformConfigurationView } from "@autoforge/contracts";
+import { Save, ServerCog } from "lucide-react";
+import { useState, type FormEvent } from "react";
+
+export function PlatformSettings({
+  initial,
+  canManage,
+}: {
+  initial: PlatformConfigurationView;
+  canManage: boolean;
+}) {
+  const [mode, setMode] = useState(initial.mode);
+  const [pending, setPending] = useState(false);
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!canManage) return;
+    setPending(true);
+    setMessage("");
+    setError("");
+    const form = new FormData(event.currentTarget);
+    try {
+      const response = await fetch("/api/v1/settings/platform", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          revision: initial.revision,
+          mode,
+          web: {
+            hostname: form.get("hostname"),
+            port: numberValue(form, "port"),
+            ...(stringValue(form, "publicBaseUrl")
+              ? { publicBaseUrl: stringValue(form, "publicBaseUrl") }
+              : {}),
+            publicDashboardRefreshSeconds: numberValue(form, "publicDashboardRefreshSeconds"),
+          },
+          limits: {
+            maxJarBytes: numberValue(form, "maxJarBytes"),
+            testNgTargetJavaVersion: numberValue(form, "testNgTargetJavaVersion"),
+            runnerClaimRateLimitPerMinute: numberValue(form, "runnerClaimRateLimitPerMinute"),
+            sessionTtlHours: numberValue(form, "sessionTtlHours"),
+          },
+          scheduler: {
+            maximumCpuUtilizationPercent: numberValue(form, "maximumCpuUtilizationPercent"),
+            maximumMemoryUtilizationPercent: numberValue(form, "maximumMemoryUtilizationPercent"),
+            maximumLoadPerCpu: numberValue(form, "maximumLoadPerCpu"),
+            metricsMaximumAgeSeconds: numberValue(form, "metricsMaximumAgeSeconds"),
+            projectMaximumConcurrency: numberValue(form, "projectMaximumConcurrency"),
+            priorityAgingIntervalMinutes: numberValue(form, "priorityAgingIntervalMinutes"),
+          },
+          worker: {
+            concurrency: numberValue(form, "workerConcurrency"),
+            healthPort: numberValue(form, "workerHealthPort"),
+            metricsEnabled: form.get("workerMetricsEnabled") === "on",
+            shutdownGraceMs: numberValue(form, "workerShutdownGraceMs"),
+          },
+          ...(mode === "full" ? { full: fullConfiguration(form) } : {}),
+        }),
+      });
+      const body = (await response.json()) as {
+        revision?: number;
+        error?: { message?: string };
+      };
+      if (!response.ok) throw new Error(body.error?.message ?? "平台配置保存失败。");
+      setMessage("平台配置已保存。为保证组合根一致，请在维护窗口重启 Web 和 worker。 ");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "平台配置保存失败。");
+      setPending(false);
+    }
+  }
+
+  return (
+    <form className="settings-stack" onSubmit={submit}>
+      {message ? <div className="inline-success">{message}</div> : null}
+      {error ? (
+        <div className="auth-error" role="alert">
+          {error}
+        </div>
+      ) : null}
+
+      {!canManage ? (
+        <div className="implementation-notice" role="status">
+          当前账号只有平台配置查看权限；所有字段均为只读。
+        </div>
+      ) : null}
+
+      <fieldset className="settings-form-fieldset" disabled={!canManage}>
+        <section className="content-card settings-section">
+          <div className="section-heading">
+            <div>
+              <p className="eyebrow">Runtime</p>
+              <h2>平台运行配置</h2>
+            </div>
+            <ServerCog size={22} aria-hidden="true" />
+          </div>
+          <p className="settings-note">
+            配置持久化到 <code>{initial.configurationFile}</code>
+            ，不从环境变量读取。运行模式仅在重启时生效。
+          </p>
+          <div className="settings-grid-form">
+            <label>
+              部署模式
+              <select value={mode} onChange={(event) => setMode(event.target.value as typeof mode)}>
+                <option value="lite">Lite · SQLite 与本地对象</option>
+                <option value="full">Full · PostgreSQL/NATS/MinIO/Redis</option>
+              </select>
+            </label>
+            <label>
+              监听地址
+              <input defaultValue={initial.web.hostname} name="hostname" required />
+            </label>
+            <label>
+              HTTP 端口
+              <input
+                defaultValue={initial.web.port}
+                min={1}
+                max={65_535}
+                name="port"
+                type="number"
+              />
+            </label>
+            <label>
+              外部访问地址
+              <input
+                defaultValue={initial.web.publicBaseUrl ?? ""}
+                name="publicBaseUrl"
+                placeholder="https://autoforge.internal"
+                type="url"
+              />
+            </label>
+            <label>
+              公开大盘刷新间隔（秒）
+              <input
+                defaultValue={initial.web.publicDashboardRefreshSeconds}
+                min={5}
+                max={300}
+                name="publicDashboardRefreshSeconds"
+                type="number"
+              />
+            </label>
+          </div>
+        </section>
+
+        {mode === "full" ? (
+          <section className="content-card settings-section">
+            <div className="section-heading">
+              <div>
+                <p className="eyebrow">Full Infrastructure</p>
+                <h2>Full 基础设施</h2>
+              </div>
+            </div>
+            <p className="settings-note">
+              {initial.fullConfigured
+                ? "凭据已配置；敏感字段留空会保留原值，页面永不回显。"
+                : "首次启用 Full 模式必须完整填写以下连接信息。"}
+            </p>
+            <div className="settings-grid-form">
+              <SecretInput
+                label="PostgreSQL URL"
+                name="databaseUrl"
+                configured={initial.fullConfigured}
+              />
+              <label>
+                NATS 地址（逗号或换行分隔）
+                <textarea name="natsServers" placeholder="nats://nats:4222" />
+              </label>
+              <SecretInput label="Redis URL" name="redisUrl" configured={initial.fullConfigured} />
+              <label>
+                MinIO 地址
+                <input name="minioEndpoint" placeholder="http://minio:9000" type="url" />
+              </label>
+              <SecretInput
+                label="MinIO Access Key"
+                name="minioAccessKey"
+                configured={initial.fullConfigured}
+              />
+              <SecretInput
+                label="MinIO Secret Key"
+                name="minioSecretKey"
+                configured={initial.fullConfigured}
+              />
+              <label>
+                MinIO Bucket
+                <input name="minioBucket" placeholder="autoforge-objects" />
+              </label>
+              <label>
+                MinIO Region
+                <input name="minioRegion" placeholder="us-east-1" />
+              </label>
+            </div>
+          </section>
+        ) : null}
+
+        <section className="content-card settings-section">
+          <div className="section-heading">
+            <div>
+              <p className="eyebrow">Limits</p>
+              <h2>容量、会话与调度阈值</h2>
+            </div>
+          </div>
+          <div className="settings-grid-form">
+            <NumberInput
+              label="JAR 大小上限（字节）"
+              name="maxJarBytes"
+              value={initial.limits.maxJarBytes}
+            />
+            <NumberInput
+              label="目标 Java 版本"
+              name="testNgTargetJavaVersion"
+              value={initial.limits.testNgTargetJavaVersion}
+            />
+            <NumberInput
+              label="Runner 每分钟领取上限"
+              name="runnerClaimRateLimitPerMinute"
+              value={initial.limits.runnerClaimRateLimitPerMinute}
+            />
+            <NumberInput
+              label="会话有效期（小时）"
+              name="sessionTtlHours"
+              value={initial.limits.sessionTtlHours}
+            />
+            <NumberInput
+              label="调度 CPU 上限（%）"
+              name="maximumCpuUtilizationPercent"
+              value={initial.scheduler.maximumCpuUtilizationPercent}
+            />
+            <NumberInput
+              label="调度内存上限（%）"
+              name="maximumMemoryUtilizationPercent"
+              value={initial.scheduler.maximumMemoryUtilizationPercent}
+            />
+            <NumberInput
+              label="每 CPU 负载上限"
+              name="maximumLoadPerCpu"
+              value={initial.scheduler.maximumLoadPerCpu}
+              step="0.1"
+            />
+            <NumberInput
+              label="指标最大年龄（秒）"
+              name="metricsMaximumAgeSeconds"
+              value={initial.scheduler.metricsMaximumAgeSeconds}
+            />
+            <NumberInput
+              label="项目最大在途执行数"
+              name="projectMaximumConcurrency"
+              value={initial.scheduler.projectMaximumConcurrency}
+            />
+            <NumberInput
+              label="优先级老化间隔（分钟）"
+              name="priorityAgingIntervalMinutes"
+              value={initial.scheduler.priorityAgingIntervalMinutes}
+            />
+            <NumberInput
+              label="Full worker 并发"
+              name="workerConcurrency"
+              value={initial.worker.concurrency}
+            />
+            <NumberInput
+              label="Full worker 健康端口"
+              name="workerHealthPort"
+              value={initial.worker.healthPort}
+            />
+            <NumberInput
+              label="Full worker 排空期限（毫秒）"
+              name="workerShutdownGraceMs"
+              value={initial.worker.shutdownGraceMs}
+            />
+            <label className="checkbox-field">
+              <input
+                defaultChecked={initial.worker.metricsEnabled}
+                name="workerMetricsEnabled"
+                type="checkbox"
+              />
+              启用 Full worker 指标端点
+            </label>
+          </div>
+          <div className="settings-form-actions">
+            <button className="primary-button" disabled={pending} type="submit">
+              <Save size={16} aria-hidden="true" /> {pending ? "正在保存…" : "保存平台配置"}
+            </button>
+          </div>
+        </section>
+      </fieldset>
+    </form>
+  );
+}
+
+function NumberInput({
+  label,
+  name,
+  value,
+  step,
+}: {
+  label: string;
+  name: string;
+  value: number;
+  step?: string;
+}) {
+  return (
+    <label>
+      {label}
+      <input defaultValue={value} name={name} step={step} type="number" />
+    </label>
+  );
+}
+
+function SecretInput({
+  label,
+  name,
+  configured,
+}: {
+  label: string;
+  name: string;
+  configured: boolean;
+}) {
+  return (
+    <label>
+      {label}
+      <input
+        autoComplete="off"
+        name={name}
+        placeholder={configured ? "留空以保留现有值" : "首次配置必填"}
+        type="password"
+      />
+    </label>
+  );
+}
+
+function fullConfiguration(form: FormData): Record<string, string | string[]> {
+  const fields = [
+    "databaseUrl",
+    "redisUrl",
+    "minioEndpoint",
+    "minioAccessKey",
+    "minioSecretKey",
+    "minioBucket",
+    "minioRegion",
+  ] as const;
+  const values: Record<string, string | string[]> = {};
+  for (const field of fields) {
+    const value = stringValue(form, field);
+    if (value) values[field] = value;
+  }
+  const natsServers = stringValue(form, "natsServers")
+    .split(/[\n,]/)
+    .map((value) => value.trim())
+    .filter(Boolean);
+  if (natsServers.length > 0) values.natsServers = natsServers;
+  return values;
+}
+
+function stringValue(form: FormData, name: string): string {
+  return String(form.get(name) ?? "").trim();
+}
+
+function numberValue(form: FormData, name: string): number {
+  return Number(form.get(name));
+}

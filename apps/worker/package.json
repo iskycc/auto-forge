@@ -12,7 +12,10 @@
     "@autoforge/application": "workspace:*",
     "@autoforge/db": "workspace:*",
     "@autoforge/ids": "workspace:*",
+    "@autoforge/object-store": "workspace:*",
+    "@autoforge/platform-config": "workspace:*",
     "@autoforge/queue": "workspace:*",
+    "@autoforge/testng-discovery": "workspace:*",
     "nats": "2.29.3",
     "zod": "4.4.3"
   },

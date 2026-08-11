@@ -30,6 +30,7 @@ autoforge-agent-data/
 
 # Local release output and manually built Agent binaries
 /release/
+/resources/agents/
 apps/runner-agent/autoforge-agent
 apps/runner-agent/autoforge-agent.exe
 

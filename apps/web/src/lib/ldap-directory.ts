@@ -9,12 +9,21 @@ import { DomainError } from "@autoforge/domain";
 
 import { combinedLdapFailure, ldapDiagnostic, type LdapOperationPhase } from "./ldap-diagnostics";
 
-type LdapClient = InstanceType<(typeof import("ldapts"))["Client"]>;
+type LdapClient = Pick<
+  InstanceType<(typeof import("ldapts"))["Client"]>,
+  "bind" | "search" | "startTLS" | "unbind"
+>;
 type SearchEntry = Record<string, unknown> & { dn?: string };
+export type LdapConnector = (
+  configuration: DirectoryConfiguration,
+  url: string,
+) => Promise<LdapClient>;
 
 export class LdapDirectory implements DirectoryPort {
+  constructor(private readonly connector: LdapConnector = connect) {}
+
   async test(configuration: DirectoryConfiguration): Promise<void> {
-    await withServiceClient(configuration, async (client) => {
+    await withServiceClient(configuration, this.connector, async (client) => {
       await validateSearchAccess(client, configuration);
     });
   }
@@ -25,16 +34,22 @@ export class LdapDirectory implements DirectoryPort {
     password: string,
   ): Promise<DirectoryIdentity> {
     if (!password) throw new DomainError("LDAP_CREDENTIAL_REJECTED", "LDAP 凭据无效。");
-    return withServiceClient(configuration, async (serviceClient, url) => {
+    return withServiceClient(configuration, this.connector, async (serviceClient, url) => {
       const identity = await findUser(serviceClient, configuration, username);
-      await verifyUserPassword(configuration, url, identity.distinguishedName, password);
+      await verifyUserPassword(
+        configuration,
+        this.connector,
+        url,
+        identity.distinguishedName,
+        password,
+      );
       const groupDns = await findGroups(serviceClient, configuration, identity.distinguishedName);
       return { ...identity, groupDns };
     });
   }
 
   async listUsers(configuration: DirectoryConfiguration): Promise<DirectoryIdentity[]> {
-    return withServiceClient(configuration, async (client) => {
+    return withServiceClient(configuration, this.connector, async (client) => {
       const filter = configuration.userFilter.replaceAll("{username}", "*");
       const result = await client.search(configuration.userBaseDn, {
         scope: "sub",
@@ -58,13 +73,14 @@ export class LdapDirectory implements DirectoryPort {
 
 async function withServiceClient<T>(
   configuration: DirectoryConfiguration,
+  connector: LdapConnector,
   work: (client: LdapClient, url: string) => Promise<T>,
 ): Promise<T> {
   const failures: DomainError[] = [];
   for (const url of configuration.urls) {
     let client: LdapClient | undefined;
     try {
-      client = await runLdapPhase("connect", () => connect(configuration, url));
+      client = await runLdapPhase("connect", () => connector(configuration, url));
       await runLdapPhase("bind", () =>
         client!.bind(configuration.bindDn, configuration.bindPassword),
       );
@@ -94,31 +110,40 @@ async function runLdapPhase<T>(phase: LdapOperationPhase, operation: () => Promi
 
 async function connect(configuration: DirectoryConfiguration, url: string): Promise<LdapClient> {
   const { Client } = await import("ldapts");
+  const plan = ldapConnectionPlan(configuration, url);
+  const client = new Client(plan.clientOptions);
+  if (plan.startTlsOptions) await client.startTLS(plan.startTlsOptions);
+  return client;
+}
+
+export function ldapConnectionPlan(configuration: DirectoryConfiguration, url: string) {
   const tlsOptions = {
     minVersion: "TLSv1.2" as const,
     rejectUnauthorized: true,
     ...(configuration.caPem ? { ca: [Buffer.from(configuration.caPem, "utf8")] } : {}),
   };
-  const client = new Client({
-    url,
-    connectTimeout: configuration.connectTimeoutMs,
-    timeout: configuration.operationTimeoutMs,
-    strictDN: true,
-    ...(configuration.tlsMode === "ldaps" ? { tlsOptions } : {}),
-  });
-  if (configuration.tlsMode === "starttls") await client.startTLS(tlsOptions);
-  return client;
+  return {
+    clientOptions: {
+      url,
+      connectTimeout: configuration.connectTimeoutMs,
+      timeout: configuration.operationTimeoutMs,
+      strictDN: true,
+      ...(configuration.tlsMode === "ldaps" ? { tlsOptions } : {}),
+    },
+    ...(configuration.tlsMode === "starttls" ? { startTlsOptions: tlsOptions } : {}),
+  };
 }
 
 async function verifyUserPassword(
   configuration: DirectoryConfiguration,
+  connector: LdapConnector,
   url: string,
   distinguishedName: string,
   password: string,
 ): Promise<void> {
   let client: LdapClient | undefined;
   try {
-    client = await connect(configuration, url);
+    client = await connector(configuration, url);
     await client.bind(distinguishedName, password);
   } catch (error) {
     throw new DomainError("LDAP_CREDENTIAL_REJECTED", "LDAP 凭据无效。", { cause: error });

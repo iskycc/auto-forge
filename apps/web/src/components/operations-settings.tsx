@@ -1,0 +1,394 @@
+"use client";
+
+import type {
+  ApiToken,
+  RetentionPolicy,
+  RetentionPreview,
+  ServiceAccount,
+} from "@autoforge/contracts";
+import { permissionCatalog } from "@autoforge/domain";
+import { KeyRound, Plus, RefreshCw, ShieldCheck, Trash2 } from "lucide-react";
+import { useState, type FormEvent } from "react";
+
+export function OperationsSettings({
+  initialAccounts,
+  initialPolicies,
+  canManageSettings,
+  canManageTokens,
+}: {
+  initialAccounts: ServiceAccount[];
+  initialPolicies: RetentionPolicy[];
+  canManageSettings: boolean;
+  canManageTokens: boolean;
+}) {
+  const [accounts, setAccounts] = useState(initialAccounts);
+  const [policies, setPolicies] = useState(initialPolicies);
+  const [tokens, setTokens] = useState<Record<string, ApiToken[]>>({});
+  const [issuedToken, setIssuedToken] = useState("");
+  const [previews, setPreviews] = useState<Record<string, RetentionPreview>>({});
+  const [pending, setPending] = useState(false);
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+
+  async function createAccount(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    await mutate(async () => {
+      const account = await requestJson<ServiceAccount>("/api/v1/service-accounts", {
+        method: "POST",
+        body: JSON.stringify({
+          name: form.get("name"),
+          description: form.get("description"),
+          systemPermissions: form.getAll("permissions"),
+          projectPermissions: {},
+        }),
+      });
+      setAccounts((current) => [...current, account].sort((a, b) => a.name.localeCompare(b.name)));
+      event.currentTarget.reset();
+      return "服务账号已创建。";
+    });
+  }
+
+  async function issueToken(event: FormEvent<HTMLFormElement>, account: ServiceAccount) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    await mutate(async () => {
+      const issued = await requestJson<ApiToken & { token: string }>(
+        `/api/v1/service-accounts/${encodeURIComponent(account.id)}/tokens`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            name: form.get("name"),
+            scopes: form.getAll("scopes"),
+            expiresAt: new Date(String(form.get("expiresAt"))).toISOString(),
+          }),
+        },
+      );
+      setIssuedToken(issued.token);
+      setTokens((current) => ({
+        ...current,
+        [account.id]: [{ ...issued, token: undefined }, ...(current[account.id] ?? [])],
+      }));
+      return "API 令牌已签发，只会显示这一次。";
+    });
+  }
+
+  async function loadTokens(accountId: string) {
+    await mutate(async () => {
+      const result = await requestJson<{ items: ApiToken[] }>(
+        `/api/v1/service-accounts/${encodeURIComponent(accountId)}/tokens`,
+      );
+      setTokens((current) => ({ ...current, [accountId]: result.items }));
+      return "令牌列表已刷新。";
+    });
+  }
+
+  async function revokeToken(token: ApiToken) {
+    if (!window.confirm(`撤销令牌 ${token.name}？自动化调用会立即失效。`)) return;
+    await mutate(async () => {
+      const revoked = await requestJson<ApiToken>(
+        `/api/v1/api-tokens/${encodeURIComponent(token.id)}/revoke`,
+        { method: "POST" },
+      );
+      setTokens((current) => ({
+        ...current,
+        [token.serviceAccountId]: (current[token.serviceAccountId] ?? []).map((item) =>
+          item.id === token.id ? revoked : item,
+        ),
+      }));
+      return "API 令牌已撤销。";
+    });
+  }
+
+  async function updateRetention(event: FormEvent<HTMLFormElement>, policy: RetentionPolicy) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    await mutate(async () => {
+      const updated = await requestJson<RetentionPolicy>(
+        `/api/v1/settings/retention/${policy.category}`,
+        {
+          method: "PATCH",
+          body: JSON.stringify({
+            retentionDays: Number(form.get("retentionDays")),
+            expectedRevision: policy.revision,
+          }),
+        },
+      );
+      setPolicies((current) =>
+        current.map((item) => (item.category === updated.category ? updated : item)),
+      );
+      return "保留策略已更新。";
+    });
+  }
+
+  async function previewRetention(policy: RetentionPolicy) {
+    await mutate(async () => {
+      const preview = await requestJson<RetentionPreview>(
+        `/api/v1/settings/retention/${policy.category}/preview`,
+      );
+      setPreviews((current) => ({ ...current, [policy.category]: preview }));
+      return "影响预览已刷新。";
+    });
+  }
+
+  async function mutate(operation: () => Promise<string>) {
+    setPending(true);
+    setError("");
+    setMessage("");
+    try {
+      setMessage(await operation());
+    } catch (problem) {
+      setError(problem instanceof Error ? problem.message : "操作失败。");
+    } finally {
+      setPending(false);
+    }
+  }
+
+  return (
+    <div className="settings-stack operations-settings">
+      {message ? <div className="inline-success">{message}</div> : null}
+      {error ? (
+        <div className="auth-error" role="alert">
+          {error}
+        </div>
+      ) : null}
+
+      <section className="content-card settings-section">
+        <div className="section-heading">
+          <div>
+            <p className="eyebrow">Automation Identity</p>
+            <h2>服务账号与 API 令牌</h2>
+          </div>
+          <KeyRound size={22} />
+        </div>
+        <p className="settings-note">
+          令牌明文只在签发时显示一次，数据库仅保存 SHA-256 摘要；作用域不能超过服务账号权限。
+        </p>
+        {issuedToken ? (
+          <div className="issued-token" role="status">
+            <span>
+              <strong>请立即复制并离线保管</strong>
+              <code>{issuedToken}</code>
+            </span>
+            <button
+              className="button button-secondary"
+              onClick={() => void navigator.clipboard.writeText(issuedToken)}
+              type="button"
+            >
+              复制
+            </button>
+          </div>
+        ) : null}
+        {canManageTokens ? (
+          <form className="settings-grid-form" onSubmit={createAccount}>
+            <label>
+              账号名称
+              <input name="name" required />
+            </label>
+            <label>
+              用途说明
+              <input name="description" />
+            </label>
+            <label className="settings-wide-field">
+              系统权限
+              <select multiple name="permissions" required size={6}>
+                {permissionCatalog.map((permission) => (
+                  <option key={permission}>{permission}</option>
+                ))}
+              </select>
+            </label>
+            <button className="button button-primary" disabled={pending} type="submit">
+              <Plus size={16} /> 创建服务账号
+            </button>
+          </form>
+        ) : (
+          <div className="implementation-notice">当前身份没有服务账号管理权限。</div>
+        )}
+        <div className="service-account-list">
+          {accounts.length === 0 ? (
+            <div className="inline-empty">尚未创建服务账号。</div>
+          ) : (
+            accounts.map((account) => (
+              <article key={account.id}>
+                <div className="service-account-heading">
+                  <span>
+                    <strong>{account.name}</strong>
+                    <small>
+                      {account.description || "无说明"} · {account.status}
+                    </small>
+                  </span>
+                  <button
+                    className="button button-secondary compact-button"
+                    disabled={pending}
+                    onClick={() => void loadTokens(account.id)}
+                    type="button"
+                  >
+                    <RefreshCw size={14} /> 令牌
+                  </button>
+                </div>
+                <div className="permission-chip-row">
+                  {account.systemPermissions.map((permission) => (
+                    <code key={permission}>{permission}</code>
+                  ))}
+                </div>
+                {canManageTokens && account.status === "active" ? (
+                  <form
+                    className="token-issue-form"
+                    onSubmit={(event) => void issueToken(event, account)}
+                  >
+                    <label>
+                      令牌名称
+                      <input name="name" required />
+                    </label>
+                    <label>
+                      过期时间
+                      <input
+                        min={new Date().toISOString().slice(0, 16)}
+                        name="expiresAt"
+                        required
+                        type="datetime-local"
+                      />
+                    </label>
+                    <label>
+                      作用域
+                      <select multiple name="scopes" required size={4}>
+                        {[
+                          ...new Set([
+                            ...account.systemPermissions,
+                            ...Object.values(account.projectPermissions).flat(),
+                          ]),
+                        ].map((scope) => (
+                          <option key={scope}>{scope}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <button className="button button-primary" disabled={pending} type="submit">
+                      签发
+                    </button>
+                  </form>
+                ) : null}
+                {(tokens[account.id] ?? []).map((token) => (
+                  <div className="token-row" key={token.id}>
+                    <span>
+                      <code>{token.prefix}…</code>
+                      <small>
+                        {token.name} · 至 {formatDate(token.expiresAt)}
+                      </small>
+                    </span>
+                    <span>
+                      {token.revokedAt
+                        ? "已撤销"
+                        : token.lastUsedAt
+                          ? `最近使用 ${formatDate(token.lastUsedAt)}`
+                          : "从未使用"}
+                    </span>
+                    {!token.revokedAt && canManageTokens ? (
+                      <button
+                        aria-label={`撤销 ${token.name}`}
+                        onClick={() => void revokeToken(token)}
+                        type="button"
+                      >
+                        <Trash2 size={15} />
+                      </button>
+                    ) : null}
+                  </div>
+                ))}
+              </article>
+            ))
+          )}
+        </div>
+      </section>
+
+      <section className="content-card settings-section">
+        <div className="section-heading">
+          <div>
+            <p className="eyebrow">Data Governance</p>
+            <h2>保留与清理策略</h2>
+          </div>
+          <ShieldCheck size={22} />
+        </div>
+        <p className="settings-note">
+          每类数据独立配置。预览只统计已满足终态和安全删除条件的记录；对象删除由可重试清理路径处理。
+        </p>
+        <div className="retention-policy-grid">
+          {policies.map((policy) => (
+            <form key={policy.category} onSubmit={(event) => void updateRetention(event, policy)}>
+              <strong>{retentionLabel(policy.category)}</strong>
+              <small>
+                允许 {policy.minimumDays}–{policy.maximumDays} 天
+              </small>
+              <label>
+                保留天数
+                <input
+                  defaultValue={policy.retentionDays}
+                  disabled={!canManageSettings}
+                  max={policy.maximumDays}
+                  min={policy.minimumDays}
+                  name="retentionDays"
+                  type="number"
+                />
+              </label>
+              {previews[policy.category] ? (
+                <p>
+                  当前将影响 {previews[policy.category]?.eligibleRecords} 条 /{" "}
+                  {formatBytes(previews[policy.category]?.eligibleBytes ?? 0)}
+                </p>
+              ) : null}
+              <span>
+                <button
+                  className="button button-secondary compact-button"
+                  disabled={pending}
+                  onClick={() => void previewRetention(policy)}
+                  type="button"
+                >
+                  影响预览
+                </button>
+                {canManageSettings ? (
+                  <button
+                    className="button button-primary compact-button"
+                    disabled={pending}
+                    type="submit"
+                  >
+                    保存
+                  </button>
+                ) : null}
+              </span>
+            </form>
+          ))}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(path, { headers: { "Content-Type": "application/json" }, ...init });
+  const body = (await response.json()) as T & { error?: { message?: string } };
+  if (!response.ok) throw new Error(body.error?.message ?? "请求失败。");
+  return body;
+}
+
+function retentionLabel(category: RetentionPolicy["category"]): string {
+  return {
+    execution: "执行数据",
+    log: "日志",
+    artifact: "产物",
+    source: "来源 JAR",
+    analytics: "分析事实",
+    audit: "审计",
+    session: "会话",
+    queue: "队列与死信",
+  }[category];
+}
+function formatDate(value: string): string {
+  return new Intl.DateTimeFormat("zh-CN", { dateStyle: "medium", timeStyle: "short" }).format(
+    new Date(value),
+  );
+}
+function formatBytes(value: number): string {
+  return value < 1024
+    ? `${value} B`
+    : value < 1_048_576
+      ? `${(value / 1024).toFixed(1)} KiB`
+      : `${(value / 1_048_576).toFixed(1)} MiB`;
+}

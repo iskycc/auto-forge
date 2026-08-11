@@ -10,10 +10,12 @@ import {
   Sparkles,
 } from "lucide-react";
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import type { CSSProperties } from "react";
 
 import { getPlatformServices } from "@/lib/services";
-import { requirePagePermission } from "@/lib/auth";
+import { currentIdentity } from "@/lib/auth";
+import { PublicDashboard } from "@/components/public-dashboard";
 import {
   isActiveRunBatch,
   runBatchCompletionPercent,
@@ -32,8 +34,20 @@ function formatDate(value: string): string {
 }
 
 export default async function DashboardPage() {
-  const identity = await requirePagePermission("case.read");
   const services = await getPlatformServices();
+  const identity = await currentIdentity();
+  if (!identity) {
+    const [statistics, setupRequired] = await Promise.all([
+      services.publicStatistics.read(),
+      services.identityAccess.setupRequired(),
+    ]);
+    return <PublicDashboard initialStatistics={statistics} setupRequired={setupRequired} />;
+  }
+  try {
+    services.identityAccess.authorize(identity, "case.read");
+  } catch {
+    redirect("/forbidden");
+  }
   const { catalog, config } = services;
   let runProjectIds: string[] | undefined = [];
   try {

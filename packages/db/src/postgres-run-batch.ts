@@ -1,11 +1,13 @@
 import type {
   CreateRunBatchRecord,
   ReserveSchedulingAssignmentsInput,
+  RunBatchListQuery,
   RunBatchRepository,
   SchedulingSnapshot,
 } from "@autoforge/application";
 import { testNgResultDetailsSchema, type ExecutionSpec } from "@autoforge/contracts";
 import {
+  artifactMediaType,
   assessRunnerCompatibility,
   DEFAULT_EXECUTION_RESOURCE_LIMITS,
   DomainError,
@@ -22,10 +24,11 @@ import {
   type RunAttempt,
   type RunBatch,
   type RunBatchDetails,
+  type RunBatchExecutionPolicy,
   type RunBatchStatusEvent,
   type RunBatchStatus,
 } from "@autoforge/domain";
-import { and, count, desc, eq, gt, inArray, isNull, or, sql } from "drizzle-orm";
+import { and, count, desc, eq, gt, gte, inArray, isNull, lt, lte, or, sql } from "drizzle-orm";
 
 import type { PostgresDatabaseHandle } from "./postgres-database";
 import {
@@ -38,8 +41,10 @@ import {
   pgRunBatches,
   pgRunBatchStatusEvents,
   pgRunners,
+  pgProjects,
 } from "./postgres-schema";
 import { mapStoredRunner } from "./runner-mapper";
+import { decodeRunBatchCursor, encodeRunBatchCursor } from "./run-batch-list";
 
 const activeAttemptStatuses = ["assigned", "running"] as const;
 
@@ -63,12 +68,14 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
         suiteVersion: record.suiteVersion,
         status: "queued",
         retryLimit: record.retryLimit,
+        priority: record.priority ?? 0,
         queueTimeoutMs,
         claimTimeoutMs,
         executionTimeoutMs,
         uploadTimeoutMs,
         environmentJson: JSON.stringify(record.environmentVariables),
         secretBindingsJson: JSON.stringify(record.secretBindings ?? []),
+        policyJson: record.policy ? JSON.stringify(record.policy) : null,
         totalRuns: record.runs.length,
         createdAt: record.createdAt,
         updatedAt: record.createdAt,
@@ -88,6 +95,7 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
       await transaction.insert(pgExecutionRuns).values(
         record.runs.map((run) => ({
           ...run,
+          parametersJson: JSON.stringify(run.parameters ?? {}),
           batchId: record.id,
           status: "queued" as const,
           assignedRunnerId: null,
@@ -129,6 +137,54 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
       .orderBy(desc(pgRunBatches.createdAt))
       .limit(limit);
     return Promise.all(rows.map((row) => this.mapBatch(row)));
+  }
+
+  async listPage(input: RunBatchListQuery) {
+    await this.ready();
+    if (input.projectIds?.length === 0) return { items: [] };
+    const cursor = decodeRunBatchCursor(input.cursor);
+    const conditions = [
+      ...(input.projectIds ? [inArray(pgRunBatches.projectId, [...input.projectIds])] : []),
+      ...(input.projectId ? [eq(pgRunBatches.projectId, input.projectId)] : []),
+      ...(input.suiteId ? [eq(pgRunBatches.suiteId, input.suiteId)] : []),
+      ...(input.status ? [eq(pgRunBatches.status, input.status)] : []),
+      ...(input.createdAfter ? [gte(pgRunBatches.createdAt, input.createdAfter)] : []),
+      ...(input.createdBefore ? [lte(pgRunBatches.createdAt, input.createdBefore)] : []),
+      ...(cursor
+        ? [
+            or(
+              lt(pgRunBatches.createdAt, cursor.createdAt),
+              and(eq(pgRunBatches.createdAt, cursor.createdAt), lt(pgRunBatches.id, cursor.id)),
+            )!,
+          ]
+        : []),
+      ...(input.caseDefinitionId
+        ? [
+            sql`EXISTS (SELECT 1 FROM execution_runs run WHERE run.batch_id = ${pgRunBatches.id} AND run.case_definition_id = ${input.caseDefinitionId})`,
+          ]
+        : []),
+      ...(input.runnerId
+        ? [
+            sql`EXISTS (SELECT 1 FROM execution_runs run WHERE run.batch_id = ${pgRunBatches.id} AND run.assigned_runner_id = ${input.runnerId})`,
+          ]
+        : []),
+    ];
+    const rows = await this.handle.db
+      .select()
+      .from(pgRunBatches)
+      .where(conditions.length > 0 ? and(...conditions) : undefined)
+      .orderBy(desc(pgRunBatches.createdAt), desc(pgRunBatches.id))
+      .limit(input.limit + 1);
+    const hasMore = rows.length > input.limit;
+    const pageRows = rows.slice(0, input.limit);
+    const items = await Promise.all(pageRows.map((row) => this.mapBatch(row)));
+    const last = pageRows.at(-1);
+    return {
+      items,
+      ...(hasMore && last
+        ? { nextCursor: encodeRunBatchCursor({ createdAt: last.createdAt, id: last.id }) }
+        : {}),
+    };
   }
 
   async get(batchId: string, projectIds?: readonly string[]): Promise<RunBatchDetails | null> {
@@ -177,34 +233,38 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
     };
   }
 
-  async listSchedulableBatchIds(limit: number): Promise<string[]> {
+  async listSchedulableBatchIds(
+    limit: number,
+    now = new Date().toISOString(),
+    agingIntervalMinutes = 5,
+  ): Promise<string[]> {
     await this.ready();
-    return (
-      await this.handle.db
-        .select({ id: pgRunBatches.id })
-        .from(pgRunBatches)
-        .where(inArray(pgRunBatches.status, ["queued", "dispatching"]))
-        .orderBy(pgRunBatches.createdAt)
-        .limit(limit)
-    ).map((row) => row.id);
+    const result = await this.handle.pool.query<{ id: string }>(
+      `SELECT id FROM run_batches WHERE status IN ('queued','dispatching')
+       ORDER BY priority + LEAST(100, GREATEST(0, FLOOR(
+         EXTRACT(EPOCH FROM ($1::timestamptz-created_at::timestamptz)) / 60 / $2
+       ))) DESC, created_at, id LIMIT $3`,
+      [now, agingIntervalMinutes, limit],
+    );
+    return result.rows.map((row) => row.id);
   }
 
-  async listSchedulableBatchIdsForRunner(runnerId: string, limit: number): Promise<string[]> {
+  async listSchedulableBatchIdsForRunner(
+    runnerId: string,
+    limit: number,
+    now = new Date().toISOString(),
+    agingIntervalMinutes = 5,
+  ): Promise<string[]> {
     await this.ready();
-    return (
-      await this.handle.db
-        .select({ id: pgRunBatches.id })
-        .from(pgRunBatches)
-        .innerJoin(pgRunBatchRunners, eq(pgRunBatchRunners.batchId, pgRunBatches.id))
-        .where(
-          and(
-            eq(pgRunBatchRunners.runnerId, runnerId),
-            inArray(pgRunBatches.status, ["queued", "dispatching"]),
-          ),
-        )
-        .orderBy(pgRunBatches.createdAt)
-        .limit(limit)
-    ).map((row) => row.id);
+    const result = await this.handle.pool.query<{ id: string }>(
+      `SELECT b.id FROM run_batches b JOIN run_batch_runners br ON br.batch_id=b.id
+       WHERE br.runner_id=$1 AND b.status IN ('queued','dispatching')
+       ORDER BY b.priority + LEAST(100, GREATEST(0, FLOOR(
+         EXTRACT(EPOCH FROM ($2::timestamptz-b.created_at::timestamptz)) / 60 / $3
+       ))) DESC, b.created_at, b.id LIMIT $4`,
+      [runnerId, now, agingIntervalMinutes, limit],
+    );
+    return result.rows.map((row) => row.id);
   }
 
   async getSchedulingSnapshot(
@@ -220,7 +280,16 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
             .select()
             .from(pgRunners)
             .where(inArray(pgRunners.id, batch.selectedRunnerIds));
-    const reservations = await this.activeReservations(batch.selectedRunnerIds);
+    const [reservations, activeProjectRuns] = await Promise.all([
+      this.activeReservations(batch.selectedRunnerIds),
+      this.handle.pool.query<{ count: string }>(
+        `SELECT count(*) AS count FROM run_attempts a
+         JOIN execution_runs r ON r.id=a.execution_run_id
+         JOIN run_batches b ON b.id=r.batch_id
+         WHERE b.project_id=$1 AND a.status IN ('assigned','running')`,
+        [batch.projectId],
+      ),
+    ]);
     const candidates = runnerRows.map((row) => ({
       runner: mapStoredRunner(row, offlineBefore),
       reservedSlots: reservations.get(row.id) ?? 0,
@@ -229,12 +298,57 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
       batch,
       queuedRuns: batch.runs.filter((run) => run.status === "queued"),
       candidates,
+      projectActiveRuns: Number(activeProjectRuns.rows[0]?.count ?? 0),
     };
   }
 
   async reserveAssignments(input: ReserveSchedulingAssignmentsInput): Promise<number> {
     await this.ready();
     return this.handle.db.transaction(async (transaction) => {
+      const [lockedBatch] = await transaction
+        .select({ projectId: pgRunBatches.projectId, policyJson: pgRunBatches.policyJson })
+        .from(pgRunBatches)
+        .where(eq(pgRunBatches.id, input.batchId))
+        .for("update");
+      if (!lockedBatch) throw new DomainError("RUN_BATCH_NOT_FOUND", "指定的执行批次不存在。");
+      await transaction
+        .select({ id: pgProjects.id })
+        .from(pgProjects)
+        .where(eq(pgProjects.id, lockedBatch.projectId))
+        .for("update");
+      const [projectActive, batchActive] = await Promise.all([
+        transaction
+          .select({ value: count() })
+          .from(pgRunAttempts)
+          .innerJoin(pgExecutionRuns, eq(pgExecutionRuns.id, pgRunAttempts.executionRunId))
+          .innerJoin(pgRunBatches, eq(pgRunBatches.id, pgExecutionRuns.batchId))
+          .where(
+            and(
+              eq(pgRunBatches.projectId, lockedBatch.projectId),
+              inArray(pgRunAttempts.status, [...activeAttemptStatuses]),
+            ),
+          ),
+        transaction
+          .select({ value: count() })
+          .from(pgRunAttempts)
+          .innerJoin(pgExecutionRuns, eq(pgExecutionRuns.id, pgRunAttempts.executionRunId))
+          .where(
+            and(
+              eq(pgExecutionRuns.batchId, input.batchId),
+              inArray(pgRunAttempts.status, [...activeAttemptStatuses]),
+            ),
+          ),
+      ]);
+      let remainingProjectSlots = Math.max(
+        0,
+        (input.projectMaximumConcurrency ?? Number.MAX_SAFE_INTEGER) -
+          Number(projectActive[0]?.value ?? 0),
+      );
+      const batchConcurrency = batchPolicy(lockedBatch.policyJson)?.concurrency;
+      let remainingBatchSlots =
+        batchConcurrency === undefined
+          ? Number.POSITIVE_INFINITY
+          : Math.max(0, batchConcurrency - Number(batchActive[0]?.value ?? 0));
       const selectedRunnerIds = new Set(
         (
           await transaction
@@ -276,6 +390,7 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
 
       let accepted = 0;
       for (const decision of input.decisions) {
+        if (remainingProjectSlots === 0 || remainingBatchSlots === 0) break;
         const runnerRow = runnerById.get(decision.runnerId);
         if (!runnerRow) continue;
         const runner = mapStoredRunner(runnerRow, input.offlineBefore);
@@ -314,6 +429,7 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
             attemptCount: pgExecutionRuns.attemptCount,
             caseDefinitionId: pgExecutionRuns.caseDefinitionId,
             className: pgExecutionRuns.className,
+            parametersJson: pgExecutionRuns.parametersJson,
           });
         if (!updatedRun) continue;
         const [source] = await transaction
@@ -340,6 +456,7 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
           .select({
             environmentJson: pgRunBatches.environmentJson,
             secretBindingsJson: pgRunBatches.secretBindingsJson,
+            policyJson: pgRunBatches.policyJson,
             priority: pgRunBatches.priority,
             claimTimeoutMs: pgRunBatches.claimTimeoutMs,
             executionTimeoutMs: pgRunBatches.executionTimeoutMs,
@@ -349,6 +466,7 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
           .where(eq(pgRunBatches.id, input.batchId))
           .limit(1);
         if (!batch) continue;
+        const policy = batchPolicy(batch.policyJson);
         await transaction.insert(pgAssignments).values({
           id: decision.assignmentId,
           attemptId: decision.attemptId,
@@ -363,11 +481,13 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
               executionRunId: decision.executionRunId,
               batchId: input.batchId,
               className: updatedRun.className,
+              parameters: stringRecord(updatedRun.parametersJson),
               source,
               environment: environmentVariables(batch.environmentJson),
               secretBindings: secretBindings(batch.secretBindingsJson),
               executionTimeoutMs: batch.executionTimeoutMs,
               uploadTimeoutMs: batch.uploadTimeoutMs,
+              ...(policy ? { policy } : {}),
             }),
           ),
           availableAt: input.scheduledAt,
@@ -376,6 +496,8 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
           updatedAt: input.scheduledAt,
         });
         reservations.set(decision.runnerId, (reservations.get(decision.runnerId) ?? 0) + 1);
+        remainingProjectSlots -= 1;
+        remainingBatchSlots -= 1;
         accepted += 1;
       }
 
@@ -446,6 +568,7 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
         .groupBy(pgExecutionRuns.status),
     ]);
     const byStatus = new Map(statusCounts.map((entry) => [entry.status, entry.value]));
+    const policy = batchPolicy(row.policyJson);
     const runOutcomes = await this.handle.db
       .select({ status: pgExecutionRuns.status, terminalOutcome: pgExecutionRuns.terminalOutcome })
       .from(pgExecutionRuns)
@@ -459,6 +582,7 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
       suiteName: row.suiteName,
       suiteVersion: row.suiteVersion,
       status: row.status,
+      priority: row.priority,
       retryLimit: row.retryLimit,
       queueTimeoutMs: row.queueTimeoutMs,
       claimTimeoutMs: row.claimTimeoutMs,
@@ -467,6 +591,7 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
       environmentVariables: environmentVariables(row.environmentJson),
       secretBindings: secretBindings(row.secretBindingsJson),
       selectedRunnerIds: selectedRunners.map((runner) => runner.runnerId),
+      ...(policy ? { policy } : {}),
       totalRuns: row.totalRuns,
       queuedRuns: byStatus.get("queued") ?? 0,
       assignedRuns: (byStatus.get("assigned") ?? 0) + (byStatus.get("running") ?? 0),
@@ -516,26 +641,57 @@ function toRunBatchStatusEvent(
   };
 }
 
+// policy_json 为 NULL（历史数据）时返回 undefined，保留旧行为。
+function batchPolicy(json: string | null): RunBatchExecutionPolicy | undefined {
+  if (!json) return undefined;
+  try {
+    const parsed: unknown = JSON.parse(json);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return undefined;
+    const record = parsed as Record<string, unknown>;
+    const concurrency = record.concurrency;
+    return {
+      executor: record.executor === "testng-container" ? "testng-container" : "testng",
+      concurrency:
+        typeof concurrency === "number" && Number.isInteger(concurrency) && concurrency >= 1
+          ? concurrency
+          : 4,
+      runnerLabels: Array.isArray(record.runnerLabels)
+        ? record.runnerLabels.filter((label): label is string => typeof label === "string")
+        : [],
+      artifactPatterns: Array.isArray(record.artifactPatterns)
+        ? record.artifactPatterns.filter(
+            (pattern): pattern is string => typeof pattern === "string",
+          )
+        : ["reports/testng/**"],
+    };
+  } catch {
+    return undefined;
+  }
+}
+
 function executionSpec(input: {
   attemptId: string;
   executionRunId: string;
   batchId: string;
   className: string;
+  parameters: Record<string, string>;
   source: { id: string; sha256: string; sizeBytes: number };
   environment: ExecutionEnvironmentVariable[];
   secretBindings: ExecutionEnvironmentSecretBinding[];
   executionTimeoutMs: number;
   uploadTimeoutMs: number;
+  policy?: RunBatchExecutionPolicy;
 }): ExecutionSpec {
+  const artifactPatterns = input.policy?.artifactPatterns ?? ["reports/testng/**"];
   return {
     schemaVersion: 1,
-    executor: "testng",
+    executor: input.policy?.executor ?? "testng",
     attemptId: input.attemptId,
     executionRunId: input.executionRunId,
     batchId: input.batchId,
     className: input.className,
     methodDescriptors: [],
-    parameters: {},
+    parameters: input.parameters,
     inputs: [
       {
         inputId: input.source.id,
@@ -554,14 +710,17 @@ function executionSpec(input: {
       minimumJavaMajorVersion: MINIMUM_JAVA_MAJOR_VERSION,
       testNgVersion: SUPPORTED_TESTNG_VERSION,
     },
-    requiredLabels: [...REQUIRED_EXECUTION_LABELS],
+    requiredLabels: [...REQUIRED_EXECUTION_LABELS, ...(input.policy?.runnerLabels ?? [])],
     requiredCapabilities: [
       ...REQUIRED_EXECUTION_CAPABILITIES,
+      ...(input.policy?.executor === "testng-container" ? ["executor:testng-container-v1"] : []),
       ...(input.secretBindings.length > 0 ? [ON_DEMAND_SECRET_CAPABILITY] : []),
     ],
-    artifactRules: [
-      { pattern: "reports/testng/**", required: false, mediaType: "application/xml" },
-    ],
+    artifactRules: artifactPatterns.map((pattern) => ({
+      pattern,
+      required: false,
+      mediaType: artifactMediaType(pattern),
+    })),
     timeoutMs: input.executionTimeoutMs,
     uploadTimeoutMs: input.uploadTimeoutMs,
     resourceLimits: { ...DEFAULT_EXECUTION_RESOURCE_LIMITS },
@@ -581,6 +740,16 @@ function environmentVariables(json: string): ExecutionEnvironmentVariable[] {
       value !== null &&
       typeof (value as { name?: unknown }).name === "string" &&
       typeof (value as { value?: unknown }).value === "string",
+  );
+}
+
+function stringRecord(json: string): Record<string, string> {
+  const parsed: unknown = JSON.parse(json);
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+  return Object.fromEntries(
+    Object.entries(parsed).filter(
+      (entry): entry is [string, string] => typeof entry[1] === "string",
+    ),
   );
 }
 

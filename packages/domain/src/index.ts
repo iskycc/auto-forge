@@ -1,4 +1,5 @@
 export * from "./case-definition";
+export * from "./case-source-lifecycle";
 export * from "./case-suite";
 export * from "./errors";
 export * from "./environment";

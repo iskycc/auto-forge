@@ -21,6 +21,7 @@ export const pgProjects = pgTable(
     archived: boolean("archived").notNull().default(false),
     createdAt: text("created_at").notNull(),
     updatedAt: text("updated_at").notNull(),
+    ownerUserId: text("owner_user_id"),
   },
   (table) => [
     uniqueIndex("projects_slug_uq").on(table.slug),
@@ -103,6 +104,7 @@ export const pgRoles = pgTable(
     description: text("description").notNull(),
     scope: text("scope", { enum: ["system", "project"] }).notNull(),
     builtIn: boolean("built_in").notNull().default(false),
+    active: boolean("active").notNull().default(true),
     permissionsJson: text("permissions_json").notNull(),
     createdAt: text("created_at").notNull(),
     updatedAt: text("updated_at").notNull(),
@@ -167,6 +169,7 @@ export const pgLdapConfigurations = pgTable("ldap_configurations", {
   operationTimeoutMs: integer("operation_timeout_ms").notNull(),
   pageSize: integer("page_size").notNull(),
   maximumUsers: integer("maximum_users").notNull(),
+  synchronizationIntervalMinutes: integer("synchronization_interval_minutes").notNull().default(0),
   bindDn: text("bind_dn").notNull(),
   bindPasswordEncrypted: text("bind_password_encrypted"),
   userBaseDn: text("user_base_dn").notNull(),
@@ -226,6 +229,7 @@ export const pgCaseSources = pgTable(
   "case_sources",
   {
     id: text("id").primaryKey(),
+    projectId: text("project_id").notNull().default("00000000-0000-7000-8000-000000000001"),
     displayName: text("display_name").notNull(),
     originalFileName: text("original_file_name").notNull(),
     objectKey: text("object_key").notNull(),
@@ -237,15 +241,22 @@ export const pgCaseSources = pgTable(
     warningsJson: text("warnings_json").notNull(),
     inspectionJson: text("inspection_json").notNull(),
     authoritative: boolean("authoritative").notNull().default(false),
+    lifecycleStatus: text("lifecycle_status", { enum: ["active", "archived", "deleting"] })
+      .notNull()
+      .default("active"),
+    revision: integer("revision").notNull().default(1),
+    importedBy: text("imported_by"),
     createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
   },
   (table) => [
-    uniqueIndex("case_sources_sha256_uq").on(table.sha256),
+    uniqueIndex("case_sources_project_sha256_uq").on(table.projectId, table.sha256),
     uniqueIndex("case_sources_object_key_uq").on(table.objectKey),
     index("case_sources_created_at_idx").on(table.createdAt),
-    uniqueIndex("case_sources_one_authoritative_uq")
-      .on(table.authoritative)
+    uniqueIndex("case_sources_project_authoritative_uq")
+      .on(table.projectId, table.authoritative)
       .where(sql`${table.authoritative} = true`),
+    index("case_sources_project_created_idx").on(table.projectId, table.createdAt),
   ],
 );
 
@@ -253,13 +264,20 @@ export const pgCaseDefinitions = pgTable(
   "case_definitions",
   {
     id: text("id").primaryKey(),
+    projectId: text("project_id").notNull().default("00000000-0000-7000-8000-000000000001"),
     sourceId: text("source_id")
       .notNull()
       .references(() => pgCaseSources.id, { onDelete: "cascade" }),
     className: text("class_name").notNull(),
     packageName: text("package_name").notNull(),
     displayName: text("display_name").notNull(),
+    description: text("description").notNull().default(""),
+    tagsJson: text("tags_json").notNull().default("[]"),
+    parametersJson: text("parameters_json").notNull().default("{}"),
     enabled: boolean("enabled").notNull(),
+    archived: boolean("archived").notNull().default(false),
+    revision: integer("revision").notNull().default(1),
+    updatedBy: text("updated_by"),
     groupsJson: text("groups_json").notNull(),
     currentVersion: integer("current_version").notNull(),
     createdAt: text("created_at").notNull(),
@@ -280,6 +298,8 @@ export const pgCaseVersions = pgTable(
       .references(() => pgCaseDefinitions.id, { onDelete: "cascade" }),
     version: integer("version").notNull(),
     snapshotJson: text("snapshot_json").notNull(),
+    createdBy: text("created_by"),
+    changeReason: text("change_reason").notNull().default("source.import"),
     createdAt: text("created_at").notNull(),
   },
   (table) => [
@@ -320,9 +340,18 @@ export const pgCaseSuites = pgTable(
   "case_suites",
   {
     id: text("id").primaryKey(),
+    projectId: text("project_id").notNull().default("00000000-0000-7000-8000-000000000001"),
     name: text("name").notNull(),
     description: text("description"),
     version: integer("version").notNull(),
+    status: text("status", { enum: ["active", "archived"] })
+      .notNull()
+      .default("active"),
+    enabled: boolean("enabled").notNull().default(true),
+    revision: integer("revision").notNull().default(1),
+    policyJson: text("policy_json").notNull().default("{}"),
+    createdBy: text("created_by"),
+    updatedBy: text("updated_by"),
     createdAt: text("created_at").notNull(),
     updatedAt: text("updated_at").notNull(),
   },
@@ -352,6 +381,12 @@ export const pgRunners = pgTable(
   {
     id: text("id").primaryKey(),
     credentialHash: text("credential_hash").notNull(),
+    credentialVersion: integer("credential_version").notNull().default(1),
+    credentialRevokedAt: text("credential_revoked_at"),
+    credentialRotationRequestedAt: text("credential_rotation_requested_at"),
+    previousCredentialHash: text("previous_credential_hash"),
+    previousCredentialValidUntil: text("previous_credential_valid_until"),
+    deregisteredAt: text("deregistered_at"),
     name: text("name").notNull(),
     disabled: boolean("disabled").notNull().default(false),
     draining: boolean("draining").notNull().default(false),
@@ -498,6 +533,7 @@ export const pgRunBatches = pgTable(
       { onDelete: "restrict" },
     ),
     priority: integer("priority").notNull().default(0),
+    policyJson: text("policy_json"),
     cancelRequestedAt: text("cancel_requested_at"),
     version: integer("version").notNull().default(1),
     createdAt: text("created_at").notNull(),
@@ -558,6 +594,7 @@ export const pgExecutionRuns = pgTable(
     caseVersion: integer("case_version").notNull(),
     displayName: text("display_name").notNull(),
     className: text("class_name").notNull(),
+    parametersJson: text("parameters_json").notNull().default("{}"),
     status: text("status", {
       enum: ["queued", "assigned", "running", "succeeded", "failed", "cancelled"],
     }).notNull(),
@@ -765,6 +802,250 @@ export const pgAttemptArtifacts = pgTable(
   ],
 );
 
+export const pgCaseSourceComparisons = pgTable(
+  "case_source_comparisons",
+  {
+    id: text("id").primaryKey(),
+    projectId: text("project_id").notNull(),
+    currentSourceId: text("current_source_id"),
+    candidateSourceId: text("candidate_source_id").notNull(),
+    addedJson: text("added_json").notNull(),
+    changedJson: text("changed_json").notNull(),
+    removedJson: text("removed_json").notNull(),
+    conflictsJson: text("conflicts_json").notNull(),
+    truncated: boolean("truncated").notNull().default(false),
+    createdBy: text("created_by"),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [
+    index("case_source_comparisons_project_created_idx").on(table.projectId, table.createdAt),
+  ],
+);
+
+export const pgCaseSuiteVersions = pgTable(
+  "case_suite_versions",
+  {
+    id: text("id").primaryKey(),
+    suiteId: text("suite_id").notNull(),
+    version: integer("version").notNull(),
+    snapshotJson: text("snapshot_json").notNull(),
+    changeReason: text("change_reason").notNull(),
+    createdBy: text("created_by"),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [uniqueIndex("case_suite_versions_suite_version_uq").on(table.suiteId, table.version)],
+);
+
+export const pgCaseSuiteSchedules = pgTable("case_suite_schedules", {
+  id: text("id").primaryKey(),
+  suiteId: text("suite_id").notNull(),
+  projectId: text("project_id").notNull(),
+  cronExpression: text("cron_expression").notNull(),
+  timeZone: text("time_zone").notNull(),
+  missedRunPolicy: text("missed_run_policy", { enum: ["skip", "run-once"] }).notNull(),
+  enabled: boolean("enabled").notNull().default(true),
+  nextTriggerAt: text("next_trigger_at").notNull(),
+  lastTriggerAt: text("last_trigger_at"),
+  revision: integer("revision").notNull().default(1),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+});
+
+export const pgLdapSyncJobs = pgTable(
+  "ldap_sync_jobs",
+  {
+    id: text("id").primaryKey(),
+    status: text("status", {
+      enum: ["queued", "running", "succeeded", "failed", "cancelled"],
+    }).notNull(),
+    triggerKind: text("trigger_kind", { enum: ["manual", "scheduled"] }).notNull(),
+    checkpointJson: text("checkpoint_json").notNull().default("{}"),
+    processedUsers: integer("processed_users").notNull().default(0),
+    disabledUsers: integer("disabled_users").notNull().default(0),
+    errorCode: text("error_code"),
+    errorSummary: text("error_summary"),
+    requestedBy: text("requested_by"),
+    scheduledAt: text("scheduled_at").notNull(),
+    startedAt: text("started_at"),
+    finishedAt: text("finished_at"),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [index("ldap_sync_jobs_status_scheduled_idx").on(table.status, table.scheduledAt)],
+);
+
+export const pgServiceAccounts = pgTable(
+  "service_accounts",
+  {
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    normalizedName: text("normalized_name").notNull(),
+    description: text("description").notNull().default(""),
+    status: text("status", { enum: ["active", "disabled"] }).notNull(),
+    systemPermissionsJson: text("system_permissions_json").notNull().default("[]"),
+    projectPermissionsJson: text("project_permissions_json").notNull().default("{}"),
+    createdBy: text("created_by").notNull(),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+    revision: integer("revision").notNull().default(1),
+  },
+  (table) => [uniqueIndex("service_accounts_normalized_name_uq").on(table.normalizedName)],
+);
+
+export const pgApiTokens = pgTable(
+  "api_tokens",
+  {
+    id: text("id").primaryKey(),
+    serviceAccountId: text("service_account_id").notNull(),
+    name: text("name").notNull(),
+    tokenPrefix: text("token_prefix").notNull(),
+    tokenHash: text("token_hash").notNull(),
+    scopesJson: text("scopes_json").notNull(),
+    expiresAt: text("expires_at").notNull(),
+    lastUsedAt: text("last_used_at"),
+    revokedAt: text("revoked_at"),
+    replacedByTokenId: text("replaced_by_token_id"),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("api_tokens_hash_uq").on(table.tokenHash),
+    index("api_tokens_account_active_idx").on(
+      table.serviceAccountId,
+      table.revokedAt,
+      table.expiresAt,
+    ),
+  ],
+);
+
+export const pgNotifications = pgTable(
+  "notifications",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id").notNull(),
+    projectId: text("project_id"),
+    kind: text("kind").notNull(),
+    severity: text("severity", { enum: ["info", "warning", "critical"] }).notNull(),
+    title: text("title").notNull(),
+    message: text("message").notNull(),
+    resourceType: text("resource_type"),
+    resourceId: text("resource_id"),
+    readAt: text("read_at"),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [
+    index("notifications_user_unread_idx").on(table.userId, table.readAt, table.createdAt),
+  ],
+);
+
+export const pgRetentionPolicies = pgTable("retention_policies", {
+  category: text("category").primaryKey(),
+  retentionDays: integer("retention_days").notNull(),
+  minimumDays: integer("minimum_days").notNull(),
+  maximumDays: integer("maximum_days").notNull(),
+  updatedBy: text("updated_by"),
+  updatedAt: text("updated_at").notNull(),
+  revision: integer("revision").notNull().default(1),
+});
+
+export const pgCleanupJobs = pgTable(
+  "cleanup_jobs",
+  {
+    id: text("id").primaryKey(),
+    category: text("category").notNull(),
+    resourceType: text("resource_type").notNull(),
+    resourceId: text("resource_id").notNull(),
+    objectKey: text("object_key"),
+    status: text("status", {
+      enum: ["pending", "leased", "succeeded", "failed", "dead_letter"],
+    }).notNull(),
+    attemptCount: integer("attempt_count").notNull().default(0),
+    availableAt: text("available_at").notNull(),
+    leaseOwner: text("lease_owner"),
+    leaseExpiresAt: text("lease_expires_at"),
+    errorSummary: text("error_summary"),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("cleanup_jobs_resource_uq").on(
+      table.category,
+      table.resourceType,
+      table.resourceId,
+    ),
+    index("cleanup_jobs_claim_idx").on(table.status, table.availableAt, table.leaseExpiresAt),
+  ],
+);
+
+export const pgAnalyticsFacts = pgTable(
+  "analytics_facts",
+  {
+    attemptId: text("attempt_id").primaryKey(),
+    projectId: text("project_id").notNull(),
+    batchId: text("batch_id").notNull(),
+    runId: text("run_id").notNull(),
+    suiteId: text("suite_id").notNull(),
+    caseDefinitionId: text("case_definition_id").notNull(),
+    caseVersion: integer("case_version").notNull(),
+    runnerId: text("runner_id").notNull(),
+    environmentVersionId: text("environment_version_id"),
+    outcome: text("outcome").notNull(),
+    resultCode: text("result_code"),
+    failureSignature: text("failure_signature"),
+    durationMs: bigint("duration_ms", { mode: "number" }),
+    passed: integer("passed").notNull().default(0),
+    failed: integer("failed").notNull().default(0),
+    skipped: integer("skipped").notNull().default(0),
+    completedAt: text("completed_at").notNull(),
+    schemaVersion: integer("schema_version").notNull().default(1),
+  },
+  (table) => [
+    index("analytics_facts_dimensions_idx").on(
+      table.projectId,
+      table.completedAt,
+      table.suiteId,
+      table.caseDefinitionId,
+      table.runnerId,
+    ),
+  ],
+);
+
+export const pgSystemSettings = pgTable("system_settings", {
+  settingKey: text("setting_key").primaryKey(),
+  valueJson: text("value_json").notNull(),
+  updatedBy: text("updated_by"),
+  updatedAt: text("updated_at").notNull(),
+  revision: integer("revision").notNull().default(1),
+});
+
+export const pgCaseImportJobs = pgTable(
+  "case_import_jobs",
+  {
+    id: text("id").primaryKey(),
+    projectId: text("project_id").notNull(),
+    idempotencyKey: text("idempotency_key").notNull(),
+    fileName: text("file_name").notNull(),
+    objectKey: text("object_key").notNull(),
+    sha256: text("sha256").notNull(),
+    sizeBytes: bigint("size_bytes", { mode: "number" }).notNull(),
+    status: text("status", {
+      enum: ["queued", "running", "cancel_requested", "cancelled", "succeeded", "failed"],
+    }).notNull(),
+    progressPercent: integer("progress_percent").notNull().default(0),
+    resultJson: text("result_json"),
+    errorCode: text("error_code"),
+    errorSummary: text("error_summary"),
+    requestedBy: text("requested_by"),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+    startedAt: text("started_at"),
+    finishedAt: text("finished_at"),
+  },
+  (table) => [
+    uniqueIndex("case_import_jobs_idempotency_uq").on(table.projectId, table.idempotencyKey),
+    index("case_import_jobs_status_idx").on(table.status, table.updatedAt),
+  ],
+);
+
 export const postgresSchema = {
   projects: pgProjects,
   users: pgUsers,
@@ -801,4 +1082,16 @@ export const postgresSchema = {
   attemptStateEvents: pgAttemptStateEvents,
   attemptLogWatermarks: pgAttemptLogWatermarks,
   attemptArtifacts: pgAttemptArtifacts,
+  caseSourceComparisons: pgCaseSourceComparisons,
+  caseSuiteVersions: pgCaseSuiteVersions,
+  caseSuiteSchedules: pgCaseSuiteSchedules,
+  ldapSyncJobs: pgLdapSyncJobs,
+  serviceAccounts: pgServiceAccounts,
+  apiTokens: pgApiTokens,
+  notifications: pgNotifications,
+  retentionPolicies: pgRetentionPolicies,
+  cleanupJobs: pgCleanupJobs,
+  analyticsFacts: pgAnalyticsFacts,
+  systemSettings: pgSystemSettings,
+  caseImportJobs: pgCaseImportJobs,
 };

@@ -35,11 +35,15 @@ func Run(arguments []string, stdout, stderr io.Writer, info buildinfo.Info) int 
 	case "version":
 		err = writeJSON(stdout, info.Details())
 	case "doctor":
-		err = runDoctor(stdout)
+		err = runDoctor(arguments[1:], stdout, stderr)
+	case "health":
+		err = runHealth(arguments[1:], stdout, stderr)
 	case "run-once":
 		err = runOnce(arguments[1:], stdout, stderr)
+	case "rotate-credential":
+		err = rotateCredential(arguments[1:], stdout, stderr)
 	case "start":
-		err = runAgent(stdout, info)
+		err = runAgent(arguments[1:], stdout, stderr, info)
 	case "help", "-h", "--help":
 		printUsage(stdout)
 		return exitSuccess
@@ -55,8 +59,35 @@ func Run(arguments []string, stdout, stderr io.Writer, info buildinfo.Info) int 
 	return exitSuccess
 }
 
-func runAgent(diagnostics io.Writer, info buildinfo.Info) error {
-	configuration, err := config.Load(os.LookupEnv)
+func runHealth(arguments []string, stdout, stderr io.Writer) error {
+	if len(arguments) == 0 {
+		return errors.New("health requires live or ready")
+	}
+	switch arguments[0] {
+	case "live":
+		if len(arguments) != 1 {
+			return errors.New("health live does not accept configuration arguments")
+		}
+		return writeJSON(stdout, struct {
+			Status string `json:"status"`
+		}{Status: "live"})
+	case "ready":
+		configuration, err := loadConfiguration(arguments[1:], stderr)
+		if err != nil {
+			return fmt.Errorf("load configuration: %w", err)
+		}
+		diagnostic, err := config.CheckLocalEnvironment(configuration)
+		if err != nil {
+			return err
+		}
+		return writeJSON(stdout, diagnostic)
+	default:
+		return errors.New("health requires live or ready")
+	}
+}
+
+func runAgent(arguments []string, diagnostics, stderr io.Writer, info buildinfo.Info) error {
+	configuration, err := loadConfiguration(arguments, stderr)
 	if err != nil {
 		return fmt.Errorf("load configuration: %w", err)
 	}
@@ -65,8 +96,8 @@ func runAgent(diagnostics io.Writer, info buildinfo.Info) error {
 	return control.Run(ctx, configuration, info, diagnostics)
 }
 
-func runDoctor(stdout io.Writer) error {
-	configuration, err := config.Load(os.LookupEnv)
+func runDoctor(arguments []string, stdout, stderr io.Writer) error {
+	configuration, err := loadConfiguration(arguments, stderr)
 	if err != nil {
 		return fmt.Errorf("load configuration: %w", err)
 	}
@@ -75,6 +106,53 @@ func runDoctor(stdout io.Writer) error {
 		return err
 	}
 	return writeJSON(stdout, diagnostic)
+}
+
+func rotateCredential(arguments []string, stdout, stderr io.Writer) error {
+	configuration, err := loadConfiguration(arguments, stderr)
+	if err != nil {
+		return fmt.Errorf("load configuration: %w", err)
+	}
+	store := control.NewIdentityStore(configuration.DataDirectory)
+	identity, found, err := store.Load()
+	if err != nil {
+		return err
+	}
+	if !found {
+		return errors.New("runner is not registered; start the agent once before rotating its credential")
+	}
+	client, err := control.NewClient(configuration)
+	if err != nil {
+		return err
+	}
+	defer client.Close()
+	rotated, err := client.RotateCredential(context.Background(), identity)
+	if err != nil {
+		return err
+	}
+	if err := store.Save(rotated); err != nil {
+		return fmt.Errorf("persist rotated identity (the previous credential remains valid briefly; retry the command): %w", err)
+	}
+	return writeJSON(stdout, struct {
+		RunnerID string `json:"runnerId"`
+		Rotated  bool   `json:"rotated"`
+	}{RunnerID: rotated.RunnerID, Rotated: true})
+}
+
+func loadConfiguration(arguments []string, stderr io.Writer) (config.Config, error) {
+	flags := flag.NewFlagSet("Agent configuration", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	configurationPath := flags.String("config", "", "path to a private schemaVersion 1 JSON configuration")
+	if err := flags.Parse(arguments); err != nil {
+		return config.Config{}, err
+	}
+	if flags.NArg() != 0 {
+		return config.Config{}, errors.New("unexpected positional Agent configuration arguments")
+	}
+	if *configurationPath != "" {
+		return config.LoadFile(*configurationPath)
+	}
+	return config.Load(os.LookupEnv)
 }
 
 func runOnce(arguments []string, stdout, stderr io.Writer) error {
@@ -141,9 +219,11 @@ func printUsage(writer io.Writer) {
 	fmt.Fprintln(writer, "")
 	fmt.Fprintln(writer, "Commands:")
 	fmt.Fprintln(writer, "  version    Print build and target information as JSON")
-	fmt.Fprintln(writer, "  doctor     Validate local configuration and writable directories")
+	fmt.Fprintln(writer, "  doctor     Validate local configuration and writable directories [--config FILE]")
+	fmt.Fprintln(writer, "  health     Probe liveness or local readiness: health live|ready [--config FILE]")
 	fmt.Fprintln(writer, "  run-once   Execute one local versioned spec without a shell")
-	fmt.Fprintln(writer, "  start      Register, reconcile, claim and execute control-plane assignments")
+	fmt.Fprintln(writer, "  rotate-credential  Exchange the runner credential for a newly issued one [--config FILE]")
+	fmt.Fprintln(writer, "  start      Register, reconcile, claim and execute assignments [--config FILE]")
 }
 
 type stringListFlag []string

@@ -1,5 +1,6 @@
 export * from "./import-testng-jar";
 export * from "./control-executions";
+export * from "./manage-case-definitions";
 export * from "./manage-case-sources";
 export * from "./manage-case-suites";
 export * from "./manage-execution-environments";
@@ -7,4 +8,7 @@ export * from "./manage-identity-access";
 export * from "./manage-runners";
 export * from "./ports";
 export * from "./schedule-run-batches";
+export * from "./read-public-statistics";
 export * from "./run-job-worker";
+export * from "./platform-operations";
+export * from "./schedule-expression";

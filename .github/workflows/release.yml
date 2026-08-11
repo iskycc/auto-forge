@@ -83,17 +83,6 @@ jobs:
           corepack enable
           pnpm install --frozen-lockfile
 
-      - name: Run quality commands
-        run: |
-          pnpm format:check
-          pnpm lint
-          pnpm typecheck
-          pnpm test
-          pnpm test:integration
-          pnpm test:full
-          pnpm test:deployment
-          pnpm build
-
       - name: Locate preinstalled Chromium
         run: |
           browser_path="$(command -v google-chrome || command -v chromium || true)"
@@ -103,61 +92,20 @@ jobs:
           fi
           echo "PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=${browser_path}" >> "${GITHUB_ENV}"
 
-      - name: Run Lite browser flow
-        run: pnpm test:e2e
+      - name: Run quality commands
+        run: |
+          pnpm format:check
+          pnpm lint
+          pnpm typecheck
+          pnpm test
+          pnpm test:integration
+          pnpm test:full
+          pnpm test:performance
+          pnpm test:deployment
+          pnpm build
 
-  agent:
-    name: Agent ${{ matrix.variant }}
-    needs: [prepare, quality]
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: 15
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - variant: amd64
-            runner: ubuntu-24.04
-          - variant: arm64
-            runner: ubuntu-24.04-arm
-          - variant: amd64-musl
-            runner: ubuntu-24.04
-          - variant: arm64-musl
-            runner: ubuntu-24.04-arm
-    env:
-      AUTOFORGE_RELEASE_REVISION: ${{ needs.prepare.outputs.revision }}
-      SOURCE_DATE_EPOCH: ${{ needs.prepare.outputs.source_date_epoch }}
-    steps:
-      - name: Check out tagged source
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ needs.prepare.outputs.tag }}
-
-      - name: Set up Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version: 1.26.5
-          cache-dependency-path: apps/runner-agent/go.mod
-
-      - name: Build static Agent binary
-        run: bash scripts/release/build-agent.sh "${{ needs.prepare.outputs.version }}" "${{ matrix.variant }}" dist/release
-
-      - name: Generate Agent SBOM
-        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
-        with:
-          file: dist/release/autoforge-agent-${{ needs.prepare.outputs.version }}-${{ matrix.variant }}
-          format: spdx-json
-          output-file: dist/release/autoforge-agent-${{ needs.prepare.outputs.version }}-${{ matrix.variant }}.spdx.json
-          syft-version: v1.50.0
-          upload-artifact: false
-          upload-release-assets: false
-
-      - name: Upload Agent release assets
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: release-agent-${{ matrix.variant }}
-          path: dist/release/*
-          if-no-files-found: error
-          retention-days: 7
+      - name: Run network-blocked Lite browser flow
+        run: pnpm test:offline
 
   backend:
     name: Backend ${{ matrix.variant }}
@@ -195,6 +143,12 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
 
+      - name: Set up Go for embedded Agent resources
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: 1.26.5
+          cache-dependency-path: apps/runner-agent/go.mod
+
       - name: Build compressed offline image
         run: bash scripts/release/build-backend-image.sh "${{ needs.prepare.outputs.version }}" "${{ matrix.variant }}" dist/release
 
@@ -202,6 +156,9 @@ jobs:
         run: |
           docker load --input "dist/release/autoforge-backend-${{ needs.prepare.outputs.version }}-${{ matrix.variant }}.docker.tar"
           bash scripts/release/verify-backend-image.sh "${BACKEND_IMAGE}" "${BACKEND_PLATFORM}"
+          node scripts/release/create-backend-image-metadata.mjs \
+            "${BACKEND_IMAGE}" "${{ needs.prepare.outputs.version }}" "${{ matrix.variant }}" \
+            "dist/release/autoforge-backend-${{ needs.prepare.outputs.version }}-${{ matrix.variant }}.image.json"
 
       - name: Generate backend image SBOM
         uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
@@ -227,7 +184,7 @@ jobs:
 
   publish:
     name: Publish GitHub Release
-    needs: [prepare, agent, backend]
+    needs: [prepare, backend]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -255,10 +212,33 @@ jobs:
         run: bash scripts/release/build-deployment-bundle.sh "${{ needs.prepare.outputs.version }}" release
 
       - name: Add license and attribution files
-        run: cp LICENSE NOTICE THIRD_PARTY_LICENSES.json release/
+        run: >-
+          cp CHANGELOG.md COMPATIBILITY.md LICENSE NOTICE THIRD_PARTY_LICENSES.json
+          release-signing-public-key.pem release/
 
       - name: Create release manifest and checksums
         run: node scripts/release/create-manifest.mjs "${{ needs.prepare.outputs.version }}" release
+
+      - name: Sign release checksums
+        env:
+          AUTOFORGE_RELEASE_SIGNING_KEY: ${{ secrets.AUTOFORGE_RELEASE_SIGNING_KEY }}
+        run: |
+          if [[ -z "${AUTOFORGE_RELEASE_SIGNING_KEY:-}" ]]; then
+            echo "AUTOFORGE_RELEASE_SIGNING_KEY is not configured." >&2
+            exit 1
+          fi
+          umask 077
+          signing_key_path="$(mktemp)"
+          cleanup_signing_key() {
+            shred --remove --zero -- "${signing_key_path}"
+          }
+          trap cleanup_signing_key EXIT
+          printf '%s\n' "${AUTOFORGE_RELEASE_SIGNING_KEY}" >"${signing_key_path}"
+          bash scripts/release/sign-checksums.sh \
+            "${signing_key_path}" \
+            release/SHA256SUMS \
+            release/SHA256SUMS.sig \
+            release/release-signing-public-key.pem
 
       - name: Generate build provenance attestation
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2

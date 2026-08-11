@@ -3,17 +3,34 @@ import { Activity } from "lucide-react";
 import { RunBatchPlanner } from "@/components/run-batch-planner";
 import { getPlatformServices } from "@/lib/services";
 import { requirePageProjectScope } from "@/lib/auth";
+import type { RunBatchListQuery } from "@autoforge/application";
 
 export const dynamic = "force-dynamic";
 
-export default async function RunBatchesPage() {
+export default async function RunBatchesPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
   const { projectIds } = await requirePageProjectScope("run.read");
   const services = await getPlatformServices();
-  const [suites, runners, batches] = await Promise.all([
+  const parameters = await searchParams;
+  const filter = runBatchFilter(parameters, projectIds);
+  const [suites, runners, batchPage, projects] = await Promise.all([
     services.caseSuites.list(200),
     services.runnerControl.list(500),
-    services.runBatches.list(100, projectIds),
+    services.runBatches.listPage(filter),
+    services.identities.listProjects(),
   ]);
+  const refreshQuery = new URLSearchParams();
+  for (const [key, value] of Object.entries(filter)) {
+    if (key !== "projectIds" && value !== undefined) refreshQuery.set(key, String(value));
+  }
+  const nextQuery = new URLSearchParams(refreshQuery);
+  if (batchPage.nextCursor) nextQuery.set("cursor", batchPage.nextCursor);
+  const visibleProjects = projectIds
+    ? projects.filter((project) => projectIds.includes(project.id))
+    : projects;
   return (
     <div className="page-stack">
       <section className="page-hero">
@@ -26,12 +43,127 @@ export default async function RunBatchesPage() {
           <Activity size={24} />
         </span>
       </section>
+      <form className="content-card run-history-filter" method="get">
+        <label>
+          项目
+          <select defaultValue={filter.projectId ?? ""} name="projectId">
+            <option value="">全部可访问项目</option>
+            {visibleProjects.map((project) => (
+              <option key={project.id} value={project.id}>
+                {project.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          用例任务
+          <select defaultValue={filter.suiteId ?? ""} name="suiteId">
+            <option value="">全部任务</option>
+            {suites.map((suite) => (
+              <option key={suite.id} value={suite.id}>
+                {suite.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          用例 ID
+          <input defaultValue={filter.caseDefinitionId ?? ""} name="caseDefinitionId" />
+        </label>
+        <label>
+          状态
+          <select defaultValue={filter.status ?? ""} name="status">
+            <option value="">全部状态</option>
+            <option value="queued">排队中</option>
+            <option value="running">执行中</option>
+            <option value="succeeded">成功</option>
+            <option value="failed">失败</option>
+            <option value="cancelled">已取消</option>
+          </select>
+        </label>
+        <label>
+          Runner
+          <select defaultValue={filter.runnerId ?? ""} name="runnerId">
+            <option value="">全部 Runner</option>
+            {runners.map((runner) => (
+              <option key={runner.id} value={runner.id}>
+                {runner.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          开始时间
+          <input
+            defaultValue={localDateTime(filter.createdAfter)}
+            name="createdAfter"
+            type="datetime-local"
+          />
+        </label>
+        <label>
+          结束时间
+          <input
+            defaultValue={localDateTime(filter.createdBefore)}
+            name="createdBefore"
+            type="datetime-local"
+          />
+        </label>
+        <button className="button button-secondary" type="submit">
+          筛选记录
+        </button>
+      </form>
       <RunBatchPlanner
         initialSuites={suites}
         initialRunners={runners}
-        initialBatches={batches}
+        initialBatches={batchPage.items}
+        historyRefreshUrl={`/api/v1/run-batches?${refreshQuery}`}
+        {...(batchPage.nextCursor ? { nextPageHref: `/run-batches?${nextQuery}` } : {})}
         policy={services.runBatches.policy()}
       />
     </div>
   );
+}
+
+function runBatchFilter(
+  parameters: Record<string, string | string[] | undefined>,
+  projectIds: string[] | undefined,
+): RunBatchListQuery {
+  const value = (key: string) =>
+    typeof parameters[key] === "string" && parameters[key]
+      ? (parameters[key] as string)
+      : undefined;
+  const date = (key: string) => {
+    const raw = value(key);
+    if (!raw) return undefined;
+    const parsed = new Date(raw);
+    return Number.isNaN(parsed.getTime()) ? undefined : parsed.toISOString();
+  };
+  const status = value("status");
+  const cursor = value("cursor");
+  const projectId = value("projectId");
+  const suiteId = value("suiteId");
+  const caseDefinitionId = value("caseDefinitionId");
+  const runnerId = value("runnerId");
+  const createdAfter = date("createdAfter");
+  const createdBefore = date("createdBefore");
+  const normalizedStatus =
+    status && ["queued", "running", "succeeded", "failed", "cancelled"].includes(status)
+      ? (status as NonNullable<RunBatchListQuery["status"]>)
+      : undefined;
+  return {
+    limit: 50,
+    ...(projectIds ? { projectIds } : {}),
+    ...(cursor ? { cursor } : {}),
+    ...(projectId ? { projectId } : {}),
+    ...(suiteId ? { suiteId } : {}),
+    ...(caseDefinitionId ? { caseDefinitionId } : {}),
+    ...(runnerId ? { runnerId } : {}),
+    ...(createdAfter ? { createdAfter } : {}),
+    ...(createdBefore ? { createdBefore } : {}),
+    ...(normalizedStatus ? { status: normalizedStatus } : {}),
+  };
+}
+
+function localDateTime(value: string | undefined): string {
+  return value ? value.slice(0, 16) : "";
 }

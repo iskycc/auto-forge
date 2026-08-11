@@ -42,6 +42,12 @@ export default async function RunBatchDetailsPage({
       </section>
       <ExecutionBatchDetails
         batch={batch}
+        canCancelRuns={canAuthorize(() =>
+          services.identityAccess.authorize(identity, "run.cancel", batch.projectId),
+        )}
+        canCreateRuns={canAuthorize(() =>
+          services.identityAccess.authorize(identity, "run.create", batch.projectId),
+        )}
         canReadLogs={canAuthorize(() =>
           services.identityAccess.authorize(identity, "log.read", batch.projectId),
         )}

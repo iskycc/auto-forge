@@ -1,40 +1,57 @@
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import { PlatformConfigurationStore } from "@autoforge/platform-config";
 import { describe, expect, it } from "vitest";
 
 import { loadAppConfig } from "./config";
 
-describe("scheduler configuration", () => {
-  it("uses conservative offline defaults", () => {
-    const config = loadAppConfig({ NODE_ENV: "test", AUTOFORGE_MODE: "lite" });
+describe("persisted application configuration", () => {
+  it("uses conservative standalone defaults", () => {
+    const dataDirectory = temporaryDataDirectory();
+    const config = loadAppConfig({ dataDirectory, workspaceRoot: "/workspace" });
 
+    expect(config.mode).toBe("lite");
     expect(config.scheduler).toEqual({
       maximumCpuUtilizationPercent: 85,
       maximumMemoryUtilizationPercent: 85,
       maximumLoadPerCpu: 1,
       metricsMaximumAgeSeconds: 45,
+      projectMaximumConcurrency: 128,
+      priorityAgingIntervalMinutes: 5,
     });
+    expect(config.testNgTargetJavaVersion).toBe(21);
+    expect(config.masterKey).toHaveLength(44);
   });
 
-  it("parses customized thresholds and rejects out-of-range values", () => {
-    const config = loadAppConfig({
-      NODE_ENV: "test",
-      AUTOFORGE_MODE: "lite",
-      AUTOFORGE_SCHEDULER_MAX_CPU_PERCENT: "70",
-      AUTOFORGE_SCHEDULER_MAX_MEMORY_PERCENT: "75",
-      AUTOFORGE_SCHEDULER_MAX_LOAD_PER_CPU: "0.8",
-      AUTOFORGE_SCHEDULER_METRICS_MAX_AGE_SECONDS: "60",
-    });
-    expect(config.scheduler).toEqual({
-      maximumCpuUtilizationPercent: 70,
-      maximumMemoryUtilizationPercent: 75,
-      maximumLoadPerCpu: 0.8,
-      metricsMaximumAgeSeconds: 60,
-    });
-    expect(() =>
-      loadAppConfig({
-        NODE_ENV: "test",
-        AUTOFORGE_MODE: "lite",
-        AUTOFORGE_SCHEDULER_MAX_CPU_PERCENT: "101",
-      }),
-    ).toThrow();
+  it("loads administrator-managed limits instead of process environment variables", () => {
+    const dataDirectory = temporaryDataDirectory();
+    const store = new PlatformConfigurationStore(dataDirectory);
+    const current = store.initialize();
+    store.replace(
+      {
+        ...current,
+        limits: { ...current.limits, testNgTargetJavaVersion: 17 },
+        scheduler: {
+          maximumCpuUtilizationPercent: 70,
+          maximumMemoryUtilizationPercent: 75,
+          maximumLoadPerCpu: 0.8,
+          metricsMaximumAgeSeconds: 60,
+          projectMaximumConcurrency: 32,
+          priorityAgingIntervalMinutes: 10,
+        },
+      },
+      current.revision,
+    );
+
+    const config = loadAppConfig({ dataDirectory, workspaceRoot: "/workspace" });
+    expect(config.testNgTargetJavaVersion).toBe(17);
+    expect(config.scheduler.maximumCpuUtilizationPercent).toBe(70);
+    expect(config.scheduler.metricsMaximumAgeSeconds).toBe(60);
   });
 });
+
+function temporaryDataDirectory(): string {
+  return mkdtempSync(join(tmpdir(), "autoforge-web-config-"));
+}

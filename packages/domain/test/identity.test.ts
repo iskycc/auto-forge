@@ -1,5 +1,6 @@
 import {
   builtInRoleDefinitions,
+  countSystemAdministrators,
   DEFAULT_PROJECT_ID,
   hasPermission,
   permissionCatalog,
@@ -91,6 +92,30 @@ describe("identity permissions", () => {
       );
     },
   );
+});
+
+describe("countSystemAdministrators", () => {
+  const adminPermissions: Permission[] = ["user.manage", "role.manage"];
+  const bindings = [
+    { userId: "user-1", roleId: "role-a", permissions: adminPermissions },
+    { userId: "user-1", roleId: "role-b", permissions: ["user.read"] as Permission[] },
+    { userId: "user-2", roleId: "role-a", permissions: adminPermissions },
+    { userId: "user-3", roleId: "role-c", permissions: ["user.manage"] as Permission[] },
+  ];
+
+  it("counts only users holding every recovery permission", () => {
+    expect(countSystemAdministrators(bindings)).toBe(2);
+  });
+
+  it("evaluates role deactivation against the remaining administrators", () => {
+    expect(countSystemAdministrators(bindings, { roleId: "role-a" })).toBe(0);
+    expect(countSystemAdministrators(bindings, { roleId: "role-b" })).toBe(2);
+  });
+
+  it("evaluates removing a single binding without ignoring the user's other roles", () => {
+    expect(countSystemAdministrators(bindings, { userId: "user-2", roleId: "role-a" })).toBe(1);
+    expect(countSystemAdministrators(bindings, { userId: "user-1" })).toBe(1);
+  });
 });
 
 function role(key: string) {

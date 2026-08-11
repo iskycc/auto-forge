@@ -14,7 +14,11 @@ export async function POST(request: Request, context: Context): Promise<NextResp
     const input = updateCaseSuiteItemsInputSchema.parse(await request.json());
     const { suiteId } = await context.params;
     const services = await getPlatformServices();
-    const suite = await services.caseSuites.addCases(suiteId, input.caseDefinitionIds);
+    const suite = await services.caseSuites.addCases(
+      suiteId,
+      input.caseDefinitionIds,
+      identity.user.id,
+    );
     await services.identityAccess.recordAuthorizedOperation(identity, {
       action: "case_suite.add_cases",
       resourceType: "case_suite",

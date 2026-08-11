@@ -3,6 +3,10 @@ import type { Runner } from "@autoforge/domain";
 type StoredRunner = {
   id: string;
   name: string;
+  credentialVersion: number;
+  credentialRevokedAt: string | null;
+  credentialRotationRequestedAt: string | null;
+  deregisteredAt: string | null;
   disabled: boolean;
   draining: boolean;
   os: string;
@@ -62,6 +66,12 @@ export function mapStoredRunner(row: StoredRunner, offlineBefore?: string): Runn
         }
       : {}),
     terminalEnabled: row.terminalEnabled,
+    credentialVersion: row.credentialVersion,
+    ...(row.credentialRevokedAt ? { credentialRevokedAt: row.credentialRevokedAt } : {}),
+    ...(row.credentialRotationRequestedAt
+      ? { credentialRotationRequestedAt: row.credentialRotationRequestedAt }
+      : {}),
+    ...(row.deregisteredAt ? { deregisteredAt: row.deregisteredAt } : {}),
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };

@@ -10,7 +10,15 @@ export const jobEnvelopeSchema = z.object({
   createdAt: z.iso.datetime({ offset: true }),
   priority: z.number().int().min(-1_000).max(1_000).default(0),
   deduplicationKey: z.string().min(1).max(256),
-  kind: z.enum(["dispatch-run", "ldap-sync", "analytics-rollup", "retention-cleanup"]),
+  kind: z.enum([
+    "dispatch-run",
+    "ldap-sync",
+    "analytics-rollup",
+    "retention-cleanup",
+    "object-cleanup",
+    "jar-import",
+    "analytics-export",
+  ]),
   payload: z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()])),
 });
 

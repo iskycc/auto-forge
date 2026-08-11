@@ -176,7 +176,11 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
           toStatus: "running",
           actorType: "runner",
           actorId: input.runnerId,
-          details: { assignmentId: assignment.id, leaseId: seed.id },
+          details: {
+            assignmentId: assignment.id,
+            leaseId: seed.id,
+            leaseExpiresAt: input.leaseExpiresAt,
+          },
           recordedAt: input.now,
         });
         this.updateBatchStatus(assignment.batch_id, input.now, seed.eventId, "assignment.claimed");
@@ -521,14 +525,26 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
       .prepare("SELECT result_code FROM run_attempts WHERE id = ?")
       .get(input.attemptId) as { result_code: string | null } | undefined;
     if (!attempt) throw new DomainError("RUN_ATTEMPT_NOT_FOUND", "指定的执行尝试不存在。");
-    const query = input.query ? `AND instr(content, ?) > 0` : "";
+    const clauses: string[] = [];
     const parameters: Array<string | number> = [input.attemptId, input.stream, input.afterSequence];
-    if (input.query) parameters.push(input.query);
+    if (input.query) {
+      clauses.push("instr(content, ?) > 0");
+      parameters.push(input.query);
+    }
+    if (input.recordedAfter) {
+      clauses.push("recorded_at >= ?");
+      parameters.push(input.recordedAfter);
+    }
+    if (input.recordedBefore) {
+      clauses.push("recorded_at <= ?");
+      parameters.push(input.recordedBefore);
+    }
     parameters.push(input.limit + 1);
+    const filters = clauses.length > 0 ? `AND ${clauses.join(" AND ")}` : "";
     const rows = this.handle.client
       .prepare(
         `SELECT stream, sequence, content, recorded_at FROM attempt_log_chunks
-         WHERE attempt_id = ? AND stream = ? AND sequence > ? ${query}
+         WHERE attempt_id = ? AND stream = ? AND sequence > ? ${filters}
          ORDER BY sequence ASC LIMIT ?`,
       )
       .all(...parameters) as Array<{

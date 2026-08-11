@@ -3,32 +3,55 @@ import type {
   CaseListPage,
   CaseListQuery,
   CaseSuiteRepository,
+  CopyCaseSuiteRecord,
   CreateCaseSuiteRecord,
+  CreateSourceComparisonRecord,
   DashboardSummary,
   ExistingSource,
   ImportCatalogRecord,
   RegisterRunnerRecord,
   RunnerRepository,
+  UpdateCaseSuiteRecord,
 } from "@autoforge/application";
-import { jarInspectionSchema } from "@autoforge/contracts";
-import type {
-  CaseDefinitionWithMethods,
-  CaseSource,
-  CaseSuite,
-  CaseSuiteDetails,
-  Runner,
-  TestMethod,
+import {
+  jarImportResultSchema,
+  jarInspectionSchema,
+  type JarImportJob,
+  type TestNgClassCandidate,
+} from "@autoforge/contracts";
+import {
+  DEFAULT_PROJECT_ID,
+  DomainError,
+  buildCaseSuiteVersionSnapshot,
+  defaultCaseSuiteExecutionPolicy,
+  type CaseSuiteExecutionPolicy,
+  type CaseDefinitionWithMethods,
+  type CaseSource,
+  type CaseSourceComparison,
+  type CaseSourceSnapshotEntry,
+  type CaseSuite,
+  type CaseSuiteDetails,
+  type CaseVersion,
+  type CleanupJob,
+  type Runner,
+  type TestMethod,
 } from "@autoforge/domain";
-import { and, count, desc, eq, inArray, like, lt, or, sql, type SQL } from "drizzle-orm";
+import { and, count, desc, eq, gt, inArray, like, lt, or, sql, type SQL } from "drizzle-orm";
 
 import type { PostgresDatabaseHandle } from "./postgres-database";
 import { mapStoredRunner } from "./runner-mapper";
 import {
+  pgAssignmentLeases,
   pgCaseDefinitions,
+  pgCaseImportJobs,
+  pgCaseSourceComparisons,
   pgCaseSources,
   pgCaseSuiteItems,
   pgCaseSuites,
+  pgCaseSuiteVersions,
   pgCaseVersions,
+  pgCleanupJobs,
+  pgExecutionRuns,
   pgRunners,
   pgRunnerBootstrapUses,
   pgTestMethods,
@@ -39,6 +62,27 @@ function stringArray(json: string): string[] {
   return Array.isArray(parsed)
     ? parsed.filter((item): item is string => typeof item === "string")
     : [];
+}
+
+function stringRecord(json: string): Record<string, string> {
+  const parsed: unknown = JSON.parse(json);
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+  return Object.fromEntries(
+    Object.entries(parsed).filter(
+      (entry): entry is [string, string] => typeof entry[1] === "string",
+    ),
+  );
+}
+
+function safePolicy(json: string): Partial<CaseSuiteExecutionPolicy> {
+  try {
+    const parsed: unknown = JSON.parse(json);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Partial<CaseSuiteExecutionPolicy>)
+      : {};
+  } catch {
+    return {};
+  }
 }
 
 function jsonArrayLength(json: string): number {
@@ -66,6 +110,7 @@ function toMethod(row: typeof pgTestMethods.$inferSelect): TestMethod {
 function toSource(row: typeof pgCaseSources.$inferSelect): CaseSource {
   return {
     id: row.id,
+    projectId: row.projectId,
     displayName: row.displayName,
     originalFileName: row.originalFileName,
     objectKey: row.objectKey,
@@ -76,17 +121,92 @@ function toSource(row: typeof pgCaseSources.$inferSelect): CaseSource {
     status: row.status,
     warningCount: jsonArrayLength(row.warningsJson),
     authoritative: row.authoritative,
+    lifecycleStatus: row.lifecycleStatus,
+    revision: row.revision,
+    ...(row.importedBy ? { importedBy: row.importedBy } : {}),
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  };
+}
+
+function toCaseDefinition(
+  row: typeof pgCaseDefinitions.$inferSelect,
+): Omit<CaseDefinitionWithMethods, "methods"> {
+  return {
+    id: row.id,
+    projectId: row.projectId,
+    sourceId: row.sourceId,
+    className: row.className,
+    packageName: row.packageName,
+    displayName: row.displayName,
+    description: row.description,
+    tags: stringArray(row.tagsJson),
+    enabled: row.enabled,
+    archived: row.archived,
+    groups: stringArray(row.groupsJson),
+    parameters: stringRecord(row.parametersJson),
+    currentVersion: row.currentVersion,
+    revision: row.revision,
+    ...(row.updatedBy ? { updatedBy: row.updatedBy } : {}),
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  };
+}
+
+function toCaseVersion(row: typeof pgCaseVersions.$inferSelect): CaseVersion {
+  return {
+    id: row.id,
+    caseDefinitionId: row.caseDefinitionId,
+    version: row.version,
+    snapshot: safeJson(row.snapshotJson),
+    changeReason: row.changeReason,
+    ...(row.createdBy ? { createdBy: row.createdBy } : {}),
     createdAt: row.createdAt,
   };
+}
+
+function toJarImportJob(row: typeof pgCaseImportJobs.$inferSelect): JarImportJob {
+  return {
+    id: row.id,
+    projectId: row.projectId,
+    fileName: row.fileName,
+    sha256: row.sha256,
+    sizeBytes: row.sizeBytes,
+    status: row.status,
+    progressPercent: row.progressPercent,
+    ...(row.resultJson ? { result: jarImportResultSchema.parse(JSON.parse(row.resultJson)) } : {}),
+    ...(row.errorCode ? { errorCode: row.errorCode } : {}),
+    ...(row.errorSummary ? { errorSummary: row.errorSummary } : {}),
+    ...(row.requestedBy ? { requestedBy: row.requestedBy } : {}),
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+    ...(row.startedAt ? { startedAt: row.startedAt } : {}),
+    ...(row.finishedAt ? { finishedAt: row.finishedAt } : {}),
+  };
+}
+
+function safeJson(json: string): unknown {
+  try {
+    return JSON.parse(json) as unknown;
+  } catch {
+    return undefined;
+  }
 }
 
 function toSuite(row: typeof pgCaseSuites.$inferSelect, caseCount: number): CaseSuite {
   return {
     id: row.id,
+    projectId: row.projectId,
     name: row.name,
     ...(row.description ? { description: row.description } : {}),
     version: row.version,
+    revision: row.revision,
+    status: row.status,
+    enabled: row.enabled,
+    policy: { ...defaultCaseSuiteExecutionPolicy, ...safePolicy(row.policyJson) },
     caseCount,
+    ...(row.createdBy ? { createdBy: row.createdBy } : {}),
+    ...(row.updatedBy ? { updatedBy: row.updatedBy } : {}),
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
@@ -99,7 +219,190 @@ export class PostgresCaseCatalogRepository implements CaseCatalogRepository {
     await this.handle.ready;
   }
 
-  async findSourceBySha256(sha256: string): Promise<ExistingSource | null> {
+  async createJarImportJob(record: Parameters<CaseCatalogRepository["createJarImportJob"]>[0]) {
+    await this.ready();
+    await this.handle.db.transaction(async (transaction) => {
+      const inserted = await transaction
+        .insert(pgCaseImportJobs)
+        .values({
+          id: record.job.id,
+          projectId: record.job.projectId,
+          idempotencyKey: record.idempotencyKey,
+          fileName: record.job.fileName,
+          objectKey: record.objectKey,
+          sha256: record.job.sha256,
+          sizeBytes: record.job.sizeBytes,
+          status: record.job.status,
+          progressPercent: record.job.progressPercent,
+          requestedBy: record.job.requestedBy,
+          createdAt: record.job.createdAt,
+          updatedAt: record.job.updatedAt,
+        })
+        .onConflictDoNothing({
+          target: [pgCaseImportJobs.projectId, pgCaseImportJobs.idempotencyKey],
+        })
+        .returning({ id: pgCaseImportJobs.id });
+      if (inserted.length === 0) return;
+      await transaction.execute(sql`
+        INSERT INTO transactional_outbox
+          (message_id, run_id, attempt, schema_version, subject, payload_json,
+           deduplication_key, created_at, available_at)
+        VALUES
+          (${record.dispatchJob.messageId}, ${record.dispatchJob.runId},
+           ${record.dispatchJob.attempt}, ${record.dispatchJob.schemaVersion},
+           ${"autoforge.jobs.v1.ready"}, ${JSON.stringify(record.dispatchJob)}::jsonb,
+           ${record.dispatchJob.deduplicationKey}, ${record.dispatchJob.createdAt},
+           ${record.dispatchJob.createdAt})
+      `);
+    });
+    const [row] = await this.handle.db
+      .select()
+      .from(pgCaseImportJobs)
+      .where(
+        and(
+          eq(pgCaseImportJobs.projectId, record.job.projectId),
+          eq(pgCaseImportJobs.idempotencyKey, record.idempotencyKey),
+        ),
+      )
+      .limit(1);
+    if (!row) throw new Error("JAR import job was not persisted.");
+    return toJarImportJob(row);
+  }
+
+  async getJarImportJob(jobId: string, projectIds?: readonly string[]) {
+    await this.ready();
+    if (projectIds?.length === 0) return null;
+    const [row] = await this.handle.db
+      .select()
+      .from(pgCaseImportJobs)
+      .where(
+        projectIds
+          ? and(
+              eq(pgCaseImportJobs.id, jobId),
+              inArray(pgCaseImportJobs.projectId, [...projectIds]),
+            )
+          : eq(pgCaseImportJobs.id, jobId),
+      )
+      .limit(1);
+    return row ? toJarImportJob(row) : null;
+  }
+
+  async claimJarImportJob(input: Parameters<CaseCatalogRepository["claimJarImportJob"]>[0]) {
+    await this.ready();
+    const [row] = await this.handle.db
+      .update(pgCaseImportJobs)
+      .set({
+        status: "running",
+        progressPercent: 5,
+        startedAt: input.startedAt,
+        updatedAt: input.startedAt,
+      })
+      .where(
+        and(
+          eq(pgCaseImportJobs.id, input.jobId),
+          inArray(pgCaseImportJobs.status, ["queued", "failed"]),
+        ),
+      )
+      .returning();
+    return row ? { job: toJarImportJob(row), objectKey: row.objectKey } : null;
+  }
+
+  async updateJarImportJob(input: Parameters<CaseCatalogRepository["updateJarImportJob"]>[0]) {
+    await this.ready();
+    const [row] = await this.handle.db
+      .update(pgCaseImportJobs)
+      .set({
+        status: input.status,
+        progressPercent: input.progressPercent,
+        resultJson: input.result ? JSON.stringify(input.result) : null,
+        errorCode: input.errorCode ?? null,
+        errorSummary: input.errorSummary ?? null,
+        updatedAt: input.updatedAt,
+        finishedAt: input.finishedAt ?? null,
+      })
+      .where(eq(pgCaseImportJobs.id, input.jobId))
+      .returning();
+    if (!row) throw new DomainError("JAR_IMPORT_JOB_NOT_FOUND", "指定的 JAR 导入任务不存在。");
+    return toJarImportJob(row);
+  }
+
+  async requestJarImportCancellation(
+    input: Parameters<CaseCatalogRepository["requestJarImportCancellation"]>[0],
+  ) {
+    await this.ready();
+    const scope = input.projectIds
+      ? inArray(pgCaseImportJobs.projectId, [...input.projectIds])
+      : undefined;
+    await this.handle.db
+      .update(pgCaseImportJobs)
+      .set({
+        status: "cancelled",
+        progressPercent: 100,
+        updatedAt: input.updatedAt,
+        finishedAt: input.updatedAt,
+      })
+      .where(
+        and(eq(pgCaseImportJobs.id, input.jobId), eq(pgCaseImportJobs.status, "queued"), scope),
+      );
+    await this.handle.db
+      .update(pgCaseImportJobs)
+      .set({ status: "cancel_requested", updatedAt: input.updatedAt })
+      .where(
+        and(eq(pgCaseImportJobs.id, input.jobId), eq(pgCaseImportJobs.status, "running"), scope),
+      );
+    const job = await this.getJarImportJob(input.jobId, input.projectIds);
+    if (!job) throw new DomainError("JAR_IMPORT_JOB_NOT_FOUND", "指定的 JAR 导入任务不存在。");
+    return job;
+  }
+
+  async retryJarImportJob(input: Parameters<CaseCatalogRepository["retryJarImportJob"]>[0]) {
+    await this.ready();
+    const updated = await this.handle.db.transaction(async (transaction) => {
+      const scope = input.projectIds
+        ? inArray(pgCaseImportJobs.projectId, [...input.projectIds])
+        : undefined;
+      const [row] = await transaction
+        .update(pgCaseImportJobs)
+        .set({
+          status: "queued",
+          progressPercent: 0,
+          errorCode: null,
+          errorSummary: null,
+          resultJson: null,
+          startedAt: null,
+          finishedAt: null,
+          updatedAt: input.updatedAt,
+        })
+        .where(
+          and(
+            eq(pgCaseImportJobs.id, input.jobId),
+            inArray(pgCaseImportJobs.status, ["failed", "cancelled"]),
+            scope,
+          ),
+        )
+        .returning();
+      if (!row) return undefined;
+      await transaction.execute(sql`
+        INSERT INTO transactional_outbox
+          (message_id, run_id, attempt, schema_version, subject, payload_json,
+           deduplication_key, created_at, available_at)
+        VALUES
+          (${input.dispatchJob.messageId}, ${input.dispatchJob.runId},
+           ${input.dispatchJob.attempt}, ${input.dispatchJob.schemaVersion},
+           ${"autoforge.jobs.v1.ready"}, ${JSON.stringify(input.dispatchJob)}::jsonb,
+           ${input.dispatchJob.deduplicationKey}, ${input.dispatchJob.createdAt},
+           ${input.dispatchJob.createdAt})
+      `);
+      return row;
+    });
+    if (!updated) throw new DomainError("JAR_IMPORT_JOB_NOT_RETRYABLE", "当前导入任务不能重试。");
+    return toJarImportJob(updated);
+  }
+
+  async findSourceBySha256(
+    sha256: string,
+    projectId = DEFAULT_PROJECT_ID,
+  ): Promise<ExistingSource | null> {
     await this.ready();
     const [row] = await this.handle.db
       .select({
@@ -108,16 +411,18 @@ export class PostgresCaseCatalogRepository implements CaseCatalogRepository {
         methodCount: pgCaseSources.methodCount,
       })
       .from(pgCaseSources)
-      .where(eq(pgCaseSources.sha256, sha256))
+      .where(and(eq(pgCaseSources.projectId, projectId), eq(pgCaseSources.sha256, sha256)))
       .limit(1);
     return row ?? null;
   }
 
   async importCatalog(record: ImportCatalogRecord): Promise<void> {
     await this.ready();
+    const projectId = record.projectId ?? DEFAULT_PROJECT_ID;
     await this.handle.db.transaction(async (transaction) => {
       await transaction.insert(pgCaseSources).values({
         id: record.sourceId,
+        projectId,
         displayName: record.displayName,
         originalFileName: record.inspection.fileName,
         objectKey: record.objectKey,
@@ -129,17 +434,28 @@ export class PostgresCaseCatalogRepository implements CaseCatalogRepository {
         warningsJson: JSON.stringify(record.inspection.warnings),
         inspectionJson: JSON.stringify(record.inspection),
         authoritative: false,
+        lifecycleStatus: "active",
+        revision: 1,
+        ...(record.importedBy ? { importedBy: record.importedBy } : {}),
         createdAt: record.importedAt,
+        updatedAt: record.importedAt,
       });
       for (const importedCase of record.cases) {
         const candidate = importedCase.candidate;
         await transaction.insert(pgCaseDefinitions).values({
           id: importedCase.caseDefinitionId,
+          projectId,
           sourceId: record.sourceId,
           className: candidate.className,
           packageName: candidate.packageName,
           displayName: candidate.simpleName,
+          description: "",
+          tagsJson: "[]",
+          parametersJson: JSON.stringify(candidate.parameters ?? {}),
           enabled: candidate.enabled,
+          archived: false,
+          revision: 1,
+          ...(record.importedBy ? { updatedBy: record.importedBy } : {}),
           groupsJson: JSON.stringify(candidate.groups),
           currentVersion: 1,
           createdAt: record.importedAt,
@@ -150,6 +466,8 @@ export class PostgresCaseCatalogRepository implements CaseCatalogRepository {
           caseDefinitionId: importedCase.caseDefinitionId,
           version: 1,
           snapshotJson: JSON.stringify(candidate),
+          ...(record.importedBy ? { createdBy: record.importedBy } : {}),
+          changeReason: "source.import",
           createdAt: record.importedAt,
         });
         if (importedCase.methods.length > 0) {
@@ -181,7 +499,10 @@ export class PostgresCaseCatalogRepository implements CaseCatalogRepository {
 
   async listCases(query: CaseListQuery): Promise<CaseListPage> {
     await this.ready();
+    if (query.projectIds?.length === 0) return { items: [] };
     const conditions: SQL[] = [];
+    if (query.projectIds)
+      conditions.push(inArray(pgCaseDefinitions.projectId, [...query.projectIds]));
     const normalized = query.query?.trim();
     if (normalized) {
       const search = or(
@@ -212,16 +533,7 @@ export class PostgresCaseCatalogRepository implements CaseCatalogRepository {
       methods.set(row.caseDefinitionId, values);
     }
     const items = pageRows.map((row): CaseDefinitionWithMethods => ({
-      id: row.id,
-      sourceId: row.sourceId,
-      className: row.className,
-      packageName: row.packageName,
-      displayName: row.displayName,
-      enabled: row.enabled,
-      groups: stringArray(row.groupsJson),
-      currentVersion: row.currentVersion,
-      createdAt: row.createdAt,
-      updatedAt: row.updatedAt,
+      ...toCaseDefinition(row),
       methods: (methods.get(row.id) ?? []).sort((left, right) =>
         left.methodName.localeCompare(right.methodName),
       ),
@@ -230,51 +542,265 @@ export class PostgresCaseCatalogRepository implements CaseCatalogRepository {
     return { items, ...(rows.length > query.limit && last ? { nextCursor: last.id } : {}) };
   }
 
-  async findExistingCaseIds(caseDefinitionIds: string[]): Promise<string[]> {
+  async getCaseDefinition(
+    caseDefinitionId: string,
+    projectIds?: readonly string[],
+  ): Promise<CaseDefinitionWithMethods | null> {
+    await this.ready();
+    if (projectIds?.length === 0) return null;
+    const [row] = await this.handle.db
+      .select()
+      .from(pgCaseDefinitions)
+      .where(
+        and(
+          eq(pgCaseDefinitions.id, caseDefinitionId),
+          ...(projectIds ? [inArray(pgCaseDefinitions.projectId, [...projectIds])] : []),
+        ),
+      )
+      .limit(1);
+    if (!row) return null;
+    const methodRows = await this.handle.db
+      .select()
+      .from(pgTestMethods)
+      .where(eq(pgTestMethods.caseDefinitionId, row.id));
+    return {
+      ...toCaseDefinition(row),
+      methods: methodRows
+        .map(toMethod)
+        .sort((left, right) => left.methodName.localeCompare(right.methodName)),
+    };
+  }
+
+  async updateCaseDefinition(input: {
+    caseDefinitionId: string;
+    expectedRevision: number;
+    displayName?: string;
+    description?: string;
+    tags?: string[];
+    enabled?: boolean;
+    archived?: boolean;
+    actorId: string;
+    updatedAt: string;
+  }): Promise<CaseDefinitionWithMethods> {
+    await this.ready();
+    const [updated] = await this.handle.db
+      .update(pgCaseDefinitions)
+      .set({
+        ...(input.displayName !== undefined ? { displayName: input.displayName } : {}),
+        ...(input.description !== undefined ? { description: input.description } : {}),
+        ...(input.tags !== undefined ? { tagsJson: JSON.stringify(input.tags) } : {}),
+        ...(input.enabled !== undefined ? { enabled: input.enabled } : {}),
+        ...(input.archived !== undefined ? { archived: input.archived } : {}),
+        revision: sql`${pgCaseDefinitions.revision} + 1`,
+        updatedBy: input.actorId,
+        updatedAt: input.updatedAt,
+      })
+      .where(
+        and(
+          eq(pgCaseDefinitions.id, input.caseDefinitionId),
+          eq(pgCaseDefinitions.revision, input.expectedRevision),
+        ),
+      )
+      .returning();
+    if (!updated) await this.throwCaseDefinitionConflict(input.caseDefinitionId);
+    const definition = await this.getCaseDefinition(input.caseDefinitionId);
+    if (!definition) throw new DomainError("CASE_DEFINITION_NOT_FOUND", "指定的用例不存在。");
+    return definition;
+  }
+
+  async listCaseVersions(caseDefinitionId: string, limit: number): Promise<CaseVersion[]> {
+    await this.ready();
+    return (
+      await this.handle.db
+        .select()
+        .from(pgCaseVersions)
+        .where(eq(pgCaseVersions.caseDefinitionId, caseDefinitionId))
+        .orderBy(desc(pgCaseVersions.version))
+        .limit(limit)
+    ).map(toCaseVersion);
+  }
+
+  async getCaseVersion(caseDefinitionId: string, version: number): Promise<CaseVersion | null> {
+    await this.ready();
+    const [row] = await this.handle.db
+      .select()
+      .from(pgCaseVersions)
+      .where(
+        and(
+          eq(pgCaseVersions.caseDefinitionId, caseDefinitionId),
+          eq(pgCaseVersions.version, version),
+        ),
+      )
+      .limit(1);
+    return row ? toCaseVersion(row) : null;
+  }
+
+  async restoreCaseVersion(input: {
+    caseDefinitionId: string;
+    expectedRevision: number;
+    versionId: string;
+    version: number;
+    snapshot: TestNgClassCandidate;
+    changeReason: string;
+    methodIds: string[];
+    actorId: string;
+    restoredAt: string;
+  }): Promise<CaseDefinitionWithMethods> {
+    await this.ready();
+    if (input.methodIds.length !== input.snapshot.methods.length) {
+      throw new Error("Restore method identifiers must match the snapshot method count.");
+    }
+    await this.handle.db.transaction(async (transaction) => {
+      const [updated] = await transaction
+        .update(pgCaseDefinitions)
+        .set({
+          groupsJson: JSON.stringify(input.snapshot.groups),
+          parametersJson: JSON.stringify(input.snapshot.parameters ?? {}),
+          enabled: input.snapshot.enabled,
+          currentVersion: input.version,
+          revision: sql`${pgCaseDefinitions.revision} + 1`,
+          updatedBy: input.actorId,
+          updatedAt: input.restoredAt,
+        })
+        .where(
+          and(
+            eq(pgCaseDefinitions.id, input.caseDefinitionId),
+            eq(pgCaseDefinitions.revision, input.expectedRevision),
+          ),
+        )
+        .returning({ id: pgCaseDefinitions.id });
+      if (!updated) {
+        const [existing] = await transaction
+          .select({ id: pgCaseDefinitions.id })
+          .from(pgCaseDefinitions)
+          .where(eq(pgCaseDefinitions.id, input.caseDefinitionId))
+          .limit(1);
+        if (!existing) throw new DomainError("CASE_DEFINITION_NOT_FOUND", "指定的用例不存在。");
+        throw new DomainError(
+          "CASE_DEFINITION_REVISION_CONFLICT",
+          "用例已被并发修改，请刷新后重试。",
+        );
+      }
+      await transaction
+        .delete(pgTestMethods)
+        .where(eq(pgTestMethods.caseDefinitionId, input.caseDefinitionId));
+      if (input.snapshot.methods.length > 0) {
+        await transaction.insert(pgTestMethods).values(
+          input.snapshot.methods.map((method, index) => ({
+            id: input.methodIds[index]!,
+            caseDefinitionId: input.caseDefinitionId,
+            methodName: method.methodName,
+            descriptor: method.descriptor,
+            enabled: method.enabled,
+            annotationSource: method.annotationSource,
+            groupsJson: JSON.stringify(method.groups),
+            description: method.description ?? null,
+            dataProvider: method.dataProvider ?? null,
+            dependsOnMethodsJson: JSON.stringify(method.dependsOnMethods),
+            dependsOnGroupsJson: JSON.stringify(method.dependsOnGroups),
+            priority: method.priority ?? null,
+            createdAt: input.restoredAt,
+          })),
+        );
+      }
+      await transaction.insert(pgCaseVersions).values({
+        id: input.versionId,
+        caseDefinitionId: input.caseDefinitionId,
+        version: input.version,
+        snapshotJson: JSON.stringify(input.snapshot),
+        createdBy: input.actorId,
+        changeReason: input.changeReason,
+        createdAt: input.restoredAt,
+      });
+    });
+    const definition = await this.getCaseDefinition(input.caseDefinitionId);
+    if (!definition) throw new DomainError("CASE_DEFINITION_NOT_FOUND", "指定的用例不存在。");
+    return definition;
+  }
+
+  private async throwCaseDefinitionConflict(caseDefinitionId: string): Promise<never> {
+    const [existing] = await this.handle.db
+      .select({ id: pgCaseDefinitions.id })
+      .from(pgCaseDefinitions)
+      .where(eq(pgCaseDefinitions.id, caseDefinitionId))
+      .limit(1);
+    if (!existing) throw new DomainError("CASE_DEFINITION_NOT_FOUND", "指定的用例不存在。");
+    throw new DomainError("CASE_DEFINITION_REVISION_CONFLICT", "用例已被并发修改，请刷新后重试。");
+  }
+
+  async findExistingCaseIds(caseDefinitionIds: string[], projectId?: string): Promise<string[]> {
     await this.ready();
     if (!caseDefinitionIds.length) return [];
     return (
       await this.handle.db
         .select({ id: pgCaseDefinitions.id })
         .from(pgCaseDefinitions)
-        .where(inArray(pgCaseDefinitions.id, caseDefinitionIds))
+        .where(
+          and(
+            inArray(pgCaseDefinitions.id, caseDefinitionIds),
+            ...(projectId ? [eq(pgCaseDefinitions.projectId, projectId)] : []),
+          ),
+        )
     ).map((row) => row.id);
   }
 
-  async listRecentSources(limit: number): Promise<CaseSource[]> {
+  async listRecentSources(limit: number, projectIds?: readonly string[]): Promise<CaseSource[]> {
     await this.ready();
+    if (projectIds?.length === 0) return [];
     return (
       await this.handle.db
         .select()
         .from(pgCaseSources)
+        .where(projectIds ? inArray(pgCaseSources.projectId, [...projectIds]) : undefined)
         .orderBy(desc(pgCaseSources.createdAt))
         .limit(limit)
     ).map(toSource);
   }
 
-  async listSources(limit: number): Promise<CaseSource[]> {
-    return this.listRecentSources(limit);
+  async listSources(limit: number, projectIds?: readonly string[]): Promise<CaseSource[]> {
+    return this.listRecentSources(limit, projectIds);
   }
 
-  async getSource(sourceId: string) {
+  async getSource(sourceId: string, projectIds?: readonly string[]) {
     await this.ready();
+    if (projectIds?.length === 0) return null;
     const [row] = await this.handle.db
       .select()
       .from(pgCaseSources)
-      .where(eq(pgCaseSources.id, sourceId))
+      .where(
+        and(
+          eq(pgCaseSources.id, sourceId),
+          ...(projectIds ? [inArray(pgCaseSources.projectId, [...projectIds])] : []),
+        ),
+      )
       .limit(1);
     if (!row) return null;
     const inspection = jarInspectionSchema.parse(JSON.parse(row.inspectionJson));
     return { source: toSource(row), inspection };
   }
 
-  async setAuthoritativeSource(sourceId: string): Promise<CaseSource> {
+  async setAuthoritativeSource(sourceId: string, projectId?: string): Promise<CaseSource> {
     await this.ready();
     return this.handle.db.transaction(async (transaction) => {
-      await transaction.update(pgCaseSources).set({ authoritative: false });
+      const [source] = await transaction
+        .select()
+        .from(pgCaseSources)
+        .where(eq(pgCaseSources.id, sourceId))
+        .limit(1);
+      if (!source || (projectId && source.projectId !== projectId)) {
+        throw new Error(`Case source ${sourceId} does not exist.`);
+      }
+      await transaction
+        .update(pgCaseSources)
+        .set({ authoritative: false })
+        .where(eq(pgCaseSources.projectId, source.projectId));
       const [row] = await transaction
         .update(pgCaseSources)
-        .set({ authoritative: true })
+        .set({
+          authoritative: true,
+          revision: source.revision + 1,
+          updatedAt: new Date().toISOString(),
+        })
         .where(eq(pgCaseSources.id, sourceId))
         .returning();
       if (!row) throw new Error(`Case source ${sourceId} does not exist.`);
@@ -282,16 +808,270 @@ export class PostgresCaseCatalogRepository implements CaseCatalogRepository {
     });
   }
 
-  async getDashboardSummary(): Promise<DashboardSummary> {
+  async getAuthoritativeSource(projectId: string): Promise<CaseSource | null> {
     await this.ready();
+    const [row] = await this.handle.db
+      .select()
+      .from(pgCaseSources)
+      .where(and(eq(pgCaseSources.projectId, projectId), eq(pgCaseSources.authoritative, true)))
+      .limit(1);
+    return row ? toSource(row) : null;
+  }
+
+  async listSourceCaseSnapshots(
+    sourceId: string,
+  ): Promise<Array<{ caseDefinitionId: string; className: string; snapshotJson: string }>> {
+    await this.ready();
+    return this.handle.db
+      .select({
+        caseDefinitionId: pgCaseDefinitions.id,
+        className: pgCaseDefinitions.className,
+        snapshotJson: pgCaseVersions.snapshotJson,
+      })
+      .from(pgCaseDefinitions)
+      .innerJoin(
+        pgCaseVersions,
+        and(
+          eq(pgCaseVersions.caseDefinitionId, pgCaseDefinitions.id),
+          eq(pgCaseVersions.version, pgCaseDefinitions.currentVersion),
+        ),
+      )
+      .where(eq(pgCaseDefinitions.sourceId, sourceId));
+  }
+
+  async createSourceComparison(
+    record: CreateSourceComparisonRecord,
+  ): Promise<CaseSourceComparison> {
+    await this.ready();
+    await this.handle.db.insert(pgCaseSourceComparisons).values({
+      id: record.id,
+      projectId: record.projectId,
+      currentSourceId: record.currentSourceId ?? null,
+      candidateSourceId: record.candidateSourceId,
+      addedJson: JSON.stringify(record.added),
+      changedJson: JSON.stringify(record.changed),
+      removedJson: JSON.stringify(record.removed),
+      conflictsJson: JSON.stringify(record.conflicts),
+      truncated: record.truncated,
+      ...(record.createdBy ? { createdBy: record.createdBy } : {}),
+      createdAt: record.createdAt,
+    });
+    const comparison = await this.getSourceComparison(record.id);
+    if (!comparison) throw new Error(`Case source comparison ${record.id} was not persisted.`);
+    return comparison;
+  }
+
+  async getSourceComparison(comparisonId: string): Promise<CaseSourceComparison | null> {
+    await this.ready();
+    const [row] = await this.handle.db
+      .select()
+      .from(pgCaseSourceComparisons)
+      .where(eq(pgCaseSourceComparisons.id, comparisonId))
+      .limit(1);
+    return row ? toSourceComparison(row) : null;
+  }
+
+  async promoteAuthoritativeSource(input: {
+    sourceId: string;
+    expectedRevision: number;
+    updatedAt: string;
+  }): Promise<CaseSource> {
+    await this.ready();
+    return this.handle.db.transaction(async (transaction) => {
+      const [target] = await transaction
+        .select()
+        .from(pgCaseSources)
+        .where(eq(pgCaseSources.id, input.sourceId))
+        .limit(1);
+      if (!target) throw new DomainError("CASE_SOURCE_NOT_FOUND", "指定的 JAR 来源不存在。");
+      await transaction
+        .update(pgCaseSources)
+        .set({
+          authoritative: false,
+          revision: sql`${pgCaseSources.revision} + 1`,
+          updatedAt: input.updatedAt,
+        })
+        .where(
+          and(eq(pgCaseSources.projectId, target.projectId), eq(pgCaseSources.authoritative, true)),
+        );
+      const [row] = await transaction
+        .update(pgCaseSources)
+        .set({
+          authoritative: true,
+          revision: sql`${pgCaseSources.revision} + 1`,
+          updatedAt: input.updatedAt,
+        })
+        .where(
+          and(
+            eq(pgCaseSources.id, input.sourceId),
+            eq(pgCaseSources.revision, input.expectedRevision),
+          ),
+        )
+        .returning();
+      if (!row) return throwPostgresSourceConflict(transaction, input.sourceId);
+      return toSource(row);
+    });
+  }
+
+  async updateSourceLifecycle(input: {
+    sourceId: string;
+    expectedRevision: number;
+    lifecycleStatus: "active" | "archived" | "deleting";
+    updatedAt: string;
+  }): Promise<CaseSource> {
+    await this.ready();
+    const [row] = await this.handle.db
+      .update(pgCaseSources)
+      .set({
+        lifecycleStatus: input.lifecycleStatus,
+        revision: sql`${pgCaseSources.revision} + 1`,
+        updatedAt: input.updatedAt,
+      })
+      .where(
+        and(
+          eq(pgCaseSources.id, input.sourceId),
+          eq(pgCaseSources.revision, input.expectedRevision),
+        ),
+      )
+      .returning();
+    if (!row) return throwPostgresSourceConflict(this.handle.db, input.sourceId);
+    return toSource(row);
+  }
+
+  async countSourceReferences(
+    sourceId: string,
+  ): Promise<{ caseDefinitions: number; executionRuns: number }> {
+    await this.ready();
+    const [caseRows, runRows] = await Promise.all([
+      this.handle.db
+        .select({ value: count() })
+        .from(pgCaseDefinitions)
+        .where(eq(pgCaseDefinitions.sourceId, sourceId)),
+      this.handle.db
+        .select({ value: count() })
+        .from(pgExecutionRuns)
+        .innerJoin(pgCaseDefinitions, eq(pgExecutionRuns.caseDefinitionId, pgCaseDefinitions.id))
+        .where(eq(pgCaseDefinitions.sourceId, sourceId)),
+    ]);
+    return {
+      caseDefinitions: caseRows[0]?.value ?? 0,
+      executionRuns: runRows[0]?.value ?? 0,
+    };
+  }
+
+  async enqueueSourceDeletion(input: {
+    sourceId: string;
+    expectedRevision: number;
+    cleanupJobId: string;
+    objectKey: string;
+    availableAt: string;
+    updatedAt: string;
+  }): Promise<CaseSource> {
+    await this.ready();
+    return this.handle.db.transaction(async (transaction) => {
+      const [updated] = await transaction
+        .update(pgCaseSources)
+        .set({
+          lifecycleStatus: "deleting",
+          revision: sql`${pgCaseSources.revision} + 1`,
+          updatedAt: input.updatedAt,
+        })
+        .where(
+          and(
+            eq(pgCaseSources.id, input.sourceId),
+            eq(pgCaseSources.revision, input.expectedRevision),
+            eq(pgCaseSources.authoritative, false),
+          ),
+        )
+        .returning();
+      if (!updated) return throwPostgresSourceConflict(transaction, input.sourceId);
+      await transaction
+        .insert(pgCleanupJobs)
+        .values({
+          id: input.cleanupJobId,
+          category: "case-source",
+          resourceType: "case-source",
+          resourceId: input.sourceId,
+          objectKey: input.objectKey,
+          status: "pending",
+          attemptCount: 0,
+          availableAt: input.availableAt,
+          createdAt: input.updatedAt,
+          updatedAt: input.updatedAt,
+        })
+        .onConflictDoNothing();
+      return toSource(updated);
+    });
+  }
+
+  async getCleanupJob(cleanupJobId: string): Promise<CleanupJob | null> {
+    await this.ready();
+    const [row] = await this.handle.db
+      .select()
+      .from(pgCleanupJobs)
+      .where(eq(pgCleanupJobs.id, cleanupJobId))
+      .limit(1);
+    return row ? toCleanupJob(row) : null;
+  }
+
+  async completeCleanupJob(input: {
+    id: string;
+    status: "succeeded" | "failed";
+    attemptCount: number;
+    errorSummary?: string;
+    finishedAt: string;
+  }): Promise<void> {
+    await this.ready();
+    await this.handle.db.transaction(async (transaction) => {
+      const [job] = await transaction
+        .select({ category: pgCleanupJobs.category, resourceId: pgCleanupJobs.resourceId })
+        .from(pgCleanupJobs)
+        .where(eq(pgCleanupJobs.id, input.id))
+        .for("update");
+      await transaction
+        .update(pgCleanupJobs)
+        .set({
+          status: input.status,
+          attemptCount: input.attemptCount,
+          errorSummary: input.errorSummary ?? null,
+          updatedAt: input.finishedAt,
+        })
+        .where(eq(pgCleanupJobs.id, input.id));
+      if (input.status === "succeeded" && job?.category === "case-source") {
+        await transaction
+          .delete(pgCaseSources)
+          .where(
+            and(
+              eq(pgCaseSources.id, job.resourceId),
+              eq(pgCaseSources.lifecycleStatus, "deleting"),
+            ),
+          );
+      }
+    });
+  }
+
+  async getDashboardSummary(projectIds?: readonly string[]): Promise<DashboardSummary> {
+    await this.ready();
+    if (projectIds?.length === 0) {
+      return { sourceCount: 0, caseCount: 0, methodCount: 0, enabledMethodCount: 0 };
+    }
+    const sourceScope = projectIds ? inArray(pgCaseSources.projectId, [...projectIds]) : undefined;
+    const caseScope = projectIds
+      ? inArray(pgCaseDefinitions.projectId, [...projectIds])
+      : undefined;
     const [sources, cases, methods, enabled] = await Promise.all([
-      this.handle.db.select({ value: count() }).from(pgCaseSources),
-      this.handle.db.select({ value: count() }).from(pgCaseDefinitions),
-      this.handle.db.select({ value: count() }).from(pgTestMethods),
+      this.handle.db.select({ value: count() }).from(pgCaseSources).where(sourceScope),
+      this.handle.db.select({ value: count() }).from(pgCaseDefinitions).where(caseScope),
       this.handle.db
         .select({ value: count() })
         .from(pgTestMethods)
-        .where(eq(pgTestMethods.enabled, true)),
+        .innerJoin(pgCaseDefinitions, eq(pgCaseDefinitions.id, pgTestMethods.caseDefinitionId))
+        .where(caseScope),
+      this.handle.db
+        .select({ value: count() })
+        .from(pgTestMethods)
+        .innerJoin(pgCaseDefinitions, eq(pgCaseDefinitions.id, pgTestMethods.caseDefinitionId))
+        .where(and(eq(pgTestMethods.enabled, true), ...(caseScope ? [caseScope] : []))),
     ]);
     return {
       sourceCount: sources[0]?.value ?? 0,
@@ -315,9 +1095,15 @@ export class PostgresCaseSuiteRepository implements CaseSuiteRepository {
       .insert(pgCaseSuites)
       .values({
         id: record.id,
+        projectId: record.projectId ?? DEFAULT_PROJECT_ID,
         name: record.name,
         description: record.description ?? null,
         version: 1,
+        status: "active",
+        enabled: true,
+        revision: 1,
+        policyJson: JSON.stringify(defaultCaseSuiteExecutionPolicy),
+        ...(record.actorId ? { createdBy: record.actorId, updatedBy: record.actorId } : {}),
         createdAt: record.createdAt,
         updatedAt: record.createdAt,
       })
@@ -326,10 +1112,16 @@ export class PostgresCaseSuiteRepository implements CaseSuiteRepository {
     return toSuite(row, 0);
   }
 
-  async list(limit: number): Promise<CaseSuite[]> {
+  async list(limit: number, projectIds?: readonly string[]): Promise<CaseSuite[]> {
     await this.ready();
+    if (projectIds?.length === 0) return [];
     const [rows, counts] = await Promise.all([
-      this.handle.db.select().from(pgCaseSuites).orderBy(desc(pgCaseSuites.updatedAt)).limit(limit),
+      this.handle.db
+        .select()
+        .from(pgCaseSuites)
+        .where(projectIds ? inArray(pgCaseSuites.projectId, [...projectIds]) : undefined)
+        .orderBy(desc(pgCaseSuites.updatedAt))
+        .limit(limit),
       this.handle.db
         .select({ suiteId: pgCaseSuiteItems.suiteId, value: count() })
         .from(pgCaseSuiteItems)
@@ -339,12 +1131,18 @@ export class PostgresCaseSuiteRepository implements CaseSuiteRepository {
     return rows.map((row) => toSuite(row, countBySuite.get(row.id) ?? 0));
   }
 
-  async get(suiteId: string): Promise<CaseSuiteDetails | null> {
+  async get(suiteId: string, projectIds?: readonly string[]): Promise<CaseSuiteDetails | null> {
     await this.ready();
+    if (projectIds?.length === 0) return null;
     const [suite] = await this.handle.db
       .select()
       .from(pgCaseSuites)
-      .where(eq(pgCaseSuites.id, suiteId))
+      .where(
+        and(
+          eq(pgCaseSuites.id, suiteId),
+          ...(projectIds ? [inArray(pgCaseSuites.projectId, [...projectIds])] : []),
+        ),
+      )
       .limit(1);
     if (!suite) return null;
     const itemRows = await this.handle.db
@@ -373,13 +1171,20 @@ export class PostgresCaseSuiteRepository implements CaseSuiteRepository {
         row.id,
         {
           id: row.id,
+          projectId: row.projectId,
           sourceId: row.sourceId,
           className: row.className,
           packageName: row.packageName,
           displayName: row.displayName,
+          description: row.description,
+          tags: stringArray(row.tagsJson),
           enabled: row.enabled,
+          archived: row.archived,
           groups: stringArray(row.groupsJson),
+          parameters: stringRecord(row.parametersJson),
           currentVersion: row.currentVersion,
+          revision: row.revision,
+          ...(row.updatedBy ? { updatedBy: row.updatedBy } : {}),
           createdAt: row.createdAt,
           updatedAt: row.updatedAt,
           methods: methods.get(row.id) ?? [],
@@ -398,6 +1203,8 @@ export class PostgresCaseSuiteRepository implements CaseSuiteRepository {
   async addCases(input: {
     suiteId: string;
     items: Array<{ id: string; caseDefinitionId: string }>;
+    versionId: string;
+    actorId?: string;
     updatedAt: string;
   }): Promise<CaseSuiteDetails> {
     await this.ready();
@@ -415,11 +1222,24 @@ export class PostgresCaseSuiteRepository implements CaseSuiteRepository {
         )
         .onConflictDoNothing()
         .returning({ id: pgCaseSuiteItems.id });
-      if (inserted.length)
+      if (inserted.length) {
         await transaction
           .update(pgCaseSuites)
-          .set({ version: sql`${pgCaseSuites.version} + 1`, updatedAt: input.updatedAt })
+          .set({
+            version: sql`${pgCaseSuites.version} + 1`,
+            revision: sql`${pgCaseSuites.revision} + 1`,
+            ...(input.actorId ? { updatedBy: input.actorId } : {}),
+            updatedAt: input.updatedAt,
+          })
           .where(eq(pgCaseSuites.id, input.suiteId));
+        await this.insertVersionSnapshot(
+          transaction,
+          input.suiteId,
+          input.versionId,
+          "suite.cases.add",
+          input,
+        );
+      }
     });
     const suite = await this.get(input.suiteId);
     if (!suite) throw new Error(`Case suite ${input.suiteId} does not exist.`);
@@ -429,6 +1249,8 @@ export class PostgresCaseSuiteRepository implements CaseSuiteRepository {
   async removeCase(input: {
     suiteId: string;
     caseDefinitionId: string;
+    versionId: string;
+    actorId?: string;
     updatedAt: string;
   }): Promise<CaseSuiteDetails> {
     await this.ready();
@@ -442,16 +1264,212 @@ export class PostgresCaseSuiteRepository implements CaseSuiteRepository {
           ),
         )
         .returning({ id: pgCaseSuiteItems.id });
-      if (deleted.length)
+      if (deleted.length) {
         await transaction
           .update(pgCaseSuites)
-          .set({ version: sql`${pgCaseSuites.version} + 1`, updatedAt: input.updatedAt })
+          .set({
+            version: sql`${pgCaseSuites.version} + 1`,
+            revision: sql`${pgCaseSuites.revision} + 1`,
+            ...(input.actorId ? { updatedBy: input.actorId } : {}),
+            updatedAt: input.updatedAt,
+          })
           .where(eq(pgCaseSuites.id, input.suiteId));
+        await this.insertVersionSnapshot(
+          transaction,
+          input.suiteId,
+          input.versionId,
+          "suite.cases.remove",
+          input,
+        );
+      }
     });
     const suite = await this.get(input.suiteId);
     if (!suite) throw new Error(`Case suite ${input.suiteId} does not exist.`);
     return suite;
   }
+
+  async updateSuite(input: UpdateCaseSuiteRecord): Promise<CaseSuiteDetails> {
+    await this.ready();
+    await this.handle.db.transaction(async (transaction) => {
+      const patch: Record<string, unknown> = {
+        version: sql`${pgCaseSuites.version} + 1`,
+        revision: sql`${pgCaseSuites.revision} + 1`,
+        updatedAt: input.updatedAt,
+      };
+      if (input.name !== undefined) patch.name = input.name;
+      if (input.description !== undefined) patch.description = input.description;
+      if (input.enabled !== undefined) patch.enabled = input.enabled;
+      if (input.archived !== undefined) patch.status = input.archived ? "archived" : "active";
+      if (input.policy !== undefined) patch.policyJson = JSON.stringify(input.policy);
+      if (input.actorId) patch.updatedBy = input.actorId;
+      const updated = await transaction
+        .update(pgCaseSuites)
+        .set(patch)
+        .where(
+          and(
+            eq(pgCaseSuites.id, input.suiteId),
+            eq(pgCaseSuites.revision, input.expectedRevision),
+          ),
+        )
+        .returning({ id: pgCaseSuites.id });
+      if (updated.length !== 1) await throwPostgresSuiteConflict(transaction, input.suiteId);
+      await this.insertVersionSnapshot(
+        transaction,
+        input.suiteId,
+        input.versionId,
+        input.changeReason,
+        input,
+      );
+    });
+    const suite = await this.get(input.suiteId);
+    if (!suite) throw new Error(`Case suite ${input.suiteId} does not exist.`);
+    return suite;
+  }
+
+  async copySuite(input: CopyCaseSuiteRecord): Promise<CaseSuiteDetails> {
+    await this.ready();
+    await this.handle.db.transaction(async (transaction) => {
+      await transaction.insert(pgCaseSuites).values({
+        id: input.id,
+        projectId: input.projectId ?? DEFAULT_PROJECT_ID,
+        name: input.name,
+        description: input.description ?? null,
+        version: 1,
+        status: "active",
+        enabled: true,
+        revision: 1,
+        policyJson: JSON.stringify(input.policy),
+        ...(input.actorId ? { createdBy: input.actorId, updatedBy: input.actorId } : {}),
+        createdAt: input.createdAt,
+        updatedAt: input.createdAt,
+      });
+      if (input.items.length) {
+        await transaction.insert(pgCaseSuiteItems).values(
+          input.items.map((item) => ({
+            id: item.id,
+            suiteId: input.id,
+            caseDefinitionId: item.caseDefinitionId,
+            addedAt: input.createdAt,
+          })),
+        );
+      }
+      await this.insertVersionSnapshot(transaction, input.id, input.versionId, "suite.copy", {
+        ...(input.actorId ? { actorId: input.actorId } : {}),
+        updatedAt: input.createdAt,
+      });
+    });
+    const suite = await this.get(input.id);
+    if (!suite) throw new Error(`Case suite ${input.id} does not exist after copy.`);
+    return suite;
+  }
+
+  // 在变更事务内基于最新状态写版本快照，版本号与 case_suites.version 保持一致。
+  private async insertVersionSnapshot(
+    transaction: PostgresSuiteTransaction,
+    suiteId: string,
+    versionId: string,
+    changeReason: string,
+    input: { actorId?: string; updatedAt: string },
+  ): Promise<void> {
+    const [row] = await transaction
+      .select()
+      .from(pgCaseSuites)
+      .where(eq(pgCaseSuites.id, suiteId))
+      .limit(1);
+    if (!row) throw new DomainError("CASE_SUITE_NOT_FOUND", "指定的用例任务不存在。");
+    const itemIds = (
+      await transaction
+        .select({ caseDefinitionId: pgCaseSuiteItems.caseDefinitionId })
+        .from(pgCaseSuiteItems)
+        .where(eq(pgCaseSuiteItems.suiteId, suiteId))
+    ).map((item) => item.caseDefinitionId);
+    const snapshot = buildCaseSuiteVersionSnapshot(toSuite(row, itemIds.length), itemIds);
+    await transaction.insert(pgCaseSuiteVersions).values({
+      id: versionId,
+      suiteId,
+      version: row.version,
+      snapshotJson: JSON.stringify(snapshot),
+      changeReason,
+      ...(input.actorId ? { createdBy: input.actorId } : {}),
+      createdAt: input.updatedAt,
+    });
+  }
+}
+
+type PostgresSuiteTransaction = Parameters<
+  Parameters<PostgresDatabaseHandle["db"]["transaction"]>[0]
+>[0];
+
+async function throwPostgresSuiteConflict(
+  transaction: PostgresSuiteTransaction,
+  suiteId: string,
+): Promise<never> {
+  const [row] = await transaction
+    .select({ id: pgCaseSuites.id })
+    .from(pgCaseSuites)
+    .where(eq(pgCaseSuites.id, suiteId))
+    .limit(1);
+  if (!row) throw new DomainError("CASE_SUITE_NOT_FOUND", "指定的用例任务不存在。");
+  throw new DomainError("CASE_SUITE_REVISION_CONFLICT", "用例任务已被他人修改，请刷新后重试。");
+}
+
+function toSourceComparison(
+  row: typeof pgCaseSourceComparisons.$inferSelect,
+): CaseSourceComparison {
+  return {
+    id: row.id,
+    projectId: row.projectId,
+    ...(row.currentSourceId ? { currentSourceId: row.currentSourceId } : {}),
+    candidateSourceId: row.candidateSourceId,
+    added: comparisonEntries(row.addedJson),
+    changed: comparisonEntries(row.changedJson),
+    removed: comparisonEntries(row.removedJson),
+    conflicts: comparisonEntries(row.conflictsJson),
+    truncated: row.truncated,
+    ...(row.createdBy ? { createdBy: row.createdBy } : {}),
+    createdAt: row.createdAt,
+  };
+}
+
+function comparisonEntries(json: string): CaseSourceSnapshotEntry[] {
+  const parsed = safeJson(json);
+  if (!Array.isArray(parsed)) return [];
+  return parsed.filter(
+    (entry): entry is CaseSourceSnapshotEntry =>
+      typeof entry === "object" &&
+      entry !== null &&
+      typeof (entry as { className?: unknown }).className === "string" &&
+      typeof (entry as { signature?: unknown }).signature === "string",
+  );
+}
+
+function toCleanupJob(row: typeof pgCleanupJobs.$inferSelect): CleanupJob {
+  return {
+    id: row.id,
+    category: row.category,
+    resourceType: row.resourceType,
+    resourceId: row.resourceId,
+    ...(row.objectKey ? { objectKey: row.objectKey } : {}),
+    status: row.status,
+    attemptCount: row.attemptCount,
+    availableAt: row.availableAt,
+    ...(row.errorSummary ? { errorSummary: row.errorSummary } : {}),
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  };
+}
+
+async function throwPostgresSourceConflict(
+  executor: Pick<PostgresDatabaseHandle["db"], "select">,
+  sourceId: string,
+): Promise<never> {
+  const [row] = await executor
+    .select({ id: pgCaseSources.id })
+    .from(pgCaseSources)
+    .where(eq(pgCaseSources.id, sourceId))
+    .limit(1);
+  if (!row) throw new DomainError("CASE_SOURCE_NOT_FOUND", "指定的 JAR 来源不存在。");
+  throw new DomainError("CASE_SOURCE_REVISION_CONFLICT", "该来源已被并发修改，请刷新后重试。");
 }
 
 export class PostgresRunnerRepository implements RunnerRepository {
@@ -475,6 +1493,7 @@ export class PostgresRunnerRepository implements RunnerRepository {
         .values({
           id: record.id,
           credentialHash: record.credentialHash,
+          credentialVersion: 1,
           name: record.name,
           disabled: false,
           draining: false,
@@ -497,12 +1516,20 @@ export class PostgresRunnerRepository implements RunnerRepository {
     });
   }
 
-  async findByCredentialHash(credentialHash: string): Promise<Runner | null> {
+  async findByCredentialHash(credentialHash: string, now: string): Promise<Runner | null> {
     await this.ready();
     const [row] = await this.handle.db
       .select()
       .from(pgRunners)
-      .where(eq(pgRunners.credentialHash, credentialHash))
+      .where(
+        or(
+          eq(pgRunners.credentialHash, credentialHash),
+          and(
+            eq(pgRunners.previousCredentialHash, credentialHash),
+            gt(pgRunners.previousCredentialValidUntil, now),
+          ),
+        ),
+      )
       .limit(1);
     return row ? mapStoredRunner(row) : null;
   }
@@ -586,5 +1613,88 @@ export class PostgresRunnerRepository implements RunnerRepository {
       .returning();
     if (!row) throw new Error(`Runner ${input.runnerId} does not exist.`);
     return mapStoredRunner(row);
+  }
+
+  async rotateCredential(input: {
+    runnerId: string;
+    credentialHash: string;
+    previousCredentialValidUntil: string;
+    rotatedAt: string;
+  }): Promise<Runner> {
+    await this.ready();
+    const [row] = await this.handle.db
+      .update(pgRunners)
+      .set({
+        previousCredentialHash: sql`${pgRunners.credentialHash}`,
+        previousCredentialValidUntil: input.previousCredentialValidUntil,
+        credentialHash: input.credentialHash,
+        credentialVersion: sql`${pgRunners.credentialVersion} + 1`,
+        credentialRotationRequestedAt: null,
+        updatedAt: input.rotatedAt,
+      })
+      .where(eq(pgRunners.id, input.runnerId))
+      .returning();
+    if (!row) throw new Error(`Runner ${input.runnerId} does not exist.`);
+    return mapStoredRunner(row);
+  }
+
+  async requestCredentialRotation(input: {
+    runnerId: string;
+    requestedAt: string;
+  }): Promise<Runner> {
+    await this.ready();
+    const [row] = await this.handle.db
+      .update(pgRunners)
+      .set({ credentialRotationRequestedAt: input.requestedAt, updatedAt: input.requestedAt })
+      .where(eq(pgRunners.id, input.runnerId))
+      .returning();
+    if (!row) throw new Error(`Runner ${input.runnerId} does not exist.`);
+    return mapStoredRunner(row);
+  }
+
+  async revokeCredential(input: { runnerId: string; revokedAt: string }): Promise<Runner> {
+    await this.ready();
+    const [row] = await this.handle.db
+      .update(pgRunners)
+      .set({
+        credentialRevokedAt: input.revokedAt,
+        credentialRotationRequestedAt: null,
+        previousCredentialHash: null,
+        previousCredentialValidUntil: null,
+        updatedAt: input.revokedAt,
+      })
+      .where(eq(pgRunners.id, input.runnerId))
+      .returning();
+    if (!row) throw new Error(`Runner ${input.runnerId} does not exist.`);
+    return mapStoredRunner(row);
+  }
+
+  async deregister(input: { runnerId: string; deregisteredAt: string }): Promise<Runner> {
+    await this.ready();
+    return this.handle.db.transaction(async (transaction) => {
+      const [row] = await transaction
+        .update(pgRunners)
+        .set({
+          deregisteredAt: input.deregisteredAt,
+          credentialRotationRequestedAt: null,
+          disabled: true,
+          updatedAt: input.deregisteredAt,
+        })
+        .where(eq(pgRunners.id, input.runnerId))
+        .returning();
+      if (!row) throw new Error(`Runner ${input.runnerId} does not exist.`);
+      // 活跃租约立即到期，由 recoverExpired 统一回收并重新排队。
+      await transaction
+        .update(pgAssignmentLeases)
+        .set({ expiresAt: input.deregisteredAt })
+        .where(
+          and(
+            eq(pgAssignmentLeases.runnerId, input.runnerId),
+            eq(pgAssignmentLeases.status, "active"),
+            gt(pgAssignmentLeases.expiresAt, input.deregisteredAt),
+          ),
+        );
+      return mapStoredRunner(row);
+    });
   }
 }

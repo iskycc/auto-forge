@@ -98,7 +98,7 @@ const runtimeRequirementsSchema = z.object({
 export const executionSpecSchema = z
   .object({
     schemaVersion: protocolVersionSchema,
-    executor: z.literal("testng"),
+    executor: z.enum(["testng", "testng-container"]),
     attemptId: identifierSchema,
     executionRunId: identifierSchema,
     batchId: identifierSchema,
@@ -271,6 +271,8 @@ export const attemptLogQuerySchema = z.object({
   afterSequence: z.coerce.number().int().min(-1).default(-1),
   limit: z.coerce.number().int().min(1).max(500).default(200),
   query: z.string().trim().min(1).max(256).optional(),
+  recordedAfter: isoTimestampSchema.optional(),
+  recordedBefore: isoTimestampSchema.optional(),
 });
 
 export const attemptLogPageSchema = z.object({

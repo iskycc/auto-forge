@@ -23,6 +23,23 @@ export type Runner = {
   lastSeenAt: string;
   resourceSnapshot?: RunnerResourceSnapshot;
   terminalEnabled: boolean;
+  credentialVersion: number;
+  credentialRevokedAt?: string;
+  credentialRotationRequestedAt?: string;
+  deregisteredAt?: string;
   createdAt: string;
   updatedAt: string;
 };
+
+export type RunnerAuthenticationBlock = "deregistered" | "credential-revoked" | "disabled";
+
+/**
+ * 判断执行机是否还能通过凭据认证。注销与凭据撤销优先于禁用状态报告，
+ * 因为它们代表身份失效而非临时生命周期状态。
+ */
+export function runnerAuthenticationBlock(runner: Runner): RunnerAuthenticationBlock | null {
+  if (runner.deregisteredAt) return "deregistered";
+  if (runner.credentialRevokedAt) return "credential-revoked";
+  if (runner.state === "disabled") return "disabled";
+  return null;
+}

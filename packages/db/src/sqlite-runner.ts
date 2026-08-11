@@ -1,10 +1,10 @@
 import type { RegisterRunnerRecord, RunnerRepository } from "@autoforge/application";
 import type { Runner } from "@autoforge/domain";
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq, gt, or, sql } from "drizzle-orm";
 
 import type { SqliteDatabaseHandle } from "./database";
 import { mapStoredRunner } from "./runner-mapper";
-import { runnerBootstrapUses, runners } from "./schema";
+import { assignmentLeases, runnerBootstrapUses, runners } from "./schema";
 
 export class SqliteRunnerRepository implements RunnerRepository {
   constructor(private readonly handle: SqliteDatabaseHandle) {}
@@ -22,6 +22,7 @@ export class SqliteRunnerRepository implements RunnerRepository {
         .values({
           id: record.id,
           credentialHash: record.credentialHash,
+          credentialVersion: 1,
           name: record.name,
           disabled: false,
           draining: false,
@@ -44,11 +45,19 @@ export class SqliteRunnerRepository implements RunnerRepository {
     })();
   }
 
-  async findByCredentialHash(credentialHash: string): Promise<Runner | null> {
+  async findByCredentialHash(credentialHash: string, now: string): Promise<Runner | null> {
     const row = this.handle.db
       .select()
       .from(runners)
-      .where(eq(runners.credentialHash, credentialHash))
+      .where(
+        or(
+          eq(runners.credentialHash, credentialHash),
+          and(
+            eq(runners.previousCredentialHash, credentialHash),
+            gt(runners.previousCredentialValidUntil, now),
+          ),
+        ),
+      )
       .get();
     return row ? mapStoredRunner(row) : null;
   }
@@ -130,5 +139,89 @@ export class SqliteRunnerRepository implements RunnerRepository {
       .get();
     if (!row) throw new Error(`Runner ${input.runnerId} does not exist.`);
     return mapStoredRunner(row);
+  }
+
+  async rotateCredential(input: {
+    runnerId: string;
+    credentialHash: string;
+    previousCredentialValidUntil: string;
+    rotatedAt: string;
+  }): Promise<Runner> {
+    const row = this.handle.db
+      .update(runners)
+      .set({
+        previousCredentialHash: sql`${runners.credentialHash}`,
+        previousCredentialValidUntil: input.previousCredentialValidUntil,
+        credentialHash: input.credentialHash,
+        credentialVersion: sql`${runners.credentialVersion} + 1`,
+        credentialRotationRequestedAt: null,
+        updatedAt: input.rotatedAt,
+      })
+      .where(eq(runners.id, input.runnerId))
+      .returning()
+      .get();
+    if (!row) throw new Error(`Runner ${input.runnerId} does not exist.`);
+    return mapStoredRunner(row);
+  }
+
+  async requestCredentialRotation(input: {
+    runnerId: string;
+    requestedAt: string;
+  }): Promise<Runner> {
+    const row = this.handle.db
+      .update(runners)
+      .set({ credentialRotationRequestedAt: input.requestedAt, updatedAt: input.requestedAt })
+      .where(eq(runners.id, input.runnerId))
+      .returning()
+      .get();
+    if (!row) throw new Error(`Runner ${input.runnerId} does not exist.`);
+    return mapStoredRunner(row);
+  }
+
+  async revokeCredential(input: { runnerId: string; revokedAt: string }): Promise<Runner> {
+    const row = this.handle.db
+      .update(runners)
+      .set({
+        credentialRevokedAt: input.revokedAt,
+        credentialRotationRequestedAt: null,
+        previousCredentialHash: null,
+        previousCredentialValidUntil: null,
+        updatedAt: input.revokedAt,
+      })
+      .where(eq(runners.id, input.runnerId))
+      .returning()
+      .get();
+    if (!row) throw new Error(`Runner ${input.runnerId} does not exist.`);
+    return mapStoredRunner(row);
+  }
+
+  async deregister(input: { runnerId: string; deregisteredAt: string }): Promise<Runner> {
+    return this.handle.client.transaction(() => {
+      const row = this.handle.db
+        .update(runners)
+        .set({
+          deregisteredAt: input.deregisteredAt,
+          credentialRotationRequestedAt: null,
+          disabled: true,
+          updatedAt: input.deregisteredAt,
+        })
+        .where(eq(runners.id, input.runnerId))
+        .returning()
+        .get();
+      if (!row) throw new Error(`Runner ${input.runnerId} does not exist.`);
+      // 活跃租约立即到期，由 recoverExpired 统一回收并重新排队。
+      this.handle.db
+        .update(assignmentLeases)
+        .set({ expiresAt: input.deregisteredAt })
+        .where(
+          and(
+            eq(assignmentLeases.runnerId, input.runnerId),
+            eq(assignmentLeases.status, "active"),
+            gt(assignmentLeases.expiresAt, input.deregisteredAt),
+          ),
+        )
+        .run();
+      return mapStoredRunner(row);
+    })();
   }
 }

@@ -25,6 +25,8 @@ export async function GET(request: Request, context: Context): Promise<NextRespo
         limit: query.limit,
         ...(projectIds ? { projectIds } : {}),
         ...(query.query ? { query: query.query } : {}),
+        ...(query.recordedAfter ? { recordedAfter: query.recordedAfter } : {}),
+        ...(query.recordedBefore ? { recordedBefore: query.recordedBefore } : {}),
       }),
     );
   } catch (error) {

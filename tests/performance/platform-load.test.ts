@@ -1,0 +1,310 @@
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { resolve } from "node:path";
+import { performance } from "node:perf_hooks";
+
+import type { JobEnvelope } from "@autoforge/contracts";
+import { scheduleExecutionRuns, type ExecutionRun, type Runner } from "@autoforge/domain";
+import { createSqliteDatabase, SqliteExecutionControlRepository } from "@autoforge/db/sqlite";
+import { SqliteJobQueue } from "@autoforge/queue/sqlite";
+import { TestNgJarDiscovery } from "@autoforge/testng-discovery";
+import { zipSync } from "fflate";
+import { afterAll, describe, expect, it } from "vitest";
+
+import { buildClassFile } from "../../packages/testng-discovery/test/class-fixture";
+
+const temporaryDirectories: string[] = [];
+const baselineTimestamp = "2026-08-11T00:00:00.000Z";
+
+afterAll(async () => {
+  await Promise.all(
+    temporaryDirectories.map((directory) => rm(directory, { recursive: true, force: true })),
+  );
+});
+
+describe("bounded platform performance baseline", () => {
+  it("discovers 2,000 TestNG classes and 10,000 methods within the bounded JAR limits", async () => {
+    const entries: Record<string, Uint8Array> = {};
+    for (let classIndex = 0; classIndex < 2_000; classIndex += 1) {
+      const className = `load.fixture.Test${classIndex}`;
+      entries[`load/fixture/Test${classIndex}.class`] = buildClassFile({
+        className,
+        methods: Array.from({ length: 5 }, (_, methodIndex) => ({
+          name: `case${methodIndex}`,
+          annotations: [{ type: "Test" as const }],
+        })),
+      });
+    }
+    const archive = zipSync(entries, { level: 1 });
+    const startedAt = performance.now();
+    const inspection = await new TestNgJarDiscovery().inspect("load.jar", archive);
+    const durationMs = performance.now() - startedAt;
+
+    expect(inspection.testClassCount).toBe(2_000);
+    expect(inspection.testMethodCount).toBe(10_000);
+    expect(durationMs).toBeLessThan(30_000);
+    recordMetric("jar-discovery", durationMs, {
+      archiveBytes: archive.byteLength,
+      classes: inspection.testClassCount,
+      methods: inspection.testMethodCount,
+    });
+  });
+
+  it("schedules 10,000 runs across 50 Runners without overselling 1,000 slots", () => {
+    const runners = Array.from({ length: 50 }, (_, index) => runnerFixture(index));
+    const runs = Array.from({ length: 10_000 }, (_, index) => runFixture(index));
+    const startedAt = performance.now();
+    const plan = scheduleExecutionRuns({
+      runs,
+      candidates: runners.map((runner) => ({ runner, reservedSlots: 0 })),
+      thresholds: {
+        maximumCpuUtilizationPercent: 90,
+        maximumMemoryUtilizationPercent: 90,
+        maximumLoadPerCpu: 2,
+      },
+      metricsFreshAfter: "2026-08-10T23:59:00.000Z",
+    });
+    const durationMs = performance.now() - startedAt;
+    const assignmentsByRunner = new Map<string, number>();
+    for (const decision of plan.decisions) {
+      assignmentsByRunner.set(
+        decision.runnerId,
+        (assignmentsByRunner.get(decision.runnerId) ?? 0) + 1,
+      );
+    }
+
+    expect(plan.decisions).toHaveLength(1_000);
+    expect(plan.unassignedRunIds).toHaveLength(9_000);
+    expect(Math.max(...assignmentsByRunner.values())).toBe(20);
+    expect(Math.min(...assignmentsByRunner.values())).toBe(20);
+    expect(durationMs).toBeLessThan(10_000);
+    recordMetric("scheduler", durationMs, { runners: 50, runs: 10_000, slots: 1_000 });
+  });
+
+  it("drains a 10,000-job SQLite backlog across competing worker connections", async () => {
+    const directory = await temporaryDirectory("autoforge-queue-load-");
+    const databasePath = resolve(directory, "queue.sqlite");
+    const migrationsFolder = resolve(import.meta.dirname, "../../packages/db/drizzle/sqlite");
+    const handles = Array.from({ length: 8 }, () =>
+      createSqliteDatabase({ databasePath, migrationsFolder }),
+    );
+    const queues = handles.map((handle) => new SqliteJobQueue(handle));
+    const startedAt = performance.now();
+    try {
+      for (let index = 0; index < 10_000; index += 1) {
+        await queues[0]!.publish(jobFixture(index));
+      }
+      const deliveryIds = new Set<string>();
+      for (;;) {
+        const claims = await Promise.all(
+          queues.map((queue, workerIndex) =>
+            queue.claim({
+              workerId: `worker-${workerIndex}`,
+              now: baselineTimestamp,
+              leaseExpiresAt: "2026-08-11T00:05:00.000Z",
+              limit: 256,
+            }),
+          ),
+        );
+        if (claims.every((claim) => claim.length === 0)) break;
+        for (const [workerIndex, workerClaims] of claims.entries()) {
+          for (const claim of workerClaims) {
+            expect(deliveryIds.has(claim.deliveryId)).toBe(false);
+            deliveryIds.add(claim.deliveryId);
+            await queues[workerIndex]!.acknowledge({
+              workerId: `worker-${workerIndex}`,
+              deliveryId: claim.deliveryId,
+              acknowledgedAt: "2026-08-11T00:00:01.000Z",
+            });
+          }
+        }
+      }
+      expect(deliveryIds.size).toBe(10_000);
+      expect(await queues[0]!.depth()).toEqual({ available: 0, leased: 0, deadLetter: 0 });
+
+      for (let cycle = 0; cycle < 100; cycle += 1) {
+        const index = 10_000 + cycle;
+        await queues[0]!.publish(jobFixture(index));
+        const [claim] = await queues[0]!.claim({
+          workerId: "soak-worker",
+          now: "2026-08-11T00:01:00.000Z",
+          leaseExpiresAt: "2026-08-11T00:01:01.000Z",
+          limit: 1,
+        });
+        expect(claim).toBeDefined();
+        expect(await queues[0]!.recoverExpired("2026-08-11T00:01:02.000Z", 1)).toBe(1);
+        const [recovered] = await queues[0]!.claim({
+          workerId: "recovery-worker",
+          now: "2026-08-11T00:01:02.000Z",
+          leaseExpiresAt: "2026-08-11T00:02:00.000Z",
+          limit: 1,
+        });
+        expect(recovered?.deliveryId).toBe(claim?.deliveryId);
+        await queues[0]!.acknowledge({
+          workerId: "recovery-worker",
+          deliveryId: recovered!.deliveryId,
+          acknowledgedAt: "2026-08-11T00:01:03.000Z",
+        });
+      }
+      const durationMs = performance.now() - startedAt;
+      expect(durationMs).toBeLessThan(60_000);
+      recordMetric("sqlite-queue", durationMs, {
+        backlog: 10_000,
+        competingWorkers: queues.length,
+        recoveryCycles: 100,
+      });
+    } finally {
+      handles.forEach((handle) => handle.close());
+    }
+  });
+
+  it("accepts and pages 20,000 authorized log chunks without unbounded reads", async () => {
+    const directory = await temporaryDirectory("autoforge-log-load-");
+    const handle = createSqliteDatabase({
+      databasePath: resolve(directory, "logs.sqlite"),
+      migrationsFolder: resolve(import.meta.dirname, "../../packages/db/drizzle/sqlite"),
+    });
+    const repository = new SqliteExecutionControlRepository(handle);
+    const content = `${"x".repeat(508)}\n`;
+    const startedAt = performance.now();
+    try {
+      seedAuthorizedAttempt(handle.client);
+      for (let offset = 0; offset < 20_000; offset += 256) {
+        await repository.appendLogChunks({
+          runnerId: "runner-load",
+          attemptId: "attempt-load",
+          leaseTokenHash: "lease-token-hash",
+          receivedAt: baselineTimestamp,
+          chunks: Array.from({ length: Math.min(256, 20_000 - offset) }, (_, index) => ({
+            stream: "stdout" as const,
+            sequence: offset + index,
+            content,
+            recordedAt: baselineTimestamp,
+          })),
+        });
+      }
+      let afterSequence = -1;
+      let readCount = 0;
+      for (;;) {
+        const page = await repository.listLogChunks({
+          attemptId: "attempt-load",
+          stream: "stdout",
+          afterSequence,
+          limit: 500,
+        });
+        readCount += page.items.length;
+        if (page.nextSequence === undefined) break;
+        afterSequence = page.nextSequence;
+      }
+      const durationMs = performance.now() - startedAt;
+      expect(readCount).toBe(20_000);
+      expect(durationMs).toBeLessThan(60_000);
+      recordMetric("sqlite-logs", durationMs, {
+        chunks: 20_000,
+        bytes: Buffer.byteLength(content) * 20_000,
+        pageSize: 500,
+      });
+    } finally {
+      handle.close();
+    }
+  });
+});
+
+async function temporaryDirectory(prefix: string): Promise<string> {
+  const directory = await mkdtemp(resolve(tmpdir(), prefix));
+  temporaryDirectories.push(directory);
+  await mkdir(directory, { recursive: true });
+  return directory;
+}
+
+function runnerFixture(index: number): Runner {
+  return {
+    id: `runner-${index.toString().padStart(3, "0")}`,
+    name: `Runner ${index}`,
+    state: "online",
+    os: "linux",
+    architecture: index % 2 === 0 ? "amd64" : "arm64",
+    agentVersion: "0.2.2",
+    protocolVersion: 1,
+    labels: ["java", "testng"],
+    capabilities: ["executor:testng-v1", "isolation:cgroup-v2", "java:21.0.8", "testng:7.11.0"],
+    maxConcurrency: 20,
+    busySlots: 0,
+    lastSeenAt: baselineTimestamp,
+    resourceSnapshot: {
+      cpuUtilizationPercent: 20,
+      memoryUtilizationPercent: 25,
+      loadAverage1m: 2,
+      logicalCpuCount: 8,
+      observedAt: baselineTimestamp,
+    },
+    terminalEnabled: false,
+    credentialVersion: 1,
+    createdAt: baselineTimestamp,
+    updatedAt: baselineTimestamp,
+  };
+}
+
+function runFixture(index: number): ExecutionRun {
+  return {
+    id: `run-${index}`,
+    batchId: "batch-load",
+    caseDefinitionId: `case-${index}`,
+    caseVersion: 1,
+    displayName: `Case ${index}`,
+    className: `load.fixture.Test${index}`,
+    status: "queued",
+    attemptCount: 0,
+    version: 1,
+    createdAt: baselineTimestamp,
+    updatedAt: baselineTimestamp,
+  };
+}
+
+function jobFixture(index: number): JobEnvelope {
+  return {
+    schemaVersion: 1,
+    messageId: `message-${index}`,
+    runId: `run-${index}`,
+    attempt: 1,
+    createdAt: baselineTimestamp,
+    priority: index % 11,
+    deduplicationKey: `load:${index}`,
+    kind: "dispatch-run",
+    payload: { batchId: `batch-${Math.floor(index / 10)}` },
+  };
+}
+
+function seedAuthorizedAttempt(client: {
+  pragma(statement: string): unknown;
+  exec(sql: string): unknown;
+}): void {
+  client.pragma("foreign_keys = OFF");
+  client.exec(`
+    INSERT INTO run_attempts
+      (id, execution_run_id, runner_id, attempt_number, status, scheduling_score, created_at)
+    VALUES
+      ('attempt-load', 'run-load', 'runner-load', 1, 'running', 1, '${baselineTimestamp}');
+    INSERT INTO assignments
+      (id, attempt_id, execution_run_id, batch_id, runner_id, status, priority,
+       execution_spec_json, available_at, claim_deadline_at, claimed_at, version, created_at,
+       updated_at)
+    VALUES
+      ('assignment-load', 'attempt-load', 'run-load', 'batch-load', 'runner-load', 'claimed', 0,
+       '{}', '${baselineTimestamp}', '2026-08-11T01:00:00.000Z', '${baselineTimestamp}', 1,
+       '${baselineTimestamp}', '${baselineTimestamp}');
+    INSERT INTO assignment_leases
+      (id, assignment_id, runner_id, token_hash, token_encrypted, status, version,
+       expires_at, renewed_at, created_at)
+    VALUES
+      ('lease-load', 'assignment-load', 'runner-load', 'lease-token-hash', 'encrypted',
+       'active', 1, '2026-08-11T01:00:00.000Z', '${baselineTimestamp}', '${baselineTimestamp}');
+  `);
+  client.pragma("foreign_keys = ON");
+}
+
+function recordMetric(name: string, durationMs: number, scale: Record<string, number>): void {
+  process.stdout.write(
+    `${JSON.stringify({ metric: name, durationMs: Math.round(durationMs), ...scale })}\n`,
+  );
+}

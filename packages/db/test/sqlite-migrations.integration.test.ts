@@ -230,6 +230,232 @@ describe("SQLite migrations", () => {
       database.close();
     }
   });
+
+  it("backfills ownership and per-project scope when upgrading to product completion", async () => {
+    const directory = await mkdtemp(resolve(tmpdir(), "autoforge-product-migration-"));
+    temporaryDirectories.push(directory);
+    const databasePath = resolve(directory, "autoforge.sqlite");
+    const migrationsFolder = resolve(import.meta.dirname, "../drizzle/sqlite");
+    const migrationFiles = (await readdir(migrationsFolder))
+      .filter((name) => /^\d+_.+\.sql$/.test(name))
+      .sort();
+    const productMigration = "0015_product_completion.sql";
+    const productMigrationIndex = migrationFiles.indexOf(productMigration);
+    expect(productMigrationIndex).toBeGreaterThan(0);
+
+    const defaultProjectId = "00000000-0000-7000-8000-000000000001";
+    const database = new Database(databasePath);
+    try {
+      database.pragma("foreign_keys = ON");
+      for (const fileName of migrationFiles.slice(0, productMigrationIndex)) {
+        database.exec(await readFile(resolve(migrationsFolder, fileName), "utf8"));
+      }
+      database.exec(`
+        INSERT INTO roles (id, role_key, name, description, scope, built_in, permissions_json, created_at, updated_at)
+        VALUES
+          ('00000000-0000-7000-8100-000000000001', 'system-administrator', '系统管理员', '', 'system', 1, '[]',
+           '2026-08-01T00:00:00.000Z', '2026-08-01T00:00:00.000Z');
+        INSERT INTO users
+          (id, username, normalized_username, display_name, source, status,
+           force_password_change, failed_login_attempts, created_at, updated_at, version)
+        VALUES
+          ('admin-first', 'admin-first', 'admin-first', 'First Admin', 'local', 'active', 0, 0,
+           '2026-08-01T00:00:00.000Z', '2026-08-01T00:00:00.000Z', 1),
+          ('admin-second', 'admin-second', 'admin-second', 'Second Admin', 'local', 'active', 0, 0,
+           '2026-08-02T00:00:00.000Z', '2026-08-02T00:00:00.000Z', 1);
+        INSERT INTO user_system_roles (user_id, role_id, source, assigned_at, assigned_by)
+        VALUES
+          ('admin-first', '00000000-0000-7000-8100-000000000001', 'manual', '2026-08-01T00:00:00.000Z', NULL),
+          ('admin-second', '00000000-0000-7000-8100-000000000001', 'manual', '2026-08-05T00:00:00.000Z', NULL);
+        INSERT INTO projects (id, name, slug, is_default, archived, created_at, updated_at)
+        VALUES
+          ('project-b', '项目 B', 'project-b', 0, 0, '2026-08-03T00:00:00.000Z', '2026-08-03T00:00:00.000Z');
+        INSERT INTO case_sources
+          (id, display_name, original_file_name, object_key, sha256, size_bytes, class_count,
+           method_count, status, warnings_json, created_at, inspection_json, authoritative)
+        VALUES
+          ('source-one', 'tests-one.jar', 'tests-one.jar', 'jar/one',
+           'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 1024, 2, 5,
+           'ready', '[]', '2026-08-04T00:00:00.000Z', '{}', 1),
+          ('source-two', 'tests-two.jar', 'tests-two.jar', 'jar/two',
+           'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', 2048, 1, 3,
+           'ready', '[]', '2026-08-04T01:00:00.000Z', '{}', 0);
+        INSERT INTO case_definitions
+          (id, source_id, class_name, package_name, display_name, enabled, groups_json,
+           current_version, created_at, updated_at)
+        VALUES
+          ('case-one', 'source-one', 'com.example.LoginTest', 'com.example', 'LoginTest', 1, '[]',
+           1, '2026-08-04T00:00:00.000Z', '2026-08-04T00:00:00.000Z');
+        INSERT INTO case_versions (id, case_definition_id, version, snapshot_json, created_at)
+        VALUES ('case-one-v1', 'case-one', 1, '{}', '2026-08-04T00:00:00.000Z');
+        INSERT INTO case_suites (id, name, description, version, created_at, updated_at)
+        VALUES ('suite-one', '回归任务', NULL, 1, '2026-08-04T02:00:00.000Z', '2026-08-04T02:00:00.000Z');
+        INSERT INTO runners
+          (id, credential_hash, name, disabled, os, architecture, agent_version, protocol_version,
+           labels_json, max_concurrency, busy_slots, last_seen_at, terminal_enabled, created_at,
+           updated_at, draining, capabilities_json)
+        VALUES
+          ('runner-one', 'hash-one', 'runner-one', 0, 'linux', 'amd64', '0.2.2', 1, '[]', 2, 0,
+           '2026-08-04T03:00:00.000Z', 0, '2026-08-04T03:00:00.000Z', '2026-08-04T03:00:00.000Z',
+           0, '[]');
+        INSERT INTO run_batches
+          (id, suite_id, suite_name, suite_version, status, retry_limit, environment_json,
+           total_runs, created_at, updated_at, project_id, priority, version)
+        VALUES
+          ('batch-one', 'suite-one', '回归任务', 1, 'queued', 0, '[]', 1,
+           '2026-08-04T04:00:00.000Z', '2026-08-04T04:00:00.000Z', '${defaultProjectId}', 0, 1);
+        INSERT INTO execution_runs
+          (id, batch_id, case_definition_id, case_version, display_name, class_name, status,
+           attempt_count, created_at, updated_at, version)
+        VALUES
+          ('run-one', 'batch-one', 'case-one', 1, 'LoginTest', 'com.example.LoginTest', 'queued',
+           0, '2026-08-04T04:00:00.000Z', '2026-08-04T04:00:00.000Z', 1);
+      `);
+
+      database.exec(await readFile(resolve(migrationsFolder, productMigration), "utf8"));
+
+      expect(database.prepare("SELECT id, owner_user_id FROM projects ORDER BY id").all()).toEqual([
+        { id: defaultProjectId, owner_user_id: "admin-first" },
+        { id: "project-b", owner_user_id: "admin-first" },
+      ]);
+      expect(
+        database
+          .prepare("SELECT active FROM roles WHERE id = '00000000-0000-7000-8100-000000000001'")
+          .get(),
+      ).toEqual({ active: 1 });
+      expect(
+        database
+          .prepare(
+            "SELECT credential_version, credential_revoked_at, deregistered_at FROM runners WHERE id = 'runner-one'",
+          )
+          .get(),
+      ).toEqual({ credential_version: 1, credential_revoked_at: null, deregistered_at: null });
+      expect(
+        database
+          .prepare(
+            `SELECT project_id, lifecycle_status, revision, updated_at
+             FROM case_sources WHERE id = 'source-one'`,
+          )
+          .get(),
+      ).toEqual({
+        project_id: defaultProjectId,
+        lifecycle_status: "active",
+        revision: 1,
+        updated_at: "2026-08-04T00:00:00.000Z",
+      });
+      expect(
+        database
+          .prepare(
+            `SELECT project_id, description, tags_json, parameters_json, archived, revision
+             FROM case_definitions WHERE id = 'case-one'`,
+          )
+          .get(),
+      ).toEqual({
+        project_id: defaultProjectId,
+        description: "",
+        tags_json: "[]",
+        parameters_json: "{}",
+        archived: 0,
+        revision: 1,
+      });
+      expect(
+        database
+          .prepare("SELECT change_reason, created_by FROM case_versions WHERE id = 'case-one-v1'")
+          .get(),
+      ).toEqual({ change_reason: "source.import", created_by: null });
+      expect(
+        database
+          .prepare(
+            "SELECT project_id, status, enabled, revision, policy_json FROM case_suites WHERE id = 'suite-one'",
+          )
+          .get(),
+      ).toEqual({
+        project_id: defaultProjectId,
+        status: "active",
+        enabled: 1,
+        revision: 1,
+        policy_json: "{}",
+      });
+      expect(
+        database.prepare("SELECT parameters_json FROM execution_runs WHERE id = 'run-one'").get(),
+      ).toEqual({ parameters_json: "{}" });
+
+      const duplicateSha256 = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+      database
+        .prepare(
+          `INSERT INTO case_sources
+           (id, project_id, display_name, original_file_name, object_key, sha256, size_bytes,
+            class_count, method_count, status, warnings_json, inspection_json, authoritative,
+            lifecycle_status, revision, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '[]', '{}', 0, 'active', 1, ?, ?)`,
+        )
+        .run(
+          "source-two-project-b",
+          "project-b",
+          "tests-two.jar",
+          "tests-two.jar",
+          "jar/two-project-b",
+          duplicateSha256,
+          2048,
+          1,
+          3,
+          "ready",
+          "2026-08-05T00:00:00.000Z",
+          "2026-08-05T00:00:00.000Z",
+        );
+      expect(() =>
+        database
+          .prepare(
+            `INSERT INTO case_sources
+             (id, project_id, display_name, original_file_name, object_key, sha256, size_bytes,
+              class_count, method_count, status, warnings_json, inspection_json, authoritative,
+              lifecycle_status, revision, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '[]', '{}', 0, 'active', 1, ?, ?)`,
+          )
+          .run(
+            "source-two-default-dup",
+            defaultProjectId,
+            "tests-two-dup.jar",
+            "tests-two-dup.jar",
+            "jar/two-default-dup",
+            duplicateSha256,
+            2048,
+            1,
+            3,
+            "ready",
+            "2026-08-05T00:00:00.000Z",
+            "2026-08-05T00:00:00.000Z",
+          ),
+      ).toThrow(/UNIQUE constraint failed: case_sources\.project_id, case_sources\.sha256/);
+      database
+        .prepare("UPDATE case_sources SET authoritative = 1 WHERE id = 'source-two-project-b'")
+        .run();
+      expect(() =>
+        database.prepare("UPDATE case_sources SET authoritative = 1 WHERE id = 'source-two'").run(),
+      ).toThrow(/UNIQUE constraint failed: case_sources\.project_id, case_sources\.authoritative/);
+
+      const createdTables = new Set(
+        database
+          .prepare("SELECT name FROM sqlite_master WHERE type = 'table'")
+          .all()
+          .map((row) => (row as { name: string }).name),
+      );
+      for (const table of [
+        "case_source_comparisons",
+        "case_suite_versions",
+        "case_suite_schedules",
+        "scheduled_trigger_receipts",
+        "cleanup_jobs",
+        "analytics_facts",
+        "notifications",
+        "system_settings",
+      ]) {
+        expect(createdTables.has(table), `missing table ${table}`).toBe(true);
+      }
+    } finally {
+      database.close();
+    }
+  });
 });
 
 type MigrationWorkerInput = {

@@ -5,3 +5,5 @@ export * from "./execution";
 export * from "./environment";
 export * from "./management";
 export * from "./scheduling";
+export * from "./platform";
+export * from "./operations";

@@ -36,16 +36,6 @@ jobs:
           corepack enable
           pnpm install --frozen-lockfile
 
-      - name: Run formatting, lint, types and tests
-        run: |
-          pnpm format:check
-          pnpm lint
-          pnpm typecheck
-          pnpm test
-          pnpm test:integration
-          pnpm test:full
-          pnpm test:deployment
-
       - name: Locate preinstalled Chromium
         run: |
           browser_path="$(command -v google-chrome || command -v chromium || true)"
@@ -55,8 +45,19 @@ jobs:
           fi
           echo "PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=${browser_path}" >> "${GITHUB_ENV}"
 
-      - name: Run Lite browser flow
-        run: pnpm test:e2e
+      - name: Run formatting, lint, types and tests
+        run: |
+          pnpm format:check
+          pnpm lint
+          pnpm typecheck
+          pnpm test
+          pnpm test:integration
+          pnpm test:full
+          pnpm test:performance
+          pnpm test:deployment
+
+      - name: Run network-blocked Lite browser flow
+        run: pnpm test:offline
 
       - name: Build platform and Agent
         run: pnpm build

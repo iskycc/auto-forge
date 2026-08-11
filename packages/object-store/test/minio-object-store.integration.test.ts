@@ -28,10 +28,12 @@ describe.skipIf(!endpoint || !accessKey || !secretKey)("MinioObjectStore", () =>
     const sha256 = createHash("sha256").update(content).digest("hex");
     try {
       await expect(store.ready()).resolves.toBeUndefined();
-      const written = await store.putJar(sha256, content);
+      const written = await store.putJar("project-1", sha256, content);
       expect(written.created).toBe(true);
       await expect(store.exists(written.objectKey)).resolves.toBe(true);
-      expect((await store.list({ limit: 10, prefix: "jars/" })).items).toHaveLength(1);
+      expect(
+        (await store.list({ limit: 10, prefix: "projects/project-1/jars/" })).items,
+      ).toHaveLength(1);
       await expect(store.read(written.objectKey)).resolves.toEqual(Buffer.from(content));
       await store.delete(written.objectKey);
       await expect(store.exists(written.objectKey)).resolves.toBe(false);
@@ -39,6 +41,7 @@ describe.skipIf(!endpoint || !accessKey || !secretKey)("MinioObjectStore", () =>
       const artifactContent = new TextEncoder().encode("direct artifact");
       const artifactSha256 = createHash("sha256").update(artifactContent).digest("hex");
       const artifactIdentity = {
+        projectId: "project-1",
         attemptId: "attempt-minio",
         artifactId: "artifact-minio",
         sha256: artifactSha256,

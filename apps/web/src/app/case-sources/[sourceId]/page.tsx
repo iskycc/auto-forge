@@ -2,6 +2,7 @@ import { AlertCircle, Archive, ArrowLeft, CheckCircle2 } from "lucide-react";
 import Link from "next/link";
 
 import { SourceActions } from "@/components/source-actions";
+import { SourceLifecyclePanel } from "@/components/source-lifecycle";
 import { getPlatformServices } from "@/lib/services";
 import { requirePagePermission } from "@/lib/auth";
 
@@ -46,8 +47,49 @@ export default async function CaseSourcePage({ params }: Props) {
             <span>扫描模式</span>
             <strong>{inspection.discoveryMode}</strong>
           </div>
+          <div>
+            <span>目标 Java 版本</span>
+            <strong>{inspection.targetJavaVersion ?? "默认"}</strong>
+          </div>
         </div>
       </section>
+      <SourceLifecyclePanel
+        sourceId={source.id}
+        authoritative={source.authoritative}
+        status={source.status}
+        lifecycleStatus={source.lifecycleStatus}
+        revision={source.revision}
+      />
+      {inspection.testNgXml && (
+        <section className="card source-summary-card">
+          <div className="card-heading">
+            <div>
+              <span className="eyebrow">testng.xml</span>
+              <h2>{inspection.testNgXml.suiteName}</h2>
+            </div>
+          </div>
+          <div className="source-meta-grid">
+            <div>
+              <span>test 数量</span>
+              <strong>{inspection.testNgXml.testCount}</strong>
+            </div>
+            <div>
+              <span>选中测试类</span>
+              <strong>{inspection.testNgXml.selectedClassCount}</strong>
+            </div>
+          </div>
+          {Object.keys(inspection.testNgXml.parameters).length > 0 && (
+            <div className="method-list">
+              {Object.entries(inspection.testNgXml.parameters).map(([name, value]) => (
+                <div className="method-row" key={name}>
+                  <code>{name}</code>
+                  <span className="method-descriptor">{value}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+      )}
       {inspection.warnings.length > 0 && (
         <div className="warning-list">
           {inspection.warnings.map((warning, index) => (
@@ -87,6 +129,16 @@ export default async function CaseSourcePage({ params }: Props) {
                 <span className="method-count">{candidate.methods.length} 个方法</span>
               </summary>
               <div className="method-list">
+                {candidate.parameters && Object.keys(candidate.parameters).length > 0 && (
+                  <div className="method-row">
+                    <span className="method-origin">参数</span>
+                    <code>
+                      {Object.entries(candidate.parameters)
+                        .map(([name, value]) => `${name}=${value}`)
+                        .join("，")}
+                    </code>
+                  </div>
+                )}
                 {candidate.methods.map((method) => (
                   <div className="method-row" key={`${method.methodName}${method.descriptor}`}>
                     <CheckCircle2 size={14} className={method.enabled ? "text-success" : "muted"} />

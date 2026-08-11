@@ -39,6 +39,9 @@ readonly compressed_archive="${docker_archive}.zst"
 readonly build_date="$(release_created_at)"
 readonly revision="$(release_revision)"
 
+bash "${repository_root}/scripts/release/build-agent-resources.sh" \
+  "${version}" "${repository_root}/resources/agents"
+
 docker buildx build \
   --build-arg "CREATED=${build_date}" \
   --build-arg "NODE_IMAGE=${node_image}" \

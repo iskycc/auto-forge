@@ -22,19 +22,21 @@ const (
 type LookupEnvironment func(string) (string, bool)
 
 type Config struct {
-	ServerURL      *url.URL
-	DataDirectory  string
-	Name           string
-	Labels         []string
-	MaxConcurrent  int
-	CAFile         string
-	BootstrapToken string
-	HasBootstrap   bool
-	Toolchain      ToolchainConfig
-	Claim          ClaimConfig
-	Spool          SpoolConfig
-	Resources      ResourceConfig
-	Terminal       TerminalConfig
+	ServerURL         *url.URL
+	ConfigurationFile string
+	DataDirectory     string
+	Name              string
+	Labels            []string
+	MaxConcurrent     int
+	CAFile            string
+	BootstrapToken    string
+	HasBootstrap      bool
+	Toolchain         ToolchainConfig
+	Container         ContainerConfig
+	Claim             ClaimConfig
+	Spool             SpoolConfig
+	Resources         ResourceConfig
+	Terminal          TerminalConfig
 }
 
 func (configuration Config) RunnerLabels() []string {
@@ -47,6 +49,9 @@ func (configuration Config) RunnerLabels() []string {
 
 func (configuration Config) Capabilities() []string {
 	result := configuration.Toolchain.Capabilities()
+	if configuration.Container.Enabled() {
+		result = append(result, "executor:testng-container-v1")
+	}
 	result = append(result, "secrets:on-demand-v1")
 	if configuration.Resources.Enabled() {
 		result = append(result, "isolation:cgroup-v2")
@@ -59,6 +64,24 @@ type ToolchainConfig struct {
 	Classpath      []string
 	JavaVersion    string
 	TestNGVersion  string
+}
+
+type ContainerConfig struct {
+	RuntimeExecutable string
+	ImageReference    string
+	SeccompProfile    string
+	User              string
+	JavaExecutable    string
+	Classpath         []string
+}
+
+func (configuration ContainerConfig) Enabled() bool {
+	return configuration.RuntimeExecutable != "" &&
+		configuration.ImageReference != "" &&
+		configuration.SeccompProfile != "" &&
+		configuration.User != "" &&
+		configuration.JavaExecutable != "" &&
+		len(configuration.Classpath) > 0
 }
 
 type ClaimConfig struct {
@@ -146,6 +169,10 @@ func Load(lookup LookupEnvironment) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	container, err := containerConfig(lookup)
+	if err != nil {
+		return Config{}, err
+	}
 	claim, err := claimConfig(lookup)
 	if err != nil {
 		return Config{}, err
@@ -172,10 +199,68 @@ func Load(lookup LookupEnvironment) (Config, error) {
 		BootstrapToken: bootstrapToken,
 		HasBootstrap:   bootstrapToken != "",
 		Toolchain:      toolchain,
+		Container:      container,
 		Claim:          claim,
 		Spool:          spool,
 		Resources:      resources,
 		Terminal:       terminal,
+	}, nil
+}
+
+func containerConfig(lookup LookupEnvironment) (ContainerConfig, error) {
+	runtimeExecutable := environmentValue(lookup, "AUTOFORGE_AGENT_CONTAINER_RUNTIME")
+	imageReference := environmentValue(lookup, "AUTOFORGE_AGENT_CONTAINER_IMAGE")
+	seccompProfile := environmentValue(lookup, "AUTOFORGE_AGENT_CONTAINER_SECCOMP")
+	user := environmentValue(lookup, "AUTOFORGE_AGENT_CONTAINER_USER")
+	javaExecutable := environmentValue(lookup, "AUTOFORGE_AGENT_CONTAINER_JAVA_EXECUTABLE")
+	classpathValue := environmentValue(lookup, "AUTOFORGE_AGENT_CONTAINER_TESTNG_CLASSPATH")
+	values := []string{
+		runtimeExecutable,
+		imageReference,
+		seccompProfile,
+		user,
+		javaExecutable,
+		classpathValue,
+	}
+	configured := 0
+	for _, value := range values {
+		if value != "" {
+			configured++
+		}
+	}
+	if configured == 0 {
+		return ContainerConfig{}, nil
+	}
+	if configured != len(values) {
+		return ContainerConfig{}, errors.New("container executor configuration must provide runtime, immutable image, seccomp, user, Java, and TestNG classpath")
+	}
+	resolvedRuntime, err := optionalAbsolutePath(runtimeExecutable)
+	if err != nil {
+		return ContainerConfig{}, fmt.Errorf("AUTOFORGE_AGENT_CONTAINER_RUNTIME is invalid: %w", err)
+	}
+	resolvedSeccomp, err := optionalAbsolutePath(seccompProfile)
+	if err != nil {
+		return ContainerConfig{}, fmt.Errorf("AUTOFORGE_AGENT_CONTAINER_SECCOMP is invalid: %w", err)
+	}
+	if !filepath.IsAbs(javaExecutable) {
+		return ContainerConfig{}, errors.New("container Java executable must be an absolute in-container path")
+	}
+	classpath := filepath.SplitList(classpathValue)
+	if len(classpath) == 0 {
+		return ContainerConfig{}, errors.New("container TestNG classpath cannot be empty")
+	}
+	for _, entry := range classpath {
+		if !filepath.IsAbs(entry) {
+			return ContainerConfig{}, errors.New("container TestNG classpath entries must be absolute in-container paths")
+		}
+	}
+	return ContainerConfig{
+		RuntimeExecutable: resolvedRuntime,
+		ImageReference:    imageReference,
+		SeccompProfile:    resolvedSeccomp,
+		User:              user,
+		JavaExecutable:    javaExecutable,
+		Classpath:         classpath,
 	}, nil
 }
 

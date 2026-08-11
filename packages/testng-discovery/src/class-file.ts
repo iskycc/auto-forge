@@ -1,6 +1,9 @@
 const CLASS_FILE_MAGIC = 0xcafebabe;
 const TEST_ANNOTATION = "Lorg/testng/annotations/Test;";
 const IGNORE_ANNOTATION = "Lorg/testng/annotations/Ignore;";
+const FACTORY_ANNOTATION = "Lorg/testng/annotations/Factory;";
+const DATA_PROVIDER_ANNOTATION = "Lorg/testng/annotations/DataProvider;";
+const LISTENERS_ANNOTATION = "Lorg/testng/annotations/Listeners;";
 
 const ACCESS_PUBLIC = 0x0001;
 const ACCESS_BRIDGE = 0x0040;
@@ -41,6 +44,8 @@ type ParsedMethod = {
   annotations: ParsedAnnotation[];
 };
 
+const ACCESS_PRIVATE = 0x0002;
+
 export type ParsedTestNgMethod = {
   methodName: string;
   descriptor: string;
@@ -52,6 +57,8 @@ export type ParsedTestNgMethod = {
   dependsOnMethods: string[];
   dependsOnGroups: string[];
   priority?: number;
+  parameters: Record<string, string>;
+  inheritable: boolean;
 };
 
 export type ParsedTestNgClass = {
@@ -62,7 +69,25 @@ export type ParsedTestNgClass = {
   enabled: boolean;
   classLevelTest: boolean;
   groups: string[];
+  parameters: Record<string, string>;
   methods: ParsedTestNgMethod[];
+};
+
+export type InheritedClassTest = {
+  enabled: boolean;
+  groups: string[];
+  description?: string;
+};
+
+export type ParsedClassFile = {
+  className: string;
+  superClassName: string | null;
+  classTest?: InheritedClassTest;
+  declaredClassTest: boolean;
+  candidate: ParsedTestNgClass | null;
+  abstract: boolean;
+  publicMethods: ParsedTestNgMethod[];
+  dynamicSemantics: Array<"factory" | "data-provider" | "listeners">;
 };
 
 class ClassFileReader {
@@ -389,7 +414,10 @@ function uniqueSorted(values: string[]): string[] {
   return [...new Set(values)].sort((left, right) => left.localeCompare(right));
 }
 
-export function parseTestNgClassFile(bytes: Uint8Array): ParsedTestNgClass | null {
+export function parseClassFile(
+  bytes: Uint8Array,
+  inheritedClassTest?: InheritedClassTest,
+): ParsedClassFile | null {
   const reader = new ClassFileReader(bytes);
   if (reader.u4() !== CLASS_FILE_MAGIC) {
     throw new Error("Entry is not a Java class file.");
@@ -423,12 +451,28 @@ export function parseTestNgClassFile(bytes: Uint8Array): ParsedTestNgClass | nul
     return null;
   }
 
-  const classTest = findAnnotation(classAnnotations, TEST_ANNOTATION);
+  const declaredClassTest = findAnnotation(classAnnotations, TEST_ANNOTATION);
   const classIgnored = Boolean(findAnnotation(classAnnotations, IGNORE_ANNOTATION));
-  const classEnabled = !classIgnored && booleanValue(classTest, "enabled", true);
-  const classGroups = uniqueSorted(stringArray(classTest, "groups"));
+  const declaredDescription = stringValue(declaredClassTest, "description");
+  const declaredClassTestMetadata: InheritedClassTest | undefined = declaredClassTest
+    ? {
+        enabled: booleanValue(declaredClassTest, "enabled", true),
+        groups: uniqueSorted(stringArray(declaredClassTest, "groups")),
+        ...(declaredDescription ? { description: declaredDescription } : {}),
+      }
+    : undefined;
+  const effectiveClassTest = declaredClassTestMetadata ?? inheritedClassTest;
+  const classEnabled = !classIgnored && (effectiveClassTest?.enabled ?? true);
+  const classGroups = effectiveClassTest?.groups ?? [];
 
   const testMethods: ParsedTestNgMethod[] = [];
+  const publicMethods: ParsedTestNgMethod[] = [];
+  const dynamicSemantics = new Set<"factory" | "data-provider" | "listeners">();
+  if (findAnnotation(classAnnotations, FACTORY_ANNOTATION)) dynamicSemantics.add("factory");
+  if (findAnnotation(classAnnotations, DATA_PROVIDER_ANNOTATION)) {
+    dynamicSemantics.add("data-provider");
+  }
+  if (findAnnotation(classAnnotations, LISTENERS_ANNOTATION)) dynamicSemantics.add("listeners");
   for (const method of methods) {
     if (method.name === "<init>" || method.name === "<clinit>") {
       continue;
@@ -437,8 +481,27 @@ export function parseTestNgClassFile(bytes: Uint8Array): ParsedTestNgClass | nul
       continue;
     }
 
+    if (findAnnotation(method.annotations, FACTORY_ANNOTATION)) dynamicSemantics.add("factory");
+    if (findAnnotation(method.annotations, DATA_PROVIDER_ANNOTATION)) {
+      dynamicSemantics.add("data-provider");
+    }
+    if ((method.accessFlags & ACCESS_PUBLIC) !== 0) {
+      publicMethods.push({
+        methodName: method.name,
+        descriptor: method.descriptor,
+        enabled: classEnabled,
+        annotationSource: "class",
+        groups: classGroups,
+        dependsOnMethods: [],
+        dependsOnGroups: [],
+        parameters: {},
+        inheritable: true,
+      });
+    }
+
     const methodTest = findAnnotation(method.annotations, TEST_ANNOTATION);
-    const includedByClass = Boolean(classTest) && (method.accessFlags & ACCESS_PUBLIC) !== 0;
+    const includedByClass =
+      Boolean(effectiveClassTest) && (method.accessFlags & ACCESS_PUBLIC) !== 0;
     if (!methodTest && !includedByClass) {
       continue;
     }
@@ -456,16 +519,18 @@ export function parseTestNgClassFile(bytes: Uint8Array): ParsedTestNgClass | nul
       groups,
       dependsOnMethods: uniqueSorted(stringArray(methodTest, "dependsOnMethods")),
       dependsOnGroups: uniqueSorted(stringArray(methodTest, "dependsOnGroups")),
+      parameters: {},
+      inheritable: (method.accessFlags & ACCESS_PRIVATE) === 0,
     };
 
-    const description =
-      stringValue(methodTest, "description") ?? stringValue(classTest, "description");
+    const description = stringValue(methodTest, "description") ?? effectiveClassTest?.description;
     if (description) {
       candidate.description = description;
     }
     const dataProvider = stringValue(methodTest, "dataProvider");
     if (dataProvider) {
       candidate.dataProvider = dataProvider;
+      dynamicSemantics.add("data-provider");
     }
     const priority = integerValue(methodTest, "priority");
     if (priority !== undefined) {
@@ -474,20 +539,37 @@ export function parseTestNgClassFile(bytes: Uint8Array): ParsedTestNgClass | nul
     testMethods.push(candidate);
   }
 
-  if (!classTest && testMethods.length === 0) {
-    return null;
-  }
-
   testMethods.sort((left, right) => left.methodName.localeCompare(right.methodName));
+  publicMethods.sort((left, right) =>
+    `${left.methodName}${left.descriptor}`.localeCompare(`${right.methodName}${right.descriptor}`),
+  );
   const lastDot = thisClass.lastIndexOf(".");
+  const candidate: ParsedTestNgClass | null =
+    !effectiveClassTest && testMethods.length === 0
+      ? null
+      : {
+          className: thisClass,
+          packageName: lastDot === -1 ? "" : thisClass.slice(0, lastDot),
+          simpleName: lastDot === -1 ? thisClass : thisClass.slice(lastDot + 1),
+          superClassName,
+          enabled: classEnabled,
+          classLevelTest: Boolean(effectiveClassTest),
+          groups: classGroups,
+          parameters: {},
+          methods: testMethods,
+        };
   return {
     className: thisClass,
-    packageName: lastDot === -1 ? "" : thisClass.slice(0, lastDot),
-    simpleName: lastDot === -1 ? thisClass : thisClass.slice(lastDot + 1),
     superClassName,
-    enabled: classEnabled,
-    classLevelTest: Boolean(classTest),
-    groups: classGroups,
-    methods: testMethods,
+    ...(effectiveClassTest ? { classTest: effectiveClassTest } : {}),
+    declaredClassTest: Boolean(declaredClassTest),
+    candidate,
+    abstract: (accessFlags & ACCESS_ABSTRACT) !== 0,
+    publicMethods,
+    dynamicSemantics: [...dynamicSemantics].sort(),
   };
+}
+
+export function parseTestNgClassFile(bytes: Uint8Array): ParsedTestNgClass | null {
+  return parseClassFile(bytes)?.candidate ?? null;
 }

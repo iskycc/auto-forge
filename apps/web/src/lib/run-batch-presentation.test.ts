@@ -39,6 +39,7 @@ function batch(overrides: Partial<RunBatch>): RunBatch {
     suiteName: "每日冒烟",
     suiteVersion: 1,
     status: "scheduled",
+    priority: 0,
     retryLimit: 0,
     queueTimeoutMs: 86_400_000,
     claimTimeoutMs: 300_000,

@@ -25,6 +25,7 @@ var sha256Pattern = regexp.MustCompile(`^[a-f0-9]{64}$`)
 type attemptSupervisor struct {
 	client        *Client
 	identity      Identity
+	identityMutex sync.RWMutex
 	configuration config.Config
 	store         attemptStore
 	logSpool      *logSpool
@@ -88,6 +89,18 @@ func (supervisor *attemptSupervisor) BeginDrain() {
 	supervisor.draining.Store(true)
 }
 
+func (supervisor *attemptSupervisor) UpdateIdentity(identity Identity) {
+	supervisor.identityMutex.Lock()
+	supervisor.identity = identity
+	supervisor.identityMutex.Unlock()
+}
+
+func (supervisor *attemptSupervisor) currentIdentity() Identity {
+	supervisor.identityMutex.RLock()
+	defer supervisor.identityMutex.RUnlock()
+	return supervisor.identity
+}
+
 func (supervisor *attemptSupervisor) Close() {
 	supervisor.BeginDrain()
 	completed := make(chan struct{})
@@ -121,7 +134,7 @@ func (supervisor *attemptSupervisor) claimLoop(ctx context.Context) {
 			}
 			continue
 		}
-		response, err := supervisor.client.Claim(ctx, supervisor.identity, supervisor.configuration, availableSlots)
+		response, err := supervisor.client.Claim(ctx, supervisor.currentIdentity(), supervisor.configuration, availableSlots)
 		if err != nil {
 			fmt.Fprintf(supervisor.diagnostics, "assignment claim failed: %v\n", err)
 			if !waitFor(ctx, jitter(backoff)) {
@@ -145,7 +158,7 @@ func (supervisor *attemptSupervisor) claimLoop(ctx context.Context) {
 func (supervisor *attemptSupervisor) startAttempt(claimed ClaimedAssignment) error {
 	if err := validateClaimedAssignment(
 		claimed,
-		supervisor.identity.RunnerID,
+		supervisor.currentIdentity().RunnerID,
 		supervisor.configuration,
 	); err != nil {
 		return err
@@ -253,10 +266,29 @@ func (supervisor *attemptSupervisor) runTestNG(
 	if err != nil {
 		return platformFailure("EXECUTION_SECRET_ACQUISITION_FAILED", err)
 	}
-	specification, inputs, err := testNGExecutorSpec(executionSpec, supervisor.configuration.Toolchain)
+	executionToolchain := supervisor.configuration.Toolchain
+	isolation := "process"
+	containerPolicy := executor.ContainerPolicy{}
+	if executionSpec.Executor == "testng-container" {
+		container := supervisor.configuration.Container
+		if !container.Enabled() {
+			return platformFailure("EXECUTION_SPEC_REJECTED", errors.New("container executor is not configured by local Agent policy"))
+		}
+		executionToolchain.JavaExecutable = container.JavaExecutable
+		executionToolchain.Classpath = append([]string(nil), container.Classpath...)
+		isolation = "container"
+		containerPolicy = executor.ContainerPolicy{
+			RuntimeExecutable: container.RuntimeExecutable,
+			ImageReference:    container.ImageReference,
+			SeccompProfile:    container.SeccompProfile,
+			User:              container.User,
+		}
+	}
+	specification, inputs, err := testNGExecutorSpec(executionSpec, executionToolchain)
 	if err != nil {
 		return platformFailure("EXECUTION_SPEC_REJECTED", err)
 	}
+	specification.Isolation = isolation
 	collector := newAttemptLogCollector(
 		claimed.Assignment.AttemptID,
 		supervisor.logSpool,
@@ -270,14 +302,17 @@ func (supervisor *attemptSupervisor) runTestNG(
 	result, runErr := supervisor.runExecution(ctx, specification, executor.RunOptions{
 		DataDirectory: supervisor.configuration.DataDirectory,
 		KeepWorkspace: true,
-		Policy:        executor.Policy{AllowedExecutables: []string{supervisor.configuration.Toolchain.JavaExecutable}},
+		Policy: executor.Policy{
+			AllowedExecutables: []string{executionToolchain.JavaExecutable},
+			Container:          containerPolicy,
+		},
 		ResourcePolicy: executor.ResourcePolicy{
 			CgroupRoot:    supervisor.configuration.Resources.CgroupRoot,
 			RequireCgroup: true,
 		},
 		LogSink: collector.Write,
 		PrepareWorkspace: func(workspace string) error {
-			if err := downloadAttemptInputs(ctx, supervisor.client, supervisor.identity, claimed, inputs, workspace); err != nil {
+			if err := downloadAttemptInputs(ctx, supervisor.client, supervisor.currentIdentity(), claimed, inputs, workspace); err != nil {
 				return err
 			}
 			return prepareTestNGLauncher(
@@ -409,7 +444,7 @@ func (supervisor *attemptSupervisor) executionSpecWithSecrets(
 	specification := claimed.Assignment.ExecutionSpec
 	secrets, err := supervisor.client.AcquireSecrets(
 		ctx,
-		supervisor.identity,
+		supervisor.currentIdentity(),
 		claimed.Assignment.AttemptID,
 		claimed.Lease,
 		specification.SecretReferences,
@@ -450,7 +485,7 @@ func (supervisor *attemptSupervisor) uploadArtifacts(
 	defer cancel()
 	declared, err := supervisor.client.DeclareArtifacts(
 		uploadContext,
-		supervisor.identity,
+		supervisor.currentIdentity(),
 		claimed.Assignment.AttemptID,
 		claimed.Lease.Token,
 		artifacts,
@@ -479,7 +514,7 @@ func (supervisor *attemptSupervisor) uploadArtifacts(
 		for {
 			err := supervisor.client.UploadArtifact(
 				uploadContext,
-				supervisor.identity,
+				supervisor.currentIdentity(),
 				claimed.Lease,
 				accepted,
 				supervisor.artifactSpool.path(claimed.Assignment.AttemptID, artifact.ArtifactID),
@@ -533,7 +568,7 @@ func (supervisor *attemptSupervisor) flushAttemptLogs(ctx context.Context, claim
 		}
 		response, uploadErr := supervisor.client.UploadLogs(
 			uploadContext,
-			supervisor.identity,
+			supervisor.currentIdentity(),
 			claimed.Assignment.AttemptID,
 			claimed.Lease.Token,
 			chunks,
@@ -579,7 +614,7 @@ func (supervisor *attemptSupervisor) renewLease(
 		if !waitFor(ctx, min(15*time.Second, max(time.Second, remaining/3))) {
 			return
 		}
-		response, renewErr := supervisor.client.RenewLease(ctx, supervisor.identity, lease)
+		response, renewErr := supervisor.client.RenewLease(ctx, supervisor.currentIdentity(), lease)
 		if renewErr != nil {
 			if isPermanentLeaseRejection(renewErr) {
 				reportAllowed.Store(false)
@@ -637,7 +672,7 @@ func (supervisor *attemptSupervisor) reportCompletion(ctx context.Context, state
 	for time.Now().Before(expiresAt) {
 		response, completeErr := supervisor.client.Complete(
 			ctx,
-			supervisor.identity,
+			supervisor.currentIdentity(),
 			state.Claimed.Assignment.AttemptID,
 			state.Claimed.Lease.Token,
 			state.CompletionID,
@@ -673,7 +708,7 @@ func (supervisor *attemptSupervisor) reconcile(ctx context.Context) error {
 		attempts = append(attempts, localAttempt{AttemptID: attemptID, LeaseID: state.Claimed.Lease.LeaseID, LeaseVersion: state.Claimed.Lease.Version, LocalState: state.LocalState})
 		stateByID[attemptID] = state
 	}
-	response, err := supervisor.client.Reconcile(ctx, supervisor.identity, attempts)
+	response, err := supervisor.client.Reconcile(ctx, supervisor.currentIdentity(), attempts)
 	if err != nil {
 		return err
 	}

@@ -15,28 +15,6 @@ services:
         condition: service_healthy
       minio-init:
         condition: service_completed_successfully
-    environment:
-      AUTOFORGE_MODE: full
-      AUTOFORGE_DATA_DIR: /var/lib/autoforge
-      AUTOFORGE_DATABASE_URL: postgresql://autoforge:${AUTOFORGE_POSTGRES_PASSWORD:?set a URL-safe PostgreSQL password}@postgres:5432/autoforge
-      AUTOFORGE_NATS_SERVERS: nats://nats:4222
-      AUTOFORGE_REDIS_URL: redis://redis:6379
-      AUTOFORGE_MINIO_ENDPOINT: http://minio:9000
-      AUTOFORGE_MINIO_ACCESS_KEY: ${AUTOFORGE_MINIO_ACCESS_KEY:?set the MinIO access key}
-      AUTOFORGE_MINIO_SECRET_KEY: ${AUTOFORGE_MINIO_SECRET_KEY:?set the MinIO secret key}
-      AUTOFORGE_MINIO_BUCKET: ${AUTOFORGE_MINIO_BUCKET:-autoforge-objects}
-      AUTOFORGE_MINIO_REGION: ${AUTOFORGE_MINIO_REGION:-us-east-1}
-      AUTOFORGE_MAX_JAR_BYTES: ${AUTOFORGE_MAX_JAR_BYTES:-33554432}
-      AUTOFORGE_RUNNER_BOOTSTRAP_TOKEN: ${AUTOFORGE_RUNNER_BOOTSTRAP_TOKEN:?set a runner bootstrap token of at least 32 characters}
-      AUTOFORGE_RUNNER_CLAIM_RATE_LIMIT_PER_MINUTE: ${AUTOFORGE_RUNNER_CLAIM_RATE_LIMIT_PER_MINUTE:-120}
-      AUTOFORGE_ADMIN_BOOTSTRAP_TOKEN: ${AUTOFORGE_ADMIN_BOOTSTRAP_TOKEN:?set an admin bootstrap token of at least 32 characters}
-      AUTOFORGE_MASTER_KEY: ${AUTOFORGE_MASTER_KEY:?set a Base64-encoded 32-byte master key}
-      AUTOFORGE_SESSION_TTL_HOURS: ${AUTOFORGE_SESSION_TTL_HOURS:-12}
-      AUTOFORGE_TERMINAL_ACCESS_TOKEN: ${AUTOFORGE_TERMINAL_ACCESS_TOKEN:?set a terminal access token of at least 32 characters}
-      AUTOFORGE_SCHEDULER_MAX_CPU_PERCENT: ${AUTOFORGE_SCHEDULER_MAX_CPU_PERCENT:-85}
-      AUTOFORGE_SCHEDULER_MAX_MEMORY_PERCENT: ${AUTOFORGE_SCHEDULER_MAX_MEMORY_PERCENT:-85}
-      AUTOFORGE_SCHEDULER_MAX_LOAD_PER_CPU: ${AUTOFORGE_SCHEDULER_MAX_LOAD_PER_CPU:-1}
-      AUTOFORGE_SCHEDULER_METRICS_MAX_AGE_SECONDS: ${AUTOFORGE_SCHEDULER_METRICS_MAX_AGE_SECONDS:-45}
     ports:
       - "${AUTOFORGE_HTTP_BIND:-0.0.0.0}:${AUTOFORGE_HTTP_PORT:-3000}:3000"
     volumes:
@@ -55,7 +33,8 @@ services:
   worker:
     image: ${AUTOFORGE_BACKEND_IMAGE:?set AUTOFORGE_BACKEND_IMAGE to a loaded AutoForge image}
     pull_policy: never
-    command: ["node", "apps/worker/dist/worker.mjs"]
+    command: ["node", "apps/worker/dist/worker.mjs", "--data-dir=/var/lib/autoforge"]
+    profiles: ["worker"]
     init: true
     restart: unless-stopped
     depends_on:
@@ -63,18 +42,8 @@ services:
         condition: service_healthy
       nats:
         condition: service_healthy
-    environment:
-      AUTOFORGE_DATABASE_URL: postgresql://autoforge:${AUTOFORGE_POSTGRES_PASSWORD:?set a URL-safe PostgreSQL password}@postgres:5432/autoforge
-      AUTOFORGE_NATS_SERVERS: nats://nats:4222
-      AUTOFORGE_WORKER_ID: full-worker-1
-      AUTOFORGE_WORKER_CONCURRENCY: ${AUTOFORGE_WORKER_CONCURRENCY:-16}
-      AUTOFORGE_WORKER_HEALTH_PORT: 3001
-      AUTOFORGE_WORKER_METRICS_ENABLED: ${AUTOFORGE_WORKER_METRICS_ENABLED:-0}
-      AUTOFORGE_POSTGRES_MIGRATIONS_DIR: /app/packages/db/drizzle/postgresql
-      AUTOFORGE_SCHEDULER_MAX_CPU_PERCENT: ${AUTOFORGE_SCHEDULER_MAX_CPU_PERCENT:-85}
-      AUTOFORGE_SCHEDULER_MAX_MEMORY_PERCENT: ${AUTOFORGE_SCHEDULER_MAX_MEMORY_PERCENT:-85}
-      AUTOFORGE_SCHEDULER_MAX_LOAD_PER_CPU: ${AUTOFORGE_SCHEDULER_MAX_LOAD_PER_CPU:-1}
-      AUTOFORGE_SCHEDULER_METRICS_MAX_AGE_SECONDS: ${AUTOFORGE_SCHEDULER_METRICS_MAX_AGE_SECONDS:-45}
+    volumes:
+      - autoforge-data:/var/lib/autoforge
     healthcheck:
       test:
         [
@@ -102,7 +71,9 @@ services:
     environment:
       POSTGRES_DB: autoforge
       POSTGRES_USER: autoforge
-      POSTGRES_PASSWORD: ${AUTOFORGE_POSTGRES_PASSWORD:?set a URL-safe PostgreSQL password}
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres-password
+    secrets:
+      - postgres-password
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
@@ -166,8 +137,11 @@ services:
     restart: unless-stopped
     command: ["server", "/data", "--address", ":9000", "--console-address", ":9001"]
     environment:
-      MINIO_ROOT_USER: ${AUTOFORGE_MINIO_ACCESS_KEY:?set the MinIO access key}
-      MINIO_ROOT_PASSWORD: ${AUTOFORGE_MINIO_SECRET_KEY:?set the MinIO secret key}
+      MINIO_ROOT_USER_FILE: /run/secrets/minio-root-user
+      MINIO_ROOT_PASSWORD_FILE: /run/secrets/minio-root-password
+    secrets:
+      - minio-root-user
+      - minio-root-password
     volumes:
       - minio-data:/data
     healthcheck:
@@ -194,13 +168,13 @@ services:
     entrypoint: ["/bin/sh", "-eu", "-c"]
     command:
       - >-
-        mc --config-dir /tmp/.mc alias set autoforge http://minio:9000 "$${MINIO_ROOT_USER}" "$${MINIO_ROOT_PASSWORD}";
-        mc --config-dir /tmp/.mc mb --ignore-existing --region "$${MINIO_REGION}" "autoforge/$${MINIO_BUCKET}"
-    environment:
-      MINIO_ROOT_USER: ${AUTOFORGE_MINIO_ACCESS_KEY:?set the MinIO access key}
-      MINIO_ROOT_PASSWORD: ${AUTOFORGE_MINIO_SECRET_KEY:?set the MinIO secret key}
-      MINIO_BUCKET: ${AUTOFORGE_MINIO_BUCKET:-autoforge-objects}
-      MINIO_REGION: ${AUTOFORGE_MINIO_REGION:-us-east-1}
+        minio_user="$$(cat /run/secrets/minio-root-user)";
+        minio_password="$$(cat /run/secrets/minio-root-password)";
+        mc --config-dir /tmp/.mc alias set autoforge http://minio:9000 "$${minio_user}" "$${minio_password}";
+        mc --config-dir /tmp/.mc mb --ignore-existing --region us-east-1 autoforge/autoforge-objects
+    secrets:
+      - minio-root-user
+      - minio-root-password
     networks:
       - core
     security_opt:
@@ -226,3 +200,11 @@ networks:
   core:
     name: ${AUTOFORGE_CORE_NETWORK:-autoforge-core}
     internal: true
+
+secrets:
+  postgres-password:
+    file: ./secrets/postgres-password
+  minio-root-user:
+    file: ./secrets/minio-root-user
+  minio-root-password:
+    file: ./secrets/minio-root-password

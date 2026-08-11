@@ -17,6 +17,7 @@ import {
   type Project,
   type Role,
   type RoleScope,
+  type SystemRoleBindingView,
   type User,
   type UserSession,
   type UserStatus,
@@ -72,6 +73,7 @@ export class SqliteIdentityAccessRepository implements IdentityAccessRepository 
             description: definition.description,
             scope: definition.scope,
             builtIn: true,
+            active: true,
             permissionsJson: JSON.stringify(definition.permissions),
             createdAt: recordedAt,
             updatedAt: recordedAt,
@@ -83,6 +85,7 @@ export class SqliteIdentityAccessRepository implements IdentityAccessRepository 
               description: definition.description,
               scope: definition.scope,
               builtIn: true,
+              active: true,
               permissionsJson: JSON.stringify(definition.permissions),
               updatedAt: recordedAt,
             },
@@ -346,13 +349,13 @@ export class SqliteIdentityAccessRepository implements IdentityAccessRepository 
     const systemRows = this.handle.db
       .select({ permissionsJson: roles.permissionsJson })
       .from(userSystemRoles)
-      .innerJoin(roles, eq(roles.id, userSystemRoles.roleId))
+      .innerJoin(roles, and(eq(roles.id, userSystemRoles.roleId), eq(roles.active, true)))
       .where(eq(userSystemRoles.userId, user.id))
       .all();
     const projectRows = this.handle.db
       .select({ projectId: projectRoleBindings.projectId, permissionsJson: roles.permissionsJson })
       .from(projectRoleBindings)
-      .innerJoin(roles, eq(roles.id, projectRoleBindings.roleId))
+      .innerJoin(roles, and(eq(roles.id, projectRoleBindings.roleId), eq(roles.active, true)))
       .where(eq(projectRoleBindings.userId, user.id))
       .all();
     const projectPermissions: Record<string, Permission[]> = {};
@@ -560,6 +563,7 @@ export class SqliteIdentityAccessRepository implements IdentityAccessRepository 
         description: input.description,
         scope: input.scope,
         builtIn: false,
+        active: true,
         permissionsJson: JSON.stringify(input.permissions),
         createdAt: input.createdAt,
         updatedAt: input.createdAt,
@@ -575,6 +579,7 @@ export class SqliteIdentityAccessRepository implements IdentityAccessRepository 
     description?: string;
     scope?: RoleScope;
     permissions?: Permission[];
+    active?: boolean;
     updatedAt: string;
   }): Promise<Role> {
     const row = this.handle.db
@@ -584,6 +589,7 @@ export class SqliteIdentityAccessRepository implements IdentityAccessRepository 
         ...(input.description !== undefined ? { description: input.description } : {}),
         ...(input.scope ? { scope: input.scope } : {}),
         ...(input.permissions ? { permissionsJson: JSON.stringify(input.permissions) } : {}),
+        ...(input.active !== undefined ? { active: input.active } : {}),
         updatedAt: input.updatedAt,
       })
       .where(and(eq(roles.id, input.id), eq(roles.builtIn, false)))
@@ -712,6 +718,7 @@ export class SqliteIdentityAccessRepository implements IdentityAccessRepository 
     id: string;
     name: string;
     slug: string;
+    ownerUserId?: string;
     createdAt: string;
   }): Promise<Project> {
     const row = this.handle.db
@@ -722,6 +729,7 @@ export class SqliteIdentityAccessRepository implements IdentityAccessRepository 
         slug: input.slug,
         isDefault: false,
         archived: false,
+        ...(input.ownerUserId ? { ownerUserId: input.ownerUserId } : {}),
         createdAt: input.createdAt,
         updatedAt: input.createdAt,
       })
@@ -739,6 +747,40 @@ export class SqliteIdentityAccessRepository implements IdentityAccessRepository 
       .get();
     if (!row) throw new DomainError("PROJECT_NOT_FOUND", "指定项目不存在。");
     return mapProject(row);
+  }
+
+  async transferProjectOwner(input: {
+    projectId: string;
+    ownerUserId: string;
+    updatedAt: string;
+  }): Promise<Project> {
+    const row = this.handle.db
+      .update(projects)
+      .set({ ownerUserId: input.ownerUserId, updatedAt: input.updatedAt })
+      .where(eq(projects.id, input.projectId))
+      .returning()
+      .get();
+    if (!row) throw new DomainError("PROJECT_NOT_FOUND", "指定项目不存在。");
+    return mapProject(row);
+  }
+
+  async listSystemRoleBindingsForActiveUsers(): Promise<SystemRoleBindingView[]> {
+    const rows = this.handle.db
+      .select({
+        userId: userSystemRoles.userId,
+        roleId: userSystemRoles.roleId,
+        permissionsJson: roles.permissionsJson,
+      })
+      .from(userSystemRoles)
+      .innerJoin(roles, eq(roles.id, userSystemRoles.roleId))
+      .innerJoin(users, eq(users.id, userSystemRoles.userId))
+      .where(and(eq(users.status, "active"), eq(roles.active, true)))
+      .all();
+    return rows.map((row) => ({
+      userId: row.userId,
+      roleId: row.roleId,
+      permissions: parsePermissions(row.permissionsJson),
+    }));
   }
 
   async getLdapConfiguration(): Promise<StoredLdapConfiguration | null> {
@@ -1023,6 +1065,7 @@ function ldapConfigurationValues(
     operationTimeoutMs: input.operationTimeoutMs,
     pageSize: input.pageSize,
     maximumUsers: input.maximumUsers,
+    synchronizationIntervalMinutes: input.synchronizationIntervalMinutes,
     bindDn: input.bindDn,
     bindPasswordEncrypted: input.bindPasswordEncrypted ?? null,
     userBaseDn: input.userBaseDn,
@@ -1052,6 +1095,7 @@ function mapLdapConfiguration(
     operationTimeoutMs: row.operationTimeoutMs,
     pageSize: row.pageSize,
     maximumUsers: row.maximumUsers,
+    synchronizationIntervalMinutes: row.synchronizationIntervalMinutes,
     bindDn: row.bindDn,
     ...(row.bindPasswordEncrypted ? { bindPasswordEncrypted: row.bindPasswordEncrypted } : {}),
     userBaseDn: row.userBaseDn,

@@ -4,6 +4,8 @@ packages:
 
 allowBuilds:
   better-sqlite3: true
+  cpu-features: false
+  ssh2: false
   unrs-resolver: true
 
 minimumReleaseAgeExclude:

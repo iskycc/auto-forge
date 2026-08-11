@@ -1,15 +1,45 @@
 import type { RunnerHeartbeatInput, RunnerRegistrationInput } from "@autoforge/contracts";
-import { DomainError } from "@autoforge/domain";
+import { DomainError, runnerAuthenticationBlock, type Runner } from "@autoforge/domain";
 
-import type { Clock, IdGenerator, RunnerCredentialPort, RunnerRepository } from "./ports";
+import type {
+  Clock,
+  ExecutionControlRepository,
+  IdGenerator,
+  RunnerCredentialPort,
+  RunnerRepository,
+} from "./ports";
 
 const HEARTBEAT_INTERVAL_SECONDS = 15;
 const OFFLINE_AFTER_SECONDS = 45;
+const CREDENTIAL_ROTATION_GRACE_MS = 15 * 60_000;
+const DEREGISTER_RECOVERY_LIMIT = 100;
+
+/**
+ * 执行机凭据认证的统一守卫：身份必须匹配目标执行机，且未注销、未撤销、未禁用。
+ * Runner Protocol 的所有入口（心跳、领取、续租、完成、轮换）共用此判断。
+ */
+export function assertRunnerAuthenticated(runner: Runner | null, runnerId: string): Runner {
+  if (!runner || runner.id !== runnerId) {
+    throw new DomainError("RUNNER_AUTH_REJECTED", "执行机凭据无效。");
+  }
+  const block = runnerAuthenticationBlock(runner);
+  if (block === "deregistered") {
+    throw new DomainError("RUNNER_AUTH_REJECTED", "执行机已注销，凭据已失效。");
+  }
+  if (block === "credential-revoked") {
+    throw new DomainError("RUNNER_AUTH_REJECTED", "执行机凭据已撤销。");
+  }
+  if (block === "disabled") {
+    throw new DomainError("RUNNER_DISABLED", "执行机已被禁用。");
+  }
+  return runner;
+}
 
 export class RunnerControlService {
   constructor(
     private readonly runners: RunnerRepository,
     private readonly credentials: RunnerCredentialPort,
+    private readonly executions: ExecutionControlRepository,
     private readonly clock: Clock,
     private readonly ids: IdGenerator,
   ) {}
@@ -49,6 +79,10 @@ export class RunnerControlService {
     };
   }
 
+  issueBootstrapToken(): string {
+    return this.credentials.issueBootstrapToken();
+  }
+
   async heartbeat(runnerId: string, credential: string, input: RunnerHeartbeatInput) {
     const runner = await this.authenticate(runnerId, credential);
     if (input.busySlots > input.maxConcurrency) {
@@ -73,6 +107,7 @@ export class RunnerControlService {
       acceptedAt,
       heartbeatIntervalSeconds: HEARTBEAT_INTERVAL_SECONDS,
       draining: runner.state === "disabled" || runner.state === "draining",
+      rotateCredential: Boolean(runner.credentialRotationRequestedAt),
     };
   }
 
@@ -95,16 +130,74 @@ export class RunnerControlService {
     });
   }
 
+  /**
+   * Agent 发起的凭据轮换：签发新凭据，旧凭据保留有限宽限期。
+   * Agent 保存新凭据失败时可用旧凭据重试轮换，因此轮换必须可安全重复。
+   */
+  async rotateCredential(runnerId: string, credential: string) {
+    const runner = await this.authenticate(runnerId, credential);
+    const rotated = this.credentials.issue();
+    const now = this.clock.now();
+    const previousCredentialValidUntil = new Date(
+      now.getTime() + CREDENTIAL_ROTATION_GRACE_MS,
+    ).toISOString();
+    const updated = await this.runners.rotateCredential({
+      runnerId: runner.id,
+      credentialHash: this.credentials.hash(rotated),
+      previousCredentialValidUntil,
+      rotatedAt: now.toISOString(),
+    });
+    return {
+      schemaVersion: 1 as const,
+      credential: rotated,
+      credentialVersion: updated.credentialVersion,
+      previousCredentialValidUntil,
+    };
+  }
+
+  async requestCredentialRotation(runnerId: string) {
+    const runner = await this.get(runnerId);
+    if (runner.deregisteredAt || runner.credentialRevokedAt) {
+      throw new DomainError("RUNNER_CREDENTIAL_UNAVAILABLE", "执行机身份已失效，无法请求轮换。", {
+        details: { runnerId },
+      });
+    }
+    return this.runners.requestCredentialRotation({
+      runnerId,
+      requestedAt: this.clock.now().toISOString(),
+    });
+  }
+
+  async revokeCredential(runnerId: string) {
+    await this.get(runnerId);
+    return this.runners.revokeCredential({
+      runnerId,
+      revokedAt: this.clock.now().toISOString(),
+    });
+  }
+
+  /**
+   * 注销执行机：身份失效并禁用，活跃租约立即到期以便重新排队。
+   */
+  async deregisterRunner(runnerId: string) {
+    await this.get(runnerId);
+    const now = this.clock.now().toISOString();
+    const runner = await this.runners.deregister({ runnerId, deregisteredAt: now });
+    await this.executions.recoverExpired({
+      now,
+      eventIds: Array.from({ length: DEREGISTER_RECOVERY_LIMIT }, () => this.ids.next()),
+      limit: DEREGISTER_RECOVERY_LIMIT,
+    });
+    return runner;
+  }
+
   private async authenticate(runnerId: string, credential: string) {
     if (!credential) throw new DomainError("RUNNER_AUTH_REQUIRED", "缺少执行机凭据。");
-    const runner = await this.runners.findByCredentialHash(this.credentials.hash(credential));
-    if (!runner || runner.id !== runnerId) {
-      throw new DomainError("RUNNER_AUTH_REJECTED", "执行机凭据无效。");
-    }
-    if (runner.state === "disabled") {
-      throw new DomainError("RUNNER_DISABLED", "执行机已被禁用。");
-    }
-    return runner;
+    const runner = await this.runners.findByCredentialHash(
+      this.credentials.hash(credential),
+      this.clock.now().toISOString(),
+    );
+    return assertRunnerAuthenticated(runner, runnerId);
   }
 
   private offlineBefore(): string {

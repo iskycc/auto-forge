@@ -40,14 +40,9 @@ Linux Agent 每次心跳读取：
 
 领域调度结果为每个候选节点保留 `runner_incompatible`、指标缺失/过期、容量不足和各资源阈值超限等稳定阻塞原因。仓储在真正写 assignment 前使用同一兼容性规则再次校验，Agent 领取后还会以不可变快照中的运行时要求做本地校验。
 
-阈值由主平台启动配置统一提供，Lite 与 Full 使用相同领域算法：
-
-```env
-AUTOFORGE_SCHEDULER_MAX_CPU_PERCENT=85
-AUTOFORGE_SCHEDULER_MAX_MEMORY_PERCENT=85
-AUTOFORGE_SCHEDULER_MAX_LOAD_PER_CPU=1
-AUTOFORGE_SCHEDULER_METRICS_MAX_AGE_SECONDS=45
-```
+阈值由首次启动引导或“系统设置 → 平台配置”写入私有 `platform.json`，包括 CPU/内存百分比、
+每 CPU load、指标最大年龄、项目最大并发和优先级老化间隔。Lite 与 Full 读取同一 schema 并使用
+相同领域算法；修改需要 revision 条件且在明确重启后生效。
 
 ## 评分与分配
 

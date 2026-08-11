@@ -71,6 +71,18 @@ func CheckLocalEnvironment(configuration Config) (Diagnostic, error) {
 			}
 		}
 	}
+	if configuration.Container.Enabled() {
+		if err := requireExecutable(configuration.Container.RuntimeExecutable); err != nil {
+			return Diagnostic{}, fmt.Errorf("validate container runtime: %w", err)
+		}
+		info, statErr := os.Stat(configuration.Container.SeccompProfile)
+		if statErr != nil {
+			return Diagnostic{}, fmt.Errorf("inspect container seccomp profile: %w", statErr)
+		}
+		if !info.Mode().IsRegular() {
+			return Diagnostic{}, errors.New("container seccomp profile is not a regular file")
+		}
+	}
 	resourceControl := "disabled"
 	if configuration.Resources.Enabled() {
 		if err := checkCgroupDelegation(configuration.Resources.CgroupRoot); err != nil {

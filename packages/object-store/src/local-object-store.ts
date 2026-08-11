@@ -18,11 +18,12 @@ export class LocalObjectStore implements JarObjectStorePort {
     this.objectsDirectory = resolve(dataDirectory, "objects");
   }
 
-  async putJar(sha256: string, content: Uint8Array): Promise<ObjectWriteResult> {
+  async putJar(projectId: string, sha256: string, content: Uint8Array): Promise<ObjectWriteResult> {
+    validateScopeId(projectId);
     if (!/^[a-f0-9]{64}$/.test(sha256)) {
       throw new Error("Object SHA-256 is invalid.");
     }
-    const objectKey = `jars/${sha256.slice(0, 2)}/${sha256}.jar`;
+    const objectKey = `projects/${projectId}/jars/${sha256.slice(0, 2)}/${sha256}.jar`;
     const targetPath = this.resolveObjectKey(objectKey);
     await mkdir(dirname(targetPath), { recursive: true });
     if (await this.pathExists(targetPath)) {
@@ -53,7 +54,57 @@ export class LocalObjectStore implements JarObjectStorePort {
     }
   }
 
+  async putObject(input: {
+    objectKey: string;
+    sha256: string;
+    sizeBytes: number;
+    mediaType: string;
+    content: AsyncIterable<Uint8Array>;
+  }): Promise<ObjectWriteResult> {
+    validateObjectMetadata(input.objectKey, input.sha256, input.sizeBytes);
+    const targetPath = this.resolveObjectKey(input.objectKey);
+    await mkdir(dirname(targetPath), { recursive: true });
+    if (await this.pathExists(targetPath)) {
+      await this.verifyStoredArtifact(targetPath, input.sizeBytes, input.sha256);
+      return { objectKey: input.objectKey, created: false };
+    }
+    const temporaryPath = `${targetPath}.${process.pid}.${randomUUID()}.tmp`;
+    const file = await open(temporaryPath, "wx", 0o600);
+    const digest = createHash("sha256");
+    let sizeBytes = 0;
+    try {
+      for await (const chunk of input.content) {
+        sizeBytes += chunk.byteLength;
+        if (sizeBytes > input.sizeBytes) throw new Error("Object exceeds its declared size.");
+        digest.update(chunk);
+        await file.write(chunk);
+      }
+      await file.sync();
+    } catch (error) {
+      await rm(temporaryPath, { force: true });
+      throw error;
+    } finally {
+      await file.close();
+    }
+    try {
+      if (sizeBytes !== input.sizeBytes || digest.digest("hex") !== input.sha256) {
+        throw new Error("Object content does not match its declaration.");
+      }
+      await link(temporaryPath, targetPath);
+      return { objectKey: input.objectKey, created: true };
+    } catch (error) {
+      if (await this.pathExists(targetPath)) {
+        await this.verifyStoredArtifact(targetPath, input.sizeBytes, input.sha256);
+        return { objectKey: input.objectKey, created: false };
+      }
+      throw error;
+    } finally {
+      await rm(temporaryPath, { force: true });
+    }
+  }
+
   async putArtifact(input: {
+    projectId: string;
     attemptId: string;
     artifactId: string;
     sha256: string;
@@ -108,6 +159,7 @@ export class LocalObjectStore implements JarObjectStorePort {
 
   async prepareArtifactUpload(input: ArtifactObjectIdentity): Promise<ArtifactUploadTarget> {
     validateArtifactIdentity(input.attemptId, input.artifactId, input.sha256, input.sizeBytes);
+    validateScopeId(input.projectId);
     return { kind: "control-plane" };
   }
 
@@ -226,9 +278,10 @@ export class LocalObjectStore implements JarObjectStorePort {
 }
 
 function artifactObjectKey(
-  input: Pick<ArtifactObjectIdentity, "attemptId" | "artifactId" | "sha256">,
+  input: Pick<ArtifactObjectIdentity, "projectId" | "attemptId" | "artifactId" | "sha256">,
 ) {
-  return `artifacts/${input.attemptId}/${input.artifactId}/${input.sha256}`;
+  validateScopeId(input.projectId);
+  return `projects/${input.projectId}/artifacts/${input.attemptId}/${input.artifactId}/${input.sha256}`;
 }
 
 function validateArtifactIdentity(
@@ -243,5 +296,25 @@ function validateArtifactIdentity(
   }
   if (!/^[a-f0-9]{64}$/.test(sha256) || !Number.isSafeInteger(sizeBytes) || sizeBytes < 0) {
     throw new Error("Artifact metadata is invalid.");
+  }
+}
+
+function validateObjectMetadata(objectKey: string, sha256: string, sizeBytes: number): void {
+  if (
+    !objectKey ||
+    objectKey.startsWith("/") ||
+    objectKey.includes("..") ||
+    objectKey.includes("\\")
+  ) {
+    throw new Error("Object key is invalid.");
+  }
+  if (!/^[a-f0-9]{64}$/.test(sha256) || !Number.isSafeInteger(sizeBytes) || sizeBytes < 0) {
+    throw new Error("Object metadata is invalid.");
+  }
+}
+
+function validateScopeId(value: string): void {
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(value)) {
+    throw new Error("Object project scope is invalid.");
   }
 }

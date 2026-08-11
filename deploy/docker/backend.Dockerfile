@@ -45,12 +45,8 @@ LABEL org.opencontainers.image.title="AutoForge Backend" \
       org.opencontainers.image.created="${CREATED}" \
       org.opencontainers.image.source="https://github.com/iskycc/auto-forge"
 
-ENV AUTOFORGE_MODE=lite \
-    AUTOFORGE_DATA_DIR=/var/lib/autoforge \
-    HOSTNAME=0.0.0.0 \
-    NEXT_TELEMETRY_DISABLED=1 \
-    NODE_ENV=production \
-    PORT=3000
+ENV NEXT_TELEMETRY_DISABLED=1 \
+    NODE_ENV=production
 
 WORKDIR /app
 
@@ -59,6 +55,7 @@ COPY --from=builder --chown=node:node /workspace/apps/web/.next/static ./apps/we
 COPY --from=builder --chown=node:node /workspace/apps/web/dist-server ./apps/web/dist-server
 COPY --from=builder --chown=node:node /workspace/apps/worker/dist ./apps/worker/dist
 COPY --from=builder --chown=node:node /workspace/packages/db/drizzle ./packages/db/drizzle
+COPY --from=builder --chown=node:node /workspace/resources/agents ./resources/agents
 COPY --from=builder --chown=node:node /workspace/node_modules/.pnpm/ws@8.21.3/node_modules/ws ./apps/web/node_modules/ws
 COPY --from=builder --chown=node:node /workspace/pnpm-workspace.yaml ./pnpm-workspace.yaml
 COPY --from=builder --chown=node:node /workspace/LICENSE /workspace/NOTICE /workspace/THIRD_PARTY_LICENSES.json ./
@@ -75,4 +72,4 @@ VOLUME ["/var/lib/autoforge"]
 HEALTHCHECK --interval=10s --timeout=3s --start-period=10s --retries=6 \
   CMD ["node", "-e", "fetch('http://127.0.0.1:3000/api/v1/health/ready').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
 
-CMD ["node", "apps/web/dist-server/server/index.js"]
+CMD ["node", "apps/web/dist-server/server/index.js", "--data-dir=/var/lib/autoforge"]

@@ -89,9 +89,28 @@ func Run(ctx context.Context, spec Spec, options RunOptions) (result Result, ret
 			returnErr = errors.Join(returnErr, cleanupErr)
 		}
 	}()
+	effectiveCommand := spec.Command
+	effectiveEnvironment := commandEnvironment(spec.Environment)
+	containerCleanup := func() error { return nil }
+	if spec.Isolation == "container" {
+		effectiveCommand, effectiveEnvironment, containerCleanup, err = containerCommand(
+			spec,
+			workspace,
+			options.Policy.Container,
+		)
+		if err != nil {
+			return Result{}, err
+		}
+		workingDirectory = workspace
+	}
+	defer func() {
+		if cleanupErr := containerCleanup(); cleanupErr != nil {
+			returnErr = errors.Join(returnErr, cleanupErr)
+		}
+	}()
 	command, handshake, err := resourceCommand(
-		spec.Command,
-		commandEnvironment(spec.Environment),
+		effectiveCommand,
+		effectiveEnvironment,
 		resourceScope,
 		spec.Limits,
 	)
@@ -110,7 +129,7 @@ func Run(ctx context.Context, spec Spec, options RunOptions) (result Result, ret
 
 	startedAt := time.Now().UTC()
 	if err := command.Start(); err != nil {
-		return Result{}, fmt.Errorf("start executable %q: %w", spec.Command.Executable, err)
+		return Result{}, fmt.Errorf("start executable %q: %w", effectiveCommand.Executable, err)
 	}
 	if err := handshake.afterStart(); err != nil {
 		killProcessGroup(command.Process.Pid)

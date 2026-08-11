@@ -13,6 +13,7 @@ type LdapView = {
   operationTimeoutMs: number;
   pageSize: number;
   maximumUsers: number;
+  synchronizationIntervalMinutes: number;
   bindDn: string;
   bindPasswordConfigured: boolean;
   userBaseDn: string;
@@ -104,12 +105,39 @@ export function AccessSettings({
         name: form.get("name"),
         description: form.get("description"),
         scope: form.get("scope"),
-        permissions: String(form.get("permissions") ?? "")
-          .split(",")
-          .map((value) => value.trim())
-          .filter(Boolean),
+        permissions: parseCommaSeparatedValues(form.get("permissions")),
       }),
       "自定义角色已创建。",
+    );
+  }
+
+  function submitRoleUpdate(event: FormEvent<HTMLFormElement>, roleId: string) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    void request(
+      `/api/v1/roles/${roleId}`,
+      jsonRequest("PATCH", {
+        name: form.get("name"),
+        description: form.get("description"),
+        permissions: parseCommaSeparatedValues(form.get("permissions")),
+      }),
+      "角色定义已更新，受影响用户的旧会话已撤销。",
+    );
+  }
+
+  function submitRoleCopy(event: FormEvent<HTMLFormElement>, role: Role) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    void request(
+      "/api/v1/roles",
+      jsonRequest("POST", {
+        key: form.get("key"),
+        name: form.get("name"),
+        description: role.description,
+        scope: role.scope,
+        permissions: role.permissions,
+      }),
+      "角色副本已创建，可继续编辑后再分配。",
     );
   }
 
@@ -342,7 +370,7 @@ export function AccessSettings({
             <label>
               系统角色
               <select name="roleId">
-                {roles.filter((role) => role.scope === "system").map(roleOption)}
+                {roles.filter((role) => role.scope === "system" && role.active).map(roleOption)}
               </select>
             </label>
             <button className="secondary-button" disabled={pending} type="submit">
@@ -362,7 +390,7 @@ export function AccessSettings({
             <label>
               项目角色
               <select name="roleId">
-                {roles.filter((role) => role.scope === "project").map(roleOption)}
+                {roles.filter((role) => role.scope === "project" && role.active).map(roleOption)}
               </select>
             </label>
             <button className="secondary-button" disabled={pending} type="submit">
@@ -405,6 +433,7 @@ export function AccessSettings({
                 <strong>{role.name}</strong>
                 <small>
                   {role.key} · {role.scope === "system" ? "系统" : "项目"}
+                  {role.builtIn ? " · 内置" : role.active ? "" : " · 已停用"}
                 </small>
               </div>
               <p>{role.description || "无描述"}</p>
@@ -413,22 +442,88 @@ export function AccessSettings({
                   <code key={permission}>{permission}</code>
                 ))}
               </div>
-              {!role.builtIn ? (
-                <button
-                  className="danger-text-button"
-                  disabled={pending}
-                  onClick={() =>
-                    void request(
-                      `/api/v1/roles/${role.id}`,
-                      { method: "DELETE" },
-                      "自定义角色已删除。",
-                    )
-                  }
-                  type="button"
-                >
-                  删除角色
-                </button>
-              ) : null}
+              <div className="role-actions">
+                <details>
+                  <summary className="role-action-summary">复制角色</summary>
+                  <form
+                    className="settings-grid-form settings-subform"
+                    onSubmit={(event) => submitRoleCopy(event, role)}
+                  >
+                    <label>
+                      新角色标识
+                      <input defaultValue={`${role.key}-copy`} name="key" required />
+                    </label>
+                    <label>
+                      新角色名称
+                      <input defaultValue={`${role.name} 副本`} name="name" required />
+                    </label>
+                    <button className="secondary-button" disabled={pending} type="submit">
+                      创建副本
+                    </button>
+                  </form>
+                </details>
+                {!role.builtIn ? (
+                  <>
+                    <details>
+                      <summary className="role-action-summary">编辑角色</summary>
+                      <form
+                        className="settings-grid-form settings-subform"
+                        onSubmit={(event) => submitRoleUpdate(event, role.id)}
+                      >
+                        <label>
+                          角色名称
+                          <input defaultValue={role.name} name="name" required />
+                        </label>
+                        <label className="settings-wide-field">
+                          权限（英文逗号分隔）
+                          <input
+                            defaultValue={role.permissions.join(",")}
+                            name="permissions"
+                            required
+                          />
+                        </label>
+                        <label className="settings-wide-field">
+                          描述
+                          <input defaultValue={role.description} name="description" />
+                        </label>
+                        <button className="secondary-button" disabled={pending} type="submit">
+                          保存角色
+                        </button>
+                      </form>
+                    </details>
+                    <button
+                      className="table-action"
+                      disabled={pending}
+                      onClick={() =>
+                        void request(
+                          `/api/v1/roles/${role.id}`,
+                          jsonRequest("PATCH", { active: !role.active }),
+                          role.active
+                            ? "角色已停用，相关用户会话已撤销，停用角色不再授予权限。"
+                            : "角色已重新启用。",
+                        )
+                      }
+                      type="button"
+                    >
+                      {role.active ? "停用角色" : "启用角色"}
+                    </button>
+                    <button
+                      className="danger-text-button"
+                      disabled={pending}
+                      onClick={() =>
+                        void request(
+                          `/api/v1/roles/${role.id}`,
+                          { method: "DELETE" },
+                          "自定义角色已删除。",
+                        )
+                      }
+                      type="button"
+                    >
+                      删除角色
+                    </button>
+                  </>
+                ) : null}
+              </div>
             </article>
           ))}
         </div>
@@ -462,6 +557,37 @@ export function AccessSettings({
                 {project.isDefault ? " · 默认" : ""}
                 {project.archived ? " · 已归档" : ""}
               </code>
+              <small>
+                负责人：
+                {project.ownerUserId
+                  ? (users.find((user) => user.id === project.ownerUserId)?.displayName ??
+                    project.ownerUserId)
+                  : "未设置"}
+              </small>
+              {!project.archived ? (
+                <form
+                  className="settings-inline-form"
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    const form = new FormData(event.currentTarget);
+                    void request(
+                      `/api/v1/projects/${project.id}/owner`,
+                      jsonRequest("POST", { ownerUserId: form.get("ownerUserId") }),
+                      "项目负责人已转移。",
+                    );
+                  }}
+                >
+                  <select defaultValue={project.ownerUserId ?? ""} name="ownerUserId" required>
+                    <option disabled value="">
+                      选择新负责人
+                    </option>
+                    {users.filter((user) => user.status === "active").map(userOption)}
+                  </select>
+                  <button className="secondary-button" disabled={pending} type="submit">
+                    转移负责人
+                  </button>
+                </form>
+              ) : null}
               {!project.isDefault && !project.archived ? (
                 <button
                   className="danger-text-button"
@@ -548,6 +674,16 @@ export function AccessSettings({
               max={50000}
               min={1}
               name="maximumUsers"
+              type="number"
+            />
+          </label>
+          <label>
+            计划同步间隔（分钟，0 为关闭）
+            <input
+              defaultValue={ldap?.synchronizationIntervalMinutes ?? 0}
+              max={10080}
+              min={0}
+              name="synchronizationIntervalMinutes"
               type="number"
             />
           </label>
@@ -769,6 +905,13 @@ function roleOption(role: Role) {
   );
 }
 
+function parseCommaSeparatedValues(value: FormDataEntryValue | null): string[] {
+  return String(value ?? "")
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+}
+
 function projectOption(project: Project) {
   return (
     <option key={project.id} value={project.id}>
@@ -791,6 +934,7 @@ function ldapPayload(form: FormData) {
     operationTimeoutMs: 10_000,
     pageSize: Number(form.get("pageSize") ?? 500),
     maximumUsers: Number(form.get("maximumUsers") ?? 5_000),
+    synchronizationIntervalMinutes: Number(form.get("synchronizationIntervalMinutes") ?? 0),
     bindDn: form.get("bindDn"),
     bindPassword: optional("bindPassword"),
     userBaseDn: form.get("userBaseDn"),

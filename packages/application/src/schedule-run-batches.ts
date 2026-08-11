@@ -1,12 +1,15 @@
 import {
   createRunBatchInputSchema,
+  createSingleCaseRunInputSchema,
   type CreateRunBatchInput,
+  type CreateSingleCaseRunInput,
   type RunBatchPreflightBlocker,
   type RunBatchPreflightResult,
 } from "@autoforge/contracts";
 import {
   assessRunnerCompatibility,
   DEFAULT_EXECUTION_RESOURCE_LIMITS,
+  defaultCaseSuiteExecutionPolicy,
   DEFAULT_PROJECT_ID,
   DomainError,
   ON_DEMAND_SECRET_CAPABILITY,
@@ -44,6 +47,8 @@ export class RunBatchSchedulingService {
       catalog: CaseCatalogRepository;
       objectStore: JarObjectStorePort;
     },
+    private readonly projectMaximumConcurrency = 128,
+    private readonly priorityAgingIntervalMinutes = 5,
   ) {}
 
   async create(input: CreateRunBatchInput): Promise<RunBatchDetails> {
@@ -56,20 +61,32 @@ export class RunBatchSchedulingService {
     }
     const suite = await this.suites.get(validated.suiteId);
     if (!suite) throw new DomainError("CASE_SUITE_NOT_FOUND", "指定的用例任务不存在。");
+    if (suite.status === "archived") {
+      throw new DomainError("CASE_SUITE_ARCHIVED", "已归档的用例任务不能创建新批次。");
+    }
+    if (!suite.enabled) {
+      throw new DomainError("CASE_SUITE_DISABLED", "已停用的用例任务不能创建新批次。");
+    }
     const enabledCases = suite.items.filter((item) => item.caseDefinition.enabled);
     if (enabledCases.length === 0) {
       throw new DomainError("RUN_BATCH_EMPTY", "用例任务中没有可执行的启用用例。");
     }
+    // 执行配置按“输入 ?? 任务策略（已含系统默认）”合并，随后固化到批次。
+    const suitePolicy = suite.policy;
+    const retryLimit = validated.retryLimit ?? suitePolicy.retryLimit;
+    const priority = validated.priority ?? suitePolicy.priority;
+    const queueTimeoutMs = validated.queueTimeoutMs ?? suitePolicy.queueTimeoutMs;
+    const executionTimeoutMs = validated.executionTimeoutMs ?? suitePolicy.executionTimeoutMs;
     const projectId = validated.projectId ?? DEFAULT_PROJECT_ID;
     const environment = await this.resolveEnvironmentSnapshot(
       projectId,
       validated.environmentVersionId,
       validated.environmentVariables,
     );
-    await this.ensureRunnersExist(
-      validated.runnerIds,
-      environment.secretBindings.length > 0 ? [ON_DEMAND_SECRET_CAPABILITY] : [],
-    );
+    await this.ensureRunnersExist(validated.runnerIds, [
+      ...(environment.secretBindings.length > 0 ? [ON_DEMAND_SECRET_CAPABILITY] : []),
+      ...(suitePolicy.executor === "testng-container" ? ["executor:testng-container-v1"] : []),
+    ]);
     const createdAt = this.clock.now().toISOString();
     const batchId = this.ids.next();
     const dispatchJob = {
@@ -78,7 +95,7 @@ export class RunBatchSchedulingService {
       runId: batchId,
       attempt: 1,
       createdAt,
-      priority: 0,
+      priority,
       deduplicationKey: `dispatch-batch:${batchId}:1`,
       kind: "dispatch-run" as const,
       payload: { batchId },
@@ -94,21 +111,130 @@ export class RunBatchSchedulingService {
       suiteId: suite.id,
       suiteName: suite.name,
       suiteVersion: suite.version,
-      retryLimit: validated.retryLimit,
-      queueTimeoutMs: validated.queueTimeoutMs,
+      retryLimit,
+      priority,
+      queueTimeoutMs,
       claimTimeoutMs: validated.claimTimeoutMs,
-      executionTimeoutMs: validated.executionTimeoutMs,
+      executionTimeoutMs,
       uploadTimeoutMs: validated.uploadTimeoutMs,
       environmentVariables: environment.variables,
       secretBindings: environment.secretBindings,
       runnerIds: [...validated.runnerIds].sort(),
+      policy: {
+        executor: suitePolicy.executor,
+        concurrency: suitePolicy.concurrency,
+        runnerLabels: [...suitePolicy.runnerLabels],
+        artifactPatterns: [...suitePolicy.artifactPatterns],
+      },
       runs: enabledCases.map((item) => ({
         id: this.ids.next(),
         caseDefinitionId: item.caseDefinition.id,
         caseVersion: item.caseDefinition.currentVersion,
         displayName: item.caseDefinition.displayName,
         className: item.caseDefinition.className,
+        parameters: { ...suitePolicy.parameters, ...item.caseDefinition.parameters },
       })),
+      dispatchJob,
+      createdAt,
+    });
+    return this.schedule(batchId);
+  }
+
+  async createSingleCase(
+    caseDefinitionId: string,
+    input: CreateSingleCaseRunInput,
+  ): Promise<RunBatchDetails> {
+    if (!this.executionInputs) {
+      throw new DomainError("SINGLE_CASE_EXECUTION_UNAVAILABLE", "当前运行时未配置用例输入仓储。");
+    }
+    const validated = createSingleCaseRunInputSchema.parse(input);
+    const projectId = validated.projectId ?? DEFAULT_PROJECT_ID;
+    const definition = await this.executionInputs.catalog.getCaseDefinition(caseDefinitionId, [
+      projectId,
+    ]);
+    if (!definition || definition.archived) {
+      throw new DomainError(
+        "CASE_DEFINITION_NOT_FOUND",
+        "指定用例不存在、已归档或不属于当前项目。",
+      );
+    }
+    if (!definition.enabled || !definition.methods.some((method) => method.enabled)) {
+      throw new DomainError("CASE_DEFINITION_DISABLED", "已停用或没有启用方法的用例不能执行。");
+    }
+    const sourceRecord = await this.executionInputs.catalog.getSource(definition.sourceId);
+    const source = sourceRecord?.source;
+    if (
+      !source ||
+      source.projectId !== projectId ||
+      source.status !== "ready" ||
+      source.lifecycleStatus !== "active" ||
+      !(await this.executionInputs.objectStore.exists(source.objectKey))
+    ) {
+      throw new DomainError("EXECUTION_INPUT_UNAVAILABLE", "用例的权威 JAR 输入不可用。");
+    }
+    const environment = await this.resolveEnvironmentSnapshot(
+      projectId,
+      validated.environmentVersionId,
+      validated.environmentVariables,
+    );
+    await this.ensureRunnersExist(
+      validated.runnerIds,
+      environment.secretBindings.length > 0 ? [ON_DEMAND_SECRET_CAPABILITY] : [],
+    );
+    const createdAt = this.clock.now().toISOString();
+    const batchId = this.ids.next();
+    const priority = validated.priority ?? defaultCaseSuiteExecutionPolicy.priority;
+    const dispatchJob = {
+      schemaVersion: 1 as const,
+      messageId: this.ids.next(),
+      runId: batchId,
+      attempt: 1,
+      createdAt,
+      priority,
+      deduplicationKey: `dispatch-batch:${batchId}:1`,
+      kind: "dispatch-run" as const,
+      payload: { batchId },
+    };
+    await this.batches.create({
+      id: batchId,
+      projectId,
+      ...(environment.environmentId ? { environmentId: environment.environmentId } : {}),
+      ...(environment.environmentVersionId
+        ? { environmentVersionId: environment.environmentVersionId }
+        : {}),
+      eventId: this.ids.next(),
+      suiteId: `single:${definition.id}`,
+      suiteName: `单用例 · ${definition.displayName}`,
+      suiteVersion: definition.currentVersion,
+      retryLimit: validated.retryLimit ?? defaultCaseSuiteExecutionPolicy.retryLimit,
+      priority,
+      queueTimeoutMs: validated.queueTimeoutMs ?? defaultCaseSuiteExecutionPolicy.queueTimeoutMs,
+      claimTimeoutMs: validated.claimTimeoutMs,
+      executionTimeoutMs:
+        validated.executionTimeoutMs ?? defaultCaseSuiteExecutionPolicy.executionTimeoutMs,
+      uploadTimeoutMs: validated.uploadTimeoutMs,
+      environmentVariables: environment.variables,
+      secretBindings: environment.secretBindings,
+      runnerIds: [...validated.runnerIds].sort(),
+      policy: {
+        executor: "testng",
+        concurrency: 1,
+        runnerLabels: [],
+        artifactPatterns:
+          validated.artifactPatterns.length > 0
+            ? [...validated.artifactPatterns]
+            : [...defaultCaseSuiteExecutionPolicy.artifactPatterns],
+      },
+      runs: [
+        {
+          id: this.ids.next(),
+          caseDefinitionId: definition.id,
+          caseVersion: definition.currentVersion,
+          displayName: definition.displayName,
+          className: definition.className,
+          parameters: { ...definition.parameters, ...validated.parameters },
+        },
+      ],
       dispatchJob,
       createdAt,
     });
@@ -135,6 +261,10 @@ export class RunBatchSchedulingService {
     return this.batches.list(limit, projectIds);
   }
 
+  async listPage(input: import("./ports").RunBatchListQuery) {
+    return this.batches.listPage(input);
+  }
+
   async get(batchId: string, projectIds?: readonly string[]): Promise<RunBatchDetails> {
     const batch = await this.batches.get(batchId, projectIds);
     if (!batch) throw new DomainError("RUN_BATCH_NOT_FOUND", "指定的执行批次不存在。");
@@ -146,20 +276,36 @@ export class RunBatchSchedulingService {
     const snapshot = await this.batches.getSchedulingSnapshot(batchId, offlineBefore(now));
     if (!snapshot) throw new DomainError("RUN_BATCH_NOT_FOUND", "指定的执行批次不存在。");
     if (snapshot.queuedRuns.length > 0) {
+      // 批次策略的并发上限按在途（assigned+running）run 数扣减；assignedRuns 已包含 running。
+      const suiteMaximumAssignments = snapshot.batch.policy
+        ? Math.max(0, snapshot.batch.policy.concurrency - snapshot.batch.assignedRuns)
+        : undefined;
+      const projectMaximumAssignments = Math.max(
+        0,
+        this.projectMaximumConcurrency - snapshot.projectActiveRuns,
+      );
+      const maxAssignments =
+        suiteMaximumAssignments === undefined
+          ? projectMaximumAssignments
+          : Math.min(suiteMaximumAssignments, projectMaximumAssignments);
       const plan = scheduleExecutionRuns({
         runs: snapshot.queuedRuns,
         candidates: snapshot.candidates.filter(
           ({ runner }) =>
-            snapshot.batch.secretBindings.length === 0 ||
-            runner.capabilities.includes(ON_DEMAND_SECRET_CAPABILITY),
+            (snapshot.batch.secretBindings.length === 0 ||
+              runner.capabilities.includes(ON_DEMAND_SECRET_CAPABILITY)) &&
+            (snapshot.batch.policy?.executor !== "testng-container" ||
+              runner.capabilities.includes("executor:testng-container-v1")),
         ),
         thresholds: this.thresholds,
         metricsFreshAfter: metricsFreshAfter(now, this.metricsMaximumAgeSeconds),
+        maxAssignments,
       });
       if (plan.decisions.length > 0) {
         await this.batches.reserveAssignments({
           batchId,
           eventId: this.ids.next(),
+          projectMaximumConcurrency: this.projectMaximumConcurrency,
           decisions: plan.decisions.map((decision) => ({
             ...decision,
             attemptId: this.ids.next(),
@@ -176,12 +322,21 @@ export class RunBatchSchedulingService {
   }
 
   async scheduleQueuedBatches(limit = 50): Promise<number> {
-    const batchIds = await this.batches.listSchedulableBatchIds(limit);
+    const batchIds = await this.batches.listSchedulableBatchIds(
+      limit,
+      this.clock.now().toISOString(),
+      this.priorityAgingIntervalMinutes,
+    );
     return this.scheduleBatchIds(batchIds);
   }
 
   async scheduleForRunner(runnerId: string, limit = 50): Promise<number> {
-    const batchIds = await this.batches.listSchedulableBatchIdsForRunner(runnerId, limit);
+    const batchIds = await this.batches.listSchedulableBatchIdsForRunner(
+      runnerId,
+      limit,
+      this.clock.now().toISOString(),
+      this.priorityAgingIntervalMinutes,
+    );
     return this.scheduleBatchIds(batchIds);
   }
 
@@ -207,6 +362,18 @@ export class RunBatchSchedulingService {
           path: ["suiteId"],
         }),
       );
+    } else if (suite.status === "archived") {
+      blockers.push(
+        blocker("CASE_SUITE_ARCHIVED", "parameter", "已归档的用例任务不能创建新批次。", {
+          path: ["suiteId"],
+        }),
+      );
+    } else if (!suite.enabled) {
+      blockers.push(
+        blocker("CASE_SUITE_DISABLED", "parameter", "已停用的用例任务不能创建新批次。", {
+          path: ["suiteId"],
+        }),
+      );
     } else {
       const enabledCases = suite.items.filter((item) => item.caseDefinition.enabled);
       if (enabledCases.length === 0) {
@@ -220,7 +387,13 @@ export class RunBatchSchedulingService {
       }
     }
     const secretBindings = await this.inspectEnvironment(projectId, input, blockers);
-    await this.inspectRunners(input.runnerIds, secretBindings.length > 0, blockers);
+    await this.inspectRunners(
+      input.runnerIds,
+      secretBindings.length > 0,
+      blockers,
+      suite?.policy.runnerLabels ?? [],
+      suite?.policy.executor ?? "testng",
+    );
     return { ready: blockers.length === 0, blockers };
   }
 
@@ -284,6 +457,8 @@ export class RunBatchSchedulingService {
     runnerIds: readonly string[],
     requiresSecrets: boolean,
     blockers: RunBatchPreflightBlocker[],
+    policyLabels: readonly string[] = [],
+    executor: "testng" | "testng-container" = "testng",
   ): Promise<void> {
     const offlineCutoff = offlineBefore(this.clock.now());
     for (const runnerId of runnerIds) {
@@ -304,7 +479,7 @@ export class RunBatchSchedulingService {
         const mapped = compatibilityBlocker(issue, runnerId);
         if (mapped) blockers.push(mapped);
       }
-      for (const label of REQUIRED_EXECUTION_LABELS) {
+      for (const label of [...REQUIRED_EXECUTION_LABELS, ...policyLabels]) {
         if (!runner.labels.includes(label)) {
           blockers.push(
             blocker("RUNNER_REQUIRED_LABEL_MISSING", "runner", `执行机缺少必需标签 ${label}。`, {
@@ -319,6 +494,19 @@ export class RunBatchSchedulingService {
             "RUNNER_SECRET_CAPABILITY_MISSING",
             "runner",
             "执行机不支持按有效 lease 领取执行密文。",
+            { runnerId },
+          ),
+        );
+      }
+      if (
+        executor === "testng-container" &&
+        !runner.capabilities.includes("executor:testng-container-v1")
+      ) {
+        blockers.push(
+          blocker(
+            "RUNNER_CONTAINER_CAPABILITY_MISSING",
+            "runner",
+            "执行机未配置离线 container 执行器。",
             { runnerId },
           ),
         );

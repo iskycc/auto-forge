@@ -2,13 +2,11 @@
 
 import {
   BarChart3,
-  Bell,
   BookOpenText,
   Bot,
   CircleHelp,
   Home,
   PlayCircle,
-  Search,
   Server,
   FolderOpen,
   Layers3,
@@ -20,10 +18,11 @@ import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
 
 import { LogoutButton } from "./logout-button";
+import { TopbarTools } from "./topbar-tools";
 
 type NavigationItem = {
   label: string;
-  href?: string;
+  href: string;
   icon: typeof Home;
 };
 
@@ -34,7 +33,7 @@ const navigation: NavigationItem[] = [
   { label: "文件来源", href: "/objects", icon: FolderOpen },
   { label: "用例批跑", href: "/run-batches", icon: PlayCircle },
   { label: "执行机", href: "/runners", icon: Server },
-  { label: "洞察", icon: BarChart3 },
+  { label: "洞察", href: "/insights", icon: BarChart3 },
 ];
 
 function isActive(pathname: string, href: string): boolean {
@@ -52,7 +51,9 @@ export function AppShell({
   userName?: string;
 }) {
   const pathname = usePathname();
-  if (pathname === "/login" || pathname === "/setup") return children;
+  if (pathname === "/login" || pathname === "/setup" || (pathname === "/" && !userName)) {
+    return children;
+  }
 
   return (
     <div className="app-shell">
@@ -67,15 +68,6 @@ export function AppShell({
         <nav className="primary-nav" aria-label="主导航">
           {navigation.map((item) => {
             const Icon = item.icon;
-            if (!item.href) {
-              return (
-                <span className="nav-item nav-item-disabled" aria-disabled="true" key={item.label}>
-                  <Icon size={19} aria-hidden="true" />
-                  <span>{item.label}</span>
-                  <span className="nav-soon">规划中</span>
-                </span>
-              );
-            }
             return (
               <Link
                 className={`nav-item ${isActive(pathname, item.href) ? "nav-item-active" : ""}`}
@@ -99,7 +91,7 @@ export function AppShell({
           </div>
           <Link
             className={`nav-item ${isActive(pathname, "/settings") ? "nav-item-active" : ""}`}
-            href="/settings/access"
+            href="/settings/platform"
           >
             <Settings size={19} aria-hidden="true" />
             <span>系统设置</span>
@@ -109,15 +101,8 @@ export function AppShell({
 
       <div className="app-frame">
         <header className="topbar">
-          <form className="global-search" action="/cases" role="search">
-            <Search size={17} aria-hidden="true" />
-            <input name="query" type="search" placeholder="搜索测试类…" aria-label="搜索测试类" />
-            <kbd>⌘ K</kbd>
-          </form>
+          <TopbarTools />
           <div className="topbar-actions">
-            <button className="icon-button" type="button" aria-label="通知（尚未启用）" disabled>
-              <Bell size={19} />
-            </button>
             <Link className="icon-button" href="/cases/import" aria-label="JAR 导入帮助">
               <CircleHelp size={19} />
             </Link>

@@ -20,7 +20,8 @@ const testNGLauncherRelativePath = "support/AutoforgeTestNgLauncher.java"
 var testNGLauncherSource []byte
 
 func testNGExecutorSpec(specification ExecutionSpec, toolchain config.ToolchainConfig) (executor.Spec, []ExecutionInput, error) {
-	if specification.SchemaVersion != protocolVersion || specification.Executor != "testng" {
+	if specification.SchemaVersion != protocolVersion ||
+		(specification.Executor != "testng" && specification.Executor != "testng-container") {
 		return executor.Spec{}, nil, errors.New("unsupported execution specification")
 	}
 	if !toolchain.Enabled() {

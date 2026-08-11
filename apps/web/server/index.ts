@@ -1,14 +1,18 @@
 import { createServer } from "node:http";
+import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 import next from "next";
 
+import { loadAppConfig } from "../src/lib/config.ts";
+import { recordHttpRequest } from "../src/lib/runtime-metrics.ts";
 import { TerminalGateway, type TerminalAuditEvent } from "./terminal-gateway.ts";
 
 const development = process.env.NODE_ENV !== "production";
-const hostname = process.env.HOSTNAME || "0.0.0.0";
-const port = parsePort(process.env.PORT);
+const platformConfiguration = loadAppConfig();
+const hostname = platformConfiguration.web.hostname;
+const port = platformConfiguration.web.port;
 const webDirectory = findWebDirectory(process.cwd());
 
 if (!development) configureStandaloneRuntime(webDirectory);
@@ -20,13 +24,30 @@ await app.prepare();
 const requestHandler = app.getRequestHandler();
 const nextUpgradeHandler = app.getUpgradeHandler();
 const terminalGateway = new TerminalGateway(
-  terminalAccessToken(process.env),
+  platformConfiguration.terminalAccessToken,
   log,
   recordTerminalAudit,
 );
 const server = createServer((request, response) => {
+  const startedAt = performance.now();
+  const currentRequestId = requestId(request.headers["x-request-id"]);
+  request.headers["x-request-id"] = currentRequestId;
+  response.setHeader("X-Request-Id", currentRequestId);
+  response.once("finish", () => {
+    const path = request.url ? new URL(request.url, "http://localhost").pathname : "/";
+    const durationMs = Math.round(performance.now() - startedAt);
+    recordHttpRequest(request.method ?? "OTHER", path, response.statusCode, durationMs);
+    log("info", "HTTP request completed", {
+      requestId: currentRequestId,
+      method: request.method ?? "OTHER",
+      path,
+      statusCode: response.statusCode,
+      durationMs,
+    });
+  });
   requestHandler(request, response).catch((error: unknown) => {
     log("error", "HTTP request failed", {
+      requestId: currentRequestId,
       path: request.url,
       error: error instanceof Error ? error.message : "Unknown error",
     });
@@ -91,14 +112,6 @@ async function shutdown(signal: "SIGINT" | "SIGTERM"): Promise<void> {
   process.exit(failures.length === 0 ? 0 : 1);
 }
 
-function parsePort(raw: string | undefined): number {
-  const parsed = Number(raw ?? 3000);
-  if (!Number.isInteger(parsed) || parsed < 1 || parsed > 65_535) {
-    throw new Error("PORT must be an integer from 1 to 65535.");
-  }
-  return parsed;
-}
-
 function findWebDirectory(startDirectory: string): string {
   for (const candidate of [resolve(startDirectory), resolve(startDirectory, "apps", "web")]) {
     if (existsSync(join(candidate, "next.config.ts")) || existsSync(join(candidate, ".next"))) {
@@ -117,15 +130,6 @@ function configureStandaloneRuntime(directory: string): void {
   process.env.__NEXT_PRIVATE_STANDALONE_CONFIG = JSON.stringify(requiredFiles.config);
 }
 
-function terminalAccessToken(environment: NodeJS.ProcessEnv): string | undefined {
-  const token = environment.AUTOFORGE_TERMINAL_ACCESS_TOKEN;
-  if (!token) return undefined;
-  if (Buffer.byteLength(token) < 32) {
-    throw new Error("AUTOFORGE_TERMINAL_ACCESS_TOKEN must contain at least 32 bytes.");
-  }
-  return token;
-}
-
 function log(level: "info" | "warn" | "error", message: string, fields: object = {}): void {
   const entry = JSON.stringify({ timestamp: new Date().toISOString(), level, message, ...fields });
   if (level === "error") process.stderr.write(`${entry}\n`);
@@ -134,6 +138,11 @@ function log(level: "info" | "warn" | "error", message: string, fields: object =
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Unknown error";
+}
+
+function requestId(value: string | string[] | undefined): string {
+  const candidate = Array.isArray(value) ? value[0] : value;
+  return candidate && /^[A-Za-z0-9._:-]{8,128}$/.test(candidate) ? candidate : randomUUID();
 }
 
 async function recordTerminalAudit(event: TerminalAuditEvent): Promise<void> {

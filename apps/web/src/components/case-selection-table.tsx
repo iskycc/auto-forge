@@ -138,7 +138,11 @@ export function CaseSelectionTable({
                 </td>
                 <td>
                   <span className="class-cell">
-                    <strong>{item.displayName}</strong>
+                    <strong>
+                      <Link className="table-link" href={`/cases/${encodeURIComponent(item.id)}`}>
+                        {item.displayName}
+                      </Link>
+                    </strong>
                     <code>{item.className}</code>
                   </span>
                 </td>

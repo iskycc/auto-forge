@@ -32,6 +32,9 @@ export async function POST(request: Request): Promise<NextResponse> {
       ),
     );
     const runner = await services.runnerControl.get(input.runnerId);
+    if (runner.deregisteredAt || runner.credentialRevokedAt) {
+      throw new DomainError("RUNNER_OFFLINE", "执行机已注销或凭据已撤销，无法打开终端。");
+    }
     if (runner.state !== "online") {
       throw new DomainError("RUNNER_OFFLINE", "执行机当前离线，无法打开终端。");
     }
