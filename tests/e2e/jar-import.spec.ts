@@ -419,6 +419,7 @@ test("imports TestNG methods from a JAR into the case library", async ({ page })
   await page.evaluate(() => {
     document.documentElement.style.zoom = "";
   });
+  await expectDesktopLayoutFits(page, 1920, 1080);
   await expectUiConsistency(page);
   await captureUi(page, "dashboard");
 
