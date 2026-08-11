@@ -58,7 +58,7 @@ jobs:
         working-directory: apps/runner-agent
         run: |
           mkdir -p ../../security-reports
-          go install golang.org/x/vuln/cmd/govulncheck@v1.1.2
+          go install golang.org/x/vuln/cmd/govulncheck@v1.6.0
           set +e
           govulncheck -format sarif ./... >../../security-reports/govulncheck.sarif
           vulnerability_status=$?
