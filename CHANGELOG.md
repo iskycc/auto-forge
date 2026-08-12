@@ -4,6 +4,49 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## 0.3.3 - 2026-08-12
+
+### Added
+
+- Added an offline-bundled AutoForge application icon without introducing a remote asset dependency.
+- Added automated visual consistency coverage across the public dashboard, setup, case, task, object,
+  execution, Runner and settings workflows, including desktop overflow, zoom, readable text and control
+  target checks.
+
+### Changed
+
+- Unified page surfaces, typography, spacing, controls, settings navigation, execution-environment and
+  secret-management workspaces through shared semantic visual tokens and layout styles.
+- Raised explicit interface text to a 12 px minimum, increased compact action targets to at least 32 px
+  and refined the first-start headline and desktop scaling for clearer hierarchy.
+
+### Fixed
+
+- Replaced legacy button and color-token references that could render inconsistent forbidden, import and
+  run-history controls.
+- Stabilized the browser layout audit after zoom restoration and kept the authenticated session available
+  until the secondary Full replica readiness check completes.
+
+### Database migrations and compatibility
+
+- No SQLite or PostgreSQL migration is added by this release.
+- Persisted platform configuration schema v1, Runner Protocol v1 and embedded Agent compatibility are
+  unchanged from `0.3.2`; the existing `0.3.x` compatibility matrix remains authoritative.
+
+### Offline assets
+
+- Rebuild the four immutable backend variants and their embedded amd64/arm64 Agent resources, SPDX
+  SBOMs, deployment bundle, signed checksums, release manifest and provenance for `0.3.3`.
+
+### Known limitations
+
+- The process executor remains a constrained process boundary rather than a complete sandbox; the
+  optional container executor still requires a locally installed OCI runtime and pinned policy.
+- Direct terminal sessions still require load-balancer affinity to the Web replica that issued the
+  ticket.
+- The management UI targets desktop screens; JDK/TestNG/browser toolchains must still be assembled
+  from approved offline artifacts and are never downloaded at runtime.
+
 ## 0.3.2 - 2026-08-11
 
 ### Changed
