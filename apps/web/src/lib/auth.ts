@@ -127,25 +127,25 @@ export function requireSameOrigin(request: Request): void {
   }
 }
 
-export function sessionCookie(token: string, expiresAt: string) {
+export function sessionCookie(token: string, expiresAt: string, request: Request) {
   return {
     name: SESSION_COOKIE_NAME,
     value: token,
     httpOnly: true,
     sameSite: "strict" as const,
-    secure: process.env.NODE_ENV === "production",
+    secure: requestUsesHttps(request),
     path: "/",
     expires: new Date(expiresAt),
   };
 }
 
-export function expiredSessionCookie() {
+export function expiredSessionCookie(request: Request) {
   return {
     name: SESSION_COOKIE_NAME,
     value: "",
     httpOnly: true,
     sameSite: "strict" as const,
-    secure: process.env.NODE_ENV === "production",
+    secure: requestUsesHttps(request),
     path: "/",
     maxAge: 0,
   };
@@ -177,4 +177,10 @@ function requestCookie(request: Request, name: string): string {
 
 function firstHeader(value: string | null): string | undefined {
   return value?.split(",")[0]?.trim() || undefined;
+}
+
+function requestUsesHttps(request: Request): boolean {
+  if (new URL(request.url).protocol === "https:") return true;
+  const forwardedProtocol = firstHeader(request.headers.get("x-forwarded-proto"))?.toLowerCase();
+  return forwardedProtocol === "https";
 }

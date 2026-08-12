@@ -475,6 +475,25 @@ test("imports TestNG methods from a JAR into the case library", async ({ page })
   await expect(page).toHaveURL(/\/login$/);
   await expect(page.getByRole("heading", { name: "欢迎回来" })).toBeVisible();
   await expectUiConsistency(page);
+
+  const loginUsername = page.getByLabel("用户名");
+  await loginUsername.focus();
+  const focusStyles = await loginUsername.evaluate((input) => {
+    const label = input.closest("label");
+    return {
+      inputBoxShadow: window.getComputedStyle(input).boxShadow,
+      labelOutlineStyle: label ? window.getComputedStyle(label).outlineStyle : "missing",
+    };
+  });
+  expect(focusStyles.labelOutlineStyle).toBe("none");
+  expect(focusStyles.inputBoxShadow).not.toBe("none");
+
+  await loginUsername.fill("e2e-admin");
+  await page.getByLabel("密码").fill("E2e!Administrator123");
+  await page.getByRole("button", { name: "登录" }).click();
+  await expect(page.getByRole("heading", { name: "自动化用例工作台" })).toBeVisible();
+  const authenticatedSession = await page.request.get("/api/v1/auth/session");
+  expect(authenticatedSession.status()).toBe(200);
 });
 
 function requiredTestSecret(name: string): string {

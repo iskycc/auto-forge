@@ -16,7 +16,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     const identity = await authenticateRequest(request);
     await (await getPlatformServices()).identityAccess.logout(identity, currentRequestId);
     const response = new NextResponse(null, { status: 204 });
-    response.cookies.set(expiredSessionCookie());
+    response.cookies.set(expiredSessionCookie(request));
     return response;
   } catch (error) {
     return apiErrorResponse(error, currentRequestId);

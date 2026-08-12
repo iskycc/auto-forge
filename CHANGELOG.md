@@ -4,6 +4,16 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## Unreleased
+
+### Fixed
+
+- Preserve administrator bootstrap and login sessions when the production server is accessed directly
+  over HTTP by deriving the session cookie's `Secure` attribute from the external request protocol;
+  HTTPS reverse-proxy requests remain protected with secure cookies.
+- Keep form focus indication on the active input, select or text area instead of drawing a second large
+  outline around the entire label container.
+
 ## 0.3.3 - 2026-08-12
 
 ### Added

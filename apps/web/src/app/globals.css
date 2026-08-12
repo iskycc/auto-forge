@@ -1180,11 +1180,7 @@ a {
 
 button:focus-visible,
 a:focus-visible,
-input:focus-visible,
-select:focus-visible,
-textarea:focus-visible,
-summary:focus-visible,
-label:focus-within {
+summary:focus-visible {
   outline: 3px solid rgba(6, 104, 216, 0.26);
   outline-offset: 2px;
 }

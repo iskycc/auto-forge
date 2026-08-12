@@ -25,7 +25,7 @@ export async function PUT(request: Request): Promise<NextResponse> {
       currentRequestId,
     );
     const response = new NextResponse(null, { status: 204 });
-    response.cookies.set(expiredSessionCookie());
+    response.cookies.set(expiredSessionCookie(request));
     return response;
   } catch (error) {
     return apiErrorResponse(error, currentRequestId);

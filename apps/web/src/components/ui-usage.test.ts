@@ -48,6 +48,14 @@ describe("shared UI controls", () => {
 
     expect(missingClasses).toEqual([]);
   });
+
+  it("keeps the focus indicator on the control instead of outlining its whole label", () => {
+    const stylesheet = readFileSync(GLOBAL_STYLES, "utf8");
+
+    expect(stylesheet).not.toContain("label:focus-within");
+    expect(stylesheet).not.toMatch(/(?:input|select|textarea):focus-visible/);
+    expect(stylesheet).toContain(".ui-input:focus");
+  });
 });
 
 function typescriptReactFiles(directory: string): string[] {
