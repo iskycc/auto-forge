@@ -325,12 +325,14 @@ public class MixedVisibleTest {
 
   await page.goto("/cases");
   await page.getByLabel("选择 CheckoutTest").check();
+  await page.getByLabel("目标用例任务").selectOption({ label: "每日冒烟测试" });
   await page.getByRole("button", { name: "加入任务" }).click();
   await expect(page.getByRole("status")).toContainText("已将 1 个用例加入任务");
 
   await page.goto("/case-suites");
   await page.getByRole("link", { name: /每日冒烟测试/ }).click();
   await expectUiConsistency(page);
+  await expect(page.getByRole("heading", { name: "1 个用例" })).toBeVisible();
   await page.getByRole("button", { name: "移除" }).click();
   await expect(page.getByText("任务中还没有用例")).toBeVisible({ timeout: 20_000 });
 
