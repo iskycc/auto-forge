@@ -313,7 +313,11 @@ public class MixedVisibleTest {
   await page.getByLabel("任务名称").fill("每日冒烟测试");
   await page.getByLabel("说明").fill("E2E 创建的可复用任务");
   await page.getByRole("button", { name: "创建任务" }).click();
-  await expect(page.getByRole("link", { name: /每日冒烟测试/ })).toBeVisible();
+  const dailySuiteLink = page.getByRole("link", { name: /每日冒烟测试/ });
+  await expect(dailySuiteLink).toBeVisible();
+  const dailySuiteHref = await dailySuiteLink.getAttribute("href");
+  expect(dailySuiteHref).toBeTruthy();
+  const dailySuiteId = new URL(dailySuiteHref!, page.url()).pathname.split("/").at(-1)!;
   await page.keyboard.press("Control+K");
   const globalSearch = page.getByLabel("全局搜索");
   await expect(globalSearch).toBeFocused();
@@ -325,12 +329,11 @@ public class MixedVisibleTest {
 
   await page.goto("/cases");
   await page.getByLabel("选择 CheckoutTest").check();
-  await page.getByLabel("目标用例任务").selectOption({ label: "每日冒烟测试" });
+  await page.getByLabel("目标用例任务").selectOption(dailySuiteId);
   await page.getByRole("button", { name: "加入任务" }).click();
   await expect(page.getByRole("status")).toContainText("已将 1 个用例加入任务");
 
-  await page.goto("/case-suites");
-  await page.getByRole("link", { name: /每日冒烟测试/ }).click();
+  await page.goto(`/case-suites/${encodeURIComponent(dailySuiteId)}`);
   await expectUiConsistency(page);
   await expect(page.getByRole("heading", { name: "1 个用例" })).toBeVisible();
   await page.getByRole("button", { name: "移除" }).click();
@@ -392,10 +395,12 @@ public class MixedVisibleTest {
 
   await page.goto("/cases");
   await page.getByLabel("选择 CheckoutTest").check();
+  await page.getByLabel("目标用例任务").selectOption(dailySuiteId);
   await page.getByRole("button", { name: "加入任务" }).click();
   await expect(page.getByRole("status")).toContainText("已将 1 个用例加入任务");
 
   await page.goto("/run-batches");
+  await page.getByLabel("用例任务").selectOption(dailySuiteId);
   const runnerChoice = page.locator(".runner-choice").filter({ hasText: "E2E Runner" });
   await runnerChoice.locator('input[type="checkbox"]').check();
   await page.getByLabel("失败用例重跑次数").selectOption("2");
@@ -585,6 +590,7 @@ public class MixedVisibleTest {
   await expectUiConsistency(page);
 
   await page.goto("/run-batches");
+  await page.getByLabel("用例任务").selectOption(dailySuiteId);
   const cancellationRunner = page.locator(".runner-choice").filter({ hasText: "E2E Runner" });
   await cancellationRunner.locator('input[type="checkbox"]').check();
   const cancellationBatchResponse = page.waitForResponse(
@@ -599,7 +605,8 @@ public class MixedVisibleTest {
   await page.getByRole("button", { name: "取消该用例" }).click();
   await expect(page.getByText("已取消", { exact: true }).first()).toBeVisible({ timeout: 20_000 });
 
-  await page.goto("/insights");
+  const checkoutCaseId = decodeURIComponent(new URL(checkoutCaseUrl).pathname.split("/").at(-1)!);
+  await page.goto(`/insights?caseDefinitionId=${encodeURIComponent(checkoutCaseId)}`);
   await expect(
     page.getByText("执行样本").locator("..").getByText("3", { exact: true }),
   ).toBeVisible();
