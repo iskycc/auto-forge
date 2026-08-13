@@ -67,6 +67,19 @@ export async function ensureAdministrator(page: Page): Promise<void> {
 }
 
 async function expectAdministratorShell(page: Page): Promise<void> {
+  // The authenticated shell is already mounted on /landing while its client
+  // hand-off to the final route is still pending. Returning at that point lets
+  // the delayed hand-off abort the caller's next navigation.
+  await expect
+    .poll(
+      () => {
+        const pathname = new URL(page.url()).pathname;
+        return pathname !== "/setup" && pathname !== "/login" && pathname !== "/landing";
+      },
+      { timeout: 20_000 },
+    )
+    .toBe(true);
+  await page.waitForLoadState("load");
   await expect(page.getByRole("navigation", { name: "主导航" })).toBeVisible({ timeout: 20_000 });
   await expect(page.getByRole("button", { name: "退出登录" })).toBeVisible();
 }
