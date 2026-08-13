@@ -280,7 +280,17 @@ async function exerciseRealTerminal(page: Page, agent: AgentProcess): Promise<vo
 async function sendTerminalInput(page: Page, command: string): Promise<void> {
   const input = page.locator(".terminal-window .xterm-helper-textarea");
   await expect(input).toBeFocused();
-  await page.keyboard.insertText(command);
+  await input.evaluate((textarea, text) => {
+    const clipboardData = new DataTransfer();
+    clipboardData.setData("text/plain", text);
+    textarea.dispatchEvent(
+      new ClipboardEvent("paste", {
+        bubbles: true,
+        cancelable: true,
+        clipboardData,
+      }),
+    );
+  }, command);
   await input.press("Enter");
 }
 

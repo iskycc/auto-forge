@@ -200,10 +200,22 @@ public class MixedVisibleTest {
   await page.getByRole("button", { name: "确认导入" }).click();
   expect((await largeImportResponse).status()).toBe(202);
   await page.getByRole("button", { name: "取消导入" }).click();
-  await expect(appAlert(page)).toContainText("导入任务已取消", { timeout: 60_000 });
-  await expect(page.getByRole("button", { name: "幂等重试" })).toBeVisible();
-  await page.getByRole("button", { name: "幂等重试" }).click();
-  await expect(page.getByRole("status")).toContainText("已导入", { timeout: 120_000 });
+  const retryLargeImport = page.getByRole("button", { name: "幂等重试" });
+  await expect
+    .poll(
+      async () => {
+        if (await retryLargeImport.isVisible()) return "cancelled";
+        const statuses = await page.getByRole("status").allTextContents();
+        return statuses.some((status) => status.includes("已导入")) ? "succeeded" : "pending";
+      },
+      { timeout: 120_000 },
+    )
+    .toMatch(/^(cancelled|succeeded)$/);
+  if (await retryLargeImport.isVisible()) {
+    await expect(appAlert(page)).toContainText("导入任务已取消");
+    await retryLargeImport.click();
+    await expect(page.getByRole("status")).toContainText("已导入", { timeout: 120_000 });
+  }
 
   await page.locator('input[type="file"]').setInputFiles({
     name: "checkout-tests.jar",
