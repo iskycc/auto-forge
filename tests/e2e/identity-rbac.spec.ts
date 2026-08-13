@@ -26,16 +26,12 @@ test("local user completes forced password change and self-service session lifec
   const initialPassword = "Initial!Password123";
   const replacementPassword = "Replacement!Password456";
 
-  await page.goto("/settings/access#users");
-  const createdUserResponse = page.waitForResponse(
-    (response) =>
-      response.request().method() === "POST" && response.url().endsWith("/api/v1/users"),
+  const createdUser = await createUserThroughAccessPage(
+    page,
+    username,
+    `Forced ${username}`,
+    initialPassword,
   );
-  await page.getByLabel("用户名", { exact: true }).fill(username);
-  await page.getByLabel("显示名称", { exact: true }).fill(`Forced ${username}`);
-  await page.getByLabel("初始密码").fill(initialPassword);
-  await page.getByRole("button", { name: "创建本地用户" }).click();
-  const createdUser = (await (await createdUserResponse).json()) as { id: string };
 
   const roleForm = page.locator("form", {
     has: page.getByRole("button", { name: "分配项目角色" }),
@@ -81,16 +77,12 @@ test("administrator can reset a user password and the last administrator binding
   const initialPassword = "Initial!Password123";
   const resetPassword = "AdminReset!Password789";
 
-  await page.goto("/settings/access#users");
-  const createdUserResponse = page.waitForResponse(
-    (response) =>
-      response.request().method() === "POST" && response.url().endsWith("/api/v1/users"),
+  const createdUser = await createUserThroughAccessPage(
+    page,
+    username,
+    `Reset ${username}`,
+    initialPassword,
   );
-  await page.getByLabel("用户名", { exact: true }).fill(username);
-  await page.getByLabel("显示名称", { exact: true }).fill(`Reset ${username}`);
-  await page.getByLabel("初始密码").fill(initialPassword);
-  await page.getByRole("button", { name: "创建本地用户" }).click();
-  const createdUser = (await (await createdUserResponse).json()) as { id: string };
 
   const resetForm = page.locator("form", {
     has: page.getByRole("button", { name: "重置密码并撤销会话" }),
@@ -130,7 +122,9 @@ test("administrator unlocks and disables a locked user and manages a custom role
   await userPage.getByLabel("用户名").fill(username);
   await userPage.getByLabel("密码").fill(password);
   await userPage.getByRole("button", { name: "登录" }).click();
-  await expect(appAlert(userPage)).toContainText(/锁定|稍后/);
+  // Authentication failures stay deliberately generic to avoid disclosing
+  // whether a username exists or has reached its lock threshold.
+  await expect(appAlert(userPage)).toContainText("用户名或密码无效");
 
   await page.goto(`/settings/access?query=${encodeURIComponent(username)}#users`);
   let userRow = page.getByRole("row", { name: new RegExp(username) });
@@ -349,6 +343,29 @@ async function createActiveUser(page: Page, username: string, password: string) 
   expect(response.status).toBe(201);
   expect(response.body.id).toBeTruthy();
   return { id: response.body.id! };
+}
+
+async function createUserThroughAccessPage(
+  page: Page,
+  username: string,
+  displayName: string,
+  password: string,
+): Promise<{ id: string }> {
+  await page.goto("/settings/access#users");
+  await page.getByLabel("用户名", { exact: true }).fill(username);
+  await page.getByLabel("显示名称", { exact: true }).fill(displayName);
+  await page.getByLabel("初始密码").fill(password);
+  await page.getByRole("button", { name: "创建本地用户" }).click();
+  await expect(page.getByText("本地用户已创建。")).toBeVisible();
+
+  const users = await browserJson<{ items: Array<{ id: string; username: string }> }>(
+    page,
+    `/api/v1/users?query=${encodeURIComponent(username)}&limit=20`,
+  );
+  expect(users.status).toBe(200);
+  const created = users.body.items.find((user) => user.username === username);
+  expect(created).toBeTruthy();
+  return { id: created!.id };
 }
 
 async function failedLogin(page: Page, username: string, password: string): Promise<void> {

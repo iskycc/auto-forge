@@ -15,6 +15,7 @@ test("case metadata, immutable versions and suite policy survive lifecycle chang
   const initialSourceName = `${suffix}-v1.jar`;
   const candidateSourceName = `${suffix}-v2.jar`;
   await importJar(page, project, initialSourceName, className, ["createsVersion"]);
+  await setAuthoritativeSource(page, project.id, initialSourceName);
 
   const definitions = await browserJson<{
     items: Array<{ id: string; className: string; revision: number }>;
@@ -163,6 +164,7 @@ test("source comparison, promotion, archive recovery and guarded deletion are ob
   const originalName = `${suffix}-v1.jar`;
   const candidateName = `${suffix}-v2.jar`;
   await importJar(page, project, originalName, className, ["original"]);
+  await setAuthoritativeSource(page, project.id, originalName);
   await importJar(page, project, candidateName, className, ["original", "addedByCandidate"]);
 
   const sources = await browserJson<{
@@ -248,4 +250,23 @@ async function createProject(page: Page, suffix: string): Promise<{ id: string; 
   });
   expect(response.status).toBe(201);
   return response.body;
+}
+
+async function setAuthoritativeSource(
+  page: Page,
+  projectId: string,
+  originalFileName: string,
+): Promise<void> {
+  const sources = await browserJson<{
+    items: Array<{ id: string; originalFileName: string }>;
+  }>(page, `/api/v1/case-sources?projectId=${encodeURIComponent(projectId)}&limit=200`);
+  const source = sources.body.items.find(
+    (candidate) => candidate.originalFileName === originalFileName,
+  );
+  expect(source).toBeTruthy();
+  const result = await browserJson(page, `/api/v1/case-sources/${source!.id}/authoritative`, {
+    method: "PUT",
+    body: { authoritative: true },
+  });
+  expect(result.status).toBe(200);
 }

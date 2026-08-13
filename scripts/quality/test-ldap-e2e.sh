@@ -158,6 +158,21 @@ start_isolated_services() {
     -x -H ldap://127.0.0.1:389 \
     -D cn=admin,dc=example,dc=test -w "Admin!Directory123" \
     -b dc=example,dc=test -s base dn
+  # The image answers plain LDAP once during bootstrap, then restarts slapd to
+  # install its TLS configuration. Wait for both final listeners so the Web
+  # acceptance cannot race that intentional restart.
+  wait_until "OpenLDAP LDAPS" docker exec \
+    --env LDAPTLS_CACERT=/container/service/slapd/assets/certs/ca.crt \
+    "${ldap_container}" ldapsearch \
+    -x -H ldaps://ldap:636 \
+    -D cn=admin,dc=example,dc=test -w "Admin!Directory123" \
+    -b dc=example,dc=test -s base dn
+  wait_until "OpenLDAP StartTLS" docker exec \
+    --env LDAPTLS_CACERT=/container/service/slapd/assets/certs/ca.crt \
+    "${ldap_container}" ldapsearch \
+    -x -ZZ -H ldap://ldap:389 \
+    -D cn=admin,dc=example,dc=test -w "Admin!Directory123" \
+    -b dc=example,dc=test -s base dn
 
   if [[ -n "${E2E_LDAP_EXTERNAL_BASE_URL:-}" ]]; then
     return

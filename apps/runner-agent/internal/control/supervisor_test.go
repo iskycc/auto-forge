@@ -205,6 +205,34 @@ func TestClaimedAssignmentRejectsIncompatiblePlatformAndToolchain(t *testing.T) 
 	}
 }
 
+func TestClaimedAssignmentAcceptsConfiguredContainerExecutor(t *testing.T) {
+	configuration := config.Config{
+		Toolchain: config.ToolchainConfig{
+			JavaExecutable: "/opt/jdk/bin/java",
+			Classpath:      []string{"/opt/testng/testng.jar"},
+			JavaVersion:    "21.0.8",
+			TestNGVersion:  "7.11.0",
+		},
+		Container: config.ContainerConfig{
+			RuntimeExecutable: "/usr/bin/docker",
+			ImageReference:    "registry.local/testng@sha256:" + strings.Repeat("a", 64),
+			SeccompProfile:    "/etc/autoforge/seccomp.json",
+			User:              "10001:10001",
+			JavaExecutable:    "/opt/java/openjdk/bin/java",
+			Classpath:         []string{"/opt/autoforge/testng/testng.jar"},
+		},
+	}
+	claimed := testClaimedAssignment(strings.Repeat("a", 64))
+	claimed.Assignment.ExecutionSpec.Executor = "testng-container"
+	claimed.Assignment.ExecutionSpec.RequiredCapabilities = []string{
+		"executor:testng-container-v1",
+	}
+
+	if err := validateClaimedAssignment(claimed, "runner-1", configuration); err != nil {
+		t.Fatalf("validateClaimedAssignment rejected a configured container executor: %v", err)
+	}
+}
+
 func testClaimedAssignment(inputDigest string) ClaimedAssignment {
 	specification := testExecutionSpec()
 	specification.Inputs[0].SHA256 = inputDigest

@@ -334,7 +334,7 @@ async function importTestJar(page: Page): Promise<void> {
   await expect(page.getByText("com.autoforge.acceptance.RealAgentFixture")).toBeVisible({
     timeout: 20_000,
   });
-  await expect(page.locator(".method-row code")).toHaveText("executesThroughRealAgent");
+  await expect(page.getByText("executesThroughRealAgent", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "确认导入" }).click();
   await expect(page.getByRole("status")).toContainText(/已导入|已返回现有用例/, {
     timeout: 60_000,

@@ -18,7 +18,7 @@ test("authoritative execution recovery handles every timeout and idempotent race
 }) => {
   test.setTimeout(180_000);
   await ensureAdministrator(page);
-  const suiteId = await createExecutableFixture(page);
+  const fixture = await createExecutableFixture(page);
   const runner = await registerRunner(page, "Execution Recovery Runner", runnerCapabilities);
   await heartbeatRunner(page, runner, ["isolation:cgroup-v2"]);
 
@@ -28,7 +28,8 @@ test("authoritative execution recovery handles every timeout and idempotent race
   }>(page, "/api/v1/run-batches/preflight", {
     method: "POST",
     body: {
-      suiteId,
+      projectId: fixture.projectId,
+      suiteId: fixture.suiteId,
       runnerIds: [runner.runnerId],
       environmentVariables: [],
     },
@@ -40,14 +41,14 @@ test("authoritative execution recovery handles every timeout and idempotent race
   );
   await heartbeatRunner(page, runner, runnerCapabilities);
 
-  const claimTimeoutBatch = await createBatch(page, suiteId, runner.runnerId, {
+  const claimTimeoutBatch = await createBatch(page, fixture, runner.runnerId, {
     claimTimeoutMs: 1_000,
   });
   await page.waitForTimeout(1_300);
   await triggerRecovery(page, runner);
   await expectBatchReason(page, claimTimeoutBatch, "ASSIGNMENT_CLAIM_TIMEOUT");
 
-  const executionTimeoutBatch = await createBatch(page, suiteId, runner.runnerId, {
+  const executionTimeoutBatch = await createBatch(page, fixture, runner.runnerId, {
     executionTimeoutMs: 1_000,
   });
   const executionTimeoutClaim = await claimAssignment(page, runner);
@@ -58,7 +59,7 @@ test("authoritative execution recovery handles every timeout and idempotent race
     (await complete(page, runner, executionTimeoutClaim, "late-after-timeout")).disposition,
   ).toBe("late");
 
-  const uploadTimeoutBatch = await createBatch(page, suiteId, runner.runnerId, {
+  const uploadTimeoutBatch = await createBatch(page, fixture, runner.runnerId, {
     executionTimeoutMs: 60_000,
     uploadTimeoutMs: 1_000,
   });
@@ -80,11 +81,11 @@ test("authoritative execution recovery handles every timeout and idempotent race
   await triggerRecovery(page, runner);
   await expectBatchReason(page, uploadTimeoutBatch, "UPLOAD_TIMEOUT");
 
-  const capacityBatch = await createBatch(page, suiteId, runner.runnerId, {
+  const capacityBatch = await createBatch(page, fixture, runner.runnerId, {
     executionTimeoutMs: 120_000,
   });
   const capacityClaim = await claimAssignment(page, runner);
-  const queueTimeoutBatch = await createBatch(page, suiteId, runner.runnerId, {
+  const queueTimeoutBatch = await createBatch(page, fixture, runner.runnerId, {
     queueTimeoutMs: 1_000,
   });
   await page.waitForTimeout(1_300);
@@ -95,7 +96,7 @@ test("authoritative execution recovery handles every timeout and idempotent race
   ).toBe("accepted");
   await expectBatchReason(page, capacityBatch, "TESTNG_SUCCEEDED");
 
-  const idempotentBatch = await createBatch(page, suiteId, runner.runnerId, {});
+  const idempotentBatch = await createBatch(page, fixture, runner.runnerId, {});
   await waitForAttemptStatus(page, idempotentBatch, "assigned");
   const claimRequestId = randomUUID();
   const firstClaimResponse = await claimOnce(page, runner, claimRequestId);
@@ -109,7 +110,7 @@ test("authoritative execution recovery handles every timeout and idempotent race
   expect((await complete(page, runner, firstClaim, completionId)).disposition).toBe("duplicate");
   await expectBatchReason(page, idempotentBatch, "TESTNG_SUCCEEDED");
 
-  const cancellationBatch = await createBatch(page, suiteId, runner.runnerId, {});
+  const cancellationBatch = await createBatch(page, fixture, runner.runnerId, {});
   const cancellationClaim = await claimAssignment(page, runner);
   const cancellation = await browserJson(
     page,
@@ -117,10 +118,15 @@ test("authoritative execution recovery handles every timeout and idempotent race
     { method: "POST", body: { reason: "E2E completion/cancel race" } },
   );
   expect(cancellation.status).toBe(200);
-  expect((await complete(page, runner, cancellationClaim, randomUUID())).disposition).toBe("late");
+  // A claimed attempt keeps its valid lease long enough to acknowledge
+  // cancellation. Its completion is accepted, but the authoritative outcome
+  // is forced to cancelled rather than trusting the Runner's success payload.
+  expect((await complete(page, runner, cancellationClaim, randomUUID())).disposition).toBe(
+    "accepted",
+  );
   await expectBatchReason(page, cancellationBatch, "CANCELLED_BY_USER");
 
-  const leaseExpiryBatch = await createBatch(page, suiteId, runner.runnerId, {
+  const leaseExpiryBatch = await createBatch(page, fixture, runner.runnerId, {
     executionTimeoutMs: 120_000,
   });
   await claimAssignment(page, runner);
@@ -138,7 +144,15 @@ type Claim = {
   lease: { token: string };
 };
 
-async function createExecutableFixture(page: Page): Promise<string> {
+type ExecutableFixture = { projectId: string; suiteId: string };
+
+async function createExecutableFixture(page: Page): Promise<ExecutableFixture> {
+  const fixtureName = uniqueName("execution-recovery");
+  const project = await browserJson<{ id: string; name: string }>(page, "/api/v1/projects", {
+    method: "POST",
+    body: { name: `Execution recovery ${fixtureName}`, slug: fixtureName },
+  });
+  expect(project.status).toBe(201);
   const className = `com.example.ExecutionRecovery${Date.now()}Test`;
   const jar = zipSync({
     [`${className.replaceAll(".", "/")}.class`]: buildClassFile({
@@ -146,7 +160,8 @@ async function createExecutableFixture(page: Page): Promise<string> {
       methods: [{ name: "recovers", annotations: [{ type: "Test", values: {} }] }],
     }),
   });
-  await page.goto("/cases/import");
+  await page.goto(`/cases/import?projectId=${encodeURIComponent(project.body.id)}`);
+  await page.getByLabel("导入项目").selectOption({ label: project.body.name });
   await page.locator('input[type="file"]').setInputFiles({
     name: "execution-recovery.jar",
     mimeType: "application/java-archive",
@@ -158,13 +173,13 @@ async function createExecutableFixture(page: Page): Promise<string> {
   await expect(page.getByRole("status")).toContainText("已导入", { timeout: 60_000 });
   const cases = await browserJson<{ items: Array<{ id: string; className: string }> }>(
     page,
-    `/api/v1/case-definitions?query=${encodeURIComponent(className)}`,
+    `/api/v1/case-definitions?projectId=${encodeURIComponent(project.body.id)}&query=${encodeURIComponent(className)}`,
   );
   const caseDefinition = cases.body.items.find((item) => item.className === className);
   expect(caseDefinition).toBeTruthy();
   const suite = await browserJson<{ id: string }>(page, "/api/v1/case-suites", {
     method: "POST",
-    body: { name: uniqueName("execution-recovery") },
+    body: { projectId: project.body.id, name: fixtureName },
   });
   expect(suite.status).toBe(201);
   const addition = await browserJson(page, `/api/v1/case-suites/${suite.body.id}/cases`, {
@@ -172,7 +187,7 @@ async function createExecutableFixture(page: Page): Promise<string> {
     body: { caseDefinitionIds: [caseDefinition!.id] },
   });
   expect(addition.status).toBe(200);
-  return suite.body.id;
+  return { projectId: project.body.id, suiteId: suite.body.id };
 }
 
 async function registerRunner(
@@ -233,14 +248,15 @@ async function heartbeatRunner(
 
 async function createBatch(
   page: Page,
-  suiteId: string,
+  fixture: ExecutableFixture,
   runnerId: string,
   timeouts: Record<string, number>,
 ): Promise<string> {
   const response = await browserJson<{ id: string }>(page, "/api/v1/run-batches", {
     method: "POST",
     body: {
-      suiteId,
+      projectId: fixture.projectId,
+      suiteId: fixture.suiteId,
       runnerIds: [runnerId],
       retryLimit: 0,
       environmentVariables: [],

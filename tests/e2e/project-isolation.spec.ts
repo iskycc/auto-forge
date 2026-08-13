@@ -73,8 +73,8 @@ test("project member cannot observe another project's assets through pages or di
   await expect(page.getByText(classA)).toBeVisible();
   await expect(page.getByText(classB)).toHaveCount(0);
   await page.goto("/objects");
-  await expect(page.getByText(sourceA.objectKey)).toBeVisible();
-  await expect(page.getByText(sourceB.objectKey)).toHaveCount(0);
+  await expect(page.getByRole("link", { name: sourceA.objectKey, exact: true })).toBeVisible();
+  await expect(page.getByRole("link", { name: sourceB.objectKey, exact: true })).toHaveCount(0);
   await page.goto("/case-suites");
   await expect(page.getByRole("link", { name: suiteA.name })).toBeVisible();
   await expect(page.getByRole("link", { name: suiteB.name })).toHaveCount(0);

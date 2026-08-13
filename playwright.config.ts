@@ -25,10 +25,19 @@ const requestedConfiguration = {
     ...initialConfiguration.scheduler,
     projectMaximumConcurrency: requestedProjectMaximumConcurrency,
   },
+  limits: {
+    ...initialConfiguration.limits,
+    // The identity scenario deliberately performs several failed logins to
+    // exercise per-user locking. Keep the separate client-address limiter
+    // above the aggregate requests made by the serial acceptance suite.
+    authLoginAttemptsPerWindow: 500,
+  },
 };
 const e2eConfiguration =
   initialConfiguration.web.port === requestedConfiguration.web.port &&
-  initialConfiguration.scheduler.projectMaximumConcurrency === requestedProjectMaximumConcurrency
+  initialConfiguration.scheduler.projectMaximumConcurrency === requestedProjectMaximumConcurrency &&
+  initialConfiguration.limits.authLoginAttemptsPerWindow ===
+    requestedConfiguration.limits.authLoginAttemptsPerWindow
     ? initialConfiguration
     : e2eConfigurationStore.replace(requestedConfiguration, initialConfiguration.revision);
 process.env.E2E_ADMIN_BOOTSTRAP_TOKEN ??= e2eConfiguration.secrets.adminBootstrapToken;

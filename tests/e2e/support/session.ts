@@ -55,7 +55,16 @@ export async function login(page: Page, username: string, password: string): Pro
   await page.getByLabel("用户名", { exact: true }).fill(username);
   await page.getByLabel("密码", { exact: true }).fill(password);
   await submitButton.click();
-  await expect(page).not.toHaveURL(/\/login$/, { timeout: 20_000 });
+  await expect
+    .poll(
+      () => {
+        const pathname = new URL(page.url()).pathname;
+        return pathname !== "/login" && pathname !== "/landing";
+      },
+      { timeout: 20_000 },
+    )
+    .toBe(true);
+  await page.waitForLoadState("load");
 }
 
 export async function logout(page: Page): Promise<void> {

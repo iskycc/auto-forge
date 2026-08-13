@@ -853,7 +853,8 @@ func validateClaimedAssignment(
 	) {
 		return errors.New("assignment toolchain requirements exceed the local Runner toolchain")
 	}
-	if specification.Executor != "testng" || specification.ClassName == "" || len(specification.ClassName) > 1_024 || specification.TimeoutMs < 1_000 || specification.TimeoutMs > 86_400_000 {
+	executorSupported := specification.Executor == "testng" || specification.Executor == "testng-container"
+	if !executorSupported || specification.ClassName == "" || len(specification.ClassName) > 1_024 || specification.TimeoutMs < 1_000 || specification.TimeoutMs > 86_400_000 {
 		return errors.New("assignment execution specification is invalid")
 	}
 	if specification.ResourceLimits.CPUMillicores <= 0 || specification.ResourceLimits.MemoryBytes <= 0 || specification.ResourceLimits.DiskBytes <= 0 || specification.ResourceLimits.ProcessCount <= 0 || specification.ResourceLimits.FileCount <= 0 {

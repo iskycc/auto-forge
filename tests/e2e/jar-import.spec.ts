@@ -243,7 +243,7 @@ public class MixedVisibleTest {
   await expect(page.getByText("可查看源码", { exact: true })).toBeVisible();
   await expect(page.getByText(/Damaged\.class/)).toBeVisible();
   await page.getByRole("button", { name: "确认导入" }).click();
-  await expect(page.getByRole("status")).toContainText("已导入", { timeout: 60_000 });
+  await expect(page.locator(".alert-success")).toContainText("已导入", { timeout: 60_000 });
 
   await page.goto("/cases/import");
   await page.locator('input[type="file"]').setInputFiles({
@@ -253,7 +253,7 @@ public class MixedVisibleTest {
   });
   await page.getByRole("button", { name: "扫描测试类" }).click();
   await page.getByRole("button", { name: "确认导入" }).click();
-  await expect(page.getByRole("status")).toContainText("已返回现有用例", {
+  await expect(page.locator(".alert-success")).toContainText("已返回现有用例", {
     timeout: 60_000,
   });
   await page.getByRole("link", { name: "查看用例库" }).click();

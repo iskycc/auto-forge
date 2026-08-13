@@ -99,6 +99,7 @@ test("service account lifecycle immediately narrows token access and produces ex
     .fill(new Date(Date.now() + 86_400_000).toISOString().slice(0, 16));
   await replacementForm.getByLabel("作用域").selectOption(["audit.read"]);
   await replacementForm.getByRole("button", { name: "签发" }).click();
+  await expect.poll(() => page.locator(".issued-token code").textContent()).not.toBe(token);
   const replacementToken = await page.locator(".issued-token code").textContent();
   expect(replacementToken).toMatch(/^af_api_/);
   const replacementAuthorized = await page.request.get("/api/v1/audit-events", {
