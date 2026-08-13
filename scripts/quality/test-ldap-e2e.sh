@@ -19,6 +19,8 @@ readonly ldap_container="autoforge-ldap-directory-${run_identity}"
 readonly web_container="autoforge-ldap-web-${run_identity}"
 readonly ldap_image="osixia/openldap:1.5.0@sha256:18742e9c449c9c1afe129d3f2f3ee15fb34cc43e5f940a20f3399728f41d7c28"
 readonly node_image="node:24.16.0-bookworm-slim@sha256:2c87ef9bd3c6a3bd4b472b4bec2ce9d16354b0c574f736c476489d09f560a203"
+# Assigned by start_isolated_services when this script runs the Web container.
+web_base_url=""
 
 cleanup() {
   local exit_status="$?"
@@ -45,6 +47,13 @@ wait_until() {
   docker logs "${ldap_container}" >&2 || true
   docker logs "${web_container}" >&2 || true
   return 1
+}
+
+# Published ports are unreachable from the host on an --internal network, so
+# host-side checks and browsers use the container IP on the isolated bridge.
+container_ip() {
+  docker inspect --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' \
+    "${1:?container name is required}"
 }
 
 prepare_certificates() {
@@ -157,7 +166,6 @@ start_isolated_services() {
   docker run --detach \
     --name "${web_container}" \
     --network "${network_name}" \
-    --publish 127.0.0.1:3101:3000 \
     --env NODE_ENV="production" \
     --tmpfs /tmp:rw,noexec,nosuid,size=64m \
     --user "$(id -u):$(id -g)" \
@@ -166,8 +174,9 @@ start_isolated_services() {
     --volume "${acceptance_directory}/platform-data:/var/lib/autoforge" \
     "${node_image}" \
     node apps/web/dist-server/server/index.js --data-dir=/var/lib/autoforge >/dev/null
+  web_base_url="http://$(container_ip "${web_container}"):3000"
   wait_until "isolated AutoForge Web" curl --fail --silent \
-    http://127.0.0.1:3101/api/v1/health/ready
+    "${web_base_url}/api/v1/health/ready"
 
   docker exec "${web_container}" node -e \
     "fetch('https://example.com',{signal:AbortSignal.timeout(3000)}).then(()=>process.exit(1)).catch(()=>process.exit(0))"
@@ -192,7 +201,7 @@ elif [[ -z "${E2E_ADMIN_BOOTSTRAP_TOKEN:-}" ]]; then
 fi
 start_isolated_services
 
-export E2E_BASE_URL="${E2E_LDAP_EXTERNAL_BASE_URL:-http://127.0.0.1:3101}"
+export E2E_BASE_URL="${E2E_LDAP_EXTERNAL_BASE_URL:-${web_base_url}}"
 export E2E_LDAP_CA_FILE="${acceptance_directory}/certs/ca.crt"
 export E2E_LDAP_CONTAINER="${ldap_container}"
 if [[ -n "${external_directory_host}" ]]; then

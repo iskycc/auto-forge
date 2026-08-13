@@ -43,6 +43,13 @@ wait_until() {
   return 1
 }
 
+# Published ports are unreachable from the host on an --internal network, so
+# host-side checks and browsers use the container IP on the isolated bridge.
+container_ip() {
+  docker inspect --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' \
+    "${1:?container name is required}"
+}
+
 initialize_platform() {
   mkdir -p "${acceptance_directory}/platform-data"
   node --input-type=module -e '
@@ -78,8 +85,6 @@ start_services() {
   docker run --detach \
     --name "${web_container}" \
     --network "${network_name}" \
-    --publish 127.0.0.1:3102:3000 \
-    --publish 127.0.0.1:2222:22 \
     --env NODE_ENV="production" \
     --tmpfs /tmp:rw,noexec,nosuid,size=64m \
     --user "$(id -u):$(id -g)" \
@@ -88,7 +93,8 @@ start_services() {
     --volume "${acceptance_directory}/platform-data:/var/lib/autoforge" \
     "${node_image}" \
     node apps/web/dist-server/server/index.js --data-dir=/var/lib/autoforge >/dev/null
-  wait_until "AutoForge Web" curl --fail --silent http://127.0.0.1:3102/api/v1/health/ready
+  web_base_url="http://$(container_ip "${web_container}"):3000"
+  wait_until "AutoForge Web" curl --fail --silent "${web_base_url}/api/v1/health/ready"
 
   docker run --detach \
     --name "${ssh_container}" \
@@ -128,7 +134,7 @@ pnpm build:agent-resources
 pnpm --filter @autoforge/web build
 start_services
 
-export E2E_BASE_URL="http://127.0.0.1:3102"
+export E2E_BASE_URL="${web_base_url}"
 export E2E_SSH_CONTAINER="${ssh_container}"
 export E2E_SSH_CA_FILE="${acceptance_directory}/runner-ca.crt"
 pnpm exec playwright test --config playwright.full.config.ts tests/e2e/runner-install.spec.ts

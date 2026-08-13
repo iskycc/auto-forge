@@ -6,31 +6,40 @@ export const E2E_ADMIN_PASSWORD = "E2e!Administrator123";
 type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
 
 export async function ensureAdministrator(page: Page): Promise<void> {
-  await page.goto("/login");
-  // /login answers 200 and finishes its redirect to /setup client-side while
-  // setup is still required; wait for the final URL before branching on it,
-  // otherwise the follow-up navigation races that in-flight redirect.
-  await page.waitForURL(/\/(login|setup)$/, { timeout: 20_000 });
-  if (new URL(page.url()).pathname === "/setup") {
+  // Decide through the public setup-status API instead of the /login page:
+  // while setup is required, /login answers 200 and only redirects to /setup
+  // client-side, which aborts in-flight navigations (ERR_ABORTED) and swaps
+  // the login form for the setup form in the middle of fills.
+  const response = await page.request.get("/api/v1/auth/setup-status");
+  const status = (await response.json()) as { setupRequired?: unknown };
+  if (status.setupRequired === true) {
+    await page.goto("/setup");
     await page
       .getByLabel("一次性管理员引导令牌")
       .fill(requiredEnvironment("E2E_ADMIN_BOOTSTRAP_TOKEN"));
-    await page.getByLabel("用户名").fill(E2E_ADMIN_USERNAME);
+    await page.getByLabel("用户名", { exact: true }).fill(E2E_ADMIN_USERNAME);
     await page.getByLabel("显示名称").fill("E2E Administrator");
     await page.getByLabel("管理员密码").fill(E2E_ADMIN_PASSWORD);
     await page.getByRole("button", { name: "创建系统管理员" }).click();
     await expect(page).toHaveURL(/\/$/, { timeout: 20_000 });
     return;
   }
-  if (new URL(page.url()).pathname !== "/login") return;
   await login(page, E2E_ADMIN_USERNAME, E2E_ADMIN_PASSWORD);
 }
 
 export async function login(page: Page, username: string, password: string): Promise<void> {
-  await page.goto("/login");
-  await page.getByLabel("用户名").fill(username);
-  await page.getByLabel("密码").fill(password);
-  await page.getByRole("button", { name: "登录" }).click();
+  if (new URL(page.url()).pathname !== "/login") {
+    await page.goto("/login");
+  }
+  // Wait for the login submit button before filling: while setup is still
+  // required the page mutates from /login into /setup client-side, and the
+  // setup form also carries 用户名 / 管理员密码 fields that would otherwise
+  // swallow these fills.
+  const submitButton = page.getByRole("button", { name: "登录", exact: true });
+  await expect(submitButton).toBeVisible({ timeout: 20_000 });
+  await page.getByLabel("用户名", { exact: true }).fill(username);
+  await page.getByLabel("密码", { exact: true }).fill(password);
+  await submitButton.click();
   await expect(page).not.toHaveURL(/\/login$/, { timeout: 20_000 });
 }
 

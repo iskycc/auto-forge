@@ -202,8 +202,10 @@ prepare_cgroup_delegation() {
 }
 
 run_network_blocked_browser_flow() {
+  # Both wrappers bring the isolated loopback up while they still hold the
+  # capability to do so; the acceptance script must not retry `ip link` after
+  # setpriv has dropped privileges, because it fails with RTNETLINK EPERM.
   local acceptance_script='
-    ip link set lo up
     if curl --fail --silent --connect-timeout 2 --max-time 3 https://example.com >/dev/null 2>&1; then
       echo "Outbound network unexpectedly remained available during container acceptance." >&2
       exit 1
@@ -214,7 +216,9 @@ run_network_blocked_browser_flow() {
 
   if unshare --user --map-root-user --net bash -Eeuo pipefail -c \
     'ip link set lo up && docker info >/dev/null' >/dev/null 2>&1; then
-    unshare --user --map-root-user --net bash -Eeuo pipefail -c "${acceptance_script}"
+    unshare --user --map-root-user --net bash -Eeuo pipefail -c \
+      'ip link set lo up
+       exec bash -Eeuo pipefail -c "$1"' _ "${acceptance_script}"
     return
   fi
   if ! command -v setpriv >/dev/null 2>&1 || ! sudo -n unshare --net true >/dev/null 2>&1; then

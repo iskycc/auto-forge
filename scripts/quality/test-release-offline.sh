@@ -20,11 +20,6 @@ readonly previous_container="autoforge-release-previous-${run_identity}"
 readonly restored_container="autoforge-release-restored-${run_identity}"
 readonly rollback_container="autoforge-release-rollback-${run_identity}"
 readonly upgraded_container="autoforge-release-upgraded-${run_identity}"
-readonly current_port=3210
-readonly previous_port=3211
-readonly restored_port=3212
-readonly rollback_port=3213
-readonly upgraded_port=3214
 readonly ldap_image="osixia/openldap:1.5.0@sha256:18742e9c449c9c1afe129d3f2f3ee15fb34cc43e5f940a20f3399728f41d7c28"
 readonly current_data="${acceptance_directory}/current-data"
 readonly restored_data="${acceptance_directory}/restored-data"
@@ -140,16 +135,21 @@ prepare_release_content() {
   fi
 }
 
+# Published ports are unreachable from the host on an --internal network, so
+# host-side checks and browsers use the container IP on the isolated bridge.
+container_ip() {
+  docker inspect --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' \
+    "${1:?container name is required}"
+}
+
 start_platform() {
   local name="${1:?container name is required}"
   local image="${2:?image is required}"
   local data_directory="${3:?data directory is required}"
-  local port="${4:?port is required}"
   mkdir -p "${data_directory}"
   docker run --detach \
     --name "${name}" \
     --network "${network_name}" \
-    --publish "127.0.0.1:${port}:3000" \
     --pull never \
     --user "$(id -u):$(id -g)" \
     --tmpfs /tmp:rw,noexec,nosuid,size=64m \
@@ -157,7 +157,9 @@ start_platform() {
     --cap-drop ALL \
     --volume "${data_directory}:/var/lib/autoforge" \
     "${image}" >/dev/null
-  wait_ready "http://127.0.0.1:${port}"
+  local base_url="http://$(container_ip "${name}"):3000"
+  wait_ready "${base_url}"
+  printf '%s\n' "${base_url}"
 }
 
 stop_platform() {
@@ -184,7 +186,7 @@ read_platform_secret() {
 }
 
 run_current_release_business() {
-  local base_url="http://127.0.0.1:${current_port}"
+  local base_url="${1:?base URL is required}"
   local admin_token runner_token
   admin_token="$(read_platform_secret "${current_data}" adminBootstrapToken)"
   runner_token="$(read_platform_secret "${current_data}" runnerBootstrapToken)"
@@ -270,17 +272,18 @@ inject_migration_integrity_failure() {
 }
 
 verify_backup_restore() {
-  local before_statistics backup_path after_statistics
-  before_statistics="$(curl --fail --silent "http://127.0.0.1:${current_port}/api/v1/public/statistics")"
+  local current_base_url="${1:?current base URL is required}"
+  local before_statistics backup_path after_statistics restored_base_url
+  before_statistics="$(curl --fail --silent "${current_base_url}/api/v1/public/statistics")"
   stop_platform "${current_container}"
   backup_path="${acceptance_directory}/current-backup.tar.gz"
   backup_data "${current_data}" "${backup_path}"
   restore_data "${backup_path}" "${restored_data}"
   diff --recursive --brief "${current_data}" "${restored_data}"
-  start_platform "${restored_container}" "${current_image}" "${restored_data}" "${restored_port}"
-  after_statistics="$(curl --fail --silent "http://127.0.0.1:${restored_port}/api/v1/public/statistics")"
+  restored_base_url="$(start_platform "${restored_container}" "${current_image}" "${restored_data}")"
+  after_statistics="$(curl --fail --silent "${restored_base_url}/api/v1/public/statistics")"
   [[ "${before_statistics}" == "${after_statistics}" ]]
-  E2E_BASE_URL="http://127.0.0.1:${restored_port}" \
+  E2E_BASE_URL="${restored_base_url}" \
   E2E_ADMIN_BOOTSTRAP_TOKEN="$(read_platform_secret "${restored_data}" adminBootstrapToken)" \
     pnpm exec playwright test --config playwright.full.config.ts \
       tests/e2e/platform-restart.spec.ts
@@ -288,8 +291,9 @@ verify_backup_restore() {
 }
 
 verify_upgrade_and_rollback() {
-  start_platform "${previous_container}" "${previous_image}" "${previous_data}" "${previous_port}"
-  run_upgrade_phase "http://127.0.0.1:${previous_port}" "${previous_data}" seed
+  local previous_base_url rollback_base_url upgraded_base_url
+  previous_base_url="$(start_platform "${previous_container}" "${previous_image}" "${previous_data}")"
+  run_upgrade_phase "${previous_base_url}" "${previous_data}" seed
   stop_platform "${previous_container}"
 
   local previous_backup="${acceptance_directory}/previous-backup.tar.gz"
@@ -302,13 +306,13 @@ verify_upgrade_and_rollback() {
   fi
 
   restore_data "${previous_backup}" "${rollback_data}"
-  start_platform "${rollback_container}" "${previous_image}" "${rollback_data}" "${rollback_port}"
-  run_upgrade_phase "http://127.0.0.1:${rollback_port}" "${rollback_data}" verify
+  rollback_base_url="$(start_platform "${rollback_container}" "${previous_image}" "${rollback_data}")"
+  run_upgrade_phase "${rollback_base_url}" "${rollback_data}" verify
   stop_platform "${rollback_container}"
 
   run_migration "${current_image}" "${previous_data}"
-  start_platform "${upgraded_container}" "${current_image}" "${previous_data}" "${upgraded_port}"
-  run_upgrade_phase "http://127.0.0.1:${upgraded_port}" "${previous_data}" verify
+  upgraded_base_url="$(start_platform "${upgraded_container}" "${current_image}" "${previous_data}")"
+  run_upgrade_phase "${upgraded_base_url}" "${previous_data}" verify
   stop_platform "${upgraded_container}"
 }
 
@@ -321,10 +325,10 @@ current_image="$(load_release_image "${current_version}" "${current_release_dire
 previous_image="$(load_release_image "${previous_version}" "${previous_release_directory}")"
 docker image inspect "${ldap_image}" >/dev/null
 docker network create --internal "${network_name}" >/dev/null
-start_platform "${current_container}" "${current_image}" "${current_data}" "${current_port}"
+current_base_url="$(start_platform "${current_container}" "${current_image}" "${current_data}")"
 docker exec "${current_container}" node -e \
   "fetch('https://example.com',{signal:AbortSignal.timeout(3000)}).then(()=>process.exit(1)).catch(()=>process.exit(0))"
-run_current_release_business
-verify_backup_restore
+run_current_release_business "${current_base_url}"
+verify_backup_restore "${current_base_url}"
 verify_upgrade_and_rollback
 printf 'Signed Release assets passed offline install, real Agent/toolchain, LDAP, backup, rollback and upgrade acceptance.\n'
