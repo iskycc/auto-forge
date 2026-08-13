@@ -2,9 +2,9 @@
 
 | Control plane | Runner Agent       | Protocol | Java/TestNG baseline     | Result                                                                        |
 | ------------- | ------------------ | -------- | ------------------------ | ----------------------------------------------------------------------------- |
-| `0.3.x`       | embedded `0.3.x`   | v1       | Java 11+ / TestNG 7.11.0 | supported                                                                     |
-| `0.3.x`       | `0.2.x`            | v1       | capability dependent     | upgrade recommended; incompatible capabilities are rejected before assignment |
-| `0.3.x`       | future protocol v2 | v2       | unknown                  | rejected with `RUNNER_PROTOCOL_UNSUPPORTED`                                   |
+| `0.4.x`       | embedded `0.4.x`   | v1       | Java 11+ / TestNG 7.11.0 | supported                                                                     |
+| `0.4.x`       | `0.3.x`            | v1       | capability dependent     | upgrade recommended; incompatible capabilities are rejected before assignment |
+| `0.4.x`       | future protocol v2 | v2       | unknown                  | rejected with `RUNNER_PROTOCOL_UNSUPPORTED`                                   |
 
 The installer always selects the Agent embedded in the running control-plane image. Credential rotation
 allows a 15-minute recovery overlap; it is not a protocol compatibility window. Database downgrade is

@@ -4,7 +4,7 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
-## Unreleased
+## 0.4.0 - 2026-08-14
 
 ### Added
 
@@ -70,12 +70,31 @@ and known limitations.
 
 ### Database migrations and compatibility
 
-- No SQLite or PostgreSQL migration is added. Persisted platform configuration schema v1 and Runner
-  Protocol v1 remain unchanged; existing JAR limits are preserved until explicitly updated.
+- SQLite migration `0024` and PostgreSQL migration `0023` backfill every immutable `CaseVersion` with
+  its owning source, add the required source foreign key and index, and prevent deletion of a source
+  still referenced by version history.
+- Persisted platform configuration schema v1 and Runner Protocol v1 remain unchanged. Control plane
+  `0.4.x` accepts protocol-compatible `0.3.x` Agents subject to capability checks, although upgrading
+  to the Agent embedded in the control-plane image is recommended.
+- Existing JAR upload limits are preserved during upgrade; the 256 MiB default applies only to new
+  installations until an administrator explicitly changes and restarts an existing deployment.
 
 ### Offline assets
 
-- No new runtime dependency or remote asset is introduced.
+- Rebuild the four immutable backend variants with embedded amd64/arm64 Agents, both offline
+  Java/TestNG Runner toolchains, SPDX SBOMs, the deployment bundle, signed checksums, release manifest
+  and provenance for `0.4.0`.
+- No new runtime CDN, telemetry service or automatically downloaded dependency is introduced.
+
+### Known limitations
+
+- The process executor remains a constrained process boundary rather than a complete sandbox; the
+  optional container executor requires a locally installed OCI runtime and pinned policy.
+- Direct terminal sessions require load-balancer affinity to the Web replica that issued the ticket.
+- The management UI targets desktop screens. Browser/driver toolchains remain administrator-supplied
+  offline resources and are never downloaded at runtime.
+- Database downgrade is unsupported after the new case-version source migrations; rollback requires
+  restoring the matching pre-upgrade database and object backup with the previous immutable image.
 
 ## 0.3.4 - 2026-08-12
 
