@@ -380,7 +380,11 @@ async function createExecutableSuite(
   await expect(page.getByRole("status")).toContainText("用例任务已更新");
 
   await page.goto(`/cases?projectId=${encodeURIComponent(DEFAULT_PROJECT_ID)}`);
-  await page.getByLabel(`选择 ${caseDisplayName}`).check();
+  const caseRow = page
+    .getByRole("row")
+    .filter({ has: page.getByRole("link", { name: caseDisplayName, exact: true }) })
+    .first();
+  await caseRow.getByLabel(`选择 ${caseDisplayName}`).check();
   await page.getByLabel("目标用例任务").selectOption({ label: suiteName });
   await page.getByRole("button", { name: "加入任务" }).click();
   await expect(page.getByRole("status")).toContainText("已将 1 个用例加入任务");
