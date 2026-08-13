@@ -317,7 +317,12 @@ assert_restored_statistics() {
 const [beforeValue, afterValue] = process.argv.slice(2);
 const before = JSON.parse(beforeValue);
 const after = JSON.parse(afterValue);
-const runtimeFields = new Set(["generatedAt", "onlineRunnerCount", "busyRunnerCount"]);
+const runtimeFields = new Set([
+  "generatedAt",
+  "onlineRunnerCount",
+  "busyRunnerCount",
+  "refreshSeconds",
+]);
 const stableEntries = (statistics) =>
   Object.entries(statistics)
     .filter(([name]) => !runtimeFields.has(name))
