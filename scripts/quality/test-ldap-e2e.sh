@@ -50,10 +50,21 @@ wait_until() {
 }
 
 # Published ports are unreachable from the host on an --internal network, so
-# host-side checks and browsers use the container IP on the isolated bridge.
+# the self-contained acceptance uses the container IP on the isolated bridge.
 container_ip() {
   docker inspect --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' \
     "${1:?container name is required}"
+}
+
+create_directory_network() {
+  if [[ -n "${external_directory_host}" ]]; then
+    # An externally hosted control plane reaches LDAP through the published
+    # loopback ports. Docker's internal bridge intentionally blocks that host
+    # forwarding path, so this mode needs a regular per-run bridge instead.
+    docker network create "${network_name}" >/dev/null
+    return
+  fi
+  docker network create --internal "${network_name}" >/dev/null
 }
 
 prepare_certificates() {
@@ -133,7 +144,7 @@ start_isolated_services() {
     fi
   fi
   if [[ -z "${external_network}" ]]; then
-    docker network create --internal "${network_name}" >/dev/null
+    create_directory_network
   fi
   docker run --detach \
     --name "${ldap_container}" \
@@ -229,4 +240,8 @@ if ! pnpm exec playwright test --config playwright.full.config.ts tests/e2e/ldap
   docker logs "${ldap_container}" >&2 || true
   exit 1
 fi
-printf 'Real LDAPS/StartTLS identity acceptance passed inside an outbound-blocked service network.\n'
+if [[ -n "${E2E_LDAP_EXTERNAL_BASE_URL:-}" ]]; then
+  printf 'Real LDAPS/StartTLS identity acceptance passed against the external control plane.\n'
+else
+  printf 'Real LDAPS/StartTLS identity acceptance passed inside an outbound-blocked service network.\n'
+fi
