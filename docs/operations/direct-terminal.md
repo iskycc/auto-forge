@@ -20,7 +20,7 @@ Runner Agent -> bounded PTY -> configured shell
 
 - Agent 只建立出站连接，执行机不开放新的入站端口。
 - 浏览器会话票据有效期 30 秒且在单个网关进程内只消费一次；Agent 票据由认证心跳滚动签发。
-- 控制面每 25 秒发送 WebSocket ping，浏览器和 Agent 自动回应 pong。浮窗关闭、网络超时、Agent 断线或服务端关闭都会终止 PTY 和进程组。
+- 控制面每 25 秒发送 WebSocket ping，浏览器和 Agent 自动回应 pong。浮窗关闭、网络超时、Agent 断线或服务端关闭都会终止 PTY 和同一终端 session 内的进程。
 - WebSocket 持续连接只保证浮窗存活期间的交互会话，不绕过令牌过期、反向代理超时或 Agent 本地最长时限。
 
 ## 启用
@@ -60,7 +60,7 @@ location /api/v1/terminal-stream {
 
 浏览器刷新不会恢复旧 PTY，而是结束旧会话并要求新票据；Agent WebSocket 重连后只接受新会话。
 票据/会话过期、Web 进程关闭、平台重启和任何 Agent 网关断开都会向 Agent 发送关闭或触发连接级
-`CloseAll`，随后终止 PTY 进程组。若 Web 副本异常崩溃，Agent 的 ping/读超时负责清理；不会把
+`CloseAll`，随后终止 PTY 与同一终端 session 内的进程。若 Web 副本异常崩溃，Agent 的 ping/读超时负责清理；不会把
 断开的 Shell 保留为可重连孤儿进程。
 
 ## 安全边界
@@ -68,7 +68,7 @@ location /api/v1/terminal-stream {
 - 终端访问同时要求有效登录会话、独立 `runner.terminal` 权限、同源校验和一次性短时票据；Runner 通道另行使用 Runner 身份签发的票据。
 - Shell 以 Agent 服务账户运行。不要让 Agent 以 root 启动；需要高权限运维时使用操作系统已有的审计和提权策略。
 - 每条消息限制为 64 KiB，单次输入/输出数据限制为 32 KiB，慢消费者缓冲超过 1 MiB 时主动断开。
-- 会话数、最长时长、终端尺寸、工作目录、环境变量和进程组生命周期均在 Agent 本地限制；控制面不能放宽。
+- 会话数、最长时长、终端尺寸、工作目录、环境变量和进程 session 生命周期均在 Agent 本地限制；控制面不能放宽。
 - 终端输出只写入 xterm.js，不进入 React HTML，不使用 `dangerouslySetInnerHTML`。
 - 持久审计记录请求、实际开始、结束、操作者、Runner、会话 ID、断开原因及输入消息数/输入输出字节数。为避免把密码和密文复制到审计库，当前不保存命令内容、终端输出或录屏；需要命令级审计时应使用执行机操作系统的受控提权/会话审计能力。
 

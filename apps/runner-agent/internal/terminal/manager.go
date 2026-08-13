@@ -253,15 +253,11 @@ func (active *session) stop() {
 		if active.command.Process == nil {
 			return
 		}
-		processGroupID := -active.command.Process.Pid
-		_ = syscall.Kill(processGroupID, syscall.SIGTERM)
-		timer := time.AfterFunc(2*time.Second, func() {
-			_ = syscall.Kill(processGroupID, syscall.SIGKILL)
+		terminalSessionID := active.command.Process.Pid
+		signalTerminalSession(terminalSessionID, syscall.SIGTERM)
+		time.AfterFunc(2*time.Second, func() {
+			signalTerminalSession(terminalSessionID, syscall.SIGKILL)
 		})
-		go func() {
-			<-active.completed
-			timer.Stop()
-		}()
 	})
 }
 

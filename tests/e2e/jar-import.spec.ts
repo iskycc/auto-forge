@@ -599,7 +599,7 @@ public class MixedVisibleTest {
 
   await page.goto("/insights");
   await expect(
-    page.getByText("执行样本").locator("..").getByText("2", { exact: true }),
+    page.getByText("执行样本").locator("..").getByText("3", { exact: true }),
   ).toBeVisible();
   await expect(page.locator(".failure-signature-list")).toContainText("TEST_ASSERTION_FAILED");
   await expectUiConsistency(page);
