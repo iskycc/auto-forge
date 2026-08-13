@@ -2,12 +2,13 @@
 
 import { Button, Input, Select, Textarea } from "@/components/ui";
 
-import type {
-  ExecutionEnvironment,
-  ExecutionEnvironmentDetails,
-  ExecutionEnvironmentReference,
-  ExecutionEnvironmentVersion,
-  ExecutionSecret,
+import {
+  DEFAULT_PROJECT_ID,
+  type ExecutionEnvironment,
+  type ExecutionEnvironmentDetails,
+  type ExecutionEnvironmentReference,
+  type ExecutionEnvironmentVersion,
+  type ExecutionSecret,
 } from "@autoforge/domain";
 import {
   Boxes,
@@ -36,6 +37,12 @@ type EnvironmentData = {
   nextBindingId: number;
   copyName: string;
 };
+
+function initialProjectId(projects: ProjectOption[]): string {
+  return projects.some((project) => project.id === DEFAULT_PROJECT_ID)
+    ? DEFAULT_PROJECT_ID
+    : (projects[0]?.id ?? "");
+}
 
 export function EnvironmentSettings({
   initialEnvironments,
@@ -673,7 +680,7 @@ function CreateEnvironmentForm({
   secrets: ExecutionSecret[];
   onCreated(environment: ExecutionEnvironmentDetails): Promise<void>;
 }) {
-  const [projectId, setProjectId] = useState(projects[0]?.id ?? "");
+  const [projectId, setProjectId] = useState(initialProjectId(projects));
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [variables, setVariables] = useState("");
@@ -821,7 +828,7 @@ function SecretPanel(props: {
   setError(value: string): void;
   setNotice(value: string): void;
 }) {
-  const [projectId, setProjectId] = useState(props.projects[0]?.id ?? "");
+  const [projectId, setProjectId] = useState(initialProjectId(props.projects));
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [value, setValue] = useState("");

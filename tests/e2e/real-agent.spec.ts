@@ -5,6 +5,7 @@ import { access, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { unzipSync, zipSync } from "fflate";
 
+import { DEFAULT_PROJECT_ID } from "@autoforge/domain";
 import { appAlert, ensureAdministrator } from "./support/session";
 
 const runnerName = "Offline Real Agent";
@@ -187,6 +188,7 @@ async function createManagedExecutionEnvironment(page: Page): Promise<void> {
   await page.goto("/settings/environments");
   await page.getByRole("button", { name: "密文", exact: true }).click();
   const secretPanel = page.locator(".secret-create-panel");
+  await secretPanel.getByLabel("项目").selectOption(DEFAULT_PROJECT_ID);
   await secretPanel.getByLabel("名称").fill(managedSecretName);
   await secretPanel.getByLabel("说明").fill("真实 Agent lease 与脱敏验收");
   await secretPanel.getByLabel("密文值").fill(secretValueV1);
@@ -196,6 +198,7 @@ async function createManagedExecutionEnvironment(page: Page): Promise<void> {
   await page.getByRole("button", { name: "环境", exact: true }).click();
   await page.getByRole("button", { name: "创建执行环境" }).click();
   const createForm = page.locator(".compact-create-form");
+  await createForm.getByLabel("项目").selectOption(DEFAULT_PROJECT_ID);
   await createForm.getByLabel("名称").fill(managedEnvironmentName);
   await createForm.getByLabel("说明").fill("固定普通变量与密文版本");
   await createForm.getByLabel("普通变量").fill("AUTOFORGE_REAL_AGENT_ENV=workflow-v1");
@@ -338,7 +341,7 @@ async function waitForOnlineRunner(page: Page, agent: AgentProcess): Promise<voi
 }
 
 async function importTestJar(page: Page): Promise<void> {
-  await page.goto("/cases/import");
+  await page.goto(`/cases/import?projectId=${encodeURIComponent(DEFAULT_PROJECT_ID)}`);
   await page.locator('input[type="file"]').setInputFiles(requiredEnvironment("E2E_REAL_TEST_JAR"));
   await page.getByRole("button", { name: "扫描测试类" }).click();
   await expect(page.getByText("com.autoforge.acceptance.RealAgentFixture")).toBeVisible({
@@ -364,7 +367,7 @@ async function createExecutableSuite(
   retryLimit: number,
   artifactPatterns: string[] = ["reports/testng/**"],
 ): Promise<void> {
-  await page.goto("/case-suites");
+  await page.goto(`/case-suites?projectId=${encodeURIComponent(DEFAULT_PROJECT_ID)}`);
   await page.getByLabel("任务名称").fill(suiteName);
   await page.getByLabel("说明").fill("由真实 Go Agent 与离线 TestNG 工具链执行");
   await page.getByRole("button", { name: "创建任务" }).click();
@@ -376,7 +379,7 @@ async function createExecutableSuite(
   await page.getByRole("button", { name: "保存修改" }).click();
   await expect(page.getByRole("status")).toContainText("用例任务已更新");
 
-  await page.goto("/cases");
+  await page.goto(`/cases?projectId=${encodeURIComponent(DEFAULT_PROJECT_ID)}`);
   await page.getByLabel(`选择 ${caseDisplayName}`).check();
   await page.getByLabel("目标用例任务").selectOption({ label: suiteName });
   await page.getByRole("button", { name: "加入任务" }).click();
@@ -384,12 +387,8 @@ async function createExecutableSuite(
 }
 
 async function scheduleExecution(page: Page, suiteName: string): Promise<string> {
-  await page.goto("/run-batches");
-  const suiteSelect = page.getByLabel("用例任务").last();
-  const suiteOption = suiteSelect.locator("option").filter({ hasText: suiteName });
-  const suiteId = await suiteOption.getAttribute("value");
-  expect(suiteId).toBeTruthy();
-  await suiteSelect.selectOption(suiteId!);
+  await page.goto(`/run-batches?projectId=${encodeURIComponent(DEFAULT_PROJECT_ID)}`);
+  await selectExecutionSuite(page, suiteName);
   const runner = page.locator(".runner-choice").filter({ hasText: runnerName });
   await expect(runner).toContainText("兼容");
   await runner.locator('input[type="checkbox"]').check();
@@ -405,6 +404,14 @@ async function scheduleExecution(page: Page, suiteName: string): Promise<string>
   const body = (await response.json()) as { id?: string };
   expect(body.id).toBeTruthy();
   return body.id!;
+}
+
+async function selectExecutionSuite(page: Page, suiteName: string): Promise<void> {
+  const suiteSelect = page.getByLabel("执行用例任务");
+  const suiteOption = suiteSelect.locator("option").filter({ hasText: suiteName });
+  const suiteId = await suiteOption.getAttribute("value");
+  expect(suiteId).toBeTruthy();
+  await suiteSelect.selectOption(suiteId!);
 }
 
 async function selectManagedEnvironment(page: Page): Promise<void> {
@@ -436,7 +443,8 @@ async function expectDisabledSecretBlocksNewBatch(page: Page): Promise<void> {
   await page.getByRole("button", { name: "停用", exact: true }).click();
   await expect(page.getByText("执行密文已停用。")).toBeVisible();
 
-  await page.goto("/run-batches");
+  await page.goto(`/run-batches?projectId=${encodeURIComponent(DEFAULT_PROJECT_ID)}`);
+  await selectExecutionSuite(page, successSuiteName);
   const runner = page.locator(".runner-choice").filter({ hasText: runnerName });
   await runner.locator('input[type="checkbox"]').check();
   await selectManagedEnvironment(page);
@@ -627,7 +635,7 @@ async function exerciseFailedJarImportRetry(page: Page, controlDirectory: string
   const entries = unzipSync(await readFile(requiredEnvironment("E2E_REAL_TEST_JAR")));
   entries[`full-failure-${Date.now()}.txt`] = new TextEncoder().encode("failure retry fixture");
   const jar = zipSync(entries);
-  await page.goto("/cases/import");
+  await page.goto(`/cases/import?projectId=${encodeURIComponent(DEFAULT_PROJECT_ID)}`);
   await page.locator('input[type="file"]').setInputFiles({
     name: "real-agent-full-retry.jar",
     mimeType: "application/java-archive",
