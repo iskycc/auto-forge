@@ -30,13 +30,17 @@ readonly current_deploy_root="${acceptance_directory}/current-deploy"
 readonly toolchain_parent="${acceptance_directory}/toolchain"
 readonly release_agent="${acceptance_directory}/autoforge-agent"
 readonly upgrade_sentinel="Release upgrade sentinel ${run_identity}"
+readonly agent_proxy_ready_file="${acceptance_directory}/agent-proxy-url"
 
 current_image=""
 previous_image=""
+agent_proxy_pid=""
+agent_proxy_url=""
 
 cleanup() {
   local exit_status="$?"
   set +e
+  stop_agent_loopback_proxy
   docker rm --force \
     "${current_container}" "${previous_container}" "${restored_container}" \
     "${rollback_container}" "${upgraded_container}" >/dev/null 2>&1
@@ -45,6 +49,15 @@ cleanup() {
   return "${exit_status}"
 }
 trap cleanup EXIT
+
+stop_agent_loopback_proxy() {
+  if [[ "${agent_proxy_pid}" =~ ^[1-9][0-9]*$ ]]; then
+    kill "${agent_proxy_pid}" >/dev/null 2>&1 || true
+    wait "${agent_proxy_pid}" >/dev/null 2>&1 || true
+  fi
+  agent_proxy_pid=""
+  agent_proxy_url=""
+}
 
 require_tools() {
   local missing=0
@@ -177,6 +190,51 @@ wait_ready() {
   return 1
 }
 
+start_agent_loopback_proxy() {
+  local target_url="${1:?target URL is required}"
+  node - "${target_url}" "${agent_proxy_ready_file}" <<'NODE' &
+const { writeFileSync } = require("node:fs");
+const net = require("node:net");
+
+const [targetValue, readyFile] = process.argv.slice(2);
+const target = new URL(targetValue);
+const targetPort = Number(target.port || (target.protocol === "https:" ? 443 : 80));
+const server = net.createServer((client) => {
+  const upstream = net.connect(targetPort, target.hostname);
+  client.pipe(upstream);
+  upstream.pipe(client);
+  client.on("error", () => upstream.destroy());
+  upstream.on("error", () => client.destroy());
+});
+server.on("error", (error) => {
+  console.error(`Agent loopback proxy failed: ${error.message}`);
+  process.exit(1);
+});
+server.listen(0, "127.0.0.1", () => {
+  const address = server.address();
+  if (!address || typeof address === "string") throw new Error("Loopback proxy address is invalid.");
+  writeFileSync(readyFile, `http://127.0.0.1:${address.port}\n`, { mode: 0o600 });
+});
+process.on("SIGTERM", () => process.exit(0));
+NODE
+  agent_proxy_pid="$!"
+
+  for _ in $(seq 1 100); do
+    if [[ -s "${agent_proxy_ready_file}" ]]; then
+      read -r agent_proxy_url <"${agent_proxy_ready_file}"
+      wait_ready "${agent_proxy_url}"
+      return
+    fi
+    if ! kill -0 "${agent_proxy_pid}" >/dev/null 2>&1; then
+      echo "Agent loopback proxy exited before becoming ready." >&2
+      return 1
+    fi
+    sleep 0.1
+  done
+  echo "Agent loopback proxy did not become ready." >&2
+  return 1
+}
+
 read_platform_secret() {
   local data_directory="${1:?data directory is required}"
   local property="${2:?secret property is required}"
@@ -206,12 +264,15 @@ run_current_release_business() {
   docker cp "${current_container}:/app/resources/agents/linux-amd64/autoforge-agent" \
     "${release_agent}"
   chmod 0755 "${release_agent}"
+  start_agent_loopback_proxy "${base_url}"
   E2E_REAL_AGENT_EXTERNAL_BASE_URL="${base_url}" \
+  E2E_REAL_AGENT_SERVER_URL="${agent_proxy_url}" \
   E2E_PREBUILT_AGENT_BINARY="${release_agent}" \
   E2E_PREBUILT_TOOLCHAIN_ROOT="${toolchain_parent}/autoforge-runner-toolchain" \
   E2E_ADMIN_BOOTSTRAP_TOKEN="${admin_token}" \
   E2E_RUNNER_BOOTSTRAP_TOKEN="${runner_token}" \
     bash "${repository_root}/scripts/quality/test-real-agent.sh"
+  stop_agent_loopback_proxy
 
   E2E_LDAP_EXTERNAL_BASE_URL="${base_url}" \
   E2E_LDAP_EXTERNAL_NETWORK="${network_name}" \

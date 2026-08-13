@@ -217,7 +217,7 @@ run_network_blocked_browser_flow() {
 run_browser_flow() {
   if [[ -n "${E2E_REAL_AGENT_EXTERNAL_BASE_URL:-}" ]]; then
     export E2E_BASE_URL="${E2E_REAL_AGENT_EXTERNAL_BASE_URL}"
-    export E2E_REAL_AGENT_SERVER_URL="${E2E_REAL_AGENT_EXTERNAL_BASE_URL}"
+    export E2E_REAL_AGENT_SERVER_URL="${E2E_REAL_AGENT_SERVER_URL:-${E2E_REAL_AGENT_EXTERNAL_BASE_URL}}"
     pnpm exec playwright test --config playwright.full.config.ts tests/e2e/real-agent.spec.ts
     return
   fi
