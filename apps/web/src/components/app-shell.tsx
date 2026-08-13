@@ -146,7 +146,7 @@ export function AppShell({
         <header className="topbar">
           {forcePasswordChange ? <span /> : <TopbarTools />}
           <div className="topbar-actions">
-            {!forcePasswordChange && granted.has("case.manage") ? (
+            {!forcePasswordChange && granted.has("case_source.manage") ? (
               <>
                 <Link className="icon-button" href="/cases/import" aria-label="JAR 导入帮助">
                   <CircleHelp size={19} />

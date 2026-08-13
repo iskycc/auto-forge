@@ -9,10 +9,12 @@ import Link from "next/link";
 import { useState } from "react";
 
 export function CaseSuiteManager({
+  canManage,
   initialSuites,
   projectId: initialProjectId,
   projects,
 }: {
+  canManage: boolean;
   initialSuites: CaseSuite[];
   projectId?: string | undefined;
   projects: Array<{ id: string; name: string }>;
@@ -58,66 +60,68 @@ export function CaseSuiteManager({
 
   return (
     <div className="suite-layout">
-      <section className="card suite-create-card">
-        <div className="card-heading">
-          <div>
-            <span className="eyebrow">新建</span>
-            <h2>创建用例任务</h2>
-            <p>任务保存可复用的用例选择；执行时再固化版本快照。</p>
+      {canManage ? (
+        <section className="card suite-create-card">
+          <div className="card-heading">
+            <div>
+              <span className="eyebrow">新建</span>
+              <h2>创建用例任务</h2>
+              <p>任务保存可复用的用例选择；执行时再固化版本快照。</p>
+            </div>
+            <Plus size={22} />
           </div>
-          <Plus size={22} />
-        </div>
-        <form className="stack-form" onSubmit={createSuite}>
-          {projects.length > 0 ? (
+          <form className="stack-form" onSubmit={createSuite}>
+            {projects.length > 0 ? (
+              <label>
+                <span>项目</span>
+                <Select
+                  name="projectId"
+                  value={projectId}
+                  onChange={(event) => setProjectId(event.target.value)}
+                >
+                  {projects.map((project) => (
+                    <option key={project.id} value={project.id}>
+                      {project.name}
+                    </option>
+                  ))}
+                </Select>
+              </label>
+            ) : null}
             <label>
-              <span>项目</span>
-              <Select
-                name="projectId"
-                value={projectId}
-                onChange={(event) => setProjectId(event.target.value)}
-              >
-                {projects.map((project) => (
-                  <option key={project.id} value={project.id}>
-                    {project.name}
-                  </option>
-                ))}
-              </Select>
+              <span>任务名称</span>
+              <Input
+                value={name}
+                onChange={(event) => setName(event.target.value)}
+                maxLength={120}
+                required
+                placeholder="例如：每日冒烟测试"
+              />
             </label>
-          ) : null}
-          <label>
-            <span>任务名称</span>
-            <Input
-              value={name}
-              onChange={(event) => setName(event.target.value)}
-              maxLength={120}
-              required
-              placeholder="例如：每日冒烟测试"
-            />
-          </label>
-          <label>
-            <span>说明</span>
-            <Textarea
-              value={description}
-              onChange={(event) => setDescription(event.target.value)}
-              maxLength={500}
-              rows={4}
-              placeholder="记录用途、范围或维护人"
-            />
-          </label>
-          {error && (
-            <span className="inline-error" role="alert">
-              {error}
-            </span>
-          )}
-          <Button
-            className="button button-primary"
-            type="submit"
-            disabled={pending || !name.trim()}
-          >
-            {pending ? <LoaderCircle className="spin" size={16} /> : <Plus size={16} />} 创建任务
-          </Button>
-        </form>
-      </section>
+            <label>
+              <span>说明</span>
+              <Textarea
+                value={description}
+                onChange={(event) => setDescription(event.target.value)}
+                maxLength={500}
+                rows={4}
+                placeholder="记录用途、范围或维护人"
+              />
+            </label>
+            {error && (
+              <span className="inline-error" role="alert">
+                {error}
+              </span>
+            )}
+            <Button
+              className="button button-primary"
+              type="submit"
+              disabled={pending || !name.trim()}
+            >
+              {pending ? <LoaderCircle className="spin" size={16} /> : <Plus size={16} />} 创建任务
+            </Button>
+          </form>
+        </section>
+      ) : null}
       <section className="suite-list" aria-label="用例任务列表">
         {suites.length === 0 ? (
           <div className="card empty-state suite-empty">

@@ -5,17 +5,19 @@ import { SourceActions } from "@/components/source-actions";
 import { SourceLifecyclePanel } from "@/components/source-lifecycle";
 import { getPlatformServices } from "@/lib/services";
 import { requirePageProjectScope } from "@/lib/auth";
+import { hasPermission } from "@autoforge/domain";
 
 export const dynamic = "force-dynamic";
 
 type Props = { params: Promise<{ sourceId: string }> };
 
 export default async function CaseSourcePage({ params }: Props) {
-  const { projectIds } = await requirePageProjectScope("case_source.read");
+  const { identity, projectIds } = await requirePageProjectScope("case_source.read");
   const { sourceId } = await params;
   const { source, inspection } = await (
     await getPlatformServices()
   ).caseSources.get(sourceId, projectIds);
+  const canManage = hasPermission(identity, "case_source.manage", source.projectId);
   return (
     <div className="page-stack narrow-page">
       <section className="page-hero">
@@ -29,7 +31,9 @@ export default async function CaseSourcePage({ params }: Props) {
             个测试方法，扫描快照可随时在线查看。
           </p>
         </div>
-        <SourceActions sourceId={source.id} authoritative={source.authoritative} />
+        {canManage ? (
+          <SourceActions sourceId={source.id} authoritative={source.authoritative} />
+        ) : null}
       </section>
       <section className="card source-summary-card">
         <div className="source-meta-grid">
@@ -67,13 +71,15 @@ export default async function CaseSourcePage({ params }: Props) {
           </div>
         </div>
       </section>
-      <SourceLifecyclePanel
-        sourceId={source.id}
-        authoritative={source.authoritative}
-        status={source.status}
-        lifecycleStatus={source.lifecycleStatus}
-        revision={source.revision}
-      />
+      {canManage ? (
+        <SourceLifecyclePanel
+          sourceId={source.id}
+          authoritative={source.authoritative}
+          status={source.status}
+          lifecycleStatus={source.lifecycleStatus}
+          revision={source.revision}
+        />
+      ) : null}
       {inspection.testNgXml && (
         <section className="card source-summary-card">
           <div className="card-heading">

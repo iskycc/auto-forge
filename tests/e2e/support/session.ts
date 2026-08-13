@@ -46,7 +46,18 @@ export async function ensureAdministrator(page: Page): Promise<void> {
       )
       .not.toBe("pending");
     if (new URL(page.url()).pathname === "/setup") {
-      await login(page, E2E_ADMIN_USERNAME, E2E_ADMIN_PASSWORD);
+      const session = await page.request.get("/api/v1/auth/session");
+      if (session.ok()) {
+        // The bootstrap response has installed the session cookie, but its
+        // document-level /landing navigation can trail the status request by
+        // a few milliseconds. Let that navigation finish instead of racing it
+        // with an unnecessary trip to /login.
+        await expect
+          .poll(() => new URL(page.url()).pathname, { timeout: 20_000 })
+          .not.toBe("/setup");
+      } else {
+        await login(page, E2E_ADMIN_USERNAME, E2E_ADMIN_PASSWORD);
+      }
     }
     await expectAdministratorShell(page);
     return;

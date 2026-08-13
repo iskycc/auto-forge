@@ -5,6 +5,7 @@ import { SourceActions } from "@/components/source-actions";
 import { Button, Select } from "@/components/ui";
 import { getPlatformServices } from "@/lib/services";
 import { requireAuthorizedPageProjectScope, requirePageProjectScope } from "@/lib/auth";
+import { hasPermission, projectIdsForPermission } from "@autoforge/domain";
 
 export const dynamic = "force-dynamic";
 
@@ -38,6 +39,9 @@ export default async function ObjectsPage({
     "case_source.read",
     projectId,
   );
+  const sourceManagementProjectIds = projectIdsForPermission(identity, "case_source.manage");
+  const canImport =
+    sourceManagementProjectIds === undefined || sourceManagementProjectIds.length > 0;
   const services = await getPlatformServices();
   const [allObjects, sources, projects] = await Promise.all([
     services.caseSources.listObjects({ limit: 100 }, effectiveProjectIds),
@@ -85,9 +89,11 @@ export default async function ObjectsPage({
             <span className="eyebrow">源码管理</span>
             <h2>TestNG JAR</h2>
           </div>
-          <Link className="button button-primary" href="/cases/import">
-            <Archive size={16} /> 导入 JAR
-          </Link>
+          {canImport ? (
+            <Link className="button button-primary" href="/cases/import">
+              <Archive size={16} /> 导入 JAR
+            </Link>
+          ) : null}
         </div>
         {sources.length === 0 ? (
           <div className="empty-state table-empty">
@@ -135,7 +141,12 @@ export default async function ObjectsPage({
                         >
                           <ExternalLink size={14} /> 预览
                         </Link>
-                        <SourceActions sourceId={source.id} authoritative={source.authoritative} />
+                        {hasPermission(identity, "case_source.manage", source.projectId) ? (
+                          <SourceActions
+                            sourceId={source.id}
+                            authoritative={source.authoritative}
+                          />
+                        ) : null}
                       </span>
                     </td>
                   </tr>

@@ -7,6 +7,34 @@ import type { PlatformOperationsRepository, RunBatchRepository } from "../src/po
 const timestamp = "2026-08-09T00:00:00.000Z";
 
 describe("PlatformOperationsService analytics", () => {
+  it("accepts project-scoped read permissions for schedules and global search", async () => {
+    const repository = {
+      listSchedules: vi.fn(async () => []),
+      globalSearch: vi.fn(async () => ({ items: [] })),
+    } as unknown as PlatformOperationsRepository;
+    const service = new PlatformOperationsService(
+      repository,
+      { now: () => new Date(timestamp) },
+      { next: () => "id" },
+      { issue: () => "token", hash: (value) => value },
+    );
+    const reader: AuthenticatedIdentity = {
+      ...projectIdentity,
+      projectPermissions: {
+        "project-1": ["case.read", "case_suite.read", "run.read"],
+      },
+    };
+
+    await expect(service.listSchedules(reader)).resolves.toEqual([]);
+    await expect(service.globalSearch(reader, "smoke", 10)).resolves.toEqual({ items: [] });
+    expect(repository.listSchedules).toHaveBeenCalledWith(["project-1"]);
+    expect(repository.globalSearch).toHaveBeenCalledWith({
+      query: "smoke",
+      limit: 10,
+      projectIds: ["project-1"],
+    });
+  });
+
   it("compares only the common case scope and reports version/result/duration changes", async () => {
     const batches = {
       get: vi.fn(async (batchId: string) =>

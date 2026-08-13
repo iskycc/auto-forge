@@ -6,6 +6,7 @@ import { RunBatchPlanner } from "@/components/run-batch-planner";
 import { getPlatformServices } from "@/lib/services";
 import { hasPermissionInAnyScope, requirePageProjectScope } from "@/lib/auth";
 import type { RunBatchListQuery } from "@autoforge/application";
+import { projectIdsForPermission } from "@autoforge/domain";
 
 export const dynamic = "force-dynamic";
 
@@ -18,12 +19,15 @@ export default async function RunBatchesPage({
   const services = await getPlatformServices();
   const parameters = await searchParams;
   const filter = runBatchFilter(parameters, projectIds);
+  const creatableProjectIds = projectIdsForPermission(identity, "run.create");
+  const canCreateRuns = creatableProjectIds === undefined || creatableProjectIds.length > 0;
+  const canReadRunners = hasPermissionInAnyScope(identity, "runner.read");
   const environmentProjectIds = hasPermissionInAnyScope(identity, "environment.read")
     ? services.identityAccess.projectScope(identity, "environment.read")
     : [];
   const [suites, runners, batchPage, projects, environmentSummaries] = await Promise.all([
     services.caseSuites.list(200, projectIds),
-    services.runnerControl.list(500),
+    canReadRunners ? services.runnerControl.list(500) : Promise.resolve([]),
     services.runBatches.listPage(filter),
     services.identities.listProjects(projectIds),
     environmentProjectIds?.length === 0
@@ -44,6 +48,10 @@ export default async function RunBatchesPage({
   const visibleProjects = projectIds
     ? projects.filter((project) => projectIds.includes(project.id))
     : projects;
+  const creatableSuites =
+    creatableProjectIds === undefined
+      ? suites
+      : suites.filter((suite) => creatableProjectIds.includes(suite.projectId));
   return (
     <div className="page-stack">
       <section className="page-hero">
@@ -126,7 +134,8 @@ export default async function RunBatchesPage({
         </Button>
       </form>
       <RunBatchPlanner
-        initialSuites={suites}
+        canCreate={canCreateRuns}
+        initialSuites={creatableSuites}
         initialRunners={runners}
         initialEnvironments={environments}
         initialBatches={batchPage.items}

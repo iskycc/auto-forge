@@ -179,7 +179,7 @@ export class PlatformOperationsService {
   }
 
   listSchedules(actor: AuthenticatedIdentity) {
-    requirePermission(actor, "case_suite.read");
+    requirePermissionInAnyScope(actor, "case_suite.read");
     return this.repository.listSchedules(projectIdsForPermission(actor, "case_suite.read"));
   }
 
@@ -563,7 +563,7 @@ export class PlatformOperationsService {
   }
 
   async analytics(actor: AuthenticatedIdentity, filterInput: AnalyticsFilter) {
-    requirePermission(actor, "run.read", filterInput.projectId);
+    requireScopedPermission(actor, "run.read", filterInput.projectId);
     const filter = analyticsFilterSchema.parse(filterInput);
     const projectIds = projectIdsForPermission(actor, "run.read");
     return this.repository.readAnalytics({
@@ -583,7 +583,7 @@ export class PlatformOperationsService {
     filterInput: AnalyticsFilter,
     maximumRows = 25_000,
   ) {
-    requirePermission(actor, "run.read", filterInput.projectId);
+    requireScopedPermission(actor, "run.read", filterInput.projectId);
     const projectIds = projectIdsForPermission(actor, "run.read");
     return this.repository.exportAnalytics({
       filter: analyticsFilterSchema.parse(filterInput),
@@ -598,7 +598,7 @@ export class PlatformOperationsService {
     idempotencyKey: string,
   ): Promise<AnalyticsExportJob> {
     const parsed = createAnalyticsExportInputSchema.parse(input);
-    requirePermission(actor, "run.read", parsed.filter.projectId);
+    requireScopedPermission(actor, "run.read", parsed.filter.projectId);
     if (!idempotencyKey || idempotencyKey.length > 256) {
       throw new DomainError("IDEMPOTENCY_KEY_INVALID", "导出幂等键必须为 1 至 256 个字符。");
     }
@@ -633,14 +633,14 @@ export class PlatformOperationsService {
   }
 
   async getAnalyticsExport(actor: AuthenticatedIdentity, exportId: string) {
-    requirePermission(actor, "run.read");
+    requirePermissionInAnyScope(actor, "run.read");
     const job = await this.repository.getAnalyticsExportJob(exportId, actor.user.id);
     if (!job) throw new DomainError("ANALYTICS_EXPORT_NOT_FOUND", "分析导出任务不存在。");
     return job;
   }
 
   async cancelAnalyticsExport(actor: AuthenticatedIdentity, exportId: string) {
-    requirePermission(actor, "run.read");
+    requirePermissionInAnyScope(actor, "run.read");
     return this.repository.requestAnalyticsExportCancellation({
       jobId: exportId,
       requestedBy: actor.user.id,
@@ -649,7 +649,7 @@ export class PlatformOperationsService {
   }
 
   async downloadAnalyticsExport(actor: AuthenticatedIdentity, exportId: string) {
-    requirePermission(actor, "run.read");
+    requirePermissionInAnyScope(actor, "run.read");
     if (!this.objectStore?.read) {
       throw new DomainError("ANALYTICS_EXPORT_UNAVAILABLE", "当前运行时未配置导出对象读取能力。");
     }
@@ -765,7 +765,7 @@ export class PlatformOperationsService {
   }
 
   async compareBatches(actor: AuthenticatedIdentity, leftBatchId: string, rightBatchId: string) {
-    requirePermission(actor, "run.read");
+    requirePermissionInAnyScope(actor, "run.read");
     if (!this.runBatches) {
       throw new DomainError("ANALYTICS_COMPARISON_UNAVAILABLE", "当前运行时未配置批次对比仓储。");
     }
@@ -811,7 +811,7 @@ export class PlatformOperationsService {
   }
 
   async globalSearch(actor: AuthenticatedIdentity, query: string, limit: number) {
-    requirePermission(actor, "case.read");
+    requirePermissionInAnyScope(actor, "case.read");
     const projectIds = mergeProjectScopes(
       projectIdsForPermission(actor, "case.read"),
       projectIdsForPermission(actor, "run.read"),
@@ -880,6 +880,25 @@ function requirePermission(
   if (!hasPermission(actor, permission, projectId)) {
     throw new DomainError("AUTH_FORBIDDEN", "当前身份没有执行此操作的权限。");
   }
+}
+
+function requirePermissionInAnyScope(actor: AuthenticatedIdentity, permission: Permission): void {
+  const projectIds = projectIdsForPermission(actor, permission);
+  if (projectIds?.length === 0) {
+    throw new DomainError("AUTH_FORBIDDEN", "当前身份没有执行此操作的权限。");
+  }
+}
+
+function requireScopedPermission(
+  actor: AuthenticatedIdentity,
+  permission: Permission,
+  projectId?: string,
+): void {
+  if (projectId) {
+    requirePermission(actor, permission, projectId);
+    return;
+  }
+  requirePermissionInAnyScope(actor, permission);
 }
 
 function accessibleProjectIds(actor: AuthenticatedIdentity): string[] | undefined {

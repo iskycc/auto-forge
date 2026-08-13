@@ -6,6 +6,7 @@ import Link from "next/link";
 import { CaseSelectionTable } from "@/components/case-selection-table";
 import { getPlatformServices } from "@/lib/services";
 import { requireAuthorizedPageProjectScope, requirePageProjectScope } from "@/lib/auth";
+import { projectIdsForPermission } from "@autoforge/domain";
 
 export const dynamic = "force-dynamic";
 
@@ -29,6 +30,13 @@ export default async function CasesPage({ searchParams }: CasesPageProps) {
   const requestedProjectId = single(parameters.projectId);
   const projectId = requestedProjectId;
   const effectiveProjectIds = requireAuthorizedPageProjectScope(identity, "case.read", projectId);
+  const sourceManagementProjectIds = projectIdsForPermission(identity, "case_source.manage");
+  const suiteManagementProjectIds = projectIdsForPermission(identity, "case_suite.manage");
+  const canImport =
+    sourceManagementProjectIds === undefined ||
+    (projectId
+      ? sourceManagementProjectIds.includes(projectId)
+      : sourceManagementProjectIds.length > 0);
   const services = await getPlatformServices();
   const [page, suites, projects] = await Promise.all([
     services.catalog.listCases({
@@ -49,14 +57,18 @@ export default async function CasesPage({ searchParams }: CasesPageProps) {
           <h1>用例库</h1>
           <p>一个 TestNG 测试类对应一个用例定义，测试方法作为可执行项保存在版本快照中。</p>
         </div>
-        <Link
-          className="button button-primary button-large"
-          href={
-            projectId ? `/cases/import?projectId=${encodeURIComponent(projectId)}` : "/cases/import"
-          }
-        >
-          <Import size={18} aria-hidden="true" /> 导入 JAR
-        </Link>
+        {canImport ? (
+          <Link
+            className="button button-primary button-large"
+            href={
+              projectId
+                ? `/cases/import?projectId=${encodeURIComponent(projectId)}`
+                : "/cases/import"
+            }
+          >
+            <Import size={18} aria-hidden="true" /> 导入 JAR
+          </Link>
+        ) : null}
       </section>
 
       <section className="card table-card">
@@ -109,14 +121,18 @@ export default async function CasesPage({ searchParams }: CasesPageProps) {
               <Link className="button button-secondary" href="/cases">
                 清除搜索
               </Link>
-            ) : (
+            ) : canImport ? (
               <Link className="button button-primary" href="/cases/import">
                 导入第一个 JAR
               </Link>
-            )}
+            ) : null}
           </div>
         ) : (
-          <CaseSelectionTable cases={page.items} suites={suites} />
+          <CaseSelectionTable
+            cases={page.items}
+            suites={suites}
+            manageableProjectIds={suiteManagementProjectIds}
+          />
         )}
 
         {page.nextCursor && (

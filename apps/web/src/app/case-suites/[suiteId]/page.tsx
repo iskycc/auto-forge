@@ -16,6 +16,7 @@ export default async function CaseSuitePage({ params }: Props) {
   const { suiteId } = await params;
   const services = await getPlatformServices();
   const suite = await services.caseSuites.get(suiteId, projectIds);
+  const canManage = hasPermission(identity, "case_suite.manage", suite.projectId);
   const schedule = (await services.platformOperations.listSchedules(identity)).find(
     (candidate) => candidate.suiteId === suiteId,
   );
@@ -29,16 +30,14 @@ export default async function CaseSuitePage({ params }: Props) {
           <h1>{suite.name}</h1>
           <p>{suite.description || "未填写任务说明。"}</p>
         </div>
-        <Link className="button button-primary button-large" href="/cases">
-          <BookOpenText size={17} /> 添加用例
-        </Link>
+        {canManage ? (
+          <Link className="button button-primary button-large" href="/cases">
+            <BookOpenText size={17} /> 添加用例
+          </Link>
+        ) : null}
       </section>
-      <CaseSuiteEditor
-        canManage={hasPermission(identity, "case_suite.manage", suite.projectId)}
-        {...(schedule ? { schedule } : {})}
-        suite={suite}
-      />
-      <CaseSuiteDetailsView initialSuite={suite} />
+      <CaseSuiteEditor canManage={canManage} {...(schedule ? { schedule } : {})} suite={suite} />
+      <CaseSuiteDetailsView canManage={canManage} initialSuite={suite} />
     </div>
   );
 }

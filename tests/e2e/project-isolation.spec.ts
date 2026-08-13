@@ -72,12 +72,22 @@ test("project member cannot observe another project's assets through pages or di
   await page.goto("/cases");
   await expect(page.getByText(classA)).toBeVisible();
   await expect(page.getByText(classB)).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "导入 JAR" })).toHaveCount(0);
+  await expect(page.getByLabel("选择本页全部用例")).toHaveCount(0);
   await page.goto("/objects");
   await expect(page.getByRole("link", { name: sourceA.objectKey, exact: true })).toBeVisible();
   await expect(page.getByRole("link", { name: sourceB.objectKey, exact: true })).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "导入 JAR" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "设为全量来源" })).toHaveCount(0);
+  await page.goto(`/case-sources/${sourceA.id}`);
+  await expect(page.getByRole("button", { name: "归档来源" })).toHaveCount(0);
   await page.goto("/case-suites");
   await expect(page.getByRole("link", { name: suiteA.name })).toBeVisible();
   await expect(page.getByRole("link", { name: suiteB.name })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "创建任务" })).toHaveCount(0);
+  await page.getByRole("link", { name: suiteA.name }).click();
+  await expect(page.getByRole("link", { name: "添加用例" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "移除" })).toHaveCount(0);
   await page.goto("/settings/environments");
   await expect(page.getByText(environmentA.name)).toBeVisible();
   await expect(page.getByText(environmentB.name)).toHaveCount(0);
@@ -85,6 +95,7 @@ test("project member cannot observe another project's assets through pages or di
   const suiteOptions = await page.getByLabel("用例任务").last().locator("option").allTextContents();
   expect(suiteOptions.some((option) => option.includes(suiteA.name))).toBe(true);
   expect(suiteOptions.some((option) => option.includes(suiteB.name))).toBe(false);
+  await expect(page.getByRole("button", { name: "开始调度" })).toHaveCount(0);
 
   await expectForbidden(page, `/api/v1/case-definitions?projectId=${projectB.id}`);
   await expectNotFoundOrForbidden(page, `/api/v1/case-definitions/${caseB.id}`);

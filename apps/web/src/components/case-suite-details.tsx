@@ -7,7 +7,13 @@ import type { CaseSuiteDetails } from "@autoforge/domain";
 import { LoaderCircle, Trash2 } from "lucide-react";
 import { useState } from "react";
 
-export function CaseSuiteDetailsView({ initialSuite }: { initialSuite: CaseSuiteDetails }) {
+export function CaseSuiteDetailsView({
+  canManage,
+  initialSuite,
+}: {
+  canManage: boolean;
+  initialSuite: CaseSuiteDetails;
+}) {
   const [suite, setSuite] = useState(initialSuite);
   const [removing, setRemoving] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -61,7 +67,7 @@ export function CaseSuiteDetailsView({ initialSuite }: { initialSuite: CaseSuite
                 <th>测试类</th>
                 <th>方法</th>
                 <th>分组</th>
-                <th>操作</th>
+                {canManage ? <th>操作</th> : null}
               </tr>
             </thead>
             <tbody>
@@ -83,21 +89,23 @@ export function CaseSuiteDetailsView({ initialSuite }: { initialSuite: CaseSuite
                       ))}
                     </span>
                   </td>
-                  <td>
-                    <Button
-                      className="button button-danger-quiet"
-                      type="button"
-                      disabled={removing === item.caseDefinition.id}
-                      onClick={() => removeCase(item.caseDefinition.id)}
-                    >
-                      {removing === item.caseDefinition.id ? (
-                        <LoaderCircle className="spin" size={15} />
-                      ) : (
-                        <Trash2 size={15} />
-                      )}{" "}
-                      移除
-                    </Button>
-                  </td>
+                  {canManage ? (
+                    <td>
+                      <Button
+                        className="button button-danger-quiet"
+                        type="button"
+                        disabled={removing === item.caseDefinition.id}
+                        onClick={() => removeCase(item.caseDefinition.id)}
+                      >
+                        {removing === item.caseDefinition.id ? (
+                          <LoaderCircle className="spin" size={15} />
+                        ) : (
+                          <Trash2 size={15} />
+                        )}{" "}
+                        移除
+                      </Button>
+                    </td>
+                  ) : null}
                 </tr>
               ))}
             </tbody>

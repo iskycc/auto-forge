@@ -19,7 +19,7 @@ type SourceLifecyclePanelProps = {
 };
 
 // 来源对比同步、归档/恢复与删除操作。同步采用“保留”语义：
-// 切换权威来源不会自动禁用或归档候选中已消失的用例。
+// 匹配的用例生成不可变版本，候选中已消失的用例不会被自动禁用或归档。
 export function SourceLifecyclePanel({
   sourceId,
   authoritative,
@@ -90,7 +90,7 @@ export function SourceLifecyclePanel({
         expectedRevision: revision,
       });
       setComparison(null);
-      setMessage("已切换为权威来源。");
+      setMessage("已同步为权威来源；匹配用例已生成不可变版本。");
     });
   }
 
@@ -192,7 +192,7 @@ export function SourceLifecyclePanel({
             对比结果：新增 {comparison.added.length}、变更 {comparison.changed.length}、消失{" "}
             {comparison.removed.length}、冲突 {comparison.conflicts.length}
             {comparison.truncated ? "（名单已达上限被截断，仅显示部分）" : ""}。
-            同步只切换权威来源，不会自动禁用或归档已消失的用例。
+            同步会为无歧义的匹配用例生成不可变版本，且不会自动禁用或归档已消失的用例。
           </p>
           <ComparisonPreview
             title="新增"

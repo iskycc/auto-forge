@@ -381,6 +381,10 @@ describe.skipIf(!connectionString)("PostgreSQL platform repositories", () => {
     } finally {
       await handle.pool.query("DELETE FROM run_batches WHERE id = $1", [secondProjectBatchId]);
       await handle.pool.query("DELETE FROM run_batches WHERE id = $1", [`batch-${runnerId}`]);
+      await handle.pool.query("DELETE FROM case_versions WHERE source_id IN ($1, $2)", [
+        `dependency-${runnerId}`,
+        `source-${runnerId}`,
+      ]);
       await handle.pool.query("DELETE FROM case_sources WHERE id = $1", [`dependency-${runnerId}`]);
       await handle.pool.query("DELETE FROM case_sources WHERE id = $1", [`source-${runnerId}`]);
       await handle.pool.query("DELETE FROM runners WHERE id = $1", [runnerId]);
@@ -699,6 +703,9 @@ describe.skipIf(!connectionString)("PostgreSQL platform repositories", () => {
       expect(run.rows[0]?.status).toBe("queued");
     } finally {
       await handle.pool.query("DELETE FROM run_batches WHERE id = $1", [batchId]);
+      await handle.pool.query("DELETE FROM case_versions WHERE source_id = $1", [
+        `source-${runnerId}`,
+      ]);
       await handle.pool.query("DELETE FROM case_sources WHERE id = $1", [`source-${runnerId}`]);
       await handle.pool.query("DELETE FROM runners WHERE id = $1", [runnerId]);
       await handle.pool.query("DELETE FROM runner_bootstrap_uses WHERE token_hash = $1", [
@@ -807,6 +814,7 @@ describe.skipIf(!connectionString)("PostgreSQL platform repositories", () => {
       );
       expect(await catalog.getCaseVersion(caseDefinitionId, 99)).toBeNull();
     } finally {
+      await handle.pool.query("DELETE FROM case_versions WHERE source_id = $1", [sourceId]);
       await handle.pool.query("DELETE FROM case_sources WHERE id = $1", [sourceId]);
       await handle.pool.query("DELETE FROM users WHERE id = $1", [actorId]);
       await handle.close();
@@ -973,6 +981,7 @@ describe.skipIf(!connectionString)("PostgreSQL platform repositories", () => {
         copyId,
       ]);
       await handle.pool.query("DELETE FROM case_suites WHERE id IN ($1, $2)", [suiteId, copyId]);
+      await handle.pool.query("DELETE FROM case_versions WHERE source_id = $1", [sourceId]);
       await handle.pool.query("DELETE FROM case_sources WHERE id = $1", [sourceId]);
       await handle.pool.query("DELETE FROM runners WHERE id = $1", [runnerId]);
       await handle.close();
@@ -1104,6 +1113,9 @@ describe.skipIf(!connectionString)("PostgreSQL platform repositories", () => {
       if (cleanupJobIds.length > 0) {
         await handle.pool.query("DELETE FROM cleanup_jobs WHERE id = ANY($1)", [cleanupJobIds]);
       }
+      await handle.pool.query("DELETE FROM case_versions WHERE source_id = ANY($1)", [
+        [currentSourceId, candidateSourceId, unreferencedSourceId],
+      ]);
       await handle.pool.query("DELETE FROM case_sources WHERE id IN ($1, $2, $3)", [
         currentSourceId,
         candidateSourceId,

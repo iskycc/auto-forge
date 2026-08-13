@@ -27,6 +27,7 @@ type SchedulerPolicy = {
 type EnvironmentRow = { id: number; name: string; value: string };
 
 export function RunBatchPlanner({
+  canCreate,
   initialSuites,
   initialRunners,
   initialEnvironments,
@@ -35,6 +36,7 @@ export function RunBatchPlanner({
   nextPageHref,
   policy,
 }: {
+  canCreate: boolean;
   initialSuites: CaseSuite[];
   initialRunners: Runner[];
   initialEnvironments: ExecutionEnvironmentDetails[];
@@ -153,242 +155,244 @@ export function RunBatchPlanner({
 
   return (
     <div className="run-batch-layout">
-      <form className="card run-batch-form" onSubmit={createBatch}>
-        <div className="section-heading">
-          <div>
-            <span className="step-label">01</span>
-            <h2>选择用例任务</h2>
+      {canCreate ? (
+        <form className="card run-batch-form" onSubmit={createBatch}>
+          <div className="section-heading">
+            <div>
+              <span className="step-label">01</span>
+              <h2>选择用例任务</h2>
+            </div>
+            <span className="muted">固定任务版本快照</span>
           </div>
-          <span className="muted">固定任务版本快照</span>
-        </div>
-        <label className="field-stack">
-          <span>用例任务</span>
-          <Select
-            value={suiteId}
-            onChange={(event) => {
-              setSuiteId(event.target.value);
-              setEnvironmentVersionId("");
-            }}
-            required
-          >
-            {initialSuites.length === 0 ? <option value="">暂无可执行任务</option> : null}
-            {initialSuites.map((suite) => (
-              <option key={suite.id} value={suite.id}>
-                {suite.name} · {suite.caseCount} 个用例 · v{suite.version}
-              </option>
-            ))}
-          </Select>
-        </label>
-        {selectedSuite ? (
-          <div className="selection-summary">
-            <Check size={16} />
-            <span>
-              将为 <strong>{selectedSuite.caseCount}</strong> 个用例创建独立 ExecutionRun
-            </span>
-          </div>
-        ) : null}
-        {selectedSuite ? (
-          <p className="field-hint">
-            任务策略：优先级 {selectedSuite.policy.priority} · 并发{" "}
-            {selectedSuite.policy.concurrency} · 重跑 {selectedSuite.policy.retryLimit} 次 · 排队{" "}
-            {Math.round(selectedSuite.policy.queueTimeoutMs / 60_000)} 分钟 · 执行{" "}
-            {Math.round(selectedSuite.policy.executionTimeoutMs / 60_000)} 分钟
-            {selectedSuite.policy.runnerLabels.length > 0
-              ? ` · 要求标签 ${selectedSuite.policy.runnerLabels.join("、")}`
-              : ""}
-          </p>
-        ) : null}
-
-        <div className="section-heading scheduler-step">
-          <div>
-            <span className="step-label">02</span>
-            <h2>勾选执行机</h2>
-          </div>
-          <span className="muted">已选 {runnerIds.length} 台</span>
-        </div>
-        <div className="runner-choice-grid">
-          {initialRunners.length === 0 ? (
-            <div className="inline-empty">暂无执行机，请先注册 Runner Agent。</div>
-          ) : (
-            initialRunners.map((runner) => {
-              const metrics = runner.resourceSnapshot;
-              const selected = runnerIds.includes(runner.id);
-              const compatibility = assessRunnerCompatibility(runner);
-              const unavailable = runner.state === "disabled" || !compatibility.compatible;
-              return (
-                <label
-                  className={`runner-choice ${selected ? "runner-choice-selected" : ""} ${unavailable ? "runner-choice-disabled" : ""}`}
-                  key={runner.id}
-                  title={runnerCompatibilitySummary(compatibility)}
-                >
-                  <Input
-                    type="checkbox"
-                    checked={selected}
-                    disabled={unavailable}
-                    onChange={() => toggleRunner(runner.id)}
-                  />
-                  <span className="runner-choice-title">
-                    <strong>{runner.name}</strong>
-                    <small className={`runner-state runner-state-${runner.state}`}>
-                      <i /> {stateLabel(runner.state)}
-                    </small>
-                  </span>
-                  <span className="runner-choice-metrics">
-                    <small>
-                      <Cpu size={13} /> CPU{" "}
-                      {metrics ? `${metrics.cpuUtilizationPercent}%` : "待上报"}
-                    </small>
-                    <small>
-                      <MemoryStick size={13} /> 内存{" "}
-                      {metrics ? `${metrics.memoryUtilizationPercent}%` : "待上报"}
-                    </small>
-                    <small>
-                      <Activity size={13} /> 负载{" "}
-                      {metrics
-                        ? (metrics.loadAverage1m / metrics.logicalCpuCount).toFixed(2)
-                        : "待上报"}
-                      {metrics ? "/CPU" : ""}
-                    </small>
-                  </span>
-                  <span className="runner-choice-capacity">
-                    槽位 {runner.busySlots}/{runner.maxConcurrency} ·{" "}
-                    {runnerCompatibilityLabel(compatibility.status)}
-                  </span>
-                </label>
-              );
-            })
-          )}
-        </div>
-
-        <div className="form-grid scheduler-step">
           <label className="field-stack">
-            <span>失败用例重跑次数</span>
+            <span>用例任务</span>
             <Select
-              value={retryLimit}
-              onChange={(event) =>
-                setRetryLimit(event.target.value === "" ? "" : Number(event.target.value))
-              }
+              value={suiteId}
+              onChange={(event) => {
+                setSuiteId(event.target.value);
+                setEnvironmentVersionId("");
+              }}
+              required
             >
-              <option value="">
-                继承任务策略{selectedSuite ? `（${selectedSuite.policy.retryLimit} 次）` : ""}
-              </option>
-              {Array.from({ length: 11 }, (_, value) => (
-                <option key={value} value={value}>
-                  {value === 0 ? "不重跑" : `${value} 次`}
+              {initialSuites.length === 0 ? <option value="">暂无可执行任务</option> : null}
+              {initialSuites.map((suite) => (
+                <option key={suite.id} value={suite.id}>
+                  {suite.name} · {suite.caseCount} 个用例 · v{suite.version}
                 </option>
               ))}
             </Select>
           </label>
-          <div className="policy-summary" aria-label="当前调度阈值">
-            <strong>当前准入阈值</strong>
-            <span>CPU ≤ {policy.maximumCpuUtilizationPercent}%</span>
-            <span>内存 ≤ {policy.maximumMemoryUtilizationPercent}%</span>
-            <span>负载/CPU ≤ {policy.maximumLoadPerCpu}</span>
-          </div>
-        </div>
+          {selectedSuite ? (
+            <div className="selection-summary">
+              <Check size={16} />
+              <span>
+                将为 <strong>{selectedSuite.caseCount}</strong> 个用例创建独立 ExecutionRun
+              </span>
+            </div>
+          ) : null}
+          {selectedSuite ? (
+            <p className="field-hint">
+              任务策略：优先级 {selectedSuite.policy.priority} · 并发{" "}
+              {selectedSuite.policy.concurrency} · 重跑 {selectedSuite.policy.retryLimit} 次 · 排队{" "}
+              {Math.round(selectedSuite.policy.queueTimeoutMs / 60_000)} 分钟 · 执行{" "}
+              {Math.round(selectedSuite.policy.executionTimeoutMs / 60_000)} 分钟
+              {selectedSuite.policy.runnerLabels.length > 0
+                ? ` · 要求标签 ${selectedSuite.policy.runnerLabels.join("、")}`
+                : ""}
+            </p>
+          ) : null}
 
-        <div className="section-heading scheduler-step">
-          <div>
-            <span className="step-label">03</span>
-            <h2>执行环境</h2>
+          <div className="section-heading scheduler-step">
+            <div>
+              <span className="step-label">02</span>
+              <h2>勾选执行机</h2>
+            </div>
+            <span className="muted">已选 {runnerIds.length} 台</span>
           </div>
+          <div className="runner-choice-grid">
+            {initialRunners.length === 0 ? (
+              <div className="inline-empty">暂无执行机，请先注册 Runner Agent。</div>
+            ) : (
+              initialRunners.map((runner) => {
+                const metrics = runner.resourceSnapshot;
+                const selected = runnerIds.includes(runner.id);
+                const compatibility = assessRunnerCompatibility(runner);
+                const unavailable = runner.state === "disabled" || !compatibility.compatible;
+                return (
+                  <label
+                    className={`runner-choice ${selected ? "runner-choice-selected" : ""} ${unavailable ? "runner-choice-disabled" : ""}`}
+                    key={runner.id}
+                    title={runnerCompatibilitySummary(compatibility)}
+                  >
+                    <Input
+                      type="checkbox"
+                      checked={selected}
+                      disabled={unavailable}
+                      onChange={() => toggleRunner(runner.id)}
+                    />
+                    <span className="runner-choice-title">
+                      <strong>{runner.name}</strong>
+                      <small className={`runner-state runner-state-${runner.state}`}>
+                        <i /> {stateLabel(runner.state)}
+                      </small>
+                    </span>
+                    <span className="runner-choice-metrics">
+                      <small>
+                        <Cpu size={13} /> CPU{" "}
+                        {metrics ? `${metrics.cpuUtilizationPercent}%` : "待上报"}
+                      </small>
+                      <small>
+                        <MemoryStick size={13} /> 内存{" "}
+                        {metrics ? `${metrics.memoryUtilizationPercent}%` : "待上报"}
+                      </small>
+                      <small>
+                        <Activity size={13} /> 负载{" "}
+                        {metrics
+                          ? (metrics.loadAverage1m / metrics.logicalCpuCount).toFixed(2)
+                          : "待上报"}
+                        {metrics ? "/CPU" : ""}
+                      </small>
+                    </span>
+                    <span className="runner-choice-capacity">
+                      槽位 {runner.busySlots}/{runner.maxConcurrency} ·{" "}
+                      {runnerCompatibilityLabel(compatibility.status)}
+                    </span>
+                  </label>
+                );
+              })
+            )}
+          </div>
+
+          <div className="form-grid scheduler-step">
+            <label className="field-stack">
+              <span>失败用例重跑次数</span>
+              <Select
+                value={retryLimit}
+                onChange={(event) =>
+                  setRetryLimit(event.target.value === "" ? "" : Number(event.target.value))
+                }
+              >
+                <option value="">
+                  继承任务策略{selectedSuite ? `（${selectedSuite.policy.retryLimit} 次）` : ""}
+                </option>
+                {Array.from({ length: 11 }, (_, value) => (
+                  <option key={value} value={value}>
+                    {value === 0 ? "不重跑" : `${value} 次`}
+                  </option>
+                ))}
+              </Select>
+            </label>
+            <div className="policy-summary" aria-label="当前调度阈值">
+              <strong>当前准入阈值</strong>
+              <span>CPU ≤ {policy.maximumCpuUtilizationPercent}%</span>
+              <span>内存 ≤ {policy.maximumMemoryUtilizationPercent}%</span>
+              <span>负载/CPU ≤ {policy.maximumLoadPerCpu}</span>
+            </div>
+          </div>
+
+          <div className="section-heading scheduler-step">
+            <div>
+              <span className="step-label">03</span>
+              <h2>执行环境</h2>
+            </div>
+            <Button
+              className="button button-secondary compact-button"
+              type="button"
+              disabled={Boolean(environmentVersionId)}
+              onClick={addEnvironmentRow}
+            >
+              <Plus size={15} /> 添加变量
+            </Button>
+          </div>
+          <label className="field-stack">
+            <span>受管环境版本</span>
+            <Select
+              aria-label="受管环境版本"
+              value={environmentVersionId}
+              onChange={(event) => setEnvironmentVersionId(event.target.value)}
+            >
+              <option value="">不使用受管环境（手工变量）</option>
+              {availableEnvironments.map((environment) => (
+                <option key={environment.current.id} value={environment.current.id}>
+                  {environment.name} · v{environment.current.version} ·{" "}
+                  {environment.current.variables.length}
+                  个变量 · {environment.current.secretBindings.length} 个密文
+                </option>
+              ))}
+            </Select>
+          </label>
+          <p className="field-hint">
+            {environmentVersionId
+              ? "批次会固定引用当前选中的不可变环境版本；密文由 Agent 在有效 Lease 内按需领取。"
+              : "手工变量会随批次保存为快照；敏感值必须先在管理中心创建密文并绑定到受管环境。"}
+          </p>
+          <div className="environment-list">
+            {environmentVersionId ? (
+              <div className="inline-empty">已选择受管环境，不能同时提交手工变量。</div>
+            ) : environmentRows.length === 0 ? (
+              <div className="inline-empty">未配置变量，执行时使用 Runner 受控基础环境。</div>
+            ) : (
+              environmentRows.map((row) => (
+                <div className="environment-row" key={row.id}>
+                  <Input
+                    aria-label="环境变量名"
+                    placeholder="TEST_ENV"
+                    value={row.name}
+                    onChange={(event) =>
+                      setEnvironmentRows((current) =>
+                        current.map((item) =>
+                          item.id === row.id ? { ...item, name: event.target.value } : item,
+                        ),
+                      )
+                    }
+                  />
+                  <Input
+                    aria-label="环境变量值"
+                    placeholder="staging"
+                    value={row.value}
+                    onChange={(event) =>
+                      setEnvironmentRows((current) =>
+                        current.map((item) =>
+                          item.id === row.id ? { ...item, value: event.target.value } : item,
+                        ),
+                      )
+                    }
+                  />
+                  <Button
+                    className="icon-button small-icon-button"
+                    type="button"
+                    aria-label="删除环境变量"
+                    onClick={() =>
+                      setEnvironmentRows((current) => current.filter((item) => item.id !== row.id))
+                    }
+                  >
+                    <Trash2 size={15} />
+                  </Button>
+                </div>
+              ))
+            )}
+          </div>
+          {preflightBlockers.length > 0 ? (
+            <ul className="preflight-blockers" aria-label="执行配置阻塞项">
+              {preflightBlockers.map((blocker, index) => (
+                <li key={`${blocker.code}-${blocker.runnerId ?? blocker.sourceId ?? index}`}>
+                  <strong>{preflightCategoryLabel(blocker.category)}</strong>
+                  <span>{blocker.message}</span>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+          {error ? <p className="form-error">{error}</p> : null}
           <Button
-            className="button button-secondary compact-button"
-            type="button"
-            disabled={Boolean(environmentVersionId)}
-            onClick={addEnvironmentRow}
+            className="button button-primary run-batch-submit"
+            type="submit"
+            disabled={submitting || initialSuites.length === 0 || runnerIds.length === 0}
           >
-            <Plus size={15} /> 添加变量
+            {submitting ? <RefreshCw className="spin" size={17} /> : <Activity size={17} />}
+            {submitting ? "正在计算分配…" : "开始调度"}
           </Button>
-        </div>
-        <label className="field-stack">
-          <span>受管环境版本</span>
-          <Select
-            aria-label="受管环境版本"
-            value={environmentVersionId}
-            onChange={(event) => setEnvironmentVersionId(event.target.value)}
-          >
-            <option value="">不使用受管环境（手工变量）</option>
-            {availableEnvironments.map((environment) => (
-              <option key={environment.current.id} value={environment.current.id}>
-                {environment.name} · v{environment.current.version} ·{" "}
-                {environment.current.variables.length}
-                个变量 · {environment.current.secretBindings.length} 个密文
-              </option>
-            ))}
-          </Select>
-        </label>
-        <p className="field-hint">
-          {environmentVersionId
-            ? "批次会固定引用当前选中的不可变环境版本；密文由 Agent 在有效 Lease 内按需领取。"
-            : "手工变量会随批次保存为快照；敏感值必须先在管理中心创建密文并绑定到受管环境。"}
-        </p>
-        <div className="environment-list">
-          {environmentVersionId ? (
-            <div className="inline-empty">已选择受管环境，不能同时提交手工变量。</div>
-          ) : environmentRows.length === 0 ? (
-            <div className="inline-empty">未配置变量，执行时使用 Runner 受控基础环境。</div>
-          ) : (
-            environmentRows.map((row) => (
-              <div className="environment-row" key={row.id}>
-                <Input
-                  aria-label="环境变量名"
-                  placeholder="TEST_ENV"
-                  value={row.name}
-                  onChange={(event) =>
-                    setEnvironmentRows((current) =>
-                      current.map((item) =>
-                        item.id === row.id ? { ...item, name: event.target.value } : item,
-                      ),
-                    )
-                  }
-                />
-                <Input
-                  aria-label="环境变量值"
-                  placeholder="staging"
-                  value={row.value}
-                  onChange={(event) =>
-                    setEnvironmentRows((current) =>
-                      current.map((item) =>
-                        item.id === row.id ? { ...item, value: event.target.value } : item,
-                      ),
-                    )
-                  }
-                />
-                <Button
-                  className="icon-button small-icon-button"
-                  type="button"
-                  aria-label="删除环境变量"
-                  onClick={() =>
-                    setEnvironmentRows((current) => current.filter((item) => item.id !== row.id))
-                  }
-                >
-                  <Trash2 size={15} />
-                </Button>
-              </div>
-            ))
-          )}
-        </div>
-        {preflightBlockers.length > 0 ? (
-          <ul className="preflight-blockers" aria-label="执行配置阻塞项">
-            {preflightBlockers.map((blocker, index) => (
-              <li key={`${blocker.code}-${blocker.runnerId ?? blocker.sourceId ?? index}`}>
-                <strong>{preflightCategoryLabel(blocker.category)}</strong>
-                <span>{blocker.message}</span>
-              </li>
-            ))}
-          </ul>
-        ) : null}
-        {error ? <p className="form-error">{error}</p> : null}
-        <Button
-          className="button button-primary run-batch-submit"
-          type="submit"
-          disabled={submitting || initialSuites.length === 0 || runnerIds.length === 0}
-        >
-          {submitting ? <RefreshCw className="spin" size={17} /> : <Activity size={17} />}
-          {submitting ? "正在计算分配…" : "开始调度"}
-        </Button>
-      </form>
+        </form>
+      ) : null}
 
       <section className="card run-batch-history">
         <div className="section-heading">

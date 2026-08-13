@@ -134,8 +134,15 @@ export function JarImporter({
       if (!response.ok) throw new Error(await errorMessage(response));
       const parsed = jarImportJobSchema.parse(await response.json());
       // Idempotent duplicate imports can return an already-terminal job. Apply
-      // that state immediately because no progress poll will run for it.
-      applyJobState(parsed);
+      // that state immediately because no progress poll will run for it. A
+      // succeeded job returned directly by POST is a replay of the implicit
+      // content-digest idempotency key, so describe the observable operation
+      // as a duplicate even though the stored job retains its original result.
+      applyJobState(
+        parsed.status === "succeeded" && parsed.result
+          ? { ...parsed, result: { ...parsed.result, duplicate: true } }
+          : parsed,
+      );
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "导入 JAR 失败。");
       setPhase("ready");

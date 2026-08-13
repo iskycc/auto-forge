@@ -23,23 +23,31 @@ function formatDate(value: string): string {
 export function CaseSelectionTable({
   cases,
   suites,
+  manageableProjectIds,
 }: {
   cases: CaseDefinitionWithMethods[];
   suites: CaseSuite[];
+  manageableProjectIds: string[] | undefined;
 }) {
   const [selected, setSelected] = useState(() => new Set<string>());
   const [suiteId, setSuiteId] = useState(suites[0]?.id ?? "");
   const [pending, setPending] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
-  const allSelected = cases.length > 0 && selected.size === cases.length;
+  const canManageProject = (projectId: string): boolean =>
+    manageableProjectIds === undefined || manageableProjectIds.includes(projectId);
+  const manageableCases = cases.filter((item) => canManageProject(item.projectId));
+  const manageableSuites = suites.filter((suite) => canManageProject(suite.projectId));
+  const canManageAnyCase = manageableCases.length > 0;
+  const allSelected =
+    manageableCases.length > 0 && manageableCases.every((item) => selected.has(item.id));
   const selectedProjects = new Set(
     cases.filter((item) => selected.has(item.id)).map((item) => item.projectId),
   );
   const crossProjectSelection = selectedProjects.size > 1;
   const selectedProjectId = selectedProjects.size === 1 ? [...selectedProjects][0] : undefined;
   const targetSuites = selectedProjectId
-    ? suites.filter((suite) => suite.projectId === selectedProjectId)
-    : suites;
+    ? manageableSuites.filter((suite) => suite.projectId === selectedProjectId)
+    : manageableSuites;
   const effectiveSuiteId = targetSuites.some((suite) => suite.id === suiteId)
     ? suiteId
     : (targetSuites[0]?.id ?? "");
@@ -85,44 +93,47 @@ export function CaseSelectionTable({
 
   return (
     <>
-      <div className="selection-toolbar">
-        <span>
-          {crossProjectSelection
-            ? "不能跨项目混选，请先按项目筛选或取消其他项目的勾选"
-            : selected.size === 0
-              ? "勾选用例后加入任务"
-              : `已选择 ${selected.size} 个用例`}
-        </span>
-        {suites.length === 0 ? (
-          <Link className="button button-secondary" href="/case-suites">
-            <Layers3 size={15} /> 新建用例任务
-          </Link>
-        ) : (
-          <span className="selection-actions">
-            <Select
-              value={effectiveSuiteId}
-              onChange={(event) => setSuiteId(event.target.value)}
-              aria-label="目标用例任务"
-            >
-              {targetSuites.map((suite) => (
-                <option value={suite.id} key={suite.id}>
-                  {suite.name}
-                </option>
-              ))}
-            </Select>
-            <Button
-              className="button button-primary"
-              type="button"
-              disabled={
-                selected.size === 0 || pending || crossProjectSelection || !effectiveSuiteId
-              }
-              onClick={addToSuite}
-            >
-              {pending ? <LoaderCircle className="spin" size={15} /> : <Check size={15} />} 加入任务
-            </Button>
+      {canManageAnyCase ? (
+        <div className="selection-toolbar">
+          <span>
+            {crossProjectSelection
+              ? "不能跨项目混选，请先按项目筛选或取消其他项目的勾选"
+              : selected.size === 0
+                ? "勾选用例后加入任务"
+                : `已选择 ${selected.size} 个用例`}
           </span>
-        )}
-      </div>
+          {manageableSuites.length === 0 ? (
+            <Link className="button button-secondary" href="/case-suites">
+              <Layers3 size={15} /> 新建用例任务
+            </Link>
+          ) : (
+            <span className="selection-actions">
+              <Select
+                value={effectiveSuiteId}
+                onChange={(event) => setSuiteId(event.target.value)}
+                aria-label="目标用例任务"
+              >
+                {targetSuites.map((suite) => (
+                  <option value={suite.id} key={suite.id}>
+                    {suite.name}
+                  </option>
+                ))}
+              </Select>
+              <Button
+                className="button button-primary"
+                type="button"
+                disabled={
+                  selected.size === 0 || pending || crossProjectSelection || !effectiveSuiteId
+                }
+                onClick={addToSuite}
+              >
+                {pending ? <LoaderCircle className="spin" size={15} /> : <Check size={15} />}{" "}
+                加入任务
+              </Button>
+            </span>
+          )}
+        </div>
+      ) : null}
       {message && (
         <div className="inline-feedback" role="status">
           {message}
@@ -132,16 +143,20 @@ export function CaseSelectionTable({
         <table className="data-table selectable-table">
           <thead>
             <tr>
-              <th className="checkbox-cell">
-                <Input
-                  type="checkbox"
-                  aria-label="选择本页全部用例"
-                  checked={allSelected}
-                  onChange={() =>
-                    setSelected(allSelected ? new Set() : new Set(cases.map((item) => item.id)))
-                  }
-                />
-              </th>
+              {canManageAnyCase ? (
+                <th className="checkbox-cell">
+                  <Input
+                    type="checkbox"
+                    aria-label="选择本页全部用例"
+                    checked={allSelected}
+                    onChange={() =>
+                      setSelected(
+                        allSelected ? new Set() : new Set(manageableCases.map((item) => item.id)),
+                      )
+                    }
+                  />
+                </th>
+              ) : null}
               <th>测试类</th>
               <th>测试方法</th>
               <th>分组</th>
@@ -152,14 +167,18 @@ export function CaseSelectionTable({
           <tbody>
             {cases.map((item) => (
               <tr className={selected.has(item.id) ? "selected-row" : ""} key={item.id}>
-                <td className="checkbox-cell">
-                  <Input
-                    type="checkbox"
-                    aria-label={`选择 ${item.displayName}`}
-                    checked={selected.has(item.id)}
-                    onChange={() => toggle(item.id)}
-                  />
-                </td>
+                {canManageAnyCase ? (
+                  <td className="checkbox-cell">
+                    {canManageProject(item.projectId) ? (
+                      <Input
+                        type="checkbox"
+                        aria-label={`选择 ${item.displayName}`}
+                        checked={selected.has(item.id)}
+                        onChange={() => toggle(item.id)}
+                      />
+                    ) : null}
+                  </td>
+                ) : null}
                 <td>
                   <span className="class-cell">
                     <strong>
