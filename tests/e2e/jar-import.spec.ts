@@ -769,7 +769,9 @@ public class MixedVisibleTest {
   await page.getByRole("link", { name: "查看用例库" }).click();
   await page.getByRole("link", { name: "SourceVisibleTest" }).click();
   await expect(page.getByRole("heading", { name: "用例源码" })).toBeVisible();
-  await expect(page.locator(".source-code-viewer")).toContainText("AUTOFORGE_SOURCE_VIEW_E2E");
+  await expect(page.locator(".source-code-card .source-code-viewer")).toContainText(
+    "AUTOFORGE_SOURCE_VIEW_E2E",
+  );
   await expect(page.getByText(/不能直接执行/)).toBeVisible();
   await expect(page.getByRole("button", { name: "立即执行" })).toHaveCount(0);
 
