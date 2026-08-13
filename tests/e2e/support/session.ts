@@ -30,9 +30,16 @@ export async function ensureAdministrator(page: Page): Promise<void> {
     await page.getByLabel("管理员密码").fill(E2E_ADMIN_PASSWORD);
     await page.getByRole("button", { name: "创建系统管理员" }).click();
     await expect(page).toHaveURL(/\/$/, { timeout: 20_000 });
+    await expectAdministratorShell(page);
     return;
   }
   await login(page, E2E_ADMIN_USERNAME, E2E_ADMIN_PASSWORD);
+  await expectAdministratorShell(page);
+}
+
+async function expectAdministratorShell(page: Page): Promise<void> {
+  await expect(page.getByRole("navigation", { name: "主导航" })).toBeVisible({ timeout: 20_000 });
+  await expect(page.getByRole("button", { name: "退出登录" })).toBeVisible();
 }
 
 export async function login(page: Page, username: string, password: string): Promise<void> {

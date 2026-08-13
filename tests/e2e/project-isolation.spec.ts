@@ -2,6 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { zipSync } from "fflate";
 
 import { buildClassFile } from "../../packages/testng-discovery/test/class-fixture";
+import { freshRunnerBootstrapToken } from "./support/runner-bootstrap";
 import { browserJson, ensureAdministrator, login, logout, uniqueName } from "./support/session";
 
 const VIEWER_ROLE_ID = "00000000-0000-7000-8100-000000000005";
@@ -261,11 +262,11 @@ async function addCaseToSuite(
 
 async function registerRunner(page: Page, suffix: string): Promise<string> {
   const registration = await page.request.post("/api/v1/runner-agents/register", {
-    headers: { authorization: `Bearer ${requiredEnvironment("E2E_RUNNER_BOOTSTRAP_TOKEN")}` },
+    headers: { authorization: `Bearer ${freshRunnerBootstrapToken()}` },
     data: {
       schemaVersion: 1,
       name: `Isolation Runner ${suffix}`,
-      labels: ["linux", "isolation"],
+      labels: ["linux", "java", "testng", "isolation"],
       capabilities: ["executor:testng-v1", "isolation:cgroup-v2", "java:21.0.8", "testng:7.11.0"],
       maxConcurrency: 4,
       os: "linux",
@@ -284,7 +285,7 @@ async function registerRunner(page: Page, suffix: string): Promise<string> {
       data: {
         schemaVersion: 1,
         busySlots: 0,
-        labels: ["linux", "isolation"],
+        labels: ["linux", "java", "testng", "isolation"],
         capabilities: ["executor:testng-v1", "isolation:cgroup-v2", "java:21.0.8", "testng:7.11.0"],
         maxConcurrency: 4,
         agentVersion: "0.3.3-e2e",
@@ -355,10 +356,4 @@ async function expectForbidden(page: Page, path: string): Promise<void> {
 async function expectNotFoundOrForbidden(page: Page, path: string): Promise<void> {
   const response = await browserJson<{ error?: { code?: string } }>(page, path);
   expect([403, 404]).toContain(response.status);
-}
-
-function requiredEnvironment(name: string): string {
-  const value = process.env[name]?.trim();
-  if (!value) throw new Error(`${name} is required for project isolation acceptance.`);
-  return value;
 }

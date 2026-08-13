@@ -112,6 +112,19 @@ export type RuntimePlatformConfiguration = {
   migrationsFolder: string;
 };
 
+export class PlatformConfigurationConflictError extends Error {
+  constructor() {
+    super("平台配置已被其他管理员修改，请刷新后重试。");
+    this.name = "PlatformConfigurationConflictError";
+  }
+}
+
+export function isPlatformConfigurationConflictError(
+  error: unknown,
+): error is PlatformConfigurationConflictError {
+  return error instanceof Error && error.name === "PlatformConfigurationConflictError";
+}
+
 export class PlatformConfigurationStore {
   readonly paths: PlatformConfigurationPaths;
 
@@ -162,7 +175,7 @@ export class PlatformConfigurationStore {
   ): PersistedPlatformConfiguration {
     const current = this.read();
     if (current.revision !== expectedRevision) {
-      throw new Error("平台配置已被其他管理员修改，请刷新后重试。");
+      throw new PlatformConfigurationConflictError();
     }
     const validated = persistedPlatformConfigurationSchema.parse({
       ...next,

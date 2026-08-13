@@ -3,6 +3,7 @@ import { zipSync } from "fflate";
 import { randomUUID } from "node:crypto";
 
 import { buildClassFile } from "../../packages/testng-discovery/test/class-fixture";
+import { freshRunnerBootstrapToken } from "./support/runner-bootstrap";
 import { browserJson, ensureAdministrator, uniqueName } from "./support/session";
 
 const runnerCapabilities = [
@@ -19,9 +20,7 @@ test("authoritative execution recovery handles every timeout and idempotent race
   await ensureAdministrator(page);
   const suiteId = await createExecutableFixture(page);
   const runner = await registerRunner(page, "Execution Recovery Runner", runnerCapabilities);
-  const incompatible = await registerRunner(page, "Incompatible Recovery Runner", [
-    "isolation:cgroup-v2",
-  ]);
+  await heartbeatRunner(page, runner, ["isolation:cgroup-v2"]);
 
   const preflight = await browserJson<{
     ready: boolean;
@@ -30,15 +29,16 @@ test("authoritative execution recovery handles every timeout and idempotent race
     method: "POST",
     body: {
       suiteId,
-      runnerIds: [incompatible.runnerId],
+      runnerIds: [runner.runnerId],
       environmentVariables: [],
     },
   });
   expect(preflight.status).toBe(200);
   expect(preflight.body.ready).toBe(false);
   expect(preflight.body.blockers).toContainEqual(
-    expect.objectContaining({ category: "runner", runnerId: incompatible.runnerId }),
+    expect.objectContaining({ category: "runner", runnerId: runner.runnerId }),
   );
+  await heartbeatRunner(page, runner, runnerCapabilities);
 
   const claimTimeoutBatch = await createBatch(page, suiteId, runner.runnerId, {
     claimTimeoutMs: 1_000,
@@ -181,7 +181,7 @@ async function registerRunner(
   capabilities: string[],
 ): Promise<RunnerIdentity> {
   const registration = await page.request.post("/api/v1/runner-agents/register", {
-    headers: { authorization: `Bearer ${requiredEnvironment("E2E_RUNNER_BOOTSTRAP_TOKEN")}` },
+    headers: { authorization: `Bearer ${freshRunnerBootstrapToken()}` },
     data: {
       schemaVersion: 1,
       name,
@@ -197,6 +197,15 @@ async function registerRunner(
   });
   expect(registration.status()).toBe(201);
   const runner = (await registration.json()) as RunnerIdentity;
+  await heartbeatRunner(page, runner, capabilities);
+  return runner;
+}
+
+async function heartbeatRunner(
+  page: Page,
+  runner: RunnerIdentity,
+  capabilities: string[],
+): Promise<void> {
   const heartbeat = await page.request.post(
     `/api/v1/runner-agents/${encodeURIComponent(runner.runnerId)}/heartbeat`,
     {
@@ -220,7 +229,6 @@ async function registerRunner(
     },
   );
   expect(heartbeat.status()).toBe(200);
-  return runner;
 }
 
 async function createBatch(
@@ -348,10 +356,4 @@ function runnerHeaders(runner: RunnerIdentity): Record<string, string> {
     authorization: `Bearer ${runner.credential}`,
     "x-autoforge-runner-id": runner.runnerId,
   };
-}
-
-function requiredEnvironment(name: string): string {
-  const value = process.env[name]?.trim();
-  if (!value) throw new Error(`${name} is required for execution recovery acceptance.`);
-  return value;
 }

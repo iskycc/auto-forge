@@ -31,8 +31,9 @@ const e2eConfiguration =
   initialConfiguration.scheduler.projectMaximumConcurrency === requestedProjectMaximumConcurrency
     ? initialConfiguration
     : e2eConfigurationStore.replace(requestedConfiguration, initialConfiguration.revision);
-process.env.E2E_ADMIN_BOOTSTRAP_TOKEN = e2eConfiguration.secrets.adminBootstrapToken;
-process.env.E2E_RUNNER_BOOTSTRAP_TOKEN = e2eConfiguration.secrets.runnerBootstrapToken;
+process.env.E2E_ADMIN_BOOTSTRAP_TOKEN ??= e2eConfiguration.secrets.adminBootstrapToken;
+process.env.E2E_RUNNER_BOOTSTRAP_TOKEN ??= e2eConfiguration.secrets.runnerBootstrapToken;
+process.env.E2E_RUNNER_BOOTSTRAP_MASTER_KEY ??= e2eConfiguration.secrets.masterKey;
 
 export default defineConfig({
   testDir: "./tests/e2e",

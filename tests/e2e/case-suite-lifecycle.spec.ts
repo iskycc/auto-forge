@@ -10,12 +10,18 @@ test("case metadata, immutable versions and suite policy survive lifecycle chang
   test.setTimeout(240_000);
   await ensureAdministrator(page);
   const suffix = uniqueName("lifecycle");
+  const project = await createProject(page, suffix);
   const className = `com.example.Lifecycle${Date.now()}Test`;
-  await importJar(page, `${suffix}.jar`, className, ["createsVersion"]);
+  const initialSourceName = `${suffix}-v1.jar`;
+  const candidateSourceName = `${suffix}-v2.jar`;
+  await importJar(page, project, initialSourceName, className, ["createsVersion"]);
 
   const definitions = await browserJson<{
     items: Array<{ id: string; className: string; revision: number }>;
-  }>(page, `/api/v1/case-definitions?query=${encodeURIComponent(className)}`);
+  }>(
+    page,
+    `/api/v1/case-definitions?projectId=${encodeURIComponent(project.id)}&query=${encodeURIComponent(className)}`,
+  );
   const definition = definitions.body.items.find((item) => item.className === className);
   expect(definition).toBeTruthy();
 
@@ -49,22 +55,41 @@ test("case metadata, immutable versions and suite policy survive lifecycle chang
   expect(staleUpdate.status).toBe(409);
   expect(staleUpdate.body.error?.code).toMatch(/REVISION_CONFLICT/);
 
+  await importJar(page, project, candidateSourceName, className, [
+    "createsVersion",
+    "browserAdded",
+  ]);
+  const sources = await browserJson<{
+    items: Array<{ id: string; originalFileName: string }>;
+  }>(page, `/api/v1/case-sources?projectId=${encodeURIComponent(project.id)}&limit=200`);
+  const candidateSource = sources.body.items.find(
+    (source) => source.originalFileName === candidateSourceName,
+  );
+  expect(candidateSource).toBeTruthy();
+  await page.goto(`/case-sources/${encodeURIComponent(candidateSource!.id)}`);
+  await page.getByRole("button", { name: "对比权威来源" }).click();
+  await expect(page.getByText(/对比结果：新增 0、变更 1、消失 0、冲突 0/)).toBeVisible();
+  await page.getByRole("button", { name: "确认同步为权威来源" }).click();
+  await expect(page.getByText("已切换为权威来源。")).toBeVisible();
+
   await page.goto(`/cases/${encodeURIComponent(definition!.id)}`);
   await expect(page.getByRole("heading", { name: `Lifecycle display ${suffix}` })).toBeVisible();
   await page.getByLabel("标签（逗号分隔）").fill("lifecycle, browser-update");
   await page.getByLabel(/启用（禁用后/).uncheck();
   await page.getByRole("button", { name: "保存修改" }).click();
   await expect(page.getByRole("status")).toContainText("用例已更新");
-  await expect(page.getByText(/版本历史（[3-9][0-9]*）/)).toBeVisible();
-  await expect(page.getByText(/用例状态：启用 → 停用/)).toBeVisible();
+  await expect(page.getByText("版本历史（2）")).toBeVisible();
+  await expect(
+    page.locator(".version-diff-list").getByText(/方法新增：.*browserAdded/),
+  ).toBeVisible();
   page.once("dialog", (dialog) => dialog.accept());
   await page.getByRole("button", { name: "从该版本创建" }).last().click();
-  await expect(page.getByText(/版本历史（[4-9][0-9]*）/)).toBeVisible();
+  await expect(page.getByText("版本历史（3）")).toBeVisible();
 
   const suiteName = `Lifecycle suite ${suffix}`;
   const suite = await browserJson<{ id: string; revision: number }>(page, "/api/v1/case-suites", {
     method: "POST",
-    body: { name: suiteName, description: "lifecycle E2E suite" },
+    body: { projectId: project.id, name: suiteName, description: "lifecycle E2E suite" },
   });
   expect(suite.status).toBe(201);
   const addCase = await browserJson(page, `/api/v1/case-suites/${suite.body.id}/cases`, {
@@ -133,11 +158,12 @@ test("source comparison, promotion, archive recovery and guarded deletion are ob
   test.setTimeout(180_000);
   await ensureAdministrator(page);
   const suffix = uniqueName("source-lifecycle");
+  const project = await createProject(page, suffix);
   const className = `com.example.SourceLifecycle${Date.now()}Test`;
   const originalName = `${suffix}-v1.jar`;
   const candidateName = `${suffix}-v2.jar`;
-  await importJar(page, originalName, className, ["original"]);
-  await importJar(page, candidateName, className, ["original", "addedByCandidate"]);
+  await importJar(page, project, originalName, className, ["original"]);
+  await importJar(page, project, candidateName, className, ["original", "addedByCandidate"]);
 
   const sources = await browserJson<{
     items: Array<{
@@ -147,7 +173,7 @@ test("source comparison, promotion, archive recovery and guarded deletion are ob
       lifecycleStatus: string;
       revision: number;
     }>;
-  }>(page, "/api/v1/case-sources?limit=200");
+  }>(page, `/api/v1/case-sources?projectId=${encodeURIComponent(project.id)}&limit=200`);
   const original = sources.body.items.find((source) => source.originalFileName === originalName);
   const candidate = sources.body.items.find((source) => source.originalFileName === candidateName);
   expect(original).toBeTruthy();
@@ -185,6 +211,7 @@ test("source comparison, promotion, archive recovery and guarded deletion are ob
 
 async function importJar(
   page: Page,
+  project: { id: string; name: string },
   fileName: string,
   className: string,
   methodNames: string[],
@@ -198,7 +225,8 @@ async function importJar(
       })),
     }),
   });
-  await page.goto("/cases/import");
+  await page.goto(`/cases/import?projectId=${encodeURIComponent(project.id)}`);
+  await page.getByLabel("导入项目").selectOption({ label: project.name });
   await page.locator('input[type="file"]').setInputFiles({
     name: fileName,
     mimeType: "application/java-archive",
@@ -210,4 +238,14 @@ async function importJar(
   await expect(page.getByRole("status")).toContainText(/已导入|已返回现有用例/, {
     timeout: 60_000,
   });
+}
+
+async function createProject(page: Page, suffix: string): Promise<{ id: string; name: string }> {
+  const name = `Lifecycle project ${suffix}`;
+  const response = await browserJson<{ id: string; name: string }>(page, "/api/v1/projects", {
+    method: "POST",
+    body: { name, slug: `lifecycle-${suffix}` },
+  });
+  expect(response.status).toBe(201);
+  return response.body;
 }

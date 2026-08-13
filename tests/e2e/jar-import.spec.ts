@@ -6,14 +6,13 @@ import { resolve } from "node:path";
 import WebSocket from "ws";
 
 import { buildClassFile } from "../../packages/testng-discovery/test/class-fixture";
+import { freshRunnerBootstrapToken } from "./support/runner-bootstrap";
 import {
   appAlert,
   E2E_ADMIN_PASSWORD,
   E2E_ADMIN_USERNAME,
   ensureAdministrator,
 } from "./support/session";
-
-const runnerBootstrapToken = requiredTestSecret("E2E_RUNNER_BOOTSTRAP_TOKEN");
 
 async function captureUi(page: Page, name: string): Promise<void> {
   const screenshotDirectory = process.env.AUTOFORGE_UI_SCREENSHOT_DIR;
@@ -316,7 +315,7 @@ public class MixedVisibleTest {
   await expect(page.getByRole("button", { name: "当前全量来源" })).toBeVisible();
 
   const registration = await page.request.post("/api/v1/runner-agents/register", {
-    headers: { authorization: `Bearer ${runnerBootstrapToken}` },
+    headers: { authorization: `Bearer ${freshRunnerBootstrapToken()}` },
     data: {
       schemaVersion: 1,
       name: "E2E Runner",
@@ -811,12 +810,6 @@ public class MixedVisibleTest {
   const authenticatedSession = await page.request.get("/api/v1/auth/session");
   expect(authenticatedSession.status()).toBe(200);
 });
-
-function requiredTestSecret(name: string): string {
-  const value = process.env[name];
-  if (!value) throw new Error(`${name} was not initialized by Playwright configuration.`);
-  return value;
-}
 
 function terminalStreamUrl(): string {
   const url = new URL(

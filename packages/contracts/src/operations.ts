@@ -16,17 +16,28 @@ export const serviceAccountSchema = z.object({
   revision: z.number().int().positive(),
 });
 
+const serviceAccountNameSchema = z.string().trim().min(1).max(120);
+const serviceAccountDescriptionSchema = z.string().trim().max(500);
+const serviceAccountSystemPermissionsSchema = z.array(permissionSchema).max(128);
+const serviceAccountProjectPermissionsSchema = z
+  .record(identifierSchema, z.array(permissionSchema).max(128))
+  .refine((value) => Object.keys(value).length <= 100, "项目权限最多覆盖 100 个项目。");
+
 export const createServiceAccountInputSchema = z.object({
-  name: z.string().trim().min(1).max(120),
-  description: z.string().trim().max(500).default(""),
-  systemPermissions: z.array(permissionSchema).max(128).default([]),
-  projectPermissions: z
-    .record(identifierSchema, z.array(permissionSchema).max(128))
-    .refine((value) => Object.keys(value).length <= 100, "项目权限最多覆盖 100 个项目。")
-    .default({}),
+  name: serviceAccountNameSchema,
+  description: serviceAccountDescriptionSchema.default(""),
+  systemPermissions: serviceAccountSystemPermissionsSchema.default([]),
+  projectPermissions: serviceAccountProjectPermissionsSchema.default({}),
 });
 
-export const updateServiceAccountInputSchema = createServiceAccountInputSchema.partial().extend({
+// Do not derive this schema with partial(): Zod preserves defaults through
+// partial fields, which would turn a status-only update into an instruction to
+// clear every permission assignment.
+export const updateServiceAccountInputSchema = z.object({
+  name: serviceAccountNameSchema.optional(),
+  description: serviceAccountDescriptionSchema.optional(),
+  systemPermissions: serviceAccountSystemPermissionsSchema.optional(),
+  projectPermissions: serviceAccountProjectPermissionsSchema.optional(),
   status: z.enum(["active", "disabled"]).optional(),
   expectedRevision: z.number().int().positive(),
 });

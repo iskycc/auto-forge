@@ -2,16 +2,20 @@ import { DEFAULT_PROJECT_ID, hasPermission, projectIdsForPermission } from "@aut
 import Link from "next/link";
 
 import { EnvironmentSettings } from "@/components/environment-settings";
-import { requirePageProjectScope } from "@/lib/auth";
+import { hasPermissionInAnyScope, requirePageAnyPermission } from "@/lib/auth";
 import { getPlatformServices } from "@/lib/services";
 
 export default async function EnvironmentSettingsPage() {
-  const { identity, projectIds } = await requirePageProjectScope("environment.read");
+  const identity = await requirePageAnyPermission(["environment.read", "secret.manage"]);
   const services = await getPlatformServices();
+  const canReadEnvironments = hasPermissionInAnyScope(identity, "environment.read");
+  const projectIds = canReadEnvironments
+    ? projectIdsForPermission(identity, "environment.read")
+    : [];
   const manageableProjectIds = projectIdsForPermission(identity, "environment.manage");
   const secretProjectIds = projectIdsForPermission(identity, "secret.manage");
   const [environments, secrets, knownProjects] = await Promise.all([
-    services.executionEnvironments.list(projectIds),
+    canReadEnvironments ? services.executionEnvironments.list(projectIds) : Promise.resolve([]),
     secretProjectIds?.length === 0 ? [] : services.executionSecrets.list(secretProjectIds),
     hasPermission(identity, "project.read")
       ? services.identityAccess.listProjects(identity)
@@ -39,9 +43,13 @@ export default async function EnvironmentSettingsPage() {
           <p>管理项目级不可变环境版本、密文元数据和执行引用。</p>
         </div>
         <nav className="settings-tabs" aria-label="系统设置分类">
-          <Link href="/settings">管理中心</Link>
-          <Link href="/settings/platform">平台配置</Link>
-          <Link href="/settings/access">身份与访问</Link>
+          {hasPermissionInAnyScope(identity, "settings.read") ? (
+            <>
+              <Link href="/settings">管理中心</Link>
+              <Link href="/settings/platform">平台配置</Link>
+              <Link href="/settings/access">身份与访问</Link>
+            </>
+          ) : null}
           <Link aria-current="page" href="/settings/environments">
             环境与密文
           </Link>

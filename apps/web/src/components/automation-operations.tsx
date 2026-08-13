@@ -6,6 +6,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 
 import { Button } from "@/components/ui";
+import { readApiErrorMessage } from "@/lib/client-api";
 
 const RELOAD_MESSAGE_KEY = "autoforge:automation-operations:message";
 
@@ -39,10 +40,8 @@ export function AutomationOperations({
     setError("");
     try {
       const response = await fetch(path, init);
-      if (!response.ok) {
-        const body = (await response.json()) as { error?: { message?: string } };
-        throw new Error(body.error?.message ?? "操作失败。");
-      }
+      const errorMessage = await readApiErrorMessage(response, "操作失败。");
+      if (errorMessage) throw new Error(errorMessage);
       window.sessionStorage.setItem(RELOAD_MESSAGE_KEY, success);
       window.location.reload();
     } catch (cause) {

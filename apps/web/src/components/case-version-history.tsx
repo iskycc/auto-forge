@@ -180,7 +180,7 @@ export function CaseVersionHistory({
                         <p className="auth-error">该历史快照格式无效，不能展示或恢复。</p>
                       )}
                       <Link
-                        className="secondary-button"
+                        className="button button-secondary"
                         href={`/run-batches?caseDefinitionId=${encodeURIComponent(caseDefinitionId)}`}
                       >
                         查看该用例关联执行

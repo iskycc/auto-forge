@@ -4,7 +4,7 @@ import { hasPermission } from "@autoforge/domain";
 import { PlatformSettings } from "@/components/platform-settings";
 import { OperationsSettings } from "@/components/operations-settings";
 import { SystemDiagnostics } from "@/components/system-diagnostics";
-import { requirePagePermission } from "@/lib/auth";
+import { hasPermissionInAnyScope, requirePagePermission } from "@/lib/auth";
 import { platformConfigurationView } from "@/lib/platform-configuration";
 import { getPlatformServices } from "@/lib/services";
 
@@ -36,7 +36,10 @@ export default async function PlatformSettingsPage() {
             平台配置
           </Link>
           <Link href="/settings/access">身份与访问</Link>
-          <Link href="/settings/environments">环境与密文</Link>
+          {hasPermissionInAnyScope(identity, "environment.read") ||
+          hasPermissionInAnyScope(identity, "secret.manage") ? (
+            <Link href="/settings/environments">环境与密文</Link>
+          ) : null}
         </nav>
       </header>
       <PlatformSettings

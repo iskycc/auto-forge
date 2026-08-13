@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import {
+  PlatformConfigurationConflictError,
   PlatformConfigurationStore,
   loadPlatformConfiguration,
   resolvePlatformDataDirectory,
@@ -45,7 +46,7 @@ describe("platform configuration store", () => {
     expect(updated.revision).toBe(2);
     expect(updated.web.port).toBe(3100);
     expect(updated.secrets).toEqual(current.secrets);
-    expect(() => store.replace(updated, 1)).toThrow(/其他管理员/);
+    expect(() => store.replace(updated, 1)).toThrow(PlatformConfigurationConflictError);
   });
 
   it("recovers when the private token was persisted before platform.json", () => {

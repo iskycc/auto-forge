@@ -362,6 +362,7 @@ start_full_worker() {
 
 run_full_browser_flow() {
   local admin_bootstrap_token
+  local runner_bootstrap_master_key
   local runner_bootstrap_token
   admin_bootstrap_token="$(node -p \
     "JSON.parse(require('node:fs').readFileSync(process.argv[1], 'utf8')).secrets.adminBootstrapToken" \
@@ -369,10 +370,14 @@ run_full_browser_flow() {
   runner_bootstrap_token="$(node -p \
     "JSON.parse(require('node:fs').readFileSync(process.argv[1], 'utf8')).secrets.runnerBootstrapToken" \
     "${platform_data_directory}/config/platform.json")"
+  runner_bootstrap_master_key="$(node -p \
+    "JSON.parse(require('node:fs').readFileSync(process.argv[1], 'utf8')).secrets.masterKey" \
+    "${platform_data_directory}/config/platform.json")"
   E2E_BASE_URL=http://127.0.0.1:3199 \
   E2E_SECONDARY_BASE_URL=http://127.0.0.1:3198 \
   E2E_ADMIN_BOOTSTRAP_TOKEN="${admin_bootstrap_token}" \
   E2E_RUNNER_BOOTSTRAP_TOKEN="${runner_bootstrap_token}" \
+  E2E_RUNNER_BOOTSTRAP_MASTER_KEY="${runner_bootstrap_master_key}" \
     pnpm exec playwright test \
       --config playwright.full.config.ts \
       tests/e2e/case-suite-lifecycle.spec.ts \

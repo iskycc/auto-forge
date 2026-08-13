@@ -2,6 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 
 import {
   appAlert,
+  browserJson,
   E2E_ADMIN_PASSWORD,
   E2E_ADMIN_USERNAME,
   ensureAdministrator,
@@ -336,22 +337,15 @@ test("every built-in role receives only its authorized navigation and API surfac
 });
 
 async function createActiveUser(page: Page, username: string, password: string) {
-  const response = await page.evaluate(
-    async ({ requestedUsername, requestedPassword }) => {
-      const result = await fetch("/api/v1/users", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          username: requestedUsername,
-          displayName: requestedUsername,
-          password: requestedPassword,
-          forcePasswordChange: false,
-        }),
-      });
-      return { status: result.status, body: (await result.json()) as { id?: string } };
+  const response = await browserJson<{ id?: string }>(page, "/api/v1/users", {
+    method: "POST",
+    body: {
+      username,
+      displayName: username,
+      password,
+      forcePasswordChange: false,
     },
-    { requestedUsername: username, requestedPassword: password },
-  );
+  });
   expect(response.status).toBe(201);
   expect(response.body.id).toBeTruthy();
   return { id: response.body.id! };

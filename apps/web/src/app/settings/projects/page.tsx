@@ -1,7 +1,11 @@
 import Link from "next/link";
 
 import { ProjectMembershipManager } from "@/components/project-membership-manager";
-import { requireAuthorizedPageProjectScope, requirePageProjectScope } from "@/lib/auth";
+import {
+  hasPermissionInAnyScope,
+  requireAuthorizedPageProjectScope,
+  requirePageProjectScope,
+} from "@/lib/auth";
 import { getPlatformServices } from "@/lib/services";
 
 export default async function ProjectMembershipsPage({
@@ -48,7 +52,9 @@ export default async function ProjectMembershipsPage({
           <p>查看成员角色；项目管理员可添加、移除成员并安全转移负责人。</p>
         </div>
         <nav className="settings-tabs" aria-label="系统设置分类">
-          <Link href="/settings">管理中心</Link>
+          {hasPermissionInAnyScope(identity, "settings.read") ? (
+            <Link href="/settings">管理中心</Link>
+          ) : null}
           <Link aria-current="page" href="/settings/projects">
             项目与成员
           </Link>

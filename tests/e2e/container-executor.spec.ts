@@ -170,7 +170,7 @@ async function createContainerSuite(page: Page): Promise<void> {
   await suiteLink.click();
   await page.getByLabel("执行器").selectOption("testng-container");
   await page.getByRole("button", { name: "保存修改" }).click();
-  await expect(page.getByRole("status")).toContainText("任务配置已保存");
+  await expect(page.getByRole("status")).toContainText("用例任务已更新");
 
   await page.goto("/cases");
   await page.getByLabel("选择 ContainerAgentFixture").check();

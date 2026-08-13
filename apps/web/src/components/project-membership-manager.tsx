@@ -5,6 +5,7 @@ import { ShieldCheck, UserPlus } from "lucide-react";
 import { useEffect, useState, type FormEvent } from "react";
 
 import { Button, Input, Select } from "@/components/ui";
+import { readApiErrorMessage } from "@/lib/client-api";
 
 type ProjectMember = { user: User; roleIds: string[] };
 const RELOAD_MESSAGE_KEY = "autoforge:project-memberships:message";
@@ -39,10 +40,8 @@ export function ProjectMembershipManager({
     setError("");
     try {
       const response = await fetch(path, init);
-      if (!response.ok) {
-        const body = (await response.json()) as { error?: { message?: string } };
-        throw new Error(body.error?.message ?? "操作失败。");
-      }
+      const errorMessage = await readApiErrorMessage(response, "操作失败。");
+      if (errorMessage) throw new Error(errorMessage);
       window.sessionStorage.setItem(RELOAD_MESSAGE_KEY, success);
       window.location.reload();
     } catch (cause) {

@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
 import type { Permission } from "@autoforge/domain";
+import { connection } from "next/server";
 
 import { AppShell } from "@/components/app-shell";
 import { currentIdentity } from "@/lib/auth";
@@ -18,6 +19,10 @@ export const metadata: Metadata = {
 };
 
 export default async function RootLayout({ children }: Readonly<{ children: ReactNode }>) {
+  // Authentication and platform services are request-bound. Enter dynamic
+  // rendering before opening SQLite so parallel prerender workers never race
+  // while configuring the same database.
+  await connection();
   const services = await getPlatformServices();
   const identity = await currentIdentity();
   const permissions = identity

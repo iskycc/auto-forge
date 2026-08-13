@@ -24,8 +24,8 @@ export function createSqliteDatabase(options: CreateSqliteDatabaseOptions): Sqli
   mkdirSync(dirname(options.databasePath), { recursive: true });
   const client = new Database(options.databasePath);
   client.pragma("foreign_keys = ON");
-  client.pragma("journal_mode = WAL");
   client.pragma("busy_timeout = 5000");
+  client.pragma("journal_mode = WAL");
   client.pragma("synchronous = NORMAL");
   runSqliteMigrations(client, options.migrationsFolder);
 
