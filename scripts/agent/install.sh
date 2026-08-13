@@ -122,10 +122,6 @@ if ! systemctl daemon-reload ||
   exit 1
 fi
 
-rm -f \
-  "${installed_binary}${backup_suffix}" \
-  "${installed_configuration}${backup_suffix}" \
-  "${installed_service_unit}${backup_suffix}" \
-  "${installed_ca_certificate}${backup_suffix}"
-
+# Retain one verified predecessor so an administrator can perform an offline,
+# host-local rollback without fetching another release asset.
 printf '%s\n' "AutoForge Agent installation completed"

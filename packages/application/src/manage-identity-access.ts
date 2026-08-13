@@ -386,6 +386,18 @@ export class IdentityAccessService {
     return this.repository.listRoles();
   }
 
+  async listProjectRolesForMemberManagement(actor: AuthenticatedIdentity, projectId: string) {
+    this.authorize(actor, "project.read", projectId);
+    return (await this.repository.listRoles()).filter(
+      (role) => role.scope === "project" && role.active,
+    );
+  }
+
+  async listSystemRoleBindings(actor: AuthenticatedIdentity) {
+    this.authorize(actor, "role.read");
+    return this.repository.listSystemRoleBindings();
+  }
+
   async recordPlatformConfigurationChange(
     actor: AuthenticatedIdentity,
     input: { mode: "lite" | "full"; revision: number },
@@ -585,6 +597,7 @@ export class IdentityAccessService {
     requestId?: string,
   ): Promise<void> {
     this.authorize(actor, "project.manage", projectId);
+    await this.ensureProjectOwnerCanStillManage(userId, projectId, roleId);
     if (!(await this.repository.removeProjectRole(userId, projectId, roleId))) {
       throw new DomainError("ROLE_BINDING_NOT_FOUND", "指定的项目角色绑定不存在。");
     }
@@ -607,8 +620,11 @@ export class IdentityAccessService {
   }
 
   async listProjects(actor: AuthenticatedIdentity) {
-    this.authorize(actor, "project.read");
-    return this.repository.listProjects();
+    const projectIds = projectIdsForPermission(actor, "project.read");
+    if (projectIds?.length === 0) {
+      throw new DomainError("AUTH_FORBIDDEN", "当前账号没有读取项目的权限。");
+    }
+    return this.repository.listProjects(projectIds);
   }
 
   async createProject(actor: AuthenticatedIdentity, input: CreateProjectInput, requestId?: string) {
@@ -643,6 +659,16 @@ export class IdentityAccessService {
     const owner = await this.requiredUser(input.ownerUserId);
     if (owner.status !== "active") {
       throw new DomainError("PROJECT_OWNER_INACTIVE", "项目负责人必须是启用状态的用户。");
+    }
+    if (!(await this.userCanManageProject(owner.id, projectId))) {
+      await this.repository.assignProjectRole({
+        userId: owner.id,
+        projectId,
+        roleId: PROJECT_ADMIN_ROLE_ID,
+        actorId: actor.user.id,
+        assignedAt: this.now(),
+      });
+      await this.repository.revokeUserSessions(owner.id, this.now());
     }
     const project = await this.repository.transferProjectOwner({
       projectId,
@@ -881,6 +907,7 @@ export class IdentityAccessService {
   async listAudit(
     actor: AuthenticatedIdentity,
     input: {
+      projectId?: string;
       actorId?: string;
       action?: string;
       resourceType?: string;
@@ -891,8 +918,18 @@ export class IdentityAccessService {
       limit: number;
     },
   ) {
-    this.authorize(actor, "audit.read");
-    return this.repository.listAudit(input);
+    const projectIds = this.auditProjectScope(actor, "audit.read", input.projectId);
+    return this.repository.listAudit({
+      ...(input.actorId ? { actorId: input.actorId } : {}),
+      ...(input.action ? { action: input.action } : {}),
+      ...(input.resourceType ? { resourceType: input.resourceType } : {}),
+      ...(input.result ? { result: input.result } : {}),
+      ...(input.recordedAfter ? { recordedAfter: input.recordedAfter } : {}),
+      ...(input.recordedBefore ? { recordedBefore: input.recordedBefore } : {}),
+      ...(input.cursor ? { cursor: input.cursor } : {}),
+      limit: input.limit,
+      ...(projectIds ? { projectIds } : {}),
+    });
   }
 
   async recordTerminalSession(
@@ -990,6 +1027,7 @@ export class IdentityAccessService {
   async exportAudit(
     actor: AuthenticatedIdentity,
     input: {
+      projectId?: string;
       actorId?: string;
       action?: string;
       resourceType?: string;
@@ -999,11 +1037,12 @@ export class IdentityAccessService {
       maximumEvents: number;
     },
   ): Promise<AuditEvent[]> {
-    this.authorize(actor, "audit.export");
+    const projectIds = this.auditProjectScope(actor, "audit.export", input.projectId);
     const events: AuditEvent[] = [];
     let cursor: string | undefined;
     while (events.length < input.maximumEvents) {
       const page = await this.repository.listAudit({
+        ...(projectIds ? { projectIds } : {}),
         ...(input.actorId ? { actorId: input.actorId } : {}),
         ...(input.action ? { action: input.action } : {}),
         ...(input.resourceType ? { resourceType: input.resourceType } : {}),
@@ -1018,6 +1057,19 @@ export class IdentityAccessService {
       cursor = page.nextCursor;
     }
     return events;
+  }
+
+  private auditProjectScope(
+    actor: AuthenticatedIdentity,
+    permission: "audit.read" | "audit.export",
+    requestedProjectId?: string,
+  ): string[] | undefined {
+    const authorizedProjectIds = this.projectScope(actor, permission);
+    if (!requestedProjectId) return authorizedProjectIds;
+    if (authorizedProjectIds && !authorizedProjectIds.includes(requestedProjectId)) {
+      throw new DomainError("AUTH_FORBIDDEN", "当前账号不能访问指定项目的审计记录。");
+    }
+    return [requestedProjectId];
   }
 
   private async loginLocally(
@@ -1197,6 +1249,50 @@ export class IdentityAccessService {
         "该操作会使系统失去最后一位可管理用户与角色的管理员。",
       );
     }
+  }
+
+  private async ensureProjectOwnerCanStillManage(
+    userId: string,
+    projectId: string,
+    removedRoleId: string,
+  ): Promise<void> {
+    const project = (await this.repository.listProjects([projectId]))[0];
+    if (!project || project.ownerUserId !== userId) return;
+    if (await this.userCanManageProject(userId, projectId, removedRoleId)) return;
+    throw new DomainError(
+      "PROJECT_OWNER_ROLE_REQUIRED",
+      "必须先转移项目负责人，不能移除当前负责人最后一个项目管理角色。",
+    );
+  }
+
+  private async userCanManageProject(
+    userId: string,
+    projectId: string,
+    excludedProjectRoleId?: string,
+  ): Promise<boolean> {
+    const [roles, systemBindings, memberships] = await Promise.all([
+      this.repository.listRoles(),
+      this.repository.listSystemRoleBindings(),
+      this.repository.listProjectMemberships(projectId),
+    ]);
+    const managingRoleIds = new Set(
+      roles
+        .filter((role) => role.active && role.permissions.includes("project.manage"))
+        .map((role) => role.id),
+    );
+    if (
+      systemBindings.some(
+        (binding) => binding.userId === userId && managingRoleIds.has(binding.roleId),
+      )
+    ) {
+      return true;
+    }
+    const membership = memberships.find((entry) => entry.user.id === userId);
+    return Boolean(
+      membership?.roleIds.some(
+        (roleId) => roleId !== excludedProjectRoleId && managingRoleIds.has(roleId),
+      ),
+    );
   }
 
   private async audit(input: AuditInput): Promise<void> {

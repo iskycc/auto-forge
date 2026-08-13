@@ -169,7 +169,10 @@ function serviceWith(dependencies: {
 }): ImportTestNgJarService {
   let nextID = 0;
   return new ImportTestNgJarService({
-    discovery: { inspect: vi.fn().mockResolvedValue(inspection) },
+    discovery: {
+      inspect: vi.fn().mockResolvedValue(inspection),
+      readSource: vi.fn(),
+    },
     catalog: dependencies.catalog,
     objectStore: dependencies.objectStore,
     clock: { now: () => new Date("2026-08-09T00:00:00.000Z") },

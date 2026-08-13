@@ -1,13 +1,13 @@
 import { expect, test, type Page } from "@playwright/test";
 import { zipSync } from "fflate";
-import { createHash, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import { resolve } from "node:path";
 import WebSocket from "ws";
 
 import { buildClassFile } from "../../packages/testng-discovery/test/class-fixture";
+import { E2E_ADMIN_PASSWORD, E2E_ADMIN_USERNAME, ensureAdministrator } from "./support/session";
 
-const adminBootstrapToken = requiredTestSecret("E2E_ADMIN_BOOTSTRAP_TOKEN");
 const runnerBootstrapToken = requiredTestSecret("E2E_RUNNER_BOOTSTRAP_TOKEN");
 
 async function captureUi(page: Page, name: string): Promise<void> {
@@ -33,31 +33,173 @@ test("imports TestNG methods from a JAR into the case library", async ({ page })
     }),
     "testng.xml": new TextEncoder().encode('<suite name="AutoForge fixture" />'),
   });
+  const jarV2 = zipSync({
+    "com/example/CheckoutTest.class": buildClassFile({
+      className: "com.example.CheckoutTest",
+      methods: [
+        {
+          name: "checkout",
+          annotations: [{ type: "Test", values: { groups: ["smoke", "checkout", "v2"] } }],
+        },
+        {
+          name: "refund",
+          annotations: [{ type: "Test", values: { groups: ["regression"] } }],
+        },
+      ],
+    }),
+  });
+  const javaSource = `package com.example;
 
-  await page.goto("/");
-  await expect(page.getByRole("heading", { name: /汇聚到一个可信控制面/ })).toBeVisible();
-  await expect(page.getByText("平台数据实时同步")).toBeVisible();
-  await expectDesktopLayoutFits(page, 1024, 768);
-  await expectUiConsistency(page);
+import org.testng.annotations.Test;
+
+public class SourceVisibleTest {
+  @Test(groups = {"source-view"}, description = "source JAR case")
+  public void displaysSource() {
+    String visibleMarker = "AUTOFORGE_SOURCE_VIEW_E2E";
+  }
+}
+`;
+  const sourcesJar = zipSync({
+    "com/example/SourceVisibleTest.java": new TextEncoder().encode(javaSource),
+  });
+  const mixedSource = `package com.example;
+
+import org.testng.annotations.Test;
+
+public class MixedVisibleTest {
+  @Test
+  public void executesAndDisplaysSource() {
+    String marker = "AUTOFORGE_MIXED_SOURCE_E2E";
+  }
+}
+`;
+  const mixedJar = zipSync({
+    "com/example/MixedVisibleTest.class": buildClassFile({
+      className: "com.example.MixedVisibleTest",
+      methods: [
+        {
+          name: "executesAndDisplaysSource",
+          annotations: [{ type: "Test", values: { groups: ["mixed"] } }],
+        },
+      ],
+    }),
+    "com/example/MixedVisibleTest.java": new TextEncoder().encode(mixedSource),
+    "com/example/Damaged.class": new Uint8Array([0xca, 0xfe, 0xba, 0xbe, 0x00]),
+  });
+
+  const setupStatus = await page.request.get("/api/v1/auth/setup-status");
+  const setup = (await setupStatus.json()) as { setupRequired: boolean };
+  if (setup.setupRequired) {
+    await page.goto("/");
+    await expect(page.getByRole("heading", { name: /汇聚到一个可信控制面/ })).toBeVisible();
+    await expect(page.getByText("平台数据实时同步")).toBeVisible();
+    await expectDesktopLayoutFits(page, 1024, 768);
+    await expectUiConsistency(page);
+
+    await page.goto("/setup");
+    await page.getByRole("button", { name: /^Full/ }).click();
+    await expect(page.getByLabel("PostgreSQL URL")).toBeVisible();
+    await expectUiConsistency(page);
+    await page.getByRole("button", { name: /^Lite/ }).click();
+  }
   const publicStatistics = await page.request.get("/api/v1/public/statistics");
   expect(publicStatistics.status()).toBe(200);
   expect(await publicStatistics.json()).not.toHaveProperty("secrets");
 
-  await page.goto("/setup");
-  await page.getByRole("button", { name: /^Full/ }).click();
-  await expect(page.getByLabel("PostgreSQL URL")).toBeVisible();
-  await expectUiConsistency(page);
-  await page.getByRole("button", { name: /^Lite/ }).click();
-  await page.getByLabel("一次性管理员引导令牌").fill(adminBootstrapToken);
-  await page.getByLabel("用户名").fill("e2e-admin");
-  await page.getByLabel("显示名称").fill("E2E Administrator");
-  await page.getByLabel("管理员密码").fill("E2e!Administrator123");
-  await page.getByRole("button", { name: "创建系统管理员" }).click();
+  await ensureAdministrator(page);
   await expect(page).toHaveURL(/\/$/, { timeout: 20_000 });
+  await expect(page.getByRole("navigation", { name: "主导航" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "首页", exact: true })).toHaveClass(
+    /nav-item-active/,
+  );
+  await expect(page.getByText("E2E Administrator", { exact: true })).toBeVisible();
+
+  await page.getByRole("button", { name: "退出登录" }).click();
+  await expect(page).toHaveURL(/\/login$/);
+  await page.getByLabel("用户名").fill(E2E_ADMIN_USERNAME);
+  await page.getByLabel("密码").fill(E2E_ADMIN_PASSWORD);
+  await page.getByRole("button", { name: "登录" }).click();
+  await expect(page).toHaveURL(/\/$/, { timeout: 20_000 });
+  await expect(page.getByRole("navigation", { name: "主导航" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "首页", exact: true })).toHaveClass(
+    /nav-item-active/,
+  );
+  await expect(page.getByText("E2E Administrator", { exact: true })).toBeVisible();
 
   await page.goto("/cases/import");
   await expect(page.getByRole("heading", { name: "导入 TestNG JAR" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "管理中心 → 平台配置" })).toBeVisible();
   await expectUiConsistency(page);
+
+  const largeUploadBoundary = await page.evaluate(
+    async (sizeBytes) => {
+      const formData = new FormData();
+      formData.set(
+        "file",
+        new File([new Uint8Array(sizeBytes)], "48-mib-boundary.jar", {
+          type: "application/java-archive",
+        }),
+      );
+      const response = await fetch("/api/v1/case-sources/jar/inspect", {
+        method: "POST",
+        body: formData,
+      });
+      return {
+        status: response.status,
+        payload: (await response.json()) as { error?: { code?: string } },
+      };
+    },
+    48 * 1024 * 1024,
+  );
+  expect(largeUploadBoundary.status).toBe(400);
+  expect(largeUploadBoundary.payload.error?.code).toBe("INVALID_JAR");
+
+  const largeClassName = `com.example.LargeBoundary${Date.now()}Test`;
+  const validLargeJar = zipSync(
+    {
+      [`${largeClassName.replaceAll(".", "/")}.class`]: buildClassFile({
+        className: largeClassName,
+        methods: [{ name: "validBeyondLegacyLimit", annotations: [{ type: "Test", values: {} }] }],
+      }),
+      "fixtures/incompressible.bin": randomBytes(48 * 1024 * 1024),
+    },
+    { level: 0 },
+  );
+  expect(validLargeJar.byteLength).toBeGreaterThan(40 * 1024 * 1024);
+  const validLargeResponse = await page.request.post("/api/v1/case-sources/jar/inspect", {
+    headers: { origin: new URL(page.url()).origin },
+    multipart: {
+      file: {
+        name: "valid-48-mib-tests.jar",
+        mimeType: "application/java-archive",
+        buffer: Buffer.from(validLargeJar),
+      },
+    },
+  });
+  expect(validLargeResponse.status()).toBe(200);
+  expect(await validLargeResponse.json()).toMatchObject({
+    classes: [{ className: largeClassName }],
+  });
+
+  await page.locator('input[type="file"]').setInputFiles({
+    name: "valid-48-mib-tests.jar",
+    mimeType: "application/java-archive",
+    buffer: Buffer.from(validLargeJar),
+  });
+  await page.getByRole("button", { name: "扫描测试类" }).click();
+  await expect(page.getByText(largeClassName)).toBeVisible({ timeout: 60_000 });
+  const largeImportResponse = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      new URL(response.url()).pathname === "/api/v1/case-sources/jar/import",
+  );
+  await page.getByRole("button", { name: "确认导入" }).click();
+  expect((await largeImportResponse).status()).toBe(202);
+  await page.getByRole("button", { name: "取消导入" }).click();
+  await expect(page.getByRole("alert")).toContainText("导入任务已取消", { timeout: 60_000 });
+  await expect(page.getByRole("button", { name: "幂等重试" })).toBeVisible();
+  await page.getByRole("button", { name: "幂等重试" }).click();
+  await expect(page.getByRole("status")).toContainText("已导入", { timeout: 120_000 });
 
   await page.locator('input[type="file"]').setInputFiles({
     name: "checkout-tests.jar",
@@ -83,6 +225,56 @@ test("imports TestNG methods from a JAR into the case library", async ({ page })
   await page.getByRole("link", { name: "CheckoutTest" }).click();
   await expect(page.getByRole("heading", { name: "CheckoutTest" })).toBeVisible();
   await expectUiConsistency(page);
+  const checkoutCaseUrl = page.url();
+
+  await page.goto("/cases/import");
+  await page.locator('input[type="file"]').setInputFiles({
+    name: "mixed-visible-tests.jar",
+    mimeType: "application/java-archive",
+    buffer: Buffer.from(mixedJar),
+  });
+  await page.getByRole("button", { name: "扫描测试类" }).click();
+  await expect(page.getByText("com.example.MixedVisibleTest")).toBeVisible();
+  await expect(page.getByText("这是混合 JAR")).toBeVisible();
+  await expect(page.getByText("可查看源码", { exact: true })).toBeVisible();
+  await expect(page.getByText(/Damaged\.class/)).toBeVisible();
+  await page.getByRole("button", { name: "确认导入" }).click();
+  await expect(page.getByRole("status")).toContainText("已导入", { timeout: 60_000 });
+
+  await page.goto("/cases/import");
+  await page.locator('input[type="file"]').setInputFiles({
+    name: "mixed-visible-tests-copy.jar",
+    mimeType: "application/java-archive",
+    buffer: Buffer.from(mixedJar),
+  });
+  await page.getByRole("button", { name: "扫描测试类" }).click();
+  await page.getByRole("button", { name: "确认导入" }).click();
+  await expect(page.getByRole("status")).toContainText("已返回现有用例", {
+    timeout: 60_000,
+  });
+  await page.getByRole("link", { name: "查看用例库" }).click();
+  await page.getByRole("link", { name: "MixedVisibleTest" }).click();
+  await expect(page.locator(".source-code-viewer")).toContainText("AUTOFORGE_MIXED_SOURCE_E2E");
+  await expect(page.getByRole("button", { name: "立即执行" })).toBeVisible();
+
+  await page.goto("/cases/import");
+  await page.locator('input[type="file"]').setInputFiles({
+    name: "checkout-tests-v2.jar",
+    mimeType: "application/java-archive",
+    buffer: Buffer.from(jarV2),
+  });
+  await page.getByRole("button", { name: "扫描测试类" }).click();
+  await expect(page.getByText("com.example.CheckoutTest")).toBeVisible({ timeout: 20_000 });
+  await page.getByRole("button", { name: "确认导入" }).click();
+  await expect(page.getByRole("status")).toContainText(/已导入|已返回现有用例/, {
+    timeout: 60_000,
+  });
+  await page.goto(checkoutCaseUrl);
+  await expect(page.getByText("版本历史（2）")).toBeVisible();
+  await expect(page.getByText(/方法(?:新增|移除)：refund/)).toBeVisible();
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.getByRole("button", { name: "从该版本创建" }).last().click();
+  await expect(page.getByText("版本历史（3）")).toBeVisible({ timeout: 20_000 });
 
   await page.goto("/case-suites");
   await page.getByLabel("任务名称").fill("每日冒烟测试");
@@ -355,11 +547,84 @@ test("imports TestNG methods from a JAR into the case library", async ({ page })
   await expect(page.getByLabel("下载 reports/testng/e2e-report.txt")).toBeVisible();
   await expectUiConsistency(page);
 
+  await page.goto("/run-batches");
+  const cancellationRunner = page.locator(".runner-choice").filter({ hasText: "E2E Runner" });
+  await cancellationRunner.locator('input[type="checkbox"]').check();
+  const cancellationBatchResponse = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      new URL(response.url()).pathname === "/api/v1/run-batches",
+  );
+  await page.getByRole("button", { name: "开始调度" }).click();
+  const cancellationBatch = (await (await cancellationBatchResponse).json()) as { id: string };
+  await page.goto(`/run-batches/${encodeURIComponent(cancellationBatch.id)}`);
+  page.once("dialog", (dialog) => dialog.accept("E2E single run cancellation"));
+  await page.getByRole("button", { name: "取消该用例" }).click();
+  await expect(page.getByText("已取消", { exact: true }).first()).toBeVisible({ timeout: 20_000 });
+
   await page.goto("/insights");
   await expect(
     page.getByText("执行样本").locator("..").getByText("2", { exact: true }),
   ).toBeVisible();
+  await expect(page.locator(".failure-signature-list")).toContainText("TEST_ASSERTION_FAILED");
   await expectUiConsistency(page);
+
+  await page.goto(
+    `/insights?outcome=succeeded&leftBatchId=${encodeURIComponent(batch.id)}&rightBatchId=${encodeURIComponent(cancellationBatch.id)}`,
+  );
+  await expect(page.getByLabel("结果")).toHaveValue("succeeded");
+  await expect(page.getByText(/共同用例 1 个/)).toBeVisible();
+  await page.getByRole("button", { name: "导出当前范围" }).click();
+  const exportLink = page.getByRole("link", { name: /下载 \d+ 行/ });
+  await expect(exportLink).toBeVisible({ timeout: 30_000 });
+  const exportHref = await exportLink.getAttribute("href");
+  expect(exportHref).toBeTruthy();
+  const exportDownload = await page.request.get(exportHref!);
+  expect(exportDownload.status()).toBe(200);
+  expect(exportDownload.headers()["content-type"]).toContain("text/csv");
+  expect(await exportDownload.text()).toContain("caseDefinitionId");
+
+  const jsonExport = await page.evaluate(async () => {
+    const response = await fetch("/api/v1/analytics/exports", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Idempotency-Key": crypto.randomUUID(),
+      },
+      body: JSON.stringify({ filter: { outcome: "succeeded" }, format: "json" }),
+    });
+    return {
+      status: response.status,
+      job: (await response.json()) as { id: string; status: string },
+    };
+  });
+  expect(jsonExport.status).toBe(202);
+  await expect
+    .poll(
+      async () => {
+        const response = await page.request.get(
+          `/api/v1/analytics/exports/${encodeURIComponent(jsonExport.job.id)}`,
+        );
+        expect(response.status()).toBe(200);
+        return ((await response.json()) as { status: string }).status;
+      },
+      { timeout: 30_000, intervals: [250, 500, 1_000] },
+    )
+    .toBe("succeeded");
+  const jsonDownload = await page.request.get(
+    `/api/v1/analytics/exports/${encodeURIComponent(jsonExport.job.id)}/download`,
+  );
+  expect(jsonDownload.status()).toBe(200);
+  expect(jsonDownload.headers()["content-type"]).toContain("application/json");
+  const jsonRows = (await jsonDownload.json()) as Array<Record<string, unknown>>;
+  expect(jsonRows.length).toBeGreaterThan(0);
+  expect(jsonRows.every((row) => row.outcome === "succeeded")).toBe(true);
+
+  expect(await searchKinds(page, "CheckoutTest")).toContain("case");
+  expect(await searchKinds(page, "每日冒烟测试")).toEqual(
+    expect.arrayContaining(["suite", "batch"]),
+  );
+  expect(await searchKinds(page, "E2E Runner")).toContain("runner");
 
   const agentSocket = new WebSocket(terminalStreamUrl(), "autoforge-runner-terminal-v1", {
     headers: { authorization: `Bearer ${heartbeatResult.terminalConnectionToken}` },
@@ -425,13 +690,59 @@ test("imports TestNG methods from a JAR into the case library", async ({ page })
 
   await page.getByRole("button", { name: "通知" }).click();
   await expect(page.getByText("通知中心")).toBeVisible();
+  const completionNotification = page
+    .locator(".notification-item")
+    .filter({ hasText: "执行批次已完成" })
+    .first();
+  await expect(completionNotification).toBeVisible();
+  await completionNotification.click();
+  await expect(completionNotification).toHaveClass(/read/);
   await expectUiConsistency(page);
   await page.getByRole("button", { name: "关闭通知" }).click();
+  await page.reload();
+  await page.getByRole("button", { name: "通知" }).click();
+  await expect(
+    page.locator(".notification-item.read").filter({ hasText: "执行批次已完成" }).first(),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "关闭通知" }).click();
+
+  await page.goto("/cases/import");
+  await page.locator('input[type="file"]').setInputFiles({
+    name: "source-visible-tests-sources.jar",
+    mimeType: "application/java-archive",
+    buffer: Buffer.from(sourcesJar),
+  });
+  await page.getByRole("button", { name: "扫描测试类" }).click();
+  await expect(page.getByText("com.example.SourceVisibleTest")).toBeVisible();
+  await expect(page.getByText("这是 sources JAR")).toBeVisible();
+  await expect(page.getByText("可查看源码", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "确认导入" }).click();
+  await expect(page.locator(".alert-success")).toContainText("已导入 1 个测试类、1 个测试方法", {
+    timeout: 60_000,
+  });
+  await page.getByRole("link", { name: "查看用例库" }).click();
+  await page.getByRole("link", { name: "SourceVisibleTest" }).click();
+  await expect(page.getByRole("heading", { name: "用例源码" })).toBeVisible();
+  await expect(page.locator(".source-code-viewer")).toContainText("AUTOFORGE_SOURCE_VIEW_E2E");
+  await expect(page.getByText(/不能直接执行/)).toBeVisible();
+  await expect(page.getByRole("button", { name: "立即执行" })).toHaveCount(0);
+
+  await page.goto("/settings");
+  await expect(page.getByRole("heading", { name: "管理中心" })).toBeVisible();
+  await expect(page.getByRole("navigation", { name: "后台管理功能" })).toBeVisible();
+  await page.getByRole("link", { name: /用户管理/ }).click();
+  await expect(page.getByRole("heading", { name: "用户管理" })).toBeVisible();
+  await page.goto("/settings");
+  await page.getByRole("link", { name: /LDAP 配置/ }).click();
+  await expect(page.getByRole("heading", { name: "LDAP 配置" })).toBeVisible();
 
   for (const route of ["/settings/platform", "/settings/access", "/settings/environments"]) {
     await page.goto(route);
     await expect(page.getByRole("navigation", { name: "系统设置分类" })).toBeVisible();
     await expectUiConsistency(page);
+    if (route === "/settings/platform") {
+      await expect(page.getByLabel("JAR 大小上限（MiB）")).toHaveValue("256");
+    }
     if (route === "/settings/environments") {
       await page.getByRole("button", { name: "密文", exact: true }).click();
       await expect(page.getByRole("heading", { name: "创建执行密文" })).toBeVisible();
@@ -488,8 +799,8 @@ test("imports TestNG methods from a JAR into the case library", async ({ page })
   expect(focusStyles.labelOutlineStyle).toBe("none");
   expect(focusStyles.inputBoxShadow).not.toBe("none");
 
-  await loginUsername.fill("e2e-admin");
-  await page.getByLabel("密码").fill("E2e!Administrator123");
+  await loginUsername.fill(E2E_ADMIN_USERNAME);
+  await page.getByLabel("密码").fill(E2E_ADMIN_PASSWORD);
   await page.getByRole("button", { name: "登录" }).click();
   await expect(page.getByRole("heading", { name: "自动化用例工作台" })).toBeVisible();
   const authenticatedSession = await page.request.get("/api/v1/auth/session");
@@ -628,6 +939,13 @@ function runnerHeaders(identity: RunnerIdentity, leaseToken?: string): Record<st
 async function browserSessionHeaders(page: Page): Promise<Record<string, string>> {
   const cookies = await page.context().cookies();
   return { cookie: cookies.map(({ name, value }) => `${name}=${value}`).join("; ") };
+}
+
+async function searchKinds(page: Page, query: string): Promise<string[]> {
+  const response = await page.request.get(`/api/v1/search?query=${encodeURIComponent(query)}`);
+  expect(response.status()).toBe(200);
+  const body = (await response.json()) as { items: Array<{ kind: string }> };
+  return body.items.map((item) => item.kind);
 }
 
 async function expectDesktopLayoutFits(page: Page, width: number, height: number): Promise<void> {

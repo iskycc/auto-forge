@@ -14,7 +14,7 @@ import { redirect } from "next/navigation";
 import type { CSSProperties } from "react";
 
 import { getPlatformServices } from "@/lib/services";
-import { currentIdentity } from "@/lib/auth";
+import { currentIdentity, hasPermissionInAnyScope } from "@/lib/auth";
 import { PublicDashboard } from "@/components/public-dashboard";
 import {
   isActiveRunBatch,
@@ -43,12 +43,16 @@ export default async function DashboardPage() {
     ]);
     return <PublicDashboard initialStatistics={statistics} setupRequired={setupRequired} />;
   }
+  if (identity.user.forcePasswordChange) redirect("/account/security");
   try {
     services.identityAccess.authorize(identity, "case.read");
   } catch {
     redirect("/forbidden");
   }
   const { catalog, config } = services;
+  const caseProjectIds = services.identityAccess.projectScope(identity, "case.read");
+  const canManageCases = hasPermissionInAnyScope(identity, "case.manage");
+  const canReadRunners = hasPermissionInAnyScope(identity, "runner.read");
   let runProjectIds: string[] | undefined = [];
   try {
     runProjectIds = services.identityAccess.projectScope(identity, "run.read");
@@ -56,9 +60,9 @@ export default async function DashboardPage() {
     // The dashboard remains useful to asset-only roles without exposing execution data.
   }
   const [summary, recentSources, runners, recentBatches] = await Promise.all([
-    catalog.getDashboardSummary(),
-    catalog.listRecentSources(5),
-    services.runnerControl.list(),
+    catalog.getDashboardSummary(caseProjectIds),
+    catalog.listRecentSources(5, caseProjectIds),
+    canReadRunners ? services.runnerControl.list() : Promise.resolve([]),
     services.runBatches.list(5, runProjectIds),
   ]);
   const onlineRunners = runners.filter((runner) => runner.state === "online").length;
@@ -83,9 +87,11 @@ export default async function DashboardPage() {
           <h1>自动化用例工作台</h1>
           <p>从 TestNG JAR 发现测试类，构建可追踪、可执行的用例资产。</p>
         </div>
-        <Link className="button button-primary button-large" href="/cases/import">
-          <FileArchive size={18} aria-hidden="true" /> 导入 TestNG JAR
-        </Link>
+        {canManageCases ? (
+          <Link className="button button-primary button-large" href="/cases/import">
+            <FileArchive size={18} aria-hidden="true" /> 导入 TestNG JAR
+          </Link>
+        ) : null}
       </section>
 
       <section className="bento-grid" aria-label="平台概览">

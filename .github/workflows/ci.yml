@@ -12,30 +12,85 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  quality:
-    name: Platform and Agent quality
+  static-quality:
+    name: Formatting, lint and types
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 25
     steps:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24.16.0
-
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: 1.26.5
           cache-dependency-path: apps/runner-agent/go.mod
-
-      - name: Install locked JavaScript dependencies
+      - name: Install locked dependencies
         run: |
           corepack enable
           pnpm install --frozen-lockfile
+      - name: Validate source and E2E coverage inventory
+        run: |
+          pnpm format:check
+          pnpm lint
+          pnpm typecheck
+          pnpm test:e2e:matrix
 
+  unit-integration:
+    name: Unit, integration and performance
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.16.0
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: 1.26.5
+          cache-dependency-path: apps/runner-agent/go.mod
+      - name: Install locked dependencies
+        run: |
+          corepack enable
+          pnpm install --frozen-lockfile
+      - name: Run automated tests
+        run: |
+          pnpm test
+          pnpm test:integration
+          pnpm test:performance
+
+  lite-browser:
+    name: Lite browser · ${{ matrix.scenario }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        scenario:
+          - case-suite-lifecycle
+          - execution-recovery
+          - identity-rbac
+          - jar-import
+          - management-operations
+          - platform-operations
+          - project-isolation
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.16.0
+      - name: Install locked dependencies
+        run: |
+          corepack enable
+          pnpm install --frozen-lockfile
       - name: Locate preinstalled Chromium
         run: |
           browser_path="$(command -v google-chrome || command -v chromium || true)"
@@ -44,20 +99,264 @@ jobs:
             exit 1
           fi
           echo "PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=${browser_path}" >> "${GITHUB_ENV}"
+      - name: Run isolated Lite browser scenario
+        env:
+          AUTOFORGE_E2E_DATA_DIR: ${{ runner.temp }}/autoforge-${{ matrix.scenario }}
+          E2E_PROJECT_MAXIMUM_CONCURRENCY: ${{ matrix.scenario == 'execution-recovery' && '1' || '' }}
+        run: pnpm exec playwright test "tests/e2e/${{ matrix.scenario }}.spec.ts"
+      - name: Upload browser trace on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: browser-trace-${{ matrix.scenario }}
+          path: test-results
+          if-no-files-found: ignore
+          retention-days: 7
 
-      - name: Run formatting, lint, types and tests
+  build:
+    name: Production platform and Agent build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.16.0
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: 1.26.5
+          cache-dependency-path: apps/runner-agent/go.mod
+      - name: Install locked dependencies
         run: |
-          pnpm format:check
-          pnpm lint
-          pnpm typecheck
-          pnpm test
-          pnpm test:integration
-          pnpm test:full
-          pnpm test:performance
-          pnpm test:deployment
-
-      - name: Run network-blocked Lite browser flow
-        run: pnpm test:offline
-
-      - name: Build platform and Agent
+          corepack enable
+          pnpm install --frozen-lockfile
+      - name: Build immutable production outputs
         run: pnpm build
+
+  real-agent-acceptance:
+    name: Network-blocked real Agent acceptance
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.16.0
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: 1.26.5
+          cache-dependency-path: apps/runner-agent/go.mod
+      - name: Install locked dependencies
+        run: |
+          corepack enable
+          pnpm install --frozen-lockfile
+      - name: Locate preinstalled Chromium
+        run: |
+          browser_path="$(command -v google-chrome || command -v chromium || true)"
+          if [[ -z "${browser_path}" ]]; then
+            echo "The hosted runner does not provide a preinstalled Chromium browser." >&2
+            exit 1
+          fi
+          echo "PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=${browser_path}" >> "${GITHUB_ENV}"
+      - name: Run real Agent acceptance without outbound network
+        run: pnpm test:real-agent
+      - name: Upload browser and Agent diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: real-agent-acceptance-diagnostics
+          path: test-results
+          if-no-files-found: ignore
+          retention-days: 7
+
+  container-executor-acceptance:
+    name: Immutable container executor acceptance
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.16.0
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: 1.26.5
+          cache-dependency-path: apps/runner-agent/go.mod
+      - name: Install locked dependencies
+        run: |
+          corepack enable
+          pnpm install --frozen-lockfile
+      - name: Locate preinstalled Chromium
+        run: |
+          browser_path="$(command -v google-chrome || command -v chromium || true)"
+          if [[ -z "${browser_path}" ]]; then
+            echo "The hosted runner does not provide a preinstalled Chromium browser." >&2
+            exit 1
+          fi
+          echo "PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=${browser_path}" >> "${GITHUB_ENV}"
+      - name: Run immutable container executor acceptance
+        run: pnpm test:container-executor
+      - name: Upload browser and Agent diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: container-executor-acceptance-diagnostics
+          path: test-results
+          if-no-files-found: ignore
+          retention-days: 7
+
+  ldap-acceptance:
+    name: Network-blocked real LDAP acceptance
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.16.0
+      - name: Install locked dependencies
+        run: |
+          corepack enable
+          pnpm install --frozen-lockfile
+      - name: Locate preinstalled Chromium
+        run: |
+          browser_path="$(command -v google-chrome || command -v chromium || true)"
+          if [[ -z "${browser_path}" ]]; then
+            echo "The hosted runner does not provide a preinstalled Chromium browser." >&2
+            exit 1
+          fi
+          echo "PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=${browser_path}" >> "${GITHUB_ENV}"
+      - name: Run real LDAP acceptance without service egress
+        run: pnpm test:ldap-e2e
+      - name: Upload browser trace on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ldap-acceptance-diagnostics
+          path: test-results
+          if-no-files-found: ignore
+          retention-days: 7
+
+  runner-install-acceptance:
+    name: Offline SSH and systemd Runner installation
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.16.0
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: 1.26.5
+          cache-dependency-path: apps/runner-agent/go.mod
+      - name: Install locked dependencies
+        run: |
+          corepack enable
+          pnpm install --frozen-lockfile
+      - name: Locate preinstalled Chromium
+        run: |
+          browser_path="$(command -v google-chrome || command -v chromium || true)"
+          if [[ -z "${browser_path}" ]]; then
+            echo "The hosted runner does not provide a preinstalled Chromium browser." >&2
+            exit 1
+          fi
+          echo "PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=${browser_path}" >> "${GITHUB_ENV}"
+      - name: Run SSH installation acceptance without service egress
+        run: pnpm test:runner-install-e2e
+      - name: Upload browser trace on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: runner-install-acceptance-diagnostics
+          path: test-results
+          if-no-files-found: ignore
+          retention-days: 7
+
+  system-acceptance:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: ${{ matrix.timeout }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Full infrastructure acceptance
+            command: pnpm test:full-business-recovery
+            timeout: 60
+          - name: Network-blocked Lite acceptance
+            command: pnpm test:offline
+            timeout: 35
+          - name: Deployment and operations acceptance
+            command: pnpm test:deployment
+            timeout: 35
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.16.0
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: 1.26.5
+          cache-dependency-path: apps/runner-agent/go.mod
+      - name: Install locked dependencies
+        run: |
+          corepack enable
+          pnpm install --frozen-lockfile
+      - name: Locate preinstalled Chromium
+        run: |
+          browser_path="$(command -v google-chrome || command -v chromium || true)"
+          if [[ -z "${browser_path}" ]]; then
+            echo "The hosted runner does not provide a preinstalled Chromium browser." >&2
+            exit 1
+          fi
+          echo "PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=${browser_path}" >> "${GITHUB_ENV}"
+      - name: Run system acceptance
+        run: ${{ matrix.command }}
+
+  ci-gate:
+    name: CI gate
+    if: always()
+    needs:
+      [
+        static-quality,
+        unit-integration,
+        lite-browser,
+        build,
+        real-agent-acceptance,
+        container-executor-acceptance,
+        ldap-acceptance,
+        runner-install-acceptance,
+        system-acceptance,
+      ]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require every parallel gate
+        run: |
+          test "${{ needs.static-quality.result }}" = success
+          test "${{ needs.unit-integration.result }}" = success
+          test "${{ needs.lite-browser.result }}" = success
+          test "${{ needs.build.result }}" = success
+          test "${{ needs.real-agent-acceptance.result }}" = success
+          test "${{ needs.container-executor-acceptance.result }}" = success
+          test "${{ needs.ldap-acceptance.result }}" = success
+          test "${{ needs.runner-install-acceptance.result }}" = success
+          test "${{ needs.system-acceptance.result }}" = success

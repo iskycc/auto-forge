@@ -37,8 +37,13 @@ export class CaseSuiteService {
     return suite;
   }
 
-  async update(suiteId: string, input: UpdateCaseSuiteInput, actorId?: string) {
-    const suite = await this.get(suiteId);
+  async update(
+    suiteId: string,
+    input: UpdateCaseSuiteInput,
+    actorId?: string,
+    projectIds?: readonly string[],
+  ) {
+    const suite = await this.get(suiteId, projectIds);
     if (input.expectedRevision !== suite.revision) {
       throw new DomainError("CASE_SUITE_REVISION_CONFLICT", "用例任务已被他人修改，请刷新后重试。");
     }
@@ -64,8 +69,13 @@ export class CaseSuiteService {
     });
   }
 
-  async copy(suiteId: string, input: CopyCaseSuiteInput, actorId?: string) {
-    const source = await this.get(suiteId);
+  async copy(
+    suiteId: string,
+    input: CopyCaseSuiteInput,
+    actorId?: string,
+    projectIds?: readonly string[],
+  ) {
+    const source = await this.get(suiteId, projectIds);
     const createdAt = this.clock.now().toISOString();
     return this.suites.copySuite({
       id: this.ids.next(),
@@ -83,8 +93,13 @@ export class CaseSuiteService {
     });
   }
 
-  async addCases(suiteId: string, requestedIds: string[], actorId?: string) {
-    const suite = await this.get(suiteId);
+  async addCases(
+    suiteId: string,
+    requestedIds: string[],
+    actorId?: string,
+    projectIds?: readonly string[],
+  ) {
+    const suite = await this.get(suiteId, projectIds);
     const uniqueIds = [...new Set(requestedIds)];
     const existingIds = await this.catalog.findExistingCaseIds(uniqueIds, suite.projectId);
     if (existingIds.length !== uniqueIds.length) {
@@ -107,8 +122,13 @@ export class CaseSuiteService {
     });
   }
 
-  async removeCase(suiteId: string, caseDefinitionId: string, actorId?: string) {
-    await this.get(suiteId);
+  async removeCase(
+    suiteId: string,
+    caseDefinitionId: string,
+    actorId?: string,
+    projectIds?: readonly string[],
+  ) {
+    await this.get(suiteId, projectIds);
     return this.suites.removeCase({
       suiteId,
       caseDefinitionId,

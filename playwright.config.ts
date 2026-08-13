@@ -9,22 +9,28 @@ const e2eDataDirectory =
 process.env.AUTOFORGE_E2E_DATA_DIR = e2eDataDirectory;
 const e2eConfigurationStore = new PlatformConfigurationStore(e2eDataDirectory);
 const initialConfiguration = e2eConfigurationStore.initialize();
+const requestedProjectMaximumConcurrency = process.env.E2E_PROJECT_MAXIMUM_CONCURRENCY
+  ? Number(process.env.E2E_PROJECT_MAXIMUM_CONCURRENCY)
+  : initialConfiguration.scheduler.projectMaximumConcurrency;
+const requestedConfiguration = {
+  ...initialConfiguration,
+  web: {
+    ...initialConfiguration.web,
+    hostname: "127.0.0.1",
+    port: 3100,
+    publicBaseUrl: "http://127.0.0.1:3100",
+    publicDashboardRefreshSeconds: 5,
+  },
+  scheduler: {
+    ...initialConfiguration.scheduler,
+    projectMaximumConcurrency: requestedProjectMaximumConcurrency,
+  },
+};
 const e2eConfiguration =
-  initialConfiguration.web.port === 3100
+  initialConfiguration.web.port === requestedConfiguration.web.port &&
+  initialConfiguration.scheduler.projectMaximumConcurrency === requestedProjectMaximumConcurrency
     ? initialConfiguration
-    : e2eConfigurationStore.replace(
-        {
-          ...initialConfiguration,
-          web: {
-            ...initialConfiguration.web,
-            hostname: "127.0.0.1",
-            port: 3100,
-            publicBaseUrl: "http://127.0.0.1:3100",
-            publicDashboardRefreshSeconds: 5,
-          },
-        },
-        initialConfiguration.revision,
-      );
+    : e2eConfigurationStore.replace(requestedConfiguration, initialConfiguration.revision);
 process.env.E2E_ADMIN_BOOTSTRAP_TOKEN = e2eConfiguration.secrets.adminBootstrapToken;
 process.env.E2E_RUNNER_BOOTSTRAP_TOKEN = e2eConfiguration.secrets.runnerBootstrapToken;
 

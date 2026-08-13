@@ -2,6 +2,11 @@
 
 set -Eeuo pipefail
 
+if [[ "${GITHUB_ACTIONS:-}" != "true" ]]; then
+  echo "Deployment acceptance is restricted to GitHub Actions because it builds and loads production container images." >&2
+  exit 1
+fi
+
 readonly repository_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly temporary_directory="$(mktemp -d)"
 

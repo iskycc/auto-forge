@@ -1,11 +1,11 @@
-import { Button, Input } from "@/components/ui";
+import { Button, Input, Select } from "@/components/ui";
 
 import { FileArchive, Import, Search } from "lucide-react";
 import Link from "next/link";
 
 import { CaseSelectionTable } from "@/components/case-selection-table";
 import { getPlatformServices } from "@/lib/services";
-import { requirePagePermission } from "@/lib/auth";
+import { requireAuthorizedPageProjectScope, requirePageProjectScope } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 
@@ -13,6 +13,7 @@ type CasesPageProps = {
   searchParams: Promise<{
     query?: string | string[];
     cursor?: string | string[];
+    projectId?: string | string[];
   }>;
 };
 
@@ -21,18 +22,23 @@ function single(value: string | string[] | undefined): string | undefined {
 }
 
 export default async function CasesPage({ searchParams }: CasesPageProps) {
-  await requirePagePermission("case.read");
+  const { identity, projectIds } = await requirePageProjectScope("case.read");
   const parameters = await searchParams;
   const query = single(parameters.query)?.trim();
   const cursor = single(parameters.cursor);
+  const requestedProjectId = single(parameters.projectId);
+  const projectId = requestedProjectId;
+  const effectiveProjectIds = requireAuthorizedPageProjectScope(identity, "case.read", projectId);
   const services = await getPlatformServices();
-  const [page, suites] = await Promise.all([
+  const [page, suites, projects] = await Promise.all([
     services.catalog.listCases({
+      ...(effectiveProjectIds ? { projectIds: effectiveProjectIds } : {}),
       ...(query ? { query } : {}),
       ...(cursor ? { cursor } : {}),
       limit: 50,
     }),
-    services.caseSuites.list(),
+    services.caseSuites.list(200, effectiveProjectIds),
+    services.identityAccess.listProjects(identity).catch(() => []),
   ]);
 
   return (
@@ -43,7 +49,12 @@ export default async function CasesPage({ searchParams }: CasesPageProps) {
           <h1>用例库</h1>
           <p>一个 TestNG 测试类对应一个用例定义，测试方法作为可执行项保存在版本快照中。</p>
         </div>
-        <Link className="button button-primary button-large" href="/cases/import">
+        <Link
+          className="button button-primary button-large"
+          href={
+            projectId ? `/cases/import?projectId=${encodeURIComponent(projectId)}` : "/cases/import"
+          }
+        >
           <Import size={18} aria-hidden="true" /> 导入 JAR
         </Link>
       </section>
@@ -51,6 +62,7 @@ export default async function CasesPage({ searchParams }: CasesPageProps) {
       <section className="card table-card">
         <div className="table-toolbar">
           <form className="case-search" action="/cases" role="search">
+            {projectId ? <input name="projectId" type="hidden" value={projectId} /> : null}
             <Search size={17} aria-hidden="true" />
             <Input
               name="query"
@@ -61,6 +73,22 @@ export default async function CasesPage({ searchParams }: CasesPageProps) {
             />
             <Button className="button button-secondary" type="submit">
               搜索
+            </Button>
+          </form>
+          <form action="/cases" method="get">
+            {query ? <input name="query" type="hidden" value={query} /> : null}
+            <Select aria-label="项目筛选" defaultValue={projectId ?? ""} name="projectId">
+              <option value="">全部授权项目</option>
+              {projects
+                .filter((project) => !projectIds || projectIds.includes(project.id))
+                .map((project) => (
+                  <option key={project.id} value={project.id}>
+                    {project.name}
+                  </option>
+                ))}
+            </Select>
+            <Button className="button button-secondary" type="submit">
+              切换项目
             </Button>
           </form>
           <span className="table-count">本页 {page.items.length} 个测试类</span>
@@ -95,7 +123,7 @@ export default async function CasesPage({ searchParams }: CasesPageProps) {
           <div className="pagination">
             <Link
               className="button button-secondary"
-              href={`/cases?${new URLSearchParams({ ...(query ? { query } : {}), cursor: page.nextCursor }).toString()}`}
+              href={`/cases?${new URLSearchParams({ ...(query ? { query } : {}), ...(projectId ? { projectId } : {}), cursor: page.nextCursor }).toString()}`}
             >
               下一页
             </Link>

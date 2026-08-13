@@ -1,0 +1,168 @@
+import { generateKeyPairSync } from "node:crypto";
+import type { AddressInfo } from "node:net";
+
+import { Server, type Connection } from "ssh2";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+vi.mock("server-only", () => ({}));
+
+import { RunnerAgentInstaller } from "./runner-agent-installer";
+import { RunnerAgentResourceStore } from "./runner-agent-resources";
+
+const hostPrivateKey = generateKeyPairSync("rsa", { modulusLength: 2048 }).privateKey.export({
+  format: "pem",
+  type: "pkcs1",
+});
+const openServers = new Set<Server>();
+
+afterEach(async () => {
+  await Promise.all([...openServers].map(closeServer));
+  openServers.clear();
+});
+
+describe("RunnerAgentInstaller SSH probe", () => {
+  it("supports password authentication exposed through keyboard-interactive/PAM", async () => {
+    const server = await startProbeServer({ authentication: "keyboard-interactive" });
+    const address = server.address() as AddressInfo;
+
+    await expect(installer().probe(connection(address.port))).resolves.toMatchObject({
+      operatingSystemId: "ubuntu",
+      architecture: "amd64",
+      privilegeMode: "sudo",
+    });
+  });
+
+  it("reports rejected credentials separately from network failures", async () => {
+    const server = await startProbeServer({ authentication: "reject" });
+    const address = server.address() as AddressInfo;
+
+    await expect(
+      installer().probe({
+        host: "127.0.0.1",
+        port: address.port,
+        username: "runner-admin",
+        password: "wrong-password",
+      }),
+    ).rejects.toMatchObject({ code: "RUNNER_HOST_AUTHENTICATION_FAILED" });
+  });
+
+  it("keeps standard SSH password authentication compatible", async () => {
+    const server = await startProbeServer({ authentication: "password" });
+    const address = server.address() as AddressInfo;
+
+    await expect(installer().probe(connection(address.port))).resolves.toMatchObject({
+      operatingSystemId: "ubuntu",
+      architecture: "amd64",
+    });
+  });
+
+  it("returns an actionable cgroup v2 prerequisite error", async () => {
+    const server = await startProbeServer({
+      authentication: "password",
+      commandOutput: "AUTOFORGE_PROBE_ERROR=CGROUP_V2_REQUIRED\n",
+      commandExitCode: 22,
+    });
+    const address = server.address() as AddressInfo;
+
+    await expect(installer().probe(connection(address.port))).rejects.toMatchObject({
+      code: "RUNNER_HOST_UNSUPPORTED",
+      message: expect.stringContaining("cgroup v2"),
+    });
+  });
+
+  it("uses the verified host key and reports the health-checked rollback version", async () => {
+    const server = await startProbeServer({
+      authentication: "password",
+      commandResults: [
+        { output: probeOutput, exitCode: 0 },
+        { output: probeOutput, exitCode: 0 },
+        { output: "AUTOFORGE_ROLLED_BACK_VERSION=0.3.3\n", exitCode: 0 },
+      ],
+    });
+    const address = server.address() as AddressInfo;
+    const target = installer();
+    const host = connection(address.port);
+    const probe = await target.probe(host);
+
+    await expect(
+      target.rollback({ connection: host, expectedHostKeySha256: probe.hostKeySha256 }),
+    ).resolves.toMatchObject({ rolledBack: true, agentVersion: "0.3.3" });
+  });
+});
+
+type ProbeAuthentication = "keyboard-interactive" | "password" | "reject";
+type ProbeServerOptions = {
+  authentication: ProbeAuthentication;
+  commandOutput?: string;
+  commandExitCode?: number;
+  commandResults?: Array<{ output: string; exitCode: number }>;
+};
+
+const probeOutput = "OS_ID=ubuntu\nOS_NAME=Ubuntu 24.04 LTS\nARCH=x86_64\nPRIVILEGE=sudo\n";
+
+async function startProbeServer(options: ProbeServerOptions): Promise<Server> {
+  let commandInvocation = 0;
+  const server = new Server({ hostKeys: [hostPrivateKey] }, (client) => {
+    configureAuthentication(client, options.authentication);
+    client.on("ready", () => {
+      client.on("session", (accept) => {
+        const session = accept();
+        session.on("exec", (acceptCommand) => {
+          const stream = acceptCommand();
+          const result = options.commandResults?.[commandInvocation++];
+          stream.write(result?.output ?? options.commandOutput ?? probeOutput);
+          stream.exit(result?.exitCode ?? options.commandExitCode ?? 0);
+          stream.end();
+        });
+      });
+    });
+  });
+  openServers.add(server);
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  return server;
+}
+
+function configureAuthentication(client: Connection, authentication: ProbeAuthentication): void {
+  client.on("authentication", (context) => {
+    if (
+      authentication === "password" &&
+      context.method === "password" &&
+      context.password === "correct-password"
+    ) {
+      context.accept();
+      return;
+    }
+    if (authentication === "keyboard-interactive" && context.method === "keyboard-interactive") {
+      context.prompt([{ prompt: "Password: ", echo: false }], (answers) => {
+        if (answers[0] === "correct-password") context.accept();
+        else context.reject();
+      });
+      return;
+    }
+    context.reject(authentication === "keyboard-interactive" ? ["keyboard-interactive"] : []);
+  });
+}
+
+function installer(): RunnerAgentInstaller {
+  return new RunnerAgentInstaller({
+    resources: new RunnerAgentResourceStore("/unused"),
+    controlPlaneUrl: "https://autoforge.internal",
+    issueBootstrapToken: () => "unused",
+  });
+}
+
+function connection(port: number) {
+  return {
+    host: "127.0.0.1",
+    port,
+    username: "runner-admin",
+    password: "correct-password",
+  };
+}
+
+function closeServer(server: Server): Promise<void> {
+  return new Promise((resolve) => server.close(() => resolve()));
+}

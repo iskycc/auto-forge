@@ -115,20 +115,24 @@ export function EnvironmentSettings({
     };
   }, []);
 
+  const applyEnvironmentData = useCallback((data: EnvironmentData): void => {
+    setDetails(data.details);
+    setVersions(data.versions);
+    setReferences(data.references);
+    setMetadataName(data.metadataName);
+    setMetadataDescription(data.metadataDescription);
+    setVariableDraft(data.variableDraft);
+    setBindingRows(data.bindingRows);
+    setNextBindingId(data.nextBindingId);
+    setCopyName(data.copyName);
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
     void loadEnvironment(selectedEnvironmentId)
       .then((data) => {
         if (cancelled) return;
-        setDetails(data.details);
-        setVersions(data.versions);
-        setReferences(data.references);
-        setMetadataName(data.metadataName);
-        setMetadataDescription(data.metadataDescription);
-        setVariableDraft(data.variableDraft);
-        setBindingRows(data.bindingRows);
-        setNextBindingId(data.nextBindingId);
-        setCopyName(data.copyName);
+        applyEnvironmentData(data);
         setError("");
       })
       .catch((problem: unknown) => {
@@ -137,7 +141,7 @@ export function EnvironmentSettings({
     return () => {
       cancelled = true;
     };
-  }, [loadEnvironment, selectedEnvironmentId]);
+  }, [applyEnvironmentData, loadEnvironment, selectedEnvironmentId]);
 
   const selectedSecret = useMemo(
     () => secrets.find((secret) => secret.id === selectedSecretId) ?? null,
@@ -160,9 +164,9 @@ export function EnvironmentSettings({
       "/api/v1/execution-environments",
     );
     setEnvironments(page.items);
-    const nextId = preferredId ?? selectedEnvironmentId ?? page.items[0]?.id ?? "";
+    const nextId = preferredId || selectedEnvironmentId || page.items[0]?.id || "";
     setSelectedEnvironmentId(nextId);
-    if (nextId) await loadEnvironment(nextId);
+    applyEnvironmentData(await loadEnvironment(nextId));
   }
 
   async function environmentMutation(

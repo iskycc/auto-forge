@@ -216,8 +216,16 @@ export class PostgresPlatformOperationsRepository implements PlatformOperationsR
     await this.ready();
     if (projectIds?.length === 0) return [];
     const result = await this.handle.pool.query<ScheduleRow>(
-      `SELECT * FROM case_suite_schedules
-       ${projectIds ? "WHERE project_id=ANY($1::text[])" : ""} ORDER BY next_trigger_at,id`,
+      `SELECT s.*,
+         (SELECT receipt.status FROM scheduled_trigger_receipts receipt
+          WHERE receipt.schedule_id=s.id ORDER BY receipt.scheduled_for DESC LIMIT 1)
+           AS last_trigger_status,
+         (SELECT receipt.batch_id FROM scheduled_trigger_receipts receipt
+          WHERE receipt.schedule_id=s.id ORDER BY receipt.scheduled_for DESC LIMIT 1)
+           AS last_batch_id
+       FROM case_suite_schedules s
+       ${projectIds ? "WHERE s.project_id=ANY($1::text[])" : ""}
+       ORDER BY s.next_trigger_at,s.id`,
       projectIds ? [[...projectIds]] : [],
     );
     return result.rows.map(mapSchedule);

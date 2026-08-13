@@ -2,6 +2,11 @@
 
 set -Eeuo pipefail
 
+if [[ "${GITHUB_ACTIONS:-}" != "true" ]]; then
+  echo "Offline production acceptance is restricted to GitHub Actions because it builds the platform and runs a browser flow in a network namespace." >&2
+  exit 1
+fi
+
 readonly repository_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly acceptance_directory="$(mktemp -d)"
 readonly acceptance_script='
@@ -10,7 +15,14 @@ if curl --fail --silent --connect-timeout 2 https://example.com >/dev/null 2>&1;
   exit 1
 fi
 pnpm exec vitest run apps/web/src/lib/ldap-directory.test.ts
-pnpm test:e2e
+pnpm exec playwright test \
+  tests/e2e/case-suite-lifecycle.spec.ts \
+  tests/e2e/execution-recovery.spec.ts \
+  tests/e2e/identity-rbac.spec.ts \
+  tests/e2e/jar-import.spec.ts \
+  tests/e2e/management-operations.spec.ts \
+  tests/e2e/platform-operations.spec.ts \
+  tests/e2e/project-isolation.spec.ts
 bash scripts/operations/lite-backup.sh \
   --data-dir "${AUTOFORGE_E2E_DATA_DIR}" \
   --output "${AUTOFORGE_OFFLINE_ACCEPTANCE_DIR}/lite-backup.tar.gz" \
@@ -36,6 +48,7 @@ fi
 cd "${repository_root}"
 export AUTOFORGE_E2E_DATA_DIR="${acceptance_directory}/platform-data"
 export AUTOFORGE_OFFLINE_ACCEPTANCE_DIR="${acceptance_directory}"
+export E2E_PROJECT_MAXIMUM_CONCURRENCY=1
 
 if unshare --user --map-root-user --net true >/dev/null 2>&1; then
   unshare --user --map-root-user --net bash -Eeuo pipefail -c '
@@ -62,6 +75,7 @@ sudo -n env \
   "PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=${PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH-}" \
   "AUTOFORGE_E2E_DATA_DIR=${AUTOFORGE_E2E_DATA_DIR}" \
   "AUTOFORGE_OFFLINE_ACCEPTANCE_DIR=${AUTOFORGE_OFFLINE_ACCEPTANCE_DIR}" \
+  "E2E_PROJECT_MAXIMUM_CONCURRENCY=${E2E_PROJECT_MAXIMUM_CONCURRENCY}" \
   unshare --net bash -Eeuo pipefail -c '
     ip link set lo up
     setpriv --reuid "$1" --regid "$2" --clear-groups \

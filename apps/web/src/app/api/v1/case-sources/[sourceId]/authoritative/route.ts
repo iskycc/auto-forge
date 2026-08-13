@@ -2,7 +2,7 @@ import { setAuthoritativeSourceInputSchema } from "@autoforge/contracts";
 import { apiErrorResponse } from "@/lib/api-response";
 import { getPlatformServices } from "@/lib/services";
 import { NextResponse } from "next/server";
-import { authorizeRequest, requestId, requireSameOrigin } from "@/lib/auth";
+import { authenticateRequest, requestId, requireSameOrigin } from "@/lib/auth";
 
 type Context = { params: Promise<{ sourceId: string }> };
 
@@ -10,15 +10,17 @@ export async function PUT(request: Request, context: Context): Promise<NextRespo
   const currentRequestId = requestId(request);
   try {
     requireSameOrigin(request);
-    const identity = await authorizeRequest(request, "case_source.manage");
+    const identity = await authenticateRequest(request);
     setAuthoritativeSourceInputSchema.parse(await request.json());
     const { sourceId } = await context.params;
     const services = await getPlatformServices();
-    const source = await services.caseSources.setAuthoritative(sourceId);
+    const projectIds = services.identityAccess.projectScope(identity, "case_source.manage");
+    const source = await services.caseSources.setAuthoritative(sourceId, projectIds);
     await services.identityAccess.recordAuthorizedOperation(identity, {
       action: "case_source.set_authoritative",
       resourceType: "case_source",
       resourceId: sourceId,
+      projectId: source.projectId,
       requestId: currentRequestId,
     });
     return NextResponse.json(source);

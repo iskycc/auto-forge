@@ -11,7 +11,7 @@ git tag -s v0.2.2 -m "AutoForge v0.2.2"
 git push origin v0.2.2
 ```
 
-流水线先执行格式、lint、类型、单元、Lite/Full 集成、浏览器流程和生产构建，然后并行构建四个平台。Full 集成使用校验和或镜像摘要锁定的 PostgreSQL、NATS JetStream、MinIO 与 Redis，并验证 Full readiness 和一次性 Runner 注册。任一质量检查或目标失败，`publish` job 都不会运行。Release 先作为 draft 创建，全部资产上传后才转为正式版本。
+流水线先执行格式、lint、类型、单元、Lite/Full 集成、浏览器流程和生产构建，然后并行构建四个平台及两个 Runner 工具链。所有资产先组成并签名一个不可变候选；候选必须在内部网络完成真实 Agent/TestNG、私有 CA LDAP、备份恢复、上一正式版本升级和注入迁移失败回滚，`publish` job 才能创建并公开 Release。任一平台、SBOM、签名或 Gate E 场景失败都不会发布部分资产。
 
 `amd64` 目标运行在 `ubuntu-24.04`，`arm64` 目标运行在 GitHub-hosted 原生 `ubuntu-24.04-arm`。后端不使用 QEMU 做跨架构模拟；内置 Agent 由 Go 原生交叉编译为两个静态架构，并在每个镜像中校验资源清单。
 
@@ -35,6 +35,8 @@ Web 进程为同源终端 WebSocket 使用 Next.js 自定义 Server。Next.js �
 - `autoforge-backend-VERSION-VARIANT.spdx.json`：包含内置 Agent 文件的后端镜像 SBOM。
 
 每个版本还生成一份 `autoforge-deploy-VERSION.tar.gz`，其中包含 Lite/Full `docker-compose.yml`、环境模板、固定的基础设施镜像摘要和离线启动说明。Release 根目录同时包含 `release-manifest.json`、`SHA256SUMS`、Ed25519 签名 `SHA256SUMS.sig` 和 `release-signing-public-key.pem`。GitHub 的构建来源证明绑定 `SHA256SUMS` 中记录的全部资产摘要。
+
+两个原生架构还分别生成 `autoforge-runner-toolchain-linux-ARCH-java21-testng7.11.0.tar.gz`、独立摘要和 SPDX SBOM。工具链包含 Eclipse Temurin JRE、TestNG 及其固定依赖、逐文件摘要与机器可读 manifest；它和镜像内置 Agent 都由 Gate E 直接消费，不允许验收时从源码重建或联网补装。部署包也有对应的 SPDX JSON SBOM，法律声明见 `RUNNER_TOOLCHAIN_NOTICES.md`。
 
 ## 离线校验与启动
 
@@ -74,7 +76,7 @@ musl 归档的镜像标签相应为 `autoforge/backend:0.2.2-amd64-musl`。必�
 
 首次启动从容器日志或数据卷的 `/var/lib/autoforge/config/initial-admin-token` 获取管理员令牌。登录后先在“平台配置”设置执行机可访问的 HTTPS 地址，再在“执行机”页面填写 IP/主机名、SSH 用户和密码。平台会探测系统与架构并显示 SSH 主机指纹；管理员通过可信渠道核对后才能安装。密码只用于本次 SSH/sudo 操作，Agent 注册使用短期一次性令牌。
 
-自动安装要求目标机为 Ubuntu 或 openSUSE、使用 systemd/cgroup v2，并预置 SSH、POSIX shell、coreutils；非 root 用户还需已有 sudo。安装脚本不会调用系统包管理器或下载依赖。Java/TestNG 及其依赖仍必须离线预置；未配置工具链时 Agent 不声明 TestNG capability。
+自动安装要求目标机为 Ubuntu 或 openSUSE、使用 systemd/cgroup v2，并预置 SSH、POSIX shell、coreutils；非 root 用户还需已有 sudo。安装脚本不会调用系统包管理器或下载依赖。可使用同一 Release 的架构匹配工具链资产离线预置 Java/TestNG；未配置工具链时 Agent 不声明 TestNG capability。
 
 ## 本地构建与验证
 

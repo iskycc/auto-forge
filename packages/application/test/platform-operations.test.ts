@@ -126,6 +126,55 @@ describe("PlatformOperationsService analytics", () => {
   });
 });
 
+describe("PlatformOperationsService retention", () => {
+  it("requires an exact confirmation before executing and processing object cleanup", async () => {
+    const repository = {
+      listRetentionPolicies: vi.fn(async () => [
+        {
+          category: "log" as const,
+          retentionDays: 30,
+          minimumDays: 7,
+          maximumDays: 730,
+          updatedAt: timestamp,
+          revision: 1,
+        },
+      ]),
+      executeRetention: vi.fn(async () => ({
+        deletedRecords: 4,
+        objectKeys: ["objects/one", "objects/two"],
+      })),
+      claimRetentionCleanupJobs: vi.fn(async () => []),
+    } as unknown as PlatformOperationsRepository;
+    const service = new PlatformOperationsService(
+      repository,
+      { now: () => new Date(timestamp) },
+      { next: () => "cleanup-owner" },
+      { issue: () => "token", hash: (value) => value },
+      { delete: vi.fn(async () => undefined) },
+    );
+
+    await expect(
+      service.executeRetentionNow(settingsAdministrator, "log", {
+        confirmation: "artifact",
+        limit: 10,
+      }),
+    ).rejects.toMatchObject({ code: "RETENTION_CONFIRMATION_MISMATCH" });
+    expect(repository.executeRetention).not.toHaveBeenCalled();
+
+    await expect(
+      service.executeRetentionNow(settingsAdministrator, "log", {
+        confirmation: "log",
+        limit: 10,
+      }),
+    ).resolves.toEqual({
+      category: "log",
+      deletedRecords: 4,
+      queuedObjectDeletes: 2,
+      completedObjectDeletes: 0,
+    });
+  });
+});
+
 const identity: AuthenticatedIdentity = {
   user: {
     id: "user-1",
@@ -149,6 +198,12 @@ const projectIdentity: AuthenticatedIdentity = {
   user: { ...identity.user, id: "user-project" },
   systemPermissions: [],
   projectPermissions: { "project-1": ["run.read"] },
+};
+
+const settingsAdministrator: AuthenticatedIdentity = {
+  ...identity,
+  user: { ...identity.user, id: "settings-admin" },
+  systemPermissions: ["settings.manage"],
 };
 
 function batch(

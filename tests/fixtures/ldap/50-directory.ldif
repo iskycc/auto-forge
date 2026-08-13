@@ -1,0 +1,26 @@
+dn: ou=people,dc=example,dc=test
+objectClass: organizationalUnit
+ou: people
+
+dn: ou=groups,dc=example,dc=test
+objectClass: organizationalUnit
+ou: groups
+
+dn: uid=alice,ou=people,dc=example,dc=test
+objectClass: inetOrgPerson
+uid: alice
+cn: Alice Directory
+sn: Directory
+displayName: Alice Directory
+mail: alice@example.test
+userPassword: Directory!Alice123
+
+dn: cn=auditors,ou=groups,dc=example,dc=test
+objectClass: groupOfNames
+cn: auditors
+member: uid=alice,ou=people,dc=example,dc=test
+
+dn: cn=viewers,ou=groups,dc=example,dc=test
+objectClass: groupOfNames
+cn: viewers
+member: uid=alice,ou=people,dc=example,dc=test

@@ -4,7 +4,7 @@ import Link from "next/link";
 import { CaseSuiteDetailsView } from "@/components/case-suite-details";
 import { CaseSuiteEditor } from "@/components/case-suite-editor";
 import { getPlatformServices } from "@/lib/services";
-import { requirePagePermission } from "@/lib/auth";
+import { requirePageProjectScope } from "@/lib/auth";
 import { hasPermission } from "@autoforge/domain";
 
 export const dynamic = "force-dynamic";
@@ -12,10 +12,10 @@ export const dynamic = "force-dynamic";
 type Props = { params: Promise<{ suiteId: string }> };
 
 export default async function CaseSuitePage({ params }: Props) {
-  const identity = await requirePagePermission("case_suite.read");
+  const { identity, projectIds } = await requirePageProjectScope("case_suite.read");
   const { suiteId } = await params;
   const services = await getPlatformServices();
-  const suite = await services.caseSuites.get(suiteId);
+  const suite = await services.caseSuites.get(suiteId, projectIds);
   const schedule = (await services.platformOperations.listSchedules(identity)).find(
     (candidate) => candidate.suiteId === suiteId,
   );

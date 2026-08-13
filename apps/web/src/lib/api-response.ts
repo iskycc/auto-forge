@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import { DomainError } from "@autoforge/domain";
-import { JarInspectionError } from "@autoforge/testng-discovery";
+import { isJarInspectionError } from "@autoforge/testng-discovery";
 import { NextResponse } from "next/server";
 import { ZodError } from "zod";
 
@@ -10,8 +10,11 @@ export type JarUpload = {
   content: Uint8Array;
 };
 
+const MULTIPART_ENCODING_ALLOWANCE_BYTES = 64 * 1_024;
+
 export async function readJarUpload(request: Request, maxJarBytes: number): Promise<JarUpload> {
-  const formData = await request.formData();
+  rejectOversizedJarRequest(request, maxJarBytes);
+  const formData = await parseMultipartFormData(request, maxJarBytes);
   const file = formData.get("file");
   if (!(file instanceof File)) {
     throw new DomainError("FILE_REQUIRED", "请选择要上传的 JAR 文件。");
@@ -20,7 +23,7 @@ export async function readJarUpload(request: Request, maxJarBytes: number): Prom
     throw new DomainError("EMPTY_JAR", "JAR 文件为空。");
   }
   if (file.size > maxJarBytes) {
-    throw new DomainError("JAR_TOO_LARGE", `JAR 超过 ${maxJarBytes} 字节的导入限制。`);
+    throw jarTooLargeError(maxJarBytes);
   }
   return {
     fileName: file.name,
@@ -28,8 +31,74 @@ export async function readJarUpload(request: Request, maxJarBytes: number): Prom
   };
 }
 
+function rejectOversizedJarRequest(request: Request, maxJarBytes: number): void {
+  const contentLength = Number(request.headers.get("content-length"));
+  if (
+    Number.isFinite(contentLength) &&
+    contentLength > maxJarBytes + MULTIPART_ENCODING_ALLOWANCE_BYTES
+  ) {
+    throw jarTooLargeError(maxJarBytes);
+  }
+}
+
+async function parseMultipartFormData(request: Request, maxJarBytes: number): Promise<FormData> {
+  const contentType = request.headers.get("content-type");
+  if (!contentType?.toLowerCase().startsWith("multipart/form-data")) {
+    throw new DomainError("INVALID_MULTIPART", "上传请求必须使用 multipart/form-data。");
+  }
+  const body = await readBoundedBody(
+    request,
+    maxJarBytes + MULTIPART_ENCODING_ALLOWANCE_BYTES,
+    maxJarBytes,
+  );
+  try {
+    return await new Response(body, { headers: { "content-type": contentType } }).formData();
+  } catch (error) {
+    throw new DomainError("INVALID_MULTIPART", "上传请求不是有效的 multipart/form-data。", {
+      cause: error,
+    });
+  }
+}
+
+async function readBoundedBody(
+  request: Request,
+  maximumRequestBytes: number,
+  maxJarBytes: number,
+): Promise<Uint8Array<ArrayBuffer>> {
+  if (!request.body) {
+    throw new DomainError("INVALID_MULTIPART", "上传请求缺少 multipart 请求体。");
+  }
+  const chunks: Uint8Array[] = [];
+  let totalBytes = 0;
+  const reader = request.body.getReader();
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    totalBytes += value.byteLength;
+    if (totalBytes > maximumRequestBytes) {
+      await reader.cancel();
+      throw jarTooLargeError(maxJarBytes);
+    }
+    chunks.push(value);
+  }
+  const body = new Uint8Array(totalBytes);
+  let offset = 0;
+  for (const chunk of chunks) {
+    body.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return body;
+}
+
+function jarTooLargeError(maxJarBytes: number): DomainError {
+  return new DomainError(
+    "JAR_TOO_LARGE",
+    `JAR 超过 ${Math.floor(maxJarBytes / 1_048_576)} MiB 的导入限制。`,
+  );
+}
+
 export function apiErrorResponse(error: unknown, requestId: string = randomUUID()): NextResponse {
-  if (error instanceof DomainError || error instanceof JarInspectionError) {
+  if (error instanceof DomainError || isJarInspectionError(error)) {
     const status = domainErrorStatus(error.code);
     return NextResponse.json(
       {
@@ -95,10 +164,18 @@ function redactSecrets(value: string): string {
 }
 
 function domainErrorStatus(code: string): number {
-  if (code === "REQUEST_BODY_TOO_LARGE") return 413;
+  if (code === "REQUEST_BODY_TOO_LARGE" || code === "JAR_TOO_LARGE") return 413;
   if (code === "RATE_LIMITED") return 429;
   if (code === "RUNNER_AGENT_RESOURCE_UNAVAILABLE") return 503;
-  if (code === "RUNNER_HOST_CONNECTION_FAILED" || code === "RUNNER_INSTALLATION_FAILED") {
+  if (
+    code === "RUNNER_HOST_CONNECTION_FAILED" ||
+    code === "RUNNER_HOST_AUTHENTICATION_FAILED" ||
+    code === "RUNNER_HOST_DNS_FAILED" ||
+    code === "RUNNER_HOST_CONNECTION_REFUSED" ||
+    code === "RUNNER_HOST_CONNECTION_TIMEOUT" ||
+    code === "RUNNER_HOST_HANDSHAKE_FAILED" ||
+    code === "RUNNER_INSTALLATION_FAILED"
+  ) {
     return 502;
   }
   if (code === "AUTH_REQUIRED" || code === "AUTHENTICATION_FAILED") return 401;
@@ -106,6 +183,7 @@ function domainErrorStatus(code: string): number {
   if (code === "AUTH_BOOTSTRAP_REJECTED") return 403;
   if (
     code.endsWith("_CONFLICT") ||
+    code === "RUNNER_HOST_KEY_MISMATCH" ||
     code === "ROLE_IN_USE" ||
     code === "LAST_ADMIN_REQUIRED" ||
     code === "CASE_SOURCE_IN_USE" ||

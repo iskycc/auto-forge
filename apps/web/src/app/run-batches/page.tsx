@@ -4,7 +4,7 @@ import { Activity } from "lucide-react";
 
 import { RunBatchPlanner } from "@/components/run-batch-planner";
 import { getPlatformServices } from "@/lib/services";
-import { requirePageProjectScope } from "@/lib/auth";
+import { hasPermissionInAnyScope, requirePageProjectScope } from "@/lib/auth";
 import type { RunBatchListQuery } from "@autoforge/application";
 
 export const dynamic = "force-dynamic";
@@ -14,16 +14,27 @@ export default async function RunBatchesPage({
 }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  const { projectIds } = await requirePageProjectScope("run.read");
+  const { identity, projectIds } = await requirePageProjectScope("run.read");
   const services = await getPlatformServices();
   const parameters = await searchParams;
   const filter = runBatchFilter(parameters, projectIds);
-  const [suites, runners, batchPage, projects] = await Promise.all([
-    services.caseSuites.list(200),
+  const environmentProjectIds = hasPermissionInAnyScope(identity, "environment.read")
+    ? services.identityAccess.projectScope(identity, "environment.read")
+    : [];
+  const [suites, runners, batchPage, projects, environmentSummaries] = await Promise.all([
+    services.caseSuites.list(200, projectIds),
     services.runnerControl.list(500),
     services.runBatches.listPage(filter),
-    services.identities.listProjects(),
+    services.identities.listProjects(projectIds),
+    environmentProjectIds?.length === 0
+      ? Promise.resolve([])
+      : services.executionEnvironments.list(environmentProjectIds),
   ]);
+  const environments = await Promise.all(
+    environmentSummaries.map((environment) =>
+      services.executionEnvironments.get(environment.id, environmentProjectIds),
+    ),
+  );
   const refreshQuery = new URLSearchParams();
   for (const [key, value] of Object.entries(filter)) {
     if (key !== "projectIds" && value !== undefined) refreshQuery.set(key, String(value));
@@ -117,6 +128,7 @@ export default async function RunBatchesPage({
       <RunBatchPlanner
         initialSuites={suites}
         initialRunners={runners}
+        initialEnvironments={environments}
         initialBatches={batchPage.items}
         historyRefreshUrl={`/api/v1/run-batches?${refreshQuery}`}
         {...(batchPage.nextCursor ? { nextPageHref: `/run-batches?${nextQuery}` } : {})}

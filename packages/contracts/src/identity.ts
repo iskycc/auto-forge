@@ -146,6 +146,7 @@ export const ldapGroupMappingInputSchema = z.object({
 });
 
 export const auditListQuerySchema = z.object({
+  projectId: z.string().min(1).max(128).optional(),
   actorId: z.string().optional(),
   action: z.string().optional(),
   resourceType: z.string().optional(),

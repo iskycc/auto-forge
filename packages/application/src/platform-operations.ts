@@ -4,6 +4,7 @@ import {
   analyticsFilterSchema,
   createAnalyticsExportInputSchema,
   createServiceAccountInputSchema,
+  executeRetentionInputSchema,
   issueApiTokenInputSchema,
   updateRetentionPolicyInputSchema,
   updateServiceAccountInputSchema,
@@ -468,6 +469,26 @@ export class PlatformOperationsService {
       category,
       cutoff(this.clock.now(), policy.retentionDays),
     );
+  }
+
+  async executeRetentionNow(
+    actor: AuthenticatedIdentity,
+    category: RetentionCategory,
+    input: unknown,
+  ) {
+    requirePermission(actor, "settings.manage");
+    const parsed = executeRetentionInputSchema.parse(input);
+    if (parsed.confirmation !== category) {
+      throw new DomainError("RETENTION_CONFIRMATION_MISMATCH", "清理确认类别与请求类别不一致。");
+    }
+    const result = await this.executeRetention(category, parsed.limit);
+    const completedObjectDeletes = await this.processRetentionCleanupJobs(parsed.limit);
+    return {
+      category,
+      deletedRecords: result.deletedRecords,
+      queuedObjectDeletes: result.objectKeys.length,
+      completedObjectDeletes,
+    };
   }
 
   async executeRetention(category: RetentionCategory, limit = 1_000) {

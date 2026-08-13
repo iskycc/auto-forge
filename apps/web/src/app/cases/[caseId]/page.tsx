@@ -1,5 +1,5 @@
 import { DomainError, hasPermission } from "@autoforge/domain";
-import { ArrowLeft, FileCode2 } from "lucide-react";
+import { AlertCircle, ArrowLeft, FileCode2 } from "lucide-react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
@@ -7,7 +7,7 @@ import { CaseDefinitionEditor } from "@/components/case-definition-editor";
 import { CaseVersionHistory } from "@/components/case-version-history";
 import { StatusBadge } from "@/components/status-badge";
 import { SingleCaseRun } from "@/components/single-case-run";
-import { requirePagePermission } from "@/lib/auth";
+import { requirePageProjectScope } from "@/lib/auth";
 import { getPlatformServices } from "@/lib/services";
 
 export const dynamic = "force-dynamic";
@@ -27,21 +27,34 @@ function formatDate(value: string): string {
 }
 
 export default async function CaseDetailPage({ params }: CaseDetailPageProps) {
-  const identity = await requirePagePermission("case.read");
+  const { identity, projectIds } = await requirePageProjectScope("case.read");
   const { caseId } = await params;
   const services = await getPlatformServices();
   let definition;
   let versions;
   try {
-    definition = await services.caseDefinitions.get(caseId);
-    versions = await services.caseDefinitions.listVersions(caseId);
+    definition = await services.caseDefinitions.get(caseId, projectIds);
+    versions = await services.caseDefinitions.listVersions(caseId, projectIds);
   } catch (error) {
     if (error instanceof DomainError && error.code === "CASE_DEFINITION_NOT_FOUND") notFound();
     throw error;
   }
-  const canManage = hasPermission(identity, "case.manage");
+  const canManage = hasPermission(identity, "case.manage", definition.projectId);
   const canRun = hasPermission(identity, "run.create", definition.projectId);
-  const runners = canRun ? await services.runnerControl.list(200) : [];
+  const sourceRecord = await services.caseSources.get(definition.sourceId, projectIds);
+  const executable = sourceRecord.inspection.executable !== false;
+  const runners = canRun && executable ? await services.runnerControl.list(200) : [];
+  let sourceView: Awaited<ReturnType<typeof services.caseSources.readClassSource>> = null;
+  let sourceViewError: string | undefined;
+  try {
+    sourceView = await services.caseSources.readClassSource(
+      definition.sourceId,
+      definition.className,
+      projectIds,
+    );
+  } catch (error) {
+    sourceViewError = error instanceof Error ? error.message : "源码读取失败。";
+  }
 
   return (
     <div className="page-stack narrow-page">
@@ -97,10 +110,39 @@ export default async function CaseDetailPage({ params }: CaseDetailPageProps) {
         </div>
       </section>
 
-      {canRun && definition.enabled && !definition.archived ? (
+      {canRun && definition.enabled && !definition.archived && executable ? (
         <section className="card">
           <SingleCaseRun caseDefinitionId={definition.id} runners={runners} />
         </section>
+      ) : null}
+
+      {!executable ? (
+        <div className="implementation-notice" role="status">
+          <AlertCircle size={17} aria-hidden="true" />
+          该用例来自 sources JAR，可查看和管理源码，但不能直接执行；执行时请导入包含 .class 的测试
+          JAR。
+        </div>
+      ) : null}
+
+      {sourceView ? (
+        <section className="card source-code-card">
+          <div className="card-heading">
+            <div>
+              <span className="eyebrow">Java Source</span>
+              <h2>用例源码</h2>
+              <p>{sourceView.reference.entryPath}</p>
+            </div>
+            <FileCode2 size={22} aria-hidden="true" />
+          </div>
+          <pre className="source-code-viewer" tabIndex={0}>
+            <code>{sourceView.content}</code>
+          </pre>
+        </section>
+      ) : sourceViewError ? (
+        <div className="alert alert-error" role="alert">
+          <AlertCircle size={17} aria-hidden="true" />
+          <span>{sourceViewError}</span>
+        </div>
       ) : null}
 
       {canManage ? (

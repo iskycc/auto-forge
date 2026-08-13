@@ -3,7 +3,12 @@ import "server-only";
 import { randomUUID } from "node:crypto";
 
 import type { AuthenticatedIdentity, Permission } from "@autoforge/domain";
-import { DEFAULT_PROJECT_ID, DomainError, isPermission } from "@autoforge/domain";
+import {
+  DEFAULT_PROJECT_ID,
+  DomainError,
+  isPermission,
+  projectIdsForPermission,
+} from "@autoforge/domain";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
@@ -11,10 +16,19 @@ import { getPlatformServices } from "./services";
 
 export const SESSION_COOKIE_NAME = "autoforge_session";
 
-export async function authenticateRequest(request: Request): Promise<AuthenticatedIdentity> {
+export async function authenticateRequest(
+  request: Request,
+  options: { allowPasswordChangeRequired?: boolean } = {},
+): Promise<AuthenticatedIdentity> {
   const services = await getPlatformServices();
   const sessionToken = requestCookie(request, SESSION_COOKIE_NAME);
-  if (sessionToken) return services.identityAccess.authenticateSession(sessionToken);
+  if (sessionToken) {
+    const identity = await services.identityAccess.authenticateSession(sessionToken);
+    if (identity.user.forcePasswordChange && !options.allowPasswordChangeRequired) {
+      throw new DomainError("PASSWORD_CHANGE_REQUIRED", "必须先修改初始密码，才能继续使用平台。");
+    }
+    return identity;
+  }
   const apiToken = request.headers.get("authorization")?.startsWith("Bearer af_api_")
     ? request.headers.get("authorization")?.slice(7).trim()
     : undefined;
@@ -82,6 +96,7 @@ export async function requirePagePermission(
   if (!identity) {
     redirect((await services.identityAccess.setupRequired()) ? "/setup" : "/login");
   }
+  if (identity.user.forcePasswordChange) redirect("/account/security");
   try {
     services.identityAccess.authorize(identity, permission, projectId);
     return identity;
@@ -99,8 +114,63 @@ export async function requirePageProjectScope(permission: Permission): Promise<{
   if (!identity) {
     redirect((await services.identityAccess.setupRequired()) ? "/setup" : "/login");
   }
+  if (identity.user.forcePasswordChange) redirect("/account/security");
   try {
     return { identity, projectIds: services.identityAccess.projectScope(identity, permission) };
+  } catch {
+    redirect("/forbidden");
+  }
+}
+
+export async function requirePageAnyPermission(
+  permissions: readonly Permission[],
+): Promise<AuthenticatedIdentity> {
+  const services = await getPlatformServices();
+  const identity = await currentIdentity();
+  if (!identity) {
+    redirect((await services.identityAccess.setupRequired()) ? "/setup" : "/login");
+  }
+  if (identity.user.forcePasswordChange) redirect("/account/security");
+  if (!permissions.some((permission) => hasPermissionInAnyScope(identity, permission))) {
+    redirect("/forbidden");
+  }
+  return identity;
+}
+
+export function hasPermissionInAnyScope(
+  identity: AuthenticatedIdentity,
+  permission: Permission,
+): boolean {
+  return (
+    identity.systemPermissions.includes(permission) ||
+    Object.values(identity.projectPermissions).some((permissions) =>
+      permissions.includes(permission),
+    )
+  );
+}
+
+export function authorizedProjectScope(
+  identity: AuthenticatedIdentity,
+  permission: Permission,
+  requestedProjectId?: string,
+): string[] | undefined {
+  const projectIds = projectIdsForPermission(identity, permission);
+  if (projectIds?.length === 0) {
+    throw new DomainError("AUTH_FORBIDDEN", "当前账号没有执行此操作的权限。");
+  }
+  if (requestedProjectId && projectIds && !projectIds.includes(requestedProjectId)) {
+    throw new DomainError("AUTH_FORBIDDEN", "当前账号不能访问指定项目。");
+  }
+  return requestedProjectId ? [requestedProjectId] : projectIds;
+}
+
+export function requireAuthorizedPageProjectScope(
+  identity: AuthenticatedIdentity,
+  permission: Permission,
+  requestedProjectId?: string,
+): string[] | undefined {
+  try {
+    return authorizedProjectScope(identity, permission, requestedProjectId);
   } catch {
     redirect("/forbidden");
   }

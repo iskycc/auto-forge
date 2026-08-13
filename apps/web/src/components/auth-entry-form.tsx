@@ -2,7 +2,6 @@
 
 import { apiErrorSchema, bootstrapAdminInputSchema, loginInputSchema } from "@autoforge/contracts";
 import { LockKeyhole, Network, ShieldCheck, UserRound } from "lucide-react";
-import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
 
 import { Button, Input } from "@/components/ui";
@@ -10,8 +9,15 @@ import { authEntryValidationMessage } from "@/lib/auth-entry-validation";
 
 type AuthMode = "login" | "setup";
 
-export function AuthEntryForm({ mode, ldapEnabled }: { mode: AuthMode; ldapEnabled?: boolean }) {
-  const router = useRouter();
+export function AuthEntryForm({
+  mode,
+  ldapEnabled,
+  notice,
+}: {
+  mode: AuthMode;
+  ldapEnabled?: boolean;
+  notice?: string | undefined;
+}) {
   const [provider, setProvider] = useState<"local" | "ldap">("local");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
@@ -60,7 +66,9 @@ export function AuthEntryForm({ mode, ldapEnabled }: { mode: AuthMode; ldapEnabl
             : undefined) ?? "请求未成功。",
         );
       }
-      router.push("/");
+      // The root layout is rendered with the session state from the login/setup request.
+      // A document navigation prevents Next.js from reusing that unauthenticated layout.
+      window.location.replace("/landing");
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "请求未成功。");
       setPending(false);
@@ -69,6 +77,11 @@ export function AuthEntryForm({ mode, ldapEnabled }: { mode: AuthMode; ldapEnabl
 
   return (
     <form className="auth-form" noValidate onSubmit={submit}>
+      {notice ? (
+        <p className="auth-notice" role="status">
+          {notice}
+        </p>
+      ) : null}
       {mode === "login" && ldapEnabled ? (
         <div className="auth-provider" role="group" aria-label="登录来源">
           <Button

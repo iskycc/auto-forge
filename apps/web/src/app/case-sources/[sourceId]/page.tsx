@@ -4,16 +4,18 @@ import Link from "next/link";
 import { SourceActions } from "@/components/source-actions";
 import { SourceLifecyclePanel } from "@/components/source-lifecycle";
 import { getPlatformServices } from "@/lib/services";
-import { requirePagePermission } from "@/lib/auth";
+import { requirePageProjectScope } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 
 type Props = { params: Promise<{ sourceId: string }> };
 
 export default async function CaseSourcePage({ params }: Props) {
-  await requirePagePermission("case_source.read");
+  const { projectIds } = await requirePageProjectScope("case_source.read");
   const { sourceId } = await params;
-  const { source, inspection } = await (await getPlatformServices()).caseSources.get(sourceId);
+  const { source, inspection } = await (
+    await getPlatformServices()
+  ).caseSources.get(sourceId, projectIds);
   return (
     <div className="page-stack narrow-page">
       <section className="page-hero">
@@ -45,7 +47,19 @@ export default async function CaseSourcePage({ params }: Props) {
           </div>
           <div>
             <span>扫描模式</span>
-            <strong>{inspection.discoveryMode}</strong>
+            <strong>
+              {inspection.discoveryMode === "java-source-annotations"
+                ? "Java 源码注解"
+                : "class 字节码注解"}
+            </strong>
+          </div>
+          <div>
+            <span>执行能力</span>
+            <strong>{inspection.executable === false ? "仅源码查看" : "可执行测试 JAR"}</strong>
+          </div>
+          <div>
+            <span>Java 源文件</span>
+            <strong>{inspection.javaSourceFileCount ?? 0}</strong>
           </div>
           <div>
             <span>目标 Java 版本</span>
@@ -127,6 +141,7 @@ export default async function CaseSourcePage({ params }: Props) {
                   <small>{candidate.className}</small>
                 </span>
                 <span className="method-count">{candidate.methods.length} 个方法</span>
+                {candidate.source ? <span className="tag">用例详情可查看源码</span> : null}
               </summary>
               <div className="method-list">
                 {candidate.parameters && Object.keys(candidate.parameters).length > 0 && (

@@ -18,6 +18,8 @@ import { z } from "zod";
 export const PLATFORM_CONFIGURATION_SCHEMA_VERSION = 1 as const;
 export const PLATFORM_CONFIGURATION_FILE = "platform.json";
 export const INITIAL_ADMIN_TOKEN_FILE = "initial-admin-token";
+export const MINIMUM_JAR_UPLOAD_BYTES = 1_048_576;
+export const MAXIMUM_JAR_UPLOAD_BYTES = 268_435_456;
 
 const schedulerSchema = z.object({
   maximumCpuUtilizationPercent: z.number().min(1).max(100),
@@ -53,7 +55,7 @@ export const persistedPlatformConfigurationSchema = z
       publicDashboardRefreshSeconds: z.number().int().min(5).max(300),
     }),
     limits: z.object({
-      maxJarBytes: z.number().int().min(1_048_576).max(268_435_456),
+      maxJarBytes: z.number().int().min(MINIMUM_JAR_UPLOAD_BYTES).max(MAXIMUM_JAR_UPLOAD_BYTES),
       testNgTargetJavaVersion: z.number().int().min(8).max(100),
       runnerClaimRateLimitPerMinute: z.number().int().min(1).max(10_000),
       sessionTtlHours: z.number().int().min(1).max(168),
@@ -231,7 +233,7 @@ function defaultConfiguration(
       publicDashboardRefreshSeconds: 15,
     },
     limits: {
-      maxJarBytes: 33_554_432,
+      maxJarBytes: MAXIMUM_JAR_UPLOAD_BYTES,
       testNgTargetJavaVersion: 21,
       runnerClaimRateLimitPerMinute: 120,
       sessionTtlHours: 12,

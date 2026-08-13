@@ -1,0 +1,8 @@
+dn: uid=e2e-admin,ou=people,dc=example,dc=test
+objectClass: inetOrgPerson
+uid: e2e-admin
+cn: Conflicting Directory Admin
+sn: Admin
+displayName: Conflicting Directory Admin
+mail: conflict@example.test
+userPassword: Directory!Conflict123

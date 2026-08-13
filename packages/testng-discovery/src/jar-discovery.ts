@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import type { JarDiscoveryPort } from "@autoforge/application";
 import {
   jarInspectionSchema,
+  type JavaSourceReference,
   type JarInspection,
   type JarInspectionWarning,
   type TestNgClassCandidate,
@@ -12,16 +13,33 @@ import {
 import { unzipSync } from "fflate";
 
 import { parseClassFile, type ParsedClassFile } from "./class-file";
+import { isSafeJavaSourceEntry, parseJavaTestSource } from "./java-source";
 import { parseTestNgXml, selectionIncludesClass } from "./testng-xml";
 
 const DEFAULT_MAX_JAR_BYTES = 32 * 1024 * 1024;
 const DEFAULT_MAX_UNCOMPRESSED_BYTES = 256 * 1024 * 1024;
 const DEFAULT_MAX_ENTRIES = 20_000;
 const DEFAULT_MAX_CLASS_BYTES = 10 * 1024 * 1024;
+const DEFAULT_MAX_SOURCE_BYTES = 2 * 1024 * 1024;
 const DEFAULT_MAX_TEST_CLASSES = 5_000;
 const DEFAULT_TARGET_JAVA_VERSION = 21;
 const MAX_WARNINGS = 100;
 const VERSIONED_CLASS_PATTERN = /^META-INF\/versions\/(\d+)\/(.+\.class)$/;
+const JAR_INSPECTION_ERROR_CODES = new Set([
+  "EMPTY_JAR",
+  "INVALID_FILE_NAME",
+  "INVALID_FILE_TYPE",
+  "INVALID_JAR",
+  "JAR_EXPANDS_TOO_LARGE",
+  "JAR_TOO_LARGE",
+  "SOURCE_ENCODING_INVALID",
+  "SOURCE_ENTRY_PATH_UNSAFE",
+  "SOURCE_FILE_TOO_LARGE",
+  "SOURCE_INTEGRITY_FAILED",
+  "SOURCE_NOT_AVAILABLE",
+  "TOO_MANY_ENTRIES",
+  "TOO_MANY_TEST_CLASSES",
+]);
 
 type SelectedClassEntry = {
   logicalName: string;
@@ -46,11 +64,22 @@ export class JarInspectionError extends Error {
   }
 }
 
+export function isJarInspectionError(error: unknown): error is JarInspectionError {
+  return (
+    error instanceof Error &&
+    error.name === "JarInspectionError" &&
+    "code" in error &&
+    typeof error.code === "string" &&
+    JAR_INSPECTION_ERROR_CODES.has(error.code)
+  );
+}
+
 export type TestNgJarDiscoveryOptions = {
   maxJarBytes?: number;
   maxUncompressedBytes?: number;
   maxEntries?: number;
   maxClassBytes?: number;
+  maxSourceBytes?: number;
   maxTestClasses?: number;
   targetJavaVersion?: number;
 };
@@ -75,6 +104,7 @@ export class TestNgJarDiscovery implements JarDiscoveryPort {
   private readonly maxUncompressedBytes: number;
   private readonly maxEntries: number;
   private readonly maxClassBytes: number;
+  private readonly maxSourceBytes: number;
   private readonly maxTestClasses: number;
   private readonly targetJavaVersion: number;
 
@@ -83,6 +113,7 @@ export class TestNgJarDiscovery implements JarDiscoveryPort {
     this.maxUncompressedBytes = options.maxUncompressedBytes ?? DEFAULT_MAX_UNCOMPRESSED_BYTES;
     this.maxEntries = options.maxEntries ?? DEFAULT_MAX_ENTRIES;
     this.maxClassBytes = options.maxClassBytes ?? DEFAULT_MAX_CLASS_BYTES;
+    this.maxSourceBytes = options.maxSourceBytes ?? DEFAULT_MAX_SOURCE_BYTES;
     this.maxTestClasses = options.maxTestClasses ?? DEFAULT_MAX_TEST_CLASSES;
     this.targetJavaVersion = options.targetJavaVersion ?? DEFAULT_TARGET_JAVA_VERSION;
     if (!Number.isInteger(this.targetJavaVersion) || this.targetJavaVersion < 8) {
@@ -98,6 +129,28 @@ export class TestNgJarDiscovery implements JarDiscoveryPort {
     const classEntries = selectClassEntries(entries, this.targetJavaVersion, warnings);
     const parsedClasses = this.parseClasses(classEntries, warnings);
     let classes = resolveCandidates(parsedClasses, warnings);
+    const sourceCandidates = this.parseJavaSources(entries, warnings);
+    const sourceByClassName = new Map(
+      sourceCandidates.map((candidate) => [candidate.className, candidate] as const),
+    );
+    if (classes.length > 0) {
+      classes = classes.map((candidate) => {
+        const source = sourceByClassName.get(candidate.className)?.source;
+        return source ? { ...candidate, source } : candidate;
+      });
+    } else if (classEntries.length === 0) {
+      classes = sourceCandidates;
+    }
+    if (
+      classEntries.length === 0 &&
+      Object.keys(entries).some((entry) => entry.endsWith(".java"))
+    ) {
+      pushWarning(warnings, {
+        code: "JAVA_SOURCE_DISCOVERY_BOUNDED",
+        message:
+          "sources JAR 使用有界声明扫描，不会编译源码；源码继承、注解处理器和运行期生成的测试不会被展开。",
+      });
+    }
 
     for (const parsed of parsedClasses.values()) {
       for (const semantic of parsed.parsed.dynamicSemantics) {
@@ -139,7 +192,7 @@ export class TestNgJarDiscovery implements JarDiscoveryPort {
       );
     }
     const testMethodCount = classes.reduce((sum, candidate) => sum + candidate.methods.length, 0);
-    this.addEmptyDiscoveryWarnings(classEntries, classes, warnings);
+    this.addEmptyDiscoveryWarnings(classEntries, sourceCandidates.length, classes, warnings);
     if (warnings.length === MAX_WARNINGS) {
       warnings.push({
         code: "WARNINGS_TRUNCATED",
@@ -154,6 +207,7 @@ export class TestNgJarDiscovery implements JarDiscoveryPort {
       sha256: createHash("sha256").update(content).digest("hex"),
       sizeBytes: content.byteLength,
       classFileCount: classEntries.length,
+      javaSourceFileCount: Object.keys(entries).filter((entry) => entry.endsWith(".java")).length,
       testClassCount: classes.length,
       testMethodCount,
       hasRootTestNgXml: Boolean(rootTestNgXml),
@@ -169,10 +223,39 @@ export class TestNgJarDiscovery implements JarDiscoveryPort {
           }
         : {}),
       targetJavaVersion: this.targetJavaVersion,
-      discoveryMode: "bytecode-annotations",
+      discoveryMode: classEntries.length === 0 ? "java-source-annotations" : "bytecode-annotations",
+      executable: classEntries.length > 0,
       classes,
       warnings,
     });
+  }
+
+  async readSource(
+    content: Uint8Array,
+    reference: JavaSourceReference | undefined,
+  ): Promise<string> {
+    if (!reference)
+      throw new JarInspectionError("SOURCE_NOT_AVAILABLE", "该用例没有可查看的源码。");
+    this.assertContentBoundary(content);
+    if (!isSafeJavaSourceEntry(reference.entryPath)) {
+      throw new JarInspectionError("SOURCE_ENTRY_PATH_UNSAFE", "源码条目路径不安全，已拒绝读取。");
+    }
+    const source = this.extractSourceEntry(content, reference.entryPath);
+    if (!source) throw new JarInspectionError("SOURCE_NOT_AVAILABLE", "JAR 中的源码条目不存在。");
+    if (source.byteLength !== reference.sizeBytes) {
+      throw new JarInspectionError("SOURCE_INTEGRITY_FAILED", "源码大小与导入快照不一致。");
+    }
+    const digest = createHash("sha256").update(source).digest("hex");
+    if (digest !== reference.sha256) {
+      throw new JarInspectionError("SOURCE_INTEGRITY_FAILED", "源码摘要与导入快照不一致。");
+    }
+    try {
+      return new TextDecoder("utf-8", { fatal: true }).decode(source);
+    } catch (error) {
+      throw new JarInspectionError("SOURCE_ENCODING_INVALID", "源码不是有效的 UTF-8 文本。", {
+        cause: error,
+      });
+    }
   }
 
   private assertContentBoundary(content: Uint8Array): void {
@@ -212,12 +295,101 @@ export class TestNgJarDiscovery implements JarDiscoveryPort {
             entry.name === "testng.xml" ||
             entry.name.toLowerCase().endsWith("/testng.xml") ||
             entry.name.toUpperCase() === "META-INF/MANIFEST.MF" ||
-            entry.name.endsWith(".class")
+            entry.name.endsWith(".class") ||
+            entry.name.endsWith(".java")
           );
         },
       });
     } catch (error) {
-      if (error instanceof JarInspectionError) throw error;
+      if (isJarInspectionError(error)) throw error;
+      throw new JarInspectionError("INVALID_JAR", "JAR 解压失败或目录结构无效。", {
+        cause: error,
+      });
+    }
+  }
+
+  private parseJavaSources(
+    entries: Record<string, Uint8Array>,
+    warnings: JarInspectionWarning[],
+  ): TestNgClassCandidate[] {
+    const candidates = new Map<string, TestNgClassCandidate>();
+    for (const [entryPath, content] of Object.entries(entries).sort(([left], [right]) =>
+      left.localeCompare(right),
+    )) {
+      if (!entryPath.endsWith(".java")) continue;
+      if (!isSafeJavaSourceEntry(entryPath)) {
+        pushWarning(warnings, {
+          code: "SOURCE_ENTRY_PATH_UNSAFE",
+          message: "Java 源码条目路径包含绝对路径、反斜杠或目录穿越片段，已跳过。",
+          entry: entryPath,
+        });
+        continue;
+      }
+      if (content.byteLength > this.maxSourceBytes) {
+        pushWarning(warnings, {
+          code: "SOURCE_FILE_TOO_LARGE",
+          message: `Java 源文件超过 ${this.maxSourceBytes} 字节，已跳过。`,
+          entry: entryPath,
+        });
+        continue;
+      }
+      try {
+        const candidate = parseJavaTestSource(entryPath, content);
+        if (!candidate) continue;
+        if (candidates.has(candidate.className)) {
+          pushWarning(warnings, {
+            code: "DUPLICATE_SOURCE_CLASS_NAME",
+            message: "sources JAR 中包含重复类名，保留按路径排序后的首个源码条目。",
+            entry: entryPath,
+          });
+          continue;
+        }
+        candidates.set(candidate.className, candidate);
+      } catch (error) {
+        pushWarning(warnings, {
+          code: "SOURCE_PARSE_FAILED",
+          message: error instanceof Error ? error.message : "Java 源文件解析失败。",
+          entry: entryPath,
+        });
+      }
+    }
+    return [...candidates.values()].sort((left, right) =>
+      left.className.localeCompare(right.className),
+    );
+  }
+
+  private extractSourceEntry(content: Uint8Array, entryPath: string): Uint8Array | undefined {
+    let entryCount = 0;
+    let totalUncompressedBytes = 0;
+    try {
+      const selected = unzipSync(content, {
+        filter: (entry) => {
+          entryCount += 1;
+          totalUncompressedBytes += entry.originalSize;
+          if (entryCount > this.maxEntries) {
+            throw new JarInspectionError(
+              "TOO_MANY_ENTRIES",
+              `JAR 条目数超过 ${this.maxEntries} 的限制。`,
+            );
+          }
+          if (totalUncompressedBytes > this.maxUncompressedBytes) {
+            throw new JarInspectionError(
+              "JAR_EXPANDS_TOO_LARGE",
+              `JAR 解压后超过 ${this.maxUncompressedBytes} 字节的限制。`,
+            );
+          }
+          if (entry.name === entryPath && entry.originalSize > this.maxSourceBytes) {
+            throw new JarInspectionError(
+              "SOURCE_FILE_TOO_LARGE",
+              `Java 源文件超过 ${this.maxSourceBytes} 字节的查看限制。`,
+            );
+          }
+          return entry.name === entryPath;
+        },
+      });
+      return selected[entryPath];
+    } catch (error) {
+      if (isJarInspectionError(error)) throw error;
       throw new JarInspectionError("INVALID_JAR", "JAR 解压失败或目录结构无效。", {
         cause: error,
       });
@@ -267,11 +439,15 @@ export class TestNgJarDiscovery implements JarDiscoveryPort {
 
   private addEmptyDiscoveryWarnings(
     classEntries: SelectedClassEntry[],
+    sourceCandidateCount: number,
     classes: TestNgClassCandidate[],
     warnings: JarInspectionWarning[],
   ): void {
-    if (classEntries.length === 0) {
-      pushWarning(warnings, { code: "NO_CLASS_FILES", message: "JAR 中没有发现 .class 文件。" });
+    if (classEntries.length === 0 && sourceCandidateCount === 0) {
+      pushWarning(warnings, {
+        code: "NO_TESTNG_ANNOTATIONS",
+        message: "没有从 .class 或 Java 源文件中发现 TestNG @Test 类或方法。",
+      });
     } else if (classes.length === 0) {
       pushWarning(warnings, {
         code: "NO_TESTNG_ANNOTATIONS",

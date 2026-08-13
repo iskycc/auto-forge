@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
-import { authorizeRequest, requestId, requireSameOrigin } from "@/lib/auth";
+import { authenticateRequest, requestId, requireSameOrigin } from "@/lib/auth";
 import { apiErrorResponse } from "@/lib/api-response";
 import { getPlatformServices } from "@/lib/services";
 
@@ -13,19 +13,22 @@ export async function POST(request: Request, context: Context): Promise<NextResp
   const currentRequestId = requestId(request);
   try {
     requireSameOrigin(request);
-    const identity = await authorizeRequest(request, "case.manage");
+    const identity = await authenticateRequest(request);
     const { caseDefinitionId, version } = await context.params;
     const parsedVersion = versionSchema.parse(version);
     const services = await getPlatformServices();
+    const projectIds = services.identityAccess.projectScope(identity, "case.manage");
     const definition = await services.caseDefinitions.restoreVersion(
       caseDefinitionId,
       parsedVersion,
       identity.user.id,
+      projectIds,
     );
     await services.identityAccess.recordAuthorizedOperation(identity, {
       action: "case_definition.restore_version",
       resourceType: "case_definition",
       resourceId: caseDefinitionId,
+      projectId: definition.projectId,
       requestId: currentRequestId,
       details: { restoredFromVersion: parsedVersion, currentVersion: definition.currentVersion },
     });

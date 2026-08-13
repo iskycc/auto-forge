@@ -4,6 +4,79 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## Unreleased
+
+### Added
+
+- Support bounded TestNG discovery from Java `*-sources.jar` archives, preserve per-class source
+  references and show integrity-checked UTF-8 source content on the case detail page. Source-only cases
+  are explicitly read-only and blocked from Agent execution; bytecode JAR imports remain executable.
+- Add a visible management center with direct entries for users, roles, projects, LDAP, sessions,
+  execution environments, secrets and platform configuration.
+- Add real SSH protocol regression coverage for both Password and Keyboard-Interactive/PAM
+  authentication, rejected credentials and Runner host prerequisite diagnostics.
+- Add an account security self-service page: local users change their own password, review and
+  terminate their own sessions, and accounts flagged for a mandatory password change are redirected
+  until they comply; LDAP-managed users see a read-only explanation instead of a local password form.
+- Generate the main navigation and management center entries from the caller's real RBAC permissions
+  (`case.*`, `run.*`, `runner.*`, `environment.*`, `audit.*`, `settings.*`) instead of showing every
+  entry to every signed-in user.
+- Scope the case library, JAR import, file sources and case suite pages to an authorized project
+  selected via URL filter, and block cross-project case/suite mixing in both UI and application
+  services.
+- Complete the user, project membership and role binding management UI: member listings, assigned
+  role review and revocation, owner transfer, and impact confirmation for last-administrator and
+  last-project-owner protections.
+- Add a standalone audit page governed by `audit.read`/`audit.export` with actor, action, resource,
+  result and UTC time filters, cursor pagination, per-event details and bounded CSV export.
+- Complete the service account lifecycle UI: edit name, description, permissions and project scope,
+  disable/restore accounts with impact hints, and mark tokens of disabled accounts as invalidated.
+- Add a per-`ExecutionRun` cancel action with reason capture on the batch details page, alongside the
+  existing whole-batch cancellation.
+- Add an automation operations view listing all authorized schedules (enable/disable, last/next
+  trigger, miss policy, related batches) and LDAP synchronization history (progress, checkpoint,
+  processed/disabled counts, error summaries, retry).
+- Extend the case version history with read-only snapshot details, adjacent or arbitrary version
+  diffs, source information, related execution links and a pre-restore change summary.
+- Add a maintained functional E2E coverage matrix (`tests/e2e/coverage-matrix.json`) validated in CI,
+  and split browser coverage into isolated suites for identity/RBAC, project isolation, case suite
+  lifecycle, execution recovery, management operations, platform operations and JAR import.
+- Add acceptance suites that run only on GitHub Actions: real Go Runner Agent Lite/Full loop with the
+  offline Java/TestNG toolchain, real offline LDAP directory flows, SSH-based Runner install and
+  rollback, container executor isolation, Full dependency business recovery and release-asset offline
+  upgrade acceptance.
+
+### Changed
+
+- Raise the new-install JAR upload default from 32 MiB to 256 MiB and present the persisted 1–256 MiB
+  limit as an administrator-friendly setting instead of a raw byte count. Existing installations keep
+  their configured value until an administrator changes it and restarts Web and worker.
+- Gate the Release workflow's publish step behind an offline-acceptance job that verifies signatures,
+  checksums, SBOMs and licenses, installs from the immutable assets without outbound network, runs the
+  core business loop with the embedded Agent, and exercises upgrade, failed-migration rejection and
+  rollback from the previous stable release.
+
+### Fixed
+
+- Reload the server-rendered root layout after login, initial administrator creation and logout so the
+  authenticated home page always remains inside the same navigation shell as the other console pages.
+- Keep API uploads outside the Next.js page proxy's 10 MiB request-body limit, bound both declared and
+  chunked multipart bodies at the configured JAR limit, return HTTP 413 for oversized uploads and map
+  malformed or invalid JAR input to stable client errors instead of 500 responses.
+- Support Runner hosts whose OpenSSH/PAM password flow is exposed through Keyboard-Interactive rather
+  than the legacy password method, and allow host probing before the Agent control-plane URL is set.
+- Distinguish SSH authentication, DNS, refused connection, timeout and handshake failures, and report
+  missing systemd, cgroup v2 or sudo prerequisites with actionable messages.
+
+### Database migrations and compatibility
+
+- No SQLite or PostgreSQL migration is added. Persisted platform configuration schema v1 and Runner
+  Protocol v1 remain unchanged; existing JAR limits are preserved until explicitly updated.
+
+### Offline assets
+
+- No new runtime dependency or remote asset is introduced.
+
 ## 0.3.4 - 2026-08-12
 
 ### Fixed

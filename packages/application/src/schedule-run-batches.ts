@@ -163,6 +163,12 @@ export class RunBatchSchedulingService {
     }
     const sourceRecord = await this.executionInputs.catalog.getSource(definition.sourceId);
     const source = sourceRecord?.source;
+    if (sourceRecord?.inspection.executable === false) {
+      throw new DomainError(
+        "CASE_SOURCE_NOT_EXECUTABLE",
+        "该用例来自 sources JAR，仅支持查看源码；请导入包含 .class 的测试 JAR 后执行。",
+      );
+    }
     if (
       !source ||
       source.projectId !== projectId ||
@@ -547,6 +553,19 @@ export class RunBatchSchedulingService {
         continue;
       }
       const source = resolved.source;
+      if (resolved.inspection.executable === false) {
+        blockers.push(
+          blocker(
+            "CASE_SOURCE_NOT_EXECUTABLE",
+            "input",
+            "用例来自 sources JAR，仅支持查看源码，不能作为 Agent 的执行输入。",
+            {
+              sourceId,
+              ...(caseDefinitionId ? { caseDefinitionId } : {}),
+            },
+          ),
+        );
+      }
       if (source.status !== "ready") {
         blockers.push(
           blocker("CASE_SOURCE_NOT_READY", "input", "用例来源 JAR 尚未准备完成。", {

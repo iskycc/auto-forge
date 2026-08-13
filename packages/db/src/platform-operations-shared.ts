@@ -45,6 +45,8 @@ export type ScheduleRow = {
   enabled: boolean | number;
   next_trigger_at: string;
   last_trigger_at: string | null;
+  last_trigger_status?: "created" | "skipped" | "failed" | null;
+  last_batch_id?: string | null;
   revision: number;
   created_at: string;
   updated_at: string;
@@ -194,6 +196,8 @@ export function mapSchedule(row: ScheduleRow): CaseSuiteSchedule {
     enabled: Boolean(row.enabled),
     nextTriggerAt: row.next_trigger_at,
     ...(row.last_trigger_at ? { lastTriggerAt: row.last_trigger_at } : {}),
+    ...(row.last_trigger_status ? { lastTriggerStatus: row.last_trigger_status } : {}),
+    ...(row.last_batch_id ? { lastBatchId: row.last_batch_id } : {}),
     revision: row.revision,
     createdAt: row.created_at,
     updatedAt: row.updated_at,

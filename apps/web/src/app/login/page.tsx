@@ -4,11 +4,17 @@ import { AuthEntryForm } from "@/components/auth-entry-form";
 import { currentIdentity } from "@/lib/auth";
 import { getPlatformServices } from "@/lib/services";
 
-export default async function LoginPage() {
+export default async function LoginPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ passwordChanged?: string }>;
+}) {
   const services = await getPlatformServices();
-  if (await currentIdentity()) redirect("/");
+  const identity = await currentIdentity();
+  if (identity) redirect(identity.user.forcePasswordChange ? "/account/security" : "/");
   if (await services.identityAccess.setupRequired()) redirect("/setup");
   const ldap = await services.identities.getLdapConfiguration();
+  const passwordChanged = (await searchParams).passwordChanged === "1";
 
   return (
     <main className="auth-page">
@@ -19,7 +25,11 @@ export default async function LoginPage() {
         <p className="eyebrow">AutoForge Control Plane</p>
         <h1 id="login-title">欢迎回来</h1>
         <p className="auth-intro">登录后管理用例、执行批次和 Runner。</p>
-        <AuthEntryForm ldapEnabled={ldap?.enabled ?? false} mode="login" />
+        <AuthEntryForm
+          ldapEnabled={ldap?.enabled ?? false}
+          mode="login"
+          notice={passwordChanged ? "密码已修改，请使用新密码重新登录。" : undefined}
+        />
       </section>
     </main>
   );

@@ -7,7 +7,13 @@ import { describe, expect, it } from "vitest";
 const SOURCE_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const UI_PRIMITIVE = join(SOURCE_ROOT, "components", "ui.tsx");
 const GLOBAL_STYLES = join(SOURCE_ROOT, "app", "globals.css");
-const NATIVE_CONTROL = /<(?:button|input|select|textarea)\b/;
+const APP_SHELL = join(SOURCE_ROOT, "components", "app-shell.tsx");
+const PLATFORM_SETTINGS = join(SOURCE_ROOT, "components", "platform-settings.tsx");
+const ACCESS_SETTINGS = join(SOURCE_ROOT, "components", "access-settings.tsx");
+const MANAGEMENT_PAGE = join(SOURCE_ROOT, "app", "settings", "page.tsx");
+// Hidden inputs only carry filter state inside GET forms and have no visual
+// styling, so the shared-component boundary applies to rendered controls only.
+const NATIVE_CONTROL = /<(?:button|select|textarea)\b|<input\b(?![^>]*type="hidden")/;
 const MINIMUM_READABLE_FONT_SIZE_PX = 12;
 const REQUIRED_LAYOUT_CLASSES = [
   "content-card",
@@ -55,6 +61,25 @@ describe("shared UI controls", () => {
     expect(stylesheet).not.toContain("label:focus-within");
     expect(stylesheet).not.toMatch(/(?:input|select|textarea):focus-visible/);
     expect(stylesheet).toContain(".ui-input:focus");
+  });
+
+  it("exposes administrator capabilities through a discoverable management entry", () => {
+    const appShell = readFileSync(APP_SHELL, "utf8");
+    const accessSettings = readFileSync(ACCESS_SETTINGS, "utf8");
+    const managementPage = readFileSync(MANAGEMENT_PAGE, "utf8");
+
+    expect(appShell).toContain("管理中心");
+    expect(managementPage).toContain('href: "/settings/access#users"');
+    expect(managementPage).toContain('href: "/settings/access#ldap"');
+    expect(accessSettings).toContain('id="users"');
+    expect(accessSettings).toContain('id="ldap"');
+  });
+
+  it("presents the configurable JAR upload boundary in MiB", () => {
+    const platformSettings = readFileSync(PLATFORM_SETTINGS, "utf8");
+
+    expect(platformSettings).toContain("JAR 大小上限（MiB）");
+    expect(platformSettings).toContain("bytesToMebibytes(initial.limits.maxJarBytes)");
   });
 });
 

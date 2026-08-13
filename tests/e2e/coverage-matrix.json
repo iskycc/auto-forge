@@ -1,0 +1,327 @@
+{
+  "schemaVersion": 1,
+  "updatedAt": "2026-08-13",
+  "dimensions": ["lite", "full", "offline", "realAgent", "success", "failure", "recovery"],
+  "items": [
+    {
+      "id": "AF-E2E-001",
+      "status": "partial",
+      "owner": "functional-matrix",
+      "evidence": [
+        "tests/e2e/coverage-matrix.json",
+        "tests/e2e/README.md",
+        "tests/e2e/identity-rbac.spec.ts"
+      ],
+      "coverage": {
+        "lite": "not-applicable",
+        "full": "not-applicable",
+        "offline": "not-applicable",
+        "realAgent": "not-applicable",
+        "success": "not-applicable",
+        "failure": "not-applicable",
+        "recovery": "not-applicable"
+      }
+    },
+    {
+      "id": "AF-E2E-002",
+      "status": "partial",
+      "owner": "runner-real-lite",
+      "evidence": [
+        "scripts/quality/test-real-agent.sh",
+        "tests/e2e/real-agent.spec.ts",
+        "tests/fixtures/real-agent/RealAgentFixture.java",
+        ".github/workflows/ci.yml"
+      ],
+      "coverage": {
+        "lite": "partial",
+        "full": "not-applicable",
+        "offline": "partial",
+        "realAgent": "partial",
+        "success": "partial",
+        "failure": "planned",
+        "recovery": "planned"
+      }
+    },
+    {
+      "id": "AF-E2E-003",
+      "status": "partial",
+      "owner": "identity-rbac",
+      "evidence": ["tests/e2e/identity-rbac.spec.ts"],
+      "coverage": {
+        "lite": "covered",
+        "full": "partial",
+        "offline": "partial",
+        "realAgent": "not-applicable",
+        "success": "partial",
+        "failure": "partial",
+        "recovery": "planned"
+      }
+    },
+    {
+      "id": "AF-E2E-004",
+      "status": "partial",
+      "owner": "ldap-real",
+      "evidence": [
+        "scripts/quality/test-ldap-e2e.sh",
+        "tests/e2e/ldap-real.spec.ts",
+        "tests/fixtures/ldap/50-directory.ldif",
+        ".github/workflows/ci.yml"
+      ],
+      "coverage": {
+        "lite": "partial",
+        "full": "planned",
+        "offline": "partial",
+        "realAgent": "not-applicable",
+        "success": "partial",
+        "failure": "partial",
+        "recovery": "partial"
+      }
+    },
+    {
+      "id": "AF-E2E-005",
+      "status": "partial",
+      "owner": "project-isolation",
+      "evidence": ["tests/e2e/project-isolation.spec.ts"],
+      "coverage": {
+        "lite": "partial",
+        "full": "partial",
+        "offline": "partial",
+        "realAgent": "not-applicable",
+        "success": "partial",
+        "failure": "partial",
+        "recovery": "planned"
+      }
+    },
+    {
+      "id": "AF-E2E-006",
+      "status": "partial",
+      "owner": "identity-operations",
+      "evidence": ["tests/e2e/identity-rbac.spec.ts", "tests/e2e/management-operations.spec.ts"],
+      "coverage": {
+        "lite": "partial",
+        "full": "partial",
+        "offline": "partial",
+        "realAgent": "not-applicable",
+        "success": "partial",
+        "failure": "partial",
+        "recovery": "not-applicable"
+      }
+    },
+    {
+      "id": "AF-E2E-007",
+      "status": "partial",
+      "owner": "asset-lifecycle",
+      "evidence": [
+        "tests/e2e/case-suite-lifecycle.spec.ts",
+        "tests/e2e/jar-import.spec.ts",
+        "tests/e2e/real-agent.spec.ts"
+      ],
+      "coverage": {
+        "lite": "partial",
+        "full": "partial",
+        "offline": "partial",
+        "realAgent": "not-applicable",
+        "success": "partial",
+        "failure": "planned",
+        "recovery": "planned"
+      }
+    },
+    {
+      "id": "AF-E2E-008",
+      "status": "partial",
+      "owner": "case-suite-lifecycle",
+      "evidence": [
+        "tests/e2e/case-suite-lifecycle.spec.ts",
+        "tests/e2e/jar-import.spec.ts",
+        "tests/e2e/management-operations.spec.ts"
+      ],
+      "coverage": {
+        "lite": "partial",
+        "full": "partial",
+        "offline": "partial",
+        "realAgent": "not-applicable",
+        "success": "partial",
+        "failure": "planned",
+        "recovery": "planned"
+      }
+    },
+    {
+      "id": "AF-E2E-009",
+      "status": "partial",
+      "owner": "environment-secret-execution",
+      "evidence": ["tests/e2e/project-isolation.spec.ts", "tests/e2e/real-agent.spec.ts"],
+      "coverage": {
+        "lite": "partial",
+        "full": "partial",
+        "offline": "partial",
+        "realAgent": "partial",
+        "success": "partial",
+        "failure": "partial",
+        "recovery": "planned"
+      }
+    },
+    {
+      "id": "AF-E2E-010",
+      "status": "partial",
+      "owner": "execution-state-machine",
+      "evidence": ["tests/e2e/jar-import.spec.ts", "tests/e2e/real-agent.spec.ts"],
+      "coverage": {
+        "lite": "partial",
+        "full": "partial",
+        "offline": "partial",
+        "realAgent": "partial",
+        "success": "partial",
+        "failure": "partial",
+        "recovery": "planned"
+      }
+    },
+    {
+      "id": "AF-E2E-011",
+      "status": "partial",
+      "owner": "logs-results-artifacts",
+      "evidence": ["tests/e2e/jar-import.spec.ts", "tests/e2e/real-agent.spec.ts"],
+      "coverage": {
+        "lite": "partial",
+        "full": "partial",
+        "offline": "partial",
+        "realAgent": "partial",
+        "success": "partial",
+        "failure": "planned",
+        "recovery": "planned"
+      }
+    },
+    {
+      "id": "AF-E2E-012",
+      "status": "partial",
+      "owner": "runner-ssh-install",
+      "evidence": [
+        "scripts/quality/test-runner-install-e2e.sh",
+        "tests/e2e/runner-install.spec.ts",
+        "tests/fixtures/ssh/Dockerfile",
+        ".github/workflows/ci.yml"
+      ],
+      "coverage": {
+        "lite": "partial",
+        "full": "planned",
+        "offline": "partial",
+        "realAgent": "partial",
+        "success": "partial",
+        "failure": "partial",
+        "recovery": "partial"
+      }
+    },
+    {
+      "id": "AF-E2E-013",
+      "status": "partial",
+      "owner": "runner-terminal",
+      "evidence": [
+        "scripts/quality/test-real-agent.sh",
+        "tests/e2e/real-agent.spec.ts",
+        ".github/workflows/ci.yml"
+      ],
+      "coverage": {
+        "lite": "partial",
+        "full": "partial",
+        "offline": "partial",
+        "realAgent": "partial",
+        "success": "partial",
+        "failure": "partial",
+        "recovery": "partial"
+      }
+    },
+    {
+      "id": "AF-E2E-014",
+      "status": "partial",
+      "owner": "container-executor",
+      "evidence": [
+        "scripts/quality/test-container-executor.sh",
+        "tests/e2e/container-executor.spec.ts",
+        "tests/fixtures/container/ContainerAgentFixture.java",
+        "tests/fixtures/container/Dockerfile",
+        ".github/workflows/ci.yml"
+      ],
+      "coverage": {
+        "lite": "partial",
+        "full": "planned",
+        "offline": "partial",
+        "realAgent": "partial",
+        "success": "partial",
+        "failure": "partial",
+        "recovery": "partial"
+      }
+    },
+    {
+      "id": "AF-E2E-015",
+      "status": "partial",
+      "owner": "analytics-search-notifications",
+      "evidence": ["tests/e2e/jar-import.spec.ts"],
+      "coverage": {
+        "lite": "partial",
+        "full": "partial",
+        "offline": "partial",
+        "realAgent": "not-applicable",
+        "success": "partial",
+        "failure": "planned",
+        "recovery": "planned"
+      }
+    },
+    {
+      "id": "AF-E2E-016",
+      "status": "partial",
+      "owner": "platform-retention-diagnostics",
+      "evidence": [
+        "tests/e2e/jar-import.spec.ts",
+        "tests/e2e/platform-operations.spec.ts",
+        ".github/workflows/ci.yml"
+      ],
+      "coverage": {
+        "lite": "partial",
+        "full": "partial",
+        "offline": "partial",
+        "realAgent": "not-applicable",
+        "success": "partial",
+        "failure": "planned",
+        "recovery": "planned"
+      }
+    },
+    {
+      "id": "AF-E2E-017",
+      "status": "partial",
+      "owner": "full-business-recovery",
+      "evidence": [
+        "scripts/quality/test-full-business-recovery.sh",
+        "scripts/quality/test-full.sh",
+        "tests/e2e/real-agent.spec.ts"
+      ],
+      "coverage": {
+        "lite": "not-applicable",
+        "full": "partial",
+        "offline": "not-applicable",
+        "realAgent": "planned",
+        "success": "partial",
+        "failure": "partial",
+        "recovery": "partial"
+      }
+    },
+    {
+      "id": "AF-E2E-018",
+      "status": "partial",
+      "owner": "release-offline-upgrade",
+      "evidence": [
+        "scripts/quality/test-offline.sh",
+        "scripts/quality/test-release-offline.sh",
+        "tests/e2e/release-upgrade.spec.ts",
+        ".github/workflows/release.yml"
+      ],
+      "coverage": {
+        "lite": "partial",
+        "full": "planned",
+        "offline": "partial",
+        "realAgent": "planned",
+        "success": "partial",
+        "failure": "planned",
+        "recovery": "partial"
+      }
+    }
+  ]
+}

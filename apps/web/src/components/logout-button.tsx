@@ -3,17 +3,16 @@
 import { Button } from "@/components/ui";
 
 import { LogOut } from "lucide-react";
-import { useRouter } from "next/navigation";
 import { useState } from "react";
 
 export function LogoutButton() {
-  const router = useRouter();
   const [pending, setPending] = useState(false);
 
   async function logout() {
     setPending(true);
     await fetch("/api/v1/auth/logout", { method: "POST" }).catch(() => undefined);
-    router.push("/login");
+    // Reload the root layout after removing the HTTP-only session cookie.
+    window.location.replace("/login");
   }
 
   return (

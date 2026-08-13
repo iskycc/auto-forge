@@ -48,6 +48,7 @@ func TestContainerCommandAppliesMandatoryIsolationFlags(t *testing.T) {
 	defer cleanup()
 	joined := strings.Join(command.Args, " ")
 	for _, required := range []string{
+		"--cidfile=" + filepath.Join(root, ".autoforge-container-id-"),
 		"--network=none",
 		"--read-only",
 		"--cap-drop=ALL",
@@ -68,6 +69,70 @@ func TestContainerCommandAppliesMandatoryIsolationFlags(t *testing.T) {
 	}
 	if len(environment) != 1 || environment[0] != "PATH=/usr/bin:/bin" {
 		t.Fatalf("unexpected runtime environment: %#v", environment)
+	}
+}
+
+func TestContainerCleanupForcesRemovalAndDeletesTemporaryFiles(t *testing.T) {
+	root := t.TempDir()
+	invocationPath := filepath.Join(root, "runtime-invocation")
+	runtimePath := filepath.Join(root, "docker")
+	runtimeScript := "#!/bin/sh\nprintf '%s\\n' \"$*\" > \"" + invocationPath + "\"\n"
+	if err := os.WriteFile(runtimePath, []byte(runtimeScript), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	containerIDFile := filepath.Join(root, "container.cid")
+	environmentFile := filepath.Join(root, "container.env")
+	containerID := strings.Repeat("a", 64)
+	if err := os.WriteFile(containerIDFile, []byte(containerID+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(environmentFile, []byte("TOKEN=secret\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := cleanupContainer(runtimePath, containerIDFile, environmentFile); err != nil {
+		t.Fatal(err)
+	}
+	invocation, err := os.ReadFile(invocationPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(string(invocation)) != "rm --force "+containerID {
+		t.Fatalf("unexpected cleanup invocation: %s", invocation)
+	}
+	for _, path := range []string{containerIDFile, environmentFile} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("temporary file %s was not removed", path)
+		}
+	}
+}
+
+func TestContainerCleanupAcceptsAlreadyRemovedContainer(t *testing.T) {
+	root := t.TempDir()
+	runtimePath := filepath.Join(root, "docker")
+	runtimeScript := "#!/bin/sh\nprintf 'Error: No such container: %s\\n' \"$3\" >&2\nexit 1\n"
+	if err := os.WriteFile(runtimePath, []byte(runtimeScript), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	containerIDFile := filepath.Join(root, "container.cid")
+	if err := os.WriteFile(containerIDFile, []byte(strings.Repeat("b", 64)+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := cleanupContainer(runtimePath, containerIDFile, filepath.Join(root, "missing.env")); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestContainerCleanupRejectsInvalidRuntimeIdentifier(t *testing.T) {
+	root := t.TempDir()
+	containerIDFile := filepath.Join(root, "container.cid")
+	if err := os.WriteFile(containerIDFile, []byte("--all\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	err := cleanupContainer(filepath.Join(root, "docker"), containerIDFile, filepath.Join(root, "missing.env"))
+	if err == nil || !strings.Contains(err.Error(), "invalid container id") {
+		t.Fatalf("expected invalid container id rejection, got %v", err)
 	}
 }
 

@@ -1,7 +1,7 @@
 import { updateCaseDefinitionInputSchema } from "@autoforge/contracts";
 import { NextResponse } from "next/server";
 
-import { authorizeRequest, requestId, requireSameOrigin } from "@/lib/auth";
+import { authenticateRequest, requestId, requireSameOrigin } from "@/lib/auth";
 import { apiErrorResponse, readJsonBody } from "@/lib/api-response";
 import { getPlatformServices } from "@/lib/services";
 
@@ -9,10 +9,11 @@ type Context = { params: Promise<{ caseDefinitionId: string }> };
 
 export async function GET(request: Request, context: Context): Promise<NextResponse> {
   try {
-    await authorizeRequest(request, "case.read");
+    const identity = await authenticateRequest(request);
     const { caseDefinitionId } = await context.params;
     const services = await getPlatformServices();
-    return NextResponse.json(await services.caseDefinitions.get(caseDefinitionId));
+    const projectIds = services.identityAccess.projectScope(identity, "case.read");
+    return NextResponse.json(await services.caseDefinitions.get(caseDefinitionId, projectIds));
   } catch (error) {
     return apiErrorResponse(error);
   }
@@ -22,19 +23,22 @@ export async function PATCH(request: Request, context: Context): Promise<NextRes
   const currentRequestId = requestId(request);
   try {
     requireSameOrigin(request);
-    const identity = await authorizeRequest(request, "case.manage");
+    const identity = await authenticateRequest(request);
     const { caseDefinitionId } = await context.params;
     const input = updateCaseDefinitionInputSchema.parse(await readJsonBody(request, 16 * 1024));
     const services = await getPlatformServices();
+    const projectIds = services.identityAccess.projectScope(identity, "case.manage");
     const definition = await services.caseDefinitions.update(
       caseDefinitionId,
       input,
       identity.user.id,
+      projectIds,
     );
     await services.identityAccess.recordAuthorizedOperation(identity, {
       action: "case_definition.update",
       resourceType: "case_definition",
       resourceId: caseDefinitionId,
+      projectId: definition.projectId,
       requestId: currentRequestId,
       details: { revision: definition.revision },
     });

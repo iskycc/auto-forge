@@ -8,7 +8,7 @@ import { getPlatformServices } from "@/lib/services";
 export async function GET(request: Request): Promise<NextResponse> {
   const currentRequestId = requestId(request);
   try {
-    const identity = await authenticateRequest(request);
+    const identity = await authenticateRequest(request, { allowPasswordChangeRequired: true });
     const input = sessionListQuerySchema.parse(
       Object.fromEntries(new URL(request.url).searchParams),
     );

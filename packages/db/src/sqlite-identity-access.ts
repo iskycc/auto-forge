@@ -710,8 +710,15 @@ export class SqliteIdentityAccessRepository implements IdentityAccessRepository 
     return [...memberships.values()];
   }
 
-  async listProjects(): Promise<Project[]> {
-    return this.handle.db.select().from(projects).orderBy(projects.name).all().map(mapProject);
+  async listProjects(projectIds?: readonly string[]): Promise<Project[]> {
+    if (projectIds?.length === 0) return [];
+    return this.handle.db
+      .select()
+      .from(projects)
+      .where(projectIds ? inArray(projects.id, [...projectIds]) : undefined)
+      .orderBy(projects.name)
+      .all()
+      .map(mapProject);
   }
 
   async createProject(input: {
@@ -781,6 +788,14 @@ export class SqliteIdentityAccessRepository implements IdentityAccessRepository 
       roleId: row.roleId,
       permissions: parsePermissions(row.permissionsJson),
     }));
+  }
+
+  async listSystemRoleBindings(): Promise<Array<{ userId: string; roleId: string }>> {
+    return this.handle.db
+      .select({ userId: userSystemRoles.userId, roleId: userSystemRoles.roleId })
+      .from(userSystemRoles)
+      .orderBy(userSystemRoles.userId, userSystemRoles.roleId)
+      .all();
   }
 
   async getLdapConfiguration(): Promise<StoredLdapConfiguration | null> {
@@ -958,6 +973,7 @@ export class SqliteIdentityAccessRepository implements IdentityAccessRepository 
   }
 
   async listAudit(input: {
+    projectIds?: readonly string[];
     actorId?: string;
     action?: string;
     resourceType?: string;
@@ -967,7 +983,9 @@ export class SqliteIdentityAccessRepository implements IdentityAccessRepository 
     cursor?: string;
     limit: number;
   }): Promise<AuditListPage> {
+    if (input.projectIds?.length === 0) return { items: [] };
     const conditions: SQL[] = [];
+    if (input.projectIds) conditions.push(inArray(auditEvents.projectId, [...input.projectIds]));
     if (input.actorId) conditions.push(eq(auditEvents.actorId, input.actorId));
     if (input.action) conditions.push(eq(auditEvents.action, input.action));
     if (input.resourceType) conditions.push(eq(auditEvents.resourceType, input.resourceType));

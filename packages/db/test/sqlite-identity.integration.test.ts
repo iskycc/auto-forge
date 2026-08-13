@@ -440,6 +440,18 @@ describe("SQLite identity access", () => {
         (await service.listProjects(administrator)).find((candidate) => candidate.id === project.id)
           ?.ownerUserId,
       ).toBe(secondAdmin.id);
+      const transferredMembers = await service.listProjectMembers(administrator, project.id);
+      expect(
+        transferredMembers.find((member) => member.user.id === secondAdmin.id)?.roleIds,
+      ).toContain("00000000-0000-7000-8100-000000000002");
+      await expect(
+        service.removeProjectRole(
+          administrator,
+          secondAdmin.id,
+          project.id,
+          "00000000-0000-7000-8100-000000000002",
+        ),
+      ).rejects.toMatchObject({ code: "PROJECT_OWNER_ROLE_REQUIRED" });
     } finally {
       handle.close();
     }

@@ -101,6 +101,8 @@ export type CaseSuiteSchedule = {
   enabled: boolean;
   nextTriggerAt: string;
   lastTriggerAt?: string;
+  lastTriggerStatus?: "created" | "skipped" | "failed";
+  lastBatchId?: string;
   revision: number;
   createdAt: string;
   updatedAt: string;

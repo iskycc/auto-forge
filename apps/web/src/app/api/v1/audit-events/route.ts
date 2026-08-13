@@ -14,6 +14,7 @@ export async function GET(request: Request): Promise<NextResponse> {
       await (
         await getPlatformServices()
       ).identityAccess.listAudit(identity, {
+        ...(input.projectId ? { projectId: input.projectId } : {}),
         ...(input.actorId ? { actorId: input.actorId } : {}),
         ...(input.action ? { action: input.action } : {}),
         ...(input.resourceType ? { resourceType: input.resourceType } : {}),

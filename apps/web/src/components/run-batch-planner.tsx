@@ -5,6 +5,7 @@ import { Button, Input, Select } from "@/components/ui";
 import {
   assessRunnerCompatibility,
   type CaseSuite,
+  type ExecutionEnvironmentDetails,
   type RunBatch,
   type Runner,
 } from "@autoforge/domain";
@@ -28,6 +29,7 @@ type EnvironmentRow = { id: number; name: string; value: string };
 export function RunBatchPlanner({
   initialSuites,
   initialRunners,
+  initialEnvironments,
   initialBatches,
   historyRefreshUrl,
   nextPageHref,
@@ -35,6 +37,7 @@ export function RunBatchPlanner({
 }: {
   initialSuites: CaseSuite[];
   initialRunners: Runner[];
+  initialEnvironments: ExecutionEnvironmentDetails[];
   initialBatches: RunBatch[];
   historyRefreshUrl: string;
   nextPageHref?: string;
@@ -43,6 +46,7 @@ export function RunBatchPlanner({
   const [suiteId, setSuiteId] = useState(initialSuites[0]?.id ?? "");
   const [runnerIds, setRunnerIds] = useState<string[]>([]);
   const [retryLimit, setRetryLimit] = useState<number | "">("");
+  const [environmentVersionId, setEnvironmentVersionId] = useState("");
   const [environmentRows, setEnvironmentRows] = useState<EnvironmentRow[]>([]);
   const [nextEnvironmentId, setNextEnvironmentId] = useState(1);
   const [batches, setBatches] = useState(initialBatches);
@@ -55,6 +59,14 @@ export function RunBatchPlanner({
   const selectedSuite = useMemo(
     () => initialSuites.find((suite) => suite.id === suiteId),
     [initialSuites, suiteId],
+  );
+  const availableEnvironments = useMemo(
+    () =>
+      initialEnvironments.filter(
+        (environment) =>
+          environment.projectId === selectedSuite?.projectId && environment.status === "active",
+      ),
+    [initialEnvironments, selectedSuite?.projectId],
   );
 
   useEffect(() => {
@@ -76,20 +88,25 @@ export function RunBatchPlanner({
     event.preventDefault();
     setError("");
     setPreflightBlockers([]);
-    if (!suiteId || runnerIds.length === 0) {
+    if (!selectedSuite || runnerIds.length === 0) {
       setError("请选择用例任务和至少一台执行机。");
       return;
     }
-    const environmentVariables = environmentRows
-      .map((row) => ({ name: row.name.trim(), value: row.value }))
-      .filter((variable) => variable.name.length > 0);
+    const environmentVariables = environmentVersionId
+      ? []
+      : environmentRows
+          .map((row) => ({ name: row.name.trim(), value: row.value }))
+          .filter((variable) => variable.name.length > 0);
     setSubmitting(true);
     try {
       const requestBody = {
         suiteId,
+        projectId: selectedSuite.projectId,
         runnerIds,
         ...(retryLimit === "" ? {} : { retryLimit }),
-        environmentVariables,
+        ...(environmentVersionId
+          ? { environmentVersionId, environmentVariables: [] }
+          : { environmentVariables }),
       };
       const preflightResponse = await fetch("/api/v1/run-batches/preflight", {
         method: "POST",
@@ -146,7 +163,14 @@ export function RunBatchPlanner({
         </div>
         <label className="field-stack">
           <span>用例任务</span>
-          <Select value={suiteId} onChange={(event) => setSuiteId(event.target.value)} required>
+          <Select
+            value={suiteId}
+            onChange={(event) => {
+              setSuiteId(event.target.value);
+              setEnvironmentVersionId("");
+            }}
+            required
+          >
             {initialSuites.length === 0 ? <option value="">暂无可执行任务</option> : null}
             {initialSuites.map((suite) => (
               <option key={suite.id} value={suite.id}>
@@ -266,21 +290,43 @@ export function RunBatchPlanner({
         <div className="section-heading scheduler-step">
           <div>
             <span className="step-label">03</span>
-            <h2>测试环境变量</h2>
+            <h2>执行环境</h2>
           </div>
           <Button
             className="button button-secondary compact-button"
             type="button"
+            disabled={Boolean(environmentVersionId)}
             onClick={addEnvironmentRow}
           >
             <Plus size={15} /> 添加变量
           </Button>
         </div>
+        <label className="field-stack">
+          <span>受管环境版本</span>
+          <Select
+            aria-label="受管环境版本"
+            value={environmentVersionId}
+            onChange={(event) => setEnvironmentVersionId(event.target.value)}
+          >
+            <option value="">不使用受管环境（手工变量）</option>
+            {availableEnvironments.map((environment) => (
+              <option key={environment.current.id} value={environment.current.id}>
+                {environment.name} · v{environment.current.version} ·{" "}
+                {environment.current.variables.length}
+                个变量 · {environment.current.secretBindings.length} 个密文
+              </option>
+            ))}
+          </Select>
+        </label>
         <p className="field-hint">
-          变量会随批次保存为快照；当前未提供密文存储，请勿填写密码或令牌。
+          {environmentVersionId
+            ? "批次会固定引用当前选中的不可变环境版本；密文由 Agent 在有效 Lease 内按需领取。"
+            : "手工变量会随批次保存为快照；敏感值必须先在管理中心创建密文并绑定到受管环境。"}
         </p>
         <div className="environment-list">
-          {environmentRows.length === 0 ? (
+          {environmentVersionId ? (
+            <div className="inline-empty">已选择受管环境，不能同时提交手工变量。</div>
+          ) : environmentRows.length === 0 ? (
             <div className="inline-empty">未配置变量，执行时使用 Runner 受控基础环境。</div>
           ) : (
             environmentRows.map((row) => (

@@ -1,19 +1,23 @@
 package executor
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
 
 var (
 	immutableImagePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._/:\-]*@sha256:[a-f0-9]{64}$`)
 	containerUserPattern  = regexp.MustCompile(`^[1-9][0-9]{0,9}(?::[1-9][0-9]{0,9})?$`)
+	containerIDPattern    = regexp.MustCompile(`^[a-f0-9]{12,64}$`)
 )
 
 func validateContainerPolicy(policy ContainerPolicy, spec Spec) error {
@@ -62,11 +66,19 @@ func containerCommand(
 	if err := requireExecutableFile(policy.RuntimeExecutable); err != nil {
 		return Command{}, nil, nil, fmt.Errorf("validate container runtime: %w", err)
 	}
-	environmentFile, err := writeContainerEnvironment(filepath.Dir(workspace), spec.Environment)
+	temporaryDirectory := filepath.Dir(workspace)
+	environmentFile, err := writeContainerEnvironment(temporaryDirectory, spec.Environment)
 	if err != nil {
 		return Command{}, nil, nil, err
 	}
-	cleanup := func() error { return os.Remove(environmentFile) }
+	containerIDFile, err := reserveContainerIDFile(temporaryDirectory)
+	if err != nil {
+		_ = os.Remove(environmentFile)
+		return Command{}, nil, nil, err
+	}
+	cleanup := func() error {
+		return cleanupContainer(policy.RuntimeExecutable, containerIDFile, environmentFile)
+	}
 	workDirectory := "/workspace"
 	if spec.Command.CwdRelative != "" {
 		workDirectory += "/" + filepath.ToSlash(spec.Command.CwdRelative)
@@ -74,6 +86,7 @@ func containerCommand(
 	arguments := []string{
 		"run",
 		"--rm",
+		"--cidfile=" + containerIDFile,
 		"--network=none",
 		"--read-only",
 		"--cap-drop=ALL",
@@ -92,6 +105,65 @@ func containerCommand(
 	}
 	arguments = append(arguments, spec.Command.Args...)
 	return Command{Executable: policy.RuntimeExecutable, Args: arguments}, []string{"PATH=/usr/bin:/bin"}, cleanup, nil
+}
+
+func reserveContainerIDFile(directory string) (string, error) {
+	file, err := os.CreateTemp(directory, ".autoforge-container-id-")
+	if err != nil {
+		return "", fmt.Errorf("reserve container id file: %w", err)
+	}
+	path := file.Name()
+	if err := file.Close(); err != nil {
+		_ = os.Remove(path)
+		return "", fmt.Errorf("close reserved container id file: %w", err)
+	}
+	if err := os.Remove(path); err != nil {
+		return "", fmt.Errorf("prepare container id file: %w", err)
+	}
+	return path, nil
+}
+
+func cleanupContainer(runtimeExecutable, containerIDFile, environmentFile string) error {
+	containerIDBytes, readErr := os.ReadFile(containerIDFile)
+	containerID := strings.TrimSpace(string(containerIDBytes))
+	var cleanupErr error
+	if readErr == nil && containerID != "" {
+		if containerIDPattern.MatchString(containerID) {
+			cleanupErr = forceRemoveContainer(runtimeExecutable, containerID)
+		} else {
+			cleanupErr = errors.New("container runtime wrote an invalid container id")
+		}
+	} else if readErr != nil && !errors.Is(readErr, os.ErrNotExist) {
+		cleanupErr = fmt.Errorf("read container id file: %w", readErr)
+	}
+	for _, path := range []string{containerIDFile, environmentFile} {
+		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			cleanupErr = errors.Join(cleanupErr, fmt.Errorf("remove container temporary file: %w", err))
+		}
+	}
+	return cleanupErr
+}
+
+func forceRemoveContainer(runtimeExecutable, containerID string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	command := exec.CommandContext(ctx, runtimeExecutable, "rm", "--force", containerID)
+	command.Env = []string{"PATH=/usr/bin:/bin"}
+	output, err := command.CombinedOutput()
+	if err == nil || containerAlreadyRemoved(output) {
+		return nil
+	}
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return errors.New("force remove container timed out")
+	}
+	return fmt.Errorf("force remove container %q: %w: %s", containerID, err, strings.TrimSpace(string(output)))
+}
+
+func containerAlreadyRemoved(output []byte) bool {
+	normalized := strings.ToLower(string(output))
+	return strings.Contains(normalized, "no such container") ||
+		strings.Contains(normalized, "container not found") ||
+		strings.Contains(normalized, "does not exist")
 }
 
 func writeContainerEnvironment(directory string, environment map[string]string) (string, error) {

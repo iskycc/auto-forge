@@ -1,6 +1,6 @@
 "use client";
 
-import { Button, Input } from "@/components/ui";
+import { Button, Input, Select } from "@/components/ui";
 
 import {
   apiErrorSchema,
@@ -40,7 +40,15 @@ async function errorMessage(response: Response): Promise<string> {
   return parsed.success ? parsed.data.error.message : `请求失败（HTTP ${response.status}）。`;
 }
 
-export function JarImporter({ maxJarBytes }: { maxJarBytes: number }) {
+export function JarImporter({
+  maxJarBytes,
+  projectId: initialProjectId,
+  projects,
+}: {
+  maxJarBytes: number;
+  projectId?: string | undefined;
+  projects: Array<{ id: string; name: string }>;
+}) {
   const inputId = useId();
   const router = useRouter();
   const [file, setFile] = useState<File | null>(null);
@@ -49,6 +57,7 @@ export function JarImporter({ maxJarBytes }: { maxJarBytes: number }) {
   const [result, setResult] = useState<JarImportResult | null>(null);
   const [job, setJob] = useState<JarImportJob | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [projectId, setProjectId] = useState(initialProjectId ?? projects[0]?.id ?? "");
 
   function chooseFile(nextFile: File | null): void {
     setFile(nextFile);
@@ -63,7 +72,9 @@ export function JarImporter({ maxJarBytes }: { maxJarBytes: number }) {
     if (!file) throw new Error("请先选择 JAR 文件。");
     const formData = new FormData();
     formData.set("file", file);
-    return fetch(url, { method: "POST", body: formData });
+    const target = new URL(url, window.location.origin);
+    if (projectId) target.searchParams.set("projectId", projectId);
+    return fetch(`${target.pathname}${target.search}`, { method: "POST", body: formData });
   }
 
   async function inspectJar(): Promise<void> {
@@ -171,11 +182,34 @@ export function JarImporter({ maxJarBytes }: { maxJarBytes: number }) {
         <div className="card-heading">
           <div>
             <span className="eyebrow">第 1 步</span>
-            <h2>选择测试 JAR</h2>
-            <p>平台只读取 ZIP 目录和 class 注解，不会加载或运行上传的字节码。</p>
+            <h2>选择测试 JAR 或 sources JAR</h2>
+            <p>
+              普通 JAR 扫描 class 注解；sources JAR 扫描 Java 源码，仅静态读取且不会编译或执行。
+            </p>
           </div>
           <FileArchive size={24} aria-hidden="true" />
         </div>
+
+        {projects.length > 0 ? (
+          <label>
+            导入项目
+            <Select
+              disabled={busy}
+              onChange={(event) => setProjectId(event.target.value)}
+              value={projectId}
+            >
+              {projects.map((project) => (
+                <option key={project.id} value={project.id}>
+                  {project.name}
+                </option>
+              ))}
+            </Select>
+          </label>
+        ) : projectId ? (
+          <p className="settings-note">
+            目标项目：<code>{projectId}</code>
+          </p>
+        ) : null}
 
         <label
           className={`file-dropzone ${file ? "file-dropzone-selected" : ""}`}
@@ -198,11 +232,15 @@ export function JarImporter({ maxJarBytes }: { maxJarBytes: number }) {
             </span>
           ) : (
             <span className="file-summary">
-              <strong>点击选择 JAR 文件</strong>
+              <strong>点击选择普通 JAR 或 *-sources.jar</strong>
               <small>最大 {formatBytes(maxJarBytes)}，仅接受 .jar</small>
             </span>
           )}
         </label>
+        <p className="settings-note">
+          管理员可在<Link href="/settings/platform">管理中心 → 平台配置</Link>调整 JAR
+          上传上限；修改后需重启 Web 和 worker。
+        </p>
 
         <div className="button-row">
           <Button
@@ -277,6 +315,10 @@ export function JarImporter({ maxJarBytes }: { maxJarBytes: number }) {
               <span>class 文件</span>
             </div>
             <div>
+              <strong>{inspection.javaSourceFileCount ?? 0}</strong>
+              <span>Java 源文件</span>
+            </div>
+            <div>
               <strong>{inspection.testClassCount}</strong>
               <span>测试类</span>
             </div>
@@ -289,6 +331,16 @@ export function JarImporter({ maxJarBytes }: { maxJarBytes: number }) {
               <span>根 testng.xml</span>
             </div>
           </div>
+
+          {inspection.executable === false ? (
+            <div className="implementation-notice" role="status">
+              这是 sources JAR。导入后可在用例详情查看源码，但不能直接交给 Agent 执行。
+            </div>
+          ) : (inspection.javaSourceFileCount ?? 0) > 0 ? (
+            <div className="implementation-notice" role="status">
+              这是混合 JAR。class 用于 Agent 执行，匹配的 Java 源文件可在用例详情中查看。
+            </div>
+          ) : null}
 
           {inspection.warnings.length > 0 && (
             <div className="warning-list" aria-label="扫描警告">
@@ -320,6 +372,7 @@ export function JarImporter({ maxJarBytes }: { maxJarBytes: number }) {
                     <small>{candidate.className}</small>
                   </span>
                   <span className="method-count">{candidate.methods.length} 个方法</span>
+                  {candidate.source ? <span className="tag">可查看源码</span> : null}
                   <ChevronRight className="summary-chevron" size={17} aria-hidden="true" />
                 </summary>
                 <div className="method-list">
@@ -352,7 +405,9 @@ export function JarImporter({ maxJarBytes }: { maxJarBytes: number }) {
           <div className="import-confirmation">
             <div>
               <strong>将创建 {inspection.testClassCount} 个用例定义</strong>
-              <span>JAR 使用 SHA-256 内容寻址保存，重复文件不会重复导入。</span>
+              <span>
+                JAR 使用 SHA-256 内容寻址保存，重复文件不会重复导入；sources JAR 作为只读源码资产。
+              </span>
             </div>
             <Button
               className="button button-primary"

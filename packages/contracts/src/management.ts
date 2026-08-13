@@ -180,6 +180,18 @@ export const runnerAgentInstallationResultSchema = z.object({
   serviceName: z.literal("autoforge-agent.service"),
 });
 
+export const rollbackRunnerAgentInputSchema = z.object({
+  connection: runnerHostConnectionSchema,
+  expectedHostKeySha256: z.string().regex(/^SHA256:[a-zA-Z0-9+/]{43}$/),
+});
+
+export const runnerAgentRollbackResultSchema = z.object({
+  rolledBack: z.literal(true),
+  host: z.string().min(1),
+  agentVersion: z.string().min(1),
+  serviceName: z.literal("autoforge-agent.service"),
+});
+
 export const runnerHeartbeatInputSchema = z.object({
   schemaVersion: z.literal(1),
   busySlots: z.number().int().min(0).max(64),
@@ -258,6 +270,8 @@ export type ProbeRunnerHostInput = z.infer<typeof probeRunnerHostInputSchema>;
 export type RunnerHostProbeResult = z.infer<typeof runnerHostProbeResultSchema>;
 export type InstallRunnerAgentInput = z.infer<typeof installRunnerAgentInputSchema>;
 export type RunnerAgentInstallationResult = z.infer<typeof runnerAgentInstallationResultSchema>;
+export type RollbackRunnerAgentInput = z.infer<typeof rollbackRunnerAgentInputSchema>;
+export type RunnerAgentRollbackResult = z.infer<typeof runnerAgentRollbackResultSchema>;
 export type RunnerHeartbeatInput = z.infer<typeof runnerHeartbeatInputSchema>;
 export type RunnerHeartbeatResult = z.infer<typeof runnerHeartbeatResultSchema>;
 export type RotateRunnerCredentialResult = z.infer<typeof rotateRunnerCredentialResultSchema>;

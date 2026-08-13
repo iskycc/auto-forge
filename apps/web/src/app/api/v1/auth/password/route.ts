@@ -14,7 +14,7 @@ export async function PUT(request: Request): Promise<NextResponse> {
   const currentRequestId = requestId(request);
   try {
     requireSameOrigin(request);
-    const identity = await authenticateRequest(request);
+    const identity = await authenticateRequest(request, { allowPasswordChangeRequired: true });
     const input = changePasswordInputSchema.parse(await readJsonBody(request, 16 * 1024));
     await (
       await getPlatformServices()

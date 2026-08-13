@@ -689,10 +689,12 @@ export class PostgresIdentityAccessRepository implements IdentityAccessRepositor
     return [...memberships.values()];
   }
 
-  async listProjects(): Promise<Project[]> {
+  async listProjects(projectIds?: readonly string[]): Promise<Project[]> {
     await this.ready();
+    if (projectIds?.length === 0) return [];
     const result = await this.handle.pool.query<ProjectDatabaseRow>(
-      "SELECT * FROM projects ORDER BY name",
+      `SELECT * FROM projects ${projectIds ? "WHERE id = ANY($1::text[])" : ""} ORDER BY name`,
+      projectIds ? [[...projectIds]] : [],
     );
     return result.rows.map(mapProjectRow);
   }
@@ -755,6 +757,14 @@ export class PostgresIdentityAccessRepository implements IdentityAccessRepositor
       roleId: row.role_id,
       permissions: permissions(row.permissions_json),
     }));
+  }
+
+  async listSystemRoleBindings(): Promise<Array<{ userId: string; roleId: string }>> {
+    await this.ready();
+    const result = await this.handle.pool.query<{ user_id: string; role_id: string }>(
+      "SELECT user_id, role_id FROM user_system_roles ORDER BY user_id, role_id",
+    );
+    return result.rows.map((row) => ({ userId: row.user_id, roleId: row.role_id }));
   }
 
   async getLdapConfiguration(): Promise<StoredLdapConfiguration | null> {
@@ -966,6 +976,7 @@ export class PostgresIdentityAccessRepository implements IdentityAccessRepositor
   }
 
   async listAudit(input: {
+    projectIds?: readonly string[];
     actorId?: string;
     action?: string;
     resourceType?: string;
@@ -976,8 +987,13 @@ export class PostgresIdentityAccessRepository implements IdentityAccessRepositor
     limit: number;
   }): Promise<AuditListPage> {
     await this.ready();
+    if (input.projectIds?.length === 0) return { items: [] };
     const parameters: unknown[] = [];
     const conditions: string[] = [];
+    if (input.projectIds) {
+      parameters.push([...input.projectIds]);
+      conditions.push(`project_id = ANY($${parameters.length}::text[])`);
+    }
     for (const [column, value] of [
       ["actor_id", input.actorId],
       ["action", input.action],

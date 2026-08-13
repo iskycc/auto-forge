@@ -10,7 +10,7 @@ export async function DELETE(request: Request, context: Context): Promise<NextRe
   const currentRequestId = requestId(request);
   try {
     requireSameOrigin(request);
-    const identity = await authenticateRequest(request);
+    const identity = await authenticateRequest(request, { allowPasswordChangeRequired: true });
     const { sessionId } = await context.params;
     await (
       await getPlatformServices()

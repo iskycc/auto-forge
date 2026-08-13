@@ -215,10 +215,19 @@ export class SqlitePlatformOperationsRepository implements PlatformOperationsRep
 
   async listSchedules(projectIds?: readonly string[]): Promise<CaseSuiteSchedule[]> {
     if (projectIds?.length === 0) return [];
-    const { clause, parameters } = inClause("project_id", projectIds);
+    const { clause, parameters } = inClause("s.project_id", projectIds);
     return (
       this.handle.client
-        .prepare(`SELECT * FROM case_suite_schedules ${clause} ORDER BY next_trigger_at, id`)
+        .prepare(
+          `SELECT s.*,
+             (SELECT receipt.status FROM scheduled_trigger_receipts receipt
+              WHERE receipt.schedule_id=s.id ORDER BY receipt.scheduled_for DESC LIMIT 1)
+               AS last_trigger_status,
+             (SELECT receipt.batch_id FROM scheduled_trigger_receipts receipt
+              WHERE receipt.schedule_id=s.id ORDER BY receipt.scheduled_for DESC LIMIT 1)
+               AS last_batch_id
+           FROM case_suite_schedules s ${clause} ORDER BY s.next_trigger_at, s.id`,
+        )
         .all(...parameters) as ScheduleRow[]
     ).map(mapSchedule);
   }

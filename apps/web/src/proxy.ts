@@ -4,7 +4,6 @@ const PUBLIC_PATHS = new Set(["/", "/login", "/setup"]);
 
 export function proxy(request: NextRequest): NextResponse {
   const pathname = request.nextUrl.pathname;
-  if (pathname.startsWith("/api/") || pathname.startsWith("/_next/")) return NextResponse.next();
   if (!PUBLIC_PATHS.has(pathname) && !request.cookies.has("autoforge_session")) {
     return withSecurityHeaders(NextResponse.redirect(new URL("/login", request.url)));
   }
@@ -44,5 +43,9 @@ function withSecurityHeaders(response: NextResponse): NextResponse {
 }
 
 export const config = {
-  matcher: ["/((?!favicon.ico|robots.txt|.*\\.(?:png|jpg|jpeg|gif|svg|ico)$).*)"],
+  // API routes perform their own authentication and bounded body parsing. Keeping
+  // them outside the page proxy avoids Next's proxy body buffering and 10 MiB cap.
+  matcher: [
+    "/((?!api(?:/|$)|_next(?:/|$)|favicon.ico|robots.txt|.*\\.(?:png|jpg|jpeg|gif|svg|ico)$).*)",
+  ],
 };

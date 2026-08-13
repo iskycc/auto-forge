@@ -2,6 +2,11 @@
 
 set -Eeuo pipefail
 
+if [[ "${GITHUB_ACTIONS:-}" != "true" ]]; then
+  echo "Full acceptance is restricted to GitHub Actions because it builds production bundles and runs privileged infrastructure fault injection." >&2
+  exit 1
+fi
+
 readonly repository_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly temporary_directory="$(mktemp -d)"
 readonly postgres_container="autoforge-full-postgres-$$"
@@ -14,9 +19,12 @@ readonly readiness_attempts=240
 readonly platform_data_directory="${temporary_directory}/platform-data"
 readonly replica_platform_data_directory="${temporary_directory}/platform-replica-data"
 readonly platform_configuration_input="${temporary_directory}/platform-input.json"
+readonly fault_control_directory="${temporary_directory}/fault-control"
 
 nats_pid=""
 minio_pid=""
+minio_proxy_pid=""
+fault_controller_pid=""
 web_pid=""
 web_replica_pid=""
 worker_pid=""
@@ -25,8 +33,18 @@ worker_replica_pid=""
 cleanup() {
   local exit_status="$?"
   set +e
+  mkdir -p "${fault_control_directory}"
+  touch "${fault_control_directory}/stop" "${fault_control_directory}/nats.resume" \
+    "${fault_control_directory}/postgres.resume" "${fault_control_directory}/redis.resume"
+  if [[ -n "${nats_pid}" ]]; then
+    kill -CONT "${nats_pid}" >/dev/null 2>&1
+  fi
+  docker unpause "${postgres_container}" "${redis_container}" >/dev/null 2>&1
+  if [[ -n "${fault_controller_pid}" ]]; then
+    wait "${fault_controller_pid}" >/dev/null 2>&1
+  fi
   if [[ "${exit_status}" -ne 0 ]]; then
-    for diagnostic_log in web-build web web-replica worker worker-replica nats minio; do
+    for diagnostic_log in web-build web web-replica worker worker-replica nats minio minio-proxy fault-controller; do
       if [[ -f "${temporary_directory}/${diagnostic_log}.log" ]]; then
         echo "=== ${diagnostic_log}.log (last 100 lines) ===" >&2
         tail -n 100 "${temporary_directory}/${diagnostic_log}.log" >&2
@@ -44,6 +62,10 @@ cleanup() {
       wait "${process_id}" >/dev/null 2>&1
     fi
   done
+  if [[ -n "${minio_proxy_pid}" ]]; then
+    kill "${minio_proxy_pid}" >/dev/null 2>&1
+    wait "${minio_proxy_pid}" >/dev/null 2>&1
+  fi
   docker rm --force "${postgres_container}" "${redis_container}" >/dev/null 2>&1
   rm -rf -- "${temporary_directory}"
   return "${exit_status}"
@@ -109,16 +131,24 @@ stop_nats() {
 start_minio() {
   MINIO_ROOT_USER=autoforge MINIO_ROOT_PASSWORD=autoforge-secret \
     "${temporary_directory}/minio" server "${temporary_directory}/minio-data" \
-    --address 127.0.0.1:59009 \
+    --address 127.0.0.1:59011 \
     --console-address 127.0.0.1:59010 >>"${temporary_directory}/minio.log" 2>&1 &
   minio_pid="$!"
-  wait_until MinIO curl --fail --silent http://127.0.0.1:59009/minio/health/live
+  wait_until MinIO curl --fail --silent http://127.0.0.1:59011/minio/health/live
 }
 
 stop_minio() {
   kill "${minio_pid}"
   wait "${minio_pid}" || true
   minio_pid=""
+}
+
+start_minio_proxy() {
+  node "${repository_root}/scripts/quality/minio-fault-proxy.mjs" \
+    "${fault_control_directory}" 59009 59011 \
+    >>"${temporary_directory}/minio-proxy.log" 2>&1 &
+  minio_proxy_pid="$!"
+  wait_until "MinIO fault proxy" curl --fail --silent http://127.0.0.1:59009/minio/health/live
 }
 
 download_dependencies() {
@@ -150,11 +180,59 @@ start_dependencies() {
     --publish 127.0.0.1:56389:6379 \
     "${redis_image}" redis-server --save '' --appendonly no >/dev/null
 
-  mkdir -p "${temporary_directory}/nats-data" "${temporary_directory}/minio-data"
+  mkdir -p "${temporary_directory}/nats-data" "${temporary_directory}/minio-data" \
+    "${fault_control_directory}"
   wait_until PostgreSQL docker exec "${postgres_container}" pg_isready -U autoforge -d autoforge
   wait_until Redis docker exec "${redis_container}" redis-cli ping
   start_nats
   start_minio
+  start_minio_proxy
+}
+
+start_fault_controller() {
+  (
+    set -Eeuo pipefail
+    while [[ ! -f "${fault_control_directory}/stop" ]]; do
+      if [[ -f "${fault_control_directory}/nats.pause" ]]; then
+        rm -- "${fault_control_directory}/nats.pause"
+        kill -STOP "${nats_pid}"
+        touch "${fault_control_directory}/nats.paused"
+        while [[ ! -f "${fault_control_directory}/nats.resume" && ! -f "${fault_control_directory}/stop" ]]; do sleep 0.05; done
+        kill -CONT "${nats_pid}" >/dev/null 2>&1 || true
+        rm -f -- "${fault_control_directory}/nats.resume"
+        touch "${fault_control_directory}/nats.resumed"
+      fi
+      if [[ -f "${fault_control_directory}/postgres.pause" ]]; then
+        rm -- "${fault_control_directory}/postgres.pause"
+        docker pause "${postgres_container}" >/dev/null
+        touch "${fault_control_directory}/postgres.paused"
+        while [[ ! -f "${fault_control_directory}/postgres.resume" && ! -f "${fault_control_directory}/stop" ]]; do sleep 0.05; done
+        docker unpause "${postgres_container}" >/dev/null 2>&1 || true
+        rm -f -- "${fault_control_directory}/postgres.resume"
+        touch "${fault_control_directory}/postgres.resumed"
+      fi
+      if [[ -f "${fault_control_directory}/redis.pause" ]]; then
+        rm -- "${fault_control_directory}/redis.pause"
+        docker pause "${redis_container}" >/dev/null
+        touch "${fault_control_directory}/redis.paused"
+        while [[ ! -f "${fault_control_directory}/redis.resume" && ! -f "${fault_control_directory}/stop" ]]; do sleep 0.05; done
+        docker unpause "${redis_container}" >/dev/null 2>&1 || true
+        rm -f -- "${fault_control_directory}/redis.resume"
+        touch "${fault_control_directory}/redis.resumed"
+      fi
+      sleep 0.05
+    done
+  ) >>"${temporary_directory}/fault-controller.log" 2>&1 &
+  fault_controller_pid="$!"
+}
+
+stop_fault_controller() {
+  touch "${fault_control_directory}/stop"
+  for dependency in nats postgres redis; do
+    touch "${fault_control_directory}/${dependency}.resume"
+  done
+  wait "${fault_controller_pid}"
+  fault_controller_pid=""
 }
 
 run_adapter_tests() {
@@ -178,6 +256,7 @@ create_platform_bucket() {
 initialize_platform_configuration() {
   node --input-type=module -e '
     import { writeFileSync } from "node:fs";
+    import { MAXIMUM_JAR_UPLOAD_BYTES } from "./packages/platform-config/src/platform-configuration.ts";
     const [path] = process.argv.slice(1);
     writeFileSync(path, `${JSON.stringify({
       revision: 1,
@@ -189,7 +268,7 @@ initialize_platform_configuration() {
         publicDashboardRefreshSeconds: 5,
       },
       limits: {
-        maxJarBytes: 33554432,
+        maxJarBytes: MAXIMUM_JAR_UPLOAD_BYTES,
         testNgTargetJavaVersion: 21,
         runnerClaimRateLimitPerMinute: 120,
         sessionTtlHours: 12,
@@ -199,7 +278,7 @@ initialize_platform_configuration() {
         maximumMemoryUtilizationPercent: 85,
         maximumLoadPerCpu: 1,
         metricsMaximumAgeSeconds: 45,
-        projectMaximumConcurrency: 128,
+        projectMaximumConcurrency: 1,
         priorityAgingIntervalMinutes: 5,
       },
       worker: {
@@ -293,7 +372,46 @@ run_full_browser_flow() {
   E2E_SECONDARY_BASE_URL=http://127.0.0.1:3198 \
   E2E_ADMIN_BOOTSTRAP_TOKEN="${admin_bootstrap_token}" \
   E2E_RUNNER_BOOTSTRAP_TOKEN="${runner_bootstrap_token}" \
-    pnpm exec playwright test --config playwright.full.config.ts
+    pnpm exec playwright test \
+      --config playwright.full.config.ts \
+      tests/e2e/case-suite-lifecycle.spec.ts \
+      tests/e2e/execution-recovery.spec.ts \
+      tests/e2e/identity-rbac.spec.ts \
+      tests/e2e/jar-import.spec.ts \
+      tests/e2e/management-operations.spec.ts \
+      tests/e2e/platform-operations.spec.ts \
+      tests/e2e/project-isolation.spec.ts
+}
+
+run_full_real_agent_recovery() {
+  local admin_bootstrap_token
+  local runner_bootstrap_token
+  admin_bootstrap_token="$(node -p \
+    "JSON.parse(require('node:fs').readFileSync(process.argv[1], 'utf8')).secrets.adminBootstrapToken" \
+    "${platform_data_directory}/config/platform.json")"
+  runner_bootstrap_token="$(node -p \
+    "JSON.parse(require('node:fs').readFileSync(process.argv[1], 'utf8')).secrets.runnerBootstrapToken" \
+    "${platform_data_directory}/config/platform.json")"
+  start_fault_controller
+  E2E_REAL_AGENT_EXTERNAL_BASE_URL=http://127.0.0.1:3199 \
+  E2E_ADMIN_BOOTSTRAP_TOKEN="${admin_bootstrap_token}" \
+  E2E_RUNNER_BOOTSTRAP_TOKEN="${runner_bootstrap_token}" \
+  E2E_FULL_FAULT_CONTROL_DIR="${fault_control_directory}" \
+    bash "${repository_root}/scripts/quality/test-real-agent.sh"
+  stop_fault_controller
+}
+
+run_full_ldap_flow() {
+  local admin_bootstrap_token
+  admin_bootstrap_token="$(node -p \
+    "JSON.parse(require('node:fs').readFileSync(process.argv[1], 'utf8')).secrets.adminBootstrapToken" \
+    "${platform_data_directory}/config/platform.json")"
+  E2E_LDAP_EXTERNAL_BASE_URL=http://127.0.0.1:3199 \
+  E2E_LDAP_EXTERNAL_DIRECTORY_HOST=127.0.0.1 \
+  E2E_LDAP_LDAPS_PORT=5636 \
+  E2E_LDAP_STARTTLS_PORT=5389 \
+  E2E_ADMIN_BOOTSTRAP_TOKEN="${admin_bootstrap_token}" \
+    bash "${repository_root}/scripts/quality/test-ldap-e2e.sh"
 }
 
 verify_dependency_recovery() {
@@ -359,5 +477,7 @@ initialize_platform_configuration
 start_full_worker
 start_full_platform
 run_full_browser_flow
+run_full_real_agent_recovery
+run_full_ldap_flow
 verify_dependency_recovery
 printf 'Full mode integration passed with two Web/worker replicas and dependency recovery.\n'

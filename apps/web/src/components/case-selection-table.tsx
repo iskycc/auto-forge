@@ -32,6 +32,17 @@ export function CaseSelectionTable({
   const [pending, setPending] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const allSelected = cases.length > 0 && selected.size === cases.length;
+  const selectedProjects = new Set(
+    cases.filter((item) => selected.has(item.id)).map((item) => item.projectId),
+  );
+  const crossProjectSelection = selectedProjects.size > 1;
+  const selectedProjectId = selectedProjects.size === 1 ? [...selectedProjects][0] : undefined;
+  const targetSuites = selectedProjectId
+    ? suites.filter((suite) => suite.projectId === selectedProjectId)
+    : suites;
+  const effectiveSuiteId = targetSuites.some((suite) => suite.id === suiteId)
+    ? suiteId
+    : (targetSuites[0]?.id ?? "");
 
   function toggle(id: string): void {
     setSelected((current) => {
@@ -44,15 +55,18 @@ export function CaseSelectionTable({
   }
 
   async function addToSuite(): Promise<void> {
-    if (!suiteId || selected.size === 0) return;
+    if (!effectiveSuiteId || selected.size === 0 || crossProjectSelection) return;
     setPending(true);
     setMessage(null);
     try {
-      const response = await fetch(`/api/v1/case-suites/${encodeURIComponent(suiteId)}/cases`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ caseDefinitionIds: [...selected] }),
-      });
+      const response = await fetch(
+        `/api/v1/case-suites/${encodeURIComponent(effectiveSuiteId)}/cases`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ caseDefinitionIds: [...selected] }),
+        },
+      );
       if (!response.ok) {
         const payload: unknown = await response.json().catch(() => null);
         const parsed = apiErrorSchema.safeParse(payload);
@@ -72,7 +86,13 @@ export function CaseSelectionTable({
   return (
     <>
       <div className="selection-toolbar">
-        <span>{selected.size === 0 ? "勾选用例后加入任务" : `已选择 ${selected.size} 个用例`}</span>
+        <span>
+          {crossProjectSelection
+            ? "不能跨项目混选，请先按项目筛选或取消其他项目的勾选"
+            : selected.size === 0
+              ? "勾选用例后加入任务"
+              : `已选择 ${selected.size} 个用例`}
+        </span>
         {suites.length === 0 ? (
           <Link className="button button-secondary" href="/case-suites">
             <Layers3 size={15} /> 新建用例任务
@@ -80,11 +100,11 @@ export function CaseSelectionTable({
         ) : (
           <span className="selection-actions">
             <Select
-              value={suiteId}
+              value={effectiveSuiteId}
               onChange={(event) => setSuiteId(event.target.value)}
               aria-label="目标用例任务"
             >
-              {suites.map((suite) => (
+              {targetSuites.map((suite) => (
                 <option value={suite.id} key={suite.id}>
                   {suite.name}
                 </option>
@@ -93,7 +113,9 @@ export function CaseSelectionTable({
             <Button
               className="button button-primary"
               type="button"
-              disabled={selected.size === 0 || pending}
+              disabled={
+                selected.size === 0 || pending || crossProjectSelection || !effectiveSuiteId
+              }
               onClick={addToSuite}
             >
               {pending ? <LoaderCircle className="spin" size={15} /> : <Check size={15} />} 加入任务

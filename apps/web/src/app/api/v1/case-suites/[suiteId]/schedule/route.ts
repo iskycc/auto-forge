@@ -13,7 +13,8 @@ export async function PUT(request: Request, context: Context): Promise<NextRespo
     const identity = await authenticateRequest(request);
     const { suiteId } = await context.params;
     const services = await getPlatformServices();
-    const suite = await services.caseSuites.get(suiteId);
+    const projectIds = services.identityAccess.projectScope(identity, "case_suite.manage");
+    const suite = await services.caseSuites.get(suiteId, projectIds);
     const schedule = await services.platformOperations.upsertSchedule(
       identity,
       suite,
@@ -40,7 +41,8 @@ export async function DELETE(request: Request, context: Context): Promise<NextRe
     const identity = await authenticateRequest(request);
     const { suiteId } = await context.params;
     const services = await getPlatformServices();
-    const suite = await services.caseSuites.get(suiteId);
+    const projectIds = services.identityAccess.projectScope(identity, "case_suite.manage");
+    const suite = await services.caseSuites.get(suiteId, projectIds);
     const schedule = (await services.platformOperations.listSchedules(identity)).find(
       (candidate) => candidate.suiteId === suiteId,
     );

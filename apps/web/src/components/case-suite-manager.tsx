@@ -1,6 +1,6 @@
 "use client";
 
-import { Button, Input, Textarea } from "@/components/ui";
+import { Button, Input, Select, Textarea } from "@/components/ui";
 
 import { apiErrorSchema } from "@autoforge/contracts";
 import type { CaseSuite } from "@autoforge/domain";
@@ -8,12 +8,21 @@ import { ArrowRight, Layers3, LoaderCircle, Plus } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
 
-export function CaseSuiteManager({ initialSuites }: { initialSuites: CaseSuite[] }) {
+export function CaseSuiteManager({
+  initialSuites,
+  projectId: initialProjectId,
+  projects,
+}: {
+  initialSuites: CaseSuite[];
+  projectId?: string | undefined;
+  projects: Array<{ id: string; name: string }>;
+}) {
   const [suites, setSuites] = useState(initialSuites);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [projectId, setProjectId] = useState(initialProjectId ?? projects[0]?.id ?? "");
 
   async function createSuite(event: React.FormEvent): Promise<void> {
     event.preventDefault();
@@ -23,7 +32,11 @@ export function CaseSuiteManager({ initialSuites }: { initialSuites: CaseSuite[]
       const response = await fetch("/api/v1/case-suites", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ name, ...(description.trim() ? { description } : {}) }),
+        body: JSON.stringify({
+          ...(projectId ? { projectId } : {}),
+          name,
+          ...(description.trim() ? { description } : {}),
+        }),
       });
       if (!response.ok) {
         const payload: unknown = await response.json().catch(() => null);
@@ -55,6 +68,22 @@ export function CaseSuiteManager({ initialSuites }: { initialSuites: CaseSuite[]
           <Plus size={22} />
         </div>
         <form className="stack-form" onSubmit={createSuite}>
+          {projects.length > 0 ? (
+            <label>
+              <span>项目</span>
+              <Select
+                name="projectId"
+                value={projectId}
+                onChange={(event) => setProjectId(event.target.value)}
+              >
+                {projects.map((project) => (
+                  <option key={project.id} value={project.id}>
+                    {project.name}
+                  </option>
+                ))}
+              </Select>
+            </label>
+          ) : null}
           <label>
             <span>任务名称</span>
             <Input

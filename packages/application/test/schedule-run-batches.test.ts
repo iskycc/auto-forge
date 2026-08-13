@@ -200,6 +200,34 @@ describe("run batch preflight", () => {
     expect(labelBlockers.map((entry) => entry.message)).toEqual(["执行机缺少必需标签 gpu。"]);
   });
 
+  it("blocks source-only JAR cases because they are viewable but not executable", async () => {
+    const catalog = readyCatalogFake();
+    const sourceRecord = await catalog.getSource("source-1");
+    vi.mocked(catalog.getSource).mockResolvedValue({
+      ...sourceRecord!,
+      inspection: {
+        discoveryMode: "java-source-annotations",
+        executable: false,
+      },
+    } as Awaited<ReturnType<CaseCatalogRepository["getSource"]>>);
+    const service = preflightService({
+      suites: {
+        get: vi.fn().mockResolvedValue(readySuite({})),
+      } as unknown as CaseSuiteRepository,
+      runners: runnersFake(),
+      environments: {} as ExecutionEnvironmentRepository,
+      catalog,
+      objectStore: objectStoreFake(),
+    });
+
+    const result = await service.preflight({ suiteId: "suite-1", runnerIds: ["runner-1"] });
+
+    expect(result.ready).toBe(false);
+    expect(result.blockers).toContainEqual(
+      expect.objectContaining({ code: "CASE_SOURCE_NOT_EXECUTABLE" }),
+    );
+  });
+
   it("requires the container executor capability for a container suite", async () => {
     const service = preflightService({
       suites: {
@@ -462,6 +490,50 @@ describe("run batch creation with suite policy", () => {
         ],
       }),
     );
+  });
+
+  it("rejects direct execution of a source-only case", async () => {
+    const catalog = {
+      ...readyCatalogFake(),
+      getCaseDefinition: vi.fn().mockResolvedValue({
+        id: "case-1",
+        projectId: "project-1",
+        sourceId: "source-1",
+        displayName: "SourceVisibleTest",
+        enabled: true,
+        archived: false,
+        parameters: {},
+        currentVersion: 1,
+        methods: [{ enabled: true }],
+      }),
+      getSource: vi.fn().mockResolvedValue({
+        source: (await readyCatalogFake().getSource("source-1"))?.source,
+        inspection: { discoveryMode: "java-source-annotations", executable: false },
+      }),
+    } as unknown as CaseCatalogRepository;
+    const service = new RunBatchSchedulingService(
+      {} as RunBatchRepository,
+      {} as CaseSuiteRepository,
+      runnersFake(),
+      { now: () => new Date(timestamp) },
+      { next: () => "generated-id" },
+      {
+        maximumCpuUtilizationPercent: 85,
+        maximumMemoryUtilizationPercent: 85,
+        maximumLoadPerCpu: 1,
+      },
+      45,
+      undefined,
+      { catalog, objectStore: objectStoreFake() },
+    );
+
+    await expect(
+      service.createSingleCase("case-1", {
+        projectId: "project-1",
+        runnerIds: ["runner-1"],
+        parameters: {},
+      }),
+    ).rejects.toMatchObject({ code: "CASE_SOURCE_NOT_EXECUTABLE" });
   });
 });
 

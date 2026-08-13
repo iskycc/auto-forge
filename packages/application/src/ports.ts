@@ -9,6 +9,7 @@ import type {
   JarInspection,
   JarImportJob,
   JarImportResult,
+  JavaSourceReference,
   JobEnvelope,
   ObjectEntry,
   ReconcileAttemptsInput,
@@ -224,7 +225,7 @@ export interface IdentityAccessRepository {
   }): Promise<void>;
   removeProjectRole(userId: string, projectId: string, roleId: string): Promise<boolean>;
   listProjectMemberships(projectId: string): Promise<Array<{ user: User; roleIds: string[] }>>;
-  listProjects(): Promise<Project[]>;
+  listProjects(projectIds?: readonly string[]): Promise<Project[]>;
   createProject(input: {
     id: string;
     name: string;
@@ -239,6 +240,7 @@ export interface IdentityAccessRepository {
     updatedAt: string;
   }): Promise<Project>;
   listSystemRoleBindingsForActiveUsers(): Promise<SystemRoleBindingView[]>;
+  listSystemRoleBindings(): Promise<Array<{ userId: string; roleId: string }>>;
   getLdapConfiguration(): Promise<StoredLdapConfiguration | null>;
   saveLdapConfiguration(
     input: Omit<StoredLdapConfiguration, "createdAt" | "updatedAt" | "version"> & {
@@ -270,6 +272,7 @@ export interface IdentityAccessRepository {
   }): Promise<string[]>;
   appendAudit(event: AuditEvent): Promise<void>;
   listAudit(input: {
+    projectIds?: readonly string[];
     actorId?: string;
     action?: string;
     resourceType?: string;
@@ -481,6 +484,7 @@ export interface DirectoryPort {
 
 export interface JarDiscoveryPort {
   inspect(fileName: string, content: Uint8Array): Promise<JarInspection>;
+  readSource(content: Uint8Array, reference: JavaSourceReference | undefined): Promise<string>;
 }
 
 export type ObjectWriteResult = {

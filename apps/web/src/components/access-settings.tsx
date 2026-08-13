@@ -4,7 +4,7 @@ import { Button, Input, Select, Textarea } from "@/components/ui";
 
 import type { AuditEvent, Project, Role, User, UserSession } from "@autoforge/domain";
 import { Network, Plus, RefreshCw, Search, Shield, UserRound } from "lucide-react";
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 
 type LdapView = {
   enabled: boolean;
@@ -30,21 +30,31 @@ type LdapView = {
   version: number;
 };
 
+const RELOAD_MESSAGE_KEY = "autoforge:access-settings:message";
+
 export function AccessSettings({
   users,
   roles,
   projects,
+  projectMemberships,
   ldap,
   ldapMappings,
   sessions,
   auditEvents,
+  systemRoleBindings,
   userQuery,
   userSource,
   nextUserCursor,
+  capabilities,
+  manageableProjectIds,
 }: {
   users: User[];
   roles: Role[];
   projects: Project[];
+  projectMemberships: Array<{
+    projectId: string;
+    members: Array<{ user: User; roleIds: string[] }>;
+  }>;
   ldap: LdapView | null;
   ldapMappings: Array<{
     id: string;
@@ -55,13 +65,36 @@ export function AccessSettings({
   }>;
   sessions: UserSession[];
   auditEvents: AuditEvent[];
+  systemRoleBindings: Array<{ userId: string; roleId: string }>;
   userQuery: string;
   userSource: "" | "local" | "ldap";
   nextUserCursor: string | undefined;
+  capabilities: {
+    userRead: boolean;
+    userManage: boolean;
+    roleRead: boolean;
+    roleManage: boolean;
+    projectRead: boolean;
+    ldapRead: boolean;
+    ldapManage: boolean;
+    auditRead: boolean;
+    canCreateProject: boolean;
+  };
+  manageableProjectIds: string[] | null;
 }) {
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [pending, setPending] = useState(false);
+
+  const canManageProject = (projectId: string) =>
+    manageableProjectIds === null || manageableProjectIds.includes(projectId);
+
+  useEffect(() => {
+    const timeoutId = window.setTimeout(() => {
+      setMessage(takeReloadMessage(RELOAD_MESSAGE_KEY));
+    }, 0);
+    return () => window.clearTimeout(timeoutId);
+  }, []);
 
   async function request(path: string, init: RequestInit, success: string) {
     setPending(true);
@@ -73,7 +106,7 @@ export function AccessSettings({
         const body = (await response.json()) as { error?: { message?: string } };
         throw new Error(body.error?.message ?? "操作失败。");
       }
-      setMessage(success);
+      window.sessionStorage.setItem(RELOAD_MESSAGE_KEY, success);
       window.location.reload();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "操作失败。");
@@ -218,591 +251,791 @@ export function AccessSettings({
         </div>
       ) : null}
 
-      <section className="content-card settings-section">
-        <div className="section-heading">
-          <div>
-            <p className="eyebrow">Identity</p>
-            <h2>用户管理</h2>
+      {capabilities.userRead ? (
+        <section className="content-card settings-section" id="users">
+          <div className="section-heading">
+            <div>
+              <p className="eyebrow">Identity</p>
+              <h2>用户管理</h2>
+            </div>
+            <UserRound size={22} aria-hidden="true" />
           </div>
-          <UserRound size={22} aria-hidden="true" />
-        </div>
-        <form className="settings-grid-form" onSubmit={submitUser}>
-          <label>
-            用户名
-            <Input name="username" required />
-          </label>
-          <label>
-            显示名称
-            <Input name="displayName" required />
-          </label>
-          <label>
-            邮箱（可选）
-            <Input name="email" type="email" />
-          </label>
-          <label>
-            初始密码
-            <Input minLength={12} name="password" required type="password" />
-          </label>
-          <Button className="primary-button" disabled={pending} type="submit">
-            <Plus size={16} /> 创建本地用户
-          </Button>
-        </form>
-        <form action="/settings/access" className="settings-user-filter" method="get">
-          <label>
-            搜索用户
-            <Input defaultValue={userQuery} maxLength={120} name="query" />
-          </label>
-          <label>
-            账号来源
-            <Select defaultValue={userSource} name="source">
-              <option value="">全部来源</option>
-              <option value="local">本地</option>
-              <option value="ldap">LDAP</option>
-            </Select>
-          </label>
-          <Button className="secondary-button" type="submit">
-            <Search size={16} /> 筛选
-          </Button>
-        </form>
-        <div className="table-scroll">
-          <table className="data-table">
-            <thead>
-              <tr>
-                <th>用户</th>
-                <th>来源</th>
-                <th>状态</th>
-                <th>最近登录</th>
-                <th>操作</th>
-              </tr>
-            </thead>
-            <tbody>
-              {users.map((user) => (
-                <tr key={user.id}>
-                  <td>
-                    <strong>{user.displayName}</strong>
-                    <small>
-                      {user.username}
-                      {user.email ? ` · ${user.email}` : ""} · {user.id}
-                    </small>
-                  </td>
-                  <td>{user.source === "ldap" ? "LDAP" : "本地"}</td>
-                  <td>{user.status === "active" ? "启用" : "禁用"}</td>
-                  <td>{user.lastLoginAt ? new Date(user.lastLoginAt).toLocaleString() : "—"}</td>
-                  <td>
-                    <Button
-                      className="table-action"
-                      disabled={pending}
-                      onClick={() =>
-                        void request(
-                          `/api/v1/users/${user.id}/status`,
-                          jsonRequest("PATCH", {
-                            status: user.status === "active" ? "disabled" : "active",
-                          }),
-                          user.status === "active" ? "用户已禁用。" : "用户已启用并解锁。",
-                        )
-                      }
-                      type="button"
-                    >
-                      {user.status === "active" ? "禁用" : "启用/解锁"}
-                    </Button>
-                    <Button
-                      className="table-action"
-                      disabled={pending}
-                      onClick={() =>
-                        void request(
-                          `/api/v1/users/${user.id}/sessions`,
-                          { method: "DELETE" },
-                          "该用户的全部会话已撤销。",
-                        )
-                      }
-                      type="button"
-                    >
-                      撤销会话
-                    </Button>
-                  </td>
+          {capabilities.userManage ? (
+            <form className="settings-grid-form" onSubmit={submitUser}>
+              <label>
+                用户名
+                <Input name="username" required />
+              </label>
+              <label>
+                显示名称
+                <Input name="displayName" required />
+              </label>
+              <label>
+                邮箱（可选）
+                <Input name="email" type="email" />
+              </label>
+              <label>
+                初始密码
+                <Input minLength={12} name="password" required type="password" />
+              </label>
+              <Button className="primary-button" disabled={pending} type="submit">
+                <Plus size={16} /> 创建本地用户
+              </Button>
+            </form>
+          ) : null}
+          <form action="/settings/access" className="settings-user-filter" method="get">
+            <label>
+              搜索用户
+              <Input defaultValue={userQuery} maxLength={120} name="query" />
+            </label>
+            <label>
+              账号来源
+              <Select defaultValue={userSource} name="source">
+                <option value="">全部来源</option>
+                <option value="local">本地</option>
+                <option value="ldap">LDAP</option>
+              </Select>
+            </label>
+            <Button className="secondary-button" type="submit">
+              <Search size={16} /> 筛选
+            </Button>
+          </form>
+          <div className="table-scroll">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>用户</th>
+                  <th>来源</th>
+                  <th>状态</th>
+                  <th>最近登录</th>
+                  <th>已分配角色</th>
+                  <th>操作</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-        {nextUserCursor ? (
-          <a
-            className="secondary-button settings-next-page"
-            href={userPageHref(userQuery, userSource, nextUserCursor)}
-          >
-            下一页
-          </a>
-        ) : null}
-        <form className="settings-grid-form settings-subform" onSubmit={submitPasswordReset}>
-          <label>
-            本地用户
-            <Select name="userId" required>
-              {users
-                .filter((user) => user.source === "local")
-                .map((user) => (
-                  <option key={user.id} value={user.id}>
-                    {user.displayName} · {user.username}
-                  </option>
+              </thead>
+              <tbody>
+                {users.map((user) => (
+                  <tr key={user.id}>
+                    <td>
+                      <strong>{user.displayName}</strong>
+                      <small>
+                        {user.username}
+                        {user.email ? ` · ${user.email}` : ""} · {user.id}
+                      </small>
+                    </td>
+                    <td>{user.source === "ldap" ? "LDAP" : "本地"}</td>
+                    <td>
+                      {user.status === "disabled"
+                        ? "禁用"
+                        : isUserLocked(user)
+                          ? `锁定至 ${new Date(user.lockedUntil!).toLocaleString()}`
+                          : "启用"}
+                    </td>
+                    <td>{user.lastLoginAt ? new Date(user.lastLoginAt).toLocaleString() : "—"}</td>
+                    <td>
+                      <details>
+                        <summary className="role-action-summary">
+                          {assignedRoleCount(user.id, systemRoleBindings, projectMemberships)}{" "}
+                          个绑定
+                        </summary>
+                        <div className="permission-list">
+                          {systemRoleBindings
+                            .filter((binding) => binding.userId === user.id)
+                            .map((binding) => (
+                              <code key={`system-${binding.roleId}`}>
+                                系统 · {roleName(roles, binding.roleId)}
+                              </code>
+                            ))}
+                          {projectMemberships.flatMap((membership) =>
+                            membership.members
+                              .filter((member) => member.user.id === user.id)
+                              .flatMap((member) =>
+                                member.roleIds.map((roleId) => (
+                                  <code key={`${membership.projectId}-${roleId}`}>
+                                    {projectName(projects, membership.projectId)} ·{" "}
+                                    {roleName(roles, roleId)}
+                                  </code>
+                                )),
+                              ),
+                          )}
+                        </div>
+                      </details>
+                    </td>
+                    <td>
+                      {capabilities.userManage ? (
+                        <>
+                          <Button
+                            className="table-action"
+                            disabled={pending}
+                            onClick={() =>
+                              void request(
+                                `/api/v1/users/${user.id}/status`,
+                                jsonRequest("PATCH", {
+                                  status:
+                                    user.status === "active" && !isUserLocked(user)
+                                      ? "disabled"
+                                      : "active",
+                                }),
+                                user.status === "active" && !isUserLocked(user)
+                                  ? "用户已禁用。"
+                                  : "用户已启用并解除登录锁定。",
+                              )
+                            }
+                            type="button"
+                          >
+                            {user.status === "active" && !isUserLocked(user) ? "禁用" : "启用/解锁"}
+                          </Button>
+                          <Button
+                            className="table-action"
+                            disabled={pending}
+                            onClick={() =>
+                              void request(
+                                `/api/v1/users/${user.id}/sessions`,
+                                { method: "DELETE" },
+                                "该用户的全部会话已撤销。",
+                              )
+                            }
+                            type="button"
+                          >
+                            撤销会话
+                          </Button>
+                        </>
+                      ) : (
+                        "仅查看"
+                      )}
+                    </td>
+                  </tr>
                 ))}
-            </Select>
-          </label>
-          <label>
-            新密码
-            <Input minLength={12} name="password" required type="password" />
-          </label>
-          <Button className="secondary-button" disabled={pending} type="submit">
-            重置密码并撤销会话
-          </Button>
-        </form>
-      </section>
-
-      <section className="content-card settings-section">
-        <div className="section-heading">
-          <div>
-            <p className="eyebrow">Authorization</p>
-            <h2>角色与权限分层</h2>
+              </tbody>
+            </table>
           </div>
-          <Shield size={22} aria-hidden="true" />
-        </div>
-        <div className="settings-paired-forms">
-          <form className="settings-grid-form settings-subform" onSubmit={submitSystemRole}>
-            <label>
-              用户<Select name="userId">{users.map(userOption)}</Select>
-            </label>
-            <label>
-              系统角色
-              <Select name="roleId">
-                {roles.filter((role) => role.scope === "system" && role.active).map(roleOption)}
-              </Select>
-            </label>
-            <Button className="secondary-button" disabled={pending} type="submit">
-              分配系统角色
-            </Button>
-          </form>
-          <form className="settings-grid-form settings-subform" onSubmit={submitProjectRole}>
-            <label>
-              用户<Select name="userId">{users.map(userOption)}</Select>
-            </label>
-            <label>
-              项目
-              <Select name="projectId">
-                {projects.filter((project) => !project.archived).map(projectOption)}
-              </Select>
-            </label>
-            <label>
-              项目角色
-              <Select name="roleId">
-                {roles.filter((role) => role.scope === "project" && role.active).map(roleOption)}
-              </Select>
-            </label>
-            <Button className="secondary-button" disabled={pending} type="submit">
-              分配项目角色
-            </Button>
-          </form>
-        </div>
-        <form className="settings-grid-form" onSubmit={submitRole}>
-          <label>
-            角色标识
-            <Input name="key" placeholder="release-operator" required />
-          </label>
-          <label>
-            角色名称
-            <Input name="name" required />
-          </label>
-          <label>
-            作用域
-            <Select defaultValue="project" name="scope">
-              <option value="project">项目</option>
-              <option value="system">系统</option>
-            </Select>
-          </label>
-          <label className="settings-wide-field">
-            权限（英文逗号分隔）
-            <Input name="permissions" placeholder="case.read,run.read,run.create" required />
-          </label>
-          <label className="settings-wide-field">
-            描述
-            <Input name="description" />
-          </label>
-          <Button className="primary-button" disabled={pending} type="submit">
-            <Plus size={16} /> 创建角色
-          </Button>
-        </form>
-        <div className="role-grid">
-          {roles.map((role) => (
-            <article className="role-card" key={role.id}>
-              <div>
-                <strong>{role.name}</strong>
-                <small>
-                  {role.key} · {role.scope === "system" ? "系统" : "项目"}
-                  {role.builtIn ? " · 内置" : role.active ? "" : " · 已停用"}
-                </small>
-              </div>
-              <p>{role.description || "无描述"}</p>
-              <div className="permission-list">
-                {role.permissions.map((permission) => (
-                  <code key={permission}>{permission}</code>
+          {nextUserCursor ? (
+            <a
+              className="secondary-button settings-next-page"
+              href={userPageHref(userQuery, userSource, nextUserCursor)}
+            >
+              下一页
+            </a>
+          ) : null}
+          {capabilities.userManage ? (
+            <form className="settings-grid-form settings-subform" onSubmit={submitPasswordReset}>
+              <label>
+                本地用户
+                <Select name="userId" required>
+                  {users
+                    .filter((user) => user.source === "local")
+                    .map((user) => (
+                      <option key={user.id} value={user.id}>
+                        {user.displayName} · {user.username}
+                      </option>
+                    ))}
+                </Select>
+              </label>
+              <label>
+                新密码
+                <Input minLength={12} name="password" required type="password" />
+              </label>
+              <Button className="secondary-button" disabled={pending} type="submit">
+                重置密码并撤销会话
+              </Button>
+            </form>
+          ) : null}
+        </section>
+      ) : null}
+
+      {capabilities.roleRead ? (
+        <section className="content-card settings-section" id="roles">
+          <div className="section-heading">
+            <div>
+              <p className="eyebrow">Authorization</p>
+              <h2>角色与权限分层</h2>
+            </div>
+            <Shield size={22} aria-hidden="true" />
+          </div>
+          {capabilities.roleManage ? (
+            <div className="settings-paired-forms">
+              <form className="settings-grid-form settings-subform" onSubmit={submitSystemRole}>
+                <label>
+                  用户<Select name="userId">{users.map(userOption)}</Select>
+                </label>
+                <label>
+                  系统角色
+                  <Select name="roleId">
+                    {roles.filter((role) => role.scope === "system" && role.active).map(roleOption)}
+                  </Select>
+                </label>
+                <Button className="secondary-button" disabled={pending} type="submit">
+                  分配系统角色
+                </Button>
+              </form>
+              <form className="settings-grid-form settings-subform" onSubmit={submitProjectRole}>
+                <label>
+                  用户<Select name="userId">{users.map(userOption)}</Select>
+                </label>
+                <label>
+                  项目
+                  <Select name="projectId">
+                    {projects.filter((project) => !project.archived).map(projectOption)}
+                  </Select>
+                </label>
+                <label>
+                  项目角色
+                  <Select name="roleId">
+                    {roles
+                      .filter((role) => role.scope === "project" && role.active)
+                      .map(roleOption)}
+                  </Select>
+                </label>
+                <Button className="secondary-button" disabled={pending} type="submit">
+                  分配项目角色
+                </Button>
+              </form>
+            </div>
+          ) : null}
+          <div className="table-scroll">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>用户</th>
+                  <th>系统角色</th>
+                  <th>影响与操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                {systemRoleBindings.length === 0 ? (
+                  <tr>
+                    <td colSpan={3}>当前没有系统角色绑定。</td>
+                  </tr>
+                ) : null}
+                {systemRoleBindings.map((binding) => (
+                  <tr key={`${binding.userId}-${binding.roleId}`}>
+                    <td>{userName(users, binding.userId)}</td>
+                    <td>{roleName(roles, binding.roleId)}</td>
+                    <td>
+                      <Button
+                        className="danger-text-button"
+                        disabled={pending || !capabilities.roleManage}
+                        onClick={() => {
+                          if (
+                            !window.confirm(
+                              "撤销系统角色会立即撤销目标用户的全部旧会话；最后一位系统管理员受服务端保护。确认继续？",
+                            )
+                          ) {
+                            return;
+                          }
+                          void request(
+                            `/api/v1/users/${binding.userId}/system-roles/${binding.roleId}`,
+                            { method: "DELETE" },
+                            "系统角色已撤销。",
+                          );
+                        }}
+                        type="button"
+                      >
+                        撤销系统角色
+                      </Button>
+                    </td>
+                  </tr>
                 ))}
-              </div>
-              <div className="role-actions">
-                <details>
-                  <summary className="role-action-summary">复制角色</summary>
-                  <form
-                    className="settings-grid-form settings-subform"
-                    onSubmit={(event) => submitRoleCopy(event, role)}
-                  >
-                    <label>
-                      新角色标识
-                      <Input defaultValue={`${role.key}-copy`} name="key" required />
-                    </label>
-                    <label>
-                      新角色名称
-                      <Input defaultValue={`${role.name} 副本`} name="name" required />
-                    </label>
-                    <Button className="secondary-button" disabled={pending} type="submit">
-                      创建副本
-                    </Button>
-                  </form>
-                </details>
-                {!role.builtIn ? (
-                  <>
+              </tbody>
+            </table>
+          </div>
+          {capabilities.roleManage ? (
+            <form className="settings-grid-form" onSubmit={submitRole}>
+              <label>
+                角色标识
+                <Input name="key" placeholder="release-operator" required />
+              </label>
+              <label>
+                角色名称
+                <Input name="name" required />
+              </label>
+              <label>
+                作用域
+                <Select defaultValue="project" name="scope">
+                  <option value="project">项目</option>
+                  <option value="system">系统</option>
+                </Select>
+              </label>
+              <label className="settings-wide-field">
+                权限（英文逗号分隔）
+                <Input name="permissions" placeholder="case.read,run.read,run.create" required />
+              </label>
+              <label className="settings-wide-field">
+                描述
+                <Input name="description" />
+              </label>
+              <Button className="primary-button" disabled={pending} type="submit">
+                <Plus size={16} /> 创建角色
+              </Button>
+            </form>
+          ) : null}
+          <div className="role-grid">
+            {roles.map((role) => (
+              <article className="role-card" key={role.id}>
+                <div>
+                  <strong>{role.name}</strong>
+                  <small>
+                    {role.key} · {role.scope === "system" ? "系统" : "项目"}
+                    {role.builtIn ? " · 内置" : role.active ? "" : " · 已停用"}
+                  </small>
+                </div>
+                <p>{role.description || "无描述"}</p>
+                <div className="permission-list">
+                  {role.permissions.map((permission) => (
+                    <code key={permission}>{permission}</code>
+                  ))}
+                </div>
+                {capabilities.roleManage ? (
+                  <div className="role-actions">
                     <details>
-                      <summary className="role-action-summary">编辑角色</summary>
+                      <summary className="role-action-summary">复制角色</summary>
                       <form
                         className="settings-grid-form settings-subform"
-                        onSubmit={(event) => submitRoleUpdate(event, role.id)}
+                        onSubmit={(event) => submitRoleCopy(event, role)}
                       >
                         <label>
-                          角色名称
-                          <Input defaultValue={role.name} name="name" required />
+                          新角色标识
+                          <Input defaultValue={`${role.key}-copy`} name="key" required />
                         </label>
-                        <label className="settings-wide-field">
-                          权限（英文逗号分隔）
-                          <Input
-                            defaultValue={role.permissions.join(",")}
-                            name="permissions"
-                            required
-                          />
-                        </label>
-                        <label className="settings-wide-field">
-                          描述
-                          <Input defaultValue={role.description} name="description" />
+                        <label>
+                          新角色名称
+                          <Input defaultValue={`${role.name} 副本`} name="name" required />
                         </label>
                         <Button className="secondary-button" disabled={pending} type="submit">
-                          保存角色
+                          创建副本
                         </Button>
                       </form>
                     </details>
-                    <Button
-                      className="table-action"
-                      disabled={pending}
-                      onClick={() =>
-                        void request(
-                          `/api/v1/roles/${role.id}`,
-                          jsonRequest("PATCH", { active: !role.active }),
-                          role.active
-                            ? "角色已停用，相关用户会话已撤销，停用角色不再授予权限。"
-                            : "角色已重新启用。",
-                        )
-                      }
-                      type="button"
-                    >
-                      {role.active ? "停用角色" : "启用角色"}
+                    {!role.builtIn ? (
+                      <>
+                        <details>
+                          <summary className="role-action-summary">编辑角色</summary>
+                          <form
+                            className="settings-grid-form settings-subform"
+                            onSubmit={(event) => submitRoleUpdate(event, role.id)}
+                          >
+                            <label>
+                              角色名称
+                              <Input defaultValue={role.name} name="name" required />
+                            </label>
+                            <label className="settings-wide-field">
+                              权限（英文逗号分隔）
+                              <Input
+                                defaultValue={role.permissions.join(",")}
+                                name="permissions"
+                                required
+                              />
+                            </label>
+                            <label className="settings-wide-field">
+                              描述
+                              <Input defaultValue={role.description} name="description" />
+                            </label>
+                            <Button className="secondary-button" disabled={pending} type="submit">
+                              保存角色
+                            </Button>
+                          </form>
+                        </details>
+                        <Button
+                          className="table-action"
+                          disabled={pending}
+                          onClick={() =>
+                            void request(
+                              `/api/v1/roles/${role.id}`,
+                              jsonRequest("PATCH", { active: !role.active }),
+                              role.active
+                                ? "角色已停用，相关用户会话已撤销，停用角色不再授予权限。"
+                                : "角色已重新启用。",
+                            )
+                          }
+                          type="button"
+                        >
+                          {role.active ? "停用角色" : "启用角色"}
+                        </Button>
+                        <Button
+                          className="danger-text-button"
+                          disabled={pending}
+                          onClick={() =>
+                            void request(
+                              `/api/v1/roles/${role.id}`,
+                              { method: "DELETE" },
+                              "自定义角色已删除。",
+                            )
+                          }
+                          type="button"
+                        >
+                          删除角色
+                        </Button>
+                      </>
+                    ) : null}
+                  </div>
+                ) : null}
+              </article>
+            ))}
+          </div>
+        </section>
+      ) : null}
+
+      {capabilities.projectRead ? (
+        <section className="content-card settings-section" id="projects">
+          <div className="section-heading">
+            <div>
+              <p className="eyebrow">Projects</p>
+              <h2>项目作用域</h2>
+            </div>
+          </div>
+          {capabilities.canCreateProject ? (
+            <form className="settings-grid-form" onSubmit={submitProject}>
+              <label>
+                项目名称
+                <Input name="name" required />
+              </label>
+              <label>
+                Slug
+                <Input name="slug" pattern="[a-z0-9]+(?:-[a-z0-9]+)*" required />
+              </label>
+              <Button className="primary-button" disabled={pending} type="submit">
+                <Plus size={16} /> 创建项目
+              </Button>
+            </form>
+          ) : null}
+          <div className="project-settings-list">
+            {projects.map((project) => (
+              <div className="project-settings-item" key={project.id}>
+                <code>
+                  {project.name} · {project.slug}
+                  {project.isDefault ? " · 默认" : ""}
+                  {project.archived ? " · 已归档" : ""}
+                </code>
+                <small>
+                  负责人：
+                  {project.ownerUserId
+                    ? (users.find((user) => user.id === project.ownerUserId)?.displayName ??
+                      project.ownerUserId)
+                    : "未设置"}
+                </small>
+                <details>
+                  <summary className="role-action-summary">
+                    {projectMemberships.find((entry) => entry.projectId === project.id)?.members
+                      .length ?? 0}{" "}
+                    位成员
+                  </summary>
+                  <div className="table-scroll">
+                    <table className="data-table">
+                      <thead>
+                        <tr>
+                          <th>成员</th>
+                          <th>角色</th>
+                          <th>操作</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {(
+                          projectMemberships.find((entry) => entry.projectId === project.id)
+                            ?.members ?? []
+                        ).map((member) => (
+                          <tr key={member.user.id}>
+                            <td>
+                              {member.user.displayName}
+                              {member.user.id === project.ownerUserId ? " · 当前负责人" : ""}
+                              <small>{member.user.id}</small>
+                            </td>
+                            <td>
+                              {member.roleIds.map((roleId) => roleName(roles, roleId)).join("、")}
+                            </td>
+                            <td>
+                              {member.roleIds.map((roleId) => (
+                                <Button
+                                  className="danger-text-button"
+                                  disabled={
+                                    pending || project.archived || !canManageProject(project.id)
+                                  }
+                                  key={roleId}
+                                  onClick={() => {
+                                    if (
+                                      !window.confirm(
+                                        "撤销项目角色会立即撤销目标用户的旧会话；当前负责人最后一个管理角色受服务端保护。确认继续？",
+                                      )
+                                    ) {
+                                      return;
+                                    }
+                                    void request(
+                                      `/api/v1/users/${member.user.id}/project-roles/${project.id}/${roleId}`,
+                                      { method: "DELETE" },
+                                      "项目角色已撤销。",
+                                    );
+                                  }}
+                                  type="button"
+                                >
+                                  撤销 {roleName(roles, roleId)}
+                                </Button>
+                              ))}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </details>
+                {!project.archived && canManageProject(project.id) ? (
+                  <form
+                    className="settings-inline-form"
+                    onSubmit={(event) => {
+                      event.preventDefault();
+                      const form = new FormData(event.currentTarget);
+                      void request(
+                        `/api/v1/projects/${project.id}/owner`,
+                        jsonRequest("POST", { ownerUserId: form.get("ownerUserId") }),
+                        "项目负责人已转移。",
+                      );
+                    }}
+                  >
+                    <Select defaultValue={project.ownerUserId ?? ""} name="ownerUserId" required>
+                      <option disabled value="">
+                        选择新负责人
+                      </option>
+                      {users.filter((user) => user.status === "active").map(userOption)}
+                    </Select>
+                    <Button className="secondary-button" disabled={pending} type="submit">
+                      转移负责人
                     </Button>
-                    <Button
-                      className="danger-text-button"
-                      disabled={pending}
-                      onClick={() =>
-                        void request(
-                          `/api/v1/roles/${role.id}`,
-                          { method: "DELETE" },
-                          "自定义角色已删除。",
-                        )
-                      }
-                      type="button"
-                    >
-                      删除角色
-                    </Button>
-                  </>
+                  </form>
+                ) : null}
+                {!project.isDefault && !project.archived && canManageProject(project.id) ? (
+                  <Button
+                    className="danger-text-button"
+                    disabled={pending}
+                    onClick={() =>
+                      void request(
+                        `/api/v1/projects/${project.id}`,
+                        { method: "DELETE" },
+                        "项目已归档。",
+                      )
+                    }
+                    type="button"
+                  >
+                    归档
+                  </Button>
                 ) : null}
               </div>
-            </article>
-          ))}
-        </div>
-      </section>
-
-      <section className="content-card settings-section">
-        <div className="section-heading">
-          <div>
-            <p className="eyebrow">Projects</p>
-            <h2>项目作用域</h2>
+            ))}
           </div>
-        </div>
-        <form className="settings-grid-form" onSubmit={submitProject}>
-          <label>
-            项目名称
-            <Input name="name" required />
-          </label>
-          <label>
-            Slug
-            <Input name="slug" pattern="[a-z0-9]+(?:-[a-z0-9]+)*" required />
-          </label>
-          <Button className="primary-button" disabled={pending} type="submit">
-            <Plus size={16} /> 创建项目
-          </Button>
-        </form>
-        <div className="project-settings-list">
-          {projects.map((project) => (
-            <div className="project-settings-item" key={project.id}>
-              <code>
-                {project.name} · {project.slug}
-                {project.isDefault ? " · 默认" : ""}
-                {project.archived ? " · 已归档" : ""}
-              </code>
-              <small>
-                负责人：
-                {project.ownerUserId
-                  ? (users.find((user) => user.id === project.ownerUserId)?.displayName ??
-                    project.ownerUserId)
-                  : "未设置"}
-              </small>
-              {!project.archived ? (
-                <form
-                  className="settings-inline-form"
-                  onSubmit={(event) => {
-                    event.preventDefault();
-                    const form = new FormData(event.currentTarget);
-                    void request(
-                      `/api/v1/projects/${project.id}/owner`,
-                      jsonRequest("POST", { ownerUserId: form.get("ownerUserId") }),
-                      "项目负责人已转移。",
-                    );
-                  }}
-                >
-                  <Select defaultValue={project.ownerUserId ?? ""} name="ownerUserId" required>
-                    <option disabled value="">
-                      选择新负责人
-                    </option>
-                    {users.filter((user) => user.status === "active").map(userOption)}
-                  </Select>
-                  <Button className="secondary-button" disabled={pending} type="submit">
-                    转移负责人
-                  </Button>
-                </form>
-              ) : null}
-              {!project.isDefault && !project.archived ? (
+        </section>
+      ) : null}
+
+      {capabilities.ldapRead ? (
+        <section className="content-card settings-section" id="ldap">
+          <div className="section-heading">
+            <div>
+              <p className="eyebrow">Directory</p>
+              <h2>LDAP 配置</h2>
+            </div>
+            <Network size={22} aria-hidden="true" />
+          </div>
+          {capabilities.ldapManage ? (
+            <form
+              className="settings-grid-form"
+              onSubmit={(event) => {
+                event.preventDefault();
+                submitLdapForm(event.currentTarget, false);
+              }}
+            >
+              <label className="checkbox-field">
+                <Input defaultChecked={ldap?.enabled ?? false} name="enabled" type="checkbox" />
+                启用 LDAP 登录
+              </label>
+              <label>
+                TLS 模式
+                <Select defaultValue={ldap?.tlsMode ?? "ldaps"} name="tlsMode">
+                  <option value="ldaps">LDAPS</option>
+                  <option value="starttls">StartTLS</option>
+                </Select>
+              </label>
+              <label className="settings-wide-field">
+                服务器地址（每行一个）
+                <Textarea
+                  defaultValue={ldap?.urls.join("\n") ?? "ldaps://ldap.internal:636"}
+                  name="urls"
+                  required
+                  rows={2}
+                />
+              </label>
+              <label>
+                Bind DN
+                <Input defaultValue={ldap?.bindDn} name="bindDn" required />
+              </label>
+              <label>
+                Bind 密码
+                <Input
+                  name="bindPassword"
+                  placeholder={ldap?.bindPasswordConfigured ? "留空以保持现有密文" : "必填"}
+                  required={!ldap?.bindPasswordConfigured}
+                  type="password"
+                />
+              </label>
+              <label>
+                LDAP 分页大小
+                <Input
+                  defaultValue={ldap?.pageSize ?? 500}
+                  max={1000}
+                  min={50}
+                  name="pageSize"
+                  type="number"
+                />
+              </label>
+              <label>
+                单次同步用户上限
+                <Input
+                  defaultValue={ldap?.maximumUsers ?? 5000}
+                  max={50000}
+                  min={1}
+                  name="maximumUsers"
+                  type="number"
+                />
+              </label>
+              <label>
+                计划同步间隔（分钟，0 为关闭）
+                <Input
+                  defaultValue={ldap?.synchronizationIntervalMinutes ?? 0}
+                  max={10080}
+                  min={0}
+                  name="synchronizationIntervalMinutes"
+                  type="number"
+                />
+              </label>
+              <label className="settings-wide-field">
+                用户 Base DN
+                <Input defaultValue={ldap?.userBaseDn} name="userBaseDn" required />
+              </label>
+              <label className="settings-wide-field">
+                用户过滤器
+                <Input
+                  defaultValue={ldap?.userFilter ?? "(&(objectClass=person)(uid={username}))"}
+                  name="userFilter"
+                  required
+                />
+              </label>
+              <label>
+                稳定 ID 属性
+                <Input defaultValue={ldap?.userIdAttribute ?? "entryUUID"} name="userIdAttribute" />
+              </label>
+              <label>
+                用户名属性
+                <Input defaultValue={ldap?.usernameAttribute ?? "uid"} name="usernameAttribute" />
+              </label>
+              <label>
+                显示名属性
+                <Input
+                  defaultValue={ldap?.displayNameAttribute ?? "displayName"}
+                  name="displayNameAttribute"
+                />
+              </label>
+              <label>
+                邮箱属性
+                <Input defaultValue={ldap?.emailAttribute ?? "mail"} name="emailAttribute" />
+              </label>
+              <label className="settings-wide-field">
+                组 Base DN（可选）
+                <Input defaultValue={ldap?.groupBaseDn} name="groupBaseDn" />
+              </label>
+              <label className="settings-wide-field">
+                组过滤器（可选，使用 {"{userDn}"}）
+                <Input defaultValue={ldap?.groupFilter} name="groupFilter" />
+              </label>
+              <label className="settings-wide-field">
+                私有 CA PEM（可选）
+                <Textarea defaultValue={ldap?.caPem} name="caPem" rows={5} />
+              </label>
+              <div className="settings-form-actions">
                 <Button
-                  className="danger-text-button"
+                  className="secondary-button"
                   disabled={pending}
-                  onClick={() =>
-                    void request(
-                      `/api/v1/projects/${project.id}`,
-                      { method: "DELETE" },
-                      "项目已归档。",
-                    )
-                  }
+                  onClick={(event) => {
+                    const form = event.currentTarget.form;
+                    if (form) submitLdapForm(form, true);
+                  }}
                   type="button"
                 >
-                  归档
+                  <RefreshCw size={16} /> 测试连接
                 </Button>
-              ) : null}
+                <Button className="primary-button" disabled={pending} type="submit">
+                  保存 LDAP 配置
+                </Button>
+              </div>
+            </form>
+          ) : (
+            <dl className="stat-list">
+              <div>
+                <dt>状态</dt>
+                <dd>{ldap?.enabled ? "启用" : "停用"}</dd>
+              </div>
+              <div>
+                <dt>TLS</dt>
+                <dd>{ldap?.tlsMode ?? "未配置"}</dd>
+              </div>
+              <div>
+                <dt>目录地址</dt>
+                <dd>{ldap?.urls.join("、") || "未配置"}</dd>
+              </div>
+            </dl>
+          )}
+          {capabilities.ldapManage ? (
+            <div className="settings-directory-actions">
+              <Button
+                className="secondary-button"
+                disabled={pending || !ldap?.enabled}
+                onClick={() =>
+                  void request(
+                    "/api/v1/ldap/synchronize",
+                    { method: "POST" },
+                    "LDAP 用户、组和停用状态同步完成。",
+                  )
+                }
+                type="button"
+              >
+                <RefreshCw size={16} /> 立即同步目录
+              </Button>
             </div>
-          ))}
-        </div>
-      </section>
-
-      <section className="content-card settings-section">
-        <div className="section-heading">
-          <div>
-            <p className="eyebrow">Directory</p>
-            <h2>LDAP 配置</h2>
+          ) : null}
+          {capabilities.ldapManage ? (
+            <form className="settings-grid-form settings-subform" onSubmit={submitLdapMapping}>
+              <label className="settings-wide-field">
+                LDAP 组 DN
+                <Input name="groupDn" required />
+              </label>
+              <label>
+                角色<Select name="roleId">{roles.map(roleOption)}</Select>
+              </label>
+              <label>
+                项目（系统角色留空）
+                <Select defaultValue="" name="projectId">
+                  <option value="">系统作用域</option>
+                  {projects.filter((project) => !project.archived).map(projectOption)}
+                </Select>
+              </label>
+              <label>
+                优先级
+                <Input defaultValue={0} max={1000} min={-1000} name="priority" type="number" />
+              </label>
+              <Button className="secondary-button" disabled={pending} type="submit">
+                添加组映射
+              </Button>
+            </form>
+          ) : null}
+          <div className="permission-list">
+            {ldapMappings.map((mapping) => (
+              <code key={mapping.id}>
+                {mapping.groupDn} →{" "}
+                {roles.find((role) => role.id === mapping.roleId)?.name ?? mapping.roleId}
+                {mapping.projectId
+                  ? ` · ${projects.find((project) => project.id === mapping.projectId)?.name ?? mapping.projectId}`
+                  : " · 系统"}{" "}
+                · 优先级 {mapping.priority}
+              </code>
+            ))}
           </div>
-          <Network size={22} aria-hidden="true" />
-        </div>
-        <form
-          className="settings-grid-form"
-          onSubmit={(event) => {
-            event.preventDefault();
-            submitLdapForm(event.currentTarget, false);
-          }}
-        >
-          <label className="checkbox-field">
-            <Input defaultChecked={ldap?.enabled ?? false} name="enabled" type="checkbox" />
-            启用 LDAP 登录
-          </label>
-          <label>
-            TLS 模式
-            <Select defaultValue={ldap?.tlsMode ?? "ldaps"} name="tlsMode">
-              <option value="ldaps">LDAPS</option>
-              <option value="starttls">StartTLS</option>
-            </Select>
-          </label>
-          <label className="settings-wide-field">
-            服务器地址（每行一个）
-            <Textarea
-              defaultValue={ldap?.urls.join("\n") ?? "ldaps://ldap.internal:636"}
-              name="urls"
-              required
-              rows={2}
-            />
-          </label>
-          <label>
-            Bind DN
-            <Input defaultValue={ldap?.bindDn} name="bindDn" required />
-          </label>
-          <label>
-            Bind 密码
-            <Input
-              name="bindPassword"
-              placeholder={ldap?.bindPasswordConfigured ? "留空以保持现有密文" : "必填"}
-              required={!ldap?.bindPasswordConfigured}
-              type="password"
-            />
-          </label>
-          <label>
-            LDAP 分页大小
-            <Input
-              defaultValue={ldap?.pageSize ?? 500}
-              max={1000}
-              min={50}
-              name="pageSize"
-              type="number"
-            />
-          </label>
-          <label>
-            单次同步用户上限
-            <Input
-              defaultValue={ldap?.maximumUsers ?? 5000}
-              max={50000}
-              min={1}
-              name="maximumUsers"
-              type="number"
-            />
-          </label>
-          <label>
-            计划同步间隔（分钟，0 为关闭）
-            <Input
-              defaultValue={ldap?.synchronizationIntervalMinutes ?? 0}
-              max={10080}
-              min={0}
-              name="synchronizationIntervalMinutes"
-              type="number"
-            />
-          </label>
-          <label className="settings-wide-field">
-            用户 Base DN
-            <Input defaultValue={ldap?.userBaseDn} name="userBaseDn" required />
-          </label>
-          <label className="settings-wide-field">
-            用户过滤器
-            <Input
-              defaultValue={ldap?.userFilter ?? "(&(objectClass=person)(uid={username}))"}
-              name="userFilter"
-              required
-            />
-          </label>
-          <label>
-            稳定 ID 属性
-            <Input defaultValue={ldap?.userIdAttribute ?? "entryUUID"} name="userIdAttribute" />
-          </label>
-          <label>
-            用户名属性
-            <Input defaultValue={ldap?.usernameAttribute ?? "uid"} name="usernameAttribute" />
-          </label>
-          <label>
-            显示名属性
-            <Input
-              defaultValue={ldap?.displayNameAttribute ?? "displayName"}
-              name="displayNameAttribute"
-            />
-          </label>
-          <label>
-            邮箱属性
-            <Input defaultValue={ldap?.emailAttribute ?? "mail"} name="emailAttribute" />
-          </label>
-          <label className="settings-wide-field">
-            组 Base DN（可选）
-            <Input defaultValue={ldap?.groupBaseDn} name="groupBaseDn" />
-          </label>
-          <label className="settings-wide-field">
-            组过滤器（可选，使用 {"{userDn}"}）
-            <Input defaultValue={ldap?.groupFilter} name="groupFilter" />
-          </label>
-          <label className="settings-wide-field">
-            私有 CA PEM（可选）
-            <Textarea defaultValue={ldap?.caPem} name="caPem" rows={5} />
-          </label>
-          <div className="settings-form-actions">
-            <Button
-              className="secondary-button"
-              disabled={pending}
-              onClick={(event) => {
-                const form = event.currentTarget.form;
-                if (form) submitLdapForm(form, true);
-              }}
-              type="button"
-            >
-              <RefreshCw size={16} /> 测试连接
-            </Button>
-            <Button className="primary-button" disabled={pending} type="submit">
-              保存 LDAP 配置
-            </Button>
-          </div>
-        </form>
-        <div className="settings-directory-actions">
-          <Button
-            className="secondary-button"
-            disabled={pending || !ldap?.enabled}
-            onClick={() =>
-              void request(
-                "/api/v1/ldap/synchronize",
-                { method: "POST" },
-                "LDAP 用户、组和停用状态同步完成。",
-              )
-            }
-            type="button"
-          >
-            <RefreshCw size={16} /> 立即同步目录
-          </Button>
-        </div>
-        <form className="settings-grid-form settings-subform" onSubmit={submitLdapMapping}>
-          <label className="settings-wide-field">
-            LDAP 组 DN
-            <Input name="groupDn" required />
-          </label>
-          <label>
-            角色<Select name="roleId">{roles.map(roleOption)}</Select>
-          </label>
-          <label>
-            项目（系统角色留空）
-            <Select defaultValue="" name="projectId">
-              <option value="">系统作用域</option>
-              {projects.filter((project) => !project.archived).map(projectOption)}
-            </Select>
-          </label>
-          <label>
-            优先级
-            <Input defaultValue={0} max={1000} min={-1000} name="priority" type="number" />
-          </label>
-          <Button className="secondary-button" disabled={pending} type="submit">
-            添加组映射
-          </Button>
-        </form>
-        <div className="permission-list">
-          {ldapMappings.map((mapping) => (
-            <code key={mapping.id}>
-              {mapping.groupDn} →{" "}
-              {roles.find((role) => role.id === mapping.roleId)?.name ?? mapping.roleId}
-              {mapping.projectId
-                ? ` · ${projects.find((project) => project.id === mapping.projectId)?.name ?? mapping.projectId}`
-                : " · 系统"}{" "}
-              · 优先级 {mapping.priority}
-            </code>
-          ))}
-        </div>
-      </section>
+        </section>
+      ) : null}
 
-      <section className="content-card settings-section">
+      <section className="content-card settings-section" id="sessions">
         <div className="section-heading">
           <div>
             <p className="eyebrow">Sessions</p>
@@ -848,41 +1081,43 @@ export function AccessSettings({
         </div>
       </section>
 
-      <section className="content-card settings-section">
-        <div className="section-heading">
-          <div>
-            <p className="eyebrow">Audit</p>
-            <h2>近期安全审计</h2>
+      {capabilities.auditRead ? (
+        <section className="content-card settings-section" id="audit">
+          <div className="section-heading">
+            <div>
+              <p className="eyebrow">Audit</p>
+              <h2>近期安全审计</h2>
+            </div>
           </div>
-        </div>
-        <div className="table-scroll">
-          <table className="data-table">
-            <thead>
-              <tr>
-                <th>时间</th>
-                <th>动作</th>
-                <th>结果</th>
-                <th>主体</th>
-                <th>资源</th>
-              </tr>
-            </thead>
-            <tbody>
-              {auditEvents.map((event) => (
-                <tr key={event.id}>
-                  <td>{new Date(event.recordedAt).toLocaleString()}</td>
-                  <td>{event.action}</td>
-                  <td>{event.result}</td>
-                  <td>{event.actorId ?? event.actorType}</td>
-                  <td>
-                    {event.resourceType}
-                    {event.resourceId ? ` · ${event.resourceId}` : ""}
-                  </td>
+          <div className="table-scroll">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>时间</th>
+                  <th>动作</th>
+                  <th>结果</th>
+                  <th>主体</th>
+                  <th>资源</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </section>
+              </thead>
+              <tbody>
+                {auditEvents.map((event) => (
+                  <tr key={event.id}>
+                    <td>{new Date(event.recordedAt).toLocaleString()}</td>
+                    <td>{event.action}</td>
+                    <td>{event.result}</td>
+                    <td>{event.actorId ?? event.actorType}</td>
+                    <td>
+                      {event.resourceType}
+                      {event.resourceId ? ` · ${event.resourceId}` : ""}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      ) : null}
     </div>
   );
 }
@@ -922,6 +1157,42 @@ function projectOption(project: Project) {
   );
 }
 
+function roleName(roles: Role[], roleId: string): string {
+  return roles.find((role) => role.id === roleId)?.name ?? roleId;
+}
+
+function userName(users: User[], userId: string): string {
+  const user = users.find((candidate) => candidate.id === userId);
+  return user ? `${user.displayName} · ${user.username}` : userId;
+}
+
+function isUserLocked(user: User): boolean {
+  return Boolean(user.lockedUntil && new Date(user.lockedUntil).getTime() > Date.now());
+}
+
+function projectName(projects: Project[], projectId: string): string {
+  return projects.find((project) => project.id === projectId)?.name ?? projectId;
+}
+
+function assignedRoleCount(
+  userId: string,
+  systemRoleBindings: Array<{ userId: string; roleId: string }>,
+  projectMemberships: Array<{
+    projectId: string;
+    members: Array<{ user: User; roleIds: string[] }>;
+  }>,
+): number {
+  return (
+    systemRoleBindings.filter((binding) => binding.userId === userId).length +
+    projectMemberships.reduce(
+      (count, membership) =>
+        count +
+        (membership.members.find((member) => member.user.id === userId)?.roleIds.length ?? 0),
+      0,
+    )
+  );
+}
+
 function ldapPayload(form: FormData) {
   const optional = (name: string) => String(form.get(name) ?? "").trim() || undefined;
   return {
@@ -956,4 +1227,11 @@ function userPageHref(query: string, source: string, cursor: string): string {
   if (query) parameters.set("query", query);
   if (source) parameters.set("source", source);
   return `/settings/access?${parameters}`;
+}
+
+function takeReloadMessage(key: string): string {
+  if (typeof window === "undefined") return "";
+  const message = window.sessionStorage.getItem(key) ?? "";
+  window.sessionStorage.removeItem(key);
+  return message;
 }

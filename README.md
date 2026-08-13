@@ -47,7 +47,7 @@ AutoForge 是一个面向自动化测试场景的用例工厂，用于统一管�
 - 产物安全发现、SHA-256 声明和鉴权下载；Lite 经控制面流式写入本地对象目录，Full 使用 15 分钟单对象 MinIO 预签名目标，Agent 不持有长期凭据，finalize 前由控制面重新核对大小和 SHA-256。TestNG XML 以禁用 DTD/实体的有界流式解析器提取 suite/test/class/method、耗时和汇总，结果由 SQLite/PostgreSQL 持久化并在执行详情展示，原始 XML 保留为产物。
 - SQLite 持久任务和 Lite 嵌入式 worker；PostgreSQL transactional outbox、JetStream 显式确认和 Full 独立 worker。SQLite/JetStream 运行同一套至少一次投递契约测试，覆盖去重、延迟、租约恢复、死信和关闭排空。
 - 可重建的 Lite 内存缓存与 Full Redis 缓存适配器；缓存不作为业务事实来源。
-- GitHub Actions CI，以及四变体后端离线镜像 GitHub Release 流水线；每个后端镜像均内置 Linux `amd64`/`arm64` Agent，不再发布独立 Agent 资产。
+- GitHub Actions CI，以及四变体后端离线镜像、两架构 Java/TestNG 工具链和签名候选 Gate E 流水线；每个后端镜像均内置 Linux `amd64`/`arm64` Agent，不再发布独立 Agent 资产。
 
 平台数据盘提供分级容量告警；Runner spool、工作目录和单项上传有严格上限。普通文件系统无法为整个工作目录提供无瞬时窗口的总量隔离，生产部署仍须按文档使用专用文件系统/项目配额；Full 对象存储总容量由 MinIO/S3 部署侧硬配额负责。Full 的调度消息使用 PostgreSQL outbox 与 JetStream，Redis 只承载可重建缓存和限流语义。
 
@@ -354,7 +354,7 @@ pnpm start -- --data-dir=/var/lib/autoforge
 
 没有显式参数时，已存在的 `/var/lib/autoforge` 优先，否则使用当前目录的 `data`。默认配置为 Lite，可在没有 PostgreSQL、NATS、MinIO 或 Redis 的条件下独立启动。管理员通过 `/settings/platform` 管理监听地址、执行机可访问的 HTTPS 地址、Lite/Full 模式、Full 连接信息、容量与调度阈值；秘密字段只写不回显。配置采用 revision 条件和原子替换，保存后需要在维护窗口重启 Web/worker。
 
-Runner Agent 由主平台自动生成独立 JSON 配置并以 `--config /etc/autoforge-agent/config.json` 启动，不复用服务端数据库或基础设施凭据。自动安装只支持已有 SSH、systemd、cgroup v2 和基础系统命令的 Ubuntu/openSUSE；不会联网或调用系统包管理器。Java/TestNG 工具链仍需在执行机离线预置并写入 Agent 配置。
+Runner Agent 由主平台自动生成独立 JSON 配置并以 `--config /etc/autoforge-agent/config.json` 启动，不复用服务端数据库或基础设施凭据。自动安装只支持已有 SSH、systemd、cgroup v2 和基础系统命令的 Ubuntu/openSUSE；不会联网或调用系统包管理器。Java/TestNG 工具链需在执行机离线预置并写入 Agent 配置，可直接使用同一 Release 的架构匹配工具链资产。
 
 直连终端不使用 SSH 协议，也不要求执行机开放入站端口：Agent 使用自身身份主动建立 WebSocket，平台只中继当前浮窗的输入输出。配置、反向代理和安全边界见 [Runner 直连终端](./docs/operations/direct-terminal.md)。
 
@@ -454,7 +454,7 @@ Playwright 首次运行需要已有 Chromium。联网开发机可按 Playwright 
 
 ## GitHub Release 与离线包
 
-仓库的 `Release` workflow 由 `vX.Y.Z` tag 触发，在完整质量门禁通过后，为后端 Docker 离线镜像和 Go Agent 分别构建 `amd64`、`arm64`、`amd64-musl`、`arm64-musl`。Release 还包含版本化 Lite/Full Compose 部署包、每个二进制/镜像资产的 SPDX JSON SBOM、`SHA256SUMS`、机器可读清单和构建来源证明。
+仓库的 `Release` workflow 由 `vX.Y.Z` tag 触发，在完整质量门禁通过后，构建 `amd64`、`arm64`、`amd64-musl`、`arm64-musl` 后端镜像，以及原生 `amd64`/`arm64` Java/TestNG 离线工具链。签名候选必须通过从上一正式版本升级、迁移失败回滚、备份恢复、真实 Agent 和 LDAP 断网验收才会发布。Release 还包含版本化 Lite/Full Compose 部署包、每个镜像/部署/工具链资产的 SPDX JSON SBOM、`SHA256SUMS`、机器可读清单和构建来源证明。
 
 后端标准版使用 Debian/glibc，musl 版使用 Alpine/musl；Agent 四个文件均为 `CGO_ENABLED=0` 的 Linux 静态二进制，其中 musl 后缀表示发布目标而不是动态链接 musl。正式 Release 发布 AutoForge 自身镜像，不重新分发 PostgreSQL、NATS、MinIO 或 Redis 镜像；xterm.js、WebSocket 和 PTY 库已经固定版本并打入 AutoForge 发布物，不产生运行时下载。
 

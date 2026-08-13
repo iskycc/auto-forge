@@ -63,6 +63,8 @@ export const caseSuiteScheduleSchema = z.object({
   enabled: z.boolean(),
   nextTriggerAt: z.string().datetime(),
   lastTriggerAt: z.string().datetime().optional(),
+  lastTriggerStatus: z.enum(["created", "skipped", "failed"]).optional(),
+  lastBatchId: identifierSchema.optional(),
   revision: z.number().int().positive(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
@@ -147,6 +149,18 @@ export const retentionPreviewSchema = z.object({
   cutoffAt: z.string().datetime(),
   eligibleRecords: z.number().int().nonnegative(),
   eligibleBytes: z.number().int().nonnegative(),
+});
+
+export const executeRetentionInputSchema = z.object({
+  confirmation: retentionCategorySchema,
+  limit: z.number().int().min(1).max(1_000).default(1_000),
+});
+
+export const retentionExecutionResultSchema = z.object({
+  category: retentionCategorySchema,
+  deletedRecords: z.number().int().nonnegative(),
+  queuedObjectDeletes: z.number().int().nonnegative(),
+  completedObjectDeletes: z.number().int().nonnegative(),
 });
 
 export const analyticsFilterSchema = z.object({
@@ -324,6 +338,7 @@ export type Notification = z.infer<typeof notificationSchema>;
 export type RetentionCategory = z.infer<typeof retentionCategorySchema>;
 export type RetentionPolicy = z.infer<typeof retentionPolicySchema>;
 export type RetentionPreview = z.infer<typeof retentionPreviewSchema>;
+export type RetentionExecutionResult = z.infer<typeof retentionExecutionResultSchema>;
 export type AnalyticsFilter = z.infer<typeof analyticsFilterSchema>;
 export type AnalyticsSummary = z.infer<typeof analyticsSummarySchema>;
 export type AnalyticsBatchComparison = z.infer<typeof analyticsBatchComparisonSchema>;

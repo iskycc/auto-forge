@@ -19,6 +19,7 @@ describe("platform configuration store", () => {
 
     expect(configuration.mode).toBe("lite");
     expect(configuration.revision).toBe(1);
+    expect(configuration.limits.maxJarBytes).toBe(256 * 1024 * 1024);
     expect(configuration.secrets.masterKey).toHaveLength(44);
     expect(statSync(store.paths.configurationFile).mode & 0o777).toBe(0o600);
     expect(statSync(store.paths.initialAdminTokenFile).mode & 0o777).toBe(0o600);

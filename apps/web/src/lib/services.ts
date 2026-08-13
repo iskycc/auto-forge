@@ -212,7 +212,7 @@ async function createPlatformServices() {
     clock,
     ids,
   });
-  const caseSources = new CaseSourceService(catalog, objectStore, clock, ids, jobQueue);
+  const caseSources = new CaseSourceService(catalog, objectStore, clock, ids, jobQueue, discovery);
   const caseSuites = new CaseSuiteService(suites, catalog, clock, ids);
   const caseDefinitions = new CaseDefinitionService(catalog, clock, ids);
   const runnerCredentials = {

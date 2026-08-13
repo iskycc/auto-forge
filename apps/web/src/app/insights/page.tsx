@@ -21,8 +21,8 @@ export default async function InsightsPage({
   const filter = analyticsFilter(parameters);
   const [summary, projects, suites, runners] = await Promise.all([
     services.platformOperations.analytics(identity, filter),
-    services.identities.listProjects(),
-    services.caseSuites.list(500),
+    services.identities.listProjects(projectIds),
+    services.caseSuites.list(500, projectIds),
     services.runnerControl.list(500),
   ]);
   const comparison =

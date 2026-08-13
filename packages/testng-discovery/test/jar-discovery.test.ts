@@ -1,10 +1,106 @@
 import { zipSync } from "fflate";
 import { describe, expect, it } from "vitest";
 
-import { JarInspectionError, TestNgJarDiscovery } from "../src/jar-discovery";
+import { isJarInspectionError, JarInspectionError, TestNgJarDiscovery } from "../src/jar-discovery";
 import { buildClassFile } from "./class-fixture";
 
 describe("TestNgJarDiscovery", () => {
+  it("discovers TestNG cases from a bounded sources JAR and exposes their source", async () => {
+    const source = `package com.example;
+
+import org.testng.annotations.Test;
+
+public class CheckoutTest {
+  @Test(groups = {"smoke", "checkout"}, description = "creates an order", priority = 2)
+  public void checkout(String accountId) {
+    // Source is displayed, never compiled or executed by discovery.
+  }
+}
+`;
+    const jar = zipSync({
+      "com/example/CheckoutTest.java": new TextEncoder().encode(source),
+    });
+    const discovery = new TestNgJarDiscovery();
+
+    const inspection = await discovery.inspect("checkout-tests-sources.jar", jar);
+
+    expect(inspection).toMatchObject({
+      discoveryMode: "java-source-annotations",
+      classFileCount: 0,
+      javaSourceFileCount: 1,
+      testClassCount: 1,
+      testMethodCount: 1,
+      classes: [
+        {
+          className: "com.example.CheckoutTest",
+          source: {
+            entryPath: "com/example/CheckoutTest.java",
+            sizeBytes: new TextEncoder().encode(source).byteLength,
+          },
+          methods: [
+            {
+              methodName: "checkout",
+              descriptor: "(Ljava/lang/String;)V",
+              groups: ["checkout", "smoke"],
+              description: "creates an order",
+              priority: 2,
+            },
+          ],
+        },
+      ],
+    });
+    await expect(discovery.readSource(jar, inspection.classes[0]?.source)).resolves.toBe(source);
+    await expect(
+      discovery.readSource(jar, {
+        ...inspection.classes[0]!.source!,
+        sha256: "0".repeat(64),
+      }),
+    ).rejects.toMatchObject({ code: "SOURCE_INTEGRITY_FAILED" });
+  });
+
+  it("rejects unsafe source paths and does not expose their content", async () => {
+    const jar = zipSync({
+      "../EscapedTest.java": new TextEncoder().encode(
+        "import org.testng.annotations.Test; class EscapedTest { @Test void escaped() {} }",
+      ),
+    });
+
+    const inspection = await new TestNgJarDiscovery().inspect("unsafe-sources.jar", jar);
+
+    expect(inspection.testClassCount).toBe(0);
+    expect(inspection.warnings).toContainEqual(
+      expect.objectContaining({ code: "SOURCE_ENTRY_PATH_UNSAFE" }),
+    );
+  });
+
+  it("keeps a bytecode JAR executable while attaching embedded Java source", async () => {
+    const source = `package com.example;
+import org.testng.annotations.Test;
+public class CheckoutTest { @Test public void checkout() {} }
+`;
+    const jar = zipSync({
+      "com/example/CheckoutTest.class": buildClassFile({
+        className: "com.example.CheckoutTest",
+        methods: [{ name: "checkout", annotations: [{ type: "Test" }] }],
+      }),
+      "com/example/CheckoutTest.java": new TextEncoder().encode(source),
+    });
+
+    const inspection = await new TestNgJarDiscovery().inspect("tests-with-source.jar", jar);
+
+    expect(inspection).toMatchObject({
+      discoveryMode: "bytecode-annotations",
+      executable: true,
+      javaSourceFileCount: 1,
+      classes: [
+        {
+          className: "com.example.CheckoutTest",
+          source: { entryPath: "com/example/CheckoutTest.java" },
+        },
+      ],
+    });
+  });
+
   it("discovers TestNG classes without loading user bytecode", async () => {
     const jar = zipSync({
       "com/example/CheckoutTest.class": buildClassFile({
@@ -38,6 +134,23 @@ describe("TestNgJarDiscovery", () => {
     await expect(
       discovery.inspect("not-a-jar.jar", new Uint8Array([1, 2, 3])),
     ).rejects.toMatchObject({ code: "INVALID_JAR" } satisfies Partial<JarInspectionError>);
+  });
+
+  it("recognizes inspection errors across production bundle boundaries", () => {
+    const bundledError = Object.assign(new Error("文件不是有效的 ZIP/JAR 格式。"), {
+      name: "JarInspectionError",
+      code: "INVALID_JAR",
+    });
+
+    expect(isJarInspectionError(bundledError)).toBe(true);
+    expect(
+      isJarInspectionError(
+        Object.assign(new Error("unexpected"), {
+          name: "JarInspectionError",
+          code: "UNRECOGNIZED_ERROR",
+        }),
+      ),
+    ).toBe(false);
   });
 
   it("enforces the compressed upload size limit", async () => {

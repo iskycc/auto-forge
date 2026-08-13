@@ -14,6 +14,7 @@ export function PlatformSettings({
   canManage: boolean;
 }) {
   const [mode, setMode] = useState(initial.mode);
+  const [revision, setRevision] = useState(initial.revision);
   const [pending, setPending] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
@@ -30,7 +31,7 @@ export function PlatformSettings({
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          revision: initial.revision,
+          revision,
           mode,
           web: {
             hostname: form.get("hostname"),
@@ -41,7 +42,7 @@ export function PlatformSettings({
             publicDashboardRefreshSeconds: numberValue(form, "publicDashboardRefreshSeconds"),
           },
           limits: {
-            maxJarBytes: numberValue(form, "maxJarBytes"),
+            maxJarBytes: mebibytesToBytes(numberValue(form, "maxJarMebibytes")),
             testNgTargetJavaVersion: numberValue(form, "testNgTargetJavaVersion"),
             runnerClaimRateLimitPerMinute: numberValue(form, "runnerClaimRateLimitPerMinute"),
             sessionTtlHours: numberValue(form, "sessionTtlHours"),
@@ -68,9 +69,11 @@ export function PlatformSettings({
         error?: { message?: string };
       };
       if (!response.ok) throw new Error(body.error?.message ?? "平台配置保存失败。");
-      setMessage("平台配置已保存。为保证组合根一致，请在维护窗口重启 Web 和 worker。 ");
+      if (body.revision !== undefined) setRevision(body.revision);
+      setMessage("平台配置已保存。为保证组合根一致，请在维护窗口重启 Web 和 worker。");
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "平台配置保存失败。");
+    } finally {
       setPending(false);
     }
   }
@@ -205,11 +208,17 @@ export function PlatformSettings({
             </div>
           </div>
           <div className="settings-grid-form">
-            <NumberInput
-              label="JAR 大小上限（字节）"
-              name="maxJarBytes"
-              value={initial.limits.maxJarBytes}
-            />
+            <label>
+              JAR 大小上限（MiB）
+              <Input
+                defaultValue={bytesToMebibytes(initial.limits.maxJarBytes)}
+                max={256}
+                min={1}
+                name="maxJarMebibytes"
+                type="number"
+              />
+              <small>可配置范围 1–256 MiB；保存后重启 Web 和 worker 生效。</small>
+            </label>
             <NumberInput
               label="目标 Java 版本"
               name="testNgTargetJavaVersion"
@@ -361,4 +370,12 @@ function stringValue(form: FormData, name: string): string {
 
 function numberValue(form: FormData, name: string): number {
   return Number(form.get(name));
+}
+
+function bytesToMebibytes(bytes: number): number {
+  return bytes / 1024 / 1024;
+}
+
+function mebibytesToBytes(mebibytes: number): number {
+  return mebibytes * 1024 * 1024;
 }

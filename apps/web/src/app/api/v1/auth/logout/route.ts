@@ -13,7 +13,7 @@ export async function POST(request: Request): Promise<NextResponse> {
   const currentRequestId = requestId(request);
   try {
     requireSameOrigin(request);
-    const identity = await authenticateRequest(request);
+    const identity = await authenticateRequest(request, { allowPasswordChangeRequired: true });
     await (await getPlatformServices()).identityAccess.logout(identity, currentRequestId);
     const response = new NextResponse(null, { status: 204 });
     response.cookies.set(expiredSessionCookie(request));

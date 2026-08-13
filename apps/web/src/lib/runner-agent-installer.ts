@@ -4,7 +4,9 @@ import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 
 import type {
   InstallRunnerAgentInput,
+  RollbackRunnerAgentInput,
   RunnerAgentInstallationResult,
+  RunnerAgentRollbackResult,
   RunnerHostProbeResult,
 } from "@autoforge/contracts";
 import { DomainError } from "@autoforge/domain";
@@ -96,6 +98,28 @@ export class RunnerAgentInstaller {
     };
   }
 
+  async rollback(input: RollbackRunnerAgentInput): Promise<RunnerAgentRollbackResult> {
+    const probe = await this.inspectHost(input.connection, input.expectedHostKeySha256);
+    const connected = await connectHost(input.connection, input.expectedHostKeySha256);
+    try {
+      const result = await executeRemoteCommand(
+        connected.client,
+        rollbackCommand(probe.privilegeMode),
+        probe.privilegeMode === "sudo" ? `${input.connection.password}\n` : undefined,
+        INSTALL_COMMAND_TIMEOUT_MS,
+      );
+      const version = parseRolledBackVersion(result.stdout);
+      return {
+        rolledBack: true,
+        host: input.connection.host,
+        agentVersion: version,
+        serviceName: "autoforge-agent.service",
+      };
+    } finally {
+      connected.client.end();
+    }
+  }
+
   private async inspectHost(
     connection: HostConnection,
     expectedHostKeySha256?: string,
@@ -107,6 +131,7 @@ export class RunnerAgentInstaller {
         hostProbeCommand,
         `${connection.password}\n`,
         REMOTE_COMMAND_TIMEOUT_MS,
+        runnerProbeCommandError,
       );
       return parseHostProbe(output.stdout, connected.hostKeySha256);
     } finally {
@@ -115,19 +140,34 @@ export class RunnerAgentInstaller {
   }
 }
 
-const hostProbeCommand = `set -eu
-test -r /etc/os-release
+const hostProbeCommand = `set -u
+if ! test -r /etc/os-release; then
+  printf "AUTOFORGE_PROBE_ERROR=OS_RELEASE_MISSING\\n" >&2
+  exit 20
+fi
 . /etc/os-release
-command -v systemctl >/dev/null 2>&1
-test -r /sys/fs/cgroup/cgroup.controllers
+if ! command -v systemctl >/dev/null 2>&1; then
+  printf "AUTOFORGE_PROBE_ERROR=SYSTEMD_REQUIRED\\n" >&2
+  exit 21
+fi
+if ! test -r /sys/fs/cgroup/cgroup.controllers; then
+  printf "AUTOFORGE_PROBE_ERROR=CGROUP_V2_REQUIRED\\n" >&2
+  exit 22
+fi
 printf "OS_ID=%s\\n" "\${ID:-}"
 printf "OS_NAME=%s\\n" "\${PRETTY_NAME:-\${NAME:-unknown}}"
 printf "ARCH=%s\\n" "$(uname -m)"
 if [ "$(id -u)" -eq 0 ]; then
   printf "PRIVILEGE=root\\n"
 else
-  sudo_path="$(command -v sudo)"
-  "\${sudo_path}" -S -k -p "" true >/dev/null
+  if ! sudo_path="$(command -v sudo)"; then
+    printf "AUTOFORGE_PROBE_ERROR=SUDO_MISSING\\n" >&2
+    exit 23
+  fi
+  if ! "\${sudo_path}" -S -k -p "" true >/dev/null; then
+    printf "AUTOFORGE_PROBE_ERROR=SUDO_REJECTED\\n" >&2
+    exit 24
+  fi
   printf "PRIVILEGE=sudo\\n"
 fi`;
 
@@ -221,18 +261,18 @@ function connectHost(
               "执行机 SSH 主机指纹已变化，安装已中止，请重新探测并核验。",
               { cause: error },
             )
-          : new DomainError(
-              "RUNNER_HOST_CONNECTION_FAILED",
-              "无法通过 SSH 连接执行机，请检查地址、端口、用户名与密码。",
-              { cause: error },
-            ),
+          : runnerHostConnectionError(error),
       );
+    });
+    client.on("keyboard-interactive", (_name, _instructions, _language, prompts, finish) => {
+      finish(prompts.map(() => connection.password));
     });
     client.connect({
       host: connection.host,
       port: connection.port,
       username: connection.username,
       password: connection.password,
+      tryKeyboard: true,
       readyTimeout: SSH_READY_TIMEOUT_MS,
       keepaliveInterval: 5_000,
       keepaliveCountMax: 3,
@@ -245,6 +285,53 @@ function connectHost(
       },
     });
   });
+}
+
+function runnerHostConnectionError(error: Error): DomainError {
+  const diagnostic = error as Error & { code?: string; level?: string };
+  if (
+    diagnostic.level === "client-authentication" ||
+    diagnostic.message.includes("authentication methods failed")
+  ) {
+    return new DomainError(
+      "RUNNER_HOST_AUTHENTICATION_FAILED",
+      "SSH 认证被执行机拒绝，请确认用户名、密码，以及服务器是否允许密码或 Keyboard-Interactive/PAM 登录。",
+      { cause: error },
+    );
+  }
+  if (diagnostic.code === "ENOTFOUND" || diagnostic.code === "EAI_AGAIN") {
+    return new DomainError(
+      "RUNNER_HOST_DNS_FAILED",
+      "无法解析执行机主机名，请检查 DNS 或改用可达的 IP 地址。",
+      { cause: error },
+    );
+  }
+  if (diagnostic.code === "ECONNREFUSED") {
+    return new DomainError(
+      "RUNNER_HOST_CONNECTION_REFUSED",
+      "执行机拒绝 SSH 连接，请确认 SSH 服务已启动且端口填写正确。",
+      { cause: error },
+    );
+  }
+  if (diagnostic.code === "ETIMEDOUT" || diagnostic.level === "client-timeout") {
+    return new DomainError(
+      "RUNNER_HOST_CONNECTION_TIMEOUT",
+      "连接执行机 SSH 超时，请检查平台到目标地址的路由、防火墙和安全组。",
+      { cause: error },
+    );
+  }
+  if (diagnostic.level === "handshake") {
+    return new DomainError(
+      "RUNNER_HOST_HANDSHAKE_FAILED",
+      "SSH 握手失败，请检查服务端主机密钥与加密算法是否为当前 OpenSSH 支持的安全配置。",
+      { cause: error },
+    );
+  }
+  return new DomainError(
+    "RUNNER_HOST_CONNECTION_FAILED",
+    "无法通过 SSH 连接执行机，请检查地址、端口和网络连通性。",
+    { cause: error },
+  );
 }
 
 function sshHostKeyFingerprint(hostKey: Buffer): string {
@@ -262,6 +349,10 @@ function executeRemoteCommand(
   command: string,
   stdin: string | undefined,
   timeoutMs: number,
+  commandError: (result: {
+    stdout: string;
+    stderr: string;
+  }) => DomainError = remoteExecutionFailure,
 ): Promise<{ stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
     client.exec(command, (error, stream) => {
@@ -269,7 +360,7 @@ function executeRemoteCommand(
         reject(remoteCommandError(error));
         return;
       }
-      collectCommandOutput(stream, stdin, timeoutMs).then(resolve, reject);
+      collectCommandOutput(stream, stdin, timeoutMs, commandError).then(resolve, reject);
     });
   });
 }
@@ -278,6 +369,7 @@ function collectCommandOutput(
   stream: ClientChannel,
   stdin: string | undefined,
   timeoutMs: number,
+  commandError: (result: { stdout: string; stderr: string }) => DomainError,
 ): Promise<{ stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
     const stdout: Buffer[] = [];
@@ -315,18 +407,52 @@ function collectCommandOutput(
         stderr: Buffer.concat(stderr).toString("utf8"),
       };
       if (exitCode !== 0) {
-        reject(
-          new DomainError(
-            "RUNNER_INSTALLATION_FAILED",
-            boundedRemoteFailure(result.stderr || result.stdout),
-          ),
-        );
+        reject(commandError(result));
         return;
       }
       resolve(result);
     });
     stream.end(stdin);
   });
+}
+
+function runnerProbeCommandError(result: { stdout: string; stderr: string }): DomainError {
+  const output = `${result.stderr}\n${result.stdout}`;
+  const marker = output.match(/AUTOFORGE_PROBE_ERROR=([A-Z0-9_]+)/)?.[1];
+  const diagnostics: Record<string, { code: string; message: string }> = {
+    OS_RELEASE_MISSING: {
+      code: "RUNNER_HOST_UNSUPPORTED",
+      message: "执行机缺少可读取的 /etc/os-release，无法确认受支持的 Linux 发行版。",
+    },
+    SYSTEMD_REQUIRED: {
+      code: "RUNNER_HOST_UNSUPPORTED",
+      message: "执行机未提供 systemd/systemctl，当前自动安装仅支持 systemd 主机。",
+    },
+    CGROUP_V2_REQUIRED: {
+      code: "RUNNER_HOST_UNSUPPORTED",
+      message: "执行机未启用 cgroup v2，无法应用要求的进程与资源隔离。",
+    },
+    SUDO_MISSING: {
+      code: "RUNNER_HOST_PRIVILEGE_REQUIRED",
+      message: "SSH 用户不是 root，且执行机未安装 sudo。",
+    },
+    SUDO_REJECTED: {
+      code: "RUNNER_HOST_PRIVILEGE_REQUIRED",
+      message:
+        "SSH 登录成功，但相同密码无法通过无交互 sudo 校验；请检查 sudoers、密码和 requiretty 策略。",
+    },
+  };
+  const diagnostic = marker ? diagnostics[marker] : undefined;
+  return diagnostic
+    ? new DomainError(diagnostic.code, diagnostic.message)
+    : remoteExecutionFailure(result);
+}
+
+function remoteExecutionFailure(result: { stdout: string; stderr: string }): DomainError {
+  return new DomainError(
+    "RUNNER_INSTALLATION_FAILED",
+    boundedRemoteFailure(result.stderr || result.stdout),
+  );
 }
 
 function remoteCommandError(error: Error): DomainError {
@@ -492,6 +618,73 @@ function installationCommand(
   const command = `/bin/sh ${argumentsList.join(" ")}`;
   return privilegeMode === "sudo" ? `sudo -S -k -p '' ${command}` : command;
 }
+
+function rollbackCommand(privilegeMode: "root" | "sudo"): string {
+  const command = `/bin/sh -c ${shellQuote(agentRollbackScript)}`;
+  return privilegeMode === "sudo" ? `sudo -S -k -p '' ${command}` : command;
+}
+
+function parseRolledBackVersion(output: string): string {
+  const marker = output
+    .split("\n")
+    .find((line) => line.startsWith("AUTOFORGE_ROLLED_BACK_VERSION="));
+  const version = marker?.slice("AUTOFORGE_ROLLED_BACK_VERSION=".length).trim();
+  if (!version || version.length > 128) {
+    throw new DomainError(
+      "RUNNER_ROLLBACK_FAILED",
+      "执行机已响应回滚命令，但没有返回有效的 Agent 版本。",
+    );
+  }
+  return version;
+}
+
+const agentRollbackScript = `set -eu
+installed_binary=/opt/autoforge/bin/autoforge-agent
+installed_configuration=/etc/autoforge-agent/config.json
+installed_service_unit=/etc/systemd/system/autoforge-agent.service
+backup_suffix=.autoforge-previous
+rollback_suffix=.autoforge-rollback-current
+
+for target in "$installed_binary" "$installed_configuration" "$installed_service_unit"; do
+  if [ ! -f "$target$backup_suffix" ]; then
+    echo "No complete previous Agent installation is available for rollback." >&2
+    exit 31
+  fi
+done
+
+restore_current() {
+  for target in "$installed_binary" "$installed_configuration" "$installed_service_unit"; do
+    failed_candidate="$target$backup_suffix"
+    mv -f "$target" "$failed_candidate"
+    mv -f "$target$rollback_suffix" "$target"
+  done
+  systemctl daemon-reload || true
+  systemctl restart autoforge-agent.service || true
+}
+
+systemctl stop autoforge-agent.service
+for target in "$installed_binary" "$installed_configuration" "$installed_service_unit"; do
+  rm -f "$target$rollback_suffix"
+  mv "$target" "$target$rollback_suffix"
+  mv "$target$backup_suffix" "$target"
+done
+if ! systemctl daemon-reload ||
+  ! systemctl restart autoforge-agent.service ||
+  ! systemctl is-active --quiet autoforge-agent.service; then
+  echo "Previous Agent failed its health check; restoring the current installation." >&2
+  restore_current
+  exit 32
+fi
+for target in "$installed_binary" "$installed_configuration" "$installed_service_unit"; do
+  mv -f "$target$rollback_suffix" "$target$backup_suffix"
+done
+version_json="$($installed_binary version)"
+version="$(printf '%s' "$version_json" | sed -n 's/.*"version":"\\([^"]*\\)".*/\\1/p')"
+if [ -z "$version" ]; then
+  echo "Rolled back Agent did not report a version." >&2
+  exit 33
+fi
+printf 'AUTOFORGE_ROLLED_BACK_VERSION=%s\n' "$version"`;
 
 function shellQuote(value: string): string {
   return `'${value.replaceAll("'", `'"'"'`)}'`;

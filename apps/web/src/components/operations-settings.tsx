@@ -4,6 +4,7 @@ import { Button, Input, Select } from "@/components/ui";
 
 import type {
   ApiToken,
+  RetentionExecutionResult,
   RetentionPolicy,
   RetentionPreview,
   ServiceAccount,
@@ -15,6 +16,7 @@ import { useState, type FormEvent } from "react";
 export function OperationsSettings({
   initialAccounts,
   initialPolicies,
+  projects,
   canManageSettings,
   canManageTokens,
 }: {
@@ -22,6 +24,7 @@ export function OperationsSettings({
   initialPolicies: RetentionPolicy[];
   canManageSettings: boolean;
   canManageTokens: boolean;
+  projects: Array<{ id: string; name: string }>;
 }) {
   const [accounts, setAccounts] = useState(initialAccounts);
   const [policies, setPolicies] = useState(initialPolicies);
@@ -42,7 +45,7 @@ export function OperationsSettings({
           name: form.get("name"),
           description: form.get("description"),
           systemPermissions: form.getAll("permissions"),
-          projectPermissions: {},
+          projectPermissions: projectPermissionsFromForm(form, projects),
         }),
       });
       setAccounts((current) => [...current, account].sort((a, b) => a.name.localeCompare(b.name)));
@@ -102,6 +105,52 @@ export function OperationsSettings({
     });
   }
 
+  async function updateAccount(event: FormEvent<HTMLFormElement>, account: ServiceAccount) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    await mutate(async () => {
+      const updated = await requestJson<ServiceAccount>(
+        `/api/v1/service-accounts/${encodeURIComponent(account.id)}`,
+        {
+          method: "PATCH",
+          body: JSON.stringify({
+            name: form.get("name"),
+            description: form.get("description"),
+            systemPermissions: form.getAll("permissions"),
+            projectPermissions: projectPermissionsFromForm(form, projects),
+            expectedRevision: account.revision,
+          }),
+        },
+      );
+      setAccounts((current) => current.map((item) => (item.id === updated.id ? updated : item)));
+      return "服务账号已更新，权限缩减对后续令牌鉴权立即生效。";
+    });
+  }
+
+  async function toggleAccount(account: ServiceAccount) {
+    const status = account.status === "active" ? "disabled" : "active";
+    if (
+      !window.confirm(
+        status === "disabled"
+          ? `禁用服务账号 ${account.name}？其全部令牌将立即失效。`
+          : `重新启用服务账号 ${account.name}？已撤销和已过期令牌不会恢复。`,
+      )
+    ) {
+      return;
+    }
+    await mutate(async () => {
+      const updated = await requestJson<ServiceAccount>(
+        `/api/v1/service-accounts/${encodeURIComponent(account.id)}`,
+        {
+          method: "PATCH",
+          body: JSON.stringify({ status, expectedRevision: account.revision }),
+        },
+      );
+      setAccounts((current) => current.map((item) => (item.id === updated.id ? updated : item)));
+      return status === "disabled" ? "服务账号已禁用。" : "服务账号已重新启用。";
+    });
+  }
+
   async function updateRetention(event: FormEvent<HTMLFormElement>, policy: RetentionPolicy) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
@@ -130,6 +179,32 @@ export function OperationsSettings({
       );
       setPreviews((current) => ({ ...current, [policy.category]: preview }));
       return "影响预览已刷新。";
+    });
+  }
+
+  async function executeRetention(policy: RetentionPolicy) {
+    const preview = previews[policy.category];
+    if (!preview) return;
+    if (
+      !window.confirm(
+        `立即清理 ${retentionLabel(policy.category)}？当前预览为 ${preview.eligibleRecords} 条，删除后的业务记录不可恢复。`,
+      )
+    ) {
+      return;
+    }
+    await mutate(async () => {
+      const result = await requestJson<RetentionExecutionResult>(
+        `/api/v1/settings/retention/${policy.category}/execute`,
+        {
+          method: "POST",
+          body: JSON.stringify({ confirmation: policy.category, limit: 1_000 }),
+        },
+      );
+      const refreshed = await requestJson<RetentionPreview>(
+        `/api/v1/settings/retention/${policy.category}/preview`,
+      );
+      setPreviews((current) => ({ ...current, [policy.category]: refreshed }));
+      return `清理已完成：删除 ${result.deletedRecords} 条记录，完成 ${result.completedObjectDeletes}/${result.queuedObjectDeletes} 个对象删除。`;
     });
   }
 
@@ -199,6 +274,7 @@ export function OperationsSettings({
                 ))}
               </Select>
             </label>
+            <ProjectPermissionFields projects={projects} />
             <Button className="button button-primary" disabled={pending} type="submit">
               <Plus size={16} /> 创建服务账号
             </Button>
@@ -233,6 +309,61 @@ export function OperationsSettings({
                     <code key={permission}>{permission}</code>
                   ))}
                 </div>
+                {canManageTokens ? (
+                  <details className="service-account-editor">
+                    <summary>编辑账号与权限</summary>
+                    <form
+                      className="settings-grid-form settings-subform"
+                      onSubmit={(event) => void updateAccount(event, account)}
+                    >
+                      <label>
+                        账号名称
+                        <Input defaultValue={account.name} name="name" required />
+                      </label>
+                      <label>
+                        用途说明
+                        <Input defaultValue={account.description} name="description" />
+                      </label>
+                      <label className="settings-wide-field">
+                        系统权限
+                        <Select
+                          defaultValue={account.systemPermissions}
+                          multiple
+                          name="permissions"
+                          size={6}
+                        >
+                          {permissionCatalog.map((permission) => (
+                            <option key={permission}>{permission}</option>
+                          ))}
+                        </Select>
+                      </label>
+                      <ProjectPermissionFields
+                        initialPermissions={account.projectPermissions}
+                        projects={projects}
+                      />
+                      <p className="settings-note settings-wide-field">
+                        移除权限后，现有令牌不会重新显示或扩大作用域；后续鉴权会立即按账号与令牌作用域交集收紧。
+                      </p>
+                      <span className="settings-form-actions">
+                        <Button className="button button-primary" disabled={pending} type="submit">
+                          保存账号
+                        </Button>
+                        <Button
+                          className={
+                            account.status === "active"
+                              ? "button button-danger-quiet"
+                              : "button button-secondary"
+                          }
+                          disabled={pending}
+                          onClick={() => void toggleAccount(account)}
+                          type="button"
+                        >
+                          {account.status === "active" ? "禁用账号" : "启用账号"}
+                        </Button>
+                      </span>
+                    </form>
+                  </details>
+                ) : null}
                 {canManageTokens && account.status === "active" ? (
                   <form
                     className="token-issue-form"
@@ -280,11 +411,13 @@ export function OperationsSettings({
                     <span>
                       {token.revokedAt
                         ? "已撤销"
-                        : token.lastUsedAt
-                          ? `最近使用 ${formatDate(token.lastUsedAt)}`
-                          : "从未使用"}
+                        : account.status === "disabled"
+                          ? "已随账号禁用失效"
+                          : token.lastUsedAt
+                            ? `最近使用 ${formatDate(token.lastUsedAt)}`
+                            : "从未使用"}
                     </span>
-                    {!token.revokedAt && canManageTokens ? (
+                    {!token.revokedAt && canManageTokens && account.status === "active" ? (
                       <Button
                         aria-label={`撤销 ${token.name}`}
                         onClick={() => void revokeToken(token)}
@@ -346,13 +479,23 @@ export function OperationsSettings({
                   影响预览
                 </Button>
                 {canManageSettings ? (
-                  <Button
-                    className="button button-primary compact-button"
-                    disabled={pending}
-                    type="submit"
-                  >
-                    保存
-                  </Button>
+                  <>
+                    <Button
+                      className="button button-primary compact-button"
+                      disabled={pending}
+                      type="submit"
+                    >
+                      保存
+                    </Button>
+                    <Button
+                      className="button button-danger-quiet compact-button"
+                      disabled={pending || !previews[policy.category]}
+                      onClick={() => void executeRetention(policy)}
+                      type="button"
+                    >
+                      执行清理
+                    </Button>
+                  </>
                 ) : null}
               </span>
             </form>
@@ -360,6 +503,53 @@ export function OperationsSettings({
         </div>
       </section>
     </div>
+  );
+}
+
+function ProjectPermissionFields({
+  projects,
+  initialPermissions = {},
+}: {
+  projects: Array<{ id: string; name: string }>;
+  initialPermissions?: ServiceAccount["projectPermissions"];
+}) {
+  if (projects.length === 0) return null;
+  return (
+    <fieldset className="settings-wide-field settings-fieldset">
+      <legend>项目作用域权限</legend>
+      <div className="settings-paired-forms">
+        {projects.map((project) => (
+          <label key={project.id}>
+            {project.name}
+            <Select
+              defaultValue={initialPermissions[project.id] ?? []}
+              multiple
+              name={`projectPermissions:${project.id}`}
+              size={5}
+            >
+              {permissionCatalog.map((permission) => (
+                <option key={permission}>{permission}</option>
+              ))}
+            </Select>
+            <small>{project.id}</small>
+          </label>
+        ))}
+      </div>
+    </fieldset>
+  );
+}
+
+function projectPermissionsFromForm(
+  form: FormData,
+  projects: Array<{ id: string; name: string }>,
+): Record<string, string[]> {
+  return Object.fromEntries(
+    projects
+      .map(
+        (project) =>
+          [project.id, form.getAll(`projectPermissions:${project.id}`).map(String)] as const,
+      )
+      .filter(([, permissions]) => permissions.length > 0),
   );
 }
 

@@ -13,6 +13,7 @@ import type {
   CaseCatalogRepository,
   Clock,
   IdGenerator,
+  JarDiscoveryPort,
   JarObjectStorePort,
   JobQueuePort,
 } from "./ports";
@@ -27,36 +28,73 @@ export class CaseSourceService {
     private readonly clock: Clock,
     private readonly ids: IdGenerator,
     private readonly queue?: JobQueuePort,
+    private readonly sourceReader?: JarDiscoveryPort,
   ) {}
 
-  async listObjects(input: { cursor?: string; limit: number; prefix?: string }) {
-    const page = await this.objectStore.list(input);
-    return { storage: this.objectStore.storageKind, ...page } as const;
+  async listObjects(
+    input: { cursor?: string; limit: number; prefix?: string },
+    projectIds?: readonly string[],
+  ) {
+    const sources = await this.catalog.listSources(10_000, projectIds);
+    const matching = sources
+      .filter((source) => !input.prefix || source.objectKey.startsWith(input.prefix))
+      .sort((left, right) => left.objectKey.localeCompare(right.objectKey));
+    const cursor = input.cursor;
+    const start = cursor ? matching.findIndex((source) => source.objectKey > cursor) : 0;
+    const pageStart = start < 0 ? matching.length : start;
+    const pageSources = matching.slice(pageStart, pageStart + input.limit);
+    const hasNextPage = pageStart + pageSources.length < matching.length;
+    return {
+      storage: this.objectStore.storageKind,
+      items: pageSources.map((source) => ({
+        objectKey: source.objectKey,
+        sizeBytes: source.sizeBytes,
+        lastModified: source.updatedAt,
+        etag: source.sha256,
+      })),
+      ...(hasNextPage && pageSources.at(-1) ? { nextCursor: pageSources.at(-1)!.objectKey } : {}),
+    } as const;
   }
 
-  async get(sourceId: string) {
-    const source = await this.catalog.getSource(sourceId);
+  async get(sourceId: string, projectIds?: readonly string[]) {
+    const source = await this.catalog.getSource(sourceId, projectIds);
     if (!source) {
       throw new DomainError("CASE_SOURCE_NOT_FOUND", "指定的 JAR 来源不存在。");
     }
     return source;
   }
 
-  private async requireSource(sourceId: string) {
-    const record = await this.get(sourceId);
+  async readClassSource(sourceId: string, className: string, projectIds?: readonly string[]) {
+    const record = await this.get(sourceId, projectIds);
+    const candidate = record.inspection.classes.find((item) => item.className === className);
+    if (!candidate?.source) return null;
+    if (!this.sourceReader) {
+      throw new DomainError("SOURCE_VIEW_UNAVAILABLE", "当前运行时未配置源码读取器。");
+    }
+    const archive = await this.objectStore.read(record.source.objectKey);
+    const content = await this.sourceReader.readSource(archive, candidate.source);
+    return { reference: candidate.source, content };
+  }
+
+  private async requireSource(sourceId: string, projectIds?: readonly string[]) {
+    const record = await this.get(sourceId, projectIds);
     return record.source;
   }
 
-  async setAuthoritative(sourceId: string) {
-    const source = await this.catalog.getSource(sourceId);
+  async setAuthoritative(sourceId: string, projectIds?: readonly string[]) {
+    const source = await this.catalog.getSource(sourceId, projectIds);
     if (!source) {
       throw new DomainError("CASE_SOURCE_NOT_FOUND", "指定的 JAR 来源不存在。");
     }
-    return this.catalog.setAuthoritativeSource(sourceId);
+    return this.catalog.setAuthoritativeSource(sourceId, source.source.projectId);
   }
 
-  async compareSources(candidateSourceId: string, actorId?: string) {
-    const candidate = await this.requireSource(candidateSourceId);
+  async compareSources(
+    candidateSourceId: string,
+    actorId?: string,
+    projectIds?: readonly string[],
+  ) {
+    const candidate = await this.requireSource(candidateSourceId, projectIds);
     if (candidate.status !== "ready") {
       throw new DomainError("CASE_SOURCE_NOT_READY", "该来源尚未完成导入，无法参与目录对比。");
     }
@@ -86,8 +124,12 @@ export class CaseSourceService {
     });
   }
 
-  async confirmSync(candidateSourceId: string, input: ConfirmCaseSourceSyncInput) {
-    const candidate = await this.requireSource(candidateSourceId);
+  async confirmSync(
+    candidateSourceId: string,
+    input: ConfirmCaseSourceSyncInput,
+    projectIds?: readonly string[],
+  ) {
+    const candidate = await this.requireSource(candidateSourceId, projectIds);
     const comparison = await this.catalog.getSourceComparison(input.comparisonId);
     if (!comparison) {
       throw new DomainError("CASE_SOURCE_COMPARISON_NOT_FOUND", "指定的对比结果不存在。");
@@ -112,8 +154,12 @@ export class CaseSourceService {
     });
   }
 
-  async updateLifecycle(sourceId: string, input: UpdateCaseSourceLifecycleInput) {
-    await this.get(sourceId);
+  async updateLifecycle(
+    sourceId: string,
+    input: UpdateCaseSourceLifecycleInput,
+    projectIds?: readonly string[],
+  ) {
+    await this.get(sourceId, projectIds);
     return this.catalog.updateSourceLifecycle({
       sourceId,
       expectedRevision: input.expectedRevision,
@@ -122,8 +168,12 @@ export class CaseSourceService {
     });
   }
 
-  async deleteSource(sourceId: string, input: DeleteCaseSourceInput) {
-    const source = await this.requireSource(sourceId);
+  async deleteSource(
+    sourceId: string,
+    input: DeleteCaseSourceInput,
+    projectIds?: readonly string[],
+  ) {
+    const source = await this.requireSource(sourceId, projectIds);
     if (source.authoritative) {
       throw new DomainError("CASE_SOURCE_AUTHORITATIVE", "权威来源不能删除，请先切换权威来源。");
     }

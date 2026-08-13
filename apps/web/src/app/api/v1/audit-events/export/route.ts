@@ -19,6 +19,7 @@ export async function GET(request: Request): Promise<NextResponse> {
     const events = await (
       await getPlatformServices()
     ).identityAccess.exportAudit(identity, {
+      ...(input.projectId ? { projectId: input.projectId } : {}),
       ...(input.actorId ? { actorId: input.actorId } : {}),
       ...(input.action ? { action: input.action } : {}),
       ...(input.resourceType ? { resourceType: input.resourceType } : {}),

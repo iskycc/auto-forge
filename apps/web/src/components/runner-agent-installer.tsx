@@ -4,8 +4,10 @@ import { Button, Input, Textarea } from "@/components/ui";
 
 import {
   runnerAgentInstallationResultSchema,
+  runnerAgentRollbackResultSchema,
   runnerHostProbeResultSchema,
   type RunnerAgentInstallationResult,
+  type RunnerAgentRollbackResult,
   type RunnerHostProbeResult,
 } from "@autoforge/contracts";
 import { CheckCircle2, Fingerprint, HardDriveDownload, Search, ShieldAlert } from "lucide-react";
@@ -30,7 +32,8 @@ export function RunnerAgentInstaller({ controlPlaneUrl }: RunnerAgentInstallerPr
   const [probe, setProbe] = useState<RunnerHostProbeResult>();
   const [fingerprintConfirmed, setFingerprintConfirmed] = useState(false);
   const [result, setResult] = useState<RunnerAgentInstallationResult>();
-  const [pending, setPending] = useState<"probe" | "install">();
+  const [rollbackResult, setRollbackResult] = useState<RunnerAgentRollbackResult>();
+  const [pending, setPending] = useState<"probe" | "install" | "rollback">();
   const [error, setError] = useState("");
 
   function connectionChanged(change: () => void) {
@@ -38,6 +41,7 @@ export function RunnerAgentInstaller({ controlPlaneUrl }: RunnerAgentInstallerPr
     setProbe(undefined);
     setFingerprintConfirmed(false);
     setResult(undefined);
+    setRollbackResult(undefined);
     setError("");
   }
 
@@ -45,6 +49,7 @@ export function RunnerAgentInstaller({ controlPlaneUrl }: RunnerAgentInstallerPr
     setPending("probe");
     setError("");
     setResult(undefined);
+    setRollbackResult(undefined);
     try {
       const response = await postJson("/api/v1/runners/installations/probe", {
         connection: { host, port, username, password },
@@ -65,6 +70,7 @@ export function RunnerAgentInstaller({ controlPlaneUrl }: RunnerAgentInstallerPr
     if (!probe || !fingerprintConfirmed) return;
     setPending("install");
     setError("");
+    setRollbackResult(undefined);
     try {
       const response = await postJson("/api/v1/runners/installations", {
         connection: { host, port, username, password },
@@ -80,6 +86,28 @@ export function RunnerAgentInstaller({ controlPlaneUrl }: RunnerAgentInstallerPr
       });
       const installed = runnerAgentInstallationResultSchema.parse(response);
       setResult(installed);
+      setPassword("");
+      setFingerprintConfirmed(false);
+      router.refresh();
+    } catch (cause) {
+      setError(errorMessage(cause));
+    } finally {
+      setPending(undefined);
+    }
+  }
+
+  async function rollbackAgent() {
+    if (!probe || !fingerprintConfirmed) return;
+    if (!window.confirm("回滚到该执行机上一次成功安装的 Agent？服务会短暂重启。")) return;
+    setPending("rollback");
+    setError("");
+    setRollbackResult(undefined);
+    try {
+      const response = await postJson("/api/v1/runners/installations/rollback", {
+        connection: { host, port, username, password },
+        expectedHostKeySha256: probe.hostKeySha256,
+      });
+      setRollbackResult(runnerAgentRollbackResultSchema.parse(response));
       setPassword("");
       setFingerprintConfirmed(false);
       router.refresh();
@@ -165,7 +193,7 @@ export function RunnerAgentInstaller({ controlPlaneUrl }: RunnerAgentInstallerPr
       <div className="runner-installer-actions">
         <Button
           className="button-secondary"
-          disabled={!controlPlaneUrl || !host || !username || !password || Boolean(pending)}
+          disabled={!host || !username || !password || Boolean(pending)}
           onClick={() => void probeHost()}
           type="button"
         >
@@ -248,6 +276,14 @@ export function RunnerAgentInstaller({ controlPlaneUrl }: RunnerAgentInstallerPr
               <HardDriveDownload size={16} />
               {pending === "install" ? "正在安装并启动…" : "安装内置 Agent"}
             </Button>
+            <Button
+              className="button-danger-quiet"
+              disabled={!fingerprintConfirmed || Boolean(pending)}
+              onClick={() => void rollbackAgent()}
+              type="button"
+            >
+              {pending === "rollback" ? "正在回滚…" : "回滚上次安装"}
+            </Button>
             <small>安装过程不会调用系统包管理器，也不会下载任何外部依赖。</small>
           </div>
         </div>
@@ -258,6 +294,12 @@ export function RunnerAgentInstaller({ controlPlaneUrl }: RunnerAgentInstallerPr
           <CheckCircle2 size={18} />
           Agent {result.agentVersion} 已安装到 {result.host}
           ；服务已启动，执行机将在注册后出现在下方列表。
+        </div>
+      ) : null}
+      {rollbackResult ? (
+        <div className="form-success" role="status">
+          <CheckCircle2 size={18} />
+          Agent 已回滚到 {rollbackResult.agentVersion}；systemd 健康检查通过。
         </div>
       ) : null}
       {error ? (

@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
+import type { Permission } from "@autoforge/domain";
 
 import { AppShell } from "@/components/app-shell";
 import { currentIdentity } from "@/lib/auth";
@@ -19,12 +20,26 @@ export const metadata: Metadata = {
 export default async function RootLayout({ children }: Readonly<{ children: ReactNode }>) {
   const services = await getPlatformServices();
   const identity = await currentIdentity();
+  const permissions = identity
+    ? ([
+        ...new Set([
+          ...identity.systemPermissions,
+          ...Object.values(identity.projectPermissions).flat(),
+        ]),
+      ] as Permission[])
+    : undefined;
   return (
     <html lang="zh-CN">
       <body>
         <AppShell
           mode={services.config.mode}
-          {...(identity ? { userName: identity.user.displayName } : {})}
+          {...(identity
+            ? {
+                userName: identity.user.displayName,
+                permissions,
+                forcePasswordChange: identity.user.forcePasswordChange,
+              }
+            : {})}
         >
           {children}
         </AppShell>

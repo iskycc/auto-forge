@@ -12,10 +12,13 @@ export default async function PlatformSettingsPage() {
   const identity = await requirePagePermission("settings.read", undefined);
   const services = await getPlatformServices();
   const configuration = services.configurationStore.read();
-  const [retentionPolicies, serviceAccounts] = await Promise.all([
+  const [retentionPolicies, serviceAccounts, projects] = await Promise.all([
     services.platformOperations.listRetentionPolicies(identity),
     hasPermission(identity, "api_token.manage")
       ? services.platformOperations.listServiceAccounts(identity)
+      : Promise.resolve([]),
+    hasPermission(identity, "project.read")
+      ? services.identityAccess.listProjects(identity)
       : Promise.resolve([]),
   ]);
 
@@ -28,6 +31,7 @@ export default async function PlatformSettingsPage() {
           <p>管理运行模式、监听地址、基础设施、容量限制和调度阈值。</p>
         </div>
         <nav className="settings-tabs" aria-label="系统设置分类">
+          <Link href="/settings">管理中心</Link>
           <Link aria-current="page" href="/settings/platform">
             平台配置
           </Link>
@@ -47,6 +51,7 @@ export default async function PlatformSettingsPage() {
         canManageTokens={hasPermission(identity, "api_token.manage")}
         initialAccounts={serviceAccounts}
         initialPolicies={retentionPolicies}
+        projects={projects.map((project) => ({ id: project.id, name: project.name }))}
       />
       <SystemDiagnostics />
     </section>

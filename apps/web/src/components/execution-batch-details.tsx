@@ -125,6 +125,29 @@ export function ExecutionBatchDetails({
     }
   }
 
+  async function cancelRun(runId: string): Promise<void> {
+    const reason = window.prompt(
+      "请输入取消该用例执行的原因：",
+      "Cancelled from execution details.",
+    );
+    if (!reason?.trim()) return;
+    setActionPending("cancel");
+    setActionError("");
+    try {
+      const response = await fetch(`/api/v1/execution-runs/${encodeURIComponent(runId)}/cancel`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ reason: reason.trim() }),
+      });
+      if (!response.ok) throw new Error(await responseMessage(response, "取消用例执行失败。"));
+      router.refresh();
+    } catch (actionFailure) {
+      setActionError(actionFailure instanceof Error ? actionFailure.message : "取消用例执行失败。");
+    } finally {
+      setActionPending(undefined);
+    }
+  }
+
   const loadAttempt = useCallback(
     async (
       selectedAttemptId: string,
@@ -288,6 +311,7 @@ export function ExecutionBatchDetails({
                 <th>结果 / 失败阶段</th>
                 <th>耗时</th>
                 <th>尝试</th>
+                {canCancelRuns ? <th>操作</th> : null}
               </tr>
             </thead>
             <tbody>
@@ -318,6 +342,22 @@ export function ExecutionBatchDetails({
                         "-"
                       )}
                     </td>
+                    {canCancelRuns ? (
+                      <td>
+                        {["queued", "assigned", "running"].includes(run.status) ? (
+                          <Button
+                            className="danger-text-button"
+                            disabled={actionPending !== undefined}
+                            onClick={() => void cancelRun(run.id)}
+                            type="button"
+                          >
+                            取消该用例
+                          </Button>
+                        ) : (
+                          <span className="muted">—</span>
+                        )}
+                      </td>
+                    ) : null}
                   </tr>
                 );
               })}

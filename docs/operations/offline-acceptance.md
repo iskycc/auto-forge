@@ -15,4 +15,6 @@ tag/commit、四平台 variant、镜像 digest、SHA256SUMS、SBOM、来源证�
    模拟迁移失败并按手册回滚。
 7. 检查 Agent/JDK/TestNG/浏览器全程无公网获取，诊断包不含凭据，保留/清理有审计且死信可见。
 
-任一步缺少自动化或实机证据时 Gate E 保持未完成；本清单本身不等同于验收通过。
+Release workflow 的 `offline-acceptance` job 自动消费已经签名的候选和上一正式 Release，而不是源码构建结果。它核对可信公钥、27 项 manifest 资产、全部摘要、镜像/部署/工具链 SBOM 与许可证，使用 `--internal` Docker 网络启动候选镜像，提取镜像内 Agent 和 Release 工具链完成真实执行，再运行 LDAP、停止状态备份恢复、迁移完整性故障、旧版本回滚及成功升级。只有该 job 的可追踪结果通过后才允许 `publish`。
+
+任一步缺少自动化或实机证据时 Gate E 保持未完成；本清单本身不等同于验收通过。PR/普通分支 CI 只验证脚本和业务矩阵，不能伪造正式 tag、签名候选或上一 Release，因此不会提前勾选 Gate E。

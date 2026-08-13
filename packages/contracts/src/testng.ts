@@ -14,6 +14,12 @@ export const testNgMethodCandidateSchema = z.object({
   parameters: z.record(z.string().min(1).max(128), z.string().max(4_096)).optional(),
 });
 
+export const javaSourceReferenceSchema = z.object({
+  entryPath: z.string().min(1).max(2_048),
+  sha256: z.string().regex(/^[a-f0-9]{64}$/),
+  sizeBytes: z.number().int().positive(),
+});
+
 export const testNgClassCandidateSchema = z.object({
   className: z.string().min(1),
   packageName: z.string(),
@@ -22,6 +28,7 @@ export const testNgClassCandidateSchema = z.object({
   classLevelTest: z.boolean(),
   groups: z.array(z.string()),
   parameters: z.record(z.string().min(1).max(128), z.string().max(4_096)).optional(),
+  source: javaSourceReferenceSchema.optional(),
   methods: z.array(testNgMethodCandidateSchema),
 });
 
@@ -62,11 +69,13 @@ export const jarInspectionSchema = z.object({
   sha256: z.string().regex(/^[a-f0-9]{64}$/),
   sizeBytes: z.number().int().nonnegative(),
   classFileCount: z.number().int().nonnegative(),
+  javaSourceFileCount: z.number().int().nonnegative().optional(),
   testClassCount: z.number().int().nonnegative(),
   testMethodCount: z.number().int().nonnegative(),
   hasRootTestNgXml: z.boolean(),
   testNgXml: testNgXmlSummarySchema.optional(),
-  discoveryMode: z.literal("bytecode-annotations"),
+  discoveryMode: z.enum(["bytecode-annotations", "java-source-annotations"]),
+  executable: z.boolean().optional(),
   classes: z.array(testNgClassCandidateSchema),
   testNgXmlSelections: z.array(testNgXmlSelectionSchema).max(200).optional(),
   targetJavaVersion: z.number().int().min(8).max(100).optional(),
@@ -109,6 +118,7 @@ export const apiErrorSchema = z.object({
 });
 
 export type TestNgMethodCandidate = z.infer<typeof testNgMethodCandidateSchema>;
+export type JavaSourceReference = z.infer<typeof javaSourceReferenceSchema>;
 export type TestNgClassCandidate = z.infer<typeof testNgClassCandidateSchema>;
 export type TestNgXmlSummary = z.infer<typeof testNgXmlSummarySchema>;
 export type TestNgXmlSelection = z.infer<typeof testNgXmlSelectionSchema>;
