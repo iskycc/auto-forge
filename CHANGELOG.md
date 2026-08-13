@@ -4,7 +4,7 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
-## 0.4.4 - 2026-08-14
+## 0.4.5 - 2026-08-14
 
 ### Added
 
@@ -58,6 +58,8 @@ and known limitations.
 
 ### Fixed
 
+- Compare stable persisted business statistics after Release backup/restore instead of requiring the
+  regenerated observation timestamp and time-window Runner presence fields to remain byte-identical.
 - Route the immutable Release fixture's real Agent connection through a host-loopback TCP proxy, so
   offline container acceptance retains the Agent's HTTPS-or-loopback transport policy.
 - Generate analytics export idempotency keys with the Web Crypto primitive available on remote HTTP
@@ -96,10 +98,10 @@ and known limitations.
 
 - Rebuild the four immutable backend variants with embedded amd64/arm64 Agents, both offline
   Java/TestNG Runner toolchains, SPDX SBOMs, the deployment bundle, signed checksums, release manifest
-  and provenance for `0.4.4`.
+  and provenance for `0.4.5`.
 - No new runtime CDN, telemetry service or automatically downloaded dependency is introduced.
-- The signed `v0.4.0` through `v0.4.3` candidates did not pass Gate E and were not published;
-  `v0.4.4` rebuilds the full immutable asset set from the corrected acceptance revision.
+- The signed `v0.4.0` through `v0.4.4` candidates did not pass Gate E and were not published;
+  `v0.4.5` rebuilds the full immutable asset set from the corrected acceptance revision.
 
 ### Known limitations
 

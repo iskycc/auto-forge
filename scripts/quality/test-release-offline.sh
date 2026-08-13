@@ -310,6 +310,27 @@ restore_data() {
     --input "${backup_path}" --data-dir "${data_directory}" --platform-stopped
 }
 
+assert_restored_statistics() {
+  local before_statistics="${1:?statistics before restore are required}"
+  local after_statistics="${2:?statistics after restore are required}"
+  node - "${before_statistics}" "${after_statistics}" <<'NODE'
+const [beforeValue, afterValue] = process.argv.slice(2);
+const before = JSON.parse(beforeValue);
+const after = JSON.parse(afterValue);
+const runtimeFields = new Set(["generatedAt", "onlineRunnerCount", "busyRunnerCount"]);
+const stableEntries = (statistics) =>
+  Object.entries(statistics)
+    .filter(([name]) => !runtimeFields.has(name))
+    .sort(([left], [right]) => left.localeCompare(right));
+
+const beforeStable = JSON.stringify(stableEntries(before));
+const afterStable = JSON.stringify(stableEntries(after));
+if (beforeStable !== afterStable) {
+  throw new Error(`Restored business statistics differ. Before: ${beforeStable}; after: ${afterStable}`);
+}
+NODE
+}
+
 run_migration() {
   local image="${1:?image is required}"
   local data_directory="${2:?data directory is required}"
@@ -373,7 +394,7 @@ verify_backup_restore() {
   diff --recursive --brief "${current_data}" "${restored_data}"
   restored_base_url="$(start_platform "${restored_container}" "${current_image}" "${restored_data}")"
   after_statistics="$(curl --fail --silent "${restored_base_url}/api/v1/public/statistics")"
-  [[ "${before_statistics}" == "${after_statistics}" ]]
+  assert_restored_statistics "${before_statistics}" "${after_statistics}"
   E2E_BASE_URL="${restored_base_url}" \
   E2E_ADMIN_BOOTSTRAP_TOKEN="$(read_platform_secret "${restored_data}" adminBootstrapToken)" \
     pnpm exec playwright test --config playwright.full.config.ts \
