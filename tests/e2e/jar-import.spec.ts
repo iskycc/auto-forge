@@ -617,7 +617,7 @@ public class MixedVisibleTest {
   const exportDownload = await page.request.get(exportHref!);
   expect(exportDownload.status()).toBe(200);
   expect(exportDownload.headers()["content-type"]).toContain("text/csv");
-  expect(await exportDownload.text()).toContain("caseDefinitionId");
+  expect(await exportDownload.text()).toContain("case_definition_id");
 
   const jsonExport = await page.evaluate(async () => {
     const response = await fetch("/api/v1/analytics/exports", {
