@@ -680,9 +680,12 @@ public class MixedVisibleTest {
   });
 
   await page.goto("/runners");
-  await expect(page.getByText("E2E Runner")).toBeVisible();
+  const e2eRunnerRow = page
+    .getByRole("row")
+    .filter({ has: page.getByText("E2E Runner", { exact: true }) });
+  await expect(e2eRunnerRow).toBeVisible();
   await expectUiConsistency(page);
-  await page.getByRole("button", { name: "终端浮窗" }).click();
+  await e2eRunnerRow.getByRole("button", { name: "终端浮窗" }).click();
 
   const openCommand = new Promise<Record<string, unknown>>((resolve, reject) => {
     const timeout = setTimeout(
