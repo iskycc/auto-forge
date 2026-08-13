@@ -187,12 +187,14 @@ read_platform_secret() {
 
 run_current_release_business() {
   local base_url="${1:?base URL is required}"
-  local admin_token runner_token
+  local admin_token runner_master_key runner_token
   admin_token="$(read_platform_secret "${current_data}" adminBootstrapToken)"
+  runner_master_key="$(read_platform_secret "${current_data}" masterKey)"
   runner_token="$(read_platform_secret "${current_data}" runnerBootstrapToken)"
   E2E_BASE_URL="${base_url}" \
   E2E_ADMIN_BOOTSTRAP_TOKEN="${admin_token}" \
   E2E_RUNNER_BOOTSTRAP_TOKEN="${runner_token}" \
+  E2E_RUNNER_BOOTSTRAP_MASTER_KEY="${runner_master_key}" \
     pnpm exec playwright test --config playwright.full.config.ts \
       tests/e2e/case-suite-lifecycle.spec.ts \
       tests/e2e/identity-rbac.spec.ts \

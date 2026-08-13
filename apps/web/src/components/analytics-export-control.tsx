@@ -1,6 +1,7 @@
 "use client";
 
 import { Button } from "@/components/ui";
+import { createClientIdempotencyKey } from "@/lib/client-idempotency-key";
 
 import type { AnalyticsExportJob, AnalyticsFilter } from "@autoforge/contracts";
 import { Download, LoaderCircle, X } from "lucide-react";
@@ -37,7 +38,7 @@ export function AnalyticsExportControl({ filter }: Props) {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "Idempotency-Key": crypto.randomUUID(),
+          "Idempotency-Key": createClientIdempotencyKey(),
         },
         body: JSON.stringify({ filter, format: "csv" }),
       });

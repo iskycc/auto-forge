@@ -4,7 +4,7 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
-## 0.4.2 - 2026-08-14
+## 0.4.3 - 2026-08-14
 
 ### Added
 
@@ -58,6 +58,10 @@ and known limitations.
 
 ### Fixed
 
+- Generate analytics export idempotency keys with the Web Crypto primitive available on remote HTTP
+  origins, where the secure-context-only `crypto.randomUUID()` API is unavailable.
+- Give each Release acceptance Runner registration a short-lived token derived from the fixture master
+  key instead of reusing the persisted one-time bootstrap token across browser suites.
 - Create the immutable Release acceptance data directory as the non-root runner before mounting it
   into the migration container, preserving the production image's non-root write-permission check.
 - Pin the production PostCSS dependency chain to `nanoid` 3.3.18, the first patched 3.x release for
@@ -90,10 +94,10 @@ and known limitations.
 
 - Rebuild the four immutable backend variants with embedded amd64/arm64 Agents, both offline
   Java/TestNG Runner toolchains, SPDX SBOMs, the deployment bundle, signed checksums, release manifest
-  and provenance for `0.4.2`.
+  and provenance for `0.4.3`.
 - No new runtime CDN, telemetry service or automatically downloaded dependency is introduced.
-- The signed `v0.4.0` and `v0.4.1` candidates did not pass Gate E and were not published; `v0.4.2`
-  rebuilds the full immutable asset set from the corrected acceptance revision.
+- The signed `v0.4.0`, `v0.4.1` and `v0.4.2` candidates did not pass Gate E and were not published;
+  `v0.4.3` rebuilds the full immutable asset set from the corrected acceptance revision.
 
 ### Known limitations
 
