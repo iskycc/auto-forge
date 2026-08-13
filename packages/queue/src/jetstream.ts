@@ -170,7 +170,9 @@ export class JetStreamJobQueue implements JobQueuePort {
         ),
         { msgID: `${delivery.job.messageId}:dead` },
       );
-      delivery.message.term(input.errorCode);
+      if (!(await delivery.message.ackAck({ timeout: 5_000 }))) {
+        throw new Error("JetStream did not confirm the dead-letter acknowledgement.");
+      }
       this.active.delete(input.deliveryId);
       return "dead_letter";
     }
