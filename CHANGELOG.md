@@ -58,6 +58,8 @@ and known limitations.
 
 ### Fixed
 
+- Pin the production PostCSS dependency chain to `nanoid` 3.3.18, the first patched 3.x release for
+  `GHSA-2v37-7h3g-55p8`, and keep the version locked for offline builds and SBOM generation.
 - Initialize the immutable Release acceptance fixture with a bounded aggregate login allowance so its
   deliberate account-lock checks do not exhaust the shared container-address limiter; production
   installations retain the secure default of 10 login attempts per 15-minute window.
