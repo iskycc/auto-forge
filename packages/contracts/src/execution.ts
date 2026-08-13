@@ -8,11 +8,28 @@ const isoTimestampSchema = z.iso.datetime({ offset: true });
 const sha256Schema = z.string().regex(/^[a-f0-9]{64}$/);
 const workspaceRelativePathSchema = z
   .string()
-  .regex(/^[A-Za-z0-9][A-Za-z0-9._/-]{0,511}$/)
-  .refine(
-    (value) => !value.split("/").some((segment) => segment === "." || segment === ".."),
-    "路径必须保持在 attempt 工作目录内。",
-  );
+  .min(1)
+  .max(512)
+  .refine((value) => {
+    if (
+      value.startsWith("/") ||
+      value.endsWith("/") ||
+      value.includes("\\") ||
+      /[\u0000-\u001f\u007f:*?"<>|]/u.test(value)
+    ) {
+      return false;
+    }
+    return value
+      .split("/")
+      .every(
+        (segment) =>
+          segment.length > 0 &&
+          segment !== "." &&
+          segment !== ".." &&
+          !segment.endsWith(".") &&
+          !segment.endsWith(" "),
+      );
+  }, "路径必须保持在 attempt 工作目录内。");
 const artifactPatternSchema = z
   .string()
   .regex(/^[A-Za-z0-9*?][A-Za-z0-9._/*?-]{0,511}$/)

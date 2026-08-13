@@ -80,6 +80,8 @@ test("case metadata, immutable versions and suite policy survive lifecycle chang
   await page.getByRole("button", { name: "保存修改" }).click();
   await expect(page.getByRole("status")).toContainText("用例已更新");
   await expect(page.getByText("版本历史（2）")).toBeVisible();
+  await page.getByLabel("基准版本").selectOption("1");
+  await page.getByLabel("对比版本").selectOption("2");
   await expect(
     page.locator(".version-diff-list").getByText(/方法新增：.*browserAdded/),
   ).toBeVisible();

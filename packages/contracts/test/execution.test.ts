@@ -5,6 +5,7 @@ import {
   attemptEventPageSchema,
   claimAssignmentsInputSchema,
   completeAttemptInputSchema,
+  declareArtifactsInputSchema,
   executionSpecSchema,
   uploadLogChunksInputSchema,
 } from "../src/execution";
@@ -198,6 +199,42 @@ describe("Runner Protocol v1 contracts", () => {
         },
       }),
     ).toThrow();
+  });
+
+  it("accepts safe generated artifact names and rejects paths that can escape the workspace", () => {
+    const declaration = {
+      artifactId: "artifact-1",
+      relativePath: "reports/testng/Command line suite/Command line test.html",
+      mediaType: "text/html; charset=utf-8",
+      sizeBytes: 1_024,
+      sha256: "a".repeat(64),
+      required: false,
+    };
+    const request = {
+      schemaVersion: 1,
+      requestId: "artifact-request-1",
+      leaseToken: "x".repeat(32),
+      artifacts: [declaration],
+    };
+
+    expect(declareArtifactsInputSchema.parse(request)).toMatchObject({
+      artifacts: [{ relativePath: declaration.relativePath }],
+    });
+    for (const relativePath of [
+      "/reports/result.xml",
+      "reports/../result.xml",
+      "reports\\result.xml",
+      "reports//result.xml",
+      "reports/result.xml ",
+      "reports/result\u0000.xml",
+    ]) {
+      expect(() =>
+        declareArtifactsInputSchema.parse({
+          ...request,
+          artifacts: [{ ...declaration, relativePath }],
+        }),
+      ).toThrow();
+    }
   });
 
   it("validates bounded hierarchical TestNG results and their counts", () => {

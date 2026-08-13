@@ -81,6 +81,18 @@ func TestPrepareResourceScopeFailsClosedWithoutDelegatedControls(t *testing.T) {
 	}
 }
 
+func TestHasControllerParsesWhitespaceSeparatedKernelOutput(t *testing.T) {
+	controllers := []byte("cpu memory pids\n")
+	for _, required := range []string{"cpu", "memory", "pids"} {
+		if !hasController(controllers, required) {
+			t.Fatalf("hasController() did not find %q", required)
+		}
+	}
+	if hasController(controllers, "io") {
+		t.Fatal("hasController() found an unavailable controller")
+	}
+}
+
 func TestMonitorWorkspaceReportsAggregateByteAndEntryLimits(t *testing.T) {
 	for name, limits := range map[string]Limits{
 		"disk":  {DiskBytes: 3, FileCount: 10},

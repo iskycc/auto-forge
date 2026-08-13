@@ -65,7 +65,7 @@ func prepareResourceScope(policy ResourcePolicy, scopeName string, limits Limits
 		return nil, fmt.Errorf("%w: read delegated controllers: %v", ErrResourceIsolationUnavailable, err)
 	}
 	for _, required := range []string{"cpu", "memory", "pids"} {
-		if !strings.Contains(" "+string(controllers)+" ", " "+required+" ") {
+		if !hasController(controllers, required) {
 			return nil, fmt.Errorf("%w: delegated cgroup does not expose %s", ErrResourceIsolationUnavailable, required)
 		}
 	}
@@ -102,6 +102,15 @@ func prepareResourceScope(policy ResourcePolicy, scopeName string, limits Limits
 	}
 	configured = true
 	return scope, nil
+}
+
+func hasController(controllers []byte, required string) bool {
+	for _, controller := range strings.Fields(string(controllers)) {
+		if controller == required {
+			return true
+		}
+	}
+	return false
 }
 
 func initializeDelegatedCgroup(root string) error {

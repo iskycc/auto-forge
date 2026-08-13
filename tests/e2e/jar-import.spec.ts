@@ -231,6 +231,12 @@ public class MixedVisibleTest {
   await expectUiConsistency(page);
   const checkoutCaseUrl = page.url();
 
+  await page.goto("/objects");
+  const checkoutSourceRow = page.getByRole("row", { name: /checkout-tests\.jar/ });
+  await checkoutSourceRow.getByRole("link", { name: "预览" }).click();
+  await page.getByRole("button", { name: "设为全量来源" }).click();
+  await expect(page.getByRole("button", { name: "当前全量来源" })).toBeVisible();
+
   await page.goto("/cases/import");
   await page.locator('input[type="file"]').setInputFiles({
     name: "mixed-visible-tests.jar",
@@ -275,6 +281,13 @@ public class MixedVisibleTest {
   await expect(page.getByRole("status")).toContainText(/已导入|已返回现有用例/, {
     timeout: 60_000,
   });
+  await page.goto("/objects");
+  const checkoutV2SourceRow = page.getByRole("row", { name: /checkout-tests-v2\.jar/ });
+  await checkoutV2SourceRow.getByRole("link", { name: "预览" }).click();
+  await page.getByRole("button", { name: "对比权威来源" }).click();
+  await expect(page.getByText(/对比结果：新增 0、变更 1、消失 0、冲突 0/)).toBeVisible();
+  await page.getByRole("button", { name: "确认同步为权威来源" }).click();
+  await expect(page.getByText(/已同步为权威来源；匹配用例已生成不可变版本/)).toBeVisible();
   await page.goto(checkoutCaseUrl);
   await expect(page.getByText("版本历史（2）")).toBeVisible();
   await expect(page.getByText(/方法(?:新增|移除)：refund/)).toBeVisible();
@@ -308,12 +321,14 @@ public class MixedVisibleTest {
   await expect(page.getByText("任务中还没有用例")).toBeVisible({ timeout: 20_000 });
 
   await page.goto("/objects");
-  await expect(page.getByText("checkout-tests.jar")).toBeVisible();
+  await expect(page.getByText("checkout-tests-v2.jar")).toBeVisible();
   await expectUiConsistency(page);
-  await page.getByRole("link", { name: "预览" }).first().click();
+  await page
+    .getByRole("row", { name: /checkout-tests-v2\.jar/ })
+    .getByRole("link", { name: "预览" })
+    .click();
   await expect(page.getByRole("heading", { name: "测试类与方法" })).toBeVisible();
   await expectUiConsistency(page);
-  await page.getByRole("button", { name: "设为全量来源" }).click();
   await expect(page.getByRole("button", { name: "当前全量来源" })).toBeVisible();
 
   const registration = await page.request.post("/api/v1/runner-agents/register", {
