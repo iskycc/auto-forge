@@ -155,7 +155,7 @@ async function verifyInstalledSystemdService(): Promise<void> {
 }
 
 async function exerciseOfflineUpgradeAndRollback(page: Page): Promise<void> {
-  const before = await installedConfigurationDigest();
+  const before = await installedConfigurationDigest("/etc/autoforge-agent/config.json");
   await probeThroughUi(page);
   await installThroughUi(page);
   await verifyInstalledSystemdService();
@@ -168,7 +168,11 @@ async function exerciseOfflineUpgradeAndRollback(page: Page): Promise<void> {
     const previous = await execFileAsync("docker", ["exec", container, "test", "-f", previousFile]);
     expect(previous.stderr).toBe("");
   }
-  expect(await installedConfigurationDigest()).not.toBe(before);
+  // Agent 启动消费一次性 bootstrapToken 后会重写 config.json，重装后配置收敛为相同字节，
+  // 因此升级前后 config.json 摘要可能相等；离线回滚的关键属性是备份字节与升级前一致。
+  expect(
+    await installedConfigurationDigest("/etc/autoforge-agent/config.json.autoforge-previous"),
+  ).toBe(before);
 
   await probeThroughUi(page);
   await page.getByLabel("我已通过可信渠道核对并确认上述 SSH 主机指纹").check();
@@ -177,7 +181,7 @@ async function exerciseOfflineUpgradeAndRollback(page: Page): Promise<void> {
   await expect(page.getByRole("status")).toContainText(/Agent 已回滚到 .*systemd 健康检查通过/, {
     timeout: 120_000,
   });
-  expect(await installedConfigurationDigest()).toBe(before);
+  expect(await installedConfigurationDigest("/etc/autoforge-agent/config.json")).toBe(before);
   await verifyInstalledSystemdService();
   const audit = await page.request.get(
     "/api/v1/audit-events?action=runner.install.rollback&limit=10",
@@ -204,7 +208,9 @@ async function waitForRegisteredRunner(page: Page, name: string): Promise<void> 
 }
 
 async function exerciseRunnerLifecycle(page: Page, name: string): Promise<void> {
-  const credentialFileBefore = await installedConfigurationDigest();
+  const credentialFileBefore = await installedConfigurationDigest(
+    "/var/lib/autoforge-agent/identity/credentials.json",
+  );
   await page.goto("/runners");
   let row = page.getByRole("row", { name: new RegExp(name) });
   page.once("dialog", (dialog) => dialog.accept());
@@ -220,7 +226,12 @@ async function exerciseRunnerLifecycle(page: Page, name: string): Promise<void> 
   page.once("dialog", (dialog) => dialog.accept());
   await row.getByRole("button", { name: "轮换凭据" }).click();
   await expect
-    .poll(installedConfigurationDigest, { timeout: 30_000 })
+    .poll(
+      () => installedConfigurationDigest("/var/lib/autoforge-agent/identity/credentials.json"),
+      {
+        timeout: 30_000,
+      },
+    )
     .not.toBe(credentialFileBefore);
   await expect
     .poll(async () => {
@@ -244,12 +255,12 @@ async function exerciseRunnerLifecycle(page: Page, name: string): Promise<void> 
   await expect(row).toContainText("已注销");
 }
 
-async function installedConfigurationDigest(): Promise<string> {
+async function installedConfigurationDigest(path: string): Promise<string> {
   const digest = await execFileAsync("docker", [
     "exec",
     requiredEnvironment("E2E_SSH_CONTAINER"),
     "sha256sum",
-    "/etc/autoforge-agent/config.json",
+    path,
   ]);
   return digest.stdout.split(/\s+/)[0] ?? "";
 }

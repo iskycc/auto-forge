@@ -33,6 +33,9 @@ cleanup() {
     fi
   fi
   if [[ "${cgroup_root}" == /sys/fs/cgroup/autoforge-ci-* && -d "${cgroup_root}" ]]; then
+    # The script lives in ${cgroup_root}/.ci-harness after delegation setup;
+    # leave the delegated subtree before removing it.
+    printf '%s\n' "$$" | sudo -n tee /sys/fs/cgroup/cgroup.procs >/dev/null 2>&1
     sudo -n find "${cgroup_root}" -depth -type d -exec rmdir -- {} \; >/dev/null 2>&1
   fi
   rm -rf -- "${acceptance_directory}"
@@ -157,6 +160,15 @@ prepare_cgroup_delegation() {
       exit 1
     fi
   done
+  # cgroup v2 containment: a delegatee cannot place the first process into the
+  # delegated subtree (cgroups(7)); the delegater must do that. Move this
+  # script into a dedicated child cgroup now so the Agent and the resource
+  # wrappers it spawns later can move themselves within the subtree. A child
+  # keeps ${cgroup_root} free of member processes, which is required before
+  # the Agent may enable controllers in ${cgroup_root}/cgroup.subtree_control.
+  sudo -n mkdir -- "${cgroup_root}/.ci-harness"
+  sudo -n chown "$(id -u):$(id -g)" "${cgroup_root}/.ci-harness"
+  printf '%s\n' "$$" | sudo -n tee "${cgroup_root}/.ci-harness/cgroup.procs" >/dev/null
 }
 
 run_network_blocked_browser_flow() {

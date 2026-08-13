@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 import { promisify } from "node:util";
 
 import {
+  appAlert,
   browserJson,
   E2E_ADMIN_PASSWORD,
   E2E_ADMIN_USERNAME,
@@ -173,7 +174,7 @@ async function expectLdapConflict(browser: Browser): Promise<void> {
   await page.getByLabel("用户名").fill("e2e-admin");
   await page.getByLabel("密码").fill("Directory!Conflict123");
   await page.getByRole("button", { name: "登录" }).click();
-  await expect(page.getByRole("alert")).toContainText(/冲突|已有账号/);
+  await expect(appAlert(page)).toContainText(/冲突|已有账号/);
   await context.close();
 }
 
@@ -190,7 +191,7 @@ async function verifyDirectoryOutageAndLocalFallback(
   await ldapPage.getByLabel("用户名").fill("alice");
   await ldapPage.getByLabel("密码").fill(directoryPassword);
   await ldapPage.getByRole("button", { name: "登录" }).click();
-  await expect(ldapPage.getByRole("alert")).toContainText(/LDAP|目录|连接/, {
+  await expect(appAlert(ldapPage)).toContainText(/LDAP|目录|连接/, {
     timeout: 20_000,
   });
 

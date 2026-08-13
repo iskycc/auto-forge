@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
-import { DomainError } from "@autoforge/domain";
+import { DomainError, isDomainError } from "@autoforge/domain";
 import { z } from "zod";
 
 const MAXIMUM_AGENT_RESOURCE_BYTES = 64 * 1024 * 1024;
@@ -54,7 +54,7 @@ export class RunnerAgentResourceStore {
         installer,
       };
     } catch (error) {
-      if (error instanceof DomainError) throw error;
+      if (isDomainError(error)) throw error;
       throw new DomainError(
         "RUNNER_AGENT_RESOURCE_UNAVAILABLE",
         "平台内置 Agent 资源不可用，请重新构建或安装完整的主平台发布物。",

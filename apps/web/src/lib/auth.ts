@@ -21,6 +21,45 @@ export async function authenticateRequest(
   options: { allowPasswordChangeRequired?: boolean } = {},
 ): Promise<AuthenticatedIdentity> {
   const services = await getPlatformServices();
+  // An explicitly presented API token wins over the ambient session cookie:
+  // a narrowed, expired or revoked token must never silently inherit the
+  // broader rights of a browser session riding on the same request.
+  const apiToken = request.headers.get("authorization")?.startsWith("Bearer af_api_")
+    ? request.headers.get("authorization")?.slice(7).trim()
+    : undefined;
+  if (apiToken) {
+    const authenticated = await services.platformOperations.authenticateApiToken(apiToken);
+    if (!authenticated || authenticated.effectiveScopes.length === 0) {
+      throw new DomainError("AUTHENTICATION_FAILED", "API 令牌无效、已过期或已撤销。");
+    }
+    const effective = new Set(authenticated.effectiveScopes);
+    return {
+      user: {
+        id: authenticated.serviceAccount.id,
+        username: `service-${authenticated.serviceAccount.id}`,
+        displayName: authenticated.serviceAccount.name,
+        source: "local",
+        status: "active",
+        forcePasswordChange: false,
+        failedLoginAttempts: 0,
+        createdAt: authenticated.serviceAccount.createdAt,
+        updatedAt: authenticated.serviceAccount.updatedAt,
+        version: authenticated.serviceAccount.revision,
+      },
+      sessionId: `api-token:${authenticated.token.id}`,
+      systemPermissions: authenticated.serviceAccount.systemPermissions
+        .filter(isPermission)
+        .filter((permission) => effective.has(permission)),
+      projectPermissions: Object.fromEntries(
+        Object.entries(authenticated.serviceAccount.projectPermissions).map(
+          ([projectId, permissions]) => [
+            projectId,
+            permissions.filter(isPermission).filter((permission) => effective.has(permission)),
+          ],
+        ),
+      ),
+    };
+  }
   const sessionToken = requestCookie(request, SESSION_COOKIE_NAME);
   if (sessionToken) {
     const identity = await services.identityAccess.authenticateSession(sessionToken);
@@ -29,41 +68,7 @@ export async function authenticateRequest(
     }
     return identity;
   }
-  const apiToken = request.headers.get("authorization")?.startsWith("Bearer af_api_")
-    ? request.headers.get("authorization")?.slice(7).trim()
-    : undefined;
-  if (!apiToken) throw new DomainError("AUTH_REQUIRED", "需要登录或提供 API 令牌。");
-  const authenticated = await services.platformOperations.authenticateApiToken(apiToken);
-  if (!authenticated || authenticated.effectiveScopes.length === 0) {
-    throw new DomainError("AUTHENTICATION_FAILED", "API 令牌无效、已过期或已撤销。");
-  }
-  const effective = new Set(authenticated.effectiveScopes);
-  return {
-    user: {
-      id: authenticated.serviceAccount.id,
-      username: `service-${authenticated.serviceAccount.id}`,
-      displayName: authenticated.serviceAccount.name,
-      source: "local",
-      status: "active",
-      forcePasswordChange: false,
-      failedLoginAttempts: 0,
-      createdAt: authenticated.serviceAccount.createdAt,
-      updatedAt: authenticated.serviceAccount.updatedAt,
-      version: authenticated.serviceAccount.revision,
-    },
-    sessionId: `api-token:${authenticated.token.id}`,
-    systemPermissions: authenticated.serviceAccount.systemPermissions
-      .filter(isPermission)
-      .filter((permission) => effective.has(permission)),
-    projectPermissions: Object.fromEntries(
-      Object.entries(authenticated.serviceAccount.projectPermissions).map(
-        ([projectId, permissions]) => [
-          projectId,
-          permissions.filter(isPermission).filter((permission) => effective.has(permission)),
-        ],
-      ),
-    ),
-  };
+  throw new DomainError("AUTH_REQUIRED", "需要登录或提供 API 令牌。");
 }
 
 export async function authorizeRequest(

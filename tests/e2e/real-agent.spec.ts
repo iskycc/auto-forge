@@ -5,7 +5,7 @@ import { access, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { unzipSync, zipSync } from "fflate";
 
-import { ensureAdministrator } from "./support/session";
+import { appAlert, ensureAdministrator } from "./support/session";
 
 const runnerName = "Offline Real Agent";
 const managedEnvironmentName = "真实 Agent 受管环境";
@@ -629,7 +629,7 @@ async function exerciseFailedJarImportRetry(page: Page, controlDirectory: string
   await expect(page.getByRole("button", { name: "幂等重试" })).toBeVisible({
     timeout: 60_000,
   });
-  await expect(page.getByRole("alert")).toContainText(/MinIO|503|对象|S3/);
+  await expect(appAlert(page)).toContainText(/MinIO|503|对象|S3/);
 
   await rm(failureMarker, { force: true });
   await page.getByRole("button", { name: "幂等重试" }).click();

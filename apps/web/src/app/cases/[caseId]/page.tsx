@@ -1,4 +1,4 @@
-import { DomainError, hasPermission } from "@autoforge/domain";
+import { hasPermission, isDomainError } from "@autoforge/domain";
 import { AlertCircle, ArrowLeft, FileCode2 } from "lucide-react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
@@ -36,7 +36,7 @@ export default async function CaseDetailPage({ params }: CaseDetailPageProps) {
     definition = await services.caseDefinitions.get(caseId, projectIds);
     versions = await services.caseDefinitions.listVersions(caseId, projectIds);
   } catch (error) {
-    if (error instanceof DomainError && error.code === "CASE_DEFINITION_NOT_FOUND") notFound();
+    if (isDomainError(error) && error.code === "CASE_DEFINITION_NOT_FOUND") notFound();
     throw error;
   }
   const canManage = hasPermission(identity, "case.manage", definition.projectId);

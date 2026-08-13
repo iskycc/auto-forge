@@ -6,7 +6,12 @@ import { resolve } from "node:path";
 import WebSocket from "ws";
 
 import { buildClassFile } from "../../packages/testng-discovery/test/class-fixture";
-import { E2E_ADMIN_PASSWORD, E2E_ADMIN_USERNAME, ensureAdministrator } from "./support/session";
+import {
+  appAlert,
+  E2E_ADMIN_PASSWORD,
+  E2E_ADMIN_USERNAME,
+  ensureAdministrator,
+} from "./support/session";
 
 const runnerBootstrapToken = requiredTestSecret("E2E_RUNNER_BOOTSTRAP_TOKEN");
 
@@ -196,7 +201,7 @@ public class MixedVisibleTest {
   await page.getByRole("button", { name: "确认导入" }).click();
   expect((await largeImportResponse).status()).toBe(202);
   await page.getByRole("button", { name: "取消导入" }).click();
-  await expect(page.getByRole("alert")).toContainText("导入任务已取消", { timeout: 60_000 });
+  await expect(appAlert(page)).toContainText("导入任务已取消", { timeout: 60_000 });
   await expect(page.getByRole("button", { name: "幂等重试" })).toBeVisible();
   await page.getByRole("button", { name: "幂等重试" }).click();
   await expect(page.getByRole("status")).toContainText("已导入", { timeout: 120_000 });

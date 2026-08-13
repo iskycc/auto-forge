@@ -1,6 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 
 import {
+  appAlert,
   E2E_ADMIN_PASSWORD,
   E2E_ADMIN_USERNAME,
   ensureAdministrator,
@@ -101,7 +102,7 @@ test("administrator can reset a user password and the last administrator binding
   const administratorRow = page.getByRole("row", { name: /E2E Administrator.*系统管理员/ });
   page.once("dialog", (dialog) => dialog.accept());
   await administratorRow.getByRole("button", { name: "撤销系统角色" }).click();
-  await expect(page.getByRole("alert")).toContainText("最后一位");
+  await expect(appAlert(page)).toContainText("最后一位");
 
   await logout(page);
   await login(page, username, resetPassword);
@@ -128,7 +129,7 @@ test("administrator unlocks and disables a locked user and manages a custom role
   await userPage.getByLabel("用户名").fill(username);
   await userPage.getByLabel("密码").fill(password);
   await userPage.getByRole("button", { name: "登录" }).click();
-  await expect(userPage.getByRole("alert")).toContainText(/锁定|稍后/);
+  await expect(appAlert(userPage)).toContainText(/锁定|稍后/);
 
   await page.goto(`/settings/access?query=${encodeURIComponent(username)}#users`);
   let userRow = page.getByRole("row", { name: new RegExp(username) });
@@ -361,7 +362,7 @@ async function failedLogin(page: Page, username: string, password: string): Prom
   await page.getByLabel("用户名").fill(username);
   await page.getByLabel("密码").fill(password);
   await page.getByRole("button", { name: "登录" }).click();
-  await expect(page.getByRole("alert")).toBeVisible();
+  await expect(appAlert(page)).toBeVisible();
 }
 
 async function browserStatus(

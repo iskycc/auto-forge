@@ -46,8 +46,8 @@ cleanup() {
   if [[ "${exit_status}" -ne 0 ]]; then
     for diagnostic_log in web-build web web-replica worker worker-replica nats minio minio-proxy fault-controller; do
       if [[ -f "${temporary_directory}/${diagnostic_log}.log" ]]; then
-        echo "=== ${diagnostic_log}.log (last 100 lines) ===" >&2
-        tail -n 100 "${temporary_directory}/${diagnostic_log}.log" >&2
+        echo "=== ${diagnostic_log}.log (last 400 lines) ===" >&2
+        tail -n 400 "${temporary_directory}/${diagnostic_log}.log" >&2
       fi
     done
   fi
@@ -272,6 +272,7 @@ initialize_platform_configuration() {
         testNgTargetJavaVersion: 21,
         runnerClaimRateLimitPerMinute: 120,
         sessionTtlHours: 12,
+        authLoginAttemptsPerWindow: 500,
       },
       scheduler: {
         maximumCpuUtilizationPercent: 85,

@@ -208,5 +208,10 @@ if [[ -n "${external_directory_host}" ]]; then
   export E2E_LDAP_LDAPS_URL="ldaps://${external_directory_host}:${external_ldaps_port}"
   export E2E_LDAP_STARTTLS_URL="ldap://${external_directory_host}:${external_starttls_port}"
 fi
-pnpm exec playwright test --config playwright.full.config.ts tests/e2e/ldap-real.spec.ts
+if ! pnpm exec playwright test --config playwright.full.config.ts tests/e2e/ldap-real.spec.ts; then
+  echo "Playwright LDAP acceptance failed; dumping container logs for diagnosis." >&2
+  docker logs "${web_container}" >&2 || true
+  docker logs "${ldap_container}" >&2 || true
+  exit 1
+fi
 printf 'Real LDAPS/StartTLS identity acceptance passed inside an outbound-blocked service network.\n'

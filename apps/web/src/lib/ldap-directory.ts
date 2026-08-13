@@ -5,7 +5,7 @@ import type {
   DirectoryIdentity,
   DirectoryPort,
 } from "@autoforge/application";
-import { DomainError } from "@autoforge/domain";
+import { DomainError, isDomainError } from "@autoforge/domain";
 
 import { combinedLdapFailure, ldapDiagnostic, type LdapOperationPhase } from "./ldap-diagnostics";
 
@@ -87,7 +87,7 @@ async function withServiceClient<T>(
       return await runLdapPhase("search", () => work(client!, url));
     } catch (failure) {
       failures.push(
-        failure instanceof DomainError
+        isDomainError(failure)
           ? failure
           : new DomainError("LDAP_DIRECTORY_UNAVAILABLE", "LDAP 目录操作失败。", {
               cause: failure,

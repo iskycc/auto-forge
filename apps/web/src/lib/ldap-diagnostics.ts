@@ -1,9 +1,9 @@
-import { DomainError } from "@autoforge/domain";
+import { DomainError, isDomainError } from "@autoforge/domain";
 
 export type LdapOperationPhase = "connect" | "bind" | "search";
 
 export function ldapDiagnostic(error: unknown, phase: LdapOperationPhase): DomainError {
-  if (error instanceof DomainError) return error;
+  if (isDomainError(error)) return error;
   const signal = errorSignal(error);
   if (matches(signal, ["ENOTFOUND", "EAI_AGAIN", "getaddrinfo"])) {
     return diagnostic(

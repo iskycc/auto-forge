@@ -24,7 +24,7 @@ test("project member cannot observe another project's assets through pages or di
         body: { projectId: projectA.id, roleId: VIEWER_ROLE_ID },
       })
     ).status,
-  ).toBe(200);
+  ).toBe(204);
 
   const classA = `com.example.ProjectA${Date.now()}Test`;
   const classB = `com.example.ProjectB${Date.now()}Test`;

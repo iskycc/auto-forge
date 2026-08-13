@@ -330,6 +330,14 @@ jobs:
           echo "PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=${browser_path}" >> "${GITHUB_ENV}"
       - name: Run system acceptance
         run: ${{ matrix.command }}
+      - name: Upload browser trace on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: system-acceptance-diagnostics-${{ matrix.name }}
+          path: test-results
+          if-no-files-found: ignore
+          retention-days: 7
 
   ci-gate:
     name: CI gate

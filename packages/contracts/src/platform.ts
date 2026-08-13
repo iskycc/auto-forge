@@ -23,6 +23,7 @@ export const updatePlatformConfigurationInputSchema = z.object({
     testNgTargetJavaVersion: z.number().int().min(8).max(100),
     runnerClaimRateLimitPerMinute: z.number().int().min(1).max(10_000),
     sessionTtlHours: z.number().int().min(1).max(168),
+    authLoginAttemptsPerWindow: z.number().int().min(1).max(100_000).default(10),
   }),
   scheduler: schedulerConfigurationSchema,
   worker: z.object({

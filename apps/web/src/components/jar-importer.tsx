@@ -155,7 +155,14 @@ export function JarImporter({
       setError(await errorMessage(response));
       return;
     }
-    setJob(jarImportJobSchema.parse(await response.json()));
+    const updated = jarImportJobSchema.parse(await response.json());
+    setJob(updated);
+    // A still-queued job transitions straight to cancelled in this response,
+    // so the progress poll never observes the transition — surface it here.
+    if (updated.status === "cancelled") {
+      setError("导入任务已取消，可重新发起。");
+      setPhase("ready");
+    }
   }
 
   async function retryImport(): Promise<void> {

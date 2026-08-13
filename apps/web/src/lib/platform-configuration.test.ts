@@ -66,6 +66,7 @@ function configuration(
       testNgTargetJavaVersion: 21,
       runnerClaimRateLimitPerMinute: 120,
       sessionTtlHours: 12,
+      authLoginAttemptsPerWindow: 10,
     },
     scheduler: {
       maximumCpuUtilizationPercent: 85,

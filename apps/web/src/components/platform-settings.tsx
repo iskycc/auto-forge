@@ -46,6 +46,7 @@ export function PlatformSettings({
             testNgTargetJavaVersion: numberValue(form, "testNgTargetJavaVersion"),
             runnerClaimRateLimitPerMinute: numberValue(form, "runnerClaimRateLimitPerMinute"),
             sessionTtlHours: numberValue(form, "sessionTtlHours"),
+            authLoginAttemptsPerWindow: numberValue(form, "authLoginAttemptsPerWindow"),
           },
           scheduler: {
             maximumCpuUtilizationPercent: numberValue(form, "maximumCpuUtilizationPercent"),
@@ -233,6 +234,11 @@ export function PlatformSettings({
               label="会话有效期（小时）"
               name="sessionTtlHours"
               value={initial.limits.sessionTtlHours}
+            />
+            <NumberInput
+              label="每 IP 登录尝试上限（15 分钟窗口）"
+              name="authLoginAttemptsPerWindow"
+              value={initial.limits.authLoginAttemptsPerWindow}
             />
             <NumberInput
               label="调度 CPU 上限（%）"

@@ -158,7 +158,7 @@ async function createExecutableFixture(page: Page): Promise<string> {
   await expect(page.getByRole("status")).toContainText("已导入", { timeout: 60_000 });
   const cases = await browserJson<{ items: Array<{ id: string; className: string }> }>(
     page,
-    "/api/v1/case-definitions?limit=200",
+    `/api/v1/case-definitions?query=${encodeURIComponent(className)}`,
   );
   const caseDefinition = cases.body.items.find((item) => item.className === className);
   expect(caseDefinition).toBeTruthy();

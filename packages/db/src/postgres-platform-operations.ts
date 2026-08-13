@@ -1042,7 +1042,9 @@ export class PostgresPlatformOperationsRepository implements PlatformOperationsR
   }
 
   private async retentionCount(category: RetentionCategory, cutoffAt: string): Promise<CountRow> {
-    const queries: Record<RetentionCategory, string> = {
+    // Full 模式的任务队列由 JetStream 承担并通过 stream 保留策略回收，
+    // PostgreSQL 中没有 queue_jobs 表；queue 类别在这里恒为零。
+    const queries: Partial<Record<RetentionCategory, string>> = {
       execution:
         "SELECT count(*) AS count,0 AS bytes FROM run_batches WHERE status IN ('succeeded','failed','cancelled') AND updated_at<$1",
       log: `SELECT count(*) AS count,COALESCE(sum(size_bytes),0) AS bytes FROM attempt_log_chunks l
@@ -1055,10 +1057,10 @@ export class PostgresPlatformOperationsRepository implements PlatformOperationsR
       audit: "SELECT count(*) AS count,0 AS bytes FROM audit_events WHERE recorded_at<$1",
       session: `SELECT count(*) AS count,0 AS bytes FROM user_sessions
                 WHERE expires_at<$1 OR (revoked_at IS NOT NULL AND revoked_at<$1)`,
-      queue: `SELECT count(*) AS count,0 AS bytes FROM queue_jobs
-              WHERE status IN ('completed','dead_letter') AND updated_at<$1`,
     };
-    const result = await this.handle.pool.query<CountRow>(queries[category], [cutoffAt]);
+    const query = queries[category];
+    if (!query) return { count: 0, bytes: 0 };
+    const result = await this.handle.pool.query<CountRow>(query, [cutoffAt]);
     return result.rows[0] as CountRow;
   }
 
@@ -1160,9 +1162,6 @@ async function executePostgresRetention(
     session: `DELETE FROM user_sessions WHERE id IN (
       SELECT id FROM user_sessions WHERE expires_at<$1 OR (revoked_at IS NOT NULL AND revoked_at<$1)
       ORDER BY created_at LIMIT $2)`,
-    queue: `DELETE FROM queue_jobs WHERE message_id IN (
-      SELECT message_id FROM queue_jobs WHERE status IN ('completed','dead_letter') AND updated_at<$1
-      ORDER BY updated_at LIMIT $2)`,
   };
   const statement = statements[input.category];
   if (!statement) return { deletedRecords: 0, objectKeys: [] };

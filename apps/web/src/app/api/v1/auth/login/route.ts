@@ -13,7 +13,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     rejectRateLimited(
       await services.runnerRequestLimiter.allow(
         `auth:login:v1:${clientAddress(request)}`,
-        10,
+        services.config.authLoginAttemptsPerWindow,
         15 * 60_000,
       ),
     );

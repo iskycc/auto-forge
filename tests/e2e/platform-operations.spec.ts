@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-import { ensureAdministrator } from "./support/session";
+import { appAlert, ensureAdministrator } from "./support/session";
 
 test("configuration conflicts, diagnostics and retention controls remain observable", async ({
   page,
@@ -15,7 +15,7 @@ test("configuration conflicts, diagnostics and retention controls remain observa
 
   await concurrentPage.getByLabel("公开大盘刷新间隔（秒）").fill("7");
   await concurrentPage.getByRole("button", { name: "保存平台配置" }).click();
-  await expect(concurrentPage.getByRole("alert")).toContainText(/修订|其他操作|重新加载/);
+  await expect(appAlert(concurrentPage)).toContainText(/修订|其他操作|重新加载/);
 
   await page.getByLabel("公开大盘刷新间隔（秒）").fill("8");
   await page.getByRole("button", { name: "保存平台配置" }).click();

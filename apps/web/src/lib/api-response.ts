@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import { DomainError } from "@autoforge/domain";
+import { DomainError, isDomainError } from "@autoforge/domain";
 import { isJarInspectionError } from "@autoforge/testng-discovery";
 import { NextResponse } from "next/server";
 import { ZodError } from "zod";
@@ -98,7 +98,7 @@ function jarTooLargeError(maxJarBytes: number): DomainError {
 }
 
 export function apiErrorResponse(error: unknown, requestId: string = randomUUID()): NextResponse {
-  if (error instanceof DomainError || isJarInspectionError(error)) {
+  if (isDomainError(error) || isJarInspectionError(error)) {
     const status = domainErrorStatus(error.code);
     return NextResponse.json(
       {
@@ -106,7 +106,7 @@ export function apiErrorResponse(error: unknown, requestId: string = randomUUID(
           code: error.code,
           message: error.message,
           requestId,
-          ...(error instanceof DomainError && error.details !== undefined
+          ...(isDomainError(error) && error.details !== undefined
             ? { details: error.details }
             : {}),
         },

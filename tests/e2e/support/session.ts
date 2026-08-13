@@ -1,9 +1,15 @@
-import { expect, type Page } from "@playwright/test";
+import { expect, type Locator, type Page } from "@playwright/test";
 
 export const E2E_ADMIN_USERNAME = "e2e-admin";
 export const E2E_ADMIN_PASSWORD = "E2e!Administrator123";
 
 type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
+
+// Next.js mounts an always-present route announcer with role="alert";
+// application feedback lives in its own alert regions instead.
+export function appAlert(page: Page): Locator {
+  return page.locator('[role="alert"]:not(#__next-route-announcer__)');
+}
 
 export async function ensureAdministrator(page: Page): Promise<void> {
   // Decide through the public setup-status API instead of the /login page:
@@ -66,26 +72,47 @@ export async function browserJson<T>(
     requestMethod: init.method ?? "GET",
     requestBody: init.body,
   };
-  const result = await page.evaluate(
-    async ({
-      requestPath,
-      requestMethod,
-      requestBody,
-    }: typeof request): Promise<{ status: number; body: unknown }> => {
-      const response = await fetch(requestPath, {
-        method: requestMethod,
-        ...(requestBody === undefined
-          ? {}
-          : {
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify(requestBody),
-            }),
-      });
-      return { status: response.status, body: (await response.json()) as unknown };
-    },
-    request,
-  );
-  return { status: result.status, body: result.body as T };
+  // A client-side navigation (login redirect, landing hand-off) destroys the
+  // execution context mid-evaluate; retry once the page settles instead of
+  // failing the test on a browser-internal race.
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      const result = await page.evaluate(
+        async ({
+          requestPath,
+          requestMethod,
+          requestBody,
+        }: typeof request): Promise<{ status: number; body: unknown }> => {
+          const response = await fetch(requestPath, {
+            method: requestMethod,
+            ...(requestBody === undefined
+              ? {}
+              : {
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify(requestBody),
+                }),
+          });
+          const text = await response.text();
+          if (text.trim().length === 0) return { status: response.status, body: null };
+          try {
+            return { status: response.status, body: JSON.parse(text) as unknown };
+          } catch {
+            throw new Error(
+              `Expected a JSON response from ${requestPath}, got ${response.status} with: ${text.slice(0, 200)}`,
+            );
+          }
+        },
+        request,
+      );
+      return { status: result.status, body: result.body as T };
+    } catch (error) {
+      const navigationRace =
+        error instanceof Error && error.message.includes("Execution context was destroyed");
+      if (!navigationRace || attempt >= 4) throw error;
+      await page.waitForLoadState("load").catch(() => undefined);
+      await page.waitForTimeout(150 * (attempt + 1));
+    }
+  }
 }
 
 function requiredEnvironment(name: string): string {
