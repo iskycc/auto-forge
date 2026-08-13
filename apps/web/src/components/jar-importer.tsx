@@ -24,7 +24,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useId, useState } from "react";
+import { useCallback, useEffect, useId, useState } from "react";
 
 type Phase = "idle" | "inspecting" | "ready" | "importing" | "done";
 
@@ -58,6 +58,30 @@ export function JarImporter({
   const [job, setJob] = useState<JarImportJob | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [projectId, setProjectId] = useState(initialProjectId ?? projects[0]?.id ?? "");
+
+  const applyJobState = useCallback(
+    (updated: JarImportJob): void => {
+      setJob(updated);
+      if (updated.status === "succeeded") {
+        if (updated.result) {
+          setResult(jarImportResultSchema.parse(updated.result));
+          setError(null);
+          setPhase("done");
+          router.refresh();
+        } else {
+          setError("后台导入已结束，但没有返回导入结果，请从来源列表确认状态。");
+          setPhase("ready");
+        }
+      } else if (updated.status === "failed") {
+        setError(updated.errorSummary ?? "后台导入失败。");
+        setPhase("ready");
+      } else if (updated.status === "cancelled") {
+        setError("导入任务已取消，可重新发起。");
+        setPhase("ready");
+      }
+    },
+    [router],
+  );
 
   function chooseFile(nextFile: File | null): void {
     setFile(nextFile);
@@ -109,7 +133,9 @@ export function JarImporter({
       const response = await sendFile("/api/v1/case-sources/jar/import");
       if (!response.ok) throw new Error(await errorMessage(response));
       const parsed = jarImportJobSchema.parse(await response.json());
-      setJob(parsed);
+      // Idempotent duplicate imports can return an already-terminal job. Apply
+      // that state immediately because no progress poll will run for it.
+      applyJobState(parsed);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "导入 JAR 失败。");
       setPhase("ready");
@@ -126,24 +152,13 @@ export function JarImporter({
         );
         if (!response.ok) throw new Error(await errorMessage(response));
         const updated = jarImportJobSchema.parse(await response.json());
-        setJob(updated);
-        if (updated.status === "succeeded" && updated.result) {
-          setResult(jarImportResultSchema.parse(updated.result));
-          setPhase("done");
-          router.refresh();
-        } else if (updated.status === "failed") {
-          setError(updated.errorSummary ?? "后台导入失败。");
-          setPhase("ready");
-        } else if (updated.status === "cancelled") {
-          setError("导入任务已取消，可重新发起。");
-          setPhase("ready");
-        }
+        applyJobState(updated);
       } catch (caught) {
         setError(caught instanceof Error ? caught.message : "读取导入进度失败。");
       }
     }, 1_000);
     return () => window.clearInterval(interval);
-  }, [job, router]);
+  }, [applyJobState, job]);
 
   async function cancelImport(): Promise<void> {
     if (!job) return;
@@ -156,13 +171,9 @@ export function JarImporter({
       return;
     }
     const updated = jarImportJobSchema.parse(await response.json());
-    setJob(updated);
     // A still-queued job transitions straight to cancelled in this response,
-    // so the progress poll never observes the transition — surface it here.
-    if (updated.status === "cancelled") {
-      setError("导入任务已取消，可重新发起。");
-      setPhase("ready");
-    }
+    // so the progress poll never observes the transition.
+    applyJobState(updated);
   }
 
   async function retryImport(): Promise<void> {
@@ -178,7 +189,7 @@ export function JarImporter({
       setPhase("ready");
       return;
     }
-    setJob(jarImportJobSchema.parse(await response.json()));
+    applyJobState(jarImportJobSchema.parse(await response.json()));
   }
 
   const busy = phase === "inspecting" || phase === "importing";

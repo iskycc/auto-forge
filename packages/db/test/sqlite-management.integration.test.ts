@@ -377,7 +377,7 @@ describe("SQLite management repositories", () => {
   });
 
   it("reserves only eligible runner capacity and persists the scheduling attempt", async () => {
-    const { handle, runners, batches } = await fixture();
+    const { handle, catalog, runners, batches } = await fixture();
     try {
       await runners.register({
         id: "runner-scheduling",
@@ -436,6 +436,29 @@ describe("SQLite management repositories", () => {
         ],
         createdAt: "2026-08-09T00:01:00.000Z",
       });
+      await catalog.importCatalog({
+        sourceId: "source-after-batch",
+        objectKey: "jars/source-after-batch.jar",
+        displayName: "Source after batch creation",
+        importedAt: "2026-08-09T00:01:00.500Z",
+        inspection: {
+          schemaVersion: 1,
+          fileName: "source-after-batch.jar",
+          sha256: "d".repeat(64),
+          sizeBytes: 256,
+          classFileCount: 0,
+          testClassCount: 0,
+          testMethodCount: 0,
+          hasRootTestNgXml: false,
+          discoveryMode: "bytecode-annotations",
+          warnings: [],
+          classes: [],
+        },
+        cases: [],
+      });
+      handle.client
+        .prepare("UPDATE case_definitions SET source_id = ? WHERE id = ?")
+        .run("source-after-batch", "case-1");
       const thresholds = {
         maximumCpuUtilizationPercent: 80,
         maximumMemoryUtilizationPercent: 85,
@@ -478,6 +501,13 @@ describe("SQLite management repositories", () => {
         attemptCount: 1,
       });
       expect(batch?.attempts[0]).toMatchObject({ id: "attempt-1", attemptNumber: 1 });
+      const assignment = handle.client
+        .prepare("SELECT execution_spec_json FROM assignments WHERE id = ?")
+        .get("assignment-1") as { execution_spec_json: string };
+      const executionSpec = JSON.parse(assignment.execution_spec_json) as {
+        inputs: Array<{ inputId: string }>;
+      };
+      expect(executionSpec.inputs[0]?.inputId).toBe("source-1");
 
       await batches.create({
         id: "batch-project-b",

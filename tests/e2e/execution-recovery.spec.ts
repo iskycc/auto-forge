@@ -124,7 +124,7 @@ test("authoritative execution recovery handles every timeout and idempotent race
   expect((await complete(page, runner, cancellationClaim, randomUUID())).disposition).toBe(
     "accepted",
   );
-  await expectBatchReason(page, cancellationBatch, "CANCELLED_BY_USER");
+  await expectBatchReason(page, cancellationBatch, "CANCELLED_BY_CONTROL_PLANE");
 
   const leaseExpiryBatch = await createBatch(page, fixture, runner.runnerId, {
     executionTimeoutMs: 120_000,

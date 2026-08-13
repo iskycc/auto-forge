@@ -7,6 +7,7 @@ import type {
   DeleteCaseSourceInput,
   UpdateCaseSourceLifecycleInput,
 } from "@autoforge/contracts";
+import { testNgClassCandidateSchema } from "@autoforge/contracts";
 
 import type { JobHandler } from "./run-job-worker";
 import type {
@@ -128,6 +129,7 @@ export class CaseSourceService {
     candidateSourceId: string,
     input: ConfirmCaseSourceSyncInput,
     projectIds?: readonly string[],
+    actorId?: string,
   ) {
     const candidate = await this.requireSource(candidateSourceId, projectIds);
     const comparison = await this.catalog.getSourceComparison(input.comparisonId);
@@ -147,10 +149,45 @@ export class CaseSourceService {
         "权威来源在对比后已变化，请重新对比后再确认同步。",
       );
     }
+    const versionMerges = current ? await this.createVersionMerges(current.id, candidate.id) : [];
     return this.catalog.promoteAuthoritativeSource({
       sourceId: candidate.id,
       expectedRevision: input.expectedRevision,
       updatedAt: this.clock.now().toISOString(),
+      ...(actorId ? { actorId } : {}),
+      versionMerges,
+    });
+  }
+
+  private async createVersionMerges(currentSourceId: string, candidateSourceId: string) {
+    const [currentSnapshots, candidateSnapshots] = await Promise.all([
+      this.catalog.listSourceCaseSnapshots(currentSourceId),
+      this.catalog.listSourceCaseSnapshots(candidateSourceId),
+    ]);
+    const currentByClass = groupSnapshotsByClass(currentSnapshots);
+    const candidateByClass = groupSnapshotsByClass(candidateSnapshots);
+    return candidateSnapshots.flatMap((candidateSnapshot) => {
+      const currentMatches = currentByClass.get(candidateSnapshot.className) ?? [];
+      const candidateMatches = candidateByClass.get(candidateSnapshot.className) ?? [];
+      if (currentMatches.length !== 1 || candidateMatches.length !== 1) return [];
+      const snapshot = testNgClassCandidateSchema.safeParse(
+        parseSnapshotJson(candidateSnapshot.snapshotJson),
+      );
+      if (!snapshot.success) {
+        throw new DomainError(
+          "CASE_SOURCE_SNAPSHOT_INVALID",
+          `候选来源中的 ${candidateSnapshot.className} 快照无效，不能确认同步。`,
+        );
+      }
+      return [
+        {
+          currentCaseDefinitionId: currentMatches[0]!.caseDefinitionId,
+          candidateCaseDefinitionId: candidateSnapshot.caseDefinitionId,
+          caseVersionId: this.ids.next(),
+          snapshot: snapshot.data,
+          methodIds: snapshot.data.methods.map(() => this.ids.next()),
+        },
+      ];
     });
   }
 
@@ -181,10 +218,14 @@ export class CaseSourceService {
       throw new DomainError("CASE_SOURCE_NOT_DELETABLE", "只有活跃状态的来源可以删除。");
     }
     const references = await this.catalog.countSourceReferences(sourceId);
-    if (references.caseDefinitions > 0 || references.executionRuns > 0) {
+    if (
+      references.caseDefinitions > 0 ||
+      references.caseVersions > 0 ||
+      references.executionRuns > 0
+    ) {
       throw new DomainError(
         "CASE_SOURCE_IN_USE",
-        `该来源仍被 ${references.caseDefinitions} 个用例定义和 ${references.executionRuns} 条执行记录引用，请先归档而不是删除。`,
+        `该来源仍被 ${references.caseDefinitions} 个当前用例、${references.caseVersions} 个不可变版本和 ${references.executionRuns} 条执行记录引用，请先归档而不是删除。`,
         { details: references },
       );
     }
@@ -235,6 +276,30 @@ export class CaseSourceService {
         finishedAt: this.clock.now().toISOString(),
       });
     };
+  }
+}
+
+type SourceSnapshot = {
+  caseDefinitionId: string;
+  className: string;
+  snapshotJson: string;
+};
+
+function groupSnapshotsByClass(snapshots: SourceSnapshot[]): Map<string, SourceSnapshot[]> {
+  const grouped = new Map<string, SourceSnapshot[]>();
+  for (const snapshot of snapshots) {
+    const values = grouped.get(snapshot.className) ?? [];
+    values.push(snapshot);
+    grouped.set(snapshot.className, values);
+  }
+  return grouped;
+}
+
+function parseSnapshotJson(snapshotJson: string): unknown {
+  try {
+    return JSON.parse(snapshotJson) as unknown;
+  } catch {
+    return undefined;
   }
 }
 

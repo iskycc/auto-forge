@@ -2,6 +2,7 @@ import type {
   CaseCatalogRepository,
   CaseListPage,
   CaseListQuery,
+  CaseSourceVersionMerge,
   CreateSourceComparisonRecord,
   DashboardSummary,
   ExistingSource,
@@ -35,6 +36,7 @@ import {
   caseImportJobs,
   caseSourceComparisons,
   caseSources,
+  caseSuiteItems,
   caseVersions,
   cleanupJobs,
   executionRuns,
@@ -193,11 +195,35 @@ function toCaseVersion(row: typeof caseVersions.$inferSelect): CaseVersion {
   return {
     id: row.id,
     caseDefinitionId: row.caseDefinitionId,
+    sourceId: row.sourceId,
     version: row.version,
     snapshot: safeJson(row.snapshotJson),
     changeReason: row.changeReason,
     ...(row.createdBy ? { createdBy: row.createdBy } : {}),
     createdAt: row.createdAt,
+  };
+}
+
+function testMethodInsertValues(input: {
+  id: string;
+  caseDefinitionId: string;
+  method: TestNgClassCandidate["methods"][number];
+  createdAt: string;
+}) {
+  return {
+    id: input.id,
+    caseDefinitionId: input.caseDefinitionId,
+    methodName: input.method.methodName,
+    descriptor: input.method.descriptor,
+    enabled: input.method.enabled,
+    annotationSource: input.method.annotationSource,
+    groupsJson: JSON.stringify(input.method.groups),
+    description: input.method.description ?? null,
+    dataProvider: input.method.dataProvider ?? null,
+    dependsOnMethodsJson: JSON.stringify(input.method.dependsOnMethods),
+    dependsOnGroupsJson: JSON.stringify(input.method.dependsOnGroups),
+    priority: input.method.priority ?? null,
+    createdAt: input.createdAt,
   };
 }
 
@@ -490,6 +516,7 @@ export class SqliteCaseCatalogRepository implements CaseCatalogRepository {
           .values({
             id: importedCase.caseVersionId,
             caseDefinitionId: importedCase.caseDefinitionId,
+            sourceId: record.sourceId,
             version: 1,
             snapshotJson: JSON.stringify(candidate),
             ...(record.importedBy ? { createdBy: record.importedBy } : {}),
@@ -507,21 +534,12 @@ export class SqliteCaseCatalogRepository implements CaseCatalogRepository {
                 if (!method) {
                   throw new Error(`Missing imported method at index ${methodIndex}.`);
                 }
-                return {
+                return testMethodInsertValues({
                   id: methodId,
                   caseDefinitionId: importedCase.caseDefinitionId,
-                  methodName: method.methodName,
-                  descriptor: method.descriptor,
-                  enabled: method.enabled,
-                  annotationSource: method.annotationSource,
-                  groupsJson: JSON.stringify(method.groups),
-                  description: method.description ?? null,
-                  dataProvider: method.dataProvider ?? null,
-                  dependsOnMethodsJson: JSON.stringify(method.dependsOnMethods),
-                  dependsOnGroupsJson: JSON.stringify(method.dependsOnGroups),
-                  priority: method.priority ?? null,
+                  method,
                   createdAt: record.importedAt,
-                };
+                });
               }),
             )
             .run();
@@ -676,6 +694,7 @@ export class SqliteCaseCatalogRepository implements CaseCatalogRepository {
     expectedRevision: number;
     versionId: string;
     version: number;
+    sourceId: string;
     snapshot: TestNgClassCandidate;
     changeReason: string;
     methodIds: string[];
@@ -692,6 +711,7 @@ export class SqliteCaseCatalogRepository implements CaseCatalogRepository {
           groupsJson: JSON.stringify(input.snapshot.groups),
           parametersJson: JSON.stringify(input.snapshot.parameters ?? {}),
           enabled: input.snapshot.enabled,
+          sourceId: input.sourceId,
           currentVersion: input.version,
           revision: sql`${caseDefinitions.revision} + 1`,
           updatedBy: input.actorId,
@@ -714,21 +734,14 @@ export class SqliteCaseCatalogRepository implements CaseCatalogRepository {
         this.handle.db
           .insert(testMethods)
           .values(
-            input.snapshot.methods.map((method, index) => ({
-              id: input.methodIds[index]!,
-              caseDefinitionId: input.caseDefinitionId,
-              methodName: method.methodName,
-              descriptor: method.descriptor,
-              enabled: method.enabled,
-              annotationSource: method.annotationSource,
-              groupsJson: JSON.stringify(method.groups),
-              description: method.description ?? null,
-              dataProvider: method.dataProvider ?? null,
-              dependsOnMethodsJson: JSON.stringify(method.dependsOnMethods),
-              dependsOnGroupsJson: JSON.stringify(method.dependsOnGroups),
-              priority: method.priority ?? null,
-              createdAt: input.restoredAt,
-            })),
+            input.snapshot.methods.map((method, index) =>
+              testMethodInsertValues({
+                id: input.methodIds[index]!,
+                caseDefinitionId: input.caseDefinitionId,
+                method,
+                createdAt: input.restoredAt,
+              }),
+            ),
           )
           .run();
       }
@@ -737,6 +750,7 @@ export class SqliteCaseCatalogRepository implements CaseCatalogRepository {
         .values({
           id: input.versionId,
           caseDefinitionId: input.caseDefinitionId,
+          sourceId: input.sourceId,
           version: input.version,
           snapshotJson: JSON.stringify(input.snapshot),
           createdBy: input.actorId,
@@ -871,14 +885,18 @@ export class SqliteCaseCatalogRepository implements CaseCatalogRepository {
         snapshotJson: caseVersions.snapshotJson,
       })
       .from(caseDefinitions)
-      .innerJoin(
-        caseVersions,
+      .innerJoin(caseVersions, eq(caseVersions.caseDefinitionId, caseDefinitions.id))
+      .where(
         and(
-          eq(caseVersions.caseDefinitionId, caseDefinitions.id),
-          eq(caseVersions.version, caseDefinitions.currentVersion),
+          eq(caseVersions.sourceId, sourceId),
+          sql`${caseVersions.version} = (
+            SELECT MAX(source_version.version)
+            FROM case_versions source_version
+            WHERE source_version.case_definition_id = ${caseVersions.caseDefinitionId}
+              AND source_version.source_id = ${sourceId}
+          )`,
         ),
       )
-      .where(eq(caseDefinitions.sourceId, sourceId))
       .all();
   }
 
@@ -919,6 +937,8 @@ export class SqliteCaseCatalogRepository implements CaseCatalogRepository {
     sourceId: string;
     expectedRevision: number;
     updatedAt: string;
+    actorId?: string;
+    versionMerges?: CaseSourceVersionMerge[];
   }): Promise<CaseSource> {
     return this.handle.client.transaction(() => {
       const target = this.handle.db
@@ -927,6 +947,25 @@ export class SqliteCaseCatalogRepository implements CaseCatalogRepository {
         .where(eq(caseSources.id, input.sourceId))
         .get();
       if (!target) throw new DomainError("CASE_SOURCE_NOT_FOUND", "指定的 JAR 来源不存在。");
+      if (target.revision !== input.expectedRevision) {
+        throwCaseSourceConflict(this.handle, input.sourceId);
+      }
+      const current = this.handle.db
+        .select({ id: caseSources.id })
+        .from(caseSources)
+        .where(
+          and(eq(caseSources.projectId, target.projectId), eq(caseSources.authoritative, true)),
+        )
+        .get();
+      for (const merge of input.versionMerges ?? []) {
+        this.mergeSourceVersion({
+          merge,
+          candidateSourceId: target.id,
+          ...(current ? { currentSourceId: current.id } : {}),
+          ...(input.actorId ? { actorId: input.actorId } : {}),
+          updatedAt: input.updatedAt,
+        });
+      }
       this.handle.db
         .update(caseSources)
         .set({
@@ -955,6 +994,121 @@ export class SqliteCaseCatalogRepository implements CaseCatalogRepository {
     })();
   }
 
+  private mergeSourceVersion(input: {
+    merge: CaseSourceVersionMerge;
+    candidateSourceId: string;
+    currentSourceId?: string;
+    actorId?: string;
+    updatedAt: string;
+  }): void {
+    const { merge } = input;
+    if (merge.methodIds.length !== merge.snapshot.methods.length) {
+      throw new Error("Source sync method identifiers must match the snapshot method count.");
+    }
+    const currentDefinition = this.handle.db
+      .select()
+      .from(caseDefinitions)
+      .where(eq(caseDefinitions.id, merge.currentCaseDefinitionId))
+      .get();
+    const candidateDefinition = this.handle.db
+      .select()
+      .from(caseDefinitions)
+      .where(eq(caseDefinitions.id, merge.candidateCaseDefinitionId))
+      .get();
+    const currentSourceVersion = input.currentSourceId
+      ? this.handle.db
+          .select({ id: caseVersions.id })
+          .from(caseVersions)
+          .where(
+            and(
+              eq(caseVersions.caseDefinitionId, merge.currentCaseDefinitionId),
+              eq(caseVersions.sourceId, input.currentSourceId),
+            ),
+          )
+          .orderBy(desc(caseVersions.version))
+          .get()
+      : undefined;
+    if (
+      !currentDefinition ||
+      !candidateDefinition ||
+      !currentSourceVersion ||
+      candidateDefinition.sourceId !== input.candidateSourceId ||
+      currentDefinition.className !== candidateDefinition.className ||
+      candidateDefinition.className !== merge.snapshot.className
+    ) {
+      throw new DomainError("CASE_SOURCE_SYNC_STALE", "来源用例在确认同步前已变化，请重新对比。");
+    }
+    const suiteReferences =
+      this.handle.db
+        .select({ value: count() })
+        .from(caseSuiteItems)
+        .where(eq(caseSuiteItems.caseDefinitionId, candidateDefinition.id))
+        .get()?.value ?? 0;
+    const runReferences =
+      this.handle.db
+        .select({ value: count() })
+        .from(executionRuns)
+        .where(eq(executionRuns.caseDefinitionId, candidateDefinition.id))
+        .get()?.value ?? 0;
+    if (suiteReferences > 0 || runReferences > 0) {
+      throw new DomainError(
+        "CASE_SOURCE_SYNC_CANDIDATE_IN_USE",
+        `候选来源中的 ${candidateDefinition.className} 已被任务或执行引用，不能合并到现有用例。`,
+      );
+    }
+
+    this.handle.db
+      .delete(caseDefinitions)
+      .where(eq(caseDefinitions.id, candidateDefinition.id))
+      .run();
+    const nextVersion = currentDefinition.currentVersion + 1;
+    this.handle.db
+      .update(caseDefinitions)
+      .set({
+        sourceId: input.candidateSourceId,
+        groupsJson: JSON.stringify(merge.snapshot.groups),
+        parametersJson: JSON.stringify(merge.snapshot.parameters ?? {}),
+        currentVersion: nextVersion,
+        revision: sql`${caseDefinitions.revision} + 1`,
+        ...(input.actorId ? { updatedBy: input.actorId } : {}),
+        updatedAt: input.updatedAt,
+      })
+      .where(eq(caseDefinitions.id, currentDefinition.id))
+      .run();
+    this.handle.db
+      .delete(testMethods)
+      .where(eq(testMethods.caseDefinitionId, currentDefinition.id))
+      .run();
+    if (merge.snapshot.methods.length > 0) {
+      this.handle.db
+        .insert(testMethods)
+        .values(
+          merge.snapshot.methods.map((method, index) =>
+            testMethodInsertValues({
+              id: merge.methodIds[index]!,
+              caseDefinitionId: currentDefinition.id,
+              method,
+              createdAt: input.updatedAt,
+            }),
+          ),
+        )
+        .run();
+    }
+    this.handle.db
+      .insert(caseVersions)
+      .values({
+        id: merge.caseVersionId,
+        caseDefinitionId: currentDefinition.id,
+        sourceId: input.candidateSourceId,
+        version: nextVersion,
+        snapshotJson: JSON.stringify(merge.snapshot),
+        ...(input.actorId ? { createdBy: input.actorId } : {}),
+        changeReason: "source.sync",
+        createdAt: input.updatedAt,
+      })
+      .run();
+  }
+
   async updateSourceLifecycle(input: {
     sourceId: string;
     expectedRevision: number;
@@ -979,21 +1133,37 @@ export class SqliteCaseCatalogRepository implements CaseCatalogRepository {
 
   async countSourceReferences(
     sourceId: string,
-  ): Promise<{ caseDefinitions: number; executionRuns: number }> {
+  ): Promise<{ caseDefinitions: number; caseVersions: number; executionRuns: number }> {
     const caseDefinitionCount =
       this.handle.db
         .select({ value: count() })
         .from(caseDefinitions)
         .where(eq(caseDefinitions.sourceId, sourceId))
         .get()?.value ?? 0;
+    const caseVersionCount =
+      this.handle.db
+        .select({ value: count() })
+        .from(caseVersions)
+        .where(eq(caseVersions.sourceId, sourceId))
+        .get()?.value ?? 0;
     const executionRunCount =
       this.handle.db
         .select({ value: count() })
         .from(executionRuns)
-        .innerJoin(caseDefinitions, eq(executionRuns.caseDefinitionId, caseDefinitions.id))
-        .where(eq(caseDefinitions.sourceId, sourceId))
+        .innerJoin(
+          caseVersions,
+          and(
+            eq(caseVersions.caseDefinitionId, executionRuns.caseDefinitionId),
+            eq(caseVersions.version, executionRuns.caseVersion),
+          ),
+        )
+        .where(eq(caseVersions.sourceId, sourceId))
         .get()?.value ?? 0;
-    return { caseDefinitions: caseDefinitionCount, executionRuns: executionRunCount };
+    return {
+      caseDefinitions: caseDefinitionCount,
+      caseVersions: caseVersionCount,
+      executionRuns: executionRunCount,
+    };
   }
 
   async enqueueSourceDeletion(input: {
@@ -1118,8 +1288,7 @@ export class SqliteCaseCatalogRepository implements CaseCatalogRepository {
     const snapshots = this.handle.db
       .select({ snapshotJson: caseVersions.snapshotJson })
       .from(caseVersions)
-      .innerJoin(caseDefinitions, eq(caseVersions.caseDefinitionId, caseDefinitions.id))
-      .where(eq(caseDefinitions.sourceId, row.id))
+      .where(eq(caseVersions.sourceId, row.id))
       .all();
     const classes = snapshots.flatMap(({ snapshotJson }) => {
       const parsed = testNgClassCandidateSchema.safeParse(safeJson(snapshotJson));

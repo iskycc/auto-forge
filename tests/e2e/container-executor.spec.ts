@@ -43,7 +43,7 @@ test("executes and cancels TestNG in a constrained immutable container", async (
     const cancelled = await waitForBatch(page, cancellationBatchId, agent, "cancelled");
     expect(cancelled.attempts.at(-1)).toMatchObject({
       status: "cancelled",
-      resultCode: "CANCELLED_BY_USER",
+      resultCode: "CANCELLED_BY_CONTROL_PLANE",
     });
     await expect.poll(runningContainerIDs, { timeout: 30_000 }).toEqual([]);
   } finally {
@@ -60,8 +60,10 @@ type AgentProcess = {
 type BatchDetails = {
   status: string;
   attempts: Array<{
+    id: string;
     status: string;
     resultCode?: string;
+    resultSummary?: string;
     testNg?: {
       total: number;
       passed: number;
@@ -207,21 +209,43 @@ async function waitForBatch(
   expectedStatus: "succeeded" | "cancelled",
 ): Promise<BatchDetails> {
   let latest: BatchDetails | undefined;
-  await expect
-    .poll(
-      async () => {
-        assertAgentRunning(agent);
-        const response = await page.request.get(
-          `/api/v1/run-batches/${encodeURIComponent(batchId)}`,
-        );
-        if (!response.ok()) return `HTTP ${response.status()}`;
-        latest = (await response.json()) as BatchDetails;
-        return latest.status;
-      },
-      { timeout: 120_000, intervals: [500, 1_000, 2_000] },
-    )
-    .toBe(expectedStatus);
-  return latest!;
+  const deadline = Date.now() + 120_000;
+  while (Date.now() < deadline) {
+    assertAgentRunning(agent);
+    const response = await page.request.get(`/api/v1/run-batches/${encodeURIComponent(batchId)}`);
+    if (!response.ok()) {
+      await page.waitForTimeout(500);
+      continue;
+    }
+    latest = (await response.json()) as BatchDetails;
+    if (latest.status === expectedStatus) return latest;
+    if (["succeeded", "failed", "cancelled"].includes(latest.status)) {
+      const attempt = latest.attempts.at(-1);
+      const logs = attempt ? await readAttemptLogs(page, attempt.id) : "No attempt was created.";
+      throw new Error(
+        `Batch ${batchId} reached ${latest.status}, expected ${expectedStatus}. ` +
+          `${attempt?.resultCode ?? "NO_RESULT_CODE"}: ${attempt?.resultSummary ?? "No result summary."}\n${logs}`,
+      );
+    }
+    await page.waitForTimeout(500);
+  }
+  throw new Error(
+    `Batch ${batchId} did not reach ${expectedStatus}; last status was ${latest?.status ?? "unknown"}.`,
+  );
+}
+
+async function readAttemptLogs(page: Page, attemptId: string): Promise<string> {
+  const streams = await Promise.all(
+    (["agent", "stdout", "stderr"] as const).map(async (stream) => {
+      const response = await page.request.get(
+        `/api/v1/run-attempts/${encodeURIComponent(attemptId)}/logs?stream=${stream}&limit=500`,
+      );
+      if (!response.ok()) return `${stream}: HTTP ${response.status()}`;
+      const body = (await response.json()) as { items: Array<{ content: string }> };
+      return `${stream}:\n${body.items.map((item) => item.content).join("")}`;
+    }),
+  );
+  return streams.join("\n");
 }
 
 async function waitForRunningContainer(agent: AgentProcess): Promise<void> {

@@ -321,4 +321,62 @@ describe.skipIf(!connectionString)("PostgreSQL migrations", () => {
       await rm(directory, { recursive: true, force: true });
     }
   });
+
+  it("backfills immutable case-version source ownership", async () => {
+    const admin = new Client({ connectionString });
+    await admin.connect();
+    const scratch = await createScratchDatabase(admin);
+    await admin.end();
+
+    const client = new Client({ connectionString: connectionStringFor(scratch) });
+    await client.connect();
+    const migrationsFolder = resolve(import.meta.dirname, "../drizzle/postgresql");
+    const migrationFiles = (await readdir(migrationsFolder))
+      .filter((name) => /^\d+_.+\.sql$/.test(name))
+      .sort();
+    const sourceMigration = "0023_case_version_sources.sql";
+    const sourceMigrationIndex = migrationFiles.indexOf(sourceMigration);
+    expect(sourceMigrationIndex).toBeGreaterThan(0);
+    try {
+      for (const fileName of migrationFiles.slice(0, sourceMigrationIndex)) {
+        await client.query(await readFile(resolve(migrationsFolder, fileName), "utf8"));
+      }
+      await client.query(`
+        INSERT INTO case_sources
+          (id, project_id, display_name, original_file_name, object_key, sha256, size_bytes,
+           class_count, method_count, status, warnings_json, inspection_json, authoritative,
+           lifecycle_status, revision, created_at, updated_at)
+        VALUES
+          ('source-existing', '00000000-0000-7000-8000-000000000001', 'Existing',
+           'existing.jar', 'jars/existing.jar',
+           'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 128,
+           1, 1, 'ready', '[]', '{}', TRUE, 'active', 1,
+           '2026-08-09T00:00:00.000Z', '2026-08-09T00:00:00.000Z');
+        INSERT INTO case_definitions
+          (id, project_id, source_id, class_name, package_name, display_name, description,
+           tags_json, parameters_json, enabled, archived, revision, groups_json,
+           current_version, created_at, updated_at)
+        VALUES
+          ('case-existing', '00000000-0000-7000-8000-000000000001', 'source-existing',
+           'example.ExistingTest', 'example', 'ExistingTest', '', '[]', '{}', TRUE, FALSE, 1,
+           '[]', 1, '2026-08-09T00:00:00.000Z', '2026-08-09T00:00:00.000Z');
+        INSERT INTO case_versions
+          (id, case_definition_id, version, snapshot_json, change_reason, created_at)
+        VALUES
+          ('case-existing-v1', 'case-existing', 1, '{}', 'source.import',
+           '2026-08-09T00:00:00.000Z');
+      `);
+
+      await client.query(await readFile(resolve(migrationsFolder, sourceMigration), "utf8"));
+
+      await expect(
+        client.query("SELECT source_id FROM case_versions WHERE id = 'case-existing-v1'"),
+      ).resolves.toMatchObject({ rows: [{ source_id: "source-existing" }] });
+      await expect(
+        client.query("DELETE FROM case_sources WHERE id = 'source-existing'"),
+      ).rejects.toThrow(/case_versions_source_id_case_sources_id_fk/);
+    } finally {
+      await client.end();
+    }
+  });
 });

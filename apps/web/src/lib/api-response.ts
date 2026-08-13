@@ -187,6 +187,7 @@ function domainErrorStatus(code: string): number {
     code === "ROLE_IN_USE" ||
     code === "LAST_ADMIN_REQUIRED" ||
     code === "CASE_SOURCE_IN_USE" ||
+    code === "CASE_SOURCE_SYNC_CANDIDATE_IN_USE" ||
     code === "CASE_SOURCE_AUTHORITATIVE" ||
     code === "CASE_SOURCE_SYNC_STALE" ||
     code === "CASE_SOURCE_NOT_DELETABLE"

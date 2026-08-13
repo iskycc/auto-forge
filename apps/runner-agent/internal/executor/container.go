@@ -96,7 +96,9 @@ func containerCommand(
 		"--memory=" + strconv.FormatInt(spec.Limits.MemoryBytes, 10),
 		"--cpus=" + strconv.FormatFloat(float64(spec.Limits.CPUMillicores)/1000, 'f', 3, 64),
 		"--user=" + policy.User,
-		"--mount=type=bind,src=" + workspace + ",dst=/workspace,rw",
+		// --mount bind mounts are writable by default. The Docker/Podman long
+		// syntax accepts readonly/ro but not the -v-only bare rw option.
+		"--mount=type=bind,src=" + workspace + ",dst=/workspace",
 		"--workdir=" + workDirectory,
 		"--env-file=" + environmentFile,
 		"--tmpfs=/tmp:rw,noexec,nosuid,size=67108864",

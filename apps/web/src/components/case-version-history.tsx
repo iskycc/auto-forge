@@ -15,6 +15,7 @@ import { Button, Select } from "@/components/ui";
 
 const CHANGE_REASON_LABELS: Record<string, string> = {
   "source.import": "来源导入",
+  "source.sync": "权威来源同步",
   "manual.restore": "手动恢复",
 };
 
@@ -23,11 +24,13 @@ export function CaseVersionHistory({
   versions,
   currentVersion,
   canManage,
+  canReadSource,
 }: {
   caseDefinitionId: string;
   versions: CaseVersion[];
   currentVersion: number;
   canManage: boolean;
+  canReadSource: boolean;
 }) {
   const router = useRouter();
   const orderedVersions = useMemo(
@@ -157,7 +160,17 @@ export function CaseVersionHistory({
                       {snapshot ? (
                         <div className="version-snapshot-details">
                           <p>
-                            <strong>来源：</strong>
+                            <strong>JAR 来源：</strong>
+                            {canReadSource ? (
+                              <Link href={`/case-sources/${encodeURIComponent(version.sourceId)}`}>
+                                {version.sourceId}
+                              </Link>
+                            ) : (
+                              <code>{version.sourceId}</code>
+                            )}
+                          </p>
+                          <p>
+                            <strong>源码条目：</strong>
                             {snapshot.source?.entryPath ?? "字节码快照（无源码条目）"}
                           </p>
                           {snapshot.source ? (

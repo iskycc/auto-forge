@@ -878,7 +878,7 @@ function requirePermission(
   projectId?: string,
 ): void {
   if (!hasPermission(actor, permission, projectId)) {
-    throw new DomainError("FORBIDDEN", "当前身份没有执行此操作的权限。");
+    throw new DomainError("AUTH_FORBIDDEN", "当前身份没有执行此操作的权限。");
   }
 }
 

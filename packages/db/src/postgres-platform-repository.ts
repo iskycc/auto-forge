@@ -2,6 +2,7 @@ import type {
   CaseCatalogRepository,
   CaseListPage,
   CaseListQuery,
+  CaseSourceVersionMerge,
   CaseSuiteRepository,
   CopyCaseSuiteRecord,
   CreateCaseSuiteRecord,
@@ -157,11 +158,35 @@ function toCaseVersion(row: typeof pgCaseVersions.$inferSelect): CaseVersion {
   return {
     id: row.id,
     caseDefinitionId: row.caseDefinitionId,
+    sourceId: row.sourceId,
     version: row.version,
     snapshot: safeJson(row.snapshotJson),
     changeReason: row.changeReason,
     ...(row.createdBy ? { createdBy: row.createdBy } : {}),
     createdAt: row.createdAt,
+  };
+}
+
+function testMethodInsertValues(input: {
+  id: string;
+  caseDefinitionId: string;
+  method: TestNgClassCandidate["methods"][number];
+  createdAt: string;
+}) {
+  return {
+    id: input.id,
+    caseDefinitionId: input.caseDefinitionId,
+    methodName: input.method.methodName,
+    descriptor: input.method.descriptor,
+    enabled: input.method.enabled,
+    annotationSource: input.method.annotationSource,
+    groupsJson: JSON.stringify(input.method.groups),
+    description: input.method.description ?? null,
+    dataProvider: input.method.dataProvider ?? null,
+    dependsOnMethodsJson: JSON.stringify(input.method.dependsOnMethods),
+    dependsOnGroupsJson: JSON.stringify(input.method.dependsOnGroups),
+    priority: input.method.priority ?? null,
+    createdAt: input.createdAt,
   };
 }
 
@@ -464,6 +489,7 @@ export class PostgresCaseCatalogRepository implements CaseCatalogRepository {
         await transaction.insert(pgCaseVersions).values({
           id: importedCase.caseVersionId,
           caseDefinitionId: importedCase.caseDefinitionId,
+          sourceId: record.sourceId,
           version: 1,
           snapshotJson: JSON.stringify(candidate),
           ...(record.importedBy ? { createdBy: record.importedBy } : {}),
@@ -475,21 +501,12 @@ export class PostgresCaseCatalogRepository implements CaseCatalogRepository {
             importedCase.methods.map(({ methodId, methodIndex }) => {
               const method = candidate.methods[methodIndex];
               if (!method) throw new Error(`Missing imported method at index ${methodIndex}.`);
-              return {
+              return testMethodInsertValues({
                 id: methodId,
                 caseDefinitionId: importedCase.caseDefinitionId,
-                methodName: method.methodName,
-                descriptor: method.descriptor,
-                enabled: method.enabled,
-                annotationSource: method.annotationSource,
-                groupsJson: JSON.stringify(method.groups),
-                description: method.description ?? null,
-                dataProvider: method.dataProvider ?? null,
-                dependsOnMethodsJson: JSON.stringify(method.dependsOnMethods),
-                dependsOnGroupsJson: JSON.stringify(method.dependsOnGroups),
-                priority: method.priority ?? null,
+                method,
                 createdAt: record.importedAt,
-              };
+              });
             }),
           );
         }
@@ -640,6 +657,7 @@ export class PostgresCaseCatalogRepository implements CaseCatalogRepository {
     expectedRevision: number;
     versionId: string;
     version: number;
+    sourceId: string;
     snapshot: TestNgClassCandidate;
     changeReason: string;
     methodIds: string[];
@@ -657,6 +675,7 @@ export class PostgresCaseCatalogRepository implements CaseCatalogRepository {
           groupsJson: JSON.stringify(input.snapshot.groups),
           parametersJson: JSON.stringify(input.snapshot.parameters ?? {}),
           enabled: input.snapshot.enabled,
+          sourceId: input.sourceId,
           currentVersion: input.version,
           revision: sql`${pgCaseDefinitions.revision} + 1`,
           updatedBy: input.actorId,
@@ -686,26 +705,20 @@ export class PostgresCaseCatalogRepository implements CaseCatalogRepository {
         .where(eq(pgTestMethods.caseDefinitionId, input.caseDefinitionId));
       if (input.snapshot.methods.length > 0) {
         await transaction.insert(pgTestMethods).values(
-          input.snapshot.methods.map((method, index) => ({
-            id: input.methodIds[index]!,
-            caseDefinitionId: input.caseDefinitionId,
-            methodName: method.methodName,
-            descriptor: method.descriptor,
-            enabled: method.enabled,
-            annotationSource: method.annotationSource,
-            groupsJson: JSON.stringify(method.groups),
-            description: method.description ?? null,
-            dataProvider: method.dataProvider ?? null,
-            dependsOnMethodsJson: JSON.stringify(method.dependsOnMethods),
-            dependsOnGroupsJson: JSON.stringify(method.dependsOnGroups),
-            priority: method.priority ?? null,
-            createdAt: input.restoredAt,
-          })),
+          input.snapshot.methods.map((method, index) =>
+            testMethodInsertValues({
+              id: input.methodIds[index]!,
+              caseDefinitionId: input.caseDefinitionId,
+              method,
+              createdAt: input.restoredAt,
+            }),
+          ),
         );
       }
       await transaction.insert(pgCaseVersions).values({
         id: input.versionId,
         caseDefinitionId: input.caseDefinitionId,
+        sourceId: input.sourceId,
         version: input.version,
         snapshotJson: JSON.stringify(input.snapshot),
         createdBy: input.actorId,
@@ -829,14 +842,18 @@ export class PostgresCaseCatalogRepository implements CaseCatalogRepository {
         snapshotJson: pgCaseVersions.snapshotJson,
       })
       .from(pgCaseDefinitions)
-      .innerJoin(
-        pgCaseVersions,
+      .innerJoin(pgCaseVersions, eq(pgCaseVersions.caseDefinitionId, pgCaseDefinitions.id))
+      .where(
         and(
-          eq(pgCaseVersions.caseDefinitionId, pgCaseDefinitions.id),
-          eq(pgCaseVersions.version, pgCaseDefinitions.currentVersion),
+          eq(pgCaseVersions.sourceId, sourceId),
+          sql`${pgCaseVersions.version} = (
+            SELECT MAX(source_version.version)
+            FROM case_versions source_version
+            WHERE source_version.case_definition_id = ${pgCaseVersions.caseDefinitionId}
+              AND source_version.source_id = ${sourceId}
+          )`,
         ),
-      )
-      .where(eq(pgCaseDefinitions.sourceId, sourceId));
+      );
   }
 
   async createSourceComparison(
@@ -875,6 +892,8 @@ export class PostgresCaseCatalogRepository implements CaseCatalogRepository {
     sourceId: string;
     expectedRevision: number;
     updatedAt: string;
+    actorId?: string;
+    versionMerges?: CaseSourceVersionMerge[];
   }): Promise<CaseSource> {
     await this.ready();
     return this.handle.db.transaction(async (transaction) => {
@@ -884,6 +903,115 @@ export class PostgresCaseCatalogRepository implements CaseCatalogRepository {
         .where(eq(pgCaseSources.id, input.sourceId))
         .limit(1);
       if (!target) throw new DomainError("CASE_SOURCE_NOT_FOUND", "指定的 JAR 来源不存在。");
+      if (target.revision !== input.expectedRevision) {
+        return throwPostgresSourceConflict(transaction, input.sourceId);
+      }
+      const [current] = await transaction
+        .select({ id: pgCaseSources.id })
+        .from(pgCaseSources)
+        .where(
+          and(eq(pgCaseSources.projectId, target.projectId), eq(pgCaseSources.authoritative, true)),
+        )
+        .limit(1);
+      for (const merge of input.versionMerges ?? []) {
+        if (merge.methodIds.length !== merge.snapshot.methods.length) {
+          throw new Error("Source sync method identifiers must match the snapshot method count.");
+        }
+        const [currentDefinition] = await transaction
+          .select()
+          .from(pgCaseDefinitions)
+          .where(eq(pgCaseDefinitions.id, merge.currentCaseDefinitionId))
+          .limit(1);
+        const [candidateDefinition] = await transaction
+          .select()
+          .from(pgCaseDefinitions)
+          .where(eq(pgCaseDefinitions.id, merge.candidateCaseDefinitionId))
+          .limit(1);
+        const [currentSourceVersion] = current
+          ? await transaction
+              .select({ id: pgCaseVersions.id })
+              .from(pgCaseVersions)
+              .where(
+                and(
+                  eq(pgCaseVersions.caseDefinitionId, merge.currentCaseDefinitionId),
+                  eq(pgCaseVersions.sourceId, current.id),
+                ),
+              )
+              .orderBy(desc(pgCaseVersions.version))
+              .limit(1)
+          : [];
+        if (
+          !currentDefinition ||
+          !candidateDefinition ||
+          !currentSourceVersion ||
+          candidateDefinition.sourceId !== target.id ||
+          currentDefinition.className !== candidateDefinition.className ||
+          candidateDefinition.className !== merge.snapshot.className
+        ) {
+          throw new DomainError(
+            "CASE_SOURCE_SYNC_STALE",
+            "来源用例在确认同步前已变化，请重新对比。",
+          );
+        }
+        const [suiteReference, runReference] = await Promise.all([
+          transaction
+            .select({ value: count() })
+            .from(pgCaseSuiteItems)
+            .where(eq(pgCaseSuiteItems.caseDefinitionId, candidateDefinition.id)),
+          transaction
+            .select({ value: count() })
+            .from(pgExecutionRuns)
+            .where(eq(pgExecutionRuns.caseDefinitionId, candidateDefinition.id)),
+        ]);
+        if ((suiteReference[0]?.value ?? 0) > 0 || (runReference[0]?.value ?? 0) > 0) {
+          throw new DomainError(
+            "CASE_SOURCE_SYNC_CANDIDATE_IN_USE",
+            `候选来源中的 ${candidateDefinition.className} 已被任务或执行引用，不能合并到现有用例。`,
+          );
+        }
+
+        await transaction
+          .delete(pgCaseDefinitions)
+          .where(eq(pgCaseDefinitions.id, candidateDefinition.id));
+        const nextVersion = currentDefinition.currentVersion + 1;
+        await transaction
+          .update(pgCaseDefinitions)
+          .set({
+            sourceId: target.id,
+            groupsJson: JSON.stringify(merge.snapshot.groups),
+            parametersJson: JSON.stringify(merge.snapshot.parameters ?? {}),
+            currentVersion: nextVersion,
+            revision: sql`${pgCaseDefinitions.revision} + 1`,
+            ...(input.actorId ? { updatedBy: input.actorId } : {}),
+            updatedAt: input.updatedAt,
+          })
+          .where(eq(pgCaseDefinitions.id, currentDefinition.id));
+        await transaction
+          .delete(pgTestMethods)
+          .where(eq(pgTestMethods.caseDefinitionId, currentDefinition.id));
+        if (merge.snapshot.methods.length > 0) {
+          await transaction.insert(pgTestMethods).values(
+            merge.snapshot.methods.map((method, index) =>
+              testMethodInsertValues({
+                id: merge.methodIds[index]!,
+                caseDefinitionId: currentDefinition.id,
+                method,
+                createdAt: input.updatedAt,
+              }),
+            ),
+          );
+        }
+        await transaction.insert(pgCaseVersions).values({
+          id: merge.caseVersionId,
+          caseDefinitionId: currentDefinition.id,
+          sourceId: target.id,
+          version: nextVersion,
+          snapshotJson: JSON.stringify(merge.snapshot),
+          ...(input.actorId ? { createdBy: input.actorId } : {}),
+          changeReason: "source.sync",
+          createdAt: input.updatedAt,
+        });
+      }
       await transaction
         .update(pgCaseSources)
         .set({
@@ -940,21 +1068,32 @@ export class PostgresCaseCatalogRepository implements CaseCatalogRepository {
 
   async countSourceReferences(
     sourceId: string,
-  ): Promise<{ caseDefinitions: number; executionRuns: number }> {
+  ): Promise<{ caseDefinitions: number; caseVersions: number; executionRuns: number }> {
     await this.ready();
-    const [caseRows, runRows] = await Promise.all([
+    const [caseRows, versionRows, runRows] = await Promise.all([
       this.handle.db
         .select({ value: count() })
         .from(pgCaseDefinitions)
         .where(eq(pgCaseDefinitions.sourceId, sourceId)),
       this.handle.db
         .select({ value: count() })
+        .from(pgCaseVersions)
+        .where(eq(pgCaseVersions.sourceId, sourceId)),
+      this.handle.db
+        .select({ value: count() })
         .from(pgExecutionRuns)
-        .innerJoin(pgCaseDefinitions, eq(pgExecutionRuns.caseDefinitionId, pgCaseDefinitions.id))
-        .where(eq(pgCaseDefinitions.sourceId, sourceId)),
+        .innerJoin(
+          pgCaseVersions,
+          and(
+            eq(pgCaseVersions.caseDefinitionId, pgExecutionRuns.caseDefinitionId),
+            eq(pgCaseVersions.version, pgExecutionRuns.caseVersion),
+          ),
+        )
+        .where(eq(pgCaseVersions.sourceId, sourceId)),
     ]);
     return {
       caseDefinitions: caseRows[0]?.value ?? 0,
+      caseVersions: versionRows[0]?.value ?? 0,
       executionRuns: runRows[0]?.value ?? 0,
     };
   }

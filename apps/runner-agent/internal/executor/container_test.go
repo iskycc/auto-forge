@@ -58,11 +58,15 @@ func TestContainerCommandAppliesMandatoryIsolationFlags(t *testing.T) {
 		"--memory=268435456",
 		"--cpus=0.500",
 		"--user=10001:10001",
+		"--mount=type=bind,src=" + workspace + ",dst=/workspace",
 		"--tmpfs=/tmp:rw,noexec,nosuid,size=67108864",
 	} {
 		if !strings.Contains(joined, required) {
 			t.Fatalf("container arguments do not contain %q: %s", required, joined)
 		}
+	}
+	if strings.Contains(joined, "dst=/workspace,rw") {
+		t.Fatalf("container bind mount uses unsupported --mount rw syntax: %s", joined)
 	}
 	if strings.Contains(joined, "redacted-value") {
 		t.Fatal("secret environment value leaked into process arguments")

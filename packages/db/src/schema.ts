@@ -764,6 +764,9 @@ export const caseVersions = sqliteTable(
     caseDefinitionId: text("case_definition_id")
       .notNull()
       .references(() => caseDefinitions.id, { onDelete: "cascade" }),
+    sourceId: text("source_id")
+      .notNull()
+      .references(() => caseSources.id, { onDelete: "restrict" }),
     version: integer("version").notNull(),
     snapshotJson: text("snapshot_json").notNull(),
     createdBy: text("created_by").references(() => users.id, { onDelete: "set null" }),

@@ -43,7 +43,11 @@ function catalogFake(source: CaseSource | null) {
     getSourceComparison: vi.fn(async (): Promise<CaseSourceComparison | null> => null),
     promoteAuthoritativeSource: vi.fn(async () => sourceRecord()),
     updateSourceLifecycle: vi.fn(async () => sourceRecord()),
-    countSourceReferences: vi.fn(async () => ({ caseDefinitions: 0, executionRuns: 0 })),
+    countSourceReferences: vi.fn(async () => ({
+      caseDefinitions: 0,
+      caseVersions: 0,
+      executionRuns: 0,
+    })),
     enqueueSourceDeletion: vi.fn(async () => sourceRecord({ lifecycleStatus: "deleting" })),
     getCleanupJob: vi.fn(async () => null as CleanupJob | null),
     completeCleanupJob: vi.fn(async () => undefined),
@@ -303,6 +307,65 @@ describe("case source sync confirmation", () => {
       sourceId: "source-1",
       expectedRevision: 4,
       updatedAt: timestamp,
+      versionMerges: [],
+    });
+  });
+
+  it("creates a new immutable version for each unambiguous matching class", async () => {
+    const catalog = catalogFake(sourceRecord({ revision: 4 }));
+    catalog.getSourceComparison.mockResolvedValue(comparison);
+    catalog.getAuthoritativeSource.mockResolvedValue(
+      sourceRecord({ id: "source-current", authoritative: true }),
+    );
+    const snapshot = {
+      className: "com.example.SyncTest",
+      packageName: "com.example",
+      simpleName: "SyncTest",
+      enabled: true,
+      classLevelTest: false,
+      groups: ["nightly"],
+      methods: [
+        {
+          methodName: "runs",
+          descriptor: "()V",
+          enabled: true,
+          annotationSource: "method" as const,
+          groups: ["nightly"],
+          dependsOnMethods: [],
+          dependsOnGroups: [],
+        },
+      ],
+    };
+    catalog.listSourceCaseSnapshots.mockImplementation(async (sourceId: string) => [
+      {
+        caseDefinitionId: sourceId === "source-current" ? "case-current" : "case-candidate",
+        className: snapshot.className,
+        snapshotJson: JSON.stringify(snapshot),
+      },
+    ]);
+    const { service } = serviceWith(catalog);
+
+    await service.confirmSync(
+      "source-1",
+      { comparisonId: "comparison-1", expectedRevision: 4 },
+      undefined,
+      "actor-1",
+    );
+
+    expect(catalog.promoteAuthoritativeSource).toHaveBeenCalledWith({
+      sourceId: "source-1",
+      expectedRevision: 4,
+      updatedAt: timestamp,
+      actorId: "actor-1",
+      versionMerges: [
+        {
+          currentCaseDefinitionId: "case-current",
+          candidateCaseDefinitionId: "case-candidate",
+          caseVersionId: "generated-1",
+          snapshot,
+          methodIds: ["generated-2"],
+        },
+      ],
     });
   });
 });
@@ -334,13 +397,17 @@ describe("case source lifecycle and deletion", () => {
     ).rejects.toMatchObject({ code: "CASE_SOURCE_NOT_DELETABLE" });
 
     const referenced = catalogFake(sourceRecord());
-    referenced.countSourceReferences.mockResolvedValue({ caseDefinitions: 2, executionRuns: 5 });
+    referenced.countSourceReferences.mockResolvedValue({
+      caseDefinitions: 2,
+      caseVersions: 3,
+      executionRuns: 5,
+    });
     const inUse = serviceWith(referenced);
     await expect(
       inUse.service.deleteSource("source-1", { expectedRevision: 1 }),
     ).rejects.toMatchObject({
       code: "CASE_SOURCE_IN_USE",
-      details: { caseDefinitions: 2, executionRuns: 5 },
+      details: { caseDefinitions: 2, caseVersions: 3, executionRuns: 5 },
     });
     expect(referenced.enqueueSourceDeletion).not.toHaveBeenCalled();
   });

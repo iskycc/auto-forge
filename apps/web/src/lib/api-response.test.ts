@@ -77,6 +77,10 @@ describe("JAR upload request boundaries", () => {
     ).toBe(409);
   });
 
+  it("maps application authorization failures to HTTP 403", () => {
+    expect(apiErrorResponse(new DomainError("AUTH_FORBIDDEN", "Access denied.")).status).toBe(403);
+  });
+
   it("bounds chunked multipart bodies without trusting Content-Length", async () => {
     const boundary = "autoforge-test";
     const request = new Request("http://localhost/api/v1/case-sources/jar/inspect", {

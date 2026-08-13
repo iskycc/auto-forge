@@ -77,6 +77,7 @@ export class CaseDefinitionService {
       expectedRevision: definition.revision,
       versionId: this.ids.next(),
       version: definition.currentVersion + 1,
+      sourceId: caseVersion.sourceId,
       snapshot: snapshot.data,
       changeReason: "manual.restore",
       methodIds: snapshot.data.methods.map(() => this.ids.next()),

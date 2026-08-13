@@ -61,7 +61,8 @@ test("local user completes forced password change and self-service session lifec
 
   await login(page, username, replacementPassword);
   await expect(page.getByRole("link", { name: "用例库" })).toBeVisible();
-  await expect(page.getByRole("link", { name: "管理中心" })).toHaveCount(0);
+  const managementLink = page.getByRole("link", { name: "管理中心" });
+  await expect(managementLink).toHaveAttribute("href", "/settings/environments");
   await page.goto("/account/security");
   await expect(page.getByText("当前会话", { exact: true })).toBeVisible();
   page.once("dialog", (dialog) => dialog.accept());

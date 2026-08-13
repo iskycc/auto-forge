@@ -193,11 +193,11 @@ test("source comparison, promotion, archive recovery and guarded deletion are ob
   await page.getByRole("button", { name: "确认同步为权威来源" }).click();
   await expect(page.getByText("已切换为权威来源。")).toBeVisible();
 
-  const promoted = await browserJson<{ authoritative: boolean }>(
+  const promoted = await browserJson<{ source: { authoritative: boolean } }>(
     page,
     `/api/v1/case-sources/${candidate!.id}`,
   );
-  expect(promoted.body.authoritative).toBe(true);
+  expect(promoted.body.source.authoritative).toBe(true);
   const refreshedOriginal = await browserJson<{ source: { revision: number } }>(
     page,
     `/api/v1/case-sources/${original!.id}`,

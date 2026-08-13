@@ -22,6 +22,7 @@ describe("CaseDefinitionService", () => {
       getCaseVersion: vi.fn().mockResolvedValue({
         id: "version-1",
         caseDefinitionId: "case-1",
+        sourceId: "source-1",
         version: 1,
         snapshot: { className: 42 },
         changeReason: "source.import",

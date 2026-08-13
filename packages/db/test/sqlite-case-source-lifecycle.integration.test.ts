@@ -45,6 +45,21 @@ describe("SQLite case source lifecycle", () => {
       });
       expect(promoted.authoritative).toBe(true);
       expect((await catalog.getAuthoritativeSource(comparison.projectId))?.id).toBe("source-2");
+      const merged = await catalog.getCaseDefinition("source-1-case-1");
+      expect(merged).toMatchObject({
+        sourceId: "source-2",
+        currentVersion: 2,
+        groups: ["nightly"],
+      });
+      expect(await catalog.getCaseDefinition("source-2-case-1")).toBeNull();
+      expect(await catalog.listCaseVersions("source-1-case-1", 10)).toMatchObject([
+        { version: 2, sourceId: "source-2", changeReason: "source.sync" },
+        { version: 1, sourceId: "source-1", changeReason: "source.import" },
+      ]);
+      expect(await catalog.countSourceReferences("source-1")).toMatchObject({
+        caseDefinitions: 1,
+        caseVersions: 2,
+      });
 
       // 权威来源已翻转后，基于旧权威(source-1)的对比结果必须拒绝。
       const staleComparison = await service.compareSources("source-3");

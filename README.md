@@ -21,7 +21,7 @@ AutoForge 是一个面向自动化测试场景的用例工厂，用于统一管�
 - `CaseDefinition`、不可变 `CaseVersion`、测试方法契约及应用用例。
 - Drizzle ORM + SQLite/PostgreSQL 持久化，两种方言使用独立版本化迁移；SQLite 启用外键、WAL 与 busy timeout。
 - Lite 本地对象存储和 Full MinIO 对象存储：JAR 按内容摘要保存，页面只浏览 AutoForge 纳管的对象空间。
-- JAR 来源列表、持久化扫描预览和唯一权威全量来源设置；来源间目录对比展示新增/变化/移除/冲突用例并提供确认同步（保留语义，不自动禁用消失的用例），支持归档/恢复与守卫式删除，无引用 JAR 对象由可重试清理任务异步回收。生命周期语义见[用例来源生命周期](./docs/architecture/case-sources.md)。
+- JAR 来源列表、持久化扫描预览和唯一权威全量来源设置；来源间目录对比展示新增/变化/移除/冲突用例并提供确认同步：唯一同类用例沿用定义 ID 并生成指向候选 JAR 的不可变新版本，消失用例按保留语义不自动禁用，排队批次继续按已固化版本读取原 JAR。支持归档/恢复与守卫式删除，仍被历史版本引用的来源不可删除，无引用 JAR 对象由可重试清理任务异步回收。生命周期语义见[用例来源生命周期](./docs/architecture/case-sources.md)。
 - 用例勾选、用例任务创建、任务详情以及任务内用例新增/删除；任务支持重命名、描述、复制、归档、启停、版本/变更快照与修订号并发冲突保护，执行策略覆盖优先级、并发度、重试、排队/执行超时、Runner 标签选择器、参数模板与产物规则并在批次创建前逐项预检。
 - 用例定义支持展示名、描述、标签与启停编辑，版本历史可查看来源、创建人与变更原因，并允许从旧版本恢复生成新版本而不覆盖历史。
 - Runner Agent 注册、身份凭据落盘、周期心跳、在线/离线判定和执行机控制台；支持凭据轮换（旧凭据有明确失效窗口）、撤销、禁用、排空与注销，注销后活跃租约立即到期回收，撤销或注销后心跳、claim、上报与终端均被拒绝。
@@ -55,7 +55,7 @@ AutoForge 是一个面向自动化测试场景的用例工厂，用于统一管�
 
 导入过程只读取 JAR 的 ZIP 目录和 JVM class 文件，不通过 class loader 加载或执行用户字节码。首版识别 `org.testng.annotations.Test` 与 `Ignore` 的运行时注解：方法级 `@Test` 直接形成测试方法；类级 `@Test` 将类中的 public 方法视为测试方法。`groups`、`enabled`、`description`、`dataProvider`、依赖组/方法与 `priority` 会写入版本快照。根目录 `testng.xml` 的 suite/test 参数、include/exclude 组、package 与类/方法选择规则会参与发现；JAR 内父类的 TestNG 注解继承会被解析，JAR 外父类、`@Factory`/DataProvider 动态语义、嵌套 `testng.xml` 与 suite-files 引用产生有界用户可见警告；Multi-Release JAR 按目标 Java 版本选择 `META-INF/versions` class，未声明 `Multi-Release: true` 的版本化条目按 JVM 语义忽略并提示。
 
-映射规则为：一个 TestNG 测试类对应一个 `CaseDefinition`，每次导入形成不可变 `CaseVersion`，重载方法通过 JVM descriptor 区分。整个 JAR 以 SHA-256 去重；数据库目录和本地对象目录应作为同一备份集合。
+映射规则为：一个 TestNG 测试类对应一个 `CaseDefinition`；首次导入产生 v1，确认权威来源同步时，同类候选快照在原定义上形成新的不可变 `CaseVersion`。每个版本固化实际 JAR 来源，重载方法通过 JVM descriptor 区分。整个 JAR 按项目和 SHA-256 去重；数据库目录和本地对象目录应作为同一备份集合。
 
 当前扫描边界：
 

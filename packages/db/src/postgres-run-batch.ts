@@ -32,8 +32,8 @@ import { and, count, desc, eq, gt, gte, inArray, isNull, lt, lte, or, sql } from
 
 import type { PostgresDatabaseHandle } from "./postgres-database";
 import {
-  pgCaseDefinitions,
   pgCaseSources,
+  pgCaseVersions,
   pgExecutionRuns,
   pgAssignments,
   pgRunAttempts,
@@ -428,6 +428,7 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
           .returning({
             attemptCount: pgExecutionRuns.attemptCount,
             caseDefinitionId: pgExecutionRuns.caseDefinitionId,
+            caseVersion: pgExecutionRuns.caseVersion,
             className: pgExecutionRuns.className,
             parametersJson: pgExecutionRuns.parametersJson,
           });
@@ -438,9 +439,14 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
             sha256: pgCaseSources.sha256,
             sizeBytes: pgCaseSources.sizeBytes,
           })
-          .from(pgCaseDefinitions)
-          .innerJoin(pgCaseSources, eq(pgCaseSources.id, pgCaseDefinitions.sourceId))
-          .where(eq(pgCaseDefinitions.id, updatedRun.caseDefinitionId))
+          .from(pgCaseVersions)
+          .innerJoin(pgCaseSources, eq(pgCaseSources.id, pgCaseVersions.sourceId))
+          .where(
+            and(
+              eq(pgCaseVersions.caseDefinitionId, updatedRun.caseDefinitionId),
+              eq(pgCaseVersions.version, updatedRun.caseVersion),
+            ),
+          )
           .limit(1);
         if (!source) throw new Error("Cannot schedule a case without its source JAR.");
         await transaction.insert(pgRunAttempts).values({

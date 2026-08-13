@@ -142,7 +142,7 @@ async function addGroupMapping(
     has: page.getByRole("button", { name: "添加组映射" }),
   });
   await form.getByLabel("LDAP 组 DN").fill(groupDn);
-  await form.getByLabel("角色", { exact: true }).selectOption({ label: roleName });
+  await form.locator('select[name="roleId"]').selectOption({ label: roleName });
   await form
     .getByLabel("项目（系统角色留空）")
     .selectOption(projectName ? { label: projectName } : "");

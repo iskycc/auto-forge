@@ -15,7 +15,12 @@ export async function POST(request: Request, context: Context): Promise<NextResp
     const { sourceId } = await context.params;
     const services = await getPlatformServices();
     const projectIds = services.identityAccess.projectScope(identity, "case_source.manage");
-    const source = await services.caseSources.confirmSync(sourceId, input, projectIds);
+    const source = await services.caseSources.confirmSync(
+      sourceId,
+      input,
+      projectIds,
+      identity.user.id,
+    );
     await services.identityAccess.recordAuthorizedOperation(identity, {
       action: "case_source.sync",
       resourceType: "case_source",

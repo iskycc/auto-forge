@@ -21,6 +21,7 @@ export type CaseDefinition = {
 export type CaseVersion = {
   id: string;
   caseDefinitionId: string;
+  sourceId: string;
   version: number;
   snapshot: unknown;
   changeReason: string;

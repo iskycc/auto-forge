@@ -35,8 +35,8 @@ import { mapStoredRunner } from "./runner-mapper";
 import { decodeRunBatchCursor, encodeRunBatchCursor } from "./run-batch-list";
 import {
   assignments,
-  caseDefinitions,
   caseSources,
+  caseVersions,
   executionRuns,
   runAttempts,
   runBatchRunners,
@@ -383,6 +383,7 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
           .returning({
             attemptCount: executionRuns.attemptCount,
             caseDefinitionId: executionRuns.caseDefinitionId,
+            caseVersion: executionRuns.caseVersion,
             className: executionRuns.className,
             parametersJson: executionRuns.parametersJson,
           })
@@ -394,9 +395,14 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
             sha256: caseSources.sha256,
             sizeBytes: caseSources.sizeBytes,
           })
-          .from(caseDefinitions)
-          .innerJoin(caseSources, eq(caseSources.id, caseDefinitions.sourceId))
-          .where(eq(caseDefinitions.id, updatedRun.caseDefinitionId))
+          .from(caseVersions)
+          .innerJoin(caseSources, eq(caseSources.id, caseVersions.sourceId))
+          .where(
+            and(
+              eq(caseVersions.caseDefinitionId, updatedRun.caseDefinitionId),
+              eq(caseVersions.version, updatedRun.caseVersion),
+            ),
+          )
           .get();
         if (!source) throw new Error("Cannot schedule a case without its source JAR.");
         this.handle.db

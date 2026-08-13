@@ -556,6 +556,14 @@ export type ImportCatalogRecord = {
   cases: ImportCaseRecord[];
 };
 
+export type CaseSourceVersionMerge = {
+  currentCaseDefinitionId: string;
+  candidateCaseDefinitionId: string;
+  caseVersionId: string;
+  snapshot: TestNgClassCandidate;
+  methodIds: string[];
+};
+
 export type ExistingSource = {
   sourceId: string;
   classCount: number;
@@ -654,6 +662,7 @@ export interface CaseCatalogRepository {
     expectedRevision: number;
     versionId: string;
     version: number;
+    sourceId: string;
     snapshot: TestNgClassCandidate;
     changeReason: string;
     methodIds: string[];
@@ -670,7 +679,8 @@ export interface CaseCatalogRepository {
   setAuthoritativeSource(sourceId: string, projectId?: string): Promise<CaseSource>;
   getDashboardSummary(projectIds?: readonly string[]): Promise<DashboardSummary>;
   getAuthoritativeSource(projectId: string): Promise<CaseSource | null>;
-  // 返回来源当前版本用例的 (className, snapshotJson)，用于来源间目录对比。
+  // 返回该来源对每个用例提供的最新不可变版本，用于来源间目录对比；
+  // 不依赖 CaseDefinition 当前是否被手动恢复到其他来源版本。
   listSourceCaseSnapshots(
     sourceId: string,
   ): Promise<Array<{ caseDefinitionId: string; className: string; snapshotJson: string }>>;
@@ -681,6 +691,8 @@ export interface CaseCatalogRepository {
     sourceId: string;
     expectedRevision: number;
     updatedAt: string;
+    actorId?: string;
+    versionMerges?: CaseSourceVersionMerge[];
   }): Promise<CaseSource>;
   updateSourceLifecycle(input: {
     sourceId: string;
@@ -690,7 +702,7 @@ export interface CaseCatalogRepository {
   }): Promise<CaseSource>;
   countSourceReferences(
     sourceId: string,
-  ): Promise<{ caseDefinitions: number; executionRuns: number }>;
+  ): Promise<{ caseDefinitions: number; caseVersions: number; executionRuns: number }>;
   // 同事务把来源置为 deleting 并写入对象清理任务；修订冲突同上。
   enqueueSourceDeletion(input: {
     sourceId: string;

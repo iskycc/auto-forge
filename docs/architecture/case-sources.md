@@ -4,7 +4,7 @@
 
 ## 概念
 
-- 每个项目（project）最多一个**权威来源**，新批次的执行规格默认取权威来源的用例当前版本。
+- 每个项目（project）最多一个**权威来源**；`CaseVersion.sourceId` 固化该版本实际使用的 JAR，新批次创建时再把版本号写入 `ExecutionRun`。
 - 来源生命周期：`active` → `archived`（可恢复）或 `active` → `deleting`（终态）。
 - 对比结果（CaseSourceComparison）持久化在 `case_source_comparisons`，确认同步依赖它做一致性校验。
 
@@ -25,7 +25,13 @@
 - 对比之后权威来源发生变化（他人已切换）返回 `CASE_SOURCE_SYNC_STALE`（409），必须重新对比。
 - 修订号冲突返回 `CASE_SOURCE_REVISION_CONFLICT`（409）。
 
-同步采用**保留语义**：切换权威来源只影响后续执行选取的版本，候选中已消失的用例不会被自动禁用或归档，由用户按对比结果自行处理。
+同步采用**保留语义**：
+
+- 当前与候选中按 `className` 唯一匹配的用例沿用原 `CaseDefinition` ID，并从候选快照创建新的不可变 `CaseVersion`；展示名称、描述、标签、启停和任务关联保持不变。
+- 候选独有用例保留导入时创建的 `CaseDefinition` 与 v1；候选中消失的旧用例不会被自动禁用或归档，由用户按对比结果自行处理。
+- 冲突类不自动合并。若候选导入产生的临时定义已被任务或执行引用，确认同步返回 409，避免静默改写引用。
+- 每个版本记录实际 `sourceId`。批次创建时固化 `caseVersion`，分配时按 `(caseDefinitionId, caseVersion)` 解析 JAR，因此排队期间再次同步或手动恢复不会改变已创建批次的输入。
+- 原来源只要仍被历史版本引用就不能删除；可归档保留，以继续支持历史执行、重试和审计。
 
 ## 归档与恢复
 

@@ -29,7 +29,25 @@ export async function ensureAdministrator(page: Page): Promise<void> {
     await page.getByLabel("显示名称").fill("E2E Administrator");
     await page.getByLabel("管理员密码").fill(E2E_ADMIN_PASSWORD);
     await page.getByRole("button", { name: "创建系统管理员" }).click();
-    await expect(page).toHaveURL(/\/$/, { timeout: 20_000 });
+    // Several spec files share one deployment and can all observe
+    // setupRequired=true before the first bootstrap transaction commits. The
+    // winner receives a session and navigates home; losers receive the
+    // expected bootstrap conflict and must log in with the account that now
+    // exists instead of waiting forever on /setup.
+    await expect
+      .poll(
+        async () => {
+          if (new URL(page.url()).pathname !== "/setup") return "navigated";
+          const current = await page.request.get("/api/v1/auth/setup-status");
+          const currentStatus = (await current.json()) as { setupRequired?: unknown };
+          return currentStatus.setupRequired === false ? "completed-by-peer" : "pending";
+        },
+        { timeout: 20_000, intervals: [100, 250, 500] },
+      )
+      .not.toBe("pending");
+    if (new URL(page.url()).pathname === "/setup") {
+      await login(page, E2E_ADMIN_USERNAME, E2E_ADMIN_PASSWORD);
+    }
     await expectAdministratorShell(page);
     return;
   }

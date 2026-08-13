@@ -296,6 +296,9 @@ export const pgCaseVersions = pgTable(
     caseDefinitionId: text("case_definition_id")
       .notNull()
       .references(() => pgCaseDefinitions.id, { onDelete: "cascade" }),
+    sourceId: text("source_id")
+      .notNull()
+      .references(() => pgCaseSources.id, { onDelete: "restrict" }),
     version: integer("version").notNull(),
     snapshotJson: text("snapshot_json").notNull(),
     createdBy: text("created_by"),

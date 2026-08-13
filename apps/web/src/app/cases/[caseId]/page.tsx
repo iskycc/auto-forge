@@ -41,6 +41,7 @@ export default async function CaseDetailPage({ params }: CaseDetailPageProps) {
   }
   const canManage = hasPermission(identity, "case.manage", definition.projectId);
   const canRun = hasPermission(identity, "run.create", definition.projectId);
+  const canReadSource = hasPermission(identity, "case_source.read", definition.projectId);
   const sourceRecord = await services.caseSources.get(definition.sourceId, projectIds);
   const executable = sourceRecord.inspection.executable !== false;
   const runners = canRun && executable ? await services.runnerControl.list(200) : [];
@@ -206,6 +207,7 @@ export default async function CaseDetailPage({ params }: CaseDetailPageProps) {
           versions={versions}
           currentVersion={definition.currentVersion}
           canManage={canManage}
+          canReadSource={canReadSource}
         />
       </section>
     </div>

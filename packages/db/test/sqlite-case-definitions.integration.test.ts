@@ -148,6 +148,7 @@ describe("CaseDefinitionService with SQLite catalog", () => {
         expectedRevision: 2,
         versionId: "case-version-2",
         version: 2,
+        sourceId: "source-1",
         snapshot: {
           ...importedCandidate,
           enabled: true,

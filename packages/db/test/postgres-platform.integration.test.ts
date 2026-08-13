@@ -786,6 +786,7 @@ describe.skipIf(!connectionString)("PostgreSQL platform repositories", () => {
         expectedRevision: 2,
         versionId: randomUUID(),
         version: 2,
+        sourceId,
         snapshot: { ...postgresCaseCandidate(), groups: ["smoke", "nightly"] },
         changeReason: "manual.restore",
         methodIds: [randomUUID()],
@@ -1034,6 +1035,21 @@ describe.skipIf(!connectionString)("PostgreSQL platform repositories", () => {
       expect((await catalog.getAuthoritativeSource(promoted.projectId))?.id).toBe(
         candidateSourceId,
       );
+      const synchronizedCases = await catalog.listCases({
+        query: "example.PgKept",
+        limit: 10,
+      });
+      expect(synchronizedCases.items).toHaveLength(1);
+      const synchronizedCase = synchronizedCases.items[0]!;
+      expect(synchronizedCase).toMatchObject({
+        sourceId: candidateSourceId,
+        currentVersion: 2,
+        groups: ["nightly"],
+      });
+      expect(await catalog.listCaseVersions(synchronizedCase.id, 10)).toMatchObject([
+        { version: 2, sourceId: candidateSourceId, changeReason: "source.sync" },
+        { version: 1, sourceId: currentSourceId, changeReason: "source.import" },
+      ]);
 
       const staleComparison = await service.compareSources(unreferencedSourceId);
       await catalog.setAuthoritativeSource(currentSourceId);
