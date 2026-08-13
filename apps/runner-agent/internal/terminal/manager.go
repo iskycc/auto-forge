@@ -234,10 +234,10 @@ func (manager *Manager) wait(active *session, exited func(Exit)) {
 	result := Exit{}
 	var exitError *exec.ExitError
 	if errors.As(err, &exitError) {
-		code := exitError.ExitCode()
-		result.Code = &code
 		if status, ok := exitError.Sys().(syscall.WaitStatus); ok && status.Signaled() {
 			result.Signal = status.Signal().String()
+		} else if code := exitError.ExitCode(); code >= 0 {
+			result.Code = &code
 		}
 	} else if err == nil {
 		code := 0

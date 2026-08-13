@@ -98,7 +98,10 @@ func TestManagerCloseTerminatesBackgroundProcessGroups(t *testing.T) {
 	childPID := waitForChildPID(t, childPIDPath)
 	manager.Close("background-session")
 	select {
-	case <-exited:
+	case result := <-exited:
+		if result.Code != nil || result.Signal == "" {
+			t.Fatalf("signal-terminated exit result = %#v", result)
+		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("terminal shell did not exit after Close()")
 	}
