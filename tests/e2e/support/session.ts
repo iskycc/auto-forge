@@ -17,7 +17,9 @@ export async function ensureAdministrator(page: Page): Promise<void> {
     await page
       .getByLabel("一次性管理员引导令牌")
       .fill(requiredEnvironment("E2E_ADMIN_BOOTSTRAP_TOKEN"));
-    await page.getByLabel("用户名", { exact: true }).fill(E2E_ADMIN_USERNAME);
+    // The setup labels embed their hint <small> in the accessible name, so
+    // exact matching fails here; "用户名" is unique on this page.
+    await page.getByLabel("用户名").fill(E2E_ADMIN_USERNAME);
     await page.getByLabel("显示名称").fill("E2E Administrator");
     await page.getByLabel("管理员密码").fill(E2E_ADMIN_PASSWORD);
     await page.getByRole("button", { name: "创建系统管理员" }).click();
