@@ -257,6 +257,10 @@ run_migration() {
 }
 
 initialize_current_acceptance_platform() {
+  # Create the bind source as the runner user. If Docker creates a missing
+  # source directory, it is owned by root and the non-root release container
+  # cannot initialize /var/lib/autoforge.
+  mkdir -p "${current_data}"
   run_migration "${current_image}" "${current_data}"
   node --input-type=module - "${current_data}" <<'NODE'
 import { PlatformConfigurationStore } from "./packages/platform-config/src/platform-configuration.ts";

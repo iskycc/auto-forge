@@ -4,7 +4,7 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
-## 0.4.1 - 2026-08-14
+## 0.4.2 - 2026-08-14
 
 ### Added
 
@@ -58,6 +58,8 @@ and known limitations.
 
 ### Fixed
 
+- Create the immutable Release acceptance data directory as the non-root runner before mounting it
+  into the migration container, preserving the production image's non-root write-permission check.
 - Pin the production PostCSS dependency chain to `nanoid` 3.3.18, the first patched 3.x release for
   `GHSA-2v37-7h3g-55p8`, and keep the version locked for offline builds and SBOM generation.
 - Initialize the immutable Release acceptance fixture with a bounded aggregate login allowance so its
@@ -88,10 +90,10 @@ and known limitations.
 
 - Rebuild the four immutable backend variants with embedded amd64/arm64 Agents, both offline
   Java/TestNG Runner toolchains, SPDX SBOMs, the deployment bundle, signed checksums, release manifest
-  and provenance for `0.4.1`.
+  and provenance for `0.4.2`.
 - No new runtime CDN, telemetry service or automatically downloaded dependency is introduced.
-- The signed `v0.4.0` candidate did not pass Gate E and was not published; `v0.4.1` rebuilds the full
-  immutable asset set from the corrected acceptance revision.
+- The signed `v0.4.0` and `v0.4.1` candidates did not pass Gate E and were not published; `v0.4.2`
+  rebuilds the full immutable asset set from the corrected acceptance revision.
 
 ### Known limitations
 
