@@ -233,9 +233,8 @@ public class MixedVisibleTest {
 
   await page.goto("/objects");
   const checkoutSourceRow = page.getByRole("row", { name: /checkout-tests\.jar/ });
-  await checkoutSourceRow.getByRole("link", { name: "预览" }).click();
-  await page.getByRole("button", { name: "设为全量来源" }).click();
-  await expect(page.getByRole("button", { name: "当前全量来源" })).toBeVisible();
+  await checkoutSourceRow.getByRole("button", { name: "设为全量来源" }).click();
+  await expect(checkoutSourceRow.getByRole("button", { name: "当前全量来源" })).toBeVisible();
 
   await page.goto("/cases/import");
   await page.locator('input[type="file"]').setInputFiles({
@@ -284,13 +283,16 @@ public class MixedVisibleTest {
   await page.goto("/objects");
   const checkoutV2SourceRow = page.getByRole("row", { name: /checkout-tests-v2\.jar/ });
   await checkoutV2SourceRow.getByRole("link", { name: "预览" }).click();
+  await expect(page.getByRole("heading", { name: "checkout-tests-v2.jar" })).toBeVisible();
   await page.getByRole("button", { name: "对比权威来源" }).click();
   await expect(page.getByText(/对比结果：新增 0、变更 1、消失 0、冲突 0/)).toBeVisible();
   await page.getByRole("button", { name: "确认同步为权威来源" }).click();
   await expect(page.getByText(/已同步为权威来源；匹配用例已生成不可变版本/)).toBeVisible();
   await page.goto(checkoutCaseUrl);
   await expect(page.getByText("版本历史（2）")).toBeVisible();
-  await expect(page.getByText(/方法(?:新增|移除)：refund/)).toBeVisible();
+  await expect(
+    page.locator(".version-diff-list").getByText(/方法(?:新增|移除)：refund/),
+  ).toBeVisible();
   page.once("dialog", (dialog) => dialog.accept());
   await page.getByRole("button", { name: "从该版本创建" }).last().click();
   await expect(page.getByText("版本历史（3）")).toBeVisible({ timeout: 20_000 });

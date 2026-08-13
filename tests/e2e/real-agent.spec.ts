@@ -280,7 +280,7 @@ async function exerciseRealTerminal(page: Page, agent: AgentProcess): Promise<vo
 async function sendTerminalInput(page: Page, command: string): Promise<void> {
   const input = page.locator(".terminal-window .xterm-helper-textarea");
   await expect(input).toBeFocused();
-  await input.pressSequentially(command);
+  await page.keyboard.insertText(command);
   await input.press("Enter");
 }
 
