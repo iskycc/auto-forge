@@ -25,7 +25,7 @@ test("authenticates and synchronizes against real private-CA LDAP", async ({ bro
 
   const ldapsContext = await loginWithLdap(browser, "alice", directoryPassword);
   const ldapsPage = ldapsContext.pages()[0]!;
-  await expect(ldapsPage.getByRole("link", { name: "用例库" })).toBeVisible();
+  await expect(ldapsPage.getByRole("link", { name: "用例库", exact: true })).toBeVisible();
   await expect(ldapsPage.getByRole("link", { name: "安全审计" })).toBeVisible();
   await ldapsPage.goto("/account/security");
   await expect(ldapsPage.getByText("LDAP 账号密码由目录服务管理", { exact: false })).toBeVisible();
