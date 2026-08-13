@@ -6,6 +6,7 @@ import { resolve } from "node:path";
 import WebSocket from "ws";
 
 import { buildClassFile } from "../../packages/testng-discovery/test/class-fixture";
+import { DEFAULT_PROJECT_ID } from "@autoforge/domain";
 import { freshRunnerBootstrapToken } from "./support/runner-bootstrap";
 import {
   appAlert,
@@ -130,7 +131,7 @@ public class MixedVisibleTest {
   );
   await expect(page.getByText("E2E Administrator", { exact: true })).toBeVisible();
 
-  await page.goto("/cases/import");
+  await page.goto(`/cases/import?projectId=${encodeURIComponent(DEFAULT_PROJECT_ID)}`);
   await expect(page.getByRole("heading", { name: "导入 TestNG JAR" })).toBeVisible();
   await expect(page.getByRole("link", { name: "管理中心 → 平台配置" })).toBeVisible();
   await expectUiConsistency(page);
@@ -243,12 +244,12 @@ public class MixedVisibleTest {
   await expectUiConsistency(page);
   const checkoutCaseUrl = page.url();
 
-  await page.goto("/objects");
+  await page.goto(`/objects?projectId=${encodeURIComponent(DEFAULT_PROJECT_ID)}`);
   const checkoutSourceRow = page.getByRole("row", { name: /checkout-tests\.jar/ });
   await checkoutSourceRow.getByRole("button", { name: "设为全量来源" }).click();
   await expect(checkoutSourceRow.getByRole("button", { name: "当前全量来源" })).toBeVisible();
 
-  await page.goto("/cases/import");
+  await page.goto(`/cases/import?projectId=${encodeURIComponent(DEFAULT_PROJECT_ID)}`);
   await page.locator('input[type="file"]').setInputFiles({
     name: "mixed-visible-tests.jar",
     mimeType: "application/java-archive",
@@ -262,7 +263,7 @@ public class MixedVisibleTest {
   await page.getByRole("button", { name: "确认导入" }).click();
   await expect(page.locator(".alert-success")).toContainText("已导入", { timeout: 60_000 });
 
-  await page.goto("/cases/import");
+  await page.goto(`/cases/import?projectId=${encodeURIComponent(DEFAULT_PROJECT_ID)}`);
   await page.locator('input[type="file"]').setInputFiles({
     name: "mixed-visible-tests-copy.jar",
     mimeType: "application/java-archive",
@@ -280,7 +281,7 @@ public class MixedVisibleTest {
   );
   await expect(page.getByRole("button", { name: "立即执行" })).toBeVisible();
 
-  await page.goto("/cases/import");
+  await page.goto(`/cases/import?projectId=${encodeURIComponent(DEFAULT_PROJECT_ID)}`);
   await page.locator('input[type="file"]').setInputFiles({
     name: "checkout-tests-v2.jar",
     mimeType: "application/java-archive",
@@ -292,7 +293,7 @@ public class MixedVisibleTest {
   await expect(page.getByRole("status")).toContainText(/已导入|已返回现有用例/, {
     timeout: 60_000,
   });
-  await page.goto("/objects");
+  await page.goto(`/objects?projectId=${encodeURIComponent(DEFAULT_PROJECT_ID)}`);
   const checkoutV2SourceRow = page.getByRole("row", { name: /checkout-tests-v2\.jar/ });
   await checkoutV2SourceRow.getByRole("link", { name: "预览" }).click();
   await expect(page.getByRole("heading", { name: "checkout-tests-v2.jar" })).toBeVisible();
@@ -309,7 +310,7 @@ public class MixedVisibleTest {
   await page.getByRole("button", { name: "从该版本创建" }).last().click();
   await expect(page.getByText("版本历史（3）")).toBeVisible({ timeout: 20_000 });
 
-  await page.goto("/case-suites");
+  await page.goto(`/case-suites?projectId=${encodeURIComponent(DEFAULT_PROJECT_ID)}`);
   await page.getByLabel("任务名称").fill("每日冒烟测试");
   await page.getByLabel("说明").fill("E2E 创建的可复用任务");
   await page.getByRole("button", { name: "创建任务" }).click();
@@ -327,7 +328,7 @@ public class MixedVisibleTest {
   await expect(page.getByRole("option", { name: /每日冒烟测试/ })).toBeFocused();
   await expectUiConsistency(page);
 
-  await page.goto("/cases");
+  await page.goto(`/cases?projectId=${encodeURIComponent(DEFAULT_PROJECT_ID)}`);
   await page.getByLabel("选择 CheckoutTest").check();
   await page.getByLabel("目标用例任务").selectOption(dailySuiteId);
   await page.getByRole("button", { name: "加入任务" }).click();
@@ -339,7 +340,7 @@ public class MixedVisibleTest {
   await page.getByRole("button", { name: "移除" }).click();
   await expect(page.getByText("任务中还没有用例")).toBeVisible({ timeout: 20_000 });
 
-  await page.goto("/objects");
+  await page.goto(`/objects?projectId=${encodeURIComponent(DEFAULT_PROJECT_ID)}`);
   await expect(page.getByText("checkout-tests-v2.jar")).toBeVisible();
   await expectUiConsistency(page);
   await page
@@ -393,7 +394,7 @@ public class MixedVisibleTest {
   const heartbeatResult = (await heartbeat.json()) as { terminalConnectionToken: string };
   expect(heartbeatResult.terminalConnectionToken).toBeTruthy();
 
-  await page.goto("/cases");
+  await page.goto(`/cases?projectId=${encodeURIComponent(DEFAULT_PROJECT_ID)}`);
   await page.getByLabel("选择 CheckoutTest").check();
   await page.getByLabel("目标用例任务").selectOption(dailySuiteId);
   await page.getByRole("button", { name: "加入任务" }).click();
@@ -761,7 +762,7 @@ public class MixedVisibleTest {
   ).toBeVisible();
   await page.getByRole("button", { name: "关闭通知" }).click();
 
-  await page.goto("/cases/import");
+  await page.goto(`/cases/import?projectId=${encodeURIComponent(DEFAULT_PROJECT_ID)}`);
   await page.locator('input[type="file"]').setInputFiles({
     name: "source-visible-tests-sources.jar",
     mimeType: "application/java-archive",
