@@ -71,7 +71,7 @@ test("case metadata, immutable versions and suite policy survive lifecycle chang
   await page.getByRole("button", { name: "对比权威来源" }).click();
   await expect(page.getByText(/对比结果：新增 0、变更 1、消失 0、冲突 0/)).toBeVisible();
   await page.getByRole("button", { name: "确认同步为权威来源" }).click();
-  await expect(page.getByText("已切换为权威来源。")).toBeVisible();
+  await expect(page.getByText(/已同步为权威来源；匹配用例已生成不可变版本/)).toBeVisible();
 
   await page.goto(`/cases/${encodeURIComponent(definition!.id)}`);
   await expect(page.getByRole("heading", { name: `Lifecycle display ${suffix}` })).toBeVisible();
@@ -191,7 +191,7 @@ test("source comparison, promotion, archive recovery and guarded deletion are ob
   await page.getByRole("button", { name: "对比权威来源" }).click();
   await expect(page.getByText(/对比结果：新增 0、变更 1、消失 0、冲突 0/)).toBeVisible();
   await page.getByRole("button", { name: "确认同步为权威来源" }).click();
-  await expect(page.getByText("已切换为权威来源。")).toBeVisible();
+  await expect(page.getByText(/已同步为权威来源；匹配用例已生成不可变版本/)).toBeVisible();
 
   const promoted = await browserJson<{ source: { authoritative: boolean } }>(
     page,

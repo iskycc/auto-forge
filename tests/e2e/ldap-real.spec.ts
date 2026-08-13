@@ -28,7 +28,7 @@ test("authenticates and synchronizes against real private-CA LDAP", async ({ bro
   await expect(ldapsPage.getByRole("link", { name: "用例库" })).toBeVisible();
   await expect(ldapsPage.getByRole("link", { name: "安全审计" })).toBeVisible();
   await ldapsPage.goto("/account/security");
-  await expect(ldapsPage.getByText("密码由 LDAP 目录管理")).toBeVisible();
+  await expect(ldapsPage.getByText("LDAP 账号密码由目录服务管理", { exact: false })).toBeVisible();
   await expect(ldapsPage.getByRole("button", { name: "修改密码并重新登录" })).toHaveCount(0);
 
   await configureDirectory(page, caPem, "starttls");

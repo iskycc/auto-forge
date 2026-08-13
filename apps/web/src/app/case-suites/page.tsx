@@ -3,7 +3,7 @@ import { Layers3 } from "lucide-react";
 import { CaseSuiteManager } from "@/components/case-suite-manager";
 import { getPlatformServices } from "@/lib/services";
 import { requireAuthorizedPageProjectScope, requirePageProjectScope } from "@/lib/auth";
-import { hasPermission } from "@autoforge/domain";
+import { DEFAULT_PROJECT_ID, hasPermission } from "@autoforge/domain";
 
 export const dynamic = "force-dynamic";
 
@@ -15,7 +15,7 @@ export default async function CaseSuitesPage({
   const { identity, projectIds } = await requirePageProjectScope("case_suite.read");
   const requested = (await searchParams).projectId;
   const requestedProjectId = (Array.isArray(requested) ? requested[0] : requested)?.trim();
-  const selectedProjectId = requestedProjectId ?? projectIds?.[0];
+  const selectedProjectId = requestedProjectId ?? projectIds?.[0] ?? DEFAULT_PROJECT_ID;
   const effectiveProjectIds = requireAuthorizedPageProjectScope(
     identity,
     "case_suite.read",
@@ -39,10 +39,7 @@ export default async function CaseSuitesPage({
         </span>
       </section>
       <CaseSuiteManager
-        canManage={
-          selectedProjectId !== undefined &&
-          hasPermission(identity, "case_suite.manage", selectedProjectId)
-        }
+        canManage={hasPermission(identity, "case_suite.manage", selectedProjectId)}
         initialSuites={suites}
         projectId={selectedProjectId}
         projects={projects
