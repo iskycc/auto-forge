@@ -167,6 +167,7 @@ export function RunBatchPlanner({
           <label className="field-stack">
             <span>用例任务</span>
             <Select
+              aria-label="执行用例任务"
               value={suiteId}
               onChange={(event) => {
                 setSuiteId(event.target.value);

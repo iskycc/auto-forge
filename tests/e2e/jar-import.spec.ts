@@ -400,7 +400,7 @@ public class MixedVisibleTest {
   await expect(page.getByRole("status")).toContainText("已将 1 个用例加入任务");
 
   await page.goto("/run-batches");
-  await page.getByLabel("用例任务").selectOption(dailySuiteId);
+  await page.getByLabel("执行用例任务").selectOption(dailySuiteId);
   const runnerChoice = page.locator(".runner-choice").filter({ hasText: "E2E Runner" });
   await runnerChoice.locator('input[type="checkbox"]').check();
   await page.getByLabel("失败用例重跑次数").selectOption("2");
@@ -590,7 +590,7 @@ public class MixedVisibleTest {
   await expectUiConsistency(page);
 
   await page.goto("/run-batches");
-  await page.getByLabel("用例任务").selectOption(dailySuiteId);
+  await page.getByLabel("执行用例任务").selectOption(dailySuiteId);
   const cancellationRunner = page.locator(".runner-choice").filter({ hasText: "E2E Runner" });
   await cancellationRunner.locator('input[type="checkbox"]').check();
   const cancellationBatchResponse = page.waitForResponse(
