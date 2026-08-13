@@ -169,7 +169,8 @@ run_network_blocked_browser_flow() {
     exec pnpm exec playwright test tests/e2e/real-agent.spec.ts
   '
 
-  if unshare --user --map-root-user --net true >/dev/null 2>&1; then
+  if unshare --user --map-root-user --net bash -Eeuo pipefail -c \
+    'ip link set lo up' >/dev/null 2>&1; then
     unshare --user --map-root-user --net bash -Eeuo pipefail -c "${acceptance_script}"
     return
   fi

@@ -158,6 +158,7 @@ start_isolated_services() {
     --name "${web_container}" \
     --network "${network_name}" \
     --publish 127.0.0.1:3101:3000 \
+    --env NODE_ENV="production" \
     --tmpfs /tmp:rw,noexec,nosuid,size=64m \
     --user "$(id -u):$(id -g)" \
     --workdir /workspace \

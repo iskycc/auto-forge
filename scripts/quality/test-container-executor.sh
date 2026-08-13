@@ -213,7 +213,7 @@ run_network_blocked_browser_flow() {
   '
 
   if unshare --user --map-root-user --net bash -Eeuo pipefail -c \
-    'docker info >/dev/null && true' >/dev/null 2>&1; then
+    'ip link set lo up && docker info >/dev/null' >/dev/null 2>&1; then
     unshare --user --map-root-user --net bash -Eeuo pipefail -c "${acceptance_script}"
     return
   fi

@@ -80,6 +80,7 @@ start_services() {
     --network "${network_name}" \
     --publish 127.0.0.1:3102:3000 \
     --publish 127.0.0.1:2222:22 \
+    --env NODE_ENV="production" \
     --tmpfs /tmp:rw,noexec,nosuid,size=64m \
     --user "$(id -u):$(id -g)" \
     --workdir /workspace \

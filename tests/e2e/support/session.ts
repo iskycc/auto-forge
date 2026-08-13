@@ -7,6 +7,10 @@ type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string
 
 export async function ensureAdministrator(page: Page): Promise<void> {
   await page.goto("/login");
+  // /login answers 200 and finishes its redirect to /setup client-side while
+  // setup is still required; wait for the final URL before branching on it,
+  // otherwise the follow-up navigation races that in-flight redirect.
+  await page.waitForURL(/\/(login|setup)$/, { timeout: 20_000 });
   if (new URL(page.url()).pathname === "/setup") {
     await page
       .getByLabel("一次性管理员引导令牌")
