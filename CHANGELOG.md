@@ -4,7 +4,7 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
-## 0.4.0 - 2026-08-14
+## 0.4.1 - 2026-08-14
 
 ### Added
 
@@ -58,6 +58,9 @@ and known limitations.
 
 ### Fixed
 
+- Initialize the immutable Release acceptance fixture with a bounded aggregate login allowance so its
+  deliberate account-lock checks do not exhaust the shared container-address limiter; production
+  installations retain the secure default of 10 login attempts per 15-minute window.
 - Reload the server-rendered root layout after login, initial administrator creation and logout so the
   authenticated home page always remains inside the same navigation shell as the other console pages.
 - Keep API uploads outside the Next.js page proxy's 10 MiB request-body limit, bound both declared and
@@ -83,8 +86,10 @@ and known limitations.
 
 - Rebuild the four immutable backend variants with embedded amd64/arm64 Agents, both offline
   Java/TestNG Runner toolchains, SPDX SBOMs, the deployment bundle, signed checksums, release manifest
-  and provenance for `0.4.0`.
+  and provenance for `0.4.1`.
 - No new runtime CDN, telemetry service or automatically downloaded dependency is introduced.
+- The signed `v0.4.0` candidate did not pass Gate E and was not published; `v0.4.1` rebuilds the full
+  immutable asset set from the corrected acceptance revision.
 
 ### Known limitations
 

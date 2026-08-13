@@ -256,6 +256,30 @@ run_migration() {
     "${image}" node apps/web/dist-server/server/migrate.js --data-dir=/var/lib/autoforge
 }
 
+initialize_current_acceptance_platform() {
+  run_migration "${current_image}" "${current_data}"
+  node --input-type=module - "${current_data}" <<'NODE'
+import { PlatformConfigurationStore } from "./packages/platform-config/src/platform-configuration.ts";
+
+const [dataDirectory] = process.argv.slice(2);
+const store = new PlatformConfigurationStore(dataDirectory);
+const current = store.read();
+store.replace(
+  {
+    ...current,
+    limits: {
+      ...current.limits,
+      // All browser scenarios share one isolated bridge address. Keep the
+      // aggregate address limiter above their bounded login count while the
+      // identity scenario still exercises the per-user lock threshold.
+      authLoginAttemptsPerWindow: 500,
+    },
+  },
+  current.revision,
+);
+NODE
+}
+
 inject_migration_integrity_failure() {
   local data_directory="${1:?data directory is required}"
   docker run --rm --network none --pull never \
@@ -325,6 +349,7 @@ current_image="$(load_release_image "${current_version}" "${current_release_dire
 previous_image="$(load_release_image "${previous_version}" "${previous_release_directory}")"
 docker image inspect "${ldap_image}" >/dev/null
 docker network create --internal "${network_name}" >/dev/null
+initialize_current_acceptance_platform
 current_base_url="$(start_platform "${current_container}" "${current_image}" "${current_data}")"
 docker exec "${current_container}" node -e \
   "fetch('https://example.com',{signal:AbortSignal.timeout(3000)}).then(()=>process.exit(1)).catch(()=>process.exit(0))"
