@@ -723,6 +723,17 @@ public class MixedVisibleTest {
   await expectUiConsistency(page);
   await captureUi(page, "dashboard");
 
+  await expect
+    .poll(
+      async () => {
+        const response = await page.request.get("/api/v1/notifications?unreadOnly=false&limit=30");
+        if (!response.ok()) return false;
+        const body = (await response.json()) as { items: Array<{ title: string }> };
+        return body.items.some((notification) => notification.title === "执行批次已完成");
+      },
+      { timeout: 40_000, intervals: [500, 1_000] },
+    )
+    .toBe(true);
   await page.getByRole("button", { name: "通知" }).click();
   await expect(page.getByText("通知中心")).toBeVisible();
   const completionNotification = page
