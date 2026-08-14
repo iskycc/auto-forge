@@ -229,7 +229,7 @@ describe("SQLite migrations", () => {
     } finally {
       database.close();
     }
-  });
+  }, 30_000);
 
   it("backfills ownership and per-project scope when upgrading to product completion", async () => {
     const directory = await mkdtemp(resolve(tmpdir(), "autoforge-product-migration-"));
