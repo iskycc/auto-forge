@@ -36,7 +36,7 @@ export function SystemDiagnostics() {
       <div className="section-heading">
         <div>
           <p className="eyebrow">Diagnostics</p>
-          <h2>系统诊断</h2>
+          <h2>诊断结果</h2>
         </div>
         <Stethoscope size={22} aria-hidden="true" />
       </div>

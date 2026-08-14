@@ -74,8 +74,7 @@ export function CaseSelectionTable({
   const [message, setMessage] = useState<string | null>(null);
   const [detailReload, setDetailReload] = useState(0);
   const [detail, setDetail] = useState<CaseWorkspaceDetail | null>(null);
-  const [detailError, setDetailError] = useState("");
-  const [detailPending, setDetailPending] = useState(false);
+  const [detailError, setDetailError] = useState<{ caseId: string; message: string } | null>(null);
 
   const normalizedSearch = search.trim().toLocaleLowerCase();
   const visibleCases = useMemo(
@@ -100,16 +99,13 @@ export function CaseSelectionTable({
   const effectiveSuiteId = targetSuites.some((suite) => suite.id === suiteId)
     ? suiteId
     : (targetSuites[0]?.id ?? "");
+  const activeDetail = detail?.definition.id === activeCaseId ? detail : null;
+  const activeDetailError =
+    detailError && detailError.caseId === activeCaseId ? detailError.message : "";
 
   useEffect(() => {
-    if (!activeCaseId) {
-      setDetail(null);
-      setDetailError("");
-      return;
-    }
+    if (!activeCaseId) return;
     const controller = new AbortController();
-    setDetailPending(true);
-    setDetailError("");
     void fetch(`/api/v1/case-definitions/${encodeURIComponent(activeCaseId)}/workspace`, {
       cache: "no-store",
       signal: controller.signal,
@@ -126,13 +122,16 @@ export function CaseSelectionTable({
         }
         return (await response.json()) as CaseWorkspaceDetail;
       })
-      .then((nextDetail) => setDetail(nextDetail))
+      .then((nextDetail) => {
+        setDetail(nextDetail);
+        setDetailError(null);
+      })
       .catch((error: unknown) => {
         if (error instanceof DOMException && error.name === "AbortError") return;
-        setDetailError(error instanceof Error ? error.message : "用例详情加载失败。");
-      })
-      .finally(() => {
-        if (!controller.signal.aborted) setDetailPending(false);
+        setDetailError({
+          caseId: activeCaseId,
+          message: error instanceof Error ? error.message : "用例详情加载失败。",
+        });
       });
     return () => controller.abort();
   }, [activeCaseId, detailReload]);
@@ -302,26 +301,26 @@ export function CaseSelectionTable({
             <strong>选择一个用例</strong>
             <p>详情、方法、执行与分析历史、源码及管理操作会显示在这里。</p>
           </div>
-        ) : detailPending ? (
-          <div className="case-inspector-empty" role="status">
-            <LoaderCircle className="spin" size={24} />
-            <strong>正在加载用例详情</strong>
-          </div>
-        ) : detailError ? (
+        ) : activeDetailError ? (
           <div className="case-inspector-empty" role="alert">
             <AlertCircle size={24} />
             <strong>详情加载失败</strong>
-            <p>{detailError}</p>
+            <p>{activeDetailError}</p>
           </div>
-        ) : detail ? (
+        ) : activeDetail ? (
           <CaseInspector
-            detail={detail}
+            detail={activeDetail}
             onDefinitionUpdated={(definition) =>
               setDetail((current) => (current ? { ...current, definition } : current))
             }
             onReload={() => setDetailReload((value) => value + 1)}
           />
-        ) : null}
+        ) : (
+          <div className="case-inspector-empty" role="status">
+            <LoaderCircle className="spin" size={24} />
+            <strong>正在加载用例详情</strong>
+          </div>
+        )}
       </aside>
     </div>
   );

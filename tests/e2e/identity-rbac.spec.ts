@@ -33,6 +33,7 @@ test("local user completes forced password change and self-service session lifec
     initialPassword,
   );
 
+  await page.goto("/settings/access?section=projects");
   const roleForm = page.locator("form", {
     has: page.getByRole("button", { name: "分配项目角色" }),
   });
@@ -96,6 +97,7 @@ test("administrator can reset a user password and the last administrator binding
   await resetForm.getByRole("button", { name: "重置密码并撤销会话" }).click();
   await expect(page.getByText("密码已重置，目标用户的已有会话已撤销。")).toBeVisible();
 
+  await page.goto("/settings/access?section=roles");
   const administratorRow = page.getByRole("row", { name: /E2E Administrator.*系统管理员/ });
   page.once("dialog", (dialog) => dialog.accept());
   await administratorRow.getByRole("button", { name: "撤销系统角色" }).click();

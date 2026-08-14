@@ -255,7 +255,7 @@ public class MixedVisibleTest {
   ).toBeVisible();
   await expect(page.locator(".case-inspector-meta > div")).toHaveCount(5);
   await expect(page.locator(".case-inspector-meta-wide")).toHaveCount(1);
-  await expect(page).toHaveURL(/\/cases\?/);
+  await expect(page).toHaveURL(/\/cases(?:\?.*)?$/);
   await expectUiConsistency(page);
   const checkoutCaseUrl = new URL(
     `/cases/${encodeURIComponent(checkoutWorkspace.definition.id)}`,

@@ -4,6 +4,7 @@ import { once } from "node:events";
 import { writeFile } from "node:fs/promises";
 import { promisify } from "node:util";
 
+import { DEFAULT_PROJECT_ID } from "@autoforge/domain";
 import { ensureAdministrator } from "./support/session";
 
 const execFileAsync = promisify(execFile);
@@ -15,6 +16,7 @@ test("executes and cancels TestNG in a constrained immutable container", async (
 }, testInfo) => {
   test.setTimeout(360_000);
   await ensureAdministrator(page);
+  await ensureProjectHierarchy(page);
 
   const agent = await startAgent();
   try {
@@ -147,7 +149,7 @@ async function waitForOnlineRunner(page: Page, agent: AgentProcess): Promise<voi
 }
 
 async function importContainerFixture(page: Page): Promise<void> {
-  await page.goto("/cases/import");
+  await page.goto(`/cases/import?projectId=${encodeURIComponent(DEFAULT_PROJECT_ID)}`);
   await page
     .locator('input[type="file"]')
     .setInputFiles(requiredEnvironment("E2E_CONTAINER_TEST_JAR"));
@@ -160,6 +162,37 @@ async function importContainerFixture(page: Page): Promise<void> {
   await expect(page.getByRole("status")).toContainText(/已导入|已返回现有用例/, {
     timeout: 60_000,
   });
+}
+
+async function ensureProjectHierarchy(page: Page): Promise<void> {
+  const projectPath = `/api/v1/projects/${encodeURIComponent(DEFAULT_PROJECT_ID)}`;
+  const structureResponse = await page.request.get(`${projectPath}/structure`);
+  expect(structureResponse.status()).toBe(200);
+  const structure = (await structureResponse.json()) as {
+    versions: Array<{ id: string; stages: Array<{ id: string }> }>;
+  };
+  let version = structure.versions[0];
+  const headers = { origin: new URL(page.url()).origin };
+  if (!version) {
+    const versionResponse = await page.request.post(`${projectPath}/versions`, {
+      data: { name: "容器验收版本" },
+      headers,
+    });
+    expect(versionResponse.status()).toBe(201);
+    version = { ...(await versionResponse.json()), stages: [] } as {
+      id: string;
+      stages: Array<{ id: string }>;
+    };
+  }
+  if (version.stages.length > 0) return;
+  const stageResponse = await page.request.post(
+    `${projectPath}/versions/${encodeURIComponent(version.id)}/stages`,
+    {
+      data: { name: "容器验收阶段", description: "不可变容器执行端到端验收" },
+      headers,
+    },
+  );
+  expect(stageResponse.status()).toBe(201);
 }
 
 async function createContainerSuite(page: Page): Promise<void> {

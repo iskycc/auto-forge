@@ -39,6 +39,7 @@ type NavigationItem = {
   anyPermissions?: Permission[];
   preferredPermissions?: Permission[];
   fallbackHref?: string;
+  fallbackLabel?: string;
   activePrefixes?: string[];
   section?: string;
   defaultSection?: string;
@@ -52,6 +53,7 @@ const navigation: NavigationItem[] = [
     label: "运维与审计",
     href: "/settings/automation",
     fallbackHref: "/audit",
+    fallbackLabel: "安全审计",
     icon: ShieldCheck,
     anyPermissions: ["case_suite.read", "ldap.read", "audit.read"],
     preferredPermissions: ["case_suite.read", "ldap.read"],
@@ -172,14 +174,24 @@ function isActiveForPrefixes(pathname: string, prefixes: string[]): boolean {
 }
 
 function navigationHref(item: NavigationItem, granted: ReadonlySet<Permission>): string {
-  if (
-    item.fallbackHref &&
-    item.preferredPermissions &&
-    !item.preferredPermissions.some((permission) => granted.has(permission))
-  ) {
+  if (usesFallbackNavigation(item, granted) && item.fallbackHref) {
     return item.fallbackHref;
   }
   return item.href;
+}
+
+function navigationLabel(item: NavigationItem, granted: ReadonlySet<Permission>): string {
+  return usesFallbackNavigation(item, granted) && item.fallbackLabel
+    ? item.fallbackLabel
+    : item.label;
+}
+
+function usesFallbackNavigation(item: NavigationItem, granted: ReadonlySet<Permission>): boolean {
+  return Boolean(
+    item.fallbackHref &&
+    item.preferredPermissions &&
+    !item.preferredPermissions.some((permission) => granted.has(permission)),
+  );
 }
 
 export function AppShell({
@@ -232,6 +244,7 @@ export function AppShell({
           {visibleNavigation.map((item) => {
             const Icon = item.icon;
             const href = navigationHref(item, granted);
+            const label = navigationLabel(item, granted);
             return (
               <Link
                 className={`nav-item ${isActive(pathname, currentSection, item) ? "nav-item-active" : ""}`}
@@ -239,7 +252,7 @@ export function AppShell({
                 key={item.href}
               >
                 <Icon size={19} aria-hidden="true" />
-                <span>{item.label}</span>
+                <span>{label}</span>
               </Link>
             );
           })}

@@ -215,7 +215,7 @@ test("source comparison, promotion, archive recovery and guarded deletion are ob
 
 async function importJar(
   page: Page,
-  project: { id: string; name: string },
+  project: { id: string; name: string; versionId: string; stageId: string },
   fileName: string,
   className: string,
   methodNames: string[],
@@ -229,7 +229,13 @@ async function importJar(
       })),
     }),
   });
-  await page.goto(`/cases/import?projectId=${encodeURIComponent(project.id)}`);
+  await page.goto(
+    `/cases/import?${new URLSearchParams({
+      projectId: project.id,
+      projectVersionId: project.versionId,
+      testStageId: project.stageId,
+    }).toString()}`,
+  );
   await page.getByLabel("导入项目").selectOption({ label: project.name });
   await page.locator('input[type="file"]').setInputFiles({
     name: fileName,
@@ -244,14 +250,36 @@ async function importJar(
   });
 }
 
-async function createProject(page: Page, suffix: string): Promise<{ id: string; name: string }> {
+async function createProject(
+  page: Page,
+  suffix: string,
+): Promise<{ id: string; name: string; versionId: string; stageId: string }> {
   const name = `Lifecycle project ${suffix}`;
   const response = await browserJson<{ id: string; name: string }>(page, "/api/v1/projects", {
     method: "POST",
     body: { name, slug: `lifecycle-${suffix}` },
   });
   expect(response.status).toBe(201);
-  return response.body;
+  const version = await browserJson<{ id: string }>(
+    page,
+    `/api/v1/projects/${encodeURIComponent(response.body.id)}/versions`,
+    { method: "POST", body: { name: "Lifecycle version" } },
+  );
+  expect(version.status).toBe(201);
+  const stage = await browserJson<{ id: string }>(
+    page,
+    `/api/v1/projects/${encodeURIComponent(response.body.id)}/versions/${encodeURIComponent(version.body.id)}/stages`,
+    {
+      method: "POST",
+      body: { name: "Lifecycle stage", description: "Case suite lifecycle hierarchy" },
+    },
+  );
+  expect(stage.status).toBe(201);
+  return {
+    ...response.body,
+    versionId: version.body.id,
+    stageId: stage.body.id,
+  };
 }
 
 async function setAuthoritativeSource(

@@ -29,8 +29,8 @@ test("project member cannot observe another project's assets through pages or di
 
   const classA = `com.example.ProjectA${Date.now()}Test`;
   const classB = `com.example.ProjectB${Date.now()}Test`;
-  await importJar(page, projectA.id, projectA.name, classA, `project-a-${suffix}.jar`);
-  await importJar(page, projectB.id, projectB.name, classB, `project-b-${suffix}.jar`);
+  await importJar(page, projectA, classA, `project-a-${suffix}.jar`);
+  await importJar(page, projectB, classB, `project-b-${suffix}.jar`);
 
   const casesA = await browserJson<{ items: Array<{ id: string; sourceId: string }> }>(
     page,
@@ -200,7 +200,23 @@ async function createProject(page: Page, name: string, slug: string) {
     body: { name, slug },
   });
   expect(response.status).toBe(201);
-  return response.body;
+  const version = await browserJson<{ id: string }>(
+    page,
+    `/api/v1/projects/${encodeURIComponent(response.body.id)}/versions`,
+    { method: "POST", body: { name: `${name} version` } },
+  );
+  expect(version.status).toBe(201);
+  const stage = await browserJson<{ id: string }>(
+    page,
+    `/api/v1/projects/${encodeURIComponent(response.body.id)}/versions/${encodeURIComponent(version.body.id)}/stages`,
+    { method: "POST", body: { name: `${name} stage` } },
+  );
+  expect(stage.status).toBe(201);
+  return {
+    ...response.body,
+    versionId: version.body.id,
+    stageId: stage.body.id,
+  };
 }
 
 async function createUser(page: Page, username: string, password: string) {
@@ -332,8 +348,7 @@ async function createBatch(page: Page, projectId: string, suiteId: string, runne
 
 async function importJar(
   page: Page,
-  projectId: string,
-  projectName: string,
+  project: { id: string; name: string; versionId: string; stageId: string },
   className: string,
   fileName: string,
 ): Promise<void> {
@@ -343,8 +358,14 @@ async function importJar(
       methods: [{ name: "isolated", annotations: [{ type: "Test", values: {} }] }],
     }),
   });
-  await page.goto(`/cases/import?projectId=${projectId}`);
-  await page.getByLabel("导入项目").selectOption({ label: projectName });
+  await page.goto(
+    `/cases/import?${new URLSearchParams({
+      projectId: project.id,
+      projectVersionId: project.versionId,
+      testStageId: project.stageId,
+    }).toString()}`,
+  );
+  await page.getByLabel("导入项目").selectOption({ label: project.name });
   await page.locator('input[type="file"]').setInputFiles({
     name: fileName,
     mimeType: "application/java-archive",

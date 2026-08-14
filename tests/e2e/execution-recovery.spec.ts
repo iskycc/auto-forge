@@ -153,6 +153,21 @@ async function createExecutableFixture(page: Page): Promise<ExecutableFixture> {
     body: { name: `Execution recovery ${fixtureName}`, slug: fixtureName },
   });
   expect(project.status).toBe(201);
+  const version = await browserJson<{ id: string }>(
+    page,
+    `/api/v1/projects/${encodeURIComponent(project.body.id)}/versions`,
+    { method: "POST", body: { name: "Execution recovery version" } },
+  );
+  expect(version.status).toBe(201);
+  const stage = await browserJson<{ id: string }>(
+    page,
+    `/api/v1/projects/${encodeURIComponent(project.body.id)}/versions/${encodeURIComponent(version.body.id)}/stages`,
+    {
+      method: "POST",
+      body: { name: "Execution recovery stage", description: "Recovery acceptance hierarchy" },
+    },
+  );
+  expect(stage.status).toBe(201);
   const className = `com.example.ExecutionRecovery${Date.now()}Test`;
   const jar = zipSync({
     [`${className.replaceAll(".", "/")}.class`]: buildClassFile({
@@ -160,7 +175,13 @@ async function createExecutableFixture(page: Page): Promise<ExecutableFixture> {
       methods: [{ name: "recovers", annotations: [{ type: "Test", values: {} }] }],
     }),
   });
-  await page.goto(`/cases/import?projectId=${encodeURIComponent(project.body.id)}`);
+  await page.goto(
+    `/cases/import?${new URLSearchParams({
+      projectId: project.body.id,
+      projectVersionId: version.body.id,
+      testStageId: stage.body.id,
+    }).toString()}`,
+  );
   await page.getByLabel("导入项目").selectOption({ label: project.body.name });
   await page.locator('input[type="file"]').setInputFiles({
     name: "execution-recovery.jar",
