@@ -10,8 +10,9 @@ and known limitations.
 
 - Use unambiguous accessible roles when asserting project-scoped execution environments in browser
   isolation coverage.
-- Reload the authenticated document after first-administrator bootstrap so upgrade acceptance can
-  test older Releases that navigate with a public root document prefetched before the session cookie.
+- Request a stable authenticated document after first-administrator bootstrap so upgrade acceptance
+  can test older Releases that navigate with a public root document prefetched before the session
+  cookie without racing the current Release's landing hand-off.
 - Let manually dispatched Release checks use the selected branch's current acceptance harness while
   retaining tagged-source quality checks and immutable published assets.
 

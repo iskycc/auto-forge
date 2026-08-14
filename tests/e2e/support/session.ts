@@ -61,9 +61,11 @@ export async function ensureAdministrator(page: Page): Promise<void> {
     }
     // Older supported Releases can complete bootstrap with a valid cookie
     // while rendering a public root document prefetched before that cookie
-    // existed. Reload from the authenticated request boundary so upgrade
-    // acceptance observes the real server-rendered shell.
-    await page.reload({ waitUntil: "load" });
+    // existed. Wait out the current Release's landing hand-off before making
+    // an explicit authenticated request, otherwise Playwright can race a
+    // document that is still being replaced.
+    await waitForAuthenticatedRoute(page);
+    await page.goto("/", { waitUntil: "load" });
     await expectAdministratorShell(page);
     return;
   }
@@ -75,6 +77,12 @@ async function expectAdministratorShell(page: Page): Promise<void> {
   // The authenticated shell is already mounted on /landing while its client
   // hand-off to the final route is still pending. Returning at that point lets
   // the delayed hand-off abort the caller's next navigation.
+  await waitForAuthenticatedRoute(page);
+  await expect(page.getByRole("navigation", { name: "主导航" })).toBeVisible({ timeout: 20_000 });
+  await expect(page.getByRole("button", { name: "退出登录" })).toBeVisible();
+}
+
+async function waitForAuthenticatedRoute(page: Page): Promise<void> {
   await expect
     .poll(
       () => {
@@ -85,8 +93,6 @@ async function expectAdministratorShell(page: Page): Promise<void> {
     )
     .toBe(true);
   await page.waitForLoadState("load");
-  await expect(page.getByRole("navigation", { name: "主导航" })).toBeVisible({ timeout: 20_000 });
-  await expect(page.getByRole("button", { name: "退出登录" })).toBeVisible();
 }
 
 export async function login(page: Page, username: string, password: string): Promise<void> {
