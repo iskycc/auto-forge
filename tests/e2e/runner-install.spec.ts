@@ -113,8 +113,9 @@ async function installThroughUi(page: Page): Promise<void> {
     .getByLabel("私有 CA 证书（可选，PEM）")
     .fill(await readFile(requiredEnvironment("E2E_SSH_CA_FILE"), "utf8"));
   await page.getByRole("button", { name: "安装内置 Agent" }).click();
-  await expect(page.getByRole("status")).toContainText("Agent", { timeout: 120_000 });
-  await expect(page.getByRole("status")).toContainText("服务已启动");
+  const installationSuccess = page.getByRole("status").filter({ hasText: "服务已启动" });
+  await expect(installationSuccess).toContainText("Agent", { timeout: 120_000 });
+  await expect(installationSuccess).toContainText("服务已启动");
 }
 
 async function verifyInstalledSystemdService(): Promise<void> {
