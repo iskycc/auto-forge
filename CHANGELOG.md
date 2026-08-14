@@ -6,6 +6,8 @@ and known limitations.
 
 ## Unreleased
 
+## 0.4.8 - 2026-08-14
+
 ### Changed
 
 - Remove the independent 5,000 TestNG test-class discovery ceiling while retaining bounded JAR size,
@@ -18,11 +20,6 @@ and known limitations.
   service account remain the recommended defaults.
 - Normalize the retired `isolation:cgroup-v2` requirement out of persisted Runner Protocol v1
   execution specifications so assignments queued before upgrade can still be claimed.
-
-### Database migrations and compatibility
-
-- No database migration or Runner Protocol schema-version change is required. HTTP and root mode
-  weaken transport or host isolation and should be limited to dedicated trusted networks and hosts.
 
 ### Fixed
 
@@ -37,6 +34,22 @@ and known limitations.
   preventing lease expiry from winning a harness-only race.
 - Resolve the migration-integrity fixture from the packaged Web workspace so Release upgrade checks
   use the production pnpm dependency layout.
+
+### Database migrations and compatibility
+
+- No database migration or Runner Protocol schema-version change is required. HTTP and root mode
+  weaken transport or host isolation and should be limited to dedicated trusted networks and hosts.
+
+### Offline assets
+
+- Rebuild all four immutable backend variants with the updated embedded amd64/arm64 Agents, both
+  offline Java/TestNG Runner toolchains, SPDX SBOMs, deployment bundle, signed checksums, release
+  manifest and provenance for `0.4.8`.
+
+### Known limitations
+
+- Without cgroup v2, CPU, memory and descendant-process counts do not have hard cgroup enforcement;
+  HTTP and root Agent modes are intended only for dedicated trusted networks and hosts.
 
 ## 0.4.7 - 2026-08-14
 
