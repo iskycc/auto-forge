@@ -54,6 +54,30 @@ func TestLogCollectorRedactsCrossChunkSecretBeforeSpooling(t *testing.T) {
 	}
 }
 
+func TestLogCollectorFlushesAgentStreamImmediately(t *testing.T) {
+	spool, err := newLogSpool(t.TempDir(), config.SpoolConfig{
+		MaximumBytes: 1 << 20,
+		Retention:    time.Hour,
+		UploadBatch:  10,
+	}, 1)
+	if err != nil {
+		t.Fatalf("create spool: %v", err)
+	}
+	collector := newAttemptLogCollector("attempt-agent-immediate", spool, nil)
+	if err := collector.Write(executor.LogChunk{
+		Stream: "agent", Content: "Agent started.\n", RecordedAt: time.Now(),
+	}); err != nil {
+		t.Fatalf("collect agent log: %v", err)
+	}
+	chunks, err := spool.list("attempt-agent-immediate", 10)
+	if err != nil {
+		t.Fatalf("list spool: %v", err)
+	}
+	if len(chunks) != 1 || chunks[0].Stream != "agent" || chunks[0].Content != "Agent started.\n" {
+		t.Fatalf("agent chunk was not flushed immediately: %#v", chunks)
+	}
+}
+
 func TestLogSpoolRejectsQuotaOverflow(t *testing.T) {
 	spool, err := newLogSpool(t.TempDir(), config.SpoolConfig{
 		MaximumBytes: 32,

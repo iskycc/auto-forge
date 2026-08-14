@@ -56,6 +56,12 @@ func (collector *attemptLogCollector) Write(chunk executor.LogChunk) error {
 	collector.mu.Lock()
 	defer collector.mu.Unlock()
 	collector.pending[chunk.Stream] += chunk.Content
+	// Agent logs are short, infrequent status messages (e.g. "started the attempt").
+	// Flush them immediately instead of waiting for the carry-size accumulation
+	// used for high-volume stdout/stderr streams, so they are visible promptly.
+	if chunk.Stream == "agent" {
+		return collector.flushStream(chunk.Stream, chunk.RecordedAt.UTC().Format(time.RFC3339Nano), true)
+	}
 	return collector.flushStream(chunk.Stream, chunk.RecordedAt.UTC().Format(time.RFC3339Nano), false)
 }
 
