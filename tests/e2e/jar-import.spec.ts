@@ -236,7 +236,7 @@ public class MixedVisibleTest {
   });
 
   await page.getByRole("link", { name: "查看用例库" }).click();
-  await expect(page.locator(".case-tree-directory").first()).not.toHaveAttribute("open", "");
+  await expect(page.locator(".case-tree-directory").first()).toHaveAttribute("open", "");
   await page.getByLabel("页内搜索用例").fill("CheckoutTest");
   await expect(page.getByRole("button", { name: "查看 CheckoutTest" })).toBeVisible();
   await expectUiConsistency(page);
@@ -296,11 +296,11 @@ public class MixedVisibleTest {
   await page.getByLabel("页内搜索用例").fill("MixedVisibleTest");
   await page.getByRole("button", { name: "查看 MixedVisibleTest" }).click();
   await page.locator(".case-inspector-section").getByText("用例源码", { exact: true }).click();
-  await expect(page.locator(".case-inspector-pane .source-code-viewer")).toContainText(
+  await expect(page.locator(".case-inspector-pane .source-code-viewer").first()).toContainText(
     "AUTOFORGE_MIXED_SOURCE_E2E",
   );
   await expect(
-    page.locator(".case-inspector-section").getByText("立即执行", { exact: true }),
+    page.locator(".case-inspector-section summary").getByText("立即执行", { exact: true }),
   ).toBeVisible();
 
   await page.goto(`/cases/import?projectId=${encodeURIComponent(DEFAULT_PROJECT_ID)}`);
@@ -444,8 +444,8 @@ public class MixedVisibleTest {
   );
   await page.getByRole("button", { name: "开始调度" }).click();
   const batch = (await (await createBatchResponse).json()) as { id: string };
-  await expect(page.getByText("已生成分配", { exact: true })).toBeVisible();
-  await expect(page.getByText("已分配 1", { exact: true })).toBeVisible();
+  await expect(page.getByText("已生成分配", { exact: true }).first()).toBeVisible();
+  await expect(page.getByText("已分配 1", { exact: true }).first()).toBeVisible();
   await captureUi(page, "run-batch-planner");
 
   const firstClaim = await claimAssignment(page, identity);
@@ -811,14 +811,14 @@ public class MixedVisibleTest {
   await page.getByLabel("页内搜索用例").fill("SourceVisibleTest");
   await page.getByRole("button", { name: "查看 SourceVisibleTest" }).click();
   await page.locator(".case-inspector-section").getByText("用例源码", { exact: true }).click();
-  await expect(page.locator(".case-inspector-pane .source-code-viewer")).toContainText(
+  await expect(page.locator(".case-inspector-pane .source-code-viewer").first()).toContainText(
     "AUTOFORGE_SOURCE_VIEW_E2E",
   );
   await expect(page.getByText(/不能直接执行/)).toBeVisible();
   await expect(page.getByRole("button", { name: "立即执行" })).toHaveCount(0);
 
   await page.goto("/settings/access?section=users");
-  await expect(page.getByRole("heading", { name: "用户管理" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "用户管理" }).first()).toBeVisible();
   await expect(page.locator(".settings-stack > .settings-section")).toHaveCount(1);
   await expect(page.getByRole("navigation", { name: "身份与访问模块" })).toHaveCount(0);
   await page.goto("/settings/access?section=ldap");

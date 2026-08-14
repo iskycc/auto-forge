@@ -882,6 +882,12 @@ describe.skipIf(!connectionString)("PostgreSQL platform repositories", () => {
         name: "PG nightly",
         policy: {
           executor: "testng",
+          adapter: {
+            enabled: false,
+            suiteName: "",
+            testName: "",
+            environmentAddresses: [],
+          },
           priority: 5,
           concurrency: 2,
           retryLimit: 3,

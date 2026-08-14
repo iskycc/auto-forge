@@ -531,7 +531,15 @@ export function JarImporter({
               ? "该 JAR 已导入，已返回现有用例。"
               : `已导入 ${result.importedClassCount} 个测试类、${result.importedMethodCount} 个测试方法。`}
           </span>
-          <Link href="/cases">查看用例库</Link>
+          <Link
+            href={`/cases?${new URLSearchParams({
+              projectId,
+              ...(projectVersionId ? { projectVersionId } : {}),
+              ...(testStageId ? { testStageId } : {}),
+            }).toString()}`}
+          >
+            查看用例库
+          </Link>
         </div>
       )}
     </div>

@@ -44,7 +44,7 @@ test("authoritative execution recovery handles every timeout and idempotent race
   const claimTimeoutBatch = await createBatch(page, fixture, runner.runnerId, {
     claimTimeoutMs: 1_000,
   });
-  await page.waitForTimeout(1_300);
+  await page.waitForTimeout(2_500);
   await triggerRecovery(page, runner);
   await expectBatchReason(page, claimTimeoutBatch, "ASSIGNMENT_CLAIM_TIMEOUT");
 
@@ -52,7 +52,7 @@ test("authoritative execution recovery handles every timeout and idempotent race
     executionTimeoutMs: 1_000,
   });
   const executionTimeoutClaim = await claimAssignment(page, runner);
-  await page.waitForTimeout(1_300);
+  await page.waitForTimeout(2_500);
   await triggerRecovery(page, runner);
   await expectBatchReason(page, executionTimeoutBatch, "EXECUTION_TIMEOUT");
   expect(
@@ -77,7 +77,7 @@ test("authoritative execution recovery handles every timeout and idempotent race
     },
   );
   expect(declaration.status()).toBe(200);
-  await page.waitForTimeout(1_300);
+  await page.waitForTimeout(2_500);
   await triggerRecovery(page, runner);
   await expectBatchReason(page, uploadTimeoutBatch, "UPLOAD_TIMEOUT");
 
@@ -85,12 +85,17 @@ test("authoritative execution recovery handles every timeout and idempotent race
     executionTimeoutMs: 120_000,
   });
   const capacityClaim = await claimAssignment(page, runner);
+  // Occupy both slots so the queue-timeout batch cannot be assigned and must
+  // hit its deadline instead of racing with the scheduler.
+  await heartbeatRunner(page, runner, runnerCapabilities, { busySlots: 2 });
   const queueTimeoutBatch = await createBatch(page, fixture, runner.runnerId, {
     queueTimeoutMs: 1_000,
   });
-  await page.waitForTimeout(1_300);
+  await page.waitForTimeout(2_500);
   await triggerRecovery(page, runner);
   await expectBatchReason(page, queueTimeoutBatch, "QUEUE_TIMEOUT");
+  // Release the artificial capacity lock; the remaining cases need assignments.
+  await heartbeatRunner(page, runner, runnerCapabilities, { busySlots: 0 });
   expect(
     (await complete(page, runner, capacityClaim, "release-project-capacity")).disposition,
   ).toBe("accepted");
@@ -241,6 +246,7 @@ async function heartbeatRunner(
   page: Page,
   runner: RunnerIdentity,
   capabilities: string[],
+  options?: { busySlots?: number },
 ): Promise<void> {
   const heartbeat = await page.request.post(
     `/api/v1/runner-agents/${encodeURIComponent(runner.runnerId)}/heartbeat`,
@@ -248,7 +254,7 @@ async function heartbeatRunner(
       headers: { authorization: `Bearer ${runner.credential}` },
       data: {
         schemaVersion: 1,
-        busySlots: 0,
+        busySlots: options?.busySlots ?? 0,
         labels: ["linux", "java", "testng"],
         capabilities,
         maxConcurrency: 2,

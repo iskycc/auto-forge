@@ -33,7 +33,7 @@ test("local user completes forced password change and self-service session lifec
     initialPassword,
   );
 
-  await page.goto("/settings/access?section=projects");
+  await page.goto("/settings/access?section=roles");
   const roleForm = page.locator("form", {
     has: page.getByRole("button", { name: "分配项目角色" }),
   });
@@ -268,7 +268,7 @@ test("every built-in role receives only its authorized navigation and API surfac
       key: "auditor",
       roleId: AUDITOR_ROLE_ID,
       scope: "system" as const,
-      visible: ["用例批跑", "洞察", "运维与审计"],
+      visible: ["用例批跑", "洞察", "安全审计"],
       hidden: [
         "首页",
         "用例库",

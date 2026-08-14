@@ -70,7 +70,7 @@ test("project member cannot observe another project's assets through pages or di
   await login(page, username, password);
 
   await page.goto("/cases");
-  await expect(page.getByText(classA)).toBeVisible();
+  await expect(page.locator(".case-directory-tree").getByText(classA)).toBeVisible();
   await expect(page.getByText(classB)).toHaveCount(0);
   await expect(page.getByRole("link", { name: "导入 JAR" })).toHaveCount(0);
   await expect(page.getByLabel("选择本页全部用例")).toHaveCount(0);

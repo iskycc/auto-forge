@@ -525,6 +525,7 @@ type DirectoryTreeNode = {
   path: string;
   directories: DirectoryTreeNode[];
   cases: CaseDefinitionWithMethods[];
+  defaultOpen?: boolean;
 };
 
 function buildDirectoryTree(cases: CaseDefinitionWithMethods[]): DirectoryTreeNode {
@@ -547,6 +548,7 @@ function buildDirectoryTree(cases: CaseDefinitionWithMethods[]): DirectoryTreeNo
     current.cases.push(item);
   }
   sortDirectory(root);
+  computeDefaultExpansion(root);
   return root;
 }
 
@@ -554,6 +556,22 @@ function sortDirectory(node: DirectoryTreeNode): void {
   node.directories.sort((left, right) => left.name.localeCompare(right.name));
   node.cases.sort((left, right) => left.displayName.localeCompare(right.displayName));
   node.directories.forEach(sortDirectory);
+}
+
+// 默认展开第一层目录；如果某层目录只有唯一子目录且没有直接用例，则继续展开，
+// 直到遇到有直接用例或多个子目录的目录为止，该目录自身仍默认展开以展示其全部子项。
+function computeDefaultExpansion(
+  node: DirectoryTreeNode,
+  depth = 0,
+  parentIsSingleDirectoryChain = false,
+): void {
+  for (const directory of node.directories) {
+    const shouldOpen = depth === 0 || parentIsSingleDirectoryChain;
+    directory.defaultOpen = shouldOpen;
+    const continuesChain =
+      shouldOpen && directory.directories.length === 1 && directory.cases.length === 0;
+    computeDefaultExpansion(directory, depth + 1, continuesChain);
+  }
 }
 
 function DirectoryNode({
@@ -627,7 +645,7 @@ function DirectoryNode({
     <details
       aria-selected={false}
       className="case-tree-directory"
-      open={forceOpen ? true : undefined}
+      open={forceOpen || node.defaultOpen ? true : undefined}
       role="treeitem"
     >
       <summary>
