@@ -102,9 +102,6 @@ export interface ProjectStructureRepository {
   createRuntimeAsset(record: CreateProjectRuntimeAssetRecord): Promise<ProjectRuntimeAsset>;
   updateAdapterConfiguration(input: {
     projectId: string;
-    suiteName: string;
-    testName: string;
-    environmentAddress: string;
     jdkAssetId?: string;
     jarBundleAssetId?: string;
     expectedRevision: number;
@@ -823,6 +820,7 @@ export type CreateCaseSuiteRecord = {
   actorId?: string;
   name: string;
   description?: string;
+  policy?: CaseSuiteExecutionPolicy;
   createdAt: string;
 };
 
@@ -1134,6 +1132,7 @@ export type CreateRunBatchRecord = {
     className: string;
     parameters?: Record<string, string>;
   }>;
+  adapter?: CaseSuiteExecutionPolicy["adapter"];
   dispatchJob?: JobEnvelope;
   createdAt: string;
 };

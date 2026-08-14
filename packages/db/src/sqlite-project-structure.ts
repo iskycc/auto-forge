@@ -197,13 +197,10 @@ export class SqliteProjectStructureRepository implements ProjectStructureReposit
               `INSERT INTO project_adapter_configurations
                (project_id, suite_name, test_name, environment_address, jdk_asset_id,
                 jar_bundle_asset_id, revision, updated_by, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)`,
+               VALUES (?, '', '', '', ?, ?, 1, ?, ?)`,
             )
             .run(
               input.projectId,
-              input.suiteName,
-              input.testName,
-              input.environmentAddress,
               input.jdkAssetId ?? null,
               input.jarBundleAssetId ?? null,
               input.actorId ?? null,
@@ -213,14 +210,11 @@ export class SqliteProjectStructureRepository implements ProjectStructureReposit
           const changed = this.handle.client
             .prepare(
               `UPDATE project_adapter_configurations
-               SET suite_name = ?, test_name = ?, environment_address = ?, jdk_asset_id = ?,
+               SET suite_name = '', test_name = '', environment_address = '', jdk_asset_id = ?,
                    jar_bundle_asset_id = ?, revision = revision + 1, updated_by = ?, updated_at = ?
                WHERE project_id = ? AND revision = ?`,
             )
             .run(
-              input.suiteName,
-              input.testName,
-              input.environmentAddress,
               input.jdkAssetId ?? null,
               input.jarBundleAssetId ?? null,
               input.actorId ?? null,
@@ -244,9 +238,6 @@ export class SqliteProjectStructureRepository implements ProjectStructureReposit
       ? this.mapConfiguration(row)
       : {
           projectId,
-          suiteName: "",
-          testName: "",
-          environmentAddress: "",
           revision: 0,
           updatedAt: "",
         };
@@ -290,9 +281,6 @@ export class SqliteProjectStructureRepository implements ProjectStructureReposit
   private mapConfiguration(row: ConfigurationRow): ProjectAdapterConfiguration {
     return {
       projectId: row.project_id,
-      suiteName: row.suite_name,
-      testName: row.test_name,
-      environmentAddress: row.environment_address,
       ...(row.jdk_asset_id ? { jdkAsset: this.requiredAsset(row.jdk_asset_id) } : {}),
       ...(row.jar_bundle_asset_id
         ? { jarBundleAsset: this.requiredAsset(row.jar_bundle_asset_id) }

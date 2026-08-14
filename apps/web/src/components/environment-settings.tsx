@@ -10,17 +10,7 @@ import {
   type ExecutionEnvironmentVersion,
   type ExecutionSecret,
 } from "@autoforge/domain";
-import {
-  Boxes,
-  Copy,
-  KeyRound,
-  Plus,
-  Power,
-  RefreshCw,
-  RotateCcw,
-  Save,
-  Trash2,
-} from "lucide-react";
+import { Copy, Plus, Power, RefreshCw, RotateCcw, Save, Trash2 } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
@@ -45,19 +35,20 @@ function initialProjectId(projects: ProjectOption[]): string {
 }
 
 export function EnvironmentSettings({
+  activeView,
   initialEnvironments,
   initialSecrets,
   manageableProjectIds,
   projects,
   secretProjectIds,
 }: {
+  activeView: "environments" | "secrets";
   initialEnvironments: ExecutionEnvironment[];
   initialSecrets: ExecutionSecret[];
   manageableProjectIds: string[] | null;
   projects: ProjectOption[];
   secretProjectIds: string[] | null;
 }) {
-  const [view, setView] = useState<"environments" | "secrets">("environments");
   const [environments, setEnvironments] = useState(initialEnvironments);
   const [secrets, setSecrets] = useState(initialSecrets);
   const [selectedEnvironmentId, setSelectedEnvironmentId] = useState(
@@ -299,26 +290,10 @@ export function EnvironmentSettings({
 
   return (
     <div className="environment-settings-stack">
-      <div className="segmented-control environment-view-switch" aria-label="管理对象">
-        <Button
-          className={view === "environments" ? "active" : ""}
-          type="button"
-          onClick={() => setView("environments")}
-        >
-          <Boxes size={15} /> 环境
-        </Button>
-        <Button
-          className={view === "secrets" ? "active" : ""}
-          type="button"
-          onClick={() => setView("secrets")}
-        >
-          <KeyRound size={15} /> 密文
-        </Button>
-      </div>
       {error ? <p className="form-error settings-feedback">{error}</p> : null}
       {notice ? <p className="form-success settings-feedback">{notice}</p> : null}
 
-      {view === "environments" ? (
+      {activeView === "environments" ? (
         <EnvironmentPanel
           addBinding={addBinding}
           bindingRows={bindingRows}

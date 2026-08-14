@@ -19,6 +19,7 @@ export type CaseSuite = {
 
 export type CaseSuiteExecutionPolicy = {
   executor: "testng" | "testng-container";
+  adapter: CaseSuiteAdapterConfiguration;
   priority: number;
   concurrency: number;
   retryLimit: number;
@@ -29,8 +30,21 @@ export type CaseSuiteExecutionPolicy = {
   artifactPatterns: string[];
 };
 
+export type CaseSuiteAdapterConfiguration = {
+  enabled: boolean;
+  suiteName: string;
+  testName: string;
+  environmentAddresses: string[];
+};
+
 export const defaultCaseSuiteExecutionPolicy: CaseSuiteExecutionPolicy = {
   executor: "testng",
+  adapter: {
+    enabled: false,
+    suiteName: "",
+    testName: "",
+    environmentAddresses: [],
+  },
   priority: 0,
   concurrency: 4,
   retryLimit: 0,
@@ -54,6 +68,19 @@ export function mergeCaseSuiteExecutionPolicy(
 ): CaseSuiteExecutionPolicy {
   return {
     executor: override.executor ?? base.executor,
+    adapter: override.adapter
+      ? {
+          enabled: override.adapter.enabled,
+          suiteName: override.adapter.suiteName,
+          testName: override.adapter.testName,
+          environmentAddresses: [...override.adapter.environmentAddresses],
+        }
+      : {
+          enabled: base.adapter.enabled,
+          suiteName: base.adapter.suiteName,
+          testName: base.adapter.testName,
+          environmentAddresses: [...base.adapter.environmentAddresses],
+        },
     priority: override.priority ?? base.priority,
     concurrency: override.concurrency ?? base.concurrency,
     retryLimit: override.retryLimit ?? base.retryLimit,

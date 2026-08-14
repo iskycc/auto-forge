@@ -17,10 +17,24 @@ export const setAuthoritativeSourceInputSchema = z.object({
   authoritative: z.literal(true),
 });
 
+export const caseSuiteAdapterConfigurationSchema = z.object({
+  enabled: z.boolean().default(false),
+  suiteName: z.string().trim().max(512).default(""),
+  testName: z.string().trim().max(512).default(""),
+  environmentAddresses: z
+    .array(z.string().trim().min(1).max(2_048))
+    .max(128)
+    .refine((addresses) => new Set(addresses).size === addresses.length, {
+      message: "环境地址不能重复。",
+    })
+    .default([]),
+});
+
 export const createCaseSuiteInputSchema = z.object({
   projectId: z.string().min(1).max(128).optional(),
   name: z.string().trim().min(1).max(120),
   description: z.string().trim().max(500).optional(),
+  adapter: caseSuiteAdapterConfigurationSchema.optional(),
 });
 
 export const updateCaseSuiteItemsInputSchema = z.object({
@@ -39,6 +53,7 @@ export const caseSuiteArtifactPatternSchema = z
 
 export const caseSuiteExecutionPolicySchema = z.object({
   executor: z.enum(["testng", "testng-container"]).optional(),
+  adapter: caseSuiteAdapterConfigurationSchema.optional(),
   priority: z.number().int().min(-100).max(100).optional(),
   concurrency: z.number().int().min(1).max(64).optional(),
   retryLimit: z.number().int().min(0).max(10).optional(),
@@ -273,6 +288,9 @@ export const createTerminalSessionResultSchema = z.object({
 export type ObjectEntry = z.infer<typeof objectEntrySchema>;
 export type ObjectListPage = z.infer<typeof objectListPageSchema>;
 export type CreateCaseSuiteInput = z.infer<typeof createCaseSuiteInputSchema>;
+export type CaseSuiteAdapterConfigurationInput = z.infer<
+  typeof caseSuiteAdapterConfigurationSchema
+>;
 export type CaseSuiteExecutionPolicyInput = z.infer<typeof caseSuiteExecutionPolicySchema>;
 export type UpdateCaseSuiteInput = z.infer<typeof updateCaseSuiteInputSchema>;
 export type CopyCaseSuiteInput = z.infer<typeof copyCaseSuiteInputSchema>;

@@ -10,6 +10,7 @@ import { DEFAULT_PROJECT_ID, defaultCaseSuiteExecutionPolicy } from "@autoforge/
 import { createSqliteDatabase } from "../src/database";
 import { SqliteCaseCatalogRepository } from "../src/sqlite-case-catalog";
 import { SqliteCaseSuiteRepository } from "../src/sqlite-case-suite";
+import { SqliteProjectStructureRepository } from "../src/sqlite-project-structure";
 import { SqliteRunBatchRepository } from "../src/sqlite-run-batch";
 import { SqliteRunnerRepository } from "../src/sqlite-runner";
 
@@ -203,13 +204,16 @@ describe("SQLite case suite lifecycle", () => {
           `INSERT INTO project_adapter_configurations
            (project_id, suite_name, test_name, environment_address, jdk_asset_id,
             jar_bundle_asset_id, revision, updated_by, updated_at)
-           VALUES (?, 'project-suite', 'system-test', '10.0.0.9', ?, ?, 1, NULL, ?)`,
+           VALUES (?, 'legacy-project-suite', 'legacy-project-test', '192.0.2.1', ?, ?, 1, NULL, ?)`,
         )
         .run(DEFAULT_PROJECT_ID, "jdk-runtime", "jar-runtime", timestamp);
       await suites.create({ id: "suite-1", name: "Smoke", createdAt: timestamp });
       await suites.addCases({
         suiteId: "suite-1",
-        items: [{ id: "item-1", caseDefinitionId: "case-1" }],
+        items: [
+          { id: "item-1", caseDefinitionId: "case-1" },
+          { id: "item-2", caseDefinitionId: "case-2" },
+        ],
         versionId: "sv-2",
         updatedAt: timestamp,
       });
@@ -221,6 +225,12 @@ describe("SQLite case suite lifecycle", () => {
         updatedAt: timestamp,
         policy: {
           ...defaultCaseSuiteExecutionPolicy,
+          adapter: {
+            enabled: true,
+            suiteName: "task-suite",
+            testName: "task-test",
+            environmentAddresses: ["10.0.0.9", "10.0.0.10"],
+          },
           priority: 5,
           concurrency: 2,
           retryLimit: 3,
@@ -291,6 +301,9 @@ describe("SQLite case suite lifecycle", () => {
         45,
         undefined,
         { catalog, objectStore: { exists: async () => true } as unknown as JarObjectStorePort },
+        128,
+        5,
+        new SqliteProjectStructureRepository(handle),
       );
 
       const batch = await scheduler.create({
@@ -310,11 +323,13 @@ describe("SQLite case suite lifecycle", () => {
           artifactPatterns: ["reports/**", "logs/*.txt"],
         },
       });
-      const specRow = handle.client
-        .prepare("SELECT execution_spec_json FROM assignments WHERE batch_id = ?")
-        .get(batch.id) as { execution_spec_json: string } | undefined;
-      expect(specRow).toBeDefined();
-      const spec = JSON.parse(specRow!.execution_spec_json) as {
+      const specRows = handle.client
+        .prepare(
+          "SELECT execution_spec_json FROM assignments WHERE batch_id = ? ORDER BY execution_run_id",
+        )
+        .all(batch.id) as Array<{ execution_spec_json: string }>;
+      expect(specRows).toHaveLength(2);
+      const specs = specRows.map((row) => JSON.parse(row.execution_spec_json)) as Array<{
         requiredLabels: string[];
         requiredCapabilities: string[];
         artifactRules: Array<{ pattern: string; mediaType: string }>;
@@ -322,7 +337,8 @@ describe("SQLite case suite lifecycle", () => {
         adapter: { suiteName: string; testName: string; environmentAddress: string };
         inputs: Array<{ kind: string; downloadUrl?: string }>;
         timeoutMs: number;
-      };
+      }>;
+      const spec = specs[0]!;
       expect(spec.requiredLabels).toEqual(expect.arrayContaining(["java", "testng", "gpu"]));
       expect(spec.artifactRules).toEqual([
         { pattern: "reports/**", required: false, mediaType: "application/octet-stream" },
@@ -330,10 +346,14 @@ describe("SQLite case suite lifecycle", () => {
       ]);
       expect(spec.parameters).toEqual({ SUITE: "nightly", CASE: "level" });
       expect(spec.adapter).toEqual({
-        suiteName: "project-suite",
-        testName: "system-test",
+        suiteName: "task-suite",
+        testName: "task-test",
         environmentAddress: "10.0.0.9",
       });
+      expect(specs.map((candidate) => candidate.adapter.environmentAddress)).toEqual([
+        "10.0.0.9",
+        "10.0.0.10",
+      ]);
       expect(spec.requiredCapabilities).toEqual(
         expect.arrayContaining(["adapter:cotest-testng-v1", "runtime:project-assets-v1"]),
       );
@@ -397,9 +417,9 @@ async function fixture() {
       fileName: "source.jar",
       sha256: "a".repeat(64),
       sizeBytes: 128,
-      classFileCount: 1,
-      testClassCount: 1,
-      testMethodCount: 1,
+      classFileCount: 2,
+      testClassCount: 2,
+      testMethodCount: 2,
       hasRootTestNgXml: false,
       discoveryMode: "bytecode-annotations",
       warnings: [],
@@ -414,6 +434,25 @@ async function fixture() {
           methods: [
             {
               methodName: "smoke",
+              descriptor: "()V",
+              enabled: true,
+              annotationSource: "method",
+              groups: ["smoke"],
+              dependsOnMethods: [],
+              dependsOnGroups: [],
+            },
+          ],
+        },
+        {
+          className: "com.example.SecondTest",
+          packageName: "com.example",
+          simpleName: "SecondTest",
+          enabled: true,
+          classLevelTest: false,
+          groups: ["smoke"],
+          methods: [
+            {
+              methodName: "second",
               descriptor: "()V",
               enabled: true,
               annotationSource: "method",
@@ -450,6 +489,31 @@ async function fixture() {
           ],
         },
         methods: [{ methodId: "method-1", methodIndex: 0 }],
+      },
+      {
+        caseDefinitionId: "case-2",
+        caseVersionId: "version-2",
+        candidate: {
+          className: "com.example.SecondTest",
+          packageName: "com.example",
+          simpleName: "SecondTest",
+          enabled: true,
+          classLevelTest: false,
+          groups: ["smoke"],
+          parameters: { CASE: "second" },
+          methods: [
+            {
+              methodName: "second",
+              descriptor: "()V",
+              enabled: true,
+              annotationSource: "method",
+              groups: ["smoke"],
+              dependsOnMethods: [],
+              dependsOnGroups: [],
+            },
+          ],
+        },
+        methods: [{ methodId: "method-2", methodIndex: 0 }],
       },
     ],
   });

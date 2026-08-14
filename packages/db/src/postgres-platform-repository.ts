@@ -40,6 +40,7 @@ import {
 } from "@autoforge/domain";
 import {
   and,
+  asc,
   count,
   desc,
   eq,
@@ -1365,7 +1366,7 @@ export class PostgresCaseSuiteRepository implements CaseSuiteRepository {
         status: "active",
         enabled: true,
         revision: 1,
-        policyJson: JSON.stringify(defaultCaseSuiteExecutionPolicy),
+        policyJson: JSON.stringify(record.policy ?? defaultCaseSuiteExecutionPolicy),
         ...(record.actorId ? { createdBy: record.actorId, updatedBy: record.actorId } : {}),
         createdAt: record.createdAt,
         updatedAt: record.createdAt,
@@ -1412,7 +1413,7 @@ export class PostgresCaseSuiteRepository implements CaseSuiteRepository {
       .select()
       .from(pgCaseSuiteItems)
       .where(eq(pgCaseSuiteItems.suiteId, suiteId))
-      .orderBy(desc(pgCaseSuiteItems.addedAt));
+      .orderBy(asc(pgCaseSuiteItems.addedAt), asc(pgCaseSuiteItems.id));
     const ids = itemRows.map((row) => row.caseDefinitionId);
     const [definitions, methodRows] = ids.length
       ? await Promise.all([

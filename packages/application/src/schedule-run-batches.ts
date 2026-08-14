@@ -8,6 +8,7 @@ import {
 } from "@autoforge/contracts";
 import {
   assessRunnerCompatibility,
+  COTEST_ADAPTER_CAPABILITY,
   DEFAULT_EXECUTION_RESOURCE_LIMITS,
   defaultCaseSuiteExecutionPolicy,
   DEFAULT_PROJECT_ID,
@@ -27,6 +28,7 @@ import type {
   ExecutionEnvironmentRepository,
   IdGenerator,
   JarObjectStorePort,
+  ProjectStructureRepository,
   RunBatchRepository,
   RunnerRepository,
 } from "./ports";
@@ -49,6 +51,7 @@ export class RunBatchSchedulingService {
     },
     private readonly projectMaximumConcurrency = 128,
     private readonly priorityAgingIntervalMinutes = 5,
+    private readonly projectStructures?: ProjectStructureRepository,
   ) {}
 
   async create(input: CreateRunBatchInput): Promise<RunBatchDetails> {
@@ -84,6 +87,7 @@ export class RunBatchSchedulingService {
       validated.environmentVariables,
     );
     await this.ensureRunnersExist(validated.runnerIds, [
+      ...(usesTaskAdapter(suitePolicy.adapter) ? [COTEST_ADAPTER_CAPABILITY] : []),
       ...(environment.secretBindings.length > 0 ? [ON_DEMAND_SECRET_CAPABILITY] : []),
       ...(suitePolicy.executor === "testng-container" ? ["executor:testng-container-v1"] : []),
     ]);
@@ -125,6 +129,12 @@ export class RunBatchSchedulingService {
         concurrency: suitePolicy.concurrency,
         runnerLabels: [...suitePolicy.runnerLabels],
         artifactPatterns: [...suitePolicy.artifactPatterns],
+      },
+      adapter: {
+        enabled: suitePolicy.adapter.enabled,
+        suiteName: suitePolicy.adapter.suiteName,
+        testName: suitePolicy.adapter.testName,
+        environmentAddresses: [...suitePolicy.adapter.environmentAddresses],
       },
       runs: enabledCases.map((item) => ({
         id: this.ids.next(),
@@ -391,6 +401,9 @@ export class RunBatchSchedulingService {
       } else {
         await this.inspectExecutionInputs(enabledCases, blockers);
       }
+      if (usesTaskAdapter(suite.policy.adapter)) {
+        await this.inspectAdapterRuntime(projectId, blockers);
+      }
     }
     const secretBindings = await this.inspectEnvironment(projectId, input, blockers);
     await this.inspectRunners(
@@ -399,6 +412,7 @@ export class RunBatchSchedulingService {
       blockers,
       suite?.policy.runnerLabels ?? [],
       suite?.policy.executor ?? "testng",
+      suite ? usesTaskAdapter(suite.policy.adapter) : false,
     );
     return { ready: blockers.length === 0, blockers };
   }
@@ -459,12 +473,61 @@ export class RunBatchSchedulingService {
     return resolved.version.secretBindings;
   }
 
+  private async inspectAdapterRuntime(
+    projectId: string,
+    blockers: RunBatchPreflightBlocker[],
+  ): Promise<void> {
+    if (!this.projectStructures) {
+      blockers.push(
+        blocker(
+          "ADAPTER_RUNTIME_PREFLIGHT_UNAVAILABLE",
+          "input",
+          "当前运行时未配置 Adapter 依赖资源预检端口。",
+        ),
+      );
+      return;
+    }
+    const configuration = await this.projectStructures.getAdapterConfiguration(projectId);
+    const bundle = configuration.jarBundleAsset;
+    if (!bundle) {
+      blockers.push(
+        blocker(
+          "ADAPTER_DEPENDENCY_ARCHIVE_MISSING",
+          "input",
+          "任务已启用 CoTest Adapter，但项目尚未配置完整依赖 JAR 压缩包。",
+        ),
+      );
+      return;
+    }
+    if (bundle.sourceType !== "upload" || !bundle.objectKey || !this.executionInputs) return;
+    try {
+      if (!(await this.executionInputs.objectStore.exists(bundle.objectKey))) {
+        blockers.push(
+          blocker(
+            "ADAPTER_DEPENDENCY_ARCHIVE_OBJECT_MISSING",
+            "input",
+            "项目配置的依赖 JAR 压缩包对象不存在，请重新上传。",
+          ),
+        );
+      }
+    } catch {
+      blockers.push(
+        blocker(
+          "ADAPTER_DEPENDENCY_ARCHIVE_CHECK_FAILED",
+          "input",
+          "暂时无法核验依赖 JAR 压缩包，请稍后重试。",
+        ),
+      );
+    }
+  }
+
   private async inspectRunners(
     runnerIds: readonly string[],
     requiresSecrets: boolean,
     blockers: RunBatchPreflightBlocker[],
     policyLabels: readonly string[] = [],
     executor: "testng" | "testng-container" = "testng",
+    requiresAdapter = false,
   ): Promise<void> {
     const offlineCutoff = offlineBefore(this.clock.now());
     for (const runnerId of runnerIds) {
@@ -513,6 +576,16 @@ export class RunBatchSchedulingService {
             "RUNNER_CONTAINER_CAPABILITY_MISSING",
             "runner",
             "执行机未配置离线 container 执行器。",
+            { runnerId },
+          ),
+        );
+      }
+      if (requiresAdapter && !runner.capabilities.includes(COTEST_ADAPTER_CAPABILITY)) {
+        blockers.push(
+          blocker(
+            "RUNNER_ADAPTER_CAPABILITY_MISSING",
+            "toolchain",
+            "执行机未安装任务所需的 CoTest Adapter；请重新下发 Runner。",
             { runnerId },
           ),
         );
@@ -690,6 +763,19 @@ export class RunBatchSchedulingService {
       secretBindings: [...resolved.version.secretBindings],
     };
   }
+}
+
+function usesTaskAdapter(
+  adapter:
+    | {
+        enabled: boolean;
+        suiteName: string;
+        testName: string;
+        environmentAddresses: readonly string[];
+      }
+    | undefined,
+): boolean {
+  return adapter?.enabled === true;
 }
 
 function blocker(

@@ -61,8 +61,11 @@ test("local user completes forced password change and self-service session lifec
 
   await login(page, username, replacementPassword);
   await expect(page.getByRole("link", { name: "用例库", exact: true })).toBeVisible();
-  const managementLink = page.getByRole("link", { name: "管理中心" });
-  await expect(managementLink).toHaveAttribute("href", "/settings/environments");
+  const environmentLink = page.getByRole("link", { name: "执行环境", exact: true });
+  await expect(environmentLink).toHaveAttribute(
+    "href",
+    "/settings/environments?section=environments",
+  );
   await page.goto("/account/security");
   await expect(page.getByText("当前会话", { exact: true })).toBeVisible();
   page.once("dialog", (dialog) => dialog.accept());
@@ -103,7 +106,7 @@ test("administrator can reset a user password and the last administrator binding
   await expect(page).toHaveURL(/\/account\/security$/);
   await logout(page);
   await login(page, E2E_ADMIN_USERNAME, E2E_ADMIN_PASSWORD);
-  await expect(page.getByRole("link", { name: "管理中心" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "平台配置", exact: true })).toBeVisible();
 });
 
 test("administrator unlocks and disables a locked user and manages a custom role", async ({
@@ -196,13 +199,14 @@ test("every built-in role receives only its authorized navigation and API surfac
         "首页",
         "用例库",
         "用例任务",
-        "运维计划",
+        "运维与审计",
         "文件来源",
         "用例批跑",
         "执行机",
         "洞察",
-        "安全审计",
-        "管理中心",
+        "项目管理",
+        "执行环境",
+        "密文管理",
       ],
       hidden: [] as string[],
     },
@@ -214,14 +218,15 @@ test("every built-in role receives only its authorized navigation and API surfac
         "首页",
         "用例库",
         "用例任务",
-        "运维计划",
+        "运维与审计",
         "文件来源",
         "用例批跑",
         "执行机",
         "洞察",
-        "管理中心",
+        "执行环境",
+        "密文管理",
       ],
-      hidden: ["安全审计"],
+      hidden: ["用户管理", "角色权限", "平台配置"],
     },
     {
       key: "execution-operator",
@@ -231,14 +236,14 @@ test("every built-in role receives only its authorized navigation and API surfac
         "首页",
         "用例库",
         "用例任务",
-        "运维计划",
+        "运维与审计",
         "文件来源",
         "用例批跑",
         "执行机",
         "洞察",
-        "管理中心",
+        "执行环境",
       ],
-      hidden: ["安全审计"],
+      hidden: ["项目管理", "密文管理", "平台配置"],
     },
     {
       key: "viewer",
@@ -248,21 +253,30 @@ test("every built-in role receives only its authorized navigation and API surfac
         "首页",
         "用例库",
         "用例任务",
-        "运维计划",
+        "运维与审计",
         "文件来源",
         "用例批跑",
         "执行机",
         "洞察",
-        "管理中心",
+        "执行环境",
       ],
-      hidden: ["安全审计"],
+      hidden: ["项目管理", "密文管理", "平台配置"],
     },
     {
       key: "auditor",
       roleId: AUDITOR_ROLE_ID,
       scope: "system" as const,
-      visible: ["用例批跑", "洞察", "安全审计"],
-      hidden: ["首页", "用例库", "用例任务", "运维计划", "文件来源", "执行机", "管理中心"],
+      visible: ["用例批跑", "洞察", "运维与审计"],
+      hidden: [
+        "首页",
+        "用例库",
+        "用例任务",
+        "文件来源",
+        "执行机",
+        "项目管理",
+        "执行环境",
+        "平台配置",
+      ],
     },
   ];
 

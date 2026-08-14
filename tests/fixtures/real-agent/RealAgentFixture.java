@@ -1,5 +1,6 @@
 package com.autoforge.acceptance;
 
+import com.huawei.cotest.util.ProjectFileUtil;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -17,6 +18,10 @@ public final class RealAgentFixture {
         secret,
         "real-agent-secret-v1-do-not-leak-8f31",
         "The secret version bound to the environment snapshot was not injected.");
+    Assert.assertEquals(
+        ProjectFileUtil.getEnvIP(),
+        "10.0.0.11",
+        "The task-scoped Adapter environment address was not injected.");
     int split = secret.length() / 2;
     System.out.print("REAL_AGENT_SECRET_PROBE=" + secret.substring(0, split));
     System.out.flush();

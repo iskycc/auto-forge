@@ -1,9 +1,10 @@
-import { Button, Input, Select } from "@/components/ui";
+import { Button, Select } from "@/components/ui";
 
-import { FileArchive, Import, Search } from "lucide-react";
+import { FileArchive, Import } from "lucide-react";
 import Link from "next/link";
 
 import { CaseSelectionTable } from "@/components/case-selection-table";
+import { listCompleteCaseDirectory } from "@/lib/case-directory";
 import { getPlatformServices } from "@/lib/services";
 import { requireAuthorizedPageProjectScope, requirePageProjectScope } from "@/lib/auth";
 import { projectIdsForPermission } from "@autoforge/domain";
@@ -13,7 +14,6 @@ export const dynamic = "force-dynamic";
 type CasesPageProps = {
   searchParams: Promise<{
     query?: string | string[];
-    cursor?: string | string[];
     projectId?: string | string[];
     projectVersionId?: string | string[];
     testStageId?: string | string[];
@@ -28,7 +28,6 @@ export default async function CasesPage({ searchParams }: CasesPageProps) {
   const { identity, projectIds } = await requirePageProjectScope("case.read");
   const parameters = await searchParams;
   const query = single(parameters.query)?.trim();
-  const cursor = single(parameters.cursor);
   const requestedProjectId = single(parameters.projectId);
   const requestedProjectVersionId = single(parameters.projectVersionId);
   const requestedTestStageId = single(parameters.testStageId);
@@ -53,15 +52,12 @@ export default async function CasesPage({ searchParams }: CasesPageProps) {
   const testStage =
     projectVersion?.stages.find((stage) => stage.id === requestedTestStageId) ??
     projectVersion?.stages[0];
-  const [page, suites] = await Promise.all([
-    services.catalog.listCases({
+  const [cases, suites] = await Promise.all([
+    listCompleteCaseDirectory(services.catalog, {
       ...(effectiveProjectIds ? { projectIds: effectiveProjectIds } : {}),
       ...(projectVersion ? { projectVersionId: projectVersion.id } : {}),
       ...(testStage ? { testStageId: testStage.id } : {}),
       scopedOnly: true,
-      ...(query ? { query } : {}),
-      ...(cursor ? { cursor } : {}),
-      limit: 50,
     }),
     services.caseSuites.list(200, effectiveProjectIds),
   ]);
@@ -92,28 +88,13 @@ export default async function CasesPage({ searchParams }: CasesPageProps) {
         ) : null}
       </section>
 
-      <section className="card table-card">
-        <div className="table-toolbar">
-          <form className="case-search" action="/cases" role="search">
-            {projectId ? <input name="projectId" type="hidden" value={projectId} /> : null}
-            {projectVersion ? (
-              <input name="projectVersionId" type="hidden" value={projectVersion.id} />
-            ) : null}
-            {testStage ? <input name="testStageId" type="hidden" value={testStage.id} /> : null}
-            <Search size={17} aria-hidden="true" />
-            <Input
-              name="query"
-              type="search"
-              defaultValue={query}
-              placeholder="按类名或包名搜索"
-              aria-label="搜索用例"
-            />
-            <Button className="button button-secondary" type="submit">
-              搜索
-            </Button>
-          </form>
+      <section className="card case-scope-toolbar" aria-label="用例范围">
+        <div className="case-scope-heading">
+          <strong>浏览范围</strong>
+          <span>目录和用例在下方工作台中一次性完整加载。</span>
+        </div>
+        <div className="case-scope-filters">
           <form action="/cases" method="get">
-            {query ? <input name="query" type="hidden" value={query} /> : null}
             <Select aria-label="项目筛选" defaultValue={projectId ?? ""} name="projectId">
               <option value="">全部授权项目</option>
               {accessibleProjects.map((project) => (
@@ -150,55 +131,32 @@ export default async function CasesPage({ searchParams }: CasesPageProps) {
               切换层级
             </Button>
           </form>
-          <span className="table-count">本页 {page.items.length} 个测试类</span>
         </div>
+      </section>
 
-        {page.items.length === 0 ? (
-          <div className="empty-state table-empty">
+      {cases.length === 0 ? (
+        <section className="card">
+          <div className="empty-state">
             <span className="empty-icon">
               <FileArchive size={27} />
             </span>
-            <strong>{query ? "没有匹配的测试类" : "用例库还是空的"}</strong>
-            <p>
-              {query
-                ? "尝试缩短关键词，或清除筛选条件。"
-                : "导入一个包含 TestNG @Test 注解的 JAR。"}
-            </p>
-            {query ? (
-              <Link className="button button-secondary" href="/cases">
-                清除搜索
-              </Link>
-            ) : canImport ? (
+            <strong>当前项目层级还没有用例</strong>
+            <p>导入一个包含 TestNG @Test 注解的 JAR，或切换项目版本与测试阶段。</p>
+            {canImport ? (
               <Link className="button button-primary" href="/cases/import">
                 导入第一个 JAR
               </Link>
             ) : null}
           </div>
-        ) : (
-          <CaseSelectionTable
-            cases={page.items}
-            suites={suites}
-            manageableProjectIds={suiteManagementProjectIds}
-          />
-        )}
-
-        {page.nextCursor && (
-          <div className="pagination">
-            <Link
-              className="button button-secondary"
-              href={`/cases?${new URLSearchParams({
-                ...(query ? { query } : {}),
-                ...(projectId ? { projectId } : {}),
-                ...(projectVersion ? { projectVersionId: projectVersion.id } : {}),
-                ...(testStage ? { testStageId: testStage.id } : {}),
-                cursor: page.nextCursor,
-              }).toString()}`}
-            >
-              下一页
-            </Link>
-          </div>
-        )}
-      </section>
+        </section>
+      ) : (
+        <CaseSelectionTable
+          cases={cases}
+          initialSearch={query ?? ""}
+          suites={suites}
+          manageableProjectIds={suiteManagementProjectIds}
+        />
+      )}
     </div>
   );
 }

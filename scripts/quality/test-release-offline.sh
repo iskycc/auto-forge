@@ -28,6 +28,7 @@ readonly failed_migration_data="${acceptance_directory}/failed-migration-data"
 readonly rollback_data="${acceptance_directory}/rollback-data"
 readonly current_deploy_root="${acceptance_directory}/current-deploy"
 readonly release_agent="${acceptance_directory}/autoforge-agent"
+readonly release_adapter="${acceptance_directory}/cotest-testng-adapter.jar"
 readonly upgrade_sentinel="Release upgrade sentinel ${run_identity}"
 readonly agent_proxy_ready_file="${acceptance_directory}/agent-proxy-url"
 
@@ -257,11 +258,14 @@ run_current_release_business() {
 
   docker cp "${current_container}:/app/resources/agents/linux-amd64/autoforge-agent" \
     "${release_agent}"
+  docker cp "${current_container}:/app/resources/agents/cotest-testng-adapter.jar" \
+    "${release_adapter}"
   chmod 0755 "${release_agent}"
   start_agent_loopback_proxy "${base_url}"
   E2E_REAL_AGENT_EXTERNAL_BASE_URL="${base_url}" \
   E2E_REAL_AGENT_SERVER_URL="${agent_proxy_url}" \
   E2E_PREBUILT_AGENT_BINARY="${release_agent}" \
+  E2E_PREBUILT_ADAPTER_JAR="${release_adapter}" \
   E2E_ADMIN_BOOTSTRAP_TOKEN="${admin_token}" \
   E2E_RUNNER_BOOTSTRAP_TOKEN="${runner_token}" \
     bash "${repository_root}/scripts/quality/test-real-agent.sh"

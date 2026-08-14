@@ -188,12 +188,9 @@ export class PostgresProjectStructureRepository implements ProjectStructureRepos
             `INSERT INTO project_adapter_configurations
              (project_id, suite_name, test_name, environment_address, jdk_asset_id,
               jar_bundle_asset_id, revision, updated_by, updated_at)
-             VALUES ($1, $2, $3, $4, $5, $6, 1, $7, $8) RETURNING *`,
+             VALUES ($1, '', '', '', $2, $3, 1, $4, $5) RETURNING *`,
             [
               input.projectId,
-              input.suiteName,
-              input.testName,
-              input.environmentAddress,
               input.jdkAssetId ?? null,
               input.jarBundleAssetId ?? null,
               input.actorId ?? null,
@@ -203,13 +200,10 @@ export class PostgresProjectStructureRepository implements ProjectStructureRepos
         } else {
           result = await client.query<ConfigurationRow>(
             `UPDATE project_adapter_configurations
-             SET suite_name = $1, test_name = $2, environment_address = $3, jdk_asset_id = $4,
-                 jar_bundle_asset_id = $5, revision = revision + 1, updated_by = $6, updated_at = $7
-             WHERE project_id = $8 AND revision = $9 RETURNING *`,
+             SET suite_name = '', test_name = '', environment_address = '', jdk_asset_id = $1,
+                 jar_bundle_asset_id = $2, revision = revision + 1, updated_by = $3, updated_at = $4
+             WHERE project_id = $5 AND revision = $6 RETURNING *`,
             [
-              input.suiteName,
-              input.testName,
-              input.environmentAddress,
               input.jdkAssetId ?? null,
               input.jarBundleAssetId ?? null,
               input.actorId ?? null,
@@ -241,9 +235,6 @@ export class PostgresProjectStructureRepository implements ProjectStructureRepos
       ? mapConfiguration(this.handle.pool, result.rows[0])
       : {
           projectId,
-          suiteName: "",
-          testName: "",
-          environmentAddress: "",
           revision: 0,
           updatedAt: "",
         };
@@ -287,9 +278,6 @@ async function mapConfiguration(
   const jarBundleAsset = findAsset(row.jar_bundle_asset_id);
   return {
     projectId: row.project_id,
-    suiteName: row.suite_name,
-    testName: row.test_name,
-    environmentAddress: row.environment_address,
     ...(jdkAsset ? { jdkAsset } : {}),
     ...(jarBundleAsset ? { jarBundleAsset } : {}),
     revision: row.revision,

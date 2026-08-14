@@ -69,7 +69,8 @@ export class ProjectStructureService {
     projectId: string;
     kind: RuntimeAssetKind;
     fileName: string;
-    content: Uint8Array;
+    content: AsyncIterable<Uint8Array>;
+    sizeBytes: number;
     sha256: string;
     archiveFormat: RuntimeArchiveFormat;
     actorId?: string;
@@ -83,9 +84,9 @@ export class ProjectStructureService {
     await this.objectStore.putObject({
       objectKey,
       sha256: input.sha256,
-      sizeBytes: input.content.byteLength,
+      sizeBytes: input.sizeBytes,
       mediaType: input.archiveFormat === "zip" ? "application/zip" : "application/gzip",
-      content: bytes(input.content),
+      content: input.content,
     });
     try {
       return await this.structures.createRuntimeAsset({
@@ -96,7 +97,7 @@ export class ProjectStructureService {
         fileName: input.fileName,
         objectKey,
         sha256: input.sha256,
-        sizeBytes: input.content.byteLength,
+        sizeBytes: input.sizeBytes,
         archiveFormat: input.archiveFormat,
         ...(input.actorId ? { createdBy: input.actorId } : {}),
         createdAt: this.clock.now().toISOString(),
@@ -123,9 +124,6 @@ export class ProjectStructureService {
     const validated = projectAdapterConfigurationInputSchema.parse(input);
     return this.structures.updateAdapterConfiguration({
       projectId,
-      suiteName: validated.suiteName,
-      testName: validated.testName,
-      environmentAddress: validated.environmentAddress,
       ...(validated.jdkAssetId ? { jdkAssetId: validated.jdkAssetId } : {}),
       ...(validated.jarBundleAssetId ? { jarBundleAssetId: validated.jarBundleAssetId } : {}),
       expectedRevision: validated.expectedRevision,
@@ -137,8 +135,4 @@ export class ProjectStructureService {
 
 function normalizeName(value: string): string {
   return value.trim().normalize("NFKC").toLocaleLowerCase("en-US");
-}
-
-async function* bytes(content: Uint8Array): AsyncIterable<Uint8Array> {
-  yield content;
 }

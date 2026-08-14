@@ -1,22 +1,20 @@
-import { ManagementNavigation } from "@/components/management-navigation";
 import { ProjectMembershipManager } from "@/components/project-membership-manager";
 import { ProjectStructureManager } from "@/components/project-structure-manager";
-import {
-  hasPermissionInAnyScope,
-  requireAuthorizedPageProjectScope,
-  requirePageProjectScope,
-} from "@/lib/auth";
+import { SectionTabs } from "@/components/section-tabs";
+import { requireAuthorizedPageProjectScope, requirePageProjectScope } from "@/lib/auth";
 import { getPlatformServices } from "@/lib/services";
 
 export default async function ProjectMembershipsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ projectId?: string }>;
+  searchParams: Promise<{ projectId?: string; section?: string }>;
 }) {
   const { identity } = await requirePageProjectScope("project.read");
   const services = await getPlatformServices();
   const projects = await services.identityAccess.listProjects(identity);
-  const requestedProjectId = (await searchParams).projectId?.trim();
+  const parameters = await searchParams;
+  const requestedProjectId = parameters.projectId?.trim();
+  const activeSection = parameters.section === "execution" ? "execution" : "members";
   if (requestedProjectId) {
     requireAuthorizedPageProjectScope(identity, "project.read", requestedProjectId);
   }
@@ -39,9 +37,15 @@ export default async function ProjectMembershipsPage({
 
   const canManage = canManageProject(services, identity, selectedProject.id);
   const [members, roles, structure] = await Promise.all([
-    services.identityAccess.listProjectMembers(identity, selectedProject.id),
-    services.identityAccess.listProjectRolesForMemberManagement(identity, selectedProject.id),
-    services.projectStructures.list(selectedProject.id),
+    activeSection === "members"
+      ? services.identityAccess.listProjectMembers(identity, selectedProject.id)
+      : Promise.resolve([]),
+    activeSection === "members"
+      ? services.identityAccess.listProjectRolesForMemberManagement(identity, selectedProject.id)
+      : Promise.resolve([]),
+    activeSection === "execution"
+      ? services.projectStructures.list(selectedProject.id)
+      : Promise.resolve(undefined),
   ]);
 
   return (
@@ -49,38 +53,50 @@ export default async function ProjectMembershipsPage({
       <header className="page-header settings-page-header">
         <div>
           <p className="eyebrow">Projects</p>
-          <h1>项目与成员</h1>
-          <p>查看成员角色；项目管理员可添加、移除成员并安全转移负责人。</p>
+          <h1>{activeSection === "members" ? "项目与成员" : "项目执行配置"}</h1>
+          <p>
+            {activeSection === "members"
+              ? "查看成员角色；项目管理员可添加、移除成员并安全转移负责人。"
+              : "管理项目版本、测试阶段、JDK 和测试依赖资源；Adapter 参数在用例任务中配置。"}
+          </p>
         </div>
-        <ManagementNavigation
-          active="projects"
-          showAccess={
-            hasPermissionInAnyScope(identity, "settings.read") ||
-            hasPermissionInAnyScope(identity, "user.read") ||
-            hasPermissionInAnyScope(identity, "role.read") ||
-            hasPermissionInAnyScope(identity, "ldap.read")
-          }
-          showEnvironments={
-            hasPermissionInAnyScope(identity, "environment.read") ||
-            hasPermissionInAnyScope(identity, "secret.manage")
-          }
-          showOverview={hasPermissionInAnyScope(identity, "settings.read")}
-          showPlatform={hasPermissionInAnyScope(identity, "settings.read")}
-          showProjects
-        />
       </header>
-      <ProjectMembershipManager
-        canManage={canManage}
-        members={members}
-        project={selectedProject}
-        projects={projects}
-        roles={roles}
+      <SectionTabs
+        label="项目管理模块"
+        tabs={[
+          {
+            href: `/settings/projects?${new URLSearchParams({
+              projectId: selectedProject.id,
+              section: "members",
+            }).toString()}`,
+            label: "成员与角色",
+            active: activeSection === "members",
+          },
+          {
+            href: `/settings/projects?${new URLSearchParams({
+              projectId: selectedProject.id,
+              section: "execution",
+            }).toString()}`,
+            label: "执行配置",
+            active: activeSection === "execution",
+          },
+        ]}
       />
-      <ProjectStructureManager
-        canManage={canManage}
-        initialStructure={structure}
-        projectId={selectedProject.id}
-      />
+      {activeSection === "members" ? (
+        <ProjectMembershipManager
+          canManage={canManage}
+          members={members}
+          project={selectedProject}
+          projects={projects}
+          roles={roles}
+        />
+      ) : structure ? (
+        <ProjectStructureManager
+          canManage={canManage}
+          initialStructure={structure}
+          projectId={selectedProject.id}
+        />
+      ) : null}
     </section>
   );
 }

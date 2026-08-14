@@ -35,6 +35,9 @@ export function CaseSuiteEditor({
       .split("\n")
       .map((pattern) => pattern.trim())
       .filter((pattern) => pattern.length > 0);
+    const environmentAddresses = parseEnvironmentAddresses(
+      String(form.get("adapterEnvironmentAddresses") ?? ""),
+    );
     setPending(true);
     setError(null);
     setMessage(null);
@@ -49,6 +52,12 @@ export function CaseSuiteEditor({
           archived: form.get("archived") === "on",
           policy: {
             executor: form.get("executor"),
+            adapter: {
+              enabled: form.get("adapterEnabled") === "on",
+              suiteName: form.get("adapterSuiteName"),
+              testName: form.get("adapterTestName"),
+              environmentAddresses,
+            },
             priority: Number(form.get("priority")),
             concurrency: Number(form.get("concurrency")),
             retryLimit: Number(form.get("retryLimit")),
@@ -238,6 +247,38 @@ export function CaseSuiteEditor({
               defaultValue={suite.policy.runnerLabels.join(", ")}
             />
           </label>
+          <label className="checkbox-field">
+            <Input
+              name="adapterEnabled"
+              type="checkbox"
+              defaultChecked={suite.policy.adapter.enabled}
+            />
+            使用 CoTest TestNG Adapter
+          </label>
+          <label>
+            Adapter Suite Name
+            <Input
+              name="adapterSuiteName"
+              maxLength={512}
+              defaultValue={suite.policy.adapter.suiteName}
+            />
+          </label>
+          <label>
+            Adapter Test Name
+            <Input
+              name="adapterTestName"
+              maxLength={512}
+              defaultValue={suite.policy.adapter.testName}
+            />
+          </label>
+          <label className="settings-wide-field">
+            Adapter 环境 IP / 地址（每行一个，按用例轮询）
+            <Textarea
+              name="adapterEnvironmentAddresses"
+              rows={3}
+              defaultValue={suite.policy.adapter.environmentAddresses.join("\n")}
+            />
+          </label>
           <label className="settings-wide-field">
             任务说明
             <Textarea
@@ -380,4 +421,15 @@ function parseKeyValueLines(text: string): Record<string, string> {
     parameters[trimmed.slice(0, separator).trim()] = trimmed.slice(separator + 1).trim();
   }
   return parameters;
+}
+
+function parseEnvironmentAddresses(value: string): string[] {
+  return [
+    ...new Set(
+      value
+        .split(/[\n,，]/u)
+        .map((item) => item.trim())
+        .filter(Boolean),
+    ),
+  ];
 }

@@ -5,7 +5,7 @@ import type {
   ProjectRuntimeAsset,
   ProjectStructure,
 } from "@autoforge/domain";
-import { Boxes, FolderTree, UploadCloud } from "lucide-react";
+import { FolderTree, UploadCloud } from "lucide-react";
 import { useState, type FormEvent } from "react";
 
 import { Button, Input, Select } from "@/components/ui";
@@ -88,20 +88,6 @@ export function ProjectStructureManager({
     });
   }
 
-  function updateConfiguration(event: FormEvent<HTMLFormElement>): void {
-    event.preventDefault();
-    const values = new FormData(event.currentTarget);
-    void run(async () => {
-      await saveConfiguration({
-        ...structure.adapterConfiguration,
-        suiteName: String(values.get("suiteName") ?? ""),
-        testName: String(values.get("testName") ?? ""),
-        environmentAddress: String(values.get("environmentAddress") ?? ""),
-      });
-      await refresh("Adapter 项目级参数已保存。");
-    });
-  }
-
   function registerUrlAsset(event: FormEvent<HTMLFormElement>): void {
     event.preventDefault();
     const form = event.currentTarget;
@@ -133,11 +119,16 @@ export function ProjectStructureManager({
       return;
     }
     void run(async () => {
-      const body = new FormData();
-      body.set("file", file);
       const response = await fetch(
         `/api/v1/projects/${projectId}/runtime-assets/upload?${new URLSearchParams({ kind, archiveFormat })}`,
-        { method: "POST", body },
+        {
+          method: "POST",
+          headers: {
+            "content-type": archiveFormat === "zip" ? "application/zip" : "application/gzip",
+            "x-autoforge-file-name": encodeURIComponent(file.name),
+          },
+          body: file,
+        },
       );
       const errorMessage = await readApiErrorMessage(response, "上传运行时资源失败。");
       if (errorMessage) throw new Error(errorMessage);
@@ -150,9 +141,6 @@ export function ProjectStructureManager({
 
   async function saveConfiguration(configuration: ProjectAdapterConfiguration): Promise<void> {
     await submitJson(`/api/v1/projects/${projectId}/adapter-configuration`, "PUT", {
-      suiteName: configuration.suiteName,
-      testName: configuration.testName,
-      environmentAddress: configuration.environmentAddress,
       ...(configuration.jdkAsset ? { jdkAssetId: configuration.jdkAsset.id } : {}),
       ...(configuration.jarBundleAsset
         ? { jarBundleAssetId: configuration.jarBundleAsset.id }
@@ -163,7 +151,7 @@ export function ProjectStructureManager({
 
   const configuration = structure.adapterConfiguration;
   return (
-    <div className="settings-stack">
+    <div className="settings-stack project-structure-manager">
       {message ? <div className="inline-success">{message}</div> : null}
       {error ? (
         <div className="auth-error" role="alert">
@@ -181,7 +169,10 @@ export function ProjectStructureManager({
           <FolderTree size={22} aria-hidden="true" />
         </div>
         <div className="settings-paired-forms">
-          <form className="settings-grid-form settings-subform" onSubmit={createVersion}>
+          <form
+            className="settings-grid-form settings-subform project-structure-subform"
+            onSubmit={createVersion}
+          >
             <label>
               版本名称
               <Input name="name" placeholder="例如 2.4.0" required disabled={!canManage} />
@@ -190,7 +181,10 @@ export function ProjectStructureManager({
               创建版本
             </Button>
           </form>
-          <form className="settings-grid-form settings-subform" onSubmit={createStage}>
+          <form
+            className="settings-grid-form settings-subform project-structure-subform"
+            onSubmit={createStage}
+          >
             <label>
               所属版本
               <Select name="versionId" required disabled={!canManage}>
@@ -218,7 +212,7 @@ export function ProjectStructureManager({
             </Button>
           </form>
         </div>
-        <div className="permission-list">
+        <div className="permission-list project-version-list">
           {structure.versions.map((version) => (
             <span key={version.id}>
               <strong>{version.name}</strong>
@@ -233,41 +227,12 @@ export function ProjectStructureManager({
       <section className="content-card settings-section">
         <div className="section-heading">
           <div>
-            <p className="eyebrow">Cotest Adapter</p>
-            <h2>项目级执行参数</h2>
-            <p>执行任务生成时会将 Suite、Test 和环境地址固化到 ExecutionSpec。</p>
-          </div>
-          <Boxes size={22} aria-hidden="true" />
-        </div>
-        <form className="settings-grid-form" onSubmit={updateConfiguration}>
-          <label>
-            TestNG Suite Name
-            <Input name="suiteName" defaultValue={configuration.suiteName} disabled={!canManage} />
-          </label>
-          <label>
-            TestNG Test Name
-            <Input name="testName" defaultValue={configuration.testName} disabled={!canManage} />
-          </label>
-          <label>
-            环境 IP / 地址
-            <Input
-              name="environmentAddress"
-              defaultValue={configuration.environmentAddress}
-              disabled={!canManage}
-            />
-          </label>
-          <Button className="primary-button" disabled={pending || !canManage} type="submit">
-            保存 Adapter 参数
-          </Button>
-        </form>
-      </section>
-
-      <section className="content-card settings-section">
-        <div className="section-heading">
-          <div>
             <p className="eyebrow">Runtime assets</p>
             <h2>JDK 与依赖 JAR 压缩包</h2>
-            <p>可以上传或填写内网 HTTP(S) 地址；Runner 下载后必须校验大小与 SHA-256。</p>
+            <p>
+              可以流式上传或填写内网 HTTP(S) 地址；不设置固定业务大小上限，Runner
+              下载后仍会校验大小、SHA-256 和任务工作区配额。
+            </p>
           </div>
           <UploadCloud size={22} aria-hidden="true" />
         </div>
@@ -276,7 +241,10 @@ export function ProjectStructureManager({
           {assetSummary(configuration.jarBundleAsset)}
         </p>
         <div className="settings-paired-forms">
-          <form className="settings-grid-form settings-subform" onSubmit={uploadAsset}>
+          <form
+            className="settings-grid-form settings-subform project-structure-subform"
+            onSubmit={uploadAsset}
+          >
             <label>
               资源类型
               <Select name="kind" disabled={!canManage}>
@@ -299,7 +267,10 @@ export function ProjectStructureManager({
               上传并启用
             </Button>
           </form>
-          <form className="settings-grid-form settings-subform" onSubmit={registerUrlAsset}>
+          <form
+            className="settings-grid-form settings-subform project-structure-subform"
+            onSubmit={registerUrlAsset}
+          >
             <label>
               资源类型
               <Select name="kind" disabled={!canManage}>

@@ -1,5 +1,10 @@
 import { Clock3, Server, ShieldCheck } from "lucide-react";
-import { assessRunnerCompatibility, hasPermission, type RunBatch } from "@autoforge/domain";
+import {
+  assessRunnerCompatibility,
+  hasPermission,
+  type RunBatch,
+  type Runner,
+} from "@autoforge/domain";
 
 import { RunnerAdminActions } from "@/components/runner-admin-actions";
 import { RunnerAgentInstaller } from "@/components/runner-agent-installer";
@@ -83,7 +88,14 @@ export default async function RunnersPage() {
           <strong>{runners.length - onlineCount}</strong>
         </div>
       </section>
-      <section className="card table-card">
+      <section className="card runner-list-card">
+        <div className="section-title-row">
+          <div>
+            <span className="eyebrow">Runner inventory</span>
+            <h2>执行机列表</h2>
+          </div>
+          <span className="table-count">共 {runners.length} 台</span>
+        </div>
         {runners.length === 0 ? (
           <div className="empty-state table-empty">
             <span className="empty-icon">
@@ -93,139 +105,113 @@ export default async function RunnersPage() {
             <p>在上方填写执行机连接信息并完成自动安装后，Agent 会自动注册并出现在这里。</p>
           </div>
         ) : (
-          <div className="table-scroll">
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th>执行机</th>
-                  <th>平台</th>
-                  <th>兼容性</th>
-                  <th>容量</th>
-                  <th>资源</th>
-                  <th>状态</th>
-                  <th>最近心跳</th>
-                  <th>Lease / 最近任务</th>
-                  <th>终端</th>
-                  {canManage ? <th>操作</th> : null}
-                </tr>
-              </thead>
-              <tbody>
-                {runners.map((runner) => {
-                  const compatibility = assessRunnerCompatibility(runner);
-                  return (
-                    <tr key={runner.id}>
-                      <td>
-                        <span className="class-cell">
-                          <strong>{runner.name}</strong>
-                          <small>{runner.labels.join(" · ") || "无标签"}</small>
-                          <small title={runner.capabilities.join(", ")}>
-                            {runner.capabilities.join(" · ") || "未声明能力"}
-                          </small>
-                        </span>
-                      </td>
-                      <td>
+          <div className="runner-list" role="table" aria-label="执行机列表">
+            {runners.map((runner) => {
+              const compatibility = assessRunnerCompatibility(runner);
+              return (
+                <article className="runner-list-item" key={runner.id} role="row">
+                  <header className="runner-list-header" role="cell">
+                    <span className="runner-list-identity">
+                      <Server size={18} aria-hidden="true" />
+                      <span>
+                        <strong>{runner.name}</strong>
+                        <small>{runner.labels.join(" · ") || "无标签"}</small>
+                      </span>
+                    </span>
+                    <span className={`runner-state runner-state-${runner.state}`}>
+                      <i /> {runnerStateLabel(runner)}
+                    </span>
+                  </header>
+
+                  <div className="runner-list-facts">
+                    <div role="cell">
+                      <span>平台</span>
+                      <strong>
                         {runner.os} · {runner.architecture}
-                        <br />
-                        <small className="muted">
-                          Agent {runner.agentVersion} · 协议 v{runner.protocolVersion}
-                        </small>
-                      </td>
-                      <td>
+                      </strong>
+                      <small>
+                        Agent {runner.agentVersion} · 协议 v{runner.protocolVersion}
+                      </small>
+                    </div>
+                    <div role="cell">
+                      <span>兼容性</span>
+                      <strong>
                         <span
                           className={`runner-state runner-compatibility-${compatibility.status}`}
                           title={runnerCompatibilitySummary(compatibility)}
                         >
                           <i /> {runnerCompatibilityLabel(compatibility.status)}
                         </span>
-                        <br />
-                        <small className="muted">{runnerToolchainSummary(compatibility)}</small>
-                      </td>
-                      <td>
-                        {runner.busySlots} / {runner.maxConcurrency}
-                      </td>
-                      <td>
-                        {runner.resourceSnapshot ? (
-                          <span className="runner-resource-cell">
-                            <small>CPU {runner.resourceSnapshot.cpuUtilizationPercent}%</small>
-                            <small>内存 {runner.resourceSnapshot.memoryUtilizationPercent}%</small>
-                            <small>
-                              负载/CPU{" "}
-                              {(
-                                runner.resourceSnapshot.loadAverage1m /
-                                runner.resourceSnapshot.logicalCpuCount
-                              ).toFixed(2)}
-                            </small>
-                          </span>
-                        ) : (
-                          <span className="muted">等待上报</span>
-                        )}
-                      </td>
-                      <td>
-                        <span className={`runner-state runner-state-${runner.state}`}>
-                          <i />
-                          {runner.deregisteredAt
-                            ? "已注销"
-                            : runner.state === "online"
-                              ? "在线"
-                              : runner.state === "draining"
-                                ? "排空中"
-                                : runner.state === "disabled"
-                                  ? "已禁用"
-                                  : "离线"}
-                        </span>
-                        {runner.credentialRevokedAt && !runner.deregisteredAt ? (
-                          <>
-                            <br />
-                            <small className="muted">凭据已撤销</small>
-                          </>
-                        ) : null}
-                      </td>
-                      <td>
+                      </strong>
+                      <small>{runnerToolchainSummary(compatibility)}</small>
+                    </div>
+                    <div role="cell">
+                      <span>容量与资源</span>
+                      <strong>
+                        {runner.busySlots} / {runner.maxConcurrency} 槽位
+                      </strong>
+                      <small>{runnerResourceSummary(runner)}</small>
+                    </div>
+                    <div role="cell">
+                      <span>最近心跳</span>
+                      <strong>
                         <time dateTime={runner.lastSeenAt}>{formatDate(runner.lastSeenAt)}</time>
-                      </td>
-                      <td>
-                        <span className="class-cell">
-                          <strong>
-                            {runner.busySlots > 0
-                              ? `${runner.busySlots} 个活跃槽位`
-                              : "无活跃 Lease"}
-                          </strong>
-                          <small>{recentBatchLabel(recentBatches, runner.id)}</small>
-                        </span>
-                      </td>
-                      <td>
-                        <RunnerTerminal
-                          runnerId={runner.id}
-                          runnerName={runner.name}
-                          platformEnabled={Boolean(services.config.terminalAccessToken)}
-                          runnerEnabled={runner.terminalEnabled}
-                          runnerOnline={runner.state === "online" && !runner.deregisteredAt}
-                        />
-                      </td>
-                      {canManage ? (
-                        <td>
-                          <RunnerAdminActions
-                            runnerId={runner.id}
-                            runnerName={runner.name}
-                            credentialRevoked={Boolean(runner.credentialRevokedAt)}
-                            credentialRotationRequested={Boolean(
-                              runner.credentialRotationRequestedAt,
-                            )}
-                            deregistered={Boolean(runner.deregisteredAt)}
-                            state={runner.state}
-                          />
-                        </td>
-                      ) : null}
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+                      </strong>
+                      <small>{recentBatchLabel(recentBatches, runner.id)}</small>
+                    </div>
+                  </div>
+
+                  <footer className="runner-list-actions" role="cell">
+                    <span
+                      className="runner-capability-summary"
+                      title={runner.capabilities.join(", ")}
+                    >
+                      {runner.capabilities.join(" · ") || "未声明能力"}
+                    </span>
+                    {runner.credentialRevokedAt && !runner.deregisteredAt ? (
+                      <span className="tag">凭据已撤销</span>
+                    ) : null}
+                    <RunnerTerminal
+                      runnerId={runner.id}
+                      runnerName={runner.name}
+                      platformEnabled={Boolean(services.config.terminalAccessToken)}
+                      runnerEnabled={runner.terminalEnabled}
+                      runnerOnline={runner.state === "online" && !runner.deregisteredAt}
+                    />
+                    {canManage ? (
+                      <RunnerAdminActions
+                        runnerId={runner.id}
+                        runnerName={runner.name}
+                        credentialRevoked={Boolean(runner.credentialRevokedAt)}
+                        credentialRotationRequested={Boolean(runner.credentialRotationRequestedAt)}
+                        deregistered={Boolean(runner.deregisteredAt)}
+                        state={runner.state}
+                      />
+                    ) : null}
+                  </footer>
+                </article>
+              );
+            })}
           </div>
         )}
       </section>
     </div>
   );
+}
+
+function runnerStateLabel(runner: Runner): string {
+  if (runner.deregisteredAt) return "已注销";
+  if (runner.state === "online") return "在线";
+  if (runner.state === "draining") return "排空中";
+  if (runner.state === "disabled") return "已禁用";
+  return "离线";
+}
+
+function runnerResourceSummary(runner: Runner): string {
+  if (!runner.resourceSnapshot) return "等待资源上报";
+  const loadPerCpu =
+    runner.resourceSnapshot.loadAverage1m / runner.resourceSnapshot.logicalCpuCount;
+  return `CPU ${runner.resourceSnapshot.cpuUtilizationPercent}% · 内存 ${runner.resourceSnapshot.memoryUtilizationPercent}% · 负载/CPU ${loadPerCpu.toFixed(2)}`;
 }
 
 function recentBatchLabel(batches: RunBatch[], runnerId: string): string {

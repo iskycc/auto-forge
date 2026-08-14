@@ -213,8 +213,18 @@ export default async function InsightsPage({
 
       <section className="insight-metrics" aria-label="质量指标">
         <Metric icon={FlaskConical} label="执行样本" value={String(summary.sampleCount)} />
-        <Metric icon={TrendingUp} label="成功率" value={percent(summary.successRate)} />
-        <Metric icon={BarChart3} label="失败率" value={percent(summary.failureRate)} />
+        <Metric
+          icon={TrendingUp}
+          label="成功率"
+          tone="success"
+          value={percent(summary.successRate)}
+        />
+        <Metric
+          icon={BarChart3}
+          label="失败率"
+          tone="danger"
+          value={percent(summary.failureRate)}
+        />
         <Metric icon={BarChart3} label="P95 耗时" value={duration(summary.durationP95Ms)} />
       </section>
 
@@ -354,15 +364,19 @@ function Metric({
   icon: Icon,
   label,
   value,
+  tone = "neutral",
 }: {
   icon: typeof BarChart3;
   label: string;
   value: string;
+  tone?: "neutral" | "success" | "danger";
 }) {
   return (
-    <article className="card">
-      <Icon size={18} />
-      <span>{label}</span>
+    <article className={`card insight-metric insight-metric-${tone}`}>
+      <span className="insight-metric-icon">
+        <Icon size={18} />
+      </span>
+      <span className="insight-metric-label">{label}</span>
       <strong>{value}</strong>
     </article>
   );

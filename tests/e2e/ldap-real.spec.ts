@@ -200,7 +200,7 @@ async function verifyDirectoryOutageAndLocalFallback(
   });
   const fallbackPage = await fallbackContext.newPage();
   await login(fallbackPage, E2E_ADMIN_USERNAME, E2E_ADMIN_PASSWORD);
-  await expect(fallbackPage.getByRole("link", { name: "管理中心" })).toBeVisible();
+  await expect(fallbackPage.getByRole("link", { name: "LDAP 目录", exact: true })).toBeVisible();
   expect((await adminPage.request.get("/api/v1/auth/session")).status()).toBe(200);
 
   await execFileAsync("docker", ["start", container]);

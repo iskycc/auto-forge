@@ -9,7 +9,6 @@ import { testNgResultDetailsSchema, type ExecutionSpec } from "@autoforge/contra
 import {
   artifactMediaType,
   assessRunnerCompatibility,
-  DEFAULT_EXECUTION_RESOURCE_LIMITS,
   DEFAULT_PROJECT_ID,
   DomainError,
   evaluateRunnerForScheduling,
@@ -32,6 +31,8 @@ import { and, count, desc, eq, gt, gte, inArray, isNull, lt, lte, or, sql } from
 
 import type { PostgresDatabaseHandle } from "./postgres-database";
 import {
+  adapterEnvironmentAddress,
+  executionResourceLimitsForInputs,
   parseProjectAdapterRuntime,
   projectAdapterRequiredCapabilities,
   supportsProjectAdapterRuntime,
@@ -69,6 +70,8 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
     const adapterRuntime = await postgresProjectAdapterRuntime(
       this.handle,
       record.projectId ?? DEFAULT_PROJECT_ID,
+      record.adapter,
+      record.runs,
     );
     await this.handle.db.transaction(async (transaction) => {
       await transaction.insert(pgRunBatches).values({
@@ -722,6 +725,17 @@ function executionSpec(input: {
 }): ExecutionSpec {
   const artifactPatterns = input.policy?.artifactPatterns ?? ["reports/testng/**"];
   const runtimeInputs = input.adapterRuntime ? runtimeAssetInputs(input.adapterRuntime) : [];
+  const executionInputs: ExecutionSpec["inputs"] = [
+    {
+      inputId: input.source.id,
+      kind: "test-jar",
+      targetPath: "inputs/tests.jar",
+      mediaType: "application/java-archive",
+      sizeBytes: input.source.sizeBytes,
+      sha256: input.source.sha256,
+    },
+    ...runtimeInputs,
+  ];
   return {
     schemaVersion: 1,
     executor: input.policy?.executor ?? "testng",
@@ -736,21 +750,14 @@ function executionSpec(input: {
           adapter: {
             suiteName: input.adapterRuntime.suiteName,
             testName: input.adapterRuntime.testName,
-            environmentAddress: input.adapterRuntime.environmentAddress,
+            environmentAddress: adapterEnvironmentAddress(
+              input.adapterRuntime,
+              input.executionRunId,
+            ),
           },
         }
       : {}),
-    inputs: [
-      {
-        inputId: input.source.id,
-        kind: "test-jar",
-        targetPath: "inputs/tests.jar",
-        mediaType: "application/java-archive",
-        sizeBytes: input.source.sizeBytes,
-        sha256: input.source.sha256,
-      },
-      ...runtimeInputs,
-    ],
+    inputs: executionInputs,
     environment: input.environment.map((entry) => ({ ...entry, secret: false })),
     secretReferences: input.secretBindings,
     runtimeRequirements: {
@@ -772,21 +779,26 @@ function executionSpec(input: {
     })),
     timeoutMs: input.executionTimeoutMs,
     uploadTimeoutMs: input.uploadTimeoutMs,
-    resourceLimits: { ...DEFAULT_EXECUTION_RESOURCE_LIMITS },
+    resourceLimits: executionResourceLimitsForInputs(
+      executionInputs.map((executionInput) => executionInput.sizeBytes),
+      input.adapterRuntime !== undefined,
+    ),
   };
 }
 
 async function postgresProjectAdapterRuntime(
   handle: PostgresDatabaseHandle,
   projectId: string,
+  adapter: CreateRunBatchRecord["adapter"],
+  runs: CreateRunBatchRecord["runs"],
 ): Promise<ProjectAdapterRuntime | undefined> {
   const [configuration] = await handle.db
     .select()
     .from(pgProjectAdapterConfigurations)
     .where(eq(pgProjectAdapterConfigurations.projectId, projectId))
     .limit(1);
-  if (!configuration) return undefined;
-  const assetIds = [configuration.jdkAssetId, configuration.jarBundleAssetId].filter(
+  if (!hasTaskAdapterSettings(adapter)) return undefined;
+  const assetIds = [configuration?.jdkAssetId, configuration?.jarBundleAssetId].filter(
     (assetId): assetId is string => Boolean(assetId),
   );
   const assets = assetIds.length
@@ -813,15 +825,39 @@ async function postgresProjectAdapterRuntime(
         }
       : undefined;
   };
-  const jdk = assetSnapshot(configuration.jdkAssetId);
-  const jarBundle = assetSnapshot(configuration.jarBundleAssetId);
+  const jdk = assetSnapshot(configuration?.jdkAssetId ?? null);
+  const jarBundle = assetSnapshot(configuration?.jarBundleAssetId ?? null);
+  if (!jarBundle) {
+    throw new DomainError(
+      "ADAPTER_DEPENDENCY_ARCHIVE_MISSING",
+      "任务已启用 CoTest Adapter，但项目尚未配置完整依赖 JAR 压缩包。",
+    );
+  }
   return {
-    suiteName: configuration.suiteName,
-    testName: configuration.testName,
-    environmentAddress: configuration.environmentAddress,
+    suiteName: adapter?.suiteName ?? "",
+    testName: adapter?.testName ?? "",
+    environmentAddressByRunId: assignEnvironmentAddresses(
+      adapter?.environmentAddresses ?? [],
+      runs,
+    ),
+    fallbackEnvironmentAddress: "",
     ...(jdk ? { jdk } : {}),
-    ...(jarBundle ? { jarBundle } : {}),
+    jarBundle,
   };
+}
+
+function hasTaskAdapterSettings(adapter: CreateRunBatchRecord["adapter"]): boolean {
+  return adapter?.enabled === true;
+}
+
+function assignEnvironmentAddresses(
+  addresses: readonly string[],
+  runs: CreateRunBatchRecord["runs"],
+): Record<string, string> {
+  if (addresses.length === 0) return {};
+  return Object.fromEntries(
+    runs.map((run, index) => [run.id, addresses[index % addresses.length]!]),
+  );
 }
 
 function runtimeAssetInputs(runtime: ProjectAdapterRuntime): ExecutionSpec["inputs"] {

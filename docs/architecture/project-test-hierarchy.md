@@ -5,23 +5,25 @@
 层级字段的旧用例保留历史引用，但不出现在新用例库/API 列表，也不能通过新详情页继续操作。
 
 `directoryPath` 从静态发现的 Java 包名生成，只用于展示树和查询索引，不作为对象存储或本地文件
-路径。用例库以目录节点展开包路径，叶节点链接到单用例详情；详情读取同一权威仓储中的执行历史
-与分析事实，不在浏览器聚合跨项目数据。
+路径。用例库以默认折叠的目录节点展开包路径，并在同一页面的右侧工作区读取所选用例的执行历史、
+分析事实和操作，不在浏览器聚合跨项目数据，也不要求跳转详情页。
 
-每个项目保存一份带 revision 的 Adapter 配置：TestNG Suite Name、Test Name、环境地址、JDK
-资源和完整 JAR 依赖包。运行时资源可以上传到 Lite 本地对象存储/Full MinIO，也可以登记 HTTP(S)
-链接；两种方式都保存文件名、格式、精确大小和 SHA-256。批次创建时将配置和资源元数据序列化为
-不可变快照，之后修改项目配置不会改变已排队批次。
+每个用例任务保存 Adapter 启用状态、TestNG Suite Name、Test Name 和环境地址列表；项目只保存
+JDK 资源与完整 JAR 依赖包。环境地址在批次创建时按任务中稳定的用例顺序轮询分配，并连同任务
+参数和资源元数据写入不可变快照。运行时资源可以流式上传到 Lite 本地对象存储/Full MinIO，也可
+登记 HTTP(S) 链接；不设置固定业务上传大小上限，但始终受对象存储、磁盘和执行协议配额保护。
 
 Assignment 包含权威测试 JAR 及快照中的 JDK/JAR 压缩包。Agent 只在 attempt 工作目录内下载，
-逐项校验大小和 SHA-256，并在磁盘/文件数预算内拒绝目录穿越、过深路径、符号链接和特殊文件。
+逐项校验大小和 SHA-256，并在磁盘/展开字节/文件数预算内拒绝目录穿越、符号链接和特殊文件。
+依赖包可保留任意内部布局；Adapter 自动发现 `test-jars` 下最多三层子目录内的全部 JAR，不另设
+JAR 文件数量上限，扫描仍受总目录条目预算保护。
 解压后执行：
 
 ```text
 runtime/jdk/bin/java -jar /opt/autoforge/lib/cotest-testng-adapter.jar \
   --jars test-jars --class <binary-class-name> \
-  --suite-name <project-suite> --test-name <project-test> \
-  --environment-address <project-address> --output reports/testng
+  --suite-name <task-suite> --test-name <task-test> \
+  --environment-address <round-robin-task-address> --output reports/testng
 ```
 
 未配置的可选参数不会传递。主用例 JAR 在 Adapter classpath 中优先，其余 JAR 确定性排序。每个

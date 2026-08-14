@@ -41,9 +41,6 @@ export type ProjectRuntimeAsset = {
 
 export type ProjectAdapterConfiguration = {
   projectId: string;
-  suiteName: string;
-  testName: string;
-  environmentAddress: string;
   jdkAsset?: ProjectRuntimeAsset;
   jarBundleAsset?: ProjectRuntimeAsset;
   revision: number;

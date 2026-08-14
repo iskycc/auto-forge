@@ -6,6 +6,34 @@ and known limitations.
 
 ## Unreleased
 
+## 0.4.10 - 2026-08-14
+
+### Changed
+
+- Load the complete selected case hierarchy instead of stopping at 50 records, keep directories
+  collapsed by default, and add an in-page search plus a scrollable split workspace that shows case
+  details, history, source and actions without leaving the case library.
+- Promote administration modules with their own sections to permission-aware primary navigation
+  entries instead of nesting them under a crowded management center.
+- Move CoTest Suite/Test/environment settings from project configuration into versioned case-task
+  policy, add an explicit Adapter switch, and assign multiple environment addresses to cases in
+  stable round-robin order when the batch snapshot is created.
+- Stream uploaded JDK and dependency archives to object storage without a fixed business-size cap;
+  execution still enforces protocol, workspace-disk, extracted-byte and file-count safety budgets.
+- Remove the remaining 5000-class `testng.xml` selection ceiling so it cannot reintroduce a test
+  discovery count limit; validated JAR entry, expansion, per-class and warning budgets remain.
+- Discover every dependency JAR up to three directories below `test-jars`, remove the separate JAR
+  count ceiling, and verify the distributed Adapter plus nested dependency archive in the
+  network-blocked real-Agent GitHub Actions acceptance path.
+
+### Fixed
+
+- Stabilize the file-source filters and tables, insight success/failure metrics, Runner inventory,
+  project execution configuration and compact top bar across desktop viewport widths.
+- Add browser layout regression coverage for every primary product and administration route at
+  multiple viewport widths, including minimum text/control sizes, boundary overflow, page overflow
+  and overlapping interactive controls.
+
 ## 0.4.9 - 2026-08-14
 
 ### Added
@@ -31,8 +59,8 @@ and known limitations.
 - Reorganize the management center, operations/audit area and platform settings into route-backed
   tabs, replace the native project selector, and stabilize the case detail, audit and insights layouts
   at desktop and compact viewport widths.
-- Preserve fast publication by keeping the tagged `Release` workflow independent from `Release
-  checks`; only required Adapter, backend image, SBOM, manifest, signature and provenance failures
+- Preserve fast publication by keeping the tagged `Release` workflow independent from
+  `Release checks`; only required Adapter, backend image, SBOM, manifest, signature and provenance failures
   block publication.
 
 ### Fixed

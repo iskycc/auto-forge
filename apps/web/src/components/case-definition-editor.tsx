@@ -8,7 +8,13 @@ import { LoaderCircle, Save } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { FormEvent, useState } from "react";
 
-export function CaseDefinitionEditor({ definition }: { definition: CaseDefinitionWithMethods }) {
+export function CaseDefinitionEditor({
+  definition,
+  onUpdated,
+}: {
+  definition: CaseDefinitionWithMethods;
+  onUpdated?: (definition: CaseDefinitionWithMethods) => void;
+}) {
   const router = useRouter();
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -47,7 +53,9 @@ export function CaseDefinitionEditor({ definition }: { definition: CaseDefinitio
           parsed.success ? parsed.data.error.message : `请求失败（HTTP ${response.status}）。`,
         );
       }
+      const updated = (await response.json()) as CaseDefinitionWithMethods;
       setMessage("用例已更新。");
+      onUpdated?.(updated);
       router.refresh();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "更新用例失败。");

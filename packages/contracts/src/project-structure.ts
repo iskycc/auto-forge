@@ -29,7 +29,7 @@ export const runtimeAssetUrlInputSchema = z
       ),
     fileName: z.string().trim().min(1).max(255),
     sha256: sha256Schema,
-    sizeBytes: z.number().int().positive().max(10_737_418_240),
+    sizeBytes: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
     archiveFormat: archiveFormatSchema,
   })
   .superRefine((input, context) => {
@@ -48,9 +48,6 @@ export const runtimeAssetUrlInputSchema = z
   });
 
 export const projectAdapterConfigurationInputSchema = z.object({
-  suiteName: z.string().trim().max(512).default(""),
-  testName: z.string().trim().max(512).default(""),
-  environmentAddress: z.string().trim().max(2_048).default(""),
   jdkAssetId: identifierSchema.optional(),
   jarBundleAssetId: identifierSchema.optional(),
   expectedRevision: z.number().int().nonnegative(),

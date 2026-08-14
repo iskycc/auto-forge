@@ -12,6 +12,8 @@ readonly acceptance_directory="$(mktemp -d)"
 readonly agent_pid_file="${acceptance_directory}/agent.pid"
 readonly toolchain_directory="${acceptance_directory}/toolchain"
 readonly fixture_classes_directory="${acceptance_directory}/fixture-classes"
+readonly project_fixture_classes_directory="${acceptance_directory}/project-fixture-classes"
+readonly dependency_bundle_directory="${acceptance_directory}/dependency-bundle/level-1/level-2/level-3"
 readonly run_identity="${GITHUB_RUN_ID//[^0-9A-Za-z_-]/_}-${GITHUB_RUN_ATTEMPT//[^0-9A-Za-z_-]/_}"
 readonly cgroup_root="/sys/fs/cgroup/autoforge-ci-${run_identity}"
 
@@ -65,7 +67,11 @@ require_host_tools() {
 }
 
 prepare_toolchain() {
-  mkdir -p "${toolchain_directory}" "${fixture_classes_directory}"
+  mkdir -p \
+    "${toolchain_directory}" \
+    "${fixture_classes_directory}" \
+    "${project_fixture_classes_directory}" \
+    "${dependency_bundle_directory}"
   local compile_classpath
   if [[ -n "${E2E_PREBUILT_TOOLCHAIN_ROOT:-}" ]]; then
     if [[ ! -x "${E2E_PREBUILT_TOOLCHAIN_ROOT}/jdk/bin/java" || ! -f "${E2E_PREBUILT_TOOLCHAIN_ROOT}/manifest.json" ]]; then
@@ -101,7 +107,16 @@ prepare_toolchain() {
   javac \
     --release 11 \
     -encoding UTF-8 \
-    -cp "${compile_classpath}" \
+    -d "${project_fixture_classes_directory}" \
+    "${repository_root}/tests/fixtures/real-agent/ProjectFileUtil.java"
+  jar --create \
+    --file "${dependency_bundle_directory}/project-fixture.jar" \
+    -C "${project_fixture_classes_directory}" .
+
+  javac \
+    --release 11 \
+    -encoding UTF-8 \
+    -cp "${compile_classpath}:${dependency_bundle_directory}/project-fixture.jar" \
     -d "${fixture_classes_directory}" \
     "${repository_root}/tests/fixtures/real-agent/RealAgentFixture.java" \
     "${repository_root}/tests/fixtures/real-agent/RealAgentFailureFixture.java" \
@@ -110,6 +125,35 @@ prepare_toolchain() {
   jar --create \
     --file "${acceptance_directory}/real-agent-tests.jar" \
     -C "${fixture_classes_directory}" .
+
+  if [[ -n "${E2E_PREBUILT_TOOLCHAIN_ROOT:-}" ]]; then
+    find "${E2E_PREBUILT_TOOLCHAIN_ROOT}/lib" -maxdepth 1 -name '*.jar' -type f \
+      -exec cp -- {} "${dependency_bundle_directory}/" \;
+  else
+    cp -- "${toolchain_directory}"/*.jar "${dependency_bundle_directory}/"
+  fi
+  jar --create \
+    --file "${acceptance_directory}/adapter-dependencies.zip" \
+    -C "${acceptance_directory}/dependency-bundle" .
+}
+
+prepare_adapter() {
+  if [[ -n "${E2E_PREBUILT_ADAPTER_JAR:-}" ]]; then
+    if [[ ! -f "${E2E_PREBUILT_ADAPTER_JAR}" ]]; then
+      echo "The prebuilt CoTest Adapter JAR does not exist." >&2
+      exit 1
+    fi
+    E2E_REAL_ADAPTER_JAR="$(readlink -f "${E2E_PREBUILT_ADAPTER_JAR}")"
+    export E2E_REAL_ADAPTER_JAR
+    return
+  fi
+  if ! command -v mvn >/dev/null 2>&1; then
+    echo "Maven is required when no prebuilt CoTest Adapter JAR is provided." >&2
+    exit 1
+  fi
+  mvn --quiet --file "${repository_root}/adapters/cotest-testng/pom.xml" -DskipTests package
+  E2E_REAL_ADAPTER_JAR="$(readlink -f "${repository_root}/adapters/cotest-testng/target/cotest-testng-adapter-0.1.0-SNAPSHOT.jar")"
+  export E2E_REAL_ADAPTER_JAR
 }
 
 prepare_agent_binary() {
@@ -208,6 +252,8 @@ run_network_blocked_browser_flow() {
     "E2E_REAL_JAVA_VERSION=${E2E_REAL_JAVA_VERSION}" \
     "E2E_REAL_TESTNG_CLASSPATH=${E2E_REAL_TESTNG_CLASSPATH}" \
     "E2E_REAL_TEST_JAR=${E2E_REAL_TEST_JAR}" \
+    "E2E_REAL_ADAPTER_JAR=${E2E_REAL_ADAPTER_JAR}" \
+    "E2E_REAL_DEPENDENCY_ARCHIVE=${E2E_REAL_DEPENDENCY_ARCHIVE}" \
     unshare --net bash -Eeuo pipefail -c '
       ip link set lo up
       setpriv --reuid "$1" --regid "$2" --clear-groups bash -Eeuo pipefail -c "$3"
@@ -227,6 +273,7 @@ run_browser_flow() {
 cd "${repository_root}"
 require_host_tools
 prepare_toolchain
+prepare_adapter
 prepare_agent_binary
 prepare_cgroup_delegation
 
@@ -251,6 +298,7 @@ export E2E_REAL_JAVA_EXECUTABLE="${java_executable}"
 export E2E_REAL_JAVA_VERSION="${java_version}"
 export E2E_REAL_TESTNG_CLASSPATH="${testng_classpath}"
 export E2E_REAL_TEST_JAR="${acceptance_directory}/real-agent-tests.jar"
+export E2E_REAL_DEPENDENCY_ARCHIVE="${acceptance_directory}/adapter-dependencies.zip"
 
 run_browser_flow
-printf 'Real Go Agent, offline Java/TestNG execution, logs, structured result and artifacts passed.\n'
+printf 'Real Go Agent, distributed Adapter, nested dependency archive, logs, structured result and artifacts passed.\n'

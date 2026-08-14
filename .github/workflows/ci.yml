@@ -66,6 +66,7 @@ jobs:
           pnpm test
           pnpm test:integration
           pnpm test:performance
+          mvn --batch-mode --file adapters/cotest-testng/pom.xml test
 
   lite-browser:
     name: Lite browser · ${{ matrix.scenario }}
@@ -82,6 +83,7 @@ jobs:
           - management-operations
           - platform-operations
           - project-isolation
+          - ui-layout
     steps:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

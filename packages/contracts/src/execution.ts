@@ -49,7 +49,7 @@ export const executionInputSchema = z
     kind: z.enum(["test-jar", "dependency-jar", "jdk-archive", "jar-bundle"]),
     targetPath: workspaceRelativePathSchema,
     mediaType: z.enum(["application/java-archive", "application/zip", "application/gzip"]),
-    sizeBytes: z.number().int().positive().max(10_737_418_240),
+    sizeBytes: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
     sha256: sha256Schema,
     downloadUrl: z
       .url()

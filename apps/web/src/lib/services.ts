@@ -259,6 +259,7 @@ async function createPlatformServices() {
     { catalog, objectStore },
     config.scheduler.projectMaximumConcurrency,
     config.scheduler.priorityAgingIntervalMinutes,
+    projectStructuresRepository,
   );
   const platformOperations = new PlatformOperationsService(
     operationsRepository,

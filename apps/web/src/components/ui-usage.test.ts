@@ -23,6 +23,11 @@ const REQUIRED_LAYOUT_CLASSES = [
   "environment-manager-grid",
   "environment-detail-panel",
   "secret-manager-grid",
+  "case-library-workspace",
+  "case-directory-scroll",
+  "case-inspector-pane",
+  "runner-list",
+  "project-structure-manager",
 ] as const;
 
 describe("shared UI controls", () => {
@@ -56,6 +61,19 @@ describe("shared UI controls", () => {
     expect(missingClasses).toEqual([]);
   });
 
+  it("does not reference undeclared design tokens", () => {
+    const stylesheet = readFileSync(GLOBAL_STYLES, "utf8");
+    const declared = new Set(
+      [...stylesheet.matchAll(/(--[a-z0-9-]+)\s*:/gi)].map((match) => match[1]!),
+    );
+    const runtimeTokens = new Set(["--donut-value"]);
+    const missing = [
+      ...new Set([...stylesheet.matchAll(/var\((--[a-z0-9-]+)/gi)].map((match) => match[1]!)),
+    ].filter((token) => !declared.has(token) && !runtimeTokens.has(token));
+
+    expect(missing).toEqual([]);
+  });
+
   it("keeps the focus indicator on the control instead of outlining its whole label", () => {
     const stylesheet = readFileSync(GLOBAL_STYLES, "utf8");
 
@@ -64,14 +82,16 @@ describe("shared UI controls", () => {
     expect(stylesheet).toContain(".ui-input:focus");
   });
 
-  it("exposes administrator capabilities through a discoverable management entry", () => {
+  it("exposes administrator capabilities as direct primary navigation entries", () => {
     const appShell = readFileSync(APP_SHELL, "utf8");
     const accessSettings = readFileSync(ACCESS_SETTINGS, "utf8");
     const managementPage = readFileSync(MANAGEMENT_PAGE, "utf8");
 
-    expect(appShell).toContain("管理中心");
-    expect(managementPage).toContain('href: "/settings/access?section=users"');
-    expect(managementPage).toContain('href: "/settings/access?section=ldap"');
+    expect(appShell).not.toContain("<span>管理中心</span>");
+    expect(appShell).toContain('label: "用户管理"');
+    expect(appShell).toContain('label: "LDAP 目录"');
+    expect(appShell).toContain('label: "平台配置"');
+    expect(managementPage).toContain('redirect("/settings/platform?section=configuration")');
     expect(accessSettings).toContain('id="users"');
     expect(accessSettings).toContain('id="ldap"');
   });

@@ -46,15 +46,13 @@ export const testNgXmlSelectionSchema = z.object({
   includedGroups: z.array(z.string().min(1).max(256)).max(256),
   excludedGroups: z.array(z.string().min(1).max(256)).max(256),
   includedPackages: z.array(z.string().min(1).max(1_024)).max(1_024),
-  selectedClasses: z
-    .array(
-      z.object({
-        className: z.string().min(1).max(1_024),
-        includedMethods: z.array(z.string().min(1).max(256)).max(1_024),
-        excludedMethods: z.array(z.string().min(1).max(256)).max(1_024),
-      }),
-    )
-    .max(5_000),
+  selectedClasses: z.array(
+    z.object({
+      className: z.string().min(1).max(1_024),
+      includedMethods: z.array(z.string().min(1).max(256)).max(1_024),
+      excludedMethods: z.array(z.string().min(1).max(256)).max(1_024),
+    }),
+  ),
 });
 
 export const jarInspectionWarningSchema = z.object({

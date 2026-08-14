@@ -325,7 +325,7 @@ export function RunBatchPlanner({
           <p className="field-hint">
             {environmentVersionId
               ? "批次会固定引用当前选中的不可变环境版本；密文由 Agent 在有效 Lease 内按需领取。"
-              : "手工变量会随批次保存为快照；敏感值必须先在管理中心创建密文并绑定到受管环境。"}
+              : "手工变量会随批次保存为快照；敏感值必须先在密文管理中创建并绑定到受管环境。"}
           </p>
           <div className="environment-list">
             {environmentVersionId ? (

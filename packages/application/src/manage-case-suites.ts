@@ -3,7 +3,12 @@ import type {
   CreateCaseSuiteInput,
   UpdateCaseSuiteInput,
 } from "@autoforge/contracts";
-import { DEFAULT_PROJECT_ID, DomainError, mergeCaseSuiteExecutionPolicy } from "@autoforge/domain";
+import {
+  DEFAULT_PROJECT_ID,
+  DomainError,
+  defaultCaseSuiteExecutionPolicy,
+  mergeCaseSuiteExecutionPolicy,
+} from "@autoforge/domain";
 
 import type { CaseCatalogRepository, CaseSuiteRepository, Clock, IdGenerator } from "./ports";
 
@@ -23,6 +28,9 @@ export class CaseSuiteService {
       ...(actorId ? { actorId } : {}),
       name: input.name.trim(),
       ...(description ? { description } : {}),
+      policy: mergeCaseSuiteExecutionPolicy(defaultCaseSuiteExecutionPolicy, {
+        ...(input.adapter ? { adapter: input.adapter } : {}),
+      }),
       createdAt: this.clock.now().toISOString(),
     });
   }

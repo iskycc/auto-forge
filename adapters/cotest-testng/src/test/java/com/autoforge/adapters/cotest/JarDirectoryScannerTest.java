@@ -36,4 +36,18 @@ class JarDirectoryScannerTest {
         IllegalArgumentException.class,
         () -> new JarDirectoryScanner().scan(temporaryDirectory));
   }
+
+  @Test
+  void scansAllJarsWithinThreeDirectoriesAndIgnoresDeeperFiles() throws IOException {
+    Path thirdLevel =
+        Files.createDirectories(temporaryDirectory.resolve("one").resolve("two").resolve("three"));
+    Path accepted = thirdLevel.resolve("accepted.jar");
+    Files.write(accepted, new byte[] {1});
+    Path fourthLevel = Files.createDirectories(thirdLevel.resolve("four"));
+    Files.write(fourthLevel.resolve("ignored.jar"), new byte[] {2});
+
+    List<URL> urls = new JarDirectoryScanner().scan(temporaryDirectory);
+
+    assertEquals(List.of(accepted.toUri().toURL()), urls);
+  }
 }

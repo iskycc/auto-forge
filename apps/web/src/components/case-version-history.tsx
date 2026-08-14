@@ -25,12 +25,14 @@ export function CaseVersionHistory({
   currentVersion,
   canManage,
   canReadSource,
+  onChanged,
 }: {
   caseDefinitionId: string;
   versions: CaseVersion[];
   currentVersion: number;
   canManage: boolean;
   canReadSource: boolean;
+  onChanged?: () => void;
 }) {
   const router = useRouter();
   const orderedVersions = useMemo(
@@ -70,6 +72,7 @@ export function CaseVersionHistory({
           parsed.success ? parsed.data.error.message : `请求失败（HTTP ${response.status}）。`,
         );
       }
+      onChanged?.();
       router.refresh();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "恢复版本失败。");

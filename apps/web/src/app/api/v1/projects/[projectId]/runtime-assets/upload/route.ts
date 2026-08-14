@@ -1,7 +1,4 @@
-import { createHash } from "node:crypto";
-
 import { runtimeAssetUploadMetadataSchema } from "@autoforge/contracts";
-import { DomainError, type RuntimeArchiveFormat } from "@autoforge/domain";
 import { NextResponse } from "next/server";
 
 import {
@@ -10,7 +7,8 @@ import {
   requestId,
   requireSameOrigin,
 } from "@/lib/auth";
-import { apiErrorResponse, readRuntimeArchiveUpload } from "@/lib/api-response";
+import { apiErrorResponse } from "@/lib/api-response";
+import { stageRuntimeArchive } from "@/lib/runtime-archive-upload";
 import { getPlatformServices } from "@/lib/services";
 
 export const runtime = "nodejs";
@@ -30,43 +28,25 @@ export async function POST(request: Request, context: Context): Promise<NextResp
       archiveFormat: url.searchParams.get("archiveFormat"),
     });
     const services = await getPlatformServices();
-    const upload = await readRuntimeArchiveUpload(request, services.config.maxJarBytes);
-    assertRuntimeArchive(upload.fileName, upload.content, metadata.archiveFormat);
-    const sha256 = createHash("sha256").update(upload.content).digest("hex");
-    return NextResponse.json(
-      await services.projectStructures.createUploadedAsset({
-        projectId,
-        kind: metadata.kind,
-        archiveFormat: metadata.archiveFormat,
-        ...upload,
-        sha256,
-        actorId: identity.user.id,
-      }),
-      { status: 201 },
-    );
+    const upload = await stageRuntimeArchive(request, metadata.archiveFormat);
+    try {
+      return NextResponse.json(
+        await services.projectStructures.createUploadedAsset({
+          projectId,
+          kind: metadata.kind,
+          archiveFormat: metadata.archiveFormat,
+          fileName: upload.fileName,
+          content: upload.content,
+          sizeBytes: upload.sizeBytes,
+          sha256: upload.sha256,
+          actorId: identity.user.id,
+        }),
+        { status: 201 },
+      );
+    } finally {
+      await upload.dispose();
+    }
   } catch (error) {
     return apiErrorResponse(error, currentRequestId);
-  }
-}
-
-function assertRuntimeArchive(
-  fileName: string,
-  content: Uint8Array,
-  archiveFormat: RuntimeArchiveFormat,
-): void {
-  const lowerName = fileName.toLowerCase();
-  const validName =
-    archiveFormat === "zip"
-      ? lowerName.endsWith(".zip")
-      : lowerName.endsWith(".tar.gz") || lowerName.endsWith(".tgz");
-  const validSignature =
-    archiveFormat === "zip"
-      ? content[0] === 0x50 && content[1] === 0x4b
-      : content[0] === 0x1f && content[1] === 0x8b;
-  if (!validName || !validSignature) {
-    throw new DomainError(
-      "RUNTIME_ASSET_FORMAT_INVALID",
-      `上传文件不是有效的 ${archiveFormat} 压缩包或扩展名不匹配。`,
-    );
   }
 }

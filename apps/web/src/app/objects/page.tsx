@@ -64,7 +64,7 @@ export default async function ObjectsPage({
           {objects.storage === "local" ? "本地对象存储" : "MinIO 对象存储"}
         </span>
       </section>
-      <form action="/objects" className="card filter-panel" method="get">
+      <form action="/objects" className="card filter-panel source-filter-panel" method="get">
         <label>
           项目
           <Select defaultValue={projectId ?? ""} name="projectId">
@@ -105,7 +105,7 @@ export default async function ObjectsPage({
           </div>
         ) : (
           <div className="table-scroll">
-            <table className="data-table">
+            <table className="data-table source-list-table">
               <thead>
                 <tr>
                   <th>JAR 来源</th>
@@ -175,7 +175,7 @@ export default async function ObjectsPage({
           </div>
         ) : (
           <div className="table-scroll">
-            <table className="data-table">
+            <table className="data-table object-list-table">
               <thead>
                 <tr>
                   <th>对象键</th>
@@ -195,7 +195,9 @@ export default async function ObjectsPage({
                             {item.objectKey}
                           </Link>
                         ) : (
-                          <code>{item.objectKey}</code>
+                          <code className="object-key" title={item.objectKey}>
+                            {item.objectKey}
+                          </code>
                         )}
                       </td>
                       <td>{source ? "TestNG JAR" : "受管对象"}</td>

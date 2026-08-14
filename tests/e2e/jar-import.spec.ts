@@ -130,10 +130,11 @@ public class MixedVisibleTest {
     /nav-item-active/,
   );
   await expect(page.getByText("E2E Administrator", { exact: true })).toBeVisible();
+  await ensureProjectHierarchy(page);
 
   await page.goto(`/cases/import?projectId=${encodeURIComponent(DEFAULT_PROJECT_ID)}`);
   await expect(page.getByRole("heading", { name: "导入 TestNG JAR" })).toBeVisible();
-  await expect(page.getByRole("link", { name: "管理中心 → 平台配置" })).toBeVisible();
+  await expect(page.getByRole("main").getByRole("link", { name: "平台配置" })).toBeVisible();
   await expectUiConsistency(page);
 
   const largeUploadBoundary = await page.evaluate(
@@ -235,27 +236,31 @@ public class MixedVisibleTest {
   });
 
   await page.getByRole("link", { name: "查看用例库" }).click();
-  await expect(page.getByText("com.example.CheckoutTest")).toBeVisible();
+  await expect(page.locator(".case-tree-directory").first()).not.toHaveAttribute("open", "");
+  await page.getByLabel("页内搜索用例").fill("CheckoutTest");
+  await expect(page.getByRole("button", { name: "查看 CheckoutTest" })).toBeVisible();
   await expectUiConsistency(page);
   await captureUi(page, "case-library");
 
-  await page.getByRole("link", { name: "CheckoutTest" }).click();
-  await expect(page.getByRole("heading", { name: "CheckoutTest" })).toBeVisible();
-  await expect(page.locator(".source-meta-grid > div")).toHaveCount(7);
-  await expect(page.locator(".source-meta-wide")).toHaveCount(1);
-  const caseHeadingFlow = await page.evaluate(() => {
-    const backLink = document.querySelector(".case-detail-hero .back-link");
-    const eyebrow = document.querySelector(".case-detail-eyebrow");
-    if (!backLink || !eyebrow) return null;
-    return {
-      backLinkBottom: Math.round(backLink.getBoundingClientRect().bottom),
-      eyebrowTop: Math.round(eyebrow.getBoundingClientRect().top),
-    };
-  });
-  expect(caseHeadingFlow).not.toBeNull();
-  expect(caseHeadingFlow!.eyebrowTop).toBeGreaterThanOrEqual(caseHeadingFlow!.backLinkBottom);
+  const checkoutWorkspaceResponse = page.waitForResponse(
+    (response) =>
+      response.url().includes("/api/v1/case-definitions/") && response.url().endsWith("/workspace"),
+  );
+  await page.getByRole("button", { name: "查看 CheckoutTest" }).click();
+  const checkoutWorkspace = (await (await checkoutWorkspaceResponse).json()) as {
+    definition: { id: string };
+  };
+  await expect(
+    page.locator(".case-inspector-header").getByRole("heading", { name: "CheckoutTest" }),
+  ).toBeVisible();
+  await expect(page.locator(".case-inspector-meta > div")).toHaveCount(5);
+  await expect(page.locator(".case-inspector-meta-wide")).toHaveCount(1);
+  await expect(page).toHaveURL(/\/cases\?/);
   await expectUiConsistency(page);
-  const checkoutCaseUrl = page.url();
+  const checkoutCaseUrl = new URL(
+    `/cases/${encodeURIComponent(checkoutWorkspace.definition.id)}`,
+    page.url(),
+  ).toString();
 
   await page.goto(`/objects?projectId=${encodeURIComponent(DEFAULT_PROJECT_ID)}`);
   const checkoutSourceRow = page.getByRole("row", { name: /checkout-tests\.jar/ });
@@ -288,11 +293,15 @@ public class MixedVisibleTest {
     timeout: 60_000,
   });
   await page.getByRole("link", { name: "查看用例库" }).click();
-  await page.getByRole("link", { name: "MixedVisibleTest" }).click();
-  await expect(page.locator(".source-code-card .source-code-viewer")).toContainText(
+  await page.getByLabel("页内搜索用例").fill("MixedVisibleTest");
+  await page.getByRole("button", { name: "查看 MixedVisibleTest" }).click();
+  await page.locator(".case-inspector-section").getByText("用例源码", { exact: true }).click();
+  await expect(page.locator(".case-inspector-pane .source-code-viewer")).toContainText(
     "AUTOFORGE_MIXED_SOURCE_E2E",
   );
-  await expect(page.getByRole("button", { name: "立即执行" })).toBeVisible();
+  await expect(
+    page.locator(".case-inspector-section").getByText("立即执行", { exact: true }),
+  ).toBeVisible();
 
   await page.goto(`/cases/import?projectId=${encodeURIComponent(DEFAULT_PROJECT_ID)}`);
   await page.locator('input[type="file"]').setInputFiles({
@@ -346,6 +355,7 @@ public class MixedVisibleTest {
   await expectUiConsistency(page);
 
   await page.goto(`/cases?projectId=${encodeURIComponent(DEFAULT_PROJECT_ID)}`);
+  await page.getByLabel("页内搜索用例").fill("CheckoutTest");
   await page.getByLabel("选择 CheckoutTest").check();
   await page.getByLabel("目标用例任务").selectOption(dailySuiteId);
   await page.getByRole("button", { name: "加入任务" }).click();
@@ -412,6 +422,7 @@ public class MixedVisibleTest {
   expect(heartbeatResult.terminalConnectionToken).toBeTruthy();
 
   await page.goto(`/cases?projectId=${encodeURIComponent(DEFAULT_PROJECT_ID)}`);
+  await page.getByLabel("页内搜索用例").fill("CheckoutTest");
   await page.getByLabel("选择 CheckoutTest").check();
   await page.getByLabel("目标用例任务").selectOption(dailySuiteId);
   await page.getByRole("button", { name: "加入任务" }).click();
@@ -797,24 +808,21 @@ public class MixedVisibleTest {
     timeout: 60_000,
   });
   await page.getByRole("link", { name: "查看用例库" }).click();
-  await page.getByRole("link", { name: "SourceVisibleTest" }).click();
-  await expect(page.getByRole("heading", { name: "用例源码" })).toBeVisible();
-  await expect(page.locator(".source-code-card .source-code-viewer")).toContainText(
+  await page.getByLabel("页内搜索用例").fill("SourceVisibleTest");
+  await page.getByRole("button", { name: "查看 SourceVisibleTest" }).click();
+  await page.locator(".case-inspector-section").getByText("用例源码", { exact: true }).click();
+  await expect(page.locator(".case-inspector-pane .source-code-viewer")).toContainText(
     "AUTOFORGE_SOURCE_VIEW_E2E",
   );
   await expect(page.getByText(/不能直接执行/)).toBeVisible();
   await expect(page.getByRole("button", { name: "立即执行" })).toHaveCount(0);
 
-  await page.goto("/settings");
-  await expect(page.getByRole("heading", { name: "管理中心" })).toBeVisible();
-  await expect(page.getByRole("navigation", { name: "后台管理功能" })).toBeVisible();
-  await page.getByRole("link", { name: /用户管理/ }).click();
+  await page.goto("/settings/access?section=users");
   await expect(page.getByRole("heading", { name: "用户管理" })).toBeVisible();
   await expect(page.locator(".settings-stack > .settings-section")).toHaveCount(1);
-  await expect(page.getByRole("navigation", { name: "身份与访问模块" })).toBeVisible();
-  await page.goto("/settings");
-  await page.getByRole("link", { name: /LDAP 配置/ }).click();
-  await expect(page.getByRole("heading", { name: "LDAP 配置" })).toBeVisible();
+  await expect(page.getByRole("navigation", { name: "身份与访问模块" })).toHaveCount(0);
+  await page.goto("/settings/access?section=ldap");
+  await expect(page.getByRole("heading", { name: "LDAP 目录" })).toBeVisible();
   await expect(page.locator(".settings-stack > .settings-section")).toHaveCount(1);
 
   await page.goto("/audit");
@@ -825,13 +833,13 @@ public class MixedVisibleTest {
 
   for (const route of ["/settings/platform", "/settings/access", "/settings/environments"]) {
     await page.goto(route);
-    await expect(page.getByRole("navigation", { name: "管理中心模块" })).toBeVisible();
+    await expect(page.getByRole("navigation", { name: "管理中心模块" })).toHaveCount(0);
     await expectUiConsistency(page);
     if (route === "/settings/platform") {
       await expect(page.getByLabel("JAR 大小上限（MiB）")).toHaveValue("256");
     }
     if (route === "/settings/environments") {
-      await page.getByRole("button", { name: "密文", exact: true }).click();
+      await page.goto("/settings/environments?section=secrets");
       await expect(page.getByRole("heading", { name: "创建执行密文" })).toBeVisible();
       await expectUiConsistency(page);
 
@@ -843,7 +851,7 @@ public class MixedVisibleTest {
       await expect(page.getByText("执行密文已创建。")).toBeVisible();
       await expectUiConsistency(page);
 
-      await page.getByRole("button", { name: "环境", exact: true }).click();
+      await page.goto("/settings/environments?section=environments");
       await page.getByRole("button", { name: "创建执行环境" }).click();
       const environmentCreateForm = page.locator(".compact-create-form");
       await environmentCreateForm.getByLabel("名称").fill("E2E Staging");
@@ -901,6 +909,35 @@ function terminalStreamUrl(): string {
   );
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
   return url.toString();
+}
+
+async function ensureProjectHierarchy(page: Page): Promise<void> {
+  const structureResponse = await page.request.get(
+    `/api/v1/projects/${encodeURIComponent(DEFAULT_PROJECT_ID)}/structure`,
+  );
+  expect(structureResponse.status()).toBe(200);
+  const structure = (await structureResponse.json()) as {
+    versions: Array<{ id: string; stages: Array<{ id: string }> }>;
+  };
+  let version = structure.versions[0];
+  const headers = { origin: new URL(page.url()).origin };
+  if (!version) {
+    const versionResponse = await page.request.post(
+      `/api/v1/projects/${encodeURIComponent(DEFAULT_PROJECT_ID)}/versions`,
+      { data: { name: "E2E 版本" }, headers },
+    );
+    expect(versionResponse.status()).toBe(201);
+    version = { ...(await versionResponse.json()), stages: [] } as {
+      id: string;
+      stages: Array<{ id: string }>;
+    };
+  }
+  if (version.stages.length > 0) return;
+  const stageResponse = await page.request.post(
+    `/api/v1/projects/${encodeURIComponent(DEFAULT_PROJECT_ID)}/versions/${encodeURIComponent(version.id)}/stages`,
+    { data: { name: "E2E 测试阶段", description: "端到端测试层级" }, headers },
+  );
+  expect(stageResponse.status()).toBe(201);
 }
 
 type RunnerIdentity = { runnerId: string; credential: string };

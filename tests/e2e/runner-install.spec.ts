@@ -137,6 +137,14 @@ async function verifyInstalledSystemdService(): Promise<void> {
     "/etc/autoforge-agent/config.json",
   ]);
   expect(metadata.stdout.trim()).toBe("600:autoforge-agent:autoforge-agent");
+  const adapter = await execFileAsync("docker", [
+    "exec",
+    container,
+    "test",
+    "-s",
+    "/opt/autoforge/lib/cotest-testng-adapter.jar",
+  ]);
+  expect(adapter.stderr).toBe("");
   const caMetadata = await execFileAsync("docker", [
     "exec",
     container,

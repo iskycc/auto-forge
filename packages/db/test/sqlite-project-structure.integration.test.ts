@@ -19,7 +19,7 @@ afterEach(async () => {
 });
 
 describe("SQLite project version structure", () => {
-  it("persists versions, ordered stages and project Adapter runtime configuration", async () => {
+  it("persists versions, ordered stages and project runtime assets", async () => {
     const directory = await mkdtemp(resolve(tmpdir(), "autoforge-project-structure-"));
     temporaryDirectories.push(directory);
     const handle = createSqliteDatabase({
@@ -59,9 +59,6 @@ describe("SQLite project version structure", () => {
       });
       const configuration = await repository.updateAdapterConfiguration({
         projectId: DEFAULT_PROJECT_ID,
-        suiteName: "suite",
-        testName: "test",
-        environmentAddress: "10.0.0.9",
         jdkAssetId: jdk.id,
         expectedRevision: 0,
         updatedAt: now,
@@ -70,19 +67,15 @@ describe("SQLite project version structure", () => {
       expect(stage.position).toBe(1);
       expect(configuration).toMatchObject({
         revision: 1,
-        suiteName: "suite",
         jdkAsset: { id: jdk.id, sourceType: "url" },
       });
       await expect(repository.list(DEFAULT_PROJECT_ID)).resolves.toMatchObject({
         versions: [{ id: version.id, stages: [{ id: stage.id }] }],
-        adapterConfiguration: { environmentAddress: "10.0.0.9" },
+        adapterConfiguration: { revision: 1 },
       });
       await expect(
         repository.updateAdapterConfiguration({
           projectId: DEFAULT_PROJECT_ID,
-          suiteName: "conflict",
-          testName: "test",
-          environmentAddress: "10.0.0.9",
           expectedRevision: 0,
           updatedAt: now,
         }),

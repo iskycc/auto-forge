@@ -9,7 +9,6 @@ import { testNgResultDetailsSchema, type ExecutionSpec } from "@autoforge/contra
 import {
   artifactMediaType,
   assessRunnerCompatibility,
-  DEFAULT_EXECUTION_RESOURCE_LIMITS,
   DEFAULT_PROJECT_ID,
   DomainError,
   evaluateRunnerForScheduling,
@@ -32,6 +31,8 @@ import { and, count, desc, eq, gt, gte, inArray, isNull, lt, lte, or, sql } from
 
 import type { SqliteDatabaseHandle } from "./database";
 import {
+  adapterEnvironmentAddress,
+  executionResourceLimitsForInputs,
   parseProjectAdapterRuntime,
   projectAdapterRequiredCapabilities,
   supportsProjectAdapterRuntime,
@@ -65,6 +66,8 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
     const adapterRuntime = projectAdapterRuntime(
       this.handle,
       record.projectId ?? DEFAULT_PROJECT_ID,
+      record.adapter,
+      record.runs,
     );
     this.handle.client.transaction(() => {
       this.handle.db
@@ -613,6 +616,17 @@ function executionSpec(input: {
 }): ExecutionSpec {
   const artifactPatterns = input.policy?.artifactPatterns ?? ["reports/testng/**"];
   const runtimeInputs = input.adapterRuntime ? runtimeAssetInputs(input.adapterRuntime) : [];
+  const executionInputs: ExecutionSpec["inputs"] = [
+    {
+      inputId: input.source.id,
+      kind: "test-jar",
+      targetPath: "inputs/tests.jar",
+      mediaType: "application/java-archive",
+      sizeBytes: input.source.sizeBytes,
+      sha256: input.source.sha256,
+    },
+    ...runtimeInputs,
+  ];
   return {
     schemaVersion: 1,
     executor: input.policy?.executor ?? "testng",
@@ -627,21 +641,14 @@ function executionSpec(input: {
           adapter: {
             suiteName: input.adapterRuntime.suiteName,
             testName: input.adapterRuntime.testName,
-            environmentAddress: input.adapterRuntime.environmentAddress,
+            environmentAddress: adapterEnvironmentAddress(
+              input.adapterRuntime,
+              input.executionRunId,
+            ),
           },
         }
       : {}),
-    inputs: [
-      {
-        inputId: input.source.id,
-        kind: "test-jar",
-        targetPath: "inputs/tests.jar",
-        mediaType: "application/java-archive",
-        sizeBytes: input.source.sizeBytes,
-        sha256: input.source.sha256,
-      },
-      ...runtimeInputs,
-    ],
+    inputs: executionInputs,
     environment: input.environment.map((entry) => ({ ...entry, secret: false })),
     secretReferences: input.secretBindings,
     runtimeRequirements: {
@@ -663,29 +670,31 @@ function executionSpec(input: {
     })),
     timeoutMs: input.executionTimeoutMs,
     uploadTimeoutMs: input.uploadTimeoutMs,
-    resourceLimits: { ...DEFAULT_EXECUTION_RESOURCE_LIMITS },
+    resourceLimits: executionResourceLimitsForInputs(
+      executionInputs.map((executionInput) => executionInput.sizeBytes),
+      input.adapterRuntime !== undefined,
+    ),
   };
 }
 
 function projectAdapterRuntime(
   handle: SqliteDatabaseHandle,
   projectId: string,
+  adapter: CreateRunBatchRecord["adapter"],
+  runs: CreateRunBatchRecord["runs"],
 ): ProjectAdapterRuntime | undefined {
   const configuration = handle.client
     .prepare(
-      `SELECT suite_name, test_name, environment_address, jdk_asset_id, jar_bundle_asset_id
+      `SELECT jdk_asset_id, jar_bundle_asset_id
        FROM project_adapter_configurations WHERE project_id = ?`,
     )
     .get(projectId) as
     | {
-        suite_name: string;
-        test_name: string;
-        environment_address: string;
         jdk_asset_id: string | null;
         jar_bundle_asset_id: string | null;
       }
     | undefined;
-  if (!configuration) return undefined;
+  if (!hasTaskAdapterSettings(adapter)) return undefined;
   const asset = (id: string | null): RuntimeAssetSnapshot | undefined => {
     if (!id) return undefined;
     const row = handle.client
@@ -714,15 +723,39 @@ function projectAdapterRuntime(
         }
       : undefined;
   };
-  const jdk = asset(configuration.jdk_asset_id);
-  const jarBundle = asset(configuration.jar_bundle_asset_id);
+  const jdk = asset(configuration?.jdk_asset_id ?? null);
+  const jarBundle = asset(configuration?.jar_bundle_asset_id ?? null);
+  if (!jarBundle) {
+    throw new DomainError(
+      "ADAPTER_DEPENDENCY_ARCHIVE_MISSING",
+      "任务已启用 CoTest Adapter，但项目尚未配置完整依赖 JAR 压缩包。",
+    );
+  }
   return {
-    suiteName: configuration.suite_name,
-    testName: configuration.test_name,
-    environmentAddress: configuration.environment_address,
+    suiteName: adapter?.suiteName ?? "",
+    testName: adapter?.testName ?? "",
+    environmentAddressByRunId: assignEnvironmentAddresses(
+      adapter?.environmentAddresses ?? [],
+      runs,
+    ),
+    fallbackEnvironmentAddress: "",
     ...(jdk ? { jdk } : {}),
-    ...(jarBundle ? { jarBundle } : {}),
+    jarBundle,
   };
+}
+
+function hasTaskAdapterSettings(adapter: CreateRunBatchRecord["adapter"]): boolean {
+  return adapter?.enabled === true;
+}
+
+function assignEnvironmentAddresses(
+  addresses: readonly string[],
+  runs: CreateRunBatchRecord["runs"],
+): Record<string, string> {
+  if (addresses.length === 0) return {};
+  return Object.fromEntries(
+    runs.map((run, index) => [run.id, addresses[index % addresses.length]!]),
+  );
 }
 
 function runtimeAssetInputs(runtime: ProjectAdapterRuntime): ExecutionSpec["inputs"] {

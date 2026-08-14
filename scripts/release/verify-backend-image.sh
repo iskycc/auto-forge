@@ -26,7 +26,7 @@ for _ in $(seq 1 60); do
         const { readFileSync } = require("node:fs");
         const root = "/app/resources/agents";
         const manifest = JSON.parse(readFileSync(`${root}/manifest.json`, "utf8"));
-        for (const key of ["linux-amd64", "linux-arm64", "installer"]) {
+        for (const key of ["linux-amd64", "linux-arm64", "installer", "adapter"]) {
           const entry = manifest.files[key];
           const content = readFileSync(`${root}/${entry.path}`);
           if (content.length !== entry.size || createHash("sha256").update(content).digest("hex") !== entry.sha256) process.exit(1);

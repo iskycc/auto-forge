@@ -77,7 +77,7 @@ export class LocalObjectStore implements JarObjectStorePort {
         sizeBytes += chunk.byteLength;
         if (sizeBytes > input.sizeBytes) throw new Error("Object exceeds its declared size.");
         digest.update(chunk);
-        await file.write(chunk);
+        await writeCompleteChunk(file, chunk);
       }
       await file.sync();
     } catch (error) {
@@ -129,7 +129,7 @@ export class LocalObjectStore implements JarObjectStorePort {
         sizeBytes += chunk.byteLength;
         if (sizeBytes > input.sizeBytes) throw new Error("Artifact exceeds its declared size.");
         digest.update(chunk);
-        await file.write(chunk);
+        await writeCompleteChunk(file, chunk);
       }
       await file.sync();
     } catch (error) {
@@ -296,6 +296,18 @@ function validateArtifactIdentity(
   }
   if (!/^[a-f0-9]{64}$/.test(sha256) || !Number.isSafeInteger(sizeBytes) || sizeBytes < 0) {
     throw new Error("Artifact metadata is invalid.");
+  }
+}
+
+async function writeCompleteChunk(
+  file: Awaited<ReturnType<typeof open>>,
+  chunk: Uint8Array,
+): Promise<void> {
+  let offset = 0;
+  while (offset < chunk.byteLength) {
+    const { bytesWritten } = await file.write(chunk, offset, chunk.byteLength - offset);
+    if (bytesWritten === 0) throw new Error("Object storage write made no progress.");
+    offset += bytesWritten;
   }
 }
 

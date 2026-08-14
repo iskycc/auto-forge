@@ -30,23 +30,6 @@ export async function readJarUpload(request: Request, maxJarBytes: number): Prom
   });
 }
 
-export async function readRuntimeArchiveUpload(
-  request: Request,
-  maximumBytes: number,
-): Promise<JarUpload> {
-  return readBoundedUpload(request, maximumBytes, {
-    missingCode: "RUNTIME_ASSET_FILE_REQUIRED",
-    missingMessage: "请选择要上传的运行时压缩包。",
-    emptyCode: "RUNTIME_ASSET_EMPTY",
-    emptyMessage: "运行时压缩包为空。",
-    tooLarge: (limit) =>
-      new DomainError(
-        "RUNTIME_ASSET_TOO_LARGE",
-        `运行时压缩包超过 ${Math.floor(limit / 1_048_576)} MiB 的上传限制。`,
-      ),
-  });
-}
-
 async function readBoundedUpload(
   request: Request,
   maximumBytes: number,

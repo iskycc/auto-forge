@@ -1,11 +1,19 @@
-import { DEFAULT_PROJECT_ID, hasPermission, projectIdsForPermission } from "@autoforge/domain";
+import { DEFAULT_PROJECT_ID, projectIdsForPermission } from "@autoforge/domain";
 import { EnvironmentSettings } from "@/components/environment-settings";
-import { ManagementNavigation } from "@/components/management-navigation";
 import { hasPermissionInAnyScope, requirePageAnyPermission } from "@/lib/auth";
 import { getPlatformServices } from "@/lib/services";
 
-export default async function EnvironmentSettingsPage() {
+export default async function EnvironmentSettingsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ section?: string }>;
+}) {
   const identity = await requirePageAnyPermission(["environment.read", "secret.manage"]);
+  const requestedSection = (await searchParams).section;
+  const activeSection =
+    requestedSection === "secrets" && hasPermissionInAnyScope(identity, "secret.manage")
+      ? "secrets"
+      : "environments";
   const services = await getPlatformServices();
   const canReadEnvironments = hasPermissionInAnyScope(identity, "environment.read");
   const projectIds = canReadEnvironments
@@ -16,7 +24,7 @@ export default async function EnvironmentSettingsPage() {
   const [environments, secrets, knownProjects] = await Promise.all([
     canReadEnvironments ? services.executionEnvironments.list(projectIds) : Promise.resolve([]),
     secretProjectIds?.length === 0 ? [] : services.executionSecrets.list(secretProjectIds),
-    hasPermission(identity, "project.read")
+    hasPermissionInAnyScope(identity, "project.read")
       ? services.identityAccess.listProjects(identity)
       : Promise.resolve([]),
   ]);
@@ -38,19 +46,16 @@ export default async function EnvironmentSettingsPage() {
       <header className="page-header settings-page-header">
         <div>
           <p className="eyebrow">System Settings</p>
-          <h1>执行环境与密文</h1>
-          <p>管理项目级不可变环境版本、密文元数据和执行引用。</p>
+          <h1>{activeSection === "environments" ? "执行环境" : "密文管理"}</h1>
+          <p>
+            {activeSection === "environments"
+              ? "管理项目级不可变环境版本、变量、密文引用和执行引用。"
+              : "管理项目级密文元数据、轮换状态和受控引用。"}
+          </p>
         </div>
-        <ManagementNavigation
-          active="environments"
-          showAccess={hasPermissionInAnyScope(identity, "settings.read")}
-          showEnvironments
-          showOverview={hasPermissionInAnyScope(identity, "settings.read")}
-          showPlatform={hasPermissionInAnyScope(identity, "settings.read")}
-          showProjects={hasPermissionInAnyScope(identity, "project.read")}
-        />
       </header>
       <EnvironmentSettings
+        activeView={activeSection}
         initialEnvironments={environments}
         initialSecrets={secrets}
         manageableProjectIds={manageableProjectIds ?? null}

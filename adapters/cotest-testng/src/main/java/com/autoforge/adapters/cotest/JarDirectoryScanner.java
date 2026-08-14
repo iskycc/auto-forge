@@ -14,10 +14,9 @@ import java.util.Locale;
 
 final class JarDirectoryScanner {
   private static final String PRIMARY_CASE_JAR = "autoforge-case.jar";
-  private static final int MAX_DIRECTORY_DEPTH = 10;
+  private static final int MAX_DIRECTORY_DEPTH = 3;
   private static final int MAX_WALK_DEPTH = MAX_DIRECTORY_DEPTH + 1;
   private static final int MAX_VISITED_ENTRIES = 100_000;
-  private static final int MAX_JAR_FILES = 4_096;
 
   List<URL> scan(Path directory) {
     Path root = requireDirectory(directory);
@@ -42,10 +41,6 @@ final class JarDirectoryScanner {
               countEntry(visitedEntries);
               if (attributes.isRegularFile()
                   && file.getFileName().toString().toLowerCase(Locale.ROOT).endsWith(".jar")) {
-                if (jarFiles.size() == MAX_JAR_FILES) {
-                  throw new IOException(
-                      "JAR directory contains more than " + MAX_JAR_FILES + " files.");
-                }
                 jarFiles.add(file.toAbsolutePath().normalize());
               }
               return FileVisitResult.CONTINUE;

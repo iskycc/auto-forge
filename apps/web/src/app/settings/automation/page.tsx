@@ -38,7 +38,9 @@ export default async function AutomationOperationsPage() {
           ]}
         />
         <div className="page-context-links">
-          {canReadSettings ? <Link href="/settings">返回管理中心</Link> : null}
+          {canReadSettings ? (
+            <Link href="/settings/platform?section=configuration">平台配置</Link>
+          ) : null}
           {canReadLdap ? <Link href="/settings/access?section=ldap">LDAP 配置</Link> : null}
         </div>
       </header>

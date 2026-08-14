@@ -23,6 +23,10 @@ export function CaseSuiteManager({
   const [suites, setSuites] = useState(initialSuites);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
+  const [adapterEnabled, setAdapterEnabled] = useState(false);
+  const [adapterSuiteName, setAdapterSuiteName] = useState("");
+  const [adapterTestName, setAdapterTestName] = useState("");
+  const [environmentAddresses, setEnvironmentAddresses] = useState("");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [projectId, setProjectId] = useState(initialProjectId ?? projects[0]?.id ?? "");
@@ -39,6 +43,12 @@ export function CaseSuiteManager({
           ...(projectId ? { projectId } : {}),
           name,
           ...(description.trim() ? { description } : {}),
+          adapter: {
+            enabled: adapterEnabled,
+            suiteName: adapterSuiteName,
+            testName: adapterTestName,
+            environmentAddresses: parseEnvironmentAddresses(environmentAddresses),
+          },
         }),
       });
       if (!response.ok) {
@@ -52,6 +62,10 @@ export function CaseSuiteManager({
       setSuites((current) => [suite, ...current]);
       setName("");
       setDescription("");
+      setAdapterEnabled(false);
+      setAdapterSuiteName("");
+      setAdapterTestName("");
+      setEnvironmentAddresses("");
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "创建用例任务失败。");
     } finally {
@@ -98,6 +112,46 @@ export function CaseSuiteManager({
                 placeholder="记录用途、范围或维护人"
               />
             </label>
+            <div className="suite-adapter-fields">
+              <strong>Adapter 执行参数</strong>
+              <p>参数随任务版本保存；多个环境地址会按任务中的用例顺序循环分配。</p>
+              <label className="checkbox-field">
+                <Input
+                  checked={adapterEnabled}
+                  onChange={(event) => setAdapterEnabled(event.target.checked)}
+                  type="checkbox"
+                />
+                使用 CoTest TestNG Adapter
+              </label>
+              <label>
+                <span>TestNG Suite Name</span>
+                <Input
+                  value={adapterSuiteName}
+                  onChange={(event) => setAdapterSuiteName(event.target.value)}
+                  maxLength={512}
+                  disabled={!adapterEnabled}
+                />
+              </label>
+              <label>
+                <span>TestNG Test Name</span>
+                <Input
+                  value={adapterTestName}
+                  onChange={(event) => setAdapterTestName(event.target.value)}
+                  maxLength={512}
+                  disabled={!adapterEnabled}
+                />
+              </label>
+              <label>
+                <span>环境 IP / 地址（每行一个）</span>
+                <Textarea
+                  value={environmentAddresses}
+                  onChange={(event) => setEnvironmentAddresses(event.target.value)}
+                  rows={3}
+                  placeholder={"10.0.0.11\n10.0.0.12"}
+                  disabled={!adapterEnabled}
+                />
+              </label>
+            </div>
             {error && (
               <span className="inline-error" role="alert">
                 {error}
@@ -143,4 +197,15 @@ export function CaseSuiteManager({
       </section>
     </div>
   );
+}
+
+function parseEnvironmentAddresses(value: string): string[] {
+  return [
+    ...new Set(
+      value
+        .split(/[\n,，]/u)
+        .map((item) => item.trim())
+        .filter(Boolean),
+    ),
+  ];
 }

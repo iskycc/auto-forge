@@ -298,7 +298,7 @@ export function JarImporter({
         </div>
         {versions.length === 0 || availableStages.length === 0 ? (
           <p className="auth-error" role="alert">
-            请先在“管理中心 → 项目与成员”创建项目版本和测试阶段，再导入用例。
+            请先在“项目管理 → 执行配置”创建项目版本和测试阶段，再导入用例。
           </p>
         ) : null}
 
@@ -329,8 +329,8 @@ export function JarImporter({
           )}
         </label>
         <p className="settings-note">
-          管理员可在<Link href="/settings/platform">管理中心 → 平台配置</Link>调整 JAR
-          上传上限；修改后需重启 Web 和 worker。
+          管理员可在<Link href="/settings/platform">平台配置</Link>调整 JAR 上传上限；修改后需重启
+          Web 和 worker。
         </p>
 
         <div className="button-row">

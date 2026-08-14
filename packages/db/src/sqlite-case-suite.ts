@@ -15,7 +15,7 @@ import {
   type CaseSuiteDetails,
   type TestMethod,
 } from "@autoforge/domain";
-import { and, count, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, inArray, sql } from "drizzle-orm";
 
 import type { SqliteDatabaseHandle } from "./database";
 import {
@@ -105,7 +105,7 @@ export class SqliteCaseSuiteRepository implements CaseSuiteRepository {
         status: "active",
         enabled: true,
         revision: 1,
-        policyJson: JSON.stringify(defaultCaseSuiteExecutionPolicy),
+        policyJson: JSON.stringify(record.policy ?? defaultCaseSuiteExecutionPolicy),
         ...(record.actorId ? { createdBy: record.actorId, updatedBy: record.actorId } : {}),
         createdAt: record.createdAt,
         updatedAt: record.createdAt,
@@ -151,7 +151,7 @@ export class SqliteCaseSuiteRepository implements CaseSuiteRepository {
       .select()
       .from(caseSuiteItems)
       .where(eq(caseSuiteItems.suiteId, suiteId))
-      .orderBy(desc(caseSuiteItems.addedAt))
+      .orderBy(asc(caseSuiteItems.addedAt), asc(caseSuiteItems.id))
       .all();
     const definitionIds = itemRows.map((row) => row.caseDefinitionId);
     const definitionRows =

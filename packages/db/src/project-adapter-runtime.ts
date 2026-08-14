@@ -1,10 +1,14 @@
 import {
   COTEST_ADAPTER_CAPABILITY,
+  DEFAULT_EXECUTION_RESOURCE_LIMITS,
   PROJECT_RUNTIME_ASSETS_CAPABILITY,
   REQUIRED_EXECUTION_CAPABILITIES,
 } from "@autoforge/domain";
 
-const maximumRuntimeAssetBytes = 10_737_418_240;
+const maximumRuntimeAssetBytes = Number.MAX_SAFE_INTEGER;
+const maximumExecutionDiskBytes = 10_995_116_277_760;
+const adapterArchiveExpansionFactor = 8;
+const adapterArchiveFileLimit = 100_000;
 const sha256Pattern = /^[a-f0-9]{64}$/u;
 
 export type RuntimeAssetSnapshot = {
@@ -19,7 +23,8 @@ export type RuntimeAssetSnapshot = {
 export type ProjectAdapterRuntime = {
   suiteName: string;
   testName: string;
-  environmentAddress: string;
+  environmentAddressByRunId: Record<string, string>;
+  fallbackEnvironmentAddress: string;
   jdk?: RuntimeAssetSnapshot;
   jarBundle?: RuntimeAssetSnapshot;
 };
@@ -35,13 +40,24 @@ export function parseProjectAdapterRuntime(
     return {
       suiteName: boundedString(record.suiteName, 512),
       testName: boundedString(record.testName, 512),
-      environmentAddress: boundedString(record.environmentAddress, 2_048),
+      environmentAddressByRunId: stringRecord(record.environmentAddressByRunId),
+      fallbackEnvironmentAddress:
+        record.fallbackEnvironmentAddress === undefined
+          ? boundedString(record.environmentAddress ?? "", 2_048)
+          : boundedString(record.fallbackEnvironmentAddress, 2_048),
       ...(jdk ? { jdk } : {}),
       ...(jarBundle ? { jarBundle } : {}),
     };
   } catch (cause) {
     throw new Error("Stored project Adapter runtime snapshot is invalid.", { cause });
   }
+}
+
+export function adapterEnvironmentAddress(
+  runtime: ProjectAdapterRuntime,
+  executionRunId: string,
+): string {
+  return runtime.environmentAddressByRunId[executionRunId] ?? runtime.fallbackEnvironmentAddress;
 }
 
 export function projectAdapterRequiredCapabilities(
@@ -61,6 +77,26 @@ export function supportsProjectAdapterRuntime(
   return projectAdapterRequiredCapabilities(runtime).every((capability) =>
     available.has(capability),
   );
+}
+
+export function executionResourceLimitsForInputs(
+  inputSizes: readonly number[],
+  usesAdapter: boolean,
+): { [Key in keyof typeof DEFAULT_EXECUTION_RESOURCE_LIMITS]: number } {
+  if (!usesAdapter) return { ...DEFAULT_EXECUTION_RESOURCE_LIMITS };
+  const totalInputBytes = inputSizes.reduce(safeByteSum, 0);
+  if (totalInputBytes > maximumExecutionDiskBytes) {
+    throw new TypeError("Execution inputs exceed the Runner Protocol disk limit.");
+  }
+  const expandedBudget = Math.min(
+    maximumExecutionDiskBytes,
+    totalInputBytes * adapterArchiveExpansionFactor,
+  );
+  return {
+    ...DEFAULT_EXECUTION_RESOURCE_LIMITS,
+    diskBytes: Math.max(DEFAULT_EXECUTION_RESOURCE_LIMITS.diskBytes, expandedBudget),
+    fileCount: adapterArchiveFileLimit,
+  };
 }
 
 function optionalRuntimeAsset(value: unknown): RuntimeAssetSnapshot | undefined {
@@ -115,6 +151,17 @@ function boundedString(value: unknown, maximumLength: number, minimumLength = 0)
   return value;
 }
 
+function stringRecord(value: unknown): Record<string, string> {
+  if (value === undefined) return {};
+  const record = objectRecord(value);
+  return Object.fromEntries(
+    Object.entries(record).map(([key, entry]) => [
+      boundedString(key, 128, 1),
+      boundedString(entry, 2_048, 1),
+    ]),
+  );
+}
+
 function enumValue<const Values extends readonly string[]>(
   value: unknown,
   allowed: Values,
@@ -123,4 +170,15 @@ function enumValue<const Values extends readonly string[]>(
     throw new TypeError("Stored enum value is invalid.");
   }
   return value;
+}
+
+function safeByteSum(total: number, sizeBytes: number): number {
+  if (
+    !Number.isSafeInteger(sizeBytes) ||
+    sizeBytes <= 0 ||
+    total > Number.MAX_SAFE_INTEGER - sizeBytes
+  ) {
+    throw new TypeError("Execution input sizes exceed the protocol range.");
+  }
+  return total + sizeBytes;
 }

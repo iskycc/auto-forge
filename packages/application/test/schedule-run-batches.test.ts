@@ -6,6 +6,7 @@ import type {
   CaseSuiteRepository,
   ExecutionEnvironmentRepository,
   JarObjectStorePort,
+  ProjectStructureRepository,
   RunBatchRepository,
   RunnerRepository,
 } from "../src/ports";
@@ -249,6 +250,48 @@ describe("run batch preflight", () => {
     expect(result.blockers).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ code: "RUNNER_CONTAINER_CAPABILITY_MISSING" }),
+      ]),
+    );
+  });
+
+  it("requires a project dependency archive for an Adapter task", async () => {
+    const service = preflightService({
+      suites: {
+        get: vi.fn().mockResolvedValue(
+          readySuite({
+            policy: {
+              adapter: {
+                enabled: true,
+                suiteName: "suite",
+                testName: "test",
+                environmentAddresses: ["10.0.0.11"],
+              },
+            },
+          }),
+        ),
+      } as unknown as CaseSuiteRepository,
+      runners: runnersFake(),
+      environments: {} as ExecutionEnvironmentRepository,
+      catalog: readyCatalogFake(),
+      objectStore: objectStoreFake(),
+      projectStructures: {
+        getAdapterConfiguration: vi.fn().mockResolvedValue({
+          projectId: "project-1",
+          revision: 0,
+          updatedAt: timestamp,
+        }),
+      } as unknown as ProjectStructureRepository,
+    });
+
+    const result = await service.preflight({
+      projectId: "project-1",
+      suiteId: "suite-1",
+      runnerIds: ["runner-1"],
+    });
+
+    expect(result.blockers).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: "ADAPTER_DEPENDENCY_ARCHIVE_MISSING" }),
       ]),
     );
   });
@@ -539,6 +582,7 @@ describe("run batch creation with suite policy", () => {
 
 const readyPolicy = {
   executor: "testng" as "testng" | "testng-container",
+  adapter: { enabled: false, suiteName: "", testName: "", environmentAddresses: [] as string[] },
   priority: 0,
   concurrency: 4,
   retryLimit: 0,
@@ -706,6 +750,7 @@ function preflightService(input: {
   environments: ExecutionEnvironmentRepository;
   catalog: CaseCatalogRepository;
   objectStore: JarObjectStorePort;
+  projectStructures?: ProjectStructureRepository;
 }) {
   return new RunBatchSchedulingService(
     {} as RunBatchRepository,
@@ -721,5 +766,8 @@ function preflightService(input: {
     45,
     input.environments,
     { catalog: input.catalog, objectStore: input.objectStore },
+    128,
+    5,
+    input.projectStructures,
   );
 }

@@ -1,11 +1,9 @@
 import { hasPermission } from "@autoforge/domain";
 
-import { ManagementNavigation } from "@/components/management-navigation";
 import { PlatformSettings } from "@/components/platform-settings";
 import { OperationsSettings } from "@/components/operations-settings";
-import { SectionTabs } from "@/components/section-tabs";
 import { SystemDiagnostics } from "@/components/system-diagnostics";
-import { hasPermissionInAnyScope, requirePagePermission } from "@/lib/auth";
+import { requirePagePermission } from "@/lib/auth";
 import { platformConfigurationView } from "@/lib/platform-configuration";
 import { getPlatformServices } from "@/lib/services";
 
@@ -28,6 +26,7 @@ export default async function PlatformSettingsPage({
       : requestedSection === "automation"
         ? "accounts"
         : "configuration";
+  const heading = platformSectionHeading(activeSection);
   const [retentionPolicies, serviceAccounts, projects] = await Promise.all([
     activeSection === "retention"
       ? services.platformOperations.listRetentionPolicies(identity)
@@ -45,46 +44,10 @@ export default async function PlatformSettingsPage({
       <header className="page-header settings-page-header">
         <div>
           <p className="eyebrow">System Settings</p>
-          <h1>平台配置</h1>
-          <p>管理运行模式、监听地址、基础设施、容量限制和调度阈值。</p>
+          <h1>{heading.title}</h1>
+          <p>{heading.description}</p>
         </div>
-        <ManagementNavigation
-          active="platform"
-          showAccess
-          showEnvironments={
-            hasPermissionInAnyScope(identity, "environment.read") ||
-            hasPermissionInAnyScope(identity, "secret.manage")
-          }
-          showOverview
-          showPlatform
-          showProjects={hasPermission(identity, "project.read")}
-        />
       </header>
-      <SectionTabs
-        label="平台管理模块"
-        tabs={[
-          {
-            href: "/settings/platform?section=configuration",
-            label: "运行配置",
-            active: activeSection === "configuration",
-          },
-          {
-            href: "/settings/platform?section=accounts",
-            label: "服务账号",
-            active: activeSection === "accounts",
-          },
-          {
-            href: "/settings/platform?section=retention",
-            label: "数据保留",
-            active: activeSection === "retention",
-          },
-          {
-            href: "/settings/platform?section=diagnostics",
-            label: "系统诊断",
-            active: activeSection === "diagnostics",
-          },
-        ]}
-      />
       {activeSection === "configuration" ? (
         <PlatformSettings
           canManage={hasPermission(identity, "settings.manage")}
@@ -107,4 +70,20 @@ export default async function PlatformSettingsPage({
       {activeSection === "diagnostics" ? <SystemDiagnostics /> : null}
     </section>
   );
+}
+
+function platformSectionHeading(section: PlatformSection): { title: string; description: string } {
+  switch (section) {
+    case "configuration":
+      return {
+        title: "平台配置",
+        description: "管理运行模式、监听地址、基础设施、容量限制和调度阈值。",
+      };
+    case "accounts":
+      return { title: "服务账号", description: "管理服务账号、项目权限和 API 令牌。" };
+    case "retention":
+      return { title: "数据保留", description: "管理平台数据保留期限和可恢复清理策略。" };
+    case "diagnostics":
+      return { title: "系统诊断", description: "检查平台配置、存储和运行时健康状态。" };
+  }
 }
