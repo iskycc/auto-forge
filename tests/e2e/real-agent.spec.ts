@@ -104,9 +104,9 @@ test("executes a TestNG JAR through the real Go Agent", async ({ page }, testInf
     await page.goto(`/run-batches/${encodeURIComponent(restartBatchId)}`);
     await expect(page.getByText("实时更新", { exact: true })).toBeVisible({ timeout: 30_000 });
     await page.getByRole("button", { name: "agent", exact: true }).click();
-    await expect(page.locator(".execution-log")).toContainText(
-      "AutoForge Runner Agent started the attempt.",
-    );
+    await expect
+      .poll(async () => page.locator(".execution-log").textContent(), { timeout: 30_000 })
+      .toContain("AutoForge Runner Agent started the attempt.");
     await waitForLocalAttemptState(restartAttemptId, "running");
     await killAgentAbruptly(agent);
     agent = await startAgent();
