@@ -15,6 +15,10 @@ and known limitations.
   cookie without racing the current Release's landing hand-off.
 - Let manually dispatched Release checks use the selected branch's current acceptance harness while
   retaining tagged-source quality checks and immutable published assets.
+- Wait for the real Agent's durable attempt state before simulating an abrupt restart in acceptance,
+  preventing lease expiry from winning a harness-only race.
+- Resolve the migration-integrity fixture from the packaged Web workspace so Release upgrade checks
+  use the production pnpm dependency layout.
 
 ## 0.4.7 - 2026-08-14
 

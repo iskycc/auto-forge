@@ -50,3 +50,12 @@ test("executes the migration entry point while verifying a release image", async
     /test -f \/app\/apps\/web\/dist-server\/server\/migrate\.js/,
   );
 });
+
+test("resolves migration-integrity dependencies from the production web workspace", async () => {
+  const acceptanceScript = await readFile("scripts/quality/test-release-offline.sh", "utf8");
+
+  assert.match(
+    acceptanceScript,
+    /inject_migration_integrity_failure\(\)[\s\S]*?--workdir \/app\/apps\/web[\s\S]*?require\("better-sqlite3"\)/,
+  );
+});

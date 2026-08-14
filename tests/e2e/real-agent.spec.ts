@@ -97,7 +97,8 @@ test("executes a TestNG JAR through the real Go Agent", async ({ page }, testInf
 
     await createExecutableSuite(page, restartSuiteName, "RealAgentRestartFixture", 0);
     const restartBatchId = await scheduleExecution(page, restartSuiteName);
-    await waitForAttemptState(page, restartBatchId, agent, "running");
+    const restartAttemptId = await waitForAttemptState(page, restartBatchId, agent, "running");
+    await waitForLocalAttemptState(restartAttemptId, "running");
     await killAgentAbruptly(agent);
     agent = await startAgent();
     agents.push(agent);
@@ -522,7 +523,8 @@ async function waitForAttemptState(
   batchId: string,
   agent: AgentProcess,
   expectedState: string,
-): Promise<void> {
+): Promise<string> {
+  let attemptId: string | undefined;
   await expect
     .poll(
       async () => {
@@ -532,9 +534,39 @@ async function waitForAttemptState(
         );
         if (!response.ok()) return `HTTP ${response.status()}`;
         const details = (await response.json()) as BatchDetails;
-        return details.attempts.at(-1)?.status ?? details.status;
+        const attempt = details.attempts.at(-1);
+        attemptId = attempt?.id;
+        return attempt?.status ?? details.status;
       },
       { timeout: 60_000, intervals: [250, 500, 1_000] },
+    )
+    .toBe(expectedState);
+  if (!attemptId) throw new Error(`Batch ${batchId} reached ${expectedState} without an attempt.`);
+  return attemptId;
+}
+
+async function waitForLocalAttemptState(attemptId: string, expectedState: string): Promise<void> {
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(attemptId)) {
+    throw new Error(`Refuse to inspect an invalid local attempt identifier: ${attemptId}`);
+  }
+  const statePath = join(
+    requiredEnvironment("E2E_REAL_AGENT_DATA_DIR"),
+    "spool",
+    "attempts",
+    `${attemptId}.json`,
+  );
+  await expect
+    .poll(
+      async () => {
+        try {
+          const state = JSON.parse(await readFile(statePath, "utf8")) as { localState?: unknown };
+          return typeof state.localState === "string" ? state.localState : "invalid";
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code === "ENOENT") return "missing";
+          throw error;
+        }
+      },
+      { timeout: 20_000, intervals: [50, 100, 250] },
     )
     .toBe(expectedState);
 }

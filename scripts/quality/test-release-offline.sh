@@ -378,6 +378,7 @@ inject_migration_integrity_failure() {
   docker run --rm --network none --pull never \
     --user "$(id -u):$(id -g)" \
     --volume "${data_directory}:/var/lib/autoforge" \
+    --workdir /app/apps/web \
     "${current_image}" node -e '
       const Database = require("better-sqlite3");
       const db = new Database("/var/lib/autoforge/db/autoforge.sqlite");
