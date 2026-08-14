@@ -51,6 +51,6 @@ lease、Runner、失败阶段、UTC 时间和状态事件均保留。
 明确入口。LDAP 支持 LDAPS 或 StartTLS 连接测试、加密保存 bind 凭据、用户同步和组角色映射。
 
 执行机页面的“探测并核验主机”支持 OpenSSH Password 与 Keyboard-Interactive/PAM 密码认证。
-探测不要求先配置 Agent 控制面地址；安装前仍须配置执行机可访问的 HTTPS 地址。失败信息会区分
+探测不要求先配置 Agent 控制面地址；安装前仍须配置执行机可访问的 HTTP 或 HTTPS 地址，可信内网可直接使用 IP。失败信息会区分
 DNS、端口拒绝、超时、认证、握手、systemd、cgroup v2 与 sudo 前置条件。密码仅用于本次内存中
 的 SSH/sudo 操作，不会持久化。

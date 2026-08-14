@@ -132,7 +132,13 @@ export const executionSpecSchema = z
       testNgVersion: "7.11.0",
     }),
     requiredLabels: z.array(z.string().trim().min(1).max(64)).max(64).default([]),
-    requiredCapabilities: z.array(z.string().trim().min(1).max(128)).max(64).default([]),
+    requiredCapabilities: z
+      .array(z.string().trim().min(1).max(128))
+      .max(64)
+      .default([])
+      .transform((capabilities) =>
+        capabilities.filter((capability) => capability !== "isolation:cgroup-v2"),
+      ),
     artifactRules: z
       .array(
         z.object({

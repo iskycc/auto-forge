@@ -28,6 +28,7 @@ export function RunnerAgentInstaller({ controlPlaneUrl }: RunnerAgentInstallerPr
   const [labels, setLabels] = useState("linux");
   const [maxConcurrency, setMaxConcurrency] = useState(1);
   const [terminalEnabled, setTerminalEnabled] = useState(false);
+  const [runAsRoot, setRunAsRoot] = useState(false);
   const [caCertificatePem, setCaCertificatePem] = useState("");
   const [probe, setProbe] = useState<RunnerHostProbeResult>();
   const [fingerprintConfirmed, setFingerprintConfirmed] = useState(false);
@@ -82,6 +83,7 @@ export function RunnerAgentInstaller({ controlPlaneUrl }: RunnerAgentInstallerPr
           .filter(Boolean),
         maxConcurrency,
         terminalEnabled,
+        runAsRoot,
         ...(caCertificatePem.trim() ? { caCertificatePem } : {}),
       });
       const installed = runnerAgentInstallationResultSchema.parse(response);
@@ -137,7 +139,7 @@ export function RunnerAgentInstaller({ controlPlaneUrl }: RunnerAgentInstallerPr
       {!controlPlaneUrl ? (
         <div className="inline-notice warning-notice" role="status">
           <ShieldAlert size={18} />
-          <span>请先在“平台配置”中设置执行机可访问的 HTTPS 地址，保存并重启主平台。</span>
+          <span>请先在“平台配置”中设置执行机可访问的 HTTP 或 HTTPS 地址，保存并重启主平台。</span>
         </div>
       ) : (
         <div className="runner-control-url">
@@ -145,6 +147,12 @@ export function RunnerAgentInstaller({ controlPlaneUrl }: RunnerAgentInstallerPr
           <code>{controlPlaneUrl}</code>
         </div>
       )}
+      {controlPlaneUrl?.startsWith("http:") ? (
+        <div className="inline-notice warning-notice" role="status">
+          <ShieldAlert size={18} />
+          <span>当前使用明文 HTTP，Runner 凭据和任务数据不会被传输层加密，请仅用于可信内网。</span>
+        </div>
+      ) : null}
 
       <div className="runner-installer-grid">
         <label>
@@ -210,6 +218,7 @@ export function RunnerAgentInstaller({ controlPlaneUrl }: RunnerAgentInstallerPr
               <strong>{probe.operatingSystemName}</strong>
               <small>
                 {probe.architecture} · systemd · {probe.privilegeMode}
+                {probe.cgroupV2Available ? " · cgroup v2" : " · 无 cgroup v2（降级隔离）"}
               </small>
             </span>
           </div>
@@ -256,7 +265,29 @@ export function RunnerAgentInstaller({ controlPlaneUrl }: RunnerAgentInstallerPr
               />
               允许管理员直连终端
             </label>
+            <label className="checkbox-field">
+              <Input
+                checked={runAsRoot}
+                onChange={(event) => setRunAsRoot(event.target.checked)}
+                type="checkbox"
+              />
+              以 root 身份运行 Agent
+            </label>
           </div>
+          {runAsRoot ? (
+            <div className="inline-notice warning-notice" role="status">
+              <ShieldAlert size={18} />
+              <span>root 模式会扩大测试进程可访问的主机资源范围，仅建议用于受控内网执行机。</span>
+            </div>
+          ) : null}
+          {!probe.cgroupV2Available ? (
+            <div className="inline-notice warning-notice" role="status">
+              <ShieldAlert size={18} />
+              <span>
+                无 cgroup v2 时不能硬性限制整个进程树的 CPU、内存和进程数，请只运行可信用例。
+              </span>
+            </div>
+          ) : null}
           <label>
             私有 CA 证书（可选，PEM）
             <Textarea

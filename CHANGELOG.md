@@ -6,6 +6,24 @@ and known limitations.
 
 ## Unreleased
 
+### Changed
+
+- Remove the independent 5,000 TestNG test-class discovery ceiling while retaining bounded JAR size,
+  archive entry, uncompressed byte and per-class byte limits.
+- Treat cgroup v2 as an optional Runner capability: supported hosts keep full cgroup enforcement,
+  while hosts without it remain schedulable with visible degraded-isolation status, rlimits,
+  process-group cleanup, timeouts and workspace monitoring.
+- Allow Runner Agent control-plane URLs to use HTTP for trusted internal IP connectivity and add an
+  explicit installer option to run the systemd service as root. HTTPS and the dedicated non-root
+  service account remain the recommended defaults.
+- Normalize the retired `isolation:cgroup-v2` requirement out of persisted Runner Protocol v1
+  execution specifications so assignments queued before upgrade can still be claimed.
+
+### Database migrations and compatibility
+
+- No database migration or Runner Protocol schema-version change is required. HTTP and root mode
+  weaken transport or host isolation and should be limited to dedicated trusted networks and hosts.
+
 ### Fixed
 
 - Use unambiguous accessible roles when asserting project-scoped execution environments in browser

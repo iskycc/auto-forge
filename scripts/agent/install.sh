@@ -5,14 +5,22 @@ set -eu
 readonly agent_binary="${1:?Agent binary path is required}"
 readonly agent_configuration="${2:?Agent configuration path is required}"
 readonly service_unit="${3:?systemd service unit path is required}"
-readonly ca_certificate="${4:-}"
+readonly service_account="${4:?service account is required}"
+readonly ca_certificate="${5:-}"
 readonly install_root="/opt/autoforge"
 readonly installed_binary="${install_root}/bin/autoforge-agent"
 readonly configuration_root="/etc/autoforge-agent"
 readonly installed_configuration="${configuration_root}/config.json"
 readonly installed_ca_certificate="${configuration_root}/control-plane-ca.pem"
 readonly installed_service_unit="/etc/systemd/system/autoforge-agent.service"
-readonly service_account="autoforge-agent"
+
+case "${service_account}" in
+  root | autoforge-agent) ;;
+  *)
+    echo "unsupported service account: ${service_account}" >&2
+    exit 1
+    ;;
+esac
 
 if [ "$(id -u)" -ne 0 ]; then
   echo "the installer must run as root" >&2
@@ -48,12 +56,7 @@ for required_command in install systemctl id; do
     exit 1
   fi
 done
-if [ ! -r /sys/fs/cgroup/cgroup.controllers ]; then
-  echo "cgroup v2 is required" >&2
-  exit 1
-fi
-
-if ! id -u "${service_account}" >/dev/null 2>&1; then
+if [ "${service_account}" != "root" ] && ! id -u "${service_account}" >/dev/null 2>&1; then
   if ! command -v useradd >/dev/null 2>&1; then
     echo "useradd is required to create the unprivileged service account" >&2
     exit 1

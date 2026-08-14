@@ -113,6 +113,7 @@ func Run(ctx context.Context, spec Spec, options RunOptions) (result Result, ret
 		effectiveEnvironment,
 		resourceScope,
 		spec.Limits,
+		options.ResourcePolicy.ApplyRlimits || options.ResourcePolicy.RequireCgroup,
 	)
 	if err != nil {
 		return Result{}, err

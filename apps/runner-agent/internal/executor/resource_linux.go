@@ -32,6 +32,7 @@ var cgroupInitialization sync.Mutex
 type ResourcePolicy struct {
 	CgroupRoot    string
 	RequireCgroup bool
+	ApplyRlimits  bool
 }
 
 type resourceScope struct {
@@ -217,8 +218,14 @@ func eventCount(directory, fileName, eventName string) int64 {
 	return 0
 }
 
-func resourceCommand(target Command, environment []string, scope *resourceScope, limits Limits) (*exec.Cmd, *resourceHandshake, error) {
-	if scope == nil {
+func resourceCommand(
+	target Command,
+	environment []string,
+	scope *resourceScope,
+	limits Limits,
+	applyRlimits bool,
+) (*exec.Cmd, *resourceHandshake, error) {
+	if scope == nil && !applyRlimits {
 		command := exec.Command(target.Executable, target.Args...)
 		command.Env = environment
 		return command, nil, nil
@@ -237,9 +244,13 @@ func resourceCommand(target Command, environment []string, scope *resourceScope,
 		readyWrite.Close()
 		return nil, nil, fmt.Errorf("create resource start pipe: %w", err)
 	}
+	cgroupPath := ""
+	if scope != nil {
+		cgroupPath = scope.path
+	}
 	arguments := []string{
 		resourceWrapperArgument,
-		scope.path,
+		cgroupPath,
 		strconv.FormatInt(limits.FileCount, 10),
 		strconv.FormatInt(limits.DiskBytes, 10),
 		target.Executable,
@@ -300,24 +311,30 @@ func RunResourceWrapper(arguments []string) error {
 		return errors.New("invalid internal resource wrapper arguments")
 	}
 	fileCount, err := strconv.ParseUint(arguments[2], 10, 64)
-	if err != nil || fileCount == 0 {
+	if err != nil {
 		return errors.New("invalid internal open-file limit")
 	}
 	diskBytes, err := strconv.ParseUint(arguments[3], 10, 64)
-	if err != nil || diskBytes == 0 {
+	if err != nil {
 		return errors.New("invalid internal file-size limit")
 	}
-	if err := lowerRlimit(syscall.RLIMIT_NOFILE, fileCount); err != nil {
-		return fmt.Errorf("set open-file limit: %w", err)
+	if fileCount > 0 {
+		if err := lowerRlimit(syscall.RLIMIT_NOFILE, fileCount); err != nil {
+			return fmt.Errorf("set open-file limit: %w", err)
+		}
 	}
-	if err := lowerRlimit(syscall.RLIMIT_FSIZE, diskBytes); err != nil {
-		return fmt.Errorf("set file-size limit: %w", err)
+	if diskBytes > 0 {
+		if err := lowerRlimit(syscall.RLIMIT_FSIZE, diskBytes); err != nil {
+			return fmt.Errorf("set file-size limit: %w", err)
+		}
 	}
 	if err := lowerRlimit(syscall.RLIMIT_CORE, 0); err != nil {
 		return fmt.Errorf("disable core dumps: %w", err)
 	}
-	if err := writeControl(arguments[1], "cgroup.procs", strconv.Itoa(os.Getpid())); err != nil {
-		return fmt.Errorf("attach process to attempt cgroup: %w", err)
+	if arguments[1] != "" {
+		if err := writeControl(arguments[1], "cgroup.procs", strconv.Itoa(os.Getpid())); err != nil {
+			return fmt.Errorf("attach process to attempt cgroup: %w", err)
+		}
 	}
 	ready := os.NewFile(resourceReadyFD, "resource-ready")
 	start := os.NewFile(resourceStartFD, "resource-start")

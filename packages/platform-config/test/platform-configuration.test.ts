@@ -49,6 +49,31 @@ describe("platform configuration store", () => {
     expect(() => store.replace(updated, 1)).toThrow(PlatformConfigurationConflictError);
   });
 
+  it("accepts HTTP for an internal Runner address and rejects unrelated URL schemes", () => {
+    const dataDirectory = mkdtempSync(join(tmpdir(), "autoforge-config-"));
+    const store = new PlatformConfigurationStore(dataDirectory);
+    const current = store.initialize(new Date("2026-08-11T00:00:00.000Z"));
+
+    const updated = store.replace(
+      {
+        ...current,
+        web: { ...current.web, publicBaseUrl: "http://10.20.30.40:3000" },
+      },
+      current.revision,
+    );
+
+    expect(updated.web.publicBaseUrl).toBe("http://10.20.30.40:3000");
+    expect(() =>
+      store.replace(
+        {
+          ...updated,
+          web: { ...updated.web, publicBaseUrl: "ftp://10.20.30.40" },
+        },
+        updated.revision,
+      ),
+    ).toThrow("HTTP 或 HTTPS");
+  });
+
   it("recovers when the private token was persisted before platform.json", () => {
     const dataDirectory = mkdtempSync(join(tmpdir(), "autoforge-config-"));
     const store = new PlatformConfigurationStore(dataDirectory);

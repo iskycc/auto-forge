@@ -191,6 +191,7 @@ func runOnce(arguments []string, stdout, stderr io.Writer) error {
 		ResourcePolicy: executor.ResourcePolicy{
 			CgroupRoot:    *cgroupRoot,
 			RequireCgroup: *cgroupRoot != "",
+			ApplyRlimits:  true,
 		},
 	})
 	if err != nil {

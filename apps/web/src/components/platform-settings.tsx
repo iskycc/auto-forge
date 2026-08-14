@@ -134,9 +134,10 @@ export function PlatformSettings({
               <Input
                 defaultValue={initial.web.publicBaseUrl ?? ""}
                 name="publicBaseUrl"
-                placeholder="https://autoforge.internal"
+                placeholder="http://10.20.30.10:3000"
                 type="url"
               />
+              <small>可信内网可使用 HTTP/IP 直连；跨不可信网络仍应使用 HTTPS。</small>
             </label>
             <label>
               公开大盘刷新间隔（秒）

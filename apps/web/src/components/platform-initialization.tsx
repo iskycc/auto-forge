@@ -137,10 +137,10 @@ export function PlatformInitialization({ initial }: { initial: PlatformConfigura
               <Input
                 defaultValue={initial.web.publicBaseUrl ?? ""}
                 name="publicBaseUrl"
-                placeholder="https://autoforge.internal"
+                placeholder="http://10.20.30.10:3000"
                 type="url"
               />
-              <small>自动安装 Agent 前设置；生产环境应使用可信 HTTPS。</small>
+              <small>可信内网可用 HTTP/IP 直连；跨不可信网络应使用可信 HTTPS。</small>
             </label>
           </div>
           {mode === "full" ? (

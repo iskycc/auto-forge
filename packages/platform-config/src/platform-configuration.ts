@@ -51,7 +51,13 @@ export const persistedPlatformConfigurationSchema = z
     web: z.object({
       hostname: z.string().min(1).max(255),
       port: z.number().int().min(1).max(65_535),
-      publicBaseUrl: z.url().max(2_048).optional(),
+      publicBaseUrl: z
+        .url()
+        .max(2_048)
+        .refine((value) => ["http:", "https:"].includes(new URL(value).protocol), {
+          message: "执行机可访问地址必须使用 HTTP 或 HTTPS。",
+        })
+        .optional(),
       publicDashboardRefreshSeconds: z.number().int().min(5).max(300),
     }),
     limits: z.object({

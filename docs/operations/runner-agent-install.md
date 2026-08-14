@@ -12,21 +12,21 @@ Agent 诊断日志和数据盘空间，不要直接删除身份文件。
 
 - Ubuntu、openSUSE Leap、openSUSE Tumbleweed；
 - Linux `amd64` 或 `arm64`；
-- systemd 与 cgroup v2；
+- systemd；cgroup v2 可选，可用时自动启用更强的资源隔离；
 - root SSH 用户，或能用同一密码执行 sudo 的普通用户。
 
 目标机必须已有 SSH Server、POSIX shell、`install`/`cp`/`mv`/`id` 等基础系统命令、systemd；普通用户场景必须已有 sudo。安装脚本不会调用系统包管理器，不会下载或安装任何依赖。Java、TestNG、浏览器和驱动等执行工具链仍需由管理员在离线介质中预置。
 
 ## 安装
 
-1. 在“平台配置”设置执行机能够访问的 HTTPS 地址；私有 PKI 场景准备 PEM CA 链。保存后重启 Web/worker。
+1. 在“平台配置”设置执行机能够访问的 HTTP 或 HTTPS 地址；可信内网可直接填写 `http://内网IP:端口`，跨不可信网络应使用 HTTPS。私有 PKI 场景准备 PEM CA 链。保存后重启 Web/worker。
 2. 进入“执行机”，填写 IP/主机名、SSH 端口、用户名和密码，点击“探测并核验主机”。
-3. 平台通过 SSH 读取 `/etc/os-release`、架构、systemd/cgroup v2 和提权能力，并显示 SSH 主机密钥 SHA-256 指纹。通过独立可信渠道核对后勾选确认。
-4. 设置 Runner 名称、标签、并发和终端策略；私有 CA 场景粘贴 PEM，然后执行安装。
+3. 平台通过 SSH 读取 `/etc/os-release`、架构、systemd、cgroup v2 可用性和提权能力，并显示 SSH 主机密钥 SHA-256 指纹。缺少 cgroup v2 时探测仍成功，但页面会标记“降级隔离”。通过独立可信渠道核对后勾选确认。
+4. 设置 Runner 名称、标签、并发和终端策略；默认以专用非特权账号运行，也可显式选择 root 模式。私有 CA 场景粘贴 PEM，然后执行安装。
 
 安装请求会再次强制匹配已确认指纹。平台读取内置资源时校验清单，SFTP 上传后读回并复核大小/SHA-256，再以固定参数执行脚本。SSH/sudo 密码只存在于请求内存，不写数据库、平台配置、审计或日志。
 
-脚本创建专用 `autoforge-agent` 系统账号并安装：
+默认模式会创建专用 `autoforge-agent` 系统账号；root 模式直接使用已有 root 账号。两种模式都安装：
 
 ```text
 /opt/autoforge/bin/autoforge-agent
@@ -36,21 +36,24 @@ Agent 诊断日志和数据盘空间，不要直接删除身份文件。
 /var/lib/autoforge-agent/
 ```
 
-systemd 服务以非 root 账号运行，启用 `NoNewPrivileges`、只读系统目录、私有临时目录、任务数上限和 cgroup 委派。安装失败会恢复上一版二进制、配置和 unit。短期 bootstrap token 只用于一次注册；长期 Runner 身份持久化后，Agent 原子清空配置中的 bootstrap token。
+systemd 服务启用 `NoNewPrivileges`、只读系统目录、私有临时目录、任务数上限和 cgroup 委派。非 root 是默认且推荐模式；root 模式会扩大测试进程可读取或修改的主机资源范围，只应在专用、受控的内网执行机上使用。安装失败会恢复上一版二进制、配置和 unit。短期 bootstrap token 只用于一次注册；长期 Runner 身份持久化后，Agent 原子清空配置中的 bootstrap token。
 
 ## 检查与日常操作
 
 ```bash
 systemctl status autoforge-agent
 journalctl -u autoforge-agent --since today
+# 默认非特权模式
 sudo -u autoforge-agent /opt/autoforge/bin/autoforge-agent doctor \
   --config /etc/autoforge-agent/config.json
+# root 模式
+/opt/autoforge/bin/autoforge-agent doctor --config /etc/autoforge-agent/config.json
 systemctl restart autoforge-agent
 ```
 
 停止时 Agent 先停止领取，在配置的 grace period 内排空在途 attempt；下次启动先读取身份、attempt 与 spool 并执行 reconcile。不要通过删除 `/var/lib/autoforge-agent` 处理未完成任务。
 
-每个 attempt 使用委派的 cgroup v2 与 rlimit 控制 CPU、内存、进程数和文件大小，并监督工作目录字节/条目上限。扫描仍有一个采样周期的瞬时超写窗口；严格防止共享磁盘耗尽时，应为 `/var/lib/autoforge-agent/work` 使用独立限额文件系统或项目配额。
+cgroup v2 可用时，每个 attempt 使用委派的 cgroup 与 rlimit 控制 CPU、内存、进程数和文件大小。没有 cgroup v2 时仍应用文件大小/打开文件数/core dump rlimit、进程组清理、执行超时和工作目录字节/条目监督，但 CPU、内存和整个后代进程数量不具备同等级硬限制。扫描仍有一个采样周期的瞬时超写窗口；严格防止共享磁盘耗尽时，应为 `/var/lib/autoforge-agent/work` 使用独立限额文件系统或项目配额。
 
 ## 升级、回滚与注销
 

@@ -12,6 +12,8 @@ test("the internal Agent installer is offline and supports the declared distribu
   assert.match(installer, /opensuse-leap/);
   assert.match(installer, /opensuse-tumbleweed/);
   assert.match(installer, /systemctl/);
+  assert.match(installer, /root \| autoforge-agent/);
+  assert.doesNotMatch(installer, /cgroup v2 is required/);
   assert.doesNotMatch(installer, /\b(?:apt|apt-get|zypper)\b/);
 });
 

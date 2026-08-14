@@ -66,7 +66,7 @@ location /api/v1/terminal-stream {
 ## 安全边界
 
 - 终端访问同时要求有效登录会话、独立 `runner.terminal` 权限、同源校验和一次性短时票据；Runner 通道另行使用 Runner 身份签发的票据。
-- Shell 以 Agent 服务账户运行。不要让 Agent 以 root 启动；需要高权限运维时使用操作系统已有的审计和提权策略。
+- Shell 以 Agent 服务账户运行。默认非特权模式风险更低；如果显式启用 root 模式，终端同样获得 root 权限，只能在专用受控主机上开启，并应使用操作系统已有的审计策略。
 - 每条消息限制为 64 KiB，单次输入/输出数据限制为 32 KiB，慢消费者缓冲超过 1 MiB 时主动断开。
 - 会话数、最长时长、终端尺寸、工作目录、环境变量和进程 session 生命周期均在 Agent 本地限制；控制面不能放宽。
 - 终端输出只写入 xterm.js，不进入 React HTML，不使用 `dangerouslySetInnerHTML`。

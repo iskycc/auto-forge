@@ -76,9 +76,9 @@ Full 部署还需提前导入部署包说明中列出的 PostgreSQL、NATS、Min
 
 musl 归档的镜像标签相应为 `autoforge/backend:0.2.2-amd64-musl`。必须持久化 `/var/lib/autoforge`；删除该卷会删除 Lite 数据库和本地对象。
 
-首次启动从容器日志或数据卷的 `/var/lib/autoforge/config/initial-admin-token` 获取管理员令牌。登录后先在“平台配置”设置执行机可访问的 HTTPS 地址，再在“执行机”页面填写 IP/主机名、SSH 用户和密码。平台会探测系统与架构并显示 SSH 主机指纹；管理员通过可信渠道核对后才能安装。密码只用于本次 SSH/sudo 操作，Agent 注册使用短期一次性令牌。
+首次启动从容器日志或数据卷的 `/var/lib/autoforge/config/initial-admin-token` 获取管理员令牌。登录后先在“平台配置”设置执行机可访问的 HTTP 或 HTTPS 地址；可信内网可填写 `http://内网IP:端口`，其他网络应使用 HTTPS。再在“执行机”页面填写 IP/主机名、SSH 用户和密码。平台会探测系统与架构并显示 SSH 主机指纹；管理员通过可信渠道核对后才能安装。密码只用于本次 SSH/sudo 操作，Agent 注册使用短期一次性令牌。
 
-自动安装要求目标机为 Ubuntu 或 openSUSE、使用 systemd/cgroup v2，并预置 SSH、POSIX shell、coreutils；非 root 用户还需已有 sudo。安装脚本不会调用系统包管理器或下载依赖。可使用同一 Release 的架构匹配工具链资产离线预置 Java/TestNG；未配置工具链时 Agent 不声明 TestNG capability。
+自动安装要求目标机为 Ubuntu 或 openSUSE、使用 systemd，并预置 SSH、POSIX shell、coreutils；非 root SSH 用户还需已有 sudo。cgroup v2 可用时自动启用，缺失时 Agent 以降级隔离运行。服务默认使用专用账号，也可由管理员显式选择 root 模式。安装脚本不会调用系统包管理器或下载依赖。可使用同一 Release 的架构匹配工具链资产离线预置 Java/TestNG；未配置工具链时 Agent 不声明 TestNG capability。
 
 ## 本地构建与验证
 

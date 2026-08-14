@@ -6,7 +6,6 @@ export const SUPPORTED_TESTNG_VERSION = "7.11.0";
 export const ON_DEMAND_SECRET_CAPABILITY = "secrets:on-demand-v1";
 export const REQUIRED_EXECUTION_CAPABILITIES = [
   "executor:testng-v1",
-  "isolation:cgroup-v2",
   `testng:${SUPPORTED_TESTNG_VERSION}`,
 ] as const;
 export const REQUIRED_EXECUTION_LABELS = ["java", "testng"] as const;
@@ -76,7 +75,6 @@ export function assessRunnerCompatibility(
     "protocol_unsupported",
     "platform_unsupported",
     "testng_executor_missing",
-    "resource_isolation_missing",
     "java_version_unknown",
     "java_version_unsupported",
     "testng_version_unknown",

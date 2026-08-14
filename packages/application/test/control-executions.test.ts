@@ -139,11 +139,14 @@ describe("execution data scope", () => {
 });
 
 describe("Runner execution compatibility", () => {
-  it("rejects claims before touching assignment state when the Runner lacks isolation", async () => {
-    const executions = { claim: vi.fn() } as unknown as ExecutionControlRepository;
+  it("allows claims without cgroup isolation when the remaining capabilities are compatible", async () => {
+    const executions = {
+      recoverExpired: vi.fn().mockResolvedValue(undefined),
+      claim: vi.fn().mockResolvedValue([]),
+    } as unknown as ExecutionControlRepository;
     const runners = {
       findByCredentialHash: vi.fn().mockResolvedValue({
-        id: "runner-incompatible",
+        id: "runner-no-cgroup",
         name: "Runner without cgroup",
         state: "online",
         os: "linux",
@@ -151,7 +154,7 @@ describe("Runner execution compatibility", () => {
         agentVersion: "0.2.2",
         protocolVersion: 1,
         labels: [],
-        capabilities: ["executor:testng-v1"],
+        capabilities: ["executor:testng-v1", "java:21.0.8", "testng:7.11.0"],
         maxConcurrency: 1,
         busySlots: 0,
         lastSeenAt: "2026-08-09T00:00:00.000Z",
@@ -176,16 +179,16 @@ describe("Runner execution compatibility", () => {
     );
 
     await expect(
-      service.claim("runner-incompatible", "credential", {
+      service.claim("runner-no-cgroup", "credential", {
         schemaVersion: 1,
         requestId: "request-1",
         availableSlots: 1,
         labels: [],
-        capabilities: ["executor:testng-v1"],
+        capabilities: ["executor:testng-v1", "java:21.0.8", "testng:7.11.0"],
         waitSeconds: 0,
       }),
-    ).rejects.toMatchObject({ code: "RUNNER_INCOMPATIBLE" });
-    expect(executions.claim).not.toHaveBeenCalled();
+    ).resolves.toMatchObject({ assignments: [] });
+    expect(executions.claim).toHaveBeenCalledOnce();
   });
 });
 

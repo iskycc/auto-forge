@@ -308,7 +308,8 @@ func (supervisor *attemptSupervisor) runTestNG(
 		},
 		ResourcePolicy: executor.ResourcePolicy{
 			CgroupRoot:    supervisor.configuration.Resources.CgroupRoot,
-			RequireCgroup: true,
+			RequireCgroup: supervisor.configuration.Resources.Enabled(),
+			ApplyRlimits:  true,
 		},
 		LogSink: collector.Write,
 		PrepareWorkspace: func(workspace string) error {

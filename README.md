@@ -36,7 +36,7 @@ AutoForge 是一个面向自动化测试场景的用例工厂，用于统一管�
 - Lite/Full 共用持久审计模型，覆盖身份、LDAP、来源/任务、批次/执行取消、Runner 和终端操作；自动重试审计与执行状态事务一致，详情只保留稳定 ID、结果码和计数等脱敏摘要。
 - `packages/runner-sdk` 中的 Runner Protocol v1 输入校验、兼容协商和有界长轮询控制器。
 - Agent 上报 CPU、内存、1 分钟负载与逻辑 CPU 数；调度阈值集中配置，过载或指标过期的节点不会获得新分配。
-- Runner 页面展示 Agent/协议、Linux 架构、Java/TestNG 工具链与 cgroup v2 能力兼容性；不可变 `ExecutionSpec` 固化 Linux `amd64/arm64`、Java 11+ 和 TestNG 7.11.0 要求。不兼容节点在批次选择、服务端调度、assignment claim 和 Agent 本地校验四层被阻止，可通过平台内置资源重新安装升级。批次、执行、尝试、assignment 和 lease 均以版本条件保护写入，批次与 attempt 状态历史可审计。
+- Runner 页面展示 Agent/协议、Linux 架构、Java/TestNG 工具链与 cgroup v2 能力；不可变 `ExecutionSpec` 固化 Linux `amd64/arm64`、Java 11+ 和 TestNG 7.11.0 要求。缺少 cgroup v2 的节点会显示降级隔离提示，但不再被阻止调度；其他不兼容节点仍在批次选择、服务端调度、assignment claim 和 Agent 本地校验四层被阻止。批次、执行、尝试、assignment 和 lease 均以版本条件保护写入，批次与 attempt 状态历史可审计。
 - 可选的 Agent 直连终端：方案 E 浮窗使用 xterm.js，登录会话通过独立 `runner.terminal` 权限换取一次性短时票据，再由同源 WebSocket 中继到 Agent 的受控 PTY；请求、开始、结束、断开原因和有界流量摘要进入持久审计，不记录命令内容或终端输出。
 - Full 模式按需连接 PostgreSQL、NATS、MinIO、Redis，readiness 实际检查四项依赖；Lite 启动不加载 Full 客户端。
 - `/api/v1` 管理接口，以及 liveness/readiness 健康检查。
@@ -55,7 +55,7 @@ AutoForge 是一个面向自动化测试场景的用例工厂，用于统一管�
 
 导入过程只读取 JAR 的 ZIP 目录和 JVM class 文件，不通过 class loader 加载或执行用户字节码。首版识别 `org.testng.annotations.Test` 与 `Ignore` 的运行时注解：方法级 `@Test` 直接形成测试方法；类级 `@Test` 将类中的 public 方法视为测试方法。`groups`、`enabled`、`description`、`dataProvider`、依赖组/方法与 `priority` 会写入版本快照。根目录 `testng.xml` 的 suite/test 参数、include/exclude 组、package 与类/方法选择规则会参与发现；JAR 内父类的 TestNG 注解继承会被解析，JAR 外父类、`@Factory`/DataProvider 动态语义、嵌套 `testng.xml` 与 suite-files 引用产生有界用户可见警告；Multi-Release JAR 按目标 Java 版本选择 `META-INF/versions` class，未声明 `Multi-Release: true` 的版本化条目按 JVM 语义忽略并提示。
 
-映射规则为：一个 TestNG 测试类对应一个 `CaseDefinition`；首次导入产生 v1，确认权威来源同步时，同类候选快照在原定义上形成新的不可变 `CaseVersion`。每个版本固化实际 JAR 来源，重载方法通过 JVM descriptor 区分。整个 JAR 按项目和 SHA-256 去重；数据库目录和本地对象目录应作为同一备份集合。
+映射规则为：一个 TestNG 测试类对应一个 `CaseDefinition`；首次导入产生 v1，确认权威来源同步时，同类候选快照在原定义上形成新的不可变 `CaseVersion`。每个版本固化实际 JAR 来源，重载方法通过 JVM descriptor 区分。发现器继续限制 JAR 上传大小、条目数、解压总量和单个 class 大小，但不再对发现的测试类数量设置独立硬上限。整个 JAR 按项目和 SHA-256 去重；数据库目录和本地对象目录应作为同一备份集合。
 
 当前扫描边界：
 
@@ -177,7 +177,7 @@ AutoForge 已选择方案 E 作为视觉基线：Apple-like 的轻盈桌面 Web 
 ```mermaid
 flowchart LR
     UI[浏览器] --> WEB[Next.js Web / API]
-    AGENT[Runner Agent] -->|HTTPS Runner Protocol| WEB
+    AGENT[Runner Agent] -->|HTTP(S) Runner Protocol| WEB
     WEB --> APP
     WORKER[Dispatcher Worker] --> APP
 
@@ -224,7 +224,7 @@ MinIO 上游仓库已于 2026 年 4 月归档。AutoForge 继续通过标准 S3 
 
 ### Runner Agent 与控制面协议
 
-生产 assignment 要求 Runner 上报 `isolation:cgroup-v2`。该 capability 只在配置 cgroup 根后出现；启动 doctor 还会验证 `cpu`、`memory`、`pids` controller 的真实委派和子 cgroup 写权限。每个 attempt 在用户 Java 启动前进入独立 cgroup，CPU 使用 `cpu.max`、内存使用 `memory.max` 且禁用 swap、任务数使用 `pids.max`；包装进程同时设置 `RLIMIT_FSIZE`、`RLIMIT_NOFILE` 并禁用 core dump。工作目录总字节数和条目数每 100ms 扫描，超限后终止整个 cgroup。普通目录的扫描无法阻止两次采样间的瞬时超写；需要严格磁盘容量隔离时，部署方还必须为数据目录配置专用文件系统或项目配额。
+配置 cgroup 根且 doctor 验证 `cpu`、`memory`、`pids` controller 的真实委派和子 cgroup 写权限后，Runner 上报 `isolation:cgroup-v2`。每个 attempt 在用户 Java 启动前进入独立 cgroup，CPU 使用 `cpu.max`、内存使用 `memory.max` 且禁用 swap、任务数使用 `pids.max`；包装进程同时设置 `RLIMIT_FSIZE`、`RLIMIT_NOFILE` 并禁用 core dump。未启用 cgroup v2 时，Agent 仍使用 rlimit、进程组、超时和工作区扫描，但不能硬性限制整个进程树的 CPU、内存和进程数，因此只适合受控执行机。工作目录总字节数和条目数每 100ms 扫描；普通目录的扫描无法阻止两次采样间的瞬时超写，需要严格磁盘容量隔离时还必须配置专用文件系统或项目配额。
 
 Runner Agent 是安装在执行机上的 Go 守护进程。`start` 会通过 bootstrap token 注册、以 `0600` 权限保存身份和在途 attempt，发送 Linux CPU、内存和负载快照，并运行有界 assignment claim 与独立 lease 续租循环。Agent 只在离线 Java/TestNG 工具链配置完整时上报精确版本 capability；领取后经控制面下载一个权威测试 JAR 和有界依赖 JAR 集，逐项校验路径、大小与 SHA-256，并在传输前校验总磁盘限制和可用空间，再在独立工作目录中以确定性 classpath 参数调用 Java，不经过 Shell。启动时先 reconcile 本地状态，未获服务端决定不会自行重跑。日志在写入有配额的本地 spool 前脱敏，控制面再次脱敏并只确认连续序号；产物在工作目录内发现、校验和上传。
 
@@ -285,18 +285,18 @@ queued -> dispatching -> running -> succeeded
 
 ## 技术基线
 
-| 类别         | 选择                                                                 |
-| ------------ | -------------------------------------------------------------------- |
-| 运行时       | Node.js 24 LTS，约束为 `>=24 <25`                                    |
-| 主平台       | Next.js 16 App Router + React + TypeScript strict                    |
-| Runner Agent | Go 1.26.x；发布工具链固定为 Go 1.26.5；使用 HTTPS Runner Protocol v1 |
-| 包管理       | pnpm workspace，提交唯一锁文件                                       |
-| 数据访问     | Drizzle ORM；PostgreSQL 与 SQLite 使用独立驱动和迁移                 |
-| 消息         | NATS JetStream                                                       |
-| 对象存储     | MinIO / 本地文件系统适配器                                           |
-| 缓存         | Redis / 进程内存与 SQLite 适配器                                     |
-| 校验         | Zod（持久配置、API 输入和消息载荷）                                  |
-| 测试         | Vitest + Playwright + Go test + 双模式集成测试                       |
+| 类别         | 选择                                                                   |
+| ------------ | ---------------------------------------------------------------------- |
+| 运行时       | Node.js 24 LTS，约束为 `>=24 <25`                                      |
+| 主平台       | Next.js 16 App Router + React + TypeScript strict                      |
+| Runner Agent | Go 1.26.x；发布工具链固定为 Go 1.26.5；使用 HTTP(S) Runner Protocol v1 |
+| 包管理       | pnpm workspace，提交唯一锁文件                                         |
+| 数据访问     | Drizzle ORM；PostgreSQL 与 SQLite 使用独立驱动和迁移                   |
+| 消息         | NATS JetStream                                                         |
+| 对象存储     | MinIO / 本地文件系统适配器                                             |
+| 缓存         | Redis / 进程内存与 SQLite 适配器                                       |
+| 校验         | Zod（持久配置、API 输入和消息载荷）                                    |
+| 测试         | Vitest + Playwright + Go test + 双模式集成测试                         |
 
 截至 2026-08-11，当前实现使用 Node.js 24 LTS 与 Next.js 16.3.0。实际依赖均在 `package.json` 中锁定具体版本，并以 `pnpm-lock.yaml` 为准；不得在可复现构建中使用浮动的 `latest` 标签。
 
@@ -352,9 +352,9 @@ pnpm start -- --data-dir=/var/lib/autoforge
 - `platform.json`：schema v1 平台配置，权限 `0600`；包含模式、Web、容量、调度、worker、Full 基础设施和随机秘密；
 - `initial-admin-token`：权限 `0600` 的首位管理员一次性令牌，管理员创建成功后删除。
 
-没有显式参数时，已存在的 `/var/lib/autoforge` 优先，否则使用当前目录的 `data`。默认配置为 Lite，可在没有 PostgreSQL、NATS、MinIO 或 Redis 的条件下独立启动。管理员通过 `/settings/platform` 管理监听地址、执行机可访问的 HTTPS 地址、Lite/Full 模式、Full 连接信息、容量与调度阈值；秘密字段只写不回显。配置采用 revision 条件和原子替换，保存后需要在维护窗口重启 Web/worker。
+没有显式参数时，已存在的 `/var/lib/autoforge` 优先，否则使用当前目录的 `data`。默认配置为 Lite，可在没有 PostgreSQL、NATS、MinIO 或 Redis 的条件下独立启动。管理员通过 `/settings/platform` 管理监听地址、执行机可访问的 HTTP/HTTPS 地址、Lite/Full 模式、Full 连接信息、容量与调度阈值；秘密字段只写不回显。配置采用 revision 条件和原子替换，保存后需要在维护窗口重启 Web/worker。HTTP/IP 直连仅适用于可信内网，跨不可信网络应使用 HTTPS。
 
-Runner Agent 由主平台自动生成独立 JSON 配置并以 `--config /etc/autoforge-agent/config.json` 启动，不复用服务端数据库或基础设施凭据。自动安装只支持已有 SSH、systemd、cgroup v2 和基础系统命令的 Ubuntu/openSUSE；不会联网或调用系统包管理器。Java/TestNG 工具链需在执行机离线预置并写入 Agent 配置，可直接使用同一 Release 的架构匹配工具链资产。
+Runner Agent 由主平台自动生成独立 JSON 配置并以 `--config /etc/autoforge-agent/config.json` 启动，不复用服务端数据库或基础设施凭据。自动安装支持已有 SSH、systemd 和基础系统命令的 Ubuntu/openSUSE；cgroup v2 可用时自动启用，缺失时使用降级隔离。服务默认使用专用非特权账号，管理员也可显式选择 root 模式；安装过程不会联网或调用系统包管理器。Java/TestNG 工具链需在执行机离线预置并写入 Agent 配置，可直接使用同一 Release 的架构匹配工具链资产。
 
 直连终端不使用 SSH 协议，也不要求执行机开放入站端口：Agent 使用自身身份主动建立 WebSocket，平台只中继当前浮窗的输入输出。配置、反向代理和安全边界见 [Runner 直连终端](./docs/operations/direct-terminal.md)。
 

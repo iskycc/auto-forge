@@ -49,6 +49,17 @@ describe("Runner Protocol v1 contracts", () => {
     });
   });
 
+  it("normalizes the retired cgroup v2 requirement from persisted v1 specifications", () => {
+    const specification = validExecutionSpec();
+
+    expect(
+      executionSpecSchema.parse({
+        ...specification,
+        requiredCapabilities: ["executor:testng-v1", "isolation:cgroup-v2"],
+      }).requiredCapabilities,
+    ).toEqual(["executor:testng-v1"]);
+  });
+
   it("requires one test JAR and unique bounded dependency inputs", () => {
     const specification = validExecutionSpec();
     const testJAR = specification.inputs[0]!;

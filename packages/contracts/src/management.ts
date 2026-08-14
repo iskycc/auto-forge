@@ -149,6 +149,7 @@ export const runnerHostProbeResultSchema = z.object({
   architecture: z.enum(["amd64", "arm64"]),
   initSystem: z.literal("systemd"),
   privilegeMode: z.enum(["root", "sudo"]),
+  cgroupV2Available: z.boolean(),
 });
 
 export const installRunnerAgentInputSchema = z.object({
@@ -158,6 +159,7 @@ export const installRunnerAgentInputSchema = z.object({
   labels: z.array(z.string().trim().min(1).max(64)).max(64).default([]),
   maxConcurrency: z.number().int().min(1).max(64).default(1),
   terminalEnabled: z.boolean().default(false),
+  runAsRoot: z.boolean().default(false),
   caCertificatePem: z
     .string()
     .max(65_536)

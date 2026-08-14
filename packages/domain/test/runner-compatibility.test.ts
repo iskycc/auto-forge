@@ -21,6 +21,24 @@ describe("Runner compatibility", () => {
     });
   });
 
+  it("keeps an Agent without cgroup v2 eligible while surfacing reduced isolation", () => {
+    expect(
+      assessRunnerCompatibility({
+        os: "linux",
+        architecture: "amd64",
+        agentVersion: "0.2.2",
+        protocolVersion: 1,
+        capabilities: ["executor:testng-v1", "java:24.0.2", "testng:7.11.0"],
+      }),
+    ).toEqual({
+      compatible: true,
+      status: "attention",
+      issues: ["resource_isolation_missing"],
+      javaVersion: "24.0.2",
+      testNgVersion: "7.11.0",
+    });
+  });
+
   it("blocks unsupported protocol, platform and execution capabilities", () => {
     expect(
       assessRunnerCompatibility({

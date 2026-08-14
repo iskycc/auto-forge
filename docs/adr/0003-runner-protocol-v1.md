@@ -1,6 +1,6 @@
 # ADR 0003：Runner Protocol v1
 
-- 状态：已接受
+- 状态：已接受；传输安全基线由 [ADR 0007](./0007-trusted-runner-deployment-options.md) 修订
 - 日期：2026-08-09
 
 ## 背景
@@ -20,14 +20,14 @@
 
 ## 端点
 
-| 方法 | 路径 | 语义 |
-| --- | --- | --- |
-| `POST` | `/api/v1/runner-agents/{runnerId}/claims` | 长轮询并原子领取 assignment |
-| `POST` | `/api/v1/runner-agents/{runnerId}/leases/{leaseId}/renew` | 续租并获取控制指令 |
-| `POST` | `/api/v1/runner-agents/{runnerId}/reconcile` | 启动恢复协商 |
-| `POST` | `/api/v1/run-attempts/{attemptId}/logs` | 幂等写入日志块并返回确认水位 |
-| `POST` | `/api/v1/run-attempts/{attemptId}/artifacts` | 声明产物并获取受控上传目标 |
-| `POST` | `/api/v1/run-attempts/{attemptId}/complete` | 幂等上报终态 |
+| 方法   | 路径                                                      | 语义                         |
+| ------ | --------------------------------------------------------- | ---------------------------- |
+| `POST` | `/api/v1/runner-agents/{runnerId}/claims`                 | 长轮询并原子领取 assignment  |
+| `POST` | `/api/v1/runner-agents/{runnerId}/leases/{leaseId}/renew` | 续租并获取控制指令           |
+| `POST` | `/api/v1/runner-agents/{runnerId}/reconcile`              | 启动恢复协商                 |
+| `POST` | `/api/v1/run-attempts/{attemptId}/logs`                   | 幂等写入日志块并返回确认水位 |
+| `POST` | `/api/v1/run-attempts/{attemptId}/artifacts`              | 声明产物并获取受控上传目标   |
+| `POST` | `/api/v1/run-attempts/{attemptId}/complete`               | 幂等上报终态                 |
 
 日志、产物与完成端点还必须携带 `X-AutoForge-Runner-Id`，并用该 Runner 注册后凭据作为 Bearer token；控制面同时校验 Runner、attempt 和 lease 的归属关系。
 

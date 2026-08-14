@@ -430,16 +430,12 @@ func parseServerURL(raw string) (*url.URL, error) {
 	if parsed.Hostname() == "" {
 		return nil, errors.New("AUTOFORGE_SERVER_URL must contain a host")
 	}
-	if parsed.Scheme != "https" && !(parsed.Scheme == "http" && isLoopbackHost(parsed.Hostname())) {
-		return nil, errors.New("AUTOFORGE_SERVER_URL must use HTTPS; HTTP is allowed only for loopback development")
+	if parsed.Scheme != "https" && parsed.Scheme != "http" {
+		return nil, errors.New("AUTOFORGE_SERVER_URL must use HTTP or HTTPS")
 	}
 	parsed.Path = strings.TrimRight(parsed.Path, "/")
 	parsed.RawPath = strings.TrimRight(parsed.RawPath, "/")
 	return parsed, nil
-}
-
-func isLoopbackHost(host string) bool {
-	return host == "localhost" || host == "127.0.0.1" || host == "::1"
 }
 
 func absoluteDataDirectory(raw string) (string, error) {

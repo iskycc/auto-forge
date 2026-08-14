@@ -32,7 +32,7 @@ flowchart LR
     APP --> DB[DatabasePort]
     APP --> OBJ[ObjectStorePort]
 
-    AGENT[Runner Agent] -->|HTTPS: register / claim / renew / report| API
+    AGENT[Runner Agent] -->|HTTP(S): register / claim / renew / report| API
     AGENT -->|WSS: optional terminal channel| API
     UI -->|WSS: short-lived terminal session| API
     AGENT --> PROC[Child Process]
@@ -113,7 +113,7 @@ claim -> prepare -> start -> stream logs -> collect artifacts -> report result -
 
 ## Runner Protocol
 
-任务协议基于 HTTPS JSON，任务领取使用有界长轮询；WebSocket 不参与任务执行正确性。当前 WebSocket 只承载管理员显式打开的交互终端，断开即终止对应 PTY，会话不能转化为 assignment 或 lease。
+任务协议基于 HTTP(S) JSON，任务领取使用有界长轮询；可信内网允许 HTTP/IP 直连，跨不可信网络应使用 HTTPS，因为 HTTP 不保护 Runner 凭据、任务、日志和密文注入流量。WebSocket 不参与任务执行正确性。当前 WebSocket 只承载管理员显式打开的交互终端，断开即终止对应 PTY，会话不能转化为 assignment 或 lease。
 
 协议端点：
 
@@ -159,7 +159,7 @@ type ExecutionSpec = {
 };
 ```
 
-当前执行快照固定要求 Linux `amd64/arm64`、Java 11+、TestNG 7.11.0、`executor:testng-v1` 和 `isolation:cgroup-v2`；含密文引用时额外要求 `secrets:on-demand-v1`。旧的 v1 快照在服务端解析时补入相同默认要求；新快照显式持久化。控制面只在 Runner 身份和 attempt lease 同时有效、密文项目/版本/状态匹配时返回值，成功解密后记录不含值的访问审计。Agent 校验响应名称与大小，只保留在内存和子进程环境中；`ExecutionSpec`、持久 claim、日志和 spool 不保存明文秘密。Go 字符串不能保证主动清零，因此这里不声明硬件级或可验证的内存擦除。
+当前执行快照固定要求 Linux `amd64/arm64`、Java 11+、TestNG 7.11.0 和 `executor:testng-v1`；含密文引用时额外要求 `secrets:on-demand-v1`。`isolation:cgroup-v2` 不再是 assignment 硬要求，服务端解析旧 v1 快照时会移除该已退役要求，避免升级前排队任务永久无法领取。控制面只在 Runner 身份和 attempt lease 同时有效、密文项目/版本/状态匹配时返回值，成功解密后记录不含值的访问审计。Agent 校验响应名称与大小，只保留在内存和子进程环境中；`ExecutionSpec`、持久 claim、日志和 spool 不保存明文秘密。Go 字符串不能保证主动清零，因此这里不声明硬件级或可验证的内存擦除。
 
 ## 命令执行
 
@@ -171,13 +171,13 @@ type ExecutionSpec = {
 - 复杂脚本作为带 SHA-256 的输入产物下发，再通过明确解释器执行，例如 `bash script.sh` 或 `powershell -File script.ps1`。
 - Shell 执行器默认禁用；如未来提供，必须由 Runner 本地策略显式允许，不能由任务自行开启。
 - 超时或取消先发送温和终止信号，经过短 grace period 后强制清理整个进程树。
-- Agent 自身不得以 root/Administrator 运行，除非部署文档列明理由和额外隔离措施。
+- Agent 默认以专用非特权账号运行；管理员可为专用、受控内网执行机显式选择 root 模式，部署文档必须说明扩大后的主机访问边界。
 
 TestNG 方法选择器使用 `methodName+JVM descriptor` 的规范形式，例如 `checkout(Ljava/lang/String;)V`。非空方法选择或参数快照会启用随 Agent 二进制内嵌的 Java source-file launcher；launcher 通过 reflection 计算真实 descriptor，并以 TestNG `IMethodSelector` 保留配置方法、精确选择测试方法。launcher 与用户 JAR 均通过固定 Java executable 和参数数组启动，不调用 Shell、`javac` 或网络下载。
 
 TestNG 输入固定为一个 `test-jar` 和最多 127 个 `dependency-jar`。每项输入都引用服务端管理的权威对象，并在 assignment 快照中固化 ID、相对 `.jar` 目标路径、大小和 SHA-256；控制面先验证 Runner 身份与有效 lease，再确认输入确实位于快照且权威元数据未漂移。Agent 在发起下载前校验输入总大小、attempt 磁盘上限和工作目录可用空间，逐项通过同一控制面端点下载并原子发布。classpath 顺序固定为测试 JAR、按目标路径排序的依赖 JAR、Runner 预置 TestNG 工具链，不向 Agent 下发数据库或对象存储长期凭据。
 
-资源隔离只在 cgroup v2 委派经过 doctor 验证后上报 `isolation:cgroup-v2` capability。Agent 为每个 attempt 创建子 cgroup，先写 `cpu.max`、`memory.max`、`memory.swap.max=0`、`memory.oom.group=1` 和 `pids.max`；内部包装进程再设置 `RLIMIT_FSIZE`、`RLIMIT_NOFILE`、`RLIMIT_CORE=0` 并加入 cgroup，完成父子握手后才 `execve` 用户 Java。超时、取消、资源超限和正常完成后的残留后代均通过 `cgroup.kill` 清理，旧内核回退为枚举 cgroup PID 后发送 `SIGKILL`。
+资源隔离只在 cgroup v2 委派经过 doctor 验证后上报 `isolation:cgroup-v2` capability。Agent 为每个 attempt 创建子 cgroup，先写 `cpu.max`、`memory.max`、`memory.swap.max=0`、`memory.oom.group=1` 和 `pids.max`；内部包装进程再设置 `RLIMIT_FSIZE`、`RLIMIT_NOFILE`、`RLIMIT_CORE=0` 并加入 cgroup，完成父子握手后才 `execve` 用户 Java。超时、取消、资源超限和正常完成后的残留后代均通过 `cgroup.kill` 清理，旧内核回退为枚举 cgroup PID 后发送 `SIGKILL`。没有 cgroup v2 时，包装进程仍设置上述 rlimit，并使用进程组、超时和有界工作区扫描清理；CPU、内存和整个后代进程数量不具备 cgroup 等级的硬限制，因此仅适合可信执行负载。
 
 工作目录总字节数和条目数使用 100ms 有界扫描监督，超限映射为独立稳定结果码。`RLIMIT_FSIZE` 可硬限制单个文件，但普通目录无法仅靠 cgroup/rlimit 获得严格的总容量配额，因此最多存在一个采样周期的瞬时超写窗口；严格磁盘隔离需要部署方提供专用文件系统或项目配额。进程模式仍不是完整沙箱：它不隔离网络，也不能阻止测试读取 Agent 服务账号本来可读的主机路径。
 

@@ -6,7 +6,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 
-import { RunnerAgentInstaller } from "./runner-agent-installer";
+import {
+  normalizeRunnerControlPlaneUrl,
+  renderAgentSystemdServiceUnit,
+  RunnerAgentInstaller,
+} from "./runner-agent-installer";
 import { RunnerAgentResourceStore } from "./runner-agent-resources";
 
 const hostPrivateKey = generateKeyPairSync("rsa", { modulusLength: 2048 }).privateKey.export({
@@ -56,17 +60,17 @@ describe("RunnerAgentInstaller SSH probe", () => {
     });
   });
 
-  it("returns an actionable cgroup v2 prerequisite error", async () => {
+  it("reports missing cgroup v2 as an available degraded mode", async () => {
     const server = await startProbeServer({
       authentication: "password",
-      commandOutput: "AUTOFORGE_PROBE_ERROR=CGROUP_V2_REQUIRED\n",
-      commandExitCode: 22,
+      commandOutput:
+        "CGROUP_V2=false\nOS_ID=ubuntu\nOS_NAME=Ubuntu 24.04 LTS\nARCH=x86_64\nPRIVILEGE=root\n",
     });
     const address = server.address() as AddressInfo;
 
-    await expect(installer().probe(connection(address.port))).rejects.toMatchObject({
-      code: "RUNNER_HOST_UNSUPPORTED",
-      message: expect.stringContaining("cgroup v2"),
+    await expect(installer().probe(connection(address.port))).resolves.toMatchObject({
+      privilegeMode: "root",
+      cgroupV2Available: false,
     });
   });
 
@@ -90,6 +94,25 @@ describe("RunnerAgentInstaller SSH probe", () => {
   });
 });
 
+describe("Runner Agent installation policy", () => {
+  it("accepts an internal HTTP control plane address", () => {
+    expect(normalizeRunnerControlPlaneUrl("http://10.20.30.40:3000/")).toBe(
+      "http://10.20.30.40:3000",
+    );
+    expect(() => normalizeRunnerControlPlaneUrl("ftp://10.20.30.40")).toThrow(
+      "必须使用 HTTP 或 HTTPS",
+    );
+    expect(() => normalizeRunnerControlPlaneUrl("http://user:secret@10.20.30.40")).toThrow(
+      "不能包含凭据",
+    );
+  });
+
+  it("can render a root-owned Agent service without changing the default", () => {
+    expect(renderAgentSystemdServiceUnit(true)).toContain("\nUser=root\n");
+    expect(renderAgentSystemdServiceUnit(false)).toContain("\nUser=autoforge-agent\n");
+  });
+});
+
 type ProbeAuthentication = "keyboard-interactive" | "password" | "reject";
 type ProbeServerOptions = {
   authentication: ProbeAuthentication;
@@ -98,7 +121,8 @@ type ProbeServerOptions = {
   commandResults?: Array<{ output: string; exitCode: number }>;
 };
 
-const probeOutput = "OS_ID=ubuntu\nOS_NAME=Ubuntu 24.04 LTS\nARCH=x86_64\nPRIVILEGE=sudo\n";
+const probeOutput =
+  "CGROUP_V2=true\nOS_ID=ubuntu\nOS_NAME=Ubuntu 24.04 LTS\nARCH=x86_64\nPRIVILEGE=sudo\n";
 
 async function startProbeServer(options: ProbeServerOptions): Promise<Server> {
   let commandInvocation = 0;

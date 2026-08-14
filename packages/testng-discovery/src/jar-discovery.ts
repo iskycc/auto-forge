@@ -21,7 +21,6 @@ const DEFAULT_MAX_UNCOMPRESSED_BYTES = 256 * 1024 * 1024;
 const DEFAULT_MAX_ENTRIES = 20_000;
 const DEFAULT_MAX_CLASS_BYTES = 10 * 1024 * 1024;
 const DEFAULT_MAX_SOURCE_BYTES = 2 * 1024 * 1024;
-const DEFAULT_MAX_TEST_CLASSES = 5_000;
 const DEFAULT_TARGET_JAVA_VERSION = 21;
 const MAX_WARNINGS = 100;
 const VERSIONED_CLASS_PATTERN = /^META-INF\/versions\/(\d+)\/(.+\.class)$/;
@@ -38,7 +37,6 @@ const JAR_INSPECTION_ERROR_CODES = new Set([
   "SOURCE_INTEGRITY_FAILED",
   "SOURCE_NOT_AVAILABLE",
   "TOO_MANY_ENTRIES",
-  "TOO_MANY_TEST_CLASSES",
 ]);
 
 type SelectedClassEntry = {
@@ -80,7 +78,6 @@ export type TestNgJarDiscoveryOptions = {
   maxEntries?: number;
   maxClassBytes?: number;
   maxSourceBytes?: number;
-  maxTestClasses?: number;
   targetJavaVersion?: number;
 };
 
@@ -105,7 +102,6 @@ export class TestNgJarDiscovery implements JarDiscoveryPort {
   private readonly maxEntries: number;
   private readonly maxClassBytes: number;
   private readonly maxSourceBytes: number;
-  private readonly maxTestClasses: number;
   private readonly targetJavaVersion: number;
 
   constructor(options: TestNgJarDiscoveryOptions = {}) {
@@ -114,7 +110,6 @@ export class TestNgJarDiscovery implements JarDiscoveryPort {
     this.maxEntries = options.maxEntries ?? DEFAULT_MAX_ENTRIES;
     this.maxClassBytes = options.maxClassBytes ?? DEFAULT_MAX_CLASS_BYTES;
     this.maxSourceBytes = options.maxSourceBytes ?? DEFAULT_MAX_SOURCE_BYTES;
-    this.maxTestClasses = options.maxTestClasses ?? DEFAULT_MAX_TEST_CLASSES;
     this.targetJavaVersion = options.targetJavaVersion ?? DEFAULT_TARGET_JAVA_VERSION;
     if (!Number.isInteger(this.targetJavaVersion) || this.targetJavaVersion < 8) {
       throw new Error("targetJavaVersion 必须是不小于 8 的整数。");
@@ -185,12 +180,6 @@ export class TestNgJarDiscovery implements JarDiscoveryPort {
       }
     }
 
-    if (classes.length > this.maxTestClasses) {
-      throw new JarInspectionError(
-        "TOO_MANY_TEST_CLASSES",
-        `发现的 TestNG 测试类超过 ${this.maxTestClasses} 个。`,
-      );
-    }
     const testMethodCount = classes.reduce((sum, candidate) => sum + candidate.methods.length, 0);
     this.addEmptyDiscoveryWarnings(classEntries, sourceCandidates.length, classes, warnings);
     if (warnings.length === MAX_WARNINGS) {

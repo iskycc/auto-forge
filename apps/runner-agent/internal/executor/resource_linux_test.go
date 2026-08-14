@@ -36,6 +36,7 @@ func TestResourceWrapperAppliesLimitsBeforeExec(t *testing.T) {
 		[]string{"PATH=/usr/bin:/bin"},
 		scope,
 		Limits{FileCount: 64, DiskBytes: 1 << 20},
+		true,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -58,6 +59,30 @@ func TestResourceWrapperAppliesLimitsBeforeExec(t *testing.T) {
 	}
 	if strings.TrimSpace(string(attached)) != strconv.Itoa(processID) {
 		t.Fatalf("cgroup.procs = %q, want process %d", attached, processID)
+	}
+}
+
+func TestResourceWrapperAppliesRlimitsWithoutCgroup(t *testing.T) {
+	command, handshake, err := resourceCommand(
+		Command{Executable: "/bin/true"},
+		[]string{"PATH=/usr/bin:/bin"},
+		nil,
+		Limits{FileCount: 64, DiskBytes: 1 << 20},
+		true,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer handshake.close()
+	configureProcessGroup(command)
+	if err := command.Start(); err != nil {
+		t.Fatal(err)
+	}
+	if err := handshake.afterStart(); err != nil {
+		t.Fatal(err)
+	}
+	if err := command.Wait(); err != nil {
+		t.Fatal(err)
 	}
 }
 

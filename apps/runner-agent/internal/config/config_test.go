@@ -60,12 +60,24 @@ func TestLoadRejectsJavaWithoutSourceFileMode(t *testing.T) {
 	}
 }
 
-func TestLoadRejectsInsecureRemoteHTTP(t *testing.T) {
+func TestLoadAcceptsInternalHTTPAddress(t *testing.T) {
+	loaded, err := Load(mapLookup(map[string]string{
+		"AUTOFORGE_SERVER_URL": "http://10.20.30.40:3000",
+	}))
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if loaded.ServerURL.String() != "http://10.20.30.40:3000" {
+		t.Fatalf("ServerURL = %q", loaded.ServerURL.String())
+	}
+}
+
+func TestLoadRejectsUnsupportedServerURLScheme(t *testing.T) {
 	_, err := Load(mapLookup(map[string]string{
-		"AUTOFORGE_SERVER_URL": "http://runner.example.test",
+		"AUTOFORGE_SERVER_URL": "ftp://runner.example.test",
 	}))
 	if err == nil {
-		t.Fatal("Load() error = nil, want insecure URL error")
+		t.Fatal("Load() accepted an unsupported URL scheme")
 	}
 }
 

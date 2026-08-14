@@ -18,8 +18,10 @@ The TypeScript process executor currently enforces these concrete boundaries:
 
 This boundary is process supervision, not a complete sandbox. It does not by itself isolate the
 network, kernel, mount namespace, user namespace, or filesystem outside the working directory.
-Production test execution therefore continues to require the Runner Agent's cgroup v2/rlimit
-controls and host hardening described in the Runner threat model.
+Production test execution should use the Runner Agent's cgroup v2/rlimit controls and host hardening
+described in the Runner threat model. A no-cgroup mode is available for trusted internal hosts; it
+retains rlimits, process-group cleanup, timeouts and workspace monitoring, but does not provide hard
+CPU, memory or descendant-process-count isolation.
 
 ## Container executor
 

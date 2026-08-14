@@ -160,22 +160,24 @@ public class CheckoutTest { @Test public void checkout() {} }
     ).rejects.toMatchObject({ code: "JAR_TOO_LARGE" } satisfies Partial<JarInspectionError>);
   });
 
-  it("rejects archives that exceed the discovered test class limit", async () => {
-    const jar = zipSync({
-      "com/example/FirstTest.class": buildClassFile({
-        className: "com.example.FirstTest",
-        methods: [{ name: "first", annotations: [{ type: "Test" }] }],
+  it("does not impose a separate discovered test class limit", async () => {
+    const classCount = 5_001;
+    const entries = Object.fromEntries(
+      Array.from({ length: classCount }, (_, index) => {
+        const className = `com.example.GeneratedTest${index}`;
+        return [
+          `${className.replaceAll(".", "/")}.class`,
+          buildClassFile({
+            className,
+            methods: [{ name: "test", annotations: [{ type: "Test" }] }],
+          }),
+        ];
       }),
-      "com/example/SecondTest.class": buildClassFile({
-        className: "com.example.SecondTest",
-        methods: [{ name: "second", annotations: [{ type: "Test" }] }],
-      }),
-    });
-    const discovery = new TestNgJarDiscovery({ maxTestClasses: 1 });
+    );
 
-    await expect(discovery.inspect("too-many.jar", jar)).rejects.toMatchObject({
-      code: "TOO_MANY_TEST_CLASSES",
-    } satisfies Partial<JarInspectionError>);
+    const inspection = await new TestNgJarDiscovery().inspect("many-tests.jar", zipSync(entries));
+
+    expect(inspection.testClassCount).toBe(classCount);
   });
 
   it("applies bounded testng.xml class, method, group, package and parameter selection", async () => {

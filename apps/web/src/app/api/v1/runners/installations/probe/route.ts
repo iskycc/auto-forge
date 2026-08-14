@@ -32,6 +32,7 @@ export async function POST(request: Request): Promise<NextResponse> {
       details: {
         operatingSystemId: result.operatingSystemId,
         architecture: result.architecture,
+        cgroupV2Available: result.cgroupV2Available,
         hostKeySha256: result.hostKeySha256,
       },
     });

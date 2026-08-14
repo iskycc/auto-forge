@@ -1,6 +1,6 @@
 # ADR 0006：持久化平台配置与内置 Agent 安装
 
-- 状态：Accepted
+- 状态：Accepted；cgroup/root 安装策略由 [ADR 0007](./0007-trusted-runner-deployment-options.md) 修订
 - 日期：2026-08-11
 
 ## 背景

@@ -31,7 +31,7 @@ Linux Agent 每次心跳读取：
 候选 Runner 必须同时满足：
 
 1. 位于用户勾选范围内且没有被禁用；
-2. Runner Protocol v1、Linux `amd64/arm64`、TestNG executor v1、Java 11+、TestNG 7.11.0 和 cgroup v2 隔离兼容；
+2. Runner Protocol v1、Linux `amd64/arm64`、TestNG executor v1、Java 11+ 和 TestNG 7.11.0 兼容；cgroup v2 缺失只产生降级隔离提示，不阻塞调度；
 3. 心跳在线，资源快照未超过配置的最长年龄；
 4. `maxConcurrency - max(Agent busySlots, 平台活动 RunAttempt 数) > 0`；
 5. CPU 使用率不超过阈值；

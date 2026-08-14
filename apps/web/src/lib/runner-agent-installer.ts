@@ -46,7 +46,7 @@ export class RunnerAgentInstaller {
   }
 
   async install(input: InstallRunnerAgentInput): Promise<RunnerAgentInstallationResult> {
-    const controlPlaneUrl = validatedControlPlaneUrl(this.dependencies.controlPlaneUrl);
+    const controlPlaneUrl = normalizeRunnerControlPlaneUrl(this.dependencies.controlPlaneUrl);
     const probe = await this.inspectHost(input.connection, input.expectedHostKeySha256);
     const resources = await this.dependencies.resources.read(probe.architecture);
     const temporaryDirectory = `/tmp/autoforge-install-${randomUUID()}`;
@@ -71,6 +71,7 @@ export class RunnerAgentInstaller {
           temporaryDirectory,
           probe.privilegeMode,
           Boolean(input.caCertificatePem),
+          input.runAsRoot,
         );
         await executeRemoteCommand(
           connected.client,
@@ -150,9 +151,10 @@ if ! command -v systemctl >/dev/null 2>&1; then
   printf "AUTOFORGE_PROBE_ERROR=SYSTEMD_REQUIRED\\n" >&2
   exit 21
 fi
-if ! test -r /sys/fs/cgroup/cgroup.controllers; then
-  printf "AUTOFORGE_PROBE_ERROR=CGROUP_V2_REQUIRED\\n" >&2
-  exit 22
+if test -r /sys/fs/cgroup/cgroup.controllers; then
+  printf "CGROUP_V2=true\\n"
+else
+  printf "CGROUP_V2=false\\n"
 fi
 printf "OS_ID=%s\\n" "\${ID:-}"
 printf "OS_NAME=%s\\n" "\${PRETTY_NAME:-\${NAME:-unknown}}"
@@ -209,6 +211,7 @@ function parseHostProbe(output: string, hostKeySha256: string): RunnerHostProbeR
     architecture,
     initSystem: "systemd",
     privilegeMode: privilege,
+    cgroupV2Available: fields.get("CGROUP_V2") === "true",
   };
 }
 
@@ -221,26 +224,37 @@ function normalizeArchitecture(value: string | undefined): AgentArchitecture {
   );
 }
 
-function validatedControlPlaneUrl(value: string | undefined): string {
+export function normalizeRunnerControlPlaneUrl(value: string | undefined): string {
   if (!value) {
     throw new DomainError(
       "RUNNER_INSTALL_CONFIGURATION_REQUIRED",
-      "自动安装 Agent 前，请在平台配置中设置执行机可访问的公网/内网 HTTPS 地址。",
+      "自动安装 Agent 前，请在平台配置中设置执行机可访问的公网/内网 HTTP 或 HTTPS 地址。",
     );
   }
-  const url = new URL(value);
-  if (url.protocol !== "https:" && !isLoopbackUrl(url)) {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch (cause) {
     throw new DomainError(
       "RUNNER_INSTALL_CONFIGURATION_REQUIRED",
-      "Agent 控制面地址必须使用 HTTPS；HTTP 仅允许本机开发地址。",
+      "Agent 控制面地址不是有效 URL。",
+      { cause },
+    );
+  }
+  if (url.protocol !== "https:" && url.protocol !== "http:") {
+    throw new DomainError(
+      "RUNNER_INSTALL_CONFIGURATION_REQUIRED",
+      "Agent 控制面地址必须使用 HTTP 或 HTTPS。",
+    );
+  }
+  if (url.username || url.password || url.search || url.hash) {
+    throw new DomainError(
+      "RUNNER_INSTALL_CONFIGURATION_REQUIRED",
+      "Agent 控制面地址不能包含凭据、查询参数或片段。",
     );
   }
   url.pathname = url.pathname.replace(/\/$/, "");
   return url.toString().replace(/\/$/, "");
-}
-
-function isLoopbackUrl(url: URL): boolean {
-  return url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname === "[::1]";
 }
 
 function connectHost(
@@ -430,7 +444,7 @@ function runnerProbeCommandError(result: { stdout: string; stderr: string }): Do
     },
     CGROUP_V2_REQUIRED: {
       code: "RUNNER_HOST_UNSUPPORTED",
-      message: "执行机未启用 cgroup v2，无法应用要求的进程与资源隔离。",
+      message: "执行机探测脚本报告 cgroup v2 不可用；请升级主平台后使用降级隔离模式。",
     },
     SUDO_MISSING: {
       code: "RUNNER_HOST_PRIVILEGE_REQUIRED",
@@ -558,7 +572,9 @@ function installationFiles(input: {
         maxConcurrency: input.input.maxConcurrency,
         ...(input.input.caCertificatePem ? { caFile: REMOTE_CA_PATH } : {}),
         bootstrapToken: input.bootstrapToken,
-        resources: { cgroupRoot: "/sys/fs/cgroup/system.slice/autoforge-agent.service" },
+        resources: input.probe.cgroupV2Available
+          ? { cgroupRoot: "/sys/fs/cgroup/system.slice/autoforge-agent.service" }
+          : {},
         terminal: {
           enabled: input.input.terminalEnabled,
           shell: "/bin/sh",
@@ -589,7 +605,7 @@ function installationFiles(input: {
     },
     {
       path: `${input.temporaryDirectory}/autoforge-agent.service`,
-      content: Buffer.from(systemdServiceUnit, "utf8"),
+      content: Buffer.from(renderAgentSystemdServiceUnit(input.input.runAsRoot), "utf8"),
       mode: 0o600,
     },
   ];
@@ -607,12 +623,14 @@ function installationCommand(
   directory: string,
   privilegeMode: "root" | "sudo",
   includeCaCertificate: boolean,
+  runAsRoot: boolean,
 ): string {
   const argumentsList = [
     `${directory}/install.sh`,
     `${directory}/autoforge-agent`,
     `${directory}/config.json`,
     `${directory}/autoforge-agent.service`,
+    runAsRoot ? "root" : "autoforge-agent",
     ...(includeCaCertificate ? [`${directory}/control-plane-ca.pem`] : []),
   ].map(shellQuote);
   const command = `/bin/sh ${argumentsList.join(" ")}`;
@@ -690,14 +708,16 @@ function shellQuote(value: string): string {
   return `'${value.replaceAll("'", `'"'"'`)}'`;
 }
 
-const systemdServiceUnit = `[Unit]
+export function renderAgentSystemdServiceUnit(runAsRoot: boolean): string {
+  const serviceUser = runAsRoot ? "root" : "autoforge-agent";
+  return `[Unit]
 Description=AutoForge Runner Agent
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
-User=autoforge-agent
+User=${serviceUser}
 ExecStart=/opt/autoforge/bin/autoforge-agent start --config ${REMOTE_CONFIGURATION_PATH}
 Restart=on-failure
 RestartSec=5s
@@ -720,3 +740,4 @@ ReadWritePaths=/var/lib/autoforge-agent /etc/autoforge-agent
 [Install]
 WantedBy=multi-user.target
 `;
+}
