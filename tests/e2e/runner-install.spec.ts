@@ -179,9 +179,10 @@ async function exerciseOfflineUpgradeAndRollback(page: Page): Promise<void> {
   await page.getByLabel("我已通过可信渠道核对并确认上述 SSH 主机指纹").check();
   page.once("dialog", (dialog) => dialog.accept());
   await page.getByRole("button", { name: "回滚上次安装" }).click();
-  await expect(page.getByRole("status")).toContainText(/Agent 已回滚到 .*systemd 健康检查通过/, {
-    timeout: 120_000,
-  });
+  await expect(page.getByRole("status").filter({ hasText: "systemd 健康检查通过" })).toContainText(
+    /Agent 已回滚到 .*systemd 健康检查通过/,
+    { timeout: 120_000 },
+  );
   expect(await installedConfigurationDigest("/etc/autoforge-agent/config.json")).toBe(before);
   await verifyInstalledSystemdService();
   const audit = await page.request.get(
