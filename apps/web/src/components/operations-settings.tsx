@@ -19,12 +19,14 @@ export function OperationsSettings({
   projects,
   canManageSettings,
   canManageTokens,
+  visibleSection,
 }: {
   initialAccounts: ServiceAccount[];
   initialPolicies: RetentionPolicy[];
   canManageSettings: boolean;
   canManageTokens: boolean;
   projects: Array<{ id: string; name: string }>;
+  visibleSection: "accounts" | "retention";
 }) {
   const [accounts, setAccounts] = useState(initialAccounts);
   const [policies, setPolicies] = useState(initialPolicies);
@@ -230,278 +232,286 @@ export function OperationsSettings({
         </div>
       ) : null}
 
-      <section className="content-card settings-section">
-        <div className="section-heading">
-          <div>
-            <p className="eyebrow">Automation Identity</p>
-            <h2>服务账号与 API 令牌</h2>
+      {visibleSection === "accounts" ? (
+        <section className="content-card settings-section">
+          <div className="section-heading">
+            <div>
+              <p className="eyebrow">Automation Identity</p>
+              <h2>服务账号与 API 令牌</h2>
+            </div>
+            <KeyRound size={22} />
           </div>
-          <KeyRound size={22} />
-        </div>
-        <p className="settings-note">
-          令牌明文只在签发时显示一次，数据库仅保存 SHA-256 摘要；作用域不能超过服务账号权限。
-        </p>
-        {issuedToken ? (
-          <div className="issued-token" role="status">
-            <span>
-              <strong>请立即复制并离线保管</strong>
-              <code>{issuedToken}</code>
-            </span>
-            <Button
-              className="button button-secondary"
-              onClick={() => void navigator.clipboard.writeText(issuedToken)}
-              type="button"
-            >
-              复制
-            </Button>
-          </div>
-        ) : null}
-        {canManageTokens ? (
-          <form className="settings-grid-form" onSubmit={createAccount}>
-            <label>
-              账号名称
-              <Input name="name" required />
-            </label>
-            <label>
-              用途说明
-              <Input name="description" />
-            </label>
-            <label className="settings-wide-field">
-              系统权限
-              <Select multiple name="permissions" required size={6}>
-                {permissionCatalog.map((permission) => (
-                  <option key={permission}>{permission}</option>
-                ))}
-              </Select>
-            </label>
-            <ProjectPermissionFields projects={projects} />
-            <Button className="button button-primary" disabled={pending} type="submit">
-              <Plus size={16} /> 创建服务账号
-            </Button>
-          </form>
-        ) : (
-          <div className="implementation-notice">当前身份没有服务账号管理权限。</div>
-        )}
-        <div className="service-account-list">
-          {accounts.length === 0 ? (
-            <div className="inline-empty">尚未创建服务账号。</div>
-          ) : (
-            accounts.map((account) => (
-              <article key={account.id}>
-                <div className="service-account-heading">
-                  <span>
-                    <strong>{account.name}</strong>
-                    <small>
-                      {account.description || "无说明"} · {account.status}
-                    </small>
-                  </span>
-                  <Button
-                    className="button button-secondary compact-button"
-                    disabled={pending}
-                    onClick={() => void loadTokens(account.id)}
-                    type="button"
-                  >
-                    <RefreshCw size={14} /> 令牌
-                  </Button>
-                </div>
-                <div className="permission-chip-row">
-                  {account.systemPermissions.map((permission) => (
-                    <code key={permission}>{permission}</code>
+          <p className="settings-note">
+            令牌明文只在签发时显示一次，数据库仅保存 SHA-256 摘要；作用域不能超过服务账号权限。
+          </p>
+          {issuedToken ? (
+            <div className="issued-token" role="status">
+              <span>
+                <strong>请立即复制并离线保管</strong>
+                <code>{issuedToken}</code>
+              </span>
+              <Button
+                className="button button-secondary"
+                onClick={() => void navigator.clipboard.writeText(issuedToken)}
+                type="button"
+              >
+                复制
+              </Button>
+            </div>
+          ) : null}
+          {canManageTokens ? (
+            <form className="settings-grid-form" onSubmit={createAccount}>
+              <label>
+                账号名称
+                <Input name="name" required />
+              </label>
+              <label>
+                用途说明
+                <Input name="description" />
+              </label>
+              <label className="settings-wide-field">
+                系统权限
+                <Select multiple name="permissions" required size={6}>
+                  {permissionCatalog.map((permission) => (
+                    <option key={permission}>{permission}</option>
                   ))}
-                </div>
-                {canManageTokens ? (
-                  <details className="service-account-editor">
-                    <summary>编辑账号与权限</summary>
+                </Select>
+              </label>
+              <ProjectPermissionFields projects={projects} />
+              <Button className="button button-primary" disabled={pending} type="submit">
+                <Plus size={16} /> 创建服务账号
+              </Button>
+            </form>
+          ) : (
+            <div className="implementation-notice">当前身份没有服务账号管理权限。</div>
+          )}
+          <div className="service-account-list">
+            {accounts.length === 0 ? (
+              <div className="inline-empty">尚未创建服务账号。</div>
+            ) : (
+              accounts.map((account) => (
+                <article key={account.id}>
+                  <div className="service-account-heading">
+                    <span>
+                      <strong>{account.name}</strong>
+                      <small>
+                        {account.description || "无说明"} · {account.status}
+                      </small>
+                    </span>
+                    <Button
+                      className="button button-secondary compact-button"
+                      disabled={pending}
+                      onClick={() => void loadTokens(account.id)}
+                      type="button"
+                    >
+                      <RefreshCw size={14} /> 令牌
+                    </Button>
+                  </div>
+                  <div className="permission-chip-row">
+                    {account.systemPermissions.map((permission) => (
+                      <code key={permission}>{permission}</code>
+                    ))}
+                  </div>
+                  {canManageTokens ? (
+                    <details className="service-account-editor">
+                      <summary>编辑账号与权限</summary>
+                      <form
+                        className="settings-grid-form settings-subform"
+                        onSubmit={(event) => void updateAccount(event, account)}
+                      >
+                        <label>
+                          账号名称
+                          <Input defaultValue={account.name} name="name" required />
+                        </label>
+                        <label>
+                          用途说明
+                          <Input defaultValue={account.description} name="description" />
+                        </label>
+                        <label className="settings-wide-field">
+                          系统权限
+                          <Select
+                            defaultValue={account.systemPermissions}
+                            multiple
+                            name="permissions"
+                            size={6}
+                          >
+                            {permissionCatalog.map((permission) => (
+                              <option key={permission}>{permission}</option>
+                            ))}
+                          </Select>
+                        </label>
+                        <ProjectPermissionFields
+                          initialPermissions={account.projectPermissions}
+                          projects={projects}
+                        />
+                        <p className="settings-note settings-wide-field">
+                          移除权限后，现有令牌不会重新显示或扩大作用域；后续鉴权会立即按账号与令牌作用域交集收紧。
+                        </p>
+                        <span className="settings-form-actions">
+                          <Button
+                            className="button button-primary"
+                            disabled={pending}
+                            type="submit"
+                          >
+                            保存账号
+                          </Button>
+                          <Button
+                            className={
+                              account.status === "active"
+                                ? "button button-danger-quiet"
+                                : "button button-secondary"
+                            }
+                            disabled={pending}
+                            onClick={() => void toggleAccount(account)}
+                            type="button"
+                          >
+                            {account.status === "active" ? "禁用账号" : "启用账号"}
+                          </Button>
+                        </span>
+                      </form>
+                    </details>
+                  ) : null}
+                  {canManageTokens && account.status === "active" ? (
                     <form
-                      className="settings-grid-form settings-subform"
-                      onSubmit={(event) => void updateAccount(event, account)}
+                      className="token-issue-form"
+                      onSubmit={(event) => void issueToken(event, account)}
                     >
                       <label>
-                        账号名称
-                        <Input defaultValue={account.name} name="name" required />
+                        令牌名称
+                        <Input name="name" required />
                       </label>
                       <label>
-                        用途说明
-                        <Input defaultValue={account.description} name="description" />
+                        过期时间
+                        <Input
+                          min={new Date().toISOString().slice(0, 16)}
+                          name="expiresAt"
+                          required
+                          type="datetime-local"
+                        />
                       </label>
-                      <label className="settings-wide-field">
-                        系统权限
-                        <Select
-                          defaultValue={account.systemPermissions}
-                          multiple
-                          name="permissions"
-                          size={6}
-                        >
-                          {permissionCatalog.map((permission) => (
-                            <option key={permission}>{permission}</option>
+                      <label>
+                        作用域
+                        <Select multiple name="scopes" required size={4}>
+                          {[
+                            ...new Set([
+                              ...account.systemPermissions,
+                              ...Object.values(account.projectPermissions).flat(),
+                            ]),
+                          ].map((scope) => (
+                            <option key={scope}>{scope}</option>
                           ))}
                         </Select>
                       </label>
-                      <ProjectPermissionFields
-                        initialPermissions={account.projectPermissions}
-                        projects={projects}
-                      />
-                      <p className="settings-note settings-wide-field">
-                        移除权限后，现有令牌不会重新显示或扩大作用域；后续鉴权会立即按账号与令牌作用域交集收紧。
-                      </p>
-                      <span className="settings-form-actions">
-                        <Button className="button button-primary" disabled={pending} type="submit">
-                          保存账号
-                        </Button>
+                      <Button className="button button-primary" disabled={pending} type="submit">
+                        签发
+                      </Button>
+                    </form>
+                  ) : null}
+                  {(tokens[account.id] ?? []).map((token) => (
+                    <div className="token-row" key={token.id}>
+                      <span>
+                        <code>{token.prefix}…</code>
+                        <small>
+                          {token.name} · 至 {formatDate(token.expiresAt)}
+                        </small>
+                      </span>
+                      <span>
+                        {token.revokedAt
+                          ? "已撤销"
+                          : account.status === "disabled"
+                            ? "已随账号禁用失效"
+                            : token.lastUsedAt
+                              ? `最近使用 ${formatDate(token.lastUsedAt)}`
+                              : "从未使用"}
+                      </span>
+                      {!token.revokedAt && canManageTokens && account.status === "active" ? (
                         <Button
-                          className={
-                            account.status === "active"
-                              ? "button button-danger-quiet"
-                              : "button button-secondary"
-                          }
-                          disabled={pending}
-                          onClick={() => void toggleAccount(account)}
+                          aria-label={`撤销 ${token.name}`}
+                          onClick={() => void revokeToken(token)}
                           type="button"
                         >
-                          {account.status === "active" ? "禁用账号" : "启用账号"}
+                          <Trash2 size={15} />
                         </Button>
-                      </span>
-                    </form>
-                  </details>
+                      ) : null}
+                    </div>
+                  ))}
+                </article>
+              ))
+            )}
+          </div>
+        </section>
+      ) : null}
+
+      {visibleSection === "retention" ? (
+        <section className="content-card settings-section">
+          <div className="section-heading">
+            <div>
+              <p className="eyebrow">Data Governance</p>
+              <h2>保留与清理策略</h2>
+            </div>
+            <ShieldCheck size={22} />
+          </div>
+          <p className="settings-note">
+            每类数据独立配置。预览只统计已满足终态和安全删除条件的记录；对象删除由可重试清理路径处理。
+          </p>
+          <div className="retention-policy-grid">
+            {policies.map((policy) => (
+              <form key={policy.category} onSubmit={(event) => void updateRetention(event, policy)}>
+                <strong>{retentionLabel(policy.category)}</strong>
+                <small>
+                  允许 {policy.minimumDays}–{policy.maximumDays} 天
+                </small>
+                <label>
+                  保留天数
+                  <Input
+                    defaultValue={policy.retentionDays}
+                    disabled={!canManageSettings}
+                    max={policy.maximumDays}
+                    min={policy.minimumDays}
+                    name="retentionDays"
+                    type="number"
+                  />
+                </label>
+                {previews[policy.category] ? (
+                  <p>
+                    当前将影响 {previews[policy.category]?.eligibleRecords} 条 /{" "}
+                    {formatBytes(previews[policy.category]?.eligibleBytes ?? 0)}
+                  </p>
                 ) : null}
-                {canManageTokens && account.status === "active" ? (
-                  <form
-                    className="token-issue-form"
-                    onSubmit={(event) => void issueToken(event, account)}
+                <span>
+                  <Button
+                    className="button button-secondary compact-button"
+                    disabled={pending}
+                    onClick={() => void previewRetention(policy)}
+                    type="button"
                   >
-                    <label>
-                      令牌名称
-                      <Input name="name" required />
-                    </label>
-                    <label>
-                      过期时间
-                      <Input
-                        min={new Date().toISOString().slice(0, 16)}
-                        name="expiresAt"
-                        required
-                        type="datetime-local"
-                      />
-                    </label>
-                    <label>
-                      作用域
-                      <Select multiple name="scopes" required size={4}>
-                        {[
-                          ...new Set([
-                            ...account.systemPermissions,
-                            ...Object.values(account.projectPermissions).flat(),
-                          ]),
-                        ].map((scope) => (
-                          <option key={scope}>{scope}</option>
-                        ))}
-                      </Select>
-                    </label>
-                    <Button className="button button-primary" disabled={pending} type="submit">
-                      签发
-                    </Button>
-                  </form>
-                ) : null}
-                {(tokens[account.id] ?? []).map((token) => (
-                  <div className="token-row" key={token.id}>
-                    <span>
-                      <code>{token.prefix}…</code>
-                      <small>
-                        {token.name} · 至 {formatDate(token.expiresAt)}
-                      </small>
-                    </span>
-                    <span>
-                      {token.revokedAt
-                        ? "已撤销"
-                        : account.status === "disabled"
-                          ? "已随账号禁用失效"
-                          : token.lastUsedAt
-                            ? `最近使用 ${formatDate(token.lastUsedAt)}`
-                            : "从未使用"}
-                    </span>
-                    {!token.revokedAt && canManageTokens && account.status === "active" ? (
+                    影响预览
+                  </Button>
+                  {canManageSettings ? (
+                    <>
                       <Button
-                        aria-label={`撤销 ${token.name}`}
-                        onClick={() => void revokeToken(token)}
+                        className="button button-primary compact-button"
+                        disabled={pending}
+                        type="submit"
+                      >
+                        保存
+                      </Button>
+                      <Button
+                        className="button button-danger-quiet compact-button"
+                        disabled={pending || !previews[policy.category]}
+                        onClick={() => void executeRetention(policy)}
                         type="button"
                       >
-                        <Trash2 size={15} />
+                        执行清理
                       </Button>
-                    ) : null}
-                  </div>
-                ))}
-              </article>
-            ))
-          )}
-        </div>
-      </section>
-
-      <section className="content-card settings-section">
-        <div className="section-heading">
-          <div>
-            <p className="eyebrow">Data Governance</p>
-            <h2>保留与清理策略</h2>
+                    </>
+                  ) : null}
+                </span>
+              </form>
+            ))}
           </div>
-          <ShieldCheck size={22} />
-        </div>
-        <p className="settings-note">
-          每类数据独立配置。预览只统计已满足终态和安全删除条件的记录；对象删除由可重试清理路径处理。
-        </p>
-        <div className="retention-policy-grid">
-          {policies.map((policy) => (
-            <form key={policy.category} onSubmit={(event) => void updateRetention(event, policy)}>
-              <strong>{retentionLabel(policy.category)}</strong>
-              <small>
-                允许 {policy.minimumDays}–{policy.maximumDays} 天
-              </small>
-              <label>
-                保留天数
-                <Input
-                  defaultValue={policy.retentionDays}
-                  disabled={!canManageSettings}
-                  max={policy.maximumDays}
-                  min={policy.minimumDays}
-                  name="retentionDays"
-                  type="number"
-                />
-              </label>
-              {previews[policy.category] ? (
-                <p>
-                  当前将影响 {previews[policy.category]?.eligibleRecords} 条 /{" "}
-                  {formatBytes(previews[policy.category]?.eligibleBytes ?? 0)}
-                </p>
-              ) : null}
-              <span>
-                <Button
-                  className="button button-secondary compact-button"
-                  disabled={pending}
-                  onClick={() => void previewRetention(policy)}
-                  type="button"
-                >
-                  影响预览
-                </Button>
-                {canManageSettings ? (
-                  <>
-                    <Button
-                      className="button button-primary compact-button"
-                      disabled={pending}
-                      type="submit"
-                    >
-                      保存
-                    </Button>
-                    <Button
-                      className="button button-danger-quiet compact-button"
-                      disabled={pending || !previews[policy.category]}
-                      onClick={() => void executeRetention(policy)}
-                      type="button"
-                    >
-                      执行清理
-                    </Button>
-                  </>
-                ) : null}
-              </span>
-            </form>
-          ))}
-        </div>
-      </section>
+        </section>
+      ) : null}
     </div>
   );
 }

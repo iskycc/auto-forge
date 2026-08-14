@@ -241,6 +241,19 @@ public class MixedVisibleTest {
 
   await page.getByRole("link", { name: "CheckoutTest" }).click();
   await expect(page.getByRole("heading", { name: "CheckoutTest" })).toBeVisible();
+  await expect(page.locator(".source-meta-grid > div")).toHaveCount(7);
+  await expect(page.locator(".source-meta-wide")).toHaveCount(1);
+  const caseHeadingFlow = await page.evaluate(() => {
+    const backLink = document.querySelector(".case-detail-hero .back-link");
+    const eyebrow = document.querySelector(".case-detail-eyebrow");
+    if (!backLink || !eyebrow) return null;
+    return {
+      backLinkBottom: Math.round(backLink.getBoundingClientRect().bottom),
+      eyebrowTop: Math.round(eyebrow.getBoundingClientRect().top),
+    };
+  });
+  expect(caseHeadingFlow).not.toBeNull();
+  expect(caseHeadingFlow!.eyebrowTop).toBeGreaterThanOrEqual(caseHeadingFlow!.backLinkBottom);
   await expectUiConsistency(page);
   const checkoutCaseUrl = page.url();
 
@@ -311,6 +324,10 @@ public class MixedVisibleTest {
   await expect(page.getByText("版本历史（3）")).toBeVisible({ timeout: 20_000 });
 
   await page.goto(`/case-suites?projectId=${encodeURIComponent(DEFAULT_PROJECT_ID)}`);
+  await expect(page.locator('select[name="projectId"]')).toHaveCount(0);
+  await page.locator(".project-picker-trigger").click();
+  await expect(page.getByRole("listbox")).toBeVisible();
+  await page.getByRole("option", { name: "默认项目" }).click();
   await page.getByLabel("任务名称").fill("每日冒烟测试");
   await page.getByLabel("说明").fill("E2E 创建的可复用任务");
   await page.getByRole("button", { name: "创建任务" }).click();
@@ -793,13 +810,22 @@ public class MixedVisibleTest {
   await expect(page.getByRole("navigation", { name: "后台管理功能" })).toBeVisible();
   await page.getByRole("link", { name: /用户管理/ }).click();
   await expect(page.getByRole("heading", { name: "用户管理" })).toBeVisible();
+  await expect(page.locator(".settings-stack > .settings-section")).toHaveCount(1);
+  await expect(page.getByRole("navigation", { name: "身份与访问模块" })).toBeVisible();
   await page.goto("/settings");
   await page.getByRole("link", { name: /LDAP 配置/ }).click();
   await expect(page.getByRole("heading", { name: "LDAP 配置" })).toBeVisible();
+  await expect(page.locator(".settings-stack > .settings-section")).toHaveCount(1);
+
+  await page.goto("/audit");
+  await expect(page.getByRole("navigation", { name: "运维与审计" })).toBeVisible();
+  await page.getByRole("link", { name: "运维计划" }).click();
+  await expect(page.getByRole("heading", { name: "计划与目录作业" })).toBeVisible();
+  await expect(page.getByRole("navigation", { name: "运维与审计" })).toBeVisible();
 
   for (const route of ["/settings/platform", "/settings/access", "/settings/environments"]) {
     await page.goto(route);
-    await expect(page.getByRole("navigation", { name: "系统设置分类" })).toBeVisible();
+    await expect(page.getByRole("navigation", { name: "管理中心模块" })).toBeVisible();
     await expectUiConsistency(page);
     if (route === "/settings/platform") {
       await expect(page.getByLabel("JAR 大小上限（MiB）")).toHaveValue("256");

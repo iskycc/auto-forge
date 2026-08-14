@@ -1,0 +1,93 @@
+package com.autoforge.adapters.cotest;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.PrintStream;
+import java.net.MalformedURLException;
+import java.net.URL;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.jar.JarEntry;
+import java.util.jar.JarOutputStream;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+
+class CotestTestNgExecutorTest {
+  private static final List<String> FIXTURE_CLASSES =
+      List.of(
+          "com/huawei/cotest/util/ProjectFileUtil.class",
+          "cotest/auto/dataproviders/MM2DataProvider.class",
+          "fixture/AdapterCase.class");
+
+  @TempDir Path temporaryDirectory;
+
+  @Test
+  void executesATestNgCaseWithAllRuntimeTypesLoadedFromTheIsolatedClasspath()
+      throws IOException {
+    Path fixtureJar = createFixtureJar();
+    Path classDataFile = temporaryDirectory.resolve("class-data.json");
+    Files.writeString(classDataFile, "{}\n");
+    Path reports = temporaryDirectory.resolve("reports");
+    ByteArrayOutputStream standardOutput = new ByteArrayOutputStream();
+    ByteArrayOutputStream errorOutput = new ByteArrayOutputStream();
+    ClassLoader originalContextLoader = Thread.currentThread().getContextClassLoader();
+
+    AdapterExecutionRequest request =
+        new AdapterExecutionRequest(
+            runtimeUrls(fixtureJar),
+            "fixture.AdapterCase",
+            new SuiteConfiguration("Adapter suite", "Adapter test"),
+            "10.0.0.8",
+            classDataFile,
+            reports);
+    int exitCode;
+    try (PrintStream output = new PrintStream(standardOutput, true, StandardCharsets.UTF_8);
+        PrintStream errors = new PrintStream(errorOutput, true, StandardCharsets.UTF_8)) {
+      exitCode = new CotestTestNgExecutor(output, errors).execute(request);
+    }
+
+    assertEquals(0, exitCode, errorOutput.toString(StandardCharsets.UTF_8));
+    assertSame(originalContextLoader, Thread.currentThread().getContextClassLoader());
+    assertTrue(standardOutput.toString(StandardCharsets.UTF_8).contains("Passed: 1"));
+    assertTrue(Files.isRegularFile(reports.resolve("testng-results.xml")));
+  }
+
+  private Path createFixtureJar() throws IOException {
+    Path fixtureJar = temporaryDirectory.resolve("adapter-fixtures.jar");
+    try (JarOutputStream archive = new JarOutputStream(Files.newOutputStream(fixtureJar))) {
+      for (String resourceName : FIXTURE_CLASSES) {
+        archive.putNextEntry(new JarEntry(resourceName));
+        try (java.io.InputStream contents =
+            getClass().getClassLoader().getResourceAsStream(resourceName)) {
+          if (contents == null) {
+            throw new IOException("Missing compiled test fixture: " + resourceName);
+          }
+          contents.transferTo(archive);
+        }
+        archive.closeEntry();
+      }
+    }
+    return fixtureJar;
+  }
+
+  private static List<URL> runtimeUrls(Path fixtureJar) throws MalformedURLException {
+    List<URL> urls = new ArrayList<>();
+    urls.add(fixtureJar.toUri().toURL());
+    String[] classpathEntries =
+        System.getProperty("java.class.path").split(java.io.File.pathSeparator);
+    for (String entry : classpathEntries) {
+      Path path = Path.of(entry);
+      if (Files.isRegularFile(path) && entry.endsWith(".jar")) {
+        urls.add(path.toUri().toURL());
+      }
+    }
+    return List.copyOf(urls);
+  }
+}

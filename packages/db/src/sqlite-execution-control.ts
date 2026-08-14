@@ -409,7 +409,7 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
     if (!declaredInput) {
       throw new DomainError("ATTEMPT_INPUT_FORBIDDEN", "输入未在执行快照中声明。");
     }
-    const row = this.handle.client
+    let row = this.handle.client
       .prepare(
         `SELECT object_key, size_bytes, sha256
          FROM case_sources
@@ -422,6 +422,16 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
           sha256: string;
         }
       | undefined;
+    if (!row && !declaredInput.downloadUrl) {
+      row = this.handle.client
+        .prepare(
+          `SELECT object_key, size_bytes, sha256
+           FROM project_runtime_assets
+           WHERE id = ? AND source_type = 'upload' AND object_key IS NOT NULL`,
+        )
+        .get(input.inputId) as
+        { object_key: string; size_bytes: number; sha256: string } | undefined;
+    }
     if (!row || row.size_bytes !== declaredInput.sizeBytes || row.sha256 !== declaredInput.sha256) {
       throw new DomainError("ATTEMPT_INPUT_INVALID", "执行输入与权威对象元数据不一致。");
     }

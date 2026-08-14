@@ -10,11 +10,11 @@ import {
   artifactMediaType,
   assessRunnerCompatibility,
   DEFAULT_EXECUTION_RESOURCE_LIMITS,
+  DEFAULT_PROJECT_ID,
   DomainError,
   evaluateRunnerForScheduling,
   MINIMUM_JAVA_MAJOR_VERSION,
   ON_DEMAND_SECRET_CAPABILITY,
-  REQUIRED_EXECUTION_CAPABILITIES,
   REQUIRED_EXECUTION_LABELS,
   SUPPORTED_TESTNG_VERSION,
   transitionRunBatch,
@@ -31,6 +31,13 @@ import {
 import { and, count, desc, eq, gt, gte, inArray, isNull, lt, lte, or, sql } from "drizzle-orm";
 
 import type { SqliteDatabaseHandle } from "./database";
+import {
+  parseProjectAdapterRuntime,
+  projectAdapterRequiredCapabilities,
+  supportsProjectAdapterRuntime,
+  type ProjectAdapterRuntime,
+  type RuntimeAssetSnapshot,
+} from "./project-adapter-runtime";
 import { mapStoredRunner } from "./runner-mapper";
 import { decodeRunBatchCursor, encodeRunBatchCursor } from "./run-batch-list";
 import {
@@ -55,6 +62,10 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
     const claimTimeoutMs = record.claimTimeoutMs ?? 300_000;
     const executionTimeoutMs = record.executionTimeoutMs ?? 3_600_000;
     const uploadTimeoutMs = record.uploadTimeoutMs ?? 600_000;
+    const adapterRuntime = projectAdapterRuntime(
+      this.handle,
+      record.projectId ?? DEFAULT_PROJECT_ID,
+    );
     this.handle.client.transaction(() => {
       this.handle.db
         .insert(runBatches)
@@ -76,6 +87,7 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
           environmentJson: JSON.stringify(record.environmentVariables),
           secretBindingsJson: JSON.stringify(record.secretBindings ?? []),
           policyJson: record.policy ? JSON.stringify(record.policy) : null,
+          adapterRuntimeJson: adapterRuntime ? JSON.stringify(adapterRuntime) : null,
           totalRuns: record.runs.length,
           createdAt: record.createdAt,
           updatedAt: record.createdAt,
@@ -298,10 +310,20 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
         ? []
         : this.handle.db.select().from(runners).where(inArray(runners.id, selectedRunnerIds)).all();
     const reservations = activeReservations(this.handle, selectedRunnerIds);
-    const candidates = runnerRows.map((row) => ({
-      runner: mapStoredRunner(row, offlineBefore),
-      reservedSlots: reservations.get(row.id) ?? 0,
-    }));
+    const runtimeRow = this.handle.db
+      .select({ adapterRuntimeJson: runBatches.adapterRuntimeJson })
+      .from(runBatches)
+      .where(eq(runBatches.id, batchId))
+      .get();
+    const adapterRuntime = parseProjectAdapterRuntime(runtimeRow?.adapterRuntimeJson ?? null);
+    const candidates = runnerRows
+      .map((row) => ({
+        runner: mapStoredRunner(row, offlineBefore),
+        reservedSlots: reservations.get(row.id) ?? 0,
+      }))
+      .filter((candidate) =>
+        supportsProjectAdapterRuntime(candidate.runner.capabilities, adapterRuntime),
+      );
     return {
       batch,
       queuedRuns: batch.runs.filter((run) => run.status === "queued"),
@@ -313,7 +335,11 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
   async reserveAssignments(input: ReserveSchedulingAssignmentsInput): Promise<number> {
     return this.handle.client.transaction(() => {
       const batchScope = this.handle.db
-        .select({ projectId: runBatches.projectId, policyJson: runBatches.policyJson })
+        .select({
+          projectId: runBatches.projectId,
+          policyJson: runBatches.policyJson,
+          adapterRuntimeJson: runBatches.adapterRuntimeJson,
+        })
         .from(runBatches)
         .where(eq(runBatches.id, input.batchId))
         .get();
@@ -324,6 +350,7 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
           projectActiveRuns(this.handle, batchScope.projectId),
       );
       const batchConcurrency = batchPolicy(batchScope.policyJson)?.concurrency;
+      const adapterRuntime = parseProjectAdapterRuntime(batchScope.adapterRuntimeJson);
       let remainingBatchSlots =
         batchConcurrency === undefined
           ? Number.POSITIVE_INFINITY
@@ -349,6 +376,7 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
         const reservations = activeReservations(this.handle, [decision.runnerId]);
         const runner = mapStoredRunner(runnerRow, input.offlineBefore);
         if (!assessRunnerCompatibility(runner).compatible) continue;
+        if (!supportsProjectAdapterRuntime(runner.capabilities, adapterRuntime)) continue;
         const evaluation = evaluateRunnerForScheduling(
           {
             runner,
@@ -450,6 +478,7 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
                 className: updatedRun.className,
                 parameters: stringRecord(updatedRun.parametersJson),
                 source,
+                ...(adapterRuntime ? { adapterRuntime } : {}),
                 environment: environmentVariables(batch.environmentJson),
                 secretBindings: secretBindings(batch.secretBindingsJson),
                 executionTimeoutMs: batch.executionTimeoutMs,
@@ -575,6 +604,7 @@ function executionSpec(input: {
   className: string;
   parameters: Record<string, string>;
   source: { id: string; sha256: string; sizeBytes: number };
+  adapterRuntime?: ProjectAdapterRuntime;
   environment: ExecutionEnvironmentVariable[];
   secretBindings: ExecutionEnvironmentSecretBinding[];
   executionTimeoutMs: number;
@@ -582,6 +612,7 @@ function executionSpec(input: {
   policy?: RunBatchExecutionPolicy;
 }): ExecutionSpec {
   const artifactPatterns = input.policy?.artifactPatterns ?? ["reports/testng/**"];
+  const runtimeInputs = input.adapterRuntime ? runtimeAssetInputs(input.adapterRuntime) : [];
   return {
     schemaVersion: 1,
     executor: input.policy?.executor ?? "testng",
@@ -591,6 +622,15 @@ function executionSpec(input: {
     className: input.className,
     methodDescriptors: [],
     parameters: input.parameters,
+    ...(input.adapterRuntime
+      ? {
+          adapter: {
+            suiteName: input.adapterRuntime.suiteName,
+            testName: input.adapterRuntime.testName,
+            environmentAddress: input.adapterRuntime.environmentAddress,
+          },
+        }
+      : {}),
     inputs: [
       {
         inputId: input.source.id,
@@ -600,6 +640,7 @@ function executionSpec(input: {
         sizeBytes: input.source.sizeBytes,
         sha256: input.source.sha256,
       },
+      ...runtimeInputs,
     ],
     environment: input.environment.map((entry) => ({ ...entry, secret: false })),
     secretReferences: input.secretBindings,
@@ -611,7 +652,7 @@ function executionSpec(input: {
     },
     requiredLabels: [...REQUIRED_EXECUTION_LABELS, ...(input.policy?.runnerLabels ?? [])],
     requiredCapabilities: [
-      ...REQUIRED_EXECUTION_CAPABILITIES,
+      ...projectAdapterRequiredCapabilities(input.adapterRuntime),
       ...(input.policy?.executor === "testng-container" ? ["executor:testng-container-v1"] : []),
       ...(input.secretBindings.length > 0 ? [ON_DEMAND_SECRET_CAPABILITY] : []),
     ],
@@ -623,6 +664,90 @@ function executionSpec(input: {
     timeoutMs: input.executionTimeoutMs,
     uploadTimeoutMs: input.uploadTimeoutMs,
     resourceLimits: { ...DEFAULT_EXECUTION_RESOURCE_LIMITS },
+  };
+}
+
+function projectAdapterRuntime(
+  handle: SqliteDatabaseHandle,
+  projectId: string,
+): ProjectAdapterRuntime | undefined {
+  const configuration = handle.client
+    .prepare(
+      `SELECT suite_name, test_name, environment_address, jdk_asset_id, jar_bundle_asset_id
+       FROM project_adapter_configurations WHERE project_id = ?`,
+    )
+    .get(projectId) as
+    | {
+        suite_name: string;
+        test_name: string;
+        environment_address: string;
+        jdk_asset_id: string | null;
+        jar_bundle_asset_id: string | null;
+      }
+    | undefined;
+  if (!configuration) return undefined;
+  const asset = (id: string | null): RuntimeAssetSnapshot | undefined => {
+    if (!id) return undefined;
+    const row = handle.client
+      .prepare(
+        `SELECT id, source_type, url, sha256, size_bytes, archive_format
+         FROM project_runtime_assets WHERE id = ? AND project_id = ?`,
+      )
+      .get(id, projectId) as
+      | {
+          id: string;
+          source_type: "upload" | "url";
+          url: string | null;
+          sha256: string;
+          size_bytes: number;
+          archive_format: "zip" | "tar.gz";
+        }
+      | undefined;
+    return row
+      ? {
+          id: row.id,
+          sourceType: row.source_type,
+          ...(row.url ? { url: row.url } : {}),
+          sha256: row.sha256,
+          sizeBytes: row.size_bytes,
+          archiveFormat: row.archive_format,
+        }
+      : undefined;
+  };
+  const jdk = asset(configuration.jdk_asset_id);
+  const jarBundle = asset(configuration.jar_bundle_asset_id);
+  return {
+    suiteName: configuration.suite_name,
+    testName: configuration.test_name,
+    environmentAddress: configuration.environment_address,
+    ...(jdk ? { jdk } : {}),
+    ...(jarBundle ? { jarBundle } : {}),
+  };
+}
+
+function runtimeAssetInputs(runtime: ProjectAdapterRuntime): ExecutionSpec["inputs"] {
+  return [
+    ...(runtime.jdk ? [runtimeInput(runtime.jdk, "jdk-archive", "runtime-inputs/jdk")] : []),
+    ...(runtime.jarBundle
+      ? [runtimeInput(runtime.jarBundle, "jar-bundle", "runtime-inputs/jars")]
+      : []),
+  ];
+}
+
+function runtimeInput(
+  asset: RuntimeAssetSnapshot,
+  kind: "jdk-archive" | "jar-bundle",
+  pathPrefix: string,
+): ExecutionSpec["inputs"][number] {
+  const suffix = asset.archiveFormat === "zip" ? ".zip" : ".tar.gz";
+  return {
+    inputId: asset.id,
+    kind,
+    targetPath: `${pathPrefix}${suffix}`,
+    mediaType: asset.archiveFormat === "zip" ? "application/zip" : "application/gzip",
+    sizeBytes: asset.sizeBytes,
+    sha256: asset.sha256,
+    ...(asset.sourceType === "url" && asset.url ? { downloadUrl: asset.url } : {}),
   };
 }
 

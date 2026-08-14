@@ -79,6 +79,26 @@ describe("Runner compatibility", () => {
     });
   });
 
+  it("accepts an Adapter Agent whose JDK and JARs are supplied by the project", () => {
+    expect(
+      assessRunnerCompatibility({
+        os: "linux",
+        architecture: "amd64",
+        agentVersion: "0.2.2",
+        protocolVersion: 1,
+        capabilities: [
+          "executor:testng-v1",
+          "adapter:cotest-testng-v1",
+          "runtime:project-assets-v1",
+        ],
+      }),
+    ).toEqual({
+      compatible: true,
+      status: "attention",
+      issues: ["resource_isolation_missing"],
+    });
+  });
+
   it("rejects Java and TestNG versions outside the offline execution baseline", () => {
     expect(
       assessRunnerCompatibility({

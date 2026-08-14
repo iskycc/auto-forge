@@ -524,6 +524,46 @@ func (client *Client) DownloadInput(ctx context.Context, identity Identity, atte
 	return nil
 }
 
+func (client *Client) DownloadExternalResource(
+	ctx context.Context,
+	rawURL string,
+	expectedSize int64,
+	destination io.Writer,
+) error {
+	parsed, err := url.Parse(rawURL)
+	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" || parsed.User != nil {
+		return errors.New("external resource URL is invalid")
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, parsed.String(), nil)
+	if err != nil {
+		return fmt.Errorf("create external resource request: %w", err)
+	}
+	request.Header.Set("User-Agent", "AutoForge-Runner-Agent")
+	response, err := client.http.Do(request)
+	if err != nil {
+		return fmt.Errorf("download external resource: %w", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return fmt.Errorf("download external resource: HTTP %d", response.StatusCode)
+	}
+	if response.ContentLength > expectedSize {
+		return errors.New("download external resource: response exceeds declared size")
+	}
+	written, err := io.Copy(destination, io.LimitReader(response.Body, expectedSize+1))
+	if err != nil {
+		return fmt.Errorf("download external resource: %w", err)
+	}
+	if written != expectedSize {
+		return fmt.Errorf(
+			"download external resource: received %d bytes, expected %d",
+			written,
+			expectedSize,
+		)
+	}
+	return nil
+}
+
 func (client *Client) post(ctx context.Context, path, credential string, input, output any) error {
 	return client.postWithTimeoutForRunner(ctx, defaultRequestTimeout, path, credential, "", input, output)
 }

@@ -22,7 +22,7 @@ export async function POST(request: Request): Promise<NextResponse> {
       ),
     );
     const result = runnerHostProbeResultSchema.parse(
-      await services.runnerAgentInstaller.probe(input.connection),
+      await services.runnerAgentInstaller.probe(input.connection, input.installationMode),
     );
     await services.identityAccess.recordAuthorizedOperation(identity, {
       action: "runner.install.probe",
@@ -31,6 +31,8 @@ export async function POST(request: Request): Promise<NextResponse> {
       requestId: currentRequestId,
       details: {
         operatingSystemId: result.operatingSystemId,
+        detectedOperatingSystemId: result.detectedOperatingSystemId,
+        forcedInstallationMode: result.forcedInstallationMode,
         architecture: result.architecture,
         cgroupV2Available: result.cgroupV2Available,
         hostKeySha256: result.hostKeySha256,

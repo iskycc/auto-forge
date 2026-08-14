@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -21,6 +22,8 @@ import (
 )
 
 var sha256Pattern = regexp.MustCompile(`^[a-f0-9]{64}$`)
+
+const liveLogUploadInterval = 500 * time.Millisecond
 
 type attemptSupervisor struct {
 	client        *Client
@@ -128,7 +131,7 @@ func (supervisor *attemptSupervisor) claimLoop(ctx context.Context) {
 			return
 		}
 		availableSlots := supervisor.configuration.MaxConcurrent - supervisor.BusySlots()
-		if availableSlots <= 0 || !supervisor.configuration.Toolchain.Enabled() {
+		if availableSlots <= 0 || !supervisor.configuration.CanClaimExecutions() {
 			if !waitFor(ctx, time.Second) {
 				return
 			}
@@ -267,6 +270,7 @@ func (supervisor *attemptSupervisor) runTestNG(
 		return platformFailure("EXECUTION_SECRET_ACQUISITION_FAILED", err)
 	}
 	executionToolchain := supervisor.configuration.Toolchain
+	useAdapter := executionSpec.Adapter != nil && supervisor.configuration.Adapter.Enabled()
 	isolation := "process"
 	containerPolicy := executor.ContainerPolicy{}
 	if executionSpec.Executor == "testng-container" {
@@ -284,7 +288,17 @@ func (supervisor *attemptSupervisor) runTestNG(
 			User:              container.User,
 		}
 	}
-	specification, inputs, err := testNGExecutorSpec(executionSpec, executionToolchain)
+	var specification executor.Spec
+	var inputs []ExecutionInput
+	if useAdapter {
+		specification, inputs, err = cotestAdapterExecutorSpec(
+			executionSpec,
+			executionToolchain,
+			supervisor.configuration.Adapter,
+		)
+	} else {
+		specification, inputs, err = testNGExecutorSpec(executionSpec, executionToolchain)
+	}
 	if err != nil {
 		return platformFailure("EXECUTION_SPEC_REJECTED", err)
 	}
@@ -299,11 +313,20 @@ func (supervisor *attemptSupervisor) runTestNG(
 		Content:    "AutoForge Runner Agent started the attempt.\n",
 		RecordedAt: time.Now().UTC(),
 	})
+	liveLogContext, stopLiveLogUpload := context.WithCancel(ctx)
+	liveLogWatermarks := make(chan logWatermark, 1)
+	go func() {
+		liveLogWatermarks <- supervisor.streamAttemptLogs(
+			liveLogContext,
+			claimed,
+			liveLogUploadInterval,
+		)
+	}()
 	result, runErr := supervisor.runExecution(ctx, specification, executor.RunOptions{
 		DataDirectory: supervisor.configuration.DataDirectory,
 		KeepWorkspace: true,
 		Policy: executor.Policy{
-			AllowedExecutables: []string{executionToolchain.JavaExecutable},
+			AllowedExecutables: []string{specification.Command.Executable},
 			Container:          containerPolicy,
 		},
 		ResourcePolicy: executor.ResourcePolicy{
@@ -316,6 +339,14 @@ func (supervisor *attemptSupervisor) runTestNG(
 			if err := downloadAttemptInputs(ctx, supervisor.client, supervisor.currentIdentity(), claimed, inputs, workspace); err != nil {
 				return err
 			}
+			if useAdapter {
+				return prepareCotestWorkspace(
+					workspace,
+					inputs,
+					executionSpec.ResourceLimits.DiskBytes,
+					executionSpec.ResourceLimits.FileCount,
+				)
+			}
 			return prepareTestNGLauncher(
 				workspace,
 				claimed.Assignment.ExecutionSpec.MethodDescriptors,
@@ -323,6 +354,8 @@ func (supervisor *attemptSupervisor) runTestNG(
 			)
 		},
 	})
+	stopLiveLogUpload()
+	streamedWatermarks := <-liveLogWatermarks
 	if closeErr := collector.Close(time.Now().UTC().Format(time.RFC3339Nano)); closeErr != nil {
 		if errors.Is(closeErr, errLogSpoolQuotaExceeded) {
 			return platformFailure("LOG_SPOOL_QUOTA_EXCEEDED", closeErr)
@@ -381,6 +414,7 @@ func (supervisor *attemptSupervisor) runTestNG(
 	if uploadErr != nil {
 		return platformFailure("LOG_UPLOAD_FAILED", uploadErr)
 	}
+	watermarks = mergeLogWatermarks(streamedWatermarks, watermarks)
 	mapped := mapExecutionResult(result)
 	if reportErr != nil {
 		mapped.Status = "failed"
@@ -586,6 +620,39 @@ func (supervisor *attemptSupervisor) flushAttemptLogs(ctx context.Context, claim
 			return watermarks, fmt.Errorf("upload attempt logs before deadline: %w", uploadErr)
 		}
 		backoff = min(backoff*2, 10*time.Second)
+	}
+}
+
+func (supervisor *attemptSupervisor) streamAttemptLogs(
+	ctx context.Context,
+	claimed ClaimedAssignment,
+	interval time.Duration,
+) logWatermark {
+	watermarks := logWatermark{Stdout: -1, Stderr: -1, Agent: -1}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return watermarks
+		case <-ticker.C:
+			uploaded, err := supervisor.flushAttemptLogs(ctx, claimed, 5*time.Second)
+			if err != nil {
+				if ctx.Err() == nil {
+					fmt.Fprintf(supervisor.diagnostics, "stream attempt logs for %s: %v\n", claimed.Assignment.AttemptID, err)
+				}
+				continue
+			}
+			watermarks = mergeLogWatermarks(watermarks, uploaded)
+		}
+	}
+}
+
+func mergeLogWatermarks(left, right logWatermark) logWatermark {
+	return logWatermark{
+		Stdout: max(left.Stdout, right.Stdout),
+		Stderr: max(left.Stderr, right.Stderr),
+		Agent:  max(left.Agent, right.Agent),
 	}
 }
 
@@ -848,7 +915,18 @@ func validateClaimedAssignment(
 	if runtimeRequirements.OS != runtime.GOOS || !containsAll(runtimeRequirements.Architectures, []string{runtime.GOARCH}) {
 		return errors.New("assignment runtime platform is incompatible with the local Runner")
 	}
-	if !configuration.Toolchain.Supports(
+	hasJDKArchive := false
+	for _, input := range specification.Inputs {
+		if input.Kind == "jdk-archive" {
+			hasJDKArchive = true
+			break
+		}
+	}
+	usesAdapter := specification.Adapter != nil
+	if usesAdapter && !configuration.Adapter.Enabled() {
+		return errors.New("assignment requires the CoTest adapter but it is not installed")
+	}
+	if (!usesAdapter || !hasJDKArchive) && !configuration.Toolchain.Supports(
 		runtimeRequirements.MinimumJavaMajorVersion,
 		runtimeRequirements.TestNGVersion,
 	) {
@@ -869,13 +947,32 @@ func validateClaimedAssignment(
 	testJARs := 0
 	var totalInputBytes int64
 	for _, input := range specification.Inputs {
-		if !localIdentifierPattern.MatchString(input.InputID) || input.MediaType != "application/java-archive" || !filepath.IsLocal(input.TargetPath) || strings.ToLower(filepath.Ext(input.TargetPath)) != ".jar" || input.SizeBytes <= 0 || !sha256Pattern.MatchString(input.SHA256) {
+		if !localIdentifierPattern.MatchString(input.InputID) || !filepath.IsLocal(input.TargetPath) || input.SizeBytes <= 0 || !sha256Pattern.MatchString(input.SHA256) {
 			return errors.New("assignment execution input is invalid")
+		}
+		lowerPath := strings.ToLower(input.TargetPath)
+		switch input.Kind {
+		case "test-jar", "dependency-jar":
+			if input.MediaType != "application/java-archive" || !strings.HasSuffix(lowerPath, ".jar") {
+				return errors.New("assignment JAR input is invalid")
+			}
+		case "jdk-archive", "jar-bundle":
+			validArchive := (input.MediaType == "application/zip" && strings.HasSuffix(lowerPath, ".zip")) ||
+				(input.MediaType == "application/gzip" && (strings.HasSuffix(lowerPath, ".tar.gz") || strings.HasSuffix(lowerPath, ".tgz")))
+			if !validArchive {
+				return errors.New("assignment runtime archive input is invalid")
+			}
+		default:
+			return errors.New("assignment execution input kind is unsupported")
+		}
+		if input.DownloadURL != "" {
+			parsedURL, err := url.Parse(input.DownloadURL)
+			if err != nil || parsedURL.Host == "" || (parsedURL.Scheme != "http" && parsedURL.Scheme != "https") || parsedURL.User != nil {
+				return errors.New("assignment external input URL is invalid")
+			}
 		}
 		if input.Kind == "test-jar" {
 			testJARs++
-		} else if input.Kind != "dependency-jar" {
-			return errors.New("assignment execution input kind is unsupported")
 		}
 		if _, duplicate := inputIDs[input.InputID]; duplicate {
 			return errors.New("assignment execution input identifier is duplicated")

@@ -4,6 +4,8 @@ export const CURRENT_RUNNER_PROTOCOL_VERSION = 1;
 export const MINIMUM_JAVA_MAJOR_VERSION = 11;
 export const SUPPORTED_TESTNG_VERSION = "7.11.0";
 export const ON_DEMAND_SECRET_CAPABILITY = "secrets:on-demand-v1";
+export const COTEST_ADAPTER_CAPABILITY = "adapter:cotest-testng-v1";
+export const PROJECT_RUNTIME_ASSETS_CAPABILITY = "runtime:project-assets-v1";
 export const REQUIRED_EXECUTION_CAPABILITIES = [
   "executor:testng-v1",
   `testng:${SUPPORTED_TESTNG_VERSION}`,
@@ -45,6 +47,9 @@ export function assessRunnerCompatibility(
   runner: Pick<Runner, "agentVersion" | "architecture" | "capabilities" | "os" | "protocolVersion">,
 ): RunnerCompatibility {
   const capabilities = new Set(runner.capabilities);
+  const acceptsProjectRuntime =
+    capabilities.has(COTEST_ADAPTER_CAPABILITY) &&
+    capabilities.has(PROJECT_RUNTIME_ASSETS_CAPABILITY);
   const issues: RunnerCompatibilityIssue[] = [];
   if (runner.protocolVersion !== CURRENT_RUNNER_PROTOCOL_VERSION) {
     issues.push("protocol_unsupported");
@@ -59,13 +64,15 @@ export function assessRunnerCompatibility(
     issues.push("resource_isolation_missing");
   }
   const javaVersion = capabilityVersion(runner.capabilities, "java:");
-  if (!javaVersion) issues.push("java_version_unknown");
-  else if ((javaMajorVersion(javaVersion) ?? 0) < MINIMUM_JAVA_MAJOR_VERSION) {
+  if (!javaVersion) {
+    if (!acceptsProjectRuntime) issues.push("java_version_unknown");
+  } else if ((javaMajorVersion(javaVersion) ?? 0) < MINIMUM_JAVA_MAJOR_VERSION) {
     issues.push("java_version_unsupported");
   }
   const testNgVersion = capabilityVersion(runner.capabilities, "testng:");
-  if (!testNgVersion) issues.push("testng_version_unknown");
-  else if (testNgVersion !== SUPPORTED_TESTNG_VERSION) {
+  if (!testNgVersion) {
+    if (!acceptsProjectRuntime) issues.push("testng_version_unknown");
+  } else if (testNgVersion !== SUPPORTED_TESTNG_VERSION) {
     issues.push("testng_version_unsupported");
   }
   if (!semanticVersionPattern.test(runner.agentVersion)) {

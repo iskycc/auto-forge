@@ -3,7 +3,7 @@ import { DomainError } from "@autoforge/domain";
 import { describe, expect, it } from "vitest";
 
 import { config as proxyConfig } from "../proxy";
-import { apiErrorResponse, readJarUpload } from "./api-response";
+import { apiErrorResponse, readJarUpload, readRuntimeArchiveUpload } from "./api-response";
 
 const MEBIBYTE = 1_048_576;
 
@@ -25,6 +25,24 @@ describe("JAR upload request boundaries", () => {
 
     await expect(readJarUpload(request, MEBIBYTE)).rejects.toMatchObject({
       code: "JAR_TOO_LARGE",
+    });
+  });
+
+  it("reports runtime archive upload limits with a resource-specific error", async () => {
+    const request = new Request(
+      "http://localhost/api/v1/projects/project-1/runtime-assets/upload",
+      {
+        method: "POST",
+        headers: {
+          "content-length": String(2 * MEBIBYTE),
+          "content-type": "multipart/form-data; boundary=unused",
+        },
+        body: "unused",
+      },
+    );
+
+    await expect(readRuntimeArchiveUpload(request, MEBIBYTE)).rejects.toMatchObject({
+      code: "RUNTIME_ASSET_TOO_LARGE",
     });
   });
 

@@ -10,11 +10,11 @@ import {
   artifactMediaType,
   assessRunnerCompatibility,
   DEFAULT_EXECUTION_RESOURCE_LIMITS,
+  DEFAULT_PROJECT_ID,
   DomainError,
   evaluateRunnerForScheduling,
   MINIMUM_JAVA_MAJOR_VERSION,
   ON_DEMAND_SECRET_CAPABILITY,
-  REQUIRED_EXECUTION_CAPABILITIES,
   REQUIRED_EXECUTION_LABELS,
   SUPPORTED_TESTNG_VERSION,
   transitionRunBatch,
@@ -32,6 +32,13 @@ import { and, count, desc, eq, gt, gte, inArray, isNull, lt, lte, or, sql } from
 
 import type { PostgresDatabaseHandle } from "./postgres-database";
 import {
+  parseProjectAdapterRuntime,
+  projectAdapterRequiredCapabilities,
+  supportsProjectAdapterRuntime,
+  type ProjectAdapterRuntime,
+  type RuntimeAssetSnapshot,
+} from "./project-adapter-runtime";
+import {
   pgCaseSources,
   pgCaseVersions,
   pgExecutionRuns,
@@ -42,6 +49,8 @@ import {
   pgRunBatchStatusEvents,
   pgRunners,
   pgProjects,
+  pgProjectAdapterConfigurations,
+  pgProjectRuntimeAssets,
 } from "./postgres-schema";
 import { mapStoredRunner } from "./runner-mapper";
 import { decodeRunBatchCursor, encodeRunBatchCursor } from "./run-batch-list";
@@ -57,6 +66,10 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
     const claimTimeoutMs = record.claimTimeoutMs ?? 300_000;
     const executionTimeoutMs = record.executionTimeoutMs ?? 3_600_000;
     const uploadTimeoutMs = record.uploadTimeoutMs ?? 600_000;
+    const adapterRuntime = await postgresProjectAdapterRuntime(
+      this.handle,
+      record.projectId ?? DEFAULT_PROJECT_ID,
+    );
     await this.handle.db.transaction(async (transaction) => {
       await transaction.insert(pgRunBatches).values({
         id: record.id,
@@ -76,6 +89,7 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
         environmentJson: JSON.stringify(record.environmentVariables),
         secretBindingsJson: JSON.stringify(record.secretBindings ?? []),
         policyJson: record.policy ? JSON.stringify(record.policy) : null,
+        adapterRuntimeJson: adapterRuntime ? JSON.stringify(adapterRuntime) : null,
         totalRuns: record.runs.length,
         createdAt: record.createdAt,
         updatedAt: record.createdAt,
@@ -290,10 +304,20 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
         [batch.projectId],
       ),
     ]);
-    const candidates = runnerRows.map((row) => ({
-      runner: mapStoredRunner(row, offlineBefore),
-      reservedSlots: reservations.get(row.id) ?? 0,
-    }));
+    const [runtimeRow] = await this.handle.db
+      .select({ adapterRuntimeJson: pgRunBatches.adapterRuntimeJson })
+      .from(pgRunBatches)
+      .where(eq(pgRunBatches.id, batchId))
+      .limit(1);
+    const adapterRuntime = parseProjectAdapterRuntime(runtimeRow?.adapterRuntimeJson ?? null);
+    const candidates = runnerRows
+      .map((row) => ({
+        runner: mapStoredRunner(row, offlineBefore),
+        reservedSlots: reservations.get(row.id) ?? 0,
+      }))
+      .filter((candidate) =>
+        supportsProjectAdapterRuntime(candidate.runner.capabilities, adapterRuntime),
+      );
     return {
       batch,
       queuedRuns: batch.runs.filter((run) => run.status === "queued"),
@@ -306,7 +330,11 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
     await this.ready();
     return this.handle.db.transaction(async (transaction) => {
       const [lockedBatch] = await transaction
-        .select({ projectId: pgRunBatches.projectId, policyJson: pgRunBatches.policyJson })
+        .select({
+          projectId: pgRunBatches.projectId,
+          policyJson: pgRunBatches.policyJson,
+          adapterRuntimeJson: pgRunBatches.adapterRuntimeJson,
+        })
         .from(pgRunBatches)
         .where(eq(pgRunBatches.id, input.batchId))
         .for("update");
@@ -345,6 +373,7 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
           Number(projectActive[0]?.value ?? 0),
       );
       const batchConcurrency = batchPolicy(lockedBatch.policyJson)?.concurrency;
+      const adapterRuntime = parseProjectAdapterRuntime(lockedBatch.adapterRuntimeJson);
       let remainingBatchSlots =
         batchConcurrency === undefined
           ? Number.POSITIVE_INFINITY
@@ -395,6 +424,7 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
         if (!runnerRow) continue;
         const runner = mapStoredRunner(runnerRow, input.offlineBefore);
         if (!assessRunnerCompatibility(runner).compatible) continue;
+        if (!supportsProjectAdapterRuntime(runner.capabilities, adapterRuntime)) continue;
         const evaluation = evaluateRunnerForScheduling(
           {
             runner,
@@ -489,6 +519,7 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
               className: updatedRun.className,
               parameters: stringRecord(updatedRun.parametersJson),
               source,
+              ...(adapterRuntime ? { adapterRuntime } : {}),
               environment: environmentVariables(batch.environmentJson),
               secretBindings: secretBindings(batch.secretBindingsJson),
               executionTimeoutMs: batch.executionTimeoutMs,
@@ -682,6 +713,7 @@ function executionSpec(input: {
   className: string;
   parameters: Record<string, string>;
   source: { id: string; sha256: string; sizeBytes: number };
+  adapterRuntime?: ProjectAdapterRuntime;
   environment: ExecutionEnvironmentVariable[];
   secretBindings: ExecutionEnvironmentSecretBinding[];
   executionTimeoutMs: number;
@@ -689,6 +721,7 @@ function executionSpec(input: {
   policy?: RunBatchExecutionPolicy;
 }): ExecutionSpec {
   const artifactPatterns = input.policy?.artifactPatterns ?? ["reports/testng/**"];
+  const runtimeInputs = input.adapterRuntime ? runtimeAssetInputs(input.adapterRuntime) : [];
   return {
     schemaVersion: 1,
     executor: input.policy?.executor ?? "testng",
@@ -698,6 +731,15 @@ function executionSpec(input: {
     className: input.className,
     methodDescriptors: [],
     parameters: input.parameters,
+    ...(input.adapterRuntime
+      ? {
+          adapter: {
+            suiteName: input.adapterRuntime.suiteName,
+            testName: input.adapterRuntime.testName,
+            environmentAddress: input.adapterRuntime.environmentAddress,
+          },
+        }
+      : {}),
     inputs: [
       {
         inputId: input.source.id,
@@ -707,6 +749,7 @@ function executionSpec(input: {
         sizeBytes: input.source.sizeBytes,
         sha256: input.source.sha256,
       },
+      ...runtimeInputs,
     ],
     environment: input.environment.map((entry) => ({ ...entry, secret: false })),
     secretReferences: input.secretBindings,
@@ -718,7 +761,7 @@ function executionSpec(input: {
     },
     requiredLabels: [...REQUIRED_EXECUTION_LABELS, ...(input.policy?.runnerLabels ?? [])],
     requiredCapabilities: [
-      ...REQUIRED_EXECUTION_CAPABILITIES,
+      ...projectAdapterRequiredCapabilities(input.adapterRuntime),
       ...(input.policy?.executor === "testng-container" ? ["executor:testng-container-v1"] : []),
       ...(input.secretBindings.length > 0 ? [ON_DEMAND_SECRET_CAPABILITY] : []),
     ],
@@ -730,6 +773,80 @@ function executionSpec(input: {
     timeoutMs: input.executionTimeoutMs,
     uploadTimeoutMs: input.uploadTimeoutMs,
     resourceLimits: { ...DEFAULT_EXECUTION_RESOURCE_LIMITS },
+  };
+}
+
+async function postgresProjectAdapterRuntime(
+  handle: PostgresDatabaseHandle,
+  projectId: string,
+): Promise<ProjectAdapterRuntime | undefined> {
+  const [configuration] = await handle.db
+    .select()
+    .from(pgProjectAdapterConfigurations)
+    .where(eq(pgProjectAdapterConfigurations.projectId, projectId))
+    .limit(1);
+  if (!configuration) return undefined;
+  const assetIds = [configuration.jdkAssetId, configuration.jarBundleAssetId].filter(
+    (assetId): assetId is string => Boolean(assetId),
+  );
+  const assets = assetIds.length
+    ? await handle.db
+        .select()
+        .from(pgProjectRuntimeAssets)
+        .where(
+          and(
+            eq(pgProjectRuntimeAssets.projectId, projectId),
+            inArray(pgProjectRuntimeAssets.id, assetIds),
+          ),
+        )
+    : [];
+  const assetSnapshot = (assetId: string | null): RuntimeAssetSnapshot | undefined => {
+    const asset = assets.find((candidate) => candidate.id === assetId);
+    return asset
+      ? {
+          id: asset.id,
+          sourceType: asset.sourceType,
+          ...(asset.url ? { url: asset.url } : {}),
+          sha256: asset.sha256,
+          sizeBytes: asset.sizeBytes,
+          archiveFormat: asset.archiveFormat,
+        }
+      : undefined;
+  };
+  const jdk = assetSnapshot(configuration.jdkAssetId);
+  const jarBundle = assetSnapshot(configuration.jarBundleAssetId);
+  return {
+    suiteName: configuration.suiteName,
+    testName: configuration.testName,
+    environmentAddress: configuration.environmentAddress,
+    ...(jdk ? { jdk } : {}),
+    ...(jarBundle ? { jarBundle } : {}),
+  };
+}
+
+function runtimeAssetInputs(runtime: ProjectAdapterRuntime): ExecutionSpec["inputs"] {
+  return [
+    ...(runtime.jdk ? [runtimeInput(runtime.jdk, "jdk-archive", "runtime-inputs/jdk")] : []),
+    ...(runtime.jarBundle
+      ? [runtimeInput(runtime.jarBundle, "jar-bundle", "runtime-inputs/jars")]
+      : []),
+  ];
+}
+
+function runtimeInput(
+  asset: RuntimeAssetSnapshot,
+  kind: "jdk-archive" | "jar-bundle",
+  pathPrefix: string,
+): ExecutionSpec["inputs"][number] {
+  const suffix = asset.archiveFormat === "zip" ? ".zip" : ".tar.gz";
+  return {
+    inputId: asset.id,
+    kind,
+    targetPath: `${pathPrefix}${suffix}`,
+    mediaType: asset.archiveFormat === "zip" ? "application/zip" : "application/gzip",
+    sizeBytes: asset.sizeBytes,
+    sha256: asset.sha256,
+    ...(asset.sourceType === "url" && asset.url ? { downloadUrl: asset.url } : {}),
   };
 }
 

@@ -28,7 +28,9 @@
   --color-scrollbar-hover: rgba(72, 72, 78, 0.5);
   --font-size-caption: 12px;
   --font-size-control: 13px;
+  --font-size-body: 14px;
   --font-family-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  --color-accent: var(--color-info);
   --space-2: 8px;
   --space-3: 12px;
   --space-4: 16px;
@@ -36,6 +38,7 @@
   --shadow-float: 0 18px 50px rgba(20, 23, 31, 0.12);
   --shadow-control: 0 1px 2px rgba(20, 23, 31, 0.045), 0 4px 14px rgba(20, 23, 31, 0.025);
   --radius-control: 10px;
+  --radius-medium: 14px;
   --radius-card: 18px;
   --radius-large: 22px;
 }
@@ -6368,6 +6371,69 @@ button.icon-button:disabled {
   margin: 0;
 }
 
+.case-directory-tree {
+  display: grid;
+  gap: 6px;
+  padding: 12px 18px 20px;
+}
+
+.case-tree-directory {
+  border-left: 1px solid var(--color-border);
+  margin-left: 8px;
+  padding-left: 12px;
+}
+
+.case-tree-directory > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+  cursor: pointer;
+  color: var(--color-text-secondary);
+}
+
+.case-tree-directory > summary::marker {
+  color: var(--color-text-tertiary);
+}
+
+.case-tree-directory > summary span {
+  font-size: var(--font-size-caption);
+}
+
+.case-tree-children {
+  display: grid;
+  gap: 5px;
+}
+
+.case-tree-case {
+  display: grid;
+  grid-template-columns:
+    auto auto minmax(220px, 1fr) minmax(100px, auto) minmax(120px, auto)
+    auto auto;
+  align-items: center;
+  gap: 12px;
+  min-height: 56px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-medium);
+  padding: 8px 12px;
+  background: var(--color-surface);
+}
+
+.case-tree-case.selected-row {
+  border-color: var(--color-accent);
+  background: var(--color-surface-muted);
+}
+
+@media (max-width: 900px) {
+  .case-tree-case {
+    grid-template-columns: auto auto minmax(0, 1fr);
+  }
+
+  .case-tree-case > :nth-child(n + 4) {
+    display: none;
+  }
+}
+
 @media (max-width: 1180px) {
   .environment-manager-grid,
   .secret-manager-grid {
@@ -6377,5 +6443,398 @@ button.icon-button:disabled {
   .environment-editor-grid,
   .environment-history-grid {
     grid-template-columns: 1fr;
+  }
+}
+
+/* Route-level navigation keeps dense administration and operations pages separated. */
+.section-tabs {
+  display: flex;
+  width: fit-content;
+  max-width: 100%;
+  min-height: 44px;
+  align-items: center;
+  gap: 4px;
+  overflow-x: auto;
+  border: 1px solid var(--color-border);
+  border-radius: 14px;
+  padding: 4px;
+  background: rgba(232, 232, 237, 0.62);
+}
+
+.section-tabs a {
+  display: inline-flex;
+  min-height: 34px;
+  flex: 0 0 auto;
+  align-items: center;
+  border-radius: 9px;
+  padding: 0 14px;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-control);
+  font-weight: 640;
+  white-space: nowrap;
+  transition:
+    background-color 150ms ease,
+    color 150ms ease,
+    box-shadow 150ms ease;
+}
+
+.section-tabs a:hover {
+  color: var(--color-text);
+  background: rgba(255, 255, 255, 0.7);
+}
+
+.section-tabs a[aria-current="page"] {
+  background: var(--color-surface);
+  color: var(--color-info);
+  box-shadow: var(--shadow-control);
+}
+
+.settings-page-header > .section-tabs {
+  width: fit-content;
+}
+
+.page-context-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-control);
+}
+
+.page-context-links a:hover {
+  color: var(--color-info);
+  text-decoration: underline;
+}
+
+/* The suite project picker is a product control instead of a browser-native select. */
+.project-picker {
+  position: relative;
+  width: 100%;
+}
+
+.project-picker-trigger {
+  display: grid;
+  width: 100%;
+  min-height: 42px;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-control);
+  padding: 0 11px;
+  background: var(--color-control);
+  color: var(--color-text);
+  box-shadow: var(--shadow-control);
+  font-size: var(--font-size-control);
+  font-weight: 620;
+  text-align: left;
+  cursor: pointer;
+}
+
+.ui-button.project-picker-trigger:hover:not(:disabled),
+.ui-button.project-picker-trigger[aria-expanded="true"] {
+  transform: none;
+  border-color: rgba(6, 104, 216, 0.42);
+  background: var(--color-control-hover);
+}
+
+.ui-button.project-picker-trigger[aria-expanded="true"] {
+  box-shadow: 0 0 0 4px var(--color-focus-ring);
+}
+
+.project-picker-icon {
+  display: inline-grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border-radius: 8px;
+  background: var(--color-info-soft);
+  color: var(--color-info);
+}
+
+.project-picker-chevron {
+  color: var(--color-text-tertiary);
+  transition: transform 150ms ease;
+}
+
+.project-picker-chevron.open {
+  transform: rotate(180deg);
+}
+
+.project-picker-options {
+  position: absolute;
+  top: calc(100% + 7px);
+  right: 0;
+  left: 0;
+  z-index: 30;
+  display: grid;
+  max-height: 260px;
+  gap: 3px;
+  overflow-y: auto;
+  border: 1px solid var(--color-border-strong);
+  border-radius: 12px;
+  padding: 5px;
+  background: var(--color-surface);
+  box-shadow: var(--shadow-float);
+}
+
+.project-picker-option {
+  display: flex;
+  min-height: 38px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 0;
+  border-radius: 8px;
+  padding: 0 10px;
+  background: transparent;
+  color: var(--color-text);
+  font-size: var(--font-size-control);
+  text-align: left;
+  cursor: pointer;
+}
+
+.ui-button.project-picker-option:hover:not(:disabled),
+.ui-button.project-picker-option[aria-selected="true"] {
+  transform: none;
+  border-color: transparent;
+  background: var(--color-info-soft);
+  color: var(--color-info);
+  box-shadow: none;
+}
+
+/* Case details: stable text rhythm, complete summary rows and padded card content. */
+.case-detail-page {
+  width: min(100%, 1280px);
+}
+
+.case-detail-hero > div {
+  display: grid;
+  min-width: 0;
+  justify-items: start;
+}
+
+.case-detail-hero .back-link {
+  margin-bottom: 9px;
+}
+
+.case-detail-eyebrow {
+  display: block;
+}
+
+.case-detail-hero h1 {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+.case-detail-hero code {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.case-detail-page .source-meta-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.case-detail-page .source-meta-grid strong,
+.case-detail-page .source-meta-grid code {
+  overflow: visible;
+  font-size: var(--font-size-control);
+  line-height: 1.45;
+  text-overflow: clip;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.case-detail-page .source-meta-wide {
+  grid-column: span 2;
+}
+
+.case-run-card {
+  padding: 20px;
+}
+
+.case-editor-card > .card-heading {
+  padding: 20px 20px 0;
+}
+
+.case-editor-card > .settings-grid-form {
+  margin: 16px 20px 20px;
+}
+
+.table-card > .card-heading {
+  min-height: 68px;
+  align-items: center;
+  border-bottom: 1px solid var(--color-border);
+  padding: 14px 18px;
+}
+
+/* Audit filters and evidence remain readable instead of stretching into one-field rows. */
+.operations-page-header {
+  align-items: center;
+}
+
+.audit-filter-panel {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(180px, 1fr));
+  align-items: end;
+  gap: 14px;
+}
+
+.audit-filter-panel label {
+  display: grid;
+  min-width: 0;
+  gap: 6px;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-caption);
+  font-weight: 650;
+}
+
+.audit-filter-panel > .ui-button {
+  width: fit-content;
+  min-width: 104px;
+}
+
+.audit-table-card .data-table {
+  min-width: 1040px;
+  table-layout: fixed;
+}
+
+.audit-table-card .data-table th:nth-child(1) {
+  width: 190px;
+}
+
+.audit-table-card .data-table th:nth-child(2) {
+  width: 190px;
+}
+
+.audit-table-card .data-table th:nth-child(3),
+.audit-table-card .data-table th:nth-child(7) {
+  width: 90px;
+}
+
+.audit-table-card .data-table td {
+  overflow-wrap: anywhere;
+}
+
+.audit-result {
+  display: inline-flex;
+  min-height: 24px;
+  align-items: center;
+  border-radius: 999px;
+  padding: 0 8px;
+  font-size: var(--font-size-caption);
+  font-weight: 680;
+  white-space: nowrap;
+}
+
+.audit-result-succeeded {
+  background: var(--color-success-soft);
+  color: var(--color-success);
+}
+
+.audit-result-rejected {
+  background: var(--color-warning-soft);
+  color: var(--color-warning);
+}
+
+.audit-result-failed {
+  background: var(--color-danger-soft);
+  color: var(--color-danger);
+}
+
+.audit-table-card details pre {
+  width: min(440px, 70vw);
+  max-height: 260px;
+  overflow: auto;
+  white-space: pre-wrap;
+}
+
+/* Insights use a stable primary row and keep specialist filters out of the visual flow. */
+.insights-page .page-hero {
+  flex-wrap: wrap;
+}
+
+.insight-filter {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 14px;
+}
+
+.insight-primary-filters {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(170px, 1fr)) auto;
+  align-items: end;
+  gap: 12px;
+}
+
+.insight-primary-filters label,
+.insight-advanced-filters label {
+  display: grid;
+  min-width: 0;
+  gap: 6px;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-caption);
+  font-weight: 650;
+}
+
+.insight-advanced-filters {
+  border-top: 1px solid var(--color-border);
+  padding-top: 12px;
+}
+
+.insight-advanced-filters summary {
+  display: inline-flex;
+  min-height: 32px;
+  align-items: center;
+  gap: 7px;
+  color: var(--color-info);
+  font-size: var(--font-size-control);
+  font-weight: 650;
+  cursor: pointer;
+  list-style: none;
+}
+
+.insight-advanced-filters summary::-webkit-details-marker {
+  display: none;
+}
+
+.insight-advanced-filters > div {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(180px, 1fr));
+  gap: 12px;
+  padding-top: 10px;
+}
+
+.insight-grid > .content-card {
+  overflow: hidden;
+}
+
+.insight-data-table {
+  min-width: 620px;
+}
+
+@media (max-width: 1280px) {
+  .case-detail-page .source-meta-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .single-case-run {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .single-run-parameters,
+  .single-case-run > button {
+    grid-column: auto;
+  }
+
+  .audit-filter-panel,
+  .insight-primary-filters,
+  .insight-advanced-filters > div {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .insight-primary-filters > .ui-button {
+    width: fit-content;
   }
 }

@@ -11,7 +11,7 @@ git tag -s v0.2.2 -m "AutoForge v0.2.2"
 git push origin v0.2.2
 ```
 
-`Release` 只保留发布所需的关键路径：校验 tag 后立即并行构建四个平台及两个 Runner 工具链，再在同一个 job 中组装部署包、生成 SBOM/清单、签名、生成来源证明并公开 GitHub Release。后端构建使用按 variant 隔离的 GitHub Actions BuildKit 缓存，离线 Docker 归档使用多线程 zstd 压缩；组装结果不再通过中间候选制品重复上传和下载。任一平台、SBOM、签名或清单失败仍会阻止发布，因而不会公开缺少必需资产的部分 Release。
+`Release` 只保留发布所需的关键路径：校验 tag 后构建一次 CoTest Adapter，四个平台复用该内部制品并行构建，随后组装部署包、生成 SBOM/清单、签名、生成来源证明并公开 GitHub Release。后端构建使用按 variant 隔离的 GitHub Actions BuildKit 缓存，离线 Docker 归档使用多线程 zstd 压缩；不再构建耗时的 `toolchain-amd64/arm64` Release 资产。任一平台、SBOM、签名或清单失败仍会阻止发布，因而不会公开缺少必需资产的部分 Release。
 
 `Release checks` 独立执行格式、lint、类型、单元、Lite/Full 集成、浏览器流程、生产构建和 Gate E 断网验收。断网验收等待同 tag Release 完整公开后直接下载已发布资产，验证真实 Agent/TestNG、私有 CA LDAP、备份恢复、上一正式版本升级和注入迁移失败回滚。检查失败会在该 workflow 中保留红灯和诊断制品，但不会成为 `Release` 的依赖，也不会阻塞、取消或撤回发布；失败版本应通过问题修复和新版本 hotfix 处理。普通 CI 与依赖安全 workflow 不在 tag push 上重复运行，以免与发布矩阵争抢并发资源。
 
@@ -38,7 +38,7 @@ Web 进程为同源终端 WebSocket 使用 Next.js 自定义 Server。Next.js �
 
 每个版本还生成一份 `autoforge-deploy-VERSION.tar.gz`，其中包含 Lite/Full `docker-compose.yml`、环境模板、固定的基础设施镜像摘要和离线启动说明。Release 根目录同时包含 `release-manifest.json`、`SHA256SUMS`、Ed25519 签名 `SHA256SUMS.sig` 和 `release-signing-public-key.pem`。GitHub 的构建来源证明绑定 `SHA256SUMS` 中记录的全部资产摘要。
 
-两个原生架构还分别生成 `autoforge-runner-toolchain-linux-ARCH-java21-testng7.11.0.tar.gz`、独立摘要和 SPDX SBOM。工具链包含 Eclipse Temurin JRE、TestNG 及其固定依赖、逐文件摘要与机器可读 manifest；它和镜像内置 Agent 都由 Gate E 直接消费，不允许验收时从源码重建或联网补装。部署包也有对应的 SPDX JSON SBOM，法律声明见 `RUNNER_TOOLCHAIN_NOTICES.md`。
+后端镜像内同时包含可校验的 CoTest Adapter JAR。正式 Release 不提供 JDK/TestNG 工具链资产；管理员在项目设置中上传 JDK 与完整依赖 JAR 压缩包，或登记 Runner 可访问的内网 HTTP(S) 链接、精确大小和 SHA-256。部署包仍生成对应的 SPDX JSON SBOM。
 
 ## 离线校验与启动
 
@@ -78,7 +78,7 @@ musl 归档的镜像标签相应为 `autoforge/backend:0.2.2-amd64-musl`。必�
 
 首次启动从容器日志或数据卷的 `/var/lib/autoforge/config/initial-admin-token` 获取管理员令牌。登录后先在“平台配置”设置执行机可访问的 HTTP 或 HTTPS 地址；可信内网可填写 `http://内网IP:端口`，其他网络应使用 HTTPS。再在“执行机”页面填写 IP/主机名、SSH 用户和密码。平台会探测系统与架构并显示 SSH 主机指纹；管理员通过可信渠道核对后才能安装。密码只用于本次 SSH/sudo 操作，Agent 注册使用短期一次性令牌。
 
-自动安装要求目标机为 Ubuntu 或 openSUSE、使用 systemd，并预置 SSH、POSIX shell、coreutils；非 root SSH 用户还需已有 sudo。cgroup v2 可用时自动启用，缺失时 Agent 以降级隔离运行。服务默认使用专用账号，也可由管理员显式选择 root 模式。安装脚本不会调用系统包管理器或下载依赖。可使用同一 Release 的架构匹配工具链资产离线预置 Java/TestNG；未配置工具链时 Agent 不声明 TestNG capability。
+自动安装要求目标机为 Ubuntu 或 openSUSE、使用 systemd，并预置 SSH、Bash、coreutils；非 root SSH 用户还需已有 sudo。cgroup v2 可用时自动启用，缺失时 Agent 以降级隔离运行。服务默认使用专用账号，也可由管理员显式选择 root 模式。openSUSE 被 `/etc/os-release` 报告成 SLES 等无法自动判断时，可在核验主机后手动强制选择 openSUSE 安装模式。安装脚本不会调用系统包管理器或下载依赖。Agent 安装包内含 Adapter；任务提供 JDK 与 JAR 资源时无需预置本机 Java/TestNG。
 
 ## 本地构建与验证
 

@@ -24,6 +24,7 @@ describe("RunnerAgentResourceStore", () => {
     expect(resources.version).toBe("1.2.3");
     expect(resources.binary.toString()).toBe("amd64-agent");
     expect(resources.installer.toString()).toBe("installer");
+    expect(resources.adapter.toString()).toBe("adapter");
   });
 
   it("rejects a modified embedded binary", async () => {
@@ -44,10 +45,12 @@ async function resourceDirectory(): Promise<string> {
     "linux-amd64": resource("linux-amd64/autoforge-agent", "amd64-agent"),
     "linux-arm64": resource("linux-arm64/autoforge-agent", "arm64-agent"),
     installer: resource("install.sh", "installer"),
+    adapter: resource("cotest-testng-adapter.jar", "adapter"),
   };
   await writeFile(join(directory, files["linux-amd64"].path), "amd64-agent");
   await writeFile(join(directory, files["linux-arm64"].path), "arm64-agent");
   await writeFile(join(directory, files.installer.path), "installer");
+  await writeFile(join(directory, files.adapter.path), "adapter");
   await writeFile(
     join(directory, "manifest.json"),
     JSON.stringify({

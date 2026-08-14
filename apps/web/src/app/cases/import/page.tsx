@@ -11,10 +11,15 @@ export const dynamic = "force-dynamic";
 export default async function ImportJarPage({
   searchParams,
 }: {
-  searchParams: Promise<{ projectId?: string | string[] }>;
+  searchParams: Promise<{
+    projectId?: string | string[];
+    projectVersionId?: string | string[];
+    testStageId?: string | string[];
+  }>;
 }) {
   const { identity, projectIds } = await requirePageProjectScope("case_source.manage");
-  const requested = (await searchParams).projectId;
+  const parameters = await searchParams;
+  const requested = parameters.projectId;
   const requestedProjectId = (Array.isArray(requested) ? requested[0] : requested)?.trim();
   const projectId = requestedProjectId ?? projectIds?.[0] ?? DEFAULT_PROJECT_ID;
   requireAuthorizedPageProjectScope(identity, "case_source.manage", projectId);
@@ -22,6 +27,15 @@ export default async function ImportJarPage({
   const projects = (await services.identityAccess.listProjects(identity).catch(() => [])).filter(
     (project) => !projectIds || projectIds.includes(project.id),
   );
+  const structure = await services.projectStructures.list(projectId);
+  const requestedVersionId = single(parameters.projectVersionId);
+  const initialVersion =
+    structure.versions.find((version) => version.id === requestedVersionId) ??
+    structure.versions[0];
+  const requestedStageId = single(parameters.testStageId);
+  const initialStage =
+    initialVersion?.stages.find((stage) => stage.id === requestedStageId) ??
+    initialVersion?.stages[0];
   return (
     <div className="page-stack narrow-page">
       <section className="page-hero">
@@ -34,8 +48,15 @@ export default async function ImportJarPage({
       <JarImporter
         maxJarBytes={services.config.maxJarBytes}
         projectId={projectId}
+        initialProjectVersionId={initialVersion?.id}
+        initialTestStageId={initialStage?.id}
         projects={projects.map(({ id, name }) => ({ id, name }))}
+        versions={structure.versions}
       />
     </div>
   );
+}
+
+function single(value: string | string[] | undefined): string | undefined {
+  return (Array.isArray(value) ? value[0] : value)?.trim() || undefined;
 }

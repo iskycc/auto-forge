@@ -11,18 +11,19 @@ import {
 import Link from "next/link";
 import type { Permission } from "@autoforge/domain";
 
+import { ManagementNavigation } from "@/components/management-navigation";
 import { hasPermissionInAnyScope, requirePagePermission } from "@/lib/auth";
 
 const managementEntries = [
   {
-    href: "/settings/access#users",
+    href: "/settings/access?section=users",
     title: "用户管理",
     description: "创建本地账号、停用用户、重置密码并撤销会话。",
     icon: UserRound,
     permissions: ["user.read"],
   },
   {
-    href: "/settings/access#roles",
+    href: "/settings/access?section=roles",
     title: "角色与权限",
     description: "管理系统角色、项目角色和自定义权限集合。",
     icon: ShieldCheck,
@@ -36,7 +37,7 @@ const managementEntries = [
     permissions: ["project.read"],
   },
   {
-    href: "/settings/access#ldap",
+    href: "/settings/access?section=ldap",
     title: "LDAP 配置",
     description: "配置 LDAPS/StartTLS、测试连接、同步用户和组映射。",
     icon: Network,
@@ -57,21 +58,21 @@ const managementEntries = [
     permissions: ["environment.read", "secret.manage"],
   },
   {
-    href: "/settings/platform",
+    href: "/settings/platform?section=configuration",
     title: "平台配置",
     description: "配置部署模式、JAR 上传容量、调度阈值和基础设施。",
     icon: Database,
     permissions: ["settings.read"],
   },
   {
-    href: "/settings/access#sessions",
+    href: "/settings/access?section=sessions",
     title: "会话管理",
     description: "查看当前账号会话并撤销不再需要的登录。",
     icon: Activity,
     permissions: ["settings.read"],
   },
   {
-    href: "/settings/access#audit",
+    href: "/audit",
     title: "安全审计",
     description: "查看近期身份、权限和管理操作审计记录。",
     icon: ShieldCheck,
@@ -100,6 +101,14 @@ export default async function ManagementPage() {
           <p>集中进入账号、权限、LDAP、项目、执行环境和平台运行配置。</p>
         </div>
       </header>
+      <ManagementNavigation
+        active="overview"
+        showAccess={visibleEntries.some((entry) => entry.href.startsWith("/settings/access"))}
+        showEnvironments={visibleEntries.some((entry) => entry.href === "/settings/environments")}
+        showOverview
+        showPlatform={visibleEntries.some((entry) => entry.href.startsWith("/settings/platform"))}
+        showProjects={visibleEntries.some((entry) => entry.href === "/settings/projects")}
+      />
       <nav className="management-grid" aria-label="后台管理功能">
         {visibleEntries.map((entry) => {
           const Icon = entry.icon;

@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-import { DEFAULT_PROJECT_ID } from "@autoforge/domain";
+import { DEFAULT_PROJECT_ID, DomainError } from "@autoforge/domain";
 import { apiErrorResponse, readJarUpload } from "@/lib/api-response";
 import { getPlatformServices } from "@/lib/services";
 import { NextResponse } from "next/server";
@@ -20,21 +20,34 @@ export async function POST(request: Request): Promise<NextResponse> {
     const identity = await authenticateRequest(request);
     const services = await getPlatformServices();
     const requestedProjectId = new URL(request.url).searchParams.get("projectId")?.trim();
+    const projectVersionId = new URL(request.url).searchParams.get("projectVersionId")?.trim();
+    const testStageId = new URL(request.url).searchParams.get("testStageId")?.trim();
     const projectScope = authorizedProjectScope(
       identity,
       "case_source.manage",
       requestedProjectId || undefined,
     );
     const projectId = requestedProjectId || projectScope?.at(0) || DEFAULT_PROJECT_ID;
+    const structure = await services.projectStructures.list(projectId);
+    const selectedVersion = structure.versions.find((version) => version.id === projectVersionId);
+    const selectedStage = selectedVersion?.stages.find((stage) => stage.id === testStageId);
+    if (!selectedVersion || !selectedStage) {
+      throw new DomainError(
+        "CASE_IMPORT_STAGE_REQUIRED",
+        "导入用例前必须选择当前项目下的版本和测试阶段。",
+      );
+    }
     const upload = await readJarUpload(request, services.config.maxJarBytes);
     const sha256 = createHash("sha256").update(upload.content).digest("hex");
     const requestedKey = request.headers.get("Idempotency-Key")?.trim();
     const result = await services.importTestNgJar.enqueue({
       ...upload,
       projectId,
+      projectVersionId: selectedVersion.id,
+      testStageId: selectedStage.id,
       actorId: identity.user.id,
       sha256,
-      idempotencyKey: requestedKey || `sha256:${sha256}`,
+      idempotencyKey: requestedKey || `stage:${selectedStage.id}:sha256:${sha256}`,
     });
     await services.identityAccess.recordAuthorizedOperation(identity, {
       action: "case_source.import_queued",

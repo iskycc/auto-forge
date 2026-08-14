@@ -3,6 +3,7 @@ import { Button, Input, Select } from "@/components/ui";
 import { Download, Search, ShieldCheck } from "lucide-react";
 import Link from "next/link";
 
+import { SectionTabs } from "@/components/section-tabs";
 import {
   hasPermissionInAnyScope,
   requireAuthorizedPageProjectScope,
@@ -45,10 +46,13 @@ export default async function AuditPage({ searchParams }: AuditPageProps) {
   );
   const exportParameters = auditParameters(values, projectId);
   exportParameters.set("maximumEvents", "5000");
+  const canReadAutomation =
+    hasPermissionInAnyScope(identity, "case_suite.read") ||
+    hasPermissionInAnyScope(identity, "ldap.read");
 
   return (
     <section className="page-stack">
-      <header className="page-header">
+      <header className="page-header operations-page-header">
         <div>
           <p className="eyebrow">Audit</p>
           <h1>安全审计</h1>
@@ -64,7 +68,17 @@ export default async function AuditPage({ searchParams }: AuditPageProps) {
         ) : null}
       </header>
 
-      <form action="/audit" className="card filter-panel" method="get">
+      <SectionTabs
+        label="运维与审计"
+        tabs={[
+          ...(canReadAutomation
+            ? [{ href: "/settings/automation", label: "运维计划", active: false }]
+            : []),
+          { href: "/audit", label: "安全审计", active: true },
+        ]}
+      />
+
+      <form action="/audit" className="content-card audit-filter-panel" method="get">
         <label>
           项目
           <Select defaultValue={projectId ?? ""} name="projectId">
@@ -118,7 +132,7 @@ export default async function AuditPage({ searchParams }: AuditPageProps) {
         </Button>
       </form>
 
-      <section className="card table-card">
+      <section className="card table-card audit-table-card">
         <div className="card-heading">
           <div>
             <span className="eyebrow">Evidence</span>
@@ -151,7 +165,11 @@ export default async function AuditPage({ searchParams }: AuditPageProps) {
                     <td>
                       <code>{event.action}</code>
                     </td>
-                    <td>{event.result}</td>
+                    <td>
+                      <span className={`audit-result audit-result-${event.result}`}>
+                        {auditResultLabel(event.result)}
+                      </span>
+                    </td>
                     <td>{event.actorId ?? event.actorType}</td>
                     <td>
                       {event.resourceType}
@@ -185,6 +203,10 @@ export default async function AuditPage({ searchParams }: AuditPageProps) {
 
 function single(value: string | string[] | undefined): string | undefined {
   return (Array.isArray(value) ? value[0] : value)?.trim() || undefined;
+}
+
+function auditResultLabel(result: "succeeded" | "rejected" | "failed"): string {
+  return result === "succeeded" ? "成功" : result === "rejected" ? "拒绝" : "失败";
 }
 
 function optionalFilter<Key extends string>(

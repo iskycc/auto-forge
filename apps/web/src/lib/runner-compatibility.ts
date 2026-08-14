@@ -23,5 +23,8 @@ export function runnerCompatibilitySummary(compatibility: RunnerCompatibility): 
 }
 
 export function runnerToolchainSummary(compatibility: RunnerCompatibility): string {
+  if (!compatibility.javaVersion && !compatibility.testNgVersion && compatibility.compatible) {
+    return "JDK 与依赖由项目任务下发";
+  }
   return `Java ${compatibility.javaVersion ?? "未知"} · TestNG ${compatibility.testNgVersion ?? "未知"}`;
 }

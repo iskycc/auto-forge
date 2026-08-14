@@ -27,7 +27,6 @@ readonly previous_data="${acceptance_directory}/previous-data"
 readonly failed_migration_data="${acceptance_directory}/failed-migration-data"
 readonly rollback_data="${acceptance_directory}/rollback-data"
 readonly current_deploy_root="${acceptance_directory}/current-deploy"
-readonly toolchain_parent="${acceptance_directory}/toolchain"
 readonly release_agent="${acceptance_directory}/autoforge-agent"
 readonly upgrade_sentinel="Release upgrade sentinel ${run_identity}"
 readonly agent_proxy_ready_file="${acceptance_directory}/agent-proxy-url"
@@ -84,7 +83,7 @@ const manifest = JSON.parse(readFileSync(join(directory, "release-manifest.json"
 if (manifest.schemaVersion !== 1 || manifest.product !== "AutoForge" || manifest.version !== expectedVersion) {
   throw new Error("Release manifest identity is invalid.");
 }
-if (manifest.artifacts.length !== 27) throw new Error(`Unexpected release asset count: ${manifest.artifacts.length}`);
+if (manifest.artifacts.length !== 20) throw new Error(`Unexpected release asset count: ${manifest.artifacts.length}`);
 for (const artifact of manifest.artifacts) {
   const path = join(directory, artifact.name);
   if (!statSync(path).isFile() || statSync(path).size !== artifact.sizeBytes) throw new Error(`Invalid asset ${artifact.name}`);
@@ -93,7 +92,7 @@ for (const name of readdirSync(directory).filter((entry) => entry.endsWith(".spd
   const sbom = JSON.parse(readFileSync(join(directory, name), "utf8"));
   if (!String(sbom.spdxVersion ?? "").startsWith("SPDX-")) throw new Error(`Invalid SPDX document ${name}`);
 }
-for (const required of ["LICENSE", "NOTICE", "THIRD_PARTY_LICENSES.json", "RUNNER_TOOLCHAIN_NOTICES.md", "CHANGELOG.md", "COMPATIBILITY.md"]) {
+for (const required of ["LICENSE", "NOTICE", "THIRD_PARTY_LICENSES.json", "CHANGELOG.md", "COMPATIBILITY.md"]) {
   if (!statSync(join(directory, required)).isFile()) throw new Error(`Missing legal or operations asset ${required}`);
 }
 NODE
@@ -129,14 +128,9 @@ load_release_image() {
 }
 
 prepare_release_content() {
-  mkdir -p "${current_deploy_root}" "${toolchain_parent}"
+  mkdir -p "${current_deploy_root}"
   tar -xzf "${current_release_directory}/autoforge-deploy-${current_version}.tar.gz" \
     -C "${current_deploy_root}"
-  tar -xzf \
-    "${current_release_directory}/autoforge-runner-toolchain-linux-amd64-java21-testng7.11.0.tar.gz" \
-    -C "${toolchain_parent}"
-  (cd "${toolchain_parent}/autoforge-runner-toolchain" && sha256sum --check --strict file-sha256sums)
-  "${toolchain_parent}/autoforge-runner-toolchain/jdk/bin/java" -version >/dev/null
   docker compose \
     --env-file "${current_deploy_root}/autoforge-deploy-${current_version}/lite/.env.example" \
     --file "${current_deploy_root}/autoforge-deploy-${current_version}/lite/docker-compose.yml" \
@@ -268,7 +262,6 @@ run_current_release_business() {
   E2E_REAL_AGENT_EXTERNAL_BASE_URL="${base_url}" \
   E2E_REAL_AGENT_SERVER_URL="${agent_proxy_url}" \
   E2E_PREBUILT_AGENT_BINARY="${release_agent}" \
-  E2E_PREBUILT_TOOLCHAIN_ROOT="${toolchain_parent}/autoforge-runner-toolchain" \
   E2E_ADMIN_BOOTSTRAP_TOKEN="${admin_token}" \
   E2E_RUNNER_BOOTSTRAP_TOKEN="${runner_token}" \
     bash "${repository_root}/scripts/quality/test-real-agent.sh"
@@ -450,4 +443,4 @@ docker exec "${current_container}" node -e \
 run_current_release_business "${current_base_url}"
 verify_backup_restore "${current_base_url}"
 verify_upgrade_and_rollback
-printf 'Signed Release assets passed offline install, real Agent/toolchain, LDAP, backup, rollback and upgrade acceptance.\n'
+printf 'Signed Release assets passed offline install, real Agent, LDAP, backup, rollback and upgrade acceptance.\n'

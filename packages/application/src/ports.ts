@@ -56,6 +56,10 @@ import type {
   ExternalIdentity,
   Permission,
   Project,
+  ProjectAdapterConfiguration,
+  ProjectRuntimeAsset,
+  ProjectStructure,
+  ProjectVersion,
   Role,
   RoleScope,
   RunBatch,
@@ -68,7 +72,47 @@ import type {
   User,
   UserSession,
   UserStatus,
+  TestStage,
 } from "@autoforge/domain";
+
+export type CreateProjectVersionRecord = {
+  id: string;
+  projectId: string;
+  name: string;
+  normalizedName: string;
+  recordedAt: string;
+};
+
+export type CreateTestStageRecord = {
+  id: string;
+  projectId: string;
+  projectVersionId: string;
+  name: string;
+  normalizedName: string;
+  description: string;
+  recordedAt: string;
+};
+
+export type CreateProjectRuntimeAssetRecord = ProjectRuntimeAsset;
+
+export interface ProjectStructureRepository {
+  list(projectId: string): Promise<ProjectStructure>;
+  createVersion(record: CreateProjectVersionRecord): Promise<ProjectVersion>;
+  createStage(record: CreateTestStageRecord): Promise<TestStage>;
+  createRuntimeAsset(record: CreateProjectRuntimeAssetRecord): Promise<ProjectRuntimeAsset>;
+  updateAdapterConfiguration(input: {
+    projectId: string;
+    suiteName: string;
+    testName: string;
+    environmentAddress: string;
+    jdkAssetId?: string;
+    jarBundleAssetId?: string;
+    expectedRevision: number;
+    actorId?: string;
+    updatedAt: string;
+  }): Promise<ProjectAdapterConfiguration>;
+  getAdapterConfiguration(projectId: string): Promise<ProjectAdapterConfiguration>;
+}
 
 export type StoredLdapConfiguration = {
   enabled: boolean;
@@ -548,6 +592,8 @@ export type ImportCaseRecord = {
 export type ImportCatalogRecord = {
   sourceId: string;
   projectId?: string;
+  projectVersionId?: string;
+  testStageId?: string;
   importedBy?: string;
   objectKey: string;
   displayName: string;
@@ -572,6 +618,9 @@ export type ExistingSource = {
 
 export type CaseListQuery = {
   projectIds?: readonly string[];
+  projectVersionId?: string;
+  testStageId?: string;
+  scopedOnly?: boolean;
   query?: string;
   cursor?: string;
   limit: number;
@@ -580,6 +629,32 @@ export type CaseListQuery = {
 export type CaseListPage = {
   items: CaseDefinitionWithMethods[];
   nextCursor?: string;
+};
+
+export type CaseActivity = {
+  executions: Array<{
+    runId: string;
+    batchId: string;
+    status: string;
+    attemptId?: string;
+    runnerId?: string;
+    resultCode?: string;
+    durationMs?: number;
+    createdAt: string;
+    finishedAt?: string;
+  }>;
+  analyses: Array<{
+    attemptId: string;
+    batchId: string;
+    outcome: string;
+    resultCode?: string;
+    failureSignature?: string;
+    durationMs?: number;
+    passed: number;
+    failed: number;
+    skipped: number;
+    completedAt: string;
+  }>;
 };
 
 export type DashboardSummary = {
@@ -637,13 +712,19 @@ export interface CaseCatalogRepository {
     dispatchJob: JobEnvelope;
     updatedAt: string;
   }): Promise<JarImportJob>;
-  findSourceBySha256(sha256: string, projectId?: string): Promise<ExistingSource | null>;
+  findSourceBySha256(
+    sha256: string,
+    projectId?: string,
+    projectVersionId?: string,
+    testStageId?: string,
+  ): Promise<ExistingSource | null>;
   importCatalog(record: ImportCatalogRecord): Promise<void>;
   listCases(query: CaseListQuery): Promise<CaseListPage>;
   getCaseDefinition(
     caseDefinitionId: string,
     projectIds?: readonly string[],
   ): Promise<CaseDefinitionWithMethods | null>;
+  listCaseActivity?(caseDefinitionId: string, limit: number): Promise<CaseActivity>;
   updateCaseDefinition(input: {
     caseDefinitionId: string;
     expectedRevision: number;

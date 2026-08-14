@@ -1,6 +1,6 @@
 "use client";
 
-import { Button, Input, Textarea } from "@/components/ui";
+import { Button, Input, Select, Textarea } from "@/components/ui";
 
 import {
   runnerAgentInstallationResultSchema,
@@ -29,6 +29,9 @@ export function RunnerAgentInstaller({ controlPlaneUrl }: RunnerAgentInstallerPr
   const [maxConcurrency, setMaxConcurrency] = useState(1);
   const [terminalEnabled, setTerminalEnabled] = useState(false);
   const [runAsRoot, setRunAsRoot] = useState(false);
+  const [installationMode, setInstallationMode] = useState<
+    "auto" | "ubuntu" | "opensuse" | "opensuse-leap" | "opensuse-tumbleweed"
+  >("auto");
   const [caCertificatePem, setCaCertificatePem] = useState("");
   const [probe, setProbe] = useState<RunnerHostProbeResult>();
   const [fingerprintConfirmed, setFingerprintConfirmed] = useState(false);
@@ -54,6 +57,7 @@ export function RunnerAgentInstaller({ controlPlaneUrl }: RunnerAgentInstallerPr
     try {
       const response = await postJson("/api/v1/runners/installations/probe", {
         connection: { host, port, username, password },
+        installationMode,
       });
       const inspected = runnerHostProbeResultSchema.parse(response);
       setProbe(inspected);
@@ -84,6 +88,7 @@ export function RunnerAgentInstaller({ controlPlaneUrl }: RunnerAgentInstallerPr
         maxConcurrency,
         terminalEnabled,
         runAsRoot,
+        installationMode,
         ...(caCertificatePem.trim() ? { caCertificatePem } : {}),
       });
       const installed = runnerAgentInstallationResultSchema.parse(response);
@@ -108,6 +113,7 @@ export function RunnerAgentInstaller({ controlPlaneUrl }: RunnerAgentInstallerPr
       const response = await postJson("/api/v1/runners/installations/rollback", {
         connection: { host, port, username, password },
         expectedHostKeySha256: probe.hostKeySha256,
+        installationMode,
       });
       setRollbackResult(runnerAgentRollbackResultSchema.parse(response));
       setPassword("");
@@ -155,6 +161,25 @@ export function RunnerAgentInstaller({ controlPlaneUrl }: RunnerAgentInstallerPr
       ) : null}
 
       <div className="runner-installer-grid">
+        <label>
+          安装系统模式
+          <Select
+            disabled={Boolean(pending)}
+            onChange={(event) =>
+              connectionChanged(() =>
+                setInstallationMode(event.target.value as typeof installationMode),
+              )
+            }
+            value={installationMode}
+          >
+            <option value="auto">自动识别（推荐）</option>
+            <option value="ubuntu">强制 Ubuntu</option>
+            <option value="opensuse">强制 openSUSE</option>
+            <option value="opensuse-leap">强制 openSUSE Leap</option>
+            <option value="opensuse-tumbleweed">强制 openSUSE Tumbleweed</option>
+          </Select>
+          <small>系统标识错误时可手动选择；仍会校验 Bash、systemd、架构和权限。</small>
+        </label>
         <label>
           执行机 IP / 主机名
           <Input
@@ -217,11 +242,21 @@ export function RunnerAgentInstaller({ controlPlaneUrl }: RunnerAgentInstallerPr
             <span>
               <strong>{probe.operatingSystemName}</strong>
               <small>
-                {probe.architecture} · systemd · {probe.privilegeMode}
+                {probe.architecture} · systemd · {probe.privilegeMode} · {probe.bashPath}
                 {probe.cgroupV2Available ? " · cgroup v2" : " · 无 cgroup v2（降级隔离）"}
               </small>
             </span>
           </div>
+          {probe.forcedInstallationMode ||
+          probe.detectedOperatingSystemId !== probe.operatingSystemId ? (
+            <div className="inline-notice warning-notice" role="status">
+              <ShieldAlert size={18} />
+              <span>
+                系统报告为 {probe.detectedOperatingSystemId}，将按 {probe.operatingSystemId}
+                模式安装。请确认目标机确实兼容该模式。
+              </span>
+            </div>
+          ) : null}
           <div className="runner-fingerprint">
             <Fingerprint size={18} />
             <span>

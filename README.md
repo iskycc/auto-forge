@@ -17,7 +17,8 @@ AutoForge 是一个面向自动化测试场景的用例工厂，用于统一管�
 - Next.js 16.3.0 App Router 主平台，采用已选方案 E 的 Apple-like Bento 工作台。
 - 未登录首页提供实时公开统计、平台能力介绍和初始化/登录入口；大盘按可见性有界轮询聚合数据，不公开项目、用户或秘密详情。
 - 主平台首次启动自动生成 Lite 持久配置和不同用途的随机秘密；平台设置页管理模式、监听、Full 基础设施、容量和调度阈值，不读取应用配置环境变量。
-- TestNG JAR 上传、静态检查、导入和 SHA-256 去重。
+- 项目下使用“版本 → 测试阶段”组织新用例；导入必须选择该层级，旧的未归属用例不进入新用例库。用例按 Java 包路径展示为可展开目录树，详情页集中展示执行历史、分析历史、源码、方法与版本。
+- TestNG JAR 上传、静态检查、按版本/阶段导入和 SHA-256 去重。
 - `CaseDefinition`、不可变 `CaseVersion`、测试方法契约及应用用例。
 - Drizzle ORM + SQLite/PostgreSQL 持久化，两种方言使用独立版本化迁移；SQLite 启用外键、WAL 与 busy timeout。
 - Lite 本地对象存储和 Full MinIO 对象存储：JAR 按内容摘要保存，页面只浏览 AutoForge 纳管的对象空间。
@@ -25,7 +26,7 @@ AutoForge 是一个面向自动化测试场景的用例工厂，用于统一管�
 - 用例勾选、用例任务创建、任务详情以及任务内用例新增/删除；任务支持重命名、描述、复制、归档、启停、版本/变更快照与修订号并发冲突保护，执行策略覆盖优先级、并发度、重试、排队/执行超时、Runner 标签选择器、参数模板与产物规则并在批次创建前逐项预检。
 - 用例定义支持展示名、描述、标签与启停编辑，版本历史可查看来源、创建人与变更原因，并允许从旧版本恢复生成新版本而不覆盖历史。
 - Runner Agent 注册、身份凭据落盘、周期心跳、在线/离线判定和执行机控制台；支持凭据轮换（旧凭据有明确失效窗口）、撤销、禁用、排空与注销，注销后活跃租约立即到期回收，撤销或注销后心跳、claim、上报与终端均被拒绝。
-- Runner 页面支持通过 SSH 探测 Ubuntu/openSUSE 主机、确认 SHA-256 主机指纹并自动安装平台内置的 `amd64`/`arm64` 静态 Agent。安装资源前后校验摘要，不调用系统包管理器；SSH/sudo 密码不落库，短期注册令牌成功使用后从 Agent 配置原子清除。
+- Runner 页面支持通过 SSH 探测 Ubuntu/openSUSE 主机、确认 SHA-256 主机指纹并自动安装平台内置的 `amd64`/`arm64` 静态 Agent 与 CoTest Adapter。远程命令固定使用探测到的 Bash，服务工作目录为 `/var/lib/autoforge-agent`；openSUSE 被报告为 SLES 等无法自动确认的场景可由管理员强制选择安装模式。安装资源前后校验摘要，不调用系统包管理器；SSH/sudo 密码不落库，短期注册令牌成功使用后从 Agent 配置原子清除。
 - 批跑配置页面、执行环境快照、失败重跑上限，以及共享的资源感知调度算法。
 - 项目级可复用执行环境使用不可变版本；非密文变量和密文版本引用在批次创建时固化，之后的环境编辑或密文轮换不会改变排队、重试或历史执行。密文值以 AES-256-GCM 保存且管理接口只返回元数据，Agent 仅凭有效 lease 按需领取到本次进程环境，明文不进入 assignment、日志或 spool。
 - 批次执行前预检一次返回参数/变量、环境密文、Runner capability/标签、Java/TestNG 工具链、权威 JAR 对象和资源限制的逐项 blocker；正式创建复用相同规则，调度、claim 和下载仍执行权威复核。
@@ -43,11 +44,12 @@ AutoForge 是一个面向自动化测试场景的用例工厂，用于统一管�
 - TestNG 解析单元测试、SQLite/PostgreSQL/本地对象/MinIO 集成测试和浏览器管理闭环测试；Agent 安全、日志/spool 与产物矩阵覆盖参数注入、越界 cwd、环境泄漏、失效凭据、资源/进程树清理、跨块、交错流、确认缺口、断线重传、重启、配额、脱敏、恶意路径、摘要冲突和对象故障恢复。
 - Go 1.26 Runner Agent 的版本信息、配置诊断、受控工作目录、无 Shell 命令执行、日志上限、超时与 Linux 进程组清理。
 - Agent 的有界 claim/退避/并发槽位、独立 lease 续租、重启 reconcile、权威测试/依赖 JAR 下载校验、离线工具链 capability，以及按 `methodName+JVM descriptor` 精确选择重载方法的 TestNG 完成上报。
-- Agent stdout/stderr/诊断流的 UTF-8 分块、双层秘密脱敏、有界磁盘 spool、连续确认水位和断线重传。
+- 项目级 CoTest Adapter 配置固化 Suite、Test、环境地址，以及上传或 HTTP(S) 链接登记的 JDK/完整 JAR 压缩包；Runner 按声明大小下载、校验 SHA-256、安全解压，再以所选 JDK 执行 `java -jar`。每个用例在独立进程和独立子优先 ClassLoader 中加载 JAR，主用例 JAR 固定处于 classpath 首位。
+- Agent stdout/stderr/诊断流的 UTF-8 分块、双层秘密脱敏、有界磁盘 spool、连续确认水位和断线重传；执行期间每 500 ms 尝试上传新增块，控制面先持久化，再由 Lite 进程内通道或 Full NATS 跨副本广播通过同源、短时票据 WebSocket 推送到执行详情。
 - 产物安全发现、SHA-256 声明和鉴权下载；Lite 经控制面流式写入本地对象目录，Full 使用 15 分钟单对象 MinIO 预签名目标，Agent 不持有长期凭据，finalize 前由控制面重新核对大小和 SHA-256。TestNG XML 以禁用 DTD/实体的有界流式解析器提取 suite/test/class/method、耗时和汇总，结果由 SQLite/PostgreSQL 持久化并在执行详情展示，原始 XML 保留为产物。
 - SQLite 持久任务和 Lite 嵌入式 worker；PostgreSQL transactional outbox、JetStream 显式确认和 Full 独立 worker。SQLite/JetStream 运行同一套至少一次投递契约测试，覆盖去重、延迟、租约恢复、死信和关闭排空。
 - 可重建的 Lite 内存缓存与 Full Redis 缓存适配器；缓存不作为业务事实来源。
-- GitHub Actions CI，以及四变体后端离线镜像、两架构 Java/TestNG 工具链和独立发布后 Gate E 检查流水线；每个后端镜像均内置 Linux `amd64`/`arm64` Agent，不再发布独立 Agent 资产。
+- GitHub Actions CI，以及四变体后端离线镜像和独立发布后 Gate E 检查流水线；每个后端镜像均内置 Linux `amd64`/`arm64` Agent 与 Adapter。Release 不再构建 `toolchain-amd64/arm64`，JDK 和测试依赖由项目上传或登记内网链接。
 
 平台数据盘提供分级容量告警；Runner spool、工作目录和单项上传有严格上限。普通文件系统无法为整个工作目录提供无瞬时窗口的总量隔离，生产部署仍须按文档使用专用文件系统/项目配额；Full 对象存储总容量由 MinIO/S3 部署侧硬配额负责。Full 的调度消息使用 PostgreSQL outbox 与 JetStream，Redis 只承载可重建缓存和限流语义。
 
@@ -308,6 +310,8 @@ autoforge/
 │   ├── web/                    # Next.js 页面、Route Handlers、Server Actions
 │   ├── worker/                 # Full 独立工作器；Lite 可由 Web 进程嵌入
 │   └── runner-agent/           # 执行机守护进程、命令执行、日志与产物采集
+├── adapters/
+│   └── cotest-testng/          # 自备 JDK/JAR 的独立 CoTest TestNG 执行适配器
 ├── packages/
 │   ├── domain/                 # 实体、值对象、状态机、领域错误
 │   ├── application/            # 用例编排和端口定义
@@ -354,7 +358,7 @@ pnpm start -- --data-dir=/var/lib/autoforge
 
 没有显式参数时，已存在的 `/var/lib/autoforge` 优先，否则使用当前目录的 `data`。默认配置为 Lite，可在没有 PostgreSQL、NATS、MinIO 或 Redis 的条件下独立启动。管理员通过 `/settings/platform` 管理监听地址、执行机可访问的 HTTP/HTTPS 地址、Lite/Full 模式、Full 连接信息、容量与调度阈值；秘密字段只写不回显。配置采用 revision 条件和原子替换，保存后需要在维护窗口重启 Web/worker。HTTP/IP 直连仅适用于可信内网，跨不可信网络应使用 HTTPS。
 
-Runner Agent 由主平台自动生成独立 JSON 配置并以 `--config /etc/autoforge-agent/config.json` 启动，不复用服务端数据库或基础设施凭据。自动安装支持已有 SSH、systemd 和基础系统命令的 Ubuntu/openSUSE；cgroup v2 可用时自动启用，缺失时使用降级隔离。服务默认使用专用非特权账号，管理员也可显式选择 root 模式；安装过程不会联网或调用系统包管理器。Java/TestNG 工具链需在执行机离线预置并写入 Agent 配置，可直接使用同一 Release 的架构匹配工具链资产。
+Runner Agent 由主平台自动生成独立 JSON 配置并以 `--config /etc/autoforge-agent/config.json` 启动，不复用服务端数据库或基础设施凭据。自动安装支持已有 SSH、Bash、systemd 和基础系统命令的 Ubuntu/openSUSE；cgroup v2 可用时自动启用，缺失时使用降级隔离。服务默认使用专用非特权账号，管理员也可显式选择 root 模式；安装过程不会联网或调用系统包管理器。JDK/TestNG 与业务依赖可由项目上传或登记 Runner 可访问的内网链接，也可使用执行机本地预置工具链作为后备。
 
 直连终端不使用 SSH 协议，也不要求执行机开放入站端口：Agent 使用自身身份主动建立 WebSocket，平台只中继当前浮窗的输入输出。配置、反向代理和安全边界见 [Runner 直连终端](./docs/operations/direct-terminal.md)。
 

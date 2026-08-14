@@ -1,0 +1,94 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { resolve } from "node:path";
+
+import { DEFAULT_PROJECT_ID } from "@autoforge/domain";
+import { afterEach, describe, expect, it } from "vitest";
+
+import { createSqliteDatabase } from "../src/database";
+import { SqliteProjectStructureRepository } from "../src/sqlite-project-structure";
+
+const temporaryDirectories: string[] = [];
+
+afterEach(async () => {
+  await Promise.all(
+    temporaryDirectories
+      .splice(0)
+      .map((directory) => rm(directory, { recursive: true, force: true })),
+  );
+});
+
+describe("SQLite project version structure", () => {
+  it("persists versions, ordered stages and project Adapter runtime configuration", async () => {
+    const directory = await mkdtemp(resolve(tmpdir(), "autoforge-project-structure-"));
+    temporaryDirectories.push(directory);
+    const handle = createSqliteDatabase({
+      databasePath: resolve(directory, "autoforge.db"),
+      migrationsFolder: resolve("packages/db/drizzle/sqlite"),
+    });
+    const repository = new SqliteProjectStructureRepository(handle);
+    const now = "2026-08-14T00:00:00.000Z";
+    try {
+      const version = await repository.createVersion({
+        id: "version-1",
+        projectId: DEFAULT_PROJECT_ID,
+        name: "2.0.0",
+        normalizedName: "2.0.0",
+        recordedAt: now,
+      });
+      const stage = await repository.createStage({
+        id: "stage-1",
+        projectId: DEFAULT_PROJECT_ID,
+        projectVersionId: version.id,
+        name: "系统测试",
+        normalizedName: "系统测试",
+        description: "内网环境",
+        recordedAt: now,
+      });
+      const jdk = await repository.createRuntimeAsset({
+        id: "jdk-1",
+        projectId: DEFAULT_PROJECT_ID,
+        kind: "jdk",
+        sourceType: "url",
+        fileName: "jdk.tar.gz",
+        url: "http://10.0.0.8/jdk.tar.gz",
+        sha256: "a".repeat(64),
+        sizeBytes: 1024,
+        archiveFormat: "tar.gz",
+        createdAt: now,
+      });
+      const configuration = await repository.updateAdapterConfiguration({
+        projectId: DEFAULT_PROJECT_ID,
+        suiteName: "suite",
+        testName: "test",
+        environmentAddress: "10.0.0.9",
+        jdkAssetId: jdk.id,
+        expectedRevision: 0,
+        updatedAt: now,
+      });
+
+      expect(stage.position).toBe(1);
+      expect(configuration).toMatchObject({
+        revision: 1,
+        suiteName: "suite",
+        jdkAsset: { id: jdk.id, sourceType: "url" },
+      });
+      await expect(repository.list(DEFAULT_PROJECT_ID)).resolves.toMatchObject({
+        versions: [{ id: version.id, stages: [{ id: stage.id }] }],
+        adapterConfiguration: { environmentAddress: "10.0.0.9" },
+      });
+      await expect(
+        repository.updateAdapterConfiguration({
+          projectId: DEFAULT_PROJECT_ID,
+          suiteName: "conflict",
+          testName: "test",
+          environmentAddress: "10.0.0.9",
+          expectedRevision: 0,
+          updatedAt: now,
+        }),
+      ).rejects.toMatchObject({ code: "PROJECT_ADAPTER_CONFIGURATION_REVISION_CONFLICT" });
+    } finally {
+      handle.close();
+    }
+  });
+});

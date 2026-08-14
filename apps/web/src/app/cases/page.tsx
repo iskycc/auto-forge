@@ -15,6 +15,8 @@ type CasesPageProps = {
     query?: string | string[];
     cursor?: string | string[];
     projectId?: string | string[];
+    projectVersionId?: string | string[];
+    testStageId?: string | string[];
   }>;
 };
 
@@ -28,7 +30,14 @@ export default async function CasesPage({ searchParams }: CasesPageProps) {
   const query = single(parameters.query)?.trim();
   const cursor = single(parameters.cursor);
   const requestedProjectId = single(parameters.projectId);
-  const projectId = requestedProjectId;
+  const requestedProjectVersionId = single(parameters.projectVersionId);
+  const requestedTestStageId = single(parameters.testStageId);
+  const services = await getPlatformServices();
+  const projects = await services.identityAccess.listProjects(identity).catch(() => []);
+  const accessibleProjects = projects.filter(
+    (project) => !projectIds || projectIds.includes(project.id),
+  );
+  const projectId = requestedProjectId ?? accessibleProjects[0]?.id;
   const effectiveProjectIds = requireAuthorizedPageProjectScope(identity, "case.read", projectId);
   const sourceManagementProjectIds = projectIdsForPermission(identity, "case_source.manage");
   const suiteManagementProjectIds = projectIdsForPermission(identity, "case_suite.manage");
@@ -37,16 +46,24 @@ export default async function CasesPage({ searchParams }: CasesPageProps) {
     (projectId
       ? sourceManagementProjectIds.includes(projectId)
       : sourceManagementProjectIds.length > 0);
-  const services = await getPlatformServices();
-  const [page, suites, projects] = await Promise.all([
+  const structure = projectId ? await services.projectStructures.list(projectId) : undefined;
+  const projectVersion =
+    structure?.versions.find((version) => version.id === requestedProjectVersionId) ??
+    structure?.versions[0];
+  const testStage =
+    projectVersion?.stages.find((stage) => stage.id === requestedTestStageId) ??
+    projectVersion?.stages[0];
+  const [page, suites] = await Promise.all([
     services.catalog.listCases({
       ...(effectiveProjectIds ? { projectIds: effectiveProjectIds } : {}),
+      ...(projectVersion ? { projectVersionId: projectVersion.id } : {}),
+      ...(testStage ? { testStageId: testStage.id } : {}),
+      scopedOnly: true,
       ...(query ? { query } : {}),
       ...(cursor ? { cursor } : {}),
       limit: 50,
     }),
     services.caseSuites.list(200, effectiveProjectIds),
-    services.identityAccess.listProjects(identity).catch(() => []),
   ]);
 
   return (
@@ -62,7 +79,11 @@ export default async function CasesPage({ searchParams }: CasesPageProps) {
             className="button button-primary button-large"
             href={
               projectId
-                ? `/cases/import?projectId=${encodeURIComponent(projectId)}`
+                ? `/cases/import?${new URLSearchParams({
+                    projectId,
+                    ...(projectVersion ? { projectVersionId: projectVersion.id } : {}),
+                    ...(testStage ? { testStageId: testStage.id } : {}),
+                  }).toString()}`
                 : "/cases/import"
             }
           >
@@ -75,6 +96,10 @@ export default async function CasesPage({ searchParams }: CasesPageProps) {
         <div className="table-toolbar">
           <form className="case-search" action="/cases" role="search">
             {projectId ? <input name="projectId" type="hidden" value={projectId} /> : null}
+            {projectVersion ? (
+              <input name="projectVersionId" type="hidden" value={projectVersion.id} />
+            ) : null}
+            {testStage ? <input name="testStageId" type="hidden" value={testStage.id} /> : null}
             <Search size={17} aria-hidden="true" />
             <Input
               name="query"
@@ -91,16 +116,38 @@ export default async function CasesPage({ searchParams }: CasesPageProps) {
             {query ? <input name="query" type="hidden" value={query} /> : null}
             <Select aria-label="项目筛选" defaultValue={projectId ?? ""} name="projectId">
               <option value="">全部授权项目</option>
-              {projects
-                .filter((project) => !projectIds || projectIds.includes(project.id))
-                .map((project) => (
-                  <option key={project.id} value={project.id}>
-                    {project.name}
-                  </option>
-                ))}
+              {accessibleProjects.map((project) => (
+                <option key={project.id} value={project.id}>
+                  {project.name}
+                </option>
+              ))}
             </Select>
             <Button className="button button-secondary" type="submit">
               切换项目
+            </Button>
+          </form>
+          <form action="/cases" method="get">
+            {projectId ? <input name="projectId" type="hidden" value={projectId} /> : null}
+            <Select
+              aria-label="版本筛选"
+              defaultValue={projectVersion?.id ?? ""}
+              name="projectVersionId"
+            >
+              {structure?.versions.map((version) => (
+                <option key={version.id} value={version.id}>
+                  {version.name}
+                </option>
+              ))}
+            </Select>
+            <Select aria-label="测试阶段筛选" defaultValue={testStage?.id ?? ""} name="testStageId">
+              {projectVersion?.stages.map((stage) => (
+                <option key={stage.id} value={stage.id}>
+                  {stage.name}
+                </option>
+              ))}
+            </Select>
+            <Button className="button button-secondary" type="submit">
+              切换层级
             </Button>
           </form>
           <span className="table-count">本页 {page.items.length} 个测试类</span>
@@ -139,7 +186,13 @@ export default async function CasesPage({ searchParams }: CasesPageProps) {
           <div className="pagination">
             <Link
               className="button button-secondary"
-              href={`/cases?${new URLSearchParams({ ...(query ? { query } : {}), ...(projectId ? { projectId } : {}), cursor: page.nextCursor }).toString()}`}
+              href={`/cases?${new URLSearchParams({
+                ...(query ? { query } : {}),
+                ...(projectId ? { projectId } : {}),
+                ...(projectVersion ? { projectVersionId: projectVersion.id } : {}),
+                ...(testStage ? { testStageId: testStage.id } : {}),
+                cursor: page.nextCursor,
+              }).toString()}`}
             >
               下一页
             </Link>

@@ -37,6 +37,7 @@ export async function POST(request: Request): Promise<NextResponse> {
         architecture: result.architecture,
         agentVersion: result.agentVersion,
         runAsRoot: input.runAsRoot,
+        installationMode: input.installationMode,
       },
     });
     return NextResponse.json(result, { status: 201 });

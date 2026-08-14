@@ -26,6 +26,7 @@ const REMOTE_CONFIGURATION_PATH = "/etc/autoforge-agent/config.json";
 const REMOTE_CA_PATH = "/etc/autoforge-agent/control-plane-ca.pem";
 
 type HostConnection = InstallRunnerAgentInput["connection"];
+type InstallationMode = InstallRunnerAgentInput["installationMode"];
 
 type ConnectedHost = {
   client: Client;
@@ -41,13 +42,20 @@ type InstallerDependencies = {
 export class RunnerAgentInstaller {
   constructor(private readonly dependencies: InstallerDependencies) {}
 
-  async probe(connection: HostConnection): Promise<RunnerHostProbeResult> {
-    return this.inspectHost(connection);
+  async probe(
+    connection: HostConnection,
+    installationMode: InstallationMode = "auto",
+  ): Promise<RunnerHostProbeResult> {
+    return this.inspectHost(connection, undefined, installationMode);
   }
 
   async install(input: InstallRunnerAgentInput): Promise<RunnerAgentInstallationResult> {
     const controlPlaneUrl = normalizeRunnerControlPlaneUrl(this.dependencies.controlPlaneUrl);
-    const probe = await this.inspectHost(input.connection, input.expectedHostKeySha256);
+    const probe = await this.inspectHost(
+      input.connection,
+      input.expectedHostKeySha256,
+      input.installationMode,
+    );
     const resources = await this.dependencies.resources.read(probe.architecture);
     const temporaryDirectory = `/tmp/autoforge-install-${randomUUID()}`;
     const connected = await connectHost(input.connection, input.expectedHostKeySha256);
@@ -72,6 +80,8 @@ export class RunnerAgentInstaller {
           probe.privilegeMode,
           Boolean(input.caCertificatePem),
           input.runAsRoot,
+          probe.bashPath,
+          probe.operatingSystemId,
         );
         await executeRemoteCommand(
           connected.client,
@@ -100,12 +110,16 @@ export class RunnerAgentInstaller {
   }
 
   async rollback(input: RollbackRunnerAgentInput): Promise<RunnerAgentRollbackResult> {
-    const probe = await this.inspectHost(input.connection, input.expectedHostKeySha256);
+    const probe = await this.inspectHost(
+      input.connection,
+      input.expectedHostKeySha256,
+      input.installationMode,
+    );
     const connected = await connectHost(input.connection, input.expectedHostKeySha256);
     try {
       const result = await executeRemoteCommand(
         connected.client,
-        rollbackCommand(probe.privilegeMode),
+        rollbackCommand(probe.privilegeMode, probe.bashPath),
         probe.privilegeMode === "sudo" ? `${input.connection.password}\n` : undefined,
         INSTALL_COMMAND_TIMEOUT_MS,
       );
@@ -124,6 +138,7 @@ export class RunnerAgentInstaller {
   private async inspectHost(
     connection: HostConnection,
     expectedHostKeySha256?: string,
+    installationMode: InstallationMode = "auto",
   ): Promise<RunnerHostProbeResult> {
     const connected = await connectHost(connection, expectedHostKeySha256);
     try {
@@ -134,7 +149,7 @@ export class RunnerAgentInstaller {
         REMOTE_COMMAND_TIMEOUT_MS,
         runnerProbeCommandError,
       );
-      return parseHostProbe(output.stdout, connected.hostKeySha256);
+      return parseHostProbe(output.stdout, connected.hostKeySha256, installationMode);
     } finally {
       connected.client.end();
     }
@@ -151,14 +166,20 @@ if ! command -v systemctl >/dev/null 2>&1; then
   printf "AUTOFORGE_PROBE_ERROR=SYSTEMD_REQUIRED\\n" >&2
   exit 21
 fi
+if ! bash_path="$(command -v bash)" || ! test -x "\${bash_path}"; then
+  printf "AUTOFORGE_PROBE_ERROR=BASH_REQUIRED\\n" >&2
+  exit 22
+fi
 if test -r /sys/fs/cgroup/cgroup.controllers; then
   printf "CGROUP_V2=true\\n"
 else
   printf "CGROUP_V2=false\\n"
 fi
 printf "OS_ID=%s\\n" "\${ID:-}"
+printf "OS_ID_LIKE=%s\\n" "\${ID_LIKE:-}"
 printf "OS_NAME=%s\\n" "\${PRETTY_NAME:-\${NAME:-unknown}}"
 printf "ARCH=%s\\n" "$(uname -m)"
+printf "BASH_PATH=%s\\n" "\${bash_path}"
 if [ "$(id -u)" -eq 0 ]; then
   printf "PRIVILEGE=root\\n"
 else
@@ -173,7 +194,11 @@ else
   printf "PRIVILEGE=sudo\\n"
 fi`;
 
-function parseHostProbe(output: string, hostKeySha256: string): RunnerHostProbeResult {
+function parseHostProbe(
+  output: string,
+  hostKeySha256: string,
+  installationMode: InstallationMode,
+): RunnerHostProbeResult {
   const fields = new Map(
     output
       .split("\n")
@@ -184,19 +209,19 @@ function parseHostProbe(output: string, hostKeySha256: string): RunnerHostProbeR
         return separator < 1 ? [line, ""] : [line.slice(0, separator), line.slice(separator + 1)];
       }),
   );
-  const operatingSystemId = fields.get("OS_ID");
-  if (
-    operatingSystemId !== "ubuntu" &&
-    operatingSystemId !== "opensuse" &&
-    operatingSystemId !== "opensuse-leap" &&
-    operatingSystemId !== "opensuse-tumbleweed"
-  ) {
-    throw new DomainError(
-      "RUNNER_HOST_UNSUPPORTED",
-      `仅支持 Ubuntu 与 openSUSE，目标系统为 ${operatingSystemId || "未知"}。`,
-    );
-  }
+  const detectedOperatingSystemId = fields.get("OS_ID")?.toLowerCase() || "unknown";
+  const operatingSystemName = fields.get("OS_NAME")?.slice(0, 128) || detectedOperatingSystemId;
+  const operatingSystemId = resolveOperatingSystemId({
+    detectedOperatingSystemId,
+    operatingSystemIdLike: fields.get("OS_ID_LIKE")?.toLowerCase() || "",
+    operatingSystemName,
+    installationMode,
+  });
   const architecture = normalizeArchitecture(fields.get("ARCH"));
+  const bashPath = fields.get("BASH_PATH");
+  if (!bashPath || !/^\/[A-Za-z0-9/._-]+$/.test(bashPath)) {
+    throw new DomainError("RUNNER_HOST_UNSUPPORTED", "执行机未返回可用的 Bash 绝对路径。");
+  }
   const privilege = fields.get("PRIVILEGE");
   if (privilege !== "root" && privilege !== "sudo") {
     throw new DomainError(
@@ -207,12 +232,44 @@ function parseHostProbe(output: string, hostKeySha256: string): RunnerHostProbeR
   return {
     hostKeySha256,
     operatingSystemId,
-    operatingSystemName: fields.get("OS_NAME")?.slice(0, 128) || operatingSystemId,
+    detectedOperatingSystemId,
+    operatingSystemName,
     architecture,
     initSystem: "systemd",
     privilegeMode: privilege,
     cgroupV2Available: fields.get("CGROUP_V2") === "true",
+    bashPath,
+    forcedInstallationMode: installationMode !== "auto",
   };
+}
+
+type SupportedOperatingSystem = RunnerHostProbeResult["operatingSystemId"];
+
+function resolveOperatingSystemId(input: {
+  detectedOperatingSystemId: string;
+  operatingSystemIdLike: string;
+  operatingSystemName: string;
+  installationMode: InstallationMode;
+}): SupportedOperatingSystem {
+  if (input.installationMode !== "auto") return input.installationMode;
+  if (isSupportedOperatingSystem(input.detectedOperatingSystemId)) {
+    return input.detectedOperatingSystemId;
+  }
+  const openSuseEvidence =
+    `${input.detectedOperatingSystemId} ${input.operatingSystemIdLike} ${input.operatingSystemName}`.toLowerCase();
+  if (openSuseEvidence.includes("opensuse")) {
+    if (openSuseEvidence.includes("tumbleweed")) return "opensuse-tumbleweed";
+    if (openSuseEvidence.includes("leap")) return "opensuse-leap";
+    return "opensuse";
+  }
+  throw new DomainError(
+    "RUNNER_HOST_UNSUPPORTED",
+    `无法自动确认系统 ${input.detectedOperatingSystemId}；请核验主机后手动选择 Ubuntu 或 openSUSE 强制安装模式。`,
+  );
+}
+
+function isSupportedOperatingSystem(value: string): value is SupportedOperatingSystem {
+  return ["ubuntu", "opensuse", "opensuse-leap", "opensuse-tumbleweed"].includes(value);
 }
 
 function normalizeArchitecture(value: string | undefined): AgentArchitecture {
@@ -442,6 +499,10 @@ function runnerProbeCommandError(result: { stdout: string; stderr: string }): Do
       code: "RUNNER_HOST_UNSUPPORTED",
       message: "执行机未提供 systemd/systemctl，当前自动安装仅支持 systemd 主机。",
     },
+    BASH_REQUIRED: {
+      code: "RUNNER_HOST_UNSUPPORTED",
+      message: "执行机未安装可执行的 Bash；Runner 安装与管理员终端默认要求 Bash。",
+    },
     CGROUP_V2_REQUIRED: {
       code: "RUNNER_HOST_UNSUPPORTED",
       message: "执行机探测脚本报告 cgroup v2 不可用；请升级主平台后使用降级隔离模式。",
@@ -577,10 +638,11 @@ function installationFiles(input: {
           : {},
         terminal: {
           enabled: input.input.terminalEnabled,
-          shell: "/bin/sh",
+          shell: input.probe.bashPath,
           maximumSessions: 1,
           maximumDuration: "1h",
         },
+        adapter: { jarPath: "/opt/autoforge/lib/cotest-testng-adapter.jar" },
       },
       null,
       2,
@@ -597,6 +659,11 @@ function installationFiles(input: {
       path: `${input.temporaryDirectory}/install.sh`,
       content: input.resources.installer,
       mode: 0o700,
+    },
+    {
+      path: `${input.temporaryDirectory}/cotest-testng-adapter.jar`,
+      content: input.resources.adapter,
+      mode: 0o600,
     },
     {
       path: `${input.temporaryDirectory}/config.json`,
@@ -624,21 +691,25 @@ function installationCommand(
   privilegeMode: "root" | "sudo",
   includeCaCertificate: boolean,
   runAsRoot: boolean,
+  bashPath: string,
+  operatingSystemId: RunnerHostProbeResult["operatingSystemId"],
 ): string {
   const argumentsList = [
     `${directory}/install.sh`,
     `${directory}/autoforge-agent`,
     `${directory}/config.json`,
     `${directory}/autoforge-agent.service`,
+    `${directory}/cotest-testng-adapter.jar`,
     runAsRoot ? "root" : "autoforge-agent",
-    ...(includeCaCertificate ? [`${directory}/control-plane-ca.pem`] : []),
+    includeCaCertificate ? `${directory}/control-plane-ca.pem` : "",
+    operatingSystemId,
   ].map(shellQuote);
-  const command = `/bin/sh ${argumentsList.join(" ")}`;
+  const command = `${shellQuote(bashPath)} ${argumentsList.join(" ")}`;
   return privilegeMode === "sudo" ? `sudo -S -k -p '' ${command}` : command;
 }
 
-function rollbackCommand(privilegeMode: "root" | "sudo"): string {
-  const command = `/bin/sh -c ${shellQuote(agentRollbackScript)}`;
+function rollbackCommand(privilegeMode: "root" | "sudo", bashPath: string): string {
+  const command = `${shellQuote(bashPath)} -c ${shellQuote(agentRollbackScript)}`;
   return privilegeMode === "sudo" ? `sudo -S -k -p '' ${command}` : command;
 }
 
@@ -658,12 +729,13 @@ function parseRolledBackVersion(output: string): string {
 
 const agentRollbackScript = `set -eu
 installed_binary=/opt/autoforge/bin/autoforge-agent
+installed_adapter=/opt/autoforge/lib/cotest-testng-adapter.jar
 installed_configuration=/etc/autoforge-agent/config.json
 installed_service_unit=/etc/systemd/system/autoforge-agent.service
 backup_suffix=.autoforge-previous
 rollback_suffix=.autoforge-rollback-current
 
-for target in "$installed_binary" "$installed_configuration" "$installed_service_unit"; do
+for target in "$installed_binary" "$installed_adapter" "$installed_configuration" "$installed_service_unit"; do
   if [ ! -f "$target$backup_suffix" ]; then
     echo "No complete previous Agent installation is available for rollback." >&2
     exit 31
@@ -671,7 +743,7 @@ for target in "$installed_binary" "$installed_configuration" "$installed_service
 done
 
 restore_current() {
-  for target in "$installed_binary" "$installed_configuration" "$installed_service_unit"; do
+  for target in "$installed_binary" "$installed_adapter" "$installed_configuration" "$installed_service_unit"; do
     failed_candidate="$target$backup_suffix"
     mv -f "$target" "$failed_candidate"
     mv -f "$target$rollback_suffix" "$target"
@@ -681,7 +753,7 @@ restore_current() {
 }
 
 systemctl stop autoforge-agent.service
-for target in "$installed_binary" "$installed_configuration" "$installed_service_unit"; do
+for target in "$installed_binary" "$installed_adapter" "$installed_configuration" "$installed_service_unit"; do
   rm -f "$target$rollback_suffix"
   mv "$target" "$target$rollback_suffix"
   mv "$target$backup_suffix" "$target"
@@ -693,7 +765,7 @@ if ! systemctl daemon-reload ||
   restore_current
   exit 32
 fi
-for target in "$installed_binary" "$installed_configuration" "$installed_service_unit"; do
+for target in "$installed_binary" "$installed_adapter" "$installed_configuration" "$installed_service_unit"; do
   mv -f "$target$rollback_suffix" "$target$backup_suffix"
 done
 version_json="$($installed_binary version)"
@@ -718,6 +790,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 User=${serviceUser}
+WorkingDirectory=/var/lib/autoforge-agent
 ExecStart=/opt/autoforge/bin/autoforge-agent start --config ${REMOTE_CONFIGURATION_PATH}
 Restart=on-failure
 RestartSec=5s

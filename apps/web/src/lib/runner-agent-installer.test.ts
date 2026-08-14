@@ -64,13 +64,44 @@ describe("RunnerAgentInstaller SSH probe", () => {
     const server = await startProbeServer({
       authentication: "password",
       commandOutput:
-        "CGROUP_V2=false\nOS_ID=ubuntu\nOS_NAME=Ubuntu 24.04 LTS\nARCH=x86_64\nPRIVILEGE=root\n",
+        "CGROUP_V2=false\nOS_ID=ubuntu\nOS_ID_LIKE=debian\nOS_NAME=Ubuntu 24.04 LTS\nARCH=x86_64\nBASH_PATH=/bin/bash\nPRIVILEGE=root\n",
     });
     const address = server.address() as AddressInfo;
 
     await expect(installer().probe(connection(address.port))).resolves.toMatchObject({
       privilegeMode: "root",
       cgroupV2Available: false,
+    });
+  });
+
+  it("recognizes openSUSE evidence when os-release reports sles", async () => {
+    const server = await startProbeServer({
+      authentication: "password",
+      commandOutput:
+        "CGROUP_V2=true\nOS_ID=sles\nOS_ID_LIKE=suse\nOS_NAME=openSUSE Leap 15.6\nARCH=x86_64\nBASH_PATH=/usr/bin/bash\nPRIVILEGE=root\n",
+    });
+    const address = server.address() as AddressInfo;
+
+    await expect(installer().probe(connection(address.port))).resolves.toMatchObject({
+      operatingSystemId: "opensuse-leap",
+      detectedOperatingSystemId: "sles",
+      forcedInstallationMode: false,
+      bashPath: "/usr/bin/bash",
+    });
+  });
+
+  it("allows an explicit mode when automatic system detection is unsupported", async () => {
+    const server = await startProbeServer({
+      authentication: "password",
+      commandOutput:
+        "CGROUP_V2=true\nOS_ID=sles\nOS_NAME=SUSE Linux Enterprise\nARCH=x86_64\nBASH_PATH=/bin/bash\nPRIVILEGE=root\n",
+    });
+    const address = server.address() as AddressInfo;
+
+    await expect(installer().probe(connection(address.port), "opensuse")).resolves.toMatchObject({
+      operatingSystemId: "opensuse",
+      detectedOperatingSystemId: "sles",
+      forcedInstallationMode: true,
     });
   });
 
@@ -89,7 +120,11 @@ describe("RunnerAgentInstaller SSH probe", () => {
     const probe = await target.probe(host);
 
     await expect(
-      target.rollback({ connection: host, expectedHostKeySha256: probe.hostKeySha256 }),
+      target.rollback({
+        connection: host,
+        expectedHostKeySha256: probe.hostKeySha256,
+        installationMode: "auto",
+      }),
     ).resolves.toMatchObject({ rolledBack: true, agentVersion: "0.3.3" });
   });
 });
@@ -110,6 +145,9 @@ describe("Runner Agent installation policy", () => {
   it("can render a root-owned Agent service without changing the default", () => {
     expect(renderAgentSystemdServiceUnit(true)).toContain("\nUser=root\n");
     expect(renderAgentSystemdServiceUnit(false)).toContain("\nUser=autoforge-agent\n");
+    expect(renderAgentSystemdServiceUnit(false)).toContain(
+      "\nWorkingDirectory=/var/lib/autoforge-agent\n",
+    );
   });
 });
 
@@ -122,7 +160,7 @@ type ProbeServerOptions = {
 };
 
 const probeOutput =
-  "CGROUP_V2=true\nOS_ID=ubuntu\nOS_NAME=Ubuntu 24.04 LTS\nARCH=x86_64\nPRIVILEGE=sudo\n";
+  "CGROUP_V2=true\nOS_ID=ubuntu\nOS_ID_LIKE=debian\nOS_NAME=Ubuntu 24.04 LTS\nARCH=x86_64\nBASH_PATH=/bin/bash\nPRIVILEGE=sudo\n";
 
 async function startProbeServer(options: ProbeServerOptions): Promise<Server> {
   let commandInvocation = 0;

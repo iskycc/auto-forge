@@ -182,6 +182,9 @@ export class SqliteCaseSuiteRepository implements CaseSuiteRepository {
         {
           id: row.id,
           projectId: row.projectId,
+          ...(row.projectVersionId ? { projectVersionId: row.projectVersionId } : {}),
+          ...(row.testStageId ? { testStageId: row.testStageId } : {}),
+          directoryPath: row.directoryPath,
           sourceId: row.sourceId,
           className: row.className,
           packageName: row.packageName,

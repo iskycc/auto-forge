@@ -15,6 +15,7 @@ import {
   JobWorker,
   PublicPlatformStatisticsService,
   PlatformOperationsService,
+  ProjectStructureService,
   RunBatchSchedulingService,
   RunnerControlService,
   type CaseCatalogRepository,
@@ -30,6 +31,7 @@ import {
   type RunnerRepository,
   type PlatformStatisticsRepository,
   type PlatformOperationsRepository,
+  type ProjectStructureRepository,
 } from "@autoforge/application";
 import { MemoryCache } from "@autoforge/cache/memory";
 import {
@@ -44,6 +46,7 @@ import {
   SqliteRunnerRepository,
   SqlitePlatformStatisticsRepository,
   SqlitePlatformOperationsRepository,
+  SqliteProjectStructureRepository,
 } from "@autoforge/db/sqlite";
 import { LocalObjectStore } from "@autoforge/object-store/local";
 import { SqliteJobQueue } from "@autoforge/queue/sqlite";
@@ -84,6 +87,7 @@ async function createPlatformServices() {
   let cache: CachePort;
   let statisticsRepository: PlatformStatisticsRepository;
   let operationsRepository: PlatformOperationsRepository;
+  let projectStructuresRepository: ProjectStructureRepository;
   let closeDatabase: () => Promise<void>;
   let runnerRequestLimiter: RequestLimiter = new MemoryRequestLimiter();
   let infrastructure: RuntimeInfrastructure | undefined;
@@ -105,6 +109,7 @@ async function createPlatformServices() {
     cache = new MemoryCache();
     statisticsRepository = new SqlitePlatformStatisticsRepository(database);
     operationsRepository = new SqlitePlatformOperationsRepository(database);
+    projectStructuresRepository = new SqliteProjectStructureRepository(database);
     closeDatabase = async () => database.close();
   } else {
     const [
@@ -120,6 +125,7 @@ async function createPlatformServices() {
         PostgresRunnerRepository,
         PostgresPlatformStatisticsRepository,
         PostgresPlatformOperationsRepository,
+        PostgresProjectStructureRepository,
       },
       { MinioObjectStore },
       { JetStreamJobQueue },
@@ -198,6 +204,7 @@ async function createPlatformServices() {
     objectStore = new MinioObjectStore(config.minio);
     statisticsRepository = new PostgresPlatformStatisticsRepository(database);
     operationsRepository = new PostgresPlatformOperationsRepository(database);
+    projectStructuresRepository = new PostgresProjectStructureRepository(database);
   }
   const discovery = new TestNgJarDiscovery({
     maxJarBytes: config.maxJarBytes,
@@ -215,6 +222,12 @@ async function createPlatformServices() {
   const caseSources = new CaseSourceService(catalog, objectStore, clock, ids, jobQueue, discovery);
   const caseSuites = new CaseSuiteService(suites, catalog, clock, ids);
   const caseDefinitions = new CaseDefinitionService(catalog, clock, ids);
+  const projectStructures = new ProjectStructureService(
+    projectStructuresRepository,
+    objectStore,
+    clock,
+    ids,
+  );
   const runnerCredentials = {
     issue: () => randomBytes(32).toString("base64url"),
     issueBootstrapToken: () => issueRunnerBootstrapToken(config.masterKey, clock.now()),
@@ -404,6 +417,7 @@ async function createPlatformServices() {
     suites,
     caseSuites,
     caseDefinitions,
+    projectStructures,
     runners,
     identities,
     executions,

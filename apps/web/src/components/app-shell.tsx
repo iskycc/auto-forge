@@ -4,7 +4,6 @@ import {
   BarChart3,
   BookOpenText,
   Bot,
-  CalendarClock,
   CircleHelp,
   Home,
   PlayCircle,
@@ -29,6 +28,10 @@ type NavigationItem = {
   href: string;
   icon: typeof Home;
   permission?: Permission;
+  anyPermissions?: Permission[];
+  preferredPermissions?: Permission[];
+  fallbackHref?: string;
+  activePrefixes?: string[];
 };
 
 const navigation: NavigationItem[] = [
@@ -36,16 +39,18 @@ const navigation: NavigationItem[] = [
   { label: "用例库", href: "/cases", icon: BookOpenText, permission: "case.read" },
   { label: "用例任务", href: "/case-suites", icon: Layers3, permission: "case_suite.read" },
   {
-    label: "运维计划",
+    label: "运维与审计",
     href: "/settings/automation",
-    icon: CalendarClock,
-    permission: "case_suite.read",
+    fallbackHref: "/audit",
+    icon: ShieldCheck,
+    anyPermissions: ["case_suite.read", "ldap.read", "audit.read"],
+    preferredPermissions: ["case_suite.read", "ldap.read"],
+    activePrefixes: ["/settings/automation", "/audit"],
   },
   { label: "文件来源", href: "/objects", icon: FolderOpen, permission: "case_source.read" },
   { label: "用例批跑", href: "/run-batches", icon: PlayCircle, permission: "run.read" },
   { label: "执行机", href: "/runners", icon: Server, permission: "runner.read" },
   { label: "洞察", href: "/insights", icon: BarChart3, permission: "run.read" },
-  { label: "安全审计", href: "/audit", icon: ShieldCheck, permission: "audit.read" },
 ];
 
 const managementPermissions: Permission[] = [
@@ -59,9 +64,33 @@ const managementPermissions: Permission[] = [
   "api_token.manage",
 ];
 
-function isActive(pathname: string, href: string): boolean {
-  if (href === "/") return pathname === href;
-  return pathname === href || pathname.startsWith(`${href}/`);
+function isActive(pathname: string, item: NavigationItem): boolean {
+  const prefixes = item.activePrefixes ?? [item.href];
+  return isActiveForPrefixes(pathname, prefixes);
+}
+
+function isActiveForPrefixes(pathname: string, prefixes: string[]): boolean {
+  return prefixes.some((prefix) =>
+    prefix === "/" ? pathname === prefix : pathname === prefix || pathname.startsWith(`${prefix}/`),
+  );
+}
+
+function isManagementActive(pathname: string): boolean {
+  return (
+    isActiveForPrefixes(pathname, ["/settings"]) &&
+    !isActiveForPrefixes(pathname, ["/settings/automation"])
+  );
+}
+
+function navigationHref(item: NavigationItem, granted: ReadonlySet<Permission>): string {
+  if (
+    item.fallbackHref &&
+    item.preferredPermissions &&
+    !item.preferredPermissions.some((permission) => granted.has(permission))
+  ) {
+    return item.fallbackHref;
+  }
+  return item.href;
 }
 
 export function AppShell({
@@ -93,7 +122,12 @@ export function AppShell({
           : "/settings/access";
   const visibleNavigation = forcePasswordChange
     ? []
-    : navigation.filter((item) => !item.permission || granted.has(item.permission));
+    : navigation.filter(
+        (item) =>
+          (!item.permission || granted.has(item.permission)) &&
+          (!item.anyPermissions ||
+            item.anyPermissions.some((permission) => granted.has(permission))),
+      );
 
   return (
     <div className="app-shell">
@@ -108,10 +142,11 @@ export function AppShell({
         <nav className="primary-nav" aria-label="主导航">
           {visibleNavigation.map((item) => {
             const Icon = item.icon;
+            const href = navigationHref(item, granted);
             return (
               <Link
-                className={`nav-item ${isActive(pathname, item.href) ? "nav-item-active" : ""}`}
-                href={item.href}
+                className={`nav-item ${isActive(pathname, item) ? "nav-item-active" : ""}`}
+                href={href}
                 key={item.href}
               >
                 <Icon size={19} aria-hidden="true" />
@@ -122,7 +157,7 @@ export function AppShell({
           {!forcePasswordChange &&
           managementPermissions.some((permission) => granted.has(permission)) ? (
             <Link
-              className={`nav-item ${isActive(pathname, "/settings") ? "nav-item-active" : ""}`}
+              className={`nav-item ${isManagementActive(pathname) ? "nav-item-active" : ""}`}
               href={managementHref}
             >
               <Settings size={19} aria-hidden="true" />

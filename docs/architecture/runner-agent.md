@@ -245,31 +245,32 @@ AUTOFORGE_AGENT_DATA_DIR/
 
 ## 配置草案
 
-| 变量                                    | 说明                                |
-| --------------------------------------- | ----------------------------------- |
-| `AUTOFORGE_SERVER_URL`                  | 控制面基础地址，必须显式配置        |
-| `AUTOFORGE_AGENT_DATA_DIR`              | Agent 身份、spool 和工作目录根路径  |
-| `AUTOFORGE_AGENT_NAME`                  | 用户可识别的执行机名称              |
-| `AUTOFORGE_AGENT_LABELS`                | 调度标签，格式在契约中定义          |
-| `AUTOFORGE_AGENT_MAX_CONCURRENCY`       | 本机最大并发，必须有安全上限        |
-| `AUTOFORGE_AGENT_SPOOL_MAX_BYTES`       | 日志、结果和上传文件共享字节上限    |
-| `AUTOFORGE_AGENT_SPOOL_RETENTION`       | 无未决 attempt 的孤立日志保留期     |
-| `AUTOFORGE_AGENT_LOG_UPLOAD_BATCH`      | 单次日志上传块数，范围 1–256        |
-| `AUTOFORGE_AGENT_BOOTSTRAP_TOKEN`       | 仅首次注册使用，成功后移除          |
-| `AUTOFORGE_AGENT_CA_FILE`               | 私有 CA 文件，支持离线内网 TLS      |
-| `AUTOFORGE_AGENT_TERMINAL_ENABLED`      | 显式开启交互终端；默认关闭          |
-| `AUTOFORGE_AGENT_TERMINAL_SHELL`        | 固定 Shell 绝对路径；默认 `/bin/sh` |
-| `AUTOFORGE_AGENT_TERMINAL_MAX_SESSIONS` | 并发终端上限，范围 1–4              |
-| `AUTOFORGE_AGENT_TERMINAL_MAX_DURATION` | 单会话时限，范围 1m–8h              |
-| `AUTOFORGE_AGENT_LOG_LEVEL`             | Agent 自身日志级别，不影响用例日志  |
+| 变量                                    | 说明                                  |
+| --------------------------------------- | ------------------------------------- |
+| `AUTOFORGE_SERVER_URL`                  | 控制面基础地址，必须显式配置          |
+| `AUTOFORGE_AGENT_DATA_DIR`              | Agent 身份、spool 和工作目录根路径    |
+| `AUTOFORGE_AGENT_NAME`                  | 用户可识别的执行机名称                |
+| `AUTOFORGE_AGENT_LABELS`                | 调度标签，格式在契约中定义            |
+| `AUTOFORGE_AGENT_MAX_CONCURRENCY`       | 本机最大并发，必须有安全上限          |
+| `AUTOFORGE_AGENT_SPOOL_MAX_BYTES`       | 日志、结果和上传文件共享字节上限      |
+| `AUTOFORGE_AGENT_SPOOL_RETENTION`       | 无未决 attempt 的孤立日志保留期       |
+| `AUTOFORGE_AGENT_LOG_UPLOAD_BATCH`      | 单次日志上传块数，范围 1–256          |
+| `AUTOFORGE_AGENT_BOOTSTRAP_TOKEN`       | 仅首次注册使用，成功后移除            |
+| `AUTOFORGE_AGENT_CA_FILE`               | 私有 CA 文件，支持离线内网 TLS        |
+| `AUTOFORGE_AGENT_ADAPTER_JAR`           | 内置 CoTest Adapter JAR 绝对路径      |
+| `AUTOFORGE_AGENT_TERMINAL_ENABLED`      | 显式开启交互终端；默认关闭            |
+| `AUTOFORGE_AGENT_TERMINAL_SHELL`        | 固定 Shell 绝对路径；默认 `/bin/bash` |
+| `AUTOFORGE_AGENT_TERMINAL_MAX_SESSIONS` | 并发终端上限，范围 1–4                |
+| `AUTOFORGE_AGENT_TERMINAL_MAX_DURATION` | 单会话时限，范围 1m–8h                |
+| `AUTOFORGE_AGENT_LOG_LEVEL`             | Agent 自身日志级别，不影响用例日志    |
 
 Agent 配置同样集中解析和校验，秘密不得出现在命令行参数、进程列表或日志中。
 
 ## 离线交付
 
 - Runner Agent 与服务端发布版本建立明确兼容矩阵。
-- GitHub Release 为 `amd64`、`arm64`、`amd64-musl`、`arm64-musl` 提供独立命名的裸二进制、校验和与 SPDX JSON SBOM。
-- 四种 Agent 资产均使用 `CGO_ENABLED=0` 静态编译，不依赖目标机 glibc 或 musl；variant 仍写入构建信息以匹配统一发布矩阵。
+- GitHub Release 的四种后端镜像均内置 `amd64`、`arm64` Agent、安装脚本和 CoTest Adapter，不提供独立 Agent 或工具链 Release 资产。
+- 两种 Agent 二进制均使用 `CGO_ENABLED=0` 静态编译，不依赖目标机 glibc 或 musl。
 - 安装包包含运行所需代码与依赖，不在首次运行时下载浏览器、驱动或 npm 包。
 - 用例确需浏览器/SDK 时，由管理员制作版本化 Runner 镜像或预置工具链，并通过 capability 上报。
 - Agent 默认不自动更新；离线升级由管理员验证校验和后执行，失败可回滚上一版本。

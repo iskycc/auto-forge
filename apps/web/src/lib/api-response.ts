@@ -10,20 +10,59 @@ export type JarUpload = {
   content: Uint8Array;
 };
 
+type UploadPolicy = {
+  missingCode: string;
+  missingMessage: string;
+  emptyCode: string;
+  emptyMessage: string;
+  tooLarge(maximumBytes: number): DomainError;
+};
+
 const MULTIPART_ENCODING_ALLOWANCE_BYTES = 64 * 1_024;
 
 export async function readJarUpload(request: Request, maxJarBytes: number): Promise<JarUpload> {
-  rejectOversizedJarRequest(request, maxJarBytes);
-  const formData = await parseMultipartFormData(request, maxJarBytes);
+  return readBoundedUpload(request, maxJarBytes, {
+    missingCode: "FILE_REQUIRED",
+    missingMessage: "请选择要上传的 JAR 文件。",
+    emptyCode: "EMPTY_JAR",
+    emptyMessage: "JAR 文件为空。",
+    tooLarge: jarTooLargeError,
+  });
+}
+
+export async function readRuntimeArchiveUpload(
+  request: Request,
+  maximumBytes: number,
+): Promise<JarUpload> {
+  return readBoundedUpload(request, maximumBytes, {
+    missingCode: "RUNTIME_ASSET_FILE_REQUIRED",
+    missingMessage: "请选择要上传的运行时压缩包。",
+    emptyCode: "RUNTIME_ASSET_EMPTY",
+    emptyMessage: "运行时压缩包为空。",
+    tooLarge: (limit) =>
+      new DomainError(
+        "RUNTIME_ASSET_TOO_LARGE",
+        `运行时压缩包超过 ${Math.floor(limit / 1_048_576)} MiB 的上传限制。`,
+      ),
+  });
+}
+
+async function readBoundedUpload(
+  request: Request,
+  maximumBytes: number,
+  policy: UploadPolicy,
+): Promise<JarUpload> {
+  rejectOversizedUpload(request, maximumBytes, policy.tooLarge);
+  const formData = await parseMultipartFormData(request, maximumBytes, policy.tooLarge);
   const file = formData.get("file");
   if (!(file instanceof File)) {
-    throw new DomainError("FILE_REQUIRED", "请选择要上传的 JAR 文件。");
+    throw new DomainError(policy.missingCode, policy.missingMessage);
   }
   if (file.size === 0) {
-    throw new DomainError("EMPTY_JAR", "JAR 文件为空。");
+    throw new DomainError(policy.emptyCode, policy.emptyMessage);
   }
-  if (file.size > maxJarBytes) {
-    throw jarTooLargeError(maxJarBytes);
+  if (file.size > maximumBytes) {
+    throw policy.tooLarge(maximumBytes);
   }
   return {
     fileName: file.name,
@@ -31,25 +70,34 @@ export async function readJarUpload(request: Request, maxJarBytes: number): Prom
   };
 }
 
-function rejectOversizedJarRequest(request: Request, maxJarBytes: number): void {
+function rejectOversizedUpload(
+  request: Request,
+  maximumBytes: number,
+  tooLarge: (maximumBytes: number) => DomainError,
+): void {
   const contentLength = Number(request.headers.get("content-length"));
   if (
     Number.isFinite(contentLength) &&
-    contentLength > maxJarBytes + MULTIPART_ENCODING_ALLOWANCE_BYTES
+    contentLength > maximumBytes + MULTIPART_ENCODING_ALLOWANCE_BYTES
   ) {
-    throw jarTooLargeError(maxJarBytes);
+    throw tooLarge(maximumBytes);
   }
 }
 
-async function parseMultipartFormData(request: Request, maxJarBytes: number): Promise<FormData> {
+async function parseMultipartFormData(
+  request: Request,
+  maximumBytes: number,
+  tooLarge: (maximumBytes: number) => DomainError,
+): Promise<FormData> {
   const contentType = request.headers.get("content-type");
   if (!contentType?.toLowerCase().startsWith("multipart/form-data")) {
     throw new DomainError("INVALID_MULTIPART", "上传请求必须使用 multipart/form-data。");
   }
   const body = await readBoundedBody(
     request,
-    maxJarBytes + MULTIPART_ENCODING_ALLOWANCE_BYTES,
-    maxJarBytes,
+    maximumBytes + MULTIPART_ENCODING_ALLOWANCE_BYTES,
+    maximumBytes,
+    tooLarge,
   );
   try {
     return await new Response(body, { headers: { "content-type": contentType } }).formData();
@@ -63,7 +111,8 @@ async function parseMultipartFormData(request: Request, maxJarBytes: number): Pr
 async function readBoundedBody(
   request: Request,
   maximumRequestBytes: number,
-  maxJarBytes: number,
+  maximumBytes: number,
+  tooLarge: (maximumBytes: number) => DomainError,
 ): Promise<Uint8Array<ArrayBuffer>> {
   if (!request.body) {
     throw new DomainError("INVALID_MULTIPART", "上传请求缺少 multipart 请求体。");
@@ -77,7 +126,7 @@ async function readBoundedBody(
     totalBytes += value.byteLength;
     if (totalBytes > maximumRequestBytes) {
       await reader.cancel();
-      throw jarTooLargeError(maxJarBytes);
+      throw tooLarge(maximumBytes);
     }
     chunks.push(value);
   }

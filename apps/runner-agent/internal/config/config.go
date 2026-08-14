@@ -15,7 +15,7 @@ const (
 	defaultDataDirectory    = "./autoforge-agent-data"
 	defaultConcurrency      = 1
 	maximumConcurrency      = 64
-	defaultTerminalShell    = "/bin/sh"
+	defaultTerminalShell    = "/bin/bash"
 	maximumTerminalSessions = 4
 )
 
@@ -32,6 +32,7 @@ type Config struct {
 	BootstrapToken    string
 	HasBootstrap      bool
 	Toolchain         ToolchainConfig
+	Adapter           AdapterConfig
 	Container         ContainerConfig
 	Claim             ClaimConfig
 	Spool             SpoolConfig
@@ -41,7 +42,7 @@ type Config struct {
 
 func (configuration Config) RunnerLabels() []string {
 	result := append([]string(nil), configuration.Labels...)
-	if configuration.Toolchain.Enabled() {
+	if configuration.Toolchain.Enabled() || configuration.Adapter.Enabled() {
 		result = append(result, "java", "testng")
 	}
 	return labels(strings.Join(result, ","))
@@ -49,6 +50,12 @@ func (configuration Config) RunnerLabels() []string {
 
 func (configuration Config) Capabilities() []string {
 	result := configuration.Toolchain.Capabilities()
+	if configuration.Adapter.Enabled() && !containsCapability(result, "executor:testng-v1") {
+		result = append(result, "executor:testng-v1")
+	}
+	if configuration.Adapter.Enabled() {
+		result = append(result, "adapter:cotest-testng-v1", "runtime:project-assets-v1")
+	}
 	if configuration.Container.Enabled() {
 		result = append(result, "executor:testng-container-v1")
 	}
@@ -57,6 +64,18 @@ func (configuration Config) Capabilities() []string {
 		result = append(result, "isolation:cgroup-v2")
 	}
 	return result
+}
+
+func (configuration Config) CanClaimExecutions() bool {
+	return configuration.Toolchain.Enabled() || configuration.Adapter.Enabled()
+}
+
+type AdapterConfig struct {
+	JarPath string
+}
+
+func (configuration AdapterConfig) Enabled() bool {
+	return configuration.JarPath != ""
 }
 
 type ToolchainConfig struct {
@@ -169,6 +188,10 @@ func Load(lookup LookupEnvironment) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	adapter, err := adapterConfig(lookup)
+	if err != nil {
+		return Config{}, err
+	}
 	container, err := containerConfig(lookup)
 	if err != nil {
 		return Config{}, err
@@ -199,12 +222,34 @@ func Load(lookup LookupEnvironment) (Config, error) {
 		BootstrapToken: bootstrapToken,
 		HasBootstrap:   bootstrapToken != "",
 		Toolchain:      toolchain,
+		Adapter:        adapter,
 		Container:      container,
 		Claim:          claim,
 		Spool:          spool,
 		Resources:      resources,
 		Terminal:       terminal,
 	}, nil
+}
+
+func adapterConfig(lookup LookupEnvironment) (AdapterConfig, error) {
+	jarPath := environmentValue(lookup, "AUTOFORGE_AGENT_ADAPTER_JAR")
+	if jarPath == "" {
+		return AdapterConfig{}, nil
+	}
+	resolved, err := optionalAbsolutePath(jarPath)
+	if err != nil {
+		return AdapterConfig{}, fmt.Errorf("AUTOFORGE_AGENT_ADAPTER_JAR is invalid: %w", err)
+	}
+	return AdapterConfig{JarPath: resolved}, nil
+}
+
+func containsCapability(capabilities []string, expected string) bool {
+	for _, capability := range capabilities {
+		if capability == expected {
+			return true
+		}
+	}
+	return false
 }
 
 func containerConfig(lookup LookupEnvironment) (ContainerConfig, error) {

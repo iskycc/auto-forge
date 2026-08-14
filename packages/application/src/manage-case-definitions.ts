@@ -50,6 +50,13 @@ export class CaseDefinitionService {
     return this.catalog.listCaseVersions(caseDefinitionId, VERSION_HISTORY_LIMIT);
   }
 
+  async listActivity(caseDefinitionId: string, projectIds?: readonly string[], limit = 50) {
+    await this.get(caseDefinitionId, projectIds);
+    return this.catalog.listCaseActivity
+      ? this.catalog.listCaseActivity(caseDefinitionId, Math.max(1, Math.min(limit, 100)))
+      : { executions: [], analyses: [] };
+  }
+
   /**
    * 从不可变历史版本创建新的当前版本：执行内容（分组、参数、方法）恢复到
    * 快照状态，展示元数据（名称、描述、标签）保持不变。

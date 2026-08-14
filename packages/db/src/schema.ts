@@ -29,6 +29,98 @@ export const projects = sqliteTable(
   ],
 );
 
+export const projectVersions = sqliteTable(
+  "project_versions",
+  {
+    id: text("id").primaryKey(),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    normalizedName: text("normalized_name").notNull(),
+    status: text("status", { enum: ["active", "archived"] })
+      .notNull()
+      .default("active"),
+    revision: integer("revision").notNull().default(1),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("project_versions_project_name_uq").on(table.projectId, table.normalizedName),
+    index("project_versions_project_status_idx").on(table.projectId, table.status),
+  ],
+);
+
+export const testStages = sqliteTable(
+  "test_stages",
+  {
+    id: text("id").primaryKey(),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    projectVersionId: text("project_version_id")
+      .notNull()
+      .references(() => projectVersions.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    normalizedName: text("normalized_name").notNull(),
+    description: text("description").notNull().default(""),
+    position: integer("position").notNull(),
+    status: text("status", { enum: ["active", "archived"] })
+      .notNull()
+      .default("active"),
+    revision: integer("revision").notNull().default(1),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("test_stages_version_name_uq").on(table.projectVersionId, table.normalizedName),
+    uniqueIndex("test_stages_version_position_uq").on(table.projectVersionId, table.position),
+    index("test_stages_project_version_idx").on(table.projectId, table.projectVersionId),
+  ],
+);
+
+export const projectRuntimeAssets = sqliteTable(
+  "project_runtime_assets",
+  {
+    id: text("id").primaryKey(),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    kind: text("kind", { enum: ["jdk", "jar-bundle"] }).notNull(),
+    sourceType: text("source_type", { enum: ["upload", "url"] }).notNull(),
+    fileName: text("file_name").notNull(),
+    url: text("url"),
+    objectKey: text("object_key"),
+    sha256: text("sha256").notNull(),
+    sizeBytes: integer("size_bytes").notNull(),
+    archiveFormat: text("archive_format", { enum: ["zip", "tar.gz"] }).notNull(),
+    createdBy: text("created_by"),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("project_runtime_assets_object_key_uq").on(table.objectKey),
+    index("project_runtime_assets_project_kind_idx").on(table.projectId, table.kind),
+  ],
+);
+
+export const projectAdapterConfigurations = sqliteTable("project_adapter_configurations", {
+  projectId: text("project_id")
+    .primaryKey()
+    .references(() => projects.id, { onDelete: "cascade" }),
+  suiteName: text("suite_name").notNull().default(""),
+  testName: text("test_name").notNull().default(""),
+  environmentAddress: text("environment_address").notNull().default(""),
+  jdkAssetId: text("jdk_asset_id").references(() => projectRuntimeAssets.id, {
+    onDelete: "set null",
+  }),
+  jarBundleAssetId: text("jar_bundle_asset_id").references(() => projectRuntimeAssets.id, {
+    onDelete: "set null",
+  }),
+  revision: integer("revision").notNull().default(1),
+  updatedBy: text("updated_by"),
+  updatedAt: text("updated_at").notNull(),
+});
+
 export const users = sqliteTable(
   "users",
   {
@@ -230,6 +322,10 @@ export const caseSources = sqliteTable(
   {
     id: text("id").primaryKey(),
     projectId: text("project_id").notNull().default("00000000-0000-7000-8000-000000000001"),
+    projectVersionId: text("project_version_id").references(() => projectVersions.id, {
+      onDelete: "restrict",
+    }),
+    testStageId: text("test_stage_id").references(() => testStages.id, { onDelete: "restrict" }),
     displayName: text("display_name").notNull(),
     originalFileName: text("original_file_name").notNull(),
     objectKey: text("object_key").notNull(),
@@ -252,12 +348,24 @@ export const caseSources = sqliteTable(
     updatedAt: text("updated_at").notNull(),
   },
   (table) => [
-    uniqueIndex("case_sources_project_sha256_uq").on(table.projectId, table.sha256),
+    uniqueIndex("case_sources_legacy_project_sha256_uq")
+      .on(table.projectId, table.sha256)
+      .where(sql`${table.projectVersionId} IS NULL AND ${table.testStageId} IS NULL`),
+    uniqueIndex("case_sources_stage_sha256_uq")
+      .on(table.projectId, table.projectVersionId, table.testStageId, table.sha256)
+      .where(sql`${table.projectVersionId} IS NOT NULL AND ${table.testStageId} IS NOT NULL`),
     uniqueIndex("case_sources_object_key_uq").on(table.objectKey),
     index("case_sources_created_at_idx").on(table.createdAt),
-    uniqueIndex("case_sources_project_authoritative_uq")
+    uniqueIndex("case_sources_legacy_authoritative_uq")
       .on(table.projectId, table.authoritative)
-      .where(sql`${table.authoritative} = 1`),
+      .where(
+        sql`${table.authoritative} = 1 AND ${table.projectVersionId} IS NULL AND ${table.testStageId} IS NULL`,
+      ),
+    uniqueIndex("case_sources_stage_authoritative_uq")
+      .on(table.projectId, table.projectVersionId, table.testStageId, table.authoritative)
+      .where(
+        sql`${table.authoritative} = 1 AND ${table.projectVersionId} IS NOT NULL AND ${table.testStageId} IS NOT NULL`,
+      ),
     index("case_sources_project_created_idx").on(table.projectId, table.createdAt),
   ],
 );
@@ -442,6 +550,7 @@ export const runBatches = sqliteTable(
     ),
     priority: integer("priority").notNull().default(0),
     policyJson: text("policy_json"),
+    adapterRuntimeJson: text("adapter_runtime_json"),
     cancelRequestedAt: text("cancel_requested_at"),
     version: integer("version").notNull().default(1),
     createdAt: text("created_at").notNull(),
@@ -715,6 +824,11 @@ export const caseDefinitions = sqliteTable(
   {
     id: text("id").primaryKey(),
     projectId: text("project_id").notNull().default("00000000-0000-7000-8000-000000000001"),
+    projectVersionId: text("project_version_id").references(() => projectVersions.id, {
+      onDelete: "restrict",
+    }),
+    testStageId: text("test_stage_id").references(() => testStages.id, { onDelete: "restrict" }),
+    directoryPath: text("directory_path").notNull().default(""),
     sourceId: text("source_id")
       .notNull()
       .references(() => caseSources.id, { onDelete: "cascade" }),
@@ -736,6 +850,12 @@ export const caseDefinitions = sqliteTable(
   (table) => [
     uniqueIndex("case_definitions_source_class_uq").on(table.sourceId, table.className),
     index("case_definitions_class_name_idx").on(table.className),
+    index("case_definitions_stage_directory_idx").on(
+      table.projectId,
+      table.projectVersionId,
+      table.testStageId,
+      table.directoryPath,
+    ),
   ],
 );
 
@@ -1027,6 +1147,10 @@ export const caseImportJobs = sqliteTable(
   {
     id: text("id").primaryKey(),
     projectId: text("project_id").notNull(),
+    projectVersionId: text("project_version_id").references(() => projectVersions.id, {
+      onDelete: "restrict",
+    }),
+    testStageId: text("test_stage_id").references(() => testStages.id, { onDelete: "restrict" }),
     idempotencyKey: text("idempotency_key").notNull(),
     fileName: text("file_name").notNull(),
     objectKey: text("object_key").notNull(),
@@ -1046,13 +1170,22 @@ export const caseImportJobs = sqliteTable(
     finishedAt: text("finished_at"),
   },
   (table) => [
-    uniqueIndex("case_import_jobs_idempotency_uq").on(table.projectId, table.idempotencyKey),
+    uniqueIndex("case_import_jobs_legacy_idempotency_uq")
+      .on(table.projectId, table.idempotencyKey)
+      .where(sql`${table.projectVersionId} IS NULL AND ${table.testStageId} IS NULL`),
+    uniqueIndex("case_import_jobs_stage_idempotency_uq")
+      .on(table.projectId, table.projectVersionId, table.testStageId, table.idempotencyKey)
+      .where(sql`${table.projectVersionId} IS NOT NULL AND ${table.testStageId} IS NOT NULL`),
     index("case_import_jobs_status_idx").on(table.status, table.updatedAt),
   ],
 );
 
 export const schema = {
   projects,
+  projectVersions,
+  testStages,
+  projectRuntimeAssets,
+  projectAdapterConfigurations,
   users,
   externalIdentities,
   userSessions,

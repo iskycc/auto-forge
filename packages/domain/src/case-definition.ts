@@ -1,6 +1,9 @@
 export type CaseDefinition = {
   id: string;
   projectId: string;
+  projectVersionId?: string;
+  testStageId?: string;
+  directoryPath: string;
   sourceId: string;
   className: string;
   packageName: string;
@@ -51,6 +54,8 @@ export type CaseDefinitionWithMethods = CaseDefinition & {
 export type CaseSource = {
   id: string;
   projectId: string;
+  projectVersionId?: string;
+  testStageId?: string;
   displayName: string;
   originalFileName: string;
   objectKey: string;

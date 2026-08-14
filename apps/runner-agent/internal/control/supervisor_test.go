@@ -161,6 +161,82 @@ func TestSupervisorClaimsDownloadsExecutesAndCompletesAssignment(t *testing.T) {
 	supervisor.Close()
 }
 
+func TestStreamAttemptLogsUploadsWhileAttemptIsRunning(t *testing.T) {
+	uploaded := make(chan struct{}, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		var upload uploadLogChunksRequest
+		if err := json.NewDecoder(request.Body).Decode(&upload); err != nil {
+			http.Error(writer, err.Error(), http.StatusBadRequest)
+			return
+		}
+		uploaded <- struct{}{}
+		writer.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(writer).Encode(uploadLogChunksResponse{
+			SchemaVersion:        1,
+			AcknowledgedSequence: logWatermark{Stdout: 0, Stderr: -1, Agent: -1},
+		})
+	}))
+	defer server.Close()
+	configuration := config.Config{
+		ServerURL: mustParseURL(t, server.URL), DataDirectory: t.TempDir(), MaxConcurrent: 1,
+		Spool: config.SpoolConfig{MaximumBytes: 8 << 20, UploadBatch: 16},
+	}
+	client, err := NewClient(configuration)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	spool, err := newLogSpool(configuration.DataDirectory, configuration.Spool, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := spool.append("attempt-1", logChunk{
+		Stream: "stdout", Sequence: 0, Content: "live output\n", RecordedAt: time.Now().UTC().Format(time.RFC3339Nano),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	supervisor := &attemptSupervisor{
+		client: client,
+		identity: Identity{
+			RunnerID: "runner-1", Credential: "runner-credential-with-more-than-32-bytes",
+		},
+		configuration: configuration,
+		logSpool:      spool,
+		diagnostics:   os.Stderr,
+	}
+	claimed := testClaimedAssignment(strings.Repeat("a", 64))
+	ctx, cancel := context.WithCancel(context.Background())
+	completed := make(chan logWatermark, 1)
+	go func() { completed <- supervisor.streamAttemptLogs(ctx, claimed, 10*time.Millisecond) }()
+	select {
+	case <-uploaded:
+	case <-time.After(time.Second):
+		cancel()
+		t.Fatal("timed out waiting for a live log upload")
+	}
+	deadline := time.Now().Add(time.Second)
+	for {
+		remaining, listErr := spool.list("attempt-1", 16)
+		if listErr != nil {
+			cancel()
+			t.Fatal(listErr)
+		}
+		if len(remaining) == 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			cancel()
+			t.Fatal("live log upload was not acknowledged")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	cancel()
+	watermark := <-completed
+	if watermark.Stdout != 0 {
+		t.Fatalf("stdout watermark = %d, want 0", watermark.Stdout)
+	}
+}
+
 func TestPermanentLeaseRejectionStopsExecutionAuthority(t *testing.T) {
 	if !isPermanentLeaseRejection(&APIError{StatusCode: http.StatusConflict, Code: "LEASE_VERSION_CONFLICT"}) {
 		t.Fatal("lease version conflict was treated as transient")

@@ -1,7 +1,7 @@
 import { Button, Input, Select } from "@/components/ui";
 
 import type { AnalyticsFilter } from "@autoforge/contracts";
-import { BarChart3, FlaskConical, TrendingUp } from "lucide-react";
+import { BarChart3, FlaskConical, SlidersHorizontal, TrendingUp } from "lucide-react";
 import Link from "next/link";
 
 import { requirePageProjectScope } from "@/lib/auth";
@@ -37,7 +37,7 @@ export default async function InsightsPage({
     ? projects.filter((project) => projectIds.includes(project.id))
     : projects;
   return (
-    <div className="page-stack">
+    <div className="page-stack insights-page">
       <section className="page-hero">
         <div>
           <span className="eyebrow">Offline Analytics</span>
@@ -48,84 +48,93 @@ export default async function InsightsPage({
       </section>
 
       <form className="content-card insight-filter" method="get">
-        <label>
-          项目
-          <Select defaultValue={filter.projectId ?? ""} name="projectId">
-            <option value="">全部可访问项目</option>
-            {visibleProjects.map((project) => (
-              <option key={project.id} value={project.id}>
-                {project.name}
-              </option>
-            ))}
-          </Select>
-        </label>
-        <label>
-          用例任务
-          <Select defaultValue={filter.suiteId ?? ""} name="suiteId">
-            <option value="">全部任务</option>
-            {suites.map((suite) => (
-              <option key={suite.id} value={suite.id}>
-                {suite.name}
-              </option>
-            ))}
-          </Select>
-        </label>
-        <label>
-          Runner
-          <Select defaultValue={filter.runnerId ?? ""} name="runnerId">
-            <option value="">全部 Runner</option>
-            {runners.map((runner) => (
-              <option key={runner.id} value={runner.id}>
-                {runner.name}
-              </option>
-            ))}
-          </Select>
-        </label>
-        <label>
-          结果
-          <Select defaultValue={filter.outcome ?? ""} name="outcome">
-            <option value="">全部结果</option>
-            <option value="succeeded">成功</option>
-            <option value="failed">失败</option>
-            <option value="timed_out">超时</option>
-            <option value="cancelled">取消</option>
-          </Select>
-        </label>
-        <label>
-          用例 ID
-          <Input defaultValue={filter.caseDefinitionId ?? ""} name="caseDefinitionId" />
-        </label>
-        <label>
-          标签
-          <Input defaultValue={filter.tag ?? ""} name="tag" />
-        </label>
-        <label>
-          环境版本 ID
-          <Input defaultValue={filter.environmentVersionId ?? ""} name="environmentVersionId" />
-        </label>
-        <label>
-          失败签名
-          <Input defaultValue={filter.failureSignature ?? ""} name="failureSignature" />
-        </label>
-        <label>
-          开始时间（UTC）
-          <Input
-            defaultValue={dateTimeLocal(filter.completedAfter)}
-            name="completedAfter"
-            type="datetime-local"
-          />
-        </label>
-        <label>
-          结束时间（UTC）
-          <Input
-            defaultValue={dateTimeLocal(filter.completedBefore)}
-            name="completedBefore"
-            type="datetime-local"
-          />
-        </label>
-        <Button className="button button-primary" type="submit">
-          应用筛选
-        </Button>
+        <div className="insight-primary-filters">
+          <label>
+            项目
+            <Select defaultValue={filter.projectId ?? ""} name="projectId">
+              <option value="">全部可访问项目</option>
+              {visibleProjects.map((project) => (
+                <option key={project.id} value={project.id}>
+                  {project.name}
+                </option>
+              ))}
+            </Select>
+          </label>
+          <label>
+            用例任务
+            <Select defaultValue={filter.suiteId ?? ""} name="suiteId">
+              <option value="">全部任务</option>
+              {suites.map((suite) => (
+                <option key={suite.id} value={suite.id}>
+                  {suite.name}
+                </option>
+              ))}
+            </Select>
+          </label>
+          <label>
+            Runner
+            <Select defaultValue={filter.runnerId ?? ""} name="runnerId">
+              <option value="">全部 Runner</option>
+              {runners.map((runner) => (
+                <option key={runner.id} value={runner.id}>
+                  {runner.name}
+                </option>
+              ))}
+            </Select>
+          </label>
+          <label>
+            结果
+            <Select defaultValue={filter.outcome ?? ""} name="outcome">
+              <option value="">全部结果</option>
+              <option value="succeeded">成功</option>
+              <option value="failed">失败</option>
+              <option value="timed_out">超时</option>
+              <option value="cancelled">取消</option>
+            </Select>
+          </label>
+          <Button className="button button-primary" type="submit">
+            应用筛选
+          </Button>
+        </div>
+        <details className="insight-advanced-filters">
+          <summary>
+            <SlidersHorizontal aria-hidden="true" size={15} /> 更多筛选条件
+          </summary>
+          <div>
+            <label>
+              用例 ID
+              <Input defaultValue={filter.caseDefinitionId ?? ""} name="caseDefinitionId" />
+            </label>
+            <label>
+              标签
+              <Input defaultValue={filter.tag ?? ""} name="tag" />
+            </label>
+            <label>
+              环境版本 ID
+              <Input defaultValue={filter.environmentVersionId ?? ""} name="environmentVersionId" />
+            </label>
+            <label>
+              失败签名
+              <Input defaultValue={filter.failureSignature ?? ""} name="failureSignature" />
+            </label>
+            <label>
+              开始时间（UTC）
+              <Input
+                defaultValue={dateTimeLocal(filter.completedAfter)}
+                name="completedAfter"
+                type="datetime-local"
+              />
+            </label>
+            <label>
+              结束时间（UTC）
+              <Input
+                defaultValue={dateTimeLocal(filter.completedBefore)}
+                name="completedBefore"
+                type="datetime-local"
+              />
+            </label>
+          </div>
+        </details>
       </form>
 
       <section className="content-card">
@@ -244,28 +253,32 @@ export default async function InsightsPage({
               })}
             </div>
           )}
-          <table className="data-table insight-data-table">
-            <thead>
-              <tr>
-                <th>日期（UTC）</th>
-                <th>Attempt</th>
-                <th>通过方法</th>
-                <th>失败方法</th>
-                <th>跳过方法</th>
-              </tr>
-            </thead>
-            <tbody>
-              {summary.trend.map((bucket) => (
-                <tr key={bucket.bucket}>
-                  <td>{bucket.bucket.slice(0, 10)}</td>
-                  <td>{bucket.total}</td>
-                  <td>{bucket.passed}</td>
-                  <td>{bucket.failed}</td>
-                  <td>{bucket.skipped}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          {summary.trend.length > 0 ? (
+            <div className="table-scroll">
+              <table className="data-table insight-data-table">
+                <thead>
+                  <tr>
+                    <th>日期（UTC）</th>
+                    <th>Attempt</th>
+                    <th>通过方法</th>
+                    <th>失败方法</th>
+                    <th>跳过方法</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {summary.trend.map((bucket) => (
+                    <tr key={bucket.bucket}>
+                      <td>{bucket.bucket.slice(0, 10)}</td>
+                      <td>{bucket.total}</td>
+                      <td>{bucket.passed}</td>
+                      <td>{bucket.failed}</td>
+                      <td>{bucket.skipped}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : null}
         </article>
 
         <article className="content-card">
@@ -302,30 +315,34 @@ export default async function InsightsPage({
           {summary.flakyCases.length === 0 ? (
             <div className="inline-empty">至少需要 5 个成功与失败混合样本。</div>
           ) : (
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th>用例</th>
-                  <th>样本</th>
-                  <th>成功/失败</th>
-                  <th>置信</th>
-                </tr>
-              </thead>
-              <tbody>
-                {summary.flakyCases.map((item) => (
-                  <tr key={item.caseDefinitionId}>
-                    <td>
-                      <Link href={`/cases/${item.caseDefinitionId}`}>{item.caseDefinitionId}</Link>
-                    </td>
-                    <td>{item.samples}</td>
-                    <td>
-                      {item.passed}/{item.failed}
-                    </td>
-                    <td>{percent(item.confidence)}</td>
+            <div className="table-scroll">
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th>用例</th>
+                    <th>样本</th>
+                    <th>成功/失败</th>
+                    <th>置信</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {summary.flakyCases.map((item) => (
+                    <tr key={item.caseDefinitionId}>
+                      <td>
+                        <Link href={`/cases/${item.caseDefinitionId}`}>
+                          {item.caseDefinitionId}
+                        </Link>
+                      </td>
+                      <td>{item.samples}</td>
+                      <td>
+                        {item.passed}/{item.failed}
+                      </td>
+                      <td>{percent(item.confidence)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           )}
         </article>
       </section>

@@ -11,7 +11,7 @@ const landingRoutes: Array<{ permission: Permission; href: string }> = [
   { permission: "environment.read", href: "/settings/environments" },
   { permission: "settings.read", href: "/settings" },
   { permission: "project.read", href: "/settings/projects" },
-  { permission: "user.read", href: "/settings/access#users" },
+  { permission: "user.read", href: "/settings/access?section=users" },
 ];
 
 export default async function LandingPage() {

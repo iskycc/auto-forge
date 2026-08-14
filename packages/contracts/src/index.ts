@@ -7,3 +7,4 @@ export * from "./management";
 export * from "./scheduling";
 export * from "./platform";
 export * from "./operations";
+export * from "./project-structure";

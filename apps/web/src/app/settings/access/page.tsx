@@ -1,13 +1,19 @@
-import { AccessSettings } from "@/components/access-settings";
+import { AccessSettings, type AccessSection } from "@/components/access-settings";
+import { ManagementNavigation } from "@/components/management-navigation";
+import { SectionTabs } from "@/components/section-tabs";
 import { hasPermissionInAnyScope, requirePageAnyPermission } from "@/lib/auth";
 import { getPlatformServices } from "@/lib/services";
 import { projectIdsForPermission } from "@autoforge/domain";
-import Link from "next/link";
 
 export default async function AccessSettingsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ query?: string; source?: string; cursor?: string }>;
+  searchParams: Promise<{
+    section?: string;
+    query?: string;
+    source?: string;
+    cursor?: string;
+  }>;
 }) {
   const identity = await requirePageAnyPermission([
     "settings.read",
@@ -15,7 +21,6 @@ export default async function AccessSettingsPage({
     "role.read",
     "project.read",
     "ldap.read",
-    "audit.read",
   ]);
   const services = await getPlatformServices();
   const requested = await searchParams;
@@ -33,11 +38,34 @@ export default async function AccessSettingsPage({
     projectRead: hasPermissionInAnyScope(identity, "project.read"),
     ldapRead: hasPermissionInAnyScope(identity, "ldap.read"),
     ldapManage: hasPermissionInAnyScope(identity, "ldap.manage"),
-    auditRead: hasPermissionInAnyScope(identity, "audit.read"),
     canCreateProject: identity.systemPermissions.includes("project.manage"),
   };
+  const accessTabs = [
+    ...(capabilities.userRead
+      ? [{ id: "users" as const, label: "用户", href: "/settings/access?section=users" }]
+      : []),
+    ...(capabilities.roleRead
+      ? [{ id: "roles" as const, label: "角色与权限", href: "/settings/access?section=roles" }]
+      : []),
+    ...(capabilities.projectRead
+      ? [
+          {
+            id: "projects" as const,
+            label: "项目作用域",
+            href: "/settings/access?section=projects",
+          },
+        ]
+      : []),
+    ...(capabilities.ldapRead
+      ? [{ id: "ldap" as const, label: "LDAP", href: "/settings/access?section=ldap" }]
+      : []),
+    { id: "sessions" as const, label: "当前会话", href: "/settings/access?section=sessions" },
+  ];
+  const requestedSection = requested.section as AccessSection | undefined;
+  const activeSection =
+    accessTabs.find((tab) => tab.id === requestedSection)?.id ?? accessTabs[0]!.id;
   const manageableProjectIds = projectIdsForPermission(identity, "project.manage");
-  const [userPage, roles, projects, ldap, ldapMappings, sessions, audit, systemRoleBindings] =
+  const [userPage, roles, projects, ldap, ldapMappings, sessions, systemRoleBindings] =
     await Promise.all([
       capabilities.userRead
         ? services.identityAccess.listUsers(identity, {
@@ -58,9 +86,6 @@ export default async function AccessSettingsPage({
         ? services.identityAccess.listLdapGroupMappings(identity)
         : Promise.resolve([]),
       services.identityAccess.listSessions(identity),
-      capabilities.auditRead
-        ? services.identityAccess.listAudit(identity, { limit: 100 })
-        : Promise.resolve({ items: [], nextCursor: undefined }),
       capabilities.roleRead
         ? services.identityAccess.listSystemRoleBindings(identity)
         : Promise.resolve([]),
@@ -78,21 +103,27 @@ export default async function AccessSettingsPage({
         <div>
           <p className="eyebrow">System Settings</p>
           <h1>身份与访问控制</h1>
-          <p>管理本地账号、LDAP、角色、项目作用域和安全审计。</p>
+          <p>管理本地账号、LDAP、角色、项目作用域和当前账号会话。</p>
         </div>
-        <nav className="settings-tabs" aria-label="系统设置分类">
-          {capabilities.settingsRead ? <Link href="/settings">管理中心</Link> : null}
-          {capabilities.settingsRead ? <Link href="/settings/platform">平台配置</Link> : null}
-          <Link aria-current="page" href="/settings/access">
-            身份与访问
-          </Link>
-          {capabilities.environmentRead ? (
-            <Link href="/settings/environments">环境与密文</Link>
-          ) : null}
-        </nav>
+        <ManagementNavigation
+          active="access"
+          showAccess
+          showEnvironments={capabilities.environmentRead}
+          showOverview={capabilities.settingsRead}
+          showPlatform={capabilities.settingsRead}
+          showProjects={capabilities.projectRead}
+        />
       </header>
+      <SectionTabs
+        label="身份与访问模块"
+        tabs={accessTabs.map((tab) => ({
+          href: tab.href,
+          label: tab.label,
+          active: tab.id === activeSection,
+        }))}
+      />
       <AccessSettings
-        auditEvents={audit.items}
+        activeSection={activeSection}
         capabilities={capabilities}
         ldap={ldap}
         ldapMappings={ldapMappings}

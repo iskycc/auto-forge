@@ -11,6 +11,7 @@ const APP_SHELL = join(SOURCE_ROOT, "components", "app-shell.tsx");
 const PLATFORM_SETTINGS = join(SOURCE_ROOT, "components", "platform-settings.tsx");
 const ACCESS_SETTINGS = join(SOURCE_ROOT, "components", "access-settings.tsx");
 const MANAGEMENT_PAGE = join(SOURCE_ROOT, "app", "settings", "page.tsx");
+const CASE_SUITE_MANAGER = join(SOURCE_ROOT, "components", "case-suite-manager.tsx");
 // Hidden inputs only carry filter state inside GET forms and have no visual
 // styling, so the shared-component boundary applies to rendered controls only.
 const NATIVE_CONTROL = /<(?:button|select|textarea)\b|<input\b(?![^>]*type="hidden")/;
@@ -69,10 +70,21 @@ describe("shared UI controls", () => {
     const managementPage = readFileSync(MANAGEMENT_PAGE, "utf8");
 
     expect(appShell).toContain("管理中心");
-    expect(managementPage).toContain('href: "/settings/access#users"');
-    expect(managementPage).toContain('href: "/settings/access#ldap"');
+    expect(managementPage).toContain('href: "/settings/access?section=users"');
+    expect(managementPage).toContain('href: "/settings/access?section=ldap"');
     expect(accessSettings).toContain('id="users"');
     expect(accessSettings).toContain('id="ldap"');
+  });
+
+  it("uses grouped navigation and a product project picker on dense workspaces", () => {
+    const appShell = readFileSync(APP_SHELL, "utf8");
+    const suiteManager = readFileSync(CASE_SUITE_MANAGER, "utf8");
+
+    expect(appShell).toContain('label: "运维与审计"');
+    expect(appShell).toContain('activePrefixes: ["/settings/automation", "/audit"]');
+    expect(appShell).not.toContain('label: "安全审计"');
+    expect(suiteManager).toContain("<ProjectPicker");
+    expect(suiteManager).not.toContain("<Select");
   });
 
   it("presents the configurable JAR upload boundary in MiB", () => {

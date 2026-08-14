@@ -79,9 +79,27 @@ func downloadAttemptInput(
 		return fmt.Errorf("secure temporary input: %w", err)
 	}
 	digest := sha256.New()
-	if err := client.DownloadInput(ctx, identity, claimed.Assignment.AttemptID, claimed.Lease, input, io.MultiWriter(temporary, digest)); err != nil {
+	var downloadErr error
+	if input.DownloadURL != "" {
+		downloadErr = client.DownloadExternalResource(
+			ctx,
+			input.DownloadURL,
+			input.SizeBytes,
+			io.MultiWriter(temporary, digest),
+		)
+	} else {
+		downloadErr = client.DownloadInput(
+			ctx,
+			identity,
+			claimed.Assignment.AttemptID,
+			claimed.Lease,
+			input,
+			io.MultiWriter(temporary, digest),
+		)
+	}
+	if downloadErr != nil {
 		temporary.Close()
-		return err
+		return downloadErr
 	}
 	if err := temporary.Sync(); err != nil {
 		temporary.Close()

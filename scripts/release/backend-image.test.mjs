@@ -58,4 +58,6 @@ test("resolves migration-integrity dependencies from the production web workspac
     acceptanceScript,
     /inject_migration_integrity_failure\(\)[\s\S]*?--workdir \/app\/apps\/web[\s\S]*?require\("better-sqlite3"\)/,
   );
+  assert.doesNotMatch(acceptanceScript, /autoforge-runner-toolchain-linux/);
+  assert.doesNotMatch(acceptanceScript, /E2E_PREBUILT_TOOLCHAIN_ROOT=/);
 });

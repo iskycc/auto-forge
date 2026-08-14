@@ -1,6 +1,6 @@
-import Link from "next/link";
-
+import { ManagementNavigation } from "@/components/management-navigation";
 import { ProjectMembershipManager } from "@/components/project-membership-manager";
+import { ProjectStructureManager } from "@/components/project-structure-manager";
 import {
   hasPermissionInAnyScope,
   requireAuthorizedPageProjectScope,
@@ -38,9 +38,10 @@ export default async function ProjectMembershipsPage({
   }
 
   const canManage = canManageProject(services, identity, selectedProject.id);
-  const [members, roles] = await Promise.all([
+  const [members, roles, structure] = await Promise.all([
     services.identityAccess.listProjectMembers(identity, selectedProject.id),
     services.identityAccess.listProjectRolesForMemberManagement(identity, selectedProject.id),
+    services.projectStructures.list(selectedProject.id),
   ]);
 
   return (
@@ -51,15 +52,22 @@ export default async function ProjectMembershipsPage({
           <h1>项目与成员</h1>
           <p>查看成员角色；项目管理员可添加、移除成员并安全转移负责人。</p>
         </div>
-        <nav className="settings-tabs" aria-label="系统设置分类">
-          {hasPermissionInAnyScope(identity, "settings.read") ? (
-            <Link href="/settings">管理中心</Link>
-          ) : null}
-          <Link aria-current="page" href="/settings/projects">
-            项目与成员
-          </Link>
-          <Link href="/account/security">账号安全</Link>
-        </nav>
+        <ManagementNavigation
+          active="projects"
+          showAccess={
+            hasPermissionInAnyScope(identity, "settings.read") ||
+            hasPermissionInAnyScope(identity, "user.read") ||
+            hasPermissionInAnyScope(identity, "role.read") ||
+            hasPermissionInAnyScope(identity, "ldap.read")
+          }
+          showEnvironments={
+            hasPermissionInAnyScope(identity, "environment.read") ||
+            hasPermissionInAnyScope(identity, "secret.manage")
+          }
+          showOverview={hasPermissionInAnyScope(identity, "settings.read")}
+          showPlatform={hasPermissionInAnyScope(identity, "settings.read")}
+          showProjects
+        />
       </header>
       <ProjectMembershipManager
         canManage={canManage}
@@ -67,6 +75,11 @@ export default async function ProjectMembershipsPage({
         project={selectedProject}
         projects={projects}
         roles={roles}
+      />
+      <ProjectStructureManager
+        canManage={canManage}
+        initialStructure={structure}
+        projectId={selectedProject.id}
       />
     </section>
   );

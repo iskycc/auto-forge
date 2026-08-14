@@ -1,4 +1,4 @@
-import { attemptLogQuerySchema } from "@autoforge/contracts";
+import { attemptLogQuerySchema, uploadLogChunksInputSchema } from "@autoforge/contracts";
 import { DomainError } from "@autoforge/domain";
 import { NextResponse } from "next/server";
 
@@ -43,14 +43,26 @@ export async function POST(request: Request, context: Context): Promise<NextResp
     rejectRateLimited(
       await services.runnerRequestLimiter.allow(`runner:logs:v1:${runnerId}`, 600, 60_000),
     );
-    return NextResponse.json(
-      await services.runnerProtocol.uploadLogs(
-        runnerId,
-        bearerToken(request),
-        attemptId,
-        await readJsonBody(request, 2 * 1024 * 1024),
-      ),
+    const input = uploadLogChunksInputSchema.parse(await readJsonBody(request, 2 * 1024 * 1024));
+    const result = await services.runnerProtocol.uploadLogs(
+      runnerId,
+      bearerToken(request),
+      attemptId,
+      input,
     );
+    const runtime = globalThis as typeof globalThis & {
+      __autoforgePublishAttemptLogs?: (
+        attemptId: string,
+        chunks: Array<{
+          stream: "stdout" | "stderr" | "agent";
+          sequence: number;
+          content: string;
+          recordedAt: string;
+        }>,
+      ) => void;
+    };
+    runtime.__autoforgePublishAttemptLogs?.(attemptId, input.chunks);
+    return NextResponse.json(result);
   } catch (error) {
     return apiErrorResponse(error);
   }

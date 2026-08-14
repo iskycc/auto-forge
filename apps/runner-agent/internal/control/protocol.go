@@ -1,12 +1,19 @@
 package control
 
 type ExecutionInput struct {
-	InputID    string `json:"inputId"`
-	Kind       string `json:"kind"`
-	TargetPath string `json:"targetPath"`
-	MediaType  string `json:"mediaType"`
-	SizeBytes  int64  `json:"sizeBytes"`
-	SHA256     string `json:"sha256"`
+	InputID     string `json:"inputId"`
+	Kind        string `json:"kind"`
+	TargetPath  string `json:"targetPath"`
+	MediaType   string `json:"mediaType"`
+	SizeBytes   int64  `json:"sizeBytes"`
+	SHA256      string `json:"sha256"`
+	DownloadURL string `json:"downloadUrl,omitempty"`
+}
+
+type AdapterSettings struct {
+	SuiteName          string `json:"suiteName"`
+	TestName           string `json:"testName"`
+	EnvironmentAddress string `json:"environmentAddress"`
 }
 
 type EnvironmentEntry struct {
@@ -47,6 +54,7 @@ type ExecutionSpec struct {
 	ClassName            string              `json:"className"`
 	MethodDescriptors    []string            `json:"methodDescriptors"`
 	Parameters           map[string]string   `json:"parameters"`
+	Adapter              *AdapterSettings    `json:"adapter,omitempty"`
 	Inputs               []ExecutionInput    `json:"inputs"`
 	Environment          []EnvironmentEntry  `json:"environment"`
 	SecretReferences     []SecretReference   `json:"secretReferences"`

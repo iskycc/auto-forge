@@ -8,9 +8,10 @@ test("publishes complete release assets without waiting for checks", async () =>
   assert.doesNotMatch(workflow, /^  quality:/m);
   assert.doesNotMatch(workflow, /^  offline-acceptance:/m);
   assert.doesNotMatch(workflow, /signed-release-candidate/);
-  assert.match(workflow, /  backend:\n[\s\S]*?    needs: prepare/);
-  assert.match(workflow, /  toolchain:\n[\s\S]*?    needs: prepare/);
-  assert.match(workflow, /  publish:\n[\s\S]*?    needs: \[prepare, backend, toolchain\]/);
+  assert.match(workflow, /  adapter:\n[\s\S]*?    needs: prepare/);
+  assert.match(workflow, /  backend:\n[\s\S]*?    needs: \[prepare, adapter\]/);
+  assert.doesNotMatch(workflow, /^  toolchain:/m);
+  assert.match(workflow, /  publish:\n[\s\S]*?    needs: \[prepare, backend\]/);
 });
 
 test("runs tagged source and published asset checks independently", async () => {

@@ -2,7 +2,7 @@
 
 import { Button, Input, Select, Textarea } from "@/components/ui";
 
-import type { AuditEvent, Project, Role, User, UserSession } from "@autoforge/domain";
+import type { Project, Role, User, UserSession } from "@autoforge/domain";
 import { Network, Plus, RefreshCw, Search, Shield, UserRound } from "lucide-react";
 import { useEffect, useState, type FormEvent } from "react";
 
@@ -34,6 +34,8 @@ type LdapView = {
 
 const RELOAD_MESSAGE_KEY = "autoforge:access-settings:message";
 
+export type AccessSection = "users" | "roles" | "projects" | "ldap" | "sessions";
+
 export function AccessSettings({
   users,
   roles,
@@ -42,13 +44,13 @@ export function AccessSettings({
   ldap,
   ldapMappings,
   sessions,
-  auditEvents,
   systemRoleBindings,
   userQuery,
   userSource,
   nextUserCursor,
   capabilities,
   manageableProjectIds,
+  activeSection,
 }: {
   users: User[];
   roles: Role[];
@@ -66,7 +68,6 @@ export function AccessSettings({
     priority: number;
   }>;
   sessions: UserSession[];
-  auditEvents: AuditEvent[];
   systemRoleBindings: Array<{ userId: string; roleId: string }>;
   userQuery: string;
   userSource: "" | "local" | "ldap";
@@ -79,10 +80,10 @@ export function AccessSettings({
     projectRead: boolean;
     ldapRead: boolean;
     ldapManage: boolean;
-    auditRead: boolean;
     canCreateProject: boolean;
   };
   manageableProjectIds: string[] | null;
+  activeSection: AccessSection;
 }) {
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
@@ -251,7 +252,7 @@ export function AccessSettings({
         </div>
       ) : null}
 
-      {capabilities.userRead ? (
+      {activeSection === "users" && capabilities.userRead ? (
         <section className="content-card settings-section" id="users">
           <div className="section-heading">
             <div>
@@ -284,6 +285,7 @@ export function AccessSettings({
             </form>
           ) : null}
           <form action="/settings/access" className="settings-user-filter" method="get">
+            <input name="section" type="hidden" value="users" />
             <label>
               搜索用户
               <Input defaultValue={userQuery} maxLength={120} name="query" />
@@ -442,7 +444,7 @@ export function AccessSettings({
         </section>
       ) : null}
 
-      {capabilities.roleRead ? (
+      {activeSection === "roles" && capabilities.roleRead ? (
         <section className="content-card settings-section" id="roles">
           <div className="section-heading">
             <div>
@@ -674,7 +676,7 @@ export function AccessSettings({
         </section>
       ) : null}
 
-      {capabilities.projectRead ? (
+      {activeSection === "projects" && capabilities.projectRead ? (
         <section className="content-card settings-section" id="projects">
           <div className="section-heading">
             <div>
@@ -821,7 +823,7 @@ export function AccessSettings({
         </section>
       ) : null}
 
-      {capabilities.ldapRead ? (
+      {activeSection === "ldap" && capabilities.ldapRead ? (
         <section className="content-card settings-section" id="ldap">
           <div className="section-heading">
             <div>
@@ -1035,81 +1037,45 @@ export function AccessSettings({
         </section>
       ) : null}
 
-      <section className="content-card settings-section" id="sessions">
-        <div className="section-heading">
-          <div>
-            <p className="eyebrow">Sessions</p>
-            <h2>当前账号会话</h2>
-          </div>
-        </div>
-        <div className="table-scroll">
-          <table className="data-table">
-            <thead>
-              <tr>
-                <th>创建时间</th>
-                <th>最近活动</th>
-                <th>过期时间</th>
-                <th>操作</th>
-              </tr>
-            </thead>
-            <tbody>
-              {sessions.map((session) => (
-                <tr key={session.id}>
-                  <td>{new Date(session.createdAt).toLocaleString()}</td>
-                  <td>{new Date(session.lastSeenAt).toLocaleString()}</td>
-                  <td>{new Date(session.expiresAt).toLocaleString()}</td>
-                  <td>
-                    <Button
-                      className="danger-text-button"
-                      disabled={pending}
-                      onClick={() =>
-                        void request(
-                          `/api/v1/sessions/${session.id}`,
-                          { method: "DELETE" },
-                          "会话已终止。",
-                        )
-                      }
-                      type="button"
-                    >
-                      终止
-                    </Button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </section>
-
-      {capabilities.auditRead ? (
-        <section className="content-card settings-section" id="audit">
+      {activeSection === "sessions" ? (
+        <section className="content-card settings-section" id="sessions">
           <div className="section-heading">
             <div>
-              <p className="eyebrow">Audit</p>
-              <h2>近期安全审计</h2>
+              <p className="eyebrow">Sessions</p>
+              <h2>当前账号会话</h2>
             </div>
           </div>
           <div className="table-scroll">
             <table className="data-table">
               <thead>
                 <tr>
-                  <th>时间</th>
-                  <th>动作</th>
-                  <th>结果</th>
-                  <th>主体</th>
-                  <th>资源</th>
+                  <th>创建时间</th>
+                  <th>最近活动</th>
+                  <th>过期时间</th>
+                  <th>操作</th>
                 </tr>
               </thead>
               <tbody>
-                {auditEvents.map((event) => (
-                  <tr key={event.id}>
-                    <td>{new Date(event.recordedAt).toLocaleString()}</td>
-                    <td>{event.action}</td>
-                    <td>{event.result}</td>
-                    <td>{event.actorId ?? event.actorType}</td>
+                {sessions.map((session) => (
+                  <tr key={session.id}>
+                    <td>{new Date(session.createdAt).toLocaleString()}</td>
+                    <td>{new Date(session.lastSeenAt).toLocaleString()}</td>
+                    <td>{new Date(session.expiresAt).toLocaleString()}</td>
                     <td>
-                      {event.resourceType}
-                      {event.resourceId ? ` · ${event.resourceId}` : ""}
+                      <Button
+                        className="danger-text-button"
+                        disabled={pending}
+                        onClick={() =>
+                          void request(
+                            `/api/v1/sessions/${session.id}`,
+                            { method: "DELETE" },
+                            "会话已终止。",
+                          )
+                        }
+                        type="button"
+                      >
+                        终止
+                      </Button>
                     </td>
                   </tr>
                 ))}
@@ -1223,7 +1189,7 @@ function ldapPayload(form: FormData) {
 }
 
 function userPageHref(query: string, source: string, cursor: string): string {
-  const parameters = new URLSearchParams({ cursor });
+  const parameters = new URLSearchParams({ cursor, section: "users" });
   if (query) parameters.set("query", query);
   if (source) parameters.set("source", source);
   return `/settings/access?${parameters}`;

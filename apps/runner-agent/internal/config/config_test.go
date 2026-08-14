@@ -129,6 +129,31 @@ func TestLoadEnablesTerminalWithBoundedPolicy(t *testing.T) {
 	}
 }
 
+func TestLoadUsesBashAsTheDefaultTerminalShell(t *testing.T) {
+	loaded, err := Load(mapLookup(map[string]string{
+		"AUTOFORGE_SERVER_URL": "https://autoforge.internal",
+	}))
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if loaded.Terminal.Shell != "/bin/bash" {
+		t.Fatalf("Terminal.Shell = %q, want /bin/bash", loaded.Terminal.Shell)
+	}
+}
+
+func TestAdapterCanClaimProjectSuppliedRuntimeWithoutLocalToolchain(t *testing.T) {
+	configuration := Config{Adapter: AdapterConfig{JarPath: "/opt/autoforge/lib/cotest-testng-adapter.jar"}}
+	if !configuration.CanClaimExecutions() {
+		t.Fatal("CanClaimExecutions() = false, want true for an installed Adapter")
+	}
+	capabilities := strings.Join(configuration.Capabilities(), " ")
+	for _, expected := range []string{"executor:testng-v1", "adapter:cotest-testng-v1", "runtime:project-assets-v1"} {
+		if !containsWord(capabilities, expected) {
+			t.Fatalf("Capabilities() = %#v, missing %q", configuration.Capabilities(), expected)
+		}
+	}
+}
+
 func TestCheckLocalEnvironmentCreatesPrivateDirectories(t *testing.T) {
 	dataDirectory := filepath.Join(t.TempDir(), "agent")
 	configuration := Config{

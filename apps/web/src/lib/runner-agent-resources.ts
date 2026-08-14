@@ -22,6 +22,7 @@ const agentResourceManifestSchema = z.object({
     "linux-amd64": resourceFileSchema,
     "linux-arm64": resourceFileSchema,
     installer: resourceFileSchema,
+    adapter: resourceFileSchema,
   }),
 });
 
@@ -32,6 +33,7 @@ export type RunnerAgentResources = {
   revision: string;
   binary: Buffer;
   installer: Buffer;
+  adapter: Buffer;
 };
 
 export class RunnerAgentResourceStore {
@@ -47,11 +49,16 @@ export class RunnerAgentResourceStore {
         `linux-${architecture}/autoforge-agent`,
       );
       const installer = await this.readVerifiedFile(manifest.files.installer, "install.sh");
+      const adapter = await this.readVerifiedFile(
+        manifest.files.adapter,
+        "cotest-testng-adapter.jar",
+      );
       return {
         version: manifest.version,
         revision: manifest.revision,
         binary,
         installer,
+        adapter,
       };
     } catch (error) {
       if (isDomainError(error)) throw error;

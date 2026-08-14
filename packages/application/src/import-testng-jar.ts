@@ -29,6 +29,8 @@ export type ImportTestNgJarInput = {
   fileName: string;
   content: Uint8Array;
   projectId?: string;
+  projectVersionId?: string;
+  testStageId?: string;
   actorId?: string;
 };
 
@@ -79,6 +81,8 @@ export class ImportTestNgJarService {
     const existing = await this.dependencies.catalog.findSourceBySha256(
       inspection.sha256,
       projectId,
+      input.projectVersionId,
+      input.testStageId,
     );
     if (existing) {
       return duplicateResult(existing, inspection);
@@ -96,6 +100,8 @@ export class ImportTestNgJarService {
       await this.dependencies.catalog.importCatalog({
         sourceId,
         projectId,
+        ...(input.projectVersionId ? { projectVersionId: input.projectVersionId } : {}),
+        ...(input.testStageId ? { testStageId: input.testStageId } : {}),
         ...(input.actorId ? { importedBy: input.actorId } : {}),
         objectKey: stored.objectKey,
         displayName: displayName(input.fileName),
@@ -107,6 +113,8 @@ export class ImportTestNgJarService {
       const concurrentImport = await this.dependencies.catalog.findSourceBySha256(
         inspection.sha256,
         projectId,
+        input.projectVersionId,
+        input.testStageId,
       );
       if (concurrentImport) {
         return duplicateResult(concurrentImport, inspection);
@@ -153,6 +161,8 @@ export class ImportTestNgJarService {
     const job: JarImportJob = {
       id: jobId,
       projectId,
+      ...(input.projectVersionId ? { projectVersionId: input.projectVersionId } : {}),
+      ...(input.testStageId ? { testStageId: input.testStageId } : {}),
       fileName: input.fileName,
       sha256: input.sha256,
       sizeBytes: input.content.byteLength,
@@ -219,6 +229,10 @@ export class ImportTestNgJarService {
           fileName: claimed.job.fileName,
           content,
           projectId: claimed.job.projectId,
+          ...(claimed.job.projectVersionId
+            ? { projectVersionId: claimed.job.projectVersionId }
+            : {}),
+          ...(claimed.job.testStageId ? { testStageId: claimed.job.testStageId } : {}),
           ...(claimed.job.requestedBy ? { actorId: claimed.job.requestedBy } : {}),
         });
         const finishedAt = this.dependencies.clock.now().toISOString();

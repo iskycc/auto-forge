@@ -104,6 +104,60 @@ describe("Runner Protocol v1 contracts", () => {
     ).toThrow();
   });
 
+  it("accepts project JDK and JAR archives with verified external links", () => {
+    const specification = validExecutionSpec();
+    expect(
+      executionSpecSchema.parse({
+        ...specification,
+        adapter: { suiteName: "Suite", testName: "Test", environmentAddress: "10.0.0.8" },
+        inputs: [
+          ...specification.inputs,
+          {
+            inputId: "jdk-1",
+            kind: "jdk-archive",
+            targetPath: "runtime-inputs/jdk.tar.gz",
+            mediaType: "application/gzip",
+            sizeBytes: 1_024,
+            sha256: "b".repeat(64),
+            downloadUrl: "http://10.0.0.9/jdk.tar.gz",
+          },
+          {
+            inputId: "jars-1",
+            kind: "jar-bundle",
+            targetPath: "runtime-inputs/jars.zip",
+            mediaType: "application/zip",
+            sizeBytes: 2_048,
+            sha256: "c".repeat(64),
+          },
+        ],
+      }),
+    ).toMatchObject({
+      adapter: { suiteName: "Suite", testName: "Test", environmentAddress: "10.0.0.8" },
+      inputs: [
+        { kind: "test-jar" },
+        { kind: "jdk-archive", downloadUrl: "http://10.0.0.9/jdk.tar.gz" },
+        { kind: "jar-bundle" },
+      ],
+    });
+    expect(() =>
+      executionSpecSchema.parse({
+        ...specification,
+        inputs: [
+          ...specification.inputs,
+          {
+            inputId: "jdk-1",
+            kind: "jdk-archive",
+            targetPath: "runtime-inputs/jdk.zip",
+            mediaType: "application/gzip",
+            sizeBytes: 1_024,
+            sha256: "b".repeat(64),
+            downloadUrl: "http://user:password@10.0.0.9/jdk.zip",
+          },
+        ],
+      }),
+    ).toThrow();
+  });
+
   it("rejects incompatible versions and unbounded claim inputs", () => {
     expect(() =>
       claimAssignmentsInputSchema.parse({

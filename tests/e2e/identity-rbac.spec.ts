@@ -127,7 +127,7 @@ test("administrator unlocks and disables a locked user and manages a custom role
   // whether a username exists or has reached its lock threshold.
   await expect(appAlert(userPage)).toContainText("用户名或密码无效");
 
-  await page.goto(`/settings/access?query=${encodeURIComponent(username)}#users`);
+  await page.goto(`/settings/access?section=users&query=${encodeURIComponent(username)}`);
   let userRow = page.getByRole("row", { name: new RegExp(username) });
   await expect(userRow).toContainText("锁定至");
   await userRow.getByRole("button", { name: "启用/解锁" }).click();
@@ -135,7 +135,7 @@ test("administrator unlocks and disables a locked user and manages a custom role
 
   await login(userPage, username, password);
   expect((await userPage.request.get("/api/v1/auth/session")).status()).toBe(200);
-  await page.goto(`/settings/access?query=${encodeURIComponent(username)}#users`);
+  await page.goto(`/settings/access?section=users&query=${encodeURIComponent(username)}`);
   userRow = page.getByRole("row", { name: new RegExp(username) });
   await userRow.getByRole("button", { name: "禁用", exact: true }).click();
   await expect(page.getByText("用户已禁用。")).toBeVisible();
@@ -146,7 +146,7 @@ test("administrator unlocks and disables a locked user and manages a custom role
 
   const roleName = uniqueName("发布观察员");
   const roleKey = uniqueName("release-observer");
-  await page.goto("/settings/access#roles");
+  await page.goto("/settings/access?section=roles");
   const roleForm = page.locator("form", {
     has: page.getByRole("button", { name: "创建角色" }),
   });
@@ -352,7 +352,7 @@ async function createUserThroughAccessPage(
   displayName: string,
   password: string,
 ): Promise<{ id: string }> {
-  await page.goto("/settings/access#users");
+  await page.goto("/settings/access?section=users");
   await page.getByLabel("用户名", { exact: true }).fill(username);
   await page.getByLabel("显示名称", { exact: true }).fill(displayName);
   await page.getByLabel("初始密码").fill(password);

@@ -1,7 +1,6 @@
 import { DEFAULT_PROJECT_ID, hasPermission, projectIdsForPermission } from "@autoforge/domain";
-import Link from "next/link";
-
 import { EnvironmentSettings } from "@/components/environment-settings";
+import { ManagementNavigation } from "@/components/management-navigation";
 import { hasPermissionInAnyScope, requirePageAnyPermission } from "@/lib/auth";
 import { getPlatformServices } from "@/lib/services";
 
@@ -42,18 +41,14 @@ export default async function EnvironmentSettingsPage() {
           <h1>执行环境与密文</h1>
           <p>管理项目级不可变环境版本、密文元数据和执行引用。</p>
         </div>
-        <nav className="settings-tabs" aria-label="系统设置分类">
-          {hasPermissionInAnyScope(identity, "settings.read") ? (
-            <>
-              <Link href="/settings">管理中心</Link>
-              <Link href="/settings/platform">平台配置</Link>
-              <Link href="/settings/access">身份与访问</Link>
-            </>
-          ) : null}
-          <Link aria-current="page" href="/settings/environments">
-            环境与密文
-          </Link>
-        </nav>
+        <ManagementNavigation
+          active="environments"
+          showAccess={hasPermissionInAnyScope(identity, "settings.read")}
+          showEnvironments
+          showOverview={hasPermissionInAnyScope(identity, "settings.read")}
+          showPlatform={hasPermissionInAnyScope(identity, "settings.read")}
+          showProjects={hasPermissionInAnyScope(identity, "project.read")}
+        />
       </header>
       <EnvironmentSettings
         initialEnvironments={environments}

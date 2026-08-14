@@ -1,5 +1,6 @@
 import type {
   CaseCatalogRepository,
+  CaseActivity,
   CaseListPage,
   CaseListQuery,
   CaseSourceVersionMerge,
@@ -28,7 +29,7 @@ import {
   type CleanupJob,
   type TestMethod,
 } from "@autoforge/domain";
-import { and, count, desc, eq, inArray, like, lt, or, sql, type SQL } from "drizzle-orm";
+import { and, count, desc, eq, inArray, isNull, like, lt, or, sql, type SQL } from "drizzle-orm";
 
 import type { SqliteDatabaseHandle } from "./database";
 import {
@@ -149,6 +150,8 @@ function toCaseSource(row: typeof caseSources.$inferSelect): CaseSource {
   return {
     id: row.id,
     projectId: row.projectId,
+    ...(row.projectVersionId ? { projectVersionId: row.projectVersionId } : {}),
+    ...(row.testStageId ? { testStageId: row.testStageId } : {}),
     displayName: row.displayName,
     originalFileName: row.originalFileName,
     objectKey: row.objectKey,
@@ -173,6 +176,9 @@ function toCaseDefinition(
   return {
     id: row.id,
     projectId: row.projectId,
+    ...(row.projectVersionId ? { projectVersionId: row.projectVersionId } : {}),
+    ...(row.testStageId ? { testStageId: row.testStageId } : {}),
+    directoryPath: row.directoryPath,
     sourceId: row.sourceId,
     className: row.className,
     packageName: row.packageName,
@@ -231,6 +237,8 @@ function toJarImportJob(row: typeof caseImportJobs.$inferSelect): JarImportJob {
   return {
     id: row.id,
     projectId: row.projectId,
+    ...(row.projectVersionId ? { projectVersionId: row.projectVersionId } : {}),
+    ...(row.testStageId ? { testStageId: row.testStageId } : {}),
     fileName: row.fileName,
     sha256: row.sha256,
     sizeBytes: row.sizeBytes,
@@ -255,13 +263,16 @@ export class SqliteCaseCatalogRepository implements CaseCatalogRepository {
       this.handle.client
         .prepare(
           `INSERT OR IGNORE INTO case_import_jobs
-           (id, project_id, idempotency_key, file_name, object_key, sha256, size_bytes, status,
-            progress_percent, requested_by, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           (id, project_id, project_version_id, test_stage_id, idempotency_key, file_name,
+            object_key, sha256, size_bytes, status, progress_percent, requested_by, created_at,
+            updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           record.job.id,
           record.job.projectId,
+          record.job.projectVersionId ?? null,
+          record.job.testStageId ?? null,
           record.idempotencyKey,
           record.job.fileName,
           record.objectKey,
@@ -305,6 +316,12 @@ export class SqliteCaseCatalogRepository implements CaseCatalogRepository {
         and(
           eq(caseImportJobs.projectId, record.job.projectId),
           eq(caseImportJobs.idempotencyKey, record.idempotencyKey),
+          record.job.projectVersionId
+            ? eq(caseImportJobs.projectVersionId, record.job.projectVersionId)
+            : isNull(caseImportJobs.projectVersionId),
+          record.job.testStageId
+            ? eq(caseImportJobs.testStageId, record.job.testStageId)
+            : isNull(caseImportJobs.testStageId),
         ),
       )
       .get();
@@ -447,7 +464,16 @@ export class SqliteCaseCatalogRepository implements CaseCatalogRepository {
   async findSourceBySha256(
     sha256: string,
     projectId = DEFAULT_PROJECT_ID,
+    projectVersionId?: string,
+    testStageId?: string,
   ): Promise<ExistingSource | null> {
+    const hierarchy =
+      projectVersionId && testStageId
+        ? and(
+            eq(caseSources.projectVersionId, projectVersionId),
+            eq(caseSources.testStageId, testStageId),
+          )
+        : and(isNull(caseSources.projectVersionId), isNull(caseSources.testStageId));
     const row = this.handle.db
       .select({
         sourceId: caseSources.id,
@@ -455,7 +481,7 @@ export class SqliteCaseCatalogRepository implements CaseCatalogRepository {
         methodCount: caseSources.methodCount,
       })
       .from(caseSources)
-      .where(and(eq(caseSources.projectId, projectId), eq(caseSources.sha256, sha256)))
+      .where(and(eq(caseSources.projectId, projectId), eq(caseSources.sha256, sha256), hierarchy))
       .get();
     return row ?? null;
   }
@@ -468,6 +494,8 @@ export class SqliteCaseCatalogRepository implements CaseCatalogRepository {
         .values({
           id: record.sourceId,
           projectId,
+          ...(record.projectVersionId ? { projectVersionId: record.projectVersionId } : {}),
+          ...(record.testStageId ? { testStageId: record.testStageId } : {}),
           displayName: record.displayName,
           originalFileName: record.inspection.fileName,
           objectKey: record.objectKey,
@@ -494,6 +522,9 @@ export class SqliteCaseCatalogRepository implements CaseCatalogRepository {
           .values({
             id: importedCase.caseDefinitionId,
             projectId,
+            ...(record.projectVersionId ? { projectVersionId: record.projectVersionId } : {}),
+            ...(record.testStageId ? { testStageId: record.testStageId } : {}),
+            directoryPath: candidate.packageName.replaceAll(".", "/"),
             sourceId: record.sourceId,
             className: candidate.className,
             packageName: candidate.packageName,
@@ -553,6 +584,13 @@ export class SqliteCaseCatalogRepository implements CaseCatalogRepository {
     if (query.projectIds?.length === 0) return { items: [] };
     if (query.projectIds)
       conditions.push(inArray(caseDefinitions.projectId, [...query.projectIds]));
+    if (query.projectVersionId)
+      conditions.push(eq(caseDefinitions.projectVersionId, query.projectVersionId));
+    if (query.testStageId) conditions.push(eq(caseDefinitions.testStageId, query.testStageId));
+    if (query.scopedOnly) {
+      conditions.push(sql`${caseDefinitions.projectVersionId} IS NOT NULL`);
+      conditions.push(sql`${caseDefinitions.testStageId} IS NOT NULL`);
+    }
     const normalizedQuery = query.query?.trim();
     if (normalizedQuery) {
       const searchCondition = or(
@@ -628,6 +666,77 @@ export class SqliteCaseCatalogRepository implements CaseCatalogRepository {
       .map(toTestMethod)
       .sort((left, right) => left.methodName.localeCompare(right.methodName));
     return { ...toCaseDefinition(row), methods };
+  }
+
+  async listCaseActivity(caseDefinitionId: string, limit: number): Promise<CaseActivity> {
+    const executions = this.handle.client
+      .prepare(
+        `SELECT r.id AS run_id, r.batch_id, r.status, r.created_at,
+                a.id AS attempt_id, a.runner_id, a.result_code, a.duration_ms, a.finished_at
+         FROM execution_runs r
+         LEFT JOIN run_attempts a ON a.execution_run_id = r.id
+           AND a.attempt_number = (
+             SELECT MAX(latest.attempt_number) FROM run_attempts latest
+             WHERE latest.execution_run_id = r.id
+           )
+         WHERE r.case_definition_id = ?
+         ORDER BY r.created_at DESC, r.id DESC LIMIT ?`,
+      )
+      .all(caseDefinitionId, limit) as Array<{
+      run_id: string;
+      batch_id: string;
+      status: string;
+      created_at: string;
+      attempt_id: string | null;
+      runner_id: string | null;
+      result_code: string | null;
+      duration_ms: number | null;
+      finished_at: string | null;
+    }>;
+    const analyses = this.handle.client
+      .prepare(
+        `SELECT attempt_id, batch_id, outcome, result_code, failure_signature, duration_ms,
+                passed, failed, skipped, completed_at
+         FROM analytics_facts WHERE case_definition_id = ?
+         ORDER BY completed_at DESC, attempt_id DESC LIMIT ?`,
+      )
+      .all(caseDefinitionId, limit) as Array<{
+      attempt_id: string;
+      batch_id: string;
+      outcome: string;
+      result_code: string | null;
+      failure_signature: string | null;
+      duration_ms: number | null;
+      passed: number;
+      failed: number;
+      skipped: number;
+      completed_at: string;
+    }>;
+    return {
+      executions: executions.map((row) => ({
+        runId: row.run_id,
+        batchId: row.batch_id,
+        status: row.status,
+        ...(row.attempt_id ? { attemptId: row.attempt_id } : {}),
+        ...(row.runner_id ? { runnerId: row.runner_id } : {}),
+        ...(row.result_code ? { resultCode: row.result_code } : {}),
+        ...(row.duration_ms === null ? {} : { durationMs: row.duration_ms }),
+        createdAt: row.created_at,
+        ...(row.finished_at ? { finishedAt: row.finished_at } : {}),
+      })),
+      analyses: analyses.map((row) => ({
+        attemptId: row.attempt_id,
+        batchId: row.batch_id,
+        outcome: row.outcome,
+        ...(row.result_code ? { resultCode: row.result_code } : {}),
+        ...(row.failure_signature ? { failureSignature: row.failure_signature } : {}),
+        ...(row.duration_ms === null ? {} : { durationMs: row.duration_ms }),
+        passed: row.passed,
+        failed: row.failed,
+        skipped: row.skipped,
+        completedAt: row.completed_at,
+      })),
+    };
   }
 
   async updateCaseDefinition(input: {

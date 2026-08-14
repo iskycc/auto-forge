@@ -19,18 +19,11 @@ test("creates a deterministic manifest and checksum list", async () => {
     }
     await writeFile(resolve(directory, "autoforge-deploy-1.2.3.tar.gz"), "compose");
     await writeFile(resolve(directory, "autoforge-deploy-1.2.3.spdx.json"), "{}");
-    for (const architecture of ["amd64", "arm64"]) {
-      const name = `autoforge-runner-toolchain-linux-${architecture}-java21-testng7.11.0.tar.gz`;
-      await writeFile(resolve(directory, name), `toolchain-${architecture}`);
-      await writeFile(resolve(directory, `${name}.sha256`), `sha-${architecture}`);
-      await writeFile(resolve(directory, `${name}.spdx.json`), "{}");
-    }
     for (const fileName of [
       "CHANGELOG.md",
       "COMPATIBILITY.md",
       "LICENSE",
       "NOTICE",
-      "RUNNER_TOOLCHAIN_NOTICES.md",
       "release-signing-public-key.pem",
       "THIRD_PARTY_LICENSES.json",
     ]) {
@@ -43,10 +36,11 @@ test("creates a deterministic manifest and checksum list", async () => {
     );
     assert.equal(manifest.schemaVersion, 1);
     assert.equal(manifest.version, "1.2.3");
-    assert.equal(manifest.artifacts.length, 27);
+    assert.equal(manifest.artifacts.length, 20);
 
     const checksums = await readFile(resolve(directory, "SHA256SUMS"), "utf8");
     assert.doesNotMatch(checksums, /autoforge-agent/);
+    assert.doesNotMatch(checksums, /runner-toolchain/);
     assert.match(checksums, /autoforge-deploy-1\.2\.3\.tar\.gz/);
     assert.match(checksums, /release-manifest\.json/);
     assert.match(checksums, /release-signing-public-key\.pem/);

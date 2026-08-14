@@ -1,5 +1,6 @@
 import type {
   CaseCatalogRepository,
+  CaseActivity,
   CaseListPage,
   CaseListQuery,
   CaseSourceVersionMerge,
@@ -37,7 +38,20 @@ import {
   type Runner,
   type TestMethod,
 } from "@autoforge/domain";
-import { and, count, desc, eq, gt, inArray, like, lt, or, sql, type SQL } from "drizzle-orm";
+import {
+  and,
+  count,
+  desc,
+  eq,
+  gt,
+  inArray,
+  isNull,
+  like,
+  lt,
+  or,
+  sql,
+  type SQL,
+} from "drizzle-orm";
 
 import type { PostgresDatabaseHandle } from "./postgres-database";
 import { mapStoredRunner } from "./runner-mapper";
@@ -112,6 +126,8 @@ function toSource(row: typeof pgCaseSources.$inferSelect): CaseSource {
   return {
     id: row.id,
     projectId: row.projectId,
+    ...(row.projectVersionId ? { projectVersionId: row.projectVersionId } : {}),
+    ...(row.testStageId ? { testStageId: row.testStageId } : {}),
     displayName: row.displayName,
     originalFileName: row.originalFileName,
     objectKey: row.objectKey,
@@ -136,6 +152,9 @@ function toCaseDefinition(
   return {
     id: row.id,
     projectId: row.projectId,
+    ...(row.projectVersionId ? { projectVersionId: row.projectVersionId } : {}),
+    ...(row.testStageId ? { testStageId: row.testStageId } : {}),
+    directoryPath: row.directoryPath,
     sourceId: row.sourceId,
     className: row.className,
     packageName: row.packageName,
@@ -194,6 +213,8 @@ function toJarImportJob(row: typeof pgCaseImportJobs.$inferSelect): JarImportJob
   return {
     id: row.id,
     projectId: row.projectId,
+    ...(row.projectVersionId ? { projectVersionId: row.projectVersionId } : {}),
+    ...(row.testStageId ? { testStageId: row.testStageId } : {}),
     fileName: row.fileName,
     sha256: row.sha256,
     sizeBytes: row.sizeBytes,
@@ -252,6 +273,8 @@ export class PostgresCaseCatalogRepository implements CaseCatalogRepository {
         .values({
           id: record.job.id,
           projectId: record.job.projectId,
+          projectVersionId: record.job.projectVersionId,
+          testStageId: record.job.testStageId,
           idempotencyKey: record.idempotencyKey,
           fileName: record.job.fileName,
           objectKey: record.objectKey,
@@ -263,9 +286,7 @@ export class PostgresCaseCatalogRepository implements CaseCatalogRepository {
           createdAt: record.job.createdAt,
           updatedAt: record.job.updatedAt,
         })
-        .onConflictDoNothing({
-          target: [pgCaseImportJobs.projectId, pgCaseImportJobs.idempotencyKey],
-        })
+        .onConflictDoNothing()
         .returning({ id: pgCaseImportJobs.id });
       if (inserted.length === 0) return;
       await transaction.execute(sql`
@@ -287,6 +308,12 @@ export class PostgresCaseCatalogRepository implements CaseCatalogRepository {
         and(
           eq(pgCaseImportJobs.projectId, record.job.projectId),
           eq(pgCaseImportJobs.idempotencyKey, record.idempotencyKey),
+          record.job.projectVersionId
+            ? eq(pgCaseImportJobs.projectVersionId, record.job.projectVersionId)
+            : isNull(pgCaseImportJobs.projectVersionId),
+          record.job.testStageId
+            ? eq(pgCaseImportJobs.testStageId, record.job.testStageId)
+            : isNull(pgCaseImportJobs.testStageId),
         ),
       )
       .limit(1);
@@ -427,6 +454,8 @@ export class PostgresCaseCatalogRepository implements CaseCatalogRepository {
   async findSourceBySha256(
     sha256: string,
     projectId = DEFAULT_PROJECT_ID,
+    projectVersionId?: string,
+    testStageId?: string,
   ): Promise<ExistingSource | null> {
     await this.ready();
     const [row] = await this.handle.db
@@ -436,7 +465,18 @@ export class PostgresCaseCatalogRepository implements CaseCatalogRepository {
         methodCount: pgCaseSources.methodCount,
       })
       .from(pgCaseSources)
-      .where(and(eq(pgCaseSources.projectId, projectId), eq(pgCaseSources.sha256, sha256)))
+      .where(
+        and(
+          eq(pgCaseSources.projectId, projectId),
+          eq(pgCaseSources.sha256, sha256),
+          projectVersionId && testStageId
+            ? and(
+                eq(pgCaseSources.projectVersionId, projectVersionId),
+                eq(pgCaseSources.testStageId, testStageId),
+              )
+            : and(isNull(pgCaseSources.projectVersionId), isNull(pgCaseSources.testStageId)),
+        ),
+      )
       .limit(1);
     return row ?? null;
   }
@@ -448,6 +488,8 @@ export class PostgresCaseCatalogRepository implements CaseCatalogRepository {
       await transaction.insert(pgCaseSources).values({
         id: record.sourceId,
         projectId,
+        projectVersionId: record.projectVersionId,
+        testStageId: record.testStageId,
         displayName: record.displayName,
         originalFileName: record.inspection.fileName,
         objectKey: record.objectKey,
@@ -470,6 +512,9 @@ export class PostgresCaseCatalogRepository implements CaseCatalogRepository {
         await transaction.insert(pgCaseDefinitions).values({
           id: importedCase.caseDefinitionId,
           projectId,
+          projectVersionId: record.projectVersionId,
+          testStageId: record.testStageId,
+          directoryPath: candidate.packageName.replaceAll(".", "/"),
           sourceId: record.sourceId,
           className: candidate.className,
           packageName: candidate.packageName,
@@ -520,6 +565,13 @@ export class PostgresCaseCatalogRepository implements CaseCatalogRepository {
     const conditions: SQL[] = [];
     if (query.projectIds)
       conditions.push(inArray(pgCaseDefinitions.projectId, [...query.projectIds]));
+    if (query.projectVersionId)
+      conditions.push(eq(pgCaseDefinitions.projectVersionId, query.projectVersionId));
+    if (query.testStageId) conditions.push(eq(pgCaseDefinitions.testStageId, query.testStageId));
+    if (query.scopedOnly) {
+      conditions.push(sql`${pgCaseDefinitions.projectVersionId} IS NOT NULL`);
+      conditions.push(sql`${pgCaseDefinitions.testStageId} IS NOT NULL`);
+    }
     const normalized = query.query?.trim();
     if (normalized) {
       const search = or(
@@ -585,6 +637,78 @@ export class PostgresCaseCatalogRepository implements CaseCatalogRepository {
       methods: methodRows
         .map(toMethod)
         .sort((left, right) => left.methodName.localeCompare(right.methodName)),
+    };
+  }
+
+  async listCaseActivity(caseDefinitionId: string, limit: number): Promise<CaseActivity> {
+    await this.ready();
+    const [executionResult, analysisResult] = await Promise.all([
+      this.handle.pool.query<{
+        run_id: string;
+        batch_id: string;
+        status: string;
+        created_at: string;
+        attempt_id: string | null;
+        runner_id: string | null;
+        result_code: string | null;
+        duration_ms: string | number | null;
+        finished_at: string | null;
+      }>(
+        `SELECT r.id AS run_id, r.batch_id, r.status, r.created_at,
+                a.id AS attempt_id, a.runner_id, a.result_code, a.duration_ms, a.finished_at
+         FROM execution_runs r
+         LEFT JOIN LATERAL (
+           SELECT * FROM run_attempts latest
+           WHERE latest.execution_run_id = r.id
+           ORDER BY latest.attempt_number DESC LIMIT 1
+         ) a ON TRUE
+         WHERE r.case_definition_id = $1
+         ORDER BY r.created_at DESC, r.id DESC LIMIT $2`,
+        [caseDefinitionId, limit],
+      ),
+      this.handle.pool.query<{
+        attempt_id: string;
+        batch_id: string;
+        outcome: string;
+        result_code: string | null;
+        failure_signature: string | null;
+        duration_ms: string | number | null;
+        passed: number;
+        failed: number;
+        skipped: number;
+        completed_at: string;
+      }>(
+        `SELECT attempt_id, batch_id, outcome, result_code, failure_signature, duration_ms,
+                passed, failed, skipped, completed_at
+         FROM analytics_facts WHERE case_definition_id = $1
+         ORDER BY completed_at DESC, attempt_id DESC LIMIT $2`,
+        [caseDefinitionId, limit],
+      ),
+    ]);
+    return {
+      executions: executionResult.rows.map((row) => ({
+        runId: row.run_id,
+        batchId: row.batch_id,
+        status: row.status,
+        ...(row.attempt_id ? { attemptId: row.attempt_id } : {}),
+        ...(row.runner_id ? { runnerId: row.runner_id } : {}),
+        ...(row.result_code ? { resultCode: row.result_code } : {}),
+        ...(row.duration_ms === null ? {} : { durationMs: Number(row.duration_ms) }),
+        createdAt: row.created_at,
+        ...(row.finished_at ? { finishedAt: row.finished_at } : {}),
+      })),
+      analyses: analysisResult.rows.map((row) => ({
+        attemptId: row.attempt_id,
+        batchId: row.batch_id,
+        outcome: row.outcome,
+        ...(row.result_code ? { resultCode: row.result_code } : {}),
+        ...(row.failure_signature ? { failureSignature: row.failure_signature } : {}),
+        ...(row.duration_ms === null ? {} : { durationMs: Number(row.duration_ms) }),
+        passed: row.passed,
+        failed: row.failed,
+        skipped: row.skipped,
+        completedAt: row.completed_at,
+      })),
     };
   }
 
@@ -1311,6 +1435,9 @@ export class PostgresCaseSuiteRepository implements CaseSuiteRepository {
         {
           id: row.id,
           projectId: row.projectId,
+          ...(row.projectVersionId ? { projectVersionId: row.projectVersionId } : {}),
+          ...(row.testStageId ? { testStageId: row.testStageId } : {}),
+          directoryPath: row.directoryPath,
           sourceId: row.sourceId,
           className: row.className,
           packageName: row.packageName,

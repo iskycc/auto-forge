@@ -23,6 +23,13 @@ install -m 0755 \
   "${output_directory}/linux-arm64/autoforge-agent"
 install -m 0755 "${repository_root}/scripts/agent/install.sh" "${output_directory}/install.sh"
 
+adapter_jar="${AUTOFORGE_ADAPTER_JAR:-}"
+if [[ -z "${adapter_jar}" ]]; then
+  mvn --quiet --file "${repository_root}/adapters/cotest-testng/pom.xml" -DskipTests package
+  adapter_jar="${repository_root}/adapters/cotest-testng/target/cotest-testng-adapter-0.1.0-SNAPSHOT.jar"
+fi
+install -m 0644 "${adapter_jar}" "${output_directory}/cotest-testng-adapter.jar"
+
 node "${repository_root}/scripts/release/create-agent-resource-manifest.mjs" \
   "${version}" "$(release_revision)" "$(release_created_at)" "${output_directory}"
 

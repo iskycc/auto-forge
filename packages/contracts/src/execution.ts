@@ -43,17 +43,39 @@ const jvmMethodSelectorSchema = z
   .max(2_048)
   .refine(isJvmMethodSelector, "方法选择器必须包含方法名和有效的 JVM descriptor。");
 
-export const executionInputSchema = z.object({
-  inputId: identifierSchema,
-  kind: z.enum(["test-jar", "dependency-jar"]),
-  targetPath: workspaceRelativePathSchema.refine(
-    (value) => value.toLowerCase().endsWith(".jar"),
-    "执行输入必须使用 .jar 目标路径。",
-  ),
-  mediaType: z.literal("application/java-archive"),
-  sizeBytes: z.number().int().positive().max(2_147_483_648),
-  sha256: sha256Schema,
-});
+export const executionInputSchema = z
+  .object({
+    inputId: identifierSchema,
+    kind: z.enum(["test-jar", "dependency-jar", "jdk-archive", "jar-bundle"]),
+    targetPath: workspaceRelativePathSchema,
+    mediaType: z.enum(["application/java-archive", "application/zip", "application/gzip"]),
+    sizeBytes: z.number().int().positive().max(10_737_418_240),
+    sha256: sha256Schema,
+    downloadUrl: z
+      .url()
+      .max(2_048)
+      .refine((value) => {
+        const url = new URL(value);
+        return ["http:", "https:"].includes(url.protocol) && !url.username && !url.password;
+      })
+      .optional(),
+  })
+  .superRefine((input, context) => {
+    const lowerPath = input.targetPath.toLowerCase();
+    if (["test-jar", "dependency-jar"].includes(input.kind)) {
+      if (!lowerPath.endsWith(".jar") || input.mediaType !== "application/java-archive") {
+        context.addIssue({ code: "custom", message: "JAR 输入的路径和媒体类型不匹配。" });
+      }
+      return;
+    }
+    const archiveMatches =
+      (lowerPath.endsWith(".zip") && input.mediaType === "application/zip") ||
+      ((lowerPath.endsWith(".tar.gz") || lowerPath.endsWith(".tgz")) &&
+        input.mediaType === "application/gzip");
+    if (!archiveMatches) {
+      context.addIssue({ code: "custom", message: "运行时压缩包的路径和媒体类型不匹配。" });
+    }
+  });
 
 export const executionEnvironmentSchema = z
   .array(
@@ -122,6 +144,13 @@ export const executionSpecSchema = z
     className: z.string().trim().min(1).max(1_024),
     methodDescriptors: z.array(jvmMethodSelectorSchema).max(1_024).default([]),
     parameters: testNgParametersSchema.default({}),
+    adapter: z
+      .object({
+        suiteName: z.string().max(512).default(""),
+        testName: z.string().max(512).default(""),
+        environmentAddress: z.string().max(2_048).default(""),
+      })
+      .optional(),
     inputs: z.array(executionInputSchema).min(1).max(128),
     environment: executionEnvironmentSchema.default([]),
     secretReferences: z.array(executionSecretReferenceSchema).max(64).default([]),
@@ -187,6 +216,15 @@ export const executionSpecSchema = z
         path: ["inputs"],
         message: "TestNG 执行必须且只能包含一个权威 test JAR。",
       });
+    }
+    for (const kind of ["jdk-archive", "jar-bundle"] as const) {
+      if (specification.inputs.filter((input) => input.kind === kind).length > 1) {
+        context.addIssue({
+          code: "custom",
+          path: ["inputs"],
+          message: `执行输入最多包含一个 ${kind}。`,
+        });
+      }
     }
     for (const field of ["inputId", "targetPath"] as const) {
       const values = specification.inputs.map((input) => input[field]);

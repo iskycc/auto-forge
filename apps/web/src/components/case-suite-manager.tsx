@@ -1,6 +1,7 @@
 "use client";
 
-import { Button, Input, Select, Textarea } from "@/components/ui";
+import { ProjectPicker } from "@/components/project-picker";
+import { Button, Input, Textarea } from "@/components/ui";
 
 import { apiErrorSchema } from "@autoforge/contracts";
 import type { CaseSuite } from "@autoforge/domain";
@@ -72,19 +73,9 @@ export function CaseSuiteManager({
           </div>
           <form className="stack-form" onSubmit={createSuite}>
             {projects.length > 0 ? (
-              <label>
+              <label className="suite-project-field">
                 <span>项目</span>
-                <Select
-                  name="projectId"
-                  value={projectId}
-                  onChange={(event) => setProjectId(event.target.value)}
-                >
-                  {projects.map((project) => (
-                    <option key={project.id} value={project.id}>
-                      {project.name}
-                    </option>
-                  ))}
-                </Select>
+                <ProjectPicker projects={projects} value={projectId} onChange={setProjectId} />
               </label>
             ) : null}
             <label>

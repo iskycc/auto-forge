@@ -8,6 +8,8 @@ export const runtime = "nodejs";
 
 const querySchema = z.object({
   projectId: z.string().min(1).max(128).optional(),
+  projectVersionId: z.string().min(1).max(128).optional(),
+  testStageId: z.string().min(1).max(128).optional(),
   query: z.string().trim().max(200).optional(),
   cursor: z.string().min(1).optional(),
   limit: z.coerce.number().int().min(1).max(100).default(50),
@@ -20,6 +22,8 @@ export async function GET(request: Request): Promise<NextResponse> {
     const input = querySchema.parse({
       query: url.searchParams.get("query") ?? undefined,
       projectId: url.searchParams.get("projectId") ?? undefined,
+      projectVersionId: url.searchParams.get("projectVersionId") ?? undefined,
+      testStageId: url.searchParams.get("testStageId") ?? undefined,
       cursor: url.searchParams.get("cursor") ?? undefined,
       limit: url.searchParams.get("limit") ?? undefined,
     });
@@ -28,6 +32,9 @@ export async function GET(request: Request): Promise<NextResponse> {
       await getPlatformServices()
     ).catalog.listCases({
       ...(projectIds ? { projectIds } : {}),
+      ...(input.projectVersionId ? { projectVersionId: input.projectVersionId } : {}),
+      ...(input.testStageId ? { testStageId: input.testStageId } : {}),
+      scopedOnly: true,
       limit: input.limit,
       ...(input.query === undefined ? {} : { query: input.query }),
       ...(input.cursor === undefined ? {} : { cursor: input.cursor }),

@@ -5,6 +5,7 @@ export * from "./errors";
 export * from "./environment";
 export * from "./execution";
 export * from "./identity";
+export * from "./project-structure";
 export * from "./run-batch";
 export * from "./runner";
 export * from "./runner-compatibility";

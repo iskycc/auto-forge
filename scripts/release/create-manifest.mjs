@@ -43,20 +43,14 @@ function expectedArtifactNames(version) {
       `${backendName}.spdx.json`,
     ];
   });
-  const toolchainArtifacts = ["amd64", "arm64"].flatMap((architecture) => {
-    const toolchainName = `autoforge-runner-toolchain-linux-${architecture}-java21-testng7.11.0.tar.gz`;
-    return [toolchainName, `${toolchainName}.sha256`, `${toolchainName}.spdx.json`];
-  });
   return [
     ...platformArtifacts,
-    ...toolchainArtifacts,
     `autoforge-deploy-${version}.tar.gz`,
     `autoforge-deploy-${version}.spdx.json`,
     "CHANGELOG.md",
     "COMPATIBILITY.md",
     "LICENSE",
     "NOTICE",
-    "RUNNER_TOOLCHAIN_NOTICES.md",
     "release-signing-public-key.pem",
     "THIRD_PARTY_LICENSES.json",
   ];

@@ -4,7 +4,7 @@ import { Button, Input, Select } from "@/components/ui";
 
 import { apiErrorSchema } from "@autoforge/contracts";
 import type { CaseDefinitionWithMethods, CaseSuite } from "@autoforge/domain";
-import { Check, Layers3, LoaderCircle } from "lucide-react";
+import { Check, FileCode2, Folder, Layers3, LoaderCircle } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
 
@@ -102,6 +102,19 @@ export function CaseSelectionTable({
                 ? "勾选用例后加入任务"
                 : `已选择 ${selected.size} 个用例`}
           </span>
+          <label className="selection-actions">
+            <Input
+              type="checkbox"
+              aria-label="选择当前目录树全部用例"
+              checked={allSelected}
+              onChange={() =>
+                setSelected(
+                  allSelected ? new Set() : new Set(manageableCases.map((item) => item.id)),
+                )
+              }
+            />
+            全选
+          </label>
           {manageableSuites.length === 0 ? (
             <Link className="button button-secondary" href="/case-suites">
               <Layers3 size={15} /> 新建用例任务
@@ -139,91 +152,136 @@ export function CaseSelectionTable({
           {message}
         </div>
       )}
-      <div className="table-scroll">
-        <table className="data-table selectable-table">
-          <thead>
-            <tr>
-              {canManageAnyCase ? (
-                <th className="checkbox-cell">
-                  <Input
-                    type="checkbox"
-                    aria-label="选择本页全部用例"
-                    checked={allSelected}
-                    onChange={() =>
-                      setSelected(
-                        allSelected ? new Set() : new Set(manageableCases.map((item) => item.id)),
-                      )
-                    }
-                  />
-                </th>
-              ) : null}
-              <th>测试类</th>
-              <th>测试方法</th>
-              <th>分组</th>
-              <th>状态</th>
-              <th>导入时间</th>
-            </tr>
-          </thead>
-          <tbody>
-            {cases.map((item) => (
-              <tr className={selected.has(item.id) ? "selected-row" : ""} key={item.id}>
-                {canManageAnyCase ? (
-                  <td className="checkbox-cell">
-                    {canManageProject(item.projectId) ? (
-                      <Input
-                        type="checkbox"
-                        aria-label={`选择 ${item.displayName}`}
-                        checked={selected.has(item.id)}
-                        onChange={() => toggle(item.id)}
-                      />
-                    ) : null}
-                  </td>
-                ) : null}
-                <td>
-                  <span className="class-cell">
-                    <strong>
-                      <Link className="table-link" href={`/cases/${encodeURIComponent(item.id)}`}>
-                        {item.displayName}
-                      </Link>
-                    </strong>
-                    <code>{item.className}</code>
-                  </span>
-                </td>
-                <td>
-                  <span className="method-summary">
-                    <strong>{item.methods.length}</strong>
-                    <span>
-                      {item.methods
-                        .slice(0, 2)
-                        .map((method) => method.methodName)
-                        .join("、") || "类级定义"}
-                    </span>
-                  </span>
-                </td>
-                <td>
-                  <span className="tag-list">
-                    {item.groups.length === 0 ? (
-                      <span className="muted">—</span>
-                    ) : (
-                      item.groups.slice(0, 3).map((group) => (
-                        <span className="tag" key={group}>
-                          {group}
-                        </span>
-                      ))
-                    )}
-                  </span>
-                </td>
-                <td>
-                  <StatusBadge enabled={item.enabled} />
-                </td>
-                <td>
-                  <time dateTime={item.createdAt}>{formatDate(item.createdAt)}</time>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+      <div className="case-directory-tree" role="tree" aria-label="用例目录">
+        <DirectoryNode
+          node={buildDirectoryTree(cases)}
+          selected={selected}
+          canManageProject={canManageProject}
+          onToggle={toggle}
+          root
+        />
       </div>
     </>
+  );
+}
+
+type DirectoryTreeNode = {
+  name: string;
+  path: string;
+  directories: DirectoryTreeNode[];
+  cases: CaseDefinitionWithMethods[];
+};
+
+function buildDirectoryTree(cases: CaseDefinitionWithMethods[]): DirectoryTreeNode {
+  const root: DirectoryTreeNode = { name: "", path: "", directories: [], cases: [] };
+  for (const item of cases) {
+    let current = root;
+    for (const segment of item.directoryPath.split("/").filter(Boolean)) {
+      let child = current.directories.find((candidate) => candidate.name === segment);
+      if (!child) {
+        child = {
+          name: segment,
+          path: current.path ? `${current.path}/${segment}` : segment,
+          directories: [],
+          cases: [],
+        };
+        current.directories.push(child);
+      }
+      current = child;
+    }
+    current.cases.push(item);
+  }
+  sortDirectory(root);
+  return root;
+}
+
+function sortDirectory(node: DirectoryTreeNode): void {
+  node.directories.sort((left, right) => left.name.localeCompare(right.name));
+  node.cases.sort((left, right) => left.displayName.localeCompare(right.displayName));
+  node.directories.forEach(sortDirectory);
+}
+
+function DirectoryNode({
+  node,
+  selected,
+  canManageProject,
+  onToggle,
+  root = false,
+}: {
+  node: DirectoryTreeNode;
+  selected: Set<string>;
+  canManageProject(projectId: string): boolean;
+  onToggle(id: string): void;
+  root?: boolean;
+}) {
+  const content = (
+    <div className="case-tree-children">
+      {node.directories.map((directory) => (
+        <DirectoryNode
+          key={directory.path}
+          node={directory}
+          selected={selected}
+          canManageProject={canManageProject}
+          onToggle={onToggle}
+        />
+      ))}
+      {node.cases.map((item) => (
+        <div
+          aria-selected={selected.has(item.id)}
+          className={`case-tree-case ${selected.has(item.id) ? "selected-row" : ""}`}
+          key={item.id}
+          role="treeitem"
+        >
+          {canManageProject(item.projectId) ? (
+            <Input
+              type="checkbox"
+              aria-label={`选择 ${item.displayName}`}
+              checked={selected.has(item.id)}
+              onChange={() => onToggle(item.id)}
+            />
+          ) : null}
+          <FileCode2 size={17} aria-hidden="true" />
+          <span className="class-cell">
+            <strong>
+              <Link className="table-link" href={`/cases/${encodeURIComponent(item.id)}`}>
+                {item.displayName}
+              </Link>
+            </strong>
+            <code>{item.className}</code>
+          </span>
+          <span className="method-summary">
+            <strong>{item.methods.length}</strong>
+            <span>个测试方法</span>
+          </span>
+          <span className="tag-list">
+            {item.groups.slice(0, 3).map((group) => (
+              <span className="tag" key={group}>
+                {group}
+              </span>
+            ))}
+          </span>
+          <StatusBadge enabled={item.enabled} />
+          <time dateTime={item.createdAt}>{formatDate(item.createdAt)}</time>
+        </div>
+      ))}
+    </div>
+  );
+  if (root) return content;
+  return (
+    <details aria-selected={false} className="case-tree-directory" open role="treeitem">
+      <summary>
+        <Folder size={17} aria-hidden="true" />
+        <strong>{node.name}</strong>
+        <span>{countCases(node)} 个用例</span>
+      </summary>
+      {content}
+    </details>
+  );
+}
+
+function countCases(node: DirectoryTreeNode): number {
+  return (
+    node.cases.length +
+    node.directories.reduce((total, directory) => total + countCases(directory), 0)
   );
 }

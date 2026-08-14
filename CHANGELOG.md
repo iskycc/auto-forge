@@ -6,6 +6,66 @@ and known limitations.
 
 ## Unreleased
 
+## 0.4.9 - 2026-08-14
+
+### Added
+
+- Add the standard Maven CoTest TestNG Adapter and embed its verified JAR into every backend image so
+  Runner attempts can execute selected classes with an isolated class loader and project-level
+  suite, test and environment-IP parameters.
+- Add project versions and test stages, project-scoped Adapter configuration, and JDK plus dependency
+  archive runtime assets supplied by upload or an integrity-pinned Runner-accessible HTTP(S) URL.
+- Add resumable Runner log streaming through the existing acknowledged log-chunk protocol and an
+  authenticated same-origin WebSocket relay for live attempt output in the platform.
+- Add directory-based case navigation and project hierarchy management while keeping case execution
+  and analysis history available from each case detail page.
+
+### Changed
+
+- Run Runner installation and attempt scripts with Bash, allow an administrator to force the
+  openSUSE installation profile when operating-system detection is ambiguous, and execute the Agent
+  from its configured working directory.
+- Remove the separately published Java/TestNG Runner toolchain archives. Administrators now provide
+  the exact JDK and complete test-dependency archive required by each project; the Agent verifies and
+  unpacks those assets before starting the embedded Adapter.
+- Reorganize the management center, operations/audit area and platform settings into route-backed
+  tabs, replace the native project selector, and stabilize the case detail, audit and insights layouts
+  at desktop and compact viewport widths.
+- Preserve fast publication by keeping the tagged `Release` workflow independent from `Release
+  checks`; only required Adapter, backend image, SBOM, manifest, signature and provenance failures
+  block publication.
+
+### Fixed
+
+- Return resolved project hierarchy DTOs from the project structure API instead of serializing a
+  pending repository promise.
+- Preserve Runner log ordering and replay semantics while relaying live stdout/stderr updates, and
+  keep class paths isolated between Adapter invocations with potentially conflicting dependency
+  classes.
+
+### Database migrations and compatibility
+
+- Add PostgreSQL migration `0024_project_version_test_stage.sql` and SQLite migration
+  `0025_project_version_test_stage.sql` for project versions, test stages, Adapter configuration,
+  runtime assets and case hierarchy references. Existing cases are intentionally not migrated into
+  the new project/version/stage hierarchy.
+- Extend Runner Protocol v1 additively with Adapter execution and runtime-asset fields. Existing
+  command assignments remain valid; upgraded Agents are required for CoTest Adapter assignments.
+
+### Offline assets
+
+- Rebuild all four immutable backend variants with the updated static amd64/arm64 Agents and embedded
+  CoTest Adapter JAR, plus SPDX SBOMs, deployment bundle, signed checksums, release manifest and
+  provenance for `0.4.9`. JDK and test dependency archives are intentionally project-managed inputs
+  rather than Release assets.
+
+### Known limitations
+
+- Runtime-asset URL downloads require network reachability from the selected Runner; fully offline
+  deployments should upload the JDK and dependency archives to the platform instead.
+- Previously imported cases remain outside the new hierarchy by design and should be re-imported into
+  an explicit project version and test stage.
+
 ## 0.4.8 - 2026-08-14
 
 ### Changed

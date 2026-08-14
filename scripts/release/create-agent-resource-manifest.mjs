@@ -7,6 +7,7 @@ const resourceFiles = [
   ["linux-amd64", "linux-amd64/autoforge-agent"],
   ["linux-arm64", "linux-arm64/autoforge-agent"],
   ["installer", "install.sh"],
+  ["adapter", "cotest-testng-adapter.jar"],
 ];
 
 export async function createAgentResourceManifest(version, revision, createdAt, resourceDirectory) {

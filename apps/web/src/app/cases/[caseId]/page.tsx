@@ -32,13 +32,22 @@ export default async function CaseDetailPage({ params }: CaseDetailPageProps) {
   const services = await getPlatformServices();
   let definition;
   let versions;
+  let activity;
   try {
     definition = await services.caseDefinitions.get(caseId, projectIds);
     versions = await services.caseDefinitions.listVersions(caseId, projectIds);
+    activity = await services.caseDefinitions.listActivity(caseId, projectIds);
   } catch (error) {
     if (isDomainError(error) && error.code === "CASE_DEFINITION_NOT_FOUND") notFound();
     throw error;
   }
+  if (!definition.projectVersionId || !definition.testStageId) notFound();
+  const structure = await services.projectStructures.list(definition.projectId);
+  const projectVersion = structure.versions.find(
+    (version) => version.id === definition.projectVersionId,
+  );
+  const testStage = projectVersion?.stages.find((stage) => stage.id === definition.testStageId);
+  if (!projectVersion || !testStage) notFound();
   const canManage = hasPermission(identity, "case.manage", definition.projectId);
   const canRun = hasPermission(identity, "run.create", definition.projectId);
   const canReadSource = hasPermission(identity, "case_source.read", definition.projectId);
@@ -58,13 +67,20 @@ export default async function CaseDetailPage({ params }: CaseDetailPageProps) {
   }
 
   return (
-    <div className="page-stack narrow-page">
-      <section className="page-hero">
+    <div className="page-stack case-detail-page">
+      <section className="page-hero case-detail-hero">
         <div>
-          <Link className="back-link" href="/cases">
+          <Link
+            className="back-link"
+            href={`/cases?${new URLSearchParams({
+              projectId: definition.projectId,
+              projectVersionId: projectVersion.id,
+              testStageId: testStage.id,
+            }).toString()}`}
+          >
             <ArrowLeft size={15} aria-hidden="true" /> 返回用例库
           </Link>
-          <span className="eyebrow">Case Definition</span>
+          <span className="eyebrow case-detail-eyebrow">Case Definition</span>
           <h1>{definition.displayName}</h1>
           <p>
             <code>{definition.className}</code>
@@ -89,6 +105,12 @@ export default async function CaseDetailPage({ params }: CaseDetailPageProps) {
             <strong>{definition.packageName || "—"}</strong>
           </div>
           <div>
+            <span>版本 / 测试阶段</span>
+            <strong>
+              {projectVersion.name} / {testStage.name}
+            </strong>
+          </div>
+          <div>
             <span>分组</span>
             <strong>{definition.groups.join("、") || "—"}</strong>
           </div>
@@ -100,7 +122,7 @@ export default async function CaseDetailPage({ params }: CaseDetailPageProps) {
             <span>最近更新</span>
             <strong>{formatDate(definition.updatedAt)}</strong>
           </div>
-          <div>
+          <div className="source-meta-wide">
             <span>参数</span>
             <strong>
               {Object.entries(definition.parameters)
@@ -112,7 +134,7 @@ export default async function CaseDetailPage({ params }: CaseDetailPageProps) {
       </section>
 
       {canRun && definition.enabled && !definition.archived && executable ? (
-        <section className="card">
+        <section className="card case-run-card">
           <SingleCaseRun caseDefinitionId={definition.id} runners={runners} />
         </section>
       ) : null}
@@ -124,6 +146,86 @@ export default async function CaseDetailPage({ params }: CaseDetailPageProps) {
           JAR。
         </div>
       ) : null}
+
+      <section className="card table-card">
+        <div className="card-heading">
+          <div>
+            <span className="eyebrow">Execution history</span>
+            <h2>执行历史（{activity.executions.length}）</h2>
+          </div>
+        </div>
+        <div className="table-scroll">
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>时间</th>
+                <th>状态</th>
+                <th>结果</th>
+                <th>Runner</th>
+                <th>详情</th>
+              </tr>
+            </thead>
+            <tbody>
+              {activity.executions.length === 0 ? (
+                <tr>
+                  <td colSpan={5}>当前用例尚无执行记录。</td>
+                </tr>
+              ) : null}
+              {activity.executions.map((execution) => (
+                <tr key={execution.runId}>
+                  <td>{formatDate(execution.finishedAt ?? execution.createdAt)}</td>
+                  <td>{execution.status}</td>
+                  <td>{execution.resultCode ?? "—"}</td>
+                  <td>{execution.runnerId ?? "—"}</td>
+                  <td>
+                    <Link href={`/run-batches/${encodeURIComponent(execution.batchId)}`}>
+                      查看批次
+                    </Link>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section className="card table-card">
+        <div className="card-heading">
+          <div>
+            <span className="eyebrow">Analysis history</span>
+            <h2>分析历史（{activity.analyses.length}）</h2>
+          </div>
+        </div>
+        <div className="table-scroll">
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>完成时间</th>
+                <th>结果</th>
+                <th>通过 / 失败 / 跳过</th>
+                <th>失败签名</th>
+              </tr>
+            </thead>
+            <tbody>
+              {activity.analyses.length === 0 ? (
+                <tr>
+                  <td colSpan={4}>当前用例尚无分析事实。</td>
+                </tr>
+              ) : null}
+              {activity.analyses.map((analysis) => (
+                <tr key={analysis.attemptId}>
+                  <td>{formatDate(analysis.completedAt)}</td>
+                  <td>{analysis.resultCode ?? analysis.outcome}</td>
+                  <td>
+                    {analysis.passed} / {analysis.failed} / {analysis.skipped}
+                  </td>
+                  <td>{analysis.failureSignature ?? "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
 
       {sourceView ? (
         <section className="card source-code-card">
@@ -147,7 +249,7 @@ export default async function CaseDetailPage({ params }: CaseDetailPageProps) {
       ) : null}
 
       {canManage ? (
-        <section className="card">
+        <section className="card case-editor-card">
           <div className="card-heading">
             <div>
               <span className="eyebrow">编辑</span>

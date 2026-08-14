@@ -7,7 +7,7 @@ test("service account lifecycle immediately narrows token access and produces ex
 }) => {
   await ensureAdministrator(page);
   const accountName = uniqueName("release-automation");
-  await page.goto("/settings/platform");
+  await page.goto("/settings/platform?section=accounts");
   const createForm = page.locator("form", {
     has: page.getByRole("button", { name: "创建服务账号" }),
   });

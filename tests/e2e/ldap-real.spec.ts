@@ -88,7 +88,7 @@ async function configureDirectory(
   caPem: string,
   tlsMode: "ldaps" | "starttls",
 ): Promise<void> {
-  await page.goto("/settings/access#ldap");
+  await page.goto("/settings/access?section=ldap");
   const form = page.locator("form", {
     has: page.getByRole("button", { name: "保存 LDAP 配置" }),
   });
@@ -137,7 +137,7 @@ async function addGroupMapping(
   roleName: string,
   projectName?: string,
 ): Promise<void> {
-  await page.goto("/settings/access#ldap");
+  await page.goto("/settings/access?section=ldap");
   const form = page.locator("form", {
     has: page.getByRole("button", { name: "添加组映射" }),
   });

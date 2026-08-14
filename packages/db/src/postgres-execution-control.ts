@@ -419,9 +419,9 @@ export class PostgresExecutionControlRepository implements ExecutionControlRepos
     if (!declaredInput) {
       throw new DomainError("ATTEMPT_INPUT_FORBIDDEN", "输入未在执行快照中声明。");
     }
-    const result = await this.handle.pool.query<{
+    let result = await this.handle.pool.query<{
       object_key: string;
-      size_bytes: number;
+      size_bytes: string | number;
       sha256: string;
     }>(
       `SELECT object_key, size_bytes, sha256
@@ -429,11 +429,27 @@ export class PostgresExecutionControlRepository implements ExecutionControlRepos
        WHERE id = $1`,
       [input.inputId],
     );
+    if (result.rowCount === 0 && !declaredInput.downloadUrl) {
+      result = await this.handle.pool.query<{
+        object_key: string;
+        size_bytes: string | number;
+        sha256: string;
+      }>(
+        `SELECT object_key, size_bytes, sha256
+         FROM project_runtime_assets
+         WHERE id = $1 AND source_type = 'upload' AND object_key IS NOT NULL`,
+        [input.inputId],
+      );
+    }
     const row = result.rows[0];
-    if (!row || row.size_bytes !== declaredInput.sizeBytes || row.sha256 !== declaredInput.sha256) {
+    if (
+      !row ||
+      Number(row.size_bytes) !== declaredInput.sizeBytes ||
+      row.sha256 !== declaredInput.sha256
+    ) {
       throw new DomainError("ATTEMPT_INPUT_INVALID", "执行输入与权威对象元数据不一致。");
     }
-    return { objectKey: row.object_key, sizeBytes: row.size_bytes, sha256: row.sha256 };
+    return { objectKey: row.object_key, sizeBytes: Number(row.size_bytes), sha256: row.sha256 };
   }
 
   async resolveAttemptSecrets(

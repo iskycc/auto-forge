@@ -5,7 +5,7 @@ import { resolve } from "path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { RunBatchSchedulingService, type JarObjectStorePort } from "@autoforge/application";
-import { defaultCaseSuiteExecutionPolicy } from "@autoforge/domain";
+import { DEFAULT_PROJECT_ID, defaultCaseSuiteExecutionPolicy } from "@autoforge/domain";
 
 import { createSqliteDatabase } from "../src/database";
 import { SqliteCaseCatalogRepository } from "../src/sqlite-case-catalog";
@@ -164,6 +164,48 @@ describe("SQLite case suite lifecycle", () => {
   it("freezes merged suite policy on the batch and into assignment specs", async () => {
     const { handle, catalog, suites, runners, batches } = await fixture();
     try {
+      handle.client
+        .prepare(
+          `INSERT INTO project_runtime_assets
+           (id, project_id, kind, source_type, file_name, url, object_key, sha256, size_bytes,
+            archive_format, created_by, created_at)
+           VALUES (?, ?, ?, 'url', ?, ?, NULL, ?, ?, 'zip', NULL, ?)`,
+        )
+        .run(
+          "jdk-runtime",
+          DEFAULT_PROJECT_ID,
+          "jdk",
+          "jdk.zip",
+          "http://10.0.0.8/jdk.zip",
+          "a".repeat(64),
+          1024,
+          timestamp,
+        );
+      handle.client
+        .prepare(
+          `INSERT INTO project_runtime_assets
+           (id, project_id, kind, source_type, file_name, url, object_key, sha256, size_bytes,
+            archive_format, created_by, created_at)
+           VALUES (?, ?, ?, 'url', ?, ?, NULL, ?, ?, 'zip', NULL, ?)`,
+        )
+        .run(
+          "jar-runtime",
+          DEFAULT_PROJECT_ID,
+          "jar-bundle",
+          "jars.zip",
+          "http://10.0.0.8/jars.zip",
+          "b".repeat(64),
+          2048,
+          timestamp,
+        );
+      handle.client
+        .prepare(
+          `INSERT INTO project_adapter_configurations
+           (project_id, suite_name, test_name, environment_address, jdk_asset_id,
+            jar_bundle_asset_id, revision, updated_by, updated_at)
+           VALUES (?, 'project-suite', 'system-test', '10.0.0.9', ?, ?, 1, NULL, ?)`,
+        )
+        .run(DEFAULT_PROJECT_ID, "jdk-runtime", "jar-runtime", timestamp);
       await suites.create({ id: "suite-1", name: "Smoke", createdAt: timestamp });
       await suites.addCases({
         suiteId: "suite-1",
@@ -199,7 +241,14 @@ describe("SQLite case suite lifecycle", () => {
         agentVersion: "0.2.0",
         protocolVersion: 1,
         labels: ["java", "testng", "gpu"],
-        capabilities: ["executor:testng-v1", "isolation:cgroup-v2", "java:21.0.8", "testng:7.11.0"],
+        capabilities: [
+          "executor:testng-v1",
+          "adapter:cotest-testng-v1",
+          "runtime:project-assets-v1",
+          "isolation:cgroup-v2",
+          "java:21.0.8",
+          "testng:7.11.0",
+        ],
         maxConcurrency: 4,
         terminalEnabled: false,
         recordedAt: timestamp,
@@ -207,7 +256,14 @@ describe("SQLite case suite lifecycle", () => {
       await runners.heartbeat({
         runnerId: "runner-1",
         labels: ["java", "testng", "gpu"],
-        capabilities: ["executor:testng-v1", "isolation:cgroup-v2", "java:21.0.8", "testng:7.11.0"],
+        capabilities: [
+          "executor:testng-v1",
+          "adapter:cotest-testng-v1",
+          "runtime:project-assets-v1",
+          "isolation:cgroup-v2",
+          "java:21.0.8",
+          "testng:7.11.0",
+        ],
         maxConcurrency: 4,
         busySlots: 0,
         agentVersion: "0.2.0",
@@ -260,8 +316,11 @@ describe("SQLite case suite lifecycle", () => {
       expect(specRow).toBeDefined();
       const spec = JSON.parse(specRow!.execution_spec_json) as {
         requiredLabels: string[];
+        requiredCapabilities: string[];
         artifactRules: Array<{ pattern: string; mediaType: string }>;
         parameters: Record<string, string>;
+        adapter: { suiteName: string; testName: string; environmentAddress: string };
+        inputs: Array<{ kind: string; downloadUrl?: string }>;
         timeoutMs: number;
       };
       expect(spec.requiredLabels).toEqual(expect.arrayContaining(["java", "testng", "gpu"]));
@@ -270,6 +329,20 @@ describe("SQLite case suite lifecycle", () => {
         { pattern: "logs/*.txt", required: false, mediaType: "text/plain" },
       ]);
       expect(spec.parameters).toEqual({ SUITE: "nightly", CASE: "level" });
+      expect(spec.adapter).toEqual({
+        suiteName: "project-suite",
+        testName: "system-test",
+        environmentAddress: "10.0.0.9",
+      });
+      expect(spec.requiredCapabilities).toEqual(
+        expect.arrayContaining(["adapter:cotest-testng-v1", "runtime:project-assets-v1"]),
+      );
+      expect(spec.inputs.map((input) => input.kind)).toEqual([
+        "test-jar",
+        "jdk-archive",
+        "jar-bundle",
+      ]);
+      expect(spec.inputs[1]?.downloadUrl).toBe("http://10.0.0.8/jdk.zip");
       expect(spec.timeoutMs).toBe(600_000);
     } finally {
       handle.close();

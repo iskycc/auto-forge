@@ -11,6 +11,7 @@ import {
   type JarImportJob,
   type JarInspection,
 } from "@autoforge/contracts";
+import type { ProjectVersion, TestStage } from "@autoforge/domain";
 import {
   AlertCircle,
   Archive,
@@ -43,11 +44,17 @@ async function errorMessage(response: Response): Promise<string> {
 export function JarImporter({
   maxJarBytes,
   projectId: initialProjectId,
+  initialProjectVersionId,
+  initialTestStageId,
   projects,
+  versions,
 }: {
   maxJarBytes: number;
   projectId?: string | undefined;
+  initialProjectVersionId?: string | undefined;
+  initialTestStageId?: string | undefined;
   projects: Array<{ id: string; name: string }>;
+  versions: Array<ProjectVersion & { stages: TestStage[] }>;
 }) {
   const inputId = useId();
   const router = useRouter();
@@ -58,6 +65,17 @@ export function JarImporter({
   const [job, setJob] = useState<JarImportJob | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [projectId, setProjectId] = useState(initialProjectId ?? projects[0]?.id ?? "");
+  const [projectVersionId, setProjectVersionId] = useState(
+    versions.some((version) => version.id === initialProjectVersionId)
+      ? (initialProjectVersionId ?? "")
+      : (versions[0]?.id ?? ""),
+  );
+  const availableStages = versions.find((version) => version.id === projectVersionId)?.stages ?? [];
+  const [testStageId, setTestStageId] = useState(
+    availableStages.some((stage) => stage.id === initialTestStageId)
+      ? (initialTestStageId ?? "")
+      : (availableStages[0]?.id ?? ""),
+  );
 
   const applyJobState = useCallback(
     (updated: JarImportJob): void => {
@@ -98,6 +116,8 @@ export function JarImporter({
     formData.set("file", file);
     const target = new URL(url, window.location.origin);
     if (projectId) target.searchParams.set("projectId", projectId);
+    if (projectVersionId) target.searchParams.set("projectVersionId", projectVersionId);
+    if (testStageId) target.searchParams.set("testStageId", testStageId);
     return fetch(`${target.pathname}${target.search}`, { method: "POST", body: formData });
   }
 
@@ -220,7 +240,11 @@ export function JarImporter({
             导入项目
             <Select
               disabled={busy}
-              onChange={(event) => setProjectId(event.target.value)}
+              onChange={(event) => {
+                const nextProjectId = event.target.value;
+                setProjectId(nextProjectId);
+                router.push(`/cases/import?projectId=${encodeURIComponent(nextProjectId)}`);
+              }}
               value={projectId}
             >
               {projects.map((project) => (
@@ -233,6 +257,48 @@ export function JarImporter({
         ) : projectId ? (
           <p className="settings-note">
             目标项目：<code>{projectId}</code>
+          </p>
+        ) : null}
+
+        <div className="settings-paired-forms">
+          <label>
+            项目版本
+            <Select
+              disabled={busy}
+              onChange={(event) => {
+                const nextVersionId = event.target.value;
+                setProjectVersionId(nextVersionId);
+                setTestStageId(
+                  versions.find((version) => version.id === nextVersionId)?.stages[0]?.id ?? "",
+                );
+              }}
+              value={projectVersionId}
+            >
+              {versions.map((version) => (
+                <option key={version.id} value={version.id}>
+                  {version.name}
+                </option>
+              ))}
+            </Select>
+          </label>
+          <label>
+            测试阶段
+            <Select
+              disabled={busy}
+              onChange={(event) => setTestStageId(event.target.value)}
+              value={testStageId}
+            >
+              {availableStages.map((stage) => (
+                <option key={stage.id} value={stage.id}>
+                  {stage.name}
+                </option>
+              ))}
+            </Select>
+          </label>
+        </div>
+        {versions.length === 0 || availableStages.length === 0 ? (
+          <p className="auth-error" role="alert">
+            请先在“管理中心 → 项目与成员”创建项目版本和测试阶段，再导入用例。
           </p>
         ) : null}
 
@@ -438,7 +504,13 @@ export function JarImporter({
               className="button button-primary"
               type="button"
               onClick={importJar}
-              disabled={busy || inspection.testClassCount === 0 || phase === "done"}
+              disabled={
+                busy ||
+                inspection.testClassCount === 0 ||
+                phase === "done" ||
+                !projectVersionId ||
+                !testStageId
+              }
             >
               {phase === "importing" ? (
                 <LoaderCircle className="spin" size={17} />

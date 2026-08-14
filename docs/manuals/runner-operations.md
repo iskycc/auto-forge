@@ -10,18 +10,22 @@
 
 ## 离线安装
 
-平台内置 Linux amd64/arm64 Agent。管理员在 Runner 页面提交 SSH 目标、用户、密码并核对主机
-指纹后，平台探测 Ubuntu/openSUSE 与架构、传输二进制/安装脚本/一次性 bootstrap token，创建
+平台内置 Linux amd64/arm64 Agent 与 CoTest Adapter。管理员在 Runner 页面提交 SSH 目标、用户、密码并核对主机
+指纹后，平台探测 Ubuntu/openSUSE 与架构、传输二进制/Adapter/安装脚本/一次性 bootstrap token，创建
 专用用户、目录和 systemd 服务。脚本不调用包管理器、不联网。详细路径、权限、私有 CA 和卸载
 命令见 [Agent 安装](../operations/runner-agent-install.md)。
 
+远程探测与安装使用目标机的 Bash，systemd 固定以 `/var/lib/autoforge-agent` 为工作目录。
+若 openSUSE 的 `ID` 被定制成 `sles` 等值，自动模式会结合名称中的 openSUSE 证据纠正；仍无法
+确认时，管理员核验主机后可手动选择 Ubuntu/openSUSE 强制模式，不再因识别结果直接阻断。
+
 ## 工具链与能力
 
-Java、TestNG、依赖 JAR、浏览器和驱动必须从受控离线介质预置。使用
-`operations/build-runner-toolchain.sh` 把已批准的 JDK 与完整 classpath 组装为带摘要的版本包；
-基线见 [Runner 工具链](../operations/runner-toolchain.md)。Agent 配置文件记录绝对 Java 路径、
-classpath 和精确版本；`doctor`/`health ready` 校验可执行文件、classpath、数据目录、cgroup v2 和
-私有 CA，校验失败时不声明对应 capability。
+项目设置可分别上传 JDK 压缩包与包含用例全部依赖的 JAR 压缩包，也可登记 Runner 可访问的
+HTTP(S) 链接、精确字节数和 SHA-256。批次创建时固化项目的 Suite/Test/环境地址和资源快照；
+Runner 下载后再次校验摘要，在 attempt 工作目录内拒绝路径穿越、符号链接、设备文件、过深目录
+和超出磁盘/文件预算的展开内容。随后使用任务 JDK 执行内置 Adapter。组织仍可选择本机预置
+工具链作为兼容后备，基线见 [Runner 工具链](../operations/runner-toolchain.md)。
 
 ## 生命周期与诊断
 
@@ -33,4 +37,5 @@ classpath 和精确版本；`doctor`/`health ready` 校验可执行文件、clas
 spool 保存未确认日志/结果并受大小与保留期限制；达到上限会明确截断或失败，不静默丢失。
 attempt 使用独立工作目录、cgroup v2、rlimit 和进程组；process 模式不是完整沙箱。终端、取消、
 超时、lease 丢失、Agent 关闭和控制面断开都会关闭 Shell/测试进程组。诊断日志与用例输出分流并
-执行脱敏。
+执行脱敏。运行期间 Agent 周期上传新增日志块；控制面成功持久化后再推送给同源 WebSocket
+订阅者，断线期间仍以持久日志与 spool 确认水位恢复，不把 WebSocket 当作执行正确性依赖。

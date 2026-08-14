@@ -22,6 +22,7 @@ test("configuration conflicts, diagnostics and retention controls remain observa
   await expect(page.getByText(/平台配置已保存/)).toBeVisible();
   await concurrentPage.close();
 
+  await page.getByRole("link", { name: "系统诊断" }).click();
   await expect(page.getByRole("heading", { name: "系统诊断" })).toBeVisible();
   await expect(page.locator(".diagnostic-summary")).toContainText(/LITE|FULL/);
   await page.getByRole("button", { name: "刷新诊断" }).click();
@@ -34,6 +35,7 @@ test("configuration conflicts, diagnostics and retention controls remain observa
   expect(JSON.stringify(diagnosticBody)).not.toContain("adminBootstrapToken");
   expect(JSON.stringify(diagnosticBody)).not.toContain("databaseUrl");
 
+  await page.getByRole("link", { name: "数据保留" }).click();
   const logRetention = page.locator(".retention-policy-grid form").filter({ hasText: "日志" });
   await logRetention.getByRole("button", { name: "影响预览" }).click();
   await expect(logRetention).toContainText(/当前将影响 \d+ 条/);

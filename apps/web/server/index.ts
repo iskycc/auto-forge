@@ -8,6 +8,8 @@ import next from "next";
 import { loadAppConfig } from "../src/lib/config.ts";
 import { recordHttpRequest } from "../src/lib/runtime-metrics.ts";
 import { TerminalGateway, type TerminalAuditEvent } from "./terminal-gateway.ts";
+import { LogStreamGateway } from "./log-stream-gateway.ts";
+import { LogStreamRelay } from "./log-stream-relay.ts";
 
 const development = process.env.NODE_ENV !== "production";
 const platformConfiguration = loadAppConfig();
@@ -28,6 +30,25 @@ const terminalGateway = new TerminalGateway(
   log,
   recordTerminalAudit,
 );
+const logStreamGateway = new LogStreamGateway(platformConfiguration.terminalAccessToken, log);
+const logStreamRelay = await LogStreamRelay.create({
+  mode: platformConfiguration.mode,
+  ...(platformConfiguration.mode === "full"
+    ? { natsServers: platformConfiguration.natsServers }
+    : {}),
+  gateway: logStreamGateway,
+  logger: log,
+});
+const runtime = globalThis as typeof globalThis & {
+  __autoforgePublishAttemptLogs?: Parameters<LogStreamGateway["publish"]> extends [
+    infer AttemptId,
+    infer Chunks,
+  ]
+    ? (attemptId: AttemptId, chunks: Chunks) => void
+    : never;
+};
+runtime.__autoforgePublishAttemptLogs = (attemptId, chunks) =>
+  logStreamRelay.publish(attemptId, chunks);
 const server = createServer((request, response) => {
   const startedAt = performance.now();
   const currentRequestId = requestId(request.headers["x-request-id"]);
@@ -57,6 +78,10 @@ const server = createServer((request, response) => {
 });
 
 server.on("upgrade", (request, socket, head) => {
+  if (logStreamGateway.handles(request)) {
+    logStreamGateway.upgrade(request, socket, head);
+    return;
+  }
   if (terminalGateway.handles(request)) {
     terminalGateway.upgrade(request, socket, head);
     return;
@@ -84,6 +109,9 @@ async function shutdown(signal: "SIGINT" | "SIGTERM"): Promise<void> {
   shuttingDown = true;
   log("info", "AutoForge control plane draining", { signal });
   await terminalGateway.close();
+  await logStreamRelay.close();
+  await logStreamGateway.close();
+  delete runtime.__autoforgePublishAttemptLogs;
   server.closeIdleConnections();
   await new Promise<void>((resolve) => {
     const timeout = setTimeout(() => {
@@ -96,12 +124,12 @@ async function shutdown(signal: "SIGINT" | "SIGTERM"): Promise<void> {
       resolve();
     });
   });
-  const runtime = globalThis as typeof globalThis & {
+  const serviceRuntime = globalThis as typeof globalThis & {
     __autoforgeClosePlatformServices?: () => Promise<void>;
   };
   const results = await Promise.allSettled([
     app.close(),
-    runtime.__autoforgeClosePlatformServices?.() ?? Promise.resolve(),
+    serviceRuntime.__autoforgeClosePlatformServices?.() ?? Promise.resolve(),
   ]);
   const failures = results.filter((result) => result.status === "rejected");
   for (const failure of failures) {

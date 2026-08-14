@@ -1,14 +1,17 @@
-#!/bin/sh
+#!/usr/bin/env bash
 
-set -eu
+set -Eeuo pipefail
 
 readonly agent_binary="${1:?Agent binary path is required}"
 readonly agent_configuration="${2:?Agent configuration path is required}"
 readonly service_unit="${3:?systemd service unit path is required}"
-readonly service_account="${4:?service account is required}"
-readonly ca_certificate="${5:-}"
+readonly adapter_jar="${4:?Adapter JAR path is required}"
+readonly service_account="${5:?service account is required}"
+readonly ca_certificate="${6:-}"
+readonly installation_mode="${7:-auto}"
 readonly install_root="/opt/autoforge"
 readonly installed_binary="${install_root}/bin/autoforge-agent"
+readonly installed_adapter="${install_root}/lib/cotest-testng-adapter.jar"
 readonly configuration_root="/etc/autoforge-agent"
 readonly installed_configuration="${configuration_root}/config.json"
 readonly installed_ca_certificate="${configuration_root}/control-plane-ca.pem"
@@ -34,10 +37,19 @@ fi
 
 # shellcheck disable=SC1091
 . /etc/os-release
-case "${ID:-}" in
+case "${installation_mode}" in
   ubuntu | opensuse | opensuse-leap | opensuse-tumbleweed) ;;
+  auto)
+    case "${ID:-}" in
+      ubuntu | opensuse | opensuse-leap | opensuse-tumbleweed) ;;
+      *)
+        echo "unsupported operating system: ${ID:-unknown}" >&2
+        exit 1
+        ;;
+    esac
+    ;;
   *)
-    echo "unsupported operating system: ${ID:-unknown}" >&2
+    echo "unsupported installation mode: ${installation_mode}" >&2
     exit 1
     ;;
 esac
@@ -75,11 +87,12 @@ readonly service_group="$(id -gn "${service_account}")"
 
 "${agent_binary}" version >/dev/null
 install -d -m 0755 "${install_root}/bin"
+install -d -m 0755 "${install_root}/lib"
 install -d -m 0700 -o "${service_account}" -g "${service_group}" \
   "${configuration_root}" /var/lib/autoforge-agent
 
 backup_suffix=".autoforge-previous"
-for target in "${installed_binary}" "${installed_configuration}" "${installed_service_unit}"; do
+for target in "${installed_binary}" "${installed_adapter}" "${installed_configuration}" "${installed_service_unit}"; do
   if [ -e "${target}" ]; then
     cp -p "${target}" "${target}${backup_suffix}"
   else
@@ -91,7 +104,7 @@ if [ -n "${ca_certificate}" ] && [ -e "${installed_ca_certificate}" ]; then
 fi
 
 rollback_installation() {
-  for target in "${installed_binary}" "${installed_configuration}" "${installed_service_unit}"; do
+  for target in "${installed_binary}" "${installed_adapter}" "${installed_configuration}" "${installed_service_unit}"; do
     if [ -e "${target}${backup_suffix}" ]; then
       mv -f "${target}${backup_suffix}" "${target}"
     else
@@ -108,6 +121,7 @@ rollback_installation() {
 }
 
 install -m 0755 "${agent_binary}" "${installed_binary}"
+install -m 0644 "${adapter_jar}" "${installed_adapter}"
 install -m 0600 -o "${service_account}" -g "${service_group}" \
   "${agent_configuration}" "${installed_configuration}"
 install -m 0644 "${service_unit}" "${installed_service_unit}"

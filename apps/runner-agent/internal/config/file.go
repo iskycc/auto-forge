@@ -24,11 +24,16 @@ type fileConfiguration struct {
 	CAFile         string              `json:"caFile"`
 	BootstrapToken string              `json:"bootstrapToken"`
 	Toolchain      fileToolchainConfig `json:"toolchain"`
+	Adapter        fileAdapterConfig   `json:"adapter"`
 	Container      fileContainerConfig `json:"container"`
 	Claim          fileClaimConfig     `json:"claim"`
 	Spool          fileSpoolConfig     `json:"spool"`
 	Resources      fileResourceConfig  `json:"resources"`
 	Terminal       fileTerminalConfig  `json:"terminal"`
+}
+
+type fileAdapterConfig struct {
+	JarPath string `json:"jarPath"`
 }
 
 type fileToolchainConfig struct {
@@ -178,6 +183,7 @@ func configurationLookup(persisted fileConfiguration) LookupEnvironment {
 		"AUTOFORGE_AGENT_TESTNG_CLASSPATH":           strings.Join(persisted.Toolchain.Classpath, string(os.PathListSeparator)),
 		"AUTOFORGE_AGENT_JAVA_VERSION":               persisted.Toolchain.JavaVersion,
 		"AUTOFORGE_AGENT_TESTNG_VERSION":             persisted.Toolchain.TestNGVersion,
+		"AUTOFORGE_AGENT_ADAPTER_JAR":                persisted.Adapter.JarPath,
 		"AUTOFORGE_AGENT_CONTAINER_RUNTIME":          persisted.Container.RuntimeExecutable,
 		"AUTOFORGE_AGENT_CONTAINER_IMAGE":            persisted.Container.ImageReference,
 		"AUTOFORGE_AGENT_CONTAINER_SECCOMP":          persisted.Container.SeccompProfile,

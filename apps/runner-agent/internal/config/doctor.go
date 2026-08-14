@@ -71,6 +71,15 @@ func CheckLocalEnvironment(configuration Config) (Diagnostic, error) {
 			}
 		}
 	}
+	if configuration.Adapter.Enabled() {
+		info, statErr := os.Stat(configuration.Adapter.JarPath)
+		if statErr != nil {
+			return Diagnostic{}, fmt.Errorf("inspect configured Adapter JAR: %w", statErr)
+		}
+		if !info.Mode().IsRegular() {
+			return Diagnostic{}, errors.New("configured Adapter JAR is not a regular file")
+		}
+	}
 	if configuration.Container.Enabled() {
 		if err := requireExecutable(configuration.Container.RuntimeExecutable); err != nil {
 			return Diagnostic{}, fmt.Errorf("validate container runtime: %w", err)

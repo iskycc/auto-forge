@@ -138,18 +138,30 @@ const runnerHostConnectionSchema = z.object({
   password: z.string().min(1).max(1_024),
 });
 
+export const runnerInstallationModeSchema = z.enum([
+  "auto",
+  "ubuntu",
+  "opensuse",
+  "opensuse-leap",
+  "opensuse-tumbleweed",
+]);
+
 export const probeRunnerHostInputSchema = z.object({
   connection: runnerHostConnectionSchema,
+  installationMode: runnerInstallationModeSchema.default("auto"),
 });
 
 export const runnerHostProbeResultSchema = z.object({
   hostKeySha256: z.string().regex(/^SHA256:[a-zA-Z0-9+/]{43}$/),
   operatingSystemId: z.enum(["ubuntu", "opensuse", "opensuse-leap", "opensuse-tumbleweed"]),
+  detectedOperatingSystemId: z.string().min(1).max(128),
   operatingSystemName: z.string().min(1).max(128),
   architecture: z.enum(["amd64", "arm64"]),
   initSystem: z.literal("systemd"),
   privilegeMode: z.enum(["root", "sudo"]),
   cgroupV2Available: z.boolean(),
+  bashPath: z.string().regex(/^\/[A-Za-z0-9/._-]+$/),
+  forcedInstallationMode: z.boolean(),
 });
 
 export const installRunnerAgentInputSchema = z.object({
@@ -160,6 +172,7 @@ export const installRunnerAgentInputSchema = z.object({
   maxConcurrency: z.number().int().min(1).max(64).default(1),
   terminalEnabled: z.boolean().default(false),
   runAsRoot: z.boolean().default(false),
+  installationMode: runnerInstallationModeSchema.default("auto"),
   caCertificatePem: z
     .string()
     .max(65_536)
@@ -185,6 +198,7 @@ export const runnerAgentInstallationResultSchema = z.object({
 export const rollbackRunnerAgentInputSchema = z.object({
   connection: runnerHostConnectionSchema,
   expectedHostKeySha256: z.string().regex(/^SHA256:[a-zA-Z0-9+/]{43}$/),
+  installationMode: runnerInstallationModeSchema.default("auto"),
 });
 
 export const runnerAgentRollbackResultSchema = z.object({

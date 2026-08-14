@@ -93,6 +93,8 @@ export const jarImportResultSchema = z.object({
 export const jarImportJobSchema = z.object({
   id: z.string().min(1).max(128),
   projectId: z.string().min(1).max(128),
+  projectVersionId: z.string().min(1).max(128).optional(),
+  testStageId: z.string().min(1).max(128).optional(),
   fileName: z.string().min(1).max(512),
   sha256: z.string().regex(/^[a-f0-9]{64}$/),
   sizeBytes: z.number().int().nonnegative(),

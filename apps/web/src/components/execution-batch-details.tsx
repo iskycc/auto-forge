@@ -2,7 +2,12 @@
 
 import { Button, Input, Select } from "@/components/ui";
 
-import type { AttemptArtifactList, AttemptEventPage, AttemptLogPage } from "@autoforge/contracts";
+import type {
+  AttemptArtifactList,
+  AttemptEventPage,
+  AttemptLogPage,
+  LogChunk,
+} from "@autoforge/contracts";
 import type { RunBatchDetails } from "@autoforge/domain";
 import {
   Activity,
@@ -22,6 +27,38 @@ import { runBatchStatusLabel } from "@/lib/run-batch-presentation";
 import { parseSafeAnsi } from "@/lib/safe-ansi";
 
 type LogStream = "stdout" | "stderr" | "agent";
+
+function parseLiveLogMessage(value: unknown): { chunks: LogChunk[] } | null {
+  if (typeof value !== "string") return null;
+  try {
+    const parsed = JSON.parse(value) as {
+      schemaVersion?: unknown;
+      type?: unknown;
+      chunks?: unknown;
+    };
+    if (parsed.schemaVersion !== 1 || parsed.type !== "chunks" || !Array.isArray(parsed.chunks)) {
+      return null;
+    }
+    const chunks = parsed.chunks.filter(
+      (chunk): chunk is LogChunk =>
+        typeof chunk === "object" &&
+        chunk !== null &&
+        ["stdout", "stderr", "agent"].includes(String((chunk as LogChunk).stream)) &&
+        Number.isInteger((chunk as LogChunk).sequence) &&
+        typeof (chunk as LogChunk).content === "string" &&
+        typeof (chunk as LogChunk).recordedAt === "string",
+    );
+    return { chunks };
+  } catch {
+    return null;
+  }
+}
+
+function mergeLogChunks(current: LogChunk[], incoming: LogChunk[]): LogChunk[] {
+  const bySequence = new Map(current.map((chunk) => [chunk.sequence, chunk]));
+  for (const chunk of incoming) bySequence.set(chunk.sequence, chunk);
+  return [...bySequence.values()].sort((left, right) => left.sequence - right.sequence);
+}
 
 export function ExecutionBatchDetails({
   batch,
@@ -51,6 +88,7 @@ export function ExecutionBatchDetails({
   const [artifacts, setArtifacts] = useState<AttemptArtifactList["items"]>([]);
   const [events, setEvents] = useState<AttemptEventPage["items"]>([]);
   const [loading, setLoading] = useState(false);
+  const [liveLogs, setLiveLogs] = useState(false);
   const [error, setError] = useState("");
   const [actionError, setActionError] = useState("");
   const [actionPending, setActionPending] = useState<"cancel" | "retry" | undefined>();
@@ -155,7 +193,6 @@ export function ExecutionBatchDetails({
       search: string,
       timeRange: { after: string; before: string },
       afterSequence: number,
-      replace: boolean,
     ) => {
       await Promise.resolve();
       setLoading(true);
@@ -198,7 +235,7 @@ export function ExecutionBatchDetails({
         }
         if (logResponse) {
           const logPage = (await logResponse.json()) as AttemptLogPage;
-          setLogs((current) => (replace ? logPage.items : [...current, ...logPage.items]));
+          setLogs((current) => mergeLogChunks(current, logPage.items));
           setNextSequence(logPage.nextSequence);
           setLogsTruncated(logPage.truncated);
         }
@@ -220,10 +257,70 @@ export function ExecutionBatchDetails({
   useEffect(() => {
     if (!attemptId) return;
     const scheduledLoad = window.setTimeout(() => {
-      void loadAttempt(attemptId, stream, activeQuery, activeTimeRange, -1, true);
+      setLogs([]);
+      setNextSequence(undefined);
+      setLogsTruncated(false);
+      void loadAttempt(attemptId, stream, activeQuery, activeTimeRange, -1);
     }, 0);
     return () => window.clearTimeout(scheduledLoad);
   }, [activeQuery, activeTimeRange, attemptId, canReadArtifacts, canReadLogs, loadAttempt, stream]);
+
+  useEffect(() => {
+    if (
+      !attemptId ||
+      !canReadLogs ||
+      activeQuery ||
+      activeTimeRange.after ||
+      activeTimeRange.before
+    ) {
+      return;
+    }
+    let disposed = false;
+    let socket: WebSocket | undefined;
+    let reconnectTimer: number | undefined;
+    const connect = async (): Promise<void> => {
+      try {
+        const response = await fetch(
+          `/api/v1/run-attempts/${encodeURIComponent(attemptId)}/log-stream-ticket`,
+          { method: "POST" },
+        );
+        if (!response.ok || disposed) return;
+        const payload = (await response.json()) as { ticket?: string };
+        if (!payload.ticket || disposed) return;
+        const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+        socket = new WebSocket(
+          `${protocol}//${window.location.host}/api/v1/log-stream`,
+          `autoforge-log.${payload.ticket}`,
+        );
+        socket.onopen = () => {
+          setLiveLogs(true);
+          void loadAttempt(attemptId, stream, "", { after: "", before: "" }, -1);
+        };
+        socket.onmessage = (event) => {
+          const message = parseLiveLogMessage(event.data);
+          if (!message) return;
+          const incoming = message.chunks.filter((chunk) => chunk.stream === stream);
+          if (incoming.length === 0) return;
+          setLogs((current) => mergeLogChunks(current, incoming));
+        };
+        socket.onclose = () => {
+          setLiveLogs(false);
+          if (!disposed) reconnectTimer = window.setTimeout(() => void connect(), 2_000);
+        };
+        socket.onerror = () => socket?.close();
+      } catch {
+        setLiveLogs(false);
+        if (!disposed) reconnectTimer = window.setTimeout(() => void connect(), 5_000);
+      }
+    };
+    void connect();
+    return () => {
+      disposed = true;
+      setLiveLogs(false);
+      if (reconnectTimer !== undefined) window.clearTimeout(reconnectTimer);
+      socket?.close(1000, "Log view changed");
+    };
+  }, [activeQuery, activeTimeRange, attemptId, canReadLogs, loadAttempt, stream]);
 
   const sequenceGaps = useMemo(() => {
     const gaps: Array<{ after: number; before: number }> = [];
@@ -397,6 +494,7 @@ export function ExecutionBatchDetails({
           <div>
             <span className="step-label">OUTPUT</span>
             <h2>日志与产物</h2>
+            {liveLogs ? <span className="status-badge">实时更新</span> : null}
           </div>
           <Select
             aria-label="执行尝试"
@@ -433,7 +531,7 @@ export function ExecutionBatchDetails({
                 onSubmit={(event) => {
                   event.preventDefault();
                   if (query === activeQuery) {
-                    void loadAttempt(attemptId, stream, activeQuery, activeTimeRange, -1, true);
+                    void loadAttempt(attemptId, stream, activeQuery, activeTimeRange, -1);
                   } else {
                     setActiveQuery(query);
                   }
@@ -506,14 +604,7 @@ export function ExecutionBatchDetails({
                 className="button button-secondary compact-button"
                 disabled={loading}
                 onClick={() =>
-                  void loadAttempt(
-                    attemptId,
-                    stream,
-                    activeQuery,
-                    activeTimeRange,
-                    nextSequence,
-                    false,
-                  )
+                  void loadAttempt(attemptId, stream, activeQuery, activeTimeRange, nextSequence)
                 }
                 type="button"
               >
