@@ -59,18 +59,23 @@ export async function ensureAdministrator(page: Page): Promise<void> {
         await login(page, E2E_ADMIN_USERNAME, E2E_ADMIN_PASSWORD);
       }
     }
-    // Older supported Releases can complete bootstrap with a valid cookie
-    // while rendering a public root document prefetched before that cookie
-    // existed. Wait out the current Release's landing hand-off before making
-    // an explicit authenticated request, otherwise Playwright can race a
-    // document that is still being replaced.
-    await waitForAuthenticatedRoute(page);
-    await page.goto("/", { waitUntil: "load" });
+    await openAuthenticatedRoot(page);
     await expectAdministratorShell(page);
     return;
   }
   await login(page, E2E_ADMIN_USERNAME, E2E_ADMIN_PASSWORD);
+  await openAuthenticatedRoot(page);
   await expectAdministratorShell(page);
+}
+
+async function openAuthenticatedRoot(page: Page): Promise<void> {
+  // Older supported Releases can complete bootstrap or login with a valid
+  // cookie while rendering a public root document prefetched before that
+  // cookie existed. Wait out the current Release's landing hand-off before
+  // making an explicit authenticated request, otherwise Playwright can race a
+  // document that is still being replaced.
+  await waitForAuthenticatedRoute(page);
+  await page.goto("/", { waitUntil: "load" });
 }
 
 async function expectAdministratorShell(page: Page): Promise<void> {
