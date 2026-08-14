@@ -4,6 +4,17 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## Unreleased
+
+### Fixed
+
+- Use unambiguous accessible roles when asserting project-scoped execution environments in browser
+  isolation coverage.
+- Reload the authenticated document after first-administrator bootstrap so upgrade acceptance can
+  test older Releases that navigate with a public root document prefetched before the session cookie.
+- Let manually dispatched Release checks use the selected branch's current acceptance harness while
+  retaining tagged-source quality checks and immutable published assets.
+
 ## 0.4.7 - 2026-08-14
 
 ### Changed

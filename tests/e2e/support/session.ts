@@ -59,6 +59,11 @@ export async function ensureAdministrator(page: Page): Promise<void> {
         await login(page, E2E_ADMIN_USERNAME, E2E_ADMIN_PASSWORD);
       }
     }
+    // Older supported Releases can complete bootstrap with a valid cookie
+    // while rendering a public root document prefetched before that cookie
+    // existed. Reload from the authenticated request boundary so upgrade
+    // acceptance observes the real server-rendered shell.
+    await page.reload({ waitUntil: "load" });
     await expectAdministratorShell(page);
     return;
   }

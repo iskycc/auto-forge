@@ -4,7 +4,7 @@ AutoForge 使用 `.github/workflows/release.yml` 从不可变 Git tag 构建 Git
 
 ## 发布条件
 
-正式版本必须使用 `vX.Y.Z` 形式的语义版本 tag。推送 tag 会同时触发相互独立的 `Release` 与 `Release checks` workflow。手动发布时，GitHub 的 “Use workflow from” 和 `Release` workflow 的 `tag` 输入必须指向同一个 tag，保证源码提交、构建来源证明和 Release 一致；独立检查可以从默认分支手动启动，并通过 `tag` 输入选择要复验的已发布版本。
+正式版本必须使用 `vX.Y.Z` 形式的语义版本 tag。推送 tag 会同时触发相互独立的 `Release` 与 `Release checks` workflow。手动发布时，GitHub 的 “Use workflow from” 和 `Release` workflow 的 `tag` 输入必须指向同一个 tag，保证源码提交、构建来源证明和 Release 一致；独立检查可以从默认分支手动启动，并通过 `tag` 输入选择要复验的已发布版本。手动复验仍对 tag 源码运行质量命令，但使用所选默认分支 revision 的验收工具检查不可变 Release 资产，允许在不改写历史 tag 的前提下修复验收工具。
 
 ```bash
 git tag -s v0.2.2 -m "AutoForge v0.2.2"
@@ -23,10 +23,10 @@ Web 进程为同源终端 WebSocket 使用 Next.js 自定义 Server。Next.js �
 
 每个版本包含以下四个 variant：
 
-| Variant      | CPU     | 后端用户空间   | 内置 Agent                       |
-| ------------ | ------- | -------------- | -------------------------------- |
-| `amd64`      | x86-64  | Debian / glibc | Linux amd64 + arm64，均为静态    |
-| `arm64`      | AArch64 | Debian / glibc | Linux amd64 + arm64，均为静态    |
+| Variant      | CPU     | 后端用户空间   | 内置 Agent                          |
+| ------------ | ------- | -------------- | ----------------------------------- |
+| `amd64`      | x86-64  | Debian / glibc | Linux amd64 + arm64，均为静态       |
+| `arm64`      | AArch64 | Debian / glibc | Linux amd64 + arm64，均为静态       |
 | `amd64-musl` | x86-64  | Alpine / musl  | Linux amd64 + arm64，均无 libc 依赖 |
 | `arm64-musl` | AArch64 | Alpine / musl  | Linux amd64 + arm64，均无 libc 依赖 |
 

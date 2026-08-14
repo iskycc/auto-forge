@@ -21,6 +21,9 @@ test("runs tagged source and published asset checks independently", async () => 
   assert.match(workflow, /^  offline-acceptance:/m);
   assert.match(workflow, /  offline-acceptance:\n[\s\S]*?    needs: prepare/);
   assert.doesNotMatch(workflow, /  offline-acceptance:\n[\s\S]*?    needs: \[prepare, quality\]/);
+  assert.match(workflow, /ref: \$\{\{ needs\.prepare\.outputs\.tag_revision \}\}/);
+  assert.match(workflow, /ref: \$\{\{ needs\.prepare\.outputs\.checks_revision \}\}/);
+  assert.match(workflow, /GITHUB_EVENT_NAME.*workflow_dispatch/);
   assert.match(workflow, /gh release download "\$\{CURRENT_TAG\}" --dir release/);
 });
 
