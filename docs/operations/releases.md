@@ -1,17 +1,19 @@
 # Release 与离线交付
 
-AutoForge 使用 `.github/workflows/release.yml` 从不可变 Git tag 构建 GitHub Release。Release 交付 Lite/Full 共用的后端镜像和版本化 Compose 部署包；每个后端镜像内置 Linux `amd64`、`arm64` Runner Agent，不再生成独立 Agent Release 资产。PostgreSQL、NATS、MinIO 与 Redis 属于外部基础设施，不混入 AutoForge 自身镜像；离线部署必须另行导出镜像、锁定版本并遵守各项目许可。
+AutoForge 使用 `.github/workflows/release.yml` 从不可变 Git tag 构建 GitHub Release，并由 `.github/workflows/release-checks.yml` 独立检查已发布资产。Release 交付 Lite/Full 共用的后端镜像和版本化 Compose 部署包；每个后端镜像内置 Linux `amd64`、`arm64` Runner Agent，不再生成独立 Agent Release 资产。PostgreSQL、NATS、MinIO 与 Redis 属于外部基础设施，不混入 AutoForge 自身镜像；离线部署必须另行导出镜像、锁定版本并遵守各项目许可。
 
 ## 发布条件
 
-正式版本必须使用 `vX.Y.Z` 形式的语义版本 tag。推送 tag 会自动触发；手动运行 workflow 时，GitHub 的 “Use workflow from” 和 `tag` 输入必须指向同一个 tag，否则流水线会拒绝发布，保证源码提交、构建来源证明和 Release 一致。
+正式版本必须使用 `vX.Y.Z` 形式的语义版本 tag。推送 tag 会同时触发相互独立的 `Release` 与 `Release checks` workflow。手动发布时，GitHub 的 “Use workflow from” 和 `Release` workflow 的 `tag` 输入必须指向同一个 tag，保证源码提交、构建来源证明和 Release 一致；独立检查可以从默认分支手动启动，并通过 `tag` 输入选择要复验的已发布版本。
 
 ```bash
 git tag -s v0.2.2 -m "AutoForge v0.2.2"
 git push origin v0.2.2
 ```
 
-流水线先执行格式、lint、类型、单元、Lite/Full 集成、浏览器流程和生产构建，然后并行构建四个平台及两个 Runner 工具链。所有资产先组成并签名一个不可变候选；候选必须在内部网络完成真实 Agent/TestNG、私有 CA LDAP、备份恢复、上一正式版本升级和注入迁移失败回滚，`publish` job 才能创建并公开 Release。任一平台、SBOM、签名或 Gate E 场景失败都不会发布部分资产。
+`Release` 只保留发布所需的关键路径：校验 tag 后立即并行构建四个平台及两个 Runner 工具链，再在同一个 job 中组装部署包、生成 SBOM/清单、签名、生成来源证明并公开 GitHub Release。后端构建使用按 variant 隔离的 GitHub Actions BuildKit 缓存，离线 Docker 归档使用多线程 zstd 压缩；组装结果不再通过中间候选制品重复上传和下载。任一平台、SBOM、签名或清单失败仍会阻止发布，因而不会公开缺少必需资产的部分 Release。
+
+`Release checks` 独立执行格式、lint、类型、单元、Lite/Full 集成、浏览器流程、生产构建和 Gate E 断网验收。断网验收等待同 tag Release 完整公开后直接下载已发布资产，验证真实 Agent/TestNG、私有 CA LDAP、备份恢复、上一正式版本升级和注入迁移失败回滚。检查失败会在该 workflow 中保留红灯和诊断制品，但不会成为 `Release` 的依赖，也不会阻塞、取消或撤回发布；失败版本应通过问题修复和新版本 hotfix 处理。普通 CI 与依赖安全 workflow 不在 tag push 上重复运行，以免与发布矩阵争抢并发资源。
 
 `amd64` 目标运行在 `ubuntu-24.04`，`arm64` 目标运行在 GitHub-hosted 原生 `ubuntu-24.04-arm`。后端不使用 QEMU 做跨架构模拟；内置 Agent 由 Go 原生交叉编译为两个静态架构，并在每个镜像中校验资源清单。
 

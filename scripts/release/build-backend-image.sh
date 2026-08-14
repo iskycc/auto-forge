@@ -42,7 +42,16 @@ readonly revision="$(release_revision)"
 bash "${repository_root}/scripts/release/build-agent-resources.sh" \
   "${version}" "${repository_root}/resources/agents"
 
+buildx_cache_arguments=()
+if [[ -n "${AUTOFORGE_BUILDX_CACHE_FROM:-}" ]]; then
+  buildx_cache_arguments+=(--cache-from "${AUTOFORGE_BUILDX_CACHE_FROM}")
+fi
+if [[ -n "${AUTOFORGE_BUILDX_CACHE_TO:-}" ]]; then
+  buildx_cache_arguments+=(--cache-to "${AUTOFORGE_BUILDX_CACHE_TO}")
+fi
+
 docker buildx build \
+  "${buildx_cache_arguments[@]}" \
   --build-arg "CREATED=${build_date}" \
   --build-arg "NODE_IMAGE=${node_image}" \
   --build-arg "REVISION=${revision}" \
@@ -54,7 +63,8 @@ docker buildx build \
   --tag "${image_reference}" \
   "${repository_root}"
 
-zstd -19 -f "${docker_archive}" -o "${compressed_archive}"
+# Release latency matters more than the small size gain from zstd level 19.
+zstd --threads=0 -10 -f "${docker_archive}" -o "${compressed_archive}"
 
 if [[ "${AUTOFORGE_KEEP_DOCKER_TAR:-0}" != "1" ]]; then
   rm -- "${docker_archive}"

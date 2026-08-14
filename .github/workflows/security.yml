@@ -2,6 +2,8 @@ name: Dependency security
 
 on:
   push:
+    branches:
+      - "**"
   pull_request:
   schedule:
     - cron: "23 3 * * 1"

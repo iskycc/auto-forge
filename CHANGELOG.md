@@ -4,6 +4,40 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## 0.4.7 - 2026-08-14
+
+### Changed
+
+- Split tagged Release publication from quality and Gate E checks. The Release workflow now publishes
+  as soon as all required platform assets, SBOMs, manifests, signatures and provenance are complete;
+  the independent Release checks workflow preserves visible failures without blocking or withdrawing
+  the published version.
+- Start all four backend variants and both Runner toolchains immediately after tag validation, reuse
+  per-variant BuildKit caches, avoid the signed-candidate artifact upload/download round trip and use
+  parallel medium-level zstd compression for the offline Docker archives.
+- Stop ordinary CI and dependency-security workflows from rerunning on tag pushes, leaving Release
+  capacity to the publication and its two independent checks.
+- Allow a Release workflow retry to update the same tag's existing draft or published assets
+  idempotently.
+
+### Database migrations and compatibility
+
+- No SQLite or PostgreSQL migration, persisted configuration change or Runner Protocol change is
+  included. Runtime compatibility is unchanged from `0.4.6`.
+
+### Offline assets
+
+- Rebuild the four immutable backend variants with embedded amd64/arm64 Agents, both offline
+  Java/TestNG Runner toolchains, SPDX SBOMs, the deployment bundle, signed checksums, release manifest
+  and provenance for `0.4.7`.
+- Quality and Gate E failures remain visible on the tag but are post-publication signals; asset build,
+  integrity, signing or manifest failures still prevent an incomplete Release from being published.
+
+### Known limitations
+
+- The first Release after enabling BuildKit caching has an empty cache; subsequent releases can reuse
+  compatible layers. Actual duration still depends on GitHub-hosted runner and artifact service load.
+
 ## 0.4.6 - 2026-08-14
 
 ### Added

@@ -1,0 +1,194 @@
+name: Release checks
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing semantic version tag to check, for example v0.2.0
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-checks-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    name: Resolve release tag
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      tag: ${{ steps.release.outputs.tag }}
+      version: ${{ steps.release.outputs.version }}
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.tag || github.ref }}
+
+      - name: Resolve semantic version tag
+        id: release
+        env:
+          REQUESTED_TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          if [[ ! "${REQUESTED_TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Invalid release tag: ${REQUESTED_TAG}" >&2
+            exit 1
+          fi
+          git rev-parse --verify "refs/tags/${REQUESTED_TAG}^{commit}" >/dev/null
+          {
+            echo "tag=${REQUESTED_TAG}"
+            echo "version=${REQUESTED_TAG#v}"
+          } >> "${GITHUB_OUTPUT}"
+
+  quality:
+    name: Tagged source quality
+    needs: prepare
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.16.0
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: 1.26.5
+          cache-dependency-path: apps/runner-agent/go.mod
+
+      - name: Install locked JavaScript dependencies
+        run: |
+          corepack enable
+          pnpm install --frozen-lockfile
+
+      - name: Locate preinstalled Chromium
+        run: |
+          browser_path="$(command -v google-chrome || command -v chromium || true)"
+          if [[ -z "${browser_path}" ]]; then
+            echo "The hosted runner does not provide a preinstalled Chromium browser." >&2
+            exit 1
+          fi
+          echo "PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=${browser_path}" >> "${GITHUB_ENV}"
+
+      - name: Run quality commands
+        run: |
+          pnpm format:check
+          pnpm lint
+          pnpm typecheck
+          pnpm test
+          pnpm test:integration
+          pnpm test:full
+          pnpm test:performance
+          pnpm test:deployment
+          pnpm build
+
+      - name: Run network-blocked Lite browser flow
+        run: pnpm test:offline
+
+  offline-acceptance:
+    name: Published Release offline upgrade acceptance
+    needs: prepare
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          ref: ${{ needs.prepare.outputs.tag }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.16.0
+
+      - name: Install locked acceptance dependencies
+        run: |
+          corepack enable
+          pnpm install --frozen-lockfile
+
+      - name: Locate preinstalled Chromium and Java compiler
+        run: |
+          browser_path="$(command -v google-chrome || command -v chromium || true)"
+          if [[ -z "${browser_path}" || -z "$(command -v javac || true)" ]]; then
+            echo "The hosted runner is missing Chromium or javac." >&2
+            exit 1
+          fi
+          echo "PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=${browser_path}" >> "${GITHUB_ENV}"
+
+      - name: Wait for and download published Release
+        env:
+          CURRENT_TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          readonly maximum_attempts=90
+          readonly wait_interval_seconds=10
+          for attempt in $(seq 1 "${maximum_attempts}"); do
+            is_draft="$(gh release view "${CURRENT_TAG}" --json isDraft --jq .isDraft 2>/dev/null || true)"
+            if [[ "${is_draft}" == "false" ]]; then
+              mkdir -p release
+              gh release download "${CURRENT_TAG}" --dir release
+              exit 0
+            fi
+            if [[ "${attempt}" == "${maximum_attempts}" ]]; then
+              echo "Release ${CURRENT_TAG} was not published within 15 minutes." >&2
+              exit 1
+            fi
+            sleep "${wait_interval_seconds}"
+          done
+
+      - name: Download previous formal Release upgrade source
+        env:
+          CURRENT_TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          previous_tag="$({ gh release list --limit 100 --json tagName,isDraft,isPrerelease \
+            --jq '.[] | select(.isDraft == false and .isPrerelease == false) | .tagName'; } | \
+            grep -E '^v[0-9]+[.][0-9]+[.][0-9]+$' | grep -Fxv "${CURRENT_TAG}" | head -n 1)"
+          if [[ -z "${previous_tag}" ]]; then
+            echo "Gate E requires a previous formal semantic-version Release." >&2
+            exit 1
+          fi
+          previous_version="${previous_tag#v}"
+          mkdir -p previous-release
+          gh release download "${previous_tag}" --dir previous-release \
+            --pattern "autoforge-backend-${previous_version}-amd64.docker.tar.zst" \
+            --pattern "autoforge-backend-${previous_version}-amd64.image.json" \
+            --pattern SHA256SUMS \
+            --pattern SHA256SUMS.sig \
+            --pattern release-signing-public-key.pem
+          echo "PREVIOUS_RELEASE_VERSION=${previous_version}" >> "${GITHUB_ENV}"
+
+      - name: Preload the fixed LDAP fixture image
+        run: >-
+          docker pull
+          osixia/openldap:1.5.0@sha256:18742e9c449c9c1afe129d3f2f3ee15fb34cc43e5f940a20f3399728f41d7c28
+
+      - name: Run disconnected install, business, rollback and upgrade acceptance
+        run: >-
+          bash scripts/quality/test-release-offline.sh
+          "${{ needs.prepare.outputs.version }}" release
+          "${PREVIOUS_RELEASE_VERSION}" previous-release
+
+      - name: Upload Release acceptance diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-offline-acceptance-diagnostics
+          path: test-results
+          if-no-files-found: ignore
+          retention-days: 7
