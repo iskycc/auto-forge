@@ -60,6 +60,15 @@ func (store IdentityStore) Load() (Identity, bool, error) {
 	return identity, true, nil
 }
 
+// Remove deletes the stored identity so the next start performs a fresh
+// registration. It is a no-op when no identity file exists yet.
+func (store IdentityStore) Remove() error {
+	if err := os.Remove(store.path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("remove runner identity: %w", err)
+	}
+	return nil
+}
+
 func (store IdentityStore) Save(identity Identity) error {
 	if identity.SchemaVersion != identitySchemaVersion || identity.RunnerID == "" || identity.Credential == "" || identity.ServerURL == "" {
 		return errors.New("refuse to save incomplete runner identity")

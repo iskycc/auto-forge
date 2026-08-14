@@ -14,7 +14,7 @@ const passwordConnection = {
 };
 
 test("probes and installs the embedded Agent through real SSH and systemd", async ({ page }) => {
-  test.setTimeout(300_000);
+  test.setTimeout(600_000);
   await ensureAdministrator(page);
 
   const rejected = await browserJson<{ error?: { code?: string } }>(
@@ -82,6 +82,7 @@ test("probes and installs the embedded Agent through real SSH and systemd", asyn
   await waitForRegisteredRunner(page, "SSH Installed Runner");
   await exerciseOfflineUpgradeAndRollback(page);
   await exerciseRunnerLifecycle(page, "SSH Installed Runner");
+  await exerciseDeregisteredReinstall(page);
 });
 
 async function probeThroughUi(page: Page): Promise<string> {
@@ -263,6 +264,59 @@ async function exerciseRunnerLifecycle(page: Page, name: string): Promise<void> 
   page.once("dialog", (dialog) => dialog.accept());
   await row.getByRole("button", { name: "注销" }).click();
   await expect(row).toContainText("已注销");
+}
+
+async function exerciseDeregisteredReinstall(page: Page): Promise<void> {
+  // 注销后旧身份文件残留在数据目录，重装时必须能自动重新注册而不是报
+  // "control plane rejected request (RUNNER_AUTH_REJECTED)"。
+  const staleIdentityBefore = await installedConfigurationDigest(
+    "/var/lib/autoforge-agent/identity/credentials.json",
+  );
+  expect(staleIdentityBefore).not.toBe("");
+
+  await probeThroughUi(page);
+  await installThroughUi(page);
+  await verifyInstalledSystemdService();
+
+  // Agent 启动后发现旧凭据已被控制面拒绝，应删除本地身份并用新 bootstrap
+  // token 重新注册。等待同名新 runner 上线（旧注销记录仍会保留在列表中，
+  // 因此不能用 find 取第一条，必须显式匹配 online 状态）。
+  await expect
+    .poll(
+      async () => {
+        const response = await page.request.get("/api/v1/runners?limit=100");
+        const body = (await response.json()) as {
+          items: Array<{ name: string; state: string }>;
+        };
+        return body.items.some(
+          (runner) => runner.name === "SSH Installed Runner" && runner.state === "online",
+        );
+      },
+      { timeout: 60_000, intervals: [500, 1_000] },
+    )
+    .toBe(true);
+
+  // 身份文件必须已被替换为新注册的身份。
+  await expect
+    .poll(
+      () => installedConfigurationDigest("/var/lib/autoforge-agent/identity/credentials.json"),
+      {
+        timeout: 30_000,
+      },
+    )
+    .not.toBe(staleIdentityBefore);
+
+  // 注销的旧 runner 仍保留在列表中（state=disabled），新注册产生同名的新
+  // runner。关键断言是存在一条 online 状态的同名 runner。
+  const runners = await page.request.get("/api/v1/runners?limit=100");
+  expect(runners.status()).toBe(200);
+  const body = (await runners.json()) as {
+    items: Array<{ name: string; state: string }>;
+  };
+  const onlineMatching = body.items.filter(
+    (runner) => runner.name === "SSH Installed Runner" && runner.state === "online",
+  );
+  expect(onlineMatching.length).toBe(1);
 }
 
 async function installedConfigurationDigest(path: string): Promise<string> {

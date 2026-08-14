@@ -198,7 +198,8 @@
         "scripts/quality/test-runner-install-e2e.sh",
         "tests/e2e/runner-install.spec.ts",
         "tests/fixtures/ssh/Dockerfile",
-        ".github/workflows/ci.yml"
+        ".github/workflows/ci.yml",
+        ".github/workflows/release-checks.yml"
       ],
       "coverage": {
         "lite": "partial",
