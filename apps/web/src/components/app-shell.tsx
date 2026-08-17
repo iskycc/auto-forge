@@ -239,6 +239,18 @@ export function AppShell({
 }) {
   const pathname = usePathname();
   const currentSection = useSearchParams().get("section");
+  // 批次详情页归属执行记录：/run-batches 是用例批跑规划页，/run-batches/[id] 是执行详情，
+  // 其返回链接也指向执行记录，因此详情页激活“执行记录”而不是“用例批跑”。
+  const batchDetailPath = pathname.startsWith("/run-batches/");
+  const primaryItemIsActive = (item: NavigationItem): boolean => {
+    if (item.href === "/run-batches") {
+      return !batchDetailPath && isActive(pathname, currentSection, item);
+    }
+    if (item.href === "/execution-records") {
+      return batchDetailPath || isActive(pathname, currentSection, item);
+    }
+    return isActive(pathname, currentSection, item);
+  };
   const granted = new Set(permissions);
   const visibleNavigation = forcePasswordChange
     ? []
@@ -300,7 +312,7 @@ export function AppShell({
             const label = navigationLabel(item, granted);
             return (
               <Link
-                className={`nav-item ${isActive(pathname, currentSection, item) ? "nav-item-active" : ""}`}
+                className={`nav-item ${primaryItemIsActive(item) ? "nav-item-active" : ""}`}
                 href={href}
                 key={item.href}
               >

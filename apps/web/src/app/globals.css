@@ -6299,7 +6299,7 @@ button.icon-button:disabled {
 
 .schedule-form {
   display: grid;
-  grid-template-columns: 1.25fr 1fr 1fr auto;
+  grid-template-columns: 1.25fr 1fr 1fr;
   gap: 12px;
   align-items: end;
   margin-top: 18px;
@@ -6325,21 +6325,22 @@ button.icon-button:disabled {
   font-weight: 650;
 }
 
-/* The enable checkbox shares a grid track with the text inputs; keep box and
-   label on one line and vertically centered against the 40px controls. */
-.schedule-form .checkbox-field {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding-bottom: 12px;
-  white-space: nowrap;
-}
-
 .schedule-actions {
   display: flex;
   gap: 8px;
   grid-column: 1 / -1;
+  align-items: center;
   justify-content: flex-end;
+}
+
+/* The enable checkbox lives in the actions row so the three-column field grid
+   cannot squeeze it against the card edge; CJK label widths vary by platform font. */
+.schedule-actions .schedule-enable-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-right: auto;
+  white-space: nowrap;
 }
 
 @media (max-width: 1180px) {

@@ -8,6 +8,16 @@ and known limitations.
 
 ### Fixed
 
+- Case suite detail page: the 离线计划触发 enable checkbox no longer clips against the card edge; it
+  now sits in the schedule actions row instead of a squeezed fourth grid column, so the label stays
+  fully visible at any viewport width and with any platform CJK font.
+- Sidebar navigation: opening a run batch detail (`/run-batches/[id]`) now keeps 执行记录 active
+  instead of jumping to 用例批跑, matching the detail page's 返回执行记录 back link.
+
+## 0.4.18 - 2026-08-17
+
+### Fixed
+
 - Scheduling logs (both the batch-wide 调度日志 and the per-runner log) now explain failures that
   happen outside the test case itself. Completion events for failed/timed-out attempts include the
   result code and a compact single-line failure summary (for example

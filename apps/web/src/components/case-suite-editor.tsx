@@ -384,15 +384,15 @@ export function CaseSuiteEditor({
               <option value="skip">跳过错过时刻</option>
             </Select>
           </label>
-          <label className="checkbox-field">
-            <Input
-              defaultChecked={schedule?.enabled ?? true}
-              name="scheduleEnabled"
-              type="checkbox"
-            />
-            启用计划
-          </label>
           <span className="schedule-actions">
+            <label className="checkbox-field schedule-enable-field">
+              <Input
+                defaultChecked={schedule?.enabled ?? true}
+                name="scheduleEnabled"
+                type="checkbox"
+              />
+              启用计划
+            </label>
             <Button className="button button-primary" disabled={pending} type="submit">
               <Save size={15} /> 保存计划
             </Button>
