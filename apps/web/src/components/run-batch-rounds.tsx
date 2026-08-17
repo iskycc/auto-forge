@@ -624,9 +624,17 @@ function RoundCaseRow({
         </td>
         <td>
           {attempt ? (
-            <span className={`batch-status ${attemptStatusClass(attempt)}`.trim()}>
-              {attemptStatusLabel(attempt)}
-            </span>
+            <>
+              <span className={`batch-status ${attemptStatusClass(attempt)}`.trim()}>
+                {attemptStatusLabel(attempt)}
+              </span>
+              {/* 终态失败原因码直接露出，无需展开详情即可定位 AGENT_RESTARTED 等调度失败。 */}
+              {isTerminalAttemptStatus(attempt.status) &&
+              attempt.status !== "succeeded" &&
+              attempt.resultCode ? (
+                <small className="table-secondary">{attempt.resultCode}</small>
+              ) : null}
+            </>
           ) : (
             <span className="batch-status batch-status-neutral">未执行</span>
           )}

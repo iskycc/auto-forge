@@ -650,6 +650,8 @@ public class MixedVisibleTest {
   await page.goto(`/run-batches/${encodeURIComponent(batch.id)}`);
   await expect(page.getByText("已成功", { exact: true }).first()).toBeVisible();
   await page.getByRole("button", { name: "初始轮次", exact: true }).click();
+  // 失败用例的终态原因码直接显示在状态列，无需展开详情。
+  await expect(page.getByText("TEST_ASSERTION_FAILED", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "查看日志" }).click();
   await expect(page.locator(".execution-log")).toContainText("first attempt assertion failed");
   await expect(page.locator(".execution-log")).toHaveClass(/execution-log-dark/);

@@ -4,6 +4,21 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## 0.4.16 - 2026-08-17
+
+### Fixed
+
+- TestNG adapter exit code no longer derives from TestNG's raw status bitmap, which includes the
+  skip bit: executions with skipped-but-no-failed tests exited 1 and were reported as failed even
+  though the case log showed success. The adapter now fails the process only when failed or
+  configuration-failure counts are non-zero; skipped-only executions are classified from
+  `testng-results.xml` as succeeded (all-skipped / with-skips). The raw status bitmap is still
+  printed to the case log for diagnostics.
+- Run batch detail round case table now shows the terminal result code (for example
+  `AGENT_RESTARTED_DURING_EXECUTION` or `TESTNG_ASSERTIONS_FAILED`) directly under the status badge,
+  so scheduling-level failures are visible without expanding the row; this also restores the
+  real-Agent acceptance expectation that the restart reason is visible on the batch page.
+
 ## 0.4.15 - 2026-08-17
 
 ### Added
