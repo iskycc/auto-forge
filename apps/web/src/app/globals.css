@@ -6343,6 +6343,13 @@ button.icon-button:disabled {
   white-space: nowrap;
 }
 
+/* The suite settings card follows the content-card settings-section pattern:
+   all three bottom forms get the standard 24px horizontal inset instead of
+   running flush against the card border. */
+.suite-settings-body {
+  padding: 20px 24px 24px;
+}
+
 /* The copy form sits between the policy form and the schedule form; give it the
    same top separator the schedule form has so the three blocks read as siblings. */
 .suite-copy-form {
