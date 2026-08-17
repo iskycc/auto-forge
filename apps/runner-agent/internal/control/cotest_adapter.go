@@ -299,6 +299,19 @@ func extractTarGzip(source, destination string, budget *archiveBudget) error {
 			if err := writeArchiveFile(target, reader, header.Size); err != nil {
 				return err
 			}
+		case tar.TypeLink:
+			// JDK archives reuse duplicated legal files as hard links; the link
+			// target must stay inside the destination and must already exist.
+			if err := budget.consume(0); err != nil {
+				return err
+			}
+			linkTarget, err := archiveTarget(destination, header.Linkname)
+			if err != nil {
+				return err
+			}
+			if err := linkArchiveFile(linkTarget, target); err != nil {
+				return fmt.Errorf("archive entry %q: %w", header.Name, err)
+			}
 		default:
 			return fmt.Errorf("archive entry %q has a forbidden type", header.Name)
 		}
@@ -314,6 +327,13 @@ func archiveTarget(root, name string) (string, error) {
 		return "", fmt.Errorf("archive entry %q exceeds the directory depth limit", name)
 	}
 	return filepath.Join(root, cleaned), nil
+}
+
+func linkArchiveFile(linkTarget, target string) error {
+	if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
+		return err
+	}
+	return os.Link(linkTarget, target)
 }
 
 func writeArchiveFile(target string, source io.Reader, size int64) error {

@@ -11,6 +11,10 @@ and known limitations.
 - Runners without the `isolation:cgroup-v2` capability (for example openSUSE nodes without cgroup
   v2 delegation) are no longer rejected by execution preflight; the agent executes with its
   documented degraded isolation (rlimits, process-group cleanup, timeouts) instead.
+- The runner agent now extracts hard link entries from JDK tar.gz archives instead of rejecting
+  them as forbidden types; OpenJDK distributions reuse duplicated legal files via hard links, so
+  JDK workspace preparation failed on those archives. Link targets must stay inside the attempt
+  workspace and must already be extracted.
 
 ## 0.4.12 - 2026-08-17
 

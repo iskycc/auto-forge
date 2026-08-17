@@ -1,7 +1,9 @@
 package control
 
 import (
+	"archive/tar"
 	"archive/zip"
+	"compress/gzip"
 	"os"
 	"path/filepath"
 	"strings"
@@ -99,6 +101,82 @@ func TestPrepareCotestWorkspaceCountsCopiedJarsAgainstDiskLimit(t *testing.T) {
 	)
 	if err == nil || !strings.Contains(err.Error(), "workspace materialization exceeds") {
 		t.Fatalf("prepareCotestWorkspace() error = %v", err)
+	}
+}
+
+func TestExtractArchiveExtractsTarHardLinks(t *testing.T) {
+	archive := filepath.Join(t.TempDir(), "jdk.tar.gz")
+	writeTarGzipFixture(t, archive, []tarFixtureEntry{
+		{name: "jdk-21/legal/java.base/ADDITIONAL_LICENSE_INFO", content: "license"},
+		{name: "jdk-21/legal/java.compiler/ADDITIONAL_LICENSE_INFO", link: "jdk-21/legal/java.base/ADDITIONAL_LICENSE_INFO"},
+	})
+	destination := t.TempDir()
+	if err := extractArchive(archive, destination, &archiveBudget{remainingBytes: 100, remainingFiles: 10}); err != nil {
+		t.Fatal(err)
+	}
+	content, err := os.ReadFile(filepath.Join(destination, "jdk-21", "legal", "java.compiler", "ADDITIONAL_LICENSE_INFO"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(content) != "license" {
+		t.Fatalf("hard-linked content = %q", content)
+	}
+}
+
+func TestExtractArchiveRejectsEscapingHardLink(t *testing.T) {
+	archive := filepath.Join(t.TempDir(), "unsafe.tar.gz")
+	writeTarGzipFixture(t, archive, []tarFixtureEntry{
+		{name: "jdk-21/legal/link", link: "../outside"},
+	})
+	err := extractArchive(archive, t.TempDir(), &archiveBudget{remainingBytes: 100, remainingFiles: 10})
+	if err == nil || !strings.Contains(err.Error(), "escapes") {
+		t.Fatalf("extractArchive() error = %v", err)
+	}
+}
+
+type tarFixtureEntry struct {
+	name    string
+	content string
+	link    string
+}
+
+func writeTarGzipFixture(t *testing.T, path string, entries []tarFixtureEntry) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	file, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gzipWriter := gzip.NewWriter(file)
+	archive := tar.NewWriter(gzipWriter)
+	for _, entry := range entries {
+		header := &tar.Header{Name: entry.name, Mode: 0o600}
+		if entry.link != "" {
+			header.Typeflag = tar.TypeLink
+			header.Linkname = entry.link
+		} else {
+			header.Typeflag = tar.TypeReg
+			header.Size = int64(len(entry.content))
+		}
+		if err := archive.WriteHeader(header); err != nil {
+			t.Fatal(err)
+		}
+		if entry.link == "" {
+			if _, err := archive.Write([]byte(entry.content)); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if err := archive.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := gzipWriter.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
 	}
 }
 
