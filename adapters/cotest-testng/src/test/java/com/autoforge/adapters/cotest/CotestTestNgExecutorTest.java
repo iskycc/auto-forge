@@ -24,7 +24,8 @@ class CotestTestNgExecutorTest {
       List.of(
           "com/huawei/cotest/util/ProjectFileUtil.class",
           "cotest/auto/dataproviders/MM2DataProvider.class",
-          "fixture/AdapterCase.class");
+          "fixture/AdapterCase.class",
+          "fixture/AdapterSkippedCase.class");
 
   @TempDir Path temporaryDirectory;
 
@@ -57,6 +58,37 @@ class CotestTestNgExecutorTest {
     assertSame(originalContextLoader, Thread.currentThread().getContextClassLoader());
     assertTrue(standardOutput.toString(StandardCharsets.UTF_8).contains("Passed: 1"));
     assertTrue(Files.isRegularFile(reports.resolve("testng-results.xml")));
+  }
+
+  @Test
+  void skippedTestsDoNotTurnTheProcessExitCodeIntoAFailure() throws IOException {
+    Path fixtureJar = createFixtureJar();
+    Path classDataFile = temporaryDirectory.resolve("class-data.json");
+    Files.writeString(classDataFile, "{}\n");
+    Path reports = temporaryDirectory.resolve("reports-skipped");
+    ByteArrayOutputStream standardOutput = new ByteArrayOutputStream();
+    ByteArrayOutputStream errorOutput = new ByteArrayOutputStream();
+
+    AdapterExecutionRequest request =
+        new AdapterExecutionRequest(
+            runtimeUrls(fixtureJar),
+            "fixture.AdapterSkippedCase",
+            new SuiteConfiguration("Adapter suite", "Adapter test"),
+            "10.0.0.8",
+            classDataFile,
+            reports);
+    int exitCode;
+    try (PrintStream output = new PrintStream(standardOutput, true, StandardCharsets.UTF_8);
+        PrintStream errors = new PrintStream(errorOutput, true, StandardCharsets.UTF_8)) {
+      exitCode = new CotestTestNgExecutor(output, errors).execute(request);
+    }
+
+    String stdout = standardOutput.toString(StandardCharsets.UTF_8);
+    assertTrue(stdout.contains("Passed: 1"), stdout);
+    assertTrue(stdout.contains("Skipped: 1"), stdout);
+    // TestNG 状态位图包含跳过位（status=2），但退出码必须为 0，由控制面按 XML 判定结果。
+    assertTrue(stdout.contains("TestNG exit status: 2"), stdout);
+    assertEquals(0, exitCode, errorOutput.toString(StandardCharsets.UTF_8));
   }
 
   private Path createFixtureJar() throws IOException {

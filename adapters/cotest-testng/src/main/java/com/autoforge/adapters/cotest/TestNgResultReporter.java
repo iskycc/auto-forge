@@ -11,7 +11,7 @@ final class TestNgResultReporter {
     this.output = output;
   }
 
-  String report(ClassLoader loader, Object listener) throws ReflectiveOperationException {
+  TestNgResultSummary report(ClassLoader loader, Object listener) throws ReflectiveOperationException {
     Class<?> listenerClass = Class.forName("org.testng.TestListenerAdapter", true, loader);
     Class<?> resultClass = Class.forName("org.testng.ITestResult", true, loader);
     Class<?> testClassInterface = Class.forName("org.testng.IClass", true, loader);
@@ -52,7 +52,12 @@ final class TestNgResultReporter {
             testMethodInterface,
             "CONFIGURATION FAILURE",
             true);
-    return firstFailure != null ? firstFailure : firstConfigurationFailure;
+    return new TestNgResultSummary(
+        passedTests.size(),
+        failedTests.size(),
+        skippedTests.size(),
+        configurationFailures.size(),
+        firstFailure != null ? firstFailure : firstConfigurationFailure);
   }
 
   @SuppressWarnings("unchecked")
