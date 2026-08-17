@@ -6333,14 +6333,22 @@ button.icon-button:disabled {
   justify-content: flex-end;
 }
 
-/* The enable checkbox lives in the actions row so the three-column field grid
-   cannot squeeze it against the card edge; CJK label widths vary by platform font. */
-.schedule-actions .schedule-enable-field {
+/* The enable checkbox gets its own grid row, mirroring the 启用/归档 row of the
+   main policy form above; the actions row stays reserved for right-aligned buttons. */
+.schedule-form .schedule-enable-field {
+  grid-column: 1 / -1;
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-right: auto;
   white-space: nowrap;
+}
+
+/* The copy form sits between the policy form and the schedule form; give it the
+   same top separator the schedule form has so the three blocks read as siblings. */
+.suite-copy-form {
+  margin-top: 18px;
+  padding-top: 18px;
+  border-top: 1px solid var(--color-border);
 }
 
 @media (max-width: 1180px) {
