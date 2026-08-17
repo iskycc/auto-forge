@@ -6,6 +6,50 @@ and known limitations.
 
 ## Unreleased
 
+## 0.4.11 - 2026-08-17
+
+### Added
+
+- Introduce a dedicated execution records page: every batch is listed with suite/test name,
+  status, pass rate, passed/failed counts, current round, retry mode, runner count, creation
+  time and duration, with the project/suite/status/runner/time filters moved there from the
+  batch planner page.
+- Add a selectable round-based retry mode alongside immediate retry: failed runs can now wait
+  for the next round so the whole suite re-runs together, with the current round tracked on the
+  batch and shown in records and batch details.
+- Split execution logs into three scoped terminal-style viewers: batch scheduling log with
+  per-round assignments and low-frequency runner resource snapshots, per-runner scheduling log,
+  and the per-attempt stdout/stderr/agent output log.
+- Add the java-cases fixture module plus a full E2E pipeline covering JAR import, task creation,
+  case selection, runner assignment, execution and log/artifact verification, including a
+  concurrent multi-attempt log isolation check.
+
+### Changed
+
+- Store attempt log chunks in a per-batch SQLite file (`attempt-logs/<batch>.sqlite`) instead of
+  the primary database in both lite and full modes; the primary database now keeps only the file
+  path, run results and the failure summary, so heavy log volume can no longer pressure the main
+  store. Retention and batch deletion remove the log file.
+- Enrich failure summaries with the last exception or stack line from the attempt log tail when
+  no structured TestNG report exists, and show that line directly in the batch runs table.
+- Regroup the sidebar administration entries into collapsible two-level groups （项目与权限 /
+  执行与平台） collapsed by default, rename 用例库 to 用例管理 and LDAP 目录 to 目录配置， and move
+  运维审计 under administration.
+- Replace native selects, date-time inputs and related form controls with shared self-drawn UI
+  components across the app.
+
+### Fixed
+
+- Restore exact-text matching for the run result code by rendering it in its own element, and
+  keep navigation group expansion robust across the post-login second page load.
+
+### Database migrations
+
+- SQLite: `0026_retry_mode_round`, `0027_scheduling_events`, `0028_attempt_logs_external`.
+- PostgreSQL: `0025_retry_mode_round`, `0026_scheduling_events`, `0027_attempt_logs_external`.
+- Upgrade note: `attempt_log_chunks` in the SQLite primary database is dropped; attempt logs
+  recorded before this version are removed during migration, run/attempt results are kept.
+
 ## 0.4.10 - 2026-08-14
 
 ### Changed
