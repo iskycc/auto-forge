@@ -6,6 +6,15 @@ and known limitations.
 
 ## Unreleased
 
+### Fixed
+
+- Run batch detail page: the attempt selector in the output section no longer stretches across the
+  full width (the width rule targeted the hidden native control instead of the drawn select), and
+  terminal attempts no longer open a live log stream or show a stale "updating live" badge.
+- Case suite detail page: the schedule form's enable checkbox renders as a single row aligned with
+  the other controls, and the copy-as-new-suite row uses the same field styling as the rest of the
+  form. The `--shadow-elevated` design token is now declared in `:root`.
+
 ## 0.4.13 - 2026-08-17
 
 ### Added
