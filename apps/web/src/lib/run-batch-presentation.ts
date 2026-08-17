@@ -81,3 +81,23 @@ export function batchTestNames(attempts: readonly RunAttempt[]): string[] {
   }
   return [...names];
 }
+
+// 详情页时间统一用用户时区展示；UTC 原值由调用方放在 title 中提供。
+export function formatLocalDateTime(value: string): string {
+  return new Intl.DateTimeFormat("zh-CN", {
+    dateStyle: "short",
+    timeStyle: "medium",
+  }).format(new Date(value));
+}
+
+export function formatAttemptDuration(durationMs: number): string {
+  if (durationMs < 1_000) return `${durationMs} ms`;
+  if (durationMs < 60_000) return `${(durationMs / 1_000).toFixed(2)} s`;
+  return `${Math.floor(durationMs / 60_000)} min ${Math.round((durationMs % 60_000) / 1_000)} s`;
+}
+
+export function formatArtifactBytes(sizeBytes: number): string {
+  if (sizeBytes < 1_024) return `${sizeBytes} B`;
+  if (sizeBytes < 1_048_576) return `${(sizeBytes / 1_024).toFixed(1)} KiB`;
+  return `${(sizeBytes / 1_048_576).toFixed(1)} MiB`;
+}

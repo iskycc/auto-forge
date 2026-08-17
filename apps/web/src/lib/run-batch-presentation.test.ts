@@ -3,7 +3,10 @@ import { describe, expect, it } from "vitest";
 
 import {
   batchTestNames,
+  formatArtifactBytes,
+  formatAttemptDuration,
   formatBatchDuration,
+  formatLocalDateTime,
   isActiveRunBatch,
   runBatchCompletionPercent,
   runBatchCoveragePercent,
@@ -110,6 +113,16 @@ describe("run batch presentation", () => {
     ];
     expect(batchTestNames(attempts)).toEqual(["Smoke"]);
     expect(batchTestNames([])).toEqual([]);
+  });
+
+  it("formats attempt durations, artifact sizes and local datetimes", () => {
+    expect(formatAttemptDuration(420)).toBe("420 ms");
+    expect(formatAttemptDuration(2_500)).toBe("2.50 s");
+    expect(formatAttemptDuration(61_000)).toBe("1 min 1 s");
+    expect(formatArtifactBytes(512)).toBe("512 B");
+    expect(formatArtifactBytes(2_048)).toBe("2.0 KiB");
+    expect(formatArtifactBytes(3 * 1_048_576)).toBe("3.0 MiB");
+    expect(formatLocalDateTime("2026-08-10T00:00:00.000Z")).toContain("2026");
   });
 });
 
