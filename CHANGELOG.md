@@ -6,6 +6,12 @@ and known limitations.
 
 ## Unreleased
 
+### Fixed
+
+- Runners without the `isolation:cgroup-v2` capability (for example openSUSE nodes without cgroup
+  v2 delegation) are no longer rejected by execution preflight; the agent executes with its
+  documented degraded isolation (rlimits, process-group cleanup, timeouts) instead.
+
 ## 0.4.12 - 2026-08-17
 
 ### Added

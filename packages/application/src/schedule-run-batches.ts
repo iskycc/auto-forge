@@ -910,7 +910,8 @@ function compatibilityBlocker(
     protocol_unsupported: "Runner Protocol 版本不受支持。",
     platform_unsupported: "Runner 操作系统或架构不受支持。",
     testng_executor_missing: "Runner 缺少 TestNG 执行 capability。",
-    resource_isolation_missing: "Runner 缺少 cgroup v2 资源隔离 capability。",
+    // resource_isolation_missing 刻意不映射为 blocker：cgroup v2 缺失时 Agent 回退到
+    // rlimit + 进程组清理的降级隔离（见 docs/architecture/runner-agent.md），执行不阻断。
     java_version_unknown: "Runner 未上报 Java 工具链版本。",
     java_version_unsupported: "Runner Java 版本低于执行基线。",
     testng_version_unknown: "Runner 未上报 TestNG 工具链版本。",

@@ -201,6 +201,25 @@ describe("run batch preflight", () => {
     expect(labelBlockers.map((entry) => entry.message)).toEqual(["执行机缺少必需标签 gpu。"]);
   });
 
+  it("allows runners without cgroup v2 isolation and keeps execution unblocked", async () => {
+    const service = preflightService({
+      suites: {
+        get: vi.fn().mockResolvedValue(readySuite({})),
+      } as unknown as CaseSuiteRepository,
+      runners: runnersFake(["executor:testng-v1", "java:21.0.8", "testng:7.11.0"]),
+      environments: {} as ExecutionEnvironmentRepository,
+      catalog: readyCatalogFake(),
+      objectStore: { exists: vi.fn().mockResolvedValue(true) } as unknown as JarObjectStorePort,
+    });
+
+    const result = await service.preflight({ suiteId: "suite-1", runnerIds: ["runner-1"] });
+
+    expect(result.blockers.map((entry) => entry.code)).not.toContain(
+      "RUNNER_RESOURCE_ISOLATION_MISSING",
+    );
+    expect(result.ready).toBe(true);
+  });
+
   it("blocks source-only JAR cases because they are viewable but not executable", async () => {
     const catalog = readyCatalogFake();
     const sourceRecord = await catalog.getSource("source-1");
@@ -778,7 +797,14 @@ function readySuite(overrides: {
   };
 }
 
-function runnersFake() {
+function runnersFake(
+  capabilities: string[] = [
+    "executor:testng-v1",
+    "isolation:cgroup-v2",
+    "java:21.0.8",
+    "testng:7.11.0",
+  ],
+) {
   return {
     get: vi.fn().mockResolvedValue({
       id: "runner-1",
@@ -789,7 +815,7 @@ function runnersFake() {
       agentVersion: "0.2.2",
       protocolVersion: 1,
       labels: ["java", "testng"],
-      capabilities: ["executor:testng-v1", "isolation:cgroup-v2", "java:21.0.8", "testng:7.11.0"],
+      capabilities,
       maxConcurrency: 4,
       busySlots: 0,
       lastSeenAt: timestamp,
