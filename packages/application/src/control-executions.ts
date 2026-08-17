@@ -183,9 +183,7 @@ export class ExecutionControlService {
   ) {
     await this.authenticateRunner(runnerId, credential);
     let result = enrichFailureSummary(input.result);
-    if (result === input.result) {
-      result = await this.enrichSummaryFromFailureLog(attemptId, result);
-    }
+    result = await this.enrichSummaryFromFailureLog(attemptId, result, result !== input.result);
     const response = await this.executions.completeAttempt({
       runnerId,
       attemptId,
@@ -204,28 +202,35 @@ export class ExecutionControlService {
     return response;
   }
 
-  // 缺少结构化 TestNG 结果时（如进程非零退出但无报告），从 stderr/stdout 尾部提取
-  // 最后一行异常/堆栈行拼入摘要，让批次列表能直接看到失败原因。
+  // 缺少结构化 TestNG 结果时（如进程非零退出但无报告），从日志尾部提取失败原因拼入摘要，
+  // 让批次列表能直接看到失败原因。优先解析 adapter 输出的机器可读失败标记
+  // （adapterFailureLine），只有找不到标记且没有结构化摘要时才回退到启发式的异常行扫描。
   // 日志读取失败（如日志库文件缺失）不得阻断完成上报的接受。
   private async enrichSummaryFromFailureLog(
     attemptId: string,
     result: CompletionResult,
+    hasStructuredSummary: boolean,
   ): Promise<CompletionResult> {
     if (result.status !== "failed" && result.status !== "timed_out") return result;
+    // adapter 的失败标记打在 stdout，优先于 stderr。
+    for (const stream of ["stdout", "stderr"] as const) {
+      const line = adapterFailureLine(await this.readLogTail(attemptId, stream));
+      if (!line) continue;
+      if (result.summary.includes(line)) return result;
+      return { ...result, summary: `${result.summary} | ${line}`.slice(0, 500) };
+    }
+    if (hasStructuredSummary) return result;
+    // 启发式兜底：历史日志没有失败标记，从 stderr/stdout 尾部找异常行。
     for (const stream of ["stderr", "stdout"] as const) {
-      const line = await this.readFailureLogLine(attemptId, stream);
+      const line = lastFailureLine(await this.readLogTail(attemptId, stream));
       if (line) {
-        const summary = `${result.summary} | ${line}`.slice(0, 500);
-        return { ...result, summary };
+        return { ...result, summary: `${result.summary} | ${line}`.slice(0, 500) };
       }
     }
     return result;
   }
 
-  private async readFailureLogLine(
-    attemptId: string,
-    stream: LogChunk["stream"],
-  ): Promise<string | null> {
+  private async readLogTail(attemptId: string, stream: LogChunk["stream"]): Promise<string> {
     try {
       const probe = await this.executions.listLogChunks({
         attemptId,
@@ -241,9 +246,9 @@ export class ExecutionControlService {
         afterSequence: fromSequence,
         limit: 100,
       });
-      return lastFailureLine(items.map((chunk) => chunk.content).join(""));
+      return items.map((chunk) => chunk.content).join("");
     } catch {
-      return null;
+      return "";
     }
   }
 
@@ -691,6 +696,23 @@ function enrichFailureSummary(result: CompletionResult): CompletionResult {
     }
   }
   return result;
+}
+
+// TestNG adapter（TestNgResultReporter / CotestTestNgExecutor）在用例失败时向 stdout
+// 打印的机器可读标记，格式为 `TestCase Run Failed Stack: [<内容>]` 单行。
+// 内容与 adapter 报告中 "Stack Trace:" 之后的第一行一致，即 throwable.toString()
+// （异常类名: 消息）。解析该标记优先于启发式的异常行扫描，避免误抓日志尾部的无关异常。
+const ADAPTER_FAILURE_MARKER = "TestCase Run Failed Stack: [";
+
+// 在日志内容中找最后一个失败标记行，返回标记内容（trim 后限长 300）；找不到返回 null。
+function adapterFailureLine(content: string): string | null {
+  const lines = content.split("\n");
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    const line = lines[index]?.trim();
+    if (!line || !line.startsWith(ADAPTER_FAILURE_MARKER) || !line.endsWith("]")) continue;
+    return line.slice(ADAPTER_FAILURE_MARKER.length, -1).trim().slice(0, 300);
+  }
+  return null;
 }
 
 // 在日志尾部找最后一行异常行（优先于堆栈帧行），作为非结构化失败的可读原因。

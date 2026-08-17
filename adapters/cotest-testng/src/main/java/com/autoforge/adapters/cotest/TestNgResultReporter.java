@@ -141,8 +141,9 @@ final class TestNgResultReporter {
   }
 
   private static String failureSummary(Throwable failure) {
-    String message = failure.getMessage();
-    return message == null || message.isBlank() ? failure.getClass().getName() : message;
+    // Parsing contract with the control plane (control-executions.ts): the marker content must
+    // stay on a single line and equal the first line after "Stack Trace:" in the report.
+    return failure.toString();
   }
 
   private static final class ResultDetails {

@@ -460,18 +460,26 @@ describe("artifact transfer orchestration", () => {
 });
 
 describe("failure summary log fallback", () => {
+  type LogTailResponse = {
+    items: Array<{ stream: string; sequence: number; content: string }>;
+    acknowledgedSequence: number;
+    truncated: boolean;
+  };
+
   function buildService(logResponses: {
     probe?: { items: unknown[]; acknowledgedSequence: number; truncated: boolean };
-    tail?: {
-      items: Array<{ stream: string; sequence: number; content: string }>;
-      acknowledgedSequence: number;
-      truncated: boolean;
-    };
+    tail?: LogTailResponse;
+    stdoutTail?: LogTailResponse;
+    stderrTail?: LogTailResponse;
     error?: unknown;
   }) {
-    const listLogChunks = vi.fn().mockImplementation((input: { limit: number }) => {
+    const listLogChunks = vi.fn().mockImplementation((input: { limit: number; stream: string }) => {
       if (logResponses.error) return Promise.reject(logResponses.error);
-      return Promise.resolve(input.limit === 1 ? logResponses.probe : logResponses.tail);
+      if (input.limit === 1) return Promise.resolve(logResponses.probe);
+      const tail =
+        (input.stream === "stdout" ? logResponses.stdoutTail : logResponses.stderrTail) ??
+        logResponses.tail;
+      return Promise.resolve(tail);
     });
     const executions = {
       completeAttempt: vi.fn().mockResolvedValue({
@@ -591,6 +599,120 @@ describe("failure summary log fallback", () => {
     expect(executions.completeAttempt).toHaveBeenCalledWith(
       expect.objectContaining({
         result: expect.objectContaining({ summary: "TestNG exited with code 1." }),
+      }),
+    );
+  });
+
+  it("prefers the adapter failure marker over later unrelated exception lines", async () => {
+    // 回归：stderr 尾部有更靠后的 ClassFormatError，但摘要必须取 stdout 中 adapter
+    // 失败标记的内容（即报告中 "Stack Trace:" 之后的第一行），不得误抓 stderr。
+    const reportBlock = [
+      "===== TestNG Failed Cases =====",
+      "Case: com.example.PaymentTest#pays",
+      "Stack Trace:",
+      "java.lang.AssertionError: expected <200> but was <500>",
+      "\tat com.example.PaymentTest.pays(PaymentTest.java:42)",
+      "TestCase Run Failed Stack: [java.lang.AssertionError: expected <200> but was <500>]",
+      "",
+    ].join("\n");
+    const { service, executions } = buildService({
+      probe: { items: [], acknowledgedSequence: 30, truncated: false },
+      stdoutTail: {
+        items: [{ stream: "stdout", sequence: 30, content: reportBlock }],
+        acknowledgedSequence: 30,
+        truncated: false,
+      },
+      stderrTail: {
+        items: [
+          {
+            stream: "stderr",
+            sequence: 31,
+            content:
+              'Exception in thread "main" java.lang.ClassFormatError: Absent Code attribute in method that is not native or abstract\n',
+          },
+        ],
+        acknowledgedSequence: 31,
+        truncated: false,
+      },
+    });
+
+    await service.complete("runner-1", "credential", "attempt-1", completionInput);
+
+    expect(executions.completeAttempt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        result: expect.objectContaining({
+          summary:
+            "TestNG exited with code 1. | java.lang.AssertionError: expected <200> but was <500>",
+        }),
+      }),
+    );
+  });
+
+  it("appends the adapter failure marker even when a structured TestNG summary exists", async () => {
+    const counts = { total: 1, passed: 0, failed: 1, skipped: 0, configurationFailures: 0 };
+    const structuredInput = {
+      ...completionInput,
+      result: {
+        ...completionInput.result,
+        testNg: {
+          ...counts,
+          detailsTruncated: false,
+          suites: [
+            {
+              ...counts,
+              name: "Suite",
+              durationMs: 8_000,
+              tests: [
+                {
+                  ...counts,
+                  name: "Test",
+                  durationMs: 8_000,
+                  classes: [
+                    {
+                      ...counts,
+                      name: "com.example.PaymentTest",
+                      durationMs: 8_000,
+                      methods: [
+                        {
+                          name: "pays",
+                          status: "failed" as const,
+                          configuration: false,
+                          durationMs: 8_000,
+                        },
+                      ],
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      },
+    };
+    const { service, executions } = buildService({
+      probe: { items: [], acknowledgedSequence: 30, truncated: false },
+      stdoutTail: {
+        items: [
+          {
+            stream: "stdout",
+            sequence: 30,
+            content:
+              "TestCase Run Failed Stack: [java.lang.AssertionError: expected <200> but was <500>]\n",
+          },
+        ],
+        acknowledgedSequence: 30,
+        truncated: false,
+      },
+    });
+
+    await service.complete("runner-1", "credential", "attempt-1", structuredInput);
+
+    expect(executions.completeAttempt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        result: expect.objectContaining({
+          summary:
+            "com.example.PaymentTest#pays 执行失败 | java.lang.AssertionError: expected <200> but was <500>",
+        }),
       }),
     );
   });
