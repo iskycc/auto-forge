@@ -134,10 +134,43 @@ func TestExtractArchiveRejectsEscapingHardLink(t *testing.T) {
 	}
 }
 
+func TestExtractArchiveExtractsTarSymlinks(t *testing.T) {
+	archive := filepath.Join(t.TempDir(), "jdk.tar.gz")
+	writeTarGzipFixture(t, archive, []tarFixtureEntry{
+		{name: "jdk-21/legal/java.base/ADDITIONAL_LICENSE_INFO", content: "license"},
+		{name: "jdk-21/legal/java.compiler/ADDITIONAL_LICENSE_INFO", symlink: "../java.base/ADDITIONAL_LICENSE_INFO"},
+	})
+	destination := t.TempDir()
+	if err := extractArchive(archive, destination, &archiveBudget{remainingBytes: 100, remainingFiles: 10}); err != nil {
+		t.Fatal(err)
+	}
+	content, err := os.ReadFile(filepath.Join(destination, "jdk-21", "legal", "java.compiler", "ADDITIONAL_LICENSE_INFO"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(content) != "license" {
+		t.Fatalf("symlinked content = %q", content)
+	}
+}
+
+func TestExtractArchiveRejectsUnsafeSymlink(t *testing.T) {
+	for _, linkname := range []string{"../../../outside", "/etc/passwd"} {
+		archive := filepath.Join(t.TempDir(), "unsafe.tar.gz")
+		writeTarGzipFixture(t, archive, []tarFixtureEntry{
+			{name: "jdk-21/legal/link", symlink: linkname},
+		})
+		err := extractArchive(archive, t.TempDir(), &archiveBudget{remainingBytes: 100, remainingFiles: 10})
+		if err == nil || !strings.Contains(err.Error(), "symlink target") {
+			t.Fatalf("extractArchive(%q) error = %v", linkname, err)
+		}
+	}
+}
+
 type tarFixtureEntry struct {
 	name    string
 	content string
 	link    string
+	symlink string
 }
 
 func writeTarGzipFixture(t *testing.T, path string, entries []tarFixtureEntry) {
@@ -153,17 +186,21 @@ func writeTarGzipFixture(t *testing.T, path string, entries []tarFixtureEntry) {
 	archive := tar.NewWriter(gzipWriter)
 	for _, entry := range entries {
 		header := &tar.Header{Name: entry.name, Mode: 0o600}
-		if entry.link != "" {
+		switch {
+		case entry.link != "":
 			header.Typeflag = tar.TypeLink
 			header.Linkname = entry.link
-		} else {
+		case entry.symlink != "":
+			header.Typeflag = tar.TypeSymlink
+			header.Linkname = entry.symlink
+		default:
 			header.Typeflag = tar.TypeReg
 			header.Size = int64(len(entry.content))
 		}
 		if err := archive.WriteHeader(header); err != nil {
 			t.Fatal(err)
 		}
-		if entry.link == "" {
+		if entry.link == "" && entry.symlink == "" {
 			if _, err := archive.Write([]byte(entry.content)); err != nil {
 				t.Fatal(err)
 			}

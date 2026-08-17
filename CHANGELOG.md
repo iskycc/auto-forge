@@ -8,6 +8,10 @@ and known limitations.
 
 ### Fixed
 
+- Runner agent workspace preparation now accepts in-bounds relative symlinks in JDK tar archives
+  (some JDK repacks use symlinks instead of hard links for duplicated legal files); absolute or
+  escaping symlink targets are still rejected, and the forbidden-type error now reports the actual
+  tar entry type to make future archive incompatibilities diagnosable.
 - Run batch detail page: the attempt selector in the output section no longer stretches across the
   full width (the width rule targeted the hidden native control instead of the drawn select), and
   terminal attempts no longer open a live log stream or show a stale "updating live" badge.

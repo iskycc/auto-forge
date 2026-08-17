@@ -312,8 +312,21 @@ func extractTarGzip(source, destination string, budget *archiveBudget) error {
 			if err := linkArchiveFile(linkTarget, target); err != nil {
 				return fmt.Errorf("archive entry %q: %w", header.Name, err)
 			}
+		case tar.TypeSymlink:
+			// Some JDK repacks ship duplicated files as symlinks instead; only
+			// relative targets that resolve inside the destination are allowed.
+			if err := budget.consume(0); err != nil {
+				return err
+			}
+			if err := symlinkArchiveEntry(destination, target, header.Linkname); err != nil {
+				return fmt.Errorf("archive entry %q: %w", header.Name, err)
+			}
 		default:
-			return fmt.Errorf("archive entry %q has a forbidden type", header.Name)
+			return fmt.Errorf(
+				"archive entry %q has a forbidden type %q",
+				header.Name,
+				rune(header.Typeflag),
+			)
 		}
 	}
 }
@@ -334,6 +347,21 @@ func linkArchiveFile(linkTarget, target string) error {
 		return err
 	}
 	return os.Link(linkTarget, target)
+}
+
+func symlinkArchiveEntry(root, target, linkname string) error {
+	if filepath.IsAbs(filepath.FromSlash(linkname)) {
+		return fmt.Errorf("symlink target %q is absolute", linkname)
+	}
+	resolved := filepath.Clean(filepath.Join(filepath.Dir(target), filepath.FromSlash(linkname)))
+	relative, err := filepath.Rel(root, resolved)
+	if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("symlink target %q escapes the destination", linkname)
+	}
+	if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
+		return err
+	}
+	return os.Symlink(linkname, target)
 }
 
 func writeArchiveFile(target string, source io.Reader, size int64) error {
