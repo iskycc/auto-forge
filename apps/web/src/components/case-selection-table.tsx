@@ -9,6 +9,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
 import { CaseDefinitionEditor } from "./case-definition-editor";
+import { CaseImportDialog } from "./case-import-dialog";
 import { CaseVersionHistory } from "./case-version-history";
 import { SingleCaseRun } from "./single-case-run";
 import { StatusBadge } from "./status-badge";
@@ -136,6 +137,22 @@ export function CaseSelectionTable({
     return () => controller.abort();
   }, [activeCaseId, detailReload]);
 
+  function importFromTable(matched: CaseDefinitionWithMethods[], unmatchedCount: number): void {
+    setCheckedCaseIds((current) => {
+      const next = new Set(current);
+      for (const item of matched) {
+        // 无管理权限的用例没有勾选框，不能通过导入间接选中。
+        if (canManageProject(item.projectId)) next.add(item.id);
+      }
+      return next;
+    });
+    setMessage(
+      unmatchedCount > 0
+        ? `已从表格勾选 ${matched.length} 个用例，${unmatchedCount} 个路径未匹配`
+        : `已从表格勾选 ${matched.length} 个用例`,
+    );
+  }
+
   function toggle(id: string): void {
     setCheckedCaseIds((current) => {
       const next = new Set(current);
@@ -226,6 +243,7 @@ export function CaseSelectionTable({
               />
               全选当前结果
             </label>
+            <CaseImportDialog cases={cases} onImport={importFromTable} />
             <span>
               {checkedCaseIds.size > 0 ? `已选 ${checkedCaseIds.size}` : "可批量加入任务"}
             </span>

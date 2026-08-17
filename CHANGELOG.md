@@ -4,6 +4,40 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## 0.4.15 - 2026-08-17
+
+### Added
+
+- Case library bulk import by table: the 用例管理 page now offers an 导入用例 dialog that
+  accepts a single-column 用例路径 table from a .csv/.tsv/.txt file or pasted text (one path
+  per line, optional header), parses and previews exact path matches against the case library
+  (including an unmatched-path report), and checks all matched cases in one action. Paths are
+  accepted in both directory form (`com/example/CheckoutTest`) and dotted class-name form
+  (`com.example.CheckoutTest`). Matching runs entirely in the browser; no server API changes.
+
+### Changed
+
+- Run batch detail page redesigned around retry rounds: a metrics band (status, overall pass rate,
+  case counts, start time, ticking elapsed time, current round) followed by a rounds table with
+  per-round status, totals, pass rates (round and cumulative), passed/failed/blocked counts, start
+  time and duration. Selecting a round (persisted in the `?round=` URL parameter) opens a detail
+  panel with self-drawn SVG donut charts (round outcome distribution and cumulative pass progress),
+  a filterable paginated case table with per-case live log viewer and inline TestNG/artifact/event
+  details, a per-runner tab with runner scheduling log access, and an overall scheduling log
+  button. Active batches refresh every 5 seconds.
+
+### Fixed
+
+- Failed attempt summaries now use the adapter's machine-readable marker line
+  (`TestCase Run Failed Stack: [...]`, content equals the first line after `Stack Trace:` in the
+  adapter report, i.e. `exception class: message`) instead of a heuristic scan for the last
+  exception-like line in the log tail, which could pick up unrelated later lines such as
+  `Exception in thread "main" ...`. The marker is appended even when a structured TestNG summary
+  exists; the log-tail heuristic remains as fallback when no marker is present.
+- Run batch detail page no longer overflows horizontally at narrow widths: the detail layout's
+  single grid column now allows shrinking (`minmax(0, 1fr)`), so wide round/case tables scroll
+  inside their own containers instead of stretching the page.
+
 ## 0.4.14 - 2026-08-17
 
 ### Changed

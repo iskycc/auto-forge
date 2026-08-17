@@ -367,6 +367,34 @@ public class MixedVisibleTest {
   await page.getByRole("button", { name: "移除" }).click();
   await expect(page.getByText("任务中还没有用例")).toBeVisible({ timeout: 20_000 });
 
+  await page.goto(`/cases?projectId=${encodeURIComponent(DEFAULT_PROJECT_ID)}`);
+  await page.getByRole("button", { name: "导入用例" }).click();
+  const caseImportDialog = page.getByLabel("导入用例", { exact: true });
+  await expect(caseImportDialog).toBeVisible();
+  await caseImportDialog.getByLabel("选择用例表格文件").setInputFiles({
+    name: "cases.csv",
+    mimeType: "text/csv",
+    buffer: Buffer.from("用例路径\ncom/example/CheckoutTest\ncom/example/NoSuchCase\n", "utf8"),
+  });
+  await caseImportDialog.getByRole("button", { name: "解析并预览" }).click();
+  await expect(caseImportDialog.getByRole("status")).toContainText("匹配 1 个 · 未匹配 1 个");
+  await expect(caseImportDialog.getByText("com/example/NoSuchCase")).toBeVisible();
+  await caseImportDialog.getByRole("button", { name: "勾选匹配用例" }).click();
+  await expect(caseImportDialog).toHaveCount(0);
+  await expect(page.locator(".selection-toolbar")).toContainText("已选 1");
+  await expect(page.getByRole("status")).toContainText("已从表格勾选 1 个用例");
+  await expect(page.getByLabel("选择 CheckoutTest")).toBeChecked();
+
+  await page.getByRole("button", { name: "导入用例" }).click();
+  const pasteImportDialog = page.getByLabel("导入用例", { exact: true });
+  await expect(pasteImportDialog).toBeVisible();
+  await pasteImportDialog.getByLabel("粘贴用例路径").fill("com.example.CheckoutTest");
+  await pasteImportDialog.getByRole("button", { name: "解析并预览" }).click();
+  await expect(pasteImportDialog.getByRole("status")).toContainText("匹配 1 个");
+  await pasteImportDialog.getByRole("button", { name: "勾选匹配用例" }).click();
+  await expect(pasteImportDialog).toHaveCount(0);
+  await expect(page.locator(".selection-toolbar")).toContainText("已选 1");
+
   await page.goto(`/objects?projectId=${encodeURIComponent(DEFAULT_PROJECT_ID)}`);
   await expect(page.getByText("checkout-tests-v2.jar")).toBeVisible();
   await expectUiConsistency(page);
@@ -475,7 +503,9 @@ public class MixedVisibleTest {
             stream: "stdout",
             sequence: 0,
             content:
-              "INFO testng runner started\nWARN flaky selector detected\n\u001b[31mERROR first attempt assertion failed\u001b[0m\n",
+              "INFO testng runner started\nWARN flaky selector detected\n\u001b[31mERROR first attempt assertion failed\u001b[0m\n" +
+              "Stack Trace:\njava.lang.AssertionError: E2E marker stack line\n\tat com.example.CheckoutCase.checkout(CheckoutCase.java:42)\n\n" +
+              "TestCase Run Failed Stack: [java.lang.AssertionError: E2E marker stack line]\n",
             recordedAt: new Date().toISOString(),
           },
         ],
@@ -598,6 +628,17 @@ public class MixedVisibleTest {
     })
     .toMatchObject({ status: "succeeded", succeededRuns: 1, attempts: [{}, {}] });
 
+  const completedBatch = (await (
+    await page.request.get(`/api/v1/run-batches/${encodeURIComponent(batch.id)}`, {
+      headers: userHeaders,
+    })
+  ).json()) as { attempts: Array<{ attemptNumber: number; resultSummary?: string }> };
+  // 失败摘要应取 adapter 标记行（"Stack Trace:" 后第一行），而不是日志尾部启发式匹配到的
+  // ANSI 着色 ERROR 行。
+  expect(
+    completedBatch.attempts.find((attempt) => attempt.attemptNumber === 1)?.resultSummary,
+  ).toBe("E2E intentional failure | java.lang.AssertionError: E2E marker stack line");
+
   const artifactDownload = await page.request.get(
     `/api/v1/run-attempts/${encodeURIComponent(firstAttemptId)}/artifacts/e2e-report`,
     { headers: userHeaders },
@@ -608,7 +649,7 @@ public class MixedVisibleTest {
 
   await page.goto(`/run-batches/${encodeURIComponent(batch.id)}`);
   await expect(page.getByText("已成功", { exact: true }).first()).toBeVisible();
-  await page.getByLabel("执行尝试").selectOption(firstAttemptId);
+  await page.getByRole("button", { name: "初始轮次", exact: true }).click();
   await page.getByRole("button", { name: "查看日志" }).click();
   await expect(page.locator(".execution-log")).toContainText("first attempt assertion failed");
   await expect(page.locator(".execution-log")).toHaveClass(/execution-log-dark/);
