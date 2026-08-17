@@ -91,10 +91,11 @@ test("project member cannot observe another project's assets through pages or di
   await page.goto("/settings/environments");
   await expect(page.getByRole("heading", { name: environmentA.name, exact: true })).toBeVisible();
   await expect(page.getByRole("heading", { name: environmentB.name, exact: true })).toHaveCount(0);
-  await page.goto("/run-batches");
+  await page.goto("/execution-records");
   const suiteOptions = await page.getByLabel("用例任务").last().locator("option").allTextContents();
   expect(suiteOptions.some((option) => option.includes(suiteA.name))).toBe(true);
   expect(suiteOptions.some((option) => option.includes(suiteB.name))).toBe(false);
+  await page.goto("/run-batches");
   await expect(page.getByRole("button", { name: "开始调度" })).toHaveCount(0);
 
   await expectForbidden(page, `/api/v1/case-definitions?projectId=${projectB.id}`);

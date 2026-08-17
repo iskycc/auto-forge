@@ -8219,7 +8219,7 @@ button.icon-button:disabled {
   display: block;
   margin-top: 2px;
   color: var(--color-danger);
-  font-size: 11px;
+  font-size: 12px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

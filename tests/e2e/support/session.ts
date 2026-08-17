@@ -131,8 +131,9 @@ export async function logout(page: Page): Promise<void> {
 }
 
 // The sidebar keeps administration entries inside collapsed groups; expand the
-// owning group before asserting or clicking one of its nested links. Accounts
-// without any entry in the group see no toggle at all; treat that as a no-op.
+// owning group before asserting or clicking one of its nested links. Login flows
+// navigate through /landing with a second document load, so a bare count() can
+// hit the blank transition window — wait for the toggle to attach instead.
 export async function expandAdministrationGroup(
   page: Page,
   groupLabel: "项目与权限" | "执行与平台",
@@ -140,7 +141,7 @@ export async function expandAdministrationGroup(
   const toggle = page.getByRole("navigation", { name: "主导航" }).getByRole("button", {
     name: groupLabel,
   });
-  if ((await toggle.count()) === 0) return;
+  await toggle.waitFor({ state: "attached" });
   if ((await toggle.getAttribute("aria-expanded")) !== "true") {
     await toggle.click();
   }

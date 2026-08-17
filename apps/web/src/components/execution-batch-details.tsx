@@ -465,7 +465,9 @@ export function ExecutionBatchDetails({
                     <td>{run.status}</td>
                     <td>{run.assignedRunnerId ?? "等待分配"}</td>
                     <td>
-                      {attempt?.resultCode ?? run.terminalReasonCode ?? "-"}
+                      <span className="run-result-code">
+                        {attempt?.resultCode ?? run.terminalReasonCode ?? "-"}
+                      </span>
                       {attempt?.resultSummary ? (
                         <small className="run-result-summary" title={attempt.resultSummary}>
                           {attempt.resultSummary}
