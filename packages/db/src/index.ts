@@ -14,3 +14,5 @@ export * from "./sqlite-execution-secret";
 export * from "./sqlite-run-batch";
 export * from "./sqlite-runner";
 export * from "./sqlite-project-structure";
+export * from "./sqlite-attempt-log-share";
+export * from "./postgres-attempt-log-share";

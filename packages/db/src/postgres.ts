@@ -10,3 +10,4 @@ export * from "./postgres-schema";
 export * from "./postgres-platform-statistics";
 export * from "./postgres-platform-operations";
 export * from "./postgres-project-structure";
+export * from "./postgres-attempt-log-share";

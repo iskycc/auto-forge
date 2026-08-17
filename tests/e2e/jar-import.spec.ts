@@ -1,7 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
-import { zipSync } from "fflate";
+import { unzipSync, zipSync } from "fflate";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
-import { mkdir } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import WebSocket from "ws";
 
@@ -672,6 +672,51 @@ public class MixedVisibleTest {
   await expect(page.getByText("reports/testng/e2e-report.txt")).toBeVisible();
   await expect(page.getByLabel("下载 reports/testng/e2e-report.txt")).toBeVisible();
   await expectUiConsistency(page);
+
+  // 执行结果导出：弹窗默认失败+超时，补选成功后当前轮次两次尝试都应进入 Excel。
+  await page.getByRole("button", { name: "导出结果" }).click();
+  const exportDialog = page.getByRole("dialog", { name: "导出执行结果" });
+  await expect(exportDialog).toBeVisible();
+  await exportDialog.getByLabel("成功", { exact: true }).check();
+  // 弹窗通过 anchor[download] 触发浏览器下载，Playwright 会把响应体转交给 download
+  // 事件（response.body() 此时为空），因此从 download 事件读取实际文件内容。
+  const downloadPromise = page.waitForEvent("download");
+  const exportResponsePromise = page.waitForResponse((response) =>
+    new URL(response.url()).pathname.endsWith("/export"),
+  );
+  await exportDialog.getByRole("button", { name: "导出 Excel" }).click();
+  const exportResponse = await exportResponsePromise;
+  expect(exportResponse.status()).toBe(200);
+  expect(exportResponse.headers()["content-type"]).toContain("spreadsheetml");
+  expect(exportResponse.headers()["content-disposition"]).toContain("attachment");
+  const download = await downloadPromise;
+  expect(download.suggestedFilename()).toContain(".xlsx");
+  const exportBody = new Uint8Array(await readFile(await download.path()));
+  // xlsx 即 zip，首 4 字节必须是 PK\x03\x04 本地文件头。
+  expect(Array.from(exportBody.subarray(0, 4))).toEqual([0x50, 0x4b, 0x03, 0x04]);
+  const sharedStrings = new TextDecoder("utf-8").decode(
+    unzipSync(exportBody)["xl/sharedStrings.xml"],
+  );
+  const sharePath = /\/share\/attempt-log\/[\w-]+/.exec(sharedStrings)?.[0];
+  expect(sharePath).toBeTruthy();
+  // 下载成功后弹窗自动关闭。
+  await expect(page.getByRole("dialog", { name: "导出执行结果" })).toHaveCount(0);
+
+  // 分享链接必须免登录可访问，且展示 adapter 完整日志；无效 token 显示失效提示而非跳登录。
+  const anonymousContext = await page.context().browser()!.newContext();
+  try {
+    const anonymousPage = await anonymousContext.newPage();
+    await anonymousPage.goto(sharePath!);
+    expect(anonymousPage.url()).toContain("/share/attempt-log/");
+    await expect(anonymousPage.getByText("用例路径", { exact: true }).first()).toBeVisible();
+    await expect(anonymousPage.locator(".share-log-output")).toContainText(
+      /first attempt assertion failed|retry passed/,
+    );
+    await anonymousPage.goto("/share/attempt-log/e2e-invalid-token");
+    await expect(anonymousPage.getByText("链接无效或已过期")).toBeVisible();
+  } finally {
+    await anonymousContext.close();
+  }
 
   await page.goto("/run-batches");
   await page.getByLabel("执行用例任务").selectOption(dailySuiteId);

@@ -4,6 +4,7 @@ import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { join } from "node:path";
 
 import {
+  AttemptLogShareService,
   CaseDefinitionService,
   CaseSourceService,
   CaseSuiteService,
@@ -16,8 +17,10 @@ import {
   PublicPlatformStatisticsService,
   PlatformOperationsService,
   ProjectStructureService,
+  RunBatchExportService,
   RunBatchSchedulingService,
   RunnerControlService,
+  type AttemptLogShareRepository,
   type CaseCatalogRepository,
   type CaseSuiteRepository,
   type JarObjectStorePort,
@@ -37,6 +40,7 @@ import { MemoryCache } from "@autoforge/cache/memory";
 import {
   createAttemptLogStore,
   createSqliteDatabase,
+  SqliteAttemptLogShareRepository,
   SqliteCaseCatalogRepository,
   SqliteCaseSuiteRepository,
   SqliteExecutionControlRepository,
@@ -83,6 +87,7 @@ async function createPlatformServices() {
   let environments: ExecutionEnvironmentRepository;
   let secrets: ExecutionSecretRepository;
   let batches: RunBatchRepository;
+  let attemptLogSharesRepository: AttemptLogShareRepository;
   let objectStore: JarObjectStorePort;
   let jobQueue: JobQueuePort;
   let cache: CachePort;
@@ -106,6 +111,7 @@ async function createPlatformServices() {
     environments = new SqliteExecutionEnvironmentRepository(database);
     secrets = new SqliteExecutionSecretRepository(database);
     batches = new SqliteRunBatchRepository(database);
+    attemptLogSharesRepository = new SqliteAttemptLogShareRepository(database);
     objectStore = new LocalObjectStore(config.dataDirectory);
     jobQueue = new SqliteJobQueue(database);
     cache = new MemoryCache();
@@ -120,6 +126,7 @@ async function createPlatformServices() {
     const [
       {
         createPostgresDatabase,
+        PostgresAttemptLogShareRepository,
         PostgresCaseCatalogRepository,
         PostgresCaseSuiteRepository,
         PostgresIdentityAccessRepository,
@@ -210,6 +217,7 @@ async function createPlatformServices() {
     environments = new PostgresExecutionEnvironmentRepository(database);
     secrets = new PostgresExecutionSecretRepository(database);
     batches = new PostgresRunBatchRepository(database);
+    attemptLogSharesRepository = new PostgresAttemptLogShareRepository(database);
     objectStore = new MinioObjectStore(config.minio);
     statisticsRepository = new PostgresPlatformStatisticsRepository(database);
     operationsRepository = new PostgresPlatformOperationsRepository(database, attemptLogs);
@@ -360,6 +368,19 @@ async function createPlatformServices() {
     batches,
   );
   const runnerProtocol = new RunnerProtocolController(executionControl);
+  // 分享 token 与 Runner 凭据同构：随机 base64url，库中只留 SHA-256 哈希。
+  const attemptLogShares = new AttemptLogShareService(
+    attemptLogSharesRepository,
+    batches,
+    executions,
+    {
+      issue: () => randomBytes(32).toString("base64url"),
+      hash: (value) => createHash("sha256").update(value).digest("hex"),
+    },
+    clock,
+    ids,
+  );
+  const runBatchExport = new RunBatchExportService(batches);
   const publicStatistics = new PublicPlatformStatisticsService(
     statisticsRepository,
     clock,
@@ -446,6 +467,8 @@ async function createPlatformServices() {
     runnerAgentResources,
     executionControl,
     runnerProtocol,
+    attemptLogShares,
+    runBatchExport,
     publicStatistics,
     platformOperations,
     runBatches,

@@ -196,7 +196,7 @@ export function summarizeRunBatchRounds(
   return roundNumbers.map((round) => {
     const roundAttempts = attempts.filter((attempt) => attempt.attemptNumber === round);
     for (const attempt of roundAttempts) {
-      if (attemptOutcome(attempt) === "succeeded") passedRunIds.add(attempt.executionRunId);
+      if (runAttemptOutcome(attempt) === "succeeded") passedRunIds.add(attempt.executionRunId);
     }
     const status = roundStatus(roundAttempts);
     const executed = roundAttempts.length;
@@ -213,7 +213,7 @@ export function summarizeRunBatchRounds(
       failed,
       timedOut,
       cancelled,
-      blocked: countBlockedRuns(runs, roundAttempts, round, status),
+      blocked: countBlockedRuns(runs, roundAttempts, round),
       roundPassRate: executed === 0 ? null : Math.round((passed / executed) * 100),
       overallPassRate:
         batch.totalRuns === 0 ? 0 : Math.round((passedRunIds.size / batch.totalRuns) * 100),
@@ -236,7 +236,8 @@ function collectRoundNumbers(
 }
 
 // 终态 attempt 的不变量保证 outcome 与 status 一致；防御性回退到 status 以覆盖历史数据。
-function attemptOutcome(attempt: RunAttempt): RunAttempt["outcome"] {
+// 导出与轮次统计共用同一判定，避免两处对 outcome/status 的回退规则漂移。
+export function runAttemptOutcome(attempt: RunAttempt): RunAttempt["outcome"] {
   if (attempt.outcome) return attempt.outcome;
   const status = attempt.status;
   if (
@@ -262,27 +263,34 @@ function countOutcome(
   roundAttempts: readonly RunAttempt[],
   outcome: NonNullable<RunAttempt["outcome"]>,
 ): number {
-  return roundAttempts.filter((attempt) => attemptOutcome(attempt) === outcome).length;
+  return roundAttempts.filter((attempt) => runAttemptOutcome(attempt) === outcome).length;
 }
 
 // blocked 只统计仍被轮次持有的 run：已完成轮次不再存在阻塞；进行中的轮次只算
 // 等待未来轮释放的 run；尚未开始的轮次把等待本轮释放的 run 也计入。
+// 导出（按轮列出阻塞用例）与轮次统计共用该判定。
+export function blockedRunsForRound(
+  runs: readonly ExecutionRun[],
+  roundAttempts: readonly RunAttempt[],
+  round: number,
+): ExecutionRun[] {
+  const status = roundStatus(roundAttempts);
+  if (status === "completed") return [];
+  const attemptedRunIds = new Set(roundAttempts.map((attempt) => attempt.executionRunId));
+  return runs.filter((run) => {
+    const heldRound = run.heldRound ?? 0;
+    if (heldRound === 0) return false;
+    if (!attemptedRunIds.has(run.id) && heldRound > round) return true;
+    return status === "waiting" && heldRound === round;
+  });
+}
+
 function countBlockedRuns(
   runs: readonly ExecutionRun[],
   roundAttempts: readonly RunAttempt[],
   round: number,
-  status: RunBatchRoundStatus,
 ): number {
-  if (status === "completed") return 0;
-  const attemptedRunIds = new Set(roundAttempts.map((attempt) => attempt.executionRunId));
-  let blocked = 0;
-  for (const run of runs) {
-    const heldRound = run.heldRound ?? 0;
-    if (heldRound === 0) continue;
-    if (!attemptedRunIds.has(run.id) && heldRound > round) blocked += 1;
-    else if (status === "waiting" && heldRound === round) blocked += 1;
-  }
-  return blocked;
+  return blockedRunsForRound(runs, roundAttempts, round).length;
 }
 
 function roundStartedAt(roundAttempts: readonly RunAttempt[]): string | null {

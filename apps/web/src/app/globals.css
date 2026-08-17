@@ -8722,3 +8722,208 @@ button.icon-button:disabled {
 .case-import-unmatched code {
   font-family: var(--font-family-mono);
 }
+
+/* 免登录执行日志分享页：左侧固定信息栏 + 右侧整页深色日志区，观感与终端弹窗一致。 */
+.share-log-page {
+  min-height: 100vh;
+  padding: 24px;
+  background:
+    radial-gradient(circle at 20% -10%, rgba(255, 255, 255, 0.9), transparent 36%),
+    var(--color-canvas);
+}
+
+.share-log-layout {
+  display: grid;
+  grid-template-columns: minmax(340px, 380px) minmax(0, 1fr);
+  gap: 18px;
+  align-items: stretch;
+  width: min(100%, 1680px);
+  min-height: calc(100vh - 48px);
+  margin: 0 auto;
+}
+
+.share-log-aside {
+  overflow: auto;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-card);
+  padding: 24px;
+  background: var(--color-surface);
+  box-shadow: var(--shadow-card);
+}
+
+.share-log-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 6px 0 18px;
+}
+
+.share-log-heading h1 {
+  margin: 0;
+  font-size: 20px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.share-log-facts {
+  display: grid;
+  gap: 14px;
+  margin: 0;
+}
+
+.share-log-fact {
+  display: grid;
+  gap: 4px;
+}
+
+.share-log-fact dt {
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-caption);
+  font-weight: 680;
+}
+
+.share-log-fact dd {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  color: var(--color-text);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.share-log-fact code {
+  font-family: var(--font-family-mono);
+  font-size: 12px;
+}
+
+.share-log-summary {
+  margin: 0;
+  width: 100%;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  padding: 10px 12px;
+  background: var(--color-surface-muted);
+  color: var(--color-danger);
+  font-family: var(--font-family-mono);
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.share-log-main {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.share-log-truncated {
+  margin: 0;
+}
+
+.share-log-output {
+  flex: 1;
+  min-height: 0;
+  max-height: none;
+  margin: 0;
+  border-radius: var(--radius-control);
+}
+
+.share-log-page-center {
+  display: grid;
+  place-items: center;
+}
+
+.share-log-invalid {
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+  width: min(100%, 420px);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-card);
+  padding: 44px 36px;
+  background: var(--color-surface);
+  box-shadow: var(--shadow-card);
+  text-align: center;
+}
+
+.share-log-invalid-icon {
+  display: grid;
+  place-items: center;
+  width: 56px;
+  height: 56px;
+  border-radius: 999px;
+  background: var(--color-warning-soft);
+  color: var(--color-warning);
+}
+
+.share-log-invalid h1 {
+  margin: 4px 0 0;
+  font-size: 20px;
+}
+
+.share-log-invalid p {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+/* 轮次详情导出弹窗：复用 runner-update 弹窗壳，内部为范围单选 + 结果多选。 */
+.export-dialog {
+  width: min(100% - 48px, 460px);
+}
+
+.export-dialog-group {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  border: 0;
+  padding: 0;
+}
+
+.export-dialog-group legend {
+  margin-bottom: 8px;
+  padding: 0;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-caption);
+  font-weight: 680;
+}
+
+.export-dialog-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  padding: 10px 12px;
+  background: var(--color-surface);
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.export-dialog-option:has(:checked) {
+  border-color: color-mix(in srgb, var(--color-info), transparent 45%);
+  background: var(--color-info-soft);
+}
+
+.export-dialog-option .ui-input {
+  margin-top: 1px;
+}
+
+.export-dialog-option small {
+  display: block;
+  margin-top: 2px;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-caption);
+}
+
+.export-dialog-hint {
+  margin: 0;
+  color: var(--color-warning);
+  font-size: var(--font-size-caption);
+}

@@ -1,3 +1,5 @@
+export * from "./attempt-log-shares";
+export * from "./export-run-batch-results";
 export * from "./import-testng-jar";
 export * from "./control-executions";
 export * from "./manage-case-definitions";

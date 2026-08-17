@@ -1,10 +1,18 @@
 import { NextResponse, type NextRequest } from "next/server";
 
 const PUBLIC_PATHS = new Set(["/", "/login", "/setup"]);
+// /share/ 承载免登录的只读分享页（如执行日志分享），由页面自身按 token 校验访问。
+const PUBLIC_PREFIXES = ["/share/"];
+
+function isPublicPath(pathname: string): boolean {
+  return (
+    PUBLIC_PATHS.has(pathname) || PUBLIC_PREFIXES.some((prefix) => pathname.startsWith(prefix))
+  );
+}
 
 export function proxy(request: NextRequest): NextResponse {
   const pathname = request.nextUrl.pathname;
-  if (!PUBLIC_PATHS.has(pathname) && !request.cookies.has("autoforge_session")) {
+  if (!isPublicPath(pathname) && !request.cookies.has("autoforge_session")) {
     return withSecurityHeaders(NextResponse.redirect(new URL("/login", request.url)));
   }
 

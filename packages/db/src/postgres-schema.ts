@@ -789,6 +789,29 @@ export const pgRunAttempts = pgTable(
   ],
 );
 
+// 免登日志分享：token 明文只出现在导出响应中，库中只存 SHA-256 哈希。
+export const pgAttemptLogShares = pgTable(
+  "attempt_log_shares",
+  {
+    id: text("id").primaryKey(),
+    tokenHash: text("token_hash").notNull(),
+    attemptId: text("attempt_id")
+      .notNull()
+      .references(() => pgRunAttempts.id, { onDelete: "cascade" }),
+    batchId: text("batch_id")
+      .notNull()
+      .references(() => pgRunBatches.id, { onDelete: "cascade" }),
+    // 创建者用户 id 不加外键：账号删除后分享记录仍需保留审计。
+    createdBy: text("created_by").notNull(),
+    createdAt: text("created_at").notNull(),
+    expiresAt: text("expires_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("attempt_log_shares_token_uq").on(table.tokenHash),
+    index("attempt_log_shares_attempt_idx").on(table.attemptId, table.expiresAt),
+  ],
+);
+
 export const pgAssignments = pgTable(
   "assignments",
   {
@@ -1229,6 +1252,7 @@ export const postgresSchema = {
   attemptCompletionReceipts: pgAttemptCompletionReceipts,
   attemptStateEvents: pgAttemptStateEvents,
   attemptLogWatermarks: pgAttemptLogWatermarks,
+  attemptLogShares: pgAttemptLogShares,
   attemptArtifacts: pgAttemptArtifacts,
   caseSourceComparisons: pgCaseSourceComparisons,
   caseSuiteVersions: pgCaseSuiteVersions,

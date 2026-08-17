@@ -1444,3 +1444,24 @@ export interface PlatformOperationsRepository {
     projectIds?: readonly string[];
   }): Promise<GlobalSearchResult>;
 }
+
+/**
+ * 免登日志分享记录。token 明文只在创建时返回给导出响应，库中只存 SHA-256 哈希；
+ * 因此“未过期分享”只能判断是否活跃，无法还原链接，过期判断统一由仓储的 now 参数完成。
+ */
+export type AttemptLogShareRecord = {
+  id: string;
+  tokenHash: string;
+  attemptId: string;
+  batchId: string;
+  createdBy: string;
+  createdAt: string;
+  expiresAt: string;
+};
+
+export interface AttemptLogShareRepository {
+  create(record: AttemptLogShareRecord): Promise<void>;
+  /** 返回该 attempt 最新创建的未过期分享；无有效分享时返回 null。 */
+  findActiveByAttemptId(attemptId: string, now: string): Promise<AttemptLogShareRecord | null>;
+  findActiveByTokenHash(tokenHash: string, now: string): Promise<AttemptLogShareRecord | null>;
+}

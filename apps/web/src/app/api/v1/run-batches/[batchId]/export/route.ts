@@ -1,0 +1,89 @@
+import { EXPORT_OUTCOME_FILTERS, type ExportOutcomeFilter } from "@autoforge/contracts";
+import { DomainError } from "@autoforge/domain";
+import { NextResponse } from "next/server";
+import { z } from "zod";
+
+import { apiErrorResponse } from "@/lib/api-response";
+import { authenticateRequest } from "@/lib/auth";
+import { buildRunBatchExportWorkbook, exportContentDisposition } from "@/lib/run-batch-export-xlsx";
+import { getPlatformServices } from "@/lib/services";
+
+type Context = { params: Promise<{ batchId: string }> };
+
+const exportQuerySchema = z.object({
+  scope: z.enum(["round", "final"]),
+  round: z.coerce.number().int().min(1).optional(),
+  outcomes: z.string().min(1),
+});
+
+export const dynamic = "force-dynamic";
+
+/**
+ * 导出批次执行结果为 Excel。附带为每个已执行 attempt 生成免登日志分享链接；
+ * blocked 行没有 attempt，时间与链接列留空。
+ */
+export async function GET(request: Request, context: Context): Promise<NextResponse> {
+  try {
+    const identity = await authenticateRequest(request);
+    const { batchId } = await context.params;
+    const parsed = exportQuerySchema.parse(Object.fromEntries(new URL(request.url).searchParams));
+    const outcomes = parseOutcomeFilter(parsed.outcomes);
+    if (parsed.scope === "round" && parsed.round === undefined) {
+      throw new DomainError("INVALID_ROUND", "按轮次导出时必须提供轮次号。");
+    }
+    const services = await getPlatformServices();
+    const projectIds = services.identityAccess.projectScope(identity, "run.read");
+    const rows = await services.runBatchExport.buildRows({
+      batchId,
+      scope: parsed.scope,
+      ...(parsed.round !== undefined ? { round: parsed.round } : {}),
+      outcomes,
+      ...(projectIds ? { projectIds } : {}),
+    });
+
+    const attemptIds = rows.flatMap((row) => (row.attemptId ? [row.attemptId] : []));
+    const tokens = await services.attemptLogShares.ensureSharesForAttempts(
+      attemptIds,
+      identity.user.id,
+    );
+    const base = shareLinkBase(services.config.web.publicBaseUrl, request);
+    const shareLinks = new Map(
+      [...tokens.entries()].map(([attemptId, token]) => [
+        attemptId,
+        `${base}/share/attempt-log/${token}`,
+      ]),
+    );
+
+    const { buffer, filename } = await buildRunBatchExportWorkbook({
+      batchId,
+      scope: parsed.scope,
+      ...(parsed.round !== undefined ? { round: parsed.round } : {}),
+      rows,
+      shareLinks,
+    });
+    return new NextResponse(new Uint8Array(buffer), {
+      headers: {
+        "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "Content-Disposition": exportContentDisposition(filename),
+        "Cache-Control": "no-store",
+      },
+    });
+  } catch (error) {
+    return apiErrorResponse(error);
+  }
+}
+
+function parseOutcomeFilter(raw: string): ExportOutcomeFilter[] {
+  const values = raw.split(",").map((value) => value.trim());
+  if (values.some((value) => !(EXPORT_OUTCOME_FILTERS as readonly string[]).includes(value))) {
+    throw new DomainError("INVALID_OUTCOMES", "导出结果筛选包含不支持的选项。");
+  }
+  // 按契约固定顺序去重，保证相同筛选的请求得到相同结果。
+  return EXPORT_OUTCOME_FILTERS.filter((filter) => values.includes(filter));
+}
+
+function shareLinkBase(publicBaseUrl: string | undefined, request: Request): string {
+  const configured = publicBaseUrl?.trim();
+  if (configured) return configured.replace(/\/$/, "");
+  return new URL(request.url).origin;
+}

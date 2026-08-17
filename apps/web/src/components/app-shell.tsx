@@ -291,7 +291,14 @@ export function AppShell({
       return next;
     });
   };
-  if (pathname === "/login" || pathname === "/setup" || (pathname === "/" && !userName)) {
+  // /share 前缀是免登录的只读分享页（如执行日志分享），与登录/初始化页一样裸渲染，
+  // 不展示侧边栏与顶栏。
+  if (
+    pathname === "/login" ||
+    pathname === "/setup" ||
+    pathname.startsWith("/share/") ||
+    (pathname === "/" && !userName)
+  ) {
     return children;
   }
 

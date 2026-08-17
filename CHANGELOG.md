@@ -6,6 +6,23 @@ and known limitations.
 
 ## Unreleased
 
+### Features
+
+- Run batch detail: each round panel now offers 导出结果, exporting that round's (or every round's
+  final) case results to Excel. Columns are 用例路径、名称、执行结果、错误描述（一行堆栈，仅失败/超时）、
+  执行开始时间、执行结束时间、执行耗时(s)、日志链接. The 日志链接 column points at a new
+  login-free share page `/share/attempt-log/[token]` that renders the adapter's full execution log
+  with the same keyword highlighting as the in-app log viewer; tokens are random 32-byte values of
+  which only the SHA-256 hash is stored, they expire after 30 days, and re-exporting reuses the
+  existing share's expiry instead of extending the window. Blocked (not-yet-executed) cases export
+  without timestamps or links.
+  - Migrations: `sqlite/0030_attempt_log_shares.sql`, `postgresql/0029_attempt_log_shares.sql`
+    (new `attempt_log_shares` table, cascade-deleted with attempts/batches).
+  - API: `GET /api/v1/run-batches/[batchId]/export?scope=round|final&round=<n>&outcomes=...`
+    (auth + `run.read`; returns the xlsx attachment; errors use stable codes BATCH_NOT_FOUND /
+    INVALID_SCOPE / INVALID_ROUND / INVALID_OUTCOMES).
+  - Known limitation: share links rely on expiry for revocation; there is no manual revocation UI yet.
+
 ### Fixed
 
 - Case suite detail page: the 离线计划触发 enable checkbox no longer clips against the card edge; it

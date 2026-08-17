@@ -22,6 +22,7 @@ import { useEffect, useMemo, useState } from "react";
 
 import { AttemptLogViewer } from "@/components/attempt-log-viewer";
 import { DonutChart, type DonutChartSegment } from "@/components/donut-chart";
+import { RunBatchExportDialog } from "@/components/run-batch-export-dialog";
 import { SchedulingLogViewer } from "@/components/scheduling-log-viewer";
 import { Button, Input, Select } from "@/components/ui";
 import { readApiErrorMessage } from "@/lib/client-api";
@@ -310,6 +311,7 @@ function RoundDetailPanel({
   onOpenScheduling: (runnerId: string | undefined) => void;
 }) {
   const label = roundLabel(batch.retryMode, summary.round);
+  const [exportDialogOpen, setExportDialogOpen] = useState(false);
   const passedRunsSoFar = useMemo(() => {
     const passed = new Set<string>();
     for (const attempt of batch.attempts) {
@@ -360,7 +362,24 @@ function RoundDetailPanel({
             <ScrollText size={15} /> 总体调度日志
           </Button>
         ) : null}
+        {canReadLogs ? (
+          <Button
+            className="button button-secondary compact-button"
+            onClick={() => setExportDialogOpen(true)}
+            type="button"
+          >
+            <Download size={15} /> 导出结果
+          </Button>
+        ) : null}
       </div>
+      {exportDialogOpen ? (
+        <RunBatchExportDialog
+          batchId={batch.id}
+          round={summary.round}
+          roundLabelText={label}
+          onClose={() => setExportDialogOpen(false)}
+        />
+      ) : null}
       {actionError ? (
         <p className="form-error" role="alert">
           {actionError}

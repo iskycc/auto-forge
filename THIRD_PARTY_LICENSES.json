@@ -136,6 +136,20 @@
     },
     {
       "ecosystem": "npm",
+      "name": "@fast-csv/format",
+      "version": "4.3.5",
+      "license": "MIT",
+      "homepage": "http://c2fo.github.com/fast-csv/packages/format"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@fast-csv/parse",
+      "version": "4.3.6",
+      "license": "MIT",
+      "homepage": "http://c2fo.github.com/fast-csv/packages/parse"
+    },
+    {
+      "ecosystem": "npm",
       "name": "@img/colour",
       "version": "1.1.0",
       "license": "MIT",
@@ -270,6 +284,13 @@
     {
       "ecosystem": "npm",
       "name": "@types/node",
+      "version": "14.18.63",
+      "license": "MIT",
+      "homepage": "https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/node"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@types/node",
       "version": "24.13.3",
       "license": "MIT",
       "homepage": "https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/node"
@@ -304,6 +325,27 @@
     },
     {
       "ecosystem": "npm",
+      "name": "archiver-utils",
+      "version": "2.1.0",
+      "license": "MIT",
+      "homepage": "https://github.com/archiverjs/archiver-utils#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "archiver-utils",
+      "version": "3.0.4",
+      "license": "MIT",
+      "homepage": "https://github.com/archiverjs/archiver-utils#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "archiver",
+      "version": "5.3.2",
+      "license": "MIT",
+      "homepage": "https://github.com/archiverjs/node-archiver"
+    },
+    {
+      "ecosystem": "npm",
       "name": "asn1",
       "version": "0.2.6",
       "license": "MIT",
@@ -315,6 +357,20 @@
       "version": "3.2.6",
       "license": "MIT",
       "homepage": "https://caolan.github.io/async/"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "balanced-match",
+      "version": "1.0.2",
+      "license": "MIT",
+      "homepage": "https://github.com/juliangruber/balanced-match"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "base64-js",
+      "version": "1.5.1",
+      "license": "MIT",
+      "homepage": "https://github.com/beatgammit/base64-js"
     },
     {
       "ecosystem": "npm",
@@ -339,10 +395,52 @@
     },
     {
       "ecosystem": "npm",
+      "name": "big-integer",
+      "version": "1.6.52",
+      "license": "Unlicense",
+      "homepage": "https://github.com/peterolson/BigInteger.js#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "binary",
+      "version": "0.3.0",
+      "license": "MIT",
+      "homepage": "https://github.com/substack/node-binary#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "bl",
+      "version": "4.1.0",
+      "license": "MIT",
+      "homepage": "https://github.com/rvagg/bl"
+    },
+    {
+      "ecosystem": "npm",
       "name": "block-stream2",
       "version": "2.1.0",
       "license": "MIT",
       "homepage": "https://github.com/substack/block-stream2"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "bluebird",
+      "version": "3.4.7",
+      "license": "MIT",
+      "homepage": "https://github.com/petkaantonov/bluebird"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "brace-expansion",
+      "version": "1.1.18",
+      "license": "MIT",
+      "homepage": "https://github.com/juliangruber/brace-expansion"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "brace-expansion",
+      "version": "2.1.4",
+      "license": "MIT",
+      "homepage": "https://github.com/juliangruber/brace-expansion"
     },
     {
       "ecosystem": "npm",
@@ -361,9 +459,37 @@
     {
       "ecosystem": "npm",
       "name": "buffer-crc32",
+      "version": "0.2.13",
+      "license": "MIT",
+      "homepage": "https://github.com/brianloveswords/buffer-crc32"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "buffer-crc32",
       "version": "1.0.0",
       "license": "MIT",
       "homepage": "https://github.com/brianloveswords/buffer-crc32"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "buffer-indexof-polyfill",
+      "version": "1.0.2",
+      "license": "MIT",
+      "homepage": "https://github.com/sarosia/buffer-indexof-polyfill#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "buffer",
+      "version": "5.7.1",
+      "license": "MIT",
+      "homepage": "https://github.com/feross/buffer"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "buffers",
+      "version": "0.1.1",
+      "license": "Unknown",
+      "homepage": "https://github.com/substack/node-buffers#readme"
     },
     {
       "ecosystem": "npm",
@@ -381,6 +507,13 @@
     },
     {
       "ecosystem": "npm",
+      "name": "chainsaw",
+      "version": "0.1.0",
+      "license": "MIT/X11",
+      "homepage": "https://github.com/substack/node-chainsaw#readme"
+    },
+    {
+      "ecosystem": "npm",
       "name": "client-only",
       "version": "0.0.1",
       "license": "MIT",
@@ -395,6 +528,20 @@
     },
     {
       "ecosystem": "npm",
+      "name": "compress-commons",
+      "version": "4.1.2",
+      "license": "MIT",
+      "homepage": "https://github.com/archiverjs/node-compress-commons"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "concat-map",
+      "version": "0.0.1",
+      "license": "MIT",
+      "homepage": "https://github.com/substack/node-concat-map#readme"
+    },
+    {
+      "ecosystem": "npm",
       "name": "convert-source-map",
       "version": "2.0.0",
       "license": "MIT",
@@ -402,10 +549,38 @@
     },
     {
       "ecosystem": "npm",
+      "name": "core-util-is",
+      "version": "1.0.3",
+      "license": "MIT",
+      "homepage": "https://github.com/isaacs/core-util-is#readme"
+    },
+    {
+      "ecosystem": "npm",
       "name": "cpu-features",
       "version": "0.0.10",
       "license": "MIT",
       "homepage": "https://github.com/mscdex/cpu-features#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "crc-32",
+      "version": "1.2.2",
+      "license": "Apache-2.0",
+      "homepage": "https://sheetjs.com/"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "crc32-stream",
+      "version": "4.0.3",
+      "license": "MIT",
+      "homepage": "https://github.com/archiverjs/node-crc32-stream"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "dayjs",
+      "version": "1.11.22",
+      "license": "MIT",
+      "homepage": "https://day.js.org"
     },
     {
       "ecosystem": "npm",
@@ -437,10 +612,24 @@
     },
     {
       "ecosystem": "npm",
+      "name": "duplexer2",
+      "version": "0.1.4",
+      "license": "BSD-3-Clause",
+      "homepage": "https://github.com/deoxxa/duplexer2#readme"
+    },
+    {
+      "ecosystem": "npm",
       "name": "electron-to-chromium",
       "version": "1.5.402",
       "license": "ISC",
       "homepage": "https://github.com/Kilian/electron-to-chromium#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "end-of-stream",
+      "version": "1.4.5",
+      "license": "MIT",
+      "homepage": "https://github.com/mafintosh/end-of-stream"
     },
     {
       "ecosystem": "npm",
@@ -455,6 +644,20 @@
       "version": "5.0.4",
       "license": "MIT",
       "homepage": "https://github.com/primus/eventemitter3#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "exceljs",
+      "version": "4.4.0",
+      "license": "MIT",
+      "homepage": "https://github.com/exceljs/exceljs#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "fast-csv",
+      "version": "4.3.6",
+      "license": "MIT",
+      "homepage": "http://c2fo.github.com/fast-csv"
     },
     {
       "ecosystem": "npm",
@@ -486,6 +689,27 @@
     },
     {
       "ecosystem": "npm",
+      "name": "fs-constants",
+      "version": "1.0.0",
+      "license": "MIT",
+      "homepage": "https://github.com/mafintosh/fs-constants"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "fs.realpath",
+      "version": "1.0.0",
+      "license": "ISC",
+      "homepage": "https://github.com/isaacs/fs.realpath#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "fstream",
+      "version": "1.0.12",
+      "license": "ISC",
+      "homepage": "https://github.com/npm/fstream#readme"
+    },
+    {
+      "ecosystem": "npm",
       "name": "gensync",
       "version": "1.0.0-beta.2",
       "license": "MIT",
@@ -493,10 +717,45 @@
     },
     {
       "ecosystem": "npm",
+      "name": "glob",
+      "version": "7.2.3",
+      "license": "ISC",
+      "homepage": "https://github.com/isaacs/node-glob#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "graceful-fs",
+      "version": "4.2.11",
+      "license": "ISC",
+      "homepage": "https://github.com/isaacs/node-graceful-fs#readme"
+    },
+    {
+      "ecosystem": "npm",
       "name": "has-flag",
       "version": "4.0.0",
       "license": "MIT",
       "homepage": "https://github.com/sindresorhus/has-flag#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "ieee754",
+      "version": "1.2.1",
+      "license": "BSD-3-Clause",
+      "homepage": "https://github.com/feross/ieee754#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "immediate",
+      "version": "3.0.6",
+      "license": "MIT",
+      "homepage": "https://github.com/calvinmetcalf/immediate#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "inflight",
+      "version": "1.0.6",
+      "license": "ISC",
+      "homepage": "https://github.com/isaacs/inflight"
     },
     {
       "ecosystem": "npm",
@@ -521,6 +780,13 @@
     },
     {
       "ecosystem": "npm",
+      "name": "isarray",
+      "version": "1.0.0",
+      "license": "MIT",
+      "homepage": "https://github.com/juliangruber/isarray"
+    },
+    {
+      "ecosystem": "npm",
       "name": "js-tokens",
       "version": "4.0.0",
       "license": "MIT",
@@ -542,10 +808,129 @@
     },
     {
       "ecosystem": "npm",
+      "name": "jszip",
+      "version": "3.10.1",
+      "license": "(MIT OR GPL-3.0-or-later)",
+      "homepage": "https://github.com/Stuk/jszip#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "lazystream",
+      "version": "1.0.1",
+      "license": "MIT",
+      "homepage": "https://github.com/jpommerening/node-lazystream"
+    },
+    {
+      "ecosystem": "npm",
       "name": "ldapts",
       "version": "8.1.5",
       "license": "MIT",
       "homepage": "https://github.com/ldapts/ldapts#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "lie",
+      "version": "3.3.0",
+      "license": "MIT",
+      "homepage": "https://github.com/calvinmetcalf/lie#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "listenercount",
+      "version": "1.0.1",
+      "license": "ISC",
+      "homepage": "https://github.com/jden/node-listenercount#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "lodash.defaults",
+      "version": "4.2.0",
+      "license": "MIT",
+      "homepage": "https://lodash.com/"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "lodash.difference",
+      "version": "4.5.0",
+      "license": "MIT",
+      "homepage": "https://lodash.com/"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "lodash.escaperegexp",
+      "version": "4.1.2",
+      "license": "MIT",
+      "homepage": "https://lodash.com/"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "lodash.flatten",
+      "version": "4.4.0",
+      "license": "MIT",
+      "homepage": "https://lodash.com/"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "lodash.groupby",
+      "version": "4.6.0",
+      "license": "MIT",
+      "homepage": "https://lodash.com/"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "lodash.isboolean",
+      "version": "3.0.3",
+      "license": "MIT",
+      "homepage": "https://lodash.com/"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "lodash.isequal",
+      "version": "4.5.0",
+      "license": "MIT",
+      "homepage": "https://lodash.com/"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "lodash.isfunction",
+      "version": "3.0.9",
+      "license": "MIT",
+      "homepage": "https://lodash.com/"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "lodash.isnil",
+      "version": "4.0.0",
+      "license": "MIT",
+      "homepage": "https://lodash.com/"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "lodash.isplainobject",
+      "version": "4.0.6",
+      "license": "MIT",
+      "homepage": "https://lodash.com/"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "lodash.isundefined",
+      "version": "3.0.1",
+      "license": "MIT",
+      "homepage": "https://lodash.com/"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "lodash.union",
+      "version": "4.6.0",
+      "license": "MIT",
+      "homepage": "https://lodash.com/"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "lodash.uniq",
+      "version": "4.5.0",
+      "license": "MIT",
+      "homepage": "https://lodash.com/"
     },
     {
       "ecosystem": "npm",
@@ -584,10 +969,38 @@
     },
     {
       "ecosystem": "npm",
+      "name": "minimatch",
+      "version": "3.1.5",
+      "license": "ISC",
+      "homepage": "https://github.com/isaacs/minimatch#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "minimatch",
+      "version": "5.1.9",
+      "license": "ISC",
+      "homepage": "https://github.com/isaacs/minimatch#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "minimist",
+      "version": "1.2.8",
+      "license": "MIT",
+      "homepage": "https://github.com/minimistjs/minimist"
+    },
+    {
+      "ecosystem": "npm",
       "name": "minio",
       "version": "8.0.7",
       "license": "Apache-2.0",
       "homepage": "https://github.com/minio/minio-js#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "mkdirp",
+      "version": "0.5.6",
+      "license": "MIT",
+      "homepage": "https://github.com/substack/node-mkdirp#readme"
     },
     {
       "ecosystem": "npm",
@@ -647,10 +1060,38 @@
     },
     {
       "ecosystem": "npm",
+      "name": "normalize-path",
+      "version": "3.0.0",
+      "license": "MIT",
+      "homepage": "https://github.com/jonschlinkert/normalize-path"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "once",
+      "version": "1.4.0",
+      "license": "ISC",
+      "homepage": "https://github.com/isaacs/once#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "pako",
+      "version": "1.0.11",
+      "license": "(MIT AND Zlib)",
+      "homepage": "https://github.com/nodeca/pako"
+    },
+    {
+      "ecosystem": "npm",
       "name": "path-expression-matcher",
       "version": "1.6.2",
       "license": "MIT",
       "homepage": "https://github.com/NaturalIntelligence/path-expression-matcher#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "path-is-absolute",
+      "version": "1.0.1",
+      "license": "MIT",
+      "homepage": "https://github.com/sindresorhus/path-is-absolute#readme"
     },
     {
       "ecosystem": "npm",
@@ -766,6 +1207,13 @@
     },
     {
       "ecosystem": "npm",
+      "name": "process-nextick-args",
+      "version": "2.0.1",
+      "license": "MIT",
+      "homepage": "https://github.com/calvinmetcalf/process-nextick-args"
+    },
+    {
+      "ecosystem": "npm",
       "name": "punycode",
       "version": "2.3.1",
       "license": "MIT",
@@ -795,9 +1243,23 @@
     {
       "ecosystem": "npm",
       "name": "readable-stream",
+      "version": "2.3.8",
+      "license": "MIT",
+      "homepage": "https://github.com/nodejs/readable-stream#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "readable-stream",
       "version": "3.6.2",
       "license": "MIT",
       "homepage": "https://github.com/nodejs/readable-stream#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "readdir-glob",
+      "version": "1.1.3",
+      "license": "Apache-2.0",
+      "homepage": "https://github.com/Yqnn/node-readdir-glob"
     },
     {
       "ecosystem": "npm",
@@ -805,6 +1267,20 @@
       "version": "6.2.0",
       "license": "MIT",
       "homepage": "https://github.com/redis/node-redis"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "rimraf",
+      "version": "2.7.1",
+      "license": "ISC",
+      "homepage": "https://github.com/isaacs/rimraf#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "safe-buffer",
+      "version": "5.1.2",
+      "license": "MIT",
+      "homepage": "https://github.com/feross/safe-buffer"
     },
     {
       "ecosystem": "npm",
@@ -826,6 +1302,13 @@
       "version": "1.6.1",
       "license": "BlueOak-1.0.0",
       "homepage": "https://github.com/isaacs/sax-js#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "saxes",
+      "version": "5.0.1",
+      "license": "ISC",
+      "homepage": "https://github.com/lddubeau/saxes#readme"
     },
     {
       "ecosystem": "npm",
@@ -854,6 +1337,13 @@
       "version": "0.0.1",
       "license": "MIT",
       "homepage": "https://reactjs.org/"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "setimmediate",
+      "version": "1.0.5",
+      "license": "MIT",
+      "homepage": "https://github.com/YuzuJS/setImmediate#readme"
     },
     {
       "ecosystem": "npm",
@@ -921,6 +1411,13 @@
     {
       "ecosystem": "npm",
       "name": "string_decoder",
+      "version": "1.1.1",
+      "license": "MIT",
+      "homepage": "https://github.com/nodejs/string_decoder"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "string_decoder",
       "version": "1.3.0",
       "license": "MIT",
       "homepage": "https://github.com/nodejs/string_decoder"
@@ -948,6 +1445,13 @@
     },
     {
       "ecosystem": "npm",
+      "name": "tar-stream",
+      "version": "2.2.0",
+      "license": "MIT",
+      "homepage": "https://github.com/mafintosh/tar-stream"
+    },
+    {
+      "ecosystem": "npm",
       "name": "through2",
       "version": "4.0.2",
       "license": "MIT",
@@ -955,10 +1459,24 @@
     },
     {
       "ecosystem": "npm",
+      "name": "tmp",
+      "version": "0.2.7",
+      "license": "MIT",
+      "homepage": "http://github.com/raszi/node-tmp"
+    },
+    {
+      "ecosystem": "npm",
       "name": "tr46",
       "version": "6.0.0",
       "license": "MIT",
       "homepage": "https://github.com/jsdom/tr46#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "traverse",
+      "version": "0.3.9",
+      "license": "MIT/X11",
+      "homepage": "https://github.com/substack/js-traverse#readme"
     },
     {
       "ecosystem": "npm",
@@ -990,6 +1508,13 @@
     },
     {
       "ecosystem": "npm",
+      "name": "unzipper",
+      "version": "0.10.14",
+      "license": "MIT",
+      "homepage": "https://github.com/ZJONSSON/node-unzipper#readme"
+    },
+    {
+      "ecosystem": "npm",
       "name": "update-browserslist-db",
       "version": "1.3.0",
       "license": "MIT",
@@ -1004,6 +1529,13 @@
     },
     {
       "ecosystem": "npm",
+      "name": "uuid",
+      "version": "8.3.2",
+      "license": "MIT",
+      "homepage": "https://github.com/uuidjs/uuid#readme"
+    },
+    {
+      "ecosystem": "npm",
       "name": "webidl-conversions",
       "version": "8.0.1",
       "license": "BSD-2-Clause",
@@ -1015,6 +1547,13 @@
       "version": "16.0.0",
       "license": "MIT",
       "homepage": "https://github.com/jsdom/whatwg-url#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "wrappy",
+      "version": "1.0.2",
+      "license": "ISC",
+      "homepage": "https://github.com/npm/wrappy"
     },
     {
       "ecosystem": "npm",
@@ -1046,6 +1585,13 @@
     },
     {
       "ecosystem": "npm",
+      "name": "xmlchars",
+      "version": "2.2.0",
+      "license": "MIT",
+      "homepage": "https://github.com/lddubeau/xmlchars#readme"
+    },
+    {
+      "ecosystem": "npm",
       "name": "xtend",
       "version": "4.0.2",
       "license": "MIT",
@@ -1057,6 +1603,13 @@
       "version": "3.1.1",
       "license": "ISC",
       "homepage": "https://github.com/isaacs/yallist#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "zip-stream",
+      "version": "4.1.1",
+      "license": "MIT",
+      "homepage": "https://github.com/archiverjs/node-zip-stream"
     },
     {
       "ecosystem": "npm",
