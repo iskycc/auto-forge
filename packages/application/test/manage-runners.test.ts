@@ -124,6 +124,77 @@ describe("RunnerControlService credentials", () => {
     });
   });
 
+  it("purges a deregistered runner record", async () => {
+    const purge = vi.fn().mockResolvedValue({
+      id: "runner-1",
+      state: "disabled",
+      deregisteredAt: "2026-08-08T23:59:00.000Z",
+      purgedAt: now.toISOString(),
+    });
+    const { service } = serviceWith({
+      get: vi.fn().mockResolvedValue({
+        id: "runner-1",
+        state: "disabled",
+        deregisteredAt: "2026-08-08T23:59:00.000Z",
+      }),
+      purge,
+    });
+
+    await expect(service.purgeRunner("runner-1")).resolves.toMatchObject({
+      purgedAt: "2026-08-09T00:00:00.000Z",
+    });
+    expect(purge).toHaveBeenCalledWith({
+      runnerId: "runner-1",
+      purgedAt: "2026-08-09T00:00:00.000Z",
+    });
+  });
+
+  it("rejects purging a runner that has not been deregistered", async () => {
+    const purge = vi.fn();
+    const { service } = serviceWith({
+      get: vi.fn().mockResolvedValue({ id: "runner-1", state: "online" }),
+      purge,
+    });
+
+    await expect(service.purgeRunner("runner-1")).rejects.toMatchObject({
+      code: "RUNNER_NOT_DELETABLE",
+    });
+    expect(purge).not.toHaveBeenCalled();
+  });
+
+  it("returns the already purged runner without rewriting it", async () => {
+    const purged = {
+      id: "runner-1",
+      state: "disabled",
+      deregisteredAt: "2026-08-08T23:59:00.000Z",
+      purgedAt: "2026-08-08T23:59:30.000Z",
+    };
+    const purge = vi.fn();
+    const { service } = serviceWith({
+      get: vi.fn().mockResolvedValue(purged),
+      purge,
+    });
+
+    await expect(service.purgeRunner("runner-1")).resolves.toBe(purged);
+    expect(purge).not.toHaveBeenCalled();
+  });
+
+  it("rejects authentication for purged runners", async () => {
+    const { service } = serviceWith({
+      findByCredentialHash: vi.fn().mockResolvedValue({
+        id: "runner-1",
+        state: "disabled",
+        deregisteredAt: "2026-08-08T23:59:00.000Z",
+        purgedAt: "2026-08-08T23:59:30.000Z",
+      }),
+      rotateCredential: vi.fn(),
+    });
+
+    await expect(service.rotateCredential("runner-1", "old-credential")).rejects.toMatchObject({
+      code: "RUNNER_AUTH_REJECTED",
+    });
+  });
+
   it("marks the credential as revoked", async () => {
     const revokeCredential = vi.fn().mockResolvedValue({ id: "runner-1" });
     const { service } = serviceWith({

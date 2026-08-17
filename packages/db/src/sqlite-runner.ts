@@ -1,6 +1,6 @@
 import type { RegisterRunnerRecord, RunnerRepository } from "@autoforge/application";
 import type { Runner } from "@autoforge/domain";
-import { and, desc, eq, gt, or, sql } from "drizzle-orm";
+import { and, desc, eq, gt, isNull, or, sql } from "drizzle-orm";
 
 import type { SqliteDatabaseHandle } from "./database";
 import { mapStoredRunner } from "./runner-mapper";
@@ -111,6 +111,7 @@ export class SqliteRunnerRepository implements RunnerRepository {
     return this.handle.db
       .select()
       .from(runners)
+      .where(isNull(runners.purgedAt))
       .orderBy(desc(runners.lastSeenAt))
       .limit(limit)
       .all()
@@ -223,5 +224,27 @@ export class SqliteRunnerRepository implements RunnerRepository {
         .run();
       return mapStoredRunner(row);
     })();
+  }
+
+  async purge(input: { runnerId: string; purgedAt: string }): Promise<Runner> {
+    const row = this.handle.db
+      .update(runners)
+      .set({
+        purgedAt: input.purgedAt,
+        // credential_hash 为 NOT NULL 且有唯一约束：用按执行机唯一的哨兵值替换，
+        // 保证任何真实凭据哈希都无法再匹配该记录。
+        credentialHash: `purged:${input.runnerId}`,
+        previousCredentialHash: null,
+        previousCredentialValidUntil: null,
+        credentialRotationRequestedAt: null,
+        labelsJson: "[]",
+        capabilitiesJson: "[]",
+        updatedAt: input.purgedAt,
+      })
+      .where(eq(runners.id, input.runnerId))
+      .returning()
+      .get();
+    if (!row) throw new Error(`Runner ${input.runnerId} does not exist.`);
+    return mapStoredRunner(row);
   }
 }

@@ -513,6 +513,7 @@ export const pgRunners = pgTable(
     previousCredentialHash: text("previous_credential_hash"),
     previousCredentialValidUntil: text("previous_credential_valid_until"),
     deregisteredAt: text("deregistered_at"),
+    purgedAt: text("purged_at"),
     name: text("name").notNull(),
     disabled: boolean("disabled").notNull().default(false),
     draining: boolean("draining").notNull().default(false),

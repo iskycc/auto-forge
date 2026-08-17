@@ -359,6 +359,77 @@ describe("SQLite management repositories", () => {
     }
   });
 
+  it("purges a deregistered runner and hides it from listings", async () => {
+    const { handle, runners } = await fixture();
+    try {
+      await runners.register({
+        id: "runner-purge",
+        bootstrapTokenHash: "bootstrap-purge",
+        credentialHash: "credential-purge",
+        name: "purge-runner",
+        os: "linux",
+        architecture: "amd64",
+        agentVersion: "0.2.0",
+        protocolVersion: 1,
+        labels: ["java"],
+        capabilities: ["executor:testng-v1"],
+        maxConcurrency: 1,
+        terminalEnabled: false,
+        recordedAt: timestamp,
+      });
+      expect((await runners.list("2026-08-08T23:59:00.000Z", 100)).map((row) => row.id)).toContain(
+        "runner-purge",
+      );
+
+      await runners.deregister({
+        runnerId: "runner-purge",
+        deregisteredAt: "2026-08-09T00:10:00.000Z",
+      });
+      const purged = await runners.purge({
+        runnerId: "runner-purge",
+        purgedAt: "2026-08-09T00:11:00.000Z",
+      });
+      expect(purged.purgedAt).toBe("2026-08-09T00:11:00.000Z");
+      expect(purged.labels).toEqual([]);
+      expect(purged.capabilities).toEqual([]);
+
+      expect(
+        (await runners.list("2026-08-08T23:59:00.000Z", 100)).map((row) => row.id),
+      ).not.toContain("runner-purge");
+      expect(
+        await runners.findByCredentialHash("credential-purge", "2026-08-09T00:12:00.000Z"),
+      ).toBeNull();
+      // get 不过滤墓碑记录，供重复清除时幂等返回。
+      expect((await runners.get("runner-purge", "2026-08-09T00:12:00.000Z"))?.purgedAt).toBe(
+        "2026-08-09T00:11:00.000Z",
+      );
+      const stored = handle.client
+        .prepare("SELECT credential_hash FROM runners WHERE id = ?")
+        .get("runner-purge") as { credential_hash: string };
+      expect(stored.credential_hash).toBe("purged:runner-purge");
+
+      // 同名新机器重新注册不受墓碑记录影响。
+      const replacement = await runners.register({
+        id: "runner-purge-replacement",
+        bootstrapTokenHash: "bootstrap-purge-replacement",
+        credentialHash: "credential-purge-replacement",
+        name: "purge-runner",
+        os: "linux",
+        architecture: "amd64",
+        agentVersion: "0.2.0",
+        protocolVersion: 1,
+        labels: [],
+        capabilities: [],
+        maxConcurrency: 1,
+        terminalEnabled: false,
+        recordedAt: "2026-08-09T00:13:00.000Z",
+      });
+      expect(replacement?.id).toBe("runner-purge-replacement");
+    } finally {
+      handle.close();
+    }
+  });
+
   it("reconstructs previews imported before inspection snapshots were persisted", async () => {
     const { handle, catalog } = await fixture();
     try {

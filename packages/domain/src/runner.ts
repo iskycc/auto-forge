@@ -27,6 +27,8 @@ export type Runner = {
   credentialRevokedAt?: string;
   credentialRotationRequestedAt?: string;
   deregisteredAt?: string;
+  // purgedAt 是注销后的墓碑标记：记录从列表隐藏，凭据材料已被清除，执行历史保留。
+  purgedAt?: string;
   createdAt: string;
   updatedAt: string;
 };
@@ -38,6 +40,8 @@ export type RunnerAuthenticationBlock = "deregistered" | "credential-revoked" | 
  * 因为它们代表身份失效而非临时生命周期状态。
  */
 export function runnerAuthenticationBlock(runner: Runner): RunnerAuthenticationBlock | null {
+  // 已清除的执行机视同已注销：身份材料不复存在，任何情况下都不能再认证。
+  if (runner.purgedAt) return "deregistered";
   if (runner.deregisteredAt) return "deregistered";
   if (runner.credentialRevokedAt) return "credential-revoked";
   if (runner.state === "disabled") return "disabled";

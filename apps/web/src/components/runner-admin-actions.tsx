@@ -69,8 +69,49 @@ export function RunnerAdminActions({
     }
   }
 
+  async function remove(confirmation: string) {
+    if (!window.confirm(confirmation)) return;
+    setPending(true);
+    setError("");
+    try {
+      const response = await fetch(`/api/v1/runners/${encodeURIComponent(runnerId)}`, {
+        method: "DELETE",
+      });
+      if (!response.ok) {
+        const body = (await response.json()) as { error?: { message?: string } };
+        throw new Error(body.error?.message ?? "删除执行机记录失败。");
+      }
+      router.refresh();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "删除执行机记录失败。");
+    } finally {
+      setPending(false);
+    }
+  }
+
   if (deregistered) {
-    return <span className="muted">已注销</span>;
+    return (
+      <span className="runner-admin-actions">
+        <span className="muted">已注销</span>
+        <Button
+          className="danger-text-button"
+          disabled={pending}
+          onClick={() =>
+            void remove(
+              `确定删除已注销执行机「${runnerName}」的平台记录？执行历史保留，删除后无法恢复。`,
+            )
+          }
+          type="button"
+        >
+          删除
+        </Button>
+        {error ? (
+          <small className="form-error" role="alert">
+            {error}
+          </small>
+        ) : null}
+      </span>
+    );
   }
 
   return (

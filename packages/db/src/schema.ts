@@ -403,6 +403,7 @@ export const runners = sqliteTable(
     previousCredentialHash: text("previous_credential_hash"),
     previousCredentialValidUntil: text("previous_credential_valid_until"),
     deregisteredAt: text("deregistered_at"),
+    purgedAt: text("purged_at"),
     name: text("name").notNull(),
     disabled: integer("disabled", { mode: "boolean" }).notNull(),
     draining: integer("draining", { mode: "boolean" }).notNull().default(false),

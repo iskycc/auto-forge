@@ -28,3 +28,23 @@ export async function PATCH(request: Request, context: Context): Promise<NextRes
     return apiErrorResponse(error, currentRequestId);
   }
 }
+
+export async function DELETE(request: Request, context: Context): Promise<NextResponse> {
+  const currentRequestId = requestId(request);
+  try {
+    requireSameOrigin(request);
+    const identity = await authorizeRequest(request, "runner.manage");
+    const { runnerId } = await context.params;
+    const services = await getPlatformServices();
+    const runner = await services.runnerControl.purgeRunner(runnerId);
+    await services.identityAccess.recordAuthorizedOperation(identity, {
+      action: "runner.purge",
+      resourceType: "runner",
+      resourceId: runnerId,
+      requestId: currentRequestId,
+    });
+    return NextResponse.json(runner);
+  } catch (error) {
+    return apiErrorResponse(error, currentRequestId);
+  }
+}

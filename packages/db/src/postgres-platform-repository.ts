@@ -1849,7 +1849,12 @@ export class PostgresRunnerRepository implements RunnerRepository {
   async list(offlineBefore: string, limit: number): Promise<Runner[]> {
     await this.ready();
     return (
-      await this.handle.db.select().from(pgRunners).orderBy(desc(pgRunners.lastSeenAt)).limit(limit)
+      await this.handle.db
+        .select()
+        .from(pgRunners)
+        .where(isNull(pgRunners.purgedAt))
+        .orderBy(desc(pgRunners.lastSeenAt))
+        .limit(limit)
     ).map((row) => mapStoredRunner(row, offlineBefore));
   }
 
@@ -1963,5 +1968,27 @@ export class PostgresRunnerRepository implements RunnerRepository {
         );
       return mapStoredRunner(row);
     });
+  }
+
+  async purge(input: { runnerId: string; purgedAt: string }): Promise<Runner> {
+    await this.ready();
+    const [row] = await this.handle.db
+      .update(pgRunners)
+      .set({
+        purgedAt: input.purgedAt,
+        // credential_hash 为 NOT NULL 且有唯一约束：用按执行机唯一的哨兵值替换，
+        // 保证任何真实凭据哈希都无法再匹配该记录。
+        credentialHash: `purged:${input.runnerId}`,
+        previousCredentialHash: null,
+        previousCredentialValidUntil: null,
+        credentialRotationRequestedAt: null,
+        labelsJson: "[]",
+        capabilitiesJson: "[]",
+        updatedAt: input.purgedAt,
+      })
+      .where(eq(pgRunners.id, input.runnerId))
+      .returning();
+    if (!row) throw new Error(`Runner ${input.runnerId} does not exist.`);
+    return mapStoredRunner(row);
   }
 }

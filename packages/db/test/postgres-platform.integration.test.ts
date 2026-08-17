@@ -733,6 +733,92 @@ describe.skipIf(!connectionString)("PostgreSQL platform repositories", () => {
       await handle.close();
     }
   });
+  it("purges a deregistered runner and hides it from listings", async () => {
+    const handle = createPostgresDatabase({
+      connectionString: connectionString!,
+      migrationsFolder: resolve(import.meta.dirname, "../drizzle/postgresql"),
+    });
+    const runners = new PostgresRunnerRepository(handle);
+    const runnerId = randomUUID();
+    const bootstrapTokenHash = randomUUID();
+    const now = "2026-08-09T00:00:00.000Z";
+    try {
+      await handle.ready;
+      await runners.register({
+        id: runnerId,
+        bootstrapTokenHash,
+        credentialHash: `credential-purge-${runnerId}`,
+        name: "postgres-purge-runner",
+        os: "linux",
+        architecture: "amd64",
+        agentVersion: "0.2.2",
+        protocolVersion: 1,
+        labels: ["java"],
+        capabilities: ["executor:testng-v1"],
+        maxConcurrency: 1,
+        terminalEnabled: false,
+        recordedAt: now,
+      });
+      expect((await runners.list("2026-08-08T23:59:00.000Z", 500)).map((row) => row.id)).toContain(
+        runnerId,
+      );
+
+      await runners.deregister({ runnerId, deregisteredAt: "2026-08-09T00:10:00.000Z" });
+      const purged = await runners.purge({ runnerId, purgedAt: "2026-08-09T00:11:00.000Z" });
+      expect(purged.purgedAt).toBe("2026-08-09T00:11:00.000Z");
+      expect(purged.labels).toEqual([]);
+      expect(purged.capabilities).toEqual([]);
+
+      expect(
+        (await runners.list("2026-08-08T23:59:00.000Z", 500)).map((row) => row.id),
+      ).not.toContain(runnerId);
+      expect(
+        await runners.findByCredentialHash(
+          `credential-purge-${runnerId}`,
+          "2026-08-09T00:12:00.000Z",
+        ),
+      ).toBeNull();
+      // get 不过滤墓碑记录，供重复清除时幂等返回。
+      expect((await runners.get(runnerId, "2026-08-09T00:12:00.000Z"))?.purgedAt).toBe(
+        "2026-08-09T00:11:00.000Z",
+      );
+      const stored = await handle.pool.query<{ credential_hash: string }>(
+        "SELECT credential_hash FROM runners WHERE id = $1",
+        [runnerId],
+      );
+      expect(stored.rows[0]?.credential_hash).toBe(`purged:${runnerId}`);
+
+      // 同名新机器重新注册不受墓碑记录影响。
+      const replacementId = randomUUID();
+      const replacementBootstrapTokenHash = randomUUID();
+      const replacement = await runners.register({
+        id: replacementId,
+        bootstrapTokenHash: replacementBootstrapTokenHash,
+        credentialHash: `credential-replacement-${replacementId}`,
+        name: "postgres-purge-runner",
+        os: "linux",
+        architecture: "amd64",
+        agentVersion: "0.2.2",
+        protocolVersion: 1,
+        labels: [],
+        capabilities: [],
+        maxConcurrency: 1,
+        terminalEnabled: false,
+        recordedAt: "2026-08-09T00:13:00.000Z",
+      });
+      expect(replacement?.id).toBe(replacementId);
+      await handle.pool.query("DELETE FROM runners WHERE id = $1", [replacementId]);
+      await handle.pool.query("DELETE FROM runner_bootstrap_uses WHERE token_hash = $1", [
+        replacementBootstrapTokenHash,
+      ]);
+    } finally {
+      await handle.pool.query("DELETE FROM runners WHERE id = $1", [runnerId]);
+      await handle.pool.query("DELETE FROM runner_bootstrap_uses WHERE token_hash = $1", [
+        bootstrapTokenHash,
+      ]);
+      await handle.close();
+    }
+  });
   it("edits case metadata and restores version history", async () => {
     const handle = createPostgresDatabase({
       connectionString: connectionString!,

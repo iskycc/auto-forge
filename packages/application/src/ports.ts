@@ -940,6 +940,9 @@ export interface RunnerRepository {
   }): Promise<Runner>;
   revokeCredential(input: { runnerId: string; revokedAt: string }): Promise<Runner>;
   deregister(input: { runnerId: string; deregisteredAt: string }): Promise<Runner>;
+  // purge 是注销后的墓碑清除：写入 purgedAt、使凭据哈希不可再匹配并清空标签/能力，
+  // 记录因执行历史外键保留在库中，但从列表隐藏。
+  purge(input: { runnerId: string; purgedAt: string }): Promise<Runner>;
 }
 
 export type Clock = {

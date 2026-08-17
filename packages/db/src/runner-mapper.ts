@@ -7,6 +7,7 @@ type StoredRunner = {
   credentialRevokedAt: string | null;
   credentialRotationRequestedAt: string | null;
   deregisteredAt: string | null;
+  purgedAt: string | null;
   disabled: boolean;
   draining: boolean;
   os: string;
@@ -72,6 +73,7 @@ export function mapStoredRunner(row: StoredRunner, offlineBefore?: string): Runn
       ? { credentialRotationRequestedAt: row.credentialRotationRequestedAt }
       : {}),
     ...(row.deregisteredAt ? { deregisteredAt: row.deregisteredAt } : {}),
+    ...(row.purgedAt ? { purgedAt: row.purgedAt } : {}),
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };

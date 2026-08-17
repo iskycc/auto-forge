@@ -191,6 +191,23 @@ export class RunnerControlService {
     return runner;
   }
 
+  /**
+   * 清除已注销执行机的平台记录（墓碑 purge）：执行历史通过外键保留，
+   * 记录从列表隐藏且凭据材料彻底失效。仅允许在注销之后执行；重复清除幂等返回。
+   */
+  async purgeRunner(runnerId: string) {
+    const runner = await this.get(runnerId);
+    if (!runner.deregisteredAt) {
+      throw new DomainError("RUNNER_NOT_DELETABLE", "执行机尚未注销，请先注销后再删除记录。", {
+        details: { runnerId },
+      });
+    }
+    if (runner.purgedAt) {
+      return runner;
+    }
+    return this.runners.purge({ runnerId, purgedAt: this.clock.now().toISOString() });
+  }
+
   private async authenticate(runnerId: string, credential: string) {
     if (!credential) throw new DomainError("RUNNER_AUTH_REQUIRED", "缺少执行机凭据。");
     const runner = await this.runners.findByCredentialHash(
