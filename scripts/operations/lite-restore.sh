@@ -36,7 +36,7 @@ readonly input_directory="$(cd -- "$(dirname -- "${input_path}")" && pwd -P)"
 readonly input_name="$(basename -- "${input_path}")"
 (
   cd -- "${input_directory}"
-  sha256sum --check --strict "${input_name}.sha256"
+  LC_ALL=C sha256sum --check --strict "${input_name}.sha256"
 )
 if tar --list --file "${input_directory}/${input_name}" | \
   awk 'BEGIN { bad=0 } /(^\/|(^|\/)\.\.($|\/))/ { bad=1 } END { exit bad ? 0 : 1 }'; then
@@ -59,7 +59,7 @@ if (manifest.schemaVersion !== 1 || manifest.product !== "AutoForge" || manifest
 NODE
 (
   cd -- "${staging_directory}/autoforge-lite-backup"
-  sha256sum --check --strict data-sha256sums
+  LC_ALL=C sha256sum --check --strict data-sha256sums
 )
 mkdir -p -- "${data_directory}"
 cp -a -- "${staging_directory}/autoforge-lite-backup/data/." "${data_directory}/"

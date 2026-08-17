@@ -5,7 +5,11 @@ import { performance } from "node:perf_hooks";
 
 import type { JobEnvelope } from "@autoforge/contracts";
 import { scheduleExecutionRuns, type ExecutionRun, type Runner } from "@autoforge/domain";
-import { createSqliteDatabase, SqliteExecutionControlRepository } from "@autoforge/db/sqlite";
+import {
+  createAttemptLogStore,
+  createSqliteDatabase,
+  SqliteExecutionControlRepository,
+} from "@autoforge/db/sqlite";
 import { SqliteJobQueue } from "@autoforge/queue/sqlite";
 import { TestNgJarDiscovery } from "@autoforge/testng-discovery";
 import { zipSync } from "fflate";
@@ -164,7 +168,10 @@ describe("bounded platform performance baseline", () => {
       databasePath: resolve(directory, "logs.sqlite"),
       migrationsFolder: resolve(import.meta.dirname, "../../packages/db/drizzle/sqlite"),
     });
-    const repository = new SqliteExecutionControlRepository(handle);
+    const repository = new SqliteExecutionControlRepository(
+      handle,
+      createAttemptLogStore(resolve(directory, "attempt-logs")),
+    );
     const content = `${"x".repeat(508)}\n`;
     const startedAt = performance.now();
     try {
@@ -281,6 +288,18 @@ function seedAuthorizedAttempt(client: {
 }): void {
   client.pragma("foreign_keys = OFF");
   client.exec(`
+    INSERT INTO run_batches
+      (id, suite_id, suite_name, suite_version, status, retry_limit, environment_json,
+       total_runs, project_id, priority, created_at, updated_at)
+    VALUES
+      ('00000000-0000-4000-8000-0000000b0001', 'suite-load', 'Load', 1, 'running', 0, '[]',
+       1, 'project-load', 0, '${baselineTimestamp}', '${baselineTimestamp}');
+    INSERT INTO execution_runs
+      (id, batch_id, case_definition_id, case_version, display_name, class_name,
+       parameters_json, status, attempt_count, created_at, updated_at)
+    VALUES
+      ('run-load', '00000000-0000-4000-8000-0000000b0001', 'case-load', 1, 'Load',
+       'load.fixture.LoadTest', '{}', 'running', 1, '${baselineTimestamp}', '${baselineTimestamp}');
     INSERT INTO run_attempts
       (id, execution_run_id, runner_id, attempt_number, status, scheduling_score, created_at)
     VALUES
@@ -290,7 +309,8 @@ function seedAuthorizedAttempt(client: {
        execution_spec_json, available_at, claim_deadline_at, claimed_at, version, created_at,
        updated_at)
     VALUES
-      ('assignment-load', 'attempt-load', 'run-load', 'batch-load', 'runner-load', 'claimed', 0,
+      ('assignment-load', 'attempt-load', 'run-load', '00000000-0000-4000-8000-0000000b0001',
+       'runner-load', 'claimed', 0,
        '{}', '${baselineTimestamp}', '2026-08-11T01:00:00.000Z', '${baselineTimestamp}', 1,
        '${baselineTimestamp}', '${baselineTimestamp}');
     INSERT INTO assignment_leases

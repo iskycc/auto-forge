@@ -27,6 +27,7 @@ import {
   type RunBatchStatus,
 } from "@autoforge/domain";
 
+import type { AttemptLogStore } from "./attempt-log-store";
 import type { SqliteDatabaseHandle } from "./database";
 
 type AssignmentRow = {
@@ -69,6 +70,7 @@ type AttemptControlRow = {
   status: RunAttemptStatus;
   run_status: ExecutionRunStatus;
   retry_limit: number;
+  retry_mode: "immediate" | "round";
   batch_id: string;
   project_id: string;
   run_cancel_requested_at: string | null;
@@ -103,7 +105,10 @@ type AttemptExpirationReason =
   "claim_timeout" | "lease_expired" | "execution_timeout" | "upload_timeout";
 
 export class SqliteExecutionControlRepository implements ExecutionControlRepository {
-  constructor(private readonly handle: SqliteDatabaseHandle) {}
+  constructor(
+    private readonly handle: SqliteDatabaseHandle,
+    private readonly attemptLogs: AttemptLogStore,
+  ) {}
 
   async claim(
     input: Parameters<ExecutionControlRepository["claim"]>[0],
@@ -485,47 +490,19 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
   async appendLogChunks(
     input: Parameters<ExecutionControlRepository["appendLogChunks"]>[0],
   ): ReturnType<ExecutionControlRepository["appendLogChunks"]> {
-    return this.handle.client.transaction(() => {
-      this.authorizedTransferContext({ ...input, now: input.receivedAt });
-      for (const chunk of input.chunks) {
-        const existing = this.handle.client
-          .prepare(
-            `SELECT content, recorded_at FROM attempt_log_chunks
-             WHERE attempt_id = ? AND stream = ? AND sequence = ?`,
-          )
-          .get(input.attemptId, chunk.stream, chunk.sequence) as
-          { content: string; recorded_at: string } | undefined;
-        if (existing) {
-          if (existing.content !== chunk.content || existing.recorded_at !== chunk.recordedAt) {
-            throw new DomainError("LOG_CHUNK_CONFLICT", "相同日志序号已保存不同内容。");
-          }
-          continue;
-        }
-        this.handle.client
-          .prepare(
-            `INSERT INTO attempt_log_chunks
-             (attempt_id, stream, sequence, content, size_bytes, recorded_at, received_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?)`,
-          )
-          .run(
-            input.attemptId,
-            chunk.stream,
-            chunk.sequence,
-            chunk.content,
-            Buffer.byteLength(chunk.content, "utf8"),
-            chunk.recordedAt,
-            input.receivedAt,
-          );
-      }
-      return {
-        schemaVersion: 1 as const,
-        acknowledgedSequence: {
-          stdout: this.advanceLogWatermark(input.attemptId, "stdout", input.receivedAt),
-          stderr: this.advanceLogWatermark(input.attemptId, "stderr", input.receivedAt),
-          agent: this.advanceLogWatermark(input.attemptId, "agent", input.receivedAt),
-        },
-      };
-    })();
+    this.authorizedTransferContext({ ...input, now: input.receivedAt });
+    const batchId = this.requiredBatchIdForAttempt(input.attemptId);
+    const acknowledgedSequence = this.attemptLogs.appendChunks({
+      batchId,
+      attemptId: input.attemptId,
+      receivedAt: input.receivedAt,
+      chunks: input.chunks,
+    });
+    this.recordAttemptLogsPath(batchId);
+    return {
+      schemaVersion: 1 as const,
+      acknowledgedSequence,
+    };
   }
 
   async listLogChunks(
@@ -535,51 +512,26 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
       .prepare("SELECT result_code FROM run_attempts WHERE id = ?")
       .get(input.attemptId) as { result_code: string | null } | undefined;
     if (!attempt) throw new DomainError("RUN_ATTEMPT_NOT_FOUND", "指定的执行尝试不存在。");
-    const clauses: string[] = [];
-    const parameters: Array<string | number> = [input.attemptId, input.stream, input.afterSequence];
-    if (input.query) {
-      clauses.push("instr(content, ?) > 0");
-      parameters.push(input.query);
-    }
-    if (input.recordedAfter) {
-      clauses.push("recorded_at >= ?");
-      parameters.push(input.recordedAfter);
-    }
-    if (input.recordedBefore) {
-      clauses.push("recorded_at <= ?");
-      parameters.push(input.recordedBefore);
-    }
-    parameters.push(input.limit + 1);
-    const filters = clauses.length > 0 ? `AND ${clauses.join(" AND ")}` : "";
-    const rows = this.handle.client
-      .prepare(
-        `SELECT stream, sequence, content, recorded_at FROM attempt_log_chunks
-         WHERE attempt_id = ? AND stream = ? AND sequence > ? ${filters}
-         ORDER BY sequence ASC LIMIT ?`,
-      )
-      .all(...parameters) as Array<{
-      stream: "stdout" | "stderr" | "agent";
-      sequence: number;
-      content: string;
-      recorded_at: string;
-    }>;
-    const hasMore = rows.length > input.limit;
-    const page = rows.slice(0, input.limit);
-    const watermark = this.handle.client
-      .prepare(
-        "SELECT acknowledged_sequence FROM attempt_log_watermarks WHERE attempt_id = ? AND stream = ?",
-      )
-      .get(input.attemptId, input.stream) as { acknowledged_sequence: number } | undefined;
+    const batchId = this.requiredBatchIdForAttempt(input.attemptId);
+    const page = this.attemptLogs.listChunks({
+      batchId,
+      attemptId: input.attemptId,
+      stream: input.stream,
+      afterSequence: input.afterSequence,
+      limit: input.limit,
+      ...(input.query !== undefined ? { query: input.query } : {}),
+      ...(input.recordedAfter !== undefined ? { recordedAfter: input.recordedAfter } : {}),
+      ...(input.recordedBefore !== undefined ? { recordedBefore: input.recordedBefore } : {}),
+    });
     return {
-      items: page.map((row) => ({
-        stream: row.stream,
-        sequence: row.sequence,
-        content: row.content,
-        recordedAt: row.recorded_at,
-      })),
-      acknowledgedSequence: watermark?.acknowledged_sequence ?? -1,
-      ...(hasMore && page.length > 0
-        ? { nextSequence: page.at(-1)?.sequence ?? input.afterSequence }
+      items: page.items,
+      acknowledgedSequence: this.attemptLogs.acknowledgedSequence(
+        batchId,
+        input.attemptId,
+        input.stream,
+      ),
+      ...(page.hasMore && page.items.length > 0
+        ? { nextSequence: page.items.at(-1)?.sequence ?? input.afterSequence }
         : {}),
       truncated: attempt.result_code === "LOG_LIMIT_EXCEEDED",
     };
@@ -595,6 +547,39 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
       )
       .get(attemptId) as { project_id: string } | undefined;
     return row?.project_id ?? null;
+  }
+
+  async resolveAttemptSchedulingContext(
+    attemptId: string,
+  ): ReturnType<ExecutionControlRepository["resolveAttemptSchedulingContext"]> {
+    const row = this.handle.client
+      .prepare(
+        `SELECT r.batch_id, a.execution_run_id, a.runner_id, a.attempt_number,
+                r.display_name, r.held_round
+         FROM run_attempts a
+         JOIN execution_runs r ON r.id = a.execution_run_id
+         WHERE a.id = ?`,
+      )
+      .get(attemptId) as
+      | {
+          batch_id: string;
+          execution_run_id: string;
+          runner_id: string;
+          attempt_number: number;
+          display_name: string;
+          held_round: number;
+        }
+      | undefined;
+    if (!row) return null;
+    // held_round 为 0 表示可立即调度，省略字段保持与领域模型一致（exactOptionalPropertyTypes）。
+    return {
+      batchId: row.batch_id,
+      executionRunId: row.execution_run_id,
+      runnerId: row.runner_id,
+      attemptNumber: row.attempt_number,
+      displayName: row.display_name,
+      ...(row.held_round > 0 ? { heldRound: row.held_round } : {}),
+    };
   }
 
   async resolveExecutionRunProjectId(runId: string): Promise<string | null> {
@@ -920,7 +905,7 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
     this.handle.client
       .prepare(
         `UPDATE execution_runs SET status = ?, terminal_outcome = ?, assigned_runner_id = ?,
-         terminal_reason_code = ?, updated_at = ?, version = version + 1
+         terminal_reason_code = ?, held_round = ?, updated_at = ?, version = version + 1
          WHERE id = ? AND status IN ('assigned', 'running')`,
       )
       .run(
@@ -928,10 +913,13 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
         executionRunStatus === "queued" ? null : attemptStatus,
         executionRunStatus === "queued" ? null : control.runner_id,
         executionRunStatus === "queued" ? null : result.resultCode,
+        executionRunStatus === "queued" && control.retry_mode === "round"
+          ? control.attempt_number + 1
+          : 0,
         input.acceptedAt,
         control.execution_run_id,
       );
-    this.persistCompletionMetadata(input.attemptId, result, input.acceptedAt);
+    this.persistCompletionMetadata(control.batch_id, input.attemptId, result, input.acceptedAt);
     this.appendAttemptEvent({
       id: input.eventId,
       attemptId: input.attemptId,
@@ -983,37 +971,26 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
     return { assignment: row };
   }
 
-  private advanceLogWatermark(
-    attemptId: string,
-    stream: "stdout" | "stderr" | "agent",
-    updatedAt: string,
-  ): number {
-    const existing = this.handle.client
+  private requiredBatchIdForAttempt(attemptId: string): string {
+    const row = this.handle.client
       .prepare(
-        "SELECT acknowledged_sequence FROM attempt_log_watermarks WHERE attempt_id = ? AND stream = ?",
+        `SELECT r.batch_id FROM run_attempts a
+         JOIN execution_runs r ON r.id = a.execution_run_id WHERE a.id = ?`,
       )
-      .get(attemptId, stream) as { acknowledged_sequence: number } | undefined;
-    let acknowledged = existing?.acknowledged_sequence ?? -1;
-    const sequences = this.handle.client
-      .prepare(
-        `SELECT sequence FROM attempt_log_chunks
-         WHERE attempt_id = ? AND stream = ? AND sequence > ? ORDER BY sequence`,
-      )
-      .all(attemptId, stream, acknowledged) as Array<{ sequence: number }>;
-    for (const row of sequences) {
-      if (row.sequence !== acknowledged + 1) break;
-      acknowledged = row.sequence;
-    }
+      .get(attemptId) as { batch_id: string } | undefined;
+    if (!row) throw new DomainError("RUN_ATTEMPT_NOT_FOUND", "指定的执行尝试不存在。");
+    return row.batch_id;
+  }
+
+  private recordAttemptLogsPath(batchId: string): void {
+    // 主库只保存批次日志文件相对数据目录的路径；日志内容在独立 SQLite 文件中。
+    const path = this.attemptLogs.relativeStorePath(batchId);
     this.handle.client
       .prepare(
-        `INSERT INTO attempt_log_watermarks (attempt_id, stream, acknowledged_sequence, updated_at)
-         VALUES (?, ?, ?, ?)
-         ON CONFLICT(attempt_id, stream) DO UPDATE SET
-         acknowledged_sequence = MAX(attempt_log_watermarks.acknowledged_sequence, excluded.acknowledged_sequence),
-         updated_at = excluded.updated_at`,
+        `UPDATE run_batches SET attempt_logs_path = ?
+         WHERE id = ? AND (attempt_logs_path IS NULL OR attempt_logs_path <> ?)`,
       )
-      .run(attemptId, stream, acknowledged, updatedAt);
-    return acknowledged;
+      .run(path, batchId, path);
   }
 
   private artifactRow(attemptId: string, artifactId: string): ArtifactRow | undefined {
@@ -1023,6 +1000,7 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
   }
 
   private persistCompletionMetadata(
+    batchId: string,
     attemptId: string,
     result: CompletionResult,
     recordedAt: string,
@@ -1048,17 +1026,13 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
         );
     }
     if (result.logWatermarks) {
-      for (const stream of ["stdout", "stderr", "agent"] as const) {
-        this.handle.client
-          .prepare(
-            `INSERT INTO attempt_log_watermarks (attempt_id, stream, acknowledged_sequence, updated_at)
-             VALUES (?, ?, ?, ?)
-             ON CONFLICT(attempt_id, stream) DO UPDATE SET
-             acknowledged_sequence = MAX(acknowledged_sequence, excluded.acknowledged_sequence),
-             updated_at = excluded.updated_at`,
-          )
-          .run(attemptId, stream, result.logWatermarks[stream], recordedAt);
-      }
+      // Agent 上报的水位写入批次日志文件；主库不再保存日志水位。
+      this.attemptLogs.recordWatermarks({
+        batchId,
+        attemptId,
+        watermarks: result.logWatermarks,
+        recordedAt,
+      });
     }
   }
 
@@ -1097,13 +1071,14 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
     this.handle.client
       .prepare(
         `UPDATE execution_runs SET status = ?, terminal_outcome = ?, assigned_runner_id = NULL,
-         terminal_reason_code = ?, updated_at = ?, version = version + 1
+         terminal_reason_code = ?, held_round = ?, updated_at = ?, version = version + 1
          WHERE id = ? AND status IN ('assigned', 'running')`,
       )
       .run(
         runStatus,
         runStatus === "queued" ? null : attemptStatus,
         runStatus === "queued" ? null : expiration.resultCode,
+        runStatus === "queued" && control.retry_mode === "round" ? control.attempt_number + 1 : 0,
         recordedAt,
         control.execution_run_id,
       );
@@ -1297,7 +1272,7 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
       .prepare(
         `SELECT a.id, a.execution_run_id, a.runner_id, a.attempt_number, a.status,
          r.status AS run_status, r.cancel_requested_at AS run_cancel_requested_at,
-         b.retry_limit, b.id AS batch_id, b.project_id
+         b.retry_limit, b.retry_mode, b.id AS batch_id, b.project_id
          FROM run_attempts a JOIN execution_runs r ON r.id = a.execution_run_id
          JOIN run_batches b ON b.id = r.batch_id WHERE a.id = ?`,
       )
@@ -1392,17 +1367,19 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
     stderr: number;
     agent: number;
   } {
-    const watermarks = { stdout: -1, stderr: -1, agent: -1 };
-    const rows = this.handle.client
+    // reconcile 场景下 attempt 可能没有批次关联（如被清理），此时按未确认处理。
+    const batchRow = this.handle.client
       .prepare(
-        "SELECT stream, acknowledged_sequence FROM attempt_log_watermarks WHERE attempt_id = ?",
+        `SELECT r.batch_id FROM run_attempts a
+         JOIN execution_runs r ON r.id = a.execution_run_id WHERE a.id = ?`,
       )
-      .all(attemptId) as Array<{
-      stream: keyof typeof watermarks;
-      acknowledged_sequence: number;
-    }>;
-    for (const row of rows) watermarks[row.stream] = row.acknowledged_sequence;
-    return watermarks;
+      .get(attemptId) as { batch_id: string } | undefined;
+    if (!batchRow) return { stdout: -1, stderr: -1, agent: -1 };
+    return {
+      stdout: this.attemptLogs.acknowledgedSequence(batchRow.batch_id, attemptId, "stdout"),
+      stderr: this.attemptLogs.acknowledgedSequence(batchRow.batch_id, attemptId, "stderr"),
+      agent: this.attemptLogs.acknowledgedSequence(batchRow.batch_id, attemptId, "agent"),
+    };
   }
 
   private updateBatchStatus(
@@ -1411,6 +1388,13 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
     eventId: string,
     reason: string,
   ): void {
+    const batch = this.handle.client
+      .prepare("SELECT status, version, retry_mode FROM run_batches WHERE id = ?")
+      .get(batchId) as
+      { status: RunBatchStatus; version: number; retry_mode: "immediate" | "round" } | undefined;
+    if (!batch) throw new DomainError("RUN_BATCH_NOT_FOUND", "指定的执行批次不存在。");
+    // 轮次制下先释放等待下一轮的失败 run，再聚合状态，确保释放的 run 计入批次状态。
+    this.advanceRoundIfIdle(batchId, batch.retry_mode, updatedAt);
     const statuses = (
       this.handle.client
         .prepare("SELECT status FROM execution_runs WHERE batch_id = ?")
@@ -1418,10 +1402,6 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
         status: string;
       }>
     ).map((row) => row.status);
-    const batch = this.handle.client
-      .prepare("SELECT status, version FROM run_batches WHERE id = ?")
-      .get(batchId) as { status: RunBatchStatus; version: number } | undefined;
-    if (!batch) throw new DomainError("RUN_BATCH_NOT_FOUND", "指定的执行批次不存在。");
     const status = aggregateBatchStatus(statuses);
     transitionRunBatch(batch.status, status);
     const update = this.handle.client
@@ -1442,6 +1422,42 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
         )
         .run(eventId, batchId, batch.status, status, batch.version + 1, reason, updatedAt);
     }
+  }
+
+  // 轮次制：整轮无在途且无未扣留的 queued run 时，把等待下一轮的失败 run 统一释放。
+  private advanceRoundIfIdle(
+    batchId: string,
+    retryMode: "immediate" | "round",
+    updatedAt: string,
+  ): void {
+    if (retryMode !== "round") return;
+    const inFlight = this.handle.client
+      .prepare(
+        "SELECT COUNT(*) AS value FROM execution_runs WHERE batch_id = ? AND status IN ('assigned', 'running')",
+      )
+      .get(batchId) as { value: number };
+    if (inFlight.value > 0) return;
+    const schedulable = this.handle.client
+      .prepare(
+        "SELECT COUNT(*) AS value FROM execution_runs WHERE batch_id = ? AND status = 'queued' AND held_round = 0",
+      )
+      .get(batchId) as { value: number };
+    if (schedulable.value > 0) return;
+    const nextRound = this.handle.client
+      .prepare(
+        "SELECT MIN(held_round) AS value FROM execution_runs WHERE batch_id = ? AND status = 'queued' AND held_round > 0",
+      )
+      .get(batchId) as { value: number | null };
+    if (nextRound.value === null) return;
+    this.handle.client
+      .prepare(
+        `UPDATE execution_runs SET held_round = 0, updated_at = ?
+         WHERE batch_id = ? AND status = 'queued' AND held_round <= ?`,
+      )
+      .run(updatedAt, batchId, nextRound.value);
+    this.handle.client
+      .prepare("UPDATE run_batches SET current_round = ?, updated_at = ? WHERE id = ?")
+      .run(nextRound.value, updatedAt, batchId);
   }
 }
 

@@ -42,7 +42,7 @@ export default async function ImportJarPage({
         <div>
           <span className="eyebrow">用例来源</span>
           <h1>导入 TestNG JAR</h1>
-          <p>静态读取 class 注解，预览测试类和方法后再写入用例库。</p>
+          <p>静态读取 class 注解，预览测试类和方法后再写入用例资产。</p>
         </div>
       </section>
       <JarImporter

@@ -1,4 +1,4 @@
-import { Button, Input, Select } from "@/components/ui";
+import { Button, DatetimeInput, Input, Select } from "@/components/ui";
 
 import { Download, Search, ShieldCheck } from "lucide-react";
 import Link from "next/link";
@@ -69,7 +69,7 @@ export default async function AuditPage({ searchParams }: AuditPageProps) {
       </header>
 
       <SectionTabs
-        label="运维与审计"
+        label="运维审计"
         tabs={[
           ...(canReadAutomation
             ? [{ href: "/settings/automation", label: "运维计划", active: false }]
@@ -113,19 +113,11 @@ export default async function AuditPage({ searchParams }: AuditPageProps) {
         </label>
         <label>
           开始时间
-          <Input
-            defaultValue={single(values.recordedAfter)}
-            name="recordedAfter"
-            type="datetime-local"
-          />
+          <DatetimeInput defaultValue={single(values.recordedAfter)} name="recordedAfter" />
         </label>
         <label>
           结束时间
-          <Input
-            defaultValue={single(values.recordedBefore)}
-            name="recordedBefore"
-            type="datetime-local"
-          />
+          <DatetimeInput defaultValue={single(values.recordedBefore)} name="recordedBefore" />
         </label>
         <Button className="button button-primary" type="submit">
           <Search size={16} /> 查询

@@ -57,6 +57,7 @@ export const caseSuiteExecutionPolicySchema = z.object({
   priority: z.number().int().min(-100).max(100).optional(),
   concurrency: z.number().int().min(1).max(64).optional(),
   retryLimit: z.number().int().min(0).max(10).optional(),
+  retryMode: z.enum(["immediate", "round"]).optional(),
   queueTimeoutMs: z.number().int().min(1_000).max(604_800_000).optional(),
   executionTimeoutMs: z.number().int().min(1_000).max(86_400_000).optional(),
   runnerLabels: z.array(z.string().trim().min(1).max(64)).max(64).optional(),

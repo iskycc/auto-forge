@@ -31,7 +31,7 @@ export default async function AutomationOperationsPage() {
           <p>统一查看计划任务的触发状态、关联批次，以及 LDAP 同步进度和失败诊断。</p>
         </div>
         <SectionTabs
-          label="运维与审计"
+          label="运维审计"
           tabs={[
             { href: "/settings/automation", label: "运维计划", active: true },
             ...(canReadAudit ? [{ href: "/audit", label: "安全审计", active: false }] : []),

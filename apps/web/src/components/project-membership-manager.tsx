@@ -186,7 +186,7 @@ export function ProjectMembershipManager({
                 <tr key={member.user.id}>
                   <td>
                     <strong>{member.user.displayName}</strong>
-                    <small>
+                    <small className="table-secondary">
                       {member.user.username} · {member.user.id}
                       {member.user.id === project.ownerUserId ? " · 当前负责人" : ""}
                     </small>

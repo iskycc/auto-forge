@@ -533,6 +533,10 @@ export const runBatches = sqliteTable(
       enum: ["queued", "dispatching", "scheduled", "running", "succeeded", "failed", "cancelled"],
     }).notNull(),
     retryLimit: integer("retry_limit").notNull(),
+    retryMode: text("retry_mode", { enum: ["immediate", "round"] })
+      .notNull()
+      .default("immediate"),
+    currentRound: integer("current_round").notNull().default(1),
     queueTimeoutMs: integer("queue_timeout_ms").notNull().default(86_400_000),
     claimTimeoutMs: integer("claim_timeout_ms").notNull().default(300_000),
     executionTimeoutMs: integer("execution_timeout_ms").notNull().default(3_600_000),
@@ -631,6 +635,7 @@ export const executionRuns = sqliteTable(
     executionTimeoutMs: integer("execution_timeout_ms").notNull().default(3_600_000),
     uploadTimeoutMs: integer("upload_timeout_ms").notNull().default(600_000),
     assignedAt: text("assigned_at"),
+    heldRound: integer("held_round").notNull().default(0),
     updatedAt: text("updated_at").notNull(),
   },
   (table) => [

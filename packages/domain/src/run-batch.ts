@@ -83,6 +83,9 @@ export type RunBatch = {
   status: RunBatchStatus;
   priority: number;
   retryLimit: number;
+  retryMode: "immediate" | "round";
+  // 当前执行轮次；immediate 模式恒为 1，round 模式随整轮推进递增。
+  currentRound: number;
   queueTimeoutMs: number;
   claimTimeoutMs: number;
   executionTimeoutMs: number;
@@ -128,6 +131,8 @@ export type ExecutionRun = {
   terminalOutcome?: "succeeded" | "failed" | "timed_out" | "cancelled";
   terminalReasonCode?: string;
   cancelRequestedAt?: string;
+  // 轮次制下失败 run 等待释放的目标轮次；0 或未设置表示可立即调度。
+  heldRound?: number;
   version: number;
   createdAt: string;
   assignedAt?: string;

@@ -33,7 +33,7 @@ readonly input_directory="$(cd -- "$(dirname -- "${input_path}")" && pwd -P)"
 readonly input_name="$(basename -- "${input_path}")"
 (
   cd -- "${input_directory}"
-  sha256sum --check --strict "${input_name}.sha256"
+  LC_ALL=C sha256sum --check --strict "${input_name}.sha256"
 )
 readonly staging_directory="$(mktemp -d)"
 cleanup() { rm -rf -- "${staging_directory}"; }

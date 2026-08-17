@@ -25,7 +25,7 @@ export default async function RunBatchDetailsPage({
 
   return (
     <div className="page-stack">
-      <Link className="back-link" href="/run-batches">
+      <Link className="back-link" href="/execution-records">
         <ArrowLeft size={16} /> 返回执行记录
       </Link>
       <section className="page-hero execution-detail-hero">

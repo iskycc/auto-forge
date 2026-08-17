@@ -8,6 +8,7 @@ const executionInputFields = {
   runnerIds: z.array(z.string().min(1).max(128)).min(1).max(64),
   // 优先级、重试与排队/执行超时允许缺省，创建时按“输入 ?? 任务策略 ?? 系统默认”合并。
   retryLimit: z.number().int().min(0).max(10).optional(),
+  retryMode: z.enum(["immediate", "round"]).optional(),
   priority: z.number().int().min(-100).max(100).optional(),
   queueTimeoutMs: z.number().int().min(1_000).max(604_800_000).optional(),
   claimTimeoutMs: z.number().int().min(1_000).max(3_600_000).default(300_000),
@@ -63,6 +64,8 @@ export const createSingleCaseRunInputSchema = z
   .superRefine(validateExecutionInput);
 
 export type CreateSingleCaseRunInput = z.input<typeof createSingleCaseRunInputSchema>;
+
+export type RetryMode = "immediate" | "round";
 
 export const runBatchPreflightBlockerSchema = z.object({
   code: z.string().regex(/^[A-Z][A-Z0-9_]{2,127}$/),

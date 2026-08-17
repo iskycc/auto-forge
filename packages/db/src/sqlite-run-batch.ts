@@ -26,6 +26,8 @@ import {
   type RunBatchExecutionPolicy,
   type RunBatchStatusEvent,
   type RunBatchStatus,
+  type SchedulingEvent,
+  type SchedulingEventType,
 } from "@autoforge/domain";
 import { and, count, desc, eq, gt, gte, inArray, isNull, lt, lte, or, sql } from "drizzle-orm";
 
@@ -82,6 +84,7 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
           suiteVersion: record.suiteVersion,
           status: "queued",
           retryLimit: record.retryLimit,
+          retryMode: record.retryMode ?? "immediate",
           priority: record.priority ?? 0,
           queueTimeoutMs,
           claimTimeoutMs,
@@ -329,7 +332,7 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
       );
     return {
       batch,
-      queuedRuns: batch.runs.filter((run) => run.status === "queued"),
+      queuedRuns: batch.runs.filter((run) => run.status === "queued" && (run.heldRound ?? 0) === 0),
       candidates,
       projectActiveRuns: projectActiveRuns(this.handle, batch.projectId),
     };
@@ -405,6 +408,7 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
               eq(executionRuns.id, decision.executionRunId),
               eq(executionRuns.batchId, input.batchId),
               eq(executionRuns.status, "queued"),
+              eq(executionRuns.heldRound, 0),
               or(
                 isNull(executionRuns.queueDeadlineAt),
                 gt(executionRuns.queueDeadlineAt, input.scheduledAt),
@@ -509,6 +513,80 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
     })();
   }
 
+  async appendSchedulingEvents(
+    events: Parameters<RunBatchRepository["appendSchedulingEvents"]>[0],
+  ): Promise<void> {
+    if (events.length === 0) return;
+    // 批量插入放入同一事务，保证一轮调度产生的事件要么整体可见，要么整体回滚。
+    this.handle.client.transaction(() => {
+      for (const event of events) {
+        this.handle.client
+          .prepare(
+            `INSERT INTO scheduling_events
+             (id, batch_id, runner_id, execution_run_id, attempt_id, event_type,
+              message, payload_json, recorded_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          )
+          .run(
+            event.id,
+            event.batchId,
+            event.runnerId ?? null,
+            event.executionRunId ?? null,
+            event.attemptId ?? null,
+            event.eventType,
+            event.message,
+            event.payload ? JSON.stringify(event.payload) : null,
+            event.recordedAt,
+          );
+      }
+    })();
+  }
+
+  async listSchedulingEvents(
+    input: Parameters<RunBatchRepository["listSchedulingEvents"]>[0],
+  ): ReturnType<RunBatchRepository["listSchedulingEvents"]> {
+    const limit = Math.min(Math.max(1, Math.trunc(input.limit)), 500);
+    const parameters: Array<string | number> = [input.batchId];
+    let filters = "";
+    if (input.runnerId !== undefined) {
+      parameters.push(input.runnerId);
+      filters += " AND runner_id = ?";
+    }
+    if (input.afterId !== undefined) {
+      // 游标用 (recorded_at, id) 元组比较定位，id 为唯一键保证边界不重复、不遗漏。
+      parameters.push(input.afterId);
+      filters += ` AND (recorded_at, id) > (
+        SELECT recorded_at, id FROM scheduling_events WHERE id = ?)`;
+    }
+    parameters.push(limit);
+    const rows = this.handle.client
+      .prepare(
+        `SELECT id, batch_id, runner_id, execution_run_id, attempt_id, event_type,
+                message, payload_json, recorded_at
+         FROM scheduling_events
+         WHERE batch_id = ?${filters}
+         ORDER BY recorded_at ASC, id ASC
+         LIMIT ?`,
+      )
+      .all(...parameters) as Array<{
+      id: string;
+      batch_id: string;
+      runner_id: string | null;
+      execution_run_id: string | null;
+      attempt_id: string | null;
+      event_type: SchedulingEventType;
+      message: string;
+      payload_json: string | null;
+      recorded_at: string;
+    }>;
+    const items = rows.map(schedulingEventFromRow);
+    const last = items.at(-1);
+    return {
+      items,
+      ...(items.length === limit && last ? { nextAfterId: last.id } : {}),
+    };
+  }
+
   private async requiredBatch(batchId: string): Promise<RunBatchDetails> {
     const batch = await this.get(batchId);
     if (!batch) throw new Error(`Run batch ${batchId} does not exist after creation.`);
@@ -547,6 +625,8 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
       status: row.status,
       priority: row.priority,
       retryLimit: row.retryLimit,
+      retryMode: row.retryMode,
+      currentRound: row.currentRound,
       queueTimeoutMs: row.queueTimeoutMs,
       claimTimeoutMs: row.claimTimeoutMs,
       executionTimeoutMs: row.executionTimeoutMs,
@@ -943,6 +1023,7 @@ function toExecutionRun(row: typeof executionRuns.$inferSelect): ExecutionRun {
     ...(row.terminalOutcome ? { terminalOutcome: row.terminalOutcome } : {}),
     ...(row.terminalReasonCode ? { terminalReasonCode: row.terminalReasonCode } : {}),
     ...(row.cancelRequestedAt ? { cancelRequestedAt: row.cancelRequestedAt } : {}),
+    ...(row.heldRound > 0 ? { heldRound: row.heldRound } : {}),
     version: row.version,
     createdAt: row.createdAt,
     ...(row.assignedAt ? { assignedAt: row.assignedAt } : {}),
@@ -979,5 +1060,42 @@ function storedTestNgResult(json: string, attemptId: string): NonNullable<RunAtt
       `执行尝试 ${attemptId} 的 TestNG 结果无法读取。`,
       { cause: error },
     );
+  }
+}
+
+// payload_json 解析失败时丢弃 payload 字段：调度事件是诊断流水，
+// 单条损坏不应阻断整页读取。
+function schedulingEventFromRow(row: {
+  id: string;
+  batch_id: string;
+  runner_id: string | null;
+  execution_run_id: string | null;
+  attempt_id: string | null;
+  event_type: SchedulingEventType;
+  message: string;
+  payload_json: string | null;
+  recorded_at: string;
+}): SchedulingEvent {
+  const payload = row.payload_json ? parseSchedulingEventPayload(row.payload_json) : undefined;
+  return {
+    id: row.id,
+    batchId: row.batch_id,
+    ...(row.runner_id ? { runnerId: row.runner_id } : {}),
+    ...(row.execution_run_id ? { executionRunId: row.execution_run_id } : {}),
+    ...(row.attempt_id ? { attemptId: row.attempt_id } : {}),
+    eventType: row.event_type,
+    message: row.message,
+    ...(payload ? { payload } : {}),
+    recordedAt: row.recorded_at,
+  };
+}
+
+function parseSchedulingEventPayload(json: string): Record<string, unknown> | undefined {
+  try {
+    const parsed: unknown = JSON.parse(json);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return undefined;
+    return parsed as Record<string, unknown>;
+  } catch {
+    return undefined;
   }
 }

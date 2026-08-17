@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-import { appAlert, ensureAdministrator } from "./support/session";
+import { appAlert, ensureAdministrator, expandAdministrationGroup } from "./support/session";
 
 test("configuration conflicts, diagnostics and retention controls remain observable", async ({
   page,
@@ -22,6 +22,7 @@ test("configuration conflicts, diagnostics and retention controls remain observa
   await expect(page.getByText(/平台配置已保存/)).toBeVisible();
   await concurrentPage.close();
 
+  await expandAdministrationGroup(page, "执行与平台");
   await page.getByRole("link", { name: "系统诊断" }).click();
   await expect(page.getByRole("heading", { name: "系统诊断" })).toBeVisible();
   await expect(page.locator(".diagnostic-summary")).toContainText(/LITE|FULL/);

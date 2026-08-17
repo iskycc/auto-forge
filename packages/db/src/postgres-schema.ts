@@ -643,6 +643,10 @@ export const pgRunBatches = pgTable(
       enum: ["queued", "dispatching", "scheduled", "running", "succeeded", "failed", "cancelled"],
     }).notNull(),
     retryLimit: integer("retry_limit").notNull(),
+    retryMode: text("retry_mode", { enum: ["immediate", "round"] })
+      .notNull()
+      .default("immediate"),
+    currentRound: integer("current_round").notNull().default(1),
     queueTimeoutMs: integer("queue_timeout_ms").notNull().default(86_400_000),
     claimTimeoutMs: integer("claim_timeout_ms").notNull().default(300_000),
     executionTimeoutMs: integer("execution_timeout_ms").notNull().default(3_600_000),
@@ -732,6 +736,7 @@ export const pgExecutionRuns = pgTable(
     schedulingScore: doublePrecision("scheduling_score"),
     createdAt: text("created_at").notNull(),
     assignedAt: text("assigned_at"),
+    heldRound: integer("held_round").notNull().default(0),
     updatedAt: text("updated_at").notNull(),
     version: integer("version").notNull().default(1),
     terminalOutcome: text("terminal_outcome", {

@@ -1,6 +1,6 @@
 "use client";
 
-import { Button, Input, Select } from "@/components/ui";
+import { Button, DatetimeInput, Input, Select } from "@/components/ui";
 
 import type {
   AttemptArtifactList,
@@ -16,14 +16,24 @@ import {
   FileText,
   RefreshCw,
   RotateCcw,
+  ScrollText,
   Search,
+  Terminal,
   TestTube2,
+  X,
   XCircle,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
-import { runBatchStatusLabel } from "@/lib/run-batch-presentation";
+import {
+  batchTestNames,
+  formatBatchDuration,
+  runBatchDurationMs,
+  runBatchPassRate,
+  runBatchStatusLabel,
+} from "@/lib/run-batch-presentation";
+import { highlightLogLevels } from "@/lib/log-levels";
 import { parseSafeAnsi } from "@/lib/safe-ansi";
 
 type LogStream = "stdout" | "stderr" | "agent";
@@ -89,6 +99,10 @@ export function ExecutionBatchDetails({
   const [events, setEvents] = useState<AttemptEventPage["items"]>([]);
   const [loading, setLoading] = useState(false);
   const [liveLogs, setLiveLogs] = useState(false);
+  const [logViewerOpen, setLogViewerOpen] = useState(false);
+  const [schedulingViewer, setSchedulingViewer] = useState<
+    { runnerId?: string; title: string } | undefined
+  >();
   const [error, setError] = useState("");
   const [actionError, setActionError] = useState("");
   const [actionPending, setActionPending] = useState<"cancel" | "retry" | undefined>();
@@ -96,6 +110,20 @@ export function ExecutionBatchDetails({
     () => new Map(batch.attempts.map((attempt) => [attempt.executionRunId, attempt])),
     [batch.attempts],
   );
+  const runnerSchedulingRows = useMemo(() => {
+    const runCountByRunner = new Map<string, number>();
+    for (const run of batch.runs) {
+      if (!run.assignedRunnerId) continue;
+      runCountByRunner.set(
+        run.assignedRunnerId,
+        (runCountByRunner.get(run.assignedRunnerId) ?? 0) + 1,
+      );
+    }
+    for (const attempt of batch.attempts) {
+      if (!runCountByRunner.has(attempt.runnerId)) runCountByRunner.set(attempt.runnerId, 0);
+    }
+    return [...runCountByRunner.entries()];
+  }, [batch.attempts, batch.runs]);
   const selectedAttempt = useMemo(
     () => batch.attempts.find((attempt) => attempt.id === attemptId),
     [attemptId, batch.attempts],
@@ -334,7 +362,7 @@ export function ExecutionBatchDetails({
     return gaps;
   }, [logs]);
   const renderedLogs = useMemo(
-    () => parseSafeAnsi(logs.map((chunk) => chunk.content).join("")),
+    () => highlightLogLevels(parseSafeAnsi(logs.map((chunk) => chunk.content).join(""))),
     [logs],
   );
 
@@ -342,9 +370,23 @@ export function ExecutionBatchDetails({
     <div className="execution-detail-layout">
       <section className="execution-summary-band" aria-label="批次概览">
         <Summary label="状态" value={runBatchStatusLabel(batch.status)} />
+        <Summary label="Suite" value={batch.suiteName} />
+        <Summary
+          label="Test Name"
+          value={batchTestNames(batch.attempts).join("、") || "尚无 TestNG 结果"}
+        />
+        <Summary label="通过率" value={`${runBatchPassRate(batch)}%`} />
         <Summary label="用例" value={String(batch.totalRuns)} />
-        <Summary label="成功" value={String(batch.succeededRuns)} />
-        <Summary label="失败" value={String(batch.failedRuns + batch.timedOutRuns)} />
+        <Summary label="已通过" value={String(batch.succeededRuns)} />
+        <Summary label="已失败" value={String(batch.failedRuns + batch.timedOutRuns)} />
+        <Summary
+          label="当前轮次"
+          value={batch.retryMode === "round" ? `第 ${batch.currentRound} 轮` : "立即重跑模式"}
+        />
+        <Summary
+          label="执行耗时"
+          value={activeBatch ? "执行中" : formatBatchDuration(runBatchDurationMs(batch))}
+        />
         <Summary label="创建时间" value={formatDate(batch.createdAt)} />
       </section>
 
@@ -422,7 +464,14 @@ export function ExecutionBatchDetails({
                     </td>
                     <td>{run.status}</td>
                     <td>{run.assignedRunnerId ?? "等待分配"}</td>
-                    <td>{attempt?.resultCode ?? run.terminalReasonCode ?? "-"}</td>
+                    <td>
+                      {attempt?.resultCode ?? run.terminalReasonCode ?? "-"}
+                      {attempt?.resultSummary ? (
+                        <small className="run-result-summary" title={attempt.resultSummary}>
+                          {attempt.resultSummary}
+                        </small>
+                      ) : null}
+                    </td>
                     <td>
                       {attempt?.durationMs === undefined ? "-" : formatDuration(attempt.durationMs)}
                     </td>
@@ -462,6 +511,42 @@ export function ExecutionBatchDetails({
           </table>
         </div>
       </section>
+
+      {runnerSchedulingRows.length > 0 ? (
+        <section className="execution-runs-section" aria-label="执行机调度日志">
+          <div className="section-heading">
+            <div>
+              <span className="step-label">RUNNERS</span>
+              <h2>执行机调度日志</h2>
+            </div>
+            <span className="muted">{runnerSchedulingRows.length} 台执行机</span>
+          </div>
+          <div className="runner-scheduling-list">
+            {runnerSchedulingRows.map(([runnerId, runCount]) => (
+              <div className="runner-scheduling-row" key={runnerId}>
+                <div className="runner-scheduling-info">
+                  <strong>{runnerId.slice(0, 8)}</strong>
+                  <small>{runCount} 个关联用例</small>
+                </div>
+                {canReadLogs ? (
+                  <Button
+                    className="button button-secondary compact-button"
+                    onClick={() =>
+                      setSchedulingViewer({
+                        runnerId,
+                        title: `runner ${runnerId.slice(0, 8)} · 调度日志`,
+                      })
+                    }
+                    type="button"
+                  >
+                    <ScrollText size={15} /> 日志
+                  </Button>
+                ) : null}
+              </div>
+            ))}
+          </div>
+        </section>
+      ) : null}
 
       {selectedAttempt?.testNg ? (
         <section className="execution-results-section">
@@ -512,104 +597,141 @@ export function ExecutionBatchDetails({
           <div className="inline-empty">批次尚未生成执行尝试。</div>
         ) : (
           <>
-            <div className="log-toolbar">
-              <div className="segmented-control" aria-label="日志流">
-                {(["stdout", "stderr", "agent"] as const).map((value) => (
+            <div className="log-entry-row">
+              <div className="log-entry-summary">
+                <Terminal size={16} aria-hidden="true" />
+                <span>
+                  执行日志 · {stream} · {logs.length} 段{liveLogs ? " · 实时更新中" : ""}
+                </span>
+              </div>
+              <div className="button-row">
+                {canReadLogs ? (
                   <Button
-                    aria-pressed={stream === value}
-                    className={stream === value ? "active" : ""}
-                    key={value}
-                    onClick={() => setStream(value)}
+                    className="button button-secondary compact-button"
+                    onClick={() => setSchedulingViewer({ title: "总体调度日志" })}
                     type="button"
                   >
-                    {value}
+                    <ScrollText size={15} /> 总体日志
                   </Button>
-                ))}
-              </div>
-              <form
-                className="log-search"
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  if (query === activeQuery) {
-                    void loadAttempt(attemptId, stream, activeQuery, activeTimeRange, -1);
-                  } else {
-                    setActiveQuery(query);
-                  }
-                  setActiveTimeRange({ after: recordedAfter, before: recordedBefore });
-                }}
-              >
-                <Search size={15} />
-                <Input
-                  aria-label="搜索日志"
-                  placeholder="搜索当前日志流"
-                  value={query}
-                  onChange={(event) => setQuery(event.target.value)}
-                />
-                <Input
-                  aria-label="日志开始时间"
-                  type="datetime-local"
-                  value={recordedAfter}
-                  onChange={(event) => setRecordedAfter(event.target.value)}
-                />
-                <Input
-                  aria-label="日志结束时间"
-                  type="datetime-local"
-                  value={recordedBefore}
-                  onChange={(event) => setRecordedBefore(event.target.value)}
-                />
-                <Button className="button button-secondary compact-button" type="submit">
-                  筛选
+                ) : null}
+                <Button
+                  className="button button-secondary compact-button"
+                  onClick={() => setLogViewerOpen(true)}
+                  type="button"
+                >
+                  <Eye size={15} /> 查看日志
                 </Button>
-              </form>
-              <Button
-                aria-pressed={darkLogs}
-                className="button button-secondary compact-button"
-                onClick={() => setDarkLogs((current) => !current)}
-                type="button"
-              >
-                {darkLogs ? "浅色日志" : "深色日志"}
-              </Button>
+              </div>
             </div>
-            {error ? <p className="form-error">{error}</p> : null}
-            {logsTruncated ? (
-              <p className="status-warning" role="status">
-                日志已达到保留上限，后续内容被明确截断。
-              </p>
-            ) : null}
-            {sequenceGaps.length > 0 ? (
-              <p className="status-warning" role="status">
-                检测到 {sequenceGaps.length} 个序号缺口；Agent 补传后刷新即可恢复连续内容。
-              </p>
-            ) : null}
-            {canReadLogs ? (
-              <pre
-                className={`execution-log ${darkLogs ? "execution-log-dark" : ""}`}
-                aria-live="polite"
+            {logViewerOpen ? (
+              <TerminalLogViewer
+                title={`attempt ${attemptId.slice(0, 8)} · ${stream}${liveLogs ? " · live" : ""}`}
+                onClose={() => setLogViewerOpen(false)}
               >
-                {logs.length > 0
-                  ? renderedLogs.map((segment, index) => (
-                      <span className={segment.classes.join(" ")} key={index}>
-                        {segment.text}
-                      </span>
-                    ))
-                  : loading
-                    ? "正在读取日志..."
-                    : "当前日志流暂无内容。"}
-              </pre>
-            ) : (
-              <div className="inline-empty">当前账号没有读取执行日志的权限。</div>
-            )}
-            {nextSequence !== undefined ? (
-              <Button
-                className="button button-secondary compact-button"
-                disabled={loading}
-                onClick={() =>
-                  void loadAttempt(attemptId, stream, activeQuery, activeTimeRange, nextSequence)
-                }
-                type="button"
-              >
-                <RefreshCw size={15} /> 加载更多
-              </Button>
+                <div className="log-toolbar">
+                  <div className="segmented-control" aria-label="日志流">
+                    {(["stdout", "stderr", "agent"] as const).map((value) => (
+                      <Button
+                        aria-pressed={stream === value}
+                        className={stream === value ? "active" : ""}
+                        key={value}
+                        onClick={() => setStream(value)}
+                        type="button"
+                      >
+                        {value}
+                      </Button>
+                    ))}
+                  </div>
+                  <form
+                    className="log-search"
+                    onSubmit={(event) => {
+                      event.preventDefault();
+                      if (query === activeQuery) {
+                        void loadAttempt(attemptId, stream, activeQuery, activeTimeRange, -1);
+                      } else {
+                        setActiveQuery(query);
+                      }
+                      setActiveTimeRange({ after: recordedAfter, before: recordedBefore });
+                    }}
+                  >
+                    <Search size={15} />
+                    <Input
+                      aria-label="搜索日志"
+                      placeholder="搜索当前日志流"
+                      value={query}
+                      onChange={(event) => setQuery(event.target.value)}
+                    />
+                    <DatetimeInput
+                      aria-label="日志开始时间"
+                      value={recordedAfter}
+                      onChange={(event) => setRecordedAfter(event.target.value)}
+                    />
+                    <DatetimeInput
+                      aria-label="日志结束时间"
+                      value={recordedBefore}
+                      onChange={(event) => setRecordedBefore(event.target.value)}
+                    />
+                    <Button className="button button-secondary compact-button" type="submit">
+                      筛选
+                    </Button>
+                  </form>
+                  <Button
+                    aria-pressed={darkLogs}
+                    className="button button-secondary compact-button"
+                    onClick={() => setDarkLogs((current) => !current)}
+                    type="button"
+                  >
+                    {darkLogs ? "浅色日志" : "深色日志"}
+                  </Button>
+                </div>
+                {error ? <p className="form-error">{error}</p> : null}
+                {logsTruncated ? (
+                  <p className="status-warning" role="status">
+                    日志已达到保留上限，后续内容被明确截断。
+                  </p>
+                ) : null}
+                {sequenceGaps.length > 0 ? (
+                  <p className="status-warning" role="status">
+                    检测到 {sequenceGaps.length} 个序号缺口；Agent 补传后刷新即可恢复连续内容。
+                  </p>
+                ) : null}
+                {canReadLogs ? (
+                  <pre
+                    className={`execution-log ${darkLogs ? "execution-log-dark" : ""}`}
+                    aria-live="polite"
+                  >
+                    {logs.length > 0
+                      ? renderedLogs.map((segment, index) => (
+                          <span className={segment.classes.join(" ")} key={index}>
+                            {segment.text}
+                          </span>
+                        ))
+                      : loading
+                        ? "正在读取日志..."
+                        : "当前日志流暂无内容。"}
+                  </pre>
+                ) : (
+                  <div className="inline-empty">当前账号没有读取执行日志的权限。</div>
+                )}
+                {nextSequence !== undefined ? (
+                  <Button
+                    className="button button-secondary compact-button"
+                    disabled={loading}
+                    onClick={() =>
+                      void loadAttempt(
+                        attemptId,
+                        stream,
+                        activeQuery,
+                        activeTimeRange,
+                        nextSequence,
+                      )
+                    }
+                    type="button"
+                  >
+                    <RefreshCw size={15} /> 加载更多
+                  </Button>
+                ) : null}
+              </TerminalLogViewer>
             ) : null}
             <div className="artifact-list">
               {!canReadArtifacts ? (
@@ -692,6 +814,15 @@ export function ExecutionBatchDetails({
           </ol>
         )}
       </section>
+
+      {schedulingViewer ? (
+        <SchedulingLogViewer
+          batchId={batch.id}
+          runnerId={schedulingViewer.runnerId}
+          title={schedulingViewer.title}
+          onClose={() => setSchedulingViewer(undefined)}
+        />
+      ) : null}
     </div>
   );
 }
@@ -844,4 +975,201 @@ function eventLabel(eventType: string): string {
 function stringDetail(details: Record<string, unknown>, key: string): string | undefined {
   const value = details[key];
   return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+type SchedulingEventType =
+  | "batch_scheduled"
+  | "run_assigned"
+  | "attempt_claimed"
+  | "attempt_completed"
+  | "run_held_for_round"
+  | "runner_metrics";
+
+type SchedulingEvent = {
+  id: string;
+  batchId: string;
+  runnerId?: string;
+  executionRunId?: string;
+  attemptId?: string;
+  eventType: SchedulingEventType;
+  message: string;
+  payload?: Record<string, unknown>;
+  recordedAt: string;
+};
+
+type SchedulingEventPage = {
+  items: SchedulingEvent[];
+  nextAfterId?: string;
+};
+
+const SCHEDULING_EVENT_CLASS: Record<SchedulingEventType, string> = {
+  batch_scheduled: "scheduling-event-blue",
+  run_assigned: "scheduling-event-green",
+  attempt_claimed: "scheduling-event-blue",
+  attempt_completed: "",
+  run_held_for_round: "scheduling-event-yellow",
+  runner_metrics: "scheduling-event-blue",
+};
+
+function schedulingEventClass(event: SchedulingEvent): string {
+  if (event.eventType === "attempt_completed") {
+    const outcome = event.payload?.outcome;
+    return outcome === "succeeded" ? "scheduling-event-green" : "scheduling-event-red";
+  }
+  return SCHEDULING_EVENT_CLASS[event.eventType];
+}
+
+function formatEventTime(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "--:--:--";
+  return date.toLocaleTimeString("zh-CN", { hour12: false });
+}
+
+/** 共享的终端弹窗外壳：遮罩、macOS 风格标题栏、Esc 关闭、滚动内容区。 */
+function TerminalLogViewer({
+  title,
+  onClose,
+  children,
+}: {
+  title: string;
+  onClose: () => void;
+  children: ReactNode;
+}) {
+  useEffect(() => {
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [onClose]);
+
+  return (
+    <div className="log-viewer-overlay" role="presentation" onClick={onClose}>
+      <div
+        className="log-viewer-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="log-viewer-titlebar">
+          <div className="log-viewer-title">
+            <span className="log-viewer-dot log-viewer-dot-red" />
+            <span className="log-viewer-dot log-viewer-dot-yellow" />
+            <span className="log-viewer-dot log-viewer-dot-green" />
+            <span className="log-viewer-name">{title}</span>
+          </div>
+          <Button
+            className="icon-button small-icon-button log-viewer-close"
+            onClick={onClose}
+            type="button"
+            aria-label="关闭日志终端"
+          >
+            <X size={16} />
+          </Button>
+        </div>
+        <div className="log-viewer-body">{children}</div>
+      </div>
+    </div>
+  );
+}
+
+/** 调度日志弹窗：批次级或单 Runner 级调度事件流，支持游标翻页与打开期间轮询。 */
+function SchedulingLogViewer({
+  batchId,
+  runnerId,
+  title,
+  onClose,
+}: {
+  batchId: string;
+  runnerId: string | undefined;
+  title: string;
+  onClose: () => void;
+}) {
+  const [events, setEvents] = useState<SchedulingEvent[]>([]);
+  const [nextAfterId, setNextAfterId] = useState<string | undefined>();
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const logRef = useRef<HTMLPreElement | null>(null);
+  const lastEventIdRef = useRef<string | undefined>(undefined);
+
+  const fetchPage = useCallback(
+    async (afterId: string | undefined) => {
+      setLoading(true);
+      setError("");
+      try {
+        const parameters = new URLSearchParams({ limit: "200" });
+        if (runnerId) parameters.set("runnerId", runnerId);
+        if (afterId) parameters.set("afterId", afterId);
+        const response = await fetch(
+          `/api/v1/run-batches/${encodeURIComponent(batchId)}/scheduling-events?${parameters}`,
+          { cache: "no-store" },
+        );
+        if (!response.ok) throw new Error(await responseMessage(response, "读取调度日志失败。"));
+        const page = (await response.json()) as SchedulingEventPage;
+        setEvents((current) => {
+          const knownIds = new Set(current.map((event) => event.id));
+          const additions = page.items.filter((event) => !knownIds.has(event.id));
+          return additions.length > 0 ? [...current, ...additions] : current;
+        });
+        const newest = page.items.at(-1);
+        if (newest) lastEventIdRef.current = newest.id;
+        setNextAfterId(page.nextAfterId);
+      } catch (loadError) {
+        setError(loadError instanceof Error ? loadError.message : "读取调度日志失败。");
+      } finally {
+        setLoading(false);
+      }
+    },
+    [batchId, runnerId],
+  );
+
+  // 首次加载与打开期间的增量轮询合并为一个 effect：
+  // 通过 setTimeout/setInterval 回调触发异步拉取，避免在 effect 体内同步 setState。
+  useEffect(() => {
+    const kick = window.setTimeout(() => void fetchPage(undefined), 0);
+    const timer = window.setInterval(() => void fetchPage(lastEventIdRef.current), 3_000);
+    return () => {
+      window.clearTimeout(kick);
+      window.clearInterval(timer);
+    };
+  }, [fetchPage]);
+
+  useEffect(() => {
+    const log = logRef.current;
+    if (log) log.scrollTop = log.scrollHeight;
+  }, [events]);
+
+  return (
+    <TerminalLogViewer title={title} onClose={onClose}>
+      {error ? <p className="form-error">{error}</p> : null}
+      <pre
+        className="execution-log execution-log-dark scheduling-log"
+        aria-live="polite"
+        ref={logRef}
+      >
+        {events.length > 0
+          ? events.map((event) => (
+              <span className={`scheduling-event ${schedulingEventClass(event)}`} key={event.id}>
+                <span className="ansi-bright-black">[{formatEventTime(event.recordedAt)}]</span>{" "}
+                {event.message}
+                {"\n"}
+              </span>
+            ))
+          : loading
+            ? "正在读取调度日志..."
+            : "暂无调度日志"}
+      </pre>
+      {nextAfterId !== undefined ? (
+        <Button
+          className="button button-secondary compact-button"
+          disabled={loading}
+          onClick={() => void fetchPage(nextAfterId)}
+          type="button"
+        >
+          <RefreshCw size={15} /> 加载更多
+        </Button>
+      ) : null}
+    </TerminalLogViewer>
+  );
 }

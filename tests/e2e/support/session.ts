@@ -130,6 +130,23 @@ export async function logout(page: Page): Promise<void> {
   await expect(page).toHaveURL(/\/login$/);
 }
 
+// The sidebar keeps administration entries inside collapsed groups; expand the
+// owning group before asserting or clicking one of its nested links. Accounts
+// without any entry in the group see no toggle at all; treat that as a no-op.
+export async function expandAdministrationGroup(
+  page: Page,
+  groupLabel: "项目与权限" | "执行与平台",
+): Promise<void> {
+  const toggle = page.getByRole("navigation", { name: "主导航" }).getByRole("button", {
+    name: groupLabel,
+  });
+  if ((await toggle.count()) === 0) return;
+  if ((await toggle.getAttribute("aria-expanded")) !== "true") {
+    await toggle.click();
+  }
+  await expect(toggle).toHaveAttribute("aria-expanded", "true");
+}
+
 export function uniqueName(prefix: string): string {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }

@@ -28,10 +28,20 @@ test("executes a TestNG JAR through the real Go Agent", async ({ page }, testInf
     await createManagedExecutionEnvironment(page);
     await importTestJar(page);
     await createExecutableSuite(page, successSuiteName, "RealAgentFixture", 0, [
-      "reports/testng/**",
+      "reports/testng/testng-results.xml",
       "artifacts/*.txt",
     ]);
     const batchId = await scheduleExecution(page, successSuiteName);
+
+    // 实时 stdout 捕获验证：attempt 运行期间日志即出现在详情页。
+    await waitForAttemptState(page, batchId, agent, "running");
+    await page.goto(`/run-batches/${encodeURIComponent(batchId)}`);
+    await expect(page.getByText("实时更新", { exact: true })).toBeVisible({ timeout: 30_000 });
+    await page.getByRole("button", { name: "查看日志" }).click();
+    await expect
+      .poll(async () => page.locator(".execution-log").textContent(), { timeout: 30_000 })
+      .toContain("REAL_AGENT_STDOUT_中文_完成:workflow-v2");
+
     const details = await waitForSucceededBatch(page, batchId, agent);
 
     expect(details.attempts[0]?.testNg).toMatchObject({
@@ -47,6 +57,7 @@ test("executes a TestNG JAR through the real Go Agent", async ({ page }, testInf
     await expect(page.getByLabel("TestNG 结果汇总")).toContainText("通过1");
     await expect(page.getByText("executesThroughRealAgent", { exact: true })).toBeVisible();
 
+    await page.getByRole("button", { name: "查看日志" }).click();
     await expect(page.locator(".execution-log")).toContainText(
       "REAL_AGENT_STDOUT_中文_完成:workflow-v2",
     );
@@ -96,6 +107,7 @@ test("executes a TestNG JAR through the real Go Agent", async ({ page }, testInf
     await expect(
       page.getByText("failsAfterRealProcessOutput", { exact: true }).last(),
     ).toBeVisible();
+    await page.getByRole("button", { name: "查看日志" }).click();
     await expect(page.locator(".execution-log")).not.toContainText(secretValueV1);
 
     await createExecutableSuite(page, restartSuiteName, "RealAgentRestartFixture", 0);
@@ -103,6 +115,7 @@ test("executes a TestNG JAR through the real Go Agent", async ({ page }, testInf
     const restartAttemptId = await waitForAttemptState(page, restartBatchId, agent, "running");
     await page.goto(`/run-batches/${encodeURIComponent(restartBatchId)}`);
     await expect(page.getByText("实时更新", { exact: true })).toBeVisible({ timeout: 30_000 });
+    await page.getByRole("button", { name: "查看日志" }).click();
     await page.getByRole("button", { name: "agent", exact: true }).click();
     await expect
       .poll(async () => page.locator(".execution-log").textContent(), { timeout: 30_000 })
@@ -434,7 +447,7 @@ async function createExecutableSuite(
   suiteName: string,
   caseDisplayName: string,
   retryLimit: number,
-  artifactPatterns: string[] = ["reports/testng/**"],
+  artifactPatterns: string[] = ["reports/testng/testng-results.xml"],
 ): Promise<void> {
   await page.goto(`/case-suites?projectId=${encodeURIComponent(DEFAULT_PROJECT_ID)}`);
   await page.getByLabel("任务名称").fill(suiteName);
@@ -662,7 +675,7 @@ async function exerciseFullDependencyRecovery(
   await exerciseAnalyticsExportCancellation(page, controlDirectory);
   const suiteName = "真实 Agent Full 依赖恢复验收";
   await createExecutableSuite(page, suiteName, "RealAgentRecoveryFixture", 0, [
-    "reports/testng/**",
+    "reports/testng/testng-results.xml",
     "artifacts/*.txt",
   ]);
 

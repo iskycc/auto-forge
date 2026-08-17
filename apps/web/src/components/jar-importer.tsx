@@ -1,6 +1,6 @@
 "use client";
 
-import { Button, Input, Select } from "@/components/ui";
+import { Button, Input, ProgressBar, Select } from "@/components/ui";
 
 import {
   apiErrorSchema,
@@ -373,7 +373,7 @@ export function JarImporter({
             <strong>后台导入 · {job.progressPercent}%</strong>
             <span>{importJobStatus(job.status)}</span>
           </div>
-          <progress max={100} value={job.progressPercent} />
+          <ProgressBar label="导入进度" max={100} value={job.progressPercent} />
           <div className="button-row">
             {["queued", "running", "cancel_requested"].includes(job.status) ? (
               <Button className="button button-secondary" type="button" onClick={cancelImport}>
@@ -538,7 +538,7 @@ export function JarImporter({
               ...(testStageId ? { testStageId } : {}),
             }).toString()}`}
           >
-            查看用例库
+            查看用例管理
           </Link>
         </div>
       )}

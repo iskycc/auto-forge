@@ -1,6 +1,6 @@
 "use client";
 
-import { Button, Input, Select } from "@/components/ui";
+import { Button, DatetimeInput, Input, Select } from "@/components/ui";
 
 import type {
   ApiToken,
@@ -382,11 +382,10 @@ export function OperationsSettings({
                       </label>
                       <label>
                         过期时间
-                        <Input
+                        <DatetimeInput
                           min={new Date().toISOString().slice(0, 16)}
                           name="expiresAt"
                           required
-                          type="datetime-local"
                         />
                       </label>
                       <label>

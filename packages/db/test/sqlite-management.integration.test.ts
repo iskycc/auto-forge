@@ -5,6 +5,7 @@ import { resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { createSqliteDatabase } from "../src/database";
+import { createAttemptLogStore } from "../src/attempt-log-store";
 import { SqliteCaseCatalogRepository } from "../src/sqlite-case-catalog";
 import { SqliteCaseSuiteRepository } from "../src/sqlite-case-suite";
 import { SqliteRunBatchRepository } from "../src/sqlite-run-batch";
@@ -845,7 +846,7 @@ describe("SQLite management repositories", () => {
         recordedAt: timestamp,
       });
       await batches.create({
-        id: "batch-control",
+        id: "00000000-0000-4000-8000-0000000c0001",
         suiteId: "suite-snapshot",
         suiteName: "Control",
         suiteVersion: 1,
@@ -871,7 +872,7 @@ describe("SQLite management repositories", () => {
         createdAt: "2026-08-09T00:01:00.000Z",
       });
       await batches.reserveAssignments({
-        batchId: "batch-control",
+        batchId: "00000000-0000-4000-8000-0000000c0001",
         decisions: [
           {
             executionRunId: "run-control",
@@ -1267,7 +1268,7 @@ describe("SQLite management repositories", () => {
           }),
         },
       ]);
-      expect(await batches.get("batch-control")).toMatchObject({
+      expect(await batches.get("00000000-0000-4000-8000-0000000c0001")).toMatchObject({
         status: "queued",
         version: 4,
         statusHistory: [
@@ -1365,10 +1366,13 @@ describe("SQLite management repositories", () => {
           },
         ],
       });
-      expect(await batches.get("batch-control")).toMatchObject({ status: "queued", queuedRuns: 1 });
+      expect(await batches.get("00000000-0000-4000-8000-0000000c0001")).toMatchObject({
+        status: "queued",
+        queuedRuns: 1,
+      });
 
       await batches.reserveAssignments({
-        batchId: "batch-control",
+        batchId: "00000000-0000-4000-8000-0000000c0001",
         decisions: [
           {
             executionRunId: "run-control",
@@ -1434,7 +1438,7 @@ describe("SQLite management repositories", () => {
         eventId: "event-complete-control-2",
         acceptedAt: "2026-08-09T00:01:25.000Z",
       });
-      expect(await batches.get("batch-control")).toMatchObject({
+      expect(await batches.get("00000000-0000-4000-8000-0000000c0001")).toMatchObject({
         status: "cancelled",
         cancelledRuns: 1,
       });
@@ -1943,6 +1947,352 @@ describe("SQLite management repositories", () => {
       handle.close();
     }
   });
+
+  it("holds failed runs until the whole round completes in round retry mode", async () => {
+    const { handle, runners, batches, executions, catalog } = await fixture();
+    try {
+      await catalog.importCatalog({
+        sourceId: "source-round-2",
+        objectKey: "jars/round/source-2.jar",
+        displayName: "round-source-2",
+        importedAt: timestamp,
+        inspection: {
+          schemaVersion: 1,
+          fileName: "source-2.jar",
+          sha256: "f".repeat(64),
+          sizeBytes: 128,
+          classFileCount: 1,
+          testClassCount: 1,
+          testMethodCount: 1,
+          hasRootTestNgXml: false,
+          discoveryMode: "bytecode-annotations",
+          warnings: [],
+          classes: [
+            {
+              className: "com.example.SecondTest",
+              packageName: "com.example",
+              simpleName: "SecondTest",
+              enabled: true,
+              classLevelTest: false,
+              groups: ["smoke"],
+              methods: [
+                {
+                  methodName: "second",
+                  descriptor: "()V",
+                  enabled: true,
+                  annotationSource: "method",
+                  groups: ["smoke"],
+                  dependsOnMethods: [],
+                  dependsOnGroups: [],
+                },
+              ],
+            },
+          ],
+        },
+        cases: [
+          {
+            caseDefinitionId: "case-2",
+            caseVersionId: "version-2",
+            candidate: {
+              className: "com.example.SecondTest",
+              packageName: "com.example",
+              simpleName: "SecondTest",
+              enabled: true,
+              classLevelTest: false,
+              groups: ["smoke"],
+              methods: [
+                {
+                  methodName: "second",
+                  descriptor: "()V",
+                  enabled: true,
+                  annotationSource: "method",
+                  groups: ["smoke"],
+                  dependsOnMethods: [],
+                  dependsOnGroups: [],
+                },
+              ],
+            },
+            methods: [{ methodId: "method-2", methodIndex: 0 }],
+          },
+        ],
+      });
+      await runners.register({
+        id: "runner-round",
+        bootstrapTokenHash: "bootstrap-round",
+        credentialHash: "credential-round",
+        name: "round-runner",
+        os: "linux",
+        architecture: "amd64",
+        agentVersion: "0.2.0",
+        protocolVersion: 1,
+        labels: ["java", "testng"],
+        capabilities: ["executor:testng-v1", "isolation:cgroup-v2", "java:21.0.8", "testng:7.11.0"],
+        maxConcurrency: 2,
+        terminalEnabled: false,
+        recordedAt: timestamp,
+      });
+      await runners.heartbeat({
+        runnerId: "runner-round",
+        labels: ["java", "testng"],
+        capabilities: ["executor:testng-v1", "isolation:cgroup-v2", "java:21.0.8", "testng:7.11.0"],
+        maxConcurrency: 2,
+        busySlots: 0,
+        agentVersion: "0.2.0",
+        terminalEnabled: false,
+        resourceSnapshot: {
+          cpuUtilizationPercent: 10,
+          memoryUtilizationPercent: 20,
+          loadAverage1m: 0.1,
+          logicalCpuCount: 2,
+          observedAt: "2026-08-09T00:01:00.000Z",
+        },
+        recordedAt: "2026-08-09T00:01:00.000Z",
+      });
+      await batches.create({
+        id: "batch-round",
+        suiteId: "suite-round",
+        suiteName: "Round",
+        suiteVersion: 1,
+        retryLimit: 1,
+        retryMode: "round",
+        environmentVariables: [],
+        runnerIds: ["runner-round"],
+        runs: [
+          {
+            id: "run-round-a",
+            caseDefinitionId: "case-1",
+            caseVersion: 1,
+            displayName: "Round A",
+            className: "com.example.SmokeTest",
+          },
+          {
+            id: "run-round-b",
+            caseDefinitionId: "case-2",
+            caseVersion: 1,
+            displayName: "Round B",
+            className: "com.example.SecondTest",
+          },
+        ],
+        createdAt: "2026-08-09T00:01:00.000Z",
+      });
+      await batches.reserveAssignments({
+        batchId: "batch-round",
+        decisions: [
+          {
+            executionRunId: "run-round-a",
+            runnerId: "runner-round",
+            score: 1,
+            attemptId: "attempt-round-a",
+            assignmentId: "assignment-round-a",
+          },
+          {
+            executionRunId: "run-round-b",
+            runnerId: "runner-round",
+            score: 1,
+            attemptId: "attempt-round-b",
+            assignmentId: "assignment-round-b",
+          },
+        ],
+        thresholds: {
+          maximumCpuUtilizationPercent: 80,
+          maximumMemoryUtilizationPercent: 85,
+          maximumLoadPerCpu: 1,
+        },
+        offlineBefore: "2026-08-09T00:00:30.000Z",
+        metricsFreshAfter: "2026-08-09T00:00:30.000Z",
+        scheduledAt: "2026-08-09T00:01:01.000Z",
+      });
+      await executions.claim({
+        runnerId: "runner-round",
+        requestId: "claim-round",
+        availableSlots: 2,
+        labels: ["java", "testng"],
+        capabilities: ["executor:testng-v1", "isolation:cgroup-v2", "java:21.0.8", "testng:7.11.0"],
+        leaseSeeds: [
+          {
+            id: "lease-round-a",
+            eventId: "event-claim-round-a",
+            tokenHash: "lease-token-hash-round-a",
+            tokenEncrypted: "encrypted-lease-token-round-a",
+          },
+          {
+            id: "lease-round-b",
+            eventId: "event-claim-round-b",
+            tokenHash: "lease-token-hash-round-b",
+            tokenEncrypted: "encrypted-lease-token-round-b",
+          },
+        ],
+        now: "2026-08-09T00:01:02.000Z",
+        leaseExpiresAt: "2026-08-09T00:01:47.000Z",
+      });
+
+      // 第 1 轮：run A 失败。round 模式下它应被扣留（held_round=2），不进入调度快照。
+      await executions.completeAttempt({
+        runnerId: "runner-round",
+        attemptId: "attempt-round-a",
+        completionId: "completion-round-a",
+        leaseTokenHash: "lease-token-hash-round-a",
+        resultDigest: "digest-round-a",
+        result: {
+          status: "failed",
+          resultCode: "TEST_ASSERTION_FAILED",
+          summary: "round A failed",
+          durationMs: 500,
+          artifacts: [],
+        },
+        eventId: "event-complete-round-a",
+        acceptedAt: "2026-08-09T00:01:10.000Z",
+      });
+
+      const snapshotMidRound = await batches.getSchedulingSnapshot(
+        "batch-round",
+        "2026-08-09T00:00:30.000Z",
+      );
+      // run B 仍在途，run A 已扣留：快照不应包含任何可调度 run。
+      expect(snapshotMidRound?.queuedRuns).toEqual([]);
+      expect(
+        handle.client
+          .prepare("SELECT status, held_round FROM execution_runs WHERE id = 'run-round-a'")
+          .get(),
+      ).toEqual({ status: "queued", held_round: 2 });
+
+      // 第 1 轮：run B 失败。整轮结束后两个 run 一起释放进入第 2 轮。
+      await executions.completeAttempt({
+        runnerId: "runner-round",
+        attemptId: "attempt-round-b",
+        completionId: "completion-round-b",
+        leaseTokenHash: "lease-token-hash-round-b",
+        resultDigest: "digest-round-b",
+        result: {
+          status: "failed",
+          resultCode: "TEST_ASSERTION_FAILED",
+          summary: "round B failed",
+          durationMs: 500,
+          artifacts: [],
+        },
+        eventId: "event-complete-round-b",
+        acceptedAt: "2026-08-09T00:01:20.000Z",
+      });
+
+      const snapshotAfterRound = await batches.getSchedulingSnapshot(
+        "batch-round",
+        "2026-08-09T00:00:30.000Z",
+      );
+      expect(snapshotAfterRound?.queuedRuns.map((run) => run.id).sort()).toEqual([
+        "run-round-a",
+        "run-round-b",
+      ]);
+      expect(
+        handle.client
+          .prepare("SELECT current_round FROM run_batches WHERE id = 'batch-round'")
+          .get(),
+      ).toEqual({ current_round: 2 });
+      expect(
+        handle.client
+          .prepare("SELECT status, held_round FROM execution_runs WHERE id = 'run-round-a'")
+          .get(),
+      ).toEqual({ status: "queued", held_round: 0 });
+
+      // 第 2 轮：两个 run 再次失败，重试用尽后进入终态 failed。
+      await batches.reserveAssignments({
+        batchId: "batch-round",
+        decisions: [
+          {
+            executionRunId: "run-round-a",
+            runnerId: "runner-round",
+            score: 1,
+            attemptId: "attempt-round-a-2",
+            assignmentId: "assignment-round-a-2",
+          },
+          {
+            executionRunId: "run-round-b",
+            runnerId: "runner-round",
+            score: 1,
+            attemptId: "attempt-round-b-2",
+            assignmentId: "assignment-round-b-2",
+          },
+        ],
+        thresholds: {
+          maximumCpuUtilizationPercent: 80,
+          maximumMemoryUtilizationPercent: 85,
+          maximumLoadPerCpu: 1,
+        },
+        offlineBefore: "2026-08-09T00:00:30.000Z",
+        metricsFreshAfter: "2026-08-09T00:00:30.000Z",
+        scheduledAt: "2026-08-09T00:02:01.000Z",
+      });
+      await executions.claim({
+        runnerId: "runner-round",
+        requestId: "claim-round-2",
+        availableSlots: 2,
+        labels: ["java", "testng"],
+        capabilities: ["executor:testng-v1", "isolation:cgroup-v2", "java:21.0.8", "testng:7.11.0"],
+        leaseSeeds: [
+          {
+            id: "lease-round-a-2",
+            eventId: "event-claim-round-a-2",
+            tokenHash: "lease-token-hash-round-a-2",
+            tokenEncrypted: "encrypted-lease-token-round-a-2",
+          },
+          {
+            id: "lease-round-b-2",
+            eventId: "event-claim-round-b-2",
+            tokenHash: "lease-token-hash-round-b-2",
+            tokenEncrypted: "encrypted-lease-token-round-b-2",
+          },
+        ],
+        now: "2026-08-09T00:02:02.000Z",
+        leaseExpiresAt: "2026-08-09T00:02:47.000Z",
+      });
+      const secondRoundA = await executions.completeAttempt({
+        runnerId: "runner-round",
+        attemptId: "attempt-round-a-2",
+        completionId: "completion-round-a-2",
+        leaseTokenHash: "lease-token-hash-round-a-2",
+        resultDigest: "digest-round-a-2",
+        result: {
+          status: "failed",
+          resultCode: "TEST_ASSERTION_FAILED",
+          summary: "round A failed again",
+          durationMs: 500,
+          artifacts: [],
+        },
+        eventId: "event-complete-round-a-2",
+        acceptedAt: "2026-08-09T00:02:10.000Z",
+      });
+      expect(secondRoundA).toMatchObject({
+        disposition: "accepted",
+        retryScheduled: false,
+      });
+      await executions.completeAttempt({
+        runnerId: "runner-round",
+        attemptId: "attempt-round-b-2",
+        completionId: "completion-round-b-2",
+        leaseTokenHash: "lease-token-hash-round-b-2",
+        resultDigest: "digest-round-b-2",
+        result: {
+          status: "failed",
+          resultCode: "TEST_ASSERTION_FAILED",
+          summary: "round B failed again",
+          durationMs: 500,
+          artifacts: [],
+        },
+        eventId: "event-complete-round-b-2",
+        acceptedAt: "2026-08-09T00:02:20.000Z",
+      });
+      expect(await batches.get("batch-round")).toMatchObject({
+        status: "failed",
+        succeededRuns: 0,
+        failedRuns: 2,
+        runs: [
+          expect.objectContaining({ id: "run-round-a", status: "failed", attemptCount: 2 }),
+          expect.objectContaining({ id: "run-round-b", status: "failed", attemptCount: 2 }),
+        ],
+      });
+    } finally {
+      handle.close();
+    }
+  });
 });
 
 function structuredTestNgResult(status: "passed" | "failed") {
@@ -1992,7 +2342,12 @@ async function executionsProjectId(
   handle: ReturnType<typeof createSqliteDatabase>,
   attemptId: string,
 ): Promise<string | null> {
-  return new SqliteExecutionControlRepository(handle).resolveAttemptProjectId(attemptId);
+  const directory = await mkdtemp(resolve(tmpdir(), "autoforge-attempt-logs-"));
+  temporaryDirectories.push(directory);
+  return new SqliteExecutionControlRepository(
+    handle,
+    createAttemptLogStore(directory),
+  ).resolveAttemptProjectId(attemptId);
 }
 
 const timestamp = "2026-08-09T00:00:00.000Z";
@@ -2076,6 +2431,9 @@ async function fixture() {
     suites: new SqliteCaseSuiteRepository(handle),
     runners: new SqliteRunnerRepository(handle),
     batches: new SqliteRunBatchRepository(handle),
-    executions: new SqliteExecutionControlRepository(handle),
+    executions: new SqliteExecutionControlRepository(
+      handle,
+      createAttemptLogStore(resolve(directory, "attempt-logs")),
+    ),
   };
 }

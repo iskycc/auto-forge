@@ -3,7 +3,9 @@ import type {
   ClaimAssignmentsInput,
   ClaimAssignmentsResponse,
   CompleteAttemptInput,
+  CompletionResult,
   DeclareArtifactsInput,
+  LogChunk,
   ReconcileAttemptsInput,
   RenewLeaseInput,
   UploadLogChunksInput,
@@ -14,6 +16,7 @@ import type {
   Clock,
   ExecutionControlRepository,
   IdGenerator,
+  RunBatchRepository,
   RunnerCredentialPort,
   JarObjectStorePort,
   RunnerRepository,
@@ -25,6 +28,17 @@ import { assertRunnerAuthenticated } from "./manage-runners";
 const LEASE_DURATION_MS = 45_000;
 const RECOVERY_SCAN_LIMIT = 100;
 
+// 完成结果的中文文案，用于调度事件消息。
+const COMPLETION_OUTCOME_LABELS: Record<
+  "succeeded" | "failed" | "timed_out" | "cancelled",
+  string
+> = {
+  succeeded: "成功",
+  failed: "失败",
+  timed_out: "超时",
+  cancelled: "已取消",
+};
+
 export class ExecutionControlService {
   constructor(
     private readonly executions: ExecutionControlRepository,
@@ -34,6 +48,7 @@ export class ExecutionControlService {
     private readonly objectStore: JarObjectStorePort,
     private readonly clock: Clock,
     private readonly ids: IdGenerator,
+    private readonly batches: RunBatchRepository,
   ) {}
 
   async claim(
@@ -94,6 +109,37 @@ export class ExecutionControlService {
       now: now.toISOString(),
       leaseExpiresAt: new Date(now.getTime() + LEASE_DURATION_MS).toISOString(),
     });
+    // assignment DTO 不携带 batchId/executionRunId，逐条反查调度上下文后写入领取事件。
+    if (claimed.length > 0) {
+      const recordedAt = this.clock.now().toISOString();
+      const events: Array<{
+        id: string;
+        batchId: string;
+        runnerId?: string;
+        executionRunId?: string;
+        attemptId?: string;
+        eventType: "attempt_claimed";
+        message: string;
+        recordedAt: string;
+      }> = [];
+      for (const record of claimed) {
+        const context = await this.executions.resolveAttemptSchedulingContext(
+          record.assignment.attemptId,
+        );
+        if (!context) continue;
+        events.push({
+          id: this.ids.next(),
+          batchId: context.batchId,
+          runnerId,
+          executionRunId: context.executionRunId,
+          attemptId: record.assignment.attemptId,
+          eventType: "attempt_claimed",
+          message: `执行机 ${runnerId} 领取任务（attempt ${record.assignment.attemptId}）`,
+          recordedAt,
+        });
+      }
+      await this.batches.appendSchedulingEvents(events);
+    }
     return {
       schemaVersion: 1,
       requestId: input.requestId,
@@ -136,17 +182,119 @@ export class ExecutionControlService {
     input: CompleteAttemptInput,
   ) {
     await this.authenticateRunner(runnerId, credential);
-    return this.executions.completeAttempt({
+    let result = enrichFailureSummary(input.result);
+    if (result === input.result) {
+      result = await this.enrichSummaryFromFailureLog(attemptId, result);
+    }
+    const response = await this.executions.completeAttempt({
       runnerId,
       attemptId,
       completionId: input.completionId,
       leaseTokenHash: this.credentials.hash(input.leaseToken),
-      resultDigest: this.credentials.hash(JSON.stringify(input.result)),
-      result: input.result,
+      resultDigest: this.credentials.hash(JSON.stringify(result)),
+      result,
       eventId: this.ids.next(),
       auditEventId: this.ids.next(),
       acceptedAt: this.clock.now().toISOString(),
     });
+    // 仅在状态机接受该完成上报时记录事件；duplicate/late 不重复写入。
+    if (response.disposition === "accepted") {
+      await this.appendAttemptCompletionEvents(attemptId, input, response.retryScheduled);
+    }
+    return response;
+  }
+
+  // 缺少结构化 TestNG 结果时（如进程非零退出但无报告），从 stderr/stdout 尾部提取
+  // 最后一行异常/堆栈行拼入摘要，让批次列表能直接看到失败原因。
+  // 日志读取失败（如日志库文件缺失）不得阻断完成上报的接受。
+  private async enrichSummaryFromFailureLog(
+    attemptId: string,
+    result: CompletionResult,
+  ): Promise<CompletionResult> {
+    if (result.status !== "failed" && result.status !== "timed_out") return result;
+    for (const stream of ["stderr", "stdout"] as const) {
+      const line = await this.readFailureLogLine(attemptId, stream);
+      if (line) {
+        const summary = `${result.summary} | ${line}`.slice(0, 500);
+        return { ...result, summary };
+      }
+    }
+    return result;
+  }
+
+  private async readFailureLogLine(
+    attemptId: string,
+    stream: LogChunk["stream"],
+  ): Promise<string | null> {
+    try {
+      const probe = await this.executions.listLogChunks({
+        attemptId,
+        stream,
+        afterSequence: -1,
+        limit: 1,
+      });
+      // 只取尾部窗口，避免为找一行堆栈而扫描整段日志。
+      const fromSequence = Math.max(-1, probe.acknowledgedSequence - 50);
+      const { items } = await this.executions.listLogChunks({
+        attemptId,
+        stream,
+        afterSequence: fromSequence,
+        limit: 100,
+      });
+      return lastFailureLine(items.map((chunk) => chunk.content).join(""));
+    } catch {
+      return null;
+    }
+  }
+
+  private async appendAttemptCompletionEvents(
+    attemptId: string,
+    input: CompleteAttemptInput,
+    retryScheduled: boolean,
+  ): Promise<void> {
+    const context = await this.executions.resolveAttemptSchedulingContext(attemptId);
+    if (!context) return;
+    const recordedAt = this.clock.now().toISOString();
+    const outcome = input.result.status;
+    const events: Array<{
+      id: string;
+      batchId: string;
+      runnerId?: string;
+      executionRunId?: string;
+      attemptId?: string;
+      eventType: "attempt_completed" | "run_held_for_round";
+      message: string;
+      payload?: Record<string, unknown>;
+      recordedAt: string;
+    }> = [
+      {
+        id: this.ids.next(),
+        batchId: context.batchId,
+        runnerId: context.runnerId,
+        executionRunId: context.executionRunId,
+        attemptId,
+        eventType: "attempt_completed",
+        message: `用例「${context.displayName}」第 ${context.attemptNumber} 次执行${COMPLETION_OUTCOME_LABELS[outcome]}`,
+        payload: {
+          attemptNumber: context.attemptNumber,
+          outcome,
+          durationMs: input.result.durationMs,
+        },
+        recordedAt,
+      },
+    ];
+    if (retryScheduled) {
+      events.push({
+        id: this.ids.next(),
+        batchId: context.batchId,
+        executionRunId: context.executionRunId,
+        eventType: "run_held_for_round",
+        message: "该用例已失败，等待下一轮重试",
+        ...(context.heldRound !== undefined ? { payload: { heldRound: context.heldRound } } : {}),
+        recordedAt,
+      });
+    }
+    await this.batches.appendSchedulingEvents(events);
   }
 
   async reconcile(runnerId: string, credential: string, input: ReconcileAttemptsInput) {
@@ -524,4 +672,36 @@ function redactLogChunks(
       ? left.sequence - right.sequence
       : left.stream.localeCompare(right.stream),
   );
+}
+
+// 失败或超时时，把首个失败方法定位到摘要，方便在列表页直接看到失败原因。
+function enrichFailureSummary(result: CompletionResult): CompletionResult {
+  if (result.status !== "failed" && result.status !== "timed_out") return result;
+  if (!result.testNg) return result;
+  for (const suite of result.testNg.suites) {
+    for (const test of suite.tests) {
+      for (const clazz of test.classes) {
+        for (const method of clazz.methods) {
+          if (method.status === "failed") {
+            const summary = `${clazz.name}#${method.name} 执行失败`.slice(0, 500);
+            return { ...result, summary };
+          }
+        }
+      }
+    }
+  }
+  return result;
+}
+
+// 在日志尾部找最后一行异常行（优先于堆栈帧行），作为非结构化失败的可读原因。
+function lastFailureLine(content: string): string | null {
+  const lines = content.split("\n");
+  let stackLine: string | null = null;
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    const line = lines[index]?.trim();
+    if (!line) continue;
+    if (/Exception|Error|Caused by/.test(line)) return line.slice(0, 300);
+    if (!stackLine && /^at\s/.test(line)) stackLine = line.slice(0, 300);
+  }
+  return stackLine;
 }

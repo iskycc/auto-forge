@@ -248,6 +248,8 @@ function batch(
     status: "succeeded",
     priority: 0,
     retryLimit: 0,
+    retryMode: "immediate",
+    currentRound: 1,
     queueTimeoutMs: 1_000,
     claimTimeoutMs: 1_000,
     executionTimeoutMs: 1_000,

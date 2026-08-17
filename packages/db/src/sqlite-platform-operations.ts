@@ -13,6 +13,7 @@ import type {
 import type { PlatformOperationsRepository } from "@autoforge/application";
 import { DomainError, isPermission, type Permission } from "@autoforge/domain";
 
+import type { AttemptLogStore } from "./attempt-log-store";
 import type { SqliteDatabaseHandle } from "./database";
 import {
   aggregateAnalytics,
@@ -37,16 +38,18 @@ import {
 type CountRow = { count: number; bytes?: number | null };
 
 export class SqlitePlatformOperationsRepository implements PlatformOperationsRepository {
-  constructor(private readonly handle: SqliteDatabaseHandle) {}
+  constructor(
+    private readonly handle: SqliteDatabaseHandle,
+    private readonly attemptLogs?: AttemptLogStore,
+  ) {}
 
   async readOperationalMetrics() {
-    return this.handle.client
+    const row = this.handle.client
       .prepare(
         `SELECT
           (SELECT count(*) FROM assignment_leases WHERE status='active' AND expires_at > strftime('%Y-%m-%dT%H:%M:%fZ','now')) AS activeLeases,
           (SELECT COALESCE(sum(max_concurrency),0) FROM runners WHERE disabled=0 AND deregistered_at IS NULL) AS runnerCapacity,
           (SELECT COALESCE(sum(busy_slots),0) FROM runners WHERE disabled=0 AND deregistered_at IS NULL) AS runnerBusySlots,
-          (SELECT COALESCE(sum(size_bytes),0) FROM attempt_log_chunks) AS storedLogBytes,
           (SELECT count(*) FROM attempt_artifacts WHERE status='uploaded') AS uploadedArtifacts,
           (SELECT count(*) FROM run_attempts WHERE status IN ('failed','timed_out')) AS failedAttempts,
           (SELECT count(*) FROM cleanup_jobs WHERE status IN ('pending','failed','leased')) AS pendingCleanupJobs,
@@ -56,12 +59,13 @@ export class SqlitePlatformOperationsRepository implements PlatformOperationsRep
       activeLeases: number;
       runnerCapacity: number;
       runnerBusySlots: number;
-      storedLogBytes: number;
       uploadedArtifacts: number;
       failedAttempts: number;
       pendingCleanupJobs: number;
       deadLetterCleanupJobs: number;
     };
+    // 用例日志保存在每批次独立 SQLite 文件中，磁盘占用按目录统计。
+    return { ...row, storedLogBytes: this.attemptLogs ? this.attemptLogs.directoryBytes() : 0 };
   }
 
   async listServiceAccounts(): Promise<ServiceAccount[]> {
@@ -688,7 +692,14 @@ export class SqlitePlatformOperationsRepository implements PlatformOperationsRep
   }
 
   async executeRetention(input: Parameters<PlatformOperationsRepository["executeRetention"]>[0]) {
-    return this.handle.client.transaction(() => executeSqliteRetention(this.handle, input))();
+    const result = this.handle.client.transaction(() =>
+      executeSqliteRetention(this.handle, input),
+    )();
+    // 批次日志文件在数据库事务提交后删除；缺失文件时 removeBatchStore 为幂等 noop。
+    for (const batchId of result.removedBatchStoreIds) {
+      this.attemptLogs?.removeBatchStore(batchId);
+    }
+    return { deletedRecords: result.deletedRecords, objectKeys: result.objectKeys };
   }
 
   async claimRetentionCleanupJobs(
@@ -1071,12 +1082,19 @@ export class SqlitePlatformOperationsRepository implements PlatformOperationsRep
   }
 
   private retentionCount(category: RetentionCategory, cutoffAt: string): CountRow {
-    const queries: Record<RetentionCategory, string> = {
+    if (category === "log") {
+      // 日志已迁移到每批次独立 SQLite 文件：按终态批次汇总文件大小。
+      const batchIds = this.terminalBatchIdsBefore(cutoffAt);
+      const stats = this.attemptLogs
+        ? this.attemptLogs.batchStoreStats(batchIds)
+        : new Map<string, number>();
+      let bytes = 0;
+      for (const value of stats.values()) bytes += value;
+      return { count: batchIds.length, bytes };
+    }
+    const queries: Record<Exclude<RetentionCategory, "log">, string> = {
       execution:
         "SELECT count(*) AS count, 0 AS bytes FROM run_batches WHERE status IN ('succeeded','failed','cancelled') AND updated_at < ?",
-      log: `SELECT count(*) AS count, COALESCE(sum(size_bytes), 0) AS bytes
-            FROM attempt_log_chunks l JOIN run_attempts a ON a.id = l.attempt_id
-            WHERE a.finished_at < ?`,
       artifact: `SELECT count(*) AS count, COALESCE(sum(size_bytes), 0) AS bytes
                  FROM attempt_artifacts f JOIN run_attempts a ON a.id = f.attempt_id
                  WHERE a.finished_at < ? AND f.status = 'uploaded'`,
@@ -1091,6 +1109,17 @@ export class SqlitePlatformOperationsRepository implements PlatformOperationsRep
     };
     const parameters = category === "session" ? [cutoffAt, cutoffAt] : [cutoffAt];
     return this.handle.client.prepare(queries[category]).get(...parameters) as CountRow;
+  }
+
+  private terminalBatchIdsBefore(cutoffAt: string): string[] {
+    const rows = this.handle.client
+      .prepare(
+        `SELECT id FROM run_batches
+         WHERE status IN ('succeeded','failed','cancelled') AND updated_at < ?
+         ORDER BY updated_at`,
+      )
+      .all(cutoffAt) as Array<{ id: string }>;
+    return rows.map((row) => row.id);
   }
 
   private analyticsRows(
@@ -1143,8 +1172,9 @@ type SearchRow = {
 function executeSqliteRetention(
   handle: SqliteDatabaseHandle,
   input: Parameters<PlatformOperationsRepository["executeRetention"]>[0],
-): { deletedRecords: number; objectKeys: string[] } {
+): { deletedRecords: number; objectKeys: string[]; removedBatchStoreIds: string[] } {
   const keys: string[] = [];
+  const removedBatchStoreIds: string[] = [];
   let deletedRecords = 0;
   if (input.category === "artifact") {
     const rows = handle.client
@@ -1176,19 +1206,43 @@ function executeSqliteRetention(
     }
   } else if (input.category === "source") {
     // 来源对象由业务删除时创建的 case-source 清理任务负责，避免与引用守卫竞争。
-    return { deletedRecords: 0, objectKeys: [] };
+    return { deletedRecords: 0, objectKeys: [], removedBatchStoreIds };
+  } else if (input.category === "log") {
+    // 日志保存在每批次独立 SQLite 文件中；按批次文件整体回收，主库无日志行可删。
+    const batchIds = (
+      handle.client
+        .prepare(
+          `SELECT id FROM run_batches
+           WHERE status IN ('succeeded','failed','cancelled') AND updated_at < ?
+           ORDER BY updated_at LIMIT ?`,
+        )
+        .all(input.cutoffAt, input.limit) as Array<{ id: string }>
+    ).map((row) => row.id);
+    removedBatchStoreIds.push(...batchIds);
+    deletedRecords = batchIds.length;
+  } else if (input.category === "execution") {
+    const rows = handle.client
+      .prepare(
+        `SELECT id FROM run_batches WHERE status IN ('succeeded','failed','cancelled')
+         AND updated_at < ? AND NOT EXISTS (
+           SELECT 1 FROM execution_runs r JOIN run_attempts a ON a.execution_run_id=r.id
+           JOIN attempt_artifacts f ON f.attempt_id=a.id
+           WHERE r.batch_id=run_batches.id AND f.status='uploaded'
+         ) ORDER BY updated_at LIMIT ?`,
+      )
+      .all(input.cutoffAt, input.limit) as Array<{ id: string }>;
+    if (rows.length > 0) {
+      const ids = rows.map((row) => row.id);
+      deletedRecords = handle.client
+        .prepare(`DELETE FROM run_batches WHERE id IN (${ids.map(() => "?").join(",")})`)
+        .run(...ids).changes;
+      // attempt/run 行由外键级联删除；批次日志文件在事务提交后移除。
+      removedBatchStoreIds.push(...ids);
+    }
   } else {
-    const statements: Partial<Record<Exclude<RetentionCategory, "artifact" | "source">, string>> = {
-      execution: `DELETE FROM run_batches WHERE id IN (
-        SELECT id FROM run_batches WHERE status IN ('succeeded','failed','cancelled')
-        AND updated_at < ? AND NOT EXISTS (
-          SELECT 1 FROM execution_runs r JOIN run_attempts a ON a.execution_run_id=r.id
-          JOIN attempt_artifacts f ON f.attempt_id=a.id
-          WHERE r.batch_id=run_batches.id AND f.status='uploaded'
-        ) ORDER BY updated_at LIMIT ?)`,
-      log: `DELETE FROM attempt_log_chunks WHERE rowid IN (
-        SELECT l.rowid FROM attempt_log_chunks l JOIN run_attempts a ON a.id = l.attempt_id
-        WHERE a.finished_at < ? ORDER BY a.finished_at, l.sequence LIMIT ?)`,
+    const statements: Partial<
+      Record<Exclude<RetentionCategory, "artifact" | "source" | "log" | "execution">, string>
+    > = {
       analytics: `DELETE FROM analytics_facts WHERE attempt_id IN (
         SELECT attempt_id FROM analytics_facts WHERE completed_at < ? ORDER BY completed_at LIMIT ?)`,
       audit: `DELETE FROM audit_events WHERE id IN (
@@ -1201,14 +1255,14 @@ function executeSqliteRetention(
         ORDER BY updated_at LIMIT ?)`,
     };
     const sql = statements[input.category];
-    if (!sql) return { deletedRecords: 0, objectKeys: [] };
+    if (!sql) return { deletedRecords: 0, objectKeys: [], removedBatchStoreIds };
     const parameters =
       input.category === "session"
         ? [input.cutoffAt, input.cutoffAt, input.limit]
         : [input.cutoffAt, input.limit];
     deletedRecords = handle.client.prepare(sql).run(...parameters).changes;
   }
-  return { deletedRecords, objectKeys: keys };
+  return { deletedRecords, objectKeys: keys, removedBatchStoreIds };
 }
 
 function searchItems(

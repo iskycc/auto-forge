@@ -28,6 +28,7 @@ import {
 } from "@autoforge/domain";
 import type { PoolClient } from "pg";
 
+import type { AttemptLogStore } from "./attempt-log-store";
 import type { PostgresDatabaseHandle } from "./postgres-database";
 
 type AssignmentRow = {
@@ -70,6 +71,7 @@ type AttemptControlRow = {
   status: RunAttemptStatus;
   run_status: ExecutionRunStatus;
   retry_limit: number;
+  retry_mode: "immediate" | "round";
   batch_id: string;
   project_id: string;
   run_cancel_requested_at: string | null;
@@ -104,7 +106,10 @@ type AttemptExpirationReason =
   "claim_timeout" | "lease_expired" | "execution_timeout" | "upload_timeout";
 
 export class PostgresExecutionControlRepository implements ExecutionControlRepository {
-  constructor(private readonly handle: PostgresDatabaseHandle) {}
+  constructor(
+    private readonly handle: PostgresDatabaseHandle,
+    private readonly attemptLogs: AttemptLogStore,
+  ) {}
 
   async claim(
     input: Parameters<ExecutionControlRepository["claim"]>[0],
@@ -331,6 +336,7 @@ export class PostgresExecutionControlRepository implements ExecutionControlRepos
           response.retryScheduled = decision.retryScheduled;
           await persistCompletion(
             client,
+            this.attemptLogs,
             control,
             assignment,
             lease,
@@ -389,7 +395,7 @@ export class PostgresExecutionControlRepository implements ExecutionControlRepos
         decisions.push({
           attemptId: local.attemptId,
           action,
-          acknowledgedLogSequence: await logWatermarks(client, local.attemptId),
+          acknowledgedLogSequence: this.logWatermarks(control.batch_id, local.attemptId),
         });
       }
       return reconcileAttemptsResponseSchema.parse({ schemaVersion: 1, decisions });
@@ -500,46 +506,20 @@ export class PostgresExecutionControlRepository implements ExecutionControlRepos
     input: Parameters<ExecutionControlRepository["appendLogChunks"]>[0],
   ): ReturnType<ExecutionControlRepository["appendLogChunks"]> {
     await this.handle.ready;
-    return this.transaction(async (client) => {
-      await authorizedTransferContext(client, { ...input, now: input.receivedAt }, true);
-      for (const chunk of input.chunks) {
-        const existing = await client.query<{ content: string; recorded_at: string }>(
-          `SELECT content, recorded_at::text FROM attempt_log_chunks
-           WHERE attempt_id = $1 AND stream = $2 AND sequence = $3`,
-          [input.attemptId, chunk.stream, chunk.sequence],
-        );
-        if (existing.rows[0]) {
-          const recordedAt = new Date(existing.rows[0].recorded_at).toISOString();
-          if (existing.rows[0].content !== chunk.content || recordedAt !== chunk.recordedAt) {
-            throw new DomainError("LOG_CHUNK_CONFLICT", "相同日志序号已保存不同内容。");
-          }
-          continue;
-        }
-        await client.query(
-          `INSERT INTO attempt_log_chunks
-           (attempt_id, stream, sequence, content, size_bytes, recorded_at, received_at)
-           VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-          [
-            input.attemptId,
-            chunk.stream,
-            chunk.sequence,
-            chunk.content,
-            Buffer.byteLength(chunk.content, "utf8"),
-            chunk.recordedAt,
-            input.receivedAt,
-          ],
-        );
-      }
-      const [stdout, stderr, agent] = await Promise.all([
-        advanceLogWatermark(client, input.attemptId, "stdout", input.receivedAt),
-        advanceLogWatermark(client, input.attemptId, "stderr", input.receivedAt),
-        advanceLogWatermark(client, input.attemptId, "agent", input.receivedAt),
-      ]);
-      return {
-        schemaVersion: 1 as const,
-        acknowledgedSequence: { stdout, stderr, agent },
-      };
+    await authorizedTransferContext(this.handle.pool, { ...input, now: input.receivedAt });
+    const batchId = await this.requiredBatchIdForAttempt(input.attemptId);
+    // 日志内容写入每批次独立 SQLite 文件；PG 主库不再保存日志行。
+    const acknowledgedSequence = this.attemptLogs.appendChunks({
+      batchId,
+      attemptId: input.attemptId,
+      receivedAt: input.receivedAt,
+      chunks: input.chunks,
     });
+    await this.recordAttemptLogsPath(batchId);
+    return {
+      schemaVersion: 1 as const,
+      acknowledgedSequence,
+    };
   }
 
   async listLogChunks(
@@ -553,53 +533,62 @@ export class PostgresExecutionControlRepository implements ExecutionControlRepos
     if (!attempt.rows[0]) {
       throw new DomainError("RUN_ATTEMPT_NOT_FOUND", "指定的执行尝试不存在。");
     }
-    const parameters: Array<string | number> = [input.attemptId, input.stream, input.afterSequence];
-    const clauses: string[] = [];
-    if (input.query) {
-      parameters.push(input.query);
-      clauses.push(`POSITION($${parameters.length} IN content) > 0`);
-    }
-    if (input.recordedAfter) {
-      parameters.push(input.recordedAfter);
-      clauses.push(`recorded_at >= $${parameters.length}::timestamptz`);
-    }
-    if (input.recordedBefore) {
-      parameters.push(input.recordedBefore);
-      clauses.push(`recorded_at <= $${parameters.length}::timestamptz`);
-    }
-    parameters.push(input.limit + 1);
-    const limitParameter = parameters.length;
-    const filters = clauses.length > 0 ? `AND ${clauses.join(" AND ")}` : "";
-    const result = await this.handle.pool.query<{
-      stream: "stdout" | "stderr" | "agent";
-      sequence: string;
-      content: string;
-      recorded_at: string;
-    }>(
-      `SELECT stream, sequence, content, recorded_at::text FROM attempt_log_chunks
-       WHERE attempt_id = $1 AND stream = $2 AND sequence > $3 ${filters}
-       ORDER BY sequence ASC LIMIT $${limitParameter}`,
-      parameters,
-    );
-    const watermark = await this.handle.pool.query<{ acknowledged_sequence: string }>(
-      `SELECT acknowledged_sequence FROM attempt_log_watermarks
-       WHERE attempt_id = $1 AND stream = $2`,
-      [input.attemptId, input.stream],
-    );
-    const hasMore = result.rows.length > input.limit;
-    const page = result.rows.slice(0, input.limit);
+    const batchId = await this.requiredBatchIdForAttempt(input.attemptId);
+    const page = this.attemptLogs.listChunks({
+      batchId,
+      attemptId: input.attemptId,
+      stream: input.stream,
+      afterSequence: input.afterSequence,
+      limit: input.limit,
+      ...(input.query !== undefined ? { query: input.query } : {}),
+      ...(input.recordedAfter !== undefined ? { recordedAfter: input.recordedAfter } : {}),
+      ...(input.recordedBefore !== undefined ? { recordedBefore: input.recordedBefore } : {}),
+    });
     return {
-      items: page.map((row) => ({
-        stream: row.stream,
-        sequence: Number(row.sequence),
-        content: row.content,
-        recordedAt: new Date(row.recorded_at).toISOString(),
-      })),
-      acknowledgedSequence: Number(watermark.rows[0]?.acknowledged_sequence ?? -1),
-      ...(hasMore && page.length > 0
-        ? { nextSequence: Number(page.at(-1)?.sequence ?? input.afterSequence) }
+      items: page.items,
+      acknowledgedSequence: this.attemptLogs.acknowledgedSequence(
+        batchId,
+        input.attemptId,
+        input.stream,
+      ),
+      ...(page.hasMore && page.items.length > 0
+        ? { nextSequence: page.items.at(-1)?.sequence ?? input.afterSequence }
         : {}),
       truncated: attempt.rows[0].result_code === "LOG_LIMIT_EXCEEDED",
+    };
+  }
+
+  private async requiredBatchIdForAttempt(attemptId: string): Promise<string> {
+    const result = await this.handle.pool.query<{ batch_id: string }>(
+      `SELECT r.batch_id FROM run_attempts a
+       JOIN execution_runs r ON r.id = a.execution_run_id WHERE a.id = $1`,
+      [attemptId],
+    );
+    if (!result.rows[0]) {
+      throw new DomainError("RUN_ATTEMPT_NOT_FOUND", "指定的执行尝试不存在。");
+    }
+    return result.rows[0].batch_id;
+  }
+
+  private async recordAttemptLogsPath(batchId: string): Promise<void> {
+    // 主库只保存批次日志文件相对数据目录的路径；日志内容在独立 SQLite 文件中。
+    const path = this.attemptLogs.relativeStorePath(batchId);
+    await this.handle.pool.query(
+      `UPDATE run_batches SET attempt_logs_path = $1
+       WHERE id = $2 AND (attempt_logs_path IS NULL OR attempt_logs_path <> $1)`,
+      [path, batchId],
+    );
+  }
+
+  // reconcile 场景下水位来自批次日志文件；attempt 批次关联在 findAttemptControl 已解析。
+  private logWatermarks(
+    batchId: string,
+    attemptId: string,
+  ): { stdout: number; stderr: number; agent: number } {
+    return {
+      stdout: this.attemptLogs.acknowledgedSequence(batchId, attemptId, "stdout"),
+      stderr: this.attemptLogs.acknowledgedSequence(batchId, attemptId, "stderr"),
+      agent: this.attemptLogs.acknowledgedSequence(batchId, attemptId, "agent"),
     };
   }
 
@@ -613,6 +602,38 @@ export class PostgresExecutionControlRepository implements ExecutionControlRepos
       [attemptId],
     );
     return result.rows[0]?.project_id ?? null;
+  }
+
+  async resolveAttemptSchedulingContext(
+    attemptId: string,
+  ): ReturnType<ExecutionControlRepository["resolveAttemptSchedulingContext"]> {
+    await this.handle.ready;
+    const result = await this.handle.pool.query<{
+      batch_id: string;
+      execution_run_id: string;
+      runner_id: string;
+      attempt_number: number;
+      display_name: string;
+      held_round: number;
+    }>(
+      `SELECT r.batch_id, a.execution_run_id, a.runner_id, a.attempt_number,
+              r.display_name, r.held_round
+       FROM run_attempts a
+       JOIN execution_runs r ON r.id = a.execution_run_id
+       WHERE a.id = $1`,
+      [attemptId],
+    );
+    const row = result.rows[0];
+    if (!row) return null;
+    // held_round 为 0 表示可立即调度，省略字段保持与领域模型一致（exactOptionalPropertyTypes）。
+    return {
+      batchId: row.batch_id,
+      executionRunId: row.execution_run_id,
+      runnerId: row.runner_id,
+      attemptNumber: row.attempt_number,
+      displayName: row.display_name,
+      ...(row.held_round > 0 ? { heldRound: row.held_round } : {}),
+    };
   }
 
   async resolveExecutionRunProjectId(runId: string): Promise<string | null> {
@@ -981,39 +1002,6 @@ async function authorizedTransferContext(
   return { assignment: row };
 }
 
-async function advanceLogWatermark(
-  client: PoolClient,
-  attemptId: string,
-  stream: "stdout" | "stderr" | "agent",
-  updatedAt: string,
-): Promise<number> {
-  const existing = await client.query<{ acknowledged_sequence: string }>(
-    `SELECT acknowledged_sequence FROM attempt_log_watermarks
-     WHERE attempt_id = $1 AND stream = $2 FOR UPDATE`,
-    [attemptId, stream],
-  );
-  let acknowledged = Number(existing.rows[0]?.acknowledged_sequence ?? -1);
-  const sequences = await client.query<{ sequence: string }>(
-    `SELECT sequence FROM attempt_log_chunks
-     WHERE attempt_id = $1 AND stream = $2 AND sequence > $3 ORDER BY sequence`,
-    [attemptId, stream, acknowledged],
-  );
-  for (const row of sequences.rows) {
-    const sequence = Number(row.sequence);
-    if (sequence !== acknowledged + 1) break;
-    acknowledged = sequence;
-  }
-  await client.query(
-    `INSERT INTO attempt_log_watermarks (attempt_id, stream, acknowledged_sequence, updated_at)
-     VALUES ($1, $2, $3, $4)
-     ON CONFLICT(attempt_id, stream) DO UPDATE SET
-     acknowledged_sequence = GREATEST(attempt_log_watermarks.acknowledged_sequence, EXCLUDED.acknowledged_sequence),
-     updated_at = EXCLUDED.updated_at`,
-    [attemptId, stream, acknowledged, updatedAt],
-  );
-  return acknowledged;
-}
-
 async function artifactRow(
   client: Pick<PoolClient, "query">,
   attemptId: string,
@@ -1051,6 +1039,7 @@ function mapArtifactRow(row: ArtifactRow) {
 
 async function persistCompletion(
   client: PoolClient,
+  attemptLogs: AttemptLogStore,
   control: AttemptControlRow,
   assignment: AssignmentRow,
   lease: LeaseRow,
@@ -1089,18 +1078,28 @@ async function persistCompletion(
   );
   await client.query(
     `UPDATE execution_runs SET status = $1, terminal_outcome = $2, assigned_runner_id = $3,
-     terminal_reason_code = $4, updated_at = $5, version = version + 1
-     WHERE id = $6 AND status IN ('assigned', 'running')`,
+     terminal_reason_code = $4, held_round = $5, updated_at = $6, version = version + 1
+     WHERE id = $7 AND status IN ('assigned', 'running')`,
     [
       executionRunStatus,
       executionRunStatus === "queued" ? null : attemptStatus,
       executionRunStatus === "queued" ? null : control.runner_id,
       executionRunStatus === "queued" ? null : result.resultCode,
+      executionRunStatus === "queued" && control.retry_mode === "round"
+        ? control.attempt_number + 1
+        : 0,
       input.acceptedAt,
       control.execution_run_id,
     ],
   );
-  await persistCompletionMetadata(client, input.attemptId, result, input.acceptedAt);
+  await persistCompletionMetadata(
+    client,
+    attemptLogs,
+    control.batch_id,
+    input.attemptId,
+    result,
+    input.acceptedAt,
+  );
   await appendAttemptEvent(client, {
     id: input.eventId,
     attemptId: input.attemptId,
@@ -1133,6 +1132,8 @@ async function persistCompletion(
 
 async function persistCompletionMetadata(
   client: PoolClient,
+  attemptLogs: AttemptLogStore,
+  batchId: string,
   attemptId: string,
   result: CompletionResult,
   recordedAt: string,
@@ -1156,16 +1157,13 @@ async function persistCompletionMetadata(
     );
   }
   if (result.logWatermarks) {
-    for (const stream of ["stdout", "stderr", "agent"] as const) {
-      await client.query(
-        `INSERT INTO attempt_log_watermarks (attempt_id, stream, acknowledged_sequence, updated_at)
-         VALUES ($1, $2, $3, $4)
-         ON CONFLICT(attempt_id, stream) DO UPDATE SET
-         acknowledged_sequence = GREATEST(attempt_log_watermarks.acknowledged_sequence, EXCLUDED.acknowledged_sequence),
-         updated_at = EXCLUDED.updated_at`,
-        [attemptId, stream, result.logWatermarks[stream], recordedAt],
-      );
-    }
+    // Agent 上报的水位写入批次日志文件；主库不再保存日志水位。
+    attemptLogs.recordWatermarks({
+      batchId,
+      attemptId,
+      watermarks: result.logWatermarks,
+      recordedAt,
+    });
   }
 }
 
@@ -1202,12 +1200,13 @@ async function expireAttempt(
   );
   await client.query(
     `UPDATE execution_runs SET status = $1, terminal_outcome = $2, assigned_runner_id = NULL,
-     terminal_reason_code = $3, updated_at = $4, version = version + 1
-     WHERE id = $5 AND status IN ('assigned', 'running')`,
+     terminal_reason_code = $3, held_round = $4, updated_at = $5, version = version + 1
+     WHERE id = $6 AND status IN ('assigned', 'running')`,
     [
       runStatus,
       runStatus === "queued" ? null : attemptStatus,
       runStatus === "queued" ? null : expiration.resultCode,
+      runStatus === "queued" && control.retry_mode === "round" ? control.attempt_number + 1 : 0,
       recordedAt,
       control.execution_run_id,
     ],
@@ -1374,7 +1373,7 @@ async function findAttemptControl(
   const result = await client.query<AttemptControlRow>(
     `SELECT a.id, a.execution_run_id, a.runner_id, a.attempt_number, a.status,
      r.status AS run_status, r.cancel_requested_at AS run_cancel_requested_at,
-     b.retry_limit, b.id AS batch_id, b.project_id
+     b.retry_limit, b.retry_mode, b.id AS batch_id, b.project_id
      FROM run_attempts a JOIN execution_runs r ON r.id = a.execution_run_id
      JOIN run_batches b ON b.id = r.batch_id WHERE a.id = $1${lock ? " FOR UPDATE OF a, r" : ""}`,
     [attemptId],
@@ -1441,21 +1440,6 @@ async function appendAttemptEvent(
   );
 }
 
-async function logWatermarks(
-  client: PoolClient,
-  attemptId: string,
-): Promise<{ stdout: number; stderr: number; agent: number }> {
-  const watermarks = { stdout: -1, stderr: -1, agent: -1 };
-  const result = await client.query<{
-    stream: keyof typeof watermarks;
-    acknowledged_sequence: number;
-  }>("SELECT stream, acknowledged_sequence FROM attempt_log_watermarks WHERE attempt_id = $1", [
-    attemptId,
-  ]);
-  for (const row of result.rows) watermarks[row.stream] = Number(row.acknowledged_sequence);
-  return watermarks;
-}
-
 async function updateBatchStatus(
   client: PoolClient,
   batchId: string,
@@ -1463,16 +1447,19 @@ async function updateBatchStatus(
   eventId: string,
   reason: string,
 ): Promise<void> {
+  const batch = await client.query<{
+    status: RunBatchStatus;
+    version: number;
+    retry_mode: "immediate" | "round";
+  }>("SELECT status, version, retry_mode FROM run_batches WHERE id = $1 FOR UPDATE", [batchId]);
+  const batchState = batch.rows[0];
+  if (!batchState) throw new DomainError("RUN_BATCH_NOT_FOUND", "指定的执行批次不存在。");
+  // 轮次制下先释放等待下一轮的失败 run，再聚合状态，确保释放的 run 计入批次状态。
+  await advanceRoundIfIdle(client, batchId, batchState.retry_mode, updatedAt);
   const result = await client.query<{ status: string }>(
     "SELECT status FROM execution_runs WHERE batch_id = $1",
     [batchId],
   );
-  const batch = await client.query<{ status: RunBatchStatus; version: number }>(
-    "SELECT status, version FROM run_batches WHERE id = $1 FOR UPDATE",
-    [batchId],
-  );
-  const batchState = batch.rows[0];
-  if (!batchState) throw new DomainError("RUN_BATCH_NOT_FOUND", "指定的执行批次不存在。");
   const status = aggregateBatchStatus(result.rows.map((row) => row.status));
   transitionRunBatch(batchState.status, status);
   const update = await client.query(
@@ -1491,6 +1478,42 @@ async function updateBatchStatus(
       [eventId, batchId, batchState.status, status, batchState.version + 1, reason, updatedAt],
     );
   }
+}
+
+// 轮次制：整轮无在途且无未扣留的 queued run 时，把等待下一轮的失败 run 统一释放。
+async function advanceRoundIfIdle(
+  client: PoolClient,
+  batchId: string,
+  retryMode: "immediate" | "round",
+  updatedAt: string,
+): Promise<void> {
+  if (retryMode !== "round") return;
+  const inFlight = await client.query<{ value: string }>(
+    "SELECT COUNT(*) AS value FROM execution_runs WHERE batch_id = $1 AND status IN ('assigned', 'running')",
+    [batchId],
+  );
+  if (Number(inFlight.rows[0]?.value ?? 0) > 0) return;
+  const schedulable = await client.query<{ value: string }>(
+    "SELECT COUNT(*) AS value FROM execution_runs WHERE batch_id = $1 AND status = 'queued' AND held_round = 0",
+    [batchId],
+  );
+  if (Number(schedulable.rows[0]?.value ?? 0) > 0) return;
+  const nextRound = await client.query<{ value: number | null }>(
+    "SELECT MIN(held_round) AS value FROM execution_runs WHERE batch_id = $1 AND status = 'queued' AND held_round > 0",
+    [batchId],
+  );
+  const nextRoundValue = nextRound.rows[0]?.value;
+  if (nextRoundValue === null || nextRoundValue === undefined) return;
+  await client.query(
+    `UPDATE execution_runs SET held_round = 0, updated_at = $1
+     WHERE batch_id = $2 AND status = 'queued' AND held_round <= $3`,
+    [updatedAt, batchId, nextRoundValue],
+  );
+  await client.query("UPDATE run_batches SET current_round = $1, updated_at = $2 WHERE id = $3", [
+    nextRoundValue,
+    updatedAt,
+    batchId,
+  ]);
 }
 
 function mapAssignment(row: AssignmentRow): AssignmentDto {

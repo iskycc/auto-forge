@@ -57,7 +57,7 @@ export function CaseSuiteDetailsView({
       {suite.items.length === 0 ? (
         <div className="empty-state table-empty">
           <strong>任务中还没有用例</strong>
-          <p>前往用例库勾选测试类并加入当前任务。</p>
+          <p>前往用例管理勾选测试类并加入当前任务。</p>
         </div>
       ) : (
         <div className="table-scroll">

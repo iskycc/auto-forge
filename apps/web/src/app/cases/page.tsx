@@ -67,7 +67,7 @@ export default async function CasesPage({ searchParams }: CasesPageProps) {
       <section className="page-hero">
         <div>
           <span className="eyebrow">TestNG 资产</span>
-          <h1>用例库</h1>
+          <h1>用例管理</h1>
           <p>一个 TestNG 测试类对应一个用例定义，测试方法作为可执行项保存在版本快照中。</p>
         </div>
         {canImport ? (

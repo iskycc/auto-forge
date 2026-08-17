@@ -408,6 +408,7 @@ describe("run batch creation with suite policy", () => {
         decisions.push(...input.decisions);
         return input.decisions.length;
       }),
+      appendSchedulingEvents: vi.fn().mockResolvedValue(undefined),
       get: vi.fn().mockResolvedValue({ id: "batch-1", assignedRuns: 3 }),
     } as unknown as RunBatchRepository;
     const service = new RunBatchSchedulingService(
@@ -577,6 +578,139 @@ describe("run batch creation with suite policy", () => {
         parameters: {},
       }),
     ).rejects.toMatchObject({ code: "CASE_SOURCE_NOT_EXECUTABLE" });
+  });
+});
+
+describe("scheduling event log", () => {
+  function schedulingBatchesFake() {
+    const appended: Array<Array<Record<string, unknown>>> = [];
+    const batches = {
+      getSchedulingSnapshot: vi.fn().mockResolvedValue({
+        batch: {
+          id: "batch-1",
+          assignedRuns: 0,
+          secretBindings: [],
+          policy: { concurrency: 4, runnerLabels: [], artifactPatterns: [] },
+        },
+        queuedRuns: [queuedRun("run-1"), queuedRun("run-2")],
+        candidates: [{ runner: schedulingRunner(), reservedSlots: 0 }],
+        projectActiveRuns: 0,
+      }),
+      reserveAssignments: vi.fn(async (input: { decisions: unknown[] }) => input.decisions.length),
+      appendSchedulingEvents: vi.fn(async (events: Array<Record<string, unknown>>) => {
+        appended.push(events);
+      }),
+      listSchedulingEvents: vi.fn().mockResolvedValue({ items: [], nextAfterId: "cursor-1" }),
+      get: vi.fn(async (batchId: string) =>
+        batchId === "batch-1" ? { id: "batch-1", assignedRuns: 2 } : null,
+      ),
+    } as unknown as RunBatchRepository;
+    return { batches, appended };
+  }
+
+  function schedulingService(batches: RunBatchRepository, nowMs: number) {
+    return new RunBatchSchedulingService(
+      batches,
+      {} as CaseSuiteRepository,
+      {} as RunnerRepository,
+      { now: () => new Date(nowMs) },
+      { next: () => "generated-id" },
+      {
+        maximumCpuUtilizationPercent: 85,
+        maximumMemoryUtilizationPercent: 85,
+        maximumLoadPerCpu: 1,
+      },
+      45,
+    );
+  }
+
+  it("writes run_assigned and batch_scheduled events after reserving", async () => {
+    const { batches, appended } = schedulingBatchesFake();
+    const service = schedulingService(batches, Date.parse(timestamp));
+
+    await service.schedule("batch-1");
+
+    expect(appended).toHaveLength(1);
+    const events = appended[0]!;
+    const assigned = events.filter((event) => event.eventType === "run_assigned");
+    expect(assigned).toHaveLength(2);
+    expect(assigned.map((event) => event.executionRunId)).toEqual(["run-1", "run-2"]);
+    expect(assigned[0]).toMatchObject({
+      batchId: "batch-1",
+      runnerId: "runner-1",
+      eventType: "run_assigned",
+      recordedAt: timestamp,
+    });
+    expect(String(assigned[0]!.message)).toContain("调度器将用例「run-1」分配给执行机 runner-1");
+    const summary = events.find((event) => event.eventType === "batch_scheduled");
+    expect(summary).toMatchObject({
+      batchId: "batch-1",
+      eventType: "batch_scheduled",
+      payload: { assignedCount: 2, queueRemaining: 0, decisions: 2 },
+    });
+  });
+
+  it("throttles runner_metrics events within the 30 second window", async () => {
+    const { batches, appended } = schedulingBatchesFake();
+    const service = schedulingService(batches, Date.parse(timestamp));
+
+    await service.schedule("batch-1");
+    await service.schedule("batch-1");
+
+    expect(appended).toHaveLength(2);
+    const metricsFirst = appended[0]!.filter((event) => event.eventType === "runner_metrics");
+    const metricsSecond = appended[1]!.filter((event) => event.eventType === "runner_metrics");
+    expect(metricsFirst).toHaveLength(1);
+    expect(metricsFirst[0]).toMatchObject({
+      runnerId: "runner-1",
+      eventType: "runner_metrics",
+      // evaluation 在决策前计算（reservedSlots=0），故为 maxConcurrency 全量。
+      payload: { availableSlots: 8, blockReasons: [] },
+    });
+    expect(String(metricsFirst[0]!.message)).toContain("执行机 runner-1 资源快照：可用槽位 8");
+    expect(metricsSecond).toHaveLength(0);
+  });
+
+  it("emits runner_metrics again once the throttle window has elapsed", async () => {
+    const { batches, appended } = schedulingBatchesFake();
+    let nowMs = Date.parse(timestamp);
+    const service = new RunBatchSchedulingService(
+      batches,
+      {} as CaseSuiteRepository,
+      {} as RunnerRepository,
+      { now: () => new Date(nowMs) },
+      { next: () => "generated-id" },
+      {
+        maximumCpuUtilizationPercent: 85,
+        maximumMemoryUtilizationPercent: 85,
+        maximumLoadPerCpu: 1,
+      },
+      45,
+    );
+
+    await service.schedule("batch-1");
+    nowMs += 30_000;
+    await service.schedule("batch-1");
+
+    const metricsCounts = appended.map(
+      (events) => events.filter((event) => event.eventType === "runner_metrics").length,
+    );
+    expect(metricsCounts).toEqual([1, 1]);
+  });
+
+  it("lists scheduling events only after confirming the batch exists", async () => {
+    const { batches } = schedulingBatchesFake();
+    const service = schedulingService(batches, Date.parse(timestamp));
+
+    const page = await service.listSchedulingEvents("batch-1", { limit: 10 });
+
+    expect(batches.get).toHaveBeenCalledWith("batch-1", undefined);
+    expect(page.nextAfterId).toBe("cursor-1");
+    await expect(
+      service.listSchedulingEvents("missing-batch", { limit: 10 }),
+    ).rejects.toMatchObject({
+      code: "RUN_BATCH_NOT_FOUND",
+    });
   });
 });
 

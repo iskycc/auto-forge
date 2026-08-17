@@ -114,7 +114,7 @@ public class MixedVisibleTest {
   await ensureAdministrator(page);
   await expect(page).toHaveURL(/\/$/, { timeout: 20_000 });
   await expect(page.getByRole("navigation", { name: "主导航" })).toBeVisible();
-  await expect(page.getByRole("link", { name: "首页", exact: true })).toHaveClass(
+  await expect(page.getByRole("link", { name: "工作台", exact: true })).toHaveClass(
     /nav-item-active/,
   );
   await expect(page.getByText("E2E Administrator", { exact: true })).toBeVisible();
@@ -126,7 +126,7 @@ public class MixedVisibleTest {
   await page.getByRole("button", { name: "登录" }).click();
   await expect(page).toHaveURL(/\/$/, { timeout: 20_000 });
   await expect(page.getByRole("navigation", { name: "主导航" })).toBeVisible();
-  await expect(page.getByRole("link", { name: "首页", exact: true })).toHaveClass(
+  await expect(page.getByRole("link", { name: "工作台", exact: true })).toHaveClass(
     /nav-item-active/,
   );
   await expect(page.getByText("E2E Administrator", { exact: true })).toBeVisible();
@@ -235,7 +235,7 @@ public class MixedVisibleTest {
     timeout: 60_000,
   });
 
-  await page.getByRole("link", { name: "查看用例库" }).click();
+  await page.getByRole("link", { name: "查看用例管理" }).click();
   await expect(page.locator(".case-tree-directory").first()).toHaveAttribute("open", "");
   await page.getByLabel("页内搜索用例").fill("CheckoutTest");
   await expect(page.getByRole("button", { name: "查看 CheckoutTest" })).toBeVisible();
@@ -292,7 +292,7 @@ public class MixedVisibleTest {
   await expect(page.locator(".alert-success")).toContainText("已返回现有用例", {
     timeout: 60_000,
   });
-  await page.getByRole("link", { name: "查看用例库" }).click();
+  await page.getByRole("link", { name: "查看用例管理" }).click();
   await page.getByLabel("页内搜索用例").fill("MixedVisibleTest");
   await page.getByRole("button", { name: "查看 MixedVisibleTest" }).click();
   await page.locator(".case-inspector-section").getByText("用例源码", { exact: true }).click();
@@ -444,8 +444,7 @@ public class MixedVisibleTest {
   );
   await page.getByRole("button", { name: "开始调度" }).click();
   const batch = (await (await createBatchResponse).json()) as { id: string };
-  await expect(page.getByText("已生成分配", { exact: true }).first()).toBeVisible();
-  await expect(page.getByText("已分配 1", { exact: true }).first()).toBeVisible();
+  await expect(page.getByRole("link", { name: "前往执行记录查看进度" })).toBeVisible();
   await captureUi(page, "run-batch-planner");
 
   const firstClaim = await claimAssignment(page, identity);
@@ -475,7 +474,8 @@ public class MixedVisibleTest {
           {
             stream: "stdout",
             sequence: 0,
-            content: "\u001b[31mfirst attempt assertion failed\u001b[0m\n",
+            content:
+              "INFO testng runner started\nWARN flaky selector detected\n\u001b[31mERROR first attempt assertion failed\u001b[0m\n",
             recordedAt: new Date().toISOString(),
           },
         ],
@@ -607,13 +607,19 @@ public class MixedVisibleTest {
   expect(await artifactDownload.body()).toEqual(report);
 
   await page.goto(`/run-batches/${encodeURIComponent(batch.id)}`);
-  await expect(page.getByText("成功", { exact: true }).first()).toBeVisible();
+  await expect(page.getByText("已成功", { exact: true }).first()).toBeVisible();
   await page.getByLabel("执行尝试").selectOption(firstAttemptId);
+  await page.getByRole("button", { name: "查看日志" }).click();
   await expect(page.locator(".execution-log")).toContainText("first attempt assertion failed");
   await expect(page.locator(".execution-log")).toHaveClass(/execution-log-dark/);
-  await expect(page.locator(".execution-log .ansi-red")).toContainText(
-    "first attempt assertion failed",
-  );
+  await expect(
+    page.locator(".execution-log .ansi-red").filter({ hasText: "first attempt assertion failed" }),
+  ).toContainText("first attempt assertion failed");
+  await expect(page.locator(".execution-log .log-level-info")).toContainText("INFO");
+  await expect(page.locator(".execution-log .log-level-warn")).toContainText("WARN");
+  await expect(page.locator(".execution-log .log-level-error").first()).toContainText("ERROR");
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".execution-log")).toHaveCount(0);
   await expect(page.getByText("reports/testng/e2e-report.txt")).toBeVisible();
   await expect(page.getByLabel("下载 reports/testng/e2e-report.txt")).toBeVisible();
   await expectUiConsistency(page);
@@ -807,7 +813,7 @@ public class MixedVisibleTest {
   await expect(page.locator(".alert-success")).toContainText("已导入 1 个测试类、1 个测试方法", {
     timeout: 60_000,
   });
-  await page.getByRole("link", { name: "查看用例库" }).click();
+  await page.getByRole("link", { name: "查看用例管理" }).click();
   await page.getByLabel("页内搜索用例").fill("SourceVisibleTest");
   await page.getByRole("button", { name: "查看 SourceVisibleTest" }).click();
   await page.locator(".case-inspector-section").getByText("用例源码", { exact: true }).click();
@@ -826,10 +832,10 @@ public class MixedVisibleTest {
   await expect(page.locator(".settings-stack > .settings-section")).toHaveCount(1);
 
   await page.goto("/audit");
-  await expect(page.getByRole("navigation", { name: "运维与审计" })).toBeVisible();
+  await expect(page.getByRole("navigation", { name: "运维审计" })).toBeVisible();
   await page.getByRole("link", { name: "运维计划" }).click();
   await expect(page.getByRole("heading", { name: "计划与目录作业" })).toBeVisible();
-  await expect(page.getByRole("navigation", { name: "运维与审计" })).toBeVisible();
+  await expect(page.getByRole("navigation", { name: "运维审计" })).toBeVisible();
 
   for (const route of ["/settings/platform", "/settings/access", "/settings/environments"]) {
     await page.goto(route);

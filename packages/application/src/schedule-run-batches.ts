@@ -18,6 +18,9 @@ import {
   scheduleExecutionRuns,
   type RunBatchDetails,
   type RunnerCompatibilityIssue,
+  type SchedulingDecision,
+  type SchedulingEventType,
+  type SchedulingPlan,
   type SchedulingThresholds,
 } from "@autoforge/domain";
 
@@ -31,11 +34,16 @@ import type {
   ProjectStructureRepository,
   RunBatchRepository,
   RunnerRepository,
+  SchedulingSnapshot,
 } from "./ports";
 
 const OFFLINE_AFTER_SECONDS = 45;
+const RUNNER_METRICS_THROTTLE_MS = 30_000;
 
 export class RunBatchSchedulingService {
+  // runner_metrics 节流：记录每个 runner 最近一次写入资源快照事件的时间。
+  private readonly lastRunnerMetricsAt = new Map<string, Date>();
+
   constructor(
     private readonly batches: RunBatchRepository,
     private readonly suites: CaseSuiteRepository,
@@ -77,6 +85,7 @@ export class RunBatchSchedulingService {
     // 执行配置按“输入 ?? 任务策略（已含系统默认）”合并，随后固化到批次。
     const suitePolicy = suite.policy;
     const retryLimit = validated.retryLimit ?? suitePolicy.retryLimit;
+    const retryMode = validated.retryMode ?? suitePolicy.retryMode;
     const priority = validated.priority ?? suitePolicy.priority;
     const queueTimeoutMs = validated.queueTimeoutMs ?? suitePolicy.queueTimeoutMs;
     const executionTimeoutMs = validated.executionTimeoutMs ?? suitePolicy.executionTimeoutMs;
@@ -116,6 +125,7 @@ export class RunBatchSchedulingService {
       suiteName: suite.name,
       suiteVersion: suite.version,
       retryLimit,
+      retryMode,
       priority,
       queueTimeoutMs,
       claimTimeoutMs: validated.claimTimeoutMs,
@@ -223,6 +233,7 @@ export class RunBatchSchedulingService {
       suiteName: `单用例 · ${definition.displayName}`,
       suiteVersion: definition.currentVersion,
       retryLimit: validated.retryLimit ?? defaultCaseSuiteExecutionPolicy.retryLimit,
+      retryMode: validated.retryMode ?? defaultCaseSuiteExecutionPolicy.retryMode,
       priority,
       queueTimeoutMs: validated.queueTimeoutMs ?? defaultCaseSuiteExecutionPolicy.queueTimeoutMs,
       claimTimeoutMs: validated.claimTimeoutMs,
@@ -318,23 +329,110 @@ export class RunBatchSchedulingService {
         maxAssignments,
       });
       if (plan.decisions.length > 0) {
-        await this.batches.reserveAssignments({
+        const decisions = plan.decisions.map((decision) => ({
+          ...decision,
+          attemptId: this.ids.next(),
+          assignmentId: this.ids.next(),
+        }));
+        const reserved = await this.batches.reserveAssignments({
           batchId,
           eventId: this.ids.next(),
           projectMaximumConcurrency: this.projectMaximumConcurrency,
-          decisions: plan.decisions.map((decision) => ({
-            ...decision,
-            attemptId: this.ids.next(),
-            assignmentId: this.ids.next(),
-          })),
+          decisions,
           thresholds: this.thresholds,
           offlineBefore: offlineBefore(now),
           metricsFreshAfter: metricsFreshAfter(now, this.metricsMaximumAgeSeconds),
           scheduledAt: now.toISOString(),
         });
+        await this.appendSchedulingRoundEvents(batchId, snapshot, plan, decisions, reserved, now);
       }
     }
     return this.get(batchId);
+  }
+
+  async listSchedulingEvents(
+    batchId: string,
+    input: { runnerId?: string; afterId?: string; limit: number },
+  ) {
+    await this.get(batchId);
+    return this.batches.listSchedulingEvents({ batchId, ...input });
+  }
+
+  // 记录一轮调度产生的事件。事件写入不捕获异常：应用层没有日志端口，
+  // 失败由调用方（HTTP 入口/工作器）按错误处理，避免静默丢失审计数据。
+  private async appendSchedulingRoundEvents(
+    batchId: string,
+    snapshot: SchedulingSnapshot,
+    plan: SchedulingPlan,
+    decisions: Array<SchedulingDecision & { attemptId: string; assignmentId: string }>,
+    reserved: number,
+    now: Date,
+  ): Promise<void> {
+    const recordedAt = now.toISOString();
+    const displayNameByRunId = new Map(snapshot.queuedRuns.map((run) => [run.id, run.displayName]));
+    const events: Array<{
+      id: string;
+      batchId: string;
+      runnerId?: string;
+      executionRunId?: string;
+      attemptId?: string;
+      eventType: SchedulingEventType;
+      message: string;
+      payload?: Record<string, unknown>;
+      recordedAt: string;
+    }> = [];
+    for (const decision of decisions) {
+      const displayName =
+        displayNameByRunId.get(decision.executionRunId) ?? decision.executionRunId;
+      events.push({
+        id: this.ids.next(),
+        batchId,
+        runnerId: decision.runnerId,
+        executionRunId: decision.executionRunId,
+        attemptId: decision.attemptId,
+        eventType: "run_assigned",
+        message: `调度器将用例「${displayName}」分配给执行机 ${decision.runnerId}（得分 ${decision.score.toFixed(2)}）`,
+        recordedAt,
+      });
+    }
+    const queueRemaining = Math.max(0, snapshot.queuedRuns.length - reserved);
+    events.push({
+      id: this.ids.next(),
+      batchId,
+      eventType: "batch_scheduled",
+      message: `本轮调度分配 ${reserved} 个用例，队列剩余 ${queueRemaining} 个`,
+      payload: { assignedCount: reserved, queueRemaining, decisions: reserved },
+      recordedAt,
+    });
+    // runner_metrics 按 runner 节流：同一执行机 30 秒内只记录一条资源快照。
+    const seenRunners = new Set<string>();
+    for (const decision of decisions) {
+      if (seenRunners.has(decision.runnerId)) continue;
+      seenRunners.add(decision.runnerId);
+      const lastAt = this.lastRunnerMetricsAt.get(decision.runnerId);
+      if (lastAt !== undefined && now.getTime() - lastAt.getTime() < RUNNER_METRICS_THROTTLE_MS) {
+        continue;
+      }
+      const evaluation = plan.evaluations.find(
+        (candidate) => candidate.runnerId === decision.runnerId,
+      );
+      const availableSlots = evaluation?.availableSlots ?? 0;
+      events.push({
+        id: this.ids.next(),
+        batchId,
+        runnerId: decision.runnerId,
+        eventType: "runner_metrics",
+        message: `执行机 ${decision.runnerId} 资源快照：可用槽位 ${availableSlots}`,
+        payload: {
+          availableSlots,
+          ...(evaluation?.score !== undefined ? { score: evaluation.score } : {}),
+          blockReasons: evaluation?.blockReasons ?? [],
+        },
+        recordedAt,
+      });
+      this.lastRunnerMetricsAt.set(decision.runnerId, now);
+    }
+    await this.batches.appendSchedulingEvents(events);
   }
 
   async scheduleQueuedBatches(limit = 50): Promise<number> {

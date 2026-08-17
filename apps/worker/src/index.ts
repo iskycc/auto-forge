@@ -1,4 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
+import { join } from "node:path";
 
 import {
   CaseSourceService,
@@ -9,6 +10,7 @@ import {
   type WorkerLogger,
 } from "@autoforge/application";
 import {
+  createAttemptLogStore,
   createPostgresDatabase,
   PostgresCaseCatalogRepository,
   PostgresCaseSuiteRepository,
@@ -75,7 +77,11 @@ const batches = new RunBatchSchedulingService(
   config.scheduling.projectMaximumConcurrency,
   config.scheduling.priorityAgingIntervalMinutes,
 );
-const platformOperationsRepository = new PostgresPlatformOperationsRepository(database);
+const attemptLogs = createAttemptLogStore(join(config.dataDirectory, "attempt-logs"));
+const platformOperationsRepository = new PostgresPlatformOperationsRepository(
+  database,
+  attemptLogs,
+);
 const objectStore = new MinioObjectStore(config.minio);
 const platformOperations = new PlatformOperationsService(
   platformOperationsRepository,
@@ -197,6 +203,7 @@ health.ready = false;
 await closeServer(healthServer);
 await withGracePeriod(loops, config.shutdownGraceMs, logger);
 await Promise.allSettled([queue.close(), nats.drain(), database.close()]);
+attemptLogs.close();
 if (fatalError) throw fatalError;
 logger.info("AutoForge worker stopped", { workerId: config.workerId });
 

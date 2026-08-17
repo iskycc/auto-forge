@@ -22,6 +22,7 @@ export function loadWorkerConfig(options: LoadPlatformConfigurationOptions = {})
   }
   return {
     databaseUrl: configuration.full.databaseUrl,
+    dataDirectory: runtime.paths.dataDirectory,
     natsServers: [...configuration.full.natsServers],
     workerId: `full-worker-${hostname()}-${process.pid}`,
     concurrency: configuration.worker.concurrency,

@@ -26,6 +26,8 @@ import {
   type RunBatchExecutionPolicy,
   type RunBatchStatusEvent,
   type RunBatchStatus,
+  type SchedulingEvent,
+  type SchedulingEventType,
 } from "@autoforge/domain";
 import { and, count, desc, eq, gt, gte, inArray, isNull, lt, lte, or, sql } from "drizzle-orm";
 
@@ -84,6 +86,7 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
         suiteVersion: record.suiteVersion,
         status: "queued",
         retryLimit: record.retryLimit,
+        retryMode: record.retryMode ?? "immediate",
         priority: record.priority ?? 0,
         queueTimeoutMs,
         claimTimeoutMs,
@@ -323,7 +326,7 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
       );
     return {
       batch,
-      queuedRuns: batch.runs.filter((run) => run.status === "queued"),
+      queuedRuns: batch.runs.filter((run) => run.status === "queued" && (run.heldRound ?? 0) === 0),
       candidates,
       projectActiveRuns: Number(activeProjectRuns.rows[0]?.count ?? 0),
     };
@@ -452,6 +455,7 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
               eq(pgExecutionRuns.id, decision.executionRunId),
               eq(pgExecutionRuns.batchId, input.batchId),
               eq(pgExecutionRuns.status, "queued"),
+              eq(pgExecutionRuns.heldRound, 0),
               or(
                 isNull(pgExecutionRuns.queueDeadlineAt),
                 gt(pgExecutionRuns.queueDeadlineAt, input.scheduledAt),
@@ -584,6 +588,84 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
     });
   }
 
+  async appendSchedulingEvents(
+    events: Parameters<RunBatchRepository["appendSchedulingEvents"]>[0],
+  ): Promise<void> {
+    if (events.length === 0) return;
+    await this.ready();
+    // 多行 INSERT 为单条语句，天然原子：一轮调度产生的事件要么整体可见，要么整体失败。
+    const columns =
+      "id, batch_id, runner_id, execution_run_id, attempt_id, event_type, message, payload_json, recorded_at";
+    const parameters: Array<string | null> = [];
+    const valueTuples = events.map((event) => {
+      const values = [
+        event.id,
+        event.batchId,
+        event.runnerId ?? null,
+        event.executionRunId ?? null,
+        event.attemptId ?? null,
+        event.eventType,
+        event.message,
+        event.payload ? JSON.stringify(event.payload) : null,
+        event.recordedAt,
+      ];
+      const placeholders = values.map((value) => {
+        parameters.push(value);
+        return `$${parameters.length}`;
+      });
+      return `(${placeholders.join(", ")})`;
+    });
+    await this.handle.pool.query(
+      `INSERT INTO scheduling_events (${columns}) VALUES ${valueTuples.join(", ")}`,
+      parameters,
+    );
+  }
+
+  async listSchedulingEvents(
+    input: Parameters<RunBatchRepository["listSchedulingEvents"]>[0],
+  ): ReturnType<RunBatchRepository["listSchedulingEvents"]> {
+    await this.ready();
+    const limit = Math.min(Math.max(1, Math.trunc(input.limit)), 500);
+    const parameters: Array<string | number> = [input.batchId];
+    let filters = "";
+    if (input.runnerId !== undefined) {
+      parameters.push(input.runnerId);
+      filters += ` AND runner_id = $${parameters.length}`;
+    }
+    if (input.afterId !== undefined) {
+      // 游标用 (recorded_at, id) 元组比较定位，id 为唯一键保证边界不重复、不遗漏。
+      parameters.push(input.afterId);
+      filters += ` AND (recorded_at, id) > (
+        SELECT recorded_at, id FROM scheduling_events WHERE id = $${parameters.length})`;
+    }
+    parameters.push(limit);
+    const result = await this.handle.pool.query<{
+      id: string;
+      batch_id: string;
+      runner_id: string | null;
+      execution_run_id: string | null;
+      attempt_id: string | null;
+      event_type: SchedulingEventType;
+      message: string;
+      payload_json: string | null;
+      recorded_at: string;
+    }>(
+      `SELECT id, batch_id, runner_id, execution_run_id, attempt_id, event_type,
+              message, payload_json, recorded_at
+       FROM scheduling_events
+       WHERE batch_id = $1${filters}
+       ORDER BY recorded_at ASC, id ASC
+       LIMIT $${parameters.length}`,
+      parameters,
+    );
+    const items = result.rows.map(schedulingEventFromRow);
+    const last = items.at(-1);
+    return {
+      items,
+      ...(items.length === limit && last ? { nextAfterId: last.id } : {}),
+    };
+  }
+
   private async ready(): Promise<void> {
     await this.handle.ready;
   }
@@ -624,6 +706,8 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
       status: row.status,
       priority: row.priority,
       retryLimit: row.retryLimit,
+      retryMode: row.retryMode,
+      currentRound: row.currentRound,
       queueTimeoutMs: row.queueTimeoutMs,
       claimTimeoutMs: row.claimTimeoutMs,
       executionTimeoutMs: row.executionTimeoutMs,
@@ -940,6 +1024,7 @@ function toExecutionRun(row: typeof pgExecutionRuns.$inferSelect): ExecutionRun 
     ...(row.terminalOutcome ? { terminalOutcome: row.terminalOutcome } : {}),
     ...(row.terminalReasonCode ? { terminalReasonCode: row.terminalReasonCode } : {}),
     ...(row.cancelRequestedAt ? { cancelRequestedAt: row.cancelRequestedAt } : {}),
+    ...(row.heldRound > 0 ? { heldRound: row.heldRound } : {}),
     version: row.version,
     createdAt: row.createdAt,
     ...(row.assignedAt ? { assignedAt: row.assignedAt } : {}),
@@ -976,5 +1061,41 @@ function storedTestNgResult(json: string, attemptId: string): NonNullable<RunAtt
       `执行尝试 ${attemptId} 的 TestNG 结果无法读取。`,
       { cause: error },
     );
+  }
+}
+// payload_json 解析失败时丢弃 payload 字段：调度事件是诊断流水，
+// 单条损坏不应阻断整页读取。
+function schedulingEventFromRow(row: {
+  id: string;
+  batch_id: string;
+  runner_id: string | null;
+  execution_run_id: string | null;
+  attempt_id: string | null;
+  event_type: SchedulingEventType;
+  message: string;
+  payload_json: string | null;
+  recorded_at: string;
+}): SchedulingEvent {
+  const payload = row.payload_json ? parseSchedulingEventPayload(row.payload_json) : undefined;
+  return {
+    id: row.id,
+    batchId: row.batch_id,
+    ...(row.runner_id ? { runnerId: row.runner_id } : {}),
+    ...(row.execution_run_id ? { executionRunId: row.execution_run_id } : {}),
+    ...(row.attempt_id ? { attemptId: row.attempt_id } : {}),
+    eventType: row.event_type,
+    message: row.message,
+    ...(payload ? { payload } : {}),
+    recordedAt: row.recorded_at,
+  };
+}
+
+function parseSchedulingEventPayload(json: string): Record<string, unknown> | undefined {
+  try {
+    const parsed: unknown = JSON.parse(json);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return undefined;
+    return parsed as Record<string, unknown>;
+  } catch {
+    return undefined;
   }
 }

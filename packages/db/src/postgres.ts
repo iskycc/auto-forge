@@ -1,3 +1,4 @@
+export * from "./attempt-log-store";
 export * from "./postgres-database";
 export * from "./postgres-identity-access";
 export * from "./postgres-execution-control";

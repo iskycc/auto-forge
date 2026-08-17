@@ -319,7 +319,7 @@ export function AccessSettings({
                   <tr key={user.id}>
                     <td>
                       <strong>{user.displayName}</strong>
-                      <small>
+                      <small className="table-secondary">
                         {user.username}
                         {user.email ? ` · ${user.email}` : ""} · {user.id}
                       </small>

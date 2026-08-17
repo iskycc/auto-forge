@@ -174,7 +174,7 @@ export function CaseSuiteManager({
               <Layers3 size={25} />
             </span>
             <strong>还没有用例任务</strong>
-            <p>先创建任务，再从用例库批量勾选测试类。</p>
+            <p>先创建任务，再从用例管理批量勾选测试类。</p>
           </div>
         ) : (
           suites.map((suite) => (

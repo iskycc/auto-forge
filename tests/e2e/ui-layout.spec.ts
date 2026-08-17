@@ -31,18 +31,21 @@ const primaryRoutes = [
   "/account/security",
 ] as const;
 
-test("administration modules are direct primary entries instead of nested management tabs", async ({
-  page,
-}) => {
+test("administration entries are grouped into collapsed two-level navigation", async ({ page }) => {
   await ensureAdministrator(page);
   const navigation = page.getByRole("navigation", { name: "主导航" });
 
+  for (const label of ["项目与权限", "执行与平台"]) {
+    await expect(navigation.getByRole("button", { name: label, exact: true })).toHaveCount(1);
+  }
+  // Groups start collapsed, so nested administration links are not rendered.
   for (const label of [
+    "运维审计",
     "项目管理",
     "用户管理",
     "角色权限",
     "项目角色",
-    "LDAP 目录",
+    "目录配置",
     "登录会话",
     "执行环境",
     "密文管理",
@@ -51,18 +54,30 @@ test("administration modules are direct primary entries instead of nested manage
     "数据保留",
     "系统诊断",
   ]) {
+    await expect(navigation.getByRole("link", { name: label, exact: true })).toHaveCount(0);
+  }
+
+  // Expanding a group reveals its entries and keeps the chevron state readable.
+  const accessToggle = navigation.getByRole("button", { name: "项目与权限" });
+  await accessToggle.click();
+  await expect(accessToggle).toHaveAttribute("aria-expanded", "true");
+  for (const label of ["项目管理", "用户管理", "角色权限", "项目角色", "目录配置", "登录会话"]) {
     await expect(navigation.getByRole("link", { name: label, exact: true })).toHaveCount(1);
   }
-  await expect(navigation.getByRole("link", { name: "管理中心", exact: true })).toHaveCount(0);
+  await accessToggle.click();
+  await expect(accessToggle).toHaveAttribute("aria-expanded", "false");
 
+  // The group owning the current route expands automatically.
   await page.goto("/settings/access?section=roles");
   await expect(page.getByRole("heading", { name: "角色与权限", exact: true })).toBeVisible();
-  await expect(page.getByRole("navigation", { name: "身份与访问模块" })).toHaveCount(0);
+  await expect(accessToggle).toHaveAttribute("aria-expanded", "true");
+  await expect(navigation.getByRole("link", { name: "角色权限", exact: true })).toHaveCount(1);
   await expect(page.locator(".settings-stack > .settings-section")).toHaveCount(1);
 
   await page.goto("/settings/platform?section=retention");
+  const platformToggle = navigation.getByRole("button", { name: "执行与平台" });
+  await expect(platformToggle).toHaveAttribute("aria-expanded", "true");
   await expect(page.getByRole("heading", { name: "数据保留", exact: true })).toBeVisible();
-  await expect(page.getByRole("navigation", { name: "平台管理模块" })).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "保留与清理策略" })).toBeVisible();
 });
 

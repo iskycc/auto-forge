@@ -12,9 +12,8 @@ import {
 import type { RunBatchPreflightResult } from "@autoforge/contracts";
 import { Activity, Check, Cpu, MemoryStick, Plus, RefreshCw, Trash2 } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 
-import { runBatchCoveragePercent, runBatchStatusLabel } from "@/lib/run-batch-presentation";
 import { runnerCompatibilityLabel, runnerCompatibilitySummary } from "@/lib/runner-compatibility";
 
 type SchedulerPolicy = {
@@ -31,33 +30,27 @@ export function RunBatchPlanner({
   initialSuites,
   initialRunners,
   initialEnvironments,
-  initialBatches,
-  historyRefreshUrl,
-  nextPageHref,
   policy,
 }: {
   canCreate: boolean;
   initialSuites: CaseSuite[];
   initialRunners: Runner[];
   initialEnvironments: ExecutionEnvironmentDetails[];
-  initialBatches: RunBatch[];
-  historyRefreshUrl: string;
-  nextPageHref?: string;
   policy: SchedulerPolicy;
 }) {
   const [suiteId, setSuiteId] = useState(initialSuites[0]?.id ?? "");
   const [runnerIds, setRunnerIds] = useState<string[]>([]);
   const [retryLimit, setRetryLimit] = useState<number | "">("");
+  const [retryMode, setRetryMode] = useState<"" | "immediate" | "round">("");
   const [environmentVersionId, setEnvironmentVersionId] = useState("");
   const [environmentRows, setEnvironmentRows] = useState<EnvironmentRow[]>([]);
   const [nextEnvironmentId, setNextEnvironmentId] = useState(1);
-  const [batches, setBatches] = useState(initialBatches);
+  const [createdBatchId, setCreatedBatchId] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [preflightBlockers, setPreflightBlockers] = useState<RunBatchPreflightResult["blockers"]>(
     [],
   );
-  const [refreshPaused, setRefreshPaused] = useState(false);
   const selectedSuite = useMemo(
     () => initialSuites.find((suite) => suite.id === suiteId),
     [initialSuites, suiteId],
@@ -70,21 +63,6 @@ export function RunBatchPlanner({
       ),
     [initialEnvironments, selectedSuite?.projectId],
   );
-
-  useEffect(() => {
-    const interval = window.setInterval(async () => {
-      try {
-        const response = await fetch(historyRefreshUrl, { cache: "no-store" });
-        if (!response.ok) return;
-        const result = (await response.json()) as { items: RunBatch[] };
-        setBatches(result.items);
-        setRefreshPaused(false);
-      } catch {
-        setRefreshPaused(true);
-      }
-    }, 5_000);
-    return () => window.clearInterval(interval);
-  }, [historyRefreshUrl]);
 
   async function createBatch(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -106,6 +84,7 @@ export function RunBatchPlanner({
         projectId: selectedSuite.projectId,
         runnerIds,
         ...(retryLimit === "" ? {} : { retryLimit }),
+        ...(retryMode === "" ? {} : { retryMode }),
         ...(environmentVersionId
           ? { environmentVersionId, environmentVariables: [] }
           : { environmentVariables }),
@@ -131,7 +110,7 @@ export function RunBatchPlanner({
       const result: unknown = await response.json();
       if (!response.ok) throw new Error(apiMessage(result));
       const created = result as RunBatch;
-      setBatches((current) => [created, ...current.filter((batch) => batch.id !== created.id)]);
+      setCreatedBatchId(created.id);
       setError("");
     } catch (submissionError) {
       setError(submissionError instanceof Error ? submissionError.message : "创建执行批次失败。");
@@ -283,6 +262,20 @@ export function RunBatchPlanner({
                 ))}
               </Select>
             </label>
+            <label className="field-stack">
+              <span>失败重跑方式</span>
+              <Select
+                value={retryMode}
+                onChange={(event) => setRetryMode(event.target.value as "" | "immediate" | "round")}
+              >
+                <option value="">
+                  继承任务策略（
+                  {selectedSuite?.policy.retryMode === "round" ? "整轮轮次" : "立即重跑"}）
+                </option>
+                <option value="immediate">立即重跑（失败后马上重试）</option>
+                <option value="round">整轮轮次（本轮结束后统一重试）</option>
+              </Select>
+            </label>
             <div className="policy-summary" aria-label="当前调度阈值">
               <strong>当前准入阈值</strong>
               <span>CPU ≤ {policy.maximumCpuUtilizationPercent}%</span>
@@ -384,6 +377,15 @@ export function RunBatchPlanner({
             </ul>
           ) : null}
           {error ? <p className="form-error">{error}</p> : null}
+          {createdBatchId ? (
+            <p className="form-success">
+              执行批次已创建，
+              <Link href={`/run-batches/${encodeURIComponent(createdBatchId)}`}>
+                前往执行记录查看进度
+              </Link>
+              。
+            </p>
+          ) : null}
           <Button
             className="button button-primary run-batch-submit"
             type="submit"
@@ -394,62 +396,6 @@ export function RunBatchPlanner({
           </Button>
         </form>
       ) : null}
-
-      <section className="card run-batch-history">
-        <div className="section-heading">
-          <div>
-            <span className="step-label">LIVE</span>
-            <h2>调度队列</h2>
-          </div>
-          <span className="refresh-label">
-            <i className={refreshPaused ? "refresh-dot-paused" : ""} />
-            {refreshPaused ? "刷新暂时中断" : "每 5 秒刷新"}
-          </span>
-        </div>
-        <div className="implementation-notice">
-          执行机领取、租约续期、TestNG 执行、日志续传和产物上传均使用同一执行闭环。
-        </div>
-        {batches.length === 0 ? (
-          <div className="inline-empty history-empty">尚未创建执行批次。</div>
-        ) : (
-          <div className="batch-list">
-            {batches.map((batch) => {
-              const progress = runBatchCoveragePercent(batch);
-              return (
-                <article className="batch-row" key={batch.id}>
-                  <div className="batch-row-main">
-                    <span className={`batch-status batch-status-${batch.status}`}>
-                      {runBatchStatusLabel(batch.status)}
-                    </span>
-                    <span>
-                      <strong>{batch.suiteName}</strong>
-                      <small>
-                        任务 v{batch.suiteVersion} · {batch.selectedRunnerIds.length} 台执行机 ·
-                        失败重跑 {batch.retryLimit} 次
-                      </small>
-                    </span>
-                    <time dateTime={batch.createdAt}>{formatDate(batch.createdAt)}</time>
-                  </div>
-                  <div className="batch-progress-line">
-                    <span style={{ width: `${progress}%` }} />
-                  </div>
-                  <div className="batch-counts">
-                    <span>已分配 {batch.assignedRuns}</span>
-                    <span>等待资源 {batch.queuedRuns}</span>
-                    <span>总计 {batch.totalRuns}</span>
-                    <Link href={`/run-batches/${encodeURIComponent(batch.id)}`}>查看详情</Link>
-                  </div>
-                </article>
-              );
-            })}
-          </div>
-        )}
-        {nextPageHref ? (
-          <Link className="button button-secondary batch-next-page" href={nextPageHref}>
-            查看更早记录
-          </Link>
-        ) : null}
-      </section>
     </div>
   );
 }
@@ -489,13 +435,4 @@ function stateLabel(state: Runner["state"]): string {
   if (state === "offline") return "离线";
   if (state === "draining") return "排空中";
   return "已禁用";
-}
-
-function formatDate(value: string): string {
-  return new Intl.DateTimeFormat("zh-CN", {
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(new Date(value));
 }

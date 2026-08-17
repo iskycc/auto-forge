@@ -78,7 +78,7 @@ export default async function CaseDetailPage({ params }: CaseDetailPageProps) {
               testStageId: testStage.id,
             }).toString()}`}
           >
-            <ArrowLeft size={15} aria-hidden="true" /> 返回用例库
+            <ArrowLeft size={15} aria-hidden="true" /> 返回用例管理
           </Link>
           <span className="eyebrow case-detail-eyebrow">Case Definition</span>
           <h1>{definition.displayName}</h1>

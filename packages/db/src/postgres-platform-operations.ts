@@ -14,6 +14,7 @@ import type { PlatformOperationsRepository } from "@autoforge/application";
 import { DomainError, isPermission, type Permission } from "@autoforge/domain";
 import type { PoolClient } from "pg";
 
+import type { AttemptLogStore } from "./attempt-log-store";
 import type { PostgresDatabaseHandle } from "./postgres-database";
 import {
   aggregateAnalytics,
@@ -39,7 +40,10 @@ type Queryable = Pick<PostgresDatabaseHandle["pool"], "query">;
 type CountRow = { count: string | number; bytes: string | number | null };
 
 export class PostgresPlatformOperationsRepository implements PlatformOperationsRepository {
-  constructor(private readonly handle: PostgresDatabaseHandle) {}
+  constructor(
+    private readonly handle: PostgresDatabaseHandle,
+    private readonly attemptLogs?: AttemptLogStore,
+  ) {}
 
   async readOperationalMetrics() {
     await this.ready();
@@ -63,9 +67,14 @@ export class PostgresPlatformOperationsRepository implements PlatformOperationsR
       (SELECT count(*) FROM cleanup_jobs WHERE status='dead_letter') AS "deadLetterCleanupJobs"`);
     const row = result.rows[0];
     if (!row) throw new Error("Operational metrics query returned no row.");
-    return Object.fromEntries(
+    const metrics = Object.fromEntries(
       Object.entries(row).map(([key, value]) => [key, Number(value)]),
     ) as Awaited<ReturnType<PlatformOperationsRepository["readOperationalMetrics"]>>;
+    // 用例日志保存在每批次独立 SQLite 文件中，磁盘占用按目录统计；旧表只保留历史数据。
+    if (this.attemptLogs) {
+      metrics.storedLogBytes = this.attemptLogs.directoryBytes();
+    }
+    return metrics;
   }
 
   async listServiceAccounts(): Promise<ServiceAccount[]> {
@@ -686,7 +695,23 @@ export class PostgresPlatformOperationsRepository implements PlatformOperationsR
 
   async executeRetention(input: Parameters<PlatformOperationsRepository["executeRetention"]>[0]) {
     await this.ready();
-    return withTransaction(this.handle, (client) => executePostgresRetention(client, input));
+    if (input.category === "log" && this.attemptLogs) {
+      // 日志保存在每批次独立 SQLite 文件中；按批次文件整体回收，主库无日志行可删。
+      const batchIds = await this.terminalBatchIdsBefore(input.cutoffAt);
+      const limited = batchIds.slice(0, input.limit);
+      for (const batchId of limited) {
+        this.attemptLogs.removeBatchStore(batchId);
+      }
+      return { deletedRecords: limited.length, objectKeys: [] };
+    }
+    const result = await withTransaction(this.handle, (client) =>
+      executePostgresRetention(client, input),
+    );
+    // 批次日志文件在数据库事务提交后删除；缺失文件时 removeBatchStore 为幂等 noop。
+    for (const batchId of result.removedBatchStoreIds) {
+      this.attemptLogs?.removeBatchStore(batchId);
+    }
+    return { deletedRecords: result.deletedRecords, objectKeys: result.objectKeys };
   }
 
   async claimRetentionCleanupJobs(
@@ -1044,6 +1069,14 @@ export class PostgresPlatformOperationsRepository implements PlatformOperationsR
   private async retentionCount(category: RetentionCategory, cutoffAt: string): Promise<CountRow> {
     // Full 模式的任务队列由 JetStream 承担并通过 stream 保留策略回收，
     // PostgreSQL 中没有 queue_jobs 表；queue 类别在这里恒为零。
+    if (category === "log" && this.attemptLogs) {
+      // 日志已迁移到每批次独立 SQLite 文件：按终态批次汇总文件大小。
+      const batchIds = await this.terminalBatchIdsBefore(cutoffAt);
+      const stats = this.attemptLogs.batchStoreStats(batchIds);
+      let bytes = 0;
+      for (const value of stats.values()) bytes += value;
+      return { count: batchIds.length, bytes };
+    }
     const queries: Partial<Record<RetentionCategory, string>> = {
       execution:
         "SELECT count(*) AS count,0 AS bytes FROM run_batches WHERE status IN ('succeeded','failed','cancelled') AND updated_at<$1",
@@ -1062,6 +1095,16 @@ export class PostgresPlatformOperationsRepository implements PlatformOperationsR
     if (!query) return { count: 0, bytes: 0 };
     const result = await this.handle.pool.query<CountRow>(query, [cutoffAt]);
     return result.rows[0] as CountRow;
+  }
+
+  private async terminalBatchIdsBefore(cutoffAt: string): Promise<string[]> {
+    const result = await this.handle.pool.query<{ id: string }>(
+      `SELECT id FROM run_batches
+       WHERE status IN ('succeeded','failed','cancelled') AND updated_at<$1
+       ORDER BY updated_at`,
+      [cutoffAt],
+    );
+    return result.rows.map((row) => row.id);
   }
 
   private async analyticsRows(
@@ -1112,7 +1155,7 @@ type SearchRow = { id: string; project_id: string | null; title: string; subtitl
 async function executePostgresRetention(
   client: PoolClient,
   input: Parameters<PlatformOperationsRepository["executeRetention"]>[0],
-): Promise<{ deletedRecords: number; objectKeys: string[] }> {
+): Promise<{ deletedRecords: number; objectKeys: string[]; removedBatchStoreIds: string[] }> {
   if (input.category === "artifact") {
     const candidates = await client.query<{ id: string; object_key: string | null }>(
       `SELECT f.id,f.object_key FROM attempt_artifacts f JOIN run_attempts a ON a.id=f.attempt_id
@@ -1139,19 +1182,36 @@ async function executePostgresRetention(
     return {
       deletedRecords,
       objectKeys,
+      removedBatchStoreIds: [],
     };
   }
   if (input.category === "source") {
-    return { deletedRecords: 0, objectKeys: [] };
+    return { deletedRecords: 0, objectKeys: [], removedBatchStoreIds: [] };
   }
+  if (input.category === "execution") {
+    // 先 SELECT 待删批次再删除，事务提交后调用方据此移除批次日志文件。
+    const candidates = await client.query<{ id: string }>(
+      `SELECT id FROM run_batches WHERE status IN ('succeeded','failed','cancelled') AND updated_at<$1
+       AND NOT EXISTS (
+         SELECT 1 FROM execution_runs r JOIN run_attempts a ON a.execution_run_id=r.id
+         JOIN attempt_artifacts f ON f.attempt_id=a.id
+         WHERE r.batch_id=run_batches.id AND f.status='uploaded'
+       ) ORDER BY updated_at LIMIT $2 FOR UPDATE SKIP LOCKED`,
+      [input.cutoffAt, input.limit],
+    );
+    const batchIds = candidates.rows.map((row) => row.id);
+    if (batchIds.length === 0) {
+      return { deletedRecords: 0, objectKeys: [], removedBatchStoreIds: [] };
+    }
+    const deleted = await client.query(`DELETE FROM run_batches WHERE id=ANY($1)`, [batchIds]);
+    return {
+      deletedRecords: deleted.rowCount ?? 0,
+      objectKeys: [],
+      removedBatchStoreIds: batchIds,
+    };
+  }
+  // log 类别仅在未接入批次日志文件 store 时走旧表删除，用于清理迁移前的历史数据。
   const statements: Partial<Record<RetentionCategory, string>> = {
-    execution: `DELETE FROM run_batches WHERE id IN (
-      SELECT id FROM run_batches WHERE status IN ('succeeded','failed','cancelled') AND updated_at<$1
-      AND NOT EXISTS (
-        SELECT 1 FROM execution_runs r JOIN run_attempts a ON a.execution_run_id=r.id
-        JOIN attempt_artifacts f ON f.attempt_id=a.id
-        WHERE r.batch_id=run_batches.id AND f.status='uploaded'
-      ) ORDER BY updated_at LIMIT $2)`,
     log: `DELETE FROM attempt_log_chunks WHERE (attempt_id,stream,sequence) IN (
       SELECT l.attempt_id,l.stream,l.sequence FROM attempt_log_chunks l JOIN run_attempts a ON a.id=l.attempt_id
       WHERE a.finished_at<$1 ORDER BY a.finished_at,l.sequence LIMIT $2)`,
@@ -1164,9 +1224,9 @@ async function executePostgresRetention(
       ORDER BY created_at LIMIT $2)`,
   };
   const statement = statements[input.category];
-  if (!statement) return { deletedRecords: 0, objectKeys: [] };
+  if (!statement) return { deletedRecords: 0, objectKeys: [], removedBatchStoreIds: [] };
   const result = await client.query(statement, [input.cutoffAt, input.limit]);
-  return { deletedRecords: result.rowCount ?? 0, objectKeys: [] };
+  return { deletedRecords: result.rowCount ?? 0, objectKeys: [], removedBatchStoreIds: [] };
 }
 
 async function withTransaction<T>(

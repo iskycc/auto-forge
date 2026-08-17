@@ -23,6 +23,7 @@ export type CaseSuiteExecutionPolicy = {
   priority: number;
   concurrency: number;
   retryLimit: number;
+  retryMode: "immediate" | "round";
   queueTimeoutMs: number;
   executionTimeoutMs: number;
   runnerLabels: string[];
@@ -48,6 +49,7 @@ export const defaultCaseSuiteExecutionPolicy: CaseSuiteExecutionPolicy = {
   priority: 0,
   concurrency: 4,
   retryLimit: 0,
+  retryMode: "immediate",
   queueTimeoutMs: 86_400_000,
   executionTimeoutMs: 3_600_000,
   runnerLabels: [],
@@ -84,6 +86,7 @@ export function mergeCaseSuiteExecutionPolicy(
     priority: override.priority ?? base.priority,
     concurrency: override.concurrency ?? base.concurrency,
     retryLimit: override.retryLimit ?? base.retryLimit,
+    retryMode: override.retryMode ?? base.retryMode,
     queueTimeoutMs: override.queueTimeoutMs ?? base.queueTimeoutMs,
     executionTimeoutMs: override.executionTimeoutMs ?? base.executionTimeoutMs,
     runnerLabels: override.runnerLabels ? [...override.runnerLabels] : [...base.runnerLabels],

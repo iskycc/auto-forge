@@ -1,4 +1,4 @@
-import { Button, Input, Select } from "@/components/ui";
+import { Button, DatetimeInput, Input, Select } from "@/components/ui";
 
 import type { AnalyticsFilter } from "@autoforge/contracts";
 import { BarChart3, FlaskConical, SlidersHorizontal, TrendingUp } from "lucide-react";
@@ -119,18 +119,16 @@ export default async function InsightsPage({
             </label>
             <label>
               开始时间（UTC）
-              <Input
+              <DatetimeInput
                 defaultValue={dateTimeLocal(filter.completedAfter)}
                 name="completedAfter"
-                type="datetime-local"
               />
             </label>
             <label>
               结束时间（UTC）
-              <Input
+              <DatetimeInput
                 defaultValue={dateTimeLocal(filter.completedBefore)}
                 name="completedBefore"
-                type="datetime-local"
               />
             </label>
           </div>

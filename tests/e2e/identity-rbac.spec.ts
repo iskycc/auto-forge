@@ -6,6 +6,7 @@ import {
   E2E_ADMIN_PASSWORD,
   E2E_ADMIN_USERNAME,
   ensureAdministrator,
+  expandAdministrationGroup,
   login,
   logout,
   uniqueName,
@@ -61,7 +62,8 @@ test("local user completes forced password change and self-service session lifec
   await expect(page).toHaveURL(/\/login\?passwordChanged=1$/);
 
   await login(page, username, replacementPassword);
-  await expect(page.getByRole("link", { name: "用例库", exact: true })).toBeVisible();
+  await expect(page.getByRole("link", { name: "用例管理", exact: true })).toBeVisible();
+  await expandAdministrationGroup(page, "执行与平台");
   const environmentLink = page.getByRole("link", { name: "执行环境", exact: true });
   await expect(environmentLink).toHaveAttribute(
     "href",
@@ -108,6 +110,7 @@ test("administrator can reset a user password and the last administrator binding
   await expect(page).toHaveURL(/\/account\/security$/);
   await logout(page);
   await login(page, E2E_ADMIN_USERNAME, E2E_ADMIN_PASSWORD);
+  await expandAdministrationGroup(page, "执行与平台");
   await expect(page.getByRole("link", { name: "平台配置", exact: true })).toBeVisible();
 });
 
@@ -198,14 +201,14 @@ test("every built-in role receives only its authorized navigation and API surfac
       roleId: PROJECT_ADMIN_ROLE_ID,
       scope: "project" as const,
       visible: [
-        "首页",
-        "用例库",
+        "工作台",
+        "用例管理",
         "用例任务",
-        "运维与审计",
+        "运维审计",
         "文件来源",
         "用例批跑",
-        "执行机",
-        "洞察",
+        "执行节点",
+        "质量洞察",
         "项目管理",
         "执行环境",
         "密文管理",
@@ -217,14 +220,14 @@ test("every built-in role receives only its authorized navigation and API surfac
       roleId: TEST_MANAGER_ROLE_ID,
       scope: "project" as const,
       visible: [
-        "首页",
-        "用例库",
+        "工作台",
+        "用例管理",
         "用例任务",
-        "运维与审计",
+        "运维审计",
         "文件来源",
         "用例批跑",
-        "执行机",
-        "洞察",
+        "执行节点",
+        "质量洞察",
         "执行环境",
         "密文管理",
       ],
@@ -235,14 +238,14 @@ test("every built-in role receives only its authorized navigation and API surfac
       roleId: EXECUTION_OPERATOR_ROLE_ID,
       scope: "project" as const,
       visible: [
-        "首页",
-        "用例库",
+        "工作台",
+        "用例管理",
         "用例任务",
-        "运维与审计",
+        "运维审计",
         "文件来源",
         "用例批跑",
-        "执行机",
-        "洞察",
+        "执行节点",
+        "质量洞察",
         "执行环境",
       ],
       hidden: ["项目管理", "密文管理", "平台配置"],
@@ -252,14 +255,14 @@ test("every built-in role receives only its authorized navigation and API surfac
       roleId: VIEWER_ROLE_ID,
       scope: "project" as const,
       visible: [
-        "首页",
-        "用例库",
+        "工作台",
+        "用例管理",
         "用例任务",
-        "运维与审计",
+        "运维审计",
         "文件来源",
         "用例批跑",
-        "执行机",
-        "洞察",
+        "执行节点",
+        "质量洞察",
         "执行环境",
       ],
       hidden: ["项目管理", "密文管理", "平台配置"],
@@ -268,13 +271,13 @@ test("every built-in role receives only its authorized navigation and API surfac
       key: "auditor",
       roleId: AUDITOR_ROLE_ID,
       scope: "system" as const,
-      visible: ["用例批跑", "洞察", "安全审计"],
+      visible: ["用例批跑", "质量洞察", "安全审计"],
       hidden: [
-        "首页",
-        "用例库",
+        "工作台",
+        "用例管理",
         "用例任务",
         "文件来源",
-        "执行机",
+        "执行节点",
         "项目管理",
         "执行环境",
         "平台配置",
@@ -298,6 +301,8 @@ test("every built-in role receives only its authorized navigation and API surfac
     const context = await browser.newContext({ baseURL: new URL(page.url()).origin });
     const rolePage = await context.newPage();
     await login(rolePage, username, password);
+    await expandAdministrationGroup(rolePage, "项目与权限");
+    await expandAdministrationGroup(rolePage, "执行与平台");
     for (const label of roleUser.visible) {
       await expect(rolePage.getByRole("link", { name: label, exact: true })).toBeVisible();
     }

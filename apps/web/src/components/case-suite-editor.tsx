@@ -61,6 +61,7 @@ export function CaseSuiteEditor({
             priority: Number(form.get("priority")),
             concurrency: Number(form.get("concurrency")),
             retryLimit: Number(form.get("retryLimit")),
+            retryMode: form.get("retryMode"),
             queueTimeoutMs: Math.round(Number(form.get("queueTimeoutMinutes")) * 60_000),
             executionTimeoutMs: Math.round(Number(form.get("executionTimeoutMinutes")) * 60_000),
             runnerLabels,
@@ -209,6 +210,13 @@ export function CaseSuiteEditor({
               step={1}
               defaultValue={suite.policy.retryLimit}
             />
+          </label>
+          <label>
+            失败重跑方式
+            <Select name="retryMode" defaultValue={suite.policy.retryMode}>
+              <option value="immediate">立即重跑（失败后马上重试）</option>
+              <option value="round">整轮轮次（本轮结束后统一重试）</option>
+            </Select>
           </label>
           <label>
             排队超时（分钟）

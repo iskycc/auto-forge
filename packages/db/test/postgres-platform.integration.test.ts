@@ -1,5 +1,7 @@
+import { mkdtempSync, rmSync } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
+import { tmpdir } from "node:os";
 
 import { describe, expect, it, vi } from "vitest";
 import { scheduleExecutionRuns } from "@autoforge/domain";
@@ -18,8 +20,20 @@ import { PostgresExecutionControlRepository } from "../src/postgres-execution-co
 import { PostgresExecutionEnvironmentRepository } from "../src/postgres-execution-environment";
 import { PostgresExecutionSecretRepository } from "../src/postgres-execution-secret";
 import { PostgresPlatformOperationsRepository } from "../src/postgres-platform-operations";
+import { createAttemptLogStore, type AttemptLogStore } from "../src/attempt-log-store";
 
 const connectionString = process.env.AUTOFORGE_TEST_POSTGRES_URL;
+
+// PG 日志同样外置到每批次独立 SQLite 文件；测试用临时目录承载批次日志。
+function createTestAttemptLogs(): { store: AttemptLogStore; directory: string } {
+  const directory = mkdtempSync(join(tmpdir(), "autoforge-pg-test-logs-"));
+  return { store: createAttemptLogStore(directory), directory };
+}
+
+function cleanupTestAttemptLogs(logs: { store: AttemptLogStore; directory: string }): void {
+  logs.store.close();
+  rmSync(logs.directory, { recursive: true, force: true });
+}
 
 describe.skipIf(!connectionString)("PostgreSQL platform repositories", () => {
   it("applies migrations and persists suites and runner heartbeats", async () => {
@@ -31,7 +45,8 @@ describe.skipIf(!connectionString)("PostgreSQL platform repositories", () => {
     const catalog = new PostgresCaseCatalogRepository(handle);
     const runners = new PostgresRunnerRepository(handle);
     const batches = new PostgresRunBatchRepository(handle);
-    const executions = new PostgresExecutionControlRepository(handle);
+    const attemptLogs = createTestAttemptLogs();
+    const executions = new PostgresExecutionControlRepository(handle, attemptLogs.store);
     const environments = new PostgresExecutionEnvironmentRepository(handle);
     const secrets = new PostgresExecutionSecretRepository(handle);
     const suiteId = randomUUID();
@@ -403,6 +418,7 @@ describe.skipIf(!connectionString)("PostgreSQL platform repositories", () => {
       await handle.pool.query("DELETE FROM execution_secrets WHERE id = $1", [secretId]);
       await handle.pool.query("DELETE FROM users WHERE id = $1", [environmentActorId]);
       await handle.pool.query("DELETE FROM projects WHERE id = $1", [secondProjectId]);
+      cleanupTestAttemptLogs(attemptLogs);
       await handle.close();
     }
   });
@@ -513,7 +529,8 @@ describe.skipIf(!connectionString)("PostgreSQL platform repositories", () => {
     const suites = new PostgresCaseSuiteRepository(handle);
     const catalog = new PostgresCaseCatalogRepository(handle);
     const batches = new PostgresRunBatchRepository(handle);
-    const executions = new PostgresExecutionControlRepository(handle);
+    const attemptLogs = createTestAttemptLogs();
+    const executions = new PostgresExecutionControlRepository(handle, attemptLogs.store);
     const runnerId = randomUUID();
     const suiteId = randomUUID();
     const batchId = `batch-${runnerId}`;
@@ -712,6 +729,7 @@ describe.skipIf(!connectionString)("PostgreSQL platform repositories", () => {
         bootstrapTokenHash,
       ]);
       await handle.pool.query("DELETE FROM case_suites WHERE id = $1", [suiteId]);
+      cleanupTestAttemptLogs(attemptLogs);
       await handle.close();
     }
   });
@@ -891,6 +909,7 @@ describe.skipIf(!connectionString)("PostgreSQL platform repositories", () => {
           priority: 5,
           concurrency: 2,
           retryLimit: 3,
+          retryMode: "immediate",
           queueTimeoutMs: 120_000,
           executionTimeoutMs: 600_000,
           runnerLabels: ["gpu"],
@@ -990,6 +1009,278 @@ describe.skipIf(!connectionString)("PostgreSQL platform repositories", () => {
       await handle.pool.query("DELETE FROM case_versions WHERE source_id = $1", [sourceId]);
       await handle.pool.query("DELETE FROM case_sources WHERE id = $1", [sourceId]);
       await handle.pool.query("DELETE FROM runners WHERE id = $1", [runnerId]);
+      await handle.close();
+    }
+  });
+
+  it("holds failed runs until the whole round completes in round retry mode", async () => {
+    const handle = createPostgresDatabase({
+      connectionString: connectionString!,
+      migrationsFolder: resolve(import.meta.dirname, "../drizzle/postgresql"),
+    });
+    const catalog = new PostgresCaseCatalogRepository(handle);
+    const runners = new PostgresRunnerRepository(handle);
+    const batches = new PostgresRunBatchRepository(handle);
+    const attemptLogs = createTestAttemptLogs();
+    const executions = new PostgresExecutionControlRepository(handle, attemptLogs.store);
+    const suiteId = randomUUID();
+    const sourceId = randomUUID();
+    const sourceId2 = randomUUID();
+    const caseDefinitionId1 = randomUUID();
+    const caseDefinitionId2 = randomUUID();
+    const runnerId = randomUUID();
+    const batchId = `batch-round-${suiteId}`;
+    const now = "2026-08-09T00:00:00.000Z";
+    const runIdA = `run-round-a-${suiteId}`;
+    const runIdB = `run-round-b-${suiteId}`;
+    const attemptIdA = `attempt-round-a-${suiteId}`;
+    const attemptIdB = `attempt-round-b-${suiteId}`;
+    const assignmentIdA = `assignment-round-a-${suiteId}`;
+    const assignmentIdB = `assignment-round-b-${suiteId}`;
+    try {
+      await handle.ready;
+      // 导入两个 case 供 round 测试使用
+      await catalog.importCatalog({
+        sourceId,
+        objectKey: `jars/${sourceId}/round1.jar`,
+        displayName: "Round source 1",
+        importedAt: now,
+        inspection: {
+          schemaVersion: 1,
+          fileName: "round1.jar",
+          sha256: "a".repeat(64),
+          sizeBytes: 128,
+          classFileCount: 1,
+          testClassCount: 1,
+          testMethodCount: 1,
+          hasRootTestNgXml: false,
+          discoveryMode: "bytecode-annotations",
+          warnings: [],
+          classes: [postgresCaseCandidate()],
+        },
+        cases: [
+          {
+            caseDefinitionId: caseDefinitionId1,
+            caseVersionId: randomUUID(),
+            candidate: postgresCaseCandidate(),
+            methods: [{ methodId: randomUUID(), methodIndex: 0 }],
+          },
+        ],
+      });
+      await catalog.importCatalog({
+        sourceId: sourceId2,
+        objectKey: `jars/${sourceId2}/round2.jar`,
+        displayName: "Round source 2",
+        importedAt: now,
+        inspection: {
+          schemaVersion: 1,
+          fileName: "round2.jar",
+          sha256: "b".repeat(64),
+          sizeBytes: 128,
+          classFileCount: 1,
+          testClassCount: 1,
+          testMethodCount: 1,
+          hasRootTestNgXml: false,
+          discoveryMode: "bytecode-annotations",
+          warnings: [],
+          classes: [postgresCaseCandidate()],
+        },
+        cases: [
+          {
+            caseDefinitionId: caseDefinitionId2,
+            caseVersionId: randomUUID(),
+            candidate: postgresCaseCandidate(),
+            methods: [{ methodId: randomUUID(), methodIndex: 0 }],
+          },
+        ],
+      });
+      await runners.register({
+        id: runnerId,
+        bootstrapTokenHash: randomUUID(),
+        credentialHash: randomUUID(),
+        name: "round-runner",
+        os: "linux",
+        architecture: "amd64",
+        agentVersion: "0.2.0",
+        protocolVersion: 1,
+        labels: ["java", "testng"],
+        capabilities: ["executor:testng-v1", "isolation:cgroup-v2", "java:21.0.8", "testng:7.11.0"],
+        maxConcurrency: 2,
+        terminalEnabled: false,
+        recordedAt: now,
+      });
+      await runners.heartbeat({
+        runnerId,
+        labels: ["java", "testng"],
+        capabilities: ["executor:testng-v1", "isolation:cgroup-v2", "java:21.0.8", "testng:7.11.0"],
+        maxConcurrency: 2,
+        busySlots: 0,
+        agentVersion: "0.2.0",
+        terminalEnabled: false,
+        resourceSnapshot: {
+          cpuUtilizationPercent: 10,
+          memoryUtilizationPercent: 20,
+          loadAverage1m: 0.1,
+          logicalCpuCount: 2,
+          observedAt: "2026-08-09T00:01:00.000Z",
+        },
+        recordedAt: "2026-08-09T00:01:00.000Z",
+      });
+      await batches.create({
+        id: batchId,
+        suiteId,
+        suiteName: "Round",
+        suiteVersion: 1,
+        retryLimit: 1,
+        retryMode: "round",
+        environmentVariables: [],
+        runnerIds: [runnerId],
+        runs: [
+          {
+            id: runIdA,
+            caseDefinitionId: caseDefinitionId1,
+            caseVersion: 1,
+            displayName: "Round A",
+            className: "example.PostgresSmoke",
+          },
+          {
+            id: runIdB,
+            caseDefinitionId: caseDefinitionId2,
+            caseVersion: 1,
+            displayName: "Round B",
+            className: "example.PostgresSmoke",
+          },
+        ],
+        createdAt: "2026-08-09T00:01:00.000Z",
+      });
+      await batches.reserveAssignments({
+        batchId,
+        decisions: [
+          {
+            executionRunId: runIdA,
+            runnerId,
+            score: 1,
+            attemptId: attemptIdA,
+            assignmentId: assignmentIdA,
+          },
+          {
+            executionRunId: runIdB,
+            runnerId,
+            score: 1,
+            attemptId: attemptIdB,
+            assignmentId: assignmentIdB,
+          },
+        ],
+        thresholds: {
+          maximumCpuUtilizationPercent: 80,
+          maximumMemoryUtilizationPercent: 85,
+          maximumLoadPerCpu: 1,
+        },
+        offlineBefore: "2026-08-09T00:00:30.000Z",
+        metricsFreshAfter: "2026-08-09T00:00:30.000Z",
+        scheduledAt: "2026-08-09T00:01:01.000Z",
+      });
+      await executions.claim({
+        runnerId,
+        requestId: `claim-round-${suiteId}`,
+        availableSlots: 2,
+        labels: ["java", "testng"],
+        capabilities: ["executor:testng-v1", "isolation:cgroup-v2", "java:21.0.8", "testng:7.11.0"],
+        leaseSeeds: [
+          {
+            id: `lease-round-a-${suiteId}`,
+            eventId: `event-claim-round-a-${suiteId}`,
+            tokenHash: "lease-token-hash-round-a",
+            tokenEncrypted: "encrypted-lease-token-round-a",
+          },
+          {
+            id: `lease-round-b-${suiteId}`,
+            eventId: `event-claim-round-b-${suiteId}`,
+            tokenHash: "lease-token-hash-round-b",
+            tokenEncrypted: "encrypted-lease-token-round-b",
+          },
+        ],
+        now: "2026-08-09T00:01:02.000Z",
+        leaseExpiresAt: "2026-08-09T00:01:47.000Z",
+      });
+
+      // 第 1 轮：run A 失败。round 模式下它应被扣留（held_round=2），不进入调度快照。
+      await executions.completeAttempt({
+        runnerId,
+        attemptId: attemptIdA,
+        completionId: `completion-round-a-${suiteId}`,
+        leaseTokenHash: "lease-token-hash-round-a",
+        resultDigest: `digest-round-a-${suiteId}`,
+        result: {
+          status: "failed",
+          resultCode: "TEST_ASSERTION_FAILED",
+          summary: "round A failed",
+          durationMs: 500,
+          artifacts: [],
+        },
+        eventId: `event-complete-round-a-${suiteId}`,
+        acceptedAt: "2026-08-09T00:01:10.000Z",
+      });
+
+      const snapshotMidRound = await batches.getSchedulingSnapshot(
+        batchId,
+        "2026-08-09T00:00:30.000Z",
+      );
+      // run B 仍在途，run A 已扣留：快照不应包含任何可调度 run。
+      expect(snapshotMidRound?.queuedRuns).toEqual([]);
+      const runAAfterFirstFailure = await handle.pool.query<{
+        status: string;
+        held_round: number;
+      }>("SELECT status, held_round FROM execution_runs WHERE id = $1", [runIdA]);
+      expect(runAAfterFirstFailure.rows[0]).toEqual({ status: "queued", held_round: 2 });
+
+      // 第 1 轮：run B 失败。整轮结束后两个 run 一起释放进入第 2 轮。
+      await executions.completeAttempt({
+        runnerId,
+        attemptId: attemptIdB,
+        completionId: `completion-round-b-${suiteId}`,
+        leaseTokenHash: "lease-token-hash-round-b",
+        resultDigest: `digest-round-b-${suiteId}`,
+        result: {
+          status: "failed",
+          resultCode: "TEST_ASSERTION_FAILED",
+          summary: "round B failed",
+          durationMs: 500,
+          artifacts: [],
+        },
+        eventId: `event-complete-round-b-${suiteId}`,
+        acceptedAt: "2026-08-09T00:01:20.000Z",
+      });
+
+      const snapshotAfterRound = await batches.getSchedulingSnapshot(
+        batchId,
+        "2026-08-09T00:00:30.000Z",
+      );
+      expect(snapshotAfterRound?.queuedRuns.map((run) => run.id).sort()).toEqual(
+        [runIdA, runIdB].sort(),
+      );
+      const batchAfterRound = await handle.pool.query<{ current_round: number }>(
+        "SELECT current_round FROM run_batches WHERE id = $1",
+        [batchId],
+      );
+      expect(batchAfterRound.rows[0]).toEqual({ current_round: 2 });
+      const runAReleased = await handle.pool.query<{ status: string; held_round: number }>(
+        "SELECT status, held_round FROM execution_runs WHERE id = $1",
+        [runIdA],
+      );
+      expect(runAReleased.rows[0]).toEqual({ status: "queued", held_round: 0 });
+    } finally {
+      await handle.pool.query("DELETE FROM run_batches WHERE id = $1", [batchId]);
+      await handle.pool.query("DELETE FROM case_versions WHERE source_id IN ($1, $2)", [
+        sourceId,
+        sourceId2,
+      ]);
+      await handle.pool.query("DELETE FROM case_sources WHERE id IN ($1, $2)", [
+        sourceId,
+        sourceId2,
+      ]);
+      await handle.pool.query("DELETE FROM runners WHERE id = $1", [runnerId]);
+      cleanupTestAttemptLogs(attemptLogs);
       await handle.close();
     }
   });

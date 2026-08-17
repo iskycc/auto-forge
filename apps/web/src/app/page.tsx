@@ -195,7 +195,7 @@ export default async function DashboardPage() {
         <article className="card bento-library">
           <div className="card-heading compact">
             <div>
-              <span className="eyebrow">用例库</span>
+              <span className="eyebrow">用例管理</span>
               <h2>已发现内容</h2>
             </div>
             <span className="soft-icon violet">
@@ -223,7 +223,7 @@ export default async function DashboardPage() {
             </div>
           </dl>
           <Link className="text-link" href="/cases">
-            打开用例库 <ArrowRight size={15} />
+            打开用例管理 <ArrowRight size={15} />
           </Link>
         </article>
 
@@ -287,7 +287,7 @@ export default async function DashboardPage() {
                 <FileArchive size={24} />
               </span>
               <strong>等待首个 JAR</strong>
-              <p>上传包含 TestNG `@Test` 注解的测试 JAR 开始构建用例库。</p>
+              <p>上传包含 TestNG `@Test` 注解的测试 JAR 开始构建用例资产。</p>
             </div>
           ) : (
             <div className="donut-layout">

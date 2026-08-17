@@ -5,6 +5,7 @@ import { join, resolve } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
+import { createAttemptLogStore } from "../src/attempt-log-store";
 import { createSqliteDatabase } from "../src/database";
 import { SqlitePlatformOperationsRepository } from "../src/sqlite-platform-operations";
 
@@ -224,14 +225,23 @@ describe("SQLite platform operations", () => {
   });
 
   it("reports low-cardinality operational counters from authoritative tables", async () => {
-    const { handle, repository } = fixture();
+    const { handle, attemptLogs, repository } = fixture();
     try {
       seedCompletedAttempt(handle);
+      attemptLogs.appendChunks({
+        batchId: "00000000-0000-4000-8000-000000000b01",
+        attemptId: "attempt-1",
+        receivedAt: "2026-08-11T01:00:00.000Z",
+        chunks: [
+          {
+            stream: "stdout",
+            sequence: 0,
+            content: "hello",
+            recordedAt: "2026-08-11T01:00:00.000Z",
+          },
+        ],
+      });
       handle.client.exec(`
-        INSERT INTO attempt_log_chunks
-          (attempt_id,stream,sequence,content,size_bytes,recorded_at,received_at)
-        VALUES ('attempt-1','stdout',0,'hello',5,
-                '2026-08-11T01:00:00.000Z','2026-08-11T01:00:00.000Z');
         INSERT INTO attempt_artifacts
           (id,attempt_id,relative_path,media_type,size_bytes,sha256,required,status,object_key,
            created_at,updated_at)
@@ -248,16 +258,18 @@ describe("SQLite platform operations", () => {
                 '2026-08-11T01:00:00.000Z');
       `);
 
-      await expect(repository.readOperationalMetrics()).resolves.toEqual({
+      const metrics = await repository.readOperationalMetrics();
+      expect(metrics).toMatchObject({
         activeLeases: 0,
         runnerCapacity: 1,
         runnerBusySlots: 0,
-        storedLogBytes: 5,
         uploadedArtifacts: 1,
         failedAttempts: 1,
         pendingCleanupJobs: 1,
         deadLetterCleanupJobs: 1,
       });
+      // 日志字节来自批次文件统计，文件大小包含 SQLite 页面开销。
+      expect(metrics.storedLogBytes).toBeGreaterThan(0);
     } finally {
       handle.close();
     }
@@ -386,6 +398,86 @@ describe("SQLite platform operations", () => {
       handle.close();
     }
   });
+
+  it("previews and executes log retention against per-batch log files", async () => {
+    const { handle, attemptLogs, repository } = fixture();
+    const batchId = "00000000-0000-4000-8000-000000000b01";
+    try {
+      seedCompletedAttempt(handle);
+      attemptLogs.appendChunks({
+        batchId,
+        attemptId: "attempt-1",
+        receivedAt: "2026-08-11T01:00:00.000Z",
+        chunks: [
+          {
+            stream: "stdout",
+            sequence: 0,
+            content: "retained-line",
+            recordedAt: "2026-08-11T01:00:00.000Z",
+          },
+        ],
+      });
+
+      const preview = await repository.previewRetention("log", "2026-08-12T00:00:00.000Z");
+      expect(preview).toMatchObject({ category: "log", eligibleRecords: 1 });
+      expect(preview.eligibleBytes).toBeGreaterThan(0);
+
+      const executed = await repository.executeRetention({
+        category: "log",
+        cutoffAt: "2026-08-12T00:00:00.000Z",
+        limit: 10,
+        recordedAt: "2026-08-12T00:00:00.000Z",
+      });
+      expect(executed).toEqual({ deletedRecords: 1, objectKeys: [] });
+      expect(attemptLogs.batchStoreStats([batchId]).get(batchId)).toBe(0);
+      // 主库不再保存日志表；结果记录保留。
+      expect(
+        handle.client
+          .prepare("SELECT count(*) AS count FROM sqlite_master WHERE name = 'attempt_log_chunks'")
+          .get(),
+      ).toEqual({ count: 0 });
+      expect(handle.client.prepare("SELECT count(*) AS count FROM run_attempts").get()).toEqual({
+        count: 1,
+      });
+    } finally {
+      handle.close();
+    }
+  });
+
+  it("removes per-batch log files when execution retention deletes batches", async () => {
+    const { handle, attemptLogs, repository } = fixture();
+    const batchId = "00000000-0000-4000-8000-000000000b01";
+    try {
+      seedCompletedAttempt(handle);
+      attemptLogs.appendChunks({
+        batchId,
+        attemptId: "attempt-1",
+        receivedAt: "2026-08-11T01:00:00.000Z",
+        chunks: [
+          {
+            stream: "stdout",
+            sequence: 0,
+            content: "batch-removal",
+            recordedAt: "2026-08-11T01:00:00.000Z",
+          },
+        ],
+      });
+
+      const executed = await repository.executeRetention({
+        category: "execution",
+        cutoffAt: "2026-08-12T00:00:00.000Z",
+        limit: 10,
+        recordedAt: "2026-08-12T00:00:00.000Z",
+      });
+      expect(executed).toEqual({ deletedRecords: 1, objectKeys: [] });
+      expect(attemptLogs.batchStoreStats([batchId]).get(batchId)).toBe(0);
+      expect(handle.client.prepare("SELECT count(*) AS count FROM run_batches").get()).toEqual({
+        count: 0,
+      });
+    } finally {
+      handle.close();
+    }
+  });
 });
 
 function fixture() {
@@ -410,7 +502,12 @@ function fixture() {
     VALUES ('suite-1','project-1','Regression','',1,'active',1,1,'{}','user-1','user-1',
             '2026-08-11T00:00:00.000Z','2026-08-11T00:00:00.000Z');
   `);
-  return { handle, repository: new SqlitePlatformOperationsRepository(handle) };
+  const attemptLogs = createAttemptLogStore(join(directory, "attempt-logs"));
+  return {
+    handle,
+    attemptLogs,
+    repository: new SqlitePlatformOperationsRepository(handle, attemptLogs),
+  };
 }
 
 function seedCompletedAttempt(handle: ReturnType<typeof createSqliteDatabase>) {
@@ -436,11 +533,11 @@ function seedCompletedAttempt(handle: ReturnType<typeof createSqliteDatabase>) {
     INSERT INTO run_batches
       (id,suite_id,suite_name,suite_version,status,retry_limit,environment_json,
        secret_bindings_json,total_runs,project_id,priority,created_at,updated_at)
-    VALUES ('batch-1','suite-1','Regression',1,'failed',0,'[]','[]',1,'project-1',0,'${now}','${now}');
+    VALUES ('00000000-0000-4000-8000-000000000b01','suite-1','Regression',1,'failed',0,'[]','[]',1,'project-1',0,'${now}','${now}');
     INSERT INTO execution_runs
       (id,batch_id,case_definition_id,case_version,display_name,class_name,parameters_json,status,
        attempt_count,created_at,updated_at)
-    VALUES ('run-1','batch-1','case-1',1,'Example Test','com.example.Test','{}','failed',1,'${now}','${now}');
+    VALUES ('run-1','00000000-0000-4000-8000-000000000b01','case-1',1,'Example Test','com.example.Test','{}','failed',1,'${now}','${now}');
     INSERT INTO run_attempts
       (id,execution_run_id,runner_id,attempt_number,status,scheduling_score,created_at,finished_at,
        outcome,result_code,result_summary,duration_ms,testng_result_json)

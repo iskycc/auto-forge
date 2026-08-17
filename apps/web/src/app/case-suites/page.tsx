@@ -32,7 +32,7 @@ export default async function CaseSuitesPage({
         <div>
           <span className="eyebrow">CaseSuite</span>
           <h1>用例任务</h1>
-          <p>创建可复用的测试集合，从用例库批量添加或随时移除用例。</p>
+          <p>创建可复用的测试集合，从用例管理批量添加或随时移除用例。</p>
         </div>
         <span className="hero-icon violet">
           <Layers3 size={24} />

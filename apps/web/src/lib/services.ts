@@ -35,6 +35,7 @@ import {
 } from "@autoforge/application";
 import { MemoryCache } from "@autoforge/cache/memory";
 import {
+  createAttemptLogStore,
   createSqliteDatabase,
   SqliteCaseCatalogRepository,
   SqliteCaseSuiteRepository,
@@ -96,11 +97,12 @@ async function createPlatformServices() {
       databasePath: config.databasePath,
       migrationsFolder: config.migrationsFolder,
     });
+    const attemptLogs = createAttemptLogStore(join(config.dataDirectory, "attempt-logs"));
     catalog = new SqliteCaseCatalogRepository(database);
     suites = new SqliteCaseSuiteRepository(database);
     runners = new SqliteRunnerRepository(database);
     identities = new SqliteIdentityAccessRepository(database);
-    executions = new SqliteExecutionControlRepository(database);
+    executions = new SqliteExecutionControlRepository(database, attemptLogs);
     environments = new SqliteExecutionEnvironmentRepository(database);
     secrets = new SqliteExecutionSecretRepository(database);
     batches = new SqliteRunBatchRepository(database);
@@ -108,9 +110,12 @@ async function createPlatformServices() {
     jobQueue = new SqliteJobQueue(database);
     cache = new MemoryCache();
     statisticsRepository = new SqlitePlatformStatisticsRepository(database);
-    operationsRepository = new SqlitePlatformOperationsRepository(database);
+    operationsRepository = new SqlitePlatformOperationsRepository(database, attemptLogs);
     projectStructuresRepository = new SqliteProjectStructureRepository(database);
-    closeDatabase = async () => database.close();
+    closeDatabase = async () => {
+      attemptLogs.close();
+      database.close();
+    };
   } else {
     const [
       {
@@ -140,6 +145,7 @@ async function createPlatformServices() {
       import("nats"),
       import("redis"),
     ]);
+    const attemptLogs = createAttemptLogStore(join(config.dataDirectory, "attempt-logs"));
     const database = createPostgresDatabase({
       connectionString: config.databaseUrl,
       migrationsFolder: config.migrationsFolder,
@@ -171,7 +177,10 @@ async function createPlatformServices() {
         throw error;
       });
       cache = new RedisCache(redis);
-      closeDatabase = () => database.close();
+      closeDatabase = () => {
+        attemptLogs.close();
+        return database.close();
+      };
       runnerRequestLimiter = new RedisRequestLimiter((script, options) =>
         redis.eval(script, options),
       );
@@ -197,13 +206,13 @@ async function createPlatformServices() {
     suites = new PostgresCaseSuiteRepository(database);
     runners = new PostgresRunnerRepository(database);
     identities = new PostgresIdentityAccessRepository(database);
-    executions = new PostgresExecutionControlRepository(database);
+    executions = new PostgresExecutionControlRepository(database, attemptLogs);
     environments = new PostgresExecutionEnvironmentRepository(database);
     secrets = new PostgresExecutionSecretRepository(database);
     batches = new PostgresRunBatchRepository(database);
     objectStore = new MinioObjectStore(config.minio);
     statisticsRepository = new PostgresPlatformStatisticsRepository(database);
-    operationsRepository = new PostgresPlatformOperationsRepository(database);
+    operationsRepository = new PostgresPlatformOperationsRepository(database, attemptLogs);
     projectStructuresRepository = new PostgresProjectStructureRepository(database);
   }
   const discovery = new TestNgJarDiscovery({
@@ -347,6 +356,7 @@ async function createPlatformServices() {
     objectStore,
     clock,
     ids,
+    batches,
   );
   const runnerProtocol = new RunnerProtocolController(executionControl);
   const publicStatistics = new PublicPlatformStatisticsService(

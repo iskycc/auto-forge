@@ -26,11 +26,11 @@ done
 
 (
   cd -- "${release_directory}"
-  sha256sum --check --strict SHA256SUMS
+  LC_ALL=C sha256sum --check --strict SHA256SUMS
 )
 (
   cd -- "$(dirname -- "${backup_path}")"
-  sha256sum --check --strict "$(basename -- "${backup_path}").sha256"
+  LC_ALL=C sha256sum --check --strict "$(basename -- "${backup_path}").sha256"
 )
 node - "${data_directory}/config/platform.json" "${release_directory}/release-manifest.json" <<'NODE'
 const { readFileSync } = require("node:fs");

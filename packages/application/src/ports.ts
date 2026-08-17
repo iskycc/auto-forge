@@ -67,6 +67,8 @@ import type {
   RunBatchExecutionPolicy,
   Runner,
   SchedulingDecision,
+  SchedulingEvent,
+  SchedulingEventType,
   SchedulingThresholds,
   SystemRoleBindingView,
   User,
@@ -482,6 +484,16 @@ export interface ExecutionControlRepository {
     eventId: string;
     requestedAt: string;
   }): Promise<boolean>;
+  // 事件写入需要按 attempt 反查批次/执行机上下文；claim/complete 的 DTO 不携带 batchId。
+  resolveAttemptSchedulingContext(attemptId: string): Promise<{
+    batchId: string;
+    executionRunId: string;
+    runnerId: string;
+    attemptNumber: number;
+    // execution_runs.display_name，供事件消息组装用例名。
+    displayName: string;
+    heldRound?: number;
+  } | null>;
 }
 
 export type ScheduledAssignmentRecord = {
@@ -1114,6 +1126,7 @@ export type CreateRunBatchRecord = {
   suiteName: string;
   suiteVersion: number;
   retryLimit: number;
+  retryMode?: "immediate" | "round";
   priority?: number;
   queueTimeoutMs?: number;
   claimTimeoutMs?: number;
@@ -1191,6 +1204,26 @@ export interface RunBatchRepository {
   ): Promise<string[]>;
   getSchedulingSnapshot(batchId: string, offlineBefore: string): Promise<SchedulingSnapshot | null>;
   reserveAssignments(input: ReserveSchedulingAssignmentsInput): Promise<number>;
+  appendSchedulingEvents(
+    events: Array<{
+      id: string;
+      batchId: string;
+      runnerId?: string;
+      executionRunId?: string;
+      attemptId?: string;
+      eventType: SchedulingEventType;
+      message: string;
+      payload?: Record<string, unknown>;
+      recordedAt: string;
+    }>,
+  ): Promise<void>;
+  listSchedulingEvents(input: {
+    batchId: string;
+    runnerId?: string;
+    // 游标：返回该 id 之后的记录（按 recorded_at, id 定位）
+    afterId?: string;
+    limit: number;
+  }): Promise<{ items: SchedulingEvent[]; nextAfterId?: string }>;
 }
 
 export type ApiTokenAuthentication = {

@@ -8,7 +8,7 @@ import type {
 import { FolderTree, UploadCloud } from "lucide-react";
 import { useState, type FormEvent } from "react";
 
-import { Button, Input, Select } from "@/components/ui";
+import { Button, FileInput, Input, Select } from "@/components/ui";
 import { readApiErrorMessage } from "@/lib/client-api";
 
 export function ProjectStructureManager({
@@ -261,7 +261,7 @@ export function ProjectStructureManager({
             </label>
             <label>
               本地文件
-              <Input name="file" type="file" accept=".zip,.tar.gz,.tgz" disabled={!canManage} />
+              <FileInput name="file" accept=".zip,.tar.gz,.tgz" disabled={!canManage} />
             </label>
             <Button className="primary-button" disabled={pending || !canManage} type="submit">
               上传并启用

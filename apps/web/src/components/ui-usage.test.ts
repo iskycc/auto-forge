@@ -82,14 +82,14 @@ describe("shared UI controls", () => {
     expect(stylesheet).toContain(".ui-input:focus");
   });
 
-  it("exposes administrator capabilities as direct primary navigation entries", () => {
+  it("exposes administrator capabilities inside administration groups", () => {
     const appShell = readFileSync(APP_SHELL, "utf8");
     const accessSettings = readFileSync(ACCESS_SETTINGS, "utf8");
     const managementPage = readFileSync(MANAGEMENT_PAGE, "utf8");
 
     expect(appShell).not.toContain("<span>管理中心</span>");
     expect(appShell).toContain('label: "用户管理"');
-    expect(appShell).toContain('label: "LDAP 目录"');
+    expect(appShell).toContain('label: "目录配置"');
     expect(appShell).toContain('label: "平台配置"');
     expect(managementPage).toContain('redirect("/settings/platform?section=configuration")');
     expect(accessSettings).toContain('id="users"');
@@ -100,7 +100,7 @@ describe("shared UI controls", () => {
     const appShell = readFileSync(APP_SHELL, "utf8");
     const suiteManager = readFileSync(CASE_SUITE_MANAGER, "utf8");
 
-    expect(appShell).toContain('label: "运维与审计"');
+    expect(appShell).toContain('label: "运维审计"');
     expect(appShell).toContain('activePrefixes: ["/settings/automation", "/audit"]');
     expect(appShell).not.toContain('label: "安全审计"');
     expect(suiteManager).toContain("<ProjectPicker");

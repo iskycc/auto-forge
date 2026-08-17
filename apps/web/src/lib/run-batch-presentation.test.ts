@@ -1,10 +1,14 @@
-import type { RunBatch } from "@autoforge/domain";
+import type { RunAttempt, RunBatch } from "@autoforge/domain";
 import { describe, expect, it } from "vitest";
 
 import {
+  batchTestNames,
+  formatBatchDuration,
   isActiveRunBatch,
   runBatchCompletionPercent,
   runBatchCoveragePercent,
+  runBatchDurationMs,
+  runBatchPassRate,
   runBatchStatusLabel,
 } from "./run-batch-presentation";
 
@@ -29,6 +33,84 @@ describe("run batch presentation", () => {
     expect(runBatchCoveragePercent(batch({ totalRuns: 0 }))).toBe(0);
     expect(runBatchCompletionPercent(batch({ succeededRuns: 2, failedRuns: 1 }))).toBe(60);
   });
+
+  it("computes pass rate from succeeded runs", () => {
+    expect(runBatchPassRate(batch({ totalRuns: 4, succeededRuns: 3 }))).toBe(75);
+    expect(runBatchPassRate(batch({ totalRuns: 0 }))).toBe(0);
+  });
+
+  it("computes duration between creation and terminal update", () => {
+    const terminal = batch({
+      createdAt: "2026-08-10T00:00:00.000Z",
+      updatedAt: "2026-08-10T00:05:30.000Z",
+    });
+    expect(runBatchDurationMs(terminal)).toBe(330_000);
+    expect(formatBatchDuration(330_000)).toBe("5m 30s");
+    expect(formatBatchDuration(0)).toBe("-");
+    expect(formatBatchDuration(3_661_000)).toBe("1h 1m 1s");
+  });
+
+  it("rejects non-positive durations", () => {
+    expect(runBatchDurationMs(batch({ updatedAt: "2026-08-09T00:00:00.000Z" }))).toBe(0);
+  });
+
+  it("collects unique test names across attempts", () => {
+    const attempts: RunAttempt[] = [
+      {
+        id: "attempt-1",
+        executionRunId: "run-1",
+        runnerId: "runner-1",
+        attemptNumber: 1,
+        status: "succeeded" as const,
+        schedulingScore: 0,
+        version: 1,
+        createdAt: "2026-08-10T00:00:00.000Z",
+        testNg: {
+          total: 2,
+          passed: 2,
+          failed: 0,
+          skipped: 0,
+          configurationFailures: 0,
+          detailsTruncated: false,
+          suites: [
+            {
+              name: "Suite A",
+              durationMs: 100,
+              total: 2,
+              passed: 2,
+              failed: 0,
+              skipped: 0,
+              configurationFailures: 0,
+              tests: [
+                {
+                  name: "Smoke",
+                  durationMs: 100,
+                  total: 2,
+                  passed: 2,
+                  failed: 0,
+                  skipped: 0,
+                  configurationFailures: 0,
+                  classes: [],
+                },
+              ],
+            },
+          ],
+        },
+      },
+      {
+        id: "attempt-2",
+        executionRunId: "run-2",
+        runnerId: "runner-1",
+        attemptNumber: 1,
+        status: "failed" as const,
+        schedulingScore: 0,
+        version: 1,
+        createdAt: "2026-08-10T00:00:00.000Z",
+      },
+    ];
+    expect(batchTestNames(attempts)).toEqual(["Smoke"]);
+    expect(batchTestNames([])).toEqual([]);
+  });
 });
 
 function batch(overrides: Partial<RunBatch>): RunBatch {
@@ -41,6 +123,8 @@ function batch(overrides: Partial<RunBatch>): RunBatch {
     status: "scheduled",
     priority: 0,
     retryLimit: 0,
+    retryMode: "immediate",
+    currentRound: 1,
     queueTimeoutMs: 86_400_000,
     claimTimeoutMs: 300_000,
     executionTimeoutMs: 3_600_000,
