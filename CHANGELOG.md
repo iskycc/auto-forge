@@ -6,6 +6,24 @@ and known limitations.
 
 ## Unreleased
 
+## 0.4.12 - 2026-08-17
+
+### Added
+
+- Deregistered runners can now be deleted from the runners page: a tombstone purge clears the
+  credential permanently, removes the record from listings, keeps historical execution references,
+  and writes an audit event. Deleting a runner that has not been deregistered is rejected.
+
+### Changed
+
+- JDK and dependency JAR archive uploads are staged inside the platform data directory
+  (`upload-staging/`) instead of the OS temp dir, so uploads no longer fail with ENOSPC on hosts
+  where /tmp is a small tmpfs; a full data disk now returns an explicit storage error (HTTP 507).
+
+### Database
+
+- SQLite migration 0029 and PostgreSQL migration 0028 add the `runners.purged_at` column.
+
 ## 0.4.11 - 2026-08-17
 
 ### Added
