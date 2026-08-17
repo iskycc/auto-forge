@@ -4,6 +4,17 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## 0.4.17 - 2026-08-17
+
+### Fixed
+
+- Runner artifact discovery no longer fails the whole attempt when the workspace contains symbolic
+  links or special files that match no artifact rule (for example the in-bounds symlinks inside an
+  extracted JDK `legal/` directory). Only symlinks or non-regular files matched by an artifact
+  pattern are still rejected, which keeps the upload safety contract; unmatched entries are skipped.
+  Previously a successful test run could be reported as failed with
+  `discover artifacts: artifact scan rejected symbolic link ...`.
+
 ## 0.4.16 - 2026-08-17
 
 ### Fixed

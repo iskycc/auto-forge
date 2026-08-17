@@ -68,10 +68,27 @@ func DiscoverArtifacts(ctx context.Context, workspace string, rules []ArtifactRu
 		if path == workspace {
 			return nil
 		}
-		if entry.Type()&os.ModeSymlink != 0 {
-			return fmt.Errorf("artifact scan rejected symbolic link %q", path)
-		}
 		if entry.IsDir() {
+			return nil
+		}
+		relative, err := filepath.Rel(workspace, path)
+		if err != nil || !filepath.IsLocal(relative) {
+			return errors.New("artifact path escapes the attempt workspace")
+		}
+		relative = filepath.ToSlash(relative)
+		matchedRule := -1
+		for index := range compiled {
+			if compiled[index].pattern.MatchString(relative) {
+				matchedRule = index
+				break
+			}
+		}
+		// 工具链目录（如 JDK legal 下的符号链接）与产物无关：只有被产物规则命中的
+		// 符号链接/特殊文件才拒绝，未命中的直接跳过，不参与收集也不算入配额。
+		if entry.Type()&os.ModeSymlink != 0 {
+			if matchedRule >= 0 {
+				return fmt.Errorf("artifact scan rejected symbolic link %q", path)
+			}
 			return nil
 		}
 		info, err := entry.Info()
@@ -79,18 +96,16 @@ func DiscoverArtifacts(ctx context.Context, workspace string, rules []ArtifactRu
 			return err
 		}
 		if !info.Mode().IsRegular() {
-			return fmt.Errorf("artifact scan rejected non-regular file %q", path)
-		}
-		relative, err := filepath.Rel(workspace, path)
-		if err != nil || !filepath.IsLocal(relative) {
-			return errors.New("artifact path escapes the attempt workspace")
-		}
-		relative = filepath.ToSlash(relative)
-		for index := range compiled {
-			rule := &compiled[index]
-			if !rule.pattern.MatchString(relative) {
-				continue
+			if matchedRule >= 0 {
+				return fmt.Errorf("artifact scan rejected non-regular file %q", path)
 			}
+			return nil
+		}
+		if matchedRule < 0 {
+			return nil
+		}
+		{
+			rule := &compiled[matchedRule]
 			rule.matched = true
 			if len(artifacts) >= maximumArtifactCount {
 				return fmt.Errorf("artifact count exceeds %d", maximumArtifactCount)
@@ -121,7 +136,6 @@ func DiscoverArtifacts(ctx context.Context, workspace string, rules []ArtifactRu
 				Required:     rule.Required,
 			})
 			totalBytes += info.Size()
-			break
 		}
 		return nil
 	})

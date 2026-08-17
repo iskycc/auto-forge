@@ -69,6 +69,41 @@ func TestDiscoverArtifactsAllowsEmptyOptionalRulesAndRejectsTraversal(t *testing
 	}
 }
 
+func TestDiscoverArtifactsSkipsUnmatchedToolchainSymlinks(t *testing.T) {
+	workspace := t.TempDir()
+	// 复现 JDK legal 目录场景：runtime 下的符号链接不匹配任何产物规则，不得导致扫描失败。
+	legal := filepath.Join(workspace, "runtime", "jdk", "legal", "java.compiler")
+	if err := os.MkdirAll(legal, 0o700); err != nil {
+		t.Fatalf("create legal directory: %v", err)
+	}
+	target := filepath.Join(legal, "LICENSE")
+	if err := os.WriteFile(target, []byte("license"), 0o600); err != nil {
+		t.Fatalf("write link target: %v", err)
+	}
+	if err := os.Symlink("LICENSE", filepath.Join(legal, "ADDITIONAL_LICENSE_INFO")); err != nil {
+		t.Fatalf("create toolchain symlink: %v", err)
+	}
+	report := filepath.Join(workspace, "reports", "testng", "results.xml")
+	if err := os.MkdirAll(filepath.Dir(report), 0o700); err != nil {
+		t.Fatalf("create report directory: %v", err)
+	}
+	if err := os.WriteFile(report, []byte("<testng-results/>"), 0o600); err != nil {
+		t.Fatalf("write report: %v", err)
+	}
+	artifacts, err := DiscoverArtifacts(
+		context.Background(),
+		workspace,
+		[]ArtifactRule{{Pattern: "reports/testng/**", Required: true, MediaType: "application/xml"}},
+		1024,
+	)
+	if err != nil {
+		t.Fatalf("DiscoverArtifacts() error = %v", err)
+	}
+	if len(artifacts) != 1 || artifacts[0].RelativePath != "reports/testng/results.xml" {
+		t.Fatalf("artifacts = %#v", artifacts)
+	}
+}
+
 func TestDiscoverArtifactsRejectsAggregateByteOverflow(t *testing.T) {
 	workspace := t.TempDir()
 	for _, name := range []string{"first.log", "second.log"} {
