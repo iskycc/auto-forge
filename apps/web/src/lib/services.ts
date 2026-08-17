@@ -251,6 +251,7 @@ async function createPlatformServices() {
     executions,
     clock,
     ids,
+    batches,
   );
   const runBatches = new RunBatchSchedulingService(
     batches,

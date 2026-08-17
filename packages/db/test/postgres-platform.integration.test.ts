@@ -712,7 +712,16 @@ describe.skipIf(!connectionString)("PostgreSQL platform repositories", () => {
         eventIds: [`recover-event-${runnerId}`],
         limit: 10,
       });
-      expect(recovered).toBe(1);
+      expect(recovered).toEqual([
+        {
+          attemptId: `attempt-${runnerId}`,
+          batchId,
+          executionRunId: `run-${runnerId}`,
+          runnerId,
+          reason: "lease_expired",
+          retryScheduled: true,
+        },
+      ]);
       const run = await handle.pool.query<{ status: string }>(
         "SELECT status FROM execution_runs WHERE id = $1",
         [`run-${runnerId}`],

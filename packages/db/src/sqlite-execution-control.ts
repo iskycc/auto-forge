@@ -1,4 +1,9 @@
-import type { ClaimedAssignmentRecord, ExecutionControlRepository } from "@autoforge/application";
+import type {
+  AttemptRecoveryReason,
+  ClaimedAssignmentRecord,
+  ExecutionControlRepository,
+  RecoveredAttemptExpiration,
+} from "@autoforge/application";
 import {
   attemptEventPageSchema,
   completeAttemptResponseSchema,
@@ -100,9 +105,6 @@ type AttemptEventRow = {
   details_json: string;
   recorded_at: string;
 };
-
-type AttemptExpirationReason =
-  "claim_timeout" | "lease_expired" | "execution_timeout" | "upload_timeout";
 
 export class SqliteExecutionControlRepository implements ExecutionControlRepository {
   constructor(
@@ -718,7 +720,7 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
 
   async recoverExpired(
     input: Parameters<ExecutionControlRepository["recoverExpired"]>[0],
-  ): Promise<number> {
+  ): Promise<RecoveredAttemptExpiration[]> {
     return this.handle.client.transaction(() => {
       const queued = this.handle.client
         .prepare(
@@ -784,7 +786,7 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
         lease_id: string;
         assignment_id: string;
         attempt_id: string;
-        expiration_reason: AttemptExpirationReason;
+        expiration_reason: AttemptRecoveryReason;
       }>;
       const unclaimed = this.handle.client
         .prepare(
@@ -794,8 +796,9 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
         .all(input.now, Math.max(0, input.limit - recovered - active.length)) as Array<{
         assignment_id: string;
         attempt_id: string;
-        expiration_reason: AttemptExpirationReason;
+        expiration_reason: AttemptRecoveryReason;
       }>;
+      const recoveredAttempts: RecoveredAttemptExpiration[] = [];
       for (const expired of [...active, ...unclaimed]) {
         const eventId = input.eventIds[recovered];
         if (!eventId) break;
@@ -806,19 +809,19 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
             )
             .run(expired.lease_id);
         }
-        if (
-          this.expireAttempt(
-            expired.assignment_id,
-            expired.attempt_id,
-            input.now,
-            eventId,
-            expired.expiration_reason,
-          )
-        ) {
+        const detail = this.expireAttempt(
+          expired.assignment_id,
+          expired.attempt_id,
+          input.now,
+          eventId,
+          expired.expiration_reason,
+        );
+        if (detail) {
           recovered += 1;
+          recoveredAttempts.push(detail);
         }
       }
-      return recovered;
+      return recoveredAttempts;
     })();
   }
 
@@ -1041,10 +1044,10 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
     attemptId: string,
     recordedAt: string,
     eventId: string,
-    expirationReason: AttemptExpirationReason,
-  ): boolean {
+    expirationReason: AttemptRecoveryReason,
+  ): RecoveredAttemptExpiration | null {
     const control = this.findAttemptControl(attemptId);
-    if (!control || isTerminalAttemptStatus(control.status)) return false;
+    if (!control || isTerminalAttemptStatus(control.status)) return null;
     const decision = outcomeAfterCompletion({
       outcome: "timed_out",
       attemptNumber: control.attempt_number,
@@ -1104,7 +1107,14 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
       });
     }
     this.updateBatchStatus(control.batch_id, recordedAt, eventId, expiration.eventType);
-    return true;
+    return {
+      attemptId,
+      batchId: control.batch_id,
+      executionRunId: control.execution_run_id,
+      runnerId: expirationReason === "claim_timeout" ? null : control.runner_id,
+      reason: expirationReason,
+      retryScheduled: decision.retryScheduled,
+    };
   }
 
   private cancelRunWithinTransaction(input: {
@@ -1493,7 +1503,7 @@ function matchesAgent(
   );
 }
 
-function attemptExpiration(reason: AttemptExpirationReason): {
+function attemptExpiration(reason: AttemptRecoveryReason): {
   eventType: string;
   resultCode: string;
   summary: string;

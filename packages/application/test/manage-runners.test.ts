@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 
-import type { ExecutionControlRepository, RunnerRepository } from "../src/ports";
+import type {
+  ExecutionControlRepository,
+  RunBatchRepository,
+  RunnerRepository,
+} from "../src/ports";
 import { RunnerControlService } from "../src/manage-runners";
 
 const now = new Date("2026-08-09T00:00:00.000Z");
@@ -8,6 +12,7 @@ const now = new Date("2026-08-09T00:00:00.000Z");
 function serviceWith(
   runners: Partial<RunnerRepository>,
   executions?: Partial<ExecutionControlRepository>,
+  batches?: Partial<RunBatchRepository>,
 ) {
   const credentials = {
     issue: vi.fn().mockReturnValue("issued-credential"),
@@ -21,6 +26,7 @@ function serviceWith(
     executions as ExecutionControlRepository,
     { now: () => new Date(now.getTime()) },
     { next: vi.fn().mockReturnValue("event-id") },
+    (batches ?? { appendSchedulingEvents: vi.fn() }) as RunBatchRepository,
   );
   return { service, credentials };
 }
@@ -102,13 +108,31 @@ describe("RunnerControlService credentials", () => {
 
   it("deregisters the runner and immediately recovers expired leases", async () => {
     const deregister = vi.fn().mockResolvedValue({ id: "runner-1", state: "disabled" });
-    const recoverExpired = vi.fn().mockResolvedValue(1);
+    const recoverExpired = vi.fn().mockResolvedValue([
+      {
+        attemptId: "attempt-1",
+        batchId: "batch-1",
+        executionRunId: "run-1",
+        runnerId: "runner-1",
+        reason: "lease_expired",
+        retryScheduled: true,
+      },
+    ]);
+    const resolveAttemptSchedulingContext = vi.fn().mockResolvedValue({
+      batchId: "batch-1",
+      executionRunId: "run-1",
+      runnerId: "runner-1",
+      attemptNumber: 2,
+      displayName: "冒烟用例",
+    });
+    const appendSchedulingEvents = vi.fn().mockResolvedValue(undefined);
     const { service } = serviceWith(
       {
         get: vi.fn().mockResolvedValue({ id: "runner-1", state: "online" }),
         deregister,
       },
-      { recoverExpired },
+      { recoverExpired, resolveAttemptSchedulingContext },
+      { appendSchedulingEvents },
     );
 
     await service.deregisterRunner("runner-1");
@@ -122,6 +146,24 @@ describe("RunnerControlService credentials", () => {
       eventIds: expect.arrayContaining(["event-id"]),
       limit: 100,
     });
+    expect(appendSchedulingEvents).toHaveBeenCalledWith([
+      expect.objectContaining({
+        batchId: "batch-1",
+        runnerId: "runner-1",
+        executionRunId: "run-1",
+        attemptId: "attempt-1",
+        eventType: "attempt_completed",
+        message:
+          "用例「冒烟用例」第 2 次执行失败（LEASE_EXPIRED：执行机掉线，租约过期未完成），将安排重试",
+        payload: {
+          attemptNumber: 2,
+          outcome: "failed",
+          resultCode: "LEASE_EXPIRED",
+          recoveryReason: "lease_expired",
+          retryScheduled: true,
+        },
+      }),
+    ]);
   });
 
   it("purges a deregistered runner record", async () => {

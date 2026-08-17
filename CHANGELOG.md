@@ -4,6 +4,18 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## Unreleased
+
+### Fixed
+
+- Scheduling logs (both the batch-wide 调度日志 and the per-runner log) now explain failures that
+  happen outside the test case itself. Completion events for failed/timed-out attempts include the
+  result code and a compact single-line failure summary (for example
+  `ARTIFACT_DISCOVERY_REJECTED：discover artifacts: ...`) directly in the event message, and the
+  recovery sweep now writes scheduling events for attempts reclaimed after lease expiry, execution
+  timeout, upload/completion timeout, or assignment claim timeout, so a dropped or offline runner no
+  longer leaves the schedule log silent.
+
 ## 0.4.17 - 2026-08-17
 
 ### Fixed

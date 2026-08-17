@@ -1,4 +1,9 @@
-import type { ClaimedAssignmentRecord, ExecutionControlRepository } from "@autoforge/application";
+import type {
+  AttemptRecoveryReason,
+  ClaimedAssignmentRecord,
+  ExecutionControlRepository,
+  RecoveredAttemptExpiration,
+} from "@autoforge/application";
 import {
   attemptEventPageSchema,
   completeAttemptResponseSchema,
@@ -101,9 +106,6 @@ type AttemptEventRow = {
   details_json: string;
   recorded_at: string;
 };
-
-type AttemptExpirationReason =
-  "claim_timeout" | "lease_expired" | "execution_timeout" | "upload_timeout";
 
 export class PostgresExecutionControlRepository implements ExecutionControlRepository {
   constructor(
@@ -769,7 +771,7 @@ export class PostgresExecutionControlRepository implements ExecutionControlRepos
 
   async recoverExpired(
     input: Parameters<ExecutionControlRepository["recoverExpired"]>[0],
-  ): Promise<number> {
+  ): Promise<RecoveredAttemptExpiration[]> {
     await this.handle.ready;
     return this.transaction(async (client) => {
       const queued = await client.query<{ id: string; batch_id: string }>(
@@ -799,7 +801,7 @@ export class PostgresExecutionControlRepository implements ExecutionControlRepos
         lease_id: string;
         assignment_id: string;
         attempt_id: string;
-        expiration_reason: AttemptExpirationReason;
+        expiration_reason: AttemptRecoveryReason;
       }>(
         `SELECT l.id AS lease_id, a.id AS assignment_id, a.attempt_id,
            CASE WHEN ra.upload_started_at IS NOT NULL
@@ -835,13 +837,14 @@ export class PostgresExecutionControlRepository implements ExecutionControlRepos
       const unclaimed = await client.query<{
         assignment_id: string;
         attempt_id: string;
-        expiration_reason: AttemptExpirationReason;
+        expiration_reason: AttemptRecoveryReason;
       }>(
         `SELECT id AS assignment_id, attempt_id, 'claim_timeout' AS expiration_reason FROM assignments
          WHERE status = 'pending' AND claim_deadline_at <= $1 ORDER BY claim_deadline_at
          LIMIT $2 FOR UPDATE SKIP LOCKED`,
         [input.now, remaining],
       );
+      const recoveredAttempts: RecoveredAttemptExpiration[] = [];
       for (const expired of [...active.rows, ...unclaimed.rows]) {
         const eventId = input.eventIds[recovered];
         if (!eventId) break;
@@ -851,20 +854,20 @@ export class PostgresExecutionControlRepository implements ExecutionControlRepos
             [expired.lease_id],
           );
         }
-        if (
-          await expireAttempt(
-            client,
-            expired.assignment_id,
-            expired.attempt_id,
-            input.now,
-            eventId,
-            expired.expiration_reason,
-          )
-        ) {
+        const detail = await expireAttempt(
+          client,
+          expired.assignment_id,
+          expired.attempt_id,
+          input.now,
+          eventId,
+          expired.expiration_reason,
+        );
+        if (detail) {
           recovered += 1;
+          recoveredAttempts.push(detail);
         }
       }
-      return recovered;
+      return recoveredAttempts;
     });
   }
 
@@ -1173,10 +1176,10 @@ async function expireAttempt(
   attemptId: string,
   recordedAt: string,
   eventId: string,
-  expirationReason: AttemptExpirationReason,
-): Promise<boolean> {
+  expirationReason: AttemptRecoveryReason,
+): Promise<RecoveredAttemptExpiration | null> {
   const control = await findAttemptControl(client, attemptId);
-  if (!control || isTerminalAttemptStatus(control.status)) return false;
+  if (!control || isTerminalAttemptStatus(control.status)) return null;
   const decision = outcomeAfterCompletion({
     outcome: "timed_out",
     attemptNumber: control.attempt_number,
@@ -1233,7 +1236,14 @@ async function expireAttempt(
     });
   }
   await updateBatchStatus(client, control.batch_id, recordedAt, eventId, expiration.eventType);
-  return true;
+  return {
+    attemptId,
+    batchId: control.batch_id,
+    executionRunId: control.execution_run_id,
+    runnerId: expirationReason === "claim_timeout" ? null : control.runner_id,
+    reason: expirationReason,
+    retryScheduled: decision.retryScheduled,
+  };
 }
 
 async function cancelRun(
@@ -1589,7 +1599,7 @@ function matchesAgent(
   );
 }
 
-function attemptExpiration(reason: AttemptExpirationReason): {
+function attemptExpiration(reason: AttemptRecoveryReason): {
   eventType: string;
   resultCode: string;
   summary: string;

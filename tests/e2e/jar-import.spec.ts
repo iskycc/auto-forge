@@ -652,6 +652,12 @@ public class MixedVisibleTest {
   await page.getByRole("button", { name: "初始轮次", exact: true }).click();
   // 失败用例的终态原因码直接显示在状态列，无需展开详情。
   await expect(page.getByText("TEST_ASSERTION_FAILED", { exact: true })).toBeVisible();
+  // 总体调度日志必须能定位用例之外/失败的异常：原因码与精简摘要都要出现在事件里。
+  await page.getByRole("button", { name: "总体调度日志" }).click();
+  await expect(page.locator(".scheduling-log")).toContainText("TEST_ASSERTION_FAILED");
+  await expect(page.locator(".scheduling-log")).toContainText("E2E marker stack line");
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".scheduling-log")).toHaveCount(0);
   await page.getByRole("button", { name: "查看日志" }).click();
   await expect(page.locator(".execution-log")).toContainText("first attempt assertion failed");
   await expect(page.locator(".execution-log")).toHaveClass(/execution-log-dark/);

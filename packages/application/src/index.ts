@@ -8,6 +8,7 @@ export * from "./manage-identity-access";
 export * from "./manage-project-structure";
 export * from "./manage-runners";
 export * from "./ports";
+export * from "./recovery-scheduling-events";
 export * from "./schedule-run-batches";
 export * from "./read-public-statistics";
 export * from "./run-job-worker";

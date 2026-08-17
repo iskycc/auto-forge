@@ -345,7 +345,16 @@ describe("SQLite management repositories", () => {
         eventIds: ["event-recover-rotate"],
         limit: 10,
       });
-      expect(recovered).toBe(1);
+      expect(recovered).toEqual([
+        {
+          attemptId: "attempt-rotate",
+          batchId: "batch-rotate",
+          executionRunId: "run-rotate",
+          runnerId: "runner-rotate",
+          reason: "lease_expired",
+          retryScheduled: true,
+        },
+      ]);
       const leaseAfter = handle.client
         .prepare("SELECT status FROM assignment_leases WHERE id = ?")
         .get("lease-rotate") as { status: string };
@@ -1573,7 +1582,16 @@ describe("SQLite management repositories", () => {
           eventIds: ["event-expire-control"],
           limit: 1,
         }),
-      ).resolves.toBe(1);
+      ).resolves.toEqual([
+        {
+          attemptId: "attempt-expiry-control",
+          batchId: "batch-expiry-control",
+          executionRunId: "run-expiry-control",
+          runnerId: "runner-control",
+          reason: "lease_expired",
+          retryScheduled: false,
+        },
+      ]);
       expect(await batches.get("batch-expiry-control")).toMatchObject({
         status: "failed",
         timedOutRuns: 1,
@@ -1662,7 +1680,13 @@ describe("SQLite management repositories", () => {
           eventIds: ["event-execution-timeout"],
           limit: 1,
         }),
-      ).resolves.toBe(1);
+      ).resolves.toEqual([
+        expect.objectContaining({
+          attemptId: "attempt-execution-timeout",
+          reason: "execution_timeout",
+          retryScheduled: false,
+        }),
+      ]);
       expect(
         handle.client
           .prepare("SELECT status, result_code FROM run_attempts WHERE id = ?")
@@ -1700,7 +1724,7 @@ describe("SQLite management repositories", () => {
           eventIds: ["unused-second-execution-timeout-event"],
           limit: 1,
         }),
-      ).resolves.toBe(0);
+      ).resolves.toEqual([]);
       expect(await batches.get("batch-execution-timeout")).toMatchObject({
         status: "failed",
         failedRuns: 0,
@@ -1757,13 +1781,14 @@ describe("SQLite management repositories", () => {
           scheduledAt: "2026-08-09T00:03:11.001Z",
         }),
       ).resolves.toBe(0);
+      // 排队超时的 run 从未产生 attempt，不进入回收明细；批次状态断言在下方覆盖。
       await expect(
         executions.recoverExpired({
           now: "2026-08-09T00:03:11.001Z",
           eventIds: ["event-queue-timeout"],
           limit: 1,
         }),
-      ).resolves.toBe(1);
+      ).resolves.toEqual([]);
       expect(await batches.get("batch-queue-timeout")).toMatchObject({
         status: "failed",
         timedOutRuns: 1,
@@ -1826,7 +1851,14 @@ describe("SQLite management repositories", () => {
           eventIds: ["event-claim-timeout"],
           limit: 1,
         }),
-      ).resolves.toBe(1);
+      ).resolves.toEqual([
+        expect.objectContaining({
+          attemptId: "attempt-claim-timeout",
+          runnerId: null,
+          reason: "claim_timeout",
+          retryScheduled: false,
+        }),
+      ]);
       expect(
         handle.client
           .prepare("SELECT status, result_code FROM run_attempts WHERE id = ?")
@@ -1900,7 +1932,14 @@ describe("SQLite management repositories", () => {
           eventIds: ["event-upload-timeout"],
           limit: 1,
         }),
-      ).resolves.toBe(1);
+      ).resolves.toEqual([
+        expect.objectContaining({
+          attemptId: "attempt-upload-timeout",
+          runnerId: "runner-control",
+          reason: "upload_timeout",
+          retryScheduled: false,
+        }),
+      ]);
       expect(
         handle.client
           .prepare("SELECT status, result_code FROM run_attempts WHERE id = ?")

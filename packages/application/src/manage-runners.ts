@@ -5,9 +5,11 @@ import type {
   Clock,
   ExecutionControlRepository,
   IdGenerator,
+  RunBatchRepository,
   RunnerCredentialPort,
   RunnerRepository,
 } from "./ports";
+import { buildRecoverySchedulingEvents } from "./recovery-scheduling-events";
 
 const HEARTBEAT_INTERVAL_SECONDS = 15;
 const OFFLINE_AFTER_SECONDS = 45;
@@ -42,6 +44,7 @@ export class RunnerControlService {
     private readonly executions: ExecutionControlRepository,
     private readonly clock: Clock,
     private readonly ids: IdGenerator,
+    private readonly batches: RunBatchRepository,
   ) {}
 
   async register(bootstrapToken: string, input: RunnerRegistrationInput) {
@@ -178,16 +181,26 @@ export class RunnerControlService {
 
   /**
    * 注销执行机：身份失效并禁用，活跃租约立即到期以便重新排队。
+   * 回收命中的 attempt 同步写调度事件，让总体/单 Runner 日志能看到回收原因。
    */
   async deregisterRunner(runnerId: string) {
     await this.get(runnerId);
     const now = this.clock.now().toISOString();
     const runner = await this.runners.deregister({ runnerId, deregisteredAt: now });
-    await this.executions.recoverExpired({
+    const recovered = await this.executions.recoverExpired({
       now,
       eventIds: Array.from({ length: DEREGISTER_RECOVERY_LIMIT }, () => this.ids.next()),
       limit: DEREGISTER_RECOVERY_LIMIT,
     });
+    const recoveryEvents = await buildRecoverySchedulingEvents({
+      recovered,
+      resolveContext: (attemptId) => this.executions.resolveAttemptSchedulingContext(attemptId),
+      recordedAt: now,
+      nextEventId: () => this.ids.next(),
+    });
+    if (recoveryEvents.length > 0) {
+      await this.batches.appendSchedulingEvents(recoveryEvents);
+    }
     return runner;
   }
 

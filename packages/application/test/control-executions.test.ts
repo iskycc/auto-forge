@@ -152,7 +152,7 @@ describe("execution data scope", () => {
 describe("Runner execution compatibility", () => {
   it("allows claims without cgroup isolation when the remaining capabilities are compatible", async () => {
     const executions = {
-      recoverExpired: vi.fn().mockResolvedValue(undefined),
+      recoverExpired: vi.fn().mockResolvedValue([]),
       claim: vi.fn().mockResolvedValue([]),
     } as unknown as ExecutionControlRepository;
     const runners = {
@@ -201,6 +201,99 @@ describe("Runner execution compatibility", () => {
       }),
     ).resolves.toMatchObject({ assignments: [] });
     expect(executions.claim).toHaveBeenCalledOnce();
+  });
+
+  it("writes scheduling events for attempts recovered before claiming", async () => {
+    const appended: Array<Array<Record<string, unknown>>> = [];
+    const executions = {
+      recoverExpired: vi.fn().mockResolvedValue([
+        {
+          attemptId: "attempt-expired",
+          batchId: "batch-1",
+          executionRunId: "run-1",
+          runnerId: null,
+          reason: "claim_timeout",
+          retryScheduled: false,
+        },
+      ]),
+      resolveAttemptSchedulingContext: vi.fn().mockResolvedValue({
+        batchId: "batch-1",
+        executionRunId: "run-1",
+        runnerId: "runner-offline",
+        attemptNumber: 1,
+        displayName: "冒烟用例",
+      }),
+      claim: vi.fn().mockResolvedValue([]),
+    } as unknown as ExecutionControlRepository;
+    const runners = {
+      findByCredentialHash: vi.fn().mockResolvedValue({
+        id: "runner-1",
+        name: "Runner 1",
+        state: "online",
+        os: "linux",
+        architecture: "amd64",
+        agentVersion: "0.2.2",
+        protocolVersion: 1,
+        labels: [],
+        capabilities: ["executor:testng-v1", "java:21.0.8", "testng:7.11.0"],
+        maxConcurrency: 1,
+        busySlots: 0,
+        lastSeenAt: "2026-08-09T00:00:00.000Z",
+        terminalEnabled: false,
+        createdAt: "2026-08-09T00:00:00.000Z",
+        updatedAt: "2026-08-09T00:00:00.000Z",
+      }),
+    } as unknown as RunnerRepository;
+    const batches = {
+      appendSchedulingEvents: vi.fn(async (events: Array<Record<string, unknown>>) => {
+        appended.push(events);
+      }),
+    } as unknown as RunBatchRepository;
+    const service = new ExecutionControlService(
+      executions,
+      runners,
+      {
+        issue: vi.fn(),
+        issueBootstrapToken: vi.fn(),
+        hash: (value) => `hash:${value}`,
+        verifyBootstrapToken: vi.fn(),
+      },
+      { available: true, encrypt: vi.fn(), decrypt: vi.fn() },
+      {} as JarObjectStorePort,
+      { now: () => new Date("2026-08-09T00:00:00.000Z") },
+      { next: () => "id-1" },
+      batches,
+    );
+
+    await service.claim("runner-1", "credential", {
+      schemaVersion: 1,
+      requestId: "request-1",
+      availableSlots: 1,
+      labels: [],
+      capabilities: ["executor:testng-v1", "java:21.0.8", "testng:7.11.0"],
+      waitSeconds: 0,
+    });
+
+    expect(appended).toHaveLength(1);
+    expect(appended[0]).toEqual([
+      expect.objectContaining({
+        batchId: "batch-1",
+        executionRunId: "run-1",
+        attemptId: "attempt-expired",
+        eventType: "attempt_completed",
+        message:
+          "用例「冒烟用例」第 1 次执行失败（ASSIGNMENT_CLAIM_TIMEOUT：任务在领取截止前无人领取）",
+        payload: {
+          attemptNumber: 1,
+          outcome: "failed",
+          resultCode: "ASSIGNMENT_CLAIM_TIMEOUT",
+          recoveryReason: "claim_timeout",
+          retryScheduled: false,
+        },
+      }),
+    ]);
+    // claim_timeout 无人领取，事件不带 runnerId，只出现在总体调度日志。
+    expect(appended[0]?.[0]).not.toHaveProperty("runnerId");
   });
 });
 
@@ -298,8 +391,14 @@ describe("attempt completion scheduling events", () => {
         executionRunId: "run-1",
         attemptId: "attempt-1",
         eventType: "attempt_completed",
-        message: "用例「冒烟用例」第 2 次执行失败",
-        payload: { attemptNumber: 2, outcome: "failed", durationMs: 12_000 },
+        message: "用例「冒烟用例」第 2 次执行失败（TESTNG_FAILURE：1 个用例失败）",
+        payload: {
+          attemptNumber: 2,
+          outcome: "failed",
+          durationMs: 12_000,
+          resultCode: "TESTNG_FAILURE",
+          summary: "1 个用例失败",
+        },
         recordedAt: "2026-08-09T00:00:00.000Z",
       },
       {
@@ -307,8 +406,8 @@ describe("attempt completion scheduling events", () => {
         batchId: "batch-1",
         executionRunId: "run-1",
         eventType: "run_held_for_round",
-        message: "该用例已失败，等待下一轮重试",
-        payload: { heldRound: 1 },
+        message: "该用例已失败，等待下一轮重试（TESTNG_FAILURE）",
+        payload: { heldRound: 1, resultCode: "TESTNG_FAILURE" },
         recordedAt: "2026-08-09T00:00:00.000Z",
       },
     ]);
@@ -355,6 +454,39 @@ describe("attempt completion scheduling events", () => {
       eventType: "attempt_completed",
       message: "用例「冒烟用例」第 3 次执行成功",
       payload: { attemptNumber: 3, outcome: "succeeded", durationMs: 12_000 },
+    });
+    // 成功事件的 message 保持原样，payload 不带失败摘要。
+    expect(appended[0]?.[0]?.payload).not.toHaveProperty("summary");
+  });
+
+  it("enriches the failure message with the summary extracted from the log tail", async () => {
+    const { service, appended } = buildService({
+      response: { disposition: "accepted", retryScheduled: false },
+      context: {
+        batchId: "batch-1",
+        executionRunId: "run-1",
+        runnerId: "runner-1",
+        attemptNumber: 1,
+        displayName: "冒烟用例",
+      },
+    });
+
+    await service.complete("runner-1", "credential", "attempt-1", {
+      ...completionInput,
+      result: {
+        ...completionInput.result,
+        resultCode: "ARTIFACT_DISCOVERY_REJECTED",
+        summary: "discover artifacts: artifact scan rejected\nsymbolic link /tmp/evil",
+      },
+    });
+
+    const event = appended[0]?.[0];
+    expect(event?.message).toBe(
+      "用例「冒烟用例」第 1 次执行失败（ARTIFACT_DISCOVERY_REJECTED：discover artifacts: artifact scan rejected symbolic link /tmp/evil）",
+    );
+    expect(event?.payload).toMatchObject({
+      resultCode: "ARTIFACT_DISCOVERY_REJECTED",
+      summary: "discover artifacts: artifact scan rejected symbolic link /tmp/evil",
     });
   });
 });

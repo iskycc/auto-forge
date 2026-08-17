@@ -337,6 +337,22 @@ export type ClaimedAssignmentRecord = {
   };
 };
 
+// recoverExpired 命中的过期原因；resultCode 映射由应用层统一维护（见 recovery-scheduling-events）。
+export type AttemptRecoveryReason =
+  "claim_timeout" | "lease_expired" | "execution_timeout" | "upload_timeout";
+
+// recoverExpired 实际回收的 attempt 明细，供应用层补写调度事件（总体/单 Runner 日志）。
+// 排队超时（run 从未产生 attempt）不包含在明细中。
+export type RecoveredAttemptExpiration = {
+  attemptId: string;
+  batchId: string;
+  executionRunId: string;
+  // claim_timeout 的 assignment 无人领取，事件不归属任何执行机。
+  runnerId: string | null;
+  reason: AttemptRecoveryReason;
+  retryScheduled: boolean;
+};
+
 export interface ExecutionControlRepository {
   claim(input: {
     runnerId: string;
@@ -469,7 +485,11 @@ export interface ExecutionControlRepository {
       }
     >
   >;
-  recoverExpired(input: { now: string; eventIds: string[]; limit: number }): Promise<number>;
+  recoverExpired(input: {
+    now: string;
+    eventIds: string[];
+    limit: number;
+  }): Promise<RecoveredAttemptExpiration[]>;
   cancelBatch(input: {
     batchId: string;
     actorId: string;

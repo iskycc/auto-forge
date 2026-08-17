@@ -24,9 +24,12 @@ import type {
 } from "./ports";
 import { executionSecretPurpose } from "./manage-execution-environments";
 import { assertRunnerAuthenticated } from "./manage-runners";
+import { buildRecoverySchedulingEvents } from "./recovery-scheduling-events";
 
 const LEASE_DURATION_MS = 45_000;
 const RECOVERY_SCAN_LIMIT = 100;
+// 调度日志只渲染 message，失败摘要必须压成单行短文本随消息展示。
+const SCHEDULING_SUMMARY_LIMIT = 300;
 
 // 完成结果的中文文案，用于调度事件消息。
 const COMPLETION_OUTCOME_LABELS: Record<
@@ -78,11 +81,20 @@ export class ExecutionControlService {
       );
     }
     const now = this.clock.now();
-    await this.executions.recoverExpired({
+    const recovered = await this.executions.recoverExpired({
       now: now.toISOString(),
       eventIds: Array.from({ length: RECOVERY_SCAN_LIMIT }, () => this.ids.next()),
       limit: RECOVERY_SCAN_LIMIT,
     });
+    const recoveryEvents = await buildRecoverySchedulingEvents({
+      recovered,
+      resolveContext: (attemptId) => this.executions.resolveAttemptSchedulingContext(attemptId),
+      recordedAt: now.toISOString(),
+      nextEventId: () => this.ids.next(),
+    });
+    if (recoveryEvents.length > 0) {
+      await this.batches.appendSchedulingEvents(recoveryEvents);
+    }
     const leaseSeeds = Array.from({ length: input.availableSlots }, () => {
       const id = this.ids.next();
       const token = this.credentials.issue();
@@ -196,8 +208,9 @@ export class ExecutionControlService {
       acceptedAt: this.clock.now().toISOString(),
     });
     // 仅在状态机接受该完成上报时记录事件；duplicate/late 不重复写入。
+    // 事件使用富化后的 result（含日志尾部提取的失败原因），否则调度日志看不到失败原因。
     if (response.disposition === "accepted") {
-      await this.appendAttemptCompletionEvents(attemptId, input, response.retryScheduled);
+      await this.appendAttemptCompletionEvents(attemptId, result, response.retryScheduled);
     }
     return response;
   }
@@ -254,13 +267,15 @@ export class ExecutionControlService {
 
   private async appendAttemptCompletionEvents(
     attemptId: string,
-    input: CompleteAttemptInput,
+    result: CompletionResult,
     retryScheduled: boolean,
   ): Promise<void> {
     const context = await this.executions.resolveAttemptSchedulingContext(attemptId);
     if (!context) return;
     const recordedAt = this.clock.now().toISOString();
-    const outcome = input.result.status;
+    const outcome = result.status;
+    const reasonSuffix = outcome === "succeeded" ? "" : completionReasonSuffix(result);
+    const failureSummary = outcome === "succeeded" ? "" : compactFailureSummary(result.summary);
     const events: Array<{
       id: string;
       batchId: string;
@@ -279,11 +294,13 @@ export class ExecutionControlService {
         executionRunId: context.executionRunId,
         attemptId,
         eventType: "attempt_completed",
-        message: `用例「${context.displayName}」第 ${context.attemptNumber} 次执行${COMPLETION_OUTCOME_LABELS[outcome]}`,
+        message: `用例「${context.displayName}」第 ${context.attemptNumber} 次执行${COMPLETION_OUTCOME_LABELS[outcome]}${reasonSuffix}`,
         payload: {
           attemptNumber: context.attemptNumber,
           outcome,
-          durationMs: input.result.durationMs,
+          durationMs: result.durationMs,
+          ...(result.resultCode ? { resultCode: result.resultCode } : {}),
+          ...(failureSummary ? { summary: failureSummary } : {}),
         },
         recordedAt,
       },
@@ -294,8 +311,11 @@ export class ExecutionControlService {
         batchId: context.batchId,
         executionRunId: context.executionRunId,
         eventType: "run_held_for_round",
-        message: "该用例已失败，等待下一轮重试",
-        ...(context.heldRound !== undefined ? { payload: { heldRound: context.heldRound } } : {}),
+        message: `该用例已失败，等待下一轮重试${result.resultCode ? `（${result.resultCode}）` : ""}`,
+        payload: {
+          ...(context.heldRound !== undefined ? { heldRound: context.heldRound } : {}),
+          ...(result.resultCode ? { resultCode: result.resultCode } : {}),
+        },
         recordedAt,
       });
     }
@@ -677,6 +697,19 @@ function redactLogChunks(
       ? left.sequence - right.sequence
       : left.stream.localeCompare(right.stream),
   );
+}
+
+// 把多行摘要折叠为单行并限长，避免堆栈撑爆调度日志消息。
+function compactFailureSummary(summary: string): string {
+  return summary.replace(/\s+/g, " ").trim().slice(0, SCHEDULING_SUMMARY_LIMIT);
+}
+
+// 调度日志只渲染 message，非成功结果必须在消息里带原因码与精简摘要；
+// resultCode 缺失（防御）时不追加括号段。
+function completionReasonSuffix(result: CompletionResult): string {
+  if (!result.resultCode) return "";
+  const summary = compactFailureSummary(result.summary);
+  return summary ? `（${result.resultCode}：${summary}）` : `（${result.resultCode}）`;
 }
 
 // 失败或超时时，把首个失败方法定位到摘要，方便在列表页直接看到失败原因。
