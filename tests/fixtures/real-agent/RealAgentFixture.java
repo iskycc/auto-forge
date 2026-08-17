@@ -10,6 +10,8 @@ import org.testng.annotations.Test;
 public final class RealAgentFixture {
   @Test(groups = {"real-agent", "smoke"}, description = "Runs in the real offline Agent toolchain")
   public void executesThroughRealAgent() throws Exception {
+    // 让 attempt 的 running 窗口足够长，控制面轮询才能稳定观察到运行中状态并验证实时日志。
+    Thread.sleep(3_000L);
     String environmentValue = System.getenv("AUTOFORGE_REAL_AGENT_ENV");
     String secret = System.getenv("AUTOFORGE_REAL_AGENT_SECRET");
     Assert.assertEquals(
