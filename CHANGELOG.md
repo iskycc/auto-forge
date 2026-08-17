@@ -6,6 +6,15 @@ and known limitations.
 
 ## Unreleased
 
+## 0.4.13 - 2026-08-17
+
+### Added
+
+- One-click in-place runner agent updates: the runners page marks nodes whose agent is older than
+  the bundled build and offers an update dialog (SSH probe, fingerprint confirmation, backup and
+  rollback via the existing installer chain) that keeps the runner identity, credentials,
+  configuration and execution history. Deregistered runners cannot be updated in place.
+
 ### Fixed
 
 - Runners without the `isolation:cgroup-v2` capability (for example openSUSE nodes without cgroup
