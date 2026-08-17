@@ -6303,12 +6303,19 @@ button.icon-button:disabled {
   gap: 12px;
   align-items: end;
   margin-top: 18px;
-  padding-top: 18px;
+  /* 16px horizontal padding mirrors the policy grid form's internal padding so
+     every label and button in the card shares one left/right alignment edge. */
+  padding: 18px 16px 0;
   border-top: 1px solid var(--color-border);
 }
 
 .schedule-form .section-title-row {
   grid-column: 1 / -1;
+  /* Inside the padded schedule form this is a subheading, not a card header:
+     drop the full-width header chrome (76px band, double padding, divider). */
+  min-height: 0;
+  padding: 0;
+  border-bottom: 0;
 }
 
 .schedule-form .section-title-row > span {
@@ -6351,10 +6358,14 @@ button.icon-button:disabled {
 }
 
 /* The copy form sits between the policy form and the schedule form; give it the
-   same top separator the schedule form has so the three blocks read as siblings. */
+   same top separator and horizontal inset so the three blocks share one
+   alignment edge with the policy form's inner content. */
 .suite-copy-form {
+  /* inline-flex would shrink the box (and its separator) to the content;
+     block-level flex keeps the row layout while spanning the padded width. */
+  display: flex;
   margin-top: 18px;
-  padding-top: 18px;
+  padding: 18px 16px 0;
   border-top: 1px solid var(--color-border);
 }
 
