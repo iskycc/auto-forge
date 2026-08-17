@@ -2,6 +2,7 @@ import { Clock3, Server, ShieldCheck } from "lucide-react";
 import {
   assessRunnerCompatibility,
   hasPermission,
+  isAgentUpdateAvailable,
   type RunBatch,
   type Runner,
 } from "@autoforge/domain";
@@ -9,6 +10,7 @@ import {
 import { RunnerAdminActions } from "@/components/runner-admin-actions";
 import { RunnerAgentInstaller } from "@/components/runner-agent-installer";
 import { RunnerTerminal } from "@/components/runner-terminal";
+import { RunnerUpdateDialog } from "@/components/runner-update-dialog";
 import { getPlatformServices } from "@/lib/services";
 import { requirePagePermission } from "@/lib/auth";
 import {
@@ -51,6 +53,8 @@ export default async function RunnersPage() {
   const incompatibleCount = runners.filter(
     (runner) => !assessRunnerCompatibility(runner).compatible,
   ).length;
+  // 内置 Agent 资源在 dev 环境可能未构建，此时静默隐藏更新提示。
+  const bundledAgentVersion = await services.runnerAgentResources.version().catch(() => undefined);
   return (
     <div className="page-stack">
       <section className="page-hero">
@@ -108,6 +112,9 @@ export default async function RunnersPage() {
           <div className="runner-list" role="table" aria-label="执行机列表">
             {runners.map((runner) => {
               const compatibility = assessRunnerCompatibility(runner);
+              const updateAvailable = bundledAgentVersion
+                ? isAgentUpdateAvailable(runner.agentVersion, bundledAgentVersion)
+                : false;
               return (
                 <article className="runner-list-item" key={runner.id} role="row">
                   <header className="runner-list-header" role="cell">
@@ -171,6 +178,9 @@ export default async function RunnersPage() {
                     {runner.credentialRevokedAt && !runner.deregisteredAt ? (
                       <span className="tag">凭据已撤销</span>
                     ) : null}
+                    {updateAvailable ? (
+                      <span className="tag">可更新至 {bundledAgentVersion}</span>
+                    ) : null}
                     <RunnerTerminal
                       runnerId={runner.id}
                       runnerName={runner.name}
@@ -178,6 +188,13 @@ export default async function RunnersPage() {
                       runnerEnabled={runner.terminalEnabled}
                       runnerOnline={runner.state === "online" && !runner.deregisteredAt}
                     />
+                    {canManage && updateAvailable && !runner.deregisteredAt ? (
+                      <RunnerUpdateDialog
+                        latestVersion={bundledAgentVersion!}
+                        runnerId={runner.id}
+                        runnerName={runner.name}
+                      />
+                    ) : null}
                     {canManage ? (
                       <RunnerAdminActions
                         runnerId={runner.id}

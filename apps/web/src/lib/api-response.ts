@@ -224,7 +224,8 @@ function domainErrorStatus(code: string): number {
     code === "CASE_SOURCE_AUTHORITATIVE" ||
     code === "CASE_SOURCE_SYNC_STALE" ||
     code === "CASE_SOURCE_NOT_DELETABLE" ||
-    code === "RUNNER_NOT_DELETABLE"
+    code === "RUNNER_NOT_DELETABLE" ||
+    code === "RUNNER_UPDATE_NOT_ALLOWED"
   ) {
     return 409;
   }

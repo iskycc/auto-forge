@@ -34,6 +34,19 @@ describe("RunnerAgentResourceStore", () => {
       code: "RUNNER_AGENT_RESOURCE_INVALID",
     });
   });
+
+  it("reports the bundled version without reading binaries", async () => {
+    const directory = await resourceDirectory();
+    await expect(new RunnerAgentResourceStore(directory).version()).resolves.toBe("1.2.3");
+  });
+
+  it("maps a missing manifest to an unavailable-resource error", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "autoforge-agent-store-"));
+    temporaryDirectories.push(directory);
+    await expect(new RunnerAgentResourceStore(directory).version()).rejects.toMatchObject({
+      code: "RUNNER_AGENT_RESOURCE_UNAVAILABLE",
+    });
+  });
 });
 
 async function resourceDirectory(): Promise<string> {

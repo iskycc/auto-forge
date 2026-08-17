@@ -411,8 +411,11 @@ async function createPlatformServices() {
     },
   };
   globalServices.__autoforgeClosePlatformServices = infrastructure.close;
+  const runnerAgentResources = new RunnerAgentResourceStore(
+    join(config.workspaceRoot, "resources", "agents"),
+  );
   const runnerAgentInstaller = new RunnerAgentInstaller({
-    resources: new RunnerAgentResourceStore(join(config.workspaceRoot, "resources", "agents")),
+    resources: runnerAgentResources,
     controlPlaneUrl: config.web.publicBaseUrl,
     issueBootstrapToken: () => runnerControl.issueBootstrapToken(),
   });
@@ -439,6 +442,7 @@ async function createPlatformServices() {
     identityAccess,
     runnerControl,
     runnerAgentInstaller,
+    runnerAgentResources,
     executionControl,
     runnerProtocol,
     publicStatistics,

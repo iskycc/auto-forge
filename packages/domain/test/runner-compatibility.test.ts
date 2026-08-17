@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { assessRunnerCompatibility } from "../src/runner-compatibility";
+import { assessRunnerCompatibility, isAgentUpdateAvailable } from "../src/runner-compatibility";
 
 describe("Runner compatibility", () => {
   it("accepts a versioned Linux Agent with the required executor and isolation", () => {
@@ -117,5 +117,22 @@ describe("Runner compatibility", () => {
       compatible: false,
       issues: ["java_version_unsupported", "testng_version_unsupported"],
     });
+  });
+});
+
+describe("isAgentUpdateAvailable", () => {
+  it.each([
+    ["0.2.1", "0.2.2", true],
+    ["0.2.2", "0.2.2", false],
+    ["0.2.3", "0.2.2", false],
+    ["0.2.2", "0.3.0", true],
+    ["0.0.0-e2e", "0.2.2", true],
+    ["0.2.2-rc.1", "0.2.2", true],
+    ["0.2.2", "0.2.2-rc.1", false],
+    ["dev", "0.2.2", false],
+    ["0.2.2", "dev", false],
+    ["unknown", "unknown", false],
+  ])("current %s vs latest %s → %s", (current, latest, expected) => {
+    expect(isAgentUpdateAvailable(current, latest)).toBe(expected);
   });
 });

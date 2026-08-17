@@ -97,6 +97,28 @@ export function assessRunnerCompatibility(
   };
 }
 
+export function isAgentUpdateAvailable(currentVersion: string, latestVersion: string): boolean {
+  const current = parseAgentVersion(currentVersion);
+  const latest = parseAgentVersion(latestVersion);
+  if (!current || !latest) return false;
+  for (let index = 0; index < 3; index += 1) {
+    if (current.numbers[index] !== latest.numbers[index]) {
+      return current.numbers[index]! < latest.numbers[index]!;
+    }
+  }
+  // 数字部分相同时，带预发布段的版本早于正式版（semver 第 11 条）。
+  return current.prerelease !== undefined && latest.prerelease === undefined;
+}
+
+function parseAgentVersion(
+  version: string,
+): { numbers: [number, number, number]; prerelease?: string } | undefined {
+  if (!semanticVersionPattern.test(version)) return undefined;
+  const [core, prerelease] = version.split("-", 2);
+  const numbers = core!.split(".").map(Number) as [number, number, number];
+  return prerelease === undefined ? { numbers } : { numbers, prerelease };
+}
+
 function javaMajorVersion(version: string): number | undefined {
   const parts = version.match(/\d+/g)?.map(Number);
   if (!parts || parts.length === 0) return undefined;

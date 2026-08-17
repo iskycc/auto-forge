@@ -39,11 +39,14 @@ export type RunnerAgentResources = {
 export class RunnerAgentResourceStore {
   constructor(private readonly resourceDirectory: string) {}
 
+  /** 只读清单获取内置 Agent 版本，供页面提示使用，避免把二进制读入内存。 */
+  async version(): Promise<string> {
+    return (await this.readManifest()).version;
+  }
+
   async read(architecture: AgentArchitecture): Promise<RunnerAgentResources> {
     try {
-      const manifest = agentResourceManifestSchema.parse(
-        JSON.parse(await readFile(join(this.resourceDirectory, "manifest.json"), "utf8")),
-      );
+      const manifest = await this.readManifest();
       const binary = await this.readVerifiedFile(
         manifest.files[`linux-${architecture}`],
         `linux-${architecture}/autoforge-agent`,
@@ -60,6 +63,21 @@ export class RunnerAgentResourceStore {
         installer,
         adapter,
       };
+    } catch (error) {
+      if (isDomainError(error)) throw error;
+      throw new DomainError(
+        "RUNNER_AGENT_RESOURCE_UNAVAILABLE",
+        "平台内置 Agent 资源不可用，请重新构建或安装完整的主平台发布物。",
+        { cause: error },
+      );
+    }
+  }
+
+  private async readManifest() {
+    try {
+      return agentResourceManifestSchema.parse(
+        JSON.parse(await readFile(join(this.resourceDirectory, "manifest.json"), "utf8")),
+      );
     } catch (error) {
       if (isDomainError(error)) throw error;
       throw new DomainError(

@@ -202,6 +202,13 @@ export const installRunnerAgentInputSchema = z.object({
     .optional(),
 });
 
+export const updateRunnerAgentInputSchema = installRunnerAgentInputSchema.omit({
+  name: true,
+  labels: true,
+  maxConcurrency: true,
+  terminalEnabled: true,
+});
+
 export const runnerAgentInstallationResultSchema = z.object({
   installed: z.literal(true),
   host: z.string().min(1),
@@ -304,6 +311,7 @@ export type RunnerRegistrationResult = z.infer<typeof runnerRegistrationResultSc
 export type ProbeRunnerHostInput = z.infer<typeof probeRunnerHostInputSchema>;
 export type RunnerHostProbeResult = z.infer<typeof runnerHostProbeResultSchema>;
 export type InstallRunnerAgentInput = z.infer<typeof installRunnerAgentInputSchema>;
+export type UpdateRunnerAgentInput = z.infer<typeof updateRunnerAgentInputSchema>;
 export type RunnerAgentInstallationResult = z.infer<typeof runnerAgentInstallationResultSchema>;
 export type RollbackRunnerAgentInput = z.infer<typeof rollbackRunnerAgentInputSchema>;
 export type RunnerAgentRollbackResult = z.infer<typeof runnerAgentRollbackResultSchema>;
