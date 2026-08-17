@@ -1,7 +1,6 @@
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { mkdtemp, open, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, mkdtemp, open, rm } from "node:fs/promises";
 import { basename, join } from "node:path";
 
 import { DomainError, type RuntimeArchiveFormat } from "@autoforge/domain";
@@ -17,6 +16,7 @@ export type StagedRuntimeArchive = {
 export async function stageRuntimeArchive(
   request: Request,
   archiveFormat: RuntimeArchiveFormat,
+  stagingRoot: string,
 ): Promise<StagedRuntimeArchive> {
   const fileName = runtimeArchiveFileName(request);
   const declaredSize = optionalContentLength(request);
@@ -24,11 +24,12 @@ export async function stageRuntimeArchive(
     throw new DomainError("RUNTIME_ASSET_UPLOAD_INVALID", "运行时资源上传缺少请求体。");
   }
 
-  const directory = await mkdtemp(join(tmpdir(), "autoforge-runtime-upload-"));
+  // 暂存目录必须与对象存储位于同一文件系统，避免 tmpfs 容量限制并保证原子重命名。
+  const directory = await createStagingDirectory(stagingRoot);
   const path = join(directory, "archive");
   const file = await open(path, "wx", 0o600).catch(async (cause: unknown) => {
     await rm(directory, { force: true, recursive: true });
-    throw cause;
+    throw asStorageFullError(cause);
   });
   const digest = createHash("sha256");
   const signature: number[] = [];
@@ -55,7 +56,7 @@ export async function stageRuntimeArchive(
     await reader.cancel().catch(() => undefined);
     await file.close().catch(() => undefined);
     await rm(directory, { force: true, recursive: true });
-    throw error;
+    throw asStorageFullError(error);
   }
 
   if (sizeBytes === 0 || (declaredSize !== undefined && declaredSize !== sizeBytes)) {
@@ -77,6 +78,27 @@ export async function stageRuntimeArchive(
     content: createReadStream(path),
     dispose: () => rm(directory, { force: true, recursive: true }),
   };
+}
+
+async function createStagingDirectory(stagingRoot: string): Promise<string> {
+  try {
+    await mkdir(stagingRoot, { recursive: true });
+    return await mkdtemp(join(stagingRoot, "autoforge-runtime-upload-"));
+  } catch (cause) {
+    throw asStorageFullError(cause);
+  }
+}
+
+// 磁盘写满时给出可诊断的领域错误；其他文件系统错误保留原始 cause 继续抛出。
+function asStorageFullError(error: unknown): unknown {
+  if ((error as NodeJS.ErrnoException | undefined)?.code === "ENOSPC") {
+    return new DomainError(
+      "RUNTIME_ASSET_STORAGE_FULL",
+      "平台数据目录磁盘空间不足，无法保存上传内容。",
+      { cause: error },
+    );
+  }
+  return error;
 }
 
 async function writeCompleteChunk(

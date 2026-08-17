@@ -199,6 +199,7 @@ function domainErrorStatus(code: string): number {
   if (code === "REQUEST_BODY_TOO_LARGE" || code === "JAR_TOO_LARGE") return 413;
   if (code === "RATE_LIMITED") return 429;
   if (code === "RUNNER_AGENT_RESOURCE_UNAVAILABLE") return 503;
+  if (code === "RUNTIME_ASSET_STORAGE_FULL") return 507;
   if (
     code === "RUNNER_HOST_CONNECTION_FAILED" ||
     code === "RUNNER_HOST_AUTHENTICATION_FAILED" ||
@@ -222,7 +223,8 @@ function domainErrorStatus(code: string): number {
     code === "CASE_SOURCE_SYNC_CANDIDATE_IN_USE" ||
     code === "CASE_SOURCE_AUTHORITATIVE" ||
     code === "CASE_SOURCE_SYNC_STALE" ||
-    code === "CASE_SOURCE_NOT_DELETABLE"
+    code === "CASE_SOURCE_NOT_DELETABLE" ||
+    code === "RUNNER_NOT_DELETABLE"
   ) {
     return 409;
   }

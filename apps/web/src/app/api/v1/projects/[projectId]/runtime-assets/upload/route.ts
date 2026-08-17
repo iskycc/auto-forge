@@ -1,4 +1,5 @@
 import { runtimeAssetUploadMetadataSchema } from "@autoforge/contracts";
+import { join } from "node:path";
 import { NextResponse } from "next/server";
 
 import {
@@ -28,7 +29,11 @@ export async function POST(request: Request, context: Context): Promise<NextResp
       archiveFormat: url.searchParams.get("archiveFormat"),
     });
     const services = await getPlatformServices();
-    const upload = await stageRuntimeArchive(request, metadata.archiveFormat);
+    const upload = await stageRuntimeArchive(
+      request,
+      metadata.archiveFormat,
+      join(services.config.dataDirectory, "upload-staging"),
+    );
     try {
       return NextResponse.json(
         await services.projectStructures.createUploadedAsset({
