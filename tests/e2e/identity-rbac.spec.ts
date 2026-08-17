@@ -201,7 +201,7 @@ test("every built-in role receives only its authorized navigation and API surfac
       roleId: PROJECT_ADMIN_ROLE_ID,
       scope: "project" as const,
       visible: [
-        "工作台",
+        "工作概览",
         "用例管理",
         "用例任务",
         "运维审计",
@@ -220,7 +220,7 @@ test("every built-in role receives only its authorized navigation and API surfac
       roleId: TEST_MANAGER_ROLE_ID,
       scope: "project" as const,
       visible: [
-        "工作台",
+        "工作概览",
         "用例管理",
         "用例任务",
         "运维审计",
@@ -238,7 +238,7 @@ test("every built-in role receives only its authorized navigation and API surfac
       roleId: EXECUTION_OPERATOR_ROLE_ID,
       scope: "project" as const,
       visible: [
-        "工作台",
+        "工作概览",
         "用例管理",
         "用例任务",
         "运维审计",
@@ -255,7 +255,7 @@ test("every built-in role receives only its authorized navigation and API surfac
       roleId: VIEWER_ROLE_ID,
       scope: "project" as const,
       visible: [
-        "工作台",
+        "工作概览",
         "用例管理",
         "用例任务",
         "运维审计",
@@ -273,7 +273,7 @@ test("every built-in role receives only its authorized navigation and API surfac
       scope: "system" as const,
       visible: ["用例批跑", "质量洞察", "安全审计"],
       hidden: [
-        "工作台",
+        "工作概览",
         "用例管理",
         "用例任务",
         "文件来源",

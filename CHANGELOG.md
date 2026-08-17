@@ -4,7 +4,14 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
-## Unreleased
+## 0.4.14 - 2026-08-17
+
+### Changed
+
+- Sidebar information architecture: the workbench entry is renamed to 工作概览, and 文件来源 moves
+  from the top level into the 执行与平台 management group. The dashboard bento cards now use a
+  uniform 3×2 equal-width grid (and equal two-column widths on medium screens) instead of mixed
+  5/4/3 column spans.
 
 ### Fixed
 

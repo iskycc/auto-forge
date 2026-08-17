@@ -2205,22 +2205,22 @@ button.icon-button:disabled {
 }
 
 .bento-quality {
-  grid-column: 1 / span 5;
+  grid-column: 1 / span 4;
 }
 .bento-active {
-  grid-column: 6 / span 4;
+  grid-column: 5 / span 4;
 }
 .bento-library {
-  grid-column: 10 / span 3;
+  grid-column: 9 / span 4;
 }
 .bento-runners {
-  grid-column: 1 / span 5;
+  grid-column: 1 / span 4;
 }
 .bento-insight {
-  grid-column: 6 / span 4;
+  grid-column: 5 / span 4;
 }
 .bento-recent {
-  grid-column: 10 / span 3;
+  grid-column: 9 / span 4;
 }
 
 .dashboard-batch {
@@ -4691,22 +4691,13 @@ button.icon-button:disabled {
   .main-content {
     padding: 22px;
   }
-  .bento-quality {
-    grid-column: span 7;
-  }
-  .bento-active {
-    grid-column: span 5;
-  }
+  .bento-quality,
+  .bento-active,
   .bento-library,
   .bento-insight,
+  .bento-runners,
   .bento-recent {
     grid-column: span 6;
-  }
-  .bento-runners {
-    grid-column: span 6;
-  }
-  .bento-recent {
-    grid-column: span 12;
   }
 }
 

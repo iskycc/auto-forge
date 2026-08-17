@@ -49,10 +49,9 @@ type NavigationItem = {
 };
 
 const navigation: NavigationItem[] = [
-  { label: "工作台", href: "/", icon: Home, permission: "case.read" },
+  { label: "工作概览", href: "/", icon: Home, permission: "case.read" },
   { label: "用例管理", href: "/cases", icon: BookOpenText, permission: "case.read" },
   { label: "用例任务", href: "/case-suites", icon: Layers3, permission: "case_suite.read" },
-  { label: "文件来源", href: "/objects", icon: FolderOpen, permission: "case_source.read" },
   { label: "用例批跑", href: "/run-batches", icon: PlayCircle, permission: "run.read" },
   { label: "执行记录", href: "/execution-records", icon: ClipboardList, permission: "run.read" },
   { label: "执行节点", href: "/runners", icon: Server, permission: "runner.read" },
@@ -180,6 +179,12 @@ const administrationGroups: AdministrationGroup[] = [
         permission: "settings.read",
         activePrefixes: ["/settings/platform"],
         section: "diagnostics",
+      },
+      {
+        label: "文件来源",
+        href: "/objects",
+        icon: FolderOpen,
+        permission: "case_source.read",
       },
     ],
   },
