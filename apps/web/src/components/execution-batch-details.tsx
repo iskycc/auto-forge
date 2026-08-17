@@ -9,6 +9,7 @@ import type {
   LogChunk,
 } from "@autoforge/contracts";
 import type { RunBatchDetails } from "@autoforge/domain";
+import { isTerminalAttemptStatus } from "@autoforge/domain";
 import {
   Activity,
   Download,
@@ -128,6 +129,9 @@ export function ExecutionBatchDetails({
     () => batch.attempts.find((attempt) => attempt.id === attemptId),
     [attemptId, batch.attempts],
   );
+  const selectedAttemptTerminal = selectedAttempt
+    ? isTerminalAttemptStatus(selectedAttempt.status)
+    : false;
   const selectedLease = useMemo(() => {
     const claimed = [...events].reverse().find((event) => event.eventType === "assignment.claimed");
     if (!claimed) return undefined;
@@ -297,6 +301,7 @@ export function ExecutionBatchDetails({
     if (
       !attemptId ||
       !canReadLogs ||
+      selectedAttemptTerminal ||
       activeQuery ||
       activeTimeRange.after ||
       activeTimeRange.before
@@ -348,7 +353,15 @@ export function ExecutionBatchDetails({
       if (reconnectTimer !== undefined) window.clearTimeout(reconnectTimer);
       socket?.close(1000, "Log view changed");
     };
-  }, [activeQuery, activeTimeRange, attemptId, canReadLogs, loadAttempt, stream]);
+  }, [
+    activeQuery,
+    activeTimeRange,
+    attemptId,
+    canReadLogs,
+    loadAttempt,
+    selectedAttemptTerminal,
+    stream,
+  ]);
 
   const sequenceGaps = useMemo(() => {
     const gaps: Array<{ after: number; before: number }> = [];
