@@ -14,6 +14,7 @@ import type {
 function makeBatchDetails(attemptOutcome: "succeeded" | "failed"): RunBatchDetails {
   return {
     id: "batch-1",
+    sequenceNumber: 1,
     projectId: "project-1",
     suiteId: "suite-1",
     suiteName: "回归套件",

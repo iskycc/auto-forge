@@ -62,6 +62,7 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
   constructor(
     private readonly handle: SqliteDatabaseHandle,
     private readonly caseExecutionTimeoutSeconds = DEFAULT_CASE_EXECUTION_TIMEOUT_SECONDS,
+    private readonly artifactCollectionEnabled = true,
   ) {}
 
   async create(record: CreateRunBatchRecord): Promise<RunBatchDetails> {
@@ -76,10 +77,17 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
       record.runs,
     );
     this.handle.client.transaction(() => {
+      // SQLite 单写者下，同一事务内取 MAX+1 即为全局唯一递增编号。
+      const nextSequence = (
+        this.handle.client
+          .prepare("SELECT COALESCE(MAX(sequence_number), 0) + 1 AS next FROM run_batches")
+          .get() as { next: number }
+      ).next;
       this.handle.db
         .insert(runBatches)
         .values({
           id: record.id,
+          sequenceNumber: nextSequence,
           projectId: record.projectId,
           environmentId: record.environmentId,
           environmentVersionId: record.environmentVersionId,
@@ -494,6 +502,7 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
                 executionTimeoutMs: batch.executionTimeoutMs,
                 uploadTimeoutMs: batch.uploadTimeoutMs,
                 caseTimeoutSeconds: this.caseExecutionTimeoutSeconds,
+                artifactCollectionEnabled: this.artifactCollectionEnabled,
                 ...(policy ? { policy } : {}),
               }),
             ),
@@ -620,6 +629,7 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
       .all();
     return {
       id: row.id,
+      sequenceNumber: row.sequenceNumber,
       projectId: row.projectId,
       ...(row.environmentId ? { environmentId: row.environmentId } : {}),
       ...(row.environmentVersionId ? { environmentVersionId: row.environmentVersionId } : {}),
@@ -697,9 +707,13 @@ function executionSpec(input: {
   executionTimeoutMs: number;
   uploadTimeoutMs: number;
   caseTimeoutSeconds: number;
+  artifactCollectionEnabled: boolean;
   policy?: RunBatchExecutionPolicy;
 }): ExecutionSpec {
-  const artifactPatterns = input.policy?.artifactPatterns ?? ["reports/testng/**"];
+  // 产物收集全局开关关闭时不下发任何产物规则，Agent 端据此跳过扫描与上传。
+  const artifactPatterns = input.artifactCollectionEnabled
+    ? (input.policy?.artifactPatterns ?? ["reports/testng/**"])
+    : [];
   const runtimeInputs = input.adapterRuntime ? runtimeAssetInputs(input.adapterRuntime) : [];
   const executionInputs: ExecutionSpec["inputs"] = [
     {

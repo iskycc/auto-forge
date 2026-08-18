@@ -61,7 +61,11 @@ const clock = { now: () => new Date() };
 const ids = { next: () => uuidV7() };
 const runnerRepository = new PostgresRunnerRepository(database);
 const batches = new RunBatchSchedulingService(
-  new PostgresRunBatchRepository(database, config.caseExecutionTimeoutSeconds),
+  new PostgresRunBatchRepository(
+    database,
+    config.caseExecutionTimeoutSeconds,
+    config.artifactCollectionEnabled,
+  ),
   new PostgresCaseSuiteRepository(database),
   runnerRepository,
   clock,

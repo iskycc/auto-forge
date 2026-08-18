@@ -220,3 +220,52 @@ blocked”是两个完全不同的概念。为避免同一术语表达两种口�
   文件混杂时收集健康文件、超 256 个文件时封顶不失败），Agent 全量 go test 通过；
   应用层 `ARTIFACT_DISCOVERY_REJECTED` 事件渲染测试保留（历史结果码仍需可渲染，新
   blocked 口径下归类为 blocked）。
+
+## 15. v0.6.2 三项改动的设计决策
+
+### 15.1 产物收集全局开关（limits.artifactCollectionEnabled）
+
+- 新增平台配置 `limits.artifactCollectionEnabled`（布尔，默认 `true`，保持现状），
+  在“平台设置”以复选框“启用产物收集”呈现。旧配置文件缺失该字段时按 zod 默认值
+  `true` 解析，行为不变。
+- 关闭后的服务端行为：两个 RunBatch 仓储（SQLite/PostgreSQL）生成执行规格时把
+  `artifactRules` 置为空数组。Runner Agent 原本就只在 `len(artifactRules) > 0` 时才
+  扫描 attempt 工作目录（supervisor.go），因此 **Go Agent 零改动**即停止扫描与上传。
+- 关闭后的界面行为：任务执行详情页不再渲染“产物”区块，也不再请求产物列表接口；
+  该开关用独立 `artifactsEnabled` 标志沿组件链下传，与“读取产物权限”
+  （canReadArtifacts）解耦——权限不足仍显示“没有权限”文案，开关关闭则整块消失。
+  日志公开访问页本来就不展示产物，无需改动。
+- 注意：开关只影响**新创建批次**的执行规格；已调度/执行中的批次沿用下发时的规格。
+  开关关闭期间执行的历史批次没有产物记录，详情页产物区块（若重新打开开关）显示
+  “没有已声明产物”，符合事实。
+
+### 15.2 批次自然递增展示编号（sequence_number）
+
+- 决策：**不改 UUID 主键**。UUID 被 Runner 协议、外键、队列去重键、日志公开链接、
+  URL 路由广泛引用，替换代价与风险不成比例。改为给 `run_batches` 增加
+  `sequence_number` 展示列（SQLite/PostgreSQL 各自迁移，存量按
+  `(created_at, id)` 创建顺序稠密回填），界面优先展示 `#编号`，UUID 退居 title。
+- 生成方式：SQLite 在 create() 同一写事务内取 `MAX(sequence_number)+1`（单写者保证
+  唯一）；PostgreSQL 使用独立序列 `run_batch_sequence_numbers` 的 `nextval`，避免
+  并发创建竞争（nextval 不参与回滚，理论空洞不影响展示）。
+- 不建唯一索引：部分集成测试以原始 SQL 直接插入 run_batches 夹具（不走仓储），
+  默认值 0 会互相冲突；唯一性由两侧生成机制本身保证。
+- 列表排序与游标**保持** `createdAt desc, id desc` 不变：编号纯展示，避免改动分页
+  语义。编号顺序与创建顺序一致，两种排序观感等价。
+- 展示范围：执行历史表（完整 `#N`，不再截断）、批次详情 hero（`批次 #N`，UUID 在
+  title）、日志公开访问页（`批次 #N · 第 X 次尝试`）。洞察页“基准/对比批次 ID”
+  输入框仍按 UUID 查询——那是查询键而非展示位。
+- 兼容性：API 返回的批次对象新增 `sequenceNumber` 字段（新增字段，向后兼容）；
+  日志公开视图契约新增 `batchSequenceNumber`。旧数据经迁移全部有编号。
+
+### 15.3 失败摘要只保留堆栈行
+
+- 完成上报的摘要富化逻辑改为：日志尾部找到 adapter 失败标记行
+  （`TestCase Run Failed Stack: [...]`）或启发式异常行时，**用该行替换**原摘要，
+  不再拼接成 `类路径#方法 | 堆栈`。找不到堆栈行时保留结构化兜底摘要
+  （`类#方法 执行失败`）。
+- 影响面：批次详情状态列（显示摘要而非 `TESTNG_ASSERTIONS_FAILED` 原因码；无摘要
+  时仍回落原因码以覆盖 AGENT_RESTARTED 等调度失败）、日志公开访问页“错误描述”、
+  导出表格“错误描述”列——三处均直接消费 `resultSummary`，一处后端修复全部生效。
+  结构化 TestNG 结果解析不产出堆栈（报告 XML 不含异常元素），堆栈唯一来源就是
+  adapter 打印的标记行，该机制保留。

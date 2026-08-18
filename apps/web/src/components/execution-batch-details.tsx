@@ -49,12 +49,14 @@ export function ExecutionBatchDetails({
   canCreateRuns,
   canReadLogs,
   canReadArtifacts,
+  artifactsEnabled,
 }: {
   batch: RunBatchDetails;
   canCancelRuns: boolean;
   canCreateRuns: boolean;
   canReadLogs: boolean;
   canReadArtifacts: boolean;
+  artifactsEnabled: boolean;
 }) {
   const router = useRouter();
   const [actionError, setActionError] = useState("");
@@ -200,6 +202,7 @@ export function ExecutionBatchDetails({
         canCancelRuns={canCancelRuns}
         canReadLogs={canReadLogs}
         canReadArtifacts={canReadArtifacts}
+        artifactsEnabled={artifactsEnabled}
       />
     </div>
   );

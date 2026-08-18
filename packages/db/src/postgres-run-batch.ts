@@ -65,6 +65,7 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
   constructor(
     private readonly handle: PostgresDatabaseHandle,
     private readonly caseExecutionTimeoutSeconds = DEFAULT_CASE_EXECUTION_TIMEOUT_SECONDS,
+    private readonly artifactCollectionEnabled = true,
   ) {}
 
   async create(record: CreateRunBatchRecord): Promise<RunBatchDetails> {
@@ -80,8 +81,14 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
       record.runs,
     );
     await this.handle.db.transaction(async (transaction) => {
+      // 独立序列生成展示编号，避免并发创建竞争；nextval 不参与回滚，空洞不影响展示。
+      const sequenceResult = await transaction.execute(
+        sql`SELECT nextval('run_batch_sequence_numbers') AS next`,
+      );
+      const nextSequence = Number(sequenceResult.rows[0]?.next ?? 0);
       await transaction.insert(pgRunBatches).values({
         id: record.id,
+        sequenceNumber: nextSequence,
         projectId: record.projectId,
         environmentId: record.environmentId,
         environmentVersionId: record.environmentVersionId,
@@ -535,6 +542,7 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
               executionTimeoutMs: batch.executionTimeoutMs,
               uploadTimeoutMs: batch.uploadTimeoutMs,
               caseTimeoutSeconds: this.caseExecutionTimeoutSeconds,
+              artifactCollectionEnabled: this.artifactCollectionEnabled,
               ...(policy ? { policy } : {}),
             }),
           ),
@@ -701,6 +709,7 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
       .where(eq(pgExecutionRuns.batchId, row.id));
     return {
       id: row.id,
+      sequenceNumber: row.sequenceNumber,
       projectId: row.projectId,
       ...(row.environmentId ? { environmentId: row.environmentId } : {}),
       ...(row.environmentVersionId ? { environmentVersionId: row.environmentVersionId } : {}),
@@ -810,9 +819,13 @@ function executionSpec(input: {
   executionTimeoutMs: number;
   uploadTimeoutMs: number;
   caseTimeoutSeconds: number;
+  artifactCollectionEnabled: boolean;
   policy?: RunBatchExecutionPolicy;
 }): ExecutionSpec {
-  const artifactPatterns = input.policy?.artifactPatterns ?? ["reports/testng/**"];
+  // 产物收集全局开关关闭时不下发任何产物规则，Agent 端据此跳过扫描与上传。
+  const artifactPatterns = input.artifactCollectionEnabled
+    ? (input.policy?.artifactPatterns ?? ["reports/testng/**"])
+    : [];
   const runtimeInputs = input.adapterRuntime ? runtimeAssetInputs(input.adapterRuntime) : [];
   const executionInputs: ExecutionSpec["inputs"] = [
     {

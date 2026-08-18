@@ -634,10 +634,10 @@ public class MixedVisibleTest {
     })
   ).json()) as { attempts: Array<{ attemptNumber: number; resultSummary?: string }> };
   // 失败摘要应取 adapter 标记行（"Stack Trace:" 后第一行），而不是日志尾部启发式匹配到的
-  // ANSI 着色 ERROR 行。
+  // ANSI 着色 ERROR 行；摘要只保留堆栈行本身，不拼接类路径前缀。
   expect(
     completedBatch.attempts.find((attempt) => attempt.attemptNumber === 1)?.resultSummary,
-  ).toBe("E2E intentional failure | java.lang.AssertionError: E2E marker stack line");
+  ).toBe("java.lang.AssertionError: E2E marker stack line");
 
   const artifactDownload = await page.request.get(
     `/api/v1/run-attempts/${encodeURIComponent(firstAttemptId)}/artifacts/e2e-report`,
@@ -650,8 +650,10 @@ public class MixedVisibleTest {
   await page.goto(`/run-batches/${encodeURIComponent(batch.id)}`);
   await expect(page.getByText("已成功", { exact: true }).first()).toBeVisible();
   await page.getByRole("button", { name: "初始轮次", exact: true }).click();
-  // 失败用例的终态原因码直接显示在状态列，无需展开详情。
-  await expect(page.getByText("TEST_ASSERTION_FAILED", { exact: true })).toBeVisible();
+  // 失败用例的堆栈摘要直接显示在状态列，无需展开详情。
+  await expect(
+    page.getByText("java.lang.AssertionError: E2E marker stack line").first(),
+  ).toBeVisible();
   // 总体调度日志必须能定位用例之外/失败的异常：原因码与精简摘要都要出现在事件里。
   await page.getByRole("button", { name: "总体调度日志" }).click();
   await expect(page.locator(".scheduling-log")).toContainText("TEST_ASSERTION_FAILED");

@@ -527,6 +527,8 @@ export const runBatches = sqliteTable(
   "run_batches",
   {
     id: text("id").primaryKey(),
+    // 自然递增展示编号；UUID 主键不变，该列只服务界面展示，由仓储在创建事务内生成。
+    sequenceNumber: integer("sequence_number").notNull().default(0),
     suiteId: text("suite_id").notNull(),
     suiteName: text("suite_name").notNull(),
     suiteVersion: integer("suite_version").notNull(),

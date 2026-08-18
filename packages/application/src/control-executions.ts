@@ -215,10 +215,11 @@ export class ExecutionControlService {
     return response;
   }
 
-  // 缺少结构化 TestNG 结果时（如进程非零退出但无报告），从日志尾部提取失败原因拼入摘要，
+  // 缺少结构化 TestNG 结果时（如进程非零退出但无报告），从日志尾部提取失败原因作为摘要，
   // 让批次列表能直接看到失败原因。优先解析 adapter 输出的机器可读失败标记
   // （adapterFailureLine），只有找不到标记且没有结构化摘要时才回退到启发式的异常行扫描。
-  // 日志读取失败（如日志库文件缺失）不得阻断完成上报的接受。
+  // 找到失败行时直接用它替换摘要（不再拼接类路径前缀），让错误描述只保留堆栈行本身；
+  // 找不到时保留现有摘要兜底。日志读取失败（如日志库文件缺失）不得阻断完成上报的接受。
   private async enrichSummaryFromFailureLog(
     attemptId: string,
     result: CompletionResult,
@@ -230,14 +231,14 @@ export class ExecutionControlService {
       const line = adapterFailureLine(await this.readLogTail(attemptId, stream));
       if (!line) continue;
       if (result.summary.includes(line)) return result;
-      return { ...result, summary: `${result.summary} | ${line}`.slice(0, 500) };
+      return { ...result, summary: line };
     }
     if (hasStructuredSummary) return result;
     // 启发式兜底：历史日志没有失败标记，从 stderr/stdout 尾部找异常行。
     for (const stream of ["stderr", "stdout"] as const) {
       const line = lastFailureLine(await this.readLogTail(attemptId, stream));
       if (line) {
-        return { ...result, summary: `${result.summary} | ${line}`.slice(0, 500) };
+        return { ...result, summary: line };
       }
     }
     return result;
@@ -712,7 +713,8 @@ function completionReasonSuffix(result: CompletionResult): string {
   return summary ? `（${result.resultCode}：${summary}）` : `（${result.resultCode}）`;
 }
 
-// 失败或超时时，把首个失败方法定位到摘要，方便在列表页直接看到失败原因。
+// 失败或超时时，把首个失败方法定位到摘要作为兜底；若日志尾部能提取到堆栈行，
+// enrichSummaryFromFailureLog 会用堆栈行替换该占位摘要。
 function enrichFailureSummary(result: CompletionResult): CompletionResult {
   if (result.status !== "failed" && result.status !== "timed_out") return result;
   if (!result.testNg) return result;

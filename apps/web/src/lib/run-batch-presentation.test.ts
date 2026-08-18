@@ -129,6 +129,7 @@ describe("run batch presentation", () => {
 function batch(overrides: Partial<RunBatch>): RunBatch {
   return {
     id: "batch-1",
+    sequenceNumber: 1,
     projectId: "project-1",
     suiteId: "suite-1",
     suiteName: "每日冒烟",

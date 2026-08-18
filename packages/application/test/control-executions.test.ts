@@ -674,7 +674,7 @@ describe("failure summary log fallback", () => {
     },
   };
 
-  it("appends the last exception line from stderr when no structured result exists", async () => {
+  it("replaces the summary with the last exception line from stderr when no structured result exists", async () => {
     const { service, executions } = buildService({
       probe: { items: [], acknowledgedSequence: 12, truncated: false },
       tail: {
@@ -696,8 +696,7 @@ describe("failure summary log fallback", () => {
     expect(executions.completeAttempt).toHaveBeenCalledWith(
       expect.objectContaining({
         result: expect.objectContaining({
-          summary:
-            "TestNG exited with code 1. | java.lang.AssertionError: expected checkout to succeed",
+          summary: "java.lang.AssertionError: expected checkout to succeed",
         }),
       }),
     );
@@ -773,14 +772,13 @@ describe("failure summary log fallback", () => {
     expect(executions.completeAttempt).toHaveBeenCalledWith(
       expect.objectContaining({
         result: expect.objectContaining({
-          summary:
-            "TestNG exited with code 1. | java.lang.AssertionError: expected <200> but was <500>",
+          summary: "java.lang.AssertionError: expected <200> but was <500>",
         }),
       }),
     );
   });
 
-  it("appends the adapter failure marker even when a structured TestNG summary exists", async () => {
+  it("replaces the structured TestNG summary with the adapter failure marker", async () => {
     const counts = { total: 1, passed: 0, failed: 1, skipped: 0, configurationFailures: 0 };
     const structuredInput = {
       ...completionInput,
@@ -842,8 +840,7 @@ describe("failure summary log fallback", () => {
     expect(executions.completeAttempt).toHaveBeenCalledWith(
       expect.objectContaining({
         result: expect.objectContaining({
-          summary:
-            "com.example.PaymentTest#pays 执行失败 | java.lang.AssertionError: expected <200> but was <500>",
+          summary: "java.lang.AssertionError: expected <200> but was <500>",
         }),
       }),
     );

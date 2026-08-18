@@ -642,6 +642,100 @@ describe("SQLite management repositories", () => {
     }
   });
 
+  it("omits artifact rules from assignment specs when artifact collection is disabled", async () => {
+    const { handle, runners } = await fixture();
+    try {
+      const disabledBatches = new SqliteRunBatchRepository(handle, undefined, false);
+      await runners.register({
+        id: "runner-artifacts-off",
+        bootstrapTokenHash: "bootstrap-artifacts-off",
+        credentialHash: "credential-artifacts-off",
+        name: "artifacts-off-runner",
+        os: "linux",
+        architecture: "amd64",
+        agentVersion: "0.2.0",
+        protocolVersion: 1,
+        labels: ["java"],
+        capabilities: [],
+        maxConcurrency: 1,
+        terminalEnabled: false,
+        recordedAt: "2026-08-09T00:03:00.000Z",
+      });
+      await runners.heartbeat({
+        runnerId: "runner-artifacts-off",
+        labels: ["java", "testng"],
+        capabilities: ["executor:testng-v1", "isolation:cgroup-v2", "java:21.0.8", "testng:7.11.0"],
+        maxConcurrency: 1,
+        busySlots: 0,
+        agentVersion: "0.2.0",
+        terminalEnabled: false,
+        resourceSnapshot: {
+          cpuUtilizationPercent: 20,
+          memoryUtilizationPercent: 30,
+          loadAverage1m: 0.5,
+          logicalCpuCount: 2,
+          observedAt: "2026-08-09T00:03:00.000Z",
+        },
+        recordedAt: "2026-08-09T00:03:00.000Z",
+      });
+      const createdBatch = await disabledBatches.create({
+        id: "batch-artifacts-off",
+        suiteId: "suite-artifacts-off",
+        suiteName: "Artifacts off",
+        suiteVersion: 1,
+        retryLimit: 0,
+        environmentVariables: [],
+        runnerIds: ["runner-artifacts-off"],
+        runs: [
+          {
+            id: "run-artifacts-off",
+            caseDefinitionId: "case-1",
+            caseVersion: 1,
+            displayName: "SmokeTest",
+            className: "com.example.SmokeTest",
+          },
+        ],
+        createdAt: "2026-08-09T00:03:00.000Z",
+      });
+      expect(createdBatch.sequenceNumber).toBe(1);
+      const thresholds = {
+        maximumCpuUtilizationPercent: 80,
+        maximumMemoryUtilizationPercent: 85,
+        maximumLoadPerCpu: 1,
+      };
+      const snapshot = await disabledBatches.getSchedulingSnapshot(
+        "batch-artifacts-off",
+        "2026-08-09T00:02:30.000Z",
+      );
+      const plan = scheduleExecutionRuns({
+        runs: snapshot!.queuedRuns,
+        candidates: snapshot!.candidates,
+        thresholds,
+        metricsFreshAfter: "2026-08-09T00:02:30.000Z",
+      });
+      await disabledBatches.reserveAssignments({
+        batchId: "batch-artifacts-off",
+        decisions: plan.decisions.map((decision) => ({
+          ...decision,
+          attemptId: "attempt-artifacts-off",
+          assignmentId: "assignment-artifacts-off",
+        })),
+        thresholds,
+        offlineBefore: "2026-08-09T00:02:30.000Z",
+        metricsFreshAfter: "2026-08-09T00:02:30.000Z",
+        scheduledAt: "2026-08-09T00:03:01.000Z",
+      });
+      const assignment = handle.client
+        .prepare("SELECT execution_spec_json FROM assignments WHERE id = ?")
+        .get("assignment-artifacts-off") as { execution_spec_json: string };
+      const spec = JSON.parse(assignment.execution_spec_json) as { artifactRules: unknown[] };
+      // 开关关闭时不下发任何产物规则，Agent 端据此跳过扫描与上传。
+      expect(spec.artifactRules).toEqual([]);
+    } finally {
+      handle.close();
+    }
+  });
+
   it("retries queued batches when a selected runner reports fresh metrics", async () => {
     const { handle, catalog, suites, runners, batches } = await fixture();
     try {

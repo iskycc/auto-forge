@@ -513,6 +513,66 @@ describe("SQLite migrations", () => {
       database.close();
     }
   });
+
+  it("backfills dense batch sequence numbers in creation order when upgrading", async () => {
+    const directory = await mkdtemp(resolve(tmpdir(), "autoforge-batch-sequence-"));
+    temporaryDirectories.push(directory);
+    const databasePath = resolve(directory, "autoforge.sqlite");
+    const migrationsFolder = resolve(import.meta.dirname, "../drizzle/sqlite");
+    const migrationFiles = (await readdir(migrationsFolder))
+      .filter((name) => /^\d+_.+\.sql$/.test(name))
+      .sort();
+    const sequenceMigration = "0031_run_batch_sequence_number.sql";
+    const sequenceMigrationIndex = migrationFiles.indexOf(sequenceMigration);
+    expect(sequenceMigrationIndex).toBeGreaterThan(0);
+
+    const database = new Database(databasePath);
+    try {
+      database.pragma("foreign_keys = ON");
+      for (const fileName of migrationFiles.slice(0, sequenceMigrationIndex)) {
+        database.exec(await readFile(resolve(migrationsFolder, fileName), "utf8"));
+      }
+      const insertBatch = database.prepare(
+        `INSERT INTO run_batches
+         (id, suite_id, suite_name, suite_version, status, retry_limit, environment_json,
+          total_runs, project_id, priority, created_at, updated_at)
+         VALUES (?, 'suite-sequence', ?, 1, 'succeeded', 0, '[]', 1,
+          '00000000-0000-7000-8000-000000000001', 0, ?, ?)`,
+      );
+      insertBatch.run(
+        "batch-oldest",
+        "Oldest",
+        "2026-08-01T00:00:00.000Z",
+        "2026-08-01T00:00:00.000Z",
+      );
+      insertBatch.run(
+        "batch-newest",
+        "Newest",
+        "2026-08-03T00:00:00.000Z",
+        "2026-08-03T00:00:00.000Z",
+      );
+      insertBatch.run(
+        "batch-middle",
+        "Middle",
+        "2026-08-02T00:00:00.000Z",
+        "2026-08-02T00:00:00.000Z",
+      );
+
+      database.exec(await readFile(resolve(migrationsFolder, sequenceMigration), "utf8"));
+
+      expect(
+        database
+          .prepare("SELECT id, sequence_number FROM run_batches ORDER BY sequence_number")
+          .all(),
+      ).toEqual([
+        { id: "batch-oldest", sequence_number: 1 },
+        { id: "batch-middle", sequence_number: 2 },
+        { id: "batch-newest", sequence_number: 3 },
+      ]);
+    } finally {
+      database.close();
+    }
+  });
 });
 
 type MigrationWorkerInput = {

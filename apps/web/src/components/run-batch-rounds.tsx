@@ -96,6 +96,12 @@ function shortId(id: string): string {
   return id.slice(0, 8);
 }
 
+// 失败摘要（堆栈行）在状态列只展示开头部分，完整内容通过 title 悬浮查看。
+function truncateFailureLine(line: string | undefined): string {
+  if (!line) return "";
+  return line.length > 160 ? `${line.slice(0, 160)}…` : line;
+}
+
 /**
  * 轮次列表 + 选中轮次的详情面板。轮次聚合来自领域纯函数 summarizeRunBatchRounds，
  * 选中轮次写入 ?round=N，刷新或分享链接后可恢复。
@@ -105,11 +111,13 @@ export function RunBatchRounds({
   canCancelRuns,
   canReadLogs,
   canReadArtifacts,
+  artifactsEnabled,
 }: {
   batch: RunBatchDetails;
   canCancelRuns: boolean;
   canReadLogs: boolean;
   canReadArtifacts: boolean;
+  artifactsEnabled: boolean;
 }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -271,6 +279,7 @@ export function RunBatchRounds({
           canCancelRuns={canCancelRuns}
           canReadLogs={canReadLogs}
           canReadArtifacts={canReadArtifacts}
+          artifactsEnabled={artifactsEnabled}
           cancelPending={cancelPending}
           actionError={actionError}
           detailCache={detailCache}
@@ -315,6 +324,7 @@ function RoundDetailPanel({
   canCancelRuns,
   canReadLogs,
   canReadArtifacts,
+  artifactsEnabled,
   cancelPending,
   actionError,
   detailCache,
@@ -330,6 +340,7 @@ function RoundDetailPanel({
   canCancelRuns: boolean;
   canReadLogs: boolean;
   canReadArtifacts: boolean;
+  artifactsEnabled: boolean;
   cancelPending: boolean;
   actionError: string;
   detailCache: ReadonlyMap<string, AttemptDetailEntry>;
@@ -472,6 +483,7 @@ function RoundDetailPanel({
               canCancelRuns={canCancelRuns}
               canReadLogs={canReadLogs}
               canReadArtifacts={canReadArtifacts}
+              artifactsEnabled={artifactsEnabled}
               cancelPending={cancelPending}
               detailCache={detailCache}
               onRememberAttemptDetail={onRememberAttemptDetail}
@@ -544,6 +556,7 @@ function RoundCasesTable({
   canCancelRuns,
   canReadLogs,
   canReadArtifacts,
+  artifactsEnabled,
   cancelPending,
   detailCache,
   onRememberAttemptDetail,
@@ -555,6 +568,7 @@ function RoundCasesTable({
   canCancelRuns: boolean;
   canReadLogs: boolean;
   canReadArtifacts: boolean;
+  artifactsEnabled: boolean;
   cancelPending: boolean;
   detailCache: ReadonlyMap<string, AttemptDetailEntry>;
   onRememberAttemptDetail: (attemptId: string, entry: AttemptDetailEntry) => void;
@@ -697,6 +711,7 @@ function RoundCasesTable({
                   canCancelRuns={canCancelRuns}
                   canReadLogs={canReadLogs}
                   canReadArtifacts={canReadArtifacts}
+                  artifactsEnabled={artifactsEnabled}
                   cancelPending={cancelPending}
                   detailEntry={row.attempt ? detailCache.get(row.attempt.id) : undefined}
                   onRememberDetail={onRememberAttemptDetail}
@@ -788,6 +803,7 @@ function RoundCaseRow({
   canCancelRuns,
   canReadLogs,
   canReadArtifacts,
+  artifactsEnabled,
   cancelPending,
   detailEntry,
   onRememberDetail,
@@ -800,6 +816,7 @@ function RoundCaseRow({
   canCancelRuns: boolean;
   canReadLogs: boolean;
   canReadArtifacts: boolean;
+  artifactsEnabled: boolean;
   cancelPending: boolean;
   detailEntry: AttemptDetailEntry | undefined;
   onRememberDetail: (attemptId: string, entry: AttemptDetailEntry) => void;
@@ -853,11 +870,17 @@ function RoundCaseRow({
               <span className={`batch-status ${attemptStatusClass(attempt)}`.trim()}>
                 {attemptStatusLabel(attempt)}
               </span>
-              {/* 终态失败原因码直接露出，无需展开详情即可定位 AGENT_RESTARTED 等调度失败。 */}
+              {/* 终态失败摘要直接露出堆栈行，无需展开详情；摘要缺失时回落原因码定位
+                  AGENT_RESTARTED 等调度失败。 */}
               {isTerminalAttemptStatus(attempt.status) &&
               attempt.status !== "succeeded" &&
-              attempt.resultCode ? (
-                <small className="table-secondary">{attempt.resultCode}</small>
+              (attempt.resultSummary ?? attempt.resultCode) ? (
+                <small
+                  className="table-secondary attempt-failure-line"
+                  title={attempt.resultSummary ?? attempt.resultCode}
+                >
+                  {truncateFailureLine(attempt.resultSummary ?? attempt.resultCode)}
+                </small>
               ) : null}
             </>
           ) : (
@@ -920,6 +943,7 @@ function RoundCaseRow({
             <AttemptInlineDetail
               attempt={attempt}
               canReadArtifacts={canReadArtifacts}
+              artifactsEnabled={artifactsEnabled}
               cached={detailEntry}
               onRemember={onRememberDetail}
             />
@@ -933,11 +957,13 @@ function RoundCaseRow({
 function AttemptInlineDetail({
   attempt,
   canReadArtifacts,
+  artifactsEnabled,
   cached,
   onRemember,
 }: {
   attempt: RunAttempt;
   canReadArtifacts: boolean;
+  artifactsEnabled: boolean;
   cached: AttemptDetailEntry | undefined;
   onRemember: (attemptId: string, entry: AttemptDetailEntry) => void;
 }) {
@@ -958,7 +984,7 @@ function AttemptInlineDetail({
       setError("");
       try {
         const [artifactResponse, eventResponse] = await Promise.all([
-          canReadArtifacts
+          canReadArtifacts && artifactsEnabled
             ? fetch(`/api/v1/run-attempts/${encodeURIComponent(attempt.id)}/artifacts`, {
                 cache: "no-store",
               })
@@ -993,7 +1019,7 @@ function AttemptInlineDetail({
       disposed = true;
       window.clearTimeout(kick);
     };
-  }, [attempt.id, canReadArtifacts, loaded, onRemember]);
+  }, [attempt.id, artifactsEnabled, canReadArtifacts, loaded, onRemember]);
 
   return (
     <div className="attempt-inline-detail">
@@ -1004,52 +1030,55 @@ function AttemptInlineDetail({
           <TestNgResults result={attempt.testNg} />
         </div>
       ) : null}
-      <div className="attempt-inline-block">
-        <h3>产物</h3>
-        {!canReadArtifacts ? (
-          <div className="inline-empty">当前账号没有读取执行产物的权限。</div>
-        ) : artifacts === undefined ? (
-          <div className="inline-empty">正在读取产物...</div>
-        ) : artifacts.length === 0 ? (
-          <div className="inline-empty">当前尝试没有已声明产物。</div>
-        ) : (
-          <div className="artifact-list">
-            {artifacts.map((artifact) => (
-              <div className="artifact-row" key={artifact.artifactId}>
-                <FileText size={17} />
-                <span>
-                  <strong>{artifact.relativePath}</strong>
-                  <small>
-                    {formatArtifactBytes(artifact.sizeBytes)} · {artifact.status}
-                  </small>
-                </span>
-                {artifact.downloadPath ? (
-                  <span className="artifact-actions">
-                    {isPreviewable(artifact.mediaType) ? (
+      {/* 产物收集全局开关关闭时，不展示产物区块（服务端也未收集任何产物）。 */}
+      {artifactsEnabled ? (
+        <div className="attempt-inline-block">
+          <h3>产物</h3>
+          {!canReadArtifacts ? (
+            <div className="inline-empty">当前账号没有读取执行产物的权限。</div>
+          ) : artifacts === undefined ? (
+            <div className="inline-empty">正在读取产物...</div>
+          ) : artifacts.length === 0 ? (
+            <div className="inline-empty">当前尝试没有已声明产物。</div>
+          ) : (
+            <div className="artifact-list">
+              {artifacts.map((artifact) => (
+                <div className="artifact-row" key={artifact.artifactId}>
+                  <FileText size={17} />
+                  <span>
+                    <strong>{artifact.relativePath}</strong>
+                    <small>
+                      {formatArtifactBytes(artifact.sizeBytes)} · {artifact.status}
+                    </small>
+                  </span>
+                  {artifact.downloadPath ? (
+                    <span className="artifact-actions">
+                      {isPreviewable(artifact.mediaType) ? (
+                        <a
+                          className="icon-button small-icon-button"
+                          href={`${artifact.downloadPath}?preview=1`}
+                          target="_blank"
+                          rel="noreferrer"
+                          aria-label={`预览 ${artifact.relativePath}`}
+                        >
+                          <Eye size={15} />
+                        </a>
+                      ) : null}
                       <a
                         className="icon-button small-icon-button"
-                        href={`${artifact.downloadPath}?preview=1`}
-                        target="_blank"
-                        rel="noreferrer"
-                        aria-label={`预览 ${artifact.relativePath}`}
+                        href={artifact.downloadPath}
+                        aria-label={`下载 ${artifact.relativePath}`}
                       >
-                        <Eye size={15} />
+                        <Download size={15} />
                       </a>
-                    ) : null}
-                    <a
-                      className="icon-button small-icon-button"
-                      href={artifact.downloadPath}
-                      aria-label={`下载 ${artifact.relativePath}`}
-                    >
-                      <Download size={15} />
-                    </a>
-                  </span>
-                ) : null}
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
+                    </span>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      ) : null}
       <div className="attempt-inline-block">
         <h3>状态事件</h3>
         {events === undefined ? (

@@ -68,6 +68,7 @@ function configuration(
       sessionTtlHours: 12,
       authLoginAttemptsPerWindow: 10,
       caseExecutionTimeoutSeconds: 600,
+      artifactCollectionEnabled: true,
     },
     scheduler: {
       maximumCpuUtilizationPercent: 85,

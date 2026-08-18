@@ -69,6 +69,8 @@ export const persistedPlatformConfigurationSchema = z
       authLoginAttemptsPerWindow: z.number().int().min(1).max(100_000).default(10),
       // 用例执行超时（秒），由 adapter 自身看门狗管理；旧配置文件缺失时默认 600 秒。
       caseExecutionTimeoutSeconds: z.number().int().min(1).max(86_400).default(600),
+      // 产物收集全局开关；关闭后执行规格不下发产物规则，Agent 不扫描不上传产物。
+      artifactCollectionEnabled: z.boolean().default(true),
     }),
     scheduler: schedulerSchema,
     worker: z.object({
@@ -262,6 +264,7 @@ function defaultConfiguration(
       sessionTtlHours: 12,
       authLoginAttemptsPerWindow: 10,
       caseExecutionTimeoutSeconds: 600,
+      artifactCollectionEnabled: true,
     },
     scheduler: {
       maximumCpuUtilizationPercent: 85,

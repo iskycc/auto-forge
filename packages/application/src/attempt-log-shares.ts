@@ -53,6 +53,7 @@ export class AttemptLogShareService {
     const run = batch.runs.find((candidate) => candidate.id === attempt.executionRunId);
     return {
       batchId: batch.id,
+      batchSequenceNumber: batch.sequenceNumber,
       attemptId: attempt.id,
       attemptNumber: attempt.attemptNumber,
       casePath: run?.className ?? "",

@@ -74,6 +74,8 @@ export function artifactMediaType(pattern: string): string {
 
 export type RunBatch = {
   id: string;
+  // 自然递增展示编号；UUID 仍是权威主键，该字段只用于界面展示。
+  sequenceNumber: number;
   projectId: string;
   environmentId?: string;
   environmentVersionId?: string;

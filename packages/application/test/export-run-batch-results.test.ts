@@ -15,6 +15,7 @@ type DetailsAttempt = RunBatchDetails["attempts"][number];
 function makeDetails(overrides: Partial<RunBatchDetails> = {}): RunBatchDetails {
   return {
     id: "batch-1",
+    sequenceNumber: 1,
     projectId: "project-1",
     suiteId: "suite-1",
     suiteName: "回归套件",

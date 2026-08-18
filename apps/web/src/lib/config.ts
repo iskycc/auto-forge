@@ -21,6 +21,7 @@ type CommonConfig = {
   runnerClaimRateLimitPerMinute: number;
   authLoginAttemptsPerWindow: number;
   caseExecutionTimeoutSeconds: number;
+  artifactCollectionEnabled: boolean;
   publicDashboardRefreshSeconds: number;
   metricsEnabled: boolean;
   web: {
@@ -80,6 +81,7 @@ export function loadAppConfig(options: LoadPlatformConfigurationOptions = {}): A
     sessionTtlHours: persisted.limits.sessionTtlHours,
     authLoginAttemptsPerWindow: persisted.limits.authLoginAttemptsPerWindow,
     caseExecutionTimeoutSeconds: persisted.limits.caseExecutionTimeoutSeconds,
+    artifactCollectionEnabled: persisted.limits.artifactCollectionEnabled,
     terminalAccessToken: persisted.secrets.terminalAccessToken,
     publicDashboardRefreshSeconds: persisted.web.publicDashboardRefreshSeconds,
     metricsEnabled: persisted.worker.metricsEnabled,

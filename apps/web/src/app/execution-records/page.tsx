@@ -41,6 +41,7 @@ export default async function ExecutionRecordsPage({
   if (batchPage.nextCursor) nextQuery.set("cursor", batchPage.nextCursor);
   const rows: ExecutionRecordRow[] = batchPage.items.map((batch) => ({
     id: batch.id,
+    sequenceNumber: batch.sequenceNumber,
     suiteName: batch.suiteName,
     suiteVersion: batch.suiteVersion,
     status: batch.status,

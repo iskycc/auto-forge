@@ -32,8 +32,8 @@ export default async function RunBatchDetailsPage({
         <div>
           <span className="eyebrow">Execution Batch</span>
           <h1>{batch.suiteName}</h1>
-          <p>
-            批次 {batch.id} · 任务版本 v{batch.suiteVersion}
+          <p title={batch.id}>
+            批次 #{batch.sequenceNumber} · 任务版本 v{batch.suiteVersion}
           </p>
         </div>
         <span className="hero-icon violet">
@@ -54,6 +54,7 @@ export default async function RunBatchDetailsPage({
         canReadArtifacts={canAuthorize(() =>
           services.identityAccess.authorize(identity, "artifact.read", batch.projectId),
         )}
+        artifactsEnabled={services.config.artifactCollectionEnabled}
       />
     </div>
   );

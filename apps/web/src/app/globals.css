@@ -5022,6 +5022,12 @@ button.icon-button:disabled {
   font-size: var(--font-size-caption);
 }
 
+/* 状态列的失败摘要（堆栈行）允许换行展示，完整内容由 title 悬浮查看。 */
+.attempt-failure-line {
+  max-width: 420px;
+  overflow-wrap: anywhere;
+}
+
 .execution-summary-band strong {
   overflow: hidden;
   font-size: 15px;

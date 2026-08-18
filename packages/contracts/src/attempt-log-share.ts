@@ -25,6 +25,8 @@ export const EXPORT_OUTCOME_FILTERS: readonly ExportOutcomeFilter[] = [
 /** 导出/日志公开访问页共用的单行数据结构。 */
 export interface SharedAttemptLogView {
   batchId: string;
+  /** 批次自然递增展示编号，界面优先展示；batchId 仍是权威 UUID。 */
+  batchSequenceNumber: number;
   attemptId: string;
   attemptNumber: number;
   /** 用例路径，如 com.example.CheckoutTest */

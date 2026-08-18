@@ -4,6 +4,41 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## 0.6.2 - 2026-08-18
+
+### Features
+
+- Global artifact-collection switch: a new platform setting `limits.artifactCollectionEnabled`
+  (default `true`, editable in 平台设置 as “启用产物收集”). When disabled, execution specs are
+  generated without artifact rules, so the Runner Agent skips artifact scanning and upload entirely
+  (no agent change — it only scans when rules are present), and the batch details page no longer
+  renders or fetches the artifacts block. The switch applies to batches created after saving;
+  already-scheduled batches keep the spec they were created with.
+- Natural-incrementing batch display numbers: `run_batches` gains a `sequence_number` column
+  (migrations `sqlite/0031`, `postgresql/0030`; existing rows backfilled densely in
+  `(created_at, id)` creation order). The execution-records table now shows the full `#N` instead
+  of a truncated UUID, the batch details hero shows `批次 #N` (UUID in the tooltip), and the
+  public log-access page shows `批次 #N`. UUIDs remain the authoritative identifiers everywhere
+  (URLs, Runner Protocol, foreign keys, dedup keys); list ordering/cursors are unchanged.
+
+### Changed
+
+- Failure summaries show the concrete stack line instead of result codes or class-path prefixes.
+  When the completion log tail contains the adapter failure marker
+  (`TestCase Run Failed Stack: [...]`) — or, without structured results, a heuristic exception
+  line — the attempt summary is replaced by that line rather than concatenated as
+  `类路径#方法 | 堆栈`. This affects the batch details status column (which now renders the
+  summary instead of codes like `TESTNG_ASSERTIONS_FAILED`, falling back to the code only when no
+  summary exists), the public log-access page “错误描述”, and the exported spreadsheet error
+  column. The `类#方法 执行失败` placeholder remains as fallback when no stack line is found.
+
+### Compatibility
+
+- Persisted configuration gains `limits.artifactCollectionEnabled`; older configuration files
+  parse with the default `true`, keeping current behavior.
+- Batch API responses and the shared log view gain `sequenceNumber` / `batchSequenceNumber`
+  fields (additive only).
+
 ## 0.6.1 - 2026-08-18
 
 ### Fixed

@@ -48,6 +48,7 @@ export function PlatformSettings({
             sessionTtlHours: numberValue(form, "sessionTtlHours"),
             authLoginAttemptsPerWindow: numberValue(form, "authLoginAttemptsPerWindow"),
             caseExecutionTimeoutSeconds: numberValue(form, "caseExecutionTimeoutSeconds"),
+            artifactCollectionEnabled: form.get("artifactCollectionEnabled") === "on",
           },
           scheduler: {
             maximumCpuUtilizationPercent: numberValue(form, "maximumCpuUtilizationPercent"),
@@ -247,6 +248,14 @@ export function PlatformSettings({
               name="caseExecutionTimeoutSeconds"
               value={initial.limits.caseExecutionTimeoutSeconds}
             />
+            <label className="checkbox-field">
+              <Input
+                defaultChecked={initial.limits.artifactCollectionEnabled}
+                name="artifactCollectionEnabled"
+                type="checkbox"
+              />
+              启用产物收集（关闭后执行不扫描、不上传产物，详情页不展示产物）
+            </label>
             <NumberInput
               label="调度 CPU 上限（%）"
               name="maximumCpuUtilizationPercent"

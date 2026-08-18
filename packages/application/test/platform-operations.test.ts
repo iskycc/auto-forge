@@ -241,6 +241,7 @@ function batch(
 ): RunBatchDetails {
   return {
     id,
+    sequenceNumber: id === "left" ? 1 : 2,
     projectId: "project-1",
     suiteId: "suite-1",
     suiteName: "Smoke",

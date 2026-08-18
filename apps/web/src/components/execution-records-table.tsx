@@ -13,6 +13,8 @@ import { formatBatchDuration } from "@/lib/run-batch-presentation";
  */
 export type ExecutionRecordRow = {
   id: string;
+  // 自然递增展示编号；UUID 保留在 title 与详情链接中。
+  sequenceNumber: number;
   suiteName: string;
   suiteVersion: number;
   status: RunBatch["status"];
@@ -72,7 +74,7 @@ type ColumnDefinition = {
 };
 
 const COLUMNS: ColumnDefinition[] = [
-  { key: "id", label: "批次 ID", defaultWidth: 120, minWidth: 80 },
+  { key: "id", label: "批次编号", defaultWidth: 96, minWidth: 72 },
   { key: "suite", label: "任务（Suite）", defaultWidth: 220, minWidth: 120 },
   { key: "status", label: "状态", defaultWidth: 100, minWidth: 80 },
   { key: "passRate", label: "通过率", defaultWidth: 90, minWidth: 70 },
@@ -143,7 +145,7 @@ function persistColumnWidths(widths: Record<string, number>): void {
 
 /**
  * 执行记录表格：列宽可拖拽调整并持久化到 localStorage；进入详情通过独立的
- * “详情”按钮，批次 ID 仅作为文本展示。
+ * “详情”按钮，批次编号（自然递增）仅作为文本展示，UUID 在 title 中查看。
  */
 export function ExecutionRecordsTable({ rows }: { rows: ExecutionRecordRow[] }) {
   // 持久化列宽通过外部 store 读取，服务端快照恒为空，避免首屏水合不一致。
@@ -232,8 +234,9 @@ export function ExecutionRecordsTable({ rows }: { rows: ExecutionRecordRow[] }) 
           {rows.map((row) => (
             <tr key={row.id}>
               <td>
+                {/* 自然递增编号完整展示；UUID 通过 title 悬浮查看。 */}
                 <span className="table-id-text" title={row.id}>
-                  {row.id.slice(0, 8)}…
+                  #{row.sequenceNumber}
                 </span>
               </td>
               <td>
@@ -259,7 +262,7 @@ export function ExecutionRecordsTable({ rows }: { rows: ExecutionRecordRow[] }) 
               </td>
               <td>
                 <Link
-                  aria-label={`查看批次 ${row.id} 详情`}
+                  aria-label={`查看批次 #${row.sequenceNumber} 详情`}
                   className="button button-secondary compact-button"
                   href={`/run-batches/${encodeURIComponent(row.id)}`}
                 >

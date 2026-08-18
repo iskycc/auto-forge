@@ -76,7 +76,7 @@ function SharedAttemptLogContent({ view }: { view: SharedAttemptLogView }) {
             </ShareFact>
             <ShareFact label="批次 / 尝试号">
               <span title={`批次 ${view.batchId} · 尝试 ${view.attemptId}`}>
-                批次 {view.batchId.slice(0, 8)} · 第 {view.attemptNumber} 次尝试
+                批次 #{view.batchSequenceNumber} · 第 {view.attemptNumber} 次尝试
               </span>
             </ShareFact>
           </dl>

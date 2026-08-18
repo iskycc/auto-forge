@@ -31,6 +31,7 @@ export const updatePlatformConfigurationInputSchema = z.object({
     sessionTtlHours: z.number().int().min(1).max(168),
     authLoginAttemptsPerWindow: z.number().int().min(1).max(100_000).default(10),
     caseExecutionTimeoutSeconds: z.number().int().min(1).max(86_400).default(600),
+    artifactCollectionEnabled: z.boolean().default(true),
   }),
   scheduler: schedulerConfigurationSchema,
   worker: z.object({
