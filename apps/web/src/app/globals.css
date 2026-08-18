@@ -8741,12 +8741,34 @@ button.icon-button:disabled {
 }
 
 /* 执行日志公开访问页：左侧固定信息栏 + 右侧整页深色日志区，观感与终端弹窗一致。 */
+/* 日志公开访问页整体深色：日志主体本就是深色背景，整页变暗消除日志区与
+   白色页面的强对比，长时间查看日志更护眼。通过覆盖语义 token 让页内
+   卡片、徽章、警告条等复用组件自动跟随深色。 */
 .share-log-page {
+  --color-canvas: #101216;
+  --color-surface: #1a1d23;
+  --color-surface-muted: #22252c;
+  --color-text: #e7e9ed;
+  --color-text-secondary: #a6abb6;
+  --color-text-tertiary: #828894;
+  --color-border: rgba(255, 255, 255, 0.1);
+  --color-border-strong: rgba(255, 255, 255, 0.18);
+  --color-info: #5aa2ff;
+  --color-info-soft: rgba(90, 162, 255, 0.14);
+  --color-success: #4cc36b;
+  --color-success-soft: rgba(76, 195, 107, 0.14);
+  --color-warning: #e5a144;
+  --color-warning-soft: rgba(229, 161, 68, 0.14);
+  --color-danger: #f26d6d;
+  --color-danger-soft: rgba(242, 109, 109, 0.14);
+  --color-scrollbar: rgba(163, 168, 179, 0.32);
+  --color-scrollbar-hover: rgba(163, 168, 179, 0.5);
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.35), 0 8px 28px rgba(0, 0, 0, 0.3);
   min-height: 100vh;
   padding: 24px;
-  background:
-    radial-gradient(circle at 20% -10%, rgba(255, 255, 255, 0.9), transparent 36%),
-    var(--color-canvas);
+  background: var(--color-canvas);
+  color: var(--color-text);
+  color-scheme: dark;
 }
 
 .share-log-layout {

@@ -4,6 +4,21 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## 0.6.4 - 2026-08-18
+
+### Changed
+
+- The public log-access page (`/share/attempt-log/...`) is now fully dark themed: the page
+  previously mixed a white chrome with the dark log panel, which was straining to read. The
+  page overrides the semantic color tokens (canvas, surfaces, text, borders, status colors,
+  shadows) locally, so the info card, status badges, truncation warning, and the
+  invalid-link view all follow the same dark palette as the log output. No markup or API
+  changes.
+
+### Compatibility
+
+- Style-only change; no migrations, configuration, or API changes.
+
 ## 0.6.3 - 2026-08-18
 
 ### Features
