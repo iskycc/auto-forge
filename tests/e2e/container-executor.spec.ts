@@ -36,6 +36,13 @@ test("executes and cancels TestNG in a constrained immutable container", async (
     await expect(page.locator(".execution-log")).toContainText("CONTAINER_POLICY_STDOUT_中文_完成");
     await page.getByRole("button", { name: "stderr", exact: true }).click();
     await expect(page.locator(".execution-log")).toContainText("CONTAINER_POLICY_STDERR_CAPTURED");
+    await page.keyboard.press("Escape");
+    await expect(page.locator(".execution-log")).toHaveCount(0);
+    // 需求5后单用例不再自动展开，需先点详情才能看到产物列表。
+    await page
+      .getByRole("row", { name: "ContainerAgentFixture" })
+      .getByRole("button", { name: "详情" })
+      .click();
     await expect(page.getByText(/reports\/testng\/testng-results\.xml/)).toBeVisible();
 
     const cancellationBatchId = await scheduleExecution(page, "cancel");
