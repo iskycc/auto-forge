@@ -226,6 +226,9 @@ export class ExecutionControlService {
     hasStructuredSummary: boolean,
   ): Promise<CompletionResult> {
     if (result.status !== "failed" && result.status !== "timed_out") return result;
+    // 重启/取消协调重放的结果码：日志属于被强杀的旧进程，从中提取的"失败原因"
+    // 会误导排查；保留上报方自带的摘要，让原因码作为 blocked 的主展示信息。
+    if (RECONCILED_COMPLETION_RESULT_CODES.has(result.resultCode ?? "")) return result;
     // adapter 的失败标记打在 stdout，优先于 stderr。
     for (const stream of ["stdout", "stderr"] as const) {
       const line = adapterFailureLine(await this.readLogTail(attemptId, stream));
@@ -732,6 +735,13 @@ function enrichFailureSummary(result: CompletionResult): CompletionResult {
   }
   return result;
 }
+
+// Agent 重启/取消协调后重放的完成结果码；这类尝试的日志由被强杀的旧进程写入，
+// 不适合作为失败摘要的启发式来源（参见 enrichSummaryFromFailureLog）。
+const RECONCILED_COMPLETION_RESULT_CODES = new Set([
+  "AGENT_RESTARTED_DURING_EXECUTION",
+  "EXECUTION_CANCELLED_DURING_RECONCILE",
+]);
 
 // TestNG adapter（TestNgResultReporter / CotestTestNgExecutor）在用例失败时向 stdout
 // 打印的机器可读标记，格式为 `TestCase Run Failed Stack: [<内容>]` 单行。

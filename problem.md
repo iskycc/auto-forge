@@ -269,3 +269,53 @@ blocked”是两个完全不同的概念。为避免同一术语表达两种口�
   导出表格“错误描述”列——三处均直接消费 `resultSummary`，一处后端修复全部生效。
   结构化 TestNG 结果解析不产出堆栈（报告 XML 不含异常元素），堆栈唯一来源就是
   adapter 打印的标记行，该机制保留。
+
+## 16. v0.6.3：回归修复与三项需求的设计决策
+
+### 16.1 AGENT_RESTARTED_DURING_EXECUTION 不再显示（v0.6.2 真实回归，已修复）
+
+- 现象：v0.6.2 发布后，CI 的 Full infrastructure acceptance 与 Release checks 的离线升级
+  验收在同一断言失败——批次详情页 5 秒内找不到 `AGENT_RESTARTED_DURING_EXECUTION` 文本。
+  两个独立 Full 环境复现同一断言，判定为真实回归而非 flake；本地 e2e 未覆盖是因为
+  real-agent.spec 只在 GitHub Actions 环境运行（test-real-agent.sh 限制）。
+- 根因（两处叠加）：
+  1. Agent 重启协调后由 Go Agent 走正常完成路径上报
+     `AGENT_RESTARTED_DURING_EXECUTION`（supervisor.go），v0.6.2 的摘要补全
+     （enrichSummaryFromFailureLog）把上报方自带摘要替换成了被强杀旧进程日志尾部的
+     启发式异常行；
+  2. v0.6.2 同时把用例表状态列从“渲染原因码”改为“摘要优先”，原因码被顶出页面。
+- 修复（最小面）：
+  - 应用层：协调重放结果码（`AGENT_RESTARTED_DURING_EXECUTION`、
+    `EXECUTION_CANCELLED_DURING_RECONCILE`）跳过日志启发式补全——这类日志属于被强杀的
+    旧进程，提取出的"失败原因"具有误导性；保留上报方自带摘要。
+  - UI：终态失败提示按 blocked 口径区分——adapter 正常失败
+    （classifyAttemptResult = failed）继续露出堆栈行摘要；blocked（重启、超时、未拉起
+    adapter 等非正常结束）露出原因码，恢复对调度失败的可定位性。纯函数 attemptFailureHint
+    放在 run-batch-presentation.ts 并有单测。
+- `TESTNG_EXIT_NONZERO` 等既有启发式补全行为与既有测试全部保留，未受影响。
+- v0.6.2 的 tag 不可变，其流水线失败无法通过 rerun 修复；修复随 v0.6.3 发布，
+  v0.6.2 流水线保持失败状态作为该回归的记录。另注：CI 的 Network-blocked real Agent
+  acceptance 是 setup 阶段 curl 429（外部限流），与代码无关，v0.6.3 流水线重跑即可。
+
+### 16.2 执行记录每页条数可选（10/50/100/500）
+
+- URL `limit` 参数只接受 10/50/100/500，其余值回落默认 50（run-batch-filter.ts 归一化，
+  带单测）；筛选表单新增“每页条数”下拉。`refreshQueryFromFilter` 会把 limit 与 cursor
+  一并保留到“查看更早记录/刷新”链接，翻页换页大小后不丢筛选条件。
+- 仓储层 listPage 对 limit 无额外硬上限（`.limit(input.limit + 1)` 直通），500 可直接使用。
+
+### 16.3 任务详情页执行机显示名称
+
+- 批次详情 page 按 `runner.read` 权限加载 `runnerControl.list(500)`，映射为可序列化
+  DTO 数组 `runnerDirectory`（id/name/resourceSnapshot）下传客户端组件；无权限传空数组，
+  不泄露执行机清单。
+- 三个展示点统一：优先注册名称（一般为 runner-IP），title 保留完整 UUID，目录查不到
+  （无权限、执行机已 purge 等）回落 UUID 短码——用例表执行机列、执行机子 Tab 卡片标题、
+  调度日志查看器标题。
+
+### 16.4 执行机小卡片展示实时资源
+
+- 卡片新增一行 `CPU x% · 内存 y% · 负载/CPU z`，与执行机页同一口径（负载按单核归一），
+  title 显示采集时间（UTC）；无快照显示“暂无资源快照”。
+- “实时”依赖既有机制：进行中批次页面每 5 秒 router.refresh()，服务端快照随之刷新；
+  终态批次资源数据本就是静态的。未新增轮询接口。

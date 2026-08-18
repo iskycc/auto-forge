@@ -4,6 +4,42 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## 0.6.3 - 2026-08-18
+
+### Features
+
+- Execution-records page size selection: the filter form gains a “每页条数” dropdown with
+  10 / 50 / 100 / 500 options (URL `limit` parameter; unsupported values fall back to 50).
+  The page-size choice survives pagination and refresh links, which keep `limit` and `cursor`
+  in the query.
+- Runner names on the batch details page: the case-table runner column, the 执行机 sub-tab
+  card headings, and the scheduling-log viewer title now show the registered runner name
+  (typically `runner-<ip>`) instead of a bare UUID prefix. The full UUID remains in the
+  tooltip; runners that cannot be resolved (no `runner.read` permission, purged runners)
+  fall back to the UUID short code. The directory is loaded server-side under `runner.read`
+  and never leaks the runner list to accounts without that permission.
+- Runner cards in the 执行机 sub-tab now show the latest resource snapshot
+  (`CPU x% · 内存 y% · 负载/CPU z`, load normalized per core, collection time in the
+  tooltip, same format as the runners page). Active batches already refresh server data
+  every 5 seconds, so the snapshot stays current while a batch runs; “暂无资源快照” is
+  shown before the first heartbeat reports metrics.
+
+### Fixed
+
+- 0.6.2 regression: `AGENT_RESTARTED_DURING_EXECUTION` disappeared from the batch details
+  page (the failure-summary enrichment replaced the agent-reported summary with a heuristic
+  log line, and the status column then preferred the summary over the reason code).
+  Reconcile-replayed completions (`AGENT_RESTARTED_DURING_EXECUTION`,
+  `EXECUTION_CANCELLED_DURING_RECONCILE`) no longer undergo log-tail summary enrichment —
+  their logs belong to the killed process — and the case-table failure hint now follows the
+  blocked taxonomy: normal adapter failures keep the stack-line summary, blocked terminations
+  (restart, timeout, adapter never started, …) show the reason code.
+
+### Compatibility
+
+- No migrations, no persisted-configuration changes, no API field changes; upgrades are
+  drop-in.
+
 ## 0.6.2 - 2026-08-18
 
 ### Features

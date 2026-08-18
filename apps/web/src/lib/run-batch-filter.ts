@@ -1,5 +1,17 @@
 import type { RunBatchListQuery } from "@autoforge/application";
 
+/** 执行记录每页条数可选项；URL 中的 limit 只接受这些值，其余回落默认 50。 */
+export const RUN_BATCH_PAGE_SIZE_OPTIONS = [10, 50, 100, 500] as const;
+
+const DEFAULT_RUN_BATCH_PAGE_SIZE = 50;
+
+function pageSizeFromValue(value: string | undefined): number {
+  const parsed = value ? Number(value) : Number.NaN;
+  return (RUN_BATCH_PAGE_SIZE_OPTIONS as readonly number[]).includes(parsed)
+    ? parsed
+    : DEFAULT_RUN_BATCH_PAGE_SIZE;
+}
+
 export function runBatchFilterFromSearch(
   parameters: Record<string, string | string[] | undefined>,
   projectIds: string[] | undefined,
@@ -27,7 +39,7 @@ export function runBatchFilterFromSearch(
       ? (status as NonNullable<RunBatchListQuery["status"]>)
       : undefined;
   return {
-    limit: 50,
+    limit: pageSizeFromValue(value("limit")),
     ...(projectIds ? { projectIds } : {}),
     ...(cursor ? { cursor } : {}),
     ...(projectId ? { projectId } : {}),

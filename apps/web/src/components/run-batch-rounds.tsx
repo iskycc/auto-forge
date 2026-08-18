@@ -6,6 +6,7 @@ import type {
   RunAttempt,
   RunBatchDetails,
   RunBatchRoundSummary,
+  RunnerResourceSnapshot,
 } from "@autoforge/domain";
 import { isTerminalAttemptStatus, summarizeRunBatchRounds } from "@autoforge/domain";
 import {
@@ -29,6 +30,7 @@ import { SchedulingLogViewer } from "@/components/scheduling-log-viewer";
 import { Button, Input, Select } from "@/components/ui";
 import { readApiErrorMessage } from "@/lib/client-api";
 import {
+  attemptFailureHint,
   formatArtifactBytes,
   formatAttemptDuration,
   formatBatchDuration,
@@ -44,6 +46,16 @@ type AttemptDetailEntry = {
   artifacts?: AttemptArtifactList["items"] | undefined;
   events?: AttemptEventPage["items"] | undefined;
   error?: string | undefined;
+};
+
+/**
+ * 执行机目录条目：由服务端页面按 runner.read 权限加载后传入，用于把 UUID
+ * 映射为执行机名称与实时资源快照；查不到（无权限、已清除等）时回落 UUID 短码。
+ */
+export type RunnerDirectoryEntry = {
+  id: string;
+  name: string;
+  resourceSnapshot?: RunnerResourceSnapshot;
 };
 
 type CaseStatusFilter = "all" | "succeeded" | "failed" | "timed_out" | "cancelled" | "pending";
@@ -96,10 +108,37 @@ function shortId(id: string): string {
   return id.slice(0, 8);
 }
 
+// 执行机展示名：优先注册名称（一般为 runner-IP），目录查不到时回落 UUID 短码。
+function runnerDisplayName(
+  runnerId: string,
+  directory: ReadonlyMap<string, RunnerDirectoryEntry>,
+): string {
+  return directory.get(runnerId)?.name || shortId(runnerId);
+}
+
+// 资源快照展示与执行机页保持一致：负载按单核归一，便于跨机型比较。
+function runnerResourceLabel(snapshot: RunnerResourceSnapshot): string {
+  const loadPerCpu =
+    snapshot.logicalCpuCount > 0 ? snapshot.loadAverage1m / snapshot.logicalCpuCount : 0;
+  return `CPU ${snapshot.cpuUtilizationPercent}% · 内存 ${snapshot.memoryUtilizationPercent}% · 负载/CPU ${loadPerCpu.toFixed(2)}`;
+}
+
 // 失败摘要（堆栈行）在状态列只展示开头部分，完整内容通过 title 悬浮查看。
 function truncateFailureLine(line: string | undefined): string {
   if (!line) return "";
   return line.length > 160 ? `${line.slice(0, 160)}…` : line;
+}
+
+// 终态失败提示行：adapter 正常失败露出堆栈行摘要，blocked 露出原因码；
+// 提示文案为空（非终态或信息缺失）时不渲染。
+function AttemptFailureHintLine({ attempt }: { attempt: RunAttempt }) {
+  const hint = attemptFailureHint(attempt);
+  if (!hint) return null;
+  return (
+    <small className="table-secondary attempt-failure-line" title={hint}>
+      {truncateFailureLine(hint)}
+    </small>
+  );
 }
 
 /**
@@ -112,12 +151,14 @@ export function RunBatchRounds({
   canReadLogs,
   canReadArtifacts,
   artifactsEnabled,
+  runnerDirectory,
 }: {
   batch: RunBatchDetails;
   canCancelRuns: boolean;
   canReadLogs: boolean;
   canReadArtifacts: boolean;
   artifactsEnabled: boolean;
+  runnerDirectory: readonly RunnerDirectoryEntry[];
 }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -125,6 +166,10 @@ export function RunBatchRounds({
   const summaries = useMemo(
     () => summarizeRunBatchRounds(batch, batch.runs, batch.attempts),
     [batch],
+  );
+  const runnerDirectoryById = useMemo(
+    () => new Map(runnerDirectory.map((entry) => [entry.id, entry])),
+    [runnerDirectory],
   );
   const requestedRound = Number(searchParams.get("round") ?? "");
   // 默认落在最后一个已执行的轮次；纯等待轮（还没有任何 attempt）不作为默认选中。
@@ -280,6 +325,7 @@ export function RunBatchRounds({
           canReadLogs={canReadLogs}
           canReadArtifacts={canReadArtifacts}
           artifactsEnabled={artifactsEnabled}
+          runnerDirectory={runnerDirectoryById}
           cancelPending={cancelPending}
           actionError={actionError}
           detailCache={detailCache}
@@ -289,7 +335,10 @@ export function RunBatchRounds({
           onOpenScheduling={(runnerId) =>
             setSchedulingViewer(
               runnerId
-                ? { runnerId, title: `runner ${shortId(runnerId)} · 调度日志` }
+                ? {
+                    runnerId,
+                    title: `runner ${runnerDisplayName(runnerId, runnerDirectoryById)} · 调度日志`,
+                  }
                 : { title: "总体调度日志" },
             )
           }
@@ -325,6 +374,7 @@ function RoundDetailPanel({
   canReadLogs,
   canReadArtifacts,
   artifactsEnabled,
+  runnerDirectory,
   cancelPending,
   actionError,
   detailCache,
@@ -341,6 +391,7 @@ function RoundDetailPanel({
   canReadLogs: boolean;
   canReadArtifacts: boolean;
   artifactsEnabled: boolean;
+  runnerDirectory: ReadonlyMap<string, RunnerDirectoryEntry>;
   cancelPending: boolean;
   actionError: string;
   detailCache: ReadonlyMap<string, AttemptDetailEntry>;
@@ -484,6 +535,7 @@ function RoundDetailPanel({
               canReadLogs={canReadLogs}
               canReadArtifacts={canReadArtifacts}
               artifactsEnabled={artifactsEnabled}
+              runnerDirectory={runnerDirectory}
               cancelPending={cancelPending}
               detailCache={detailCache}
               onRememberAttemptDetail={onRememberAttemptDetail}
@@ -495,6 +547,7 @@ function RoundDetailPanel({
               batch={batch}
               round={summary.round}
               canReadLogs={canReadLogs}
+              runnerDirectory={runnerDirectory}
               onOpenScheduling={onOpenScheduling}
             />
           )}
@@ -557,6 +610,7 @@ function RoundCasesTable({
   canReadLogs,
   canReadArtifacts,
   artifactsEnabled,
+  runnerDirectory,
   cancelPending,
   detailCache,
   onRememberAttemptDetail,
@@ -569,6 +623,7 @@ function RoundCasesTable({
   canReadLogs: boolean;
   canReadArtifacts: boolean;
   artifactsEnabled: boolean;
+  runnerDirectory: ReadonlyMap<string, RunnerDirectoryEntry>;
   cancelPending: boolean;
   detailCache: ReadonlyMap<string, AttemptDetailEntry>;
   onRememberAttemptDetail: (attemptId: string, entry: AttemptDetailEntry) => void;
@@ -712,6 +767,7 @@ function RoundCasesTable({
                   canReadLogs={canReadLogs}
                   canReadArtifacts={canReadArtifacts}
                   artifactsEnabled={artifactsEnabled}
+                  runnerDirectory={runnerDirectory}
                   cancelPending={cancelPending}
                   detailEntry={row.attempt ? detailCache.get(row.attempt.id) : undefined}
                   onRememberDetail={onRememberAttemptDetail}
@@ -804,6 +860,7 @@ function RoundCaseRow({
   canReadLogs,
   canReadArtifacts,
   artifactsEnabled,
+  runnerDirectory,
   cancelPending,
   detailEntry,
   onRememberDetail,
@@ -817,6 +874,7 @@ function RoundCaseRow({
   canReadLogs: boolean;
   canReadArtifacts: boolean;
   artifactsEnabled: boolean;
+  runnerDirectory: ReadonlyMap<string, RunnerDirectoryEntry>;
   cancelPending: boolean;
   detailEntry: AttemptDetailEntry | undefined;
   onRememberDetail: (attemptId: string, entry: AttemptDetailEntry) => void;
@@ -870,24 +928,24 @@ function RoundCaseRow({
               <span className={`batch-status ${attemptStatusClass(attempt)}`.trim()}>
                 {attemptStatusLabel(attempt)}
               </span>
-              {/* 终态失败摘要直接露出堆栈行，无需展开详情；摘要缺失时回落原因码定位
-                  AGENT_RESTARTED 等调度失败。 */}
-              {isTerminalAttemptStatus(attempt.status) &&
-              attempt.status !== "succeeded" &&
-              (attempt.resultSummary ?? attempt.resultCode) ? (
-                <small
-                  className="table-secondary attempt-failure-line"
-                  title={attempt.resultSummary ?? attempt.resultCode}
-                >
-                  {truncateFailureLine(attempt.resultSummary ?? attempt.resultCode)}
-                </small>
+              {/* 终态失败提示直接露出，无需展开详情：adapter 正常失败显示堆栈行
+                  摘要，blocked（重启协调、超时等）显示原因码。 */}
+              {isTerminalAttemptStatus(attempt.status) && attempt.status !== "succeeded" ? (
+                <AttemptFailureHintLine attempt={attempt} />
               ) : null}
             </>
           ) : (
             <span className="batch-status batch-status-neutral">未执行</span>
           )}
         </td>
-        <td>{runnerId ? <span title={runnerId}>{shortId(runnerId)}</span> : "—"}</td>
+        {/* 执行机优先展示注册名称（一般为 runner-IP），title 保留完整 UUID。 */}
+        <td>
+          {runnerId ? (
+            <span title={runnerId}>{runnerDisplayName(runnerId, runnerDirectory)}</span>
+          ) : (
+            "—"
+          )}
+        </td>
         <td>
           {attempt?.durationMs === undefined ? "—" : formatAttemptDuration(attempt.durationMs)}
         </td>
@@ -1115,11 +1173,13 @@ function RoundRunnerCards({
   batch,
   round,
   canReadLogs,
+  runnerDirectory,
   onOpenScheduling,
 }: {
   batch: RunBatchDetails;
   round: number;
   canReadLogs: boolean;
+  runnerDirectory: ReadonlyMap<string, RunnerDirectoryEntry>;
   onOpenScheduling: (runnerId: string | undefined) => void;
 }) {
   const cards = useMemo(() => {
@@ -1150,31 +1210,47 @@ function RoundRunnerCards({
   }
   return (
     <div className="runner-card-grid">
-      {cards.map(([runnerId, card]) => (
-        <div className="runner-card" key={runnerId}>
-          <div className="runner-card-heading">
-            <strong title={runnerId}>{shortId(runnerId)}</strong>
-            <span className="muted">本轮执行 {card.executed} 个</span>
+      {cards.map(([runnerId, card]) => {
+        const directoryEntry = runnerDirectory.get(runnerId);
+        const resourceSnapshot = directoryEntry?.resourceSnapshot;
+        return (
+          <div className="runner-card" key={runnerId}>
+            <div className="runner-card-heading">
+              <strong title={runnerId}>{directoryEntry?.name || shortId(runnerId)}</strong>
+              <span className="muted">本轮执行 {card.executed} 个</span>
+            </div>
+            <div className="runner-card-stats">
+              <span>通过 {card.passed}</span>
+              <span>失败 {card.failed}</span>
+            </div>
+            {resourceSnapshot ? (
+              <small
+                className="muted runner-card-resources"
+                title={`采集于 UTC ${resourceSnapshot.observedAt}`}
+              >
+                {runnerResourceLabel(resourceSnapshot)}
+              </small>
+            ) : (
+              <small className="muted runner-card-resources">暂无资源快照</small>
+            )}
+            <small className="muted">
+              最后活动{" "}
+              <time title={`UTC ${card.lastActivity}`}>
+                {formatLocalDateTime(card.lastActivity)}
+              </time>
+            </small>
+            {canReadLogs ? (
+              <Button
+                className="button button-secondary compact-button"
+                onClick={() => onOpenScheduling(runnerId)}
+                type="button"
+              >
+                <ScrollText size={15} /> 调度日志
+              </Button>
+            ) : null}
           </div>
-          <div className="runner-card-stats">
-            <span>通过 {card.passed}</span>
-            <span>失败 {card.failed}</span>
-          </div>
-          <small className="muted">
-            最后活动{" "}
-            <time title={`UTC ${card.lastActivity}`}>{formatLocalDateTime(card.lastActivity)}</time>
-          </small>
-          {canReadLogs ? (
-            <Button
-              className="button button-secondary compact-button"
-              onClick={() => onOpenScheduling(runnerId)}
-              type="button"
-            >
-              <ScrollText size={15} /> 调度日志
-            </Button>
-          ) : null}
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }

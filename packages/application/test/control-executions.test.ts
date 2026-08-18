@@ -721,6 +721,42 @@ describe("failure summary log fallback", () => {
     );
   });
 
+  it("keeps reconcile-reported summaries instead of mining the killed attempt log", async () => {
+    // 回归：AGENT_RESTARTED_DURING_EXECUTION 的日志属于被强杀的旧进程，
+    // 不得用启发式异常行替换上报方自带摘要，否则页面原因码被摘要顶掉。
+    const { service, executions } = buildService({
+      probe: { items: [], acknowledgedSequence: 5, truncated: false },
+      tail: {
+        items: [
+          {
+            stream: "stderr",
+            sequence: 5,
+            content: "java.lang.AssertionError: stale line from the killed process\n",
+          },
+        ],
+        acknowledgedSequence: 5,
+        truncated: false,
+      },
+    });
+
+    await service.complete("runner-1", "credential", "attempt-1", {
+      ...completionInput,
+      result: {
+        ...completionInput.result,
+        resultCode: "AGENT_RESTARTED_DURING_EXECUTION",
+        summary: "Runner Agent restarted before the attempt completed.",
+      },
+    });
+
+    expect(executions.completeAttempt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        result: expect.objectContaining({
+          summary: "Runner Agent restarted before the attempt completed.",
+        }),
+      }),
+    );
+  });
+
   it("accepts the completion even when the log store cannot be read", async () => {
     const { service, executions } = buildService({ error: new Error("store gone") });
 

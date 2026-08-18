@@ -5,7 +5,7 @@ import { RotateCcw, XCircle } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
-import { RunBatchRounds } from "@/components/run-batch-rounds";
+import { RunBatchRounds, type RunnerDirectoryEntry } from "@/components/run-batch-rounds";
 import { Button } from "@/components/ui";
 import { readApiErrorMessage } from "@/lib/client-api";
 import {
@@ -50,6 +50,7 @@ export function ExecutionBatchDetails({
   canReadLogs,
   canReadArtifacts,
   artifactsEnabled,
+  runnerDirectory,
 }: {
   batch: RunBatchDetails;
   canCancelRuns: boolean;
@@ -57,6 +58,7 @@ export function ExecutionBatchDetails({
   canReadLogs: boolean;
   canReadArtifacts: boolean;
   artifactsEnabled: boolean;
+  runnerDirectory: readonly RunnerDirectoryEntry[];
 }) {
   const router = useRouter();
   const [actionError, setActionError] = useState("");
@@ -203,6 +205,7 @@ export function ExecutionBatchDetails({
         canReadLogs={canReadLogs}
         canReadArtifacts={canReadArtifacts}
         artifactsEnabled={artifactsEnabled}
+        runnerDirectory={runnerDirectory}
       />
     </div>
   );

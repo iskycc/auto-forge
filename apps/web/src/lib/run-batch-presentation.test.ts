@@ -2,6 +2,7 @@ import type { RunAttempt, RunBatch } from "@autoforge/domain";
 import { describe, expect, it } from "vitest";
 
 import {
+  attemptFailureHint,
   batchTestNames,
   formatArtifactBytes,
   formatAttemptDuration,
@@ -160,3 +161,48 @@ function batch(overrides: Partial<RunBatch>): RunBatch {
     ...overrides,
   };
 }
+
+describe("attemptFailureHint", () => {
+  function attempt(
+    overrides: Partial<Pick<RunAttempt, "outcome" | "resultCode" | "resultSummary">>,
+  ): Pick<RunAttempt, "outcome" | "resultCode" | "resultSummary"> {
+    return { outcome: "failed", resultCode: "", resultSummary: "", ...overrides };
+  }
+
+  it("shows the stack-line summary for normal adapter failures", () => {
+    expect(
+      attemptFailureHint(
+        attempt({
+          resultCode: "TESTNG_ASSERTIONS_FAILED",
+          resultSummary: "java.lang.AssertionError: expected <200> but was <500>",
+        }),
+      ),
+    ).toBe("java.lang.AssertionError: expected <200> but was <500>");
+  });
+
+  it("shows the reason code for blocked terminations even when a summary exists", () => {
+    expect(
+      attemptFailureHint(
+        attempt({
+          resultCode: "AGENT_RESTARTED_DURING_EXECUTION",
+          resultSummary: "Runner Agent restarted before the attempt completed.",
+        }),
+      ),
+    ).toBe("AGENT_RESTARTED_DURING_EXECUTION");
+    expect(
+      attemptFailureHint(attempt({ resultCode: "EXECUTION_TIMEOUT", resultSummary: "" })),
+    ).toBe("EXECUTION_TIMEOUT");
+  });
+
+  it("falls back to the summary when no result code was reported", () => {
+    expect(attemptFailureHint(attempt({ resultCode: "", resultSummary: "boom" }))).toBe("boom");
+  });
+
+  it("treats timed out outcomes as blocked", () => {
+    expect(
+      attemptFailureHint(
+        attempt({ outcome: "timed_out", resultCode: "EXECUTION_TIMEOUT", resultSummary: "x" }),
+      ),
+    ).toBe("EXECUTION_TIMEOUT");
+  });
+});

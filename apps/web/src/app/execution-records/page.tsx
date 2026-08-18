@@ -13,6 +13,7 @@ import {
   localDateTimeInputValue,
   refreshQueryFromFilter,
   runBatchFilterFromSearch,
+  RUN_BATCH_PAGE_SIZE_OPTIONS,
 } from "@/lib/run-batch-filter";
 
 export const dynamic = "force-dynamic";
@@ -130,6 +131,16 @@ export default async function ExecutionRecordsPage({
             name="createdBefore"
           />
         </label>
+        <label>
+          每页条数
+          <Select defaultValue={String(filter.limit)} name="limit">
+            {RUN_BATCH_PAGE_SIZE_OPTIONS.map((size) => (
+              <option key={size} value={String(size)}>
+                {size} 条
+              </option>
+            ))}
+          </Select>
+        </label>
         <Button className="button button-secondary" type="submit">
           筛选记录
         </Button>
@@ -140,7 +151,9 @@ export default async function ExecutionRecordsPage({
       <section className="content-card execution-records-card">
         <div className="records-table-header">
           <h2>批次列表</h2>
-          <span className="table-count">共 {batchPage.items.length} 条记录</span>
+          <span className="table-count">
+            本页 {batchPage.items.length} 条 · 每页 {filter.limit} 条
+          </span>
         </div>
         {batchPage.items.length === 0 ? (
           <div className="table-empty">
