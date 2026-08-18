@@ -424,9 +424,16 @@ func (supervisor *attemptSupervisor) runTestNG(
 		mapTestNGReport(&mapped, result, reportSummary)
 	}
 	if artifactDiscoveryErr != nil {
-		mapped.Status = "failed"
-		mapped.ResultCode = artifactDiscoveryCode
-		mapped.Summary = boundedSummary(artifactDiscoveryErr.Error())
+		if artifactDiscoveryCode == "REQUIRED_ARTIFACT_MISSING" {
+			// 显式声明为必需的产物缺失代表执行不完整，保留失败语义。
+			mapped.Status = "failed"
+			mapped.ResultCode = artifactDiscoveryCode
+			mapped.Summary = boundedSummary(artifactDiscoveryErr.Error())
+		} else {
+			// 产物收集是尽力而为的辅助能力，扫描的偶发问题不得推翻由 TestNG 报告与
+			// 进程退出码决定的用例真实结果，仅记录 Agent 诊断日志。
+			fmt.Fprintf(supervisor.diagnostics, "attempt %s artifact discovery skipped: %v\n", claimed.Assignment.AttemptID, artifactDiscoveryErr)
+		}
 	}
 	mapped.LogWatermarks = &watermarks
 	uploads := make([]artifactUploadState, 0, len(artifacts))

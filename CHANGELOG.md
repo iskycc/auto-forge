@@ -4,6 +4,22 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## 0.6.1 - 2026-08-18
+
+### Fixed
+
+- Artifact collection no longer fails a test attempt. After an execution finishes (logs already
+  collected), the Runner Agent scans the attempt workspace for files matching the execution spec's
+  artifact rules — by default the TestNG report tree `reports/testng/**` — and uploads them as
+  downloadable artifacts. Previously any matched symbolic link or special file, more than 256
+  matched files, or a size/byte-budget breach rejected the whole scan and overrode the attempt's
+  real result with `ARTIFACT_DISCOVERY_REJECTED`, so a passed case could be reported as failed.
+  The scan is now best-effort: uncollectable files are skipped (symbolic links are never followed
+  or read), healthy files are still collected, and the attempt result stays authoritative — it is
+  determined by the parsed TestNG report and the process exit code. Only a missing `required: true`
+  artifact still fails the attempt (`REQUIRED_ARTIFACT_MISSING`). Case result classification,
+  scheduling semantics and custom artifact rules (for example `artifacts/*.txt`) are unchanged.
+
 ## 0.6.0 - 2026-08-18
 
 ### Features

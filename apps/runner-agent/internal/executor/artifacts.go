@@ -83,60 +83,52 @@ func DiscoverArtifacts(ctx context.Context, workspace string, rules []ArtifactRu
 				break
 			}
 		}
-		// 工具链目录（如 JDK legal 下的符号链接）与产物无关：只有被产物规则命中的
-		// 符号链接/特殊文件才拒绝，未命中的直接跳过，不参与收集也不算入配额。
+		if matchedRule < 0 {
+			// 与任何产物规则无关的文件（含工具链 JDK legal 下的符号链接）直接跳过，
+			// 不参与收集也不算入配额。
+			return nil
+		}
+		rule := &compiled[matchedRule]
+		// 产物收集是尽力而为的辅助能力，用例真实结果由 TestNG 报告与进程退出码决定：
+		// 命中规则的符号链接、特殊文件、超过大小/数量/字节预算的文件一律跳过（从不跟随
+		// 符号链接、从不读取），而不是让整个扫描失败并推翻用例结果。
 		if entry.Type()&os.ModeSymlink != 0 {
-			if matchedRule >= 0 {
-				return fmt.Errorf("artifact scan rejected symbolic link %q", path)
-			}
 			return nil
 		}
 		info, err := entry.Info()
+		if err != nil || !info.Mode().IsRegular() {
+			return nil
+		}
+		if len(artifacts) >= maximumArtifactCount {
+			return nil
+		}
+		if info.Size() > min(maximumBytes, int64(maximumSingleArtifactSize)) {
+			return nil
+		}
+		if info.Size() > maximumBytes-totalBytes {
+			return nil
+		}
+		digest, err := fileSHA256(path)
 		if err != nil {
-			return err
-		}
-		if !info.Mode().IsRegular() {
-			if matchedRule >= 0 {
-				return fmt.Errorf("artifact scan rejected non-regular file %q", path)
-			}
 			return nil
 		}
-		if matchedRule < 0 {
-			return nil
+		mediaType := rule.MediaType
+		if mediaType == "" {
+			mediaType = mime.TypeByExtension(filepath.Ext(path))
 		}
-		{
-			rule := &compiled[matchedRule]
-			rule.matched = true
-			if len(artifacts) >= maximumArtifactCount {
-				return fmt.Errorf("artifact count exceeds %d", maximumArtifactCount)
-			}
-			if info.Size() > min(maximumBytes, int64(maximumSingleArtifactSize)) {
-				return errors.New("artifact exceeds the single-file size limit")
-			}
-			if info.Size() > maximumBytes-totalBytes {
-				return errors.New("artifact bytes exceed the execution limit")
-			}
-			digest, err := fileSHA256(path)
-			if err != nil {
-				return err
-			}
-			mediaType := rule.MediaType
-			if mediaType == "" {
-				mediaType = mime.TypeByExtension(filepath.Ext(path))
-			}
-			if mediaType == "" {
-				mediaType = "application/octet-stream"
-			}
-			artifacts = append(artifacts, Artifact{
-				RelativePath: relative,
-				AbsolutePath: path,
-				MediaType:    mediaType,
-				SizeBytes:    info.Size(),
-				SHA256:       digest,
-				Required:     rule.Required,
-			})
-			totalBytes += info.Size()
+		if mediaType == "" {
+			mediaType = "application/octet-stream"
 		}
+		artifacts = append(artifacts, Artifact{
+			RelativePath: relative,
+			AbsolutePath: path,
+			MediaType:    mediaType,
+			SizeBytes:    info.Size(),
+			SHA256:       digest,
+			Required:     rule.Required,
+		})
+		rule.matched = true
+		totalBytes += info.Size()
 		return nil
 	})
 	if err != nil {

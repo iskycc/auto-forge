@@ -3,6 +3,7 @@ package executor
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -28,7 +29,7 @@ func TestDiscoverArtifactsHashesBoundedRegularFiles(t *testing.T) {
 	}
 }
 
-func TestDiscoverArtifactsRejectsSymlinksAndMissingRequiredPatterns(t *testing.T) {
+func TestDiscoverArtifactsSkipsMatchedSymlinksAndDetectsMissingRequiredPatterns(t *testing.T) {
 	workspace := t.TempDir()
 	outside := filepath.Join(t.TempDir(), "secret")
 	if err := os.WriteFile(outside, []byte("secret"), 0o600); err != nil {
@@ -37,11 +38,17 @@ func TestDiscoverArtifactsRejectsSymlinksAndMissingRequiredPatterns(t *testing.T
 	if err := os.Symlink(outside, filepath.Join(workspace, "report.xml")); err != nil {
 		t.Fatalf("create symlink: %v", err)
 	}
-	if _, err := DiscoverArtifacts(context.Background(), workspace, []ArtifactRule{{Pattern: "**"}}, 1024); err == nil {
-		t.Fatal("DiscoverArtifacts() accepted a symbolic link")
+	// 命中规则的符号链接被跳过而不是拒绝整轮扫描：绝不跟随链接读取工作区外的内容，
+	// 因此不会收集到任何产物，但用例结果不受影响。
+	artifacts, err := DiscoverArtifacts(context.Background(), workspace, []ArtifactRule{{Pattern: "**"}}, 1024)
+	if err != nil {
+		t.Fatalf("DiscoverArtifacts() error = %v", err)
+	}
+	if len(artifacts) != 0 {
+		t.Fatalf("DiscoverArtifacts() followed a symbolic link: %#v", artifacts)
 	}
 	clean := t.TempDir()
-	_, err := DiscoverArtifacts(context.Background(), clean, []ArtifactRule{{Pattern: "report.xml", Required: true}}, 1024)
+	_, err = DiscoverArtifacts(context.Background(), clean, []ArtifactRule{{Pattern: "report.xml", Required: true}}, 1024)
 	var missing *RequiredArtifactMissingError
 	if !errors.As(err, &missing) || missing.Pattern != "report.xml" {
 		t.Fatalf("expected missing required artifact error, got %v", err)
@@ -104,19 +111,96 @@ func TestDiscoverArtifactsSkipsUnmatchedToolchainSymlinks(t *testing.T) {
 	}
 }
 
-func TestDiscoverArtifactsRejectsAggregateByteOverflow(t *testing.T) {
+func TestDiscoverArtifactsStaysWithinByteBudgetBySkipping(t *testing.T) {
 	workspace := t.TempDir()
 	for _, name := range []string{"first.log", "second.log"} {
 		if err := os.WriteFile(filepath.Join(workspace, name), []byte("123456"), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if _, err := DiscoverArtifacts(
+	// 超出字节预算的文件被跳过而不是让整个扫描失败：收集结果始终不超过预算。
+	artifacts, err := DiscoverArtifacts(
 		context.Background(),
 		workspace,
 		[]ArtifactRule{{Pattern: "*.log"}},
 		10,
-	); err == nil {
-		t.Fatal("DiscoverArtifacts() accepted artifacts above the aggregate byte limit")
+	)
+	if err != nil {
+		t.Fatalf("DiscoverArtifacts() error = %v", err)
+	}
+	var total int64
+	for _, artifact := range artifacts {
+		total += artifact.SizeBytes
+	}
+	if total > 10 {
+		t.Fatalf("DiscoverArtifacts() exceeded the byte budget: %#v", artifacts)
+	}
+	if len(artifacts) != 1 {
+		t.Fatalf("expected exactly one artifact within budget, got %#v", artifacts)
+	}
+}
+
+func TestDiscoverArtifactsCollectsHealthyFilesAroundProblematicOnes(t *testing.T) {
+	workspace := t.TempDir()
+	reportDirectory := filepath.Join(workspace, "reports", "testng")
+	if err := os.MkdirAll(reportDirectory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	// 复现真实用例输出混杂异常文件的场景：正常报告文件与符号链接共存时，
+	// 扫描必须收集正常产物而不是整体拒绝（ARTIFACT_DISCOVERY_REJECTED 回归防护）。
+	if err := os.WriteFile(filepath.Join(reportDirectory, "testng-results.xml"), []byte("<testng-results/>"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(reportDirectory, "index.html"), []byte("<html/>"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(t.TempDir(), "outside-secret")
+	if err := os.WriteFile(outside, []byte("secret"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(reportDirectory, "linked.log")); err != nil {
+		t.Fatal(err)
+	}
+	artifacts, err := DiscoverArtifacts(
+		context.Background(),
+		workspace,
+		[]ArtifactRule{{Pattern: "reports/testng/**"}},
+		10_737_418_240,
+	)
+	if err != nil {
+		t.Fatalf("DiscoverArtifacts() error = %v", err)
+	}
+	collected := map[string]bool{}
+	for _, artifact := range artifacts {
+		collected[artifact.RelativePath] = true
+	}
+	if len(artifacts) != 2 || !collected["reports/testng/testng-results.xml"] || !collected["reports/testng/index.html"] {
+		t.Fatalf("artifacts = %#v", artifacts)
+	}
+}
+
+func TestDiscoverArtifactsCapsCountWithoutFailing(t *testing.T) {
+	workspace := t.TempDir()
+	reportDirectory := filepath.Join(workspace, "reports", "testng")
+	if err := os.MkdirAll(reportDirectory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for index := 0; index < maximumArtifactCount+4; index++ {
+		name := filepath.Join(reportDirectory, fmt.Sprintf("file-%03d.txt", index))
+		if err := os.WriteFile(name, []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	artifacts, err := DiscoverArtifacts(
+		context.Background(),
+		workspace,
+		[]ArtifactRule{{Pattern: "reports/testng/**"}},
+		10_737_418_240,
+	)
+	if err != nil {
+		t.Fatalf("DiscoverArtifacts() error = %v", err)
+	}
+	if len(artifacts) != maximumArtifactCount {
+		t.Fatalf("expected the scan to cap at %d artifacts, got %d", maximumArtifactCount, len(artifacts))
 	}
 }

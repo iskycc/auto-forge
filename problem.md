@@ -188,3 +188,35 @@ blocked”是两个完全不同的概念。为避免同一术语表达两种口�
   outcome=cancelled 或取消类结果码；其余 blocked（adapter 崩溃、日志超限等）仅由
   “阻塞（异常结束）”筛选项命中。
 - 默认勾选项由“失败 + 超时”改为“失败 + 阻塞”，使首次导出即覆盖全部非正常结束。
+
+## 14. ARTIFACT_DISCOVERY_REJECTED 的根因与彻底修复（v0.6.1）
+
+- artifact 发现在做什么：用例执行结束、日志收口之后，Agent 按执行规格中的产物规则
+  （`artifactRules`）扫描 attempt 工作目录，把命中的文件收集为可下载产物并上传对象
+  存储。默认套件策略规则为 `reports/testng/**`，即收集 TestNG 报告输出
+  （testng-results.xml、index.html 等）。用例成败**不依赖**这一步——它由
+  `reports/testng/testng-results.xml` 的解析与进程退出码决定；产物收集只是附加下载
+  能力，自定义产物规则（如 java-cases fixture 的 `artifacts/*.txt`）也走同一机制。
+- 根因：原实现是 all-or-nothing。任何被规则命中的文件若是符号链接/特殊文件、命中文件
+  超过 256 个、单文件超过 256MiB 或总字节超限，都会拒绝整轮扫描，且 supervisor 会把
+  attempt 的真实结果直接改写为 failed + `ARTIFACT_DISCOVERY_REJECTED`。本机已复现三类
+  触发器（reports/testng 内的符号链接、FIFO、260 个文件均导致拒绝）。生产环境中只要
+  用例或框架向报告目录写入任何此类文件，用例即使通过也被记为失败。0.4.17 只修复了
+  “未命中规则的符号链接”，命中规则的拒绝逻辑仍在，这就是执行完仍报错的原因。
+- 修复（两层）：
+  1. 扫描器（`apps/runner-agent/internal/executor/artifacts.go`）改为尽力而为收集：
+     命中规则但无法安全收集的文件（符号链接、特殊文件、超大小/数量/字节预算）一律跳过
+     （符号链接从不跟随、从不读取，无越界读取风险），其余正常文件照常收集。硬性错误仅
+     保留给规则配置错误（路径穿越等）、ctx 取消与“必需产物缺失”。
+  2. supervisor（`apps/runner-agent/internal/control/supervisor.go`）：仅
+     `REQUIRED_ARTIFACT_MISSING`（显式声明 required 的产物确实缺失）仍以失败覆盖 attempt
+     结果；其他产物发现问题只写 Agent 诊断日志，不推翻 TestNG 报告与退出码决定的真实结果。
+- “该逻辑是否有存在必要”的决策：保留产物收集能力（自定义产物规则是真实功能，CI 的
+  java-cases-pipeline 依赖 `artifacts/*.txt` 下载断言），但把默认 TestNG 报告收集降级为
+  尽力而为——收集失败只意味着少几个可下载文件，永远不再导致用例失败。结构化结果页已含
+  testng-results.xml 的解析内容；若后续决定彻底移除默认报告收集，只需把
+  `defaultCaseSuiteExecutionPolicy.artifactPatterns` 置空，无需其他改动。
+- 测试：新增/改写扫描器测试（符号链接跳过且不越界读取、字节预算内跳过超限文件、异常
+  文件混杂时收集健康文件、超 256 个文件时封顶不失败），Agent 全量 go test 通过；
+  应用层 `ARTIFACT_DISCOVERY_REJECTED` 事件渲染测试保留（历史结果码仍需可渲染，新
+  blocked 口径下归类为 blocked）。
