@@ -96,3 +96,21 @@ clamp 两个端点。未触碰移动端断点。
 `autoforge.execution-records.column-widths.v1`，仅对当前浏览器与域生效（“浏览器自动
 记忆”按 localStorage 实现）。更换浏览器或清除站点数据后回到默认列宽；每列有最小
 宽度下限，不会被拖到不可读。
+
+## 10. 发布期 CI 失败的两个根因与修复（提交 7688737 / 9ba38aa）
+
+v0.5.0 首轮流水线的 4 个失败 job 与第二轮的 2 个失败 job，根因均在本仓库而非
+runner 环境：
+
+1. 需求5取消了批次详情页行内详情的自动展开，但 `real-agent`、`java-cases-pipeline`、
+   `container-executor` 三个 e2e spec 仍在未点击行级“详情”按钮的情况下断言展开
+   区域内的内容（“结构化测试结果”标题、TestNG 方法行、产物下载链接）。这些 spec
+   不在本机 `test:e2e` 的 8 个冒烟列表内，仅由 CI 完整门运行，因此本机 15/15 通过
+   未能暴露。已按 `jar-import.spec.ts` 的模式补齐展开点击（7688737、9ba38aa）。
+2. `vitest.performance.config.ts` 的别名写死了本机绝对路径
+   `/opt/auto-forge/...`，CI runner 工作目录不同，导致 `@/export-workbook` 解析为
+   `ERR_MODULE_NOT_FOUND`，50,000 行导出性能测试在 CI 崩溃。已改为从
+   `import.meta.dirname` 相对解析（9ba38aa），本机性能测试复跑 5/5 通过。
+
+教训：新增仅 CI 可跑的 e2e spec 时，前端展示语义变更（如取消自动展开）必须全量
+扫描所有 spec 中的相关断言；vitest 配置中禁止出现机器相关绝对路径。
