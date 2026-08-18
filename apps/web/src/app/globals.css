@@ -8601,6 +8601,11 @@ button.icon-button:disabled {
   gap: 12px;
 }
 
+/* 全部轮次视图的轮次列：短文本不允许换行挤压状态列。 */
+.round-cell-nowrap {
+  white-space: nowrap;
+}
+
 .round-filter-row {
   display: flex;
   flex-wrap: wrap;

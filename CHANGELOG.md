@@ -4,6 +4,23 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## 0.6.6 - 2026-08-18
+
+### Fixed
+
+- All-rounds virtual round layout: the panel reused the two-column `round-detail-body` grid whose
+  first column is reserved for the donut charts, so the case table was squeezed into a ~320px
+  column — the 轮次 cell wrapped vertically and the status/runner/duration/action columns were
+  clipped. The all-rounds panel now renders the table full width and the 轮次 cell is
+  `nowrap`. A new end-to-end spec (`tests/e2e/all-rounds.spec.ts`) drives a real two-round batch
+  through the Runner Protocol and asserts the per-round annotations, the status filters, the
+  “previously passed cases disappear from later rounds” behaviour, the `scope=all` export, and a
+  table-width layout regression check.
+
+### Compatibility
+
+- Style/test-only change on top of 0.6.5; no migrations, configuration, or API changes.
+
 ## 0.6.5 - 2026-08-18
 
 ### Features

@@ -498,24 +498,24 @@ function AllRoundsPanel({
           {actionError}
         </p>
       ) : null}
-      <div className="round-detail-body">
-        <div className="round-tab-content">
-          <RoundCasesTable
-            key="all"
-            batch={batch}
-            round="all"
-            canCancelRuns={canCancelRuns}
-            canReadLogs={canReadLogs}
-            canReadArtifacts={canReadArtifacts}
-            artifactsEnabled={artifactsEnabled}
-            runnerDirectory={runnerDirectory}
-            cancelPending={cancelPending}
-            detailCache={detailCache}
-            onRememberAttemptDetail={onRememberAttemptDetail}
-            onCancelRun={onCancelRun}
-            onOpenLogs={onOpenLogs}
-          />
-        </div>
+      {/* 全部轮次没有环形图，不能使用 round-detail-body 的双列网格，
+          否则表格会被挤进 320px 的图表列。 */}
+      <div className="round-tab-content">
+        <RoundCasesTable
+          key="all"
+          batch={batch}
+          round="all"
+          canCancelRuns={canCancelRuns}
+          canReadLogs={canReadLogs}
+          canReadArtifacts={canReadArtifacts}
+          artifactsEnabled={artifactsEnabled}
+          runnerDirectory={runnerDirectory}
+          cancelPending={cancelPending}
+          detailCache={detailCache}
+          onRememberAttemptDetail={onRememberAttemptDetail}
+          onCancelRun={onCancelRun}
+          onOpenLogs={onOpenLogs}
+        />
       </div>
     </section>
   );
@@ -1076,7 +1076,9 @@ function RoundCaseRow({
           <strong>{run.displayName}</strong>
           <small className="table-secondary">{run.className}</small>
         </td>
-        {showRoundColumn ? <td>{attempt ? `第 ${attempt.attemptNumber} 轮` : "—"}</td> : null}
+        {showRoundColumn ? (
+          <td className="round-cell-nowrap">{attempt ? `第 ${attempt.attemptNumber} 轮` : "—"}</td>
+        ) : null}
         <td>
           {attempt ? (
             <>
