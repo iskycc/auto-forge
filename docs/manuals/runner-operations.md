@@ -15,7 +15,9 @@
 专用用户、目录和 systemd 服务。脚本不调用包管理器、不联网。详细路径、权限、私有 CA 和卸载
 命令见 [Agent 安装](../operations/runner-agent-install.md)。
 
-远程探测与安装使用目标机的 Bash，systemd 固定以 `/var/lib/autoforge-agent` 为工作目录。
+远程探测与安装使用目标机的 Bash，systemd 默认以 `/var/lib/autoforge-agent` 为工作目录；
+安装与更新时均可自定义绝对路径的工作目录（如 `/data/autoforge-agent`），更新时留空会读回并沿用
+执行机当前目录。
 若 openSUSE 的 `ID` 被定制成 `sles` 等值，自动模式会结合名称中的 openSUSE 证据纠正；仍无法
 确认时，管理员核验主机后可手动选择 Ubuntu/openSUSE 强制模式，不再因识别结果直接阻断。
 

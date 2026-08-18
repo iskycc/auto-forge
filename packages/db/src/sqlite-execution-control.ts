@@ -34,6 +34,7 @@ import {
 
 import type { AttemptLogStore } from "./attempt-log-store";
 import type { SqliteDatabaseHandle } from "./database";
+import { QUERY_IN_CHUNK_SIZE, splitIntoChunks } from "./query-chunks";
 
 type AssignmentRow = {
   id: string;
@@ -582,6 +583,19 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
       displayName: row.display_name,
       ...(row.held_round > 0 ? { heldRound: row.held_round } : {}),
     };
+  }
+
+  async countExistingAttemptIds(attemptIds: readonly string[]): Promise<number> {
+    if (attemptIds.length === 0) return 0;
+    let total = 0;
+    for (const chunk of splitIntoChunks(attemptIds, QUERY_IN_CHUNK_SIZE)) {
+      const placeholders = chunk.map(() => "?").join(", ");
+      const row = this.handle.client
+        .prepare(`SELECT count(*) AS count FROM run_attempts WHERE id IN (${placeholders})`)
+        .get(...chunk) as { count: number };
+      total += row.count;
+    }
+    return total;
   }
 
   async resolveExecutionRunProjectId(runId: string): Promise<string | null> {

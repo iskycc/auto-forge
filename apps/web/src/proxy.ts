@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 
 const PUBLIC_PATHS = new Set(["/", "/login", "/setup"]);
-// /share/ 承载免登录的只读分享页（如执行日志分享），由页面自身按 token 校验访问。
+// /share/ 承载免登录的只读公开页（如执行日志公开访问），由页面自身按 token 校验访问。
 const PUBLIC_PREFIXES = ["/share/"];
 
 function isPublicPath(pathname: string): boolean {

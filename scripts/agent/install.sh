@@ -9,6 +9,8 @@ readonly adapter_jar="${4:?Adapter JAR path is required}"
 readonly service_account="${5:?service account is required}"
 readonly ca_certificate="${6:-}"
 readonly installation_mode="${7:-auto}"
+# Optional for backward compatibility: older control planes omit the data directory.
+readonly data_directory="${8:-/var/lib/autoforge-agent}"
 readonly install_root="/opt/autoforge"
 readonly installed_binary="${install_root}/bin/autoforge-agent"
 readonly installed_adapter="${install_root}/lib/cotest-testng-adapter.jar"
@@ -21,6 +23,20 @@ case "${service_account}" in
   root | autoforge-agent) ;;
   *)
     echo "unsupported service account: ${service_account}" >&2
+    exit 1
+    ;;
+esac
+
+case "${data_directory}" in
+  /*) ;;
+  *)
+    echo "data directory must be an absolute path: ${data_directory}" >&2
+    exit 1
+    ;;
+esac
+case "${data_directory}" in
+  *".."*)
+    echo "data directory must not contain ..: ${data_directory}" >&2
     exit 1
     ;;
 esac
@@ -80,7 +96,7 @@ if [ "${service_account}" != "root" ] && ! id -u "${service_account}" >/dev/null
       break
     fi
   done
-  useradd --system --home-dir /var/lib/autoforge-agent --shell "${nologin_shell}" \
+  useradd --system --home-dir "${data_directory}" --shell "${nologin_shell}" \
     --user-group --comment "AutoForge Runner Agent" "${service_account}"
 fi
 readonly service_group="$(id -gn "${service_account}")"
@@ -89,7 +105,7 @@ readonly service_group="$(id -gn "${service_account}")"
 install -d -m 0755 "${install_root}/bin"
 install -d -m 0755 "${install_root}/lib"
 install -d -m 0700 -o "${service_account}" -g "${service_group}" \
-  "${configuration_root}" /var/lib/autoforge-agent
+  "${configuration_root}" "${data_directory}"
 
 backup_suffix=".autoforge-previous"
 for target in "${installed_binary}" "${installed_adapter}" "${installed_configuration}" "${installed_service_unit}"; do

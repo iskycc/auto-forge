@@ -58,6 +58,29 @@ export class CaseDefinitionService {
   }
 
   /**
+   * 批量查询每个用例最近一次终态执行结果；`projectIds` 用于按项目范围裁剪，
+   * 调用方已持有范围化用例 ID 时可省略。无终态记录的用例不出现在结果中。
+   */
+  async latestRunOutcomes(caseDefinitionIds: readonly string[], projectIds?: readonly string[]) {
+    if (caseDefinitionIds.length === 0) return [];
+    let scopedIds: readonly string[] = caseDefinitionIds;
+    if (projectIds && projectIds.length > 0) {
+      const existing = new Set<string>();
+      for (const projectId of projectIds) {
+        for (const id of await this.catalog.findExistingCaseIds(
+          [...caseDefinitionIds],
+          projectId,
+        )) {
+          existing.add(id);
+        }
+      }
+      scopedIds = [...caseDefinitionIds].filter((id) => existing.has(id));
+      if (scopedIds.length === 0) return [];
+    }
+    return this.catalog.listLatestRunOutcomes(scopedIds);
+  }
+
+  /**
    * 从不可变历史版本创建新的当前版本：执行内容（分组、参数、方法）恢复到
    * 快照状态，展示元数据（名称、描述、标签）保持不变。
    */

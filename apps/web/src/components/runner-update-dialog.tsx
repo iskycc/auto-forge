@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  DEFAULT_RUNNER_DATA_DIRECTORY,
   runnerAgentInstallationResultSchema,
   runnerHostProbeResultSchema,
   type RunnerAgentInstallationResult,
@@ -30,6 +31,7 @@ export function RunnerUpdateDialog({
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [runAsRoot, setRunAsRoot] = useState(false);
+  const [dataDirectory, setDataDirectory] = useState("");
   const [installationMode, setInstallationMode] = useState<
     "auto" | "ubuntu" | "opensuse" | "opensuse-leap" | "opensuse-tumbleweed"
   >("auto");
@@ -85,6 +87,7 @@ export function RunnerUpdateDialog({
         expectedHostKeySha256: probe.hostKeySha256,
         runAsRoot,
         installationMode,
+        ...(dataDirectory.trim() ? { dataDirectory: dataDirectory.trim() } : {}),
       });
       setResult(runnerAgentInstallationResultSchema.parse(response));
       setPassword("");
@@ -205,7 +208,27 @@ export function RunnerUpdateDialog({
                   />
                   以 root 身份运行 Agent
                 </label>
+                <label>
+                  工作目录
+                  <Input
+                    autoComplete="off"
+                    disabled={Boolean(pending)}
+                    onChange={(event) => setDataDirectory(event.target.value)}
+                    placeholder={DEFAULT_RUNNER_DATA_DIRECTORY}
+                    value={dataDirectory}
+                  />
+                  <small>留空保持执行机当前工作目录；需为绝对路径。</small>
+                </label>
               </div>
+              {dataDirectory.trim() ? (
+                <div className="inline-notice warning-notice" role="status">
+                  <ShieldAlert size={18} />
+                  <span>
+                    更换工作目录后，原目录中的本地身份与 spool
+                    不会自动迁移，执行机将作为新节点重新注册；请先在平台撤销旧身份。
+                  </span>
+                </div>
+              ) : null}
               <div className="runner-installer-actions">
                 <Button
                   className="button-secondary"

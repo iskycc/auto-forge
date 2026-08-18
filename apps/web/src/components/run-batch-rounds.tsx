@@ -14,11 +14,13 @@ import {
   Download,
   Eye,
   FileText,
+  Globe,
+  RefreshCw,
   ScrollText,
   Search,
 } from "lucide-react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { AttemptLogViewer } from "@/components/attempt-log-viewer";
 import { DonutChart, type DonutChartSegment } from "@/components/donut-chart";
@@ -33,7 +35,16 @@ import {
   formatLocalDateTime,
 } from "@/lib/run-batch-presentation";
 
-const CASE_PAGE_SIZE = 10;
+const DEFAULT_CASE_PAGE_SIZE = 50;
+// 用户可选的每页用例数；500 为需求上限。
+const CASE_PAGE_SIZE_OPTIONS = [20, 50, 100, 200, 500] as const;
+
+/** 行内详情缓存：展开过的 attempt 产物与事件只请求一次，切换页面/重新展开不再重复拉取。 */
+type AttemptDetailEntry = {
+  artifacts?: AttemptArtifactList["items"] | undefined;
+  events?: AttemptEventPage["items"] | undefined;
+  error?: string | undefined;
+};
 
 type CaseStatusFilter = "all" | "succeeded" | "failed" | "timed_out" | "cancelled" | "pending";
 
@@ -124,6 +135,17 @@ export function RunBatchRounds({
   >();
   const [cancelPending, setCancelPending] = useState(false);
   const [actionError, setActionError] = useState("");
+  // 行内详情缓存按批次组件生命周期存活；刷新按钮触发 router.refresh() 后
+  // 服务端数据更新，缓存仍按 attemptId 复用已加载的产物与事件。
+  const [detailCache, setDetailCache] = useState<Map<string, AttemptDetailEntry>>(new Map());
+
+  const rememberAttemptDetail = useCallback((attemptId: string, entry: AttemptDetailEntry) => {
+    setDetailCache((current) => {
+      const next = new Map(current);
+      next.set(attemptId, entry);
+      return next;
+    });
+  }, []);
 
   function selectRound(round: number): void {
     const parameters = new URLSearchParams(searchParams.toString());
@@ -251,6 +273,8 @@ export function RunBatchRounds({
           canReadArtifacts={canReadArtifacts}
           cancelPending={cancelPending}
           actionError={actionError}
+          detailCache={detailCache}
+          onRememberAttemptDetail={rememberAttemptDetail}
           onCancelRun={(runId) => void cancelRun(runId)}
           onOpenLogs={setLogAttempt}
           onOpenScheduling={(runnerId) =>
@@ -293,6 +317,8 @@ function RoundDetailPanel({
   canReadArtifacts,
   cancelPending,
   actionError,
+  detailCache,
+  onRememberAttemptDetail,
   onCancelRun,
   onOpenLogs,
   onOpenScheduling,
@@ -306,11 +332,14 @@ function RoundDetailPanel({
   canReadArtifacts: boolean;
   cancelPending: boolean;
   actionError: string;
+  detailCache: ReadonlyMap<string, AttemptDetailEntry>;
+  onRememberAttemptDetail: (attemptId: string, entry: AttemptDetailEntry) => void;
   onCancelRun: (runId: string) => void;
   onOpenLogs: (attempt: RunAttempt) => void;
   onOpenScheduling: (runnerId: string | undefined) => void;
 }) {
   const label = roundLabel(batch.retryMode, summary.round);
+  const router = useRouter();
   const [exportDialogOpen, setExportDialogOpen] = useState(false);
   const passedRunsSoFar = useMemo(() => {
     const passed = new Set<string>();
@@ -353,24 +382,34 @@ function RoundDetailPanel({
             <span className="status-badge">实时更新</span>
           ) : null}
         </div>
-        {canReadLogs ? (
+        <div className="round-detail-header-actions">
           <Button
             className="button button-secondary compact-button"
-            onClick={() => onOpenScheduling(undefined)}
+            onClick={() => router.refresh()}
             type="button"
+            title="重新从服务端拉取最新执行状态"
           >
-            <ScrollText size={15} /> 总体调度日志
+            <RefreshCw size={15} /> 刷新
           </Button>
-        ) : null}
-        {canReadLogs ? (
-          <Button
-            className="button button-secondary compact-button"
-            onClick={() => setExportDialogOpen(true)}
-            type="button"
-          >
-            <Download size={15} /> 导出结果
-          </Button>
-        ) : null}
+          {canReadLogs ? (
+            <Button
+              className="button button-secondary compact-button"
+              onClick={() => onOpenScheduling(undefined)}
+              type="button"
+            >
+              <ScrollText size={15} /> 总体调度日志
+            </Button>
+          ) : null}
+          {canReadLogs ? (
+            <Button
+              className="button button-secondary compact-button"
+              onClick={() => setExportDialogOpen(true)}
+              type="button"
+            >
+              <Download size={15} /> 导出结果
+            </Button>
+          ) : null}
+        </div>
       </div>
       {exportDialogOpen ? (
         <RunBatchExportDialog
@@ -434,6 +473,8 @@ function RoundDetailPanel({
               canReadLogs={canReadLogs}
               canReadArtifacts={canReadArtifacts}
               cancelPending={cancelPending}
+              detailCache={detailCache}
+              onRememberAttemptDetail={onRememberAttemptDetail}
               onCancelRun={onCancelRun}
               onOpenLogs={onOpenLogs}
             />
@@ -451,6 +492,52 @@ function RoundDetailPanel({
   );
 }
 
+type CaseSortKey = "name" | "status" | "runner" | "duration";
+
+type CaseSortSpec = {
+  key: CaseSortKey | "none";
+  direction: "asc" | "desc";
+};
+
+// 状态排序权重：结果态在前、进行中次之、未执行最后，升序即按此顺序。
+const ATTEMPT_STATUS_SORT_RANK: Record<RunAttempt["status"], number> = {
+  succeeded: 0,
+  failed: 1,
+  timed_out: 2,
+  cancelled: 3,
+  running: 4,
+  assigned: 5,
+};
+
+function attemptStatusSortRank(row: RoundCaseRowModel): number {
+  return row.attempt ? ATTEMPT_STATUS_SORT_RANK[row.attempt.status] : 6;
+}
+
+function compareRowsBy(
+  left: RoundCaseRowModel,
+  right: RoundCaseRowModel,
+  key: CaseSortKey,
+): number {
+  switch (key) {
+    case "name":
+      return left.run.displayName.localeCompare(right.run.displayName, "zh-CN");
+    case "status":
+      return attemptStatusSortRank(left) - attemptStatusSortRank(right);
+    case "runner": {
+      const leftRunner = left.attempt?.runnerId ?? left.run.assignedRunnerId ?? "";
+      const rightRunner = right.attempt?.runnerId ?? right.run.assignedRunnerId ?? "";
+      return leftRunner.localeCompare(rightRunner);
+    }
+    case "duration": {
+      // 无耗时的行排在有耗时之后（升序时），无穷大之间视为相等避免 NaN。
+      const leftDuration = left.attempt?.durationMs ?? Number.POSITIVE_INFINITY;
+      const rightDuration = right.attempt?.durationMs ?? Number.POSITIVE_INFINITY;
+      if (leftDuration === rightDuration) return 0;
+      return leftDuration - rightDuration;
+    }
+  }
+}
+
 function RoundCasesTable({
   batch,
   round,
@@ -458,6 +545,8 @@ function RoundCasesTable({
   canReadLogs,
   canReadArtifacts,
   cancelPending,
+  detailCache,
+  onRememberAttemptDetail,
   onCancelRun,
   onOpenLogs,
 }: {
@@ -467,6 +556,8 @@ function RoundCasesTable({
   canReadLogs: boolean;
   canReadArtifacts: boolean;
   cancelPending: boolean;
+  detailCache: ReadonlyMap<string, AttemptDetailEntry>;
+  onRememberAttemptDetail: (attemptId: string, entry: AttemptDetailEntry) => void;
   onCancelRun: (runId: string) => void;
   onOpenLogs: (attempt: RunAttempt) => void;
 }) {
@@ -482,34 +573,49 @@ function RoundCasesTable({
   );
   const [statusFilter, setStatusFilter] = useState<CaseStatusFilter>("all");
   const [nameQuery, setNameQuery] = useState("");
+  const [pageSize, setPageSize] = useState<number>(DEFAULT_CASE_PAGE_SIZE);
   const [page, setPage] = useState(1);
-  // 单个用例的轮次默认展开行内详情，让结构化结果与产物无需额外点击即可见。
-  const [expandedAttemptId, setExpandedAttemptId] = useState<string | undefined>(() => {
-    if (rows.length !== 1) return undefined;
-    const only = rows[0];
-    if (!only?.attempt || !isTerminalAttemptStatus(only.attempt.status)) return undefined;
-    return only.attempt.testNg || canReadArtifacts ? only.attempt.id : undefined;
-  });
+  // 不再自动展开行内详情：无论单用例还是多用例，都需用户主动点击详情。
+  const [expandedAttemptId, setExpandedAttemptId] = useState<string | undefined>();
+  const [sortSpec, setSortSpec] = useState<CaseSortSpec>({ key: "none", direction: "asc" });
 
   const filteredRows = useMemo(() => {
     const keyword = nameQuery.trim().toLowerCase();
-    return rows.filter((row) => {
+    const filtered = rows.filter((row) => {
       if (statusFilter !== "all" && rowStatusKey(row) !== statusFilter) return false;
       if (!keyword) return true;
       return `${row.run.displayName} ${row.run.className}`.toLowerCase().includes(keyword);
     });
-  }, [nameQuery, rows, statusFilter]);
-  const pageCount = Math.max(1, Math.ceil(filteredRows.length / CASE_PAGE_SIZE));
+    if (sortSpec.key === "none") return filtered;
+    const direction = sortSpec.direction === "asc" ? 1 : -1;
+    const sortKey = sortSpec.key;
+    return [...filtered].sort((left, right) => {
+      const comparison = compareRowsBy(left, right, sortKey);
+      // 排序键相同时按用例名兜底，保证结果稳定。
+      return (
+        (comparison !== 0
+          ? comparison
+          : left.run.displayName.localeCompare(right.run.displayName, "zh-CN")) * direction
+      );
+    });
+  }, [nameQuery, rows, sortSpec, statusFilter]);
+  const pageCount = Math.max(1, Math.ceil(filteredRows.length / pageSize));
   const currentPage = Math.min(page, pageCount);
-  const pageRows = filteredRows.slice(
-    (currentPage - 1) * CASE_PAGE_SIZE,
-    currentPage * CASE_PAGE_SIZE,
-  );
+  const pageRows = filteredRows.slice((currentPage - 1) * pageSize, currentPage * pageSize);
 
   function rowStatusKey(row: RoundCaseRowModel): CaseStatusFilter {
     if (!row.attempt) return "pending";
     if (row.attempt.status === "assigned" || row.attempt.status === "running") return "all";
     return row.attempt.status;
+  }
+
+  function toggleSort(key: CaseSortKey): void {
+    setSortSpec((current) => {
+      if (current.key !== key) return { key, direction: "asc" };
+      if (current.direction === "asc") return { key, direction: "desc" };
+      // 第三次点击同一列恢复默认顺序。
+      return { key: "none", direction: "asc" };
+    });
   }
 
   return (
@@ -550,10 +656,30 @@ function RoundCasesTable({
           <table className="data-table">
             <thead>
               <tr>
-                <th>用例</th>
-                <th>本轮状态</th>
-                <th>Runner</th>
-                <th>耗时</th>
+                <SortableCaseTh
+                  label="用例"
+                  sortKey="name"
+                  active={sortSpec}
+                  onToggle={() => toggleSort("name")}
+                />
+                <SortableCaseTh
+                  label="本轮状态"
+                  sortKey="status"
+                  active={sortSpec}
+                  onToggle={() => toggleSort("status")}
+                />
+                <SortableCaseTh
+                  label="Runner"
+                  sortKey="runner"
+                  active={sortSpec}
+                  onToggle={() => toggleSort("runner")}
+                />
+                <SortableCaseTh
+                  label="耗时"
+                  sortKey="duration"
+                  active={sortSpec}
+                  onToggle={() => toggleSort("duration")}
+                />
                 <th>操作</th>
               </tr>
             </thead>
@@ -572,6 +698,8 @@ function RoundCasesTable({
                   canReadLogs={canReadLogs}
                   canReadArtifacts={canReadArtifacts}
                   cancelPending={cancelPending}
+                  detailEntry={row.attempt ? detailCache.get(row.attempt.id) : undefined}
+                  onRememberDetail={onRememberAttemptDetail}
                   onCancelRun={onCancelRun}
                   onOpenLogs={onOpenLogs}
                 />
@@ -580,30 +708,76 @@ function RoundCasesTable({
           </table>
         </div>
       )}
-      {filteredRows.length > CASE_PAGE_SIZE ? (
-        <div className="round-pagination">
-          <Button
-            className="button button-secondary compact-button"
-            disabled={currentPage <= 1}
-            onClick={() => setPage(currentPage - 1)}
-            type="button"
+      <div className="round-pagination">
+        <label className="round-page-size">
+          每页
+          <Select
+            aria-label="每页显示用例数"
+            value={pageSize}
+            onChange={(event) => {
+              setPageSize(Number(event.target.value));
+              setPage(1);
+            }}
           >
-            <ChevronLeft size={15} /> 上一页
-          </Button>
-          <span>
-            第 {currentPage} / {pageCount} 页 · 共 {filteredRows.length} 条
-          </span>
-          <Button
-            className="button button-secondary compact-button"
-            disabled={currentPage >= pageCount}
-            onClick={() => setPage(currentPage + 1)}
-            type="button"
-          >
-            下一页 <ChevronRight size={15} />
-          </Button>
-        </div>
-      ) : null}
+            {CASE_PAGE_SIZE_OPTIONS.map((size) => (
+              <option key={size} value={size}>
+                {size}
+              </option>
+            ))}
+          </Select>
+          个用例
+        </label>
+        <Button
+          className="button button-secondary compact-button"
+          disabled={currentPage <= 1}
+          onClick={() => setPage(currentPage - 1)}
+          type="button"
+        >
+          <ChevronLeft size={15} /> 上一页
+        </Button>
+        <span>
+          第 {currentPage} / {pageCount} 页 · 共 {filteredRows.length} 条
+        </span>
+        <Button
+          className="button button-secondary compact-button"
+          disabled={currentPage >= pageCount}
+          onClick={() => setPage(currentPage + 1)}
+          type="button"
+        >
+          下一页 <ChevronRight size={15} />
+        </Button>
+      </div>
     </div>
+  );
+}
+
+function SortableCaseTh({
+  label,
+  sortKey,
+  active,
+  onToggle,
+}: {
+  label: string;
+  sortKey: CaseSortKey;
+  active: CaseSortSpec;
+  onToggle: () => void;
+}) {
+  const isActive = active.key === sortKey;
+  return (
+    <th aria-sort={isActive ? (active.direction === "asc" ? "ascending" : "descending") : "none"}>
+      <Button
+        className="sortable-th-button"
+        variant="ghost"
+        size="compact"
+        onClick={onToggle}
+        type="button"
+      >
+        {label}
+        <span aria-hidden="true" className="sortable-th-indicator">
+          {isActive ? (active.direction === "asc" ? "▲" : "▼") : ""}
+        </span>
+      </Button>
+    </th>
   );
 }
 
@@ -615,6 +789,8 @@ function RoundCaseRow({
   canReadLogs,
   canReadArtifacts,
   cancelPending,
+  detailEntry,
+  onRememberDetail,
   onCancelRun,
   onOpenLogs,
 }: {
@@ -625,15 +801,45 @@ function RoundCaseRow({
   canReadLogs: boolean;
   canReadArtifacts: boolean;
   cancelPending: boolean;
+  detailEntry: AttemptDetailEntry | undefined;
+  onRememberDetail: (attemptId: string, entry: AttemptDetailEntry) => void;
   onCancelRun: (runId: string) => void;
   onOpenLogs: (attempt: RunAttempt) => void;
 }) {
   const { run, attempt } = row;
   const runnerId = attempt?.runnerId ?? run.assignedRunnerId;
+  const [sharePending, setSharePending] = useState(false);
+  const [shareError, setShareError] = useState("");
   const hasDetail =
     attempt !== undefined &&
     isTerminalAttemptStatus(attempt.status) &&
     (attempt.testNg !== undefined || canReadArtifacts);
+  // 终态 attempt 可创建日志公开访问链接；后端校验项目权限并签发永久有效链接。
+  const canShareLog = attempt !== undefined && isTerminalAttemptStatus(attempt.status);
+
+  async function openShareLog(): Promise<void> {
+    if (!attempt) return;
+    setSharePending(true);
+    setShareError("");
+    try {
+      const response = await fetch(
+        `/api/v1/run-attempts/${encodeURIComponent(attempt.id)}/log-share`,
+        { method: "POST" },
+      );
+      if (!response.ok) {
+        throw new Error((await readApiErrorMessage(response, "创建日志公开访问链接失败。"))!);
+      }
+      const payload = (await response.json()) as { shareUrl: string };
+      window.open(payload.shareUrl, "_blank", "noopener");
+    } catch (shareFailure) {
+      setShareError(
+        shareFailure instanceof Error ? shareFailure.message : "创建日志公开访问链接失败。",
+      );
+    } finally {
+      setSharePending(false);
+    }
+  }
+
   return (
     <>
       <tr>
@@ -673,6 +879,17 @@ function RoundCaseRow({
                 <Eye size={15} /> 查看日志
               </Button>
             ) : null}
+            {canShareLog ? (
+              <Button
+                className="button button-secondary compact-button"
+                disabled={sharePending}
+                onClick={() => void openShareLog()}
+                type="button"
+                title="生成日志公开访问链接并在新窗口打开"
+              >
+                <Globe size={15} /> 公开日志
+              </Button>
+            ) : null}
             {hasDetail && attempt ? (
               <Button
                 className="button button-secondary compact-button"
@@ -694,12 +911,18 @@ function RoundCaseRow({
               </Button>
             ) : null}
           </div>
+          {shareError ? <p className="form-error">{shareError}</p> : null}
         </td>
       </tr>
       {expanded && attempt ? (
         <tr className="round-detail-row">
           <td colSpan={5}>
-            <AttemptInlineDetail attempt={attempt} canReadArtifacts={canReadArtifacts} />
+            <AttemptInlineDetail
+              attempt={attempt}
+              canReadArtifacts={canReadArtifacts}
+              cached={detailEntry}
+              onRemember={onRememberDetail}
+            />
           </td>
         </tr>
       ) : null}
@@ -710,15 +933,26 @@ function RoundCaseRow({
 function AttemptInlineDetail({
   attempt,
   canReadArtifacts,
+  cached,
+  onRemember,
 }: {
   attempt: RunAttempt;
   canReadArtifacts: boolean;
+  cached: AttemptDetailEntry | undefined;
+  onRemember: (attemptId: string, entry: AttemptDetailEntry) => void;
 }) {
-  const [artifacts, setArtifacts] = useState<AttemptArtifactList["items"] | undefined>();
-  const [events, setEvents] = useState<AttemptEventPage["items"] | undefined>();
-  const [error, setError] = useState("");
+  const [artifacts, setArtifacts] = useState<AttemptArtifactList["items"] | undefined>(
+    cached?.artifacts,
+  );
+  const [events, setEvents] = useState<AttemptEventPage["items"] | undefined>(cached?.events);
+  const [error, setError] = useState(cached?.error ?? "");
+  // 已缓存的详情不再请求：展开/收起/翻页后重开复用首次加载结果。
+  const [loaded, setLoaded] = useState(
+    () => cached !== undefined && (cached.artifacts !== undefined || cached.events !== undefined),
+  );
 
   useEffect(() => {
+    if (loaded) return;
     let disposed = false;
     const load = async (): Promise<void> => {
       setError("");
@@ -740,10 +974,14 @@ function AttemptInlineDetail({
           throw new Error((await readApiErrorMessage(eventResponse, "读取执行时间线失败。"))!);
         }
         if (disposed) return;
-        if (artifactResponse) {
-          setArtifacts(((await artifactResponse.json()) as AttemptArtifactList).items);
-        }
-        setEvents(((await eventResponse.json()) as AttemptEventPage).items);
+        const nextArtifacts = artifactResponse
+          ? ((await artifactResponse.json()) as AttemptArtifactList).items
+          : undefined;
+        const nextEvents = ((await eventResponse.json()) as AttemptEventPage).items;
+        setArtifacts(nextArtifacts);
+        setEvents(nextEvents);
+        setLoaded(true);
+        onRemember(attempt.id, { artifacts: nextArtifacts, events: nextEvents });
       } catch (loadError) {
         if (!disposed) {
           setError(loadError instanceof Error ? loadError.message : "读取执行详情失败。");
@@ -755,7 +993,7 @@ function AttemptInlineDetail({
       disposed = true;
       window.clearTimeout(kick);
     };
-  }, [attempt.id, canReadArtifacts]);
+  }, [attempt.id, canReadArtifacts, loaded, onRemember]);
 
   return (
     <div className="attempt-inline-detail">

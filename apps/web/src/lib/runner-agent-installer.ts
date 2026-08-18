@@ -2,6 +2,7 @@ import "server-only";
 
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 
+import { DEFAULT_RUNNER_DATA_DIRECTORY, runnerDataDirectorySchema } from "@autoforge/contracts";
 import type {
   InstallRunnerAgentInput,
   RollbackRunnerAgentInput,
@@ -24,6 +25,9 @@ const INSTALL_COMMAND_TIMEOUT_MS = 120_000;
 const MAXIMUM_COMMAND_OUTPUT_BYTES = 64 * 1024;
 const REMOTE_CONFIGURATION_PATH = "/etc/autoforge-agent/config.json";
 const REMOTE_CA_PATH = "/etc/autoforge-agent/control-plane-ca.pem";
+// sudo 模式下配置文件 0600 且属服务账号：先直读，再用相同密码 sudo 读取；
+// 文件不存在时两者均失败，调用方回退默认目录。
+const readRemoteConfigurationCommand = `cat ${shellQuote(REMOTE_CONFIGURATION_PATH)} 2>/dev/null || sudo -S -k -p '' cat ${shellQuote(REMOTE_CONFIGURATION_PATH)}`;
 
 type HostConnection = InstallRunnerAgentInput["connection"];
 type InstallationMode = InstallRunnerAgentInput["installationMode"];
@@ -51,6 +55,7 @@ export class RunnerAgentInstaller {
 
   async install(input: InstallRunnerAgentInput): Promise<RunnerAgentInstallationResult> {
     const controlPlaneUrl = normalizeRunnerControlPlaneUrl(this.dependencies.controlPlaneUrl);
+    const dataDirectory = resolveRunnerDataDirectory(input.dataDirectory);
     const probe = await this.inspectHost(
       input.connection,
       input.expectedHostKeySha256,
@@ -67,6 +72,7 @@ export class RunnerAgentInstaller {
         probe,
         resources,
         controlPlaneUrl,
+        dataDirectory,
         bootstrapToken: this.dependencies.issueBootstrapToken(),
         temporaryDirectory,
       });
@@ -82,6 +88,7 @@ export class RunnerAgentInstaller {
           input.runAsRoot,
           probe.bashPath,
           probe.operatingSystemId,
+          dataDirectory,
         );
         await executeRemoteCommand(
           connected.client,
@@ -133,6 +140,34 @@ export class RunnerAgentInstaller {
     } finally {
       connected.client.end();
     }
+  }
+
+  /**
+   * 读回远端已安装 Agent 的 dataDirectory，供原地更新沿用。配置文件缺失或无法读取
+   * （旧版本安装）时返回默认目录；配置存在但取值非法时显式失败，避免静默重置既有部署。
+   */
+  async readRemoteDataDirectory(
+    connection: HostConnection,
+    expectedHostKeySha256?: string,
+  ): Promise<string> {
+    let configuration: string;
+    try {
+      const connected = await connectHost(connection, expectedHostKeySha256);
+      try {
+        const result = await executeRemoteCommand(
+          connected.client,
+          readRemoteConfigurationCommand,
+          `${connection.password}\n`,
+          REMOTE_COMMAND_TIMEOUT_MS,
+        );
+        configuration = result.stdout;
+      } finally {
+        connected.client.end();
+      }
+    } catch {
+      return DEFAULT_RUNNER_DATA_DIRECTORY;
+    }
+    return parseRemoteDataDirectory(Buffer.from(configuration, "utf8"));
   }
 
   private async inspectHost(
@@ -614,11 +649,38 @@ function unlinkRemoteFile(sftp: SFTPWrapper, path: string): Promise<void> {
 
 type InstallationFile = { path: string; content: Buffer; mode: number };
 
-function installationFiles(input: {
+// schema 已校验可选取值；这里把显式提供的值再归一化到同一规则，并兜底默认目录。
+export function resolveRunnerDataDirectory(value: string | undefined): string {
+  if (value === undefined || value.trim() === "") return DEFAULT_RUNNER_DATA_DIRECTORY;
+  const parsed = runnerDataDirectorySchema.safeParse(value);
+  if (!parsed.success) {
+    throw new DomainError(
+      "VALIDATION_FAILED",
+      "执行机工作目录必须是绝对路径，且只能包含字母、数字、点、下划线、连字符和分隔符。",
+    );
+  }
+  return parsed.data;
+}
+
+// 远端配置缺失字段（旧版本安装）或无法解析时回退默认目录；字段存在但取值非法说明
+// 远端状态已被改动，必须显式失败，避免把既有部署静默重置到默认目录。
+export function parseRemoteDataDirectory(configuration: Buffer): string {
+  let parsed: { dataDirectory?: unknown };
+  try {
+    parsed = JSON.parse(configuration.toString("utf8")) as { dataDirectory?: unknown };
+  } catch {
+    return DEFAULT_RUNNER_DATA_DIRECTORY;
+  }
+  if (typeof parsed.dataDirectory !== "string") return DEFAULT_RUNNER_DATA_DIRECTORY;
+  return resolveRunnerDataDirectory(parsed.dataDirectory);
+}
+
+export function installationFiles(input: {
   input: InstallRunnerAgentInput;
   probe: RunnerHostProbeResult;
   resources: RunnerAgentResources;
   controlPlaneUrl: string;
+  dataDirectory: string;
   bootstrapToken: string;
   temporaryDirectory: string;
 }): InstallationFile[] {
@@ -627,7 +689,7 @@ function installationFiles(input: {
       {
         schemaVersion: 1,
         serverUrl: input.controlPlaneUrl,
-        dataDirectory: "/var/lib/autoforge-agent",
+        dataDirectory: input.dataDirectory,
         name: input.input.name,
         labels: [...new Set(input.input.labels)],
         maxConcurrency: input.input.maxConcurrency,
@@ -672,7 +734,10 @@ function installationFiles(input: {
     },
     {
       path: `${input.temporaryDirectory}/autoforge-agent.service`,
-      content: Buffer.from(renderAgentSystemdServiceUnit(input.input.runAsRoot), "utf8"),
+      content: Buffer.from(
+        renderAgentSystemdServiceUnit(input.input.runAsRoot, input.dataDirectory),
+        "utf8",
+      ),
       mode: 0o600,
     },
   ];
@@ -686,13 +751,14 @@ function installationFiles(input: {
   return files;
 }
 
-function installationCommand(
+export function installationCommand(
   directory: string,
   privilegeMode: "root" | "sudo",
   includeCaCertificate: boolean,
   runAsRoot: boolean,
   bashPath: string,
   operatingSystemId: RunnerHostProbeResult["operatingSystemId"],
+  dataDirectory: string,
 ): string {
   const argumentsList = [
     `${directory}/install.sh`,
@@ -703,6 +769,8 @@ function installationCommand(
     runAsRoot ? "root" : "autoforge-agent",
     includeCaCertificate ? `${directory}/control-plane-ca.pem` : "",
     operatingSystemId,
+    // 末尾位置参数：旧版 install.sh 不识别时按默认目录执行，保持向后兼容。
+    dataDirectory,
   ].map(shellQuote);
   const command = `${shellQuote(bashPath)} ${argumentsList.join(" ")}`;
   return privilegeMode === "sudo" ? `sudo -S -k -p '' ${command}` : command;
@@ -780,8 +848,16 @@ function shellQuote(value: string): string {
   return `'${value.replaceAll("'", `'"'"'`)}'`;
 }
 
-export function renderAgentSystemdServiceUnit(runAsRoot: boolean): string {
+export function renderAgentSystemdServiceUnit(
+  runAsRoot: boolean,
+  dataDirectory: string = DEFAULT_RUNNER_DATA_DIRECTORY,
+): string {
   const serviceUser = runAsRoot ? "root" : "autoforge-agent";
+  // StateDirectory 只能保证在 /var/lib 下创建同名目录；自定义目录由安装脚本创建并 chown。
+  const stateDirectory =
+    dataDirectory === DEFAULT_RUNNER_DATA_DIRECTORY
+      ? `StateDirectory=autoforge-agent\nStateDirectoryMode=0700\n`
+      : "";
   return `[Unit]
 Description=AutoForge Runner Agent
 After=network-online.target
@@ -790,14 +866,12 @@ Wants=network-online.target
 [Service]
 Type=simple
 User=${serviceUser}
-WorkingDirectory=/var/lib/autoforge-agent
+WorkingDirectory=${dataDirectory}
 ExecStart=/opt/autoforge/bin/autoforge-agent start --config ${REMOTE_CONFIGURATION_PATH}
 Restart=on-failure
 RestartSec=5s
 TimeoutStopSec=45s
-StateDirectory=autoforge-agent
-StateDirectoryMode=0700
-UMask=0077
+${stateDirectory}UMask=0077
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectHome=true
@@ -808,7 +882,7 @@ ProtectKernelLogs=true
 RestrictSUIDSGID=true
 Delegate=yes
 TasksMax=2048
-ReadWritePaths=/var/lib/autoforge-agent /etc/autoforge-agent
+ReadWritePaths=${dataDirectory} /etc/autoforge-agent
 
 [Install]
 WantedBy=multi-user.target

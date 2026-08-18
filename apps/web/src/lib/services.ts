@@ -368,7 +368,7 @@ async function createPlatformServices() {
     batches,
   );
   const runnerProtocol = new RunnerProtocolController(executionControl);
-  // 分享 token 与 Runner 凭据同构：随机 base64url，库中只留 SHA-256 哈希。
+  // 日志公开访问 token 与 Runner 凭据同构：随机 base64url，库中只留 SHA-256 哈希。
   const attemptLogShares = new AttemptLogShareService(
     attemptLogSharesRepository,
     batches,

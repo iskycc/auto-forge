@@ -1,4 +1,8 @@
 import { Button, DatetimeInput, Input, Select } from "@/components/ui";
+import {
+  ExecutionRecordsTable,
+  type ExecutionRecordRow,
+} from "@/components/execution-records-table";
 
 import { ClipboardList } from "lucide-react";
 import Link from "next/link";
@@ -10,13 +14,6 @@ import {
   refreshQueryFromFilter,
   runBatchFilterFromSearch,
 } from "@/lib/run-batch-filter";
-import {
-  formatBatchDuration,
-  isActiveRunBatch,
-  runBatchDurationMs,
-  runBatchPassRate,
-  runBatchStatusLabel,
-} from "@/lib/run-batch-presentation";
 
 export const dynamic = "force-dynamic";
 
@@ -42,6 +39,21 @@ export default async function ExecutionRecordsPage({
   const refreshQuery = refreshQueryFromFilter(filter);
   const nextQuery = new URLSearchParams(refreshQuery);
   if (batchPage.nextCursor) nextQuery.set("cursor", batchPage.nextCursor);
+  const rows: ExecutionRecordRow[] = batchPage.items.map((batch) => ({
+    id: batch.id,
+    suiteName: batch.suiteName,
+    suiteVersion: batch.suiteVersion,
+    status: batch.status,
+    totalRuns: batch.totalRuns,
+    succeededRuns: batch.succeededRuns,
+    failedRuns: batch.failedRuns,
+    timedOutRuns: batch.timedOutRuns,
+    retryMode: batch.retryMode,
+    currentRound: batch.currentRound,
+    selectedRunnerCount: batch.selectedRunnerIds.length,
+    createdAt: batch.createdAt,
+    updatedAt: batch.updatedAt,
+  }));
   return (
     <div className="page-stack">
       <section className="page-hero">
@@ -137,62 +149,7 @@ export default async function ExecutionRecordsPage({
             </Link>
           </div>
         ) : (
-          <div className="table-scroll">
-            <table className="data-table execution-records-table">
-              <thead>
-                <tr>
-                  <th>批次 ID</th>
-                  <th>任务（Suite）</th>
-                  <th>状态</th>
-                  <th>通过率</th>
-                  <th>已通过</th>
-                  <th>已失败</th>
-                  <th>当前轮次</th>
-                  <th>重跑方式</th>
-                  <th>执行机</th>
-                  <th>创建时间</th>
-                  <th>耗时</th>
-                </tr>
-              </thead>
-              <tbody>
-                {batchPage.items.map((batch) => (
-                  <tr key={batch.id}>
-                    <td>
-                      <Link
-                        className="table-link"
-                        href={`/run-batches/${encodeURIComponent(batch.id)}`}
-                      >
-                        {batch.id.slice(0, 8)}…
-                      </Link>
-                    </td>
-                    <td>
-                      <strong>{batch.suiteName}</strong>
-                      <small> v{batch.suiteVersion}</small>
-                    </td>
-                    <td>
-                      <span className={`batch-status batch-status-${batch.status}`}>
-                        {runBatchStatusLabel(batch.status)}
-                      </span>
-                    </td>
-                    <td>{runBatchPassRate(batch)}%</td>
-                    <td>{batch.succeededRuns}</td>
-                    <td>{batch.failedRuns + batch.timedOutRuns}</td>
-                    <td>{batch.retryMode === "round" ? `第 ${batch.currentRound} 轮` : "-"}</td>
-                    <td>{batch.retryMode === "round" ? "整轮轮次" : "立即重跑"}</td>
-                    <td>{batch.selectedRunnerIds.length}</td>
-                    <td>
-                      <time dateTime={batch.createdAt}>{formatRecordTime(batch.createdAt)}</time>
-                    </td>
-                    <td>
-                      {isActiveRunBatch(batch.status)
-                        ? "执行中"
-                        : formatBatchDuration(runBatchDurationMs(batch))}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <ExecutionRecordsTable rows={rows} />
         )}
         {batchPage.nextCursor ? (
           <Link
@@ -205,17 +162,4 @@ export default async function ExecutionRecordsPage({
       </section>
     </div>
   );
-}
-
-function formatRecordTime(value: string): string {
-  const date = new Date(value);
-  return Number.isNaN(date.getTime())
-    ? value
-    : date.toLocaleString("zh-CN", {
-        year: "numeric",
-        month: "2-digit",
-        day: "2-digit",
-        hour: "2-digit",
-        minute: "2-digit",
-      });
 }

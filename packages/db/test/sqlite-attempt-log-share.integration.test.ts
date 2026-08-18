@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { createSqliteDatabase } from "../src/database";
 import { SqliteAttemptLogShareRepository } from "../src/sqlite-attempt-log-share";
+import { attemptLogShareContract, type AttemptLogShareHarness } from "./attempt-log-share.contract";
 
 const temporaryDirectories: string[] = [];
 
@@ -24,7 +25,7 @@ async function createHandle() {
     databasePath: resolve(directory, "autoforge.sqlite"),
     migrationsFolder: resolve(import.meta.dirname, "../drizzle/sqlite"),
   });
-  // 最小外键链：runner -> run_batches -> execution_runs -> run_attempts。
+  // 最小外键链：runner -> run_batches -> execution_runs -> run_attempts（两条 run/attempt）。
   handle.client
     .prepare(
       `INSERT INTO runners
@@ -41,7 +42,7 @@ async function createHandle() {
       `INSERT INTO run_batches
        (id, suite_id, suite_name, suite_version, status, retry_limit, total_runs,
         environment_json, created_at, updated_at)
-       VALUES ('batch-1', 'suite-1', '回归套件', 1, 'running', 3, 1, '[]',
+       VALUES ('batch-1', 'suite-1', '回归套件', 1, 'running', 3, 2, '[]',
                '2026-08-17T00:00:00.000Z', '2026-08-17T00:00:00.000Z')`,
     )
     .run();
@@ -61,8 +62,38 @@ async function createHandle() {
        VALUES ('attempt-1', 'run-1', 'runner-1', 1, 'running', 1.0, '2026-08-17T00:00:00.000Z')`,
     )
     .run();
+  handle.client
+    .prepare(
+      `INSERT INTO execution_runs
+       (id, batch_id, case_definition_id, case_version, display_name, class_name,
+        status, attempt_count, created_at, updated_at)
+       VALUES ('run-2', 'batch-1', 'case-2', 1, 'run-2#method', 'com.example.RunTwo',
+               'running', 1, '2026-08-17T00:00:00.000Z', '2026-08-17T00:00:00.000Z')`,
+    )
+    .run();
+  handle.client
+    .prepare(
+      `INSERT INTO run_attempts
+       (id, execution_run_id, runner_id, attempt_number, status, scheduling_score, created_at)
+       VALUES ('attempt-2', 'run-2', 'runner-1', 1, 'running', 1.0, '2026-08-17T00:00:00.000Z')`,
+    )
+    .run();
   return handle;
 }
+
+function sqliteHarness(): Promise<AttemptLogShareHarness> {
+  return createHandle().then((handle): AttemptLogShareHarness => {
+    return {
+      repository: new SqliteAttemptLogShareRepository(handle),
+      fixture: { batchId: "batch-1", attemptIds: ["attempt-1", "attempt-2"] },
+      async dispose() {
+        handle.close();
+      },
+    };
+  });
+}
+
+attemptLogShareContract("SQLite attempt log share", sqliteHarness);
 
 function shareRecord(overrides: Record<string, string> = {}) {
   return {
@@ -109,7 +140,7 @@ describe("SqliteAttemptLogShareRepository", () => {
         "attempt-1",
         "2026-08-17T04:00:00.000Z",
       );
-      // 最新创建且未过期的分享优先；过期行即使更晚创建也不返回。
+      // 最新创建的有效记录优先；expires_at 已过的行即使更晚创建也不返回。
       expect(active?.id).toBe("share-new");
 
       const byToken = await repository.findActiveByTokenHash(

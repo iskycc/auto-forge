@@ -34,7 +34,7 @@ export type RunBatchExportWorkbookInput = {
   /** scope=round 时记录具体轮次，用于文件名区分。 */
   round?: number;
   rows: readonly RunBatchExportRow[];
-  /** attemptId -> 分享链接绝对地址。 */
+  /** attemptId -> 日志公开访问链接绝对地址。 */
   shareLinks: ReadonlyMap<string, string>;
 };
 

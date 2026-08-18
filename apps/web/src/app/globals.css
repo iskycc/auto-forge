@@ -1950,7 +1950,12 @@ button.icon-button:disabled {
 
 .page-stack {
   display: flex;
-  width: min(100%, 1540px);
+  /*
+   * 大屏适配：上限不再固定 1540px，而在 1440px~2400px 视口间随窗口线性增长，
+   * 超大屏封顶 2160px，避免 4K 屏上内容显得过窄；小于 1440px 时退回 1540px，
+   * 与原有断点行为保持一致。
+   */
+  width: min(100%, clamp(1540px, 90vw, 2160px));
   flex-direction: column;
   gap: 18px;
   margin: 0 auto;
@@ -8036,7 +8041,7 @@ button.icon-button:disabled {
 
 /* Case details: stable text rhythm, complete summary rows and padded card content. */
 .case-detail-page {
-  width: min(100%, 1280px);
+  width: min(100%, clamp(1280px, 82vw, 1920px));
 }
 
 .case-detail-hero > div {
@@ -8723,7 +8728,7 @@ button.icon-button:disabled {
   font-family: var(--font-family-mono);
 }
 
-/* 免登录执行日志分享页：左侧固定信息栏 + 右侧整页深色日志区，观感与终端弹窗一致。 */
+/* 执行日志公开访问页：左侧固定信息栏 + 右侧整页深色日志区，观感与终端弹窗一致。 */
 .share-log-page {
   min-height: 100vh;
   padding: 24px;
@@ -8926,4 +8931,180 @@ button.icon-button:disabled {
   margin: 0;
   color: var(--color-warning);
   font-size: var(--font-size-caption);
+}
+
+/* 用例目录搜索栏追加“最近执行结果”筛选；为第 4 列腾出位置 */
+.case-browser-search {
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+}
+
+/* 勾选统计条：已勾选用例的最近执行结果汇总 */
+.case-selection-stats {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-surface-muted);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-caption);
+}
+
+.case-selection-stats strong {
+  color: var(--color-text);
+}
+
+/* 用例行内结果徽章：目录行网格追加第 4 列 */
+.case-tree-activate.ui-button {
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+}
+
+.case-tree-activate .batch-status {
+  align-self: center;
+}
+
+/* 质量洞察：用例执行情况区块 */
+.case-outcome-filter {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 10px;
+  padding: 14px 16px;
+}
+
+.case-outcome-filter label {
+  display: grid;
+  gap: 4px;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-caption);
+}
+
+.case-outcome-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 4px 0 12px;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-caption);
+}
+
+.case-outcome-summary strong {
+  color: var(--color-text);
+}
+
+/* 可调整列宽的表格（执行记录）：fixed 布局让 colgroup 宽度生效 */
+.resizable-table-scroll {
+  overflow-x: auto;
+}
+
+.resizable-table {
+  width: max-content;
+  min-width: 100%;
+  table-layout: fixed;
+}
+
+.resizable-table th {
+  position: relative;
+  overflow: visible;
+  white-space: nowrap;
+}
+
+.resizable-table td {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.resizable-th-content {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.column-resize-handle {
+  position: absolute;
+  top: 0;
+  right: -3px;
+  z-index: 2;
+  width: 6px;
+  height: 100%;
+  cursor: col-resize;
+  background: transparent;
+  transition: background 0.12s ease;
+}
+
+.column-resize-handle:hover,
+.column-resize-handle:active {
+  background: var(--color-info);
+  opacity: 0.45;
+}
+
+.table-id-text {
+  color: var(--color-text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 轮次详情头部操作区：刷新、调度日志、导出等按钮右对齐分组 */
+.round-detail-header-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+/* 用例表可排序表头 */
+.sortable-th-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  /* 排序键是可点击控件，必须满足 32px 最小触控高度，不能沿用纯文本按钮的 21px。 */
+  min-height: 32px;
+  padding: 2px 4px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: inherit;
+  cursor: pointer;
+}
+
+/* 覆盖共享按钮的默认描边、悬浮位移与阴影，让表头排序键保持朴素的文本按钮观感。 */
+.ui-button.sortable-th-button:hover:not(:disabled),
+.ui-button.sortable-th-button:active:not(:disabled) {
+  transform: none;
+  border-color: transparent;
+  background: rgba(29, 29, 31, 0.06);
+  box-shadow: none;
+}
+
+.sortable-th-button:hover {
+  color: var(--color-text);
+}
+
+.sortable-th-indicator {
+  display: inline-block;
+  min-width: 12px;
+  color: var(--color-info);
+  font-size: 12px;
+  line-height: 1;
+}
+
+/* 用例分页行：左侧每页条数选择，右侧翻页按钮 */
+.round-page-size {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-right: auto;
+  color: var(--color-text-secondary);
+}
+
+.round-page-size .ui-select {
+  width: auto;
+  min-width: 72px;
+  padding-block: 4px;
 }

@@ -1571,6 +1571,141 @@ describe.skipIf(!connectionString)("PostgreSQL platform repositories", () => {
       await handle.close();
     }
   });
+
+  it("lists the latest terminal run outcome per case definition", async () => {
+    const handle = createPostgresDatabase({
+      connectionString: connectionString!,
+      migrationsFolder: resolve(import.meta.dirname, "../drizzle/postgresql"),
+    });
+    const catalog = new PostgresCaseCatalogRepository(handle);
+    const firstBatchId = randomUUID();
+    const secondBatchId = randomUUID();
+    const projectId = randomUUID();
+    const casePrefix = `case-${randomUUID()}-`;
+    const caseMulti = `${casePrefix}multi`;
+    const caseStale = `${casePrefix}stale`;
+    const caseQueuedOnly = `${casePrefix}queued`;
+    const caseCancelled = `${casePrefix}cancelled`;
+    const caseNullOutcome = `${casePrefix}legacy`;
+    try {
+      await handle.ready;
+      await handle.pool.query(
+        `INSERT INTO projects (id, name, slug, is_default, archived, created_at, updated_at)
+         VALUES ($1, 'Latest outcomes', $2, false, false, $3, $3)`,
+        [projectId, `latest-${projectId}`, "2026-08-11T00:00:00.000Z"],
+      );
+      await handle.pool.query(
+        `INSERT INTO run_batches
+           (id, suite_id, suite_name, suite_version, status, retry_limit, environment_json,
+            secret_bindings_json, total_runs, project_id, priority, created_at, updated_at)
+         VALUES ($1, $2, 'Latest', 1, 'running', 0, '[]', '[]', 3, $3, 0, $4, $4)`,
+        [firstBatchId, `suite-${randomUUID()}`, projectId, "2026-08-11T00:00:00.000Z"],
+      );
+      await handle.pool.query(
+        `INSERT INTO run_batches
+           (id, suite_id, suite_name, suite_version, status, retry_limit, environment_json,
+            secret_bindings_json, total_runs, project_id, priority, created_at, updated_at)
+         VALUES ($1, $2, 'Latest', 1, 'running', 0, '[]', '[]', 3, $3, 0, $4, $4)`,
+        [secondBatchId, `suite-${randomUUID()}`, projectId, "2026-08-12T00:00:00.000Z"],
+      );
+      await handle.pool.query(
+        `INSERT INTO execution_runs
+           (id, batch_id, case_definition_id, case_version, display_name, class_name,
+            parameters_json, status, terminal_outcome, attempt_count, created_at, updated_at)
+         VALUES
+           ($1, $2, $3, 1, 'Multi', 'com.example.Multi', '{}',
+            'succeeded', 'succeeded', 1, '2026-08-12T01:00:00.000Z', '2026-08-12T01:00:00.000Z'),
+           ($4, $5, $3, 1, 'Multi', 'com.example.Multi', '{}',
+            'failed', 'timed_out', 1, '2026-08-12T02:00:00.000Z', '2026-08-12T02:00:00.000Z'),
+           ($6, $2, $7, 1, 'Stale', 'com.example.Stale', '{}',
+            'failed', 'failed', 1, '2026-08-12T01:00:00.000Z', '2026-08-12T01:00:00.000Z'),
+           ($8, $5, $7, 1, 'Stale', 'com.example.Stale', '{}',
+            'running', NULL, 0, '2026-08-12T03:00:00.000Z', '2026-08-12T03:00:00.000Z'),
+           ($9, $5, $10, 1, 'Queued', 'com.example.Queued', '{}',
+            'queued', NULL, 0, '2026-08-12T03:00:00.000Z', '2026-08-12T03:00:00.000Z'),
+           ($11, $2, $12, 1, 'Cancelled', 'com.example.Cancelled', '{}',
+            'cancelled', 'cancelled', 1, '2026-08-12T01:30:00.000Z', '2026-08-12T01:30:00.000Z'),
+           ($13, $2, $14, 1, 'Legacy', 'com.example.Legacy', '{}',
+            'succeeded', NULL, 1, '2026-08-12T01:15:00.000Z', '2026-08-12T01:15:00.000Z')`,
+        [
+          randomUUID(),
+          firstBatchId,
+          caseMulti,
+          randomUUID(),
+          secondBatchId,
+          randomUUID(),
+          caseStale,
+          randomUUID(),
+          randomUUID(),
+          caseQueuedOnly,
+          randomUUID(),
+          caseCancelled,
+          randomUUID(),
+          caseNullOutcome,
+        ],
+      );
+
+      // 每用例多条 run：取最新终态 run；最新 run 尚未终态时回退到更早的终态 run；
+      // 仅有排队中 run 的用例不返回。
+      const outcomes = await catalog.listLatestRunOutcomes([
+        caseMulti,
+        caseStale,
+        caseQueuedOnly,
+        caseCancelled,
+        caseNullOutcome,
+        `${casePrefix}unknown`,
+      ]);
+
+      expect(new Map(outcomes.map((entry) => [entry.caseDefinitionId, entry]))).toEqual(
+        new Map([
+          [
+            caseMulti,
+            {
+              caseDefinitionId: caseMulti,
+              outcome: "timed_out",
+              executedAt: "2026-08-12T02:00:00.000Z",
+            },
+          ],
+          [
+            caseStale,
+            {
+              caseDefinitionId: caseStale,
+              outcome: "failed",
+              executedAt: "2026-08-12T01:00:00.000Z",
+            },
+          ],
+          [
+            caseCancelled,
+            {
+              caseDefinitionId: caseCancelled,
+              outcome: "cancelled",
+              executedAt: "2026-08-12T01:30:00.000Z",
+            },
+          ],
+          [
+            caseNullOutcome,
+            {
+              caseDefinitionId: caseNullOutcome,
+              outcome: "succeeded",
+              executedAt: "2026-08-12T01:15:00.000Z",
+            },
+          ],
+        ]),
+      );
+      expect(await catalog.listLatestRunOutcomes([])).toEqual([]);
+    } finally {
+      await handle.pool.query("DELETE FROM execution_runs WHERE batch_id IN ($1, $2)", [
+        firstBatchId,
+        secondBatchId,
+      ]);
+      await handle.pool.query("DELETE FROM run_batches WHERE id IN ($1, $2)", [
+        firstBatchId,
+        secondBatchId,
+      ]);
+      await handle.pool.query("DELETE FROM projects WHERE id = $1", [projectId]);
+      await handle.close();
+    }
+  });
 });
 
 function postgresTestNgResult() {

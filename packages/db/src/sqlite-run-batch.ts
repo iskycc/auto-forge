@@ -239,6 +239,8 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
       .where(eq(executionRuns.batchId, batchId))
       .orderBy(executionRuns.createdAt, executionRuns.id)
       .all();
+    // attempts 用 batch_id 关联子查询定位：大批次（5 万+ run）下 inArray 会超出
+    // SQLite 绑定变量上限，子查询把参数数量固定为 1。
     const attemptRows =
       runRows.length === 0
         ? []
@@ -246,10 +248,7 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
             .select()
             .from(runAttempts)
             .where(
-              inArray(
-                runAttempts.executionRunId,
-                runRows.map((run) => run.id),
-              ),
+              sql`EXISTS (SELECT 1 FROM execution_runs run WHERE run.id = ${runAttempts.executionRunId} AND run.batch_id = ${batchId})`,
             )
             .orderBy(runAttempts.createdAt, runAttempts.id)
             .all();

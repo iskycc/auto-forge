@@ -225,6 +225,8 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
       .from(pgExecutionRuns)
       .where(eq(pgExecutionRuns.batchId, batchId))
       .orderBy(pgExecutionRuns.createdAt, pgExecutionRuns.id);
+    // attempts 用 batch_id 关联子查询定位，与 SQLite 适配保持同形：大批次（5 万+ run）
+    // 下避免巨型 IN 列表，参数数量固定为 1。
     const attemptRows =
       runRows.length === 0
         ? []
@@ -232,10 +234,7 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
             .select()
             .from(pgRunAttempts)
             .where(
-              inArray(
-                pgRunAttempts.executionRunId,
-                runRows.map((run) => run.id),
-              ),
+              sql`EXISTS (SELECT 1 FROM execution_runs run WHERE run.id = ${pgRunAttempts.executionRunId} AND run.batch_id = ${batchId})`,
             )
             .orderBy(pgRunAttempts.createdAt, pgRunAttempts.id);
     const statusHistory = (

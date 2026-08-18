@@ -36,9 +36,17 @@ export async function POST(request: Request, context: Context): Promise<NextResp
     }
     // 原地更新保留执行机既有配置与身份：名称、标签、并发与终端开关以平台记录为准，
     // 不允许通过更新动作改动；Agent 侧已有持久身份时会忽略新 bootstrap token。
+    // 工作目录未显式指定时读回远端配置沿用，避免把既有部署重置回默认目录。
+    const dataDirectory =
+      input.dataDirectory ??
+      (await services.runnerAgentInstaller.readRemoteDataDirectory(
+        input.connection,
+        input.expectedHostKeySha256,
+      ));
     const result = runnerAgentInstallationResultSchema.parse(
       await services.runnerAgentInstaller.install({
         ...input,
+        dataDirectory,
         name: runner.name,
         labels: runner.labels,
         maxConcurrency: runner.maxConcurrency,
@@ -56,6 +64,7 @@ export async function POST(request: Request, context: Context): Promise<NextResp
         toVersion: result.agentVersion,
         runAsRoot: input.runAsRoot,
         installationMode: input.installationMode,
+        dataDirectory,
       },
     });
     return NextResponse.json(result);

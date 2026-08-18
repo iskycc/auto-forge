@@ -180,6 +180,20 @@ export const runnerHostProbeResultSchema = z.object({
   forcedInstallationMode: z.boolean(),
 });
 
+// Runner 工作目录（Agent 数据目录）：身份、spool 与执行工作目录都从它派生。
+// 保持可选而不填充默认值，更新动作才能区分“未提供”（沿用远端现有目录）与显式指定。
+export const DEFAULT_RUNNER_DATA_DIRECTORY = "/var/lib/autoforge-agent";
+
+export const runnerDataDirectorySchema = z
+  .string()
+  .trim()
+  .max(4_096)
+  .regex(
+    /^\/(?:[\w.-]+\/)*[\w.-]+$/,
+    "工作目录必须是绝对路径，且只能包含字母、数字、点、下划线、连字符和分隔符。",
+  )
+  .refine((value) => !value.split("/").includes(".."), "工作目录不能包含 .. 段。");
+
 export const installRunnerAgentInputSchema = z.object({
   connection: runnerHostConnectionSchema,
   expectedHostKeySha256: z.string().regex(/^SHA256:[a-zA-Z0-9+/]{43}$/),
@@ -189,6 +203,7 @@ export const installRunnerAgentInputSchema = z.object({
   terminalEnabled: z.boolean().default(false),
   runAsRoot: z.boolean().default(false),
   installationMode: runnerInstallationModeSchema.default("auto"),
+  dataDirectory: runnerDataDirectorySchema.optional(),
   caCertificatePem: z
     .string()
     .max(65_536)

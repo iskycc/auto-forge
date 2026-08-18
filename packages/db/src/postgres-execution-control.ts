@@ -35,6 +35,7 @@ import type { PoolClient } from "pg";
 
 import type { AttemptLogStore } from "./attempt-log-store";
 import type { PostgresDatabaseHandle } from "./postgres-database";
+import { QUERY_IN_CHUNK_SIZE, splitIntoChunks } from "./query-chunks";
 
 type AssignmentRow = {
   id: string;
@@ -636,6 +637,21 @@ export class PostgresExecutionControlRepository implements ExecutionControlRepos
       displayName: row.display_name,
       ...(row.held_round > 0 ? { heldRound: row.held_round } : {}),
     };
+  }
+
+  async countExistingAttemptIds(attemptIds: readonly string[]): Promise<number> {
+    if (attemptIds.length === 0) return 0;
+    await this.handle.ready;
+    let total = 0;
+    for (const chunk of splitIntoChunks(attemptIds, QUERY_IN_CHUNK_SIZE)) {
+      const placeholders = chunk.map((_, index) => `$${index + 1}`).join(", ");
+      const result = await this.handle.pool.query<{ count: string }>(
+        `SELECT count(*) AS count FROM run_attempts WHERE id IN (${placeholders})`,
+        chunk,
+      );
+      total += Number(result.rows[0]?.count ?? 0);
+    }
+    return total;
   }
 
   async resolveExecutionRunProjectId(runId: string): Promise<string | null> {

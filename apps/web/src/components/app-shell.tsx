@@ -291,7 +291,7 @@ export function AppShell({
       return next;
     });
   };
-  // /share 前缀是免登录的只读分享页（如执行日志分享），与登录/初始化页一样裸渲染，
+  // /share 前缀是免登录的只读公开页（如执行日志公开访问），与登录/初始化页一样裸渲染，
   // 不展示侧边栏与顶栏。
   if (
     pathname === "/login" ||

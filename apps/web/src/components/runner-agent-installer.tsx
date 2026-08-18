@@ -3,6 +3,7 @@
 import { Button, Input, Select, Textarea } from "@/components/ui";
 
 import {
+  DEFAULT_RUNNER_DATA_DIRECTORY,
   runnerAgentInstallationResultSchema,
   runnerAgentRollbackResultSchema,
   runnerHostProbeResultSchema,
@@ -29,6 +30,7 @@ export function RunnerAgentInstaller({ controlPlaneUrl }: RunnerAgentInstallerPr
   const [maxConcurrency, setMaxConcurrency] = useState(1);
   const [terminalEnabled, setTerminalEnabled] = useState(false);
   const [runAsRoot, setRunAsRoot] = useState(false);
+  const [dataDirectory, setDataDirectory] = useState("");
   const [installationMode, setInstallationMode] = useState<
     "auto" | "ubuntu" | "opensuse" | "opensuse-leap" | "opensuse-tumbleweed"
   >("auto");
@@ -89,6 +91,7 @@ export function RunnerAgentInstaller({ controlPlaneUrl }: RunnerAgentInstallerPr
         terminalEnabled,
         runAsRoot,
         installationMode,
+        ...(dataDirectory.trim() ? { dataDirectory: dataDirectory.trim() } : {}),
         ...(caCertificatePem.trim() ? { caCertificatePem } : {}),
       });
       const installed = runnerAgentInstallationResultSchema.parse(response);
@@ -291,6 +294,16 @@ export function RunnerAgentInstaller({ controlPlaneUrl }: RunnerAgentInstallerPr
                 type="number"
                 value={maxConcurrency}
               />
+            </label>
+            <label>
+              工作目录
+              <Input
+                autoComplete="off"
+                onChange={(event) => setDataDirectory(event.target.value)}
+                placeholder={DEFAULT_RUNNER_DATA_DIRECTORY}
+                value={dataDirectory}
+              />
+              <small>留空使用默认 {DEFAULT_RUNNER_DATA_DIRECTORY}；需为绝对路径。</small>
             </label>
             <label className="checkbox-field">
               <Input

@@ -1,6 +1,6 @@
 import type { SharedAttemptLogView } from "@autoforge/contracts";
 
-/** 免登分享页服务端渲染的日志上限：超出部分截断并在页面顶部明确提示。 */
+/** 日志公开访问页服务端渲染的日志上限：超出部分截断并在页面顶部明确提示。 */
 export const SHARED_LOG_MAX_BYTES = 512 * 1024;
 
 /**

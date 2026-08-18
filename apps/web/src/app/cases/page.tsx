@@ -8,6 +8,7 @@ import { listCompleteCaseDirectory } from "@/lib/case-directory";
 import { getPlatformServices } from "@/lib/services";
 import { requireAuthorizedPageProjectScope, requirePageProjectScope } from "@/lib/auth";
 import { projectIdsForPermission } from "@autoforge/domain";
+import type { LatestCaseRunOutcome } from "@autoforge/application";
 
 export const dynamic = "force-dynamic";
 
@@ -61,6 +62,17 @@ export default async function CasesPage({ searchParams }: CasesPageProps) {
     }),
     services.caseSuites.list(200, effectiveProjectIds),
   ]);
+  // 目录已按项目范围加载；这里直接取每用例最近终态执行结果，供筛选与统计使用。
+  const latestRunOutcomes =
+    cases.length > 0
+      ? await services.caseDefinitions.latestRunOutcomes(
+          cases.map((item) => item.id),
+          effectiveProjectIds,
+        )
+      : [];
+  const latestOutcomes = new Map<string, LatestCaseRunOutcome["outcome"]>(
+    latestRunOutcomes.map((entry) => [entry.caseDefinitionId, entry.outcome]),
+  );
 
   return (
     <div className="page-stack">
@@ -153,6 +165,7 @@ export default async function CasesPage({ searchParams }: CasesPageProps) {
         <CaseSelectionTable
           cases={cases}
           initialSearch={query ?? ""}
+          latestOutcomes={latestOutcomes}
           suites={suites}
           manageableProjectIds={suiteManagementProjectIds}
         />

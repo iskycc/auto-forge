@@ -789,7 +789,8 @@ export const pgRunAttempts = pgTable(
   ],
 );
 
-// 免登日志分享：token 明文只出现在导出响应中，库中只存 SHA-256 哈希。
+// 日志公开访问：token 明文只出现在导出响应中，库中只存 SHA-256 哈希。
+// expires_at 对新记录为永久哨兵值（应用层 PERMANENT_LOG_ACCESS_EXPIRY），列保持 NOT NULL。
 export const pgAttemptLogShares = pgTable(
   "attempt_log_shares",
   {
@@ -801,7 +802,7 @@ export const pgAttemptLogShares = pgTable(
     batchId: text("batch_id")
       .notNull()
       .references(() => pgRunBatches.id, { onDelete: "cascade" }),
-    // 创建者用户 id 不加外键：账号删除后分享记录仍需保留审计。
+    // 创建者用户 id 不加外键：账号删除后公开访问记录仍需保留审计。
     createdBy: text("created_by").notNull(),
     createdAt: text("created_at").notNull(),
     expiresAt: text("expires_at").notNull(),

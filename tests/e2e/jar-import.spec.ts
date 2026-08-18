@@ -359,7 +359,7 @@ public class MixedVisibleTest {
   await page.getByLabel("选择 CheckoutTest").check();
   await page.getByLabel("目标用例任务").selectOption(dailySuiteId);
   await page.getByRole("button", { name: "加入任务" }).click();
-  await expect(page.getByRole("status")).toContainText("已将 1 个用例加入任务");
+  await expect(page.locator(".inline-feedback")).toContainText("已将 1 个用例加入任务");
 
   await page.goto(`/case-suites/${encodeURIComponent(dailySuiteId)}`);
   await expectUiConsistency(page);
@@ -382,7 +382,7 @@ public class MixedVisibleTest {
   await caseImportDialog.getByRole("button", { name: "勾选匹配用例" }).click();
   await expect(caseImportDialog).toHaveCount(0);
   await expect(page.locator(".selection-toolbar")).toContainText("已选 1");
-  await expect(page.getByRole("status")).toContainText("已从表格勾选 1 个用例");
+  await expect(page.locator(".inline-feedback")).toContainText("已从表格勾选 1 个用例");
   await expect(page.getByLabel("选择 CheckoutTest")).toBeChecked();
 
   await page.getByRole("button", { name: "导入用例" }).click();
@@ -454,7 +454,7 @@ public class MixedVisibleTest {
   await page.getByLabel("选择 CheckoutTest").check();
   await page.getByLabel("目标用例任务").selectOption(dailySuiteId);
   await page.getByRole("button", { name: "加入任务" }).click();
-  await expect(page.getByRole("status")).toContainText("已将 1 个用例加入任务");
+  await expect(page.locator(".inline-feedback")).toContainText("已将 1 个用例加入任务");
 
   await page.goto("/run-batches");
   await page.getByLabel("执行用例任务").selectOption(dailySuiteId);
@@ -669,6 +669,11 @@ public class MixedVisibleTest {
   await expect(page.locator(".execution-log .log-level-error").first()).toContainText("ERROR");
   await page.keyboard.press("Escape");
   await expect(page.locator(".execution-log")).toHaveCount(0);
+  // 需求5后单用例不再自动展开，需显式点击详情才能看到产物列表。
+  await page
+    .getByRole("row", { name: "CheckoutTest" })
+    .getByRole("button", { name: "详情" })
+    .click();
   await expect(page.getByText("reports/testng/e2e-report.txt")).toBeVisible();
   await expect(page.getByLabel("下载 reports/testng/e2e-report.txt")).toBeVisible();
   await expectUiConsistency(page);
@@ -702,7 +707,7 @@ public class MixedVisibleTest {
   // 下载成功后弹窗自动关闭。
   await expect(page.getByRole("dialog", { name: "导出执行结果" })).toHaveCount(0);
 
-  // 分享链接必须免登录可访问，且展示 adapter 完整日志；无效 token 显示失效提示而非跳登录。
+  // 日志公开访问链接必须免登录可访问，且展示 adapter 完整日志；无效 token 显示失效提示而非跳登录。
   const anonymousContext = await page.context().browser()!.newContext();
   try {
     const anonymousPage = await anonymousContext.newPage();
@@ -713,7 +718,7 @@ public class MixedVisibleTest {
       /first attempt assertion failed|retry passed/,
     );
     await anonymousPage.goto("/share/attempt-log/e2e-invalid-token");
-    await expect(anonymousPage.getByText("链接无效或已过期")).toBeVisible();
+    await expect(anonymousPage.getByRole("heading", { name: "链接无效" })).toBeVisible();
   } finally {
     await anonymousContext.close();
   }

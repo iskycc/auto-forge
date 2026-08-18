@@ -19,7 +19,7 @@ const exportQuerySchema = z.object({
 export const dynamic = "force-dynamic";
 
 /**
- * 导出批次执行结果为 Excel。附带为每个已执行 attempt 生成免登日志分享链接；
+ * 导出批次执行结果为 Excel。附带为每个已执行 attempt 生成日志公开访问链接；
  * blocked 行没有 attempt，时间与链接列留空。
  */
 export async function GET(request: Request, context: Context): Promise<NextResponse> {
@@ -42,8 +42,11 @@ export async function GET(request: Request, context: Context): Promise<NextRespo
     });
 
     const attemptIds = rows.flatMap((row) => (row.attemptId ? [row.attemptId] : []));
-    const tokens = await services.attemptLogShares.ensureSharesForAttempts(
+    // 导出批次内全部 attempt 归属 batchId（buildRows 已校验批次存在），
+    // 走批量路径避免 5 万行导出时的逐条链接查询。
+    const tokens = await services.attemptLogShares.ensureSharesForAttemptsInBatch(
       attemptIds,
+      batchId,
       identity.user.id,
     );
     const base = shareLinkBase(services.config.web.publicBaseUrl, request);

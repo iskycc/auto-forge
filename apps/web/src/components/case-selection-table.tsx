@@ -13,6 +13,12 @@ import { CaseImportDialog } from "./case-import-dialog";
 import { CaseVersionHistory } from "./case-version-history";
 import { SingleCaseRun } from "./single-case-run";
 import { StatusBadge } from "./status-badge";
+import {
+  computeSelectionStats,
+  matchesOutcomeFilter,
+  type CaseLatestOutcome,
+  type CaseOutcomeFilter,
+} from "@/lib/case-selection-stats";
 
 type CaseActivity = {
   executions: Array<{
@@ -61,16 +67,19 @@ export function CaseSelectionTable({
   suites,
   manageableProjectIds,
   initialSearch = "",
+  latestOutcomes = new Map(),
 }: {
   cases: CaseDefinitionWithMethods[];
   suites: CaseSuite[];
   manageableProjectIds: string[] | undefined;
   initialSearch?: string;
+  latestOutcomes?: ReadonlyMap<string, CaseLatestOutcome>;
 }) {
   const [checkedCaseIds, setCheckedCaseIds] = useState(() => new Set<string>());
   const [activeCaseId, setActiveCaseId] = useState<string>();
   const [suiteId, setSuiteId] = useState(suites[0]?.id ?? "");
   const [search, setSearch] = useState(initialSearch);
+  const [outcomeFilter, setOutcomeFilter] = useState<CaseOutcomeFilter>("all");
   const [pending, setPending] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [detailReload, setDetailReload] = useState(0);
@@ -79,8 +88,17 @@ export function CaseSelectionTable({
 
   const normalizedSearch = search.trim().toLocaleLowerCase();
   const visibleCases = useMemo(
-    () => cases.filter((item) => matchesSearch(item, normalizedSearch)),
-    [cases, normalizedSearch],
+    () =>
+      cases.filter(
+        (item) =>
+          matchesSearch(item, normalizedSearch) &&
+          matchesOutcomeFilter(latestOutcomes.get(item.id), outcomeFilter),
+      ),
+    [cases, normalizedSearch, outcomeFilter, latestOutcomes],
+  );
+  const selectionStats = useMemo(
+    () => computeSelectionStats(checkedCaseIds, latestOutcomes),
+    [checkedCaseIds, latestOutcomes],
   );
   const canManageProject = (projectId: string): boolean =>
     manageableProjectIds === undefined || manageableProjectIds.includes(projectId);
@@ -217,10 +235,22 @@ export function CaseSelectionTable({
               清除
             </Button>
           ) : null}
+          <Select
+            aria-label="按最近执行结果筛选"
+            onChange={(event) => setOutcomeFilter(parseOutcomeFilter(event.currentTarget.value))}
+            value={outcomeFilter}
+          >
+            <option value="all">全部结果</option>
+            <option value="succeeded">最近成功</option>
+            <option value="failed">最近失败</option>
+            <option value="never">从未执行</option>
+          </Select>
         </div>
         <div className="case-browser-summary">
           <span>全部 {cases.length} 个用例</span>
-          {normalizedSearch ? <strong>匹配 {visibleCases.length} 个</strong> : null}
+          {normalizedSearch || outcomeFilter !== "all" ? (
+            <strong>匹配 {visibleCases.length} 个</strong>
+          ) : null}
         </div>
 
         {canManageAnyCase ? (
@@ -292,6 +322,24 @@ export function CaseSelectionTable({
           </div>
         ) : null}
 
+        {checkedCaseIds.size > 0 ? (
+          <div aria-label="已勾选用例的执行统计" className="case-selection-stats" role="status">
+            <span>
+              已勾选 <strong>{selectionStats.total}</strong> 个用例
+            </span>
+            <span className="batch-status batch-status-succeeded">
+              成功 {selectionStats.succeededCount}（{selectionStats.successRate}）
+            </span>
+            <span className="batch-status batch-status-failed">
+              失败 {selectionStats.failedCount}（{selectionStats.failureRate}）
+            </span>
+            <span className="batch-status">取消 {selectionStats.cancelledCount}</span>
+            <span className="batch-status batch-status-neutral">
+              未执行 {selectionStats.notRunCount}（阻塞 {selectionStats.blockedRate}）
+            </span>
+          </div>
+        ) : null}
+
         <div className="case-directory-scroll">
           {visibleCases.length === 0 ? (
             <div className="inline-empty">没有匹配的用例，尝试缩短搜索关键词。</div>
@@ -301,6 +349,7 @@ export function CaseSelectionTable({
                 activeCaseId={activeCaseId}
                 canManageProject={canManageProject}
                 forceOpen={Boolean(normalizedSearch)}
+                latestOutcomes={latestOutcomes}
                 node={buildDirectoryTree(visibleCases)}
                 onActivate={setActiveCaseId}
                 onToggle={toggle}
@@ -600,6 +649,7 @@ function DirectoryNode({
   canManageProject,
   onToggle,
   onActivate,
+  latestOutcomes,
   root = false,
 }: {
   node: DirectoryTreeNode;
@@ -609,6 +659,7 @@ function DirectoryNode({
   canManageProject(projectId: string): boolean;
   onToggle(id: string): void;
   onActivate(id: string): void;
+  latestOutcomes: ReadonlyMap<string, CaseLatestOutcome>;
   root?: boolean;
 }) {
   const content = (
@@ -619,43 +670,51 @@ function DirectoryNode({
           canManageProject={canManageProject}
           forceOpen={forceOpen}
           key={directory.path}
+          latestOutcomes={latestOutcomes}
           node={directory}
           onActivate={onActivate}
           onToggle={onToggle}
           selected={selected}
         />
       ))}
-      {node.cases.map((item) => (
-        <div
-          aria-selected={activeCaseId === item.id}
-          className={`case-tree-case ${activeCaseId === item.id ? "active-case" : ""}`}
-          key={item.id}
-          role="treeitem"
-        >
-          {canManageProject(item.projectId) ? (
-            <Input
-              type="checkbox"
-              aria-label={`选择 ${item.displayName}`}
-              checked={selected.has(item.id)}
-              onChange={() => onToggle(item.id)}
-            />
-          ) : null}
-          <Button
-            aria-label={`查看 ${item.displayName}`}
-            className="case-tree-activate"
-            onClick={() => onActivate(item.id)}
-            type="button"
-            variant="ghost"
+      {node.cases.map((item) => {
+        const outcome = latestOutcomes.get(item.id);
+        const outcomeLabel = outcome ? OUTCOME_BADGE_LABEL[outcome] : undefined;
+        return (
+          <div
+            aria-selected={activeCaseId === item.id}
+            className={`case-tree-case ${activeCaseId === item.id ? "active-case" : ""}`}
+            key={item.id}
+            role="treeitem"
           >
-            <FileCode2 size={16} aria-hidden="true" />
-            <span>
-              <strong>{item.displayName}</strong>
-              <code>{item.className}</code>
-            </span>
-            <small>{item.methods.length} 个方法</small>
-          </Button>
-        </div>
-      ))}
+            {canManageProject(item.projectId) ? (
+              <Input
+                type="checkbox"
+                aria-label={`选择 ${item.displayName}`}
+                checked={selected.has(item.id)}
+                onChange={() => onToggle(item.id)}
+              />
+            ) : null}
+            <Button
+              aria-label={`查看 ${item.displayName}`}
+              className="case-tree-activate"
+              onClick={() => onActivate(item.id)}
+              type="button"
+              variant="ghost"
+            >
+              <FileCode2 size={16} aria-hidden="true" />
+              <span>
+                <strong>{item.displayName}</strong>
+                <code>{item.className}</code>
+              </span>
+              <small>{item.methods.length} 个方法</small>
+              {outcomeLabel ? (
+                <span className={`batch-status ${outcomeBadgeClass(outcome)}`}>{outcomeLabel}</span>
+              ) : null}
+            </Button>
+          </div>
+        );
+      })}
     </div>
   );
   if (root) return content;
@@ -681,6 +740,31 @@ function countCases(node: DirectoryTreeNode): number {
     node.cases.length +
     node.directories.reduce((total, directory) => total + countCases(directory), 0)
   );
+}
+
+const OUTCOME_BADGE_LABEL: Record<CaseLatestOutcome, string> = {
+  succeeded: "最近成功",
+  failed: "最近失败",
+  timed_out: "最近超时",
+  cancelled: "最近取消",
+};
+
+function outcomeBadgeClass(outcome: CaseLatestOutcome | undefined): string {
+  switch (outcome) {
+    case "succeeded":
+      return "batch-status-succeeded";
+    case "failed":
+    case "timed_out":
+      return "batch-status-failed";
+    case "cancelled":
+      return "batch-status-queued";
+    default:
+      return "batch-status-neutral";
+  }
+}
+
+function parseOutcomeFilter(value: string): CaseOutcomeFilter {
+  return value === "succeeded" || value === "failed" || value === "never" ? value : "all";
 }
 
 function matchesSearch(item: CaseDefinitionWithMethods, normalizedSearch: string): boolean {

@@ -24,6 +24,7 @@ test-results/
 # AutoForge runtime state
 data/
 .lite-data/
+.local/
 autoforge-agent-data/
 *.sqlite
 *.sqlite-shm

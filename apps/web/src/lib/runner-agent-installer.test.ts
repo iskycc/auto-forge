@@ -1,17 +1,26 @@
 import { generateKeyPairSync } from "node:crypto";
 import type { AddressInfo } from "node:net";
 
+import {
+  DEFAULT_RUNNER_DATA_DIRECTORY,
+  installRunnerAgentInputSchema,
+  type InstallRunnerAgentInput,
+  type RunnerHostProbeResult,
+} from "@autoforge/contracts";
 import { Server, type Connection } from "ssh2";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 
 import {
+  installationFiles,
   normalizeRunnerControlPlaneUrl,
+  parseRemoteDataDirectory,
   renderAgentSystemdServiceUnit,
+  resolveRunnerDataDirectory,
   RunnerAgentInstaller,
 } from "./runner-agent-installer";
-import { RunnerAgentResourceStore } from "./runner-agent-resources";
+import { RunnerAgentResourceStore, type RunnerAgentResources } from "./runner-agent-resources";
 
 const hostPrivateKey = generateKeyPairSync("rsa", { modulusLength: 2048 }).privateKey.export({
   format: "pem",
@@ -148,6 +157,106 @@ describe("Runner Agent installation policy", () => {
     expect(renderAgentSystemdServiceUnit(false)).toContain(
       "\nWorkingDirectory=/var/lib/autoforge-agent\n",
     );
+    expect(renderAgentSystemdServiceUnit(false)).toContain("\nStateDirectory=autoforge-agent\n");
+  });
+
+  it("points the systemd unit at a custom data directory without StateDirectory", () => {
+    const unit = renderAgentSystemdServiceUnit(false, "/data/autoforge-agent");
+    expect(unit).toContain("\nWorkingDirectory=/data/autoforge-agent\n");
+    expect(unit).toContain("\nReadWritePaths=/data/autoforge-agent /etc/autoforge-agent\n");
+    expect(unit).not.toContain("StateDirectory=");
+  });
+
+  it("defaults an omitted data directory to the standard directory", () => {
+    expect(resolveRunnerDataDirectory(undefined)).toBe(DEFAULT_RUNNER_DATA_DIRECTORY);
+    expect(resolveRunnerDataDirectory("  /data/agent  ")).toBe("/data/agent");
+    expect(() => resolveRunnerDataDirectory("relative")).toThrow("必须是绝对路径");
+  });
+
+  it("writes the requested data directory into the generated Agent configuration", () => {
+    const files = installationFiles({
+      input: baseInstallInput({ dataDirectory: "/data/autoforge-agent" }),
+      probe: probeResult,
+      resources: stubResources(),
+      controlPlaneUrl: "https://autoforge.internal",
+      dataDirectory: "/data/autoforge-agent",
+      bootstrapToken: "one-time-token",
+      temporaryDirectory: "/tmp/autoforge-install-1",
+    });
+    const configuration = files.find((file) => file.path.endsWith("/config.json"));
+    expect(configuration).toBeDefined();
+    const rendered = JSON.parse(configuration!.content.toString("utf8"));
+    expect(rendered.dataDirectory).toBe("/data/autoforge-agent");
+    const unit = files.find((file) => file.path.endsWith("/autoforge-agent.service"));
+    expect(unit!.content.toString("utf8")).toContain("WorkingDirectory=/data/autoforge-agent\n");
+  });
+
+  it("keeps the default data directory when the installation does not customize it", () => {
+    const files = installationFiles({
+      input: baseInstallInput({}),
+      probe: probeResult,
+      resources: stubResources(),
+      controlPlaneUrl: "https://autoforge.internal",
+      dataDirectory: DEFAULT_RUNNER_DATA_DIRECTORY,
+      bootstrapToken: "one-time-token",
+      temporaryDirectory: "/tmp/autoforge-install-1",
+    });
+    const configuration = files.find((file) => file.path.endsWith("/config.json"));
+    const rendered = JSON.parse(configuration!.content.toString("utf8"));
+    expect(rendered.dataDirectory).toBe(DEFAULT_RUNNER_DATA_DIRECTORY);
+    const unit = files.find((file) => file.path.endsWith("/autoforge-agent.service"));
+    expect(unit!.content.toString("utf8")).toContain("StateDirectory=autoforge-agent\n");
+  });
+
+  it("preserves a previously configured data directory when reading remote state", () => {
+    const configured = Buffer.from(
+      JSON.stringify({ schemaVersion: 1, dataDirectory: "/data/autoforge-agent" }),
+      "utf8",
+    );
+    expect(parseRemoteDataDirectory(configured)).toBe("/data/autoforge-agent");
+    expect(parseRemoteDataDirectory(Buffer.from("{}", "utf8"))).toBe(DEFAULT_RUNNER_DATA_DIRECTORY);
+    expect(parseRemoteDataDirectory(Buffer.from("not-json", "utf8"))).toBe(
+      DEFAULT_RUNNER_DATA_DIRECTORY,
+    );
+    const invalid = Buffer.from(JSON.stringify({ dataDirectory: "/data/../etc" }), "utf8");
+    expect(() => parseRemoteDataDirectory(invalid)).toThrow("必须是绝对路径");
+  });
+});
+
+describe("RunnerAgentInstaller remote configuration read-back", () => {
+  it("keeps the custom directory reported by the installed Agent configuration", async () => {
+    const configuration = JSON.stringify({ schemaVersion: 1, dataDirectory: "/data/runner" });
+    const server = await startProbeServer({
+      authentication: "password",
+      commandOutput: configuration,
+    });
+    const address = server.address() as AddressInfo;
+
+    await expect(installer().readRemoteDataDirectory(connection(address.port))).resolves.toBe(
+      "/data/runner",
+    );
+  });
+
+  it("falls back to the default directory when no configuration exists yet", async () => {
+    const server = await startProbeServer({ authentication: "password" });
+    const address = server.address() as AddressInfo;
+
+    await expect(installer().readRemoteDataDirectory(connection(address.port))).resolves.toBe(
+      DEFAULT_RUNNER_DATA_DIRECTORY,
+    );
+  });
+
+  it("fails when the remote configuration contains an invalid data directory", async () => {
+    const configuration = JSON.stringify({ schemaVersion: 1, dataDirectory: "/data/../etc" });
+    const server = await startProbeServer({
+      authentication: "password",
+      commandOutput: configuration,
+    });
+    const address = server.address() as AddressInfo;
+
+    await expect(
+      installer().readRemoteDataDirectory(connection(address.port)),
+    ).rejects.toMatchObject({ code: "VALIDATION_FAILED" });
   });
 });
 
@@ -227,4 +336,41 @@ function connection(port: number) {
 
 function closeServer(server: Server): Promise<void> {
   return new Promise((resolve) => server.close(() => resolve()));
+}
+
+const probeResult: RunnerHostProbeResult = {
+  hostKeySha256: `SHA256:${"a".repeat(43)}`,
+  operatingSystemId: "ubuntu",
+  detectedOperatingSystemId: "ubuntu",
+  operatingSystemName: "Ubuntu 24.04 LTS",
+  architecture: "amd64",
+  initSystem: "systemd",
+  privilegeMode: "sudo",
+  cgroupV2Available: true,
+  bashPath: "/bin/bash",
+  forcedInstallationMode: false,
+};
+
+function baseInstallInput(overrides: Partial<InstallRunnerAgentInput>): InstallRunnerAgentInput {
+  return installRunnerAgentInputSchema.parse({
+    connection: {
+      host: "10.20.30.40",
+      port: 22,
+      username: "runner-admin",
+      password: "correct-password",
+    },
+    expectedHostKeySha256: `SHA256:${"a".repeat(43)}`,
+    name: "runner-west-1",
+    ...overrides,
+  });
+}
+
+function stubResources(): RunnerAgentResources {
+  return {
+    version: "0.3.3",
+    revision: "revision",
+    binary: Buffer.from("agent-binary"),
+    installer: Buffer.from("installer"),
+    adapter: Buffer.from("adapter"),
+  };
 }

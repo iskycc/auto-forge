@@ -2,6 +2,7 @@ import type { SharedAttemptLogView } from "@autoforge/contracts";
 import { DomainError, runAttemptOutcome } from "@autoforge/domain";
 
 import type {
+  AttemptLogShareRecord,
   AttemptLogShareRepository,
   Clock,
   ExecutionControlRepository,
@@ -10,10 +11,11 @@ import type {
 } from "./ports";
 
 /**
- * 分享链接有效期固定 30 天：离线部署没有外部吊销通道，链接一旦泄露只能等待过期收敛暴露面，
- * 30 天在审计可追溯与导出结果的可用性之间取平衡。
+ * 日志公开访问链接永久有效：离线部署没有外部吊销通道，链接一旦泄露只能靠删除对应
+ * attempt/批次收敛暴露面，因此签发时即视为永久。expires_at 列为 NOT NULL 且仓储统一
+ * 按 `expires_at > now` 判定有效性，故用一个远期哨兵时间表达“永久”，不改表结构。
  */
-export const ATTEMPT_LOG_SHARE_TTL_MS = 30 * 24 * 60 * 60 * 1_000;
+export const PERMANENT_LOG_ACCESS_EXPIRY = "9999-12-31T23:59:59.999Z";
 
 /** 读取完整日志时的单页大小；日志内容在写入侧已脱敏，这里原样拼接，截断由展示层负责。 */
 const LOG_PAGE_LIMIT = 500;
@@ -36,8 +38,8 @@ export class AttemptLogShareService {
   ) {}
 
   /**
-   * 免登读取分享日志。token 无效、过期、批次或 attempt 已删除时统一返回 null，
-   * 不向外区分失败原因。分享页无会话，不能再按项目裁剪权限。
+   * 免登读取公开日志。token 无效、失效（旧记录过期或批次/attempt 已删除）时统一返回 null，
+   * 不向外区分失败原因。公开页无会话，不能再按项目裁剪权限。
    */
   async getSharedAttemptLog(token: string): Promise<SharedAttemptLogView | null> {
     const now = this.clock.now().toISOString();
@@ -67,10 +69,10 @@ export class AttemptLogShareService {
   }
 
   /**
-   * 为一组 attempt 准备分享链接，返回 attemptId 到明文 token 的映射。
-   * token 只存哈希、无法还原，因此已存在有效分享时不能复用旧链接；新分享沿用该 attempt
-   * 现有有效分享的过期时间，避免反复导出无限延长暴露窗口。同一调用内重复的 attemptId
-   * 复用同一条分享。
+   * 为一组 attempt 准备日志公开访问链接，返回 attemptId 到明文 token 的映射。
+   * token 只存哈希、无法还原，因此已存在有效链接时不能复用旧链接；新链接沿用该 attempt
+   * 现有有效链接的过期时间（当前均为永久哨兵值），保持同一 attempt 的链接有效期一致。
+   * 同一调用内重复的 attemptId 复用同一条记录。
    */
   async ensureSharesForAttempts(
     attemptIds: readonly string[],
@@ -93,11 +95,75 @@ export class AttemptLogShareService {
         batchId: context.batchId,
         createdBy,
         createdAt: now.toISOString(),
-        expiresAt:
-          existing?.expiresAt ?? new Date(now.getTime() + ATTEMPT_LOG_SHARE_TTL_MS).toISOString(),
+        expiresAt: existing?.expiresAt ?? PERMANENT_LOG_ACCESS_EXPIRY,
       });
       tokensByAttempt.set(attemptId, token);
     }
+    return tokensByAttempt;
+  }
+
+  /**
+   * 为单个 attempt 创建日志公开访问链接并返回明文 token；projectIds 为调用方的日志读取范围，
+   * attempt 不在范围内按不存在处理，与日志读取接口的越权语义保持一致。
+   */
+  async ensureShareForAttempt(
+    attemptId: string,
+    createdBy: string,
+    projectIds?: readonly string[],
+  ): Promise<string> {
+    if (projectIds) {
+      const projectId = await this.executions.resolveAttemptProjectId(attemptId);
+      if (!projectId || !projectIds.includes(projectId)) {
+        throw new DomainError("RUN_ATTEMPT_NOT_FOUND", "指定的执行尝试不存在。");
+      }
+    }
+    const tokens = await this.ensureSharesForAttempts([attemptId], createdBy);
+    const token = tokens.get(attemptId);
+    if (!token) throw new DomainError("RUN_ATTEMPT_NOT_FOUND", "指定的执行尝试不存在。");
+    return token;
+  }
+
+  /**
+   * 为同一批次的全部 attempt 批量准备日志公开访问链接，返回 attemptId 到明文 token 的映射。
+   * 与逐条版语义一致（token 只存哈希、已有有效链接沿用过期时间），但把 3N 次串行
+   * 查询收敛为分批存在性校验、分批查有效链接与单事务批量写入，供 5 万行级导出使用；
+   * 详情页的单个链接仍走 ensureSharesForAttempts。
+   */
+  async ensureSharesForAttemptsInBatch(
+    attemptIds: readonly string[],
+    batchId: string,
+    createdBy: string,
+  ): Promise<Map<string, string>> {
+    const uniqueAttemptIds = [...new Set(attemptIds)];
+    if (uniqueAttemptIds.length === 0) return new Map();
+    const now = this.clock.now();
+    const existingCount = await this.executions.countExistingAttemptIds(uniqueAttemptIds);
+    if (existingCount !== uniqueAttemptIds.length) {
+      throw new DomainError("RUN_ATTEMPT_NOT_FOUND", "指定的执行尝试不存在。");
+    }
+    const activeShares = await this.shares.findActiveByAttemptIds(
+      uniqueAttemptIds,
+      now.toISOString(),
+    );
+    const activeExpiryByAttempt = new Map(
+      activeShares.map((share) => [share.attemptId, share.expiresAt]),
+    );
+    const tokensByAttempt = new Map<string, string>();
+    const newShares: AttemptLogShareRecord[] = [];
+    for (const attemptId of uniqueAttemptIds) {
+      const token = this.tokens.issue();
+      tokensByAttempt.set(attemptId, token);
+      newShares.push({
+        id: this.ids.next(),
+        tokenHash: this.tokens.hash(token),
+        attemptId,
+        batchId,
+        createdBy,
+        createdAt: now.toISOString(),
+        expiresAt: activeExpiryByAttempt.get(attemptId) ?? PERMANENT_LOG_ACCESS_EXPIRY,
+      });
+    }
+    await this.shares.createMany(newShares);
     return tokensByAttempt;
   }
 

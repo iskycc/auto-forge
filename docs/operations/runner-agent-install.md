@@ -22,7 +22,7 @@ Agent 诊断日志和数据盘空间，不要直接删除身份文件。
 1. 在“平台配置”设置执行机能够访问的 HTTP 或 HTTPS 地址；可信内网可直接填写 `http://内网IP:端口`，跨不可信网络应使用 HTTPS。私有 PKI 场景准备 PEM CA 链。保存后重启 Web/worker。
 2. 进入“执行机”，填写 IP/主机名、SSH 端口、用户名和密码，点击“探测并核验主机”。
 3. 平台通过 SSH 读取 `/etc/os-release`、架构、Bash、systemd、cgroup v2 可用性和提权能力，并显示 SSH 主机密钥 SHA-256 指纹。缺少 cgroup v2 时探测仍成功，但页面会标记“降级隔离”。openSUSE 被错误报告为 SLES 时会结合系统名称识别；仍不能自动确认时，可在核验主机后手动强制选择安装模式。通过独立可信渠道核对后勾选确认。
-4. 设置 Runner 名称、标签、并发和终端策略；默认以专用非特权账号运行，也可显式选择 root 模式。私有 CA 场景粘贴 PEM，然后执行安装。
+4. 设置 Runner 名称、标签、并发和终端策略；默认以专用非特权账号运行，也可显式选择 root 模式。私有 CA 场景粘贴 PEM，然后执行安装。默认数据盘空间不足时，可在“工作目录”填写自定义绝对路径（如 `/data/autoforge-agent`）；留空使用默认 `/var/lib/autoforge-agent`。
 
 安装请求会再次强制匹配已确认指纹。平台读取内置资源时校验清单，SFTP 上传后读回并复核大小/SHA-256，再以固定参数执行脚本。SSH/sudo 密码只存在于请求内存，不写数据库、平台配置、审计或日志。
 
@@ -34,10 +34,14 @@ Agent 诊断日志和数据盘空间，不要直接删除身份文件。
 /etc/autoforge-agent/config.json
 /etc/autoforge-agent/control-plane-ca.pem  # 仅私有 CA
 /etc/systemd/system/autoforge-agent.service
-/var/lib/autoforge-agent/
+<工作目录>/  # 默认 /var/lib/autoforge-agent/
 ```
 
-systemd 的 `WorkingDirectory` 固定为 `/var/lib/autoforge-agent`，终端默认 Shell 为探测到的 Bash。
+systemd 的 `WorkingDirectory` 与 Agent 配置的 `dataDirectory` 一致，默认 `/var/lib/autoforge-agent`；自定义目录由安装脚本创建并授权给服务账号，且 systemd unit 不再依赖 `StateDirectory`。终端默认 Shell 为探测到的 Bash。
+
+更换工作目录只影响新安装或更新时写入的配置：原目录中的本地身份、凭据与 spool 不会自动迁移。更换后执行机会作为新节点重新注册，旧身份应先撤销或注销。
+
+在“更新执行机 Agent”对话框中留空“工作目录”表示保持执行机当前目录；平台会先通过 SSH 读回远端 `/etc/autoforge-agent/config.json` 中已有的 `dataDirectory` 并沿用，升级不会把自定义目录重置回默认值。
 
 systemd 服务启用 `NoNewPrivileges`、只读系统目录、私有临时目录、任务数上限和 cgroup 委派。非 root 是默认且推荐模式；root 模式会扩大测试进程可读取或修改的主机资源范围，只应在专用、受控的内网执行机上使用。安装失败会恢复上一版二进制、配置和 unit。短期 bootstrap token 只用于一次注册；长期 Runner 身份持久化后，Agent 原子清空配置中的 bootstrap token。
 

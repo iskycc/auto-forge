@@ -4,24 +4,53 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
-## Unreleased
+## 0.5.0 - 2026-08-18
 
 ### Features
 
 - Run batch detail: each round panel now offers 导出结果, exporting that round's (or every round's
   final) case results to Excel. Columns are 用例路径、名称、执行结果、错误描述（一行堆栈，仅失败/超时）、
   执行开始时间、执行结束时间、执行耗时(s)、日志链接. The 日志链接 column points at a new
-  login-free share page `/share/attempt-log/[token]` that renders the adapter's full execution log
-  with the same keyword highlighting as the in-app log viewer; tokens are random 32-byte values of
-  which only the SHA-256 hash is stored, they expire after 30 days, and re-exporting reuses the
-  existing share's expiry instead of extending the window. Blocked (not-yet-executed) cases export
-  without timestamps or links.
+  login-free log public-access page `/share/attempt-log/[token]` that renders the adapter's full
+  execution log with the same keyword highlighting as the in-app log viewer; tokens are random
+  32-byte values of which only the SHA-256 hash is stored. Links are **permanent**: the
+  `expires_at` column keeps its NOT NULL contract and new records carry the sentinel expiry
+  `9999-12-31T23:59:59.999Z`, replacing the former 30-day TTL (records signed by older releases
+  expire naturally and are replaced by permanent links on re-export). Blocked (not-yet-executed)
+  cases export without timestamps or links. Export performance is sized for 50k+ rows within one
+  minute: link issuance runs through a batched existence-check / lookup / single-transaction
+  `createMany` path and the workbook is streamed (measured ~11s for 50,000 rows in the performance
+  suite).
   - Migrations: `sqlite/0030_attempt_log_shares.sql`, `postgresql/0029_attempt_log_shares.sql`
     (new `attempt_log_shares` table, cascade-deleted with attempts/batches).
   - API: `GET /api/v1/run-batches/[batchId]/export?scope=round|final&round=<n>&outcomes=...`
     (auth + `run.read`; returns the xlsx attachment; errors use stable codes BATCH_NOT_FOUND /
-    INVALID_SCOPE / INVALID_ROUND / INVALID_OUTCOMES).
-  - Known limitation: share links rely on expiry for revocation; there is no manual revocation UI yet.
+    INVALID_SCOPE / INVALID_ROUND / INVALID_OUTCOMES), plus
+    `POST /api/v1/run-attempts/[attemptId]/log-share` for issuing a single public-access link
+    from the batch detail page (audited as `attempt_log.share`).
+  - Known limitation: permanent links have no revocation channel; deleting the attempt/batch
+    (cascade) is currently the only way to retire one. There is no manual revocation UI yet.
+- Case management list: cases can be filtered by their latest terminal run outcome
+  (成功 / 失败（含超时与取消）/ 从未执行), and selecting cases shows aggregate statistics —
+  总数、成功数、失败数、阻塞率（未执行占比）— in the selection toolbar.
+- Quality insights: a new 项目 / 版本用例执行情况 report lists every case of the chosen project
+  version with its latest outcome and execution time, bounded to 500 detail rows.
+- Runner Agent data directory: the SSH installer and the post-install update flow both accept a
+  custom absolute working directory (default remains `/var/lib/autoforge-agent`); the installer
+  validates the path (absolute, no `..`) and the 8th script argument stays optional, so older
+  control planes that omit it keep the default. Updating without a directory reads the remote
+  config back and keeps the current value. Existing data under the old directory is not migrated.
+- Execution records page: every column can be resized by dragging; widths persist per browser in
+  localStorage (`autoforge.execution-records.column-widths.v1`) with per-column minimums, and
+  batch details open through a dedicated 详情 button instead of clicking the batch id.
+- Run batch detail: rows no longer auto-expand; page size is selectable up to 500 with a
+  single-load per-attempt detail cache (artifacts/events are fetched once per session), a refresh
+  button, name/status/runner/duration sorting, and a 公开日志 button on finished attempts that
+  opens the permanent public log page in a new tab.
+- Layout: page content width now follows the viewport — `clamp(1540px, 90vw, 2160px)` for
+  `.page-stack` and `clamp(1280px, 82vw, 1920px)` for the case detail page — so large screens use
+  their space while viewports below the old caps render exactly as before; mobile breakpoints are
+  untouched.
 
 ### Fixed
 

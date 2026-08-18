@@ -8,6 +8,7 @@ import type {
   DashboardSummary,
   ExistingSource,
   ImportCatalogRecord,
+  LatestCaseRunOutcome,
 } from "@autoforge/application";
 import {
   jarInspectionSchema,
@@ -72,6 +73,33 @@ function safeJson(json: string): unknown {
   } catch {
     return undefined;
   }
+}
+
+// 单次查询的用例 ID 上限，避免 SQLite 变量数量超过编译期上限。
+const LATEST_RUN_BATCH_SIZE = 5000;
+
+function toLatestRunOutcome(
+  terminalOutcome: string | null,
+  status: string,
+): LatestCaseRunOutcome["outcome"] {
+  if (
+    terminalOutcome === "succeeded" ||
+    terminalOutcome === "failed" ||
+    terminalOutcome === "timed_out" ||
+    terminalOutcome === "cancelled"
+  ) {
+    return terminalOutcome;
+  }
+  // terminal_outcome 为空时回退到终态 status。
+  return status === "succeeded" || status === "cancelled" ? status : "failed";
+}
+
+function batchesOf<T>(items: readonly T[], size: number): T[][] {
+  const batches: T[][] = [];
+  for (let offset = 0; offset < items.length; offset += size) {
+    batches.push(items.slice(offset, offset + size));
+  }
+  return batches;
 }
 
 function toSourceComparison(row: typeof caseSourceComparisons.$inferSelect): CaseSourceComparison {
@@ -737,6 +765,45 @@ export class SqliteCaseCatalogRepository implements CaseCatalogRepository {
         completedAt: row.completed_at,
       })),
     };
+  }
+
+  async listLatestRunOutcomes(
+    caseDefinitionIds: readonly string[],
+  ): Promise<LatestCaseRunOutcome[]> {
+    if (caseDefinitionIds.length === 0) return [];
+    const outcomes: LatestCaseRunOutcome[] = [];
+    for (const batch of batchesOf([...new Set(caseDefinitionIds)], LATEST_RUN_BATCH_SIZE)) {
+      const placeholders = batch.map(() => "?").join(", ");
+      // 每个用例只取最新一条终态 run（succeeded/failed/cancelled）；
+      // created_at 相同时用 id（UUIDv7，时间有序）作为次序，保证结果确定。
+      const rows = this.handle.client
+        .prepare(
+          `SELECT case_definition_id, status, terminal_outcome, created_at FROM (
+             SELECT case_definition_id, status, terminal_outcome, created_at,
+                    ROW_NUMBER() OVER (
+                      PARTITION BY case_definition_id
+                      ORDER BY created_at DESC, id DESC
+                    ) AS row_number
+             FROM execution_runs
+             WHERE case_definition_id IN (${placeholders})
+               AND status IN ('succeeded', 'failed', 'cancelled')
+           ) WHERE row_number = 1`,
+        )
+        .all(...batch) as Array<{
+        case_definition_id: string;
+        status: string;
+        terminal_outcome: string | null;
+        created_at: string;
+      }>;
+      for (const row of rows) {
+        outcomes.push({
+          caseDefinitionId: row.case_definition_id,
+          outcome: toLatestRunOutcome(row.terminal_outcome, row.status),
+          executedAt: row.created_at,
+        });
+      }
+    }
+    return outcomes;
   }
 
   async updateCaseDefinition(input: {

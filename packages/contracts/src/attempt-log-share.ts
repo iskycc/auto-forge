@@ -1,5 +1,5 @@
 /**
- * 执行结果导出与免登录日志分享的共享契约。
+ * 执行结果导出与日志公开访问的共享契约。
  *
  * 导出接口：GET /api/v1/run-batches/[batchId]/export
  *   ?scope=round|final        round=指定轮次的尝试；final=每个用例取最新一次尝试
@@ -7,8 +7,8 @@
  *   &outcomes=succeeded,failed,timed_out,cancelled,blocked
  * 响应：200 application/vnd.openxmlformats-officedocument.spreadsheetml.sheet 附件。
  *
- * 免登录日志页：/share/attempt-log/[token]
- * token 在导出时由服务端生成并持久化（存 SHA-256 哈希），默认 30 天有效。
+ * 免登日志页：/share/attempt-log/[token]
+ * token 在导出时由服务端生成并持久化（存 SHA-256 哈希），链接永久有效。
  */
 
 /** 导出筛选项；blocked 表示仍被轮次持有/等待中、尚未执行的用例（无执行时间与日志）。 */
@@ -22,7 +22,7 @@ export const EXPORT_OUTCOME_FILTERS: readonly ExportOutcomeFilter[] = [
   "blocked",
 ];
 
-/** 导出/分享页共用的单行数据结构。 */
+/** 导出/日志公开访问页共用的单行数据结构。 */
 export interface SharedAttemptLogView {
   batchId: string;
   attemptId: string;
@@ -41,7 +41,10 @@ export interface SharedAttemptLogView {
   durationMs: number | null;
   /** adapter 执行该用例的完整输出流日志（已脱敏） */
   logText: string;
-  /** 分享链接过期时间（ISO 8601） */
+  /**
+   * 兼容字段：链接当前永久有效，新记录固定为永久哨兵值（9999-12-31），
+   * 旧版记录的有限过期时间仍按原值比较。保留字段以免破坏既有消费者。
+   */
   expiresAt: string;
 }
 

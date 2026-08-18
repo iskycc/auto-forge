@@ -514,6 +514,11 @@ export interface ExecutionControlRepository {
     displayName: string;
     heldRound?: number;
   } | null>;
+  /**
+   * 统计入参中真实存在的 attempt 数量（内部分批查询，避免 IN 参数超出数据库绑定上限）。
+   * 批量签发日志公开访问链接场景用一次校验替代逐个 resolveAttemptSchedulingContext。
+   */
+  countExistingAttemptIds(attemptIds: readonly string[]): Promise<number>;
 }
 
 export type ScheduledAssignmentRecord = {
@@ -660,6 +665,13 @@ export type CaseListPage = {
   nextCursor?: string;
 };
 
+// 每个用例最近一次已到达终态的执行结果；尚无终态 run 的用例不返回。
+export type LatestCaseRunOutcome = {
+  caseDefinitionId: string;
+  outcome: "succeeded" | "failed" | "timed_out" | "cancelled";
+  executedAt: string;
+};
+
 export type CaseActivity = {
   executions: Array<{
     runId: string;
@@ -754,6 +766,8 @@ export interface CaseCatalogRepository {
     projectIds?: readonly string[],
   ): Promise<CaseDefinitionWithMethods | null>;
   listCaseActivity?(caseDefinitionId: string, limit: number): Promise<CaseActivity>;
+  // 批量查询每个用例最新一条终态 run 的结果；无终态记录或入参为空时不返回该用例。
+  listLatestRunOutcomes(caseDefinitionIds: readonly string[]): Promise<LatestCaseRunOutcome[]>;
   updateCaseDefinition(input: {
     caseDefinitionId: string;
     expectedRevision: number;
@@ -1446,8 +1460,9 @@ export interface PlatformOperationsRepository {
 }
 
 /**
- * 免登日志分享记录。token 明文只在创建时返回给导出响应，库中只存 SHA-256 哈希；
- * 因此“未过期分享”只能判断是否活跃，无法还原链接，过期判断统一由仓储的 now 参数完成。
+ * 日志公开访问记录。token 明文只在创建时返回给导出响应，库中只存 SHA-256 哈希；
+ * 因此只能判断链接是否活跃，无法还原链接，有效性判断统一由仓储的 now 参数完成。
+ * expiresAt 对新记录固定为永久哨兵值（见 PERMANENT_LOG_ACCESS_EXPIRY）。
  */
 export type AttemptLogShareRecord = {
   id: string;
@@ -1461,7 +1476,17 @@ export type AttemptLogShareRecord = {
 
 export interface AttemptLogShareRepository {
   create(record: AttemptLogShareRecord): Promise<void>;
-  /** 返回该 attempt 最新创建的未过期分享；无有效分享时返回 null。 */
+  /** 单事务批量插入公开访问记录；任一条冲突或失败时整体回滚。 */
+  createMany(records: readonly AttemptLogShareRecord[]): Promise<void>;
+  /** 返回该 attempt 最新创建的有效链接记录；无有效记录时返回 null。 */
   findActiveByAttemptId(attemptId: string, now: string): Promise<AttemptLogShareRecord | null>;
+  /**
+   * 批量返回每个 attempt 最新创建的有效链接记录；无有效记录的 attempt 不出现在结果中。
+   * 内部分批查询，避免 IN 参数超出数据库绑定上限。
+   */
+  findActiveByAttemptIds(
+    attemptIds: readonly string[],
+    now: string,
+  ): Promise<AttemptLogShareRecord[]>;
   findActiveByTokenHash(tokenHash: string, now: string): Promise<AttemptLogShareRecord | null>;
 }
