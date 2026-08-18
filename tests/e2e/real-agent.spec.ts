@@ -53,6 +53,11 @@ test("executes a TestNG JAR through the real Go Agent", async ({ page }, testInf
     });
 
     await page.goto(`/run-batches/${encodeURIComponent(batchId)}`);
+    // 需求5后单用例不再自动展开，需先点详情才能看到结构化结果与产物。
+    await page
+      .getByRole("row", { name: "RealAgentFixture" })
+      .getByRole("button", { name: "详情" })
+      .click();
     await expect(page.getByRole("heading", { name: "结构化测试结果" })).toBeVisible();
     await expect(page.getByLabel("TestNG 结果汇总")).toContainText("通过1");
     await expect(page.getByText("executesThroughRealAgent", { exact: true })).toBeVisible();
@@ -104,6 +109,10 @@ test("executes a TestNG JAR through the real Go Agent", async ({ page }, testInf
       expect(logs).not.toContain(secretValueV1);
     }
     await page.goto(`/run-batches/${encodeURIComponent(failureBatchId)}`);
+    await page
+      .getByRole("row", { name: "RealAgentFailureFixture" })
+      .getByRole("button", { name: "详情" })
+      .click();
     await expect(
       page.getByText("failsAfterRealProcessOutput", { exact: true }).last(),
     ).toBeVisible();
@@ -708,6 +717,11 @@ async function exerciseFullDependencyRecovery(
   await waitForSucceededBatch(page, minioBatchId, agent);
   await waitForFile(minioAcknowledgement, 60_000);
   await page.goto(`/run-batches/${encodeURIComponent(minioBatchId)}`);
+  // 行内详情默认收起，先展开才能看到产物下载入口。
+  await page
+    .getByRole("row", { name: "RealAgentRecoveryFixture" })
+    .getByRole("button", { name: "详情" })
+    .click();
   const artifact = page.getByLabel("下载 artifacts/full-recovery.txt");
   await expect(artifact).toBeVisible();
   const href = await artifact.getAttribute("href");

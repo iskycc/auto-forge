@@ -85,6 +85,11 @@ test("runs the java-cases module through the adapter E2E chain", async ({ page }
     });
 
     await page.goto(`/run-batches/${encodeURIComponent(batchId)}`);
+    // 需求5后单用例不再自动展开，需先点详情才能看到结构化结果与产物。
+    await page
+      .getByRole("row", { name: "JavaCasesFixture" })
+      .getByRole("button", { name: "详情" })
+      .click();
     await expect(page.getByRole("heading", { name: "结构化测试结果" })).toBeVisible();
     await expect(page.getByLabel("TestNG 结果汇总")).toContainText("通过1");
     await expect(page.getByText("executesThroughJavaCasesModule", { exact: true })).toBeVisible();
@@ -130,6 +135,11 @@ test("runs the java-cases module through the adapter E2E chain", async ({ page }
       expect(attempt.testNg).toMatchObject({ total: 1, passed: 0, failed: 1 });
     }
     await page.goto(`/run-batches/${encodeURIComponent(failureBatchId)}`);
+    // 需求5后单用例不再自动展开，需先点详情才能看到方法级失败结果。
+    await page
+      .getByRole("row", { name: "JavaCasesFailureFixture" })
+      .getByRole("button", { name: "详情" })
+      .click();
     await expect(
       page.getByText("failsAfterRealProcessOutput", { exact: true }).last(),
     ).toBeVisible();
