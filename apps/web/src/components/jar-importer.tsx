@@ -27,6 +27,8 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useId, useState } from "react";
 
+import { CLASS_PREVIEW_LIMIT, uniqueInspectionClasses } from "@/lib/class-preview";
+
 type Phase = "idle" | "inspecting" | "ready" | "importing" | "done";
 
 function formatBytes(value: number): string {
@@ -447,51 +449,61 @@ export function JarImporter({
             </div>
           )}
 
-          <div className="class-preview-list">
-            {inspection.classes.map((candidate) => (
-              <details
-                className="class-preview"
-                key={candidate.className}
-                open={inspection.classes.length <= 3}
-              >
-                <summary>
-                  <span className="class-icon">
-                    <Archive size={16} aria-hidden="true" />
-                  </span>
-                  <span className="class-title">
-                    <strong>{candidate.simpleName}</strong>
-                    <small>{candidate.className}</small>
-                  </span>
-                  <span className="method-count">{candidate.methods.length} 个方法</span>
-                  {candidate.source ? <span className="tag">可查看源码</span> : null}
-                  <ChevronRight className="summary-chevron" size={17} aria-hidden="true" />
-                </summary>
-                <div className="method-list">
-                  {candidate.methods.length === 0 ? (
-                    <p className="empty-inline">类带有 `@Test`，但未发现可导入的 public 方法。</p>
-                  ) : (
-                    candidate.methods.map((method) => (
-                      <div className="method-row" key={`${method.methodName}${method.descriptor}`}>
-                        <span
-                          className={`method-status ${method.enabled ? "method-enabled" : "method-disabled"}`}
-                        />
-                        <code>{method.methodName}</code>
-                        <span className="method-descriptor">{method.descriptor}</span>
-                        <span className="method-origin">
-                          {method.annotationSource === "class" ? "类级 @Test" : "方法级 @Test"}
-                        </span>
-                        {method.groups.map((group) => (
-                          <span className="tag" key={group}>
-                            {group}
+          {inspection.classes.length > CLASS_PREVIEW_LIMIT ? (
+            <div className="implementation-notice" role="status">
+              共识别 {inspection.classes.length} 个测试类，超过 {CLASS_PREVIEW_LIMIT}{" "}
+              个不再逐条展示；导入进度见下方状态，识别异常见上方扫描警告。
+            </div>
+          ) : (
+            <div className="class-preview-list">
+              {uniqueInspectionClasses(inspection.classes).map((candidate) => (
+                <details
+                  className="class-preview"
+                  key={candidate.className}
+                  open={inspection.classes.length <= 3}
+                >
+                  <summary>
+                    <span className="class-icon">
+                      <Archive size={16} aria-hidden="true" />
+                    </span>
+                    <span className="class-title">
+                      <strong>{candidate.simpleName}</strong>
+                      <small>{candidate.className}</small>
+                    </span>
+                    <span className="method-count">{candidate.methods.length} 个方法</span>
+                    {candidate.source ? <span className="tag">可查看源码</span> : null}
+                    <ChevronRight className="summary-chevron" size={17} aria-hidden="true" />
+                  </summary>
+                  <div className="method-list">
+                    {candidate.methods.length === 0 ? (
+                      <p className="empty-inline">类带有 `@Test`，但未发现可导入的 public 方法。</p>
+                    ) : (
+                      candidate.methods.map((method) => (
+                        <div
+                          className="method-row"
+                          key={`${method.methodName}${method.descriptor}`}
+                        >
+                          <span
+                            className={`method-status ${method.enabled ? "method-enabled" : "method-disabled"}`}
+                          />
+                          <code>{method.methodName}</code>
+                          <span className="method-descriptor">{method.descriptor}</span>
+                          <span className="method-origin">
+                            {method.annotationSource === "class" ? "类级 @Test" : "方法级 @Test"}
                           </span>
-                        ))}
-                      </div>
-                    ))
-                  )}
-                </div>
-              </details>
-            ))}
-          </div>
+                          {method.groups.map((group) => (
+                            <span className="tag" key={group}>
+                              {group}
+                            </span>
+                          ))}
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </details>
+              ))}
+            </div>
+          )}
 
           <div className="import-confirmation">
             <div>

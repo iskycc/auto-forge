@@ -22,14 +22,17 @@ export function RunBatchExportDialog({
   batchId,
   round,
   roundLabelText,
+  defaultScope,
   onClose,
 }: {
   batchId: string;
-  round: number;
-  roundLabelText: string;
+  /** 从具体轮次打开时提供；全部轮次虚拟视图打开时缺省，隐藏「当前轮次」选项。 */
+  round?: number | undefined;
+  roundLabelText?: string | undefined;
+  defaultScope?: RunBatchExportScope;
   onClose: () => void;
 }) {
-  const [scope, setScope] = useState<RunBatchExportScope>("round");
+  const [scope, setScope] = useState<RunBatchExportScope>(defaultScope ?? "round");
   const [selectedOutcomes, setSelectedOutcomes] = useState<ReadonlySet<ExportOutcomeFilter>>(
     () => new Set(DEFAULT_EXPORT_OUTCOMES),
   );
@@ -111,18 +114,32 @@ export function RunBatchExportDialog({
         <div className="runner-update-body">
           <fieldset className="export-dialog-group">
             <legend>导出范围</legend>
+            {round !== undefined ? (
+              <label className="export-dialog-option">
+                <Input
+                  checked={scope === "round"}
+                  name="export-scope"
+                  onChange={() => setScope("round")}
+                  type="radio"
+                />
+                <span>
+                  当前轮次
+                  <small>
+                    {roundLabelText}（第 {round} 轮）
+                  </small>
+                </span>
+              </label>
+            ) : null}
             <label className="export-dialog-option">
               <Input
-                checked={scope === "round"}
+                checked={scope === "all"}
                 name="export-scope"
-                onChange={() => setScope("round")}
+                onChange={() => setScope("all")}
                 type="radio"
               />
               <span>
-                当前轮次
-                <small>
-                  {roundLabelText}（第 {round} 轮）
-                </small>
+                全部轮次
+                <small>逐条记录，标注轮次；同一用例多条记录会分行导出</small>
               </span>
             </label>
             <label className="export-dialog-option">
@@ -133,7 +150,7 @@ export function RunBatchExportDialog({
                 type="radio"
               />
               <span>
-                全部轮次
+                最终结果
                 <small>每个用例最终结果</small>
               </span>
             </label>

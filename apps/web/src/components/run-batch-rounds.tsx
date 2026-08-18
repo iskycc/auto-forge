@@ -2,7 +2,6 @@
 
 import type { AttemptArtifactList, AttemptEventPage } from "@autoforge/contracts";
 import type {
-  ExecutionRun,
   RunAttempt,
   RunBatchDetails,
   RunBatchRoundSummary,
@@ -29,6 +28,7 @@ import { RunBatchExportDialog } from "@/components/run-batch-export-dialog";
 import { SchedulingLogViewer } from "@/components/scheduling-log-viewer";
 import { Button, Input, Select } from "@/components/ui";
 import { readApiErrorMessage } from "@/lib/client-api";
+import { buildRoundCaseRows, type RoundCaseRowModel } from "@/lib/round-case-rows";
 import {
   attemptFailureHint,
   formatArtifactBytes,
@@ -59,11 +59,6 @@ export type RunnerDirectoryEntry = {
 };
 
 type CaseStatusFilter = "all" | "succeeded" | "failed" | "timed_out" | "cancelled" | "pending";
-
-type RoundCaseRowModel = {
-  run: ExecutionRun;
-  attempt: RunAttempt | undefined;
-};
 
 // 轮次行命名：第 1 轮是初始执行，round 模式之后叫「重跑第 N 轮」，
 // immediate 模式按第几次尝试叫「重试第 N 次」，两种模式的文案不得混用。
@@ -171,7 +166,10 @@ export function RunBatchRounds({
     () => new Map(runnerDirectory.map((entry) => [entry.id, entry])),
     [runnerDirectory],
   );
-  const requestedRound = Number(searchParams.get("round") ?? "");
+  const requestedRoundParam = searchParams.get("round");
+  // round=all 是虚拟轮次：跨全部轮次逐条展示执行记录，不对应任何真实轮次号。
+  const allRoundsSelected = requestedRoundParam === "all";
+  const requestedRound = Number(requestedRoundParam ?? "");
   // 默认落在最后一个已执行的轮次；纯等待轮（还没有任何 attempt）不作为默认选中。
   const defaultRound =
     [...summaries].reverse().find((summary) => summary.status !== "waiting")?.round ??
@@ -181,6 +179,21 @@ export function RunBatchRounds({
     ? requestedRound
     : defaultRound;
   const selectedSummary = summaries.find((summary) => summary.round === selectedRound);
+  // 全部轮次行的累计口径：曾通过的用例（按 run 去重）与从未产生 attempt 的用例数。
+  const allRoundsStats = useMemo(() => {
+    const passedRunIds = new Set<string>();
+    const attemptedRunIds = new Set<string>();
+    for (const attempt of batch.attempts) {
+      attemptedRunIds.add(attempt.executionRunId);
+      if (attempt.outcome === "succeeded") passedRunIds.add(attempt.executionRunId);
+    }
+    const total = batch.runs.length;
+    return {
+      passed: passedRunIds.size,
+      neverExecuted: batch.runs.filter((run) => !attemptedRunIds.has(run.id)).length,
+      passRate: total === 0 ? 0 : Math.round((passedRunIds.size / total) * 100),
+    };
+  }, [batch.attempts, batch.runs]);
   const [activeTab, setActiveTab] = useState<"cases" | "runners">("cases");
   const [logAttempt, setLogAttempt] = useState<RunAttempt | undefined>();
   const [schedulingViewer, setSchedulingViewer] = useState<
@@ -200,7 +213,7 @@ export function RunBatchRounds({
     });
   }, []);
 
-  function selectRound(round: number): void {
+  function selectRound(round: number | "all"): void {
     const parameters = new URLSearchParams(searchParams.toString());
     parameters.set("round", String(round));
     router.replace(`${pathname}?${parameters.toString()}`, { scroll: false });
@@ -258,10 +271,42 @@ export function RunBatchRounds({
               </tr>
             </thead>
             <tbody>
+              {/* 虚拟轮次：跨全部轮次逐条查看/筛选执行记录，并导出所有轮次结果。 */}
+              <tr
+                className={allRoundsSelected ? "selected-row" : undefined}
+                onClick={() => selectRound("all")}
+              >
+                <td>
+                  <Button
+                    className="round-select-button"
+                    variant="ghost"
+                    size="compact"
+                    type="button"
+                    aria-pressed={allRoundsSelected}
+                    onClick={() => selectRound("all")}
+                  >
+                    全部轮次
+                  </Button>
+                  <small className="table-secondary">跨轮次记录</small>
+                </td>
+                <td>—</td>
+                <td>{batch.totalRuns}</td>
+                <td>{allRoundsStats.passRate}%</td>
+                <td>—</td>
+                <td>{allRoundsStats.passed}</td>
+                <td>—</td>
+                <td>{allRoundsStats.neverExecuted}</td>
+                <td>—</td>
+                <td>—</td>
+              </tr>
               {summaries.map((summary) => (
                 <tr
                   key={summary.round}
-                  className={summary.round === selectedRound ? "selected-row" : undefined}
+                  className={
+                    !allRoundsSelected && summary.round === selectedRound
+                      ? "selected-row"
+                      : undefined
+                  }
                   onClick={() => selectRound(summary.round)}
                 >
                   <td>
@@ -270,7 +315,7 @@ export function RunBatchRounds({
                       variant="ghost"
                       size="compact"
                       type="button"
-                      aria-pressed={summary.round === selectedRound}
+                      aria-pressed={!allRoundsSelected && summary.round === selectedRound}
                       onClick={() => selectRound(summary.round)}
                     >
                       {roundLabel(batch.retryMode, summary.round)}
@@ -315,7 +360,22 @@ export function RunBatchRounds({
         </div>
       </section>
 
-      {selectedSummary ? (
+      {allRoundsSelected ? (
+        <AllRoundsPanel
+          batch={batch}
+          canCancelRuns={canCancelRuns}
+          canReadLogs={canReadLogs}
+          canReadArtifacts={canReadArtifacts}
+          artifactsEnabled={artifactsEnabled}
+          runnerDirectory={runnerDirectoryById}
+          cancelPending={cancelPending}
+          actionError={actionError}
+          detailCache={detailCache}
+          onRememberAttemptDetail={rememberAttemptDetail}
+          onCancelRun={(runId) => void cancelRun(runId)}
+          onOpenLogs={setLogAttempt}
+        />
+      ) : selectedSummary ? (
         <RoundDetailPanel
           batch={batch}
           summary={selectedSummary}
@@ -362,6 +422,102 @@ export function RunBatchRounds({
         />
       ) : null}
     </>
+  );
+}
+
+/**
+ * 全部轮次虚拟面板：同一用例在不同轮次产生的每条 attempt 各占一行，
+ * 用轮次列区分；导出默认使用 scope=all（所有轮次逐条记录）。
+ */
+function AllRoundsPanel({
+  batch,
+  canCancelRuns,
+  canReadLogs,
+  canReadArtifacts,
+  artifactsEnabled,
+  runnerDirectory,
+  cancelPending,
+  actionError,
+  detailCache,
+  onRememberAttemptDetail,
+  onCancelRun,
+  onOpenLogs,
+}: {
+  batch: RunBatchDetails;
+  canCancelRuns: boolean;
+  canReadLogs: boolean;
+  canReadArtifacts: boolean;
+  artifactsEnabled: boolean;
+  runnerDirectory: ReadonlyMap<string, RunnerDirectoryEntry>;
+  cancelPending: boolean;
+  actionError: string;
+  detailCache: ReadonlyMap<string, AttemptDetailEntry>;
+  onRememberAttemptDetail: (attemptId: string, entry: AttemptDetailEntry) => void;
+  onCancelRun: (runId: string) => void;
+  onOpenLogs: (attempt: RunAttempt) => void;
+}) {
+  const router = useRouter();
+  const [exportDialogOpen, setExportDialogOpen] = useState(false);
+
+  return (
+    <section className="round-detail-panel" aria-label="轮次详情：全部轮次">
+      <div className="round-detail-header">
+        <div className="round-detail-title">
+          <h2>全部轮次</h2>
+          <span className="batch-status batch-status-neutral">逐条记录</span>
+        </div>
+        <div className="round-detail-header-actions">
+          <Button
+            className="button button-secondary compact-button"
+            onClick={() => router.refresh()}
+            type="button"
+            title="重新从服务端拉取最新执行状态"
+          >
+            <RefreshCw size={15} /> 刷新
+          </Button>
+          {canReadLogs ? (
+            <Button
+              className="button button-secondary compact-button"
+              onClick={() => setExportDialogOpen(true)}
+              type="button"
+            >
+              <Download size={15} /> 导出结果
+            </Button>
+          ) : null}
+        </div>
+      </div>
+      {exportDialogOpen ? (
+        <RunBatchExportDialog
+          batchId={batch.id}
+          defaultScope="all"
+          onClose={() => setExportDialogOpen(false)}
+        />
+      ) : null}
+      {actionError ? (
+        <p className="form-error" role="alert">
+          {actionError}
+        </p>
+      ) : null}
+      <div className="round-detail-body">
+        <div className="round-tab-content">
+          <RoundCasesTable
+            key="all"
+            batch={batch}
+            round="all"
+            canCancelRuns={canCancelRuns}
+            canReadLogs={canReadLogs}
+            canReadArtifacts={canReadArtifacts}
+            artifactsEnabled={artifactsEnabled}
+            runnerDirectory={runnerDirectory}
+            cancelPending={cancelPending}
+            detailCache={detailCache}
+            onRememberAttemptDetail={onRememberAttemptDetail}
+            onCancelRun={onCancelRun}
+            onOpenLogs={onOpenLogs}
+          />
+        </div>
+      </div>
+    </section>
   );
 }
 
@@ -618,7 +774,8 @@ function RoundCasesTable({
   onOpenLogs,
 }: {
   batch: RunBatchDetails;
-  round: number;
+  /** 具体轮次号，或 "all" 表示全部轮次虚拟视图（逐条 attempt 一行）。 */
+  round: number | "all";
   canCancelRuns: boolean;
   canReadLogs: boolean;
   canReadArtifacts: boolean;
@@ -630,16 +787,8 @@ function RoundCasesTable({
   onCancelRun: (runId: string) => void;
   onOpenLogs: (attempt: RunAttempt) => void;
 }) {
-  const rows = useMemo<RoundCaseRowModel[]>(
-    () =>
-      batch.runs.map((run) => ({
-        run,
-        attempt: batch.attempts.find(
-          (attempt) => attempt.executionRunId === run.id && attempt.attemptNumber === round,
-        ),
-      })),
-    [batch.attempts, batch.runs, round],
-  );
+  const rows = useMemo<RoundCaseRowModel[]>(() => buildRoundCaseRows(batch, round), [batch, round]);
+  const showRoundColumn = round === "all";
   const [statusFilter, setStatusFilter] = useState<CaseStatusFilter>("all");
   const [nameQuery, setNameQuery] = useState("");
   const [pageSize, setPageSize] = useState<number>(DEFAULT_CASE_PAGE_SIZE);
@@ -731,8 +880,9 @@ function RoundCasesTable({
                   active={sortSpec}
                   onToggle={() => toggleSort("name")}
                 />
+                {showRoundColumn ? <th>轮次</th> : null}
                 <SortableCaseTh
-                  label="本轮状态"
+                  label={showRoundColumn ? "状态" : "本轮状态"}
                   sortKey="status"
                   active={sortSpec}
                   onToggle={() => toggleSort("status")}
@@ -755,8 +905,9 @@ function RoundCasesTable({
             <tbody>
               {pageRows.map((row) => (
                 <RoundCaseRow
-                  key={row.run.id}
+                  key={row.attempt ? row.attempt.id : row.run.id}
                   row={row}
+                  showRoundColumn={showRoundColumn}
                   expanded={expandedAttemptId === row.attempt?.id}
                   onToggleDetail={() =>
                     setExpandedAttemptId((current) =>
@@ -856,6 +1007,7 @@ function RoundCaseRow({
   row,
   expanded,
   onToggleDetail,
+  showRoundColumn,
   canCancelRuns,
   canReadLogs,
   canReadArtifacts,
@@ -870,6 +1022,8 @@ function RoundCaseRow({
   row: RoundCaseRowModel;
   expanded: boolean;
   onToggleDetail: () => void;
+  /** 全部轮次视图下展示 attempt 所属轮次列。 */
+  showRoundColumn: boolean;
   canCancelRuns: boolean;
   canReadLogs: boolean;
   canReadArtifacts: boolean;
@@ -922,6 +1076,7 @@ function RoundCaseRow({
           <strong>{run.displayName}</strong>
           <small className="table-secondary">{run.className}</small>
         </td>
+        {showRoundColumn ? <td>{attempt ? `第 ${attempt.attemptNumber} 轮` : "—"}</td> : null}
         <td>
           {attempt ? (
             <>
@@ -997,7 +1152,7 @@ function RoundCaseRow({
       </tr>
       {expanded && attempt ? (
         <tr className="round-detail-row">
-          <td colSpan={5}>
+          <td colSpan={showRoundColumn ? 6 : 5}>
             <AttemptInlineDetail
               attempt={attempt}
               canReadArtifacts={canReadArtifacts}

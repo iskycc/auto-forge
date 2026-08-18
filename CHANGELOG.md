@@ -4,6 +4,35 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## 0.6.5 - 2026-08-18
+
+### Features
+
+- Batch details gains an “全部轮次” virtual round (`?round=all`): every attempt of every case is
+  listed as its own row with a 轮次 column, so cases with records in several rounds are explicitly
+  annotated. The view supports the existing status filter, name search, sorting, pagination, log
+  viewing, and inline details, and its export dialog defaults to the new export scope.
+- New result-export scope `all` (“全部轮次，逐条记录，标注轮次”): the Excel workbook contains one
+  row per terminal attempt across all rounds with a leading 轮次 column and a
+  `...-all-rounds.xlsx` filename. The previous “全部轮次（每个用例最终结果）” option is renamed
+  “最终结果”; never-executed cases remain excluded, consistent with the existing scopes.
+
+### Fixed
+
+- Later rounds no longer list cases that already passed in an earlier round as “未执行”: per the
+  scheduling semantics those cases never re-enter subsequent rounds, so the per-round case table
+  now filters them out and only shows cases genuinely waiting for the selected round.
+- JAR import scan preview and the case-source persisted preview no longer degrade into a long
+  strip of blank-looking rows for large imports: above 100 test classes the list is replaced by a
+  count summary pointing at the scan warnings (import progress still comes from the background
+  job status), and duplicate `className` candidates are de-duplicated before rendering to avoid
+  duplicate React keys.
+
+### Compatibility
+
+- No migrations, no persisted-configuration changes. The export API gains `scope=all` as an
+  additive value; existing `round`/`final` exports are unchanged.
+
 ## 0.6.4 - 2026-08-18
 
 ### Changed

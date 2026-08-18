@@ -11,7 +11,7 @@ import { getPlatformServices } from "@/lib/services";
 type Context = { params: Promise<{ batchId: string }> };
 
 const exportQuerySchema = z.object({
-  scope: z.enum(["round", "final"]),
+  scope: z.enum(["round", "final", "all"]),
   round: z.coerce.number().int().min(1).optional(),
   outcomes: z.string().min(1),
 });

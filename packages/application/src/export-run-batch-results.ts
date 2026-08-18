@@ -32,7 +32,8 @@ export type RunBatchExportRow = {
 
 export type RunBatchExportQuery = {
   batchId: string;
-  scope: "round" | "final";
+  /** round=指定轮次；final=每个用例最新一次记录；all=所有轮次逐条记录（round 字段标注轮次）。 */
+  scope: "round" | "final" | "all";
   /** scope=round 时必填；轮次号即 attemptNumber，初始轮次为 1，与批次详情页一致。 */
   round?: number;
   outcomes: readonly ExportOutcomeFilter[];
@@ -60,7 +61,9 @@ export function buildRunBatchExportRows(
   const rows =
     query.scope === "round"
       ? roundScopeRows(details, requiredRound(query.round), outcomes)
-      : finalScopeRows(details, outcomes);
+      : query.scope === "all"
+        ? allScopeRows(details, outcomes)
+        : finalScopeRows(details, outcomes);
   return sortExportRows(rows);
 }
 
@@ -97,6 +100,21 @@ function roundScopeRows(
     if (!matchesOutcomeFilter(attempt, outcomes)) continue;
     const run = runsById.get(attempt.executionRunId);
     rows.push(attemptRow(attempt, run));
+  }
+  return rows;
+}
+
+// all 口径：所有轮次的每条终态 attempt 各导出一行，round 字段标注轮次；
+// 从未执行的用例没有终止结果，与其他口径一致不导出。
+function allScopeRows(
+  details: RunBatchDetails,
+  outcomes: ReadonlySet<ExportOutcomeFilter>,
+): RunBatchExportRow[] {
+  const runsById = new Map(details.runs.map((run) => [run.id, run]));
+  const rows: RunBatchExportRow[] = [];
+  for (const attempt of details.attempts) {
+    if (!matchesOutcomeFilter(attempt, outcomes)) continue;
+    rows.push(attemptRow(attempt, runsById.get(attempt.executionRunId)));
   }
   return rows;
 }

@@ -202,6 +202,29 @@ describe("buildRunBatchExportRows", () => {
     );
   });
 
+  it("exports every terminal attempt across rounds in all scope, annotated with its round", () => {
+    const rows = buildRunBatchExportRows(makeDetails(), {
+      scope: "all",
+      outcomes: ["succeeded", "failed", "timed_out", "cancelled", "blocked"],
+    });
+    // 全部 4 条终态 attempt 逐条导出；run-b 从未执行，不出现。
+    expect(rows.map((row) => `${row.attemptId}:${row.round}`)).toEqual([
+      "attempt-a1:1",
+      "attempt-a2:2",
+      "attempt-c1:1",
+      "attempt-c2:2",
+    ]);
+  });
+
+  it("filters all scope by outcome, e.g. succeeded across all rounds", () => {
+    const rows = buildRunBatchExportRows(makeDetails(), {
+      scope: "all",
+      outcomes: ["succeeded"],
+    });
+    expect(rows.map((row) => row.attemptId)).toEqual(["attempt-a1"]);
+    expect(rows[0]).toMatchObject({ outcome: "succeeded", round: 1 });
+  });
+
   it("fills the result summary only for non-succeeded attempts", () => {
     const rows = buildRunBatchExportRows(makeDetails(), {
       scope: "round",

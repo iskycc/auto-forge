@@ -1,6 +1,6 @@
 import { EXPORT_OUTCOME_FILTERS, type ExportOutcomeFilter } from "@autoforge/contracts";
 
-export type RunBatchExportScope = "round" | "final";
+export type RunBatchExportScope = "round" | "final" | "all";
 
 /** 导出弹窗中的结果筛选项；顺序即契约顺序，展示与 query 组装共用。 */
 export const EXPORT_OUTCOME_OPTIONS: ReadonlyArray<{
@@ -20,15 +20,16 @@ export const DEFAULT_EXPORT_OUTCOMES: readonly ExportOutcomeFilter[] = ["failed"
 /**
  * 组装 GET /api/v1/run-batches/[batchId]/export 的查询串。
  * outcomes 固定按契约顺序输出，与用户勾选先后无关，保证结果可测试、可分享。
+ * 仅 scope=round 需要轮次号；final/all 忽略 round 参数。
  */
 export function buildRunBatchExportQuery(
   scope: RunBatchExportScope,
-  round: number,
+  round: number | undefined,
   outcomes: readonly ExportOutcomeFilter[],
 ): string {
   const parameters = new URLSearchParams();
   parameters.set("scope", scope);
-  if (scope === "round") parameters.set("round", String(round));
+  if (scope === "round" && round !== undefined) parameters.set("round", String(round));
   const ordered = EXPORT_OUTCOME_FILTERS.filter((filter) => outcomes.includes(filter));
   parameters.set("outcomes", ordered.join(","));
   return parameters.toString();

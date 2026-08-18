@@ -30,7 +30,7 @@ const OUTCOME_LABELS: Record<ExportOutcomeFilter, string> = {
 
 export type RunBatchExportWorkbookInput = {
   batchId: string;
-  scope: "round" | "final";
+  scope: "round" | "final" | "all";
   /** scope=round 时记录具体轮次，用于文件名区分。 */
   round?: number;
   rows: readonly RunBatchExportRow[];
@@ -46,7 +46,10 @@ export async function buildRunBatchExportWorkbook(
   const sheet = workbook.addWorksheet("执行结果", {
     views: [{ state: "frozen", ySplit: 1 }],
   });
-  sheet.columns = EXPORT_HEADERS.map((header) => ({ header, width: headerWidth(header) }));
+  // all 口径同一用例可能有多条记录，首列标注轮次以便区分。
+  const includeRound = input.scope === "all";
+  const headers: readonly string[] = includeRound ? ["轮次", ...EXPORT_HEADERS] : EXPORT_HEADERS;
+  sheet.columns = headers.map((header) => ({ header, width: headerWidth(header) }));
 
   const headerRow = sheet.getRow(1);
   headerRow.font = { bold: true };
@@ -54,6 +57,7 @@ export async function buildRunBatchExportWorkbook(
   for (const row of input.rows) {
     const shareLink = row.attemptId ? input.shareLinks.get(row.attemptId) : undefined;
     const cells: ExcelJS.CellValue[] = [
+      ...(includeRound ? [row.round] : []),
       row.casePath,
       row.displayName,
       OUTCOME_LABELS[row.outcome],
@@ -74,11 +78,13 @@ function headerWidth(header: string): number {
   if (header === "用例路径" || header === "日志链接") return 48;
   if (header === "错误描述") return 60;
   if (header === "名称") return 32;
+  if (header === "轮次") return 10;
   return 20;
 }
 
-function exportFilename(batchId: string, scope: "round" | "final", round?: number): string {
-  const suffix = scope === "round" ? `round-${round ?? 0}` : "final";
+function exportFilename(batchId: string, scope: "round" | "final" | "all", round?: number): string {
+  const suffix =
+    scope === "round" ? `round-${round ?? 0}` : scope === "all" ? "all-rounds" : "final";
   return `run-batch-${batchId.slice(0, 8)}-${suffix}.xlsx`;
 }
 

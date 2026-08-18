@@ -3,6 +3,7 @@ import Link from "next/link";
 
 import { SourceActions } from "@/components/source-actions";
 import { SourceLifecyclePanel } from "@/components/source-lifecycle";
+import { CLASS_PREVIEW_LIMIT, uniqueInspectionClasses } from "@/lib/class-preview";
 import { getPlatformServices } from "@/lib/services";
 import { requirePageProjectScope } from "@/lib/auth";
 import { hasPermission } from "@autoforge/domain";
@@ -131,49 +132,59 @@ export default async function CaseSourcePage({ params }: Props) {
           </div>
           <Archive size={22} />
         </div>
-        <div className="class-preview-list">
-          {inspection.classes.map((candidate) => (
-            <details
-              className="class-preview"
-              key={candidate.className}
-              open={inspection.classes.length <= 5}
-            >
-              <summary>
-                <span className="class-icon">
-                  <Archive size={16} />
-                </span>
-                <span className="class-title">
-                  <strong>{candidate.simpleName}</strong>
-                  <small>{candidate.className}</small>
-                </span>
-                <span className="method-count">{candidate.methods.length} 个方法</span>
-                {candidate.source ? <span className="tag">用例详情可查看源码</span> : null}
-              </summary>
-              <div className="method-list">
-                {candidate.parameters && Object.keys(candidate.parameters).length > 0 && (
-                  <div className="method-row">
-                    <span className="method-origin">参数</span>
-                    <code>
-                      {Object.entries(candidate.parameters)
-                        .map(([name, value]) => `${name}=${value}`)
-                        .join("，")}
-                    </code>
-                  </div>
-                )}
-                {candidate.methods.map((method) => (
-                  <div className="method-row" key={`${method.methodName}${method.descriptor}`}>
-                    <CheckCircle2 size={14} className={method.enabled ? "text-success" : "muted"} />
-                    <code>{method.methodName}</code>
-                    <span className="method-descriptor">{method.descriptor}</span>
-                    <span className="method-origin">
-                      {method.annotationSource === "class" ? "类级 @Test" : "方法级 @Test"}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </details>
-          ))}
-        </div>
+        {inspection.classes.length > CLASS_PREVIEW_LIMIT ? (
+          <div className="implementation-notice" role="status">
+            共识别 {inspection.classes.length} 个测试类，超过 {CLASS_PREVIEW_LIMIT}{" "}
+            个不再逐条展示；识别异常见上方扫描警告。
+          </div>
+        ) : (
+          <div className="class-preview-list">
+            {uniqueInspectionClasses(inspection.classes).map((candidate) => (
+              <details
+                className="class-preview"
+                key={candidate.className}
+                open={inspection.classes.length <= 5}
+              >
+                <summary>
+                  <span className="class-icon">
+                    <Archive size={16} />
+                  </span>
+                  <span className="class-title">
+                    <strong>{candidate.simpleName}</strong>
+                    <small>{candidate.className}</small>
+                  </span>
+                  <span className="method-count">{candidate.methods.length} 个方法</span>
+                  {candidate.source ? <span className="tag">用例详情可查看源码</span> : null}
+                </summary>
+                <div className="method-list">
+                  {candidate.parameters && Object.keys(candidate.parameters).length > 0 && (
+                    <div className="method-row">
+                      <span className="method-origin">参数</span>
+                      <code>
+                        {Object.entries(candidate.parameters)
+                          .map(([name, value]) => `${name}=${value}`)
+                          .join("，")}
+                      </code>
+                    </div>
+                  )}
+                  {candidate.methods.map((method) => (
+                    <div className="method-row" key={`${method.methodName}${method.descriptor}`}>
+                      <CheckCircle2
+                        size={14}
+                        className={method.enabled ? "text-success" : "muted"}
+                      />
+                      <code>{method.methodName}</code>
+                      <span className="method-descriptor">{method.descriptor}</span>
+                      <span className="method-origin">
+                        {method.annotationSource === "class" ? "类级 @Test" : "方法级 @Test"}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </details>
+            ))}
+          </div>
+        )}
       </section>
     </div>
   );

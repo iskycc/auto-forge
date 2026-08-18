@@ -24,6 +24,14 @@ describe("buildRunBatchExportQuery", () => {
     expect(parameters.get("outcomes")).toBe("succeeded");
   });
 
+  it("omits the round parameter for all scope", () => {
+    const query = buildRunBatchExportQuery("all", undefined, ["succeeded", "blocked"]);
+    const parameters = new URLSearchParams(query);
+    expect(parameters.get("scope")).toBe("all");
+    expect(parameters.get("round")).toBeNull();
+    expect(parameters.get("outcomes")).toBe("succeeded,blocked");
+  });
+
   it("keeps every outcome when all are selected", () => {
     const query = buildRunBatchExportQuery("round", 1, [
       "blocked",
