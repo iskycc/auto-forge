@@ -199,7 +199,7 @@ export function RunBatchRounds({
                 <th>轮次通过率</th>
                 <th>通过数</th>
                 <th>失败数</th>
-                <th>阻塞数</th>
+                <th>未执行数</th>
                 <th>开始时间</th>
                 <th>轮次时长</th>
               </tr>

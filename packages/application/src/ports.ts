@@ -666,9 +666,12 @@ export type CaseListPage = {
 };
 
 // 每个用例最近一次已到达终态的执行结果；尚无终态 run 的用例不返回。
+// resultCode 为该终态 run 最后一次 attempt 的结果码，用于 blocked 口径分类
+// （历史数据可能缺失）。
 export type LatestCaseRunOutcome = {
   caseDefinitionId: string;
   outcome: "succeeded" | "failed" | "timed_out" | "cancelled";
+  resultCode?: string;
   executedAt: string;
 };
 

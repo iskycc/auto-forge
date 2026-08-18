@@ -14,6 +14,9 @@ type AdapterSettings struct {
 	SuiteName          string `json:"suiteName"`
 	TestName           string `json:"testName"`
 	EnvironmentAddress string `json:"environmentAddress"`
+	// 用例执行超时（秒），由 adapter 自身看门狗强制中断；0 表示控制面未下发，
+	// adapter 使用自己的默认值。
+	CaseTimeoutSeconds int64 `json:"caseTimeoutSeconds,omitempty"`
 }
 
 type EnvironmentEntry struct {

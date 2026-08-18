@@ -5,11 +5,14 @@ import java.util.HashMap;
 import java.util.Map;
 
 final class AdapterArguments {
+  static final int DEFAULT_CASE_TIMEOUT_SECONDS = 600;
+  static final int MAXIMUM_CASE_TIMEOUT_SECONDS = 86_400;
+
   static final String USAGE =
       "Usage: java -jar cotest-testng-adapter.jar "
           + "--jars DIR --class CLASS [--environment-address VALUE] "
           + "[--class-data FILE] [--config FILE] [--suite-name NAME] "
-          + "[--test-name NAME] [--output DIR]";
+          + "[--test-name NAME] [--output DIR] [--case-timeout-seconds SECONDS]";
 
   private final Path jarDirectory;
   private final String className;
@@ -19,6 +22,7 @@ final class AdapterArguments {
   private final String suiteName;
   private final String testName;
   private final Path outputDirectory;
+  private final int caseTimeoutSeconds;
 
   private AdapterArguments(Map<String, String> options) {
     jarDirectory = Path.of(required(options, "--jars"));
@@ -29,6 +33,7 @@ final class AdapterArguments {
     suiteName = options.get("--suite-name");
     testName = options.get("--test-name");
     outputDirectory = Path.of(options.getOrDefault("--output", "reports/testng"));
+    caseTimeoutSeconds = caseTimeoutSeconds(options);
     if (!isBinaryClassName(className)) {
       throw new IllegalArgumentException("--class must be a Java binary class name.");
     }
@@ -84,6 +89,12 @@ final class AdapterArguments {
     return outputDirectory;
   }
 
+  // 用例执行超时（秒）：由 adapter 自行看门狗强制中断执行；控制面可通过
+  // --case-timeout-seconds 覆盖，缺省 600 秒。
+  int caseTimeoutSeconds() {
+    return caseTimeoutSeconds;
+  }
+
   private static String required(Map<String, String> options, String name) {
     String value = options.get(name);
     if (value == null) {
@@ -97,6 +108,25 @@ final class AdapterArguments {
     return value == null ? null : Path.of(value);
   }
 
+  private static int caseTimeoutSeconds(Map<String, String> options) {
+    String value = options.get("--case-timeout-seconds");
+    if (value == null) {
+      return DEFAULT_CASE_TIMEOUT_SECONDS;
+    }
+    int seconds;
+    try {
+      seconds = Integer.parseInt(value);
+    } catch (NumberFormatException error) {
+      throw new IllegalArgumentException(
+          "--case-timeout-seconds must be an integer number of seconds.");
+    }
+    if (seconds < 1 || seconds > MAXIMUM_CASE_TIMEOUT_SECONDS) {
+      throw new IllegalArgumentException(
+          "--case-timeout-seconds must be between 1 and " + MAXIMUM_CASE_TIMEOUT_SECONDS + ".");
+    }
+    return seconds;
+  }
+
   private static boolean isSupported(String option) {
     switch (option) {
       case "--jars":
@@ -107,6 +137,7 @@ final class AdapterArguments {
       case "--suite-name":
       case "--test-name":
       case "--output":
+      case "--case-timeout-seconds":
         return true;
       default:
         return false;

@@ -341,3 +341,33 @@ func mustParseURL(t *testing.T, raw string) *url.URL {
 	}
 	return parsed
 }
+
+func TestMapExecutionResultTreatsAdapterTimeoutExitCodeAsTimedOut(t *testing.T) {
+	mapped := mapExecutionResult(executor.Result{
+		Termination: "completed",
+		ExitCode:    adapterCaseTimeoutExitCode,
+		DurationMs:  600_000,
+	})
+	if mapped.Status != "timed_out" || mapped.ResultCode != "ADAPTER_CASE_TIMEOUT" {
+		t.Fatalf("mapExecutionResult() = %+v", mapped)
+	}
+}
+
+func TestMapTestNGReportKeepsAdapterTimeoutAuthoritative(t *testing.T) {
+	mapped := mapExecutionResult(executor.Result{
+		Termination: "completed",
+		ExitCode:    adapterCaseTimeoutExitCode,
+	})
+	mapTestNGReport(&mapped, executor.Result{
+		Termination: "completed",
+		ExitCode:    adapterCaseTimeoutExitCode,
+	}, executor.TestNGReportSummary{
+		TestNGResultCounts: executor.TestNGResultCounts{Failed: 1, ConfigurationFailures: 1},
+	})
+	if mapped.Status != "timed_out" || mapped.ResultCode != "ADAPTER_CASE_TIMEOUT" {
+		t.Fatalf("mapTestNGReport() overrode the timeout result: %+v", mapped)
+	}
+	if mapped.TestNG == nil {
+		t.Fatal("mapTestNGReport() must keep the parsed report summary")
+	}
+}

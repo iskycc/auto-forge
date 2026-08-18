@@ -20,6 +20,7 @@ type CommonConfig = {
   terminalAccessToken: string;
   runnerClaimRateLimitPerMinute: number;
   authLoginAttemptsPerWindow: number;
+  caseExecutionTimeoutSeconds: number;
   publicDashboardRefreshSeconds: number;
   metricsEnabled: boolean;
   web: {
@@ -78,6 +79,7 @@ export function loadAppConfig(options: LoadPlatformConfigurationOptions = {}): A
     masterKey: persisted.secrets.masterKey,
     sessionTtlHours: persisted.limits.sessionTtlHours,
     authLoginAttemptsPerWindow: persisted.limits.authLoginAttemptsPerWindow,
+    caseExecutionTimeoutSeconds: persisted.limits.caseExecutionTimeoutSeconds,
     terminalAccessToken: persisted.secrets.terminalAccessToken,
     publicDashboardRefreshSeconds: persisted.web.publicDashboardRefreshSeconds,
     metricsEnabled: persisted.worker.metricsEnabled,

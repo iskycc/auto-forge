@@ -67,6 +67,7 @@ function configuration(
       runnerClaimRateLimitPerMinute: 120,
       sessionTtlHours: 12,
       authLoginAttemptsPerWindow: 10,
+      caseExecutionTimeoutSeconds: 600,
     },
     scheduler: {
       maximumCpuUtilizationPercent: 85,

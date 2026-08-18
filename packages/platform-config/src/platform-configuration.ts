@@ -67,6 +67,8 @@ export const persistedPlatformConfigurationSchema = z
       sessionTtlHours: z.number().int().min(1).max(168),
       // 兼容旧配置文件：缺失时回落到与历史硬编码一致的 10 次/15 分钟。
       authLoginAttemptsPerWindow: z.number().int().min(1).max(100_000).default(10),
+      // 用例执行超时（秒），由 adapter 自身看门狗管理；旧配置文件缺失时默认 600 秒。
+      caseExecutionTimeoutSeconds: z.number().int().min(1).max(86_400).default(600),
     }),
     scheduler: schedulerSchema,
     worker: z.object({
@@ -259,6 +261,7 @@ function defaultConfiguration(
       runnerClaimRateLimitPerMinute: 120,
       sessionTtlHours: 12,
       authLoginAttemptsPerWindow: 10,
+      caseExecutionTimeoutSeconds: 600,
     },
     scheduler: {
       maximumCpuUtilizationPercent: 85,

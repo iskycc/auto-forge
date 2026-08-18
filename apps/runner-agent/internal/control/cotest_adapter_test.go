@@ -50,6 +50,56 @@ func TestCotestAdapterExecutorUsesDownloadedJDKAndProjectSettings(t *testing.T) 
 	}
 }
 
+func TestCotestAdapterExecutorPassesCaseTimeoutWhenConfigured(t *testing.T) {
+	specification := testExecutionSpec()
+	specification.Adapter = &AdapterSettings{CaseTimeoutSeconds: 120}
+
+	mapped, _, err := cotestAdapterExecutorSpec(
+		specification,
+		config.ToolchainConfig{JavaExecutable: "/usr/bin/java"},
+		config.AdapterConfig{JarPath: "/opt/autoforge/lib/cotest-testng-adapter.jar"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	arguments := strings.Join(mapped.Command.Args, " ")
+	if !strings.Contains(arguments, "--case-timeout-seconds 120") {
+		t.Fatalf("arguments %q do not contain the case timeout", arguments)
+	}
+}
+
+func TestCotestAdapterExecutorOmitsCaseTimeoutWhenAbsent(t *testing.T) {
+	specification := testExecutionSpec()
+	specification.Adapter = &AdapterSettings{SuiteName: "suite"}
+
+	mapped, _, err := cotestAdapterExecutorSpec(
+		specification,
+		config.ToolchainConfig{JavaExecutable: "/usr/bin/java"},
+		config.AdapterConfig{JarPath: "/opt/autoforge/lib/cotest-testng-adapter.jar"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	arguments := strings.Join(mapped.Command.Args, " ")
+	if strings.Contains(arguments, "--case-timeout-seconds") {
+		t.Fatalf("arguments %q must not contain a case timeout", arguments)
+	}
+}
+
+func TestCotestAdapterExecutorRejectsCaseTimeoutOutOfRange(t *testing.T) {
+	specification := testExecutionSpec()
+	specification.Adapter = &AdapterSettings{CaseTimeoutSeconds: 100_000}
+
+	_, _, err := cotestAdapterExecutorSpec(
+		specification,
+		config.ToolchainConfig{JavaExecutable: "/usr/bin/java"},
+		config.AdapterConfig{JarPath: "/opt/autoforge/lib/cotest-testng-adapter.jar"},
+	)
+	if err == nil || !strings.Contains(err.Error(), "case timeout") {
+		t.Fatalf("cotestAdapterExecutorSpec() error = %v", err)
+	}
+}
+
 func TestPrepareCotestWorkspaceExtractsJDKAndJars(t *testing.T) {
 	workspace := t.TempDir()
 	writeFixture(t, filepath.Join(workspace, "inputs", "tests.jar"), []byte("case"))

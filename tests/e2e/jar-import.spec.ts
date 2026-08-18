@@ -678,7 +678,7 @@ public class MixedVisibleTest {
   await expect(page.getByLabel("下载 reports/testng/e2e-report.txt")).toBeVisible();
   await expectUiConsistency(page);
 
-  // 执行结果导出：弹窗默认失败+超时，补选成功后当前轮次两次尝试都应进入 Excel。
+  // 执行结果导出：弹窗默认失败+阻塞，补选成功后当前轮次两次尝试都应进入 Excel。
   await page.getByRole("button", { name: "导出结果" }).click();
   const exportDialog = page.getByRole("dialog", { name: "导出执行结果" });
   await expect(exportDialog).toBeVisible();

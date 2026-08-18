@@ -110,7 +110,7 @@ async function createPlatformServices() {
     executions = new SqliteExecutionControlRepository(database, attemptLogs);
     environments = new SqliteExecutionEnvironmentRepository(database);
     secrets = new SqliteExecutionSecretRepository(database);
-    batches = new SqliteRunBatchRepository(database);
+    batches = new SqliteRunBatchRepository(database, config.caseExecutionTimeoutSeconds);
     attemptLogSharesRepository = new SqliteAttemptLogShareRepository(database);
     objectStore = new LocalObjectStore(config.dataDirectory);
     jobQueue = new SqliteJobQueue(database);
@@ -216,7 +216,7 @@ async function createPlatformServices() {
     executions = new PostgresExecutionControlRepository(database, attemptLogs);
     environments = new PostgresExecutionEnvironmentRepository(database);
     secrets = new PostgresExecutionSecretRepository(database);
-    batches = new PostgresRunBatchRepository(database);
+    batches = new PostgresRunBatchRepository(database, config.caseExecutionTimeoutSeconds);
     attemptLogSharesRepository = new PostgresAttemptLogShareRepository(database);
     objectStore = new MinioObjectStore(config.minio);
     statisticsRepository = new PostgresPlatformStatisticsRepository(database);

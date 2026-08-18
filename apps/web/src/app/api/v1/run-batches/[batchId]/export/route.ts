@@ -19,8 +19,8 @@ const exportQuerySchema = z.object({
 export const dynamic = "force-dynamic";
 
 /**
- * 导出批次执行结果为 Excel。附带为每个已执行 attempt 生成日志公开访问链接；
- * blocked 行没有 attempt，时间与链接列留空。
+ * 导出批次执行结果为 Excel。附带为每个导出行的 attempt 生成日志公开访问链接；
+ * blocked 新口径下从未执行的用例不导出，因此每行都有 attempt。
  */
 export async function GET(request: Request, context: Context): Promise<NextResponse> {
   try {

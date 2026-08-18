@@ -8,7 +8,8 @@ import Link from "next/link";
 import { requirePageProjectScope } from "@/lib/auth";
 import { getPlatformServices } from "@/lib/services";
 import { listCompleteCaseDirectory } from "@/lib/case-directory";
-import { formatRate, type CaseLatestOutcome } from "@/lib/case-selection-stats";
+import { formatRate, type CaseLatestRun } from "@/lib/case-selection-stats";
+import { classifyAttemptResult } from "@autoforge/domain";
 import { AnalyticsExportControl } from "@/components/analytics-export-control";
 
 const CASE_OUTCOME_DETAIL_LIMIT = 500;
@@ -19,7 +20,7 @@ type CaseOutcomeReport = {
   versionName: string;
   versions: Array<{ id: string; name: string }>;
   cases: CaseDefinitionWithMethods[];
-  outcomes: Map<string, CaseLatestOutcome>;
+  outcomes: Map<string, CaseLatestRun>;
   executedAt: Map<string, string>;
 };
 
@@ -503,17 +504,24 @@ function CaseOutcomeSummary({ report }: { report: CaseOutcomeReport }) {
   const total = report.cases.length;
   let succeededCount = 0;
   let failedCount = 0;
-  let timedOutCount = 0;
-  let cancelledCount = 0;
+  let blockedCount = 0;
   for (const item of report.cases) {
-    const outcome = report.outcomes.get(item.id);
-    if (outcome === "succeeded") succeededCount += 1;
-    else if (outcome === "failed") failedCount += 1;
-    else if (outcome === "timed_out") timedOutCount += 1;
-    else if (outcome === "cancelled") cancelledCount += 1;
+    const run = report.outcomes.get(item.id);
+    if (!run) continue;
+    switch (classifyAttemptResult(run)) {
+      case "succeeded":
+        succeededCount += 1;
+        break;
+      case "failed":
+        failedCount += 1;
+        break;
+      case "blocked":
+        blockedCount += 1;
+        break;
+    }
   }
-  const neverRunCount = total - succeededCount - failedCount - timedOutCount - cancelledCount;
-  // 失败优先展示：把尚未稳定的用例排在表格前面。
+  const neverRunCount = total - succeededCount - failedCount - blockedCount;
+  // 失败与阻塞优先展示：把尚未稳定的用例排在表格前面。
   const rows = [...report.cases].sort(
     (left, right) =>
       outcomeRank(report.outcomes.get(left.id)).localeCompare(
@@ -532,11 +540,8 @@ function CaseOutcomeSummary({ report }: { report: CaseOutcomeReport }) {
         <span className="batch-status batch-status-failed">
           失败 {failedCount}（{formatRate(failedCount, total)}）
         </span>
-        <span className="batch-status batch-status-failed">
-          超时 {timedOutCount}（{formatRate(timedOutCount, total)}）
-        </span>
-        <span className="batch-status">
-          取消 {cancelledCount}（{formatRate(cancelledCount, total)}）
+        <span className="batch-status batch-status-blocked">
+          阻塞 {blockedCount}（{formatRate(blockedCount, total)}）
         </span>
         <span className="batch-status batch-status-neutral">
           未执行 {neverRunCount}（{formatRate(neverRunCount, total)}）
@@ -589,47 +594,39 @@ function CaseOutcomeSummary({ report }: { report: CaseOutcomeReport }) {
   );
 }
 
-function outcomeRank(outcome: CaseLatestOutcome | undefined): string {
-  switch (outcome) {
+function outcomeRank(run: CaseLatestRun | undefined): string {
+  if (!run) return "4";
+  switch (classifyAttemptResult(run)) {
     case "failed":
       return "0";
-    case "timed_out":
+    case "blocked":
       return "1";
-    case "cancelled":
-      return "2";
     case "succeeded":
       return "3";
-    default:
-      return "4";
   }
 }
 
-function outcomeLabel(outcome: CaseLatestOutcome | undefined): string {
-  switch (outcome) {
+function outcomeLabel(run: CaseLatestRun | undefined): string {
+  if (!run) return "未执行";
+  switch (classifyAttemptResult(run)) {
     case "succeeded":
       return "成功";
     case "failed":
       return "失败";
-    case "timed_out":
-      return "超时";
-    case "cancelled":
-      return "取消";
-    default:
-      return "未执行";
+    case "blocked":
+      return "阻塞";
   }
 }
 
-function outcomeBadgeClass(outcome: CaseLatestOutcome | undefined): string {
-  switch (outcome) {
+function outcomeBadgeClass(run: CaseLatestRun | undefined): string {
+  if (!run) return "batch-status-neutral";
+  switch (classifyAttemptResult(run)) {
     case "succeeded":
       return "batch-status-succeeded";
     case "failed":
-    case "timed_out":
       return "batch-status-failed";
-    case "cancelled":
-      return "batch-status-queued";
-    default:
-      return "batch-status-neutral";
+    case "blocked":
+      return "batch-status-blocked";
   }
 }
 
@@ -659,10 +656,13 @@ async function loadCaseOutcomeReport(input: {
           [caseProjectId],
         )
       : [];
-  const outcomes = new Map<string, CaseLatestOutcome>();
+  const outcomes = new Map<string, CaseLatestRun>();
   const executedAt = new Map<string, string>();
   for (const entry of latestRuns) {
-    outcomes.set(entry.caseDefinitionId, entry.outcome);
+    outcomes.set(entry.caseDefinitionId, {
+      outcome: entry.outcome,
+      ...(entry.resultCode ? { resultCode: entry.resultCode } : {}),
+    });
     executedAt.set(entry.caseDefinitionId, entry.executedAt);
   }
   return {

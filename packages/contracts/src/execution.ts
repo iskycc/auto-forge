@@ -149,6 +149,9 @@ export const executionSpecSchema = z
         suiteName: z.string().max(512).default(""),
         testName: z.string().max(512).default(""),
         environmentAddress: z.string().max(2_048).default(""),
+        // 用例执行超时（秒）：由 adapter 自身看门狗强制中断执行；可选新增字段，
+        // 历史规格缺失时回落到平台默认值 600 秒。
+        caseTimeoutSeconds: z.number().int().min(1).max(86_400).default(600),
       })
       .optional(),
     inputs: z.array(executionInputSchema).min(1).max(128),

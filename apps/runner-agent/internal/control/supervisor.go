@@ -1047,6 +1047,9 @@ func boundedSummary(value string) string {
 	return strings.ToValidUTF8(value[:maximumBytes], "")
 }
 
+// adapter 进程退出码约定：3 表示用例执行超过配置时限、被 adapter 看门狗强制中断。
+const adapterCaseTimeoutExitCode = 3
+
 func mapExecutionResult(result executor.Result) completionResult {
 	exitCode := result.ExitCode
 	mapped := completionResult{DurationMs: result.DurationMs, ExitCode: &exitCode}
@@ -1062,6 +1065,10 @@ func mapExecutionResult(result executor.Result) completionResult {
 		mapped.Status = "cancelled"
 		mapped.ResultCode = "EXECUTION_CANCELLED"
 		mapped.Summary = "The execution was cancelled and its process group was terminated."
+	case result.ExitCode == adapterCaseTimeoutExitCode:
+		mapped.Status = "timed_out"
+		mapped.ResultCode = "ADAPTER_CASE_TIMEOUT"
+		mapped.Summary = "The adapter aborted the case after its configured execution timeout."
 	case result.LogsTruncated:
 		mapped.Status = "failed"
 		mapped.ResultCode = "LOG_LIMIT_EXCEEDED"
@@ -1102,7 +1109,8 @@ func mapTestNGReport(mapped *completionResult, result executor.Result, summary e
 		DetailsTruncated: summary.DetailsTruncated,
 		Suites:           mapTestNGSuites(summary.Suites),
 	}
-	if result.Termination != "completed" || result.LogsTruncated {
+	if result.Termination != "completed" || result.LogsTruncated ||
+		result.ExitCode == adapterCaseTimeoutExitCode {
 		return
 	}
 	switch {

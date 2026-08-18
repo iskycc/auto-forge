@@ -378,7 +378,9 @@ async function createUserThroughAccessPage(
   await page.getByLabel("显示名称", { exact: true }).fill(displayName);
   await page.getByLabel("初始密码").fill(password);
   await page.getByRole("button", { name: "创建本地用户" }).click();
-  await expect(page.getByText("本地用户已创建。")).toBeVisible();
+  // 提交含 scrypt 哈希与 SQLite 写入，随后整页 reload 再渲染 toast；
+  // 全套件并发负载下可能超过默认 5s，放宽到 15s 避免偶发误报。
+  await expect(page.getByText("本地用户已创建。")).toBeVisible({ timeout: 15_000 });
 
   const users = await browserJson<{ items: Array<{ id: string; username: string }> }>(
     page,

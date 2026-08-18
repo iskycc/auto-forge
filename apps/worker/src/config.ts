@@ -42,5 +42,6 @@ export function loadWorkerConfig(options: LoadPlatformConfigurationOptions = {})
     scheduling: { ...configuration.scheduler },
     maxJarBytes: configuration.limits.maxJarBytes,
     testNgTargetJavaVersion: configuration.limits.testNgTargetJavaVersion,
+    caseExecutionTimeoutSeconds: configuration.limits.caseExecutionTimeoutSeconds,
   };
 }

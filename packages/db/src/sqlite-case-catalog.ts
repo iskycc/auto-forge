@@ -776,17 +776,21 @@ export class SqliteCaseCatalogRepository implements CaseCatalogRepository {
       const placeholders = batch.map(() => "?").join(", ");
       // 每个用例只取最新一条终态 run（succeeded/failed/cancelled）；
       // created_at 相同时用 id（UUIDv7，时间有序）作为次序，保证结果确定。
+      // result_code 取该 run 最后一次 attempt 的结果码，供 blocked 口径分类。
       const rows = this.handle.client
         .prepare(
-          `SELECT case_definition_id, status, terminal_outcome, created_at FROM (
-             SELECT case_definition_id, status, terminal_outcome, created_at,
+          `SELECT case_definition_id, status, terminal_outcome, created_at, result_code FROM (
+             SELECT r.case_definition_id, r.status, r.terminal_outcome, r.created_at,
+                    (SELECT a.result_code FROM run_attempts a
+                      WHERE a.execution_run_id = r.id
+                      ORDER BY a.attempt_number DESC LIMIT 1) AS result_code,
                     ROW_NUMBER() OVER (
-                      PARTITION BY case_definition_id
-                      ORDER BY created_at DESC, id DESC
+                      PARTITION BY r.case_definition_id
+                      ORDER BY r.created_at DESC, r.id DESC
                     ) AS row_number
-             FROM execution_runs
-             WHERE case_definition_id IN (${placeholders})
-               AND status IN ('succeeded', 'failed', 'cancelled')
+             FROM execution_runs r
+             WHERE r.case_definition_id IN (${placeholders})
+               AND r.status IN ('succeeded', 'failed', 'cancelled')
            ) WHERE row_number = 1`,
         )
         .all(...batch) as Array<{
@@ -794,11 +798,13 @@ export class SqliteCaseCatalogRepository implements CaseCatalogRepository {
         status: string;
         terminal_outcome: string | null;
         created_at: string;
+        result_code: string | null;
       }>;
       for (const row of rows) {
         outcomes.push({
           caseDefinitionId: row.case_definition_id,
           outcome: toLatestRunOutcome(row.terminal_outcome, row.status),
+          ...(row.result_code ? { resultCode: row.result_code } : {}),
           executedAt: row.created_at,
         });
       }

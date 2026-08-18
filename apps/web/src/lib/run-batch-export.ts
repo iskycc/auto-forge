@@ -11,11 +11,11 @@ export const EXPORT_OUTCOME_OPTIONS: ReadonlyArray<{
   { value: "failed", label: "失败" },
   { value: "timed_out", label: "超时" },
   { value: "cancelled", label: "取消" },
-  { value: "blocked", label: "阻塞（未执行）" },
+  { value: "blocked", label: "阻塞（异常结束）" },
 ];
 
-/** 默认勾选失败与超时：导出的主要诉求是分析未通过用例。 */
-export const DEFAULT_EXPORT_OUTCOMES: readonly ExportOutcomeFilter[] = ["failed", "timed_out"];
+/** 默认勾选失败与阻塞：导出的主要诉求是分析未通过与非正常结束的用例。 */
+export const DEFAULT_EXPORT_OUTCOMES: readonly ExportOutcomeFilter[] = ["failed", "blocked"];
 
 /**
  * 组装 GET /api/v1/run-batches/[batchId]/export 的查询串。

@@ -7,6 +7,7 @@ import { Network, Plus, RefreshCw, Search, Shield, UserRound } from "lucide-reac
 import { useEffect, useState, type FormEvent } from "react";
 
 import { readApiErrorMessage } from "@/lib/client-api";
+import { formatLocalDateTime } from "@/lib/run-batch-presentation";
 
 type LdapView = {
   enabled: boolean;
@@ -329,10 +330,10 @@ export function AccessSettings({
                       {user.status === "disabled"
                         ? "禁用"
                         : isUserLocked(user)
-                          ? `锁定至 ${new Date(user.lockedUntil!).toLocaleString()}`
+                          ? `锁定至 ${formatLocalDateTime(user.lockedUntil!)}`
                           : "启用"}
                     </td>
-                    <td>{user.lastLoginAt ? new Date(user.lastLoginAt).toLocaleString() : "—"}</td>
+                    <td>{user.lastLoginAt ? formatLocalDateTime(user.lastLoginAt) : "—"}</td>
                     <td>
                       <details>
                         <summary className="role-action-summary">
@@ -1058,9 +1059,9 @@ export function AccessSettings({
               <tbody>
                 {sessions.map((session) => (
                   <tr key={session.id}>
-                    <td>{new Date(session.createdAt).toLocaleString()}</td>
-                    <td>{new Date(session.lastSeenAt).toLocaleString()}</td>
-                    <td>{new Date(session.expiresAt).toLocaleString()}</td>
+                    <td>{formatLocalDateTime(session.createdAt)}</td>
+                    <td>{formatLocalDateTime(session.lastSeenAt)}</td>
+                    <td>{formatLocalDateTime(session.expiresAt)}</td>
                     <td>
                       <Button
                         className="danger-text-button"

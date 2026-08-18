@@ -8,7 +8,7 @@ import { listCompleteCaseDirectory } from "@/lib/case-directory";
 import { getPlatformServices } from "@/lib/services";
 import { requireAuthorizedPageProjectScope, requirePageProjectScope } from "@/lib/auth";
 import { projectIdsForPermission } from "@autoforge/domain";
-import type { LatestCaseRunOutcome } from "@autoforge/application";
+import type { CaseLatestRun } from "@/lib/case-selection-stats";
 
 export const dynamic = "force-dynamic";
 
@@ -70,8 +70,14 @@ export default async function CasesPage({ searchParams }: CasesPageProps) {
           effectiveProjectIds,
         )
       : [];
-  const latestOutcomes = new Map<string, LatestCaseRunOutcome["outcome"]>(
-    latestRunOutcomes.map((entry) => [entry.caseDefinitionId, entry.outcome]),
+  const latestOutcomes = new Map<string, CaseLatestRun>(
+    latestRunOutcomes.map((entry) => [
+      entry.caseDefinitionId,
+      {
+        outcome: entry.outcome,
+        ...(entry.resultCode ? { resultCode: entry.resultCode } : {}),
+      },
+    ]),
   );
 
   return (

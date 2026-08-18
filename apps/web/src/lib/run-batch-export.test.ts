@@ -37,8 +37,8 @@ describe("buildRunBatchExportQuery", () => {
     );
   });
 
-  it("defaults to failed and timed_out outcomes", () => {
-    expect(DEFAULT_EXPORT_OUTCOMES).toEqual(["failed", "timed_out"]);
+  it("defaults to failed and blocked outcomes", () => {
+    expect(DEFAULT_EXPORT_OUTCOMES).toEqual(["failed", "blocked"]);
   });
 });
 

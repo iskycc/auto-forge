@@ -17,8 +17,10 @@ import {
   computeSelectionStats,
   matchesOutcomeFilter,
   type CaseLatestOutcome,
+  type CaseLatestRun,
   type CaseOutcomeFilter,
 } from "@/lib/case-selection-stats";
+import { classifyAttemptResult } from "@autoforge/domain";
 
 type CaseActivity = {
   executions: Array<{
@@ -73,7 +75,7 @@ export function CaseSelectionTable({
   suites: CaseSuite[];
   manageableProjectIds: string[] | undefined;
   initialSearch?: string;
-  latestOutcomes?: ReadonlyMap<string, CaseLatestOutcome>;
+  latestOutcomes?: ReadonlyMap<string, CaseLatestRun>;
 }) {
   const [checkedCaseIds, setCheckedCaseIds] = useState(() => new Set<string>());
   const [activeCaseId, setActiveCaseId] = useState<string>();
@@ -243,6 +245,7 @@ export function CaseSelectionTable({
             <option value="all">全部结果</option>
             <option value="succeeded">最近成功</option>
             <option value="failed">最近失败</option>
+            <option value="blocked">最近阻塞</option>
             <option value="never">从未执行</option>
           </Select>
         </div>
@@ -333,9 +336,11 @@ export function CaseSelectionTable({
             <span className="batch-status batch-status-failed">
               失败 {selectionStats.failedCount}（{selectionStats.failureRate}）
             </span>
-            <span className="batch-status">取消 {selectionStats.cancelledCount}</span>
+            <span className="batch-status batch-status-blocked">
+              阻塞 {selectionStats.blockedCount}（{selectionStats.blockedRate}）
+            </span>
             <span className="batch-status batch-status-neutral">
-              未执行 {selectionStats.notRunCount}（阻塞 {selectionStats.blockedRate}）
+              未执行 {selectionStats.notRunCount}
             </span>
           </div>
         ) : null}
@@ -659,7 +664,7 @@ function DirectoryNode({
   canManageProject(projectId: string): boolean;
   onToggle(id: string): void;
   onActivate(id: string): void;
-  latestOutcomes: ReadonlyMap<string, CaseLatestOutcome>;
+  latestOutcomes: ReadonlyMap<string, CaseLatestRun>;
   root?: boolean;
 }) {
   const content = (
@@ -678,8 +683,8 @@ function DirectoryNode({
         />
       ))}
       {node.cases.map((item) => {
-        const outcome = latestOutcomes.get(item.id);
-        const outcomeLabel = outcome ? OUTCOME_BADGE_LABEL[outcome] : undefined;
+        const latestRun = latestOutcomes.get(item.id);
+        const outcomeLabel = latestRunBadge(latestRun);
         return (
           <div
             aria-selected={activeCaseId === item.id}
@@ -709,7 +714,9 @@ function DirectoryNode({
               </span>
               <small>{item.methods.length} 个方法</small>
               {outcomeLabel ? (
-                <span className={`batch-status ${outcomeBadgeClass(outcome)}`}>{outcomeLabel}</span>
+                <span className={`batch-status ${outcomeBadgeClass(latestRun)}`}>
+                  {outcomeLabel}
+                </span>
               ) : null}
             </Button>
           </div>
@@ -745,26 +752,34 @@ function countCases(node: DirectoryTreeNode): number {
 const OUTCOME_BADGE_LABEL: Record<CaseLatestOutcome, string> = {
   succeeded: "最近成功",
   failed: "最近失败",
-  timed_out: "最近超时",
-  cancelled: "最近取消",
+  timed_out: "最近阻塞",
+  cancelled: "最近阻塞",
 };
 
-function outcomeBadgeClass(outcome: CaseLatestOutcome | undefined): string {
-  switch (outcome) {
+// blocked 口径：除 adapter 正常成功/失败外的非正常结束统一显示为“最近阻塞”。
+function latestRunBadge(run: CaseLatestRun | undefined): string | undefined {
+  if (!run) return undefined;
+  const category = classifyAttemptResult(run);
+  if (category === "blocked") return "最近阻塞";
+  return OUTCOME_BADGE_LABEL[category];
+}
+
+function outcomeBadgeClass(run: CaseLatestRun | undefined): string {
+  if (!run) return "batch-status-neutral";
+  switch (classifyAttemptResult(run)) {
     case "succeeded":
       return "batch-status-succeeded";
     case "failed":
-    case "timed_out":
       return "batch-status-failed";
-    case "cancelled":
-      return "batch-status-queued";
-    default:
-      return "batch-status-neutral";
+    case "blocked":
+      return "batch-status-blocked";
   }
 }
 
 function parseOutcomeFilter(value: string): CaseOutcomeFilter {
-  return value === "succeeded" || value === "failed" || value === "never" ? value : "all";
+  return value === "succeeded" || value === "failed" || value === "blocked" || value === "never"
+    ? value
+    : "all";
 }
 
 function matchesSearch(item: CaseDefinitionWithMethods, normalizedSearch: string): boolean {

@@ -17,13 +17,27 @@
 以“空目录”启动，需要重新走注册流程（installer 的 update 流程已按此实现：未提供新
 目录时 SSH 读回远端 config 沿用）。如需保留旧目录数据，需要额外的迁移能力。
 
-## 3. 需求2：阻塞率口径
+## 3. 需求2：阻塞（blocked）口径（已按用户后续指示重定义）
 
-领域模型中 `RunAttempt`/`ExecutionRun` 没有独立的 “blocked” 状态。勾选用例统计中的
-“阻塞率”定义为：**阻塞率 = 未执行用例数 / 勾选总数**（见
-`apps/web/src/lib/case-selection-stats.ts`）。这与质量洞察轮次统计中 “阻塞数 = 未执行”
-的既有口径保持一致。若业务上期望 blocked 指“被依赖阻塞”，需要先在领域模型中引入该
-状态，当前无此概念。
+用户明确定义：**排除 adapter 执行结果为成功或失败的正常结束，其他任何非正常结束
+都归为 blocked**——超时被强杀、未拉起 adapter、adapter 执行异常、取消等。实现采用
+白名单判定（`packages/domain/src/attempt-result.ts` 的 `classifyAttemptResult`）：
+
+- 成功码（adapter 正常结束并产出有效测试结果）：`TESTNG_SUCCEEDED`、
+  `TESTNG_SUCCEEDED_WITH_SKIPS`、`TESTNG_ALL_SKIPPED`；
+- 失败码（adapter 正常结束、TestNG 报告真实失败）：`TESTNG_ASSERTIONS_FAILED`、
+  `TESTNG_CONFIGURATION_FAILED`；
+- 其余一切情形（`timed_out`/`cancelled` outcome、`EXECUTION_TIMEOUT`、
+  `ADAPTER_CASE_TIMEOUT`、`LOG_LIMIT_EXCEEDED`、`TESTNG_EXIT_NONZERO`、缺失或未知
+  结果码等）一律 blocked。白名单保证未来新增异常码无需回头改分类逻辑。
+
+接入点：用例列表勾选统计（总数/成功/失败/阻塞数与三率）、用例列表“最近执行结果”
+筛选与展示（`timed_out`/`cancelled` 的最新 attempt 同样显示为“最近阻塞”）、质量
+洞察的项目/版本用例执行统计、执行结果导出。从未执行的用例没有任何终止结果，统计中
+单独计为“未执行”，不进入成功/失败/阻塞任何一类。
+
+旧口径（阻塞率 = 未执行数 / 勾选总数）已被替换；质量洞察轮次表的旧“阻塞数”列见
+第 11 节的说明。
 
 ## 4. 需求5：日志公开访问链接的有效期与权限
 
@@ -69,26 +83,41 @@ clamp 两个端点。未触碰移动端断点。
 
 ## 8. 验证范围说明（已执行与未执行的检查）
 
-已在本机执行并通过：
+0.6.0 变更（blocked 重定义 + 用例执行超时）在本机执行并通过：
 
-- `pnpm format:check` / `pnpm lint`（含 gofmt、licenses 检查）
+- `pnpm format:check` / `pnpm lint`（含 gofmt、go vet、licenses 检查）
 - `pnpm typecheck`（全部包，含 apps/web 的 route types）
-- `pnpm test`（vitest 67 files / 357 tests、Go 单测、release/operations 脚本测试）
+- `pnpm test`（vitest 68 files / 370 tests、Go 单测、release/operations 脚本测试）
 - SQLite/本地适配器集成测试（`vitest run integration.test`，PG/JetStream/MinIO 按环境 skip）
-- `pnpm test:performance`（5 项，含 50,000 行导出链路）
-- `pnpm --filter @autoforge/web build`（Next.js 生产编译）
-- `pnpm test:e2e` 全量 8 spec / 15 tests 通过（jar-import 含日志公开访问断言）
-- `scripts/agent/install.sh` 语法检查（bash -n）；installer 相关单测通过
+- adapter 看门狗冒烟（本机无 Maven，用 javac + 本地 fixture jar 手工重建）：
+  sleep 30s 用例 + `--case-timeout-seconds 1` → 秒级退出码 3 与超时标记；正常用例
+  + `--case-timeout-seconds 600` → 退出码 0。正式 jar 由 CI 的 Maven 构建重新打包。
+- `pnpm test:e2e` 全量 8 spec / 15 tests（见下方说明）
+
+0.5.0 阶段已通过且本次未回归的检查：`pnpm test:performance`（含 50,000 行导出链路）、
+`pnpm --filter @autoforge/web build`、`scripts/agent/install.sh` 语法检查与 installer 单测。
 
 未在本机执行的检查及原因：
 
 - 根 `pnpm build` 的 `build:agent-resources` 步骤依赖 `mvn` 重建 CoTest Adapter JAR，
-  本机未安装 Maven，仅 web/worker 构建在本机验证；adapter 构建由 CI release 流水线
-  （ubuntu-24.04 自带 mvn）完成。
+  本机未安装 Maven；本地冒烟用 javac 重建的等价 jar，正式构建由 CI release 流水线
+  （ubuntu-24.04 自带 mvn）完成，其中包含 `AdapterArgumentsTest`/`AdapterMainTest`。
 - PostgreSQL 集成测试（`test:full` / `packages/db/test/postgres-*.integration.test.ts`）、
   `test:deployment`、`test:offline` 仅限 GitHub Actions 环境执行，由 release-checks
-  流水线覆盖。
+  流水线覆盖。PostgreSQL 版 listLatestRunOutcomes 的相关子查询与 SQLite 版同构，
+  但只能由 CI 实际执行验证。
 - 需求3 真实 SSH 安装链路（`test:runner-install-e2e`）需要真实执行机环境。
+
+e2e 稳定性说明（根因已修复）：全套件运行时 identity-rbac 的“创建本地用户后出现
+toast”断言曾偶发失败。最终定位的根因不是负载超时，而是 React 水合失配：
+`access-settings.tsx` 的用户/会话表格用裸 `toLocaleString()` 渲染时间，服务端 Node
+locale（zh）与浏览器 locale（en-US，Playwright 设备配置）输出不一致，触发 React #418
+hydration mismatch，React 重建整棵组件树；全套件负载下水合重建滞后于表单填写，已填
+入的用户名输入框被重建清空，`required` 校验拦截提交，POST /api/v1/users 从未发出，
+因此永远等不到 toast。单独运行该 spec 时水合先于填写完成，所以稳定通过。修复：上述
+5 处时间渲染统一改用 locale 固定的 `formatLocalDateTime`（`Intl.DateTimeFormat("zh-CN")`，
+与仓库其余时间展示一致），水合失配消除；断言超时放宽到 15s 的调整保留作为负载余量。
+约定 e2e 运行期间不并行执行其他重负载命令。
 
 ## 9. 需求4：列宽记忆的作用域
 
@@ -114,3 +143,48 @@ runner 环境：
 
 教训：新增仅 CI 可跑的 e2e spec 时，前端展示语义变更（如取消自动展开）必须全量
 扫描所有 spec 中的相关断言；vitest 配置中禁止出现机器相关绝对路径。
+
+## 11. blocked 重定义：轮次级“阻塞数”改为“未执行数”
+
+批次详情/轮次表中原来的“阻塞数”列统计的是**该轮被持有但尚未执行**的 run
+（`blockedRunsForRound`，调度语义：等待未来轮释放），与第 3 节“非正常结束 =
+blocked”是两个完全不同的概念。为避免同一术语表达两种口径造成误读，轮次表列名改为
+“未执行数”，领域函数与字段名保持不变（仅 UI 文案变化）。若业务上需要按新口径在
+轮次维度统计 blocked，需要在轮次汇总中新增字段，本次未做。
+
+## 12. 用例执行超时：adapter 看门狗 + 后台可配置
+
+按用户要求，用例执行超时由 adapter 自己管理生命周期，后台可配置，默认 600s：
+
+- 平台配置新增 `limits.caseExecutionTimeoutSeconds`（1~86400，默认 600），管理后台
+  “平台设置”中名称为“用例执行超时（秒）”；经 executionSpec 的 adapter 对象
+  （契约 `caseTimeoutSeconds`）下发，SQLite/PostgreSQL 两个 run-batch 仓储注入。
+- Go Agent 在拼装 adapter 命令时，当该值 > 0 追加 `--case-timeout-seconds N`
+  （新增参数，不影响既有参数顺序与功能）；adapter 侧 `AdapterArguments` 解析并
+  校验（默认 600，上限 86400）。
+- Java adapter 看门狗实现在 `AdapterMain.executeWithCaseTimeout`：TestNG 执行放入
+  守护工作线程，主线程 `Future.get(timeout)` 等待；超时输出机器可读标记
+  `TestCase Execution Timeout: ...` 并以退出码 3 结束（退出码约定：0 成功、1 失败
+  或异常、2 参数错误、3 用例超时）。超时线程为 daemon，`System.exit` 后不阻止进程
+  退出；被中断的 TestNG 线程不做额外清理（JVM 即将退出）。
+- Go Agent 将退出码 3 映射为 `timed_out` + 结果码 `ADAPTER_CASE_TIMEOUT`；报告
+  解析对该结果码设守卫，即使超时前残留 TestNG 报告也以超时为权威结论。新口径下该
+  结果码归类为 blocked。
+- 本机验证（无 Maven，使用 javac + 本地 fixture jar 手工重建 adapter jar 冒烟）：
+  慢用例（sleep 30s）+ `--case-timeout-seconds 1` → 秒级返回退出码 3 与标记；
+  正常用例 + `--case-timeout-seconds 600` → 退出码 0。CI 的 Maven 构建会重新打包
+  正式 jar 并运行 `AdapterArgumentsTest`/`AdapterMainTest`。
+- 兼容性：未传新参数时 adapter 行为与之前完全一致（默认 600s 看门狗）；旧 Agent
+  不传该参数，新 adapter 仍按默认值执行。若既有执行依赖“用例本身运行超过 10 分钟”
+  且不希望被中断，需要在平台设置中调大该值。
+
+## 13. blocked 重定义对导出的影响
+
+- 导出行全部来自已产生的 attempt；**从未执行的用例不再导出**（旧口径会把它们作为
+  “阻塞（未执行）”行导出，时间与链接留空）。需要未执行清单时请使用轮次表的
+  “未执行数”或用例列表的“未执行”筛选。
+- 导出筛选项 `timed_out`/`cancelled` 保留为 blocked 的细分别名：超时筛选匹配
+  outcome=timed_out 或超时类结果码（含 `ADAPTER_CASE_TIMEOUT`），取消筛选匹配
+  outcome=cancelled 或取消类结果码；其余 blocked（adapter 崩溃、日志超限等）仅由
+  “阻塞（异常结束）”筛选项命中。
+- 默认勾选项由“失败 + 超时”改为“失败 + 阻塞”，使首次导出即覆盖全部非正常结束。

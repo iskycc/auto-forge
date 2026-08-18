@@ -38,6 +38,10 @@ export type CaseSuiteAdapterConfiguration = {
   environmentAddresses: string[];
 };
 
+// adapter 用例执行超时的平台默认值（秒）；后台配置缺失时回落该值，
+// 与契约 executionSpecSchema.adapter.caseTimeoutSeconds 的默认值保持一致。
+export const DEFAULT_CASE_EXECUTION_TIMEOUT_SECONDS = 600;
+
 export const defaultCaseSuiteExecutionPolicy: CaseSuiteExecutionPolicy = {
   executor: "testng",
   adapter: {

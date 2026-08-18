@@ -334,7 +334,12 @@ describe("SQLite case suite lifecycle", () => {
         requiredCapabilities: string[];
         artifactRules: Array<{ pattern: string; mediaType: string }>;
         parameters: Record<string, string>;
-        adapter: { suiteName: string; testName: string; environmentAddress: string };
+        adapter: {
+          suiteName: string;
+          testName: string;
+          environmentAddress: string;
+          caseTimeoutSeconds: number;
+        };
         inputs: Array<{ kind: string; downloadUrl?: string }>;
         timeoutMs: number;
       }>;
@@ -349,6 +354,7 @@ describe("SQLite case suite lifecycle", () => {
         suiteName: "task-suite",
         testName: "task-test",
         environmentAddress: "10.0.0.9",
+        caseTimeoutSeconds: 600,
       });
       expect(specs.map((candidate) => candidate.adapter.environmentAddress)).toEqual([
         "10.0.0.9",

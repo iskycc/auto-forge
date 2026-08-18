@@ -1,8 +1,9 @@
 import { EXPORT_OUTCOME_FILTERS, type ExportOutcomeFilter } from "@autoforge/contracts";
 import {
-  blockedRunsForRound,
+  classifyAttemptResult,
   DomainError,
   runAttemptOutcome,
+  type AttemptResultCategory,
   type ExecutionRun,
   type RunAttempt,
   type RunBatchDetails,
@@ -11,8 +12,9 @@ import {
 import type { RunBatchRepository } from "./ports";
 
 /**
- * 导出单行数据。blocked 行没有 attempt：attemptId/时间/耗时均为 null，日志链接由路由层留空。
- * round 为轮次号（即 attemptNumber）；final 范围内没有 attempt 的 blocked 行固定为 0。
+ * 导出单行数据。blocked 口径：除 adapter 正常成功/失败外的任何非正常结束
+ * （超时强杀、未拉起 adapter、adapter 异常、取消等）；从未执行的用例没有终止
+ * 结果，不导出。round 为轮次号（即 attemptNumber）。
  */
 export type RunBatchExportRow = {
   attemptId: string | null;
@@ -20,7 +22,7 @@ export type RunBatchExportRow = {
   displayName: string;
   outcome: ExportOutcomeFilter;
   resultCode: string | null;
-  /** 仅失败/超时尝试有值（一行精简堆栈）。 */
+  /** 仅失败/阻塞尝试有值（一行精简堆栈）。 */
   summary: string | null;
   startedAt: string | null;
   finishedAt: string | null;
@@ -92,15 +94,9 @@ function roundScopeRows(
   const runsById = new Map(details.runs.map((run) => [run.id, run]));
   const rows: RunBatchExportRow[] = [];
   for (const attempt of roundAttempts) {
-    const outcome = runAttemptOutcome(attempt);
-    if (!outcome || !outcomes.has(outcome)) continue;
+    if (!matchesOutcomeFilter(attempt, outcomes)) continue;
     const run = runsById.get(attempt.executionRunId);
     rows.push(attemptRow(attempt, run));
-  }
-  if (outcomes.has("blocked")) {
-    for (const run of blockedRunsForRound(details.runs, roundAttempts, round)) {
-      rows.push(blockedRow(run, round));
-    }
   }
   return rows;
 }
@@ -119,48 +115,71 @@ function finalScopeRows(
   const rows: RunBatchExportRow[] = [];
   for (const run of details.runs) {
     const attempt = latestAttemptByRun.get(run.id);
-    if (!attempt) {
-      // 从未产生 attempt 的 run 没有最终结果，按阻塞导出。
-      if (outcomes.has("blocked")) rows.push(blockedRow(run, 0));
-      continue;
-    }
-    const outcome = runAttemptOutcome(attempt);
-    if (!outcome || !outcomes.has(outcome)) continue;
+    // 从未产生 attempt 的 run 没有任何终止结果，按 blocked 新口径不再导出。
+    if (!attempt || !matchesOutcomeFilter(attempt, outcomes)) continue;
     rows.push(attemptRow(attempt, run));
   }
   return rows;
 }
 
+// blocked 口径下 timed_out/cancelled 是 blocked 的细分别名：timed_out 匹配超时类
+// 非正常结束（含 adapter 用例超时），cancelled 匹配取消类；blocked 匹配全部。
+const TIMEOUT_BLOCKED_RESULT_CODES: ReadonlySet<string> = new Set([
+  "EXECUTION_TIMEOUT",
+  "ADAPTER_CASE_TIMEOUT",
+]);
+const CANCELLED_BLOCKED_RESULT_CODES: ReadonlySet<string> = new Set([
+  "EXECUTION_CANCELLED",
+  "EXECUTION_CANCELLED_DURING_RECONCILE",
+]);
+
+function matchesOutcomeFilter(
+  attempt: RunAttempt,
+  outcomes: ReadonlySet<ExportOutcomeFilter>,
+): boolean {
+  const outcome = runAttemptOutcome(attempt);
+  if (!outcome) return false;
+  const category = classifyAttemptResult({
+    outcome,
+    ...(attempt.resultCode ? { resultCode: attempt.resultCode } : {}),
+  });
+  if (outcomes.has(category)) return true;
+  if (category === "blocked") {
+    const resultCode = attempt.resultCode ?? "";
+    if (
+      outcomes.has("timed_out") &&
+      (outcome === "timed_out" || TIMEOUT_BLOCKED_RESULT_CODES.has(resultCode))
+    ) {
+      return true;
+    }
+    if (
+      outcomes.has("cancelled") &&
+      (outcome === "cancelled" || CANCELLED_BLOCKED_RESULT_CODES.has(resultCode))
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function attemptRow(attempt: RunAttempt, run: ExecutionRun | undefined): RunBatchExportRow {
   const outcome = runAttemptOutcome(attempt);
   if (!outcome) throw new DomainError("INVALID_OUTCOMES", "进行中的执行尝试不能导出。");
+  const category: AttemptResultCategory = classifyAttemptResult({
+    outcome,
+    ...(attempt.resultCode ? { resultCode: attempt.resultCode } : {}),
+  });
   return {
     attemptId: attempt.id,
     casePath: run?.className ?? "",
     displayName: run?.displayName ?? "",
-    outcome,
+    outcome: category,
     resultCode: attempt.resultCode ?? null,
-    summary:
-      outcome === "failed" || outcome === "timed_out" ? (attempt.resultSummary ?? null) : null,
+    summary: category === "succeeded" ? null : (attempt.resultSummary ?? null),
     startedAt: attempt.startedAt ?? null,
     finishedAt: attempt.finishedAt ?? null,
     durationMs: attempt.durationMs ?? null,
     round: attempt.attemptNumber,
-  };
-}
-
-function blockedRow(run: ExecutionRun, round: number): RunBatchExportRow {
-  return {
-    attemptId: null,
-    casePath: run.className,
-    displayName: run.displayName,
-    outcome: "blocked",
-    resultCode: null,
-    summary: null,
-    startedAt: null,
-    finishedAt: null,
-    durationMs: null,
-    round,
   };
 }
 

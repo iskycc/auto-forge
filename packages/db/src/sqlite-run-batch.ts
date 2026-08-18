@@ -9,6 +9,7 @@ import { testNgResultDetailsSchema, type ExecutionSpec } from "@autoforge/contra
 import {
   artifactMediaType,
   assessRunnerCompatibility,
+  DEFAULT_CASE_EXECUTION_TIMEOUT_SECONDS,
   DEFAULT_PROJECT_ID,
   DomainError,
   evaluateRunnerForScheduling,
@@ -58,7 +59,10 @@ import {
 const activeAttemptStatuses = ["assigned", "running"] as const;
 
 export class SqliteRunBatchRepository implements RunBatchRepository {
-  constructor(private readonly handle: SqliteDatabaseHandle) {}
+  constructor(
+    private readonly handle: SqliteDatabaseHandle,
+    private readonly caseExecutionTimeoutSeconds = DEFAULT_CASE_EXECUTION_TIMEOUT_SECONDS,
+  ) {}
 
   async create(record: CreateRunBatchRecord): Promise<RunBatchDetails> {
     const queueTimeoutMs = record.queueTimeoutMs ?? 86_400_000;
@@ -489,6 +493,7 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
                 secretBindings: secretBindings(batch.secretBindingsJson),
                 executionTimeoutMs: batch.executionTimeoutMs,
                 uploadTimeoutMs: batch.uploadTimeoutMs,
+                caseTimeoutSeconds: this.caseExecutionTimeoutSeconds,
                 ...(policy ? { policy } : {}),
               }),
             ),
@@ -691,6 +696,7 @@ function executionSpec(input: {
   secretBindings: ExecutionEnvironmentSecretBinding[];
   executionTimeoutMs: number;
   uploadTimeoutMs: number;
+  caseTimeoutSeconds: number;
   policy?: RunBatchExecutionPolicy;
 }): ExecutionSpec {
   const artifactPatterns = input.policy?.artifactPatterns ?? ["reports/testng/**"];
@@ -724,6 +730,7 @@ function executionSpec(input: {
               input.adapterRuntime,
               input.executionRunId,
             ),
+            caseTimeoutSeconds: input.caseTimeoutSeconds,
           },
         }
       : {}),

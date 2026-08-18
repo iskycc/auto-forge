@@ -47,6 +47,7 @@ export function PlatformSettings({
             runnerClaimRateLimitPerMinute: numberValue(form, "runnerClaimRateLimitPerMinute"),
             sessionTtlHours: numberValue(form, "sessionTtlHours"),
             authLoginAttemptsPerWindow: numberValue(form, "authLoginAttemptsPerWindow"),
+            caseExecutionTimeoutSeconds: numberValue(form, "caseExecutionTimeoutSeconds"),
           },
           scheduler: {
             maximumCpuUtilizationPercent: numberValue(form, "maximumCpuUtilizationPercent"),
@@ -240,6 +241,11 @@ export function PlatformSettings({
               label="每 IP 登录尝试上限（15 分钟窗口）"
               name="authLoginAttemptsPerWindow"
               value={initial.limits.authLoginAttemptsPerWindow}
+            />
+            <NumberInput
+              label="用例执行超时（秒）"
+              name="caseExecutionTimeoutSeconds"
+              value={initial.limits.caseExecutionTimeoutSeconds}
             />
             <NumberInput
               label="调度 CPU 上限（%）"

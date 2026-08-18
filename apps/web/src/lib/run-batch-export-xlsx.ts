@@ -6,7 +6,7 @@ import ExcelJS from "exceljs";
 
 /**
  * 执行结果导出 Excel 生成。列顺序即需求约定的固定顺序；
- * blocked 行没有 attempt，时间/耗时为空，日志链接留空。
+ * blocked 新口径下所有导出行都有 attempt（从未执行的用例不导出）。
  */
 
 const EXPORT_HEADERS = [
@@ -25,7 +25,7 @@ const OUTCOME_LABELS: Record<ExportOutcomeFilter, string> = {
   failed: "失败",
   timed_out: "超时",
   cancelled: "取消",
-  blocked: "阻塞",
+  blocked: "阻塞（异常结束）",
 };
 
 export type RunBatchExportWorkbookInput = {

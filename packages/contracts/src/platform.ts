@@ -30,6 +30,7 @@ export const updatePlatformConfigurationInputSchema = z.object({
     runnerClaimRateLimitPerMinute: z.number().int().min(1).max(10_000),
     sessionTtlHours: z.number().int().min(1).max(168),
     authLoginAttemptsPerWindow: z.number().int().min(1).max(100_000).default(10),
+    caseExecutionTimeoutSeconds: z.number().int().min(1).max(86_400).default(600),
   }),
   scheduler: schedulerConfigurationSchema,
   worker: z.object({

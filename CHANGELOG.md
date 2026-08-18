@@ -4,6 +4,60 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## 0.6.0 - 2026-08-18
+
+### Features
+
+- Case execution timeout, managed by the adapter itself: a new platform setting
+  `limits.caseExecutionTimeoutSeconds` (default 600s, editable in 平台设置 as
+  “用例执行超时（秒）”) flows through `executionSpec.adapter.caseTimeoutSeconds` into a new
+  optional CoTest adapter CLI flag `--case-timeout-seconds`. The adapter runs TestNG on a daemon
+  worker thread with a bounded wait; when the case exceeds the limit it prints the machine-readable
+  marker `TestCase Execution Timeout: ...` and exits with code 3 (exit-code contract: 0 success,
+  1 failure/adapter error, 2 argument error, 3 case timeout). The Runner Agent maps exit code 3 to
+  `timed_out` with the new result code `ADAPTER_CASE_TIMEOUT`, which stays authoritative even if a
+  partial TestNG report exists. Omitting the flag keeps the adapter's own 600s default, so older
+  control planes remain compatible; the agent and adapter ship together in the agent resources,
+  so the new flag never reaches an adapter build that predates it.
+
+### Changed
+
+- Blocked redefined per the operational rule “any non-normal exit is blocked”: only adapter-normal
+  success (`TESTNG_SUCCEEDED`, `TESTNG_SUCCEEDED_WITH_SKIPS`, `TESTNG_ALL_SKIPPED`, legacy
+  `PASSED`) and adapter-normal failure (`TESTNG_ASSERTIONS_FAILED`,
+  `TESTNG_CONFIGURATION_FAILED`, legacy `TEST_ASSERTION_FAILED`) result codes count as
+  succeeded/failed; every other terminal outcome — timeout kills (including
+  `ADAPTER_CASE_TIMEOUT`), cancellations, adapter never started or crashed, log-limit breaches,
+  unknown or missing result codes — is classified blocked via a whitelist
+  (`packages/domain/src/attempt-result.ts`). The new classification drives the case-list
+  selection statistics (总数/成功/失败/阻塞 with success/failure/blocked rates), the case-list
+  “最近执行结果” filter and badges (超时/取消 latest runs now render as 最近阻塞), the quality
+  insights project/version case-outcome report, and the Excel export.
+- Export semantics follow the new blocked rule: rows always come from a real attempt — cases that
+  never executed have no terminal result and are no longer exported (they used to appear as
+  “阻塞（未执行）” rows with empty timestamps); use the round table or the 未执行 case filter to
+  list them. The `timed_out`/`cancelled` export filters remain as narrow aliases of blocked
+  (timeout-family vs cancellation-family result codes), the blocked option is now labeled
+  “阻塞（异常结束）”, and the default checked outcomes changed from 失败+超时 to 失败+阻塞 so a
+  first export covers every non-normal exit.
+- Batch round table column 阻塞数 renamed to 未执行数: it counts runs still held by that round
+  (scheduling semantics) and is a different concept from the result-classification blocked above.
+
+### Fixed
+
+- Access management (用户管理/会话管理) rendered timestamps with locale-dependent
+  `toLocaleString()`, producing a React hydration mismatch whenever the server locale differed
+  from the browser locale. Under load the hydration rebuild could replace a half-filled form input
+  and swallow the create-user submit. All affected timestamp cells now use the locale-pinned
+  `formatLocalDateTime` shared by the rest of the UI.
+
+### Compatibility
+
+- Persisted platform configuration gains `limits.caseExecutionTimeoutSeconds`; missing values in
+  older configuration files fall back to 600s on load (no migration).
+- Execution specs gain `adapter.caseTimeoutSeconds` (optional, defaults to 600 when absent), an
+  additive contract change; agents older than this release keep running without the flag.
+
 ## 0.5.0 - 2026-08-18
 
 ### Features

@@ -4643,6 +4643,12 @@ button.icon-button:disabled {
   color: var(--color-warning);
 }
 
+/* blocked：adapter 非正常结束（超时强杀、未拉起、执行异常、取消等） */
+.batch-status-blocked {
+  background: var(--color-warning-soft);
+  color: var(--color-warning);
+}
+
 .batch-status-scheduled,
 .batch-status-succeeded {
   background: var(--color-success-soft);

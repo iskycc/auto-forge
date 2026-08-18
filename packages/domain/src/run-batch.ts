@@ -268,7 +268,8 @@ function countOutcome(
 
 // blocked 只统计仍被轮次持有的 run：已完成轮次不再存在阻塞；进行中的轮次只算
 // 等待未来轮释放的 run；尚未开始的轮次把等待本轮释放的 run 也计入。
-// 导出（按轮列出阻塞用例）与轮次统计共用该判定。
+// 这是调度语义的“该轮未执行”，与 attempt 结果分类的 blocked（非正常结束，
+// 见 attempt-result.ts）是两个独立概念，仅轮次统计使用。
 export function blockedRunsForRound(
   runs: readonly ExecutionRun[],
   roundAttempts: readonly RunAttempt[],

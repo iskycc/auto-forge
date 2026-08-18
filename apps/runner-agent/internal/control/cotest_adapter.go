@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/iskycc/auto-forge/apps/runner-agent/internal/config"
@@ -84,6 +85,16 @@ func cotestAdapterExecutorSpec(
 			arguments,
 			"--environment-address",
 			specification.Adapter.EnvironmentAddress,
+		)
+	}
+	if specification.Adapter.CaseTimeoutSeconds < 0 || specification.Adapter.CaseTimeoutSeconds > 86_400 {
+		return executor.Spec{}, nil, errors.New("adapter case timeout seconds is outside the supported range")
+	}
+	if specification.Adapter.CaseTimeoutSeconds > 0 {
+		arguments = append(
+			arguments,
+			"--case-timeout-seconds",
+			strconv.FormatInt(specification.Adapter.CaseTimeoutSeconds, 10),
 		)
 	}
 	environment := make(map[string]string, len(specification.Environment))

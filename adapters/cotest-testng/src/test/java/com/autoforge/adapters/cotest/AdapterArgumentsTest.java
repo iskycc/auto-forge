@@ -28,6 +28,36 @@ class AdapterArgumentsTest {
     assertEquals("Regression", arguments.suiteName());
     assertEquals("Adapter cases", arguments.testName());
     assertEquals(Path.of("/tmp/testng-output"), arguments.outputDirectory());
+    assertEquals(AdapterArguments.DEFAULT_CASE_TIMEOUT_SECONDS, arguments.caseTimeoutSeconds());
+  }
+
+  @Test
+  void parsesAnExplicitCaseTimeout() {
+    AdapterArguments arguments =
+        AdapterArguments.parse(
+            new String[] {
+              "--jars", "/opt/cotest/jars",
+              "--class", "example.AdapterCase",
+              "--case-timeout-seconds", "120"
+            });
+
+    assertEquals(120, arguments.caseTimeoutSeconds());
+  }
+
+  @Test
+  void rejectsInvalidCaseTimeoutValues() {
+    for (String invalid : new String[] {"0", "-5", "not-a-number", "86401"}) {
+      assertThrows(
+          IllegalArgumentException.class,
+          () ->
+              AdapterArguments.parse(
+                  new String[] {
+                    "--jars", "/opt/cotest/jars",
+                    "--class", "example.AdapterCase",
+                    "--case-timeout-seconds", invalid
+                  }),
+          "expected " + invalid + " to be rejected");
+    }
   }
 
   @Test
