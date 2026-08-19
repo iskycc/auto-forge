@@ -272,6 +272,12 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
     const names = await runNames();
     const caseName = names.get(claim.assignment.executionSpec.executionRunId) ?? "";
     const stable = caseName.includes("AllRoundsStableTest");
+    // 最后一个首轮用例完成时先占满 Runner 槽位，确保第 2 轮保留在“有资格但
+    // 尚未调度”的可观察窗口；否则调度器会立即创建 attempt，未执行数理应变为 0。
+    if (claimed === 1) {
+      const fullHeartbeat = await postHeartbeat(page, identity, 2);
+      expect(fullHeartbeat.status()).toBe(200);
+    }
     await completeAttempt(page, identity, claim, {
       completionId: `e2e-allround-r1-${claimed}`,
       status: stable ? "succeeded" : "failed",

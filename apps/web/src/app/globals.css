@@ -8734,8 +8734,8 @@ button.icon-button:disabled {
 
 .execution-case-table .compact-button,
 .execution-case-table .danger-text-button {
-  min-height: 28px;
-  padding-block: 3px;
+  min-height: 32px;
+  padding-block: 1px;
 }
 
 .round-detail-row > td {
