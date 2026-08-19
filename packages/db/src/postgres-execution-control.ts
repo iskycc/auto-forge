@@ -845,7 +845,7 @@ export class PostgresExecutionControlRepository implements ExecutionControlRepos
          JOIN execution_runs r ON r.id = a.execution_run_id
          JOIN run_batches b ON b.id = r.batch_id
          WHERE l.status = 'active'
-           AND a.status = 'running'
+           AND a.status IN ('claimed','running')
            AND ra.status IN ('assigned','running')
            AND r.status IN ('assigned','running')
            AND b.status IN ('queued','dispatching','scheduled','running')

@@ -211,9 +211,13 @@ function schedulingRefillCases(createHarness: () => Promise<RefillHarness>): voi
   it("ignores expired active records that belong to a terminal batch", async () => {
     const harness = await createHarness();
     try {
+      await harness.rawQuery(
+        "UPDATE assignment_leases SET expires_at = ? WHERE assignment_id = (SELECT id FROM assignments WHERE attempt_id = ?)",
+        ["2000-01-01T00:00:00.000Z", harness.completion.lateAttemptId],
+      );
       await expect(
         harness.executions.recoverExpired({
-          now: "2026-08-10T02:00:00.000Z",
+          now: "2000-01-01T00:00:00.001Z",
           eventIds: [randomUUID()],
           limit: 10,
         }),
@@ -229,7 +233,7 @@ function schedulingRefillCases(createHarness: () => Promise<RefillHarness>): voi
     try {
       await harness.rawQuery(
         "UPDATE assignments SET status = 'pending', claim_deadline_at = ? WHERE attempt_id = ?",
-        ["2026-08-10T01:00:00.000Z", harness.completion.lateAttemptId],
+        ["2000-01-01T00:00:00.000Z", harness.completion.lateAttemptId],
       );
       await harness.rawQuery(
         "UPDATE assignment_leases SET status = 'released' WHERE assignment_id = (SELECT id FROM assignments WHERE attempt_id = ?)",
@@ -244,7 +248,7 @@ function schedulingRefillCases(createHarness: () => Promise<RefillHarness>): voi
       );
       await expect(
         harness.executions.recoverExpired({
-          now: "2026-08-10T02:00:00.000Z",
+          now: "2000-01-01T00:00:00.001Z",
           eventIds: [randomUUID()],
           limit: 10,
         }),
