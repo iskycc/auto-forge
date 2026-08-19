@@ -26,7 +26,11 @@ describe("Runner Protocol compatibility", () => {
         capabilities: [],
         optionalPatchField: "ignored-by-v1-server",
       }),
-    ).resolves.toMatchObject({ schemaVersion: 1, requestId: "request-next-patch" });
+    ).resolves.toMatchObject({
+      schemaVersion: 1,
+      requestId: "request-next-patch",
+      closedBatchIds: [],
+    });
 
     expect(claim).toHaveBeenCalledWith(
       "runner-1",

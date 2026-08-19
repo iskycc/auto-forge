@@ -421,7 +421,7 @@ public class MixedVisibleTest {
   await expect(page.locator(".method-row .method-signature").first()).toHaveText(
     "入参：空，返回值：空",
   );
-  await expect(page.locator(".method-row")).not.toContainText("()V");
+  expect((await page.locator(".method-row").allTextContents()).join("\n")).not.toContain("()V");
   await expectUiConsistency(page);
   await expect(page.getByRole("button", { name: "当前全量来源" })).toBeVisible();
 
