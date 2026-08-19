@@ -81,6 +81,12 @@ func (supervisor *attemptSupervisor) Start(ctx context.Context) error {
 	if err := supervisor.reconcile(ctx); err != nil {
 		return err
 	}
+	// reconcile 会删除已由控制面确认的本地 attempt 状态。若 Agent 恰好在
+	// 状态删除与 runExecution 的延迟目录清理之间崩溃，首次扫描会因状态仍在
+	// 而保留工作目录；状态核对结束后再扫描一次，关闭这个崩溃窗口。
+	if err := supervisor.cleanOrphanedWorkspaces(); err != nil {
+		return err
+	}
 	supervisor.waitGroup.Add(1)
 	go func() {
 		defer supervisor.waitGroup.Done()
@@ -269,10 +275,23 @@ func (supervisor *attemptSupervisor) executeAttempt(ctx context.Context, cancel 
 		state.ArtifactUploads = append([]artifactUploadState(nil), uploads...)
 		return supervisor.store.save(state)
 	}
-	result := supervisor.runTestNG(ctx, state.Claimed, persistProgress)
+	persistProcess := func(identity executor.ProcessIdentity) error {
+		stateMutex.Lock()
+		defer stateMutex.Unlock()
+		state.Process = &attemptProcess{
+			ProcessID:      identity.ProcessID,
+			StartTimeTicks: identity.StartTimeTicks,
+		}
+		return supervisor.store.save(state)
+	}
+	result := supervisor.runTestNG(ctx, state.Claimed, persistProgress, persistProcess)
 	stopRenewal()
 	<-renewed
 	stateMutex.Lock()
+	// runTestNG returns only after the process group has exited. Do not retain a
+	// stale PID in finishing state; a crash before this save remains safe because
+	// reconciliation verifies the kernel start time before signalling anything.
+	state.Process = nil
 	if state.CompletionID == "" {
 		completionID, err := randomIdentifier()
 		if err != nil {
@@ -301,6 +320,7 @@ func (supervisor *attemptSupervisor) runTestNG(
 	ctx context.Context,
 	claimed ClaimedAssignment,
 	persistProgress func(completionResult, []artifactUploadState) error,
+	persistProcess func(executor.ProcessIdentity) error,
 ) completionResult {
 	executionSpec, err := supervisor.executionSpecWithSecrets(ctx, claimed)
 	if err != nil {
@@ -371,7 +391,8 @@ func (supervisor *attemptSupervisor) runTestNG(
 			RequireCgroup: supervisor.configuration.Resources.Enabled(),
 			ApplyRlimits:  true,
 		},
-		LogSink: collector.Write,
+		ProcessStarted: persistProcess,
+		LogSink:        collector.Write,
 		PrepareWorkspace: func(workspace string) error {
 			if executionSpec.BatchID != "" {
 				// 批次共享：同批次输入只下载解压一次，attempt 工作目录通过
@@ -841,6 +862,9 @@ func (supervisor *attemptSupervisor) reconcile(ctx context.Context) error {
 		if !exists {
 			continue
 		}
+		if err := supervisor.killRecoveredProcess(state); err != nil {
+			return err
+		}
 		switch decision.Action {
 		case "clean":
 			if err := supervisor.cleanAttemptSpool(decision.AttemptID); err != nil {
@@ -916,6 +940,23 @@ func (supervisor *attemptSupervisor) reconcile(ctx context.Context) error {
 				return err
 			}
 		}
+	}
+	return nil
+}
+
+func (supervisor *attemptSupervisor) killRecoveredProcess(state attemptState) error {
+	if state.Process == nil {
+		return nil
+	}
+	killed, err := executor.KillPersistedProcessGroup(executor.ProcessIdentity{
+		ProcessID:      state.Process.ProcessID,
+		StartTimeTicks: state.Process.StartTimeTicks,
+	})
+	if err != nil {
+		return fmt.Errorf("terminate recovered attempt %s process: %w", state.Claimed.Assignment.AttemptID, err)
+	}
+	if killed {
+		fmt.Fprintf(supervisor.diagnostics, "terminated recovered attempt %s process group\n", state.Claimed.Assignment.AttemptID)
 	}
 	return nil
 }

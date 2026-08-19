@@ -18,7 +18,16 @@ type RunOptions struct {
 	Policy           Policy
 	ResourcePolicy   ResourcePolicy
 	PrepareWorkspace func(string) error
+	ProcessStarted   func(ProcessIdentity) error
 	LogSink          func(LogChunk) error
+}
+
+// ProcessIdentity combines the process-group leader PID with its kernel start
+// time. A restarted Agent verifies both values before signalling the group, so
+// PID reuse cannot terminate an unrelated process.
+type ProcessIdentity struct {
+	ProcessID      int    `json:"processId"`
+	StartTimeTicks uint64 `json:"startTimeTicks"`
 }
 
 type LogChunk struct {
@@ -131,6 +140,26 @@ func Run(ctx context.Context, spec Spec, options RunOptions) (result Result, ret
 	startedAt := time.Now().UTC()
 	if err := command.Start(); err != nil {
 		return Result{}, fmt.Errorf("start executable %q: %w", effectiveCommand.Executable, err)
+	}
+	if options.ProcessStarted != nil {
+		identity, identityErr := captureProcessIdentity(command.Process.Pid)
+		if identityErr == nil {
+			identityErr = options.ProcessStarted(identity)
+		} else if errors.Is(identityErr, os.ErrNotExist) {
+			// The command exited before /proc could be sampled. There is no
+			// surviving process group for a future Agent restart to recover.
+			identityErr = nil
+		}
+		if identityErr != nil {
+			killProcessGroup(command.Process.Pid)
+			resourceScope.forceKill()
+			_ = command.Wait()
+			return Result{}, errors.Join(
+				fmt.Errorf("persist started process identity: %w", identityErr),
+				stdout.Close(),
+				stderr.Close(),
+			)
+		}
 	}
 	if err := handshake.afterStart(); err != nil {
 		killProcessGroup(command.Process.Pid)

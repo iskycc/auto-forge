@@ -337,7 +337,10 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
         `SELECT count(*) AS count FROM run_attempts a
          JOIN execution_runs r ON r.id=a.execution_run_id
          JOIN run_batches b ON b.id=r.batch_id
-         WHERE b.project_id=$1 AND a.status IN ('assigned','running')`,
+         WHERE b.project_id=$1
+           AND b.status IN ('queued','running')
+           AND r.status IN ('assigned','running')
+           AND a.status IN ('assigned','running')`,
         [batch.projectId],
       ),
     ]);
@@ -773,10 +776,14 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
         await this.handle.db
           .select({ runnerId: pgRunAttempts.runnerId, value: count() })
           .from(pgRunAttempts)
+          .innerJoin(pgExecutionRuns, eq(pgExecutionRuns.id, pgRunAttempts.executionRunId))
+          .innerJoin(pgRunBatches, eq(pgRunBatches.id, pgExecutionRuns.batchId))
           .where(
             and(
               inArray(pgRunAttempts.runnerId, runnerIds),
               inArray(pgRunAttempts.status, [...activeAttemptStatuses]),
+              inArray(pgExecutionRuns.status, [...activeAttemptStatuses]),
+              inArray(pgRunBatches.status, ["queued", "running"]),
             ),
           )
           .groupBy(pgRunAttempts.runnerId)

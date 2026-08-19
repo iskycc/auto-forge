@@ -11,7 +11,10 @@ import (
 	"sort"
 )
 
-const attemptStateSchemaVersion = 1
+const (
+	legacyAttemptStateSchemaVersion = 1
+	attemptStateSchemaVersion       = 2
+)
 
 var localIdentifierPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
 
@@ -19,9 +22,15 @@ type attemptState struct {
 	SchemaVersion   int                   `json:"schemaVersion"`
 	Claimed         ClaimedAssignment     `json:"claimed"`
 	LocalState      string                `json:"localState"`
+	Process         *attemptProcess       `json:"process,omitempty"`
 	CompletionID    string                `json:"completionId,omitempty"`
 	Result          *completionResult     `json:"result,omitempty"`
 	ArtifactUploads []artifactUploadState `json:"artifactUploads,omitempty"`
+}
+
+type attemptProcess struct {
+	ProcessID      int    `json:"processId"`
+	StartTimeTicks uint64 `json:"startTimeTicks"`
 }
 
 type artifactUploadState struct {
@@ -41,6 +50,9 @@ func newAttemptStore(dataDirectory string) attemptStore {
 func (store attemptStore) save(state attemptState) error {
 	if state.SchemaVersion != attemptStateSchemaVersion || !validLocalAttemptState(state.LocalState) || !localIdentifierPattern.MatchString(state.Claimed.Assignment.AttemptID) {
 		return errors.New("refuse to save invalid attempt state")
+	}
+	if !validAttemptProcess(state.Process) {
+		return errors.New("refuse to save invalid attempt process identity")
 	}
 	if err := os.MkdirAll(store.directory, 0o700); err != nil {
 		return fmt.Errorf("create attempt spool: %w", err)
@@ -155,12 +167,26 @@ func (store attemptStore) list() ([]attemptState, error) {
 		if closeErr != nil {
 			return nil, fmt.Errorf("close attempt state %s: %w", entry.Name(), closeErr)
 		}
-		if state.SchemaVersion != attemptStateSchemaVersion || !validLocalAttemptState(state.LocalState) || store.path(state.Claimed.Assignment.AttemptID) != path {
+		if !supportedAttemptStateSchemaVersion(state.SchemaVersion) || !validLocalAttemptState(state.LocalState) || store.path(state.Claimed.Assignment.AttemptID) != path {
 			return nil, fmt.Errorf("attempt state %s has an invalid identity", entry.Name())
 		}
+		if !validAttemptProcess(state.Process) {
+			return nil, fmt.Errorf("attempt state %s has an invalid process identity", entry.Name())
+		}
+		// Version 1 did not persist process identity. Normalize it in memory so
+		// the next state write atomically upgrades the record.
+		state.SchemaVersion = attemptStateSchemaVersion
 		states = append(states, state)
 	}
 	return states, nil
+}
+
+func supportedAttemptStateSchemaVersion(version int) bool {
+	return version == legacyAttemptStateSchemaVersion || version == attemptStateSchemaVersion
+}
+
+func validAttemptProcess(process *attemptProcess) bool {
+	return process == nil || (process.ProcessID > 0 && process.StartTimeTicks > 0)
 }
 
 func validLocalAttemptState(state string) bool {

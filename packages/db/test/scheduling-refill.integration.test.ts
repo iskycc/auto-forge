@@ -108,6 +108,26 @@ function schedulingRefillCases(createHarness: () => Promise<RefillHarness>): voi
     }
   });
 
+  it("excludes terminal batch records from project and runner capacity", async () => {
+    const harness = await createHarness();
+    try {
+      const snapshot = await harness.batches.getSchedulingSnapshot(
+        harness.batchRunningId,
+        "2026-08-10T00:00:00.000Z",
+      );
+      expect(snapshot?.projectActiveRuns).toBe(2);
+      expect(snapshot?.candidates).toEqual([
+        expect.objectContaining({
+          runner: expect.objectContaining({ id: harness.runnerId }),
+          reservedSlots: 2,
+        }),
+      ]);
+    } finally {
+      await harness.dispose();
+      await cleanupTemporaryDirectories();
+    }
+  });
+
   it("reports only non-terminal cached batches selected for the runner as reusable", async () => {
     const harness = await createHarness();
     try {
@@ -261,6 +281,7 @@ function schedulingRefillCases(createHarness: () => Promise<RefillHarness>): voi
 }
 
 type FixtureIds = {
+  projectId: string;
   runnerId: string;
   batchRunningId: string;
   batchQueuedId: string;
@@ -273,6 +294,7 @@ async function seedFixture(
   execute: (sql: string, parameters?: unknown[]) => Promise<unknown>,
 ): Promise<FixtureIds> {
   const ids: FixtureIds = {
+    projectId: randomUUID(),
     runnerId: randomUUID(),
     batchRunningId: randomUUID(),
     batchQueuedId: randomUUID(),
@@ -288,13 +310,20 @@ async function seedFixture(
       lateLeaseTokenHash: `lease-hash-${randomUUID()}`,
     },
   };
-  const projectId = "00000000-0000-7000-8000-000000000001";
   const now = "2026-08-10T00:00:00.000Z";
+  await execute(
+    `INSERT INTO projects (id, name, slug, is_default, archived, created_at, updated_at)
+     VALUES (?, 'Scheduling refill fixture', ?, FALSE, FALSE, ?, ?)`,
+    [ids.projectId, `scheduling-refill-${ids.projectId}`, now, now],
+  );
   await execute(
     `INSERT INTO runners
        (id, credential_hash, name, os, architecture, agent_version, protocol_version,
-        labels_json, max_concurrency, busy_slots, last_seen_at, created_at, updated_at)
-     VALUES (?, ?, 'runner-refill', 'linux', 'amd64', '0.2.2', 1, '[]', 2, 0, ?, ?, ?)`,
+        labels_json, capabilities_json, max_concurrency, busy_slots, last_seen_at, created_at,
+        updated_at)
+     VALUES (?, ?, 'runner-refill', 'linux', 'amd64', '0.2.2', 1, '[]',
+             '["executor:testng-v1","isolation:cgroup-v2","java:21.0.8","testng:7.11.0"]',
+             2, 0, ?, ?, ?)`,
     [ids.runnerId, `hash-${ids.runnerId}`, now, now, now],
   );
   const insertBatch = async (batchId: string, status: string, totalRuns: number): Promise<void> => {
@@ -303,7 +332,7 @@ async function seedFixture(
          (id, suite_id, suite_name, suite_version, status, retry_limit, environment_json,
           total_runs, project_id, created_at, updated_at)
        VALUES (?, 'suite-refill', 'Refill Suite', 1, ?, 0, '[]', ?, ?, ?, ?)`,
-      [batchId, status, totalRuns, projectId, now, now],
+      [batchId, status, totalRuns, ids.projectId, now, now],
     );
   };
   await insertBatch(ids.batchRunningId, "running", 1);
@@ -431,7 +460,15 @@ describe.skipIf(!postgresConnectionString)("PostgreSQL scheduling refill contrac
       },
       async dispose() {
         attemptLogs.close();
-        await handle.close();
+        try {
+          await handle.pool.query("DELETE FROM run_batches WHERE project_id = $1", [
+            fixture.projectId,
+          ]);
+          await handle.pool.query("DELETE FROM projects WHERE id = $1", [fixture.projectId]);
+          await handle.pool.query("DELETE FROM runners WHERE id = $1", [fixture.runnerId]);
+        } finally {
+          await handle.close();
+        }
       },
     };
   });

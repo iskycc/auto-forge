@@ -462,15 +462,20 @@ func TestCleanOrphanedWorkspacesRestoresReusableBatchDirectories(t *testing.T) {
 	assertExists("attempt-9-2000002", false)
 	assertExists(filepath.Join("batches", "batch-1"), true)
 	assertExists(filepath.Join("batches", "invalid id"), false)
+	// 启动 reconcile 确认结果后会删除本地状态；第二次孤儿扫描必须回收首次
+	// 因状态仍存在而保留的工作目录。
+	if err := store.remove("attempt-1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := supervisor.cleanOrphanedWorkspaces(); err != nil {
+		t.Fatal(err)
+	}
+	assertExists("attempt-1-1000001", false)
 	if got := supervisor.CachedBatchIDs(); len(got) != 1 || got[0] != "batch-1" {
 		t.Fatalf("CachedBatchIDs() = %v, want [batch-1]", got)
 	}
 	supervisor.ApplyClosedBatchIDs([]string{"batch-1"})
 	assertExists(filepath.Join("batches", "batch-1"), false)
-	if err := supervisor.removeAttemptWorkspaces("attempt-1"); err != nil {
-		t.Fatal(err)
-	}
-	assertExists("attempt-1-1000001", false)
 }
 
 func TestReportCompletionReturnsBatchClosedFromControlPlane(t *testing.T) {

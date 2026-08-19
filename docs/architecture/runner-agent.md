@@ -258,7 +258,7 @@ AUTOFORGE_AGENT_DATA_DIR/
 
 批次注册表记录本机在途 attempt 数与已确认终态：完成响应的 `batchClosed=true` 会持久到最后一个本地 attempt 收尾，避免并发完成次序造成目录泄漏。Agent 还会在 heartbeat 与 claim 中上报本机已空闲的 `cachedBatchIds`；控制面仅把该 Runner 仍被选中且尚未终态的批次视为可复用，其余 ID 通过 `closedBatchIds` 通知回收。因此多 Runner 批次中没有提交最后一份结果的节点以及已进入排空、不再 claim 的节点都能及时清理。禁用状态只保留心跳认证以便下发 drain 和执行该回收握手，claim、续租、完成和凭据轮换仍被拒绝。
 
-启动 reconcile 前只清理 `work/` 下无本地状态引用的 `<attemptId>-*` 独立工作目录；有状态引用的崩溃 attempt 在完成 reconcile、日志/产物/结果重传后再连同状态一起回收。安全的 `batches/<batch-id>` 会恢复为空闲缓存，避免 Agent 崩溃后同批次的后续用例重新下载或解压。reconcile 完成后由上述 heartbeat/claim 核对批次是否仍可能派发；终态、已删除或不属于该 Runner 的目录才会回收，非法批次路径和非目录内容直接清理。
+启动 reconcile 前只清理 `work/` 下无本地状态引用的 `<attemptId>-*` 独立工作目录；有状态引用的崩溃 attempt 会保存进程组 leader PID 与 Linux 内核启动时钟，重启后先核对两者以防 PID 复用误杀，再终止仍存活的原进程组，并在完成 reconcile、日志/产物/结果重传后连同状态一起回收。reconcile 后再次扫描孤儿目录，关闭状态已确认删除而旧进程刚结束写入的崩溃窗口；本地 attempt 状态 v2 可读取并自动升级不含进程身份的 v1 记录。安全的 `batches/<batch-id>` 会恢复为空闲缓存，避免 Agent 崩溃后同批次的后续用例重新下载或解压。reconcile 完成后由上述 heartbeat/claim 核对批次是否仍可能派发；终态、已删除或不属于该 Runner 的目录才会回收，非法批次路径和非目录内容直接清理。
 
 目录权限遵循最小权限。spool 和 diagnostics 都必须有配额、保留期和启动时恢复策略；清理不得跟随越界符号链接。
 

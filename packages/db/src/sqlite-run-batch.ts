@@ -917,10 +917,14 @@ function activeReservations(
     handle.db
       .select({ runnerId: runAttempts.runnerId, value: count() })
       .from(runAttempts)
+      .innerJoin(executionRuns, eq(executionRuns.id, runAttempts.executionRunId))
+      .innerJoin(runBatches, eq(runBatches.id, executionRuns.batchId))
       .where(
         and(
           inArray(runAttempts.runnerId, runnerIds),
           inArray(runAttempts.status, [...activeAttemptStatuses]),
+          inArray(executionRuns.status, [...activeAttemptStatuses]),
+          inArray(runBatches.status, ["queued", "running"]),
         ),
       )
       .groupBy(runAttempts.runnerId)
@@ -935,7 +939,10 @@ function projectActiveRuns(handle: SqliteDatabaseHandle, projectId: string): num
       `SELECT count(*) AS count FROM run_attempts a
        JOIN execution_runs r ON r.id=a.execution_run_id
        JOIN run_batches b ON b.id=r.batch_id
-       WHERE b.project_id=? AND a.status IN ('assigned','running')`,
+       WHERE b.project_id=?
+         AND b.status IN ('queued','running')
+         AND r.status IN ('assigned','running')
+         AND a.status IN ('assigned','running')`,
     )
     .get(projectId) as { count: number };
   return row.count;

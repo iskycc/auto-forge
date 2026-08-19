@@ -20,7 +20,14 @@ and known limitations.
   file budgets.
 - Restart reconciliation now removes a killed attempt's obsolete workspace even when its old lease
   expired before the completion could be reported. The persisted completion and spools remain
-  available for a later retry, while batch-input hard links and workspace disk are released.
+  available for a later retry, while batch-input hard links and workspace disk are released. The
+  Agent now persists the execution process-group leader with its Linux kernel start time; restart
+  reconciliation verifies that identity, kills the surviving group without PID-reuse risk, and then
+  performs a second orphan scan. Local attempt-state schema v2 remains able to read and automatically
+  upgrade v1 records.
+- Scheduler project and Runner capacity accounting now excludes stale active attempts whose run or
+  batch is already terminal. Scheduling-refill adapter fixtures use isolated projects and clean up
+  their PostgreSQL records, so Full-mode acceptance cannot be blocked by prior contract-test data.
 
 ## 0.7.1 - 2026-08-19
 

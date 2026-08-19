@@ -58,6 +58,37 @@ func TestRunTerminatesProcessGroupOnTimeout(t *testing.T) {
 	}
 }
 
+func TestRunPersistsAndSafelyKillsRecoveredProcessGroup(t *testing.T) {
+	executable := testExecutable(t)
+	spec := helperSpec(executable, "sleep")
+	var captured ProcessIdentity
+	result, err := Run(context.Background(), spec, RunOptions{
+		DataDirectory: t.TempDir(),
+		Policy:        Policy{AllowedExecutables: []string{executable}},
+		ProcessStarted: func(identity ProcessIdentity) error {
+			captured = identity
+			wrongIdentity := identity
+			wrongIdentity.StartTimeTicks++
+			if killed, killErr := KillPersistedProcessGroup(wrongIdentity); killErr != nil || killed {
+				return fmt.Errorf("PID reuse guard result = (%v, %v), want (false, nil)", killed, killErr)
+			}
+			if killed, killErr := KillPersistedProcessGroup(identity); killErr != nil || !killed {
+				return fmt.Errorf("recovered process kill result = (%v, %v), want (true, nil)", killed, killErr)
+			}
+			return nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if captured.ProcessID <= 0 || captured.StartTimeTicks == 0 {
+		t.Fatalf("captured process identity = %#v", captured)
+	}
+	if result.ExitCode == 0 {
+		t.Fatalf("killed process result = %#v, want non-zero exit", result)
+	}
+}
+
 func TestRunTreatsShellMetacharactersAsLiteralArguments(t *testing.T) {
 	executable := testExecutable(t)
 	marker := filepath.Join(t.TempDir(), "must-not-exist")

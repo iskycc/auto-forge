@@ -474,9 +474,10 @@ func linkSharedRegularTree(sourceRoot, destinationRoot string) error {
 	})
 }
 
-// cleanOrphanedWorkspaces 在启动 reconcile 前清理不属于本地 attempt 的独立工作
-// 目录，并恢复安全的批次共享目录。批次目录不能在重启时直接删除：同一批次可能
-// 仍有待派发用例；恢复为 idle 后再由控制面确认是否可回收。
+// cleanOrphanedWorkspaces 在启动恢复阶段清理不属于本地 attempt 的独立工作
+// 目录，并恢复安全的批次共享目录。该扫描可在 reconcile 前后重复执行：前者清理
+// 既有孤儿，后者清理本轮刚删除状态的目录。批次目录不能在重启时直接删除：同一
+// 批次可能仍有待派发用例；恢复为 idle 后再由控制面确认是否可回收。
 func (supervisor *attemptSupervisor) cleanOrphanedWorkspaces() error {
 	states, err := supervisor.store.list()
 	if err != nil {
