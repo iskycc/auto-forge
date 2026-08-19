@@ -29,8 +29,6 @@ export async function GET(request: Request, context: Context): Promise<NextRespo
     );
     const testStage = projectVersion?.stages.find((stage) => stage.id === definition.testStageId);
     const executable = sourceRecord.inspection.executable !== false;
-    const runners = canRun && executable ? await services.runnerControl.list(200) : [];
-
     let sourceView: Awaited<ReturnType<typeof services.caseSources.readClassSource>> = null;
     let sourceViewError: string | undefined;
     if (canReadSource) {
@@ -52,7 +50,6 @@ export async function GET(request: Request, context: Context): Promise<NextRespo
       projectVersionName: projectVersion?.name ?? "未归属版本",
       testStageName: testStage?.name ?? "未归属阶段",
       executable,
-      runners,
       canManage,
       canRun,
       canReadSource,

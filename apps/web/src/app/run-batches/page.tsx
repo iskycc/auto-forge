@@ -16,9 +16,10 @@ export default async function RunBatchesPage() {
   const environmentProjectIds = hasPermissionInAnyScope(identity, "environment.read")
     ? services.identityAccess.projectScope(identity, "environment.read")
     : [];
-  const [suites, runners, environmentSummaries] = await Promise.all([
+  const [suites, runners, runnerGroups, environmentSummaries] = await Promise.all([
     services.caseSuites.list(200, projectIds),
     canReadRunners ? services.runnerControl.list(500) : Promise.resolve([]),
+    canReadRunners ? services.runnerGroups.list() : Promise.resolve([]),
     environmentProjectIds?.length === 0
       ? Promise.resolve([])
       : services.executionEnvironments.list(environmentProjectIds),
@@ -48,6 +49,7 @@ export default async function RunBatchesPage() {
         canCreate={canCreateRuns}
         initialSuites={creatableSuites}
         initialRunners={runners}
+        initialRunnerGroups={runnerGroups}
         initialEnvironments={environments}
         policy={services.runBatches.policy()}
       />

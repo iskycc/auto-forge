@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-08-19",
+  "updatedAt": "2026-08-20",
   "dimensions": ["lite", "full", "offline", "realAgent", "success", "failure", "recovery"],
   "items": [
     {
@@ -172,7 +172,8 @@
         "tests/e2e/all-rounds.spec.ts",
         "tests/e2e/jar-import.spec.ts",
         "tests/e2e/real-agent.spec.ts",
-        "tests/e2e/scheduling-refill.spec.ts"
+        "tests/e2e/scheduling-refill.spec.ts",
+        "tests/e2e/single-case-run.spec.ts"
       ],
       "coverage": {
         "lite": "partial",

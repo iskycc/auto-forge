@@ -26,9 +26,9 @@ test("authenticates and synchronizes against real private-CA LDAP", async ({ bro
 
   const ldapsContext = await loginWithLdap(browser, "alice", directoryPassword);
   const ldapsPage = ldapsContext.pages()[0]!;
-  await expect(ldapsPage.getByRole("link", { name: "用例管理", exact: true })).toBeVisible();
-  await expandAdministrationGroup(ldapsPage, "执行与平台");
-  await expect(ldapsPage.getByRole("link", { name: "运维审计" })).toBeVisible();
+  await expect(ldapsPage.getByRole("link", { name: "用例库", exact: true })).toBeVisible();
+  await expandAdministrationGroup(ldapsPage, "平台运维");
+  await expect(ldapsPage.getByRole("link", { name: "安全审计" })).toBeVisible();
   await ldapsPage.goto("/account/security");
   await expect(ldapsPage.getByText("LDAP 账号密码由目录服务管理", { exact: false })).toBeVisible();
   await expect(ldapsPage.getByRole("button", { name: "修改密码并重新登录" })).toHaveCount(0);
@@ -202,7 +202,7 @@ async function verifyDirectoryOutageAndLocalFallback(
   });
   const fallbackPage = await fallbackContext.newPage();
   await login(fallbackPage, E2E_ADMIN_USERNAME, E2E_ADMIN_PASSWORD);
-  await expandAdministrationGroup(fallbackPage, "项目与权限");
+  await expandAdministrationGroup(fallbackPage, "身份与访问");
   await expect(fallbackPage.getByRole("link", { name: "目录配置", exact: true })).toBeVisible();
   expect((await adminPage.request.get("/api/v1/auth/session")).status()).toBe(200);
 

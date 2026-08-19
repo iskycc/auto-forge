@@ -8,6 +8,7 @@ import type {
   JarObjectStorePort,
   ProjectStructureRepository,
   RunBatchRepository,
+  RunnerGroupRepository,
   RunnerRepository,
 } from "../src/ports";
 
@@ -551,6 +552,153 @@ describe("run batch creation with suite policy", () => {
             parameters: { CASE_DEFAULT: "yes", OVERRIDE: "value" },
           }),
         ],
+      }),
+    );
+  });
+
+  it("resolves a runner group once and persists its sorted member snapshot", async () => {
+    const create = vi.fn();
+    const batches = {
+      create,
+      getSchedulingSnapshot: vi.fn().mockResolvedValue({
+        batch: { assignedRuns: 0, secretBindings: [] },
+        queuedRuns: [],
+        candidates: [],
+        projectActiveRuns: 0,
+      }),
+      get: vi.fn().mockResolvedValue({ id: "generated-id", assignedRuns: 0 }),
+    } as unknown as RunBatchRepository;
+    const runnerGroups = {
+      get: vi.fn().mockResolvedValue({
+        id: "group-1",
+        runnerIds: ["runner-b", "runner-a"],
+      }),
+    } as unknown as RunnerGroupRepository;
+    const runners = {
+      get: vi.fn(async (runnerId: string) => ({
+        ...(await runnersFake().get("runner-1", timestamp))!,
+        id: runnerId,
+      })),
+    } as unknown as RunnerRepository;
+    const service = new RunBatchSchedulingService(
+      batches,
+      { get: vi.fn().mockResolvedValue(readySuite({})) } as unknown as CaseSuiteRepository,
+      runners,
+      { now: () => new Date(timestamp) },
+      { next: () => "generated-id" },
+      {
+        maximumCpuUtilizationPercent: 85,
+        maximumMemoryUtilizationPercent: 85,
+        maximumLoadPerCpu: 1,
+      },
+      45,
+      undefined,
+      { catalog: readyCatalogFake(), objectStore: objectStoreFake() },
+      128,
+      5,
+      undefined,
+      runnerGroups,
+    );
+
+    await service.create({ suiteId: "suite-1", runnerGroupId: "group-1" });
+
+    expect(runnerGroups.get).toHaveBeenCalledWith("group-1");
+    expect(create).toHaveBeenCalledWith(
+      expect.objectContaining({ runnerIds: ["runner-a", "runner-b"] }),
+    );
+  });
+
+  it("persists Adapter execution addresses for a single-case batch", async () => {
+    const catalog = {
+      ...readyCatalogFake(),
+      getCaseDefinition: vi.fn().mockResolvedValue({
+        id: "case-1",
+        projectId: "project-1",
+        sourceId: "source-1",
+        className: "com.example.SmokeTest",
+        displayName: "Smoke",
+        enabled: true,
+        archived: false,
+        parameters: {},
+        currentVersion: 3,
+        methods: [{ enabled: true }],
+      }),
+    } as unknown as CaseCatalogRepository;
+    const create = vi.fn();
+    const batches = {
+      create,
+      getSchedulingSnapshot: vi.fn().mockResolvedValue({
+        batch: { assignedRuns: 0, secretBindings: [] },
+        queuedRuns: [],
+        candidates: [],
+        projectActiveRuns: 0,
+      }),
+      get: vi.fn().mockResolvedValue({ id: "generated-id", assignedRuns: 0 }),
+    } as unknown as RunBatchRepository;
+    const projectStructures = {
+      getAdapterConfiguration: vi.fn().mockResolvedValue({
+        projectId: "project-1",
+        jarBundleAsset: {
+          id: "bundle-1",
+          projectId: "project-1",
+          kind: "jar-bundle",
+          sourceType: "upload",
+          fileName: "adapter.zip",
+          objectKey: "projects/project-1/runtime-assets/bundle-1.zip",
+          sha256: "b".repeat(64),
+          sizeBytes: 1_024,
+          archiveFormat: "zip",
+          createdAt: timestamp,
+        },
+        revision: 1,
+        updatedAt: timestamp,
+      }),
+    } as unknown as ProjectStructureRepository;
+    const service = new RunBatchSchedulingService(
+      batches,
+      {} as CaseSuiteRepository,
+      runnersFake([
+        "executor:testng-v1",
+        "isolation:cgroup-v2",
+        "java:21.0.8",
+        "testng:7.11.0",
+        "adapter:cotest-testng-v1",
+      ]),
+      { now: () => new Date(timestamp) },
+      { next: () => "generated-id" },
+      {
+        maximumCpuUtilizationPercent: 85,
+        maximumMemoryUtilizationPercent: 85,
+        maximumLoadPerCpu: 1,
+      },
+      45,
+      undefined,
+      { catalog, objectStore: objectStoreFake() },
+      128,
+      5,
+      projectStructures,
+    );
+
+    await service.createSingleCase("case-1", {
+      projectId: "project-1",
+      runnerIds: ["runner-1"],
+      adapter: {
+        enabled: true,
+        suiteName: "IP Suite",
+        testName: "IP Test",
+        environmentAddresses: ["10.0.0.21", "10.0.0.22"],
+      },
+    });
+
+    expect(create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectId: "project-1",
+        adapter: {
+          enabled: true,
+          suiteName: "IP Suite",
+          testName: "IP Test",
+          environmentAddresses: ["10.0.0.21", "10.0.0.22"],
+        },
       }),
     );
   });

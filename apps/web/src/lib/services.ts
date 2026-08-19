@@ -20,6 +20,7 @@ import {
   RunBatchExportService,
   RunBatchSchedulingService,
   RunnerControlService,
+  RunnerGroupService,
   type AttemptLogShareRepository,
   type CaseCatalogRepository,
   type CaseSuiteRepository,
@@ -32,6 +33,7 @@ import {
   type JobQueuePort,
   type RunBatchRepository,
   type RunnerRepository,
+  type RunnerGroupRepository,
   type PlatformStatisticsRepository,
   type PlatformOperationsRepository,
   type ProjectStructureRepository,
@@ -49,6 +51,7 @@ import {
   SqliteIdentityAccessRepository,
   SqliteRunBatchRepository,
   SqliteRunnerRepository,
+  SqliteRunnerGroupRepository,
   SqlitePlatformStatisticsRepository,
   SqlitePlatformOperationsRepository,
   SqliteProjectStructureRepository,
@@ -82,6 +85,7 @@ async function createPlatformServices() {
   let catalog: CaseCatalogRepository;
   let suites: CaseSuiteRepository;
   let runners: RunnerRepository;
+  let runnerGroupsRepository: RunnerGroupRepository;
   let identities: IdentityAccessRepository;
   let executions: ExecutionControlRepository;
   let environments: ExecutionEnvironmentRepository;
@@ -106,6 +110,7 @@ async function createPlatformServices() {
     catalog = new SqliteCaseCatalogRepository(database);
     suites = new SqliteCaseSuiteRepository(database);
     runners = new SqliteRunnerRepository(database);
+    runnerGroupsRepository = new SqliteRunnerGroupRepository(database);
     identities = new SqliteIdentityAccessRepository(database);
     executions = new SqliteExecutionControlRepository(database, attemptLogs);
     environments = new SqliteExecutionEnvironmentRepository(database);
@@ -139,6 +144,7 @@ async function createPlatformServices() {
         PostgresExecutionSecretRepository,
         PostgresRunBatchRepository,
         PostgresRunnerRepository,
+        PostgresRunnerGroupRepository,
         PostgresPlatformStatisticsRepository,
         PostgresPlatformOperationsRepository,
         PostgresProjectStructureRepository,
@@ -216,6 +222,7 @@ async function createPlatformServices() {
     catalog = new PostgresCaseCatalogRepository(database);
     suites = new PostgresCaseSuiteRepository(database);
     runners = new PostgresRunnerRepository(database);
+    runnerGroupsRepository = new PostgresRunnerGroupRepository(database);
     identities = new PostgresIdentityAccessRepository(database);
     executions = new PostgresExecutionControlRepository(database, attemptLogs);
     environments = new PostgresExecutionEnvironmentRepository(database);
@@ -269,6 +276,7 @@ async function createPlatformServices() {
     ids,
     batches,
   );
+  const runnerGroups = new RunnerGroupService(runnerGroupsRepository, runners, clock, ids);
   const runBatches = new RunBatchSchedulingService(
     batches,
     suites,
@@ -286,6 +294,7 @@ async function createPlatformServices() {
     config.scheduler.projectMaximumConcurrency,
     config.scheduler.priorityAgingIntervalMinutes,
     projectStructuresRepository,
+    runnerGroupsRepository,
   );
   const platformOperations = new PlatformOperationsService(
     operationsRepository,
@@ -471,6 +480,7 @@ async function createPlatformServices() {
     executionSecrets,
     identityAccess,
     runnerControl,
+    runnerGroups,
     runnerAgentInstaller,
     runnerAgentResources,
     executionControl,

@@ -100,9 +100,9 @@ describe("shared UI controls", () => {
     const appShell = readFileSync(APP_SHELL, "utf8");
     const suiteManager = readFileSync(CASE_SUITE_MANAGER, "utf8");
 
-    expect(appShell).toContain('label: "运维审计"');
-    expect(appShell).toContain('activePrefixes: ["/settings/automation", "/audit"]');
-    expect(appShell).not.toContain('label: "安全审计"');
+    expect(appShell).toContain('label: "安全审计"');
+    expect(appShell).toContain('label: "执行机组"');
+    expect(appShell).not.toContain('label: "用例批跑"');
     expect(suiteManager).toContain("<ProjectPicker");
     expect(suiteManager).not.toContain("<Select");
   });

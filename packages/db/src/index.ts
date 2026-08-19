@@ -13,6 +13,8 @@ export * from "./sqlite-execution-environment";
 export * from "./sqlite-execution-secret";
 export * from "./sqlite-run-batch";
 export * from "./sqlite-runner";
+export * from "./sqlite-runner-group";
+export * from "./postgres-runner-group";
 export * from "./sqlite-project-structure";
 export * from "./sqlite-attempt-log-share";
 export * from "./postgres-attempt-log-share";

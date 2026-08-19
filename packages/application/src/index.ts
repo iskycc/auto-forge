@@ -9,6 +9,7 @@ export * from "./manage-execution-environments";
 export * from "./manage-identity-access";
 export * from "./manage-project-structure";
 export * from "./manage-runners";
+export * from "./manage-runner-groups";
 export * from "./ports";
 export * from "./recovery-scheduling-events";
 export * from "./schedule-run-batches";

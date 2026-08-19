@@ -1,37 +1,30 @@
+import type { AnalyticsSummary } from "@autoforge/contracts";
+import type { RunBatch, Runner, RunnerGroup } from "@autoforge/domain";
 import {
   Activity,
-  ArrowRight,
+  AlertTriangle,
   BookOpenText,
-  Box,
   CheckCircle2,
   CircleDashed,
+  Clock3,
   FileArchive,
-  Server,
-  Sparkles,
+  UsersRound,
+  XCircle,
 } from "lucide-react";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import type { CSSProperties } from "react";
 
-import { getPlatformServices } from "@/lib/services";
-import { currentIdentity, hasPermissionInAnyScope } from "@/lib/auth";
 import { PublicDashboard } from "@/components/public-dashboard";
+import { currentIdentity, hasPermissionInAnyScope } from "@/lib/auth";
 import {
   isActiveRunBatch,
   runBatchCompletionPercent,
   runBatchStatusLabel,
 } from "@/lib/run-batch-presentation";
+import { getPlatformServices } from "@/lib/services";
 
 export const dynamic = "force-dynamic";
-
-function formatDate(value: string): string {
-  return new Intl.DateTimeFormat("zh-CN", {
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(new Date(value));
-}
 
 export default async function DashboardPage() {
   const services = await getPlatformServices();
@@ -44,317 +37,594 @@ export default async function DashboardPage() {
     return <PublicDashboard initialStatistics={statistics} setupRequired={setupRequired} />;
   }
   if (identity.user.forcePasswordChange) redirect("/account/security");
+
   let caseProjectIds: string[] | undefined;
   try {
     caseProjectIds = services.identityAccess.projectScope(identity, "case.read");
   } catch {
     redirect("/forbidden");
   }
-  const { catalog, config } = services;
-  const canManageSources = hasPermissionInAnyScope(identity, "case_source.manage");
-  const canReadSources = hasPermissionInAnyScope(identity, "case_source.read");
-  const canReadRunners = hasPermissionInAnyScope(identity, "runner.read");
   let runProjectIds: string[] | undefined = [];
   try {
     runProjectIds = services.identityAccess.projectScope(identity, "run.read");
   } catch {
-    // The dashboard remains useful to asset-only roles without exposing execution data.
+    // 仅资产角色仍可使用首页中的用例库概览。
   }
   const canReadRuns = runProjectIds === undefined || runProjectIds.length > 0;
-  const [summary, recentSources, runners, recentBatches] = await Promise.all([
-    catalog.getDashboardSummary(caseProjectIds),
-    canReadSources ? catalog.listRecentSources(5, caseProjectIds) : Promise.resolve([]),
-    canReadRunners ? services.runnerControl.list() : Promise.resolve([]),
-    canReadRuns ? services.runBatches.list(5, runProjectIds) : Promise.resolve([]),
+  const canReadRunners = hasPermissionInAnyScope(identity, "runner.read");
+  const canReadSources = hasPermissionInAnyScope(identity, "case_source.read");
+  const canManageSources = hasPermissionInAnyScope(identity, "case_source.manage");
+  const now = new Date();
+  const currentWeekStartedAt = new Date(now.getTime() - 7 * 86_400_000).toISOString();
+  const previousWeekStartedAt = new Date(now.getTime() - 14 * 86_400_000).toISOString();
+
+  const [
+    catalogSummary,
+    runners,
+    runnerGroups,
+    recentBatches,
+    recentSources,
+    currentAnalytics,
+    previousAnalytics,
+  ] = await Promise.all([
+    services.catalog.getDashboardSummary(caseProjectIds),
+    canReadRunners ? services.runnerControl.list(500) : Promise.resolve([]),
+    canReadRunners ? services.runnerGroups.list() : Promise.resolve([]),
+    canReadRuns ? services.runBatches.list(8, runProjectIds) : Promise.resolve([]),
+    canReadSources ? services.catalog.listRecentSources(5, caseProjectIds) : Promise.resolve([]),
+    canReadRuns
+      ? services.platformOperations.analytics(identity, { completedAfter: currentWeekStartedAt })
+      : Promise.resolve(null),
+    canReadRuns
+      ? services.platformOperations.analytics(identity, {
+          completedAfter: previousWeekStartedAt,
+          completedBefore: currentWeekStartedAt,
+        })
+      : Promise.resolve(null),
   ]);
-  const onlineRunners = runners.filter((runner) => runner.state === "online").length;
-  const busyRunners = runners.filter((runner) => runner.busySlots > 0).length;
-  const enabledRate =
-    summary.methodCount === 0
-      ? 0
-      : Math.round((summary.enabledMethodCount / summary.methodCount) * 1000) / 10;
+
   const activeBatch = recentBatches.find((batch) => isActiveRunBatch(batch.status));
-  const activeBatchCompletedRuns = activeBatch
-    ? activeBatch.succeededRuns +
-      activeBatch.failedRuns +
-      activeBatch.timedOutRuns +
-      activeBatch.cancelledRuns
-    : 0;
+  const onlineRunners = runners.filter((runner) => runner.state === "online");
+  const qualityScore = currentAnalytics ? currentAnalytics.successRate * 100 : null;
+  const previousQualityScore = previousAnalytics ? previousAnalytics.successRate * 100 : null;
+  const qualityDelta =
+    qualityScore === null || previousQualityScore === null
+      ? null
+      : qualityScore - previousQualityScore;
+  const recentActivity = buildRecentActivity(recentBatches, recentSources);
 
   return (
-    <div className="page-stack">
-      <section className="page-hero">
+    <div className="dashboard-page">
+      <header className="dashboard-welcome">
         <div>
-          <span className="eyebrow">AutoForge · {config.mode === "lite" ? "Lite" : "Full"}</span>
-          <h1>自动化用例工作台</h1>
-          <p>从 TestNG JAR 发现测试类，构建可追踪、可执行的用例资产。</p>
+          <span>{greeting(now)}，</span>
+          <strong>{identity.user.displayName}</strong>
         </div>
-        {canManageSources ? (
-          <Link className="button button-primary button-large" href="/cases/import">
-            <FileArchive size={18} aria-hidden="true" /> 导入 TestNG JAR
-          </Link>
-        ) : null}
-      </section>
+        <p>这里是自动化质量、执行进度和资源容量的实时概览。</p>
+      </header>
 
-      <section className="bento-grid" aria-label="平台概览">
-        <article className="card bento-quality">
-          <div className="card-heading compact">
+      <section className="design-dashboard-grid" aria-label="工作台概览">
+        <article className="card design-quality-card">
+          <header className="design-card-heading">
             <div>
-              <span className="eyebrow">当前资产</span>
-              <h2>用例发现概览</h2>
+              <h2>本周质量</h2>
+              <span className="dashboard-info" title="最近 7 天已确认 TestNG 方法结果">
+                i
+              </span>
             </div>
-            <span className="soft-icon blue">
-              <Sparkles size={19} />
-            </span>
+            <span className="dashboard-period">最近 7 天</span>
+          </header>
+          <div className="quality-score-row">
+            <strong>
+              {qualityScore === null || currentAnalytics?.sampleCount === 0
+                ? "—"
+                : qualityScore.toFixed(1)}
+            </strong>
+            <span>/ 100</span>
+            {qualityDelta !== null && currentAnalytics && currentAnalytics.sampleCount > 0 ? (
+              <b className={qualityDelta >= 0 ? "trend-positive" : "trend-negative"}>
+                {qualityDelta >= 0 ? "↑" : "↓"} {Math.abs(qualityDelta).toFixed(1)}
+              </b>
+            ) : null}
           </div>
-          <div className="quality-value">
-            <strong>{summary.caseCount}</strong>
-            <span>个 TestNG 测试类</span>
-          </div>
-          <div className="mini-chart" aria-label={`已启用测试方法占比 ${enabledRate}%`}>
-            <div className="mini-chart-line" style={{ width: `${Math.max(enabledRate, 2)}%` }} />
-          </div>
-          <div className="metric-strip">
-            <div>
-              <span>JAR 来源</span>
-              <strong>{summary.sourceCount}</strong>
-            </div>
-            <div>
-              <span>测试方法</span>
-              <strong>{summary.methodCount}</strong>
-            </div>
-            <div>
-              <span>已启用</span>
-              <strong>{summary.enabledMethodCount}</strong>
-            </div>
-            <div>
-              <span>启用占比</span>
-              <strong>{enabledRate}%</strong>
-            </div>
+          <p className="quality-caption">
+            {currentAnalytics?.sampleCount
+              ? `基于 ${currentAnalytics.sampleCount} 次已确认执行样本`
+              : "完成首轮执行后生成质量趋势"}
+          </p>
+          <QualityTrend analytics={currentAnalytics} />
+          <div className="quality-metric-strip">
+            <DashboardMetric
+              label="总执行数"
+              value={currentAnalytics?.sampleCount ?? 0}
+              detail={`${currentAnalytics?.passed ?? 0} 个通过方法`}
+              tone="info"
+            />
+            <DashboardMetric
+              label="通过率"
+              value={percent(currentAnalytics?.successRate ?? 0)}
+              detail={
+                qualityDelta === null
+                  ? "暂无上周基线"
+                  : `${qualityDelta >= 0 ? "↑" : "↓"} ${Math.abs(qualityDelta).toFixed(1)}%`
+              }
+              tone="success"
+            />
+            <DashboardMetric
+              label="失败数"
+              value={currentAnalytics?.failed ?? 0}
+              detail={percent(currentAnalytics?.failureRate ?? 0)}
+              tone="danger"
+            />
+            <DashboardMetric
+              label="跳过数"
+              value={currentAnalytics?.skipped ?? 0}
+              detail={percent(currentAnalytics?.skippedRate ?? 0)}
+              tone="warning"
+            />
           </div>
         </article>
 
         {canReadRuns ? (
-          <article className="card bento-active">
-            <div className="card-heading compact">
-              <div>
-                <span className="eyebrow">执行</span>
-                <h2>活动执行</h2>
-              </div>
-              <Link className="text-link" href="/run-batches">
-                查看全部
-              </Link>
-            </div>
+          <article className="card design-active-card">
+            <header className="design-card-heading">
+              <h2>活动执行</h2>
+              <Link href="/execution-records">查看全部</Link>
+            </header>
             {activeBatch ? (
-              <div className="dashboard-batch">
-                <div className="dashboard-batch-title">
-                  <span className={`batch-status batch-status-${activeBatch.status}`}>
-                    {runBatchStatusLabel(activeBatch.status)}
+              <>
+                <div className="active-run-overview">
+                  <div
+                    aria-label={`活动执行共 ${activeBatch.totalRuns} 个用例：运行中 ${activeBatch.runningRuns}，通过 ${activeBatch.succeededRuns}，失败 ${activeBatch.failedRuns + activeBatch.timedOutRuns}，排队中 ${activeBatch.queuedRuns}`}
+                    className="active-run-donut"
+                    role="img"
+                    style={activeRunDonutStyle(activeBatch)}
+                  >
+                    <span>
+                      <strong>{activeBatch.totalRuns}</strong>
+                      <small>总计</small>
+                    </span>
+                  </div>
+                  <dl>
+                    <ActiveCount color="blue" label="运行中" value={activeBatch.runningRuns} />
+                    <ActiveCount color="green" label="通过" value={activeBatch.succeededRuns} />
+                    <ActiveCount
+                      color="orange"
+                      label="失败"
+                      value={activeBatch.failedRuns + activeBatch.timedOutRuns}
+                    />
+                    <ActiveCount color="violet" label="排队中" value={activeBatch.queuedRuns} />
+                  </dl>
+                </div>
+                <Link className="active-batch-summary" href={`/run-batches/${activeBatch.id}`}>
+                  <span className="active-batch-icon">
+                    <Activity size={17} />
                   </span>
                   <span>
                     <strong>{activeBatch.suiteName}</strong>
                     <small>
-                      任务 v{activeBatch.suiteVersion} · {activeBatch.selectedRunnerIds.length}{" "}
-                      台执行机
+                      {runBatchStatusLabel(activeBatch.status)} ·{" "}
+                      {activeBatch.selectedRunnerIds.length} 台执行机
                     </small>
                   </span>
-                </div>
-                <div className="dashboard-batch-progress">
-                  <strong>{runBatchCompletionPercent(activeBatch)}%</strong>
-                  <span>
-                    已完成 {activeBatchCompletedRuns} / {activeBatch.totalRuns}
+                  <span className="active-batch-progress">
+                    <b>{runBatchCompletionPercent(activeBatch)}%</b>
+                    <i>
+                      <em style={{ width: `${runBatchCompletionPercent(activeBatch)}%` }} />
+                    </i>
                   </span>
-                </div>
-                <div className="batch-progress-line">
-                  <span style={{ width: `${runBatchCompletionPercent(activeBatch)}%` }} />
-                </div>
-                <div className="batch-counts">
-                  <span>执行中 {activeBatch.runningRuns}</span>
-                  <span>已完成 {activeBatchCompletedRuns}</span>
-                  <span>
-                    待执行{" "}
-                    {Math.max(
-                      0,
-                      activeBatch.totalRuns - activeBatch.runningRuns - activeBatchCompletedRuns,
-                    )}
-                  </span>
-                </div>
-              </div>
+                </Link>
+              </>
             ) : (
-              <div className="empty-state compact-empty">
-                <span className="empty-icon">
-                  <Activity size={24} />
-                </span>
-                <strong>当前没有活动批次</strong>
-                <p>从用例批跑选择任务与执行机，即可创建可追踪的执行分配。</p>
+              <div className="design-empty-state">
+                <CircleDashed size={28} />
+                <strong>当前没有活动执行</strong>
+                <p>点击顶栏“开始执行”，选择任务或单个用例。</p>
               </div>
             )}
           </article>
         ) : null}
 
-        <article className="card bento-library">
-          <div className="card-heading compact">
-            <div>
-              <span className="eyebrow">用例管理</span>
-              <h2>已发现内容</h2>
-            </div>
-            <span className="soft-icon violet">
-              <BookOpenText size={19} />
-            </span>
-          </div>
-          <dl className="stat-list">
-            <div>
-              <dt>
-                <Box size={15} /> JAR 包
-              </dt>
-              <dd>{summary.sourceCount}</dd>
-            </div>
-            <div>
-              <dt>
-                <BookOpenText size={15} /> 测试类
-              </dt>
-              <dd>{summary.caseCount}</dd>
-            </div>
-            <div>
-              <dt>
-                <CheckCircle2 size={15} /> 测试方法
-              </dt>
-              <dd>{summary.methodCount}</dd>
-            </div>
+        <article className="card design-library-card">
+          <header className="design-card-heading">
+            <h2>用例库</h2>
+            <Link href="/cases">查看全部</Link>
+          </header>
+          <dl className="design-stat-list">
+            <LibraryCount icon={BookOpenText} label="用例总数" value={catalogSummary.caseCount} />
+            <LibraryCount
+              icon={CheckCircle2}
+              label="启用方法"
+              value={catalogSummary.enabledMethodCount}
+            />
+            <LibraryCount icon={Activity} label="测试方法" value={catalogSummary.methodCount} />
+            <LibraryCount icon={FileArchive} label="JAR 来源" value={catalogSummary.sourceCount} />
           </dl>
-          <Link className="text-link" href="/cases">
-            打开用例管理 <ArrowRight size={15} />
+          <Link
+            className="design-library-action"
+            href={canManageSources ? "/cases/import" : "/cases"}
+          >
+            {canManageSources ? "+ 导入新用例" : "打开用例库"}
           </Link>
         </article>
 
         {canReadRunners ? (
-          <article className="card bento-runners">
-            <div className="card-heading compact">
+          <article className="card design-runner-groups-card">
+            <header className="design-card-heading">
               <div>
-                <span className="eyebrow">执行资源</span>
-                <h2>执行机群</h2>
-              </div>
-              <span className="soft-icon green">
-                <Server size={19} />
-              </span>
-            </div>
-            <div className="runner-zero">
-              <div className="runner-orbit">
-                <Server size={28} />
-                <span>{runners.length}</span>
-              </div>
-              <div>
-                <strong>
-                  {runners.length === 0 ? "尚未注册执行机" : `${onlineRunners} 台执行机在线`}
-                </strong>
-                <p>
-                  {runners.length === 0
-                    ? "启动 Runner Agent 后会通过 HTTPS 控制协议接入。"
-                    : "心跳状态与容量信息已同步到控制台。"}
-                </p>
-              </div>
-            </div>
-            <div className="runner-summary">
-              <span>
-                <i className="dot green-dot" /> 在线 {onlineRunners}
-              </span>
-              <span>
-                <i className="dot amber-dot" /> 繁忙 {busyRunners}
-              </span>
-              <span>
-                <i className="dot gray-dot" /> 离线 {runners.length - onlineRunners}
-              </span>
-            </div>
-            <Link className="text-link" href="/runners">
-              管理执行机 <ArrowRight size={15} />
-            </Link>
-          </article>
-        ) : null}
-
-        <article className="card bento-insight">
-          <div className="card-heading compact">
-            <div>
-              <span className="eyebrow">发现质量</span>
-              <h2>导入状态</h2>
-            </div>
-            <span className="soft-icon amber">
-              <CircleDashed size={19} />
-            </span>
-          </div>
-          {summary.methodCount === 0 ? (
-            <div className="empty-state compact-empty">
-              <span className="empty-icon">
-                <FileArchive size={24} />
-              </span>
-              <strong>等待首个 JAR</strong>
-              <p>上传包含 TestNG `@Test` 注解的测试 JAR 开始构建用例资产。</p>
-            </div>
-          ) : (
-            <div className="donut-layout">
-              <div
-                className="donut"
-                style={{ "--donut-value": `${enabledRate * 3.6}deg` } as CSSProperties}
-              >
-                <span>
-                  <strong>{enabledRate}%</strong>
-                  <small>已启用</small>
+                <h2>执行机组</h2>
+                <span className="runner-health-label">
+                  <i /> 在线 {onlineRunners.length}/{runners.length}
                 </span>
               </div>
-              <div className="donut-legend">
-                <span>
-                  <i className="dot green-dot" /> 已启用 {summary.enabledMethodCount}
-                </span>
-                <span>
-                  <i className="dot gray-dot" /> 已禁用{" "}
-                  {summary.methodCount - summary.enabledMethodCount}
-                </span>
-              </div>
-            </div>
-          )}
-        </article>
-
-        {canReadSources ? (
-          <article className="card bento-recent">
-            <div className="card-heading compact">
-              <div>
-                <span className="eyebrow">最近动态</span>
-                <h2>JAR 导入记录</h2>
-              </div>
-              {recentSources.length > 0 && (
-                <Link className="text-link" href="/cases">
-                  查看全部
-                </Link>
-              )}
-            </div>
-            {recentSources.length === 0 ? (
-              <div className="empty-state compact-empty">
-                <span className="empty-icon">
-                  <FileArchive size={24} />
-                </span>
-                <strong>暂无导入记录</strong>
-                <p>导入后会在这里展示来源、类数量和扫描时间。</p>
+              <Link href="/runners?section=groups">查看全部</Link>
+            </header>
+            {runnerGroups.length === 0 ? (
+              <div className="design-empty-state compact">
+                <UsersRound size={25} />
+                <strong>尚未配置执行机组</strong>
+                <p>将执行机按机房或能力分组后，可在发起执行时整组选择。</p>
+                <Link href="/runners?section=groups">创建执行机组</Link>
               </div>
             ) : (
-              <div className="activity-list">
-                {recentSources.map((source) => (
-                  <div className="activity-row" key={source.id}>
-                    <span className="activity-icon">
-                      <FileArchive size={16} />
-                    </span>
-                    <span>
-                      <strong>{source.displayName}</strong>
-                      <small>
-                        {source.classCount} 个类 · {source.methodCount} 个方法
-                      </small>
-                    </span>
-                    <time dateTime={source.createdAt}>{formatDate(source.createdAt)}</time>
-                  </div>
+              <div className="dashboard-runner-group-grid">
+                {runnerGroups.slice(0, 6).map((group) => (
+                  <RunnerGroupCard group={group} key={group.id} runners={runners} />
                 ))}
               </div>
             )}
+            <div className="runner-total-strip">
+              <span>
+                <small>总执行机</small>
+                <strong>{runners.length}</strong>
+              </span>
+              <span>
+                <small>在线</small>
+                <strong>{onlineRunners.length}</strong>
+              </span>
+              <span>
+                <small>离线</small>
+                <strong>{runners.length - onlineRunners.length}</strong>
+              </span>
+              <span>
+                <small>可用槽位</small>
+                <strong>{availableRunnerSlots(runners)}</strong>
+              </span>
+            </div>
           </article>
         ) : null}
+
+        {canReadRuns ? (
+          <article className="card design-failure-card">
+            <header className="design-card-heading">
+              <h2>失败洞察</h2>
+              <Link href="/insights">查看全部</Link>
+            </header>
+            <div className="failure-overview">
+              <div
+                aria-label={`本周失败率 ${percent(currentAnalytics?.failureRate ?? 0)}`}
+                className="failure-donut"
+                role="img"
+                style={failureDonutStyle(currentAnalytics?.failures ?? [])}
+              >
+                <span>
+                  <strong>{currentAnalytics?.failed ?? 0}</strong>
+                  <small>失败方法</small>
+                </span>
+              </div>
+              <div className="failure-reason-list">
+                {(currentAnalytics?.failures ?? []).slice(0, 5).map((failure, index) => (
+                  <div key={failure.signature}>
+                    <i data-index={index} />
+                    <span title={failure.signature}>{failure.resultCode ?? failure.signature}</span>
+                    <strong>{failure.count}</strong>
+                  </div>
+                ))}
+                {(currentAnalytics?.failures.length ?? 0) === 0 ? (
+                  <p className="muted">本周暂无可聚类失败。</p>
+                ) : null}
+              </div>
+            </div>
+            <div className="failure-top-list">
+              <strong>高频失败 TOP 3</strong>
+              {(currentAnalytics?.failures ?? []).slice(0, 3).map((failure) => (
+                <div key={failure.signature}>
+                  <span title={failure.signature}>{failure.signature}</span>
+                  <b>{failure.count} 次</b>
+                </div>
+              ))}
+            </div>
+          </article>
+        ) : null}
+
+        <article className="card design-recent-card">
+          <header className="design-card-heading">
+            <h2>最近动态</h2>
+            <Link
+              href={canReadRuns ? "/execution-records" : canReadSources ? "/objects" : "/cases"}
+            >
+              查看全部
+            </Link>
+          </header>
+          {recentActivity.length === 0 ? (
+            <div className="design-empty-state compact">
+              <Clock3 size={25} />
+              <strong>暂无最近动态</strong>
+              <p>批次执行与用例导入会显示在这里。</p>
+            </div>
+          ) : (
+            <div className="design-activity-list">
+              {recentActivity.slice(0, 5).map((item) => (
+                <Link href={item.href} key={`${item.kind}:${item.id}`}>
+                  <span className={`design-activity-icon ${item.tone}`}>
+                    {item.tone === "success" ? (
+                      <CheckCircle2 size={16} />
+                    ) : item.tone === "danger" ? (
+                      <XCircle size={16} />
+                    ) : item.tone === "warning" ? (
+                      <AlertTriangle size={16} />
+                    ) : item.kind === "source" ? (
+                      <FileArchive size={16} />
+                    ) : (
+                      <Activity size={16} />
+                    )}
+                  </span>
+                  <span>
+                    <strong>{item.title}</strong>
+                    <small>{item.detail}</small>
+                  </span>
+                  <time dateTime={item.at}>{formatDate(item.at)}</time>
+                </Link>
+              ))}
+            </div>
+          )}
+        </article>
       </section>
     </div>
   );
+}
+
+function QualityTrend({ analytics }: { analytics: AnalyticsSummary | null }) {
+  const trend = analytics?.trend ?? [];
+  if (trend.length === 0) return <div className="quality-chart-empty">暂无趋势数据</div>;
+  const points = trend.map((bucket, index) => {
+    const samples = bucket.passed + bucket.failed + bucket.skipped;
+    const rate = samples === 0 ? 0 : (bucket.passed / samples) * 100;
+    const x = trend.length === 1 ? 300 : 20 + (index / (trend.length - 1)) * 560;
+    const y = 155 - rate * 1.25;
+    return { x, y, label: bucket.bucket.slice(5, 10), rate };
+  });
+  const polyline = points.map(({ x, y }) => `${x},${y}`).join(" ");
+  const area = `20,165 ${polyline} 580,165`;
+  return (
+    <div className="quality-trend-chart" role="img" aria-label="最近七天通过率趋势">
+      <svg aria-hidden="true" viewBox="0 0 600 175">
+        {[40, 80, 120, 160].map((y) => (
+          <line key={y} x1="20" x2="580" y1={y} y2={y} />
+        ))}
+        <polygon points={area} />
+        <polyline points={polyline} />
+        {points.map((point) => (
+          <circle cx={point.x} cy={point.y} key={point.label} r="4" />
+        ))}
+      </svg>
+      <div>
+        {points.map((point) => (
+          <span key={point.label} title={`${point.rate.toFixed(1)}%`}>
+            {point.label}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function DashboardMetric({
+  label,
+  value,
+  detail,
+  tone,
+}: {
+  label: string;
+  value: string | number;
+  detail: string;
+  tone: "info" | "success" | "danger" | "warning";
+}) {
+  return (
+    <span>
+      <small>{label}</small>
+      <strong>{value}</strong>
+      <em className={`metric-tone-${tone}`}>{detail}</em>
+    </span>
+  );
+}
+
+function ActiveCount({ color, label, value }: { color: string; label: string; value: number }) {
+  return (
+    <div>
+      <dt>
+        <i className={`active-color-${color}`} /> {label}
+      </dt>
+      <dd>{value}</dd>
+    </div>
+  );
+}
+
+function LibraryCount({
+  icon: Icon,
+  label,
+  value,
+}: {
+  icon: typeof BookOpenText;
+  label: string;
+  value: number;
+}) {
+  return (
+    <div>
+      <dt>
+        <span>
+          <Icon size={15} />
+        </span>
+        {label}
+      </dt>
+      <dd>{value.toLocaleString("zh-CN")}</dd>
+    </div>
+  );
+}
+
+function RunnerGroupCard({ group, runners }: { group: RunnerGroup; runners: readonly Runner[] }) {
+  const members = runners.filter((runner) => group.runnerIds.includes(runner.id));
+  const totalSlots = members.reduce((sum, runner) => sum + runner.maxConcurrency, 0);
+  const availableSlots = members
+    .filter((runner) => runner.state === "online")
+    .reduce((sum, runner) => sum + Math.max(0, runner.maxConcurrency - runner.busySlots), 0);
+  const availablePercent = totalSlots === 0 ? 0 : Math.round((availableSlots / totalSlots) * 100);
+  return (
+    <Link href="/runners?section=groups">
+      <span>
+        <strong>{group.name}</strong>
+        <i className={members.some((runner) => runner.state === "online") ? "online" : "offline"} />
+      </span>
+      <span>
+        {availableSlots} / {totalSlots} 槽位 <b>{availablePercent}%</b>
+      </span>
+      <em>
+        <i style={{ width: `${availablePercent}%` }} />
+      </em>
+    </Link>
+  );
+}
+
+type RecentActivity = {
+  id: string;
+  kind: "batch" | "source";
+  title: string;
+  detail: string;
+  at: string;
+  href: string;
+  tone: "success" | "danger" | "warning" | "info";
+};
+
+function buildRecentActivity(
+  batches: readonly RunBatch[],
+  sources: readonly {
+    id: string;
+    displayName: string;
+    classCount: number;
+    methodCount: number;
+    createdAt: string;
+  }[],
+): RecentActivity[] {
+  return [
+    ...batches.map((batch): RecentActivity => ({
+      id: batch.id,
+      kind: "batch",
+      title:
+        batch.status === "succeeded"
+          ? `执行完成 · ${batch.suiteName}`
+          : batch.status === "failed"
+            ? `执行失败 · ${batch.suiteName}`
+            : `执行${runBatchStatusLabel(batch.status)} · ${batch.suiteName}`,
+      detail: `通过 ${batch.succeededRuns} / ${batch.totalRuns} · 失败 ${batch.failedRuns + batch.timedOutRuns}`,
+      at: batch.updatedAt,
+      href: `/run-batches/${batch.id}`,
+      tone:
+        batch.status === "succeeded"
+          ? "success"
+          : batch.status === "failed"
+            ? "danger"
+            : isActiveRunBatch(batch.status)
+              ? "info"
+              : "warning",
+    })),
+    ...sources.map((source): RecentActivity => ({
+      id: source.id,
+      kind: "source",
+      title: `导入用例 · ${source.displayName}`,
+      detail: `${source.classCount} 个测试类 · ${source.methodCount} 个方法`,
+      at: source.createdAt,
+      href: `/case-sources/${source.id}`,
+      tone: "info",
+    })),
+  ].sort((left, right) => right.at.localeCompare(left.at));
+}
+
+function availableRunnerSlots(runners: readonly Runner[]): number {
+  return runners
+    .filter((runner) => runner.state === "online")
+    .reduce((sum, runner) => sum + Math.max(0, runner.maxConcurrency - runner.busySlots), 0);
+}
+
+function activeRunDonutStyle(batch: RunBatch): CSSProperties {
+  return {
+    background: conicGradient(
+      [
+        { count: batch.runningRuns, color: "var(--color-info)" },
+        { count: batch.succeededRuns, color: "var(--color-success)" },
+        { count: batch.failedRuns + batch.timedOutRuns, color: "var(--color-danger)" },
+        { count: batch.queuedRuns, color: "var(--color-violet)" },
+      ],
+      batch.totalRuns,
+      "#e8eef6",
+    ),
+  };
+}
+
+function failureDonutStyle(failures: AnalyticsSummary["failures"]): CSSProperties {
+  const palette = [
+    "var(--color-danger)",
+    "#ff9f0a",
+    "#ffcc00",
+    "var(--color-violet)",
+    "var(--color-text-tertiary)",
+  ];
+  const segments = failures.slice(0, palette.length).map((failure, index) => ({
+    count: failure.count,
+    color: palette[index]!,
+  }));
+  return {
+    background: conicGradient(
+      segments,
+      segments.reduce((total, segment) => total + segment.count, 0),
+      "#ebedf0",
+    ),
+  };
+}
+
+function conicGradient(
+  segments: ReadonlyArray<{ count: number; color: string }>,
+  total: number,
+  remainderColor: string,
+): string {
+  if (total <= 0) return remainderColor;
+  let cursor = 0;
+  const stops = segments.flatMap((segment) => {
+    if (segment.count <= 0) return [];
+    const start = cursor;
+    cursor = Math.min(360, cursor + (segment.count / total) * 360);
+    return `${segment.color} ${start.toFixed(2)}deg ${cursor.toFixed(2)}deg`;
+  });
+  if (cursor < 360) stops.push(`${remainderColor} ${cursor.toFixed(2)}deg 360deg`);
+  return stops.length > 0 ? `conic-gradient(${stops.join(", ")})` : remainderColor;
+}
+
+function greeting(now: Date): string {
+  const hour = now.getHours();
+  if (hour < 11) return "早上好";
+  if (hour < 14) return "中午好";
+  if (hour < 18) return "下午好";
+  return "晚上好";
+}
+
+function percent(rate: number): string {
+  return `${(rate * 100).toFixed(1)}%`;
+}
+
+function formatDate(value: string): string {
+  return new Intl.DateTimeFormat("zh-CN", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(new Date(value));
 }

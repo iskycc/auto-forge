@@ -8,6 +8,7 @@ import {
   type ExecutionEnvironmentDetails,
   type RunBatch,
   type Runner,
+  type RunnerGroup,
 } from "@autoforge/domain";
 import type { RunBatchPreflightResult } from "@autoforge/contracts";
 import { Activity, Check, Cpu, MemoryStick, Plus, RefreshCw, Trash2 } from "lucide-react";
@@ -29,17 +30,21 @@ export function RunBatchPlanner({
   canCreate,
   initialSuites,
   initialRunners,
+  initialRunnerGroups,
   initialEnvironments,
   policy,
 }: {
   canCreate: boolean;
   initialSuites: CaseSuite[];
   initialRunners: Runner[];
+  initialRunnerGroups: RunnerGroup[];
   initialEnvironments: ExecutionEnvironmentDetails[];
   policy: SchedulerPolicy;
 }) {
   const [suiteId, setSuiteId] = useState(initialSuites[0]?.id ?? "");
   const [runnerIds, setRunnerIds] = useState<string[]>([]);
+  const [runnerSelectionKind, setRunnerSelectionKind] = useState<"runners" | "group">("runners");
+  const [runnerGroupId, setRunnerGroupId] = useState("");
   const [retryLimit, setRetryLimit] = useState<number | "">("");
   const [retryMode, setRetryMode] = useState<"" | "immediate" | "round">("");
   const [environmentVersionId, setEnvironmentVersionId] = useState("");
@@ -68,8 +73,12 @@ export function RunBatchPlanner({
     event.preventDefault();
     setError("");
     setPreflightBlockers([]);
-    if (!selectedSuite || runnerIds.length === 0) {
-      setError("请选择用例任务和至少一台执行机。");
+    if (
+      !selectedSuite ||
+      (runnerSelectionKind === "runners" && runnerIds.length === 0) ||
+      (runnerSelectionKind === "group" && !runnerGroupId)
+    ) {
+      setError("请选择用例任务和执行机，或选择一个执行机组。");
       return;
     }
     const environmentVariables = environmentVersionId
@@ -82,7 +91,8 @@ export function RunBatchPlanner({
       const requestBody = {
         suiteId,
         projectId: selectedSuite.projectId,
-        runnerIds,
+        runnerIds: runnerSelectionKind === "runners" ? runnerIds : [],
+        ...(runnerSelectionKind === "group" ? { runnerGroupId } : {}),
         ...(retryLimit === "" ? {} : { retryLimit }),
         ...(retryMode === "" ? {} : { retryMode }),
         ...(environmentVersionId
@@ -185,63 +195,99 @@ export function RunBatchPlanner({
           <div className="section-heading scheduler-step">
             <div>
               <span className="step-label">02</span>
-              <h2>勾选执行机</h2>
+              <h2>选择执行资源</h2>
             </div>
-            <span className="muted">已选 {runnerIds.length} 台</span>
+            <span className="muted">
+              {runnerSelectionKind === "runners" ? `已选 ${runnerIds.length} 台` : "使用执行机组"}
+            </span>
           </div>
-          <div className="runner-choice-grid">
-            {initialRunners.length === 0 ? (
-              <div className="inline-empty">暂无执行机，请先注册 Runner Agent。</div>
-            ) : (
-              initialRunners.map((runner) => {
-                const metrics = runner.resourceSnapshot;
-                const selected = runnerIds.includes(runner.id);
-                const compatibility = assessRunnerCompatibility(runner);
-                const unavailable = runner.state === "disabled" || !compatibility.compatible;
-                return (
-                  <label
-                    className={`runner-choice ${selected ? "runner-choice-selected" : ""} ${unavailable ? "runner-choice-disabled" : ""}`}
-                    key={runner.id}
-                    title={runnerCompatibilitySummary(compatibility)}
-                  >
-                    <Input
-                      type="checkbox"
-                      checked={selected}
-                      disabled={unavailable}
-                      onChange={() => toggleRunner(runner.id)}
-                    />
-                    <span className="runner-choice-title">
-                      <strong>{runner.name}</strong>
-                      <small className={`runner-state runner-state-${runner.state}`}>
-                        <i /> {stateLabel(runner.state)}
-                      </small>
-                    </span>
-                    <span className="runner-choice-metrics">
-                      <small>
-                        <Cpu size={13} /> CPU{" "}
-                        {metrics ? `${metrics.cpuUtilizationPercent}%` : "待上报"}
-                      </small>
-                      <small>
-                        <MemoryStick size={13} /> 内存{" "}
-                        {metrics ? `${metrics.memoryUtilizationPercent}%` : "待上报"}
-                      </small>
-                      <small>
-                        <Activity size={13} /> 负载{" "}
-                        {metrics
-                          ? (metrics.loadAverage1m / metrics.logicalCpuCount).toFixed(2)
-                          : "待上报"}
-                        {metrics ? "/CPU" : ""}
-                      </small>
-                    </span>
-                    <span className="runner-choice-capacity">
-                      槽位 {runner.busySlots}/{runner.maxConcurrency} ·{" "}
-                      {runnerCompatibilityLabel(compatibility.status)}
-                    </span>
-                  </label>
-                );
-              })
-            )}
+          <div className="resource-mode-grid legacy-resource-mode">
+            <Button
+              aria-pressed={runnerSelectionKind === "runners"}
+              onClick={() => setRunnerSelectionKind("runners")}
+              type="button"
+            >
+              指定执行机
+            </Button>
+            <Button
+              aria-pressed={runnerSelectionKind === "group"}
+              onClick={() => setRunnerSelectionKind("group")}
+              type="button"
+            >
+              使用执行机组
+            </Button>
           </div>
+          {runnerSelectionKind === "runners" ? (
+            <div className="runner-choice-grid">
+              {initialRunners.length === 0 ? (
+                <div className="inline-empty">暂无执行机，请先注册 Runner Agent。</div>
+              ) : (
+                initialRunners.map((runner) => {
+                  const metrics = runner.resourceSnapshot;
+                  const selected = runnerIds.includes(runner.id);
+                  const compatibility = assessRunnerCompatibility(runner);
+                  const unavailable = runner.state === "disabled" || !compatibility.compatible;
+                  return (
+                    <label
+                      className={`runner-choice ${selected ? "runner-choice-selected" : ""} ${unavailable ? "runner-choice-disabled" : ""}`}
+                      key={runner.id}
+                      title={runnerCompatibilitySummary(compatibility)}
+                    >
+                      <Input
+                        type="checkbox"
+                        checked={selected}
+                        disabled={unavailable}
+                        onChange={() => toggleRunner(runner.id)}
+                      />
+                      <span className="runner-choice-title">
+                        <strong>{runner.name}</strong>
+                        <small className={`runner-state runner-state-${runner.state}`}>
+                          <i /> {stateLabel(runner.state)}
+                        </small>
+                      </span>
+                      <span className="runner-choice-metrics">
+                        <small>
+                          <Cpu size={13} /> CPU{" "}
+                          {metrics ? `${metrics.cpuUtilizationPercent}%` : "待上报"}
+                        </small>
+                        <small>
+                          <MemoryStick size={13} /> 内存{" "}
+                          {metrics ? `${metrics.memoryUtilizationPercent}%` : "待上报"}
+                        </small>
+                        <small>
+                          <Activity size={13} /> 负载{" "}
+                          {metrics
+                            ? (metrics.loadAverage1m / metrics.logicalCpuCount).toFixed(2)
+                            : "待上报"}
+                          {metrics ? "/CPU" : ""}
+                        </small>
+                      </span>
+                      <span className="runner-choice-capacity">
+                        槽位 {runner.busySlots}/{runner.maxConcurrency} ·{" "}
+                        {runnerCompatibilityLabel(compatibility.status)}
+                      </span>
+                    </label>
+                  );
+                })
+              )}
+            </div>
+          ) : (
+            <label className="field-stack">
+              <span>执行机组</span>
+              <Select
+                aria-label="执行机组"
+                onChange={(event) => setRunnerGroupId(event.target.value)}
+                value={runnerGroupId}
+              >
+                <option value="">请选择执行机组</option>
+                {initialRunnerGroups.map((group) => (
+                  <option disabled={group.runnerIds.length === 0} key={group.id} value={group.id}>
+                    {group.name} · {group.runnerIds.length} 台执行机
+                  </option>
+                ))}
+              </Select>
+            </label>
+          )}
 
           <div className="form-grid scheduler-step">
             <label className="field-stack">

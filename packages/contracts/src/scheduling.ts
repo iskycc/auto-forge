@@ -1,11 +1,13 @@
 import { z } from "zod";
 
 import { executionEnvironmentVariableSchema } from "./environment";
+import { caseSuiteAdapterConfigurationSchema } from "./management";
 
 const executionInputFields = {
   projectId: z.string().min(1).max(128).optional(),
   environmentVersionId: z.string().min(1).max(128).optional(),
-  runnerIds: z.array(z.string().min(1).max(128)).min(1).max(64),
+  runnerIds: z.array(z.string().min(1).max(128)).max(64).default([]),
+  runnerGroupId: z.string().min(1).max(128).optional(),
   // 优先级、重试与排队/执行超时允许缺省，创建时按“输入 ?? 任务策略 ?? 系统默认”合并。
   retryLimit: z.number().int().min(0).max(10).optional(),
   retryMode: z.enum(["immediate", "round"]).optional(),
@@ -20,11 +22,21 @@ const executionInputFields = {
 function validateExecutionInput(
   value: {
     runnerIds: string[];
+    runnerGroupId?: string | undefined;
     environmentVersionId?: string | undefined;
     environmentVariables: Array<{ name: string }>;
   },
   context: z.RefinementCtx,
 ): void {
+  const hasDirectRunnerSelection = value.runnerIds.length > 0;
+  const hasRunnerGroupSelection = Boolean(value.runnerGroupId);
+  if (hasDirectRunnerSelection === hasRunnerGroupSelection) {
+    context.addIssue({
+      code: "custom",
+      path: ["runnerIds"],
+      message: "必须且只能选择执行机或执行机组中的一种。",
+    });
+  }
   if (new Set(value.runnerIds).size !== value.runnerIds.length) {
     context.addIssue({
       code: "custom",
@@ -60,8 +72,38 @@ export const createSingleCaseRunInputSchema = z
     ...executionInputFields,
     parameters: z.record(z.string().min(1).max(128), z.string().max(1_024)).default({}),
     artifactPatterns: z.array(z.string().min(1).max(256)).max(32).default([]),
+    adapter: caseSuiteAdapterConfigurationSchema.default({
+      enabled: false,
+      suiteName: "",
+      testName: "",
+      environmentAddresses: [],
+    }),
   })
-  .superRefine(validateExecutionInput);
+  .superRefine((value, context) => {
+    validateExecutionInput(value, context);
+    if (!value.adapter.enabled) return;
+    if (!value.adapter.suiteName) {
+      context.addIssue({
+        code: "custom",
+        path: ["adapter", "suiteName"],
+        message: "启用 Adapter 时必须填写 Suite Name。",
+      });
+    }
+    if (!value.adapter.testName) {
+      context.addIssue({
+        code: "custom",
+        path: ["adapter", "testName"],
+        message: "启用 Adapter 时必须填写 Test Name。",
+      });
+    }
+    if (value.adapter.environmentAddresses.length === 0) {
+      context.addIssue({
+        code: "custom",
+        path: ["adapter", "environmentAddresses"],
+        message: "启用 Adapter 时必须填写至少一个执行环境 IP 或地址。",
+      });
+    }
+  });
 
 export type CreateSingleCaseRunInput = z.input<typeof createSingleCaseRunInputSchema>;
 

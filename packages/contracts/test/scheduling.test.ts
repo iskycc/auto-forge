@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { createRunBatchInputSchema, runBatchPreflightResultSchema } from "../src/scheduling";
+import {
+  createRunBatchInputSchema,
+  createSingleCaseRunInputSchema,
+  runBatchPreflightResultSchema,
+} from "../src/scheduling";
 
 describe("createRunBatchInputSchema", () => {
   it("accepts bounded environment variables and keeps policy-backed fields omittable", () => {
@@ -42,6 +46,41 @@ describe("createRunBatchInputSchema", () => {
         runnerIds: ["runner-1"],
         retryLimit: 0,
         queueTimeoutMs: 999,
+      }),
+    ).toThrow();
+  });
+
+  it("accepts exactly one resource selection mode", () => {
+    expect(
+      createRunBatchInputSchema.parse({ suiteId: "suite-1", runnerGroupId: "group-1" }),
+    ).toMatchObject({ runnerIds: [], runnerGroupId: "group-1" });
+    for (const resourceSelection of [{}, { runnerIds: ["runner-1"], runnerGroupId: "group-1" }]) {
+      expect(() =>
+        createRunBatchInputSchema.parse({ suiteId: "suite-1", ...resourceSelection }),
+      ).toThrow();
+    }
+  });
+
+  it("requires and preserves Adapter environment addresses for a single case", () => {
+    const parsed = createSingleCaseRunInputSchema.parse({
+      runnerIds: ["runner-1"],
+      adapter: {
+        enabled: true,
+        suiteName: "IP Suite",
+        testName: "IP Test",
+        environmentAddresses: ["10.0.0.21"],
+      },
+    });
+    expect(parsed.adapter.environmentAddresses).toEqual(["10.0.0.21"]);
+    expect(() =>
+      createSingleCaseRunInputSchema.parse({
+        runnerIds: ["runner-1"],
+        adapter: {
+          enabled: true,
+          suiteName: "IP Suite",
+          testName: "IP Test",
+          environmentAddresses: [],
+        },
       }),
     ).toThrow();
   });

@@ -546,6 +546,37 @@ export const pgRunnerBootstrapUses = pgTable("runner_bootstrap_uses", {
   usedAt: text("used_at").notNull(),
 });
 
+export const pgRunnerGroups = pgTable(
+  "runner_groups",
+  {
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    normalizedName: text("normalized_name").notNull(),
+    description: text("description").notNull().default(""),
+    revision: integer("revision").notNull().default(1),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [uniqueIndex("runner_groups_normalized_name_uq").on(table.normalizedName)],
+);
+
+export const pgRunnerGroupMembers = pgTable(
+  "runner_group_members",
+  {
+    groupId: text("group_id")
+      .notNull()
+      .references(() => pgRunnerGroups.id, { onDelete: "cascade" }),
+    runnerId: text("runner_id")
+      .notNull()
+      .references(() => pgRunners.id, { onDelete: "cascade" }),
+    addedAt: text("added_at").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.groupId, table.runnerId] }),
+    index("runner_group_members_runner_idx").on(table.runnerId, table.groupId),
+  ],
+);
+
 export const pgExecutionEnvironments = pgTable(
   "execution_environments",
   {
@@ -1240,6 +1271,8 @@ export const postgresSchema = {
   caseSuiteItems: pgCaseSuiteItems,
   runners: pgRunners,
   runnerBootstrapUses: pgRunnerBootstrapUses,
+  runnerGroups: pgRunnerGroups,
+  runnerGroupMembers: pgRunnerGroupMembers,
   executionEnvironments: pgExecutionEnvironments,
   executionEnvironmentVersions: pgExecutionEnvironmentVersions,
   executionSecrets: pgExecutionSecrets,

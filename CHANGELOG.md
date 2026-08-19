@@ -6,6 +6,25 @@ and known limitations.
 
 ## Unreleased
 
+### Added
+
+- Added persistent Runner Groups for Lite/SQLite and Full/PostgreSQL, including optimistic updates,
+  member management, dual-adapter contract tests and immutable member snapshots when an execution
+  batch is created. Both suite and single-case execution can select either direct Runners or one
+  Runner Group.
+- Added a global “开始执行” dialog to the top bar on every authorized page. It supports suite and
+  single-case execution, managed or inline environments, Runner Groups, retry policy, parameter
+  overrides and CoTest Adapter Suite/Test/environment addresses.
+- Added `Design.md` as the implementation-facing UI review and information-architecture guide.
+
+### Changed
+
+- Rebuilt the authenticated homepage around the six sections from the approved dashboard design:
+  weekly quality, active execution, case library, Runner Groups, failure insight and recent
+  activity. Empty states use real product actions instead of placeholder metrics.
+- Removed the standalone batch planner from primary navigation and regrouped administration into
+  project collaboration, identity/access, execution configuration and platform operations.
+
 ### Fixed
 
 - Execution failure descriptions now preserve the complete multiline UTF-8 adapter summary instead
@@ -19,12 +38,23 @@ and known limitations.
 - Completed attempt rows no longer expose cancellation actions merely because their execution run is
   queued for a later retry. Execution detail tables use compact fixed layouts with 70th-percentile
   content widths so isolated long values wrap without stretching the whole column.
+- Single-case execution now resolves the case's actual project instead of silently falling back to
+  the default project, schedules through the shared batch state machine, and persists Adapter
+  environment IP/address settings into the immutable execution specification.
 
 ### Tests
 
 - Added multiline/long/Chinese failure-summary coverage across Adapter, control plane, UI and public
   log views, plus live round aggregation, retry eligibility, compact layout and terminal-row action
   E2E coverage. The existing all-rounds scenario is now part of the GitHub Actions browser matrix.
+- Added a Lite browser scenario that creates a Runner Group, starts one case through the global
+  dialog and verifies the claimed assignment contains the selected Runner, parameters and Adapter
+  environment address.
+
+### Database
+
+- SQLite migration `0032_runner_groups.sql` and PostgreSQL migration `0031_runner_groups.sql` add
+  `runner_groups` and `runner_group_members`. Existing execution data is unchanged.
 
 ### Compatibility
 

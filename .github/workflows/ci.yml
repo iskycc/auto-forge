@@ -85,6 +85,7 @@ jobs:
           - platform-operations
           - project-isolation
           - scheduling-refill
+          - single-case-run
           - ui-layout
     steps:
       - name: Check out source
@@ -108,8 +109,17 @@ jobs:
       - name: Run isolated Lite browser scenario
         env:
           AUTOFORGE_E2E_DATA_DIR: ${{ runner.temp }}/autoforge-${{ matrix.scenario }}
+          AUTOFORGE_UI_SCREENSHOT_DIR: ${{ matrix.scenario == 'ui-layout' && format('{0}/autoforge-ui-screenshots', runner.temp) || '' }}
           E2E_PROJECT_MAXIMUM_CONCURRENCY: ${{ matrix.scenario == 'execution-recovery' && '1' || '' }}
         run: pnpm exec playwright test "tests/e2e/${{ matrix.scenario }}.spec.ts"
+      - name: Upload serial UI screenshots
+        if: always() && matrix.scenario == 'ui-layout'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ui-layout-screenshots-${{ github.sha }}
+          path: ${{ runner.temp }}/autoforge-ui-screenshots
+          if-no-files-found: warn
+          retention-days: 7
       - name: Upload browser trace on failure
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

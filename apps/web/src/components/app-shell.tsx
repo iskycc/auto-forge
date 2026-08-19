@@ -14,7 +14,6 @@ import {
   KeySquare,
   Landmark,
   Network,
-  PlayCircle,
   Server,
   FolderOpen,
   Layers3,
@@ -33,6 +32,7 @@ import { useState, type ReactNode } from "react";
 import { LogoutButton } from "./logout-button";
 import { TopbarTools } from "./topbar-tools";
 import { Button } from "./ui";
+import { GlobalRunDialog } from "./global-run-dialog";
 
 type NavigationItem = {
   label: string;
@@ -49,13 +49,19 @@ type NavigationItem = {
 };
 
 const navigation: NavigationItem[] = [
-  { label: "工作概览", href: "/", icon: Home, permission: "case.read" },
-  { label: "用例管理", href: "/cases", icon: BookOpenText, permission: "case.read" },
+  { label: "首页", href: "/", icon: Home, permission: "case.read" },
+  { label: "用例库", href: "/cases", icon: BookOpenText, permission: "case.read" },
   { label: "用例任务", href: "/case-suites", icon: Layers3, permission: "case_suite.read" },
-  { label: "用例批跑", href: "/run-batches", icon: PlayCircle, permission: "run.read" },
   { label: "执行记录", href: "/execution-records", icon: ClipboardList, permission: "run.read" },
-  { label: "执行节点", href: "/runners", icon: Server, permission: "runner.read" },
-  { label: "质量洞察", href: "/insights", icon: BarChart3, permission: "run.read" },
+  {
+    label: "执行机",
+    href: "/runners",
+    icon: Server,
+    permission: "runner.read",
+    section: "runners",
+    defaultSection: "runners",
+  },
+  { label: "洞察", href: "/insights", icon: BarChart3, permission: "run.read" },
 ];
 
 type AdministrationGroup = {
@@ -67,11 +73,26 @@ type AdministrationGroup = {
 
 const administrationGroups: AdministrationGroup[] = [
   {
-    id: "projects-access",
-    label: "项目与权限",
+    id: "project-collaboration",
+    label: "项目协作",
     icon: Landmark,
     items: [
       { label: "项目管理", href: "/settings/projects", icon: Landmark, permission: "project.read" },
+      {
+        label: "项目角色",
+        href: "/settings/access?section=projects",
+        icon: KeySquare,
+        anyPermissions: ["settings.read", "user.read", "role.read"],
+        activePrefixes: ["/settings/access"],
+        section: "projects",
+      },
+    ],
+  },
+  {
+    id: "identity-access",
+    label: "身份与访问",
+    icon: ShieldCheck,
+    items: [
       {
         label: "用户管理",
         href: "/settings/access?section=users",
@@ -88,14 +109,6 @@ const administrationGroups: AdministrationGroup[] = [
         anyPermissions: ["settings.read", "role.read"],
         activePrefixes: ["/settings/access"],
         section: "roles",
-      },
-      {
-        label: "项目角色",
-        href: "/settings/access?section=projects",
-        icon: KeySquare,
-        anyPermissions: ["settings.read", "user.read", "role.read"],
-        activePrefixes: ["/settings/access"],
-        section: "projects",
       },
       {
         label: "目录配置",
@@ -116,19 +129,24 @@ const administrationGroups: AdministrationGroup[] = [
     ],
   },
   {
-    id: "execution-platform",
-    label: "执行与平台",
-    icon: FileCog,
+    id: "execution-configuration",
+    label: "执行配置",
+    icon: Boxes,
     items: [
       {
-        label: "运维审计",
+        label: "自动化任务",
         href: "/settings/automation",
-        fallbackHref: "/audit",
-        fallbackLabel: "安全审计",
-        icon: ShieldCheck,
-        anyPermissions: ["case_suite.read", "ldap.read", "audit.read"],
-        preferredPermissions: ["case_suite.read", "ldap.read"],
-        activePrefixes: ["/settings/automation", "/audit"],
+        icon: FileCog,
+        anyPermissions: ["case_suite.read", "ldap.read"],
+        activePrefixes: ["/settings/automation"],
+      },
+      {
+        label: "执行机组",
+        href: "/runners?section=groups",
+        icon: Server,
+        permission: "runner.read",
+        activePrefixes: ["/runners"],
+        section: "groups",
       },
       {
         label: "执行环境",
@@ -146,6 +164,19 @@ const administrationGroups: AdministrationGroup[] = [
         permission: "secret.manage",
         activePrefixes: ["/settings/environments"],
         section: "secrets",
+      },
+    ],
+  },
+  {
+    id: "platform-operations",
+    label: "平台运维",
+    icon: FileCog,
+    items: [
+      {
+        label: "安全审计",
+        href: "/audit",
+        icon: ShieldCheck,
+        permission: "audit.read",
       },
       {
         label: "平台配置",
@@ -239,13 +270,9 @@ export function AppShell({
 }) {
   const pathname = usePathname();
   const currentSection = useSearchParams().get("section");
-  // 批次详情页归属执行记录：/run-batches 是用例批跑规划页，/run-batches/[id] 是执行详情，
-  // 其返回链接也指向执行记录，因此详情页激活“执行记录”而不是“用例批跑”。
+  // 保留 /run-batches/[id] 详情路由，但所有批次入口统一归属“执行记录”。
   const batchDetailPath = pathname.startsWith("/run-batches/");
   const primaryItemIsActive = (item: NavigationItem): boolean => {
-    if (item.href === "/run-batches") {
-      return !batchDetailPath && isActive(pathname, currentSection, item);
-    }
     if (item.href === "/execution-records") {
       return batchDetailPath || isActive(pathname, currentSection, item);
     }
@@ -389,6 +416,7 @@ export function AppShell({
         <header className="topbar">
           {forcePasswordChange ? <span /> : <TopbarTools />}
           <div className="topbar-actions">
+            {!forcePasswordChange ? <GlobalRunDialog enabled={granted.has("run.create")} /> : null}
             {!forcePasswordChange && granted.has("case_source.manage") ? (
               <>
                 <Link className="icon-button" href="/cases/import" aria-label="JAR 导入帮助">

@@ -9,6 +9,7 @@ export * from "./sqlite-execution-environment";
 export * from "./sqlite-execution-secret";
 export * from "./sqlite-run-batch";
 export * from "./sqlite-runner";
+export * from "./sqlite-runner-group";
 export * from "./sqlite-platform-statistics";
 export * from "./sqlite-platform-operations";
 export * from "./sqlite-project-structure";

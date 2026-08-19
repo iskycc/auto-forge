@@ -4,7 +4,7 @@ import { Button, Input, Select } from "@/components/ui";
 import { formatMethodSignature } from "@/lib/jvm-signature";
 
 import { apiErrorSchema } from "@autoforge/contracts";
-import type { CaseDefinitionWithMethods, CaseSuite, CaseVersion, Runner } from "@autoforge/domain";
+import type { CaseDefinitionWithMethods, CaseSuite, CaseVersion } from "@autoforge/domain";
 import { AlertCircle, Check, FileCode2, Folder, Layers3, LoaderCircle, Search } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
@@ -12,7 +12,7 @@ import { useEffect, useMemo, useState } from "react";
 import { CaseDefinitionEditor } from "./case-definition-editor";
 import { CaseImportDialog } from "./case-import-dialog";
 import { CaseVersionHistory } from "./case-version-history";
-import { SingleCaseRun } from "./single-case-run";
+import { OpenRunDialogButton } from "./global-run-dialog";
 import { StatusBadge } from "./status-badge";
 import {
   computeSelectionStats,
@@ -52,7 +52,6 @@ type CaseWorkspaceDetail = {
   projectVersionName: string;
   testStageName: string;
   executable: boolean;
-  runners: Runner[];
   canManage: boolean;
   canRun: boolean;
   canReadSource: boolean;
@@ -451,7 +450,13 @@ function CaseInspector({
       {detail.canRun && definition.enabled && !definition.archived && detail.executable ? (
         <details className="case-inspector-section">
           <summary>立即执行</summary>
-          <SingleCaseRun caseDefinitionId={definition.id} runners={detail.runners} />
+          <div className="case-inspector-run-action">
+            <p>通过全局执行弹窗配置执行机、执行机组、环境、参数和 Adapter 地址。</p>
+            <OpenRunDialogButton
+              caseDefinitionId={definition.id}
+              className="button button-primary"
+            />
+          </div>
         </details>
       ) : null}
 

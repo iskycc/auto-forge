@@ -11,6 +11,8 @@ import { RunnerAdminActions } from "@/components/runner-admin-actions";
 import { RunnerAgentInstaller } from "@/components/runner-agent-installer";
 import { RunnerTerminal } from "@/components/runner-terminal";
 import { RunnerUpdateDialog } from "@/components/runner-update-dialog";
+import { RunnerGroupManager } from "@/components/runner-group-manager";
+import { SectionTabs } from "@/components/section-tabs";
 import { getPlatformServices } from "@/lib/services";
 import { requirePagePermission } from "@/lib/auth";
 import {
@@ -32,11 +34,42 @@ function formatDate(value: string): string {
   }).format(new Date(value));
 }
 
-export default async function RunnersPage() {
+export default async function RunnersPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
   const identity = await requirePagePermission("runner.read");
   const canManage = hasPermission(identity, "runner.manage");
   const services = await getPlatformServices();
-  const runners = await services.runnerControl.list(500);
+  const parameters = await searchParams;
+  const activeSection = parameters.section === "groups" ? "groups" : "runners";
+  const [runners, runnerGroups] = await Promise.all([
+    services.runnerControl.list(500),
+    services.runnerGroups.list(),
+  ]);
+  if (activeSection === "groups") {
+    return (
+      <div className="page-stack">
+        <section className="page-hero">
+          <div>
+            <span className="eyebrow">Runner Groups</span>
+            <h1>执行机组</h1>
+            <p>按机房、网络或能力组合执行机；发起任务批跑和单用例执行时可直接选择整组。</p>
+          </div>
+          <span className="storage-pill">{runnerGroups.length} 个资源组</span>
+        </section>
+        <SectionTabs
+          label="执行资源视图"
+          tabs={[
+            { href: "/runners", label: "执行机", active: false },
+            { href: "/runners?section=groups", label: "执行机组", active: true },
+          ]}
+        />
+        <RunnerGroupManager canManage={canManage} initialGroups={runnerGroups} runners={runners} />
+      </div>
+    );
+  }
   let recentBatches: Awaited<ReturnType<typeof services.runBatches.listPage>>["items"] = [];
   try {
     const projectIds = services.identityAccess.projectScope(identity, "run.read");
@@ -72,6 +105,13 @@ export default async function RunnersPage() {
           <span className="live-dot" /> 在线 {onlineCount} / {runners.length}
         </span>
       </section>
+      <SectionTabs
+        label="执行资源视图"
+        tabs={[
+          { href: "/runners", label: "执行机", active: true },
+          { href: "/runners?section=groups", label: "执行机组", active: false },
+        ]}
+      />
       {canManage ? (
         <RunnerAgentInstaller controlPlaneUrl={services.config.web.publicBaseUrl} />
       ) : null}

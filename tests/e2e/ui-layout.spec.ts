@@ -10,8 +10,9 @@ const primaryRoutes = [
   "/cases",
   "/case-suites",
   "/objects",
-  "/run-batches",
+  "/execution-records",
   "/runners",
+  "/runners?section=groups",
   "/insights",
   "/settings/automation",
   "/audit",
@@ -31,22 +32,24 @@ const primaryRoutes = [
   "/account/security",
 ] as const;
 
-test("administration entries are grouped into collapsed two-level navigation", async ({ page }) => {
+test("administration entries are grouped into focused two-level navigation", async ({ page }) => {
   await ensureAdministrator(page);
   const navigation = page.getByRole("navigation", { name: "主导航" });
 
-  for (const label of ["项目与权限", "执行与平台"]) {
+  for (const label of ["项目协作", "身份与访问", "执行配置", "平台运维"]) {
     await expect(navigation.getByRole("button", { name: label, exact: true })).toHaveCount(1);
   }
   // Groups start collapsed, so nested administration links are not rendered.
   for (const label of [
-    "运维审计",
+    "安全审计",
     "项目管理",
+    "项目角色",
     "用户管理",
     "角色权限",
-    "项目角色",
     "目录配置",
     "登录会话",
+    "自动化任务",
+    "执行机组",
     "执行环境",
     "密文管理",
     "平台配置",
@@ -58,10 +61,10 @@ test("administration entries are grouped into collapsed two-level navigation", a
   }
 
   // Expanding a group reveals its entries and keeps the chevron state readable.
-  const accessToggle = navigation.getByRole("button", { name: "项目与权限" });
+  const accessToggle = navigation.getByRole("button", { name: "身份与访问" });
   await accessToggle.click();
   await expect(accessToggle).toHaveAttribute("aria-expanded", "true");
-  for (const label of ["项目管理", "用户管理", "角色权限", "项目角色", "目录配置", "登录会话"]) {
+  for (const label of ["用户管理", "角色权限", "目录配置", "登录会话"]) {
     await expect(navigation.getByRole("link", { name: label, exact: true })).toHaveCount(1);
   }
   await accessToggle.click();
@@ -75,10 +78,22 @@ test("administration entries are grouped into collapsed two-level navigation", a
   await expect(page.locator(".settings-stack > .settings-section")).toHaveCount(1);
 
   await page.goto("/settings/platform?section=retention");
-  const platformToggle = navigation.getByRole("button", { name: "执行与平台" });
+  const platformToggle = navigation.getByRole("button", { name: "平台运维" });
   await expect(platformToggle).toHaveAttribute("aria-expanded", "true");
   await expect(page.getByRole("heading", { name: "数据保留", exact: true })).toBeVisible();
   await expect(page.getByRole("heading", { name: "保留与清理策略" })).toBeVisible();
+});
+
+test("homepage mirrors the designed six-card workspace and exposes global execution", async ({
+  page,
+}) => {
+  await ensureAdministrator(page);
+  for (const heading of ["本周质量", "活动执行", "用例库", "执行机组", "失败洞察", "最近动态"]) {
+    await expect(page.getByRole("heading", { name: heading, exact: true })).toBeVisible();
+  }
+  await expect(page.getByRole("button", { name: "开始执行", exact: true })).toBeVisible();
+  await page.goto("/cases");
+  await expect(page.getByRole("button", { name: "开始执行", exact: true })).toBeVisible();
 });
 
 test("primary product and administration routes pass the shared layout guard", async ({ page }) => {

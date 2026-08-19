@@ -131,7 +131,7 @@ public class MixedVisibleTest {
   await ensureAdministrator(page);
   await expect(page).toHaveURL(/\/$/, { timeout: 20_000 });
   await expect(page.getByRole("navigation", { name: "主导航" })).toBeVisible();
-  await expect(page.getByRole("link", { name: "工作概览", exact: true })).toHaveClass(
+  await expect(page.getByRole("link", { name: "首页", exact: true })).toHaveClass(
     /nav-item-active/,
   );
   await expect(page.getByText("E2E Administrator", { exact: true })).toBeVisible();
@@ -143,7 +143,7 @@ public class MixedVisibleTest {
   await page.getByRole("button", { name: "登录" }).click();
   await expect(page).toHaveURL(/\/$/, { timeout: 20_000 });
   await expect(page.getByRole("navigation", { name: "主导航" })).toBeVisible();
-  await expect(page.getByRole("link", { name: "工作概览", exact: true })).toHaveClass(
+  await expect(page.getByRole("link", { name: "首页", exact: true })).toHaveClass(
     /nav-item-active/,
   );
   await expect(page.getByText("E2E Administrator", { exact: true })).toBeVisible();

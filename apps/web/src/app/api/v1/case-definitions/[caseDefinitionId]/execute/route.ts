@@ -16,17 +16,25 @@ export async function POST(request: Request, context: Context): Promise<NextResp
     const services = await getPlatformServices();
     const definition = await services.caseDefinitions.get(caseDefinitionId);
     services.identityAccess.authorize(identity, "run.create", definition.projectId);
-    const batch = await services.runBatches.createSingleCase(
-      caseDefinitionId,
-      createSingleCaseRunInputSchema.parse(await readJsonBody(request, 64 * 1024)),
-    );
+    const input = createSingleCaseRunInputSchema.parse(await readJsonBody(request, 64 * 1024));
+    if (input.environmentVersionId) {
+      services.identityAccess.authorize(identity, "environment.read", definition.projectId);
+    }
+    const batch = await services.runBatches.createSingleCase(caseDefinitionId, {
+      ...input,
+      projectId: definition.projectId,
+    });
     await services.identityAccess.recordAuthorizedOperation(identity, {
       action: "execution.single_case_create",
       resourceType: "run_batch",
       resourceId: batch.id,
       projectId: definition.projectId,
       requestId: currentRequestId,
-      details: { caseDefinitionId },
+      details: {
+        caseDefinitionId,
+        runnerSelection: input.runnerGroupId ? "group" : "runners",
+        adapterEnabled: input.adapter.enabled,
+      },
     });
     return NextResponse.json(batch, { status: 201 });
   } catch (error) {

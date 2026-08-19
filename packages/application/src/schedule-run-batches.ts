@@ -33,6 +33,7 @@ import type {
   JarObjectStorePort,
   ProjectStructureRepository,
   RunBatchRepository,
+  RunnerGroupRepository,
   RunnerRepository,
   SchedulingSnapshot,
 } from "./ports";
@@ -60,6 +61,7 @@ export class RunBatchSchedulingService {
     private readonly projectMaximumConcurrency = 128,
     private readonly priorityAgingIntervalMinutes = 5,
     private readonly projectStructures?: ProjectStructureRepository,
+    private readonly runnerGroups?: RunnerGroupRepository,
   ) {}
 
   async create(input: CreateRunBatchInput): Promise<RunBatchDetails> {
@@ -84,6 +86,7 @@ export class RunBatchSchedulingService {
     }
     // 执行配置按“输入 ?? 任务策略（已含系统默认）”合并，随后固化到批次。
     const suitePolicy = suite.policy;
+    const runnerIds = await this.resolveRunnerSelection(validated);
     const retryLimit = validated.retryLimit ?? suitePolicy.retryLimit;
     const retryMode = validated.retryMode ?? suitePolicy.retryMode;
     const priority = validated.priority ?? suitePolicy.priority;
@@ -95,7 +98,7 @@ export class RunBatchSchedulingService {
       validated.environmentVersionId,
       validated.environmentVariables,
     );
-    await this.ensureRunnersExist(validated.runnerIds, [
+    await this.ensureRunnersExist(runnerIds, [
       ...(usesTaskAdapter(suitePolicy.adapter) ? [COTEST_ADAPTER_CAPABILITY] : []),
       ...(environment.secretBindings.length > 0 ? [ON_DEMAND_SECRET_CAPABILITY] : []),
       ...(suitePolicy.executor === "testng-container" ? ["executor:testng-container-v1"] : []),
@@ -133,7 +136,7 @@ export class RunBatchSchedulingService {
       uploadTimeoutMs: validated.uploadTimeoutMs,
       environmentVariables: environment.variables,
       secretBindings: environment.secretBindings,
-      runnerIds: [...validated.runnerIds].sort(),
+      runnerIds,
       policy: {
         executor: suitePolicy.executor,
         concurrency: suitePolicy.concurrency,
@@ -203,10 +206,20 @@ export class RunBatchSchedulingService {
       validated.environmentVersionId,
       validated.environmentVariables,
     );
-    await this.ensureRunnersExist(
-      validated.runnerIds,
-      environment.secretBindings.length > 0 ? [ON_DEMAND_SECRET_CAPABILITY] : [],
-    );
+    const runnerIds = await this.resolveRunnerSelection(validated);
+    const adapterBlockers: RunBatchPreflightBlocker[] = [];
+    if (usesTaskAdapter(validated.adapter)) {
+      await this.inspectAdapterRuntime(projectId, adapterBlockers);
+    }
+    if (adapterBlockers.length > 0) {
+      throw new DomainError("RUN_BATCH_PREFLIGHT_FAILED", "执行配置预检未通过。", {
+        details: { ready: false, blockers: adapterBlockers },
+      });
+    }
+    await this.ensureRunnersExist(runnerIds, [
+      ...(environment.secretBindings.length > 0 ? [ON_DEMAND_SECRET_CAPABILITY] : []),
+      ...(usesTaskAdapter(validated.adapter) ? [COTEST_ADAPTER_CAPABILITY] : []),
+    ]);
     const createdAt = this.clock.now().toISOString();
     const batchId = this.ids.next();
     const priority = validated.priority ?? defaultCaseSuiteExecutionPolicy.priority;
@@ -242,7 +255,7 @@ export class RunBatchSchedulingService {
       uploadTimeoutMs: validated.uploadTimeoutMs,
       environmentVariables: environment.variables,
       secretBindings: environment.secretBindings,
-      runnerIds: [...validated.runnerIds].sort(),
+      runnerIds,
       policy: {
         executor: "testng",
         concurrency: 1,
@@ -251,6 +264,12 @@ export class RunBatchSchedulingService {
           validated.artifactPatterns.length > 0
             ? [...validated.artifactPatterns]
             : [...defaultCaseSuiteExecutionPolicy.artifactPatterns],
+      },
+      adapter: {
+        enabled: validated.adapter.enabled,
+        suiteName: validated.adapter.suiteName,
+        testName: validated.adapter.testName,
+        environmentAddresses: [...validated.adapter.environmentAddresses],
       },
       runs: [
         {
@@ -279,6 +298,13 @@ export class RunBatchSchedulingService {
           issue.message,
         ),
       );
+      const rawSelectionBlocker = validateRawRunnerSelection(input);
+      if (
+        rawSelectionBlocker &&
+        !blockers.some((candidate) => candidate.code === rawSelectionBlocker.code)
+      ) {
+        blockers.push(rawSelectionBlocker);
+      }
       return { ready: false, blockers };
     }
     return this.preflightValidated(parsed.data);
@@ -504,8 +530,9 @@ export class RunBatchSchedulingService {
       }
     }
     const secretBindings = await this.inspectEnvironment(projectId, input, blockers);
+    const runnerIds = await this.resolveRunnerSelectionForPreflight(input, blockers);
     await this.inspectRunners(
-      input.runnerIds,
+      runnerIds,
       secretBindings.length > 0,
       blockers,
       suite?.policy.runnerLabels ?? [],
@@ -817,7 +844,37 @@ export class RunBatchSchedulingService {
         ),
       )
     ) {
-      throw new DomainError("RUNNER_INCOMPATIBLE", "所选执行机不支持按租约领取执行密文。");
+      throw new DomainError("RUNNER_INCOMPATIBLE", "所选执行机缺少本次执行要求的能力。");
+    }
+  }
+
+  private async resolveRunnerSelection(input: {
+    runnerIds: string[];
+    runnerGroupId?: string | undefined;
+  }): Promise<string[]> {
+    if (!input.runnerGroupId) return [...input.runnerIds].sort();
+    if (!this.runnerGroups) {
+      throw new DomainError("RUNNER_GROUP_UNAVAILABLE", "当前运行时未配置执行机组仓储。");
+    }
+    const group = await this.runnerGroups.get(input.runnerGroupId);
+    if (!group) throw new DomainError("RUNNER_GROUP_NOT_FOUND", "指定的执行机组不存在。");
+    if (group.runnerIds.length === 0) {
+      throw new DomainError("RUNNER_GROUP_EMPTY", "指定的执行机组没有可用成员。");
+    }
+    return [...group.runnerIds].sort();
+  }
+
+  private async resolveRunnerSelectionForPreflight(
+    input: { runnerIds: string[]; runnerGroupId?: string | undefined },
+    blockers: RunBatchPreflightBlocker[],
+  ): Promise<string[]> {
+    try {
+      return await this.resolveRunnerSelection(input);
+    } catch (error) {
+      const code = error instanceof DomainError ? error.code : "RUNNER_GROUP_UNAVAILABLE";
+      const message = error instanceof Error ? error.message : "无法读取执行机组。";
+      blockers.push(blocker(code, "runner", message, { path: ["runnerGroupId"] }));
+      return [];
     }
   }
 
@@ -900,6 +957,18 @@ function validationBlocker(
     return blocker("EXECUTION_RESOURCE_PARAMETER_INVALID", "resource", message, { path });
   }
   return blocker("EXECUTION_PARAMETER_INVALID", "parameter", message, { path });
+}
+
+function validateRawRunnerSelection(input: unknown): RunBatchPreflightBlocker | undefined {
+  if (!input || typeof input !== "object" || Array.isArray(input)) return undefined;
+  const record = input as Record<string, unknown>;
+  const hasDirectRunnerSelection = Array.isArray(record.runnerIds) && record.runnerIds.length > 0;
+  const hasRunnerGroupSelection =
+    typeof record.runnerGroupId === "string" && record.runnerGroupId.trim().length > 0;
+  if (hasDirectRunnerSelection !== hasRunnerGroupSelection) return undefined;
+  return blocker("RUNNER_SELECTION_INVALID", "runner", "必须且只能选择执行机或执行机组中的一种。", {
+    path: ["runnerIds"],
+  });
 }
 
 function compatibilityBlocker(

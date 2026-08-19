@@ -436,6 +436,37 @@ export const runnerBootstrapUses = sqliteTable("runner_bootstrap_uses", {
   usedAt: text("used_at").notNull(),
 });
 
+export const runnerGroups = sqliteTable(
+  "runner_groups",
+  {
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    normalizedName: text("normalized_name").notNull(),
+    description: text("description").notNull().default(""),
+    revision: integer("revision").notNull().default(1),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [uniqueIndex("runner_groups_normalized_name_uq").on(table.normalizedName)],
+);
+
+export const runnerGroupMembers = sqliteTable(
+  "runner_group_members",
+  {
+    groupId: text("group_id")
+      .notNull()
+      .references(() => runnerGroups.id, { onDelete: "cascade" }),
+    runnerId: text("runner_id")
+      .notNull()
+      .references(() => runners.id, { onDelete: "cascade" }),
+    addedAt: text("added_at").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.groupId, table.runnerId] }),
+    index("runner_group_members_runner_idx").on(table.runnerId, table.groupId),
+  ],
+);
+
 export const executionEnvironments = sqliteTable(
   "execution_environments",
   {
@@ -1236,6 +1267,8 @@ export const schema = {
   caseSuiteItems,
   runners,
   runnerBootstrapUses,
+  runnerGroups,
+  runnerGroupMembers,
   executionEnvironments,
   executionEnvironmentVersions,
   executionSecrets,

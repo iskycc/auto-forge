@@ -66,6 +66,7 @@ import type {
   RunBatchDetails,
   RunBatchExecutionPolicy,
   Runner,
+  RunnerGroup,
   SchedulingDecision,
   SchedulingEvent,
   SchedulingEventType,
@@ -980,6 +981,29 @@ export interface RunnerRepository {
   // purge 是注销后的墓碑清除：写入 purgedAt、使凭据哈希不可再匹配并清空标签/能力，
   // 记录因执行历史外键保留在库中，但从列表隐藏。
   purge(input: { runnerId: string; purgedAt: string }): Promise<Runner>;
+}
+
+export interface RunnerGroupRepository {
+  list(): Promise<RunnerGroup[]>;
+  get(groupId: string): Promise<RunnerGroup | null>;
+  create(input: {
+    id: string;
+    name: string;
+    normalizedName: string;
+    description: string;
+    runnerIds: string[];
+    recordedAt: string;
+  }): Promise<RunnerGroup>;
+  update(input: {
+    groupId: string;
+    expectedRevision: number;
+    name?: string;
+    normalizedName?: string;
+    description?: string;
+    runnerIds?: string[];
+    updatedAt: string;
+  }): Promise<RunnerGroup | null>;
+  delete(groupId: string): Promise<boolean>;
 }
 
 export type Clock = {

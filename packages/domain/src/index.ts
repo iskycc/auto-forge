@@ -9,6 +9,7 @@ export * from "./identity";
 export * from "./project-structure";
 export * from "./run-batch";
 export * from "./runner";
+export * from "./runner-group";
 export * from "./runner-compatibility";
 export * from "./scheduler";
 export * from "./scheduling-events";

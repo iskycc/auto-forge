@@ -6,7 +6,7 @@ import { notFound } from "next/navigation";
 import { CaseDefinitionEditor } from "@/components/case-definition-editor";
 import { CaseVersionHistory } from "@/components/case-version-history";
 import { StatusBadge } from "@/components/status-badge";
-import { SingleCaseRun } from "@/components/single-case-run";
+import { OpenRunDialogButton } from "@/components/global-run-dialog";
 import { requirePageProjectScope } from "@/lib/auth";
 import { formatMethodSignature } from "@/lib/jvm-signature";
 import { getPlatformServices } from "@/lib/services";
@@ -54,7 +54,6 @@ export default async function CaseDetailPage({ params }: CaseDetailPageProps) {
   const canReadSource = hasPermission(identity, "case_source.read", definition.projectId);
   const sourceRecord = await services.caseSources.get(definition.sourceId, projectIds);
   const executable = sourceRecord.inspection.executable !== false;
-  const runners = canRun && executable ? await services.runnerControl.list(200) : [];
   let sourceView: Awaited<ReturnType<typeof services.caseSources.readClassSource>> = null;
   let sourceViewError: string | undefined;
   try {
@@ -87,9 +86,17 @@ export default async function CaseDetailPage({ params }: CaseDetailPageProps) {
             <code>{definition.className}</code>
           </p>
         </div>
-        <span className="storage-pill">
-          <FileCode2 size={16} aria-hidden="true" /> 当前版本 v{definition.currentVersion}
-        </span>
+        <div className="case-detail-actions">
+          {canRun && definition.enabled && !definition.archived && executable ? (
+            <OpenRunDialogButton
+              caseDefinitionId={definition.id}
+              className="button button-primary"
+            />
+          ) : null}
+          <span className="storage-pill">
+            <FileCode2 size={16} aria-hidden="true" /> 当前版本 v{definition.currentVersion}
+          </span>
+        </div>
       </section>
 
       <section className="card source-summary-card">
@@ -133,12 +140,6 @@ export default async function CaseDetailPage({ params }: CaseDetailPageProps) {
           </div>
         </div>
       </section>
-
-      {canRun && definition.enabled && !definition.archived && executable ? (
-        <section className="card case-run-card">
-          <SingleCaseRun caseDefinitionId={definition.id} runners={runners} />
-        </section>
-      ) : null}
 
       {!executable ? (
         <div className="implementation-notice" role="status">
