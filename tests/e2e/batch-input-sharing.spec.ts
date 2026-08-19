@@ -92,13 +92,14 @@ test("同批次并发 attempt 共享输入目录，批次终态后回收", async
     }
 
     // 确认两个 attempt 确实并发进入 running，再隔约 2 秒第二次采样：
-    // mtime 不变证明没有重复下载覆盖共享文件。
+    // mtime 不变证明没有重复下载覆盖共享文件。此处只读取批次目录；首轮
+    // attempt 可能已经结束并清理各自工作目录，而批次级运行时仍需供 Gamma 复用。
     await waitForRunningAttempts(page, batchId, agent, 2);
     await delay(2_000);
-    const second = await snapshotSharedInputs(batchId, attemptIds);
+    const second = await collectSharedInputFiles(batchDir);
     for (const [relativePath, sharedStat] of first.shared) {
       expect(
-        second.shared.get(relativePath)?.mtimeMs,
+        second.get(relativePath)?.mtimeMs,
         `批次目录的 ${relativePath} 在执行期间不应被重新下载`,
       ).toBe(sharedStat.mtimeMs);
     }
@@ -761,11 +762,11 @@ async function snapshotSharedInputs(
 function formatSharedSnapshot(
   batchId: string,
   first: SharedSnapshot,
-  second: SharedSnapshot,
+  second: ReadonlyMap<string, SharedFileStat>,
 ): string {
   const lines = [`batchId: ${batchId}`, "共享输入（批次目录）:"];
   for (const [relativePath, stats] of first.shared) {
-    const secondStats = second.shared.get(relativePath);
+    const secondStats = second.get(relativePath);
     lines.push(
       `  ${relativePath} inode=${stats.inode} mtime=${stats.mtimeMs} -> ${secondStats?.mtimeMs}`,
     );

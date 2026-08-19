@@ -36,7 +36,7 @@ test("authenticates and synchronizes against real private-CA LDAP", async ({ bro
   await configureDirectory(page, caPem, "starttls");
   const startTlsContext = await loginWithLdap(browser, "alice", directoryPassword);
   await expect(
-    startTlsContext.pages()[0]!.getByText("Alice Directory", { exact: true }),
+    startTlsContext.pages()[0]!.getByRole("heading", { level: 1, name: /Alice Directory/ }),
   ).toBeVisible();
 
   const synchronization = await browserJson<{

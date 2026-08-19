@@ -569,11 +569,9 @@ async function waitForSucceededBatch(
     .poll(
       async () => {
         assertAgentRunning(agent);
-        const response = await page.request.get(
-          `/api/v1/run-batches/${encodeURIComponent(batchId)}`,
-        );
-        if (!response.ok()) return `HTTP ${response.status()}`;
-        latest = (await response.json()) as BatchDetails;
+        const result = await readBatchDetailsForPolling(page, batchId);
+        if (typeof result === "string") return result;
+        latest = result;
         const resultCode = latest.attempts.at(-1)?.resultCode;
         return resultCode ? `${latest.status}:${resultCode}` : latest.status;
       },
@@ -596,11 +594,9 @@ async function waitForTerminalBatch(
     .poll(
       async () => {
         assertAgentRunning(agent);
-        const response = await page.request.get(
-          `/api/v1/run-batches/${encodeURIComponent(batchId)}`,
-        );
-        if (!response.ok()) return `HTTP ${response.status()}`;
-        latest = (await response.json()) as BatchDetails;
+        const result = await readBatchDetailsForPolling(page, batchId);
+        if (typeof result === "string") return result;
+        latest = result;
         return `${latest.status}:${latest.attempts.at(-1)?.resultCode ?? "pending"}:${latest.attempts.length}`;
       },
       { timeout: 180_000, intervals: [500, 1_000, 2_000] },
@@ -620,11 +616,9 @@ async function waitForAttemptState(
     .poll(
       async () => {
         assertAgentRunning(agent);
-        const response = await page.request.get(
-          `/api/v1/run-batches/${encodeURIComponent(batchId)}`,
-        );
-        if (!response.ok()) return `HTTP ${response.status()}`;
-        const details = (await response.json()) as BatchDetails;
+        const result = await readBatchDetailsForPolling(page, batchId);
+        if (typeof result === "string") return result;
+        const details = result;
         const attempt = details.attempts.at(-1);
         attemptId = attempt?.id;
         return attempt?.status ?? details.status;
@@ -634,6 +628,20 @@ async function waitForAttemptState(
     .toBe(expectedState);
   if (!attemptId) throw new Error(`Batch ${batchId} reached ${expectedState} without an attempt.`);
   return attemptId;
+}
+
+async function readBatchDetailsForPolling(
+  page: Page,
+  batchId: string,
+): Promise<BatchDetails | string> {
+  try {
+    const response = await page.request.get(`/api/v1/run-batches/${encodeURIComponent(batchId)}`);
+    if (!response.ok()) return `HTTP ${response.status()}`;
+    return (await response.json()) as BatchDetails;
+  } catch (problem) {
+    const message = problem instanceof Error ? problem.message : String(problem);
+    return `transient request failure: ${message}`;
+  }
 }
 
 async function waitForLocalAttemptState(attemptId: string, expectedState: string): Promise<void> {
