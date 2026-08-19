@@ -300,3 +300,81 @@ func TestReconcileUploadsOnlyLogsAboveTheConfirmedWatermark(t *testing.T) {
 		t.Fatalf("remaining states = %#v, error = %v", states, err)
 	}
 }
+
+func TestReconcileRemovesCrashedWorkspaceAfterLeaseExpiry(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		switch request.URL.Path {
+		case "/api/v1/runner-agents/runner-1/reconcile":
+			_ = json.NewEncoder(writer).Encode(ReconcileResponse{
+				SchemaVersion: 1,
+				Decisions: []ReconcileDecision{{
+					AttemptID: "attempt-expired", Action: "continue",
+				}},
+			})
+		case "/api/v1/run-attempts/attempt-expired/complete":
+			t.Error("expired lease must not send a completion request")
+			http.Error(writer, "expired", http.StatusConflict)
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+
+	configuration := testConfiguration(t, server.URL)
+	dataDirectory := t.TempDir()
+	configuration.DataDirectory = dataDirectory
+	client, err := NewClient(configuration)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	supervisor := newAttemptSupervisor(
+		client,
+		Identity{RunnerID: "runner-1", Credential: "runner-credential-with-more-than-32-bytes"},
+		configuration,
+		os.Stderr,
+	)
+	supervisor.logSpool, err = newLogSpool(dataDirectory, configuration.Spool, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	supervisor.store.budget = supervisor.logSpool.budget
+	supervisor.artifactSpool, err = newArtifactSpool(dataDirectory, supervisor.logSpool.budget)
+	if err != nil {
+		t.Fatal(err)
+	}
+	workspace := filepath.Join(dataDirectory, "work", "attempt-expired-1234567890")
+	if err := os.MkdirAll(workspace, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	state := attemptState{
+		SchemaVersion: attemptStateSchemaVersion,
+		LocalState:    "running",
+		Claimed: ClaimedAssignment{
+			Assignment: Assignment{
+				AttemptID: "attempt-expired",
+				ExecutionSpec: ExecutionSpec{
+					AttemptID: "attempt-expired", UploadTimeoutMs: 1_000,
+				},
+			},
+			Lease: Lease{
+				LeaseID: "lease-expired", Token: "lease-token-with-more-than-thirty-two-bytes", Version: 1,
+				ExpiresAt: time.Now().Add(-time.Minute).UTC().Format(time.RFC3339Nano),
+			},
+		},
+	}
+	if err := supervisor.store.save(state); err != nil {
+		t.Fatal(err)
+	}
+	if err := supervisor.reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(workspace); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expired attempt workspace still exists: %v", err)
+	}
+	states, err := supervisor.store.list()
+	if err != nil || len(states) != 1 || states[0].Result == nil {
+		t.Fatalf("completion state was not retained for retry: %#v, error = %v", states, err)
+	}
+}

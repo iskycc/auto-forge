@@ -18,6 +18,9 @@ and known limitations.
 - The GitHub Actions batch-sharing acceptance packages a bounded `jlink` runtime instead of the
   hosted runner's complete JDK, keeping the real-JDK extraction scenario within execution disk and
   file budgets.
+- Restart reconciliation now removes a killed attempt's obsolete workspace even when its old lease
+  expired before the completion could be reported. The persisted completion and spools remain
+  available for a later retry, while batch-input hard links and workspace disk are released.
 
 ## 0.7.1 - 2026-08-19
 

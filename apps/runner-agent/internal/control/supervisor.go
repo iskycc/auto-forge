@@ -905,7 +905,16 @@ func (supervisor *attemptSupervisor) reconcile(ctx context.Context) error {
 			if err := supervisor.store.save(state); err != nil {
 				return err
 			}
-			supervisor.reportCompletion(ctx, state)
+			batchClosed := supervisor.reportCompletion(ctx, state)
+			if batchClosed {
+				supervisor.batches.close(state.Claimed.Assignment.ExecutionSpec.BatchID, supervisor.diagnostics)
+			}
+			// 重启后的进程不会恢复执行。即使旧 lease 已过期、完成上报需留待下次
+			// reconcile 重试，所需结果、日志和产物都已进入持久 spool，原工作目录
+			// 也不再有恢复价值，应立即删除以释放批次输入硬链接和磁盘空间。
+			if err := supervisor.removeAttemptWorkspaces(decision.AttemptID); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
