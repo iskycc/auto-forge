@@ -23,41 +23,47 @@ final class TestNgResultReporter {
         results(listenerClass, listener, "getConfigurationFailures");
     List<?> passedTests = results(listenerClass, listener, "getPassedTests");
 
+    String firstFailure =
+        firstFailureSummary(
+            failedTests, resultClass, testClassInterface, testMethodInterface);
+    if (firstFailure == null) {
+      firstFailure =
+          firstFailureSummary(
+              configurationFailures, resultClass, testClassInterface, testMethodInterface);
+    }
+    if (firstFailure != null) {
+      output.println(System.lineSeparator() + FailureSummaryMarker.encode(firstFailure));
+    }
+
     output.println(System.lineSeparator() + "========== Test Results Summary ==========");
     output.println("Passed: " + passedTests.size());
     output.println("Failed: " + failedTests.size());
     output.println("Skipped: " + skippedTests.size());
     output.println("Configuration Failures: " + configurationFailures.size());
 
-    String firstFailure =
-        printResults(
-            failedTests,
-            resultClass,
-            testClassInterface,
-            testMethodInterface,
-            "FAILED",
-            true);
+    printResults(
+        failedTests,
+        resultClass,
+        testClassInterface,
+        testMethodInterface,
+        "FAILED");
     printResults(
         skippedTests,
         resultClass,
         testClassInterface,
         testMethodInterface,
-        "SKIPPED",
-        false);
-    String firstConfigurationFailure =
-        printResults(
-            configurationFailures,
-            resultClass,
-            testClassInterface,
-            testMethodInterface,
-            "CONFIGURATION FAILURE",
-            true);
+        "SKIPPED");
+    printResults(
+        configurationFailures,
+        resultClass,
+        testClassInterface,
+        testMethodInterface,
+        "CONFIGURATION FAILURE");
     return new TestNgResultSummary(
         passedTests.size(),
         failedTests.size(),
         skippedTests.size(),
-        configurationFailures.size(),
-        firstFailure != null ? firstFailure : firstConfigurationFailure);
+        configurationFailures.size());
   }
 
   @SuppressWarnings("unchecked")
@@ -71,20 +77,18 @@ final class TestNgResultReporter {
     return (List<?>) value;
   }
 
-  private String printResults(
+  private void printResults(
       List<?> results,
       Class<?> resultClass,
       Class<?> testClassInterface,
       Class<?> testMethodInterface,
-      String status,
-      boolean captureFailure)
+      String status)
       throws ReflectiveOperationException {
     if (results.isEmpty()) {
-      return null;
+      return;
     }
     output.println(
         System.lineSeparator() + "========== " + status + " Tests (" + results.size() + ") ==========");
-    String firstFailure = null;
     for (Object result : results) {
       ResultDetails details =
           details(result, resultClass, testClassInterface, testMethodInterface);
@@ -102,15 +106,25 @@ final class TestNgResultReporter {
         output.println("Message: " + String.valueOf(details.throwable.getMessage()));
         output.println(System.lineSeparator() + "Stack Trace:");
         details.throwable.printStackTrace(output);
-        if (captureFailure && firstFailure == null) {
-          firstFailure = failureSummary(details.throwable);
-        }
-      } else if (captureFailure && firstFailure == null) {
-        firstFailure = details.className + "." + details.methodName + " failed without an exception.";
       }
       printParameters(details.parameters);
     }
-    return firstFailure;
+  }
+
+  private static String firstFailureSummary(
+      List<?> results,
+      Class<?> resultClass,
+      Class<?> testClassInterface,
+      Class<?> testMethodInterface)
+      throws ReflectiveOperationException {
+    if (results.isEmpty()) {
+      return null;
+    }
+    ResultDetails details =
+        details(results.get(0), resultClass, testClassInterface, testMethodInterface);
+    return details.throwable != null
+        ? failureSummary(details.throwable)
+        : details.className + "." + details.methodName + " failed without an exception.";
   }
 
   private static ResultDetails details(
@@ -146,8 +160,6 @@ final class TestNgResultReporter {
   }
 
   private static String failureSummary(Throwable failure) {
-    // Parsing contract with the control plane (control-executions.ts): the marker content must
-    // stay on a single line and equal the first line after "Stack Trace:" in the report.
     return failure.toString();
   }
 

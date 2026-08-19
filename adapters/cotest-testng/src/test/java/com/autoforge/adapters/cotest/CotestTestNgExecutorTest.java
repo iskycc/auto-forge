@@ -13,6 +13,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.List;
 import java.util.jar.JarEntry;
 import java.util.jar.JarOutputStream;
@@ -25,6 +26,7 @@ class CotestTestNgExecutorTest {
           "com/huawei/cotest/util/ProjectFileUtil.class",
           "cotest/auto/dataproviders/MM2DataProvider.class",
           "fixture/AdapterCase.class",
+          "fixture/AdapterFailingCase.class",
           "fixture/AdapterSkippedCase.class");
 
   @TempDir Path temporaryDirectory;
@@ -89,6 +91,44 @@ class CotestTestNgExecutorTest {
     // TestNG 状态位图包含跳过位（status=2），但退出码必须为 0，由控制面按 XML 判定结果。
     assertTrue(stdout.contains("TestNG exit status: 2"), stdout);
     assertEquals(0, exitCode, errorOutput.toString(StandardCharsets.UTF_8));
+  }
+
+  @Test
+  void emitsTheCompleteFailureMarkerBeforeThePotentiallyLongStackTrace() throws IOException {
+    Path fixtureJar = createFixtureJar();
+    Path classDataFile = temporaryDirectory.resolve("class-data-failure.json");
+    Files.writeString(classDataFile, "{}\n");
+    ByteArrayOutputStream standardOutput = new ByteArrayOutputStream();
+    ByteArrayOutputStream errorOutput = new ByteArrayOutputStream();
+    AdapterExecutionRequest request =
+        new AdapterExecutionRequest(
+            runtimeUrls(fixtureJar),
+            "fixture.AdapterFailingCase",
+            new SuiteConfiguration("Adapter suite", "Adapter test"),
+            "10.0.0.8",
+            classDataFile,
+            temporaryDirectory.resolve("reports-failure"));
+
+    int exitCode;
+    try (PrintStream output = new PrintStream(standardOutput, true, StandardCharsets.UTF_8);
+        PrintStream errors = new PrintStream(errorOutput, true, StandardCharsets.UTF_8)) {
+      exitCode = new CotestTestNgExecutor(output, errors).execute(request);
+    }
+
+    String stdout = standardOutput.toString(StandardCharsets.UTF_8);
+    int markerStart = stdout.indexOf(FailureSummaryMarker.PREFIX + "[");
+    int markerEnd = stdout.indexOf(']', markerStart);
+    assertEquals(1, exitCode);
+    assertTrue(markerStart >= 0, stdout);
+    assertTrue(markerEnd > markerStart, stdout);
+    assertTrue(markerStart < stdout.indexOf("Stack Trace:"), stdout);
+    String payload =
+        stdout.substring(markerStart + (FailureSummaryMarker.PREFIX + "[").length(), markerEnd);
+    String summary =
+        new String(Base64.getDecoder().decode(payload), StandardCharsets.UTF_8);
+    assertEquals(
+        "java.lang.AssertionError: 中文断言失败\n第二行错误详情",
+        summary);
   }
 
   private Path createFixtureJar() throws IOException {

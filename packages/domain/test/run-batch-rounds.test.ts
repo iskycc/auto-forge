@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { ExecutionRun, RunAttempt, RunBatch } from "../src/run-batch";
-import { summarizeRunBatchRounds } from "../src/run-batch";
+import { summarizeAllRunBatchRounds, summarizeRunBatchRounds } from "../src/run-batch";
 
 describe("summarizeRunBatchRounds", () => {
   it("aggregates multiple rounds in round mode", () => {
@@ -37,7 +37,7 @@ describe("summarizeRunBatchRounds", () => {
       failed: 2,
       timedOut: 0,
       cancelled: 0,
-      blocked: 0,
+      notExecuted: 0,
       roundPassRate: 33,
       overallPassRate: 33,
       startedAt: "2026-08-10T00:00:00.000Z",
@@ -45,9 +45,11 @@ describe("summarizeRunBatchRounds", () => {
     });
     expect(second).toMatchObject({
       status: "completed",
+      totalRuns: 2,
       executed: 2,
       passed: 1,
       failed: 1,
+      notExecuted: 0,
       roundPassRate: 50,
       // run-1 与 run-2 截至第二轮均已通过。
       overallPassRate: 67,
@@ -56,7 +58,9 @@ describe("summarizeRunBatchRounds", () => {
     });
     expect(third).toMatchObject({
       status: "waiting",
+      totalRuns: 1,
       executed: 0,
+      notExecuted: 1,
       roundPassRate: null,
       overallPassRate: 67,
       startedAt: null,
@@ -64,34 +68,70 @@ describe("summarizeRunBatchRounds", () => {
     });
   });
 
-  it("counts held runs as blocked on waiting and running rounds", () => {
+  it("reports not-yet-attempted eligible cases while a round is running", () => {
     const batch = makeBatch({ retryMode: "round", retryLimit: 2, currentRound: 2, totalRuns: 3 });
-    const runs = [
-      makeRun("run-1"),
-      makeRun("run-2", { heldRound: 3, status: "queued" }),
-      makeRun("run-3", { heldRound: 3, status: "queued" }),
-    ];
+    const runs = [makeRun("run-1"), makeRun("run-2"), makeRun("run-3")];
     const attempts = [
       makeAttempt("a1", "run-1", 1, "succeeded"),
       makeAttempt("a2", "run-2", 1, "failed"),
       makeAttempt("a3", "run-3", 1, "timed_out"),
-      // 第二轮只有 run-1 无重跑需求；此处用一个进行中的 attempt 表示轮次仍在执行。
-      makeAttempt("a4", "run-1", 2, undefined, { status: "running" }),
+      makeAttempt("a4", "run-2", 2, undefined, { status: "running" }),
     ];
 
     const summaries = summarizeRunBatchRounds(batch, runs, attempts);
-    const waiting = summaries.find((summary) => summary.round === 3);
     const running = summaries.find((summary) => summary.round === 2);
 
     expect(running?.status).toBe("running");
-    // run-2、run-3 在第二轮没有 attempt 且 heldRound=3，对进行中的第二轮算 blocked。
-    expect(running?.blocked).toBe(2);
+    expect(running?.totalRuns).toBe(2);
+    expect(running?.executed).toBe(1);
+    expect(running?.notExecuted).toBe(1);
     expect(running?.durationMs).toBeNull();
-    // 等待中的第三轮：heldRound === 3 的两个 run 都计入 blocked。
-    expect(waiting?.status).toBe("waiting");
-    expect(waiting?.blocked).toBe(2);
-    // 已完成轮次不再报告阻塞。
-    expect(summaries.find((summary) => summary.round === 1)?.blocked).toBe(0);
+  });
+
+  it("keeps an incomplete current round live after all existing attempts finish", () => {
+    const batch = makeBatch({ currentRound: 1, totalRuns: 3 });
+    const runs = [makeRun("run-1"), makeRun("run-2"), makeRun("run-3")];
+    const attempts = [
+      makeAttempt("a1", "run-1", 1, "succeeded"),
+      makeAttempt("a2", "run-2", 1, "failed"),
+    ];
+
+    const [first] = summarizeRunBatchRounds(batch, runs, attempts);
+
+    expect(first).toMatchObject({
+      status: "running",
+      totalRuns: 3,
+      executed: 2,
+      notExecuted: 1,
+      durationMs: null,
+    });
+  });
+
+  it("keeps a future retry round waiting and derives its total from the previous failures", () => {
+    const batch = makeBatch({ retryMode: "round", retryLimit: 2, currentRound: 2, totalRuns: 3 });
+    const runs = [
+      makeRun("run-1"),
+      makeRun("run-2", { heldRound: 3, status: "queued" }),
+      makeRun("run-3"),
+    ];
+    const attempts = [
+      makeAttempt("a1", "run-1", 1, "succeeded"),
+      makeAttempt("a2", "run-2", 1, "failed"),
+      makeAttempt("a3", "run-3", 1, "failed"),
+      makeAttempt("a4", "run-2", 2, "failed"),
+      makeAttempt("a5", "run-3", 2, undefined, { status: "running" }),
+    ];
+
+    const third = summarizeRunBatchRounds(batch, runs, attempts).find(
+      (summary) => summary.round === 3,
+    );
+
+    expect(third).toMatchObject({
+      status: "waiting",
+      totalRuns: 1,
+      executed: 0,
+      notExecuted: 1,
+    });
   });
 
   it("distinguishes timed_out from failed and counts cancellations", () => {
@@ -133,6 +173,7 @@ describe("summarizeRunBatchRounds", () => {
     expect(summaries.map((summary) => summary.round)).toEqual([1, 2]);
     expect(summaries[0]).toMatchObject({ executed: 1, passed: 0, overallPassRate: 0 });
     expect(summaries[1]).toMatchObject({
+      status: "completed",
       executed: 1,
       passed: 1,
       roundPassRate: 100,
@@ -142,7 +183,7 @@ describe("summarizeRunBatchRounds", () => {
   });
 
   it("returns a single waiting round when no attempts exist", () => {
-    const batch = makeBatch({ totalRuns: 2 });
+    const batch = makeBatch({ status: "queued", totalRuns: 2 });
     const runs = [makeRun("run-1"), makeRun("run-2")];
 
     const summaries = summarizeRunBatchRounds(batch, runs, []);
@@ -153,11 +194,34 @@ describe("summarizeRunBatchRounds", () => {
       status: "waiting",
       totalRuns: 2,
       executed: 0,
-      blocked: 0,
+      notExecuted: 2,
       roundPassRate: null,
       overallPassRate: 0,
       startedAt: null,
       durationMs: null,
+    });
+  });
+
+  it("sums every round for the all-rounds totals", () => {
+    const batch = makeBatch({ retryMode: "round", retryLimit: 1, currentRound: 2, totalRuns: 3 });
+    const runs = [makeRun("run-1"), makeRun("run-2"), makeRun("run-3")];
+    const attempts = [
+      makeAttempt("a1", "run-1", 1, "succeeded"),
+      makeAttempt("a2", "run-2", 1, "failed"),
+      makeAttempt("a3", "run-3", 1, "timed_out"),
+      makeAttempt("a4", "run-2", 2, "succeeded"),
+    ];
+
+    const all = summarizeAllRunBatchRounds(summarizeRunBatchRounds(batch, runs, attempts));
+
+    expect(all).toEqual({
+      totalRuns: 5,
+      passed: 2,
+      failed: 1,
+      timedOut: 1,
+      cancelled: 0,
+      notExecuted: 1,
+      passRate: 40,
     });
   });
 

@@ -59,7 +59,7 @@ final class ReflectiveTestNgRunner {
     // 进程退出码只表达是否存在真实失败，跳过-only 的执行由控制面根据 testng-results.xml
     // 映射为成功（全部跳过 / 通过含跳过）。
     boolean hasFailures = summary.failedCount() + summary.configurationFailureCount() > 0;
-    return new TestNgExecutionOutcome(hasFailures ? 1 : 0, summary.firstFailure());
+    return new TestNgExecutionOutcome(hasFailures ? 1 : 0);
   }
 
   private static Object createListener(ClassLoader loader) throws ReflectiveOperationException {

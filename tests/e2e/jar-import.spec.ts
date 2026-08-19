@@ -526,6 +526,10 @@ public class MixedVisibleTest {
   expect(downloadedJar.byteLength).toBe(testJarInput!.sizeBytes);
   expect(createHash("sha256").update(downloadedJar).digest("hex")).toBe(testJarInput!.sha256);
 
+  const expectedFailureSummary =
+    "java.lang.AssertionError: 中文断言失败\n第二行错误详情：" +
+    "预期值与实际值不一致；".repeat(40);
+  const encodedFailureSummary = Buffer.from(expectedFailureSummary, "utf8").toString("base64");
   const firstLog = await page.request.post(
     `/api/v1/run-attempts/${encodeURIComponent(firstAttemptId)}/logs`,
     {
@@ -540,8 +544,8 @@ public class MixedVisibleTest {
             sequence: 0,
             content:
               "INFO testng runner started\nWARN flaky selector detected\n\u001b[31mERROR first attempt assertion failed\u001b[0m\n" +
-              "Stack Trace:\njava.lang.AssertionError: E2E marker stack line\n\tat com.example.CheckoutCase.checkout(CheckoutCase.java:42)\n\n" +
-              "TestCase Run Failed Stack: [java.lang.AssertionError: E2E marker stack line]\n",
+              `Stack Trace:\n${expectedFailureSummary}\n\tat com.example.CheckoutCase.checkout(CheckoutCase.java:42)\n\n` +
+              `TestCase Run Failed Stack Base64: [${encodedFailureSummary}]\n`,
             recordedAt: new Date().toISOString(),
           },
         ],
@@ -673,7 +677,7 @@ public class MixedVisibleTest {
   // ANSI 着色 ERROR 行；摘要只保留堆栈行本身，不拼接类路径前缀。
   expect(
     completedBatch.attempts.find((attempt) => attempt.attemptNumber === 1)?.resultSummary,
-  ).toBe("java.lang.AssertionError: E2E marker stack line");
+  ).toBe(expectedFailureSummary);
 
   const artifactDownload = await page.request.get(
     `/api/v1/run-attempts/${encodeURIComponent(firstAttemptId)}/artifacts/e2e-report`,
@@ -687,13 +691,13 @@ public class MixedVisibleTest {
   await expect(page.getByText("已成功", { exact: true }).first()).toBeVisible();
   await page.getByRole("button", { name: "初始轮次", exact: true }).click();
   // 失败用例的堆栈摘要直接显示在状态列，无需展开详情。
-  await expect(
-    page.getByText("java.lang.AssertionError: E2E marker stack line").first(),
-  ).toBeVisible();
+  const failureHint = page.locator(".attempt-failure-line").first();
+  await expect(failureHint).toBeVisible();
+  expect(await failureHint.textContent()).toBe(expectedFailureSummary);
   // 总体调度日志必须能定位用例之外/失败的异常：原因码与精简摘要都要出现在事件里。
   await page.getByRole("button", { name: "总体调度日志" }).click();
   await expect(page.locator(".scheduling-log")).toContainText("TEST_ASSERTION_FAILED");
-  await expect(page.locator(".scheduling-log")).toContainText("E2E marker stack line");
+  await expect(page.locator(".scheduling-log")).toContainText("中文断言失败");
   await page.keyboard.press("Escape");
   await expect(page.locator(".scheduling-log")).toHaveCount(0);
   await page.getByRole("button", { name: "查看日志" }).click();
@@ -742,6 +746,15 @@ public class MixedVisibleTest {
   );
   const sharePath = /\/share\/attempt-log\/[\w-]+/.exec(sharedStrings)?.[0];
   expect(sharePath).toBeTruthy();
+  const failureShareResponse = await page.request.post(
+    `/api/v1/run-attempts/${encodeURIComponent(firstAttemptId)}/log-share`,
+    { headers: { ...userHeaders, origin: new URL(page.url()).origin } },
+  );
+  expect(failureShareResponse.status()).toBe(200);
+  const failureSharePath = new URL(
+    ((await failureShareResponse.json()) as { shareUrl: string }).shareUrl,
+    page.url(),
+  ).pathname;
   // 下载成功后弹窗自动关闭。
   await expect(page.getByRole("dialog", { name: "导出执行结果" })).toHaveCount(0);
 
@@ -755,6 +768,10 @@ public class MixedVisibleTest {
     await expect(anonymousPage.locator(".share-log-output")).toContainText(
       /first attempt assertion failed|retry passed/,
     );
+    await anonymousPage.goto(failureSharePath);
+    const sharedSummary = anonymousPage.locator(".share-log-summary");
+    await expect(sharedSummary).toBeVisible();
+    expect(await sharedSummary.textContent()).toBe(expectedFailureSummary);
     await anonymousPage.goto("/share/attempt-log/e2e-invalid-token");
     await expect(anonymousPage.getByRole("heading", { name: "链接无效" })).toBeVisible();
   } finally {

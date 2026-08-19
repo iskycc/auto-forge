@@ -35,7 +35,7 @@ export interface SharedAttemptLogView {
   displayName: string;
   outcome: "succeeded" | "failed" | "timed_out" | "cancelled";
   resultCode: string | null;
-  /** 失败精简描述（一行堆栈），仅非成功时有值 */
+  /** 完整失败描述（可包含多行与非 ASCII 文本），仅非成功时有值 */
   summary: string | null;
   /** ISO 8601；尚未开始的尝试为 null */
   startedAt: string | null;

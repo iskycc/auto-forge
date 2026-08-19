@@ -1,6 +1,7 @@
 package executor
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -43,5 +44,34 @@ func TestStreamBufferMarksTruncationAtTheSharedByteLimit(t *testing.T) {
 	}
 	if buffer.String() != "12345" {
 		t.Fatalf("buffer content = %q, want bounded prefix", buffer.String())
+	}
+}
+
+func TestStreamBufferSplitsLargeWritesIntoProtocolSizedChunks(t *testing.T) {
+	content := strings.Repeat("中文日志", maxLogChunkBytes/4)
+	budget := newLogBudget(int64(len(content)))
+	chunks := make([]LogChunk, 0)
+	buffer := newStreamBuffer("stdout", budget, func(chunk LogChunk) error {
+		chunks = append(chunks, chunk)
+		return nil
+	})
+	if _, err := buffer.Write([]byte(content)); err != nil {
+		t.Fatal(err)
+	}
+	if err := buffer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if len(chunks) < 2 {
+		t.Fatalf("chunk count = %d, want more than one", len(chunks))
+	}
+	var combined strings.Builder
+	for _, chunk := range chunks {
+		if len([]byte(chunk.Content)) > maxLogChunkBytes {
+			t.Fatalf("chunk bytes = %d, limit = %d", len([]byte(chunk.Content)), maxLogChunkBytes)
+		}
+		combined.WriteString(chunk.Content)
+	}
+	if combined.String() != content {
+		t.Fatal("split chunks did not preserve the UTF-8 log")
 	}
 }

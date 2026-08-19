@@ -169,6 +169,7 @@
       "status": "partial",
       "owner": "execution-state-machine",
       "evidence": [
+        "tests/e2e/all-rounds.spec.ts",
         "tests/e2e/jar-import.spec.ts",
         "tests/e2e/real-agent.spec.ts",
         "tests/e2e/scheduling-refill.spec.ts"
@@ -187,7 +188,11 @@
       "id": "AF-E2E-011",
       "status": "partial",
       "owner": "logs-results-artifacts",
-      "evidence": ["tests/e2e/jar-import.spec.ts", "tests/e2e/real-agent.spec.ts"],
+      "evidence": [
+        "tests/e2e/all-rounds.spec.ts",
+        "tests/e2e/jar-import.spec.ts",
+        "tests/e2e/real-agent.spec.ts"
+      ],
       "coverage": {
         "lite": "partial",
         "full": "partial",

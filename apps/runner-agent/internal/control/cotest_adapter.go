@@ -68,12 +68,12 @@ func cotestAdapterExecutorSpec(
 	if javaExecutable == "" {
 		return executor.Spec{}, nil, errors.New("CoTest execution requires a JDK archive or local Java executable")
 	}
-	arguments := []string{
+	arguments := append(javaUTF8Arguments(),
 		"-jar", adapter.JarPath,
 		"--jars", "test-jars",
 		"--class", specification.ClassName,
 		"--output", "reports/testng",
-	}
+	)
 	if specification.Adapter.SuiteName != "" {
 		arguments = append(arguments, "--suite-name", specification.Adapter.SuiteName)
 	}

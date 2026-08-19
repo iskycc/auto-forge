@@ -35,6 +35,7 @@ func TestCotestAdapterExecutorUsesDownloadedJDKAndProjectSettings(t *testing.T) 
 	if mapped.Command.Executable != dynamicJavaExecutable {
 		t.Fatalf("executable = %q", mapped.Command.Executable)
 	}
+	assertJavaUTF8Arguments(t, mapped.Command.Args)
 	arguments := strings.Join(mapped.Command.Args, " ")
 	for _, expected := range []string{
 		"-jar /opt/autoforge/lib/cotest-testng-adapter.jar",
@@ -46,6 +47,19 @@ func TestCotestAdapterExecutorUsesDownloadedJDKAndProjectSettings(t *testing.T) 
 	} {
 		if !strings.Contains(arguments, expected) {
 			t.Fatalf("arguments %q do not contain %q", arguments, expected)
+		}
+	}
+}
+
+func assertJavaUTF8Arguments(t *testing.T, arguments []string) {
+	t.Helper()
+	expected := javaUTF8Arguments()
+	if len(arguments) < len(expected) {
+		t.Fatalf("arguments = %#v, want UTF-8 JVM properties first", arguments)
+	}
+	for index, value := range expected {
+		if arguments[index] != value {
+			t.Fatalf("arguments[%d] = %q, want %q", index, arguments[index], value)
 		}
 	}
 }

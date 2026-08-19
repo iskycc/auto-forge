@@ -76,6 +76,7 @@ jobs:
       fail-fast: false
       matrix:
         scenario:
+          - all-rounds
           - case-suite-lifecycle
           - execution-recovery
           - identity-rbac

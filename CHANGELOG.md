@@ -4,6 +4,31 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## Unreleased
+
+### Fixed
+
+- Execution failure descriptions now preserve the complete multiline UTF-8 adapter summary instead
+  of truncating it or falling back to `class#method 执行失败`. Runner JVM processes explicitly use
+  UTF-8 console encodings, and oversized writes are split at the Runner Protocol chunk boundary.
+- Round totals now use the cases eligible for each round: the initial round contains all cases and
+  each retry round contains the preceding round's failures/timeouts. Not-executed counts update while
+  a round is active, and the all-rounds row sums every displayed round consistently.
+- Completed attempt rows no longer expose cancellation actions merely because their execution run is
+  queued for a later retry. Execution detail tables use compact fixed layouts with 70th-percentile
+  content widths so isolated long values wrap without stretching the whole column.
+
+### Tests
+
+- Added multiline/long/Chinese failure-summary coverage across Adapter, control plane, UI and public
+  log views, plus live round aggregation, retry eligibility, compact layout and terminal-row action
+  E2E coverage. The existing all-rounds scenario is now part of the GitHub Actions browser matrix.
+
+### Compatibility
+
+- No database migration or Runner Protocol schema change. The Base64 failure marker is additive;
+  control planes continue to accept the legacy plaintext marker during rolling upgrades.
+
 ## 0.7.2 - 2026-08-19
 
 ### Fixed

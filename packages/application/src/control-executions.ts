@@ -202,8 +202,7 @@ export class ExecutionControlService {
     input: CompleteAttemptInput,
   ) {
     await this.authenticateRunner(runnerId, credential);
-    let result = enrichFailureSummary(input.result);
-    result = await this.enrichSummaryFromFailureLog(attemptId, result, result !== input.result);
+    const result = await this.enrichSummaryFromFailureLog(attemptId, input.result);
     const response = await this.executions.completeAttempt({
       runnerId,
       attemptId,
@@ -223,15 +222,12 @@ export class ExecutionControlService {
     return response;
   }
 
-  // 缺少结构化 TestNG 结果时（如进程非零退出但无报告），从日志尾部提取失败原因作为摘要，
-  // 让批次列表能直接看到失败原因。优先解析 adapter 输出的机器可读失败标记
-  // （adapterFailureLine），只有找不到标记且没有结构化摘要时才回退到启发式的异常行扫描。
-  // 找到失败行时直接用它替换摘要（不再拼接类路径前缀），让错误描述只保留堆栈行本身；
-  // 找不到时保留现有摘要兜底。日志读取失败（如日志库文件缺失）不得阻断完成上报的接受。
+  // 从日志尾部提取权威失败原因，无论是否已有结构化 TestNG 结果都不生成“类#方法执行失败”
+  // 占位摘要。优先解析 adapter 的机器可读标记；旧日志没有标记时再扫描异常行。
+  // 找不到时保留 Runner 原始摘要，日志读取失败也不得阻断完成上报的接受。
   private async enrichSummaryFromFailureLog(
     attemptId: string,
     result: CompletionResult,
-    hasStructuredSummary: boolean,
   ): Promise<CompletionResult> {
     if (result.status !== "failed" && result.status !== "timed_out") return result;
     // 重启/取消协调重放的结果码：日志属于被强杀的旧进程，从中提取的"失败原因"
@@ -239,12 +235,11 @@ export class ExecutionControlService {
     if (RECONCILED_COMPLETION_RESULT_CODES.has(result.resultCode ?? "")) return result;
     // adapter 的失败标记打在 stdout，优先于 stderr。
     for (const stream of ["stdout", "stderr"] as const) {
-      const line = adapterFailureLine(await this.readLogTail(attemptId, stream));
+      const line = adapterFailureLine(await this.readFailureMarkerWindow(attemptId, stream));
       if (!line) continue;
       if (result.summary.includes(line)) return result;
       return { ...result, summary: line };
     }
-    if (hasStructuredSummary) return result;
     // 启发式兜底：历史日志没有失败标记，从 stderr/stdout 尾部找异常行。
     for (const stream of ["stderr", "stdout"] as const) {
       const line = lastFailureLine(await this.readLogTail(attemptId, stream));
@@ -255,6 +250,32 @@ export class ExecutionControlService {
     return result;
   }
 
+  private async readFailureMarkerWindow(
+    attemptId: string,
+    stream: LogChunk["stream"],
+  ): Promise<string> {
+    try {
+      const matches = await this.executions.listLogChunks({
+        attemptId,
+        stream,
+        afterSequence: -1,
+        limit: 500,
+        query: "TestCase Run Failed Stack",
+      });
+      const markerChunk = matches.items.at(-1);
+      if (!markerChunk) return "";
+      const window = await this.executions.listLogChunks({
+        attemptId,
+        stream,
+        afterSequence: Math.max(-1, markerChunk.sequence - 1),
+        limit: 500,
+      });
+      return window.items.map((chunk) => chunk.content).join("");
+    } catch {
+      return "";
+    }
+  }
+
   private async readLogTail(attemptId: string, stream: LogChunk["stream"]): Promise<string> {
     try {
       const probe = await this.executions.listLogChunks({
@@ -263,13 +284,14 @@ export class ExecutionControlService {
         afterSequence: -1,
         limit: 1,
       });
-      // 只取尾部窗口，避免为找一行堆栈而扫描整段日志。
-      const fromSequence = Math.max(-1, probe.acknowledgedSequence - 50);
+      // Agent 单次日志上限为 64 MiB，协议单块最多 256 KiB；读取最后 500 块既能
+      // 覆盖完整的超长失败标记，又保持严格的有界内存使用。
+      const fromSequence = Math.max(-1, probe.acknowledgedSequence - 500);
       const { items } = await this.executions.listLogChunks({
         attemptId,
         stream,
         afterSequence: fromSequence,
-        limit: 100,
+        limit: 500,
       });
       return items.map((chunk) => chunk.content).join("");
     } catch {
@@ -724,26 +746,6 @@ function completionReasonSuffix(result: CompletionResult): string {
   return summary ? `（${result.resultCode}：${summary}）` : `（${result.resultCode}）`;
 }
 
-// 失败或超时时，把首个失败方法定位到摘要作为兜底；若日志尾部能提取到堆栈行，
-// enrichSummaryFromFailureLog 会用堆栈行替换该占位摘要。
-function enrichFailureSummary(result: CompletionResult): CompletionResult {
-  if (result.status !== "failed" && result.status !== "timed_out") return result;
-  if (!result.testNg) return result;
-  for (const suite of result.testNg.suites) {
-    for (const test of suite.tests) {
-      for (const clazz of test.classes) {
-        for (const method of clazz.methods) {
-          if (method.status === "failed") {
-            const summary = `${clazz.name}#${method.name} 执行失败`.slice(0, 500);
-            return { ...result, summary };
-          }
-        }
-      }
-    }
-  }
-  return result;
-}
-
 // Agent 重启/取消协调后重放的完成结果码；这类尝试的日志由被强杀的旧进程写入，
 // 不适合作为失败摘要的启发式来源（参见 enrichSummaryFromFailureLog）。
 const RECONCILED_COMPLETION_RESULT_CODES = new Set([
@@ -751,21 +753,40 @@ const RECONCILED_COMPLETION_RESULT_CODES = new Set([
   "EXECUTION_CANCELLED_DURING_RECONCILE",
 ]);
 
-// TestNG adapter（TestNgResultReporter / CotestTestNgExecutor）在用例失败时向 stdout
-// 打印的机器可读标记，格式为 `TestCase Run Failed Stack: [<内容>]` 单行。
-// 内容与 adapter 报告中 "Stack Trace:" 之后的第一行一致，即 throwable.toString()
-// （异常类名: 消息）。解析该标记优先于启发式的异常行扫描，避免误抓日志尾部的无关异常。
+// 新版 adapter 把 UTF-8 摘要编码为 Base64 后输出 ASCII 单行，避免 JVM 控制台编码、
+// 换行和日志分块破坏边界；旧版明文标记继续兼容，便于滚动升级 Runner。
+const ADAPTER_FAILURE_BASE64_MARKER = "TestCase Run Failed Stack Base64: [";
 const ADAPTER_FAILURE_MARKER = "TestCase Run Failed Stack: [";
 
-// 在日志内容中找最后一个失败标记行，返回标记内容（trim 后限长 300）；找不到返回 null。
+// 在日志尾部找最后一个失败标记。完整返回内容，不用展示层或调度日志的短摘要上限
+// 截断权威 resultSummary。
 function adapterFailureLine(content: string): string | null {
-  const lines = content.split("\n");
-  for (let index = lines.length - 1; index >= 0; index -= 1) {
-    const line = lines[index]?.trim();
-    if (!line || !line.startsWith(ADAPTER_FAILURE_MARKER) || !line.endsWith("]")) continue;
-    return line.slice(ADAPTER_FAILURE_MARKER.length, -1).trim().slice(0, 300);
-  }
-  return null;
+  const encoded = enclosedMarkerPayload(content, ADAPTER_FAILURE_BASE64_MARKER, "first");
+  if (encoded !== null) return decodeBase64Utf8(encoded);
+  return enclosedMarkerPayload(content, ADAPTER_FAILURE_MARKER, "last")?.trim() || null;
+}
+
+function enclosedMarkerPayload(
+  content: string,
+  marker: string,
+  closingBracket: "first" | "last",
+): string | null {
+  const markerIndex = content.lastIndexOf(marker);
+  if (markerIndex < 0) return null;
+  const payloadStart = markerIndex + marker.length;
+  const payloadEnd =
+    closingBracket === "first" ? content.indexOf("]", payloadStart) : content.lastIndexOf("]");
+  return payloadEnd >= payloadStart ? content.slice(payloadStart, payloadEnd) : null;
+}
+
+function decodeBase64Utf8(encoded: string): string | null {
+  if (encoded.length === 0 || encoded.length % 4 !== 0) return null;
+  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(encoded)) return null;
+  const bytes = Buffer.from(encoded, "base64");
+  if (bytes.toString("base64") !== encoded) return null;
+  const decoded = bytes.toString("utf8");
+  // Buffer 默认会替换非法 UTF-8；往返校验保证损坏标记不会被静默改写。
+  return Buffer.from(decoded, "utf8").equals(bytes) ? decoded : null;
 }
 
 // 在日志尾部找最后一行异常行（优先于堆栈帧行），作为非结构化失败的可读原因。
@@ -775,8 +796,8 @@ function lastFailureLine(content: string): string | null {
   for (let index = lines.length - 1; index >= 0; index -= 1) {
     const line = lines[index]?.trim();
     if (!line) continue;
-    if (/Exception|Error|Caused by/.test(line)) return line.slice(0, 300);
-    if (!stackLine && /^at\s/.test(line)) stackLine = line.slice(0, 300);
+    if (/Exception|Error|Caused by/.test(line)) return line;
+    if (!stackLine && /^at\s/.test(line)) stackLine = line;
   }
   return stackLine;
 }

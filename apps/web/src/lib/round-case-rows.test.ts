@@ -1,7 +1,7 @@
 import type { ExecutionRun, RunAttempt } from "@autoforge/domain";
 import { describe, expect, it } from "vitest";
 
-import { buildRoundCaseRows } from "./round-case-rows";
+import { buildRoundCaseRows, canCancelRoundCaseRow } from "./round-case-rows";
 
 function run(id: string, overrides: Partial<ExecutionRun> = {}): ExecutionRun {
   return {
@@ -42,6 +42,7 @@ function attempt(
 describe("buildRoundCaseRows", () => {
   // run-a 第 1 轮通过；run-b 第 1 轮失败、等待第 2 轮；run-c 尚未产生任何 attempt。
   const batch = {
+    currentRound: 1,
     runs: [run("run-a"), run("run-b", { heldRound: 2 }), run("run-c")],
     attempts: [
       attempt("attempt-a1", "run-a", 1, "succeeded"),
@@ -57,32 +58,46 @@ describe("buildRoundCaseRows", () => {
 
   it("excludes runs already passed in earlier rounds from later rounds", () => {
     const rows = buildRoundCaseRows(batch, 2);
-    // run-a 第 1 轮已通过，第 2 轮不再出现；run-b 等待第 2 轮，显示为未执行占位。
-    expect(rows.map((row) => row.run.id)).toEqual(["run-b", "run-c"]);
+    // 第 2 轮只包含首轮失败的 run-b；首轮通过或尚未执行的用例都不属于重跑总数。
+    expect(rows.map((row) => row.run.id)).toEqual(["run-b"]);
     expect(rows[0]?.attempt).toBeUndefined();
+    expect(rows[0]?.round).toBe(2);
   });
 
-  it("excludes previously passed runs even when stale data holds a later attempt", () => {
+  it("keeps an actual later attempt visible even if historical data is inconsistent", () => {
     const rerun = {
       ...batch,
       attempts: [...batch.attempts, attempt("attempt-a2", "run-a", 2, "failed")],
     };
     const rows = buildRoundCaseRows(rerun, 2);
-    // 调度语义上已通过用例不会重跑；即使历史数据残留后续 attempt，也不再显示为未执行。
-    expect(rows.some((candidate) => candidate.run.id === "run-a")).toBe(false);
+    expect(rows.find((candidate) => candidate.run.id === "run-a")?.attempt?.id).toBe("attempt-a2");
   });
 
   it("emits one row per attempt in all-rounds view, ordered by round", () => {
     const multi = {
       ...batch,
+      currentRound: 2,
       attempts: [attempt("attempt-b2", "run-b", 2, "succeeded"), ...batch.attempts],
     };
     const rows = buildRoundCaseRows(multi, "all");
-    expect(rows.map((row) => `${row.run.id}:${row.attempt?.attemptNumber ?? "none"}`)).toEqual([
-      "run-a:1",
-      "run-b:1",
-      "run-b:2",
-      "run-c:none",
-    ]);
+    expect(
+      rows.map((row) => `${row.run.id}:${row.round}:${row.attempt?.attemptNumber ?? "none"}`),
+    ).toEqual(["run-a:1:1", "run-b:1:1", "run-b:2:2", "run-c:1:none"]);
+  });
+
+  it("emits a pending all-rounds row for an eligible retry that has not started", () => {
+    const rows = buildRoundCaseRows({ ...batch, currentRound: 2 }, "all");
+    expect(
+      rows.map((row) => `${row.run.id}:${row.round}:${row.attempt ? "done" : "pending"}`),
+    ).toEqual(["run-a:1:done", "run-b:1:done", "run-b:2:pending", "run-c:1:pending"]);
+  });
+
+  it("does not offer cancellation on terminal attempts even if the run is queued for retry", () => {
+    const failedAttempt = batch.attempts.find((candidate) => candidate.executionRunId === "run-b");
+    expect(failedAttempt).toBeDefined();
+    expect(canCancelRoundCaseRow({ run: batch.runs[1]!, attempt: failedAttempt, round: 1 })).toBe(
+      false,
+    );
+    expect(canCancelRoundCaseRow({ run: batch.runs[1]!, attempt: undefined, round: 2 })).toBe(true);
   });
 });

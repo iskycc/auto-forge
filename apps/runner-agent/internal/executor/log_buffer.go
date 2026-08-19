@@ -8,6 +8,8 @@ import (
 	"unicode/utf8"
 )
 
+const maxLogChunkBytes = 262_144
+
 type logBudget struct {
 	mu        sync.Mutex
 	remaining int64
@@ -92,34 +94,42 @@ func (buffer *streamBuffer) emitCompleteRunes(final bool) error {
 		}
 		return nil
 	}
+	for len(buffer.pending) > 0 {
+		consumed := completeRunePrefix(buffer.pending, final, maxLogChunkBytes)
+		if consumed == 0 {
+			return nil
+		}
+		decoded := strings.ToValidUTF8(string(buffer.pending[:consumed]), "\uFFFD")
+		buffer.pending = append(buffer.pending[:0], buffer.pending[consumed:]...)
+		if decoded == "" {
+			continue
+		}
+		err := buffer.sink(LogChunk{
+			Stream:     buffer.stream,
+			Sequence:   buffer.sequence,
+			Content:    decoded,
+			RecordedAt: time.Now().UTC(),
+		})
+		if err != nil {
+			return err
+		}
+		buffer.sequence++
+	}
+	return nil
+}
+
+func completeRunePrefix(content []byte, final bool, maximumBytes int) int {
 	consumed := 0
-	for consumed < len(buffer.pending) {
-		remaining := buffer.pending[consumed:]
+	for consumed < len(content) {
+		remaining := content[consumed:]
 		if !final && !utf8.FullRune(remaining) {
 			break
 		}
 		_, size := utf8.DecodeRune(remaining)
-		if size == 0 {
+		if size == 0 || consumed+size > maximumBytes {
 			break
 		}
 		consumed += size
 	}
-	if consumed == 0 {
-		return nil
-	}
-	decoded := strings.ToValidUTF8(string(buffer.pending[:consumed]), "\uFFFD")
-	buffer.pending = append(buffer.pending[:0], buffer.pending[consumed:]...)
-	if decoded == "" {
-		return nil
-	}
-	err := buffer.sink(LogChunk{
-		Stream:     buffer.stream,
-		Sequence:   buffer.sequence,
-		Content:    decoded,
-		RecordedAt: time.Now().UTC(),
-	})
-	if err == nil {
-		buffer.sequence++
-	}
-	return err
+	return consumed
 }

@@ -31,7 +31,9 @@ func TestTestNGExecutorSpecUsesArgumentArrayAndOfflineClasspath(t *testing.T) {
 		t.Fatalf("Executable = %q", mapped.Command.Executable)
 	}
 	wantClasspath := filepath.Join("inputs", "tests.jar") + string(filepath.ListSeparator) + filepath.Join("inputs", "lib", "support.jar") + string(filepath.ListSeparator) + "/opt/testng/testng.jar" + string(filepath.ListSeparator) + "/opt/testng/jcommander.jar"
-	if len(mapped.Command.Args) < 2 || mapped.Command.Args[0] != "-cp" || mapped.Command.Args[1] != wantClasspath {
+	assertJavaUTF8Arguments(t, mapped.Command.Args)
+	classpathIndex := len(javaUTF8Arguments())
+	if len(mapped.Command.Args) < classpathIndex+2 || mapped.Command.Args[classpathIndex] != "-cp" || mapped.Command.Args[classpathIndex+1] != wantClasspath {
 		t.Fatalf("Args = %#v, want classpath %q", mapped.Command.Args, wantClasspath)
 	}
 	if len(inputs) != 2 || inputs[0].InputID != "source-1" || inputs[1].InputID != "dependency-1" {

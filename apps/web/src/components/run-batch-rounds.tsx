@@ -7,7 +7,11 @@ import type {
   RunBatchRoundSummary,
   RunnerResourceSnapshot,
 } from "@autoforge/domain";
-import { isTerminalAttemptStatus, summarizeRunBatchRounds } from "@autoforge/domain";
+import {
+  isTerminalAttemptStatus,
+  summarizeAllRunBatchRounds,
+  summarizeRunBatchRounds,
+} from "@autoforge/domain";
 import {
   ChevronLeft,
   ChevronRight,
@@ -28,7 +32,11 @@ import { RunBatchExportDialog } from "@/components/run-batch-export-dialog";
 import { SchedulingLogViewer } from "@/components/scheduling-log-viewer";
 import { Button, Input, Select } from "@/components/ui";
 import { readApiErrorMessage } from "@/lib/client-api";
-import { buildRoundCaseRows, type RoundCaseRowModel } from "@/lib/round-case-rows";
+import {
+  buildRoundCaseRows,
+  canCancelRoundCaseRow,
+  type RoundCaseRowModel,
+} from "@/lib/round-case-rows";
 import {
   attemptFailureHint,
   formatArtifactBytes,
@@ -36,6 +44,7 @@ import {
   formatBatchDuration,
   formatLocalDateTime,
 } from "@/lib/run-batch-presentation";
+import { columnCharacterWidthAtCoverage, widestText } from "@/lib/table-column-width";
 
 const DEFAULT_CASE_PAGE_SIZE = 50;
 // 用户可选的每页用例数；500 为需求上限。
@@ -67,10 +76,10 @@ function roundLabel(retryMode: RunBatchDetails["retryMode"], round: number): str
   return retryMode === "round" ? `重跑第 ${round - 1} 轮` : `重试第 ${round - 1} 次`;
 }
 
-function roundStatusLabel(summary: RunBatchRoundSummary): string {
+function roundStatusLabel(summary: RunBatchRoundSummary, currentRound: number): string {
   if (summary.status === "running") return "运行中";
   if (summary.status === "completed") return "已完成";
-  return summary.round === 1 ? "等待调度" : "等待上一轮结束";
+  return summary.round <= currentRound ? "等待调度" : "等待上一轮结束";
 }
 
 function roundStatusClass(summary: RunBatchRoundSummary): string {
@@ -118,20 +127,14 @@ function runnerResourceLabel(snapshot: RunnerResourceSnapshot): string {
   return `CPU ${snapshot.cpuUtilizationPercent}% · 内存 ${snapshot.memoryUtilizationPercent}% · 负载/CPU ${loadPerCpu.toFixed(2)}`;
 }
 
-// 失败摘要（堆栈行）在状态列只展示开头部分，完整内容通过 title 悬浮查看。
-function truncateFailureLine(line: string | undefined): string {
-  if (!line) return "";
-  return line.length > 160 ? `${line.slice(0, 160)}…` : line;
-}
-
-// 终态失败提示行：adapter 正常失败露出堆栈行摘要，blocked 露出原因码；
+// 终态失败提示行：adapter 正常失败露出完整失败描述，blocked 露出原因码；
 // 提示文案为空（非终态或信息缺失）时不渲染。
 function AttemptFailureHintLine({ attempt }: { attempt: RunAttempt }) {
   const hint = attemptFailureHint(attempt);
   if (!hint) return null;
   return (
     <small className="table-secondary attempt-failure-line" title={hint}>
-      {truncateFailureLine(hint)}
+      {hint}
     </small>
   );
 }
@@ -179,21 +182,7 @@ export function RunBatchRounds({
     ? requestedRound
     : defaultRound;
   const selectedSummary = summaries.find((summary) => summary.round === selectedRound);
-  // 全部轮次行的累计口径：曾通过的用例（按 run 去重）与从未产生 attempt 的用例数。
-  const allRoundsStats = useMemo(() => {
-    const passedRunIds = new Set<string>();
-    const attemptedRunIds = new Set<string>();
-    for (const attempt of batch.attempts) {
-      attemptedRunIds.add(attempt.executionRunId);
-      if (attempt.outcome === "succeeded") passedRunIds.add(attempt.executionRunId);
-    }
-    const total = batch.runs.length;
-    return {
-      passed: passedRunIds.size,
-      neverExecuted: batch.runs.filter((run) => !attemptedRunIds.has(run.id)).length,
-      passRate: total === 0 ? 0 : Math.round((passedRunIds.size / total) * 100),
-    };
-  }, [batch.attempts, batch.runs]);
+  const allRoundsStats = useMemo(() => summarizeAllRunBatchRounds(summaries), [summaries]);
   const [activeTab, setActiveTab] = useState<"cases" | "runners">("cases");
   const [logAttempt, setLogAttempt] = useState<RunAttempt | undefined>();
   const [schedulingViewer, setSchedulingViewer] = useState<
@@ -255,7 +244,14 @@ export function RunBatchRounds({
           <span className="muted">共 {summaries.length} 轮</span>
         </div>
         <div className="table-scroll round-table-scroll">
-          <table className="data-table">
+          <table className="data-table execution-round-table">
+            <colgroup>
+              <col className="round-column-name" />
+              <col className="round-column-status" />
+              <col className="round-column-count" span={6} />
+              <col className="round-column-start" />
+              <col className="round-column-duration" />
+            </colgroup>
             <thead>
               <tr>
                 <th>轮次</th>
@@ -287,15 +283,14 @@ export function RunBatchRounds({
                   >
                     全部轮次
                   </Button>
-                  <small className="table-secondary">跨轮次记录</small>
                 </td>
                 <td>—</td>
-                <td>{batch.totalRuns}</td>
+                <td>{allRoundsStats.totalRuns}</td>
                 <td>{allRoundsStats.passRate}%</td>
                 <td>—</td>
                 <td>{allRoundsStats.passed}</td>
-                <td>—</td>
-                <td>{allRoundsStats.neverExecuted}</td>
+                <td>{allRoundsStats.failed + allRoundsStats.timedOut}</td>
+                <td>{allRoundsStats.notExecuted}</td>
                 <td>—</td>
                 <td>—</td>
               </tr>
@@ -320,11 +315,10 @@ export function RunBatchRounds({
                     >
                       {roundLabel(batch.retryMode, summary.round)}
                     </Button>
-                    <small className="table-secondary">第 {summary.round} 轮</small>
                   </td>
                   <td>
                     <span className={`batch-status ${roundStatusClass(summary)}`.trim()}>
-                      {roundStatusLabel(summary)}
+                      {roundStatusLabel(summary, batch.currentRound)}
                     </span>
                   </td>
                   <td>{summary.totalRuns}</td>
@@ -336,7 +330,7 @@ export function RunBatchRounds({
                   </td>
                   <td>{summary.passed}</td>
                   <td>{summary.failed + summary.timedOut}</td>
-                  <td>{summary.blocked}</td>
+                  <td>{summary.notExecuted}</td>
                   <td>
                     {summary.startedAt ? (
                       <time title={`UTC ${summary.startedAt}`}>
@@ -583,7 +577,7 @@ function RoundDetailPanel({
     { label: "累计通过", value: passedRunsSoFar, color: "var(--color-success)" },
     {
       label: "未通过",
-      value: Math.max(0, summary.totalRuns - passedRunsSoFar),
+      value: Math.max(0, batch.totalRuns - passedRunsSoFar),
       color: "var(--color-border-strong)",
     },
   ];
@@ -594,7 +588,7 @@ function RoundDetailPanel({
         <div className="round-detail-title">
           <h2>{label}</h2>
           <span className={`batch-status ${roundStatusClass(summary)}`.trim()}>
-            {roundStatusLabel(summary)}
+            {roundStatusLabel(summary, batch.currentRound)}
           </span>
           {summary.status === "running" && canReadLogs ? (
             <span className="status-badge">实时更新</span>
@@ -659,7 +653,7 @@ function RoundDetailPanel({
               segments={progressSegments}
               centerValue={`${summary.overallPassRate}%`}
               centerLabel="总通过率"
-              ariaLabel={`截至本轮总体通过进度：累计通过 ${passedRunsSoFar} 个用例，共 ${summary.totalRuns} 个`}
+              ariaLabel={`截至本轮总体通过进度：累计通过 ${passedRunsSoFar} 个用例，共 ${batch.totalRuns} 个`}
             />
           </div>
         </div>
@@ -796,6 +790,33 @@ function RoundCasesTable({
   // 不再自动展开行内详情：无论单用例还是多用例，都需用户主动点击详情。
   const [expandedAttemptId, setExpandedAttemptId] = useState<string | undefined>();
   const [sortSpec, setSortSpec] = useState<CaseSortSpec>({ key: "none", direction: "asc" });
+  const columnWidths = useMemo(
+    () => ({
+      case: columnCharacterWidthAtCoverage(
+        rows.map((row) => widestText([row.run.displayName, row.run.className])),
+        { minimum: 22, maximum: 42 },
+      ),
+      status: columnCharacterWidthAtCoverage(
+        rows.map((row) =>
+          widestText(
+            (row.attempt
+              ? `${attemptStatusLabel(row.attempt)} ${attemptFailureHint(row.attempt) ?? ""}`
+              : "未执行"
+            ).split(/\r?\n/),
+          ),
+        ),
+        { minimum: 12, maximum: 36 },
+      ),
+      runner: columnCharacterWidthAtCoverage(
+        rows.map((row) => {
+          const runnerId = row.attempt?.runnerId ?? row.run.assignedRunnerId;
+          return runnerId ? runnerDisplayName(runnerId, runnerDirectory) : "—";
+        }),
+        { minimum: 10, maximum: 24 },
+      ),
+    }),
+    [rows, runnerDirectory],
+  );
 
   const filteredRows = useMemo(() => {
     const keyword = nameQuery.trim().toLowerCase();
@@ -871,7 +892,15 @@ function RoundCasesTable({
         <div className="inline-empty">没有匹配当前筛选条件的用例。</div>
       ) : (
         <div className="table-scroll">
-          <table className="data-table">
+          <table className="data-table execution-case-table">
+            <colgroup>
+              <col style={{ width: `${columnWidths.case}ch` }} />
+              {showRoundColumn ? <col className="case-column-round" /> : null}
+              <col style={{ width: `${columnWidths.status}ch` }} />
+              <col style={{ width: `${columnWidths.runner}ch` }} />
+              <col className="case-column-duration" />
+              <col className="case-column-actions" />
+            </colgroup>
             <thead>
               <tr>
                 <SortableCaseTh
@@ -905,7 +934,7 @@ function RoundCasesTable({
             <tbody>
               {pageRows.map((row) => (
                 <RoundCaseRow
-                  key={row.attempt ? row.attempt.id : row.run.id}
+                  key={row.attempt ? row.attempt.id : `${row.run.id}:${row.round}`}
                   row={row}
                   showRoundColumn={showRoundColumn}
                   expanded={expandedAttemptId === row.attempt?.id}
@@ -1076,17 +1105,15 @@ function RoundCaseRow({
           <strong>{run.displayName}</strong>
           <small className="table-secondary">{run.className}</small>
         </td>
-        {showRoundColumn ? (
-          <td className="round-cell-nowrap">{attempt ? `第 ${attempt.attemptNumber} 轮` : "—"}</td>
-        ) : null}
+        {showRoundColumn ? <td className="round-cell-nowrap">第 {row.round} 轮</td> : null}
         <td>
           {attempt ? (
             <>
               <span className={`batch-status ${attemptStatusClass(attempt)}`.trim()}>
                 {attemptStatusLabel(attempt)}
               </span>
-              {/* 终态失败提示直接露出，无需展开详情：adapter 正常失败显示堆栈行
-                  摘要，blocked（重启协调、超时等）显示原因码。 */}
+              {/* 终态失败提示直接露出，无需展开详情：adapter 正常失败显示完整描述，
+                  blocked（重启协调、超时等）显示原因码。 */}
               {isTerminalAttemptStatus(attempt.status) && attempt.status !== "succeeded" ? (
                 <AttemptFailureHintLine attempt={attempt} />
               ) : null}
@@ -1098,7 +1125,9 @@ function RoundCaseRow({
         {/* 执行机优先展示注册名称（一般为 runner-IP），title 保留完整 UUID。 */}
         <td>
           {runnerId ? (
-            <span title={runnerId}>{runnerDisplayName(runnerId, runnerDirectory)}</span>
+            <span className="round-runner-name" title={runnerId}>
+              {runnerDisplayName(runnerId, runnerDirectory)}
+            </span>
           ) : (
             "—"
           )}
@@ -1138,7 +1167,7 @@ function RoundCaseRow({
                 <FileText size={15} /> 详情
               </Button>
             ) : null}
-            {canCancelRuns && ["queued", "assigned", "running"].includes(run.status) ? (
+            {canCancelRuns && canCancelRoundCaseRow(row) ? (
               <Button
                 className="danger-text-button"
                 disabled={cancelPending}

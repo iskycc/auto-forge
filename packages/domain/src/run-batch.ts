@@ -178,7 +178,8 @@ export type RunBatchRoundSummary = {
   failed: number;
   timedOut: number;
   cancelled: number;
-  blocked: number;
+  // 属于本轮但尚未产生 attempt 的用例数；进行中的轮次也必须实时计算。
+  notExecuted: number;
   // 本轮通过率（百分比，0-100）；本轮尚无 attempt 时为 null，由 UI 显示中间态。
   roundPassRate: number | null;
   // 截至本轮末，曾经通过的 run（按 executionRunId 去重）占总用例数的百分比。
@@ -187,21 +188,33 @@ export type RunBatchRoundSummary = {
   durationMs: number | null;
 };
 
+export type RunBatchAllRoundsSummary = {
+  totalRuns: number;
+  passed: number;
+  failed: number;
+  timedOut: number;
+  cancelled: number;
+  notExecuted: number;
+  passRate: number;
+};
+
 // 纯函数聚合：不读取系统时间，进行中的轮次 durationMs 为 null，由调用方决定如何倒计时。
 export function summarizeRunBatchRounds(
   batch: RunBatch,
   runs: readonly ExecutionRun[],
   attempts: readonly RunAttempt[],
 ): RunBatchRoundSummary[] {
-  const roundNumbers = collectRoundNumbers(runs, attempts);
+  const roundNumbers = runBatchRoundNumbers(batch, runs, attempts);
   const passedRunIds = new Set<string>();
   return roundNumbers.map((round) => {
     const roundAttempts = attempts.filter((attempt) => attempt.attemptNumber === round);
+    const eligibleRuns = executionRunsForRound(runs, attempts, round);
+    const attemptedRunIds = new Set(roundAttempts.map((attempt) => attempt.executionRunId));
     for (const attempt of roundAttempts) {
       if (runAttemptOutcome(attempt) === "succeeded") passedRunIds.add(attempt.executionRunId);
     }
-    const status = roundStatus(roundAttempts);
-    const executed = roundAttempts.length;
+    const executed = attemptedRunIds.size;
+    const status = roundStatus(batch, round, roundAttempts, eligibleRuns.length, executed);
     const passed = countOutcome(roundAttempts, "succeeded");
     const timedOut = countOutcome(roundAttempts, "timed_out");
     const failed = countOutcome(roundAttempts, "failed");
@@ -209,32 +222,84 @@ export function summarizeRunBatchRounds(
     return {
       round,
       status,
-      totalRuns: batch.totalRuns,
+      totalRuns: eligibleRuns.length,
       executed,
       passed,
       failed,
       timedOut,
       cancelled,
-      blocked: countBlockedRuns(runs, roundAttempts, round),
+      notExecuted: Math.max(0, eligibleRuns.length - executed),
       roundPassRate: executed === 0 ? null : Math.round((passed / executed) * 100),
       overallPassRate:
         batch.totalRuns === 0 ? 0 : Math.round((passedRunIds.size / batch.totalRuns) * 100),
       startedAt: roundStartedAt(roundAttempts),
-      durationMs: roundDurationMs(roundAttempts),
+      durationMs: status === "running" ? null : roundDurationMs(roundAttempts),
     };
   });
 }
 
-function collectRoundNumbers(
+/**
+ * 返回批次已有或已声明等待的轮次号。currentRound 必须纳入，否则一轮刚释放、
+ * 尚未产生第一个 attempt 的短暂窗口会从页面消失。
+ */
+export function runBatchRoundNumbers(
+  batch: Pick<RunBatch, "currentRound">,
   runs: readonly ExecutionRun[],
   attempts: readonly RunAttempt[],
 ): number[] {
-  const numbers = new Set<number>([1]);
+  const numbers = new Set<number>([1, batch.currentRound]);
   for (const attempt of attempts) numbers.add(attempt.attemptNumber);
   for (const run of runs) {
     if (run.heldRound !== undefined && run.heldRound > 0) numbers.add(run.heldRound);
   }
   return [...numbers].sort((left, right) => left - right);
+}
+
+/**
+ * 单一轮次资格规则：首轮包含批次全部用例；后续轮次包含上一轮失败/超时的用例。
+ * heldRound 补足已持有但历史 attempt 不完整的数据，当前轮已经存在的 attempt 则必须
+ * 如实展示，不能因更早轮次的异常数据而被隐藏。
+ */
+export function executionRunsForRound(
+  runs: readonly ExecutionRun[],
+  attempts: readonly RunAttempt[],
+  round: number,
+): ExecutionRun[] {
+  if (round === 1) return [...runs];
+  const eligibleRunIds = new Set<string>();
+  for (const attempt of attempts) {
+    if (attempt.attemptNumber === round) eligibleRunIds.add(attempt.executionRunId);
+    if (attempt.attemptNumber !== round - 1) continue;
+    const outcome = runAttemptOutcome(attempt);
+    if (outcome === "failed" || outcome === "timed_out") {
+      eligibleRunIds.add(attempt.executionRunId);
+    }
+  }
+  for (const run of runs) {
+    if (run.heldRound === round) eligibleRunIds.add(run.id);
+  }
+  return runs.filter((run) => eligibleRunIds.has(run.id));
+}
+
+/** 全部轮次按各真实轮次逐项求和，不再回退到首轮批次总数。 */
+export function summarizeAllRunBatchRounds(
+  summaries: readonly RunBatchRoundSummary[],
+): RunBatchAllRoundsSummary {
+  const totals = summaries.reduce<Omit<RunBatchAllRoundsSummary, "passRate">>(
+    (current, summary) => ({
+      totalRuns: current.totalRuns + summary.totalRuns,
+      passed: current.passed + summary.passed,
+      failed: current.failed + summary.failed,
+      timedOut: current.timedOut + summary.timedOut,
+      cancelled: current.cancelled + summary.cancelled,
+      notExecuted: current.notExecuted + summary.notExecuted,
+    }),
+    { totalRuns: 0, passed: 0, failed: 0, timedOut: 0, cancelled: 0, notExecuted: 0 },
+  );
+  return {
+    ...totals,
+    passRate: totals.totalRuns === 0 ? 0 : Math.round((totals.passed / totals.totalRuns) * 100),
+  };
 }
 
 // 终态 attempt 的不变量保证 outcome 与 status 一致；防御性回退到 status 以覆盖历史数据。
@@ -253,12 +318,28 @@ export function runAttemptOutcome(attempt: RunAttempt): RunAttempt["outcome"] {
   return undefined;
 }
 
-function roundStatus(roundAttempts: readonly RunAttempt[]): RunBatchRoundStatus {
-  if (roundAttempts.length === 0) return "waiting";
+function roundStatus(
+  batch: Pick<RunBatch, "currentRound" | "retryMode" | "status">,
+  round: number,
+  roundAttempts: readonly RunAttempt[],
+  totalRuns: number,
+  executed: number,
+): RunBatchRoundStatus {
   const hasActive = roundAttempts.some(
     (attempt) => attempt.status === "assigned" || attempt.status === "running",
   );
-  return hasActive ? "running" : "completed";
+  if (hasActive) return "running";
+  if (isTerminalRoundBatchStatus(batch.status) || round < batch.currentRound) return "completed";
+  if (batch.retryMode === "immediate") {
+    if (roundAttempts.length === 0) return "waiting";
+    return executed < totalRuns ? "running" : "completed";
+  }
+  if (round > batch.currentRound || roundAttempts.length === 0) return "waiting";
+  return executed < totalRuns ? "running" : "completed";
+}
+
+function isTerminalRoundBatchStatus(status: RunBatchStatus): boolean {
+  return status === "succeeded" || status === "failed" || status === "cancelled";
 }
 
 function countOutcome(
@@ -266,34 +347,6 @@ function countOutcome(
   outcome: NonNullable<RunAttempt["outcome"]>,
 ): number {
   return roundAttempts.filter((attempt) => runAttemptOutcome(attempt) === outcome).length;
-}
-
-// blocked 只统计仍被轮次持有的 run：已完成轮次不再存在阻塞；进行中的轮次只算
-// 等待未来轮释放的 run；尚未开始的轮次把等待本轮释放的 run 也计入。
-// 这是调度语义的“该轮未执行”，与 attempt 结果分类的 blocked（非正常结束，
-// 见 attempt-result.ts）是两个独立概念，仅轮次统计使用。
-export function blockedRunsForRound(
-  runs: readonly ExecutionRun[],
-  roundAttempts: readonly RunAttempt[],
-  round: number,
-): ExecutionRun[] {
-  const status = roundStatus(roundAttempts);
-  if (status === "completed") return [];
-  const attemptedRunIds = new Set(roundAttempts.map((attempt) => attempt.executionRunId));
-  return runs.filter((run) => {
-    const heldRound = run.heldRound ?? 0;
-    if (heldRound === 0) return false;
-    if (!attemptedRunIds.has(run.id) && heldRound > round) return true;
-    return status === "waiting" && heldRound === round;
-  });
-}
-
-function countBlockedRuns(
-  runs: readonly ExecutionRun[],
-  roundAttempts: readonly RunAttempt[],
-  round: number,
-): number {
-  return blockedRunsForRound(runs, roundAttempts, round).length;
 }
 
 function roundStartedAt(roundAttempts: readonly RunAttempt[]): string | null {

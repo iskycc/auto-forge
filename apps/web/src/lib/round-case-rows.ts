@@ -1,57 +1,77 @@
-import type { ExecutionRun, RunAttempt, RunBatchDetails } from "@autoforge/domain";
+import {
+  executionRunsForRound,
+  isTerminalAttemptStatus,
+  runBatchRoundNumbers,
+  type ExecutionRun,
+  type RunAttempt,
+  type RunBatchDetails,
+} from "@autoforge/domain";
 
 export type RoundCaseRowModel = {
   run: ExecutionRun;
   attempt: RunAttempt | undefined;
+  round: number;
 };
 
 /**
  * 组装轮次用例表的行。
  *
- * 具体轮次：每个未在前轮通过的用例一行，attempt 为该轮记录（无记录即等待本轮）。
- * 调度语义上前轮已通过的用例不再进入后续轮次，把它们显示为「未执行」是误导，
- * 因此直接过滤；remaining 无 attempt 的行才是真正等待本轮调度的用例。
+ * 具体轮次：首轮包含全部用例，后续轮次只包含上一轮失败/超时或已经存在本轮
+ * attempt 的用例；无 attempt 的资格行表示真正等待本轮调度。
  *
- * "all" 虚拟轮次：同一用例的每条 attempt 各占一行（按轮次升序），由轮次列区分；
- * 从未执行的用例保留一行占位，便于筛选「未执行」。
+ * "all" 虚拟轮次：按轮次资格展开，同一用例在每个所属轮次各占一行；尚未产生
+ * attempt 的资格行同样保留，保证详情行数与“全部轮次”总数/未执行数完全一致。
  */
 export function buildRoundCaseRows(
-  batch: Pick<RunBatchDetails, "runs" | "attempts">,
+  batch: Pick<RunBatchDetails, "currentRound" | "runs" | "attempts">,
   round: number | "all",
 ): RoundCaseRowModel[] {
   if (round === "all") {
-    const attemptsByRun = new Map<string, RunAttempt[]>();
-    for (const attempt of batch.attempts) {
-      const list = attemptsByRun.get(attempt.executionRunId) ?? [];
-      list.push(attempt);
-      attemptsByRun.set(attempt.executionRunId, list);
-    }
+    const roundNumbers = runBatchRoundNumbers(batch, batch.runs, batch.attempts);
+    const eligibleRunIdsByRound = new Map(
+      roundNumbers.map((roundNumber) => [
+        roundNumber,
+        new Set(
+          executionRunsForRound(batch.runs, batch.attempts, roundNumber).map((run) => run.id),
+        ),
+      ]),
+    );
+    const attemptsByRunAndRound = new Map(
+      batch.attempts.map((attempt) => [
+        runRoundKey(attempt.executionRunId, attempt.attemptNumber),
+        attempt,
+      ]),
+    );
     const rows: RoundCaseRowModel[] = [];
     for (const run of batch.runs) {
-      const runAttempts = (attemptsByRun.get(run.id) ?? [])
-        .slice()
-        .sort((left, right) => left.attemptNumber - right.attemptNumber);
-      if (runAttempts.length === 0) {
-        rows.push({ run, attempt: undefined });
-      } else {
-        for (const attempt of runAttempts) rows.push({ run, attempt });
+      for (const roundNumber of roundNumbers) {
+        if (!eligibleRunIdsByRound.get(roundNumber)?.has(run.id)) continue;
+        rows.push({
+          run,
+          round: roundNumber,
+          attempt: attemptsByRunAndRound.get(runRoundKey(run.id, roundNumber)),
+        });
       }
     }
     return rows;
   }
 
-  const passedBeforeRound = new Set<string>();
-  for (const attempt of batch.attempts) {
-    if (attempt.attemptNumber < round && attempt.outcome === "succeeded") {
-      passedBeforeRound.add(attempt.executionRunId);
-    }
-  }
-  return batch.runs
-    .filter((run) => !passedBeforeRound.has(run.id))
-    .map((run) => ({
-      run,
-      attempt: batch.attempts.find(
-        (attempt) => attempt.executionRunId === run.id && attempt.attemptNumber === round,
-      ),
-    }));
+  return executionRunsForRound(batch.runs, batch.attempts, round).map((run) => ({
+    run,
+    round,
+    attempt: batch.attempts.find(
+      (attempt) => attempt.executionRunId === run.id && attempt.attemptNumber === round,
+    ),
+  }));
+}
+
+/** 终态行只表示历史结果；run 已排队重跑也不能在该历史行上提供取消操作。 */
+export function canCancelRoundCaseRow(row: RoundCaseRowModel): boolean {
+  const runCanBeCancelled = ["queued", "assigned", "running"].includes(row.run.status);
+  if (!runCanBeCancelled) return false;
+  return row.attempt === undefined || !isTerminalAttemptStatus(row.attempt.status);
+}
+
+function runRoundKey(runId: string, round: number): string {
+  return `${runId}:${round}`;
 }

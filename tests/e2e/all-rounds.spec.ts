@@ -280,6 +280,21 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
     });
   }
 
+  // 第 1 轮结束、重跑尚未领取时，轮次总数与未执行数必须立即按本轮资格实时计算。
+  // 首轮失败记录已经终止，即便 execution run 正处于 queued 等待重跑，也不能显示取消按钮。
+  await page.goto(`/run-batches/${encodeURIComponent(batch.id)}`);
+  const roundTable = page.locator(".execution-round-table");
+  const initialRoundRow = roundTable.getByRole("row", { name: /初始轮次/ });
+  const retryRoundRow = roundTable.getByRole("row", { name: /重跑第 1 轮/ });
+  await expect(initialRoundRow.locator("td").nth(2)).toHaveText("2");
+  await expect(initialRoundRow.locator("td").nth(7)).toHaveText("0");
+  await expect(retryRoundRow.locator("td").nth(2)).toHaveText("1");
+  await expect(retryRoundRow.locator("td").nth(7)).toHaveText("1");
+  await page.getByRole("button", { name: "初始轮次", exact: true }).click();
+  const failedFirstRoundRow = page.locator(".round-cases tbody tr").filter({ hasText: "失败" });
+  await expect(failedFirstRoundRow).toHaveCount(1);
+  await expect(failedFirstRoundRow.getByRole("button", { name: "取消该用例" })).toHaveCount(0);
+
   // 整轮轮次模式：第 1 轮结束后统一释放失败用例进入第 2 轮。
   const idleHeartbeat = await postHeartbeat(page, identity, 0);
   expect(idleHeartbeat.status()).toBe(200);
@@ -303,6 +318,14 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
 
   // 全部轮次视图：flaky 用例两条记录分别标注第 1/2 轮，稳定用例只有一条。
   await page.goto(`/run-batches/${encodeURIComponent(batch.id)}`);
+  const completedAllRoundsRow = page
+    .locator(".execution-round-table")
+    .getByRole("row", { name: /全部轮次/ });
+  await expect(completedAllRoundsRow.locator("td").nth(2)).toHaveText("3");
+  await expect(completedAllRoundsRow.locator("td").nth(3)).toHaveText("67%");
+  await expect(completedAllRoundsRow.locator("td").nth(5)).toHaveText("2");
+  await expect(completedAllRoundsRow.locator("td").nth(6)).toHaveText("1");
+  await expect(completedAllRoundsRow.locator("td").nth(7)).toHaveText("0");
   await page.getByRole("button", { name: "全部轮次", exact: true }).click();
   await expect(page).toHaveURL(/round=all/);
   const casesRegion = page.locator(".round-cases");
@@ -328,10 +351,26 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
   expect(panelBox).toBeTruthy();
   expect(tableBox).toBeTruthy();
   expect(tableBox!.width).toBeGreaterThan(panelBox!.width * 0.6);
+  await expect(casesRegion.locator("table")).toHaveCSS("table-layout", "fixed");
+  const compactCellPadding = await casesRegion
+    .locator("tbody td")
+    .first()
+    .evaluate((cell) => {
+      const style = window.getComputedStyle(cell);
+      return {
+        top: Number.parseFloat(style.paddingTop),
+        bottom: Number.parseFloat(style.paddingBottom),
+      };
+    });
+  expect(compactCellPadding.top).toBeLessThanOrEqual(8);
+  expect(compactCellPadding.bottom).toBeLessThanOrEqual(8);
   await captureUi(page, "all-rounds-view");
 
   // 第 2 轮不再把首轮已通过的稳定用例显示为「未执行」。
   await page.getByRole("button", { name: "重跑第 1 轮", exact: true }).click();
+  await expect(
+    page.getByRole("img", { name: /截至本轮总体通过进度：累计通过 2 个用例，共 2 个/ }),
+  ).toBeVisible();
   await expect(casesRegion.getByRole("row", { name: /AllRoundsFlakyTest/ })).toHaveCount(1);
   await expect(casesRegion.getByRole("row", { name: /AllRoundsStableTest/ })).toHaveCount(0);
   // 「未执行」同时是筛选下拉的选项文案，断言限定在用例行 tbody 内。

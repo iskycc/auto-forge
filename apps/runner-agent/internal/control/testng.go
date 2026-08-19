@@ -95,19 +95,19 @@ func testNGExecutorSpec(specification ExecutionSpec, toolchain config.ToolchainC
 	sort.Strings(dependencyPaths)
 	classpath := append([]string{filepath.Clean(testInput.TargetPath)}, dependencyPaths...)
 	classpath = append(classpath, toolchain.Classpath...)
-	arguments := []string{
+	arguments := append(javaUTF8Arguments(),
 		"-cp", strings.Join(classpath, string(filepath.ListSeparator)),
 		"org.testng.TestNG",
 		"-d", "reports/testng",
 		"-testclass", specification.ClassName,
-	}
+	)
 	if len(methodSelectors) > 0 || len(parameterNames) > 0 {
-		arguments = []string{
+		arguments = append(javaUTF8Arguments(),
 			"-cp", strings.Join(classpath, string(filepath.ListSeparator)),
 			testNGLauncherRelativePath,
 			"--output", "reports/testng",
 			"--class", specification.ClassName,
-		}
+		)
 		for _, selector := range methodSelectors {
 			arguments = append(arguments, "--method", selector)
 		}

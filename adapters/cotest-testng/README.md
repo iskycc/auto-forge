@@ -53,6 +53,10 @@ Adapter 不会访问网络或自动补装缺失依赖。
 
 退出码 `0` 表示 TestNG 成功，`1` 表示用例或执行失败，`2` 表示 Adapter 参数无效。
 
+失败摘要会额外输出为 ASCII 单行的 `TestCase Run Failed Stack Base64` 标记；载荷是完整的 UTF-8
+`Throwable.toString()`。因此，多行异常消息、中文内容和跨日志分块的长摘要都不会被截断或受
+控制台默认字符集影响。
+
 ## 类加载边界
 
 旧实现只修改线程上下文 ClassLoader，但 `URLClassLoader` 默认仍是父优先；当父进程已经加载

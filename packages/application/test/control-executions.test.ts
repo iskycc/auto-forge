@@ -611,16 +611,38 @@ describe("failure summary log fallback", () => {
     tail?: LogTailResponse;
     stdoutTail?: LogTailResponse;
     stderrTail?: LogTailResponse;
+    markerSearch?: LogTailResponse;
+    markerWindow?: LogTailResponse;
     error?: unknown;
   }) {
-    const listLogChunks = vi.fn().mockImplementation((input: { limit: number; stream: string }) => {
-      if (logResponses.error) return Promise.reject(logResponses.error);
-      if (input.limit === 1) return Promise.resolve(logResponses.probe);
-      const tail =
-        (input.stream === "stdout" ? logResponses.stdoutTail : logResponses.stderrTail) ??
-        logResponses.tail;
-      return Promise.resolve(tail);
-    });
+    const listLogChunks = vi
+      .fn()
+      .mockImplementation(
+        (input: { afterSequence: number; limit: number; query?: string; stream: string }) => {
+          if (logResponses.error) return Promise.reject(logResponses.error);
+          if (input.limit === 1) return Promise.resolve(logResponses.probe);
+          const tail =
+            (input.stream === "stdout" ? logResponses.stdoutTail : logResponses.stderrTail) ??
+            logResponses.tail;
+          if (input.query) {
+            if (logResponses.markerSearch) return Promise.resolve(logResponses.markerSearch);
+            return Promise.resolve(
+              tail
+                ? {
+                    ...tail,
+                    items: tail.items.filter((item) =>
+                      item.content.includes("TestCase Run Failed Stack"),
+                    ),
+                  }
+                : { items: [], acknowledgedSequence: -1, truncated: false },
+            );
+          }
+          if (logResponses.markerWindow && input.afterSequence >= 0) {
+            return Promise.resolve(logResponses.markerWindow);
+          }
+          return Promise.resolve(tail);
+        },
+      );
     const executions = {
       completeAttempt: vi.fn().mockResolvedValue({
         schemaVersion: 1,
@@ -822,6 +844,42 @@ describe("failure summary log fallback", () => {
     );
   });
 
+  it("finds an early adapter marker even when more than 500 later chunks leave the tail", async () => {
+    const marker =
+      "TestCase Run Failed Stack: [java.lang.AssertionError: early authoritative failure]\n";
+    const markerPage = {
+      items: [{ stream: "stdout", sequence: 10, content: marker }],
+      acknowledgedSequence: 1_000,
+      truncated: false,
+    };
+    const { service, executions } = buildService({
+      probe: { items: [], acknowledgedSequence: 1_000, truncated: false },
+      markerSearch: markerPage,
+      markerWindow: markerPage,
+      stdoutTail: {
+        items: [
+          {
+            stream: "stdout",
+            sequence: 1_000,
+            content: "later output without the marker\n",
+          },
+        ],
+        acknowledgedSequence: 1_000,
+        truncated: false,
+      },
+    });
+
+    await service.complete("runner-1", "credential", "attempt-1", completionInput);
+
+    expect(executions.completeAttempt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        result: expect.objectContaining({
+          summary: "java.lang.AssertionError: early authoritative failure",
+        }),
+      }),
+    );
+  });
+
   it("replaces the structured TestNG summary with the adapter failure marker", async () => {
     const counts = { total: 1, passed: 0, failed: 1, skipped: 0, configurationFailures: 0 };
     const structuredInput = {
@@ -886,6 +944,131 @@ describe("failure summary log fallback", () => {
         result: expect.objectContaining({
           summary: "java.lang.AssertionError: expected <200> but was <500>",
         }),
+      }),
+    );
+  });
+
+  it("never replaces a structured failure with the class-and-method placeholder", async () => {
+    const counts = { total: 1, passed: 0, failed: 1, skipped: 0, configurationFailures: 0 };
+    const { service, executions } = buildService({
+      probe: { items: [], acknowledgedSequence: 4, truncated: false },
+      stderrTail: {
+        items: [
+          {
+            stream: "stderr",
+            sequence: 4,
+            content: "java.lang.AssertionError: 中文详情必须保留\n",
+          },
+        ],
+        acknowledgedSequence: 4,
+        truncated: false,
+      },
+    });
+
+    await service.complete("runner-1", "credential", "attempt-1", {
+      ...completionInput,
+      result: {
+        ...completionInput.result,
+        testNg: {
+          ...counts,
+          detailsTruncated: false,
+          suites: [
+            {
+              ...counts,
+              name: "Suite",
+              durationMs: 1,
+              tests: [
+                {
+                  ...counts,
+                  name: "Test",
+                  durationMs: 1,
+                  classes: [
+                    {
+                      ...counts,
+                      name: "com.example.PaymentTest",
+                      durationMs: 1,
+                      methods: [
+                        {
+                          name: "pays",
+                          status: "failed" as const,
+                          configuration: false,
+                          durationMs: 1,
+                        },
+                      ],
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      },
+    });
+
+    expect(executions.completeAttempt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        result: expect.objectContaining({ summary: "java.lang.AssertionError: 中文详情必须保留" }),
+      }),
+    );
+  });
+
+  it("decodes a multiline, long and Chinese adapter failure marker without truncation", async () => {
+    const failureSummary =
+      "java.lang.AssertionError: 中文断言失败\n第二行错误详情：" +
+      "预期值与实际值不一致；".repeat(500);
+    const encodedSummary = Buffer.from(failureSummary, "utf8").toString("base64");
+    const { service, executions } = buildService({
+      probe: { items: [], acknowledgedSequence: 31, truncated: false },
+      stdoutTail: {
+        items: [
+          {
+            stream: "stdout",
+            sequence: 30,
+            content: "TestCase Run Failed Stack Base64: [" + encodedSummary.slice(0, 120),
+          },
+          {
+            stream: "stdout",
+            sequence: 31,
+            content: `${encodedSummary.slice(120)}]\nStack frame argument [unrelated]\n`,
+          },
+        ],
+        acknowledgedSequence: 31,
+        truncated: false,
+      },
+    });
+
+    await service.complete("runner-1", "credential", "attempt-1", completionInput);
+
+    expect(failureSummary.length).toBeGreaterThan(4_096);
+    expect(executions.completeAttempt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        result: expect.objectContaining({ summary: failureSummary }),
+      }),
+    );
+  });
+
+  it("parses legacy multiline markers and keeps long heuristic exception lines intact", async () => {
+    const legacySummary = "java.lang.AssertionError: first line\nsecond line with 中文详情";
+    const { service, executions } = buildService({
+      probe: { items: [], acknowledgedSequence: 8, truncated: false },
+      stdoutTail: {
+        items: [
+          {
+            stream: "stdout",
+            sequence: 8,
+            content: `TestCase Run Failed Stack: [${legacySummary}]\n`,
+          },
+        ],
+        acknowledgedSequence: 8,
+        truncated: false,
+      },
+    });
+
+    await service.complete("runner-1", "credential", "attempt-1", completionInput);
+
+    expect(executions.completeAttempt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        result: expect.objectContaining({ summary: legacySummary }),
       }),
     );
   });

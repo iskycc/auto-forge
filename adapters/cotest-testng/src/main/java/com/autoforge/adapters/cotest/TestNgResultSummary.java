@@ -6,19 +6,16 @@ final class TestNgResultSummary {
   private final int failedCount;
   private final int skippedCount;
   private final int configurationFailureCount;
-  private final String firstFailure;
 
   TestNgResultSummary(
       int passedCount,
       int failedCount,
       int skippedCount,
-      int configurationFailureCount,
-      String firstFailure) {
+      int configurationFailureCount) {
     this.passedCount = passedCount;
     this.failedCount = failedCount;
     this.skippedCount = skippedCount;
     this.configurationFailureCount = configurationFailureCount;
-    this.firstFailure = firstFailure;
   }
 
   int passedCount() {
@@ -35,9 +32,5 @@ final class TestNgResultSummary {
 
   int configurationFailureCount() {
     return configurationFailureCount;
-  }
-
-  String firstFailure() {
-    return firstFailure;
   }
 }
