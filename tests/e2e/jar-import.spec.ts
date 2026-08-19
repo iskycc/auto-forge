@@ -23,6 +23,23 @@ async function captureUi(page: Page, name: string): Promise<void> {
   await page.screenshot({ path: resolve(absoluteDirectory, `${name}.png`), fullPage: true });
 }
 
+interface JarFilePayload {
+  name: string;
+  mimeType: "application/java-archive";
+  buffer: Buffer;
+}
+
+async function selectJarForInspection(page: Page, payload: JarFilePayload): Promise<void> {
+  const fileInput = page.locator('input[type="file"]');
+  const inspectButton = page.getByRole("button", { name: "扫描测试类" });
+
+  await expect(async () => {
+    await fileInput.setInputFiles([]);
+    await fileInput.setInputFiles(payload);
+    await expect(inspectButton).toBeEnabled({ timeout: 1_000 });
+  }).toPass({ intervals: [100, 250, 500, 1_000], timeout: 15_000 });
+}
+
 test("imports TestNG methods from a JAR into the case library", async ({ page }) => {
   test.setTimeout(300_000);
   await page.emulateMedia({ reducedMotion: "reduce" });
@@ -187,7 +204,7 @@ public class MixedVisibleTest {
     classes: [{ className: largeClassName }],
   });
 
-  await page.locator('input[type="file"]').setInputFiles({
+  await selectJarForInspection(page, {
     name: "valid-48-mib-tests.jar",
     mimeType: "application/java-archive",
     buffer: Buffer.from(validLargeJar),
@@ -219,7 +236,7 @@ public class MixedVisibleTest {
     await expect(page.getByRole("status")).toContainText("已导入", { timeout: 120_000 });
   }
 
-  await page.locator('input[type="file"]').setInputFiles({
+  await selectJarForInspection(page, {
     name: "checkout-tests.jar",
     mimeType: "application/java-archive",
     buffer: Buffer.from(jar),
@@ -273,7 +290,7 @@ public class MixedVisibleTest {
   await expect(checkoutSourceRow.getByRole("button", { name: "当前全量来源" })).toBeVisible();
 
   await page.goto(`/cases/import?projectId=${encodeURIComponent(DEFAULT_PROJECT_ID)}`);
-  await page.locator('input[type="file"]').setInputFiles({
+  await selectJarForInspection(page, {
     name: "mixed-visible-tests.jar",
     mimeType: "application/java-archive",
     buffer: Buffer.from(mixedJar),
@@ -287,7 +304,7 @@ public class MixedVisibleTest {
   await expect(page.locator(".alert-success")).toContainText("已导入", { timeout: 60_000 });
 
   await page.goto(`/cases/import?projectId=${encodeURIComponent(DEFAULT_PROJECT_ID)}`);
-  await page.locator('input[type="file"]').setInputFiles({
+  await selectJarForInspection(page, {
     name: "mixed-visible-tests-copy.jar",
     mimeType: "application/java-archive",
     buffer: Buffer.from(mixedJar),
@@ -309,7 +326,7 @@ public class MixedVisibleTest {
   ).toBeVisible();
 
   await page.goto(`/cases/import?projectId=${encodeURIComponent(DEFAULT_PROJECT_ID)}`);
-  await page.locator('input[type="file"]').setInputFiles({
+  await selectJarForInspection(page, {
     name: "checkout-tests-v2.jar",
     mimeType: "application/java-archive",
     buffer: Buffer.from(jarV2),
@@ -920,7 +937,7 @@ public class MixedVisibleTest {
   await page.getByRole("button", { name: "关闭通知" }).click();
 
   await page.goto(`/cases/import?projectId=${encodeURIComponent(DEFAULT_PROJECT_ID)}`);
-  await page.locator('input[type="file"]').setInputFiles({
+  await selectJarForInspection(page, {
     name: "source-visible-tests-sources.jar",
     mimeType: "application/java-archive",
     buffer: Buffer.from(sourcesJar),
