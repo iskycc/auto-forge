@@ -142,6 +142,56 @@ jobs:
       - name: Build immutable production outputs
         run: pnpm build
 
+  verification-image:
+    name: Current SHA amd64 verification image
+    if: >-
+      github.event_name == 'push' &&
+      contains(github.event.head_commit.message, '[verification-image]')
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      AUTOFORGE_BUILDX_CACHE_FROM: type=gha,scope=ci-verification-backend-amd64,timeout=2m
+      AUTOFORGE_BUILDX_CACHE_TO: type=gha,mode=max,scope=ci-verification-backend-amd64,timeout=2m,ignore-error=true
+      AUTOFORGE_KEEP_DOCKER_TAR: "1"
+      AUTOFORGE_RELEASE_REVISION: ${{ github.sha }}
+      BACKEND_IMAGE: autoforge/backend:0.0.0-ci.${{ github.run_id }}-amd64
+      BACKEND_PLATFORM: linux/amd64
+      VERIFICATION_VERSION: 0.0.0-ci.${{ github.run_id }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.16.0
+      - name: Set up Go for embedded Agent resources
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: 1.26.5
+          cache-dependency-path: apps/runner-agent/go.mod
+      - name: Record reproducible build time
+        run: echo "SOURCE_DATE_EPOCH=$(git show -s --format=%ct HEAD)" >> "${GITHUB_ENV}"
+      - name: Build compressed verification image
+        run: >-
+          bash scripts/release/build-backend-image.sh
+          "${VERIFICATION_VERSION}" amd64 dist/verification
+      - name: Load and verify image
+        run: |
+          docker load --input "dist/verification/autoforge-backend-${VERIFICATION_VERSION}-amd64.docker.tar"
+          bash scripts/release/verify-backend-image.sh "${BACKEND_IMAGE}" "${BACKEND_PLATFORM}"
+          rm -- "dist/verification/autoforge-backend-${VERIFICATION_VERSION}-amd64.docker.tar"
+      - name: Upload compressed verification image
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: verification-backend-amd64-${{ github.sha }}
+          path: dist/verification/*.docker.tar.zst
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
   real-agent-acceptance:
     name: Network-blocked real Agent acceptance
     runs-on: ubuntu-24.04
