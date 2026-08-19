@@ -20,7 +20,8 @@ async function createHarness(): Promise<RunnerGroupHarness> {
     migrationsFolder: resolve(import.meta.dirname, "../drizzle/postgresql"),
   });
   await handle.ready;
-  const runnerIds = [randomUUID(), randomUUID()] as const;
+  const generatedRunnerIds = [randomUUID(), randomUUID()].sort();
+  const runnerIds = [generatedRunnerIds[0]!, generatedRunnerIds[1]!] as const;
   for (const runnerId of runnerIds) {
     await handle.pool.query(
       `INSERT INTO runners

@@ -134,7 +134,9 @@ public class MixedVisibleTest {
   await expect(page.getByRole("link", { name: "首页", exact: true })).toHaveClass(
     /nav-item-active/,
   );
-  await expect(page.getByText("E2E Administrator", { exact: true })).toBeVisible();
+  await expect(
+    page.getByRole("banner").getByText("E2E Administrator", { exact: true }),
+  ).toBeVisible();
 
   await page.getByRole("button", { name: "退出登录" }).click();
   await expect(page).toHaveURL(/\/login$/);
@@ -146,7 +148,9 @@ public class MixedVisibleTest {
   await expect(page.getByRole("link", { name: "首页", exact: true })).toHaveClass(
     /nav-item-active/,
   );
-  await expect(page.getByText("E2E Administrator", { exact: true })).toBeVisible();
+  await expect(
+    page.getByRole("banner").getByText("E2E Administrator", { exact: true }),
+  ).toBeVisible();
   await ensureProjectHierarchy(page);
 
   await page.goto(`/cases/import?projectId=${encodeURIComponent(DEFAULT_PROJECT_ID)}`);
