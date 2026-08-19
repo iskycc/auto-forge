@@ -96,10 +96,10 @@ export default async function DashboardPage() {
   return (
     <div className="dashboard-page">
       <header className="dashboard-welcome">
-        <div>
+        <h1>
           <span>{greeting(now)}，</span>
           <strong>{identity.user.displayName}</strong>
-        </div>
+        </h1>
         <p>这里是自动化质量、执行进度和资源容量的实时概览。</p>
       </header>
 

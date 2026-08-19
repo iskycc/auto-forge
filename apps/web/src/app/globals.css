@@ -9186,11 +9186,13 @@ button.icon-button:disabled {
   margin-bottom: 18px;
 }
 
-.dashboard-welcome > div {
+.dashboard-welcome > h1 {
   display: flex;
   align-items: baseline;
   gap: 7px;
+  margin: 0;
   font-size: 24px;
+  font-weight: 400;
   letter-spacing: -0.035em;
 }
 
@@ -9930,6 +9932,8 @@ button.icon-button:disabled {
 .global-run-dialog {
   display: flex;
   width: min(900px, calc(100vw - 36px));
+  height: min(760px, calc(100vh - 36px));
+  min-height: 0;
   max-height: calc(100vh - 36px);
   flex-direction: column;
   overflow: hidden;
@@ -9973,6 +9977,7 @@ button.icon-button:disabled {
 }
 
 .global-run-form {
+  flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
   padding: 0 22px;

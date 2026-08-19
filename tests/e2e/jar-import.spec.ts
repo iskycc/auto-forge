@@ -918,14 +918,14 @@ public class MixedVisibleTest {
   agentSocket.close();
 
   await page.goto("/");
-  await expect(page.getByRole("heading", { name: "自动化用例工作台" })).toBeVisible();
+  await expect(page.getByRole("heading", { level: 1, name: /E2E Administrator/ })).toBeVisible();
   await expectDesktopLayoutFits(page, 1024, 768);
   await expectDesktopLayoutFits(page, 1920, 1080);
   await page.setViewportSize({ width: 1920, height: 1080 });
   await page.evaluate(() => {
     document.documentElement.style.zoom = "2";
   });
-  await expect(page.getByRole("heading", { name: "自动化用例工作台" })).toBeVisible();
+  await expect(page.getByRole("heading", { level: 1, name: /E2E Administrator/ })).toBeVisible();
   await expect(page.getByLabel("全局搜索")).toBeVisible();
   await page.evaluate(() => {
     document.documentElement.style.zoom = "";
@@ -1040,7 +1040,7 @@ public class MixedVisibleTest {
   const secondaryBaseUrl = process.env.E2E_SECONDARY_BASE_URL;
   if (secondaryBaseUrl) {
     await page.goto(new URL("/", secondaryBaseUrl).toString());
-    await expect(page.getByRole("heading", { name: "自动化用例工作台" })).toBeVisible();
+    await expect(page.getByRole("heading", { level: 1, name: /E2E Administrator/ })).toBeVisible();
     const secondaryReadiness = await page.request.get(
       new URL("/api/v1/health/ready", secondaryBaseUrl).toString(),
     );
@@ -1067,7 +1067,7 @@ public class MixedVisibleTest {
   await loginUsername.fill(E2E_ADMIN_USERNAME);
   await page.getByLabel("密码").fill(E2E_ADMIN_PASSWORD);
   await page.getByRole("button", { name: "登录" }).click();
-  await expect(page.getByRole("heading", { name: "自动化用例工作台" })).toBeVisible();
+  await expect(page.getByRole("heading", { level: 1, name: /E2E Administrator/ })).toBeVisible();
   const authenticatedSession = await page.request.get("/api/v1/auth/session");
   expect(authenticatedSession.status()).toBe(200);
 });

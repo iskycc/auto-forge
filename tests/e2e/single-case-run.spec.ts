@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 import { zipSync } from "fflate";
 import { randomUUID } from "node:crypto";
 
@@ -48,9 +48,9 @@ test("global execution dialog schedules one case through a runner group with Ada
   const dialog = page.getByRole("dialog", { name: "开始执行" });
   await expect(dialog).toBeVisible();
   await dialog.getByRole("button", { name: "单个用例" }).click();
-  await dialog.getByLabel("待执行单个用例").selectOption({ label: /SingleCaseFixture/ });
+  await selectOptionContaining(dialog.getByLabel("待执行单个用例"), "SingleCaseFixture");
   await dialog.getByRole("button", { name: "使用执行机组" }).click();
-  await dialog.getByLabel("执行机组").selectOption({ label: new RegExp(groupName) });
+  await selectOptionContaining(dialog.getByLabel("执行机组"), groupName);
   await dialog.getByLabel("单用例参数覆盖").fill("target=single-case-e2e");
   await dialog.getByLabel("使用 CoTest TestNG Adapter").check();
   await dialog.getByLabel("单用例 Adapter Suite Name").fill("Single Case Suite");
@@ -111,6 +111,14 @@ test("global execution dialog schedules one case through a runner group with Ada
     },
   });
 });
+
+async function selectOptionContaining(select: Locator, text: string): Promise<void> {
+  const option = select.locator("option").filter({ hasText: text });
+  await expect(option).toHaveCount(1);
+  const value = await option.getAttribute("value");
+  if (!value) throw new Error(`Option containing ${text} has no selectable value.`);
+  await select.selectOption(value);
+}
 
 async function createProject(page: Page) {
   const suffix = uniqueName("single-case");
