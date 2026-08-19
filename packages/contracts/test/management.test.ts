@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import {
   DEFAULT_RUNNER_DATA_DIRECTORY,
   installRunnerAgentInputSchema,
+  runnerHeartbeatInputSchema,
+  runnerHeartbeatResultSchema,
   updateRunnerAgentInputSchema,
 } from "../src/management";
 
@@ -46,5 +48,44 @@ describe("runner data directory contracts", () => {
         installRunnerAgentInputSchema.parse({ ...installInput, dataDirectory: invalid }),
       ).toThrow();
     }
+  });
+});
+
+describe("runner heartbeat cache reconciliation contracts", () => {
+  it("accepts bounded cached batch IDs and defaults the response list", () => {
+    const input = runnerHeartbeatInputSchema.parse({
+      schemaVersion: 1,
+      busySlots: 0,
+      labels: [],
+      capabilities: [],
+      maxConcurrency: 2,
+      agentVersion: "0.2.0",
+      terminalEnabled: false,
+      cachedBatchIds: ["batch-1"],
+    });
+    expect(input.cachedBatchIds).toEqual(["batch-1"]);
+    const result = runnerHeartbeatResultSchema.parse({
+      schemaVersion: 1,
+      acceptedAt: "2026-08-19T00:00:00.000Z",
+      heartbeatIntervalSeconds: 15,
+      draining: false,
+    });
+    expect(result.closedBatchIds).toEqual([]);
+    expect(result.disabled).toBe(false);
+  });
+
+  it("rejects an unbounded cached batch list", () => {
+    expect(() =>
+      runnerHeartbeatInputSchema.parse({
+        schemaVersion: 1,
+        busySlots: 0,
+        labels: [],
+        capabilities: [],
+        maxConcurrency: 2,
+        agentVersion: "0.2.0",
+        terminalEnabled: false,
+        cachedBatchIds: Array.from({ length: 1_025 }, (_, index) => `batch-${index}`),
+      }),
+    ).toThrow();
   });
 });

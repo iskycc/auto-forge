@@ -279,6 +279,26 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
     };
   }
 
+  async listReusableBatchIdsForRunner(
+    runnerId: string,
+    batchIds: readonly string[],
+  ): Promise<string[]> {
+    if (batchIds.length === 0) return [];
+    return this.handle.db
+      .select({ id: runBatches.id })
+      .from(runBatches)
+      .innerJoin(runBatchRunners, eq(runBatchRunners.batchId, runBatches.id))
+      .where(
+        and(
+          eq(runBatchRunners.runnerId, runnerId),
+          inArray(runBatches.id, [...batchIds]),
+          inArray(runBatches.status, ["queued", "dispatching", "scheduled", "running"]),
+        ),
+      )
+      .all()
+      .map((row) => row.id);
+  }
+
   async listSchedulableBatchIds(
     limit: number,
     now = new Date().toISOString(),

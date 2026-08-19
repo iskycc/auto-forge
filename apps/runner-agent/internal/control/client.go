@@ -73,15 +73,17 @@ type heartbeatRequest struct {
 	AgentVersion     string            `json:"agentVersion"`
 	TerminalEnabled  bool              `json:"terminalEnabled"`
 	ResourceSnapshot *metrics.Snapshot `json:"resourceSnapshot,omitempty"`
+	CachedBatchIDs   []string          `json:"cachedBatchIds,omitempty"`
 }
 
 type HeartbeatResponse struct {
-	SchemaVersion           int    `json:"schemaVersion"`
-	AcceptedAt              string `json:"acceptedAt"`
-	HeartbeatIntervalSecond int    `json:"heartbeatIntervalSeconds"`
-	Draining                bool   `json:"draining"`
-	RotateCredential        bool   `json:"rotateCredential"`
-	TerminalConnectionToken string `json:"terminalConnectionToken,omitempty"`
+	SchemaVersion           int      `json:"schemaVersion"`
+	AcceptedAt              string   `json:"acceptedAt"`
+	HeartbeatIntervalSecond int      `json:"heartbeatIntervalSeconds"`
+	Draining                bool     `json:"draining"`
+	RotateCredential        bool     `json:"rotateCredential"`
+	TerminalConnectionToken string   `json:"terminalConnectionToken,omitempty"`
+	ClosedBatchIDs          []string `json:"closedBatchIds,omitempty"`
 }
 
 type apiErrorEnvelope struct {
@@ -188,7 +190,15 @@ func (client *Client) RotateCredential(ctx context.Context, identity Identity) (
 	}, nil
 }
 
-func (client *Client) Heartbeat(ctx context.Context, identity Identity, configuration config.Config, info buildinfo.Info, busySlots int, snapshot *metrics.Snapshot) (HeartbeatResponse, error) {
+func (client *Client) Heartbeat(
+	ctx context.Context,
+	identity Identity,
+	configuration config.Config,
+	info buildinfo.Info,
+	busySlots int,
+	snapshot *metrics.Snapshot,
+	cachedBatchIDs []string,
+) (HeartbeatResponse, error) {
 	request := heartbeatRequest{
 		SchemaVersion:    protocolVersion,
 		BusySlots:        busySlots,
@@ -198,6 +208,7 @@ func (client *Client) Heartbeat(ctx context.Context, identity Identity, configur
 		AgentVersion:     info.Version,
 		TerminalEnabled:  configuration.Terminal.Enabled,
 		ResourceSnapshot: snapshot,
+		CachedBatchIDs:   append([]string(nil), cachedBatchIDs...),
 	}
 	var response HeartbeatResponse
 	path := fmt.Sprintf("/api/v1/runner-agents/%s/heartbeat", url.PathEscape(identity.RunnerID))
@@ -210,10 +221,19 @@ func (client *Client) Heartbeat(ctx context.Context, identity Identity, configur
 	if _, err := time.Parse(time.RFC3339Nano, response.AcceptedAt); err != nil {
 		return HeartbeatResponse{}, errors.New("send heartbeat: control plane returned an invalid acceptance time")
 	}
+	if !closedBatchIDsBelongToCache(cachedBatchIDs, response.ClosedBatchIDs) {
+		return HeartbeatResponse{}, errors.New("send heartbeat: control plane returned an unknown cached batch")
+	}
 	return response, nil
 }
 
-func (client *Client) Claim(ctx context.Context, identity Identity, configuration config.Config, availableSlots int) (ClaimResponse, error) {
+func (client *Client) Claim(
+	ctx context.Context,
+	identity Identity,
+	configuration config.Config,
+	availableSlots int,
+	cachedBatchIDs []string,
+) (ClaimResponse, error) {
 	requestID, err := randomIdentifier()
 	if err != nil {
 		return ClaimResponse{}, fmt.Errorf("create claim request identifier: %w", err)
@@ -225,6 +245,7 @@ func (client *Client) Claim(ctx context.Context, identity Identity, configuratio
 		Labels:         configuration.RunnerLabels(),
 		Capabilities:   configuration.Capabilities(),
 		WaitSeconds:    int(configuration.Claim.WaitDuration / time.Second),
+		CachedBatchIDs: append([]string(nil), cachedBatchIDs...),
 	}
 	var response ClaimResponse
 	path := fmt.Sprintf("/api/v1/runner-agents/%s/claims", url.PathEscape(identity.RunnerID))
@@ -237,7 +258,23 @@ func (client *Client) Claim(ctx context.Context, identity Identity, configuratio
 	if len(response.Assignments) > availableSlots {
 		return ClaimResponse{}, errors.New("claim assignments: control plane exceeded the requested slot count")
 	}
+	if !closedBatchIDsBelongToCache(cachedBatchIDs, response.ClosedBatchIDs) {
+		return ClaimResponse{}, errors.New("claim assignments: control plane returned an unknown cached batch")
+	}
 	return response, nil
+}
+
+func closedBatchIDsBelongToCache(cachedBatchIDs, closedBatchIDs []string) bool {
+	cached := make(map[string]struct{}, len(cachedBatchIDs))
+	for _, batchID := range cachedBatchIDs {
+		cached[batchID] = struct{}{}
+	}
+	for _, batchID := range closedBatchIDs {
+		if _, exists := cached[batchID]; !exists {
+			return false
+		}
+	}
+	return true
 }
 
 func (client *Client) RenewLease(ctx context.Context, identity Identity, lease Lease) (RenewLeaseResponse, error) {

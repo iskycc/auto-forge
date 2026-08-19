@@ -93,6 +93,16 @@ func (supervisor *attemptSupervisor) BusySlots() int {
 	return int(supervisor.busy.Load())
 }
 
+func (supervisor *attemptSupervisor) CachedBatchIDs() []string {
+	return supervisor.batches.idleBatchIDs()
+}
+
+func (supervisor *attemptSupervisor) ApplyClosedBatchIDs(batchIDs []string) {
+	for _, batchID := range batchIDs {
+		supervisor.batches.close(batchID, supervisor.diagnostics)
+	}
+}
+
 func (supervisor *attemptSupervisor) BeginDrain() {
 	supervisor.draining.Store(true)
 }
@@ -142,7 +152,13 @@ func (supervisor *attemptSupervisor) claimLoop(ctx context.Context) {
 			}
 			continue
 		}
-		response, err := supervisor.client.Claim(ctx, supervisor.currentIdentity(), supervisor.configuration, availableSlots)
+		response, err := supervisor.client.Claim(
+			ctx,
+			supervisor.currentIdentity(),
+			supervisor.configuration,
+			availableSlots,
+			supervisor.batches.idleBatchIDs(),
+		)
 		if err != nil {
 			fmt.Fprintf(supervisor.diagnostics, "assignment claim failed: %v\n", err)
 			if !waitFor(ctx, jitter(backoff)) {
@@ -152,6 +168,7 @@ func (supervisor *attemptSupervisor) claimLoop(ctx context.Context) {
 			continue
 		}
 		backoff = time.Second
+		supervisor.ApplyClosedBatchIDs(response.ClosedBatchIDs)
 		for _, claimed := range response.Assignments {
 			if err := supervisor.startAttempt(claimed); err != nil {
 				fmt.Fprintf(supervisor.diagnostics, "assignment %s rejected locally: %v\n", claimed.Assignment.AssignmentID, err)
@@ -365,7 +382,7 @@ func (supervisor *attemptSupervisor) runTestNG(
 			} else if err := downloadAttemptInputs(ctx, supervisor.client, supervisor.currentIdentity(), claimed, inputs, workspace); err != nil {
 				return err
 			}
-			if useAdapter {
+			if useAdapter && executionSpec.BatchID == "" {
 				return prepareCotestWorkspace(
 					workspace,
 					inputs,
@@ -906,7 +923,37 @@ func (supervisor *attemptSupervisor) cleanAttemptSpool(attemptID string) error {
 	}); err != nil {
 		return err
 	}
+	if err := supervisor.removeAttemptWorkspaces(attemptID); err != nil {
+		return err
+	}
 	return supervisor.store.remove(attemptID)
+}
+
+// removeAttemptWorkspaces 回收崩溃前 KeepWorkspace 留下的 attempt 目录。批次输入
+// 位于独立的 work/batches 下，不受影响；先删除工作目录再移除 attempt 状态，
+// 失败时下次 reconcile 仍能根据本地状态重试清理。
+func (supervisor *attemptSupervisor) removeAttemptWorkspaces(attemptID string) error {
+	if !localIdentifierPattern.MatchString(attemptID) {
+		return fmt.Errorf("attempt identifier %q is invalid for workspace cleanup", attemptID)
+	}
+	workRoot := filepath.Join(supervisor.configuration.DataDirectory, "work")
+	entries, err := os.ReadDir(workRoot)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read work root for attempt cleanup: %w", err)
+	}
+	prefix := attemptID + "-"
+	for _, entry := range entries {
+		if !entry.IsDir() || !strings.HasPrefix(entry.Name(), prefix) {
+			continue
+		}
+		if err := os.RemoveAll(filepath.Join(workRoot, entry.Name())); err != nil {
+			return fmt.Errorf("remove attempt workspace %s: %w", entry.Name(), err)
+		}
+	}
+	return nil
 }
 
 func validateReconcileDecisions(decisions []ReconcileDecision, states map[string]attemptState) error {

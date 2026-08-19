@@ -100,6 +100,7 @@ func TestBatchRegistrySharesDownloadsAcrossConcurrentAttempts(t *testing.T) {
 				identity,
 				batchClaimedAssignment(attemptID, "batch-1", input),
 				[]ExecutionInput{input},
+				false,
 			)
 			errorsChannel <- err
 		}()
@@ -148,7 +149,7 @@ func TestBatchRegistryRedownloadsWhenDigestMismatch(t *testing.T) {
 	if err := registry.acquire("batch-1"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := registry.ensureBatchInputs(context.Background(), client, identity, claimed, []ExecutionInput{input}); err != nil {
+	if _, err := registry.ensureBatchInputs(context.Background(), client, identity, claimed, []ExecutionInput{input}, false); err != nil {
 		t.Fatalf("first ensureBatchInputs() error = %v", err)
 	}
 
@@ -157,7 +158,7 @@ func TestBatchRegistryRedownloadsWhenDigestMismatch(t *testing.T) {
 	if err := os.WriteFile(shared, []byte("corrupted"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := registry.ensureBatchInputs(context.Background(), client, identity, claimed, []ExecutionInput{input}); err != nil {
+	if _, err := registry.ensureBatchInputs(context.Background(), client, identity, claimed, []ExecutionInput{input}, false); err != nil {
 		t.Fatalf("second ensureBatchInputs() error = %v", err)
 	}
 	if got := downloads.Load(); got != 2 {
@@ -169,6 +170,151 @@ func TestBatchRegistryRedownloadsWhenDigestMismatch(t *testing.T) {
 	}
 }
 
+func TestBatchRegistryMaterializesAdapterDependenciesOnce(t *testing.T) {
+	fixtureRoot := t.TempDir()
+	bundlePath := filepath.Join(fixtureRoot, "dependencies.zip")
+	writeZipFixture(t, bundlePath, map[string]string{
+		"nested/project.jar": "project-dependency",
+	})
+	bundle, err := os.ReadFile(bundlePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	testJAR := []byte("test-jar")
+	inputs := []ExecutionInput{
+		executionInputFixture("test-jar", "test-jar", "inputs/tests.jar", testJAR),
+		executionInputFixture("bundle", "jar-bundle", "runtime-inputs/dependencies.zip", bundle),
+	}
+	contents := map[string][]byte{"test-jar": testJAR, "bundle": bundle}
+	var downloads atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		for inputID, content := range contents {
+			if strings.HasSuffix(request.URL.Path, "/inputs/"+inputID) {
+				downloads.Add(1)
+				writer.Header().Set("Content-Length", fmt.Sprintf("%d", len(content)))
+				_, _ = writer.Write(content)
+				return
+			}
+		}
+		http.NotFound(writer, request)
+	}))
+	defer server.Close()
+	client, err := NewClient(testConfiguration(t, server.URL))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	registry := newBatchRegistry(t.TempDir())
+	identity := Identity{RunnerID: "runner-1", Credential: "runner-credential"}
+	for range 2 {
+		if err := registry.acquire("batch-1"); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	var waitGroup sync.WaitGroup
+	errorsChannel := make(chan error, 2)
+	for _, attemptID := range []string{"attempt-1", "attempt-2"} {
+		waitGroup.Add(1)
+		go func() {
+			defer waitGroup.Done()
+			claimed := batchClaimedAssignment(attemptID, "batch-1", inputs[0])
+			claimed.Assignment.ExecutionSpec.Inputs = inputs
+			claimed.Assignment.ExecutionSpec.ResourceLimits = ResourceLimits{
+				DiskBytes: 1 << 20,
+				FileCount: 1_024,
+			}
+			_, ensureErr := registry.ensureBatchInputs(
+				context.Background(),
+				client,
+				identity,
+				claimed,
+				inputs,
+				true,
+			)
+			errorsChannel <- ensureErr
+		}()
+	}
+	waitGroup.Wait()
+	close(errorsChannel)
+	for ensureErr := range errorsChannel {
+		if ensureErr != nil {
+			t.Fatalf("ensureBatchInputs() error = %v", ensureErr)
+		}
+	}
+	if got := downloads.Load(); got != int32(len(inputs)) {
+		t.Fatalf("downloads = %d, want %d", got, len(inputs))
+	}
+
+	// 前两个并发 attempt 已结束后再启动同批次的后续 attempt，原始输入和
+	// 已解压依赖仍必须复用，不能把“共享”限制成单次并发波次。
+	registry.release("batch-1", false, nil)
+	registry.release("batch-1", false, nil)
+	if err := registry.acquire("batch-1"); err != nil {
+		t.Fatal(err)
+	}
+	laterClaim := batchClaimedAssignment("attempt-3", "batch-1", inputs[0])
+	laterClaim.Assignment.ExecutionSpec.Inputs = inputs
+	laterClaim.Assignment.ExecutionSpec.ResourceLimits = ResourceLimits{
+		DiskBytes: 1 << 20,
+		FileCount: 1_024,
+	}
+	if _, err := registry.ensureBatchInputs(
+		context.Background(),
+		client,
+		identity,
+		laterClaim,
+		inputs,
+		true,
+	); err != nil {
+		t.Fatalf("later ensureBatchInputs() error = %v", err)
+	}
+	if got := downloads.Load(); got != int32(len(inputs)) {
+		t.Fatalf("downloads after later attempt = %d, want %d", got, len(inputs))
+	}
+
+	sharedDependency := filepath.Join(
+		registry.directory("batch-1"),
+		"runtime",
+		"cotest",
+		"test-jars",
+		"nested",
+		"project.jar",
+	)
+	sharedStat, err := os.Stat(sharedDependency)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		workspace := t.TempDir()
+		if err := linkSharedCotestRuntime(registry.directory("batch-1"), workspace, inputs); err != nil {
+			t.Fatal(err)
+		}
+		link, err := os.Lstat(filepath.Join(workspace, "test-jars"))
+		if err != nil || link.Mode()&os.ModeSymlink == 0 {
+			t.Fatalf("shared test-jars link = %v, %v", link, err)
+		}
+		dependencyStat, err := os.Stat(filepath.Join(workspace, "test-jars", "nested", "project.jar"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !os.SameFile(sharedStat, dependencyStat) {
+			t.Fatal("attempt did not reuse the batch-level extracted dependency")
+		}
+	}
+}
+
+func executionInputFixture(inputID, kind, targetPath string, content []byte) ExecutionInput {
+	digest := sha256.Sum256(content)
+	return ExecutionInput{
+		InputID:    inputID,
+		Kind:       kind,
+		TargetPath: targetPath,
+		SizeBytes:  int64(len(content)),
+		SHA256:     hex.EncodeToString(digest[:]),
+	}
+}
+
 func TestBatchRegistryRemovesDirectoryOnlyWhenBatchClosedAndIdle(t *testing.T) {
 	tests := []struct {
 		name           string
@@ -177,7 +323,7 @@ func TestBatchRegistryRemovesDirectoryOnlyWhenBatchClosedAndIdle(t *testing.T) {
 		expectRemoved  bool
 	}{
 		{"批次未关闭时保留目录", 1, []bool{false}, false},
-		{"批次关闭通知到达时仍有在途 attempt 则保留目录", 2, []bool{true, false}, false},
+		{"批次关闭通知早于最后一个 attempt 收尾仍会删除目录", 2, []bool{true, false}, true},
 		{"批次关闭且最后一个 attempt 收尾时删除目录", 2, []bool{true, true}, true},
 		{"单 attempt 批次关闭即删除目录", 1, []bool{true}, true},
 	}
@@ -208,7 +354,58 @@ func TestBatchRegistryRemovesDirectoryOnlyWhenBatchClosedAndIdle(t *testing.T) {
 	}
 }
 
-func TestCleanOrphanedWorkspacesRemovesCrashLeftovers(t *testing.T) {
+func TestBatchRegistryRemovesIdleWorkspaceAfterClaimConfirmsClosure(t *testing.T) {
+	registry := newBatchRegistry(t.TempDir())
+	if err := registry.acquire("batch-1"); err != nil {
+		t.Fatal(err)
+	}
+	batchDir := registry.directory("batch-1")
+	if err := os.MkdirAll(batchDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	registry.release("batch-1", false, nil)
+	if got := registry.idleBatchIDs(); len(got) != 1 || got[0] != "batch-1" {
+		t.Fatalf("idleBatchIDs() = %v, want [batch-1]", got)
+	}
+	registry.close("batch-1", nil)
+	if _, err := os.Stat(batchDir); !os.IsNotExist(err) {
+		t.Fatalf("closed idle batch workspace still exists: %v", err)
+	}
+}
+
+func TestBatchRegistryRetriesFailedTerminalRemoval(t *testing.T) {
+	registry := newBatchRegistry(t.TempDir())
+	if err := registry.acquire("batch-1"); err != nil {
+		t.Fatal(err)
+	}
+	batchDir := registry.directory("batch-1")
+	if err := os.MkdirAll(batchDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	removeCalls := 0
+	registry.removeAll = func(path string) error {
+		removeCalls++
+		if removeCalls == 1 {
+			return fmt.Errorf("injected removal failure")
+		}
+		return os.RemoveAll(path)
+	}
+
+	registry.release("batch-1", true, nil)
+	if _, err := os.Stat(batchDir); err != nil {
+		t.Fatalf("workspace should remain after injected failure: %v", err)
+	}
+	if got := registry.idleBatchIDs(); len(got) != 1 || got[0] != "batch-1" {
+		t.Fatalf("idleBatchIDs() after failed removal = %v, want [batch-1]", got)
+	}
+
+	registry.close("batch-1", nil)
+	if _, err := os.Stat(batchDir); !os.IsNotExist(err) {
+		t.Fatalf("workspace still exists after removal retry: %v", err)
+	}
+}
+
+func TestCleanOrphanedWorkspacesRestoresReusableBatchDirectories(t *testing.T) {
 	dataDirectory := t.TempDir()
 	store := newAttemptStore(dataDirectory)
 	// 本地仍有状态记录的 attempt 视为活跃，其工作目录必须保留。
@@ -223,9 +420,10 @@ func TestCleanOrphanedWorkspacesRemovesCrashLeftovers(t *testing.T) {
 	}
 	workRoot := filepath.Join(dataDirectory, "work")
 	for _, directory := range []string{
-		"attempt-1-1000001",                 // 有本地状态，保留
-		"attempt-9-2000002",                 // 崩溃残留，删除
-		filepath.Join("batches", "batch-1"), // 无活跃 attempt 引用，删除
+		"attempt-1-1000001",                    // 有本地状态，保留
+		"attempt-9-2000002",                    // 崩溃残留，删除
+		filepath.Join("batches", "batch-1"),    // 重启后恢复并向控制面核对
+		filepath.Join("batches", "invalid id"), // 非法批次路径，删除
 	} {
 		if err := os.MkdirAll(filepath.Join(workRoot, directory), 0o700); err != nil {
 			t.Fatal(err)
@@ -234,6 +432,7 @@ func TestCleanOrphanedWorkspacesRemovesCrashLeftovers(t *testing.T) {
 	supervisor := &attemptSupervisor{
 		store:         store,
 		configuration: config.Config{DataDirectory: dataDirectory},
+		batches:       newBatchRegistry(dataDirectory),
 	}
 	if err := supervisor.cleanOrphanedWorkspaces(); err != nil {
 		t.Fatal(err)
@@ -247,7 +446,17 @@ func TestCleanOrphanedWorkspacesRemovesCrashLeftovers(t *testing.T) {
 	}
 	assertExists("attempt-1-1000001", true)
 	assertExists("attempt-9-2000002", false)
+	assertExists(filepath.Join("batches", "batch-1"), true)
+	assertExists(filepath.Join("batches", "invalid id"), false)
+	if got := supervisor.CachedBatchIDs(); len(got) != 1 || got[0] != "batch-1" {
+		t.Fatalf("CachedBatchIDs() = %v, want [batch-1]", got)
+	}
+	supervisor.ApplyClosedBatchIDs([]string{"batch-1"})
 	assertExists(filepath.Join("batches", "batch-1"), false)
+	if err := supervisor.removeAttemptWorkspaces("attempt-1"); err != nil {
+		t.Fatal(err)
+	}
+	assertExists("attempt-1-1000001", false)
 }
 
 func TestReportCompletionReturnsBatchClosedFromControlPlane(t *testing.T) {

@@ -24,7 +24,11 @@ export class RunnerProtocolController {
         ...input,
         waitSeconds: 0,
       });
-      if (response.assignments.length > 0 || Date.now() >= deadline) {
+      if (
+        response.assignments.length > 0 ||
+        response.closedBatchIds.length > 0 ||
+        Date.now() >= deadline
+      ) {
         return { ...response, retryAfterMs: response.assignments.length > 0 ? 100 : 1_000 };
       }
       await delay(Math.min(POLL_INTERVAL_MS, Math.max(0, deadline - Date.now())));

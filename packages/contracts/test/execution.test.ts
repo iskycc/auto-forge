@@ -171,6 +171,14 @@ describe("Runner Protocol v1 contracts", () => {
         schemaVersion: 1,
         requestId: "claim-1",
         availableSlots: 1,
+        cachedBatchIds: Array.from({ length: 1_025 }, (_, index) => `batch-${index}`),
+      }),
+    ).toThrow();
+    expect(() =>
+      claimAssignmentsInputSchema.parse({
+        schemaVersion: 1,
+        requestId: "claim-1",
+        availableSlots: 1,
         labels: Array.from({ length: 129 }, (_, index) => `label-${index}`),
       }),
     ).toThrow();

@@ -107,13 +107,22 @@ func Run(ctx context.Context, configuration config.Config, info buildinfo.Info, 
 		} else {
 			resourceSnapshot = &collected
 		}
-		response, heartbeatErr := client.Heartbeat(ctx, identity, configuration, info, supervisor.BusySlots(), resourceSnapshot)
+		response, heartbeatErr := client.Heartbeat(
+			ctx,
+			identity,
+			configuration,
+			info,
+			supervisor.BusySlots(),
+			resourceSnapshot,
+			supervisor.CachedBatchIDs(),
+		)
 		if heartbeatErr != nil {
 			if ctx.Err() != nil {
 				return nil
 			}
 			fmt.Fprintf(diagnostics, "heartbeat failed: %v\n", heartbeatErr)
 		} else {
+			supervisor.ApplyClosedBatchIDs(response.ClosedBatchIDs)
 			interval = heartbeatInterval(response.HeartbeatIntervalSecond)
 			if terminalConnector != nil {
 				terminalConnector.UpdateToken(response.TerminalConnectionToken)
@@ -161,7 +170,7 @@ func ensureIdentityAccepted(
 	info buildinfo.Info,
 	diagnostics io.Writer,
 ) (Identity, time.Duration, error) {
-	heartbeat, heartbeatErr := client.Heartbeat(ctx, identity, configuration, info, 0, nil)
+	heartbeat, heartbeatErr := client.Heartbeat(ctx, identity, configuration, info, 0, nil, nil)
 	if heartbeatErr == nil {
 		return identity, heartbeatInterval(heartbeat.HeartbeatIntervalSecond), nil
 	}

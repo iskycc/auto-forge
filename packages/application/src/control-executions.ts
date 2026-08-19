@@ -24,6 +24,7 @@ import type {
 } from "./ports";
 import { executionSecretPurpose } from "./manage-execution-environments";
 import { assertRunnerAuthenticated } from "./manage-runners";
+import { discardableRunnerBatchCacheIds } from "./reconcile-runner-batch-cache";
 import { buildRecoverySchedulingEvents } from "./recovery-scheduling-events";
 
 const LEASE_DURATION_MS = 45_000;
@@ -60,6 +61,11 @@ export class ExecutionControlService {
     input: ClaimAssignmentsInput,
   ): Promise<ClaimAssignmentsResponse> {
     const runner = await this.authenticateRunner(runnerId, credential);
+    const closedBatchIds = await discardableRunnerBatchCacheIds(
+      this.batches,
+      runnerId,
+      input.cachedBatchIds ?? [],
+    );
     if (!assessRunnerCompatibility(runner).compatible) {
       throw new DomainError(
         "RUNNER_INCOMPATIBLE",
@@ -72,6 +78,7 @@ export class ExecutionControlService {
         requestId: input.requestId,
         assignments: [],
         retryAfterMs: Math.max(1_000, input.waitSeconds * 1_000),
+        closedBatchIds,
       };
     }
     if (!this.cipher.available) {
@@ -168,6 +175,7 @@ export class ExecutionControlService {
         },
       })),
       retryAfterMs: claimed.length === 0 ? Math.max(500, input.waitSeconds * 1_000) : 100,
+      closedBatchIds,
     };
   }
 

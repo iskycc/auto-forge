@@ -1,15 +1,8 @@
-import { randomUUID } from "node:crypto";
-
 import { DomainError } from "@autoforge/domain";
 import { NextResponse } from "next/server";
 
-import {
-  apiErrorResponse,
-  bearerToken,
-  logServerError,
-  readJsonBody,
-  rejectRateLimited,
-} from "@/lib/api-response";
+import { apiErrorResponse, bearerToken, readJsonBody, rejectRateLimited } from "@/lib/api-response";
+import { refillBatchAfterCompletion } from "@/lib/refill-batch-after-completion";
 import { getPlatformServices } from "@/lib/services";
 
 type Context = { params: Promise<{ attemptId: string }> };
@@ -29,14 +22,9 @@ export async function POST(request: Request, context: Context): Promise<NextResp
       attemptId,
       await readJsonBody(request, 512 * 1024),
     );
-    // 一个 attempt 完成就立即补调度，让空闲出来的并发槽立刻领取下一个用例。
-    if (response.disposition === "accepted" && response.batchId) {
-      try {
-        await services.runBatches.schedule(response.batchId);
-      } catch (error) {
-        logServerError(error, randomUUID(), "Completion-triggered scheduling failed");
-      }
-    }
+    // accepted 与 duplicate 都可能来自一次已持久化的完成上报。调度本身幂等，
+    // 因此重放时也补做一次，覆盖上次响应丢失或调度触发失败的恢复窗口。
+    await refillBatchAfterCompletion(response, (batchId) => services.runBatches.schedule(batchId));
     return NextResponse.json(response);
   } catch (error) {
     return apiErrorResponse(error);

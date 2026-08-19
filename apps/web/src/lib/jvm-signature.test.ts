@@ -27,12 +27,10 @@ describe("formatMethodSignature", () => {
     expect(formatMethodSignature("(I)V")).not.toBe(formatMethodSignature("(J)V"));
   });
 
-  it("falls back to the raw descriptor when parsing fails", () => {
-    expect(formatMethodSignature("(I")).toBe("(I");
-    expect(formatMethodSignature("")).toBe("");
-    expect(formatMethodSignature("(L;)V")).toBe("(L;)V");
-    expect(formatMethodSignature("([V)V")).toBe("([V)V");
-    expect(formatMethodSignature("(I)Vextra")).toBe("(I)Vextra");
+  it("uses a readable Chinese fallback without exposing malformed JVM symbols", () => {
+    for (const malformed of ["(I", "", "(L;)V", "([V)V", "(I)Vextra"]) {
+      expect(formatMethodSignature(malformed)).toBe("入参：无法识别，返回值：无法识别");
+    }
   });
 });
 

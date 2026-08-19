@@ -119,13 +119,15 @@ type claimRequest struct {
 	Labels         []string `json:"labels"`
 	Capabilities   []string `json:"capabilities"`
 	WaitSeconds    int      `json:"waitSeconds"`
+	CachedBatchIDs []string `json:"cachedBatchIds,omitempty"`
 }
 
 type ClaimResponse struct {
-	SchemaVersion int                 `json:"schemaVersion"`
-	RequestID     string              `json:"requestId"`
-	Assignments   []ClaimedAssignment `json:"assignments"`
-	RetryAfterMs  int                 `json:"retryAfterMs"`
+	SchemaVersion  int                 `json:"schemaVersion"`
+	RequestID      string              `json:"requestId"`
+	Assignments    []ClaimedAssignment `json:"assignments"`
+	RetryAfterMs   int                 `json:"retryAfterMs"`
+	ClosedBatchIDs []string            `json:"closedBatchIds,omitempty"`
 }
 
 type renewLeaseRequest struct {

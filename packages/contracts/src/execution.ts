@@ -271,6 +271,8 @@ export const claimAssignmentsInputSchema = z.object({
   labels: z.array(z.string().trim().min(1).max(64)).max(128).default([]),
   capabilities: z.array(z.string().trim().min(1).max(128)).max(128).default([]),
   waitSeconds: z.number().int().min(0).max(30).default(20),
+  /** Agent 本机已空闲但仍保留共享输入的批次；控制面返回其中不可再复用的 ID。 */
+  cachedBatchIds: z.array(identifierSchema).max(1_024).optional(),
 });
 
 export const leaseSchema = z.object({
@@ -290,6 +292,7 @@ export const claimAssignmentsResponseSchema = z.object({
   requestId: identifierSchema,
   assignments: z.array(claimedAssignmentSchema).max(1_024),
   retryAfterMs: z.number().int().min(100).max(60_000),
+  closedBatchIds: z.array(identifierSchema).max(1_024).default([]),
 });
 
 export const renewLeaseInputSchema = z.object({

@@ -10,6 +10,7 @@ import type {
   RunnerRepository,
 } from "./ports";
 import { buildRecoverySchedulingEvents } from "./recovery-scheduling-events";
+import { discardableRunnerBatchCacheIds } from "./reconcile-runner-batch-cache";
 
 const HEARTBEAT_INTERVAL_SECONDS = 15;
 const OFFLINE_AFTER_SECONDS = 45;
@@ -17,10 +18,26 @@ const CREDENTIAL_ROTATION_GRACE_MS = 15 * 60_000;
 const DEREGISTER_RECOVERY_LIMIT = 100;
 
 /**
- * 执行机凭据认证的统一守卫：身份必须匹配目标执行机，且未注销、未撤销、未禁用。
- * Runner Protocol 的所有入口（心跳、领取、续租、完成、轮换）共用此判断。
+ * Runner Protocol 的严格凭据守卫：身份必须匹配，且未注销、未撤销、未禁用。
+ * claim、续租、完成和轮换使用该守卫；心跳使用下方仅放宽 disabled 的守卫。
  */
 export function assertRunnerAuthenticated(runner: Runner | null, runnerId: string): Runner {
+  const authenticated = assertRunnerIdentityAuthenticated(runner, runnerId);
+  if (runnerAuthenticationBlock(authenticated) === "disabled") {
+    throw new DomainError("RUNNER_DISABLED", "执行机已被禁用。");
+  }
+  return authenticated;
+}
+
+/**
+ * 心跳在 disabled 状态仍允许认证，用于向 Agent 下发 drain 并回收已终态批次缓存；
+ * claim、续租、完成和轮换仍使用严格守卫，不能借心跳恢复执行权。
+ */
+function assertRunnerHeartbeatAuthenticated(runner: Runner | null, runnerId: string): Runner {
+  return assertRunnerIdentityAuthenticated(runner, runnerId);
+}
+
+function assertRunnerIdentityAuthenticated(runner: Runner | null, runnerId: string): Runner {
   if (!runner || runner.id !== runnerId) {
     throw new DomainError("RUNNER_AUTH_REJECTED", "执行机凭据无效。");
   }
@@ -30,9 +47,6 @@ export function assertRunnerAuthenticated(runner: Runner | null, runnerId: strin
   }
   if (block === "credential-revoked") {
     throw new DomainError("RUNNER_AUTH_REJECTED", "执行机凭据已撤销。");
-  }
-  if (block === "disabled") {
-    throw new DomainError("RUNNER_DISABLED", "执行机已被禁用。");
   }
   return runner;
 }
@@ -87,7 +101,7 @@ export class RunnerControlService {
   }
 
   async heartbeat(runnerId: string, credential: string, input: RunnerHeartbeatInput) {
-    const runner = await this.authenticate(runnerId, credential);
+    const runner = await this.authenticateHeartbeat(runnerId, credential);
     if (input.busySlots > input.maxConcurrency) {
       throw new DomainError("RUNNER_CAPACITY_INVALID", "执行机忙碌槽位不能超过最大并发数。");
     }
@@ -105,12 +119,19 @@ export class RunnerControlService {
         : {}),
       recordedAt: acceptedAt,
     });
+    const closedBatchIds = await discardableRunnerBatchCacheIds(
+      this.batches,
+      runnerId,
+      input.cachedBatchIds ?? [],
+    );
     return {
       schemaVersion: 1 as const,
       acceptedAt,
       heartbeatIntervalSeconds: HEARTBEAT_INTERVAL_SECONDS,
       draining: runner.state === "disabled" || runner.state === "draining",
+      disabled: runner.state === "disabled",
       rotateCredential: Boolean(runner.credentialRotationRequestedAt),
+      closedBatchIds,
     };
   }
 
@@ -228,6 +249,15 @@ export class RunnerControlService {
       this.clock.now().toISOString(),
     );
     return assertRunnerAuthenticated(runner, runnerId);
+  }
+
+  private async authenticateHeartbeat(runnerId: string, credential: string) {
+    if (!credential) throw new DomainError("RUNNER_AUTH_REQUIRED", "缺少执行机凭据。");
+    const runner = await this.runners.findByCredentialHash(
+      this.credentials.hash(credential),
+      this.clock.now().toISOString(),
+    );
+    return assertRunnerHeartbeatAuthenticated(runner, runnerId);
   }
 
   private offlineBefore(): string {

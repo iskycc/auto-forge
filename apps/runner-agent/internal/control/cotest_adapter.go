@@ -131,10 +131,25 @@ func prepareCotestWorkspace(
 	diskLimit int64,
 	fileLimit int64,
 ) error {
+	budget, err := newCotestArchiveBudget(inputs, diskLimit, fileLimit)
+	if err != nil {
+		return err
+	}
+	if err := materializeCotestJars(workspace, filepath.Join(workspace, "test-jars"), inputs, budget); err != nil {
+		return err
+	}
+	return materializeCotestJDK(workspace, filepath.Join(workspace, "runtime", "jdk"), inputs, budget)
+}
+
+func newCotestArchiveBudget(
+	inputs []ExecutionInput,
+	diskLimit int64,
+	fileLimit int64,
+) (*archiveBudget, error) {
 	var inputBytes int64
 	for _, input := range inputs {
 		if input.SizeBytes <= 0 || inputBytes > diskLimit-input.SizeBytes {
-			return errors.New("execution inputs exceed the attempt disk limit")
+			return nil, errors.New("execution inputs exceed the attempt disk limit")
 		}
 		inputBytes += input.SizeBytes
 	}
@@ -143,16 +158,23 @@ func prepareCotestWorkspace(
 		remainingFiles: fileLimit - int64(len(inputs)),
 	}
 	if budget.remainingBytes < 0 || budget.remainingFiles < 0 {
-		return errors.New("execution inputs leave no capacity for archive extraction")
+		return nil, errors.New("execution inputs leave no capacity for archive extraction")
 	}
-	jarDirectory := filepath.Join(workspace, "test-jars")
+	return budget, nil
+}
+
+func materializeCotestJars(
+	inputRoot string,
+	jarDirectory string,
+	inputs []ExecutionInput,
+	budget *archiveBudget,
+) error {
 	if err := os.MkdirAll(jarDirectory, 0o700); err != nil {
 		return fmt.Errorf("create adapter JAR directory: %w", err)
 	}
-	var jdkArchive *ExecutionInput
 	for index := range inputs {
 		input := &inputs[index]
-		source := filepath.Join(workspace, filepath.Clean(input.TargetPath))
+		source := filepath.Join(inputRoot, filepath.Clean(input.TargetPath))
 		switch input.Kind {
 		case "test-jar":
 			if err := budget.consume(input.SizeBytes); err != nil {
@@ -172,22 +194,30 @@ func prepareCotestWorkspace(
 			if err := extractArchive(source, jarDirectory, budget); err != nil {
 				return fmt.Errorf("extract dependency JAR bundle: %w", err)
 			}
-		case "jdk-archive":
-			jdkArchive = input
+		}
+	}
+	return nil
+}
+
+func materializeCotestJDK(
+	inputRoot string,
+	target string,
+	inputs []ExecutionInput,
+	budget *archiveBudget,
+) error {
+	var jdkArchive *ExecutionInput
+	for index := range inputs {
+		if inputs[index].Kind == "jdk-archive" {
+			jdkArchive = &inputs[index]
+			break
 		}
 	}
 	if jdkArchive == nil {
 		return nil
 	}
-	target := filepath.Join(workspace, "runtime", "jdk")
-	// 批次共享模式下 supervisor 已把共享 JDK 以符号链接挂到 runtime/jdk，
-	// 跳过 attempt 内的重复解压。
-	if _, err := os.Lstat(target); err == nil {
-		return nil
-	}
-	unpacked := filepath.Join(workspace, "runtime", "jdk-unpacked")
+	unpacked := target + "-unpacked"
 	if err := extractArchive(
-		filepath.Join(workspace, filepath.Clean(jdkArchive.TargetPath)),
+		filepath.Join(inputRoot, filepath.Clean(jdkArchive.TargetPath)),
 		unpacked,
 		budget,
 	); err != nil {

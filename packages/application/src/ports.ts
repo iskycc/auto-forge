@@ -1231,6 +1231,8 @@ export interface RunBatchRepository {
   list(limit: number, projectIds?: readonly string[]): Promise<RunBatch[]>;
   listPage(input: RunBatchListQuery): Promise<RunBatchListPage>;
   get(batchId: string, projectIds?: readonly string[]): Promise<RunBatchDetails | null>;
+  /** 返回指定 Runner 仍可能收到后续 attempt 的非终态批次 ID。 */
+  listReusableBatchIdsForRunner(runnerId: string, batchIds: readonly string[]): Promise<string[]>;
   listSchedulableBatchIds(
     limit: number,
     now?: string,

@@ -245,14 +245,20 @@ AUTOFORGE_AGENT_DATA_DIR/
 │   ├── <attempt-id>-*/             # 独立执行工作目录
 │   └── batches/<batch-id>/         # 批次级共享输入目录
 │       ├── <输入相对路径>           # 同批次只下载一次的 JAR / archive 输入
-│       └── runtime/jdk/            # 同批次只解压一次的 JDK
+│       └── runtime/cotest/          # 原子发布的 Adapter 批次运行时
+│           ├── test-jars/           # 主 JAR、依赖 JAR 与只解压一次的依赖包
+│           └── jdk/                 # 配置 JDK archive 时只解压一次
 └── spool/
     ├── logs/<attempt-id>/          # 待确认的有序日志块
     ├── attempts/<attempt-id>.json  # lease、完成结果和上传水位
     └── uploads/<attempt-id>/       # 待确认产物内容
 ```
 
-同一批次的 `test-jar`、`dependency-jar`、`jar-bundle` 和 `jdk-archive` 输入在同一台 Agent 上只下载解压一次：`batchId` 校验为安全路径段后定位到 `work/batches/<batch-id>/`，同批次并发 attempt 通过批次锁串行化下载，已存在的输入流式重算 SHA-256，匹配则跳过、不匹配重新下载；attempt 工作目录再以硬链接（不支持时回退复制）引用共享输入，adapter 的 `runtime/jdk` 以符号链接指向共享目录。批次注册表记录本机在途 attempt 数：完成上报响应 `batchClosed=true` 且本机无其他在途 attempt 时删除整个批次目录；启动 reconcile 前还会清理 `work/` 下无本地状态引用的 `<attemptId>-*` 残留和没有任何活跃 attempt 引用的 `batches/*` 残留，修复崩溃留下的缝隙。
+同一批次的 `test-jar`、`dependency-jar`、`jar-bundle` 和 `jdk-archive` 输入在同一台 Agent 上只下载一次：`batchId` 校验为安全路径段后定位到 `work/batches/<batch-id>/`，同批次并发 attempt 通过批次锁串行化下载，已存在的输入流式重算 SHA-256，匹配则跳过、不匹配重新下载。CoTest Adapter 的主 JAR、独立依赖 JAR、依赖压缩包解压结果与可选 JDK 在临时目录完整生成后原子发布到 `runtime/cotest/`，每个 attempt 的 `test-jars`/`runtime/jdk` 以符号链接复用；非 Adapter 输入以硬链接（不支持时回退复制）进入 attempt 工作目录。
+
+批次注册表记录本机在途 attempt 数与已确认终态：完成响应的 `batchClosed=true` 会持久到最后一个本地 attempt 收尾，避免并发完成次序造成目录泄漏。Agent 还会在 heartbeat 与 claim 中上报本机已空闲的 `cachedBatchIds`；控制面仅把该 Runner 仍被选中且尚未终态的批次视为可复用，其余 ID 通过 `closedBatchIds` 通知回收。因此多 Runner 批次中没有提交最后一份结果的节点以及已进入排空、不再 claim 的节点都能及时清理。禁用状态只保留心跳认证以便下发 drain 和执行该回收握手，claim、续租、完成和凭据轮换仍被拒绝。
+
+启动 reconcile 前只清理 `work/` 下无本地状态引用的 `<attemptId>-*` 独立工作目录；有状态引用的崩溃 attempt 在完成 reconcile、日志/产物/结果重传后再连同状态一起回收。安全的 `batches/<batch-id>` 会恢复为空闲缓存，避免 Agent 崩溃后同批次的后续用例重新下载或解压。reconcile 完成后由上述 heartbeat/claim 核对批次是否仍可能派发；终态、已删除或不属于该 Runner 的目录才会回收，非法批次路径和非目录内容直接清理。
 
 目录权限遵循最小权限。spool 和 diagnostics 都必须有配额、保留期和启动时恢复策略；清理不得跟随越界符号链接。
 

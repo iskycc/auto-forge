@@ -12,6 +12,7 @@ import { ensureAdministrator } from "./support/session";
  * - 初始领取占满 2 个并发槽后，没有空闲槽时领不到新任务；
  * - 任意一个 attempt 完成上报被接受后，无需等待同批其他用例完成、
  *   也无需等待心跳，立即可以领取下一个用例（保持并发槽满载）；
+ * - 首轮仍有用例运行时，失败用例可立即进入第二次 attempt 并占用刚释放的槽位；
  * - 完成响应携带 batchId，且仅最后一个用例完成时 batchClosed 为 true；
  * - 批次终态后不再派发新任务。
  * 全程在批次创建后不再发送心跳，确保补槽只能来自完成触发，而非心跳调度。
@@ -31,6 +32,7 @@ type ClaimedAssignment = {
 
 type CompletionResponse = {
   disposition: "accepted" | "duplicate" | "late";
+  retryScheduled: boolean;
   batchId?: string;
   batchClosed?: boolean;
 };
@@ -113,6 +115,7 @@ async function completeAttempt(
   identity: RunnerIdentity,
   claim: ClaimedAssignment,
   completionId: string,
+  outcome: "succeeded" | "failed" = "succeeded",
 ): Promise<CompletionResponse> {
   const response = await page.request.post(
     `/api/v1/run-attempts/${encodeURIComponent(claim.assignment.attemptId)}/complete`,
@@ -123,9 +126,9 @@ async function completeAttempt(
         completionId,
         leaseToken: claim.lease.token,
         result: {
-          status: "succeeded",
-          resultCode: "TESTNG_SUCCEEDED",
-          summary: "refill probe passed",
+          status: outcome,
+          resultCode: outcome === "succeeded" ? "TESTNG_SUCCEEDED" : "TEST_ASSERTION_FAILED",
+          summary: outcome === "succeeded" ? "refill probe passed" : "refill retry probe failed",
           durationMs: 100,
           logWatermarks: { stdout: 0, stderr: -1, agent: -1 },
           artifacts: [],
@@ -234,6 +237,8 @@ test("completion immediately refills free runner slots without waiting for the w
   const suiteId = await suiteOption.getAttribute("value");
   expect(suiteId).toBeTruthy();
   await suiteSelect.selectOption(suiteId!);
+  await page.getByLabel("失败用例重跑次数").selectOption("1");
+  await page.getByLabel("失败重跑方式").selectOption("immediate");
   const runnerChoice = page.locator(".runner-choice").filter({ hasText: "E2E Refill Runner" });
   await runnerChoice.locator('input[type="checkbox"]').check();
   const createBatchResponse = page.waitForResponse(
@@ -250,16 +255,33 @@ test("completion immediately refills free runner slots without waiting for the w
   // 没有空闲槽时领不到新任务。
   await expectNoAssignment(page, identity);
 
-  // 完成第一个：立即补派第三个用例，不等另一个在途用例，也不等心跳。
-  const first = await completeAttempt(page, identity, initial[0]!, "e2e-refill-r1");
+  // 第一个用例失败：其第二次 attempt 立即占用释放的槽位；此时首轮另一个
+  // attempt 仍在运行，证明立即重试不等待整轮结束，也不等待心跳。
+  const first = await completeAttempt(page, identity, initial[0]!, "e2e-refill-r1", "failed");
   expect(first.disposition).toBe("accepted");
+  expect(first.retryScheduled).toBe(true);
   expect(first.batchId).toBe(batch.id);
   expect(first.batchClosed).toBe(false);
-  const refill1 = await claimOnce(page, identity, 1);
-  expect(refill1).toHaveLength(1);
+  // 模拟完成响应丢失后的相同上报重放。duplicate 也应安全地补做幂等调度，
+  // 不能额外创建 attempt，也不能让已释放的槽位空转。
+  const duplicate = await completeAttempt(page, identity, initial[0]!, "e2e-refill-r1", "failed");
+  expect(duplicate.disposition).toBe("duplicate");
+  expect(duplicate.retryScheduled).toBe(true);
+  expect(duplicate.batchId).toBe(batch.id);
+  const retry = await claimOnce(page, identity, 1);
+  expect(retry).toHaveLength(1);
+  expect(retry[0]!.assignment.executionSpec.executionRunId).toBe(
+    initial[0]!.assignment.executionSpec.executionRunId,
+  );
 
   const second = await completeAttempt(page, identity, initial[1]!, "e2e-refill-r2");
   expect(second.batchClosed).toBe(false);
+  const refill1 = await claimOnce(page, identity, 1);
+  expect(refill1).toHaveLength(1);
+
+  const retried = await completeAttempt(page, identity, retry[0]!, "e2e-refill-retry");
+  expect(retried.retryScheduled).toBe(false);
+  expect(retried.batchClosed).toBe(false);
   const refill2 = await claimOnce(page, identity, 1);
   expect(refill2).toHaveLength(1);
 
@@ -268,10 +290,12 @@ test("completion immediately refills free runner slots without waiting for the w
   const refill3 = await claimOnce(page, identity, 1);
   expect(refill3).toHaveLength(1);
 
-  // 倒数第二个完成时仍有一个在途，批次未关闭；最后一个完成后 batchClosed=true。
+  // 倒数第二个完成时仍有一个在途，且已经没有待补位用例；批次未关闭。
   const fourth = await completeAttempt(page, identity, refill2[0]!, "e2e-refill-r4");
   expect(fourth.batchId).toBe(batch.id);
   expect(fourth.batchClosed).toBe(false);
+  await expectNoAssignment(page, identity);
+  // 最后一个完成后 batchClosed=true。
   const last = await completeAttempt(page, identity, refill3[0]!, "e2e-refill-r5");
   expect(last.batchId).toBe(batch.id);
   expect(last.batchClosed).toBe(true);

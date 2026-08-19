@@ -478,7 +478,7 @@ function CaseInspector({
                 <tr key={method.id}>
                   <td>
                     <strong>{method.methodName}</strong>
-                    <span className="method-signature" title={method.descriptor}>
+                    <span className="method-signature">
                       {formatMethodSignature(method.descriptor)}
                     </span>
                   </td>

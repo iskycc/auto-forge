@@ -4,6 +4,36 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## 0.7.1 - 2026-08-19
+
+### Fixed
+
+- Batch sharing now materializes the CoTest `test-jars` tree and optional JDK once under
+  `work/batches/<batchId>/runtime/cotest/`; attempts reuse the extracted dependency files through
+  symlinks instead of extracting the same archive again.
+- Batch workspace closure is remembered until the final local attempt exits. Idle cached batch IDs
+  are reconciled through heartbeats and assignment claims, so every participating Runner cleans its
+  copy in a multi-Runner batch, including draining or disabled Runners that no longer claim
+  assignments; disabled heartbeat remains drain/cleanup-only and does not restore execution rights.
+- Safe batch workspaces now survive Agent restart and are reused after reconcile while the batch is
+  still active; terminal, deleted, foreign and malformed cache entries are cleaned deterministically.
+- Reconcile completion now also removes crashed attempt workspaces, so hard links to batch inputs do
+  not keep downloaded files alive after the batch cache is deleted.
+- A failed terminal batch-directory deletion is retained for the next heartbeat/claim cleanup
+  handshake instead of becoming an untracked leak.
+- Completion-triggered scheduling failures now return an error so the Agent replays the persisted
+  completion with the same ID and retries the idempotent slot-refill operation.
+- Version-diff labels and historical snapshot presentation now use readable Chinese method
+  signatures as well; raw JVM descriptors are no longer exposed through method tooltip text.
+
+### Tests
+
+- The scheduling-refill browser scenario now covers an immediate retry starting while a sibling
+  first attempt remains in flight.
+- The real-Agent batch-input-sharing scenario is wired into a dedicated GitHub Actions job and now
+  verifies concurrent attempts, a later refill attempt and a post-crash attempt all reuse the same
+  raw inputs and extracted dependency inode before terminal cleanup.
+
 ## 0.7.0 - 2026-08-19
 
 ### Features

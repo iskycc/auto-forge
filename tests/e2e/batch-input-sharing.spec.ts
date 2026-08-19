@@ -2,15 +2,16 @@ import { expect, test, type Page, type TestInfo } from "@playwright/test";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { once } from "node:events";
 import { access, lstat, readdir, stat } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 
 import { DEFAULT_PROJECT_ID } from "@autoforge/domain";
 import { ensureAdministrator } from "./support/session";
 
 // 批次级输入共享端到端验收：同一 batchId 的 test-jar / jar-bundle 输入在
-// <Agent数据目录>/work/batches/<batchId>/ 只下载一次，同批次并发 attempt 通过
-// 硬链接共享（inode 相同证明没有重复下载）；批次终态后共享目录被回收；
-// Agent 异常中断重启后，启动清理会删除无主批次目录。
+// <Agent数据目录>/work/batches/<batchId>/ 只下载一次，依赖压缩包也只解压一次；
+// 同批次并发 attempt 通过硬链接/符号链接共享（inode 相同证明没有重复物化）；
+// 首轮并发结束后启动的后续 attempt 仍复用同一份文件；批次终态后共享目录被回收；
+// Agent 异常中断重启后保留仍未结束批次的运行时，reconcile 后继续复用。
 // 本规格不设置 AUTOFORGE_AGENT_CGROUP_ROOT：无 cgroup 环境走 rlimit 回退，
 // 控制面也会过滤掉 isolation:cgroup-v2 的匹配要求。
 
@@ -34,7 +35,8 @@ test("同批次并发 attempt 共享输入目录，批次终态后回收", async
     await importJavaCasesJar(page);
     await createSharedSuite(page);
 
-    // 单个批次包含 Alpha 与 Beta 两个用例，由同一台并发度为 2 的 Agent 执行。
+    // 单个批次包含 Alpha/Beta/Gamma 三个用例，由并发度为 2 的 Agent 执行：
+    // Alpha/Beta 构成首轮并发，Gamma 必须在其中一个完成后由空闲槽补派。
     const batchId = await scheduleExecution(page);
     // 先等 attempt 记录出现再直接轮询文件系统：服务端 running 状态上报有数秒延迟，
     // 若等 running 再看工作区，6 秒的执行窗口可能不足以完成两次采样。
@@ -43,6 +45,35 @@ test("同批次并发 attempt 共享输入目录，批次终态后回收", async
 
     // 等待批次共享目录与两个 attempt 工作目录都挂载了共享输入。
     await waitForSharedWorkspace(batchId, attemptIds);
+
+    // Adapter 的依赖压缩包必须在批次目录中只解压一次；每个 attempt 的
+    // test-jars 都是指向同一目录的符号链接，而不是各自重复解压。
+    const sharedDependency = join(
+      batchDir,
+      "runtime",
+      "cotest",
+      "test-jars",
+      "level-1",
+      "level-2",
+      "level-3",
+      "project-fixture.jar",
+    );
+    const sharedDependencyStat = await stat(sharedDependency);
+    const sharedJavaStat = await stat(join(batchDir, "runtime", "cotest", "jdk", "bin", "java"));
+    for (const attemptId of attemptIds) {
+      const workspace = await findAttemptWorkspace(attemptId);
+      expect(workspace, `attempt ${attemptId} 的工作目录应仍存在`).toBeTruthy();
+      const testJarsLink = await lstat(join(workspace!, "test-jars"));
+      expect(testJarsLink.isSymbolicLink()).toBe(true);
+      const attemptDependencyStat = await stat(
+        join(workspace!, "test-jars", "level-1", "level-2", "level-3", "project-fixture.jar"),
+      );
+      expect(attemptDependencyStat.ino).toBe(sharedDependencyStat.ino);
+      const jdkLink = await lstat(join(workspace!, "runtime", "jdk"));
+      expect(jdkLink.isSymbolicLink()).toBe(true);
+      const attemptJavaStat = await stat(join(workspace!, "runtime", "jdk", "bin", "java"));
+      expect(attemptJavaStat.ino).toBe(sharedJavaStat.ino);
+    }
 
     // 第一次采样：批次目录中的每个输入文件与任一 attempt 工作目录下
     // 相同相对路径的文件 inode 必须一致（硬链接共享，只下载一次）。
@@ -70,22 +101,22 @@ test("同批次并发 attempt 共享输入目录，批次终态后回收", async
       ).toBe(sharedStat.mtimeMs);
     }
 
+    // Gamma 是首轮两个 attempt 之后才创建的后续 attempt。它仍必须引用首轮
+    // 已物化的原始输入和解压依赖，证明共享范围覆盖整个批次而非单次并发波次。
+    const laterAttemptId = await waitForLaterRunningAttempt(page, batchId, agent, attemptIds);
+    const later = await snapshotSharedInputs(batchId, [laterAttemptId]);
+    for (const [relativePath, sharedStat] of first.shared) {
+      expect(later.shared.get(relativePath)?.inode).toBe(sharedStat.inode);
+      expect(later.shared.get(relativePath)?.mtimeMs).toBe(sharedStat.mtimeMs);
+      expect(later.attempts.get(laterAttemptId)?.get(relativePath)).toBe(sharedStat.inode);
+    }
+    await expectAttemptUsesSharedRuntime(laterAttemptId, sharedDependencyStat, sharedJavaStat);
+
     // 把共享采样观测值归档到测试报告，便于人工核对 inode/mtime。
     await testInfo.attach("batch-shared-inputs-snapshot", {
       body: Buffer.from(formatSharedSnapshot(batchId, first, second), "utf8"),
       contentType: "text/plain",
     });
-
-    // 若批次配置了 jdk-archive 输入，adapter 的 JDK 应以符号链接指向共享目录。
-    // 本规格只上传 jar-bundle，不覆盖该路径；此处保留条件断言以备扩展。
-    if (await pathExists(join(batchDir, "runtime", "jdk"))) {
-      for (const attemptId of attemptIds) {
-        const workspace = await findAttemptWorkspace(attemptId);
-        expect(workspace, `attempt ${attemptId} 的工作目录应仍存在`).toBeTruthy();
-        const jdkLink = await lstat(join(workspace!, "runtime", "jdk"));
-        expect(jdkLink.isSymbolicLink()).toBe(true);
-      }
-    }
 
     const details = await waitForTerminalBatch(
       page,
@@ -93,18 +124,18 @@ test("同批次并发 attempt 共享输入目录，批次终态后回收", async
       agent,
       "succeeded",
       "TESTNG_SUCCEEDED",
-      2,
+      3,
     );
-    expect(details.attempts).toHaveLength(2);
+    expect(details.attempts).toHaveLength(3);
 
     // 批次终态且本机无在途 attempt 后，Agent 应回收批次共享目录。
     await expect
       .poll(async () => pathExists(batchDir), { timeout: 30_000, intervals: [250, 500, 1_000] })
       .toBe(false);
 
-    // 日志隔离标记仍在：两个 attempt 的 ALPHA/BETA 标记互不窜入。
+    // 日志隔离标记仍在：三个 attempt 的 ALPHA/BETA/GAMMA 标记互不窜入。
     const logs = await Promise.all(
-      attemptIds.map(async (attemptId) => {
+      [...attemptIds, laterAttemptId].map(async (attemptId) => {
         const stdout = await readAttemptLogs(page, attemptId, "stdout");
         const stderr = await readAttemptLogs(page, attemptId, "stderr");
         return stdout + stderr;
@@ -112,20 +143,25 @@ test("同批次并发 attempt 共享输入目录，批次终态后回收", async
     );
     const alphaLog = logs.find((content) => content.includes("JAVA_CASES_CONCURRENT_ALPHA_START"));
     const betaLog = logs.find((content) => content.includes("JAVA_CASES_CONCURRENT_BETA_START"));
+    const gammaLog = logs.find((content) => content.includes("JAVA_CASES_CONCURRENT_GAMMA_START"));
     expect(alphaLog, "应有一个 attempt 输出 ALPHA 标记").toBeTruthy();
     expect(betaLog, "应有一个 attempt 输出 BETA 标记").toBeTruthy();
+    expect(gammaLog, "应有一个后续 attempt 输出 GAMMA 标记").toBeTruthy();
     expect(alphaLog).not.toBe(betaLog);
     expect(alphaLog).toContain("JAVA_CASES_CONCURRENT_ALPHA_DONE");
     expect(alphaLog).not.toContain("JAVA_CASES_CONCURRENT_BETA");
     expect(betaLog).toContain("JAVA_CASES_CONCURRENT_BETA_DONE");
     expect(betaLog).not.toContain("JAVA_CASES_CONCURRENT_ALPHA");
+    expect(gammaLog).toContain("JAVA_CASES_CONCURRENT_GAMMA_DONE");
+    expect(gammaLog).not.toContain("JAVA_CASES_CONCURRENT_ALPHA");
+    expect(gammaLog).not.toContain("JAVA_CASES_CONCURRENT_BETA");
   } finally {
     await attachAgentDiagnostics(testInfo, agent, 0);
     await stopAgent(agent);
   }
 });
 
-test("Agent 异常中断后，重启清理批次共享目录", async ({ page }, testInfo) => {
+test("Agent 异常中断后，重启继续复用未完成批次的共享目录", async ({ page }, testInfo) => {
   test.setTimeout(480_000);
   await ensureAdministrator(page);
 
@@ -139,17 +175,43 @@ test("Agent 异常中断后，重启清理批次共享目录", async ({ page }, 
     const attemptIds = await waitForRunningAttempts(page, batchId, agent, 2);
     const batchDir = batchWorkspaceDirectory(batchId);
     await waitForSharedWorkspace(batchId, attemptIds);
+    const beforeRestart = await snapshotSharedInputs(batchId, attemptIds);
+    const sharedDependency = join(
+      batchDir,
+      "runtime",
+      "cotest",
+      "test-jars",
+      "level-1",
+      "level-2",
+      "level-3",
+      "project-fixture.jar",
+    );
+    const sharedDependencyStat = await stat(sharedDependency);
+    const sharedJavaStat = await stat(join(batchDir, "runtime", "cotest", "jdk", "bin", "java"));
+    const heartbeatBeforeRestart = await runnerLastSeenAt(page);
 
     // SIGKILL 模拟 Agent 崩溃：批次共享目录与 attempt 工作目录都来不及清理。
     await killAgentAbruptly(agent);
     agent = await startAgent();
     agents.push(agent);
-    await waitForOnlineRunner(page, agent);
+    await waitForOnlineRunner(page, agent, heartbeatBeforeRestart);
 
-    // 启动清理（reconcile 之前）应删除所有无主批次共享目录。
-    await expect
-      .poll(async () => pathExists(batchDir), { timeout: 30_000, intervals: [250, 500, 1_000] })
-      .toBe(false);
+    // 重启不得删除仍有排队用例的批次目录；原始文件 inode/mtime 与解压依赖
+    // 均保持不变，reconcile 后补派的 Gamma 继续使用这一份运行时。
+    const afterRestart = await snapshotSharedInputs(batchId, []);
+    for (const [relativePath, sharedStat] of beforeRestart.shared) {
+      expect(afterRestart.shared.get(relativePath)?.inode).toBe(sharedStat.inode);
+      expect(afterRestart.shared.get(relativePath)?.mtimeMs).toBe(sharedStat.mtimeMs);
+    }
+    expect((await stat(join(batchDir, "runtime", "cotest", "jdk", "bin", "java"))).ino).toBe(
+      sharedJavaStat.ino,
+    );
+    const laterAttemptId = await waitForLaterRunningAttempt(page, batchId, agent, attemptIds);
+    const later = await snapshotSharedInputs(batchId, [laterAttemptId]);
+    for (const [relativePath, sharedStat] of beforeRestart.shared) {
+      expect(later.attempts.get(laterAttemptId)?.get(relativePath)).toBe(sharedStat.inode);
+    }
+    await expectAttemptUsesSharedRuntime(laterAttemptId, sharedDependencyStat, sharedJavaStat);
 
     // 崩溃时的在途 attempt 经 reconcile 后以重启类结果进入失败终态。
     await waitForTerminalBatch(
@@ -158,8 +220,19 @@ test("Agent 异常中断后，重启清理批次共享目录", async ({ page }, 
       agent,
       "failed",
       "AGENT_RESTARTED_DURING_EXECUTION",
-      2,
+      3,
     );
+    await expect
+      .poll(async () => pathExists(batchDir), { timeout: 30_000, intervals: [250, 500, 1_000] })
+      .toBe(false);
+    for (const crashedAttemptId of attemptIds) {
+      await expect
+        .poll(() => findAttemptWorkspace(crashedAttemptId), {
+          timeout: 30_000,
+          intervals: [250, 500, 1_000],
+        })
+        .toBeUndefined();
+    }
   } finally {
     for (const [index, observedAgent] of agents.entries()) {
       await attachAgentDiagnostics(testInfo, observedAgent, index);
@@ -312,6 +385,18 @@ async function uploadAdapterDependencies(page: Page): Promise<void> {
     timeout: 60_000,
   });
   await expect(page.getByText(/java-cases-dependencies\.zip/).first()).toBeVisible();
+
+  await uploadForm.getByLabel("资源类型").selectOption("jdk");
+  await uploadForm.getByLabel("压缩格式").selectOption("tar.gz");
+  const jdkArchive = requiredEnvironment("E2E_BATCH_SHARE_JDK_ARCHIVE");
+  await uploadForm.getByLabel("本地文件").setInputFiles(jdkArchive);
+  await uploadForm.getByRole("button", { name: "上传并启用" }).click();
+  await expect(page.getByText("运行时资源已上传并设为当前配置。")).toBeVisible({
+    timeout: 120_000,
+  });
+  await expect(page.getByText(basename(jdkArchive), { exact: false }).first()).toBeVisible({
+    timeout: 120_000,
+  });
 }
 
 async function createSharedSuite(page: Page): Promise<void> {
@@ -321,8 +406,8 @@ async function createSharedSuite(page: Page): Promise<void> {
   await page.getByLabel("使用 CoTest TestNG Adapter").check();
   await page.getByLabel("TestNG Suite Name").fill(`Adapter · ${suiteName}`);
   await page.getByLabel("TestNG Test Name").fill("JavaCasesConcurrent");
-  // 两个并发 fixture 都断言注入地址为 environmentAddress，只填一个地址保证
-  // 轮询分配对两个 run 都落在同一 mock 值上。
+  // 三个 fixture 都断言注入地址为 environmentAddress，只填一个地址保证
+  // 轮询分配对三个 run 都落在同一 mock 值上。
   await page.getByLabel("环境 IP / 地址（每行一个）").fill(environmentAddress);
   await page.getByRole("button", { name: "创建任务" }).click();
   const suiteLink = page.getByRole("link", { name: suiteName });
@@ -332,14 +417,14 @@ async function createSharedSuite(page: Page): Promise<void> {
   await page.getByRole("button", { name: "保存修改" }).click();
   await expect(page.getByRole("status")).toContainText("用例任务已更新");
 
-  // 搜索 "Concurrent" 同时命中 Alpha 与 Beta 两个用例，全选加入同一任务，
-  // 使一次调度产生同批次的两个并发 attempt。
+  // 搜索 "Concurrent" 同时命中 Alpha/Beta/Gamma，全选加入同一任务；Runner
+  // 并发度为 2，因此 Gamma 会成为首轮完成后才补派的后续 attempt。
   await page.goto(`/cases?projectId=${encodeURIComponent(DEFAULT_PROJECT_ID)}`);
   await page.getByLabel("页内搜索用例").fill("Concurrent");
   await page.getByLabel("选择当前搜索结果中的全部用例").check();
   await page.getByLabel("目标用例任务").selectOption({ label: suiteName });
   await page.getByRole("button", { name: "加入任务" }).click();
-  await expect(page.getByRole("status")).toContainText("已将 2 个用例加入任务");
+  await expect(page.getByRole("status")).toContainText("已将 3 个用例加入任务");
 }
 
 async function scheduleExecution(page: Page): Promise<string> {
@@ -378,7 +463,11 @@ async function scheduleExecution(page: Page): Promise<string> {
   return body.id!;
 }
 
-async function waitForOnlineRunner(page: Page, agent: AgentProcess): Promise<void> {
+async function waitForOnlineRunner(
+  page: Page,
+  agent: AgentProcess,
+  heartbeatAfter?: string,
+): Promise<void> {
   // 本机无可用 cgroup 挂载点，不断言 isolation:cgroup-v2 能力。
   await expect
     .poll(
@@ -387,7 +476,12 @@ async function waitForOnlineRunner(page: Page, agent: AgentProcess): Promise<voi
         const response = await page.request.get("/api/v1/runners?limit=100");
         if (!response.ok()) return `HTTP ${response.status()}`;
         const body = (await response.json()) as {
-          items: Array<{ name: string; state: string; capabilities: string[] }>;
+          items: Array<{
+            name: string;
+            state: string;
+            capabilities: string[];
+            lastSeenAt: string;
+          }>;
         };
         const runner = body.items.find((candidate) => candidate.name === runnerName);
         if (!runner) return "not-registered";
@@ -395,11 +489,23 @@ async function waitForOnlineRunner(page: Page, agent: AgentProcess): Promise<voi
         if (!runner.capabilities.includes("runtime:project-assets-v1")) {
           return "runtime-assets-missing";
         }
+        if (heartbeatAfter && runner.lastSeenAt <= heartbeatAfter) return "stale-heartbeat";
         return runner.state;
       },
-      { timeout: 60_000, intervals: [250, 500, 1_000] },
+      { timeout: 180_000, intervals: [250, 500, 1_000, 2_000] },
     )
     .toBe("online");
+}
+
+async function runnerLastSeenAt(page: Page): Promise<string> {
+  const response = await page.request.get("/api/v1/runners?limit=100");
+  expect(response.status()).toBe(200);
+  const body = (await response.json()) as {
+    items: Array<{ name: string; lastSeenAt: string }>;
+  };
+  const runner = body.items.find((candidate) => candidate.name === runnerName);
+  expect(runner).toBeTruthy();
+  return runner!.lastSeenAt;
 }
 
 // 等待批次下出现预期数量的 attempt 记录（不限状态），返回 attempt ID 列表。
@@ -459,6 +565,54 @@ async function waitForRunningAttempts(
   return attemptIds;
 }
 
+async function waitForLaterRunningAttempt(
+  page: Page,
+  batchId: string,
+  agent: AgentProcess,
+  earlierAttemptIds: string[],
+): Promise<string> {
+  const earlier = new Set(earlierAttemptIds);
+  let laterAttemptId: string | undefined;
+  await expect
+    .poll(
+      async () => {
+        assertAgentRunning(agent);
+        const response = await page.request.get(
+          `/api/v1/run-batches/${encodeURIComponent(batchId)}`,
+        );
+        if (!response.ok()) return `HTTP ${response.status()}`;
+        const details = (await response.json()) as BatchDetails;
+        const later = details.attempts.find(
+          (attempt) => !earlier.has(attempt.id) && attempt.status === "running",
+        );
+        laterAttemptId = later?.id;
+        return later ? "running" : "pending";
+      },
+      { timeout: 90_000, intervals: [250, 500, 1_000] },
+    )
+    .toBe("running");
+  return laterAttemptId!;
+}
+
+async function expectAttemptUsesSharedRuntime(
+  attemptId: string,
+  sharedDependencyStat: { ino: number },
+  sharedJavaStat: { ino: number },
+): Promise<void> {
+  const workspace = await findAttemptWorkspace(attemptId);
+  expect(workspace, `attempt ${attemptId} 的工作目录应仍存在`).toBeTruthy();
+  const testJarsLink = await lstat(join(workspace!, "test-jars"));
+  expect(testJarsLink.isSymbolicLink()).toBe(true);
+  const dependency = await stat(
+    join(workspace!, "test-jars", "level-1", "level-2", "level-3", "project-fixture.jar"),
+  );
+  expect(dependency.ino).toBe(sharedDependencyStat.ino);
+  const jdkLink = await lstat(join(workspace!, "runtime", "jdk"));
+  expect(jdkLink.isSymbolicLink()).toBe(true);
+  const java = await stat(join(workspace!, "runtime", "jdk", "bin", "java"));
+  expect(java.ino).toBe(sharedJavaStat.ino);
+}
+
 async function waitForTerminalBatch(
   page: Page,
   batchId: string,
@@ -477,11 +631,14 @@ async function waitForTerminalBatch(
         );
         if (!response.ok()) return `HTTP ${response.status()}`;
         latest = (await response.json()) as BatchDetails;
-        return `${latest.status}:${latest.attempts.at(-1)?.resultCode ?? "pending"}:${latest.attempts.length}`;
+        const hasExpectedResult = latest.attempts.some(
+          (attempt) => attempt.resultCode === expectedResultCode,
+        );
+        return `${latest.status}:${hasExpectedResult}:${latest.attempts.length}`;
       },
       { timeout: 180_000, intervals: [500, 1_000, 2_000] },
     )
-    .toBe(`${expectedStatus}:${expectedResultCode}:${expectedAttempts}`);
+    .toBe(`${expectedStatus}:true:${expectedAttempts}`);
   return latest!;
 }
 
@@ -541,6 +698,18 @@ async function waitForSharedWorkspace(batchId: string, attemptIds: string[]): Pr
         try {
           const shared = await collectSharedInputFiles(batchDir);
           if (shared.size === 0) return "no-shared-inputs";
+          await stat(
+            join(
+              batchDir,
+              "runtime",
+              "cotest",
+              "test-jars",
+              "level-1",
+              "level-2",
+              "level-3",
+              "project-fixture.jar",
+            ),
+          );
           for (const attemptId of attemptIds) {
             const workspace = await findAttemptWorkspace(attemptId);
             if (!workspace) return `attempt-workspace-missing:${attemptId}`;
@@ -553,7 +722,7 @@ async function waitForSharedWorkspace(batchId: string, attemptIds: string[]): Pr
           return "not-ready";
         }
       },
-      { timeout: 60_000, intervals: [250, 500, 1_000] },
+      { timeout: 180_000, intervals: [250, 500, 1_000, 2_000] },
     )
     .toBe("ready");
 }

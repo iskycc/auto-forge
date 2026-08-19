@@ -108,6 +108,21 @@ function schedulingRefillCases(createHarness: () => Promise<RefillHarness>): voi
     }
   });
 
+  it("reports only non-terminal cached batches selected for the runner as reusable", async () => {
+    const harness = await createHarness();
+    try {
+      await expect(
+        harness.batches.listReusableBatchIdsForRunner(harness.runnerId, [
+          harness.batchRunningId,
+          harness.batchSucceededId,
+        ]),
+      ).resolves.toEqual([harness.batchRunningId]);
+    } finally {
+      await harness.dispose();
+      await cleanupTemporaryDirectories();
+    }
+  });
+
   it("reports batchClosed per completion and keeps the batch schedulable until the last run", async () => {
     const harness = await createHarness();
     const { completion } = harness;

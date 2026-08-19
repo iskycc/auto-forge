@@ -488,7 +488,7 @@ export function JarImporter({
                             className={`method-status ${method.enabled ? "method-enabled" : "method-disabled"}`}
                           />
                           <code>{method.methodName}</code>
-                          <span className="method-signature" title={method.descriptor}>
+                          <span className="method-signature">
                             {formatMethodSignature(method.descriptor)}
                           </span>
                           <span className="method-origin">

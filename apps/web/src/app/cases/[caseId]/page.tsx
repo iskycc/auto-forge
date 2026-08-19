@@ -285,7 +285,7 @@ export default async function CaseDetailPage({ params }: CaseDetailPageProps) {
                     <strong>{method.methodName}</strong>
                   </td>
                   <td>
-                    <span className="method-signature" title={method.descriptor}>
+                    <span className="method-signature">
                       {formatMethodSignature(method.descriptor)}
                     </span>
                   </td>

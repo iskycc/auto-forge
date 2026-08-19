@@ -254,6 +254,8 @@ export const runnerHeartbeatInputSchema = z.object({
   maxConcurrency: z.number().int().min(1).max(64),
   agentVersion: z.string().trim().min(1).max(64),
   terminalEnabled: z.boolean(),
+  /** Agent 本机仍可复用的批次目录；控制面返回其中不再可能派发任务的 ID。 */
+  cachedBatchIds: z.array(z.string().trim().min(1).max(128)).max(1_024).optional(),
   resourceSnapshot: z
     .object({
       cpuUtilizationPercent: z.number().finite().min(0).max(100),
@@ -270,7 +272,9 @@ export const runnerHeartbeatResultSchema = z.object({
   acceptedAt: z.string().datetime(),
   heartbeatIntervalSeconds: z.number().int().min(5).max(300),
   draining: z.boolean(),
+  disabled: z.boolean().default(false),
   rotateCredential: z.boolean().default(false),
+  closedBatchIds: z.array(z.string().trim().min(1).max(128)).max(1_024).default([]),
   terminalConnectionToken: z.string().min(1).optional(),
 });
 

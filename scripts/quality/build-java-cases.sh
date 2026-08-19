@@ -70,7 +70,8 @@ compile_java_cases() {
     "${module_directory}/src/main/java/com/autoforge/javacases/JavaCasesFixture.java" \
     "${module_directory}/src/main/java/com/autoforge/javacases/JavaCasesFailureFixture.java" \
     "${module_directory}/src/main/java/com/autoforge/javacases/JavaCasesConcurrentAlphaFixture.java" \
-    "${module_directory}/src/main/java/com/autoforge/javacases/JavaCasesConcurrentBetaFixture.java"
+    "${module_directory}/src/main/java/com/autoforge/javacases/JavaCasesConcurrentBetaFixture.java" \
+    "${module_directory}/src/main/java/com/autoforge/javacases/JavaCasesConcurrentGammaFixture.java"
   jar --create \
     --file "${output_directory}/java-cases-tests.jar" \
     -C "${classes_directory}" .

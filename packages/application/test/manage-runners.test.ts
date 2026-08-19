@@ -32,6 +32,45 @@ function serviceWith(
 }
 
 describe("RunnerControlService credentials", () => {
+  it("reconciles idle batch caches through heartbeat while the runner is disabled", async () => {
+    const recordHeartbeat = vi.fn().mockResolvedValue(undefined);
+    const listReusableBatchIdsForRunner = vi.fn().mockResolvedValue(["batch-open"]);
+    const { service } = serviceWith(
+      {
+        findByCredentialHash: vi.fn().mockResolvedValue({
+          id: "runner-1",
+          state: "disabled",
+        }),
+        heartbeat: recordHeartbeat,
+      },
+      undefined,
+      { listReusableBatchIdsForRunner },
+    );
+
+    await expect(
+      service.heartbeat("runner-1", "runner-credential", {
+        schemaVersion: 1,
+        busySlots: 0,
+        labels: ["linux"],
+        capabilities: [],
+        maxConcurrency: 2,
+        agentVersion: "0.2.0",
+        terminalEnabled: false,
+        cachedBatchIds: ["batch-open", "batch-closed", "batch-foreign", "batch-closed"],
+      }),
+    ).resolves.toMatchObject({
+      draining: true,
+      disabled: true,
+      closedBatchIds: ["batch-closed", "batch-foreign"],
+    });
+    expect(listReusableBatchIdsForRunner).toHaveBeenCalledWith("runner-1", [
+      "batch-open",
+      "batch-closed",
+      "batch-foreign",
+    ]);
+    expect(recordHeartbeat).toHaveBeenCalledOnce();
+  });
+
   it("records an administrator rotation request for the next heartbeat", async () => {
     const requestCredentialRotation = vi.fn().mockResolvedValue({
       id: "runner-1",

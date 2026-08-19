@@ -175,7 +175,7 @@ export default async function CaseSourcePage({ params }: Props) {
                         className={method.enabled ? "text-success" : "muted"}
                       />
                       <code>{method.methodName}</code>
-                      <span className="method-signature" title={method.descriptor}>
+                      <span className="method-signature">
                         {formatMethodSignature(method.descriptor)}
                       </span>
                       <span className="method-origin">

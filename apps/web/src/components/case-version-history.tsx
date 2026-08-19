@@ -12,6 +12,7 @@ import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 
 import { Button, Select } from "@/components/ui";
+import { formatMethodSignature } from "@/lib/jvm-signature";
 
 const CHANGE_REASON_LABELS: Record<string, string> = {
   "source.import": "来源导入",
@@ -189,7 +190,9 @@ export function CaseVersionHistory({
                               : "首个版本，无相邻基准"}
                           </p>
                           <pre className="source-code-viewer" tabIndex={0}>
-                            <code>{JSON.stringify(snapshot, null, 2)}</code>
+                            <code>
+                              {JSON.stringify(snapshotForPresentation(snapshot), null, 2)}
+                            </code>
                           </pre>
                         </div>
                       ) : (
@@ -253,19 +256,20 @@ function compareSnapshots(
   addRecordDiff(changes, "参数", before.parameters ?? {}, after.parameters ?? {});
   const beforeMethods = new Map(before.methods.map((method) => [methodKey(method), method]));
   const afterMethods = new Map(after.methods.map((method) => [methodKey(method), method]));
-  addSetDiff(changes, "方法", [...beforeMethods.keys()], [...afterMethods.keys()]);
+  addMethodDiff(changes, beforeMethods, afterMethods);
   for (const [key, beforeMethod] of beforeMethods) {
     const afterMethod = afterMethods.get(key);
     if (!afterMethod) continue;
+    const label = methodLabel(beforeMethod);
     if (beforeMethod.enabled !== afterMethod.enabled) {
       changes.push(
-        `${key}：${beforeMethod.enabled ? "启用" : "停用"} → ${afterMethod.enabled ? "启用" : "停用"}`,
+        `${label}：${beforeMethod.enabled ? "启用" : "停用"} → ${afterMethod.enabled ? "启用" : "停用"}`,
       );
     }
-    addSetDiff(changes, `${key} 分组`, beforeMethod.groups, afterMethod.groups);
+    addSetDiff(changes, `${label} 分组`, beforeMethod.groups, afterMethod.groups);
     addRecordDiff(
       changes,
-      `${key} 参数`,
+      `${label} 参数`,
       beforeMethod.parameters ?? {},
       afterMethod.parameters ?? {},
     );
@@ -276,6 +280,21 @@ function compareSnapshots(
     );
   }
   return changes;
+}
+
+function addMethodDiff(
+  changes: string[],
+  before: ReadonlyMap<string, TestNgClassCandidate["methods"][number]>,
+  after: ReadonlyMap<string, TestNgClassCandidate["methods"][number]>,
+): void {
+  const added = [...after]
+    .filter(([key]) => !before.has(key))
+    .map(([, method]) => methodLabel(method));
+  const removed = [...before]
+    .filter(([key]) => !after.has(key))
+    .map(([, method]) => methodLabel(method));
+  if (added.length > 0) changes.push(`方法新增：${added.join("、")}`);
+  if (removed.length > 0) changes.push(`方法移除：${removed.join("、")}`);
 }
 
 function addSetDiff(changes: string[], label: string, before: string[], after: string[]): void {
@@ -303,6 +322,20 @@ function addRecordDiff(
 
 function methodKey(method: TestNgClassCandidate["methods"][number]): string {
   return `${method.methodName}${method.descriptor}`;
+}
+
+function methodLabel(method: TestNgClassCandidate["methods"][number]): string {
+  return `${method.methodName}（${formatMethodSignature(method.descriptor)}）`;
+}
+
+function snapshotForPresentation(snapshot: TestNgClassCandidate) {
+  return {
+    ...snapshot,
+    methods: snapshot.methods.map(({ descriptor, ...method }) => ({
+      ...method,
+      methodSignature: formatMethodSignature(descriptor),
+    })),
+  };
 }
 
 function versionOption(version: CaseVersion) {

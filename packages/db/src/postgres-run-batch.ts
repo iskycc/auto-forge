@@ -263,6 +263,27 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
     };
   }
 
+  async listReusableBatchIdsForRunner(
+    runnerId: string,
+    batchIds: readonly string[],
+  ): Promise<string[]> {
+    await this.ready();
+    if (batchIds.length === 0) return [];
+    return (
+      await this.handle.db
+        .select({ id: pgRunBatches.id })
+        .from(pgRunBatches)
+        .innerJoin(pgRunBatchRunners, eq(pgRunBatchRunners.batchId, pgRunBatches.id))
+        .where(
+          and(
+            eq(pgRunBatchRunners.runnerId, runnerId),
+            inArray(pgRunBatches.id, [...batchIds]),
+            inArray(pgRunBatches.status, ["queued", "dispatching", "scheduled", "running"]),
+          ),
+        )
+    ).map((row) => row.id);
+  }
+
   async listSchedulableBatchIds(
     limit: number,
     now = new Date().toISOString(),

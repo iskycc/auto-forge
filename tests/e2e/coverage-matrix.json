@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-08-13",
+  "updatedAt": "2026-08-19",
   "dimensions": ["lite", "full", "offline", "realAgent", "success", "failure", "recovery"],
   "items": [
     {
@@ -28,8 +28,12 @@
       "owner": "runner-real-lite",
       "evidence": [
         "scripts/quality/test-real-agent.sh",
+        "scripts/quality/test-batch-input-sharing.sh",
+        "scripts/quality/build-java-cases.sh",
         "tests/e2e/real-agent.spec.ts",
+        "tests/e2e/batch-input-sharing.spec.ts",
         "tests/fixtures/real-agent/RealAgentFixture.java",
+        "tests/fixtures/java-cases/src/main/java/com/autoforge/javacases/JavaCasesConcurrentGammaFixture.java",
         ".github/workflows/ci.yml"
       ],
       "coverage": {
@@ -38,8 +42,8 @@
         "offline": "partial",
         "realAgent": "partial",
         "success": "partial",
-        "failure": "planned",
-        "recovery": "planned"
+        "failure": "partial",
+        "recovery": "partial"
       }
     },
     {
@@ -164,7 +168,11 @@
       "id": "AF-E2E-010",
       "status": "partial",
       "owner": "execution-state-machine",
-      "evidence": ["tests/e2e/jar-import.spec.ts", "tests/e2e/real-agent.spec.ts"],
+      "evidence": [
+        "tests/e2e/jar-import.spec.ts",
+        "tests/e2e/real-agent.spec.ts",
+        "tests/e2e/scheduling-refill.spec.ts"
+      ],
       "coverage": {
         "lite": "partial",
         "full": "partial",

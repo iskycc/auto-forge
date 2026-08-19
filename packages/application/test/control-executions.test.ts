@@ -13,6 +13,8 @@ import type {
 function batchesRepositoryFake(): RunBatchRepository {
   return {
     appendSchedulingEvents: vi.fn().mockResolvedValue(undefined),
+    get: vi.fn().mockResolvedValue(null),
+    listReusableBatchIdsForRunner: vi.fn().mockResolvedValue([]),
   } as unknown as RunBatchRepository;
 }
 
@@ -174,6 +176,8 @@ describe("Runner execution compatibility", () => {
         updatedAt: "2026-08-09T00:00:00.000Z",
       }),
     } as unknown as RunnerRepository;
+    const batches = batchesRepositoryFake();
+    vi.mocked(batches.listReusableBatchIdsForRunner).mockResolvedValue(["batch-open"]);
     const service = new ExecutionControlService(
       executions,
       runners,
@@ -187,7 +191,7 @@ describe("Runner execution compatibility", () => {
       {} as JarObjectStorePort,
       { now: () => new Date("2026-08-09T00:00:00.000Z") },
       { next: () => "id-1" },
-      batchesRepositoryFake(),
+      batches,
     );
 
     await expect(
@@ -198,8 +202,12 @@ describe("Runner execution compatibility", () => {
         labels: [],
         capabilities: ["executor:testng-v1", "java:21.0.8", "testng:7.11.0"],
         waitSeconds: 0,
+        cachedBatchIds: ["batch-open", "batch-closed", "batch-foreign"],
       }),
-    ).resolves.toMatchObject({ assignments: [] });
+    ).resolves.toMatchObject({
+      assignments: [],
+      closedBatchIds: ["batch-closed", "batch-foreign"],
+    });
     expect(executions.claim).toHaveBeenCalledOnce();
   });
 

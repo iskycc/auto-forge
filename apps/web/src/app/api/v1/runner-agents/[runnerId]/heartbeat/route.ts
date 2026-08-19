@@ -23,13 +23,15 @@ export async function POST(request: Request, context: Context): Promise<NextResp
       await services.runnerRequestLimiter.allow(`runner:heartbeat:v1:${runnerId}`, 120, 60_000),
     );
     const heartbeat = await services.runnerControl.heartbeat(runnerId, bearerToken(request), input);
-    try {
-      await services.runBatches.scheduleForRunner(runnerId);
-    } catch (error) {
-      logServerError(error, randomUUID(), "Heartbeat-triggered scheduling failed");
+    if (!heartbeat.draining) {
+      try {
+        await services.runBatches.scheduleForRunner(runnerId);
+      } catch (error) {
+        logServerError(error, randomUUID(), "Heartbeat-triggered scheduling failed");
+      }
     }
     const terminalConnectionToken =
-      input.terminalEnabled && services.config.terminalAccessToken
+      input.terminalEnabled && !heartbeat.disabled && services.config.terminalAccessToken
         ? issueTerminalTicket(services.config.terminalAccessToken, {
             role: "agent",
             runnerId,

@@ -207,8 +207,16 @@ func TestClientRegistersAndSendsAuthenticatedHeartbeat(t *testing.T) {
 			if request.Header.Get("Authorization") != "Bearer runner-credential-with-more-than-32-bytes" {
 				t.Errorf("heartbeat Authorization = %q", request.Header.Get("Authorization"))
 			}
+			var heartbeat heartbeatRequest
+			if err := json.NewDecoder(request.Body).Decode(&heartbeat); err != nil {
+				t.Errorf("decode heartbeat: %v", err)
+			}
+			if len(heartbeat.CachedBatchIDs) != 1 || heartbeat.CachedBatchIDs[0] != "batch-1" {
+				t.Errorf("heartbeat cachedBatchIds = %v, want [batch-1]", heartbeat.CachedBatchIDs)
+			}
 			json.NewEncoder(writer).Encode(map[string]any{
 				"schemaVersion": 1, "acceptedAt": "2026-08-09T00:00:00.000Z", "heartbeatIntervalSeconds": 15, "draining": false, "rotateCredential": true,
+				"closedBatchIds": heartbeat.CachedBatchIDs,
 			})
 		default:
 			http.NotFound(writer, request)
@@ -226,12 +234,23 @@ func TestClientRegistersAndSendsAuthenticatedHeartbeat(t *testing.T) {
 		t.Fatalf("Register() error = %v", err)
 	}
 	snapshot := &metrics.Snapshot{CPUUtilizationPercent: 20, MemoryUtilizationPercent: 30, LoadAverage1m: 0.5, LogicalCPUCount: 4, ObservedAt: "2026-08-09T00:00:00Z"}
-	heartbeat, err := client.Heartbeat(context.Background(), identity, configuration, buildinfo.Info{Version: "0.2.0"}, 1, snapshot)
+	heartbeat, err := client.Heartbeat(
+		context.Background(),
+		identity,
+		configuration,
+		buildinfo.Info{Version: "0.2.0"},
+		1,
+		snapshot,
+		[]string{"batch-1"},
+	)
 	if err != nil {
 		t.Fatalf("Heartbeat() error = %v", err)
 	}
 	if !heartbeat.RotateCredential {
 		t.Fatal("Heartbeat() did not preserve the credential rotation instruction")
+	}
+	if len(heartbeat.ClosedBatchIDs) != 1 || heartbeat.ClosedBatchIDs[0] != "batch-1" {
+		t.Fatalf("Heartbeat() closedBatchIds = %v, want [batch-1]", heartbeat.ClosedBatchIDs)
 	}
 	if requests != 2 {
 		t.Fatalf("requests = %d, want 2", requests)
@@ -323,6 +342,7 @@ func TestClientReturnsStableErrorForRevokedRunnerCredential(t *testing.T) {
 		buildinfo.Info{Version: "0.2.2"},
 		0,
 		nil,
+		nil,
 	)
 	var problem *APIError
 	if !errors.As(err, &problem) || problem.Code != "RUNNER_AUTH_REJECTED" {
@@ -350,12 +370,16 @@ func TestClientUsesSameProtocolForLiteAndFullControlPlanes(t *testing.T) {
 				if claim.SchemaVersion != protocolVersion {
 					t.Errorf("claim schemaVersion = %d, want %d", claim.SchemaVersion, protocolVersion)
 				}
+				if len(claim.CachedBatchIDs) != 1 || claim.CachedBatchIDs[0] != "batch-1" {
+					t.Errorf("claim cachedBatchIds = %v, want [batch-1]", claim.CachedBatchIDs)
+				}
 				writer.Header().Set("Content-Type", "application/json")
 				_ = json.NewEncoder(writer).Encode(map[string]any{
 					"schemaVersion":            protocolVersion,
 					"requestId":                claim.RequestID,
 					"assignments":              []any{},
 					"retryAfterMs":             1_000,
+					"closedBatchIds":           claim.CachedBatchIDs,
 					"optionalServerPatchField": mode,
 				})
 			}))
@@ -371,11 +395,12 @@ func TestClientUsesSameProtocolForLiteAndFullControlPlanes(t *testing.T) {
 				Identity{RunnerID: "runner-1", Credential: "runner-credential"},
 				configuration,
 				1,
+				[]string{"batch-1"},
 			)
 			if err != nil {
 				t.Fatalf("Claim() error = %v", err)
 			}
-			if response.SchemaVersion != protocolVersion || len(response.Assignments) != 0 {
+			if response.SchemaVersion != protocolVersion || len(response.Assignments) != 0 || len(response.ClosedBatchIDs) != 1 {
 				t.Fatalf("Claim() response = %#v", response)
 			}
 		})
@@ -409,6 +434,7 @@ func TestClientRejectsIncompatibleClaimResponseVersion(t *testing.T) {
 		Identity{RunnerID: "runner-1", Credential: "runner-credential"},
 		configuration,
 		1,
+		nil,
 	)
 	if err == nil || !strings.Contains(err.Error(), "incompatible protocol response") {
 		t.Fatalf("Claim() error = %v, want incompatible protocol response", err)

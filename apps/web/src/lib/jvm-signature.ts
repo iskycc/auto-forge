@@ -21,7 +21,7 @@ export type MethodSignature = {
   returnType: string;
 };
 
-/** 解析失败返回 null，调用方应回退展示原始描述符，避免显示错误信息。 */
+/** 解析失败返回 null；展示层使用中文未知状态，不暴露原始 JVM 符号。 */
 export function parseMethodDescriptor(descriptor: string): MethodSignature | null {
   if (!descriptor.startsWith("(")) return null;
   const closeIndex = descriptor.indexOf(")");
@@ -43,7 +43,7 @@ export function parseMethodDescriptor(descriptor: string): MethodSignature | nul
 
 export function formatMethodSignature(descriptor: string): string {
   const parsed = parseMethodDescriptor(descriptor);
-  if (!parsed) return descriptor;
+  if (!parsed) return "入参：无法识别，返回值：无法识别";
   const parameters = parsed.parameterTypes.length > 0 ? parsed.parameterTypes.join("、") : "空";
   const returnType = parsed.returnType === "void" ? "空" : parsed.returnType;
   return `入参：${parameters}，返回值：${returnType}`;

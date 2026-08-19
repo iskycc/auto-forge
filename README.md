@@ -44,7 +44,7 @@ AutoForge 是一个面向自动化测试场景的用例工厂，用于统一管�
 - TestNG 解析单元测试、SQLite/PostgreSQL/本地对象/MinIO 集成测试和浏览器管理闭环测试；Agent 安全、日志/spool 与产物矩阵覆盖参数注入、越界 cwd、环境泄漏、失效凭据、资源/进程树清理、跨块、交错流、确认缺口、断线重传、重启、配额、脱敏、恶意路径、摘要冲突和对象故障恢复。
 - Go 1.26 Runner Agent 的版本信息、配置诊断、受控工作目录、无 Shell 命令执行、日志上限、超时与 Linux 进程组清理。
 - Agent 的有界 claim/退避/并发槽位、独立 lease 续租、重启 reconcile、权威测试/依赖 JAR 下载校验、离线工具链 capability，以及按 `methodName+JVM descriptor` 精确选择重载方法的 TestNG 完成上报。
-- CoTest Adapter 的启用状态、Suite、Test 与多个环境地址保存在用例任务中，批次按稳定用例顺序轮询分配地址；项目只保存上传或 HTTP(S) 链接登记的 JDK/完整 JAR 压缩包。上传采用流式处理且没有固定业务大小上限，Runner 仍按任务工作区配额校验、下载和安全解压，并自动加载 `test-jars` 下三层目录内的全部 JAR。每个用例在独立进程和独立子优先 ClassLoader 中执行，主用例 JAR 固定处于 classpath 首位。
+- CoTest Adapter 的启用状态、Suite、Test 与多个环境地址保存在用例任务中，批次按稳定用例顺序轮询分配地址；项目只保存上传或 HTTP(S) 链接登记的 JDK/完整 JAR 压缩包。上传采用流式处理且没有固定业务大小上限，Runner 仍按任务工作区配额校验、下载和安全解压；同一批次在同一 Runner 上只下载一次输入并只解压一次依赖包/JDK，各 attempt 通过批次目录复用 `test-jars`，Agent 重启后仍保留未终态批次的已校验运行时。完成响应、heartbeat 或 claim 确认该批次不再可能派发到本机后才回收。每个用例仍在独立进程和独立子优先 ClassLoader 中执行，主用例 JAR 固定处于 classpath 首位。
 - Agent stdout/stderr/诊断流的 UTF-8 分块、双层秘密脱敏、有界磁盘 spool、连续确认水位和断线重传；执行期间每 500 ms 尝试上传新增块，控制面先持久化，再由 Lite 进程内通道或 Full NATS 跨副本广播通过同源、短时票据 WebSocket 推送到执行详情。
 - 产物安全发现、SHA-256 声明和鉴权下载；Lite 经控制面流式写入本地对象目录，Full 使用 15 分钟单对象 MinIO 预签名目标，Agent 不持有长期凭据，finalize 前由控制面重新核对大小和 SHA-256。TestNG XML 以禁用 DTD/实体的有界流式解析器提取 suite/test/class/method、耗时和汇总，结果由 SQLite/PostgreSQL 持久化并在执行详情展示，原始 XML 保留为产物。
 - SQLite 持久任务和 Lite 嵌入式 worker；PostgreSQL transactional outbox、JetStream 显式确认和 Full 独立 worker。SQLite/JetStream 运行同一套至少一次投递契约测试，覆盖去重、延迟、租约恢复、死信和关闭排空。
@@ -103,7 +103,7 @@ AutoForge 是一个面向自动化测试场景的用例工厂，用于统一管�
 
 ## 批跑动态调度
 
-“用例批跑”页面按“选择用例任务 → 勾选执行机 → 设置失败重跑次数 → 填写非密文测试环境变量 → 开始调度”创建批次。每个启用用例固化为一个 `ExecutionRun`；平台只在用户勾选范围内选择 Runner，并根据在线状态、资源快照新鲜度、空闲并发槽位、CPU、内存和 1 分钟单位 CPU 负载进行准入与评分。每次心跳会继续尝试分配等待资源的用例。排队、领取、执行和上传收尾分别使用持久化 UTC deadline 与稳定结果码，服务重启后由同一恢复扫描继续裁决。
+“用例批跑”页面按“选择用例任务 → 勾选执行机 → 设置失败重跑次数 → 填写非密文测试环境变量 → 开始调度”创建批次。每个启用用例固化为一个 `ExecutionRun`；平台只在用户勾选范围内选择 Runner，并根据在线状态、资源快照新鲜度、空闲并发槽位、CPU、内存和 1 分钟单位 CPU 负载进行准入与评分。每次心跳和每个被接受的完成上报都会继续尝试分配等待资源的用例；立即重跑模式允许失败用例在同批其他首轮用例仍运行时进入下一次 attempt，整轮轮次模式则按用户选择等待本轮结束。排队、领取、执行和上传收尾分别使用持久化 UTC deadline 与稳定结果码，服务重启后由同一恢复扫描继续裁决。
 
 `scheduled` 表示 assignment 已持久化但尚未领取，`running` 表示 Agent 已取得有效 lease。Agent 已接入 claim、续租、取消、reconcile、日志/产物上传和完成上报；执行详情页可分页读取三类日志、下载已上传产物并查看 Attempt 状态时间线。精确评分、并发防超卖、双模式语义和失败重跑边界见[批跑动态调度设计](./docs/architecture/run-scheduling.md)。
 
