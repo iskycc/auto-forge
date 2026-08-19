@@ -709,6 +709,9 @@ public class MixedVisibleTest {
   await expect(page.locator(".execution-log .log-level-info")).toContainText("INFO");
   await expect(page.locator(".execution-log .log-level-warn")).toContainText("WARN");
   await expect(page.locator(".execution-log .log-level-error").first()).toContainText("ERROR");
+  await expect(page.locator(".execution-log")).not.toContainText(
+    "TestCase Run Failed Stack Base64",
+  );
   await page.keyboard.press("Escape");
   await expect(page.locator(".execution-log")).toHaveCount(0);
   // 需求5后单用例不再自动展开，需显式点击详情才能看到产物列表。
@@ -772,6 +775,9 @@ public class MixedVisibleTest {
     const sharedSummary = anonymousPage.locator(".share-log-summary");
     await expect(sharedSummary).toBeVisible();
     expect(await sharedSummary.textContent()).toBe(expectedFailureSummary);
+    await expect(anonymousPage.locator(".share-log-output")).not.toContainText(
+      "TestCase Run Failed Stack Base64",
+    );
     await anonymousPage.goto("/share/attempt-log/e2e-invalid-token");
     await expect(anonymousPage.getByRole("heading", { name: "链接无效" })).toBeVisible();
   } finally {

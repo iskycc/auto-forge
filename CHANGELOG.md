@@ -11,6 +11,8 @@ and known limitations.
 - Execution failure descriptions now preserve the complete multiline UTF-8 adapter summary instead
   of truncating it or falling back to `class#method 执行失败`. Runner JVM processes explicitly use
   UTF-8 console encodings, and oversized writes are split at the Runner Protocol chunk boundary.
+  The internal Base64 summary control record remains in authoritative logs for extraction but is
+  hidden from interactive and public log views.
 - Round totals now use the cases eligible for each round: the initial round contains all cases and
   each retry round contains the preceding round's failures/timeouts. Not-executed counts update while
   a round is active, and the all-rounds row sums every displayed round consistently.

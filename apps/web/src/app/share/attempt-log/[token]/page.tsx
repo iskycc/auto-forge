@@ -4,6 +4,7 @@ import type { Metadata } from "next";
 import type { ReactNode } from "react";
 
 import { highlightLogLevels } from "@/lib/log-levels";
+import { visibleAttemptLogText } from "@/lib/log-presentation";
 import { formatLocalDateTime } from "@/lib/run-batch-presentation";
 import { parseSafeAnsi } from "@/lib/safe-ansi";
 import { getPlatformServices } from "@/lib/services";
@@ -36,7 +37,7 @@ export default async function SharedAttemptLogPage({
 }
 
 function SharedAttemptLogContent({ view }: { view: SharedAttemptLogView }) {
-  const { text: logText, truncated } = truncateSharedLogText(view.logText);
+  const { text: logText, truncated } = truncateSharedLogText(visibleAttemptLogText(view.logText));
   const renderedSegments = highlightLogLevels(parseSafeAnsi(logText));
   return (
     <main className="share-log-page">

@@ -9,6 +9,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { TerminalLogViewer } from "@/components/terminal-log-viewer";
 import { Button, DatetimeInput, Input } from "@/components/ui";
 import { readApiErrorMessage } from "@/lib/client-api";
+import { visibleAttemptLogText } from "@/lib/log-presentation";
 import { highlightLogLevels } from "@/lib/log-levels";
 import { parseSafeAnsi } from "@/lib/safe-ansi";
 
@@ -202,9 +203,13 @@ export function AttemptLogViewer({
     }
     return gaps;
   }, [logs]);
-  const renderedLogs = useMemo(
-    () => highlightLogLevels(parseSafeAnsi(logs.map((chunk) => chunk.content).join(""))),
+  const visibleLogText = useMemo(
+    () => visibleAttemptLogText(logs.map((chunk) => chunk.content).join("")),
     [logs],
+  );
+  const renderedLogs = useMemo(
+    () => highlightLogLevels(parseSafeAnsi(visibleLogText)),
+    [visibleLogText],
   );
 
   return (
@@ -281,7 +286,7 @@ export function AttemptLogViewer({
       ) : null}
       {canReadLogs ? (
         <pre className={`execution-log ${darkLogs ? "execution-log-dark" : ""}`} aria-live="polite">
-          {logs.length > 0
+          {visibleLogText
             ? renderedLogs.map((segment, index) => (
                 <span className={segment.classes.join(" ")} key={index}>
                   {segment.text}
