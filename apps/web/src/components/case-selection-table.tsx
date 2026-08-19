@@ -1,6 +1,7 @@
 "use client";
 
 import { Button, Input, Select } from "@/components/ui";
+import { formatMethodSignature } from "@/lib/jvm-signature";
 
 import { apiErrorSchema } from "@autoforge/contracts";
 import type { CaseDefinitionWithMethods, CaseSuite, CaseVersion, Runner } from "@autoforge/domain";
@@ -477,7 +478,9 @@ function CaseInspector({
                 <tr key={method.id}>
                   <td>
                     <strong>{method.methodName}</strong>
-                    <code>{method.descriptor}</code>
+                    <span className="method-signature" title={method.descriptor}>
+                      {formatMethodSignature(method.descriptor)}
+                    </span>
                   </td>
                   <td>{method.groups.join("、") || "—"}</td>
                   <td>

@@ -269,6 +269,10 @@ type CompleteAttemptResponse struct {
 	AcceptedAt     string `json:"acceptedAt"`
 	Disposition    string `json:"disposition"`
 	RetryScheduled bool   `json:"retryScheduled"`
+	// BatchID 与 BatchClosed 由控制面在完成上报响应中下发：BatchClosed 为 true 表示
+	// 该批次已进入终态，Agent 在本机没有在途 attempt 时可回收批次共享目录。
+	BatchID     string `json:"batchId,omitempty"`
+	BatchClosed bool   `json:"batchClosed,omitempty"`
 }
 
 type localAttempt struct {

@@ -33,6 +33,7 @@ type attemptSupervisor struct {
 	store         attemptStore
 	logSpool      *logSpool
 	artifactSpool *artifactSpool
+	batches       *batchRegistry
 	diagnostics   io.Writer
 	draining      atomic.Bool
 	busy          atomic.Int32
@@ -48,6 +49,7 @@ func newAttemptSupervisor(client *Client, identity Identity, configuration confi
 		identity:      identity,
 		configuration: configuration,
 		store:         newAttemptStore(configuration.DataDirectory),
+		batches:       newBatchRegistry(configuration.DataDirectory),
 		diagnostics:   diagnostics,
 		cancellations: make(map[string]context.CancelFunc),
 		runExecution:  executor.Run,
@@ -73,6 +75,9 @@ func (supervisor *attemptSupervisor) Start(ctx context.Context) error {
 		return err
 	}
 	supervisor.artifactSpool = artifactSpool
+	if err := supervisor.cleanOrphanedWorkspaces(); err != nil {
+		return err
+	}
 	if err := supervisor.reconcile(ctx); err != nil {
 		return err
 	}
@@ -167,12 +172,19 @@ func (supervisor *attemptSupervisor) startAttempt(claimed ClaimedAssignment) err
 		return err
 	}
 	attemptID := claimed.Assignment.AttemptID
+	batchID := claimed.Assignment.ExecutionSpec.BatchID
+	// 批次引用在 attempt 启动时注册，executeAttempt 收尾时注销；期间批次共享目录
+	// 不会被回收，保证 PrepareWorkspace 的硬链接/符号链接来源稳定。
+	if err := supervisor.batches.acquire(batchID); err != nil {
+		return err
+	}
 	state := attemptState{SchemaVersion: attemptStateSchemaVersion, Claimed: claimed, LocalState: "claimed"}
 	executionContext, cancel := context.WithCancel(context.Background())
 	supervisor.mutex.Lock()
 	if _, exists := supervisor.cancellations[attemptID]; exists {
 		supervisor.mutex.Unlock()
 		cancel()
+		supervisor.batches.release(batchID, false, supervisor.diagnostics)
 		return errors.New("attempt is already running locally")
 	}
 	supervisor.cancellations[attemptID] = cancel
@@ -182,6 +194,7 @@ func (supervisor *attemptSupervisor) startAttempt(claimed ClaimedAssignment) err
 		delete(supervisor.cancellations, attemptID)
 		supervisor.mutex.Unlock()
 		cancel()
+		supervisor.batches.release(batchID, false, supervisor.diagnostics)
 		return err
 	}
 	supervisor.busy.Add(1)
@@ -201,6 +214,13 @@ func (supervisor *attemptSupervisor) startAttempt(claimed ClaimedAssignment) err
 }
 
 func (supervisor *attemptSupervisor) executeAttempt(ctx context.Context, cancel context.CancelFunc, state attemptState) {
+	batchID := state.Claimed.Assignment.ExecutionSpec.BatchID
+	batchClosed := false
+	// attempt 收尾时注销批次引用；仅当控制面确认批次进入终态且本机无其他在途
+	// attempt 时，release 才会删除批次共享目录。
+	defer func() {
+		supervisor.batches.release(batchID, batchClosed, supervisor.diagnostics)
+	}()
 	state.LocalState = "running"
 	if err := supervisor.store.save(state); err != nil {
 		fmt.Fprintf(supervisor.diagnostics, "persist running attempt %s: %v\n", state.Claimed.Assignment.AttemptID, err)
@@ -257,7 +277,7 @@ func (supervisor *attemptSupervisor) executeAttempt(ctx context.Context, cancel 
 		fmt.Fprintf(supervisor.diagnostics, "attempt %s lost its lease; completion retained locally\n", state.Claimed.Assignment.AttemptID)
 		return
 	}
-	supervisor.reportCompletion(context.Background(), state)
+	batchClosed = supervisor.reportCompletion(context.Background(), state)
 }
 
 func (supervisor *attemptSupervisor) runTestNG(
@@ -336,7 +356,13 @@ func (supervisor *attemptSupervisor) runTestNG(
 		},
 		LogSink: collector.Write,
 		PrepareWorkspace: func(workspace string) error {
-			if err := downloadAttemptInputs(ctx, supervisor.client, supervisor.currentIdentity(), claimed, inputs, workspace); err != nil {
+			if executionSpec.BatchID != "" {
+				// 批次共享：同批次输入只下载解压一次，attempt 工作目录通过
+				// 硬链接/符号链接引用共享目录内容。
+				if err := supervisor.prepareSharedBatchWorkspace(ctx, claimed, inputs, workspace, useAdapter); err != nil {
+					return err
+				}
+			} else if err := downloadAttemptInputs(ctx, supervisor.client, supervisor.currentIdentity(), claimed, inputs, workspace); err != nil {
 				return err
 			}
 			if useAdapter {
@@ -735,13 +761,15 @@ func isPermanentLeaseRejection(err error) bool {
 	}
 }
 
-func (supervisor *attemptSupervisor) reportCompletion(ctx context.Context, state attemptState) {
+// reportCompletion 重试上报完成结果直到 lease 过期；返回控制面确认的 batchClosed
+// 标记，供调用方决定是否在批次收尾时回收共享目录。上报未成功时返回 false。
+func (supervisor *attemptSupervisor) reportCompletion(ctx context.Context, state attemptState) bool {
 	if state.Result == nil || state.CompletionID == "" {
-		return
+		return false
 	}
 	expiresAt, err := time.Parse(time.RFC3339Nano, state.Claimed.Lease.ExpiresAt)
 	if err != nil {
-		return
+		return false
 	}
 	backoff := time.Second
 	for time.Now().Before(expiresAt) {
@@ -758,14 +786,15 @@ func (supervisor *attemptSupervisor) reportCompletion(ctx context.Context, state
 				if removeErr := supervisor.cleanAttemptSpool(state.Claimed.Assignment.AttemptID); removeErr != nil {
 					fmt.Fprintf(supervisor.diagnostics, "clean completed attempt %s: %v\n", state.Claimed.Assignment.AttemptID, removeErr)
 				}
-				return
+				return response.BatchClosed
 			}
 		}
 		if !waitFor(ctx, backoff) {
-			return
+			return false
 		}
 		backoff = min(backoff*2, 10*time.Second)
 	}
+	return false
 }
 
 func (supervisor *attemptSupervisor) reconcile(ctx context.Context) error {

@@ -2922,6 +2922,16 @@ button.icon-button:disabled {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* 方法签名的中文可读展示；原始描述符仅保留在 title 悬浮提示中。 */
+.method-signature {
+  max-width: 340px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-caption);
+}
 .method-origin {
   margin-left: auto;
   white-space: nowrap;

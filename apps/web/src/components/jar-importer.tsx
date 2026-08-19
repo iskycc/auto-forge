@@ -28,6 +28,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useId, useState } from "react";
 
 import { CLASS_PREVIEW_LIMIT, uniqueInspectionClasses } from "@/lib/class-preview";
+import { formatMethodSignature } from "@/lib/jvm-signature";
 
 type Phase = "idle" | "inspecting" | "ready" | "importing" | "done";
 
@@ -487,7 +488,9 @@ export function JarImporter({
                             className={`method-status ${method.enabled ? "method-enabled" : "method-disabled"}`}
                           />
                           <code>{method.methodName}</code>
-                          <span className="method-descriptor">{method.descriptor}</span>
+                          <span className="method-signature" title={method.descriptor}>
+                            {formatMethodSignature(method.descriptor)}
+                          </span>
                           <span className="method-origin">
                             {method.annotationSource === "class" ? "类级 @Test" : "方法级 @Test"}
                           </span>

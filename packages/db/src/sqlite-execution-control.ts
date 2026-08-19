@@ -19,6 +19,7 @@ import {
   aggregateBatchStatus,
   DomainError,
   isTerminalAttemptStatus,
+  isTerminalBatchStatus,
   isTerminalRunStatus,
   outcomeAfterCompletion,
   transitionAssignment,
@@ -329,6 +330,8 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
           acceptedAt: input.acceptedAt,
           disposition: isLate ? "late" : "accepted",
           retryScheduled: false,
+          batchId: control.batch_id,
+          batchClosed: this.batchClosed(control.batch_id),
         };
         if (!isLate) {
           const effectiveResult = cancellationResult(input.result, control.run_cancel_requested_at);
@@ -339,13 +342,16 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
             cancellationRequested: control.run_cancel_requested_at !== null,
           });
           response.retryScheduled = decision.retryScheduled;
-          this.persistCompletion(
-            control,
-            assignment,
-            lease,
-            effectiveResult,
-            input,
-            decision.runStatus,
+          // persistCompletion 内部已聚合批次状态，直接用其返回值判定终态。
+          response.batchClosed = isTerminalBatchStatus(
+            this.persistCompletion(
+              control,
+              assignment,
+              lease,
+              effectiveResult,
+              input,
+              decision.runStatus,
+            ),
           );
         }
         this.handle.client
@@ -888,7 +894,7 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
     result: CompletionResult,
     input: Parameters<ExecutionControlRepository["completeAttempt"]>[0],
     runStatus: "queued" | "succeeded" | "failed" | "cancelled",
-  ): void {
+  ): RunBatchStatus {
     const attemptStatus = transitionRunAttempt(control.status, result.status);
     const assignmentStatus = transitionAssignment(assignment.status, "completed");
     const leaseStatus = transitionLease(lease.status, "released");
@@ -958,7 +964,12 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
         recordedAt: input.acceptedAt,
       });
     }
-    this.updateBatchStatus(control.batch_id, input.acceptedAt, input.eventId, "attempt.completed");
+    return this.updateBatchStatus(
+      control.batch_id,
+      input.acceptedAt,
+      input.eventId,
+      "attempt.completed",
+    );
   }
 
   private authorizedTransferContext(input: {
@@ -997,6 +1008,14 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
       .get(attemptId) as { batch_id: string } | undefined;
     if (!row) throw new DomainError("RUN_ATTEMPT_NOT_FOUND", "指定的执行尝试不存在。");
     return row.batch_id;
+  }
+
+  // late 路径不经过 persistCompletion，直接读当前批次聚合状态判定终态。
+  private batchClosed(batchId: string): boolean {
+    const row = this.handle.client
+      .prepare("SELECT status FROM run_batches WHERE id = ?")
+      .get(batchId) as { status: RunBatchStatus } | undefined;
+    return row ? isTerminalBatchStatus(row.status) : false;
   }
 
   private recordAttemptLogsPath(batchId: string): void {
@@ -1411,7 +1430,7 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
     updatedAt: string,
     eventId: string,
     reason: string,
-  ): void {
+  ): RunBatchStatus {
     const batch = this.handle.client
       .prepare("SELECT status, version, retry_mode FROM run_batches WHERE id = ?")
       .get(batchId) as
@@ -1446,6 +1465,7 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
         )
         .run(eventId, batchId, batch.status, status, batch.version + 1, reason, updatedAt);
     }
+    return status;
   }
 
   // 轮次制：整轮无在途且无未扣留的 queued run 时，把等待下一轮的失败 run 统一释放。

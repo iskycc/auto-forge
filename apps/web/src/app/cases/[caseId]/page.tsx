@@ -8,6 +8,7 @@ import { CaseVersionHistory } from "@/components/case-version-history";
 import { StatusBadge } from "@/components/status-badge";
 import { SingleCaseRun } from "@/components/single-case-run";
 import { requirePageProjectScope } from "@/lib/auth";
+import { formatMethodSignature } from "@/lib/jvm-signature";
 import { getPlatformServices } from "@/lib/services";
 
 export const dynamic = "force-dynamic";
@@ -272,7 +273,7 @@ export default async function CaseDetailPage({ params }: CaseDetailPageProps) {
             <thead>
               <tr>
                 <th>方法</th>
-                <th>描述符</th>
+                <th>方法签名</th>
                 <th>分组</th>
                 <th>状态</th>
               </tr>
@@ -284,7 +285,9 @@ export default async function CaseDetailPage({ params }: CaseDetailPageProps) {
                     <strong>{method.methodName}</strong>
                   </td>
                   <td>
-                    <code>{method.descriptor}</code>
+                    <span className="method-signature" title={method.descriptor}>
+                      {formatMethodSignature(method.descriptor)}
+                    </span>
                   </td>
                   <td>{method.groups.join("、") || "—"}</td>
                   <td>

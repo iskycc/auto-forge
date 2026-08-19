@@ -19,6 +19,7 @@ import {
   aggregateBatchStatus,
   DomainError,
   isTerminalAttemptStatus,
+  isTerminalBatchStatus,
   isTerminalRunStatus,
   outcomeAfterCompletion,
   transitionAssignment,
@@ -327,6 +328,8 @@ export class PostgresExecutionControlRepository implements ExecutionControlRepos
           acceptedAt: input.acceptedAt,
           disposition: isLate ? "late" : "accepted",
           retryScheduled: false,
+          batchId: control.batch_id,
+          batchClosed: await batchClosed(client, control.batch_id),
         };
         if (!isLate) {
           const effectiveResult = cancellationResult(input.result, control.run_cancel_requested_at);
@@ -337,15 +340,18 @@ export class PostgresExecutionControlRepository implements ExecutionControlRepos
             cancellationRequested: control.run_cancel_requested_at !== null,
           });
           response.retryScheduled = decision.retryScheduled;
-          await persistCompletion(
-            client,
-            this.attemptLogs,
-            control,
-            assignment,
-            lease,
-            effectiveResult,
-            input,
-            decision.runStatus,
+          // persistCompletion 内部已聚合批次状态，直接用其返回值判定终态。
+          response.batchClosed = isTerminalBatchStatus(
+            await persistCompletion(
+              client,
+              this.attemptLogs,
+              control,
+              assignment,
+              lease,
+              effectiveResult,
+              input,
+              decision.runStatus,
+            ),
           );
         }
         await client.query(
@@ -1065,7 +1071,7 @@ async function persistCompletion(
   result: CompletionResult,
   input: Parameters<ExecutionControlRepository["completeAttempt"]>[0],
   runStatus: "queued" | "succeeded" | "failed" | "cancelled",
-): Promise<void> {
+): Promise<RunBatchStatus> {
   const attemptStatus = transitionRunAttempt(control.status, result.status);
   const assignmentStatus = transitionAssignment(assignment.status, "completed");
   const leaseStatus = transitionLease(lease.status, "released");
@@ -1140,7 +1146,7 @@ async function persistCompletion(
       recordedAt: input.acceptedAt,
     });
   }
-  await updateBatchStatus(
+  return updateBatchStatus(
     client,
     control.batch_id,
     input.acceptedAt,
@@ -1472,7 +1478,7 @@ async function updateBatchStatus(
   updatedAt: string,
   eventId: string,
   reason: string,
-): Promise<void> {
+): Promise<RunBatchStatus> {
   const batch = await client.query<{
     status: RunBatchStatus;
     version: number;
@@ -1504,6 +1510,16 @@ async function updateBatchStatus(
       [eventId, batchId, batchState.status, status, batchState.version + 1, reason, updatedAt],
     );
   }
+  return status;
+}
+
+// late 路径不经过 persistCompletion，直接读当前批次聚合状态判定终态。
+async function batchClosed(client: PoolClient, batchId: string): Promise<boolean> {
+  const row = await client.query<{ status: RunBatchStatus }>(
+    "SELECT status FROM run_batches WHERE id = $1",
+    [batchId],
+  );
+  return row.rows[0] ? isTerminalBatchStatus(row.rows[0].status) : false;
 }
 
 // 轮次制：整轮无在途且无未扣留的 queued run 时，把等待下一轮的失败 run 统一释放。

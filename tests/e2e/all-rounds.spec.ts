@@ -344,6 +344,9 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
 
   // 全部轮次导出：scope=all，Excel 首列为轮次，文件名带 all-rounds。
   await page.getByRole("button", { name: "全部轮次", exact: true }).click();
+  // 等面板切换完成再点导出，否则导航重渲染会重置对话框的打开状态（偶发丢失点击）。
+  await expect(page).toHaveURL(/round=all/);
+  await expect(page.locator(".round-cases")).toBeVisible();
   await page.getByRole("button", { name: "导出结果" }).click();
   const exportDialog = page.getByRole("dialog", { name: "导出执行结果" });
   await expect(exportDialog).toBeVisible();

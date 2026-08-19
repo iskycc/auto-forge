@@ -4,6 +4,59 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## 0.7.0 - 2026-08-19
+
+### Features
+
+- Batch-level shared execution inputs on the Runner Agent: all test-jar / dependency-jar /
+  jar-bundle / jdk-archive inputs of one batch are downloaded and extracted exactly once per
+  runner into `<agent data dir>/work/batches/<batchId>/`. Concurrent attempts of the same batch
+  reference them through hard links (with a copy fallback across filesystems) and a shared
+  `runtime/jdk` symlink, so five parallel attempts no longer download the same JAR five times.
+  Existing inputs are re-validated by streaming SHA-256 and only re-downloaded on mismatch. The
+  shared directory is removed once the control plane confirms the batch is terminal
+  (`batchClosed`) and no local attempt of that batch is still running; agent startup reconcile
+  now also removes orphaned `work/<attemptId>-*` leftovers and unreferenced `batches/*`
+  directories left behind by crashes.
+- Runner Protocol completion responses carry the optional `batchId` and `batchClosed` fields
+  (additive change, schemaVersion unchanged) so agents can recycle batch workspaces and the
+  control plane can trigger refill scheduling.
+
+### Changed
+
+- Scheduling now refills freed concurrency slots immediately: accepting an attempt completion
+  re-runs batch scheduling at once, and batches in `running` status remain schedulable, so a
+  runner with 10 slots starts the next case as soon as any case finishes instead of waiting for
+  the whole wave of 10 to complete (previously assignments were only created at batch creation
+  and on heartbeats, and `running` batches were excluded from scheduling).
+- Method signatures in the UI are shown as Chinese readable text instead of raw JVM descriptors:
+  the import scan preview, the case-source preview, the case details method table (column
+  “描述符” renamed to “方法签名”) and the case-library selection table now render
+  “入参：…，返回值：…” — `()V` reads as “入参：空，返回值：空”,
+  `(Ljava/lang/String;I)Z` as “入参：String、int，返回值：boolean”. The raw descriptor
+  moves to a hover tooltip so overloaded methods stay precisely identifiable. Data, contracts
+  and execution matching are unchanged (still `methodName + descriptor`).
+
+### Tests
+
+- New dual-database contract suite `packages/db/test/scheduling-refill.integration.test.ts`:
+  `running` batches stay schedulable, completions report the correct `batchId`/`batchClosed`,
+  and a freed slot is refillable while sibling runs are still in flight.
+- New end-to-end spec `tests/e2e/scheduling-refill.spec.ts`: five cases on a two-slot runner,
+  each accepted completion immediately yields the next assignment without any heartbeat, and
+  `batchClosed` only turns true on the final completion.
+- New end-to-end spec `tests/e2e/batch-input-sharing.spec.ts` driving the real Go Agent: two
+  concurrent attempts of one batch share the same downloaded inputs (identical inodes via hard
+  links, stable mtimes proving no re-download), the batch workspace is removed after the
+  terminal state, and a crashed-then-restarted agent cleans up the orphaned batch directory.
+- `tests/e2e/all-rounds.spec.ts` export step hardened against the tab-navigation re-render race.
+
+### Compatibility
+
+- Runner Protocol change is additive and optional on both sides; older agents and servers
+  interoperate unchanged (agents without batch sharing simply re-download per attempt).
+- No database migrations, no persisted-configuration changes, no offline asset changes.
+
 ## 0.6.6 - 2026-08-18
 
 ### Fixed

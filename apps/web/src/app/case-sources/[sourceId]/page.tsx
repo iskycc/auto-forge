@@ -4,6 +4,7 @@ import Link from "next/link";
 import { SourceActions } from "@/components/source-actions";
 import { SourceLifecyclePanel } from "@/components/source-lifecycle";
 import { CLASS_PREVIEW_LIMIT, uniqueInspectionClasses } from "@/lib/class-preview";
+import { formatMethodSignature } from "@/lib/jvm-signature";
 import { getPlatformServices } from "@/lib/services";
 import { requirePageProjectScope } from "@/lib/auth";
 import { hasPermission } from "@autoforge/domain";
@@ -174,7 +175,9 @@ export default async function CaseSourcePage({ params }: Props) {
                         className={method.enabled ? "text-success" : "muted"}
                       />
                       <code>{method.methodName}</code>
-                      <span className="method-descriptor">{method.descriptor}</span>
+                      <span className="method-signature" title={method.descriptor}>
+                        {formatMethodSignature(method.descriptor)}
+                      </span>
                       <span className="method-origin">
                         {method.annotationSource === "class" ? "类级 @Test" : "方法级 @Test"}
                       </span>

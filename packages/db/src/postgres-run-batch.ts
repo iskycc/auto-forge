@@ -270,7 +270,7 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
   ): Promise<string[]> {
     await this.ready();
     const result = await this.handle.pool.query<{ id: string }>(
-      `SELECT id FROM run_batches WHERE status IN ('queued','dispatching')
+      `SELECT id FROM run_batches WHERE status IN ('queued','dispatching','running')
        ORDER BY priority + LEAST(100, GREATEST(0, FLOOR(
          EXTRACT(EPOCH FROM ($1::timestamptz-created_at::timestamptz)) / 60 / $2
        ))) DESC, created_at, id LIMIT $3`,
@@ -288,7 +288,7 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
     await this.ready();
     const result = await this.handle.pool.query<{ id: string }>(
       `SELECT b.id FROM run_batches b JOIN run_batch_runners br ON br.batch_id=b.id
-       WHERE br.runner_id=$1 AND b.status IN ('queued','dispatching')
+       WHERE br.runner_id=$1 AND b.status IN ('queued','dispatching','running')
        ORDER BY b.priority + LEAST(100, GREATEST(0, FLOOR(
          EXTRACT(EPOCH FROM ($2::timestamptz-b.created_at::timestamptz)) / 60 / $3
        ))) DESC, b.created_at, b.id LIMIT $4`,

@@ -241,12 +241,18 @@ type LogChunk = {
 ```text
 AUTOFORGE_AGENT_DATA_DIR/
 ├── identity/                       # Runner 身份与受限权限凭据
-├── work/<attempt-id>-*/            # 独立执行工作目录
+├── work/
+│   ├── <attempt-id>-*/             # 独立执行工作目录
+│   └── batches/<batch-id>/         # 批次级共享输入目录
+│       ├── <输入相对路径>           # 同批次只下载一次的 JAR / archive 输入
+│       └── runtime/jdk/            # 同批次只解压一次的 JDK
 └── spool/
     ├── logs/<attempt-id>/          # 待确认的有序日志块
     ├── attempts/<attempt-id>.json  # lease、完成结果和上传水位
     └── uploads/<attempt-id>/       # 待确认产物内容
 ```
+
+同一批次的 `test-jar`、`dependency-jar`、`jar-bundle` 和 `jdk-archive` 输入在同一台 Agent 上只下载解压一次：`batchId` 校验为安全路径段后定位到 `work/batches/<batch-id>/`，同批次并发 attempt 通过批次锁串行化下载，已存在的输入流式重算 SHA-256，匹配则跳过、不匹配重新下载；attempt 工作目录再以硬链接（不支持时回退复制）引用共享输入，adapter 的 `runtime/jdk` 以符号链接指向共享目录。批次注册表记录本机在途 attempt 数：完成上报响应 `batchClosed=true` 且本机无其他在途 attempt 时删除整个批次目录；启动 reconcile 前还会清理 `work/` 下无本地状态引用的 `<attemptId>-*` 残留和没有任何活跃 attempt 引用的 `batches/*` 残留，修复崩溃留下的缝隙。
 
 目录权限遵循最小权限。spool 和 diagnostics 都必须有配额、保留期和启动时恢复策略；清理不得跟随越界符号链接。
 

@@ -188,6 +188,12 @@ export function isTerminalRunStatus(status: ExecutionRunStatus): boolean {
   return status === "succeeded" || status === "failed" || status === "cancelled";
 }
 
+// 批次终态：所有 run 已落定（全部成功/全部取消/其余失败）。完成上报据此向
+// Agent 反馈 batchClosed，Agent 据此回收批次级共享输入目录。
+export function isTerminalBatchStatus(status: RunBatchStatus): boolean {
+  return status === "succeeded" || status === "failed" || status === "cancelled";
+}
+
 export function isTerminalAttemptStatus(status: RunAttemptStatus): boolean {
   return (
     status === "succeeded" ||

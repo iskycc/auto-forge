@@ -287,7 +287,7 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
     return (
       this.handle.client
         .prepare(
-          `SELECT id FROM run_batches WHERE status IN ('queued','dispatching')
+          `SELECT id FROM run_batches WHERE status IN ('queued','dispatching','running')
            ORDER BY priority + MIN(100, MAX(0, CAST(
              (julianday(?) - julianday(created_at)) * 1440 / ? AS INTEGER
            ))) DESC, created_at, id LIMIT ?`,
@@ -306,7 +306,7 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
       this.handle.client
         .prepare(
           `SELECT b.id FROM run_batches b JOIN run_batch_runners br ON br.batch_id=b.id
-           WHERE br.runner_id=? AND b.status IN ('queued','dispatching')
+           WHERE br.runner_id=? AND b.status IN ('queued','dispatching','running')
            ORDER BY b.priority + MIN(100, MAX(0, CAST(
              (julianday(?) - julianday(b.created_at)) * 1440 / ? AS INTEGER
            ))) DESC, b.created_at, b.id LIMIT ?`,

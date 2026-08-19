@@ -511,6 +511,10 @@ export const completeAttemptResponseSchema = z.object({
   acceptedAt: isoTimestampSchema,
   disposition: z.enum(["accepted", "duplicate", "late"]),
   retryScheduled: z.boolean(),
+  /** 批次 ID：供调用方在完成被接受后触发补调度；可选新增，旧实现可不返回。 */
+  batchId: identifierSchema.optional(),
+  /** 批次是否已进入终态：Agent 据此回收批次级共享输入目录。 */
+  batchClosed: z.boolean().optional(),
 });
 
 export const reconcileAttemptsInputSchema = z.object({

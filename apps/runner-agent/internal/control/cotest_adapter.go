@@ -179,6 +179,12 @@ func prepareCotestWorkspace(
 	if jdkArchive == nil {
 		return nil
 	}
+	target := filepath.Join(workspace, "runtime", "jdk")
+	// 批次共享模式下 supervisor 已把共享 JDK 以符号链接挂到 runtime/jdk，
+	// 跳过 attempt 内的重复解压。
+	if _, err := os.Lstat(target); err == nil {
+		return nil
+	}
 	unpacked := filepath.Join(workspace, "runtime", "jdk-unpacked")
 	if err := extractArchive(
 		filepath.Join(workspace, filepath.Clean(jdkArchive.TargetPath)),
@@ -191,7 +197,6 @@ func prepareCotestWorkspace(
 	if err != nil {
 		return err
 	}
-	target := filepath.Join(workspace, "runtime", "jdk")
 	if err := os.Rename(javaHome, target); err != nil {
 		return fmt.Errorf("publish extracted JDK: %w", err)
 	}
