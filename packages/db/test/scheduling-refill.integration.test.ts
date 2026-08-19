@@ -207,6 +207,53 @@ function schedulingRefillCases(createHarness: () => Promise<RefillHarness>): voi
       await cleanupTemporaryDirectories();
     }
   });
+
+  it("ignores expired active records that belong to a terminal batch", async () => {
+    const harness = await createHarness();
+    try {
+      await expect(
+        harness.executions.recoverExpired({
+          now: "2026-08-10T02:00:00.000Z",
+          eventIds: [randomUUID()],
+          limit: 10,
+        }),
+      ).resolves.toEqual([]);
+    } finally {
+      await harness.dispose();
+      await cleanupTemporaryDirectories();
+    }
+  });
+
+  it("ignores unclaimed records that belong to a terminal batch", async () => {
+    const harness = await createHarness();
+    try {
+      await harness.rawQuery(
+        "UPDATE assignments SET status = 'pending', claim_deadline_at = ? WHERE attempt_id = ?",
+        ["2026-08-10T01:00:00.000Z", harness.completion.lateAttemptId],
+      );
+      await harness.rawQuery(
+        "UPDATE assignment_leases SET status = 'released' WHERE assignment_id = (SELECT id FROM assignments WHERE attempt_id = ?)",
+        [harness.completion.lateAttemptId],
+      );
+      await harness.rawQuery("UPDATE run_attempts SET status = 'assigned' WHERE id = ?", [
+        harness.completion.lateAttemptId,
+      ]);
+      await harness.rawQuery(
+        "UPDATE execution_runs SET status = 'assigned' WHERE id = (SELECT execution_run_id FROM run_attempts WHERE id = ?)",
+        [harness.completion.lateAttemptId],
+      );
+      await expect(
+        harness.executions.recoverExpired({
+          now: "2026-08-10T02:00:00.000Z",
+          eventIds: [randomUUID()],
+          limit: 10,
+        }),
+      ).resolves.toEqual([]);
+    } finally {
+      await harness.dispose();
+      await cleanupTemporaryDirectories();
+    }
+  });
 }
 
 type FixtureIds = {
@@ -327,14 +374,14 @@ async function seedFixture(
     run1Id,
     completion.batchId,
     completion.lease1TokenHash,
-    "2026-08-10T01:00:00.000Z",
+    "2026-08-10T03:00:00.000Z",
   );
   await insertAssignmentAndLease(
     completion.attempt2Id,
     run2Id,
     completion.batchId,
     completion.lease2TokenHash,
-    "2026-08-10T01:00:00.000Z",
+    "2026-08-10T03:00:00.000Z",
   );
 
   // late 场景：批次已终态，租约已过期（acceptedAt 晚于 expires_at）。

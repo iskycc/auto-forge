@@ -254,7 +254,7 @@ AUTOFORGE_AGENT_DATA_DIR/
     └── uploads/<attempt-id>/       # 待确认产物内容
 ```
 
-同一批次的 `test-jar`、`dependency-jar`、`jar-bundle` 和 `jdk-archive` 输入在同一台 Agent 上只下载一次：`batchId` 校验为安全路径段后定位到 `work/batches/<batch-id>/`，同批次并发 attempt 通过批次锁串行化下载，已存在的输入流式重算 SHA-256，匹配则跳过、不匹配重新下载。CoTest Adapter 的主 JAR、独立依赖 JAR、依赖压缩包解压结果与可选 JDK 在临时目录完整生成后原子发布到 `runtime/cotest/`，每个 attempt 的 `test-jars`/`runtime/jdk` 以符号链接复用；非 Adapter 输入以硬链接（不支持时回退复制）进入 attempt 工作目录。
+同一批次的 `test-jar`、`dependency-jar`、`jar-bundle` 和 `jdk-archive` 输入在同一台 Agent 上只下载一次：`batchId` 校验为安全路径段后定位到 `work/batches/<batch-id>/`，同批次并发 attempt 通过批次锁串行化下载，已存在的输入流式重算 SHA-256，匹配则跳过、不匹配重新下载。CoTest Adapter 的主 JAR、独立依赖 JAR、依赖压缩包解压结果与可选 JDK 在临时目录完整生成后原子发布到 `runtime/cotest/`；每个 attempt 创建真实 `test-jars` 目录并以文件级硬链接复用其中 JAR（跨文件系统时回退复制），避免 Java 的非跟随式目录遍历跳过符号链接根目录；`runtime/jdk` 继续使用受控符号链接。非 Adapter 输入同样以硬链接（不支持时回退复制）进入 attempt 工作目录。
 
 批次注册表记录本机在途 attempt 数与已确认终态：完成响应的 `batchClosed=true` 会持久到最后一个本地 attempt 收尾，避免并发完成次序造成目录泄漏。Agent 还会在 heartbeat 与 claim 中上报本机已空闲的 `cachedBatchIds`；控制面仅把该 Runner 仍被选中且尚未终态的批次视为可复用，其余 ID 通过 `closedBatchIds` 通知回收。因此多 Runner 批次中没有提交最后一份结果的节点以及已进入排空、不再 claim 的节点都能及时清理。禁用状态只保留心跳认证以便下发 drain 和执行该回收握手，claim、续租、完成和凭据轮换仍被拒绝。
 

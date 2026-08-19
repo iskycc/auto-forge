@@ -797,11 +797,13 @@ export class PostgresExecutionControlRepository implements ExecutionControlRepos
     await this.handle.ready;
     return this.transaction(async (client) => {
       const queued = await client.query<{ id: string; batch_id: string }>(
-        `SELECT id, batch_id FROM execution_runs
-         WHERE status = 'queued' AND queue_deadline_at IS NOT NULL
-           AND queue_deadline_at::timestamptz <= $1::timestamptz
-         ORDER BY queue_deadline_at::timestamptz, id
-         LIMIT $2 FOR UPDATE SKIP LOCKED`,
+        `SELECT r.id, r.batch_id FROM execution_runs r
+         JOIN run_batches b ON b.id = r.batch_id
+         WHERE r.status = 'queued' AND r.queue_deadline_at IS NOT NULL
+           AND r.queue_deadline_at::timestamptz <= $1::timestamptz
+           AND b.status IN ('queued','dispatching','scheduled','running')
+         ORDER BY r.queue_deadline_at::timestamptz, r.id
+         LIMIT $2 FOR UPDATE OF r SKIP LOCKED`,
         [input.now, input.limit],
       );
       let recovered = 0;
@@ -812,7 +814,12 @@ export class PostgresExecutionControlRepository implements ExecutionControlRepos
           `UPDATE execution_runs SET status = 'failed', terminal_outcome = 'timed_out',
            terminal_reason_code = 'QUEUE_TIMEOUT', updated_at = $1, version = version + 1
            WHERE id = $2 AND status = 'queued'
-             AND queue_deadline_at::timestamptz <= $1::timestamptz`,
+             AND queue_deadline_at::timestamptz <= $1::timestamptz
+             AND EXISTS (
+               SELECT 1 FROM run_batches b
+               WHERE b.id = execution_runs.batch_id
+                 AND b.status IN ('queued','dispatching','scheduled','running')
+             )`,
           [input.now, run.id],
         );
         if (update.rowCount !== 1) continue;
@@ -836,7 +843,13 @@ export class PostgresExecutionControlRepository implements ExecutionControlRepos
          JOIN assignments a ON a.id = l.assignment_id
          JOIN run_attempts ra ON ra.id = a.attempt_id
          JOIN execution_runs r ON r.id = a.execution_run_id
-         WHERE l.status = 'active' AND (
+         JOIN run_batches b ON b.id = r.batch_id
+         WHERE l.status = 'active'
+           AND a.status = 'running'
+           AND ra.status IN ('assigned','running')
+           AND r.status IN ('assigned','running')
+           AND b.status IN ('queued','dispatching','scheduled','running')
+           AND (
            l.expires_at::timestamptz <= $1::timestamptz OR (
              ra.upload_started_at IS NOT NULL
              AND ra.upload_started_at::timestamptz + r.upload_timeout_ms * interval '1 millisecond' <= $1::timestamptz
@@ -861,9 +874,16 @@ export class PostgresExecutionControlRepository implements ExecutionControlRepos
         attempt_id: string;
         expiration_reason: AttemptRecoveryReason;
       }>(
-        `SELECT id AS assignment_id, attempt_id, 'claim_timeout' AS expiration_reason FROM assignments
-         WHERE status = 'pending' AND claim_deadline_at <= $1 ORDER BY claim_deadline_at
-         LIMIT $2 FOR UPDATE SKIP LOCKED`,
+        `SELECT a.id AS assignment_id, a.attempt_id, 'claim_timeout' AS expiration_reason
+         FROM assignments a
+         JOIN run_attempts ra ON ra.id = a.attempt_id
+         JOIN execution_runs r ON r.id = a.execution_run_id
+         JOIN run_batches b ON b.id = r.batch_id
+         WHERE a.status = 'pending' AND a.claim_deadline_at <= $1
+           AND ra.status = 'assigned' AND r.status = 'assigned'
+           AND b.status IN ('queued','dispatching','scheduled','running')
+         ORDER BY a.claim_deadline_at, a.id
+         LIMIT $2 FOR UPDATE OF a SKIP LOCKED`,
         [input.now, remaining],
       );
       const recoveredAttempts: RecoveredAttemptExpiration[] = [];

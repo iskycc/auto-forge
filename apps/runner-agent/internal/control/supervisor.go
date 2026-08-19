@@ -191,7 +191,7 @@ func (supervisor *attemptSupervisor) startAttempt(claimed ClaimedAssignment) err
 	attemptID := claimed.Assignment.AttemptID
 	batchID := claimed.Assignment.ExecutionSpec.BatchID
 	// 批次引用在 attempt 启动时注册，executeAttempt 收尾时注销；期间批次共享目录
-	// 不会被回收，保证 PrepareWorkspace 的硬链接/符号链接来源稳定。
+	// 不会被回收，保证 PrepareWorkspace 的硬链接和 JDK 目录链接来源稳定。
 	if err := supervisor.batches.acquire(batchID); err != nil {
 		return err
 	}
@@ -375,7 +375,7 @@ func (supervisor *attemptSupervisor) runTestNG(
 		PrepareWorkspace: func(workspace string) error {
 			if executionSpec.BatchID != "" {
 				// 批次共享：同批次输入只下载解压一次，attempt 工作目录通过
-				// 硬链接/符号链接引用共享目录内容。
+				// 文件级硬链接与受控 JDK 目录链接引用共享目录内容。
 				if err := supervisor.prepareSharedBatchWorkspace(ctx, claimed, inputs, workspace, useAdapter); err != nil {
 					return err
 				}

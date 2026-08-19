@@ -19,7 +19,7 @@ trap cleanup EXIT
 
 require_host_tools() {
   local missing=0
-  for command_name in curl jar java javac sha256sum tar; do
+  for command_name in curl jar java javac jlink sha256sum tar; do
     if ! command -v "${command_name}" >/dev/null 2>&1; then
       echo "Missing required hosted-runner command: ${command_name}" >&2
       missing=1
@@ -51,11 +51,21 @@ prepare_agent_binary() {
 prepare_jdk_archive() {
   local java_home
   java_home="$(dirname -- "$(dirname -- "${java_executable}")")"
-  E2E_BATCH_SHARE_JDK_ARCHIVE="${acceptance_directory}/$(basename -- "${java_home}").tar.gz"
-  tar --create --gzip --format=ustar \
+  local runtime_directory="${acceptance_directory}/autoforge-test-jdk"
+  # 只打包验收所需的模块化运行时。完整 hosted-runner JDK 包含编译器、jmods、
+  # 源码与调试资产，既超过执行磁盘预算，也会掩盖真正的共享运行时行为。
+  nice -n 10 jlink \
+    --module-path "${java_home}/jmods" \
+    --add-modules ALL-MODULE-PATH \
+    --strip-debug \
+    --no-header-files \
+    --no-man-pages \
+    --output "${runtime_directory}"
+  E2E_BATCH_SHARE_JDK_ARCHIVE="${acceptance_directory}/autoforge-test-jdk.tar.gz"
+  nice -n 10 tar --create --gzip --format=ustar \
     --file "${E2E_BATCH_SHARE_JDK_ARCHIVE}" \
-    --directory "$(dirname -- "${java_home}")" \
-    "$(basename -- "${java_home}")"
+    --directory "${acceptance_directory}" \
+    "$(basename -- "${runtime_directory}")"
   export E2E_BATCH_SHARE_JDK_ARCHIVE
 }
 

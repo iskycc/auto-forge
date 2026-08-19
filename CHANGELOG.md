@@ -4,6 +4,21 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## Unreleased
+
+### Fixed
+
+- CoTest batch sharing now gives every attempt a real `test-jars` directory whose JAR files are
+  hard-linked to the single batch-level extraction. This preserves inode-level reuse while allowing
+  the Adapter's non-following Java directory walk to discover the JARs; the optional JDK remains a
+  controlled directory symlink.
+- Expiration recovery now ignores queued, active-lease and unclaimed records whose batch is already
+  terminal, and verifies run/attempt/assignment states before recovery. Stale records can no longer
+  make later Runner claims fail with an invalid terminal batch transition.
+- The GitHub Actions batch-sharing acceptance packages a bounded `jlink` runtime instead of the
+  hosted runner's complete JDK, keeping the real-JDK extraction scenario within execution disk and
+  file budgets.
+
 ## 0.7.1 - 2026-08-19
 
 ### Fixed

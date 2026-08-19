@@ -9,7 +9,7 @@ import { ensureAdministrator } from "./support/session";
 
 // 批次级输入共享端到端验收：同一 batchId 的 test-jar / jar-bundle 输入在
 // <Agent数据目录>/work/batches/<batchId>/ 只下载一次，依赖压缩包也只解压一次；
-// 同批次并发 attempt 通过硬链接/符号链接共享（inode 相同证明没有重复物化）；
+// 同批次并发 attempt 通过文件级硬链接与 JDK 目录链接共享（inode 相同证明没有重复物化）；
 // 首轮并发结束后启动的后续 attempt 仍复用同一份文件；批次终态后共享目录被回收；
 // Agent 异常中断重启后保留仍未结束批次的运行时，reconcile 后继续复用。
 // 本规格不设置 AUTOFORGE_AGENT_CGROUP_ROOT：无 cgroup 环境走 rlimit 回退，
@@ -47,7 +47,8 @@ test("同批次并发 attempt 共享输入目录，批次终态后回收", async
     await waitForSharedWorkspace(batchId, attemptIds);
 
     // Adapter 的依赖压缩包必须在批次目录中只解压一次；每个 attempt 的
-    // test-jars 都是指向同一目录的符号链接，而不是各自重复解压。
+    // test-jars 必须是真实目录，内部 JAR 通过硬链接复用；Java 的目录遍历默认
+    // 不跟随符号链接根目录，因此不能把整个 test-jars 做成目录链接。
     const sharedDependency = join(
       batchDir,
       "runtime",
@@ -63,8 +64,9 @@ test("同批次并发 attempt 共享输入目录，批次终态后回收", async
     for (const attemptId of attemptIds) {
       const workspace = await findAttemptWorkspace(attemptId);
       expect(workspace, `attempt ${attemptId} 的工作目录应仍存在`).toBeTruthy();
-      const testJarsLink = await lstat(join(workspace!, "test-jars"));
-      expect(testJarsLink.isSymbolicLink()).toBe(true);
+      const testJarsDirectory = await lstat(join(workspace!, "test-jars"));
+      expect(testJarsDirectory.isDirectory()).toBe(true);
+      expect(testJarsDirectory.isSymbolicLink()).toBe(false);
       const attemptDependencyStat = await stat(
         join(workspace!, "test-jars", "level-1", "level-2", "level-3", "project-fixture.jar"),
       );
@@ -601,8 +603,9 @@ async function expectAttemptUsesSharedRuntime(
 ): Promise<void> {
   const workspace = await findAttemptWorkspace(attemptId);
   expect(workspace, `attempt ${attemptId} 的工作目录应仍存在`).toBeTruthy();
-  const testJarsLink = await lstat(join(workspace!, "test-jars"));
-  expect(testJarsLink.isSymbolicLink()).toBe(true);
+  const testJarsDirectory = await lstat(join(workspace!, "test-jars"));
+  expect(testJarsDirectory.isDirectory()).toBe(true);
+  expect(testJarsDirectory.isSymbolicLink()).toBe(false);
   const dependency = await stat(
     join(workspace!, "test-jars", "level-1", "level-2", "level-3", "project-fixture.jar"),
   );

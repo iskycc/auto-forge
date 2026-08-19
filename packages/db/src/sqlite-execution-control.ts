@@ -744,9 +744,12 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
     return this.handle.client.transaction(() => {
       const queued = this.handle.client
         .prepare(
-          `SELECT id, batch_id FROM execution_runs
-           WHERE status = 'queued' AND queue_deadline_at IS NOT NULL AND queue_deadline_at <= ?
-           ORDER BY queue_deadline_at, id LIMIT ?`,
+          `SELECT r.id, r.batch_id FROM execution_runs r
+           JOIN run_batches b ON b.id = r.batch_id
+           WHERE r.status = 'queued' AND r.queue_deadline_at IS NOT NULL
+             AND r.queue_deadline_at <= ?
+             AND b.status IN ('queued','dispatching','scheduled','running')
+           ORDER BY r.queue_deadline_at, r.id LIMIT ?`,
         )
         .all(input.now, input.limit) as Array<{ id: string; batch_id: string }>;
       let recovered = 0;
@@ -757,7 +760,12 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
           .prepare(
             `UPDATE execution_runs SET status = 'failed', terminal_outcome = 'timed_out',
              terminal_reason_code = 'QUEUE_TIMEOUT', updated_at = ?, version = version + 1
-             WHERE id = ? AND status = 'queued' AND queue_deadline_at <= ?`,
+             WHERE id = ? AND status = 'queued' AND queue_deadline_at <= ?
+               AND EXISTS (
+                 SELECT 1 FROM run_batches b
+                 WHERE b.id = execution_runs.batch_id
+                   AND b.status IN ('queued','dispatching','scheduled','running')
+               )`,
           )
           .run(input.now, run.id, input.now);
         if (update.changes !== 1) continue;
@@ -777,7 +785,13 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
            JOIN assignments a ON a.id = l.assignment_id
            JOIN run_attempts ra ON ra.id = a.attempt_id
            JOIN execution_runs r ON r.id = a.execution_run_id
-           WHERE l.status = 'active' AND (
+           JOIN run_batches b ON b.id = r.batch_id
+           WHERE l.status = 'active'
+             AND a.status = 'running'
+             AND ra.status IN ('assigned','running')
+             AND r.status IN ('assigned','running')
+             AND b.status IN ('queued','dispatching','scheduled','running')
+             AND (
              l.expires_at <= ? OR (
                ra.upload_started_at IS NOT NULL
                AND julianday(ra.upload_started_at) + (r.upload_timeout_ms / 86400000.0) <= julianday(?)
@@ -810,8 +824,15 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
       }>;
       const unclaimed = this.handle.client
         .prepare(
-          `SELECT id AS assignment_id, attempt_id, 'claim_timeout' AS expiration_reason FROM assignments
-           WHERE status = 'pending' AND claim_deadline_at <= ? ORDER BY claim_deadline_at LIMIT ?`,
+          `SELECT a.id AS assignment_id, a.attempt_id, 'claim_timeout' AS expiration_reason
+           FROM assignments a
+           JOIN run_attempts ra ON ra.id = a.attempt_id
+           JOIN execution_runs r ON r.id = a.execution_run_id
+           JOIN run_batches b ON b.id = r.batch_id
+           WHERE a.status = 'pending' AND a.claim_deadline_at <= ?
+             AND ra.status = 'assigned' AND r.status = 'assigned'
+             AND b.status IN ('queued','dispatching','scheduled','running')
+           ORDER BY a.claim_deadline_at, a.id LIMIT ?`,
         )
         .all(input.now, Math.max(0, input.limit - recovered - active.length)) as Array<{
         assignment_id: string;

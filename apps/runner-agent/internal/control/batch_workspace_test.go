@@ -290,9 +290,9 @@ func TestBatchRegistryMaterializesAdapterDependenciesOnce(t *testing.T) {
 		if err := linkSharedCotestRuntime(registry.directory("batch-1"), workspace, inputs); err != nil {
 			t.Fatal(err)
 		}
-		link, err := os.Lstat(filepath.Join(workspace, "test-jars"))
-		if err != nil || link.Mode()&os.ModeSymlink == 0 {
-			t.Fatalf("shared test-jars link = %v, %v", link, err)
+		jarDirectory, err := os.Lstat(filepath.Join(workspace, "test-jars"))
+		if err != nil || !jarDirectory.IsDir() || jarDirectory.Mode()&os.ModeSymlink != 0 {
+			t.Fatalf("shared test-jars directory = %v, %v", jarDirectory, err)
 		}
 		dependencyStat, err := os.Stat(filepath.Join(workspace, "test-jars", "nested", "project.jar"))
 		if err != nil {
@@ -301,6 +301,20 @@ func TestBatchRegistryMaterializesAdapterDependenciesOnce(t *testing.T) {
 		if !os.SameFile(sharedStat, dependencyStat) {
 			t.Fatal("attempt did not reuse the batch-level extracted dependency")
 		}
+	}
+}
+
+func TestLinkSharedRegularTreeRejectsSymbolicLinks(t *testing.T) {
+	source := t.TempDir()
+	if err := os.WriteFile(filepath.Join(source, "case.jar"), []byte("jar"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("case.jar", filepath.Join(source, "linked.jar")); err != nil {
+		t.Fatal(err)
+	}
+	err := linkSharedRegularTree(source, filepath.Join(t.TempDir(), "test-jars"))
+	if err == nil || !strings.Contains(err.Error(), "is not a regular file") {
+		t.Fatalf("linkSharedRegularTree() error = %v", err)
 	}
 }
 

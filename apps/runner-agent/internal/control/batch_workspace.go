@@ -21,7 +21,7 @@ const maximumCachedBatchIDs = 1_024
 
 // batchRegistry 跟踪本机正在执行的批次共享目录：同一批次（batchId）的
 // test-jar / dependency-jar / jar-bundle / jdk-archive 输入只下载解压一次，
-// 同批次并发 attempt 通过硬链接或符号链接共享；批次进入终态且本机没有在途
+// 同批次并发 attempt 通过硬链接或受控目录链接共享；批次进入终态且本机没有在途
 // attempt 后删除共享目录。
 type batchRegistry struct {
 	mutex     sync.Mutex
@@ -232,8 +232,8 @@ func (registry *batchRegistry) ensureBatchInputs(
 }
 
 // prepareSharedBatchWorkspace 持批次锁确保共享目录输入齐备，再把输入硬链接到
-// attempt 工作目录原有的 TargetPath；Adapter 模式的 test-jars 与可选 JDK
-// 以符号链接指向共享运行时。
+// attempt 工作目录原有的 TargetPath；Adapter 模式的 test-jars 使用真实目录和
+// 文件级硬链接，避免 Java 目录遍历跳过符号链接根目录；可选 JDK 以符号链接复用。
 func (supervisor *attemptSupervisor) prepareSharedBatchWorkspace(
 	ctx context.Context,
 	claimed ClaimedAssignment,
@@ -406,12 +406,17 @@ func linkBatchInputsIntoWorkspace(batchDir, workspace string, inputs []Execution
 	return nil
 }
 
-// linkSharedCotestRuntime 把批次共享 test-jars 与可选 JDK 挂到 attempt 工作目录，
-// 使 Adapter 的既有相对路径无需改动即可解析到共享目录。
+// linkSharedCotestRuntime 把批次共享 test-jars 与可选 JDK 挂到 attempt 工作目录。
+// Adapter 使用不跟随符号链接的 Files.walkFileTree，因此 test-jars 根目录必须是真实
+// 目录；目录内文件以硬链接复用，跨文件系统时才回退复制。JDK 由已知路径直接执行，
+// 可以安全地以目录符号链接复用。
 func linkSharedCotestRuntime(batchDir, workspace string, inputs []ExecutionInput) error {
 	sharedRuntime := filepath.Join(batchDir, "runtime", "cotest")
-	if err := os.Symlink(filepath.Join(sharedRuntime, "test-jars"), filepath.Join(workspace, "test-jars")); err != nil {
-		return fmt.Errorf("link shared CoTest JAR directory: %w", err)
+	if err := linkSharedRegularTree(
+		filepath.Join(sharedRuntime, "test-jars"),
+		filepath.Join(workspace, "test-jars"),
+	); err != nil {
+		return fmt.Errorf("link shared CoTest JAR tree: %w", err)
 	}
 	hasJDKArchive := false
 	for _, input := range inputs {
@@ -431,6 +436,42 @@ func linkSharedCotestRuntime(batchDir, workspace string, inputs []ExecutionInput
 		return fmt.Errorf("link shared JDK: %w", err)
 	}
 	return nil
+}
+
+// linkSharedRegularTree 保留目录结构并让目标树中的每个文件共享源 inode。
+// 批次运行时在调用前已经完成安全解压并原子发布；这里仍拒绝符号链接和特殊文件，
+// 避免未来物化规则变化时把越界路径带入 attempt 工作目录。
+func linkSharedRegularTree(sourceRoot, destinationRoot string) error {
+	return filepath.WalkDir(sourceRoot, func(sourcePath string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		relativePath, err := filepath.Rel(sourceRoot, sourcePath)
+		if err != nil {
+			return err
+		}
+		destinationPath := filepath.Join(destinationRoot, relativePath)
+		if entry.IsDir() {
+			if err := os.MkdirAll(destinationPath, 0o700); err != nil {
+				return fmt.Errorf("create shared JAR directory %q: %w", relativePath, err)
+			}
+			return nil
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("shared JAR entry %q is not a regular file", relativePath)
+		}
+		if err := os.Link(sourcePath, destinationPath); err == nil {
+			return nil
+		}
+		if err := copyRegularFile(sourcePath, destinationPath); err != nil {
+			return fmt.Errorf("materialize shared JAR entry %q: %w", relativePath, err)
+		}
+		return nil
+	})
 }
 
 // cleanOrphanedWorkspaces 在启动 reconcile 前清理不属于本地 attempt 的独立工作
