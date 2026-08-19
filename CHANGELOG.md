@@ -4,7 +4,7 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
-## Unreleased
+## 0.7.2 - 2026-08-19
 
 ### Fixed
 
@@ -28,6 +28,12 @@ and known limitations.
 - Scheduler project and Runner capacity accounting now excludes stale active attempts whose run or
   batch is already terminal. Scheduling-refill adapter fixtures use isolated projects and clean up
   their PostgreSQL records, so Full-mode acceptance cannot be blocked by prior contract-test data.
+
+### Compatibility
+
+- No database migrations, platform persisted-configuration changes, Runner Protocol changes, or
+  offline asset format changes. Runner local attempt state advances from schema v1 to v2; existing
+  v1 records are read and upgraded automatically.
 
 ## 0.7.1 - 2026-08-19
 
