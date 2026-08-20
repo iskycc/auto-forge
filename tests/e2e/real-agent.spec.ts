@@ -153,6 +153,9 @@ test("executes a TestNG JAR through the real Go Agent", async ({ page }, testInf
       status: "succeeded",
       resultCode: "TESTNG_SUCCEEDED",
     });
+    expect(await readAttemptLogs(page, restartedBatch.attempts[1]!.id, "stdout")).toContain(
+      "REAL_AGENT_RESTART_FIXTURE_RECOVERED",
+    );
     await page.goto(`/run-batches/${encodeURIComponent(restartBatchId)}`);
     await page.getByRole("button", { name: "执行机", exact: true }).click();
     await page.getByRole("button", { name: /执行机异常 1/ }).click();
@@ -238,6 +241,7 @@ async function startAgent(): Promise<AgentProcess> {
 }
 
 async function createManagedExecutionEnvironment(page: Page): Promise<void> {
+  const restartMarker = requiredEnvironment("E2E_REAL_AGENT_RESTART_MARKER");
   await page.goto("/settings/environments?section=secrets");
   const secretPanel = page.locator(".secret-create-panel");
   await secretPanel.getByLabel("项目").selectOption(DEFAULT_PROJECT_ID);
@@ -253,7 +257,11 @@ async function createManagedExecutionEnvironment(page: Page): Promise<void> {
   await createForm.getByLabel("项目").selectOption(DEFAULT_PROJECT_ID);
   await createForm.getByLabel("名称").fill(managedEnvironmentName);
   await createForm.getByLabel("说明").fill("固定普通变量与密文版本");
-  await createForm.getByLabel("普通变量").fill("AUTOFORGE_REAL_AGENT_ENV=workflow-v1");
+  await createForm
+    .getByLabel("普通变量")
+    .fill(
+      `AUTOFORGE_REAL_AGENT_ENV=workflow-v1\nAUTOFORGE_REAL_AGENT_RESTART_MARKER=${restartMarker}`,
+    );
   await createForm.getByRole("button", { name: "添加密文绑定" }).click();
   await createForm.getByLabel("注入变量名").fill("AUTOFORGE_REAL_AGENT_SECRET");
   await createForm.getByLabel("执行密文").selectOption({ label: managedSecretName });
@@ -263,7 +271,11 @@ async function createManagedExecutionEnvironment(page: Page): Promise<void> {
   const variableVersionForm = page.locator("form", {
     has: page.getByRole("button", { name: "创建变量版本" }),
   });
-  await variableVersionForm.getByLabel("变量").fill("AUTOFORGE_REAL_AGENT_ENV=workflow-v2");
+  await variableVersionForm
+    .getByLabel("变量")
+    .fill(
+      `AUTOFORGE_REAL_AGENT_ENV=workflow-v2\nAUTOFORGE_REAL_AGENT_RESTART_MARKER=${restartMarker}`,
+    );
   await variableVersionForm.getByRole("button", { name: "创建变量版本" }).click();
   await expect(page.getByText("已创建新的普通变量版本。")).toBeVisible();
   await expect(page.locator(".environment-version-list")).toContainText("v2");

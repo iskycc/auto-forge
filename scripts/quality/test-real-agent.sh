@@ -10,6 +10,7 @@ fi
 readonly repository_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly acceptance_directory="$(mktemp -d)"
 readonly agent_pid_file="${acceptance_directory}/agent.pid"
+readonly restart_marker_path="${acceptance_directory}/restart-attempt.marker"
 readonly toolchain_directory="${acceptance_directory}/toolchain"
 readonly fixture_classes_directory="${acceptance_directory}/fixture-classes"
 readonly project_fixture_classes_directory="${acceptance_directory}/project-fixture-classes"
@@ -247,6 +248,7 @@ run_network_blocked_browser_flow() {
     "E2E_REAL_AGENT_BINARY=${E2E_REAL_AGENT_BINARY}" \
     "E2E_REAL_AGENT_DATA_DIR=${E2E_REAL_AGENT_DATA_DIR}" \
     "E2E_REAL_AGENT_PID_FILE=${E2E_REAL_AGENT_PID_FILE}" \
+    "E2E_REAL_AGENT_RESTART_MARKER=${E2E_REAL_AGENT_RESTART_MARKER}" \
     "E2E_REAL_CGROUP_ROOT=${E2E_REAL_CGROUP_ROOT}" \
     "E2E_REAL_JAVA_EXECUTABLE=${E2E_REAL_JAVA_EXECUTABLE}" \
     "E2E_REAL_JAVA_VERSION=${E2E_REAL_JAVA_VERSION}" \
@@ -293,6 +295,7 @@ fi
 export AUTOFORGE_E2E_DATA_DIR="${acceptance_directory}/platform-data"
 export E2E_REAL_AGENT_DATA_DIR="${acceptance_directory}/agent-data"
 export E2E_REAL_AGENT_PID_FILE="${agent_pid_file}"
+export E2E_REAL_AGENT_RESTART_MARKER="${restart_marker_path}"
 export E2E_REAL_CGROUP_ROOT="${cgroup_root}"
 export E2E_REAL_JAVA_EXECUTABLE="${java_executable}"
 export E2E_REAL_JAVA_VERSION="${java_version}"

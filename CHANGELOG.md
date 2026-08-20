@@ -55,6 +55,8 @@ and known limitations.
   after a later attempt reports `running`, removing a filesystem sampling race.
 - Updated the real-Agent restart acceptance paths to require automatic recovery: interrupted attempts
   remain visible as Runner incidents while replacement attempts complete the batch successfully.
+- Replaced the recovered real-Agent fixture's fixed two-minute sleep with an isolated one-shot attempt
+  marker, preserving abrupt-restart coverage while keeping both Lite and Full Agent CI jobs bounded.
 
 ### Database
 
