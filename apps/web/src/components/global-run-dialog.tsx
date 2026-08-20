@@ -3,6 +3,7 @@
 import type {
   CaseDefinitionWithMethods,
   CaseSuite,
+  ExecutionEnvironment,
   ExecutionEnvironmentDetails,
   RunBatch,
   Runner,
@@ -623,7 +624,7 @@ export function GlobalRunDialog({ enabled }: { enabled: boolean }) {
 }
 
 async function loadRunOptions(requestedCaseId?: string): Promise<RunOptions> {
-  const [suitePage, casePage, requestedCase, runnerPage, groupPage, environmentPage] =
+  const [suitePage, casePage, requestedCase, runnerPage, groupPage, environments] =
     await Promise.all([
       requestJson<{ items: CaseSuite[] }>("/api/v1/case-suites?limit=200"),
       requestJson<{ items: CaseDefinitionWithMethods[] }>("/api/v1/case-definitions?limit=100"),
@@ -634,9 +635,7 @@ async function loadRunOptions(requestedCaseId?: string): Promise<RunOptions> {
         : Promise.resolve(undefined),
       requestJson<{ items: Runner[] }>("/api/v1/runners?limit=500"),
       requestJson<{ items: RunnerGroup[] }>("/api/v1/runner-groups"),
-      optionalRequest<{ items: ExecutionEnvironmentDetails[] }>("/api/v1/execution-environments", {
-        items: [],
-      }),
+      loadExecutionEnvironmentOptions(),
     ]);
   const cases = requestedCase
     ? [requestedCase, ...casePage.items.filter((candidate) => candidate.id !== requestedCase.id)]
@@ -646,8 +645,24 @@ async function loadRunOptions(requestedCaseId?: string): Promise<RunOptions> {
     cases: cases.filter((definition) => definition.enabled && !definition.archived),
     runners: runnerPage.items,
     groups: groupPage.items,
-    environments: environmentPage.items,
+    environments,
   };
+}
+
+async function loadExecutionEnvironmentOptions(): Promise<ExecutionEnvironmentDetails[]> {
+  const environmentPage = await optionalRequest<{ items: ExecutionEnvironment[] }>(
+    "/api/v1/execution-environments",
+    { items: [] },
+  );
+  return Promise.all(
+    environmentPage.items
+      .filter((environment) => environment.status === "active")
+      .map((environment) =>
+        requestJson<ExecutionEnvironmentDetails>(
+          `/api/v1/execution-environments/${encodeURIComponent(environment.id)}`,
+        ),
+      ),
+  );
 }
 
 async function optionalRequest<T>(path: string, fallback: T): Promise<T> {
