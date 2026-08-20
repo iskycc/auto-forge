@@ -218,15 +218,24 @@ test("Agent 异常中断后，重启继续复用未完成批次的共享目录",
     }
     await expectAttemptUsesSharedRuntime(laterAttemptId, sharedDependencyStat, sharedJavaStat);
 
-    // 崩溃时的在途 attempt 经 reconcile 后以重启类结果进入失败终态。
-    await waitForTerminalBatch(
+    // 崩溃时的两个在途 attempt 经 reconcile 后保留重启故障记录；控制面随后
+    // 自动重调度这两个用例，连同尚未执行的 Gamma 一起成功完成批次。
+    const recovered = await waitForTerminalBatch(
       page,
       batchId,
       agent,
-      "failed",
-      "AGENT_RESTARTED_DURING_EXECUTION",
-      3,
+      "succeeded",
+      "TESTNG_SUCCEEDED",
+      5,
     );
+    expect(
+      recovered.attempts.filter(
+        (attempt) => attempt.resultCode === "AGENT_RESTARTED_DURING_EXECUTION",
+      ),
+    ).toHaveLength(2);
+    expect(
+      recovered.attempts.filter((attempt) => attempt.resultCode === "TESTNG_SUCCEEDED"),
+    ).toHaveLength(3);
     await expect
       .poll(async () => pathExists(batchDir), { timeout: 30_000, intervals: [250, 500, 1_000] })
       .toBe(false);

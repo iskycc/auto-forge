@@ -53,6 +53,8 @@ and known limitations.
   depending on another browser scenario to run first.
 - Stabilized the batch-shared-input E2E by waiting for Agent workspace links to finish materializing
   after a later attempt reports `running`, removing a filesystem sampling race.
+- Updated the real-Agent restart acceptance paths to require automatic recovery: interrupted attempts
+  remain visible as Runner incidents while replacement attempts complete the batch successfully.
 
 ### Database
 

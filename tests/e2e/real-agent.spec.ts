@@ -138,17 +138,31 @@ test("executes a TestNG JAR through the real Go Agent", async ({ page }, testInf
       page,
       restartBatchId,
       agent,
-      "failed",
-      "AGENT_RESTARTED_DURING_EXECUTION",
-      1,
+      "succeeded",
+      "TESTNG_SUCCEEDED",
+      2,
     );
+    expect(restartedBatch.attempts[0]).toMatchObject({
+      status: "failed",
+      resultCode: "AGENT_RESTARTED_DURING_EXECUTION",
+    });
     expect(restartedBatch.attempts[0]?.resultSummary).toBe(
       "Runner Agent restarted before the attempt completed.",
     );
+    expect(restartedBatch.attempts[1]).toMatchObject({
+      status: "succeeded",
+      resultCode: "TESTNG_SUCCEEDED",
+    });
     await page.goto(`/run-batches/${encodeURIComponent(restartBatchId)}`);
-    await expect(
-      page.getByText("Runner Agent restarted before the attempt completed.", { exact: true }),
-    ).toBeVisible();
+    await page.getByRole("button", { name: "执行机", exact: true }).click();
+    await page.getByRole("button", { name: /执行机异常 1/ }).click();
+    const restartFaultDialog = page.getByRole("dialog", { name: "执行机异常事件" });
+    await expect(restartFaultDialog).toContainText("AGENT_RESTARTED_DURING_EXECUTION");
+    await expect(restartFaultDialog).toContainText(
+      "Runner Agent restarted before the attempt completed.",
+    );
+    await expect(restartFaultDialog).toContainText("RealAgentRestartFixture");
+    await restartFaultDialog.getByRole("button", { name: "关闭" }).click();
 
     const fullFaultControlDirectory = process.env.E2E_FULL_FAULT_CONTROL_DIR?.trim();
     if (fullFaultControlDirectory) {
