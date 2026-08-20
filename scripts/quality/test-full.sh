@@ -515,10 +515,10 @@ case "${acceptance_phase}" in
   contracts)
     run_adapter_tests
     ;;
-  browser-assets | browser-governance | browser-recovery | real-agent | ldap | dependency-recovery | runtime-health | all)
-    if [[ "${acceptance_phase}" == "runtime-health" || "${acceptance_phase}" == "all" ]]; then
-      run_adapter_tests
-    fi
+  browser-assets | browser-governance | browser-recovery | real-agent | ldap | dependency-recovery | runtime-agent | runtime-recovery | runtime-health | all)
+    case "${acceptance_phase}" in
+      runtime-agent | runtime-health | all) run_adapter_tests ;;
+    esac
     create_platform_bucket
     initialize_platform_configuration
     start_full_worker
@@ -540,6 +540,14 @@ case "${acceptance_phase}" in
         run_full_ldap_flow
         ;;
       dependency-recovery)
+        verify_dependency_recovery
+        ;;
+      runtime-agent)
+        run_full_real_agent_recovery
+        ;;
+      runtime-recovery)
+        run_full_browser_flow recovery
+        run_full_ldap_flow
         verify_dependency_recovery
         ;;
       runtime-health)

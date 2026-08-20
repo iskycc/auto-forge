@@ -16,8 +16,9 @@ and known limitations.
   supports rechecking an existing immutable tag with the current acceptance harness.
 - Lite browser coverage now reuses one production build within four duration-balanced scenario
   groups instead of consuming eleven concurrent runners on eleven duplicate builds.
-- Main CI reuses one Full platform for adapter, Agent, LDAP and dependency-recovery checks, and folds
-  deployment checks into Lite operations so the initial job wave stays within hosted concurrency.
+- Main CI balances Full adapter/Agent and execution/LDAP/dependency recovery across two shared-platform
+  jobs, and folds deployment checks into Lite operations so the initial wave stays within hosted
+  concurrency without creating a new serial bottleneck.
 
 ### Tests
 
