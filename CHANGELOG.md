@@ -24,6 +24,8 @@ and known limitations.
   rollback and upgrade coverage.
 - Made the published backup/restore scenario seed and verify its own persisted settings instead of
   depending on another browser scenario to run first.
+- Stabilized the batch-shared-input E2E by waiting for Agent workspace links to finish materializing
+  after a later attempt reports `running`, removing a filesystem sampling race.
 
 ## 0.9.0 - 2026-08-20
 

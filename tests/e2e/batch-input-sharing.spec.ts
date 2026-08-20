@@ -107,6 +107,7 @@ test("同批次并发 attempt 共享输入目录，批次终态后回收", async
     // Gamma 是首轮两个 attempt 之后才创建的后续 attempt。它仍必须引用首轮
     // 已物化的原始输入和解压依赖，证明共享范围覆盖整个批次而非单次并发波次。
     const laterAttemptId = await waitForLaterRunningAttempt(page, batchId, agent, attemptIds);
+    await waitForSharedWorkspace(batchId, [laterAttemptId]);
     const later = await snapshotSharedInputs(batchId, [laterAttemptId]);
     for (const [relativePath, sharedStat] of first.shared) {
       expect(later.shared.get(relativePath)?.inode).toBe(sharedStat.inode);
@@ -210,6 +211,7 @@ test("Agent 异常中断后，重启继续复用未完成批次的共享目录",
       sharedJavaStat.ino,
     );
     const laterAttemptId = await waitForLaterRunningAttempt(page, batchId, agent, attemptIds);
+    await waitForSharedWorkspace(batchId, [laterAttemptId]);
     const later = await snapshotSharedInputs(batchId, [laterAttemptId]);
     for (const [relativePath, sharedStat] of beforeRestart.shared) {
       expect(later.attempts.get(laterAttemptId)?.get(relativePath)).toBe(sharedStat.inode);
