@@ -1,4 +1,4 @@
-import { classifyAttemptResult, type RunAttempt, type RunBatch } from "@autoforge/domain";
+import type { RunAttempt, RunBatch } from "@autoforge/domain";
 
 const activeStatuses = new Set<RunBatch["status"]>([
   "queued",
@@ -82,17 +82,14 @@ export function batchTestNames(attempts: readonly RunAttempt[]): string[] {
   return [...names];
 }
 
-// 终态失败提示文案：adapter 正常失败（断言/配置失败）优先露出堆栈行摘要；
-// blocked（重启协调、超时、未拉起 adapter 等非正常结束）露出原因码，
-// 与 classifyAttemptResult 的 blocked 口径保持一致。
+// 终态失败提示优先展示可读错误描述；仅在执行机没有上报描述时回退机器码。
+// 机器码仍保留在详情数据与事件中用于检索，不应取代用户排障所需的信息。
 export function attemptFailureHint(
   attempt: Pick<RunAttempt, "outcome" | "resultCode" | "resultSummary">,
 ): string {
   const resultCode = attempt.resultCode ?? "";
-  const summary = attempt.resultSummary ?? "";
-  if (!resultCode) return summary;
-  const category = classifyAttemptResult({ outcome: attempt.outcome ?? "failed", resultCode });
-  return category === "failed" && summary ? summary : resultCode;
+  const summary = attempt.resultSummary?.trim() ?? "";
+  return summary || resultCode;
 }
 
 // 详情页时间统一用用户时区展示；UTC 原值由调用方放在 title 中提供。

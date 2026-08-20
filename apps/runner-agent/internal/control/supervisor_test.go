@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -234,6 +235,146 @@ func TestStreamAttemptLogsUploadsWhileAttemptIsRunning(t *testing.T) {
 	watermark := <-completed
 	if watermark.Stdout != 0 {
 		t.Fatalf("stdout watermark = %d, want 0", watermark.Stdout)
+	}
+}
+
+func TestFlushAttemptLogsKeepsEachRequestWithinTheControlPlaneLimit(t *testing.T) {
+	var requestCount atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		payload, err := io.ReadAll(request.Body)
+		if err != nil {
+			http.Error(writer, err.Error(), http.StatusBadRequest)
+			return
+		}
+		requestCount.Add(1)
+		if len(payload) > maximumLogUploadRequestBytes {
+			http.Error(writer, "request body too large", http.StatusRequestEntityTooLarge)
+			return
+		}
+		var upload uploadLogChunksRequest
+		if err := json.Unmarshal(payload, &upload); err != nil {
+			http.Error(writer, err.Error(), http.StatusBadRequest)
+			return
+		}
+		watermark := logWatermark{Stdout: -1, Stderr: -1, Agent: -1}
+		for _, chunk := range upload.Chunks {
+			if chunk.Stream == "stdout" {
+				watermark.Stdout = max(watermark.Stdout, chunk.Sequence)
+			}
+		}
+		writer.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(writer).Encode(uploadLogChunksResponse{
+			SchemaVersion: protocolVersion, AcknowledgedSequence: watermark,
+		})
+	}))
+	defer server.Close()
+
+	configuration := config.Config{
+		ServerURL: mustParseURL(t, server.URL), DataDirectory: t.TempDir(), MaxConcurrent: 1,
+		Spool: config.SpoolConfig{MaximumBytes: 64 << 20, UploadBatch: 128},
+	}
+	client, err := NewClient(configuration)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	spool, err := newLogSpool(configuration.DataDirectory, configuration.Spool, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for sequence := int64(0); sequence < 10; sequence++ {
+		if err := spool.append("attempt-1", logChunk{
+			Stream: "stdout", Sequence: sequence, Content: strings.Repeat("<", 80<<10),
+			RecordedAt: time.Now().UTC().Format(time.RFC3339Nano),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	supervisor := &attemptSupervisor{
+		client: client,
+		identity: Identity{
+			RunnerID: "runner-1", Credential: "runner-credential-with-more-than-32-bytes",
+		},
+		configuration: configuration,
+		logSpool:      spool,
+		diagnostics:   io.Discard,
+	}
+	claimed := testClaimedAssignment(strings.Repeat("a", 64))
+
+	if _, err := supervisor.flushAttemptLogs(context.Background(), claimed, 5*time.Second); err != nil {
+		t.Fatalf("flushAttemptLogs() error = %v", err)
+	}
+	if requestCount.Load() < 2 {
+		t.Fatalf("request count = %d, want multiple bounded requests", requestCount.Load())
+	}
+	remaining, err := spool.list("attempt-1", 128)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(remaining) != 0 {
+		t.Fatalf("remaining log chunks = %d, want 0", len(remaining))
+	}
+}
+
+func TestFlushAttemptLogsRetriesTransientUploadFailure(t *testing.T) {
+	var requestCount atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if requestCount.Add(1) == 1 {
+			http.Error(writer, "temporary outage", http.StatusServiceUnavailable)
+			return
+		}
+		writer.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(writer).Encode(uploadLogChunksResponse{
+			SchemaVersion:        protocolVersion,
+			AcknowledgedSequence: logWatermark{Stdout: 0, Stderr: -1, Agent: -1},
+		})
+	}))
+	defer server.Close()
+
+	configuration := config.Config{
+		ServerURL: mustParseURL(t, server.URL), DataDirectory: t.TempDir(), MaxConcurrent: 1,
+		Spool: config.SpoolConfig{MaximumBytes: 1 << 20, UploadBatch: 16},
+	}
+	client, err := NewClient(configuration)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	spool, err := newLogSpool(configuration.DataDirectory, configuration.Spool, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := spool.append("attempt-1", logChunk{
+		Stream: "stdout", Sequence: 0, Content: "retry me", RecordedAt: time.Now().UTC().Format(time.RFC3339Nano),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	supervisor := &attemptSupervisor{
+		client: client,
+		identity: Identity{
+			RunnerID: "runner-1", Credential: "runner-credential-with-more-than-32-bytes",
+		},
+		configuration: configuration,
+		logSpool:      spool,
+		diagnostics:   io.Discard,
+	}
+	claimed := testClaimedAssignment(strings.Repeat("a", 64))
+
+	if _, err := supervisor.flushAttemptLogs(context.Background(), claimed, 3*time.Second); err != nil {
+		t.Fatalf("flushAttemptLogs() error = %v", err)
+	}
+	if requestCount.Load() != 2 {
+		t.Fatalf("request count = %d, want 2", requestCount.Load())
+	}
+}
+
+func TestProcessPreparationFailureDistinguishesWorkspaceDiskCapacity(t *testing.T) {
+	failure := processStartFailure(&workspaceCapacityError{requiredBytes: 459129517, availableBytes: 450891776})
+	if failure.ResultCode != "WORKSPACE_DISK_INSUFFICIENT" {
+		t.Fatalf("result code = %q, want WORKSPACE_DISK_INSUFFICIENT", failure.ResultCode)
+	}
+	if !strings.Contains(failure.Summary, "disk") || strings.Contains(strings.ToLower(failure.Summary), "memory") {
+		t.Fatalf("summary = %q, want an explicit disk-capacity description", failure.Summary)
 	}
 }
 

@@ -1,92 +1,23 @@
 "use client";
 
-import type { RunBatch } from "@autoforge/domain";
 import { ExternalLink } from "lucide-react";
 import Link from "next/link";
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 
+import {
+  EXECUTION_RECORD_COLUMNS,
+  executionRecordColumnWidths,
+  executionRecordDurationMs,
+  executionRecordIsActive,
+  executionRecordPassRate,
+  executionRecordStatusLabel,
+  formatExecutionRecordTime,
+  type ExecutionRecordColumnDefinition,
+  type ExecutionRecordRow,
+} from "@/lib/execution-record-columns";
 import { formatBatchDuration } from "@/lib/run-batch-presentation";
 
-/**
- * 执行记录页的行载荷。与 RunBatch 相比只携带展示所需字段，让表格组件
- * 与领域聚合解耦，同时避免把 ORM/领域类型直接渲染到客户端。
- */
-export type ExecutionRecordRow = {
-  id: string;
-  // 自然递增展示编号；UUID 保留在 title 与详情链接中。
-  sequenceNumber: number;
-  suiteName: string;
-  suiteVersion: number;
-  status: RunBatch["status"];
-  totalRuns: number;
-  succeededRuns: number;
-  failedRuns: number;
-  timedOutRuns: number;
-  retryMode: "immediate" | "round";
-  currentRound: number;
-  selectedRunnerCount: number;
-  createdAt: string;
-  updatedAt: string;
-};
-
-const ACTIVE_STATUSES: ReadonlySet<RunBatch["status"]> = new Set([
-  "queued",
-  "dispatching",
-  "scheduled",
-  "running",
-]);
-
-function isActiveStatus(status: RunBatch["status"]): boolean {
-  return ACTIVE_STATUSES.has(status);
-}
-
-function statusLabel(status: RunBatch["status"]): string {
-  const labels: Record<RunBatch["status"], string> = {
-    queued: "等待资源",
-    dispatching: "分配中",
-    scheduled: "已生成分配",
-    running: "执行中",
-    succeeded: "已成功",
-    failed: "已失败",
-    cancelled: "已取消",
-  };
-  return labels[status];
-}
-
-function passRatePercent(row: Pick<ExecutionRecordRow, "totalRuns" | "succeededRuns">): number {
-  if (row.totalRuns === 0) return 0;
-  return Math.round((row.succeededRuns / row.totalRuns) * 100);
-}
-
-function durationMs(row: Pick<ExecutionRecordRow, "createdAt" | "updatedAt">): number {
-  const start = Date.parse(row.createdAt);
-  // 终态批次的 updatedAt 即结束时间；进行中的批次展示已消耗时长。
-  const end = Date.parse(row.updatedAt);
-  if (Number.isNaN(start) || Number.isNaN(end) || end <= start) return 0;
-  return end - start;
-}
-
-type ColumnDefinition = {
-  key: string;
-  label: string;
-  defaultWidth: number;
-  minWidth: number;
-};
-
-const COLUMNS: ColumnDefinition[] = [
-  { key: "id", label: "批次编号", defaultWidth: 96, minWidth: 72 },
-  { key: "suite", label: "任务（Suite）", defaultWidth: 220, minWidth: 120 },
-  { key: "status", label: "状态", defaultWidth: 100, minWidth: 80 },
-  { key: "passRate", label: "通过率", defaultWidth: 90, minWidth: 70 },
-  { key: "passed", label: "已通过", defaultWidth: 80, minWidth: 64 },
-  { key: "failed", label: "已失败", defaultWidth: 80, minWidth: 64 },
-  { key: "round", label: "当前轮次", defaultWidth: 110, minWidth: 80 },
-  { key: "retryMode", label: "重跑方式", defaultWidth: 100, minWidth: 80 },
-  { key: "runners", label: "执行机", defaultWidth: 80, minWidth: 64 },
-  { key: "createdAt", label: "创建时间", defaultWidth: 150, minWidth: 110 },
-  { key: "duration", label: "耗时", defaultWidth: 100, minWidth: 70 },
-  { key: "actions", label: "操作", defaultWidth: 100, minWidth: 84 },
-];
+export type { ExecutionRecordRow } from "@/lib/execution-record-columns";
 
 const STORAGE_KEY = "autoforge.execution-records.column-widths.v1";
 // localStorage 变更事件名：拖拽结束后写入列宽时派发，让 useSyncExternalStore 快照刷新。
@@ -160,12 +91,13 @@ export function ExecutionRecordsTable({ rows }: { rows: ExecutionRecordRow[] }) 
   const dragWidthsRef = useRef<Record<string, number>>({});
   const dragState = useRef<{ key: string; startX: number; startWidth: number } | null>(null);
   const widths: Record<string, number> = { ...storedWidths, ...dragWidths };
+  const automaticWidths = useMemo(() => executionRecordColumnWidths(rows), [rows]);
 
   useEffect(() => {
     const onMove = (event: MouseEvent) => {
       const state = dragState.current;
       if (!state) return;
-      const column = COLUMNS.find((item) => item.key === state.key);
+      const column = EXECUTION_RECORD_COLUMNS.find((item) => item.key === state.key);
       if (!column) return;
       const nextWidth = Math.max(column.minWidth, state.startWidth + event.clientX - state.startX);
       const nextDragWidths = { ...dragWidthsRef.current, [state.key]: nextWidth };
@@ -189,32 +121,35 @@ export function ExecutionRecordsTable({ rows }: { rows: ExecutionRecordRow[] }) 
     };
   }, []);
 
-  const startResize = useCallback((event: React.MouseEvent, column: ColumnDefinition) => {
-    event.preventDefault();
-    const width = event.currentTarget.parentElement?.getBoundingClientRect().width ?? 0;
-    dragState.current = {
-      key: column.key,
-      startX: event.clientX,
-      startWidth: width,
-    };
-    document.body.style.cursor = "col-resize";
-    document.body.style.userSelect = "none";
-  }, []);
+  const startResize = useCallback(
+    (event: React.MouseEvent, column: ExecutionRecordColumnDefinition) => {
+      event.preventDefault();
+      const width = event.currentTarget.parentElement?.getBoundingClientRect().width ?? 0;
+      dragState.current = {
+        key: column.key,
+        startX: event.clientX,
+        startWidth: width,
+      };
+      document.body.style.cursor = "col-resize";
+      document.body.style.userSelect = "none";
+    },
+    [],
+  );
 
-  const columnWidth = (column: ColumnDefinition): number =>
-    widths[column.key] ?? column.defaultWidth;
+  const columnWidth = (column: ExecutionRecordColumnDefinition): number =>
+    widths[column.key] ?? automaticWidths[column.key];
 
   return (
     <div className="table-scroll resizable-table-scroll">
       <table className="data-table execution-records-table resizable-table">
         <colgroup>
-          {COLUMNS.map((column) => (
+          {EXECUTION_RECORD_COLUMNS.map((column) => (
             <col key={column.key} style={{ width: columnWidth(column) }} />
           ))}
         </colgroup>
         <thead>
           <tr>
-            {COLUMNS.map((column) => (
+            {EXECUTION_RECORD_COLUMNS.map((column) => (
               <th key={column.key} scope="col">
                 <span className="resizable-th-content">
                   {column.label}
@@ -245,20 +180,22 @@ export function ExecutionRecordsTable({ rows }: { rows: ExecutionRecordRow[] }) 
               </td>
               <td>
                 <span className={`batch-status batch-status-${row.status}`}>
-                  {statusLabel(row.status)}
+                  {executionRecordStatusLabel(row.status)}
                 </span>
               </td>
-              <td>{passRatePercent(row)}%</td>
+              <td>{executionRecordPassRate(row)}%</td>
               <td>{row.succeededRuns}</td>
               <td>{row.failedRuns + row.timedOutRuns}</td>
               <td>{row.retryMode === "round" ? `第 ${row.currentRound} 轮` : "-"}</td>
               <td>{row.retryMode === "round" ? "整轮轮次" : "立即重跑"}</td>
               <td>{row.selectedRunnerCount}</td>
               <td>
-                <time dateTime={row.createdAt}>{formatRecordTime(row.createdAt)}</time>
+                <time dateTime={row.createdAt}>{formatExecutionRecordTime(row.createdAt)}</time>
               </td>
               <td>
-                {isActiveStatus(row.status) ? "执行中" : formatBatchDuration(durationMs(row))}
+                {executionRecordIsActive(row.status)
+                  ? "执行中"
+                  : formatBatchDuration(executionRecordDurationMs(row))}
               </td>
               <td>
                 <Link
@@ -275,17 +212,4 @@ export function ExecutionRecordsTable({ rows }: { rows: ExecutionRecordRow[] }) 
       </table>
     </div>
   );
-}
-
-function formatRecordTime(value: string): string {
-  const date = new Date(value);
-  return Number.isNaN(date.getTime())
-    ? value
-    : date.toLocaleString("zh-CN", {
-        year: "numeric",
-        month: "2-digit",
-        day: "2-digit",
-        hour: "2-digit",
-        minute: "2-digit",
-      });
 }

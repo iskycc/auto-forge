@@ -133,6 +133,10 @@ test("runs the java-cases module through the adapter E2E chain", async ({ page }
     );
     for (const attempt of failed.attempts) {
       expect(attempt.testNg).toMatchObject({ total: 1, passed: 0, failed: 1 });
+      expect(attempt.resultSummary).toContain(
+        "订单创建失败 OrderId 不能为空，中文断言必须保持 UTF-8 / mixed English message",
+      );
+      expect(attempt.resultSummary).not.toContain("????");
     }
     await page.goto(`/run-batches/${encodeURIComponent(failureBatchId)}`);
     // 需求5后单用例不再自动展开，需先点详情才能看到方法级失败结果。
@@ -274,6 +278,7 @@ type BatchDetails = {
     id: string;
     status?: string;
     resultCode?: string;
+    resultSummary?: string;
     testNg?: {
       total: number;
       passed: number;

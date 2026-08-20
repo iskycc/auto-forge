@@ -19,6 +19,16 @@ class AdapterMainTest {
   @TempDir Path temporaryDirectory;
 
   @Test
+  void createsUtf8ConsoleStreamsIndependentOfTheHostDefault() {
+    ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+    try (PrintStream output = AdapterMain.utf8PrintStream(bytes)) {
+      output.print("中文 assertion message");
+    }
+
+    assertEquals("中文 assertion message", bytes.toString(StandardCharsets.UTF_8));
+  }
+
+  @Test
   void abortsWithTheTimeoutExitCodeWhenTheCaseExceedsTheLimit() throws IOException {
     Path jarDirectory = createJarDirectory("fixture/AdapterSlowCase.class");
     ByteArrayOutputStream standardOutput = new ByteArrayOutputStream();

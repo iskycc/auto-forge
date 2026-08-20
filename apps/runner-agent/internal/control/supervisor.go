@@ -430,7 +430,7 @@ func (supervisor *attemptSupervisor) runTestNG(
 		if errors.Is(runErr, executor.ErrResourceIsolationUnavailable) {
 			return platformFailure("RESOURCE_ISOLATION_UNAVAILABLE", runErr)
 		}
-		return platformFailure("PROCESS_START_FAILED", runErr)
+		return processStartFailure(runErr)
 	}
 	defer func() {
 		if removeErr := os.RemoveAll(result.WorkspacePath); removeErr != nil {
@@ -660,6 +660,7 @@ func (supervisor *attemptSupervisor) flushAttemptLogs(ctx context.Context, claim
 	uploadContext, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	backoff := time.Second
+	uploadAttempts := 0
 	uploadBatch := supervisor.configuration.Spool.UploadBatch
 	if uploadBatch == 0 {
 		uploadBatch = 128
@@ -679,6 +680,7 @@ func (supervisor *attemptSupervisor) flushAttemptLogs(ctx context.Context, claim
 			claimed.Lease.Token,
 			chunks,
 		)
+		uploadAttempts++
 		if uploadErr == nil {
 			watermarks = response.AcknowledgedSequence
 			if err := supervisor.logSpool.acknowledge(claimed.Assignment.AttemptID, watermarks); err != nil {
@@ -687,11 +689,23 @@ func (supervisor *attemptSupervisor) flushAttemptLogs(ctx context.Context, claim
 			backoff = time.Second
 			continue
 		}
+		if logUploadPayloadWasRejected(uploadErr) && len(chunks) > 1 {
+			// A reverse proxy may enforce a lower limit than the platform route. Halve the
+			// count immediately and retry instead of repeating an identical rejected body.
+			uploadBatch = max(1, len(chunks)/2)
+			continue
+		}
 		if !waitFor(uploadContext, backoff) {
-			return watermarks, fmt.Errorf("upload attempt logs before deadline: %w", uploadErr)
+			return watermarks, fmt.Errorf("upload attempt logs failed after %d attempt(s): %w", uploadAttempts, uploadErr)
 		}
 		backoff = min(backoff*2, 10*time.Second)
 	}
+}
+
+func logUploadPayloadWasRejected(err error) bool {
+	var problem *APIError
+	return errors.As(err, &problem) &&
+		(problem.StatusCode == http.StatusRequestEntityTooLarge || problem.Code == "REQUEST_BODY_TOO_LARGE")
 }
 
 func (supervisor *attemptSupervisor) streamAttemptLogs(
@@ -1170,6 +1184,18 @@ func containsAll(available, required []string) bool {
 
 func platformFailure(code string, err error) completionResult {
 	return completionResult{Status: "failed", ResultCode: code, Summary: boundedSummary(err.Error()), DurationMs: 0}
+}
+
+func processStartFailure(err error) completionResult {
+	var capacityFailure *workspaceCapacityError
+	if errors.As(err, &capacityFailure) {
+		return platformFailure("WORKSPACE_DISK_INSUFFICIENT", err)
+	}
+	var limitFailure *executionInputDiskLimitError
+	if errors.As(err, &limitFailure) {
+		return platformFailure("EXECUTION_INPUT_DISK_LIMIT_EXCEEDED", err)
+	}
+	return platformFailure("PROCESS_START_FAILED", err)
 }
 
 func boundedSummary(value string) string {

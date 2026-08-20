@@ -180,7 +180,7 @@ describe("attemptFailureHint", () => {
     ).toBe("java.lang.AssertionError: expected <200> but was <500>");
   });
 
-  it("shows the reason code for blocked terminations even when a summary exists", () => {
+  it("shows the error description for blocked terminations when one exists", () => {
     expect(
       attemptFailureHint(
         attempt({
@@ -188,7 +188,7 @@ describe("attemptFailureHint", () => {
           resultSummary: "Runner Agent restarted before the attempt completed.",
         }),
       ),
-    ).toBe("AGENT_RESTARTED_DURING_EXECUTION");
+    ).toBe("Runner Agent restarted before the attempt completed.");
     expect(
       attemptFailureHint(attempt({ resultCode: "EXECUTION_TIMEOUT", resultSummary: "" })),
     ).toBe("EXECUTION_TIMEOUT");
@@ -198,11 +198,11 @@ describe("attemptFailureHint", () => {
     expect(attemptFailureHint(attempt({ resultCode: "", resultSummary: "boom" }))).toBe("boom");
   });
 
-  it("treats timed out outcomes as blocked", () => {
+  it("shows a timed-out error description instead of only its code", () => {
     expect(
       attemptFailureHint(
         attempt({ outcome: "timed_out", resultCode: "EXECUTION_TIMEOUT", resultSummary: "x" }),
       ),
-    ).toBe("EXECUTION_TIMEOUT");
+    ).toBe("x");
   });
 });

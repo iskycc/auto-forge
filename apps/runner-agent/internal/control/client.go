@@ -24,8 +24,12 @@ import (
 )
 
 const (
-	protocolVersion               = 1
-	maximumResponseBytes          = 2 * 1024 * 1024
+	protocolVersion      = 1
+	maximumResponseBytes = 2 * 1024 * 1024
+	// The control-plane log route reads at most 2 MiB. Count-only batching is insufficient
+	// because JSON escaping can expand a 256 KiB chunk substantially, so UploadLogs measures
+	// the exact encoded request and sends the largest fitting prefix.
+	maximumLogUploadRequestBytes  = 2 * 1024 * 1024
 	defaultRequestTimeout         = 20 * time.Second
 	maximumSecretEnvironmentBytes = 64 << 10
 )
@@ -318,6 +322,10 @@ func (client *Client) UploadLogs(ctx context.Context, identity Identity, attempt
 		LeaseToken:    leaseToken,
 		Chunks:        chunks,
 	}
+	request, err = boundedLogUploadRequest(request)
+	if err != nil {
+		return uploadLogChunksResponse{}, fmt.Errorf("upload logs: %w", err)
+	}
 	var response uploadLogChunksResponse
 	path := fmt.Sprintf("/api/v1/run-attempts/%s/logs", url.PathEscape(attemptID))
 	if err := client.postForRunner(ctx, path, identity.Credential, identity.RunnerID, request, &response); err != nil {
@@ -327,6 +335,34 @@ func (client *Client) UploadLogs(ctx context.Context, identity Identity, attempt
 		return uploadLogChunksResponse{}, errors.New("upload logs: incompatible protocol response")
 	}
 	return response, nil
+}
+
+func boundedLogUploadRequest(request uploadLogChunksRequest) (uploadLogChunksRequest, error) {
+	if len(request.Chunks) == 0 {
+		return uploadLogChunksRequest{}, errors.New("log upload contains no chunks")
+	}
+	low, high := 1, len(request.Chunks)
+	fittingCount := 0
+	for low <= high {
+		candidateCount := low + (high-low)/2
+		candidate := request
+		candidate.Chunks = request.Chunks[:candidateCount]
+		payload, err := json.Marshal(candidate)
+		if err != nil {
+			return uploadLogChunksRequest{}, fmt.Errorf("encode log upload: %w", err)
+		}
+		if len(payload) <= maximumLogUploadRequestBytes {
+			fittingCount = candidateCount
+			low = candidateCount + 1
+		} else {
+			high = candidateCount - 1
+		}
+	}
+	if fittingCount == 0 {
+		return uploadLogChunksRequest{}, errors.New("one log chunk exceeds the control-plane request limit")
+	}
+	request.Chunks = request.Chunks[:fittingCount]
+	return request, nil
 }
 
 func (client *Client) AcquireSecrets(

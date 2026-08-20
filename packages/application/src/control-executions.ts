@@ -758,12 +758,13 @@ const RECONCILED_COMPLETION_RESULT_CODES = new Set([
 const ADAPTER_FAILURE_BASE64_MARKER = "TestCase Run Failed Stack Base64: [";
 const ADAPTER_FAILURE_MARKER = "TestCase Run Failed Stack: [";
 
-// 在日志尾部找最后一个失败标记。完整返回内容，不用展示层或调度日志的短摘要上限
-// 截断权威 resultSummary。
+// 在日志尾部找最后一个失败标记。保留完整内容但折叠换行，避免 power-assert
+// 的辅助定位图把状态列撑成多行；不用展示层或调度日志的短摘要上限截断权威摘要。
 function adapterFailureLine(content: string): string | null {
   const encoded = enclosedMarkerPayload(content, ADAPTER_FAILURE_BASE64_MARKER, "first");
-  if (encoded !== null) return decodeBase64Utf8(encoded);
-  return enclosedMarkerPayload(content, ADAPTER_FAILURE_MARKER, "last")?.trim() || null;
+  const decoded = encoded !== null ? decodeBase64Utf8(encoded) : null;
+  const legacy = enclosedMarkerPayload(content, ADAPTER_FAILURE_MARKER, "last");
+  return singleLineFailureDescription(decoded ?? legacy ?? "");
 }
 
 function enclosedMarkerPayload(
@@ -789,7 +790,18 @@ function decodeBase64Utf8(encoded: string): string | null {
   return Buffer.from(decoded, "utf8").equals(bytes) ? decoded : null;
 }
 
+function singleLineFailureDescription(value: string): string | null {
+  return (
+    value
+      .replace(/&(?:#x20|nbsp);/gi, " ")
+      .replace(/\s+/g, " ")
+      .trim() || null
+  );
+}
+
 // 在日志尾部找最后一行异常行（优先于堆栈帧行），作为非结构化失败的可读原因。
+// Groovy/Spock power-assert 由 assert 表达式和若干缩进诊断行组成；旧版 adapter
+// 没有机器标记时也要完整抓取，并折叠为适合表格展示的一行。
 function lastFailureLine(content: string): string | null {
   const lines = content.split("\n");
   let stackLine: string | null = null;
@@ -799,5 +811,18 @@ function lastFailureLine(content: string): string | null {
     if (/Exception|Error|Caused by/.test(line)) return line;
     if (!stackLine && /^at\s/.test(line)) stackLine = line;
   }
-  return stackLine;
+  if (stackLine) return stackLine;
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    if (!/^\s*assert\b/.test(lines[index] ?? "")) continue;
+    const block = [lines[index]!.trim()];
+    for (let next = index + 1; next < Math.min(lines.length, index + 16); next += 1) {
+      const rawLine = lines[next] ?? "";
+      const trimmed = rawLine.trim();
+      if (!trimmed) break;
+      if (!/^(?:\s|&#x20;|&nbsp;)/i.test(rawLine) || /^at\s|^Caused by/.test(trimmed)) break;
+      block.push(trimmed);
+    }
+    return singleLineFailureDescription(block.join(" "));
+  }
+  return null;
 }

@@ -14,6 +14,9 @@ and known limitations.
   proportions, method-level TestNG totals, human-readable error descriptions and case names.
 - Expanded the dashboard fluid desktop width through 4K while keeping 1024px as the supported
   minimum; mobile layouts are explicitly outside the product and test baseline.
+- Execution-record columns now use their 70th-percentile row content for initial sizing while
+  retaining manual resize persistence. Failed rows sort by their human-readable failure description
+  after the primary status category instead of falling back to case names under one shared code.
 
 ### Fixed
 
@@ -22,12 +25,23 @@ and known limitations.
   facts are rebuilt automatically with the corrected schema version.
 - The global execution dialog is mounted through a body portal so its backdrop covers the complete
   viewport and the dialog remains geometrically centered instead of being constrained by the topbar.
+- Multiline power-assert diagnostics are recognized without an Adapter marker and compacted to one
+  line without discarding their values. The CoTest Adapter installs explicit UTF-8 stdout/stderr
+  streams before loading user classes, preserving mixed Chinese/English `Assert.assertTrue` messages.
+- Runner log uploads now split batches by the actual encoded 2 MiB request limit and shrink/retry
+  batches rejected by a lower proxy limit; transient failures retain bounded exponential retries.
+- Pre-launch input failures now distinguish execution disk-policy overflow from actual Runner
+  workspace disk exhaustion with `EXECUTION_INPUT_DISK_LIMIT_EXCEEDED` and
+  `WORKSPACE_DISK_INSUFFICIENT` instead of the misleading `PROCESS_START_FAILED`.
 
 ### Tests
 
 - Added shared analytics unit and SQLite recovery coverage, a PostgreSQL success-fact assertion, a
   real completion-protocol browser scenario for 50% pass/fail analytics, and desktop viewport checks
   for dashboard scaling and full-screen dialog geometry.
+- Added regressions for percentile column sizing, failure-description sorting, multiline
+  power-assert extraction, encoded log-request splitting and transient retry, disk-capacity result
+  classification, and a real Adapter assertion carrying mixed Chinese/English text.
 
 ## 0.8.5 - 2026-08-20
 

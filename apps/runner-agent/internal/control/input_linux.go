@@ -13,6 +13,32 @@ import (
 	"syscall"
 )
 
+type executionInputDiskLimitError struct {
+	requiredBytes int64
+	limitBytes    int64
+}
+
+func (failure *executionInputDiskLimitError) Error() string {
+	return fmt.Sprintf(
+		"execution inputs require %d bytes and exceed the attempt disk limit of %d bytes",
+		failure.requiredBytes,
+		failure.limitBytes,
+	)
+}
+
+type workspaceCapacityError struct {
+	requiredBytes  int64
+	availableBytes int64
+}
+
+func (failure *workspaceCapacityError) Error() string {
+	return fmt.Sprintf(
+		"Runner workspace disk requires %d bytes for execution inputs but only %d bytes are available",
+		failure.requiredBytes,
+		failure.availableBytes,
+	)
+}
+
 func downloadAttemptInputs(
 	ctx context.Context,
 	client *Client,
@@ -24,7 +50,10 @@ func downloadAttemptInputs(
 	var totalBytes int64
 	for _, input := range inputs {
 		if input.SizeBytes <= 0 || totalBytes > claimed.Assignment.ExecutionSpec.ResourceLimits.DiskBytes-input.SizeBytes {
-			return errors.New("execution inputs exceed the attempt disk limit")
+			return &executionInputDiskLimitError{
+				requiredBytes: totalBytes + max(input.SizeBytes, 0),
+				limitBytes:    claimed.Assignment.ExecutionSpec.ResourceLimits.DiskBytes,
+			}
 		}
 		totalBytes += input.SizeBytes
 	}
@@ -33,7 +62,7 @@ func downloadAttemptInputs(
 		return fmt.Errorf("inspect available workspace capacity: %w", err)
 	}
 	if totalBytes > available {
-		return fmt.Errorf("execution inputs require %d bytes but only %d bytes are available", totalBytes, available)
+		return &workspaceCapacityError{requiredBytes: totalBytes, availableBytes: available}
 	}
 	for _, input := range inputs {
 		if err := downloadAttemptInput(ctx, client, identity, claimed, input, workspace); err != nil {
@@ -55,14 +84,17 @@ func downloadAttemptInput(
 		return errors.New("execution input path or size is invalid")
 	}
 	if input.SizeBytes > claimed.Assignment.ExecutionSpec.ResourceLimits.DiskBytes {
-		return errors.New("execution input exceeds the attempt disk limit")
+		return &executionInputDiskLimitError{
+			requiredBytes: input.SizeBytes,
+			limitBytes:    claimed.Assignment.ExecutionSpec.ResourceLimits.DiskBytes,
+		}
 	}
 	available, err := availableBytes(workspace)
 	if err != nil {
 		return fmt.Errorf("inspect available workspace capacity: %w", err)
 	}
 	if input.SizeBytes > available {
-		return fmt.Errorf("execution input requires %d bytes but only %d bytes are available", input.SizeBytes, available)
+		return &workspaceCapacityError{requiredBytes: input.SizeBytes, availableBytes: available}
 	}
 	destination := filepath.Join(workspace, filepath.Clean(input.TargetPath))
 	if err := os.MkdirAll(filepath.Dir(destination), 0o700); err != nil {

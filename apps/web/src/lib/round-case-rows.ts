@@ -72,6 +72,40 @@ export function canCancelRoundCaseRow(row: RoundCaseRowModel): boolean {
   return row.attempt === undefined || !isTerminalAttemptStatus(row.attempt.status);
 }
 
+const ATTEMPT_STATUS_SORT_RANK: Record<RunAttempt["status"], number> = {
+  succeeded: 0,
+  failed: 1,
+  timed_out: 2,
+  cancelled: 3,
+  running: 4,
+  assigned: 5,
+};
+
+/**
+ * 状态列排序先按状态类别，再用失败错误描述排序同类失败行。错误码只在描述缺失时
+ * 兜底，避免所有 TESTNG_ASSERTIONS_FAILED 行只能按用例名称形成无意义顺序。
+ */
+export function compareRoundCaseRowsByStatus(
+  left: RoundCaseRowModel,
+  right: RoundCaseRowModel,
+): number {
+  const rankDifference = statusSortRank(left) - statusSortRank(right);
+  if (rankDifference !== 0) return rankDifference;
+  if (left.attempt?.status !== "failed" || right.attempt?.status !== "failed") return 0;
+  return failureSortDescription(left.attempt).localeCompare(
+    failureSortDescription(right.attempt),
+    "zh-CN",
+  );
+}
+
+function statusSortRank(row: RoundCaseRowModel): number {
+  return row.attempt ? ATTEMPT_STATUS_SORT_RANK[row.attempt.status] : 6;
+}
+
+function failureSortDescription(attempt: RunAttempt): string {
+  return (attempt.resultSummary?.trim() || attempt.resultCode || "").replace(/\s+/g, " ");
+}
+
 function runRoundKey(runId: string, round: number): string {
   return `${runId}:${round}`;
 }

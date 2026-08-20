@@ -1042,7 +1042,7 @@ describe("failure summary log fallback", () => {
     expect(failureSummary.length).toBeGreaterThan(4_096);
     expect(executions.completeAttempt).toHaveBeenCalledWith(
       expect.objectContaining({
-        result: expect.objectContaining({ summary: failureSummary }),
+        result: expect.objectContaining({ summary: failureSummary.replace(/\s+/g, " ") }),
       }),
     );
   });
@@ -1068,7 +1068,40 @@ describe("failure summary log fallback", () => {
 
     expect(executions.completeAttempt).toHaveBeenCalledWith(
       expect.objectContaining({
-        result: expect.objectContaining({ summary: legacySummary }),
+        result: expect.objectContaining({ summary: legacySummary.replace(/\s+/g, " ") }),
+      }),
+    );
+  });
+
+  it("compresses a multiline power-assert block when no adapter marker exists", async () => {
+    const { service, executions } = buildService({
+      probe: { items: [], acknowledgedSequence: 11, truncated: false },
+      stdoutTail: {
+        items: [
+          {
+            stream: "stdout",
+            sequence: 11,
+            content: [
+              "running checkout case",
+              'assert OrderId != ""',
+              "&#x20;      |       |",
+              "&#x20;      ''      false",
+              "",
+            ].join("\n"),
+          },
+        ],
+        acknowledgedSequence: 11,
+        truncated: false,
+      },
+    });
+
+    await service.complete("runner-1", "credential", "attempt-1", completionInput);
+
+    expect(executions.completeAttempt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        result: expect.objectContaining({
+          summary: "assert OrderId != \"\" | | '' false",
+        }),
       }),
     );
   });

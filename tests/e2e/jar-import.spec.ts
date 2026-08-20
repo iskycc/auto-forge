@@ -530,10 +530,11 @@ public class MixedVisibleTest {
   expect(downloadedJar.byteLength).toBe(testJarInput!.sizeBytes);
   expect(createHash("sha256").update(downloadedJar).digest("hex")).toBe(testJarInput!.sha256);
 
-  const expectedFailureSummary =
+  const rawFailureSummary =
     "java.lang.AssertionError: 中文断言失败\n第二行错误详情：" +
     "预期值与实际值不一致；".repeat(40);
-  const encodedFailureSummary = Buffer.from(expectedFailureSummary, "utf8").toString("base64");
+  const expectedFailureSummary = rawFailureSummary.replace(/\s+/g, " ");
+  const encodedFailureSummary = Buffer.from(rawFailureSummary, "utf8").toString("base64");
   const firstLog = await page.request.post(
     `/api/v1/run-attempts/${encodeURIComponent(firstAttemptId)}/logs`,
     {
@@ -548,7 +549,7 @@ public class MixedVisibleTest {
             sequence: 0,
             content:
               "INFO testng runner started\nWARN flaky selector detected\n\u001b[31mERROR first attempt assertion failed\u001b[0m\n" +
-              `Stack Trace:\n${expectedFailureSummary}\n\tat com.example.CheckoutCase.checkout(CheckoutCase.java:42)\n\n` +
+              `Stack Trace:\n${rawFailureSummary}\n\tat com.example.CheckoutCase.checkout(CheckoutCase.java:42)\n\n` +
               `TestCase Run Failed Stack Base64: [${encodedFailureSummary}]\n`,
             recordedAt: new Date().toISOString(),
           },

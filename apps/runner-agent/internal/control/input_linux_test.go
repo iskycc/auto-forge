@@ -2,6 +2,7 @@ package control
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 )
@@ -20,5 +21,9 @@ func TestDownloadAttemptInputsRejectsAggregateDiskLimitBeforeTransfer(t *testing
 	err := downloadAttemptInputs(context.Background(), nil, Identity{}, claimed, inputs, t.TempDir())
 	if err == nil || !strings.Contains(err.Error(), "exceed the attempt disk limit") {
 		t.Fatalf("downloadAttemptInputs() error = %v", err)
+	}
+	var limitFailure *executionInputDiskLimitError
+	if !errors.As(err, &limitFailure) {
+		t.Fatalf("downloadAttemptInputs() error type = %T, want executionInputDiskLimitError", err)
 	}
 }

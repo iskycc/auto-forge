@@ -126,9 +126,9 @@ class CotestTestNgExecutorTest {
         stdout.substring(markerStart + (FailureSummaryMarker.PREFIX + "[").length(), markerEnd);
     String summary =
         new String(Base64.getDecoder().decode(payload), StandardCharsets.UTF_8);
-    assertEquals(
-        "java.lang.AssertionError: 中文断言失败\n第二行错误详情",
-        summary);
+    assertTrue(summary.contains("中文断言失败 mixed English"), summary);
+    assertTrue(summary.contains("第二行错误详情 OrderId 不能为空"), summary);
+    assertTrue(!summary.contains("???"), summary);
   }
 
   private Path createFixtureJar() throws IOException {

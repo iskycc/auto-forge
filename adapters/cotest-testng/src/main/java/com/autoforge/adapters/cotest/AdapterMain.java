@@ -1,7 +1,11 @@
 package com.autoforge.adapters.cotest;
 
+import java.io.FileDescriptor;
+import java.io.FileOutputStream;
+import java.io.OutputStream;
 import java.io.PrintStream;
 import java.net.URL;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
@@ -17,7 +21,17 @@ public final class AdapterMain {
   private AdapterMain() {}
 
   public static void main(String[] arguments) {
-    System.exit(run(arguments, System.out, System.err));
+    // Do not rely on the host locale or an older JDK's console defaults. User tests write to
+    // System.out/System.err directly, so install UTF-8 streams before loading any test class.
+    PrintStream output = utf8PrintStream(new FileOutputStream(FileDescriptor.out));
+    PrintStream errorOutput = utf8PrintStream(new FileOutputStream(FileDescriptor.err));
+    System.setOut(output);
+    System.setErr(errorOutput);
+    System.exit(run(arguments, output, errorOutput));
+  }
+
+  static PrintStream utf8PrintStream(OutputStream destination) {
+    return new PrintStream(destination, true, StandardCharsets.UTF_8);
   }
 
   static int run(String[] arguments, PrintStream output, PrintStream errorOutput) {

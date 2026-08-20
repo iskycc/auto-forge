@@ -35,6 +35,7 @@ import { readApiErrorMessage } from "@/lib/client-api";
 import {
   buildRoundCaseRows,
   canCancelRoundCaseRow,
+  compareRoundCaseRowsByStatus,
   type RoundCaseRowModel,
 } from "@/lib/round-case-rows";
 import {
@@ -714,20 +715,6 @@ type CaseSortSpec = {
   direction: "asc" | "desc";
 };
 
-// 状态排序权重：结果态在前、进行中次之、未执行最后，升序即按此顺序。
-const ATTEMPT_STATUS_SORT_RANK: Record<RunAttempt["status"], number> = {
-  succeeded: 0,
-  failed: 1,
-  timed_out: 2,
-  cancelled: 3,
-  running: 4,
-  assigned: 5,
-};
-
-function attemptStatusSortRank(row: RoundCaseRowModel): number {
-  return row.attempt ? ATTEMPT_STATUS_SORT_RANK[row.attempt.status] : 6;
-}
-
 function compareRowsBy(
   left: RoundCaseRowModel,
   right: RoundCaseRowModel,
@@ -737,7 +724,7 @@ function compareRowsBy(
     case "name":
       return left.run.displayName.localeCompare(right.run.displayName, "zh-CN");
     case "status":
-      return attemptStatusSortRank(left) - attemptStatusSortRank(right);
+      return compareRoundCaseRowsByStatus(left, right);
     case "runner": {
       const leftRunner = left.attempt?.runnerId ?? left.run.assignedRunnerId ?? "";
       const rightRunner = right.attempt?.runnerId ?? right.run.assignedRunnerId ?? "";

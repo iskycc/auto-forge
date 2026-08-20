@@ -175,7 +175,7 @@ type ExecutionSpec = {
 
 TestNG 方法选择器使用 `methodName+JVM descriptor` 的规范形式，例如 `checkout(Ljava/lang/String;)V`。非空方法选择或参数快照会启用随 Agent 二进制内嵌的 Java source-file launcher；launcher 通过 reflection 计算真实 descriptor，并以 TestNG `IMethodSelector` 保留配置方法、精确选择测试方法。launcher 与用户 JAR 均通过固定 Java executable 和参数数组启动，不调用 Shell、`javac` 或网络下载。
 
-TestNG 输入固定为一个 `test-jar` 和最多 127 个 `dependency-jar`。每项输入都引用服务端管理的权威对象，并在 assignment 快照中固化 ID、相对 `.jar` 目标路径、大小和 SHA-256；控制面先验证 Runner 身份与有效 lease，再确认输入确实位于快照且权威元数据未漂移。Agent 在发起下载前校验输入总大小、attempt 磁盘上限和工作目录可用空间，逐项通过同一控制面端点下载并原子发布。classpath 顺序固定为测试 JAR、按目标路径排序的依赖 JAR、Runner 预置 TestNG 工具链，不向 Agent 下发数据库或对象存储长期凭据。
+TestNG 输入固定为一个 `test-jar` 和最多 127 个 `dependency-jar`。每项输入都引用服务端管理的权威对象，并在 assignment 快照中固化 ID、相对 `.jar` 目标路径、大小和 SHA-256；控制面先验证 Runner 身份与有效 lease，再确认输入确实位于快照且权威元数据未漂移。Agent 在发起下载前校验输入总大小、attempt 磁盘上限和工作目录可用空间，逐项通过同一控制面端点下载并原子发布。输入超过策略配额返回 `EXECUTION_INPUT_DISK_LIMIT_EXCEEDED`；宿主工作目录实际可用磁盘不足返回 `WORKSPACE_DISK_INSUFFICIENT`，不得归为进程启动失败或内存不足。classpath 顺序固定为测试 JAR、按目标路径排序的依赖 JAR、Runner 预置 TestNG 工具链，不向 Agent 下发数据库或对象存储长期凭据。
 
 CoTest Adapter assignment 另外允许一个 `jar-bundle` 和一个可选 `jdk-archive`。项目保存这些
 资源，任务保存 Adapter 开关、Suite/Test 与环境地址列表；批次按用例顺序轮询环境地址并固化每个
@@ -211,6 +211,9 @@ type LogChunk = {
 - Agent 在写本地 spool 前完成秘密脱敏；控制面再做第二层防护。
 - 日志、完成结果和待上传产物共享 `AUTOFORGE_AGENT_SPOOL_MAX_BYTES` 硬预算；按最大并发预留最多一半预算给原子完成元数据，负载达到上限时以 `LOG_SPOOL_QUOTA_EXCEEDED` 或 `ARTIFACT_SPOOL_QUOTA_EXCEEDED` 明确终止，禁止静默丢弃。
 - 服务端只确认连续序号；Agent 根据确认水位删除 spool 并重传缺口。
+- Agent 同时受配置的块数上限和控制面 2 MiB JSON 请求上限约束，按实际编码后的字节数自动拆批；
+  瞬时网络/服务错误使用有界指数退避重试，代理返回 413 时立即缩小批次重试，避免重复发送
+  同一个必然失败的超大请求。只有重试窗口耗尽后才报告 `LOG_UPLOAD_FAILED`。
 - 保留期只清理没有本地未决 attempt 的孤立日志；仍待 reconcile/确认的日志不会仅因时间到期而删除。
 - ANSI 仅保存受控语义或原文，Web 展示必须白名单解析，禁止注入 HTML。
 
