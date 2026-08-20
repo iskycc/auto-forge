@@ -17,7 +17,7 @@ readonly run_identity="${GITHUB_RUN_ID//[^0-9A-Za-z_-]/_}-${GITHUB_RUN_ATTEMPT//
 readonly cgroup_root="/sys/fs/cgroup/autoforge-container-ci-${run_identity}"
 readonly registry_container="autoforge-container-registry-${run_identity}"
 readonly registry_image="registry:2.8.3@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373"
-readonly java_base_image="eclipse-temurin:21.0.8_9-jre-noble@sha256:20e7f7288e1c18eebe8f06a442c9f7183342d9b022d3b9a9677cae2b558ddddd"
+readonly java_base_image="eclipse-temurin:21.0.8_9-jdk-noble@sha256:03b731a231066bd04ada0a7ee9003cdbc1460083344f9277245b233e5ffcbf47"
 readonly mutable_container_image="127.0.0.1:5000/autoforge/testng:${run_identity}"
 
 cleanup() {
@@ -134,6 +134,11 @@ prepare_container_image() {
     --build-arg "BASE_IMAGE=${java_base_image}" \
     --tag "${mutable_container_image}" \
     "${image_context_directory}"
+  if ! docker run --rm --network=none "${mutable_container_image}" \
+    java --list-modules | grep -q '^jdk.compiler@'; then
+    echo "The immutable TestNG image must include jdk.compiler for the source-file launcher." >&2
+    exit 1
+  fi
 
   docker run \
     --detach \
