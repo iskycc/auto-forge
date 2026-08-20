@@ -4,7 +4,7 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
-## Unreleased
+## 0.9.0 - 2026-08-20
 
 ### Changed
 
@@ -33,6 +33,8 @@ and known limitations.
 - Pre-launch input failures now distinguish execution disk-policy overflow from actual Runner
   workspace disk exhaustion with `EXECUTION_INPUT_DISK_LIMIT_EXCEEDED` and
   `WORKSPACE_DISK_INSUFFICIENT` instead of the misleading `PROCESS_START_FAILED`.
+- The JAR importer keeps its controls disabled until client hydration completes, preventing an early
+  file selection from being discarded and leaving the scan action permanently disabled.
 
 ### Tests
 
@@ -41,7 +43,24 @@ and known limitations.
   for dashboard scaling and full-screen dialog geometry.
 - Added regressions for percentile column sizing, failure-description sorting, multiline
   power-assert extraction, encoded log-request splitting and transient retry, disk-capacity result
-  classification, and a real Adapter assertion carrying mixed Chinese/English text.
+  classification, a real Adapter assertion carrying mixed Chinese/English text, and hydrated JAR
+  upload readiness in the Full real-Agent recovery path.
+
+### Database
+
+- No database migration or persisted platform-configuration migration is required.
+
+### Compatibility
+
+- Runner Protocol schema v1 and the offline asset layout remain unchanged. The new workspace-disk
+  result codes are additive; older stored result codes remain readable.
+- Release images, deployment bundles, embedded static Runner binaries, SBOMs, checksums and build
+  provenance are regenerated for `v0.9.0` by the tagged Release workflow.
+
+### Known limitations
+
+- The authenticated UI supports desktop browser widths of 1024 pixels and above; mobile layouts are
+  intentionally outside the supported and tested interface baseline.
 
 ## 0.8.5 - 2026-08-20
 

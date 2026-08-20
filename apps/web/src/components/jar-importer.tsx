@@ -25,12 +25,24 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useId, useState } from "react";
+import { useCallback, useEffect, useId, useState, useSyncExternalStore } from "react";
 
 import { CLASS_PREVIEW_LIMIT, uniqueInspectionClasses } from "@/lib/class-preview";
 import { formatMethodSignature } from "@/lib/jvm-signature";
 
 type Phase = "idle" | "inspecting" | "ready" | "importing" | "done";
+
+function subscribeToClientReadiness(): () => void {
+  return () => undefined;
+}
+
+function clientIsReady(): boolean {
+  return true;
+}
+
+function serverIsNotReady(): boolean {
+  return false;
+}
 
 function formatBytes(value: number): string {
   if (value < 1024) return `${value} B`;
@@ -61,6 +73,11 @@ export function JarImporter({
 }) {
   const inputId = useId();
   const router = useRouter();
+  const clientReady = useSyncExternalStore(
+    subscribeToClientReadiness,
+    clientIsReady,
+    serverIsNotReady,
+  );
   const [file, setFile] = useState<File | null>(null);
   const [phase, setPhase] = useState<Phase>("idle");
   const [inspection, setInspection] = useState<JarInspection | null>(null);
@@ -242,7 +259,7 @@ export function JarImporter({
           <label>
             导入项目
             <Select
-              disabled={busy}
+              disabled={!clientReady || busy}
               onChange={(event) => {
                 const nextProjectId = event.target.value;
                 setProjectId(nextProjectId);
@@ -267,7 +284,7 @@ export function JarImporter({
           <label>
             项目版本
             <Select
-              disabled={busy}
+              disabled={!clientReady || busy}
               onChange={(event) => {
                 const nextVersionId = event.target.value;
                 setProjectVersionId(nextVersionId);
@@ -287,7 +304,7 @@ export function JarImporter({
           <label>
             测试阶段
             <Select
-              disabled={busy}
+              disabled={!clientReady || busy}
               onChange={(event) => setTestStageId(event.target.value)}
               value={testStageId}
             >
@@ -314,7 +331,7 @@ export function JarImporter({
             type="file"
             accept=".jar,application/java-archive"
             onChange={(event) => chooseFile(event.target.files?.item(0) ?? null)}
-            disabled={busy}
+            disabled={!clientReady || busy}
           />
           <span className="upload-icon">
             <UploadCloud size={26} aria-hidden="true" />
@@ -341,7 +358,7 @@ export function JarImporter({
             className="button button-primary"
             type="button"
             onClick={inspectJar}
-            disabled={!file || busy}
+            disabled={!clientReady || !file || busy}
           >
             {phase === "inspecting" ? (
               <LoaderCircle className="spin" size={17} aria-hidden="true" />
@@ -355,7 +372,7 @@ export function JarImporter({
               className="button button-secondary"
               type="button"
               onClick={() => chooseFile(null)}
-              disabled={busy}
+              disabled={!clientReady || busy}
             >
               <RotateCcw size={16} aria-hidden="true" /> 重置
             </Button>
