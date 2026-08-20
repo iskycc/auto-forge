@@ -14,6 +14,8 @@ and known limitations.
 - Published-asset acceptance starts from the successful `Release` workflow completion instead of
   spending several minutes polling for a Release that is still being built. A manual dispatch still
   supports rechecking an existing immutable tag with the current acceptance harness.
+- Lite browser coverage now reuses one production build within four duration-balanced scenario
+  groups instead of consuming eleven concurrent runners on eleven duplicate builds.
 
 ### Tests
 

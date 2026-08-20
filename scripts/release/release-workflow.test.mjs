@@ -45,6 +45,11 @@ test("partitions tagged and published checks without polling inside a test job",
 test("keeps long-running CI acceptance paths partitioned", async () => {
   const workflow = await readFile(".github/workflows/ci.yml", "utf8");
 
+  assert.match(workflow, /scenario: assets\n\s+specs: .*case-suite-lifecycle.*jar-import/);
+  assert.match(workflow, /scenario: execution\n\s+specs: .*execution-recovery.*single-case-run/);
+  assert.match(workflow, /scenario: identity\n\s+specs: .*identity-rbac.*all-rounds/);
+  assert.match(workflow, /scenario: operations\n\s+specs: .*platform-operations.*ui-layout/);
+  assert.doesNotMatch(workflow, /scenario:\n\s+- all-rounds/);
   assert.match(workflow, /test-full-business-recovery\.sh contracts/);
   assert.match(workflow, /test-full-business-recovery\.sh browser-governance/);
   assert.match(workflow, /test-full-business-recovery\.sh real-agent/);
