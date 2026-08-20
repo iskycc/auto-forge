@@ -20,6 +20,8 @@ and known limitations.
 - Added workflow contract coverage that rejects reintroducing the unpartitioned Full and offline
   commands and verifies the post-publication acceptance matrix retains asset, Agent, LDAP, backup,
   rollback and upgrade coverage.
+- Made the published backup/restore scenario seed and verify its own persisted settings instead of
+  depending on another browser scenario to run first.
 
 ## 0.9.0 - 2026-08-20
 

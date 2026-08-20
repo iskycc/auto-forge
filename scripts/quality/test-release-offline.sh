@@ -327,6 +327,16 @@ run_upgrade_phase() {
     pnpm exec playwright test --config playwright.full.config.ts tests/e2e/release-upgrade.spec.ts
 }
 
+run_platform_restart_phase() {
+  local base_url="${1:?base URL is required}"
+  local data_directory="${2:?data directory is required}"
+  local phase="${3:?platform restart phase is required}"
+  E2E_BASE_URL="${base_url}" \
+  E2E_ADMIN_BOOTSTRAP_TOKEN="$(read_platform_secret "${data_directory}" adminBootstrapToken)" \
+  E2E_PLATFORM_RESTART_PHASE="${phase}" \
+    pnpm exec playwright test --config playwright.full.config.ts tests/e2e/platform-restart.spec.ts
+}
+
 release_operations_directory() {
   printf '%s\n' "${current_deploy_root}/autoforge-deploy-${current_version}/operations"
 }
@@ -427,6 +437,7 @@ inject_migration_integrity_failure() {
 verify_backup_restore() {
   local current_base_url="${1:?current base URL is required}"
   local before_statistics backup_path after_statistics restored_base_url
+  run_platform_restart_phase "${current_base_url}" "${current_data}" seed
   before_statistics="$(curl --fail --silent "${current_base_url}/api/v1/public/statistics")"
   stop_platform "${current_container}"
   backup_path="${acceptance_directory}/current-backup.tar.gz"
@@ -436,10 +447,7 @@ verify_backup_restore() {
   restored_base_url="$(start_platform "${restored_container}" "${current_image}" "${restored_data}")"
   after_statistics="$(curl --fail --silent "${restored_base_url}/api/v1/public/statistics")"
   assert_restored_statistics "${before_statistics}" "${after_statistics}"
-  E2E_BASE_URL="${restored_base_url}" \
-  E2E_ADMIN_BOOTSTRAP_TOKEN="$(read_platform_secret "${restored_data}" adminBootstrapToken)" \
-    pnpm exec playwright test --config playwright.full.config.ts \
-      tests/e2e/platform-restart.spec.ts
+  run_platform_restart_phase "${restored_base_url}" "${restored_data}" verify
   stop_platform "${restored_container}"
 }
 
