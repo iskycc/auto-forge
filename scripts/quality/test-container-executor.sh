@@ -134,8 +134,12 @@ prepare_container_image() {
     --build-arg "BASE_IMAGE=${java_base_image}" \
     --tag "${mutable_container_image}" \
     "${image_context_directory}"
-  if ! docker run --rm --network=none "${mutable_container_image}" \
-    java --list-modules | grep -q '^jdk.compiler@'; then
+  local java_modules
+  if ! java_modules="$(docker run --rm --network=none "${mutable_container_image}" java --list-modules)"; then
+    echo "Unable to inspect Java modules in the immutable TestNG image." >&2
+    exit 1
+  fi
+  if ! grep -q '^jdk.compiler@' <<<"${java_modules}"; then
     echo "The immutable TestNG image must include jdk.compiler for the source-file launcher." >&2
     exit 1
   fi
