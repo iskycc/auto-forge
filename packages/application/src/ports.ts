@@ -983,6 +983,28 @@ export interface RunnerRepository {
   purge(input: { runnerId: string; purgedAt: string }): Promise<Runner>;
 }
 
+export type RunnerInstallationProfileRecord = {
+  id: string;
+  runnerId?: string;
+  runnerName: string;
+  connectionEncrypted: string;
+  expectedHostKeySha256: string;
+  installationMode: "auto" | "ubuntu" | "opensuse" | "opensuse-leap" | "opensuse-tumbleweed";
+  runAsRoot: boolean;
+  dataDirectory?: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export interface RunnerInstallationProfileRepository {
+  list(limit: number): Promise<RunnerInstallationProfileRecord[]>;
+  get(profileId: string): Promise<RunnerInstallationProfileRecord | null>;
+  findByRunnerId(runnerId: string): Promise<RunnerInstallationProfileRecord | null>;
+  findPendingByRunnerName(runnerName: string): Promise<RunnerInstallationProfileRecord | null>;
+  upsert(record: RunnerInstallationProfileRecord): Promise<RunnerInstallationProfileRecord>;
+  bindPending(input: { runnerName: string; runnerId: string; updatedAt: string }): Promise<void>;
+}
+
 export interface RunnerGroupRepository {
   list(): Promise<RunnerGroup[]>;
   get(groupId: string): Promise<RunnerGroup | null>;
@@ -1218,6 +1240,7 @@ export type SchedulingSnapshot = {
   batch: RunBatch;
   queuedRuns: ExecutionRun[];
   candidates: Array<{ runner: Runner; reservedSlots: number }>;
+  runnerFailureIdsByRun: Record<string, string[]>;
   projectActiveRuns: number;
 };
 
@@ -1249,6 +1272,12 @@ export type RunBatchListPage = {
   items: RunBatch[];
   nextCursor?: string;
 };
+
+/** 恢复与 Runner 生命周期路径只依赖这两个调度入口，不依赖具体服务实现。 */
+export interface RunBatchSchedulingPort {
+  schedule(batchId: string): Promise<unknown>;
+  scheduleForRunner(runnerId: string): Promise<unknown>;
+}
 
 export interface RunBatchRepository {
   create(record: CreateRunBatchRecord): Promise<RunBatchDetails>;

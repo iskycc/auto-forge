@@ -26,6 +26,34 @@ export const ADAPTER_FAILURE_RESULT_CODES: readonly string[] = [
   "TEST_ASSERTION_FAILED",
 ];
 
+// Runner/传输基础设施异常允许独立于用例失败重跑额度进行有界重调度。
+// 测试断言、测试配置、资源限制和用户取消不在此列，避免无意义地换机重跑。
+export const RETRYABLE_RUNNER_FAILURE_RESULT_CODES: readonly string[] = [
+  "AGENT_RESTARTED_DURING_EXECUTION",
+  "ARTIFACT_ID_FAILED",
+  "ARTIFACT_SPOOL_QUOTA_EXCEEDED",
+  "ARTIFACT_SPOOL_WRITE_FAILED",
+  "ASSIGNMENT_CLAIM_TIMEOUT",
+  "EXECUTION_SECRET_ACQUISITION_FAILED",
+  "LEASE_EXPIRED",
+  "LOG_SPOOL_QUOTA_EXCEEDED",
+  "LOG_SPOOL_WRITE_FAILED",
+  "LOG_UPLOAD_FAILED",
+  "PROCESS_START_FAILED",
+  "REQUIRED_ARTIFACT_UPLOAD_FAILED",
+  "RESOURCE_ISOLATION_UNAVAILABLE",
+  "RESOURCE_MONITOR_FAILED",
+  "RESULT_SPOOL_WRITE_FAILED",
+  "UPLOAD_TIMEOUT",
+  "WORKSPACE_DISK_INSUFFICIENT",
+];
+
+export const MAX_RUNNER_FAILURE_RESCHEDULES = 2;
+
+export function isRetryableRunnerFailure(resultCode: string | null | undefined): boolean {
+  return RETRYABLE_RUNNER_FAILURE_RESULT_CODES.includes(resultCode ?? "");
+}
+
 export function classifyAttemptResult(result: ClassifiableAttemptResult): AttemptResultCategory {
   if (result.outcome === "succeeded") return "succeeded";
   if (result.outcome === "failed") {

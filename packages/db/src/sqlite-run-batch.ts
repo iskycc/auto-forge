@@ -43,6 +43,7 @@ import {
   type RuntimeAssetSnapshot,
 } from "./project-adapter-runtime";
 import { mapStoredRunner } from "./runner-mapper";
+import { runnerFailureIdsByExecutionRun } from "./runner-failure-history";
 import { decodeRunBatchCursor, encodeRunBatchCursor } from "./run-batch-list";
 import {
   assignments,
@@ -57,6 +58,7 @@ import {
 } from "./schema";
 
 const activeAttemptStatuses = ["assigned", "running"] as const;
+const activeBatchStatuses = ["queued", "dispatching", "scheduled", "running"] as const;
 
 export class SqliteRunBatchRepository implements RunBatchRepository {
   constructor(
@@ -365,6 +367,7 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
       batch,
       queuedRuns: batch.runs.filter((run) => run.status === "queued" && (run.heldRound ?? 0) === 0),
       candidates,
+      runnerFailureIdsByRun: runnerFailureIdsByExecutionRun(batch.attempts),
       projectActiveRuns: projectActiveRuns(this.handle, batch.projectId),
     };
   }
@@ -924,7 +927,7 @@ function activeReservations(
           inArray(runAttempts.runnerId, runnerIds),
           inArray(runAttempts.status, [...activeAttemptStatuses]),
           inArray(executionRuns.status, [...activeAttemptStatuses]),
-          inArray(runBatches.status, ["queued", "running"]),
+          inArray(runBatches.status, [...activeBatchStatuses]),
         ),
       )
       .groupBy(runAttempts.runnerId)
@@ -940,7 +943,7 @@ function projectActiveRuns(handle: SqliteDatabaseHandle, projectId: string): num
        JOIN execution_runs r ON r.id=a.execution_run_id
        JOIN run_batches b ON b.id=r.batch_id
        WHERE b.project_id=?
-         AND b.status IN ('queued','running')
+         AND b.status IN ('queued','dispatching','scheduled','running')
          AND r.status IN ('assigned','running')
          AND a.status IN ('assigned','running')`,
     )

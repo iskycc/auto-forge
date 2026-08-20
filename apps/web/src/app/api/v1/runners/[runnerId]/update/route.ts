@@ -1,6 +1,6 @@
 import {
   runnerAgentInstallationResultSchema,
-  updateRunnerAgentInputSchema,
+  updateRunnerAgentRequestSchema,
 } from "@autoforge/contracts";
 import { DomainError } from "@autoforge/domain";
 import { NextResponse } from "next/server";
@@ -8,6 +8,7 @@ import { NextResponse } from "next/server";
 import { apiErrorResponse, readJsonBody, rejectRateLimited } from "@/lib/api-response";
 import { authorizeRequest, requestId, requireSameOrigin } from "@/lib/auth";
 import { getPlatformServices } from "@/lib/services";
+import { updateRunnerAgent, type RunnerAgentUpdateTarget } from "@/lib/runner-agent-update";
 
 export const runtime = "nodejs";
 
@@ -19,7 +20,7 @@ export async function POST(request: Request, context: Context): Promise<NextResp
     requireSameOrigin(request);
     const identity = await authorizeRequest(request, "runner.manage");
     const { runnerId } = await context.params;
-    const input = updateRunnerAgentInputSchema.parse(await readJsonBody(request, 96 * 1024));
+    const input = updateRunnerAgentRequestSchema.parse(await readJsonBody(request, 96 * 1024));
     const services = await getPlatformServices();
     rejectRateLimited(
       await services.runnerRequestLimiter.allow(
@@ -29,42 +30,55 @@ export async function POST(request: Request, context: Context): Promise<NextResp
       ),
     );
     const runner = await services.runnerControl.get(runnerId);
-    if (runner.deregisteredAt || runner.purgedAt) {
-      throw new DomainError("RUNNER_UPDATE_NOT_ALLOWED", "执行机已注销，不能原地更新。", {
-        details: { runnerId },
-      });
+    let target: RunnerAgentUpdateTarget;
+    if ("profileId" in input) {
+      const stored = await services.runnerInstallationProfiles.connectionByProfileId(
+        input.profileId,
+      );
+      if (stored.profile.runnerId && stored.profile.runnerId !== runnerId) {
+        throw new DomainError(
+          "RUNNER_INSTALLATION_PROFILE_MISMATCH",
+          "保存的连接信息不属于当前执行机。",
+        );
+      }
+      target = {
+        connection: stored.connection,
+        expectedHostKeySha256: stored.profile.expectedHostKeySha256,
+        installationMode: stored.profile.installationMode,
+        runAsRoot: stored.profile.runAsRoot,
+        ...(stored.profile.dataDirectory ? { dataDirectory: stored.profile.dataDirectory } : {}),
+        ...(stored.caCertificatePem ? { caCertificatePem: stored.caCertificatePem } : {}),
+      };
+    } else {
+      target = {
+        connection: input.connection,
+        expectedHostKeySha256: input.expectedHostKeySha256,
+        installationMode: input.installationMode,
+        runAsRoot: input.runAsRoot,
+        ...(input.dataDirectory ? { dataDirectory: input.dataDirectory } : {}),
+        ...(input.caCertificatePem ? { caCertificatePem: input.caCertificatePem } : {}),
+      };
     }
-    // 原地更新保留执行机既有配置与身份：名称、标签、并发与终端开关以平台记录为准，
-    // 不允许通过更新动作改动；Agent 侧已有持久身份时会忽略新 bootstrap token。
-    // 工作目录未显式指定时读回远端配置沿用，避免把既有部署重置回默认目录。
-    const dataDirectory =
-      input.dataDirectory ??
-      (await services.runnerAgentInstaller.readRemoteDataDirectory(
-        input.connection,
-        input.expectedHostKeySha256,
-      ));
-    const result = runnerAgentInstallationResultSchema.parse(
-      await services.runnerAgentInstaller.install({
-        ...input,
-        dataDirectory,
-        name: runner.name,
-        labels: runner.labels,
-        maxConcurrency: runner.maxConcurrency,
-        terminalEnabled: runner.terminalEnabled,
-      }),
-    );
+    const updated = await updateRunnerAgent(services.runnerAgentInstaller, runner, target);
+    const profile = await services.runnerInstallationProfiles.save({
+      runnerId,
+      runnerName: runner.name,
+      ...target,
+      dataDirectory: updated.dataDirectory,
+    });
+    const result = runnerAgentInstallationResultSchema.parse({ ...updated, profileId: profile.id });
     await services.identityAccess.recordAuthorizedOperation(identity, {
       action: "runner.update.complete",
       resourceType: "runner",
       resourceId: runnerId,
       requestId: currentRequestId,
       details: {
-        host: input.connection.host,
+        host: target.connection.host,
         fromVersion: runner.agentVersion,
         toVersion: result.agentVersion,
-        runAsRoot: input.runAsRoot,
-        installationMode: input.installationMode,
-        dataDirectory,
+        runAsRoot: target.runAsRoot,
+        installationMode: target.installationMode,
+        dataDirectory: updated.dataDirectory,
       },
     });
     return NextResponse.json(result);

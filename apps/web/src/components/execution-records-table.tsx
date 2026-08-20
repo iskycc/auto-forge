@@ -138,10 +138,19 @@ export function ExecutionRecordsTable({ rows }: { rows: ExecutionRecordRow[] }) 
 
   const columnWidth = (column: ExecutionRecordColumnDefinition): number =>
     widths[column.key] ?? automaticWidths[column.key];
+  // table-layout: fixed 只有在表格拥有确定宽度时才会完全忽略单元格的内在宽度。
+  // 直接使用各列宽度之和，避免某个超长且不可换行的任务名通过 max-content 撑宽整列。
+  const tableWidth = EXECUTION_RECORD_COLUMNS.reduce(
+    (total, column) => total + columnWidth(column),
+    0,
+  );
 
   return (
     <div className="table-scroll resizable-table-scroll">
-      <table className="data-table execution-records-table resizable-table">
+      <table
+        className="data-table execution-records-table resizable-table"
+        style={{ width: tableWidth }}
+      >
         <colgroup>
           {EXECUTION_RECORD_COLUMNS.map((column) => (
             <col key={column.key} style={{ width: columnWidth(column) }} />

@@ -6,6 +6,7 @@ import {
   runnerHostProbeResultSchema,
   type RunnerAgentInstallationResult,
   type RunnerHostProbeResult,
+  type RunnerInstallationProfile,
 } from "@autoforge/contracts";
 import { CheckCircle2, Download, Fingerprint, Search, ShieldAlert, X } from "lucide-react";
 import { useRouter } from "next/navigation";
@@ -17,28 +18,30 @@ type RunnerUpdateDialogProps = {
   runnerId: string;
   runnerName: string;
   latestVersion: string;
+  profile?: RunnerInstallationProfile;
 };
 
 export function RunnerUpdateDialog({
   runnerId,
   runnerName,
   latestVersion,
+  profile,
 }: RunnerUpdateDialogProps) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
-  const [host, setHost] = useState("");
-  const [port, setPort] = useState(22);
-  const [username, setUsername] = useState("");
+  const [host, setHost] = useState(profile?.host ?? "");
+  const [port, setPort] = useState(profile?.port ?? 22);
+  const [username, setUsername] = useState(profile?.username ?? "");
   const [password, setPassword] = useState("");
-  const [runAsRoot, setRunAsRoot] = useState(false);
-  const [dataDirectory, setDataDirectory] = useState("");
+  const [runAsRoot, setRunAsRoot] = useState(profile?.runAsRoot ?? false);
+  const [dataDirectory, setDataDirectory] = useState(profile?.dataDirectory ?? "");
   const [installationMode, setInstallationMode] = useState<
     "auto" | "ubuntu" | "opensuse" | "opensuse-leap" | "opensuse-tumbleweed"
-  >("auto");
+  >(profile?.installationMode ?? "auto");
   const [probe, setProbe] = useState<RunnerHostProbeResult>();
   const [fingerprintConfirmed, setFingerprintConfirmed] = useState(false);
   const [result, setResult] = useState<RunnerAgentInstallationResult>();
-  const [pending, setPending] = useState<"probe" | "update">();
+  const [pending, setPending] = useState<"probe" | "update" | "stored">();
   const [error, setError] = useState("");
 
   function connectionChanged(change: () => void) {
@@ -100,6 +103,23 @@ export function RunnerUpdateDialog({
     }
   }
 
+  async function updateWithStoredProfile() {
+    if (!profile) return;
+    setPending("stored");
+    setError("");
+    try {
+      const response = await postJson(`/api/v1/runners/${runnerId}/update`, {
+        profileId: profile.id,
+      });
+      setResult(runnerAgentInstallationResultSchema.parse(response));
+      router.refresh();
+    } catch (cause) {
+      setError(errorMessage(cause));
+    } finally {
+      setPending(undefined);
+    }
+  }
+
   return (
     <>
       <Button
@@ -135,8 +155,25 @@ export function RunnerUpdateDialog({
               <p className="runner-update-hint">
                 原地更新会保留执行机身份、凭据与历史执行记录，仅替换 Agent
                 并重启服务；名称、标签与并发以平台记录为准。更新前自动备份，失败可在自动安装面板回滚。SSH
-                密码仅在本次操作的内存中使用，不会保存。
+                连接信息会使用平台主密钥 AES-GCM 加密保存，后续可直接单机或批量更新。
               </p>
+              {profile ? (
+                <div className="inline-notice" role="status">
+                  <CheckCircle2 size={18} />
+                  <span>
+                    已保存 {profile.username}@{profile.host}:{profile.port} 的加密连接信息。
+                    <Button
+                      className="button button-primary compact-button"
+                      disabled={Boolean(pending)}
+                      onClick={() => void updateWithStoredProfile()}
+                      type="button"
+                    >
+                      <Download size={15} />
+                      {pending === "stored" ? "正在更新…" : "使用已保存连接更新"}
+                    </Button>
+                  </span>
+                </div>
+              ) : null}
               <div className="runner-update-grid">
                 <label>
                   执行机 IP / 主机名

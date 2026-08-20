@@ -41,6 +41,9 @@ describe("analytics fact semantics", () => {
         "java.lang.AssertionError: expected 200 but was 500",
       ),
     ).toBe("java.lang.assertionerror: expected <n> but was <n>");
+    expect(
+      failureSignature("failed", "PROCESS_START_FAILED", "failed to start the process"),
+    ).toBeNull();
   });
 
   it("uses method totals for daily trends, descriptions for failures and names for flaky cases", () => {
@@ -88,6 +91,28 @@ describe("analytics fact semantics", () => {
       ],
     });
     expect(summary.failures).toHaveLength(1);
+  });
+
+  it("keeps retryable Runner failures out of quality analytics", () => {
+    const summary = aggregateAnalytics(
+      [
+        fact("attempt-1", "2026-08-19T01:00:00.000Z", "succeeded", "TESTNG_SUCCEEDED", 1, 0),
+        fact("attempt-2", "2026-08-19T02:00:00.000Z", "failed", "PROCESS_START_FAILED", 0, 0, {
+          failureSignature: "failed to start the process",
+          failureDescription: "failed to start the process",
+        }),
+      ],
+      "2026-08-20T00:00:00.000Z",
+    );
+
+    expect(summary).toMatchObject({
+      sampleCount: 1,
+      passed: 1,
+      failed: 0,
+      successRate: 1,
+      failures: [],
+      flakyCases: [],
+    });
   });
 });
 

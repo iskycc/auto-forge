@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import type { ExecutionRun, RunAttempt, RunBatch } from "../src/run-batch";
-import { summarizeAllRunBatchRounds, summarizeRunBatchRounds } from "../src/run-batch";
+import {
+  summarizeAllRunBatchRounds,
+  summarizeRunBatchFinalResults,
+  summarizeRunBatchRounds,
+} from "../src/run-batch";
 
 describe("summarizeRunBatchRounds", () => {
   it("aggregates multiple rounds in round mode", () => {
@@ -222,6 +226,29 @@ describe("summarizeRunBatchRounds", () => {
       cancelled: 0,
       notExecuted: 1,
       passRate: 40,
+    });
+  });
+
+  it("summarizes final case outcomes without counting retry attempts as extra cases", () => {
+    const batch = makeBatch({ retryMode: "round", retryLimit: 2, currentRound: 3, totalRuns: 3 });
+    const runs = [makeRun("run-1"), makeRun("run-2"), makeRun("run-3")];
+    const attempts = [
+      makeAttempt("a1", "run-1", 1, "succeeded"),
+      makeAttempt("a2", "run-2", 1, "failed"),
+      makeAttempt("a3", "run-3", 1, "failed"),
+      makeAttempt("a4", "run-2", 2, "succeeded"),
+      makeAttempt("a5", "run-3", 2, "failed"),
+      makeAttempt("a6", "run-3", 3, "timed_out"),
+    ];
+
+    expect(summarizeRunBatchFinalResults(batch, runs, attempts)).toEqual({
+      totalRuns: 3,
+      passed: 2,
+      failed: 0,
+      timedOut: 1,
+      cancelled: 0,
+      notExecuted: 0,
+      passRate: 67,
     });
   });
 

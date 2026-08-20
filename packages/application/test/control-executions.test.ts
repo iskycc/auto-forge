@@ -5,6 +5,7 @@ import type {
   ExecutionControlRepository,
   JarObjectStorePort,
   RunBatchRepository,
+  RunBatchSchedulingPort,
   RunnerRepository,
 } from "../src/ports";
 
@@ -16,6 +17,13 @@ function batchesRepositoryFake(): RunBatchRepository {
     get: vi.fn().mockResolvedValue(null),
     listReusableBatchIdsForRunner: vi.fn().mockResolvedValue([]),
   } as unknown as RunBatchRepository;
+}
+
+function schedulingFake(): RunBatchSchedulingPort {
+  return {
+    schedule: vi.fn().mockResolvedValue(undefined),
+    scheduleForRunner: vi.fn().mockResolvedValue(0),
+  };
 }
 
 describe("execution log redaction", () => {
@@ -77,6 +85,7 @@ describe("execution secret acquisition", () => {
       { now: () => new Date("2026-08-09T00:00:00.000Z") },
       { next: () => "audit-1" },
       batchesRepositoryFake(),
+      schedulingFake(),
     );
 
     await expect(
@@ -136,6 +145,7 @@ describe("execution data scope", () => {
       { now: () => new Date("2026-08-09T00:00:00.000Z") },
       { next: () => "id-1" },
       batchesRepositoryFake(),
+      schedulingFake(),
     );
 
     await expect(
@@ -178,6 +188,7 @@ describe("Runner execution compatibility", () => {
     } as unknown as RunnerRepository;
     const batches = batchesRepositoryFake();
     vi.mocked(batches.listReusableBatchIdsForRunner).mockResolvedValue(["batch-open"]);
+    const scheduling = schedulingFake();
     const service = new ExecutionControlService(
       executions,
       runners,
@@ -192,6 +203,7 @@ describe("Runner execution compatibility", () => {
       { now: () => new Date("2026-08-09T00:00:00.000Z") },
       { next: () => "id-1" },
       batches,
+      scheduling,
     );
 
     await expect(
@@ -209,6 +221,7 @@ describe("Runner execution compatibility", () => {
       closedBatchIds: ["batch-closed", "batch-foreign"],
     });
     expect(executions.claim).toHaveBeenCalledOnce();
+    expect(scheduling.scheduleForRunner).toHaveBeenCalledWith("runner-no-cgroup");
   });
 
   it("writes scheduling events for attempts recovered before claiming", async () => {
@@ -257,6 +270,7 @@ describe("Runner execution compatibility", () => {
         appended.push(events);
       }),
     } as unknown as RunBatchRepository;
+    const scheduling = schedulingFake();
     const service = new ExecutionControlService(
       executions,
       runners,
@@ -271,6 +285,7 @@ describe("Runner execution compatibility", () => {
       { now: () => new Date("2026-08-09T00:00:00.000Z") },
       { next: () => "id-1" },
       batches,
+      scheduling,
     );
 
     await service.claim("runner-1", "credential", {
@@ -283,6 +298,7 @@ describe("Runner execution compatibility", () => {
     });
 
     expect(appended).toHaveLength(1);
+    expect(scheduling.scheduleForRunner).toHaveBeenCalledWith("runner-1");
     expect(appended[0]).toEqual([
       expect.objectContaining({
         batchId: "batch-1",
@@ -358,6 +374,7 @@ describe("attempt completion scheduling events", () => {
       { now: () => new Date("2026-08-09T00:00:00.000Z") },
       { next: () => "event-id" },
       batches,
+      schedulingFake(),
     );
     return { service, appended, executions };
   }
@@ -413,9 +430,14 @@ describe("attempt completion scheduling events", () => {
         id: "event-id",
         batchId: "batch-1",
         executionRunId: "run-1",
+        attemptId: "attempt-1",
         eventType: "run_held_for_round",
         message: "该用例已失败，等待下一轮重试（TESTNG_FAILURE）",
-        payload: { heldRound: 1, resultCode: "TESTNG_FAILURE" },
+        payload: {
+          heldRound: 1,
+          resultCode: "TESTNG_FAILURE",
+          summary: "1 个用例失败",
+        },
         recordedAt: "2026-08-09T00:00:00.000Z",
       },
     ]);
@@ -559,6 +581,7 @@ describe("artifact transfer orchestration", () => {
       { now: () => new Date("2026-08-09T00:00:00.000Z") },
       { next: () => "id-1" },
       batchesRepositoryFake(),
+      schedulingFake(),
     );
 
     await expect(
@@ -687,6 +710,7 @@ describe("failure summary log fallback", () => {
       { now: () => new Date("2026-08-09T00:00:00.000Z") },
       { next: () => "event-id" },
       batchesRepositoryFake(),
+      schedulingFake(),
     );
     return { service, executions, listLogChunks };
   }

@@ -8,6 +8,22 @@ and known limitations.
 
 ### Changed
 
+- Execution records now give the table an explicit fixed-layout pixel width derived from the
+  70th-percentile column widths, so a single long cell cannot make every row in that column wider.
+- Successful Runner installation/manual update now stores the SSH host, port, username, password
+  and optional private CA as an AES-256-GCM encrypted connection profile. Saved profiles support
+  passwordless reinstall/update from the browser and bounded four-way batch updates of up to 50
+  Runners with per-node results.
+- Batch details add a virtual `总结` round with exactly one final row per initial case. A case that
+  passes in any attempt counts once as passed; otherwise its latest attempt supplies the final result.
+- Runner/infrastructure result codes now receive up to two immediate rescheduling attempts independent
+  of the configured case-failure retry budget. Scheduling prefers a different eligible Runner, falls
+  back for single-Runner deployments, and exposes grouped Runner incidents from the execution detail.
+  These recoverable infrastructure attempts are excluded from TestNG quality rates, failure insight
+  clusters and flaky-case detection.
+- Runner capacity accounting now includes assignments in every non-terminal batch phase, including
+  `dispatching` and `scheduled`, preventing claim-triggered recovery scheduling from exceeding the
+  declared concurrency before the first Agent claim updates the batch to `running`.
 - GitHub Actions now partitions Full, network-blocked Lite, tagged-source quality and published
   Release acceptance into independent state-isolated jobs. The longest browser and infrastructure
   paths no longer serialize unrelated scenarios behind one 10-17 minute job.
@@ -22,6 +38,14 @@ and known limitations.
 
 ### Tests
 
+- Added domain and dual-database contracts for independent infrastructure retry budgets, immediate
+  round-mode recovery and alternate-Runner preference; browser coverage verifies the summary round,
+  incident dialog and fixed table geometry after injecting an extreme long cell.
+- Added dual-database capacity regressions for scheduled/dispatching batches and analytics coverage
+  proving recoverable Runner failures remain available as incidents without becoming test failures.
+- Added AES-GCM/profile service and SQLite/PostgreSQL repository tests. The real SSH/systemd scenario
+  verifies that APIs never return the password and updates an installed Runner through its saved
+  encrypted profile in the batch endpoint.
 - Added workflow contract coverage that rejects reintroducing the unpartitioned Full and offline
   commands and verifies the post-publication acceptance matrix retains asset, Agent, LDAP, backup,
   rollback and upgrade coverage.
@@ -29,6 +53,21 @@ and known limitations.
   depending on another browser scenario to run first.
 - Stabilized the batch-shared-input E2E by waiting for Agent workspace links to finish materializing
   after a later attempt reports `running`, removing a filesystem sampling race.
+
+### Database
+
+- Added SQLite migration `0033_runner_installation_profiles.sql` and PostgreSQL migration
+  `0032_runner_installation_profiles.sql`. Existing Runner rows are unchanged; connection profiles
+  are created only after a successful install or manual update.
+- Added SQLite migration `0034_runner_fault_scheduling_events.sql` and PostgreSQL migration
+  `0033_runner_fault_scheduling_events.sql` so the persisted scheduling-event constraint accepts
+  the additive `runner_fault_rescheduled` incident event without changing existing history.
+
+### Compatibility
+
+- Runner Protocol schema v1 and Runner binaries are unchanged. The new management request variants
+  and infrastructure scheduling events are additive; existing manual install/update requests remain
+  accepted.
 
 ## 0.9.0 - 2026-08-20
 

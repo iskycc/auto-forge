@@ -10,6 +10,7 @@ import {
   type RunnerAgentInstallationResult,
   type RunnerAgentRollbackResult,
   type RunnerHostProbeResult,
+  type RunnerInstallationProfile,
 } from "@autoforge/contracts";
 import { CheckCircle2, Fingerprint, HardDriveDownload, Search, ShieldAlert } from "lucide-react";
 import { useRouter } from "next/navigation";
@@ -17,9 +18,10 @@ import { useState } from "react";
 
 type RunnerAgentInstallerProps = {
   controlPlaneUrl: string | undefined;
+  profiles: readonly RunnerInstallationProfile[];
 };
 
-export function RunnerAgentInstaller({ controlPlaneUrl }: RunnerAgentInstallerProps) {
+export function RunnerAgentInstaller({ controlPlaneUrl, profiles }: RunnerAgentInstallerProps) {
   const router = useRouter();
   const [host, setHost] = useState("");
   const [port, setPort] = useState(22);
@@ -35,11 +37,12 @@ export function RunnerAgentInstaller({ controlPlaneUrl }: RunnerAgentInstallerPr
     "auto" | "ubuntu" | "opensuse" | "opensuse-leap" | "opensuse-tumbleweed"
   >("auto");
   const [caCertificatePem, setCaCertificatePem] = useState("");
+  const [selectedProfileId, setSelectedProfileId] = useState("");
   const [probe, setProbe] = useState<RunnerHostProbeResult>();
   const [fingerprintConfirmed, setFingerprintConfirmed] = useState(false);
   const [result, setResult] = useState<RunnerAgentInstallationResult>();
   const [rollbackResult, setRollbackResult] = useState<RunnerAgentRollbackResult>();
-  const [pending, setPending] = useState<"probe" | "install" | "rollback">();
+  const [pending, setPending] = useState<"probe" | "install" | "stored-install" | "rollback">();
   const [error, setError] = useState("");
 
   function connectionChanged(change: () => void) {
@@ -106,6 +109,31 @@ export function RunnerAgentInstaller({ controlPlaneUrl }: RunnerAgentInstallerPr
     }
   }
 
+  async function installFromStoredProfile() {
+    if (!selectedProfileId) return;
+    setPending("stored-install");
+    setError("");
+    setRollbackResult(undefined);
+    try {
+      const response = await postJson("/api/v1/runners/installations", {
+        profileId: selectedProfileId,
+        name,
+        labels: labels
+          .split(",")
+          .map((label) => label.trim())
+          .filter(Boolean),
+        maxConcurrency,
+        terminalEnabled,
+      });
+      setResult(runnerAgentInstallationResultSchema.parse(response));
+      router.refresh();
+    } catch (cause) {
+      setError(errorMessage(cause));
+    } finally {
+      setPending(undefined);
+    }
+  }
+
   async function rollbackAgent() {
     if (!probe || !fingerprintConfirmed) return;
     if (!window.confirm("回滚到该执行机上一次成功安装的 Agent？服务会短暂重启。")) return;
@@ -140,7 +168,7 @@ export function RunnerAgentInstaller({ controlPlaneUrl }: RunnerAgentInstallerPr
           <h2>自动安装执行机 Agent</h2>
           <p>
             平台通过 SSH 探测目标主机，核验指纹后上传内置静态 Agent，并配置为 systemd 服务。SSH
-            密码仅在本次操作的内存中使用，不会保存。
+            连接信息会使用平台主密钥 AES-GCM 加密保存，后续安装或批量更新无需重复输入密码。
           </p>
         </div>
       </div>
@@ -160,6 +188,50 @@ export function RunnerAgentInstaller({ controlPlaneUrl }: RunnerAgentInstallerPr
         <div className="inline-notice warning-notice" role="status">
           <ShieldAlert size={18} />
           <span>当前使用明文 HTTP，Runner 凭据和任务数据不会被传输层加密，请仅用于可信内网。</span>
+        </div>
+      ) : null}
+
+      {profiles.length > 0 ? (
+        <div className="runner-saved-profile-row">
+          <label>
+            已保存连接
+            <Select
+              disabled={Boolean(pending)}
+              onChange={(event) => {
+                const profileId = event.target.value;
+                setSelectedProfileId(profileId);
+                const profile = profiles.find((candidate) => candidate.id === profileId);
+                if (!profile) return;
+                setHost(profile.host);
+                setPort(profile.port);
+                setUsername(profile.username);
+                setName(profile.runnerName);
+                setInstallationMode(profile.installationMode);
+                setRunAsRoot(profile.runAsRoot);
+                setDataDirectory(profile.dataDirectory ?? "");
+                setPassword("");
+                setProbe(undefined);
+                setFingerprintConfirmed(false);
+              }}
+              value={selectedProfileId}
+            >
+              <option value="">选择已保存的执行机连接</option>
+              {profiles.map((profile) => (
+                <option key={profile.id} value={profile.id}>
+                  {profile.runnerName} · {profile.username}@{profile.host}:{profile.port}
+                </option>
+              ))}
+            </Select>
+          </label>
+          <Button
+            className="button button-primary"
+            disabled={!selectedProfileId || !name.trim() || Boolean(pending)}
+            onClick={() => void installFromStoredProfile()}
+            type="button"
+          >
+            <HardDriveDownload size={16} />
+            {pending === "stored-install" ? "正在重新安装…" : "使用已保存连接安装"}
+          </Button>
         </div>
       ) : null}
 

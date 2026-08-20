@@ -1,4 +1,5 @@
 import { DomainError } from "./errors";
+import { MAX_RUNNER_FAILURE_RESCHEDULES } from "./attempt-result";
 import type {
   ExecutionRun,
   ExecutionRunStatus,
@@ -163,12 +164,18 @@ export function outcomeAfterCompletion(input: {
   attemptNumber: number;
   retryLimit: number;
   cancellationRequested: boolean;
+  retryableRunnerFailure?: boolean;
+  runnerFailuresBefore?: number;
+  ordinaryFailuresBefore?: number;
 }): { runStatus: "queued" | "succeeded" | "failed" | "cancelled"; retryScheduled: boolean } {
   if (input.outcome === "succeeded") return { runStatus: "succeeded", retryScheduled: false };
   if (input.outcome === "cancelled" || input.cancellationRequested) {
     return { runStatus: "cancelled", retryScheduled: false };
   }
-  const retryScheduled = input.attemptNumber <= input.retryLimit;
+  const failuresBefore = Math.max(0, input.attemptNumber - 1);
+  const retryScheduled = input.retryableRunnerFailure
+    ? (input.runnerFailuresBefore ?? failuresBefore) < MAX_RUNNER_FAILURE_RESCHEDULES
+    : (input.ordinaryFailuresBefore ?? failuresBefore) < input.retryLimit;
   return { runStatus: retryScheduled ? "queued" : "failed", retryScheduled };
 }
 

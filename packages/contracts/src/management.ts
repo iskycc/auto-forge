@@ -137,7 +137,7 @@ export const runnerRegistrationResultSchema = z.object({
   heartbeatIntervalSeconds: z.number().int().min(5).max(300),
 });
 
-const runnerHostConnectionSchema = z.object({
+export const runnerHostConnectionSchema = z.object({
   host: z
     .string()
     .trim()
@@ -217,6 +217,19 @@ export const installRunnerAgentInputSchema = z.object({
     .optional(),
 });
 
+export const installRunnerAgentFromProfileInputSchema = z.object({
+  profileId: z.string().min(1),
+  name: z.string().trim().min(1).max(128),
+  labels: z.array(z.string().trim().min(1).max(64)).max(64).default([]),
+  maxConcurrency: z.number().int().min(1).max(64).default(1),
+  terminalEnabled: z.boolean().default(false),
+});
+
+export const installRunnerAgentRequestSchema = z.union([
+  installRunnerAgentInputSchema,
+  installRunnerAgentFromProfileInputSchema,
+]);
+
 export const updateRunnerAgentInputSchema = installRunnerAgentInputSchema.omit({
   name: true,
   labels: true,
@@ -231,6 +244,56 @@ export const runnerAgentInstallationResultSchema = z.object({
   architecture: z.enum(["amd64", "arm64"]),
   agentVersion: z.string().min(1),
   serviceName: z.literal("autoforge-agent.service"),
+  profileId: z.string().min(1).optional(),
+});
+
+export const runnerInstallationProfileSchema = z.object({
+  id: z.string().min(1),
+  runnerId: z.string().min(1).optional(),
+  runnerName: z.string().min(1).max(128),
+  host: z.string().min(1).max(255),
+  port: z.number().int().min(1).max(65_535),
+  username: z.string().min(1).max(64),
+  expectedHostKeySha256: z.string().regex(/^SHA256:[a-zA-Z0-9+/]{43}$/),
+  installationMode: runnerInstallationModeSchema,
+  runAsRoot: z.boolean(),
+  dataDirectory: runnerDataDirectorySchema.optional(),
+  hasStoredPassword: z.literal(true),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+});
+
+export const runnerInstallationProfileListSchema = z.object({
+  items: z.array(runnerInstallationProfileSchema).max(500),
+});
+
+export const updateRunnerAgentFromProfileInputSchema = z.object({
+  profileId: z.string().min(1),
+});
+
+export const updateRunnerAgentRequestSchema = z.union([
+  updateRunnerAgentInputSchema,
+  updateRunnerAgentFromProfileInputSchema,
+]);
+
+export const batchUpdateRunnerAgentsInputSchema = z.object({
+  runnerIds: z
+    .array(z.string().min(1))
+    .min(1)
+    .max(50)
+    .transform((ids) => [...new Set(ids)]),
+});
+
+export const batchUpdateRunnerAgentsResultSchema = z.object({
+  items: z.array(
+    z.object({
+      runnerId: z.string().min(1),
+      runnerName: z.string().min(1),
+      status: z.enum(["updated", "missing_profile", "failed"]),
+      message: z.string().min(1),
+      agentVersion: z.string().min(1).optional(),
+    }),
+  ),
 });
 
 export const rollbackRunnerAgentInputSchema = z.object({
@@ -328,10 +391,14 @@ export type DeleteCaseSourceInput = z.infer<typeof deleteCaseSourceInputSchema>;
 export type RunnerRegistrationInput = z.infer<typeof runnerRegistrationInputSchema>;
 export type RunnerRegistrationResult = z.infer<typeof runnerRegistrationResultSchema>;
 export type ProbeRunnerHostInput = z.infer<typeof probeRunnerHostInputSchema>;
+export type RunnerHostConnection = z.infer<typeof runnerHostConnectionSchema>;
+export type RunnerInstallationMode = z.infer<typeof runnerInstallationModeSchema>;
 export type RunnerHostProbeResult = z.infer<typeof runnerHostProbeResultSchema>;
 export type InstallRunnerAgentInput = z.infer<typeof installRunnerAgentInputSchema>;
 export type UpdateRunnerAgentInput = z.infer<typeof updateRunnerAgentInputSchema>;
 export type RunnerAgentInstallationResult = z.infer<typeof runnerAgentInstallationResultSchema>;
+export type RunnerInstallationProfile = z.infer<typeof runnerInstallationProfileSchema>;
+export type BatchUpdateRunnerAgentsResult = z.infer<typeof batchUpdateRunnerAgentsResultSchema>;
 export type RollbackRunnerAgentInput = z.infer<typeof rollbackRunnerAgentInputSchema>;
 export type RunnerAgentRollbackResult = z.infer<typeof runnerAgentRollbackResultSchema>;
 export type RunnerHeartbeatInput = z.infer<typeof runnerHeartbeatInputSchema>;

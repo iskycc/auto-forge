@@ -151,7 +151,7 @@ export function ExecutionBatchDetails({
           label="当前轮次"
           value={
             batch.retryMode === "round"
-              ? `第 ${batch.currentRound} 轮 / 共 ${batch.retryLimit + 1} 轮`
+              ? `第 ${batch.currentRound} 轮 · 用例重跑上限 ${batch.retryLimit} 次`
               : "立即重跑模式"
           }
         />

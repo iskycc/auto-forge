@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import type {
   ExecutionControlRepository,
   RunBatchRepository,
+  RunBatchSchedulingPort,
   RunnerRepository,
 } from "../src/ports";
 import { RunnerControlService } from "../src/manage-runners";
@@ -13,12 +14,18 @@ function serviceWith(
   runners: Partial<RunnerRepository>,
   executions?: Partial<ExecutionControlRepository>,
   batches?: Partial<RunBatchRepository>,
+  schedulingOverrides?: Partial<RunBatchSchedulingPort>,
 ) {
   const credentials = {
     issue: vi.fn().mockReturnValue("issued-credential"),
     issueBootstrapToken: vi.fn().mockReturnValue("issued-bootstrap-token"),
     hash: vi.fn((value: string) => `hash:${value}`),
     verifyBootstrapToken: vi.fn().mockReturnValue(true),
+  };
+  const scheduling: RunBatchSchedulingPort = {
+    schedule: vi.fn().mockResolvedValue(undefined),
+    scheduleForRunner: vi.fn().mockResolvedValue(0),
+    ...schedulingOverrides,
   };
   const service = new RunnerControlService(
     runners as RunnerRepository,
@@ -27,8 +34,9 @@ function serviceWith(
     { now: () => new Date(now.getTime()) },
     { next: vi.fn().mockReturnValue("event-id") },
     (batches ?? { appendSchedulingEvents: vi.fn() }) as RunBatchRepository,
+    scheduling,
   );
-  return { service, credentials };
+  return { service, credentials, scheduling };
 }
 
 describe("RunnerControlService credentials", () => {
@@ -165,7 +173,7 @@ describe("RunnerControlService credentials", () => {
       displayName: "冒烟用例",
     });
     const appendSchedulingEvents = vi.fn().mockResolvedValue(undefined);
-    const { service } = serviceWith(
+    const { service, scheduling } = serviceWith(
       {
         get: vi.fn().mockResolvedValue({ id: "runner-1", state: "online" }),
         deregister,
@@ -202,7 +210,21 @@ describe("RunnerControlService credentials", () => {
           retryScheduled: true,
         },
       }),
+      expect.objectContaining({
+        batchId: "batch-1",
+        runnerId: "runner-1",
+        executionRunId: "run-1",
+        attemptId: "attempt-1",
+        eventType: "runner_fault_rescheduled",
+        message: "非用例异常导致用例「冒烟用例」自动重新调度（LEASE_EXPIRED）",
+        payload: {
+          resultCode: "LEASE_EXPIRED",
+          summary: "执行机掉线，租约过期未完成",
+          recoveryReason: "lease_expired",
+        },
+      }),
     ]);
+    expect(scheduling.schedule).toHaveBeenCalledWith("batch-1");
   });
 
   it("purges a deregistered runner record", async () => {

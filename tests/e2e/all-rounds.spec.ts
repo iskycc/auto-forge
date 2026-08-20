@@ -243,7 +243,8 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
   await page.getByLabel("执行用例任务").selectOption(suiteId);
   const runnerChoice = page.locator(".runner-choice").filter({ hasText: "E2E All-Rounds Runner" });
   await runnerChoice.locator('input[type="checkbox"]').check();
-  await page.getByLabel("失败用例重跑次数").selectOption("1");
+  // 用户重跑额度为 0；首轮 PROCESS_START_FAILED 仍必须获得独立的执行机异常重调度。
+  await page.getByLabel("失败用例重跑次数").selectOption("0");
   await page.getByLabel("失败重跑方式").selectOption("round");
   const createBatchResponse = page.waitForResponse(
     (response) =>
@@ -272,21 +273,16 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
     const names = await runNames();
     const caseName = names.get(claim.assignment.executionSpec.executionRunId) ?? "";
     const stable = caseName.includes("AllRoundsStableTest");
-    // 最后一个首轮用例完成时先占满 Runner 槽位，确保第 2 轮保留在“有资格但
-    // 尚未调度”的可观察窗口；否则调度器会立即创建 attempt，未执行数理应变为 0。
-    if (claimed === 1) {
-      const fullHeartbeat = await postHeartbeat(page, identity, 2);
-      expect(fullHeartbeat.status()).toBe(200);
-    }
     await completeAttempt(page, identity, claim, {
       completionId: `e2e-allround-r1-${claimed}`,
       status: stable ? "succeeded" : "failed",
-      resultCode: stable ? "TESTNG_SUCCEEDED" : "TEST_ASSERTION_FAILED",
-      summary: stable ? "round 1 passed" : "round 1 intentional failure",
+      resultCode: stable ? "TESTNG_SUCCEEDED" : "PROCESS_START_FAILED",
+      summary: stable ? "round 1 passed" : "failed to create the Runner process",
     });
   }
 
-  // 第 1 轮结束、重跑尚未领取时，轮次总数与未执行数必须立即按本轮资格实时计算。
+  // 基础设施异常不等待整轮结束：第 2 轮 attempt 已调度、尚未领取，
+  // 因此本轮有 1 个用例且未执行数为 0。
   // 首轮失败记录已经终止，即便 execution run 正处于 queued 等待重跑，也不能显示取消按钮。
   await page.goto(`/run-batches/${encodeURIComponent(batch.id)}`);
   const roundTable = page.locator(".execution-round-table");
@@ -295,13 +291,13 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
   await expect(initialRoundRow.locator("td").nth(2)).toHaveText("2");
   await expect(initialRoundRow.locator("td").nth(7)).toHaveText("0");
   await expect(retryRoundRow.locator("td").nth(2)).toHaveText("1");
-  await expect(retryRoundRow.locator("td").nth(7)).toHaveText("1");
+  await expect(retryRoundRow.locator("td").nth(7)).toHaveText("0");
   await page.getByRole("button", { name: "初始轮次", exact: true }).click();
   const failedFirstRoundRow = page.locator(".round-cases tbody tr").filter({ hasText: "失败" });
   await expect(failedFirstRoundRow).toHaveCount(1);
   await expect(failedFirstRoundRow.getByRole("button", { name: "取消该用例" })).toHaveCount(0);
 
-  // 整轮轮次模式：第 1 轮结束后统一释放失败用例进入第 2 轮。
+  // 释放 Runner 槽位并领取已自动重调度的第 2 轮。
   const idleHeartbeat = await postHeartbeat(page, identity, 0);
   expect(idleHeartbeat.status()).toBe(200);
   const retryClaim = await claimAssignment(page, identity);
@@ -383,8 +379,28 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
   await expect(casesRegion.locator("tbody").getByText("未执行")).toHaveCount(0);
   await captureUi(page, "round-two-cases");
 
-  // 初始轮次仍包含两个用例。
+  // “总结”按初始用例去重：首轮通过 + 重试通过共 2 个，通过率 100%，列表也只有 2 行。
+  const summaryRow = roundTable.getByRole("row", { name: /总结/ });
+  await expect(summaryRow.locator("td").nth(2)).toHaveText("2");
+  await expect(summaryRow.locator("td").nth(3)).toHaveText("100%");
+  await expect(summaryRow.locator("td").nth(5)).toHaveText("2");
+  await expect(summaryRow.locator("td").nth(6)).toHaveText("0");
+  await page.getByRole("button", { name: "总结", exact: true }).click();
+  await expect(page).toHaveURL(/round=summary/);
+  await expect(casesRegion.getByRole("row", { name: /AllRounds/ })).toHaveCount(2);
+
+  // PROCESS_START_FAILED 属于执行机异常：保留原失败记录、自动重新调度，并在执行机视图聚合展示。
   await page.getByRole("button", { name: "初始轮次", exact: true }).click();
+  await page.getByRole("button", { name: "执行机", exact: true }).click();
+  await page.getByRole("button", { name: /执行机异常 1/ }).click();
+  const faultDialog = page.getByRole("dialog", { name: "执行机异常事件" });
+  await expect(faultDialog).toContainText("PROCESS_START_FAILED");
+  await expect(faultDialog).toContainText("failed to create the Runner process");
+  await expect(faultDialog).toContainText("AllRoundsFlakyTest");
+  await faultDialog.getByRole("button", { name: "关闭" }).click();
+
+  // 初始轮次仍包含两个用例。
+  await page.getByRole("button", { name: "用例", exact: true }).click();
   await expect(casesRegion.getByRole("row", { name: /AllRounds/ })).toHaveCount(2);
 
   // 全部轮次导出：scope=all，Excel 首列为轮次，文件名带 all-rounds。
@@ -412,4 +428,32 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
     unzipSync(exportBody)["xl/sharedStrings.xml"],
   );
   expect(sharedStrings).toContain("轮次");
+
+  // 执行记录真机布局：一个极端长值只能在自身单元格内截断，不能改变列宽或整表宽度。
+  await page.goto("/execution-records");
+  await page.evaluate(() =>
+    window.localStorage.removeItem("autoforge.execution-records.column-widths.v1"),
+  );
+  await page.reload();
+  const executionRecordsTable = page.locator(".execution-records-table");
+  await expect(executionRecordsTable).toBeVisible();
+  const suiteCell = executionRecordsTable.locator("tbody tr").first().locator("td").nth(1);
+  const widthBeforeOutlier = await executionRecordsTable.evaluate((table) => ({
+    table: table.getBoundingClientRect().width,
+    suite: table.querySelectorAll("col")[1]?.getBoundingClientRect().width ?? 0,
+  }));
+  await suiteCell.locator("strong").evaluate((element) => {
+    element.textContent = "单个极端超长任务名称".repeat(200);
+  });
+  const widthAfterOutlier = await executionRecordsTable.evaluate((table) => ({
+    table: table.getBoundingClientRect().width,
+    suite: table.querySelectorAll("col")[1]?.getBoundingClientRect().width ?? 0,
+  }));
+  expect(widthAfterOutlier.table).toBeCloseTo(widthBeforeOutlier.table, 0);
+  expect(widthAfterOutlier.suite).toBeCloseTo(widthBeforeOutlier.suite, 0);
+  const overflow = await suiteCell.evaluate((cell) => ({
+    clientWidth: cell.clientWidth,
+    scrollWidth: cell.scrollWidth,
+  }));
+  expect(overflow.scrollWidth).toBeGreaterThan(overflow.clientWidth);
 });

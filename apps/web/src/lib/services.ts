@@ -20,6 +20,7 @@ import {
   RunBatchExportService,
   RunBatchSchedulingService,
   RunnerControlService,
+  RunnerInstallationProfileService,
   RunnerGroupService,
   type AttemptLogShareRepository,
   type CaseCatalogRepository,
@@ -33,6 +34,7 @@ import {
   type JobQueuePort,
   type RunBatchRepository,
   type RunnerRepository,
+  type RunnerInstallationProfileRepository,
   type RunnerGroupRepository,
   type PlatformStatisticsRepository,
   type PlatformOperationsRepository,
@@ -51,6 +53,7 @@ import {
   SqliteIdentityAccessRepository,
   SqliteRunBatchRepository,
   SqliteRunnerRepository,
+  SqliteRunnerInstallationProfileRepository,
   SqliteRunnerGroupRepository,
   SqlitePlatformStatisticsRepository,
   SqlitePlatformOperationsRepository,
@@ -85,6 +88,7 @@ async function createPlatformServices() {
   let catalog: CaseCatalogRepository;
   let suites: CaseSuiteRepository;
   let runners: RunnerRepository;
+  let runnerInstallationProfileRepository: RunnerInstallationProfileRepository;
   let runnerGroupsRepository: RunnerGroupRepository;
   let identities: IdentityAccessRepository;
   let executions: ExecutionControlRepository;
@@ -110,6 +114,7 @@ async function createPlatformServices() {
     catalog = new SqliteCaseCatalogRepository(database);
     suites = new SqliteCaseSuiteRepository(database);
     runners = new SqliteRunnerRepository(database);
+    runnerInstallationProfileRepository = new SqliteRunnerInstallationProfileRepository(database);
     runnerGroupsRepository = new SqliteRunnerGroupRepository(database);
     identities = new SqliteIdentityAccessRepository(database);
     executions = new SqliteExecutionControlRepository(database, attemptLogs);
@@ -144,6 +149,7 @@ async function createPlatformServices() {
         PostgresExecutionSecretRepository,
         PostgresRunBatchRepository,
         PostgresRunnerRepository,
+        PostgresRunnerInstallationProfileRepository,
         PostgresRunnerGroupRepository,
         PostgresPlatformStatisticsRepository,
         PostgresPlatformOperationsRepository,
@@ -222,6 +228,7 @@ async function createPlatformServices() {
     catalog = new PostgresCaseCatalogRepository(database);
     suites = new PostgresCaseSuiteRepository(database);
     runners = new PostgresRunnerRepository(database);
+    runnerInstallationProfileRepository = new PostgresRunnerInstallationProfileRepository(database);
     runnerGroupsRepository = new PostgresRunnerGroupRepository(database);
     identities = new PostgresIdentityAccessRepository(database);
     executions = new PostgresExecutionControlRepository(database, attemptLogs);
@@ -268,14 +275,6 @@ async function createPlatformServices() {
       secureEqual(value, config.runnerBootstrapToken ?? "") ||
       verifyRunnerBootstrapToken(value, config.masterKey, clock.now()),
   };
-  const runnerControl = new RunnerControlService(
-    runners,
-    runnerCredentials,
-    executions,
-    clock,
-    ids,
-    batches,
-  );
   const runnerGroups = new RunnerGroupService(runnerGroupsRepository, runners, clock, ids);
   const runBatches = new RunBatchSchedulingService(
     batches,
@@ -295,6 +294,16 @@ async function createPlatformServices() {
     config.scheduler.priorityAgingIntervalMinutes,
     projectStructuresRepository,
     runnerGroupsRepository,
+  );
+  const runnerControl = new RunnerControlService(
+    runners,
+    runnerCredentials,
+    executions,
+    clock,
+    ids,
+    batches,
+    runBatches,
+    runnerInstallationProfileRepository,
   );
   const platformOperations = new PlatformOperationsService(
     operationsRepository,
@@ -355,6 +364,12 @@ async function createPlatformServices() {
   }
   if (!infrastructure) throw new Error("Runtime infrastructure was not initialized.");
   const secretCipher = new AesGcmSecretCipher(config.masterKey);
+  const runnerInstallationProfiles = new RunnerInstallationProfileService(
+    runnerInstallationProfileRepository,
+    secretCipher,
+    clock,
+    ids,
+  );
   const identityAccess = new IdentityAccessService(
     identities,
     new ScryptPasswordHasher(),
@@ -383,6 +398,7 @@ async function createPlatformServices() {
     clock,
     ids,
     batches,
+    runBatches,
   );
   const runnerProtocol = new RunnerProtocolController(executionControl);
   // 日志公开访问 token 与 Runner 凭据同构：随机 base64url，库中只留 SHA-256 哈希。
@@ -482,6 +498,7 @@ async function createPlatformServices() {
     runnerControl,
     runnerGroups,
     runnerAgentInstaller,
+    runnerInstallationProfiles,
     runnerAgentResources,
     executionControl,
     runnerProtocol,

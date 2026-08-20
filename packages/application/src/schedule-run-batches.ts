@@ -352,6 +352,12 @@ export class RunBatchSchedulingService {
         ),
         thresholds: this.thresholds,
         metricsFreshAfter: metricsFreshAfter(now, this.metricsMaximumAgeSeconds),
+        excludedRunnerIdsByRun: new Map(
+          Object.entries(snapshot.runnerFailureIdsByRun ?? {}).map(([runId, runnerIds]) => [
+            runId,
+            new Set(runnerIds),
+          ]),
+        ),
         maxAssignments,
       });
       if (plan.decisions.length > 0) {

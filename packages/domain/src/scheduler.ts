@@ -49,6 +49,9 @@ type ScheduleExecutionRunsInput = {
   candidates: SchedulingCandidate[];
   thresholds: SchedulingThresholds;
   metricsFreshAfter: string;
+  // Runner 基础设施异常后的重调度优先避开曾使该 run 异常的节点；若没有其他
+  // 合格节点则允许回退，避免单 Runner 部署永久卡住。
+  excludedRunnerIdsByRun?: ReadonlyMap<string, ReadonlySet<string>>;
   // 批次策略的并发上限换算成本轮最多新增的 assignment 数；缺省表示不限制。
   maxAssignments?: number;
 };
@@ -67,7 +70,13 @@ export function scheduleExecutionRuns(input: ScheduleExecutionRunsInput): Schedu
       unassignedRunIds.push(run.id);
       continue;
     }
-    const selected = bestCandidate(candidates, input.thresholds, input.metricsFreshAfter);
+    const excludedRunnerIds = input.excludedRunnerIdsByRun?.get(run.id);
+    const preferredCandidates = excludedRunnerIds
+      ? candidates.filter((candidate) => !excludedRunnerIds.has(candidate.runner.id))
+      : candidates;
+    const selected =
+      bestCandidate(preferredCandidates, input.thresholds, input.metricsFreshAfter) ??
+      bestCandidate(candidates, input.thresholds, input.metricsFreshAfter);
     if (!selected) {
       unassignedRunIds.push(run.id);
       continue;

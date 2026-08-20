@@ -12,6 +12,7 @@ import { RunnerAgentInstaller } from "@/components/runner-agent-installer";
 import { RunnerTerminal } from "@/components/runner-terminal";
 import { RunnerUpdateDialog } from "@/components/runner-update-dialog";
 import { RunnerGroupManager } from "@/components/runner-group-manager";
+import { BatchRunnerUpdate } from "@/components/batch-runner-update";
 import { SectionTabs } from "@/components/section-tabs";
 import { getPlatformServices } from "@/lib/services";
 import { requirePagePermission } from "@/lib/auth";
@@ -88,6 +89,30 @@ export default async function RunnersPage({
   ).length;
   // 内置 Agent 资源在 dev 环境可能未构建，此时静默隐藏更新提示。
   const bundledAgentVersion = await services.runnerAgentResources.version().catch(() => undefined);
+  const installationProfiles = canManage
+    ? await (async () => {
+        await services.runnerInstallationProfiles.reconcileBindings(runners);
+        return services.runnerInstallationProfiles.list();
+      })()
+    : [];
+  const installationProfileByRunnerId = new Map(
+    installationProfiles.flatMap((profile) =>
+      profile.runnerId ? ([[profile.runnerId, profile]] as const) : [],
+    ),
+  );
+  const updateTargets = bundledAgentVersion
+    ? runners
+        .filter(
+          (runner) =>
+            isAgentUpdateAvailable(runner.agentVersion, bundledAgentVersion) &&
+            !runner.deregisteredAt,
+        )
+        .map((runner) => ({
+          runnerId: runner.id,
+          runnerName: runner.name,
+          hasStoredProfile: installationProfileByRunnerId.has(runner.id),
+        }))
+    : [];
   return (
     <div className="page-stack">
       <section className="page-hero">
@@ -113,7 +138,10 @@ export default async function RunnersPage({
         ]}
       />
       {canManage ? (
-        <RunnerAgentInstaller controlPlaneUrl={services.config.web.publicBaseUrl} />
+        <RunnerAgentInstaller
+          controlPlaneUrl={services.config.web.publicBaseUrl}
+          profiles={installationProfiles}
+        />
       ) : null}
       <section className="runner-metrics">
         <div className="card">
@@ -138,7 +166,12 @@ export default async function RunnersPage({
             <span className="eyebrow">Runner inventory</span>
             <h2>执行机列表</h2>
           </div>
-          <span className="table-count">共 {runners.length} 台</span>
+          <div className="button-row">
+            {canManage && bundledAgentVersion ? (
+              <BatchRunnerUpdate latestVersion={bundledAgentVersion} targets={updateTargets} />
+            ) : null}
+            <span className="table-count">共 {runners.length} 台</span>
+          </div>
         </div>
         {runners.length === 0 ? (
           <div className="empty-state table-empty">
@@ -233,6 +266,9 @@ export default async function RunnersPage({
                         latestVersion={bundledAgentVersion!}
                         runnerId={runner.id}
                         runnerName={runner.name}
+                        {...(installationProfileByRunnerId.get(runner.id)
+                          ? { profile: installationProfileByRunnerId.get(runner.id)! }
+                          : {})}
                       />
                     ) : null}
                     {canManage ? (

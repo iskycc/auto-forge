@@ -80,6 +80,54 @@ describe("dynamic execution scheduler", () => {
     expect(plan.unassignedRunIds).toEqual(["run-1"]);
   });
 
+  it("moves an infrastructure retry to another healthy Runner when possible", () => {
+    const plan = scheduleExecutionRuns({
+      runs: [run("run-1")],
+      candidates: [
+        {
+          runner: runner("runner-fast-but-faulted", {
+            cpu: 5,
+            memory: 10,
+            load: 0.1,
+            concurrency: 4,
+          }),
+          reservedSlots: 0,
+        },
+        {
+          runner: runner("runner-alternative", {
+            cpu: 30,
+            memory: 40,
+            load: 0.4,
+            concurrency: 4,
+          }),
+          reservedSlots: 0,
+        },
+      ],
+      excludedRunnerIdsByRun: new Map([["run-1", new Set(["runner-fast-but-faulted"])]]),
+      thresholds,
+      metricsFreshAfter: freshAfter,
+    });
+
+    expect(plan.decisions[0]?.runnerId).toBe("runner-alternative");
+  });
+
+  it("falls back to the only healthy Runner instead of leaving a retry stuck", () => {
+    const plan = scheduleExecutionRuns({
+      runs: [run("run-1")],
+      candidates: [
+        {
+          runner: runner("runner-only", { cpu: 20, memory: 20, load: 0.2, concurrency: 1 }),
+          reservedSlots: 0,
+        },
+      ],
+      excludedRunnerIdsByRun: new Map([["run-1", new Set(["runner-only"])]]),
+      thresholds,
+      metricsFreshAfter: freshAfter,
+    });
+
+    expect(plan.decisions[0]?.runnerId).toBe("runner-only");
+  });
+
   it("keeps runs queued when metrics are stale or capacity is exhausted", () => {
     const stale = runner("runner-stale", { cpu: 10, memory: 20, load: 0.1, concurrency: 1 });
     stale.resourceSnapshot = { ...stale.resourceSnapshot!, observedAt: "2026-08-08T23:59:00.000Z" };

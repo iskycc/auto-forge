@@ -7,6 +7,7 @@ export * from "./postgres-execution-secret";
 export * from "./postgres-platform-repository";
 export * from "./postgres-run-batch";
 export * from "./postgres-runner-group";
+export * from "./postgres-runner-installation-profile";
 export * from "./postgres-schema";
 export * from "./postgres-platform-statistics";
 export * from "./postgres-platform-operations";

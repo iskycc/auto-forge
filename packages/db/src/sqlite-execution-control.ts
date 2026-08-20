@@ -21,6 +21,7 @@ import {
   isTerminalAttemptStatus,
   isTerminalBatchStatus,
   isTerminalRunStatus,
+  isRetryableRunnerFailure,
   outcomeAfterCompletion,
   transitionAssignment,
   transitionExecutionRun,
@@ -335,11 +336,15 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
         };
         if (!isLate) {
           const effectiveResult = cancellationResult(input.result, control.run_cancel_requested_at);
+          const failureCounts = this.failureCounts(control.execution_run_id);
           const decision = outcomeAfterCompletion({
             outcome: effectiveResult.status,
             attemptNumber: control.attempt_number,
             retryLimit: control.retry_limit,
             cancellationRequested: control.run_cancel_requested_at !== null,
+            retryableRunnerFailure: isRetryableRunnerFailure(effectiveResult.resultCode),
+            runnerFailuresBefore: failureCounts.runner,
+            ordinaryFailuresBefore: failureCounts.ordinary,
           });
           response.retryScheduled = decision.retryScheduled;
           // persistCompletion 内部已聚合批次状态，直接用其返回值判定终态。
@@ -957,7 +962,9 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
         executionRunStatus === "queued" ? null : attemptStatus,
         executionRunStatus === "queued" ? null : control.runner_id,
         executionRunStatus === "queued" ? null : result.resultCode,
-        executionRunStatus === "queued" && control.retry_mode === "round"
+        executionRunStatus === "queued" &&
+          control.retry_mode === "round" &&
+          !isRetryableRunnerFailure(result.resultCode)
           ? control.attempt_number + 1
           : 0,
         input.acceptedAt,
@@ -1102,17 +1109,21 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
   ): RecoveredAttemptExpiration | null {
     const control = this.findAttemptControl(attemptId);
     if (!control || isTerminalAttemptStatus(control.status)) return null;
+    const expiration = attemptExpiration(expirationReason);
+    const failureCounts = this.failureCounts(control.execution_run_id);
     const decision = outcomeAfterCompletion({
       outcome: "timed_out",
       attemptNumber: control.attempt_number,
       retryLimit: control.retry_limit,
       cancellationRequested: control.run_cancel_requested_at !== null,
+      retryableRunnerFailure: isRetryableRunnerFailure(expiration.resultCode),
+      runnerFailuresBefore: failureCounts.runner,
+      ordinaryFailuresBefore: failureCounts.ordinary,
     });
     const attemptStatus = transitionRunAttempt(control.status, "timed_out");
     const runStatus = transitionExecutionRun(control.run_status, decision.runStatus);
     const assignment = this.requiredAssignment(assignmentId);
     const assignmentStatus = transitionAssignment(assignment.status, "expired");
-    const expiration = attemptExpiration(expirationReason);
     this.handle.client
       .prepare(
         "UPDATE assignments SET status = ?, updated_at = ?, version = version + 1 WHERE id = ? AND status IN ('pending', 'claimed', 'running')",
@@ -1135,7 +1146,11 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
         runStatus,
         runStatus === "queued" ? null : attemptStatus,
         runStatus === "queued" ? null : expiration.resultCode,
-        runStatus === "queued" && control.retry_mode === "round" ? control.attempt_number + 1 : 0,
+        runStatus === "queued" &&
+          control.retry_mode === "round" &&
+          !isRetryableRunnerFailure(expiration.resultCode)
+          ? control.attempt_number + 1
+          : 0,
         recordedAt,
         control.execution_run_id,
       );
@@ -1169,6 +1184,22 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
       reason: expirationReason,
       retryScheduled: decision.retryScheduled,
     };
+  }
+
+  private failureCounts(executionRunId: string): { runner: number; ordinary: number } {
+    const rows = this.handle.client
+      .prepare(
+        `SELECT result_code FROM run_attempts
+         WHERE execution_run_id = ? AND status IN ('failed', 'timed_out')`,
+      )
+      .all(executionRunId) as Array<{ result_code: string | null }>;
+    let runner = 0;
+    let ordinary = 0;
+    for (const row of rows) {
+      if (isRetryableRunnerFailure(row.result_code)) runner += 1;
+      else ordinary += 1;
+    }
+    return { runner, ordinary };
   }
 
   private cancelRunWithinTransaction(input: {

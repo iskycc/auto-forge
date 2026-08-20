@@ -96,6 +96,25 @@ describe("buildRoundCaseRows", () => {
     ).toEqual(["run-a:1:done", "run-b:1:done", "run-b:2:pending", "run-c:1:pending"]);
   });
 
+  it("emits one final summary row per initial case using any success or the latest failure", () => {
+    const summaryBatch = {
+      ...batch,
+      currentRound: 3,
+      attempts: [
+        ...batch.attempts,
+        attempt("attempt-b2", "run-b", 2, "failed"),
+        attempt("attempt-b3", "run-b", 3, "succeeded"),
+      ],
+    };
+
+    const rows = buildRoundCaseRows(summaryBatch, "summary");
+
+    expect(rows).toHaveLength(3);
+    expect(rows.find((row) => row.run.id === "run-a")?.attempt?.id).toBe("attempt-a1");
+    expect(rows.find((row) => row.run.id === "run-b")?.attempt?.id).toBe("attempt-b3");
+    expect(rows.find((row) => row.run.id === "run-c")?.attempt).toBeUndefined();
+  });
+
   it("does not offer cancellation on terminal attempts even if the run is queued for retry", () => {
     const failedAttempt = batch.attempts.find((candidate) => candidate.executionRunId === "run-b");
     expect(failedAttempt).toBeDefined();

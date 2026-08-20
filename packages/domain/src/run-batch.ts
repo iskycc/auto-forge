@@ -198,6 +198,10 @@ export type RunBatchAllRoundsSummary = {
   passRate: number;
 };
 
+// “总结”虚拟轮次按初始用例去重：曾在任一轮通过即视为最终通过，否则取该
+// 用例最后一次尝试的结果。字段与全部轮次汇总同构，但 totalRuns 永远不累加重试。
+export type RunBatchFinalSummary = RunBatchAllRoundsSummary;
+
 // 纯函数聚合：不读取系统时间，进行中的轮次 durationMs 为 null，由调用方决定如何倒计时。
 export function summarizeRunBatchRounds(
   batch: RunBatch,
@@ -300,6 +304,63 @@ export function summarizeAllRunBatchRounds(
     ...totals,
     passRate: totals.totalRuns === 0 ? 0 : Math.round((totals.passed / totals.totalRuns) * 100),
   };
+}
+
+export function summarizeRunBatchFinalResults(
+  batch: Pick<RunBatch, "totalRuns">,
+  runs: readonly ExecutionRun[],
+  attempts: readonly RunAttempt[],
+): RunBatchFinalSummary {
+  const finalAttempts = finalRunAttemptByExecutionRun(attempts);
+  let passed = 0;
+  let failed = 0;
+  let timedOut = 0;
+  let cancelled = 0;
+  let notExecuted = 0;
+  for (const run of runs) {
+    const attempt = finalAttempts.get(run.id);
+    const outcome = attempt ? runAttemptOutcome(attempt) : undefined;
+    if (outcome === "succeeded") passed += 1;
+    else if (outcome === "failed") failed += 1;
+    else if (outcome === "timed_out") timedOut += 1;
+    else if (outcome === "cancelled") cancelled += 1;
+    else notExecuted += 1;
+  }
+  return {
+    totalRuns: batch.totalRuns,
+    passed,
+    failed,
+    timedOut,
+    cancelled,
+    notExecuted,
+    passRate: batch.totalRuns === 0 ? 0 : Math.round((passed / batch.totalRuns) * 100),
+  };
+}
+
+/**
+ * 每个用例的最终展示尝试：成功优先于后续异常，未成功时取轮次号最大的尝试。
+ * 这同时供“总结”统计和 UI 行模型复用，避免两处最终口径漂移。
+ */
+export function finalRunAttemptByExecutionRun(
+  attempts: readonly RunAttempt[],
+): ReadonlyMap<string, RunAttempt> {
+  const selected = new Map<string, RunAttempt>();
+  for (const attempt of attempts) {
+    const current = selected.get(attempt.executionRunId);
+    if (!current) {
+      selected.set(attempt.executionRunId, attempt);
+      continue;
+    }
+    const currentSucceeded = runAttemptOutcome(current) === "succeeded";
+    const attemptSucceeded = runAttemptOutcome(attempt) === "succeeded";
+    if (
+      (!currentSucceeded && attemptSucceeded) ||
+      (currentSucceeded === attemptSucceeded && attempt.attemptNumber > current.attemptNumber)
+    ) {
+      selected.set(attempt.executionRunId, attempt);
+    }
+  }
+  return selected;
 }
 
 // 终态 attempt 的不变量保证 outcome 与 status 一致；防御性回退到 status 以覆盖历史数据。

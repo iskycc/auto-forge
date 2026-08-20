@@ -1,3 +1,5 @@
+import { isRetryableRunnerFailure } from "@autoforge/domain";
+
 import type {
   AttemptRecoveryReason,
   ExecutionControlRepository,
@@ -73,6 +75,23 @@ export async function buildRecoverySchedulingEvents(input: {
       },
       recordedAt: input.recordedAt,
     });
+    if (detail.retryScheduled && isRetryableRunnerFailure(reason.resultCode)) {
+      events.push({
+        id: input.nextEventId(),
+        batchId: detail.batchId,
+        ...(detail.runnerId ? { runnerId: detail.runnerId } : {}),
+        executionRunId: detail.executionRunId,
+        attemptId: detail.attemptId,
+        eventType: "runner_fault_rescheduled",
+        message: `非用例异常导致用例「${context.displayName}」自动重新调度（${reason.resultCode}）`,
+        payload: {
+          resultCode: reason.resultCode,
+          summary: reason.summary,
+          recoveryReason: detail.reason,
+        },
+        recordedAt: input.recordedAt,
+      });
+    }
   }
   return events;
 }

@@ -546,6 +546,28 @@ export const pgRunnerBootstrapUses = pgTable("runner_bootstrap_uses", {
   usedAt: text("used_at").notNull(),
 });
 
+export const pgRunnerInstallationProfiles = pgTable(
+  "runner_installation_profiles",
+  {
+    id: text("id").primaryKey(),
+    runnerId: text("runner_id").references(() => pgRunners.id, { onDelete: "set null" }),
+    runnerName: text("runner_name").notNull(),
+    connectionEncrypted: text("connection_encrypted").notNull(),
+    expectedHostKeySha256: text("expected_host_key_sha256").notNull(),
+    installationMode: text("installation_mode", {
+      enum: ["auto", "ubuntu", "opensuse", "opensuse-leap", "opensuse-tumbleweed"],
+    }).notNull(),
+    runAsRoot: boolean("run_as_root").notNull().default(false),
+    dataDirectory: text("data_directory"),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("runner_installation_profiles_runner_uq").on(table.runnerId),
+    index("runner_installation_profiles_name_idx").on(table.runnerName, table.updatedAt),
+  ],
+);
+
 export const pgRunnerGroups = pgTable(
   "runner_groups",
   {
@@ -1271,6 +1293,7 @@ export const postgresSchema = {
   caseSuiteItems: pgCaseSuiteItems,
   runners: pgRunners,
   runnerBootstrapUses: pgRunnerBootstrapUses,
+  runnerInstallationProfiles: pgRunnerInstallationProfiles,
   runnerGroups: pgRunnerGroups,
   runnerGroupMembers: pgRunnerGroupMembers,
   executionEnvironments: pgExecutionEnvironments,

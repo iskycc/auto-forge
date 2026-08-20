@@ -79,8 +79,9 @@ test("probes and installs the embedded Agent through real SSH and systemd", asyn
 
   await installThroughUi(page);
   await verifyInstalledSystemdService();
-  await waitForRegisteredRunner(page, "SSH Installed Runner");
+  const runnerId = await waitForRegisteredRunner(page, "SSH Installed Runner");
   await exerciseOfflineUpgradeAndRollback(page);
+  await verifyStoredProfileAndBatchUpdate(page, runnerId);
   await exerciseRunnerLifecycle(page, "SSH Installed Runner");
   await exerciseDeregisteredReinstall(page);
 });
@@ -166,8 +167,21 @@ async function verifyInstalledSystemdService(): Promise<void> {
 
 async function exerciseOfflineUpgradeAndRollback(page: Page): Promise<void> {
   const before = await installedConfigurationDigest("/etc/autoforge-agent/config.json");
-  await probeThroughUi(page);
-  await installThroughUi(page);
+  await page.goto("/runners");
+  const savedConnections = page.getByLabel("已保存连接");
+  await expect(savedConnections).toBeVisible();
+  const savedOption = savedConnections
+    .locator("option")
+    .filter({ hasText: "SSH Installed Runner" })
+    .last();
+  const profileId = await savedOption.getAttribute("value");
+  expect(profileId).toBeTruthy();
+  await savedConnections.selectOption(profileId!);
+  await expect(page.getByLabel("SSH / sudo 密码")).toHaveValue("");
+  await page.getByRole("button", { name: "使用已保存连接安装" }).click();
+  await expect(page.getByRole("status").filter({ hasText: "服务已启动" })).toContainText("Agent", {
+    timeout: 120_000,
+  });
   await verifyInstalledSystemdService();
   const container = requiredEnvironment("E2E_SSH_CONTAINER");
   for (const previousFile of [
@@ -203,19 +217,58 @@ async function exerciseOfflineUpgradeAndRollback(page: Page): Promise<void> {
   });
 }
 
-async function waitForRegisteredRunner(page: Page, name: string): Promise<void> {
+async function waitForRegisteredRunner(page: Page, name: string): Promise<string> {
+  let runnerId = "";
   await expect
     .poll(
       async () => {
         const response = await page.request.get("/api/v1/runners?limit=100");
         const body = (await response.json()) as {
-          items: Array<{ name: string; state: string }>;
+          items: Array<{ id: string; name: string; state: string }>;
         };
-        return body.items.find((runner) => runner.name === name)?.state ?? "missing";
+        const runner = body.items.find((candidate) => candidate.name === name);
+        runnerId = runner?.id ?? "";
+        return runner?.state ?? "missing";
       },
       { timeout: 60_000, intervals: [500, 1_000] },
     )
     .toBe("online");
+  return runnerId;
+}
+
+async function verifyStoredProfileAndBatchUpdate(page: Page, runnerId: string): Promise<void> {
+  const profiles = await page.request.get("/api/v1/runners/installations/profiles");
+  expect(profiles.status()).toBe(200);
+  const rawProfiles = await profiles.text();
+  expect(rawProfiles).not.toContain(passwordConnection.password);
+  const profileBody = JSON.parse(rawProfiles) as {
+    items: Array<{
+      runnerId?: string;
+      host: string;
+      username: string;
+      hasStoredPassword: boolean;
+    }>;
+  };
+  expect(profileBody.items).toContainEqual(
+    expect.objectContaining({
+      runnerId,
+      host: passwordConnection.host,
+      username: passwordConnection.username,
+      hasStoredPassword: true,
+    }),
+  );
+
+  const batchUpdate = await browserJson<{
+    items: Array<{ runnerId: string; status: string }>;
+  }>(page, "/api/v1/runners/updates", {
+    method: "POST",
+    body: { runnerIds: [runnerId] },
+  });
+  expect(batchUpdate.status).toBe(200);
+  expect(batchUpdate.body.items).toContainEqual(
+    expect.objectContaining({ runnerId, status: "updated" }),
+  );
+  await verifyInstalledSystemdService();
 }
 
 async function exerciseRunnerLifecycle(page: Page, name: string): Promise<void> {

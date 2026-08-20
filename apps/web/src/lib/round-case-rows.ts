@@ -1,5 +1,6 @@
 import {
   executionRunsForRound,
+  finalRunAttemptByExecutionRun,
   isTerminalAttemptStatus,
   runBatchRoundNumbers,
   type ExecutionRun,
@@ -24,8 +25,15 @@ export type RoundCaseRowModel = {
  */
 export function buildRoundCaseRows(
   batch: Pick<RunBatchDetails, "currentRound" | "runs" | "attempts">,
-  round: number | "all",
+  round: number | "all" | "summary",
 ): RoundCaseRowModel[] {
+  if (round === "summary") {
+    const finalAttempts = finalRunAttemptByExecutionRun(batch.attempts);
+    return batch.runs.map((run) => {
+      const attempt = finalAttempts.get(run.id);
+      return { run, attempt, round: attempt?.attemptNumber ?? 1 };
+    });
+  }
   if (round === "all") {
     const roundNumbers = runBatchRoundNumbers(batch, batch.runs, batch.attempts);
     const eligibleRunIdsByRound = new Map(

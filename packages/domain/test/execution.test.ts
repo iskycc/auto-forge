@@ -12,6 +12,7 @@ import {
   transitionRunBatch,
   transitionRunAttempt,
 } from "../src/execution";
+import { isRetryableRunnerFailure, MAX_RUNNER_FAILURE_RESCHEDULES } from "../src/attempt-result";
 
 describe("execution state machine", () => {
   it("rejects terminal assignment transitions", () => {
@@ -118,5 +119,38 @@ describe("execution state machine", () => {
     ).toEqual({ runStatus: "cancelled", retryScheduled: false });
     expect(aggregateBatchStatus(["succeeded", "failed", "cancelled"])).toBe("failed");
     expect(aggregateBatchStatus(["assigned", "queued"])).toBe("dispatching");
+  });
+
+  it("identifies only retryable Runner infrastructure failures", () => {
+    expect(isRetryableRunnerFailure("PROCESS_START_FAILED")).toBe(true);
+    expect(isRetryableRunnerFailure("LOG_UPLOAD_FAILED")).toBe(true);
+    expect(isRetryableRunnerFailure("TESTNG_ASSERTIONS_FAILED")).toBe(false);
+    expect(isRetryableRunnerFailure("EXECUTION_TIMEOUT")).toBe(false);
+    expect(MAX_RUNNER_FAILURE_RESCHEDULES).toBeGreaterThanOrEqual(1);
+  });
+
+  it("keeps Runner failure reschedules separate from the configured case retry budget", () => {
+    expect(
+      outcomeAfterCompletion({
+        outcome: "failed",
+        attemptNumber: 3,
+        retryLimit: 1,
+        cancellationRequested: false,
+        retryableRunnerFailure: false,
+        runnerFailuresBefore: 2,
+        ordinaryFailuresBefore: 0,
+      }),
+    ).toEqual({ runStatus: "queued", retryScheduled: true });
+    expect(
+      outcomeAfterCompletion({
+        outcome: "failed",
+        attemptNumber: 3,
+        retryLimit: 0,
+        cancellationRequested: false,
+        retryableRunnerFailure: true,
+        runnerFailuresBefore: MAX_RUNNER_FAILURE_RESCHEDULES,
+        ordinaryFailuresBefore: 0,
+      }),
+    ).toEqual({ runStatus: "failed", retryScheduled: false });
   });
 });

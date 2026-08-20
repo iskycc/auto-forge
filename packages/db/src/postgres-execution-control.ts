@@ -21,6 +21,7 @@ import {
   isTerminalAttemptStatus,
   isTerminalBatchStatus,
   isTerminalRunStatus,
+  isRetryableRunnerFailure,
   outcomeAfterCompletion,
   transitionAssignment,
   transitionExecutionRun,
@@ -333,11 +334,15 @@ export class PostgresExecutionControlRepository implements ExecutionControlRepos
         };
         if (!isLate) {
           const effectiveResult = cancellationResult(input.result, control.run_cancel_requested_at);
+          const failureCounts = await executionFailureCounts(client, control.execution_run_id);
           const decision = outcomeAfterCompletion({
             outcome: effectiveResult.status,
             attemptNumber: control.attempt_number,
             retryLimit: control.retry_limit,
             cancellationRequested: control.run_cancel_requested_at !== null,
+            retryableRunnerFailure: isRetryableRunnerFailure(effectiveResult.resultCode),
+            runnerFailuresBefore: failureCounts.runner,
+            ordinaryFailuresBefore: failureCounts.ordinary,
           });
           response.retryScheduled = decision.retryScheduled;
           // persistCompletion 内部已聚合批次状态，直接用其返回值判定终态。
@@ -1130,7 +1135,9 @@ async function persistCompletion(
       executionRunStatus === "queued" ? null : attemptStatus,
       executionRunStatus === "queued" ? null : control.runner_id,
       executionRunStatus === "queued" ? null : result.resultCode,
-      executionRunStatus === "queued" && control.retry_mode === "round"
+      executionRunStatus === "queued" &&
+      control.retry_mode === "round" &&
+      !isRetryableRunnerFailure(result.resultCode)
         ? control.attempt_number + 1
         : 0,
       input.acceptedAt,
@@ -1222,17 +1229,21 @@ async function expireAttempt(
 ): Promise<RecoveredAttemptExpiration | null> {
   const control = await findAttemptControl(client, attemptId);
   if (!control || isTerminalAttemptStatus(control.status)) return null;
+  const expiration = attemptExpiration(expirationReason);
+  const failureCounts = await executionFailureCounts(client, control.execution_run_id);
   const decision = outcomeAfterCompletion({
     outcome: "timed_out",
     attemptNumber: control.attempt_number,
     retryLimit: control.retry_limit,
     cancellationRequested: control.run_cancel_requested_at !== null,
+    retryableRunnerFailure: isRetryableRunnerFailure(expiration.resultCode),
+    runnerFailuresBefore: failureCounts.runner,
+    ordinaryFailuresBefore: failureCounts.ordinary,
   });
   const attemptStatus = transitionRunAttempt(control.status, "timed_out");
   const runStatus = transitionExecutionRun(control.run_status, decision.runStatus);
   const assignment = await requiredAssignment(client, assignmentId);
   const assignmentStatus = transitionAssignment(assignment.status, "expired");
-  const expiration = attemptExpiration(expirationReason);
   await client.query(
     "UPDATE assignments SET status = $1, updated_at = $2, version = version + 1 WHERE id = $3 AND status IN ('pending', 'claimed', 'running')",
     [assignmentStatus, recordedAt, assignmentId],
@@ -1251,7 +1262,11 @@ async function expireAttempt(
       runStatus,
       runStatus === "queued" ? null : attemptStatus,
       runStatus === "queued" ? null : expiration.resultCode,
-      runStatus === "queued" && control.retry_mode === "round" ? control.attempt_number + 1 : 0,
+      runStatus === "queued" &&
+      control.retry_mode === "round" &&
+      !isRetryableRunnerFailure(expiration.resultCode)
+        ? control.attempt_number + 1
+        : 0,
       recordedAt,
       control.execution_run_id,
     ],
@@ -1286,6 +1301,24 @@ async function expireAttempt(
     reason: expirationReason,
     retryScheduled: decision.retryScheduled,
   };
+}
+
+async function executionFailureCounts(
+  client: PoolClient,
+  executionRunId: string,
+): Promise<{ runner: number; ordinary: number }> {
+  const result = await client.query<{ result_code: string | null }>(
+    `SELECT result_code FROM run_attempts
+     WHERE execution_run_id = $1 AND status IN ('failed', 'timed_out')`,
+    [executionRunId],
+  );
+  let runner = 0;
+  let ordinary = 0;
+  for (const row of result.rows) {
+    if (isRetryableRunnerFailure(row.result_code)) runner += 1;
+    else ordinary += 1;
+  }
+  return { runner, ordinary };
 }
 
 async function cancelRun(

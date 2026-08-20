@@ -108,20 +108,26 @@ function schedulingRefillCases(createHarness: () => Promise<RefillHarness>): voi
     }
   });
 
-  it("excludes terminal batch records from project and runner capacity", async () => {
+  it("counts every non-terminal batch phase in project and runner capacity", async () => {
     const harness = await createHarness();
     try {
-      const snapshot = await harness.batches.getSchedulingSnapshot(
-        harness.batchRunningId,
-        "2026-08-10T00:00:00.000Z",
-      );
-      expect(snapshot?.projectActiveRuns).toBe(2);
-      expect(snapshot?.candidates).toEqual([
-        expect.objectContaining({
-          runner: expect.objectContaining({ id: harness.runnerId }),
-          reservedSlots: 2,
-        }),
-      ]);
+      for (const status of ["scheduled", "dispatching", "running"] as const) {
+        await harness.rawQuery("UPDATE run_batches SET status = ? WHERE id = ?", [
+          status,
+          harness.batchRunningId,
+        ]);
+        const snapshot = await harness.batches.getSchedulingSnapshot(
+          harness.batchRunningId,
+          "2026-08-10T00:00:00.000Z",
+        );
+        expect(snapshot?.projectActiveRuns).toBe(2);
+        expect(snapshot?.candidates).toEqual([
+          expect.objectContaining({
+            runner: expect.objectContaining({ id: harness.runnerId }),
+            reservedSlots: 2,
+          }),
+        ]);
+      }
     } finally {
       await harness.dispose();
       await cleanupTemporaryDirectories();
@@ -193,6 +199,51 @@ function schedulingRefillCases(createHarness: () => Promise<RefillHarness>): voi
       expect(
         await harness.batches.listSchedulableBatchIds(10, "2026-08-10T00:08:00.000Z"),
       ).not.toContain(completion.batchId);
+    } finally {
+      await harness.dispose();
+      await cleanupTemporaryDirectories();
+    }
+  });
+
+  it("reschedules a Runner infrastructure failure even when the case retry limit is zero", async () => {
+    const harness = await createHarness();
+    const { completion } = harness;
+    try {
+      await harness.rawQuery("UPDATE run_batches SET retry_mode = 'round' WHERE id = ?", [
+        completion.batchId,
+      ]);
+      const failed = await harness.executions.completeAttempt({
+        runnerId: harness.runnerId,
+        attemptId: completion.attempt1Id,
+        completionId: randomUUID(),
+        leaseTokenHash: completion.lease1TokenHash,
+        resultDigest: randomUUID(),
+        result: {
+          status: "failed",
+          resultCode: "PROCESS_START_FAILED",
+          summary: "Runner could not start the process.",
+          durationMs: 1,
+          artifacts: [],
+        },
+        eventId: randomUUID(),
+        acceptedAt: "2026-08-10T00:05:00.000Z",
+      });
+
+      expect(failed).toMatchObject({
+        disposition: "accepted",
+        retryScheduled: true,
+        batchClosed: false,
+      });
+      const snapshot = await harness.batches.getSchedulingSnapshot(
+        completion.batchId,
+        "2026-08-10T00:00:00.000Z",
+      );
+      expect(Object.values(snapshot?.runnerFailureIdsByRun ?? {})).toContainEqual([
+        harness.runnerId,
+      ]);
+      // 基础设施异常不等待整个用例轮次结束，应立即进入重调度。
+      expect(snapshot?.queuedRuns).toHaveLength(1);
+      expect(snapshot?.queuedRuns[0]).not.toHaveProperty("heldRound");
     } finally {
       await harness.dispose();
       await cleanupTemporaryDirectories();

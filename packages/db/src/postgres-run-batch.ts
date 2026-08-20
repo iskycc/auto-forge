@@ -42,6 +42,7 @@ import {
   type ProjectAdapterRuntime,
   type RuntimeAssetSnapshot,
 } from "./project-adapter-runtime";
+import { runnerFailureIdsByExecutionRun } from "./runner-failure-history";
 import {
   pgCaseSources,
   pgCaseVersions,
@@ -60,6 +61,7 @@ import { mapStoredRunner } from "./runner-mapper";
 import { decodeRunBatchCursor, encodeRunBatchCursor } from "./run-batch-list";
 
 const activeAttemptStatuses = ["assigned", "running"] as const;
+const activeBatchStatuses = ["queued", "dispatching", "scheduled", "running"] as const;
 
 export class PostgresRunBatchRepository implements RunBatchRepository {
   constructor(
@@ -338,7 +340,7 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
          JOIN execution_runs r ON r.id=a.execution_run_id
          JOIN run_batches b ON b.id=r.batch_id
          WHERE b.project_id=$1
-           AND b.status IN ('queued','running')
+           AND b.status IN ('queued','dispatching','scheduled','running')
            AND r.status IN ('assigned','running')
            AND a.status IN ('assigned','running')`,
         [batch.projectId],
@@ -362,6 +364,7 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
       batch,
       queuedRuns: batch.runs.filter((run) => run.status === "queued" && (run.heldRound ?? 0) === 0),
       candidates,
+      runnerFailureIdsByRun: runnerFailureIdsByExecutionRun(batch.attempts),
       projectActiveRuns: Number(activeProjectRuns.rows[0]?.count ?? 0),
     };
   }
@@ -783,7 +786,7 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
               inArray(pgRunAttempts.runnerId, runnerIds),
               inArray(pgRunAttempts.status, [...activeAttemptStatuses]),
               inArray(pgExecutionRuns.status, [...activeAttemptStatuses]),
-              inArray(pgRunBatches.status, ["queued", "running"]),
+              inArray(pgRunBatches.status, [...activeBatchStatuses]),
             ),
           )
           .groupBy(pgRunAttempts.runnerId)

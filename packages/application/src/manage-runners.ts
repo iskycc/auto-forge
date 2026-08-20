@@ -6,8 +6,10 @@ import type {
   ExecutionControlRepository,
   IdGenerator,
   RunBatchRepository,
+  RunBatchSchedulingPort,
   RunnerCredentialPort,
   RunnerRepository,
+  RunnerInstallationProfileRepository,
 } from "./ports";
 import { buildRecoverySchedulingEvents } from "./recovery-scheduling-events";
 import { discardableRunnerBatchCacheIds } from "./reconcile-runner-batch-cache";
@@ -59,6 +61,8 @@ export class RunnerControlService {
     private readonly clock: Clock,
     private readonly ids: IdGenerator,
     private readonly batches: RunBatchRepository,
+    private readonly scheduling: RunBatchSchedulingPort,
+    private readonly installationProfiles?: RunnerInstallationProfileRepository,
   ) {}
 
   async register(bootstrapToken: string, input: RunnerRegistrationInput) {
@@ -85,6 +89,11 @@ export class RunnerControlService {
     if (!runner) {
       throw new DomainError("RUNNER_BOOTSTRAP_REJECTED", "执行机注册令牌已使用。");
     }
+    await this.installationProfiles?.bindPending({
+      runnerName: runner.name,
+      runnerId: runner.id,
+      updatedAt: recordedAt,
+    });
     return {
       runner,
       result: {
@@ -221,6 +230,12 @@ export class RunnerControlService {
     });
     if (recoveryEvents.length > 0) {
       await this.batches.appendSchedulingEvents(recoveryEvents);
+    }
+    const recoveredBatchIds = new Set(
+      recovered.filter((item) => item.retryScheduled).map((item) => item.batchId),
+    );
+    for (const batchId of recoveredBatchIds) {
+      await this.scheduling.schedule(batchId);
     }
     return runner;
   }

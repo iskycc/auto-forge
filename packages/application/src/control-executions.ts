@@ -10,13 +10,18 @@ import type {
   RenewLeaseInput,
   UploadLogChunksInput,
 } from "@autoforge/contracts";
-import { assessRunnerCompatibility, DomainError } from "@autoforge/domain";
+import {
+  assessRunnerCompatibility,
+  DomainError,
+  isRetryableRunnerFailure,
+} from "@autoforge/domain";
 
 import type {
   Clock,
   ExecutionControlRepository,
   IdGenerator,
   RunBatchRepository,
+  RunBatchSchedulingPort,
   RunnerCredentialPort,
   JarObjectStorePort,
   RunnerRepository,
@@ -53,6 +58,7 @@ export class ExecutionControlService {
     private readonly clock: Clock,
     private readonly ids: IdGenerator,
     private readonly batches: RunBatchRepository,
+    private readonly scheduling: RunBatchSchedulingPort,
   ) {}
 
   async claim(
@@ -102,6 +108,9 @@ export class ExecutionControlService {
     if (recoveryEvents.length > 0) {
       await this.batches.appendSchedulingEvents(recoveryEvents);
     }
+    // 同一 claim 请求内完成“回收 -> 重调度 -> 领取”，避免等待下一次
+    // heartbeat。每次 claim 都补调度，上次调度失败后也能幂等恢复。
+    await this.scheduling.scheduleForRunner(runnerId);
     const leaseSeeds = Array.from({ length: input.availableSlots }, () => {
       const id = this.ids.next();
       const token = this.credentials.issue();
@@ -316,7 +325,7 @@ export class ExecutionControlService {
       runnerId?: string;
       executionRunId?: string;
       attemptId?: string;
-      eventType: "attempt_completed" | "run_held_for_round";
+      eventType: "attempt_completed" | "run_held_for_round" | "runner_fault_rescheduled";
       message: string;
       payload?: Record<string, unknown>;
       recordedAt: string;
@@ -340,15 +349,21 @@ export class ExecutionControlService {
       },
     ];
     if (retryScheduled) {
+      const runnerFault = isRetryableRunnerFailure(result.resultCode);
       events.push({
         id: this.ids.next(),
         batchId: context.batchId,
+        ...(runnerFault ? { runnerId: context.runnerId } : {}),
         executionRunId: context.executionRunId,
-        eventType: "run_held_for_round",
-        message: `该用例已失败，等待下一轮重试${result.resultCode ? `（${result.resultCode}）` : ""}`,
+        attemptId,
+        eventType: runnerFault ? "runner_fault_rescheduled" : "run_held_for_round",
+        message: runnerFault
+          ? `执行机异常导致用例「${context.displayName}」自动重新调度（${result.resultCode}）`
+          : `该用例已失败，等待下一轮重试${result.resultCode ? `（${result.resultCode}）` : ""}`,
         payload: {
           ...(context.heldRound !== undefined ? { heldRound: context.heldRound } : {}),
           ...(result.resultCode ? { resultCode: result.resultCode } : {}),
+          ...(failureSummary ? { summary: failureSummary } : {}),
         },
         recordedAt,
       });

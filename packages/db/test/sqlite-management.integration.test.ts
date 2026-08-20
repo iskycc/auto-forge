@@ -1683,12 +1683,12 @@ describe("SQLite management repositories", () => {
           executionRunId: "run-expiry-control",
           runnerId: "runner-control",
           reason: "lease_expired",
-          retryScheduled: false,
+          retryScheduled: true,
         },
       ]);
       expect(await batches.get("batch-expiry-control")).toMatchObject({
-        status: "failed",
-        timedOutRuns: 1,
+        status: "queued",
+        timedOutRuns: 0,
       });
       const lateCompletion = await executions.completeAttempt({
         runnerId: "runner-control",
@@ -1708,8 +1708,8 @@ describe("SQLite management repositories", () => {
       });
       expect(lateCompletion).toMatchObject({ disposition: "late", retryScheduled: false });
       expect(await batches.get("batch-expiry-control")).toMatchObject({
-        status: "failed",
-        timedOutRuns: 1,
+        status: "queued",
+        timedOutRuns: 0,
       });
 
       await batches.create({
@@ -1950,7 +1950,7 @@ describe("SQLite management repositories", () => {
           attemptId: "attempt-claim-timeout",
           runnerId: null,
           reason: "claim_timeout",
-          retryScheduled: false,
+          retryScheduled: true,
         }),
       ]);
       expect(
@@ -2031,7 +2031,7 @@ describe("SQLite management repositories", () => {
           attemptId: "attempt-upload-timeout",
           runnerId: "runner-control",
           reason: "upload_timeout",
-          retryScheduled: false,
+          retryScheduled: true,
         }),
       ]);
       expect(

@@ -47,6 +47,10 @@ test("authoritative execution recovery handles every timeout and idempotent race
   await page.waitForTimeout(2_500);
   await triggerRecovery(page, runner);
   await expectBatchReason(page, claimTimeoutBatch, "ASSIGNMENT_CLAIM_TIMEOUT");
+  // 领取超时是基础设施故障：用户重试上限为 0 也必须自动重调度，
+  // 完成重调度 attempt 后再继续下一个恢复场景，避免占用项目并发槽。
+  await complete(page, runner, await claimAssignment(page, runner), randomUUID());
+  await waitForBatchStatus(page, claimTimeoutBatch, "succeeded");
 
   const executionTimeoutBatch = await createBatch(page, fixture, runner.runnerId, {
     executionTimeoutMs: 1_000,
@@ -80,6 +84,8 @@ test("authoritative execution recovery handles every timeout and idempotent race
   await page.waitForTimeout(2_500);
   await triggerRecovery(page, runner);
   await expectBatchReason(page, uploadTimeoutBatch, "UPLOAD_TIMEOUT");
+  await complete(page, runner, await claimAssignment(page, runner), randomUUID());
+  await waitForBatchStatus(page, uploadTimeoutBatch, "succeeded");
 
   const capacityBatch = await createBatch(page, fixture, runner.runnerId, {
     executionTimeoutMs: 120_000,
@@ -390,6 +396,15 @@ async function waitForAttemptStatus(page: Page, batchId: string, status: string)
       const response = await page.request.get(`/api/v1/run-batches/${encodeURIComponent(batchId)}`);
       return ((await response.json()) as { attempts: Array<{ status: string }> }).attempts[0]
         ?.status;
+    })
+    .toBe(status);
+}
+
+async function waitForBatchStatus(page: Page, batchId: string, status: string): Promise<void> {
+  await expect
+    .poll(async () => {
+      const response = await page.request.get(`/api/v1/run-batches/${encodeURIComponent(batchId)}`);
+      return ((await response.json()) as { status: string }).status;
     })
     .toBe(status);
 }

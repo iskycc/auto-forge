@@ -10,12 +10,13 @@ import type {
 } from "@autoforge/contracts";
 import {
   classifyAttemptResult,
+  isRetryableRunnerFailure,
   isPermission,
   type ClassifiableAttemptResult,
   type Permission,
 } from "@autoforge/domain";
 
-export const ANALYTICS_FACT_SCHEMA_VERSION = 2;
+export const ANALYTICS_FACT_SCHEMA_VERSION = 3;
 
 export type ServiceAccountRow = {
   id: string;
@@ -252,11 +253,14 @@ export function aggregateAnalytics(
   rows: AnalyticsFactRow[],
   generatedAt: string,
 ): AnalyticsSummary {
-  const passed = sum(rows, "passed");
-  const failed = sum(rows, "failed");
-  const skipped = sum(rows, "skipped");
+  // 可自动换机恢复的 Runner/传输异常不是 TestNG 质量结果；它们由执行详情的
+  // “执行机异常事件”承载，不能污染通过率、失败洞察或不稳定用例。
+  const qualityRows = rows.filter((row) => !isRetryableRunnerFailure(row.result_code));
+  const passed = sum(qualityRows, "passed");
+  const failed = sum(qualityRows, "failed");
+  const skipped = sum(qualityRows, "skipped");
   const methodSamples = passed + failed + skipped;
-  const durations = rows
+  const durations = qualityRows
     .map((row) => row.duration_ms)
     .filter((value): value is number => value !== null && value >= 0)
     .sort((left, right) => left - right);
@@ -272,7 +276,7 @@ export function aggregateAnalytics(
     string,
     { total: number; passed: number; failed: number; skipped: number }
   >();
-  for (const row of rows) {
+  for (const row of qualityRows) {
     const category = attemptResultCategory(row.outcome, row.result_code);
     if (row.failure_signature && category !== "succeeded" && row.outcome !== "cancelled") {
       const current = failureGroups.get(row.failure_signature);
@@ -313,7 +317,7 @@ export function aggregateAnalytics(
     }
   }
   return {
-    sampleCount: rows.length,
+    sampleCount: qualityRows.length,
     passed,
     failed,
     skipped,
@@ -325,10 +329,10 @@ export function aggregateAnalytics(
       : {}),
     generatedAt,
     dimensions: {
-      projects: dimensions(rows, "project_id"),
-      suites: dimensions(rows, "suite_id"),
-      runners: dimensions(rows, "runner_id"),
-      outcomes: dimensions(rows, "outcome"),
+      projects: dimensions(qualityRows, "project_id"),
+      suites: dimensions(qualityRows, "suite_id"),
+      runners: dimensions(qualityRows, "runner_id"),
+      outcomes: dimensions(qualityRows, "outcome"),
     },
     trend: [...trend.entries()]
       .sort(([left], [right]) => left.localeCompare(right))
@@ -383,6 +387,7 @@ export function failureSignature(
   resultCode: string | null,
   summary: string | null,
 ): string | null {
+  if (isRetryableRunnerFailure(resultCode)) return null;
   const category = attemptResultCategory(outcome, resultCode);
   if (category === "succeeded" || outcome === "cancelled") return null;
   const normalized = failureDescription(summary)
