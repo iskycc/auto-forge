@@ -89,4 +89,4 @@ Runner Group 是可复用资源池，而不是动态查询或标签别名。组�
 
 键盘焦点必须可见，原生表单语义不能被自绘组件移除；弹窗使用 `role="dialog"`、`aria-modal` 和可访问名称。状态同时使用文字、图标和颜色。时间显示采用用户时区，权威数据继续保存 UTC。
 
-当前自动化证据包括：Runner Group 应用服务单元测试、SQLite/PostgreSQL 共用仓储契约、调度与 Adapter 地址固化测试、首页/导航布局断言，以及通过全局弹窗选择执行机组并领取单用例 assignment 的 Playwright 场景。完整构建和浏览器验证在 GitHub Actions 执行，本机只运行低优先级静态检查和小范围测试。
+当前自动化证据包括：Runner Group 应用服务单元测试、SQLite/PostgreSQL 共用仓储契约、调度与 Adapter 地址固化测试、首页/导航布局断言，以及通过全局弹窗选择执行机组并领取单用例 assignment 的 Playwright 场景。上述浏览器场景已进入根级 `pnpm test:e2e`，在具备锁定版本 Chromium 的本机与 GitHub Actions 均可运行；真实 Agent、Full 基础设施和离线发布验收继续使用各自独立的高资源质量门禁。
