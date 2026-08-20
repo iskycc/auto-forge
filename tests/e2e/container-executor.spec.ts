@@ -216,6 +216,11 @@ async function createContainerSuite(page: Page): Promise<void> {
   await page.getByRole("button", { name: "创建任务" }).click();
   const suiteLink = page.getByRole("link", { name: new RegExp(suiteName) });
   await expect(suiteLink).toBeVisible();
+  const [suiteId, runnerId] = await Promise.all([
+    findSuiteId(page, suiteName),
+    findRunnerId(page, runnerName),
+  ]);
+  await configureTaskExecution(page, suiteId, runnerId);
   await suiteLink.click();
   await page.getByLabel("执行器").selectOption("testng-container");
   await page.getByRole("button", { name: "保存修改" }).click();

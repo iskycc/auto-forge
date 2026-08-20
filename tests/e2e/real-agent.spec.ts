@@ -449,6 +449,11 @@ async function createExecutableSuite(
   await page.getByRole("button", { name: "创建任务" }).click();
   const suiteLink = page.getByRole("link", { name: suiteName });
   await expect(suiteLink).toBeVisible();
+  const [suiteId, runnerId] = await Promise.all([
+    findSuiteId(page, suiteName),
+    findRunnerId(page, runnerName),
+  ]);
+  await configureTaskExecution(page, suiteId, runnerId);
   await suiteLink.click();
   await page.getByLabel("重试次数上限").fill(String(retryLimit));
   await page.getByLabel("产物规则（每行一个相对路径 glob）").fill(artifactPatterns.join("\n"));
