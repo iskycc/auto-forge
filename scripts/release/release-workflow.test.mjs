@@ -53,11 +53,12 @@ test("keeps long-running CI acceptance paths partitioned", async () => {
     /scenario: operations\n\s+specs: .*platform-operations.*scheduling-refill.*ui-layout/,
   );
   assert.doesNotMatch(workflow, /scenario:\n\s+- all-rounds/);
-  assert.match(workflow, /test-full-business-recovery\.sh contracts/);
+  assert.match(workflow, /test-full-business-recovery\.sh runtime-health/);
   assert.match(workflow, /test-full-business-recovery\.sh browser-governance/);
-  assert.match(workflow, /test-full-business-recovery\.sh real-agent/);
+  assert.doesNotMatch(workflow, /test-full-business-recovery\.sh (contracts|real-agent|ldap)/);
   assert.match(workflow, /test-offline\.sh assets/);
   assert.match(workflow, /test-offline\.sh governance/);
+  assert.match(workflow, /test-offline\.sh operations && pnpm test:deployment/);
   assert.doesNotMatch(workflow, /command: pnpm test:full-business-recovery\s*$/m);
   assert.doesNotMatch(workflow, /command: pnpm test:offline\s*$/m);
 });
