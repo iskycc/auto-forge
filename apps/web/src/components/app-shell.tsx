@@ -49,19 +49,19 @@ type NavigationItem = {
 };
 
 const navigation: NavigationItem[] = [
-  { label: "首页", href: "/", icon: Home, permission: "case.read" },
-  { label: "用例库", href: "/cases", icon: BookOpenText, permission: "case.read" },
+  { label: "工作概览", href: "/", icon: Home, permission: "case.read" },
+  { label: "用例管理", href: "/cases", icon: BookOpenText, permission: "case.read" },
   { label: "用例任务", href: "/case-suites", icon: Layers3, permission: "case_suite.read" },
   { label: "执行记录", href: "/execution-records", icon: ClipboardList, permission: "run.read" },
   {
-    label: "执行机",
+    label: "执行节点",
     href: "/runners",
     icon: Server,
     permission: "runner.read",
     section: "runners",
     defaultSection: "runners",
   },
-  { label: "洞察", href: "/insights", icon: BarChart3, permission: "run.read" },
+  { label: "质量洞察", href: "/insights", icon: BarChart3, permission: "run.read" },
 ];
 
 type AdministrationGroup = {
@@ -90,7 +90,7 @@ const administrationGroups: AdministrationGroup[] = [
   },
   {
     id: "identity-access",
-    label: "身份与访问",
+    label: "身份权限",
     icon: ShieldCheck,
     items: [
       {
@@ -134,7 +134,7 @@ const administrationGroups: AdministrationGroup[] = [
     icon: Boxes,
     items: [
       {
-        label: "自动化任务",
+        label: "运维计划",
         href: "/settings/automation",
         icon: FileCog,
         anyPermissions: ["case_suite.read", "ldap.read"],
@@ -355,7 +355,7 @@ export function AppShell({
               </Link>
             );
           })}
-          {visibleGroups.length > 0 ? <span className="nav-section-label">管理</span> : null}
+          {visibleGroups.length > 0 ? <span className="nav-section-label">系统管理</span> : null}
           {visibleGroups.map((group) => {
             const GroupIcon = group.icon;
             const expanded = expandedGroupIds.has(group.id);

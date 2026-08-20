@@ -8,7 +8,14 @@ import type {
   RetentionCategory,
   ServiceAccount,
 } from "@autoforge/contracts";
-import { isPermission, type Permission } from "@autoforge/domain";
+import {
+  classifyAttemptResult,
+  isPermission,
+  type ClassifiableAttemptResult,
+  type Permission,
+} from "@autoforge/domain";
+
+export const ANALYTICS_FACT_SCHEMA_VERSION = 2;
 
 export type ServiceAccountRow = {
   id: string;
@@ -90,12 +97,14 @@ export type AnalyticsFactRow = {
   run_id: string;
   suite_id: string;
   case_definition_id: string;
+  case_display_name: string;
   case_version: number;
   runner_id: string;
   environment_version_id: string | null;
   outcome: string;
   result_code: string | null;
   failure_signature: string | null;
+  failure_description: string | null;
   duration_ms: number | null;
   passed: number;
   failed: number;
@@ -253,44 +262,55 @@ export function aggregateAnalytics(
     .sort((left, right) => left - right);
   const failureGroups = new Map<
     string,
-    { resultCode?: string; count: number; lastSeenAt: string }
+    { description: string; resultCode?: string; count: number; lastSeenAt: string }
   >();
-  const caseOutcomes = new Map<string, { samples: number; passed: number; failed: number }>();
+  const caseOutcomes = new Map<
+    string,
+    { displayName: string; samples: number; passed: number; failed: number }
+  >();
   const trend = new Map<
     string,
     { total: number; passed: number; failed: number; skipped: number }
   >();
   for (const row of rows) {
-    if (row.failure_signature) {
+    const category = attemptResultCategory(row.outcome, row.result_code);
+    if (row.failure_signature && category !== "succeeded" && row.outcome !== "cancelled") {
       const current = failureGroups.get(row.failure_signature);
+      const latest = !current || row.completed_at > current.lastSeenAt;
       failureGroups.set(row.failure_signature, {
-        ...(row.result_code
+        description: latest ? failureDescription(row.failure_description) : current.description,
+        ...(latest && row.result_code
           ? { resultCode: row.result_code }
           : current?.resultCode
             ? { resultCode: current.resultCode }
             : {}),
         count: (current?.count ?? 0) + 1,
-        lastSeenAt:
-          !current || row.completed_at > current.lastSeenAt ? row.completed_at : current.lastSeenAt,
+        lastSeenAt: latest ? row.completed_at : current.lastSeenAt,
       });
     }
-    const outcome = caseOutcomes.get(row.case_definition_id) ?? {
-      samples: 0,
-      passed: 0,
-      failed: 0,
-    };
-    outcome.samples += 1;
-    if (row.outcome === "succeeded") outcome.passed += 1;
-    if (row.outcome === "failed" || row.outcome === "timed_out") outcome.failed += 1;
-    caseOutcomes.set(row.case_definition_id, outcome);
+    if (category === "succeeded" || category === "failed") {
+      const outcome = caseOutcomes.get(row.case_definition_id) ?? {
+        displayName: row.case_display_name,
+        samples: 0,
+        passed: 0,
+        failed: 0,
+      };
+      outcome.samples += 1;
+      if (category === "succeeded") outcome.passed += 1;
+      if (category === "failed") outcome.failed += 1;
+      caseOutcomes.set(row.case_definition_id, outcome);
+    }
 
-    const bucket = `${row.completed_at.slice(0, 10)}T00:00:00.000Z`;
-    const daily = trend.get(bucket) ?? { total: 0, passed: 0, failed: 0, skipped: 0 };
-    daily.total += 1;
-    daily.passed += row.passed;
-    daily.failed += row.failed;
-    daily.skipped += row.skipped;
-    trend.set(bucket, daily);
+    const methodCount = row.passed + row.failed + row.skipped;
+    if (methodCount > 0) {
+      const bucket = `${row.completed_at.slice(0, 10)}T00:00:00.000Z`;
+      const daily = trend.get(bucket) ?? { total: 0, passed: 0, failed: 0, skipped: 0 };
+      daily.total += methodCount;
+      daily.passed += row.passed;
+      daily.failed += row.failed;
+      daily.skipped += row.skipped;
+      trend.set(bucket, daily);
+    }
   }
   return {
     sampleCount: rows.length,
@@ -339,28 +359,59 @@ export function resultCounts(testNgResultJson: string | null): {
   if (!testNgResultJson) return { passed: 0, failed: 0, skipped: 0 };
   try {
     const result = JSON.parse(testNgResultJson) as {
+      passed?: unknown;
+      failed?: unknown;
+      skipped?: unknown;
       summary?: { passed?: unknown; failed?: unknown; skipped?: unknown };
     };
+    const counts =
+      result.passed !== undefined || result.failed !== undefined || result.skipped !== undefined
+        ? result
+        : result.summary;
     return {
-      passed: nonnegativeInteger(result.summary?.passed),
-      failed: nonnegativeInteger(result.summary?.failed),
-      skipped: nonnegativeInteger(result.summary?.skipped),
+      passed: nonnegativeInteger(counts?.passed),
+      failed: nonnegativeInteger(counts?.failed),
+      skipped: nonnegativeInteger(counts?.skipped),
     };
   } catch {
     return { passed: 0, failed: 0, skipped: 0 };
   }
 }
 
-export function failureSignature(resultCode: string | null, summary: string | null): string | null {
-  if (!resultCode && !summary) return null;
-  const normalized = (summary ?? "")
+export function failureSignature(
+  outcome: string,
+  resultCode: string | null,
+  summary: string | null,
+): string | null {
+  const category = attemptResultCategory(outcome, resultCode);
+  if (category === "succeeded" || outcome === "cancelled") return null;
+  const normalized = failureDescription(summary)
     .toLocaleLowerCase("en-US")
     .replace(/[0-9a-f]{8}-[0-9a-f-]{27,}/g, "<id>")
     .replace(/\b\d+\b/g, "<n>")
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, 160);
-  return `${resultCode ?? "UNKNOWN"}:${normalized}`;
+  return normalized || null;
+}
+
+function failureDescription(summary: string | null): string {
+  return summary?.trim().slice(0, 4_096) || "执行失败，但执行机未提供错误描述。";
+}
+
+function attemptResultCategory(
+  outcome: string,
+  resultCode: string | null,
+): ReturnType<typeof classifyAttemptResult> | null {
+  if (!isAttemptOutcome(outcome)) return null;
+  return classifyAttemptResult({
+    outcome,
+    ...(resultCode ? { resultCode } : {}),
+  });
+}
+
+function isAttemptOutcome(value: string): value is ClassifiableAttemptResult["outcome"] {
+  return ["succeeded", "failed", "timed_out", "cancelled"].includes(value);
 }
 
 export const RETENTION_TABLES: Partial<Record<RetentionCategory, string>> = {

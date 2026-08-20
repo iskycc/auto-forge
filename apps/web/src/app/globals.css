@@ -6848,37 +6848,47 @@ button.icon-button:disabled {
 
 .insight-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1.7fr) minmax(320px, 1fr);
+  grid-template-columns: minmax(0, 3fr) minmax(340px, 2fr);
+  align-items: start;
   gap: 16px;
 }
 
 .insight-trend-card {
-  grid-row: span 2;
+  min-width: 0;
 }
 
 .trend-bars {
-  display: flex;
-  align-items: end;
+  display: grid;
+  width: 100%;
+  align-items: stretch;
+  justify-content: center;
   gap: 8px;
-  height: 230px;
-  margin: 20px 0;
-  padding: 18px 12px 28px;
+  overflow-x: auto;
+  margin: 8px auto 18px;
+  padding: 12px 8px 8px;
   border-bottom: 1px solid var(--color-border);
 }
 
 .trend-column {
-  position: relative;
   display: flex;
-  align-items: end;
-  min-width: 16px;
-  height: 100%;
-  flex: 1;
-  gap: 2px;
+  min-width: 0;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
 }
 
-.trend-column > span {
+.trend-column-bars {
+  display: flex;
+  width: 100%;
+  height: 160px;
+  align-items: end;
+  justify-content: center;
+  gap: 3px;
+}
+
+.trend-column-bars > span {
+  width: min(15px, 28%);
   min-height: 2px;
-  flex: 1;
   border-radius: 5px 5px 2px 2px;
 }
 
@@ -6890,24 +6900,54 @@ button.icon-button:disabled {
   background: var(--color-danger);
 }
 
+.trend-skipped {
+  background: var(--color-warning);
+}
+
+.trend-column em {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-caption);
+  font-style: normal;
+  font-weight: 680;
+}
+
 .trend-column small {
-  position: absolute;
-  top: calc(100% + 7px);
-  left: 50%;
-  transform: translateX(-50%) rotate(-35deg);
   color: var(--color-text-tertiary);
   font-size: var(--font-size-caption);
   white-space: nowrap;
 }
 
+.trend-legend {
+  display: flex;
+  justify-content: flex-end;
+  gap: 14px;
+  margin-top: 10px;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-caption);
+}
+
+.trend-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.trend-legend i {
+  width: 8px;
+  height: 8px;
+  border-radius: 3px;
+}
+
 .insight-data-table {
-  margin-top: 22px;
+  margin-top: 10px;
 }
 
 .failure-signature-list {
   display: grid;
+  max-height: 390px;
+  overflow-y: auto;
   margin: 0;
-  padding: 0;
+  padding: 0 5px 0 0;
   list-style: none;
 }
 
@@ -6925,9 +6965,22 @@ button.icon-button:disabled {
   gap: 4px;
 }
 
+.failure-signature-list strong {
+  display: -webkit-box;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  line-height: 1.45;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
 .failure-signature-list small {
   overflow-wrap: anywhere;
   color: var(--color-text-secondary);
+}
+
+.insight-flaky-card {
+  grid-column: 1 / -1;
 }
 
 @media (max-width: 1500px) {
@@ -6943,6 +6996,10 @@ button.icon-button:disabled {
 
   .insight-trend-card {
     grid-row: auto;
+  }
+
+  .insight-flaky-card {
+    grid-column: auto;
   }
 
   .global-search-shell {
@@ -9174,7 +9231,7 @@ button.icon-button:disabled {
 
 /* 首页工作台：布局与 docs/design/autoforge-apple-like-e-dashboard.png 保持同一信息层级。 */
 .dashboard-page {
-  width: min(100%, 1760px);
+  width: min(100%, clamp(1760px, calc(100vw - 300px), 3200px));
   margin: 0 auto;
 }
 
@@ -9922,6 +9979,10 @@ button.icon-button:disabled {
   position: fixed;
   z-index: 100;
   display: grid;
+  width: 100dvw;
+  height: 100dvh;
+  overflow: auto;
+  overscroll-behavior: contain;
   padding: 18px;
   background: rgba(13, 15, 20, 0.46);
   backdrop-filter: blur(7px);
@@ -9931,10 +9992,10 @@ button.icon-button:disabled {
 
 .global-run-dialog {
   display: flex;
-  width: min(900px, calc(100vw - 36px));
-  height: min(760px, calc(100vh - 36px));
+  width: min(900px, calc(100dvw - 36px));
+  height: min(760px, calc(100dvh - 36px));
   min-height: 0;
-  max-height: calc(100vh - 36px);
+  max-height: calc(100dvh - 36px);
   flex-direction: column;
   overflow: hidden;
   border: 1px solid rgba(255, 255, 255, 0.75);
@@ -10398,6 +10459,7 @@ button.icon-button:disabled {
 
   .design-quality-card,
   .design-runner-groups-card,
+  .design-failure-card,
   .design-recent-card {
     grid-column: span 2;
   }

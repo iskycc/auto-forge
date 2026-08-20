@@ -253,6 +253,7 @@ export const analyticsSummarySchema = z.object({
   failures: z.array(
     z.object({
       signature: z.string(),
+      description: z.string().min(1).max(4_096),
       resultCode: z.string().optional(),
       count: z.number().int().positive(),
       lastSeenAt: z.string().datetime(),
@@ -261,6 +262,7 @@ export const analyticsSummarySchema = z.object({
   flakyCases: z.array(
     z.object({
       caseDefinitionId: identifierSchema,
+      displayName: z.string().min(1).max(240),
       samples: z.number().int().positive(),
       passed: z.number().int().nonnegative(),
       failed: z.number().int().nonnegative(),

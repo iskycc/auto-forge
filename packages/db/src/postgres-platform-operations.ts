@@ -17,6 +17,7 @@ import type { PoolClient } from "pg";
 import type { AttemptLogStore } from "./attempt-log-store";
 import type { PostgresDatabaseHandle } from "./postgres-database";
 import {
+  ANALYTICS_FACT_SCHEMA_VERSION,
   aggregateAnalytics,
   analyticsExportProjectIds,
   failureSignature,
@@ -793,9 +794,10 @@ export class PostgresPlatformOperationsRepository implements PlatformOperationsR
                 a.outcome,a.result_code,a.result_summary,a.duration_ms,a.testng_result_json,a.finished_at
          FROM run_attempts a JOIN execution_runs r ON r.id=a.execution_run_id
          JOIN run_batches b ON b.id=r.batch_id LEFT JOIN analytics_facts f ON f.attempt_id=a.id
-         WHERE f.attempt_id IS NULL AND a.finished_at IS NOT NULL AND a.outcome IS NOT NULL
-         ORDER BY a.finished_at,a.id LIMIT $1 FOR UPDATE OF a SKIP LOCKED`,
-        [limit],
+         WHERE (f.attempt_id IS NULL OR f.schema_version < $1)
+           AND a.finished_at IS NOT NULL AND a.outcome IS NOT NULL
+         ORDER BY a.finished_at,a.id LIMIT $2 FOR UPDATE OF a SKIP LOCKED`,
+        [ANALYTICS_FACT_SCHEMA_VERSION, limit],
       );
       let inserted = 0;
       for (const row of result.rows) {
@@ -805,8 +807,26 @@ export class PostgresPlatformOperationsRepository implements PlatformOperationsR
            (attempt_id,project_id,batch_id,run_id,suite_id,case_definition_id,case_version,
             runner_id,environment_version_id,outcome,result_code,failure_signature,duration_ms,
             passed,failed,skipped,completed_at,schema_version)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,1)
-           ON CONFLICT (attempt_id) DO NOTHING`,
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+           ON CONFLICT (attempt_id) DO UPDATE SET
+             project_id=EXCLUDED.project_id,
+             batch_id=EXCLUDED.batch_id,
+             run_id=EXCLUDED.run_id,
+             suite_id=EXCLUDED.suite_id,
+             case_definition_id=EXCLUDED.case_definition_id,
+             case_version=EXCLUDED.case_version,
+             runner_id=EXCLUDED.runner_id,
+             environment_version_id=EXCLUDED.environment_version_id,
+             outcome=EXCLUDED.outcome,
+             result_code=EXCLUDED.result_code,
+             failure_signature=EXCLUDED.failure_signature,
+             duration_ms=EXCLUDED.duration_ms,
+             passed=EXCLUDED.passed,
+             failed=EXCLUDED.failed,
+             skipped=EXCLUDED.skipped,
+             completed_at=EXCLUDED.completed_at,
+             schema_version=EXCLUDED.schema_version
+           WHERE analytics_facts.schema_version < EXCLUDED.schema_version`,
           [
             row.attempt_id,
             row.project_id,
@@ -819,12 +839,13 @@ export class PostgresPlatformOperationsRepository implements PlatformOperationsR
             row.environment_version_id,
             row.outcome,
             row.result_code,
-            failureSignature(row.result_code, row.result_summary),
+            failureSignature(row.outcome, row.result_code, row.result_summary),
             row.duration_ms,
             counts.passed,
             counts.failed,
             counts.skipped,
             row.finished_at,
+            ANALYTICS_FACT_SCHEMA_VERSION,
           ],
         );
         inserted += write.rowCount ?? 0;
@@ -1139,7 +1160,15 @@ export class PostgresPlatformOperationsRepository implements PlatformOperationsR
     add("completed_at", filter.completedAfter, ">=");
     add("completed_at", filter.completedBefore, "<=");
     const result = await this.handle.pool.query<AnalyticsFactRow>(
-      `SELECT * FROM analytics_facts ${where.length > 0 ? `WHERE ${where.join(" AND ")}` : ""}
+      `SELECT analytics_facts.*,
+              COALESCE(
+                (SELECT c.display_name FROM case_definitions c
+                 WHERE c.id=analytics_facts.case_definition_id),
+                analytics_facts.case_definition_id
+              ) AS case_display_name,
+              (SELECT a.result_summary FROM run_attempts a
+               WHERE a.id=analytics_facts.attempt_id) AS failure_description
+       FROM analytics_facts ${where.length > 0 ? `WHERE ${where.join(" AND ")}` : ""}
        ORDER BY completed_at,attempt_id LIMIT 100000`,
       values,
     );

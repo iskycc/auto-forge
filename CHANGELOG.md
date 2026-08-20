@@ -4,6 +4,31 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## Unreleased
+
+### Changed
+
+- Standardized every first- and second-level sidebar entry on a four-Chinese-character label and
+  added a CI-enforced source test so navigation redesigns cannot silently regress the naming rule.
+- Redesigned analytics trends, failure reasons and flaky-case presentation to use compact card
+  proportions, method-level TestNG totals, human-readable error descriptions and case names.
+- Expanded the dashboard fluid desktop width through 4K while keeping 1024px as the supported
+  minimum; mobile layouts are explicitly outside the product and test baseline.
+
+### Fixed
+
+- Current top-level TestNG result counts are now aggregated correctly while legacy nested summaries
+  remain readable. Successful result codes can no longer produce failure facts, and stale analytics
+  facts are rebuilt automatically with the corrected schema version.
+- The global execution dialog is mounted through a body portal so its backdrop covers the complete
+  viewport and the dialog remains geometrically centered instead of being constrained by the topbar.
+
+### Tests
+
+- Added shared analytics unit and SQLite recovery coverage, a PostgreSQL success-fact assertion, a
+  real completion-protocol browser scenario for 50% pass/fail analytics, and desktop viewport checks
+  for dashboard scaling and full-screen dialog geometry.
+
 ## 0.8.5 - 2026-08-20
 
 ### Added

@@ -131,7 +131,7 @@ public class MixedVisibleTest {
   await ensureAdministrator(page);
   await expect(page).toHaveURL(/\/$/, { timeout: 20_000 });
   await expect(page.getByRole("navigation", { name: "主导航" })).toBeVisible();
-  await expect(page.getByRole("link", { name: "首页", exact: true })).toHaveClass(
+  await expect(page.getByRole("link", { name: "工作概览", exact: true })).toHaveClass(
     /nav-item-active/,
   );
   await expect(
@@ -145,7 +145,7 @@ public class MixedVisibleTest {
   await page.getByRole("button", { name: "登录" }).click();
   await expect(page).toHaveURL(/\/$/, { timeout: 20_000 });
   await expect(page.getByRole("navigation", { name: "主导航" })).toBeVisible();
-  await expect(page.getByRole("link", { name: "首页", exact: true })).toHaveClass(
+  await expect(page.getByRole("link", { name: "工作概览", exact: true })).toHaveClass(
     /nav-item-active/,
   );
   await expect(
@@ -609,6 +609,7 @@ public class MixedVisibleTest {
     resultCode: "TEST_ASSERTION_FAILED",
     summary: "E2E intentional failure",
     durationMs: 200,
+    testNg: testNgResult("failed"),
     artifacts: [reportDeclaration],
   });
   expect(failedCompletion).toMatchObject({
@@ -649,6 +650,7 @@ public class MixedVisibleTest {
     resultCode: "TESTNG_SUCCEEDED",
     summary: "E2E retry passed",
     durationMs: 120,
+    testNg: testNgResult("succeeded"),
     artifacts: [],
   });
   expect(successfulCompletion).toMatchObject({
@@ -676,12 +678,39 @@ public class MixedVisibleTest {
     await page.request.get(`/api/v1/run-batches/${encodeURIComponent(batch.id)}`, {
       headers: userHeaders,
     })
-  ).json()) as { attempts: Array<{ attemptNumber: number; resultSummary?: string }> };
+  ).json()) as {
+    attempts: Array<{ attemptNumber: number; resultSummary?: string }>;
+    runs: Array<{ caseDefinitionId: string }>;
+  };
   // 失败摘要应取 adapter 标记行（"Stack Trace:" 后第一行），而不是日志尾部启发式匹配到的
   // ANSI 着色 ERROR 行；摘要只保留堆栈行本身，不拼接类路径前缀。
   expect(
     completedBatch.attempts.find((attempt) => attempt.attemptNumber === 1)?.resultSummary,
   ).toBe(expectedFailureSummary);
+
+  // 分析闭环必须使用 TestNG 方法计数与权威错误描述：一次失败、一次成功即 50%，
+  // 成功码和断言分类码都不能再冒充“失败原因”。该断言通过真实 HTTP 完成协议写入数据，
+  // 随根级 test:e2e 在 CI 运行，防止只在展示层伪装修复。
+  const analyticsCaseId = completedBatch.runs[0]!.caseDefinitionId;
+  await page.goto(`/insights?caseDefinitionId=${encodeURIComponent(analyticsCaseId)}`);
+  await expect(page.locator(".insight-metric-success")).toContainText("50.0%");
+  await expect(page.locator(".insight-metric-danger")).toContainText("50.0%");
+  const failureReasonCard = page.locator(".insight-failure-card");
+  await expect(failureReasonCard).toContainText("java.lang.AssertionError: 中文断言失败");
+  await expect(failureReasonCard).not.toContainText("TESTNG_SUCCEEDED");
+  await expect(failureReasonCard).not.toContainText("TEST_ASSERTION_FAILED");
+  const trendRow = page.locator(".insight-data-table tbody tr").first();
+  await expect(trendRow.locator("td").nth(1)).toHaveText("2");
+  await expect(trendRow.locator("td").nth(2)).toHaveText("1");
+  await expect(trendRow.locator("td").nth(3)).toHaveText("1");
+  await expect(trendRow.locator("td").nth(4)).toHaveText("0");
+
+  await page.goto("/");
+  await expect(page.locator(".quality-score-row > strong")).toHaveText("50.0");
+  await expect(page.locator(".design-failure-card")).toContainText(
+    "java.lang.AssertionError: 中文断言失败",
+  );
+  await expect(page.locator(".design-failure-card")).not.toContainText("TESTNG_SUCCEEDED");
 
   const artifactDownload = await page.request.get(
     `/api/v1/run-attempts/${encodeURIComponent(firstAttemptId)}/artifacts/e2e-report`,
@@ -809,7 +838,10 @@ public class MixedVisibleTest {
   await expect(
     page.getByText("执行样本").locator("..").getByText("3", { exact: true }),
   ).toBeVisible();
-  await expect(page.locator(".failure-signature-list")).toContainText("TEST_ASSERTION_FAILED");
+  const filteredFailureReasons = page.locator(".failure-signature-list");
+  await expect(filteredFailureReasons).toContainText("java.lang.AssertionError: 中文断言失败");
+  await expect(filteredFailureReasons).not.toContainText("TEST_ASSERTION_FAILED");
+  await expect(filteredFailureReasons).not.toContainText("TESTNG_SUCCEEDED");
   await expectUiConsistency(page);
 
   await page.goto(
@@ -990,7 +1022,7 @@ public class MixedVisibleTest {
   await page.goto("/settings/access?section=users");
   await expect(page.getByRole("heading", { name: "用户管理" }).first()).toBeVisible();
   await expect(page.locator(".settings-stack > .settings-section")).toHaveCount(1);
-  await expect(page.getByRole("navigation", { name: "身份与访问模块" })).toHaveCount(0);
+  await expect(page.getByRole("navigation", { name: "身份权限模块" })).toHaveCount(0);
   await page.goto("/settings/access?section=ldap");
   await expect(page.getByRole("heading", { name: "LDAP 目录" })).toBeVisible();
   await expect(page.locator(".settings-stack > .settings-section")).toHaveCount(1);
@@ -1165,6 +1197,7 @@ async function completeAttempt(
     resultCode: string;
     summary: string;
     durationMs: number;
+    testNg?: ReturnType<typeof testNgResult>;
     artifacts: Array<Record<string, unknown>>;
   },
 ): Promise<Record<string, unknown>> {
@@ -1181,6 +1214,7 @@ async function completeAttempt(
           resultCode: result.resultCode,
           summary: result.summary,
           durationMs: result.durationMs,
+          ...(result.testNg ? { testNg: result.testNg } : {}),
           logWatermarks: { stdout: 0, stderr: -1, agent: -1 },
           artifacts: result.artifacts,
         },
@@ -1189,6 +1223,18 @@ async function completeAttempt(
   );
   expect(response.status()).toBe(200);
   return (await response.json()) as Record<string, unknown>;
+}
+
+function testNgResult(outcome: "succeeded" | "failed") {
+  return {
+    total: 1,
+    passed: outcome === "succeeded" ? 1 : 0,
+    failed: outcome === "failed" ? 1 : 0,
+    skipped: 0,
+    configurationFailures: 0,
+    detailsTruncated: true,
+    suites: [],
+  };
 }
 
 async function postHeartbeat(page: Page, identity: RunnerIdentity, busySlots: number) {

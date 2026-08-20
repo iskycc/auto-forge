@@ -16,6 +16,7 @@ import { DomainError, isPermission, type Permission } from "@autoforge/domain";
 import type { AttemptLogStore } from "./attempt-log-store";
 import type { SqliteDatabaseHandle } from "./database";
 import {
+  ANALYTICS_FACT_SCHEMA_VERSION,
   aggregateAnalytics,
   analyticsExportProjectIds,
   failureSignature,
@@ -778,10 +779,11 @@ export class SqlitePlatformOperationsRepository implements PlatformOperationsRep
          JOIN execution_runs r ON r.id = a.execution_run_id
          JOIN run_batches b ON b.id = r.batch_id
          LEFT JOIN analytics_facts f ON f.attempt_id = a.id
-         WHERE f.attempt_id IS NULL AND a.finished_at IS NOT NULL AND a.outcome IS NOT NULL
+         WHERE (f.attempt_id IS NULL OR f.schema_version < ?)
+           AND a.finished_at IS NOT NULL AND a.outcome IS NOT NULL
          ORDER BY a.finished_at, a.id LIMIT ?`,
       )
-      .all(limit) as Array<{
+      .all(ANALYTICS_FACT_SCHEMA_VERSION, limit) as Array<{
       attempt_id: string;
       project_id: string;
       batch_id: string;
@@ -798,18 +800,37 @@ export class SqlitePlatformOperationsRepository implements PlatformOperationsRep
       testng_result_json: string | null;
       finished_at: string;
     }>;
-    const insert = this.handle.client.prepare(
-      `INSERT OR IGNORE INTO analytics_facts
+    const writeFact = this.handle.client.prepare(
+      `INSERT INTO analytics_facts
        (attempt_id, project_id, batch_id, run_id, suite_id, case_definition_id, case_version,
         runner_id, environment_version_id, outcome, result_code, failure_signature, duration_ms,
         passed, failed, skipped, completed_at, schema_version)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(attempt_id) DO UPDATE SET
+         project_id=excluded.project_id,
+         batch_id=excluded.batch_id,
+         run_id=excluded.run_id,
+         suite_id=excluded.suite_id,
+         case_definition_id=excluded.case_definition_id,
+         case_version=excluded.case_version,
+         runner_id=excluded.runner_id,
+         environment_version_id=excluded.environment_version_id,
+         outcome=excluded.outcome,
+         result_code=excluded.result_code,
+         failure_signature=excluded.failure_signature,
+         duration_ms=excluded.duration_ms,
+         passed=excluded.passed,
+         failed=excluded.failed,
+         skipped=excluded.skipped,
+         completed_at=excluded.completed_at,
+         schema_version=excluded.schema_version
+       WHERE analytics_facts.schema_version < excluded.schema_version`,
     );
     return this.handle.client.transaction(() => {
       let inserted = 0;
       for (const row of rows) {
         const counts = resultCounts(row.testng_result_json);
-        inserted += insert.run(
+        inserted += writeFact.run(
           row.attempt_id,
           row.project_id,
           row.batch_id,
@@ -821,12 +842,13 @@ export class SqlitePlatformOperationsRepository implements PlatformOperationsRep
           row.environment_version_id,
           row.outcome,
           row.result_code,
-          failureSignature(row.result_code, row.result_summary),
+          failureSignature(row.outcome, row.result_code, row.result_summary),
           row.duration_ms,
           counts.passed,
           counts.failed,
           counts.skipped,
           row.finished_at,
+          ANALYTICS_FACT_SCHEMA_VERSION,
         ).changes;
       }
       return inserted;
@@ -1155,7 +1177,15 @@ export class SqlitePlatformOperationsRepository implements PlatformOperationsRep
     add("completed_at", filter.completedBefore, "<=");
     return this.handle.client
       .prepare(
-        `SELECT * FROM analytics_facts ${where.length > 0 ? `WHERE ${where.join(" AND ")}` : ""}
+        `SELECT analytics_facts.*,
+                COALESCE(
+                  (SELECT c.display_name FROM case_definitions c
+                   WHERE c.id=analytics_facts.case_definition_id),
+                  analytics_facts.case_definition_id
+                ) AS case_display_name,
+                (SELECT a.result_summary FROM run_attempts a
+                 WHERE a.id=analytics_facts.attempt_id) AS failure_description
+         FROM analytics_facts ${where.length > 0 ? `WHERE ${where.join(" AND ")}` : ""}
          ORDER BY completed_at, attempt_id LIMIT 100000`,
       )
       .all(...parameters) as AnalyticsFactRow[];

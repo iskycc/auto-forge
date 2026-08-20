@@ -316,7 +316,7 @@ export default async function DashboardPage() {
                 {(currentAnalytics?.failures ?? []).slice(0, 5).map((failure, index) => (
                   <div key={failure.signature}>
                     <i data-index={index} />
-                    <span title={failure.signature}>{failure.resultCode ?? failure.signature}</span>
+                    <span title={failure.description}>{failure.description}</span>
                     <strong>{failure.count}</strong>
                   </div>
                 ))}
@@ -329,7 +329,7 @@ export default async function DashboardPage() {
               <strong>高频失败 TOP 3</strong>
               {(currentAnalytics?.failures ?? []).slice(0, 3).map((failure) => (
                 <div key={failure.signature}>
-                  <span title={failure.signature}>{failure.signature}</span>
+                  <span title={failure.description}>{failure.description}</span>
                   <b>{failure.count} 次</b>
                 </div>
               ))}

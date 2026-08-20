@@ -47,6 +47,7 @@ describe.skipIf(!connectionString)("PostgreSQL platform repositories", () => {
     const batches = new PostgresRunBatchRepository(handle);
     const attemptLogs = createTestAttemptLogs();
     const executions = new PostgresExecutionControlRepository(handle, attemptLogs.store);
+    const operations = new PostgresPlatformOperationsRepository(handle, attemptLogs.store);
     const environments = new PostgresExecutionEnvironmentRepository(handle);
     const secrets = new PostgresExecutionSecretRepository(handle);
     const suiteId = randomUUID();
@@ -392,6 +393,19 @@ describe.skipIf(!connectionString)("PostgreSQL platform repositories", () => {
             },
           },
         ],
+      });
+      await expect(
+        operations.readAnalytics({
+          filter: { caseDefinitionId: `case-${runnerId}` },
+          generatedAt: "2026-08-09T00:02:00.000Z",
+        }),
+      ).resolves.toMatchObject({
+        sampleCount: 1,
+        passed: 1,
+        failed: 0,
+        successRate: 1,
+        failures: [],
+        trend: [{ total: 1, passed: 1, failed: 0, skipped: 0 }],
       });
     } finally {
       await handle.pool.query("DELETE FROM run_batches WHERE id = $1", [secondProjectBatchId]);

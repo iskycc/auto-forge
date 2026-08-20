@@ -102,9 +102,27 @@ describe("shared UI controls", () => {
 
     expect(appShell).toContain('label: "安全审计"');
     expect(appShell).toContain('label: "执行机组"');
+    expect(appShell).toContain('label: "运维计划"');
     expect(appShell).not.toContain('label: "用例批跑"');
     expect(suiteManager).toContain("<ProjectPicker");
     expect(suiteManager).not.toContain("<Select");
+  });
+
+  it("keeps every first- and second-level sidebar tab at exactly four Chinese characters", () => {
+    // 产品导航采用固定四字节奏。该约束属于信息架构，不允许在视觉改版中随意改回
+    // “首页”“用例库”等长度不一致的标签；根级 pnpm test 会在 CI 执行本断言。
+    const appShell = readFileSync(APP_SHELL, "utf8");
+    const navigationSource = appShell.slice(
+      appShell.indexOf("const navigation:"),
+      appShell.indexOf("function isActive("),
+    );
+    const tabLabels = [
+      ...navigationSource.matchAll(/(?:label|fallbackLabel): "([\p{Script=Han}]+)"/gu),
+    ].map((match) => match[1]!);
+
+    expect(tabLabels.length).toBeGreaterThan(20);
+    expect(tabLabels.filter((label) => [...label].length !== 4)).toEqual([]);
+    expect(appShell).toContain('<span className="nav-section-label">系统管理</span>');
   });
 
   it("presents the configurable JAR upload boundary in MiB", () => {

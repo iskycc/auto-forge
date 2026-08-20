@@ -137,7 +137,7 @@ export async function logout(page: Page): Promise<void> {
 // without any entry in the group see no toggle at all; treat that as a no-op.
 export async function expandAdministrationGroup(
   page: Page,
-  groupLabel: "项目协作" | "身份与访问" | "执行配置" | "平台运维",
+  groupLabel: "项目协作" | "身份权限" | "执行配置" | "平台运维",
 ): Promise<void> {
   const toggle = page.getByRole("navigation", { name: "主导航" }).getByRole("button", {
     name: groupLabel,

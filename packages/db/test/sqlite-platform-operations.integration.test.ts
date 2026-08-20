@@ -197,14 +197,49 @@ describe("SQLite platform operations", () => {
     const { handle, repository } = fixture();
     try {
       seedCompletedAttempt(handle);
-      expect(await repository.rebuildAnalyticsFacts(100)).toBe(1);
+      seedSucceededAttempt(handle);
+      expect(await repository.rebuildAnalyticsFacts(100)).toBe(2);
       expect(await repository.rebuildAnalyticsFacts(100)).toBe(0);
       const summary = await repository.readAnalytics({
         filter: { projectId: "project-1" },
         projectIds: ["project-1"],
         generatedAt: "2026-08-11T03:00:00.000Z",
       });
-      expect(summary).toMatchObject({ sampleCount: 1, passed: 2, failed: 1, skipped: 1 });
+      expect(summary).toMatchObject({
+        sampleCount: 2,
+        passed: 3,
+        failed: 1,
+        skipped: 1,
+        successRate: 0.6,
+        trend: [{ total: 5, passed: 3, failed: 1, skipped: 1 }],
+        failures: [
+          {
+            description: "expected 1 but got 2",
+            signature: "expected <n> but got <n>",
+            count: 1,
+          },
+        ],
+      });
+      expect(summary.failures).not.toEqual(
+        expect.arrayContaining([expect.objectContaining({ resultCode: "TESTNG_SUCCEEDED" })]),
+      );
+
+      // 0.8.5 及以前生成过 schema v1 错误事实。读取分析时必须原地重建，不能要求
+      // 管理员删除数据库或等待新执行覆盖历史。
+      handle.client
+        .prepare(
+          `UPDATE analytics_facts SET passed=0, failure_signature='TESTNG_SUCCEEDED:passed',
+           schema_version=1 WHERE attempt_id='attempt-success'`,
+        )
+        .run();
+      expect(await repository.rebuildAnalyticsFacts(100)).toBe(1);
+      expect(
+        await repository.readAnalytics({
+          filter: { projectId: "project-1" },
+          projectIds: ["project-1"],
+          generatedAt: "2026-08-11T03:00:00.000Z",
+        }),
+      ).toMatchObject({ passed: 3, failures: [{ description: "expected 1 but got 2" }] });
       expect(
         (
           await repository.globalSearch({
@@ -543,6 +578,28 @@ function seedCompletedAttempt(handle: ReturnType<typeof createSqliteDatabase>) {
        outcome,result_code,result_summary,duration_ms,testng_result_json)
     VALUES ('attempt-1','run-1','runner-1',1,'failed',1,'${now}','${now}','failed',
             'TEST_FAILURE','expected 1 but got 2',1200,
-            '{"summary":{"passed":2,"failed":1,"skipped":1}}');
+            '{"total":4,"passed":2,"failed":1,"skipped":1,"configurationFailures":0,"detailsTruncated":true,"suites":[]}');
+  `);
+}
+
+function seedSucceededAttempt(handle: ReturnType<typeof createSqliteDatabase>) {
+  const now = "2026-08-11T01:30:00.000Z";
+  handle.client.exec(`
+    INSERT INTO run_batches
+      (id,suite_id,suite_name,suite_version,status,retry_limit,environment_json,
+       secret_bindings_json,total_runs,project_id,priority,created_at,updated_at)
+    VALUES ('00000000-0000-4000-8000-000000000b02','suite-1','Regression',1,'succeeded',0,
+            '[]','[]',1,'project-1',0,'${now}','${now}');
+    INSERT INTO execution_runs
+      (id,batch_id,case_definition_id,case_version,display_name,class_name,parameters_json,status,
+       attempt_count,created_at,updated_at)
+    VALUES ('run-success','00000000-0000-4000-8000-000000000b02','case-1',1,'Example Test',
+            'com.example.Test','{}','succeeded',1,'${now}','${now}');
+    INSERT INTO run_attempts
+      (id,execution_run_id,runner_id,attempt_number,status,scheduling_score,created_at,finished_at,
+       outcome,result_code,result_summary,duration_ms,testng_result_json)
+    VALUES ('attempt-success','run-success','runner-1',1,'succeeded',1,'${now}','${now}',
+            'succeeded','TESTNG_SUCCEEDED','TestNG passed 1 test method(s).',800,
+            '{"total":1,"passed":1,"failed":0,"skipped":0,"configurationFailures":0,"detailsTruncated":true,"suites":[]}');
   `);
 }

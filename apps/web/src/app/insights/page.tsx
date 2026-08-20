@@ -60,6 +60,8 @@ export default async function InsightsPage({
     ...(caseProjectVersionId ? { caseProjectVersionId } : {}),
     ...(projectIds ? { allowedProjectIds: projectIds } : {}),
   });
+  const methodSampleCount = summary.passed + summary.failed + summary.skipped;
+  const trendMaximum = Math.max(1, ...summary.trend.map((entry) => entry.total));
   return (
     <div className="page-stack insights-page">
       <section className="page-hero">
@@ -138,7 +140,7 @@ export default async function InsightsPage({
               <Input defaultValue={filter.environmentVersionId ?? ""} name="environmentVersionId" />
             </label>
             <label>
-              失败签名
+              失败特征
               <Input defaultValue={filter.failureSignature ?? ""} name="failureSignature" />
             </label>
             <label>
@@ -283,13 +285,13 @@ export default async function InsightsPage({
         <Metric icon={FlaskConical} label="执行样本" value={String(summary.sampleCount)} />
         <Metric
           icon={TrendingUp}
-          label="成功率"
+          label="方法通过率"
           tone="success"
           value={percent(summary.successRate)}
         />
         <Metric
           icon={BarChart3}
-          label="失败率"
+          label="方法失败率"
           tone="danger"
           value={percent(summary.failureRate)}
         />
@@ -303,33 +305,62 @@ export default async function InsightsPage({
               <span className="eyebrow">TREND</span>
               <h2>每日趋势</h2>
             </div>
-            <span className="muted">UTC · {summary.sampleCount} 个 attempt</span>
+            <span className="muted">
+              UTC · {methodSampleCount} 个方法结果 · {summary.sampleCount} 次执行
+            </span>
           </div>
           {summary.trend.length === 0 ? (
             <div className="inline-empty">当前筛选范围还没有已确认执行结果。</div>
           ) : (
-            <div className="trend-bars" role="img" aria-label="每日成功失败趋势图">
-              {summary.trend.map((bucket) => {
-                const maximum = Math.max(1, ...summary.trend.map((entry) => entry.total));
-                return (
-                  <div
-                    className="trend-column"
-                    key={bucket.bucket}
-                    title={`${bucket.bucket.slice(0, 10)}：${bucket.total}`}
-                  >
-                    <span
-                      className="trend-failed"
-                      style={{ height: `${(bucket.failed / maximum) * 100}%` }}
-                    />
-                    <span
-                      className="trend-passed"
-                      style={{ height: `${(bucket.passed / maximum) * 100}%` }}
-                    />
+            <>
+              <div className="trend-legend" aria-hidden="true">
+                <span>
+                  <i className="trend-passed" />
+                  通过
+                </span>
+                <span>
+                  <i className="trend-failed" />
+                  失败
+                </span>
+                <span>
+                  <i className="trend-skipped" />
+                  跳过
+                </span>
+              </div>
+              <div
+                className="trend-bars"
+                role="img"
+                aria-label="每日 TestNG 方法通过、失败与跳过趋势图"
+                style={{
+                  gridTemplateColumns: `repeat(${summary.trend.length}, minmax(54px, 84px))`,
+                  maxWidth: `${summary.trend.length * 92}px`,
+                }}
+              >
+                {summary.trend.map((bucket) => (
+                  <div className="trend-column" key={bucket.bucket}>
+                    <div
+                      className="trend-column-bars"
+                      title={`${bucket.bucket.slice(0, 10)}：通过 ${bucket.passed}，失败 ${bucket.failed}，跳过 ${bucket.skipped}`}
+                    >
+                      <span
+                        className="trend-passed"
+                        style={{ height: `${(bucket.passed / trendMaximum) * 100}%` }}
+                      />
+                      <span
+                        className="trend-failed"
+                        style={{ height: `${(bucket.failed / trendMaximum) * 100}%` }}
+                      />
+                      <span
+                        className="trend-skipped"
+                        style={{ height: `${(bucket.skipped / trendMaximum) * 100}%` }}
+                      />
+                    </div>
+                    <em>{bucket.total}</em>
                     <small>{bucket.bucket.slice(5, 10)}</small>
                   </div>
-                );
-              })}
-            </div>
+                ))}
+              </div>
+            </>
           )}
           {summary.trend.length > 0 ? (
             <div className="table-scroll">
@@ -337,7 +368,7 @@ export default async function InsightsPage({
                 <thead>
                   <tr>
                     <th>日期（UTC）</th>
-                    <th>Attempt</th>
+                    <th>方法总数</th>
                     <th>通过方法</th>
                     <th>失败方法</th>
                     <th>跳过方法</th>
@@ -359,11 +390,11 @@ export default async function InsightsPage({
           ) : null}
         </article>
 
-        <article className="content-card">
+        <article className="content-card insight-failure-card">
           <div className="section-heading">
             <div>
               <span className="eyebrow">FAILURES</span>
-              <h2>失败签名</h2>
+              <h2>失败原因</h2>
             </div>
           </div>
           {summary.failures.length === 0 ? (
@@ -373,17 +404,19 @@ export default async function InsightsPage({
               {summary.failures.map((failure) => (
                 <li key={failure.signature}>
                   <span>
-                    <strong>{failure.resultCode ?? "UNKNOWN"}</strong>
-                    <small>{failure.signature}</small>
+                    <strong title={failure.description}>{failure.description}</strong>
+                    <small>
+                      最近出现于 {failure.lastSeenAt.slice(0, 19).replace("T", " ")} UTC
+                    </small>
                   </span>
-                  <b>{failure.count}</b>
+                  <b>{failure.count} 次</b>
                 </li>
               ))}
             </ol>
           )}
         </article>
 
-        <article className="content-card">
+        <article className="content-card insight-flaky-card">
           <div className="section-heading">
             <div>
               <span className="eyebrow">FLAKY</span>
@@ -407,9 +440,7 @@ export default async function InsightsPage({
                   {summary.flakyCases.map((item) => (
                     <tr key={item.caseDefinitionId}>
                       <td>
-                        <Link href={`/cases/${item.caseDefinitionId}`}>
-                          {item.caseDefinitionId}
-                        </Link>
+                        <Link href={`/cases/${item.caseDefinitionId}`}>{item.displayName}</Link>
                       </td>
                       <td>{item.samples}</td>
                       <td>
