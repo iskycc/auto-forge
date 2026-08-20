@@ -76,6 +76,18 @@ test("keeps long-running CI acceptance paths partitioned", async () => {
   assert.match(workflow, /needs\.jenkins-plugins\.result/);
 });
 
+test("declares the official Jenkins repository in every plugin POM", async () => {
+  const pluginPoms = await Promise.all([
+    readFile("integrations/jenkins/autoforge-execution/pom.xml", "utf8"),
+    readFile("integrations/jenkins/autoforge-dependency-publisher/pom.xml", "utf8"),
+  ]);
+
+  for (const pluginPom of pluginPoms) {
+    assert.match(pluginPom, /<repositories>[\s\S]*https:\/\/repo\.jenkins-ci\.org\/public\//);
+    assert.match(pluginPom, /<pluginRepositories>[\s\S]*https:\/\/repo\.jenkins-ci\.org\/public\//);
+  }
+});
+
 test("uses cached builds and parallel archive compression", async () => {
   const [workflow, buildScript] = await Promise.all([
     readFile(".github/workflows/release.yml", "utf8"),
