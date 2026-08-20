@@ -4,7 +4,7 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
-## Unreleased
+## 0.8.5 - 2026-08-20
 
 ### Added
 
@@ -41,6 +41,9 @@ and known limitations.
 - Single-case execution now resolves the case's actual project instead of silently falling back to
   the default project, schedules through the shared batch state machine, and persists Adapter
   environment IP/address settings into the immutable execution specification.
+- The global execution dialog now resolves each managed environment's current immutable version
+  before rendering it. A non-empty environment list can no longer crash the dialog by treating
+  environment summaries as version details.
 
 ### Tests
 
@@ -58,8 +61,16 @@ and known limitations.
 
 ### Compatibility
 
-- No database migration or Runner Protocol schema change. The Base64 failure marker is additive;
-  control planes continue to accept the legacy plaintext marker during rolling upgrades.
+- Runner Protocol schema v1 and the offline asset layout are unchanged. The Base64 failure marker
+  and Runner Group HTTP contracts are additive; control planes continue to accept the legacy
+  plaintext marker during rolling upgrades.
+- Existing Lite and Full installations must apply the new Runner Group migrations during upgrade.
+  No persisted platform-configuration migration is required.
+
+### Known limitations
+
+- The authenticated desktop UI continues to require a viewport width of at least 1024 pixels;
+  mobile layouts remain outside the supported interface baseline.
 
 ## 0.7.2 - 2026-08-19
 
