@@ -134,7 +134,7 @@ test("executes a TestNG JAR through the real Go Agent", async ({ page }, testInf
     agent = await startAgent();
     agents.push(agent);
     await waitForOnlineRunner(page, agent);
-    await waitForTerminalBatch(
+    const restartedBatch = await waitForTerminalBatch(
       page,
       restartBatchId,
       agent,
@@ -142,8 +142,13 @@ test("executes a TestNG JAR through the real Go Agent", async ({ page }, testInf
       "AGENT_RESTARTED_DURING_EXECUTION",
       1,
     );
+    expect(restartedBatch.attempts[0]?.resultSummary).toBe(
+      "Runner Agent restarted before the attempt completed.",
+    );
     await page.goto(`/run-batches/${encodeURIComponent(restartBatchId)}`);
-    await expect(page.getByText("AGENT_RESTARTED_DURING_EXECUTION", { exact: true })).toBeVisible();
+    await expect(
+      page.getByText("Runner Agent restarted before the attempt completed.", { exact: true }),
+    ).toBeVisible();
 
     const fullFaultControlDirectory = process.env.E2E_FULL_FAULT_CONTROL_DIR?.trim();
     if (fullFaultControlDirectory) {
@@ -170,6 +175,7 @@ type BatchDetails = {
     id: string;
     status?: string;
     resultCode?: string;
+    resultSummary?: string;
     testNg?: {
       total: number;
       passed: number;
