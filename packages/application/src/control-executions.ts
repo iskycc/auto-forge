@@ -1,5 +1,4 @@
 import type {
-  AcquireAttemptSecretsInput,
   ClaimAssignmentsInput,
   ClaimAssignmentsResponse,
   CompleteAttemptInput,
@@ -27,7 +26,6 @@ import type {
   RunnerRepository,
   SecretCipherPort,
 } from "./ports";
-import { executionSecretPurpose } from "./manage-execution-environments";
 import { assertRunnerAuthenticated } from "./manage-runners";
 import { discardableRunnerBatchCacheIds } from "./reconcile-runner-batch-cache";
 import { buildRecoverySchedulingEvents } from "./recovery-scheduling-events";
@@ -53,7 +51,7 @@ export class ExecutionControlService {
     private readonly executions: ExecutionControlRepository,
     private readonly runners: RunnerRepository,
     private readonly credentials: RunnerCredentialPort,
-    private readonly cipher: SecretCipherPort,
+    private readonly credentialCipher: SecretCipherPort,
     private readonly objectStore: JarObjectStorePort,
     private readonly clock: Clock,
     private readonly ids: IdGenerator,
@@ -87,10 +85,10 @@ export class ExecutionControlService {
         closedBatchIds,
       };
     }
-    if (!this.cipher.available) {
+    if (!this.credentialCipher.available) {
       throw new DomainError(
         "SECRET_CIPHER_UNAVAILABLE",
-        "领取执行任务前必须配置 AutoForge 主密钥。",
+        "领取执行任务前必须配置用于保护租约凭据的平台主密钥。",
       );
     }
     const now = this.clock.now();
@@ -119,7 +117,7 @@ export class ExecutionControlService {
         eventId: this.ids.next(),
         token,
         tokenHash: this.credentials.hash(token),
-        tokenEncrypted: this.cipher.encrypt(token, leaseTokenPurpose(id)),
+        tokenEncrypted: this.credentialCipher.encrypt(token, leaseTokenPurpose(id)),
       };
     });
     const claimed = await this.executions.claim({
@@ -175,7 +173,7 @@ export class ExecutionControlService {
         assignment: record.assignment,
         lease: {
           leaseId: record.lease.id,
-          token: this.cipher.decrypt(
+          token: this.credentialCipher.decrypt(
             record.lease.tokenEncrypted,
             leaseTokenPurpose(record.lease.id),
           ),
@@ -407,52 +405,13 @@ export class ExecutionControlService {
     await this.authenticateRunner(runnerId, credential);
     const leaseTokenHash = this.credentials.hash(input.leaseToken);
     const now = this.clock.now().toISOString();
-    const encryptedSecrets = await this.executions.resolveAttemptSecrets({
-      runnerId,
-      attemptId,
-      leaseTokenHash,
-      now,
-    });
     return this.executions.appendLogChunks({
       runnerId,
       attemptId,
       leaseTokenHash,
-      chunks: redactLogChunks(
-        input.chunks,
-        this.decryptSecrets(encryptedSecrets).map(({ value }) => value),
-      ),
+      chunks: redactLogChunks(input.chunks, []),
       receivedAt: now,
     });
-  }
-
-  async acquireSecrets(
-    runnerId: string,
-    credential: string,
-    attemptId: string,
-    input: AcquireAttemptSecretsInput,
-  ) {
-    await this.authenticateRunner(runnerId, credential);
-    const now = this.clock.now().toISOString();
-    const encryptedSecrets = await this.executions.acquireAttemptSecrets({
-      runnerId,
-      attemptId,
-      leaseTokenHash: this.credentials.hash(input.leaseToken),
-      now,
-    });
-    const secrets = this.decryptSecrets(encryptedSecrets);
-    await this.executions.recordAttemptSecretAccess({
-      id: this.ids.next(),
-      runnerId,
-      attemptId,
-      requestId: input.requestId,
-      secretIds: encryptedSecrets.map((secret) => secret.secretId),
-      recordedAt: now,
-    });
-    return {
-      schemaVersion: 1 as const,
-      requestId: input.requestId,
-      secrets,
-    };
   }
 
   async listLogs(input: {
@@ -626,27 +585,6 @@ export class ExecutionControlService {
     return projectId;
   }
 
-  private decryptSecrets(
-    encrypted: Array<{ name: string; secretVersionId: string; valueEncrypted: string }>,
-  ): Array<{ name: string; value: string }> {
-    if (encrypted.length > 0 && !this.cipher.available) {
-      throw new DomainError("SECRET_CIPHER_UNAVAILABLE", "服务端未配置密文主密钥。");
-    }
-    try {
-      return encrypted.map((secret) => ({
-        name: secret.name,
-        value: this.cipher.decrypt(
-          secret.valueEncrypted,
-          executionSecretPurpose(secret.secretVersionId),
-        ),
-      }));
-    } catch (error) {
-      throw new DomainError("EXECUTION_SECRET_DECRYPT_FAILED", "执行密文无法解密。", {
-        cause: error,
-      });
-    }
-  }
-
   async cancelBatch(actorId: string, batchId: string, reason: string): Promise<number> {
     return this.executions.cancelBatch({
       batchId,
@@ -806,12 +744,25 @@ function decodeBase64Utf8(encoded: string): string | null {
 }
 
 function singleLineFailureDescription(value: string): string | null {
-  return (
-    value
-      .replace(/&(?:#x20|nbsp);/gi, " ")
-      .replace(/\s+/g, " ")
-      .trim() || null
-  );
+  const decodedLines = value
+    .replace(/&(?:#x20|nbsp);/gi, " ")
+    .split(/\r?\n/)
+    .map((line) => line.trim());
+  const assertionMarker = decodedLines.findIndex((line) => /^Assertion failed\b/i.test(line));
+  if (assertionMarker >= 0) {
+    const inlineExpression = decodedLines[assertionMarker]!.replace(
+      /^Assertion failed\s*:?[\s]*/i,
+      "",
+    ).trim();
+    if (inlineExpression) return inlineExpression.replace(/\s+/g, " ");
+    const expression = decodedLines
+      .slice(assertionMarker + 1)
+      .find((line) => Boolean(line) && !line.includes("|"));
+    return expression?.replace(/\s+/g, " ").trim() || null;
+  }
+  const assertionExpression = decodedLines.find((line) => /^assert\b/i.test(line));
+  if (assertionExpression) return assertionExpression.replace(/\s+/g, " ").trim() || null;
+  return decodedLines.filter(Boolean).join(" ").replace(/\s+/g, " ").trim() || null;
 }
 
 // 在日志尾部找最后一行异常行（优先于堆栈帧行），作为非结构化失败的可读原因。
@@ -829,15 +780,7 @@ function lastFailureLine(content: string): string | null {
   if (stackLine) return stackLine;
   for (let index = lines.length - 1; index >= 0; index -= 1) {
     if (!/^\s*assert\b/.test(lines[index] ?? "")) continue;
-    const block = [lines[index]!.trim()];
-    for (let next = index + 1; next < Math.min(lines.length, index + 16); next += 1) {
-      const rawLine = lines[next] ?? "";
-      const trimmed = rawLine.trim();
-      if (!trimmed) break;
-      if (!/^(?:\s|&#x20;|&nbsp;)/i.test(rawLine) || /^at\s|^Caused by/.test(trimmed)) break;
-      block.push(trimmed);
-    }
-    return singleLineFailureDescription(block.join(" "));
+    return singleLineFailureDescription(lines[index] ?? "");
   }
   return null;
 }

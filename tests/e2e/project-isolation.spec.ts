@@ -4,6 +4,7 @@ import { zipSync } from "fflate";
 import { buildClassFile } from "../../packages/testng-discovery/test/class-fixture";
 import { freshRunnerBootstrapToken } from "./support/runner-bootstrap";
 import { browserJson, ensureAdministrator, login, logout, uniqueName } from "./support/session";
+import { configureTaskExecution, createTaskRun } from "./support/task-execution";
 
 const VIEWER_ROLE_ID = "00000000-0000-7000-8100-000000000005";
 
@@ -58,13 +59,9 @@ test("project member cannot observe another project's assets through pages or di
   const suiteB = await createSuite(page, projectB.id, `Suite B ${suffix}`);
   await addCaseToSuite(page, suiteA.id, caseA.id);
   await addCaseToSuite(page, suiteB.id, caseB.id);
-  const environmentA = await createEnvironment(page, projectA.id, `Environment A ${suffix}`);
-  const environmentB = await createEnvironment(page, projectB.id, `Environment B ${suffix}`);
-  const secretA = await createSecret(page, projectA.id, `Secret A ${suffix}`);
-  const secretB = await createSecret(page, projectB.id, `Secret B ${suffix}`);
   const runnerId = await registerRunner(page, suffix);
-  const batchA = await createBatch(page, projectA.id, suiteA.id, runnerId);
-  const batchB = await createBatch(page, projectB.id, suiteB.id, runnerId);
+  const batchA = await createBatch(page, suiteA.id, runnerId);
+  const batchB = await createBatch(page, suiteB.id, runnerId);
 
   await logout(page);
   await login(page, username, password);
@@ -88,23 +85,18 @@ test("project member cannot observe another project's assets through pages or di
   await page.getByRole("link", { name: suiteA.name }).click();
   await expect(page.getByRole("link", { name: "添加用例" })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "移除" })).toHaveCount(0);
-  await page.goto("/settings/environments");
-  await expect(page.getByRole("heading", { name: environmentA.name, exact: true })).toBeVisible();
-  await expect(page.getByRole("heading", { name: environmentB.name, exact: true })).toHaveCount(0);
   await page.goto("/execution-records");
   const suiteOptions = await page.getByLabel("用例任务").last().locator("option").allTextContents();
   expect(suiteOptions.some((option) => option.includes(suiteA.name))).toBe(true);
   expect(suiteOptions.some((option) => option.includes(suiteB.name))).toBe(false);
   await page.goto("/run-batches");
-  await expect(page.getByRole("button", { name: "开始调度" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "开始执行", exact: true })).toHaveCount(0);
 
   await expectForbidden(page, `/api/v1/case-definitions?projectId=${projectB.id}`);
   await expectNotFoundOrForbidden(page, `/api/v1/case-definitions/${caseB.id}`);
   await expectNotFoundOrForbidden(page, `/api/v1/case-sources/${sourceB.id}`);
   await expectForbidden(page, `/api/v1/case-suites?projectId=${projectB.id}`);
   await expectNotFoundOrForbidden(page, `/api/v1/case-suites/${suiteB.id}`);
-  await expectNotFoundOrForbidden(page, `/api/v1/execution-environments/${environmentB.id}`);
-  await expectNotFoundOrForbidden(page, `/api/v1/execution-secrets/${secretB.id}`);
   await expectNotFoundOrForbidden(page, `/api/v1/run-batches/${batchB.id}`);
   const forbiddenAnalytics = await browserJson<{ error?: { code?: string } }>(
     page,
@@ -132,11 +124,6 @@ test("project member cannot observe another project's assets through pages or di
   expect(visibleObjects.status).toBe(200);
   expect(visibleObjects.body.items.map((item) => item.objectKey)).toContain(sourceA.objectKey);
   expect(visibleObjects.body.items.map((item) => item.objectKey)).not.toContain(sourceB.objectKey);
-  const visibleEnvironments = await browserJson<{
-    items: Array<{ id: string }>;
-  }>(page, "/api/v1/execution-environments");
-  expect(visibleEnvironments.body.items.map((item) => item.id)).toContain(environmentA.id);
-  expect(visibleEnvironments.body.items.map((item) => item.id)).not.toContain(environmentB.id);
   const visibleBatches = await browserJson<{ items: Array<{ id: string; projectId: string }> }>(
     page,
     "/api/v1/run-batches?limit=200",
@@ -192,7 +179,6 @@ test("project member cannot observe another project's assets through pages or di
   expect(archiveAudit.body.items).toContainEqual(
     expect.objectContaining({ resourceId: projectA.id, projectId: projectA.id }),
   );
-  expect(secretA.id).toBeTruthy();
 });
 
 async function createProject(page: Page, name: string, slug: string) {
@@ -238,39 +224,6 @@ async function createSuite(page: Page, projectId: string, name: string) {
   const response = await browserJson<{ id: string; name: string }>(page, "/api/v1/case-suites", {
     method: "POST",
     body: { projectId, name },
-  });
-  expect(response.status).toBe(201);
-  return response.body;
-}
-
-async function createEnvironment(page: Page, projectId: string, name: string) {
-  const response = await browserJson<{ id: string; name: string }>(
-    page,
-    "/api/v1/execution-environments",
-    {
-      method: "POST",
-      body: {
-        projectId,
-        name,
-        description: "Project isolation fixture",
-        variables: [{ name: "PROJECT_MARKER", value: projectId }],
-        secretBindings: [],
-      },
-    },
-  );
-  expect(response.status).toBe(201);
-  return response.body;
-}
-
-async function createSecret(page: Page, projectId: string, name: string) {
-  const response = await browserJson<{ id: string }>(page, "/api/v1/execution-secrets", {
-    method: "POST",
-    body: {
-      projectId,
-      name,
-      description: "Project isolation secret fixture",
-      value: `isolated-${projectId}`,
-    },
   });
   expect(response.status).toBe(201);
   return response.body;
@@ -332,19 +285,9 @@ async function registerRunner(page: Page, suffix: string): Promise<string> {
   return identity.runnerId;
 }
 
-async function createBatch(page: Page, projectId: string, suiteId: string, runnerId: string) {
-  const response = await browserJson<{ id: string }>(page, "/api/v1/run-batches", {
-    method: "POST",
-    body: {
-      projectId,
-      suiteId,
-      runnerIds: [runnerId],
-      retryLimit: 0,
-      environmentVariables: [],
-    },
-  });
-  expect(response.status).toBe(201);
-  return response.body;
+async function createBatch(page: Page, suiteId: string, runnerId: string) {
+  await configureTaskExecution(page, suiteId, runnerId, { retryLimit: 0 });
+  return createTaskRun(page, suiteId);
 }
 
 async function importJar(

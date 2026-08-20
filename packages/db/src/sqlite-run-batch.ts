@@ -14,7 +14,6 @@ import {
   DomainError,
   evaluateRunnerForScheduling,
   MINIMUM_JAVA_MAJOR_VERSION,
-  ON_DEMAND_SECRET_CAPABILITY,
   REQUIRED_EXECUTION_LABELS,
   SUPPORTED_TESTNG_VERSION,
   transitionRunBatch,
@@ -77,6 +76,7 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
       record.projectId ?? DEFAULT_PROJECT_ID,
       record.adapter,
       record.runs,
+      record.policy?.projectVersionId,
     );
     this.handle.client.transaction(() => {
       // SQLite 单写者下，同一事务内取 MAX+1 即为全局唯一递增编号。
@@ -784,7 +784,6 @@ function executionSpec(input: {
     requiredCapabilities: [
       ...projectAdapterRequiredCapabilities(input.adapterRuntime),
       ...(input.policy?.executor === "testng-container" ? ["executor:testng-container-v1"] : []),
-      ...(input.secretBindings.length > 0 ? [ON_DEMAND_SECRET_CAPABILITY] : []),
     ],
     artifactRules: artifactPatterns.map((pattern) => ({
       pattern,
@@ -805,6 +804,7 @@ function projectAdapterRuntime(
   projectId: string,
   adapter: CreateRunBatchRecord["adapter"],
   runs: CreateRunBatchRecord["runs"],
+  projectVersionId?: string,
 ): ProjectAdapterRuntime | undefined {
   const configuration = handle.client
     .prepare(
@@ -817,6 +817,15 @@ function projectAdapterRuntime(
         jar_bundle_asset_id: string | null;
       }
     | undefined;
+  const versionConfiguration = projectVersionId
+    ? (handle.client
+        .prepare(
+          `SELECT jar_bundle_asset_id
+           FROM project_version_runtime_assets
+           WHERE project_version_id = ? AND project_id = ?`,
+        )
+        .get(projectVersionId, projectId) as { jar_bundle_asset_id: string } | undefined)
+    : undefined;
   if (!hasTaskAdapterSettings(adapter)) return undefined;
   const asset = (id: string | null): RuntimeAssetSnapshot | undefined => {
     if (!id) return undefined;
@@ -847,7 +856,11 @@ function projectAdapterRuntime(
       : undefined;
   };
   const jdk = asset(configuration?.jdk_asset_id ?? null);
-  const jarBundle = asset(configuration?.jar_bundle_asset_id ?? null);
+  const jarBundle = asset(
+    projectVersionId
+      ? (versionConfiguration?.jar_bundle_asset_id ?? null)
+      : (configuration?.jar_bundle_asset_id ?? null),
+  );
   if (!jarBundle) {
     throw new DomainError(
       "ADAPTER_DEPENDENCY_ARCHIVE_MISSING",

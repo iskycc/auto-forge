@@ -97,13 +97,6 @@ func cotestAdapterExecutorSpec(
 			strconv.FormatInt(specification.Adapter.CaseTimeoutSeconds, 10),
 		)
 	}
-	environment := make(map[string]string, len(specification.Environment))
-	for _, entry := range specification.Environment {
-		if _, exists := environment[entry.Name]; exists {
-			return executor.Spec{}, nil, fmt.Errorf("duplicate environment variable %q", entry.Name)
-		}
-		environment[entry.Name] = entry.Value
-	}
 	return executor.Spec{
 		SchemaVersion: executor.SupportedSchemaVersion,
 		AttemptID:     specification.AttemptID,
@@ -111,7 +104,7 @@ func cotestAdapterExecutorSpec(
 			Executable: javaExecutable,
 			Args:       arguments,
 		},
-		Environment: environment,
+		Environment: map[string]string{},
 		Limits: executor.Limits{
 			TimeoutMs:          specification.TimeoutMs,
 			MaxLogBytes:        min(specification.ResourceLimits.LogBytes, 64<<20),

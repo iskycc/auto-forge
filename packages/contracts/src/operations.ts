@@ -179,7 +179,6 @@ export const analyticsFilterSchema = z.object({
   suiteId: identifierSchema.optional(),
   caseDefinitionId: identifierSchema.optional(),
   runnerId: identifierSchema.optional(),
-  environmentVersionId: identifierSchema.optional(),
   outcome: z.enum(["succeeded", "failed", "cancelled", "timed_out"]).optional(),
   failureSignature: z.string().max(256).optional(),
   tag: z.string().trim().min(1).max(128).optional(),
@@ -192,7 +191,6 @@ const analyticsBatchSnapshotSchema = z.object({
   projectId: identifierSchema,
   suiteId: identifierSchema,
   suiteVersion: z.number().int().positive(),
-  environmentVersionId: identifierSchema.optional(),
   selectedRunnerIds: z.array(identifierSchema),
   caseCount: z.number().int().nonnegative(),
 });

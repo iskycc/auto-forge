@@ -171,9 +171,72 @@ jobs:
           retention-days: 7
           compression-level: 0
 
+  jenkins-plugins:
+    name: Jenkins Pipeline plugins
+    needs: prepare
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
+
+      - name: Set up Java
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+
+      - name: Build and verify Jenkins plugins
+        run: >-
+          mvn --batch-mode --no-transfer-progress
+          --file integrations/jenkins/pom.xml
+          -Drevision=${{ needs.prepare.outputs.version }}
+          -Dchangelist=
+          verify
+
+      - name: Stage Jenkins plugins
+        run: |
+          mkdir -p dist/release
+          cp integrations/jenkins/autoforge-execution/target/autoforge-execution.hpi \
+            "dist/release/autoforge-jenkins-execution-${{ needs.prepare.outputs.version }}.hpi"
+          cp integrations/jenkins/autoforge-dependency-publisher/target/autoforge-dependency-publisher.hpi \
+            "dist/release/autoforge-jenkins-dependency-publisher-${{ needs.prepare.outputs.version }}.hpi"
+
+      - name: Generate execution plugin SBOM
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          path: dist/release/autoforge-jenkins-execution-${{ needs.prepare.outputs.version }}.hpi
+          format: spdx-json
+          output-file: dist/release/autoforge-jenkins-execution-${{ needs.prepare.outputs.version }}.spdx.json
+          syft-version: v1.50.0
+          upload-artifact: false
+          upload-release-assets: false
+
+      - name: Generate dependency publisher plugin SBOM
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          path: dist/release/autoforge-jenkins-dependency-publisher-${{ needs.prepare.outputs.version }}.hpi
+          format: spdx-json
+          output-file: dist/release/autoforge-jenkins-dependency-publisher-${{ needs.prepare.outputs.version }}.spdx.json
+          syft-version: v1.50.0
+          upload-artifact: false
+          upload-release-assets: false
+
+      - name: Upload Jenkins plugin release assets
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-jenkins-plugins
+          path: dist/release/*
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
   publish:
     name: Assemble and publish GitHub Release
-    needs: [prepare, backend]
+    needs: [prepare, backend, jenkins-plugins]
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:

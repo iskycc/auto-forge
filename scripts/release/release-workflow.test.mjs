@@ -10,8 +10,13 @@ test("publishes complete release assets without waiting for checks", async () =>
   assert.doesNotMatch(workflow, /signed-release-candidate/);
   assert.match(workflow, /  adapter:\n[\s\S]*?    needs: prepare/);
   assert.match(workflow, /  backend:\n[\s\S]*?    needs: \[prepare, adapter\]/);
+  assert.match(workflow, /  jenkins-plugins:\n[\s\S]*?    needs: prepare/);
+  assert.match(
+    workflow,
+    /mvn --batch-mode --no-transfer-progress[\s\S]*?integrations\/jenkins\/pom\.xml/,
+  );
   assert.doesNotMatch(workflow, /^  toolchain:/m);
-  assert.match(workflow, /  publish:\n[\s\S]*?    needs: \[prepare, backend\]/);
+  assert.match(workflow, /  publish:\n[\s\S]*?    needs: \[prepare, backend, jenkins-plugins\]/);
 });
 
 test("partitions tagged and published checks without polling inside a test job", async () => {
@@ -65,6 +70,10 @@ test("keeps long-running CI acceptance paths partitioned", async () => {
   assert.match(workflow, /test-offline\.sh operations && pnpm test:deployment/);
   assert.doesNotMatch(workflow, /command: pnpm test:full-business-recovery\s*$/m);
   assert.doesNotMatch(workflow, /command: pnpm test:offline\s*$/m);
+  assert.match(workflow, /^  jenkins-plugins:$/m);
+  assert.match(workflow, /pnpm test:jenkins-plugins/);
+  assert.match(workflow, /ci-gate:[\s\S]*needs:[\s\S]*jenkins-plugins/);
+  assert.match(workflow, /needs\.jenkins-plugins\.result/);
 });
 
 test("uses cached builds and parallel archive compression", async () => {

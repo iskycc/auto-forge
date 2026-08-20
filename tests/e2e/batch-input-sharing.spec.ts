@@ -6,6 +6,12 @@ import { basename, join } from "node:path";
 
 import { DEFAULT_PROJECT_ID } from "@autoforge/domain";
 import { ensureAdministrator } from "./support/session";
+import {
+  configureTaskExecution,
+  createTaskRun,
+  findRunnerId,
+  findSuiteId,
+} from "./support/task-execution";
 
 // 批次级输入共享端到端验收：同一 batchId 的 test-jar / jar-bundle 输入在
 // <Agent数据目录>/work/batches/<batchId>/ 只下载一次，依赖压缩包也只解压一次；
@@ -16,7 +22,6 @@ import { ensureAdministrator } from "./support/session";
 // 控制面也会过滤掉 isolation:cgroup-v2 的匹配要求。
 
 const runnerName = "Batch Share Agent";
-const environmentName = "batch-share 并发受管环境";
 const suiteName = "batch-share 输入共享验收";
 const environmentAddress = "10.20.30.40";
 
@@ -31,7 +36,6 @@ test("同批次并发 attempt 共享输入目录，批次终态后回收", async
   const agent = await startAgent();
   try {
     await waitForOnlineRunner(page, agent);
-    await createConcurrentExecutionEnvironment(page);
     await importJavaCasesJar(page);
     await createSharedSuite(page);
 
@@ -311,26 +315,6 @@ function startAgent(): Promise<AgentProcess> {
   return Promise.resolve({ child, diagnostics });
 }
 
-async function createConcurrentExecutionEnvironment(page: Page): Promise<void> {
-  await page.goto("/settings/environments?section=environments");
-  await page.getByRole("button", { name: "创建执行环境" }).click();
-  const createForm = page.locator(".compact-create-form");
-  await createForm.getByLabel("项目").selectOption(DEFAULT_PROJECT_ID);
-  await createForm.getByLabel("名称").fill(environmentName);
-  await createForm.getByLabel("说明").fill("batch-share 并发验收普通变量版本");
-  await createForm.getByLabel("普通变量").fill("AUTOFORGE_JAVA_CASES_ENV=java-cases-env-v1");
-  await createForm.getByRole("button", { name: "创建环境" }).click();
-  await expect(page.getByRole("heading", { name: environmentName })).toBeVisible();
-
-  const variableVersionForm = page.locator("form", {
-    has: page.getByRole("button", { name: "创建变量版本" }),
-  });
-  await variableVersionForm.getByLabel("变量").fill("AUTOFORGE_JAVA_CASES_ENV=java-cases-env-v2");
-  await variableVersionForm.getByRole("button", { name: "创建变量版本" }).click();
-  await expect(page.getByText("已创建新的普通变量版本。")).toBeVisible();
-  await expect(page.locator(".environment-version-list")).toContainText("v2");
-}
-
 async function importJavaCasesJar(page: Page): Promise<void> {
   await ensureProjectHierarchy(page);
   await uploadAdapterDependencies(page);
@@ -442,39 +426,12 @@ async function createSharedSuite(page: Page): Promise<void> {
 }
 
 async function scheduleExecution(page: Page): Promise<string> {
-  await page.goto(`/run-batches?projectId=${encodeURIComponent(DEFAULT_PROJECT_ID)}`);
-  const suiteSelect = page.getByLabel("执行用例任务");
-  const suiteOption = suiteSelect.locator("option").filter({ hasText: suiteName });
-  const suiteId = await suiteOption.getAttribute("value");
-  expect(suiteId).toBeTruthy();
-  await suiteSelect.selectOption(suiteId!);
-
-  // 本机无 cgroup v2，runner 会带“需关注”的降级隔离提示，但仍可调度（compatible=true）。
-  const runner = page.locator(".runner-choice").filter({ hasText: runnerName });
-  await expect(runner).toContainText(/兼容|需关注/);
-  const runnerCheckbox = runner.locator('input[type="checkbox"]');
-  await expect(runnerCheckbox).toBeEnabled();
-  await runnerCheckbox.check();
-
-  const environmentSelect = page.getByLabel("受管环境版本");
-  const environmentOption = environmentSelect
-    .locator("option")
-    .filter({ hasText: environmentName });
-  const versionId = await environmentOption.getAttribute("value");
-  expect(versionId).toBeTruthy();
-  await environmentSelect.selectOption(versionId!);
-
-  const createdResponse = page.waitForResponse(
-    (response) =>
-      response.request().method() === "POST" &&
-      new URL(response.url()).pathname === "/api/v1/run-batches",
-  );
-  await page.getByRole("button", { name: "开始调度" }).click();
-  const response = await createdResponse;
-  expect(response.status()).toBe(201);
-  const body = (await response.json()) as { id?: string };
-  expect(body.id).toBeTruthy();
-  return body.id!;
+  const [suiteId, runnerId] = await Promise.all([
+    findSuiteId(page, suiteName),
+    findRunnerId(page, runnerName),
+  ]);
+  await configureTaskExecution(page, suiteId, runnerId);
+  return (await createTaskRun(page, suiteId)).id;
 }
 
 async function waitForOnlineRunner(

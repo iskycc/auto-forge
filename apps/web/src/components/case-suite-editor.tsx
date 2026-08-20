@@ -3,18 +3,26 @@
 import { Button, Input, Select, Textarea } from "@/components/ui";
 
 import { apiErrorSchema, type CaseSuiteSchedule } from "@autoforge/contracts";
-import type { CaseSuiteDetails } from "@autoforge/domain";
-import { CalendarClock, Copy, LoaderCircle, Save, Trash2 } from "lucide-react";
+import type { CaseSuiteDetails, ProjectVersion, Runner, RunnerGroup } from "@autoforge/domain";
+import { CalendarClock, Copy, LoaderCircle, Save, Server, Trash2, UsersRound } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { FormEvent, useState } from "react";
 
 export function CaseSuiteEditor({
   suite,
   schedule,
+  runners,
+  runnerGroups,
+  projectVersions,
+  artifactsEnabled,
   canManage,
 }: {
   suite: CaseSuiteDetails;
   schedule?: CaseSuiteSchedule;
+  runners: Runner[];
+  runnerGroups: RunnerGroup[];
+  projectVersions: ProjectVersion[];
+  artifactsEnabled: boolean;
   canManage: boolean;
 }) {
   const router = useRouter();
@@ -22,6 +30,9 @@ export function CaseSuiteEditor({
   const [copying, setCopying] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [runnerSelectionKind, setRunnerSelectionKind] = useState<"runners" | "group">(
+    suite.policy.runnerGroupId ? "group" : "runners",
+  );
 
   async function submit(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
@@ -38,6 +49,10 @@ export function CaseSuiteEditor({
     const environmentAddresses = parseEnvironmentAddresses(
       String(form.get("adapterEnvironmentAddresses") ?? ""),
     );
+    const runnerIds = form
+      .getAll("runnerIds")
+      .map(String)
+      .filter((runnerId) => runnerId.length > 0);
     setPending(true);
     setError(null);
     setMessage(null);
@@ -63,10 +78,15 @@ export function CaseSuiteEditor({
             retryLimit: Number(form.get("retryLimit")),
             retryMode: form.get("retryMode"),
             queueTimeoutMs: Math.round(Number(form.get("queueTimeoutMinutes")) * 60_000),
-            executionTimeoutMs: Math.round(Number(form.get("executionTimeoutMinutes")) * 60_000),
+            claimTimeoutMs: Math.round(Number(form.get("claimTimeoutMinutes")) * 60_000),
+            uploadTimeoutMs: Math.round(Number(form.get("uploadTimeoutMinutes")) * 60_000),
+            projectVersionId: String(form.get("projectVersionId") ?? ""),
+            runnerIds: runnerSelectionKind === "runners" ? runnerIds : [],
+            runnerGroupId:
+              runnerSelectionKind === "group" ? String(form.get("runnerGroupId") ?? "") : "",
             runnerLabels,
             parameters,
-            artifactPatterns,
+            artifactPatterns: artifactsEnabled ? artifactPatterns : [],
           },
           expectedRevision: suite.revision,
         }),
@@ -231,14 +251,25 @@ export function CaseSuiteEditor({
               />
             </label>
             <label>
-              执行超时（分钟）
+              领取超时（分钟）
               <Input
-                name="executionTimeoutMinutes"
+                name="claimTimeoutMinutes"
                 type="number"
                 min={1}
-                max={1440}
+                max={60}
                 step={1}
-                defaultValue={Math.round(suite.policy.executionTimeoutMs / 60_000)}
+                defaultValue={Math.max(1, Math.round(suite.policy.claimTimeoutMs / 60_000))}
+              />
+            </label>
+            <label>
+              上传超时（分钟）
+              <Input
+                name="uploadTimeoutMinutes"
+                type="number"
+                min={1}
+                max={60}
+                step={1}
+                defaultValue={Math.max(1, Math.round(suite.policy.uploadTimeoutMs / 60_000))}
               />
             </label>
             <label>
@@ -249,6 +280,19 @@ export function CaseSuiteEditor({
               </Select>
             </label>
             <label>
+              项目版本
+              <Select name="projectVersionId" defaultValue={suite.policy.projectVersionId ?? ""}>
+                <option value="">项目默认依赖</option>
+                {projectVersions
+                  .filter((version) => version.status === "active")
+                  .map((version) => (
+                    <option key={version.id} value={version.id}>
+                      {version.name}
+                    </option>
+                  ))}
+              </Select>
+            </label>
+            <label>
               Runner 标签（逗号分隔）
               <Input
                 name="runnerLabels"
@@ -256,6 +300,63 @@ export function CaseSuiteEditor({
                 defaultValue={suite.policy.runnerLabels.join(", ")}
               />
             </label>
+            <div className="settings-wide-field suite-runner-selection">
+              <span className="field-label">执行资源</span>
+              <p className="form-help">任务执行时直接使用这里保存的执行机或执行机组。</p>
+              <div className="resource-mode-grid">
+                <Button
+                  aria-pressed={runnerSelectionKind === "runners"}
+                  onClick={() => setRunnerSelectionKind("runners")}
+                  type="button"
+                >
+                  <Server size={17} /> 指定执行机
+                </Button>
+                <Button
+                  aria-pressed={runnerSelectionKind === "group"}
+                  onClick={() => setRunnerSelectionKind("group")}
+                  type="button"
+                >
+                  <UsersRound size={17} /> 使用执行机组
+                </Button>
+              </div>
+              {runnerSelectionKind === "runners" ? (
+                <div className="global-run-runner-grid">
+                  {runners.map((runner) => (
+                    <label className="global-run-runner" key={runner.id}>
+                      <Input
+                        defaultChecked={suite.policy.runnerIds.includes(runner.id)}
+                        disabled={runner.state === "disabled" || Boolean(runner.purgedAt)}
+                        name="runnerIds"
+                        type="checkbox"
+                        value={runner.id}
+                      />
+                      <span>
+                        <strong>{runner.name}</strong>
+                        <small>
+                          {runner.state} · {runner.os}/{runner.architecture}
+                        </small>
+                      </span>
+                    </label>
+                  ))}
+                </div>
+              ) : (
+                <label className="field-stack">
+                  <span>执行机组</span>
+                  <Select name="runnerGroupId" defaultValue={suite.policy.runnerGroupId ?? ""}>
+                    <option value="">请选择执行机组</option>
+                    {runnerGroups.map((group) => (
+                      <option
+                        disabled={group.runnerIds.length === 0}
+                        key={group.id}
+                        value={group.id}
+                      >
+                        {group.name} · {group.runnerIds.length} 台执行机
+                      </option>
+                    ))}
+                  </Select>
+                </label>
+              )}
+            </div>
             <label className="checkbox-field">
               <Input
                 name="adapterEnabled"
@@ -307,14 +408,16 @@ export function CaseSuiteEditor({
                   .join("\n")}
               />
             </label>
-            <label className="settings-wide-field">
-              产物规则（每行一个相对路径 glob）
-              <Textarea
-                name="artifactPatterns"
-                rows={2}
-                defaultValue={suite.policy.artifactPatterns.join("\n")}
-              />
-            </label>
+            {artifactsEnabled ? (
+              <label className="settings-wide-field">
+                产物规则（每行一个相对路径 glob）
+                <Textarea
+                  name="artifactPatterns"
+                  rows={2}
+                  defaultValue={suite.policy.artifactPatterns.join("\n")}
+                />
+              </label>
+            ) : null}
             <label className="checkbox-field">
               <Input name="enabled" type="checkbox" defaultChecked={suite.enabled} />
               启用（停用后不能创建新批次，在途批次继续）

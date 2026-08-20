@@ -117,7 +117,25 @@ describe("execution state machine", () => {
         cancellationRequested: false,
       }),
     ).toEqual({ runStatus: "cancelled", retryScheduled: false });
-    expect(aggregateBatchStatus(["succeeded", "failed", "cancelled"])).toBe("failed");
+    expect(
+      aggregateBatchStatus([
+        { status: "succeeded" },
+        { status: "failed", terminalReasonCode: "TESTNG_ASSERTIONS_FAILED" },
+      ]),
+    ).toBe("succeeded");
+    expect(
+      aggregateBatchStatus([
+        { status: "succeeded" },
+        { status: "failed", terminalReasonCode: "PROCESS_START_FAILED" },
+      ]),
+    ).toBe("failed");
+    expect(aggregateBatchStatus(["succeeded", "cancelled"])).toBe("cancelled");
+    expect(
+      aggregateBatchStatus([
+        { status: "cancelled" },
+        { status: "failed", terminalReasonCode: "PROCESS_START_FAILED" },
+      ]),
+    ).toBe("cancelled");
     expect(aggregateBatchStatus(["assigned", "queued"])).toBe("dispatching");
   });
 

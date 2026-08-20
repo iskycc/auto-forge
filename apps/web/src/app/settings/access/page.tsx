@@ -28,7 +28,6 @@ export default async function AccessSettingsPage({
   const cursor = requested.cursor?.trim().slice(0, 128) || undefined;
   const capabilities = {
     settingsRead: hasPermissionInAnyScope(identity, "settings.read"),
-    environmentRead: hasPermissionInAnyScope(identity, "environment.read"),
     userRead: hasPermissionInAnyScope(identity, "user.read"),
     userManage: hasPermissionInAnyScope(identity, "user.manage"),
     roleRead: hasPermissionInAnyScope(identity, "role.read"),

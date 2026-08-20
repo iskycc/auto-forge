@@ -64,10 +64,9 @@ test("local user completes forced password change and self-service session lifec
   await login(page, username, replacementPassword);
   await expect(page.getByRole("link", { name: "用例管理", exact: true })).toBeVisible();
   await expandAdministrationGroup(page, "执行配置");
-  const environmentLink = page.getByRole("link", { name: "执行环境", exact: true });
-  await expect(environmentLink).toHaveAttribute(
+  await expect(page.getByRole("link", { name: "执行机组", exact: true })).toHaveAttribute(
     "href",
-    "/settings/environments?section=environments",
+    "/runners?section=groups",
   );
   await page.goto("/account/security");
   await expect(page.getByText("当前会话", { exact: true })).toBeVisible();
@@ -211,8 +210,6 @@ test("every built-in role receives only its authorized navigation and API surfac
         "质量洞察",
         "项目管理",
         "执行机组",
-        "执行环境",
-        "密文管理",
       ],
       hidden: [] as string[],
     },
@@ -229,8 +226,6 @@ test("every built-in role receives only its authorized navigation and API surfac
         "执行节点",
         "质量洞察",
         "执行机组",
-        "执行环境",
-        "密文管理",
       ],
       hidden: ["用户管理", "角色权限", "安全审计", "平台配置"],
     },
@@ -247,9 +242,8 @@ test("every built-in role receives only its authorized navigation and API surfac
         "执行节点",
         "质量洞察",
         "执行机组",
-        "执行环境",
       ],
-      hidden: ["项目管理", "密文管理", "安全审计", "平台配置"],
+      hidden: ["项目管理", "安全审计", "平台配置"],
     },
     {
       key: "viewer",
@@ -264,9 +258,8 @@ test("every built-in role receives only its authorized navigation and API surfac
         "执行节点",
         "质量洞察",
         "执行机组",
-        "执行环境",
       ],
-      hidden: ["项目管理", "密文管理", "安全审计", "平台配置"],
+      hidden: ["项目管理", "安全审计", "平台配置"],
     },
     {
       key: "auditor",
@@ -281,7 +274,6 @@ test("every built-in role receives only its authorized navigation and API surfac
         "执行节点",
         "执行机组",
         "项目管理",
-        "执行环境",
         "平台配置",
       ],
     },

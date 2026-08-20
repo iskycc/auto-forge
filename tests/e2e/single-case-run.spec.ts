@@ -21,7 +21,6 @@ test("global execution dialog schedules one case through a runner group with Ada
   await page.emulateMedia({ reducedMotion: "reduce" });
   await ensureAdministrator(page);
   const project = await createProject(page);
-  const environment = await createExecutionEnvironment(page, project.id);
   await uploadAdapterDependencies(page, project.id);
   await importSingleCase(page, project);
 
@@ -50,9 +49,6 @@ test("global execution dialog schedules one case through a runner group with Ada
   await expect(dialog).toBeVisible();
   await dialog.getByRole("button", { name: "单个用例" }).click();
   await selectOptionContaining(dialog.getByLabel("待执行单个用例"), "SingleCaseFixture");
-  await expect(
-    dialog.getByLabel("受管执行环境").locator(`option[value="${environment.current.id}"]`),
-  ).toContainText("单用例 E2E 环境 · v1");
   await dialog.getByRole("button", { name: "使用执行机组" }).click();
   await selectOptionContaining(dialog.getByLabel("执行机组"), groupName);
   await dialog.getByLabel("单用例参数覆盖").fill("target=single-case-e2e");
@@ -171,28 +167,6 @@ async function uploadAdapterDependencies(page: Page, projectId: string): Promise
   await expect(page.getByText("运行时资源已上传并设为当前配置。")).toBeVisible({
     timeout: 60_000,
   });
-}
-
-async function createExecutionEnvironment(
-  page: Page,
-  projectId: string,
-): Promise<{ current: { id: string } }> {
-  const environment = await browserJson<{ current: { id: string } }>(
-    page,
-    "/api/v1/execution-environments",
-    {
-      method: "POST",
-      body: {
-        projectId,
-        name: "单用例 E2E 环境",
-        description: "验证全局执行弹窗加载当前不可变环境版本",
-        variables: [{ name: "ENVIRONMENT_MARKER", value: "single-case-e2e" }],
-        secretBindings: [],
-      },
-    },
-  );
-  expect(environment.status).toBe(201);
-  return environment.body;
 }
 
 async function importSingleCase(

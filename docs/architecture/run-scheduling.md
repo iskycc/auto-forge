@@ -1,19 +1,19 @@
 # 批跑动态调度
 
-状态：资源感知调度、Lite/Full 持久化、批跑页面、`RunAttempt` 分配、Agent claim/lease、实际 TestNG 执行、结果上报和失败重跑触发均已实现首版；优先级公平性、项目配额和完整故障注入仍待验收。
+状态：任务快照执行、资源感知调度、Lite/Full 持久化、`RunAttempt` 分配、Agent claim/lease、实际 TestNG 执行、结果上报、失败重跑与基础设施异常重调度均已实现；优先级公平性、项目配额和完整故障注入仍待验收。
 
 ## 输入与快照
 
-管理员创建批次时必须选择一个 `CaseSuite`、至少一台 Runner、失败重跑次数和可选执行环境版本。平台在同一事务中保存：
+管理员先在 `CaseSuite` 中保存完整执行配置；顶栏快捷执行、计划任务与 Jenkins API 创建批次时都只提交 `suiteId`，不能临时覆盖任务策略。单用例快捷执行仍提交一次性的显式配置。平台在同一事务中保存：
 
 - `CaseSuite` ID、名称与版本；
 - 每个启用 `CaseDefinition` 的 ID、当前版本、类名和显示名；
-- 允许参与本批次的 Runner ID；
-- `retryLimit`、按名称排序的非密文变量快照和密文版本引用；
-- 排队、领取、执行和上传收尾四个有界超时策略；
+- 任务指定的 Runner ID，或任务指定 Runner Group 当时的成员快照；
+- `retryLimit`、重跑方式、参数模板、项目版本与 Adapter 环境地址；
+- 排队、领取和上传收尾三个任务级恢复时限，以及平台全局“单用例执行超时”的快照；
 - 一个用例对应一个 `ExecutionRun`，一次实际调度对应一个 `RunAttempt`。
 
-普通环境变量按明文业务数据保存，密码和令牌必须使用项目级执行密文。密文值不进入批次或 assignment；Agent 只在取得有效 attempt lease 后按需领取。创建页面先调用 `/api/v1/run-batches/preflight`，逐项检查输入、环境/密文、Runner/工具链、权威 JAR 对象和固定资源上限，预检通过后才创建权威批次。
+产品级执行环境、内联环境变量和执行密文已从新建链路移除；历史数据库列只用于旧库可升级和历史记录可读取，新批次固定为空。创建用例先执行相同的服务端预检，逐项检查任务状态、用例输入、Runner/工具链、项目版本的权威 JAR 对象和固定资源上限，预检通过后才创建权威批次。
 
 ## Runner 资源快照
 
@@ -72,11 +72,13 @@ score = 100 × (
 
 ## 失败重跑边界
 
-`retryLimit` 表示首次执行之外允许的重跑次数。例如配置 2 时，attempt 1 和 attempt 2 失败后重新排队，attempt 3 失败后进入最终失败。Agent 完成上报在权威事务中固化终态、状态事件和下一次 attempt；重复或迟到上报不会覆盖新租约持有者的结果。
+`retryLimit` 表示首次执行之外允许的用例失败重跑次数。例如配置 2 时，TestNG 失败的 attempt 1 和 attempt 2 后重新排队，attempt 3 失败后形成该用例最终结果。Runner/传输异常使用独立的两次恢复预算并优先换机，不消耗这里的重跑次数。Agent 完成上报在权威事务中固化终态、状态事件和下一次 attempt；重复或迟到上报不会覆盖新租约持有者的结果。
+
+批次终态描述生命周期是否完整，而不是用例断言结果：全部用例按策略正常执行完毕为 `succeeded`（界面“执行完成”），即使其中仍有最终失败用例；Runner/控制面等非正常异常耗尽恢复预算为 `failed`（“执行异常”）；用户取消或中断为 `cancelled`（“执行中断”）。用例通过/失败只在批次计数、总结轮次和分析事实中表达。
 
 ## 超时与恢复
 
-创建批次时可配置 `queueTimeoutMs`、`claimTimeoutMs`、`executionTimeoutMs` 和 `uploadTimeoutMs`，入口分别限制在 7 天、1 小时、24 小时和 1 小时以内。所有 deadline 由控制面 UTC 时钟计算并持久化，恢复扫描不依赖 Web/worker 进程内定时器：
+任务可配置 `queueTimeoutMs`、`claimTimeoutMs` 和 `uploadTimeoutMs`，入口分别限制在 7 天、1 小时和 1 小时以内。任务不再保存 `executionTimeoutMs`；批次创建统一读取平台配置的 `caseExecutionTimeoutSeconds`，避免同一概念出现两份冲突配置。所有 deadline 由控制面 UTC 时钟计算并持久化，恢复扫描不依赖 Web/worker 进程内定时器：
 
 - queued run 越过排队期限后进入最终 `failed/timed_out`，原因码为 `QUEUE_TIMEOUT`；assignment 条件更新也检查排队期限，防止扫描前的竞态领取。
 - pending assignment 越过领取期限后 attempt 使用 `ASSIGNMENT_CLAIM_TIMEOUT`，并按已固化重试策略回排或终结。
@@ -84,3 +86,9 @@ score = 100 × (
 - Agent 完成进程执行后总会调用产物声明，零产物时发送空数组。服务端首次声明原子记录 `upload_started_at`，此后恢复扫描停止计算执行期限并改用 `UPLOAD_TIMEOUT`。
 
 四类裁决都先条件写入权威状态和状态历史，再允许重复扫描返回零变更；迟到完成上报不会覆盖已确认的超时终态。
+
+## Jenkins 与只读进展
+
+Jenkins Pipeline 使用服务账号签发的最小权限 `af_api_` API Key。`POST /api/v1/jenkins/runs` 需要项目级 `run.create`，只接受 `suiteId`，返回批次 ID、30 秒建议轮询周期、鉴权 API 地址和带批次绑定 HMAC 的只读进展地址。Jenkins 步骤必须轮询到批次终态才结束，并打印当前轮次、本轮完成/通过/失败、累计通过、最终失败和进展链接；正常用例失败不使 Jenkins 步骤失败，执行异常或中断才失败。
+
+`GET /api/v1/run-batches/{batchId}/progress` 可使用 `run.read` API Key，或使用七天有效、只绑定该批次的签名参数。`/progress/{batchId}` 只渲染进度卡片，不渲染应用顶栏、侧栏或其他业务数据。签名参数不能访问日志、产物或其他 API。

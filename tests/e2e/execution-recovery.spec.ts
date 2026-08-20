@@ -5,6 +5,7 @@ import { randomUUID } from "node:crypto";
 import { buildClassFile } from "../../packages/testng-discovery/test/class-fixture";
 import { freshRunnerBootstrapToken } from "./support/runner-bootstrap";
 import { browserJson, ensureAdministrator, uniqueName } from "./support/session";
+import { configureTaskExecution, createTaskRun } from "./support/task-execution";
 
 const runnerCapabilities = [
   "executor:testng-v1",
@@ -20,6 +21,7 @@ test("authoritative execution recovery handles every timeout and idempotent race
   await ensureAdministrator(page);
   const fixture = await createExecutableFixture(page);
   const runner = await registerRunner(page, "Execution Recovery Runner", runnerCapabilities);
+  await configureTaskExecution(page, fixture.suiteId, runner.runnerId, { retryLimit: 0 });
   await heartbeatRunner(page, runner, ["isolation:cgroup-v2"]);
 
   const preflight = await browserJson<{
@@ -27,12 +29,7 @@ test("authoritative execution recovery handles every timeout and idempotent race
     blockers: Array<{ category: string; runnerId?: string }>;
   }>(page, "/api/v1/run-batches/preflight", {
     method: "POST",
-    body: {
-      projectId: fixture.projectId,
-      suiteId: fixture.suiteId,
-      runnerIds: [runner.runnerId],
-      environmentVariables: [],
-    },
+    body: { suiteId: fixture.suiteId },
   });
   expect(preflight.status).toBe(200);
   expect(preflight.body.ready).toBe(false);
@@ -52,19 +49,7 @@ test("authoritative execution recovery handles every timeout and idempotent race
   await complete(page, runner, await claimAssignment(page, runner), randomUUID());
   await waitForBatchStatus(page, claimTimeoutBatch, "succeeded");
 
-  const executionTimeoutBatch = await createBatch(page, fixture, runner.runnerId, {
-    executionTimeoutMs: 1_000,
-  });
-  const executionTimeoutClaim = await claimAssignment(page, runner);
-  await page.waitForTimeout(2_500);
-  await triggerRecovery(page, runner);
-  await expectBatchReason(page, executionTimeoutBatch, "EXECUTION_TIMEOUT");
-  expect(
-    (await complete(page, runner, executionTimeoutClaim, "late-after-timeout")).disposition,
-  ).toBe("late");
-
   const uploadTimeoutBatch = await createBatch(page, fixture, runner.runnerId, {
-    executionTimeoutMs: 60_000,
     uploadTimeoutMs: 1_000,
   });
   const uploadTimeoutClaim = await claimAssignment(page, runner);
@@ -87,9 +72,7 @@ test("authoritative execution recovery handles every timeout and idempotent race
   await complete(page, runner, await claimAssignment(page, runner), randomUUID());
   await waitForBatchStatus(page, uploadTimeoutBatch, "succeeded");
 
-  const capacityBatch = await createBatch(page, fixture, runner.runnerId, {
-    executionTimeoutMs: 120_000,
-  });
+  const capacityBatch = await createBatch(page, fixture, runner.runnerId, {});
   const capacityClaim = await claimAssignment(page, runner);
   // Occupy both slots so the queue-timeout batch cannot be assigned and must
   // hit its deadline instead of racing with the scheduler.
@@ -137,9 +120,7 @@ test("authoritative execution recovery handles every timeout and idempotent race
   );
   await expectBatchReason(page, cancellationBatch, "CANCELLED_BY_CONTROL_PLANE");
 
-  const leaseExpiryBatch = await createBatch(page, fixture, runner.runnerId, {
-    executionTimeoutMs: 120_000,
-  });
+  const leaseExpiryBatch = await createBatch(page, fixture, runner.runnerId, {});
   await claimAssignment(page, runner);
   await page.waitForTimeout(46_000);
   await triggerRecovery(page, runner);
@@ -285,19 +266,14 @@ async function createBatch(
   runnerId: string,
   timeouts: Record<string, number>,
 ): Promise<string> {
-  const response = await browserJson<{ id: string }>(page, "/api/v1/run-batches", {
-    method: "POST",
-    body: {
-      projectId: fixture.projectId,
-      suiteId: fixture.suiteId,
-      runnerIds: [runnerId],
-      retryLimit: 0,
-      environmentVariables: [],
-      ...timeouts,
-    },
+  await configureTaskExecution(page, fixture.suiteId, runnerId, {
+    retryLimit: 0,
+    queueTimeoutMs: 86_400_000,
+    claimTimeoutMs: 300_000,
+    uploadTimeoutMs: 600_000,
+    ...timeouts,
   });
-  expect(response.status).toBe(201);
-  return response.body.id;
+  return (await createTaskRun(page, fixture.suiteId)).id;
 }
 
 async function claimAssignment(page: Page, runner: RunnerIdentity): Promise<Claim> {

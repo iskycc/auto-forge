@@ -56,6 +56,7 @@ export type TestNgResultDetails = TestNgResultCounts & {
 export type RunBatchExecutionPolicy = {
   executor: "testng" | "testng-container";
   concurrency: number;
+  projectVersionId?: string;
   runnerLabels: string[];
   artifactPatterns: string[];
 };

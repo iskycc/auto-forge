@@ -43,15 +43,8 @@ import type {
   CaseSuiteExecutionPolicy,
   CaseVersion,
   CleanupJob,
-  ExecutionEnvironment,
-  ExecutionEnvironmentDetails,
-  ExecutionEnvironmentReference,
   ExecutionEnvironmentSecretBinding,
   ExecutionEnvironmentVariable,
-  ExecutionEnvironmentVersion,
-  ExecutionEnvironmentStatus,
-  ExecutionSecret,
-  ExecutionSecretStatus,
   ExecutionRun,
   ExternalIdentity,
   Permission,
@@ -60,6 +53,7 @@ import type {
   ProjectRuntimeAsset,
   ProjectStructure,
   ProjectVersion,
+  ProjectVersionDependency,
   Role,
   RoleScope,
   RunBatch,
@@ -103,6 +97,10 @@ export interface ProjectStructureRepository {
   createVersion(record: CreateProjectVersionRecord): Promise<ProjectVersion>;
   createStage(record: CreateTestStageRecord): Promise<TestStage>;
   createRuntimeAsset(record: CreateProjectRuntimeAssetRecord): Promise<ProjectRuntimeAsset>;
+  replaceVersionRuntimeAsset(
+    projectVersionId: string,
+    record: CreateProjectRuntimeAssetRecord,
+  ): Promise<ProjectVersionDependency>;
   updateAdapterConfiguration(input: {
     projectId: string;
     jdkAssetId?: string;
@@ -111,7 +109,10 @@ export interface ProjectStructureRepository {
     actorId?: string;
     updatedAt: string;
   }): Promise<ProjectAdapterConfiguration>;
-  getAdapterConfiguration(projectId: string): Promise<ProjectAdapterConfiguration>;
+  getAdapterConfiguration(
+    projectId: string,
+    projectVersionId?: string,
+  ): Promise<ProjectAdapterConfiguration>;
 }
 
 export type StoredLdapConfiguration = {
@@ -396,40 +397,6 @@ export interface ExecutionControlRepository {
     leaseTokenHash: string;
     now: string;
   }): Promise<{ objectKey: string; sizeBytes: number; sha256: string }>;
-  resolveAttemptSecrets(input: {
-    runnerId: string;
-    attemptId: string;
-    leaseTokenHash: string;
-    now: string;
-  }): Promise<
-    Array<{
-      name: string;
-      secretId: string;
-      secretVersionId: string;
-      valueEncrypted: string;
-    }>
-  >;
-  acquireAttemptSecrets(input: {
-    runnerId: string;
-    attemptId: string;
-    leaseTokenHash: string;
-    now: string;
-  }): Promise<
-    Array<{
-      name: string;
-      secretId: string;
-      secretVersionId: string;
-      valueEncrypted: string;
-    }>
-  >;
-  recordAttemptSecretAccess(input: {
-    id: string;
-    runnerId: string;
-    attemptId: string;
-    requestId: string;
-    secretIds: string[];
-    recordedAt: string;
-  }): Promise<void>;
   appendLogChunks(input: {
     runnerId: string;
     attemptId: string;
@@ -1100,106 +1067,6 @@ export interface CachePort {
   }): Promise<void>;
   delete(namespace: string, tenantId: string, schemaVersion: number, key: string): Promise<void>;
   close(): Promise<void>;
-}
-
-export type CreateExecutionEnvironmentRecord = {
-  id: string;
-  versionId: string;
-  projectId: string;
-  name: string;
-  normalizedName: string;
-  description: string;
-  variables: ExecutionEnvironmentVariable[];
-  secretBindings: Array<{ name: string; secretId: string; secretVersionId?: string }>;
-  actorId: string;
-  recordedAt: string;
-};
-
-export type UpdateExecutionEnvironmentRecord = {
-  environmentId: string;
-  expectedRevision: number;
-  actorId: string;
-  recordedAt: string;
-  name?: string;
-  normalizedName?: string;
-  description?: string;
-  nextVersion?: {
-    id: string;
-    variables?: ExecutionEnvironmentVariable[];
-    secretBindings?: Array<{ name: string; secretId: string }>;
-  };
-};
-
-export interface ExecutionEnvironmentRepository {
-  create(record: CreateExecutionEnvironmentRecord): Promise<ExecutionEnvironmentDetails>;
-  list(projectIds?: readonly string[]): Promise<ExecutionEnvironment[]>;
-  get(
-    environmentId: string,
-    projectIds?: readonly string[],
-  ): Promise<ExecutionEnvironmentDetails | null>;
-  getVersion(
-    versionId: string,
-    projectId: string,
-  ): Promise<{
-    environment: ExecutionEnvironment;
-    version: ExecutionEnvironmentVersion;
-  } | null>;
-  listVersions(
-    environmentId: string,
-    projectIds?: readonly string[],
-  ): Promise<ExecutionEnvironmentVersion[]>;
-  listReferences(
-    environmentId: string,
-    projectIds?: readonly string[],
-    limit?: number,
-  ): Promise<{ items: ExecutionEnvironmentReference[]; total: number }>;
-  assertSecretsAvailableForExecution(
-    projectId: string,
-    bindings: readonly ExecutionEnvironmentSecretBinding[],
-  ): Promise<void>;
-  findUnavailableSecretsForExecution(
-    projectId: string,
-    bindings: readonly ExecutionEnvironmentSecretBinding[],
-  ): Promise<ExecutionEnvironmentSecretBinding[]>;
-  update(record: UpdateExecutionEnvironmentRecord): Promise<ExecutionEnvironmentDetails>;
-  setStatus(input: {
-    environmentId: string;
-    expectedRevision: number;
-    status: ExecutionEnvironmentStatus;
-    recordedAt: string;
-  }): Promise<ExecutionEnvironmentDetails>;
-}
-
-export type CreateExecutionSecretRecord = {
-  id: string;
-  versionId: string;
-  projectId: string;
-  name: string;
-  normalizedName: string;
-  description: string;
-  valueEncrypted: string;
-  actorId: string;
-  recordedAt: string;
-};
-
-export interface ExecutionSecretRepository {
-  create(record: CreateExecutionSecretRecord): Promise<ExecutionSecret>;
-  list(projectIds?: readonly string[]): Promise<ExecutionSecret[]>;
-  get(secretId: string, projectIds?: readonly string[]): Promise<ExecutionSecret | null>;
-  rotate(input: {
-    secretId: string;
-    versionId: string;
-    expectedRevision: number;
-    valueEncrypted: string;
-    actorId: string;
-    recordedAt: string;
-  }): Promise<ExecutionSecret>;
-  setStatus(input: {
-    secretId: string;
-    expectedRevision: number;
-    status: ExecutionSecretStatus;
-    recordedAt: string;
-  }): Promise<ExecutionSecret>;
 }
 
 export type CreateRunBatchRecord = {

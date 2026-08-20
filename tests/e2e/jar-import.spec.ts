@@ -9,6 +9,11 @@ import { buildClassFile } from "../../packages/testng-discovery/test/class-fixtu
 import { DEFAULT_PROJECT_ID } from "@autoforge/domain";
 import { freshRunnerBootstrapToken } from "./support/runner-bootstrap";
 import {
+  configureTaskExecution,
+  createTaskRun,
+  startTaskFromTopbar,
+} from "./support/task-execution";
+import {
   appAlert,
   E2E_ADMIN_PASSWORD,
   E2E_ADMIN_USERNAME,
@@ -496,24 +501,10 @@ public class MixedVisibleTest {
   await page.getByRole("button", { name: "加入任务" }).click();
   await expect(page.locator(".inline-feedback")).toContainText("已将 1 个用例加入任务");
 
-  await page.goto("/run-batches");
-  await page.getByLabel("执行用例任务").selectOption(dailySuiteId);
-  const runnerChoice = page.locator(".runner-choice").filter({ hasText: "E2E Runner" });
-  await runnerChoice.locator('input[type="checkbox"]').check();
-  await page.getByLabel("失败用例重跑次数").selectOption("2");
-  await page.getByRole("button", { name: "添加变量" }).click();
-  await page.getByLabel("环境变量名").fill("TEST_ENV");
-  await page.getByLabel("环境变量值").fill("e2e");
-  await expectUiConsistency(page);
-  const createBatchResponse = page.waitForResponse(
-    (response) =>
-      response.request().method() === "POST" &&
-      new URL(response.url()).pathname === "/api/v1/run-batches",
-  );
-  await page.getByRole("button", { name: "开始调度" }).click();
-  const batch = (await (await createBatchResponse).json()) as { id: string };
-  await expect(page.getByRole("link", { name: "前往执行记录查看进度" })).toBeVisible();
-  await captureUi(page, "run-batch-planner");
+  await configureTaskExecution(page, dailySuiteId, identity.runnerId, { retryLimit: 2 });
+  const batch = await startTaskFromTopbar(page, dailySuiteId);
+  await expect(page).toHaveURL(new RegExp(`/run-batches/${batch.id}$`));
+  await captureUi(page, "run-batch-details");
 
   const firstClaim = await claimAssignment(page, identity);
   const firstAttemptId = firstClaim.assignment.attemptId;
@@ -722,7 +713,7 @@ public class MixedVisibleTest {
   expect(await artifactDownload.body()).toEqual(report);
 
   await page.goto(`/run-batches/${encodeURIComponent(batch.id)}`);
-  await expect(page.getByText("已成功", { exact: true }).first()).toBeVisible();
+  await expect(page.getByText("执行完成", { exact: true }).first()).toBeVisible();
   await page.getByRole("button", { name: "初始轮次", exact: true }).click();
   // 失败用例的堆栈摘要直接显示在状态列，无需展开详情。
   const failureHint = page.locator(".attempt-failure-line").first();
@@ -818,17 +809,7 @@ public class MixedVisibleTest {
     await anonymousContext.close();
   }
 
-  await page.goto("/run-batches");
-  await page.getByLabel("执行用例任务").selectOption(dailySuiteId);
-  const cancellationRunner = page.locator(".runner-choice").filter({ hasText: "E2E Runner" });
-  await cancellationRunner.locator('input[type="checkbox"]').check();
-  const cancellationBatchResponse = page.waitForResponse(
-    (response) =>
-      response.request().method() === "POST" &&
-      new URL(response.url()).pathname === "/api/v1/run-batches",
-  );
-  await page.getByRole("button", { name: "开始调度" }).click();
-  const cancellationBatch = (await (await cancellationBatchResponse).json()) as { id: string };
+  const cancellationBatch = await createTaskRun(page, dailySuiteId);
   await page.goto(`/run-batches/${encodeURIComponent(cancellationBatch.id)}`);
   page.once("dialog", (dialog) => dialog.accept("E2E single run cancellation"));
   await page.getByRole("button", { name: "取消该用例" }).click();
@@ -1034,35 +1015,12 @@ public class MixedVisibleTest {
   await expect(page.getByRole("heading", { name: "计划与目录作业" })).toBeVisible();
   await expect(page.getByRole("navigation", { name: "运维审计" })).toBeVisible();
 
-  for (const route of ["/settings/platform", "/settings/access", "/settings/environments"]) {
+  for (const route of ["/settings/platform", "/settings/access"]) {
     await page.goto(route);
     await expect(page.getByRole("navigation", { name: "管理中心模块" })).toHaveCount(0);
     await expectUiConsistency(page);
     if (route === "/settings/platform") {
       await expect(page.getByLabel("JAR 大小上限（MiB）")).toHaveValue("256");
-    }
-    if (route === "/settings/environments") {
-      await page.goto("/settings/environments?section=secrets");
-      await expect(page.getByRole("heading", { name: "创建执行密文" })).toBeVisible();
-      await expectUiConsistency(page);
-
-      const secretCreatePanel = page.locator(".secret-create-panel");
-      await secretCreatePanel.getByLabel("名称").fill("E2E API Token");
-      await secretCreatePanel.getByLabel("说明").fill("UI consistency fixture");
-      await secretCreatePanel.getByLabel("密文值").fill("e2e-secret-value");
-      await secretCreatePanel.getByRole("button", { name: "创建密文" }).click();
-      await expect(page.getByText("执行密文已创建。")).toBeVisible();
-      await expectUiConsistency(page);
-
-      await page.goto("/settings/environments?section=environments");
-      await page.getByRole("button", { name: "创建执行环境" }).click();
-      const environmentCreateForm = page.locator(".compact-create-form");
-      await environmentCreateForm.getByLabel("名称").fill("E2E Staging");
-      await environmentCreateForm.getByLabel("说明").fill("UI consistency fixture");
-      await environmentCreateForm.getByLabel("普通变量").fill("BASE_URL=https://staging.invalid");
-      await environmentCreateForm.getByRole("button", { name: "创建环境" }).click();
-      await expect(page.getByRole("heading", { name: "E2E Staging" })).toBeVisible();
-      await expectUiConsistency(page);
     }
   }
 

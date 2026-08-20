@@ -8,6 +8,24 @@ and known limitations.
 
 ### Changed
 
+- Case suites now own the complete reusable execution configuration: Runner or Runner Group,
+  project version, Adapter addresses, parameters, retry policy and queue/claim/upload recovery
+  windows. The global dialog starts a selected suite without asking users to reconstruct its policy.
+  The duplicate suite execution-timeout setting was removed; all case processes use the platform
+  `caseExecutionTimeoutSeconds` setting.
+- Normal TestNG completion now ends a batch as `执行完成` even when cases ultimately fail. Exhausted
+  infrastructure faults end as `执行异常`, while user cancellation ends as `执行中断`; case outcomes
+  remain visible in the summary and analytics instead of being conflated with lifecycle status.
+- Product-managed execution environments and execution secrets were removed from navigation, pages,
+  HTTP routes and new execution inputs. Historical schema fields remain readable for upgrade safety
+  but new batches always store an empty compatibility snapshot.
+- Assertion summaries now decode HTML space entities and keep only the assertion expression above
+  Groovy-style power-assert `|` diagrams, preventing multiline diagrams from falling back to a class
+  and method placeholder.
+- Added API-Key-authenticated Jenkins endpoints and two Pipeline plugins. `autoforgeRun` waits for the
+  complete batch lifecycle, prints a compact progress line every 30 seconds and exposes a signed
+  progress-only link; `autoforgePublishDependencies` replaces the dependency archive for one project
+  version without retaining an application-level file history.
 - Execution records now give the table an explicit fixed-layout pixel width derived from the
   70th-percentile column widths, so a single long cell cannot make every row in that column wider.
 - Successful Runner installation/manual update now stores the SSH host, port, username, password
@@ -38,6 +56,12 @@ and known limitations.
 
 ### Tests
 
+- Added browser coverage for both Jenkins endpoints, signed no-login progress rendering without the
+  application shell, 30-second polling metadata and complete task lifecycle. Added Maven Harness
+  tests for both Pipeline steps and an independent Jenkins plugin CI job.
+- Migrated real-Agent, java-cases, shared-input and container E2E fixtures away from the removed
+  environment/secret planner. Container execution now supplies its mode through a saved TestNG
+  parameter, while restart recovery carries its marker through the task Adapter address snapshot.
 - Added domain and dual-database contracts for independent infrastructure retry budgets, immediate
   round-mode recovery and alternate-Runner preference; browser coverage verifies the summary round,
   incident dialog and fixed table geometry after injecting an extreme long cell.
@@ -60,6 +84,9 @@ and known limitations.
 
 ### Database
 
+- Added SQLite migration `0035_project_version_dependencies.sql` and PostgreSQL migration
+  `0034_project_version_dependencies.sql`. Each project version has at most one active dependency
+  archive; a Jenkins publication atomically replaces the prior row.
 - Added SQLite migration `0033_runner_installation_profiles.sql` and PostgreSQL migration
   `0032_runner_installation_profiles.sql`. Existing Runner rows are unchanged; connection profiles
   are created only after a successful install or manual update.
@@ -69,9 +96,12 @@ and known limitations.
 
 ### Compatibility
 
-- Runner Protocol schema v1 and Runner binaries are unchanged. The new management request variants
-  and infrastructure scheduling events are additive; existing manual install/update requests remain
-  accepted.
+- Runner Protocol schema v1 and Runner binaries are unchanged. Existing historical environment and
+  secret snapshots remain readable, but their management/lease HTTP routes are removed and cannot be
+  used for new execution. `POST /api/v1/run-batches` task mode now accepts only `{ "suiteId": ... }`;
+  callers that previously rebuilt suite policy per request must save it on the suite first.
+- Infrastructure scheduling events and Jenkins routes are additive; existing manual Runner
+  install/update requests remain accepted.
 
 ## 0.9.0 - 2026-08-20
 

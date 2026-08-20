@@ -1,5 +1,5 @@
 import { DomainError } from "./errors";
-import { MAX_RUNNER_FAILURE_RESCHEDULES } from "./attempt-result";
+import { classifyAttemptResult, MAX_RUNNER_FAILURE_RESCHEDULES } from "./attempt-result";
 import type {
   ExecutionRun,
   ExecutionRunStatus,
@@ -179,23 +179,46 @@ export function outcomeAfterCompletion(input: {
   return { runStatus: retryScheduled ? "queued" : "failed", retryScheduled };
 }
 
-export function aggregateBatchStatus(statuses: readonly string[]): RunBatchStatus {
+type BatchRunCompletion = {
+  status: string;
+  terminalReasonCode?: string | null;
+};
+
+// 批次终态表达执行生命周期，而不是断言结果：用例断言失败仍表示任务完整执行结束；
+// 只有执行机/控制面异常才进入 failed，取消优先显示为中断。
+export function aggregateBatchStatus(
+  states: readonly (string | BatchRunCompletion)[],
+): RunBatchStatus {
+  const completions = states.map((state) =>
+    typeof state === "string" ? { status: state } : state,
+  );
+  const statuses = completions.map((state) => state.status);
   if (statuses.length === 0) return "queued";
   if (statuses.some((status) => status === "running")) return "running";
   if (statuses.some((status) => status === "assigned")) {
     return statuses.some((status) => status === "queued") ? "dispatching" : "scheduled";
   }
   if (statuses.some((status) => status === "queued")) return "queued";
-  if (statuses.every((status) => status === "succeeded")) return "succeeded";
-  if (statuses.every((status) => status === "cancelled")) return "cancelled";
-  return "failed";
+  // 用户中断是整个批次的生命周期裁决；即使中断前已有 Runner 异常，最终状态仍应
+  // 清楚表达“执行中断”，异常证据继续保留在 attempt 与执行机事件中。
+  if (statuses.some((status) => status === "cancelled")) return "cancelled";
+  const hasAbnormalFailure = completions.some(
+    ({ status, terminalReasonCode }) =>
+      status === "failed" &&
+      classifyAttemptResult({
+        outcome: "failed",
+        ...(terminalReasonCode ? { resultCode: terminalReasonCode } : {}),
+      }) === "blocked",
+  );
+  if (hasAbnormalFailure) return "failed";
+  return "succeeded";
 }
 
 export function isTerminalRunStatus(status: ExecutionRunStatus): boolean {
   return status === "succeeded" || status === "failed" || status === "cancelled";
 }
 
-// 批次终态：所有 run 已落定（全部成功/全部取消/其余失败）。完成上报据此向
+// 批次终态只描述生命周期是否关闭；用例断言失败也可以正常“执行完成”。完成上报据此向
 // Agent 反馈 batchClosed，Agent 据此回收批次级共享输入目录。
 export function isTerminalBatchStatus(status: RunBatchStatus): boolean {
   return status === "succeeded" || status === "failed" || status === "cancelled";

@@ -136,10 +136,6 @@ export default async function InsightsPage({
               <Input defaultValue={filter.tag ?? ""} name="tag" />
             </label>
             <label>
-              环境版本 ID
-              <Input defaultValue={filter.environmentVersionId ?? ""} name="environmentVersionId" />
-            </label>
-            <label>
               失败特征
               <Input defaultValue={filter.failureSignature ?? ""} name="failureSignature" />
             </label>
@@ -500,9 +496,6 @@ function analyticsFilter(
     ...(value("suiteId") ? { suiteId: value("suiteId") } : {}),
     ...(value("runnerId") ? { runnerId: value("runnerId") } : {}),
     ...(value("caseDefinitionId") ? { caseDefinitionId: value("caseDefinitionId") } : {}),
-    ...(value("environmentVersionId")
-      ? { environmentVersionId: value("environmentVersionId") }
-      : {}),
     ...(value("failureSignature") ? { failureSignature: value("failureSignature") } : {}),
     ...(value("tag") ? { tag: value("tag") } : {}),
     ...(outcome && ["succeeded", "failed", "cancelled", "timed_out"].includes(outcome)

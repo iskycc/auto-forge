@@ -123,6 +123,21 @@ export const pgProjectAdapterConfigurations = pgTable("project_adapter_configura
   updatedAt: text("updated_at").notNull(),
 });
 
+export const pgProjectVersionRuntimeAssets = pgTable("project_version_runtime_assets", {
+  projectVersionId: text("project_version_id")
+    .primaryKey()
+    .references(() => pgProjectVersions.id, { onDelete: "cascade" }),
+  projectId: text("project_id")
+    .notNull()
+    .references(() => pgProjects.id, { onDelete: "cascade" }),
+  jarBundleAssetId: text("jar_bundle_asset_id")
+    .notNull()
+    .references(() => pgProjectRuntimeAssets.id, { onDelete: "restrict" }),
+  revision: integer("revision").notNull().default(1),
+  updatedBy: text("updated_by"),
+  updatedAt: text("updated_at").notNull(),
+});
+
 export const pgUsers = pgTable(
   "users",
   {
@@ -1275,6 +1290,7 @@ export const postgresSchema = {
   testStages: pgTestStages,
   projectRuntimeAssets: pgProjectRuntimeAssets,
   projectAdapterConfigurations: pgProjectAdapterConfigurations,
+  projectVersionRuntimeAssets: pgProjectVersionRuntimeAssets,
   users: pgUsers,
   externalIdentities: pgExternalIdentities,
   userSessions: pgUserSessions,

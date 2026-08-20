@@ -17,9 +17,8 @@ import {
 } from "../src/postgres-platform-repository";
 import { PostgresRunBatchRepository } from "../src/postgres-run-batch";
 import { PostgresExecutionControlRepository } from "../src/postgres-execution-control";
-import { PostgresExecutionEnvironmentRepository } from "../src/postgres-execution-environment";
-import { PostgresExecutionSecretRepository } from "../src/postgres-execution-secret";
 import { PostgresPlatformOperationsRepository } from "../src/postgres-platform-operations";
+import { PostgresProjectStructureRepository } from "../src/postgres-project-structure";
 import { createAttemptLogStore, type AttemptLogStore } from "../src/attempt-log-store";
 
 const connectionString = process.env.AUTOFORGE_TEST_POSTGRES_URL;
@@ -48,18 +47,12 @@ describe.skipIf(!connectionString)("PostgreSQL platform repositories", () => {
     const attemptLogs = createTestAttemptLogs();
     const executions = new PostgresExecutionControlRepository(handle, attemptLogs.store);
     const operations = new PostgresPlatformOperationsRepository(handle, attemptLogs.store);
-    const environments = new PostgresExecutionEnvironmentRepository(handle);
-    const secrets = new PostgresExecutionSecretRepository(handle);
+    const structures = new PostgresProjectStructureRepository(handle);
     const suiteId = randomUUID();
     const runnerId = randomUUID();
     const credentialHash = randomUUID();
     const bootstrapTokenHash = randomUUID();
     const secondProjectId = randomUUID();
-    const environmentActorId = randomUUID();
-    const environmentId = randomUUID();
-    const environmentVersionId = randomUUID();
-    const secretId = randomUUID();
-    const secretVersionId = randomUUID();
     const secondProjectBatchId = `batch-project-${runnerId}`;
     try {
       await handle.ready;
@@ -68,57 +61,49 @@ describe.skipIf(!connectionString)("PostgreSQL platform repositories", () => {
          VALUES ($1, $2, $3, false, false, $4, $4)`,
         [secondProjectId, "Second project", `second-${runnerId}`, "2026-08-09T00:00:00.000Z"],
       );
-      await handle.pool.query(
-        `INSERT INTO users
-         (id, username, normalized_username, display_name, source, status,
-          force_password_change, failed_login_attempts, created_at, updated_at, version)
-         VALUES ($1, $2, $2, 'Environment Actor', 'local', 'active', false, 0, $3, $3, 1)`,
-        [environmentActorId, `environment-${runnerId}`, "2026-08-09T00:00:00.000Z"],
-      );
-      await expect(
-        secrets.create({
-          id: secretId,
-          versionId: secretVersionId,
-          projectId: secondProjectId,
-          name: `API token ${runnerId}`,
-          normalizedName: `api token ${runnerId}`,
-          description: "PostgreSQL secret",
-          valueEncrypted: "postgres-ciphertext-v1",
-          actorId: environmentActorId,
-          recordedAt: "2026-08-09T00:00:00.000Z",
-        }),
-      ).resolves.toMatchObject({ currentVersion: 1, revision: 1 });
-      await expect(
-        environments.create({
-          id: environmentId,
-          versionId: environmentVersionId,
-          projectId: secondProjectId,
-          name: `Staging ${runnerId}`,
-          normalizedName: `staging ${runnerId}`,
-          description: "PostgreSQL environment",
-          variables: [{ name: "BASE_URL", value: "https://postgres.example.test" }],
-          secretBindings: [{ name: "API_TOKEN", secretId }],
-          actorId: environmentActorId,
-          recordedAt: "2026-08-09T00:00:00.000Z",
-        }),
-      ).resolves.toMatchObject({ currentVersion: 1, revision: 1 });
-      await secrets.rotate({
-        secretId,
-        versionId: randomUUID(),
-        expectedRevision: 1,
-        valueEncrypted: "postgres-ciphertext-v2",
-        actorId: environmentActorId,
-        recordedAt: "2026-08-09T00:00:01.000Z",
+      const projectVersion = await structures.createVersion({
+        id: randomUUID(),
+        projectId: secondProjectId,
+        name: "2026.08",
+        normalizedName: "2026.08",
+        recordedAt: "2026-08-09T00:00:00.000Z",
+      });
+      const firstBundleId = randomUUID();
+      await structures.replaceVersionRuntimeAsset(projectVersion.id, {
+        id: firstBundleId,
+        projectId: secondProjectId,
+        kind: "jar-bundle",
+        sourceType: "url",
+        fileName: "dependencies-1.zip",
+        url: "https://jenkins.internal/dependencies-1.zip",
+        sha256: "d".repeat(64),
+        sizeBytes: 2_048,
+        archiveFormat: "zip",
+        createdAt: "2026-08-09T00:00:01.000Z",
+      });
+      const secondBundleId = randomUUID();
+      await structures.replaceVersionRuntimeAsset(projectVersion.id, {
+        id: secondBundleId,
+        projectId: secondProjectId,
+        kind: "jar-bundle",
+        sourceType: "url",
+        fileName: "dependencies-2.zip",
+        url: "https://jenkins.internal/dependencies-2.zip",
+        sha256: "e".repeat(64),
+        sizeBytes: 4_096,
+        archiveFormat: "zip",
+        createdAt: "2026-08-09T00:00:02.000Z",
       });
       await expect(
-        environments.getVersion(environmentVersionId, secondProjectId),
-      ).resolves.toMatchObject({ version: { secretBindings: [{ secretVersionId }] } });
-      await expect(environments.list([secondProjectId])).resolves.toMatchObject([
-        { id: environmentId, projectId: secondProjectId },
-      ]);
+        structures.getAdapterConfiguration(secondProjectId, projectVersion.id),
+      ).resolves.toMatchObject({
+        projectVersionId: projectVersion.id,
+        jarBundleAsset: { id: secondBundleId },
+        revision: 2,
+      });
       await expect(
-        environments.getVersion(environmentVersionId, "00000000-0000-7000-8000-000000000001"),
-      ).resolves.toBeNull();
+        handle.pool.query("SELECT id FROM project_runtime_assets WHERE id = $1", [firstBundleId]),
+      ).resolves.toMatchObject({ rowCount: 0 });
       await suites.create({
         id: suiteId,
         name: "PostgreSQL smoke suite",
@@ -421,16 +406,6 @@ describe.skipIf(!connectionString)("PostgreSQL platform repositories", () => {
         bootstrapTokenHash,
       ]);
       await handle.pool.query("DELETE FROM case_suites WHERE id = $1", [suiteId]);
-      await handle.pool.query(
-        "DELETE FROM execution_environment_versions WHERE environment_id = $1",
-        [environmentId],
-      );
-      await handle.pool.query("DELETE FROM execution_environments WHERE id = $1", [environmentId]);
-      await handle.pool.query("DELETE FROM execution_secret_versions WHERE secret_id = $1", [
-        secretId,
-      ]);
-      await handle.pool.query("DELETE FROM execution_secrets WHERE id = $1", [secretId]);
-      await handle.pool.query("DELETE FROM users WHERE id = $1", [environmentActorId]);
       await handle.pool.query("DELETE FROM projects WHERE id = $1", [secondProjectId]);
       cleanupTestAttemptLogs(attemptLogs);
       await handle.close();
@@ -1020,7 +995,9 @@ describe.skipIf(!connectionString)("PostgreSQL platform repositories", () => {
           retryLimit: 3,
           retryMode: "immediate",
           queueTimeoutMs: 120_000,
-          executionTimeoutMs: 600_000,
+          claimTimeoutMs: 300_000,
+          uploadTimeoutMs: 600_000,
+          runnerIds: [runnerId],
           runnerLabels: ["gpu"],
           parameters: { SUITE: "nightly" },
           artifactPatterns: ["reports/**"],

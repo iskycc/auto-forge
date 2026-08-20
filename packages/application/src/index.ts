@@ -5,7 +5,6 @@ export * from "./control-executions";
 export * from "./manage-case-definitions";
 export * from "./manage-case-sources";
 export * from "./manage-case-suites";
-export * from "./manage-execution-environments";
 export * from "./manage-identity-access";
 export * from "./manage-project-structure";
 export * from "./manage-runners";

@@ -7219,281 +7219,6 @@ button.icon-button:disabled {
   overflow-wrap: anywhere;
 }
 
-/* Execution environment and secret manager. */
-.environment-settings-stack {
-  display: grid;
-  gap: 16px;
-}
-
-.environment-view-switch {
-  width: fit-content;
-  grid-template-columns: repeat(2, minmax(110px, 1fr));
-}
-
-.environment-manager-grid,
-.secret-manager-grid {
-  display: grid;
-  grid-template-columns: minmax(250px, 0.7fr) minmax(0, 1.3fr);
-  align-items: start;
-  gap: 16px;
-}
-
-.environment-list-panel,
-.environment-detail-panel,
-.secret-create-panel,
-.secret-list-panel {
-  min-width: 0;
-  padding: 20px;
-}
-
-.environment-detail-panel > .inline-empty {
-  display: grid;
-  min-height: 104px;
-  place-content: center;
-}
-
-.environment-list-panel,
-.secret-create-panel {
-  position: sticky;
-  top: 92px;
-}
-
-.environment-record-list,
-.secret-record-list {
-  display: grid;
-  gap: 8px;
-  margin-top: 16px;
-}
-
-.environment-record-list > .ui-button,
-.secret-record-list > .ui-button {
-  width: 100%;
-  min-height: 54px;
-  justify-content: space-between;
-  border-color: var(--color-border);
-  padding: 9px 11px;
-  background: var(--color-surface-muted);
-  box-shadow: none;
-  text-align: left;
-}
-
-.environment-record-list > .ui-button.selected,
-.secret-record-list > .ui-button.selected {
-  border-color: rgba(6, 104, 216, 0.38);
-  background: var(--color-info-soft);
-  box-shadow: 0 0 0 3px rgba(6, 104, 216, 0.07);
-}
-
-.environment-record-list > .ui-button > span:first-child,
-.secret-record-list > .ui-button > span:first-child {
-  display: grid;
-  min-width: 0;
-  gap: 3px;
-}
-
-.environment-record-list strong,
-.secret-record-list strong,
-.environment-record-list small,
-.secret-record-list small {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.environment-record-list small,
-.secret-record-list small {
-  color: var(--color-text-secondary);
-}
-
-.environment-status {
-  flex: 0 0 auto;
-  border-radius: 999px;
-  padding: 4px 8px;
-  font-size: var(--font-size-caption);
-  font-weight: 680;
-}
-
-.environment-status-active {
-  background: var(--color-success-soft);
-  color: var(--color-success);
-}
-
-.environment-status-disabled {
-  background: var(--color-surface-muted);
-  color: var(--color-text-tertiary);
-}
-
-.environment-detail-header,
-.environment-detail-actions,
-.compact-section-heading {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.environment-detail-header {
-  border-bottom: 1px solid var(--color-border);
-  padding-bottom: 16px;
-}
-
-.environment-detail-header h2,
-.section-heading h2,
-.compact-section-heading h3 {
-  margin: 0;
-}
-
-.environment-editor-grid,
-.environment-history-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-  margin-top: 16px;
-}
-
-.environment-editor-grid > form,
-.environment-history-grid > section {
-  min-width: 0;
-  border: 1px solid var(--color-border);
-  border-radius: 14px;
-  padding: 16px;
-  background: var(--color-surface-muted);
-}
-
-.environment-editor-grid > form {
-  display: flex;
-  align-items: stretch;
-  flex-direction: column;
-}
-
-.environment-editor-grid h3,
-.environment-history-grid h3 {
-  margin: 0 0 12px;
-  font-size: 15px;
-}
-
-.environment-editor-grid .field-stack,
-.compact-create-form .field-stack,
-.secret-create-panel .field-stack,
-.secret-rotation-form .field-stack {
-  margin-top: 10px;
-}
-
-.environment-editor-grid > form > .ui-button,
-.compact-create-form > .ui-button,
-.secret-create-panel form > .ui-button {
-  align-self: flex-start;
-  margin-top: 14px;
-}
-
-.secret-binding-list,
-.environment-version-list,
-.environment-reference-list {
-  display: grid;
-  gap: 8px;
-}
-
-.secret-binding-row {
-  display: grid;
-  grid-template-columns: minmax(120px, 0.85fr) minmax(150px, 1.15fr) 34px;
-  align-items: center;
-  gap: 8px;
-}
-
-.compact-create-form {
-  display: grid;
-  gap: 10px;
-  margin-top: 16px;
-  border-top: 1px solid var(--color-border);
-  padding-top: 16px;
-}
-
-.environment-version-list > div,
-.environment-reference-list > a {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  gap: 4px 10px;
-  border: 1px solid var(--color-border);
-  border-radius: 10px;
-  padding: 10px;
-  background: var(--color-surface);
-}
-
-.environment-version-list > div > span,
-.environment-version-list > div > small,
-.environment-version-list > div > time,
-.environment-reference-list > a > time {
-  color: var(--color-text-secondary);
-  font-size: var(--font-size-caption);
-}
-
-.environment-version-list > div > span,
-.environment-version-list > div > small,
-.environment-version-list > div > time {
-  grid-column: 2;
-  overflow-wrap: anywhere;
-}
-
-.environment-reference-list > a {
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-}
-
-.environment-reference-list > a > span {
-  display: grid;
-  gap: 3px;
-}
-
-.secret-create-panel form,
-.secret-rotation-form {
-  display: grid;
-  gap: 10px;
-}
-
-.secret-selected-detail {
-  display: grid;
-  gap: 14px;
-  margin-top: 18px;
-  border-top: 1px solid var(--color-border);
-  padding-top: 18px;
-}
-
-.secret-selected-detail dl {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 8px;
-  margin: 0;
-}
-
-.secret-selected-detail dl > div {
-  min-width: 0;
-  border-radius: 10px;
-  padding: 10px;
-  background: var(--color-surface-muted);
-}
-
-.secret-selected-detail dt {
-  color: var(--color-text-secondary);
-  font-size: var(--font-size-caption);
-}
-
-.secret-selected-detail dd {
-  overflow: hidden;
-  margin: 4px 0 0;
-  font-weight: 650;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.secret-rotation-form {
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: end;
-}
-
-.settings-feedback {
-  margin: 0;
-}
-
 .case-scope-toolbar {
   display: grid;
   grid-template-columns: minmax(210px, 0.55fr) minmax(0, 1.45fr);
@@ -7885,18 +7610,6 @@ button.icon-button:disabled {
 
   .case-scope-filters form .ui-select {
     width: 100% !important;
-  }
-}
-
-@media (max-width: 1180px) {
-  .environment-manager-grid,
-  .secret-manager-grid {
-    grid-template-columns: minmax(230px, 0.65fr) minmax(0, 1.35fr);
-  }
-
-  .environment-editor-grid,
-  .environment-history-grid {
-    grid-template-columns: 1fr;
   }
 }
 
@@ -10574,4 +10287,103 @@ button.icon-button:disabled {
   .runner-member-picker > div {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+}
+/* Jenkins 与外部系统使用的只读进度页不加载应用外壳。 */
+.public-progress-page {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 48px;
+  background:
+    radial-gradient(
+      circle at 15% 10%,
+      color-mix(in srgb, var(--color-info) 12%, transparent),
+      transparent 34%
+    ),
+    var(--color-canvas);
+}
+
+.public-progress-card {
+  width: min(920px, 100%);
+  padding: 36px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-large);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-elevated);
+}
+
+.public-progress-card > header,
+.public-progress-card > footer,
+.public-progress-percent,
+.public-progress-status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.public-progress-card h1 {
+  margin: 8px 0;
+}
+.public-progress-card p {
+  color: var(--color-text-secondary);
+}
+.public-progress-status {
+  justify-content: flex-start;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.public-progress-bar {
+  height: 10px;
+  margin-top: 36px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--color-surface-muted);
+}
+.public-progress-bar > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--color-info);
+  transition: width 300ms ease;
+}
+.public-progress-percent {
+  margin-top: 12px;
+  color: var(--color-text-secondary);
+}
+.public-progress-percent strong {
+  color: var(--color-text);
+  font-size: 26px;
+}
+.public-progress-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin: 30px 0;
+}
+.public-progress-metrics > div {
+  padding: 18px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-medium);
+  background: var(--color-surface-muted);
+}
+.public-progress-metrics dt {
+  color: var(--color-text-secondary);
+  font-size: 13px;
+}
+.public-progress-metrics dd {
+  margin: 8px 0 0;
+  font-size: 22px;
+  font-weight: 720;
+}
+.public-progress-card > footer {
+  padding-top: 20px;
+  border-top: 1px solid var(--color-border);
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+}
+.public-progress-card > footer span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }

@@ -7,7 +7,8 @@ import { resolve } from "node:path";
 import { buildClassFile } from "../../packages/testng-discovery/test/class-fixture";
 import { DEFAULT_PROJECT_ID } from "@autoforge/domain";
 import { freshRunnerBootstrapToken } from "./support/runner-bootstrap";
-import { ensureAdministrator } from "./support/session";
+import { configureTaskExecution, startTaskFromTopbar } from "./support/task-execution";
+import { browserJson, ensureAdministrator, uniqueName } from "./support/session";
 
 /**
  * 全部轮次虚拟轮次视图的验收：一个批次两个用例，一个首轮通过、
@@ -46,6 +47,34 @@ function runnerHeaders(identity: RunnerIdentity, leaseToken?: string): Record<st
 async function browserSessionHeaders(page: Page): Promise<Record<string, string>> {
   const cookies = await page.context().cookies();
   return { cookie: cookies.map(({ name, value }) => `${name}=${value}`).join("; ") };
+}
+
+async function issueJenkinsApiToken(page: Page): Promise<string> {
+  const permissions = ["run.create", "run.read", "project.manage"];
+  const account = await browserJson<{ id: string }>(page, "/api/v1/service-accounts", {
+    method: "POST",
+    body: {
+      name: uniqueName("jenkins-e2e"),
+      description: "Jenkins 插件端到端验收",
+      projectPermissions: { [DEFAULT_PROJECT_ID]: permissions },
+    },
+  });
+  expect(account.status).toBe(201);
+  const token = await browserJson<{ token: string }>(
+    page,
+    `/api/v1/service-accounts/${encodeURIComponent(account.body.id)}/tokens`,
+    {
+      method: "POST",
+      body: {
+        name: "jenkins-pipeline",
+        scopes: permissions,
+        expiresAt: new Date(Date.now() + 86_400_000).toISOString(),
+      },
+    },
+  );
+  expect(token.status).toBe(201);
+  expect(token.body.token).toMatch(/^af_api_/);
+  return token.body.token;
 }
 
 async function ensureProjectHierarchy(page: Page): Promise<void> {
@@ -239,20 +268,12 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
   const registrationHeartbeat = await postHeartbeat(page, identity, 1);
   expect(registrationHeartbeat.status()).toBe(200);
 
-  await page.goto("/run-batches");
-  await page.getByLabel("执行用例任务").selectOption(suiteId);
-  const runnerChoice = page.locator(".runner-choice").filter({ hasText: "E2E All-Rounds Runner" });
-  await runnerChoice.locator('input[type="checkbox"]').check();
   // 用户重跑额度为 0；首轮 PROCESS_START_FAILED 仍必须获得独立的执行机异常重调度。
-  await page.getByLabel("失败用例重跑次数").selectOption("0");
-  await page.getByLabel("失败重跑方式").selectOption("round");
-  const createBatchResponse = page.waitForResponse(
-    (response) =>
-      response.request().method() === "POST" &&
-      new URL(response.url()).pathname === "/api/v1/run-batches",
-  );
-  await page.getByRole("button", { name: "开始调度" }).click();
-  const batch = (await (await createBatchResponse).json()) as { id: string };
+  await configureTaskExecution(page, suiteId, identity.runnerId, {
+    retryLimit: 0,
+    retryMode: "round",
+  });
+  const batch = await startTaskFromTopbar(page, suiteId);
 
   // 通过批次 API 把 executionRunId 映射到用例名，领取顺序不确定。
   const userHeaders = await browserSessionHeaders(page);
@@ -428,6 +449,74 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
     unzipSync(exportBody)["xl/sharedStrings.xml"],
   );
   expect(sharedStrings).toContain("轮次");
+
+  // Jenkins 的两个 Pipeline 步骤使用同一种 API Key：依赖按项目版本替换，执行接口
+  // 返回免登录进展链接；链接页不渲染产品顶栏和侧栏，且生命周期持续到批次终态。
+  const jenkinsToken = await issueJenkinsApiToken(page);
+  const dependencyPublication = await page.request.post("/api/v1/jenkins/dependencies", {
+    headers: { authorization: `Bearer ${jenkinsToken}` },
+    data: {
+      projectId: DEFAULT_PROJECT_ID,
+      version: "jenkins-e2e-1.0.0",
+      dependencyArchive: {
+        url: "http://127.0.0.1:3100/jenkins-fixtures/dependencies.zip",
+        fileName: "dependencies.zip",
+        sha256: "a".repeat(64),
+        sizeBytes: 1024,
+        archiveFormat: "zip",
+      },
+    },
+  });
+  expect(dependencyPublication.status()).toBe(200);
+  expect(await dependencyPublication.json()).toMatchObject({
+    projectId: DEFAULT_PROJECT_ID,
+    version: "jenkins-e2e-1.0.0",
+    replaced: true,
+  });
+
+  const jenkinsRunResponse = await page.request.post("/api/v1/jenkins/runs", {
+    headers: { authorization: `Bearer ${jenkinsToken}` },
+    data: { suiteId },
+  });
+  expect(jenkinsRunResponse.status()).toBe(201);
+  const jenkinsRun = (await jenkinsRunResponse.json()) as {
+    batchId: string;
+    progressUrl: string;
+    progressApiUrl: string;
+    pollIntervalSeconds: number;
+  };
+  expect(jenkinsRun.pollIntervalSeconds).toBe(30);
+  expect(jenkinsRun.progressUrl).toContain(`/progress/${jenkinsRun.batchId}`);
+  await page.goto(jenkinsRun.progressUrl);
+  await expect(page.getByText("只读执行进展 · 每 30 秒自动刷新", { exact: true })).toBeVisible();
+  await expect(page.locator(".app-shell, .app-sidebar, .topbar")).toHaveCount(0);
+
+  expect((await postHeartbeat(page, identity, 0)).status()).toBe(200);
+  for (let claimed = 0; claimed < 2; claimed += 1) {
+    const claim = await claimAssignment(page, identity);
+    await completeAttempt(page, identity, claim, {
+      completionId: `e2e-jenkins-completion-${claimed}`,
+      status: "succeeded",
+      resultCode: "TESTNG_SUCCEEDED",
+      summary: "Jenkins lifecycle acceptance passed",
+    });
+    expect((await postHeartbeat(page, identity, 0)).status()).toBe(200);
+  }
+  await expect
+    .poll(async () => {
+      const progress = await page.request.get(jenkinsRun.progressApiUrl);
+      expect(progress.status()).toBe(200);
+      const body = (await progress.json()) as {
+        active: boolean;
+        statusLabel: string;
+        totalCases: number;
+        totalPassed: number;
+      };
+      return `${body.active}:${body.statusLabel}:${body.totalPassed}/${body.totalCases}`;
+    })
+    .toBe("false:执行完成:2/2");
+  await page.reload();
+  await expect(page.getByText("执行完成", { exact: true })).toBeVisible();
 
   // 执行记录真机布局：一个极端长值只能在自身单元格内截断，不能改变列宽或整表宽度。
   await page.goto("/execution-records");

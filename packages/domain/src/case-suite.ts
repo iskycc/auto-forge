@@ -25,7 +25,11 @@ export type CaseSuiteExecutionPolicy = {
   retryLimit: number;
   retryMode: "immediate" | "round";
   queueTimeoutMs: number;
-  executionTimeoutMs: number;
+  claimTimeoutMs: number;
+  uploadTimeoutMs: number;
+  projectVersionId?: string;
+  runnerIds: string[];
+  runnerGroupId?: string;
   runnerLabels: string[];
   parameters: Record<string, string>;
   artifactPatterns: string[];
@@ -55,7 +59,9 @@ export const defaultCaseSuiteExecutionPolicy: CaseSuiteExecutionPolicy = {
   retryLimit: 0,
   retryMode: "immediate",
   queueTimeoutMs: 86_400_000,
-  executionTimeoutMs: 3_600_000,
+  claimTimeoutMs: 300_000,
+  uploadTimeoutMs: 600_000,
+  runnerIds: [],
   runnerLabels: [],
   parameters: {},
   artifactPatterns: ["reports/testng/**"],
@@ -92,7 +98,23 @@ export function mergeCaseSuiteExecutionPolicy(
     retryLimit: override.retryLimit ?? base.retryLimit,
     retryMode: override.retryMode ?? base.retryMode,
     queueTimeoutMs: override.queueTimeoutMs ?? base.queueTimeoutMs,
-    executionTimeoutMs: override.executionTimeoutMs ?? base.executionTimeoutMs,
+    claimTimeoutMs: override.claimTimeoutMs ?? base.claimTimeoutMs,
+    uploadTimeoutMs: override.uploadTimeoutMs ?? base.uploadTimeoutMs,
+    ...(override.projectVersionId !== undefined
+      ? override.projectVersionId
+        ? { projectVersionId: override.projectVersionId }
+        : {}
+      : base.projectVersionId
+        ? { projectVersionId: base.projectVersionId }
+        : {}),
+    runnerIds: override.runnerIds ? [...override.runnerIds] : [...base.runnerIds],
+    ...(override.runnerGroupId !== undefined
+      ? override.runnerGroupId
+        ? { runnerGroupId: override.runnerGroupId }
+        : {}
+      : base.runnerGroupId
+        ? { runnerGroupId: base.runnerGroupId }
+        : {}),
     runnerLabels: override.runnerLabels ? [...override.runnerLabels] : [...base.runnerLabels],
     parameters: override.parameters ? { ...override.parameters } : { ...base.parameters },
     artifactPatterns: override.artifactPatterns

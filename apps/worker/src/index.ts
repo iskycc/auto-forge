@@ -14,7 +14,6 @@ import {
   createPostgresDatabase,
   PostgresCaseCatalogRepository,
   PostgresCaseSuiteRepository,
-  PostgresExecutionEnvironmentRepository,
   PostgresRunBatchRepository,
   PostgresRunnerRepository,
   PostgresPlatformOperationsRepository,
@@ -76,10 +75,13 @@ const batches = new RunBatchSchedulingService(
     maximumLoadPerCpu: config.scheduling.maximumLoadPerCpu,
   },
   config.scheduling.metricsMaximumAgeSeconds,
-  new PostgresExecutionEnvironmentRepository(database),
   undefined,
   config.scheduling.projectMaximumConcurrency,
   config.scheduling.priorityAgingIntervalMinutes,
+  undefined,
+  undefined,
+  config.caseExecutionTimeoutSeconds * 1_000,
+  config.artifactCollectionEnabled,
 );
 const attemptLogs = createAttemptLogStore(join(config.dataDirectory, "attempt-logs"));
 const platformOperationsRepository = new PostgresPlatformOperationsRepository(
@@ -172,15 +174,8 @@ const loops = Promise.all([
   }),
   runPeriodic(shutdown.signal, 30_000, async () => {
     await platformOperations.triggerDueSchedules(async (schedule) => {
-      const candidates = (await runnerRepository.list(offlineCutoff(clock.now()), 500)).filter(
-        (runner) => runner.state === "online",
-      );
-      if (candidates.length === 0) throw new Error("No online Runner is available for schedule.");
       const batch = await batches.create({
-        projectId: schedule.projectId,
         suiteId: schedule.suiteId,
-        runnerIds: candidates.map((runner) => runner.id),
-        environmentVariables: [],
       });
       return batch.id;
     });
@@ -248,10 +243,6 @@ function abortableDelay(signal: AbortSignal, delayMs: number): Promise<void> {
       { once: true },
     );
   });
-}
-
-function offlineCutoff(now: Date): string {
-  return new Date(now.getTime() - 90_000).toISOString();
 }
 
 async function withGracePeriod(

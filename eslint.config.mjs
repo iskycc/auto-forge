@@ -15,6 +15,7 @@ export default defineConfig([
     "**/coverage/**",
     "**/dist/**",
     "**/node_modules/**",
+    "**/target/**",
     "data/**",
     "playwright-report/**",
     "test-results/**",

@@ -457,50 +457,6 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
     return { objectKey: row.object_key, sizeBytes: row.size_bytes, sha256: row.sha256 };
   }
 
-  async resolveAttemptSecrets(
-    input: Parameters<ExecutionControlRepository["resolveAttemptSecrets"]>[0],
-  ): ReturnType<ExecutionControlRepository["resolveAttemptSecrets"]> {
-    const context = this.authorizedTransferContext(input);
-    return this.readAttemptSecrets(context.assignment, "redaction");
-  }
-
-  async acquireAttemptSecrets(
-    input: Parameters<ExecutionControlRepository["acquireAttemptSecrets"]>[0],
-  ): ReturnType<ExecutionControlRepository["acquireAttemptSecrets"]> {
-    const context = this.authorizedTransferContext(input);
-    return this.readAttemptSecrets(context.assignment, "acquisition");
-  }
-
-  async recordAttemptSecretAccess(
-    input: Parameters<ExecutionControlRepository["recordAttemptSecretAccess"]>[0],
-  ): Promise<void> {
-    const project = this.handle.client
-      .prepare(
-        `SELECT b.project_id FROM run_attempts a
-         JOIN execution_runs r ON r.id = a.execution_run_id
-         JOIN run_batches b ON b.id = r.batch_id WHERE a.id = ?`,
-      )
-      .get(input.attemptId) as { project_id: string } | undefined;
-    if (!project) throw new DomainError("RUN_ATTEMPT_NOT_FOUND", "指定的执行尝试不存在。");
-    this.handle.client
-      .prepare(
-        `INSERT INTO audit_events
-         (id, actor_type, actor_id, action, resource_type, resource_id, project_id,
-          result, request_id, details_json, recorded_at)
-         VALUES (?, 'runner', ?, 'execution_secret.access', 'run_attempt', ?, ?,
-                 'succeeded', ?, ?, ?)`,
-      )
-      .run(
-        input.id,
-        input.runnerId,
-        input.attemptId,
-        project.project_id,
-        input.requestId,
-        JSON.stringify({ secretCount: input.secretIds.length, secretIds: input.secretIds }),
-        input.recordedAt,
-      );
-  }
-
   async appendLogChunks(
     input: Parameters<ExecutionControlRepository["appendLogChunks"]>[0],
   ): ReturnType<ExecutionControlRepository["appendLogChunks"]> {
@@ -1397,34 +1353,6 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
       );
   }
 
-  private readAttemptSecrets(
-    assignment: AssignmentRow,
-    purpose: "redaction" | "acquisition",
-  ): Array<{
-    name: string;
-    secretId: string;
-    secretVersionId: string;
-    valueEncrypted: string;
-  }> {
-    return parseSpec(assignment).secretReferences.map((reference) => {
-      const activePredicate = purpose === "acquisition" ? "AND s.status = 'active'" : "";
-      const row = this.handle.client
-        .prepare(
-          `SELECT v.value_encrypted
-           FROM execution_secret_versions v
-           JOIN execution_secrets s ON s.id = v.secret_id
-           JOIN run_batches b ON b.id = ? AND b.project_id = s.project_id
-           WHERE v.id = ? AND v.secret_id = ? ${activePredicate}`,
-        )
-        .get(assignment.batch_id, reference.secretVersionId, reference.secretId) as
-        { value_encrypted: string } | undefined;
-      if (!row) {
-        throw new DomainError("EXECUTION_SECRET_UNAVAILABLE", "执行所需密文不可用或已撤销。");
-      }
-      return { ...reference, valueEncrypted: row.value_encrypted };
-    });
-  }
-
   private appendAttemptEvent(input: {
     id: string;
     attemptId: string;
@@ -1490,14 +1418,20 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
     if (!batch) throw new DomainError("RUN_BATCH_NOT_FOUND", "指定的执行批次不存在。");
     // 轮次制下先释放等待下一轮的失败 run，再聚合状态，确保释放的 run 计入批次状态。
     this.advanceRoundIfIdle(batchId, batch.retry_mode, updatedAt);
-    const statuses = (
+    const runCompletions = (
       this.handle.client
-        .prepare("SELECT status FROM execution_runs WHERE batch_id = ?")
+        .prepare(
+          "SELECT status, terminal_reason_code AS terminalReasonCode FROM execution_runs WHERE batch_id = ?",
+        )
         .all(batchId) as Array<{
         status: string;
+        terminalReasonCode: string | null;
       }>
-    ).map((row) => row.status);
-    const status = aggregateBatchStatus(statuses);
+    ).map((row) => ({
+      status: row.status,
+      ...(row.terminalReasonCode ? { terminalReasonCode: row.terminalReasonCode } : {}),
+    }));
+    const status = aggregateBatchStatus(runCompletions);
     transitionRunBatch(batch.status, status);
     const update = this.handle.client
       .prepare(

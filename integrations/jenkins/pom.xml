@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>io.autoforge.jenkins</groupId>
+  <artifactId>autoforge-jenkins-plugins</artifactId>
+  <version>${revision}${changelist}</version>
+  <packaging>pom</packaging>
+  <properties>
+    <revision>0.9.1</revision>
+    <changelist>-SNAPSHOT</changelist>
+  </properties>
+  <modules>
+    <module>autoforge-execution</module>
+    <module>autoforge-dependency-publisher</module>
+  </modules>
+</project>

@@ -59,7 +59,6 @@ func (configuration Config) Capabilities() []string {
 	if configuration.Container.Enabled() {
 		result = append(result, "executor:testng-container-v1")
 	}
-	result = append(result, "secrets:on-demand-v1")
 	if configuration.Resources.Enabled() {
 		result = append(result, "isolation:cgroup-v2")
 	}

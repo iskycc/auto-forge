@@ -9,11 +9,11 @@ import {
 import {
   assessRunnerCompatibility,
   COTEST_ADAPTER_CAPABILITY,
+  DEFAULT_CASE_EXECUTION_TIMEOUT_SECONDS,
   DEFAULT_EXECUTION_RESOURCE_LIMITS,
   defaultCaseSuiteExecutionPolicy,
   DEFAULT_PROJECT_ID,
   DomainError,
-  ON_DEMAND_SECRET_CAPABILITY,
   REQUIRED_EXECUTION_LABELS,
   scheduleExecutionRuns,
   type RunBatchDetails,
@@ -28,7 +28,6 @@ import type {
   CaseSuiteRepository,
   CaseCatalogRepository,
   Clock,
-  ExecutionEnvironmentRepository,
   IdGenerator,
   JarObjectStorePort,
   ProjectStructureRepository,
@@ -53,7 +52,6 @@ export class RunBatchSchedulingService {
     private readonly ids: IdGenerator,
     private readonly thresholds: SchedulingThresholds,
     private readonly metricsMaximumAgeSeconds: number,
-    private readonly environments?: ExecutionEnvironmentRepository,
     private readonly executionInputs?: {
       catalog: CaseCatalogRepository;
       objectStore: JarObjectStorePort;
@@ -62,6 +60,8 @@ export class RunBatchSchedulingService {
     private readonly priorityAgingIntervalMinutes = 5,
     private readonly projectStructures?: ProjectStructureRepository,
     private readonly runnerGroups?: RunnerGroupRepository,
+    private readonly caseExecutionTimeoutMs = DEFAULT_CASE_EXECUTION_TIMEOUT_SECONDS * 1_000,
+    private readonly artifactCollectionEnabled = true,
   ) {}
 
   async create(input: CreateRunBatchInput): Promise<RunBatchDetails> {
@@ -84,23 +84,12 @@ export class RunBatchSchedulingService {
     if (enabledCases.length === 0) {
       throw new DomainError("RUN_BATCH_EMPTY", "用例任务中没有可执行的启用用例。");
     }
-    // 执行配置按“输入 ?? 任务策略（已含系统默认）”合并，随后固化到批次。
+    // 任务执行只读取任务的版本化策略快照。顶栏快捷执行不得制造一份易漂移的第二配置源。
     const suitePolicy = suite.policy;
-    const runnerIds = await this.resolveRunnerSelection(validated);
-    const retryLimit = validated.retryLimit ?? suitePolicy.retryLimit;
-    const retryMode = validated.retryMode ?? suitePolicy.retryMode;
-    const priority = validated.priority ?? suitePolicy.priority;
-    const queueTimeoutMs = validated.queueTimeoutMs ?? suitePolicy.queueTimeoutMs;
-    const executionTimeoutMs = validated.executionTimeoutMs ?? suitePolicy.executionTimeoutMs;
-    const projectId = validated.projectId ?? DEFAULT_PROJECT_ID;
-    const environment = await this.resolveEnvironmentSnapshot(
-      projectId,
-      validated.environmentVersionId,
-      validated.environmentVariables,
-    );
+    const runnerIds = await this.resolveRunnerSelection(suitePolicy);
+    const projectId = suite.projectId;
     await this.ensureRunnersExist(runnerIds, [
       ...(usesTaskAdapter(suitePolicy.adapter) ? [COTEST_ADAPTER_CAPABILITY] : []),
-      ...(environment.secretBindings.length > 0 ? [ON_DEMAND_SECRET_CAPABILITY] : []),
       ...(suitePolicy.executor === "testng-container" ? ["executor:testng-container-v1"] : []),
     ]);
     const createdAt = this.clock.now().toISOString();
@@ -111,7 +100,7 @@ export class RunBatchSchedulingService {
       runId: batchId,
       attempt: 1,
       createdAt,
-      priority,
+      priority: suitePolicy.priority,
       deduplicationKey: `dispatch-batch:${batchId}:1`,
       kind: "dispatch-run" as const,
       payload: { batchId },
@@ -119,29 +108,26 @@ export class RunBatchSchedulingService {
     await this.batches.create({
       id: batchId,
       projectId,
-      ...(environment.environmentId ? { environmentId: environment.environmentId } : {}),
-      ...(environment.environmentVersionId
-        ? { environmentVersionId: environment.environmentVersionId }
-        : {}),
       eventId: this.ids.next(),
       suiteId: suite.id,
       suiteName: suite.name,
       suiteVersion: suite.version,
-      retryLimit,
-      retryMode,
-      priority,
-      queueTimeoutMs,
-      claimTimeoutMs: validated.claimTimeoutMs,
-      executionTimeoutMs,
-      uploadTimeoutMs: validated.uploadTimeoutMs,
-      environmentVariables: environment.variables,
-      secretBindings: environment.secretBindings,
+      retryLimit: suitePolicy.retryLimit,
+      retryMode: suitePolicy.retryMode,
+      priority: suitePolicy.priority,
+      queueTimeoutMs: suitePolicy.queueTimeoutMs,
+      claimTimeoutMs: suitePolicy.claimTimeoutMs,
+      executionTimeoutMs: this.caseExecutionTimeoutMs,
+      uploadTimeoutMs: suitePolicy.uploadTimeoutMs,
+      environmentVariables: [],
+      secretBindings: [],
       runnerIds,
       policy: {
         executor: suitePolicy.executor,
         concurrency: suitePolicy.concurrency,
+        ...(suitePolicy.projectVersionId ? { projectVersionId: suitePolicy.projectVersionId } : {}),
         runnerLabels: [...suitePolicy.runnerLabels],
-        artifactPatterns: [...suitePolicy.artifactPatterns],
+        artifactPatterns: this.artifactCollectionEnabled ? [...suitePolicy.artifactPatterns] : [],
       },
       adapter: {
         enabled: suitePolicy.adapter.enabled,
@@ -201,11 +187,6 @@ export class RunBatchSchedulingService {
     ) {
       throw new DomainError("EXECUTION_INPUT_UNAVAILABLE", "用例的权威 JAR 输入不可用。");
     }
-    const environment = await this.resolveEnvironmentSnapshot(
-      projectId,
-      validated.environmentVersionId,
-      validated.environmentVariables,
-    );
     const runnerIds = await this.resolveRunnerSelection(validated);
     const adapterBlockers: RunBatchPreflightBlocker[] = [];
     if (usesTaskAdapter(validated.adapter)) {
@@ -217,7 +198,6 @@ export class RunBatchSchedulingService {
       });
     }
     await this.ensureRunnersExist(runnerIds, [
-      ...(environment.secretBindings.length > 0 ? [ON_DEMAND_SECRET_CAPABILITY] : []),
       ...(usesTaskAdapter(validated.adapter) ? [COTEST_ADAPTER_CAPABILITY] : []),
     ]);
     const createdAt = this.clock.now().toISOString();
@@ -237,10 +217,6 @@ export class RunBatchSchedulingService {
     await this.batches.create({
       id: batchId,
       projectId,
-      ...(environment.environmentId ? { environmentId: environment.environmentId } : {}),
-      ...(environment.environmentVersionId
-        ? { environmentVersionId: environment.environmentVersionId }
-        : {}),
       eventId: this.ids.next(),
       suiteId: `single:${definition.id}`,
       suiteName: `单用例 · ${definition.displayName}`,
@@ -250,20 +226,20 @@ export class RunBatchSchedulingService {
       priority,
       queueTimeoutMs: validated.queueTimeoutMs ?? defaultCaseSuiteExecutionPolicy.queueTimeoutMs,
       claimTimeoutMs: validated.claimTimeoutMs,
-      executionTimeoutMs:
-        validated.executionTimeoutMs ?? defaultCaseSuiteExecutionPolicy.executionTimeoutMs,
+      executionTimeoutMs: this.caseExecutionTimeoutMs,
       uploadTimeoutMs: validated.uploadTimeoutMs,
-      environmentVariables: environment.variables,
-      secretBindings: environment.secretBindings,
+      environmentVariables: [],
+      secretBindings: [],
       runnerIds,
       policy: {
         executor: "testng",
         concurrency: 1,
         runnerLabels: [],
-        artifactPatterns:
-          validated.artifactPatterns.length > 0
+        artifactPatterns: this.artifactCollectionEnabled
+          ? validated.artifactPatterns.length > 0
             ? [...validated.artifactPatterns]
-            : [...defaultCaseSuiteExecutionPolicy.artifactPatterns],
+            : [...defaultCaseSuiteExecutionPolicy.artifactPatterns]
+          : [],
       },
       adapter: {
         enabled: validated.adapter.enabled,
@@ -298,13 +274,6 @@ export class RunBatchSchedulingService {
           issue.message,
         ),
       );
-      const rawSelectionBlocker = validateRawRunnerSelection(input);
-      if (
-        rawSelectionBlocker &&
-        !blockers.some((candidate) => candidate.code === rawSelectionBlocker.code)
-      ) {
-        blockers.push(rawSelectionBlocker);
-      }
       return { ready: false, blockers };
     }
     return this.preflightValidated(parsed.data);
@@ -345,10 +314,8 @@ export class RunBatchSchedulingService {
         runs: snapshot.queuedRuns,
         candidates: snapshot.candidates.filter(
           ({ runner }) =>
-            (snapshot.batch.secretBindings.length === 0 ||
-              runner.capabilities.includes(ON_DEMAND_SECRET_CAPABILITY)) &&
-            (snapshot.batch.policy?.executor !== "testng-container" ||
-              runner.capabilities.includes("executor:testng-container-v1")),
+            snapshot.batch.policy?.executor !== "testng-container" ||
+            runner.capabilities.includes("executor:testng-container-v1"),
         ),
         thresholds: this.thresholds,
         metricsFreshAfter: metricsFreshAfter(now, this.metricsMaximumAgeSeconds),
@@ -500,7 +467,6 @@ export class RunBatchSchedulingService {
     input: ReturnType<typeof createRunBatchInputSchema.parse>,
   ): Promise<RunBatchPreflightResult> {
     const blockers: RunBatchPreflightBlocker[] = [];
-    const projectId = input.projectId ?? DEFAULT_PROJECT_ID;
     const suite = await this.suites.get(input.suiteId);
     if (!suite) {
       blockers.push(
@@ -532,14 +498,12 @@ export class RunBatchSchedulingService {
         await this.inspectExecutionInputs(enabledCases, blockers);
       }
       if (usesTaskAdapter(suite.policy.adapter)) {
-        await this.inspectAdapterRuntime(projectId, blockers);
+        await this.inspectAdapterRuntime(suite.projectId, blockers, suite.policy.projectVersionId);
       }
     }
-    const secretBindings = await this.inspectEnvironment(projectId, input, blockers);
-    const runnerIds = await this.resolveRunnerSelectionForPreflight(input, blockers);
+    const runnerIds = await this.resolveRunnerSelectionForPreflight(suite?.policy, blockers);
     await this.inspectRunners(
       runnerIds,
-      secretBindings.length > 0,
       blockers,
       suite?.policy.runnerLabels ?? [],
       suite?.policy.executor ?? "testng",
@@ -548,65 +512,10 @@ export class RunBatchSchedulingService {
     return { ready: blockers.length === 0, blockers };
   }
 
-  private async inspectEnvironment(
-    projectId: string,
-    input: ReturnType<typeof createRunBatchInputSchema.parse>,
-    blockers: RunBatchPreflightBlocker[],
-  ) {
-    if (!input.environmentVersionId) return [];
-    if (!this.environments) {
-      blockers.push(
-        blocker(
-          "EXECUTION_ENVIRONMENT_UNAVAILABLE",
-          "environment",
-          "当前运行时未配置执行环境仓储。",
-          { path: ["environmentVersionId"] },
-        ),
-      );
-      return [];
-    }
-    const resolved = await this.environments.getVersion(input.environmentVersionId, projectId);
-    if (!resolved) {
-      blockers.push(
-        blocker(
-          "EXECUTION_ENVIRONMENT_VERSION_NOT_FOUND",
-          "environment",
-          "指定的执行环境版本不存在或不属于当前项目。",
-          { path: ["environmentVersionId"] },
-        ),
-      );
-      return [];
-    }
-    if (resolved.environment.status !== "active") {
-      blockers.push(
-        blocker(
-          "EXECUTION_ENVIRONMENT_DISABLED",
-          "environment",
-          "已停用的执行环境不能创建新批次。",
-          { path: ["environmentVersionId"] },
-        ),
-      );
-    }
-    const unavailable = await this.environments.findUnavailableSecretsForExecution(
-      projectId,
-      resolved.version.secretBindings,
-    );
-    for (const secret of unavailable) {
-      blockers.push(
-        blocker(
-          "EXECUTION_SECRET_UNAVAILABLE",
-          "environment",
-          `变量 ${secret.name} 引用的执行密文不可用、已停用或不属于当前项目。`,
-          { path: ["environmentVersionId"] },
-        ),
-      );
-    }
-    return resolved.version.secretBindings;
-  }
-
   private async inspectAdapterRuntime(
     projectId: string,
     blockers: RunBatchPreflightBlocker[],
+    projectVersionId?: string,
   ): Promise<void> {
     if (!this.projectStructures) {
       blockers.push(
@@ -618,7 +527,10 @@ export class RunBatchSchedulingService {
       );
       return;
     }
-    const configuration = await this.projectStructures.getAdapterConfiguration(projectId);
+    const configuration = await this.projectStructures.getAdapterConfiguration(
+      projectId,
+      projectVersionId,
+    );
     const bundle = configuration.jarBundleAsset;
     if (!bundle) {
       blockers.push(
@@ -654,7 +566,6 @@ export class RunBatchSchedulingService {
 
   private async inspectRunners(
     runnerIds: readonly string[],
-    requiresSecrets: boolean,
     blockers: RunBatchPreflightBlocker[],
     policyLabels: readonly string[] = [],
     executor: "testng" | "testng-container" = "testng",
@@ -687,16 +598,6 @@ export class RunBatchSchedulingService {
             }),
           );
         }
-      }
-      if (requiresSecrets && !runner.capabilities.includes(ON_DEMAND_SECRET_CAPABILITY)) {
-        blockers.push(
-          blocker(
-            "RUNNER_SECRET_CAPABILITY_MISSING",
-            "runner",
-            "执行机不支持按有效 lease 领取执行密文。",
-            { runnerId },
-          ),
-        );
       }
       if (
         executor === "testng-container" &&
@@ -855,9 +756,19 @@ export class RunBatchSchedulingService {
   }
 
   private async resolveRunnerSelection(input: {
-    runnerIds: string[];
+    runnerIds: readonly string[];
     runnerGroupId?: string | undefined;
   }): Promise<string[]> {
+    const hasDirectSelection = input.runnerIds.length > 0;
+    const hasGroupSelection = Boolean(input.runnerGroupId);
+    if (hasDirectSelection === hasGroupSelection) {
+      throw new DomainError(
+        hasDirectSelection ? "RUNNER_SELECTION_CONFLICT" : "RUNNER_SELECTION_REQUIRED",
+        hasDirectSelection
+          ? "用例任务只能选择执行机或执行机组中的一种。"
+          : "用例任务尚未配置执行机或执行机组。",
+      );
+    }
     if (!input.runnerGroupId) return [...input.runnerIds].sort();
     if (!this.runnerGroups) {
       throw new DomainError("RUNNER_GROUP_UNAVAILABLE", "当前运行时未配置执行机组仓储。");
@@ -871,9 +782,10 @@ export class RunBatchSchedulingService {
   }
 
   private async resolveRunnerSelectionForPreflight(
-    input: { runnerIds: string[]; runnerGroupId?: string | undefined },
+    input: { runnerIds: readonly string[]; runnerGroupId?: string | undefined } | undefined,
     blockers: RunBatchPreflightBlocker[],
   ): Promise<string[]> {
+    if (!input) return [];
     try {
       return await this.resolveRunnerSelection(input);
     } catch (error) {
@@ -883,49 +795,7 @@ export class RunBatchSchedulingService {
       return [];
     }
   }
-
-  private async resolveEnvironmentSnapshot(
-    projectId: string,
-    environmentVersionId: string | undefined,
-    inlineVariables: Array<{ name: string; value: string }>,
-  ): Promise<{
-    environmentId?: string;
-    environmentVersionId?: string;
-    variables: Array<{ name: string; value: string }>;
-    secretBindings: Array<{ name: string; secretId: string; secretVersionId: string }>;
-  }> {
-    if (!environmentVersionId) {
-      return {
-        variables: [...inlineVariables].sort((left, right) => left.name.localeCompare(right.name)),
-        secretBindings: [],
-      };
-    }
-    if (!this.environments) {
-      throw new DomainError("EXECUTION_ENVIRONMENT_UNAVAILABLE", "当前运行时未配置执行环境仓储。");
-    }
-    const resolved = await this.environments.getVersion(environmentVersionId, projectId);
-    if (!resolved) {
-      throw new DomainError(
-        "EXECUTION_ENVIRONMENT_VERSION_NOT_FOUND",
-        "指定的执行环境版本不存在。",
-      );
-    }
-    if (resolved.environment.status !== "active") {
-      throw new DomainError("EXECUTION_ENVIRONMENT_DISABLED", "已停用的执行环境不能创建新批次。");
-    }
-    await this.environments.assertSecretsAvailableForExecution(
-      projectId,
-      resolved.version.secretBindings,
-    );
-    return {
-      environmentId: resolved.environment.id,
-      environmentVersionId: resolved.version.id,
-      variables: [...resolved.version.variables],
-      secretBindings: [...resolved.version.secretBindings],
-    };
-  }
 }
-
 function usesTaskAdapter(
   adapter:
     | {
@@ -953,9 +823,6 @@ function validationBlocker(
   message: string,
 ): RunBatchPreflightBlocker {
   const root = path[0];
-  if (root === "environmentVariables" || root === "environmentVersionId") {
-    return blocker("EXECUTION_ENVIRONMENT_PARAMETER_INVALID", "environment", message, { path });
-  }
   if (root === "runnerIds") {
     return blocker("RUNNER_SELECTION_INVALID", "runner", message, { path });
   }
@@ -963,18 +830,6 @@ function validationBlocker(
     return blocker("EXECUTION_RESOURCE_PARAMETER_INVALID", "resource", message, { path });
   }
   return blocker("EXECUTION_PARAMETER_INVALID", "parameter", message, { path });
-}
-
-function validateRawRunnerSelection(input: unknown): RunBatchPreflightBlocker | undefined {
-  if (!input || typeof input !== "object" || Array.isArray(input)) return undefined;
-  const record = input as Record<string, unknown>;
-  const hasDirectRunnerSelection = Array.isArray(record.runnerIds) && record.runnerIds.length > 0;
-  const hasRunnerGroupSelection =
-    typeof record.runnerGroupId === "string" && record.runnerGroupId.trim().length > 0;
-  if (hasDirectRunnerSelection !== hasRunnerGroupSelection) return undefined;
-  return blocker("RUNNER_SELECTION_INVALID", "runner", "必须且只能选择执行机或执行机组中的一种。", {
-    path: ["runnerIds"],
-  });
 }
 
 function compatibilityBlocker(

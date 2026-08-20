@@ -7,15 +7,17 @@ import { unzipSync, zipSync } from "fflate";
 
 import { DEFAULT_PROJECT_ID } from "@autoforge/domain";
 import { appAlert, ensureAdministrator } from "./support/session";
+import {
+  configureTaskExecution,
+  createTaskRun,
+  findRunnerId,
+  findSuiteId,
+} from "./support/task-execution";
 
 const runnerName = "Offline Real Agent";
-const managedEnvironmentName = "真实 Agent 受管环境";
-const managedSecretName = "真实 Agent 执行密文";
 const successSuiteName = "真实 Agent 离线验收";
 const failureSuiteName = "真实 Agent 失败重试验收";
 const restartSuiteName = "真实 Agent 重启协调验收";
-const secretValueV1 = "real-agent-secret-v1-do-not-leak-8f31";
-const secretValueV2 = "real-agent-secret-v2-rotated-71ce";
 
 test("executes a TestNG JAR through the real Go Agent", async ({ page }, testInfo) => {
   test.setTimeout(480_000);
@@ -25,7 +27,6 @@ test("executes a TestNG JAR through the real Go Agent", async ({ page }, testInf
   const agents = [agent];
   try {
     await waitForOnlineRunner(page, agent);
-    await createManagedExecutionEnvironment(page);
     await importTestJar(page);
     await createExecutableSuite(page, successSuiteName, "RealAgentFixture", 0, [
       "reports/testng/testng-results.xml",
@@ -40,7 +41,7 @@ test("executes a TestNG JAR through the real Go Agent", async ({ page }, testInf
     await page.getByRole("button", { name: "查看日志" }).click();
     await expect
       .poll(async () => page.locator(".execution-log").textContent(), { timeout: 30_000 })
-      .toContain("REAL_AGENT_STDOUT_中文_完成:workflow-v2");
+      .toContain("REAL_AGENT_STDOUT_中文_完成:10.0.0.11");
 
     const details = await waitForSucceededBatch(page, batchId, agent);
 
@@ -64,15 +65,11 @@ test("executes a TestNG JAR through the real Go Agent", async ({ page }, testInf
 
     await page.getByRole("button", { name: "查看日志" }).click();
     await expect(page.locator(".execution-log")).toContainText(
-      "REAL_AGENT_STDOUT_中文_完成:workflow-v2",
+      "REAL_AGENT_STDOUT_中文_完成:10.0.0.11",
     );
     await expect(page.locator(".execution-log")).toContainText(
       "Configured CoTest environment address: 10.0.0.11",
     );
-    await expect(page.locator(".execution-log")).toContainText("[REDACTED]");
-    await expect(page.locator(".execution-log")).not.toContainText(secretValueV1);
-    expect(agent.diagnostics.join("")).not.toContain(secretValueV1);
-    expect(agent.diagnostics.join("")).not.toContain(secretValueV2);
     await page.getByRole("button", { name: "stderr", exact: true }).click();
     await expect(page.locator(".execution-log")).toContainText("REAL_AGENT_STDERR_CAPTURED");
     await page.getByRole("button", { name: "agent", exact: true }).click();
@@ -89,24 +86,21 @@ test("executes a TestNG JAR through the real Go Agent", async ({ page }, testInf
     expect(artifactDownload.status()).toBe(200);
     expect(await artifactDownload.text()).toBe("REAL_AGENT_ARTIFACT_SAFE\n");
 
-    await expectEnvironmentReference(page, batchId);
-    await expectDisabledSecretBlocksNewBatch(page);
-
     await createExecutableSuite(page, failureSuiteName, "RealAgentFailureFixture", 1);
     const failureBatchId = await scheduleExecution(page, failureSuiteName);
     const failed = await waitForTerminalBatch(
       page,
       failureBatchId,
       agent,
-      "failed",
+      "succeeded",
       "TESTNG_ASSERTIONS_FAILED",
       2,
     );
     for (const attempt of failed.attempts) {
       expect(attempt.testNg).toMatchObject({ total: 1, passed: 0, failed: 1 });
-      const logs = await readAttemptLogs(page, attempt.id, "stdout");
-      expect(logs).toContain("[REDACTED]");
-      expect(logs).not.toContain(secretValueV1);
+      expect(await readAttemptLogs(page, attempt.id, "stdout")).toContain(
+        "REAL_AGENT_FAILURE_STDOUT_中文",
+      );
     }
     await page.goto(`/run-batches/${encodeURIComponent(failureBatchId)}`);
     await page
@@ -117,7 +111,7 @@ test("executes a TestNG JAR through the real Go Agent", async ({ page }, testInf
       page.getByText("failsAfterRealProcessOutput", { exact: true }).last(),
     ).toBeVisible();
     await page.getByRole("button", { name: "查看日志" }).click();
-    await expect(page.locator(".execution-log")).not.toContainText(secretValueV1);
+    await expect(page.locator(".execution-log")).toContainText("REAL_AGENT_FAILURE_STDOUT_中文");
 
     await createExecutableSuite(page, restartSuiteName, "RealAgentRestartFixture", 0);
     const restartBatchId = await scheduleExecution(page, restartSuiteName);
@@ -238,57 +232,6 @@ async function startAgent(): Promise<AgentProcess> {
   captureBounded(child.stderr, diagnostics, bootstrapToken);
   await writeFile(pidFile, `${child.pid ?? ""}\n`, { mode: 0o600 });
   return { child, diagnostics };
-}
-
-async function createManagedExecutionEnvironment(page: Page): Promise<void> {
-  const restartMarker = requiredEnvironment("E2E_REAL_AGENT_RESTART_MARKER");
-  await page.goto("/settings/environments?section=secrets");
-  const secretPanel = page.locator(".secret-create-panel");
-  await secretPanel.getByLabel("项目").selectOption(DEFAULT_PROJECT_ID);
-  await secretPanel.getByLabel("名称").fill(managedSecretName);
-  await secretPanel.getByLabel("说明").fill("真实 Agent lease 与脱敏验收");
-  await secretPanel.getByLabel("密文值").fill(secretValueV1);
-  await secretPanel.getByRole("button", { name: "创建密文" }).click();
-  await expect(page.getByText("执行密文已创建。")).toBeVisible();
-
-  await page.goto("/settings/environments?section=environments");
-  await page.getByRole("button", { name: "创建执行环境" }).click();
-  const createForm = page.locator(".compact-create-form");
-  await createForm.getByLabel("项目").selectOption(DEFAULT_PROJECT_ID);
-  await createForm.getByLabel("名称").fill(managedEnvironmentName);
-  await createForm.getByLabel("说明").fill("固定普通变量与密文版本");
-  await createForm
-    .getByLabel("普通变量")
-    .fill(
-      `AUTOFORGE_REAL_AGENT_ENV=workflow-v1\nAUTOFORGE_REAL_AGENT_RESTART_MARKER=${restartMarker}`,
-    );
-  await createForm.getByRole("button", { name: "添加密文绑定" }).click();
-  await createForm.getByLabel("注入变量名").fill("AUTOFORGE_REAL_AGENT_SECRET");
-  await createForm.getByLabel("执行密文").selectOption({ label: managedSecretName });
-  await createForm.getByRole("button", { name: "创建环境" }).click();
-  await expect(page.getByRole("heading", { name: managedEnvironmentName })).toBeVisible();
-
-  const variableVersionForm = page.locator("form", {
-    has: page.getByRole("button", { name: "创建变量版本" }),
-  });
-  await variableVersionForm
-    .getByLabel("变量")
-    .fill(
-      `AUTOFORGE_REAL_AGENT_ENV=workflow-v2\nAUTOFORGE_REAL_AGENT_RESTART_MARKER=${restartMarker}`,
-    );
-  await variableVersionForm.getByRole("button", { name: "创建变量版本" }).click();
-  await expect(page.getByText("已创建新的普通变量版本。")).toBeVisible();
-  await expect(page.locator(".environment-version-list")).toContainText("v2");
-
-  await page.goto("/settings/environments?section=secrets");
-  await page
-    .locator(".secret-record-list")
-    .getByRole("button", { name: /真实 Agent 执行密文/ })
-    .click();
-  const rotationForm = page.locator(".secret-rotation-form");
-  await rotationForm.getByLabel("新密文值").fill(secretValueV2);
-  await rotationForm.getByRole("button", { name: "轮换" }).click();
-  await expect(page.getByText("执行密文已轮换。")).toBeVisible();
 }
 
 async function exerciseRealTerminal(page: Page, agent: AgentProcess): Promise<void> {
@@ -498,6 +441,10 @@ async function createExecutableSuite(
   await page.getByLabel("TestNG Test Name").fill(caseDisplayName);
   if (caseDisplayName === "RealAgentFixture") {
     await page.getByLabel("环境 IP / 地址（每行一个）").fill("10.0.0.11\n10.0.0.12");
+  } else if (caseDisplayName === "RealAgentRestartFixture") {
+    await page
+      .getByLabel("环境 IP / 地址（每行一个）")
+      .fill(requiredEnvironment("E2E_REAL_AGENT_RESTART_MARKER"));
   }
   await page.getByRole("button", { name: "创建任务" }).click();
   const suiteLink = page.getByRole("link", { name: suiteName });
@@ -517,78 +464,12 @@ async function createExecutableSuite(
 }
 
 async function scheduleExecution(page: Page, suiteName: string): Promise<string> {
-  await page.goto(`/run-batches?projectId=${encodeURIComponent(DEFAULT_PROJECT_ID)}`);
-  await selectExecutionSuite(page, suiteName);
-  const runner = page.locator(".runner-choice").filter({ hasText: runnerName });
-  await expect(runner).toContainText("兼容");
-  await runner.locator('input[type="checkbox"]').check();
-  await selectManagedEnvironment(page);
-  const createdResponse = page.waitForResponse(
-    (response) =>
-      response.request().method() === "POST" &&
-      new URL(response.url()).pathname === "/api/v1/run-batches",
-  );
-  await page.getByRole("button", { name: "开始调度" }).click();
-  const response = await createdResponse;
-  expect(response.status()).toBe(201);
-  const body = (await response.json()) as { id?: string };
-  expect(body.id).toBeTruthy();
-  return body.id!;
-}
-
-async function selectExecutionSuite(page: Page, suiteName: string): Promise<void> {
-  const suiteSelect = page.getByLabel("执行用例任务");
-  const suiteOption = suiteSelect.locator("option").filter({ hasText: suiteName });
-  const suiteId = await suiteOption.getAttribute("value");
-  expect(suiteId).toBeTruthy();
-  await suiteSelect.selectOption(suiteId!);
-}
-
-async function selectManagedEnvironment(page: Page): Promise<void> {
-  const environmentSelect = page.getByLabel("受管环境版本");
-  const option = environmentSelect.locator("option").filter({ hasText: managedEnvironmentName });
-  const versionId = await option.getAttribute("value");
-  expect(versionId).toBeTruthy();
-  await environmentSelect.selectOption(versionId!);
-}
-
-async function expectEnvironmentReference(page: Page, batchId: string): Promise<void> {
-  await page.goto("/settings/environments?section=environments");
-  await page
-    .locator(".environment-record-list")
-    .getByRole("button", { name: new RegExp(managedEnvironmentName) })
-    .click();
-  const reference = page.locator(".environment-reference-list").getByRole("link");
-  await expect(reference).toHaveAttribute("href", `/run-batches/${batchId}`);
-}
-
-async function expectDisabledSecretBlocksNewBatch(page: Page): Promise<void> {
-  await page.goto("/settings/environments?section=secrets");
-  await page
-    .locator(".secret-record-list")
-    .getByRole("button", { name: new RegExp(managedSecretName) })
-    .click();
-  page.once("dialog", (dialog) => dialog.accept());
-  await page.getByRole("button", { name: "停用", exact: true }).click();
-  await expect(page.getByText("执行密文已停用。")).toBeVisible();
-
-  await page.goto(`/run-batches?projectId=${encodeURIComponent(DEFAULT_PROJECT_ID)}`);
-  await selectExecutionSuite(page, successSuiteName);
-  const runner = page.locator(".runner-choice").filter({ hasText: runnerName });
-  await runner.locator('input[type="checkbox"]').check();
-  await selectManagedEnvironment(page);
-  await page.getByRole("button", { name: "开始调度" }).click();
-  await expect(page.getByText("执行配置仍有阻塞项，请逐项处理后重试。")).toBeVisible();
-  await expect(page.getByLabel("执行配置阻塞项")).toContainText("密文");
-
-  await page.goto("/settings/environments?section=secrets");
-  await page
-    .locator(".secret-record-list")
-    .getByRole("button", { name: new RegExp(managedSecretName) })
-    .click();
-  page.once("dialog", (dialog) => dialog.accept());
-  await page.getByRole("button", { name: "启用", exact: true }).click();
-  await expect(page.getByText("执行密文已启用。")).toBeVisible();
+  const [suiteId, runnerId] = await Promise.all([
+    findSuiteId(page, suiteName),
+    findRunnerId(page, runnerName),
+  ]);
+  await configureTaskExecution(page, suiteId, runnerId);
+  return (await createTaskRun(page, suiteId)).id;
 }
 
 async function waitForSucceededBatch(

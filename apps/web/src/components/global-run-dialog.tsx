@@ -3,8 +3,6 @@
 import type {
   CaseDefinitionWithMethods,
   CaseSuite,
-  ExecutionEnvironment,
-  ExecutionEnvironmentDetails,
   RunBatch,
   Runner,
   RunnerGroup,
@@ -23,7 +21,6 @@ type RunOptions = {
   cases: CaseDefinitionWithMethods[];
   runners: Runner[];
   groups: RunnerGroup[];
-  environments: ExecutionEnvironmentDetails[];
 };
 
 type RunKind = "suite" | "case";
@@ -71,11 +68,8 @@ export function GlobalRunDialog({ enabled }: { enabled: boolean }) {
   const [runnerSelectionKind, setRunnerSelectionKind] = useState<RunnerSelectionKind>("runners");
   const [runnerIds, setRunnerIds] = useState<string[]>([]);
   const [runnerGroupId, setRunnerGroupId] = useState("");
-  const [environmentVersionId, setEnvironmentVersionId] = useState("");
   const [retryLimit, setRetryLimit] = useState(0);
   const [retryMode, setRetryMode] = useState<"immediate" | "round">("immediate");
-  const [executionTimeoutMinutes, setExecutionTimeoutMinutes] = useState(60);
-  const [environmentVariables, setEnvironmentVariables] = useState("");
   const [parameters, setParameters] = useState("");
   const [adapterEnabled, setAdapterEnabled] = useState(false);
   const [adapterSuiteName, setAdapterSuiteName] = useState("");
@@ -86,14 +80,6 @@ export function GlobalRunDialog({ enabled }: { enabled: boolean }) {
   const selectedCase = options?.cases.find((definition) => definition.id === caseDefinitionId);
   const selectedProjectId =
     runKind === "suite" ? selectedSuite?.projectId : selectedCase?.projectId;
-  const availableEnvironments = useMemo(
-    () =>
-      options?.environments.filter(
-        (environment) =>
-          environment.projectId === selectedProjectId && environment.status === "active",
-      ) ?? [],
-    [options?.environments, selectedProjectId],
-  );
   const visibleCases = useMemo(() => {
     const normalizedQuery = caseQuery.trim().toLocaleLowerCase("zh-CN");
     if (!normalizedQuery) return options?.cases ?? [];
@@ -221,30 +207,19 @@ export function GlobalRunDialog({ enabled }: { enabled: boolean }) {
       setError(runKind === "suite" ? "请选择用例任务。" : "请选择单个用例。");
       return;
     }
-    if (runnerSelectionKind === "runners" && runnerIds.length === 0) {
+    if (runKind === "case" && runnerSelectionKind === "runners" && runnerIds.length === 0) {
       setError("请至少选择一台执行机。");
       return;
     }
-    if (runnerSelectionKind === "group" && !runnerGroupId) {
+    if (runKind === "case" && runnerSelectionKind === "group" && !runnerGroupId) {
       setError("请选择执行机组。");
       return;
     }
     setSubmitting(true);
     try {
-      const common = {
-        projectId: selectedProjectId,
-        runnerIds: runnerSelectionKind === "runners" ? runnerIds : [],
-        ...(runnerSelectionKind === "group" ? { runnerGroupId } : {}),
-        retryLimit,
-        retryMode,
-        executionTimeoutMs: executionTimeoutMinutes * 60_000,
-        ...(environmentVersionId
-          ? { environmentVersionId, environmentVariables: [] }
-          : { environmentVariables: parseKeyValues(environmentVariables) }),
-      };
       let batch: RunBatch;
       if (runKind === "suite") {
-        const requestBody = { ...common, suiteId };
+        const requestBody = { suiteId };
         const preflight = await requestJson<{
           ready: boolean;
           blockers: Array<{ message: string }>;
@@ -262,7 +237,11 @@ export function GlobalRunDialog({ enabled }: { enabled: boolean }) {
           {
             method: "POST",
             body: {
-              ...common,
+              projectId: selectedProjectId,
+              runnerIds: runnerSelectionKind === "runners" ? runnerIds : [],
+              ...(runnerSelectionKind === "group" ? { runnerGroupId } : {}),
+              retryLimit,
+              retryMode,
               parameters: parseParameterRecord(parameters),
               artifactPatterns: ["reports/testng/**"],
               adapter: {
@@ -340,7 +319,6 @@ export function GlobalRunDialog({ enabled }: { enabled: boolean }) {
                           aria-pressed={runKind === "suite"}
                           onClick={() => {
                             setRunKind("suite");
-                            setEnvironmentVersionId("");
                           }}
                           type="button"
                         >
@@ -350,7 +328,6 @@ export function GlobalRunDialog({ enabled }: { enabled: boolean }) {
                           aria-pressed={runKind === "case"}
                           onClick={() => {
                             setRunKind("case");
-                            setEnvironmentVersionId("");
                           }}
                           type="button"
                         >
@@ -364,7 +341,6 @@ export function GlobalRunDialog({ enabled }: { enabled: boolean }) {
                             aria-label="执行用例任务"
                             onChange={(event) => {
                               setSuiteId(event.target.value);
-                              setEnvironmentVersionId("");
                             }}
                             value={suiteId}
                           >
@@ -392,7 +368,6 @@ export function GlobalRunDialog({ enabled }: { enabled: boolean }) {
                               aria-label="待执行单个用例"
                               onChange={(event) => {
                                 setCaseDefinitionId(event.target.value);
-                                setEnvironmentVersionId("");
                               }}
                               value={caseDefinitionId}
                             >
@@ -407,210 +382,217 @@ export function GlobalRunDialog({ enabled }: { enabled: boolean }) {
                       )}
                     </section>
 
-                    <section className="global-run-step">
-                      <div className="global-run-step-title">
-                        <span>2</span>
-                        <div>
-                          <h3>选择执行资源</h3>
-                          <p>可以直接指定多台执行机，也可以使用维护好的执行机组。</p>
+                    {runKind === "suite" ? (
+                      <section className="global-run-step suite-run-summary">
+                        <div className="global-run-step-title">
+                          <span>✓</span>
+                          <div>
+                            <h3>使用任务配置直接执行</h3>
+                            <p>执行资源、重试策略、参数和 Adapter 地址均读取任务当前版本。</p>
+                          </div>
                         </div>
-                      </div>
-                      <div className="resource-mode-grid">
-                        <Button
-                          aria-pressed={runnerSelectionKind === "runners"}
-                          onClick={() => setRunnerSelectionKind("runners")}
-                          type="button"
-                        >
-                          <Server size={17} /> 指定执行机
-                        </Button>
-                        <Button
-                          aria-pressed={runnerSelectionKind === "group"}
-                          onClick={() => setRunnerSelectionKind("group")}
-                          type="button"
-                        >
-                          <UsersRound size={17} /> 使用执行机组
-                        </Button>
-                      </div>
-                      {runnerSelectionKind === "runners" ? (
-                        <div className="global-run-runner-grid">
-                          {(options?.runners ?? []).map((runner) => {
-                            const unavailable =
-                              runner.state === "disabled" || Boolean(runner.purgedAt);
-                            const selected = runnerIds.includes(runner.id);
-                            return (
-                              <label
-                                className={`global-run-runner ${selected ? "selected" : ""} ${unavailable ? "disabled" : ""}`}
-                                key={runner.id}
-                              >
-                                <Input
-                                  checked={selected}
-                                  disabled={unavailable}
-                                  onChange={() => toggleRunner(runner.id)}
-                                  type="checkbox"
-                                />
-                                <span>
-                                  <strong>{runner.name}</strong>
-                                  <small>
-                                    {runner.state} · 可用槽位{" "}
-                                    {Math.max(0, runner.maxConcurrency - runner.busySlots)}
-                                  </small>
-                                </span>
-                                {selected ? <Check aria-hidden="true" size={16} /> : null}
-                              </label>
-                            );
-                          })}
-                        </div>
-                      ) : (
-                        <label className="field-stack">
-                          <span>执行机组</span>
-                          <Select
-                            aria-label="执行机组"
-                            onChange={(event) => setRunnerGroupId(event.target.value)}
-                            value={runnerGroupId}
-                          >
-                            <option value="">请选择执行机组</option>
-                            {(options?.groups ?? []).map((group) => (
-                              <option
-                                disabled={group.runnerIds.length === 0}
-                                key={group.id}
-                                value={group.id}
-                              >
-                                {group.name} · {group.runnerIds.length} 台执行机
-                              </option>
-                            ))}
-                          </Select>
-                        </label>
-                      )}
-                    </section>
-
-                    <section className="global-run-step">
-                      <div className="global-run-step-title">
-                        <span>3</span>
-                        <div>
-                          <h3>运行参数</h3>
-                          <p>环境版本与手工变量互斥；单用例可配置 Adapter 环境 IP。</p>
-                        </div>
-                      </div>
-                      <div className="global-run-fields">
-                        <label className="field-stack">
-                          <span>失败重跑</span>
-                          <Select
-                            aria-label="失败重跑次数"
-                            onChange={(event) => setRetryLimit(Number(event.target.value))}
-                            value={String(retryLimit)}
-                          >
-                            {Array.from({ length: 11 }, (_, value) => (
-                              <option key={value} value={value}>
-                                {value === 0 ? "不重跑" : `${value} 次`}
-                              </option>
-                            ))}
-                          </Select>
-                        </label>
-                        <label className="field-stack">
-                          <span>重跑方式</span>
-                          <Select
-                            aria-label="失败重跑方式"
-                            onChange={(event) =>
-                              setRetryMode(event.target.value as typeof retryMode)
-                            }
-                            value={retryMode}
-                          >
-                            <option value="immediate">失败后立即重跑</option>
-                            <option value="round">本轮结束后统一重跑</option>
-                          </Select>
-                        </label>
-                        <label className="field-stack">
-                          <span>执行超时（分钟）</span>
-                          <Input
-                            aria-label="执行超时分钟"
-                            max={1440}
-                            min={1}
-                            onChange={(event) =>
-                              setExecutionTimeoutMinutes(Number(event.target.value))
-                            }
-                            type="number"
-                            value={executionTimeoutMinutes}
-                          />
-                        </label>
-                        <label className="field-stack">
-                          <span>受管环境</span>
-                          <Select
-                            aria-label="受管执行环境"
-                            onChange={(event) => setEnvironmentVersionId(event.target.value)}
-                            value={environmentVersionId}
-                          >
-                            <option value="">不使用受管环境</option>
-                            {availableEnvironments.map((environment) => (
-                              <option key={environment.id} value={environment.current.id}>
-                                {environment.name} · v{environment.current.version}
-                              </option>
-                            ))}
-                          </Select>
-                        </label>
-                      </div>
-                      {!environmentVersionId ? (
-                        <label className="field-stack">
-                          <span>环境变量（每行 KEY=VALUE）</span>
-                          <Textarea
-                            aria-label="执行环境变量"
-                            onChange={(event) => setEnvironmentVariables(event.target.value)}
-                            rows={2}
-                            value={environmentVariables}
-                          />
-                        </label>
-                      ) : null}
-                      {runKind === "case" ? (
-                        <div className="single-run-advanced">
-                          <label className="field-stack">
-                            <span>参数覆盖（每行 KEY=VALUE）</span>
-                            <Textarea
-                              aria-label="单用例参数覆盖"
-                              onChange={(event) => setParameters(event.target.value)}
-                              rows={2}
-                              value={parameters}
-                            />
-                          </label>
-                          <label className="adapter-toggle">
-                            <Input
-                              checked={adapterEnabled}
-                              onChange={(event) => setAdapterEnabled(event.target.checked)}
-                              type="checkbox"
-                            />
-                            使用 CoTest TestNG Adapter
-                          </label>
-                          {adapterEnabled ? (
-                            <div className="adapter-run-fields">
-                              <label className="field-stack">
-                                <span>Adapter Suite Name</span>
-                                <Input
-                                  aria-label="单用例 Adapter Suite Name"
-                                  onChange={(event) => setAdapterSuiteName(event.target.value)}
-                                  value={adapterSuiteName}
-                                />
-                              </label>
-                              <label className="field-stack">
-                                <span>Adapter Test Name</span>
-                                <Input
-                                  aria-label="单用例 Adapter Test Name"
-                                  onChange={(event) => setAdapterTestName(event.target.value)}
-                                  value={adapterTestName}
-                                />
-                              </label>
-                              <label className="field-stack adapter-address-field">
-                                <span>执行环境 IP / 地址（每行一个）</span>
-                                <Textarea
-                                  aria-label="单用例执行环境 IP 地址"
-                                  onChange={(event) => setEnvironmentAddresses(event.target.value)}
-                                  placeholder="10.0.0.21"
-                                  rows={2}
-                                  value={environmentAddresses}
-                                />
-                              </label>
+                        {selectedSuite ? (
+                          <dl className="summary-grid">
+                            <div>
+                              <dt>执行资源</dt>
+                              <dd>{suiteRunnerSummary(selectedSuite, options)}</dd>
                             </div>
-                          ) : null}
-                        </div>
-                      ) : null}
-                    </section>
+                            <div>
+                              <dt>失败重跑</dt>
+                              <dd>
+                                {selectedSuite.policy.retryLimit} 次 ·{" "}
+                                {selectedSuite.policy.retryMode === "round"
+                                  ? "整轮重跑"
+                                  : "立即重跑"}
+                              </dd>
+                            </div>
+                            <div>
+                              <dt>执行器</dt>
+                              <dd>
+                                {selectedSuite.policy.executor === "testng-container"
+                                  ? "Container"
+                                  : "Process"}
+                              </dd>
+                            </div>
+                            <div>
+                              <dt>环境地址</dt>
+                              <dd>
+                                {selectedSuite.policy.adapter.enabled
+                                  ? `${selectedSuite.policy.adapter.environmentAddresses.length} 个`
+                                  : "未启用 Adapter"}
+                              </dd>
+                            </div>
+                          </dl>
+                        ) : null}
+                      </section>
+                    ) : (
+                      <>
+                        <section className="global-run-step">
+                          <div className="global-run-step-title">
+                            <span>2</span>
+                            <div>
+                              <h3>选择执行资源</h3>
+                              <p>可以直接指定多台执行机，也可以使用维护好的执行机组。</p>
+                            </div>
+                          </div>
+                          <div className="resource-mode-grid">
+                            <Button
+                              aria-pressed={runnerSelectionKind === "runners"}
+                              onClick={() => setRunnerSelectionKind("runners")}
+                              type="button"
+                            >
+                              <Server size={17} /> 指定执行机
+                            </Button>
+                            <Button
+                              aria-pressed={runnerSelectionKind === "group"}
+                              onClick={() => setRunnerSelectionKind("group")}
+                              type="button"
+                            >
+                              <UsersRound size={17} /> 使用执行机组
+                            </Button>
+                          </div>
+                          {runnerSelectionKind === "runners" ? (
+                            <div className="global-run-runner-grid">
+                              {(options?.runners ?? []).map((runner) => {
+                                const unavailable =
+                                  runner.state === "disabled" || Boolean(runner.purgedAt);
+                                const selected = runnerIds.includes(runner.id);
+                                return (
+                                  <label
+                                    className={`global-run-runner ${selected ? "selected" : ""} ${unavailable ? "disabled" : ""}`}
+                                    key={runner.id}
+                                  >
+                                    <Input
+                                      checked={selected}
+                                      disabled={unavailable}
+                                      onChange={() => toggleRunner(runner.id)}
+                                      type="checkbox"
+                                    />
+                                    <span>
+                                      <strong>{runner.name}</strong>
+                                      <small>
+                                        {runner.state} · 可用槽位{" "}
+                                        {Math.max(0, runner.maxConcurrency - runner.busySlots)}
+                                      </small>
+                                    </span>
+                                    {selected ? <Check aria-hidden="true" size={16} /> : null}
+                                  </label>
+                                );
+                              })}
+                            </div>
+                          ) : (
+                            <label className="field-stack">
+                              <span>执行机组</span>
+                              <Select
+                                aria-label="执行机组"
+                                onChange={(event) => setRunnerGroupId(event.target.value)}
+                                value={runnerGroupId}
+                              >
+                                <option value="">请选择执行机组</option>
+                                {(options?.groups ?? []).map((group) => (
+                                  <option
+                                    disabled={group.runnerIds.length === 0}
+                                    key={group.id}
+                                    value={group.id}
+                                  >
+                                    {group.name} · {group.runnerIds.length} 台执行机
+                                  </option>
+                                ))}
+                              </Select>
+                            </label>
+                          )}
+                        </section>
+                        <section className="global-run-step">
+                          <div className="global-run-step-title">
+                            <span>3</span>
+                            <div>
+                              <h3>运行参数</h3>
+                              <p>单用例可临时配置重跑、参数与 Adapter 环境 IP。</p>
+                            </div>
+                          </div>
+                          <div className="global-run-fields">
+                            <label className="field-stack">
+                              <span>失败重跑</span>
+                              <Select
+                                aria-label="失败重跑次数"
+                                onChange={(event) => setRetryLimit(Number(event.target.value))}
+                                value={String(retryLimit)}
+                              >
+                                {Array.from({ length: 11 }, (_, value) => (
+                                  <option key={value} value={value}>
+                                    {value === 0 ? "不重跑" : `${value} 次`}
+                                  </option>
+                                ))}
+                              </Select>
+                            </label>
+                            <label className="field-stack">
+                              <span>重跑方式</span>
+                              <Select
+                                aria-label="失败重跑方式"
+                                onChange={(event) =>
+                                  setRetryMode(event.target.value as typeof retryMode)
+                                }
+                                value={retryMode}
+                              >
+                                <option value="immediate">失败后立即重跑</option>
+                                <option value="round">本轮结束后统一重跑</option>
+                              </Select>
+                            </label>
+                          </div>
+                          <div className="single-run-advanced">
+                            <label className="field-stack">
+                              <span>参数覆盖（每行 KEY=VALUE）</span>
+                              <Textarea
+                                aria-label="单用例参数覆盖"
+                                onChange={(event) => setParameters(event.target.value)}
+                                rows={2}
+                                value={parameters}
+                              />
+                            </label>
+                            <label className="adapter-toggle">
+                              <Input
+                                checked={adapterEnabled}
+                                onChange={(event) => setAdapterEnabled(event.target.checked)}
+                                type="checkbox"
+                              />
+                              使用 CoTest TestNG Adapter
+                            </label>
+                            {adapterEnabled ? (
+                              <div className="adapter-run-fields">
+                                <label className="field-stack">
+                                  <span>Adapter Suite Name</span>
+                                  <Input
+                                    aria-label="单用例 Adapter Suite Name"
+                                    onChange={(event) => setAdapterSuiteName(event.target.value)}
+                                    value={adapterSuiteName}
+                                  />
+                                </label>
+                                <label className="field-stack">
+                                  <span>Adapter Test Name</span>
+                                  <Input
+                                    aria-label="单用例 Adapter Test Name"
+                                    onChange={(event) => setAdapterTestName(event.target.value)}
+                                    value={adapterTestName}
+                                  />
+                                </label>
+                                <label className="field-stack adapter-address-field">
+                                  <span>执行环境 IP / 地址（每行一个）</span>
+                                  <Textarea
+                                    aria-label="单用例执行环境 IP 地址"
+                                    onChange={(event) =>
+                                      setEnvironmentAddresses(event.target.value)
+                                    }
+                                    placeholder="10.0.0.21"
+                                    rows={2}
+                                    value={environmentAddresses}
+                                  />
+                                </label>
+                              </div>
+                            ) : null}
+                          </div>
+                        </section>
+                      </>
+                    )}
 
                     {error ? (
                       <p className="form-error global-run-error" role="alert">
@@ -642,19 +624,17 @@ export function GlobalRunDialog({ enabled }: { enabled: boolean }) {
 }
 
 async function loadRunOptions(requestedCaseId?: string): Promise<RunOptions> {
-  const [suitePage, casePage, requestedCase, runnerPage, groupPage, environments] =
-    await Promise.all([
-      requestJson<{ items: CaseSuite[] }>("/api/v1/case-suites?limit=200"),
-      requestJson<{ items: CaseDefinitionWithMethods[] }>("/api/v1/case-definitions?limit=100"),
-      requestedCaseId
-        ? requestJson<CaseDefinitionWithMethods>(
-            `/api/v1/case-definitions/${encodeURIComponent(requestedCaseId)}`,
-          )
-        : Promise.resolve(undefined),
-      requestJson<{ items: Runner[] }>("/api/v1/runners?limit=500"),
-      requestJson<{ items: RunnerGroup[] }>("/api/v1/runner-groups"),
-      loadExecutionEnvironmentOptions(),
-    ]);
+  const [suitePage, casePage, requestedCase, runnerPage, groupPage] = await Promise.all([
+    requestJson<{ items: CaseSuite[] }>("/api/v1/case-suites?limit=200"),
+    requestJson<{ items: CaseDefinitionWithMethods[] }>("/api/v1/case-definitions?limit=100"),
+    requestedCaseId
+      ? requestJson<CaseDefinitionWithMethods>(
+          `/api/v1/case-definitions/${encodeURIComponent(requestedCaseId)}`,
+        )
+      : Promise.resolve(undefined),
+    requestJson<{ items: Runner[] }>("/api/v1/runners?limit=500"),
+    requestJson<{ items: RunnerGroup[] }>("/api/v1/runner-groups"),
+  ]);
   const cases = requestedCase
     ? [requestedCase, ...casePage.items.filter((candidate) => candidate.id !== requestedCase.id)]
     : casePage.items;
@@ -663,32 +643,18 @@ async function loadRunOptions(requestedCaseId?: string): Promise<RunOptions> {
     cases: cases.filter((definition) => definition.enabled && !definition.archived),
     runners: runnerPage.items,
     groups: groupPage.items,
-    environments,
   };
 }
 
-async function loadExecutionEnvironmentOptions(): Promise<ExecutionEnvironmentDetails[]> {
-  const environmentPage = await optionalRequest<{ items: ExecutionEnvironment[] }>(
-    "/api/v1/execution-environments",
-    { items: [] },
-  );
-  return Promise.all(
-    environmentPage.items
-      .filter((environment) => environment.status === "active")
-      .map((environment) =>
-        requestJson<ExecutionEnvironmentDetails>(
-          `/api/v1/execution-environments/${encodeURIComponent(environment.id)}`,
-        ),
-      ),
-  );
-}
-
-async function optionalRequest<T>(path: string, fallback: T): Promise<T> {
-  try {
-    return await requestJson<T>(path);
-  } catch {
-    return fallback;
+function suiteRunnerSummary(suite: CaseSuite, options: RunOptions | undefined): string {
+  if (suite.policy.runnerGroupId) {
+    const group = options?.groups.find((candidate) => candidate.id === suite.policy.runnerGroupId);
+    return group ? `${group.name}（${group.runnerIds.length} 台）` : "执行机组已失效";
   }
+  const runnerNames = suite.policy.runnerIds.map(
+    (runnerId) => options?.runners.find((runner) => runner.id === runnerId)?.name ?? runnerId,
+  );
+  return runnerNames.length > 0 ? runnerNames.join("、") : "尚未配置，请先编辑任务";
 }
 
 async function requestJson<T>(

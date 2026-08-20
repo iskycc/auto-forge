@@ -826,7 +826,6 @@ function batchSnapshot(batch: import("@autoforge/domain").RunBatchDetails) {
     projectId: batch.projectId,
     suiteId: batch.suiteId,
     suiteVersion: batch.suiteVersion,
-    ...(batch.environmentVersionId ? { environmentVersionId: batch.environmentVersionId } : {}),
     selectedRunnerIds: [...batch.selectedRunnerIds],
     caseCount: batch.runs.length,
   };

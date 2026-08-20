@@ -1,5 +1,4 @@
 import { createRunBatchInputSchema } from "@autoforge/contracts";
-import { DEFAULT_PROJECT_ID } from "@autoforge/domain";
 import { apiErrorResponse, readJsonBody } from "@/lib/api-response";
 import { getPlatformServices } from "@/lib/services";
 import { NextResponse } from "next/server";
@@ -52,12 +51,9 @@ export async function POST(request: Request): Promise<NextResponse> {
     const input = createRunBatchInputSchema.parse(await readJsonBody(request, 128 * 1024));
     const services = await getPlatformServices();
     const projectScope = services.identityAccess.projectScope(identity, "run.create");
-    const projectId = input.projectId ?? projectScope?.at(0) ?? DEFAULT_PROJECT_ID;
-    services.identityAccess.authorize(identity, "run.create", projectId);
-    if (input.environmentVersionId) {
-      services.identityAccess.authorize(identity, "environment.read", projectId);
-    }
-    const batch = await services.runBatches.create({ ...input, projectId });
+    const suite = await services.caseSuites.get(input.suiteId, projectScope);
+    services.identityAccess.authorize(identity, "run.create", suite.projectId);
+    const batch = await services.runBatches.create(input);
     await services.identityAccess.recordAuthorizedOperation(identity, {
       action: "run_batch.create",
       resourceType: "run_batch",

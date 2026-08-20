@@ -7,57 +7,37 @@ import {
 } from "../src/scheduling";
 
 describe("createRunBatchInputSchema", () => {
-  it("accepts bounded environment variables and keeps policy-backed fields omittable", () => {
-    const parsed = createRunBatchInputSchema.parse({
+  it("only accepts the task id so execution always uses the stored task snapshot", () => {
+    expect(createRunBatchInputSchema.parse({ suiteId: "suite-1" })).toEqual({
       suiteId: "suite-1",
-      runnerIds: ["runner-1"],
-      retryLimit: 2,
-      environmentVariables: [{ name: "TEST_ENV", value: "staging" }],
     });
-    expect(parsed).toMatchObject({
-      retryLimit: 2,
-      claimTimeoutMs: 300_000,
-      uploadTimeoutMs: 600_000,
-    });
-    // 优先级与排队/执行超时不再带契约默认值，由批次创建按任务策略合并。
-    expect(parsed.priority).toBeUndefined();
-    expect(parsed.queueTimeoutMs).toBeUndefined();
-    expect(parsed.executionTimeoutMs).toBeUndefined();
+    expect(() => createRunBatchInputSchema.parse({ suiteId: "suite-1", retryLimit: 2 })).toThrow();
   });
 
-  it("rejects duplicate runners and environment names", () => {
+  it("rejects duplicate runners for a single-case shortcut", () => {
     expect(() =>
-      createRunBatchInputSchema.parse({
-        suiteId: "suite-1",
+      createSingleCaseRunInputSchema.parse({
         runnerIds: ["runner-1", "runner-1"],
-        retryLimit: 0,
-        environmentVariables: [
-          { name: "TEST_ENV", value: "a" },
-          { name: "TEST_ENV", value: "b" },
-        ],
       }),
     ).toThrow();
   });
 
-  it("rejects timeout policies outside the recoverable server bounds", () => {
+  it("rejects single-case queue policies outside the recoverable server bounds", () => {
     expect(() =>
-      createRunBatchInputSchema.parse({
-        suiteId: "suite-1",
+      createSingleCaseRunInputSchema.parse({
         runnerIds: ["runner-1"],
-        retryLimit: 0,
         queueTimeoutMs: 999,
       }),
     ).toThrow();
   });
 
-  it("accepts exactly one resource selection mode", () => {
-    expect(
-      createRunBatchInputSchema.parse({ suiteId: "suite-1", runnerGroupId: "group-1" }),
-    ).toMatchObject({ runnerIds: [], runnerGroupId: "group-1" });
+  it("accepts exactly one resource selection mode for a single-case shortcut", () => {
+    expect(createSingleCaseRunInputSchema.parse({ runnerGroupId: "group-1" })).toMatchObject({
+      runnerIds: [],
+      runnerGroupId: "group-1",
+    });
     for (const resourceSelection of [{}, { runnerIds: ["runner-1"], runnerGroupId: "group-1" }]) {
-      expect(() =>
-        createRunBatchInputSchema.parse({ suiteId: "suite-1", ...resourceSelection }),
-      ).toThrow();
+      expect(() => createSingleCaseRunInputSchema.parse(resourceSelection)).toThrow();
     }
   });
 

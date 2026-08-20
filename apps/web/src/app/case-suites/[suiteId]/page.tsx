@@ -17,6 +17,11 @@ export default async function CaseSuitePage({ params }: Props) {
   const services = await getPlatformServices();
   const suite = await services.caseSuites.get(suiteId, projectIds);
   const canManage = hasPermission(identity, "case_suite.manage", suite.projectId);
+  const [runners, runnerGroups, projectStructure] = await Promise.all([
+    services.runnerControl.list(500),
+    services.runnerGroups.list(),
+    services.projectStructures.list(suite.projectId),
+  ]);
   const schedule = (await services.platformOperations.listSchedules(identity)).find(
     (candidate) => candidate.suiteId === suiteId,
   );
@@ -36,7 +41,15 @@ export default async function CaseSuitePage({ params }: Props) {
           </Link>
         ) : null}
       </section>
-      <CaseSuiteEditor canManage={canManage} {...(schedule ? { schedule } : {})} suite={suite} />
+      <CaseSuiteEditor
+        artifactsEnabled={services.config.artifactCollectionEnabled}
+        canManage={canManage}
+        projectVersions={projectStructure.versions}
+        runnerGroups={runnerGroups}
+        runners={runners}
+        {...(schedule ? { schedule } : {})}
+        suite={suite}
+      />
       <CaseSuiteDetailsView canManage={canManage} initialSuite={suite} />
     </div>
   );

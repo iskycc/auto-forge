@@ -59,7 +59,17 @@ export const caseSuiteExecutionPolicySchema = z.object({
   retryLimit: z.number().int().min(0).max(10).optional(),
   retryMode: z.enum(["immediate", "round"]).optional(),
   queueTimeoutMs: z.number().int().min(1_000).max(604_800_000).optional(),
-  executionTimeoutMs: z.number().int().min(1_000).max(86_400_000).optional(),
+  claimTimeoutMs: z.number().int().min(1_000).max(3_600_000).optional(),
+  uploadTimeoutMs: z.number().int().min(1_000).max(3_600_000).optional(),
+  projectVersionId: z.string().trim().max(128).optional(),
+  runnerIds: z
+    .array(z.string().trim().min(1).max(128))
+    .max(64)
+    .refine((runnerIds) => new Set(runnerIds).size === runnerIds.length, {
+      message: "执行机不能重复。",
+    })
+    .optional(),
+  runnerGroupId: z.string().trim().max(128).optional(),
   runnerLabels: z.array(z.string().trim().min(1).max(64)).max(64).optional(),
   parameters: z
     .record(z.string().trim().min(1).max(128), z.string().max(1_024))

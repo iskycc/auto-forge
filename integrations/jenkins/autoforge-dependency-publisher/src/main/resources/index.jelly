@@ -1,0 +1,4 @@
+<?jelly escape-by-default='true'?>
+<div>
+  Replaces the dependency archive assigned to an AutoForge project version from Jenkins Pipeline.
+</div>

@@ -5,7 +5,8 @@ import { randomUUID } from "node:crypto";
 import { buildClassFile } from "../../packages/testng-discovery/test/class-fixture";
 import { DEFAULT_PROJECT_ID } from "@autoforge/domain";
 import { freshRunnerBootstrapToken } from "./support/runner-bootstrap";
-import { ensureAdministrator } from "./support/session";
+import { configureTaskExecution, createTaskRun } from "./support/task-execution";
+import { browserJson, ensureAdministrator } from "./support/session";
 
 /**
  * 即时补槽调度验收：一个批次 5 个用例、执行机并发 2。验证：
@@ -231,23 +232,17 @@ test("completion immediately refills free runner slots without waiting for the w
   );
   expect(heartbeat.status()).toBe(200);
 
-  await page.goto("/run-batches");
-  const suiteSelect = page.getByLabel("执行用例任务");
-  const suiteOption = suiteSelect.locator("option").filter({ hasText: "即时补槽验收任务" });
-  const suiteId = await suiteOption.getAttribute("value");
-  expect(suiteId).toBeTruthy();
-  await suiteSelect.selectOption(suiteId!);
-  await page.getByLabel("失败用例重跑次数").selectOption("1");
-  await page.getByLabel("失败重跑方式").selectOption("immediate");
-  const runnerChoice = page.locator(".runner-choice").filter({ hasText: "E2E Refill Runner" });
-  await runnerChoice.locator('input[type="checkbox"]').check();
-  const createBatchResponse = page.waitForResponse(
-    (response) =>
-      response.request().method() === "POST" &&
-      new URL(response.url()).pathname === "/api/v1/run-batches",
+  const suites = await browserJson<{ items: Array<{ id: string; name: string }> }>(
+    page,
+    "/api/v1/case-suites?limit=200",
   );
-  await page.getByRole("button", { name: "开始调度" }).click();
-  const batch = (await (await createBatchResponse).json()) as { id: string };
+  const suiteId = suites.body.items.find((suite) => suite.name === "即时补槽验收任务")?.id;
+  expect(suiteId).toBeTruthy();
+  await configureTaskExecution(page, suiteId!, identity.runnerId, {
+    retryLimit: 1,
+    retryMode: "immediate",
+  });
+  const batch = await createTaskRun(page, suiteId!);
 
   // 初始领取占满 2 个并发槽。
   const initial = await claimOnce(page, identity, 2);

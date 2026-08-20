@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { executionRecordColumnWidths, type ExecutionRecordRow } from "./execution-record-columns";
+import {
+  executionRecordColumnWidths,
+  executionRecordStatusLabel,
+  type ExecutionRecordRow,
+} from "./execution-record-columns";
 
 function row(index: number, suiteName = "日常回归任务"): ExecutionRecordRow {
   return {
@@ -40,5 +44,11 @@ describe("executionRecordColumnWidths", () => {
 
     expect(widths.suite).toBeGreaterThanOrEqual(120);
     expect(widths.suite).toBeLessThanOrEqual(360);
+  });
+
+  it("labels infrastructure terminal failures as execution exceptions", () => {
+    expect(executionRecordStatusLabel("failed")).toBe("执行异常");
+    expect(executionRecordStatusLabel("cancelled")).toBe("执行中断");
+    expect(executionRecordStatusLabel("succeeded")).toBe("执行完成");
   });
 });

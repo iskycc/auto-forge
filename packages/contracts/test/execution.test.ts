@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  acquireAttemptSecretsInputSchema,
   attemptEventPageSchema,
   claimAssignmentsInputSchema,
   completeAttemptInputSchema,
@@ -182,34 +181,6 @@ describe("Runner Protocol v1 contracts", () => {
         labels: Array.from({ length: 129 }, (_, index) => `label-${index}`),
       }),
     ).toThrow();
-  });
-
-  it("carries only secret references in assignments and bounds lease acquisition", () => {
-    const specification = executionSpecSchema.parse({
-      ...validExecutionSpec(),
-      secretReferences: [
-        {
-          name: "API_TOKEN",
-          secretId: "secret-1",
-          secretVersionId: "secret-version-1",
-        },
-      ],
-    });
-    expect(specification.secretReferences).toEqual([
-      {
-        name: "API_TOKEN",
-        secretId: "secret-1",
-        secretVersionId: "secret-version-1",
-      },
-    ]);
-    expect(JSON.stringify(specification)).not.toContain("secret-value");
-    expect(
-      acquireAttemptSecretsInputSchema.parse({
-        schemaVersion: 1,
-        requestId: "secret-request-1",
-        leaseToken: "l".repeat(32),
-      }),
-    ).toMatchObject({ requestId: "secret-request-1" });
   });
 
   it("validates explicit runtime and offline toolchain requirements", () => {

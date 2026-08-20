@@ -180,9 +180,9 @@ export function executionRecordStatusLabel(status: RunBatch["status"]): string {
     dispatching: "分配中",
     scheduled: "已生成分配",
     running: "执行中",
-    succeeded: "已成功",
-    failed: "已失败",
-    cancelled: "已取消",
+    succeeded: "执行完成",
+    failed: "执行异常",
+    cancelled: "执行中断",
   };
   return labels[status];
 }

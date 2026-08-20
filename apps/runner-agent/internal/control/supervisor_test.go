@@ -20,45 +20,6 @@ import (
 	"github.com/iskycc/auto-forge/apps/runner-agent/internal/executor"
 )
 
-func TestExecutionSecretsStayOutOfPersistedClaimAndEnterOnlyLocalSpec(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		var acquisition acquireSecretsRequest
-		if err := json.NewDecoder(request.Body).Decode(&acquisition); err != nil {
-			t.Errorf("decode acquisition: %v", err)
-			return
-		}
-		writer.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(writer).Encode(acquireSecretsResponse{
-			SchemaVersion: protocolVersion,
-			RequestID:     acquisition.RequestID,
-			Secrets:       []EnvironmentEntry{{Name: "API_TOKEN", Value: "execution-secret"}},
-		})
-	}))
-	defer server.Close()
-	client, err := NewClient(testConfiguration(t, server.URL))
-	if err != nil {
-		t.Fatal(err)
-	}
-	claimed := testClaimedAssignment(strings.Repeat("a", 64))
-	claimed.Assignment.ExecutionSpec.SecretReferences = []SecretReference{{
-		Name: "API_TOKEN", SecretID: "secret-1", SecretVersionID: "secret-version-1",
-	}}
-	supervisor := &attemptSupervisor{
-		client:   client,
-		identity: Identity{RunnerID: "runner-1", Credential: "runner-credential"},
-	}
-	localSpec, err := supervisor.executionSpecWithSecrets(context.Background(), claimed)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(localSpec.Environment) != 1 || localSpec.Environment[0].Value != "execution-secret" {
-		t.Fatalf("local environment = %#v", localSpec.Environment)
-	}
-	if len(claimed.Assignment.ExecutionSpec.Environment) != 0 {
-		t.Fatalf("persisted claim was mutated: %#v", claimed.Assignment.ExecutionSpec.Environment)
-	}
-}
-
 func TestSupervisorClaimsDownloadsExecutesAndCompletesAssignment(t *testing.T) {
 	inputContent := []byte("jar")
 	digest := sha256.Sum256(inputContent)
@@ -419,6 +380,21 @@ func TestClaimedAssignmentRejectsIncompatiblePlatformAndToolchain(t *testing.T) 
 	claimed.Assignment.ExecutionSpec.RuntimeRequirements.TestNGVersion = "7.10.2"
 	if err := validateClaimedAssignment(claimed, "runner-1", configuration); err == nil {
 		t.Fatal("validateClaimedAssignment accepted an incompatible TestNG toolchain")
+	}
+}
+
+func TestClaimedAssignmentRejectsRetiredExecutionEnvironmentFields(t *testing.T) {
+	configuration := config.Config{Toolchain: config.ToolchainConfig{
+		JavaExecutable: "/opt/jdk/bin/java",
+		Classpath:      []string{"/opt/testng/testng.jar"},
+		JavaVersion:    "21.0.8",
+		TestNGVersion:  "7.11.0",
+	}}
+	claimed := testClaimedAssignment(strings.Repeat("a", 64))
+	claimed.Assignment.ExecutionSpec.Environment = []EnvironmentEntry{{Name: "LEGACY", Value: "value"}}
+	if err := validateClaimedAssignment(claimed, "runner-1", configuration); err == nil ||
+		!strings.Contains(err.Error(), "retired execution environment") {
+		t.Fatalf("validateClaimedAssignment() error = %v", err)
 	}
 }
 

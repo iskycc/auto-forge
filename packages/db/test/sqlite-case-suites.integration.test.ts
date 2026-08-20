@@ -235,7 +235,7 @@ describe("SQLite case suite lifecycle", () => {
           concurrency: 2,
           retryLimit: 3,
           queueTimeoutMs: 120_000,
-          executionTimeoutMs: 600_000,
+          runnerIds: ["runner-1"],
           runnerLabels: ["gpu"],
           parameters: { SUITE: "nightly" },
           artifactPatterns: ["reports/**", "logs/*.txt"],
@@ -299,18 +299,13 @@ describe("SQLite case suite lifecycle", () => {
           maximumLoadPerCpu: 1,
         },
         45,
-        undefined,
         { catalog, objectStore: { exists: async () => true } as unknown as JarObjectStorePort },
         128,
         5,
         new SqliteProjectStructureRepository(handle),
       );
 
-      const batch = await scheduler.create({
-        suiteId: "suite-1",
-        runnerIds: ["runner-1"],
-        environmentVariables: [],
-      });
+      const batch = await scheduler.create({ suiteId: "suite-1" });
 
       expect(batch).toMatchObject({
         priority: 5,

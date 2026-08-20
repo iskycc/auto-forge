@@ -26,6 +26,14 @@ function schedulingFake(): RunBatchSchedulingPort {
   };
 }
 
+function credentialCipherFake() {
+  return {
+    available: true,
+    encrypt: vi.fn((value: string) => value),
+    decrypt: vi.fn((value: string) => value),
+  };
+}
+
 describe("execution log redaction", () => {
   it("redacts execution secrets and common credential formats", () => {
     expect(
@@ -35,93 +43,6 @@ describe("execution log redaction", () => {
       ),
     ).not.toContain("hunter2");
     expect(redactLogContent("Bearer abcdefghijklmnopqrstuv", [])).toBe("[REDACTED]");
-  });
-});
-
-describe("execution secret acquisition", () => {
-  it("decrypts lease-authorized ciphertext with its version purpose", async () => {
-    const executions = {
-      acquireAttemptSecrets: vi.fn().mockResolvedValue([
-        {
-          name: "API_TOKEN",
-          secretId: "secret-1",
-          secretVersionId: "secret-version-1",
-          valueEncrypted: "ciphertext",
-        },
-      ]),
-      recordAttemptSecretAccess: vi.fn().mockResolvedValue(undefined),
-    } as unknown as ExecutionControlRepository;
-    const runners = {
-      findByCredentialHash: vi.fn().mockResolvedValue({
-        id: "runner-1",
-        name: "Runner 1",
-        state: "online",
-        os: "linux",
-        architecture: "amd64",
-        agentVersion: "0.2.2",
-        protocolVersion: 1,
-        labels: ["java", "testng"],
-        capabilities: ["executor:testng-v1", "isolation:cgroup-v2", "java:21.0.8", "testng:7.11.0"],
-        maxConcurrency: 1,
-        busySlots: 0,
-        lastSeenAt: "2026-08-09T00:00:00.000Z",
-        terminalEnabled: false,
-        createdAt: "2026-08-09T00:00:00.000Z",
-        updatedAt: "2026-08-09T00:00:00.000Z",
-      }),
-    } as unknown as RunnerRepository;
-    const decrypt = vi.fn().mockReturnValue("plaintext-secret");
-    const service = new ExecutionControlService(
-      executions,
-      runners,
-      {
-        issue: vi.fn(),
-        issueBootstrapToken: vi.fn(),
-        hash: (value) => `hash:${value}`,
-        verifyBootstrapToken: vi.fn(),
-      },
-      { available: true, encrypt: vi.fn(), decrypt },
-      {} as JarObjectStorePort,
-      { now: () => new Date("2026-08-09T00:00:00.000Z") },
-      { next: () => "audit-1" },
-      batchesRepositoryFake(),
-      schedulingFake(),
-    );
-
-    await expect(
-      service.acquireSecrets("runner-1", "credential", "attempt-1", {
-        schemaVersion: 1,
-        requestId: "request-1",
-        leaseToken: "l".repeat(32),
-      }),
-    ).resolves.toEqual({
-      schemaVersion: 1,
-      requestId: "request-1",
-      secrets: [{ name: "API_TOKEN", value: "plaintext-secret" }],
-    });
-    expect(decrypt).toHaveBeenCalledWith("ciphertext", "execution-secret:secret-version-1");
-    expect(executions.acquireAttemptSecrets).toHaveBeenCalledWith(
-      expect.objectContaining({ leaseTokenHash: `hash:${"l".repeat(32)}` }),
-    );
-    expect(executions.recordAttemptSecretAccess).toHaveBeenCalledWith(
-      expect.objectContaining({
-        id: "audit-1",
-        requestId: "request-1",
-        secretIds: ["secret-1"],
-      }),
-    );
-    vi.mocked(executions.recordAttemptSecretAccess).mockClear();
-    decrypt.mockImplementationOnce(() => {
-      throw new Error("wrong master key");
-    });
-    await expect(
-      service.acquireSecrets("runner-1", "credential", "attempt-1", {
-        schemaVersion: 1,
-        requestId: "request-2",
-        leaseToken: "m".repeat(32),
-      }),
-    ).rejects.toMatchObject({ code: "EXECUTION_SECRET_DECRYPT_FAILED" });
-    expect(executions.recordAttemptSecretAccess).not.toHaveBeenCalled();
   });
 });
 
@@ -140,7 +61,7 @@ describe("execution data scope", () => {
         hash: (value) => `hash:${value}`,
         verifyBootstrapToken: vi.fn(),
       },
-      { available: true, encrypt: vi.fn(), decrypt: vi.fn() },
+      credentialCipherFake(),
       {} as JarObjectStorePort,
       { now: () => new Date("2026-08-09T00:00:00.000Z") },
       { next: () => "id-1" },
@@ -198,7 +119,7 @@ describe("Runner execution compatibility", () => {
         hash: (value) => `hash:${value}`,
         verifyBootstrapToken: vi.fn(),
       },
-      { available: true, encrypt: vi.fn(), decrypt: vi.fn() },
+      credentialCipherFake(),
       {} as JarObjectStorePort,
       { now: () => new Date("2026-08-09T00:00:00.000Z") },
       { next: () => "id-1" },
@@ -280,7 +201,7 @@ describe("Runner execution compatibility", () => {
         hash: (value) => `hash:${value}`,
         verifyBootstrapToken: vi.fn(),
       },
-      { available: true, encrypt: vi.fn(), decrypt: vi.fn() },
+      credentialCipherFake(),
       {} as JarObjectStorePort,
       { now: () => new Date("2026-08-09T00:00:00.000Z") },
       { next: () => "id-1" },
@@ -369,7 +290,7 @@ describe("attempt completion scheduling events", () => {
         hash: (value) => `hash:${value}`,
         verifyBootstrapToken: vi.fn(),
       },
-      { available: true, encrypt: vi.fn(), decrypt: vi.fn() },
+      credentialCipherFake(),
       {} as JarObjectStorePort,
       { now: () => new Date("2026-08-09T00:00:00.000Z") },
       { next: () => "event-id" },
@@ -576,7 +497,7 @@ describe("artifact transfer orchestration", () => {
         hash: (value) => `hash:${value}`,
         verifyBootstrapToken: vi.fn(),
       },
-      { available: true, encrypt: vi.fn(), decrypt: vi.fn() },
+      credentialCipherFake(),
       objectStore,
       { now: () => new Date("2026-08-09T00:00:00.000Z") },
       { next: () => "id-1" },
@@ -705,7 +626,7 @@ describe("failure summary log fallback", () => {
         hash: (value) => `hash:${value}`,
         verifyBootstrapToken: vi.fn(),
       },
-      { available: true, encrypt: vi.fn(), decrypt: vi.fn() },
+      credentialCipherFake(),
       {} as JarObjectStorePort,
       { now: () => new Date("2026-08-09T00:00:00.000Z") },
       { next: () => "event-id" },
@@ -1097,7 +1018,7 @@ describe("failure summary log fallback", () => {
     );
   });
 
-  it("compresses a multiline power-assert block when no adapter marker exists", async () => {
+  it("keeps only the assertion expression from a multiline power-assert block", async () => {
     const { service, executions } = buildService({
       probe: { items: [], acknowledgedSequence: 11, truncated: false },
       stdoutTail: {
@@ -1124,8 +1045,40 @@ describe("failure summary log fallback", () => {
     expect(executions.completeAttempt).toHaveBeenCalledWith(
       expect.objectContaining({
         result: expect.objectContaining({
-          summary: "assert OrderId != \"\" | | '' false",
+          summary: 'assert OrderId != ""',
         }),
+      }),
+    );
+  });
+
+  it("drops a power-assert value diagram from an encoded adapter marker", async () => {
+    const failureSummary = [
+      "Assertion failed:",
+      'assert OrderId != ""',
+      "&#x20;      |       |",
+      "&#x20;      ''      false",
+    ].join("\n");
+    const encodedSummary = Buffer.from(failureSummary, "utf8").toString("base64");
+    const { service, executions } = buildService({
+      probe: { items: [], acknowledgedSequence: 12, truncated: false },
+      stdoutTail: {
+        items: [
+          {
+            stream: "stdout",
+            sequence: 12,
+            content: `TestCase Run Failed Stack Base64: [${encodedSummary}]\n`,
+          },
+        ],
+        acknowledgedSequence: 12,
+        truncated: false,
+      },
+    });
+
+    await service.complete("runner-1", "credential", "attempt-1", completionInput);
+
+    expect(executions.completeAttempt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        result: expect.objectContaining({ summary: 'assert OrderId != ""' }),
       }),
     );
   });

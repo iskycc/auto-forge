@@ -6,6 +6,12 @@ import { promisify } from "node:util";
 
 import { DEFAULT_PROJECT_ID } from "@autoforge/domain";
 import { ensureAdministrator } from "./support/session";
+import {
+  configureTaskExecution,
+  createTaskRun,
+  findRunnerId,
+  findSuiteId,
+} from "./support/task-execution";
 
 const execFileAsync = promisify(execFile);
 const runnerName = "Container Executor Agent";
@@ -223,24 +229,12 @@ async function createContainerSuite(page: Page): Promise<void> {
 }
 
 async function scheduleExecution(page: Page, mode: "success" | "cancel"): Promise<string> {
-  await page.goto("/run-batches");
-  const runner = page.locator(".runner-choice").filter({ hasText: runnerName });
-  await expect(runner).toContainText("兼容");
-  await runner.locator('input[type="checkbox"]').check();
-  await page.getByRole("button", { name: "添加变量" }).click();
-  await page.getByLabel("环境变量名").fill("AUTOFORGE_CONTAINER_MODE");
-  await page.getByLabel("环境变量值").fill(mode);
-  const createdResponse = page.waitForResponse(
-    (response) =>
-      response.request().method() === "POST" &&
-      new URL(response.url()).pathname === "/api/v1/run-batches",
-  );
-  await page.getByRole("button", { name: "开始调度" }).click();
-  const response = await createdResponse;
-  expect(response.status()).toBe(201);
-  const body = (await response.json()) as { id?: string };
-  expect(body.id).toBeTruthy();
-  return body.id!;
+  const [suiteId, runnerId] = await Promise.all([
+    findSuiteId(page, suiteName),
+    findRunnerId(page, runnerName),
+  ]);
+  await configureTaskExecution(page, suiteId, runnerId, { parameters: { mode } });
+  return (await createTaskRun(page, suiteId)).id;
 }
 
 async function waitForBatch(

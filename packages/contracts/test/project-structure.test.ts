@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { runtimeAssetUrlInputSchema } from "../src/project-structure";
+import {
+  jenkinsDependencyPublicationInputSchema,
+  runtimeAssetUrlInputSchema,
+} from "../src/project-structure";
 
 describe("project runtime asset contracts", () => {
   const validInput = {
@@ -26,5 +29,22 @@ describe("project runtime asset contracts", () => {
     expect(() =>
       runtimeAssetUrlInputSchema.parse({ ...validInput, fileName: "jdk.zip" }),
     ).toThrow();
+  });
+
+  it("accepts a version-scoped Jenkins dependency archive without a client-controlled kind", () => {
+    const publication = jenkinsDependencyPublicationInputSchema.parse({
+      projectId: "project-1",
+      version: "2026.08",
+      dependencyArchive: {
+        url: "https://jenkins.internal/artifacts/dependencies.zip",
+        fileName: "dependencies.zip",
+        sha256: "b".repeat(64),
+        sizeBytes: 8_192,
+        archiveFormat: "zip",
+      },
+    });
+
+    expect(publication.version).toBe("2026.08");
+    expect(publication.dependencyArchive).not.toHaveProperty("kind");
   });
 });

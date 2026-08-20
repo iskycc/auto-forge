@@ -1,7 +1,5 @@
 export * from "./database";
 export * from "./postgres-database";
-export * from "./postgres-execution-environment";
-export * from "./postgres-execution-secret";
 export * from "./postgres-schema";
 export * from "./postgres-platform-repository";
 export * from "./postgres-project-structure";
@@ -9,8 +7,6 @@ export * from "./postgres-run-batch";
 export * from "./schema";
 export * from "./sqlite-case-catalog";
 export * from "./sqlite-case-suite";
-export * from "./sqlite-execution-environment";
-export * from "./sqlite-execution-secret";
 export * from "./sqlite-run-batch";
 export * from "./sqlite-runner";
 export * from "./sqlite-runner-installation-profile";

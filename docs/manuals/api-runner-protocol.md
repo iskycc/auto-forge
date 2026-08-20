@@ -11,8 +11,10 @@
 {"error":{"code":"STABLE_MACHINE_CODE","message":"可操作说明","requestId":"trace-id"}}
 ```
 
-Runner Protocol v1 包含注册、heartbeat、claim、lease renew、输入/密文领取、日志、产物、完成、
-reconcile 和凭据轮换。每个 DTO 携带 `schemaVersion: 1`；不兼容版本明确拒绝。每条 assignment
+Runner Protocol v1 包含注册、heartbeat、claim、lease renew、输入领取、日志、产物、完成、
+reconcile 和凭据轮换。产品级密文领取端点已经移除；历史 v1 执行快照中的 `environment` 与
+`secretReferences` 仅保留空值解析兼容，新任务携带非空值会被 Agent 拒绝。每个 DTO 携带
+`schemaVersion: 1`；不兼容版本明确拒绝。每条 assignment
 关联 attempt、稳定 claim request ID 和短期 lease；心跳不延长 lease。日志以
 `(attemptId, stream, sequence)` 去重，完成以 completion ID 与结果摘要幂等。
 

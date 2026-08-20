@@ -1148,7 +1148,6 @@ export class PostgresPlatformOperationsRepository implements PlatformOperationsR
     add("suite_id", filter.suiteId);
     add("case_definition_id", filter.caseDefinitionId);
     add("runner_id", filter.runnerId);
-    add("environment_version_id", filter.environmentVersionId);
     add("outcome", filter.outcome);
     add("failure_signature", filter.failureSignature);
     if (filter.tag) {

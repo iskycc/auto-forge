@@ -14,38 +14,47 @@ export const createTestStageInputSchema = z.object({
 
 export const runtimeAssetKindSchema = z.enum(["jdk", "jar-bundle"]);
 
+const runtimeAssetFileFields = {
+  url: z
+    .url()
+    .max(2_048)
+    .refine(
+      (value) => {
+        const url = new URL(value);
+        return ["http:", "https:"].includes(url.protocol) && !url.username && !url.password;
+      },
+      { message: "运行时资源链接必须使用 HTTP 或 HTTPS，且不能包含凭据。" },
+    ),
+  fileName: z.string().trim().min(1).max(255),
+  sha256: sha256Schema,
+  sizeBytes: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+  archiveFormat: archiveFormatSchema,
+} as const;
+
+function validateArchiveFileName(
+  input: { fileName: string; archiveFormat: "zip" | "tar.gz" },
+  context: z.RefinementCtx,
+): void {
+  const fileName = input.fileName.toLowerCase();
+  const matches =
+    input.archiveFormat === "zip"
+      ? fileName.endsWith(".zip")
+      : fileName.endsWith(".tar.gz") || fileName.endsWith(".tgz");
+  if (!matches) {
+    context.addIssue({
+      code: "custom",
+      path: ["fileName"],
+      message: "文件名扩展名必须与压缩格式一致。",
+    });
+  }
+}
+
 export const runtimeAssetUrlInputSchema = z
   .object({
     kind: runtimeAssetKindSchema,
-    url: z
-      .url()
-      .max(2_048)
-      .refine(
-        (value) => {
-          const url = new URL(value);
-          return ["http:", "https:"].includes(url.protocol) && !url.username && !url.password;
-        },
-        { message: "运行时资源链接必须使用 HTTP 或 HTTPS，且不能包含凭据。" },
-      ),
-    fileName: z.string().trim().min(1).max(255),
-    sha256: sha256Schema,
-    sizeBytes: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
-    archiveFormat: archiveFormatSchema,
+    ...runtimeAssetFileFields,
   })
-  .superRefine((input, context) => {
-    const fileName = input.fileName.toLowerCase();
-    const matches =
-      input.archiveFormat === "zip"
-        ? fileName.endsWith(".zip")
-        : fileName.endsWith(".tar.gz") || fileName.endsWith(".tgz");
-    if (!matches) {
-      context.addIssue({
-        code: "custom",
-        path: ["fileName"],
-        message: "文件名扩展名必须与压缩格式一致。",
-      });
-    }
-  });
+  .superRefine(validateArchiveFileName);
 
 export const projectAdapterConfigurationInputSchema = z.object({
   jdkAssetId: identifierSchema.optional(),
@@ -58,9 +67,18 @@ export const runtimeAssetUploadMetadataSchema = z.object({
   archiveFormat: archiveFormatSchema,
 });
 
+export const jenkinsDependencyPublicationInputSchema = z.object({
+  projectId: identifierSchema,
+  version: nameSchema,
+  dependencyArchive: z.object(runtimeAssetFileFields).superRefine(validateArchiveFileName),
+});
+
 export type CreateProjectVersionInput = z.infer<typeof createProjectVersionInputSchema>;
 export type CreateTestStageInput = z.infer<typeof createTestStageInputSchema>;
 export type RuntimeAssetUrlInput = z.infer<typeof runtimeAssetUrlInputSchema>;
 export type ProjectAdapterConfigurationInput = z.infer<
   typeof projectAdapterConfigurationInputSchema
+>;
+export type JenkinsDependencyPublicationInput = z.infer<
+  typeof jenkinsDependencyPublicationInputSchema
 >;

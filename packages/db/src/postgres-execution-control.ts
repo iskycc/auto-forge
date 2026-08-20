@@ -472,50 +472,6 @@ export class PostgresExecutionControlRepository implements ExecutionControlRepos
     return { objectKey: row.object_key, sizeBytes: Number(row.size_bytes), sha256: row.sha256 };
   }
 
-  async resolveAttemptSecrets(
-    input: Parameters<ExecutionControlRepository["resolveAttemptSecrets"]>[0],
-  ): ReturnType<ExecutionControlRepository["resolveAttemptSecrets"]> {
-    await this.handle.ready;
-    const context = await authorizedTransferContext(this.handle.pool, input);
-    return readAttemptSecrets(this.handle.pool, context.assignment, "redaction");
-  }
-
-  async acquireAttemptSecrets(
-    input: Parameters<ExecutionControlRepository["acquireAttemptSecrets"]>[0],
-  ): ReturnType<ExecutionControlRepository["acquireAttemptSecrets"]> {
-    await this.handle.ready;
-    const context = await authorizedTransferContext(this.handle.pool, input);
-    return readAttemptSecrets(this.handle.pool, context.assignment, "acquisition");
-  }
-
-  async recordAttemptSecretAccess(
-    input: Parameters<ExecutionControlRepository["recordAttemptSecretAccess"]>[0],
-  ): Promise<void> {
-    await this.handle.ready;
-    const result = await this.handle.pool.query(
-      `INSERT INTO audit_events
-       (id, actor_type, actor_id, action, resource_type, resource_id, project_id,
-        result, request_id, details_json, recorded_at)
-       SELECT $1, 'runner', $2, 'execution_secret.access', 'run_attempt', a.id, b.project_id,
-              'succeeded', $3, $4, $5
-       FROM run_attempts a
-       JOIN execution_runs r ON r.id = a.execution_run_id
-       JOIN run_batches b ON b.id = r.batch_id
-       WHERE a.id = $6`,
-      [
-        input.id,
-        input.runnerId,
-        input.requestId,
-        JSON.stringify({ secretCount: input.secretIds.length, secretIds: input.secretIds }),
-        input.recordedAt,
-        input.attemptId,
-      ],
-    );
-    if (result.rowCount !== 1) {
-      throw new DomainError("RUN_ATTEMPT_NOT_FOUND", "指定的执行尝试不存在。");
-    }
-  }
-
   async appendLogChunks(
     input: Parameters<ExecutionControlRepository["appendLogChunks"]>[0],
   ): ReturnType<ExecutionControlRepository["appendLogChunks"]> {
@@ -1541,11 +1497,16 @@ async function updateBatchStatus(
   if (!batchState) throw new DomainError("RUN_BATCH_NOT_FOUND", "指定的执行批次不存在。");
   // 轮次制下先释放等待下一轮的失败 run，再聚合状态，确保释放的 run 计入批次状态。
   await advanceRoundIfIdle(client, batchId, batchState.retry_mode, updatedAt);
-  const result = await client.query<{ status: string }>(
-    "SELECT status FROM execution_runs WHERE batch_id = $1",
+  const result = await client.query<{ status: string; terminal_reason_code: string | null }>(
+    "SELECT status, terminal_reason_code FROM execution_runs WHERE batch_id = $1",
     [batchId],
   );
-  const status = aggregateBatchStatus(result.rows.map((row) => row.status));
+  const status = aggregateBatchStatus(
+    result.rows.map((row) => ({
+      status: row.status,
+      ...(row.terminal_reason_code ? { terminalReasonCode: row.terminal_reason_code } : {}),
+    })),
+  );
   transitionRunBatch(batchState.status, status);
   const update = await client.query(
     `UPDATE run_batches SET status = $1, updated_at = $2, version = version + 1
@@ -1627,48 +1588,6 @@ function mapAssignment(row: AssignmentRow): AssignmentDto {
 
 function parseSpec(row: AssignmentRow) {
   return executionSpecSchema.parse(JSON.parse(row.execution_spec_json));
-}
-
-async function readAttemptSecrets(
-  client: Pick<PoolClient, "query">,
-  assignment: AssignmentRow,
-  purpose: "redaction" | "acquisition",
-): Promise<
-  Array<{
-    name: string;
-    secretId: string;
-    secretVersionId: string;
-    valueEncrypted: string;
-  }>
-> {
-  const secrets = [] as Array<{
-    name: string;
-    secretId: string;
-    secretVersionId: string;
-    valueEncrypted: string;
-  }>;
-  for (const reference of parseSpec(assignment).secretReferences) {
-    const result = await client.query<{ value_encrypted: string }>(
-      `SELECT v.value_encrypted
-       FROM execution_secret_versions v
-       JOIN execution_secrets s ON s.id = v.secret_id
-       JOIN run_batches b ON b.id = $1 AND b.project_id = s.project_id
-       WHERE v.id = $2 AND v.secret_id = $3
-         AND ($4::boolean = false OR s.status = 'active')`,
-      [
-        assignment.batch_id,
-        reference.secretVersionId,
-        reference.secretId,
-        purpose === "acquisition",
-      ],
-    );
-    const row = result.rows[0];
-    if (!row) {
-      throw new DomainError("EXECUTION_SECRET_UNAVAILABLE", "执行所需密文不可用或已撤销。");
-    }
-    secrets.push({ ...reference, valueEncrypted: row.value_encrypted });
-  }
-  return secrets;
 }
 
 function matchesAgent(

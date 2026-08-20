@@ -8,7 +8,7 @@
 ## 内容
 
 - `src/main/java/com/autoforge/javacases/JavaCasesFixture.java`：成功用例。
-  断言受管环境变量、执行密文与任务配置的 Adapter 环境地址均已注入，输出
+  断言任务保存的 Adapter 环境地址已注入，输出
   `JAVA_CASES_STDOUT_完成:` 标记与 `artifacts/java-cases.txt` 产物。
 - `src/main/java/com/autoforge/javacases/JavaCasesFailureFixture.java`：失败用例，
   用于验证失败上报与重试链路。

@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-08-20",
+  "updatedAt": "2026-08-21",
   "dimensions": ["lite", "full", "offline", "realAgent", "success", "failure", "recovery"],
   "items": [
     {
@@ -152,13 +152,18 @@
     {
       "id": "AF-E2E-009",
       "status": "partial",
-      "owner": "environment-secret-execution",
-      "evidence": ["tests/e2e/project-isolation.spec.ts", "tests/e2e/real-agent.spec.ts"],
+      "owner": "task-jenkins-integration",
+      "evidence": [
+        "tests/e2e/all-rounds.spec.ts",
+        "integrations/jenkins/autoforge-execution/pom.xml",
+        "integrations/jenkins/autoforge-dependency-publisher/pom.xml",
+        ".github/workflows/release.yml"
+      ],
       "coverage": {
         "lite": "partial",
         "full": "partial",
         "offline": "partial",
-        "realAgent": "partial",
+        "realAgent": "not-applicable",
         "success": "partial",
         "failure": "partial",
         "recovery": "planned"

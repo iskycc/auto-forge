@@ -70,18 +70,6 @@ type ExecutionSpec struct {
 	ResourceLimits       ResourceLimits      `json:"resourceLimits"`
 }
 
-type acquireSecretsRequest struct {
-	SchemaVersion int    `json:"schemaVersion"`
-	RequestID     string `json:"requestId"`
-	LeaseToken    string `json:"leaseToken"`
-}
-
-type acquireSecretsResponse struct {
-	SchemaVersion int                `json:"schemaVersion"`
-	RequestID     string             `json:"requestId"`
-	Secrets       []EnvironmentEntry `json:"secrets"`
-}
-
 type ArtifactRule struct {
 	Pattern   string `json:"pattern"`
 	Required  bool   `json:"required"`

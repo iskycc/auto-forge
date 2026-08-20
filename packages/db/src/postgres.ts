@@ -2,8 +2,6 @@ export * from "./attempt-log-store";
 export * from "./postgres-database";
 export * from "./postgres-identity-access";
 export * from "./postgres-execution-control";
-export * from "./postgres-execution-environment";
-export * from "./postgres-execution-secret";
 export * from "./postgres-platform-repository";
 export * from "./postgres-run-batch";
 export * from "./postgres-runner-group";

@@ -21,7 +21,8 @@ describe("run batch presentation", () => {
     expect(isActiveRunBatch("scheduled")).toBe(true);
     expect(isActiveRunBatch("running")).toBe(true);
     expect(isActiveRunBatch("succeeded")).toBe(false);
-    expect(runBatchStatusLabel("failed")).toBe("已失败");
+    expect(runBatchStatusLabel("failed")).toBe("执行异常");
+    expect(runBatchStatusLabel("cancelled")).toBe("执行中断");
   });
 
   it("reports progress across assigned and terminal runs", () => {

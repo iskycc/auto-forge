@@ -68,6 +68,28 @@ jobs:
           pnpm test:performance
           mvn --batch-mode --file adapters/cotest-testng/pom.xml test
 
+  jenkins-plugins:
+    name: Jenkins plugin verification
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up Java
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.16.0
+      - name: Enable pnpm launcher
+        run: corepack enable
+      - name: Build and verify Jenkins plugins
+        run: pnpm test:jenkins-plugins
+
   lite-browser:
     name: Lite browser · ${{ matrix.scenario }}
     runs-on: ubuntu-24.04
@@ -466,6 +488,7 @@ jobs:
       [
         static-quality,
         unit-integration,
+        jenkins-plugins,
         lite-browser,
         build,
         real-agent-acceptance,
@@ -482,6 +505,7 @@ jobs:
         run: |
           test "${{ needs.static-quality.result }}" = success
           test "${{ needs.unit-integration.result }}" = success
+          test "${{ needs.jenkins-plugins.result }}" = success
           test "${{ needs.lite-browser.result }}" = success
           test "${{ needs.build.result }}" = success
           test "${{ needs.real-agent-acceptance.result }}" = success

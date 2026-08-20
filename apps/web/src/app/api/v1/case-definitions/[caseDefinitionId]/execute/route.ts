@@ -17,9 +17,6 @@ export async function POST(request: Request, context: Context): Promise<NextResp
     const definition = await services.caseDefinitions.get(caseDefinitionId);
     services.identityAccess.authorize(identity, "run.create", definition.projectId);
     const input = createSingleCaseRunInputSchema.parse(await readJsonBody(request, 64 * 1024));
-    if (input.environmentVersionId) {
-      services.identityAccess.authorize(identity, "environment.read", definition.projectId);
-    }
     const batch = await services.runBatches.createSingleCase(caseDefinitionId, {
       ...input,
       projectId: definition.projectId,

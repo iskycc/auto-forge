@@ -31,6 +31,7 @@ describe("case suite update and copy", () => {
         changeReason: "suite.update:policy+disable",
         policy: {
           ...defaultCaseSuiteExecutionPolicy,
+          runnerIds: ["runner-1"],
           runnerLabels: ["gpu"],
           concurrency: 8,
           parameters: { SUITE: "smoke" },
@@ -74,7 +75,11 @@ describe("case suite update and copy", () => {
       projectId: "project-1",
       name: "Smoke 副本",
       description: "smoke suite",
-      policy: { ...defaultCaseSuiteExecutionPolicy, runnerLabels: ["gpu"] },
+      policy: {
+        ...defaultCaseSuiteExecutionPolicy,
+        runnerIds: ["runner-1"],
+        runnerLabels: ["gpu"],
+      },
       items: [{ id: "id-2", caseDefinitionId: "case-1" }],
       versionId: "id-3",
       actorId: "user-1",
@@ -93,7 +98,11 @@ function suiteRepositoryFake() {
     revision: 2,
     status: "active",
     enabled: true,
-    policy: { ...defaultCaseSuiteExecutionPolicy, runnerLabels: ["gpu"] },
+    policy: {
+      ...defaultCaseSuiteExecutionPolicy,
+      runnerIds: ["runner-1"],
+      runnerLabels: ["gpu"],
+    },
     caseCount: 1,
     createdAt: timestamp,
     updatedAt: timestamp,

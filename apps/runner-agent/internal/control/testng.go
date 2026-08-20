@@ -79,13 +79,6 @@ func testNGExecutorSpec(specification ExecutionSpec, toolchain config.ToolchainC
 	if testInput == nil {
 		return executor.Spec{}, nil, errors.New("TestNG execution does not contain a test JAR")
 	}
-	environment := make(map[string]string, len(specification.Environment))
-	for _, entry := range specification.Environment {
-		if _, exists := environment[entry.Name]; exists {
-			return executor.Spec{}, nil, fmt.Errorf("duplicate environment variable %q", entry.Name)
-		}
-		environment[entry.Name] = entry.Value
-	}
 	dependencyPaths := make([]string, 0, len(inputs)-1)
 	for _, input := range inputs {
 		if input.Kind == "dependency-jar" {
@@ -122,7 +115,7 @@ func testNGExecutorSpec(specification ExecutionSpec, toolchain config.ToolchainC
 			Executable: toolchain.JavaExecutable,
 			Args:       arguments,
 		},
-		Environment: environment,
+		Environment: map[string]string{},
 		Limits: executor.Limits{
 			TimeoutMs:          specification.TimeoutMs,
 			MaxLogBytes:        min(specification.ResourceLimits.LogBytes, 64<<20),

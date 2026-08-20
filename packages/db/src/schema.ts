@@ -121,6 +121,21 @@ export const projectAdapterConfigurations = sqliteTable("project_adapter_configu
   updatedAt: text("updated_at").notNull(),
 });
 
+export const projectVersionRuntimeAssets = sqliteTable("project_version_runtime_assets", {
+  projectVersionId: text("project_version_id")
+    .primaryKey()
+    .references(() => projectVersions.id, { onDelete: "cascade" }),
+  projectId: text("project_id")
+    .notNull()
+    .references(() => projects.id, { onDelete: "cascade" }),
+  jarBundleAssetId: text("jar_bundle_asset_id")
+    .notNull()
+    .references(() => projectRuntimeAssets.id, { onDelete: "restrict" }),
+  revision: integer("revision").notNull().default(1),
+  updatedBy: text("updated_by"),
+  updatedAt: text("updated_at").notNull(),
+});
+
 export const users = sqliteTable(
   "users",
   {
@@ -1271,6 +1286,7 @@ export const schema = {
   testStages,
   projectRuntimeAssets,
   projectAdapterConfigurations,
+  projectVersionRuntimeAssets,
   users,
   externalIdentities,
   userSessions,

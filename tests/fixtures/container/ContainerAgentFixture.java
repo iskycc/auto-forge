@@ -6,13 +6,13 @@ import java.net.Socket;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import org.testng.Assert;
+import org.testng.annotations.Parameters;
 import org.testng.annotations.Test;
 
 public final class ContainerAgentFixture {
   @Test
-  public void enforcesContainerPolicy() throws Exception {
-    String mode = System.getenv("AUTOFORGE_CONTAINER_MODE");
-    Assert.assertNotNull(mode, "The container execution mode must be injected.");
+  @Parameters("mode")
+  public void enforcesContainerPolicy(String mode) throws Exception {
     if (mode.equals("cancel")) {
       System.out.println("CONTAINER_CANCEL_STARTED");
       System.out.flush();

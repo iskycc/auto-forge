@@ -9,8 +9,6 @@ import {
   CaseSourceService,
   CaseSuiteService,
   ExecutionControlService,
-  ExecutionEnvironmentService,
-  ExecutionSecretService,
   ImportTestNgJarService,
   IdentityAccessService,
   JobWorker,
@@ -28,8 +26,6 @@ import {
   type JarObjectStorePort,
   type IdentityAccessRepository,
   type ExecutionControlRepository,
-  type ExecutionEnvironmentRepository,
-  type ExecutionSecretRepository,
   type CachePort,
   type JobQueuePort,
   type RunBatchRepository,
@@ -48,8 +44,6 @@ import {
   SqliteCaseCatalogRepository,
   SqliteCaseSuiteRepository,
   SqliteExecutionControlRepository,
-  SqliteExecutionEnvironmentRepository,
-  SqliteExecutionSecretRepository,
   SqliteIdentityAccessRepository,
   SqliteRunBatchRepository,
   SqliteRunnerRepository,
@@ -92,8 +86,6 @@ async function createPlatformServices() {
   let runnerGroupsRepository: RunnerGroupRepository;
   let identities: IdentityAccessRepository;
   let executions: ExecutionControlRepository;
-  let environments: ExecutionEnvironmentRepository;
-  let secrets: ExecutionSecretRepository;
   let batches: RunBatchRepository;
   let attemptLogSharesRepository: AttemptLogShareRepository;
   let objectStore: JarObjectStorePort;
@@ -118,8 +110,6 @@ async function createPlatformServices() {
     runnerGroupsRepository = new SqliteRunnerGroupRepository(database);
     identities = new SqliteIdentityAccessRepository(database);
     executions = new SqliteExecutionControlRepository(database, attemptLogs);
-    environments = new SqliteExecutionEnvironmentRepository(database);
-    secrets = new SqliteExecutionSecretRepository(database);
     batches = new SqliteRunBatchRepository(
       database,
       config.caseExecutionTimeoutSeconds,
@@ -145,8 +135,6 @@ async function createPlatformServices() {
         PostgresCaseSuiteRepository,
         PostgresIdentityAccessRepository,
         PostgresExecutionControlRepository,
-        PostgresExecutionEnvironmentRepository,
-        PostgresExecutionSecretRepository,
         PostgresRunBatchRepository,
         PostgresRunnerRepository,
         PostgresRunnerInstallationProfileRepository,
@@ -232,8 +220,6 @@ async function createPlatformServices() {
     runnerGroupsRepository = new PostgresRunnerGroupRepository(database);
     identities = new PostgresIdentityAccessRepository(database);
     executions = new PostgresExecutionControlRepository(database, attemptLogs);
-    environments = new PostgresExecutionEnvironmentRepository(database);
-    secrets = new PostgresExecutionSecretRepository(database);
     batches = new PostgresRunBatchRepository(
       database,
       config.caseExecutionTimeoutSeconds,
@@ -288,12 +274,13 @@ async function createPlatformServices() {
       maximumLoadPerCpu: config.scheduler.maximumLoadPerCpu,
     },
     config.scheduler.metricsMaximumAgeSeconds,
-    environments,
     { catalog, objectStore },
     config.scheduler.projectMaximumConcurrency,
     config.scheduler.priorityAgingIntervalMinutes,
     projectStructuresRepository,
     runnerGroupsRepository,
+    config.caseExecutionTimeoutSeconds * 1_000,
+    config.artifactCollectionEnabled,
   );
   const runnerControl = new RunnerControlService(
     runners,
@@ -385,8 +372,6 @@ async function createPlatformServices() {
     config.sessionTtlHours,
   );
   await identityAccess.initialize();
-  const executionEnvironments = new ExecutionEnvironmentService(environments, clock, ids);
-  const executionSecrets = new ExecutionSecretService(secrets, secretCipher, clock, ids);
   globalServices.__autoforgeRecordTerminalAudit = (event) =>
     identityAccess.recordTerminalLifecycle(event);
   const executionControl = new ExecutionControlService(
@@ -425,17 +410,8 @@ async function createPlatformServices() {
     config.mode === "lite"
       ? runPeriodic(scheduleAbort.signal, 30_000, async () => {
           await platformOperations.triggerDueSchedules(async (schedule) => {
-            const candidates = (await runners.list(offlineCutoff(clock.now()), 500)).filter(
-              (runner) => runner.state === "online",
-            );
-            if (candidates.length === 0) {
-              throw new Error("No online Runner is available for schedule.");
-            }
             const batch = await runBatches.create({
-              projectId: schedule.projectId,
               suiteId: schedule.suiteId,
-              runnerIds: candidates.map((runner) => runner.id),
-              environmentVariables: [],
             });
             return batch.id;
           });
@@ -490,10 +466,6 @@ async function createPlatformServices() {
     runners,
     identities,
     executions,
-    environments,
-    executionEnvironments,
-    secrets,
-    executionSecrets,
     identityAccess,
     runnerControl,
     runnerGroups,
@@ -570,10 +542,6 @@ function abortableDelay(signal: AbortSignal, delayMs: number): Promise<void> {
       { once: true },
     );
   });
-}
-
-function offlineCutoff(now: Date): string {
-  return new Date(now.getTime() - 90_000).toISOString();
 }
 
 const globalServices = globalThis as typeof globalThis & {

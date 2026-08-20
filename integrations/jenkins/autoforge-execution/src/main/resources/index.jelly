@@ -1,0 +1,4 @@
+<?jelly escape-by-default='true'?>
+<div>
+  Starts an AutoForge task from Jenkins Pipeline, reports progress every 30 seconds, and waits for its terminal lifecycle.
+</div>

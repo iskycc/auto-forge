@@ -30,6 +30,7 @@
     "test:ldap-e2e": "bash scripts/quality/test-ldap-e2e.sh",
     "test:real-agent": "bash scripts/quality/test-real-agent.sh",
     "test:batch-input-sharing": "bash scripts/quality/test-batch-input-sharing.sh",
+    "test:jenkins-plugins": "mvn --batch-mode --no-transfer-progress --file integrations/jenkins/pom.xml verify",
     "test:runner-install-e2e": "bash scripts/quality/test-runner-install-e2e.sh",
     "test:offline": "bash scripts/quality/test-offline.sh",
     "test:performance": "vitest run --config vitest.performance.config.ts",

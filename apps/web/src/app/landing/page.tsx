@@ -8,7 +8,6 @@ const landingRoutes: Array<{ permission: Permission; href: string }> = [
   { permission: "run.read", href: "/run-batches" },
   { permission: "runner.read", href: "/runners" },
   { permission: "audit.read", href: "/audit" },
-  { permission: "environment.read", href: "/settings/environments" },
   { permission: "settings.read", href: "/settings" },
   { permission: "project.read", href: "/settings/projects" },
   { permission: "user.read", href: "/settings/access?section=users" },

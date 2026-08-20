@@ -3,7 +3,6 @@ import type { Runner } from "./runner";
 export const CURRENT_RUNNER_PROTOCOL_VERSION = 1;
 export const MINIMUM_JAVA_MAJOR_VERSION = 11;
 export const SUPPORTED_TESTNG_VERSION = "7.11.0";
-export const ON_DEMAND_SECRET_CAPABILITY = "secrets:on-demand-v1";
 export const COTEST_ADAPTER_CAPABILITY = "adapter:cotest-testng-v1";
 export const PROJECT_RUNTIME_ASSETS_CAPABILITY = "runtime:project-assets-v1";
 export const REQUIRED_EXECUTION_CAPABILITIES = [

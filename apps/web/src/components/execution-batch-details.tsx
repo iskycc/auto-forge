@@ -13,8 +13,8 @@ import {
   formatLocalDateTime,
   isActiveRunBatch,
   isTerminalRunBatch,
+  runBatchCompletionLabel,
   runBatchPassRate,
-  runBatchStatusLabel,
 } from "@/lib/run-batch-presentation";
 
 // 批次没有 startedAt 字段：开始时间取所有 attempt 的最早 startedAt，无 attempt 时回退创建时间。
@@ -64,8 +64,6 @@ export function ExecutionBatchDetails({
   const [actionError, setActionError] = useState("");
   const [actionPending, setActionPending] = useState<"cancel" | "retry" | undefined>();
   const activeBatch = isActiveRunBatch(batch.status);
-  const retryBlockedByLegacySecrets =
-    batch.secretBindings.length > 0 && batch.environmentVersionId === undefined;
   const startedAt = batchStartedAt(batch);
 
   // 进行中的批次每 5 秒刷新服务端数据，让轮次进度自动推进；组件卸载时清理。
@@ -103,20 +101,7 @@ export function ExecutionBatchDetails({
       const response = await fetch("/api/v1/run-batches", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          projectId: batch.projectId,
-          suiteId: batch.suiteId,
-          runnerIds: batch.selectedRunnerIds,
-          retryLimit: batch.retryLimit,
-          priority: batch.priority,
-          queueTimeoutMs: batch.queueTimeoutMs,
-          claimTimeoutMs: batch.claimTimeoutMs,
-          executionTimeoutMs: batch.executionTimeoutMs,
-          uploadTimeoutMs: batch.uploadTimeoutMs,
-          ...(batch.environmentVersionId
-            ? { environmentVersionId: batch.environmentVersionId }
-            : { environmentVariables: batch.environmentVariables }),
-        }),
+        body: JSON.stringify({ suiteId: batch.suiteId }),
       });
       if (!response.ok) {
         throw new Error((await readApiErrorMessage(response, "重新执行失败。"))!);
@@ -134,7 +119,7 @@ export function ExecutionBatchDetails({
   return (
     <div className="execution-detail-layout">
       <section className="batch-metrics-band" aria-label="批次概览">
-        <Metric label="状态" value={runBatchStatusLabel(batch.status)} />
+        <Metric label="状态" value={runBatchCompletionLabel(batch)} />
         <Metric label="总通过率" value={`${runBatchPassRate(batch)}%`} />
         <Metric
           label="用例总数"
@@ -161,11 +146,7 @@ export function ExecutionBatchDetails({
         <section className="execution-detail-actions" aria-label="批次操作">
           <div>
             <strong>{activeBatch ? "批次仍在执行" : "批次已进入终态"}</strong>
-            <span>
-              {retryBlockedByLegacySecrets
-                ? "历史批次包含无法重放的密文绑定，请从任务页面重新选择环境。"
-                : "重新执行会创建新批次，并保留当前策略快照供审计对比。"}
-            </span>
+            <span>再次执行会读取任务当前版本的完整配置并创建新批次。</span>
           </div>
           <div className="button-row">
             {canCancelRuns && activeBatch ? (
@@ -182,7 +163,7 @@ export function ExecutionBatchDetails({
             {canCreateRuns && !activeBatch ? (
               <Button
                 className="button button-primary"
-                disabled={actionPending !== undefined || retryBlockedByLegacySecrets}
+                disabled={actionPending !== undefined}
                 onClick={() => void retryBatch()}
                 type="button"
               >

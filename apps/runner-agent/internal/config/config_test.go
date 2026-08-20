@@ -94,8 +94,8 @@ func TestLoadAddsCgroupIsolationCapability(t *testing.T) {
 	if !containsWord(strings.Join(loaded.Capabilities(), " "), "isolation:cgroup-v2") {
 		t.Fatalf("Capabilities() = %#v", loaded.Capabilities())
 	}
-	if !containsWord(strings.Join(loaded.Capabilities(), " "), "secrets:on-demand-v1") {
-		t.Fatalf("Capabilities() = %#v, want on-demand secret support", loaded.Capabilities())
+	if containsWord(strings.Join(loaded.Capabilities(), " "), "secrets:on-demand-v1") {
+		t.Fatalf("Capabilities() = %#v, retired secret capability must not be advertised", loaded.Capabilities())
 	}
 }
 

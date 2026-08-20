@@ -1,14 +1,21 @@
 import {
   createProjectVersionInputSchema,
   createTestStageInputSchema,
+  jenkinsDependencyPublicationInputSchema,
   projectAdapterConfigurationInputSchema,
   runtimeAssetUrlInputSchema,
   type CreateProjectVersionInput,
   type CreateTestStageInput,
+  type JenkinsDependencyPublicationInput,
   type ProjectAdapterConfigurationInput,
   type RuntimeAssetUrlInput,
 } from "@autoforge/contracts";
-import { DomainError, type RuntimeArchiveFormat, type RuntimeAssetKind } from "@autoforge/domain";
+import {
+  DomainError,
+  type ProjectVersion,
+  type RuntimeArchiveFormat,
+  type RuntimeAssetKind,
+} from "@autoforge/domain";
 
 import type { Clock, IdGenerator, JarObjectStorePort, ProjectStructureRepository } from "./ports";
 
@@ -60,6 +67,39 @@ export class ProjectStructureService {
       sha256: validated.sha256,
       sizeBytes: validated.sizeBytes,
       archiveFormat: validated.archiveFormat,
+      ...(actorId ? { createdBy: actorId } : {}),
+      createdAt: this.clock.now().toISOString(),
+    });
+  }
+
+  async replaceVersionDependency(input: JenkinsDependencyPublicationInput, actorId?: string) {
+    const validated = jenkinsDependencyPublicationInputSchema.parse(input);
+    const structure = await this.structures.list(validated.projectId);
+    const normalizedVersion = normalizeName(validated.version);
+    let version: ProjectVersion | undefined = structure.versions.find(
+      (candidate) => normalizeName(candidate.name) === normalizedVersion,
+    );
+    if (version?.status === "archived") {
+      throw new DomainError("PROJECT_VERSION_ARCHIVED", "已归档的项目版本不能接收新的依赖压缩包。");
+    }
+    version ??= await this.structures.createVersion({
+      id: this.ids.next(),
+      projectId: validated.projectId,
+      name: validated.version,
+      normalizedName: normalizedVersion,
+      recordedAt: this.clock.now().toISOString(),
+    });
+    const archive = validated.dependencyArchive;
+    return this.structures.replaceVersionRuntimeAsset(version.id, {
+      id: this.ids.next(),
+      projectId: validated.projectId,
+      kind: "jar-bundle",
+      sourceType: "url",
+      fileName: archive.fileName,
+      url: archive.url,
+      sha256: archive.sha256,
+      sizeBytes: archive.sizeBytes,
+      archiveFormat: archive.archiveFormat,
       ...(actorId ? { createdBy: actorId } : {}),
       createdAt: this.clock.now().toISOString(),
     });

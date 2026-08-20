@@ -13,7 +13,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"regexp"
 	"runtime"
 	"strings"
 	"time"
@@ -29,12 +28,9 @@ const (
 	// The control-plane log route reads at most 2 MiB. Count-only batching is insufficient
 	// because JSON escaping can expand a 256 KiB chunk substantially, so UploadLogs measures
 	// the exact encoded request and sends the largest fitting prefix.
-	maximumLogUploadRequestBytes  = 2 * 1024 * 1024
-	defaultRequestTimeout         = 20 * time.Second
-	maximumSecretEnvironmentBytes = 64 << 10
+	maximumLogUploadRequestBytes = 2 * 1024 * 1024
+	defaultRequestTimeout        = 20 * time.Second
 )
-
-var executionEnvironmentName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 type Client struct {
 	baseURL *url.URL
@@ -363,69 +359,6 @@ func boundedLogUploadRequest(request uploadLogChunksRequest) (uploadLogChunksReq
 	}
 	request.Chunks = request.Chunks[:fittingCount]
 	return request, nil
-}
-
-func (client *Client) AcquireSecrets(
-	ctx context.Context,
-	identity Identity,
-	attemptID string,
-	lease Lease,
-	references []SecretReference,
-) ([]EnvironmentEntry, error) {
-	if len(references) == 0 {
-		return nil, nil
-	}
-	requestID, err := randomIdentifier()
-	if err != nil {
-		return nil, fmt.Errorf("create secret request identifier: %w", err)
-	}
-	request := acquireSecretsRequest{
-		SchemaVersion: protocolVersion,
-		RequestID:     requestID,
-		LeaseToken:    lease.Token,
-	}
-	var response acquireSecretsResponse
-	path := fmt.Sprintf("/api/v1/run-attempts/%s/secrets", url.PathEscape(attemptID))
-	if err := client.postForRunner(ctx, path, identity.Credential, identity.RunnerID, request, &response); err != nil {
-		return nil, fmt.Errorf("acquire execution secrets: %w", err)
-	}
-	if response.SchemaVersion != protocolVersion || response.RequestID != requestID {
-		return nil, errors.New("acquire execution secrets: incompatible protocol response")
-	}
-	expectedNames := make(map[string]struct{}, len(references))
-	for _, reference := range references {
-		if !executionEnvironmentName.MatchString(reference.Name) || reference.SecretID == "" || reference.SecretVersionID == "" {
-			return nil, errors.New("acquire execution secrets: assignment contains an invalid secret reference")
-		}
-		if _, duplicate := expectedNames[reference.Name]; duplicate {
-			return nil, errors.New("acquire execution secrets: assignment contains duplicate secret names")
-		}
-		expectedNames[reference.Name] = struct{}{}
-	}
-	if len(response.Secrets) != len(expectedNames) {
-		return nil, errors.New("acquire execution secrets: response count does not match the assignment")
-	}
-	totalBytes := 0
-	seenNames := make(map[string]struct{}, len(response.Secrets))
-	for index := range response.Secrets {
-		secret := &response.Secrets[index]
-		if _, expected := expectedNames[secret.Name]; !expected {
-			return nil, errors.New("acquire execution secrets: response contains an unexpected variable")
-		}
-		if _, duplicate := seenNames[secret.Name]; duplicate {
-			return nil, errors.New("acquire execution secrets: response contains duplicate variables")
-		}
-		if strings.ContainsRune(secret.Value, '\x00') {
-			return nil, errors.New("acquire execution secrets: response contains a NUL byte")
-		}
-		totalBytes += len(secret.Name) + len(secret.Value)
-		if totalBytes > maximumSecretEnvironmentBytes {
-			return nil, errors.New("acquire execution secrets: response exceeds the environment limit")
-		}
-		secret.Secret = true
-		seenNames[secret.Name] = struct{}{}
-	}
-	return response.Secrets, nil
 }
 
 func (client *Client) DeclareArtifacts(ctx context.Context, identity Identity, attemptID, leaseToken string, artifacts []artifactDeclaration) (declareArtifactsResponse, error) {

@@ -14,7 +14,6 @@ import {
   DomainError,
   evaluateRunnerForScheduling,
   MINIMUM_JAVA_MAJOR_VERSION,
-  ON_DEMAND_SECRET_CAPABILITY,
   REQUIRED_EXECUTION_LABELS,
   SUPPORTED_TESTNG_VERSION,
   transitionRunBatch,
@@ -55,6 +54,7 @@ import {
   pgRunners,
   pgProjects,
   pgProjectAdapterConfigurations,
+  pgProjectVersionRuntimeAssets,
   pgProjectRuntimeAssets,
 } from "./postgres-schema";
 import { mapStoredRunner } from "./runner-mapper";
@@ -81,6 +81,7 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
       record.projectId ?? DEFAULT_PROJECT_ID,
       record.adapter,
       record.runs,
+      record.policy?.projectVersionId,
     );
     await this.handle.db.transaction(async (transaction) => {
       // 独立序列生成展示编号，避免并发创建竞争；nextval 不参与回滚，空洞不影响展示。
@@ -904,7 +905,6 @@ function executionSpec(input: {
     requiredCapabilities: [
       ...projectAdapterRequiredCapabilities(input.adapterRuntime),
       ...(input.policy?.executor === "testng-container" ? ["executor:testng-container-v1"] : []),
-      ...(input.secretBindings.length > 0 ? [ON_DEMAND_SECRET_CAPABILITY] : []),
     ],
     artifactRules: artifactPatterns.map((pattern) => ({
       pattern,
@@ -925,6 +925,7 @@ async function postgresProjectAdapterRuntime(
   projectId: string,
   adapter: CreateRunBatchRecord["adapter"],
   runs: CreateRunBatchRecord["runs"],
+  projectVersionId?: string,
 ): Promise<ProjectAdapterRuntime | undefined> {
   const [configuration] = await handle.db
     .select()
@@ -932,7 +933,22 @@ async function postgresProjectAdapterRuntime(
     .where(eq(pgProjectAdapterConfigurations.projectId, projectId))
     .limit(1);
   if (!hasTaskAdapterSettings(adapter)) return undefined;
-  const assetIds = [configuration?.jdkAssetId, configuration?.jarBundleAssetId].filter(
+  const [versionConfiguration] = projectVersionId
+    ? await handle.db
+        .select()
+        .from(pgProjectVersionRuntimeAssets)
+        .where(
+          and(
+            eq(pgProjectVersionRuntimeAssets.projectVersionId, projectVersionId),
+            eq(pgProjectVersionRuntimeAssets.projectId, projectId),
+          ),
+        )
+        .limit(1)
+    : [];
+  const selectedJarBundleId = projectVersionId
+    ? versionConfiguration?.jarBundleAssetId
+    : configuration?.jarBundleAssetId;
+  const assetIds = [configuration?.jdkAssetId, selectedJarBundleId].filter(
     (assetId): assetId is string => Boolean(assetId),
   );
   const assets = assetIds.length
@@ -960,7 +976,7 @@ async function postgresProjectAdapterRuntime(
       : undefined;
   };
   const jdk = assetSnapshot(configuration?.jdkAssetId ?? null);
-  const jarBundle = assetSnapshot(configuration?.jarBundleAssetId ?? null);
+  const jarBundle = assetSnapshot(selectedJarBundleId ?? null);
   if (!jarBundle) {
     throw new DomainError(
       "ADAPTER_DEPENDENCY_ARCHIVE_MISSING",

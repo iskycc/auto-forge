@@ -6,6 +6,12 @@ import { resolve } from "node:path";
 
 import { DEFAULT_PROJECT_ID } from "@autoforge/domain";
 import { ensureAdministrator } from "./support/session";
+import {
+  configureTaskExecution,
+  createTaskRun,
+  findRunnerId,
+  findSuiteId,
+} from "./support/task-execution";
 
 // When AUTOFORGE_LOG_SCREENSHOT_DIR is set, capture the execution log panel
 // (real Agent/Adapter output) for visual review of log level highlighting.
@@ -30,11 +36,8 @@ async function captureDetailsPage(page: Page, name: string): Promise<void> {
 // them into ProjectFileUtil and never opens a network connection to them.
 
 const runnerName = "Java Cases Agent";
-const managedEnvironmentName = "java-cases 受管环境";
-const managedSecretName = "java-cases 执行密文";
 const successSuiteName = "java-cases 成功链路验收";
 const failureSuiteName = "java-cases 失败重试验收";
-const secretValue = "java-cases-secret-v1-9d2f";
 const environmentAddress = "10.20.30.40";
 const backupEnvironmentAddress = "10.20.30.41";
 
@@ -46,7 +49,6 @@ test("runs the java-cases module through the adapter E2E chain", async ({ page }
   try {
     // 执行机添加：Agent 注册后出现在 /runners 并具备 Adapter 能力。
     await waitForOnlineRunner(page, agent);
-    await createManagedExecutionEnvironment(page);
 
     // JAR 导入：上传 java-cases-tests.jar，扫描测试类并确认导入。
     await importJavaCasesJar(page);
@@ -54,7 +56,7 @@ test("runs the java-cases module through the adapter E2E chain", async ({ page }
     // 任务创建 + 用例勾选：创建 Adapter 任务并把用例加入任务。
     await createExecutableSuite(page, successSuiteName, "JavaCasesFixture", 0, ["artifacts/*.txt"]);
 
-    // 任务执行：选择任务与执行机后开始调度。
+    // 任务快捷执行：选择保存了完整配置的任务后直接执行。
     const batchId = await scheduleExecution(page, successSuiteName);
 
     // 实时 stdout 捕获验证：attempt 运行期间日志即出现在详情页。
@@ -65,7 +67,7 @@ test("runs the java-cases module through the adapter E2E chain", async ({ page }
     const executionLog = page.locator(".execution-log");
     await expect
       .poll(async () => executionLog.textContent(), { timeout: 30_000 })
-      .toContain(`JAVA_CASES_STDOUT_完成:java-cases-env-v2:${environmentAddress}`);
+      .toContain(`JAVA_CASES_STDOUT_完成:${environmentAddress}`);
 
     // 查看执行详情及日志：等待成功后校验结构化结果、日志与产物。
     const details = await waitForTerminalBatch(
@@ -96,9 +98,6 @@ test("runs the java-cases module through the adapter E2E chain", async ({ page }
     await captureDetailsPage(page, "real-details-success-dark");
 
     await page.getByRole("button", { name: "查看日志" }).click();
-    await expect(executionLog).toContainText("[REDACTED]");
-    await expect(executionLog).not.toContainText(secretValue);
-    expect(agent.diagnostics.join("")).not.toContain(secretValue);
     await captureDetailsPage(page, "real-logviewer-open-dark");
     await captureExecutionLog(page, "real-stdout-dark");
     await page.getByRole("button", { name: "浅色日志" }).click();
@@ -127,7 +126,7 @@ test("runs the java-cases module through the adapter E2E chain", async ({ page }
       page,
       failureBatchId,
       agent,
-      "failed",
+      "succeeded",
       "TESTNG_ASSERTIONS_FAILED",
       2,
     );
@@ -164,7 +163,6 @@ test("runs the java-cases module through the adapter E2E chain", async ({ page }
 
 const concurrentAlphaSuiteName = "java-cases 并发 Alpha 验收";
 const concurrentBetaSuiteName = "java-cases 并发 Beta 验收";
-const concurrentEnvironmentName = "java-cases 并发受管环境";
 
 test("runs multiple java-cases attempts concurrently without log cross-contamination", async ({
   page,
@@ -175,7 +173,6 @@ test("runs multiple java-cases attempts concurrently without log cross-contamina
   const agent = await startAgent(2);
   try {
     await waitForOnlineRunner(page, agent);
-    await createConcurrentExecutionEnvironment(page);
     await importJavaCasesJar(page);
 
     await createExecutableSuite(
@@ -188,16 +185,8 @@ test("runs multiple java-cases attempts concurrently without log cross-contamina
 
     // 快速连续调度两个 batch，使 Agent 有机会同时 claim 两个 assignment。
     // Playwright 的 page 不能并发导航，所以这里串行调用但要尽量快。
-    const alphaBatchId = await scheduleExecution(
-      page,
-      concurrentAlphaSuiteName,
-      concurrentEnvironmentName,
-    );
-    const betaBatchId = await scheduleExecution(
-      page,
-      concurrentBetaSuiteName,
-      concurrentEnvironmentName,
-    );
+    const alphaBatchId = await scheduleExecution(page, concurrentAlphaSuiteName);
+    const betaBatchId = await scheduleExecution(page, concurrentBetaSuiteName);
 
     // 等待两个 batch 都产生 running 的 attempt，确认 Agent 真的在并发执行。
     const [alphaAttemptId, betaAttemptId] = await Promise.all([
@@ -320,58 +309,6 @@ function startAgent(maxConcurrency = 1): Promise<AgentProcess> {
   return Promise.resolve({ child, diagnostics });
 }
 
-async function createManagedExecutionEnvironment(page: Page): Promise<void> {
-  await page.goto("/settings/environments?section=secrets");
-  const secretPanel = page.locator(".secret-create-panel");
-  await secretPanel.getByLabel("项目").selectOption(DEFAULT_PROJECT_ID);
-  await secretPanel.getByLabel("名称").fill(managedSecretName);
-  await secretPanel.getByLabel("说明").fill("java-cases 链路验收密文");
-  await secretPanel.getByLabel("密文值").fill(secretValue);
-  await secretPanel.getByRole("button", { name: "创建密文" }).click();
-  await expect(page.getByText("执行密文已创建。")).toBeVisible();
-
-  await page.goto("/settings/environments?section=environments");
-  await page.getByRole("button", { name: "创建执行环境" }).click();
-  const createForm = page.locator(".compact-create-form");
-  await createForm.getByLabel("项目").selectOption(DEFAULT_PROJECT_ID);
-  await createForm.getByLabel("名称").fill(managedEnvironmentName);
-  await createForm.getByLabel("说明").fill("java-cases 普通变量与密文版本");
-  await createForm.getByLabel("普通变量").fill("AUTOFORGE_JAVA_CASES_ENV=java-cases-env-v1");
-  await createForm.getByRole("button", { name: "添加密文绑定" }).click();
-  await createForm.getByLabel("注入变量名").fill("AUTOFORGE_JAVA_CASES_SECRET");
-  await createForm.getByLabel("执行密文").selectOption({ label: managedSecretName });
-  await createForm.getByRole("button", { name: "创建环境" }).click();
-  await expect(page.getByRole("heading", { name: managedEnvironmentName })).toBeVisible();
-
-  const variableVersionForm = page.locator("form", {
-    has: page.getByRole("button", { name: "创建变量版本" }),
-  });
-  await variableVersionForm.getByLabel("变量").fill("AUTOFORGE_JAVA_CASES_ENV=java-cases-env-v2");
-  await variableVersionForm.getByRole("button", { name: "创建变量版本" }).click();
-  await expect(page.getByText("已创建新的普通变量版本。")).toBeVisible();
-  await expect(page.locator(".environment-version-list")).toContainText("v2");
-}
-
-async function createConcurrentExecutionEnvironment(page: Page): Promise<void> {
-  await page.goto("/settings/environments?section=environments");
-  await page.getByRole("button", { name: "创建执行环境" }).click();
-  const createForm = page.locator(".compact-create-form");
-  await createForm.getByLabel("项目").selectOption(DEFAULT_PROJECT_ID);
-  await createForm.getByLabel("名称").fill(concurrentEnvironmentName);
-  await createForm.getByLabel("说明").fill("java-cases 并发验收普通变量版本");
-  await createForm.getByLabel("普通变量").fill("AUTOFORGE_JAVA_CASES_ENV=java-cases-env-v1");
-  await createForm.getByRole("button", { name: "创建环境" }).click();
-  await expect(page.getByRole("heading", { name: concurrentEnvironmentName })).toBeVisible();
-
-  const variableVersionForm = page.locator("form", {
-    has: page.getByRole("button", { name: "创建变量版本" }),
-  });
-  await variableVersionForm.getByLabel("变量").fill("AUTOFORGE_JAVA_CASES_ENV=java-cases-env-v2");
-  await variableVersionForm.getByRole("button", { name: "创建变量版本" }).click();
-  await expect(page.getByText("已创建新的普通变量版本。")).toBeVisible();
-  await expect(page.locator(".environment-version-list")).toContainText("v2");
-}
-
 async function importJavaCasesJar(page: Page): Promise<void> {
   await ensureProjectHierarchy(page);
   await uploadAdapterDependencies(page);
@@ -476,6 +413,11 @@ async function createExecutableSuite(
   await page.getByRole("button", { name: "创建任务" }).click();
   const suiteLink = page.getByRole("link", { name: suiteName });
   await expect(suiteLink).toBeVisible();
+  const [suiteId, runnerId] = await Promise.all([
+    findSuiteId(page, suiteName),
+    findRunnerId(page, runnerName),
+  ]);
+  await configureTaskExecution(page, suiteId, runnerId);
   await suiteLink.click();
   await page.getByLabel("重试次数上限").fill(String(retryLimit));
   await page.getByLabel("产物规则（每行一个相对路径 glob）").fill(artifactPatterns.join("\n"));
@@ -490,41 +432,13 @@ async function createExecutableSuite(
   await expect(page.getByRole("status")).toContainText("已将 1 个用例加入任务");
 }
 
-async function scheduleExecution(
-  page: Page,
-  suiteName: string,
-  environmentName: string = managedEnvironmentName,
-): Promise<string> {
-  await page.goto(`/run-batches?projectId=${encodeURIComponent(DEFAULT_PROJECT_ID)}`);
-  const suiteSelect = page.getByLabel("执行用例任务");
-  const suiteOption = suiteSelect.locator("option").filter({ hasText: suiteName });
-  const suiteId = await suiteOption.getAttribute("value");
-  expect(suiteId).toBeTruthy();
-  await suiteSelect.selectOption(suiteId!);
-
-  const runner = page.locator(".runner-choice").filter({ hasText: runnerName });
-  await expect(runner).toContainText("兼容");
-  await runner.locator('input[type="checkbox"]').check();
-
-  const environmentSelect = page.getByLabel("受管环境版本");
-  const environmentOption = environmentSelect
-    .locator("option")
-    .filter({ hasText: environmentName });
-  const versionId = await environmentOption.getAttribute("value");
-  expect(versionId).toBeTruthy();
-  await environmentSelect.selectOption(versionId!);
-
-  const createdResponse = page.waitForResponse(
-    (response) =>
-      response.request().method() === "POST" &&
-      new URL(response.url()).pathname === "/api/v1/run-batches",
-  );
-  await page.getByRole("button", { name: "开始调度" }).click();
-  const response = await createdResponse;
-  expect(response.status()).toBe(201);
-  const body = (await response.json()) as { id?: string };
-  expect(body.id).toBeTruthy();
-  return body.id!;
+async function scheduleExecution(page: Page, suiteName: string): Promise<string> {
+  const [suiteId, runnerId] = await Promise.all([
+    findSuiteId(page, suiteName),
+    findRunnerId(page, runnerName),
+  ]);
+  await configureTaskExecution(page, suiteId, runnerId);
+  return (await createTaskRun(page, suiteId)).id;
 }
 
 async function waitForOnlineRunner(page: Page, agent: AgentProcess): Promise<void> {

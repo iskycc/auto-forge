@@ -12,12 +12,12 @@ import {
   FileCog,
   Home,
   KeySquare,
+  KeyRound,
   Landmark,
   Network,
   Server,
   FolderOpen,
   Layers3,
-  KeyRound,
   ScanSearch,
   ShieldCheck,
   Sparkles,
@@ -147,23 +147,6 @@ const administrationGroups: AdministrationGroup[] = [
         permission: "runner.read",
         activePrefixes: ["/runners"],
         section: "groups",
-      },
-      {
-        label: "执行环境",
-        href: "/settings/environments?section=environments",
-        icon: Boxes,
-        permission: "environment.read",
-        activePrefixes: ["/settings/environments"],
-        section: "environments",
-        defaultSection: "environments",
-      },
-      {
-        label: "密文管理",
-        href: "/settings/environments?section=secrets",
-        icon: KeyRound,
-        permission: "secret.manage",
-        activePrefixes: ["/settings/environments"],
-        section: "secrets",
       },
     ],
   },
@@ -324,6 +307,7 @@ export function AppShell({
     pathname === "/login" ||
     pathname === "/setup" ||
     pathname.startsWith("/share/") ||
+    pathname.startsWith("/progress/") ||
     (pathname === "/" && !userName)
   ) {
     return children;

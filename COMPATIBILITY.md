@@ -2,9 +2,9 @@
 
 | Control plane | Runner Agent       | Protocol | Java/TestNG baseline     | Result                                                                        |
 | ------------- | ------------------ | -------- | ------------------------ | ----------------------------------------------------------------------------- |
-| `0.4.x`       | embedded `0.4.x`   | v1       | Java 11+ / TestNG 7.11.0 | supported                                                                     |
-| `0.4.x`       | `0.3.x`            | v1       | capability dependent     | upgrade recommended; incompatible capabilities are rejected before assignment |
-| `0.4.x`       | future protocol v2 | v2       | unknown                  | rejected with `RUNNER_PROTOCOL_UNSUPPORTED`                                   |
+| `0.9.x`       | embedded `0.9.x`   | v1       | Java 11+ / TestNG 7.11.0 | supported                                                                     |
+| `0.9.x`       | `0.8.x`            | v1       | capability dependent     | upgrade recommended; incompatible capabilities are rejected before assignment |
+| `0.9.x`       | future protocol v2 | v2       | unknown                  | rejected with `RUNNER_PROTOCOL_UNSUPPORTED`                                   |
 
 The installer always selects the Agent embedded in the running control-plane image. Credential rotation
 allows a 15-minute recovery overlap; it is not a protocol compatibility window. Database downgrade is
@@ -15,3 +15,7 @@ Persisted platform configuration schema v1 is shared by Web and worker. A worker
 same `/var/lib/autoforge` volume and release version as Web during normal operation and rolling upgrades.
 Mixed Web/worker versions are allowed only for the bounded drain interval documented in the upgrade
 runbook.
+
+Protocol v1 keeps the historical `environment` and `secretReferences` JSON fields for wire parsing only.
+Control plane `0.9.x` emits empty values, and the embedded Agent rejects non-empty values because product-level
+managed execution environments and secrets have been retired.

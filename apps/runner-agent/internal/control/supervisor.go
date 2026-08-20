@@ -322,10 +322,7 @@ func (supervisor *attemptSupervisor) runTestNG(
 	persistProgress func(completionResult, []artifactUploadState) error,
 	persistProcess func(executor.ProcessIdentity) error,
 ) completionResult {
-	executionSpec, err := supervisor.executionSpecWithSecrets(ctx, claimed)
-	if err != nil {
-		return platformFailure("EXECUTION_SECRET_ACQUISITION_FAILED", err)
-	}
+	executionSpec := claimed.Assignment.ExecutionSpec
 	executionToolchain := supervisor.configuration.Toolchain
 	useAdapter := executionSpec.Adapter != nil && supervisor.configuration.Adapter.Enabled()
 	isolation := "process"
@@ -347,6 +344,7 @@ func (supervisor *attemptSupervisor) runTestNG(
 	}
 	var specification executor.Spec
 	var inputs []ExecutionInput
+	var err error
 	if useAdapter {
 		specification, inputs, err = cotestAdapterExecutorSpec(
 			executionSpec,
@@ -363,7 +361,7 @@ func (supervisor *attemptSupervisor) runTestNG(
 	collector := newAttemptLogCollector(
 		claimed.Assignment.AttemptID,
 		supervisor.logSpool,
-		executionSpec.Environment,
+		nil,
 	)
 	_ = collector.Write(executor.LogChunk{
 		Stream:     "agent",
@@ -541,28 +539,6 @@ func (supervisor *attemptSupervisor) runTestNG(
 		return platformFailure(code, err)
 	}
 	return mapped
-}
-
-func (supervisor *attemptSupervisor) executionSpecWithSecrets(
-	ctx context.Context,
-	claimed ClaimedAssignment,
-) (ExecutionSpec, error) {
-	specification := claimed.Assignment.ExecutionSpec
-	secrets, err := supervisor.client.AcquireSecrets(
-		ctx,
-		supervisor.currentIdentity(),
-		claimed.Assignment.AttemptID,
-		claimed.Lease,
-		specification.SecretReferences,
-	)
-	if err != nil {
-		return ExecutionSpec{}, err
-	}
-	specification.Environment = append(
-		append([]EnvironmentEntry(nil), specification.Environment...),
-		secrets...,
-	)
-	return specification, nil
 }
 
 type artifactTransferError struct {
@@ -1055,8 +1031,8 @@ func validateClaimedAssignment(
 		return errors.New("assignment requirements exceed local Runner capabilities")
 	}
 	specification := claimed.Assignment.ExecutionSpec
-	if err := validateSecretReferences(specification.Environment, specification.SecretReferences); err != nil {
-		return err
+	if len(specification.Environment) > 0 || len(specification.SecretReferences) > 0 {
+		return errors.New("assignment uses retired execution environment or secret fields")
 	}
 	runtimeRequirements := specification.RuntimeRequirements
 	if runtimeRequirements.OS != runtime.GOOS || !containsAll(runtimeRequirements.Architectures, []string{runtime.GOARCH}) {
@@ -1142,29 +1118,6 @@ func validateClaimedAssignment(
 	}
 	if _, err := time.Parse(time.RFC3339Nano, claimed.Lease.ExpiresAt); err != nil {
 		return errors.New("assignment lease expiry is invalid")
-	}
-	return nil
-}
-
-func validateSecretReferences(
-	environment []EnvironmentEntry,
-	references []SecretReference,
-) error {
-	if len(references) > 64 {
-		return errors.New("assignment secret references exceed 64 entries")
-	}
-	names := make(map[string]struct{}, len(environment)+len(references))
-	for _, entry := range environment {
-		names[entry.Name] = struct{}{}
-	}
-	for _, reference := range references {
-		if !executionEnvironmentName.MatchString(reference.Name) || reference.SecretID == "" || reference.SecretVersionID == "" {
-			return errors.New("assignment contains an invalid secret reference")
-		}
-		if _, duplicate := names[reference.Name]; duplicate {
-			return errors.New("assignment contains a duplicate environment name")
-		}
-		names[reference.Name] = struct{}{}
 	}
 	return nil
 }

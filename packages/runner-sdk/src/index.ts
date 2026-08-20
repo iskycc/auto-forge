@@ -1,6 +1,5 @@
 import type { ExecutionControlService } from "@autoforge/application";
 import {
-  acquireAttemptSecretsInputSchema,
   claimAssignmentsInputSchema,
   completeAttemptInputSchema,
   declareArtifactsInputSchema,
@@ -69,15 +68,6 @@ export class RunnerProtocolController {
       credential,
       attemptId,
       uploadLogChunksInputSchema.parse(rawInput),
-    );
-  }
-
-  acquireSecrets(runnerId: string, credential: string, attemptId: string, rawInput: unknown) {
-    return this.executions.acquireSecrets(
-      runnerId,
-      credential,
-      attemptId,
-      acquireAttemptSecretsInputSchema.parse(rawInput),
     );
   }
 

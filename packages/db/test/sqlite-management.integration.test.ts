@@ -10,10 +10,8 @@ import { SqliteCaseCatalogRepository } from "../src/sqlite-case-catalog";
 import { SqliteCaseSuiteRepository } from "../src/sqlite-case-suite";
 import { SqliteRunBatchRepository } from "../src/sqlite-run-batch";
 import { SqliteExecutionControlRepository } from "../src/sqlite-execution-control";
-import { SqliteExecutionEnvironmentRepository } from "../src/sqlite-execution-environment";
-import { SqliteExecutionSecretRepository } from "../src/sqlite-execution-secret";
 import { SqliteRunnerRepository } from "../src/sqlite-runner";
-import { scheduleExecutionRuns } from "@autoforge/domain";
+import { defaultCaseSuiteExecutionPolicy, scheduleExecutionRuns } from "@autoforge/domain";
 import { RunBatchSchedulingService, type JarObjectStorePort } from "@autoforge/application";
 
 const temporaryDirectories: string[] = [];
@@ -478,13 +476,7 @@ describe("SQLite management repositories", () => {
       await runners.heartbeat({
         runnerId: "runner-scheduling",
         labels: ["java", "testng"],
-        capabilities: [
-          "executor:testng-v1",
-          "isolation:cgroup-v2",
-          "java:21.0.8",
-          "testng:7.11.0",
-          "secrets:on-demand-v1",
-        ],
+        capabilities: ["executor:testng-v1", "isolation:cgroup-v2", "java:21.0.8", "testng:7.11.0"],
         maxConcurrency: 1,
         busySlots: 0,
         agentVersion: "0.2.0",
@@ -739,7 +731,16 @@ describe("SQLite management repositories", () => {
   it("retries queued batches when a selected runner reports fresh metrics", async () => {
     const { handle, catalog, suites, runners, batches } = await fixture();
     try {
-      await suites.create({ id: "suite-dynamic", name: "Dynamic", createdAt: timestamp });
+      await suites.create({
+        id: "suite-dynamic",
+        name: "Dynamic",
+        policy: {
+          ...defaultCaseSuiteExecutionPolicy,
+          retryLimit: 1,
+          runnerIds: ["runner-dynamic"],
+        },
+        createdAt: timestamp,
+      });
       await suites.addCases({
         suiteId: "suite-dynamic",
         items: [{ id: "suite-item-dynamic", caseDefinitionId: "case-1" }],
@@ -762,40 +763,6 @@ describe("SQLite management repositories", () => {
         recordedAt: "2026-08-09T00:01:00.000Z",
       });
       let nextId = 0;
-      handle.client
-        .prepare(
-          `INSERT INTO users
-           (id, username, normalized_username, display_name, source, status,
-            force_password_change, failed_login_attempts, created_at, updated_at, version)
-           VALUES ('dynamic-actor', 'dynamic-actor', 'dynamic-actor', 'Dynamic Actor',
-                   'local', 'active', 0, 0, ?, ?, 1)`,
-        )
-        .run(timestamp, timestamp);
-      const secrets = new SqliteExecutionSecretRepository(handle);
-      await secrets.create({
-        id: "dynamic-secret",
-        versionId: "dynamic-secret-version-1",
-        projectId: "00000000-0000-7000-8000-000000000001",
-        name: "Dynamic token",
-        normalizedName: "dynamic token",
-        description: "",
-        valueEncrypted: "encrypted-dynamic-secret",
-        actorId: "dynamic-actor",
-        recordedAt: timestamp,
-      });
-      const environments = new SqliteExecutionEnvironmentRepository(handle);
-      await environments.create({
-        id: "dynamic-environment",
-        versionId: "dynamic-environment-version-1",
-        projectId: "00000000-0000-7000-8000-000000000001",
-        name: "Dynamic staging",
-        normalizedName: "dynamic staging",
-        description: "",
-        variables: [{ name: "BASE_URL", value: "https://first.example.test" }],
-        secretBindings: [{ name: "API_TOKEN", secretId: "dynamic-secret" }],
-        actorId: "dynamic-actor",
-        recordedAt: timestamp,
-      });
       const scheduler = new RunBatchSchedulingService(
         batches,
         suites,
@@ -808,98 +775,17 @@ describe("SQLite management repositories", () => {
           maximumLoadPerCpu: 1,
         },
         45,
-        environments,
         {
           catalog,
           objectStore: { exists: async () => true } as unknown as JarObjectStorePort,
         },
       );
-      await expect(
-        scheduler.create({
-          suiteId: "suite-dynamic",
-          runnerIds: ["runner-dynamic"],
-          retryLimit: 1,
-          environmentVersionId: "dynamic-environment-version-1",
-        }),
-      ).rejects.toMatchObject({
-        code: "RUN_BATCH_PREFLIGHT_FAILED",
-        details: {
-          ready: false,
-          blockers: [expect.objectContaining({ code: "RUNNER_SECRET_CAPABILITY_MISSING" })],
-        },
-      });
-      await runners.heartbeat({
-        runnerId: "runner-dynamic",
-        labels: ["java", "testng"],
-        capabilities: [
-          "executor:testng-v1",
-          "isolation:cgroup-v2",
-          "java:21.0.8",
-          "testng:7.11.0",
-          "secrets:on-demand-v1",
-        ],
-        maxConcurrency: 1,
-        busySlots: 0,
-        agentVersion: "0.2.0",
-        terminalEnabled: false,
-        recordedAt: "2026-08-09T00:01:00.000Z",
-      });
-      const queued = await scheduler.create({
-        suiteId: "suite-dynamic",
-        runnerIds: ["runner-dynamic"],
-        retryLimit: 1,
-        environmentVersionId: "dynamic-environment-version-1",
-      });
+      const queued = await scheduler.create({ suiteId: "suite-dynamic" });
       expect(queued).toMatchObject({
         status: "queued",
-        environmentId: "dynamic-environment",
-        environmentVersionId: "dynamic-environment-version-1",
-        environmentVariables: [{ name: "BASE_URL", value: "https://first.example.test" }],
-        secretBindings: [
-          {
-            name: "API_TOKEN",
-            secretId: "dynamic-secret",
-            secretVersionId: "dynamic-secret-version-1",
-          },
-        ],
+        environmentVariables: [],
+        secretBindings: [],
       });
-      await environments.update({
-        environmentId: "dynamic-environment",
-        expectedRevision: 1,
-        actorId: "dynamic-actor",
-        recordedAt: "2026-08-09T00:01:00.500Z",
-        nextVersion: {
-          id: "dynamic-environment-version-2",
-          variables: [{ name: "BASE_URL", value: "https://second.example.test" }],
-        },
-      });
-      await expect(
-        environments.listVersions("dynamic-environment", ["00000000-0000-7000-8000-000000000001"]),
-      ).resolves.toMatchObject([{ version: 2 }, { version: 1 }]);
-      await expect(
-        environments.listReferences(
-          "dynamic-environment",
-          ["00000000-0000-7000-8000-000000000001"],
-          10,
-        ),
-      ).resolves.toMatchObject({
-        total: 1,
-        items: [
-          {
-            batchId: queued.id,
-            environmentVersionId: "dynamic-environment-version-1",
-            suiteName: "Dynamic",
-          },
-        ],
-      });
-      await expect(
-        environments.listReferences("dynamic-environment", ["another-project"], 10),
-      ).resolves.toEqual({ items: [], total: 0 });
-      await expect(scheduler.get(queued.id)).resolves.toMatchObject({
-        environmentVersionId: "dynamic-environment-version-1",
-        environmentVariables: [{ value: "https://first.example.test" }],
-      });
-
       await runners.heartbeat({
         runnerId: "runner-dynamic",
         labels: ["java", "testng"],
@@ -921,13 +807,7 @@ describe("SQLite management repositories", () => {
       await runners.heartbeat({
         runnerId: "runner-dynamic",
         labels: ["java", "testng"],
-        capabilities: [
-          "executor:testng-v1",
-          "isolation:cgroup-v2",
-          "java:21.0.8",
-          "testng:7.11.0",
-          "secrets:on-demand-v1",
-        ],
+        capabilities: ["executor:testng-v1", "isolation:cgroup-v2", "java:21.0.8", "testng:7.11.0"],
         maxConcurrency: 1,
         busySlots: 0,
         agentVersion: "0.2.0",
@@ -964,13 +844,7 @@ describe("SQLite management repositories", () => {
         agentVersion: "0.2.0",
         protocolVersion: 1,
         labels: ["java", "testng"],
-        capabilities: [
-          "executor:testng-v1",
-          "isolation:cgroup-v2",
-          "java:21.0.8",
-          "testng:7.11.0",
-          "secrets:on-demand-v1",
-        ],
+        capabilities: ["executor:testng-v1", "isolation:cgroup-v2", "java:21.0.8", "testng:7.11.0"],
         maxConcurrency: 1,
         terminalEnabled: false,
         recordedAt: timestamp,
@@ -978,13 +852,7 @@ describe("SQLite management repositories", () => {
       await runners.heartbeat({
         runnerId: "runner-control",
         labels: ["java", "testng"],
-        capabilities: [
-          "executor:testng-v1",
-          "isolation:cgroup-v2",
-          "java:21.0.8",
-          "testng:7.11.0",
-          "secrets:on-demand-v1",
-        ],
+        capabilities: ["executor:testng-v1", "isolation:cgroup-v2", "java:21.0.8", "testng:7.11.0"],
         maxConcurrency: 1,
         busySlots: 0,
         agentVersion: "0.2.0",
@@ -998,27 +866,6 @@ describe("SQLite management repositories", () => {
         },
         recordedAt: "2026-08-09T00:01:00.000Z",
       });
-      handle.client
-        .prepare(
-          `INSERT INTO users
-           (id, username, normalized_username, display_name, source, status,
-            force_password_change, failed_login_attempts, created_at, updated_at, version)
-           VALUES ('control-actor', 'control-actor', 'control-actor', 'Control Actor',
-                   'local', 'active', 0, 0, ?, ?, 1)`,
-        )
-        .run(timestamp, timestamp);
-      const secrets = new SqliteExecutionSecretRepository(handle);
-      await secrets.create({
-        id: "control-secret",
-        versionId: "control-secret-version",
-        projectId: "00000000-0000-7000-8000-000000000001",
-        name: "Control token",
-        normalizedName: "control token",
-        description: "",
-        valueEncrypted: "encrypted-control-secret",
-        actorId: "control-actor",
-        recordedAt: timestamp,
-      });
       await batches.create({
         id: "00000000-0000-4000-8000-0000000c0001",
         suiteId: "suite-snapshot",
@@ -1026,13 +873,7 @@ describe("SQLite management repositories", () => {
         suiteVersion: 1,
         retryLimit: 1,
         environmentVariables: [],
-        secretBindings: [
-          {
-            name: "API_TOKEN",
-            secretId: "control-secret",
-            secretVersionId: "control-secret-version",
-          },
-        ],
+        secretBindings: [],
         runnerIds: ["runner-control"],
         runs: [
           {
@@ -1105,13 +946,7 @@ describe("SQLite management repositories", () => {
         requestId: "claim-control",
         availableSlots: 1,
         labels: ["java", "testng"],
-        capabilities: [
-          "executor:testng-v1",
-          "isolation:cgroup-v2",
-          "java:21.0.8",
-          "testng:7.11.0",
-          "secrets:on-demand-v1",
-        ],
+        capabilities: ["executor:testng-v1", "isolation:cgroup-v2", "java:21.0.8", "testng:7.11.0"],
         leaseSeeds: [
           {
             id: "lease-control",
@@ -1127,82 +962,8 @@ describe("SQLite management repositories", () => {
       expect(claimed).toHaveLength(1);
       expect(claimed[0]?.assignment.executionSpec).toMatchObject({
         environment: [],
-        secretReferences: [
-          {
-            name: "API_TOKEN",
-            secretId: "control-secret",
-            secretVersionId: "control-secret-version",
-          },
-        ],
+        secretReferences: [],
       });
-      await expect(
-        executions.acquireAttemptSecrets({
-          runnerId: "runner-control",
-          attemptId: "attempt-control",
-          leaseTokenHash: "lease-token-hash",
-          now: "2026-08-09T00:01:02.500Z",
-        }),
-      ).resolves.toEqual([
-        {
-          name: "API_TOKEN",
-          secretId: "control-secret",
-          secretVersionId: "control-secret-version",
-          valueEncrypted: "encrypted-control-secret",
-        },
-      ]);
-      await executions.recordAttemptSecretAccess({
-        id: "secret-audit-control",
-        runnerId: "runner-control",
-        attemptId: "attempt-control",
-        requestId: "secret-request-control",
-        secretIds: ["control-secret"],
-        recordedAt: "2026-08-09T00:01:02.500Z",
-      });
-      expect(
-        handle.client
-          .prepare(
-            "SELECT actor_type, actor_id, action, resource_id, details_json FROM audit_events WHERE id = ?",
-          )
-          .get("secret-audit-control"),
-      ).toEqual({
-        actor_type: "runner",
-        actor_id: "runner-control",
-        action: "execution_secret.access",
-        resource_id: "attempt-control",
-        details_json: JSON.stringify({ secretCount: 1, secretIds: ["control-secret"] }),
-      });
-      await expect(
-        executions.acquireAttemptSecrets({
-          runnerId: "runner-control",
-          attemptId: "attempt-control",
-          leaseTokenHash: "wrong-token-hash",
-          now: "2026-08-09T00:01:02.600Z",
-        }),
-      ).rejects.toMatchObject({ code: "ATTEMPT_TRANSFER_FORBIDDEN" });
-      expect(
-        handle.client
-          .prepare("SELECT COUNT(*) AS count FROM audit_events WHERE id = ?")
-          .get("secret-audit-rejected"),
-      ).toEqual({ count: 0 });
-      await secrets.setStatus({
-        secretId: "control-secret",
-        expectedRevision: 1,
-        status: "disabled",
-        recordedAt: "2026-08-09T00:01:02.700Z",
-      });
-      await expect(
-        executions.acquireAttemptSecrets({
-          runnerId: "runner-control",
-          attemptId: "attempt-control",
-          leaseTokenHash: "lease-token-hash",
-          now: "2026-08-09T00:01:02.800Z",
-        }),
-      ).rejects.toMatchObject({ code: "EXECUTION_SECRET_UNAVAILABLE" });
-      expect(
-        handle.client
-          .prepare("SELECT COUNT(*) AS count FROM audit_events WHERE id = ?")
-          .get("secret-audit-disabled"),
-      ).toEqual({ count: 0 });
       await expect(
         executions.resolveAttemptInput({
           runnerId: "runner-control",
@@ -2397,7 +2158,7 @@ describe("SQLite management repositories", () => {
           .get(),
       ).toEqual({ status: "queued", held_round: 0 });
 
-      // 第 2 轮：两个 run 再次失败，重试用尽后进入终态 failed。
+      // 第 2 轮：两个 run 再次断言失败；全部正常执行结束后批次进入“执行完成”。
       await batches.reserveAssignments({
         batchId: "batch-round",
         decisions: [
@@ -2485,7 +2246,7 @@ describe("SQLite management repositories", () => {
         acceptedAt: "2026-08-09T00:02:20.000Z",
       });
       expect(await batches.get("batch-round")).toMatchObject({
-        status: "failed",
+        status: "succeeded",
         succeededRuns: 0,
         failedRuns: 2,
         runs: [

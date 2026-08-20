@@ -4,7 +4,6 @@ import { RunBatchSchedulingService } from "../src/schedule-run-batches";
 import type {
   CaseCatalogRepository,
   CaseSuiteRepository,
-  ExecutionEnvironmentRepository,
   JarObjectStorePort,
   ProjectStructureRepository,
   RunBatchRepository,
@@ -19,28 +18,20 @@ describe("run batch preflight", () => {
     const service = preflightService({
       suites: { get: vi.fn() } as unknown as CaseSuiteRepository,
       runners: {} as RunnerRepository,
-      environments: {} as ExecutionEnvironmentRepository,
       catalog: {} as CaseCatalogRepository,
       objectStore: {} as JarObjectStorePort,
     });
 
-    const result = await service.preflight({
-      runnerIds: [],
-      retryLimit: 99,
-      environmentVariables: [{ name: "1INVALID", value: "value" }],
-    });
+    const result = await service.preflight({ retryLimit: 99 });
 
     expect(result.ready).toBe(false);
-    expect(result.blockers.map((entry) => entry.code)).toEqual(
-      expect.arrayContaining([
-        "EXECUTION_PARAMETER_INVALID",
-        "RUNNER_SELECTION_INVALID",
-        "EXECUTION_ENVIRONMENT_PARAMETER_INVALID",
-      ]),
-    );
+    expect(result.blockers.map((entry) => entry.code)).toEqual([
+      "EXECUTION_PARAMETER_INVALID",
+      "EXECUTION_PARAMETER_INVALID",
+    ]);
   });
 
-  it("aggregates secret, Runner, toolchain and authoritative JAR blockers", async () => {
+  it("aggregates Runner, toolchain and authoritative JAR blockers", async () => {
     const suites = {
       get: vi.fn().mockResolvedValue({
         id: "suite-1",
@@ -49,11 +40,14 @@ describe("run batch preflight", () => {
         status: "active",
         enabled: true,
         policy: {
+          executor: "testng",
+          adapter: { enabled: false, suiteName: "", testName: "", environmentAddresses: [] },
           priority: 0,
           concurrency: 4,
           retryLimit: 0,
+          retryMode: "immediate",
           queueTimeoutMs: 86_400_000,
-          executionTimeoutMs: 3_600_000,
+          runnerIds: ["runner-1"],
           runnerLabels: [],
           parameters: {},
           artifactPatterns: ["reports/testng/**"],
@@ -102,18 +96,6 @@ describe("run batch preflight", () => {
         updatedAt: timestamp,
       }),
     } as unknown as RunnerRepository;
-    const binding = {
-      name: "API_TOKEN",
-      secretId: "secret-1",
-      secretVersionId: "secret-version-1",
-    };
-    const environments = {
-      getVersion: vi.fn().mockResolvedValue({
-        environment: { id: "environment-1", status: "active" },
-        version: { id: "environment-version-1", variables: [], secretBindings: [binding] },
-      }),
-      findUnavailableSecretsForExecution: vi.fn().mockResolvedValue([binding]),
-    } as unknown as ExecutionEnvironmentRepository;
     const catalog = {
       getSource: vi.fn().mockResolvedValue({
         source: {
@@ -136,24 +118,17 @@ describe("run batch preflight", () => {
     const objectStore = {
       exists: vi.fn().mockResolvedValue(false),
     } as unknown as JarObjectStorePort;
-    const service = preflightService({ suites, runners, environments, catalog, objectStore });
+    const service = preflightService({ suites, runners, catalog, objectStore });
 
-    const result = await service.preflight({
-      suiteId: "suite-1",
-      runnerIds: ["runner-1"],
-      retryLimit: 0,
-      environmentVersionId: "environment-version-1",
-    });
+    const result = await service.preflight({ suiteId: "suite-1" });
 
     expect(result.ready).toBe(false);
     expect(result.blockers.map((entry) => entry.code)).toEqual(
       expect.arrayContaining([
         "CASE_SOURCE_OBJECT_MISSING",
-        "EXECUTION_SECRET_UNAVAILABLE",
         "RUNNER_JAVA_VERSION_UNKNOWN",
         "RUNNER_TESTNG_VERSION_UNKNOWN",
         "RUNNER_REQUIRED_LABEL_MISSING",
-        "RUNNER_SECRET_CAPABILITY_MISSING",
       ]),
     );
   });
@@ -169,12 +144,11 @@ describe("run batch preflight", () => {
           get: vi.fn().mockResolvedValue(readySuite(suiteState)),
         } as unknown as CaseSuiteRepository,
         runners: runnersFake(),
-        environments: {} as ExecutionEnvironmentRepository,
         catalog,
         objectStore: {} as JarObjectStorePort,
       });
 
-      const result = await service.preflight({ suiteId: "suite-1", runnerIds: ["runner-1"] });
+      const result = await service.preflight({ suiteId: "suite-1" });
 
       expect(result.ready).toBe(false);
       expect(result.blockers.map((entry) => entry.code)).toContain(expected);
@@ -188,12 +162,11 @@ describe("run batch preflight", () => {
         get: vi.fn().mockResolvedValue(readySuite({ runnerLabels: ["gpu"] })),
       } as unknown as CaseSuiteRepository,
       runners: runnersFake(),
-      environments: {} as ExecutionEnvironmentRepository,
       catalog: readyCatalogFake(),
       objectStore: { exists: vi.fn().mockResolvedValue(true) } as unknown as JarObjectStorePort,
     });
 
-    const result = await service.preflight({ suiteId: "suite-1", runnerIds: ["runner-1"] });
+    const result = await service.preflight({ suiteId: "suite-1" });
 
     expect(result.ready).toBe(false);
     const labelBlockers = result.blockers.filter(
@@ -208,12 +181,11 @@ describe("run batch preflight", () => {
         get: vi.fn().mockResolvedValue(readySuite({})),
       } as unknown as CaseSuiteRepository,
       runners: runnersFake(["executor:testng-v1", "java:21.0.8", "testng:7.11.0"]),
-      environments: {} as ExecutionEnvironmentRepository,
       catalog: readyCatalogFake(),
       objectStore: { exists: vi.fn().mockResolvedValue(true) } as unknown as JarObjectStorePort,
     });
 
-    const result = await service.preflight({ suiteId: "suite-1", runnerIds: ["runner-1"] });
+    const result = await service.preflight({ suiteId: "suite-1" });
 
     expect(result.blockers.map((entry) => entry.code)).not.toContain(
       "RUNNER_RESOURCE_ISOLATION_MISSING",
@@ -236,12 +208,11 @@ describe("run batch preflight", () => {
         get: vi.fn().mockResolvedValue(readySuite({})),
       } as unknown as CaseSuiteRepository,
       runners: runnersFake(),
-      environments: {} as ExecutionEnvironmentRepository,
       catalog,
       objectStore: objectStoreFake(),
     });
 
-    const result = await service.preflight({ suiteId: "suite-1", runnerIds: ["runner-1"] });
+    const result = await service.preflight({ suiteId: "suite-1" });
 
     expect(result.ready).toBe(false);
     expect(result.blockers).toContainEqual(
@@ -255,16 +226,11 @@ describe("run batch preflight", () => {
         get: vi.fn().mockResolvedValue(readySuite({ policy: { executor: "testng-container" } })),
       } as unknown as CaseSuiteRepository,
       runners: runnersFake(),
-      environments: {} as ExecutionEnvironmentRepository,
       catalog: readyCatalogFake(),
       objectStore: objectStoreFake(),
     });
 
-    const result = await service.preflight({
-      projectId: "project-1",
-      suiteId: "suite-1",
-      runnerIds: ["runner-1"],
-    });
+    const result = await service.preflight({ suiteId: "suite-1" });
 
     expect(result.ready).toBe(false);
     expect(result.blockers).toEqual(
@@ -291,7 +257,6 @@ describe("run batch preflight", () => {
         ),
       } as unknown as CaseSuiteRepository,
       runners: runnersFake(),
-      environments: {} as ExecutionEnvironmentRepository,
       catalog: readyCatalogFake(),
       objectStore: objectStoreFake(),
       projectStructures: {
@@ -303,11 +268,7 @@ describe("run batch preflight", () => {
       } as unknown as ProjectStructureRepository,
     });
 
-    const result = await service.preflight({
-      projectId: "project-1",
-      suiteId: "suite-1",
-      runnerIds: ["runner-1"],
-    });
+    const result = await service.preflight({ suiteId: "suite-1" });
 
     expect(result.blockers).toEqual(
       expect.arrayContaining([
@@ -325,7 +286,6 @@ describe("run batch creation with suite policy", () => {
         concurrency: 2,
         retryLimit: 2,
         queueTimeoutMs: 60_000,
-        executionTimeoutMs: 120_000,
         runnerLabels: [],
         parameters: { SUITE: "template", SHARED: "suite" },
         artifactPatterns: ["reports/**"],
@@ -358,25 +318,64 @@ describe("run batch creation with suite policy", () => {
         maximumLoadPerCpu: 1,
       },
       45,
-      undefined,
       { catalog: readyCatalogFake(), objectStore: objectStoreFake() },
     );
 
-    await service.create({
-      suiteId: "suite-1",
-      runnerIds: ["runner-1"],
-      environmentVariables: [],
-    });
+    await service.create({ suiteId: "suite-1" });
 
     expect(created).toHaveLength(1);
     expect(created[0]).toMatchObject({
       priority: 3,
       retryLimit: 2,
       queueTimeoutMs: 60_000,
-      executionTimeoutMs: 120_000,
+      executionTimeoutMs: 600_000,
       policy: { concurrency: 2, runnerLabels: [], artifactPatterns: ["reports/**"] },
       runs: [{ parameters: { SUITE: "template", SHARED: "case" } }],
     });
+  });
+
+  it("drops saved artifact patterns when global artifact collection is disabled", async () => {
+    const suite = readySuite({
+      policy: { artifactPatterns: ["reports/**"] },
+    });
+    const created: Array<{ policy: { artifactPatterns: string[] } }> = [];
+    const batches = {
+      create: vi.fn(async (record: { policy: { artifactPatterns: string[] } }) => {
+        created.push(record);
+        return { id: "batch-1" };
+      }),
+      getSchedulingSnapshot: vi.fn().mockResolvedValue({
+        batch: { assignedRuns: 0, secretBindings: [] },
+        queuedRuns: [],
+        candidates: [],
+        projectActiveRuns: 0,
+      }),
+      get: vi.fn().mockResolvedValue({ id: "batch-1" }),
+    } as unknown as RunBatchRepository;
+    const service = new RunBatchSchedulingService(
+      batches,
+      { get: vi.fn().mockResolvedValue(suite) } as unknown as CaseSuiteRepository,
+      runnersFake(),
+      { now: () => new Date(timestamp) },
+      { next: () => "generated-id" },
+      {
+        maximumCpuUtilizationPercent: 85,
+        maximumMemoryUtilizationPercent: 85,
+        maximumLoadPerCpu: 1,
+      },
+      45,
+      { catalog: readyCatalogFake(), objectStore: objectStoreFake() },
+      128,
+      5,
+      undefined,
+      undefined,
+      600_000,
+      false,
+    );
+
+    await service.create({ suiteId: "suite-1" });
+
+    expect(created[0]?.policy.artifactPatterns).toEqual([]);
   });
 
   it("rejects creating batches for archived suites", async () => {
@@ -395,13 +394,12 @@ describe("run batch creation with suite policy", () => {
         maximumLoadPerCpu: 1,
       },
       45,
-      undefined,
       { catalog: readyCatalogFake(), objectStore: objectStoreFake() },
     );
 
-    await expect(
-      service.create({ suiteId: "suite-1", runnerIds: ["runner-1"], environmentVariables: [] }),
-    ).rejects.toMatchObject({ code: "RUN_BATCH_PREFLIGHT_FAILED" });
+    await expect(service.create({ suiteId: "suite-1" })).rejects.toMatchObject({
+      code: "RUN_BATCH_PREFLIGHT_FAILED",
+    });
   });
 
   it("limits new assignments to the remaining batch concurrency budget", async () => {
@@ -482,7 +480,6 @@ describe("run batch creation with suite policy", () => {
       },
       45,
       undefined,
-      undefined,
       2,
     );
 
@@ -530,7 +527,6 @@ describe("run batch creation with suite policy", () => {
         maximumLoadPerCpu: 1,
       },
       45,
-      undefined,
       { catalog, objectStore: objectStoreFake() },
     );
 
@@ -582,7 +578,11 @@ describe("run batch creation with suite policy", () => {
     } as unknown as RunnerRepository;
     const service = new RunBatchSchedulingService(
       batches,
-      { get: vi.fn().mockResolvedValue(readySuite({})) } as unknown as CaseSuiteRepository,
+      {
+        get: vi
+          .fn()
+          .mockResolvedValue(readySuite({ policy: { runnerIds: [], runnerGroupId: "group-1" } })),
+      } as unknown as CaseSuiteRepository,
       runners,
       { now: () => new Date(timestamp) },
       { next: () => "generated-id" },
@@ -592,7 +592,6 @@ describe("run batch creation with suite policy", () => {
         maximumLoadPerCpu: 1,
       },
       45,
-      undefined,
       { catalog: readyCatalogFake(), objectStore: objectStoreFake() },
       128,
       5,
@@ -600,7 +599,7 @@ describe("run batch creation with suite policy", () => {
       runnerGroups,
     );
 
-    await service.create({ suiteId: "suite-1", runnerGroupId: "group-1" });
+    await service.create({ suiteId: "suite-1" });
 
     expect(runnerGroups.get).toHaveBeenCalledWith("group-1");
     expect(create).toHaveBeenCalledWith(
@@ -672,7 +671,6 @@ describe("run batch creation with suite policy", () => {
         maximumLoadPerCpu: 1,
       },
       45,
-      undefined,
       { catalog, objectStore: objectStoreFake() },
       128,
       5,
@@ -734,7 +732,6 @@ describe("run batch creation with suite policy", () => {
         maximumLoadPerCpu: 1,
       },
       45,
-      undefined,
       { catalog, objectStore: objectStoreFake() },
     );
 
@@ -887,8 +884,12 @@ const readyPolicy = {
   priority: 0,
   concurrency: 4,
   retryLimit: 0,
+  retryMode: "immediate" as "immediate" | "round",
   queueTimeoutMs: 86_400_000,
-  executionTimeoutMs: 3_600_000,
+  claimTimeoutMs: 300_000,
+  uploadTimeoutMs: 600_000,
+  runnerIds: ["runner-1"] as string[],
+  runnerGroupId: undefined as string | undefined,
   runnerLabels: [] as string[],
   parameters: {} as Record<string, string>,
   artifactPatterns: ["reports/testng/**"],
@@ -1055,7 +1056,6 @@ function schedulingRunner() {
 function preflightService(input: {
   suites: CaseSuiteRepository;
   runners: RunnerRepository;
-  environments: ExecutionEnvironmentRepository;
   catalog: CaseCatalogRepository;
   objectStore: JarObjectStorePort;
   projectStructures?: ProjectStructureRepository;
@@ -1072,7 +1072,6 @@ function preflightService(input: {
       maximumLoadPerCpu: 1,
     },
     45,
-    input.environments,
     { catalog: input.catalog, objectStore: input.objectStore },
     128,
     5,

@@ -1,5 +1,7 @@
 # ADR 0005：离线密文管理
 
+状态：已由 [ADR 0008](./0008-remove-managed-execution-environments.md) 部分取代。LDAP、Runner、API 和基础设施凭据的加密规则继续有效；本文中的产品级执行环境密文、任务绑定和 lease 领取方案已经退役，仅作为历史决策记录保留。
+
 - 状态：已接受
 - 日期：2026-08-09
 

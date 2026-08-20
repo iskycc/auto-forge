@@ -19,6 +19,10 @@ test("creates a deterministic manifest and checksum list", async () => {
     }
     await writeFile(resolve(directory, "autoforge-deploy-1.2.3.tar.gz"), "compose");
     await writeFile(resolve(directory, "autoforge-deploy-1.2.3.spdx.json"), "{}");
+    for (const plugin of ["dependency-publisher", "execution"]) {
+      await writeFile(resolve(directory, `autoforge-jenkins-${plugin}-1.2.3.hpi`), plugin);
+      await writeFile(resolve(directory, `autoforge-jenkins-${plugin}-1.2.3.spdx.json`), "{}");
+    }
     for (const fileName of [
       "CHANGELOG.md",
       "COMPATIBILITY.md",
@@ -36,12 +40,14 @@ test("creates a deterministic manifest and checksum list", async () => {
     );
     assert.equal(manifest.schemaVersion, 1);
     assert.equal(manifest.version, "1.2.3");
-    assert.equal(manifest.artifacts.length, 20);
+    assert.equal(manifest.artifacts.length, 24);
 
     const checksums = await readFile(resolve(directory, "SHA256SUMS"), "utf8");
     assert.doesNotMatch(checksums, /autoforge-agent/);
     assert.doesNotMatch(checksums, /runner-toolchain/);
     assert.match(checksums, /autoforge-deploy-1\.2\.3\.tar\.gz/);
+    assert.match(checksums, /autoforge-jenkins-execution-1\.2\.3\.hpi/);
+    assert.match(checksums, /autoforge-jenkins-dependency-publisher-1\.2\.3\.hpi/);
     assert.match(checksums, /release-manifest\.json/);
     assert.match(checksums, /release-signing-public-key\.pem/);
   } finally {

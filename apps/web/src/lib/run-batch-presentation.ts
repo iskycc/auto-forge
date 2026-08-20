@@ -1,4 +1,9 @@
-import type { RunAttempt, RunBatch } from "@autoforge/domain";
+import {
+  classifyAttemptResult,
+  type RunAttempt,
+  type RunBatch,
+  type RunBatchDetails,
+} from "@autoforge/domain";
 
 const activeStatuses = new Set<RunBatch["status"]>([
   "queued",
@@ -17,11 +22,35 @@ export function runBatchStatusLabel(status: RunBatch["status"]): string {
     dispatching: "分配中",
     scheduled: "已生成分配",
     running: "执行中",
-    succeeded: "已成功",
-    failed: "已失败",
-    cancelled: "已取消",
+    succeeded: "执行完成",
+    failed: "执行异常",
+    cancelled: "执行中断",
   };
   return labels[status];
+}
+
+export function runBatchCompletionLabel(batch: RunBatchDetails): string {
+  if (isActiveRunBatch(batch.status)) return runBatchStatusLabel(batch.status);
+  if (batch.status === "cancelled") return "执行中断";
+  const latestAttempts = new Map<string, RunAttempt>();
+  for (const attempt of batch.attempts) {
+    const current = latestAttempts.get(attempt.executionRunId);
+    if (!current || attempt.attemptNumber > current.attemptNumber) {
+      latestAttempts.set(attempt.executionRunId, attempt);
+    }
+  }
+  const abnormal = batch.runs.some((run) => {
+    const attempt = latestAttempts.get(run.id);
+    return (
+      !attempt ||
+      !attempt.outcome ||
+      classifyAttemptResult({
+        outcome: attempt.outcome,
+        ...(attempt.resultCode ? { resultCode: attempt.resultCode } : {}),
+      }) === "blocked"
+    );
+  });
+  return abnormal ? "执行异常" : "执行完成";
 }
 
 export function runBatchCoveragePercent(batch: RunBatch): number {

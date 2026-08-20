@@ -59,6 +59,7 @@ export class CaseSuiteService {
     const policy = input.policy
       ? mergeCaseSuiteExecutionPolicy(suite.policy, input.policy)
       : undefined;
+    if (policy) assertRunnableResourceSelection(policy);
     const changeReason = describeSuiteChange(input);
     return this.suites.updateSuite({
       suiteId,
@@ -144,6 +145,22 @@ export class CaseSuiteService {
       ...(actorId ? { actorId } : {}),
       updatedAt: this.clock.now().toISOString(),
     });
+  }
+}
+
+function assertRunnableResourceSelection(policy: {
+  runnerIds: readonly string[];
+  runnerGroupId?: string;
+}): void {
+  const usesRunners = policy.runnerIds.length > 0;
+  const usesGroup = Boolean(policy.runnerGroupId);
+  if (usesRunners === usesGroup) {
+    throw new DomainError(
+      usesRunners ? "RUNNER_SELECTION_CONFLICT" : "RUNNER_SELECTION_REQUIRED",
+      usesRunners
+        ? "用例任务只能选择执行机或执行机组中的一种。"
+        : "用例任务必须配置执行机或执行机组。",
+    );
   }
 }
 

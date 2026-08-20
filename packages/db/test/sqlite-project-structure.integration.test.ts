@@ -63,6 +63,32 @@ describe("SQLite project version structure", () => {
         expectedRevision: 0,
         updatedAt: now,
       });
+      await repository.replaceVersionRuntimeAsset(version.id, {
+        id: "bundle-1",
+        projectId: DEFAULT_PROJECT_ID,
+        kind: "jar-bundle",
+        sourceType: "url",
+        fileName: "dependencies-1.zip",
+        url: "http://10.0.0.8/dependencies-1.zip",
+        sha256: "b".repeat(64),
+        sizeBytes: 2_048,
+        archiveFormat: "zip",
+        createdBy: "jenkins",
+        createdAt: now,
+      });
+      await repository.replaceVersionRuntimeAsset(version.id, {
+        id: "bundle-2",
+        projectId: DEFAULT_PROJECT_ID,
+        kind: "jar-bundle",
+        sourceType: "url",
+        fileName: "dependencies-2.zip",
+        url: "http://10.0.0.8/dependencies-2.zip",
+        sha256: "c".repeat(64),
+        sizeBytes: 4_096,
+        archiveFormat: "zip",
+        createdBy: "jenkins",
+        createdAt: "2026-08-14T00:01:00.000Z",
+      });
 
       expect(stage.position).toBe(1);
       expect(configuration).toMatchObject({
@@ -73,6 +99,19 @@ describe("SQLite project version structure", () => {
         versions: [{ id: version.id, stages: [{ id: stage.id }] }],
         adapterConfiguration: { revision: 1 },
       });
+      await expect(
+        repository.getAdapterConfiguration(DEFAULT_PROJECT_ID, version.id),
+      ).resolves.toMatchObject({
+        projectVersionId: version.id,
+        jdkAsset: { id: jdk.id },
+        jarBundleAsset: { id: "bundle-2", fileName: "dependencies-2.zip" },
+        revision: 2,
+      });
+      expect(
+        handle.client
+          .prepare("SELECT COUNT(*) AS value FROM project_runtime_assets WHERE id = ?")
+          .get("bundle-1"),
+      ).toEqual({ value: 0 });
       await expect(
         repository.updateAdapterConfiguration({
           projectId: DEFAULT_PROJECT_ID,

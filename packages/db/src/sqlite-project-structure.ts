@@ -64,6 +64,15 @@ type ConfigurationRow = {
   updated_at: string;
 };
 
+type VersionRuntimeRow = {
+  project_version_id: string;
+  project_id: string;
+  jar_bundle_asset_id: string;
+  revision: number;
+  updated_by: string | null;
+  updated_at: string;
+};
+
 export class SqliteProjectStructureRepository implements ProjectStructureRepository {
   constructor(private readonly handle: SqliteDatabaseHandle) {}
 
@@ -182,6 +191,54 @@ export class SqliteProjectStructureRepository implements ProjectStructureReposit
     }
   }
 
+  async replaceVersionRuntimeAsset(
+    projectVersionId: string,
+    record: CreateProjectRuntimeAssetRecord,
+  ) {
+    try {
+      return this.handle.client.transaction(() => {
+        const version = this.handle.client
+          .prepare("SELECT * FROM project_versions WHERE id = ? AND project_id = ?")
+          .get(projectVersionId, record.projectId) as VersionRow | undefined;
+        if (!version) {
+          throw new DomainError(
+            "PROJECT_VERSION_NOT_FOUND",
+            "指定的项目版本不存在或不属于当前项目。",
+          );
+        }
+        const previous = this.versionRuntimeRow(projectVersionId);
+        this.insertRuntimeAsset(record);
+        this.handle.client
+          .prepare(
+            `INSERT INTO project_version_runtime_assets
+             (project_version_id, project_id, jar_bundle_asset_id, revision, updated_by, updated_at)
+             VALUES (?, ?, ?, 1, ?, ?)
+             ON CONFLICT(project_version_id) DO UPDATE SET
+               jar_bundle_asset_id = excluded.jar_bundle_asset_id,
+               revision = project_version_runtime_assets.revision + 1,
+               updated_by = excluded.updated_by,
+               updated_at = excluded.updated_at`,
+          )
+          .run(
+            projectVersionId,
+            record.projectId,
+            record.id,
+            record.createdBy ?? null,
+            record.createdAt,
+          );
+        if (previous && previous.jar_bundle_asset_id !== record.id) {
+          this.handle.client
+            .prepare("DELETE FROM project_runtime_assets WHERE id = ? AND source_type = 'url'")
+            .run(previous.jar_bundle_asset_id);
+        }
+        return { version: mapVersion(version), asset: this.requiredAsset(record.id) };
+      })();
+    } catch (error) {
+      if (error instanceof DomainError) throw error;
+      throw mapStructureWriteError(error);
+    }
+  }
+
   async updateAdapterConfiguration(
     input: Parameters<ProjectStructureRepository["updateAdapterConfiguration"]>[0],
   ): Promise<ProjectAdapterConfiguration> {
@@ -232,8 +289,25 @@ export class SqliteProjectStructureRepository implements ProjectStructureReposit
     }
   }
 
-  async getAdapterConfiguration(projectId: string): Promise<ProjectAdapterConfiguration> {
+  async getAdapterConfiguration(
+    projectId: string,
+    projectVersionId?: string,
+  ): Promise<ProjectAdapterConfiguration> {
     const row = this.configurationRow(projectId);
+    if (projectVersionId) {
+      const versionRuntime = this.versionRuntimeRow(projectVersionId);
+      return {
+        projectId,
+        projectVersionId,
+        ...(row?.jdk_asset_id ? { jdkAsset: this.requiredAsset(row.jdk_asset_id) } : {}),
+        ...(versionRuntime
+          ? { jarBundleAsset: this.requiredAsset(versionRuntime.jar_bundle_asset_id) }
+          : {}),
+        revision: versionRuntime?.revision ?? 0,
+        ...(versionRuntime?.updated_by ? { updatedBy: versionRuntime.updated_by } : {}),
+        updatedAt: versionRuntime?.updated_at ?? "",
+      };
+    }
     return row
       ? this.mapConfiguration(row)
       : {
@@ -264,6 +338,36 @@ export class SqliteProjectStructureRepository implements ProjectStructureReposit
       .get(id) as AssetRow | undefined;
     if (!row) throw new Error("Created runtime asset could not be read.");
     return mapAsset(row);
+  }
+
+  private insertRuntimeAsset(record: CreateProjectRuntimeAssetRecord): void {
+    this.handle.client
+      .prepare(
+        `INSERT INTO project_runtime_assets
+         (id, project_id, kind, source_type, file_name, url, object_key, sha256, size_bytes,
+          archive_format, created_by, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        record.id,
+        record.projectId,
+        record.kind,
+        record.sourceType,
+        record.fileName,
+        record.url ?? null,
+        record.objectKey ?? null,
+        record.sha256,
+        record.sizeBytes,
+        record.archiveFormat,
+        record.createdBy ?? null,
+        record.createdAt,
+      );
+  }
+
+  private versionRuntimeRow(projectVersionId: string): VersionRuntimeRow | undefined {
+    return this.handle.client
+      .prepare("SELECT * FROM project_version_runtime_assets WHERE project_version_id = ?")
+      .get(projectVersionId) as VersionRuntimeRow | undefined;
   }
 
   private configurationRow(projectId: string): ConfigurationRow | undefined {

@@ -61,6 +61,14 @@ type ConfigurationRow = QueryResultRow & {
   updated_by: string | null;
   updated_at: string;
 };
+type VersionRuntimeRow = QueryResultRow & {
+  project_version_id: string;
+  project_id: string;
+  jar_bundle_asset_id: string;
+  revision: number;
+  updated_by: string | null;
+  updated_at: string;
+};
 
 export class PostgresProjectStructureRepository implements ProjectStructureRepository {
   constructor(private readonly handle: PostgresDatabaseHandle) {}
@@ -169,6 +177,83 @@ export class PostgresProjectStructureRepository implements ProjectStructureRepos
     }
   }
 
+  async replaceVersionRuntimeAsset(
+    projectVersionId: string,
+    record: CreateProjectRuntimeAssetRecord,
+  ) {
+    await this.handle.ready;
+    try {
+      return await this.transaction(async (client) => {
+        const versions = await client.query<VersionRow>(
+          "SELECT * FROM project_versions WHERE id = $1 AND project_id = $2 FOR UPDATE",
+          [projectVersionId, record.projectId],
+        );
+        const version = versions.rows[0];
+        if (!version) {
+          throw new DomainError(
+            "PROJECT_VERSION_NOT_FOUND",
+            "指定的项目版本不存在或不属于当前项目。",
+          );
+        }
+        const previous = await client.query<VersionRuntimeRow>(
+          "SELECT * FROM project_version_runtime_assets WHERE project_version_id = $1 FOR UPDATE",
+          [projectVersionId],
+        );
+        const inserted = await client.query<AssetRow>(
+          `INSERT INTO project_runtime_assets
+           (id, project_id, kind, source_type, file_name, url, object_key, sha256, size_bytes,
+            archive_format, created_by, created_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING *`,
+          [
+            record.id,
+            record.projectId,
+            record.kind,
+            record.sourceType,
+            record.fileName,
+            record.url ?? null,
+            record.objectKey ?? null,
+            record.sha256,
+            record.sizeBytes,
+            record.archiveFormat,
+            record.createdBy ?? null,
+            record.createdAt,
+          ],
+        );
+        await client.query(
+          `INSERT INTO project_version_runtime_assets
+           (project_version_id, project_id, jar_bundle_asset_id, revision, updated_by, updated_at)
+           VALUES ($1, $2, $3, 1, $4, $5)
+           ON CONFLICT (project_version_id) DO UPDATE SET
+             jar_bundle_asset_id = EXCLUDED.jar_bundle_asset_id,
+             revision = project_version_runtime_assets.revision + 1,
+             updated_by = EXCLUDED.updated_by,
+             updated_at = EXCLUDED.updated_at`,
+          [
+            projectVersionId,
+            record.projectId,
+            record.id,
+            record.createdBy ?? null,
+            record.createdAt,
+          ],
+        );
+        const previousAssetId = previous.rows[0]?.jar_bundle_asset_id;
+        if (previousAssetId && previousAssetId !== record.id) {
+          await client.query(
+            "DELETE FROM project_runtime_assets WHERE id = $1 AND source_type = 'url'",
+            [previousAssetId],
+          );
+        }
+        return {
+          version: mapVersion(version),
+          asset: mapAsset(required(inserted.rows[0], "Created runtime asset could not be read.")),
+        };
+      });
+    } catch (error) {
+      if (error instanceof DomainError) throw error;
+      throw mapStructureWriteError(error);
+    }
+  }
+
   async updateAdapterConfiguration(
     input: Parameters<ProjectStructureRepository["updateAdapterConfiguration"]>[0],
   ): Promise<ProjectAdapterConfiguration> {
@@ -225,19 +310,38 @@ export class PostgresProjectStructureRepository implements ProjectStructureRepos
     }
   }
 
-  async getAdapterConfiguration(projectId: string): Promise<ProjectAdapterConfiguration> {
+  async getAdapterConfiguration(
+    projectId: string,
+    projectVersionId?: string,
+  ): Promise<ProjectAdapterConfiguration> {
     await this.handle.ready;
     const result = await this.handle.pool.query<ConfigurationRow>(
       "SELECT * FROM project_adapter_configurations WHERE project_id = $1",
       [projectId],
     );
-    return result.rows[0]
-      ? mapConfiguration(this.handle.pool, result.rows[0])
-      : {
-          projectId,
-          revision: 0,
-          updatedAt: "",
-        };
+    const globalConfiguration = result.rows[0]
+      ? await mapConfiguration(this.handle.pool, result.rows[0])
+      : { projectId, revision: 0, updatedAt: "" };
+    if (!projectVersionId) return globalConfiguration;
+    const versionResult = await this.handle.pool.query<VersionRuntimeRow & AssetRow>(
+      `SELECT configuration.*, asset.id, asset.project_id, asset.kind, asset.source_type,
+              asset.file_name, asset.url, asset.object_key, asset.sha256, asset.size_bytes,
+              asset.archive_format, asset.created_by, asset.created_at
+       FROM project_version_runtime_assets configuration
+       JOIN project_runtime_assets asset ON asset.id = configuration.jar_bundle_asset_id
+       WHERE configuration.project_version_id = $1 AND configuration.project_id = $2`,
+      [projectVersionId, projectId],
+    );
+    const versionRuntime = versionResult.rows[0];
+    return {
+      projectId,
+      projectVersionId,
+      ...(globalConfiguration.jdkAsset ? { jdkAsset: globalConfiguration.jdkAsset } : {}),
+      ...(versionRuntime ? { jarBundleAsset: mapAsset(versionRuntime) } : {}),
+      revision: versionRuntime?.revision ?? 0,
+      ...(versionRuntime?.updated_by ? { updatedBy: versionRuntime.updated_by } : {}),
+      updatedAt: versionRuntime?.updated_at ?? "",
+    };
   }
 
   private async transaction<T>(operation: (client: PoolClient) => Promise<T>): Promise<T> {

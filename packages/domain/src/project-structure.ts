@@ -41,11 +41,17 @@ export type ProjectRuntimeAsset = {
 
 export type ProjectAdapterConfiguration = {
   projectId: string;
+  projectVersionId?: string;
   jdkAsset?: ProjectRuntimeAsset;
   jarBundleAsset?: ProjectRuntimeAsset;
   revision: number;
   updatedBy?: string;
   updatedAt: string;
+};
+
+export type ProjectVersionDependency = {
+  version: ProjectVersion;
+  asset: ProjectRuntimeAsset;
 };
 
 export type ProjectStructure = {

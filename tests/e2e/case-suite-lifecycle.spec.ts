@@ -3,6 +3,7 @@ import { zipSync } from "fflate";
 
 import { buildClassFile } from "../../packages/testng-discovery/test/class-fixture";
 import { browserJson, ensureAdministrator, uniqueName } from "./support/session";
+import { freshRunnerBootstrapToken } from "./support/runner-bootstrap";
 
 test("case metadata, immutable versions and suite policy survive lifecycle changes", async ({
   page,
@@ -100,6 +101,7 @@ test("case metadata, immutable versions and suite policy survive lifecycle chang
     body: { caseDefinitionIds: [definition!.id] },
   });
   expect(addCase.status).toBe(200);
+  const runner = await registerRunner(page, suffix);
 
   await page.goto(`/case-suites/${encodeURIComponent(suite.body.id)}`);
   await page.getByLabel("任务名称").fill(`${suiteName} updated`);
@@ -107,7 +109,10 @@ test("case metadata, immutable versions and suite policy survive lifecycle chang
   await page.getByLabel("并发度（同时在途执行数）").fill("3");
   await page.getByLabel("重试次数上限").fill("2");
   await page.getByLabel("排队超时（分钟）").fill("7");
-  await page.getByLabel("执行超时（分钟）").fill("11");
+  await page
+    .locator(".global-run-runner", { hasText: runner.name })
+    .locator('input[type="checkbox"]')
+    .check();
   await page.getByLabel("Runner 标签（逗号分隔）").fill("linux, lifecycle");
   await page.getByLabel("参数模板（每行一个 KEY=VALUE，用例参数优先）").fill("REGION=cn\nMODE=e2e");
   await page.getByLabel("产物规则（每行一个相对路径 glob）").fill("reports/**/*.xml");
@@ -248,6 +253,52 @@ async function importJar(
   await expect(page.getByRole("status")).toContainText(/已导入|已返回现有用例/, {
     timeout: 60_000,
   });
+}
+
+async function registerRunner(page: Page, suffix: string): Promise<{ id: string; name: string }> {
+  const name = `Lifecycle runner ${suffix}`;
+  const capabilities = ["executor:testng-v1", "java:21.0.8", "testng:7.11.0"];
+  const registration = await page.request.post("/api/v1/runner-agents/register", {
+    headers: { authorization: `Bearer ${freshRunnerBootstrapToken()}` },
+    data: {
+      schemaVersion: 1,
+      name,
+      labels: ["linux", "java", "testng"],
+      capabilities,
+      maxConcurrency: 2,
+      os: "linux",
+      architecture: "amd64",
+      agentVersion: "0.9.0-e2e",
+      protocolVersion: 1,
+      terminalEnabled: false,
+    },
+  });
+  expect(registration.status()).toBe(201);
+  const identity = (await registration.json()) as { runnerId: string; credential: string };
+  const heartbeat = await page.request.post(
+    `/api/v1/runner-agents/${encodeURIComponent(identity.runnerId)}/heartbeat`,
+    {
+      headers: { authorization: `Bearer ${identity.credential}` },
+      data: {
+        schemaVersion: 1,
+        busySlots: 0,
+        labels: ["linux", "java", "testng"],
+        capabilities,
+        maxConcurrency: 2,
+        agentVersion: "0.9.0-e2e",
+        terminalEnabled: false,
+        resourceSnapshot: {
+          cpuUtilizationPercent: 10,
+          memoryUtilizationPercent: 20,
+          loadAverage1m: 0.1,
+          logicalCpuCount: 4,
+          observedAt: new Date().toISOString(),
+        },
+      },
+    },
+  );
+  expect(heartbeat.status()).toBe(200);
+  return { id: identity.runnerId, name };
 }
 
 async function createProject(

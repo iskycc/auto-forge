@@ -38,8 +38,8 @@ concrete restrictions:
   dropped, and the configured seccomp profile;
 - a numeric non-root user, bounded pids/memory/CPU and a bounded `/tmp` tmpfs;
 - exactly one read-write bind mount: the attempt workspace, mounted at `/workspace`;
-- secrets in a mode-`0600` environment file outside the mounted workspace, so values are absent
-  from the runtime process arguments;
+- a minimal fixed process environment; new execution tasks cannot inject platform-managed secrets
+  or arbitrary environment variables into the container;
 - the same cgroup/process-group cancellation, log spool, result mapping, artifact validation and
   cleanup lifecycle used by the process executor.
 

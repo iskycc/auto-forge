@@ -101,8 +101,8 @@ claim -> prepare -> start -> stream logs -> collect artifacts -> report result -
 ```
 
 1. Agent 长轮询领取 assignment；控制面原子创建 `RunAttempt` 和 lease。
-2. Agent 校验 `ExecutionSpec`、协议版本、执行器、资源上限和本机能力；含密文引用时使用有效 lease 按需领取。
-3. Workspace Manager 创建本次 attempt 的独立目录并准备输入，密文只合并到本次内存执行规格。
+2. Agent 校验 `ExecutionSpec`、协议版本、执行器、资源上限和本机能力。
+3. Workspace Manager 创建本次 attempt 的独立目录并准备输入；新任务不下发平台受管环境变量或执行密文。
 4. Process Supervisor 使用参数数组启动子进程。
 5. Lease Manager 定时续租；Log Pipeline 并行采集 stdout/stderr。
 6. 取消、租约失效或超时触发进程树终止。
@@ -113,7 +113,7 @@ claim -> prepare -> start -> stream logs -> collect artifacts -> report result -
 
 ## Runner Protocol
 
-任务协议基于 HTTP(S) JSON，任务领取使用有界长轮询；可信内网允许 HTTP/IP 直连，跨不可信网络应使用 HTTPS，因为 HTTP 不保护 Runner 凭据、任务、日志和密文注入流量。WebSocket 不参与任务执行正确性。当前 WebSocket 只承载管理员显式打开的交互终端，断开即终止对应 PTY，会话不能转化为 assignment 或 lease。
+任务协议基于 HTTP(S) JSON，任务领取使用有界长轮询；可信内网允许 HTTP/IP 直连，跨不可信网络应使用 HTTPS，因为 HTTP 不保护 Runner 凭据、任务和日志。WebSocket 不参与任务执行正确性。当前 WebSocket 只承载管理员显式打开的交互终端，断开即终止对应 PTY，会话不能转化为 assignment 或 lease。
 
 协议端点：
 
@@ -126,7 +126,6 @@ claim -> prepare -> start -> stream logs -> collect artifacts -> report result -
 | `POST /api/v1/runner-agents/{runnerId}/claims`                  | 长轮询并原子领取 assignment                      |
 | `POST /api/v1/runner-agents/{runnerId}/leases/{leaseId}/renew`  | 续租并获取取消/排空指令                          |
 | `POST /api/v1/run-attempts/{attemptId}/logs`                    | 批量上报日志块                                   |
-| `POST /api/v1/run-attempts/{attemptId}/secrets`                 | 使用有效 lease 按需领取本次执行密文              |
 | `POST /api/v1/run-attempts/{attemptId}/artifacts`               | 声明产物并获取上传目标                           |
 | `POST /api/v1/run-attempts/{attemptId}/artifacts/{id}/finalize` | 复核 Full 直传对象并确认产物元数据               |
 | `POST /api/v1/run-attempts/{attemptId}/complete`                | 幂等上报最终结果                                 |
@@ -154,12 +153,13 @@ type ExecutionSpec = {
   inputs: Array<{ inputId: string; kind: "test-jar" | "dependency-jar"; sha256: string }>;
   requiredLabels: string[];
   requiredCapabilities: string[];
-  secretReferences: Array<{ name: string; secretId: string; secretVersionId: string }>;
+  /** v1 升级兼容字段；新任务固定为空，控制面不再提供领取端点。 */
+  secretReferences: [];
   resourceLimits: ResourceLimits;
 };
 ```
 
-当前执行快照固定要求 Linux `amd64/arm64`、Java 11+、TestNG 7.11.0 和 `executor:testng-v1`；含密文引用时额外要求 `secrets:on-demand-v1`。`isolation:cgroup-v2` 不再是 assignment 硬要求，服务端解析旧 v1 快照时会移除该已退役要求，避免升级前排队任务永久无法领取。控制面只在 Runner 身份和 attempt lease 同时有效、密文项目/版本/状态匹配时返回值，成功解密后记录不含值的访问审计。Agent 校验响应名称与大小，只保留在内存和子进程环境中；`ExecutionSpec`、持久 claim、日志和 spool 不保存明文秘密。Go 字符串不能保证主动清零，因此这里不声明硬件级或可验证的内存擦除。
+当前执行快照固定要求 Linux `amd64/arm64`、Java 11+、TestNG 7.11.0 和 `executor:testng-v1`。`isolation:cgroup-v2` 不再是 assignment 硬要求，服务端解析旧 v1 快照时会移除该已退役要求，避免升级前排队任务永久无法领取。产品级执行环境与执行密文已经退役；协议 v1 为历史 JSON 兼容保留空的 `environment` 与 `secretReferences` 字段，新建批次固定为空且控制面不再提供密文领取端点。
 
 ## 命令执行
 

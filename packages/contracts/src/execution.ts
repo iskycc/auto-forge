@@ -99,22 +99,6 @@ export const executionSecretReferenceSchema = z.object({
   secretVersionId: identifierSchema,
 });
 
-export const acquireAttemptSecretsInputSchema = z.object({
-  schemaVersion: protocolVersionSchema,
-  requestId: identifierSchema,
-  leaseToken: z.string().min(32).max(512),
-});
-
-export const acquireAttemptSecretsResponseSchema = z.object({
-  schemaVersion: protocolVersionSchema,
-  requestId: identifierSchema,
-  secrets: z
-    .array(
-      z.object({ name: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]{0,127}$/), value: z.string() }),
-    )
-    .max(64),
-});
-
 const testNgParametersSchema = z
   .record(z.string().regex(/^[A-Za-z_][A-Za-z0-9_.-]{0,127}$/), z.string().max(4_096))
   .refine((parameters) => Object.keys(parameters).length <= 128, "TestNG 参数不能超过 128 项。");
@@ -566,8 +550,6 @@ export const cancelExecutionInputSchema = z.object({
 });
 
 export type ExecutionSpec = z.infer<typeof executionSpecSchema>;
-export type AcquireAttemptSecretsInput = z.infer<typeof acquireAttemptSecretsInputSchema>;
-export type AcquireAttemptSecretsResponse = z.infer<typeof acquireAttemptSecretsResponseSchema>;
 export type ExecutionInput = z.infer<typeof executionInputSchema>;
 export type AssignmentDto = z.infer<typeof assignmentSchema>;
 export type ClaimAssignmentsInput = z.infer<typeof claimAssignmentsInputSchema>;
