@@ -14,18 +14,44 @@ test("publishes complete release assets without waiting for checks", async () =>
   assert.match(workflow, /  publish:\n[\s\S]*?    needs: \[prepare, backend\]/);
 });
 
-test("runs tagged source and published asset checks independently", async () => {
-  const workflow = await readFile(".github/workflows/release-checks.yml", "utf8");
+test("partitions tagged and published checks without polling inside a test job", async () => {
+  const [taggedChecks, publishedAcceptance] = await Promise.all([
+    readFile(".github/workflows/release-checks.yml", "utf8"),
+    readFile(".github/workflows/release-acceptance.yml", "utf8"),
+  ]);
 
-  assert.match(workflow, /^name: Release checks$/m);
-  assert.match(workflow, /^  quality:/m);
-  assert.match(workflow, /^  offline-acceptance:/m);
-  assert.match(workflow, /  offline-acceptance:\n[\s\S]*?    needs: prepare/);
-  assert.doesNotMatch(workflow, /  offline-acceptance:\n[\s\S]*?    needs: \[prepare, quality\]/);
-  assert.match(workflow, /ref: \$\{\{ needs\.prepare\.outputs\.tag_revision \}\}/);
-  assert.match(workflow, /ref: \$\{\{ needs\.prepare\.outputs\.checks_revision \}\}/);
-  assert.match(workflow, /GITHUB_EVENT_NAME.*workflow_dispatch/);
-  assert.match(workflow, /gh release download "\$\{CURRENT_TAG\}" --dir release/);
+  assert.match(taggedChecks, /^name: Release checks$/m);
+  assert.match(taggedChecks, /^  quality:/m);
+  assert.match(taggedChecks, /^  offline-quality:/m);
+  assert.match(taggedChecks, /bash scripts\/quality\/test-full\.sh browser-governance/);
+  assert.match(taggedChecks, /bash scripts\/quality\/test-offline\.sh "\$\{\{ matrix\.phase \}\}"/);
+  assert.doesNotMatch(taggedChecks, /^  offline-acceptance:/m);
+  assert.doesNotMatch(taggedChecks, /pnpm test:full\s*$/m);
+  assert.doesNotMatch(taggedChecks, /pnpm test:offline\s*$/m);
+
+  assert.match(publishedAcceptance, /^name: Published Release acceptance$/m);
+  assert.match(publishedAcceptance, /^  workflow_run:/m);
+  assert.match(publishedAcceptance, /workflows: \[Release\]/);
+  assert.match(publishedAcceptance, /^  asset-integrity:/m);
+  assert.match(publishedAcceptance, /^  acceptance:/m);
+  assert.match(publishedAcceptance, /needs: \[prepare, asset-integrity\]/);
+  assert.match(publishedAcceptance, /phase: business-governance/);
+  assert.match(publishedAcceptance, /phase: upgrade-rollback/);
+  assert.doesNotMatch(publishedAcceptance, /sleep "\$\{wait_interval_seconds\}"/);
+  assert.match(publishedAcceptance, /ref: \$\{\{ needs\.prepare\.outputs\.checks_revision \}\}/);
+  assert.match(publishedAcceptance, /GITHUB_EVENT_NAME.*workflow_dispatch/);
+});
+
+test("keeps long-running CI acceptance paths partitioned", async () => {
+  const workflow = await readFile(".github/workflows/ci.yml", "utf8");
+
+  assert.match(workflow, /test-full-business-recovery\.sh contracts/);
+  assert.match(workflow, /test-full-business-recovery\.sh browser-governance/);
+  assert.match(workflow, /test-full-business-recovery\.sh real-agent/);
+  assert.match(workflow, /test-offline\.sh assets/);
+  assert.match(workflow, /test-offline\.sh governance/);
+  assert.doesNotMatch(workflow, /command: pnpm test:full-business-recovery\s*$/m);
+  assert.doesNotMatch(workflow, /command: pnpm test:offline\s*$/m);
 });
 
 test("uses cached builds and parallel archive compression", async () => {

@@ -8,4 +8,4 @@ if [[ "${GITHUB_ACTIONS:-}" != "true" ]]; then
 fi
 
 readonly repository_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
-exec bash "${repository_root}/scripts/quality/test-full.sh"
+exec bash "${repository_root}/scripts/quality/test-full.sh" "$@"

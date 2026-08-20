@@ -1,0 +1,245 @@
+name: Published Release acceptance
+
+on:
+  workflow_run:
+    workflows: [Release]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Published semantic version tag to verify, for example v0.9.0
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: published-release-acceptance-${{ inputs.tag || github.event.workflow_run.head_branch }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    name: Resolve published Release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      checks_revision: ${{ steps.release.outputs.checks_revision }}
+      previous_tag: ${{ steps.release.outputs.previous_tag }}
+      previous_version: ${{ steps.release.outputs.previous_version }}
+      tag: ${{ steps.release.outputs.tag }}
+      tag_revision: ${{ steps.release.outputs.tag_revision }}
+      version: ${{ steps.release.outputs.version }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Check out acceptance harness
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event_name == 'workflow_dispatch' && github.sha || github.event.workflow_run.head_sha }}
+
+      - name: Resolve published and previous Releases
+        id: release
+        env:
+          RELEASE_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          RELEASE_REVISION: ${{ github.event.workflow_run.head_sha }}
+          REQUESTED_TAG: ${{ inputs.tag || github.event.workflow_run.head_branch }}
+        run: |
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_run" && "${RELEASE_CONCLUSION}" != "success" ]]; then
+            echo "The Release workflow did not succeed: ${RELEASE_CONCLUSION}" >&2
+            exit 1
+          fi
+          if [[ ! "${REQUESTED_TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Invalid release tag: ${REQUESTED_TAG}" >&2
+            exit 1
+          fi
+          tag_revision="$(git rev-parse --verify "refs/tags/${REQUESTED_TAG}^{commit}")"
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_run" && "${tag_revision}" != "${RELEASE_REVISION}" ]]; then
+            echo "Release workflow revision ${RELEASE_REVISION} does not match ${REQUESTED_TAG} (${tag_revision})." >&2
+            exit 1
+          fi
+          if [[ "$(gh release view "${REQUESTED_TAG}" --json isDraft --jq .isDraft)" != "false" ]]; then
+            echo "Release ${REQUESTED_TAG} is not publicly available." >&2
+            exit 1
+          fi
+          previous_tag="$(gh release list --limit 100 --json tagName,isDraft,isPrerelease --jq \
+            ".[] | select(.isDraft == false and .isPrerelease == false and .tagName != \"${REQUESTED_TAG}\") | .tagName" | \
+            grep -E '^v[0-9]+[.][0-9]+[.][0-9]+$' | head -n 1)"
+          if [[ -z "${previous_tag}" ]]; then
+            echo "Published Release acceptance requires a previous formal semantic-version Release." >&2
+            exit 1
+          fi
+          checks_revision="${tag_revision}"
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            checks_revision="${GITHUB_SHA}"
+          fi
+          {
+            echo "checks_revision=${checks_revision}"
+            echo "previous_tag=${previous_tag}"
+            echo "previous_version=${previous_tag#v}"
+            echo "tag=${REQUESTED_TAG}"
+            echo "tag_revision=${tag_revision}"
+            echo "version=${REQUESTED_TAG#v}"
+          } >> "${GITHUB_OUTPUT}"
+
+  asset-integrity:
+    name: Published assets and signatures
+    needs: prepare
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Check out acceptance harness
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.prepare.outputs.checks_revision }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.16.0
+
+      - name: Install locked acceptance dependencies
+        run: |
+          corepack enable
+          pnpm install --frozen-lockfile
+
+      - name: Download current and previous signed assets
+        run: |
+          mkdir -p release previous-release
+          gh release download "${{ needs.prepare.outputs.tag }}" --dir release
+          gh release download "${{ needs.prepare.outputs.previous_tag }}" --dir previous-release \
+            --pattern "autoforge-backend-${{ needs.prepare.outputs.previous_version }}-amd64.docker.tar.zst" \
+            --pattern "autoforge-backend-${{ needs.prepare.outputs.previous_version }}-amd64.image.json" \
+            --pattern SHA256SUMS \
+            --pattern SHA256SUMS.sig \
+            --pattern release-signing-public-key.pem
+
+      - name: Verify manifests, signatures, checksums and deployment bundle
+        run: >-
+          bash scripts/quality/test-release-offline.sh
+          "${{ needs.prepare.outputs.version }}" release
+          "${{ needs.prepare.outputs.previous_version }}" previous-release assets
+
+  acceptance:
+    name: Published offline · ${{ matrix.name }}
+    needs: [prepare, asset-integrity]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: asset lifecycle
+            phase: business-assets
+            needs_deploy: false
+            needs_previous: false
+            needs_ldap: false
+          - name: governance
+            phase: business-governance
+            needs_deploy: false
+            needs_previous: false
+            needs_ldap: false
+          - name: real Agent
+            phase: real-agent
+            needs_deploy: false
+            needs_previous: false
+            needs_ldap: false
+          - name: real LDAP
+            phase: ldap
+            needs_deploy: false
+            needs_previous: false
+            needs_ldap: true
+          - name: backup and restore
+            phase: backup-restore
+            needs_deploy: true
+            needs_previous: false
+            needs_ldap: false
+          - name: upgrade and rollback
+            phase: upgrade-rollback
+            needs_deploy: true
+            needs_previous: true
+            needs_ldap: false
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Check out acceptance harness
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.prepare.outputs.checks_revision }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.16.0
+
+      - name: Install locked acceptance dependencies
+        run: |
+          corepack enable
+          pnpm install --frozen-lockfile
+
+      - name: Locate preinstalled Chromium and Java compiler
+        run: |
+          browser_path="$(command -v google-chrome || command -v chromium || true)"
+          if [[ -z "${browser_path}" || -z "$(command -v javac || true)" ]]; then
+            echo "The hosted runner is missing Chromium or javac." >&2
+            exit 1
+          fi
+          echo "PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=${browser_path}" >> "${GITHUB_ENV}"
+
+      - name: Download current amd64 image
+        run: |
+          mkdir -p release previous-release
+          gh release download "${{ needs.prepare.outputs.tag }}" --dir release \
+            --pattern "autoforge-backend-${{ needs.prepare.outputs.version }}-amd64.docker.tar.zst" \
+            --pattern "autoforge-backend-${{ needs.prepare.outputs.version }}-amd64.image.json"
+
+      - name: Download current deployment bundle
+        if: matrix.needs_deploy
+        run: >-
+          gh release download "${{ needs.prepare.outputs.tag }}" --dir release
+          --pattern "autoforge-deploy-${{ needs.prepare.outputs.version }}.tar.gz"
+
+      - name: Download previous amd64 image
+        if: matrix.needs_previous
+        run: |
+          gh release download "${{ needs.prepare.outputs.previous_tag }}" --dir previous-release \
+            --pattern "autoforge-backend-${{ needs.prepare.outputs.previous_version }}-amd64.docker.tar.zst" \
+            --pattern "autoforge-backend-${{ needs.prepare.outputs.previous_version }}-amd64.image.json"
+
+      - name: Preload fixed LDAP fixture image
+        if: matrix.needs_ldap
+        run: >-
+          docker pull
+          osixia/openldap:1.5.0@sha256:18742e9c449c9c1afe129d3f2f3ee15fb34cc43e5f940a20f3399728f41d7c28
+
+      - name: Run published Release acceptance partition
+        run: >-
+          bash scripts/quality/test-release-offline.sh
+          "${{ needs.prepare.outputs.version }}" release
+          "${{ needs.prepare.outputs.previous_version }}" previous-release
+          "${{ matrix.phase }}"
+
+      - name: Upload Release acceptance diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: published-release-diagnostics-${{ matrix.phase }}
+          path: test-results
+          if-no-files-found: ignore
+          retention-days: 7
+
+  acceptance-gate:
+    name: Published Release acceptance gate
+    if: always()
+    needs: [prepare, asset-integrity, acceptance]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require every published-asset partition
+        run: |
+          test "${{ needs.prepare.result }}" = success
+          test "${{ needs.asset-integrity.result }}" = success
+          test "${{ needs.acceptance.result }}" = success

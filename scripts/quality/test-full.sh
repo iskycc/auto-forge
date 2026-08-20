@@ -9,6 +9,7 @@ fi
 
 readonly repository_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly temporary_directory="$(mktemp -d)"
+readonly acceptance_phase="${1:-all}"
 readonly postgres_container="autoforge-full-postgres-$$"
 readonly redis_container="autoforge-full-redis-$$"
 readonly postgres_image="postgres:15-alpine@sha256:df7bca0066e6f60cc3dd32faa70caddec20e2c22b58932f79498e5704b23854a"
@@ -363,6 +364,42 @@ start_full_worker() {
 }
 
 run_full_browser_flow() {
+  local browser_phase="${1:?Full browser phase is required}"
+  local browser_specs=()
+  case "${browser_phase}" in
+    assets)
+      browser_specs=(
+        tests/e2e/case-suite-lifecycle.spec.ts
+        tests/e2e/jar-import.spec.ts
+        tests/e2e/project-isolation.spec.ts
+      )
+      ;;
+    governance)
+      browser_specs=(
+        tests/e2e/identity-rbac.spec.ts
+        tests/e2e/management-operations.spec.ts
+        tests/e2e/platform-operations.spec.ts
+      )
+      ;;
+    recovery)
+      browser_specs=(tests/e2e/execution-recovery.spec.ts)
+      ;;
+    all)
+      browser_specs=(
+        tests/e2e/case-suite-lifecycle.spec.ts
+        tests/e2e/execution-recovery.spec.ts
+        tests/e2e/identity-rbac.spec.ts
+        tests/e2e/jar-import.spec.ts
+        tests/e2e/management-operations.spec.ts
+        tests/e2e/platform-operations.spec.ts
+        tests/e2e/project-isolation.spec.ts
+      )
+      ;;
+    *)
+      printf 'Unknown Full browser phase: %s\n' "${browser_phase}" >&2
+      return 2
+      ;;
+  esac
   local admin_bootstrap_token
   local runner_bootstrap_master_key
   local runner_bootstrap_token
@@ -382,13 +419,7 @@ run_full_browser_flow() {
   E2E_RUNNER_BOOTSTRAP_MASTER_KEY="${runner_bootstrap_master_key}" \
     pnpm exec playwright test \
       --config playwright.full.config.ts \
-      tests/e2e/case-suite-lifecycle.spec.ts \
-      tests/e2e/execution-recovery.spec.ts \
-      tests/e2e/identity-rbac.spec.ts \
-      tests/e2e/jar-import.spec.ts \
-      tests/e2e/management-operations.spec.ts \
-      tests/e2e/platform-operations.spec.ts \
-      tests/e2e/project-isolation.spec.ts
+      "${browser_specs[@]}"
 }
 
 run_full_real_agent_recovery() {
@@ -479,13 +510,50 @@ verify_dependency_recovery() {
 cd "${repository_root}"
 download_dependencies
 start_dependencies
-run_adapter_tests
-create_platform_bucket
-initialize_platform_configuration
-start_full_worker
-start_full_platform
-run_full_browser_flow
-run_full_real_agent_recovery
-run_full_ldap_flow
-verify_dependency_recovery
-printf 'Full mode integration passed with two Web/worker replicas and dependency recovery.\n'
+
+case "${acceptance_phase}" in
+  contracts)
+    run_adapter_tests
+    ;;
+  browser-assets | browser-governance | browser-recovery | real-agent | ldap | dependency-recovery | all)
+    if [[ "${acceptance_phase}" == "all" ]]; then
+      run_adapter_tests
+    fi
+    create_platform_bucket
+    initialize_platform_configuration
+    start_full_worker
+    start_full_platform
+    case "${acceptance_phase}" in
+      browser-assets)
+        run_full_browser_flow assets
+        ;;
+      browser-governance)
+        run_full_browser_flow governance
+        ;;
+      browser-recovery)
+        run_full_browser_flow recovery
+        ;;
+      real-agent)
+        run_full_real_agent_recovery
+        ;;
+      ldap)
+        run_full_ldap_flow
+        ;;
+      dependency-recovery)
+        verify_dependency_recovery
+        ;;
+      all)
+        run_full_browser_flow all
+        run_full_real_agent_recovery
+        run_full_ldap_flow
+        verify_dependency_recovery
+        ;;
+    esac
+    ;;
+  *)
+    printf 'Unknown Full acceptance phase: %s\n' "${acceptance_phase}" >&2
+    exit 2
+    ;;
+esac
+
+printf 'Full mode acceptance phase passed: %s.\n' "${acceptance_phase}"

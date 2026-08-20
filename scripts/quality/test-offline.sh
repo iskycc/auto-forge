@@ -9,30 +9,62 @@ fi
 
 readonly repository_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly acceptance_directory="$(mktemp -d)"
+readonly acceptance_phase="${1:-all}"
+
+case "${acceptance_phase}" in
+  assets)
+    readonly offline_e2e_specs="tests/e2e/case-suite-lifecycle.spec.ts tests/e2e/jar-import.spec.ts tests/e2e/project-isolation.spec.ts"
+    readonly verify_ldap_directory=0
+    readonly verify_backup_restore=0
+    ;;
+  governance)
+    readonly offline_e2e_specs="tests/e2e/identity-rbac.spec.ts"
+    readonly verify_ldap_directory=1
+    readonly verify_backup_restore=0
+    ;;
+  operations)
+    readonly offline_e2e_specs="tests/e2e/management-operations.spec.ts tests/e2e/platform-operations.spec.ts"
+    readonly verify_ldap_directory=0
+    readonly verify_backup_restore=1
+    ;;
+  recovery)
+    readonly offline_e2e_specs="tests/e2e/execution-recovery.spec.ts"
+    readonly verify_ldap_directory=0
+    readonly verify_backup_restore=0
+    ;;
+  all)
+    readonly offline_e2e_specs="tests/e2e/case-suite-lifecycle.spec.ts tests/e2e/execution-recovery.spec.ts tests/e2e/identity-rbac.spec.ts tests/e2e/jar-import.spec.ts tests/e2e/management-operations.spec.ts tests/e2e/platform-operations.spec.ts tests/e2e/project-isolation.spec.ts"
+    readonly verify_ldap_directory=1
+    readonly verify_backup_restore=1
+    ;;
+  *)
+    printf 'Unknown offline acceptance phase: %s\n' "${acceptance_phase}" >&2
+    exit 2
+    ;;
+esac
+
 readonly acceptance_script='
 if curl --fail --silent --connect-timeout 2 https://example.com >/dev/null 2>&1; then
   echo "Outbound network unexpectedly remained available." >&2
   exit 1
 fi
-pnpm exec vitest run apps/web/src/lib/ldap-directory.test.ts
-pnpm exec playwright test \
-  tests/e2e/case-suite-lifecycle.spec.ts \
-  tests/e2e/execution-recovery.spec.ts \
-  tests/e2e/identity-rbac.spec.ts \
-  tests/e2e/jar-import.spec.ts \
-  tests/e2e/management-operations.spec.ts \
-  tests/e2e/platform-operations.spec.ts \
-  tests/e2e/project-isolation.spec.ts
-bash scripts/operations/lite-backup.sh \
-  --data-dir "${AUTOFORGE_E2E_DATA_DIR}" \
-  --output "${AUTOFORGE_OFFLINE_ACCEPTANCE_DIR}/lite-backup.tar.gz" \
-  --platform-stopped
-bash scripts/operations/lite-restore.sh \
-  --input "${AUTOFORGE_OFFLINE_ACCEPTANCE_DIR}/lite-backup.tar.gz" \
-  --data-dir "${AUTOFORGE_OFFLINE_ACCEPTANCE_DIR}/restored-data" \
-  --platform-stopped
-diff --recursive --brief \
-  "${AUTOFORGE_E2E_DATA_DIR}" "${AUTOFORGE_OFFLINE_ACCEPTANCE_DIR}/restored-data"
+if [[ "${AUTOFORGE_OFFLINE_VERIFY_LDAP_DIRECTORY}" == "1" ]]; then
+  pnpm exec vitest run apps/web/src/lib/ldap-directory.test.ts
+fi
+read -r -a offline_specs <<<"${AUTOFORGE_OFFLINE_E2E_SPECS}"
+pnpm exec playwright test "${offline_specs[@]}"
+if [[ "${AUTOFORGE_OFFLINE_VERIFY_BACKUP_RESTORE}" == "1" ]]; then
+  bash scripts/operations/lite-backup.sh \
+    --data-dir "${AUTOFORGE_E2E_DATA_DIR}" \
+    --output "${AUTOFORGE_OFFLINE_ACCEPTANCE_DIR}/lite-backup.tar.gz" \
+    --platform-stopped
+  bash scripts/operations/lite-restore.sh \
+    --input "${AUTOFORGE_OFFLINE_ACCEPTANCE_DIR}/lite-backup.tar.gz" \
+    --data-dir "${AUTOFORGE_OFFLINE_ACCEPTANCE_DIR}/restored-data" \
+    --platform-stopped
+  diff --recursive --brief \
+    "${AUTOFORGE_E2E_DATA_DIR}" "${AUTOFORGE_OFFLINE_ACCEPTANCE_DIR}/restored-data"
+fi
 '
 
 cleanup() {
@@ -48,6 +80,9 @@ fi
 cd "${repository_root}"
 export AUTOFORGE_E2E_DATA_DIR="${acceptance_directory}/platform-data"
 export AUTOFORGE_OFFLINE_ACCEPTANCE_DIR="${acceptance_directory}"
+export AUTOFORGE_OFFLINE_E2E_SPECS="${offline_e2e_specs}"
+export AUTOFORGE_OFFLINE_VERIFY_LDAP_DIRECTORY="${verify_ldap_directory}"
+export AUTOFORGE_OFFLINE_VERIFY_BACKUP_RESTORE="${verify_backup_restore}"
 export E2E_PROJECT_MAXIMUM_CONCURRENCY=1
 
 if unshare --user --map-root-user --net true >/dev/null 2>&1; then
@@ -75,6 +110,9 @@ sudo -n env \
   "PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=${PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH-}" \
   "AUTOFORGE_E2E_DATA_DIR=${AUTOFORGE_E2E_DATA_DIR}" \
   "AUTOFORGE_OFFLINE_ACCEPTANCE_DIR=${AUTOFORGE_OFFLINE_ACCEPTANCE_DIR}" \
+  "AUTOFORGE_OFFLINE_E2E_SPECS=${AUTOFORGE_OFFLINE_E2E_SPECS}" \
+  "AUTOFORGE_OFFLINE_VERIFY_LDAP_DIRECTORY=${AUTOFORGE_OFFLINE_VERIFY_LDAP_DIRECTORY}" \
+  "AUTOFORGE_OFFLINE_VERIFY_BACKUP_RESTORE=${AUTOFORGE_OFFLINE_VERIFY_BACKUP_RESTORE}" \
   "E2E_PROJECT_MAXIMUM_CONCURRENCY=${E2E_PROJECT_MAXIMUM_CONCURRENCY}" \
   unshare --net bash -Eeuo pipefail -c '
     ip link set lo up

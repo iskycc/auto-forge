@@ -15,6 +15,6 @@ tag/commit、四平台 variant、镜像 digest、SHA256SUMS、SBOM、来源证�
    模拟迁移失败并按手册回滚。
 7. 检查 Agent/JDK/TestNG/浏览器全程无公网获取，诊断包不含凭据，保留/清理有审计且死信可见。
 
-独立 `Release checks` workflow 的 `offline-acceptance` job 等待同 tag Release 完整公开后，自动消费已发布的签名资产和上一正式 Release，而不是源码构建结果。它核对可信公钥、27 项 manifest 资产、全部摘要、镜像/部署/工具链 SBOM 与许可证，使用 `--internal` Docker 网络启动发布镜像，提取镜像内 Agent 和 Release 工具链完成真实执行，再运行 LDAP、停止状态备份恢复、迁移完整性故障、旧版本回滚及成功升级。该 job 的成功或失败不参与 `Release` workflow 的依赖链；失败会保留 Gate E 红灯和诊断证据，并要求后续 hotfix，但不会阻塞或撤回发布。
+独立 `Published Release acceptance` workflow 在同 tag 的 `Release` 成功完成后启动，自动消费已发布的签名资产和上一正式 Release，而不是源码构建结果。资产完整性、业务、真实 Agent、LDAP、停止状态备份恢复、迁移完整性故障、旧版本回滚与成功升级分别在隔离 Job 中并行执行，避免把发布等待和所有场景串成一个长任务。它核对可信公钥、manifest 全部资产、摘要、镜像/部署 SBOM 与许可证，使用 `--internal` Docker 网络启动发布镜像，并提取镜像内 Agent 与 Adapter 完成真实执行。该 workflow 的成功或失败不参与 `Release` 依赖链；失败会保留 Gate E 红灯和诊断证据，并要求后续 hotfix，但不会阻塞或撤回发布。
 
 任一步缺少自动化或实机证据时 Gate E 保持未完成；本清单本身不等同于验收通过。PR/普通分支 CI 只验证脚本和业务矩阵，不能伪造正式 tag、已发布签名资产或上一 Release，因此不会提前勾选 Gate E。

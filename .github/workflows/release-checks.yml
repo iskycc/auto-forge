@@ -57,15 +57,43 @@ jobs:
           } >> "${GITHUB_OUTPUT}"
 
   quality:
-    name: Tagged source quality
+    name: Release source · ${{ matrix.name }}
     needs: prepare
     runs-on: ubuntu-24.04
-    timeout-minutes: 90
+    timeout-minutes: 8
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: static quality
+            command: pnpm format:check && pnpm lint && pnpm typecheck && pnpm test:e2e:matrix
+          - name: unit and integration
+            command: pnpm test && pnpm test:integration && mvn --batch-mode --file adapters/cotest-testng/pom.xml test
+          - name: performance
+            command: pnpm test:performance
+          - name: deployment
+            command: pnpm test:deployment
+          - name: production build
+            command: pnpm build
+          - name: Full adapter contracts
+            command: bash scripts/quality/test-full.sh contracts
+          - name: Full asset lifecycle
+            command: bash scripts/quality/test-full.sh browser-assets
+          - name: Full governance
+            command: bash scripts/quality/test-full.sh browser-governance
+          - name: Full execution recovery
+            command: bash scripts/quality/test-full.sh browser-recovery
+          - name: Full real Agent recovery
+            command: bash scripts/quality/test-full.sh real-agent
+          - name: Full real LDAP
+            command: bash scripts/quality/test-full.sh ldap
+          - name: Full dependency health
+            command: bash scripts/quality/test-full.sh dependency-recovery
     steps:
-      - name: Check out tagged source
+      - name: Check out source under test
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ needs.prepare.outputs.tag_revision }}
+          ref: ${{ needs.prepare.outputs.checks_revision }}
 
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -92,31 +120,80 @@ jobs:
           fi
           echo "PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=${browser_path}" >> "${GITHUB_ENV}"
 
-      - name: Run quality commands
-        run: |
-          pnpm format:check
-          pnpm lint
-          pnpm typecheck
-          pnpm test
-          pnpm test:integration
-          pnpm test:full
-          pnpm test:performance
-          pnpm test:deployment
-          pnpm build
+      - name: Run release-source quality partition
+        run: ${{ matrix.command }}
 
-      - name: Run network-blocked Lite browser flow
-        run: pnpm test:offline
+      - name: Upload browser trace on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-source-diagnostics-${{ strategy.job-index }}
+          path: test-results
+          if-no-files-found: ignore
+          retention-days: 7
+
+  offline-quality:
+    name: Release source offline · ${{ matrix.phase }}
+    needs: prepare
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    strategy:
+      fail-fast: false
+      matrix:
+        phase: [assets, governance, operations, recovery]
+    steps:
+      - name: Check out source under test
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.prepare.outputs.checks_revision }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.16.0
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: 1.26.5
+          cache-dependency-path: apps/runner-agent/go.mod
+
+      - name: Install locked JavaScript dependencies
+        run: |
+          corepack enable
+          pnpm install --frozen-lockfile
+
+      - name: Locate preinstalled Chromium
+        run: |
+          browser_path="$(command -v google-chrome || command -v chromium || true)"
+          if [[ -z "${browser_path}" ]]; then
+            echo "The hosted runner does not provide a preinstalled Chromium browser." >&2
+            exit 1
+          fi
+          echo "PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=${browser_path}" >> "${GITHUB_ENV}"
+
+      - name: Run network-blocked Lite partition
+        run: bash scripts/quality/test-offline.sh "${{ matrix.phase }}"
+
+      - name: Upload browser trace on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-source-offline-diagnostics-${{ matrix.phase }}
+          path: test-results
+          if-no-files-found: ignore
+          retention-days: 7
 
   runner-reinstall-gate:
     name: Deregistered Runner reinstall re-registration gate
     needs: prepare
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 8
     steps:
-      - name: Check out tagged source
+      - name: Check out source under test
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ needs.prepare.outputs.tag_revision }}
+          ref: ${{ needs.prepare.outputs.checks_revision }}
 
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -162,96 +239,16 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
-  offline-acceptance:
-    name: Published Release offline upgrade acceptance
-    needs: prepare
+  release-checks-gate:
+    name: Release checks gate
+    if: always()
+    needs: [prepare, quality, offline-quality, runner-reinstall-gate]
     runs-on: ubuntu-24.04
-    timeout-minutes: 90
-    env:
-      GH_TOKEN: ${{ github.token }}
+    timeout-minutes: 5
     steps:
-      - name: Check out tagged source
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-          ref: ${{ needs.prepare.outputs.checks_revision }}
-
-      - name: Set up Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: 24.16.0
-
-      - name: Install locked acceptance dependencies
+      - name: Require every release-source partition
         run: |
-          corepack enable
-          pnpm install --frozen-lockfile
-
-      - name: Locate preinstalled Chromium and Java compiler
-        run: |
-          browser_path="$(command -v google-chrome || command -v chromium || true)"
-          if [[ -z "${browser_path}" || -z "$(command -v javac || true)" ]]; then
-            echo "The hosted runner is missing Chromium or javac." >&2
-            exit 1
-          fi
-          echo "PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=${browser_path}" >> "${GITHUB_ENV}"
-
-      - name: Wait for and download published Release
-        env:
-          CURRENT_TAG: ${{ needs.prepare.outputs.tag }}
-        run: |
-          readonly maximum_attempts=90
-          readonly wait_interval_seconds=10
-          for attempt in $(seq 1 "${maximum_attempts}"); do
-            is_draft="$(gh release view "${CURRENT_TAG}" --json isDraft --jq .isDraft 2>/dev/null || true)"
-            if [[ "${is_draft}" == "false" ]]; then
-              mkdir -p release
-              gh release download "${CURRENT_TAG}" --dir release
-              exit 0
-            fi
-            if [[ "${attempt}" == "${maximum_attempts}" ]]; then
-              echo "Release ${CURRENT_TAG} was not published within 15 minutes." >&2
-              exit 1
-            fi
-            sleep "${wait_interval_seconds}"
-          done
-
-      - name: Download previous formal Release upgrade source
-        env:
-          CURRENT_TAG: ${{ needs.prepare.outputs.tag }}
-        run: |
-          previous_tag="$({ gh release list --limit 100 --json tagName,isDraft,isPrerelease \
-            --jq '.[] | select(.isDraft == false and .isPrerelease == false) | .tagName'; } | \
-            grep -E '^v[0-9]+[.][0-9]+[.][0-9]+$' | grep -Fxv "${CURRENT_TAG}" | head -n 1)"
-          if [[ -z "${previous_tag}" ]]; then
-            echo "Gate E requires a previous formal semantic-version Release." >&2
-            exit 1
-          fi
-          previous_version="${previous_tag#v}"
-          mkdir -p previous-release
-          gh release download "${previous_tag}" --dir previous-release \
-            --pattern "autoforge-backend-${previous_version}-amd64.docker.tar.zst" \
-            --pattern "autoforge-backend-${previous_version}-amd64.image.json" \
-            --pattern SHA256SUMS \
-            --pattern SHA256SUMS.sig \
-            --pattern release-signing-public-key.pem
-          echo "PREVIOUS_RELEASE_VERSION=${previous_version}" >> "${GITHUB_ENV}"
-
-      - name: Preload the fixed LDAP fixture image
-        run: >-
-          docker pull
-          osixia/openldap:1.5.0@sha256:18742e9c449c9c1afe129d3f2f3ee15fb34cc43e5f940a20f3399728f41d7c28
-
-      - name: Run disconnected install, business, rollback and upgrade acceptance
-        run: >-
-          bash scripts/quality/test-release-offline.sh
-          "${{ needs.prepare.outputs.version }}" release
-          "${PREVIOUS_RELEASE_VERSION}" previous-release
-
-      - name: Upload Release acceptance diagnostics on failure
-        if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: release-offline-acceptance-diagnostics
-          path: test-results
-          if-no-files-found: ignore
-          retention-days: 7
+          test "${{ needs.prepare.result }}" = success
+          test "${{ needs.quality.result }}" = success
+          test "${{ needs.offline-quality.result }}" = success
+          test "${{ needs.runner-reinstall-gate.result }}" = success

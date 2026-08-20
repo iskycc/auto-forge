@@ -395,20 +395,35 @@ jobs:
   system-acceptance:
     name: ${{ matrix.name }}
     runs-on: ubuntu-24.04
-    timeout-minutes: ${{ matrix.timeout }}
+    timeout-minutes: 8
     strategy:
       fail-fast: false
       matrix:
         include:
-          - name: Full infrastructure acceptance
-            command: pnpm test:full-business-recovery
-            timeout: 60
-          - name: Network-blocked Lite acceptance
-            command: pnpm test:offline
-            timeout: 35
+          - name: Full · adapter contracts
+            command: bash scripts/quality/test-full-business-recovery.sh contracts
+          - name: Full · asset lifecycle
+            command: bash scripts/quality/test-full-business-recovery.sh browser-assets
+          - name: Full · governance
+            command: bash scripts/quality/test-full-business-recovery.sh browser-governance
+          - name: Full · execution recovery
+            command: bash scripts/quality/test-full-business-recovery.sh browser-recovery
+          - name: Full · real Agent recovery
+            command: bash scripts/quality/test-full-business-recovery.sh real-agent
+          - name: Full · real LDAP
+            command: bash scripts/quality/test-full-business-recovery.sh ldap
+          - name: Full · dependency health
+            command: bash scripts/quality/test-full-business-recovery.sh dependency-recovery
+          - name: Network-blocked Lite · assets
+            command: bash scripts/quality/test-offline.sh assets
+          - name: Network-blocked Lite · governance
+            command: bash scripts/quality/test-offline.sh governance
+          - name: Network-blocked Lite · operations
+            command: bash scripts/quality/test-offline.sh operations
+          - name: Network-blocked Lite · recovery
+            command: bash scripts/quality/test-offline.sh recovery
           - name: Deployment and operations acceptance
             command: pnpm test:deployment
-            timeout: 35
     steps:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -454,6 +469,7 @@ jobs:
         lite-browser,
         build,
         real-agent-acceptance,
+        batch-input-sharing-acceptance,
         container-executor-acceptance,
         ldap-acceptance,
         runner-install-acceptance,
@@ -469,6 +485,7 @@ jobs:
           test "${{ needs.lite-browser.result }}" = success
           test "${{ needs.build.result }}" = success
           test "${{ needs.real-agent-acceptance.result }}" = success
+          test "${{ needs.batch-input-sharing-acceptance.result }}" = success
           test "${{ needs.container-executor-acceptance.result }}" = success
           test "${{ needs.ldap-acceptance.result }}" = success
           test "${{ needs.runner-install-acceptance.result }}" = success

@@ -8,12 +8,22 @@ if [[ "${GITHUB_ACTIONS:-}" != "true" ]]; then
 fi
 
 readonly repository_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
-readonly current_version="${1:?usage: test-release-offline.sh CURRENT_VERSION CURRENT_DIR PREVIOUS_VERSION PREVIOUS_DIR}"
+readonly current_version="${1:?usage: test-release-offline.sh CURRENT_VERSION CURRENT_DIR PREVIOUS_VERSION PREVIOUS_DIR [PHASE]}"
 readonly current_release_directory="$(realpath "${2:?current release directory is required}")"
 readonly previous_version="${3:?previous release version is required}"
 readonly previous_release_directory="$(realpath "${4:?previous release directory is required}")"
+readonly acceptance_phase="${5:-all}"
+
+case "${acceptance_phase}" in
+  all | assets | backup-restore | business-assets | business-governance | ldap | real-agent | upgrade-rollback) ;;
+  *)
+    printf 'Unknown published Release acceptance phase: %s\n' "${acceptance_phase}" >&2
+    exit 2
+    ;;
+esac
 readonly acceptance_directory="$(mktemp -d)"
-readonly run_identity="${GITHUB_RUN_ID//[^0-9A-Za-z_-]/_}-${GITHUB_RUN_ATTEMPT//[^0-9A-Za-z_-]/_}"
+readonly phase_identity="${acceptance_phase//[^0-9A-Za-z_-]/_}"
+readonly run_identity="${GITHUB_RUN_ID//[^0-9A-Za-z_-]/_}-${GITHUB_RUN_ATTEMPT//[^0-9A-Za-z_-]/_}-${phase_identity}"
 readonly network_name="autoforge-release-offline-${run_identity}"
 readonly current_container="autoforge-release-current-${run_identity}"
 readonly previous_container="autoforge-release-previous-${run_identity}"
@@ -238,8 +248,30 @@ read_platform_secret() {
     "${data_directory}/config/platform.json" "${property}"
 }
 
-run_current_release_business() {
+run_current_release_browser() {
   local base_url="${1:?base URL is required}"
+  local browser_phase="${2:?Release browser phase is required}"
+  local browser_specs=()
+  case "${browser_phase}" in
+    assets)
+      browser_specs=(
+        tests/e2e/case-suite-lifecycle.spec.ts
+        tests/e2e/jar-import.spec.ts
+        tests/e2e/project-isolation.spec.ts
+      )
+      ;;
+    governance)
+      browser_specs=(
+        tests/e2e/identity-rbac.spec.ts
+        tests/e2e/management-operations.spec.ts
+        tests/e2e/platform-operations.spec.ts
+      )
+      ;;
+    *)
+      printf 'Unknown published Release browser phase: %s\n' "${browser_phase}" >&2
+      return 2
+      ;;
+  esac
   local admin_token runner_master_key runner_token
   admin_token="$(read_platform_secret "${current_data}" adminBootstrapToken)"
   runner_master_key="$(read_platform_secret "${current_data}" masterKey)"
@@ -249,13 +281,14 @@ run_current_release_business() {
   E2E_RUNNER_BOOTSTRAP_TOKEN="${runner_token}" \
   E2E_RUNNER_BOOTSTRAP_MASTER_KEY="${runner_master_key}" \
     pnpm exec playwright test --config playwright.full.config.ts \
-      tests/e2e/case-suite-lifecycle.spec.ts \
-      tests/e2e/identity-rbac.spec.ts \
-      tests/e2e/jar-import.spec.ts \
-      tests/e2e/management-operations.spec.ts \
-      tests/e2e/platform-operations.spec.ts \
-      tests/e2e/project-isolation.spec.ts
+      "${browser_specs[@]}"
+}
 
+run_current_release_agent() {
+  local base_url="${1:?base URL is required}"
+  local admin_token runner_token
+  admin_token="$(read_platform_secret "${current_data}" adminBootstrapToken)"
+  runner_token="$(read_platform_secret "${current_data}" runnerBootstrapToken)"
   docker cp "${current_container}:/app/resources/agents/linux-amd64/autoforge-agent" \
     "${release_agent}"
   docker cp "${current_container}:/app/resources/agents/cotest-testng-adapter.jar" \
@@ -270,7 +303,12 @@ run_current_release_business() {
   E2E_RUNNER_BOOTSTRAP_TOKEN="${runner_token}" \
     bash "${repository_root}/scripts/quality/test-real-agent.sh"
   stop_agent_loopback_proxy
+}
 
+run_current_release_ldap() {
+  local base_url="${1:?base URL is required}"
+  local admin_token
+  admin_token="$(read_platform_secret "${current_data}" adminBootstrapToken)"
   E2E_LDAP_EXTERNAL_BASE_URL="${base_url}" \
   E2E_LDAP_EXTERNAL_NETWORK="${network_name}" \
   E2E_LDAP_SKIP_PULL=1 \
@@ -431,20 +469,67 @@ verify_upgrade_and_rollback() {
   stop_platform "${upgraded_container}"
 }
 
+prepare_current_platform() {
+  current_image="$(load_release_image "${current_version}" "${current_release_directory}")"
+  docker network create --internal "${network_name}" >/dev/null
+  initialize_current_acceptance_platform
+  current_base_url="$(start_platform "${current_container}" "${current_image}" "${current_data}")"
+  docker exec "${current_container}" node -e \
+    "fetch('https://example.com',{signal:AbortSignal.timeout(3000)}).then(()=>process.exit(1)).catch(()=>process.exit(0))"
+}
+
 cd "${repository_root}"
 require_tools
-verify_current_release
-verify_previous_release
-prepare_release_content
-current_image="$(load_release_image "${current_version}" "${current_release_directory}")"
-previous_image="$(load_release_image "${previous_version}" "${previous_release_directory}")"
-docker image inspect "${ldap_image}" >/dev/null
-docker network create --internal "${network_name}" >/dev/null
-initialize_current_acceptance_platform
-current_base_url="$(start_platform "${current_container}" "${current_image}" "${current_data}")"
-docker exec "${current_container}" node -e \
-  "fetch('https://example.com',{signal:AbortSignal.timeout(3000)}).then(()=>process.exit(1)).catch(()=>process.exit(0))"
-run_current_release_business "${current_base_url}"
-verify_backup_restore "${current_base_url}"
-verify_upgrade_and_rollback
-printf 'Signed Release assets passed offline install, real Agent, LDAP, backup, rollback and upgrade acceptance.\n'
+
+case "${acceptance_phase}" in
+  assets)
+    verify_current_release
+    verify_previous_release
+    prepare_release_content
+    ;;
+  business-assets)
+    prepare_current_platform
+    run_current_release_browser "${current_base_url}" assets
+    ;;
+  business-governance)
+    prepare_current_platform
+    run_current_release_browser "${current_base_url}" governance
+    ;;
+  real-agent)
+    prepare_current_platform
+    run_current_release_agent "${current_base_url}"
+    ;;
+  ldap)
+    docker image inspect "${ldap_image}" >/dev/null
+    prepare_current_platform
+    run_current_release_ldap "${current_base_url}"
+    ;;
+  backup-restore)
+    prepare_release_content
+    prepare_current_platform
+    verify_backup_restore "${current_base_url}"
+    ;;
+  upgrade-rollback)
+    prepare_release_content
+    current_image="$(load_release_image "${current_version}" "${current_release_directory}")"
+    previous_image="$(load_release_image "${previous_version}" "${previous_release_directory}")"
+    docker network create --internal "${network_name}" >/dev/null
+    verify_upgrade_and_rollback
+    ;;
+  all)
+    verify_current_release
+    verify_previous_release
+    prepare_release_content
+    previous_image="$(load_release_image "${previous_version}" "${previous_release_directory}")"
+    docker image inspect "${ldap_image}" >/dev/null
+    prepare_current_platform
+    run_current_release_browser "${current_base_url}" assets
+    run_current_release_browser "${current_base_url}" governance
+    run_current_release_agent "${current_base_url}"
+    run_current_release_ldap "${current_base_url}"
+    verify_backup_restore "${current_base_url}"
+    verify_upgrade_and_rollback
+    ;;
+esac
+
+printf 'Published Release acceptance phase passed: %s.\n' "${acceptance_phase}"

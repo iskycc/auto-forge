@@ -4,6 +4,23 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## Unreleased
+
+### Changed
+
+- GitHub Actions now partitions Full, network-blocked Lite, tagged-source quality and published
+  Release acceptance into independent state-isolated jobs. The longest browser and infrastructure
+  paths no longer serialize unrelated scenarios behind one 10-17 minute job.
+- Published-asset acceptance starts from the successful `Release` workflow completion instead of
+  spending several minutes polling for a Release that is still being built. A manual dispatch still
+  supports rechecking an existing immutable tag with the current acceptance harness.
+
+### Tests
+
+- Added workflow contract coverage that rejects reintroducing the unpartitioned Full and offline
+  commands and verifies the post-publication acceptance matrix retains asset, Agent, LDAP, backup,
+  rollback and upgrade coverage.
+
 ## 0.9.0 - 2026-08-20
 
 ### Changed
