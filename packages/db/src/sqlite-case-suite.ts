@@ -20,6 +20,11 @@ import { and, asc, count, desc, eq, inArray, sql } from "drizzle-orm";
 
 import type { SqliteDatabaseHandle } from "./database";
 import {
+  batchesOf,
+  RELATIONAL_ID_QUERY_BATCH_SIZE,
+  RELATIONAL_WRITE_BATCH_SIZE,
+} from "./database-batches";
+import {
   caseDefinitions,
   caseSuiteItems,
   caseSuites,
@@ -134,6 +139,28 @@ export class SqliteCaseSuiteRepository implements CaseSuiteRepository {
     return suiteRows.map((row) => toSuite(row, counts.get(row.id) ?? 0));
   }
 
+  async getSummary(suiteId: string, projectIds?: readonly string[]): Promise<CaseSuite | null> {
+    if (projectIds?.length === 0) return null;
+    const row = this.handle.db
+      .select()
+      .from(caseSuites)
+      .where(
+        and(
+          eq(caseSuites.id, suiteId),
+          ...(projectIds ? [inArray(caseSuites.projectId, [...projectIds])] : []),
+        ),
+      )
+      .get();
+    if (!row) return null;
+    const caseCount =
+      this.handle.db
+        .select({ value: count() })
+        .from(caseSuiteItems)
+        .where(eq(caseSuiteItems.suiteId, suiteId))
+        .get()?.value ?? 0;
+    return toSuite(row, caseCount);
+  }
+
   async get(suiteId: string, projectIds?: readonly string[]): Promise<CaseSuiteDetails | null> {
     if (projectIds?.length === 0) return null;
     const suiteRow = this.handle.db
@@ -155,22 +182,16 @@ export class SqliteCaseSuiteRepository implements CaseSuiteRepository {
       .orderBy(asc(caseSuiteItems.addedAt), asc(caseSuiteItems.id))
       .all();
     const definitionIds = itemRows.map((row) => row.caseDefinitionId);
-    const definitionRows =
-      definitionIds.length === 0
-        ? []
-        : this.handle.db
-            .select()
-            .from(caseDefinitions)
-            .where(inArray(caseDefinitions.id, definitionIds))
-            .all();
-    const methodRows =
-      definitionIds.length === 0
-        ? []
-        : this.handle.db
-            .select()
-            .from(testMethods)
-            .where(inArray(testMethods.caseDefinitionId, definitionIds))
-            .all();
+    const definitionRows = batchesOf(definitionIds, RELATIONAL_ID_QUERY_BATCH_SIZE).flatMap((ids) =>
+      this.handle.db.select().from(caseDefinitions).where(inArray(caseDefinitions.id, ids)).all(),
+    );
+    const methodRows = batchesOf(definitionIds, RELATIONAL_ID_QUERY_BATCH_SIZE).flatMap((ids) =>
+      this.handle.db
+        .select()
+        .from(testMethods)
+        .where(inArray(testMethods.caseDefinitionId, ids))
+        .all(),
+    );
     const methods = new Map<string, TestMethod[]>();
     for (const row of methodRows) {
       const values = methods.get(row.caseDefinitionId) ?? [];
@@ -223,7 +244,7 @@ export class SqliteCaseSuiteRepository implements CaseSuiteRepository {
     versionId: string;
     actorId?: string;
     updatedAt: string;
-  }): Promise<CaseSuiteDetails> {
+  }): Promise<CaseSuite> {
     this.handle.client.transaction(() => {
       let added = 0;
       for (const item of input.items) {
@@ -253,7 +274,7 @@ export class SqliteCaseSuiteRepository implements CaseSuiteRepository {
         this.insertVersionSnapshot(input.suiteId, input.versionId, "suite.cases.add", input);
       }
     })();
-    const suite = await this.get(input.suiteId);
+    const suite = await this.getSummary(input.suiteId);
     if (!suite) throw new Error(`Case suite ${input.suiteId} does not exist.`);
     return suite;
   }
@@ -264,18 +285,21 @@ export class SqliteCaseSuiteRepository implements CaseSuiteRepository {
     versionId: string;
     actorId?: string;
     updatedAt: string;
-  }): Promise<CaseSuiteDetails> {
+  }): Promise<CaseSuite> {
     this.handle.client.transaction(() => {
-      const result = this.handle.db
-        .delete(caseSuiteItems)
-        .where(
-          and(
-            eq(caseSuiteItems.suiteId, input.suiteId),
-            inArray(caseSuiteItems.caseDefinitionId, input.caseDefinitionIds),
-          ),
-        )
-        .run();
-      if (result.changes > 0) {
+      let removed = 0;
+      for (const ids of batchesOf(input.caseDefinitionIds, RELATIONAL_WRITE_BATCH_SIZE)) {
+        removed += this.handle.db
+          .delete(caseSuiteItems)
+          .where(
+            and(
+              eq(caseSuiteItems.suiteId, input.suiteId),
+              inArray(caseSuiteItems.caseDefinitionId, ids),
+            ),
+          )
+          .run().changes;
+      }
+      if (removed > 0) {
         this.handle.db
           .update(caseSuites)
           .set({
@@ -294,12 +318,12 @@ export class SqliteCaseSuiteRepository implements CaseSuiteRepository {
         );
       }
     })();
-    const suite = await this.get(input.suiteId);
+    const suite = await this.getSummary(input.suiteId);
     if (!suite) throw new Error(`Case suite ${input.suiteId} does not exist.`);
     return suite;
   }
 
-  async updateSuite(input: UpdateCaseSuiteRecord): Promise<CaseSuiteDetails> {
+  async updateSuite(input: UpdateCaseSuiteRecord): Promise<CaseSuite> {
     this.handle.client.transaction(() => {
       const patch: Record<string, unknown> = {
         version: sql`${caseSuites.version} + 1`,
@@ -322,12 +346,12 @@ export class SqliteCaseSuiteRepository implements CaseSuiteRepository {
       if (result.changes !== 1) throwCaseSuiteConflict(this.handle, input.suiteId);
       this.insertVersionSnapshot(input.suiteId, input.versionId, input.changeReason, input);
     })();
-    const suite = await this.get(input.suiteId);
+    const suite = await this.getSummary(input.suiteId);
     if (!suite) throw new Error(`Case suite ${input.suiteId} does not exist.`);
     return suite;
   }
 
-  async copySuite(input: CopyCaseSuiteRecord): Promise<CaseSuiteDetails> {
+  async copySuite(input: CopyCaseSuiteRecord): Promise<CaseSuite> {
     this.handle.client.transaction(() => {
       this.handle.db
         .insert(caseSuites)
@@ -362,7 +386,7 @@ export class SqliteCaseSuiteRepository implements CaseSuiteRepository {
         updatedAt: input.createdAt,
       });
     })();
-    const suite = await this.get(input.id);
+    const suite = await this.getSummary(input.id);
     if (!suite) throw new Error(`Case suite ${input.id} does not exist after copy.`);
     return suite;
   }

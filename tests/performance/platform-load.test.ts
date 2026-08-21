@@ -8,7 +8,9 @@ import { scheduleExecutionRuns, type ExecutionRun, type Runner } from "@autoforg
 import {
   createAttemptLogStore,
   createSqliteDatabase,
+  SqliteCaseSuiteRepository,
   SqliteExecutionControlRepository,
+  SqliteRunBatchRepository,
 } from "@autoforge/db/sqlite";
 import { SqliteJobQueue } from "@autoforge/queue/sqlite";
 import { TestNgJarDiscovery } from "@autoforge/testng-discovery";
@@ -54,9 +56,9 @@ describe("bounded platform performance baseline", () => {
     });
   });
 
-  it("schedules 10,000 runs across 50 Runners without overselling 1,000 slots", () => {
+  it("schedules the bounded window of a 100,000-run task without overselling 1,000 slots", () => {
     const runners = Array.from({ length: 50 }, (_, index) => runnerFixture(index));
-    const runs = Array.from({ length: 10_000 }, (_, index) => runFixture(index));
+    const runs = Array.from({ length: 4_096 }, (_, index) => runFixture(index));
     const startedAt = performance.now();
     const plan = scheduleExecutionRuns({
       runs,
@@ -78,11 +80,95 @@ describe("bounded platform performance baseline", () => {
     }
 
     expect(plan.decisions).toHaveLength(1_000);
-    expect(plan.unassignedRunIds).toHaveLength(9_000);
+    expect(plan.unassignedRunIds).toHaveLength(3_096);
     expect(Math.max(...assignmentsByRunner.values())).toBe(20);
     expect(Math.min(...assignmentsByRunner.values())).toBe(20);
-    expect(durationMs).toBeLessThan(10_000);
-    recordMetric("scheduler", durationMs, { runners: 50, runs: 10_000, slots: 1_000 });
+    expect(durationMs).toBeLessThan(2_000);
+    recordMetric("scheduler", durationMs, {
+      taskRuns: 100_000,
+      windowRuns: 4_096,
+      runners: 50,
+      slots: 1_000,
+    });
+  });
+
+  it("persists 100,000 execution runs and reads a bounded scheduling window", async () => {
+    const directory = await temporaryDirectory("autoforge-run-batch-load-");
+    const handle = createSqliteDatabase({
+      databasePath: resolve(directory, "runs.sqlite"),
+      migrationsFolder: resolve(import.meta.dirname, "../../packages/db/drizzle/sqlite"),
+    });
+    const repository = new SqliteRunBatchRepository(handle);
+    const startedAt = performance.now();
+    try {
+      const batch = await repository.create({
+        id: "batch-100k",
+        projectId: "project-load",
+        suiteId: "suite-100k",
+        suiteName: "100k capacity",
+        suiteVersion: 1,
+        retryLimit: 0,
+        environmentVariables: [],
+        runnerIds: [],
+        runs: Array.from({ length: 100_000 }, (_, index) => ({
+          id: `run-${index.toString().padStart(6, "0")}`,
+          caseDefinitionId: `case-${index.toString().padStart(6, "0")}`,
+          caseVersion: 1,
+          displayName: `Case ${index}`,
+          className: `load.fixture.Test${index}`,
+        })),
+        createdAt: baselineTimestamp,
+      });
+      const snapshot = await repository.getSchedulingSnapshot(batch.id, "2026-08-10T23:59:00.000Z");
+      const durationMs = performance.now() - startedAt;
+
+      expect(batch).toMatchObject({ totalRuns: 100_000, queuedRuns: 100_000 });
+      expect(snapshot?.queuedRuns).toHaveLength(4_096);
+      expect(snapshot?.batch).toMatchObject({ totalRuns: 100_000, queuedRuns: 100_000 });
+      expect(durationMs).toBeLessThan(60_000);
+      recordMetric("sqlite-run-batch", durationMs, {
+        runs: 100_000,
+        schedulingWindow: snapshot?.queuedRuns.length ?? 0,
+      });
+    } finally {
+      handle.close();
+    }
+  });
+
+  it("persists 100,000 cases in one task without a product-level item cap", async () => {
+    const directory = await temporaryDirectory("autoforge-case-suite-load-");
+    const handle = createSqliteDatabase({
+      databasePath: resolve(directory, "suite.sqlite"),
+      migrationsFolder: resolve(import.meta.dirname, "../../packages/db/drizzle/sqlite"),
+    });
+    const repository = new SqliteCaseSuiteRepository(handle);
+    handle.client.pragma("foreign_keys = OFF");
+    const startedAt = performance.now();
+    try {
+      await repository.create({
+        id: "suite-100k",
+        projectId: "project-load",
+        name: "100k capacity",
+        createdAt: baselineTimestamp,
+      });
+      const suite = await repository.addCases({
+        suiteId: "suite-100k",
+        items: Array.from({ length: 100_000 }, (_, index) => ({
+          id: `item-${index.toString().padStart(6, "0")}`,
+          caseDefinitionId: `case-${index.toString().padStart(6, "0")}`,
+        })),
+        versionId: "suite-version-2",
+        updatedAt: baselineTimestamp,
+      });
+      const durationMs = performance.now() - startedAt;
+
+      expect(suite).toMatchObject({ caseCount: 100_000, version: 2, revision: 2 });
+      expect(durationMs).toBeLessThan(60_000);
+      recordMetric("sqlite-case-suite", durationMs, { cases: suite.caseCount });
+    } finally {
+      handle.client.pragma("foreign_keys = ON");
+      handle.close();
+    }
   });
 
   it("drains a 10,000-job SQLite backlog across competing worker connections", async () => {

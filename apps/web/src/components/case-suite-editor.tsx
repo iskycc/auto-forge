@@ -3,7 +3,13 @@
 import { Button, Input, Select, Textarea } from "@/components/ui";
 
 import { apiErrorSchema, type CaseSuiteSchedule } from "@autoforge/contracts";
-import type { CaseSuiteDetails, ProjectVersion, Runner, RunnerGroup } from "@autoforge/domain";
+import type {
+  CaseSuite,
+  CaseSuiteDetails,
+  ProjectVersion,
+  Runner,
+  RunnerGroup,
+} from "@autoforge/domain";
 import { CalendarClock, Copy, LoaderCircle, Save, Server, Trash2, UsersRound } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { FormEvent, useState } from "react";
@@ -127,7 +133,7 @@ export function CaseSuiteEditor({
           parsed.success ? parsed.data.error.message : `请求失败（HTTP ${response.status}）。`,
         );
       }
-      const created = (await response.json()) as CaseSuiteDetails;
+      const created = (await response.json()) as CaseSuite;
       router.push(`/case-suites/${encodeURIComponent(created.id)}`);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "复制用例任务失败。");

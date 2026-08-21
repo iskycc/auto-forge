@@ -1,5 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import { zipSync } from "fflate";
+import { mkdir } from "node:fs/promises";
+import { resolve } from "node:path";
 
 import { buildClassFile } from "../../packages/testng-discovery/test/class-fixture";
 import {
@@ -10,6 +12,14 @@ import {
 } from "./support/session";
 import { freshRunnerBootstrapToken } from "./support/runner-bootstrap";
 import { selectJarForInspection } from "./support/jar-import";
+
+async function captureUi(page: Page, name: string): Promise<void> {
+  const screenshotDirectory = process.env.AUTOFORGE_UI_SCREENSHOT_DIR;
+  if (!screenshotDirectory) return;
+  const absoluteDirectory = resolve(screenshotDirectory);
+  await mkdir(absoluteDirectory, { recursive: true });
+  await page.screenshot({ path: resolve(absoluteDirectory, `${name}.png`), fullPage: false });
+}
 
 test("case metadata, immutable versions and suite policy survive lifecycle changes", async ({
   page,
@@ -164,6 +174,12 @@ test("case metadata, immutable versions and suite policy survive lifecycle chang
   await expect(caseTree).toBeVisible();
   await caseTree.getByLabel(/^选择包 /u).check();
   await expect(page.getByRole("button", { name: "批量移除（2）" })).toBeVisible();
+  await caseTree.scrollIntoViewIfNeeded();
+  await captureUi(page, "case-suite-folder-selected-1536");
+  await page.setViewportSize({ width: 1024, height: 768 });
+  await caseTree.scrollIntoViewIfNeeded();
+  await captureUi(page, "case-suite-folder-selected-1024");
+  await page.setViewportSize({ width: 1536, height: 1024 });
   page.once("dialog", (dialog) => dialog.accept());
   await page.getByRole("button", { name: "批量移除（2）" }).click();
   await expect(page.getByText("任务中还没有用例")).toBeVisible();

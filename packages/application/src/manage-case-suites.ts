@@ -45,13 +45,19 @@ export class CaseSuiteService {
     return suite;
   }
 
+  private async getSummary(suiteId: string, projectIds?: readonly string[]) {
+    const suite = await this.suites.getSummary(suiteId, projectIds);
+    if (!suite) throw new DomainError("CASE_SUITE_NOT_FOUND", "指定的用例任务不存在。");
+    return suite;
+  }
+
   async update(
     suiteId: string,
     input: UpdateCaseSuiteInput,
     actorId?: string,
     projectIds?: readonly string[],
   ) {
-    const suite = await this.get(suiteId, projectIds);
+    const suite = await this.getSummary(suiteId, projectIds);
     if (input.expectedRevision !== suite.revision) {
       throw new DomainError("CASE_SUITE_REVISION_CONFLICT", "用例任务已被他人修改，请刷新后重试。");
     }
@@ -108,20 +114,15 @@ export class CaseSuiteService {
     actorId?: string,
     projectIds?: readonly string[],
   ) {
-    const suite = await this.get(suiteId, projectIds);
+    const suite = await this.getSummary(suiteId, projectIds);
     const uniqueIds = [...new Set(requestedIds)];
     const existingIds = await this.catalog.findExistingCaseIds(uniqueIds, suite.projectId);
     if (existingIds.length !== uniqueIds.length) {
       throw new DomainError("CASE_DEFINITION_NOT_FOUND", "选择中包含不存在的用例。");
     }
-    const currentIds = new Set(suite.items.map((item) => item.caseDefinition.id));
-    const additions = existingIds.filter((id) => !currentIds.has(id));
-    if (suite.items.length + additions.length > 500) {
-      throw new DomainError("CASE_SUITE_CAPACITY_EXCEEDED", "单个用例任务最多包含 500 个用例。");
-    }
     return this.suites.addCases({
       suiteId,
-      items: additions.map((caseDefinitionId) => ({
+      items: existingIds.map((caseDefinitionId) => ({
         id: this.ids.next(),
         caseDefinitionId,
       })),
@@ -146,10 +147,10 @@ export class CaseSuiteService {
     actorId?: string,
     projectIds?: readonly string[],
   ) {
-    await this.get(suiteId, projectIds);
+    await this.getSummary(suiteId, projectIds);
     const uniqueIds = [...new Set(caseDefinitionIds)];
-    if (uniqueIds.length === 0 || uniqueIds.length > 500) {
-      throw new DomainError("CASE_SUITE_SELECTION_INVALID", "请选择 1 到 500 个待移除用例。");
+    if (uniqueIds.length === 0) {
+      throw new DomainError("CASE_SUITE_SELECTION_INVALID", "请至少选择一个待移除用例。");
     }
     return this.suites.removeCases({
       suiteId,

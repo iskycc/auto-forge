@@ -106,6 +106,38 @@ describe("case suite update and copy", () => {
       updatedAt: timestamp,
     });
   });
+
+  it("does not impose the retired 500-case task capacity", async () => {
+    const suites = suiteRepositoryFake();
+    const existingItems = Array.from({ length: 500 }, (_, index) => ({
+      id: `item-${index}`,
+      suiteId: "suite-1",
+      addedAt: timestamp,
+      caseDefinition: { id: `case-${index}` },
+    }));
+    suites.getSummary.mockResolvedValueOnce({
+      ...(await suites.getSummary("suite-1")),
+      caseCount: existingItems.length,
+    });
+    const catalog = {
+      findExistingCaseIds: vi.fn().mockResolvedValue(["case-500"]),
+    } as unknown as CaseCatalogRepository;
+    const service = new CaseSuiteService(
+      suites,
+      catalog,
+      { now: () => new Date(timestamp) },
+      { next: () => "generated-id" },
+    );
+
+    await service.addCases("suite-1", ["case-500"], "user-1");
+
+    expect(suites.addCases).toHaveBeenCalledWith(
+      expect.objectContaining({
+        suiteId: "suite-1",
+        items: [{ id: "generated-id", caseDefinitionId: "case-500" }],
+      }),
+    );
+  });
 });
 
 function suiteRepositoryFake() {
@@ -137,12 +169,16 @@ function suiteRepositoryFake() {
   };
   return {
     get: vi.fn().mockResolvedValue(suite),
+    getSummary: vi.fn().mockResolvedValue(suite),
     updateSuite: vi.fn().mockResolvedValue(suite),
     copySuite: vi.fn().mockResolvedValue(suite),
+    addCases: vi.fn().mockResolvedValue(suite),
     removeCases: vi.fn().mockResolvedValue(suite),
   } as unknown as CaseSuiteRepository & {
+    getSummary: ReturnType<typeof vi.fn>;
     updateSuite: ReturnType<typeof vi.fn>;
     copySuite: ReturnType<typeof vi.fn>;
+    addCases: ReturnType<typeof vi.fn>;
     removeCases: ReturnType<typeof vi.fn>;
   };
 }

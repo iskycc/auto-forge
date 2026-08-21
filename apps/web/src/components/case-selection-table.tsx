@@ -3,7 +3,7 @@
 import { Button, Input, Select } from "@/components/ui";
 import { formatMethodSignature } from "@/lib/jvm-signature";
 
-import { apiErrorSchema } from "@autoforge/contracts";
+import { apiErrorSchema, CASE_SUITE_ITEM_MUTATION_LIMIT } from "@autoforge/contracts";
 import type { CaseDefinitionWithMethods, CaseSuite, CaseVersion } from "@autoforge/domain";
 import { AlertCircle, Check, FileCode2, Folder, Layers3, LoaderCircle, Search } from "lucide-react";
 import Link from "next/link";
@@ -22,6 +22,11 @@ import {
   type CaseOutcomeFilter,
 } from "@/lib/case-selection-stats";
 import { classifyAttemptResult } from "@autoforge/domain";
+import {
+  collectSelectableDirectoryCaseIds,
+  selectionState,
+  toggledSelection,
+} from "@/lib/case-directory-selection";
 
 type CaseActivity = {
   executions: Array<{
@@ -62,7 +67,7 @@ type CaseWorkspaceDetail = {
   sourceViewError?: string;
 };
 
-const CASE_SUITE_UPDATE_BATCH_SIZE = 500;
+const TREE_RENDER_PAGE_SIZE = 250;
 
 export function CaseSelectionTable({
   cases,
@@ -174,12 +179,12 @@ export function CaseSelectionTable({
   }
 
   function toggle(id: string): void {
-    setCheckedCaseIds((current) => {
-      const next = new Set(current);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
+    setCheckedCaseIds((current) => toggledSelection(current, [id]));
+    setMessage(null);
+  }
+
+  function toggleDirectory(ids: readonly string[]): void {
+    setCheckedCaseIds((current) => toggledSelection(current, ids));
     setMessage(null);
   }
 
@@ -190,7 +195,7 @@ export function CaseSelectionTable({
     setMessage(null);
     try {
       let addedCount = 0;
-      for (const caseDefinitionIds of batchesOf(selectedCaseIds, CASE_SUITE_UPDATE_BATCH_SIZE)) {
+      for (const caseDefinitionIds of batchesOf(selectedCaseIds, CASE_SUITE_ITEM_MUTATION_LIMIT)) {
         const response = await fetch(
           `/api/v1/case-suites/${encodeURIComponent(effectiveSuiteId)}/cases`,
           {
@@ -358,6 +363,7 @@ export function CaseSelectionTable({
                 node={buildDirectoryTree(visibleCases)}
                 onActivate={setActiveCaseId}
                 onToggle={toggle}
+                onToggleDirectory={toggleDirectory}
                 selected={checkedCaseIds}
                 root
               />
@@ -646,7 +652,9 @@ function computeDefaultExpansion(
   parentIsSingleDirectoryChain = false,
 ): void {
   for (const directory of node.directories) {
-    const shouldOpen = depth === 0 || parentIsSingleDirectoryChain;
+    const shouldOpen =
+      (depth === 0 || parentIsSingleDirectoryChain) &&
+      countCases(directory) <= TREE_RENDER_PAGE_SIZE;
     directory.defaultOpen = shouldOpen;
     const continuesChain =
       shouldOpen && directory.directories.length === 1 && directory.cases.length === 0;
@@ -661,6 +669,7 @@ function DirectoryNode({
   forceOpen,
   canManageProject,
   onToggle,
+  onToggleDirectory,
   onActivate,
   latestOutcomes,
   root = false,
@@ -671,13 +680,21 @@ function DirectoryNode({
   forceOpen: boolean;
   canManageProject(projectId: string): boolean;
   onToggle(id: string): void;
+  onToggleDirectory(ids: readonly string[]): void;
   onActivate(id: string): void;
   latestOutcomes: ReadonlyMap<string, CaseLatestRun>;
   root?: boolean;
 }) {
+  const [open, setOpen] = useState(root || forceOpen || Boolean(node.defaultOpen));
+  const [visibleDirectoryCount, setVisibleDirectoryCount] = useState(TREE_RENDER_PAGE_SIZE);
+  const [visibleCaseCount, setVisibleCaseCount] = useState(TREE_RENDER_PAGE_SIZE);
+
+  const visibleDirectories = node.directories.slice(0, visibleDirectoryCount);
+  const visibleNodeCases = node.cases.slice(0, visibleCaseCount);
+  const renderedOpen = root || forceOpen || open;
   const content = (
     <div className="case-tree-children">
-      {node.directories.map((directory) => (
+      {visibleDirectories.map((directory) => (
         <DirectoryNode
           activeCaseId={activeCaseId}
           canManageProject={canManageProject}
@@ -687,10 +704,20 @@ function DirectoryNode({
           node={directory}
           onActivate={onActivate}
           onToggle={onToggle}
+          onToggleDirectory={onToggleDirectory}
           selected={selected}
         />
       ))}
-      {node.cases.map((item) => {
+      {node.directories.length > visibleDirectoryCount ? (
+        <Button
+          onClick={() => setVisibleDirectoryCount((count) => count + TREE_RENDER_PAGE_SIZE)}
+          type="button"
+          variant="ghost"
+        >
+          加载更多目录（剩余 {node.directories.length - visibleDirectoryCount}）
+        </Button>
+      ) : null}
+      {visibleNodeCases.map((item) => {
         const latestRun = latestOutcomes.get(item.id);
         const outcomeLabel = latestRunBadge(latestRun);
         return (
@@ -730,22 +757,45 @@ function DirectoryNode({
           </div>
         );
       })}
+      {node.cases.length > visibleCaseCount ? (
+        <Button
+          onClick={() => setVisibleCaseCount((count) => count + TREE_RENDER_PAGE_SIZE)}
+          type="button"
+          variant="ghost"
+        >
+          加载更多用例（剩余 {node.cases.length - visibleCaseCount}）
+        </Button>
+      ) : null}
     </div>
   );
   if (root) return content;
+  const selectableIds = collectSelectableDirectoryCaseIds(node, canManageProject);
+  const directorySelection = selectionState(selected, selectableIds);
   return (
     <details
       aria-selected={false}
       className="case-tree-directory"
-      open={forceOpen || node.defaultOpen ? true : undefined}
+      onToggle={(event) => setOpen(event.currentTarget.open)}
+      open={renderedOpen}
       role="treeitem"
     >
       <summary>
+        <Input
+          aria-label={`选择文件夹 ${node.path}（${selectableIds.length} 个用例）`}
+          checked={directorySelection === "checked"}
+          disabled={selectableIds.length === 0}
+          onChange={() => onToggleDirectory(selectableIds)}
+          onClick={(event) => event.stopPropagation()}
+          ref={(input) => {
+            if (input) input.indeterminate = directorySelection === "mixed";
+          }}
+          type="checkbox"
+        />
         <Folder size={17} aria-hidden="true" />
         <strong>{node.name}</strong>
         <span>{countCases(node)} 个用例</span>
       </summary>
-      {content}
+      {renderedOpen ? content : null}
     </details>
   );
 }

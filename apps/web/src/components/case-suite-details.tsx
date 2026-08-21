@@ -3,9 +3,11 @@
 import { Button, Input } from "@/components/ui";
 
 import { apiErrorSchema } from "@autoforge/contracts";
-import type { CaseSuiteDetails, CaseSuiteItem } from "@autoforge/domain";
+import type { CaseSuite, CaseSuiteDetails, CaseSuiteItem } from "@autoforge/domain";
 import { ChevronRight, FolderTree, LoaderCircle, Search, Trash2 } from "lucide-react";
 import { useMemo, useState } from "react";
+
+const SUITE_TREE_RENDER_PAGE_SIZE = 250;
 
 export function CaseSuiteDetailsView({
   canManage,
@@ -19,6 +21,7 @@ export function CaseSuiteDetailsView({
   const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(new Set());
   const [removing, setRemoving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [visibleGroupCount, setVisibleGroupCount] = useState(SUITE_TREE_RENDER_PAGE_SIZE);
   const visibleItems = useMemo(() => filterItems(suite.items, query), [query, suite.items]);
   const groups = useMemo(() => packageGroups(visibleItems), [visibleItems]);
 
@@ -48,7 +51,13 @@ export function CaseSuiteDetailsView({
           parsed.success ? parsed.data.error.message : `请求失败（HTTP ${response.status}）。`,
         );
       }
-      setSuite((await response.json()) as CaseSuiteDetails);
+      const summary = (await response.json()) as CaseSuite;
+      const removedIds = new Set(caseDefinitionIds);
+      setSuite((current) => ({
+        ...current,
+        ...summary,
+        items: current.items.filter((item) => !removedIds.has(item.caseDefinition.id)),
+      }));
       setSelectedIds(new Set());
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "移除用例失败。");
@@ -86,7 +95,10 @@ export function CaseSuiteDetailsView({
               <Search aria-hidden="true" size={16} />
               <Input
                 aria-label="搜索任务用例"
-                onChange={(event) => setQuery(event.target.value)}
+                onChange={(event) => {
+                  setQuery(event.target.value);
+                  setVisibleGroupCount(SUITE_TREE_RENDER_PAGE_SIZE);
+                }}
                 placeholder="搜索用例名称、类名或包路径"
                 type="search"
                 value={query}
@@ -121,74 +133,131 @@ export function CaseSuiteDetailsView({
             <div className="inline-empty">没有匹配的任务用例。</div>
           ) : (
             <div aria-label="任务用例树" className="suite-case-tree" role="tree">
-              {groups.map(([packageName, items]) => {
-                const selectedCount = items.filter((item) =>
-                  selectedIds.has(item.caseDefinition.id),
-                ).length;
-                return (
-                  <details
-                    aria-selected={selectedCount === items.length}
-                    key={packageName}
-                    open
-                    role="treeitem"
-                  >
-                    <summary>
-                      <ChevronRight aria-hidden="true" size={15} />
-                      {canManage ? (
-                        <Input
-                          aria-label={`选择包 ${packageName}`}
-                          checked={selectedCount === items.length}
-                          onChange={() => toggleGroup(items)}
-                          onClick={(event) => event.stopPropagation()}
-                          type="checkbox"
-                        />
-                      ) : null}
-                      <span className="suite-tree-folder">{packageName}</span>
-                      <small>{items.length} 个用例</small>
-                    </summary>
-                    <div className="suite-tree-children" role="group">
-                      {items.map((item) => (
-                        <div
-                          aria-selected={selectedIds.has(item.caseDefinition.id)}
-                          className="suite-tree-case"
-                          key={item.id}
-                          role="treeitem"
-                        >
-                          {canManage ? (
-                            <Input
-                              aria-label={`选择 ${item.caseDefinition.displayName}`}
-                              checked={selectedIds.has(item.caseDefinition.id)}
-                              onChange={() => toggleCase(item.caseDefinition.id)}
-                              type="checkbox"
-                            />
-                          ) : null}
-                          <span>
-                            <strong>{item.caseDefinition.displayName}</strong>
-                            <code>{item.caseDefinition.className}</code>
-                          </span>
-                          <small>{item.caseDefinition.methods.length} 个方法</small>
-                          {canManage ? (
-                            <Button
-                              aria-label={`移除 ${item.caseDefinition.displayName}`}
-                              className="button button-danger-quiet"
-                              disabled={removing}
-                              onClick={() => void removeCases([item.caseDefinition.id])}
-                              type="button"
-                            >
-                              <Trash2 size={14} />
-                            </Button>
-                          ) : null}
-                        </div>
-                      ))}
-                    </div>
-                  </details>
-                );
-              })}
+              {groups.slice(0, visibleGroupCount).map(([packageName, items]) => (
+                <SuitePackageGroup
+                  canManage={canManage}
+                  items={items}
+                  key={packageName}
+                  onRemoveCases={removeCases}
+                  onToggleCase={toggleCase}
+                  onToggleGroup={toggleGroup}
+                  packageName={packageName}
+                  removing={removing}
+                  selectedIds={selectedIds}
+                />
+              ))}
+              {groups.length > visibleGroupCount ? (
+                <Button
+                  onClick={() =>
+                    setVisibleGroupCount((count) => count + SUITE_TREE_RENDER_PAGE_SIZE)
+                  }
+                  type="button"
+                  variant="ghost"
+                >
+                  加载更多目录（剩余 {groups.length - visibleGroupCount}）
+                </Button>
+              ) : null}
             </div>
           )}
         </>
       )}
     </section>
+  );
+}
+
+function SuitePackageGroup({
+  canManage,
+  items,
+  onRemoveCases,
+  onToggleCase,
+  onToggleGroup,
+  packageName,
+  removing,
+  selectedIds,
+}: {
+  canManage: boolean;
+  items: CaseSuiteItem[];
+  onRemoveCases(caseDefinitionIds: string[]): Promise<void>;
+  onToggleCase(caseDefinitionId: string): void;
+  onToggleGroup(items: CaseSuiteItem[]): void;
+  packageName: string;
+  removing: boolean;
+  selectedIds: ReadonlySet<string>;
+}) {
+  const [open, setOpen] = useState(items.length <= SUITE_TREE_RENDER_PAGE_SIZE);
+  const [visibleCount, setVisibleCount] = useState(SUITE_TREE_RENDER_PAGE_SIZE);
+  const selectedCount = items.filter((item) => selectedIds.has(item.caseDefinition.id)).length;
+  return (
+    <details
+      aria-selected={selectedCount === items.length}
+      onToggle={(event) => setOpen(event.currentTarget.open)}
+      open={open}
+      role="treeitem"
+    >
+      <summary>
+        <ChevronRight aria-hidden="true" size={15} />
+        {canManage ? (
+          <Input
+            aria-label={`选择包 ${packageName}`}
+            checked={selectedCount === items.length}
+            onChange={() => onToggleGroup(items)}
+            onClick={(event) => event.stopPropagation()}
+            ref={(input) => {
+              if (input) input.indeterminate = selectedCount > 0 && selectedCount < items.length;
+            }}
+            type="checkbox"
+          />
+        ) : null}
+        <span className="suite-tree-folder">{packageName}</span>
+        <small>{items.length} 个用例</small>
+      </summary>
+      {open ? (
+        <div className="suite-tree-children" role="group">
+          {items.slice(0, visibleCount).map((item) => (
+            <div
+              aria-selected={selectedIds.has(item.caseDefinition.id)}
+              className="suite-tree-case"
+              key={item.id}
+              role="treeitem"
+            >
+              {canManage ? (
+                <Input
+                  aria-label={`选择 ${item.caseDefinition.displayName}`}
+                  checked={selectedIds.has(item.caseDefinition.id)}
+                  onChange={() => onToggleCase(item.caseDefinition.id)}
+                  type="checkbox"
+                />
+              ) : null}
+              <span>
+                <strong>{item.caseDefinition.displayName}</strong>
+                <code>{item.caseDefinition.className}</code>
+              </span>
+              <small>{item.caseDefinition.methods.length} 个方法</small>
+              {canManage ? (
+                <Button
+                  aria-label={`移除 ${item.caseDefinition.displayName}`}
+                  className="button button-danger-quiet"
+                  disabled={removing}
+                  onClick={() => void onRemoveCases([item.caseDefinition.id])}
+                  type="button"
+                >
+                  <Trash2 size={14} />
+                </Button>
+              ) : null}
+            </div>
+          ))}
+          {items.length > visibleCount ? (
+            <Button
+              onClick={() => setVisibleCount((count) => count + SUITE_TREE_RENDER_PAGE_SIZE)}
+              type="button"
+              variant="ghost"
+            >
+              加载更多用例（剩余 {items.length - visibleCount}）
+            </Button>
+          ) : null}
+        </div>
+      ) : null}
+    </details>
   );
 }
 
@@ -206,7 +275,9 @@ function packageGroups(items: CaseSuiteItem[]): Array<[string, CaseSuiteItem[]]>
   const groups = new Map<string, CaseSuiteItem[]>();
   for (const item of items) {
     const packageName = item.caseDefinition.packageName || "默认包";
-    groups.set(packageName, [...(groups.get(packageName) ?? []), item]);
+    const entries = groups.get(packageName);
+    if (entries) entries.push(item);
+    else groups.set(packageName, [item]);
   }
   return [...groups.entries()]
     .map(

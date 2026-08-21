@@ -37,8 +37,12 @@ export const createCaseSuiteInputSchema = z.object({
   adapter: caseSuiteAdapterConfigurationSchema.optional(),
 });
 
+// 这是单次 HTTP 变更的安全边界，不是任务容量上限。任务可通过多次变更继续增长；
+// 一次允许 10 万项，确保整棵大型目录能够原子加入或移除。
+export const CASE_SUITE_ITEM_MUTATION_LIMIT = 100_000;
+
 export const updateCaseSuiteItemsInputSchema = z.object({
-  caseDefinitionIds: z.array(z.string().min(1)).min(1).max(500),
+  caseDefinitionIds: z.array(z.string().min(1).max(128)).min(1).max(CASE_SUITE_ITEM_MUTATION_LIMIT),
 });
 
 // 产物 glob 在控制面侧先做有界校验：拒绝绝对路径与 .. 段，Agent 侧仍会再次收紧。

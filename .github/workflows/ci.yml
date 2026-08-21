@@ -101,7 +101,7 @@ jobs:
           - scenario: assets
             specs: tests/e2e/case-suite-lifecycle.spec.ts tests/e2e/jar-import.spec.ts tests/e2e/project-isolation.spec.ts
             project_maximum_concurrency: ""
-            screenshots: false
+            screenshots: true
           - scenario: execution
             specs: tests/e2e/execution-recovery.spec.ts tests/e2e/single-case-run.spec.ts
             project_maximum_concurrency: "1"
@@ -146,7 +146,7 @@ jobs:
         if: always() && matrix.screenshots
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: ui-layout-screenshots-${{ github.sha }}
+          name: ui-layout-screenshots-${{ matrix.scenario }}-${{ github.sha }}
           path: ${{ runner.temp }}/autoforge-ui-screenshots
           if-no-files-found: warn
           retention-days: 7

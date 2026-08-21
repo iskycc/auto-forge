@@ -7,6 +7,7 @@ import {
   runnerHeartbeatResultSchema,
   updateRunnerAgentInputSchema,
   caseSuiteExecutionPolicySchema,
+  updateCaseSuiteItemsInputSchema,
 } from "../src/management";
 
 const connection = {
@@ -19,6 +20,22 @@ const connection = {
 describe("case suite execution policy", () => {
   it("rejects the retired task parameter template", () => {
     expect(() => caseSuiteExecutionPolicySchema.parse({ parameters: { REGION: "cn" } })).toThrow();
+  });
+});
+
+describe("case suite item mutation contracts", () => {
+  it("accepts one atomic 100,000-case task mutation", () => {
+    const caseDefinitionIds = Array.from({ length: 100_000 }, (_, index) => `case-${index}`);
+
+    expect(
+      updateCaseSuiteItemsInputSchema.parse({ caseDefinitionIds }).caseDefinitionIds,
+    ).toHaveLength(100_000);
+  });
+
+  it("keeps the HTTP mutation payload bounded above the required scale", () => {
+    const caseDefinitionIds = Array.from({ length: 100_001 }, (_, index) => `case-${index}`);
+
+    expect(() => updateCaseSuiteItemsInputSchema.parse({ caseDefinitionIds })).toThrow();
   });
 });
 

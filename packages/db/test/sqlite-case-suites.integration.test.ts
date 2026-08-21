@@ -152,7 +152,7 @@ describe("SQLite case suite lifecycle", () => {
         caseCount: 1,
       });
       expect(copied.policy.runnerLabels).toEqual(["gpu"]);
-      expect(copied.items[0]?.caseDefinition.id).toBe("case-1");
+      expect((await suites.get(copied.id))?.items[0]?.caseDefinition.id).toBe("case-1");
       const snapshots = suiteVersionRows(handle, "suite-copy");
       expect(snapshots.map((row) => [row.version, row.change_reason])).toEqual([[1, "suite.copy"]]);
     } finally {

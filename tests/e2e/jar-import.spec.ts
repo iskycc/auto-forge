@@ -252,6 +252,19 @@ public class MixedVisibleTest {
 
   await page.getByRole("link", { name: "查看用例管理" }).click();
   await expect(page.locator(".case-tree-directory").first()).toHaveAttribute("open", "");
+  const folderCheckbox = page
+    .locator('.case-tree-directory summary input[type="checkbox"]')
+    .first();
+  await folderCheckbox.check();
+  await expect(folderCheckbox).toBeChecked();
+  await expect(page.locator(".case-selection-toolbar")).toContainText(/已选 [1-9]\d*/);
+  await page.setViewportSize({ width: 1536, height: 1024 });
+  await captureUi(page, "case-library-folder-selected-1536");
+  await page.setViewportSize({ width: 1024, height: 768 });
+  await expectDesktopLayoutFits(page, 1024, 768);
+  await captureUi(page, "case-library-folder-selected-1024");
+  await page.setViewportSize({ width: 1536, height: 1024 });
+  await folderCheckbox.uncheck();
   await page.getByLabel("页内搜索用例").fill("CheckoutTest");
   await expect(page.getByRole("button", { name: "查看 CheckoutTest" })).toBeVisible();
   await expectUiConsistency(page);

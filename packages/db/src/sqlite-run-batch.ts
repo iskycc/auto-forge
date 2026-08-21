@@ -33,6 +33,11 @@ import { and, count, desc, eq, gt, gte, inArray, isNull, lt, lte, or, sql } from
 
 import type { SqliteDatabaseHandle } from "./database";
 import {
+  batchesOf,
+  RELATIONAL_ID_QUERY_BATCH_SIZE,
+  RELATIONAL_WRITE_BATCH_SIZE,
+} from "./database-batches";
+import {
   adapterEnvironmentAddress,
   executionResourceLimitsForInputs,
   parseProjectAdapterRuntime,
@@ -58,6 +63,7 @@ import {
 
 const activeAttemptStatuses = ["assigned", "running"] as const;
 const activeBatchStatuses = ["queued", "dispatching", "scheduled", "running"] as const;
+const SCHEDULING_RUN_WINDOW_SIZE = 4_096;
 
 export class SqliteRunBatchRepository implements RunBatchRepository {
   constructor(
@@ -66,7 +72,7 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
     private readonly artifactCollectionEnabled = true,
   ) {}
 
-  async create(record: CreateRunBatchRecord): Promise<RunBatchDetails> {
+  async create(record: CreateRunBatchRecord): Promise<RunBatch> {
     const queueTimeoutMs = record.queueTimeoutMs ?? 86_400_000;
     const claimTimeoutMs = record.claimTimeoutMs ?? 300_000;
     const executionTimeoutMs = record.executionTimeoutMs ?? 3_600_000;
@@ -125,30 +131,34 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
           recordedAt: record.createdAt,
         })
         .run();
-      this.handle.db
-        .insert(runBatchRunners)
-        .values(record.runnerIds.map((runnerId) => ({ batchId: record.id, runnerId })))
-        .run();
-      this.handle.db
-        .insert(executionRuns)
-        .values(
-          record.runs.map((run) => ({
-            ...run,
-            parametersJson: JSON.stringify(run.parameters ?? {}),
-            batchId: record.id,
-            status: "queued" as const,
-            assignedRunnerId: null,
-            attemptCount: 0,
-            schedulingScore: null,
-            queueDeadlineAt: addMilliseconds(record.createdAt, queueTimeoutMs),
-            executionTimeoutMs,
-            uploadTimeoutMs,
-            createdAt: record.createdAt,
-            assignedAt: null,
-            updatedAt: record.createdAt,
-          })),
-        )
-        .run();
+      if (record.runnerIds.length > 0) {
+        this.handle.db
+          .insert(runBatchRunners)
+          .values(record.runnerIds.map((runnerId) => ({ batchId: record.id, runnerId })))
+          .run();
+      }
+      for (const runs of batchesOf(record.runs, RELATIONAL_WRITE_BATCH_SIZE)) {
+        this.handle.db
+          .insert(executionRuns)
+          .values(
+            runs.map((run) => ({
+              ...run,
+              parametersJson: JSON.stringify(run.parameters ?? {}),
+              batchId: record.id,
+              status: "queued" as const,
+              assignedRunnerId: null,
+              attemptCount: 0,
+              schedulingScore: null,
+              queueDeadlineAt: addMilliseconds(record.createdAt, queueTimeoutMs),
+              executionTimeoutMs,
+              uploadTimeoutMs,
+              createdAt: record.createdAt,
+              assignedAt: null,
+              updatedAt: record.createdAt,
+            })),
+          )
+          .run();
+      }
       if (record.dispatchJob) {
         this.handle.client
           .prepare(
@@ -172,7 +182,7 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
           );
       }
     })();
-    return this.requiredBatch(record.id);
+    return this.requiredBatchSummary(record.id);
   }
 
   async list(limit: number, projectIds?: readonly string[]): Promise<RunBatch[]> {
@@ -281,6 +291,20 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
     };
   }
 
+  async getSummary(batchId: string, projectIds?: readonly string[]): Promise<RunBatch | null> {
+    if (projectIds?.length === 0) return null;
+    const row = this.handle.db
+      .select()
+      .from(runBatches)
+      .where(
+        projectIds
+          ? and(eq(runBatches.id, batchId), inArray(runBatches.projectId, [...projectIds]))
+          : eq(runBatches.id, batchId),
+      )
+      .get();
+    return row ? this.mapBatch(row) : null;
+  }
+
   async listReusableBatchIdsForRunner(
     runnerId: string,
     batchIds: readonly string[],
@@ -341,8 +365,29 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
     batchId: string,
     offlineBefore: string,
   ): Promise<SchedulingSnapshot | null> {
-    const batch = await this.get(batchId);
+    const batch = await this.getSummary(batchId);
     if (!batch) return null;
+    const queuedRows = this.handle.db
+      .select()
+      .from(executionRuns)
+      .where(
+        and(
+          eq(executionRuns.batchId, batchId),
+          eq(executionRuns.status, "queued"),
+          eq(executionRuns.heldRound, 0),
+        ),
+      )
+      .orderBy(executionRuns.createdAt, executionRuns.id)
+      .limit(SCHEDULING_RUN_WINDOW_SIZE)
+      .all();
+    const queuedRunIds = queuedRows.map((run) => run.id);
+    const attemptRows = batchesOf(queuedRunIds, RELATIONAL_ID_QUERY_BATCH_SIZE).flatMap((ids) =>
+      this.handle.db
+        .select()
+        .from(runAttempts)
+        .where(inArray(runAttempts.executionRunId, ids))
+        .all(),
+    );
     const selectedRunnerIds = batch.selectedRunnerIds;
     const runnerRows =
       selectedRunnerIds.length === 0
@@ -365,9 +410,9 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
       );
     return {
       batch,
-      queuedRuns: batch.runs.filter((run) => run.status === "queued" && (run.heldRound ?? 0) === 0),
+      queuedRuns: queuedRows.map(toExecutionRun),
       candidates,
-      runnerFailureIdsByRun: runnerFailureIdsByExecutionRun(batch.attempts),
+      runnerFailureIdsByRun: runnerFailureIdsByExecutionRun(attemptRows.map(toRunAttempt)),
       projectActiveRuns: projectActiveRuns(this.handle, batch.projectId),
     };
   }
@@ -623,8 +668,8 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
     };
   }
 
-  private async requiredBatch(batchId: string): Promise<RunBatchDetails> {
-    const batch = await this.get(batchId);
+  private async requiredBatchSummary(batchId: string): Promise<RunBatch> {
+    const batch = await this.getSummary(batchId);
     if (!batch) throw new Error(`Run batch ${batchId} does not exist after creation.`);
     return batch;
   }
@@ -645,11 +690,14 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
       .all();
     const byStatus = new Map(statusCounts.map((entry) => [entry.status, entry.value]));
     const policy = batchPolicy(row.policyJson);
-    const runOutcomes = this.handle.db
-      .select({ status: executionRuns.status, terminalOutcome: executionRuns.terminalOutcome })
+    const outcomeCounts = this.handle.db
+      .select({
+        failed: sql<number>`sum(case when ${executionRuns.status} = 'failed' and (${executionRuns.terminalOutcome} is null or ${executionRuns.terminalOutcome} <> 'timed_out') then 1 else 0 end)`,
+        timedOut: sql<number>`sum(case when ${executionRuns.terminalOutcome} = 'timed_out' then 1 else 0 end)`,
+      })
       .from(executionRuns)
       .where(eq(executionRuns.batchId, row.id))
-      .all();
+      .get();
     return {
       id: row.id,
       sequenceNumber: row.sequenceNumber,
@@ -677,10 +725,8 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
       assignedRuns: (byStatus.get("assigned") ?? 0) + (byStatus.get("running") ?? 0),
       runningRuns: byStatus.get("running") ?? 0,
       succeededRuns: byStatus.get("succeeded") ?? 0,
-      failedRuns: runOutcomes.filter(
-        (run) => run.status === "failed" && run.terminalOutcome !== "timed_out",
-      ).length,
-      timedOutRuns: runOutcomes.filter((run) => run.terminalOutcome === "timed_out").length,
+      failedRuns: Number(outcomeCounts?.failed ?? 0),
+      timedOutRuns: Number(outcomeCounts?.timedOut ?? 0),
       cancelledRuns: byStatus.get("cancelled") ?? 0,
       version: row.version,
       createdAt: row.createdAt,

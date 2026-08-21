@@ -33,6 +33,11 @@ import { and, count, desc, eq, gt, gte, inArray, isNull, lt, lte, or, sql } from
 
 import type { PostgresDatabaseHandle } from "./postgres-database";
 import {
+  batchesOf,
+  POSTGRES_WRITE_BATCH_SIZE,
+  RELATIONAL_ID_QUERY_BATCH_SIZE,
+} from "./database-batches";
+import {
   adapterEnvironmentAddress,
   executionResourceLimitsForInputs,
   parseProjectAdapterRuntime,
@@ -62,6 +67,7 @@ import { decodeRunBatchCursor, encodeRunBatchCursor } from "./run-batch-list";
 
 const activeAttemptStatuses = ["assigned", "running"] as const;
 const activeBatchStatuses = ["queued", "dispatching", "scheduled", "running"] as const;
+const SCHEDULING_RUN_WINDOW_SIZE = 4_096;
 
 export class PostgresRunBatchRepository implements RunBatchRepository {
   constructor(
@@ -70,7 +76,7 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
     private readonly artifactCollectionEnabled = true,
   ) {}
 
-  async create(record: CreateRunBatchRecord): Promise<RunBatchDetails> {
+  async create(record: CreateRunBatchRecord): Promise<RunBatch> {
     await this.ready();
     const queueTimeoutMs = record.queueTimeoutMs ?? 86_400_000;
     const claimTimeoutMs = record.claimTimeoutMs ?? 300_000;
@@ -123,26 +129,30 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
         reason: "batch.created",
         recordedAt: record.createdAt,
       });
-      await transaction
-        .insert(pgRunBatchRunners)
-        .values(record.runnerIds.map((runnerId) => ({ batchId: record.id, runnerId })));
-      await transaction.insert(pgExecutionRuns).values(
-        record.runs.map((run) => ({
-          ...run,
-          parametersJson: JSON.stringify(run.parameters ?? {}),
-          batchId: record.id,
-          status: "queued" as const,
-          assignedRunnerId: null,
-          attemptCount: 0,
-          schedulingScore: null,
-          queueDeadlineAt: addMilliseconds(record.createdAt, queueTimeoutMs),
-          executionTimeoutMs,
-          uploadTimeoutMs,
-          createdAt: record.createdAt,
-          assignedAt: null,
-          updatedAt: record.createdAt,
-        })),
-      );
+      if (record.runnerIds.length > 0) {
+        await transaction
+          .insert(pgRunBatchRunners)
+          .values(record.runnerIds.map((runnerId) => ({ batchId: record.id, runnerId })));
+      }
+      for (const runs of batchesOf(record.runs, POSTGRES_WRITE_BATCH_SIZE)) {
+        await transaction.insert(pgExecutionRuns).values(
+          runs.map((run) => ({
+            ...run,
+            parametersJson: JSON.stringify(run.parameters ?? {}),
+            batchId: record.id,
+            status: "queued" as const,
+            assignedRunnerId: null,
+            attemptCount: 0,
+            schedulingScore: null,
+            queueDeadlineAt: addMilliseconds(record.createdAt, queueTimeoutMs),
+            executionTimeoutMs,
+            uploadTimeoutMs,
+            createdAt: record.createdAt,
+            assignedAt: null,
+            updatedAt: record.createdAt,
+          })),
+        );
+      }
       if (record.dispatchJob) {
         await transaction.execute(sql`
           INSERT INTO transactional_outbox
@@ -158,7 +168,7 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
         `);
       }
     });
-    return this.requiredBatch(record.id);
+    return this.requiredBatchSummary(record.id);
   }
 
   async list(limit: number, projectIds?: readonly string[]): Promise<RunBatch[]> {
@@ -266,6 +276,21 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
     };
   }
 
+  async getSummary(batchId: string, projectIds?: readonly string[]): Promise<RunBatch | null> {
+    await this.ready();
+    if (projectIds?.length === 0) return null;
+    const [row] = await this.handle.db
+      .select()
+      .from(pgRunBatches)
+      .where(
+        projectIds
+          ? and(eq(pgRunBatches.id, batchId), inArray(pgRunBatches.projectId, [...projectIds]))
+          : eq(pgRunBatches.id, batchId),
+      )
+      .limit(1);
+    return row ? this.mapBatch(row) : null;
+  }
+
   async listReusableBatchIdsForRunner(
     runnerId: string,
     batchIds: readonly string[],
@@ -325,8 +350,30 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
     batchId: string,
     offlineBefore: string,
   ): Promise<SchedulingSnapshot | null> {
-    const batch = await this.get(batchId);
+    const batch = await this.getSummary(batchId);
     if (!batch) return null;
+    const queuedRows = await this.handle.db
+      .select()
+      .from(pgExecutionRuns)
+      .where(
+        and(
+          eq(pgExecutionRuns.batchId, batchId),
+          eq(pgExecutionRuns.status, "queued"),
+          eq(pgExecutionRuns.heldRound, 0),
+        ),
+      )
+      .orderBy(pgExecutionRuns.createdAt, pgExecutionRuns.id)
+      .limit(SCHEDULING_RUN_WINDOW_SIZE);
+    const queuedRunIds = queuedRows.map((run) => run.id);
+    const attemptRows = [];
+    for (const ids of batchesOf(queuedRunIds, RELATIONAL_ID_QUERY_BATCH_SIZE)) {
+      attemptRows.push(
+        ...(await this.handle.db
+          .select()
+          .from(pgRunAttempts)
+          .where(inArray(pgRunAttempts.executionRunId, ids))),
+      );
+    }
     const runnerRows =
       batch.selectedRunnerIds.length === 0
         ? []
@@ -363,9 +410,9 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
       );
     return {
       batch,
-      queuedRuns: batch.runs.filter((run) => run.status === "queued" && (run.heldRound ?? 0) === 0),
+      queuedRuns: queuedRows.map(toExecutionRun),
       candidates,
-      runnerFailureIdsByRun: runnerFailureIdsByExecutionRun(batch.attempts),
+      runnerFailureIdsByRun: runnerFailureIdsByExecutionRun(attemptRows.map(toRunAttempt)),
       projectActiveRuns: Number(activeProjectRuns.rows[0]?.count ?? 0),
     };
   }
@@ -710,14 +757,14 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
     await this.handle.ready;
   }
 
-  private async requiredBatch(batchId: string): Promise<RunBatchDetails> {
-    const batch = await this.get(batchId);
+  private async requiredBatchSummary(batchId: string): Promise<RunBatch> {
+    const batch = await this.getSummary(batchId);
     if (!batch) throw new Error(`Run batch ${batchId} does not exist after creation.`);
     return batch;
   }
 
   private async mapBatch(row: typeof pgRunBatches.$inferSelect): Promise<RunBatch> {
-    const [selectedRunners, statusCounts] = await Promise.all([
+    const [selectedRunners, statusCounts, outcomeCounts] = await Promise.all([
       this.handle.db
         .select({ runnerId: pgRunBatchRunners.runnerId })
         .from(pgRunBatchRunners)
@@ -728,13 +775,17 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
         .from(pgExecutionRuns)
         .where(eq(pgExecutionRuns.batchId, row.id))
         .groupBy(pgExecutionRuns.status),
+      this.handle.db
+        .select({
+          failed: sql<number>`sum(case when ${pgExecutionRuns.status} = 'failed' and (${pgExecutionRuns.terminalOutcome} is null or ${pgExecutionRuns.terminalOutcome} <> 'timed_out') then 1 else 0 end)`,
+          timedOut: sql<number>`sum(case when ${pgExecutionRuns.terminalOutcome} = 'timed_out' then 1 else 0 end)`,
+        })
+        .from(pgExecutionRuns)
+        .where(eq(pgExecutionRuns.batchId, row.id)),
     ]);
     const byStatus = new Map(statusCounts.map((entry) => [entry.status, entry.value]));
     const policy = batchPolicy(row.policyJson);
-    const runOutcomes = await this.handle.db
-      .select({ status: pgExecutionRuns.status, terminalOutcome: pgExecutionRuns.terminalOutcome })
-      .from(pgExecutionRuns)
-      .where(eq(pgExecutionRuns.batchId, row.id));
+    const outcomeCount = outcomeCounts[0];
     return {
       id: row.id,
       sequenceNumber: row.sequenceNumber,
@@ -762,10 +813,8 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
       assignedRuns: (byStatus.get("assigned") ?? 0) + (byStatus.get("running") ?? 0),
       runningRuns: byStatus.get("running") ?? 0,
       succeededRuns: byStatus.get("succeeded") ?? 0,
-      failedRuns: runOutcomes.filter(
-        (run) => run.status === "failed" && run.terminalOutcome !== "timed_out",
-      ).length,
-      timedOutRuns: runOutcomes.filter((run) => run.terminalOutcome === "timed_out").length,
+      failedRuns: Number(outcomeCount?.failed ?? 0),
+      timedOutRuns: Number(outcomeCount?.timedOut ?? 0),
       cancelledRuns: byStatus.get("cancelled") ?? 0,
       version: row.version,
       createdAt: row.createdAt,

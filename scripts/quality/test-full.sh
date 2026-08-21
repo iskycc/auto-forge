@@ -169,7 +169,7 @@ download_dependencies() {
 start_dependencies() {
   docker run --detach \
     --name "${postgres_container}" \
-    --tmpfs /var/lib/postgresql/data:rw,noexec,nosuid,size=256m \
+    --tmpfs /var/lib/postgresql/data:rw,noexec,nosuid,size=1g \
     --publish 127.0.0.1:55439:5432 \
     --env POSTGRES_DB=autoforge \
     --env POSTGRES_USER=autoforge \
@@ -237,6 +237,8 @@ stop_fault_controller() {
 }
 
 run_adapter_tests() {
+  AUTOFORGE_TEST_POSTGRES_URL=postgresql://autoforge:autoforge@127.0.0.1:55439/autoforge \
+    pnpm exec vitest run packages/db/test/postgres-capacity.integration.test.ts
   AUTOFORGE_TEST_POSTGRES_URL=postgresql://autoforge:autoforge@127.0.0.1:55439/autoforge \
   AUTOFORGE_TEST_MINIO_ENDPOINT=http://127.0.0.1:59009 \
   AUTOFORGE_TEST_MINIO_ACCESS_KEY=autoforge \

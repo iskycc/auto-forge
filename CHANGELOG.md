@@ -16,6 +16,11 @@ and known limitations.
   Single-case execution now enables the CoTest Adapter by default.
 - Case-suite members now use a searchable package tree with group selection and transactional bulk
   removal that creates one suite version per operation.
+- Case-library directory checkboxes now select or clear every manageable descendant and expose a
+  mixed state for partial selection. Case and task trees render large folders in bounded pages.
+- Removed the former 500-case task capacity. Lite and Full now persist 100,000-member tasks and
+  100,000-run batches through bounded SQL batches; scheduling reads a 4,096-run refill window rather
+  than materializing the complete pending batch on every heartbeat.
 - Consolidated related access and platform settings behind page-local four-character tabs, removed
   stale platform/LDAP links from operations, and moved low-frequency create, password reset, role
   assignment and suite-copy actions into centered full-viewport dialogs.
@@ -24,6 +29,14 @@ and known limitations.
 
 - No migration is required. Legacy suite-policy `parameters` keys remain readable during upgrade and
   are discarded by policy normalization before a new suite version or batch is written.
+- No migration is required for 100k task capacity; existing membership and execution tables are used
+  with chunked reads/writes and aggregate summary queries.
+
+### Tests
+
+- Added 100,000-case folder-selection, Lite task-membership, Lite execution-batch and Full PostgreSQL
+  execution-batch capacity coverage. The assets browser job now uploads screenshots of selected case
+  and task folders in addition to the fixed-viewport layout screenshots.
 
 ## 0.9.1 - 2026-08-21
 

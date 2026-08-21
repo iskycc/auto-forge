@@ -33,6 +33,7 @@ import {
 import { and, count, desc, eq, inArray, isNull, like, lt, or, sql, type SQL } from "drizzle-orm";
 
 import type { SqliteDatabaseHandle } from "./database";
+import { batchesOf, RELATIONAL_ID_QUERY_BATCH_SIZE } from "./database-batches";
 import {
   caseDefinitions,
   caseImportJobs,
@@ -76,7 +77,7 @@ function safeJson(json: string): unknown {
 }
 
 // 单次查询的用例 ID 上限，避免 SQLite 变量数量超过编译期上限。
-const LATEST_RUN_BATCH_SIZE = 5000;
+const LATEST_RUN_BATCH_SIZE = RELATIONAL_ID_QUERY_BATCH_SIZE;
 
 function toLatestRunOutcome(
   terminalOutcome: string | null,
@@ -92,14 +93,6 @@ function toLatestRunOutcome(
   }
   // terminal_outcome 为空时回退到终态 status。
   return status === "succeeded" || status === "cancelled" ? status : "failed";
-}
-
-function batchesOf<T>(items: readonly T[], size: number): T[][] {
-  const batches: T[][] = [];
-  for (let offset = 0; offset < items.length; offset += size) {
-    batches.push(items.slice(offset, offset + size));
-  }
-  return batches;
 }
 
 function toSourceComparison(row: typeof caseSourceComparisons.$inferSelect): CaseSourceComparison {
@@ -969,17 +962,19 @@ export class SqliteCaseCatalogRepository implements CaseCatalogRepository {
 
   async findExistingCaseIds(caseDefinitionIds: string[], projectId?: string): Promise<string[]> {
     if (caseDefinitionIds.length === 0) return [];
-    return this.handle.db
-      .select({ id: caseDefinitions.id })
-      .from(caseDefinitions)
-      .where(
-        and(
-          inArray(caseDefinitions.id, caseDefinitionIds),
-          ...(projectId ? [eq(caseDefinitions.projectId, projectId)] : []),
-        ),
-      )
-      .all()
-      .map((row) => row.id);
+    return batchesOf(caseDefinitionIds, RELATIONAL_ID_QUERY_BATCH_SIZE).flatMap((ids) =>
+      this.handle.db
+        .select({ id: caseDefinitions.id })
+        .from(caseDefinitions)
+        .where(
+          and(
+            inArray(caseDefinitions.id, ids),
+            ...(projectId ? [eq(caseDefinitions.projectId, projectId)] : []),
+          ),
+        )
+        .all()
+        .map((row) => row.id),
+    );
   }
 
   async listRecentSources(limit: number, projectIds?: readonly string[]): Promise<CaseSource[]> {

@@ -16,6 +16,7 @@ import {
   DomainError,
   REQUIRED_EXECUTION_LABELS,
   scheduleExecutionRuns,
+  type RunBatch,
   type RunBatchDetails,
   type RunnerCompatibilityIssue,
   type SchedulingDecision,
@@ -64,15 +65,15 @@ export class RunBatchSchedulingService {
     private readonly artifactCollectionEnabled = true,
   ) {}
 
-  async create(input: CreateRunBatchInput): Promise<RunBatchDetails> {
+  async create(input: CreateRunBatchInput): Promise<RunBatch> {
     const validated = createRunBatchInputSchema.parse(input);
-    const preflight = await this.preflightValidated(validated);
+    const suite = await this.suites.get(validated.suiteId);
+    const preflight = await this.preflightValidated(validated, { suite });
     if (!preflight.ready) {
       throw new DomainError("RUN_BATCH_PREFLIGHT_FAILED", "执行配置预检未通过。", {
         details: preflight,
       });
     }
-    const suite = await this.suites.get(validated.suiteId);
     if (!suite) throw new DomainError("CASE_SUITE_NOT_FOUND", "指定的用例任务不存在。");
     if (suite.status === "archived") {
       throw new DomainError("CASE_SUITE_ARCHIVED", "已归档的用例任务不能创建新批次。");
@@ -152,7 +153,7 @@ export class RunBatchSchedulingService {
   async createSingleCase(
     caseDefinitionId: string,
     input: CreateSingleCaseRunInput,
-  ): Promise<RunBatchDetails> {
+  ): Promise<RunBatch> {
     if (!this.executionInputs) {
       throw new DomainError("SINGLE_CASE_EXECUTION_UNAVAILABLE", "当前运行时未配置用例输入仓储。");
     }
@@ -293,7 +294,7 @@ export class RunBatchSchedulingService {
     return batch;
   }
 
-  async schedule(batchId: string): Promise<RunBatchDetails> {
+  async schedule(batchId: string): Promise<RunBatch> {
     const now = this.clock.now();
     const snapshot = await this.batches.getSchedulingSnapshot(batchId, offlineBefore(now));
     if (!snapshot) throw new DomainError("RUN_BATCH_NOT_FOUND", "指定的执行批次不存在。");
@@ -346,7 +347,9 @@ export class RunBatchSchedulingService {
         await this.appendSchedulingRoundEvents(batchId, snapshot, plan, decisions, reserved, now);
       }
     }
-    return this.get(batchId);
+    const batch = await this.batches.getSummary(batchId);
+    if (!batch) throw new DomainError("RUN_BATCH_NOT_FOUND", "指定的执行批次不存在。");
+    return batch;
   }
 
   async listSchedulingEvents(
@@ -456,7 +459,7 @@ export class RunBatchSchedulingService {
   private async scheduleBatchIds(batchIds: string[]): Promise<number> {
     let scheduled = 0;
     for (const batchId of batchIds) {
-      const before = await this.batches.get(batchId);
+      const before = await this.batches.getSummary(batchId);
       const after = await this.schedule(batchId);
       scheduled += Math.max(0, after.assignedRuns - (before?.assignedRuns ?? 0));
     }
@@ -465,9 +468,10 @@ export class RunBatchSchedulingService {
 
   private async preflightValidated(
     input: ReturnType<typeof createRunBatchInputSchema.parse>,
+    loaded?: { suite: Awaited<ReturnType<CaseSuiteRepository["get"]>> },
   ): Promise<RunBatchPreflightResult> {
     const blockers: RunBatchPreflightBlocker[] = [];
-    const suite = await this.suites.get(input.suiteId);
+    const suite = loaded ? loaded.suite : await this.suites.get(input.suiteId);
     if (!suite) {
       blockers.push(
         blocker("CASE_SUITE_NOT_FOUND", "parameter", "指定的用例任务不存在。", {

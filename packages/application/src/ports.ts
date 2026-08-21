@@ -845,23 +845,24 @@ export type CreateCaseSuiteRecord = {
 export interface CaseSuiteRepository {
   create(record: CreateCaseSuiteRecord): Promise<CaseSuite>;
   list(limit: number, projectIds?: readonly string[]): Promise<CaseSuite[]>;
+  getSummary(suiteId: string, projectIds?: readonly string[]): Promise<CaseSuite | null>;
   get(suiteId: string, projectIds?: readonly string[]): Promise<CaseSuiteDetails | null>;
-  updateSuite(input: UpdateCaseSuiteRecord): Promise<CaseSuiteDetails>;
-  copySuite(input: CopyCaseSuiteRecord): Promise<CaseSuiteDetails>;
+  updateSuite(input: UpdateCaseSuiteRecord): Promise<CaseSuite>;
+  copySuite(input: CopyCaseSuiteRecord): Promise<CaseSuite>;
   addCases(input: {
     suiteId: string;
     items: Array<{ id: string; caseDefinitionId: string }>;
     versionId: string;
     actorId?: string;
     updatedAt: string;
-  }): Promise<CaseSuiteDetails>;
+  }): Promise<CaseSuite>;
   removeCases(input: {
     suiteId: string;
     caseDefinitionIds: string[];
     versionId: string;
     actorId?: string;
     updatedAt: string;
-  }): Promise<CaseSuiteDetails>;
+  }): Promise<CaseSuite>;
 }
 
 export type UpdateCaseSuiteRecord = {
@@ -1148,9 +1149,10 @@ export interface RunBatchSchedulingPort {
 }
 
 export interface RunBatchRepository {
-  create(record: CreateRunBatchRecord): Promise<RunBatchDetails>;
+  create(record: CreateRunBatchRecord): Promise<RunBatch>;
   list(limit: number, projectIds?: readonly string[]): Promise<RunBatch[]>;
   listPage(input: RunBatchListQuery): Promise<RunBatchListPage>;
+  getSummary(batchId: string, projectIds?: readonly string[]): Promise<RunBatch | null>;
   get(batchId: string, projectIds?: readonly string[]): Promise<RunBatchDetails | null>;
   /** 返回指定 Runner 仍可能收到后续 attempt 的非终态批次 ID。 */
   listReusableBatchIdsForRunner(runnerId: string, batchIds: readonly string[]): Promise<string[]>;

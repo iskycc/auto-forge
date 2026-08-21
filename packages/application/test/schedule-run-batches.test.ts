@@ -303,6 +303,7 @@ describe("run batch creation with suite policy", () => {
         candidates: [],
         projectActiveRuns: 0,
       }),
+      getSummary: vi.fn().mockResolvedValue({ id: "batch-1" }),
       get: vi.fn().mockResolvedValue({ id: "batch-1" }),
     } as unknown as RunBatchRepository;
     const service = new RunBatchSchedulingService(
@@ -349,6 +350,7 @@ describe("run batch creation with suite policy", () => {
         candidates: [],
         projectActiveRuns: 0,
       }),
+      getSummary: vi.fn().mockResolvedValue({ id: "batch-1" }),
       get: vi.fn().mockResolvedValue({ id: "batch-1" }),
     } as unknown as RunBatchRepository;
     const service = new RunBatchSchedulingService(
@@ -426,6 +428,7 @@ describe("run batch creation with suite policy", () => {
         return input.decisions.length;
       }),
       appendSchedulingEvents: vi.fn().mockResolvedValue(undefined),
+      getSummary: vi.fn().mockResolvedValue({ id: "batch-1", assignedRuns: 3 }),
       get: vi.fn().mockResolvedValue({ id: "batch-1", assignedRuns: 3 }),
     } as unknown as RunBatchRepository;
     const service = new RunBatchSchedulingService(
@@ -464,6 +467,7 @@ describe("run batch creation with suite policy", () => {
         projectActiveRuns: 2,
       }),
       reserveAssignments: vi.fn(),
+      getSummary: vi.fn().mockResolvedValue({ id: "batch-1", assignedRuns: 0 }),
       get: vi.fn().mockResolvedValue({ id: "batch-1", assignedRuns: 0 }),
     } as unknown as RunBatchRepository;
     const service = new RunBatchSchedulingService(
@@ -512,6 +516,7 @@ describe("run batch creation with suite policy", () => {
         candidates: [],
         projectActiveRuns: 0,
       }),
+      getSummary: vi.fn().mockResolvedValue({ id: "generated-id", assignedRuns: 0 }),
       get: vi.fn().mockResolvedValue({ id: "generated-id", assignedRuns: 0 }),
     } as unknown as RunBatchRepository;
     const service = new RunBatchSchedulingService(
@@ -560,6 +565,7 @@ describe("run batch creation with suite policy", () => {
         candidates: [],
         projectActiveRuns: 0,
       }),
+      getSummary: vi.fn().mockResolvedValue({ id: "generated-id", assignedRuns: 0 }),
       get: vi.fn().mockResolvedValue({ id: "generated-id", assignedRuns: 0 }),
     } as unknown as RunBatchRepository;
     const runnerGroups = {
@@ -630,6 +636,7 @@ describe("run batch creation with suite policy", () => {
         candidates: [],
         projectActiveRuns: 0,
       }),
+      getSummary: vi.fn().mockResolvedValue({ id: "generated-id", assignedRuns: 0 }),
       get: vi.fn().mockResolvedValue({ id: "generated-id", assignedRuns: 0 }),
     } as unknown as RunBatchRepository;
     const projectStructures = {
@@ -762,6 +769,9 @@ describe("scheduling event log", () => {
         appended.push(events);
       }),
       listSchedulingEvents: vi.fn().mockResolvedValue({ items: [], nextAfterId: "cursor-1" }),
+      getSummary: vi.fn(async (batchId: string) =>
+        batchId === "batch-1" ? { id: "batch-1", assignedRuns: 2 } : null,
+      ),
       get: vi.fn(async (batchId: string) =>
         batchId === "batch-1" ? { id: "batch-1", assignedRuns: 2 } : null,
       ),

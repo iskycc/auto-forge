@@ -57,6 +57,11 @@ import {
 } from "drizzle-orm";
 
 import type { PostgresDatabaseHandle } from "./postgres-database";
+import {
+  batchesOf,
+  POSTGRES_WRITE_BATCH_SIZE,
+  RELATIONAL_ID_QUERY_BATCH_SIZE,
+} from "./database-batches";
 import { mapStoredRunner } from "./runner-mapper";
 import {
   pgAssignmentLeases,
@@ -945,17 +950,23 @@ export class PostgresCaseCatalogRepository implements CaseCatalogRepository {
   async findExistingCaseIds(caseDefinitionIds: string[], projectId?: string): Promise<string[]> {
     await this.ready();
     if (!caseDefinitionIds.length) return [];
-    return (
-      await this.handle.db
-        .select({ id: pgCaseDefinitions.id })
-        .from(pgCaseDefinitions)
-        .where(
-          and(
-            inArray(pgCaseDefinitions.id, caseDefinitionIds),
-            ...(projectId ? [eq(pgCaseDefinitions.projectId, projectId)] : []),
-          ),
-        )
-    ).map((row) => row.id);
+    const existingIds: string[] = [];
+    for (const ids of batchesOf(caseDefinitionIds, RELATIONAL_ID_QUERY_BATCH_SIZE)) {
+      existingIds.push(
+        ...(
+          await this.handle.db
+            .select({ id: pgCaseDefinitions.id })
+            .from(pgCaseDefinitions)
+            .where(
+              and(
+                inArray(pgCaseDefinitions.id, ids),
+                ...(projectId ? [eq(pgCaseDefinitions.projectId, projectId)] : []),
+              ),
+            )
+        ).map((row) => row.id),
+      );
+    }
+    return existingIds;
   }
 
   async listRecentSources(limit: number, projectIds?: readonly string[]): Promise<CaseSource[]> {
@@ -1471,6 +1482,30 @@ export class PostgresCaseSuiteRepository implements CaseSuiteRepository {
     return rows.map((row) => toSuite(row, countBySuite.get(row.id) ?? 0));
   }
 
+  async getSummary(suiteId: string, projectIds?: readonly string[]): Promise<CaseSuite | null> {
+    await this.ready();
+    if (projectIds?.length === 0) return null;
+    const [rows, counts] = await Promise.all([
+      this.handle.db
+        .select()
+        .from(pgCaseSuites)
+        .where(
+          and(
+            eq(pgCaseSuites.id, suiteId),
+            ...(projectIds ? [inArray(pgCaseSuites.projectId, [...projectIds])] : []),
+          ),
+        )
+        .limit(1),
+      this.handle.db
+        .select({ value: count() })
+        .from(pgCaseSuiteItems)
+        .where(eq(pgCaseSuiteItems.suiteId, suiteId)),
+    ]);
+    const row = rows[0];
+    if (!row) return null;
+    return toSuite(row, counts[0]?.value ?? 0);
+  }
+
   async get(suiteId: string, projectIds?: readonly string[]): Promise<CaseSuiteDetails | null> {
     await this.ready();
     if (projectIds?.length === 0) return null;
@@ -1491,15 +1526,22 @@ export class PostgresCaseSuiteRepository implements CaseSuiteRepository {
       .where(eq(pgCaseSuiteItems.suiteId, suiteId))
       .orderBy(asc(pgCaseSuiteItems.addedAt), asc(pgCaseSuiteItems.id));
     const ids = itemRows.map((row) => row.caseDefinitionId);
-    const [definitions, methodRows] = ids.length
-      ? await Promise.all([
-          this.handle.db.select().from(pgCaseDefinitions).where(inArray(pgCaseDefinitions.id, ids)),
-          this.handle.db
-            .select()
-            .from(pgTestMethods)
-            .where(inArray(pgTestMethods.caseDefinitionId, ids)),
-        ])
-      : [[], []];
+    const definitions = [];
+    const methodRows = [];
+    for (const idBatch of batchesOf(ids, RELATIONAL_ID_QUERY_BATCH_SIZE)) {
+      const [definitionBatch, methodBatch] = await Promise.all([
+        this.handle.db
+          .select()
+          .from(pgCaseDefinitions)
+          .where(inArray(pgCaseDefinitions.id, idBatch)),
+        this.handle.db
+          .select()
+          .from(pgTestMethods)
+          .where(inArray(pgTestMethods.caseDefinitionId, idBatch)),
+      ]);
+      definitions.push(...definitionBatch);
+      methodRows.push(...methodBatch);
+    }
     const methods = new Map<string, TestMethod[]>();
     for (const row of methodRows) {
       const values = methods.get(row.caseDefinitionId) ?? [];
@@ -1549,23 +1591,27 @@ export class PostgresCaseSuiteRepository implements CaseSuiteRepository {
     versionId: string;
     actorId?: string;
     updatedAt: string;
-  }): Promise<CaseSuiteDetails> {
+  }): Promise<CaseSuite> {
     await this.ready();
     await this.handle.db.transaction(async (transaction) => {
       if (!input.items.length) return;
-      const inserted = await transaction
-        .insert(pgCaseSuiteItems)
-        .values(
-          input.items.map((item) => ({
-            id: item.id,
-            suiteId: input.suiteId,
-            caseDefinitionId: item.caseDefinitionId,
-            addedAt: input.updatedAt,
-          })),
-        )
-        .onConflictDoNothing()
-        .returning({ id: pgCaseSuiteItems.id });
-      if (inserted.length) {
+      let added = 0;
+      for (const items of batchesOf(input.items, POSTGRES_WRITE_BATCH_SIZE)) {
+        const inserted = await transaction
+          .insert(pgCaseSuiteItems)
+          .values(
+            items.map((item) => ({
+              id: item.id,
+              suiteId: input.suiteId,
+              caseDefinitionId: item.caseDefinitionId,
+              addedAt: input.updatedAt,
+            })),
+          )
+          .onConflictDoNothing()
+          .returning({ id: pgCaseSuiteItems.id });
+        added += inserted.length;
+      }
+      if (added > 0) {
         await transaction
           .update(pgCaseSuites)
           .set({
@@ -1584,7 +1630,7 @@ export class PostgresCaseSuiteRepository implements CaseSuiteRepository {
         );
       }
     });
-    const suite = await this.get(input.suiteId);
+    const suite = await this.getSummary(input.suiteId);
     if (!suite) throw new Error(`Case suite ${input.suiteId} does not exist.`);
     return suite;
   }
@@ -1595,19 +1641,24 @@ export class PostgresCaseSuiteRepository implements CaseSuiteRepository {
     versionId: string;
     actorId?: string;
     updatedAt: string;
-  }): Promise<CaseSuiteDetails> {
+  }): Promise<CaseSuite> {
     await this.ready();
     await this.handle.db.transaction(async (transaction) => {
-      const deleted = await transaction
-        .delete(pgCaseSuiteItems)
-        .where(
-          and(
-            eq(pgCaseSuiteItems.suiteId, input.suiteId),
-            inArray(pgCaseSuiteItems.caseDefinitionId, input.caseDefinitionIds),
-          ),
-        )
-        .returning({ id: pgCaseSuiteItems.id });
-      if (deleted.length) {
+      let removed = 0;
+      for (const ids of batchesOf(input.caseDefinitionIds, POSTGRES_WRITE_BATCH_SIZE)) {
+        removed += (
+          await transaction
+            .delete(pgCaseSuiteItems)
+            .where(
+              and(
+                eq(pgCaseSuiteItems.suiteId, input.suiteId),
+                inArray(pgCaseSuiteItems.caseDefinitionId, ids),
+              ),
+            )
+            .returning({ id: pgCaseSuiteItems.id })
+        ).length;
+      }
+      if (removed > 0) {
         await transaction
           .update(pgCaseSuites)
           .set({
@@ -1626,12 +1677,12 @@ export class PostgresCaseSuiteRepository implements CaseSuiteRepository {
         );
       }
     });
-    const suite = await this.get(input.suiteId);
+    const suite = await this.getSummary(input.suiteId);
     if (!suite) throw new Error(`Case suite ${input.suiteId} does not exist.`);
     return suite;
   }
 
-  async updateSuite(input: UpdateCaseSuiteRecord): Promise<CaseSuiteDetails> {
+  async updateSuite(input: UpdateCaseSuiteRecord): Promise<CaseSuite> {
     await this.ready();
     await this.handle.db.transaction(async (transaction) => {
       const patch: Record<string, unknown> = {
@@ -1664,12 +1715,12 @@ export class PostgresCaseSuiteRepository implements CaseSuiteRepository {
         input,
       );
     });
-    const suite = await this.get(input.suiteId);
+    const suite = await this.getSummary(input.suiteId);
     if (!suite) throw new Error(`Case suite ${input.suiteId} does not exist.`);
     return suite;
   }
 
-  async copySuite(input: CopyCaseSuiteRecord): Promise<CaseSuiteDetails> {
+  async copySuite(input: CopyCaseSuiteRecord): Promise<CaseSuite> {
     await this.ready();
     await this.handle.db.transaction(async (transaction) => {
       await transaction.insert(pgCaseSuites).values({
@@ -1687,21 +1738,23 @@ export class PostgresCaseSuiteRepository implements CaseSuiteRepository {
         updatedAt: input.createdAt,
       });
       if (input.items.length) {
-        await transaction.insert(pgCaseSuiteItems).values(
-          input.items.map((item) => ({
-            id: item.id,
-            suiteId: input.id,
-            caseDefinitionId: item.caseDefinitionId,
-            addedAt: input.createdAt,
-          })),
-        );
+        for (const items of batchesOf(input.items, POSTGRES_WRITE_BATCH_SIZE)) {
+          await transaction.insert(pgCaseSuiteItems).values(
+            items.map((item) => ({
+              id: item.id,
+              suiteId: input.id,
+              caseDefinitionId: item.caseDefinitionId,
+              addedAt: input.createdAt,
+            })),
+          );
+        }
       }
       await this.insertVersionSnapshot(transaction, input.id, input.versionId, "suite.copy", {
         ...(input.actorId ? { actorId: input.actorId } : {}),
         updatedAt: input.createdAt,
       });
     });
-    const suite = await this.get(input.id);
+    const suite = await this.getSummary(input.id);
     if (!suite) throw new Error(`Case suite ${input.id} does not exist after copy.`);
     return suite;
   }

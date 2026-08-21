@@ -7326,8 +7326,9 @@ button.icon-button:disabled {
 }
 
 .case-selection-toolbar {
-  display: grid;
-  grid-template-columns: auto auto minmax(120px, 1fr) auto;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
   gap: 8px;
   border-block: 1px solid var(--color-border);
   padding: 9px 12px;
@@ -7335,6 +7336,7 @@ button.icon-button:disabled {
 
 .case-selection-toolbar .ui-select {
   min-width: 0;
+  flex: 1 1 150px;
 }
 
 .case-selection-toolbar > span {
@@ -8808,6 +8810,14 @@ button.icon-button:disabled {
 
 .case-selection-stats strong {
   color: var(--color-text);
+}
+
+.case-selection-stats > span {
+  flex: 0 0 auto;
+}
+
+.case-selection-stats > span:first-child {
+  flex-basis: 100%;
 }
 
 /* 用例行内结果徽章：目录行网格追加第 4 列 */
@@ -10436,6 +10446,13 @@ button.icon-button:disabled {
 
 .global-project-switcher .project-picker-trigger {
   min-height: 38px;
+}
+
+.project-picker-trigger > span:nth-child(2) {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .global-project-switcher[aria-busy="true"] {
