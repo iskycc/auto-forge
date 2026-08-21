@@ -34,7 +34,7 @@ async function artifact(directory, name) {
   };
 }
 
-function expectedArtifactNames(version) {
+export function expectedArtifactNames(version) {
   const platformArtifacts = releaseVariants.flatMap((variant) => {
     const backendName = `autoforge-backend-${version}-${variant}`;
     return [

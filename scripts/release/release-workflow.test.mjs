@@ -108,3 +108,10 @@ test("uses cached builds and parallel archive compression", async () => {
   assert.match(workflow, /AUTOFORGE_BUILDX_CACHE_TO: type=gha/);
   assert.match(buildScript, /zstd --threads=0 -10 -f/);
 });
+
+test("shares the release asset contract with published acceptance", async () => {
+  const acceptanceScript = await readFile("scripts/quality/test-release-offline.sh", "utf8");
+
+  assert.match(acceptanceScript, /expectedArtifactNames/);
+  assert.doesNotMatch(acceptanceScript, /manifest\.artifacts\.length !== \d+/);
+});

@@ -86,15 +86,25 @@ verify_current_release() {
     "${current_release_directory}/release-signing-public-key.pem"
   verify_signature "${current_release_directory}"
   (cd "${current_release_directory}" && sha256sum --check --strict SHA256SUMS)
-  node - "${current_release_directory}" "${current_version}" <<'NODE'
-const { readdirSync, readFileSync, statSync } = require("node:fs");
-const { join } = require("node:path");
-const [directory, expectedVersion] = process.argv.slice(2);
+  node --input-type=module - \
+    "${repository_root}" "${current_release_directory}" "${current_version}" <<'NODE'
+import { readdirSync, readFileSync, statSync } from "node:fs";
+import { join } from "node:path";
+import { pathToFileURL } from "node:url";
+
+const [repositoryRoot, directory, expectedVersion] = process.argv.slice(2);
+const { expectedArtifactNames } = await import(
+  pathToFileURL(join(repositoryRoot, "scripts/release/create-manifest.mjs")).href
+);
 const manifest = JSON.parse(readFileSync(join(directory, "release-manifest.json"), "utf8"));
 if (manifest.schemaVersion !== 1 || manifest.product !== "AutoForge" || manifest.version !== expectedVersion) {
   throw new Error("Release manifest identity is invalid.");
 }
-if (manifest.artifacts.length !== 20) throw new Error(`Unexpected release asset count: ${manifest.artifacts.length}`);
+const expectedNames = expectedArtifactNames(expectedVersion).sort();
+const actualNames = manifest.artifacts.map((artifact) => artifact.name).sort();
+if (JSON.stringify(actualNames) !== JSON.stringify(expectedNames)) {
+  throw new Error(`Unexpected release assets: ${actualNames.join(", ")}`);
+}
 for (const artifact of manifest.artifacts) {
   const path = join(directory, artifact.name);
   if (!statSync(path).isFile() || statSync(path).size !== artifact.sizeBytes) throw new Error(`Invalid asset ${artifact.name}`);

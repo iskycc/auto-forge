@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import test from "node:test";
 
-import { createReleaseMetadata } from "./create-manifest.mjs";
+import { createReleaseMetadata, expectedArtifactNames } from "./create-manifest.mjs";
 
 test("creates a deterministic manifest and checksum list", async () => {
   const directory = await mkdtemp(resolve(tmpdir(), "autoforge-release-"));
@@ -40,7 +40,10 @@ test("creates a deterministic manifest and checksum list", async () => {
     );
     assert.equal(manifest.schemaVersion, 1);
     assert.equal(manifest.version, "1.2.3");
-    assert.equal(manifest.artifacts.length, 24);
+    assert.deepEqual(
+      manifest.artifacts.map((artifact) => artifact.name).sort(),
+      expectedArtifactNames("1.2.3").sort(),
+    );
 
     const checksums = await readFile(resolve(directory, "SHA256SUMS"), "utf8");
     assert.doesNotMatch(checksums, /autoforge-agent/);
