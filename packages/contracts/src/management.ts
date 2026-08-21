@@ -60,7 +60,7 @@ export const caseSuiteExecutionPolicySchema = z
     executor: z.enum(["testng", "testng-container"]).optional(),
     adapter: caseSuiteAdapterConfigurationSchema.optional(),
     priority: z.number().int().min(-100).max(100).optional(),
-    concurrency: z.number().int().min(1).max(64).optional(),
+    concurrency: z.number().int().min(1).max(10_000).optional(),
     retryLimit: z.number().int().min(0).max(10).optional(),
     retryMode: z.enum(["immediate", "round"]).optional(),
     queueTimeoutMs: z.number().int().min(1_000).max(604_800_000).optional(),

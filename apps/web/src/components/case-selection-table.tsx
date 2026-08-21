@@ -20,7 +20,7 @@ import {
   Trash2,
 } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useDeferredValue, useEffect, useMemo, useState } from "react";
 
 import { CaseDefinitionEditor } from "./case-definition-editor";
 import { CaseImportDialog } from "./case-import-dialog";
@@ -109,7 +109,10 @@ export function CaseSelectionTable({
   const [detailError, setDetailError] = useState<{ caseId: string; message: string } | null>(null);
   const [deletedCaseIds, setDeletedCaseIds] = useState(() => new Set<string>());
 
-  const normalizedSearch = search.trim().toLocaleLowerCase();
+  const deferredSearch = useDeferredValue(search);
+  const deferredOutcomeFilter = useDeferredValue(outcomeFilter);
+  const filtering = deferredSearch !== search || deferredOutcomeFilter !== outcomeFilter;
+  const normalizedSearch = deferredSearch.trim().toLocaleLowerCase();
   const availableCases = useMemo(
     () => cases.filter((item) => !deletedCaseIds.has(item.id)),
     [cases, deletedCaseIds],
@@ -119,10 +122,11 @@ export function CaseSelectionTable({
       availableCases.filter(
         (item) =>
           matchesSearch(item, normalizedSearch) &&
-          matchesOutcomeFilter(latestOutcomes.get(item.id), outcomeFilter),
+          matchesOutcomeFilter(latestOutcomes.get(item.id), deferredOutcomeFilter),
       ),
-    [availableCases, normalizedSearch, outcomeFilter, latestOutcomes],
+    [availableCases, normalizedSearch, deferredOutcomeFilter, latestOutcomes],
   );
+  const directoryTree = useMemo(() => buildDirectoryTree(visibleCases), [visibleCases]);
   const selectionStats = useMemo(
     () => computeSelectionStats(checkedCaseIds, latestOutcomes),
     [checkedCaseIds, latestOutcomes],
@@ -346,7 +350,11 @@ export function CaseSelectionTable({
         </div>
         <div className="case-browser-summary">
           <span>全部 {availableCases.length} 个用例</span>
-          {normalizedSearch || outcomeFilter !== "all" ? (
+          {filtering ? (
+            <span className="list-filter-progress" role="status">
+              <LoaderCircle aria-hidden="true" className="spin" size={14} /> 正在筛选
+            </span>
+          ) : normalizedSearch || deferredOutcomeFilter !== "all" ? (
             <strong>匹配 {visibleCases.length} 个</strong>
           ) : null}
         </div>
@@ -456,7 +464,7 @@ export function CaseSelectionTable({
           </div>
         ) : null}
 
-        <div className="case-directory-scroll">
+        <div aria-busy={filtering} className="case-directory-scroll">
           {visibleCases.length === 0 ? (
             <div className="inline-empty">没有匹配的用例，尝试缩短搜索关键词。</div>
           ) : (
@@ -466,7 +474,7 @@ export function CaseSelectionTable({
                 canManageProject={canSelectCase}
                 forceOpen={Boolean(normalizedSearch)}
                 latestOutcomes={latestOutcomes}
-                node={buildDirectoryTree(visibleCases)}
+                node={directoryTree}
                 onActivate={setActiveCaseId}
                 onToggle={toggle}
                 onToggleDirectory={toggleDirectory}

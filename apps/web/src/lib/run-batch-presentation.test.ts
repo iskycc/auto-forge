@@ -22,7 +22,7 @@ describe("run batch presentation", () => {
     expect(isActiveRunBatch("running")).toBe(true);
     expect(isActiveRunBatch("succeeded")).toBe(false);
     expect(runBatchStatusLabel("failed")).toBe("执行异常");
-    expect(runBatchStatusLabel("cancelled")).toBe("执行中断");
+    expect(runBatchStatusLabel("cancelled")).toBe("已终止");
   });
 
   it("reports progress across assigned and terminal runs", () => {

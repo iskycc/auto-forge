@@ -11,5 +11,6 @@
     "rewriteRelativeImportExtensions": true,
     "noEmit": false
   },
-  "include": ["server/**/*.ts", "src/lib/terminal-ticket.ts"]
+  "include": ["server/**/*.ts", "src/lib/lite-work-runtime.ts", "src/lib/terminal-ticket.ts"],
+  "exclude": ["server/lite-work-thread.ts"]
 }

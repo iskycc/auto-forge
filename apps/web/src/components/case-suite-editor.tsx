@@ -223,7 +223,7 @@ export function CaseSuiteEditor({
                 name="concurrency"
                 type="number"
                 min={1}
-                max={64}
+                max={10000}
                 step={1}
                 defaultValue={suite.policy.concurrency}
               />

@@ -8,6 +8,18 @@ and known limitations.
 
 ### Changed
 
+- Added graceful task termination to the execution-record list and batch details. A termination
+  request immediately blocks scheduling and claims, closes work that has not started, lets valid
+  in-flight leases finish naturally, suppresses retries, and then presents the batch as terminated.
+  The legacy batch-cancel endpoint now delegates to the same semantics.
+- Moved Lite scheduling, high-frequency Runner control transactions and attempt-log writes to a
+  bounded worker-thread pool. Runner claim recovery and same-key scheduling are coalesced, scheduling
+  snapshots scale with configured capacity, and SQLite assignment input/Runner data is bulk-loaded
+  instead of queried once per decision.
+- Added streamed route skeletons and deferred in-page filtering feedback to case management, task
+  management, execution records and batch details so large queries do not appear frozen.
+- Raised task policy concurrency to 10,000 while retaining bounded scheduling windows and storage
+  transactions; the Runner registration per-node safety boundary remains unchanged.
 - Reimporting a different TestNG JAR into the same project version and test stage now updates the
   existing case with the same fully qualified class name. The stable case ID, manual display name,
   description, tags and task memberships are retained; executable metadata and methods are replaced
@@ -20,6 +32,8 @@ and known limitations.
 
 ### Database
 
+- No migration is required for task termination or Lite worker threads. They reuse the existing
+  `run_batches.cancel_requested_at`, WAL database and per-batch attempt-log stores.
 - Added SQLite migration `0036_shared_case_source_objects.sql` and PostgreSQL migration
   `0035_shared_case_source_objects.sql`. They replace the global unique JAR object-key index with a
   non-unique lookup index; project-hierarchy SHA-256 indexes remain the source-import idempotency
@@ -27,6 +41,14 @@ and known limitations.
 
 ### Tests
 
+- Added domain, application and SQLite/PostgreSQL adapter regressions for graceful termination,
+  completed-assignment cancellation, retry suppression, concurrent claim coalescing and worker-pool
+  sizing. The browser scheduling scenario terminates a five-case task with two in-flight attempts,
+  verifies that no new assignment is issued, and captures the final execution-record screenshot.
+- Added a repeatable Lite capacity gate that atomically reserves 500 assignments across 25 Runners
+  in under five seconds; the current local run completed the bounded pass in under 300 ms.
+- Added a 100,000-run graceful-termination gate; set-based SQLite transitions completed locally in
+  under one second instead of iterating through every run on the Web event loop.
 - Added Lite and Full adapter regressions for stable-ID overwrite, immutable version creation,
   method replacement, cross-version shared JAR objects and scoped deletion.
 - Extended the browser regression to import one JAR with the same idempotency key into two versions,
@@ -34,6 +56,9 @@ and known limitations.
 
 ### Compatibility
 
+- Runner Protocol v1 and database schemas are unchanged. Existing clients may continue calling
+  `/cancel`; new integrations should use `/terminate`. The Lite release now includes a bundled
+  Node 24 worker entry and adds `esbuild` as a build-time-only, offline-locked dependency.
 - Runner Protocol v1 is unchanged. Existing case and source data remains readable; old duplicate
   cases created under the former source-scoped identity are consolidated on the next matching JAR
   reimport, with task memberships moved to the oldest stable case ID.

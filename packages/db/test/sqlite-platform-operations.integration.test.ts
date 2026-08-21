@@ -281,7 +281,7 @@ describe("SQLite platform operations", () => {
     const { handle, attemptLogs, repository } = fixture();
     try {
       seedCompletedAttempt(handle);
-      attemptLogs.appendChunks({
+      await attemptLogs.appendChunks({
         batchId: "00000000-0000-4000-8000-000000000b01",
         attemptId: "attempt-1",
         receivedAt: "2026-08-11T01:00:00.000Z",
@@ -457,7 +457,7 @@ describe("SQLite platform operations", () => {
     const batchId = "00000000-0000-4000-8000-000000000b01";
     try {
       seedCompletedAttempt(handle);
-      attemptLogs.appendChunks({
+      await attemptLogs.appendChunks({
         batchId,
         attemptId: "attempt-1",
         receivedAt: "2026-08-11T01:00:00.000Z",
@@ -502,7 +502,7 @@ describe("SQLite platform operations", () => {
     const batchId = "00000000-0000-4000-8000-000000000b01";
     try {
       seedCompletedAttempt(handle);
-      attemptLogs.appendChunks({
+      await attemptLogs.appendChunks({
         batchId,
         attemptId: "attempt-1",
         receivedAt: "2026-08-11T01:00:00.000Z",

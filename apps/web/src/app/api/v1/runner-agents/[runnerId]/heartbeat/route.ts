@@ -25,7 +25,7 @@ export async function POST(request: Request, context: Context): Promise<NextResp
     const heartbeat = await services.runnerControl.heartbeat(runnerId, bearerToken(request), input);
     if (!heartbeat.draining) {
       try {
-        await services.runBatches.scheduleForRunner(runnerId);
+        await services.runScheduling.scheduleForRunner(runnerId);
       } catch (error) {
         logServerError(error, randomUUID(), "Heartbeat-triggered scheduling failed");
       }

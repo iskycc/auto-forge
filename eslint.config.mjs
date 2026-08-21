@@ -14,6 +14,7 @@ export default defineConfig([
     "**/.next/**",
     "**/coverage/**",
     "**/dist/**",
+    "**/dist-server/**",
     "**/node_modules/**",
     "**/target/**",
     "data/**",

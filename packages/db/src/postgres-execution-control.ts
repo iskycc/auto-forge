@@ -83,6 +83,7 @@ type AttemptControlRow = {
   batch_id: string;
   project_id: string;
   run_cancel_requested_at: string | null;
+  batch_termination_requested_at: string | null;
 };
 
 type ArtifactRow = {
@@ -125,10 +126,12 @@ export class PostgresExecutionControlRepository implements ExecutionControlRepos
       if (replay) return replay;
       if (input.availableSlots === 0) return [];
       const candidateResult = await client.query<AssignmentRow>(
-        `SELECT * FROM assignments
-         WHERE runner_id = $1 AND status = 'pending' AND available_at <= $2 AND claim_deadline_at > $2
-         ORDER BY priority DESC, created_at ASC, id ASC
-         FOR UPDATE SKIP LOCKED LIMIT $3`,
+        `SELECT a.* FROM assignments a
+         JOIN run_batches b ON b.id = a.batch_id
+         WHERE a.runner_id = $1 AND a.status = 'pending' AND a.available_at <= $2
+           AND a.claim_deadline_at > $2 AND b.cancel_requested_at IS NULL
+         ORDER BY a.priority DESC, a.created_at ASC, a.id ASC
+         FOR UPDATE OF a SKIP LOCKED LIMIT $3`,
         [input.runnerId, input.now, Math.max(input.availableSlots * 8, 8)],
       );
       const selected = candidateResult.rows
@@ -142,7 +145,9 @@ export class PostgresExecutionControlRepository implements ExecutionControlRepos
         if (!seed) break;
         const update = await client.query(
           `UPDATE assignments SET status = 'claimed', claimed_at = $1, updated_at = $1, version = version + 1
-           WHERE id = $2 AND status = 'pending'`,
+           WHERE id = $2 AND status = 'pending'
+             AND EXISTS (SELECT 1 FROM run_batches b
+                         WHERE b.id = assignments.batch_id AND b.cancel_requested_at IS NULL)`,
           [input.now, assignment.id],
         );
         if (update.rowCount !== 1) continue;
@@ -343,6 +348,7 @@ export class PostgresExecutionControlRepository implements ExecutionControlRepos
             retryableRunnerFailure: isRetryableRunnerFailure(effectiveResult.resultCode),
             runnerFailuresBefore: failureCounts.runner,
             ordinaryFailuresBefore: failureCounts.ordinary,
+            retrySuppressed: control.batch_termination_requested_at !== null,
           });
           response.retryScheduled = decision.retryScheduled;
           // persistCompletion 内部已聚合批次状态，直接用其返回值判定终态。
@@ -479,7 +485,7 @@ export class PostgresExecutionControlRepository implements ExecutionControlRepos
     await authorizedTransferContext(this.handle.pool, { ...input, now: input.receivedAt });
     const batchId = await this.requiredBatchIdForAttempt(input.attemptId);
     // 日志内容写入每批次独立 SQLite 文件；PG 主库不再保存日志行。
-    const acknowledgedSequence = this.attemptLogs.appendChunks({
+    const acknowledgedSequence = await this.attemptLogs.appendChunks({
       batchId,
       attemptId: input.attemptId,
       receivedAt: input.receivedAt,
@@ -874,43 +880,43 @@ export class PostgresExecutionControlRepository implements ExecutionControlRepos
     });
   }
 
-  async cancelBatch(
-    input: Parameters<ExecutionControlRepository["cancelBatch"]>[0],
+  async terminateBatch(
+    input: Parameters<ExecutionControlRepository["terminateBatch"]>[0],
   ): Promise<number> {
     await this.handle.ready;
     return this.transaction(async (client) => {
-      const runs = await client.query<{ id: string }>(
-        "SELECT id FROM execution_runs WHERE batch_id = $1 AND status NOT IN ('succeeded', 'failed', 'cancelled') FOR UPDATE",
-        [input.batchId],
-      );
-      const batch = await client.query<{ version: number }>(
-        "SELECT version FROM run_batches WHERE id = $1 FOR UPDATE",
-        [input.batchId],
-      );
-      const batchVersion = batch.rows[0]?.version;
-      if (batchVersion === undefined) {
-        throw new DomainError("RUN_BATCH_NOT_FOUND", "指定的执行批次不存在。");
+      const batch = await client.query<{
+        status: RunBatchStatus;
+        version: number;
+        cancel_requested_at: string | null;
+      }>("SELECT status, version, cancel_requested_at FROM run_batches WHERE id = $1 FOR UPDATE", [
+        input.batchId,
+      ]);
+      const batchState = batch.rows[0];
+      if (!batchState) throw new DomainError("RUN_BATCH_NOT_FOUND", "指定的执行批次不存在。");
+      if (isTerminalBatchStatus(batchState.status)) return 0;
+      if (!batchState.cancel_requested_at) {
+        const termination = await client.query(
+          `UPDATE run_batches SET cancel_requested_at = $1, updated_at = $1, version = version + 1
+           WHERE id = $2 AND version = $3 AND cancel_requested_at IS NULL`,
+          [input.requestedAt, input.batchId, batchState.version],
+        );
+        if (termination.rowCount !== 1) {
+          throw new DomainError("RUN_BATCH_VERSION_CONFLICT", "执行批次已被并发修改。");
+        }
       }
-      const cancellation = await client.query(
-        `UPDATE run_batches SET cancel_requested_at = $1, updated_at = $1, version = version + 1
-         WHERE id = $2 AND version = $3`,
-        [input.requestedAt, input.batchId, batchVersion],
+      const changed = await terminateWaitingRuns(
+        client,
+        input.batchId,
+        input.reason,
+        input.requestedAt,
       );
-      if (cancellation.rowCount !== 1) {
-        throw new DomainError("RUN_BATCH_VERSION_CONFLICT", "执行批次已被并发修改。");
-      }
-      let changed = 0;
-      for (const [index, run] of runs.rows.entries()) {
-        const eventId = input.eventIds[index];
-        if (!eventId) break;
-        changed += (await cancelRun(client, { ...input, runId: run.id, eventId })) ? 1 : 0;
-      }
       await updateBatchStatus(
         client,
         input.batchId,
         input.requestedAt,
-        input.eventIds[changed] ?? input.batchId,
-        "batch.cancelled",
+        input.eventId,
+        "batch.termination_requested",
       );
       return changed;
     });
@@ -1195,6 +1201,7 @@ async function expireAttempt(
     retryableRunnerFailure: isRetryableRunnerFailure(expiration.resultCode),
     runnerFailuresBefore: failureCounts.runner,
     ordinaryFailuresBefore: failureCounts.ordinary,
+    retrySuppressed: control.batch_termination_requested_at !== null,
   });
   const attemptStatus = transitionRunAttempt(control.status, "timed_out");
   const runStatus = transitionExecutionRun(control.run_status, decision.runStatus);
@@ -1313,7 +1320,7 @@ async function cancelRun(
     );
     return true;
   }
-  if (assignment) {
+  if (assignment && !["completed", "cancelled", "expired"].includes(assignment.status)) {
     const assignmentStatus = transitionAssignment(assignment.status, "cancelled");
     await client.query(
       "UPDATE assignments SET status = $1, cancel_requested_at = $2, updated_at = $2, version = version + 1 WHERE id = $3",
@@ -1352,6 +1359,66 @@ async function cancelRun(
   );
   await updateBatchStatus(client, run.batch_id, input.requestedAt, input.eventId, "run.cancelled");
   return true;
+}
+
+/** 集合式关闭未开始的工作，避免 10 万级任务逐行往返；有效租约是唯一保留条件。 */
+async function terminateWaitingRuns(
+  client: PoolClient,
+  batchId: string,
+  reason: string,
+  requestedAt: string,
+): Promise<number> {
+  await client.query(
+    `UPDATE assignments a SET status = 'cancelled', updated_at = $1, version = version + 1
+     WHERE a.batch_id = $2 AND a.status IN ('pending', 'claimed', 'running')
+       AND NOT (
+         a.status IN ('claimed', 'running') AND EXISTS (
+           SELECT 1 FROM assignment_leases l
+           WHERE l.assignment_id = a.id AND l.status = 'active' AND l.expires_at > $1
+         )
+       )`,
+    [requestedAt, batchId],
+  );
+  await client.query(
+    `UPDATE assignment_leases l SET status = 'revoked'
+     WHERE l.status = 'active' AND EXISTS (
+       SELECT 1 FROM assignments a
+       WHERE a.id = l.assignment_id AND a.batch_id = $1 AND a.status = 'cancelled'
+     )`,
+    [batchId],
+  );
+  await client.query(
+    `UPDATE run_attempts ra SET status = 'cancelled', outcome = 'cancelled',
+     result_code = 'BATCH_TERMINATED_BEFORE_EXECUTION', result_summary = $1,
+     finished_at = $2, version = version + 1
+     WHERE ra.status IN ('assigned', 'running')
+       AND EXISTS (
+         SELECT 1 FROM execution_runs er WHERE er.id = ra.execution_run_id AND er.batch_id = $3
+       )
+       AND NOT EXISTS (
+         SELECT 1 FROM assignments a JOIN assignment_leases l ON l.assignment_id = a.id
+         WHERE a.attempt_id = ra.id AND a.status IN ('claimed', 'running')
+           AND l.status = 'active' AND l.expires_at > $2
+       )`,
+    [reason, requestedAt, batchId],
+  );
+  const runs = await client.query(
+    `UPDATE execution_runs er SET status = 'cancelled', terminal_outcome = 'cancelled',
+     terminal_reason_code = 'BATCH_TERMINATED_BEFORE_EXECUTION', cancel_requested_at = $1,
+     updated_at = $1, version = version + 1
+     WHERE er.batch_id = $2 AND er.status NOT IN ('succeeded', 'failed', 'cancelled')
+       AND NOT EXISTS (
+         SELECT 1 FROM run_attempts ra
+         JOIN assignments a ON a.attempt_id = ra.id
+         JOIN assignment_leases l ON l.assignment_id = a.id
+         WHERE ra.execution_run_id = er.id
+           AND ra.status IN ('assigned', 'running')
+           AND a.status IN ('claimed', 'running')
+           AND l.status = 'active' AND l.expires_at > $1
+       )`,
+    [requestedAt, batchId],
+  );
+  return runs.rowCount ?? 0;
 }
 
 async function requiredAssignment(
@@ -1414,7 +1481,8 @@ async function findAttemptControl(
   const result = await client.query<AttemptControlRow>(
     `SELECT a.id, a.execution_run_id, a.runner_id, a.attempt_number, a.status,
      r.status AS run_status, r.cancel_requested_at AS run_cancel_requested_at,
-     b.retry_limit, b.retry_mode, b.id AS batch_id, b.project_id
+     b.retry_limit, b.retry_mode, b.id AS batch_id, b.project_id,
+     b.cancel_requested_at AS batch_termination_requested_at
      FROM run_attempts a JOIN execution_runs r ON r.id = a.execution_run_id
      JOIN run_batches b ON b.id = r.batch_id WHERE a.id = $1${lock ? " FOR UPDATE OF a, r" : ""}`,
     [attemptId],
@@ -1492,11 +1560,17 @@ async function updateBatchStatus(
     status: RunBatchStatus;
     version: number;
     retry_mode: "immediate" | "round";
-  }>("SELECT status, version, retry_mode FROM run_batches WHERE id = $1 FOR UPDATE", [batchId]);
+    cancel_requested_at: string | null;
+  }>(
+    "SELECT status, version, retry_mode, cancel_requested_at FROM run_batches WHERE id = $1 FOR UPDATE",
+    [batchId],
+  );
   const batchState = batch.rows[0];
   if (!batchState) throw new DomainError("RUN_BATCH_NOT_FOUND", "指定的执行批次不存在。");
   // 轮次制下先释放等待下一轮的失败 run，再聚合状态，确保释放的 run 计入批次状态。
-  await advanceRoundIfIdle(client, batchId, batchState.retry_mode, updatedAt);
+  if (!batchState.cancel_requested_at) {
+    await advanceRoundIfIdle(client, batchId, batchState.retry_mode, updatedAt);
+  }
   const result = await client.query<{ status: string; terminal_reason_code: string | null }>(
     "SELECT status, terminal_reason_code FROM execution_runs WHERE batch_id = $1",
     [batchId],
@@ -1506,6 +1580,7 @@ async function updateBatchStatus(
       status: row.status,
       ...(row.terminal_reason_code ? { terminalReasonCode: row.terminal_reason_code } : {}),
     })),
+    { terminationRequested: batchState.cancel_requested_at !== null },
   );
   transitionRunBatch(batchState.status, status);
   const update = await client.query(

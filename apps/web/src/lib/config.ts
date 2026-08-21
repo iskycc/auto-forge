@@ -24,6 +24,10 @@ type CommonConfig = {
   artifactCollectionEnabled: boolean;
   publicDashboardRefreshSeconds: number;
   metricsEnabled: boolean;
+  worker: {
+    concurrency: number;
+    shutdownGraceMs: number;
+  };
   web: {
     hostname: string;
     port: number;
@@ -85,6 +89,10 @@ export function loadAppConfig(options: LoadPlatformConfigurationOptions = {}): A
     terminalAccessToken: persisted.secrets.terminalAccessToken,
     publicDashboardRefreshSeconds: persisted.web.publicDashboardRefreshSeconds,
     metricsEnabled: persisted.worker.metricsEnabled,
+    worker: {
+      concurrency: persisted.worker.concurrency,
+      shutdownGraceMs: persisted.worker.shutdownGraceMs,
+    },
     web: {
       hostname: persisted.web.hostname,
       port: persisted.web.port,

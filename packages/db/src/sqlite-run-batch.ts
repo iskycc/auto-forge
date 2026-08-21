@@ -319,6 +319,7 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
           eq(runBatchRunners.runnerId, runnerId),
           inArray(runBatches.id, [...batchIds]),
           inArray(runBatches.status, ["queued", "dispatching", "scheduled", "running"]),
+          isNull(runBatches.cancelRequestedAt),
         ),
       )
       .all()
@@ -333,7 +334,8 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
     return (
       this.handle.client
         .prepare(
-          `SELECT id FROM run_batches WHERE status IN ('queued','dispatching','running')
+          `SELECT id FROM run_batches
+           WHERE status IN ('queued','dispatching','running') AND cancel_requested_at IS NULL
            ORDER BY priority + MIN(100, MAX(0, CAST(
              (julianday(?) - julianday(created_at)) * 1440 / ? AS INTEGER
            ))) DESC, created_at, id LIMIT ?`,
@@ -353,6 +355,7 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
         .prepare(
           `SELECT b.id FROM run_batches b JOIN run_batch_runners br ON br.batch_id=b.id
            WHERE br.runner_id=? AND b.status IN ('queued','dispatching','running')
+             AND b.cancel_requested_at IS NULL
            ORDER BY b.priority + MIN(100, MAX(0, CAST(
              (julianday(?) - julianday(b.created_at)) * 1440 / ? AS INTEGER
            ))) DESC, b.created_at, b.id LIMIT ?`,
@@ -364,22 +367,25 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
   async getSchedulingSnapshot(
     batchId: string,
     offlineBefore: string,
+    maximumQueuedRuns = SCHEDULING_RUN_WINDOW_SIZE,
   ): Promise<SchedulingSnapshot | null> {
     const batch = await this.getSummary(batchId);
     if (!batch) return null;
-    const queuedRows = this.handle.db
-      .select()
-      .from(executionRuns)
-      .where(
-        and(
-          eq(executionRuns.batchId, batchId),
-          eq(executionRuns.status, "queued"),
-          eq(executionRuns.heldRound, 0),
-        ),
-      )
-      .orderBy(executionRuns.createdAt, executionRuns.id)
-      .limit(SCHEDULING_RUN_WINDOW_SIZE)
-      .all();
+    const queuedRows = batch.terminationRequestedAt
+      ? []
+      : this.handle.db
+          .select()
+          .from(executionRuns)
+          .where(
+            and(
+              eq(executionRuns.batchId, batchId),
+              eq(executionRuns.status, "queued"),
+              eq(executionRuns.heldRound, 0),
+            ),
+          )
+          .orderBy(executionRuns.createdAt, executionRuns.id)
+          .limit(Math.min(SCHEDULING_RUN_WINDOW_SIZE, Math.max(1, maximumQueuedRuns)))
+          .all();
     const queuedRunIds = queuedRows.map((run) => run.id);
     const attemptRows = batchesOf(queuedRunIds, RELATIONAL_ID_QUERY_BATCH_SIZE).flatMap((ids) =>
       this.handle.db
@@ -424,11 +430,19 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
           projectId: runBatches.projectId,
           policyJson: runBatches.policyJson,
           adapterRuntimeJson: runBatches.adapterRuntimeJson,
+          terminationRequestedAt: runBatches.cancelRequestedAt,
+          environmentJson: runBatches.environmentJson,
+          secretBindingsJson: runBatches.secretBindingsJson,
+          priority: runBatches.priority,
+          claimTimeoutMs: runBatches.claimTimeoutMs,
+          executionTimeoutMs: runBatches.executionTimeoutMs,
+          uploadTimeoutMs: runBatches.uploadTimeoutMs,
         })
         .from(runBatches)
         .where(eq(runBatches.id, input.batchId))
         .get();
       if (!batchScope) throw new DomainError("RUN_BATCH_NOT_FOUND", "指定的执行批次不存在。");
+      if (batchScope.terminationRequestedAt) return 0;
       let remainingProjectSlots = Math.max(
         0,
         (input.projectMaximumConcurrency ?? Number.MAX_SAFE_INTEGER) -
@@ -436,6 +450,7 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
       );
       const batchConcurrency = batchPolicy(batchScope.policyJson)?.concurrency;
       const adapterRuntime = parseProjectAdapterRuntime(batchScope.adapterRuntimeJson);
+      const policy = batchPolicy(batchScope.policyJson);
       let remainingBatchSlots =
         batchConcurrency === undefined
           ? Number.POSITIVE_INFINITY
@@ -448,17 +463,55 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
           .all()
           .map((row) => row.runnerId),
       );
+      const decisionRunnerIds = [
+        ...new Set(
+          input.decisions
+            .map((decision) => decision.runnerId)
+            .filter((runnerId) => selectedRunnerIds.has(runnerId)),
+        ),
+      ];
+      const runnerRows =
+        decisionRunnerIds.length === 0
+          ? []
+          : this.handle.db
+              .select()
+              .from(runners)
+              .where(inArray(runners.id, decisionRunnerIds))
+              .all();
+      const runnerById = new Map(runnerRows.map((runner) => [runner.id, runner]));
+      const reservations = activeReservations(this.handle, decisionRunnerIds);
+      const decisionRunIds = input.decisions.map((decision) => decision.executionRunId);
+      const executionInputRows = batchesOf(decisionRunIds, RELATIONAL_ID_QUERY_BATCH_SIZE).flatMap(
+        (ids) =>
+          this.handle.db
+            .select({
+              id: executionRuns.id,
+              caseDefinitionId: executionRuns.caseDefinitionId,
+              caseVersion: executionRuns.caseVersion,
+              className: executionRuns.className,
+              parametersJson: executionRuns.parametersJson,
+              sourceId: caseSources.id,
+              sourceSha256: caseSources.sha256,
+              sourceSizeBytes: caseSources.sizeBytes,
+            })
+            .from(executionRuns)
+            .innerJoin(
+              caseVersions,
+              and(
+                eq(caseVersions.caseDefinitionId, executionRuns.caseDefinitionId),
+                eq(caseVersions.version, executionRuns.caseVersion),
+              ),
+            )
+            .innerJoin(caseSources, eq(caseSources.id, caseVersions.sourceId))
+            .where(and(eq(executionRuns.batchId, input.batchId), inArray(executionRuns.id, ids)))
+            .all(),
+      );
+      const executionInputByRunId = new Map(executionInputRows.map((row) => [row.id, row]));
       let accepted = 0;
       for (const decision of input.decisions) {
         if (remainingProjectSlots === 0 || remainingBatchSlots === 0) break;
-        if (!selectedRunnerIds.has(decision.runnerId)) continue;
-        const runnerRow = this.handle.db
-          .select()
-          .from(runners)
-          .where(eq(runners.id, decision.runnerId))
-          .get();
+        const runnerRow = runnerById.get(decision.runnerId);
         if (!runnerRow) continue;
-        const reservations = activeReservations(this.handle, [decision.runnerId]);
         const runner = mapStoredRunner(runnerRow, input.offlineBefore);
         if (!assessRunnerCompatibility(runner).compatible) continue;
         if (!supportsProjectAdapterRuntime(runner.capabilities, adapterRuntime)) continue;
@@ -471,6 +524,8 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
           input.metricsFreshAfter,
         );
         if (!evaluation.eligible || evaluation.score === undefined) continue;
+        const executionInput = executionInputByRunId.get(decision.executionRunId);
+        if (!executionInput) continue;
 
         const updatedRun = this.handle.db
           .update(executionRuns)
@@ -496,29 +551,9 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
           )
           .returning({
             attemptCount: executionRuns.attemptCount,
-            caseDefinitionId: executionRuns.caseDefinitionId,
-            caseVersion: executionRuns.caseVersion,
-            className: executionRuns.className,
-            parametersJson: executionRuns.parametersJson,
           })
           .get();
         if (!updatedRun) continue;
-        const source = this.handle.db
-          .select({
-            id: caseSources.id,
-            sha256: caseSources.sha256,
-            sizeBytes: caseSources.sizeBytes,
-          })
-          .from(caseVersions)
-          .innerJoin(caseSources, eq(caseSources.id, caseVersions.sourceId))
-          .where(
-            and(
-              eq(caseVersions.caseDefinitionId, updatedRun.caseDefinitionId),
-              eq(caseVersions.version, updatedRun.caseVersion),
-            ),
-          )
-          .get();
-        if (!source) throw new Error("Cannot schedule a case without its source JAR.");
         this.handle.db
           .insert(runAttempts)
           .values({
@@ -531,21 +566,6 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
             createdAt: input.scheduledAt,
           })
           .run();
-        const batch = this.handle.db
-          .select({
-            environmentJson: runBatches.environmentJson,
-            secretBindingsJson: runBatches.secretBindingsJson,
-            policyJson: runBatches.policyJson,
-            priority: runBatches.priority,
-            claimTimeoutMs: runBatches.claimTimeoutMs,
-            executionTimeoutMs: runBatches.executionTimeoutMs,
-            uploadTimeoutMs: runBatches.uploadTimeoutMs,
-          })
-          .from(runBatches)
-          .where(eq(runBatches.id, input.batchId))
-          .get();
-        if (!batch) continue;
-        const policy = batchPolicy(batch.policyJson);
         this.handle.db
           .insert(assignments)
           .values({
@@ -555,32 +575,37 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
             batchId: input.batchId,
             runnerId: decision.runnerId,
             status: "pending",
-            priority: batch.priority,
+            priority: batchScope.priority,
             executionSpecJson: JSON.stringify(
               executionSpec({
                 attemptId: decision.attemptId,
                 executionRunId: decision.executionRunId,
                 batchId: input.batchId,
-                className: updatedRun.className,
-                parameters: stringRecord(updatedRun.parametersJson),
-                source,
+                className: executionInput.className,
+                parameters: stringRecord(executionInput.parametersJson),
+                source: {
+                  id: executionInput.sourceId,
+                  sha256: executionInput.sourceSha256,
+                  sizeBytes: executionInput.sourceSizeBytes,
+                },
                 ...(adapterRuntime ? { adapterRuntime } : {}),
-                environment: environmentVariables(batch.environmentJson),
-                secretBindings: secretBindings(batch.secretBindingsJson),
-                executionTimeoutMs: batch.executionTimeoutMs,
-                uploadTimeoutMs: batch.uploadTimeoutMs,
+                environment: environmentVariables(batchScope.environmentJson),
+                secretBindings: secretBindings(batchScope.secretBindingsJson),
+                executionTimeoutMs: batchScope.executionTimeoutMs,
+                uploadTimeoutMs: batchScope.uploadTimeoutMs,
                 caseTimeoutSeconds: this.caseExecutionTimeoutSeconds,
                 artifactCollectionEnabled: this.artifactCollectionEnabled,
                 ...(policy ? { policy } : {}),
               }),
             ),
             availableAt: input.scheduledAt,
-            claimDeadlineAt: addMilliseconds(input.scheduledAt, batch.claimTimeoutMs),
+            claimDeadlineAt: addMilliseconds(input.scheduledAt, batchScope.claimTimeoutMs),
             createdAt: input.scheduledAt,
             updatedAt: input.scheduledAt,
           })
           .run();
         accepted += 1;
+        reservations.set(decision.runnerId, (reservations.get(decision.runnerId) ?? 0) + 1);
         remainingProjectSlots -= 1;
         remainingBatchSlots -= 1;
       }
@@ -728,6 +753,7 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
       failedRuns: Number(outcomeCounts?.failed ?? 0),
       timedOutRuns: Number(outcomeCounts?.timedOut ?? 0),
       cancelledRuns: byStatus.get("cancelled") ?? 0,
+      ...(row.cancelRequestedAt ? { terminationRequestedAt: row.cancelRequestedAt } : {}),
       version: row.version,
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,

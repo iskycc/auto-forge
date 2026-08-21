@@ -139,6 +139,24 @@ describe("execution state machine", () => {
     expect(aggregateBatchStatus(["assigned", "queued"])).toBe("dispatching");
   });
 
+  it("keeps a terminating batch active until in-flight runs finish and suppresses retries", () => {
+    expect(aggregateBatchStatus(["running", "cancelled"], { terminationRequested: true })).toBe(
+      "running",
+    );
+    expect(aggregateBatchStatus(["succeeded", "failed"], { terminationRequested: true })).toBe(
+      "cancelled",
+    );
+    expect(
+      outcomeAfterCompletion({
+        outcome: "failed",
+        attemptNumber: 1,
+        retryLimit: 10,
+        cancellationRequested: false,
+        retrySuppressed: true,
+      }),
+    ).toEqual({ runStatus: "failed", retryScheduled: false });
+  });
+
   it("identifies only retryable Runner infrastructure failures", () => {
     expect(isRetryableRunnerFailure("PROCESS_START_FAILED")).toBe(true);
     expect(isRetryableRunnerFailure("LOG_UPLOAD_FAILED")).toBe(true);

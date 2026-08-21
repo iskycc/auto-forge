@@ -6,16 +6,38 @@ import { join, resolve } from "node:path";
 import next from "next";
 
 import { loadAppConfig } from "../src/lib/config.ts";
+import {
+  registerLiteWorkDispatcher,
+  unregisterLiteWorkDispatcher,
+} from "../src/lib/lite-work-runtime.ts";
 import { recordHttpRequest } from "../src/lib/runtime-metrics.ts";
 import { TerminalGateway, type TerminalAuditEvent } from "./terminal-gateway.ts";
 import { LogStreamGateway } from "./log-stream-gateway.ts";
 import { LogStreamRelay } from "./log-stream-relay.ts";
+import { LiteWorkerPool } from "./lite-worker-pool.ts";
 
 const development = process.env.NODE_ENV !== "production";
 const platformConfiguration = loadAppConfig();
 const hostname = platformConfiguration.web.hostname;
 const port = platformConfiguration.web.port;
 const webDirectory = findWebDirectory(process.cwd());
+const liteWorkerPool =
+  platformConfiguration.mode === "lite"
+    ? new LiteWorkerPool(
+        {
+          databasePath: platformConfiguration.databasePath,
+          migrationsFolder: platformConfiguration.migrationsFolder,
+          attemptLogsDirectory: join(platformConfiguration.dataDirectory, "attempt-logs"),
+          dataDirectory: platformConfiguration.dataDirectory,
+          caseExecutionTimeoutSeconds: platformConfiguration.caseExecutionTimeoutSeconds,
+          artifactCollectionEnabled: platformConfiguration.artifactCollectionEnabled,
+          scheduler: { ...platformConfiguration.scheduler },
+        },
+        platformConfiguration.worker.concurrency,
+        platformConfiguration.worker.shutdownGraceMs,
+      )
+    : undefined;
+if (liteWorkerPool) registerLiteWorkDispatcher(liteWorkerPool);
 
 if (!development) configureProductionRuntime(webDirectory);
 
@@ -112,6 +134,7 @@ async function shutdown(signal: "SIGINT" | "SIGTERM"): Promise<void> {
   await logStreamRelay.close();
   await logStreamGateway.close();
   delete runtime.__autoforgePublishAttemptLogs;
+  if (liteWorkerPool) unregisterLiteWorkDispatcher(liteWorkerPool);
   server.closeIdleConnections();
   await new Promise<void>((resolve) => {
     const timeout = setTimeout(() => {
@@ -129,6 +152,7 @@ async function shutdown(signal: "SIGINT" | "SIGTERM"): Promise<void> {
   };
   const results = await Promise.allSettled([
     app.close(),
+    liteWorkerPool?.close() ?? Promise.resolve(),
     serviceRuntime.__autoforgeClosePlatformServices?.() ?? Promise.resolve(),
   ]);
   const failures = results.filter((result) => result.status === "rejected");

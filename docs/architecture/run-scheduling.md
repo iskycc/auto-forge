@@ -1,6 +1,6 @@
 # 批跑动态调度
 
-状态：任务快照执行、资源感知调度、Lite/Full 持久化、`RunAttempt` 分配、Agent claim/lease、实际 TestNG 执行、结果上报、失败重跑与基础设施异常重调度均已实现；优先级公平性、项目配额和完整故障注入仍待验收。
+状态：任务快照执行、资源感知调度、Lite/Full 持久化、`RunAttempt` 分配、Agent claim/lease、实际 TestNG 执行、结果上报、任务终止、失败重跑与基础设施异常重调度均已实现；优先级公平性、项目配额和完整故障注入仍待验收。
 
 ## 输入与快照
 
@@ -63,11 +63,12 @@ score = 100 × (
 
 任务容量不以 UI 或单条 SQL 的参数上限定义。当前 Lite/Full 均支持至少 100,000 个任务成员和同规模 `ExecutionRun`：成员校验、关联查询和写入按固定批次执行，批次摘要使用数据库聚合；每轮调度只读取按创建顺序排列的前 4,096 个可调度 run 及其 attempt 历史。这个窗口覆盖当前 Runner 总槽位上限，完成或心跳会继续触发下一窗口，因此不会为一次补调度把 10 万行及全部 attempt 载入内存，也不会改变稳定顺序、重试或租约语义。
 
-`RunBatch`、`ExecutionRun`、`RunAttempt`、assignment 和 lease 都使用正整数版本。批次创建、调度、领取、完成、超时回收和取消在短事务中以当前版本做条件更新；版本冲突会中止事务，不以最后写入覆盖并发结果。批次每次状态变化同时追加不可变 `run_batch_status_events`，记录前后状态、变更后版本、原因和服务端 UTC 时间；从旧库升级时为已有批次写入 `history.baseline`，因此详情可以从创建或升级基线开始审计完整状态路径。
+`RunBatch`、`ExecutionRun`、`RunAttempt`、assignment 和 lease 都使用正整数版本。批次创建、调度、领取、完成、超时回收和终止在短事务中以当前版本做条件更新；版本冲突会中止事务，不以最后写入覆盖并发结果。批次每次状态变化同时追加不可变 `run_batch_status_events`，记录前后状态、变更后版本、原因和服务端 UTC 时间；从旧库升级时为已有批次写入 `history.baseline`，因此详情可以从创建或升级基线开始审计完整状态路径。
 
 ## 并发与双模式
 
 - SQLite 在短写事务内重新读取 Runner、活动 attempt 和等待 run，使用条件更新防止重复分配；批次状态也使用版本条件写。
+- Lite 自托管服务把调度、领取、续租、完成、恢复扫描、批次终止和日志文件写入分派到最多四条控制 lane 与四条日志 lane；同一 Runner、attempt 或批次使用稳定哈希保持顺序，高频同键调度请求在进程内合并。worker 使用独立 SQLite WAL 连接，Web 事件循环不执行这些同步写事务，页面查询仍可从权威库恢复全部状态。批次终止使用集合式条件更新，10 万个 queued run 不在应用层逐项读写。
 - PostgreSQL 按 Runner ID 固定顺序取得行锁，再重新执行同一准入规则和容量计算，避免并发批次超卖同一执行机。
 - `busySlots` 与平台活动 attempt 可能描述同一工作，容量计算取二者最大值而不是相加，避免重复扣减。
 - Full 在同一 PostgreSQL 事务中保存调度事实和 outbox，独立 Dispatcher 将消息幂等发布到 JetStream；SQLite 与 JetStream 运行相同的至少一次投递契约，Redis 不参与正确性判断。
@@ -76,7 +77,13 @@ score = 100 × (
 
 `retryLimit` 表示首次执行之外允许的用例失败重跑次数。例如配置 2 时，TestNG 失败的 attempt 1 和 attempt 2 后重新排队，attempt 3 失败后形成该用例最终结果。Runner/传输异常使用独立的两次恢复预算并优先换机，不消耗这里的重跑次数。Agent 完成上报在权威事务中固化终态、状态事件和下一次 attempt；重复或迟到上报不会覆盖新租约持有者的结果。
 
-批次终态描述生命周期是否完整，而不是用例断言结果：全部用例按策略正常执行完毕为 `succeeded`（界面“执行完成”），即使其中仍有最终失败用例；Runner/控制面等非正常异常耗尽恢复预算为 `failed`（“执行异常”）；用户取消或中断为 `cancelled`（“执行中断”）。用例通过/失败只在批次计数、总结轮次和分析事实中表达。
+批次终态描述生命周期是否完整，而不是用例断言结果：全部用例按策略正常执行完毕为 `succeeded`（界面“执行完成”），即使其中仍有最终失败用例；Runner/控制面等非正常异常耗尽恢复预算为 `failed`（“执行异常”）；用户终止为 `cancelled`（“已终止”）。用例通过/失败只在批次计数、总结轮次和分析事实中表达。
+
+`POST /api/v1/run-batches/{batchId}/terminate` 保存不可逆的终止请求。事务立即把 queued、未领取或
+已经失去有效 lease 的 run 关闭为 `BATCH_TERMINATED_BEFORE_EXECUTION`，随后所有调度查询、预留和
+claim 都排除该批次。持有有效 lease 的 attempt 不设置取消指令，Runner 继续执行和续租；完成上报
+保留真实成功/失败结果，但禁止再次重跑。最后一个在途 attempt 完成或被恢复扫描裁决后，批次进入
+`cancelled`。旧 `/cancel` 路由保留同语义兼容，不再逐条强制把 completed assignment 转为 cancelled。
 
 ## 超时与恢复
 

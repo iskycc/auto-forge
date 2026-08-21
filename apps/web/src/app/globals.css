@@ -10691,3 +10691,114 @@ button.icon-button:disabled {
     width: min(420px, 48%);
   }
 }
+/* App Router 流式加载：保持顶栏与侧栏可交互，并用轻量骨架反馈大型目录/任务查询。 */
+.route-loading {
+  min-height: 60vh;
+}
+
+.route-loading-hero,
+.route-loading-card {
+  position: relative;
+  overflow: hidden;
+}
+
+.route-loading-spinner {
+  color: var(--color-accent);
+}
+
+.route-loading-label {
+  display: inline-flex;
+  margin-bottom: var(--space-4);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-control);
+}
+
+.skeleton-line,
+.skeleton-block,
+.skeleton-row {
+  display: block;
+  border-radius: var(--radius-control);
+  background: linear-gradient(
+    100deg,
+    var(--color-surface-muted) 20%,
+    var(--color-surface) 38%,
+    var(--color-surface-muted) 56%
+  );
+  background-size: 220% 100%;
+  animation: route-skeleton-shimmer 1.4s ease-in-out infinite;
+}
+
+.skeleton-eyebrow {
+  width: 7rem;
+  height: 0.65rem;
+  margin-bottom: var(--space-3);
+}
+
+.skeleton-title {
+  width: 15rem;
+  height: 2rem;
+  margin-bottom: var(--space-3);
+}
+
+.skeleton-copy {
+  width: min(36rem, 60vw);
+  height: 0.9rem;
+}
+
+.route-loading-toolbar {
+  display: grid;
+  grid-template-columns: minmax(12rem, 1fr) minmax(10rem, 0.6fr) 8rem;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+}
+
+.skeleton-block {
+  height: 2.5rem;
+}
+
+.route-loading-rows {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.skeleton-row {
+  height: 3.25rem;
+}
+
+.list-filter-progress,
+.execution-record-row-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.list-filter-progress {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-caption);
+}
+
+.execution-record-row-actions {
+  white-space: nowrap;
+}
+
+.execution-record-table-stack {
+  display: grid;
+  gap: var(--space-3);
+}
+
+@keyframes route-skeleton-shimmer {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: -100% 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skeleton-line,
+  .skeleton-block,
+  .skeleton-row {
+    animation: none;
+  }
+}

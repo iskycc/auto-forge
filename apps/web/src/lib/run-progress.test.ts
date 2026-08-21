@@ -35,7 +35,7 @@ describe("Jenkins and public run progress", () => {
     });
   });
 
-  it("distinguishes infrastructure exceptions and user interruption", () => {
+  it("distinguishes infrastructure exceptions and user termination", () => {
     const exception = buildRunProgress(
       batch({
         status: "failed",
@@ -50,7 +50,7 @@ describe("Jenkins and public run progress", () => {
     const interrupted = buildRunProgress(batch({ status: "cancelled", cancelledRuns: 2 }));
 
     expect(exception.statusLabel).toBe("执行异常");
-    expect(interrupted.statusLabel).toBe("执行中断");
+    expect(interrupted.statusLabel).toBe("已终止");
   });
 
   it("reports the complete current-round denominator before attempts are assigned", () => {

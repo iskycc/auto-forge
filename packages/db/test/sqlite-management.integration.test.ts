@@ -1847,11 +1847,11 @@ describe("SQLite management repositories", () => {
         createdAt: "2026-08-09T00:04:00.000Z",
       });
       await expect(
-        executions.cancelBatch({
+        executions.terminateBatch({
           batchId: "batch-cancel-queued",
           actorId: "administrator",
           reason: "operator cancelled queued batch",
-          eventIds: ["event-cancel-queued"],
+          eventId: "event-cancel-queued",
           requestedAt: "2026-08-09T00:04:01.000Z",
         }),
       ).resolves.toBe(1);
@@ -1906,11 +1906,11 @@ describe("SQLite management repositories", () => {
         scheduledAt: "2026-08-09T00:04:03.000Z",
       });
       await expect(
-        executions.cancelBatch({
+        executions.terminateBatch({
           batchId: "batch-cancel-assigned",
           actorId: "administrator",
           reason: "operator cancelled assigned batch",
-          eventIds: ["event-cancel-assigned"],
+          eventId: "event-cancel-assigned",
           requestedAt: "2026-08-09T00:04:04.000Z",
         }),
       ).resolves.toBe(1);
@@ -1922,9 +1922,200 @@ describe("SQLite management repositories", () => {
           expect.objectContaining({
             id: "attempt-cancel-assigned",
             status: "cancelled",
-            resultCode: "CANCELLED_BY_USER",
+            resultCode: "BATCH_TERMINATED_BEFORE_EXECUTION",
           }),
         ],
+      });
+
+      await batches.create({
+        id: "batch-terminate-after-retry",
+        suiteId: "suite-1",
+        suiteName: "Terminate completed assignment suite",
+        suiteVersion: 1,
+        retryLimit: 1,
+        environmentVariables: [],
+        runnerIds: ["runner-control"],
+        runs: [
+          {
+            id: "run-terminate-after-retry",
+            caseDefinitionId: "case-1",
+            caseVersion: 1,
+            displayName: "Terminate after retry",
+            className: "com.example.TerminateAfterRetryTest",
+          },
+        ],
+        createdAt: "2026-08-09T00:04:05.000Z",
+      });
+      await batches.reserveAssignments({
+        batchId: "batch-terminate-after-retry",
+        decisions: [
+          {
+            executionRunId: "run-terminate-after-retry",
+            runnerId: "runner-control",
+            score: 1,
+            attemptId: "attempt-terminate-after-retry",
+            assignmentId: "assignment-terminate-after-retry",
+          },
+        ],
+        thresholds: {
+          maximumCpuUtilizationPercent: 80,
+          maximumMemoryUtilizationPercent: 85,
+          maximumLoadPerCpu: 1,
+        },
+        offlineBefore: "2026-08-09T00:00:30.000Z",
+        metricsFreshAfter: "2026-08-09T00:00:30.000Z",
+        scheduledAt: "2026-08-09T00:04:06.000Z",
+      });
+      await executions.claim({
+        ...claimInput,
+        requestId: "claim-terminate-after-retry",
+        leaseSeeds: [
+          {
+            id: "lease-terminate-after-retry",
+            eventId: "event-claim-terminate-after-retry",
+            tokenHash: "lease-terminate-after-retry-hash",
+            tokenEncrypted: "encrypted-terminate-after-retry-token",
+          },
+        ],
+        now: "2026-08-09T00:04:07.000Z",
+        leaseExpiresAt: "2026-08-09T00:05:00.000Z",
+      });
+      await expect(
+        executions.completeAttempt({
+          runnerId: "runner-control",
+          attemptId: "attempt-terminate-after-retry",
+          completionId: "completion-terminate-after-retry",
+          leaseTokenHash: "lease-terminate-after-retry-hash",
+          resultDigest: "result-terminate-after-retry",
+          result: {
+            status: "failed",
+            resultCode: "TESTNG_ASSERTIONS_FAILED",
+            summary: "assertion failed",
+            durationMs: 1_000,
+            artifacts: [],
+          },
+          eventId: "event-complete-terminate-after-retry",
+          acceptedAt: "2026-08-09T00:04:08.000Z",
+        }),
+      ).resolves.toMatchObject({ retryScheduled: true });
+      // 回归原问题：最新 assignment 已 completed，而 run 因重试回到 queued。
+      await expect(
+        executions.terminateBatch({
+          batchId: "batch-terminate-after-retry",
+          actorId: "administrator",
+          reason: "terminate queued retry",
+          eventId: "event-terminate-after-retry",
+          requestedAt: "2026-08-09T00:04:09.000Z",
+        }),
+      ).resolves.toBe(1);
+      expect(await batches.get("batch-terminate-after-retry")).toMatchObject({
+        status: "cancelled",
+        terminationRequestedAt: "2026-08-09T00:04:09.000Z",
+        cancelledRuns: 1,
+        attempts: [expect.objectContaining({ status: "failed" })],
+      });
+
+      await batches.create({
+        id: "batch-terminate-running",
+        suiteId: "suite-1",
+        suiteName: "Graceful termination suite",
+        suiteVersion: 1,
+        retryLimit: 3,
+        environmentVariables: [],
+        runnerIds: ["runner-control"],
+        runs: [
+          {
+            id: "run-terminate-running",
+            caseDefinitionId: "case-1",
+            caseVersion: 1,
+            displayName: "Running during termination",
+            className: "com.example.RunningDuringTerminationTest",
+          },
+        ],
+        createdAt: "2026-08-09T00:04:10.000Z",
+      });
+      await batches.reserveAssignments({
+        batchId: "batch-terminate-running",
+        decisions: [
+          {
+            executionRunId: "run-terminate-running",
+            runnerId: "runner-control",
+            score: 1,
+            attemptId: "attempt-terminate-running",
+            assignmentId: "assignment-terminate-running",
+          },
+        ],
+        thresholds: {
+          maximumCpuUtilizationPercent: 80,
+          maximumMemoryUtilizationPercent: 85,
+          maximumLoadPerCpu: 1,
+        },
+        offlineBefore: "2026-08-09T00:00:30.000Z",
+        metricsFreshAfter: "2026-08-09T00:00:30.000Z",
+        scheduledAt: "2026-08-09T00:04:11.000Z",
+      });
+      await executions.claim({
+        ...claimInput,
+        requestId: "claim-terminate-running",
+        leaseSeeds: [
+          {
+            id: "lease-terminate-running",
+            eventId: "event-claim-terminate-running",
+            tokenHash: "lease-terminate-running-hash",
+            tokenEncrypted: "encrypted-terminate-running-token",
+          },
+        ],
+        now: "2026-08-09T00:04:12.000Z",
+        leaseExpiresAt: "2026-08-09T00:05:00.000Z",
+      });
+      await expect(
+        executions.terminateBatch({
+          batchId: "batch-terminate-running",
+          actorId: "administrator",
+          reason: "graceful termination",
+          eventId: "event-terminate-running-batch",
+          requestedAt: "2026-08-09T00:04:13.000Z",
+        }),
+      ).resolves.toBe(0);
+      expect(await batches.get("batch-terminate-running")).toMatchObject({
+        status: "running",
+        terminationRequestedAt: "2026-08-09T00:04:13.000Z",
+        runningRuns: 1,
+      });
+      await expect(
+        executions.renewLease({
+          runnerId: "runner-control",
+          leaseId: "lease-terminate-running",
+          tokenHash: "lease-terminate-running-hash",
+          expectedVersion: 1,
+          now: "2026-08-09T00:04:14.000Z",
+          expiresAt: "2026-08-09T00:05:14.000Z",
+        }),
+      ).resolves.toMatchObject({ instruction: "continue" });
+      await expect(
+        executions.completeAttempt({
+          runnerId: "runner-control",
+          attemptId: "attempt-terminate-running",
+          completionId: "completion-terminate-running",
+          leaseTokenHash: "lease-terminate-running-hash",
+          resultDigest: "result-terminate-running",
+          result: {
+            status: "failed",
+            resultCode: "TESTNG_ASSERTIONS_FAILED",
+            summary: "assertion failed after termination request",
+            durationMs: 1_000,
+            artifacts: [],
+          },
+          eventId: "event-complete-terminate-running",
+          acceptedAt: "2026-08-09T00:04:15.000Z",
+        }),
+      ).resolves.toMatchObject({ retryScheduled: false });
+      expect(await batches.get("batch-terminate-running")).toMatchObject({
+        status: "cancelled",
+        failedRuns: 1,
+        cancelledRuns: 0,
+        terminationRequestedAt: "2026-08-09T00:04:13.000Z",
+        runs: [expect.objectContaining({ status: "failed" })],
       });
     } finally {
       handle.close();

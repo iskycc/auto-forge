@@ -288,7 +288,7 @@ export function PlatformSettings({
               value={initial.scheduler.priorityAgingIntervalMinutes}
             />
             <NumberInput
-              label="Full worker 并发"
+              label="后台工作并发"
               name="workerConcurrency"
               value={initial.worker.concurrency}
             />
@@ -298,7 +298,7 @@ export function PlatformSettings({
               value={initial.worker.healthPort}
             />
             <NumberInput
-              label="Full worker 排空期限（毫秒）"
+              label="后台工作排空期限（毫秒）"
               name="workerShutdownGraceMs"
               value={initial.worker.shutdownGraceMs}
             />
@@ -308,7 +308,7 @@ export function PlatformSettings({
                 name="workerMetricsEnabled"
                 type="checkbox"
               />
-              启用 Full worker 指标端点
+              启用后台 worker 指标端点
             </label>
           </div>
           <div className="settings-form-actions">

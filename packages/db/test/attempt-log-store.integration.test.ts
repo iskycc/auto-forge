@@ -18,11 +18,11 @@ afterEach(() => {
 });
 
 describe("AttemptLogStore", () => {
-  it("appends, lists and acknowledges chunks with gap, conflict and idempotent semantics", () => {
+  it("appends, lists and acknowledges chunks with gap, conflict and idempotent semantics", async () => {
     const store = createAttemptLogStore(temporaryDirectory());
     try {
       // 缺号（sequence 1 未到）时水位停留在 -1。
-      store.appendChunks({
+      await store.appendChunks({
         batchId,
         attemptId: "attempt-1",
         receivedAt: "2026-08-12T00:00:01.000Z",
@@ -38,7 +38,7 @@ describe("AttemptLogStore", () => {
       expect(store.acknowledgedSequence(batchId, "attempt-1", "stdout")).toBe(-1);
 
       // 补齐 0/1 后水位推进到连续段末尾。
-      const watermark = store.appendChunks({
+      const watermark = await store.appendChunks({
         batchId,
         attemptId: "attempt-1",
         receivedAt: "2026-08-12T00:00:02.000Z",
@@ -60,7 +60,7 @@ describe("AttemptLogStore", () => {
       expect(watermark).toEqual({ stdout: 2, stderr: -1, agent: -1 });
 
       // 幂等重复：相同内容原样接受。
-      const duplicate = store.appendChunks({
+      const duplicate = await store.appendChunks({
         batchId,
         attemptId: "attempt-1",
         receivedAt: "2026-08-12T00:00:03.000Z",
@@ -76,7 +76,7 @@ describe("AttemptLogStore", () => {
       expect(duplicate.stdout).toBe(2);
 
       // 相同序号不同内容触发冲突。
-      expect(() =>
+      await expect(
         store.appendChunks({
           batchId,
           attemptId: "attempt-1",
@@ -90,7 +90,7 @@ describe("AttemptLogStore", () => {
             },
           ],
         }),
-      ).toThrowError(/相同日志序号/);
+      ).rejects.toThrowError(/相同日志序号/);
 
       const page = store.listChunks({
         batchId,
@@ -116,10 +116,10 @@ describe("AttemptLogStore", () => {
     }
   });
 
-  it("removes batch files and is idempotent for missing files", () => {
+  it("removes batch files and is idempotent for missing files", async () => {
     const directory = temporaryDirectory();
     const store = createAttemptLogStore(directory);
-    store.appendChunks({
+    await store.appendChunks({
       batchId,
       attemptId: "attempt-1",
       receivedAt: "2026-08-12T00:00:01.000Z",
@@ -138,10 +138,10 @@ describe("AttemptLogStore", () => {
     store.close();
   });
 
-  it("keeps the main database free of log tables", () => {
+  it("keeps the main database free of log tables", async () => {
     const directory = temporaryDirectory();
     const store = createAttemptLogStore(directory);
-    store.appendChunks({
+    await store.appendChunks({
       batchId,
       attemptId: "attempt-1",
       receivedAt: "2026-08-12T00:00:01.000Z",
@@ -171,10 +171,10 @@ describe("AttemptLogStore", () => {
     }
   });
 
-  it("rejects batch ids that could escape the log directory", () => {
+  it("rejects batch ids that could escape the log directory", async () => {
     const store = createAttemptLogStore(temporaryDirectory());
     try {
-      expect(() =>
+      await expect(
         store.appendChunks({
           batchId: "../escape",
           attemptId: "attempt-1",
@@ -183,7 +183,7 @@ describe("AttemptLogStore", () => {
             { stream: "stdout", sequence: 0, content: "x", recordedAt: "2026-08-12T00:00:00.000Z" },
           ],
         }),
-      ).toThrowError(/批次不存在/);
+      ).rejects.toThrowError(/批次不存在/);
     } finally {
       store.close();
     }

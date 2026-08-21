@@ -32,6 +32,7 @@ import { buildRecoverySchedulingEvents } from "./recovery-scheduling-events";
 
 const LEASE_DURATION_MS = 45_000;
 const RECOVERY_SCAN_LIMIT = 100;
+const RECOVERY_MINIMUM_INTERVAL_MS = 1_000;
 // 调度日志只渲染 message，失败摘要必须压成单行短文本随消息展示。
 const SCHEDULING_SUMMARY_LIMIT = 300;
 
@@ -47,6 +48,10 @@ const COMPLETION_OUTCOME_LABELS: Record<
 };
 
 export class ExecutionControlService {
+  private recoveryInFlight: Promise<void> | undefined;
+  private nextRecoveryAtMs = 0;
+  private readonly runnerSchedulingInFlight = new Map<string, Promise<unknown>>();
+
   constructor(
     private readonly executions: ExecutionControlRepository,
     private readonly runners: RunnerRepository,
@@ -92,23 +97,10 @@ export class ExecutionControlService {
       );
     }
     const now = this.clock.now();
-    const recovered = await this.executions.recoverExpired({
-      now: now.toISOString(),
-      eventIds: Array.from({ length: RECOVERY_SCAN_LIMIT }, () => this.ids.next()),
-      limit: RECOVERY_SCAN_LIMIT,
-    });
-    const recoveryEvents = await buildRecoverySchedulingEvents({
-      recovered,
-      resolveContext: (attemptId) => this.executions.resolveAttemptSchedulingContext(attemptId),
-      recordedAt: now.toISOString(),
-      nextEventId: () => this.ids.next(),
-    });
-    if (recoveryEvents.length > 0) {
-      await this.batches.appendSchedulingEvents(recoveryEvents);
-    }
+    await this.recoverExpiredAttempts(now);
     // 同一 claim 请求内完成“回收 -> 重调度 -> 领取”，避免等待下一次
     // heartbeat。每次 claim 都补调度，上次调度失败后也能幂等恢复。
-    await this.scheduling.scheduleForRunner(runnerId);
+    await this.scheduleForRunner(runnerId, input.availableSlots);
     const leaseSeeds = Array.from({ length: input.availableSlots }, () => {
       const id = this.ids.next();
       const token = this.credentials.issue();
@@ -585,14 +577,65 @@ export class ExecutionControlService {
     return projectId;
   }
 
-  async cancelBatch(actorId: string, batchId: string, reason: string): Promise<number> {
-    return this.executions.cancelBatch({
+  async terminateBatch(actorId: string, batchId: string, reason: string): Promise<number> {
+    return this.executions.terminateBatch({
       batchId,
       actorId,
       reason,
-      eventIds: Array.from({ length: 10_000 }, () => this.ids.next()),
+      eventId: this.ids.next(),
       requestedAt: this.clock.now().toISOString(),
     });
+  }
+
+  /**
+   * Runner claim 是高频入口。全局恢复扫描按固定窗口合并，避免数百个并发 claim
+   * 重复扫描同一批租约并阻塞 Lite 的 Web 事件循环。
+   */
+  private async recoverExpiredAttempts(now: Date): Promise<void> {
+    if (now.getTime() < this.nextRecoveryAtMs) return;
+    if (this.recoveryInFlight) return this.recoveryInFlight;
+    this.nextRecoveryAtMs = now.getTime() + RECOVERY_MINIMUM_INTERVAL_MS;
+    const recovery = (async () => {
+      const recovered = await this.executions.recoverExpired({
+        now: now.toISOString(),
+        eventIds: Array.from({ length: RECOVERY_SCAN_LIMIT }, () => this.ids.next()),
+        limit: RECOVERY_SCAN_LIMIT,
+      });
+      const recoveryEvents = await buildRecoverySchedulingEvents({
+        recovered,
+        resolveContext: (attemptId) => this.executions.resolveAttemptSchedulingContext(attemptId),
+        recordedAt: now.toISOString(),
+        nextEventId: () => this.ids.next(),
+      });
+      if (recoveryEvents.length > 0) {
+        await this.batches.appendSchedulingEvents(recoveryEvents);
+      }
+    })();
+    this.recoveryInFlight = recovery;
+    try {
+      await recovery;
+    } finally {
+      if (this.recoveryInFlight === recovery) this.recoveryInFlight = undefined;
+    }
+  }
+
+  /** 同一 Runner 的并发 claim 共用一次补调度；批次数量与可用槽位保持有界。 */
+  private async scheduleForRunner(runnerId: string, availableSlots: number): Promise<void> {
+    const existing = this.runnerSchedulingInFlight.get(runnerId);
+    if (existing) {
+      await existing;
+      return;
+    }
+    const batchLimit = Math.min(8, Math.max(1, availableSlots));
+    const scheduling = this.scheduling.scheduleForRunner(runnerId, batchLimit);
+    this.runnerSchedulingInFlight.set(runnerId, scheduling);
+    try {
+      await scheduling;
+    } finally {
+      if (this.runnerSchedulingInFlight.get(runnerId) === scheduling) {
+        this.runnerSchedulingInFlight.delete(runnerId);
+      }
+    }
   }
 
   async cancelRun(

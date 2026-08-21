@@ -33,7 +33,7 @@ export type AttemptLogStore = {
     attemptId: string;
     receivedAt: string;
     chunks: AttemptLogChunkInput[];
-  }): { stdout: number; stderr: number; agent: number };
+  }): Promise<{ stdout: number; stderr: number; agent: number }>;
   listChunks(input: {
     batchId: string;
     attemptId: string;
@@ -149,7 +149,7 @@ export function createAttemptLogStore(attemptLogsDirectory: string): AttemptLogS
   }
 
   return {
-    appendChunks(input) {
+    async appendChunks(input) {
       assertBatchId(input.batchId);
       const client = openBatch(input.batchId);
       return client.transaction(() => {
@@ -287,7 +287,9 @@ export function createAttemptLogStore(attemptLogsDirectory: string): AttemptLogS
         let bytes = 0;
         for (const suffix of ["", "-wal"]) {
           const path = storePath(attemptLogsDirectory, batchId) + suffix;
-          if (existsSync(path)) bytes += statSync(path).size;
+          if (existsSync(/* turbopackIgnore: true */ path)) {
+            bytes += statSync(/* turbopackIgnore: true */ path).size;
+          }
         }
         stats.set(batchId, bytes);
       }

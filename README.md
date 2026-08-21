@@ -100,7 +100,8 @@ AutoForge 是一个面向自动化测试场景的用例工厂，用于统一管�
 | `POST`   | `/api/v1/run-batches/preflight`                           | 返回创建前逐项配置阻塞原因                           |
 | `GET`    | `/api/v1/run-batches/{batchId}`                           | 查询批次、ExecutionRun 与 RunAttempt                 |
 | `GET`    | `/api/v1/run-batches/{batchId}/progress`                  | API Key 或批次签名参数读取 Jenkins 进展摘要          |
-| `POST`   | `/api/v1/run-batches/{batchId}/cancel`                    | 取消批次及其未完成执行                               |
+| `POST`   | `/api/v1/run-batches/{batchId}/terminate`                 | 终止批次调度，在途用例自然完成后关闭任务             |
+| `POST`   | `/api/v1/run-batches/{batchId}/cancel`                    | 兼容旧客户端的批次终止别名                           |
 | `POST`   | `/api/v1/jenkins/runs`                                    | API Key 按任务快照启动批次并返回进展链接             |
 | `POST`   | `/api/v1/jenkins/dependencies`                            | API Key 按项目版本替换依赖压缩包链接                 |
 | `POST`   | `/api/v1/runner-agents/{runnerId}/claims`                 | 认证长轮询并原子领取 assignment                      |
@@ -120,6 +121,15 @@ AutoForge 是一个面向自动化测试场景的用例工厂，用于统一管�
 顶栏“开始执行”弹窗的任务模式只需选择任务并确认，Runner/Runner Group、项目版本、重跑和 Adapter 地址全部继承任务配置；单用例模式才展示临时执行配置。`/run-batches` 规划路由只重定向到执行记录。每个启用用例固化为一个 `ExecutionRun`；10 万级批次创建时分批写入，调度每轮只读取最多 4,096 个待执行用例，并在后续心跳和完成上报时持续补充。平台只在任务保存的 Runner 快照内，根据在线状态、资源快照新鲜度、空闲并发槽位、CPU、内存和 1 分钟单位 CPU 负载进行准入与评分。立即重跑模式允许失败用例在同批其他首轮用例仍运行时进入下一次 attempt，整轮轮次模式则按用户选择等待本轮结束。排队、领取和上传收尾使用任务快照中的持久化 UTC deadline；执行期限统一来自平台的单用例执行时限，服务重启后由同一恢复扫描继续裁决。
 
 Runner/传输基础设施失败使用独立的最多两次自动重调度预算，不占用用例失败重跑额度，并且不等待整轮结束。重调度优先避开已对该用例产生异常的 Runner，没有替代节点时才有界回退；每次异常都写入调度事件，执行详情可按执行机、错误和用例聚合查看。“总结”虚拟轮次每个初始用例只保留一行：任一轮通过即计入最终通过，从未通过则保留最后一次失败结果。
+
+执行记录列表和批次详情都提供“终止任务”。请求一经持久化，调度器立即停止创建或下发新
+assignment，未领取用例直接关闭；持有有效 lease 的在途用例继续续租并自然完成，不会被强杀，
+且不再产生重跑。所有在途用例结束或被超时恢复后，批次终态为 `cancelled`，界面显示“已终止”。
+
+Lite 自托管服务把补调度、assignment 领取/续租/完成、恢复扫描和日志文件写入分派到有界
+worker-thread lane；相同 Runner、attempt 或日志批次稳定落到同一 lane，高频补调度请求会合并。
+SQLite WAL 和短事务仍是权威并发边界，Web 主线程主要负责鉴权、页面查询与响应映射。16U 基线
+使用 25 台、每台 20 槽的合成 Runner，在一次有界窗口内完成 500 个 assignment 的原子预留。
 
 `scheduled` 表示 assignment 已持久化但尚未领取，`running` 表示 Agent 已取得有效 lease。Agent 已接入 claim、续租、取消、reconcile、日志/产物上传和完成上报；执行详情页可分页读取三类日志、下载已上传产物并查看 Attempt 状态时间线。精确评分、并发防超卖、双模式语义和失败重跑边界见[批跑动态调度设计](./docs/architecture/run-scheduling.md)。
 

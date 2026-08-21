@@ -24,14 +24,15 @@ export function runBatchStatusLabel(status: RunBatch["status"]): string {
     running: "执行中",
     succeeded: "执行完成",
     failed: "执行异常",
-    cancelled: "执行中断",
+    cancelled: "已终止",
   };
   return labels[status];
 }
 
 export function runBatchCompletionLabel(batch: RunBatchDetails): string {
+  if (batch.terminationRequestedAt && isActiveRunBatch(batch.status)) return "终止中";
   if (isActiveRunBatch(batch.status)) return runBatchStatusLabel(batch.status);
-  if (batch.status === "cancelled") return "执行中断";
+  if (batch.status === "cancelled") return "已终止";
   const latestAttempts = new Map<string, RunAttempt>();
   for (const attempt of batch.attempts) {
     const current = latestAttempts.get(attempt.executionRunId);

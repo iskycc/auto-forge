@@ -5,7 +5,7 @@ import { Button, Input } from "@/components/ui";
 import { apiErrorSchema } from "@autoforge/contracts";
 import type { CaseSuite, CaseSuiteDetails, CaseSuiteItem } from "@autoforge/domain";
 import { ChevronRight, FolderTree, LoaderCircle, Search, Trash2 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useDeferredValue, useMemo, useState } from "react";
 
 const SUITE_TREE_RENDER_PAGE_SIZE = 250;
 
@@ -22,7 +22,12 @@ export function CaseSuiteDetailsView({
   const [removing, setRemoving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [visibleGroupCount, setVisibleGroupCount] = useState(SUITE_TREE_RENDER_PAGE_SIZE);
-  const visibleItems = useMemo(() => filterItems(suite.items, query), [query, suite.items]);
+  const deferredQuery = useDeferredValue(query);
+  const filtering = deferredQuery !== query;
+  const visibleItems = useMemo(
+    () => filterItems(suite.items, deferredQuery),
+    [deferredQuery, suite.items],
+  );
   const groups = useMemo(() => packageGroups(visibleItems), [visibleItems]);
 
   function toggleCase(caseDefinitionId: string): void {
@@ -128,11 +133,21 @@ export function CaseSuiteDetailsView({
                 </Button>
               </div>
             ) : null}
+            {filtering ? (
+              <span className="list-filter-progress" role="status">
+                <LoaderCircle aria-hidden="true" className="spin" size={14} /> 正在筛选
+              </span>
+            ) : null}
           </div>
           {groups.length === 0 ? (
             <div className="inline-empty">没有匹配的任务用例。</div>
           ) : (
-            <div aria-label="任务用例树" className="suite-case-tree" role="tree">
+            <div
+              aria-busy={filtering}
+              aria-label="任务用例树"
+              className="suite-case-tree"
+              role="tree"
+            >
               {groups.slice(0, visibleGroupCount).map(([packageName, items]) => (
                 <SuitePackageGroup
                   canManage={canManage}

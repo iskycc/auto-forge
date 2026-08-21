@@ -459,11 +459,11 @@ export interface ExecutionControlRepository {
     eventIds: string[];
     limit: number;
   }): Promise<RecoveredAttemptExpiration[]>;
-  cancelBatch(input: {
+  terminateBatch(input: {
     batchId: string;
     actorId: string;
     reason: string;
-    eventIds: string[];
+    eventId: string;
     requestedAt: string;
   }): Promise<number>;
   cancelRun(input: {
@@ -1158,7 +1158,7 @@ export type RunBatchListPage = {
 /** 恢复与 Runner 生命周期路径只依赖这两个调度入口，不依赖具体服务实现。 */
 export interface RunBatchSchedulingPort {
   schedule(batchId: string): Promise<unknown>;
-  scheduleForRunner(runnerId: string): Promise<unknown>;
+  scheduleForRunner(runnerId: string, batchLimit?: number): Promise<unknown>;
 }
 
 export interface RunBatchRepository {
@@ -1180,7 +1180,11 @@ export interface RunBatchRepository {
     now?: string,
     agingIntervalMinutes?: number,
   ): Promise<string[]>;
-  getSchedulingSnapshot(batchId: string, offlineBefore: string): Promise<SchedulingSnapshot | null>;
+  getSchedulingSnapshot(
+    batchId: string,
+    offlineBefore: string,
+    maximumQueuedRuns?: number,
+  ): Promise<SchedulingSnapshot | null>;
   reserveAssignments(input: ReserveSchedulingAssignmentsInput): Promise<number>;
   appendSchedulingEvents(
     events: Array<{

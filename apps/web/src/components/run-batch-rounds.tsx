@@ -305,9 +305,11 @@ export function RunBatchRounds({
                             : ""
                     }`.trim()}
                   >
-                    {["succeeded", "failed", "cancelled"].includes(batch.status)
-                      ? "已完成"
-                      : "实时汇总"}
+                    {batch.status === "cancelled"
+                      ? "已终止"
+                      : ["succeeded", "failed"].includes(batch.status)
+                        ? "已完成"
+                        : "实时汇总"}
                   </span>
                 </td>
                 <td>{finalStats.totalRuns}</td>

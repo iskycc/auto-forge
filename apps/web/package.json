@@ -4,10 +4,11 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "node server/index.ts",
-    "build": "next build && tsc -p tsconfig.server.json",
+    "build:lite-worker": "node server/build-lite-worker.mjs",
+    "dev": "pnpm run build:lite-worker && node server/index.ts",
+    "build": "next build && tsc -p tsconfig.server.json && pnpm run build:lite-worker",
     "start": "node dist-server/server/index.js",
-    "typecheck": "next typegen && tsc --noEmit && tsc --noEmit -p tsconfig.server.json"
+    "typecheck": "next typegen && tsc --noEmit && tsc --noEmit -p tsconfig.server.json && tsc --noEmit -p tsconfig.worker.json"
   },
   "dependencies": {
     "@autoforge/application": "workspace:*",
@@ -46,6 +47,7 @@
     "@types/react-dom": "19.2.4",
     "@types/ssh2": "1.15.5",
     "@types/ws": "8.18.1",
+    "esbuild": "0.28.2",
     "typescript": "5.9.3"
   }
 }

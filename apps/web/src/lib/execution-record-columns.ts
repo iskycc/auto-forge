@@ -18,6 +18,7 @@ export type ExecutionRecordRow = {
   selectedRunnerCount: number;
   createdAt: string;
   updatedAt: string;
+  terminationRequestedAt?: string;
 };
 
 export type ExecutionRecordColumnKey =
@@ -66,7 +67,7 @@ export const EXECUTION_RECORD_COLUMNS: readonly ExecutionRecordColumnDefinition[
     defaultWidth: 100,
     minWidth: 80,
     maxWidth: 140,
-    text: (row) => executionRecordStatusLabel(row.status),
+    text: (row) => executionRecordStatusLabel(row),
   },
   {
     key: "passRate",
@@ -138,10 +139,10 @@ export const EXECUTION_RECORD_COLUMNS: readonly ExecutionRecordColumnDefinition[
   {
     key: "actions",
     label: "操作",
-    defaultWidth: 100,
-    minWidth: 84,
-    maxWidth: 110,
-    text: () => "详情",
+    defaultWidth: 190,
+    minWidth: 100,
+    maxWidth: 220,
+    text: (row) => (executionRecordIsActive(row.status) ? "详情 终止任务" : "详情"),
   },
 ];
 
@@ -174,7 +175,17 @@ export function executionRecordIsActive(status: RunBatch["status"]): boolean {
   return ["queued", "dispatching", "scheduled", "running"].includes(status);
 }
 
-export function executionRecordStatusLabel(status: RunBatch["status"]): string {
+export function executionRecordStatusLabel(
+  value: RunBatch["status"] | Pick<ExecutionRecordRow, "status" | "terminationRequestedAt">,
+): string {
+  if (
+    typeof value !== "string" &&
+    value.terminationRequestedAt &&
+    executionRecordIsActive(value.status)
+  ) {
+    return "终止中";
+  }
+  const status = typeof value === "string" ? value : value.status;
   const labels: Record<RunBatch["status"], string> = {
     queued: "等待资源",
     dispatching: "分配中",
@@ -182,7 +193,7 @@ export function executionRecordStatusLabel(status: RunBatch["status"]): string {
     running: "执行中",
     succeeded: "执行完成",
     failed: "执行异常",
-    cancelled: "执行中断",
+    cancelled: "已终止",
   };
   return labels[status];
 }

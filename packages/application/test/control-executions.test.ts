@@ -142,7 +142,7 @@ describe("Runner execution compatibility", () => {
       closedBatchIds: ["batch-closed", "batch-foreign"],
     });
     expect(executions.claim).toHaveBeenCalledOnce();
-    expect(scheduling.scheduleForRunner).toHaveBeenCalledWith("runner-no-cgroup");
+    expect(scheduling.scheduleForRunner).toHaveBeenCalledWith("runner-no-cgroup", 1);
   });
 
   it("writes scheduling events for attempts recovered before claiming", async () => {
@@ -219,7 +219,7 @@ describe("Runner execution compatibility", () => {
     });
 
     expect(appended).toHaveLength(1);
-    expect(scheduling.scheduleForRunner).toHaveBeenCalledWith("runner-1");
+    expect(scheduling.scheduleForRunner).toHaveBeenCalledWith("runner-1", 1);
     expect(appended[0]).toEqual([
       expect.objectContaining({
         batchId: "batch-1",
@@ -239,6 +239,106 @@ describe("Runner execution compatibility", () => {
     ]);
     // claim_timeout 无人领取，事件不带 runnerId，只出现在总体调度日志。
     expect(appended[0]?.[0]).not.toHaveProperty("runnerId");
+  });
+});
+
+describe("high-concurrency execution control", () => {
+  it("coalesces concurrent Runner recovery and refill scans", async () => {
+    let releaseScheduling!: () => void;
+    const schedulingGate = new Promise<void>((resolve) => {
+      releaseScheduling = resolve;
+    });
+    const executions = {
+      recoverExpired: vi.fn().mockResolvedValue([]),
+      claim: vi.fn().mockResolvedValue([]),
+    } as unknown as ExecutionControlRepository;
+    const runners = {
+      findByCredentialHash: vi.fn().mockResolvedValue({
+        id: "runner-concurrent",
+        name: "Runner Concurrent",
+        state: "online",
+        os: "linux",
+        architecture: "amd64",
+        agentVersion: "0.2.2",
+        protocolVersion: 1,
+        labels: [],
+        capabilities: ["executor:testng-v1", "java:21.0.8", "testng:7.11.0"],
+        maxConcurrency: 500,
+        busySlots: 0,
+        lastSeenAt: "2026-08-09T00:00:00.000Z",
+        terminalEnabled: false,
+        createdAt: "2026-08-09T00:00:00.000Z",
+        updatedAt: "2026-08-09T00:00:00.000Z",
+      }),
+    } as unknown as RunnerRepository;
+    const scheduling = schedulingFake();
+    vi.mocked(scheduling.scheduleForRunner).mockReturnValue(schedulingGate);
+    const service = new ExecutionControlService(
+      executions,
+      runners,
+      {
+        issue: vi.fn(() => "l".repeat(32)),
+        issueBootstrapToken: vi.fn(),
+        hash: (value) => `hash:${value}`,
+        verifyBootstrapToken: vi.fn(),
+      },
+      credentialCipherFake(),
+      {} as JarObjectStorePort,
+      { now: () => new Date("2026-08-09T00:00:00.000Z") },
+      { next: () => "generated-id" },
+      batchesRepositoryFake(),
+      scheduling,
+    );
+    const claims = Array.from({ length: 100 }, (_, index) =>
+      service.claim("runner-concurrent", "credential", {
+        schemaVersion: 1,
+        requestId: `request-${index}`,
+        availableSlots: 500,
+        labels: [],
+        capabilities: ["executor:testng-v1", "java:21.0.8", "testng:7.11.0"],
+        waitSeconds: 0,
+      }),
+    );
+
+    await vi.waitFor(() => expect(scheduling.scheduleForRunner).toHaveBeenCalledOnce());
+    releaseScheduling();
+    await expect(Promise.all(claims)).resolves.toHaveLength(100);
+
+    expect(executions.recoverExpired).toHaveBeenCalledOnce();
+    expect(scheduling.scheduleForRunner).toHaveBeenCalledWith("runner-concurrent", 8);
+    expect(executions.claim).toHaveBeenCalledTimes(100);
+  });
+
+  it("persists a batch termination request through the execution repository", async () => {
+    const executions = {
+      terminateBatch: vi.fn().mockResolvedValue(12),
+    } as unknown as ExecutionControlRepository;
+    const service = new ExecutionControlService(
+      executions,
+      {} as RunnerRepository,
+      {
+        issue: vi.fn(),
+        issueBootstrapToken: vi.fn(),
+        hash: (value) => value,
+        verifyBootstrapToken: vi.fn(),
+      },
+      credentialCipherFake(),
+      {} as JarObjectStorePort,
+      { now: () => new Date("2026-08-09T00:00:00.000Z") },
+      { next: () => "termination-event" },
+      batchesRepositoryFake(),
+      schedulingFake(),
+    );
+
+    await expect(service.terminateBatch("operator-1", "batch-1", "maintenance")).resolves.toBe(12);
+    expect(executions.terminateBatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        actorId: "operator-1",
+        batchId: "batch-1",
+        reason: "maintenance",
+        requestedAt: "2026-08-09T00:00:00.000Z",
+      }),
+    );
   });
 });
 

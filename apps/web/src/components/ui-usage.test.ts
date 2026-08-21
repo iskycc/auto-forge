@@ -16,6 +16,8 @@ const GLOBAL_RUN_DIALOG = join(SOURCE_ROOT, "components", "global-run-dialog.tsx
 const GLOBAL_PROJECT_SWITCHER = join(SOURCE_ROOT, "components", "global-project-switcher.tsx");
 const CASE_SUITE_EDITOR = join(SOURCE_ROOT, "components", "case-suite-editor.tsx");
 const CASE_SELECTION_TABLE = join(SOURCE_ROOT, "components", "case-selection-table.tsx");
+const CASE_SUITE_DETAILS = join(SOURCE_ROOT, "components", "case-suite-details.tsx");
+const ROUTE_LOADING_SKELETON = join(SOURCE_ROOT, "components", "route-loading-skeleton.tsx");
 const AUTOMATION_PAGE = join(SOURCE_ROOT, "app", "settings", "automation", "page.tsx");
 const AUTOMATION_OPERATIONS = join(SOURCE_ROOT, "components", "automation-operations.tsx");
 const PROJECT_SWITCH_FREE_FILES = [
@@ -179,6 +181,29 @@ describe("shared UI controls", () => {
     const accessSettings = readFileSync(ACCESS_SETTINGS, "utf8");
     expect(accessSettings).toContain('title="重置用户密码"');
     expect(accessSettings).toContain('title="分配用户角色"');
+  });
+
+  it("keeps dense data routes visibly responsive while loading and filtering", () => {
+    for (const loadingFile of [
+      join(SOURCE_ROOT, "app", "cases", "loading.tsx"),
+      join(SOURCE_ROOT, "app", "case-suites", "loading.tsx"),
+      join(SOURCE_ROOT, "app", "case-suites", "[suiteId]", "loading.tsx"),
+      join(SOURCE_ROOT, "app", "execution-records", "loading.tsx"),
+      join(SOURCE_ROOT, "app", "run-batches", "[batchId]", "loading.tsx"),
+    ]) {
+      expect(readFileSync(loadingFile, "utf8"), relative(SOURCE_ROOT, loadingFile)).toContain(
+        "<RouteLoadingSkeleton",
+      );
+    }
+    const skeleton = readFileSync(ROUTE_LOADING_SKELETON, "utf8");
+    expect(skeleton).toContain('aria-busy="true"');
+    expect(skeleton).toContain('role="status"');
+    for (const component of [CASE_SELECTION_TABLE, CASE_SUITE_DETAILS]) {
+      const source = readFileSync(component, "utf8");
+      expect(source).toContain("useDeferredValue");
+      expect(source).toContain("正在筛选");
+      expect(source).toContain("aria-busy={filtering}");
+    }
   });
 
   it("keeps every first-level sidebar tab at exactly four Chinese characters", () => {

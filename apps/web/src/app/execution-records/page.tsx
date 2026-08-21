@@ -14,6 +14,7 @@ import {
   requirePageProjectScope,
 } from "@/lib/auth";
 import { selectableProjectIds, selectedProjectId } from "@/lib/selected-project";
+import { hasPermission } from "@autoforge/domain";
 import {
   localDateTimeInputValue,
   refreshQueryFromFilter,
@@ -67,6 +68,9 @@ export default async function ExecutionRecordsPage({
     selectedRunnerCount: batch.selectedRunnerIds.length,
     createdAt: batch.createdAt,
     updatedAt: batch.updatedAt,
+    ...(batch.terminationRequestedAt
+      ? { terminationRequestedAt: batch.terminationRequestedAt }
+      : {}),
   }));
   return (
     <div className="page-stack">
@@ -104,7 +108,7 @@ export default async function ExecutionRecordsPage({
             <option value="running">执行中</option>
             <option value="succeeded">成功</option>
             <option value="failed">失败</option>
-            <option value="cancelled">已取消</option>
+            <option value="cancelled">已终止</option>
           </Select>
         </label>
         <label>
@@ -164,7 +168,10 @@ export default async function ExecutionRecordsPage({
             </Link>
           </div>
         ) : (
-          <ExecutionRecordsTable rows={rows} />
+          <ExecutionRecordsTable
+            canTerminate={hasPermission(identity, "run.cancel", projectId)}
+            rows={rows}
+          />
         )}
         {batchPage.nextCursor ? (
           <Link

@@ -141,9 +141,37 @@ async function completeAttempt(
   return (await response.json()) as CompletionResponse;
 }
 
+async function uploadAttemptLog(
+  page: Page,
+  identity: RunnerIdentity,
+  claim: ClaimedAssignment,
+): Promise<void> {
+  const response = await page.request.post(
+    `/api/v1/run-attempts/${encodeURIComponent(claim.assignment.attemptId)}/logs`,
+    {
+      headers: runnerHeaders(identity),
+      data: {
+        schemaVersion: 1,
+        requestId: `e2e-refill-log-${randomUUID()}`,
+        leaseToken: claim.lease.token,
+        chunks: [
+          {
+            stream: "stdout",
+            sequence: 0,
+            content: "worker-backed log upload\n",
+            recordedAt: new Date().toISOString(),
+          },
+        ],
+      },
+    },
+  );
+  expect(response.status()).toBe(200);
+  expect(await response.json()).toMatchObject({ acknowledgedSequence: { stdout: 0 } });
+}
+
 test("completion immediately refills free runner slots without waiting for the whole wave", async ({
   page,
-}) => {
+}, testInfo) => {
   test.setTimeout(300_000);
   await page.emulateMedia({ reducedMotion: "reduce" });
   await ensureAdministrator(page);
@@ -251,6 +279,7 @@ test("completion immediately refills free runner slots without waiting for the w
   // 初始领取占满 2 个并发槽。
   const initial = await claimOnce(page, identity, 2);
   expect(initial).toHaveLength(2);
+  await uploadAttemptLog(page, identity, initial[0]!);
   // 没有空闲槽时领不到新任务。
   await expectNoAssignment(page, identity);
 
@@ -311,4 +340,51 @@ test("completion immediately refills free runner slots without waiting for the w
     .toBe("succeeded");
   // 批次终态后不再派发新任务。
   await expectNoAssignment(page, identity);
+
+  // 同一套 5 个用例再次执行：领取 2 个后从执行记录列表终止。未领取的 3 个必须
+  // 立即停止调度，2 个在途 attempt 保持 continue 并自然完成，最后展示“已终止”。
+  const terminatingBatch = await createTaskRun(page, suiteId!);
+  const inFlight = await claimOnce(page, identity, 2);
+  expect(inFlight).toHaveLength(2);
+  await page.goto("/execution-records");
+  const terminatingRow = page.locator("tbody tr", {
+    has: page.locator(`a[href="/run-batches/${terminatingBatch.id}"]`),
+  });
+  await expect(terminatingRow).toBeVisible();
+  page.once("dialog", (dialog) => dialog.accept());
+  await terminatingRow.getByRole("button", { name: "终止任务" }).click();
+  await expect(terminatingRow).toContainText("终止中");
+  await expectNoAssignment(page, identity);
+
+  expect(
+    (await completeAttempt(page, identity, inFlight[0]!, "e2e-termination-active-1")).batchClosed,
+  ).toBe(false);
+  expect(
+    (await completeAttempt(page, identity, inFlight[1]!, "e2e-termination-active-2")).batchClosed,
+  ).toBe(true);
+  await expect
+    .poll(async () => {
+      const response = await page.request.get(
+        `/api/v1/run-batches/${encodeURIComponent(terminatingBatch.id)}`,
+        { headers: userHeaders },
+      );
+      return (await response.json()) as {
+        status: string;
+        succeededRuns: number;
+        cancelledRuns: number;
+        terminationRequestedAt?: string;
+      };
+    })
+    .toMatchObject({
+      status: "cancelled",
+      succeededRuns: 2,
+      cancelledRuns: 3,
+      terminationRequestedAt: expect.any(String),
+    });
+  await page.reload();
+  await expect(terminatingRow).toContainText("已终止");
+  await page.screenshot({
+    path: testInfo.outputPath("execution-records-terminated.png"),
+    fullPage: true,
+  });
 });

@@ -40,10 +40,15 @@ import type {
 
 const OFFLINE_AFTER_SECONDS = 45;
 const RUNNER_METRICS_THROTTLE_MS = 30_000;
+const MAXIMUM_SCHEDULING_WINDOW = 4_096;
 
 export class RunBatchSchedulingService {
   // runner_metrics 节流：记录每个 runner 最近一次写入资源快照事件的时间。
   private readonly lastRunnerMetricsAt = new Map<string, Date>();
+  private readonly schedulingInFlight = new Map<
+    string,
+    Promise<{ batch: RunBatch; reserved: number }>
+  >();
 
   constructor(
     private readonly batches: RunBatchRepository,
@@ -294,9 +299,38 @@ export class RunBatchSchedulingService {
     return batch;
   }
 
+  async getSummary(batchId: string, projectIds?: readonly string[]): Promise<RunBatch> {
+    const batch = await this.batches.getSummary(batchId, projectIds);
+    if (!batch) throw new DomainError("RUN_BATCH_NOT_FOUND", "指定的执行批次不存在。");
+    return batch;
+  }
+
   async schedule(batchId: string): Promise<RunBatch> {
+    return (await this.scheduleWithCount(batchId)).batch;
+  }
+
+  private async scheduleWithCount(batchId: string): Promise<{ batch: RunBatch; reserved: number }> {
+    const existing = this.schedulingInFlight.get(batchId);
+    if (existing) return existing;
+    const scheduling = this.scheduleBatch(batchId);
+    this.schedulingInFlight.set(batchId, scheduling);
+    try {
+      return await scheduling;
+    } finally {
+      if (this.schedulingInFlight.get(batchId) === scheduling) {
+        this.schedulingInFlight.delete(batchId);
+      }
+    }
+  }
+
+  private async scheduleBatch(batchId: string): Promise<{ batch: RunBatch; reserved: number }> {
     const now = this.clock.now();
-    const snapshot = await this.batches.getSchedulingSnapshot(batchId, offlineBefore(now));
+    let reserved = 0;
+    const snapshot = await this.batches.getSchedulingSnapshot(
+      batchId,
+      offlineBefore(now),
+      Math.min(MAXIMUM_SCHEDULING_WINDOW, this.projectMaximumConcurrency),
+    );
     if (!snapshot) throw new DomainError("RUN_BATCH_NOT_FOUND", "指定的执行批次不存在。");
     if (snapshot.queuedRuns.length > 0) {
       // 批次策略的并发上限按在途（assigned+running）run 数扣减；assignedRuns 已包含 running。
@@ -334,7 +368,7 @@ export class RunBatchSchedulingService {
           attemptId: this.ids.next(),
           assignmentId: this.ids.next(),
         }));
-        const reserved = await this.batches.reserveAssignments({
+        reserved = await this.batches.reserveAssignments({
           batchId,
           eventId: this.ids.next(),
           projectMaximumConcurrency: this.projectMaximumConcurrency,
@@ -349,7 +383,7 @@ export class RunBatchSchedulingService {
     }
     const batch = await this.batches.getSummary(batchId);
     if (!batch) throw new DomainError("RUN_BATCH_NOT_FOUND", "指定的执行批次不存在。");
-    return batch;
+    return { batch, reserved };
   }
 
   async listSchedulingEvents(
@@ -446,7 +480,7 @@ export class RunBatchSchedulingService {
     return this.scheduleBatchIds(batchIds);
   }
 
-  async scheduleForRunner(runnerId: string, limit = 50): Promise<number> {
+  async scheduleForRunner(runnerId: string, limit = 8): Promise<number> {
     const batchIds = await this.batches.listSchedulableBatchIdsForRunner(
       runnerId,
       limit,
@@ -459,9 +493,7 @@ export class RunBatchSchedulingService {
   private async scheduleBatchIds(batchIds: string[]): Promise<number> {
     let scheduled = 0;
     for (const batchId of batchIds) {
-      const before = await this.batches.getSummary(batchId);
-      const after = await this.schedule(batchId);
-      scheduled += Math.max(0, after.assignedRuns - (before?.assignedRuns ?? 0));
+      scheduled += (await this.scheduleWithCount(batchId)).reserved;
     }
     return scheduled;
   }

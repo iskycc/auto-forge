@@ -8,9 +8,11 @@ import { scheduleExecutionRuns, type ExecutionRun, type Runner } from "@autoforg
 import {
   createAttemptLogStore,
   createSqliteDatabase,
+  SqliteCaseCatalogRepository,
   SqliteCaseSuiteRepository,
   SqliteExecutionControlRepository,
   SqliteRunBatchRepository,
+  SqliteRunnerRepository,
 } from "@autoforge/db/sqlite";
 import { SqliteJobQueue } from "@autoforge/queue/sqlite";
 import { TestNgJarDiscovery } from "@autoforge/testng-discovery";
@@ -99,6 +101,8 @@ describe("bounded platform performance baseline", () => {
       migrationsFolder: resolve(import.meta.dirname, "../../packages/db/drizzle/sqlite"),
     });
     const repository = new SqliteRunBatchRepository(handle);
+    const attemptLogs = createAttemptLogStore(resolve(directory, "attempt-logs"));
+    const executionControl = new SqliteExecutionControlRepository(handle, attemptLogs);
     const startedAt = performance.now();
     try {
       const batch = await repository.create({
@@ -129,6 +133,154 @@ describe("bounded platform performance baseline", () => {
       recordMetric("sqlite-run-batch", durationMs, {
         runs: 100_000,
         schedulingWindow: snapshot?.queuedRuns.length ?? 0,
+      });
+
+      const terminationStartedAt = performance.now();
+      const cancelledRuns = await executionControl.terminateBatch({
+        batchId: batch.id,
+        actorId: "performance-test",
+        reason: "Capacity gate",
+        eventId: "termination-event-100k",
+        requestedAt: "2026-08-11T00:01:00.000Z",
+      });
+      const terminationDurationMs = performance.now() - terminationStartedAt;
+      expect(cancelledRuns).toBe(100_000);
+      expect((await repository.getSummary(batch.id))?.status).toBe("cancelled");
+      expect(terminationDurationMs).toBeLessThan(5_000);
+      recordMetric("sqlite-terminate-100k", terminationDurationMs, { runs: cancelledRuns });
+    } finally {
+      attemptLogs.close();
+      handle.close();
+    }
+  });
+
+  it("reserves 500 concurrent Lite assignments in one bounded scheduling pass", async () => {
+    const directory = await temporaryDirectory("autoforge-500-concurrency-");
+    const handle = createSqliteDatabase({
+      databasePath: resolve(directory, "concurrency.sqlite"),
+      migrationsFolder: resolve(import.meta.dirname, "../../packages/db/drizzle/sqlite"),
+    });
+    const catalog = new SqliteCaseCatalogRepository(handle);
+    const runners = new SqliteRunnerRepository(handle);
+    const batches = new SqliteRunBatchRepository(handle);
+    try {
+      const archive = zipSync(
+        Object.fromEntries(
+          Array.from({ length: 500 }, (_, index) => {
+            const className = `load.fixture.ConcurrentTest${index}`;
+            return [
+              `${className.replaceAll(".", "/")}.class`,
+              buildClassFile({
+                className,
+                methods: [{ name: "executes", annotations: [{ type: "Test" }] }],
+              }),
+            ];
+          }),
+        ),
+      );
+      const inspection = await new TestNgJarDiscovery().inspect("concurrent.jar", archive);
+      await catalog.importCatalog({
+        sourceId: "source-concurrent",
+        objectKey: "jars/concurrent.jar",
+        displayName: "Concurrent source",
+        importedAt: baselineTimestamp,
+        inspection,
+        cases: inspection.classes.map((candidate, index) => ({
+          caseDefinitionId: `case-concurrent-${index}`,
+          caseVersionId: `version-concurrent-${index}`,
+          candidate,
+          methods: [{ methodId: `method-concurrent-${index}`, methodIndex: 0 }],
+        })),
+      });
+      const selectedRunnerIds: string[] = [];
+      for (let index = 0; index < 25; index += 1) {
+        const runner = runnerFixture(index);
+        selectedRunnerIds.push(runner.id);
+        await runners.register({
+          id: runner.id,
+          bootstrapTokenHash: `bootstrap-${index}`,
+          credentialHash: `credential-${index}`,
+          name: runner.name,
+          os: runner.os,
+          architecture: runner.architecture,
+          agentVersion: runner.agentVersion,
+          protocolVersion: runner.protocolVersion,
+          labels: runner.labels,
+          capabilities: runner.capabilities,
+          maxConcurrency: runner.maxConcurrency,
+          terminalEnabled: false,
+          recordedAt: baselineTimestamp,
+        });
+        await runners.heartbeat({
+          runnerId: runner.id,
+          labels: runner.labels,
+          capabilities: runner.capabilities,
+          maxConcurrency: runner.maxConcurrency,
+          busySlots: 0,
+          agentVersion: runner.agentVersion,
+          terminalEnabled: false,
+          resourceSnapshot: runner.resourceSnapshot!,
+          recordedAt: baselineTimestamp,
+        });
+      }
+      await batches.create({
+        id: "batch-concurrent-500",
+        projectId: "project-load",
+        suiteId: "suite-concurrent-500",
+        suiteName: "500 concurrency",
+        suiteVersion: 1,
+        retryLimit: 0,
+        environmentVariables: [],
+        runnerIds: selectedRunnerIds,
+        runs: Array.from({ length: 500 }, (_, index) => ({
+          id: `concurrent-run-${index}`,
+          caseDefinitionId: `case-concurrent-${index}`,
+          caseVersion: 1,
+          displayName: `Concurrent case ${index}`,
+          className: inspection.classes[index]!.className,
+        })),
+        createdAt: baselineTimestamp,
+      });
+
+      const startedAt = performance.now();
+      const snapshot = await batches.getSchedulingSnapshot(
+        "batch-concurrent-500",
+        "2026-08-10T23:59:00.000Z",
+        500,
+      );
+      const thresholds = {
+        maximumCpuUtilizationPercent: 90,
+        maximumMemoryUtilizationPercent: 90,
+        maximumLoadPerCpu: 2,
+      };
+      const plan = scheduleExecutionRuns({
+        runs: snapshot!.queuedRuns,
+        candidates: snapshot!.candidates,
+        thresholds,
+        metricsFreshAfter: "2026-08-10T23:59:00.000Z",
+      });
+      const reserved = await batches.reserveAssignments({
+        batchId: "batch-concurrent-500",
+        decisions: plan.decisions.map((decision, index) => ({
+          ...decision,
+          attemptId: `concurrent-attempt-${index}`,
+          assignmentId: `concurrent-assignment-${index}`,
+        })),
+        thresholds,
+        offlineBefore: "2026-08-10T23:59:00.000Z",
+        metricsFreshAfter: "2026-08-10T23:59:00.000Z",
+        scheduledAt: baselineTimestamp,
+        projectMaximumConcurrency: 500,
+        eventId: "concurrent-scheduling-event",
+      });
+      const durationMs = performance.now() - startedAt;
+
+      expect(plan.decisions).toHaveLength(500);
+      expect(reserved).toBe(500);
+      expect(durationMs).toBeLessThan(5_000);
+      recordMetric("sqlite-500-concurrency", durationMs, {
+        assignments: reserved,
+        runners: selectedRunnerIds.length,
       });
     } finally {
       handle.close();

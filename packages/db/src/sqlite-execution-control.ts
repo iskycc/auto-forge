@@ -82,6 +82,7 @@ type AttemptControlRow = {
   batch_id: string;
   project_id: string;
   run_cancel_requested_at: string | null;
+  batch_termination_requested_at: string | null;
 };
 
 type ArtifactRow = {
@@ -124,9 +125,11 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
       if (input.availableSlots === 0) return [];
       const candidates = this.handle.client
         .prepare(
-          `SELECT * FROM assignments
-           WHERE runner_id = ? AND status = 'pending' AND available_at <= ? AND claim_deadline_at > ?
-           ORDER BY priority DESC, created_at ASC, id ASC LIMIT ?`,
+          `SELECT a.* FROM assignments a
+           JOIN run_batches b ON b.id = a.batch_id
+           WHERE a.runner_id = ? AND a.status = 'pending' AND a.available_at <= ?
+             AND a.claim_deadline_at > ? AND b.cancel_requested_at IS NULL
+           ORDER BY a.priority DESC, a.created_at ASC, a.id ASC LIMIT ?`,
         )
         .all(
           input.runnerId,
@@ -146,7 +149,9 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
         const update = this.handle.client
           .prepare(
             `UPDATE assignments SET status = 'claimed', claimed_at = ?, updated_at = ?, version = version + 1
-             WHERE id = ? AND status = 'pending'`,
+             WHERE id = ? AND status = 'pending'
+               AND EXISTS (SELECT 1 FROM run_batches b
+                           WHERE b.id = assignments.batch_id AND b.cancel_requested_at IS NULL)`,
           )
           .run(input.now, input.now, assignment.id);
         if (update.changes !== 1) continue;
@@ -345,6 +350,7 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
             retryableRunnerFailure: isRetryableRunnerFailure(effectiveResult.resultCode),
             runnerFailuresBefore: failureCounts.runner,
             ordinaryFailuresBefore: failureCounts.ordinary,
+            retrySuppressed: control.batch_termination_requested_at !== null,
           });
           response.retryScheduled = decision.retryScheduled;
           // persistCompletion 内部已聚合批次状态，直接用其返回值判定终态。
@@ -462,7 +468,7 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
   ): ReturnType<ExecutionControlRepository["appendLogChunks"]> {
     this.authorizedTransferContext({ ...input, now: input.receivedAt });
     const batchId = this.requiredBatchIdForAttempt(input.attemptId);
-    const acknowledgedSequence = this.attemptLogs.appendChunks({
+    const acknowledgedSequence = await this.attemptLogs.appendChunks({
       batchId,
       attemptId: input.attemptId,
       receivedAt: input.receivedAt,
@@ -827,39 +833,33 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
     })();
   }
 
-  async cancelBatch(
-    input: Parameters<ExecutionControlRepository["cancelBatch"]>[0],
+  async terminateBatch(
+    input: Parameters<ExecutionControlRepository["terminateBatch"]>[0],
   ): Promise<number> {
     return this.handle.client.transaction(() => {
-      const runs = this.handle.client
-        .prepare(
-          "SELECT id FROM execution_runs WHERE batch_id = ? AND status NOT IN ('succeeded', 'failed', 'cancelled')",
-        )
-        .all(input.batchId) as Array<{ id: string }>;
       const batch = this.handle.client
-        .prepare("SELECT version FROM run_batches WHERE id = ?")
-        .get(input.batchId) as { version: number } | undefined;
+        .prepare("SELECT status, version, cancel_requested_at FROM run_batches WHERE id = ?")
+        .get(input.batchId) as
+        { status: RunBatchStatus; version: number; cancel_requested_at: string | null } | undefined;
       if (!batch) throw new DomainError("RUN_BATCH_NOT_FOUND", "指定的执行批次不存在。");
-      const cancellation = this.handle.client
-        .prepare(
-          `UPDATE run_batches SET cancel_requested_at = ?, updated_at = ?, version = version + 1
-           WHERE id = ? AND version = ?`,
-        )
-        .run(input.requestedAt, input.requestedAt, input.batchId, batch.version);
-      if (cancellation.changes !== 1) {
-        throw new DomainError("RUN_BATCH_VERSION_CONFLICT", "执行批次已被并发修改。");
+      if (isTerminalBatchStatus(batch.status)) return 0;
+      if (!batch.cancel_requested_at) {
+        const termination = this.handle.client
+          .prepare(
+            `UPDATE run_batches SET cancel_requested_at = ?, updated_at = ?, version = version + 1
+             WHERE id = ? AND version = ? AND cancel_requested_at IS NULL`,
+          )
+          .run(input.requestedAt, input.requestedAt, input.batchId, batch.version);
+        if (termination.changes !== 1) {
+          throw new DomainError("RUN_BATCH_VERSION_CONFLICT", "执行批次已被并发修改。");
+        }
       }
-      let changed = 0;
-      for (const [index, run] of runs.entries()) {
-        const eventId = input.eventIds[index];
-        if (!eventId) break;
-        changed += this.cancelRunWithinTransaction({ ...input, runId: run.id, eventId }) ? 1 : 0;
-      }
+      const changed = this.terminateWaitingRuns(input.batchId, input.reason, input.requestedAt);
       this.updateBatchStatus(
         input.batchId,
         input.requestedAt,
-        input.eventIds[changed] ?? input.batchId,
-        "batch.cancelled",
+        input.eventId,
+        "batch.termination_requested",
       );
       return changed;
     })();
@@ -1075,6 +1075,7 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
       retryableRunnerFailure: isRetryableRunnerFailure(expiration.resultCode),
       runnerFailuresBefore: failureCounts.runner,
       ordinaryFailuresBefore: failureCounts.ordinary,
+      retrySuppressed: control.batch_termination_requested_at !== null,
     });
     const attemptStatus = transitionRunAttempt(control.status, "timed_out");
     const runStatus = transitionExecutionRun(control.run_status, decision.runStatus);
@@ -1190,7 +1191,7 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
         .run(input.requestedAt, input.requestedAt, assignment.id);
       return true;
     }
-    if (assignment) {
+    if (assignment && !["completed", "cancelled", "expired"].includes(assignment.status)) {
       const assignmentStatus = transitionAssignment(assignment.status, "cancelled");
       this.handle.client
         .prepare(
@@ -1233,6 +1234,61 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
       .run(runStatus, input.requestedAt, input.requestedAt, input.runId);
     this.updateBatchStatus(run.batch_id, input.requestedAt, input.eventId, "run.cancelled");
     return true;
+  }
+
+  /** 集合式关闭未开始的工作，避免 10 万级任务逐行往返；有效租约是唯一保留条件。 */
+  private terminateWaitingRuns(batchId: string, reason: string, requestedAt: string): number {
+    this.handle.client
+      .prepare(
+        `UPDATE assignments SET status = 'cancelled', updated_at = ?, version = version + 1
+         WHERE batch_id = ? AND status IN ('pending', 'claimed', 'running')
+           AND NOT (
+             status IN ('claimed', 'running') AND EXISTS (
+               SELECT 1 FROM assignment_leases l
+               WHERE l.assignment_id = assignments.id AND l.status = 'active' AND l.expires_at > ?
+             )
+           )`,
+      )
+      .run(requestedAt, batchId, requestedAt);
+    this.handle.client
+      .prepare(
+        `UPDATE assignment_leases SET status = 'revoked'
+         WHERE status = 'active' AND assignment_id IN (
+           SELECT id FROM assignments WHERE batch_id = ? AND status = 'cancelled'
+         )`,
+      )
+      .run(batchId);
+    this.handle.client
+      .prepare(
+        `UPDATE run_attempts SET status = 'cancelled', outcome = 'cancelled',
+         result_code = 'BATCH_TERMINATED_BEFORE_EXECUTION', result_summary = ?,
+         finished_at = ?, version = version + 1
+         WHERE status IN ('assigned', 'running')
+           AND execution_run_id IN (SELECT id FROM execution_runs WHERE batch_id = ?)
+           AND NOT EXISTS (
+             SELECT 1 FROM assignments a JOIN assignment_leases l ON l.assignment_id = a.id
+             WHERE a.attempt_id = run_attempts.id AND a.status IN ('claimed', 'running')
+               AND l.status = 'active' AND l.expires_at > ?
+           )`,
+      )
+      .run(reason, requestedAt, batchId, requestedAt);
+    return this.handle.client
+      .prepare(
+        `UPDATE execution_runs SET status = 'cancelled', terminal_outcome = 'cancelled',
+         terminal_reason_code = 'BATCH_TERMINATED_BEFORE_EXECUTION', cancel_requested_at = ?,
+         updated_at = ?, version = version + 1
+         WHERE batch_id = ? AND status NOT IN ('succeeded', 'failed', 'cancelled')
+           AND NOT EXISTS (
+             SELECT 1 FROM run_attempts ra
+             JOIN assignments a ON a.attempt_id = ra.id
+             JOIN assignment_leases l ON l.assignment_id = a.id
+             WHERE ra.execution_run_id = execution_runs.id
+               AND ra.status IN ('assigned', 'running')
+               AND a.status IN ('claimed', 'running')
+               AND l.status = 'active' AND l.expires_at > ?
+           )`,
+      )
+      .run(requestedAt, requestedAt, batchId, requestedAt).changes;
   }
 
   private claimReplay(runnerId: string, requestId: string): ClaimedAssignmentRecord[] | null {
@@ -1323,7 +1379,8 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
       .prepare(
         `SELECT a.id, a.execution_run_id, a.runner_id, a.attempt_number, a.status,
          r.status AS run_status, r.cancel_requested_at AS run_cancel_requested_at,
-         b.retry_limit, b.retry_mode, b.id AS batch_id, b.project_id
+         b.retry_limit, b.retry_mode, b.id AS batch_id, b.project_id,
+         b.cancel_requested_at AS batch_termination_requested_at
          FROM run_attempts a JOIN execution_runs r ON r.id = a.execution_run_id
          JOIN run_batches b ON b.id = r.batch_id WHERE a.id = ?`,
       )
@@ -1412,12 +1469,22 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
     reason: string,
   ): RunBatchStatus {
     const batch = this.handle.client
-      .prepare("SELECT status, version, retry_mode FROM run_batches WHERE id = ?")
+      .prepare(
+        "SELECT status, version, retry_mode, cancel_requested_at FROM run_batches WHERE id = ?",
+      )
       .get(batchId) as
-      { status: RunBatchStatus; version: number; retry_mode: "immediate" | "round" } | undefined;
+      | {
+          status: RunBatchStatus;
+          version: number;
+          retry_mode: "immediate" | "round";
+          cancel_requested_at: string | null;
+        }
+      | undefined;
     if (!batch) throw new DomainError("RUN_BATCH_NOT_FOUND", "指定的执行批次不存在。");
     // 轮次制下先释放等待下一轮的失败 run，再聚合状态，确保释放的 run 计入批次状态。
-    this.advanceRoundIfIdle(batchId, batch.retry_mode, updatedAt);
+    if (!batch.cancel_requested_at) {
+      this.advanceRoundIfIdle(batchId, batch.retry_mode, updatedAt);
+    }
     const runCompletions = (
       this.handle.client
         .prepare(
@@ -1431,7 +1498,9 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
       status: row.status,
       ...(row.terminalReasonCode ? { terminalReasonCode: row.terminalReasonCode } : {}),
     }));
-    const status = aggregateBatchStatus(runCompletions);
+    const status = aggregateBatchStatus(runCompletions, {
+      terminationRequested: batch.cancel_requested_at !== null,
+    });
     transitionRunBatch(batch.status, status);
     const update = this.handle.client
       .prepare(

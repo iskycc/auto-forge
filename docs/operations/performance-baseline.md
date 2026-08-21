@@ -8,6 +8,8 @@ SQLite 持久队列和执行日志仓储，固定验证以下支持规模：
 | JAR 静态发现  |                             2,000 class / 10,000 method |                         30 秒 |
 | 调度窗口      | 100,000-run 任务中的 4,096 run / 50 Runner / 1,000 slot |        2 秒且零超卖、均衡分配 |
 | Lite 执行批次 |                            100,000 run / 4,096 调度窗口 |           60 秒且摘要计数完整 |
+| Lite 任务终止 |                                      100,000 queued run |        5 秒且全部原子进入终态 |
+| Lite 并发预留 |                                    25 Runner / 500 slot | 5 秒且 500 个 assignment 完整 |
 | Lite 任务成员 |                                            100,000 case |     60 秒且只生成一个任务版本 |
 | Lite 队列     |                        10,000 job / 8 worker connection | 60 秒且零重复、100 次租约恢复 |
 | Lite 日志     |                                20,000 chunk，约 9.7 MiB |   60 秒，500 条分页且完整水位 |

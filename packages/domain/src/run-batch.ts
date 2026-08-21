@@ -105,6 +105,9 @@ export type RunBatch = {
   failedRuns: number;
   timedOutRuns: number;
   cancelledRuns: number;
+  // 终止请求一经保存，调度器不得再创建或下发新 assignment；已有在途用例自然完成。
+  // 在所有 run 进入终态前，批次仍保留其运行状态，由展示层显示“终止中”。
+  terminationRequestedAt?: string;
   version: number;
   createdAt: string;
   updatedAt: string;

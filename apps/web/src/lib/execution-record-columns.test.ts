@@ -46,9 +46,9 @@ describe("executionRecordColumnWidths", () => {
     expect(widths.suite).toBeLessThanOrEqual(360);
   });
 
-  it("labels infrastructure terminal failures as execution exceptions", () => {
+  it("distinguishes completed, exceptional, and terminated batches", () => {
     expect(executionRecordStatusLabel("failed")).toBe("执行异常");
-    expect(executionRecordStatusLabel("cancelled")).toBe("执行中断");
+    expect(executionRecordStatusLabel("cancelled")).toBe("已终止");
     expect(executionRecordStatusLabel("succeeded")).toBe("执行完成");
   });
 });

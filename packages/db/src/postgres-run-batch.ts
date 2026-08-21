@@ -307,6 +307,7 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
             eq(pgRunBatchRunners.runnerId, runnerId),
             inArray(pgRunBatches.id, [...batchIds]),
             inArray(pgRunBatches.status, ["queued", "dispatching", "scheduled", "running"]),
+            isNull(pgRunBatches.cancelRequestedAt),
           ),
         )
     ).map((row) => row.id);
@@ -319,7 +320,8 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
   ): Promise<string[]> {
     await this.ready();
     const result = await this.handle.pool.query<{ id: string }>(
-      `SELECT id FROM run_batches WHERE status IN ('queued','dispatching','running')
+      `SELECT id FROM run_batches
+       WHERE status IN ('queued','dispatching','running') AND cancel_requested_at IS NULL
        ORDER BY priority + LEAST(100, GREATEST(0, FLOOR(
          EXTRACT(EPOCH FROM ($1::timestamptz-created_at::timestamptz)) / 60 / $2
        ))) DESC, created_at, id LIMIT $3`,
@@ -338,6 +340,7 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
     const result = await this.handle.pool.query<{ id: string }>(
       `SELECT b.id FROM run_batches b JOIN run_batch_runners br ON br.batch_id=b.id
        WHERE br.runner_id=$1 AND b.status IN ('queued','dispatching','running')
+         AND b.cancel_requested_at IS NULL
        ORDER BY b.priority + LEAST(100, GREATEST(0, FLOOR(
          EXTRACT(EPOCH FROM ($2::timestamptz-b.created_at::timestamptz)) / 60 / $3
        ))) DESC, b.created_at, b.id LIMIT $4`,
@@ -349,21 +352,24 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
   async getSchedulingSnapshot(
     batchId: string,
     offlineBefore: string,
+    maximumQueuedRuns = SCHEDULING_RUN_WINDOW_SIZE,
   ): Promise<SchedulingSnapshot | null> {
     const batch = await this.getSummary(batchId);
     if (!batch) return null;
-    const queuedRows = await this.handle.db
-      .select()
-      .from(pgExecutionRuns)
-      .where(
-        and(
-          eq(pgExecutionRuns.batchId, batchId),
-          eq(pgExecutionRuns.status, "queued"),
-          eq(pgExecutionRuns.heldRound, 0),
-        ),
-      )
-      .orderBy(pgExecutionRuns.createdAt, pgExecutionRuns.id)
-      .limit(SCHEDULING_RUN_WINDOW_SIZE);
+    const queuedRows = batch.terminationRequestedAt
+      ? []
+      : await this.handle.db
+          .select()
+          .from(pgExecutionRuns)
+          .where(
+            and(
+              eq(pgExecutionRuns.batchId, batchId),
+              eq(pgExecutionRuns.status, "queued"),
+              eq(pgExecutionRuns.heldRound, 0),
+            ),
+          )
+          .orderBy(pgExecutionRuns.createdAt, pgExecutionRuns.id)
+          .limit(Math.min(SCHEDULING_RUN_WINDOW_SIZE, Math.max(1, maximumQueuedRuns)));
     const queuedRunIds = queuedRows.map((run) => run.id);
     const attemptRows = [];
     for (const ids of batchesOf(queuedRunIds, RELATIONAL_ID_QUERY_BATCH_SIZE)) {
@@ -425,11 +431,13 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
           projectId: pgRunBatches.projectId,
           policyJson: pgRunBatches.policyJson,
           adapterRuntimeJson: pgRunBatches.adapterRuntimeJson,
+          terminationRequestedAt: pgRunBatches.cancelRequestedAt,
         })
         .from(pgRunBatches)
         .where(eq(pgRunBatches.id, input.batchId))
         .for("update");
       if (!lockedBatch) throw new DomainError("RUN_BATCH_NOT_FOUND", "指定的执行批次不存在。");
+      if (lockedBatch.terminationRequestedAt) return 0;
       await transaction
         .select({ id: pgProjects.id })
         .from(pgProjects)
@@ -816,6 +824,7 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
       failedRuns: Number(outcomeCount?.failed ?? 0),
       timedOutRuns: Number(outcomeCount?.timedOut ?? 0),
       cancelledRuns: byStatus.get("cancelled") ?? 0,
+      ...(row.cancelRequestedAt ? { terminationRequestedAt: row.cancelRequestedAt } : {}),
       version: row.version,
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,

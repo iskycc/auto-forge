@@ -68,6 +68,11 @@ import { RunnerAgentInstaller } from "./runner-agent-installer";
 import { RunnerAgentResourceStore } from "./runner-agent-resources";
 import { issueRunnerBootstrapToken, verifyRunnerBootstrapToken } from "./runner-bootstrap-token";
 import { AesGcmSecretCipher } from "./secret-cipher";
+import {
+  CoalescingSchedulingPort,
+  liteWorkDispatcher,
+  workerBackedExecutionControlRepository,
+} from "./lite-work-dispatch";
 
 export type PlatformServices = Awaited<ReturnType<typeof createPlatformServices>>;
 
@@ -78,6 +83,7 @@ type RuntimeInfrastructure = {
 
 async function createPlatformServices() {
   const config = loadAppConfig();
+  const workDispatcher = config.mode === "lite" ? liteWorkDispatcher() : undefined;
   const configurationStore = appConfigurationStore(config);
   let catalog: CaseCatalogRepository;
   let suites: CaseSuiteRepository;
@@ -109,7 +115,8 @@ async function createPlatformServices() {
     runnerInstallationProfileRepository = new SqliteRunnerInstallationProfileRepository(database);
     runnerGroupsRepository = new SqliteRunnerGroupRepository(database);
     identities = new SqliteIdentityAccessRepository(database);
-    executions = new SqliteExecutionControlRepository(database, attemptLogs);
+    const localExecutions = new SqliteExecutionControlRepository(database, attemptLogs);
+    executions = workerBackedExecutionControlRepository(localExecutions, workDispatcher);
     batches = new SqliteRunBatchRepository(
       database,
       config.caseExecutionTimeoutSeconds,
@@ -282,6 +289,7 @@ async function createPlatformServices() {
     config.caseExecutionTimeoutSeconds * 1_000,
     config.artifactCollectionEnabled,
   );
+  const runScheduling = new CoalescingSchedulingPort(runBatches, workDispatcher);
   const runnerControl = new RunnerControlService(
     runners,
     runnerCredentials,
@@ -289,7 +297,7 @@ async function createPlatformServices() {
     clock,
     ids,
     batches,
-    runBatches,
+    runScheduling,
     runnerInstallationProfileRepository,
   );
   const platformOperations = new PlatformOperationsService(
@@ -313,7 +321,7 @@ async function createPlatformServices() {
         "dispatch-run": async (job) => {
           const batchId = job.payload.batchId;
           if (typeof batchId !== "string") throw new Error("Dispatch job batchId is invalid.");
-          await runBatches.schedule(batchId);
+          await runScheduling.schedule(batchId);
         },
         "object-cleanup": caseSources.objectCleanupHandler(),
         "jar-import": importTestNgJar.jobHandler(),
@@ -322,7 +330,7 @@ async function createPlatformServices() {
       clock,
       {
         workerId: `lite-web-${process.pid}`,
-        concurrency: 4,
+        concurrency: config.worker.concurrency,
         leaseDurationMs: 30_000,
         minimumPollMs: 100,
         maximumPollMs: 2_000,
@@ -383,7 +391,7 @@ async function createPlatformServices() {
     clock,
     ids,
     batches,
-    runBatches,
+    runScheduling,
   );
   const runnerProtocol = new RunnerProtocolController(executionControl);
   // 日志公开访问 token 与 Runner 凭据同构：随机 base64url，库中只留 SHA-256 哈希。
@@ -479,6 +487,7 @@ async function createPlatformServices() {
     publicStatistics,
     platformOperations,
     runBatches,
+    runScheduling,
     runnerRequestLimiter,
     jobQueue,
     cache,

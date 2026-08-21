@@ -167,11 +167,13 @@ export function outcomeAfterCompletion(input: {
   retryableRunnerFailure?: boolean;
   runnerFailuresBefore?: number;
   ordinaryFailuresBefore?: number;
+  retrySuppressed?: boolean;
 }): { runStatus: "queued" | "succeeded" | "failed" | "cancelled"; retryScheduled: boolean } {
   if (input.outcome === "succeeded") return { runStatus: "succeeded", retryScheduled: false };
   if (input.outcome === "cancelled" || input.cancellationRequested) {
     return { runStatus: "cancelled", retryScheduled: false };
   }
+  if (input.retrySuppressed) return { runStatus: "failed", retryScheduled: false };
   const failuresBefore = Math.max(0, input.attemptNumber - 1);
   const retryScheduled = input.retryableRunnerFailure
     ? (input.runnerFailuresBefore ?? failuresBefore) < MAX_RUNNER_FAILURE_RESCHEDULES
@@ -185,9 +187,10 @@ type BatchRunCompletion = {
 };
 
 // 批次终态表达执行生命周期，而不是断言结果：用例断言失败仍表示任务完整执行结束；
-// 只有执行机/控制面异常才进入 failed，取消优先显示为中断。
+// 只有执行机/控制面异常才进入 failed，用户终止优先显示为已终止。
 export function aggregateBatchStatus(
   states: readonly (string | BatchRunCompletion)[],
+  options: { terminationRequested?: boolean } = {},
 ): RunBatchStatus {
   const completions = states.map((state) =>
     typeof state === "string" ? { status: state } : state,
@@ -199,9 +202,11 @@ export function aggregateBatchStatus(
     return statuses.some((status) => status === "queued") ? "dispatching" : "scheduled";
   }
   if (statuses.some((status) => status === "queued")) return "queued";
-  // 用户中断是整个批次的生命周期裁决；即使中断前已有 Runner 异常，最终状态仍应
-  // 清楚表达“执行中断”，异常证据继续保留在 attempt 与执行机事件中。
-  if (statuses.some((status) => status === "cancelled")) return "cancelled";
+  // 用户终止是整个批次的生命周期裁决；即使终止前已有 Runner 异常，最终状态仍应
+  // 清楚表达“已终止”，异常证据继续保留在 attempt 与执行机事件中。
+  if (options.terminationRequested || statuses.some((status) => status === "cancelled")) {
+    return "cancelled";
+  }
   const hasAbnormalFailure = completions.some(
     ({ status, terminalReasonCode }) =>
       status === "failed" &&

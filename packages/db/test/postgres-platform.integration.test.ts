@@ -256,6 +256,7 @@ describe.skipIf(!connectionString)("PostgreSQL platform repositories", () => {
     const secondProjectId = randomUUID();
     const defaultProjectId = "00000000-0000-7000-8000-000000000001";
     const secondProjectBatchId = `batch-project-${runnerId}`;
+    const terminationBatchId = `batch-termination-${runnerId}`;
     let analyticsProjectVersionId: string | undefined;
     let analyticsTestStageId: string | undefined;
     try {
@@ -630,7 +631,109 @@ describe.skipIf(!connectionString)("PostgreSQL platform repositories", () => {
           generatedAt: "2026-08-09T00:02:00.000Z",
         }),
       ).resolves.toMatchObject({ sampleCount: 0, passed: 0, failed: 0 });
+
+      await batches.create({
+        id: terminationBatchId,
+        suiteId,
+        suiteName: "PostgreSQL graceful termination",
+        suiteVersion: 1,
+        retryLimit: 3,
+        environmentVariables: [],
+        runnerIds: [runnerId],
+        runs: [
+          {
+            id: `run-active-${runnerId}`,
+            caseDefinitionId: `case-${runnerId}`,
+            caseVersion: 1,
+            displayName: "Active during termination",
+            className: "example.ActiveDuringTermination",
+          },
+        ],
+        createdAt: "2026-08-09T00:02:01.000Z",
+      });
+      await batches.reserveAssignments({
+        batchId: terminationBatchId,
+        decisions: [
+          {
+            executionRunId: `run-active-${runnerId}`,
+            runnerId,
+            score: 1,
+            attemptId: `attempt-active-${runnerId}`,
+            assignmentId: `assignment-active-${runnerId}`,
+          },
+        ],
+        thresholds,
+        offlineBefore: "2026-08-09T00:00:30.000Z",
+        metricsFreshAfter: "2026-08-09T00:00:30.000Z",
+        scheduledAt: "2026-08-09T00:02:02.000Z",
+      });
+      await executions.claim({
+        runnerId,
+        requestId: `claim-active-${runnerId}`,
+        availableSlots: 1,
+        labels: ["java", "testng"],
+        capabilities: ["executor:testng-v1", "isolation:cgroup-v2", "java:21.0.8", "testng:7.11.0"],
+        leaseSeeds: [
+          {
+            id: `lease-active-${runnerId}`,
+            eventId: `claim-event-active-${runnerId}`,
+            tokenHash: `lease-token-active-${runnerId}`,
+            tokenEncrypted: `encrypted-active-${runnerId}`,
+          },
+        ],
+        now: "2026-08-09T00:02:03.000Z",
+        leaseExpiresAt: "2026-08-09T00:03:03.000Z",
+      });
+      await expect(
+        executions.terminateBatch({
+          batchId: terminationBatchId,
+          actorId: "administrator",
+          reason: "operator termination",
+          eventId: `termination-event-${runnerId}`,
+          requestedAt: "2026-08-09T00:02:04.000Z",
+        }),
+      ).resolves.toBe(0);
+      await expect(batches.get(terminationBatchId)).resolves.toMatchObject({
+        status: "running",
+        terminationRequestedAt: "2026-08-09T00:02:04.000Z",
+        runningRuns: 1,
+        cancelledRuns: 0,
+      });
+      await expect(
+        executions.renewLease({
+          runnerId,
+          leaseId: `lease-active-${runnerId}`,
+          tokenHash: `lease-token-active-${runnerId}`,
+          expectedVersion: 1,
+          now: "2026-08-09T00:02:05.000Z",
+          expiresAt: "2026-08-09T00:03:05.000Z",
+        }),
+      ).resolves.toMatchObject({ instruction: "continue" });
+      await expect(
+        executions.completeAttempt({
+          runnerId,
+          attemptId: `attempt-active-${runnerId}`,
+          completionId: `completion-active-${runnerId}`,
+          leaseTokenHash: `lease-token-active-${runnerId}`,
+          resultDigest: `digest-active-${runnerId}`,
+          result: {
+            status: "failed",
+            resultCode: "TESTNG_ASSERTIONS_FAILED",
+            summary: "failed after termination request",
+            durationMs: 100,
+            artifacts: [],
+          },
+          eventId: `complete-event-active-${runnerId}`,
+          acceptedAt: "2026-08-09T00:02:06.000Z",
+        }),
+      ).resolves.toMatchObject({ retryScheduled: false });
+      await expect(batches.get(terminationBatchId)).resolves.toMatchObject({
+        status: "cancelled",
+        failedRuns: 1,
+        cancelledRuns: 0,
+      });
     } finally {
+      await handle.pool.query("DELETE FROM run_batches WHERE id = $1", [terminationBatchId]);
       await handle.pool.query("DELETE FROM run_batches WHERE id = $1", [secondProjectBatchId]);
       await handle.pool.query("DELETE FROM run_batches WHERE id = $1", [`batch-${runnerId}`]);
       await handle.pool.query("DELETE FROM case_versions WHERE source_id IN ($1, $2)", [

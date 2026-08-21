@@ -1,7 +1,7 @@
 "use client";
 
 import type { RunBatchDetails } from "@autoforge/domain";
-import { RotateCcw, XCircle } from "lucide-react";
+import { OctagonX, RotateCcw } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
@@ -73,22 +73,30 @@ export function ExecutionBatchDetails({
     return () => window.clearInterval(timer);
   }, [activeBatch, router]);
 
-  async function cancelBatch(): Promise<void> {
-    if (!window.confirm("取消后，尚未结束的执行将收到停止请求。确认取消当前批次？")) return;
+  async function terminateBatch(): Promise<void> {
+    if (
+      !window.confirm(
+        "终止后会立即停止后续调度；正在执行的用例会继续到本次完成，随后任务正式终止。确认继续？",
+      )
+    )
+      return;
     setActionPending("cancel");
     setActionError("");
     try {
-      const response = await fetch(`/api/v1/run-batches/${encodeURIComponent(batch.id)}/cancel`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ reason: "Cancelled from execution details." }),
-      });
+      const response = await fetch(
+        `/api/v1/run-batches/${encodeURIComponent(batch.id)}/terminate`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ reason: "Terminated from execution details." }),
+        },
+      );
       if (!response.ok) {
-        throw new Error((await readApiErrorMessage(response, "取消批次失败。"))!);
+        throw new Error((await readApiErrorMessage(response, "终止任务失败。"))!);
       }
       router.refresh();
     } catch (actionFailure) {
-      setActionError(actionFailure instanceof Error ? actionFailure.message : "取消批次失败。");
+      setActionError(actionFailure instanceof Error ? actionFailure.message : "终止任务失败。");
     } finally {
       setActionPending(undefined);
     }
@@ -145,19 +153,33 @@ export function ExecutionBatchDetails({
       {(canCancelRuns || canCreateRuns) && (
         <section className="execution-detail-actions" aria-label="批次操作">
           <div>
-            <strong>{activeBatch ? "批次仍在执行" : "批次已进入终态"}</strong>
-            <span>再次执行会读取任务当前版本的完整配置并创建新批次。</span>
+            <strong>
+              {batch.terminationRequestedAt
+                ? "任务正在终止"
+                : activeBatch
+                  ? "批次仍在执行"
+                  : "批次已进入终态"}
+            </strong>
+            <span>
+              {batch.terminationRequestedAt
+                ? "后续调度已停止，等待正在执行的用例自然完成。"
+                : "再次执行会读取任务当前版本的完整配置并创建新批次。"}
+            </span>
           </div>
           <div className="button-row">
             {canCancelRuns && activeBatch ? (
               <Button
                 className="button button-danger-quiet"
-                disabled={actionPending !== undefined}
-                onClick={() => void cancelBatch()}
+                disabled={actionPending !== undefined || Boolean(batch.terminationRequestedAt)}
+                onClick={() => void terminateBatch()}
                 type="button"
               >
-                <XCircle size={16} />
-                {actionPending === "cancel" ? "正在取消…" : "取消批次"}
+                <OctagonX size={16} />
+                {batch.terminationRequestedAt
+                  ? "终止中"
+                  : actionPending === "cancel"
+                    ? "正在终止…"
+                    : "终止任务"}
               </Button>
             ) : null}
             {canCreateRuns && !activeBatch ? (
