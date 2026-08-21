@@ -8,6 +8,7 @@ import WebSocket from "ws";
 import { buildClassFile } from "../../packages/testng-discovery/test/class-fixture";
 import { DEFAULT_PROJECT_ID } from "@autoforge/domain";
 import { freshRunnerBootstrapToken } from "./support/runner-bootstrap";
+import { selectJarForInspection } from "./support/jar-import";
 import {
   configureTaskExecution,
   createTaskRun,
@@ -28,23 +29,6 @@ async function captureUi(page: Page, name: string): Promise<void> {
   const absoluteDirectory = resolve(screenshotDirectory);
   await mkdir(absoluteDirectory, { recursive: true });
   await page.screenshot({ path: resolve(absoluteDirectory, `${name}.png`), fullPage: true });
-}
-
-interface JarFilePayload {
-  name: string;
-  mimeType: "application/java-archive";
-  buffer: Buffer;
-}
-
-async function selectJarForInspection(page: Page, payload: JarFilePayload): Promise<void> {
-  const fileInput = page.locator('input[type="file"]');
-  const inspectButton = page.getByRole("button", { name: "扫描测试类" });
-
-  await expect(async () => {
-    await fileInput.setInputFiles([]);
-    await fileInput.setInputFiles(payload);
-    await expect(inspectButton).toBeEnabled({ timeout: 1_000 });
-  }).toPass({ intervals: [100, 250, 500, 1_000], timeout: 15_000 });
 }
 
 test("imports TestNG methods from a JAR into the case library", async ({ page }) => {

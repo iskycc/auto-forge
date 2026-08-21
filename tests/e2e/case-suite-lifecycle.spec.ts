@@ -9,6 +9,7 @@ import {
   uniqueName,
 } from "./support/session";
 import { freshRunnerBootstrapToken } from "./support/runner-bootstrap";
+import { selectJarForInspection } from "./support/jar-import";
 
 test("case metadata, immutable versions and suite policy survive lifecycle changes", async ({
   page,
@@ -285,7 +286,7 @@ async function importJar(
     }).toString()}`,
   );
   await expect(page.locator(".global-project-switcher")).toContainText(project.name);
-  await page.locator('input[type="file"]').setInputFiles({
+  await selectJarForInspection(page, {
     name: fileName,
     mimeType: "application/java-archive",
     buffer: Buffer.from(jar),
