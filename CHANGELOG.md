@@ -6,6 +6,8 @@ and known limitations.
 
 ## Unreleased
 
+## 0.9.5 - 2026-08-21
+
 ### Changed
 
 - Added one server-validated global project switch to the top bar. Dashboard, cases, imports, suites,
@@ -46,6 +48,22 @@ and known limitations.
   dialog with its default CoTest Adapter state, and every low-frequency management dialog introduced
   by this redesign. Screenshot jobs install a system CJK font so Chinese labels remain reviewable in
   uploaded artifacts.
+
+### Compatibility
+
+- Runner Protocol v1 and the `0.9.x` embedded Agent compatibility line are unchanged. Existing task
+  records remain readable, but new suite versions and single-case requests no longer accept manual
+  TestNG parameter overrides; imported parameter metadata remains part of immutable case snapshots.
+- Release images, deployment bundles, embedded static Runner binaries, Jenkins HPI plugins, SBOMs,
+  checksums and build provenance are regenerated for `v0.9.5` by the tagged Release workflow.
+
+### Known limitations
+
+- The authenticated UI supports desktop browser widths of 1024 pixels and above; mobile layouts are
+  intentionally outside the supported and tested interface baseline.
+- Tasks containing 100,000 cases use bounded persistence, scheduling and browser windows. Actual
+  completion throughput still depends on Runner capacity, dependency download speed and database or
+  object-storage performance.
 
 ## 0.9.1 - 2026-08-21
 
