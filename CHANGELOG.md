@@ -6,6 +6,52 @@ and known limitations.
 
 ## Unreleased
 
+## 0.9.6 - 2026-08-21
+
+### Changed
+
+- Added direct `.xlsx` case-list import using the first worksheet's first column. Text lists now
+  decode UTF-8, UTF-16 and GB18030 instead of treating binary workbooks or Chinese Windows CSV as
+  UTF-8 text and displaying mojibake.
+- Promoted every administration destination to a four-character first-level sidebar entry; the
+  former one-item and two-item collapsible groups were removed so permission-filtered destinations
+  remain directly visible.
+- Extended the server-validated top-bar context from project only to project, project version and
+  test stage. The case library, single-case picker, quality analytics and TestNG JAR importer now
+  consume that same hierarchy, and JAR imports no longer expose page-local version/stage selectors.
+- Kept task execution sourced exclusively from each task's saved policy: the top-bar version and
+  stage scope single-case choices and imports but no longer hide otherwise executable project tasks.
+- Restored quality metrics and daily trends to the top of Quality Insights. Long per-case outcome
+  details and batch comparison now follow the summary, while analytics queries and exports are
+  scoped to the selected project version and test stage in both SQLite and PostgreSQL.
+
+### Database
+
+- No migration is required. Version/stage analytics scoping joins existing case-definition
+  hierarchy columns and does not change persisted analytics facts.
+
+### Tests
+
+- Added XLSX Chinese-text, GB18030 CSV and UTF-16 list parser coverage, plus browser verification
+  that an XLSX list matches and selects cases from the case library.
+- Added CI structure guards for flat four-character sidebar entries and the three-part global
+  context, adapter-level analytics hierarchy coverage, and Playwright checks for cross-page context
+  persistence, JAR import targets and summary-before-detail layout.
+
+### Compatibility
+
+- Runner Protocol v1, persisted configuration schema v1 and the `0.9.x` embedded Agent compatibility
+  line are unchanged. Existing project, task, case and analytics records require no data migration.
+- Release images, deployment bundles, embedded static Runner binaries, Jenkins HPI plugins, SBOMs,
+  checksums and build provenance are regenerated for `v0.9.6` by the tagged Release workflow.
+
+### Known limitations
+
+- The authenticated UI supports desktop browser widths of 1024 pixels and above; mobile layouts are
+  intentionally outside the supported and tested interface baseline.
+- Case-list upload supports `.xlsx` but not the legacy binary `.xls` format. Legacy workbooks must be
+  saved as `.xlsx`; encrypted or damaged workbooks are rejected with an actionable error.
+
 ## 0.9.5 - 2026-08-21
 
 ### Changed
