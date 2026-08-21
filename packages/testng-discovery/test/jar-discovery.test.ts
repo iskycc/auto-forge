@@ -180,6 +180,41 @@ public class CheckoutTest { @Test public void checkout() {} }
     expect(inspection.testClassCount).toBe(classCount);
   });
 
+  it("discovers and reads sources from JARs with more than 20,000 entries", async () => {
+    const source = `package com.example;
+import org.testng.annotations.Test;
+public class LargeDirectoryTest { @Test public void scansEveryEntry() {} }
+`;
+    const entries: Record<string, Uint8Array> = Object.fromEntries(
+      Array.from({ length: 20_001 }, (_, index) => [
+        `padding/entry-${index}.txt`,
+        new Uint8Array(),
+      ]),
+    );
+    entries["com/example/LargeDirectoryTest.class"] = buildClassFile({
+      className: "com.example.LargeDirectoryTest",
+      methods: [{ name: "scansEveryEntry", annotations: [{ type: "Test" }] }],
+    });
+    entries["com/example/LargeDirectoryTest.java"] = new TextEncoder().encode(source);
+    const jar = zipSync(entries, { level: 0 });
+    const discovery = new TestNgJarDiscovery();
+
+    const inspection = await discovery.inspect("large-directory.jar", jar);
+
+    expect(inspection).toMatchObject({
+      classFileCount: 1,
+      javaSourceFileCount: 1,
+      testClassCount: 1,
+      classes: [
+        {
+          className: "com.example.LargeDirectoryTest",
+          source: { entryPath: "com/example/LargeDirectoryTest.java" },
+        },
+      ],
+    });
+    await expect(discovery.readSource(jar, inspection.classes[0]?.source)).resolves.toBe(source);
+  });
+
   it("applies bounded testng.xml class, method, group, package and parameter selection", async () => {
     const jar = zipSync({
       "com/example/CheckoutTest.class": buildClassFile({

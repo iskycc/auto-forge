@@ -59,7 +59,7 @@ AutoForge 是一个面向自动化测试场景的用例工厂，用于统一管�
 
 导入过程只读取 JAR 的 ZIP 目录和 JVM class 文件，不通过 class loader 加载或执行用户字节码。首版识别 `org.testng.annotations.Test` 与 `Ignore` 的运行时注解：方法级 `@Test` 直接形成测试方法；类级 `@Test` 将类中的 public 方法视为测试方法。`groups`、`enabled`、`description`、`dataProvider`、依赖组/方法与 `priority` 会写入版本快照。根目录 `testng.xml` 的 suite/test 参数、include/exclude 组、package 与类/方法选择规则会参与发现；JAR 内父类的 TestNG 注解继承会被解析，JAR 外父类、`@Factory`/DataProvider 动态语义、嵌套 `testng.xml` 与 suite-files 引用产生有界用户可见警告；Multi-Release JAR 按目标 Java 版本选择 `META-INF/versions` class，未声明 `Multi-Release: true` 的版本化条目按 JVM 语义忽略并提示。
 
-映射规则为：一个 TestNG 测试类对应一个 `CaseDefinition`；首次导入产生 v1，确认权威来源同步时，同类候选快照在原定义上形成新的不可变 `CaseVersion`。每个版本固化实际 JAR 来源，重载方法通过 JVM descriptor 区分。发现器继续限制 JAR 上传大小、条目数、解压总量和单个 class 大小，但不再对发现的测试类数量设置独立硬上限。整个 JAR 按项目和 SHA-256 去重；数据库目录和本地对象目录应作为同一备份集合。
+映射规则为：一个 TestNG 测试类对应一个 `CaseDefinition`；首次导入产生 v1，确认权威来源同步时，同类候选快照在原定义上形成新的不可变 `CaseVersion`。每个版本固化实际 JAR 来源，重载方法通过 JVM descriptor 区分。发现器不限制 JAR 条目数或发现的测试类数量；仍限制 JAR 上传大小、解压总量和单个 class 大小。整个 JAR 按项目和 SHA-256 去重；数据库目录和本地对象目录应作为同一备份集合。
 
 当前扫描边界：
 

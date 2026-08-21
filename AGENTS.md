@@ -143,7 +143,7 @@ UI / HTTP / Worker entrypoints
 只负责对 JAR 与 JVM class 文件做有界静态分析。它可以依赖 `contracts` 和 application 定义的发现端口，但不得加载、链接、初始化或执行上传的 class。
 
 - 新识别的 TestNG 语义必须有使用合成 class fixture 或真实最小 JAR 的测试。
-- JAR 条目数、解压总量、单 class 大小和发现类数量必须有上限，禁止无界解压或无界警告列表。
+- JAR 扫描不设置条目数或发现类数量上限；压缩大小、解压总量、单 class 大小和警告数量必须有上限，禁止无界解压或无界警告列表。
 - 损坏或无法支持的单个 class 可以产生有界警告；整个 JAR 的格式、体积或解压限制失败必须拒绝导入。
 - `testng.xml`、继承注解、多版本 JAR、工厂和动态测试等未实现语义必须明确返回警告或写入文档，不能静默声称完整发现。
 - 一个 TestNG class 映射一个 `CaseDefinition`，导入内容写不可变 `CaseVersion`；重载方法必须保留 JVM descriptor。

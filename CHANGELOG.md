@@ -6,6 +6,22 @@ and known limitations.
 
 ## Unreleased
 
+### Changed
+
+- Removed the fixed 20,000-entry rejection from TestNG JAR inspection, background import and source
+  viewing. JAR entry and discovered-class counts are no longer capped; compressed upload size,
+  declared uncompressed bytes, individual class/source size and warning output remain bounded.
+
+### Tests
+
+- Added discovery/source-reading and authenticated HTTP inspection regressions using real JARs with
+  more than 20,000 ZIP entries.
+
+### Compatibility
+
+- No database migration or Runner Protocol change is required. The former `TOO_MANY_ENTRIES`
+  inspection failure is no longer emitted.
+
 ## 0.9.6 - 2026-08-21
 
 ### Changed

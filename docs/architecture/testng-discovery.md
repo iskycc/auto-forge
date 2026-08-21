@@ -4,7 +4,7 @@
 
 ## 扫描边界
 
-`packages/testng-discovery` 只解析 ZIP 目录和 JVM class 文件结构，不加载、链接、初始化或执行上传的 class。发现结果不另设 5000 个测试类之类的业务数量上限；JAR 压缩大小、总条目数、解压总量、单 class 大小和警告数量仍有安全边界，因此可发现的 class 数自然受已校验的 JAR 条目预算约束。超过整体限制的 JAR 拒绝导入，单个损坏或超限的 class 产生有界警告后跳过。
+`packages/testng-discovery` 只解析 ZIP 目录和 JVM class 文件结构，不加载、链接、初始化或执行上传的 class。JAR 条目数和发现结果数量不设硬上限，包含超过 20,000 个条目的归档也会完整遍历；压缩大小、解压总量、单 class 大小和警告数量仍有安全边界。超过字节边界的 JAR 拒绝导入，单个损坏或超限的 class 产生有界警告后跳过。
 
 ## testng.xml（AF-CASE-001）
 

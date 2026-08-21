@@ -18,7 +18,6 @@ import { parseTestNgXml, selectionIncludesClass } from "./testng-xml";
 
 const DEFAULT_MAX_JAR_BYTES = 32 * 1024 * 1024;
 const DEFAULT_MAX_UNCOMPRESSED_BYTES = 256 * 1024 * 1024;
-const DEFAULT_MAX_ENTRIES = 20_000;
 const DEFAULT_MAX_CLASS_BYTES = 10 * 1024 * 1024;
 const DEFAULT_MAX_SOURCE_BYTES = 2 * 1024 * 1024;
 const DEFAULT_TARGET_JAVA_VERSION = 21;
@@ -36,7 +35,6 @@ const JAR_INSPECTION_ERROR_CODES = new Set([
   "SOURCE_FILE_TOO_LARGE",
   "SOURCE_INTEGRITY_FAILED",
   "SOURCE_NOT_AVAILABLE",
-  "TOO_MANY_ENTRIES",
 ]);
 
 type SelectedClassEntry = {
@@ -75,7 +73,6 @@ export function isJarInspectionError(error: unknown): error is JarInspectionErro
 export type TestNgJarDiscoveryOptions = {
   maxJarBytes?: number;
   maxUncompressedBytes?: number;
-  maxEntries?: number;
   maxClassBytes?: number;
   maxSourceBytes?: number;
   targetJavaVersion?: number;
@@ -99,7 +96,6 @@ function pushWarning(warnings: JarInspectionWarning[], warning: JarInspectionWar
 export class TestNgJarDiscovery implements JarDiscoveryPort {
   private readonly maxJarBytes: number;
   private readonly maxUncompressedBytes: number;
-  private readonly maxEntries: number;
   private readonly maxClassBytes: number;
   private readonly maxSourceBytes: number;
   private readonly targetJavaVersion: number;
@@ -107,7 +103,6 @@ export class TestNgJarDiscovery implements JarDiscoveryPort {
   constructor(options: TestNgJarDiscoveryOptions = {}) {
     this.maxJarBytes = options.maxJarBytes ?? DEFAULT_MAX_JAR_BYTES;
     this.maxUncompressedBytes = options.maxUncompressedBytes ?? DEFAULT_MAX_UNCOMPRESSED_BYTES;
-    this.maxEntries = options.maxEntries ?? DEFAULT_MAX_ENTRIES;
     this.maxClassBytes = options.maxClassBytes ?? DEFAULT_MAX_CLASS_BYTES;
     this.maxSourceBytes = options.maxSourceBytes ?? DEFAULT_MAX_SOURCE_BYTES;
     this.targetJavaVersion = options.targetJavaVersion ?? DEFAULT_TARGET_JAVA_VERSION;
@@ -261,19 +256,11 @@ export class TestNgJarDiscovery implements JarDiscoveryPort {
   }
 
   private extractRelevantEntries(content: Uint8Array): Record<string, Uint8Array> {
-    let entryCount = 0;
     let totalUncompressedBytes = 0;
     try {
       return unzipSync(content, {
         filter: (entry) => {
-          entryCount += 1;
           totalUncompressedBytes += entry.originalSize;
-          if (entryCount > this.maxEntries) {
-            throw new JarInspectionError(
-              "TOO_MANY_ENTRIES",
-              `JAR 条目数超过 ${this.maxEntries} 的限制。`,
-            );
-          }
           if (totalUncompressedBytes > this.maxUncompressedBytes) {
             throw new JarInspectionError(
               "JAR_EXPANDS_TOO_LARGE",
@@ -348,19 +335,11 @@ export class TestNgJarDiscovery implements JarDiscoveryPort {
   }
 
   private extractSourceEntry(content: Uint8Array, entryPath: string): Uint8Array | undefined {
-    let entryCount = 0;
     let totalUncompressedBytes = 0;
     try {
       const selected = unzipSync(content, {
         filter: (entry) => {
-          entryCount += 1;
           totalUncompressedBytes += entry.originalSize;
-          if (entryCount > this.maxEntries) {
-            throw new JarInspectionError(
-              "TOO_MANY_ENTRIES",
-              `JAR 条目数超过 ${this.maxEntries} 的限制。`,
-            );
-          }
           if (totalUncompressedBytes > this.maxUncompressedBytes) {
             throw new JarInspectionError(
               "JAR_EXPANDS_TOO_LARGE",

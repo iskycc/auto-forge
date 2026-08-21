@@ -14,8 +14,8 @@
 
 ## 决策
 
-1. JAR 发现不再限制 TestNG 测试类总数。上传大小、ZIP/JAR 条目数、解压总量、单 class
-   大小和解析警告数量仍保持有界，避免取消数量限制后引入无界压缩包处理。
+1. JAR 发现不再限制 TestNG 测试类总数。原有 ZIP/JAR 条目数决定已由 ADR 0010 取代；
+   上传大小、解压总量、单 class 大小和解析警告数量仍保持有界。
 2. cgroup v2 从 Runner/assignment 的硬兼容要求改为可选 capability。探测会报告可用性；
    可用时安装器配置委派根并继续执行完整 cgroup 控制，不可用时允许安装和调度。
 3. 无 cgroup 模式仍在启动用户命令前应用 `RLIMIT_FSIZE`、`RLIMIT_NOFILE` 和

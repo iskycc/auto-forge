@@ -241,6 +241,32 @@ public class MixedVisibleTest {
     classes: [{ className: largeClassName }],
   });
 
+  const manyEntryClassName = `com.example.ManyEntries${Date.now()}Test`;
+  const manyEntryJarEntries: Record<string, Uint8Array> = Object.fromEntries(
+    Array.from({ length: 20_001 }, (_, index) => [`padding/entry-${index}.txt`, new Uint8Array()]),
+  );
+  manyEntryJarEntries[`${manyEntryClassName.replaceAll(".", "/")}.class`] = buildClassFile({
+    className: manyEntryClassName,
+    methods: [{ name: "scansBeyondLegacyEntryLimit", annotations: [{ type: "Test" }] }],
+  });
+  const manyEntryJar = zipSync(manyEntryJarEntries, { level: 0 });
+  expect(Object.keys(unzipSync(manyEntryJar))).toHaveLength(20_002);
+  const manyEntryResponse = await page.request.post("/api/v1/case-sources/jar/inspect", {
+    headers: { origin: new URL(page.url()).origin },
+    multipart: {
+      file: {
+        name: "more-than-20000-entries.jar",
+        mimeType: "application/java-archive",
+        buffer: Buffer.from(manyEntryJar),
+      },
+    },
+  });
+  expect(manyEntryResponse.status()).toBe(200);
+  expect(await manyEntryResponse.json()).toMatchObject({
+    classFileCount: 1,
+    classes: [{ className: manyEntryClassName }],
+  });
+
   await selectJarForInspection(page, {
     name: "valid-48-mib-tests.jar",
     mimeType: "application/java-archive",
