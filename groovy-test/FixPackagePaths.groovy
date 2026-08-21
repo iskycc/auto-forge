@@ -1,5 +1,3 @@
-#!/usr/bin/env groovy
-
 import java.nio.ByteBuffer
 import java.nio.charset.CharacterCodingException
 import java.nio.charset.CodingErrorAction
@@ -16,11 +14,34 @@ import java.util.regex.Matcher
 import java.util.regex.Pattern
 import java.util.stream.Stream
 
-final class CommandLineOptions {
-    Path sourceRoot = Paths.get('.')
-    String basePackage = ''
-    boolean dryRun = false
-    boolean helpRequested = false
+final class FixPackagePaths {
+    // Run this main method from the repository root. The selected directory is
+    // the root package; its child directories are mapped to child packages.
+    private static final Path CASE_SOURCE_ROOT = Paths.get('groovy-test')
+    private static final String ROOT_PACKAGE = ''
+
+    static void main(String[] ignoredArguments) {
+        try {
+            PackagePathFixer fixer = new PackagePathFixer(CASE_SOURCE_ROOT, ROOT_PACKAGE)
+            List<Path> sourceFiles = fixer.findSourceFiles()
+            List<SourceChange> changes = fixer.planChanges(sourceFiles)
+
+            changes.each { SourceChange change ->
+                String oldPackage = displayPackage(change.currentPackage)
+                String newPackage = displayPackage(change.expectedPackage)
+                println "Fixing ${fixer.displayPath(change.sourceFile)}: ${oldPackage} -> ${newPackage}"
+            }
+            fixer.applyChanges(changes)
+            println "Scanned ${sourceFiles.size()} source file(s); " +
+                "${changes.size()} package declaration(s) corrected."
+        } catch (Exception error) {
+            throw new IllegalStateException('Failed to fix case source packages', error)
+        }
+    }
+
+    private static String displayPackage(String packageName) {
+        return packageName.isEmpty() ? '<default>' : packageName
+    }
 }
 
 final class PackageDeclaration {
@@ -60,12 +81,10 @@ final class PackagePathFixer {
 
     private final Path sourceRoot
     private final String basePackage
-    private final Path scriptPath
 
-    PackagePathFixer(Path sourceRoot, String basePackage, Path scriptPath) {
+    PackagePathFixer(Path sourceRoot, String basePackage) {
         this.sourceRoot = sourceRoot.toAbsolutePath().normalize()
         this.basePackage = normalizeAndValidatePackage(basePackage, 'base package')
-        this.scriptPath = scriptPath?.toAbsolutePath()?.normalize()
     }
 
     List<Path> findSourceFiles() {
@@ -113,8 +132,7 @@ final class PackagePathFixer {
         if (!Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS)) {
             return false
         }
-        Path normalizedPath = path.toAbsolutePath().normalize()
-        if (scriptPath != null && normalizedPath == scriptPath) {
+        if (path.fileName.toString() == 'FixPackagePaths.groovy') {
             return false
         }
 
@@ -362,90 +380,4 @@ final class PackagePathFixer {
             // Non-POSIX file systems preserve content correctness without this metadata.
         }
     }
-}
-
-static CommandLineOptions parseOptions(String[] arguments) {
-    CommandLineOptions options = new CommandLineOptions()
-    boolean sourceRootProvided = false
-
-    for (int index = 0; index < arguments.length; index++) {
-        String argument = arguments[index]
-        if (argument == '--help' || argument == '-h') {
-            options.helpRequested = true
-        } else if (argument == '--dry-run') {
-            options.dryRun = true
-        } else if (argument == '--base-package') {
-            if (++index >= arguments.length) {
-                throw new IllegalArgumentException('--base-package requires a value')
-            }
-            options.basePackage = arguments[index]
-        } else if (argument.startsWith('--base-package=')) {
-            options.basePackage = argument.substring('--base-package='.length())
-        } else if (argument.startsWith('-')) {
-            throw new IllegalArgumentException("Unknown option: ${argument}")
-        } else if (sourceRootProvided) {
-            throw new IllegalArgumentException('Only one source root may be specified')
-        } else {
-            options.sourceRoot = Paths.get(argument)
-            sourceRootProvided = true
-        }
-    }
-    return options
-}
-
-static Path resolveScriptPath(Class scriptClass) {
-    try {
-        return Paths.get(scriptClass.protectionDomain.codeSource.location.toURI())
-    } catch (Exception ignored) {
-        return null
-    }
-}
-
-static void printUsage() {
-    println '''Usage: groovy fixPackagePaths.groovy [OPTIONS] [SOURCE_ROOT]
-
-Recursively makes each .groovy and .java case source package match its directory.
-SOURCE_ROOT defaults to the current directory and represents BASE_PACKAGE itself.
-
-Options:
-  --base-package PACKAGE   Package represented by SOURCE_ROOT (default: empty)
-  --dry-run                Report changes without modifying files
-  -h, --help               Show this help
-
-Examples:
-  groovy groovy-test/fixPackagePaths.groovy src/test/groovy
-  groovy groovy-test/fixPackagePaths.groovy --base-package com.example src/test/groovy/com/example
-'''
-}
-
-try {
-    CommandLineOptions options = parseOptions(args)
-    if (options.helpRequested) {
-        printUsage()
-        return
-    }
-
-    PackagePathFixer fixer = new PackagePathFixer(
-        options.sourceRoot,
-        options.basePackage,
-        resolveScriptPath(this.class)
-    )
-    List<Path> sourceFiles = fixer.findSourceFiles()
-    List<SourceChange> changes = fixer.planChanges(sourceFiles)
-
-    changes.each { SourceChange change ->
-        String oldPackage = change.currentPackage.isEmpty() ? '<default>' : change.currentPackage
-        String newPackage = change.expectedPackage.isEmpty() ? '<default>' : change.expectedPackage
-        println "${options.dryRun ? 'Would fix' : 'Fixing'} ${fixer.displayPath(change.sourceFile)}: " +
-            "${oldPackage} -> ${newPackage}"
-    }
-    if (!options.dryRun) {
-        fixer.applyChanges(changes)
-    }
-
-    String action = options.dryRun ? 'would be corrected' : 'corrected'
-    println "Scanned ${sourceFiles.size()} source file(s); ${changes.size()} package declaration(s) ${action}."
-} catch (Exception error) {
-    System.err.println("Error: ${error.message}")
-    System.exit(1)
 }

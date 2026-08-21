@@ -3,67 +3,72 @@
 set -euo pipefail
 
 repository_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-script_path="${repository_root}/groovy-test/fixPackagePaths.groovy"
+script_path="${repository_root}/groovy-test/FixPackagePaths.groovy"
 
 fixture_root="$(mktemp -d)"
 trap 'rm -rf -- "${fixture_root}"' EXIT
+compiled_classes="${fixture_root}/classes"
+mkdir -p "${compiled_classes}"
 
-run_fixer() {
+compile_fixer() {
   if [[ -n "${GROOVY_JAR:-}" ]]; then
-    java -cp "${GROOVY_JAR}" groovy.ui.GroovyMain "${script_path}" "$@"
-  elif command -v groovy >/dev/null 2>&1; then
-    groovy "${script_path}" "$@"
+    java -cp "${GROOVY_JAR}" org.codehaus.groovy.tools.FileSystemCompiler \
+      -d "${compiled_classes}" "${script_path}"
+  elif command -v groovyc >/dev/null 2>&1; then
+    groovyc -d "${compiled_classes}" "${script_path}"
   else
     echo 'Install Groovy or set GROOVY_JAR to run this test.' >&2
     return 1
   fi
 }
 
-mkdir -p "${fixture_root}/source/com/example/nested"
-mkdir -p "${fixture_root}/source/defaults"
-mkdir -p "${fixture_root}/source/unchanged"
+run_fixer_main() {
+  local working_directory="$1"
+  if [[ -n "${GROOVY_JAR:-}" ]]; then
+    (cd "${working_directory}" && java -cp "${compiled_classes}:${GROOVY_JAR}" FixPackagePaths)
+  else
+    (cd "${working_directory}" && groovy -cp "${compiled_classes}" -e 'FixPackagePaths.main(new String[0])')
+  fi
+}
 
-printf '%s\n' 'package wrong.name // keep this note' '' 'class RootCase {}' >"${fixture_root}/source/RootCase.groovy"
-printf '%s\n' 'package wrong.name' '' 'class GroovyCase {}' >"${fixture_root}/source/com/example/GroovyCase.groovy"
-printf '%s\n' '/* license */' '' 'package wrong.name;' '' 'class JavaCase {}' >"${fixture_root}/source/com/example/nested/JavaCase.java"
-printf '%s\n' '// header' 'class MissingPackageCase {}' >"${fixture_root}/source/defaults/MissingPackageCase.groovy"
-printf '%s\n' 'package unchanged' '' 'class UnchangedCase {}' >"${fixture_root}/source/unchanged/UnchangedCase.groovy"
+compile_fixer
+javap -classpath "${compiled_classes}" FixPackagePaths | grep -Fq 'public static void main(java.lang.String...);'
 
-before_dry_run="$(sha256sum "${fixture_root}/source/com/example/GroovyCase.groovy")"
-dry_run_output="$(run_fixer --dry-run "${fixture_root}/source")"
-after_dry_run="$(sha256sum "${fixture_root}/source/com/example/GroovyCase.groovy")"
-[[ "${before_dry_run}" == "${after_dry_run}" ]]
-grep -Fq '4 package declaration(s) would be corrected.' <<<"${dry_run_output}"
+mkdir -p "${fixture_root}/groovy-test/com/example/nested"
+mkdir -p "${fixture_root}/groovy-test/defaults"
+mkdir -p "${fixture_root}/groovy-test/unchanged"
 
-run_output="$(run_fixer "${fixture_root}/source")"
+printf '%s\n' 'package wrong.name // keep this note' '' 'class RootCase {}' >"${fixture_root}/groovy-test/RootCase.groovy"
+printf '%s\n' 'package wrong.name' '' 'class GroovyCase {}' >"${fixture_root}/groovy-test/com/example/GroovyCase.groovy"
+printf '%s\n' '/* license */' '' 'package wrong.name;' '' 'class JavaCase {}' >"${fixture_root}/groovy-test/com/example/nested/JavaCase.java"
+printf '%s\n' '// header' 'class MissingPackageCase {}' >"${fixture_root}/groovy-test/defaults/MissingPackageCase.groovy"
+printf '%s\n' 'package unchanged' '' 'class UnchangedCase {}' >"${fixture_root}/groovy-test/unchanged/UnchangedCase.groovy"
+
+run_output="$(run_fixer_main "${fixture_root}")"
 grep -Fq '4 package declaration(s) corrected.' <<<"${run_output}"
-grep -Fqx '// keep this note' "${fixture_root}/source/RootCase.groovy"
-if grep -Eq '^[[:space:]]*package[[:space:]]' "${fixture_root}/source/RootCase.groovy"; then
+grep -Fqx '// keep this note' "${fixture_root}/groovy-test/RootCase.groovy"
+if grep -Eq '^[[:space:]]*package[[:space:]]' "${fixture_root}/groovy-test/RootCase.groovy"; then
   echo 'Expected a root source to use the default package.' >&2
   exit 1
 fi
-grep -Fqx 'package com.example' "${fixture_root}/source/com/example/GroovyCase.groovy"
-grep -Fqx 'package com.example.nested;' "${fixture_root}/source/com/example/nested/JavaCase.java"
-grep -Fqx 'package defaults' "${fixture_root}/source/defaults/MissingPackageCase.groovy"
-grep -Fqx 'package unchanged' "${fixture_root}/source/unchanged/UnchangedCase.groovy"
+grep -Fqx 'package com.example' "${fixture_root}/groovy-test/com/example/GroovyCase.groovy"
+grep -Fqx 'package com.example.nested;' "${fixture_root}/groovy-test/com/example/nested/JavaCase.java"
+grep -Fqx 'package defaults' "${fixture_root}/groovy-test/defaults/MissingPackageCase.groovy"
+grep -Fqx 'package unchanged' "${fixture_root}/groovy-test/unchanged/UnchangedCase.groovy"
 
-idempotent_output="$(run_fixer "${fixture_root}/source")"
+idempotent_output="$(run_fixer_main "${fixture_root}")"
 grep -Fq '0 package declaration(s) corrected.' <<<"${idempotent_output}"
 
-mkdir -p "${fixture_root}/scoped/child"
-printf '%s\n' 'package incorrect' '' 'class ScopedCase {}' >"${fixture_root}/scoped/child/ScopedCase.groovy"
-run_fixer --base-package com.acme "${fixture_root}/scoped" >/dev/null
-grep -Fqx 'package com.acme.child' "${fixture_root}/scoped/child/ScopedCase.groovy"
-
-mkdir -p "${fixture_root}/invalid/valid" "${fixture_root}/invalid/not-valid"
-printf '%s\n' 'package old' 'class ValidCase {}' >"${fixture_root}/invalid/valid/ValidCase.groovy"
-printf '%s\n' 'package old' 'class InvalidCase {}' >"${fixture_root}/invalid/not-valid/InvalidCase.groovy"
-valid_before="$(sha256sum "${fixture_root}/invalid/valid/ValidCase.groovy")"
-if run_fixer "${fixture_root}/invalid" >/dev/null 2>&1; then
+invalid_root="${fixture_root}/invalid-workspace"
+mkdir -p "${invalid_root}/groovy-test/valid" "${invalid_root}/groovy-test/not-valid"
+printf '%s\n' 'package old' 'class ValidCase {}' >"${invalid_root}/groovy-test/valid/ValidCase.groovy"
+printf '%s\n' 'package old' 'class InvalidCase {}' >"${invalid_root}/groovy-test/not-valid/InvalidCase.groovy"
+valid_before="$(sha256sum "${invalid_root}/groovy-test/valid/ValidCase.groovy")"
+if run_fixer_main "${invalid_root}" >/dev/null 2>&1; then
   echo 'Expected an invalid directory name to fail validation.' >&2
   exit 1
 fi
-valid_after="$(sha256sum "${fixture_root}/invalid/valid/ValidCase.groovy")"
+valid_after="$(sha256sum "${invalid_root}/groovy-test/valid/ValidCase.groovy")"
 [[ "${valid_before}" == "${valid_after}" ]]
 
 echo 'fix-package-paths tests passed'
