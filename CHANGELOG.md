@@ -24,6 +24,8 @@ and known limitations.
 - JAR import retry is now idempotent when an automatic queue retry wins the race and has already
   queued, started or completed the same import. Full 100k capacity contracts run in their own CI
   partition so the real-Agent acceptance remains below the five-minute target.
+- SQLite historical migration tests use an explicit bounded timeout that accommodates hosted-runner
+  disk variance without weakening migration assertions.
 - Consolidated related access and platform settings behind page-local four-character tabs, removed
   stale platform/LDAP links from operations, and moved low-frequency create, password reset, role
   assignment and suite-copy actions into centered full-viewport dialogs.

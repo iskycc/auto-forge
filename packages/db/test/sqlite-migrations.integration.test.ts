@@ -16,7 +16,9 @@ afterEach(async () => {
   );
 });
 
-describe("SQLite migrations", () => {
+// 迁移测试会从历史版本逐份回放全部 DDL；GitHub 并行 job 的磁盘抖动可能超过
+// Vitest 默认 5 秒，但每条仍应在独立的 15 秒边界内完成。
+describe("SQLite migrations", { timeout: 15_000 }, () => {
   it("serializes concurrent startup workers without repeating DDL", async () => {
     const directory = await mkdtemp(resolve(tmpdir(), "autoforge-migrations-"));
     temporaryDirectories.push(directory);
