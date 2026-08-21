@@ -170,7 +170,7 @@ test("global execution dialog covers and centers within the whole viewport", asy
         document.elementFromPoint(8, 8)?.classList.contains("global-run-backdrop"),
       ),
     ).toBe(true);
-    await captureUi(page, "/global-run-dialog-suite", viewport.width);
+    await captureUi(page, "/global-run-dialog-suite", viewport.width, false);
 
     await dialog.getByRole("button", { name: "单个用例" }).click();
     const adapterToggle = dialog.getByLabel("使用 CoTest TestNG Adapter");
@@ -182,7 +182,7 @@ test("global execution dialog covers and centers within the whole viewport", asy
     });
     await expect(adapterToggle).toBeInViewport();
     await expectViewportDialog(backdrop, dialog, viewport);
-    await captureUi(page, "/global-run-dialog-single-case", viewport.width);
+    await captureUi(page, "/global-run-dialog-single-case", viewport.width, false);
 
     await page.keyboard.press("Escape");
     await expect(backdrop).toHaveCount(0);
@@ -205,7 +205,7 @@ test("project and user creation stay in centered low-frequency dialogs", async (
     await expect(projectDialog.getByLabel("项目名称")).toBeVisible();
     await expect(projectDialog.getByLabel("Slug")).toBeVisible();
     await expectViewportDialog(projectBackdrop, projectDialog, viewport);
-    await captureUi(page, "/project-create-dialog", viewport.width);
+    await captureUi(page, "/project-create-dialog", viewport.width, false);
     await page.keyboard.press("Escape");
     await expect(projectBackdrop).toHaveCount(0);
 
@@ -217,9 +217,107 @@ test("project and user creation stay in centered low-frequency dialogs", async (
     await expect(userDialog.getByLabel("显示名称", { exact: true })).toBeVisible();
     await expect(userDialog.getByLabel("初始密码")).toBeVisible();
     await expectViewportDialog(userBackdrop, userDialog, viewport);
-    await captureUi(page, "/user-create-dialog", viewport.width);
+    await captureUi(page, "/user-create-dialog", viewport.width, false);
     await page.keyboard.press("Escape");
     await expect(userBackdrop).toHaveCount(0);
+  }
+});
+
+test("remaining low-frequency management actions expose reviewable dialogs", async ({ page }) => {
+  await ensureAdministrator(page);
+  const viewport = { width: 1024, height: 768 };
+  await page.setViewportSize(viewport);
+
+  const dialogStates: Array<{
+    route: string;
+    trigger: string;
+    dialog: string;
+    screenshot: string;
+    bottomAction?: string;
+  }> = [
+    {
+      route: "/case-suites",
+      trigger: "创建任务",
+      dialog: "创建用例任务",
+      screenshot: "suite-create-dialog",
+      bottomAction: "创建任务",
+    },
+    {
+      route: "/runners?section=groups",
+      trigger: "创建机组",
+      dialog: "新建执行机组",
+      screenshot: "runner-group-create-dialog",
+    },
+    {
+      route: "/settings/projects?section=members",
+      trigger: "添加成员",
+      dialog: "添加项目成员",
+      screenshot: "project-member-dialog",
+    },
+    {
+      route: "/settings/projects?section=members",
+      trigger: "转移负责",
+      dialog: "转移项目负责人",
+      screenshot: "project-owner-dialog",
+    },
+    {
+      route: "/settings/projects?section=execution",
+      trigger: "创建版本",
+      dialog: "创建项目版本",
+      screenshot: "project-version-dialog",
+    },
+    {
+      route: "/settings/projects?section=execution",
+      trigger: "创建阶段",
+      dialog: "创建测试阶段",
+      screenshot: "test-stage-dialog",
+    },
+    {
+      route: "/settings/access?section=users",
+      trigger: "重置密码",
+      dialog: "重置用户密码",
+      screenshot: "user-password-dialog",
+    },
+    {
+      route: "/settings/access?section=roles",
+      trigger: "分配角色",
+      dialog: "分配用户角色",
+      screenshot: "role-assignment-dialog",
+    },
+    {
+      route: "/settings/access?section=roles",
+      trigger: "创建角色",
+      dialog: "创建自定义角色",
+      screenshot: "role-create-dialog",
+    },
+    {
+      route: "/settings/platform?section=accounts",
+      trigger: "创建账号",
+      dialog: "创建服务账号",
+      screenshot: "service-account-create-dialog",
+      bottomAction: "创建服务账号",
+    },
+  ];
+
+  for (const state of dialogStates) {
+    await page.goto(state.route);
+    await page.getByRole("button", { name: state.trigger, exact: true }).click();
+    const backdrop = page.locator("body > .action-dialog-backdrop");
+    const dialog = page.getByRole("dialog", { name: state.dialog });
+    await expect(dialog).toBeVisible();
+    await expectViewportDialog(backdrop, dialog, viewport);
+    await captureUi(page, `/${state.screenshot}`, viewport.width, false);
+    if (state.bottomAction) {
+      await dialog.locator(".action-dialog-body").evaluate((body) => {
+        body.scrollTop = body.scrollHeight;
+      });
+      await expect(
+        dialog.getByRole("button", { name: state.bottomAction, exact: true }),
+      ).toBeInViewport();
+      await captureUi(page, `/${state.screenshot}-bottom`, viewport.width, false);
+    }
+    await page.keyboard.press("Escape");
+    await expect(backdrop).toHaveCount(0);
   }
 });
 
@@ -278,7 +376,7 @@ test("specified dense pages expose stable product controls", async ({ page }) =>
   await expect(page.locator(".project-structure-manager")).toBeVisible();
 });
 
-async function captureUi(page: Page, route: string, width: number): Promise<void> {
+async function captureUi(page: Page, route: string, width: number, fullPage = true): Promise<void> {
   const screenshotDirectory = process.env.AUTOFORGE_UI_SCREENSHOT_DIR;
   if (!screenshotDirectory) return;
   await mkdir(screenshotDirectory, { recursive: true });
@@ -289,7 +387,7 @@ async function captureUi(page: Page, route: string, width: number): Promise<void
       .replace(/^-|-$/g, "") || "home";
   await page.screenshot({
     path: resolve(screenshotDirectory, `${width}-${name}.png`),
-    fullPage: true,
+    fullPage,
   });
 }
 

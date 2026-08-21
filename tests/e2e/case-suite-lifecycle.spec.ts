@@ -177,6 +177,15 @@ test("case metadata, immutable versions and suite policy survive lifecycle chang
   const copyName = `${suiteName} copy`;
   await page.getByRole("button", { name: "复制任务" }).click();
   const copyDialog = page.getByRole("dialog", { name: "复制用例任务" });
+  for (const viewport of [
+    { width: 1536, height: 1024 },
+    { width: 1024, height: 768 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await expect(copyDialog).toBeVisible();
+    await captureUi(page, `case-suite-copy-dialog-${viewport.width}`);
+  }
+  await page.setViewportSize({ width: 1536, height: 1024 });
   await copyDialog.getByLabel("复制为新任务").fill(copyName);
   await copyDialog.getByRole("button", { name: "复制任务" }).click();
   await expect(page.getByRole("heading", { name: copyName })).toBeVisible();

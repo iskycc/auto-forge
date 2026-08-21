@@ -43,8 +43,9 @@ and known limitations.
   execution-batch capacity coverage. The assets browser job now uploads screenshots of selected case
   and task folders in addition to the fixed-viewport layout screenshots.
 - Expanded fixed-viewport UI evidence to cover the task execution-policy region, the single-case
-  dialog with its default CoTest Adapter state, and the create-project/create-user dialogs. Screenshot
-  jobs install a system CJK font so Chinese labels remain reviewable in uploaded artifacts.
+  dialog with its default CoTest Adapter state, and every low-frequency management dialog introduced
+  by this redesign. Screenshot jobs install a system CJK font so Chinese labels remain reviewable in
+  uploaded artifacts.
 
 ## 0.9.1 - 2026-08-21
 
