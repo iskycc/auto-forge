@@ -396,21 +396,23 @@ async function createExecutableSuite(
   artifactPatterns: string[] = [],
 ): Promise<void> {
   await page.goto(`/case-suites?projectId=${encodeURIComponent(DEFAULT_PROJECT_ID)}`);
-  await page.getByLabel("任务名称").fill(suiteName);
-  await page.getByLabel("说明").fill("java-cases 模块全链路验收任务");
-  await page.getByLabel("使用 CoTest TestNG Adapter").check();
-  await page.getByLabel("TestNG Suite Name").fill(`Adapter · ${suiteName}`);
-  await page.getByLabel("TestNG Test Name").fill(caseDisplayName);
+  await page.getByRole("button", { name: "创建任务" }).click();
+  const createSuiteDialog = page.getByRole("dialog", { name: "创建用例任务" });
+  await createSuiteDialog.getByLabel("任务名称").fill(suiteName);
+  await createSuiteDialog.getByLabel("说明").fill("java-cases 模块全链路验收任务");
+  await createSuiteDialog.getByLabel("使用 CoTest TestNG Adapter").check();
+  await createSuiteDialog.getByLabel("TestNG Suite Name").fill(`Adapter · ${suiteName}`);
+  await createSuiteDialog.getByLabel("TestNG Test Name").fill(caseDisplayName);
   if (
     caseDisplayName === "JavaCasesFixture" ||
     caseDisplayName === "JavaCasesConcurrentAlphaFixture" ||
     caseDisplayName === "JavaCasesConcurrentBetaFixture"
   ) {
-    await page
+    await createSuiteDialog
       .getByLabel("环境 IP / 地址（每行一个）")
       .fill(`${environmentAddress}\n${backupEnvironmentAddress}`);
   }
-  await page.getByRole("button", { name: "创建任务" }).click();
+  await createSuiteDialog.getByRole("button", { name: "创建任务" }).click();
   const suiteLink = page.getByRole("link", { name: suiteName });
   await expect(suiteLink).toBeVisible();
   const [suiteId, runnerId] = await Promise.all([

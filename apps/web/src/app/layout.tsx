@@ -6,6 +6,7 @@ import { connection } from "next/server";
 import { AppShell } from "@/components/app-shell";
 import { currentIdentity } from "@/lib/auth";
 import { getPlatformServices } from "@/lib/services";
+import { selectableProjectIds, selectedProjectId } from "@/lib/selected-project";
 
 import "@xterm/xterm/css/xterm.css";
 import "./globals.css";
@@ -33,6 +34,10 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
         ]),
       ] as Permission[])
     : undefined;
+  const projects = identity
+    ? await services.identities.listProjects(selectableProjectIds(identity)).catch(() => [])
+    : [];
+  const activeProjectId = identity ? await selectedProjectId(identity, projects) : undefined;
   return (
     <html lang="zh-CN">
       <body>
@@ -43,6 +48,8 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
                 userName: identity.user.displayName,
                 permissions,
                 forcePasswordChange: identity.user.forcePasswordChange,
+                projects: projects.map(({ id, name }) => ({ id, name })),
+                selectedProjectId: activeProjectId,
               }
             : {})}
         >

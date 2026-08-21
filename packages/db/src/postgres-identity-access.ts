@@ -977,6 +977,7 @@ export class PostgresIdentityAccessRepository implements IdentityAccessRepositor
 
   async listAudit(input: {
     projectIds?: readonly string[];
+    includeUnscoped?: boolean;
     actorId?: string;
     action?: string;
     resourceType?: string;
@@ -992,7 +993,10 @@ export class PostgresIdentityAccessRepository implements IdentityAccessRepositor
     const conditions: string[] = [];
     if (input.projectIds) {
       parameters.push([...input.projectIds]);
-      conditions.push(`project_id = ANY($${parameters.length}::text[])`);
+      const scopedCondition = `project_id = ANY($${parameters.length}::text[])`;
+      conditions.push(
+        input.includeUnscoped ? `(${scopedCondition} OR project_id IS NULL)` : scopedCondition,
+      );
     }
     for (const [column, value] of [
       ["actor_id", input.actorId],

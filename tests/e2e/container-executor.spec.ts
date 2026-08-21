@@ -15,7 +15,8 @@ import {
 
 const execFileAsync = promisify(execFile);
 const runnerName = "Container Executor Agent";
-const suiteName = "容器执行器安全验收";
+const successSuiteName = "容器执行器安全验收";
+const cancellationSuiteName = "容器执行器取消验收";
 
 test("executes and cancels TestNG in a constrained immutable container", async ({
   page,
@@ -28,9 +29,10 @@ test("executes and cancels TestNG in a constrained immutable container", async (
   try {
     await waitForOnlineRunner(page, agent);
     await importContainerFixture(page);
-    await createContainerSuite(page);
+    await createContainerSuite(page, successSuiteName, "ContainerAgentFixture");
+    await createContainerSuite(page, cancellationSuiteName, "ContainerCancelFixture");
 
-    const successfulBatchId = await scheduleExecution(page, "success");
+    const successfulBatchId = await scheduleExecution(page, successSuiteName);
     const succeeded = await waitForBatch(page, successfulBatchId, agent, "succeeded");
     expect(succeeded.attempts.at(-1)).toMatchObject({
       status: "succeeded",
@@ -51,7 +53,7 @@ test("executes and cancels TestNG in a constrained immutable container", async (
       .click();
     await expect(page.getByText(/reports\/testng\/testng-results\.xml/)).toBeVisible();
 
-    const cancellationBatchId = await scheduleExecution(page, "cancel");
+    const cancellationBatchId = await scheduleExecution(page, cancellationSuiteName);
     await waitForRunningContainer(agent);
     await page.goto(`/run-batches/${encodeURIComponent(cancellationBatchId)}`);
     page.once("dialog", (dialog) => dialog.accept("Container cleanup acceptance"));
@@ -171,7 +173,11 @@ async function importContainerFixture(page: Page): Promise<void> {
   await expect(page.getByText("com.autoforge.acceptance.ContainerAgentFixture")).toBeVisible({
     timeout: 20_000,
   });
-  await expect(page.locator(".method-row code")).toHaveText("enforcesContainerPolicy");
+  await expect(page.getByText("com.autoforge.acceptance.ContainerCancelFixture")).toBeVisible();
+  await expect(page.locator(".method-row code")).toContainText([
+    "enforcesContainerPolicy",
+    "waitsForControlPlaneCancellation",
+  ]);
   await page.getByRole("button", { name: "确认导入" }).click();
   await expect(page.getByRole("status")).toContainText(/已导入|已返回现有用例/, {
     timeout: 60_000,
@@ -209,11 +215,17 @@ async function ensureProjectHierarchy(page: Page): Promise<void> {
   expect(stageResponse.status()).toBe(201);
 }
 
-async function createContainerSuite(page: Page): Promise<void> {
+async function createContainerSuite(
+  page: Page,
+  suiteName: string,
+  caseDisplayName: string,
+): Promise<void> {
   await page.goto("/case-suites");
-  await page.getByLabel("任务名称").fill(suiteName);
-  await page.getByLabel("说明").fill("GitHub Actions 真实容器隔离与取消清理验收");
   await page.getByRole("button", { name: "创建任务" }).click();
+  const createSuiteDialog = page.getByRole("dialog", { name: "创建用例任务" });
+  await createSuiteDialog.getByLabel("任务名称").fill(suiteName);
+  await createSuiteDialog.getByLabel("说明").fill("GitHub Actions 真实容器隔离与取消清理验收");
+  await createSuiteDialog.getByRole("button", { name: "创建任务" }).click();
   const suiteLink = page.getByRole("link", { name: new RegExp(suiteName) });
   await expect(suiteLink).toBeVisible();
   const [suiteId, runnerId] = await Promise.all([
@@ -227,18 +239,19 @@ async function createContainerSuite(page: Page): Promise<void> {
   await expect(page.getByRole("status")).toContainText("用例任务已更新");
 
   await page.goto("/cases");
-  await page.getByLabel("选择 ContainerAgentFixture").check();
+  await page.getByLabel("页内搜索用例").fill(caseDisplayName);
+  await page.getByLabel(`选择 ${caseDisplayName}`).check();
   await page.getByLabel("目标用例任务").selectOption({ label: suiteName });
   await page.getByRole("button", { name: "加入任务" }).click();
   await expect(page.getByRole("status")).toContainText("已将 1 个用例加入任务");
 }
 
-async function scheduleExecution(page: Page, mode: "success" | "cancel"): Promise<string> {
+async function scheduleExecution(page: Page, suiteName: string): Promise<string> {
   const [suiteId, runnerId] = await Promise.all([
     findSuiteId(page, suiteName),
     findRunnerId(page, runnerName),
   ]);
-  await configureTaskExecution(page, suiteId, runnerId, { parameters: { mode } });
+  await configureTaskExecution(page, suiteId, runnerId);
   return (await createTaskRun(page, suiteId)).id;
 }
 

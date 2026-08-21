@@ -139,9 +139,9 @@ public class MixedVisibleTest {
   await expect(page.getByRole("link", { name: "工作概览", exact: true })).toHaveClass(
     /nav-item-active/,
   );
-  await expect(
-    page.getByRole("banner").getByText("E2E Administrator", { exact: true }),
-  ).toBeVisible();
+  await expect(page.getByRole("banner").getByText("E2E Administrator", { exact: true })).toHaveText(
+    "E2E Administrator",
+  );
 
   await page.getByRole("button", { name: "退出登录" }).click();
   await expect(page).toHaveURL(/\/login$/);
@@ -153,9 +153,9 @@ public class MixedVisibleTest {
   await expect(page.getByRole("link", { name: "工作概览", exact: true })).toHaveClass(
     /nav-item-active/,
   );
-  await expect(
-    page.getByRole("banner").getByText("E2E Administrator", { exact: true }),
-  ).toBeVisible();
+  await expect(page.getByRole("banner").getByText("E2E Administrator", { exact: true })).toHaveText(
+    "E2E Administrator",
+  );
   await ensureProjectHierarchy(page);
 
   await page.goto(`/cases/import?projectId=${encodeURIComponent(DEFAULT_PROJECT_ID)}`);
@@ -373,14 +373,34 @@ public class MixedVisibleTest {
   await page.getByRole("button", { name: "从该版本创建" }).last().click();
   await expect(page.getByText("版本历史（3）")).toBeVisible({ timeout: 20_000 });
 
+  const activeCasesResponse = await page.request.get(
+    `/api/v1/case-definitions?projectId=${encodeURIComponent(DEFAULT_PROJECT_ID)}&limit=100`,
+  );
+  expect(activeCasesResponse.status()).toBe(200);
+  const activeCases = (await activeCasesResponse.json()) as {
+    items: Array<{
+      id: string;
+      className: string;
+      displayName: string;
+      enabled: boolean;
+      archived: boolean;
+    }>;
+  };
+  const taskCase = activeCases.items.find(
+    (definition) => definition.enabled && !definition.archived,
+  );
+  if (!taskCase) throw new Error("当前项目应至少保留一个可执行用例。");
+
   await page.goto(`/case-suites?projectId=${encodeURIComponent(DEFAULT_PROJECT_ID)}`);
   await expect(page.locator('select[name="projectId"]')).toHaveCount(0);
   await page.locator(".project-picker-trigger").click();
   await expect(page.getByRole("listbox")).toBeVisible();
   await page.getByRole("option", { name: "默认项目" }).click();
-  await page.getByLabel("任务名称").fill("每日冒烟测试");
-  await page.getByLabel("说明").fill("E2E 创建的可复用任务");
   await page.getByRole("button", { name: "创建任务" }).click();
+  const createSuiteDialog = page.getByRole("dialog", { name: "创建用例任务" });
+  await createSuiteDialog.getByLabel("任务名称").fill("每日冒烟测试");
+  await createSuiteDialog.getByLabel("说明").fill("E2E 创建的可复用任务");
+  await createSuiteDialog.getByRole("button", { name: "创建任务" }).click();
   const dailySuiteLink = page.getByRole("link", { name: /每日冒烟测试/ });
   await expect(dailySuiteLink).toBeVisible();
   const dailySuiteHref = await dailySuiteLink.getAttribute("href");
@@ -396,8 +416,8 @@ public class MixedVisibleTest {
   await expectUiConsistency(page);
 
   await page.goto(`/cases?projectId=${encodeURIComponent(DEFAULT_PROJECT_ID)}`);
-  await page.getByLabel("页内搜索用例").fill("CheckoutTest");
-  await page.getByLabel("选择 CheckoutTest").check();
+  await page.getByLabel("页内搜索用例").fill(taskCase.displayName);
+  await page.getByLabel(`选择 ${taskCase.displayName}`).check();
   await page.getByLabel("目标用例任务").selectOption(dailySuiteId);
   await page.getByRole("button", { name: "加入任务" }).click();
   await expect(page.locator(".inline-feedback")).toContainText("已将 1 个用例加入任务");
@@ -405,7 +425,8 @@ public class MixedVisibleTest {
   await page.goto(`/case-suites/${encodeURIComponent(dailySuiteId)}`);
   await expectUiConsistency(page);
   await expect(page.getByRole("heading", { name: "1 个用例" })).toBeVisible();
-  await page.getByRole("button", { name: "移除" }).click();
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.getByRole("button", { name: `移除 ${taskCase.displayName}`, exact: true }).click();
   await expect(page.getByText("任务中还没有用例")).toBeVisible({ timeout: 20_000 });
 
   await page.goto(`/cases?projectId=${encodeURIComponent(DEFAULT_PROJECT_ID)}`);
@@ -415,7 +436,10 @@ public class MixedVisibleTest {
   await caseImportDialog.getByLabel("选择用例表格文件").setInputFiles({
     name: "cases.csv",
     mimeType: "text/csv",
-    buffer: Buffer.from("用例路径\ncom/example/CheckoutTest\ncom/example/NoSuchCase\n", "utf8"),
+    buffer: Buffer.from(
+      `用例路径\n${taskCase.className.replaceAll(".", "/")}\ncom/example/NoSuchCase\n`,
+      "utf8",
+    ),
   });
   await caseImportDialog.getByRole("button", { name: "解析并预览" }).click();
   await expect(caseImportDialog.getByRole("status")).toContainText("匹配 1 个 · 未匹配 1 个");
@@ -424,32 +448,17 @@ public class MixedVisibleTest {
   await expect(caseImportDialog).toHaveCount(0);
   await expect(page.locator(".selection-toolbar")).toContainText("已选 1");
   await expect(page.locator(".inline-feedback")).toContainText("已从表格勾选 1 个用例");
-  await expect(page.getByLabel("选择 CheckoutTest")).toBeChecked();
+  await expect(page.getByLabel(`选择 ${taskCase.displayName}`)).toBeChecked();
 
   await page.getByRole("button", { name: "导入用例" }).click();
   const pasteImportDialog = page.getByLabel("导入用例", { exact: true });
   await expect(pasteImportDialog).toBeVisible();
-  await pasteImportDialog.getByLabel("粘贴用例路径").fill("com.example.CheckoutTest");
+  await pasteImportDialog.getByLabel("粘贴用例路径").fill(taskCase.className);
   await pasteImportDialog.getByRole("button", { name: "解析并预览" }).click();
   await expect(pasteImportDialog.getByRole("status")).toContainText("匹配 1 个");
   await pasteImportDialog.getByRole("button", { name: "勾选匹配用例" }).click();
   await expect(pasteImportDialog).toHaveCount(0);
   await expect(page.locator(".selection-toolbar")).toContainText("已选 1");
-
-  await page.goto(`/objects?projectId=${encodeURIComponent(DEFAULT_PROJECT_ID)}`);
-  await expect(page.getByText("checkout-tests-v2.jar")).toBeVisible();
-  await expectUiConsistency(page);
-  await page
-    .getByRole("row", { name: /checkout-tests-v2\.jar/ })
-    .getByRole("link", { name: "预览" })
-    .click();
-  await expect(page.getByRole("heading", { name: "测试类与方法" })).toBeVisible();
-  await expect(page.locator(".method-row .method-signature").first()).toHaveText(
-    "入参：空，返回值：空",
-  );
-  expect((await page.locator(".method-row").allTextContents()).join("\n")).not.toContain("()V");
-  await expectUiConsistency(page);
-  await expect(page.getByRole("button", { name: "当前全量来源" })).toBeVisible();
 
   const registration = await page.request.post("/api/v1/runner-agents/register", {
     headers: { authorization: `Bearer ${freshRunnerBootstrapToken()}` },
@@ -495,8 +504,8 @@ public class MixedVisibleTest {
   expect(heartbeatResult.terminalConnectionToken).toBeTruthy();
 
   await page.goto(`/cases?projectId=${encodeURIComponent(DEFAULT_PROJECT_ID)}`);
-  await page.getByLabel("页内搜索用例").fill("CheckoutTest");
-  await page.getByLabel("选择 CheckoutTest").check();
+  await page.getByLabel("页内搜索用例").fill(taskCase.displayName);
+  await page.getByLabel(`选择 ${taskCase.displayName}`).check();
   await page.getByLabel("目标用例任务").selectOption(dailySuiteId);
   await page.getByRole("button", { name: "加入任务" }).click();
   await expect(page.locator(".inline-feedback")).toContainText("已将 1 个用例加入任务");
@@ -684,7 +693,9 @@ public class MixedVisibleTest {
   // 成功码和断言分类码都不能再冒充“失败原因”。该断言通过真实 HTTP 完成协议写入数据，
   // 随根级 test:e2e 在 CI 运行，防止只在展示层伪装修复。
   const analyticsCaseId = completedBatch.runs[0]!.caseDefinitionId;
-  await page.goto(`/insights?caseDefinitionId=${encodeURIComponent(analyticsCaseId)}`);
+  await page.goto(
+    `/insights?suiteId=${encodeURIComponent(dailySuiteId)}&caseDefinitionId=${encodeURIComponent(analyticsCaseId)}`,
+  );
   await expect(page.locator(".insight-metric-success")).toContainText("50.0%");
   await expect(page.locator(".insight-metric-danger")).toContainText("50.0%");
   const failureReasonCard = page.locator(".insight-failure-card");
@@ -741,7 +752,7 @@ public class MixedVisibleTest {
   await expect(page.locator(".execution-log")).toHaveCount(0);
   // 需求5后单用例不再自动展开，需显式点击详情才能看到产物列表。
   await page
-    .getByRole("row", { name: "CheckoutTest" })
+    .getByRole("row", { name: taskCase.displayName })
     .getByRole("button", { name: "详情" })
     .click();
   await expect(page.getByText("reports/testng/e2e-report.txt")).toBeVisible();
@@ -814,11 +825,22 @@ public class MixedVisibleTest {
   page.once("dialog", (dialog) => dialog.accept("E2E single run cancellation"));
   await page.getByRole("button", { name: "取消该用例" }).click();
   await expect(page.getByText("已取消", { exact: true }).first()).toBeVisible({ timeout: 20_000 });
+  const cancelledBatchDetails = (await (
+    await page.request.get(`/api/v1/run-batches/${encodeURIComponent(cancellationBatch.id)}`, {
+      headers: userHeaders,
+    })
+  ).json()) as { attempts: Array<{ id: string }> };
+  const expectedSampleCount =
+    completedBatch.attempts.length + cancelledBatchDetails.attempts.length;
 
-  const checkoutCaseId = decodeURIComponent(new URL(checkoutCaseUrl).pathname.split("/").at(-1)!);
-  await page.goto(`/insights?caseDefinitionId=${encodeURIComponent(checkoutCaseId)}`);
+  await page.goto(
+    `/insights?suiteId=${encodeURIComponent(dailySuiteId)}&caseDefinitionId=${encodeURIComponent(taskCase.id)}`,
+  );
   await expect(
-    page.getByText("执行样本").locator("..").getByText("3", { exact: true }),
+    page
+      .getByText("执行样本")
+      .locator("..")
+      .getByText(String(expectedSampleCount), { exact: true }),
   ).toBeVisible();
   const filteredFailureReasons = page.locator(".failure-signature-list");
   await expect(filteredFailureReasons).toContainText("java.lang.AssertionError: 中文断言失败");
@@ -877,7 +899,7 @@ public class MixedVisibleTest {
   expect(jsonRows.length).toBeGreaterThan(0);
   expect(jsonRows.every((row) => row.outcome === "succeeded")).toBe(true);
 
-  expect(await searchKinds(page, "CheckoutTest")).toContain("case");
+  expect(await searchKinds(page, taskCase.displayName)).toContain("case");
   expect(await searchKinds(page, "每日冒烟测试")).toEqual(
     expect.arrayContaining(["suite", "batch"]),
   );

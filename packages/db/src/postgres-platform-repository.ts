@@ -27,6 +27,7 @@ import {
   DomainError,
   buildCaseSuiteVersionSnapshot,
   defaultCaseSuiteExecutionPolicy,
+  mergeCaseSuiteExecutionPolicy,
   type CaseSuiteExecutionPolicy,
   type CaseDefinitionWithMethods,
   type CaseSource,
@@ -278,7 +279,10 @@ function toSuite(row: typeof pgCaseSuites.$inferSelect, caseCount: number): Case
     revision: row.revision,
     status: row.status,
     enabled: row.enabled,
-    policy: { ...defaultCaseSuiteExecutionPolicy, ...safePolicy(row.policyJson) },
+    policy: mergeCaseSuiteExecutionPolicy(
+      defaultCaseSuiteExecutionPolicy,
+      safePolicy(row.policyJson),
+    ),
     caseCount,
     ...(row.createdBy ? { createdBy: row.createdBy } : {}),
     ...(row.updatedBy ? { updatedBy: row.updatedBy } : {}),
@@ -1585,9 +1589,9 @@ export class PostgresCaseSuiteRepository implements CaseSuiteRepository {
     return suite;
   }
 
-  async removeCase(input: {
+  async removeCases(input: {
     suiteId: string;
-    caseDefinitionId: string;
+    caseDefinitionIds: string[];
     versionId: string;
     actorId?: string;
     updatedAt: string;
@@ -1599,7 +1603,7 @@ export class PostgresCaseSuiteRepository implements CaseSuiteRepository {
         .where(
           and(
             eq(pgCaseSuiteItems.suiteId, input.suiteId),
-            eq(pgCaseSuiteItems.caseDefinitionId, input.caseDefinitionId),
+            inArray(pgCaseSuiteItems.caseDefinitionId, input.caseDefinitionIds),
           ),
         )
         .returning({ id: pgCaseSuiteItems.id });
@@ -1617,7 +1621,7 @@ export class PostgresCaseSuiteRepository implements CaseSuiteRepository {
           transaction,
           input.suiteId,
           input.versionId,
-          "suite.cases.remove",
+          "suite.cases.remove-bulk",
           input,
         );
       }

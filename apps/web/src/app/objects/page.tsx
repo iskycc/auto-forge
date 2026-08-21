@@ -2,10 +2,10 @@ import { Archive, Database, ExternalLink, FolderOpen, HardDrive } from "lucide-r
 import Link from "next/link";
 
 import { SourceActions } from "@/components/source-actions";
-import { Button, Select } from "@/components/ui";
 import { getPlatformServices } from "@/lib/services";
 import { requireAuthorizedPageProjectScope, requirePageProjectScope } from "@/lib/auth";
 import { hasPermission, projectIdsForPermission } from "@autoforge/domain";
+import { selectableProjectIds, selectedProjectId } from "@/lib/selected-project";
 
 export const dynamic = "force-dynamic";
 
@@ -25,15 +25,13 @@ function formatDate(value: string): string {
   }).format(new Date(value));
 }
 
-export default async function ObjectsPage({
-  searchParams,
-}: {
-  searchParams: Promise<{ projectId?: string | string[] }>;
-}) {
-  const { identity, projectIds } = await requirePageProjectScope("case_source.read");
-  const requested = (await searchParams).projectId;
-  const requestedProjectId = (Array.isArray(requested) ? requested[0] : requested)?.trim();
-  const projectId = requestedProjectId;
+export default async function ObjectsPage() {
+  const { identity } = await requirePageProjectScope("case_source.read");
+  const services = await getPlatformServices();
+  const projects = await services.identities
+    .listProjects(selectableProjectIds(identity))
+    .catch(() => []);
+  const projectId = await selectedProjectId(identity, projects, "case_source.read");
   const effectiveProjectIds = requireAuthorizedPageProjectScope(
     identity,
     "case_source.read",
@@ -41,12 +39,11 @@ export default async function ObjectsPage({
   );
   const sourceManagementProjectIds = projectIdsForPermission(identity, "case_source.manage");
   const canImport =
-    sourceManagementProjectIds === undefined || sourceManagementProjectIds.length > 0;
-  const services = await getPlatformServices();
-  const [allObjects, sources, projects] = await Promise.all([
+    sourceManagementProjectIds === undefined ||
+    Boolean(projectId && sourceManagementProjectIds.includes(projectId));
+  const [allObjects, sources] = await Promise.all([
     services.caseSources.listObjects({ limit: 100 }, effectiveProjectIds),
     services.catalog.listSources(100, effectiveProjectIds),
-    services.identityAccess.listProjects(identity).catch(() => []),
   ]);
   const objects = allObjects;
   const sourceByKey = new Map(sources.map((source) => [source.objectKey, source]));
@@ -64,25 +61,6 @@ export default async function ObjectsPage({
           {objects.storage === "local" ? "本地对象存储" : "MinIO 对象存储"}
         </span>
       </section>
-      <form action="/objects" className="card filter-panel source-filter-panel" method="get">
-        <label>
-          项目
-          <Select defaultValue={projectId ?? ""} name="projectId">
-            <option value="">全部授权项目</option>
-            {projects
-              .filter((project) => !projectIds || projectIds.includes(project.id))
-              .map((project) => (
-                <option key={project.id} value={project.id}>
-                  {project.name}
-                </option>
-              ))}
-          </Select>
-        </label>
-        <Button className="button button-secondary" type="submit">
-          切换项目
-        </Button>
-      </form>
-
       <section className="card table-card">
         <div className="section-title-row">
           <div>

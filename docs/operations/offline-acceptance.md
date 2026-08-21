@@ -7,7 +7,7 @@ tag/commit、四平台 variant、镜像 digest、SHA256SUMS、SBOM、来源证�
 1. 从 Release 资产和预先导出的 Full 基础设施镜像启动，确认 `pull_policy: never` 且无 DNS/CDN/
    遥测/包下载请求。
 2. 完成首次管理员、本地登录、私有 CA LDAP 登录、用户/角色/项目隔离。
-3. 后台导入带 testng.xml/继承/MR class 的 JAR，比较并确认来源，创建含 Runner、项目版本、参数、重跑和 Adapter 地址的完整任务。
+3. 后台导入带 testng.xml/继承/MR class 的 JAR，比较并确认来源，创建含 Runner、项目版本、重跑和 Adapter 地址的完整任务，并确认发现参数只读固化且界面没有手工参数覆盖。
 4. 从平台 SSH 自动安装内置 Agent，运行 doctor；分别完成单用例/批量执行、失败重试、取消、日志
    断线补传、产物上传/下载和分析导出。
 5. Lite 完成崩溃恢复；Full 注入 PostgreSQL/NATS/Redis/MinIO 短暂故障和重复消息，验证唯一终态。

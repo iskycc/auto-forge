@@ -5,11 +5,12 @@ import type {
   ProjectRuntimeAsset,
   ProjectStructure,
 } from "@autoforge/domain";
-import { FolderTree, UploadCloud } from "lucide-react";
+import { FolderTree, Plus, UploadCloud } from "lucide-react";
 import { useState, type FormEvent } from "react";
 
 import { Button, FileInput, Input, Select } from "@/components/ui";
 import { readApiErrorMessage } from "@/lib/client-api";
+import { ActionDialog } from "@/components/action-dialog";
 
 export function ProjectStructureManager({
   projectId,
@@ -24,6 +25,7 @@ export function ProjectStructureManager({
   const [pending, setPending] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [createDialog, setCreateDialog] = useState<"version" | "stage" | null>(null);
 
   async function refresh(success: string): Promise<void> {
     const response = await fetch(`/api/v1/projects/${projectId}/structure`, {
@@ -69,6 +71,7 @@ export function ProjectStructureManager({
       });
       form.reset();
       await refresh("项目版本已创建。");
+      setCreateDialog(null);
     });
   }
 
@@ -85,6 +88,7 @@ export function ProjectStructureManager({
       );
       form.reset();
       await refresh("测试阶段已创建。");
+      setCreateDialog(null);
     });
   }
 
@@ -166,13 +170,27 @@ export function ProjectStructureManager({
             <h2>版本与测试阶段</h2>
             <p>新用例必须归属到项目版本和测试阶段；旧的未归属用例不进入新目录树。</p>
           </div>
-          <FolderTree size={22} aria-hidden="true" />
+          <div className="button-row">
+            {canManage ? (
+              <>
+                <Button onClick={() => setCreateDialog("version")} type="button">
+                  <Plus size={15} /> 创建版本
+                </Button>
+                <Button onClick={() => setCreateDialog("stage")} type="button">
+                  <Plus size={15} /> 创建阶段
+                </Button>
+              </>
+            ) : (
+              <FolderTree size={22} aria-hidden="true" />
+            )}
+          </div>
         </div>
-        <div className="settings-paired-forms">
-          <form
-            className="settings-grid-form settings-subform project-structure-subform"
-            onSubmit={createVersion}
-          >
+        <ActionDialog
+          onClose={() => !pending && setCreateDialog(null)}
+          open={createDialog === "version"}
+          title="创建项目版本"
+        >
+          <form className="settings-grid-form action-dialog-form" onSubmit={createVersion}>
             <label>
               版本名称
               <Input name="name" placeholder="例如 2.4.0" required disabled={!canManage} />
@@ -181,10 +199,13 @@ export function ProjectStructureManager({
               创建版本
             </Button>
           </form>
-          <form
-            className="settings-grid-form settings-subform project-structure-subform"
-            onSubmit={createStage}
-          >
+        </ActionDialog>
+        <ActionDialog
+          onClose={() => !pending && setCreateDialog(null)}
+          open={createDialog === "stage"}
+          title="创建测试阶段"
+        >
+          <form className="settings-grid-form action-dialog-form" onSubmit={createStage}>
             <label>
               所属版本
               <Select name="versionId" required disabled={!canManage}>
@@ -211,7 +232,7 @@ export function ProjectStructureManager({
               创建测试阶段
             </Button>
           </form>
-        </div>
+        </ActionDialog>
         <div className="permission-list project-version-list">
           {structure.versions.map((version) => (
             <span key={version.id}>

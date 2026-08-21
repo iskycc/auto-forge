@@ -55,7 +55,9 @@ export function runBatchFilterFromSearch(
 export function refreshQueryFromFilter(filter: RunBatchListQuery): URLSearchParams {
   const refreshQuery = new URLSearchParams();
   for (const [key, value] of Object.entries(filter)) {
-    if (key !== "projectIds" && value !== undefined) refreshQuery.set(key, String(value));
+    if (key !== "projectIds" && key !== "projectId" && value !== undefined) {
+      refreshQuery.set(key, String(value));
+    }
   }
   return refreshQuery;
 }

@@ -9,6 +9,7 @@ import {
   DomainError,
   buildCaseSuiteVersionSnapshot,
   defaultCaseSuiteExecutionPolicy,
+  mergeCaseSuiteExecutionPolicy,
   type CaseSuiteExecutionPolicy,
   type CaseDefinitionWithMethods,
   type CaseSuite,
@@ -47,7 +48,7 @@ function policy(json: string): CaseSuiteExecutionPolicy {
   try {
     const parsed: unknown = JSON.parse(json);
     return parsed && typeof parsed === "object" && !Array.isArray(parsed)
-      ? { ...defaultCaseSuiteExecutionPolicy, ...parsed }
+      ? mergeCaseSuiteExecutionPolicy(defaultCaseSuiteExecutionPolicy, parsed)
       : { ...defaultCaseSuiteExecutionPolicy };
   } catch {
     return { ...defaultCaseSuiteExecutionPolicy };
@@ -257,9 +258,9 @@ export class SqliteCaseSuiteRepository implements CaseSuiteRepository {
     return suite;
   }
 
-  async removeCase(input: {
+  async removeCases(input: {
     suiteId: string;
-    caseDefinitionId: string;
+    caseDefinitionIds: string[];
     versionId: string;
     actorId?: string;
     updatedAt: string;
@@ -268,7 +269,10 @@ export class SqliteCaseSuiteRepository implements CaseSuiteRepository {
       const result = this.handle.db
         .delete(caseSuiteItems)
         .where(
-          sql`${caseSuiteItems.suiteId} = ${input.suiteId} AND ${caseSuiteItems.caseDefinitionId} = ${input.caseDefinitionId}`,
+          and(
+            eq(caseSuiteItems.suiteId, input.suiteId),
+            inArray(caseSuiteItems.caseDefinitionId, input.caseDefinitionIds),
+          ),
         )
         .run();
       if (result.changes > 0) {
@@ -282,7 +286,12 @@ export class SqliteCaseSuiteRepository implements CaseSuiteRepository {
           })
           .where(eq(caseSuites.id, input.suiteId))
           .run();
-        this.insertVersionSnapshot(input.suiteId, input.versionId, "suite.cases.remove", input);
+        this.insertVersionSnapshot(
+          input.suiteId,
+          input.versionId,
+          "suite.cases.remove-bulk",
+          input,
+        );
       }
     })();
     const suite = await this.get(input.suiteId);

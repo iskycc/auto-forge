@@ -109,7 +109,8 @@ prepare_toolchain_and_fixture() {
     -encoding UTF-8 \
     -cp "${toolchain_directory}/testng-7.11.0.jar" \
     -d "${fixture_classes_directory}" \
-    "${repository_root}/tests/fixtures/container/ContainerAgentFixture.java"
+    "${repository_root}/tests/fixtures/container/ContainerAgentFixture.java" \
+    "${repository_root}/tests/fixtures/container/ContainerCancelFixture.java"
   jar --create \
     --file "${acceptance_directory}/container-agent-tests.jar" \
     -C "${fixture_classes_directory}" .

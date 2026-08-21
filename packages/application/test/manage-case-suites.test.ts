@@ -18,7 +18,7 @@ describe("case suite update and copy", () => {
     );
 
     await service.update("suite-1", {
-      policy: { concurrency: 8, parameters: { SUITE: "smoke" } },
+      policy: { concurrency: 8 },
       enabled: false,
       expectedRevision: 2,
     });
@@ -34,7 +34,6 @@ describe("case suite update and copy", () => {
           runnerIds: ["runner-1"],
           runnerLabels: ["gpu"],
           concurrency: 8,
-          parameters: { SUITE: "smoke" },
         },
       }),
     );
@@ -86,6 +85,27 @@ describe("case suite update and copy", () => {
       createdAt: timestamp,
     });
   });
+
+  it("removes a unique case selection in one repository operation", async () => {
+    const suites = suiteRepositoryFake();
+    const service = new CaseSuiteService(
+      suites,
+      {} as CaseCatalogRepository,
+      { now: () => new Date(timestamp) },
+      { next: () => "version-3" },
+    );
+
+    await service.removeCases("suite-1", ["case-1", "case-1", "case-2"], "user-1");
+
+    expect(suites.removeCases).toHaveBeenCalledOnce();
+    expect(suites.removeCases).toHaveBeenCalledWith({
+      suiteId: "suite-1",
+      caseDefinitionIds: ["case-1", "case-2"],
+      versionId: "version-3",
+      actorId: "user-1",
+      updatedAt: timestamp,
+    });
+  });
 });
 
 function suiteRepositoryFake() {
@@ -119,8 +139,10 @@ function suiteRepositoryFake() {
     get: vi.fn().mockResolvedValue(suite),
     updateSuite: vi.fn().mockResolvedValue(suite),
     copySuite: vi.fn().mockResolvedValue(suite),
+    removeCases: vi.fn().mockResolvedValue(suite),
   } as unknown as CaseSuiteRepository & {
     updateSuite: ReturnType<typeof vi.fn>;
     copySuite: ReturnType<typeof vi.fn>;
+    removeCases: ReturnType<typeof vi.fn>;
   };
 }

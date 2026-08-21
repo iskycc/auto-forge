@@ -8,6 +8,7 @@ import { useEffect, useState, type FormEvent } from "react";
 
 import { readApiErrorMessage } from "@/lib/client-api";
 import { formatLocalDateTime } from "@/lib/run-batch-presentation";
+import { ActionDialog } from "@/components/action-dialog";
 
 type LdapView = {
   enabled: boolean;
@@ -35,7 +36,7 @@ type LdapView = {
 
 const RELOAD_MESSAGE_KEY = "autoforge:access-settings:message";
 
-export type AccessSection = "users" | "roles" | "projects" | "ldap" | "sessions";
+export type AccessSection = "users" | "roles" | "ldap" | "sessions";
 
 export function AccessSettings({
   users,
@@ -50,7 +51,6 @@ export function AccessSettings({
   userSource,
   nextUserCursor,
   capabilities,
-  manageableProjectIds,
   activeSection,
 }: {
   users: User[];
@@ -81,17 +81,15 @@ export function AccessSettings({
     projectRead: boolean;
     ldapRead: boolean;
     ldapManage: boolean;
-    canCreateProject: boolean;
   };
-  manageableProjectIds: string[] | null;
   activeSection: AccessSection;
 }) {
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [pending, setPending] = useState(false);
-
-  const canManageProject = (projectId: string) =>
-    manageableProjectIds === null || manageableProjectIds.includes(projectId);
+  const [createDialog, setCreateDialog] = useState<
+    "user" | "password" | "role" | "assignment" | null
+  >(null);
 
   useEffect(() => {
     const timeoutId = window.setTimeout(() => {
@@ -224,16 +222,6 @@ export function AccessSettings({
     );
   }
 
-  function submitProject(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const form = new FormData(event.currentTarget);
-    void request(
-      "/api/v1/projects",
-      jsonRequest("POST", { name: form.get("name"), slug: form.get("slug") }),
-      "项目已创建。",
-    );
-  }
-
   function submitLdapForm(formElement: HTMLFormElement, testOnly: boolean) {
     const form = new FormData(formElement);
     const payload = ldapPayload(form);
@@ -260,10 +248,26 @@ export function AccessSettings({
               <p className="eyebrow">Identity</p>
               <h2>用户管理</h2>
             </div>
-            <UserRound size={22} aria-hidden="true" />
+            {capabilities.userManage ? (
+              <div className="button-row">
+                <Button onClick={() => setCreateDialog("password")} type="button">
+                  重置密码
+                </Button>
+                <Button onClick={() => setCreateDialog("user")} type="button" variant="primary">
+                  <Plus size={16} /> 创建用户
+                </Button>
+              </div>
+            ) : (
+              <UserRound size={22} aria-hidden="true" />
+            )}
           </div>
-          {capabilities.userManage ? (
-            <form className="settings-grid-form" onSubmit={submitUser}>
+          <ActionDialog
+            description="创建本地账号后，用户首次登录必须修改初始密码。"
+            onClose={() => !pending && setCreateDialog(null)}
+            open={createDialog === "user"}
+            title="创建本地用户"
+          >
+            <form className="settings-grid-form action-dialog-form" onSubmit={submitUser}>
               <label>
                 用户名
                 <Input name="username" required />
@@ -284,7 +288,35 @@ export function AccessSettings({
                 <Plus size={16} /> 创建本地用户
               </Button>
             </form>
-          ) : null}
+          </ActionDialog>
+          <ActionDialog
+            description="重置后会立即撤销目标用户的所有旧会话。"
+            onClose={() => !pending && setCreateDialog(null)}
+            open={createDialog === "password"}
+            title="重置用户密码"
+          >
+            <form className="settings-grid-form action-dialog-form" onSubmit={submitPasswordReset}>
+              <label>
+                本地用户
+                <Select name="userId" required>
+                  {users
+                    .filter((user) => user.source === "local")
+                    .map((user) => (
+                      <option key={user.id} value={user.id}>
+                        {user.displayName} · {user.username}
+                      </option>
+                    ))}
+                </Select>
+              </label>
+              <label>
+                新密码
+                <Input minLength={12} name="password" required type="password" />
+              </label>
+              <Button className="secondary-button" disabled={pending} type="submit">
+                重置密码并撤销会话
+              </Button>
+            </form>
+          </ActionDialog>
           <form action="/settings/access" className="settings-user-filter" method="get">
             <input name="section" type="hidden" value="users" />
             <label>
@@ -419,29 +451,6 @@ export function AccessSettings({
               下一页
             </a>
           ) : null}
-          {capabilities.userManage ? (
-            <form className="settings-grid-form settings-subform" onSubmit={submitPasswordReset}>
-              <label>
-                本地用户
-                <Select name="userId" required>
-                  {users
-                    .filter((user) => user.source === "local")
-                    .map((user) => (
-                      <option key={user.id} value={user.id}>
-                        {user.displayName} · {user.username}
-                      </option>
-                    ))}
-                </Select>
-              </label>
-              <label>
-                新密码
-                <Input minLength={12} name="password" required type="password" />
-              </label>
-              <Button className="secondary-button" disabled={pending} type="submit">
-                重置密码并撤销会话
-              </Button>
-            </form>
-          ) : null}
         </section>
       ) : null}
 
@@ -452,9 +461,25 @@ export function AccessSettings({
               <p className="eyebrow">Authorization</p>
               <h2>角色与权限分层</h2>
             </div>
-            <Shield size={22} aria-hidden="true" />
+            {capabilities.roleManage ? (
+              <div className="button-row">
+                <Button onClick={() => setCreateDialog("assignment")} type="button">
+                  分配角色
+                </Button>
+                <Button onClick={() => setCreateDialog("role")} type="button" variant="primary">
+                  <Plus size={16} /> 创建角色
+                </Button>
+              </div>
+            ) : (
+              <Shield size={22} aria-hidden="true" />
+            )}
           </div>
-          {capabilities.roleManage ? (
+          <ActionDialog
+            description="系统角色对全局生效，项目角色仅对选定项目生效。"
+            onClose={() => !pending && setCreateDialog(null)}
+            open={createDialog === "assignment"}
+            title="分配用户角色"
+          >
             <div className="settings-paired-forms">
               <form className="settings-grid-form settings-subform" onSubmit={submitSystemRole}>
                 <label>
@@ -493,7 +518,7 @@ export function AccessSettings({
                 </Button>
               </form>
             </div>
-          ) : null}
+          </ActionDialog>
           <div className="table-scroll">
             <table className="data-table">
               <thead>
@@ -541,8 +566,13 @@ export function AccessSettings({
               </tbody>
             </table>
           </div>
-          {capabilities.roleManage ? (
-            <form className="settings-grid-form" onSubmit={submitRole}>
+          <ActionDialog
+            description="自定义角色用于组合系统级或项目级权限。"
+            onClose={() => !pending && setCreateDialog(null)}
+            open={createDialog === "role"}
+            title="创建自定义角色"
+          >
+            <form className="settings-grid-form action-dialog-form" onSubmit={submitRole}>
               <label>
                 角色标识
                 <Input name="key" placeholder="release-operator" required />
@@ -570,7 +600,7 @@ export function AccessSettings({
                 <Plus size={16} /> 创建角色
               </Button>
             </form>
-          ) : null}
+          </ActionDialog>
           <div className="role-grid">
             {roles.map((role) => (
               <article className="role-card" key={role.id}>
@@ -672,153 +702,6 @@ export function AccessSettings({
                   </div>
                 ) : null}
               </article>
-            ))}
-          </div>
-        </section>
-      ) : null}
-
-      {activeSection === "projects" && capabilities.projectRead ? (
-        <section className="content-card settings-section" id="projects">
-          <div className="section-heading">
-            <div>
-              <p className="eyebrow">Projects</p>
-              <h2>项目作用域</h2>
-            </div>
-          </div>
-          {capabilities.canCreateProject ? (
-            <form className="settings-grid-form" onSubmit={submitProject}>
-              <label>
-                项目名称
-                <Input name="name" required />
-              </label>
-              <label>
-                Slug
-                <Input name="slug" pattern="[a-z0-9]+(?:-[a-z0-9]+)*" required />
-              </label>
-              <Button className="primary-button" disabled={pending} type="submit">
-                <Plus size={16} /> 创建项目
-              </Button>
-            </form>
-          ) : null}
-          <div className="project-settings-list">
-            {projects.map((project) => (
-              <div className="project-settings-item" key={project.id}>
-                <code>
-                  {project.name} · {project.slug}
-                  {project.isDefault ? " · 默认" : ""}
-                  {project.archived ? " · 已归档" : ""}
-                </code>
-                <small>
-                  负责人：
-                  {project.ownerUserId
-                    ? (users.find((user) => user.id === project.ownerUserId)?.displayName ??
-                      project.ownerUserId)
-                    : "未设置"}
-                </small>
-                <details>
-                  <summary className="role-action-summary">
-                    {projectMemberships.find((entry) => entry.projectId === project.id)?.members
-                      .length ?? 0}{" "}
-                    位成员
-                  </summary>
-                  <div className="table-scroll">
-                    <table className="data-table">
-                      <thead>
-                        <tr>
-                          <th>成员</th>
-                          <th>角色</th>
-                          <th>操作</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {(
-                          projectMemberships.find((entry) => entry.projectId === project.id)
-                            ?.members ?? []
-                        ).map((member) => (
-                          <tr key={member.user.id}>
-                            <td>
-                              {member.user.displayName}
-                              {member.user.id === project.ownerUserId ? " · 当前负责人" : ""}
-                              <small>{member.user.id}</small>
-                            </td>
-                            <td>
-                              {member.roleIds.map((roleId) => roleName(roles, roleId)).join("、")}
-                            </td>
-                            <td>
-                              {member.roleIds.map((roleId) => (
-                                <Button
-                                  className="danger-text-button"
-                                  disabled={
-                                    pending || project.archived || !canManageProject(project.id)
-                                  }
-                                  key={roleId}
-                                  onClick={() => {
-                                    if (
-                                      !window.confirm(
-                                        "撤销项目角色会立即撤销目标用户的旧会话；当前负责人最后一个管理角色受服务端保护。确认继续？",
-                                      )
-                                    ) {
-                                      return;
-                                    }
-                                    void request(
-                                      `/api/v1/users/${member.user.id}/project-roles/${project.id}/${roleId}`,
-                                      { method: "DELETE" },
-                                      "项目角色已撤销。",
-                                    );
-                                  }}
-                                  type="button"
-                                >
-                                  撤销 {roleName(roles, roleId)}
-                                </Button>
-                              ))}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </details>
-                {!project.archived && canManageProject(project.id) ? (
-                  <form
-                    className="settings-inline-form"
-                    onSubmit={(event) => {
-                      event.preventDefault();
-                      const form = new FormData(event.currentTarget);
-                      void request(
-                        `/api/v1/projects/${project.id}/owner`,
-                        jsonRequest("POST", { ownerUserId: form.get("ownerUserId") }),
-                        "项目负责人已转移。",
-                      );
-                    }}
-                  >
-                    <Select defaultValue={project.ownerUserId ?? ""} name="ownerUserId" required>
-                      <option disabled value="">
-                        选择新负责人
-                      </option>
-                      {users.filter((user) => user.status === "active").map(userOption)}
-                    </Select>
-                    <Button className="secondary-button" disabled={pending} type="submit">
-                      转移负责人
-                    </Button>
-                  </form>
-                ) : null}
-                {!project.isDefault && !project.archived && canManageProject(project.id) ? (
-                  <Button
-                    className="danger-text-button"
-                    disabled={pending}
-                    onClick={() =>
-                      void request(
-                        `/api/v1/projects/${project.id}`,
-                        { method: "DELETE" },
-                        "项目已归档。",
-                      )
-                    }
-                    type="button"
-                  >
-                    归档
-                  </Button>
-                ) : null}
-              </div>
             ))}
           </div>
         </section>

@@ -1,5 +1,4 @@
 import { projectIdsForPermission } from "@autoforge/domain";
-import Link from "next/link";
 
 import { AutomationOperations } from "@/components/automation-operations";
 import { SectionTabs } from "@/components/section-tabs";
@@ -11,7 +10,6 @@ export default async function AutomationOperationsPage() {
   const services = await getPlatformServices();
   const canReadSchedules = hasPermissionInAnyScope(identity, "case_suite.read");
   const canReadLdap = hasPermissionInAnyScope(identity, "ldap.read");
-  const canReadSettings = hasPermissionInAnyScope(identity, "settings.read");
   const canReadAudit = hasPermissionInAnyScope(identity, "audit.read");
   const scheduleProjectIds = canReadSchedules
     ? projectIdsForPermission(identity, "case_suite.read")
@@ -37,12 +35,6 @@ export default async function AutomationOperationsPage() {
             ...(canReadAudit ? [{ href: "/audit", label: "安全审计", active: false }] : []),
           ]}
         />
-        <div className="page-context-links">
-          {canReadSettings ? (
-            <Link href="/settings/platform?section=configuration">平台配置</Link>
-          ) : null}
-          {canReadLdap ? <Link href="/settings/access?section=ldap">LDAP 配置</Link> : null}
-        </div>
       </header>
       <AutomationOperations
         canManageLdap={hasPermissionInAnyScope(identity, "ldap.manage")}

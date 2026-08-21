@@ -2,7 +2,12 @@ import { expect, test, type Page } from "@playwright/test";
 import { zipSync } from "fflate";
 
 import { buildClassFile } from "../../packages/testng-discovery/test/class-fixture";
-import { browserJson, ensureAdministrator, uniqueName } from "./support/session";
+import {
+  browserJson,
+  ensureAdministrator,
+  selectProjectContext,
+  uniqueName,
+} from "./support/session";
 import { freshRunnerBootstrapToken } from "./support/runner-bootstrap";
 
 test("case metadata, immutable versions and suite policy survive lifecycle changes", async ({
@@ -13,9 +18,17 @@ test("case metadata, immutable versions and suite policy survive lifecycle chang
   const suffix = uniqueName("lifecycle");
   const project = await createProject(page, suffix);
   const className = `com.example.Lifecycle${Date.now()}Test`;
+  const companionClassName = className.replace(/Test$/u, "CompanionTest");
   const initialSourceName = `${suffix}-v1.jar`;
   const candidateSourceName = `${suffix}-v2.jar`;
-  await importJar(page, project, initialSourceName, className, ["createsVersion"]);
+  await importJar(
+    page,
+    project,
+    initialSourceName,
+    className,
+    ["createsVersion"],
+    [{ className: companionClassName, methodNames: ["staysInTree"] }],
+  );
   await setAuthoritativeSource(page, project.id, initialSourceName);
 
   const definitions = await browserJson<{
@@ -57,10 +70,14 @@ test("case metadata, immutable versions and suite policy survive lifecycle chang
   expect(staleUpdate.status).toBe(409);
   expect(staleUpdate.body.error?.code).toMatch(/REVISION_CONFLICT/);
 
-  await importJar(page, project, candidateSourceName, className, [
-    "createsVersion",
-    "browserAdded",
-  ]);
+  await importJar(
+    page,
+    project,
+    candidateSourceName,
+    className,
+    ["createsVersion", "browserAdded"],
+    [{ className: companionClassName, methodNames: ["staysInTree"] }],
+  );
   const sources = await browserJson<{
     items: Array<{ id: string; originalFileName: string }>;
   }>(page, `/api/v1/case-sources?projectId=${encodeURIComponent(project.id)}&limit=200`);
@@ -96,9 +113,19 @@ test("case metadata, immutable versions and suite policy survive lifecycle chang
     body: { projectId: project.id, name: suiteName, description: "lifecycle E2E suite" },
   });
   expect(suite.status).toBe(201);
+  const companionDefinitions = await browserJson<{
+    items: Array<{ id: string; className: string }>;
+  }>(
+    page,
+    `/api/v1/case-definitions?projectId=${encodeURIComponent(project.id)}&query=${encodeURIComponent(companionClassName)}`,
+  );
+  const companionDefinition = companionDefinitions.body.items.find(
+    (item) => item.className === companionClassName,
+  );
+  expect(companionDefinition).toBeTruthy();
   const addCase = await browserJson(page, `/api/v1/case-suites/${suite.body.id}/cases`, {
     method: "POST",
-    body: { caseDefinitionIds: [definition!.id] },
+    body: { caseDefinitionIds: [definition!.id, companionDefinition!.id] },
   });
   expect(addCase.status).toBe(200);
   const runner = await registerRunner(page, suffix);
@@ -114,7 +141,7 @@ test("case metadata, immutable versions and suite policy survive lifecycle chang
     .locator('input[type="checkbox"]')
     .check();
   await page.getByLabel("Runner 标签（逗号分隔）").fill("linux, lifecycle");
-  await page.getByLabel("参数模板（每行一个 KEY=VALUE，用例参数优先）").fill("REGION=cn\nMODE=e2e");
+  await expect(page.getByText("参数模板")).toHaveCount(0);
   await page.getByLabel("产物规则（每行一个相对路径 glob）").fill("reports/**/*.xml");
   await page.getByRole("button", { name: "保存修改" }).click();
   await expect(page.getByRole("status")).toContainText("用例任务已更新");
@@ -126,10 +153,19 @@ test("case metadata, immutable versions and suite policy survive lifecycle chang
   await expect(page.getByRole("status")).toContainText("计划触发已保存");
 
   const copyName = `${suiteName} copy`;
-  await page.getByLabel("复制为新任务").fill(copyName);
   await page.getByRole("button", { name: "复制任务" }).click();
+  const copyDialog = page.getByRole("dialog", { name: "复制用例任务" });
+  await copyDialog.getByLabel("复制为新任务").fill(copyName);
+  await copyDialog.getByRole("button", { name: "复制任务" }).click();
   await expect(page.getByRole("heading", { name: copyName })).toBeVisible();
-  await expect(page.getByText("1 个用例")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "2 个用例", exact: true })).toBeVisible();
+  const caseTree = page.getByRole("tree", { name: "任务用例树" });
+  await expect(caseTree).toBeVisible();
+  await caseTree.getByLabel(/^选择包 /u).check();
+  await expect(page.getByRole("button", { name: "批量移除（2）" })).toBeVisible();
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.getByRole("button", { name: "批量移除（2）" }).click();
+  await expect(page.getByText("任务中还没有用例")).toBeVisible();
 
   await page.goto(`/case-suites/${encodeURIComponent(suite.body.id)}`);
   await page.getByLabel(/启用（停用后/).uncheck();
@@ -139,7 +175,7 @@ test("case metadata, immutable versions and suite policy survive lifecycle chang
   const disabledSuite = await browserJson<{
     enabled: boolean;
     status: string;
-    policy: { priority: number; concurrency: number; retryLimit: number; parameters: unknown };
+    policy: { priority: number; concurrency: number; retryLimit: number };
   }>(page, `/api/v1/case-suites/${suite.body.id}`);
   expect(disabledSuite.body).toMatchObject({
     enabled: false,
@@ -148,9 +184,9 @@ test("case metadata, immutable versions and suite policy survive lifecycle chang
       priority: 42,
       concurrency: 3,
       retryLimit: 2,
-      parameters: { REGION: "cn", MODE: "e2e" },
     },
   });
+  expect(disabledSuite.body.policy).not.toHaveProperty("parameters");
 
   const schedule = await browserJson<{
     items: Array<{ suiteId: string; missedRunPolicy: string }>;
@@ -224,16 +260,23 @@ async function importJar(
   fileName: string,
   className: string,
   methodNames: string[],
+  additionalClasses: Array<{ className: string; methodNames: string[] }> = [],
 ): Promise<void> {
-  const jar = zipSync({
-    [`${className.replaceAll(".", "/")}.class`]: buildClassFile({
-      className,
-      methods: methodNames.map((name) => ({
-        name,
-        annotations: [{ type: "Test" as const, values: { groups: ["lifecycle"] } }],
-      })),
-    }),
-  });
+  const classes = [{ className, methodNames }, ...additionalClasses];
+  const jar = zipSync(
+    Object.fromEntries(
+      classes.map((fixture) => [
+        `${fixture.className.replaceAll(".", "/")}.class`,
+        buildClassFile({
+          className: fixture.className,
+          methods: fixture.methodNames.map((name) => ({
+            name,
+            annotations: [{ type: "Test" as const, values: { groups: ["lifecycle"] } }],
+          })),
+        }),
+      ]),
+    ),
+  );
   await page.goto(
     `/cases/import?${new URLSearchParams({
       projectId: project.id,
@@ -241,7 +284,7 @@ async function importJar(
       testStageId: project.stageId,
     }).toString()}`,
   );
-  await page.getByLabel("导入项目").selectOption({ label: project.name });
+  await expect(page.locator(".global-project-switcher")).toContainText(project.name);
   await page.locator('input[type="file"]').setInputFiles({
     name: fileName,
     mimeType: "application/java-archive",
@@ -326,6 +369,7 @@ async function createProject(
     },
   );
   expect(stage.status).toBe(201);
+  await selectProjectContext(page, response.body.id);
   return {
     ...response.body,
     versionId: version.body.id,

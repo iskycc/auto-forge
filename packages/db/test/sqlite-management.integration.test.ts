@@ -121,9 +121,9 @@ describe("SQLite management repositories", () => {
       expect(withCase).toMatchObject({ caseCount: 1, version: 2 });
       expect(withCase.items[0]?.caseDefinition.className).toBe("com.example.SmokeTest");
 
-      const empty = await suites.removeCase({
+      const empty = await suites.removeCases({
         suiteId: "suite-1",
-        caseDefinitionId: "case-1",
+        caseDefinitionIds: ["case-1"],
         versionId: "suite-version-3",
         updatedAt: "2026-08-09T00:01:00.000Z",
       });

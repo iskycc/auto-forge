@@ -4,7 +4,12 @@ import { randomUUID } from "node:crypto";
 
 import { buildClassFile } from "../../packages/testng-discovery/test/class-fixture";
 import { freshRunnerBootstrapToken } from "./support/runner-bootstrap";
-import { browserJson, ensureAdministrator, uniqueName } from "./support/session";
+import {
+  browserJson,
+  ensureAdministrator,
+  selectProjectContext,
+  uniqueName,
+} from "./support/session";
 
 const runnerCapabilities = [
   "executor:testng-v1",
@@ -21,15 +26,15 @@ test("global execution dialog schedules one case through a runner group with Ada
   await page.emulateMedia({ reducedMotion: "reduce" });
   await ensureAdministrator(page);
   const project = await createProject(page);
+  await selectProjectContext(page, project.id);
   await uploadAdapterDependencies(page, project.id);
   await importSingleCase(page, project);
 
   const runner = await registerRunner(page);
   const groupName = `单用例执行池-${randomUUID().slice(0, 8)}`;
   await page.goto("/runners?section=groups");
-  const createGroup = page.locator("form", {
-    has: page.getByRole("button", { name: "创建执行机组" }),
-  });
+  await page.getByRole("button", { name: "创建机组" }).click();
+  const createGroup = page.getByRole("dialog", { name: "新建执行机组" });
   await createGroup.getByLabel("组名称").fill(groupName);
   await createGroup
     .locator(".runner-member-picker label", { hasText: "E2E Single Case Runner" })
@@ -51,8 +56,8 @@ test("global execution dialog schedules one case through a runner group with Ada
   await selectOptionContaining(dialog.getByLabel("待执行单个用例"), "SingleCaseFixture");
   await dialog.getByRole("button", { name: "使用执行机组" }).click();
   await selectOptionContaining(dialog.getByLabel("执行机组"), groupName);
-  await dialog.getByLabel("单用例参数覆盖").fill("target=single-case-e2e");
-  await dialog.getByLabel("使用 CoTest TestNG Adapter").check();
+  await expect(dialog.getByLabel("使用 CoTest TestNG Adapter")).toBeChecked();
+  await expect(dialog.getByText("单用例参数覆盖")).toHaveCount(0);
   await dialog.getByLabel("单用例 Adapter Suite Name").fill("Single Case Suite");
   await dialog.getByLabel("单用例 Adapter Test Name").fill("Single Case Test");
   await dialog.getByLabel("单用例执行环境 IP 地址").fill("10.0.0.21");
@@ -103,7 +108,7 @@ test("global execution dialog schedules one case through a runner group with Ada
   expect(body.assignments).toHaveLength(1);
   expect(body.assignments[0]!.assignment.executionSpec).toMatchObject({
     className: "com.example.SingleCaseFixture",
-    parameters: { target: "single-case-e2e" },
+    parameters: {},
     adapter: {
       suiteName: "Single Case Suite",
       testName: "Single Case Test",
@@ -181,12 +186,11 @@ async function importSingleCase(
   });
   await page.goto(
     `/cases/import?${new URLSearchParams({
-      projectId: project.id,
       projectVersionId: project.versionId,
       testStageId: project.stageId,
     }).toString()}`,
   );
-  await page.getByLabel("导入项目").selectOption({ label: project.name });
+  await expect(page.locator(".global-project-switcher")).toContainText(project.name);
   await page.locator('input[type="file"]').setInputFiles({
     name: "single-case-fixture.jar",
     mimeType: "application/java-archive",

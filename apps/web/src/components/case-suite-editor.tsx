@@ -8,6 +8,8 @@ import { CalendarClock, Copy, LoaderCircle, Save, Server, Trash2, UsersRound } f
 import { useRouter } from "next/navigation";
 import { FormEvent, useState } from "react";
 
+import { ActionDialog } from "@/components/action-dialog";
+
 export function CaseSuiteEditor({
   suite,
   schedule,
@@ -28,6 +30,7 @@ export function CaseSuiteEditor({
   const router = useRouter();
   const [pending, setPending] = useState(false);
   const [copying, setCopying] = useState(false);
+  const [copyOpen, setCopyOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [runnerSelectionKind, setRunnerSelectionKind] = useState<"runners" | "group">(
@@ -41,7 +44,6 @@ export function CaseSuiteEditor({
       .split(/[,，]/)
       .map((label) => label.trim())
       .filter((label) => label.length > 0);
-    const parameters = parseKeyValueLines(String(form.get("parameters") ?? ""));
     const artifactPatterns = String(form.get("artifactPatterns") ?? "")
       .split("\n")
       .map((pattern) => pattern.trim())
@@ -85,7 +87,6 @@ export function CaseSuiteEditor({
             runnerGroupId:
               runnerSelectionKind === "group" ? String(form.get("runnerGroupId") ?? "") : "",
             runnerLabels,
-            parameters,
             artifactPatterns: artifactsEnabled ? artifactPatterns : [],
           },
           expectedRevision: suite.revision,
@@ -398,16 +399,6 @@ export function CaseSuiteEditor({
                 defaultValue={suite.description}
               />
             </label>
-            <label className="settings-wide-field">
-              参数模板（每行一个 KEY=VALUE，用例参数优先）
-              <Textarea
-                name="parameters"
-                rows={3}
-                defaultValue={Object.entries(suite.policy.parameters)
-                  .map(([key, value]) => `${key}=${value}`)
-                  .join("\n")}
-              />
-            </label>
             {artifactsEnabled ? (
               <label className="settings-wide-field">
                 产物规则（每行一个相对路径 glob）
@@ -443,18 +434,36 @@ export function CaseSuiteEditor({
               </Button>
             </div>
           </form>
-          <form
-            className="settings-inline-form suite-copy-form"
-            onSubmit={(event) => void copySuite(event)}
-          >
-            <label>
-              复制为新任务
-              <Input name="copyName" required maxLength={120} placeholder={`${suite.name} 副本`} />
-            </label>
-            <Button className="button button-secondary" disabled={copying} type="submit">
-              {copying ? <LoaderCircle className="spin" size={15} /> : <Copy size={15} />} 复制任务
+          <div className="suite-secondary-actions">
+            <Button onClick={() => setCopyOpen(true)} type="button">
+              <Copy size={15} /> 复制任务
             </Button>
-          </form>
+          </div>
+          <ActionDialog
+            description="复制当前任务的用例成员和执行策略，历史执行记录不会复制。"
+            onClose={() => !copying && setCopyOpen(false)}
+            open={copyOpen}
+            title="复制用例任务"
+          >
+            <form
+              className="settings-inline-form suite-copy-form action-dialog-form"
+              onSubmit={(event) => void copySuite(event)}
+            >
+              <label>
+                复制为新任务
+                <Input
+                  name="copyName"
+                  required
+                  maxLength={120}
+                  placeholder={`${suite.name} 副本`}
+                />
+              </label>
+              <Button className="button button-secondary" disabled={copying} type="submit">
+                {copying ? <LoaderCircle className="spin" size={15} /> : <Copy size={15} />}{" "}
+                复制任务
+              </Button>
+            </form>
+          </ActionDialog>
           <form className="schedule-form" onSubmit={(event) => void saveSchedule(event)}>
             <div className="section-title-row">
               <span>
@@ -528,18 +537,6 @@ function formatDate(value: string): string {
   return new Intl.DateTimeFormat("zh-CN", { dateStyle: "medium", timeStyle: "short" }).format(
     new Date(value),
   );
-}
-
-function parseKeyValueLines(text: string): Record<string, string> {
-  const parameters: Record<string, string> = {};
-  for (const line of text.split("\n")) {
-    const trimmed = line.trim();
-    if (!trimmed) continue;
-    const separator = trimmed.indexOf("=");
-    if (separator <= 0) continue;
-    parameters[trimmed.slice(0, separator).trim()] = trimmed.slice(separator + 1).trim();
-  }
-  return parameters;
 }
 
 function parseEnvironmentAddresses(value: string): string[] {

@@ -12,6 +12,7 @@ import type {
 import { permissionCatalog } from "@autoforge/domain";
 import { KeyRound, Plus, RefreshCw, ShieldCheck, Trash2 } from "lucide-react";
 import { useState, type FormEvent } from "react";
+import { ActionDialog } from "@/components/action-dialog";
 
 export function OperationsSettings({
   initialAccounts,
@@ -36,10 +37,12 @@ export function OperationsSettings({
   const [pending, setPending] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [createAccountOpen, setCreateAccountOpen] = useState(false);
 
   async function createAccount(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const form = new FormData(event.currentTarget);
+    const formElement = event.currentTarget;
+    const form = new FormData(formElement);
     await mutate(async () => {
       const account = await requestJson<ServiceAccount>("/api/v1/service-accounts", {
         method: "POST",
@@ -51,7 +54,8 @@ export function OperationsSettings({
         }),
       });
       setAccounts((current) => [...current, account].sort((a, b) => a.name.localeCompare(b.name)));
-      event.currentTarget.reset();
+      formElement.reset();
+      setCreateAccountOpen(false);
       return "服务账号已创建。";
     });
   }
@@ -239,7 +243,13 @@ export function OperationsSettings({
               <p className="eyebrow">Automation Identity</p>
               <h2>服务账号与 API 令牌</h2>
             </div>
-            <KeyRound size={22} />
+            {canManageTokens ? (
+              <Button onClick={() => setCreateAccountOpen(true)} type="button" variant="primary">
+                <Plus size={16} /> 创建账号
+              </Button>
+            ) : (
+              <KeyRound size={22} />
+            )}
           </div>
           <p className="settings-note">
             令牌明文只在签发时显示一次，数据库仅保存 SHA-256 摘要；作用域不能超过服务账号权限。
@@ -259,8 +269,13 @@ export function OperationsSettings({
               </Button>
             </div>
           ) : null}
-          {canManageTokens ? (
-            <form className="settings-grid-form" onSubmit={createAccount}>
+          <ActionDialog
+            description="服务账号用于 Jenkins 等自动化系统，权限应按最小范围分配。"
+            onClose={() => !pending && setCreateAccountOpen(false)}
+            open={createAccountOpen}
+            title="创建服务账号"
+          >
+            <form className="settings-grid-form action-dialog-form" onSubmit={createAccount}>
               <label>
                 账号名称
                 <Input name="name" required />
@@ -282,9 +297,10 @@ export function OperationsSettings({
                 <Plus size={16} /> 创建服务账号
               </Button>
             </form>
-          ) : (
+          </ActionDialog>
+          {!canManageTokens ? (
             <div className="implementation-notice">当前身份没有服务账号管理权限。</div>
-          )}
+          ) : null}
           <div className="service-account-list">
             {accounts.length === 0 ? (
               <div className="inline-empty">尚未创建服务账号。</div>

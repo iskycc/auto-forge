@@ -3,7 +3,14 @@ import { zipSync } from "fflate";
 
 import { buildClassFile } from "../../packages/testng-discovery/test/class-fixture";
 import { freshRunnerBootstrapToken } from "./support/runner-bootstrap";
-import { browserJson, ensureAdministrator, login, logout, uniqueName } from "./support/session";
+import {
+  browserJson,
+  ensureAdministrator,
+  login,
+  logout,
+  selectProjectContext,
+  uniqueName,
+} from "./support/session";
 import { configureTaskExecution, createTaskRun } from "./support/task-execution";
 
 const VIEWER_ROLE_ID = "00000000-0000-7000-8100-000000000005";
@@ -67,6 +74,9 @@ test("project member cannot observe another project's assets through pages or di
   await login(page, username, password);
 
   await page.goto("/cases");
+  await expect(
+    page.locator(".global-project-switcher").getByRole("button", { name: projectA.name }),
+  ).toBeVisible();
   await expect(page.locator(".case-directory-tree").getByText(classA)).toBeVisible();
   await expect(page.getByText(classB)).toHaveCount(0);
   await expect(page.getByRole("link", { name: "导入 JAR" })).toHaveCount(0);
@@ -296,6 +306,7 @@ async function importJar(
   className: string,
   fileName: string,
 ): Promise<void> {
+  await selectProjectContext(page, project.id);
   const jar = zipSync({
     [`${className.replaceAll(".", "/")}.class`]: buildClassFile({
       className,
@@ -309,7 +320,7 @@ async function importJar(
       testStageId: project.stageId,
     }).toString()}`,
   );
-  await page.getByLabel("导入项目").selectOption({ label: project.name });
+  await expect(page.locator(".global-project-switcher")).toContainText(project.name);
   await page.locator('input[type="file"]').setInputFiles({
     name: fileName,
     mimeType: "application/java-archive",

@@ -31,7 +31,6 @@ export type CaseSuiteExecutionPolicy = {
   runnerIds: string[];
   runnerGroupId?: string;
   runnerLabels: string[];
-  parameters: Record<string, string>;
   artifactPatterns: string[];
 };
 
@@ -63,7 +62,6 @@ export const defaultCaseSuiteExecutionPolicy: CaseSuiteExecutionPolicy = {
   uploadTimeoutMs: 600_000,
   runnerIds: [],
   runnerLabels: [],
-  parameters: {},
   artifactPatterns: ["reports/testng/**"],
 };
 
@@ -116,7 +114,6 @@ export function mergeCaseSuiteExecutionPolicy(
         ? { runnerGroupId: base.runnerGroupId }
         : {}),
     runnerLabels: override.runnerLabels ? [...override.runnerLabels] : [...base.runnerLabels],
-    parameters: override.parameters ? { ...override.parameters } : { ...base.parameters },
     artifactPatterns: override.artifactPatterns
       ? [...override.artifactPatterns]
       : [...base.artifactPatterns],

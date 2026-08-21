@@ -6,6 +6,7 @@ import {
   runnerHeartbeatInputSchema,
   runnerHeartbeatResultSchema,
   updateRunnerAgentInputSchema,
+  caseSuiteExecutionPolicySchema,
 } from "../src/management";
 
 const connection = {
@@ -14,6 +15,12 @@ const connection = {
   username: "runner-admin",
   password: "correct-password",
 };
+
+describe("case suite execution policy", () => {
+  it("rejects the retired task parameter template", () => {
+    expect(() => caseSuiteExecutionPolicySchema.parse({ parameters: { REGION: "cn" } })).toThrow();
+  });
+});
 
 const installInput = {
   connection,

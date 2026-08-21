@@ -21,6 +21,7 @@ import {
   runnerCompatibilitySummary,
   runnerToolchainSummary,
 } from "@/lib/runner-compatibility";
+import { selectableProjectIds, selectedProjectId } from "@/lib/selected-project";
 
 export const dynamic = "force-dynamic";
 
@@ -73,13 +74,13 @@ export default async function RunnersPage({
   }
   let recentBatches: Awaited<ReturnType<typeof services.runBatches.listPage>>["items"] = [];
   try {
-    const projectIds = services.identityAccess.projectScope(identity, "run.read");
-    recentBatches = (
-      await services.runBatches.listPage({
-        limit: 200,
-        ...(projectIds ? { projectIds } : {}),
-      })
-    ).items;
+    const projects = await services.identities.listProjects(selectableProjectIds(identity));
+    const projectId = await selectedProjectId(identity, projects, "run.read");
+    if (projectId && hasPermission(identity, "run.read", projectId)) {
+      recentBatches = (
+        await services.runBatches.listPage({ limit: 200, projectId, projectIds: [projectId] })
+      ).items;
+    }
   } catch {
     // Runner operators without run.read can manage node lifecycle without seeing project execution data.
   }

@@ -318,6 +318,7 @@ export interface IdentityAccessRepository {
   appendAudit(event: AuditEvent): Promise<void>;
   listAudit(input: {
     projectIds?: readonly string[];
+    includeUnscoped?: boolean;
     actorId?: string;
     action?: string;
     resourceType?: string;
@@ -854,9 +855,9 @@ export interface CaseSuiteRepository {
     actorId?: string;
     updatedAt: string;
   }): Promise<CaseSuiteDetails>;
-  removeCase(input: {
+  removeCases(input: {
     suiteId: string;
-    caseDefinitionId: string;
+    caseDefinitionIds: string[];
     versionId: string;
     actorId?: string;
     updatedAt: string;

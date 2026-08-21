@@ -6,6 +6,7 @@ import { SystemDiagnostics } from "@/components/system-diagnostics";
 import { requirePagePermission } from "@/lib/auth";
 import { platformConfigurationView } from "@/lib/platform-configuration";
 import { getPlatformServices } from "@/lib/services";
+import { SectionTabs } from "@/components/section-tabs";
 
 type PlatformSection = "configuration" | "accounts" | "retention" | "diagnostics";
 
@@ -48,6 +49,31 @@ export default async function PlatformSettingsPage({
           <p>{heading.description}</p>
         </div>
       </header>
+      <SectionTabs
+        label="平台设置模块"
+        tabs={[
+          {
+            href: "/settings/platform?section=configuration",
+            label: "平台配置",
+            active: activeSection === "configuration",
+          },
+          {
+            href: "/settings/platform?section=accounts",
+            label: "服务账号",
+            active: activeSection === "accounts",
+          },
+          {
+            href: "/settings/platform?section=retention",
+            label: "数据保留",
+            active: activeSection === "retention",
+          },
+          {
+            href: "/settings/platform?section=diagnostics",
+            label: "系统诊断",
+            active: activeSection === "diagnostics",
+          },
+        ]}
+      />
       {activeSection === "configuration" ? (
         <PlatformSettings
           canManage={hasPermission(identity, "settings.manage")}

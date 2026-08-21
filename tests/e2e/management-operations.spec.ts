@@ -8,9 +8,8 @@ test("service account lifecycle immediately narrows token access and produces ex
   await ensureAdministrator(page);
   const accountName = uniqueName("release-automation");
   await page.goto("/settings/platform?section=accounts");
-  const createForm = page.locator("form", {
-    has: page.getByRole("button", { name: "创建服务账号" }),
-  });
+  await page.getByRole("button", { name: "创建账号" }).click();
+  const createForm = page.getByRole("dialog", { name: "创建服务账号" });
   await createForm.getByLabel("账号名称").fill(accountName);
   await createForm.getByLabel("用途说明").fill("E2E service account lifecycle");
   await createForm.locator('select[name="permissions"]').selectOption(["case.read", "audit.read"]);
@@ -22,7 +21,7 @@ test("service account lifecycle immediately narrows token access and produces ex
     (response) =>
       response.request().method() === "POST" && response.url().endsWith("/api/v1/service-accounts"),
   );
-  await createForm.getByRole("button", { name: "创建服务账号" }).click();
+  await createForm.getByRole("button", { name: "创建服务账号", exact: true }).click();
   const account = (await (await accountResponse).json()) as { id: string };
   const accountCard = page.locator("article", { hasText: accountName });
   await expect(accountCard).toContainText("active");

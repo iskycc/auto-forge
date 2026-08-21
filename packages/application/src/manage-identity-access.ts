@@ -929,6 +929,9 @@ export class IdentityAccessService {
       ...(input.cursor ? { cursor: input.cursor } : {}),
       limit: input.limit,
       ...(projectIds ? { projectIds } : {}),
+      ...(input.projectId && actor.systemPermissions.includes("audit.read")
+        ? { includeUnscoped: true }
+        : {}),
     });
   }
 

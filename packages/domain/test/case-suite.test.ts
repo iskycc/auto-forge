@@ -14,19 +14,16 @@ describe("case suite execution policy", () => {
     const base = {
       ...defaultCaseSuiteExecutionPolicy,
       runnerLabels: ["gpu"],
-      parameters: { REGION: "cn" },
       artifactPatterns: ["reports/**"],
     };
 
     const merged = mergeCaseSuiteExecutionPolicy(base, {
       priority: 10,
-      parameters: { SUITE: "smoke" },
     });
 
     expect(merged.priority).toBe(10);
     expect(merged.concurrency).toBe(base.concurrency);
     expect(merged.runnerLabels).toEqual(["gpu"]);
-    expect(merged.parameters).toEqual({ SUITE: "smoke" });
     expect(merged.artifactPatterns).toEqual(["reports/**"]);
   });
 
@@ -45,6 +42,14 @@ describe("case suite execution policy", () => {
     const merged = mergeCaseSuiteExecutionPolicy(base, {});
     merged.runnerLabels.push("other");
     expect(base.runnerLabels).toEqual(["gpu"]);
+  });
+
+  it("drops legacy parameter templates while normalizing stored policies", () => {
+    const merged = mergeCaseSuiteExecutionPolicy(defaultCaseSuiteExecutionPolicy, {
+      parameters: { REGION: "cn" },
+    } as unknown as Parameters<typeof mergeCaseSuiteExecutionPolicy>[1]);
+
+    expect(merged).not.toHaveProperty("parameters");
   });
 });
 

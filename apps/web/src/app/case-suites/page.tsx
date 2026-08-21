@@ -4,28 +4,24 @@ import { CaseSuiteManager } from "@/components/case-suite-manager";
 import { getPlatformServices } from "@/lib/services";
 import { requireAuthorizedPageProjectScope, requirePageProjectScope } from "@/lib/auth";
 import { DEFAULT_PROJECT_ID, hasPermission } from "@autoforge/domain";
+import { selectableProjectIds, selectedProjectId } from "@/lib/selected-project";
 
 export const dynamic = "force-dynamic";
 
-export default async function CaseSuitesPage({
-  searchParams,
-}: {
-  searchParams: Promise<{ projectId?: string | string[] }>;
-}) {
-  const { identity, projectIds } = await requirePageProjectScope("case_suite.read");
-  const requested = (await searchParams).projectId;
-  const requestedProjectId = (Array.isArray(requested) ? requested[0] : requested)?.trim();
-  const selectedProjectId = requestedProjectId ?? projectIds?.[0] ?? DEFAULT_PROJECT_ID;
+export default async function CaseSuitesPage() {
+  const { identity } = await requirePageProjectScope("case_suite.read");
+  const services = await getPlatformServices();
+  const projects = await services.identities
+    .listProjects(selectableProjectIds(identity))
+    .catch(() => []);
+  const activeProjectId =
+    (await selectedProjectId(identity, projects, "case_suite.read")) ?? DEFAULT_PROJECT_ID;
   const effectiveProjectIds = requireAuthorizedPageProjectScope(
     identity,
     "case_suite.read",
-    selectedProjectId,
+    activeProjectId,
   );
-  const services = await getPlatformServices();
-  const [suites, projects] = await Promise.all([
-    services.caseSuites.list(200, effectiveProjectIds),
-    services.identityAccess.listProjects(identity).catch(() => []),
-  ]);
+  const suites = await services.caseSuites.list(200, effectiveProjectIds);
   return (
     <div className="page-stack">
       <section className="page-hero">
@@ -39,12 +35,9 @@ export default async function CaseSuitesPage({
         </span>
       </section>
       <CaseSuiteManager
-        canManage={hasPermission(identity, "case_suite.manage", selectedProjectId)}
+        canManage={hasPermission(identity, "case_suite.manage", activeProjectId)}
         initialSuites={suites}
-        projectId={selectedProjectId}
-        projects={projects
-          .filter((project) => !projectIds || projectIds.includes(project.id))
-          .map(({ id, name }) => ({ id, name }))}
+        projectId={activeProjectId}
       />
     </div>
   );

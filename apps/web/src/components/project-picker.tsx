@@ -30,7 +30,6 @@ export function ProjectPicker({
 
   return (
     <div className="project-picker" ref={containerRef}>
-      <input name="projectId" type="hidden" value={value} />
       <Button
         aria-controls={listboxId}
         aria-expanded={open}

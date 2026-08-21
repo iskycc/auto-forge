@@ -4,6 +4,7 @@ import { JarImporter } from "@/components/jar-importer";
 import { requireAuthorizedPageProjectScope, requirePageProjectScope } from "@/lib/auth";
 import { getPlatformServices } from "@/lib/services";
 import { DEFAULT_PROJECT_ID } from "@autoforge/domain";
+import { selectableProjectIds, selectedProjectId } from "@/lib/selected-project";
 
 export const metadata: Metadata = { title: "导入 TestNG JAR" };
 export const dynamic = "force-dynamic";
@@ -12,21 +13,19 @@ export default async function ImportJarPage({
   searchParams,
 }: {
   searchParams: Promise<{
-    projectId?: string | string[];
     projectVersionId?: string | string[];
     testStageId?: string | string[];
   }>;
 }) {
-  const { identity, projectIds } = await requirePageProjectScope("case_source.manage");
+  const { identity } = await requirePageProjectScope("case_source.manage");
   const parameters = await searchParams;
-  const requested = parameters.projectId;
-  const requestedProjectId = (Array.isArray(requested) ? requested[0] : requested)?.trim();
-  const projectId = requestedProjectId ?? projectIds?.[0] ?? DEFAULT_PROJECT_ID;
-  requireAuthorizedPageProjectScope(identity, "case_source.manage", projectId);
   const services = await getPlatformServices();
-  const projects = (await services.identityAccess.listProjects(identity).catch(() => [])).filter(
-    (project) => !projectIds || projectIds.includes(project.id),
-  );
+  const projects = await services.identities
+    .listProjects(selectableProjectIds(identity))
+    .catch(() => []);
+  const projectId =
+    (await selectedProjectId(identity, projects, "case_source.manage")) ?? DEFAULT_PROJECT_ID;
+  requireAuthorizedPageProjectScope(identity, "case_source.manage", projectId);
   const structure = await services.projectStructures.list(projectId);
   const requestedVersionId = single(parameters.projectVersionId);
   const initialVersion =
@@ -50,7 +49,6 @@ export default async function ImportJarPage({
         projectId={projectId}
         initialProjectVersionId={initialVersion?.id}
         initialTestStageId={initialStage?.id}
-        projects={projects.map(({ id, name }) => ({ id, name }))}
         versions={structure.versions}
       />
     </div>

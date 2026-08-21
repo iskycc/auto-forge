@@ -51,7 +51,6 @@ export type CreateRunBatchInput = z.input<typeof createRunBatchInputSchema>;
 export const createSingleCaseRunInputSchema = z
   .object({
     ...executionInputFields,
-    parameters: z.record(z.string().min(1).max(128), z.string().max(1_024)).default({}),
     artifactPatterns: z.array(z.string().min(1).max(256)).max(32).default([]),
     adapter: caseSuiteAdapterConfigurationSchema.default({
       enabled: false,
@@ -60,6 +59,7 @@ export const createSingleCaseRunInputSchema = z
       environmentAddresses: [],
     }),
   })
+  .strict()
   .superRefine((value, context) => {
     validateExecutionInput(value, context);
     if (!value.adapter.enabled) return;

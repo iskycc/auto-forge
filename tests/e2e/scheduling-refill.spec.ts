@@ -175,9 +175,11 @@ test("completion immediately refills free runner slots without waiting for the w
   });
 
   await page.goto(`/case-suites?projectId=${encodeURIComponent(DEFAULT_PROJECT_ID)}`);
-  await page.getByLabel("任务名称").fill("即时补槽验收任务");
-  await page.getByLabel("说明").fill("验证完成一个用例后立即补派下一个");
   await page.getByRole("button", { name: "创建任务" }).click();
+  const createSuiteDialog = page.getByRole("dialog", { name: "创建用例任务" });
+  await createSuiteDialog.getByLabel("任务名称").fill("即时补槽验收任务");
+  await createSuiteDialog.getByLabel("说明").fill("验证完成一个用例后立即补派下一个");
+  await createSuiteDialog.getByRole("button", { name: "创建任务" }).click();
   const suiteLink = page.getByRole("link", { name: /即时补槽验收任务/ });
   await expect(suiteLink).toBeVisible();
 

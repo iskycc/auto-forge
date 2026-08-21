@@ -2,7 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { mkdir } from "node:fs/promises";
 import { resolve } from "node:path";
 
-import { ensureAdministrator } from "./support/session";
+import { browserJson, ensureAdministrator, uniqueName } from "./support/session";
 import { expectUiIntegrity } from "./support/ui-guard";
 
 const primaryRoutes = [
@@ -20,7 +20,6 @@ const primaryRoutes = [
   "/settings/projects?section=execution",
   "/settings/access?section=users",
   "/settings/access?section=roles",
-  "/settings/access?section=projects",
   "/settings/access?section=ldap",
   "/settings/access?section=sessions",
   "/settings/platform?section=configuration",
@@ -38,21 +37,7 @@ test("administration entries are grouped into focused two-level navigation", asy
     await expect(navigation.getByRole("button", { name: label, exact: true })).toHaveCount(1);
   }
   // Groups start collapsed, so nested administration links are not rendered.
-  for (const label of [
-    "安全审计",
-    "项目管理",
-    "项目角色",
-    "用户管理",
-    "角色权限",
-    "目录配置",
-    "登录会话",
-    "运维计划",
-    "执行机组",
-    "平台配置",
-    "服务账号",
-    "数据保留",
-    "系统诊断",
-  ]) {
+  for (const label of ["安全审计", "项目管理", "访问管理", "运维计划", "执行机组", "平台设置"]) {
     await expect(navigation.getByRole("link", { name: label, exact: true })).toHaveCount(0);
   }
 
@@ -60,9 +45,7 @@ test("administration entries are grouped into focused two-level navigation", asy
   const accessToggle = navigation.getByRole("button", { name: "身份权限" });
   await accessToggle.click();
   await expect(accessToggle).toHaveAttribute("aria-expanded", "true");
-  for (const label of ["用户管理", "角色权限", "目录配置", "登录会话"]) {
-    await expect(navigation.getByRole("link", { name: label, exact: true })).toHaveCount(1);
-  }
+  await expect(navigation.getByRole("link", { name: "访问管理", exact: true })).toHaveCount(1);
   await accessToggle.click();
   await expect(accessToggle).toHaveAttribute("aria-expanded", "false");
 
@@ -70,14 +53,48 @@ test("administration entries are grouped into focused two-level navigation", asy
   await page.goto("/settings/access?section=roles");
   await expect(page.getByRole("heading", { name: "角色与权限", exact: true })).toBeVisible();
   await expect(accessToggle).toHaveAttribute("aria-expanded", "true");
-  await expect(navigation.getByRole("link", { name: "角色权限", exact: true })).toHaveCount(1);
+  await expect(navigation.getByRole("link", { name: "访问管理", exact: true })).toHaveCount(1);
   await expect(page.locator(".settings-stack > .settings-section")).toHaveCount(1);
 
   await page.goto("/settings/platform?section=retention");
   const platformToggle = navigation.getByRole("button", { name: "平台运维" });
   await expect(platformToggle).toHaveAttribute("aria-expanded", "true");
+  await expect(navigation.getByRole("link", { name: "平台设置", exact: true })).toBeVisible();
   await expect(page.getByRole("heading", { name: "数据保留", exact: true })).toBeVisible();
   await expect(page.getByRole("heading", { name: "保留与清理策略" })).toBeVisible();
+});
+
+test("top-bar project context persists across pages and removes local project switchers", async ({
+  page,
+}) => {
+  await ensureAdministrator(page);
+  const suffix = uniqueName("global-project");
+  const projectName = `全局项目 ${suffix}`;
+  const created = await browserJson<{ id: string }>(page, "/api/v1/projects", {
+    method: "POST",
+    body: { name: projectName, slug: suffix },
+  });
+  expect(created.status).toBe(201);
+
+  await page.goto("/cases?projectId=stale-project&cursor=stale-cursor");
+  const switcher = page.locator(".global-project-switcher");
+  await switcher.locator(".project-picker-trigger").click();
+  const switched = page.waitForResponse(
+    (response) =>
+      response.request().method() === "PUT" &&
+      new URL(response.url()).pathname === "/api/v1/selected-project",
+  );
+  await page.getByRole("option", { name: projectName }).click();
+  expect((await switched).status()).toBe(200);
+  await expect(switcher).toContainText(projectName);
+  await expect(page).not.toHaveURL(/projectId|cursor/u);
+
+  for (const route of ["/", "/case-suites", "/execution-records", "/cases/import"]) {
+    await page.goto(route);
+    await expect(page.locator(".global-project-switcher")).toContainText(projectName);
+    await expect(page.locator('select[name="projectId"]')).toHaveCount(0);
+  }
+  await expect(page.getByLabel("导入项目")).toHaveCount(0);
 });
 
 test("homepage mirrors the designed six-card workspace and exposes global execution", async ({
@@ -186,7 +203,8 @@ test("specified dense pages expose stable product controls", async ({ page }) =>
   await page.getByRole("option", { name: "默认项目" }).click();
 
   await page.goto("/objects");
-  await expect(page.locator(".source-filter-panel")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "TestNG JAR" })).toBeVisible();
+  await expect(page.locator('select[name="projectId"]')).toHaveCount(0);
 
   await page.goto("/insights");
   await expect(page.locator(".insight-metric-success")).toContainText("方法通过率");

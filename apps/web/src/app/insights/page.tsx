@@ -5,12 +5,13 @@ import type { CaseDefinitionWithMethods } from "@autoforge/domain";
 import { BarChart3, FlaskConical, SlidersHorizontal, TrendingUp } from "lucide-react";
 import Link from "next/link";
 
-import { requirePageProjectScope } from "@/lib/auth";
+import { requireAuthorizedPageProjectScope, requirePageProjectScope } from "@/lib/auth";
 import { getPlatformServices } from "@/lib/services";
 import { listCompleteCaseDirectory } from "@/lib/case-directory";
 import { formatRate, type CaseLatestRun } from "@/lib/case-selection-stats";
 import { classifyAttemptResult } from "@autoforge/domain";
 import { AnalyticsExportControl } from "@/components/analytics-export-control";
+import { selectableProjectIds, selectedProjectId } from "@/lib/selected-project";
 
 const CASE_OUTCOME_DETAIL_LIMIT = 500;
 
@@ -34,11 +35,18 @@ export default async function InsightsPage({
   const { identity, projectIds } = await requirePageProjectScope("run.read");
   const services = await getPlatformServices();
   const parameters = await searchParams;
-  const filter = analyticsFilter(parameters);
-  const [summary, projects, suites, runners] = await Promise.all([
+  const projects = await services.identities
+    .listProjects(selectableProjectIds(identity))
+    .catch(() => []);
+  const caseProjectId = await selectedProjectId(identity, projects, "run.read");
+  requireAuthorizedPageProjectScope(identity, "run.read", caseProjectId);
+  const filter = {
+    ...analyticsFilter({ ...parameters, projectId: undefined }),
+    ...(caseProjectId ? { projectId: caseProjectId } : {}),
+  };
+  const [summary, suites, runners] = await Promise.all([
     services.platformOperations.analytics(identity, filter),
-    services.identities.listProjects(projectIds),
-    services.caseSuites.list(500, projectIds),
+    services.caseSuites.list(500, caseProjectId ? [caseProjectId] : []),
     services.runnerControl.list(500),
   ]);
   const comparison =
@@ -49,10 +57,6 @@ export default async function InsightsPage({
           parameters.rightBatchId,
         )
       : undefined;
-  const visibleProjects = projectIds
-    ? projects.filter((project) => projectIds.includes(project.id))
-    : projects;
-  const caseProjectId = stringParameter(parameters.caseProjectId) || undefined;
   const caseProjectVersionId = stringParameter(parameters.caseProjectVersionId) || undefined;
   const caseOutcomeReport = await loadCaseOutcomeReport({
     services,
@@ -75,17 +79,6 @@ export default async function InsightsPage({
 
       <form className="content-card insight-filter" method="get">
         <div className="insight-primary-filters">
-          <label>
-            项目
-            <Select defaultValue={filter.projectId ?? ""} name="projectId">
-              <option value="">全部可访问项目</option>
-              {visibleProjects.map((project) => (
-                <option key={project.id} value={project.id}>
-                  {project.name}
-                </option>
-              ))}
-            </Select>
-          </label>
           <label>
             用例任务
             <Select defaultValue={filter.suiteId ?? ""} name="suiteId">
@@ -171,17 +164,6 @@ export default async function InsightsPage({
         </div>
         <form className="case-outcome-filter" method="get">
           <label>
-            项目
-            <Select defaultValue={caseProjectId ?? ""} name="caseProjectId">
-              <option value="">请选择项目</option>
-              {visibleProjects.map((project) => (
-                <option key={project.id} value={project.id}>
-                  {project.name}
-                </option>
-              ))}
-            </Select>
-          </label>
-          <label>
             项目版本
             <Select defaultValue={caseOutcomeReport?.versionId ?? ""} name="caseProjectVersionId">
               <option value="">默认版本</option>
@@ -199,7 +181,7 @@ export default async function InsightsPage({
         {caseOutcomeReport ? (
           <CaseOutcomeSummary report={caseOutcomeReport} />
         ) : (
-          <div className="inline-empty">选择项目与项目版本，查看该范围内用例的最新执行状态。</div>
+          <div className="inline-empty">请在顶栏选择项目，并确认该项目已配置可用版本。</div>
         )}
       </section>
 

@@ -51,7 +51,6 @@ describe("SQLite case suite lifecycle", () => {
           ...defaultCaseSuiteExecutionPolicy,
           concurrency: 8,
           runnerLabels: ["gpu"],
-          parameters: { SUITE: "nightly" },
           artifactPatterns: ["reports/**", "logs/*.txt"],
         },
       });
@@ -66,7 +65,6 @@ describe("SQLite case suite lifecycle", () => {
       expect(updated.policy).toMatchObject({
         concurrency: 8,
         runnerLabels: ["gpu"],
-        parameters: { SUITE: "nightly" },
         artifactPatterns: ["reports/**", "logs/*.txt"],
       });
 
@@ -237,7 +235,6 @@ describe("SQLite case suite lifecycle", () => {
           queueTimeoutMs: 120_000,
           runnerIds: ["runner-1"],
           runnerLabels: ["gpu"],
-          parameters: { SUITE: "nightly" },
           artifactPatterns: ["reports/**", "logs/*.txt"],
         },
       });
@@ -344,7 +341,7 @@ describe("SQLite case suite lifecycle", () => {
         { pattern: "reports/**", required: false, mediaType: "application/octet-stream" },
         { pattern: "logs/*.txt", required: false, mediaType: "text/plain" },
       ]);
-      expect(spec.parameters).toEqual({ SUITE: "nightly", CASE: "level" });
+      expect(spec.parameters).toEqual({ CASE: "level" });
       expect(spec.adapter).toEqual({
         suiteName: "task-suite",
         testName: "task-test",

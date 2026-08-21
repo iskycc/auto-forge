@@ -434,19 +434,21 @@ async function createExecutableSuite(
   artifactPatterns: string[] = ["reports/testng/testng-results.xml"],
 ): Promise<void> {
   await page.goto(`/case-suites?projectId=${encodeURIComponent(DEFAULT_PROJECT_ID)}`);
-  await page.getByLabel("任务名称").fill(suiteName);
-  await page.getByLabel("说明").fill("由真实 Go Agent 与离线 TestNG 工具链执行");
-  await page.getByLabel("使用 CoTest TestNG Adapter").check();
-  await page.getByLabel("TestNG Suite Name").fill(`Adapter · ${suiteName}`);
-  await page.getByLabel("TestNG Test Name").fill(caseDisplayName);
+  await page.getByRole("button", { name: "创建任务" }).click();
+  const createSuiteDialog = page.getByRole("dialog", { name: "创建用例任务" });
+  await createSuiteDialog.getByLabel("任务名称").fill(suiteName);
+  await createSuiteDialog.getByLabel("说明").fill("由真实 Go Agent 与离线 TestNG 工具链执行");
+  await createSuiteDialog.getByLabel("使用 CoTest TestNG Adapter").check();
+  await createSuiteDialog.getByLabel("TestNG Suite Name").fill(`Adapter · ${suiteName}`);
+  await createSuiteDialog.getByLabel("TestNG Test Name").fill(caseDisplayName);
   if (caseDisplayName === "RealAgentFixture") {
-    await page.getByLabel("环境 IP / 地址（每行一个）").fill("10.0.0.11\n10.0.0.12");
+    await createSuiteDialog.getByLabel("环境 IP / 地址（每行一个）").fill("10.0.0.11\n10.0.0.12");
   } else if (caseDisplayName === "RealAgentRestartFixture") {
-    await page
+    await createSuiteDialog
       .getByLabel("环境 IP / 地址（每行一个）")
       .fill(requiredEnvironment("E2E_REAL_AGENT_RESTART_MARKER"));
   }
-  await page.getByRole("button", { name: "创建任务" }).click();
+  await createSuiteDialog.getByRole("button", { name: "创建任务" }).click();
   const suiteLink = page.getByRole("link", { name: suiteName });
   await expect(suiteLink).toBeVisible();
   const [suiteId, runnerId] = await Promise.all([

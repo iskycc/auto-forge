@@ -23,6 +23,11 @@ type RunOptions = {
   groups: RunnerGroup[];
 };
 
+type ProjectRunOptions = {
+  projectId: string | undefined;
+  value: RunOptions;
+};
+
 type RunKind = "suite" | "case";
 type RunnerSelectionKind = "runners" | "group";
 
@@ -52,12 +57,12 @@ export function OpenRunDialogButton({
   );
 }
 
-export function GlobalRunDialog({ enabled }: { enabled: boolean }) {
+export function GlobalRunDialog({ enabled, projectId }: { enabled: boolean; projectId?: string }) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const [open, setOpen] = useState(false);
-  const [options, setOptions] = useState<RunOptions>();
+  const [projectOptions, setProjectOptions] = useState<ProjectRunOptions>();
   const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
@@ -70,11 +75,12 @@ export function GlobalRunDialog({ enabled }: { enabled: boolean }) {
   const [runnerGroupId, setRunnerGroupId] = useState("");
   const [retryLimit, setRetryLimit] = useState(0);
   const [retryMode, setRetryMode] = useState<"immediate" | "round">("immediate");
-  const [parameters, setParameters] = useState("");
-  const [adapterEnabled, setAdapterEnabled] = useState(false);
+  const [adapterEnabled, setAdapterEnabled] = useState(true);
   const [adapterSuiteName, setAdapterSuiteName] = useState("");
   const [adapterTestName, setAdapterTestName] = useState("");
   const [environmentAddresses, setEnvironmentAddresses] = useState("");
+  const options =
+    projectOptions && projectOptions.projectId === projectId ? projectOptions.value : undefined;
 
   const selectedSuite = options?.suites.find((suite) => suite.id === suiteId);
   const selectedCase = options?.cases.find((definition) => definition.id === caseDefinitionId);
@@ -111,17 +117,19 @@ export function GlobalRunDialog({ enabled }: { enabled: boolean }) {
           `/api/v1/case-definitions/${encodeURIComponent(requestedCaseId)}`,
         )
           .then((definition) => {
-            setOptions((current) =>
-              current
-                ? {
-                    ...current,
-                    cases: [
-                      definition,
-                      ...current.cases.filter((candidate) => candidate.id !== definition.id),
-                    ],
-                  }
-                : current,
-            );
+            setProjectOptions((current) => {
+              if (!current || current.projectId !== projectId) return current;
+              return {
+                projectId: current.projectId,
+                value: {
+                  ...current.value,
+                  cases: [
+                    definition,
+                    ...current.value.cases.filter((candidate) => candidate.id !== definition.id),
+                  ],
+                },
+              };
+            });
           })
           .catch((problem: unknown) => {
             setError(problem instanceof Error ? problem.message : "用例加载失败。");
@@ -131,18 +139,22 @@ export function GlobalRunDialog({ enabled }: { enabled: boolean }) {
       }
       setLoading(true);
       setError("");
-      void loadRunOptions(requestedCaseId)
+      void loadRunOptions(requestedCaseId, projectId)
         .then((loaded) => {
-          setOptions(loaded);
-          setSuiteId((current) => current || loaded.suites[0]?.id || "");
-          setCaseDefinitionId((current) => current || loaded.cases[0]?.id || "");
+          setProjectOptions({ projectId, value: loaded });
+          setSuiteId(loaded.suites[0]?.id ?? "");
+          setCaseDefinitionId(
+            requestedCaseId && loaded.cases.some((candidate) => candidate.id === requestedCaseId)
+              ? requestedCaseId
+              : (loaded.cases[0]?.id ?? ""),
+          );
         })
         .catch((problem: unknown) => {
           setError(problem instanceof Error ? problem.message : "执行配置加载失败。");
         })
         .finally(() => setLoading(false));
     },
-    [loading, options],
+    [loading, options, projectId],
   );
 
   useEffect(() => {
@@ -242,7 +254,6 @@ export function GlobalRunDialog({ enabled }: { enabled: boolean }) {
               ...(runnerSelectionKind === "group" ? { runnerGroupId } : {}),
               retryLimit,
               retryMode,
-              parameters: parseParameterRecord(parameters),
               artifactPatterns: ["reports/testng/**"],
               adapter: {
                 enabled: adapterEnabled,
@@ -286,7 +297,7 @@ export function GlobalRunDialog({ enabled }: { enabled: boolean }) {
                   <div>
                     <span className="eyebrow">NEW EXECUTION</span>
                     <h2>开始执行</h2>
-                    <p>选择用例、执行资源与运行参数，提交前会执行相同的权威预检。</p>
+                    <p>选择用例与执行资源，提交前会执行相同的权威预检。</p>
                   </div>
                   <Button
                     aria-label="关闭执行弹窗"
@@ -388,7 +399,7 @@ export function GlobalRunDialog({ enabled }: { enabled: boolean }) {
                           <span>✓</span>
                           <div>
                             <h3>使用任务配置直接执行</h3>
-                            <p>执行资源、重试策略、参数和 Adapter 地址均读取任务当前版本。</p>
+                            <p>执行资源、重试策略和 Adapter 地址均读取任务当前版本。</p>
                           </div>
                         </div>
                         {selectedSuite ? (
@@ -506,8 +517,8 @@ export function GlobalRunDialog({ enabled }: { enabled: boolean }) {
                           <div className="global-run-step-title">
                             <span>3</span>
                             <div>
-                              <h3>运行参数</h3>
-                              <p>单用例可临时配置重跑、参数与 Adapter 环境 IP。</p>
+                              <h3>执行策略</h3>
+                              <p>单用例可临时配置重跑策略与 Adapter 环境 IP。</p>
                             </div>
                           </div>
                           <div className="global-run-fields">
@@ -540,15 +551,6 @@ export function GlobalRunDialog({ enabled }: { enabled: boolean }) {
                             </label>
                           </div>
                           <div className="single-run-advanced">
-                            <label className="field-stack">
-                              <span>参数覆盖（每行 KEY=VALUE）</span>
-                              <Textarea
-                                aria-label="单用例参数覆盖"
-                                onChange={(event) => setParameters(event.target.value)}
-                                rows={2}
-                                value={parameters}
-                              />
-                            </label>
                             <label className="adapter-toggle">
                               <Input
                                 checked={adapterEnabled}
@@ -623,10 +625,13 @@ export function GlobalRunDialog({ enabled }: { enabled: boolean }) {
   );
 }
 
-async function loadRunOptions(requestedCaseId?: string): Promise<RunOptions> {
+async function loadRunOptions(requestedCaseId?: string, projectId?: string): Promise<RunOptions> {
+  const projectQuery = projectId ? `&projectId=${encodeURIComponent(projectId)}` : "";
   const [suitePage, casePage, requestedCase, runnerPage, groupPage] = await Promise.all([
-    requestJson<{ items: CaseSuite[] }>("/api/v1/case-suites?limit=200"),
-    requestJson<{ items: CaseDefinitionWithMethods[] }>("/api/v1/case-definitions?limit=100"),
+    requestJson<{ items: CaseSuite[] }>(`/api/v1/case-suites?limit=200${projectQuery}`),
+    requestJson<{ items: CaseDefinitionWithMethods[] }>(
+      `/api/v1/case-definitions?limit=100${projectQuery}`,
+    ),
     requestedCaseId
       ? requestJson<CaseDefinitionWithMethods>(
           `/api/v1/case-definitions/${encodeURIComponent(requestedCaseId)}`,
@@ -673,20 +678,6 @@ async function requestJson<T>(
   };
   if (!response.ok) throw new Error(body.error?.message ?? `请求失败（HTTP ${response.status}）。`);
   return body as T;
-}
-
-function parseKeyValues(value: string): Array<{ name: string; value: string }> {
-  return parseLines(value).flatMap((line) => {
-    const separator = line.indexOf("=");
-    if (separator <= 0) return [];
-    return [{ name: line.slice(0, separator).trim(), value: line.slice(separator + 1).trim() }];
-  });
-}
-
-function parseParameterRecord(value: string): Record<string, string> {
-  return Object.fromEntries(
-    parseKeyValues(value).map(({ name, value: parameterValue }) => [name, parameterValue]),
-  );
 }
 
 function parseLines(value: string): string[] {

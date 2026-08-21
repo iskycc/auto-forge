@@ -293,6 +293,16 @@ describe("SQLite identity access", () => {
           }),
         ]),
       );
+      const projectAudit = await service.listAudit(administrator, {
+        projectId: project.id,
+        limit: 100,
+      });
+      expect(projectAudit.items).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ action: "project.archive", projectId: project.id }),
+          expect.objectContaining({ action: "terminal.session_finished" }),
+        ]),
+      );
       const expiringSession = await service.login({
         username: "permission-user",
         password: "Permission!12345",

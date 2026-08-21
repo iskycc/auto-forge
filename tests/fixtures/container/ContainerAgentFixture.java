@@ -6,21 +6,11 @@ import java.net.Socket;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import org.testng.Assert;
-import org.testng.annotations.Parameters;
 import org.testng.annotations.Test;
 
 public final class ContainerAgentFixture {
   @Test
-  @Parameters("mode")
-  public void enforcesContainerPolicy(String mode) throws Exception {
-    if (mode.equals("cancel")) {
-      System.out.println("CONTAINER_CANCEL_STARTED");
-      System.out.flush();
-      Thread.sleep(120_000L);
-      return;
-    }
-
-    Assert.assertEquals(mode, "success");
+  public void enforcesContainerPolicy() throws Exception {
     String processStatus = Files.readString(Path.of("/proc/self/status"));
     Assert.assertTrue(processStatus.matches("(?ms).*^Uid:\\s+[1-9][0-9]*\\s+.*$.*"), processStatus);
     Assert.assertTrue(processStatus.matches("(?ms).*^CapEff:\\s+0+\\s*$.*"), processStatus);

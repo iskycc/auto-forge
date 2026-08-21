@@ -10,6 +10,7 @@ import {
   requirePageProjectScope,
 } from "@/lib/auth";
 import { getPlatformServices } from "@/lib/services";
+import { selectableProjectIds, selectedProjectId } from "@/lib/selected-project";
 
 export const dynamic = "force-dynamic";
 
@@ -18,14 +19,14 @@ type AuditPageProps = {
 };
 
 export default async function AuditPage({ searchParams }: AuditPageProps) {
-  const { identity, projectIds } = await requirePageProjectScope("audit.read");
+  const { identity } = await requirePageProjectScope("audit.read");
   const services = await getPlatformServices();
   const values = await searchParams;
-  const requestedProjectId = single(values.projectId);
-  if (requestedProjectId) {
-    requireAuthorizedPageProjectScope(identity, "audit.read", requestedProjectId);
-  }
-  const projectId = requestedProjectId;
+  const projects = await services.identities
+    .listProjects(selectableProjectIds(identity))
+    .catch(() => []);
+  const projectId = await selectedProjectId(identity, projects, "audit.read");
+  if (projectId) requireAuthorizedPageProjectScope(identity, "audit.read", projectId);
   const filter = {
     ...(projectId ? { projectId } : {}),
     ...optionalFilter("actorId", values.actorId),
@@ -37,13 +38,7 @@ export default async function AuditPage({ searchParams }: AuditPageProps) {
     ...optionalFilter("cursor", values.cursor),
     limit: 100,
   };
-  const [events, projects] = await Promise.all([
-    services.identityAccess.listAudit(identity, filter),
-    services.identityAccess.listProjects(identity).catch(() => []),
-  ]);
-  const visibleProjects = projects.filter(
-    (project) => !projectIds || projectIds.includes(project.id),
-  );
+  const events = await services.identityAccess.listAudit(identity, filter);
   const exportParameters = auditParameters(values, projectId);
   exportParameters.set("maximumEvents", "5000");
   const canReadAutomation =
@@ -79,17 +74,6 @@ export default async function AuditPage({ searchParams }: AuditPageProps) {
       />
 
       <form action="/audit" className="content-card audit-filter-panel" method="get">
-        <label>
-          项目
-          <Select defaultValue={projectId ?? ""} name="projectId">
-            <option value="">全部授权项目</option>
-            {visibleProjects.map((project) => (
-              <option key={project.id} value={project.id}>
-                {project.name}
-              </option>
-            ))}
-          </Select>
-        </label>
         <label>
           操作者 ID
           <Input defaultValue={single(values.actorId)} name="actorId" />

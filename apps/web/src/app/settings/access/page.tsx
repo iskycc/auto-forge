@@ -1,7 +1,7 @@
 import { AccessSettings, type AccessSection } from "@/components/access-settings";
 import { hasPermissionInAnyScope, requirePageAnyPermission } from "@/lib/auth";
 import { getPlatformServices } from "@/lib/services";
-import { projectIdsForPermission } from "@autoforge/domain";
+import { SectionTabs } from "@/components/section-tabs";
 
 export default async function AccessSettingsPage({
   searchParams,
@@ -17,7 +17,6 @@ export default async function AccessSettingsPage({
     "settings.read",
     "user.read",
     "role.read",
-    "project.read",
     "ldap.read",
   ]);
   const services = await getPlatformServices();
@@ -35,12 +34,10 @@ export default async function AccessSettingsPage({
     projectRead: hasPermissionInAnyScope(identity, "project.read"),
     ldapRead: hasPermissionInAnyScope(identity, "ldap.read"),
     ldapManage: hasPermissionInAnyScope(identity, "ldap.manage"),
-    canCreateProject: identity.systemPermissions.includes("project.manage"),
   };
   const availableSections = [
     ...(capabilities.userRead ? [{ id: "users" as const }] : []),
     ...(capabilities.roleRead ? [{ id: "roles" as const }] : []),
-    ...(capabilities.projectRead ? [{ id: "projects" as const }] : []),
     ...(capabilities.ldapRead ? [{ id: "ldap" as const }] : []),
     { id: "sessions" as const },
   ];
@@ -49,7 +46,6 @@ export default async function AccessSettingsPage({
     availableSections.find((section) => section.id === requestedSection)?.id ??
     availableSections[0]!.id;
   const heading = accessSectionHeading(activeSection);
-  const manageableProjectIds = projectIdsForPermission(identity, "project.manage");
   const [userPage, roles, projects, ldap, ldapMappings, sessions, systemRoleBindings] =
     await Promise.all([
       capabilities.userRead
@@ -91,12 +87,19 @@ export default async function AccessSettingsPage({
           <p>{heading.description}</p>
         </div>
       </header>
+      <SectionTabs
+        label="访问管理模块"
+        tabs={availableSections.map(({ id }) => ({
+          href: `/settings/access?section=${id}`,
+          label: accessSectionHeading(id).tab,
+          active: activeSection === id,
+        }))}
+      />
       <AccessSettings
         activeSection={activeSection}
         capabilities={capabilities}
         ldap={ldap}
         ldapMappings={ldapMappings}
-        manageableProjectIds={manageableProjectIds ?? null}
         projects={projects}
         projectMemberships={projectMemberships}
         roles={roles}
@@ -111,17 +114,35 @@ export default async function AccessSettingsPage({
   );
 }
 
-function accessSectionHeading(section: AccessSection): { title: string; description: string } {
+function accessSectionHeading(section: AccessSection): {
+  title: string;
+  description: string;
+  tab: string;
+} {
   switch (section) {
     case "users":
-      return { title: "用户管理", description: "管理本地账号、账号状态和用户来源。" };
+      return {
+        title: "用户管理",
+        description: "管理本地账号、账号状态和用户来源。",
+        tab: "用户管理",
+      };
     case "roles":
-      return { title: "角色与权限", description: "管理系统角色、权限集合和系统级绑定。" };
-    case "projects":
-      return { title: "项目角色", description: "查看项目成员及其项目作用域角色。" };
+      return {
+        title: "角色与权限",
+        description: "管理系统角色、权限集合和系统级绑定。",
+        tab: "角色权限",
+      };
     case "ldap":
-      return { title: "LDAP 目录", description: "配置离线目录连接、组映射和同步规则。" };
+      return {
+        title: "LDAP 目录",
+        description: "配置离线目录连接、组映射和同步规则。",
+        tab: "目录配置",
+      };
     case "sessions":
-      return { title: "登录会话", description: "查看并终止当前账号的活动登录会话。" };
+      return {
+        title: "登录会话",
+        description: "查看并终止当前账号的活动登录会话。",
+        tab: "登录会话",
+      };
   }
 }

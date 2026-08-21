@@ -8,21 +8,15 @@ import {
   ChevronDown,
   CircleHelp,
   ClipboardList,
-  Database,
   FileCog,
   Home,
-  KeySquare,
   KeyRound,
   Landmark,
-  Network,
   Server,
   FolderOpen,
   Layers3,
-  ScanSearch,
   ShieldCheck,
   Sparkles,
-  UserCog,
-  Users,
 } from "lucide-react";
 import type { Permission } from "@autoforge/domain";
 import Link from "next/link";
@@ -33,6 +27,7 @@ import { LogoutButton } from "./logout-button";
 import { TopbarTools } from "./topbar-tools";
 import { Button } from "./ui";
 import { GlobalRunDialog } from "./global-run-dialog";
+import { GlobalProjectSwitcher } from "./global-project-switcher";
 
 type NavigationItem = {
   label: string;
@@ -78,14 +73,6 @@ const administrationGroups: AdministrationGroup[] = [
     icon: Landmark,
     items: [
       { label: "项目管理", href: "/settings/projects", icon: Landmark, permission: "project.read" },
-      {
-        label: "项目角色",
-        href: "/settings/access?section=projects",
-        icon: KeySquare,
-        anyPermissions: ["settings.read", "user.read", "role.read"],
-        activePrefixes: ["/settings/access"],
-        section: "projects",
-      },
     ],
   },
   {
@@ -94,37 +81,11 @@ const administrationGroups: AdministrationGroup[] = [
     icon: ShieldCheck,
     items: [
       {
-        label: "用户管理",
+        label: "访问管理",
         href: "/settings/access?section=users",
-        icon: Users,
-        anyPermissions: ["settings.read", "user.read"],
-        activePrefixes: ["/settings/access"],
-        section: "users",
-        defaultSection: "users",
-      },
-      {
-        label: "角色权限",
-        href: "/settings/access?section=roles",
-        icon: UserCog,
-        anyPermissions: ["settings.read", "role.read"],
-        activePrefixes: ["/settings/access"],
-        section: "roles",
-      },
-      {
-        label: "目录配置",
-        href: "/settings/access?section=ldap",
-        icon: Network,
-        anyPermissions: ["settings.read", "ldap.read"],
-        activePrefixes: ["/settings/access"],
-        section: "ldap",
-      },
-      {
-        label: "登录会话",
-        href: "/settings/access?section=sessions",
         icon: ShieldCheck,
-        anyPermissions: ["settings.read", "user.read"],
+        anyPermissions: ["settings.read", "user.read", "role.read", "ldap.read"],
         activePrefixes: ["/settings/access"],
-        section: "sessions",
       },
     ],
   },
@@ -162,37 +123,11 @@ const administrationGroups: AdministrationGroup[] = [
         permission: "audit.read",
       },
       {
-        label: "平台配置",
+        label: "平台设置",
         href: "/settings/platform?section=configuration",
         icon: FileCog,
         permission: "settings.read",
         activePrefixes: ["/settings/platform"],
-        section: "configuration",
-        defaultSection: "configuration",
-      },
-      {
-        label: "服务账号",
-        href: "/settings/platform?section=accounts",
-        icon: KeySquare,
-        permission: "settings.read",
-        activePrefixes: ["/settings/platform"],
-        section: "accounts",
-      },
-      {
-        label: "数据保留",
-        href: "/settings/platform?section=retention",
-        icon: Database,
-        permission: "settings.read",
-        activePrefixes: ["/settings/platform"],
-        section: "retention",
-      },
-      {
-        label: "系统诊断",
-        href: "/settings/platform?section=diagnostics",
-        icon: ScanSearch,
-        permission: "settings.read",
-        activePrefixes: ["/settings/platform"],
-        section: "diagnostics",
       },
       {
         label: "文件来源",
@@ -244,12 +179,16 @@ export function AppShell({
   userName,
   permissions = [],
   forcePasswordChange = false,
+  projects = [],
+  selectedProjectId,
 }: {
   children: ReactNode;
   mode: "lite" | "full";
   userName?: string;
   permissions?: Permission[] | undefined;
   forcePasswordChange?: boolean;
+  projects?: Array<{ id: string; name: string }>;
+  selectedProjectId?: string | undefined;
 }) {
   const pathname = usePathname();
   const currentSection = useSearchParams().get("section");
@@ -398,9 +337,27 @@ export function AppShell({
 
       <div className="app-frame">
         <header className="topbar">
-          {forcePasswordChange ? <span /> : <TopbarTools />}
+          {forcePasswordChange ? (
+            <span />
+          ) : (
+            <div className="topbar-context">
+              {selectedProjectId ? (
+                <GlobalProjectSwitcher
+                  key={selectedProjectId}
+                  projects={projects}
+                  selectedProjectId={selectedProjectId}
+                />
+              ) : null}
+              <TopbarTools />
+            </div>
+          )}
           <div className="topbar-actions">
-            {!forcePasswordChange ? <GlobalRunDialog enabled={granted.has("run.create")} /> : null}
+            {!forcePasswordChange ? (
+              <GlobalRunDialog
+                enabled={granted.has("run.create")}
+                {...(selectedProjectId ? { projectId: selectedProjectId } : {})}
+              />
+            ) : null}
             {!forcePasswordChange && granted.has("case_source.manage") ? (
               <>
                 <Link className="icon-button" href="/cases/import" aria-label="JAR 导入帮助">

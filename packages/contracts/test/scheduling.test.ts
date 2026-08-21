@@ -31,6 +31,15 @@ describe("createRunBatchInputSchema", () => {
     ).toThrow();
   });
 
+  it("rejects removed single-case parameter overrides", () => {
+    expect(() =>
+      createSingleCaseRunInputSchema.parse({
+        runnerIds: ["runner-1"],
+        parameters: { REGION: "cn" },
+      }),
+    ).toThrow();
+  });
+
   it("accepts exactly one resource selection mode for a single-case shortcut", () => {
     expect(createSingleCaseRunInputSchema.parse({ runnerGroupId: "group-1" })).toMatchObject({
       runnerIds: [],

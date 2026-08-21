@@ -35,6 +35,7 @@ test("local user completes forced password change and self-service session lifec
   );
 
   await page.goto("/settings/access?section=roles");
+  await page.getByRole("button", { name: "分配角色" }).click();
   const roleForm = page.locator("form", {
     has: page.getByRole("button", { name: "分配项目角色" }),
   });
@@ -90,6 +91,7 @@ test("administrator can reset a user password and the last administrator binding
     initialPassword,
   );
 
+  await page.getByRole("button", { name: "重置密码" }).click();
   const resetForm = page.locator("form", {
     has: page.getByRole("button", { name: "重置密码并撤销会话" }),
   });
@@ -110,7 +112,7 @@ test("administrator can reset a user password and the last administrator binding
   await logout(page);
   await login(page, E2E_ADMIN_USERNAME, E2E_ADMIN_PASSWORD);
   await expandAdministrationGroup(page, "平台运维");
-  await expect(page.getByRole("link", { name: "平台配置", exact: true })).toBeVisible();
+  await expect(page.getByRole("link", { name: "平台设置", exact: true })).toBeVisible();
 });
 
 test("administrator unlocks and disables a locked user and manages a custom role", async ({
@@ -154,9 +156,8 @@ test("administrator unlocks and disables a locked user and manages a custom role
   const roleName = uniqueName("发布观察员");
   const roleKey = uniqueName("release-observer");
   await page.goto("/settings/access?section=roles");
-  const roleForm = page.locator("form", {
-    has: page.getByRole("button", { name: "创建角色" }),
-  });
+  await page.getByRole("button", { name: "创建角色" }).click();
+  const roleForm = page.getByRole("dialog", { name: "创建自定义角色" });
   await roleForm.getByLabel("角色标识").fill(roleKey);
   await roleForm.getByLabel("角色名称").fill(roleName);
   await roleForm.getByLabel("作用域").selectOption("project");
@@ -370,10 +371,12 @@ async function createUserThroughAccessPage(
   password: string,
 ): Promise<{ id: string }> {
   await page.goto("/settings/access?section=users");
-  await page.getByLabel("用户名", { exact: true }).fill(username);
-  await page.getByLabel("显示名称", { exact: true }).fill(displayName);
-  await page.getByLabel("初始密码").fill(password);
-  await page.getByRole("button", { name: "创建本地用户" }).click();
+  await page.getByRole("button", { name: "创建用户" }).click();
+  const dialog = page.getByRole("dialog", { name: "创建本地用户" });
+  await dialog.getByLabel("用户名", { exact: true }).fill(username);
+  await dialog.getByLabel("显示名称", { exact: true }).fill(displayName);
+  await dialog.getByLabel("初始密码").fill(password);
+  await dialog.getByRole("button", { name: "创建本地用户", exact: true }).click();
   // 提交含 scrypt 哈希与 SQLite 写入，随后整页 reload 再渲染 toast；
   // 全套件并发负载下可能超过默认 5s，放宽到 15s 避免偶发误报。
   await expect(page.getByText("本地用户已创建。")).toBeVisible({ timeout: 15_000 });

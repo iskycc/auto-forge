@@ -5,6 +5,7 @@ import { LoaderCircle, Pencil, Plus, Server, Trash2, UsersRound, X } from "lucid
 import { useState, type FormEvent } from "react";
 
 import { Button, Input, Textarea } from "./ui";
+import { ActionDialog } from "./action-dialog";
 
 export function RunnerGroupManager({
   initialGroups,
@@ -19,6 +20,7 @@ export function RunnerGroupManager({
   const [editingGroupId, setEditingGroupId] = useState<string>();
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
+  const [createOpen, setCreateOpen] = useState(false);
 
   async function create(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
@@ -37,6 +39,7 @@ export function RunnerGroupManager({
       });
       setGroups((current) => [...current, group].sort(compareGroups));
       formElement.reset();
+      setCreateOpen(false);
     } catch (problem) {
       setError(problem instanceof Error ? problem.message : "创建执行机组失败。");
     } finally {
@@ -95,17 +98,20 @@ export function RunnerGroupManager({
   return (
     <div className="runner-group-manager">
       {canManage ? (
-        <form className="card runner-group-create" onSubmit={(event) => void create(event)}>
-          <div className="section-title-row">
-            <div>
-              <span className="eyebrow">NEW GROUP</span>
-              <h2>新建执行机组</h2>
-              <p>按机房、网络区域或能力维护可复用资源池。</p>
-            </div>
-            <span className="soft-icon blue">
-              <Plus size={19} />
-            </span>
-          </div>
+        <div className="runner-group-toolbar">
+          <span>按机房、网络区域或能力维护可复用资源池。</span>
+          <Button onClick={() => setCreateOpen(true)} type="button" variant="primary">
+            <Plus size={16} /> 创建机组
+          </Button>
+        </div>
+      ) : null}
+      <ActionDialog
+        description="按机房、网络区域或能力维护可复用资源池。"
+        onClose={() => !pending && setCreateOpen(false)}
+        open={createOpen}
+        title="新建执行机组"
+      >
+        <form className="action-dialog-form" onSubmit={(event) => void create(event)}>
           <div className="runner-group-fields">
             <label className="field-stack">
               <span>组名称</span>
@@ -122,7 +128,7 @@ export function RunnerGroupManager({
             创建执行机组
           </Button>
         </form>
-      ) : null}
+      </ActionDialog>
 
       {error ? (
         <p className="form-error" role="alert">

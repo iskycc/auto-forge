@@ -1,5 +1,5 @@
 import type { AnalyticsSummary } from "@autoforge/contracts";
-import type { RunBatch, Runner, RunnerGroup } from "@autoforge/domain";
+import { hasPermission, type RunBatch, type Runner, type RunnerGroup } from "@autoforge/domain";
 import {
   Activity,
   AlertTriangle,
@@ -23,6 +23,7 @@ import {
   runBatchStatusLabel,
 } from "@/lib/run-batch-presentation";
 import { getPlatformServices } from "@/lib/services";
+import { selectableProjectIds, selectedProjectId } from "@/lib/selected-project";
 
 export const dynamic = "force-dynamic";
 
@@ -37,23 +38,25 @@ export default async function DashboardPage() {
     return <PublicDashboard initialStatistics={statistics} setupRequired={setupRequired} />;
   }
   if (identity.user.forcePasswordChange) redirect("/account/security");
-
-  let caseProjectIds: string[] | undefined;
-  try {
-    caseProjectIds = services.identityAccess.projectScope(identity, "case.read");
-  } catch {
-    redirect("/forbidden");
-  }
-  let runProjectIds: string[] | undefined = [];
-  try {
-    runProjectIds = services.identityAccess.projectScope(identity, "run.read");
-  } catch {
-    // 仅资产角色仍可使用首页中的用例库概览。
-  }
-  const canReadRuns = runProjectIds === undefined || runProjectIds.length > 0;
+  const projects = await services.identities
+    .listProjects(selectableProjectIds(identity))
+    .catch(() => []);
+  const activeProjectId = await selectedProjectId(identity, projects);
+  const canReadCases = Boolean(
+    activeProjectId && hasPermission(identity, "case.read", activeProjectId),
+  );
+  const canReadRuns = Boolean(
+    activeProjectId && hasPermission(identity, "run.read", activeProjectId),
+  );
+  const caseProjectIds = canReadCases && activeProjectId ? [activeProjectId] : [];
+  const runProjectIds = canReadRuns && activeProjectId ? [activeProjectId] : [];
   const canReadRunners = hasPermissionInAnyScope(identity, "runner.read");
-  const canReadSources = hasPermissionInAnyScope(identity, "case_source.read");
-  const canManageSources = hasPermissionInAnyScope(identity, "case_source.manage");
+  const canReadSources = Boolean(
+    activeProjectId && hasPermission(identity, "case_source.read", activeProjectId),
+  );
+  const canManageSources = Boolean(
+    activeProjectId && hasPermission(identity, "case_source.manage", activeProjectId),
+  );
   const now = new Date();
   const currentWeekStartedAt = new Date(now.getTime() - 7 * 86_400_000).toISOString();
   const previousWeekStartedAt = new Date(now.getTime() - 14 * 86_400_000).toISOString();
@@ -73,10 +76,14 @@ export default async function DashboardPage() {
     canReadRuns ? services.runBatches.list(8, runProjectIds) : Promise.resolve([]),
     canReadSources ? services.catalog.listRecentSources(5, caseProjectIds) : Promise.resolve([]),
     canReadRuns
-      ? services.platformOperations.analytics(identity, { completedAfter: currentWeekStartedAt })
+      ? services.platformOperations.analytics(identity, {
+          ...(runProjectIds?.[0] ? { projectId: runProjectIds[0] } : {}),
+          completedAfter: currentWeekStartedAt,
+        })
       : Promise.resolve(null),
     canReadRuns
       ? services.platformOperations.analytics(identity, {
+          ...(runProjectIds?.[0] ? { projectId: runProjectIds[0] } : {}),
           completedAfter: previousWeekStartedAt,
           completedBefore: currentWeekStartedAt,
         })

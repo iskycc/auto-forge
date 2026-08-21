@@ -6,6 +6,25 @@ and known limitations.
 
 ## Unreleased
 
+### Changed
+
+- Added one server-validated global project switch to the top bar. Dashboard, cases, imports, suites,
+  execution records, insights, sources, audit and project settings now share that project context;
+  page-local project switches were removed while project-version/stage filters remain contextual.
+- Removed configurable TestNG parameter overrides from case-suite policy and single-case requests.
+  Imported TestNG parameter metadata remains read-only and is still frozen into execution snapshots.
+  Single-case execution now enables the CoTest Adapter by default.
+- Case-suite members now use a searchable package tree with group selection and transactional bulk
+  removal that creates one suite version per operation.
+- Consolidated related access and platform settings behind page-local four-character tabs, removed
+  stale platform/LDAP links from operations, and moved low-frequency create, password reset, role
+  assignment and suite-copy actions into centered full-viewport dialogs.
+
+### Database
+
+- No migration is required. Legacy suite-policy `parameters` keys remain readable during upgrade and
+  are discarded by policy normalization before a new suite version or batch is written.
+
 ## 0.9.1 - 2026-08-21
 
 ### Changed

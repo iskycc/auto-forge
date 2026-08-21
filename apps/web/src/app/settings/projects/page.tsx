@@ -3,23 +3,21 @@ import { ProjectStructureManager } from "@/components/project-structure-manager"
 import { SectionTabs } from "@/components/section-tabs";
 import { requireAuthorizedPageProjectScope, requirePageProjectScope } from "@/lib/auth";
 import { getPlatformServices } from "@/lib/services";
+import { selectableProjectIds, selectedProjectId } from "@/lib/selected-project";
 
 export default async function ProjectMembershipsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ projectId?: string; section?: string }>;
+  searchParams: Promise<{ section?: string }>;
 }) {
   const { identity } = await requirePageProjectScope("project.read");
   const services = await getPlatformServices();
-  const projects = await services.identityAccess.listProjects(identity);
+  const projects = await services.identities.listProjects(selectableProjectIds(identity));
   const parameters = await searchParams;
-  const requestedProjectId = parameters.projectId?.trim();
   const activeSection = parameters.section === "execution" ? "execution" : "members";
-  if (requestedProjectId) {
-    requireAuthorizedPageProjectScope(identity, "project.read", requestedProjectId);
-  }
-  const selectedProject =
-    projects.find((project) => project.id === requestedProjectId) ?? projects[0];
+  const activeProjectId = await selectedProjectId(identity, projects, "project.read");
+  if (activeProjectId) requireAuthorizedPageProjectScope(identity, "project.read", activeProjectId);
+  const selectedProject = projects.find((project) => project.id === activeProjectId);
 
   if (!selectedProject) {
     return (
@@ -66,7 +64,6 @@ export default async function ProjectMembershipsPage({
         tabs={[
           {
             href: `/settings/projects?${new URLSearchParams({
-              projectId: selectedProject.id,
               section: "members",
             }).toString()}`,
             label: "成员与角色",
@@ -74,7 +71,6 @@ export default async function ProjectMembershipsPage({
           },
           {
             href: `/settings/projects?${new URLSearchParams({
-              projectId: selectedProject.id,
               section: "execution",
             }).toString()}`,
             label: "执行配置",
@@ -85,9 +81,9 @@ export default async function ProjectMembershipsPage({
       {activeSection === "members" ? (
         <ProjectMembershipManager
           canManage={canManage}
+          canCreateProject={identity.systemPermissions.includes("project.manage")}
           members={members}
           project={selectedProject}
-          projects={projects}
           roles={roles}
         />
       ) : structure ? (

@@ -10,7 +10,6 @@ type SuitePolicyOverrides = {
   claimTimeoutMs?: number;
   uploadTimeoutMs?: number;
   runnerLabels?: string[];
-  parameters?: Record<string, string>;
   artifactPatterns?: string[];
 };
 

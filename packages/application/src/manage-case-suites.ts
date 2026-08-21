@@ -137,10 +137,23 @@ export class CaseSuiteService {
     actorId?: string,
     projectIds?: readonly string[],
   ) {
+    return this.removeCases(suiteId, [caseDefinitionId], actorId, projectIds);
+  }
+
+  async removeCases(
+    suiteId: string,
+    caseDefinitionIds: string[],
+    actorId?: string,
+    projectIds?: readonly string[],
+  ) {
     await this.get(suiteId, projectIds);
-    return this.suites.removeCase({
+    const uniqueIds = [...new Set(caseDefinitionIds)];
+    if (uniqueIds.length === 0 || uniqueIds.length > 500) {
+      throw new DomainError("CASE_SUITE_SELECTION_INVALID", "请选择 1 到 500 个待移除用例。");
+    }
+    return this.suites.removeCases({
       suiteId,
-      caseDefinitionId,
+      caseDefinitionIds: uniqueIds,
       versionId: this.ids.next(),
       ...(actorId ? { actorId } : {}),
       updatedAt: this.clock.now().toISOString(),

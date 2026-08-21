@@ -4,7 +4,12 @@ import { randomUUID } from "node:crypto";
 
 import { buildClassFile } from "../../packages/testng-discovery/test/class-fixture";
 import { freshRunnerBootstrapToken } from "./support/runner-bootstrap";
-import { browserJson, ensureAdministrator, uniqueName } from "./support/session";
+import {
+  browserJson,
+  ensureAdministrator,
+  selectProjectContext,
+  uniqueName,
+} from "./support/session";
 import { configureTaskExecution, createTaskRun } from "./support/task-execution";
 
 const runnerCapabilities = [
@@ -160,6 +165,7 @@ async function createExecutableFixture(page: Page): Promise<ExecutableFixture> {
     },
   );
   expect(stage.status).toBe(201);
+  await selectProjectContext(page, project.body.id);
   const className = `com.example.ExecutionRecovery${Date.now()}Test`;
   const jar = zipSync({
     [`${className.replaceAll(".", "/")}.class`]: buildClassFile({
@@ -174,7 +180,7 @@ async function createExecutableFixture(page: Page): Promise<ExecutableFixture> {
       testStageId: stage.body.id,
     }).toString()}`,
   );
-  await page.getByLabel("导入项目").selectOption({ label: project.body.name });
+  await expect(page.locator(".global-project-switcher")).toContainText(project.body.name);
   await page.locator('input[type="file"]').setInputFiles({
     name: "execution-recovery.jar",
     mimeType: "application/java-archive",

@@ -8,7 +8,12 @@ import { ClipboardList } from "lucide-react";
 import Link from "next/link";
 
 import { getPlatformServices } from "@/lib/services";
-import { hasPermissionInAnyScope, requirePageProjectScope } from "@/lib/auth";
+import {
+  hasPermissionInAnyScope,
+  requireAuthorizedPageProjectScope,
+  requirePageProjectScope,
+} from "@/lib/auth";
+import { selectableProjectIds, selectedProjectId } from "@/lib/selected-project";
 import {
   localDateTimeInputValue,
   refreshQueryFromFilter,
@@ -23,20 +28,27 @@ export default async function ExecutionRecordsPage({
 }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  const { identity, projectIds } = await requirePageProjectScope("run.read");
+  const { identity } = await requirePageProjectScope("run.read");
   const services = await getPlatformServices();
   const parameters = await searchParams;
-  const filter = runBatchFilterFromSearch(parameters, projectIds);
   const canReadRunners = hasPermissionInAnyScope(identity, "runner.read");
-  const [batchPage, suites, runners, projects] = await Promise.all([
+  const projects = await services.identities
+    .listProjects(selectableProjectIds(identity))
+    .catch(() => []);
+  const projectId = await selectedProjectId(identity, projects, "run.read");
+  requireAuthorizedPageProjectScope(identity, "run.read", projectId);
+  const filter = {
+    ...runBatchFilterFromSearch(
+      { ...parameters, projectId: undefined },
+      projectId ? [projectId] : [],
+    ),
+    ...(projectId ? { projectId } : {}),
+  };
+  const [batchPage, suites, runners] = await Promise.all([
     services.runBatches.listPage(filter),
-    services.caseSuites.list(200, projectIds),
+    services.caseSuites.list(200, projectId ? [projectId] : []),
     canReadRunners ? services.runnerControl.list(500) : Promise.resolve([]),
-    services.identities.listProjects(projectIds),
   ]);
-  const visibleProjects = projectIds
-    ? projects.filter((project) => projectIds.includes(project.id))
-    : projects;
   const refreshQuery = refreshQueryFromFilter(filter);
   const nextQuery = new URLSearchParams(refreshQuery);
   if (batchPage.nextCursor) nextQuery.set("cursor", batchPage.nextCursor);
@@ -69,17 +81,6 @@ export default async function ExecutionRecordsPage({
         </span>
       </section>
       <form className="content-card run-history-filter" method="get">
-        <label>
-          项目
-          <Select defaultValue={filter.projectId ?? ""} name="projectId">
-            <option value="">全部可访问项目</option>
-            {visibleProjects.map((project) => (
-              <option key={project.id} value={project.id}>
-                {project.name}
-              </option>
-            ))}
-          </Select>
-        </label>
         <label>
           用例任务
           <Select defaultValue={filter.suiteId ?? ""} name="suiteId">

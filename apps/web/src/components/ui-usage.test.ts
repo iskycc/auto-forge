@@ -12,6 +12,18 @@ const PLATFORM_SETTINGS = join(SOURCE_ROOT, "components", "platform-settings.tsx
 const ACCESS_SETTINGS = join(SOURCE_ROOT, "components", "access-settings.tsx");
 const MANAGEMENT_PAGE = join(SOURCE_ROOT, "app", "settings", "page.tsx");
 const CASE_SUITE_MANAGER = join(SOURCE_ROOT, "components", "case-suite-manager.tsx");
+const GLOBAL_RUN_DIALOG = join(SOURCE_ROOT, "components", "global-run-dialog.tsx");
+const CASE_SUITE_EDITOR = join(SOURCE_ROOT, "components", "case-suite-editor.tsx");
+const PROJECT_SWITCH_FREE_FILES = [
+  join(SOURCE_ROOT, "app", "cases", "page.tsx"),
+  join(SOURCE_ROOT, "app", "execution-records", "page.tsx"),
+  join(SOURCE_ROOT, "app", "insights", "page.tsx"),
+  join(SOURCE_ROOT, "app", "objects", "page.tsx"),
+  join(SOURCE_ROOT, "app", "audit", "page.tsx"),
+  join(SOURCE_ROOT, "components", "case-suite-manager.tsx"),
+  join(SOURCE_ROOT, "components", "jar-importer.tsx"),
+  join(SOURCE_ROOT, "components", "project-membership-manager.tsx"),
+] as const;
 // Hidden inputs only carry filter state inside GET forms and have no visual
 // styling, so the shared-component boundary applies to rendered controls only.
 const NATIVE_CONTROL = /<(?:button|select|textarea)\b|<input\b(?![^>]*type="hidden")/;
@@ -85,15 +97,14 @@ describe("shared UI controls", () => {
     const managementPage = readFileSync(MANAGEMENT_PAGE, "utf8");
 
     expect(appShell).not.toContain("<span>管理中心</span>");
-    expect(appShell).toContain('label: "用户管理"');
-    expect(appShell).toContain('label: "目录配置"');
-    expect(appShell).toContain('label: "平台配置"');
+    expect(appShell).toContain('label: "访问管理"');
+    expect(appShell).toContain('label: "平台设置"');
     expect(managementPage).toContain('redirect("/settings/platform?section=configuration")');
     expect(accessSettings).toContain('id="users"');
     expect(accessSettings).toContain('id="ldap"');
   });
 
-  it("uses grouped navigation and a product project picker on dense workspaces", () => {
+  it("uses grouped navigation and one global project picker", () => {
     const appShell = readFileSync(APP_SHELL, "utf8");
     const suiteManager = readFileSync(CASE_SUITE_MANAGER, "utf8");
 
@@ -101,8 +112,45 @@ describe("shared UI controls", () => {
     expect(appShell).toContain('label: "执行机组"');
     expect(appShell).toContain('label: "运维计划"');
     expect(appShell).not.toContain('label: "用例批跑"');
-    expect(suiteManager).toContain("<ProjectPicker");
+    expect(appShell).toContain("<GlobalProjectSwitcher");
+    expect(suiteManager).not.toContain("<ProjectPicker");
     expect(suiteManager).not.toContain("<Select");
+  });
+
+  it("does not reintroduce page-level project switches or execution parameter overrides", () => {
+    for (const file of PROJECT_SWITCH_FREE_FILES) {
+      const source = readFileSync(file, "utf8");
+      expect(source, relative(SOURCE_ROOT, file)).not.toContain("切换项目");
+      expect(source, relative(SOURCE_ROOT, file)).not.toContain("项目筛选");
+      expect(source, relative(SOURCE_ROOT, file)).not.toContain('name="projectId"');
+    }
+
+    const suiteEditor = readFileSync(CASE_SUITE_EDITOR, "utf8");
+    const runDialog = readFileSync(GLOBAL_RUN_DIALOG, "utf8");
+    expect(suiteEditor).not.toContain('name="parameters"');
+    expect(suiteEditor).not.toContain("参数模板");
+    expect(runDialog).not.toContain("单用例参数覆盖");
+    expect(runDialog).not.toContain("parseParameterRecord");
+    expect(runDialog).toContain("useState(true)");
+  });
+
+  it("keeps low-frequency management actions in dialogs", () => {
+    for (const component of [
+      CASE_SUITE_MANAGER,
+      CASE_SUITE_EDITOR,
+      ACCESS_SETTINGS,
+      join(SOURCE_ROOT, "components", "project-membership-manager.tsx"),
+      join(SOURCE_ROOT, "components", "project-structure-manager.tsx"),
+      join(SOURCE_ROOT, "components", "runner-group-manager.tsx"),
+      join(SOURCE_ROOT, "components", "operations-settings.tsx"),
+    ]) {
+      expect(readFileSync(component, "utf8"), relative(SOURCE_ROOT, component)).toContain(
+        "<ActionDialog",
+      );
+    }
+    const accessSettings = readFileSync(ACCESS_SETTINGS, "utf8");
+    expect(accessSettings).toContain('title="重置用户密码"');
+    expect(accessSettings).toContain('title="分配用户角色"');
   });
 
   it("keeps every first- and second-level sidebar tab at exactly four Chinese characters", () => {
@@ -117,7 +165,7 @@ describe("shared UI controls", () => {
       ...navigationSource.matchAll(/(?:label|fallbackLabel): "([\p{Script=Han}]+)"/gu),
     ].map((match) => match[1]!);
 
-    expect(tabLabels.length).toBeGreaterThan(20);
+    expect(tabLabels.length).toBeGreaterThan(10);
     expect(tabLabels.filter((label) => [...label].length !== 4)).toEqual([]);
     expect(appShell).toContain('<span className="nav-section-label">系统管理</span>');
   });

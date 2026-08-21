@@ -130,6 +130,14 @@ export async function logout(page: Page): Promise<void> {
   await expect(page).toHaveURL(/\/login$/);
 }
 
+export async function selectProjectContext(page: Page, projectId: string): Promise<void> {
+  const response = await browserJson(page, "/api/v1/selected-project", {
+    method: "PUT",
+    body: { projectId },
+  });
+  expect(response.status).toBe(200);
+}
+
 // The sidebar keeps administration entries inside collapsed groups; expand the
 // owning group before asserting or clicking one of its nested links. Login flows
 // navigate through /landing with a second document load, so the sidebar can

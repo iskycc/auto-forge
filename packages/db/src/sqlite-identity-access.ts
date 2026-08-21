@@ -974,6 +974,7 @@ export class SqliteIdentityAccessRepository implements IdentityAccessRepository 
 
   async listAudit(input: {
     projectIds?: readonly string[];
+    includeUnscoped?: boolean;
     actorId?: string;
     action?: string;
     resourceType?: string;
@@ -985,7 +986,10 @@ export class SqliteIdentityAccessRepository implements IdentityAccessRepository 
   }): Promise<AuditListPage> {
     if (input.projectIds?.length === 0) return { items: [] };
     const conditions: SQL[] = [];
-    if (input.projectIds) conditions.push(inArray(auditEvents.projectId, [...input.projectIds]));
+    if (input.projectIds) {
+      const scoped = inArray(auditEvents.projectId, [...input.projectIds]);
+      conditions.push(input.includeUnscoped ? or(scoped, isNull(auditEvents.projectId))! : scoped);
+    }
     if (input.actorId) conditions.push(eq(auditEvents.actorId, input.actorId));
     if (input.action) conditions.push(eq(auditEvents.action, input.action));
     if (input.resourceType) conditions.push(eq(auditEvents.resourceType, input.resourceType));

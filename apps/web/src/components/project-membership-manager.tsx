@@ -6,26 +6,28 @@ import { useEffect, useState, type FormEvent } from "react";
 
 import { Button, Input, Select } from "@/components/ui";
 import { readApiErrorMessage } from "@/lib/client-api";
+import { ActionDialog } from "@/components/action-dialog";
 
 type ProjectMember = { user: User; roleIds: string[] };
 const RELOAD_MESSAGE_KEY = "autoforge:project-memberships:message";
 
 export function ProjectMembershipManager({
   project,
-  projects,
   members,
   roles,
   canManage,
+  canCreateProject,
 }: {
   project: Project;
-  projects: Project[];
   members: ProjectMember[];
   roles: Role[];
   canManage: boolean;
+  canCreateProject: boolean;
 }) {
   const [pending, setPending] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [actionDialog, setActionDialog] = useState<"project" | "member" | "owner" | null>(null);
 
   useEffect(() => {
     const timeoutId = window.setTimeout(() => {
@@ -61,6 +63,16 @@ export function ProjectMembershipManager({
     );
   }
 
+  function createProject(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    void request(
+      "/api/v1/projects",
+      jsonRequest("POST", { name: form.get("name"), slug: form.get("slug") }),
+      "项目已创建，可从顶栏切换到新项目。",
+    );
+  }
+
   function transferOwner(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
@@ -82,7 +94,7 @@ export function ProjectMembershipManager({
         </div>
       ) : null}
 
-      <section className="content-card settings-section">
+      <section className="content-card settings-section project-scope-card">
         <div className="section-heading">
           <div>
             <p className="eyebrow">Project scope</p>
@@ -91,72 +103,102 @@ export function ProjectMembershipManager({
               {project.slug} · {project.archived ? "已归档" : "启用"} · 项目 ID {project.id}
             </p>
           </div>
-          <ShieldCheck size={22} aria-hidden="true" />
+          <div className="button-row">
+            {canCreateProject ? (
+              <Button onClick={() => setActionDialog("project")} type="button" variant="primary">
+                创建项目
+              </Button>
+            ) : null}
+            {canManage && !project.archived ? (
+              <>
+                <Button onClick={() => setActionDialog("member")} type="button">
+                  <UserPlus size={16} /> 添加成员
+                </Button>
+                <Button onClick={() => setActionDialog("owner")} type="button">
+                  转移负责
+                </Button>
+              </>
+            ) : null}
+            {!canCreateProject && !canManage ? <ShieldCheck size={22} aria-hidden="true" /> : null}
+          </div>
         </div>
-        <form action="/settings/projects" className="settings-user-filter" method="get">
-          <label>
-            授权项目
-            <Select defaultValue={project.id} name="projectId">
-              {projects.map((candidate) => (
-                <option key={candidate.id} value={candidate.id}>
-                  {candidate.name}
-                  {candidate.archived ? "（已归档）" : ""}
+        <ActionDialog
+          description="新项目创建后会自动由当前用户担任负责人。"
+          onClose={() => !pending && setActionDialog(null)}
+          open={actionDialog === "project"}
+          title="创建项目"
+        >
+          <form className="settings-grid-form action-dialog-form" onSubmit={createProject}>
+            <label>
+              项目名称
+              <Input name="name" required />
+            </label>
+            <label>
+              Slug
+              <Input name="slug" pattern="[a-z0-9]+(?:-[a-z0-9]+)*" required />
+            </label>
+            <Button disabled={pending} type="submit" variant="primary">
+              创建项目
+            </Button>
+          </form>
+        </ActionDialog>
+        <ActionDialog
+          description="为用户分配当前项目中的一个项目角色。"
+          onClose={() => !pending && setActionDialog(null)}
+          open={actionDialog === "member"}
+          title="添加项目成员"
+        >
+          <form className="settings-grid-form action-dialog-form" onSubmit={addMemberRole}>
+            <label>
+              用户 ID
+              <Input name="userId" placeholder="用户详情中显示的 UUID" required />
+            </label>
+            <label>
+              项目角色
+              <Select name="roleId" required>
+                {roles.map((role) => (
+                  <option key={role.id} value={role.id}>
+                    {role.name}
+                  </option>
+                ))}
+              </Select>
+            </label>
+            <Button
+              className="primary-button"
+              disabled={pending || roles.length === 0}
+              type="submit"
+            >
+              <UserPlus size={16} /> 添加成员角色
+            </Button>
+          </form>
+        </ActionDialog>
+        <ActionDialog
+          description="新负责人会自动获得项目管理能力。"
+          onClose={() => !pending && setActionDialog(null)}
+          open={actionDialog === "owner"}
+          title="转移项目负责人"
+        >
+          <form className="settings-grid-form action-dialog-form" onSubmit={transferOwner}>
+            <label>
+              新负责人
+              <Select defaultValue={project.ownerUserId ?? ""} name="ownerUserId" required>
+                <option disabled value="">
+                  选择启用成员
                 </option>
-              ))}
-            </Select>
-          </label>
-          <Button className="secondary-button" type="submit">
-            切换项目
-          </Button>
-        </form>
-
-        {canManage && !project.archived ? (
-          <div className="settings-paired-forms">
-            <form className="settings-grid-form settings-subform" onSubmit={addMemberRole}>
-              <label>
-                用户 ID
-                <Input name="userId" placeholder="用户详情中显示的 UUID" required />
-              </label>
-              <label>
-                项目角色
-                <Select name="roleId" required>
-                  {roles.map((role) => (
-                    <option key={role.id} value={role.id}>
-                      {role.name}
+                {members
+                  .filter((member) => member.user.status === "active")
+                  .map((member) => (
+                    <option key={member.user.id} value={member.user.id}>
+                      {member.user.displayName} · {member.user.username}
                     </option>
                   ))}
-                </Select>
-              </label>
-              <Button
-                className="primary-button"
-                disabled={pending || roles.length === 0}
-                type="submit"
-              >
-                <UserPlus size={16} /> 添加成员角色
-              </Button>
-            </form>
-            <form className="settings-grid-form settings-subform" onSubmit={transferOwner}>
-              <label>
-                新负责人
-                <Select defaultValue={project.ownerUserId ?? ""} name="ownerUserId" required>
-                  <option disabled value="">
-                    选择启用成员
-                  </option>
-                  {members
-                    .filter((member) => member.user.status === "active")
-                    .map((member) => (
-                      <option key={member.user.id} value={member.user.id}>
-                        {member.user.displayName} · {member.user.username}
-                      </option>
-                    ))}
-                </Select>
-              </label>
-              <Button className="secondary-button" disabled={pending} type="submit">
-                转移负责人
-              </Button>
-            </form>
-          </div>
-        ) : null}
+              </Select>
+            </label>
+            <Button className="secondary-button" disabled={pending} type="submit">
+              转移负责人
+            </Button>
+          </form>
+        </ActionDialog>
       </section>
 
       <section className="content-card settings-section">

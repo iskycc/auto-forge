@@ -287,7 +287,6 @@ describe("run batch creation with suite policy", () => {
         retryLimit: 2,
         queueTimeoutMs: 60_000,
         runnerLabels: [],
-        parameters: { SUITE: "template", SHARED: "suite" },
         artifactPatterns: ["reports/**"],
       },
     });
@@ -330,7 +329,7 @@ describe("run batch creation with suite policy", () => {
       queueTimeoutMs: 60_000,
       executionTimeoutMs: 600_000,
       policy: { concurrency: 2, runnerLabels: [], artifactPatterns: ["reports/**"] },
-      runs: [{ parameters: { SUITE: "template", SHARED: "case" } }],
+      runs: [{ parameters: { SHARED: "case" } }],
     });
   });
 
@@ -533,7 +532,6 @@ describe("run batch creation with suite policy", () => {
     await service.createSingleCase("case-1", {
       projectId: "project-1",
       runnerIds: ["runner-1"],
-      parameters: { OVERRIDE: "value" },
     });
 
     expect(create).toHaveBeenCalledWith(
@@ -545,7 +543,7 @@ describe("run batch creation with suite policy", () => {
           expect.objectContaining({
             caseDefinitionId: "case-1",
             caseVersion: 3,
-            parameters: { CASE_DEFAULT: "yes", OVERRIDE: "value" },
+            parameters: { CASE_DEFAULT: "yes" },
           }),
         ],
       }),
@@ -739,7 +737,6 @@ describe("run batch creation with suite policy", () => {
       service.createSingleCase("case-1", {
         projectId: "project-1",
         runnerIds: ["runner-1"],
-        parameters: {},
       }),
     ).rejects.toMatchObject({ code: "CASE_SOURCE_NOT_EXECUTABLE" });
   });

@@ -399,15 +399,17 @@ async function uploadAdapterDependencies(page: Page): Promise<void> {
 
 async function createSharedSuite(page: Page): Promise<void> {
   await page.goto(`/case-suites?projectId=${encodeURIComponent(DEFAULT_PROJECT_ID)}`);
-  await page.getByLabel("任务名称").fill(suiteName);
-  await page.getByLabel("说明").fill("批次级输入共享端到端验收任务");
-  await page.getByLabel("使用 CoTest TestNG Adapter").check();
-  await page.getByLabel("TestNG Suite Name").fill(`Adapter · ${suiteName}`);
-  await page.getByLabel("TestNG Test Name").fill("JavaCasesConcurrent");
+  await page.getByRole("button", { name: "创建任务" }).click();
+  const createSuiteDialog = page.getByRole("dialog", { name: "创建用例任务" });
+  await createSuiteDialog.getByLabel("任务名称").fill(suiteName);
+  await createSuiteDialog.getByLabel("说明").fill("批次级输入共享端到端验收任务");
+  await createSuiteDialog.getByLabel("使用 CoTest TestNG Adapter").check();
+  await createSuiteDialog.getByLabel("TestNG Suite Name").fill(`Adapter · ${suiteName}`);
+  await createSuiteDialog.getByLabel("TestNG Test Name").fill("JavaCasesConcurrent");
   // 三个 fixture 都断言注入地址为 environmentAddress，只填一个地址保证
   // 轮询分配对三个 run 都落在同一 mock 值上。
-  await page.getByLabel("环境 IP / 地址（每行一个）").fill(environmentAddress);
-  await page.getByRole("button", { name: "创建任务" }).click();
+  await createSuiteDialog.getByLabel("环境 IP / 地址（每行一个）").fill(environmentAddress);
+  await createSuiteDialog.getByRole("button", { name: "创建任务" }).click();
   const suiteLink = page.getByRole("link", { name: suiteName });
   await expect(suiteLink).toBeVisible();
   const [suiteId, runnerId] = await Promise.all([

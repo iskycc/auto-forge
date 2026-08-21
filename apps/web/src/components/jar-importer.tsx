@@ -61,14 +61,12 @@ export function JarImporter({
   projectId: initialProjectId,
   initialProjectVersionId,
   initialTestStageId,
-  projects,
   versions,
 }: {
   maxJarBytes: number;
   projectId?: string | undefined;
   initialProjectVersionId?: string | undefined;
   initialTestStageId?: string | undefined;
-  projects: Array<{ id: string; name: string }>;
   versions: Array<ProjectVersion & { stages: TestStage[] }>;
 }) {
   const inputId = useId();
@@ -84,7 +82,7 @@ export function JarImporter({
   const [result, setResult] = useState<JarImportResult | null>(null);
   const [job, setJob] = useState<JarImportJob | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [projectId, setProjectId] = useState(initialProjectId ?? projects[0]?.id ?? "");
+  const projectId = initialProjectId ?? "";
   const [projectVersionId, setProjectVersionId] = useState(
     versions.some((version) => version.id === initialProjectVersionId)
       ? (initialProjectVersionId ?? "")
@@ -255,28 +253,9 @@ export function JarImporter({
           <FileArchive size={24} aria-hidden="true" />
         </div>
 
-        {projects.length > 0 ? (
-          <label>
-            导入项目
-            <Select
-              disabled={!clientReady || busy}
-              onChange={(event) => {
-                const nextProjectId = event.target.value;
-                setProjectId(nextProjectId);
-                router.push(`/cases/import?projectId=${encodeURIComponent(nextProjectId)}`);
-              }}
-              value={projectId}
-            >
-              {projects.map((project) => (
-                <option key={project.id} value={project.id}>
-                  {project.name}
-                </option>
-              ))}
-            </Select>
-          </label>
-        ) : projectId ? (
+        {projectId ? (
           <p className="settings-note">
-            目标项目：<code>{projectId}</code>
+            目标项目由顶栏全局项目决定；如需更改，请先在顶栏选择目标项目再进入导入页。
           </p>
         ) : null}
 

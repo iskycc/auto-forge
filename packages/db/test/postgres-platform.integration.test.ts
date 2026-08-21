@@ -999,7 +999,6 @@ describe.skipIf(!connectionString)("PostgreSQL platform repositories", () => {
           uploadTimeoutMs: 600_000,
           runnerIds: [runnerId],
           runnerLabels: ["gpu"],
-          parameters: { SUITE: "nightly" },
           artifactPatterns: ["reports/**"],
         },
       });

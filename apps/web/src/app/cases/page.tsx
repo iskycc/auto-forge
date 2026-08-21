@@ -7,6 +7,7 @@ import { CaseSelectionTable } from "@/components/case-selection-table";
 import { listCompleteCaseDirectory } from "@/lib/case-directory";
 import { getPlatformServices } from "@/lib/services";
 import { requireAuthorizedPageProjectScope, requirePageProjectScope } from "@/lib/auth";
+import { selectableProjectIds, selectedProjectId } from "@/lib/selected-project";
 import { projectIdsForPermission } from "@autoforge/domain";
 import type { CaseLatestRun } from "@/lib/case-selection-stats";
 
@@ -15,7 +16,6 @@ export const dynamic = "force-dynamic";
 type CasesPageProps = {
   searchParams: Promise<{
     query?: string | string[];
-    projectId?: string | string[];
     projectVersionId?: string | string[];
     testStageId?: string | string[];
   }>;
@@ -26,18 +26,16 @@ function single(value: string | string[] | undefined): string | undefined {
 }
 
 export default async function CasesPage({ searchParams }: CasesPageProps) {
-  const { identity, projectIds } = await requirePageProjectScope("case.read");
+  const { identity } = await requirePageProjectScope("case.read");
   const parameters = await searchParams;
   const query = single(parameters.query)?.trim();
-  const requestedProjectId = single(parameters.projectId);
   const requestedProjectVersionId = single(parameters.projectVersionId);
   const requestedTestStageId = single(parameters.testStageId);
   const services = await getPlatformServices();
-  const projects = await services.identityAccess.listProjects(identity).catch(() => []);
-  const accessibleProjects = projects.filter(
-    (project) => !projectIds || projectIds.includes(project.id),
-  );
-  const projectId = requestedProjectId ?? accessibleProjects[0]?.id;
+  const projects = await services.identities
+    .listProjects(selectableProjectIds(identity))
+    .catch(() => []);
+  const projectId = await selectedProjectId(identity, projects, "case.read");
   const effectiveProjectIds = requireAuthorizedPageProjectScope(identity, "case.read", projectId);
   const sourceManagementProjectIds = projectIdsForPermission(identity, "case_source.manage");
   const suiteManagementProjectIds = projectIdsForPermission(identity, "case_suite.manage");
@@ -92,10 +90,9 @@ export default async function CasesPage({ searchParams }: CasesPageProps) {
           <Link
             className="button button-primary button-large"
             href={
-              projectId
+              projectVersion
                 ? `/cases/import?${new URLSearchParams({
-                    projectId,
-                    ...(projectVersion ? { projectVersionId: projectVersion.id } : {}),
+                    projectVersionId: projectVersion.id,
                     ...(testStage ? { testStageId: testStage.id } : {}),
                   }).toString()}`
                 : "/cases/import"
@@ -113,20 +110,6 @@ export default async function CasesPage({ searchParams }: CasesPageProps) {
         </div>
         <div className="case-scope-filters">
           <form action="/cases" method="get">
-            <Select aria-label="项目筛选" defaultValue={projectId ?? ""} name="projectId">
-              <option value="">全部授权项目</option>
-              {accessibleProjects.map((project) => (
-                <option key={project.id} value={project.id}>
-                  {project.name}
-                </option>
-              ))}
-            </Select>
-            <Button className="button button-secondary" type="submit">
-              切换项目
-            </Button>
-          </form>
-          <form action="/cases" method="get">
-            {projectId ? <input name="projectId" type="hidden" value={projectId} /> : null}
             <Select
               aria-label="版本筛选"
               defaultValue={projectVersion?.id ?? ""}
@@ -159,7 +142,7 @@ export default async function CasesPage({ searchParams }: CasesPageProps) {
               <FileArchive size={27} />
             </span>
             <strong>当前项目层级还没有用例</strong>
-            <p>导入一个包含 TestNG @Test 注解的 JAR，或切换项目版本与测试阶段。</p>
+            <p>导入一个包含 TestNG @Test 注解的 JAR，或调整项目版本与测试阶段。</p>
             {canImport ? (
               <Link className="button button-primary" href="/cases/import">
                 导入第一个 JAR
