@@ -52,7 +52,7 @@ test("global execution dialog schedules one case through a runner group with Ada
   await page.getByRole("button", { name: "开始执行", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "开始执行" });
   await expect(dialog).toBeVisible();
-  await dialog.getByRole("button", { name: "单个用例" }).click();
+  await dialog.getByRole("button", { name: "单个用例", exact: true }).click();
   await selectOptionContaining(dialog.getByLabel("待执行单个用例"), "SingleCaseFixture");
   await dialog.getByRole("button", { name: "使用执行机组" }).click();
   await selectOptionContaining(dialog.getByLabel("执行机组"), groupName);

@@ -176,6 +176,8 @@ export const retentionExecutionResultSchema = z.object({
 
 export const analyticsFilterSchema = z.object({
   projectId: identifierSchema.optional(),
+  projectVersionId: identifierSchema.optional(),
+  testStageId: identifierSchema.optional(),
   suiteId: identifierSchema.optional(),
   caseDefinitionId: identifierSchema.optional(),
   runnerId: identifierSchema.optional(),

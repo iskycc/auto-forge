@@ -44,7 +44,7 @@ export function ProjectPicker({
         <span className="project-picker-icon" aria-hidden="true">
           <FolderKanban size={16} />
         </span>
-        <span>{selectedProject?.name ?? "请选择项目"}</span>
+        <span title={selectedProject?.name}>{selectedProject?.name ?? "请选择项目"}</span>
         <ChevronDown
           className={open ? "project-picker-chevron open" : "project-picker-chevron"}
           size={15}

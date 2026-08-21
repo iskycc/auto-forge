@@ -35,37 +35,37 @@ const primaryRoutes = [
   "/account/security",
 ] as const;
 
-test("administration entries are grouped into focused two-level navigation", async ({ page }) => {
+test("administration entries are exposed as four-character first-level navigation", async ({
+  page,
+}) => {
   await ensureAdministrator(page);
   const navigation = page.getByRole("navigation", { name: "主导航" });
 
-  for (const label of ["项目协作", "身份权限", "执行配置", "平台运维"]) {
-    await expect(navigation.getByRole("button", { name: label, exact: true })).toHaveCount(1);
+  for (const label of [
+    "项目管理",
+    "访问管理",
+    "运维计划",
+    "执行机组",
+    "安全审计",
+    "平台设置",
+    "文件来源",
+  ]) {
+    await expect(navigation.getByRole("link", { name: label, exact: true })).toBeVisible();
   }
-  // Groups start collapsed, so nested administration links are not rendered.
-  for (const label of ["安全审计", "项目管理", "访问管理", "运维计划", "执行机组", "平台设置"]) {
-    await expect(navigation.getByRole("link", { name: label, exact: true })).toHaveCount(0);
-  }
+  await expect(navigation.getByRole("button")).toHaveCount(0);
+  await expect(navigation.locator(".nav-item-nested, .nav-group")).toHaveCount(0);
 
-  // Expanding a group reveals its entries and keeps the chevron state readable.
-  const accessToggle = navigation.getByRole("button", { name: "身份权限" });
-  await accessToggle.click();
-  await expect(accessToggle).toHaveAttribute("aria-expanded", "true");
-  await expect(navigation.getByRole("link", { name: "访问管理", exact: true })).toHaveCount(1);
-  await accessToggle.click();
-  await expect(accessToggle).toHaveAttribute("aria-expanded", "false");
-
-  // The group owning the current route expands automatically.
   await page.goto("/settings/access?section=roles");
   await expect(page.getByRole("heading", { name: "角色与权限", exact: true })).toBeVisible();
-  await expect(accessToggle).toHaveAttribute("aria-expanded", "true");
-  await expect(navigation.getByRole("link", { name: "访问管理", exact: true })).toHaveCount(1);
+  await expect(navigation.getByRole("link", { name: "访问管理", exact: true })).toHaveClass(
+    /nav-item-active/u,
+  );
   await expect(page.locator(".settings-stack > .settings-section")).toHaveCount(1);
 
   await page.goto("/settings/platform?section=retention");
-  const platformToggle = navigation.getByRole("button", { name: "平台运维" });
-  await expect(platformToggle).toHaveAttribute("aria-expanded", "true");
-  await expect(navigation.getByRole("link", { name: "平台设置", exact: true })).toBeVisible();
+  await expect(navigation.getByRole("link", { name: "平台设置", exact: true })).toHaveClass(
+    /nav-item-active/u,
+  );
   await expect(page.getByRole("heading", { name: "数据保留", exact: true })).toBeVisible();
   await expect(page.getByRole("heading", { name: "保留与清理策略" })).toBeVisible();
 
@@ -86,6 +86,36 @@ test("top-bar project context persists across pages and removes local project sw
     body: { name: projectName, slug: suffix },
   });
   expect(created.status).toBe(201);
+  const firstVersion = await browserJson<{ id: string }>(
+    page,
+    `/api/v1/projects/${created.body.id}/versions`,
+    { method: "POST", body: { name: "1.0.0" } },
+  );
+  expect(firstVersion.status).toBe(201);
+  const firstStage = await browserJson<{ id: string }>(
+    page,
+    `/api/v1/projects/${created.body.id}/versions/${firstVersion.body.id}/stages`,
+    { method: "POST", body: { name: "系统测试", description: "第一层级" } },
+  );
+  expect(firstStage.status).toBe(201);
+  const secondVersion = await browserJson<{ id: string }>(
+    page,
+    `/api/v1/projects/${created.body.id}/versions`,
+    { method: "POST", body: { name: "2.0.0" } },
+  );
+  expect(secondVersion.status).toBe(201);
+  const secondStage = await browserJson<{ id: string }>(
+    page,
+    `/api/v1/projects/${created.body.id}/versions/${secondVersion.body.id}/stages`,
+    { method: "POST", body: { name: "回归测试", description: "第二层级" } },
+  );
+  expect(secondStage.status).toBe(201);
+  const alternateStage = await browserJson<{ id: string }>(
+    page,
+    `/api/v1/projects/${created.body.id}/versions/${secondVersion.body.id}/stages`,
+    { method: "POST", body: { name: "灰度验证", description: "手工切换目标" } },
+  );
+  expect(alternateStage.status).toBe(201);
   await selectProjectContext(page, DEFAULT_PROJECT_ID);
 
   await page.goto("/cases?projectId=stale-project&cursor=stale-cursor");
@@ -99,14 +129,48 @@ test("top-bar project context persists across pages and removes local project sw
   await page.getByRole("option", { name: projectName }).click();
   expect((await switched).status()).toBe(200);
   await expect(switcher).toContainText(projectName);
+  await expect(switcher).toContainText("1.0.0");
+  await expect(switcher).toContainText("系统测试");
   await expect(page).not.toHaveURL(/projectId|cursor/u);
+
+  await switcher.getByRole("button", { name: "当前项目版本" }).click();
+  const versionSwitched = page.waitForResponse(
+    (response) =>
+      response.request().method() === "PUT" &&
+      new URL(response.url()).pathname === "/api/v1/selected-project",
+  );
+  await page.getByRole("option", { name: "2.0.0", exact: true }).click();
+  expect((await versionSwitched).status()).toBe(200);
+  await expect(switcher).toContainText("2.0.0");
+  await expect(switcher).toContainText("回归测试");
+
+  await switcher.getByRole("button", { name: "当前测试阶段" }).click();
+  const stageSwitched = page.waitForResponse(
+    (response) =>
+      response.request().method() === "PUT" &&
+      new URL(response.url()).pathname === "/api/v1/selected-project",
+  );
+  await page.getByRole("option", { name: "灰度验证", exact: true }).click();
+  expect((await stageSwitched).status()).toBe(200);
+  await expect(switcher).toContainText("灰度验证");
 
   for (const route of ["/", "/case-suites", "/execution-records", "/cases/import"]) {
     await page.goto(route);
     await expect(page.locator(".global-project-switcher")).toContainText(projectName);
+    await expect(page.locator(".global-project-switcher")).toContainText("2.0.0");
+    await expect(page.locator(".global-project-switcher")).toContainText("灰度验证");
     await expect(page.locator('select[name="projectId"]')).toHaveCount(0);
   }
   await expect(page.getByLabel("导入项目")).toHaveCount(0);
+  await expect(page.locator(".import-card .ui-select")).toHaveCount(0);
+  await expect(page.getByLabel("JAR 导入目标层级")).toContainText("2.0.0");
+  await expect(page.getByLabel("JAR 导入目标层级")).toContainText("灰度验证");
+  for (const width of [1024, 1536]) {
+    await page.setViewportSize({ width, height: width === 1024 ? 768 : 1024 });
+    await page.goto("/cases/import");
+    await expectUiIntegrity(page);
+    await captureUi(page, "/global-project-hierarchy", width);
+  }
 });
 
 test("homepage mirrors the designed six-card workspace and exposes global execution", async ({
@@ -172,7 +236,7 @@ test("global execution dialog covers and centers within the whole viewport", asy
     ).toBe(true);
     await captureUi(page, "/global-run-dialog-suite", viewport.width, false);
 
-    await dialog.getByRole("button", { name: "单个用例" }).click();
+    await dialog.getByRole("button", { name: "单个用例", exact: true }).click();
     const adapterToggle = dialog.getByLabel("使用 CoTest TestNG Adapter");
     await expect(adapterToggle).toBeChecked();
     await expect(dialog.getByText("单用例参数覆盖")).toHaveCount(0);
@@ -360,13 +424,19 @@ test("specified dense pages expose stable product controls", async ({ page }) =>
   const trendCard = page.locator(".insight-trend-card");
   const failureCard = page.locator(".insight-failure-card");
   const flakyCard = page.locator(".insight-flaky-card");
-  const [trendBox, failureBox, flakyBox] = await Promise.all([
+  const metrics = page.locator(".insight-metrics");
+  const caseOutcomeCard = page.locator(".insight-case-outcome-card");
+  const [trendBox, failureBox, flakyBox, metricsBox, caseOutcomeBox] = await Promise.all([
     trendCard.boundingBox(),
     failureCard.boundingBox(),
     flakyCard.boundingBox(),
+    metrics.boundingBox(),
+    caseOutcomeCard.boundingBox(),
   ]);
   expect(trendBox?.y).toBe(failureBox?.y);
   expect(flakyBox!.y).toBeGreaterThan(Math.max(trendBox!.y, failureBox!.y));
+  expect(metricsBox!.y).toBeLessThan(caseOutcomeBox!.y);
+  expect(trendBox!.y).toBeLessThan(caseOutcomeBox!.y);
 
   await page.goto("/runners");
   await expect(page.getByRole("heading", { name: "执行机列表" })).toBeVisible();

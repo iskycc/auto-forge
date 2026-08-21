@@ -31,6 +31,47 @@ async function captureUi(page: Page, name: string): Promise<void> {
   await page.screenshot({ path: resolve(absoluteDirectory, `${name}.png`), fullPage: true });
 }
 
+function caseListXlsx(rows: string[][]): Uint8Array {
+  const encoder = new TextEncoder();
+  const sheetRows = rows
+    .map(
+      (cells, rowIndex) =>
+        `<row r="${rowIndex + 1}">${cells
+          .map(
+            (value, columnIndex) =>
+              `<c r="${String.fromCharCode(65 + columnIndex)}${rowIndex + 1}" t="inlineStr"><is><t>${escapeXml(value)}</t></is></c>`,
+          )
+          .join("")}</row>`,
+    )
+    .join("");
+  return zipSync({
+    "[Content_Types].xml": encoder.encode(
+      '<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>',
+    ),
+    "_rels/.rels": encoder.encode(
+      '<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>',
+    ),
+    "xl/workbook.xml": encoder.encode(
+      '<?xml version="1.0" encoding="UTF-8"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="用例列表" sheetId="1" r:id="rId1"/></sheets></workbook>',
+    ),
+    "xl/_rels/workbook.xml.rels": encoder.encode(
+      '<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>',
+    ),
+    "xl/worksheets/sheet1.xml": encoder.encode(
+      `<?xml version="1.0" encoding="UTF-8"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>${sheetRows}</sheetData></worksheet>`,
+    ),
+  });
+}
+
+function escapeXml(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&apos;");
+}
+
 test("imports TestNG methods from a JAR into the case library", async ({ page }) => {
   test.setTimeout(300_000);
   await page.emulateMedia({ reducedMotion: "reduce" });
@@ -406,10 +447,12 @@ public class MixedVisibleTest {
   expect(activatedCase.status).toBe(200);
   const taskCase = activatedCase.body;
   expect(taskCase).toMatchObject({ enabled: true, archived: false });
-  const taskCaseQuery = new URLSearchParams({
-    projectVersionId: taskCase.projectVersionId,
-    testStageId: taskCase.testStageId,
-  }).toString();
+  await selectProjectContext(
+    page,
+    DEFAULT_PROJECT_ID,
+    taskCase.projectVersionId,
+    taskCase.testStageId,
+  );
 
   await page.goto(`/case-suites?projectId=${encodeURIComponent(DEFAULT_PROJECT_ID)}`);
   await expect(page.locator('select[name="projectId"]')).toHaveCount(0);
@@ -435,10 +478,11 @@ public class MixedVisibleTest {
   await expect(page.getByRole("option", { name: /每日冒烟测试/ })).toBeFocused();
   await expectUiConsistency(page);
 
-  await page.goto(`/cases?${taskCaseQuery}`);
+  await page.goto("/cases");
   await page.getByLabel("页内搜索用例").fill(taskCase.displayName);
   await page.getByLabel(`选择 ${taskCase.displayName}`).check();
-  await page.getByLabel("目标用例任务").selectOption(dailySuiteId);
+  await page.getByRole("button", { name: "目标用例任务", exact: true }).click();
+  await page.getByRole("option", { name: "每日冒烟测试", exact: true }).click();
   await page.getByRole("button", { name: "加入任务" }).click();
   await expect(page.locator(".inline-feedback")).toContainText("已将 1 个用例加入任务");
 
@@ -449,7 +493,7 @@ public class MixedVisibleTest {
   await page.getByRole("button", { name: `移除 ${taskCase.displayName}`, exact: true }).click();
   await expect(page.getByText("任务中还没有用例")).toBeVisible({ timeout: 20_000 });
 
-  await page.goto(`/cases?${taskCaseQuery}`);
+  await page.goto("/cases");
   await page.getByRole("button", { name: "导入用例" }).click();
   const caseImportDialog = page.getByLabel("导入用例", { exact: true });
   await expect(caseImportDialog).toBeVisible();
@@ -462,12 +506,38 @@ public class MixedVisibleTest {
     ),
   });
   await caseImportDialog.getByRole("button", { name: "解析并预览" }).click();
-  await expect(caseImportDialog.getByRole("status")).toContainText("匹配 1 个 · 未匹配 1 个");
+  await expect(caseImportDialog.locator(".case-import-result")).toContainText(
+    "匹配 1 个 · 未匹配 1 个",
+  );
   await expect(caseImportDialog.getByText("com/example/NoSuchCase")).toBeVisible();
   await caseImportDialog.getByRole("button", { name: "勾选匹配用例" }).click();
   await expect(caseImportDialog).toHaveCount(0);
   await expect(page.locator(".selection-toolbar")).toContainText("已选 1");
   await expect(page.locator(".inline-feedback")).toContainText("已从表格勾选 1 个用例");
+  await expect(page.getByLabel(`选择 ${taskCase.displayName}`)).toBeChecked();
+
+  await page.getByLabel(`选择 ${taskCase.displayName}`).uncheck();
+  await page.getByRole("button", { name: "导入用例" }).click();
+  const xlsxImportDialog = page.getByLabel("导入用例", { exact: true });
+  await xlsxImportDialog.getByLabel("选择用例表格文件").setInputFiles({
+    name: "中文用例列表.xlsx",
+    mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    buffer: Buffer.from(
+      caseListXlsx([
+        ["用例路径", "备注"],
+        [taskCase.className, "中文备注"],
+        ["com.example.不存在的用例", "应显示为未匹配"],
+      ]),
+    ),
+  });
+  await expect(xlsxImportDialog.getByText(/已读取 中文用例列表\.xlsx，共 2 条路径/)).toBeVisible();
+  await xlsxImportDialog.getByRole("button", { name: "解析并预览" }).click();
+  await expect(xlsxImportDialog.locator(".case-import-result")).toContainText(
+    "匹配 1 个 · 未匹配 1 个",
+  );
+  await expect(xlsxImportDialog.getByText("com.example.不存在的用例")).toBeVisible();
+  await captureUi(page, "case-list-xlsx-import");
+  await xlsxImportDialog.getByRole("button", { name: "勾选匹配用例" }).click();
   await expect(page.getByLabel(`选择 ${taskCase.displayName}`)).toBeChecked();
 
   await page.getByRole("button", { name: "导入用例" }).click();
@@ -523,10 +593,11 @@ public class MixedVisibleTest {
   const heartbeatResult = (await heartbeat.json()) as { terminalConnectionToken: string };
   expect(heartbeatResult.terminalConnectionToken).toBeTruthy();
 
-  await page.goto(`/cases?${taskCaseQuery}`);
+  await page.goto("/cases");
   await page.getByLabel("页内搜索用例").fill(taskCase.displayName);
   await page.getByLabel(`选择 ${taskCase.displayName}`).check();
-  await page.getByLabel("目标用例任务").selectOption(dailySuiteId);
+  await page.getByRole("button", { name: "目标用例任务", exact: true }).click();
+  await page.getByRole("option", { name: "每日冒烟测试", exact: true }).click();
   await page.getByRole("button", { name: "加入任务" }).click();
   await expect(page.locator(".inline-feedback")).toContainText("已将 1 个用例加入任务");
 
@@ -1052,8 +1123,9 @@ public class MixedVisibleTest {
   await expect(page.locator(".settings-stack > .settings-section")).toHaveCount(1);
 
   await page.goto("/audit");
-  await expect(page.getByRole("navigation", { name: "运维审计" })).toBeVisible();
-  await page.getByRole("link", { name: "运维计划" }).click();
+  const operationsNavigation = page.getByRole("navigation", { name: "运维审计" });
+  await expect(operationsNavigation).toBeVisible();
+  await operationsNavigation.getByRole("link", { name: "运维计划" }).click();
   await expect(page.getByRole("heading", { name: "计划与目录作业" })).toBeVisible();
   await expect(page.getByRole("navigation", { name: "运维审计" })).toBeVisible();
 

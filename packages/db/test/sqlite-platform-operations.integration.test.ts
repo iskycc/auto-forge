@@ -223,6 +223,24 @@ describe("SQLite platform operations", () => {
       expect(summary.failures).not.toEqual(
         expect.arrayContaining([expect.objectContaining({ resultCode: "TESTNG_SUCCEEDED" })]),
       );
+      expect(
+        await repository.readAnalytics({
+          filter: {
+            projectId: "project-1",
+            projectVersionId: "version-1",
+            testStageId: "stage-1",
+          },
+          projectIds: ["project-1"],
+          generatedAt: "2026-08-11T03:00:00.000Z",
+        }),
+      ).toMatchObject({ sampleCount: 2, passed: 3, failed: 1 });
+      expect(
+        await repository.readAnalytics({
+          filter: { projectId: "project-1", projectVersionId: "version-missing" },
+          projectIds: ["project-1"],
+          generatedAt: "2026-08-11T03:00:00.000Z",
+        }),
+      ).toMatchObject({ sampleCount: 0, passed: 0, failed: 0 });
 
       // 0.8.5 及以前生成过 schema v1 错误事实。读取分析时必须原地重建，不能要求
       // 管理员删除数据库或等待新执行覆盖历史。
@@ -531,6 +549,15 @@ function fixture() {
     INSERT INTO projects (id,name,slug,is_default,archived,created_at,updated_at,owner_user_id)
     VALUES ('project-1','Project One','project-one',0,0,
             '2026-08-11T00:00:00.000Z','2026-08-11T00:00:00.000Z','user-1');
+    INSERT INTO project_versions
+      (id,project_id,name,normalized_name,status,revision,created_at,updated_at)
+    VALUES ('version-1','project-1','1.0','1.0','active',1,
+            '2026-08-11T00:00:00.000Z','2026-08-11T00:00:00.000Z');
+    INSERT INTO test_stages
+      (id,project_id,project_version_id,name,normalized_name,description,position,status,revision,
+       created_at,updated_at)
+    VALUES ('stage-1','project-1','version-1','System','system','',1,'active',1,
+            '2026-08-11T00:00:00.000Z','2026-08-11T00:00:00.000Z');
     INSERT INTO case_suites
       (id,project_id,name,description,version,status,enabled,revision,policy_json,
        created_by,updated_by,created_at,updated_at)
@@ -549,15 +576,19 @@ function seedCompletedAttempt(handle: ReturnType<typeof createSqliteDatabase>) {
   const now = "2026-08-11T01:00:00.000Z";
   handle.client.exec(`
     INSERT INTO case_sources
-      (id,project_id,display_name,original_file_name,object_key,sha256,size_bytes,class_count,
+      (id,project_id,project_version_id,test_stage_id,display_name,original_file_name,object_key,
+       sha256,size_bytes,class_count,
        method_count,status,warnings_json,inspection_json,authoritative,lifecycle_status,revision,
        created_at,updated_at)
-    VALUES ('source-1','project-1','Example','example.jar','jars/example','${"a".repeat(64)}',10,1,1,
+    VALUES ('source-1','project-1','version-1','stage-1','Example','example.jar','jars/example',
+            '${"a".repeat(64)}',10,1,1,
             'ready','[]','{}',1,'active',1,'${now}','${now}');
     INSERT INTO case_definitions
-      (id,project_id,source_id,class_name,package_name,display_name,description,tags_json,
+      (id,project_id,project_version_id,test_stage_id,source_id,class_name,package_name,display_name,
+       description,tags_json,
        parameters_json,enabled,archived,revision,groups_json,current_version,created_at,updated_at)
-    VALUES ('case-1','project-1','source-1','com.example.Test','com.example','Example Test','',
+    VALUES ('case-1','project-1','version-1','stage-1','source-1','com.example.Test','com.example',
+            'Example Test','',
             '[]','{}',1,0,1,'[]',1,'${now}','${now}');
     INSERT INTO runners
       (id,credential_hash,name,disabled,draining,os,architecture,agent_version,protocol_version,

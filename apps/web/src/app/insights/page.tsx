@@ -11,7 +11,11 @@ import { listCompleteCaseDirectory } from "@/lib/case-directory";
 import { formatRate, type CaseLatestRun } from "@/lib/case-selection-stats";
 import { classifyAttemptResult } from "@autoforge/domain";
 import { AnalyticsExportControl } from "@/components/analytics-export-control";
-import { selectableProjectIds, selectedProjectId } from "@/lib/selected-project";
+import {
+  selectableProjectIds,
+  selectedProjectHierarchy,
+  selectedProjectId,
+} from "@/lib/selected-project";
 
 const CASE_OUTCOME_DETAIL_LIMIT = 500;
 
@@ -19,7 +23,8 @@ type CaseOutcomeReport = {
   projectId: string;
   versionId: string;
   versionName: string;
-  versions: Array<{ id: string; name: string }>;
+  stageId: string;
+  stageName: string;
   cases: CaseDefinitionWithMethods[];
   outcomes: Map<string, CaseLatestRun>;
   executedAt: Map<string, string>;
@@ -40,9 +45,20 @@ export default async function InsightsPage({
     .catch(() => []);
   const caseProjectId = await selectedProjectId(identity, projects, "run.read");
   requireAuthorizedPageProjectScope(identity, "run.read", caseProjectId);
+  const projectStructure = caseProjectId
+    ? await services.projectStructures.list(caseProjectId).catch(() => undefined)
+    : undefined;
+  const hierarchy = await selectedProjectHierarchy(projectStructure);
   const filter = {
-    ...analyticsFilter({ ...parameters, projectId: undefined }),
+    ...analyticsFilter({
+      ...parameters,
+      projectId: undefined,
+      projectVersionId: undefined,
+      testStageId: undefined,
+    }),
     ...(caseProjectId ? { projectId: caseProjectId } : {}),
+    ...(hierarchy.projectVersionId ? { projectVersionId: hierarchy.projectVersionId } : {}),
+    ...(hierarchy.testStageId ? { testStageId: hierarchy.testStageId } : {}),
   };
   const [summary, suites, runners] = await Promise.all([
     services.platformOperations.analytics(identity, filter),
@@ -57,11 +73,11 @@ export default async function InsightsPage({
           parameters.rightBatchId,
         )
       : undefined;
-  const caseProjectVersionId = stringParameter(parameters.caseProjectVersionId) || undefined;
   const caseOutcomeReport = await loadCaseOutcomeReport({
     services,
     ...(caseProjectId ? { caseProjectId } : {}),
-    ...(caseProjectVersionId ? { caseProjectVersionId } : {}),
+    ...(hierarchy.projectVersionId ? { caseProjectVersionId: hierarchy.projectVersionId } : {}),
+    ...(hierarchy.testStageId ? { caseTestStageId: hierarchy.testStageId } : {}),
     ...(projectIds ? { allowedProjectIds: projectIds } : {}),
   });
   const methodSampleCount = summary.passed + summary.failed + summary.skipped;
@@ -149,115 +165,6 @@ export default async function InsightsPage({
           </div>
         </details>
       </form>
-
-      <section aria-label="项目版本用例执行情况" className="content-card">
-        <div className="section-heading">
-          <div>
-            <span className="eyebrow">CASE OUTCOMES</span>
-            <h2>项目 / 版本用例执行情况</h2>
-          </div>
-          {caseOutcomeReport ? (
-            <span className="muted">
-              {caseOutcomeReport.versionName} · 共 {caseOutcomeReport.cases.length} 个用例
-            </span>
-          ) : null}
-        </div>
-        <form className="case-outcome-filter" method="get">
-          <label>
-            项目版本
-            <Select defaultValue={caseOutcomeReport?.versionId ?? ""} name="caseProjectVersionId">
-              <option value="">默认版本</option>
-              {caseOutcomeReport?.versions.map((version) => (
-                <option key={version.id} value={version.id}>
-                  {version.name}
-                </option>
-              ))}
-            </Select>
-          </label>
-          <Button className="button button-primary" type="submit">
-            查看执行情况
-          </Button>
-        </form>
-        {caseOutcomeReport ? (
-          <CaseOutcomeSummary report={caseOutcomeReport} />
-        ) : (
-          <div className="inline-empty">请在顶栏选择项目，并确认该项目已配置可用版本。</div>
-        )}
-      </section>
-
-      <section className="content-card">
-        <div className="section-heading">
-          <div>
-            <span className="eyebrow">COMPARE</span>
-            <h2>批次对比</h2>
-          </div>
-        </div>
-        <form className="batch-comparison-form" method="get">
-          <Input
-            name="leftBatchId"
-            defaultValue={stringParameter(parameters.leftBatchId)}
-            placeholder="基准批次 ID"
-            required
-          />
-          <Input
-            name="rightBatchId"
-            defaultValue={stringParameter(parameters.rightBatchId)}
-            placeholder="对比批次 ID"
-            required
-          />
-          <Button className="button button-secondary" type="submit">
-            开始对比
-          </Button>
-        </form>
-        {comparison ? (
-          <>
-            <p className={comparison.comparableScope ? "status-success" : "status-warning"}>
-              共同用例 {comparison.commonCaseCount} 个；仅基准 {comparison.onlyLeftCaseCount}{" "}
-              个；仅对比 {comparison.onlyRightCaseCount} 个。
-              {comparison.comparableScope
-                ? " 样本范围一致。"
-                : " 样本范围不同，不直接比较总体百分比。"}
-            </p>
-            <div className="table-scroll">
-              <table className="data-table">
-                <thead>
-                  <tr>
-                    <th>用例</th>
-                    <th>版本变化</th>
-                    <th>结果变化</th>
-                    <th>耗时变化</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {comparison.cases.map((item) => (
-                    <tr key={item.caseDefinitionId}>
-                      <td>
-                        {item.displayName}
-                        <small className="table-secondary">{item.caseDefinitionId}</small>
-                      </td>
-                      <td>
-                        {item.leftVersion ?? "-"} → {item.rightVersion ?? "-"}
-                      </td>
-                      <td>
-                        {item.leftOutcome ?? "-"} → {item.rightOutcome ?? "-"}
-                      </td>
-                      <td>
-                        {item.durationDeltaMs === undefined
-                          ? "-"
-                          : `${item.durationDeltaMs >= 0 ? "+" : ""}${item.durationDeltaMs} ms`}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </>
-        ) : (
-          <div className="inline-empty">
-            输入两个可访问批次 ID，按相同用例范围比较版本、环境、Runner、结果和耗时。
-          </div>
-        )}
-      </section>
 
       <section className="insight-metrics" aria-label="质量指标">
         <Metric icon={FlaskConical} label="执行样本" value={String(summary.sampleCount)} />
@@ -433,6 +340,100 @@ export default async function InsightsPage({
           )}
         </article>
       </section>
+
+      <section aria-label="当前层级用例执行情况" className="content-card insight-case-outcome-card">
+        <div className="section-heading">
+          <div>
+            <span className="eyebrow">CASE OUTCOMES</span>
+            <h2>当前层级用例执行情况</h2>
+          </div>
+          {caseOutcomeReport ? (
+            <span className="muted">
+              {caseOutcomeReport.versionName} / {caseOutcomeReport.stageName} · 共{" "}
+              {caseOutcomeReport.cases.length} 个用例
+            </span>
+          ) : null}
+        </div>
+        {caseOutcomeReport ? (
+          <CaseOutcomeSummary report={caseOutcomeReport} />
+        ) : (
+          <div className="inline-empty">请在顶栏选择项目，并确认该项目已配置可用版本。</div>
+        )}
+      </section>
+
+      <section className="content-card insight-comparison-card">
+        <div className="section-heading">
+          <div>
+            <span className="eyebrow">COMPARE</span>
+            <h2>批次对比</h2>
+          </div>
+        </div>
+        <form className="batch-comparison-form" method="get">
+          <Input
+            name="leftBatchId"
+            defaultValue={stringParameter(parameters.leftBatchId)}
+            placeholder="基准批次 ID"
+            required
+          />
+          <Input
+            name="rightBatchId"
+            defaultValue={stringParameter(parameters.rightBatchId)}
+            placeholder="对比批次 ID"
+            required
+          />
+          <Button className="button button-secondary" type="submit">
+            开始对比
+          </Button>
+        </form>
+        {comparison ? (
+          <>
+            <p className={comparison.comparableScope ? "status-success" : "status-warning"}>
+              共同用例 {comparison.commonCaseCount} 个；仅基准 {comparison.onlyLeftCaseCount}{" "}
+              个；仅对比 {comparison.onlyRightCaseCount} 个。
+              {comparison.comparableScope
+                ? " 样本范围一致。"
+                : " 样本范围不同，不直接比较总体百分比。"}
+            </p>
+            <div className="table-scroll">
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th>用例</th>
+                    <th>版本变化</th>
+                    <th>结果变化</th>
+                    <th>耗时变化</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {comparison.cases.map((item) => (
+                    <tr key={item.caseDefinitionId}>
+                      <td>
+                        {item.displayName}
+                        <small className="table-secondary">{item.caseDefinitionId}</small>
+                      </td>
+                      <td>
+                        {item.leftVersion ?? "-"} → {item.rightVersion ?? "-"}
+                      </td>
+                      <td>
+                        {item.leftOutcome ?? "-"} → {item.rightOutcome ?? "-"}
+                      </td>
+                      <td>
+                        {item.durationDeltaMs === undefined
+                          ? "-"
+                          : `${item.durationDeltaMs >= 0 ? "+" : ""}${item.durationDeltaMs} ms`}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </>
+        ) : (
+          <div className="inline-empty">
+            输入两个可访问批次 ID，按相同用例范围比较版本、环境、Runner、结果和耗时。
+          </div>
+        )}
+      </section>
     </div>
   );
 }
@@ -475,6 +476,8 @@ function analyticsFilter(
   const outcome = value("outcome");
   return {
     ...(value("projectId") ? { projectId: value("projectId") } : {}),
+    ...(value("projectVersionId") ? { projectVersionId: value("projectVersionId") } : {}),
+    ...(value("testStageId") ? { testStageId: value("testStageId") } : {}),
     ...(value("suiteId") ? { suiteId: value("suiteId") } : {}),
     ...(value("runnerId") ? { runnerId: value("runnerId") } : {}),
     ...(value("caseDefinitionId") ? { caseDefinitionId: value("caseDefinitionId") } : {}),
@@ -593,7 +596,7 @@ function CaseOutcomeSummary({ report }: { report: CaseOutcomeReport }) {
       {total > CASE_OUTCOME_DETAIL_LIMIT ? (
         <p className="muted">
           共 {total} 个用例，此处仅展示前 {CASE_OUTCOME_DETAIL_LIMIT}{" "}
-          个；请使用项目/版本或搜索缩小范围。
+          个；请在顶栏调整项目层级以缩小范围。
         </p>
       ) : null}
     </>
@@ -640,20 +643,30 @@ async function loadCaseOutcomeReport(input: {
   services: Awaited<ReturnType<typeof getPlatformServices>>;
   caseProjectId?: string;
   caseProjectVersionId?: string;
+  caseTestStageId?: string;
   allowedProjectIds?: string[];
 }): Promise<CaseOutcomeReport | undefined> {
-  const { services, caseProjectId, caseProjectVersionId, allowedProjectIds } = input;
+  const { services, caseProjectId, caseProjectVersionId, caseTestStageId, allowedProjectIds } =
+    input;
   if (!caseProjectId) return undefined;
   if (allowedProjectIds && !allowedProjectIds.includes(caseProjectId)) return undefined;
   const structure = await services.projectStructures.list(caseProjectId).catch(() => undefined);
   if (!structure) return undefined;
   const version =
-    structure.versions.find((candidate) => candidate.id === caseProjectVersionId) ??
-    structure.versions[0];
+    structure.versions.find(
+      (candidate) => candidate.id === caseProjectVersionId && candidate.status === "active",
+    ) ?? structure.versions.find((candidate) => candidate.status === "active");
   if (!version) return undefined;
+  const stage =
+    version.stages.find(
+      (candidate) => candidate.id === caseTestStageId && candidate.status === "active",
+    ) ?? version.stages.find((candidate) => candidate.status === "active");
+  if (!stage) return undefined;
   const cases = await listCompleteCaseDirectory(services.catalog, {
     projectIds: [caseProjectId],
     projectVersionId: version.id,
+    testStageId: stage.id,
+    scopedOnly: true,
   });
   const latestRuns =
     cases.length > 0
@@ -675,7 +688,8 @@ async function loadCaseOutcomeReport(input: {
     projectId: caseProjectId,
     versionId: version.id,
     versionName: version.name,
-    versions: structure.versions.map((candidate) => ({ id: candidate.id, name: candidate.name })),
+    stageId: stage.id,
+    stageName: stage.name,
     cases,
     outcomes,
     executedAt,

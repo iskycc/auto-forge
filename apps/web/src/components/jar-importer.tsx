@@ -1,6 +1,6 @@
 "use client";
 
-import { Button, Input, ProgressBar, Select } from "@/components/ui";
+import { Button, Input, ProgressBar } from "@/components/ui";
 
 import {
   apiErrorSchema,
@@ -11,7 +11,6 @@ import {
   type JarImportJob,
   type JarInspection,
 } from "@autoforge/contracts";
-import type { ProjectVersion, TestStage } from "@autoforge/domain";
 import {
   AlertCircle,
   Archive,
@@ -59,15 +58,19 @@ async function errorMessage(response: Response): Promise<string> {
 export function JarImporter({
   maxJarBytes,
   projectId: initialProjectId,
-  initialProjectVersionId,
-  initialTestStageId,
-  versions,
+  projectName,
+  projectVersionId,
+  projectVersionName,
+  testStageId,
+  testStageName,
 }: {
   maxJarBytes: number;
   projectId?: string | undefined;
-  initialProjectVersionId?: string | undefined;
-  initialTestStageId?: string | undefined;
-  versions: Array<ProjectVersion & { stages: TestStage[] }>;
+  projectName?: string | undefined;
+  projectVersionId?: string | undefined;
+  projectVersionName?: string | undefined;
+  testStageId?: string | undefined;
+  testStageName?: string | undefined;
 }) {
   const inputId = useId();
   const router = useRouter();
@@ -83,17 +86,6 @@ export function JarImporter({
   const [job, setJob] = useState<JarImportJob | null>(null);
   const [error, setError] = useState<string | null>(null);
   const projectId = initialProjectId ?? "";
-  const [projectVersionId, setProjectVersionId] = useState(
-    versions.some((version) => version.id === initialProjectVersionId)
-      ? (initialProjectVersionId ?? "")
-      : (versions[0]?.id ?? ""),
-  );
-  const availableStages = versions.find((version) => version.id === projectVersionId)?.stages ?? [];
-  const [testStageId, setTestStageId] = useState(
-    availableStages.some((stage) => stage.id === initialTestStageId)
-      ? (initialTestStageId ?? "")
-      : (availableStages[0]?.id ?? ""),
-  );
 
   const applyJobState = useCallback(
     (updated: JarImportJob): void => {
@@ -253,51 +245,24 @@ export function JarImporter({
           <FileArchive size={24} aria-hidden="true" />
         </div>
 
-        {projectId ? (
-          <p className="settings-note">
-            目标项目由顶栏全局项目决定；如需更改，请先在顶栏选择目标项目再进入导入页。
-          </p>
-        ) : null}
-
-        <div className="settings-paired-forms">
-          <label>
-            项目版本
-            <Select
-              disabled={!clientReady || busy}
-              onChange={(event) => {
-                const nextVersionId = event.target.value;
-                setProjectVersionId(nextVersionId);
-                setTestStageId(
-                  versions.find((version) => version.id === nextVersionId)?.stages[0]?.id ?? "",
-                );
-              }}
-              value={projectVersionId}
-            >
-              {versions.map((version) => (
-                <option key={version.id} value={version.id}>
-                  {version.name}
-                </option>
-              ))}
-            </Select>
-          </label>
-          <label>
-            测试阶段
-            <Select
-              disabled={!clientReady || busy}
-              onChange={(event) => setTestStageId(event.target.value)}
-              value={testStageId}
-            >
-              {availableStages.map((stage) => (
-                <option key={stage.id} value={stage.id}>
-                  {stage.name}
-                </option>
-              ))}
-            </Select>
-          </label>
+        <div className="import-target-context" aria-label="JAR 导入目标层级">
+          <span>
+            <small>当前项目</small>
+            <strong>{projectName ?? "尚未配置"}</strong>
+          </span>
+          <span>
+            <small>项目版本</small>
+            <strong>{projectVersionName ?? "尚未配置"}</strong>
+          </span>
+          <span>
+            <small>测试阶段</small>
+            <strong>{testStageName ?? "尚未配置"}</strong>
+          </span>
+          <p>导入目标严格使用顶栏当前项目、版本和测试阶段；切换后页面会自动刷新。</p>
         </div>
-        {versions.length === 0 || availableStages.length === 0 ? (
+        {!projectVersionId || !testStageId ? (
           <p className="auth-error" role="alert">
-            请先在“项目管理 → 执行配置”创建项目版本和测试阶段，再导入用例。
+            请先在“项目管理 → 执行配置”创建项目版本和测试阶段，并在顶栏完成选择。
           </p>
         ) : null}
 
@@ -337,7 +302,7 @@ export function JarImporter({
             className="button button-primary"
             type="button"
             onClick={inspectJar}
-            disabled={!clientReady || !file || busy}
+            disabled={!clientReady || !file || busy || !projectVersionId || !testStageId}
           >
             {phase === "inspecting" ? (
               <LoaderCircle className="spin" size={17} aria-hidden="true" />
@@ -542,15 +507,7 @@ export function JarImporter({
               ? "该 JAR 已导入，已返回现有用例。"
               : `已导入 ${result.importedClassCount} 个测试类、${result.importedMethodCount} 个测试方法。`}
           </span>
-          <Link
-            href={`/cases?${new URLSearchParams({
-              projectId,
-              ...(projectVersionId ? { projectVersionId } : {}),
-              ...(testStageId ? { testStageId } : {}),
-            }).toString()}`}
-          >
-            查看用例管理
-          </Link>
+          <Link href="/cases">查看用例管理</Link>
         </div>
       )}
     </div>

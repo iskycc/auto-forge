@@ -75,7 +75,7 @@ export async function startTaskFromTopbar(page: Page, suiteId: string): Promise<
   await page.getByRole("button", { name: "开始执行", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "开始执行" });
   await expect(dialog).toBeVisible();
-  await dialog.getByLabel("执行用例任务").selectOption(suiteId);
+  await dialog.locator('select[aria-label="执行用例任务"]').selectOption(suiteId);
   const response = page.waitForResponse(
     (candidate) =>
       candidate.request().method() === "POST" &&

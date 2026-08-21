@@ -2,9 +2,10 @@
 
 import type { CaseDefinitionWithMethods } from "@autoforge/domain";
 import { Table2, X } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { Button, FileInput, Textarea } from "@/components/ui";
+import { parseCasePathFile } from "@/lib/case-path-file";
 import {
   matchCasePaths,
   parseCasePathColumn,
@@ -20,9 +21,13 @@ type CaseImportDialogProps = {
 
 export function CaseImportDialog({ cases, onImport }: CaseImportDialogProps) {
   const [open, setOpen] = useState(false);
-  const [fileContent, setFileContent] = useState("");
+  const [filePaths, setFilePaths] = useState<string[] | null>(null);
+  const [fileName, setFileName] = useState("");
+  const [fileError, setFileError] = useState("");
+  const [readingFile, setReadingFile] = useState(false);
   const [pastedText, setPastedText] = useState("");
   const [result, setResult] = useState<CasePathMatchResult | null>(null);
+  const fileReadGeneration = useRef(0);
 
   useEffect(() => {
     if (!open) return;
@@ -34,8 +39,12 @@ export function CaseImportDialog({ cases, onImport }: CaseImportDialogProps) {
   }, [open]);
 
   function closeDialog() {
+    fileReadGeneration.current += 1;
     setOpen(false);
-    setFileContent("");
+    setFilePaths(null);
+    setFileName("");
+    setFileError("");
+    setReadingFile(false);
     setPastedText("");
     setResult(null);
   }
@@ -45,13 +54,29 @@ export function CaseImportDialog({ cases, onImport }: CaseImportDialogProps) {
     setResult(null);
     // 用户取消系统文件选择框时 files 为空，保留已读内容避免误清空。
     if (!file) return;
-    setFileContent(await file.text());
+    const generation = fileReadGeneration.current + 1;
+    fileReadGeneration.current = generation;
+    setFilePaths(null);
+    setFileName(file.name);
+    setFileError("");
+    setReadingFile(true);
+    try {
+      const paths = await parseCasePathFile(file);
+      if (generation !== fileReadGeneration.current) return;
+      setFilePaths(paths);
+      if (paths.length === 0) setFileError("首列没有可导入的用例路径。");
+    } catch (error) {
+      if (generation !== fileReadGeneration.current) return;
+      setFileError(error instanceof Error ? error.message : "用例列表读取失败。");
+    } finally {
+      if (generation === fileReadGeneration.current) setReadingFile(false);
+    }
   }
 
   function parseAndPreview(): void {
     // 两种输入都存在时以文件为准，避免过期粘贴内容覆盖用户刚选的文件。
-    const source = fileContent.trim() ? fileContent : pastedText;
-    setResult(matchCasePaths(cases, parseCasePathColumn(source)));
+    const paths = filePaths?.length ? filePaths : parseCasePathColumn(pastedText);
+    setResult(matchCasePaths(cases, paths));
   }
 
   function applySelection(): void {
@@ -60,7 +85,7 @@ export function CaseImportDialog({ cases, onImport }: CaseImportDialogProps) {
     closeDialog();
   }
 
-  const canParse = Boolean(fileContent.trim() || pastedText.trim());
+  const canParse = !readingFile && Boolean(filePaths?.length || pastedText.trim());
   const visibleUnmatched = result ? result.unmatched.slice(0, MAX_UNMATCHED_PREVIEW) : [];
   const hiddenUnmatched = result ? result.unmatched.length - visibleUnmatched.length : 0;
 
@@ -90,19 +115,30 @@ export function CaseImportDialog({ cases, onImport }: CaseImportDialogProps) {
             </header>
             <div className="runner-update-body">
               <p className="runner-update-hint">
-                上传只含一列“用例路径”的表格文件（.csv / .tsv / .txt），或从 Excel
-                复制该列直接粘贴；每行一个用例路径，可含表头。路径支持目录写法
-                com/example/CheckoutTest 和类名写法 com.example.CheckoutTest，
-                与用例库精确匹配后批量勾选。
+                上传表格文件（.xlsx / .csv / .tsv / .txt），XLSX 读取首个工作表的第一列；也可从
+                Excel 复制“用例路径”列直接粘贴。第一行可以是表头。路径支持目录写法
+                com/example/CheckoutTest 和类名写法
+                com.example.CheckoutTest，与用例库精确匹配后批量勾选。
               </p>
               <div className="runner-update-grid">
                 <label>
                   表格文件
                   <FileInput
-                    accept=".csv,.tsv,.txt"
+                    accept=".xlsx,.csv,.tsv,.txt"
                     aria-label="选择用例表格文件"
                     onChange={(event) => void readFile(event.currentTarget)}
                   />
+                  {readingFile ? <small role="status">正在读取 {fileName}…</small> : null}
+                  {!readingFile && filePaths?.length ? (
+                    <small role="status">
+                      已读取 {fileName}，共 {filePaths.length} 条路径
+                    </small>
+                  ) : null}
+                  {fileError ? (
+                    <small className="auth-error" role="alert">
+                      {fileError}
+                    </small>
+                  ) : null}
                 </label>
                 <label>
                   或直接粘贴

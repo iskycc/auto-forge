@@ -1161,6 +1161,18 @@ export class SqlitePlatformOperationsRepository implements PlatformOperationsRep
       parameters.push(...projectIds);
     }
     add("project_id", filter.projectId);
+    if (filter.projectVersionId) {
+      where.push(
+        "EXISTS (SELECT 1 FROM case_definitions c WHERE c.id = analytics_facts.case_definition_id AND c.project_version_id = ?)",
+      );
+      parameters.push(filter.projectVersionId);
+    }
+    if (filter.testStageId) {
+      where.push(
+        "EXISTS (SELECT 1 FROM case_definitions c WHERE c.id = analytics_facts.case_definition_id AND c.test_stage_id = ?)",
+      );
+      parameters.push(filter.testStageId);
+    }
     add("suite_id", filter.suiteId);
     add("case_definition_id", filter.caseDefinitionId);
     add("runner_id", filter.runnerId);

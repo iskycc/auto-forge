@@ -5,6 +5,7 @@ import {
   casePathOf,
   matchCasePaths,
   normalizeCasePath,
+  parseCasePathCells,
   parseCasePathColumn,
 } from "./case-path-import";
 
@@ -29,6 +30,12 @@ describe("case path import", () => {
       "com/example/CheckoutTest",
     ]);
     expect(parseCasePathColumn("com/example/CheckoutTest\n")).toEqual(["com/example/CheckoutTest"]);
+  });
+
+  it("recognizes the header after blank cells and strips a Unicode BOM", () => {
+    expect(parseCasePathCells(["", "\uFEFF用例路径", "com/example/CheckoutTest"])).toEqual([
+      "com/example/CheckoutTest",
+    ]);
   });
 
   it("parses quoted CSV cells and ignores later columns", () => {

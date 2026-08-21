@@ -13,6 +13,7 @@ const ACCESS_SETTINGS = join(SOURCE_ROOT, "components", "access-settings.tsx");
 const MANAGEMENT_PAGE = join(SOURCE_ROOT, "app", "settings", "page.tsx");
 const CASE_SUITE_MANAGER = join(SOURCE_ROOT, "components", "case-suite-manager.tsx");
 const GLOBAL_RUN_DIALOG = join(SOURCE_ROOT, "components", "global-run-dialog.tsx");
+const GLOBAL_PROJECT_SWITCHER = join(SOURCE_ROOT, "components", "global-project-switcher.tsx");
 const CASE_SUITE_EDITOR = join(SOURCE_ROOT, "components", "case-suite-editor.tsx");
 const CASE_SELECTION_TABLE = join(SOURCE_ROOT, "components", "case-selection-table.tsx");
 const AUTOMATION_PAGE = join(SOURCE_ROOT, "app", "settings", "automation", "page.tsx");
@@ -94,7 +95,7 @@ describe("shared UI controls", () => {
     expect(stylesheet).toContain(".ui-input:focus");
   });
 
-  it("exposes administrator capabilities inside administration groups", () => {
+  it("exposes administrator capabilities as first-level navigation", () => {
     const appShell = readFileSync(APP_SHELL, "utf8");
     const accessSettings = readFileSync(ACCESS_SETTINGS, "utf8");
     const managementPage = readFileSync(MANAGEMENT_PAGE, "utf8");
@@ -102,12 +103,14 @@ describe("shared UI controls", () => {
     expect(appShell).not.toContain("<span>管理中心</span>");
     expect(appShell).toContain('label: "访问管理"');
     expect(appShell).toContain('label: "平台设置"');
+    expect(appShell).not.toContain("AdministrationGroup");
+    expect(appShell).not.toContain("nav-group-toggle");
     expect(managementPage).toContain('redirect("/settings/platform?section=configuration")');
     expect(accessSettings).toContain('id="users"');
     expect(accessSettings).toContain('id="ldap"');
   });
 
-  it("uses grouped navigation and one global project picker", () => {
+  it("uses flat navigation and one global project hierarchy picker", () => {
     const appShell = readFileSync(APP_SHELL, "utf8");
     const suiteManager = readFileSync(CASE_SUITE_MANAGER, "utf8");
     const projectPickerConsumers = typescriptReactFiles(SOURCE_ROOT)
@@ -119,6 +122,10 @@ describe("shared UI controls", () => {
     expect(appShell).toContain('label: "运维计划"');
     expect(appShell).not.toContain('label: "用例批跑"');
     expect(appShell).toContain("<GlobalProjectSwitcher");
+    expect(appShell).toContain("projectVersions={projectVersions}");
+    const globalSwitcher = readFileSync(GLOBAL_PROJECT_SWITCHER, "utf8");
+    expect(globalSwitcher).toContain('aria-label="当前项目版本"');
+    expect(globalSwitcher).toContain('aria-label="当前测试阶段"');
     expect(suiteManager).not.toContain("<ProjectPicker");
     expect(suiteManager).not.toContain("<Select");
     expect(projectPickerConsumers).toEqual(["components/global-project-switcher.tsx"]);
@@ -130,6 +137,8 @@ describe("shared UI controls", () => {
       expect(source, relative(SOURCE_ROOT, file)).not.toContain("切换项目");
       expect(source, relative(SOURCE_ROOT, file)).not.toContain("项目筛选");
       expect(source, relative(SOURCE_ROOT, file)).not.toContain('name="projectId"');
+      expect(source, relative(SOURCE_ROOT, file)).not.toContain('name="projectVersionId"');
+      expect(source, relative(SOURCE_ROOT, file)).not.toContain('name="testStageId"');
     }
 
     const suiteEditor = readFileSync(CASE_SUITE_EDITOR, "utf8");
@@ -172,12 +181,12 @@ describe("shared UI controls", () => {
     expect(accessSettings).toContain('title="分配用户角色"');
   });
 
-  it("keeps every first- and second-level sidebar tab at exactly four Chinese characters", () => {
+  it("keeps every first-level sidebar tab at exactly four Chinese characters", () => {
     // 产品导航采用固定四字节奏。该约束属于信息架构，不允许在视觉改版中随意改回
     // “首页”“用例库”等长度不一致的标签；根级 pnpm test 会在 CI 执行本断言。
     const appShell = readFileSync(APP_SHELL, "utf8");
     const navigationSource = appShell.slice(
-      appShell.indexOf("const navigation:"),
+      appShell.indexOf("const primaryNavigation:"),
       appShell.indexOf("function isActive("),
     );
     const tabLabels = [
@@ -187,6 +196,7 @@ describe("shared UI controls", () => {
     expect(tabLabels.length).toBeGreaterThan(10);
     expect(tabLabels.filter((label) => [...label].length !== 4)).toEqual([]);
     expect(appShell).toContain('<span className="nav-section-label">系统管理</span>');
+    expect(appShell).not.toContain("nav-item-nested");
   });
 
   it("presents the configurable JAR upload boundary in MiB", () => {

@@ -130,35 +130,31 @@ export async function logout(page: Page): Promise<void> {
   await expect(page).toHaveURL(/\/login$/);
 }
 
-export async function selectProjectContext(page: Page, projectId: string): Promise<void> {
+export async function selectProjectContext(
+  page: Page,
+  projectId: string,
+  projectVersionId?: string,
+  testStageId?: string,
+): Promise<void> {
   const response = await browserJson(page, "/api/v1/selected-project", {
     method: "PUT",
-    body: { projectId },
+    body: {
+      projectId,
+      ...(projectVersionId ? { projectVersionId } : {}),
+      ...(testStageId ? { testStageId } : {}),
+    },
   });
   expect(response.status).toBe(200);
 }
 
-// The sidebar keeps administration entries inside collapsed groups; expand the
-// owning group before asserting or clicking one of its nested links. Login flows
-// navigate through /landing with a second document load, so the sidebar can
-// briefly vanish right after login; poll briefly for the toggle. Accounts
-// without any entry in the group see no toggle at all; treat that as a no-op.
+// Compatibility helper for older scenario code. Administration capabilities are
+// now first-level links, so callers only need to wait until the shell is mounted.
 export async function expandAdministrationGroup(
   page: Page,
   groupLabel: "项目协作" | "身份权限" | "执行配置" | "平台运维",
 ): Promise<void> {
-  const toggle = page.getByRole("navigation", { name: "主导航" }).getByRole("button", {
-    name: groupLabel,
-  });
-  const deadline = Date.now() + 10_000;
-  while ((await toggle.count()) === 0) {
-    if (Date.now() >= deadline) return;
-    await page.waitForTimeout(200);
-  }
-  if ((await toggle.getAttribute("aria-expanded")) !== "true") {
-    await toggle.click();
-  }
-  await expect(toggle).toHaveAttribute("aria-expanded", "true");
+  void groupLabel;
+  await expect(page.getByRole("navigation", { name: "主导航" })).toBeVisible({ timeout: 10_000 });
 }
 
 export function uniqueName(prefix: string): string {

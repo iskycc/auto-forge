@@ -201,6 +201,7 @@ export const Select = forwardRef<HTMLSelectElement, SelectHTMLAttributes<HTMLSel
         {multiple ? null : (
           <>
             <button
+              aria-label={props["aria-label"]}
               aria-expanded={open}
               aria-haspopup="listbox"
               className="ui-select-trigger"

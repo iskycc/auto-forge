@@ -126,7 +126,10 @@ describe.skipIf(!connectionString)("PostgreSQL platform repositories", () => {
     const credentialHash = randomUUID();
     const bootstrapTokenHash = randomUUID();
     const secondProjectId = randomUUID();
+    const defaultProjectId = "00000000-0000-7000-8000-000000000001";
     const secondProjectBatchId = `batch-project-${runnerId}`;
+    let analyticsProjectVersionId: string | undefined;
+    let analyticsTestStageId: string | undefined;
     try {
       await handle.ready;
       await handle.pool.query(
@@ -177,6 +180,24 @@ describe.skipIf(!connectionString)("PostgreSQL platform repositories", () => {
       await expect(
         handle.pool.query("SELECT id FROM project_runtime_assets WHERE id = $1", [firstBundleId]),
       ).resolves.toMatchObject({ rowCount: 0 });
+      const analyticsProjectVersion = await structures.createVersion({
+        id: randomUUID(),
+        projectId: defaultProjectId,
+        name: `analytics-${runnerId}`,
+        normalizedName: `analytics-${runnerId}`,
+        recordedAt: "2026-08-09T00:00:00.000Z",
+      });
+      analyticsProjectVersionId = analyticsProjectVersion.id;
+      const analyticsTestStage = await structures.createStage({
+        id: randomUUID(),
+        projectId: defaultProjectId,
+        projectVersionId: analyticsProjectVersion.id,
+        name: `stage-${runnerId}`,
+        normalizedName: `stage-${runnerId}`,
+        description: "analytics hierarchy filter",
+        recordedAt: "2026-08-09T00:00:00.000Z",
+      });
+      analyticsTestStageId = analyticsTestStage.id;
       await suites.create({
         id: suiteId,
         name: "PostgreSQL smoke suite",
@@ -241,6 +262,9 @@ describe.skipIf(!connectionString)("PostgreSQL platform repositories", () => {
       });
 
       await catalog.importCatalog({
+        projectId: defaultProjectId,
+        projectVersionId: analyticsProjectVersion.id,
+        testStageId: analyticsTestStage.id,
         sourceId: `source-${runnerId}`,
         objectKey: `jars/${runnerId}/source.jar`,
         displayName: "PostgreSQL source",
@@ -454,7 +478,11 @@ describe.skipIf(!connectionString)("PostgreSQL platform repositories", () => {
       });
       await expect(
         operations.readAnalytics({
-          filter: { caseDefinitionId: `case-${runnerId}` },
+          filter: {
+            caseDefinitionId: `case-${runnerId}`,
+            projectVersionId: analyticsProjectVersion.id,
+            testStageId: analyticsTestStage.id,
+          },
           generatedAt: "2026-08-09T00:02:00.000Z",
         }),
       ).resolves.toMatchObject({
@@ -465,6 +493,15 @@ describe.skipIf(!connectionString)("PostgreSQL platform repositories", () => {
         failures: [],
         trend: [{ total: 1, passed: 1, failed: 0, skipped: 0 }],
       });
+      await expect(
+        operations.readAnalytics({
+          filter: {
+            caseDefinitionId: `case-${runnerId}`,
+            projectVersionId: randomUUID(),
+          },
+          generatedAt: "2026-08-09T00:02:00.000Z",
+        }),
+      ).resolves.toMatchObject({ sampleCount: 0, passed: 0, failed: 0 });
     } finally {
       await handle.pool.query("DELETE FROM run_batches WHERE id = $1", [secondProjectBatchId]);
       await handle.pool.query("DELETE FROM run_batches WHERE id = $1", [`batch-${runnerId}`]);
@@ -474,6 +511,14 @@ describe.skipIf(!connectionString)("PostgreSQL platform repositories", () => {
       ]);
       await handle.pool.query("DELETE FROM case_sources WHERE id = $1", [`dependency-${runnerId}`]);
       await handle.pool.query("DELETE FROM case_sources WHERE id = $1", [`source-${runnerId}`]);
+      if (analyticsTestStageId) {
+        await handle.pool.query("DELETE FROM test_stages WHERE id = $1", [analyticsTestStageId]);
+      }
+      if (analyticsProjectVersionId) {
+        await handle.pool.query("DELETE FROM project_versions WHERE id = $1", [
+          analyticsProjectVersionId,
+        ]);
+      }
       await handle.pool.query("DELETE FROM runners WHERE id = $1", [runnerId]);
       await handle.pool.query("DELETE FROM runner_bootstrap_uses WHERE token_hash = $1", [
         bootstrapTokenHash,

@@ -4,8 +4,6 @@ import {
   BarChart3,
   BookOpenText,
   Bot,
-  Boxes,
-  ChevronDown,
   CircleHelp,
   ClipboardList,
   FileCog,
@@ -21,11 +19,10 @@ import {
 import type { Permission } from "@autoforge/domain";
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
-import { useState, type ReactNode } from "react";
+import type { ReactNode } from "react";
 
 import { LogoutButton } from "./logout-button";
 import { TopbarTools } from "./topbar-tools";
-import { Button } from "./ui";
 import { GlobalRunDialog } from "./global-run-dialog";
 import { GlobalProjectSwitcher } from "./global-project-switcher";
 
@@ -43,7 +40,7 @@ type NavigationItem = {
   defaultSection?: string;
 };
 
-const navigation: NavigationItem[] = [
+const primaryNavigation: NavigationItem[] = [
   { label: "工作概览", href: "/", icon: Home, permission: "case.read" },
   { label: "用例管理", href: "/cases", icon: BookOpenText, permission: "case.read" },
   { label: "用例任务", href: "/case-suites", icon: Layers3, permission: "case_suite.read" },
@@ -59,83 +56,53 @@ const navigation: NavigationItem[] = [
   { label: "质量洞察", href: "/insights", icon: BarChart3, permission: "run.read" },
 ];
 
-type AdministrationGroup = {
-  id: string;
-  label: string;
-  icon: typeof Home;
-  items: NavigationItem[];
-};
-
-const administrationGroups: AdministrationGroup[] = [
+const administrationNavigation: NavigationItem[] = [
   {
-    id: "project-collaboration",
-    label: "项目协作",
+    label: "项目管理",
+    href: "/settings/projects",
     icon: Landmark,
-    items: [
-      { label: "项目管理", href: "/settings/projects", icon: Landmark, permission: "project.read" },
-    ],
+    permission: "project.read",
   },
   {
-    id: "identity-access",
-    label: "身份权限",
+    label: "访问管理",
+    href: "/settings/access?section=users",
     icon: ShieldCheck,
-    items: [
-      {
-        label: "访问管理",
-        href: "/settings/access?section=users",
-        icon: ShieldCheck,
-        anyPermissions: ["settings.read", "user.read", "role.read", "ldap.read"],
-        activePrefixes: ["/settings/access"],
-      },
-    ],
+    anyPermissions: ["settings.read", "user.read", "role.read", "ldap.read"],
+    activePrefixes: ["/settings/access"],
   },
   {
-    id: "execution-configuration",
-    label: "执行配置",
-    icon: Boxes,
-    items: [
-      {
-        label: "运维计划",
-        href: "/settings/automation",
-        icon: FileCog,
-        anyPermissions: ["case_suite.read", "ldap.read"],
-        activePrefixes: ["/settings/automation"],
-      },
-      {
-        label: "执行机组",
-        href: "/runners?section=groups",
-        icon: Server,
-        permission: "runner.read",
-        activePrefixes: ["/runners"],
-        section: "groups",
-      },
-    ],
-  },
-  {
-    id: "platform-operations",
-    label: "平台运维",
+    label: "运维计划",
+    href: "/settings/automation",
     icon: FileCog,
-    items: [
-      {
-        label: "安全审计",
-        href: "/audit",
-        icon: ShieldCheck,
-        permission: "audit.read",
-      },
-      {
-        label: "平台设置",
-        href: "/settings/platform?section=configuration",
-        icon: FileCog,
-        permission: "settings.read",
-        activePrefixes: ["/settings/platform"],
-      },
-      {
-        label: "文件来源",
-        href: "/objects",
-        icon: FolderOpen,
-        permission: "case_source.read",
-      },
-    ],
+    anyPermissions: ["case_suite.read", "ldap.read"],
+    activePrefixes: ["/settings/automation"],
+  },
+  {
+    label: "执行机组",
+    href: "/runners?section=groups",
+    icon: Server,
+    permission: "runner.read",
+    activePrefixes: ["/runners"],
+    section: "groups",
+  },
+  {
+    label: "安全审计",
+    href: "/audit",
+    icon: ShieldCheck,
+    permission: "audit.read",
+  },
+  {
+    label: "平台设置",
+    href: "/settings/platform?section=configuration",
+    icon: FileCog,
+    permission: "settings.read",
+    activePrefixes: ["/settings/platform"],
+  },
+  {
+    label: "文件来源",
+    href: "/objects",
+    icon: FolderOpen,
+    permission: "case_source.read",
   },
 ];
 
@@ -181,6 +148,9 @@ export function AppShell({
   forcePasswordChange = false,
   projects = [],
   selectedProjectId,
+  projectVersions = [],
+  selectedProjectVersionId,
+  selectedTestStageId,
 }: {
   children: ReactNode;
   mode: "lite" | "full";
@@ -189,6 +159,13 @@ export function AppShell({
   forcePasswordChange?: boolean;
   projects?: Array<{ id: string; name: string }>;
   selectedProjectId?: string | undefined;
+  projectVersions?: Array<{
+    id: string;
+    name: string;
+    stages: Array<{ id: string; name: string }>;
+  }>;
+  selectedProjectVersionId?: string | undefined;
+  selectedTestStageId?: string | undefined;
 }) {
   const pathname = usePathname();
   const currentSection = useSearchParams().get("section");
@@ -203,43 +180,20 @@ export function AppShell({
   const granted = new Set(permissions);
   const visibleNavigation = forcePasswordChange
     ? []
-    : navigation.filter(
+    : primaryNavigation.filter(
         (item) =>
           (!item.permission || granted.has(item.permission)) &&
           (!item.anyPermissions ||
             item.anyPermissions.some((permission) => granted.has(permission))),
       );
-  const visibleGroups = forcePasswordChange
+  const visibleAdministration = forcePasswordChange
     ? []
-    : administrationGroups
-        .map((group) => ({
-          ...group,
-          items: group.items.filter(
-            (item) =>
-              (!item.permission || granted.has(item.permission)) &&
-              (!item.anyPermissions ||
-                item.anyPermissions.some((permission) => granted.has(permission))),
-          ),
-        }))
-        .filter((group) => group.items.length > 0);
-  const activeGroupIds = visibleGroups
-    .filter((group) => group.items.some((item) => isActive(pathname, currentSection, item)))
-    .map((group) => group.id);
-  const [openGroupIds, setOpenGroupIds] = useState<ReadonlySet<string>>(
-    () => new Set(activeGroupIds),
-  );
-  const expandedGroupIds = new Set([...openGroupIds, ...activeGroupIds]);
-  const toggleGroup = (groupId: string) => {
-    setOpenGroupIds((previous) => {
-      const next = new Set(previous);
-      if (next.has(groupId)) {
-        next.delete(groupId);
-      } else {
-        next.add(groupId);
-      }
-      return next;
-    });
-  };
+    : administrationNavigation.filter(
+        (item) =>
+          (!item.permission || granted.has(item.permission)) &&
+          (!item.anyPermissions ||
+            item.anyPermissions.some((permission) => granted.has(permission))),
+      );
   // /share 前缀是免登录的只读公开页（如执行日志公开访问），与登录/初始化页一样裸渲染，
   // 不展示侧边栏与顶栏。
   if (
@@ -278,48 +232,20 @@ export function AppShell({
               </Link>
             );
           })}
-          {visibleGroups.length > 0 ? <span className="nav-section-label">系统管理</span> : null}
-          {visibleGroups.map((group) => {
-            const GroupIcon = group.icon;
-            const expanded = expandedGroupIds.has(group.id);
-            const groupActive = group.items.some((item) =>
-              isActive(pathname, currentSection, item),
-            );
+          {visibleAdministration.length > 0 ? (
+            <span className="nav-section-label">系统管理</span>
+          ) : null}
+          {visibleAdministration.map((item) => {
+            const Icon = item.icon;
             return (
-              <div className="nav-group" key={group.id}>
-                <Button
-                  type="button"
-                  className={`nav-group-toggle ${groupActive ? "nav-group-toggle-active" : ""}`}
-                  aria-expanded={expanded}
-                  aria-controls={`nav-group-${group.id}`}
-                  onClick={() => toggleGroup(group.id)}
-                >
-                  <GroupIcon size={19} aria-hidden="true" />
-                  <span>{group.label}</span>
-                  <ChevronDown
-                    size={15}
-                    aria-hidden="true"
-                    className={`nav-group-chevron ${expanded ? "nav-group-chevron-open" : ""}`}
-                  />
-                </Button>
-                {expanded ? (
-                  <div className="nav-group-items" id={`nav-group-${group.id}`}>
-                    {group.items.map((item) => {
-                      const Icon = item.icon;
-                      return (
-                        <Link
-                          className={`nav-item nav-item-nested ${isActive(pathname, currentSection, item) ? "nav-item-active" : ""}`}
-                          href={navigationHref(item, granted)}
-                          key={item.href}
-                        >
-                          <Icon size={17} aria-hidden="true" />
-                          <span>{navigationLabel(item, granted)}</span>
-                        </Link>
-                      );
-                    })}
-                  </div>
-                ) : null}
-              </div>
+              <Link
+                className={`nav-item ${isActive(pathname, currentSection, item) ? "nav-item-active" : ""}`}
+                href={navigationHref(item, granted)}
+                key={item.href}
+              >
+                <Icon size={19} aria-hidden="true" />
+                <span>{navigationLabel(item, granted)}</span>
+              </Link>
             );
           })}
         </nav>
@@ -343,9 +269,12 @@ export function AppShell({
             <div className="topbar-context">
               {selectedProjectId ? (
                 <GlobalProjectSwitcher
-                  key={selectedProjectId}
+                  key={`${selectedProjectId}:${selectedProjectVersionId ?? ""}:${selectedTestStageId ?? ""}`}
                   projects={projects}
+                  projectVersions={projectVersions}
                   selectedProjectId={selectedProjectId}
+                  {...(selectedProjectVersionId ? { selectedProjectVersionId } : {})}
+                  {...(selectedTestStageId ? { selectedTestStageId } : {})}
                 />
               ) : null}
               <TopbarTools />
@@ -356,6 +285,10 @@ export function AppShell({
               <GlobalRunDialog
                 enabled={granted.has("run.create")}
                 {...(selectedProjectId ? { projectId: selectedProjectId } : {})}
+                {...(selectedProjectVersionId
+                  ? { projectVersionId: selectedProjectVersionId }
+                  : {})}
+                {...(selectedTestStageId ? { testStageId: selectedTestStageId } : {})}
               />
             ) : null}
             {!forcePasswordChange && granted.has("case_source.manage") ? (

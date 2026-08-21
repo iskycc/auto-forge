@@ -1,10 +1,22 @@
 import "server-only";
 
-import type { AuthenticatedIdentity, Permission, Project } from "@autoforge/domain";
+import type {
+  AuthenticatedIdentity,
+  Permission,
+  Project,
+  ProjectStructure,
+} from "@autoforge/domain";
 import { projectIdsForPermission } from "@autoforge/domain";
 import { cookies } from "next/headers";
 
 export const SELECTED_PROJECT_COOKIE_NAME = "autoforge_project";
+export const SELECTED_PROJECT_VERSION_COOKIE_NAME = "autoforge_project_version";
+export const SELECTED_TEST_STAGE_COOKIE_NAME = "autoforge_test_stage";
+
+export type SelectedProjectHierarchy = {
+  projectVersionId?: string;
+  testStageId?: string;
+};
 
 const SYSTEM_PROJECT_CONTEXT_PERMISSIONS: readonly Permission[] = [
   "case.read",
@@ -48,7 +60,27 @@ export async function selectedProjectId(
     ? projects.filter((project) => permittedProjectIds.includes(project.id))
     : projects;
   const requestedProjectId = (await cookies()).get(SELECTED_PROJECT_COOKIE_NAME)?.value;
-  return projects.some((project) => project.id === requestedProjectId)
+  return accessibleProjects.some((project) => project.id === requestedProjectId)
     ? requestedProjectId
     : accessibleProjects[0]?.id;
+}
+
+export async function selectedProjectHierarchy(
+  structure: ProjectStructure | undefined,
+): Promise<SelectedProjectHierarchy> {
+  if (!structure) return {};
+  const cookieStore = await cookies();
+  const activeVersions = structure.versions.filter((version) => version.status === "active");
+  const requestedVersionId = cookieStore.get(SELECTED_PROJECT_VERSION_COOKIE_NAME)?.value;
+  const version =
+    activeVersions.find((candidate) => candidate.id === requestedVersionId) ?? activeVersions[0];
+  if (!version) return {};
+  const activeStages = version.stages.filter((stage) => stage.status === "active");
+  const requestedStageId = cookieStore.get(SELECTED_TEST_STAGE_COOKIE_NAME)?.value;
+  const stage =
+    activeStages.find((candidate) => candidate.id === requestedStageId) ?? activeStages[0];
+  return {
+    projectVersionId: version.id,
+    ...(stage ? { testStageId: stage.id } : {}),
+  };
 }

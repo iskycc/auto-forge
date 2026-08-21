@@ -24,7 +24,7 @@ type RunOptions = {
 };
 
 type ProjectRunOptions = {
-  projectId: string | undefined;
+  contextKey: string;
   value: RunOptions;
 };
 
@@ -57,7 +57,17 @@ export function OpenRunDialogButton({
   );
 }
 
-export function GlobalRunDialog({ enabled, projectId }: { enabled: boolean; projectId?: string }) {
+export function GlobalRunDialog({
+  enabled,
+  projectId,
+  projectVersionId,
+  testStageId,
+}: {
+  enabled: boolean;
+  projectId?: string;
+  projectVersionId?: string;
+  testStageId?: string;
+}) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -79,8 +89,8 @@ export function GlobalRunDialog({ enabled, projectId }: { enabled: boolean; proj
   const [adapterSuiteName, setAdapterSuiteName] = useState("");
   const [adapterTestName, setAdapterTestName] = useState("");
   const [environmentAddresses, setEnvironmentAddresses] = useState("");
-  const options =
-    projectOptions && projectOptions.projectId === projectId ? projectOptions.value : undefined;
+  const contextKey = `${projectId ?? ""}:${projectVersionId ?? ""}:${testStageId ?? ""}`;
+  const options = projectOptions?.contextKey === contextKey ? projectOptions.value : undefined;
 
   const selectedSuite = options?.suites.find((suite) => suite.id === suiteId);
   const selectedCase = options?.cases.find((definition) => definition.id === caseDefinitionId);
@@ -118,9 +128,9 @@ export function GlobalRunDialog({ enabled, projectId }: { enabled: boolean; proj
         )
           .then((definition) => {
             setProjectOptions((current) => {
-              if (!current || current.projectId !== projectId) return current;
+              if (!current || current.contextKey !== contextKey) return current;
               return {
-                projectId: current.projectId,
+                contextKey: current.contextKey,
                 value: {
                   ...current.value,
                   cases: [
@@ -139,9 +149,9 @@ export function GlobalRunDialog({ enabled, projectId }: { enabled: boolean; proj
       }
       setLoading(true);
       setError("");
-      void loadRunOptions(requestedCaseId, projectId)
+      void loadRunOptions(requestedCaseId, projectId, projectVersionId, testStageId)
         .then((loaded) => {
-          setProjectOptions({ projectId, value: loaded });
+          setProjectOptions({ contextKey, value: loaded });
           setSuiteId(loaded.suites[0]?.id ?? "");
           setCaseDefinitionId(
             requestedCaseId && loaded.cases.some((candidate) => candidate.id === requestedCaseId)
@@ -154,7 +164,7 @@ export function GlobalRunDialog({ enabled, projectId }: { enabled: boolean; proj
         })
         .finally(() => setLoading(false));
     },
-    [loading, options, projectId],
+    [contextKey, loading, options, projectId, projectVersionId, testStageId],
   );
 
   useEffect(() => {
@@ -625,12 +635,22 @@ export function GlobalRunDialog({ enabled, projectId }: { enabled: boolean; proj
   );
 }
 
-async function loadRunOptions(requestedCaseId?: string, projectId?: string): Promise<RunOptions> {
+async function loadRunOptions(
+  requestedCaseId?: string,
+  projectId?: string,
+  projectVersionId?: string,
+  testStageId?: string,
+): Promise<RunOptions> {
+  const contextQuery = new URLSearchParams();
+  if (projectId) contextQuery.set("projectId", projectId);
+  if (projectVersionId) contextQuery.set("projectVersionId", projectVersionId);
+  if (testStageId) contextQuery.set("testStageId", testStageId);
+  const query = contextQuery.size > 0 ? `&${contextQuery.toString()}` : "";
   const projectQuery = projectId ? `&projectId=${encodeURIComponent(projectId)}` : "";
   const [suitePage, casePage, requestedCase, runnerPage, groupPage] = await Promise.all([
     requestJson<{ items: CaseSuite[] }>(`/api/v1/case-suites?limit=200${projectQuery}`),
     requestJson<{ items: CaseDefinitionWithMethods[] }>(
-      `/api/v1/case-definitions?limit=100${projectQuery}`,
+      `/api/v1/case-definitions?limit=100${query}`,
     ),
     requestedCaseId
       ? requestJson<CaseDefinitionWithMethods>(
@@ -644,6 +664,8 @@ async function loadRunOptions(requestedCaseId?: string, projectId?: string): Pro
     ? [requestedCase, ...casePage.items.filter((candidate) => candidate.id !== requestedCase.id)]
     : casePage.items;
   return {
+    // 任务自身的版本化策略是批量执行的唯一配置来源；顶栏版本只约束单用例选择，
+    // 不能二次隐藏当前项目中可直接执行的任务。
     suites: suitePage.items.filter((suite) => suite.enabled && suite.status === "active"),
     cases: cases.filter((definition) => definition.enabled && !definition.archived),
     runners: runnerPage.items,

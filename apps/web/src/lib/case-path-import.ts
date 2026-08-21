@@ -21,14 +21,21 @@ export function normalizeCasePath(value: string): string {
 }
 
 export function parseCasePathColumn(text: string): string[] {
+  return parseCasePathCells(text.split(/\r?\n/).map((line) => firstColumnOf(line)));
+}
+
+export function parseCasePathCells(cells: Iterable<string>): string[] {
   const paths: string[] = [];
   const seen = new Set<string>();
-  const lines = text.split(/\r?\n/);
-  for (const [index, line] of lines.entries()) {
-    const cell = cleanCell(firstColumnOf(line));
+  let firstNonEmptyCell = true;
+  for (const rawCell of cells) {
+    const cell = cleanCell(rawCell);
     if (!cell) continue;
-    // 从 Excel 复制的列通常自带表头，跳过以免误报为未匹配路径。
-    if (index === 0 && cell === CASE_PATH_HEADER) continue;
+    // 文件可能在表头前带有空行或 BOM；首个有效单元格仍应识别为表头。
+    if (firstNonEmptyCell) {
+      firstNonEmptyCell = false;
+      if (cell === CASE_PATH_HEADER) continue;
+    }
     const normalized = normalizeCasePath(cell);
     if (!normalized || seen.has(normalized)) continue;
     seen.add(normalized);
@@ -92,7 +99,7 @@ function firstCsvCell(line: string): string {
 }
 
 function cleanCell(cell: string): string {
-  let value = cell.trim();
+  let value = cell.replace(/^\uFEFF/, "").trim();
   if (value.length >= 2 && value.startsWith('"') && value.endsWith('"')) {
     value = value.slice(1, -1).trim();
   }
