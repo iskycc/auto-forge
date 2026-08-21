@@ -16,6 +16,12 @@ and known limitations.
   bounded worker-thread pool. Runner claim recovery and same-key scheduling are coalesced, scheduling
   snapshots scale with configured capacity, and SQLite assignment input/Runner data is bulk-loaded
   instead of queried once per decision.
+- Optimized the complete Lite/Full control path rather than relying on worker count alone: batch
+  status aggregation now uses indexed presence checks and skips unchanged hot-row writes, claim and
+  recovery context reads are batched, execution-record summaries avoid per-row queries, and burst
+  refills perform one leading plus at most one trailing scan. SQLite control and log writes now use
+  short immediate transactions so multiple WAL worker connections wait instead of failing on a
+  deferred read-to-write lock upgrade.
 - Added streamed route skeletons and deferred in-page filtering feedback to case management, task
   management, execution records and batch details so large queries do not appear frozen.
 - Raised task policy concurrency to 10,000 while retaining bounded scheduling windows and storage
@@ -38,6 +44,8 @@ and known limitations.
   `0035_shared_case_source_objects.sql`. They replace the global unique JAR object-key index with a
   non-unique lookup index; project-hierarchy SHA-256 indexes remain the source-import idempotency
   boundary.
+- Added SQLite migration `0037_run_batch_list_index.sql` and PostgreSQL migration
+  `0036_run_batch_list_index.sql` for project-scoped execution-record cursor reads.
 
 ### Tests
 
@@ -47,6 +55,10 @@ and known limitations.
   verifies that no new assignment is issued, and captures the final execution-record screenshot.
 - Added a repeatable Lite capacity gate that atomically reserves 500 assignments across 25 Runners
   in under five seconds; the current local run completed the bounded pass in under 300 ms.
+- Added a production-build Playwright gate used by CI and Release checks. Eight virtual Runners claim
+  500 slots, upload 500 logs and submit 500 completions while execution-record reads are timed; the
+  JSON measurements and failure trace are retained as workflow artifacts. The local regression
+  completed the protocol phase in 5.28 seconds with 141.77 ms read P95 and 196.96 ms maximum latency.
 - Added a 100,000-run graceful-termination gate; set-based SQLite transitions completed locally in
   under one second instead of iterating through every run on the Web event loop.
 - Added Lite and Full adapter regressions for stable-ID overwrite, immutable version creation,

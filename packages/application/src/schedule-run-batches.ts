@@ -37,6 +37,7 @@ import type {
   RunnerRepository,
   SchedulingSnapshot,
 } from "./ports";
+import { CoalescedOperation } from "./coalesced-operation";
 
 const OFFLINE_AFTER_SECONDS = 45;
 const RUNNER_METRICS_THROTTLE_MS = 30_000;
@@ -47,7 +48,7 @@ export class RunBatchSchedulingService {
   private readonly lastRunnerMetricsAt = new Map<string, Date>();
   private readonly schedulingInFlight = new Map<
     string,
-    Promise<{ batch: RunBatch; reserved: number }>
+    CoalescedOperation<{ batch: RunBatch; reserved: number }>
   >();
 
   constructor(
@@ -311,11 +312,11 @@ export class RunBatchSchedulingService {
 
   private async scheduleWithCount(batchId: string): Promise<{ batch: RunBatch; reserved: number }> {
     const existing = this.schedulingInFlight.get(batchId);
-    if (existing) return existing;
-    const scheduling = this.scheduleBatch(batchId);
+    if (existing) return existing.requestAnotherPass();
+    const scheduling = new CoalescedOperation(() => this.scheduleBatch(batchId));
     this.schedulingInFlight.set(batchId, scheduling);
     try {
-      return await scheduling;
+      return await scheduling.result;
     } finally {
       if (this.schedulingInFlight.get(batchId) === scheduling) {
         this.schedulingInFlight.delete(batchId);

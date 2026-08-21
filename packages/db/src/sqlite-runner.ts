@@ -2,7 +2,7 @@ import type { RegisterRunnerRecord, RunnerRepository } from "@autoforge/applicat
 import type { Runner } from "@autoforge/domain";
 import { and, desc, eq, gt, isNull, or, sql } from "drizzle-orm";
 
-import type { SqliteDatabaseHandle } from "./database";
+import { runSqliteWriteTransaction, type SqliteDatabaseHandle } from "./database";
 import { mapStoredRunner } from "./runner-mapper";
 import { assignmentLeases, runnerBootstrapUses, runners } from "./schema";
 
@@ -10,7 +10,7 @@ export class SqliteRunnerRepository implements RunnerRepository {
   constructor(private readonly handle: SqliteDatabaseHandle) {}
 
   async register(record: RegisterRunnerRecord): Promise<Runner | null> {
-    return this.handle.client.transaction(() => {
+    return runSqliteWriteTransaction(this.handle, () => {
       const use = this.handle.db
         .insert(runnerBootstrapUses)
         .values({ tokenHash: record.bootstrapTokenHash, usedAt: record.recordedAt })
@@ -42,7 +42,7 @@ export class SqliteRunnerRepository implements RunnerRepository {
         .returning()
         .get();
       return mapStoredRunner(row);
-    })();
+    });
   }
 
   async findByCredentialHash(credentialHash: string, now: string): Promise<Runner | null> {
@@ -197,7 +197,7 @@ export class SqliteRunnerRepository implements RunnerRepository {
   }
 
   async deregister(input: { runnerId: string; deregisteredAt: string }): Promise<Runner> {
-    return this.handle.client.transaction(() => {
+    return runSqliteWriteTransaction(this.handle, () => {
       const row = this.handle.db
         .update(runners)
         .set({
@@ -223,7 +223,7 @@ export class SqliteRunnerRepository implements RunnerRepository {
         )
         .run();
       return mapStoredRunner(row);
-    })();
+    });
   }
 
   async purge(input: { runnerId: string; purgedAt: string }): Promise<Runner> {

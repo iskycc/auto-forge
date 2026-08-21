@@ -77,6 +77,8 @@ async function execute(task: LiteWorkerTask): Promise<unknown> {
       return executionRepository().recoverExpired(
         task.input as Parameters<SqliteExecutionControlRepository["recoverExpired"]>[0],
       );
+    case "resolve-attempt-contexts":
+      return executionRepository().resolveAttemptSchedulingContexts(task.attemptIds);
     case "terminate-batch":
       return executionRepository().terminateBatch(
         task.input as Parameters<SqliteExecutionControlRepository["terminateBatch"]>[0],

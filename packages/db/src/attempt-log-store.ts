@@ -152,43 +152,45 @@ export function createAttemptLogStore(attemptLogsDirectory: string): AttemptLogS
     async appendChunks(input) {
       assertBatchId(input.batchId);
       const client = openBatch(input.batchId);
-      return client.transaction(() => {
-        for (const chunk of input.chunks) {
-          const existing = client
-            .prepare(
-              `SELECT content, recorded_at FROM attempt_log_chunks
+      return client
+        .transaction(() => {
+          for (const chunk of input.chunks) {
+            const existing = client
+              .prepare(
+                `SELECT content, recorded_at FROM attempt_log_chunks
                WHERE attempt_id = ? AND stream = ? AND sequence = ?`,
-            )
-            .get(input.attemptId, chunk.stream, chunk.sequence) as
-            { content: string; recorded_at: string } | undefined;
-          if (existing) {
-            if (existing.content !== chunk.content || existing.recorded_at !== chunk.recordedAt) {
-              throw new DomainError("LOG_CHUNK_CONFLICT", "相同日志序号已保存不同内容。");
+              )
+              .get(input.attemptId, chunk.stream, chunk.sequence) as
+              { content: string; recorded_at: string } | undefined;
+            if (existing) {
+              if (existing.content !== chunk.content || existing.recorded_at !== chunk.recordedAt) {
+                throw new DomainError("LOG_CHUNK_CONFLICT", "相同日志序号已保存不同内容。");
+              }
+              continue;
             }
-            continue;
-          }
-          client
-            .prepare(
-              `INSERT INTO attempt_log_chunks
+            client
+              .prepare(
+                `INSERT INTO attempt_log_chunks
                (attempt_id, stream, sequence, content, size_bytes, recorded_at, received_at)
                VALUES (?, ?, ?, ?, ?, ?, ?)`,
-            )
-            .run(
-              input.attemptId,
-              chunk.stream,
-              chunk.sequence,
-              chunk.content,
-              Buffer.byteLength(chunk.content, "utf8"),
-              chunk.recordedAt,
-              input.receivedAt,
-            );
-        }
-        return {
-          stdout: advanceWatermark(client, input.attemptId, "stdout", input.receivedAt),
-          stderr: advanceWatermark(client, input.attemptId, "stderr", input.receivedAt),
-          agent: advanceWatermark(client, input.attemptId, "agent", input.receivedAt),
-        };
-      })();
+              )
+              .run(
+                input.attemptId,
+                chunk.stream,
+                chunk.sequence,
+                chunk.content,
+                Buffer.byteLength(chunk.content, "utf8"),
+                chunk.recordedAt,
+                input.receivedAt,
+              );
+          }
+          return {
+            stdout: advanceWatermark(client, input.attemptId, "stdout", input.receivedAt),
+            stderr: advanceWatermark(client, input.attemptId, "stderr", input.receivedAt),
+            agent: advanceWatermark(client, input.attemptId, "agent", input.receivedAt),
+          };
+        })
+        .immediate();
     },
 
     listChunks(input) {
@@ -258,11 +260,13 @@ export function createAttemptLogStore(attemptLogsDirectory: string): AttemptLogS
          acknowledged_sequence = MAX(attempt_log_watermarks.acknowledged_sequence, excluded.acknowledged_sequence),
          updated_at = excluded.updated_at`,
       );
-      client.transaction(() => {
-        for (const stream of ["stdout", "stderr", "agent"] as const) {
-          upsert.run(input.attemptId, stream, input.watermarks[stream], input.recordedAt);
-        }
-      })();
+      client
+        .transaction(() => {
+          for (const stream of ["stdout", "stderr", "agent"] as const) {
+            upsert.run(input.attemptId, stream, input.watermarks[stream], input.recordedAt);
+          }
+        })
+        .immediate();
     },
 
     removeBatchStore(batchId) {

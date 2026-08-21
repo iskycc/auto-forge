@@ -97,6 +97,14 @@ export class LiteWorkerPool implements LiteWorkDispatcher {
     return this.nextSchedulingLane().dispatch({ kind: "recover-expired", input });
   }
 
+  resolveAttemptSchedulingContexts(attemptIds: readonly string[]): Promise<unknown> {
+    if (attemptIds.length === 0) return Promise.resolve([]);
+    return this.keyedControlLane(`attempt:${attemptIds[0]}`).dispatch({
+      kind: "resolve-attempt-contexts",
+      attemptIds: [...attemptIds],
+    });
+  }
+
   async terminateBatch(input: unknown): Promise<number> {
     const batchId = stringProperty(input, "batchId");
     return (await this.keyedControlLane(`batch:${batchId}`).dispatch({

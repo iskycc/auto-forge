@@ -29,6 +29,7 @@ import type {
 import { assertRunnerAuthenticated } from "./manage-runners";
 import { discardableRunnerBatchCacheIds } from "./reconcile-runner-batch-cache";
 import { buildRecoverySchedulingEvents } from "./recovery-scheduling-events";
+import { resolveAttemptSchedulingContexts } from "./attempt-scheduling-contexts";
 
 const LEASE_DURATION_MS = 45_000;
 const RECOVERY_SCAN_LIMIT = 100;
@@ -140,10 +141,12 @@ export class ExecutionControlService {
         message: string;
         recordedAt: string;
       }> = [];
+      const contexts = await resolveAttemptSchedulingContexts(
+        this.executions,
+        claimed.map((record) => record.assignment.attemptId),
+      );
       for (const record of claimed) {
-        const context = await this.executions.resolveAttemptSchedulingContext(
-          record.assignment.attemptId,
-        );
+        const context = contexts.get(record.assignment.attemptId);
         if (!context) continue;
         events.push({
           id: this.ids.next(),
@@ -603,7 +606,7 @@ export class ExecutionControlService {
       });
       const recoveryEvents = await buildRecoverySchedulingEvents({
         recovered,
-        resolveContext: (attemptId) => this.executions.resolveAttemptSchedulingContext(attemptId),
+        executions: this.executions,
         recordedAt: now.toISOString(),
         nextEventId: () => this.ids.next(),
       });

@@ -1,4 +1,6 @@
 export * from "./attempt-log-shares";
+export * from "./attempt-scheduling-contexts";
+export * from "./coalesced-operation";
 export * from "./export-run-batch-results";
 export * from "./import-testng-jar";
 export * from "./control-executions";

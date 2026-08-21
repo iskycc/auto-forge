@@ -31,7 +31,7 @@ import {
 } from "@autoforge/domain";
 import { and, count, desc, eq, gt, gte, inArray, isNull, lt, lte, or, sql } from "drizzle-orm";
 
-import type { SqliteDatabaseHandle } from "./database";
+import { runSqliteWriteTransaction, type SqliteDatabaseHandle } from "./database";
 import {
   batchesOf,
   RELATIONAL_ID_QUERY_BATCH_SIZE,
@@ -84,7 +84,7 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
       record.runs,
       record.policy?.projectVersionId,
     );
-    this.handle.client.transaction(() => {
+    runSqliteWriteTransaction(this.handle, () => {
       // SQLite 单写者下，同一事务内取 MAX+1 即为全局唯一递增编号。
       const nextSequence = (
         this.handle.client
@@ -181,7 +181,7 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
             record.dispatchJob.createdAt,
           );
       }
-    })();
+    });
     return this.requiredBatchSummary(record.id);
   }
 
@@ -194,7 +194,7 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
       .orderBy(desc(runBatches.createdAt))
       .limit(limit)
       .all();
-    return Promise.all(rows.map((row) => this.mapBatch(row)));
+    return this.mapBatches(rows);
   }
 
   async listPage(input: RunBatchListQuery) {
@@ -235,7 +235,7 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
       .all();
     const hasMore = rows.length > input.limit;
     const pageRows = rows.slice(0, input.limit);
-    const items = await Promise.all(pageRows.map((row) => this.mapBatch(row)));
+    const items = await this.mapBatches(pageRows);
     const last = pageRows.at(-1);
     return {
       items,
@@ -424,7 +424,7 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
   }
 
   async reserveAssignments(input: ReserveSchedulingAssignmentsInput): Promise<number> {
-    return this.handle.client.transaction(() => {
+    return runSqliteWriteTransaction(this.handle, () => {
       const batchScope = this.handle.db
         .select({
           projectId: runBatches.projectId,
@@ -616,7 +616,7 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
         input.eventId ?? input.decisions[0]?.assignmentId ?? input.batchId,
       );
       return accepted;
-    })();
+    });
   }
 
   async appendSchedulingEvents(
@@ -624,7 +624,7 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
   ): Promise<void> {
     if (events.length === 0) return;
     // 批量插入放入同一事务，保证一轮调度产生的事件要么整体可见，要么整体回滚。
-    this.handle.client.transaction(() => {
+    runSqliteWriteTransaction(this.handle, () => {
       for (const event of events) {
         this.handle.client
           .prepare(
@@ -645,7 +645,7 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
             event.recordedAt,
           );
       }
-    })();
+    });
   }
 
   async listSchedulingEvents(
@@ -700,29 +700,73 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
   }
 
   private async mapBatch(row: typeof runBatches.$inferSelect): Promise<RunBatch> {
-    const selectedRunnerIds = this.handle.db
-      .select({ runnerId: runBatchRunners.runnerId })
-      .from(runBatchRunners)
-      .where(eq(runBatchRunners.batchId, row.id))
-      .orderBy(runBatchRunners.runnerId)
-      .all()
-      .map((runner) => runner.runnerId);
-    const statusCounts = this.handle.db
-      .select({ status: executionRuns.status, value: count() })
-      .from(executionRuns)
-      .where(eq(executionRuns.batchId, row.id))
-      .groupBy(executionRuns.status)
-      .all();
-    const byStatus = new Map(statusCounts.map((entry) => [entry.status, entry.value]));
+    const [batch] = await this.mapBatches([row]);
+    if (!batch) throw new Error(`Cannot map run batch ${row.id}.`);
+    return batch;
+  }
+
+  /** 列表页一次读取整页关联计数，避免每个批次追加三次查询。 */
+  private async mapBatches(rows: Array<typeof runBatches.$inferSelect>): Promise<RunBatch[]> {
+    if (rows.length === 0) return [];
+    const batchIds = rows.map((row) => row.id);
+    const selectedRunnerRows = batchesOf(batchIds, RELATIONAL_ID_QUERY_BATCH_SIZE).flatMap((ids) =>
+      this.handle.db
+        .select({ batchId: runBatchRunners.batchId, runnerId: runBatchRunners.runnerId })
+        .from(runBatchRunners)
+        .where(inArray(runBatchRunners.batchId, ids))
+        .orderBy(runBatchRunners.batchId, runBatchRunners.runnerId)
+        .all(),
+    );
+    const statusRows = batchesOf(batchIds, RELATIONAL_ID_QUERY_BATCH_SIZE).flatMap((ids) =>
+      this.handle.db
+        .select({ batchId: executionRuns.batchId, status: executionRuns.status, value: count() })
+        .from(executionRuns)
+        .where(inArray(executionRuns.batchId, ids))
+        .groupBy(executionRuns.batchId, executionRuns.status)
+        .all(),
+    );
+    const outcomeRows = batchesOf(batchIds, RELATIONAL_ID_QUERY_BATCH_SIZE).flatMap((ids) =>
+      this.handle.db
+        .select({
+          batchId: executionRuns.batchId,
+          failed: sql<number>`sum(case when ${executionRuns.status} = 'failed' and (${executionRuns.terminalOutcome} is null or ${executionRuns.terminalOutcome} <> 'timed_out') then 1 else 0 end)`,
+          timedOut: sql<number>`sum(case when ${executionRuns.terminalOutcome} = 'timed_out' then 1 else 0 end)`,
+        })
+        .from(executionRuns)
+        .where(inArray(executionRuns.batchId, ids))
+        .groupBy(executionRuns.batchId)
+        .all(),
+    );
+    const runnerIdsByBatch = new Map<string, string[]>();
+    for (const runner of selectedRunnerRows) {
+      const ids = runnerIdsByBatch.get(runner.batchId) ?? [];
+      ids.push(runner.runnerId);
+      runnerIdsByBatch.set(runner.batchId, ids);
+    }
+    const statusByBatch = new Map<string, Map<string, number>>();
+    for (const entry of statusRows) {
+      const counts = statusByBatch.get(entry.batchId) ?? new Map<string, number>();
+      counts.set(entry.status, entry.value);
+      statusByBatch.set(entry.batchId, counts);
+    }
+    const outcomesByBatch = new Map(outcomeRows.map((entry) => [entry.batchId, entry]));
+    return rows.map((row) =>
+      this.mapBatchRow(
+        row,
+        runnerIdsByBatch.get(row.id) ?? [],
+        statusByBatch.get(row.id) ?? new Map(),
+        outcomesByBatch.get(row.id),
+      ),
+    );
+  }
+
+  private mapBatchRow(
+    row: typeof runBatches.$inferSelect,
+    selectedRunnerIds: string[],
+    byStatus: Map<string, number>,
+    outcomeCounts: { failed: number | null; timedOut: number | null } | undefined,
+  ): RunBatch {
     const policy = batchPolicy(row.policyJson);
-    const outcomeCounts = this.handle.db
-      .select({
-        failed: sql<number>`sum(case when ${executionRuns.status} = 'failed' and (${executionRuns.terminalOutcome} is null or ${executionRuns.terminalOutcome} <> 'timed_out') then 1 else 0 end)`,
-        timedOut: sql<number>`sum(case when ${executionRuns.terminalOutcome} = 'timed_out' then 1 else 0 end)`,
-      })
-      .from(executionRuns)
-      .where(eq(executionRuns.batchId, row.id))
-      .get();
     return {
       id: row.id,
       sequenceNumber: row.sequenceNumber,

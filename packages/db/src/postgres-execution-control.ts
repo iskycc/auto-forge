@@ -112,6 +112,8 @@ type AttemptEventRow = {
 };
 
 export class PostgresExecutionControlRepository implements ExecutionControlRepository {
+  private readonly recordedAttemptLogPaths = new Set<string>();
+
   constructor(
     private readonly handle: PostgresDatabaseHandle,
     private readonly attemptLogs: AttemptLogStore,
@@ -140,6 +142,7 @@ export class PostgresExecutionControlRepository implements ExecutionControlRepos
         )
         .slice(0, input.availableSlots);
       const claimed: ClaimedAssignmentRecord[] = [];
+      const claimedBatchEvents = new Map<string, string>();
       for (const [index, assignment] of selected.entries()) {
         const seed = input.leaseSeeds[index];
         if (!seed) break;
@@ -190,13 +193,9 @@ export class PostgresExecutionControlRepository implements ExecutionControlRepos
           },
           recordedAt: input.now,
         });
-        await updateBatchStatus(
-          client,
-          assignment.batch_id,
-          input.now,
-          seed.eventId,
-          "assignment.claimed",
-        );
+        if (!claimedBatchEvents.has(assignment.batch_id)) {
+          claimedBatchEvents.set(assignment.batch_id, seed.eventId);
+        }
         claimed.push({
           assignment: mapAssignment({
             ...assignment,
@@ -212,6 +211,9 @@ export class PostgresExecutionControlRepository implements ExecutionControlRepos
             expiresAt: input.leaseExpiresAt,
           },
         });
+      }
+      for (const [batchId, eventId] of claimedBatchEvents) {
+        await updateBatchStatus(client, batchId, input.now, eventId, "assignment.claimed");
       }
       if (claimed.length > 0) {
         await this.saveClaimRequest(
@@ -547,6 +549,7 @@ export class PostgresExecutionControlRepository implements ExecutionControlRepos
   }
 
   private async recordAttemptLogsPath(batchId: string): Promise<void> {
+    if (this.recordedAttemptLogPaths.has(batchId)) return;
     // 主库只保存批次日志文件相对数据目录的路径；日志内容在独立 SQLite 文件中。
     const path = this.attemptLogs.relativeStorePath(batchId);
     await this.handle.pool.query(
@@ -554,6 +557,7 @@ export class PostgresExecutionControlRepository implements ExecutionControlRepos
        WHERE id = $2 AND (attempt_logs_path IS NULL OR attempt_logs_path <> $1)`,
       [path, batchId],
     );
+    rememberBounded(this.recordedAttemptLogPaths, batchId);
   }
 
   // reconcile 场景下水位来自批次日志文件；attempt 批次关联在 findAttemptControl 已解析。
@@ -583,33 +587,60 @@ export class PostgresExecutionControlRepository implements ExecutionControlRepos
   async resolveAttemptSchedulingContext(
     attemptId: string,
   ): ReturnType<ExecutionControlRepository["resolveAttemptSchedulingContext"]> {
-    await this.handle.ready;
-    const result = await this.handle.pool.query<{
-      batch_id: string;
-      execution_run_id: string;
-      runner_id: string;
-      attempt_number: number;
-      display_name: string;
-      held_round: number;
-    }>(
-      `SELECT r.batch_id, a.execution_run_id, a.runner_id, a.attempt_number,
-              r.display_name, r.held_round
-       FROM run_attempts a
-       JOIN execution_runs r ON r.id = a.execution_run_id
-       WHERE a.id = $1`,
-      [attemptId],
-    );
-    const row = result.rows[0];
+    const row = (await this.resolveAttemptSchedulingContexts([attemptId]))[0];
     if (!row) return null;
-    // held_round 为 0 表示可立即调度，省略字段保持与领域模型一致（exactOptionalPropertyTypes）。
     return {
-      batchId: row.batch_id,
-      executionRunId: row.execution_run_id,
-      runnerId: row.runner_id,
-      attemptNumber: row.attempt_number,
-      displayName: row.display_name,
-      ...(row.held_round > 0 ? { heldRound: row.held_round } : {}),
+      batchId: row.batchId,
+      executionRunId: row.executionRunId,
+      runnerId: row.runnerId,
+      attemptNumber: row.attemptNumber,
+      displayName: row.displayName,
+      ...(row.heldRound !== undefined ? { heldRound: row.heldRound } : {}),
     };
+  }
+
+  async resolveAttemptSchedulingContexts(attemptIds: readonly string[]): Promise<
+    Array<
+      NonNullable<
+        Awaited<ReturnType<ExecutionControlRepository["resolveAttemptSchedulingContext"]>>
+      > & {
+        attemptId: string;
+      }
+    >
+  > {
+    if (attemptIds.length === 0) return [];
+    await this.handle.ready;
+    const contexts = [];
+    for (const chunk of splitIntoChunks(attemptIds, QUERY_IN_CHUNK_SIZE)) {
+      const result = await this.handle.pool.query<{
+        attempt_id: string;
+        batch_id: string;
+        execution_run_id: string;
+        runner_id: string;
+        attempt_number: number;
+        display_name: string;
+        held_round: number;
+      }>(
+        `SELECT a.id AS attempt_id, r.batch_id, a.execution_run_id, a.runner_id,
+                a.attempt_number, r.display_name, r.held_round
+         FROM run_attempts a
+         JOIN execution_runs r ON r.id = a.execution_run_id
+         WHERE a.id = ANY($1::text[])`,
+        [chunk],
+      );
+      contexts.push(
+        ...result.rows.map((row) => ({
+          attemptId: row.attempt_id,
+          batchId: row.batch_id,
+          executionRunId: row.execution_run_id,
+          runnerId: row.runner_id,
+          attemptNumber: row.attempt_number,
+          displayName: row.display_name,
+          ...(row.held_round > 0 ? { heldRound: row.held_round } : {}),
+        })),
+      );
+    }
+    return contexts;
   }
 
   async countExistingAttemptIds(attemptIds: readonly string[]): Promise<number> {
@@ -1561,28 +1592,46 @@ async function updateBatchStatus(
     version: number;
     retry_mode: "immediate" | "round";
     cancel_requested_at: string | null;
-  }>(
-    "SELECT status, version, retry_mode, cancel_requested_at FROM run_batches WHERE id = $1 FOR UPDATE",
-    [batchId],
-  );
-  const batchState = batch.rows[0];
+  }>("SELECT status, version, retry_mode, cancel_requested_at FROM run_batches WHERE id = $1", [
+    batchId,
+  ]);
+  let batchState = batch.rows[0];
   if (!batchState) throw new DomainError("RUN_BATCH_NOT_FOUND", "指定的执行批次不存在。");
   // 轮次制下先释放等待下一轮的失败 run，再聚合状态，确保释放的 run 计入批次状态。
   if (!batchState.cancel_requested_at) {
     await advanceRoundIfIdle(client, batchId, batchState.retry_mode, updatedAt);
   }
-  const result = await client.query<{ status: string; terminal_reason_code: string | null }>(
-    "SELECT status, terminal_reason_code FROM execution_runs WHERE batch_id = $1",
-    [batchId],
-  );
-  const status = aggregateBatchStatus(
-    result.rows.map((row) => ({
-      status: row.status,
-      ...(row.terminal_reason_code ? { terminalReasonCode: row.terminal_reason_code } : {}),
-    })),
-    { terminationRequested: batchState.cancel_requested_at !== null },
+  let status = await aggregateStoredBatchStatus(
+    client,
+    batchId,
+    batchState.cancel_requested_at !== null,
   );
   transitionRunBatch(batchState.status, status);
+  // 高频完成上报的批次状态通常仍是 running，快路径不锁、不写热点批次行。
+  if (batchState.status === status) return status;
+
+  // 只有生命周期真正可能变化时才串行化批次行，并在锁内重新读取聚合状态。
+  const lockedBatch = await client.query<{
+    status: RunBatchStatus;
+    version: number;
+    retry_mode: "immediate" | "round";
+    cancel_requested_at: string | null;
+  }>(
+    "SELECT status, version, retry_mode, cancel_requested_at FROM run_batches WHERE id = $1 FOR UPDATE",
+    [batchId],
+  );
+  batchState = lockedBatch.rows[0];
+  if (!batchState) throw new DomainError("RUN_BATCH_NOT_FOUND", "指定的执行批次不存在。");
+  if (!batchState.cancel_requested_at) {
+    await advanceRoundIfIdle(client, batchId, batchState.retry_mode, updatedAt);
+  }
+  status = await aggregateStoredBatchStatus(
+    client,
+    batchId,
+    batchState.cancel_requested_at !== null,
+  );
+  transitionRunBatch(batchState.status, status);
+  if (batchState.status === status) return status;
   const update = await client.query(
     `UPDATE run_batches SET status = $1, updated_at = $2, version = version + 1
      WHERE id = $3 AND version = $4`,
@@ -1600,6 +1649,48 @@ async function updateBatchStatus(
     );
   }
   return status;
+}
+
+/** 用索引存在性查询短路运行态，避免每次完成都扫描并传输整个任务。 */
+async function aggregateStoredBatchStatus(
+  client: PoolClient,
+  batchId: string,
+  terminationRequested: boolean,
+): Promise<RunBatchStatus> {
+  const statusPresence = await client.query<{
+    running: boolean;
+    assigned: boolean;
+    queued: boolean;
+    cancelled: boolean;
+  }>(
+    `SELECT
+       EXISTS(SELECT 1 FROM execution_runs WHERE batch_id = $1 AND status = 'running') AS running,
+       EXISTS(SELECT 1 FROM execution_runs WHERE batch_id = $1 AND status = 'assigned') AS assigned,
+       EXISTS(SELECT 1 FROM execution_runs WHERE batch_id = $1 AND status = 'queued') AS queued,
+       EXISTS(SELECT 1 FROM execution_runs WHERE batch_id = $1 AND status = 'cancelled') AS cancelled`,
+    [batchId],
+  );
+  const presence = statusPresence.rows[0];
+  if (presence?.running) return aggregateBatchStatus(["running"]);
+  if (presence?.assigned) {
+    return aggregateBatchStatus(presence.queued ? ["assigned", "queued"] : ["assigned"]);
+  }
+  if (presence?.queued) return aggregateBatchStatus(["queued"]);
+  if (terminationRequested || presence?.cancelled) {
+    return aggregateBatchStatus(["cancelled"], { terminationRequested });
+  }
+  const failures = await client.query<{ terminal_reason_code: string | null }>(
+    `SELECT DISTINCT terminal_reason_code FROM execution_runs
+     WHERE batch_id = $1 AND status = 'failed'`,
+    [batchId],
+  );
+  return aggregateBatchStatus([
+    "succeeded",
+    ...failures.rows.map(({ terminal_reason_code: terminalReasonCode }) => ({
+      status: "failed",
+      ...(terminalReasonCode ? { terminalReasonCode } : {}),
+    })),
+  ]);
 }
 
 // late 路径不经过 persistCompletion，直接读当前批次聚合状态判定终态。
@@ -1737,4 +1828,11 @@ function cancellationResult(
     resultCode: "CANCELLED_BY_CONTROL_PLANE",
     summary: "控制面取消请求先于完成上报生效。",
   };
+}
+
+function rememberBounded(values: Set<string>, value: string): void {
+  values.add(value);
+  if (values.size <= 1_024) return;
+  const oldest = values.values().next().value as string | undefined;
+  if (oldest) values.delete(oldest);
 }

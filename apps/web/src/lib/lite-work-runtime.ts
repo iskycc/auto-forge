@@ -11,6 +11,7 @@ export interface LiteWorkDispatcher {
   completeAttempt(input: unknown): Promise<unknown>;
   declareArtifacts(input: unknown): Promise<unknown>;
   recoverExpired(input: unknown): Promise<unknown>;
+  resolveAttemptSchedulingContexts(attemptIds: readonly string[]): Promise<unknown>;
   terminateBatch(input: unknown): Promise<number>;
   close(): Promise<void>;
 }

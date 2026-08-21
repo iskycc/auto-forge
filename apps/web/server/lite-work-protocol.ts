@@ -23,6 +23,7 @@ export type LiteWorkerTask =
   | { kind: "complete-attempt"; attemptId: string; input: unknown }
   | { kind: "declare-artifacts"; attemptId: string; input: unknown }
   | { kind: "recover-expired"; input: unknown }
+  | { kind: "resolve-attempt-contexts"; attemptIds: string[] }
   | { kind: "terminate-batch"; batchId: string; input: unknown }
   | { kind: "append-attempt-log-chunks"; attemptId: string; input: unknown };
 

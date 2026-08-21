@@ -1,4 +1,9 @@
-import type { ExecutionControlRepository, RunBatchSchedulingPort } from "@autoforge/application";
+import {
+  type AttemptSchedulingContext,
+  CoalescedOperation,
+  type ExecutionControlRepository,
+  type RunBatchSchedulingPort,
+} from "@autoforge/application";
 
 import type { LiteWorkDispatcher } from "./lite-work-runtime";
 
@@ -34,6 +39,26 @@ export function workerBackedExecutionControlRepository(
             dispatcher.recoverExpired(input) as ReturnType<
               ExecutionControlRepository["recoverExpired"]
             >;
+        case "resolveAttemptSchedulingContext":
+          return async (attemptId: string) => {
+            const contexts = (await dispatcher.resolveAttemptSchedulingContexts([attemptId])) as
+              Array<AttemptSchedulingContext & { attemptId: string }> | undefined;
+            const context = contexts?.[0];
+            if (!context) return null;
+            return {
+              batchId: context.batchId,
+              executionRunId: context.executionRunId,
+              runnerId: context.runnerId,
+              attemptNumber: context.attemptNumber,
+              displayName: context.displayName,
+              ...(context.heldRound !== undefined ? { heldRound: context.heldRound } : {}),
+            };
+          };
+        case "resolveAttemptSchedulingContexts":
+          return (attemptIds: readonly string[]) =>
+            dispatcher.resolveAttemptSchedulingContexts(attemptIds) as ReturnType<
+              NonNullable<ExecutionControlRepository["resolveAttemptSchedulingContexts"]>
+            >;
         case "appendLogChunks":
           return (input: Parameters<ExecutionControlRepository["appendLogChunks"]>[0]) =>
             dispatcher.appendAttemptLogChunks(input) as ReturnType<
@@ -55,7 +80,7 @@ export function workerBackedExecutionControlRepository(
 
 /** 合并同一批次/Runner 的高频补调度请求，避免并发完成上报制造重复扫描。 */
 export class CoalescingSchedulingPort implements RunBatchSchedulingPort {
-  private readonly inFlight = new Map<string, Promise<unknown>>();
+  private readonly inFlight = new Map<string, CoalescedOperation<unknown>>();
 
   constructor(
     private readonly local: RunBatchSchedulingPort,
@@ -78,11 +103,17 @@ export class CoalescingSchedulingPort implements RunBatchSchedulingPort {
 
   private coalesce(key: string, operation: () => Promise<unknown>): Promise<unknown> {
     const existing = this.inFlight.get(key);
-    if (existing) return existing;
-    const pending = operation().finally(() => {
-      if (this.inFlight.get(key) === pending) this.inFlight.delete(key);
-    });
+    if (existing) return existing.requestAnotherPass();
+    const pending = new CoalescedOperation(operation);
     this.inFlight.set(key, pending);
-    return pending;
+    void pending.result.then(
+      () => {
+        if (this.inFlight.get(key) === pending) this.inFlight.delete(key);
+      },
+      () => {
+        if (this.inFlight.get(key) === pending) this.inFlight.delete(key);
+      },
+    );
+    return pending.result;
   }
 }

@@ -634,6 +634,7 @@ export const runBatches = sqliteTable(
   (table) => [
     index("run_batches_status_created_at_idx").on(table.status, table.createdAt),
     index("run_batches_suite_id_idx").on(table.suiteId),
+    index("run_batches_project_created_id_idx").on(table.projectId, table.createdAt, table.id),
   ],
 );
 

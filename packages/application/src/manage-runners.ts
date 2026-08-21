@@ -224,7 +224,7 @@ export class RunnerControlService {
     });
     const recoveryEvents = await buildRecoverySchedulingEvents({
       recovered,
-      resolveContext: (attemptId) => this.executions.resolveAttemptSchedulingContext(attemptId),
+      executions: this.executions,
       recordedAt: now,
       nextEventId: () => this.ids.next(),
     });

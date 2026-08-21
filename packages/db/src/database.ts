@@ -35,3 +35,14 @@ export function createSqliteDatabase(options: CreateSqliteDatabaseOptions): Sqli
     close: () => client.close(),
   };
 }
+
+/**
+ * 多连接 WAL 下，延迟事务在读后升级写锁可能直接返回 SQLITE_BUSY。
+ * 控制面写用例从事务入口取得保留写锁，busy_timeout 才能有序等待单写者。
+ */
+export function runSqliteWriteTransaction<Result>(
+  handle: SqliteDatabaseHandle,
+  operation: () => Result,
+): Result {
+  return handle.client.transaction(operation).immediate();
+}

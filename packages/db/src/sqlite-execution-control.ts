@@ -35,7 +35,7 @@ import {
 } from "@autoforge/domain";
 
 import type { AttemptLogStore } from "./attempt-log-store";
-import type { SqliteDatabaseHandle } from "./database";
+import { runSqliteWriteTransaction, type SqliteDatabaseHandle } from "./database";
 import { QUERY_IN_CHUNK_SIZE, splitIntoChunks } from "./query-chunks";
 
 type AssignmentRow = {
@@ -111,6 +111,8 @@ type AttemptEventRow = {
 };
 
 export class SqliteExecutionControlRepository implements ExecutionControlRepository {
+  private readonly recordedAttemptLogPaths = new Set<string>();
+
   constructor(
     private readonly handle: SqliteDatabaseHandle,
     private readonly attemptLogs: AttemptLogStore,
@@ -119,7 +121,7 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
   async claim(
     input: Parameters<ExecutionControlRepository["claim"]>[0],
   ): Promise<ClaimedAssignmentRecord[]> {
-    return this.handle.client.transaction(() => {
+    return runSqliteWriteTransaction(this.handle, () => {
       const replay = this.claimReplay(input.runnerId, input.requestId);
       if (replay) return replay;
       if (input.availableSlots === 0) return [];
@@ -143,46 +145,43 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
         )
         .slice(0, input.availableSlots);
       const claimed: ClaimedAssignmentRecord[] = [];
+      const claimedBatchEvents = new Map<string, string>();
+      const updateAssignment = this.handle.client.prepare(
+        `UPDATE assignments SET status = 'claimed', claimed_at = ?, updated_at = ?, version = version + 1
+         WHERE id = ? AND status = 'pending'
+           AND EXISTS (SELECT 1 FROM run_batches b
+                       WHERE b.id = assignments.batch_id AND b.cancel_requested_at IS NULL)`,
+      );
+      const insertLease = this.handle.client.prepare(
+        `INSERT INTO assignment_leases
+         (id, assignment_id, runner_id, token_hash, token_encrypted, status, version, expires_at, renewed_at, created_at)
+         VALUES (?, ?, ?, ?, ?, 'active', 1, ?, ?, ?)`,
+      );
+      const startAttempt = this.handle.client.prepare(
+        `UPDATE run_attempts SET status = 'running', started_at = COALESCE(started_at, ?), version = version + 1
+         WHERE id = ? AND status = 'assigned'`,
+      );
+      const startRun = this.handle.client.prepare(
+        `UPDATE execution_runs SET status = 'running', version = version + 1, updated_at = ?
+         WHERE id = ? AND status = 'assigned'`,
+      );
       for (const [index, assignment] of selected.entries()) {
         const seed = input.leaseSeeds[index];
         if (!seed) break;
-        const update = this.handle.client
-          .prepare(
-            `UPDATE assignments SET status = 'claimed', claimed_at = ?, updated_at = ?, version = version + 1
-             WHERE id = ? AND status = 'pending'
-               AND EXISTS (SELECT 1 FROM run_batches b
-                           WHERE b.id = assignments.batch_id AND b.cancel_requested_at IS NULL)`,
-          )
-          .run(input.now, input.now, assignment.id);
+        const update = updateAssignment.run(input.now, input.now, assignment.id);
         if (update.changes !== 1) continue;
-        this.handle.client
-          .prepare(
-            `INSERT INTO assignment_leases
-             (id, assignment_id, runner_id, token_hash, token_encrypted, status, version, expires_at, renewed_at, created_at)
-             VALUES (?, ?, ?, ?, ?, 'active', 1, ?, ?, ?)`,
-          )
-          .run(
-            seed.id,
-            assignment.id,
-            input.runnerId,
-            seed.tokenHash,
-            seed.tokenEncrypted,
-            input.leaseExpiresAt,
-            input.now,
-            input.now,
-          );
-        this.handle.client
-          .prepare(
-            `UPDATE run_attempts SET status = 'running', started_at = COALESCE(started_at, ?), version = version + 1
-             WHERE id = ? AND status = 'assigned'`,
-          )
-          .run(input.now, assignment.attempt_id);
-        this.handle.client
-          .prepare(
-            `UPDATE execution_runs SET status = 'running', version = version + 1, updated_at = ?
-             WHERE id = ? AND status = 'assigned'`,
-          )
-          .run(input.now, assignment.execution_run_id);
+        insertLease.run(
+          seed.id,
+          assignment.id,
+          input.runnerId,
+          seed.tokenHash,
+          seed.tokenEncrypted,
+          input.leaseExpiresAt,
+          input.now,
+          input.now,
+        );
+        startAttempt.run(input.now, assignment.attempt_id);
+        startRun.run(input.now, assignment.execution_run_id);
         this.appendAttemptEvent({
           id: seed.eventId,
           attemptId: assignment.attempt_id,
@@ -198,7 +197,9 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
           },
           recordedAt: input.now,
         });
-        this.updateBatchStatus(assignment.batch_id, input.now, seed.eventId, "assignment.claimed");
+        if (!claimedBatchEvents.has(assignment.batch_id)) {
+          claimedBatchEvents.set(assignment.batch_id, seed.eventId);
+        }
         claimed.push({
           assignment: mapAssignment({
             ...assignment,
@@ -215,6 +216,9 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
           },
         });
       }
+      for (const [batchId, eventId] of claimedBatchEvents) {
+        this.updateBatchStatus(batchId, input.now, eventId, "assignment.claimed");
+      }
       if (claimed.length > 0) {
         this.saveClaimRequest(
           input.runnerId,
@@ -227,13 +231,13 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
         );
       }
       return claimed;
-    })();
+    });
   }
 
   async renewLease(
     input: Parameters<ExecutionControlRepository["renewLease"]>[0],
   ): ReturnType<ExecutionControlRepository["renewLease"]> {
-    return this.handle.client.transaction(() => {
+    return runSqliteWriteTransaction(this.handle, () => {
       const lease = this.requiredLease(input.leaseId);
       if (lease.runner_id !== input.runnerId || lease.token_hash !== input.tokenHash) {
         throw new DomainError("LEASE_AUTH_REJECTED", "租约凭据无效。");
@@ -268,13 +272,14 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
         expiresAt: input.expiresAt,
         instruction,
       };
-    })();
+    });
   }
 
   async completeAttempt(
     input: Parameters<ExecutionControlRepository["completeAttempt"]>[0],
   ): Promise<CompleteAttemptResponse> {
-    const result = this.handle.client.transaction(
+    const result = runSqliteWriteTransaction(
+      this.handle,
       (): { response: CompleteAttemptResponse } | { conflict: true } => {
         const control = this.requiredAttemptControl(input.attemptId);
         const assignment = this.assignmentForAttempt(input.attemptId);
@@ -379,7 +384,7 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
           );
         return { response };
       },
-    )();
+    );
     if ("conflict" in result) {
       throw new DomainError("ATTEMPT_COMPLETION_CONFLICT", "该执行尝试已收到不同的完成结果。");
     }
@@ -528,34 +533,61 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
   async resolveAttemptSchedulingContext(
     attemptId: string,
   ): ReturnType<ExecutionControlRepository["resolveAttemptSchedulingContext"]> {
-    const row = this.handle.client
-      .prepare(
-        `SELECT r.batch_id, a.execution_run_id, a.runner_id, a.attempt_number,
-                r.display_name, r.held_round
-         FROM run_attempts a
-         JOIN execution_runs r ON r.id = a.execution_run_id
-         WHERE a.id = ?`,
-      )
-      .get(attemptId) as
-      | {
-          batch_id: string;
-          execution_run_id: string;
-          runner_id: string;
-          attempt_number: number;
-          display_name: string;
-          held_round: number;
-        }
-      | undefined;
+    const row = (await this.resolveAttemptSchedulingContexts([attemptId]))[0];
     if (!row) return null;
-    // held_round 为 0 表示可立即调度，省略字段保持与领域模型一致（exactOptionalPropertyTypes）。
     return {
-      batchId: row.batch_id,
-      executionRunId: row.execution_run_id,
-      runnerId: row.runner_id,
-      attemptNumber: row.attempt_number,
-      displayName: row.display_name,
-      ...(row.held_round > 0 ? { heldRound: row.held_round } : {}),
+      batchId: row.batchId,
+      executionRunId: row.executionRunId,
+      runnerId: row.runnerId,
+      attemptNumber: row.attemptNumber,
+      displayName: row.displayName,
+      ...(row.heldRound !== undefined ? { heldRound: row.heldRound } : {}),
     };
+  }
+
+  async resolveAttemptSchedulingContexts(attemptIds: readonly string[]): Promise<
+    Array<
+      NonNullable<
+        Awaited<ReturnType<ExecutionControlRepository["resolveAttemptSchedulingContext"]>>
+      > & {
+        attemptId: string;
+      }
+    >
+  > {
+    if (attemptIds.length === 0) return [];
+    const contexts = [];
+    for (const chunk of splitIntoChunks(attemptIds, QUERY_IN_CHUNK_SIZE)) {
+      const placeholders = chunk.map(() => "?").join(", ");
+      const rows = this.handle.client
+        .prepare(
+          `SELECT a.id AS attempt_id, r.batch_id, a.execution_run_id, a.runner_id,
+                  a.attempt_number, r.display_name, r.held_round
+           FROM run_attempts a
+           JOIN execution_runs r ON r.id = a.execution_run_id
+           WHERE a.id IN (${placeholders})`,
+        )
+        .all(...chunk) as Array<{
+        attempt_id: string;
+        batch_id: string;
+        execution_run_id: string;
+        runner_id: string;
+        attempt_number: number;
+        display_name: string;
+        held_round: number;
+      }>;
+      contexts.push(
+        ...rows.map((row) => ({
+          attemptId: row.attempt_id,
+          batchId: row.batch_id,
+          executionRunId: row.execution_run_id,
+          runnerId: row.runner_id,
+          attemptNumber: row.attempt_number,
+          displayName: row.display_name,
+          ...(row.held_round > 0 ? { heldRound: row.held_round } : {}),
+        })),
+      );
+    }
+    return contexts;
   }
 
   async countExistingAttemptIds(attemptIds: readonly string[]): Promise<number> {
@@ -629,7 +661,7 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
   async declareArtifacts(
     input: Parameters<ExecutionControlRepository["declareArtifacts"]>[0],
   ): ReturnType<ExecutionControlRepository["declareArtifacts"]> {
-    return this.handle.client.transaction(() => {
+    return runSqliteWriteTransaction(this.handle, () => {
       this.authorizedTransferContext({ ...input, now: input.declaredAt });
       this.handle.client
         .prepare(
@@ -667,7 +699,7 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
         result.push({ ...artifact, status: "declared" as const });
       }
       return result;
-    })();
+    });
   }
 
   async resolveArtifactUpload(
@@ -708,7 +740,7 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
   async recoverExpired(
     input: Parameters<ExecutionControlRepository["recoverExpired"]>[0],
   ): Promise<RecoveredAttemptExpiration[]> {
-    return this.handle.client.transaction(() => {
+    return runSqliteWriteTransaction(this.handle, () => {
       const queued = this.handle.client
         .prepare(
           `SELECT r.id, r.batch_id FROM execution_runs r
@@ -830,13 +862,13 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
         }
       }
       return recoveredAttempts;
-    })();
+    });
   }
 
   async terminateBatch(
     input: Parameters<ExecutionControlRepository["terminateBatch"]>[0],
   ): Promise<number> {
-    return this.handle.client.transaction(() => {
+    return runSqliteWriteTransaction(this.handle, () => {
       const batch = this.handle.client
         .prepare("SELECT status, version, cancel_requested_at FROM run_batches WHERE id = ?")
         .get(input.batchId) as
@@ -862,11 +894,11 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
         "batch.termination_requested",
       );
       return changed;
-    })();
+    });
   }
 
   async cancelRun(input: Parameters<ExecutionControlRepository["cancelRun"]>[0]): Promise<boolean> {
-    return this.handle.client.transaction(() => this.cancelRunWithinTransaction(input))();
+    return runSqliteWriteTransaction(this.handle, () => this.cancelRunWithinTransaction(input));
   }
 
   private persistCompletion(
@@ -1003,6 +1035,7 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
   }
 
   private recordAttemptLogsPath(batchId: string): void {
+    if (this.recordedAttemptLogPaths.has(batchId)) return;
     // 主库只保存批次日志文件相对数据目录的路径；日志内容在独立 SQLite 文件中。
     const path = this.attemptLogs.relativeStorePath(batchId);
     this.handle.client
@@ -1011,6 +1044,7 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
          WHERE id = ? AND (attempt_logs_path IS NULL OR attempt_logs_path <> ?)`,
       )
       .run(path, batchId, path);
+    rememberBounded(this.recordedAttemptLogPaths, batchId);
   }
 
   private artifactRow(attemptId: string, artifactId: string): ArtifactRow | undefined {
@@ -1485,23 +1519,10 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
     if (!batch.cancel_requested_at) {
       this.advanceRoundIfIdle(batchId, batch.retry_mode, updatedAt);
     }
-    const runCompletions = (
-      this.handle.client
-        .prepare(
-          "SELECT status, terminal_reason_code AS terminalReasonCode FROM execution_runs WHERE batch_id = ?",
-        )
-        .all(batchId) as Array<{
-        status: string;
-        terminalReasonCode: string | null;
-      }>
-    ).map((row) => ({
-      status: row.status,
-      ...(row.terminalReasonCode ? { terminalReasonCode: row.terminalReasonCode } : {}),
-    }));
-    const status = aggregateBatchStatus(runCompletions, {
-      terminationRequested: batch.cancel_requested_at !== null,
-    });
+    const status = this.aggregateStoredBatchStatus(batchId, batch.cancel_requested_at !== null);
     transitionRunBatch(batch.status, status);
+    // 执行中绝大多数完成上报不会改变批次生命周期；避免无意义地写热点批次行。
+    if (batch.status === status) return status;
     const update = this.handle.client
       .prepare(
         `UPDATE run_batches SET status = ?, updated_at = ?, version = version + 1
@@ -1521,6 +1542,42 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
         .run(eventId, batchId, batch.status, status, batch.version + 1, reason, updatedAt);
     }
     return status;
+  }
+
+  /**
+   * 状态优先级通过有索引的存在性查询短路。任务仍在运行时只读取一行，
+   * 不再为每个完成上报加载同批次的全部 execution_runs，避免 O(n²) 扫描。
+   */
+  private aggregateStoredBatchStatus(
+    batchId: string,
+    terminationRequested: boolean,
+  ): RunBatchStatus {
+    const hasStatus = this.handle.client.prepare(
+      "SELECT 1 FROM execution_runs WHERE batch_id = ? AND status = ? LIMIT 1",
+    );
+    if (hasStatus.get(batchId, "running")) return aggregateBatchStatus(["running"]);
+    if (hasStatus.get(batchId, "assigned")) {
+      return aggregateBatchStatus(
+        hasStatus.get(batchId, "queued") ? ["assigned", "queued"] : ["assigned"],
+      );
+    }
+    if (hasStatus.get(batchId, "queued")) return aggregateBatchStatus(["queued"]);
+    if (terminationRequested || hasStatus.get(batchId, "cancelled")) {
+      return aggregateBatchStatus(["cancelled"], { terminationRequested });
+    }
+    const failedCodes = this.handle.client
+      .prepare(
+        `SELECT DISTINCT terminal_reason_code AS terminalReasonCode
+         FROM execution_runs WHERE batch_id = ? AND status = 'failed'`,
+      )
+      .all(batchId) as Array<{ terminalReasonCode: string | null }>;
+    return aggregateBatchStatus([
+      "succeeded",
+      ...failedCodes.map(({ terminalReasonCode }) => ({
+        status: "failed",
+        ...(terminalReasonCode ? { terminalReasonCode } : {}),
+      })),
+    ]);
   }
 
   // 轮次制：整轮无在途且无未扣留的 queued run 时，把等待下一轮的失败 run 统一释放。
@@ -1674,4 +1731,11 @@ function mapArtifactRow(row: ArtifactRow) {
     status: row.status,
     ...(row.object_key ? { objectKey: row.object_key } : {}),
   };
+}
+
+function rememberBounded(values: Set<string>, value: string): void {
+  values.add(value);
+  if (values.size <= 1_024) return;
+  const oldest = values.values().next().value as string | undefined;
+  if (oldest) values.delete(oldest);
 }

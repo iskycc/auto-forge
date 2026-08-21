@@ -165,6 +165,46 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+  lite-concurrency:
+    name: Lite 500-slot protocol concurrency
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.16.0
+      - name: Install locked dependencies
+        run: |
+          corepack enable
+          pnpm install --frozen-lockfile
+      - name: Locate preinstalled Chromium
+        run: |
+          browser_path="$(command -v google-chrome || command -v chromium || true)"
+          if [[ -z "${browser_path}" ]]; then
+            echo "The hosted runner does not provide a preinstalled Chromium browser." >&2
+            exit 1
+          fi
+          echo "PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=${browser_path}" >> "${GITHUB_ENV}"
+      - name: Exercise 500 concurrent Runner protocol slots
+        env:
+          AUTOFORGE_E2E_DATA_DIR: ${{ runner.temp }}/autoforge-lite-concurrency
+          AUTOFORGE_CONCURRENCY_REPORT: ${{ runner.temp }}/autoforge-performance/lite-concurrency.json
+          E2E_PROJECT_MAXIMUM_CONCURRENCY: "500"
+        run: pnpm test:lite-concurrency
+      - name: Upload concurrency measurements
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: lite-concurrency-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/autoforge-performance
+            test-results
+          if-no-files-found: warn
+          retention-days: 14
+
   build:
     name: Production platform and Agent build
     runs-on: ubuntu-24.04

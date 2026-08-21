@@ -71,6 +71,8 @@ jobs:
             command: pnpm test && pnpm test:integration && mvn --batch-mode --file adapters/cotest-testng/pom.xml test
           - name: performance
             command: pnpm test:performance
+          - name: Lite 500 protocol concurrency
+            command: E2E_PROJECT_MAXIMUM_CONCURRENCY=500 AUTOFORGE_E2E_DATA_DIR="${RUNNER_TEMP}/autoforge-lite-concurrency" AUTOFORGE_CONCURRENCY_REPORT="${RUNNER_TEMP}/autoforge-performance/lite-concurrency.json" pnpm test:lite-concurrency
           - name: deployment
             command: pnpm test:deployment
           - name: production build
@@ -131,6 +133,15 @@ jobs:
           path: test-results
           if-no-files-found: ignore
           retention-days: 7
+
+      - name: Upload Lite concurrency measurements
+        if: always() && matrix.name == 'Lite 500 protocol concurrency'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-lite-concurrency-${{ needs.prepare.outputs.tag }}
+          path: ${{ runner.temp }}/autoforge-performance
+          if-no-files-found: warn
+          retention-days: 14
 
   offline-quality:
     name: Release source offline · ${{ matrix.phase }}

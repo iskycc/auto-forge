@@ -474,21 +474,27 @@ export interface ExecutionControlRepository {
     requestedAt: string;
   }): Promise<boolean>;
   // 事件写入需要按 attempt 反查批次/执行机上下文；claim/complete 的 DTO 不携带 batchId。
-  resolveAttemptSchedulingContext(attemptId: string): Promise<{
-    batchId: string;
-    executionRunId: string;
-    runnerId: string;
-    attemptNumber: number;
-    // execution_runs.display_name，供事件消息组装用例名。
-    displayName: string;
-    heldRound?: number;
-  } | null>;
+  resolveAttemptSchedulingContext(attemptId: string): Promise<AttemptSchedulingContext | null>;
+  /** 高频领取与恢复路径一次解析多个 attempt，避免每个 assignment 产生一次数据库往返。 */
+  resolveAttemptSchedulingContexts?(
+    attemptIds: readonly string[],
+  ): Promise<Array<AttemptSchedulingContext & { attemptId: string }>>;
   /**
    * 统计入参中真实存在的 attempt 数量（内部分批查询，避免 IN 参数超出数据库绑定上限）。
    * 批量签发日志公开访问链接场景用一次校验替代逐个 resolveAttemptSchedulingContext。
    */
   countExistingAttemptIds(attemptIds: readonly string[]): Promise<number>;
 }
+
+export type AttemptSchedulingContext = {
+  batchId: string;
+  executionRunId: string;
+  runnerId: string;
+  attemptNumber: number;
+  // execution_runs.display_name，供事件消息组装用例名。
+  displayName: string;
+  heldRound?: number;
+};
 
 export type ScheduledAssignmentRecord = {
   assignmentId: string;

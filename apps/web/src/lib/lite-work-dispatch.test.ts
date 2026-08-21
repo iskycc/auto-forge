@@ -9,7 +9,7 @@ import {
 import type { LiteWorkDispatcher } from "./lite-work-runtime";
 
 describe("Lite scheduling coalescing", () => {
-  it("shares an in-flight batch or Runner scan and allows a later refill", async () => {
+  it("merges a burst into a leading and one trailing scan without losing a refill", async () => {
     let release!: () => void;
     const gate = new Promise<void>((resolve) => {
       release = resolve;
@@ -27,8 +27,9 @@ describe("Lite scheduling coalescing", () => {
 
     release();
     await Promise.all([first, second]);
-    await scheduling.scheduleForRunner("runner-1", 8);
     expect(local.scheduleForRunner).toHaveBeenCalledTimes(2);
+    await scheduling.scheduleForRunner("runner-1", 8);
+    expect(local.scheduleForRunner).toHaveBeenCalledTimes(3);
   });
 });
 

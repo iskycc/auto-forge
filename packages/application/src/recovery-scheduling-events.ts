@@ -7,6 +7,7 @@ import type {
   RecoveredAttemptExpiration,
   RunBatchRepository,
 } from "./ports";
+import { resolveAttemptSchedulingContexts } from "./attempt-scheduling-contexts";
 
 // recoverExpired 四种回收原因到调度事件文案的映射；resultCode 与仓储层
 // attemptExpiration 写入 run_attempts.result_code 的取值保持一致。
@@ -46,13 +47,17 @@ type SchedulingEventInput = Parameters<RunBatchRepository["appendSchedulingEvent
 // 因此原因码与场景摘要必须写进 message；retryScheduled 时文案不得暗示终局。
 export async function buildRecoverySchedulingEvents(input: {
   recovered: readonly RecoveredAttemptExpiration[];
-  resolveContext: ExecutionControlRepository["resolveAttemptSchedulingContext"];
+  executions: ExecutionControlRepository;
   recordedAt: string;
   nextEventId: IdGenerator["next"];
 }): Promise<SchedulingEventInput> {
   const events: SchedulingEventInput = [];
+  const contexts = await resolveAttemptSchedulingContexts(
+    input.executions,
+    input.recovered.map((detail) => detail.attemptId),
+  );
   for (const detail of input.recovered) {
-    const context = await input.resolveContext(detail.attemptId);
+    const context = contexts.get(detail.attemptId);
     if (!context) continue;
     const reason = ATTEMPT_RECOVERY_REASONS[detail.reason];
     events.push({

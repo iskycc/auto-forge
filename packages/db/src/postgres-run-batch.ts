@@ -180,7 +180,7 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
       .where(projectIds ? inArray(pgRunBatches.projectId, [...projectIds]) : undefined)
       .orderBy(desc(pgRunBatches.createdAt))
       .limit(limit);
-    return Promise.all(rows.map((row) => this.mapBatch(row)));
+    return this.mapBatches(rows);
   }
 
   async listPage(input: RunBatchListQuery) {
@@ -221,7 +221,7 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
       .limit(input.limit + 1);
     const hasMore = rows.length > input.limit;
     const pageRows = rows.slice(0, input.limit);
-    const items = await Promise.all(pageRows.map((row) => this.mapBatch(row)));
+    const items = await this.mapBatches(pageRows);
     const last = pageRows.at(-1);
     return {
       items,
@@ -772,28 +772,86 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
   }
 
   private async mapBatch(row: typeof pgRunBatches.$inferSelect): Promise<RunBatch> {
-    const [selectedRunners, statusCounts, outcomeCounts] = await Promise.all([
-      this.handle.db
-        .select({ runnerId: pgRunBatchRunners.runnerId })
-        .from(pgRunBatchRunners)
-        .where(eq(pgRunBatchRunners.batchId, row.id))
-        .orderBy(pgRunBatchRunners.runnerId),
-      this.handle.db
-        .select({ status: pgExecutionRuns.status, value: count() })
-        .from(pgExecutionRuns)
-        .where(eq(pgExecutionRuns.batchId, row.id))
-        .groupBy(pgExecutionRuns.status),
-      this.handle.db
-        .select({
-          failed: sql<number>`sum(case when ${pgExecutionRuns.status} = 'failed' and (${pgExecutionRuns.terminalOutcome} is null or ${pgExecutionRuns.terminalOutcome} <> 'timed_out') then 1 else 0 end)`,
-          timedOut: sql<number>`sum(case when ${pgExecutionRuns.terminalOutcome} = 'timed_out' then 1 else 0 end)`,
-        })
-        .from(pgExecutionRuns)
-        .where(eq(pgExecutionRuns.batchId, row.id)),
-    ]);
-    const byStatus = new Map(statusCounts.map((entry) => [entry.status, entry.value]));
+    const [batch] = await this.mapBatches([row]);
+    if (!batch) throw new Error(`Cannot map run batch ${row.id}.`);
+    return batch;
+  }
+
+  /** 列表页按绑定参数上限分批读取关联计数，查询量不再随批次数线性增长。 */
+  private async mapBatches(rows: Array<typeof pgRunBatches.$inferSelect>): Promise<RunBatch[]> {
+    if (rows.length === 0) return [];
+    const batchIds = rows.map((row) => row.id);
+    const selectedRunnerRows = (
+      await Promise.all(
+        batchesOf(batchIds, RELATIONAL_ID_QUERY_BATCH_SIZE).map((ids) =>
+          this.handle.db
+            .select({ batchId: pgRunBatchRunners.batchId, runnerId: pgRunBatchRunners.runnerId })
+            .from(pgRunBatchRunners)
+            .where(inArray(pgRunBatchRunners.batchId, ids))
+            .orderBy(pgRunBatchRunners.batchId, pgRunBatchRunners.runnerId),
+        ),
+      )
+    ).flat();
+    const statusRows = (
+      await Promise.all(
+        batchesOf(batchIds, RELATIONAL_ID_QUERY_BATCH_SIZE).map((ids) =>
+          this.handle.db
+            .select({
+              batchId: pgExecutionRuns.batchId,
+              status: pgExecutionRuns.status,
+              value: count(),
+            })
+            .from(pgExecutionRuns)
+            .where(inArray(pgExecutionRuns.batchId, ids))
+            .groupBy(pgExecutionRuns.batchId, pgExecutionRuns.status),
+        ),
+      )
+    ).flat();
+    const outcomeRows = (
+      await Promise.all(
+        batchesOf(batchIds, RELATIONAL_ID_QUERY_BATCH_SIZE).map((ids) =>
+          this.handle.db
+            .select({
+              batchId: pgExecutionRuns.batchId,
+              failed: sql<number>`sum(case when ${pgExecutionRuns.status} = 'failed' and (${pgExecutionRuns.terminalOutcome} is null or ${pgExecutionRuns.terminalOutcome} <> 'timed_out') then 1 else 0 end)`,
+              timedOut: sql<number>`sum(case when ${pgExecutionRuns.terminalOutcome} = 'timed_out' then 1 else 0 end)`,
+            })
+            .from(pgExecutionRuns)
+            .where(inArray(pgExecutionRuns.batchId, ids))
+            .groupBy(pgExecutionRuns.batchId),
+        ),
+      )
+    ).flat();
+    const runnerIdsByBatch = new Map<string, string[]>();
+    for (const runner of selectedRunnerRows) {
+      const ids = runnerIdsByBatch.get(runner.batchId) ?? [];
+      ids.push(runner.runnerId);
+      runnerIdsByBatch.set(runner.batchId, ids);
+    }
+    const statusByBatch = new Map<string, Map<string, number>>();
+    for (const entry of statusRows) {
+      const counts = statusByBatch.get(entry.batchId) ?? new Map<string, number>();
+      counts.set(entry.status, entry.value);
+      statusByBatch.set(entry.batchId, counts);
+    }
+    const outcomesByBatch = new Map(outcomeRows.map((entry) => [entry.batchId, entry]));
+    return rows.map((row) =>
+      this.mapBatchRow(
+        row,
+        runnerIdsByBatch.get(row.id) ?? [],
+        statusByBatch.get(row.id) ?? new Map(),
+        outcomesByBatch.get(row.id),
+      ),
+    );
+  }
+
+  private mapBatchRow(
+    row: typeof pgRunBatches.$inferSelect,
+    selectedRunnerIds: string[],
+    byStatus: Map<string, number>,
+    outcomeCount: { failed: number | null; timedOut: number | null } | undefined,
+  ): RunBatch {
     const policy = batchPolicy(row.policyJson);
-    const outcomeCount = outcomeCounts[0];
     return {
       id: row.id,
       sequenceNumber: row.sequenceNumber,
@@ -814,7 +872,7 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
       uploadTimeoutMs: row.uploadTimeoutMs,
       environmentVariables: environmentVariables(row.environmentJson),
       secretBindings: secretBindings(row.secretBindingsJson),
-      selectedRunnerIds: selectedRunners.map((runner) => runner.runnerId),
+      selectedRunnerIds,
       ...(policy ? { policy } : {}),
       totalRuns: row.totalRuns,
       queuedRuns: byStatus.get("queued") ?? 0,
