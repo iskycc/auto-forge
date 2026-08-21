@@ -35,6 +35,79 @@ function cleanupTestAttemptLogs(logs: { store: AttemptLogStore; directory: strin
 }
 
 describe.skipIf(!connectionString)("PostgreSQL platform repositories", () => {
+  it("treats a retry already queued by another caller as idempotent", async () => {
+    const handle = createPostgresDatabase({
+      connectionString: connectionString!,
+      migrationsFolder: resolve(import.meta.dirname, "../drizzle/postgresql"),
+    });
+    const catalog = new PostgresCaseCatalogRepository(handle);
+    const suffix = randomUUID();
+    const jobId = `import-job-${suffix}`;
+    const createdAt = "2026-08-21T00:00:00.000Z";
+    const dispatchJob: JobEnvelope = {
+      schemaVersion: 1,
+      messageId: `import-message-${suffix}`,
+      runId: jobId,
+      attempt: 1,
+      createdAt,
+      priority: 0,
+      deduplicationKey: `jar-import:${suffix}`,
+      kind: "jar-import",
+      payload: { jobId },
+    };
+    try {
+      await handle.ready;
+      await catalog.createJarImportJob({
+        job: {
+          id: jobId,
+          projectId: "00000000-0000-7000-8000-000000000001",
+          fileName: "retry-race.jar",
+          sha256: suffix.replaceAll("-", "").repeat(2),
+          sizeBytes: 128,
+          status: "queued",
+          progressPercent: 0,
+          createdAt,
+          updatedAt: createdAt,
+        },
+        objectKey: `jars/${suffix}.jar`,
+        idempotencyKey: suffix,
+        dispatchJob,
+      });
+      await catalog.requestJarImportCancellation({ jobId, updatedAt: createdAt });
+      await expect(
+        catalog.retryJarImportJob({
+          jobId,
+          dispatchJob: {
+            ...dispatchJob,
+            messageId: `import-retry-${suffix}`,
+            deduplicationKey: `jar-import:${suffix}:retry`,
+          },
+          updatedAt: "2026-08-21T00:00:01.000Z",
+        }),
+      ).resolves.toMatchObject({ status: "queued" });
+      await expect(
+        catalog.retryJarImportJob({
+          jobId,
+          dispatchJob: {
+            ...dispatchJob,
+            messageId: `import-retry-race-${suffix}`,
+            deduplicationKey: `jar-import:${suffix}:retry-race`,
+          },
+          updatedAt: "2026-08-21T00:00:01.500Z",
+        }),
+      ).resolves.toMatchObject({ status: "queued" });
+      const outbox = await handle.pool.query(
+        "SELECT COUNT(*) AS count FROM transactional_outbox WHERE run_id = $1",
+        [jobId],
+      );
+      expect(Number(outbox.rows[0]?.count)).toBe(2);
+    } finally {
+      await handle.pool.query("DELETE FROM case_import_jobs WHERE id = $1", [jobId]);
+      await handle.pool.query("DELETE FROM transactional_outbox WHERE run_id = $1", [jobId]);
+      await handle.close();
+    }
+  });
+
   it("applies migrations and persists suites and runner heartbeats", async () => {
     const handle = createPostgresDatabase({
       connectionString: connectionString!,

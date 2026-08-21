@@ -21,6 +21,9 @@ and known limitations.
 - Removed the former 500-case task capacity. Lite and Full now persist 100,000-member tasks and
   100,000-run batches through bounded SQL batches; scheduling reads a 4,096-run refill window rather
   than materializing the complete pending batch on every heartbeat.
+- JAR import retry is now idempotent when an automatic queue retry wins the race and has already
+  queued, started or completed the same import. Full 100k capacity contracts run in their own CI
+  partition so the real-Agent acceptance remains below the five-minute target.
 - Consolidated related access and platform settings behind page-local four-character tabs, removed
   stale platform/LDAP links from operations, and moved low-frequency create, password reset, role
   assignment and suite-copy actions into centered full-viewport dialogs.

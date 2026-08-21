@@ -238,8 +238,6 @@ stop_fault_controller() {
 
 run_adapter_tests() {
   AUTOFORGE_TEST_POSTGRES_URL=postgresql://autoforge:autoforge@127.0.0.1:55439/autoforge \
-    pnpm exec vitest run packages/db/test/postgres-capacity.integration.test.ts
-  AUTOFORGE_TEST_POSTGRES_URL=postgresql://autoforge:autoforge@127.0.0.1:55439/autoforge \
   AUTOFORGE_TEST_MINIO_ENDPOINT=http://127.0.0.1:59009 \
   AUTOFORGE_TEST_MINIO_ACCESS_KEY=autoforge \
   AUTOFORGE_TEST_MINIO_SECRET_KEY=autoforge-secret \
@@ -252,6 +250,11 @@ run_adapter_tests() {
       packages/db/test/scheduling-refill.integration.test.ts \
       packages/object-store/test/minio-object-store.integration.test.ts \
       packages/queue/test/jetstream-job-queue.integration.test.ts
+}
+
+run_capacity_tests() {
+  AUTOFORGE_TEST_POSTGRES_URL=postgresql://autoforge:autoforge@127.0.0.1:55439/autoforge \
+    pnpm exec vitest run packages/db/test/postgres-capacity.integration.test.ts
 }
 
 create_platform_bucket() {
@@ -516,11 +519,15 @@ start_dependencies
 
 case "${acceptance_phase}" in
   contracts)
+    run_capacity_tests
     run_adapter_tests
     ;;
   browser-assets | browser-governance | browser-recovery | real-agent | ldap | dependency-recovery | runtime-agent | runtime-recovery | runtime-health | all)
     case "${acceptance_phase}" in
-      runtime-agent | runtime-health | all) run_adapter_tests ;;
+      runtime-health | all)
+        run_capacity_tests
+        run_adapter_tests
+        ;;
     esac
     create_platform_bucket
     initialize_platform_configuration

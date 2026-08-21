@@ -88,6 +88,22 @@ describe("SQLite management repositories", () => {
         }),
       ).resolves.toMatchObject({ status: "queued", progressPercent: 0 });
       await expect(
+        catalog.retryJarImportJob({
+          jobId: job.id,
+          dispatchJob: {
+            ...dispatchJob,
+            messageId: "import-message-retry-race",
+            deduplicationKey: "jar-import:large-tests:retry-race",
+          },
+          updatedAt: "2026-08-09T00:11:00.500Z",
+        }),
+      ).resolves.toMatchObject({ status: "queued", progressPercent: 0 });
+      expect(
+        handle.client
+          .prepare("SELECT COUNT(*) AS count FROM queue_jobs WHERE kind = 'jar-import'")
+          .get(),
+      ).toEqual({ count: 2 });
+      await expect(
         catalog.claimJarImportJob({ jobId: job.id, startedAt: "2026-08-09T00:11:01.000Z" }),
       ).resolves.toMatchObject({
         job: { status: "running", progressPercent: 5 },

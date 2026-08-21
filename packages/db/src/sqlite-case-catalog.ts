@@ -478,7 +478,11 @@ export class SqliteCaseCatalogRepository implements CaseCatalogRepository {
         );
       return row;
     })();
-    if (!updated) throw new DomainError("JAR_IMPORT_JOB_NOT_RETRYABLE", "当前导入任务不能重试。");
+    if (!updated) {
+      const current = await this.getJarImportJob(input.jobId, input.projectIds);
+      if (current && ["queued", "running", "succeeded"].includes(current.status)) return current;
+      throw new DomainError("JAR_IMPORT_JOB_NOT_RETRYABLE", "当前导入任务不能重试。");
+    }
     return toJarImportJob(updated);
   }
 
