@@ -6,21 +6,43 @@ and known limitations.
 
 ## Unreleased
 
+## 0.9.7 - 2026-08-21
+
 ### Changed
 
+- Added a standalone Groovy/Java package-path repair utility for repository test sources. It derives
+  package declarations from directory paths, validates Java/Groovy identifiers, preserves UTF-8 BOM
+  and comments, writes atomically, and remains idempotent across repeated runs.
 - Removed the fixed 20,000-entry rejection from TestNG JAR inspection, background import and source
   viewing. JAR entry and discovered-class counts are no longer capped; compressed upload size,
   declared uncompressed bytes, individual class/source size and warning output remain bounded.
+
+### Database
+
+- No migration is required. JAR discovery and the source-tree repair utility do not change persisted
+  records or configuration schemas.
 
 ### Tests
 
 - Added discovery/source-reading and authenticated HTTP inspection regressions using real JARs with
   more than 20,000 ZIP entries.
+- Added package-path repair coverage for Java/Groovy declarations, root/default packages, comments,
+  idempotency and validation-before-write behavior.
+- Stabilized browser acceptance helpers by targeting native select controls without changing the
+  user-visible selection behavior.
 
 ### Compatibility
 
 - No database migration or Runner Protocol change is required. The former `TOO_MANY_ENTRIES`
   inspection failure is no longer emitted.
+- Release images, deployment bundles, embedded static Runner binaries, Jenkins HPI plugins, SBOMs,
+  checksums and build provenance are regenerated for `v0.9.7` by the tagged Release workflow.
+
+### Known limitations
+
+- JAR entry and discovered-class counts are unrestricted, but deployment-configured compressed
+  upload size, declared uncompressed bytes and individual class/source size remain resource safety
+  boundaries.
 
 ## 0.9.6 - 2026-08-21
 
