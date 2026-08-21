@@ -45,7 +45,7 @@ jobs:
             exit 1
           fi
           revision="$(git rev-parse --verify "refs/tags/${REQUESTED_TAG}^{commit}")"
-          if [[ "${revision}" != "${GITHUB_SHA}" ]]; then
+          if [[ "${GITHUB_EVENT_NAME}" != "workflow_dispatch" && "${revision}" != "${GITHUB_SHA}" ]]; then
             echo "The workflow ref (${GITHUB_SHA}) must be the requested tagged commit (${revision})." >&2
             exit 1
           fi
@@ -208,7 +208,7 @@ jobs:
       - name: Generate execution plugin SBOM
         uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
         with:
-          path: dist/release/autoforge-jenkins-execution-${{ needs.prepare.outputs.version }}.hpi
+          file: dist/release/autoforge-jenkins-execution-${{ needs.prepare.outputs.version }}.hpi
           format: spdx-json
           output-file: dist/release/autoforge-jenkins-execution-${{ needs.prepare.outputs.version }}.spdx.json
           syft-version: v1.50.0
@@ -218,7 +218,7 @@ jobs:
       - name: Generate dependency publisher plugin SBOM
         uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
         with:
-          path: dist/release/autoforge-jenkins-dependency-publisher-${{ needs.prepare.outputs.version }}.hpi
+          file: dist/release/autoforge-jenkins-dependency-publisher-${{ needs.prepare.outputs.version }}.hpi
           format: spdx-json
           output-file: dist/release/autoforge-jenkins-dependency-publisher-${{ needs.prepare.outputs.version }}.spdx.json
           syft-version: v1.50.0

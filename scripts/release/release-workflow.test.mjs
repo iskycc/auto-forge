@@ -15,6 +15,16 @@ test("publishes complete release assets without waiting for checks", async () =>
     workflow,
     /mvn --batch-mode --no-transfer-progress[\s\S]*?integrations\/jenkins\/pom\.xml/,
   );
+  assert.match(
+    workflow,
+    /file: dist\/release\/autoforge-jenkins-execution-\$\{\{ needs\.prepare\.outputs\.version \}\}\.hpi/,
+  );
+  assert.match(
+    workflow,
+    /file: dist\/release\/autoforge-jenkins-dependency-publisher-\$\{\{ needs\.prepare\.outputs\.version \}\}\.hpi/,
+  );
+  assert.doesNotMatch(workflow, /path: dist\/release\/autoforge-jenkins-.*\.hpi/);
+  assert.match(workflow, /GITHUB_EVENT_NAME.*workflow_dispatch.*revision.*GITHUB_SHA/);
   assert.doesNotMatch(workflow, /^  toolchain:/m);
   assert.match(workflow, /  publish:\n[\s\S]*?    needs: \[prepare, backend, jenkins-plugins\]/);
 });
