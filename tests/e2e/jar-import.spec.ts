@@ -15,9 +15,11 @@ import {
 } from "./support/task-execution";
 import {
   appAlert,
+  browserJson,
   E2E_ADMIN_PASSWORD,
   E2E_ADMIN_USERNAME,
   ensureAdministrator,
+  selectProjectContext,
 } from "./support/session";
 
 async function captureUi(page: Page, name: string): Promise<void> {
@@ -156,6 +158,7 @@ public class MixedVisibleTest {
   await expect(page.getByRole("banner").getByText("E2E Administrator", { exact: true })).toHaveText(
     "E2E Administrator",
   );
+  await selectProjectContext(page, DEFAULT_PROJECT_ID);
   await ensureProjectHierarchy(page);
 
   await page.goto(`/cases/import?projectId=${encodeURIComponent(DEFAULT_PROJECT_ID)}`);
@@ -373,23 +376,43 @@ public class MixedVisibleTest {
   await page.getByRole("button", { name: "从该版本创建" }).last().click();
   await expect(page.getByText("版本历史（3）")).toBeVisible({ timeout: 20_000 });
 
-  const activeCasesResponse = await page.request.get(
-    `/api/v1/case-definitions?projectId=${encodeURIComponent(DEFAULT_PROJECT_ID)}&limit=100`,
-  );
-  expect(activeCasesResponse.status()).toBe(200);
-  const activeCases = (await activeCasesResponse.json()) as {
+  const executionCases = await browserJson<{
     items: Array<{
       id: string;
       className: string;
       displayName: string;
       enabled: boolean;
       archived: boolean;
+      revision: number;
+      projectVersionId: string;
+      testStageId: string;
     }>;
-  };
-  const taskCase = activeCases.items.find(
-    (definition) => definition.enabled && !definition.archived,
+  }>(
+    page,
+    `/api/v1/case-definitions?projectId=${encodeURIComponent(DEFAULT_PROJECT_ID)}&limit=100`,
   );
-  if (!taskCase) throw new Error("当前项目应至少保留一个可执行用例。");
+  expect(executionCases.status).toBe(200);
+  const executionCandidate = executionCases.body.items.at(0);
+  if (!executionCandidate) throw new Error("JAR 导入后应至少存在一个已绑定版本和阶段的用例。");
+  const activatedCase = await browserJson<typeof executionCandidate>(
+    page,
+    `/api/v1/case-definitions/${encodeURIComponent(executionCandidate.id)}`,
+    {
+      method: "PATCH",
+      body: {
+        enabled: true,
+        archived: false,
+        expectedRevision: executionCandidate.revision,
+      },
+    },
+  );
+  expect(activatedCase.status).toBe(200);
+  const taskCase = activatedCase.body;
+  expect(taskCase).toMatchObject({ enabled: true, archived: false });
+  const taskCaseQuery = new URLSearchParams({
+    projectVersionId: taskCase.projectVersionId,
+    testStageId: taskCase.testStageId,
+  }).toString();
 
   await page.goto(`/case-suites?projectId=${encodeURIComponent(DEFAULT_PROJECT_ID)}`);
   await expect(page.locator('select[name="projectId"]')).toHaveCount(0);
@@ -415,7 +438,7 @@ public class MixedVisibleTest {
   await expect(page.getByRole("option", { name: /每日冒烟测试/ })).toBeFocused();
   await expectUiConsistency(page);
 
-  await page.goto(`/cases?projectId=${encodeURIComponent(DEFAULT_PROJECT_ID)}`);
+  await page.goto(`/cases?${taskCaseQuery}`);
   await page.getByLabel("页内搜索用例").fill(taskCase.displayName);
   await page.getByLabel(`选择 ${taskCase.displayName}`).check();
   await page.getByLabel("目标用例任务").selectOption(dailySuiteId);
@@ -429,7 +452,7 @@ public class MixedVisibleTest {
   await page.getByRole("button", { name: `移除 ${taskCase.displayName}`, exact: true }).click();
   await expect(page.getByText("任务中还没有用例")).toBeVisible({ timeout: 20_000 });
 
-  await page.goto(`/cases?projectId=${encodeURIComponent(DEFAULT_PROJECT_ID)}`);
+  await page.goto(`/cases?${taskCaseQuery}`);
   await page.getByRole("button", { name: "导入用例" }).click();
   const caseImportDialog = page.getByLabel("导入用例", { exact: true });
   await expect(caseImportDialog).toBeVisible();
@@ -503,7 +526,7 @@ public class MixedVisibleTest {
   const heartbeatResult = (await heartbeat.json()) as { terminalConnectionToken: string };
   expect(heartbeatResult.terminalConnectionToken).toBeTruthy();
 
-  await page.goto(`/cases?projectId=${encodeURIComponent(DEFAULT_PROJECT_ID)}`);
+  await page.goto(`/cases?${taskCaseQuery}`);
   await page.getByLabel("页内搜索用例").fill(taskCase.displayName);
   await page.getByLabel(`选择 ${taskCase.displayName}`).check();
   await page.getByLabel("目标用例任务").selectOption(dailySuiteId);

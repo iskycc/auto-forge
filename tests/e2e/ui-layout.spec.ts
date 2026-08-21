@@ -2,8 +2,14 @@ import { expect, test, type Page } from "@playwright/test";
 import { mkdir } from "node:fs/promises";
 import { resolve } from "node:path";
 
-import { browserJson, ensureAdministrator, uniqueName } from "./support/session";
+import {
+  browserJson,
+  ensureAdministrator,
+  selectProjectContext,
+  uniqueName,
+} from "./support/session";
 import { expectUiIntegrity } from "./support/ui-guard";
+import { DEFAULT_PROJECT_ID } from "@autoforge/domain";
 
 const primaryRoutes = [
   "/",
@@ -75,6 +81,7 @@ test("top-bar project context persists across pages and removes local project sw
     body: { name: projectName, slug: suffix },
   });
   expect(created.status).toBe(201);
+  await selectProjectContext(page, DEFAULT_PROJECT_ID);
 
   await page.goto("/cases?projectId=stale-project&cursor=stale-cursor");
   const switcher = page.locator(".global-project-switcher");

@@ -203,6 +203,9 @@ async function verifyDirectoryOutageAndLocalFallback(
   const fallbackPage = await fallbackContext.newPage();
   await login(fallbackPage, E2E_ADMIN_USERNAME, E2E_ADMIN_PASSWORD);
   await expandAdministrationGroup(fallbackPage, "身份权限");
+  const accessManagement = fallbackPage.getByRole("link", { name: "访问管理", exact: true });
+  await expect(accessManagement).toBeVisible();
+  await accessManagement.click();
   await expect(fallbackPage.getByRole("link", { name: "目录配置", exact: true })).toBeVisible();
   expect((await adminPage.request.get("/api/v1/auth/session")).status()).toBe(200);
 
