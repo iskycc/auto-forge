@@ -14,6 +14,9 @@ const MANAGEMENT_PAGE = join(SOURCE_ROOT, "app", "settings", "page.tsx");
 const CASE_SUITE_MANAGER = join(SOURCE_ROOT, "components", "case-suite-manager.tsx");
 const GLOBAL_RUN_DIALOG = join(SOURCE_ROOT, "components", "global-run-dialog.tsx");
 const CASE_SUITE_EDITOR = join(SOURCE_ROOT, "components", "case-suite-editor.tsx");
+const CASE_SELECTION_TABLE = join(SOURCE_ROOT, "components", "case-selection-table.tsx");
+const AUTOMATION_PAGE = join(SOURCE_ROOT, "app", "settings", "automation", "page.tsx");
+const AUTOMATION_OPERATIONS = join(SOURCE_ROOT, "components", "automation-operations.tsx");
 const PROJECT_SWITCH_FREE_FILES = [
   join(SOURCE_ROOT, "app", "cases", "page.tsx"),
   join(SOURCE_ROOT, "app", "execution-records", "page.tsx"),
@@ -107,6 +110,9 @@ describe("shared UI controls", () => {
   it("uses grouped navigation and one global project picker", () => {
     const appShell = readFileSync(APP_SHELL, "utf8");
     const suiteManager = readFileSync(CASE_SUITE_MANAGER, "utf8");
+    const projectPickerConsumers = typescriptReactFiles(SOURCE_ROOT)
+      .filter((file) => readFileSync(file, "utf8").includes("<ProjectPicker"))
+      .map((file) => relative(SOURCE_ROOT, file));
 
     expect(appShell).toContain('label: "安全审计"');
     expect(appShell).toContain('label: "执行机组"');
@@ -115,6 +121,7 @@ describe("shared UI controls", () => {
     expect(appShell).toContain("<GlobalProjectSwitcher");
     expect(suiteManager).not.toContain("<ProjectPicker");
     expect(suiteManager).not.toContain("<Select");
+    expect(projectPickerConsumers).toEqual(["components/global-project-switcher.tsx"]);
   });
 
   it("does not reintroduce page-level project switches or execution parameter overrides", () => {
@@ -127,11 +134,23 @@ describe("shared UI controls", () => {
 
     const suiteEditor = readFileSync(CASE_SUITE_EDITOR, "utf8");
     const runDialog = readFileSync(GLOBAL_RUN_DIALOG, "utf8");
+    const caseSelection = readFileSync(CASE_SELECTION_TABLE, "utf8");
     expect(suiteEditor).not.toContain('name="parameters"');
     expect(suiteEditor).not.toContain("参数模板");
     expect(runDialog).not.toContain("单用例参数覆盖");
     expect(runDialog).not.toContain("parseParameterRecord");
     expect(runDialog).toContain("useState(true)");
+    expect(caseSelection).not.toContain("环境、参数和 Adapter 地址");
+    expect(caseSelection).toContain("重跑策略与 Adapter 地址");
+  });
+
+  it("keeps operations free of stale platform and LDAP configuration shortcuts", () => {
+    const operationsSource = [AUTOMATION_PAGE, AUTOMATION_OPERATIONS]
+      .map((file) => readFileSync(file, "utf8"))
+      .join("\n");
+
+    expect(operationsSource).not.toContain('href="/settings/platform');
+    expect(operationsSource).not.toContain('href="/settings/access?section=ldap');
   });
 
   it("keeps low-frequency management actions in dialogs", () => {

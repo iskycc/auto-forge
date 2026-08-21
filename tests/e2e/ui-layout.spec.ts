@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 import { mkdir } from "node:fs/promises";
 import { resolve } from "node:path";
 
@@ -68,6 +68,11 @@ test("administration entries are grouped into focused two-level navigation", asy
   await expect(navigation.getByRole("link", { name: "平台设置", exact: true })).toBeVisible();
   await expect(page.getByRole("heading", { name: "数据保留", exact: true })).toBeVisible();
   await expect(page.getByRole("heading", { name: "保留与清理策略" })).toBeVisible();
+
+  await page.goto("/settings/automation");
+  const automationPage = page.getByRole("main");
+  await expect(automationPage.getByRole("link", { name: "平台配置", exact: true })).toHaveCount(0);
+  await expect(automationPage.getByRole("link", { name: "LDAP 配置", exact: true })).toHaveCount(0);
 });
 
 test("top-bar project context persists across pages and removes local project switchers", async ({
@@ -148,6 +153,7 @@ test("global execution dialog covers and centers within the whole viewport", asy
 
   for (const viewport of [
     { width: 1024, height: 768 },
+    { width: 1536, height: 1024 },
     { width: 2560, height: 1440 },
   ]) {
     await page.setViewportSize(viewport);
@@ -156,28 +162,64 @@ test("global execution dialog covers and centers within the whole viewport", asy
     const dialog = page.getByRole("dialog", { name: "开始执行" });
     await expect(backdrop).toBeVisible();
     await expect(dialog).toBeVisible();
+    await expect(dialog.locator(".global-run-loading")).toHaveCount(0);
 
-    const [backdropBox, dialogBox] = await Promise.all([
-      backdrop.boundingBox(),
-      dialog.boundingBox(),
-    ]);
-    expect(backdropBox).toEqual({ x: 0, y: 0, width: viewport.width, height: viewport.height });
-    expect(dialogBox).not.toBeNull();
-    expect(Math.abs(dialogBox!.x + dialogBox!.width / 2 - viewport.width / 2)).toBeLessThanOrEqual(
-      1,
-    );
-    expect(
-      Math.abs(dialogBox!.y + dialogBox!.height / 2 - viewport.height / 2),
-    ).toBeLessThanOrEqual(1);
+    await expectViewportDialog(backdrop, dialog, viewport);
     expect(
       await page.evaluate(() =>
         document.elementFromPoint(8, 8)?.classList.contains("global-run-backdrop"),
       ),
     ).toBe(true);
-    await captureUi(page, "/global-run-dialog", viewport.width);
+    await captureUi(page, "/global-run-dialog-suite", viewport.width);
+
+    await dialog.getByRole("button", { name: "单个用例" }).click();
+    const adapterToggle = dialog.getByLabel("使用 CoTest TestNG Adapter");
+    await expect(adapterToggle).toBeChecked();
+    await expect(dialog.getByText("单用例参数覆盖")).toHaveCount(0);
+    await expect(dialog.locator('[name="parameters"]')).toHaveCount(0);
+    await dialog.locator(".global-run-form").evaluate((form) => {
+      form.scrollTop = form.scrollHeight;
+    });
+    await expect(adapterToggle).toBeInViewport();
+    await expectViewportDialog(backdrop, dialog, viewport);
+    await captureUi(page, "/global-run-dialog-single-case", viewport.width);
 
     await page.keyboard.press("Escape");
     await expect(backdrop).toHaveCount(0);
+  }
+});
+
+test("project and user creation stay in centered low-frequency dialogs", async ({ page }) => {
+  await ensureAdministrator(page);
+
+  for (const viewport of [
+    { width: 1024, height: 768 },
+    { width: 1536, height: 1024 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await page.goto("/settings/projects?section=members");
+    await expect(page.locator(".project-scope-card > form")).toHaveCount(0);
+    await page.getByRole("button", { name: "创建项目", exact: true }).click();
+    const projectBackdrop = page.locator("body > .action-dialog-backdrop");
+    const projectDialog = page.getByRole("dialog", { name: "创建项目" });
+    await expect(projectDialog.getByLabel("项目名称")).toBeVisible();
+    await expect(projectDialog.getByLabel("Slug")).toBeVisible();
+    await expectViewportDialog(projectBackdrop, projectDialog, viewport);
+    await captureUi(page, "/project-create-dialog", viewport.width);
+    await page.keyboard.press("Escape");
+    await expect(projectBackdrop).toHaveCount(0);
+
+    await page.goto("/settings/access?section=users");
+    await page.getByRole("button", { name: "创建用户", exact: true }).click();
+    const userBackdrop = page.locator("body > .action-dialog-backdrop");
+    const userDialog = page.getByRole("dialog", { name: "创建本地用户" });
+    await expect(userDialog.getByLabel("用户名", { exact: true })).toBeVisible();
+    await expect(userDialog.getByLabel("显示名称", { exact: true })).toBeVisible();
+    await expect(userDialog.getByLabel("初始密码")).toBeVisible();
+    await expectViewportDialog(userBackdrop, userDialog, viewport);
+    await captureUi(page, "/user-create-dialog", viewport.width);
+    await page.keyboard.press("Escape");
+    await expect(userBackdrop).toHaveCount(0);
   }
 });
 
@@ -249,4 +291,21 @@ async function captureUi(page: Page, route: string, width: number): Promise<void
     path: resolve(screenshotDirectory, `${width}-${name}.png`),
     fullPage: true,
   });
+}
+
+async function expectViewportDialog(
+  backdrop: Locator,
+  dialog: Locator,
+  viewport: { width: number; height: number },
+): Promise<void> {
+  const [backdropBox, dialogBox] = await Promise.all([
+    backdrop.boundingBox(),
+    dialog.boundingBox(),
+  ]);
+  expect(backdropBox).toEqual({ x: 0, y: 0, width: viewport.width, height: viewport.height });
+  expect(dialogBox).not.toBeNull();
+  expect(Math.abs(dialogBox!.x + dialogBox!.width / 2 - viewport.width / 2)).toBeLessThanOrEqual(1);
+  expect(Math.abs(dialogBox!.y + dialogBox!.height / 2 - viewport.height / 2)).toBeLessThanOrEqual(
+    1,
+  );
 }

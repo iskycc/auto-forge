@@ -125,6 +125,12 @@ jobs:
         run: |
           corepack enable
           pnpm install --frozen-lockfile
+      - name: Install CJK font for reviewable UI screenshots
+        if: matrix.screenshots
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends fonts-noto-cjk
+          fc-cache --force
       - name: Locate preinstalled Chromium
         run: |
           browser_path="$(command -v google-chrome || command -v chromium || true)"

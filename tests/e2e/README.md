@@ -11,12 +11,13 @@ The suite is divided by failure domain so each scenario can run alone with an is
 | `case-suite-lifecycle`    | `playwright test tests/e2e/case-suite-lifecycle.spec.ts` | Case/source/suite versioning, conflict, policy and archive lifecycle                                    |
 | `asset-lifecycle`         | `playwright test tests/e2e/jar-import.spec.ts`           | Current legacy asset/control-plane execution flow; split further as coverage grows                      |
 | `single-case-run`         | `playwright test tests/e2e/single-case-run.spec.ts`      | Global execution dialog, Runner Group selection, single-case scheduling and Adapter address propagation |
+| `ui-layout`               | `playwright test tests/e2e/ui-layout.spec.ts`            | 1024px+ layout guards, global project context, full-viewport dialogs and review screenshots             |
 | `scheduling-refill`       | `playwright test tests/e2e/scheduling-refill.spec.ts`    | Immediate slot refill, overlapping retry and idempotent completion replay                               |
-| `round-summary`           | `playwright test tests/e2e/all-rounds.spec.ts`            | Final summary round, infrastructure rescheduling/incidents and real fixed-layout column geometry         |
+| `round-summary`           | `playwright test tests/e2e/all-rounds.spec.ts`           | Final summary round, infrastructure rescheduling/incidents and real fixed-layout column geometry        |
 | `runner-real-lite`        | `scripts/quality/test-real-agent.sh`                     | Release-built Go Agent, offline Java/TestNG and real PTY lifecycle in Lite                              |
 | `batch-input-sharing`     | `scripts/quality/test-batch-input-sharing.sh`            | Real Agent JAR/JDK reuse across refill/restart and terminal cleanup                                     |
 | `ldap-real`               | `scripts/quality/test-ldap-e2e.sh`                       | Private-CA LDAPS/StartTLS directory in an internal container network                                    |
-| `runner-ssh-install`      | `scripts/quality/test-runner-install-e2e.sh`             | Password/PAM SSH, encrypted connection profiles, batch update and real systemd                           |
+| `runner-ssh-install`      | `scripts/quality/test-runner-install-e2e.sh`             | Password/PAM SSH, encrypted connection profiles, batch update and real systemd                          |
 | `container-executor`      | `scripts/quality/test-container-executor.sh`             | Immutable offline executor image, isolation and cancellation cleanup                                    |
 | `platform-retention`      | `playwright test tests/e2e/platform-operations.spec.ts`  | Configuration conflicts, diagnostics and retention previews                                             |
 | `full-business-recovery`  | `scripts/quality/test-full-business-recovery.sh`         | Fault injection during active Full business stages                                                      |

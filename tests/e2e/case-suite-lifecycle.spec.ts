@@ -153,6 +153,17 @@ test("case metadata, immutable versions and suite policy survive lifecycle chang
     .check();
   await page.getByLabel("Runner 标签（逗号分隔）").fill("linux, lifecycle");
   await expect(page.getByText("参数模板")).toHaveCount(0);
+  await expect(page.locator('[name="parameters"]')).toHaveCount(0);
+  const adapterToggle = page.getByLabel("使用 CoTest TestNG Adapter");
+  for (const viewport of [
+    { width: 1536, height: 1024 },
+    { width: 1024, height: 768 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await adapterToggle.scrollIntoViewIfNeeded();
+    await captureUi(page, `case-suite-execution-policy-${viewport.width}`);
+  }
+  await page.setViewportSize({ width: 1536, height: 1024 });
   await page.getByLabel("产物规则（每行一个相对路径 glob）").fill("reports/**/*.xml");
   await page.getByRole("button", { name: "保存修改" }).click();
   await expect(page.getByRole("status")).toContainText("用例任务已更新");

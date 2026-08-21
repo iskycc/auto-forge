@@ -457,7 +457,7 @@ function CaseInspector({
         <details className="case-inspector-section">
           <summary>立即执行</summary>
           <div className="case-inspector-run-action">
-            <p>通过全局执行弹窗配置执行机、执行机组、环境、参数和 Adapter 地址。</p>
+            <p>通过顶栏执行入口选择执行机或执行机组，并设置重跑策略与 Adapter 地址。</p>
             <OpenRunDialogButton
               caseDefinitionId={definition.id}
               className="button button-primary"
