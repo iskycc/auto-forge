@@ -3,9 +3,22 @@
 import { Button, Input, Select } from "@/components/ui";
 import { formatMethodSignature } from "@/lib/jvm-signature";
 
-import { apiErrorSchema, CASE_SUITE_ITEM_MUTATION_LIMIT } from "@autoforge/contracts";
+import {
+  apiErrorSchema,
+  CASE_DEFINITION_DELETE_LIMIT,
+  CASE_SUITE_ITEM_MUTATION_LIMIT,
+} from "@autoforge/contracts";
 import type { CaseDefinitionWithMethods, CaseSuite, CaseVersion } from "@autoforge/domain";
-import { AlertCircle, Check, FileCode2, Folder, Layers3, LoaderCircle, Search } from "lucide-react";
+import {
+  AlertCircle,
+  Check,
+  FileCode2,
+  Folder,
+  Layers3,
+  LoaderCircle,
+  Search,
+  Trash2,
+} from "lucide-react";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
@@ -72,13 +85,15 @@ const TREE_RENDER_PAGE_SIZE = 250;
 export function CaseSelectionTable({
   cases,
   suites,
-  manageableProjectIds,
+  caseManagementProjectIds,
+  suiteManagementProjectIds,
   initialSearch = "",
   latestOutcomes = new Map(),
 }: {
   cases: CaseDefinitionWithMethods[];
   suites: CaseSuite[];
-  manageableProjectIds: string[] | undefined;
+  caseManagementProjectIds: string[] | undefined;
+  suiteManagementProjectIds: string[] | undefined;
   initialSearch?: string;
   latestOutcomes?: ReadonlyMap<string, CaseLatestRun>;
 }) {
@@ -92,30 +107,39 @@ export function CaseSelectionTable({
   const [detailReload, setDetailReload] = useState(0);
   const [detail, setDetail] = useState<CaseWorkspaceDetail | null>(null);
   const [detailError, setDetailError] = useState<{ caseId: string; message: string } | null>(null);
+  const [deletedCaseIds, setDeletedCaseIds] = useState(() => new Set<string>());
 
   const normalizedSearch = search.trim().toLocaleLowerCase();
+  const availableCases = useMemo(
+    () => cases.filter((item) => !deletedCaseIds.has(item.id)),
+    [cases, deletedCaseIds],
+  );
   const visibleCases = useMemo(
     () =>
-      cases.filter(
+      availableCases.filter(
         (item) =>
           matchesSearch(item, normalizedSearch) &&
           matchesOutcomeFilter(latestOutcomes.get(item.id), outcomeFilter),
       ),
-    [cases, normalizedSearch, outcomeFilter, latestOutcomes],
+    [availableCases, normalizedSearch, outcomeFilter, latestOutcomes],
   );
   const selectionStats = useMemo(
     () => computeSelectionStats(checkedCaseIds, latestOutcomes),
     [checkedCaseIds, latestOutcomes],
   );
-  const canManageProject = (projectId: string): boolean =>
-    manageableProjectIds === undefined || manageableProjectIds.includes(projectId);
-  const manageableCases = visibleCases.filter((item) => canManageProject(item.projectId));
-  const manageableSuites = suites.filter((suite) => canManageProject(suite.projectId));
-  const canManageAnyCase = manageableCases.length > 0;
+  const canManageCases = (projectId: string): boolean =>
+    caseManagementProjectIds === undefined || caseManagementProjectIds.includes(projectId);
+  const canManageSuites = (projectId: string): boolean =>
+    suiteManagementProjectIds === undefined || suiteManagementProjectIds.includes(projectId);
+  const canSelectCase = (projectId: string): boolean =>
+    canManageCases(projectId) || canManageSuites(projectId);
+  const selectableCases = visibleCases.filter((item) => canSelectCase(item.projectId));
+  const manageableSuites = suites.filter((suite) => canManageSuites(suite.projectId));
+  const canSelectAnyCase = selectableCases.length > 0;
   const allSelected =
-    manageableCases.length > 0 && manageableCases.every((item) => checkedCaseIds.has(item.id));
+    selectableCases.length > 0 && selectableCases.every((item) => checkedCaseIds.has(item.id));
   const selectedProjects = new Set(
-    cases.filter((item) => checkedCaseIds.has(item.id)).map((item) => item.projectId),
+    availableCases.filter((item) => checkedCaseIds.has(item.id)).map((item) => item.projectId),
   );
   const crossProjectSelection = selectedProjects.size > 1;
   const selectedProjectId = selectedProjects.size === 1 ? [...selectedProjects][0] : undefined;
@@ -125,6 +149,11 @@ export function CaseSelectionTable({
   const effectiveSuiteId = targetSuites.some((suite) => suite.id === suiteId)
     ? suiteId
     : (targetSuites[0]?.id ?? "");
+  const selectedCases = availableCases.filter((item) => checkedCaseIds.has(item.id));
+  const selectedCasesCanJoinSuite =
+    selectedCases.length > 0 && selectedCases.every((item) => canManageSuites(item.projectId));
+  const selectedCasesCanDelete =
+    selectedCases.length > 0 && selectedCases.every((item) => canManageCases(item.projectId));
   const activeDetail = detail?.definition.id === activeCaseId ? detail : null;
   const activeDetailError =
     detailError && detailError.caseId === activeCaseId ? detailError.message : "";
@@ -167,7 +196,7 @@ export function CaseSelectionTable({
       const next = new Set(current);
       for (const item of matched) {
         // 无管理权限的用例没有勾选框，不能通过导入间接选中。
-        if (canManageProject(item.projectId)) next.add(item.id);
+        if (canSelectCase(item.projectId)) next.add(item.id);
       }
       return next;
     });
@@ -189,7 +218,13 @@ export function CaseSelectionTable({
   }
 
   async function addToSuite(): Promise<void> {
-    if (!effectiveSuiteId || checkedCaseIds.size === 0 || crossProjectSelection) return;
+    if (
+      !effectiveSuiteId ||
+      checkedCaseIds.size === 0 ||
+      crossProjectSelection ||
+      !selectedCasesCanJoinSuite
+    )
+      return;
     const selectedCaseIds = [...checkedCaseIds];
     setPending(true);
     setMessage(null);
@@ -225,6 +260,61 @@ export function CaseSelectionTable({
     }
   }
 
+  async function deleteCases(caseDefinitionIds: readonly string[]): Promise<void> {
+    if (caseDefinitionIds.length === 0) return;
+    const confirmed = window.confirm(
+      caseDefinitionIds.length === 1
+        ? "确认删除这个用例？它会从用例库和任务成员中移除，既有执行记录仍会保留。"
+        : `确认批量删除 ${caseDefinitionIds.length} 个用例？它们会从用例库和任务成员中移除，既有执行记录仍会保留。`,
+    );
+    if (!confirmed) return;
+    setPending(true);
+    setMessage(null);
+    let deletedCount = 0;
+    try {
+      if (caseDefinitionIds.length === 1) {
+        const response = await fetch(
+          `/api/v1/case-definitions/${encodeURIComponent(caseDefinitionIds[0]!)}`,
+          { method: "DELETE" },
+        );
+        if (!response.ok) throw new Error(await responseErrorMessage(response));
+        deletedCount = 1;
+      } else {
+        for (const batch of batchesOf(caseDefinitionIds, CASE_DEFINITION_DELETE_LIMIT)) {
+          const response = await fetch("/api/v1/case-definitions", {
+            method: "DELETE",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ caseDefinitionIds: batch }),
+          });
+          if (!response.ok) {
+            const reason = await responseErrorMessage(response);
+            throw new Error(
+              deletedCount > 0 ? `已删除 ${deletedCount} 个用例；后续批次失败：${reason}` : reason,
+            );
+          }
+          deletedCount += batch.length;
+        }
+      }
+      const removed = new Set(caseDefinitionIds);
+      setDeletedCaseIds((current) => new Set([...current, ...removed]));
+      setCheckedCaseIds((current) => {
+        const next = new Set(current);
+        for (const id of removed) next.delete(id);
+        return next;
+      });
+      if (activeCaseId && removed.has(activeCaseId)) {
+        setActiveCaseId(undefined);
+        setDetail(null);
+        setDetailError(null);
+      }
+      setMessage(`已删除 ${deletedCount} 个用例。`);
+    } catch (caught) {
+      setMessage(caught instanceof Error ? caught.message : "删除用例失败。");
+    } finally {
+      setPending(false);
+    }
+  }
+
   return (
     <div className="case-library-workspace">
       <section className="case-browser-pane" aria-label="用例目录工作区">
@@ -255,13 +345,13 @@ export function CaseSelectionTable({
           </Select>
         </div>
         <div className="case-browser-summary">
-          <span>全部 {cases.length} 个用例</span>
+          <span>全部 {availableCases.length} 个用例</span>
           {normalizedSearch || outcomeFilter !== "all" ? (
             <strong>匹配 {visibleCases.length} 个</strong>
           ) : null}
         </div>
 
-        {canManageAnyCase ? (
+        {canSelectAnyCase ? (
           <div className="selection-toolbar case-selection-toolbar">
             <label className="selection-actions">
               <Input
@@ -271,7 +361,7 @@ export function CaseSelectionTable({
                 onChange={() =>
                   setCheckedCaseIds((current) => {
                     const next = new Set(current);
-                    for (const item of manageableCases) {
+                    for (const item of selectableCases) {
                       if (allSelected) next.delete(item.id);
                       else next.add(item.id);
                     }
@@ -281,15 +371,30 @@ export function CaseSelectionTable({
               />
               全选当前结果
             </label>
-            <CaseImportDialog cases={cases} onImport={importFromTable} />
+            <CaseImportDialog cases={availableCases} onImport={importFromTable} />
             <span>
-              {checkedCaseIds.size > 0 ? `已选 ${checkedCaseIds.size}` : "可批量加入任务"}
+              {checkedCaseIds.size > 0
+                ? `已选 ${checkedCaseIds.size}`
+                : manageableSuites.length > 0
+                  ? "可批量加入任务"
+                  : "可批量管理用例"}
             </span>
-            {manageableSuites.length === 0 ? (
+            {selectedCasesCanDelete ? (
+              <Button
+                disabled={pending}
+                onClick={() => deleteCases([...checkedCaseIds])}
+                type="button"
+                variant="danger"
+              >
+                {pending ? <LoaderCircle className="spin" size={15} /> : <Trash2 size={15} />}
+                批量删除
+              </Button>
+            ) : null}
+            {manageableSuites.length === 0 && selectedCasesCanJoinSuite ? (
               <Link className="button button-secondary" href="/case-suites">
                 <Layers3 size={15} /> 新建任务
               </Link>
-            ) : (
+            ) : manageableSuites.length > 0 ? (
               <>
                 <Select
                   value={effectiveSuiteId}
@@ -309,6 +414,7 @@ export function CaseSelectionTable({
                     checkedCaseIds.size === 0 ||
                     pending ||
                     crossProjectSelection ||
+                    !selectedCasesCanJoinSuite ||
                     !effectiveSuiteId
                   }
                   onClick={addToSuite}
@@ -317,7 +423,7 @@ export function CaseSelectionTable({
                   加入任务
                 </Button>
               </>
-            )}
+            ) : null}
           </div>
         ) : null}
         {crossProjectSelection ? (
@@ -357,7 +463,7 @@ export function CaseSelectionTable({
             <div className="case-directory-tree" role="tree" aria-label="完整用例目录">
               <DirectoryNode
                 activeCaseId={activeCaseId}
-                canManageProject={canManageProject}
+                canManageProject={canSelectCase}
                 forceOpen={Boolean(normalizedSearch)}
                 latestOutcomes={latestOutcomes}
                 node={buildDirectoryTree(visibleCases)}
@@ -392,6 +498,8 @@ export function CaseSelectionTable({
               setDetail((current) => (current ? { ...current, definition } : current))
             }
             onReload={() => setDetailReload((value) => value + 1)}
+            onDelete={() => deleteCases([activeDetail.definition.id])}
+            pending={pending}
           />
         ) : (
           <div className="case-inspector-empty" role="status">
@@ -408,10 +516,14 @@ function CaseInspector({
   detail,
   onDefinitionUpdated,
   onReload,
+  onDelete,
+  pending,
 }: {
   detail: CaseWorkspaceDetail;
   onDefinitionUpdated(definition: CaseDefinitionWithMethods): void;
   onReload(): void;
+  onDelete(): void;
+  pending: boolean;
 }) {
   const { definition, activity } = detail;
   return (
@@ -586,8 +698,18 @@ function CaseInspector({
 
       {detail.canManage ? (
         <details className="case-inspector-section">
-          <summary>编辑用例元数据</summary>
+          <summary>管理用例</summary>
           <CaseDefinitionEditor definition={definition} onUpdated={onDefinitionUpdated} />
+          <div className="case-inspector-delete-action">
+            <div>
+              <strong>删除用例</strong>
+              <p>删除当前目录、版本和任务成员关系；既有执行记录仍保留。</p>
+            </div>
+            <Button disabled={pending} onClick={onDelete} type="button" variant="danger">
+              {pending ? <LoaderCircle className="spin" size={15} /> : <Trash2 size={15} />}
+              删除用例
+            </Button>
+          </div>
         </details>
       ) : null}
 
@@ -851,6 +973,12 @@ function matchesSearch(item: CaseDefinitionWithMethods, normalizedSearch: string
     ...item.tags,
     ...item.methods.flatMap((method) => [method.methodName, ...method.groups]),
   ].some((value) => value.toLocaleLowerCase().includes(normalizedSearch));
+}
+
+async function responseErrorMessage(response: Response): Promise<string> {
+  const payload: unknown = await response.json().catch(() => null);
+  const parsed = apiErrorSchema.safeParse(payload);
+  return parsed.success ? parsed.data.error.message : `请求失败（HTTP ${response.status}）。`;
 }
 
 function formatDate(value: string): string {

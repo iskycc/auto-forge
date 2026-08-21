@@ -1,8 +1,14 @@
-import { apiErrorResponse } from "@/lib/api-response";
+import { apiErrorResponse, readJsonBody } from "@/lib/api-response";
 import { getPlatformServices } from "@/lib/services";
+import { deleteCaseDefinitionsInputSchema } from "@autoforge/contracts";
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { authenticateRequest, authorizedProjectScope } from "@/lib/auth";
+import {
+  authenticateRequest,
+  authorizedProjectScope,
+  requestId,
+  requireSameOrigin,
+} from "@/lib/auth";
 
 export const runtime = "nodejs";
 
@@ -42,5 +48,38 @@ export async function GET(request: Request): Promise<NextResponse> {
     return NextResponse.json(page);
   } catch (error) {
     return apiErrorResponse(error);
+  }
+}
+
+export async function DELETE(request: Request): Promise<NextResponse> {
+  const currentRequestId = requestId(request);
+  try {
+    requireSameOrigin(request);
+    const identity = await authenticateRequest(request);
+    const input = deleteCaseDefinitionsInputSchema.parse(
+      await readJsonBody(request, 16 * 1_024 * 1_024),
+    );
+    const services = await getPlatformServices();
+    const projectIds = services.identityAccess.projectScope(identity, "case.manage");
+    const deleted = await services.caseDefinitions.deleteMany(input.caseDefinitionIds, projectIds);
+    const countsByProject = new Map<string, number>();
+    for (const definition of deleted) {
+      countsByProject.set(
+        definition.projectId,
+        (countsByProject.get(definition.projectId) ?? 0) + 1,
+      );
+    }
+    for (const [projectId, caseCount] of countsByProject) {
+      await services.identityAccess.recordAuthorizedOperation(identity, {
+        action: "case_definition.delete_many",
+        resourceType: "case_definition",
+        projectId,
+        requestId: currentRequestId,
+        details: { caseCount },
+      });
+    }
+    return NextResponse.json({ deletedCount: deleted.length });
+  } catch (error) {
+    return apiErrorResponse(error, currentRequestId);
   }
 }

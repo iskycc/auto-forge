@@ -46,4 +46,20 @@ describe("CaseDefinitionService", () => {
       service.update("case-1", { displayName: "新名称", expectedRevision: 4 }, "actor-1"),
     ).rejects.toMatchObject({ code: "CASE_DEFINITION_REVISION_CONFLICT" });
   });
+
+  it("deletes a deduplicated selection only inside the authorized project scope", async () => {
+    const deleteCaseDefinitions = vi.fn().mockResolvedValue([
+      { id: "case-1", projectId: "project-a", displayName: "Case One" },
+      { id: "case-2", projectId: "project-a", displayName: "Case Two" },
+    ]);
+    const service = serviceWith({ deleteCaseDefinitions });
+
+    await expect(
+      service.deleteMany(["case-1", "case-1", "case-2"], ["project-a"]),
+    ).resolves.toHaveLength(2);
+    expect(deleteCaseDefinitions).toHaveBeenCalledWith(["case-1", "case-2"], ["project-a"]);
+    await expect(service.deleteMany([])).rejects.toMatchObject({
+      code: "CASE_DEFINITION_IDS_REQUIRED",
+    });
+  });
 });

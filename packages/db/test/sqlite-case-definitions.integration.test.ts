@@ -192,6 +192,23 @@ describe("CaseDefinitionService with SQLite catalog", () => {
         changeReason: "manual.restore",
         createdBy: "actor-2",
       });
+
+      await expect(service.deleteMany(["case-1"], [])).rejects.toMatchObject({
+        code: "CASE_DEFINITION_NOT_FOUND",
+      });
+      await expect(service.get("case-1")).resolves.toMatchObject({ id: "case-1" });
+
+      await expect(service.deleteMany(["case-1"])).resolves.toEqual([
+        {
+          id: "case-1",
+          projectId: "00000000-0000-7000-8000-000000000001",
+          displayName: "结账测试",
+        },
+      ]);
+      await expect(service.get("case-1")).rejects.toMatchObject({
+        code: "CASE_DEFINITION_NOT_FOUND",
+      });
+      await expect(catalog.listCaseVersions("case-1", 10)).resolves.toEqual([]);
     } finally {
       handle.close();
     }

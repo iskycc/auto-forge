@@ -35,6 +35,134 @@ function cleanupTestAttemptLogs(logs: { store: AttemptLogStore; directory: strin
 }
 
 describe.skipIf(!connectionString)("PostgreSQL platform repositories", () => {
+  it("overwrites matching classes per hierarchy and allows one JAR object in two versions", async () => {
+    const handle = createPostgresDatabase({
+      connectionString: connectionString!,
+      migrationsFolder: resolve(import.meta.dirname, "../drizzle/postgresql"),
+    });
+    const catalog = new PostgresCaseCatalogRepository(handle);
+    const structures = new PostgresProjectStructureRepository(handle);
+    const suffix = randomUUID();
+    const projectId = "00000000-0000-7000-8000-000000000001";
+    const versionA = `version-a-${suffix}`;
+    const versionB = `version-b-${suffix}`;
+    const stageA = `stage-a-${suffix}`;
+    const stageB = `stage-b-${suffix}`;
+    const sourceA1 = `source-a1-${suffix}`;
+    const sourceA2 = `source-a2-${suffix}`;
+    const sourceB = `source-b-${suffix}`;
+    const stableCaseId = `case-stable-${suffix}`;
+    const otherVersionCaseId = `case-version-b-${suffix}`;
+    const sharedObjectKey = `jars/shared-${suffix}.jar`;
+    const now = "2026-08-21T00:00:00.000Z";
+    try {
+      await structures.createVersion({
+        id: versionA,
+        projectId,
+        name: `Version A ${suffix}`,
+        normalizedName: `version a ${suffix}`,
+        recordedAt: now,
+      });
+      await structures.createVersion({
+        id: versionB,
+        projectId,
+        name: `Version B ${suffix}`,
+        normalizedName: `version b ${suffix}`,
+        recordedAt: now,
+      });
+      await structures.createStage({
+        id: stageA,
+        projectId,
+        projectVersionId: versionA,
+        name: "Stage A",
+        normalizedName: "stage a",
+        description: "",
+        recordedAt: now,
+      });
+      await structures.createStage({
+        id: stageB,
+        projectId,
+        projectVersionId: versionB,
+        name: "Stage B",
+        normalizedName: "stage b",
+        description: "",
+        recordedAt: now,
+      });
+
+      await catalog.importCatalog(
+        scopedPostgresImportRecord({
+          sourceId: sourceA1,
+          caseDefinitionId: stableCaseId,
+          projectId,
+          projectVersionId: versionA,
+          testStageId: stageA,
+          objectKey: sharedObjectKey,
+          sha256: "a".repeat(64),
+          methodName: "beforeReimport",
+          importedAt: now,
+        }),
+      );
+      await catalog.importCatalog(
+        scopedPostgresImportRecord({
+          sourceId: sourceA2,
+          caseDefinitionId: `unused-${suffix}`,
+          projectId,
+          projectVersionId: versionA,
+          testStageId: stageA,
+          objectKey: `jars/changed-${suffix}.jar`,
+          sha256: "b".repeat(64),
+          methodName: "afterReimport",
+          importedAt: "2026-08-21T00:01:00.000Z",
+        }),
+      );
+      await catalog.importCatalog(
+        scopedPostgresImportRecord({
+          sourceId: sourceB,
+          caseDefinitionId: otherVersionCaseId,
+          projectId,
+          projectVersionId: versionB,
+          testStageId: stageB,
+          objectKey: sharedObjectKey,
+          sha256: "a".repeat(64),
+          methodName: "beforeReimport",
+          importedAt: "2026-08-21T00:02:00.000Z",
+        }),
+      );
+
+      const inVersionA = await catalog.listCases({
+        projectIds: [projectId],
+        projectVersionId: versionA,
+        testStageId: stageA,
+        limit: 20,
+      });
+      expect(inVersionA.items).toHaveLength(1);
+      expect(inVersionA.items[0]).toMatchObject({
+        id: stableCaseId,
+        sourceId: sourceA2,
+        currentVersion: 2,
+        methods: [{ methodName: "afterReimport" }],
+      });
+      expect(
+        await catalog.findSourceBySha256("a".repeat(64), projectId, versionB, stageB),
+      ).toMatchObject({ sourceId: sourceB });
+      await expect(
+        catalog.deleteCaseDefinitions([stableCaseId, otherVersionCaseId], [projectId]),
+      ).resolves.toHaveLength(2);
+    } finally {
+      await handle.pool.query("DELETE FROM case_definitions WHERE id LIKE $1", [`%${suffix}%`]);
+      await handle.pool.query("DELETE FROM case_sources WHERE id = ANY($1::text[])", [
+        [sourceA1, sourceA2, sourceB],
+      ]);
+      await handle.pool.query("DELETE FROM test_stages WHERE id = ANY($1::text[])", [
+        [stageA, stageB],
+      ]);
+      await handle.pool.query("DELETE FROM project_versions WHERE id = ANY($1::text[])", [
+        [versionA, versionB],
+      ]);
+      await handle.close();
+    }
+  });
+
   it("treats a retry already queued by another caller as idempotent", async () => {
     const handle = createPostgresDatabase({
       connectionString: connectionString!,
@@ -1240,6 +1368,7 @@ describe.skipIf(!connectionString)("PostgreSQL platform repositories", () => {
     const attemptIdB = `attempt-round-b-${suiteId}`;
     const assignmentIdA = `assignment-round-a-${suiteId}`;
     const assignmentIdB = `assignment-round-b-${suiteId}`;
+    const firstRoundCandidate = postgresClassCandidate("example.PostgresSmokeA", ["smoke"]);
     try {
       await handle.ready;
       // 导入两个 case 供 round 测试使用
@@ -1259,13 +1388,13 @@ describe.skipIf(!connectionString)("PostgreSQL platform repositories", () => {
           hasRootTestNgXml: false,
           discoveryMode: "bytecode-annotations",
           warnings: [],
-          classes: [postgresCaseCandidate()],
+          classes: [firstRoundCandidate],
         },
         cases: [
           {
             caseDefinitionId: caseDefinitionId1,
             caseVersionId: randomUUID(),
-            candidate: postgresCaseCandidate(),
+            candidate: firstRoundCandidate,
             methods: [{ methodId: randomUUID(), methodIndex: 0 }],
           },
         ],
@@ -1344,7 +1473,7 @@ describe.skipIf(!connectionString)("PostgreSQL platform repositories", () => {
             caseDefinitionId: caseDefinitionId1,
             caseVersion: 1,
             displayName: "Round A",
-            className: "example.PostgresSmoke",
+            className: firstRoundCandidate.className,
           },
           {
             id: runIdB,
@@ -1556,7 +1685,7 @@ describe.skipIf(!connectionString)("PostgreSQL platform repositories", () => {
         groups: ["nightly"],
       });
       expect(await catalog.listCaseVersions(synchronizedCase.id, 10)).toMatchObject([
-        { version: 2, sourceId: candidateSourceId, changeReason: "source.sync" },
+        { version: 2, sourceId: candidateSourceId, changeReason: "source.reimport" },
         { version: 1, sourceId: currentSourceId, changeReason: "source.import" },
       ]);
 
@@ -1929,4 +2058,56 @@ async function importPostgresSource(
       methods: [{ methodId: randomUUID(), methodIndex: 0 }],
     })),
   });
+}
+
+function scopedPostgresImportRecord(input: {
+  sourceId: string;
+  caseDefinitionId: string;
+  projectId: string;
+  projectVersionId: string;
+  testStageId: string;
+  objectKey: string;
+  sha256: string;
+  methodName: string;
+  importedAt: string;
+}) {
+  const candidate = {
+    ...postgresClassCandidate("com.example.ScopedSameTest", ["smoke"]),
+    methods: [
+      {
+        ...postgresClassCandidate("com.example.ScopedSameTest", ["smoke"]).methods[0]!,
+        methodName: input.methodName,
+      },
+    ],
+  };
+  return {
+    sourceId: input.sourceId,
+    projectId: input.projectId,
+    projectVersionId: input.projectVersionId,
+    testStageId: input.testStageId,
+    objectKey: input.objectKey,
+    displayName: input.sourceId,
+    importedAt: input.importedAt,
+    inspection: {
+      schemaVersion: 1 as const,
+      fileName: `${input.sourceId}.jar`,
+      sha256: input.sha256,
+      sizeBytes: 128,
+      classFileCount: 1,
+      testClassCount: 1,
+      testMethodCount: 1,
+      hasRootTestNgXml: false,
+      discoveryMode: "bytecode-annotations" as const,
+      warnings: [],
+      classes: [candidate],
+    },
+    cases: [
+      {
+        caseDefinitionId: input.caseDefinitionId,
+        caseVersionId: randomUUID(),
+        candidate,
+        methods: [{ methodId: randomUUID(), methodIndex: 0 }],
+      },
+    ],
+  };
 }

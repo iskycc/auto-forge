@@ -140,6 +140,20 @@ public class MixedVisibleTest {
     "com/example/MixedVisibleTest.java": new TextEncoder().encode(mixedSource),
     "com/example/Damaged.class": new Uint8Array([0xca, 0xfe, 0xba, 0xbe, 0x00]),
   });
+  const deletionJar = zipSync({
+    "com/example/BulkDeleteOneFixture.class": buildClassFile({
+      className: "com.example.BulkDeleteOneFixture",
+      methods: [{ name: "deleteOne", annotations: [{ type: "Test" }] }],
+    }),
+    "com/example/BulkDeleteTwoFixture.class": buildClassFile({
+      className: "com.example.BulkDeleteTwoFixture",
+      methods: [{ name: "deleteTwo", annotations: [{ type: "Test" }] }],
+    }),
+    "com/example/SingleDeleteFixture.class": buildClassFile({
+      className: "com.example.SingleDeleteFixture",
+      methods: [{ name: "deleteSingle", annotations: [{ type: "Test" }] }],
+    }),
+  });
 
   const setupStatus = await page.request.get("/api/v1/auth/setup-status");
   const setup = (await setupStatus.json()) as { setupRequired: boolean };
@@ -184,7 +198,7 @@ public class MixedVisibleTest {
     "E2E Administrator",
   );
   await selectProjectContext(page, DEFAULT_PROJECT_ID);
-  await ensureProjectHierarchy(page);
+  const primaryHierarchy = await ensureProjectHierarchy(page);
 
   await page.goto(`/cases/import?projectId=${encodeURIComponent(DEFAULT_PROJECT_ID)}`);
   await expect(page.getByRole("heading", { name: "导入 TestNG JAR" })).toBeVisible();
@@ -401,6 +415,36 @@ public class MixedVisibleTest {
     page.locator(".case-inspector-section summary").getByText("立即执行", { exact: true }),
   ).toBeVisible();
 
+  const secondaryHierarchy = await createAdditionalProjectHierarchy(page);
+  const primaryReplay = await importJarWithIdempotencyKey(page, {
+    jar: mixedJar,
+    fileName: "mixed-visible-primary-replay.jar",
+    ...primaryHierarchy,
+    idempotencyKey: "e2e-shared-jar-cross-version",
+  });
+  expect(primaryReplay.result?.duplicate).toBe(true);
+  const secondaryImport = await importJarWithIdempotencyKey(page, {
+    jar: mixedJar,
+    fileName: "mixed-visible-secondary-version.jar",
+    ...secondaryHierarchy,
+    idempotencyKey: "e2e-shared-jar-cross-version",
+  });
+  expect(secondaryImport.result?.duplicate).toBe(false);
+  const secondaryCases = await browserJson<{ items: Array<{ id: string; className: string }> }>(
+    page,
+    `/api/v1/case-definitions?projectId=${encodeURIComponent(DEFAULT_PROJECT_ID)}&projectVersionId=${encodeURIComponent(secondaryHierarchy.projectVersionId)}&testStageId=${encodeURIComponent(secondaryHierarchy.testStageId)}&limit=100`,
+  );
+  expect(secondaryCases.status).toBe(200);
+  expect(secondaryCases.body.items).toContainEqual(
+    expect.objectContaining({ className: "com.example.MixedVisibleTest" }),
+  );
+  await selectProjectContext(
+    page,
+    DEFAULT_PROJECT_ID,
+    primaryHierarchy.projectVersionId,
+    primaryHierarchy.testStageId,
+  );
+
   await page.goto(`/cases/import?projectId=${encodeURIComponent(DEFAULT_PROJECT_ID)}`);
   await selectJarForInspection(page, {
     name: "checkout-tests-v2.jar",
@@ -453,7 +497,7 @@ public class MixedVisibleTest {
     }>;
   }>(
     page,
-    `/api/v1/case-definitions?projectId=${encodeURIComponent(DEFAULT_PROJECT_ID)}&limit=100`,
+    `/api/v1/case-definitions?projectId=${encodeURIComponent(DEFAULT_PROJECT_ID)}&projectVersionId=${encodeURIComponent(primaryHierarchy.projectVersionId)}&testStageId=${encodeURIComponent(primaryHierarchy.testStageId)}&limit=100`,
   );
   expect(executionCases.status).toBe(200);
   const executionCandidate = executionCases.body.items.at(0);
@@ -1140,6 +1184,41 @@ public class MixedVisibleTest {
   await expect(page.getByText(/不能直接执行/)).toBeVisible();
   await expect(page.getByRole("button", { name: "立即执行" })).toHaveCount(0);
 
+  const deletionImport = await importJarWithIdempotencyKey(page, {
+    jar: deletionJar,
+    fileName: "deletion-fixtures.jar",
+    ...primaryHierarchy,
+    idempotencyKey: `e2e-deletion-${randomUUID()}`,
+  });
+  expect(deletionImport.result?.importedClassCount).toBe(3);
+  await selectProjectContext(
+    page,
+    DEFAULT_PROJECT_ID,
+    primaryHierarchy.projectVersionId,
+    primaryHierarchy.testStageId,
+  );
+  await page.goto("/cases");
+  await page.getByLabel("页内搜索用例").fill("BulkDelete");
+  await expect(page.getByRole("button", { name: /查看 BulkDelete/ })).toHaveCount(2);
+  await page.getByLabel("选择当前搜索结果中的全部用例").check();
+  await expect(page.locator(".case-selection-toolbar")).toContainText("已选 2");
+  await captureUi(page, "case-library-bulk-delete");
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.getByRole("button", { name: "批量删除" }).click();
+  await expect(page.locator(".inline-feedback")).toContainText("已删除 2 个用例");
+  await expect(page.getByRole("button", { name: /查看 BulkDelete/ })).toHaveCount(0);
+
+  await page.getByLabel("页内搜索用例").fill("SingleDeleteFixture");
+  await page.getByRole("button", { name: "查看 SingleDeleteFixture" }).click();
+  await page.locator(".case-inspector-section").getByText("管理用例", { exact: true }).click();
+  const singleDeleteButton = page.getByRole("button", { name: "删除用例", exact: true });
+  await singleDeleteButton.scrollIntoViewIfNeeded();
+  await captureUi(page, "case-library-single-delete");
+  page.once("dialog", (dialog) => dialog.accept());
+  await singleDeleteButton.click();
+  await expect(page.locator(".inline-feedback")).toContainText("已删除 1 个用例");
+  await expect(page.getByRole("button", { name: "查看 SingleDeleteFixture" })).toHaveCount(0);
+
   await page.goto("/settings/access?section=users");
   await expect(page.getByRole("heading", { name: "用户管理" }).first()).toBeVisible();
   await expect(page.locator(".settings-stack > .settings-section")).toHaveCount(1);
@@ -1212,7 +1291,9 @@ function terminalStreamUrl(): string {
   return url.toString();
 }
 
-async function ensureProjectHierarchy(page: Page): Promise<void> {
+async function ensureProjectHierarchy(
+  page: Page,
+): Promise<{ projectVersionId: string; testStageId: string }> {
   const structureResponse = await page.request.get(
     `/api/v1/projects/${encodeURIComponent(DEFAULT_PROJECT_ID)}/structure`,
   );
@@ -1233,12 +1314,89 @@ async function ensureProjectHierarchy(page: Page): Promise<void> {
       stages: Array<{ id: string }>;
     };
   }
-  if (version.stages.length > 0) return;
+  let stage = version.stages[0];
+  if (!stage) {
+    const stageResponse = await page.request.post(
+      `/api/v1/projects/${encodeURIComponent(DEFAULT_PROJECT_ID)}/versions/${encodeURIComponent(version.id)}/stages`,
+      { data: { name: "E2E 测试阶段", description: "端到端测试层级" }, headers },
+    );
+    expect(stageResponse.status()).toBe(201);
+    stage = (await stageResponse.json()) as { id: string };
+  }
+  return { projectVersionId: version.id, testStageId: stage.id };
+}
+
+async function createAdditionalProjectHierarchy(
+  page: Page,
+): Promise<{ projectVersionId: string; testStageId: string }> {
+  const suffix = randomUUID().slice(0, 8);
+  const headers = { origin: new URL(page.url()).origin };
+  const versionResponse = await page.request.post(
+    `/api/v1/projects/${encodeURIComponent(DEFAULT_PROJECT_ID)}/versions`,
+    { data: { name: `跨版本导入 ${suffix}` }, headers },
+  );
+  expect(versionResponse.status()).toBe(201);
+  const version = (await versionResponse.json()) as { id: string };
   const stageResponse = await page.request.post(
     `/api/v1/projects/${encodeURIComponent(DEFAULT_PROJECT_ID)}/versions/${encodeURIComponent(version.id)}/stages`,
-    { data: { name: "E2E 测试阶段", description: "端到端测试层级" }, headers },
+    { data: { name: "回归阶段", description: "验证相同 JAR 跨版本导入" }, headers },
   );
   expect(stageResponse.status()).toBe(201);
+  const stage = (await stageResponse.json()) as { id: string };
+  return { projectVersionId: version.id, testStageId: stage.id };
+}
+
+async function importJarWithIdempotencyKey(
+  page: Page,
+  input: {
+    jar: Uint8Array;
+    fileName: string;
+    projectVersionId: string;
+    testStageId: string;
+    idempotencyKey: string;
+  },
+): Promise<{
+  status: string;
+  result?: { duplicate: boolean; importedClassCount: number };
+}> {
+  const response = await page.request.post(
+    `/api/v1/case-sources/jar/import?projectId=${encodeURIComponent(DEFAULT_PROJECT_ID)}&projectVersionId=${encodeURIComponent(input.projectVersionId)}&testStageId=${encodeURIComponent(input.testStageId)}`,
+    {
+      headers: {
+        origin: new URL(page.url()).origin,
+        "Idempotency-Key": input.idempotencyKey,
+      },
+      multipart: {
+        file: {
+          name: input.fileName,
+          mimeType: "application/java-archive",
+          buffer: Buffer.from(input.jar),
+        },
+      },
+    },
+  );
+  expect([200, 202]).toContain(response.status());
+  const job = (await response.json()) as {
+    id: string;
+    status: string;
+    result?: { duplicate: boolean; importedClassCount: number };
+  };
+  if (["succeeded", "failed", "cancelled"].includes(job.status)) return job;
+  let completed = job;
+  await expect
+    .poll(
+      async () => {
+        const statusResponse = await page.request.get(
+          `/api/v1/case-sources/jar/imports/${encodeURIComponent(job.id)}`,
+        );
+        expect(statusResponse.status()).toBe(200);
+        completed = (await statusResponse.json()) as typeof job;
+        return completed.status;
+      },
+      { timeout: 60_000, intervals: [250, 500, 1_000] },
+    )
+    .toBe("succeeded");
+  return completed;
 }
 
 type RunnerIdentity = { runnerId: string; credential: string };

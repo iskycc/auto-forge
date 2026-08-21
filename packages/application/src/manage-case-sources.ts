@@ -170,6 +170,9 @@ export class CaseSourceService {
       const currentMatches = currentByClass.get(candidateSnapshot.className) ?? [];
       const candidateMatches = candidateByClass.get(candidateSnapshot.className) ?? [];
       if (currentMatches.length !== 1 || candidateMatches.length !== 1) return [];
+      // 同层级重导会在导入事务中保留稳定 CaseDefinition ID 并追加版本，
+      // 此时确认来源只需切换 authoritative 标记，不能再次把用例合并到自身。
+      if (currentMatches[0]!.caseDefinitionId === candidateSnapshot.caseDefinitionId) return [];
       const snapshot = testNgClassCandidateSchema.safeParse(
         parseSnapshotJson(candidateSnapshot.snapshotJson),
       );
@@ -266,7 +269,14 @@ export class CaseSourceService {
       }
       const cleanupJob = await this.catalog.getCleanupJob(cleanupJobId);
       if (!cleanupJob || cleanupJob.status === "succeeded") return;
-      if (cleanupJob.objectKey) {
+      if (!cleanupJob.objectKey) {
+        throw new Error(`Case source cleanup job ${cleanupJob.id} has no object key.`);
+      }
+      const remainingSourceReferences = await this.catalog.detachSourceForCleanup(
+        cleanupJob.resourceId,
+        cleanupJob.objectKey,
+      );
+      if (remainingSourceReferences === 0) {
         await this.objectStore.delete(cleanupJob.objectKey);
       }
       await this.catalog.completeCleanupJob({

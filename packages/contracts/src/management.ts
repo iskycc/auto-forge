@@ -371,6 +371,18 @@ export const updateCaseDefinitionInputSchema = z.object({
   expectedRevision: z.number().int().min(1),
 });
 
+// 与用例库的 10 万级目录能力保持一致。仓储仍按数据库参数上限分批处理，
+// 避免把 HTTP 单次容量误当成数据库单条 SQL 的容量。
+export const CASE_DEFINITION_DELETE_LIMIT = 100_000;
+
+export const deleteCaseDefinitionsInputSchema = z.object({
+  caseDefinitionIds: z
+    .array(z.string().min(1).max(128))
+    .min(1)
+    .max(CASE_DEFINITION_DELETE_LIMIT)
+    .transform((ids) => [...new Set(ids)]),
+});
+
 export const createTerminalSessionInputSchema = z.object({
   runnerId: z.string().min(1),
   columns: z.number().int().min(20).max(500),
@@ -415,5 +427,6 @@ export type RunnerHeartbeatInput = z.infer<typeof runnerHeartbeatInputSchema>;
 export type RunnerHeartbeatResult = z.infer<typeof runnerHeartbeatResultSchema>;
 export type RotateRunnerCredentialResult = z.infer<typeof rotateRunnerCredentialResultSchema>;
 export type UpdateCaseDefinitionInput = z.infer<typeof updateCaseDefinitionInputSchema>;
+export type DeleteCaseDefinitionsInput = z.infer<typeof deleteCaseDefinitionsInputSchema>;
 export type CreateTerminalSessionInput = z.infer<typeof createTerminalSessionInputSchema>;
 export type CreateTerminalSessionResult = z.infer<typeof createTerminalSessionResultSchema>;

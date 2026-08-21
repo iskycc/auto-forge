@@ -53,7 +53,7 @@ describe("SQLite case source lifecycle", () => {
       });
       expect(await catalog.getCaseDefinition("source-2-case-1")).toBeNull();
       expect(await catalog.listCaseVersions("source-1-case-1", 10)).toMatchObject([
-        { version: 2, sourceId: "source-2", changeReason: "source.sync" },
+        { version: 2, sourceId: "source-2", changeReason: "source.reimport" },
         { version: 1, sourceId: "source-1", changeReason: "source.import" },
       ]);
       expect(await catalog.countSourceReferences("source-1")).toMatchObject({

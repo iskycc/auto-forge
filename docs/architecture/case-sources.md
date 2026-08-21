@@ -5,6 +5,7 @@
 ## 概念
 
 - 每个项目（project）最多一个**权威来源**；`CaseVersion.sourceId` 固化该版本实际使用的 JAR，新批次创建时再把版本号写入 `ExecutionRun`。
+- JAR 对象按项目和内容摘要寻址。不同版本/阶段的来源可以引用同一个对象；SHA-256 导入幂等键和后台队列去重键都包含完整项目层级。
 - 来源生命周期：`active` → `archived`（可恢复）或 `active` → `deleting`（终态）。
 - 对比结果（CaseSourceComparison）持久化在 `case_source_comparisons`，确认同步依赖它做一致性校验。
 
@@ -25,9 +26,9 @@
 - 对比之后权威来源发生变化（他人已切换）返回 `CASE_SOURCE_SYNC_STALE`（409），必须重新对比。
 - 修订号冲突返回 `CASE_SOURCE_REVISION_CONFLICT`（409）。
 
-同步采用**保留语义**：
+导入阶段先采用**稳定 ID 覆盖语义**：同一项目版本/测试阶段内按完整 `className` 对齐；匹配项保留原 `CaseDefinition` ID、人工展示名、描述、标签、归档状态和任务关系，替换包路径、参数、分组、启停及方法并追加 `source.reimport` 版本。候选来源确认同步采用**保留语义**：
 
-- 当前与候选中按 `className` 唯一匹配的用例沿用原 `CaseDefinition` ID，并从候选快照创建新的不可变 `CaseVersion`；展示名称、描述、标签、启停和任务关联保持不变。
+- 当前与候选中按 `className` 唯一匹配且仍是不同定义的旧数据会合并到原 `CaseDefinition` ID；正常重导已经在导入事务中追加版本，确认同步只切换权威来源，不会重复生成版本。
 - 候选独有用例保留导入时创建的 `CaseDefinition` 与 v1；候选中消失的旧用例不会被自动禁用或归档，由用户按对比结果自行处理。
 - 冲突类不自动合并。若候选导入产生的临时定义已被任务或执行引用，确认同步返回 409，避免静默改写引用。
 - 每个版本记录实际 `sourceId`。批次创建时固化 `caseVersion`，分配时按 `(caseDefinitionId, caseVersion)` 解析 JAR，因此排队期间再次同步或手动恢复不会改变已创建批次的输入。
@@ -47,8 +48,8 @@
 
 通过守卫后，仓储在同一事务内把来源置为 `deleting` 并写入 `cleanup_jobs` 行（`category=case-source`，携带 JAR `objectKey`），随后以去重键 `object-cleanup:{cleanupJobId}` 发布 `object-cleanup` 队列消息。Lite 由嵌入式工作器消费，Full 由独立 worker 进程消费；两种模式使用同一个 `CaseSourceService.objectCleanupHandler()`：
 
-- 处理器删除对象存储中的 JAR 并把清理任务标记为 `succeeded`（attemptCount+1）。
+- 处理器先检查是否还有其他版本/阶段的来源引用同一对象；仅最后一个引用删除时回收 JAR，并把清理任务标记为 `succeeded`（attemptCount+1）。
 - 重复投递时任务已 `succeeded`，直接返回，保持幂等。
 - 删除对象失败由队列重试；达到最大尝试后进入死信，清理任务保留诊断信息。
 
-业务记录（来源行、对比历史）保留用于审计，只删除对象存储中的 JAR 文件。
+清理成功后删除处于 `deleting` 的来源行，对比历史按数据库引用策略保留；共享 JAR 对象只在没有其他来源引用时删除。

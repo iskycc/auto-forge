@@ -527,6 +527,13 @@ export class PostgresCaseCatalogRepository implements CaseCatalogRepository {
     await this.ready();
     const projectId = record.projectId ?? DEFAULT_PROJECT_ID;
     await this.handle.db.transaction(async (transaction) => {
+      const scopeLockKey =
+        record.projectVersionId && record.testStageId
+          ? `case-import:${projectId}:${record.projectVersionId}:${record.testStageId}`
+          : `case-import:${projectId}:legacy`;
+      // 不同来源可能包含同一个类。按层级串行化目录合并，使“查询后更新/插入”
+      // 在 PostgreSQL 多 Web 实例下仍保持单一稳定用例 ID。
+      await transaction.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${scopeLockKey}))`);
       await transaction.insert(pgCaseSources).values({
         id: record.sourceId,
         projectId,
@@ -549,8 +556,116 @@ export class PostgresCaseCatalogRepository implements CaseCatalogRepository {
         createdAt: record.importedAt,
         updatedAt: record.importedAt,
       });
+      const hierarchy =
+        record.projectVersionId && record.testStageId
+          ? and(
+              eq(pgCaseDefinitions.projectVersionId, record.projectVersionId),
+              eq(pgCaseDefinitions.testStageId, record.testStageId),
+            )
+          : and(isNull(pgCaseDefinitions.projectVersionId), isNull(pgCaseDefinitions.testStageId));
+      const definitionsByClass = new Map<string, Array<typeof pgCaseDefinitions.$inferSelect>>();
+      const importedClassNames = [
+        ...new Set(record.cases.map((importedCase) => importedCase.candidate.className)),
+      ];
+      for (const classNameBatch of batchesOf(importedClassNames, RELATIONAL_ID_QUERY_BATCH_SIZE)) {
+        const rows = await transaction
+          .select()
+          .from(pgCaseDefinitions)
+          .where(
+            and(
+              eq(pgCaseDefinitions.projectId, projectId),
+              inArray(pgCaseDefinitions.className, classNameBatch),
+              hierarchy,
+            ),
+          )
+          .orderBy(
+            asc(pgCaseDefinitions.className),
+            asc(pgCaseDefinitions.createdAt),
+            asc(pgCaseDefinitions.id),
+          );
+        for (const row of rows) {
+          const matching = definitionsByClass.get(row.className) ?? [];
+          matching.push(row);
+          definitionsByClass.set(row.className, matching);
+        }
+      }
       for (const importedCase of record.cases) {
         const candidate = importedCase.candidate;
+        const matchingDefinitions = definitionsByClass.get(candidate.className) ?? [];
+        const existingDefinition = matchingDefinitions[0];
+        if (existingDefinition) {
+          let latestVersion = existingDefinition.currentVersion;
+          for (const duplicate of matchingDefinitions.slice(1)) {
+            const duplicateVersions = await transaction
+              .select()
+              .from(pgCaseVersions)
+              .where(eq(pgCaseVersions.caseDefinitionId, duplicate.id))
+              .orderBy(asc(pgCaseVersions.version), asc(pgCaseVersions.id));
+            await transaction.execute(sql`
+              DELETE FROM case_suite_items AS duplicate_item
+              WHERE duplicate_item.case_definition_id = ${duplicate.id}
+                AND EXISTS (
+                  SELECT 1 FROM case_suite_items AS canonical_item
+                  WHERE canonical_item.suite_id = duplicate_item.suite_id
+                    AND canonical_item.case_definition_id = ${existingDefinition.id}
+                )
+            `);
+            await transaction
+              .update(pgCaseSuiteItems)
+              .set({ caseDefinitionId: existingDefinition.id })
+              .where(eq(pgCaseSuiteItems.caseDefinitionId, duplicate.id));
+            await transaction
+              .delete(pgCaseDefinitions)
+              .where(eq(pgCaseDefinitions.id, duplicate.id));
+            if (duplicateVersions.length > 0) {
+              await transaction.insert(pgCaseVersions).values(
+                duplicateVersions.map((version, index) => ({
+                  ...version,
+                  caseDefinitionId: existingDefinition.id,
+                  version: latestVersion + index + 1,
+                })),
+              );
+              latestVersion += duplicateVersions.length;
+            }
+          }
+          const nextVersion = latestVersion + 1;
+          await transaction
+            .update(pgCaseDefinitions)
+            .set({
+              directoryPath: candidate.packageName.replaceAll(".", "/"),
+              sourceId: record.sourceId,
+              packageName: candidate.packageName,
+              parametersJson: JSON.stringify(candidate.parameters ?? {}),
+              enabled: candidate.enabled,
+              groupsJson: JSON.stringify(candidate.groups),
+              currentVersion: nextVersion,
+              revision: sql`${pgCaseDefinitions.revision} + 1`,
+              ...(record.importedBy ? { updatedBy: record.importedBy } : {}),
+              updatedAt: record.importedAt,
+            })
+            .where(eq(pgCaseDefinitions.id, existingDefinition.id));
+          await transaction.insert(pgCaseVersions).values({
+            id: importedCase.caseVersionId,
+            caseDefinitionId: existingDefinition.id,
+            sourceId: record.sourceId,
+            version: nextVersion,
+            snapshotJson: JSON.stringify(candidate),
+            ...(record.importedBy ? { createdBy: record.importedBy } : {}),
+            changeReason: "source.reimport",
+            createdAt: record.importedAt,
+          });
+          await transaction
+            .delete(pgTestMethods)
+            .where(eq(pgTestMethods.caseDefinitionId, existingDefinition.id));
+          await this.insertPostgresImportedMethods(
+            transaction,
+            existingDefinition.id,
+            importedCase,
+            record.importedAt,
+          );
+          continue;
+        }
+
         await transaction.insert(pgCaseDefinitions).values({
           id: importedCase.caseDefinitionId,
           projectId,
@@ -583,22 +698,35 @@ export class PostgresCaseCatalogRepository implements CaseCatalogRepository {
           changeReason: "source.import",
           createdAt: record.importedAt,
         });
-        if (importedCase.methods.length > 0) {
-          await transaction.insert(pgTestMethods).values(
-            importedCase.methods.map(({ methodId, methodIndex }) => {
-              const method = candidate.methods[methodIndex];
-              if (!method) throw new Error(`Missing imported method at index ${methodIndex}.`);
-              return testMethodInsertValues({
-                id: methodId,
-                caseDefinitionId: importedCase.caseDefinitionId,
-                method,
-                createdAt: record.importedAt,
-              });
-            }),
-          );
-        }
+        await this.insertPostgresImportedMethods(
+          transaction,
+          importedCase.caseDefinitionId,
+          importedCase,
+          record.importedAt,
+        );
       }
     });
+  }
+
+  private async insertPostgresImportedMethods(
+    transaction: Parameters<Parameters<PostgresDatabaseHandle["db"]["transaction"]>[0]>[0],
+    caseDefinitionId: string,
+    importedCase: ImportCatalogRecord["cases"][number],
+    importedAt: string,
+  ): Promise<void> {
+    if (importedCase.methods.length === 0) return;
+    await transaction.insert(pgTestMethods).values(
+      importedCase.methods.map(({ methodId, methodIndex }) => {
+        const method = importedCase.candidate.methods[methodIndex];
+        if (!method) throw new Error(`Missing imported method at index ${methodIndex}.`);
+        return testMethodInsertValues({
+          id: methodId,
+          caseDefinitionId,
+          method,
+          createdAt: importedAt,
+        });
+      }),
+    );
   }
 
   async listCases(query: CaseListQuery): Promise<CaseListPage> {
@@ -833,6 +961,49 @@ export class PostgresCaseCatalogRepository implements CaseCatalogRepository {
     const definition = await this.getCaseDefinition(input.caseDefinitionId);
     if (!definition) throw new DomainError("CASE_DEFINITION_NOT_FOUND", "指定的用例不存在。");
     return definition;
+  }
+
+  async deleteCaseDefinitions(
+    caseDefinitionIds: readonly string[],
+    projectIds?: readonly string[],
+  ) {
+    await this.ready();
+    const uniqueIds = [...new Set(caseDefinitionIds)];
+    if (uniqueIds.length === 0) return [];
+    return this.handle.db.transaction(async (transaction) => {
+      const definitions: Array<{ id: string; projectId: string; displayName: string }> = [];
+      if (projectIds?.length !== 0) {
+        for (const batch of batchesOf(uniqueIds, RELATIONAL_ID_QUERY_BATCH_SIZE)) {
+          definitions.push(
+            ...(await transaction
+              .select({
+                id: pgCaseDefinitions.id,
+                projectId: pgCaseDefinitions.projectId,
+                displayName: pgCaseDefinitions.displayName,
+              })
+              .from(pgCaseDefinitions)
+              .where(
+                and(
+                  inArray(pgCaseDefinitions.id, batch),
+                  ...(projectIds ? [inArray(pgCaseDefinitions.projectId, [...projectIds])] : []),
+                ),
+              )
+              .for("update")),
+          );
+        }
+      }
+      if (definitions.length !== uniqueIds.length) {
+        throw new DomainError(
+          "CASE_DEFINITION_NOT_FOUND",
+          "部分用例不存在或不在当前账号可管理的项目范围内，未执行删除。",
+        );
+      }
+      for (const batch of batchesOf(uniqueIds, POSTGRES_WRITE_BATCH_SIZE)) {
+        await transaction.delete(pgCaseDefinitions).where(inArray(pgCaseDefinitions.id, batch));
+      }
+      const byId = new Map(definitions.map((definition) => [definition.id, definition]));
+      return uniqueIds.flatMap((id) => (byId.has(id) ? [byId.get(id)!] : []));
+    });
   }
 
   async listCaseVersions(caseDefinitionId: string, limit: number): Promise<CaseVersion[]> {
@@ -1314,6 +1485,23 @@ export class PostgresCaseCatalogRepository implements CaseCatalogRepository {
     };
   }
 
+  async detachSourceForCleanup(sourceId: string, objectKey: string): Promise<number> {
+    await this.ready();
+    return this.handle.db.transaction(async (transaction) => {
+      await transaction.execute(
+        sql`SELECT pg_advisory_xact_lock(hashtext(${"case-source-cleanup:" + objectKey}))`,
+      );
+      await transaction
+        .delete(pgCaseSources)
+        .where(and(eq(pgCaseSources.id, sourceId), eq(pgCaseSources.lifecycleStatus, "deleting")));
+      const rows = await transaction
+        .select({ value: count() })
+        .from(pgCaseSources)
+        .where(eq(pgCaseSources.objectKey, objectKey));
+      return rows[0]?.value ?? 0;
+    });
+  }
+
   async enqueueSourceDeletion(input: {
     sourceId: string;
     expectedRevision: number;
@@ -1378,11 +1566,6 @@ export class PostgresCaseCatalogRepository implements CaseCatalogRepository {
   }): Promise<void> {
     await this.ready();
     await this.handle.db.transaction(async (transaction) => {
-      const [job] = await transaction
-        .select({ category: pgCleanupJobs.category, resourceId: pgCleanupJobs.resourceId })
-        .from(pgCleanupJobs)
-        .where(eq(pgCleanupJobs.id, input.id))
-        .for("update");
       await transaction
         .update(pgCleanupJobs)
         .set({
@@ -1392,16 +1575,6 @@ export class PostgresCaseCatalogRepository implements CaseCatalogRepository {
           updatedAt: input.finishedAt,
         })
         .where(eq(pgCleanupJobs.id, input.id));
-      if (input.status === "succeeded" && job?.category === "case-source") {
-        await transaction
-          .delete(pgCaseSources)
-          .where(
-            and(
-              eq(pgCaseSources.id, job.resourceId),
-              eq(pgCaseSources.lifecycleStatus, "deleting"),
-            ),
-          );
-      }
     });
   }
 

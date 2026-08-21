@@ -48,6 +48,7 @@ function catalogFake(source: CaseSource | null) {
       caseVersions: 0,
       executionRuns: 0,
     })),
+    detachSourceForCleanup: vi.fn(async () => 0),
     enqueueSourceDeletion: vi.fn(async () => sourceRecord({ lifecycleStatus: "deleting" })),
     getCleanupJob: vi.fn(async () => null as CleanupJob | null),
     completeCleanupJob: vi.fn(async () => undefined),
@@ -482,6 +483,48 @@ describe("object cleanup handler", () => {
       attemptCount: 2,
       finishedAt: timestamp,
     });
+  });
+
+  it("keeps a content-addressed object while another version still references it", async () => {
+    const catalog = catalogFake(sourceRecord());
+    catalog.getCleanupJob.mockResolvedValue(cleanupJobRecord());
+    catalog.detachSourceForCleanup.mockResolvedValue(1);
+    const { service, objectStore } = serviceWith(catalog);
+
+    await service.objectCleanupHandler()(
+      cleanupEnvelope("cleanup-1"),
+      new AbortController().signal,
+    );
+
+    expect(catalog.detachSourceForCleanup).toHaveBeenCalledWith(
+      "source-1",
+      "jars/bb/candidate.jar",
+    );
+    expect(objectStore.delete).not.toHaveBeenCalled();
+    expect(catalog.completeCleanupJob).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "cleanup-1", status: "succeeded" }),
+    );
+  });
+
+  it("retries object deletion after the source reference was already detached", async () => {
+    const catalog = catalogFake(sourceRecord());
+    catalog.getCleanupJob.mockResolvedValue(cleanupJobRecord());
+    const objectStore = objectStoreFake();
+    objectStore.delete.mockRejectedValueOnce(new Error("object store unavailable"));
+    const { service } = serviceWith(catalog, objectStore);
+    const handler = service.objectCleanupHandler();
+
+    await expect(
+      handler(cleanupEnvelope("cleanup-1"), new AbortController().signal),
+    ).rejects.toThrow("object store unavailable");
+    expect(catalog.completeCleanupJob).not.toHaveBeenCalled();
+
+    await handler(cleanupEnvelope("cleanup-1"), new AbortController().signal);
+    expect(catalog.detachSourceForCleanup).toHaveBeenCalledTimes(2);
+    expect(objectStore.delete).toHaveBeenCalledTimes(2);
+    expect(catalog.completeCleanupJob).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "cleanup-1", status: "succeeded" }),
+    );
   });
 
   it("rejects envelopes without a cleanup job id", async () => {

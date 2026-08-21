@@ -45,6 +45,21 @@ export class CaseDefinitionService {
     });
   }
 
+  async deleteMany(caseDefinitionIds: readonly string[], projectIds?: readonly string[]) {
+    const uniqueIds = [...new Set(caseDefinitionIds)];
+    if (uniqueIds.length === 0) {
+      throw new DomainError("CASE_DEFINITION_IDS_REQUIRED", "请至少选择一个要删除的用例。");
+    }
+    const deleted = await this.catalog.deleteCaseDefinitions(uniqueIds, projectIds);
+    if (deleted.length !== uniqueIds.length) {
+      throw new DomainError(
+        "CASE_DEFINITION_NOT_FOUND",
+        "部分用例不存在或不在当前账号可管理的项目范围内，未执行删除。",
+      );
+    }
+    return deleted;
+  }
+
   async listVersions(caseDefinitionId: string, projectIds?: readonly string[]) {
     await this.get(caseDefinitionId, projectIds);
     return this.catalog.listCaseVersions(caseDefinitionId, VERSION_HISTORY_LIMIT);

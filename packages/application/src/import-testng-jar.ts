@@ -176,7 +176,11 @@ export class ImportTestNgJarService {
       job,
       objectKey: stored.objectKey,
       idempotencyKey,
-      dispatchJob: this.importJobEnvelope(jobId, now, `jar-import:${projectId}:${idempotencyKey}`),
+      dispatchJob: this.importJobEnvelope(
+        jobId,
+        now,
+        `jar-import:${importScopeKey(job)}:${idempotencyKey}`,
+      ),
     });
   }
 
@@ -296,6 +300,12 @@ export class ImportTestNgJarService {
       payload: { jobId },
     };
   }
+}
+
+function importScopeKey(job: Pick<JarImportJob, "projectId" | "projectVersionId" | "testStageId">) {
+  return job.projectVersionId && job.testStageId
+    ? `${job.projectId}:${job.projectVersionId}:${job.testStageId}`
+    : `${job.projectId}:legacy`;
 }
 
 class ImportCancellationError extends Error {

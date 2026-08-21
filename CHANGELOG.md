@@ -6,6 +6,38 @@ and known limitations.
 
 ## Unreleased
 
+### Changed
+
+- Reimporting a different TestNG JAR into the same project version and test stage now updates the
+  existing case with the same fully qualified class name. The stable case ID, manual display name,
+  description, tags and task memberships are retained; executable metadata and methods are replaced
+  and an immutable `source.reimport` version is appended.
+- Added permission-scoped single and bulk deletion to the case library. Deletion removes the case,
+  its version/method catalog and task memberships while retaining already materialized execution and
+  analytics records.
+- Scoped import idempotency and queue deduplication to project/version/stage. The same content-addressed
+  JAR can now be imported into multiple project versions without a false duplicate conflict.
+
+### Database
+
+- Added SQLite migration `0036_shared_case_source_objects.sql` and PostgreSQL migration
+  `0035_shared_case_source_objects.sql`. They replace the global unique JAR object-key index with a
+  non-unique lookup index; project-hierarchy SHA-256 indexes remain the source-import idempotency
+  boundary.
+
+### Tests
+
+- Added Lite and Full adapter regressions for stable-ID overwrite, immutable version creation,
+  method replacement, cross-version shared JAR objects and scoped deletion.
+- Extended the browser regression to import one JAR with the same idempotency key into two versions,
+  and to screenshot and exercise case-library single and bulk deletion.
+
+### Compatibility
+
+- Runner Protocol v1 is unchanged. Existing case and source data remains readable; old duplicate
+  cases created under the former source-scoped identity are consolidated on the next matching JAR
+  reimport, with task memberships moved to the oldest stable case ID.
+
 ## 0.9.7 - 2026-08-21
 
 ### Changed

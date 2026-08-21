@@ -629,6 +629,12 @@ export type CaseListQuery = {
   limit: number;
 };
 
+export type DeletedCaseDefinition = {
+  id: string;
+  projectId: string;
+  displayName: string;
+};
+
 export type CaseListPage = {
   items: CaseDefinitionWithMethods[];
   nextCursor?: string;
@@ -751,6 +757,10 @@ export interface CaseCatalogRepository {
     actorId: string;
     updatedAt: string;
   }): Promise<CaseDefinitionWithMethods>;
+  deleteCaseDefinitions(
+    caseDefinitionIds: readonly string[],
+    projectIds?: readonly string[],
+  ): Promise<DeletedCaseDefinition[]>;
   listCaseVersions(caseDefinitionId: string, limit: number): Promise<CaseVersion[]>;
   getCaseVersion(caseDefinitionId: string, version: number): Promise<CaseVersion | null>;
   restoreCaseVersion(input: {
@@ -799,6 +809,9 @@ export interface CaseCatalogRepository {
   countSourceReferences(
     sourceId: string,
   ): Promise<{ caseDefinitions: number; caseVersions: number; executionRuns: number }>;
+  // 原子移除 deleting 来源并返回同一对象剩余的来源引用数。Full 实现必须按对象键加锁，
+  // 使多个版本同时清理共享内容寻址对象时恰有最后一个任务负责回收对象。
+  detachSourceForCleanup(sourceId: string, objectKey: string): Promise<number>;
   // 同事务把来源置为 deleting 并写入对象清理任务；修订冲突同上。
   enqueueSourceDeletion(input: {
     sourceId: string;

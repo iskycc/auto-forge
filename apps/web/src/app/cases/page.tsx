@@ -37,6 +37,7 @@ export default async function CasesPage({ searchParams }: CasesPageProps) {
   const effectiveProjectIds = requireAuthorizedPageProjectScope(identity, "case.read", projectId);
   const sourceManagementProjectIds = projectIdsForPermission(identity, "case_source.manage");
   const suiteManagementProjectIds = projectIdsForPermission(identity, "case_suite.manage");
+  const caseManagementProjectIds = projectIdsForPermission(identity, "case.manage");
   const canImport =
     sourceManagementProjectIds === undefined ||
     (projectId
@@ -128,7 +129,8 @@ export default async function CasesPage({ searchParams }: CasesPageProps) {
           initialSearch={query ?? ""}
           latestOutcomes={latestOutcomes}
           suites={suites}
-          manageableProjectIds={suiteManagementProjectIds}
+          caseManagementProjectIds={caseManagementProjectIds}
+          suiteManagementProjectIds={suiteManagementProjectIds}
         />
       )}
     </div>

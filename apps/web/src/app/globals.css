@@ -7579,6 +7579,25 @@ button.icon-button:disabled {
   padding: 14px;
 }
 
+.case-inspector-delete-action {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border-top: 1px solid var(--color-border);
+  padding-top: 14px;
+}
+
+.case-inspector-delete-action p {
+  margin: 4px 0 0;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-caption);
+}
+
+.case-inspector-delete-action .ui-button {
+  flex: 0 0 auto;
+}
+
 .case-inspector-table {
   min-width: 540px;
 }

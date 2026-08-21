@@ -30,7 +30,20 @@ import {
   type CleanupJob,
   type TestMethod,
 } from "@autoforge/domain";
-import { and, count, desc, eq, inArray, isNull, like, lt, or, sql, type SQL } from "drizzle-orm";
+import {
+  and,
+  asc,
+  count,
+  desc,
+  eq,
+  inArray,
+  isNull,
+  like,
+  lt,
+  or,
+  sql,
+  type SQL,
+} from "drizzle-orm";
 
 import type { SqliteDatabaseHandle } from "./database";
 import { batchesOf, RELATIONAL_ID_QUERY_BATCH_SIZE } from "./database-batches";
@@ -540,8 +553,94 @@ export class SqliteCaseCatalogRepository implements CaseCatalogRepository {
         })
         .run();
 
+      const hierarchy =
+        record.projectVersionId && record.testStageId
+          ? and(
+              eq(caseDefinitions.projectVersionId, record.projectVersionId),
+              eq(caseDefinitions.testStageId, record.testStageId),
+            )
+          : and(isNull(caseDefinitions.projectVersionId), isNull(caseDefinitions.testStageId));
+      const definitionsByClass = new Map<string, Array<typeof caseDefinitions.$inferSelect>>();
+      const importedClassNames = [
+        ...new Set(record.cases.map((importedCase) => importedCase.candidate.className)),
+      ];
+      for (const classNameBatch of batchesOf(importedClassNames, RELATIONAL_ID_QUERY_BATCH_SIZE)) {
+        const rows = this.handle.db
+          .select()
+          .from(caseDefinitions)
+          .where(
+            and(
+              eq(caseDefinitions.projectId, projectId),
+              inArray(caseDefinitions.className, classNameBatch),
+              hierarchy,
+            ),
+          )
+          .orderBy(
+            asc(caseDefinitions.className),
+            asc(caseDefinitions.createdAt),
+            asc(caseDefinitions.id),
+          )
+          .all();
+        for (const row of rows) {
+          const matching = definitionsByClass.get(row.className) ?? [];
+          matching.push(row);
+          definitionsByClass.set(row.className, matching);
+        }
+      }
+
       for (const importedCase of record.cases) {
         const candidate = importedCase.candidate;
+        const matchingDefinitions = definitionsByClass.get(candidate.className) ?? [];
+        const existingDefinition = matchingDefinitions[0];
+        if (existingDefinition) {
+          // 旧版本曾按 source + class 建唯一约束，可能已经留下同层级重复用例。
+          // 首次重导时保留最早 ID，并把任务成员关系合并回这个稳定 ID。
+          let latestVersion = existingDefinition.currentVersion;
+          for (const duplicate of matchingDefinitions.slice(1)) {
+            latestVersion = this.mergeDuplicateCaseDefinition(
+              existingDefinition.id,
+              duplicate.id,
+              latestVersion,
+            );
+          }
+          const nextVersion = latestVersion + 1;
+          this.handle.db
+            .update(caseDefinitions)
+            .set({
+              directoryPath: candidate.packageName.replaceAll(".", "/"),
+              sourceId: record.sourceId,
+              packageName: candidate.packageName,
+              parametersJson: JSON.stringify(candidate.parameters ?? {}),
+              enabled: candidate.enabled,
+              groupsJson: JSON.stringify(candidate.groups),
+              currentVersion: nextVersion,
+              revision: sql`${caseDefinitions.revision} + 1`,
+              ...(record.importedBy ? { updatedBy: record.importedBy } : {}),
+              updatedAt: record.importedAt,
+            })
+            .where(eq(caseDefinitions.id, existingDefinition.id))
+            .run();
+          this.handle.db
+            .insert(caseVersions)
+            .values({
+              id: importedCase.caseVersionId,
+              caseDefinitionId: existingDefinition.id,
+              sourceId: record.sourceId,
+              version: nextVersion,
+              snapshotJson: JSON.stringify(candidate),
+              ...(record.importedBy ? { createdBy: record.importedBy } : {}),
+              changeReason: "source.reimport",
+              createdAt: record.importedAt,
+            })
+            .run();
+          this.handle.db
+            .delete(testMethods)
+            .where(eq(testMethods.caseDefinitionId, existingDefinition.id))
+            .run();
+          this.insertImportedMethods(existingDefinition.id, importedCase, record.importedAt);
+          continue;
+        }
+
         this.handle.db
           .insert(caseDefinitions)
           .values({
@@ -581,27 +680,71 @@ export class SqliteCaseCatalogRepository implements CaseCatalogRepository {
           })
           .run();
 
-        if (importedCase.methods.length > 0) {
-          this.handle.db
-            .insert(testMethods)
-            .values(
-              importedCase.methods.map(({ methodId, methodIndex }) => {
-                const method = candidate.methods[methodIndex];
-                if (!method) {
-                  throw new Error(`Missing imported method at index ${methodIndex}.`);
-                }
-                return testMethodInsertValues({
-                  id: methodId,
-                  caseDefinitionId: importedCase.caseDefinitionId,
-                  method,
-                  createdAt: record.importedAt,
-                });
-              }),
-            )
-            .run();
-        }
+        this.insertImportedMethods(importedCase.caseDefinitionId, importedCase, record.importedAt);
       }
     })();
+  }
+
+  private insertImportedMethods(
+    caseDefinitionId: string,
+    importedCase: ImportCatalogRecord["cases"][number],
+    importedAt: string,
+  ): void {
+    if (importedCase.methods.length === 0) return;
+    this.handle.db
+      .insert(testMethods)
+      .values(
+        importedCase.methods.map(({ methodId, methodIndex }) => {
+          const method = importedCase.candidate.methods[methodIndex];
+          if (!method) throw new Error(`Missing imported method at index ${methodIndex}.`);
+          return testMethodInsertValues({
+            id: methodId,
+            caseDefinitionId,
+            method,
+            createdAt: importedAt,
+          });
+        }),
+      )
+      .run();
+  }
+
+  private mergeDuplicateCaseDefinition(
+    canonicalId: string,
+    duplicateId: string,
+    latestVersion: number,
+  ): number {
+    const duplicateVersions = this.handle.db
+      .select()
+      .from(caseVersions)
+      .where(eq(caseVersions.caseDefinitionId, duplicateId))
+      .orderBy(asc(caseVersions.version), asc(caseVersions.id))
+      .all();
+    this.handle.client
+      .prepare(
+        `DELETE FROM case_suite_items
+         WHERE case_definition_id = ?
+           AND suite_id IN (
+             SELECT suite_id FROM case_suite_items WHERE case_definition_id = ?
+           )`,
+      )
+      .run(duplicateId, canonicalId);
+    this.handle.client
+      .prepare("UPDATE case_suite_items SET case_definition_id = ? WHERE case_definition_id = ?")
+      .run(canonicalId, duplicateId);
+    this.handle.db.delete(caseDefinitions).where(eq(caseDefinitions.id, duplicateId)).run();
+    if (duplicateVersions.length > 0) {
+      this.handle.db
+        .insert(caseVersions)
+        .values(
+          duplicateVersions.map((version, index) => ({
+            ...version,
+            caseDefinitionId: canonicalId,
+            version: latestVersion + index + 1,
+          })),
+        )
+        .run();
+    }
+    return latestVersion + duplicateVersions.length;
   }
 
   async listCases(query: CaseListQuery): Promise<CaseListPage> {
@@ -844,6 +987,49 @@ export class SqliteCaseCatalogRepository implements CaseCatalogRepository {
     const definition = await this.getCaseDefinition(input.caseDefinitionId);
     if (!definition) throw new DomainError("CASE_DEFINITION_NOT_FOUND", "指定的用例不存在。");
     return definition;
+  }
+
+  async deleteCaseDefinitions(
+    caseDefinitionIds: readonly string[],
+    projectIds?: readonly string[],
+  ) {
+    const uniqueIds = [...new Set(caseDefinitionIds)];
+    if (uniqueIds.length === 0) return [];
+    const deleteInScope = this.handle.client.transaction(() => {
+      const definitions: Array<{ id: string; projectId: string; displayName: string }> = [];
+      if (projectIds?.length !== 0) {
+        for (const batch of batchesOf(uniqueIds, RELATIONAL_ID_QUERY_BATCH_SIZE)) {
+          definitions.push(
+            ...this.handle.db
+              .select({
+                id: caseDefinitions.id,
+                projectId: caseDefinitions.projectId,
+                displayName: caseDefinitions.displayName,
+              })
+              .from(caseDefinitions)
+              .where(
+                and(
+                  inArray(caseDefinitions.id, batch),
+                  ...(projectIds ? [inArray(caseDefinitions.projectId, [...projectIds])] : []),
+                ),
+              )
+              .all(),
+          );
+        }
+      }
+      if (definitions.length !== uniqueIds.length) {
+        throw new DomainError(
+          "CASE_DEFINITION_NOT_FOUND",
+          "部分用例不存在或不在当前账号可管理的项目范围内，未执行删除。",
+        );
+      }
+      for (const batch of batchesOf(uniqueIds, RELATIONAL_ID_QUERY_BATCH_SIZE)) {
+        this.handle.db.delete(caseDefinitions).where(inArray(caseDefinitions.id, batch)).run();
+      }
+      const byId = new Map(definitions.map((definition) => [definition.id, definition]));
+      return uniqueIds.flatMap((id) => (byId.has(id) ? [byId.get(id)!] : []));
+    });
+    return deleteInScope.immediate();
   }
 
   async listCaseVersions(caseDefinitionId: string, limit: number): Promise<CaseVersion[]> {
@@ -1347,6 +1533,23 @@ export class SqliteCaseCatalogRepository implements CaseCatalogRepository {
     };
   }
 
+  async detachSourceForCleanup(sourceId: string, objectKey: string): Promise<number> {
+    const detachAndCount = this.handle.client.transaction(() => {
+      this.handle.db
+        .delete(caseSources)
+        .where(and(eq(caseSources.id, sourceId), eq(caseSources.lifecycleStatus, "deleting")))
+        .run();
+      return (
+        this.handle.db
+          .select({ value: count() })
+          .from(caseSources)
+          .where(eq(caseSources.objectKey, objectKey))
+          .get()?.value ?? 0
+      );
+    });
+    return detachAndCount.immediate();
+  }
+
   async enqueueSourceDeletion(input: {
     sourceId: string;
     expectedRevision: number;
@@ -1410,11 +1613,6 @@ export class SqliteCaseCatalogRepository implements CaseCatalogRepository {
     finishedAt: string;
   }): Promise<void> {
     this.handle.client.transaction(() => {
-      const job = this.handle.db
-        .select({ category: cleanupJobs.category, resourceId: cleanupJobs.resourceId })
-        .from(cleanupJobs)
-        .where(eq(cleanupJobs.id, input.id))
-        .get();
       this.handle.db
         .update(cleanupJobs)
         .set({
@@ -1425,14 +1623,6 @@ export class SqliteCaseCatalogRepository implements CaseCatalogRepository {
         })
         .where(eq(cleanupJobs.id, input.id))
         .run();
-      if (input.status === "succeeded" && job?.category === "case-source") {
-        this.handle.db
-          .delete(caseSources)
-          .where(
-            and(eq(caseSources.id, job.resourceId), eq(caseSources.lifecycleStatus, "deleting")),
-          )
-          .run();
-      }
     })();
   }
 

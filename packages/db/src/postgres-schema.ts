@@ -369,7 +369,7 @@ export const pgCaseSources = pgTable(
     uniqueIndex("case_sources_stage_sha256_uq")
       .on(table.projectId, table.projectVersionId, table.testStageId, table.sha256)
       .where(sql`${table.projectVersionId} IS NOT NULL AND ${table.testStageId} IS NOT NULL`),
-    uniqueIndex("case_sources_object_key_uq").on(table.objectKey),
+    index("case_sources_object_key_idx").on(table.objectKey),
     index("case_sources_created_at_idx").on(table.createdAt),
     uniqueIndex("case_sources_legacy_authoritative_uq")
       .on(table.projectId, table.authoritative)

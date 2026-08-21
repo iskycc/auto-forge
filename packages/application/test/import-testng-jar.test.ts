@@ -98,6 +98,8 @@ describe("ImportTestNgJarService", () => {
       sha256: inspection.sha256,
       idempotencyKey: `sha256:${inspection.sha256}`,
       projectId: "project-1",
+      projectVersionId: "version-1",
+      testStageId: "stage-1",
       actorId: "user-1",
     });
 
@@ -105,7 +107,10 @@ describe("ImportTestNgJarService", () => {
     expect(catalog.createJarImportJob).toHaveBeenCalledWith(
       expect.objectContaining({
         idempotencyKey: `sha256:${inspection.sha256}`,
-        dispatchJob: expect.objectContaining({ kind: "jar-import" }),
+        dispatchJob: expect.objectContaining({
+          kind: "jar-import",
+          deduplicationKey: `jar-import:project-1:version-1:stage-1:sha256:${inspection.sha256}`,
+        }),
       }),
     );
   });
@@ -229,6 +234,7 @@ function catalogFake(
     getDashboardSummary: vi.fn(),
     getCaseDefinition: vi.fn(),
     updateCaseDefinition: vi.fn(),
+    deleteCaseDefinitions: vi.fn(),
     listCaseVersions: vi.fn(),
     getCaseVersion: vi.fn(),
     restoreCaseVersion: vi.fn(),
@@ -239,6 +245,7 @@ function catalogFake(
     promoteAuthoritativeSource: vi.fn(),
     updateSourceLifecycle: vi.fn(),
     countSourceReferences: vi.fn(),
+    detachSourceForCleanup: vi.fn(),
     enqueueSourceDeletion: vi.fn(),
     getCleanupJob: vi.fn(),
     completeCleanupJob: vi.fn(),

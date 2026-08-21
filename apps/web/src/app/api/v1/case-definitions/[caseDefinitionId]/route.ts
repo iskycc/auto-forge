@@ -47,3 +47,27 @@ export async function PATCH(request: Request, context: Context): Promise<NextRes
     return apiErrorResponse(error, currentRequestId);
   }
 }
+
+export async function DELETE(request: Request, context: Context): Promise<NextResponse> {
+  const currentRequestId = requestId(request);
+  try {
+    requireSameOrigin(request);
+    const identity = await authenticateRequest(request);
+    const { caseDefinitionId } = await context.params;
+    const services = await getPlatformServices();
+    const projectIds = services.identityAccess.projectScope(identity, "case.manage");
+    const [deleted] = await services.caseDefinitions.deleteMany([caseDefinitionId], projectIds);
+    if (!deleted) throw new Error("Deleted case definition result is missing.");
+    await services.identityAccess.recordAuthorizedOperation(identity, {
+      action: "case_definition.delete",
+      resourceType: "case_definition",
+      resourceId: deleted.id,
+      projectId: deleted.projectId,
+      requestId: currentRequestId,
+      details: { displayName: deleted.displayName },
+    });
+    return NextResponse.json({ deletedCount: 1 });
+  } catch (error) {
+    return apiErrorResponse(error, currentRequestId);
+  }
+}
