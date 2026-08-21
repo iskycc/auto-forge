@@ -76,7 +76,7 @@ Full 部署还需提前导入部署包说明中列出的 PostgreSQL、NATS、Min
 
 musl 归档的镜像标签相应为 `autoforge/backend:0.2.2-amd64-musl`。必须持久化 `/var/lib/autoforge`；删除该卷会删除 Lite 数据库和本地对象。
 
-首次启动从容器日志或数据卷的 `/var/lib/autoforge/config/initial-admin-token` 获取管理员令牌。登录后先在“平台配置”设置执行机可访问的 HTTP 或 HTTPS 地址；可信内网可填写 `http://内网IP:端口`，其他网络应使用 HTTPS。再在“执行机”页面填写 IP/主机名、SSH 用户和密码。平台会探测系统与架构并显示 SSH 主机指纹；管理员通过可信渠道核对后才能安装。密码只用于本次 SSH/sudo 操作，Agent 注册使用短期一次性令牌。
+首次启动从容器日志或数据卷的 `/var/lib/autoforge/config/initial-admin-token` 获取管理员令牌。登录后先在“平台配置”设置执行机可访问的 HTTP 或 HTTPS 地址；可信内网可填写 `http://内网IP:端口`，其他网络应使用 HTTPS。再在“执行机”页面填写 IP/主机名、SSH 用户和密码。平台会探测系统与架构并显示 SSH 主机指纹；管理员通过可信渠道核对后才能安装。首次安装或手动更新成功后，平台以主密钥 AES-256-GCM 加密保存连接档案，供后续单机或批量更新复用；API 不返回密码或私有 CA 明文。Agent 注册仍使用短期一次性令牌。
 
 自动安装要求目标机为 Ubuntu 或 openSUSE、使用 systemd，并预置 SSH、Bash、coreutils；非 root SSH 用户还需已有 sudo。cgroup v2 可用时自动启用，缺失时 Agent 以降级隔离运行。服务默认使用专用账号，也可由管理员显式选择 root 模式。openSUSE 被 `/etc/os-release` 报告成 SLES 等无法自动判断时，可在核验主机后手动强制选择 openSUSE 安装模式。安装脚本不会调用系统包管理器或下载依赖。Agent 安装包内含 Adapter；任务提供 JDK 与 JAR 资源时无需预置本机 Java/TestNG。
 

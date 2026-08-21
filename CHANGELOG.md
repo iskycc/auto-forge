@@ -6,6 +6,8 @@ and known limitations.
 
 ## Unreleased
 
+## 0.9.1 - 2026-08-21
+
 ### Changed
 
 - Case suites now own the complete reusable execution configuration: Runner or Runner Group,
@@ -102,6 +104,15 @@ and known limitations.
   callers that previously rebuilt suite policy per request must save it on the suite first.
 - Infrastructure scheduling events and Jenkins routes are additive; existing manual Runner
   install/update requests remain accepted.
+- Release images, deployment bundles, embedded static Runner binaries, Jenkins HPI plugins, SBOMs,
+  checksums and build provenance are regenerated for `v0.9.1` by the tagged Release workflow.
+
+### Known limitations
+
+- The authenticated UI supports desktop browser widths of 1024 pixels and above; mobile layouts are
+  intentionally outside the supported and tested interface baseline.
+- Jenkins controllers must be able to reach the AutoForge control plane. Dependency URLs published
+  by Jenkins must remain reachable by the control plane and Runner network when an execution uses them.
 
 ## 0.9.0 - 2026-08-20
 

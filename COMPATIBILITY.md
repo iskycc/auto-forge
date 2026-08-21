@@ -19,3 +19,6 @@ runbook.
 Protocol v1 keeps the historical `environment` and `secretReferences` JSON fields for wire parsing only.
 Control plane `0.9.x` emits empty values, and the embedded Agent rejects non-empty values because product-level
 managed execution environments and secrets have been retired.
+
+The `v0.9.1` Jenkins HPI plugins require Jenkins `2.479.3` or newer. The execution plugin requires an
+API key with `run.create`; the dependency publisher requires `project.manage` for the target project.
