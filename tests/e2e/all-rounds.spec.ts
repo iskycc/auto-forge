@@ -245,7 +245,7 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
     await page.goto(`/cases?projectId=${encodeURIComponent(DEFAULT_PROJECT_ID)}`);
     await page.getByLabel("页内搜索用例").fill(caseName);
     await page.getByLabel(`选择 ${caseName}`).check();
-    await page.getByLabel("目标用例任务").selectOption(suiteId);
+    await page.locator('select[aria-label="目标用例任务"]').selectOption(suiteId);
     await page.getByRole("button", { name: "加入任务" }).click();
     await expect(page.locator(".inline-feedback")).toContainText("已将 1 个用例加入任务");
   }
@@ -365,11 +365,11 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
   await expect(flakyRows.filter({ hasText: "第 2 轮" })).toContainText("通过");
 
   // 通过/失败筛选在全部轮次下可用。
-  await page.getByLabel("按状态筛选").selectOption("succeeded");
+  await page.locator('select[aria-label="按状态筛选"]').selectOption("succeeded");
   await expect(casesRegion.getByRole("row", { name: /AllRounds/ })).toHaveCount(2);
-  await page.getByLabel("按状态筛选").selectOption("failed");
+  await page.locator('select[aria-label="按状态筛选"]').selectOption("failed");
   await expect(casesRegion.getByRole("row", { name: /AllRounds/ })).toHaveCount(1);
-  await page.getByLabel("按状态筛选").selectOption("all");
+  await page.locator('select[aria-label="按状态筛选"]').selectOption("all");
   // 布局回归：全部轮次没有环形图，用例表格必须占满面板宽度，而不是被挤进图表列。
   const panelBox = await page.locator("section.round-detail-panel").boundingBox();
   const tableBox = await casesRegion.locator("table.data-table").boundingBox();

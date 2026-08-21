@@ -427,7 +427,7 @@ async function createSharedSuite(page: Page): Promise<void> {
   await page.goto(`/cases?projectId=${encodeURIComponent(DEFAULT_PROJECT_ID)}`);
   await page.getByLabel("页内搜索用例").fill("Concurrent");
   await page.getByLabel("选择当前搜索结果中的全部用例").check();
-  await page.getByLabel("目标用例任务").selectOption({ label: suiteName });
+  await page.locator('select[aria-label="目标用例任务"]').selectOption({ label: suiteName });
   await page.getByRole("button", { name: "加入任务" }).click();
   await expect(page.getByRole("status")).toContainText("已将 3 个用例加入任务");
 }

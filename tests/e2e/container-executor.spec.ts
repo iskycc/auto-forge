@@ -241,7 +241,7 @@ async function createContainerSuite(
   await page.goto("/cases");
   await page.getByLabel("页内搜索用例").fill(caseDisplayName);
   await page.getByLabel(`选择 ${caseDisplayName}`).check();
-  await page.getByLabel("目标用例任务").selectOption({ label: suiteName });
+  await page.locator('select[aria-label="目标用例任务"]').selectOption({ label: suiteName });
   await page.getByRole("button", { name: "加入任务" }).click();
   await expect(page.getByRole("status")).toContainText("已将 1 个用例加入任务");
 }

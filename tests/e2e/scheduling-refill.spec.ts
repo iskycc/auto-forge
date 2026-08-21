@@ -187,7 +187,9 @@ test("completion immediately refills free runner slots without waiting for the w
   await page.goto(`/cases?projectId=${encodeURIComponent(DEFAULT_PROJECT_ID)}`);
   await page.getByLabel("页内搜索用例").fill("RefillCase");
   await page.getByLabel("选择当前搜索结果中的全部用例").check();
-  await page.getByLabel("目标用例任务").selectOption({ label: "即时补槽验收任务" });
+  await page
+    .locator('select[aria-label="目标用例任务"]')
+    .selectOption({ label: "即时补槽验收任务" });
   await page.getByRole("button", { name: "加入任务" }).click();
   await expect(page.locator(".inline-feedback")).toContainText("已将 5 个用例加入任务");
 
