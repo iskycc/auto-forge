@@ -67,7 +67,9 @@ type ConfigurationRow = {
 type VersionRuntimeRow = {
   project_version_id: string;
   project_id: string;
-  jar_bundle_asset_id: string;
+  jdk_asset_id: string | null;
+  jar_bundle_asset_id: string | null;
+  inherited_from_project_version_id: string | null;
   revision: number;
   updated_by: string | null;
   updated_at: string;
@@ -89,10 +91,14 @@ export class SqliteProjectStructureRepository implements ProjectStructureReposit
         )
         .all(projectId) as StageRow[]
     ).map(mapStage);
+    const configurations = await Promise.all(
+      versions.map((version) => this.getAdapterConfiguration(projectId, version.id)),
+    );
     return {
-      versions: versions.map((version) => ({
+      versions: versions.map((version, index) => ({
         ...version,
         stages: stages.filter((stage) => stage.projectVersionId === version.id),
+        adapterConfiguration: configurations[index]!,
       })),
       adapterConfiguration: await this.getAdapterConfiguration(projectId),
     };
@@ -215,6 +221,7 @@ export class SqliteProjectStructureRepository implements ProjectStructureReposit
              VALUES (?, ?, ?, 1, ?, ?)
              ON CONFLICT(project_version_id) DO UPDATE SET
                jar_bundle_asset_id = excluded.jar_bundle_asset_id,
+               inherited_from_project_version_id = NULL,
                revision = project_version_runtime_assets.revision + 1,
                updated_by = excluded.updated_by,
                updated_at = excluded.updated_at`,
@@ -227,9 +234,9 @@ export class SqliteProjectStructureRepository implements ProjectStructureReposit
             record.createdAt,
           );
         if (previous && previous.jar_bundle_asset_id !== record.id) {
-          this.handle.client
-            .prepare("DELETE FROM project_runtime_assets WHERE id = ? AND source_type = 'url'")
-            .run(previous.jar_bundle_asset_id);
+          if (previous.jar_bundle_asset_id) {
+            this.deleteAssetMetadataIfUnreferenced(previous.jar_bundle_asset_id);
+          }
         }
         return { version: mapVersion(version), asset: this.requiredAsset(record.id) };
       })();
@@ -242,6 +249,12 @@ export class SqliteProjectStructureRepository implements ProjectStructureReposit
   async updateAdapterConfiguration(
     input: Parameters<ProjectStructureRepository["updateAdapterConfiguration"]>[0],
   ): Promise<ProjectAdapterConfiguration> {
+    if (input.projectVersionId) {
+      return this.updateVersionConfiguration({
+        ...input,
+        projectVersionId: input.projectVersionId,
+      });
+    }
     try {
       return this.handle.client.transaction(() => {
         this.validateAsset(input.projectId, input.jdkAssetId, "jdk");
@@ -299,8 +312,13 @@ export class SqliteProjectStructureRepository implements ProjectStructureReposit
       return {
         projectId,
         projectVersionId,
-        ...(row?.jdk_asset_id ? { jdkAsset: this.requiredAsset(row.jdk_asset_id) } : {}),
-        ...(versionRuntime
+        ...(versionRuntime?.inherited_from_project_version_id
+          ? { inheritedFromProjectVersionId: versionRuntime.inherited_from_project_version_id }
+          : {}),
+        ...(versionRuntime?.jdk_asset_id
+          ? { jdkAsset: this.requiredAsset(versionRuntime.jdk_asset_id) }
+          : {}),
+        ...(versionRuntime?.jar_bundle_asset_id
           ? { jarBundleAsset: this.requiredAsset(versionRuntime.jar_bundle_asset_id) }
           : {}),
         revision: versionRuntime?.revision ?? 0,
@@ -315,6 +333,241 @@ export class SqliteProjectStructureRepository implements ProjectStructureReposit
           revision: 0,
           updatedAt: "",
         };
+  }
+
+  async inheritAdapterConfiguration(
+    input: Parameters<ProjectStructureRepository["inheritAdapterConfiguration"]>[0],
+  ): Promise<ProjectAdapterConfiguration> {
+    try {
+      return this.handle.client.transaction(() => {
+        this.requireVersionInProject(input.sourceProjectVersionId, input.projectId);
+        this.requireVersionInProject(input.targetProjectVersionId, input.projectId);
+        const source = this.versionRuntimeRow(input.sourceProjectVersionId);
+        if (!source) {
+          throw new DomainError(
+            "PROJECT_VERSION_RUNTIME_ASSETS_MISSING",
+            "来源版本尚未配置 JDK 或依赖 JAR 压缩包。",
+          );
+        }
+        const current = this.versionRuntimeRow(input.targetProjectVersionId);
+        if ((current?.revision ?? 0) !== input.expectedRevision) throw revisionConflict();
+        this.writeVersionConfiguration({
+          projectId: input.projectId,
+          projectVersionId: input.targetProjectVersionId,
+          ...(source.jdk_asset_id ? { jdkAssetId: source.jdk_asset_id } : {}),
+          ...(source.jar_bundle_asset_id ? { jarBundleAssetId: source.jar_bundle_asset_id } : {}),
+          inheritedFromProjectVersionId: input.sourceProjectVersionId,
+          expectedRevision: input.expectedRevision,
+          ...(input.actorId ? { actorId: input.actorId } : {}),
+          updatedAt: input.updatedAt,
+        });
+        return this.requiredVersionConfiguration(input.projectId, input.targetProjectVersionId);
+      })();
+    } catch (error) {
+      if (error instanceof DomainError) throw error;
+      throw mapStructureWriteError(error);
+    }
+  }
+
+  async detachVersionRuntimeAsset(
+    input: Parameters<ProjectStructureRepository["detachVersionRuntimeAsset"]>[0],
+  ): Promise<{
+    configuration: ProjectAdapterConfiguration;
+    orphanedAsset?: ProjectRuntimeAsset;
+  }> {
+    try {
+      return this.handle.client.transaction(() => {
+        this.requireVersionInProject(input.projectVersionId, input.projectId);
+        const current = this.versionRuntimeRow(input.projectVersionId);
+        if (!current) {
+          throw new DomainError(
+            "PROJECT_VERSION_RUNTIME_ASSETS_MISSING",
+            "当前版本没有可删除的资源。",
+          );
+        }
+        if (current.revision !== input.expectedRevision) throw revisionConflict();
+        const assetId = input.kind === "jdk" ? current.jdk_asset_id : current.jar_bundle_asset_id;
+        if (!assetId) {
+          throw new DomainError("PROJECT_VERSION_RUNTIME_ASSET_MISSING", "当前版本未配置该资源。");
+        }
+        const jdkAssetId = input.kind === "jdk" ? undefined : (current.jdk_asset_id ?? undefined);
+        const jarBundleAssetId =
+          input.kind === "jar-bundle" ? undefined : (current.jar_bundle_asset_id ?? undefined);
+        if (!jdkAssetId && !jarBundleAssetId) {
+          this.handle.client
+            .prepare(
+              "DELETE FROM project_version_runtime_assets WHERE project_version_id = ? AND revision = ?",
+            )
+            .run(input.projectVersionId, input.expectedRevision);
+        } else {
+          this.writeVersionConfiguration({
+            projectId: input.projectId,
+            projectVersionId: input.projectVersionId,
+            ...(jdkAssetId ? { jdkAssetId } : {}),
+            ...(jarBundleAssetId ? { jarBundleAssetId } : {}),
+            expectedRevision: input.expectedRevision,
+            ...(input.actorId ? { actorId: input.actorId } : {}),
+            updatedAt: input.updatedAt,
+          });
+        }
+        const configuration = this.requiredVersionConfiguration(
+          input.projectId,
+          input.projectVersionId,
+          true,
+        );
+        const orphanedAsset = this.findUnreferencedAsset(assetId);
+        return { configuration, ...(orphanedAsset ? { orphanedAsset } : {}) };
+      })();
+    } catch (error) {
+      if (error instanceof DomainError) throw error;
+      throw mapStructureWriteError(error);
+    }
+  }
+
+  async deleteRuntimeAssetMetadata(assetId: string): Promise<void> {
+    this.handle.client.transaction(() => {
+      const orphan = this.findUnreferencedAsset(assetId);
+      if (orphan) {
+        this.handle.client.prepare("DELETE FROM project_runtime_assets WHERE id = ?").run(assetId);
+      }
+    })();
+  }
+
+  private updateVersionConfiguration(
+    input: Parameters<ProjectStructureRepository["updateAdapterConfiguration"]>[0] & {
+      projectVersionId: string;
+    },
+  ): ProjectAdapterConfiguration {
+    try {
+      return this.handle.client.transaction(() => {
+        this.requireVersionInProject(input.projectVersionId, input.projectId);
+        this.validateAsset(input.projectId, input.jdkAssetId, "jdk");
+        this.validateAsset(input.projectId, input.jarBundleAssetId, "jar-bundle");
+        this.writeVersionConfiguration(input);
+        return this.requiredVersionConfiguration(input.projectId, input.projectVersionId);
+      })();
+    } catch (error) {
+      if (error instanceof DomainError) throw error;
+      throw mapStructureWriteError(error);
+    }
+  }
+
+  private writeVersionConfiguration(input: {
+    projectId: string;
+    projectVersionId: string;
+    jdkAssetId?: string;
+    jarBundleAssetId?: string;
+    inheritedFromProjectVersionId?: string;
+    expectedRevision: number;
+    actorId?: string;
+    updatedAt: string;
+  }): void {
+    const current = this.versionRuntimeRow(input.projectVersionId);
+    if ((current?.revision ?? 0) !== input.expectedRevision) throw revisionConflict();
+    if (!input.jdkAssetId && !input.jarBundleAssetId) {
+      throw new DomainError(
+        "PROJECT_VERSION_RUNTIME_ASSETS_REQUIRED",
+        "项目版本至少需要配置一个运行时资源。",
+      );
+    }
+    if (!current) {
+      this.handle.client
+        .prepare(
+          `INSERT INTO project_version_runtime_assets
+           (project_version_id, project_id, jdk_asset_id, jar_bundle_asset_id,
+            inherited_from_project_version_id, revision, updated_by, updated_at)
+           VALUES (?, ?, ?, ?, ?, 1, ?, ?)`,
+        )
+        .run(
+          input.projectVersionId,
+          input.projectId,
+          input.jdkAssetId ?? null,
+          input.jarBundleAssetId ?? null,
+          input.inheritedFromProjectVersionId ?? null,
+          input.actorId ?? null,
+          input.updatedAt,
+        );
+      return;
+    }
+    const changed = this.handle.client
+      .prepare(
+        `UPDATE project_version_runtime_assets
+         SET jdk_asset_id = ?, jar_bundle_asset_id = ?, inherited_from_project_version_id = ?,
+             revision = revision + 1, updated_by = ?, updated_at = ?
+         WHERE project_version_id = ? AND project_id = ? AND revision = ?`,
+      )
+      .run(
+        input.jdkAssetId ?? null,
+        input.jarBundleAssetId ?? null,
+        input.inheritedFromProjectVersionId ?? null,
+        input.actorId ?? null,
+        input.updatedAt,
+        input.projectVersionId,
+        input.projectId,
+        input.expectedRevision,
+      );
+    if (changed.changes !== 1) throw revisionConflict();
+  }
+
+  private requiredVersionConfiguration(
+    projectId: string,
+    projectVersionId: string,
+    allowEmpty = false,
+  ): ProjectAdapterConfiguration {
+    const row = this.versionRuntimeRow(projectVersionId);
+    if (!row) {
+      if (allowEmpty) return { projectId, projectVersionId, revision: 0, updatedAt: "" };
+      throw new Error("Updated project version configuration could not be read.");
+    }
+    return {
+      projectId,
+      projectVersionId,
+      ...(row.inherited_from_project_version_id
+        ? { inheritedFromProjectVersionId: row.inherited_from_project_version_id }
+        : {}),
+      ...(row.jdk_asset_id ? { jdkAsset: this.requiredAsset(row.jdk_asset_id) } : {}),
+      ...(row.jar_bundle_asset_id
+        ? { jarBundleAsset: this.requiredAsset(row.jar_bundle_asset_id) }
+        : {}),
+      revision: row.revision,
+      ...(row.updated_by ? { updatedBy: row.updated_by } : {}),
+      updatedAt: row.updated_at,
+    };
+  }
+
+  private requireVersionInProject(projectVersionId: string, projectId: string): void {
+    const version = this.handle.client
+      .prepare("SELECT 1 FROM project_versions WHERE id = ? AND project_id = ?")
+      .get(projectVersionId, projectId);
+    if (!version) {
+      throw new DomainError("PROJECT_VERSION_NOT_FOUND", "指定的项目版本不存在或不属于当前项目。");
+    }
+  }
+
+  private deleteAssetMetadataIfUnreferenced(assetId: string): ProjectRuntimeAsset | undefined {
+    const asset = this.findUnreferencedAsset(assetId);
+    // Jenkins 这里只替换 URL 登记；上传对象必须由具备 ObjectStore 的应用服务清理，
+    // 不能先删元数据而遗失可重试的对象引用。
+    if (!asset || asset.sourceType !== "url") return undefined;
+    this.handle.client.prepare("DELETE FROM project_runtime_assets WHERE id = ?").run(assetId);
+    return asset;
+  }
+
+  private findUnreferencedAsset(assetId: string): ProjectRuntimeAsset | undefined {
+    const references = this.handle.client
+      .prepare(
+        `SELECT
+           (SELECT COUNT(*) FROM project_adapter_configurations
+             WHERE jdk_asset_id = ? OR jar_bundle_asset_id = ?) +
+           (SELECT COUNT(*) FROM project_version_runtime_assets
+             WHERE jdk_asset_id = ? OR jar_bundle_asset_id = ?) +
+           (SELECT COUNT(*) FROM run_batches
+             WHERE status IN ('queued','dispatching','scheduled','running')
+               AND adapter_runtime_json LIKE ?) AS value`,
+      )
+      .get(assetId, assetId, assetId, assetId, `%\"id\":\"${assetId}\"%`) as { value: number };
+    if (references.value > 0) return undefined;
+    return this.requiredAsset(assetId);
   }
 
   private requiredVersion(id: string): ProjectVersion {

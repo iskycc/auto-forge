@@ -62,4 +62,42 @@ describe("CaseDefinitionService", () => {
       code: "CASE_DEFINITION_IDS_REQUIRED",
     });
   });
+
+  it("inherits cases between version stages with new definition, version and method ids", async () => {
+    const listCases = vi.fn().mockResolvedValue({
+      items: [
+        {
+          id: "source-case",
+          methods: [{ id: "source-method" }],
+        },
+      ],
+    });
+    const inheritCaseDefinitions = vi
+      .fn()
+      .mockResolvedValue({ inheritedCount: 1, skippedCount: 0 });
+    const service = serviceWith({ listCases, inheritCaseDefinitions });
+
+    await expect(
+      service.inheritFromVersion({
+        projectId: "project-1",
+        sourceProjectVersionId: "version-1",
+        sourceTestStageId: "stage-1",
+        targetProjectVersionId: "version-2",
+        targetTestStageId: "stage-2",
+        actorId: "actor-1",
+      }),
+    ).resolves.toEqual({ inheritedCount: 1, skippedCount: 0 });
+    expect(inheritCaseDefinitions).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sourceProjectVersionId: "version-1",
+        targetProjectVersionId: "version-2",
+        records: [
+          expect.objectContaining({
+            sourceCaseDefinitionId: "source-case",
+            methods: [expect.objectContaining({ sourceMethodId: "source-method" })],
+          }),
+        ],
+      }),
+    );
+  });
 });

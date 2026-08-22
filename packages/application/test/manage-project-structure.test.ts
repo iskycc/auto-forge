@@ -93,6 +93,68 @@ describe("version dependency publication", () => {
       }),
     ).rejects.toMatchObject({ code: "PROJECT_VERSION_ARCHIVED" });
   });
+
+  it("inherits runtime assets by reference and deletes an orphaned uploaded object", async () => {
+    const structures = repositoryFake({ versions: [] });
+    structures.inheritAdapterConfiguration = vi.fn().mockResolvedValue({
+      projectId: "project-1",
+      projectVersionId: "version-2",
+      inheritedFromProjectVersionId: "version-1",
+      revision: 1,
+      updatedAt: timestamp,
+    });
+    structures.detachVersionRuntimeAsset = vi.fn().mockResolvedValue({
+      configuration: {
+        projectId: "project-1",
+        projectVersionId: "version-2",
+        revision: 0,
+        updatedAt: "",
+      },
+      orphanedAsset: {
+        id: "asset-upload",
+        projectId: "project-1",
+        kind: "jdk",
+        sourceType: "upload",
+        fileName: "jdk.zip",
+        objectKey: "projects/project-1/runtime-assets/asset-upload.zip",
+        sha256: "d".repeat(64),
+        sizeBytes: 1024,
+        archiveFormat: "zip",
+        createdAt: timestamp,
+      },
+    });
+    structures.deleteRuntimeAssetMetadata = vi.fn().mockResolvedValue(undefined);
+    const objectStore = {
+      delete: vi.fn().mockResolvedValue(undefined),
+    } as unknown as JarObjectStorePort;
+    const service = new ProjectStructureService(
+      structures,
+      objectStore,
+      { now: () => new Date(timestamp) },
+      { next: () => "unused" },
+    );
+
+    await service.inheritAdapterConfiguration({
+      projectId: "project-1",
+      sourceProjectVersionId: "version-1",
+      targetProjectVersionId: "version-2",
+      expectedRevision: 0,
+    });
+    await service.deleteVersionRuntimeAsset({
+      projectId: "project-1",
+      projectVersionId: "version-2",
+      kind: "jdk",
+      expectedRevision: 1,
+    });
+
+    expect(structures.inheritAdapterConfiguration).toHaveBeenCalledWith(
+      expect.objectContaining({ updatedAt: timestamp }),
+    );
+    expect(objectStore.delete).toHaveBeenCalledWith(
+      "projects/project-1/runtime-assets/asset-upload.zip",
+    );
+    expect(structures.deleteRuntimeAssetMetadata).toHaveBeenCalledWith("asset-upload");
+  });
 });
 
 function repositoryFake(structure: { versions: ReturnType<typeof projectVersion>[] }) {
@@ -107,9 +169,15 @@ function repositoryFake(structure: { versions: ReturnType<typeof projectVersion>
     }),
     createVersion: vi.fn(),
     replaceVersionRuntimeAsset: vi.fn(),
+    inheritAdapterConfiguration: vi.fn(),
+    detachVersionRuntimeAsset: vi.fn(),
+    deleteRuntimeAssetMetadata: vi.fn(),
   } as unknown as ProjectStructureRepository & {
     createVersion: ReturnType<typeof vi.fn>;
     replaceVersionRuntimeAsset: ReturnType<typeof vi.fn>;
+    inheritAdapterConfiguration: ReturnType<typeof vi.fn>;
+    detachVersionRuntimeAsset: ReturnType<typeof vi.fn>;
+    deleteRuntimeAssetMetadata: ReturnType<typeof vi.fn>;
   };
 }
 

@@ -160,16 +160,57 @@ export class ProjectStructureService {
     projectId: string,
     input: ProjectAdapterConfigurationInput,
     actorId?: string,
+    projectVersionId?: string,
   ) {
     const validated = projectAdapterConfigurationInputSchema.parse(input);
     return this.structures.updateAdapterConfiguration({
       projectId,
+      ...(projectVersionId ? { projectVersionId } : {}),
       ...(validated.jdkAssetId ? { jdkAssetId: validated.jdkAssetId } : {}),
       ...(validated.jarBundleAssetId ? { jarBundleAssetId: validated.jarBundleAssetId } : {}),
       expectedRevision: validated.expectedRevision,
       ...(actorId ? { actorId } : {}),
       updatedAt: this.clock.now().toISOString(),
     });
+  }
+
+  async inheritAdapterConfiguration(input: {
+    projectId: string;
+    sourceProjectVersionId: string;
+    targetProjectVersionId: string;
+    expectedRevision: number;
+    actorId?: string;
+  }) {
+    if (input.sourceProjectVersionId === input.targetProjectVersionId) {
+      throw new DomainError(
+        "PROJECT_VERSION_INHERITANCE_SELF_REFERENCE",
+        "不能从当前项目版本继承运行时资源。",
+      );
+    }
+    return this.structures.inheritAdapterConfiguration({
+      ...input,
+      updatedAt: this.clock.now().toISOString(),
+    });
+  }
+
+  async deleteVersionRuntimeAsset(input: {
+    projectId: string;
+    projectVersionId: string;
+    kind: RuntimeAssetKind;
+    expectedRevision: number;
+    actorId?: string;
+  }) {
+    const detached = await this.structures.detachVersionRuntimeAsset({
+      ...input,
+      updatedAt: this.clock.now().toISOString(),
+    });
+    if (detached.orphanedAsset?.objectKey) {
+      await this.objectStore.delete(detached.orphanedAsset.objectKey);
+    }
+    if (detached.orphanedAsset) {
+      await this.structures.deleteRuntimeAssetMetadata(detached.orphanedAsset.id);
+    }
+    return detached.configuration;
   }
 }
 

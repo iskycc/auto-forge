@@ -1536,6 +1536,126 @@
   overflow-wrap: anywhere;
 }
 
+.project-version-tree {
+  display: grid;
+  gap: 12px;
+}
+
+.project-version-node {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  border-radius: 14px;
+  background: var(--color-surface-muted);
+}
+
+.project-version-node-heading {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 11px;
+  padding: 13px 15px;
+  background: var(--color-surface);
+}
+
+.project-version-node-heading > span:nth-child(2),
+.project-stage-node > span:last-child {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.project-version-node small,
+.project-stage-node small {
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-caption);
+}
+
+.project-version-node strong,
+.project-stage-node em {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-version-branch {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  background: var(--color-info);
+  box-shadow: 0 0 0 4px var(--color-info-soft);
+}
+
+.project-stage-children {
+  display: grid;
+  padding: 5px 15px 11px 34px;
+}
+
+.project-stage-node {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: 22px minmax(0, 1fr);
+  gap: 8px;
+  padding: 8px 0;
+}
+
+.project-stage-connector {
+  height: calc(100% + 16px);
+  border-bottom: 1px solid var(--color-border-strong);
+  border-left: 1px solid var(--color-border-strong);
+  transform: translateY(-16px);
+}
+
+.project-stage-connector.last {
+  height: 26px;
+}
+
+.project-stage-node em {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-caption);
+  font-style: normal;
+}
+
+.project-stage-empty {
+  margin: 6px 0 2px 30px;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-caption);
+}
+
+.project-runtime-version-select {
+  display: grid;
+  max-width: 420px;
+  gap: 7px;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-caption);
+  font-weight: 600;
+}
+
+.project-runtime-actions,
+.project-runtime-inherit {
+  display: flex;
+  min-width: 0;
+  align-items: end;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.project-runtime-inherit {
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  padding: 12px;
+  background: var(--color-surface-muted);
+}
+
+.project-runtime-inherit label {
+  display: grid;
+  min-width: 240px;
+  gap: 6px;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-caption);
+  font-weight: 600;
+}
+
 .project-settings-list,
 .settings-directory-actions {
   display: grid;
@@ -2455,6 +2575,24 @@ button.icon-button:disabled {
   margin: 6px auto 0;
   color: var(--color-text-secondary);
   line-height: 1.5;
+}
+
+.case-library-empty-card {
+  display: grid;
+  min-height: 360px;
+  overflow: hidden;
+}
+
+.case-library-empty {
+  width: min(100%, 560px);
+  min-height: 320px;
+  justify-self: center;
+  gap: 4px;
+  padding: 40px 24px;
+}
+
+.case-library-empty .button {
+  margin-top: 18px;
 }
 
 .stat-list {

@@ -1032,6 +1032,138 @@ export class SqliteCaseCatalogRepository implements CaseCatalogRepository {
     return deleteInScope.immediate();
   }
 
+  async inheritCaseDefinitions(
+    input: Parameters<CaseCatalogRepository["inheritCaseDefinitions"]>[0],
+  ): Promise<{ inheritedCount: number; skippedCount: number }> {
+    if (input.records.length === 0) return { inheritedCount: 0, skippedCount: 0 };
+    return this.handle.client
+      .transaction(() => {
+        const targetStage = this.handle.client
+          .prepare(
+            `SELECT 1 FROM test_stages
+           WHERE id = ? AND project_id = ? AND project_version_id = ?`,
+          )
+          .get(input.targetTestStageId, input.projectId, input.targetProjectVersionId);
+        if (!targetStage) {
+          throw new DomainError(
+            "TARGET_TEST_STAGE_NOT_FOUND",
+            "目标测试阶段不存在或不属于目标项目版本。",
+          );
+        }
+        let inheritedCount = 0;
+        let skippedCount = 0;
+        for (const record of input.records) {
+          const source = this.handle.client
+            .prepare(
+              `SELECT class_name FROM case_definitions
+             WHERE id = ? AND project_id = ? AND project_version_id = ? AND test_stage_id = ?`,
+            )
+            .get(
+              record.sourceCaseDefinitionId,
+              input.projectId,
+              input.sourceProjectVersionId,
+              input.sourceTestStageId,
+            ) as { class_name: string } | undefined;
+          if (!source) {
+            throw new DomainError(
+              "SOURCE_CASE_DEFINITION_NOT_FOUND",
+              "继承来源用例不存在或不属于所选项目版本与测试阶段。",
+            );
+          }
+          const existing = this.handle.client
+            .prepare(
+              `SELECT 1 FROM case_definitions
+             WHERE project_id = ? AND project_version_id = ? AND test_stage_id = ?
+               AND class_name = ? LIMIT 1`,
+            )
+            .get(
+              input.projectId,
+              input.targetProjectVersionId,
+              input.targetTestStageId,
+              source.class_name,
+            );
+          if (existing) {
+            skippedCount += 1;
+            continue;
+          }
+          const definition = this.handle.client
+            .prepare(
+              `INSERT INTO case_definitions
+             (id, project_id, project_version_id, test_stage_id, directory_path, source_id,
+              class_name, package_name, display_name, description, tags_json, parameters_json,
+              enabled, archived, revision, updated_by, groups_json, current_version,
+              created_at, updated_at)
+             SELECT ?, project_id, ?, ?, directory_path, source_id, class_name, package_name,
+                    display_name, description, tags_json, parameters_json, enabled, archived, 1, ?,
+                    groups_json, 1, ?, ?
+             FROM case_definitions WHERE id = ?`,
+            )
+            .run(
+              record.targetCaseDefinitionId,
+              input.targetProjectVersionId,
+              input.targetTestStageId,
+              input.actorId,
+              input.inheritedAt,
+              input.inheritedAt,
+              record.sourceCaseDefinitionId,
+            );
+          if (definition.changes !== 1) {
+            throw new DomainError("SOURCE_CASE_DEFINITION_NOT_FOUND", "继承来源用例不存在。");
+          }
+          const version = this.handle.client
+            .prepare(
+              `INSERT INTO case_versions
+             (id, case_definition_id, source_id, version, snapshot_json, created_by,
+              change_reason, created_at)
+             SELECT ?, ?, source_id, 1, snapshot_json, ?, 'version.inherit', ?
+             FROM case_versions
+             WHERE case_definition_id = ?
+               AND version = (SELECT current_version FROM case_definitions WHERE id = ?)`,
+            )
+            .run(
+              record.targetCaseVersionId,
+              record.targetCaseDefinitionId,
+              input.actorId,
+              input.inheritedAt,
+              record.sourceCaseDefinitionId,
+              record.sourceCaseDefinitionId,
+            );
+          if (version.changes !== 1) {
+            throw new DomainError(
+              "SOURCE_CASE_VERSION_NOT_FOUND",
+              "继承来源用例的当前版本不存在。",
+            );
+          }
+          for (const method of record.methods) {
+            const insertedMethod = this.handle.client
+              .prepare(
+                `INSERT INTO test_methods
+               (id, case_definition_id, method_name, descriptor, enabled, annotation_source,
+                groups_json, description, data_provider, depends_on_methods_json,
+                depends_on_groups_json, priority, created_at)
+               SELECT ?, ?, method_name, descriptor, enabled, annotation_source, groups_json,
+                      description, data_provider, depends_on_methods_json, depends_on_groups_json,
+                      priority, ?
+               FROM test_methods WHERE id = ? AND case_definition_id = ?`,
+              )
+              .run(
+                method.targetMethodId,
+                record.targetCaseDefinitionId,
+                input.inheritedAt,
+                method.sourceMethodId,
+                record.sourceCaseDefinitionId,
+              );
+            if (insertedMethod.changes !== 1) {
+              throw new DomainError("SOURCE_TEST_METHOD_NOT_FOUND", "继承来源测试方法不存在。");
+            }
+          }
+          inheritedCount += 1;
+        }
+        return { inheritedCount, skippedCount };
+      })
+      .immediate();
+  }
+
   async listCaseVersions(caseDefinitionId: string, limit: number): Promise<CaseVersion[]> {
     return this.handle.db
       .select()

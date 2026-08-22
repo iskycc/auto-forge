@@ -235,6 +235,7 @@ function catalogFake(
     getCaseDefinition: vi.fn(),
     updateCaseDefinition: vi.fn(),
     deleteCaseDefinitions: vi.fn(),
+    inheritCaseDefinitions: vi.fn(),
     listCaseVersions: vi.fn(),
     getCaseVersion: vi.fn(),
     restoreCaseVersion: vi.fn(),

@@ -1,7 +1,7 @@
 "use client";
 
 import type { CaseSuiteSchedule, LdapSyncJob } from "@autoforge/contracts";
-import { CalendarClock, RefreshCw } from "lucide-react";
+import { CalendarClock, RefreshCw, Trash2 } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
@@ -166,6 +166,24 @@ export function AutomationOperations({
                             type="button"
                           >
                             {schedule.enabled ? "暂停" : "启用"}
+                          </Button>
+                          <Button
+                            className="table-action"
+                            disabled={pending}
+                            onClick={() => {
+                              if (!window.confirm("删除这条计划任务？删除后不会再自动触发。")) {
+                                return;
+                              }
+                              void request(
+                                `/api/v1/case-suites/${schedule.suiteId}/schedule`,
+                                { method: "DELETE" },
+                                "计划任务已删除。",
+                              );
+                            }}
+                            type="button"
+                            variant="danger"
+                          >
+                            <Trash2 size={14} aria-hidden="true" /> 删除
                           </Button>
                         </span>
                       ) : (

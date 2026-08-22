@@ -6,6 +6,63 @@ and known limitations.
 
 ## Unreleased
 
+## 0.9.9 - 2026-08-23
+
+### Changed
+
+- Kept execution lifecycle separate from TestNG outcomes throughout execution records and batch
+  details. A batch whose Adapter attempts all completed normally is shown as `执行完成` even when
+  assertions or TestNG configuration methods failed; only scheduling, Runner, process, timeout,
+  upload and other incomplete-execution failures are shown as `执行异常`.
+- Added deletion to the offline schedule overview. Authorized users can now pause, resume, edit or
+  permanently delete a suite schedule from the same bounded table.
+- Replaced the flattened `版本 → 阶段一、阶段二` text with an accessible nested version/stage tree,
+  including stage counts, descriptions and stable empty states.
+- Scoped JDK and dependency archives to individual project versions. Administrators can upload or
+  register independent resources, inherit another version's resources through shared database/object
+  references without copying bytes, and remove either resource without affecting versions that still
+  reference it.
+- Added bounded cross-version case inheritance between explicit source and target test stages. The
+  target receives independent case IDs and immutable v1 snapshots while sharing the source JAR;
+  existing fully qualified class names are skipped, and later target-stage imports retain the target
+  case ID.
+- Stabilized the empty case-library layout with a fixed readable work area that does not collapse or
+  stretch surrounding cards.
+
+### Database
+
+- Added SQLite migration `0038_version_assets_and_batch_status.sql` and PostgreSQL migration
+  `0037_version_assets_and_batch_status.sql`. They make both JDK and dependency references
+  version-scoped, preserve existing installations by materializing legacy project resources into
+  existing versions, allow explicit inherited references, replace the obsolete source/class unique
+  index with scoped lookup indexes, and repair historical failed batch rows whose only failures are
+  normal TestNG outcomes.
+- Uploaded runtime objects are removed only after the last configuration and active batch reference
+  disappears. Metadata is finalized after object-store deletion so a failed Lite/MinIO deletion does
+  not silently lose the cleanup reference.
+
+### Tests
+
+- Added domain/presentation regressions for authoritative completed status with failed assertions,
+  application tests for paginated case inheritance and runtime-resource cleanup, and SQLite/PostgreSQL
+  adapter coverage for version isolation, reference inheritance, guarded deletion and stable-ID
+  target reimport.
+- Extended browser coverage for schedule deletion, nested version/stage rendering, version-aware
+  resource selection and the non-collapsing empty case-library state.
+
+### Compatibility
+
+- Runner Protocol v1 is unchanged. Existing project-level runtime settings are copied into existing
+  project versions during migration; newly created versions start without implicit resources and
+  must upload, register or explicitly inherit them.
+- Release images, deployment bundles, embedded static Runner binaries, Jenkins HPI plugins, SBOMs,
+  checksums and build provenance are regenerated for `v0.9.9` by the tagged Release workflow.
+
+### Known limitations
+
+- Runtime-resource and case inheritance stay within one project. Cross-project references remain
+  forbidden by repository scope checks and foreign-key validation.
+
 ## 0.9.8 - 2026-08-22
 
 ### Changed

@@ -42,6 +42,7 @@ export type ProjectRuntimeAsset = {
 export type ProjectAdapterConfiguration = {
   projectId: string;
   projectVersionId?: string;
+  inheritedFromProjectVersionId?: string;
   jdkAsset?: ProjectRuntimeAsset;
   jarBundleAsset?: ProjectRuntimeAsset;
   revision: number;
@@ -55,6 +56,9 @@ export type ProjectVersionDependency = {
 };
 
 export type ProjectStructure = {
-  versions: Array<ProjectVersion & { stages: TestStage[] }>;
+  versions: Array<
+    ProjectVersion & { stages: TestStage[]; adapterConfiguration: ProjectAdapterConfiguration }
+  >;
+  // 仅为历史升级读取保留；新配置必须写入具体项目版本。
   adapterConfiguration: ProjectAdapterConfiguration;
 };

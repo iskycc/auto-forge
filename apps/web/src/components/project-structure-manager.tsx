@@ -5,7 +5,7 @@ import type {
   ProjectRuntimeAsset,
   ProjectStructure,
 } from "@autoforge/domain";
-import { FolderTree, Plus, UploadCloud } from "lucide-react";
+import { FolderTree, Link2, Plus, Trash2, UploadCloud } from "lucide-react";
 import { useState, type FormEvent } from "react";
 
 import { Button, FileInput, Input, Select } from "@/components/ui";
@@ -15,17 +15,26 @@ import { ActionDialog } from "@/components/action-dialog";
 export function ProjectStructureManager({
   projectId,
   initialStructure,
+  initialVersionId,
   canManage,
 }: {
   projectId: string;
   initialStructure: ProjectStructure;
+  initialVersionId?: string;
   canManage: boolean;
 }) {
   const [structure, setStructure] = useState(initialStructure);
   const [pending, setPending] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
-  const [createDialog, setCreateDialog] = useState<"version" | "stage" | null>(null);
+  const [createDialog, setCreateDialog] = useState<"version" | "stage" | "inherit-cases" | null>(
+    null,
+  );
+  const [selectedVersionId, setSelectedVersionId] = useState(
+    initialStructure.versions.some((version) => version.id === initialVersionId)
+      ? (initialVersionId ?? "")
+      : (initialStructure.versions[0]?.id ?? ""),
+  );
 
   async function refresh(success: string): Promise<void> {
     const response = await fetch(`/api/v1/projects/${projectId}/structure`, {
@@ -33,7 +42,13 @@ export function ProjectStructureManager({
     });
     const errorMessage = await readApiErrorMessage(response, "刷新项目结构失败。");
     if (errorMessage) throw new Error(errorMessage);
-    setStructure((await response.json()) as ProjectStructure);
+    const nextStructure = (await response.json()) as ProjectStructure;
+    setStructure(nextStructure);
+    setSelectedVersionId((current) =>
+      nextStructure.versions.some((version) => version.id === current)
+        ? current
+        : (nextStructure.versions[0]?.id ?? ""),
+    );
     setMessage(success);
   }
 
@@ -92,10 +107,41 @@ export function ProjectStructureManager({
     });
   }
 
+  function inheritCases(event: FormEvent<HTMLFormElement>): void {
+    event.preventDefault();
+    const values = new FormData(event.currentTarget);
+    const sourceStage = findStage(structure, String(values.get("sourceTestStageId") ?? ""));
+    const targetStage = findStage(structure, String(values.get("targetTestStageId") ?? ""));
+    if (!sourceStage || !targetStage) {
+      setError("请选择有效的来源和目标测试阶段。");
+      return;
+    }
+    void run(async () => {
+      const result = (await submitJson(
+        `/api/v1/projects/${projectId}/versions/${encodeURIComponent(targetStage.projectVersionId)}/inherit-cases`,
+        "POST",
+        {
+          sourceProjectVersionId: sourceStage.projectVersionId,
+          sourceTestStageId: sourceStage.id,
+          targetTestStageId: targetStage.id,
+        },
+      )) as { inheritedCount: number; skippedCount: number };
+      await refresh(
+        `已继承 ${result.inheritedCount} 个用例${result.skippedCount ? `，跳过 ${result.skippedCount} 个同名用例` : ""}。`,
+      );
+      setCreateDialog(null);
+    });
+  }
+
   function registerUrlAsset(event: FormEvent<HTMLFormElement>): void {
     event.preventDefault();
     const form = event.currentTarget;
     const values = new FormData(form);
+    const configuration = selectedVersionConfiguration(structure, selectedVersionId);
+    if (!configuration) {
+      setError("请先创建并选择项目版本。");
+      return;
+    }
     void run(async () => {
       const asset = (await submitJson(`/api/v1/projects/${projectId}/runtime-assets/url`, "POST", {
         kind: values.get("kind"),
@@ -105,7 +151,7 @@ export function ProjectStructureManager({
         sizeBytes: Number(values.get("sizeBytes")),
         archiveFormat: values.get("archiveFormat"),
       })) as ProjectRuntimeAsset;
-      await saveConfiguration(withAsset(structure.adapterConfiguration, asset));
+      await saveConfiguration(selectedVersionId, withAsset(configuration, asset));
       form.reset();
       await refresh("运行时资源链接已登记并设为当前配置。");
     });
@@ -118,6 +164,11 @@ export function ProjectStructureManager({
     const kind = String(values.get("kind"));
     const archiveFormat = String(values.get("archiveFormat"));
     const file = values.get("file");
+    const configuration = selectedVersionConfiguration(structure, selectedVersionId);
+    if (!configuration) {
+      setError("请先创建并选择项目版本。");
+      return;
+    }
     if (!(file instanceof File) || file.size === 0) {
       setError("请选择非空运行时压缩包。");
       return;
@@ -137,23 +188,74 @@ export function ProjectStructureManager({
       const errorMessage = await readApiErrorMessage(response, "上传运行时资源失败。");
       if (errorMessage) throw new Error(errorMessage);
       const asset = (await response.json()) as ProjectRuntimeAsset;
-      await saveConfiguration(withAsset(structure.adapterConfiguration, asset));
+      await saveConfiguration(selectedVersionId, withAsset(configuration, asset));
       form.reset();
       await refresh("运行时资源已上传并设为当前配置。");
     });
   }
 
-  async function saveConfiguration(configuration: ProjectAdapterConfiguration): Promise<void> {
-    await submitJson(`/api/v1/projects/${projectId}/adapter-configuration`, "PUT", {
-      ...(configuration.jdkAsset ? { jdkAssetId: configuration.jdkAsset.id } : {}),
-      ...(configuration.jarBundleAsset
-        ? { jarBundleAssetId: configuration.jarBundleAsset.id }
-        : {}),
-      expectedRevision: structure.adapterConfiguration.revision,
+  async function saveConfiguration(
+    versionId: string,
+    configuration: ProjectAdapterConfiguration,
+  ): Promise<void> {
+    await submitJson(
+      `/api/v1/projects/${projectId}/versions/${encodeURIComponent(versionId)}/adapter-configuration`,
+      "PUT",
+      {
+        ...(configuration.jdkAsset ? { jdkAssetId: configuration.jdkAsset.id } : {}),
+        ...(configuration.jarBundleAsset
+          ? { jarBundleAssetId: configuration.jarBundleAsset.id }
+          : {}),
+        expectedRevision: configuration.revision,
+      },
+    );
+  }
+
+  function inheritRuntime(event: FormEvent<HTMLFormElement>): void {
+    event.preventDefault();
+    const configuration = selectedVersionConfiguration(structure, selectedVersionId);
+    if (!configuration) return;
+    const values = new FormData(event.currentTarget);
+    void run(async () => {
+      await submitJson(
+        `/api/v1/projects/${projectId}/versions/${encodeURIComponent(selectedVersionId)}/inherit-runtime`,
+        "POST",
+        {
+          sourceProjectVersionId: values.get("sourceProjectVersionId"),
+          expectedRevision: configuration.revision,
+        },
+      );
+      await refresh("已通过共享对象引用继承运行时资源，不会重复上传文件。");
     });
   }
 
-  const configuration = structure.adapterConfiguration;
+  function deleteAsset(kind: "jdk" | "jar-bundle"): void {
+    const configuration = selectedVersionConfiguration(structure, selectedVersionId);
+    if (!configuration) return;
+    const label = kind === "jdk" ? "JDK 压缩包" : "依赖 JAR 压缩包";
+    if (!window.confirm(`删除当前版本的${label}？其他继承版本的引用不会受影响。`)) return;
+    void run(async () => {
+      const query = new URLSearchParams({
+        kind,
+        expectedRevision: String(configuration.revision),
+      });
+      const response = await fetch(
+        `/api/v1/projects/${projectId}/versions/${encodeURIComponent(selectedVersionId)}/adapter-configuration?${query}`,
+        { method: "DELETE" },
+      );
+      const errorMessage = await readApiErrorMessage(response, `删除${label}失败。`);
+      if (errorMessage) throw new Error(errorMessage);
+      await refresh(`${label}已从当前版本删除。`);
+    });
+  }
+
+  const selectedVersion = structure.versions.find((version) => version.id === selectedVersionId);
+  const configuration = selectedVersion?.adapterConfiguration ?? {
+    projectId,
+    projectVersionId: selectedVersionId,
+    revision: 0,
+    updatedAt: "",
+  };
   return (
     <div className="settings-stack project-structure-manager">
       {message ? <div className="inline-success">{message}</div> : null}
@@ -179,6 +281,9 @@ export function ProjectStructureManager({
                 <Button onClick={() => setCreateDialog("stage")} type="button">
                   <Plus size={15} /> 创建阶段
                 </Button>
+                <Button onClick={() => setCreateDialog("inherit-cases")} type="button">
+                  <Link2 size={15} /> 继承用例
+                </Button>
               </>
             ) : (
               <FolderTree size={22} aria-hidden="true" />
@@ -197,6 +302,49 @@ export function ProjectStructureManager({
             </label>
             <Button className="primary-button" disabled={pending || !canManage} type="submit">
               创建版本
+            </Button>
+          </form>
+        </ActionDialog>
+        <ActionDialog
+          onClose={() => !pending && setCreateDialog(null)}
+          open={createDialog === "inherit-cases"}
+          title="从其他版本继承用例"
+        >
+          <form className="settings-grid-form action-dialog-form" onSubmit={inheritCases}>
+            <label>
+              来源版本 / 测试阶段
+              <Select name="sourceTestStageId" required disabled={!canManage}>
+                {structure.versions.flatMap((version) =>
+                  version.stages.map((stage) => (
+                    <option key={stage.id} value={stage.id}>
+                      {version.name} / {stage.name}
+                    </option>
+                  )),
+                )}
+              </Select>
+            </label>
+            <label>
+              目标版本 / 测试阶段
+              <Select name="targetTestStageId" required disabled={!canManage}>
+                {structure.versions.flatMap((version) =>
+                  version.stages.map((stage) => (
+                    <option key={stage.id} value={stage.id}>
+                      {version.name} / {stage.name}
+                    </option>
+                  )),
+                )}
+              </Select>
+            </label>
+            <p className="settings-note">
+              继承会创建独立的目标用例定义，并共享不可变 JAR
+              来源；目标阶段已有的同类名用例会安全跳过。
+            </p>
+            <Button
+              className="primary-button"
+              disabled={pending || !canManage || structure.versions.length < 2}
+              type="submit"
+            >
+              开始继承
             </Button>
           </form>
         </ActionDialog>
@@ -233,14 +381,56 @@ export function ProjectStructureManager({
             </Button>
           </form>
         </ActionDialog>
-        <div className="permission-list project-version-list">
+        <div className="project-version-tree" role="tree" aria-label="项目版本与测试阶段">
+          {structure.versions.length === 0 ? (
+            <p className="inline-empty">尚未创建项目版本。</p>
+          ) : null}
           {structure.versions.map((version) => (
-            <span key={version.id}>
-              <strong>{version.name}</strong>
-              {version.stages.length
-                ? ` → ${version.stages.map((stage) => stage.name).join("、")}`
-                : " → 尚无测试阶段"}
-            </span>
+            <section
+              aria-selected={version.id === selectedVersionId}
+              className="project-version-node"
+              key={version.id}
+              role="treeitem"
+            >
+              <div className="project-version-node-heading">
+                <span className="project-version-branch" aria-hidden="true" />
+                <span>
+                  <small>项目版本</small>
+                  <strong>{version.name}</strong>
+                </span>
+                <span className="status-badge status-ready">
+                  {version.stages.length} 个测试阶段
+                </span>
+              </div>
+              <div className="project-stage-children" role="group">
+                {version.stages.length === 0 ? (
+                  <p className="project-stage-empty">尚无测试阶段</p>
+                ) : (
+                  version.stages.map((stage, index) => (
+                    <div
+                      aria-selected={false}
+                      className="project-stage-node"
+                      key={stage.id}
+                      role="treeitem"
+                    >
+                      <span
+                        className={
+                          index === version.stages.length - 1
+                            ? "project-stage-connector last"
+                            : "project-stage-connector"
+                        }
+                        aria-hidden="true"
+                      />
+                      <span>
+                        <small>测试阶段 {index + 1}</small>
+                        <strong>{stage.name}</strong>
+                        {stage.description ? <em>{stage.description}</em> : null}
+                      </span>
+                    </div>
+                  ))
+                )}
+              </div>
+            </section>
           ))}
         </div>
       </section>
@@ -257,10 +447,82 @@ export function ProjectStructureManager({
           </div>
           <UploadCloud size={22} aria-hidden="true" />
         </div>
+        <label className="project-runtime-version-select">
+          配置所属版本
+          <Select
+            value={selectedVersionId}
+            onChange={(event) => setSelectedVersionId(event.currentTarget.value)}
+            disabled={structure.versions.length === 0}
+          >
+            {structure.versions.length === 0 ? <option value="">尚无项目版本</option> : null}
+            {structure.versions.map((version) => (
+              <option key={version.id} value={version.id}>
+                {version.name}
+              </option>
+            ))}
+          </Select>
+        </label>
         <p className="settings-note">
-          当前 JDK：{assetSummary(configuration.jdkAsset)}；当前依赖包：
+          {selectedVersion ? `${selectedVersion.name} · ` : ""}当前 JDK：
+          {assetSummary(configuration.jdkAsset)}；当前依赖包：
           {assetSummary(configuration.jarBundleAsset)}
+          {configuration.inheritedFromProjectVersionId
+            ? `；继承自 ${versionName(structure, configuration.inheritedFromProjectVersionId)}`
+            : ""}
         </p>
+        <div className="project-runtime-actions">
+          <Button
+            disabled={pending || !canManage || !configuration.jdkAsset}
+            onClick={() => deleteAsset("jdk")}
+            type="button"
+            variant="danger"
+          >
+            <Trash2 size={14} /> 删除当前 JDK
+          </Button>
+          <Button
+            disabled={pending || !canManage || !configuration.jarBundleAsset}
+            onClick={() => deleteAsset("jar-bundle")}
+            type="button"
+            variant="danger"
+          >
+            <Trash2 size={14} /> 删除当前依赖包
+          </Button>
+        </div>
+        <form className="project-runtime-inherit" onSubmit={inheritRuntime}>
+          <label>
+            从其他版本继承资源
+            <Select name="sourceProjectVersionId" required disabled={!canManage || pending}>
+              {structure.versions
+                .filter(
+                  (version) =>
+                    version.id !== selectedVersionId &&
+                    (version.adapterConfiguration.jdkAsset ||
+                      version.adapterConfiguration.jarBundleAsset),
+                )
+                .map((version) => (
+                  <option key={version.id} value={version.id}>
+                    {version.name}
+                  </option>
+                ))}
+            </Select>
+          </label>
+          <Button
+            disabled={
+              pending ||
+              !canManage ||
+              !selectedVersionId ||
+              !structure.versions.some(
+                (version) =>
+                  version.id !== selectedVersionId &&
+                  (version.adapterConfiguration.jdkAsset ||
+                    version.adapterConfiguration.jarBundleAsset),
+              )
+            }
+            type="submit"
+          >
+            <Link2 size={14} /> 继承共享资源
+          </Button>
+        </form>
         <div className="settings-paired-forms">
           <form
             className="settings-grid-form settings-subform project-structure-subform"
@@ -330,6 +592,25 @@ export function ProjectStructureManager({
       </section>
     </div>
   );
+}
+
+function selectedVersionConfiguration(
+  structure: ProjectStructure,
+  versionId: string,
+): ProjectAdapterConfiguration | undefined {
+  return structure.versions.find((version) => version.id === versionId)?.adapterConfiguration;
+}
+
+function versionName(structure: ProjectStructure, versionId: string): string {
+  return structure.versions.find((version) => version.id === versionId)?.name ?? "其他版本";
+}
+
+function findStage(structure: ProjectStructure, stageId: string) {
+  for (const version of structure.versions) {
+    const stage = version.stages.find((candidate) => candidate.id === stageId);
+    if (stage) return stage;
+  }
+  return undefined;
 }
 
 function withAsset(

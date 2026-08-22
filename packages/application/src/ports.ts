@@ -51,6 +51,7 @@ import type {
   Project,
   ProjectAdapterConfiguration,
   ProjectRuntimeAsset,
+  RuntimeAssetKind,
   ProjectStructure,
   ProjectVersion,
   ProjectVersionDependency,
@@ -103,12 +104,33 @@ export interface ProjectStructureRepository {
   ): Promise<ProjectVersionDependency>;
   updateAdapterConfiguration(input: {
     projectId: string;
+    projectVersionId?: string;
     jdkAssetId?: string;
     jarBundleAssetId?: string;
     expectedRevision: number;
     actorId?: string;
     updatedAt: string;
   }): Promise<ProjectAdapterConfiguration>;
+  inheritAdapterConfiguration(input: {
+    projectId: string;
+    sourceProjectVersionId: string;
+    targetProjectVersionId: string;
+    expectedRevision: number;
+    actorId?: string;
+    updatedAt: string;
+  }): Promise<ProjectAdapterConfiguration>;
+  detachVersionRuntimeAsset(input: {
+    projectId: string;
+    projectVersionId: string;
+    kind: RuntimeAssetKind;
+    expectedRevision: number;
+    actorId?: string;
+    updatedAt: string;
+  }): Promise<{
+    configuration: ProjectAdapterConfiguration;
+    orphanedAsset?: ProjectRuntimeAsset;
+  }>;
+  deleteRuntimeAssetMetadata(assetId: string): Promise<void>;
   getAdapterConfiguration(
     projectId: string,
     projectVersionId?: string,
@@ -646,6 +668,13 @@ export type CaseListPage = {
   nextCursor?: string;
 };
 
+export type InheritCaseDefinitionRecord = {
+  sourceCaseDefinitionId: string;
+  targetCaseDefinitionId: string;
+  targetCaseVersionId: string;
+  methods: Array<{ sourceMethodId: string; targetMethodId: string }>;
+};
+
 // 每个用例最近一次已到达终态的执行结果；尚无终态 run 的用例不返回。
 // resultCode 为该终态 run 最后一次 attempt 的结果码，用于 blocked 口径分类
 // （历史数据可能缺失）。
@@ -767,6 +796,16 @@ export interface CaseCatalogRepository {
     caseDefinitionIds: readonly string[],
     projectIds?: readonly string[],
   ): Promise<DeletedCaseDefinition[]>;
+  inheritCaseDefinitions(input: {
+    projectId: string;
+    sourceProjectVersionId: string;
+    sourceTestStageId: string;
+    targetProjectVersionId: string;
+    targetTestStageId: string;
+    records: InheritCaseDefinitionRecord[];
+    actorId: string;
+    inheritedAt: string;
+  }): Promise<{ inheritedCount: number; skippedCount: number }>;
   listCaseVersions(caseDefinitionId: string, limit: number): Promise<CaseVersion[]>;
   getCaseVersion(caseDefinitionId: string, version: number): Promise<CaseVersion | null>;
   restoreCaseVersion(input: {

@@ -1,9 +1,4 @@
-import {
-  classifyAttemptResult,
-  type RunAttempt,
-  type RunBatch,
-  type RunBatchDetails,
-} from "@autoforge/domain";
+import type { RunAttempt, RunBatch, RunBatchDetails } from "@autoforge/domain";
 
 const activeStatuses = new Set<RunBatch["status"]>([
   "queued",
@@ -31,27 +26,9 @@ export function runBatchStatusLabel(status: RunBatch["status"]): string {
 
 export function runBatchCompletionLabel(batch: RunBatchDetails): string {
   if (batch.terminationRequestedAt && isActiveRunBatch(batch.status)) return "终止中";
-  if (isActiveRunBatch(batch.status)) return runBatchStatusLabel(batch.status);
-  if (batch.status === "cancelled") return "已终止";
-  const latestAttempts = new Map<string, RunAttempt>();
-  for (const attempt of batch.attempts) {
-    const current = latestAttempts.get(attempt.executionRunId);
-    if (!current || attempt.attemptNumber > current.attemptNumber) {
-      latestAttempts.set(attempt.executionRunId, attempt);
-    }
-  }
-  const abnormal = batch.runs.some((run) => {
-    const attempt = latestAttempts.get(run.id);
-    return (
-      !attempt ||
-      !attempt.outcome ||
-      classifyAttemptResult({
-        outcome: attempt.outcome,
-        ...(attempt.resultCode ? { resultCode: attempt.resultCode } : {}),
-      }) === "blocked"
-    );
-  });
-  return abnormal ? "执行异常" : "执行完成";
+  // status 是控制面按完整执行集合聚合的权威生命周期。详情中的 attempts 可能经过分页，
+  // 不能用不完整的展示数据再次推导，否则正常结束但存在断言失败的批次会被误报为异常。
+  return runBatchStatusLabel(batch.status);
 }
 
 export function runBatchCoveragePercent(batch: RunBatch): number {

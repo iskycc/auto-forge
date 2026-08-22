@@ -59,6 +59,7 @@ describe("SQLite project version structure", () => {
       });
       const configuration = await repository.updateAdapterConfiguration({
         projectId: DEFAULT_PROJECT_ID,
+        projectVersionId: version.id,
         jdkAssetId: jdk.id,
         expectedRevision: 0,
         updatedAt: now,
@@ -96,8 +97,17 @@ describe("SQLite project version structure", () => {
         jdkAsset: { id: jdk.id, sourceType: "url" },
       });
       await expect(repository.list(DEFAULT_PROJECT_ID)).resolves.toMatchObject({
-        versions: [{ id: version.id, stages: [{ id: stage.id }] }],
-        adapterConfiguration: { revision: 1 },
+        versions: [
+          {
+            id: version.id,
+            stages: [{ id: stage.id }],
+            adapterConfiguration: {
+              jdkAsset: { id: jdk.id },
+              jarBundleAsset: { id: "bundle-2" },
+            },
+          },
+        ],
+        adapterConfiguration: { revision: 0 },
       });
       await expect(
         repository.getAdapterConfiguration(DEFAULT_PROJECT_ID, version.id),
@@ -105,7 +115,7 @@ describe("SQLite project version structure", () => {
         projectVersionId: version.id,
         jdkAsset: { id: jdk.id },
         jarBundleAsset: { id: "bundle-2", fileName: "dependencies-2.zip" },
-        revision: 2,
+        revision: 3,
       });
       expect(
         handle.client
@@ -115,10 +125,45 @@ describe("SQLite project version structure", () => {
       await expect(
         repository.updateAdapterConfiguration({
           projectId: DEFAULT_PROJECT_ID,
+          projectVersionId: version.id,
           expectedRevision: 0,
           updatedAt: now,
         }),
       ).rejects.toMatchObject({ code: "PROJECT_ADAPTER_CONFIGURATION_REVISION_CONFLICT" });
+
+      const inheritedVersion = await repository.createVersion({
+        id: "version-2",
+        projectId: DEFAULT_PROJECT_ID,
+        name: "2.1.0",
+        normalizedName: "2.1.0",
+        recordedAt: "2026-08-14T00:02:00.000Z",
+      });
+      await expect(
+        repository.inheritAdapterConfiguration({
+          projectId: DEFAULT_PROJECT_ID,
+          sourceProjectVersionId: version.id,
+          targetProjectVersionId: inheritedVersion.id,
+          expectedRevision: 0,
+          updatedAt: "2026-08-14T00:03:00.000Z",
+        }),
+      ).resolves.toMatchObject({
+        inheritedFromProjectVersionId: version.id,
+        jdkAsset: { id: jdk.id },
+        jarBundleAsset: { id: "bundle-2" },
+      });
+
+      const detached = await repository.detachVersionRuntimeAsset({
+        projectId: DEFAULT_PROJECT_ID,
+        projectVersionId: version.id,
+        kind: "jar-bundle",
+        expectedRevision: 3,
+        updatedAt: "2026-08-14T00:04:00.000Z",
+      });
+      expect(detached).toMatchObject({ configuration: { jdkAsset: { id: jdk.id } } });
+      expect(detached.orphanedAsset).toBeUndefined();
+      await expect(
+        repository.getAdapterConfiguration(DEFAULT_PROJECT_ID, inheritedVersion.id),
+      ).resolves.toMatchObject({ jarBundleAsset: { id: "bundle-2" } });
     } finally {
       handle.close();
     }

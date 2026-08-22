@@ -194,6 +194,18 @@ test("top-bar project context persists across pages and removes local project sw
   expect((await stageSwitched).status()).toBe(200);
   await expect(switcher).toContainText("灰度验证");
 
+  await expect(page.getByText("当前项目层级还没有用例")).toBeVisible();
+  const emptyCard = page.locator(".case-library-empty-card");
+  await expect(emptyCard).toBeVisible();
+  expect((await emptyCard.boundingBox())?.height ?? 0).toBeGreaterThanOrEqual(320);
+
+  await page.goto("/settings/projects?section=execution");
+  await expect(page.getByRole("tree", { name: "项目版本与测试阶段" })).toBeVisible();
+  await expect(page.locator(".project-version-node")).toHaveCount(2);
+  await expect(page.locator(".project-stage-node")).toHaveCount(3);
+  await expect(page.getByLabel("配置所属版本")).toHaveValue(secondVersion.body.id);
+  await expect(page.getByRole("button", { name: "继承用例" })).toBeVisible();
+
   for (const route of ["/", "/case-suites", "/execution-records", "/cases/import"]) {
     await page.goto(route);
     await expect(page.locator(".global-project-switcher")).toContainText(projectName);
@@ -466,6 +478,11 @@ test("specified dense pages expose stable product controls", async ({ page }) =>
   const flakyCard = page.locator(".insight-flaky-card");
   const metrics = page.locator(".insight-metrics");
   const caseOutcomeCard = page.locator(".insight-case-outcome-card");
+  await Promise.all(
+    [trendCard, failureCard, flakyCard, metrics, caseOutcomeCard].map((locator) =>
+      expect(locator).toBeVisible(),
+    ),
+  );
   const [trendBox, failureBox, flakyBox, metricsBox, caseOutcomeBox] = await Promise.all([
     trendCard.boundingBox(),
     failureCard.boundingBox(),

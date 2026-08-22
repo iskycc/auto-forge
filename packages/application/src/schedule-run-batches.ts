@@ -197,7 +197,7 @@ export class RunBatchSchedulingService {
     const runnerIds = await this.resolveRunnerSelection(validated);
     const adapterBlockers: RunBatchPreflightBlocker[] = [];
     if (usesTaskAdapter(validated.adapter)) {
-      await this.inspectAdapterRuntime(projectId, adapterBlockers);
+      await this.inspectAdapterRuntime(projectId, adapterBlockers, definition.projectVersionId);
     }
     if (adapterBlockers.length > 0) {
       throw new DomainError("RUN_BATCH_PREFLIGHT_FAILED", "执行配置预检未通过。", {
@@ -241,6 +241,7 @@ export class RunBatchSchedulingService {
       policy: {
         executor: "testng",
         concurrency: 1,
+        ...(definition.projectVersionId ? { projectVersionId: definition.projectVersionId } : {}),
         runnerLabels: [],
         artifactPatterns: this.artifactCollectionEnabled
           ? validated.artifactPatterns.length > 0

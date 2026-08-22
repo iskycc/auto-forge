@@ -53,9 +53,17 @@ describe.skipIf(!connectionString)("PostgreSQL platform repositories", () => {
     const sourceB = `source-b-${suffix}`;
     const stableCaseId = `case-stable-${suffix}`;
     const otherVersionCaseId = `case-version-b-${suffix}`;
+    const inheritanceActorId = `case-inheritance-actor-${suffix}`;
     const sharedObjectKey = `jars/shared-${suffix}.jar`;
     const now = "2026-08-21T00:00:00.000Z";
     try {
+      await handle.pool.query(
+        `INSERT INTO users
+         (id, username, normalized_username, display_name, source, status,
+          force_password_change, failed_login_attempts, created_at, updated_at, version)
+         VALUES ($1, $2, $2, 'Inheritance Actor', 'local', 'active', false, 0, $3, $3, 1)`,
+        [inheritanceActorId, `inheritance-${suffix}`, now],
+      );
       await structures.createVersion({
         id: versionA,
         projectId,
@@ -102,19 +110,42 @@ describe.skipIf(!connectionString)("PostgreSQL platform repositories", () => {
           importedAt: now,
         }),
       );
-      await catalog.importCatalog(
-        scopedPostgresImportRecord({
-          sourceId: sourceA2,
-          caseDefinitionId: `unused-${suffix}`,
+      const sourceA2Record = scopedPostgresImportRecord({
+        sourceId: sourceA2,
+        caseDefinitionId: `unused-${suffix}`,
+        projectId,
+        projectVersionId: versionA,
+        testStageId: stageA,
+        objectKey: `jars/changed-${suffix}.jar`,
+        sha256: "b".repeat(64),
+        methodName: "afterReimport",
+        importedAt: "2026-08-21T00:01:00.000Z",
+      });
+      await catalog.importCatalog(sourceA2Record);
+      await expect(
+        catalog.inheritCaseDefinitions({
           projectId,
-          projectVersionId: versionA,
-          testStageId: stageA,
-          objectKey: `jars/changed-${suffix}.jar`,
-          sha256: "b".repeat(64),
-          methodName: "afterReimport",
-          importedAt: "2026-08-21T00:01:00.000Z",
+          sourceProjectVersionId: versionA,
+          sourceTestStageId: stageA,
+          targetProjectVersionId: versionB,
+          targetTestStageId: stageB,
+          records: [
+            {
+              sourceCaseDefinitionId: stableCaseId,
+              targetCaseDefinitionId: otherVersionCaseId,
+              targetCaseVersionId: `case-version-b-v1-${suffix}`,
+              methods: [
+                {
+                  sourceMethodId: sourceA2Record.cases[0]!.methods[0]!.methodId,
+                  targetMethodId: `case-version-b-method-${suffix}`,
+                },
+              ],
+            },
+          ],
+          actorId: inheritanceActorId,
+          inheritedAt: "2026-08-21T00:01:30.000Z",
         }),
-      );
+      ).resolves.toEqual({ inheritedCount: 1, skippedCount: 0 });
       await catalog.importCatalog(
         scopedPostgresImportRecord({
           sourceId: sourceB,
@@ -146,6 +177,9 @@ describe.skipIf(!connectionString)("PostgreSQL platform repositories", () => {
         await catalog.findSourceBySha256("a".repeat(64), projectId, versionB, stageB),
       ).toMatchObject({ sourceId: sourceB });
       await expect(
+        catalog.getCaseDefinition(otherVersionCaseId, [projectId]),
+      ).resolves.toMatchObject({ currentVersion: 2, sourceId: sourceB });
+      await expect(
         catalog.deleteCaseDefinitions([stableCaseId, otherVersionCaseId], [projectId]),
       ).resolves.toHaveLength(2);
     } finally {
@@ -159,6 +193,7 @@ describe.skipIf(!connectionString)("PostgreSQL platform repositories", () => {
       await handle.pool.query("DELETE FROM project_versions WHERE id = ANY($1::text[])", [
         [versionA, versionB],
       ]);
+      await handle.pool.query("DELETE FROM users WHERE id = $1", [inheritanceActorId]);
       await handle.close();
     }
   });
@@ -309,6 +344,57 @@ describe.skipIf(!connectionString)("PostgreSQL platform repositories", () => {
       await expect(
         handle.pool.query("SELECT id FROM project_runtime_assets WHERE id = $1", [firstBundleId]),
       ).resolves.toMatchObject({ rowCount: 0 });
+      const jdkAsset = await structures.createRuntimeAsset({
+        id: randomUUID(),
+        projectId: secondProjectId,
+        kind: "jdk",
+        sourceType: "url",
+        fileName: "jdk.tar.gz",
+        url: "https://jenkins.internal/jdk.tar.gz",
+        sha256: "f".repeat(64),
+        sizeBytes: 8_192,
+        archiveFormat: "tar.gz",
+        createdAt: "2026-08-09T00:00:03.000Z",
+      });
+      await structures.updateAdapterConfiguration({
+        projectId: secondProjectId,
+        projectVersionId: projectVersion.id,
+        jdkAssetId: jdkAsset.id,
+        jarBundleAssetId: secondBundleId,
+        expectedRevision: 2,
+        updatedAt: "2026-08-09T00:00:04.000Z",
+      });
+      const inheritedRuntimeVersion = await structures.createVersion({
+        id: randomUUID(),
+        projectId: secondProjectId,
+        name: "2026.09",
+        normalizedName: "2026.09",
+        recordedAt: "2026-08-09T00:00:05.000Z",
+      });
+      await expect(
+        structures.inheritAdapterConfiguration({
+          projectId: secondProjectId,
+          sourceProjectVersionId: projectVersion.id,
+          targetProjectVersionId: inheritedRuntimeVersion.id,
+          expectedRevision: 0,
+          updatedAt: "2026-08-09T00:00:06.000Z",
+        }),
+      ).resolves.toMatchObject({
+        inheritedFromProjectVersionId: projectVersion.id,
+        jdkAsset: { id: jdkAsset.id },
+        jarBundleAsset: { id: secondBundleId },
+      });
+      const sharedRuntimeDeletion = await structures.detachVersionRuntimeAsset({
+        projectId: secondProjectId,
+        projectVersionId: projectVersion.id,
+        kind: "jar-bundle",
+        expectedRevision: 3,
+        updatedAt: "2026-08-09T00:00:07.000Z",
+      });
+      expect(sharedRuntimeDeletion).toMatchObject({
+        configuration: { jdkAsset: { id: jdkAsset.id } },
+      });
+      expect(sharedRuntimeDeletion.orphanedAsset).toBeUndefined();
       const analyticsProjectVersion = await structures.createVersion({
         id: randomUUID(),
         projectId: defaultProjectId,

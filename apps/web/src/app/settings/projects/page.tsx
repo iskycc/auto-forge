@@ -3,7 +3,11 @@ import { ProjectStructureManager } from "@/components/project-structure-manager"
 import { SectionTabs } from "@/components/section-tabs";
 import { requireAuthorizedPageProjectScope, requirePageProjectScope } from "@/lib/auth";
 import { getPlatformServices } from "@/lib/services";
-import { selectableProjectIds, selectedProjectId } from "@/lib/selected-project";
+import {
+  selectableProjectIds,
+  selectedProjectHierarchy,
+  selectedProjectId,
+} from "@/lib/selected-project";
 
 export default async function ProjectMembershipsPage({
   searchParams,
@@ -45,6 +49,7 @@ export default async function ProjectMembershipsPage({
       ? services.projectStructures.list(selectedProject.id)
       : Promise.resolve(undefined),
   ]);
+  const hierarchy = structure ? await selectedProjectHierarchy(structure) : undefined;
 
   return (
     <section className="page-stack">
@@ -90,6 +95,7 @@ export default async function ProjectMembershipsPage({
         <ProjectStructureManager
           canManage={canManage}
           initialStructure={structure}
+          {...(hierarchy?.projectVersionId ? { initialVersionId: hierarchy.projectVersionId } : {})}
           projectId={selectedProject.id}
         />
       ) : null}

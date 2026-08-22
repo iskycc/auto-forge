@@ -109,8 +109,8 @@ export default async function CasesPage({ searchParams }: CasesPageProps) {
       </section>
 
       {cases.length === 0 ? (
-        <section className="card">
-          <div className="empty-state">
+        <section className="card case-library-empty-card">
+          <div className="empty-state case-library-empty">
             <span className="empty-icon">
               <FileArchive size={27} />
             </span>

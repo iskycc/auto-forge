@@ -124,7 +124,7 @@ test("service account lifecycle immediately narrows token access and produces ex
   expect(account.id).toBeTruthy();
 });
 
-test("schedule overview can pause plans and LDAP failures remain diagnosable and retryable", async ({
+test("schedule overview can pause and delete plans while LDAP failures remain diagnosable", async ({
   page,
 }) => {
   await ensureAdministrator(page);
@@ -166,4 +166,11 @@ test("schedule overview can pause plans and LDAP failures remain diagnosable and
   await expect(page.getByRole("heading", { name: "LDAP 同步历史" })).toBeVisible();
   await expect(page.getByText(/LDAP_.*|LDAP/).first()).toBeVisible();
   await expect(page.getByRole("button", { name: "立即同步 / 重试" })).toBeVisible();
+  page.once("dialog", (dialog) => dialog.accept());
+  await page
+    .getByRole("row", { name: new RegExp(suiteName) })
+    .getByRole("button", { name: "删除" })
+    .click();
+  await expect(page.getByText("计划任务已删除。")).toBeVisible();
+  await expect(page.getByRole("row", { name: new RegExp(suiteName) })).toHaveCount(0);
 });

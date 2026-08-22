@@ -133,6 +133,11 @@ describe("SqliteCaseCatalogRepository", () => {
 
     try {
       handle.client.exec(`
+        INSERT INTO users
+          (id, username, normalized_username, display_name, source, status,
+           force_password_change, failed_login_attempts, created_at, updated_at, version)
+        VALUES ('user-inherit', 'user-inherit', 'user-inherit', 'Inheritance User', 'local',
+                'active', 0, 0, '${now}', '${now}', 1);
         INSERT INTO project_versions
           (id, project_id, name, normalized_name, status, revision, created_at, updated_at)
         VALUES
@@ -304,6 +309,45 @@ describe("SqliteCaseCatalogRepository", () => {
           .get(),
       ).toEqual({ case_definition_id: "case-a-stable" });
 
+      await expect(
+        repository.inheritCaseDefinitions({
+          projectId,
+          sourceProjectVersionId: "version-a",
+          sourceTestStageId: "stage-a",
+          targetProjectVersionId: "version-b",
+          targetTestStageId: "stage-b",
+          records: [
+            {
+              sourceCaseDefinitionId: "case-a-stable",
+              targetCaseDefinitionId: "case-inherited",
+              targetCaseVersionId: "case-inherited-v1",
+              methods: [{ sourceMethodId: "method-a-v2", targetMethodId: "method-inherited-v1" }],
+            },
+          ],
+          actorId: "user-inherit",
+          inheritedAt: "2026-08-08T11:30:00.000Z",
+        }),
+      ).resolves.toEqual({ inheritedCount: 1, skippedCount: 0 });
+      await expect(
+        repository.inheritCaseDefinitions({
+          projectId,
+          sourceProjectVersionId: "version-a",
+          sourceTestStageId: "stage-a",
+          targetProjectVersionId: "version-b",
+          targetTestStageId: "stage-b",
+          records: [
+            {
+              sourceCaseDefinitionId: "case-a-stable",
+              targetCaseDefinitionId: "case-inherited-duplicate",
+              targetCaseVersionId: "case-inherited-duplicate-v1",
+              methods: [],
+            },
+          ],
+          actorId: "user-inherit",
+          inheritedAt: "2026-08-08T11:31:00.000Z",
+        }),
+      ).resolves.toEqual({ inheritedCount: 0, skippedCount: 1 });
+
       await repository.importCatalog(
         importRecord({
           sourceId: "source-b1",
@@ -329,7 +373,16 @@ describe("SqliteCaseCatalogRepository", () => {
           testStageId: "stage-b",
           limit: 20,
         }),
-      ).toMatchObject({ items: [{ id: "case-b", currentVersion: 1 }] });
+      ).toMatchObject({
+        items: [
+          {
+            id: "case-inherited",
+            sourceId: "source-b1",
+            currentVersion: 2,
+            methods: [{ id: "method-b-v1", methodName: "beforeReimport" }],
+          },
+        ],
+      });
     } finally {
       handle.close();
     }

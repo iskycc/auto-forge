@@ -64,7 +64,9 @@ type ConfigurationRow = QueryResultRow & {
 type VersionRuntimeRow = QueryResultRow & {
   project_version_id: string;
   project_id: string;
-  jar_bundle_asset_id: string;
+  jdk_asset_id: string | null;
+  jar_bundle_asset_id: string | null;
+  inherited_from_project_version_id: string | null;
   revision: number;
   updated_by: string | null;
   updated_at: string;
@@ -88,10 +90,15 @@ export class PostgresProjectStructureRepository implements ProjectStructureRepos
       this.getAdapterConfiguration(projectId),
     ]);
     const stages = stageResult.rows.map(mapStage);
+    const versions = versionResult.rows.map(mapVersion);
+    const configurations = await Promise.all(
+      versions.map((version) => this.getAdapterConfiguration(projectId, version.id)),
+    );
     return {
-      versions: versionResult.rows.map(mapVersion).map((version) => ({
+      versions: versions.map((version, index) => ({
         ...version,
         stages: stages.filter((stage) => stage.projectVersionId === version.id),
+        adapterConfiguration: configurations[index]!,
       })),
       adapterConfiguration,
     };
@@ -225,6 +232,7 @@ export class PostgresProjectStructureRepository implements ProjectStructureRepos
            VALUES ($1, $2, $3, 1, $4, $5)
            ON CONFLICT (project_version_id) DO UPDATE SET
              jar_bundle_asset_id = EXCLUDED.jar_bundle_asset_id,
+             inherited_from_project_version_id = NULL,
              revision = project_version_runtime_assets.revision + 1,
              updated_by = EXCLUDED.updated_by,
              updated_at = EXCLUDED.updated_at`,
@@ -238,10 +246,7 @@ export class PostgresProjectStructureRepository implements ProjectStructureRepos
         );
         const previousAssetId = previous.rows[0]?.jar_bundle_asset_id;
         if (previousAssetId && previousAssetId !== record.id) {
-          await client.query(
-            "DELETE FROM project_runtime_assets WHERE id = $1 AND source_type = 'url'",
-            [previousAssetId],
-          );
+          await deleteAssetMetadataIfUnreferenced(client, previousAssetId);
         }
         return {
           version: mapVersion(version),
@@ -258,6 +263,12 @@ export class PostgresProjectStructureRepository implements ProjectStructureRepos
     input: Parameters<ProjectStructureRepository["updateAdapterConfiguration"]>[0],
   ): Promise<ProjectAdapterConfiguration> {
     await this.handle.ready;
+    if (input.projectVersionId) {
+      return this.updateVersionConfiguration({
+        ...input,
+        projectVersionId: input.projectVersionId,
+      });
+    }
     try {
       return await this.transaction(async (client) => {
         await validateAsset(client, input.projectId, input.jdkAssetId, "jdk");
@@ -323,25 +334,144 @@ export class PostgresProjectStructureRepository implements ProjectStructureRepos
       ? await mapConfiguration(this.handle.pool, result.rows[0])
       : { projectId, revision: 0, updatedAt: "" };
     if (!projectVersionId) return globalConfiguration;
-    const versionResult = await this.handle.pool.query<VersionRuntimeRow & AssetRow>(
-      `SELECT configuration.*, asset.id, asset.project_id, asset.kind, asset.source_type,
-              asset.file_name, asset.url, asset.object_key, asset.sha256, asset.size_bytes,
-              asset.archive_format, asset.created_by, asset.created_at
-       FROM project_version_runtime_assets configuration
-       JOIN project_runtime_assets asset ON asset.id = configuration.jar_bundle_asset_id
-       WHERE configuration.project_version_id = $1 AND configuration.project_id = $2`,
+    const versionResult = await this.handle.pool.query<VersionRuntimeRow>(
+      `SELECT * FROM project_version_runtime_assets
+       WHERE project_version_id = $1 AND project_id = $2`,
       [projectVersionId, projectId],
     );
     const versionRuntime = versionResult.rows[0];
-    return {
-      projectId,
-      projectVersionId,
-      ...(globalConfiguration.jdkAsset ? { jdkAsset: globalConfiguration.jdkAsset } : {}),
-      ...(versionRuntime ? { jarBundleAsset: mapAsset(versionRuntime) } : {}),
-      revision: versionRuntime?.revision ?? 0,
-      ...(versionRuntime?.updated_by ? { updatedBy: versionRuntime.updated_by } : {}),
-      updatedAt: versionRuntime?.updated_at ?? "",
-    };
+    return versionRuntime
+      ? mapVersionConfiguration(this.handle.pool, versionRuntime)
+      : { projectId, projectVersionId, revision: 0, updatedAt: "" };
+  }
+
+  async inheritAdapterConfiguration(
+    input: Parameters<ProjectStructureRepository["inheritAdapterConfiguration"]>[0],
+  ): Promise<ProjectAdapterConfiguration> {
+    await this.handle.ready;
+    try {
+      return await this.transaction(async (client) => {
+        await requireVersionInProject(client, input.sourceProjectVersionId, input.projectId);
+        await requireVersionInProject(client, input.targetProjectVersionId, input.projectId);
+        const source = await versionRuntimeRow(client, input.sourceProjectVersionId, true);
+        if (!source) {
+          throw new DomainError(
+            "PROJECT_VERSION_RUNTIME_ASSETS_MISSING",
+            "来源版本尚未配置 JDK 或依赖 JAR 压缩包。",
+          );
+        }
+        await writeVersionConfiguration(client, {
+          projectId: input.projectId,
+          projectVersionId: input.targetProjectVersionId,
+          ...(source.jdk_asset_id ? { jdkAssetId: source.jdk_asset_id } : {}),
+          ...(source.jar_bundle_asset_id ? { jarBundleAssetId: source.jar_bundle_asset_id } : {}),
+          inheritedFromProjectVersionId: input.sourceProjectVersionId,
+          expectedRevision: input.expectedRevision,
+          ...(input.actorId ? { actorId: input.actorId } : {}),
+          updatedAt: input.updatedAt,
+        });
+        const updated = await versionRuntimeRow(client, input.targetProjectVersionId, false);
+        return mapVersionConfiguration(client, updated!);
+      });
+    } catch (error) {
+      if (error instanceof DomainError) throw error;
+      throw mapStructureWriteError(error);
+    }
+  }
+
+  async detachVersionRuntimeAsset(
+    input: Parameters<ProjectStructureRepository["detachVersionRuntimeAsset"]>[0],
+  ): Promise<{
+    configuration: ProjectAdapterConfiguration;
+    orphanedAsset?: ProjectRuntimeAsset;
+  }> {
+    await this.handle.ready;
+    try {
+      return await this.transaction(async (client) => {
+        await requireVersionInProject(client, input.projectVersionId, input.projectId);
+        const current = await versionRuntimeRow(client, input.projectVersionId, true);
+        if (!current) {
+          throw new DomainError(
+            "PROJECT_VERSION_RUNTIME_ASSETS_MISSING",
+            "当前版本没有可删除的资源。",
+          );
+        }
+        if (current.revision !== input.expectedRevision) throw revisionConflict();
+        const assetId = input.kind === "jdk" ? current.jdk_asset_id : current.jar_bundle_asset_id;
+        if (!assetId) {
+          throw new DomainError("PROJECT_VERSION_RUNTIME_ASSET_MISSING", "当前版本未配置该资源。");
+        }
+        const jdkAssetId = input.kind === "jdk" ? undefined : (current.jdk_asset_id ?? undefined);
+        const jarBundleAssetId =
+          input.kind === "jar-bundle" ? undefined : (current.jar_bundle_asset_id ?? undefined);
+        let configuration: ProjectAdapterConfiguration;
+        if (!jdkAssetId && !jarBundleAssetId) {
+          const deleted = await client.query(
+            `DELETE FROM project_version_runtime_assets
+             WHERE project_version_id = $1 AND revision = $2`,
+            [input.projectVersionId, input.expectedRevision],
+          );
+          if (deleted.rowCount !== 1) throw revisionConflict();
+          configuration = {
+            projectId: input.projectId,
+            projectVersionId: input.projectVersionId,
+            revision: 0,
+            updatedAt: "",
+          };
+        } else {
+          await writeVersionConfiguration(client, {
+            projectId: input.projectId,
+            projectVersionId: input.projectVersionId,
+            ...(jdkAssetId ? { jdkAssetId } : {}),
+            ...(jarBundleAssetId ? { jarBundleAssetId } : {}),
+            expectedRevision: input.expectedRevision,
+            ...(input.actorId ? { actorId: input.actorId } : {}),
+            updatedAt: input.updatedAt,
+          });
+          configuration = await mapVersionConfiguration(
+            client,
+            (await versionRuntimeRow(client, input.projectVersionId, false))!,
+          );
+        }
+        const orphanedAsset = await findUnreferencedAsset(client, assetId);
+        return { configuration, ...(orphanedAsset ? { orphanedAsset } : {}) };
+      });
+    } catch (error) {
+      if (error instanceof DomainError) throw error;
+      throw mapStructureWriteError(error);
+    }
+  }
+
+  async deleteRuntimeAssetMetadata(assetId: string): Promise<void> {
+    await this.handle.ready;
+    await this.transaction(async (client) => {
+      const orphan = await findUnreferencedAsset(client, assetId);
+      if (orphan) {
+        await client.query("DELETE FROM project_runtime_assets WHERE id = $1", [assetId]);
+      }
+    });
+  }
+
+  private async updateVersionConfiguration(
+    input: Parameters<ProjectStructureRepository["updateAdapterConfiguration"]>[0] & {
+      projectVersionId: string;
+    },
+  ): Promise<ProjectAdapterConfiguration> {
+    try {
+      return await this.transaction(async (client) => {
+        await requireVersionInProject(client, input.projectVersionId, input.projectId);
+        await validateAsset(client, input.projectId, input.jdkAssetId, "jdk");
+        await validateAsset(client, input.projectId, input.jarBundleAssetId, "jar-bundle");
+        await writeVersionConfiguration(client, input);
+        return mapVersionConfiguration(
+          client,
+          (await versionRuntimeRow(client, input.projectVersionId, false))!,
+        );
+      });
+    } catch (error) {
+      if (error instanceof DomainError) throw error;
+      throw mapStructureWriteError(error);
+    }
   }
 
   private async transaction<T>(operation: (client: PoolClient) => Promise<T>): Promise<T> {
@@ -361,6 +491,157 @@ export class PostgresProjectStructureRepository implements ProjectStructureRepos
 }
 
 type Queryable = Pick<PoolClient, "query">;
+
+async function requireVersionInProject(
+  client: Queryable,
+  projectVersionId: string,
+  projectId: string,
+): Promise<void> {
+  const result = await client.query(
+    "SELECT 1 FROM project_versions WHERE id = $1 AND project_id = $2",
+    [projectVersionId, projectId],
+  );
+  if (result.rowCount !== 1) {
+    throw new DomainError("PROJECT_VERSION_NOT_FOUND", "指定的项目版本不存在或不属于当前项目。");
+  }
+}
+
+async function versionRuntimeRow(
+  client: Queryable,
+  projectVersionId: string,
+  lock: boolean,
+): Promise<VersionRuntimeRow | undefined> {
+  const result = await client.query<VersionRuntimeRow>(
+    `SELECT * FROM project_version_runtime_assets WHERE project_version_id = $1${lock ? " FOR UPDATE" : ""}`,
+    [projectVersionId],
+  );
+  return result.rows[0];
+}
+
+async function writeVersionConfiguration(
+  client: Queryable,
+  input: {
+    projectId: string;
+    projectVersionId: string;
+    jdkAssetId?: string;
+    jarBundleAssetId?: string;
+    inheritedFromProjectVersionId?: string;
+    expectedRevision: number;
+    actorId?: string;
+    updatedAt: string;
+  },
+): Promise<void> {
+  const current = await versionRuntimeRow(client, input.projectVersionId, true);
+  if ((current?.revision ?? 0) !== input.expectedRevision) throw revisionConflict();
+  if (!input.jdkAssetId && !input.jarBundleAssetId) {
+    throw new DomainError(
+      "PROJECT_VERSION_RUNTIME_ASSETS_REQUIRED",
+      "项目版本至少需要配置一个运行时资源。",
+    );
+  }
+  if (!current) {
+    await client.query(
+      `INSERT INTO project_version_runtime_assets
+       (project_version_id, project_id, jdk_asset_id, jar_bundle_asset_id,
+        inherited_from_project_version_id, revision, updated_by, updated_at)
+       VALUES ($1, $2, $3, $4, $5, 1, $6, $7)`,
+      [
+        input.projectVersionId,
+        input.projectId,
+        input.jdkAssetId ?? null,
+        input.jarBundleAssetId ?? null,
+        input.inheritedFromProjectVersionId ?? null,
+        input.actorId ?? null,
+        input.updatedAt,
+      ],
+    );
+    return;
+  }
+  const updated = await client.query(
+    `UPDATE project_version_runtime_assets
+     SET jdk_asset_id = $1, jar_bundle_asset_id = $2, inherited_from_project_version_id = $3,
+         revision = revision + 1, updated_by = $4, updated_at = $5
+     WHERE project_version_id = $6 AND project_id = $7 AND revision = $8`,
+    [
+      input.jdkAssetId ?? null,
+      input.jarBundleAssetId ?? null,
+      input.inheritedFromProjectVersionId ?? null,
+      input.actorId ?? null,
+      input.updatedAt,
+      input.projectVersionId,
+      input.projectId,
+      input.expectedRevision,
+    ],
+  );
+  if (updated.rowCount !== 1) throw revisionConflict();
+}
+
+async function mapVersionConfiguration(
+  client: Queryable,
+  row: VersionRuntimeRow,
+): Promise<ProjectAdapterConfiguration> {
+  const assetIds = [row.jdk_asset_id, row.jar_bundle_asset_id].filter((value): value is string =>
+    Boolean(value),
+  );
+  const assets = assetIds.length
+    ? (
+        await client.query<AssetRow>(
+          "SELECT * FROM project_runtime_assets WHERE id = ANY($1::text[])",
+          [assetIds],
+        )
+      ).rows.map(mapAsset)
+    : [];
+  const findAsset = (id: string | null) => assets.find((asset) => asset.id === id);
+  const jdkAsset = findAsset(row.jdk_asset_id);
+  const jarBundleAsset = findAsset(row.jar_bundle_asset_id);
+  return {
+    projectId: row.project_id,
+    projectVersionId: row.project_version_id,
+    ...(row.inherited_from_project_version_id
+      ? { inheritedFromProjectVersionId: row.inherited_from_project_version_id }
+      : {}),
+    ...(jdkAsset ? { jdkAsset } : {}),
+    ...(jarBundleAsset ? { jarBundleAsset } : {}),
+    revision: row.revision,
+    ...(row.updated_by ? { updatedBy: row.updated_by } : {}),
+    updatedAt: row.updated_at,
+  };
+}
+
+async function deleteAssetMetadataIfUnreferenced(
+  client: Queryable,
+  assetId: string,
+): Promise<ProjectRuntimeAsset | undefined> {
+  const asset = await findUnreferencedAsset(client, assetId);
+  // Jenkins 这里只替换 URL 登记；上传对象必须由具备 ObjectStore 的应用服务清理，
+  // 不能先删元数据而遗失可重试的对象引用。
+  if (!asset || asset.sourceType !== "url") return undefined;
+  await client.query("DELETE FROM project_runtime_assets WHERE id = $1", [assetId]);
+  return asset;
+}
+
+async function findUnreferencedAsset(
+  client: Queryable,
+  assetId: string,
+): Promise<ProjectRuntimeAsset | undefined> {
+  const references = await client.query<{ value: string }>(
+    `SELECT (
+       (SELECT COUNT(*) FROM project_adapter_configurations
+         WHERE jdk_asset_id = $1 OR jar_bundle_asset_id = $1) +
+       (SELECT COUNT(*) FROM project_version_runtime_assets
+         WHERE jdk_asset_id = $1 OR jar_bundle_asset_id = $1) +
+       (SELECT COUNT(*) FROM run_batches
+         WHERE status IN ('queued','dispatching','scheduled','running')
+           AND adapter_runtime_json LIKE $2)
+     ) AS value`,
+    [assetId, `%\"id\":\"${assetId}\"%`],
+  );
+  if (Number(references.rows[0]?.value ?? 0) > 0) return undefined;
+  const asset = await client.query<AssetRow>("SELECT * FROM project_runtime_assets WHERE id = $1", [
+    assetId,
+  ]);
+  return asset.rows[0] ? mapAsset(asset.rows[0]) : undefined;
+}
 
 async function mapConfiguration(
   client: Queryable,

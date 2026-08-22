@@ -497,6 +497,7 @@ describe("run batch creation with suite policy", () => {
       getCaseDefinition: vi.fn().mockResolvedValue({
         id: "case-1",
         projectId: "project-1",
+        projectVersionId: "version-1",
         sourceId: "source-1",
         className: "com.example.SmokeTest",
         displayName: "Smoke",
@@ -617,6 +618,7 @@ describe("run batch creation with suite policy", () => {
       getCaseDefinition: vi.fn().mockResolvedValue({
         id: "case-1",
         projectId: "project-1",
+        projectVersionId: "version-1",
         sourceId: "source-1",
         className: "com.example.SmokeTest",
         displayName: "Smoke",
@@ -696,6 +698,7 @@ describe("run batch creation with suite policy", () => {
     expect(create).toHaveBeenCalledWith(
       expect.objectContaining({
         projectId: "project-1",
+        policy: expect.objectContaining({ projectVersionId: "version-1" }),
         adapter: {
           enabled: true,
           suiteName: "IP Suite",
@@ -703,6 +706,10 @@ describe("run batch creation with suite policy", () => {
           environmentAddresses: ["10.0.0.21", "10.0.0.22"],
         },
       }),
+    );
+    expect(projectStructures.getAdapterConfiguration).toHaveBeenCalledWith(
+      "project-1",
+      "version-1",
     );
   });
 

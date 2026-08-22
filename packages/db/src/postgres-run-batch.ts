@@ -1043,12 +1043,12 @@ async function postgresProjectAdapterRuntime(
   runs: CreateRunBatchRecord["runs"],
   projectVersionId?: string,
 ): Promise<ProjectAdapterRuntime | undefined> {
+  if (!hasTaskAdapterSettings(adapter)) return undefined;
   const [configuration] = await handle.db
     .select()
     .from(pgProjectAdapterConfigurations)
     .where(eq(pgProjectAdapterConfigurations.projectId, projectId))
     .limit(1);
-  if (!hasTaskAdapterSettings(adapter)) return undefined;
   const [versionConfiguration] = projectVersionId
     ? await handle.db
         .select()
@@ -1061,11 +1061,14 @@ async function postgresProjectAdapterRuntime(
         )
         .limit(1)
     : [];
+  const selectedJdkId = projectVersionId
+    ? versionConfiguration?.jdkAssetId
+    : configuration?.jdkAssetId;
   const selectedJarBundleId = projectVersionId
     ? versionConfiguration?.jarBundleAssetId
     : configuration?.jarBundleAssetId;
-  const assetIds = [configuration?.jdkAssetId, selectedJarBundleId].filter(
-    (assetId): assetId is string => Boolean(assetId),
+  const assetIds = [selectedJdkId, selectedJarBundleId].filter((assetId): assetId is string =>
+    Boolean(assetId),
   );
   const assets = assetIds.length
     ? await handle.db
@@ -1091,7 +1094,7 @@ async function postgresProjectAdapterRuntime(
         }
       : undefined;
   };
-  const jdk = assetSnapshot(configuration?.jdkAssetId ?? null);
+  const jdk = assetSnapshot(selectedJdkId ?? null);
   const jarBundle = assetSnapshot(selectedJarBundleId ?? null);
   if (!jarBundle) {
     throw new DomainError(

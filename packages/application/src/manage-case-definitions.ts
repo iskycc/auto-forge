@@ -5,6 +5,7 @@ import { DomainError } from "@autoforge/domain";
 import type { CaseCatalogRepository, Clock, IdGenerator } from "./ports";
 
 const VERSION_HISTORY_LIMIT = 100;
+const INHERITANCE_PAGE_SIZE = 100;
 
 export class CaseDefinitionService {
   constructor(
@@ -58,6 +59,54 @@ export class CaseDefinitionService {
       );
     }
     return deleted;
+  }
+
+  async inheritFromVersion(input: {
+    projectId: string;
+    sourceProjectVersionId: string;
+    sourceTestStageId: string;
+    targetProjectVersionId: string;
+    targetTestStageId: string;
+    actorId: string;
+  }): Promise<{ inheritedCount: number; skippedCount: number }> {
+    if (input.sourceProjectVersionId === input.targetProjectVersionId) {
+      throw new DomainError(
+        "CASE_VERSION_INHERITANCE_SELF_REFERENCE",
+        "请选择其他项目版本作为用例继承来源。",
+      );
+    }
+    let cursor: string | undefined;
+    let inheritedCount = 0;
+    let skippedCount = 0;
+    do {
+      const page = await this.catalog.listCases({
+        projectIds: [input.projectId],
+        projectVersionId: input.sourceProjectVersionId,
+        testStageId: input.sourceTestStageId,
+        scopedOnly: true,
+        limit: INHERITANCE_PAGE_SIZE,
+        ...(cursor ? { cursor } : {}),
+      });
+      if (page.items.length > 0) {
+        const result = await this.catalog.inheritCaseDefinitions({
+          ...input,
+          records: page.items.map((definition) => ({
+            sourceCaseDefinitionId: definition.id,
+            targetCaseDefinitionId: this.ids.next(),
+            targetCaseVersionId: this.ids.next(),
+            methods: definition.methods.map((method) => ({
+              sourceMethodId: method.id,
+              targetMethodId: this.ids.next(),
+            })),
+          })),
+          inheritedAt: this.clock.now().toISOString(),
+        });
+        inheritedCount += result.inheritedCount;
+        skippedCount += result.skippedCount;
+      }
+      cursor = page.nextCursor;
+    } while (cursor);
+    return { inheritedCount, skippedCount };
   }
 
   async listVersions(caseDefinitionId: string, projectIds?: readonly string[]) {

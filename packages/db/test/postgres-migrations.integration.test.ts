@@ -432,4 +432,125 @@ describe.skipIf(!connectionString)("PostgreSQL migrations", () => {
       await client.end();
     }
   });
+
+  it("upgrades version runtime resources and repairs normal TestNG batch status", async () => {
+    const admin = new Client({ connectionString });
+    await admin.connect();
+    const scratch = await createScratchDatabase(admin);
+    await admin.end();
+
+    const client = new Client({ connectionString: connectionStringFor(scratch) });
+    await client.connect();
+    const migrationsFolder = resolve(import.meta.dirname, "../drizzle/postgresql");
+    const migrationFiles = (await readdir(migrationsFolder))
+      .filter((name) => /^\d+_.+\.sql$/.test(name))
+      .sort();
+    const migration = "0037_version_assets_and_batch_status.sql";
+    const migrationIndex = migrationFiles.indexOf(migration);
+    expect(migrationIndex).toBeGreaterThan(0);
+    const projectId = "00000000-0000-7000-8000-000000000001";
+    try {
+      for (const fileName of migrationFiles.slice(0, migrationIndex)) {
+        await client.query(await readFile(resolve(migrationsFolder, fileName), "utf8"));
+      }
+      await client.query(`
+        INSERT INTO project_versions
+          (id, project_id, name, normalized_name, created_at, updated_at)
+        VALUES
+          ('version-one', '${projectId}', '1.0', '1.0',
+           '2026-08-22T00:00:00.000Z', '2026-08-22T00:00:00.000Z'),
+          ('version-two', '${projectId}', '2.0', '2.0',
+           '2026-08-22T00:00:00.000Z', '2026-08-22T00:00:00.000Z');
+        INSERT INTO project_runtime_assets
+          (id, project_id, kind, source_type, file_name, url, sha256, size_bytes,
+           archive_format, created_at)
+        VALUES
+          ('jdk-global', '${projectId}', 'jdk', 'url', 'jdk.zip',
+           'https://assets.example.test/jdk.zip',
+           'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 1024, 'zip',
+           '2026-08-22T00:00:00.000Z'),
+          ('bundle-global', '${projectId}', 'jar-bundle', 'url', 'global.zip',
+           'https://assets.example.test/global.zip',
+           'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', 2048, 'zip',
+           '2026-08-22T00:00:00.000Z'),
+          ('bundle-version-one', '${projectId}', 'jar-bundle', 'url', 'one.zip',
+           'https://assets.example.test/one.zip',
+           'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc', 4096, 'zip',
+           '2026-08-22T00:00:00.000Z');
+        INSERT INTO project_adapter_configurations
+          (project_id, jdk_asset_id, jar_bundle_asset_id, updated_at)
+        VALUES
+          ('${projectId}', 'jdk-global', 'bundle-global', '2026-08-22T00:00:00.000Z');
+        INSERT INTO project_version_runtime_assets
+          (project_version_id, project_id, jar_bundle_asset_id, updated_at)
+        VALUES
+          ('version-one', '${projectId}', 'bundle-version-one', '2026-08-22T00:00:00.000Z');
+        INSERT INTO run_batches
+          (id, suite_id, suite_name, suite_version, status, retry_limit, environment_json,
+           total_runs, project_id, created_at, updated_at)
+        VALUES
+          ('batch-normal-failure', 'suite-one', 'Suite one', 1, 'failed', 0, '[]', 1,
+           '${projectId}', '2026-08-22T01:00:00.000Z', '2026-08-22T01:01:00.000Z'),
+          ('batch-runner-failure', 'suite-two', 'Suite two', 1, 'failed', 0, '[]', 1,
+           '${projectId}', '2026-08-22T02:00:00.000Z', '2026-08-22T02:01:00.000Z');
+        INSERT INTO execution_runs
+          (id, batch_id, case_definition_id, case_version, display_name, class_name, status,
+           terminal_reason_code, created_at, updated_at)
+        VALUES
+          ('run-normal-failure', 'batch-normal-failure', 'case-one', 1, 'Case one',
+           'example.CaseOne', 'failed', 'TESTNG_ASSERTIONS_FAILED',
+           '2026-08-22T01:00:00.000Z', '2026-08-22T01:01:00.000Z'),
+          ('run-runner-failure', 'batch-runner-failure', 'case-two', 1, 'Case two',
+           'example.CaseTwo', 'failed', 'PROCESS_START_FAILED',
+           '2026-08-22T02:00:00.000Z', '2026-08-22T02:01:00.000Z');
+      `);
+
+      await client.query(await readFile(resolve(migrationsFolder, migration), "utf8"));
+
+      await expect(
+        client.query(
+          `SELECT project_version_id, jdk_asset_id, jar_bundle_asset_id
+           FROM project_version_runtime_assets ORDER BY project_version_id`,
+        ),
+      ).resolves.toMatchObject({
+        rows: [
+          {
+            project_version_id: "version-one",
+            jdk_asset_id: "jdk-global",
+            jar_bundle_asset_id: "bundle-version-one",
+          },
+          {
+            project_version_id: "version-two",
+            jdk_asset_id: "jdk-global",
+            jar_bundle_asset_id: "bundle-global",
+          },
+        ],
+      });
+      await expect(
+        client.query("SELECT id, status, version FROM run_batches ORDER BY id"),
+      ).resolves.toMatchObject({
+        rows: [
+          { id: "batch-normal-failure", status: "succeeded", version: 2 },
+          { id: "batch-runner-failure", status: "failed", version: 1 },
+        ],
+      });
+      await expect(
+        client.query(
+          `SELECT from_status, to_status, batch_version, reason
+           FROM run_batch_status_events WHERE batch_id = 'batch-normal-failure'`,
+        ),
+      ).resolves.toMatchObject({
+        rows: [
+          {
+            from_status: "failed",
+            to_status: "succeeded",
+            batch_version: 2,
+            reason: "migration.normal_test_failure",
+          },
+        ],
+      });
+    } finally {
+      await client.end();
+    }
+  });
 });

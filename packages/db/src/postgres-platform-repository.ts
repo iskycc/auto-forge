@@ -1006,6 +1006,133 @@ export class PostgresCaseCatalogRepository implements CaseCatalogRepository {
     });
   }
 
+  async inheritCaseDefinitions(
+    input: Parameters<CaseCatalogRepository["inheritCaseDefinitions"]>[0],
+  ): Promise<{ inheritedCount: number; skippedCount: number }> {
+    await this.ready();
+    if (input.records.length === 0) return { inheritedCount: 0, skippedCount: 0 };
+    const client = await this.handle.pool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [
+        `case-import:${input.projectId}:${input.targetProjectVersionId}:${input.targetTestStageId}`,
+      ]);
+      const targetStage = await client.query(
+        `SELECT 1 FROM test_stages
+         WHERE id = $1 AND project_id = $2 AND project_version_id = $3 FOR UPDATE`,
+        [input.targetTestStageId, input.projectId, input.targetProjectVersionId],
+      );
+      if (targetStage.rowCount !== 1) {
+        throw new DomainError(
+          "TARGET_TEST_STAGE_NOT_FOUND",
+          "目标测试阶段不存在或不属于目标项目版本。",
+        );
+      }
+      let inheritedCount = 0;
+      let skippedCount = 0;
+      for (const record of input.records) {
+        const source = await client.query<{ class_name: string }>(
+          `SELECT class_name FROM case_definitions
+           WHERE id = $1 AND project_id = $2 AND project_version_id = $3 AND test_stage_id = $4`,
+          [
+            record.sourceCaseDefinitionId,
+            input.projectId,
+            input.sourceProjectVersionId,
+            input.sourceTestStageId,
+          ],
+        );
+        const className = source.rows[0]?.class_name;
+        if (!className) {
+          throw new DomainError(
+            "SOURCE_CASE_DEFINITION_NOT_FOUND",
+            "继承来源用例不存在或不属于所选项目版本与测试阶段。",
+          );
+        }
+        const existing = await client.query(
+          `SELECT 1 FROM case_definitions
+           WHERE project_id = $1 AND project_version_id = $2 AND test_stage_id = $3
+             AND class_name = $4 LIMIT 1`,
+          [input.projectId, input.targetProjectVersionId, input.targetTestStageId, className],
+        );
+        if (existing.rowCount === 1) {
+          skippedCount += 1;
+          continue;
+        }
+        const definition = await client.query(
+          `INSERT INTO case_definitions
+           (id, project_id, project_version_id, test_stage_id, directory_path, source_id,
+            class_name, package_name, display_name, description, tags_json, parameters_json,
+            enabled, archived, revision, updated_by, groups_json, current_version,
+            created_at, updated_at)
+           SELECT $1, project_id, $2, $3, directory_path, source_id, class_name, package_name,
+                  display_name, description, tags_json, parameters_json, enabled, archived, 1, $4,
+                  groups_json, 1, $5, $5
+           FROM case_definitions WHERE id = $6`,
+          [
+            record.targetCaseDefinitionId,
+            input.targetProjectVersionId,
+            input.targetTestStageId,
+            input.actorId,
+            input.inheritedAt,
+            record.sourceCaseDefinitionId,
+          ],
+        );
+        if (definition.rowCount !== 1) {
+          throw new DomainError("SOURCE_CASE_DEFINITION_NOT_FOUND", "继承来源用例不存在。");
+        }
+        const version = await client.query(
+          `INSERT INTO case_versions
+           (id, case_definition_id, source_id, version, snapshot_json, created_by,
+            change_reason, created_at)
+           SELECT $1, $2, source_id, 1, snapshot_json, $3, 'version.inherit', $4
+           FROM case_versions
+           WHERE case_definition_id = $5
+             AND version = (SELECT current_version FROM case_definitions WHERE id = $5)`,
+          [
+            record.targetCaseVersionId,
+            record.targetCaseDefinitionId,
+            input.actorId,
+            input.inheritedAt,
+            record.sourceCaseDefinitionId,
+          ],
+        );
+        if (version.rowCount !== 1) {
+          throw new DomainError("SOURCE_CASE_VERSION_NOT_FOUND", "继承来源用例的当前版本不存在。");
+        }
+        for (const method of record.methods) {
+          const insertedMethod = await client.query(
+            `INSERT INTO test_methods
+             (id, case_definition_id, method_name, descriptor, enabled, annotation_source,
+              groups_json, description, data_provider, depends_on_methods_json,
+              depends_on_groups_json, priority, created_at)
+             SELECT $1, $2, method_name, descriptor, enabled, annotation_source, groups_json,
+                    description, data_provider, depends_on_methods_json, depends_on_groups_json,
+                    priority, $3
+             FROM test_methods WHERE id = $4 AND case_definition_id = $5`,
+            [
+              method.targetMethodId,
+              record.targetCaseDefinitionId,
+              input.inheritedAt,
+              method.sourceMethodId,
+              record.sourceCaseDefinitionId,
+            ],
+          );
+          if (insertedMethod.rowCount !== 1) {
+            throw new DomainError("SOURCE_TEST_METHOD_NOT_FOUND", "继承来源测试方法不存在。");
+          }
+        }
+        inheritedCount += 1;
+      }
+      await client.query("COMMIT");
+      return { inheritedCount, skippedCount };
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
   async listCaseVersions(caseDefinitionId: string, limit: number): Promise<CaseVersion[]> {
     await this.ready();
     return (

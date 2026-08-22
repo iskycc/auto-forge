@@ -10,6 +10,7 @@ import {
   formatLocalDateTime,
   isActiveRunBatch,
   runBatchCompletionPercent,
+  runBatchCompletionLabel,
   runBatchCoveragePercent,
   runBatchDurationMs,
   runBatchPassRate,
@@ -23,6 +24,17 @@ describe("run batch presentation", () => {
     expect(isActiveRunBatch("succeeded")).toBe(false);
     expect(runBatchStatusLabel("failed")).toBe("执行异常");
     expect(runBatchStatusLabel("cancelled")).toBe("已终止");
+  });
+
+  it("uses the authoritative batch lifecycle even when assertions failed", () => {
+    expect(
+      runBatchCompletionLabel({
+        ...batch({ status: "succeeded", succeededRuns: 0, failedRuns: 1, queuedRuns: 0 }),
+        runs: [],
+        attempts: [],
+        statusHistory: [],
+      }),
+    ).toBe("执行完成");
   });
 
   it("reports progress across assigned and terminal runs", () => {

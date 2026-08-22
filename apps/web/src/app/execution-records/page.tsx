@@ -108,8 +108,8 @@ export default async function ExecutionRecordsPage({
             <option value="">全部状态</option>
             <option value="queued">排队中</option>
             <option value="running">执行中</option>
-            <option value="succeeded">成功</option>
-            <option value="failed">失败</option>
+            <option value="succeeded">执行完成</option>
+            <option value="failed">执行异常</option>
             <option value="cancelled">已终止</option>
           </Select>
         </label>

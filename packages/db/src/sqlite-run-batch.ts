@@ -922,6 +922,7 @@ function projectAdapterRuntime(
   runs: CreateRunBatchRecord["runs"],
   projectVersionId?: string,
 ): ProjectAdapterRuntime | undefined {
+  if (!hasTaskAdapterSettings(adapter)) return undefined;
   const configuration = handle.client
     .prepare(
       `SELECT jdk_asset_id, jar_bundle_asset_id
@@ -936,13 +937,13 @@ function projectAdapterRuntime(
   const versionConfiguration = projectVersionId
     ? (handle.client
         .prepare(
-          `SELECT jar_bundle_asset_id
+          `SELECT jdk_asset_id, jar_bundle_asset_id
            FROM project_version_runtime_assets
            WHERE project_version_id = ? AND project_id = ?`,
         )
-        .get(projectVersionId, projectId) as { jar_bundle_asset_id: string } | undefined)
+        .get(projectVersionId, projectId) as
+        { jdk_asset_id: string | null; jar_bundle_asset_id: string | null } | undefined)
     : undefined;
-  if (!hasTaskAdapterSettings(adapter)) return undefined;
   const asset = (id: string | null): RuntimeAssetSnapshot | undefined => {
     if (!id) return undefined;
     const row = handle.client
@@ -971,7 +972,11 @@ function projectAdapterRuntime(
         }
       : undefined;
   };
-  const jdk = asset(configuration?.jdk_asset_id ?? null);
+  const jdk = asset(
+    projectVersionId
+      ? (versionConfiguration?.jdk_asset_id ?? null)
+      : (configuration?.jdk_asset_id ?? null),
+  );
   const jarBundle = asset(
     projectVersionId
       ? (versionConfiguration?.jar_bundle_asset_id ?? null)

@@ -130,9 +130,16 @@ export const pgProjectVersionRuntimeAssets = pgTable("project_version_runtime_as
   projectId: text("project_id")
     .notNull()
     .references(() => pgProjects.id, { onDelete: "cascade" }),
-  jarBundleAssetId: text("jar_bundle_asset_id")
-    .notNull()
-    .references(() => pgProjectRuntimeAssets.id, { onDelete: "restrict" }),
+  jdkAssetId: text("jdk_asset_id").references(() => pgProjectRuntimeAssets.id, {
+    onDelete: "restrict",
+  }),
+  jarBundleAssetId: text("jar_bundle_asset_id").references(() => pgProjectRuntimeAssets.id, {
+    onDelete: "restrict",
+  }),
+  inheritedFromProjectVersionId: text("inherited_from_project_version_id").references(
+    () => pgProjectVersions.id,
+    { onDelete: "set null" },
+  ),
   revision: integer("revision").notNull().default(1),
   updatedBy: text("updated_by"),
   updatedAt: text("updated_at").notNull(),
@@ -416,7 +423,13 @@ export const pgCaseDefinitions = pgTable(
     updatedAt: text("updated_at").notNull(),
   },
   (table) => [
-    uniqueIndex("case_definitions_source_class_uq").on(table.sourceId, table.className),
+    index("case_definitions_source_class_idx").on(table.sourceId, table.className),
+    index("case_definitions_hierarchy_class_idx").on(
+      table.projectId,
+      table.projectVersionId,
+      table.testStageId,
+      table.className,
+    ),
     index("case_definitions_class_name_idx").on(table.className),
     index("case_definitions_stage_directory_idx").on(
       table.projectId,
