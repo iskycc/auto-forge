@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { promisify } from "node:util";
@@ -278,17 +278,17 @@ async function exerciseRunnerLifecycle(page: Page, name: string): Promise<void> 
   await page.goto("/runners");
   let row = page.getByRole("row", { name: new RegExp(name) });
   page.once("dialog", (dialog) => dialog.accept());
-  await row.getByRole("button", { name: "排空" }).click();
+  await clickRunnerManagementAction(row, "排空");
   await expect(row).toContainText("排空中");
 
   row = page.getByRole("row", { name: new RegExp(name) });
   page.once("dialog", (dialog) => dialog.accept());
-  await row.getByRole("button", { name: "恢复接单" }).click();
+  await clickRunnerManagementAction(row, "恢复接单");
   await expect(row).toContainText("在线");
 
   row = page.getByRole("row", { name: new RegExp(name) });
   page.once("dialog", (dialog) => dialog.accept());
-  await row.getByRole("button", { name: "轮换凭据" }).click();
+  await clickRunnerManagementAction(row, "轮换凭据");
   await expect
     .poll(
       () => installedConfigurationDigest("/var/lib/autoforge-agent/identity/credentials.json"),
@@ -310,13 +310,21 @@ async function exerciseRunnerLifecycle(page: Page, name: string): Promise<void> 
   await page.reload();
   row = page.getByRole("row", { name: new RegExp(name) });
   page.once("dialog", (dialog) => dialog.accept());
-  await row.getByRole("button", { name: "撤销凭据" }).click();
+  await clickRunnerManagementAction(row, "撤销凭据");
   await expect(row).toContainText("凭据已撤销");
 
   row = page.getByRole("row", { name: new RegExp(name) });
   page.once("dialog", (dialog) => dialog.accept());
-  await row.getByRole("button", { name: "注销" }).click();
+  await clickRunnerManagementAction(row, "注销");
   await expect(row).toContainText("已注销");
+}
+
+async function clickRunnerManagementAction(pageRow: Locator, actionName: string): Promise<void> {
+  const actions = pageRow.locator("details.runner-actions-menu");
+  if ((await actions.getAttribute("open")) === null) {
+    await actions.getByText("管理操作", { exact: true }).click();
+  }
+  await actions.getByRole("button", { name: actionName, exact: true }).click();
 }
 
 async function exerciseDeregisteredReinstall(page: Page): Promise<void> {
