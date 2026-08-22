@@ -15,10 +15,14 @@ export function CaseSuiteManager({
   canManage,
   initialSuites,
   projectId: initialProjectId,
+  selectedProjectVersionId,
+  selectedProjectVersionName,
 }: {
   canManage: boolean;
   initialSuites: CaseSuite[];
   projectId?: string | undefined;
+  selectedProjectVersionId?: string | undefined;
+  selectedProjectVersionName?: string | undefined;
 }) {
   const [suites, setSuites] = useState(initialSuites);
   const [name, setName] = useState("");
@@ -42,6 +46,7 @@ export function CaseSuiteManager({
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           ...(projectId ? { projectId } : {}),
+          ...(selectedProjectVersionId ? { projectVersionId: selectedProjectVersionId } : {}),
           name,
           ...(description.trim() ? { description } : {}),
           adapter: {
@@ -112,6 +117,11 @@ export function CaseSuiteManager({
               placeholder="记录用途、范围或维护人"
             />
           </label>
+          <div className="form-context-summary" aria-label="任务项目版本">
+            <span>项目版本</span>
+            <strong>{selectedProjectVersionName ?? "暂无可用版本"}</strong>
+            <small>使用顶栏当前选择；任务创建后仍可在详情中调整。</small>
+          </div>
           <div className="suite-adapter-fields">
             <strong>Adapter 执行配置</strong>
             <p>配置随任务版本保存；多个环境地址会按任务中的用例顺序循环分配。</p>
@@ -161,7 +171,7 @@ export function CaseSuiteManager({
           <Button
             className="button button-primary"
             type="submit"
-            disabled={pending || !name.trim()}
+            disabled={pending || !name.trim() || !selectedProjectVersionId}
           >
             {pending ? <LoaderCircle className="spin" size={16} /> : <Plus size={16} />} 创建任务
           </Button>

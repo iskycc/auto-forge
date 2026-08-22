@@ -4,7 +4,11 @@ import { CaseSuiteManager } from "@/components/case-suite-manager";
 import { getPlatformServices } from "@/lib/services";
 import { requireAuthorizedPageProjectScope, requirePageProjectScope } from "@/lib/auth";
 import { DEFAULT_PROJECT_ID, hasPermission } from "@autoforge/domain";
-import { selectableProjectIds, selectedProjectId } from "@/lib/selected-project";
+import {
+  selectableProjectIds,
+  selectedProjectHierarchy,
+  selectedProjectId,
+} from "@/lib/selected-project";
 
 export const dynamic = "force-dynamic";
 
@@ -21,7 +25,14 @@ export default async function CaseSuitesPage() {
     "case_suite.read",
     activeProjectId,
   );
-  const suites = await services.caseSuites.list(200, effectiveProjectIds);
+  const [suites, structure] = await Promise.all([
+    services.caseSuites.list(200, effectiveProjectIds),
+    services.projectStructures.list(activeProjectId),
+  ]);
+  const hierarchy = await selectedProjectHierarchy(structure);
+  const selectedVersion = structure.versions.find(
+    (version) => version.id === hierarchy.projectVersionId,
+  );
   return (
     <div className="page-stack">
       <section className="page-hero">
@@ -38,6 +49,10 @@ export default async function CaseSuitesPage() {
         canManage={hasPermission(identity, "case_suite.manage", activeProjectId)}
         initialSuites={suites}
         projectId={activeProjectId}
+        {...(hierarchy.projectVersionId
+          ? { selectedProjectVersionId: hierarchy.projectVersionId }
+          : {})}
+        {...(selectedVersion ? { selectedProjectVersionName: selectedVersion.name } : {})}
       />
     </div>
   );

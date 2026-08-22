@@ -30,6 +30,7 @@ export class CaseSuiteService {
       ...(description ? { description } : {}),
       policy: mergeCaseSuiteExecutionPolicy(defaultCaseSuiteExecutionPolicy, {
         ...(input.adapter ? { adapter: input.adapter } : {}),
+        ...(input.projectVersionId ? { projectVersionId: input.projectVersionId } : {}),
       }),
       createdAt: this.clock.now().toISOString(),
     });

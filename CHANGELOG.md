@@ -21,7 +21,8 @@ and known limitations.
 - Scoped JDK and dependency archives to individual project versions. Administrators can upload or
   register independent resources, inherit another version's resources through shared database/object
   references without copying bytes, and remove either resource without affecting versions that still
-  reference it.
+  reference it. Newly created case suites explicitly bind the currently selected project version,
+  so execution preflight and batch snapshots always resolve that version's resources.
 - Added bounded cross-version case inheritance between explicit source and target test stages. The
   target receives independent case IDs and immutable v1 snapshots while sharing the source JAR;
   existing fully qualified class names are skipped, and later target-stage imports retain the target

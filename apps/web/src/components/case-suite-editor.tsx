@@ -42,6 +42,13 @@ export function CaseSuiteEditor({
   const [runnerSelectionKind, setRunnerSelectionKind] = useState<"runners" | "group">(
     suite.policy.runnerGroupId ? "group" : "runners",
   );
+  const selectableProjectVersions = projectVersions.filter(
+    (version) =>
+      version.status === "active" ||
+      (suite.policy.projectVersionId !== undefined && version.id === suite.policy.projectVersionId),
+  );
+  const selectedProjectVersionId =
+    suite.policy.projectVersionId ?? selectableProjectVersions[0]?.id ?? "";
 
   async function submit(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
@@ -288,15 +295,17 @@ export function CaseSuiteEditor({
             </label>
             <label>
               项目版本
-              <Select name="projectVersionId" defaultValue={suite.policy.projectVersionId ?? ""}>
-                <option value="">项目默认依赖</option>
-                {projectVersions
-                  .filter((version) => version.status === "active")
-                  .map((version) => (
+              <Select name="projectVersionId" defaultValue={selectedProjectVersionId} required>
+                {selectableProjectVersions.length === 0 ? (
+                  <option value="">暂无可用版本</option>
+                ) : (
+                  selectableProjectVersions.map((version) => (
                     <option key={version.id} value={version.id}>
                       {version.name}
+                      {version.status === "archived" ? "（已归档）" : ""}
                     </option>
-                  ))}
+                  ))
+                )}
               </Select>
             </label>
             <label>

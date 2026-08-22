@@ -8,6 +8,34 @@ import type { CaseCatalogRepository, CaseSuiteRepository } from "../src/ports";
 const timestamp = "2026-08-09T00:00:00.000Z";
 
 describe("case suite update and copy", () => {
+  it("binds a new suite to its selected project version", async () => {
+    const suites = suiteRepositoryFake();
+    const service = new CaseSuiteService(
+      suites,
+      {} as CaseCatalogRepository,
+      { now: () => new Date(timestamp) },
+      { next: () => "suite-new" },
+    );
+
+    await service.create(
+      {
+        projectId: "project-1",
+        projectVersionId: "version-2",
+        name: "Version smoke",
+      },
+      "user-1",
+    );
+
+    expect(suites.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: "suite-new",
+        projectId: "project-1",
+        actorId: "user-1",
+        policy: expect.objectContaining({ projectVersionId: "version-2" }),
+      }),
+    );
+  });
+
   it("merges partial policy input over the stored policy before persisting", async () => {
     const suites = suiteRepositoryFake();
     const service = new CaseSuiteService(
@@ -168,6 +196,7 @@ function suiteRepositoryFake() {
     ],
   };
   return {
+    create: vi.fn().mockResolvedValue(suite),
     get: vi.fn().mockResolvedValue(suite),
     getSummary: vi.fn().mockResolvedValue(suite),
     updateSuite: vi.fn().mockResolvedValue(suite),
@@ -175,6 +204,7 @@ function suiteRepositoryFake() {
     addCases: vi.fn().mockResolvedValue(suite),
     removeCases: vi.fn().mockResolvedValue(suite),
   } as unknown as CaseSuiteRepository & {
+    create: ReturnType<typeof vi.fn>;
     getSummary: ReturnType<typeof vi.fn>;
     updateSuite: ReturnType<typeof vi.fn>;
     copySuite: ReturnType<typeof vi.fn>;

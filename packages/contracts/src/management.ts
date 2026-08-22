@@ -32,6 +32,7 @@ export const caseSuiteAdapterConfigurationSchema = z.object({
 
 export const createCaseSuiteInputSchema = z.object({
   projectId: z.string().min(1).max(128).optional(),
+  projectVersionId: z.string().trim().min(1).max(128).optional(),
   name: z.string().trim().min(1).max(120),
   description: z.string().trim().max(500).optional(),
   adapter: caseSuiteAdapterConfigurationSchema.optional(),
