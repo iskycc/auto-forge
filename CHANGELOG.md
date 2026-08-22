@@ -6,8 +6,22 @@ and known limitations.
 
 ## Unreleased
 
+## 0.9.8 - 2026-08-22
+
 ### Changed
 
+- Reworked Quality Insights into a compact visual dashboard: method history uses a multi-series line
+  chart, failure clusters use a pie chart, flaky samples use stacked columns, and batch changes use
+  comparison columns alongside the existing outcome donuts. Every chart exposes its exact data from
+  a top-right detail action instead of expanding long tables directly in the page.
+- Bounded insight detail dialogs to the desktop viewport with sticky table headers, independent
+  horizontal and vertical scrolling, comfortable row spacing and 50-row client windows for large
+  batch comparisons. The 1024-pixel desktop layout retains two chart columns without page overflow.
+- Replaced permission codes in role, service-account, project-permission and API-token controls with
+  concise Chinese names and purpose descriptions. Forms and HTTP contracts continue to submit the
+  stable permission codes, including a visible fallback for permissions introduced by newer versions.
+- Refined dense administration and execution pages with localized state/action labels, clearer
+  control grouping, bounded identifiers and logs, and viewport-safe low-frequency action dialogs.
 - Added graceful task termination to the execution-record list and batch details. A termination
   request immediately blocks scheduling and claims, closes work that has not started, lets valid
   in-flight leases finish naturally, suppresses retries, and then presents the batch as terminated.
@@ -49,6 +63,11 @@ and known limitations.
 
 ### Tests
 
+- Added a complete permission-presentation mapping test and browser regressions that verify role and
+  service-account pages never expose known permission codes as their primary labels.
+- Added production-build browser coverage for the insight line, pie and comparison-column charts,
+  fixed-height 1024/1536 layouts, viewport-bounded detail dialogs, sticky scrollable tables and
+  paginated batch-comparison details.
 - Added domain, application and SQLite/PostgreSQL adapter regressions for graceful termination,
   completed-assignment cancellation, retry suppression, concurrent claim coalescing and worker-pool
   sizing. The browser scheduling scenario terminates a five-case task with two in-flight attempts,
@@ -68,12 +87,21 @@ and known limitations.
 
 ### Compatibility
 
+- The insight and permission changes are presentation-only: permission values in APIs, persisted role
+  definitions, database schemas and Runner Protocol v1 are unchanged.
 - Runner Protocol v1 and database schemas are unchanged. Existing clients may continue calling
   `/cancel`; new integrations should use `/terminate`. The Lite release now includes a bundled
   Node 24 worker entry and adds `esbuild` as a build-time-only, offline-locked dependency.
 - Runner Protocol v1 is unchanged. Existing case and source data remains readable; old duplicate
   cases created under the former source-scoped identity are consolidated on the next matching JAR
   reimport, with task memberships moved to the oldest stable case ID.
+- Release images, deployment bundles, embedded static Runner binaries, Jenkins HPI plugins, SBOMs,
+  checksums and build provenance are regenerated for `v0.9.8` by the tagged Release workflow.
+
+### Known limitations
+
+- The authenticated UI supports desktop browser widths of 1024 pixels and above; mobile layouts are
+  intentionally outside the supported and tested interface baseline.
 
 ## 0.9.7 - 2026-08-21
 
