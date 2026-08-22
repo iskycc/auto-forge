@@ -94,6 +94,9 @@ export function GlobalRunDialog({
 
   const selectedSuite = options?.suites.find((suite) => suite.id === suiteId);
   const selectedCase = options?.cases.find((definition) => definition.id === caseDefinitionId);
+  const suiteExecutionResourceConfigured = selectedSuite
+    ? suiteHasExecutionResource(selectedSuite, options)
+    : false;
   const selectedProjectId =
     runKind === "suite" ? selectedSuite?.projectId : selectedCase?.projectId;
   const visibleCases = useMemo(() => {
@@ -114,39 +117,6 @@ export function GlobalRunDialog({
       }
       setOpen(true);
       if (loading) return;
-      if (options) {
-        if (
-          !requestedCaseId ||
-          options.cases.some((candidate) => candidate.id === requestedCaseId)
-        ) {
-          return;
-        }
-        setLoading(true);
-        setError("");
-        void requestJson<CaseDefinitionWithMethods>(
-          `/api/v1/case-definitions/${encodeURIComponent(requestedCaseId)}`,
-        )
-          .then((definition) => {
-            setProjectOptions((current) => {
-              if (!current || current.contextKey !== contextKey) return current;
-              return {
-                contextKey: current.contextKey,
-                value: {
-                  ...current.value,
-                  cases: [
-                    definition,
-                    ...current.value.cases.filter((candidate) => candidate.id !== definition.id),
-                  ],
-                },
-              };
-            });
-          })
-          .catch((problem: unknown) => {
-            setError(problem instanceof Error ? problem.message : "用例加载失败。");
-          })
-          .finally(() => setLoading(false));
-        return;
-      }
       setLoading(true);
       setError("");
       void loadRunOptions(requestedCaseId, projectId, projectVersionId, testStageId)
@@ -156,7 +126,7 @@ export function GlobalRunDialog({
           setCaseDefinitionId(
             requestedCaseId && loaded.cases.some((candidate) => candidate.id === requestedCaseId)
               ? requestedCaseId
-              : (loaded.cases[0]?.id ?? ""),
+              : "",
           );
         })
         .catch((problem: unknown) => {
@@ -164,7 +134,7 @@ export function GlobalRunDialog({
         })
         .finally(() => setLoading(false));
     },
-    [contextKey, loading, options, projectId, projectVersionId, testStageId],
+    [contextKey, loading, projectId, projectVersionId, testStageId],
   );
 
   useEffect(() => {
@@ -227,6 +197,10 @@ export function GlobalRunDialog({
     const targetId = runKind === "suite" ? suiteId : caseDefinitionId;
     if (!targetId || !selectedProjectId) {
       setError(runKind === "suite" ? "请选择用例任务。" : "请选择单个用例。");
+      return;
+    }
+    if (runKind === "suite" && !suiteExecutionResourceConfigured) {
+      setError("任务尚未配置有效执行资源，请先编辑任务。");
       return;
     }
     if (runKind === "case" && runnerSelectionKind === "runners" && runnerIds.length === 0) {
@@ -392,6 +366,7 @@ export function GlobalRunDialog({
                               }}
                               value={caseDefinitionId}
                             >
+                              <option value="">请选择用例</option>
                               {visibleCases.map((definition) => (
                                 <option key={definition.id} value={definition.id}>
                                   {definition.displayName} · {definition.className}
@@ -413,37 +388,44 @@ export function GlobalRunDialog({
                           </div>
                         </div>
                         {selectedSuite ? (
-                          <dl className="summary-grid">
-                            <div>
-                              <dt>执行资源</dt>
-                              <dd>{suiteRunnerSummary(selectedSuite, options)}</dd>
-                            </div>
-                            <div>
-                              <dt>失败重跑</dt>
-                              <dd>
-                                {selectedSuite.policy.retryLimit} 次 ·{" "}
-                                {selectedSuite.policy.retryMode === "round"
-                                  ? "整轮重跑"
-                                  : "立即重跑"}
-                              </dd>
-                            </div>
-                            <div>
-                              <dt>执行器</dt>
-                              <dd>
-                                {selectedSuite.policy.executor === "testng-container"
-                                  ? "Container"
-                                  : "Process"}
-                              </dd>
-                            </div>
-                            <div>
-                              <dt>环境地址</dt>
-                              <dd>
-                                {selectedSuite.policy.adapter.enabled
-                                  ? `${selectedSuite.policy.adapter.environmentAddresses.length} 个`
-                                  : "未启用 Adapter"}
-                              </dd>
-                            </div>
-                          </dl>
+                          <>
+                            {!suiteExecutionResourceConfigured ? (
+                              <p className="inline-notice warning-notice" role="status">
+                                任务尚未配置有效执行资源，请先进入任务详情完成配置。
+                              </p>
+                            ) : null}
+                            <dl className="summary-grid">
+                              <div>
+                                <dt>执行资源</dt>
+                                <dd>{suiteRunnerSummary(selectedSuite, options)}</dd>
+                              </div>
+                              <div>
+                                <dt>失败重跑</dt>
+                                <dd>
+                                  {selectedSuite.policy.retryLimit} 次 ·{" "}
+                                  {selectedSuite.policy.retryMode === "round"
+                                    ? "整轮重跑"
+                                    : "立即重跑"}
+                                </dd>
+                              </div>
+                              <div>
+                                <dt>执行器</dt>
+                                <dd>
+                                  {selectedSuite.policy.executor === "testng-container"
+                                    ? "Container"
+                                    : "Process"}
+                                </dd>
+                              </div>
+                              <div>
+                                <dt>环境地址</dt>
+                                <dd>
+                                  {selectedSuite.policy.adapter.enabled
+                                    ? `${selectedSuite.policy.adapter.environmentAddresses.length} 个`
+                                    : "未启用 Adapter"}
+                                </dd>
+                              </div>
+                            </dl>
+                          </>
                         ) : null}
                       </section>
                     ) : (
@@ -476,7 +458,7 @@ export function GlobalRunDialog({
                             <div className="global-run-runner-grid">
                               {(options?.runners ?? []).map((runner) => {
                                 const unavailable =
-                                  runner.state === "disabled" || Boolean(runner.purgedAt);
+                                  runner.state !== "online" || Boolean(runner.purgedAt);
                                 const selected = runnerIds.includes(runner.id);
                                 return (
                                   <label
@@ -492,8 +474,10 @@ export function GlobalRunDialog({
                                     <span>
                                       <strong>{runner.name}</strong>
                                       <small>
-                                        {runner.state} · 可用槽位{" "}
-                                        {Math.max(0, runner.maxConcurrency - runner.busySlots)}
+                                        {runnerStateLabel(runner.state)}
+                                        {runner.state === "online"
+                                          ? ` · 可用槽位 ${Math.max(0, runner.maxConcurrency - runner.busySlots)}`
+                                          : " · 当前不可执行"}
                                       </small>
                                     </span>
                                     {selected ? <Check aria-hidden="true" size={16} /> : null}
@@ -615,7 +599,16 @@ export function GlobalRunDialog({
                       <Button disabled={submitting} onClick={closeDialog} type="button">
                         取消
                       </Button>
-                      <Button disabled={submitting || loading} type="submit" variant="primary">
+                      <Button
+                        disabled={
+                          submitting ||
+                          loading ||
+                          (runKind === "suite" && !suiteExecutionResourceConfigured) ||
+                          (runKind === "case" && !caseDefinitionId)
+                        }
+                        type="submit"
+                        variant="primary"
+                      >
                         {submitting ? (
                           <LoaderCircle className="spin" size={16} />
                         ) : (
@@ -679,9 +672,34 @@ function suiteRunnerSummary(suite: CaseSuite, options: RunOptions | undefined): 
     return group ? `${group.name}（${group.runnerIds.length} 台）` : "执行机组已失效";
   }
   const runnerNames = suite.policy.runnerIds.map(
-    (runnerId) => options?.runners.find((runner) => runner.id === runnerId)?.name ?? runnerId,
+    (runnerId) => options?.runners.find((runner) => runner.id === runnerId)?.name ?? "执行机已失效",
   );
   return runnerNames.length > 0 ? runnerNames.join("、") : "尚未配置，请先编辑任务";
+}
+
+function suiteHasExecutionResource(suite: CaseSuite, options: RunOptions | undefined): boolean {
+  if (suite.policy.runnerGroupId) {
+    const group = options?.groups.find((candidate) => candidate.id === suite.policy.runnerGroupId);
+    return Boolean(group && group.runnerIds.length > 0);
+  }
+  return (
+    suite.policy.runnerIds.length > 0 &&
+    suite.policy.runnerIds.every((runnerId) =>
+      options?.runners.some(
+        (runner) => runner.id === runnerId && !runner.purgedAt && !runner.deregisteredAt,
+      ),
+    )
+  );
+}
+
+function runnerStateLabel(state: Runner["state"]): string {
+  const labels: Record<Runner["state"], string> = {
+    online: "在线",
+    offline: "离线",
+    draining: "排空中",
+    disabled: "已禁用",
+  };
+  return labels[state];
 }
 
 async function requestJson<T>(

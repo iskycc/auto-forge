@@ -15,6 +15,10 @@ import { parseSafeAnsi } from "@/lib/safe-ansi";
 
 type LogStream = "stdout" | "stderr" | "agent";
 
+function streamLabel(stream: LogStream): string {
+  return { stdout: "标准输出", stderr: "错误输出", agent: "Agent 诊断" }[stream];
+}
+
 function parseLiveLogMessage(value: unknown): { chunks: LogChunk[] } | null {
   if (typeof value !== "string") return null;
   try {
@@ -214,7 +218,7 @@ export function AttemptLogViewer({
 
   return (
     <TerminalLogViewer
-      title={`attempt ${attemptId.slice(0, 8)} · ${stream}${liveLogs ? " · live" : ""}`}
+      title={`执行日志 · ${attemptId.slice(0, 8)} · ${streamLabel(stream)}${liveLogs ? " · 实时" : ""}`}
       onClose={onClose}
     >
       <div className="log-toolbar">
@@ -250,16 +254,22 @@ export function AttemptLogViewer({
             value={query}
             onChange={(event) => setQuery(event.target.value)}
           />
-          <DatetimeInput
-            aria-label="日志开始时间"
-            value={recordedAfter}
-            onChange={(event) => setRecordedAfter(event.target.value)}
-          />
-          <DatetimeInput
-            aria-label="日志结束时间"
-            value={recordedBefore}
-            onChange={(event) => setRecordedBefore(event.target.value)}
-          />
+          <label className="log-time-filter">
+            <span>开始</span>
+            <DatetimeInput
+              aria-label="日志开始时间"
+              value={recordedAfter}
+              onChange={(event) => setRecordedAfter(event.target.value)}
+            />
+          </label>
+          <label className="log-time-filter">
+            <span>结束</span>
+            <DatetimeInput
+              aria-label="日志结束时间"
+              value={recordedBefore}
+              onChange={(event) => setRecordedBefore(event.target.value)}
+            />
+          </label>
           <Button className="button button-secondary compact-button" type="submit">
             筛选
           </Button>

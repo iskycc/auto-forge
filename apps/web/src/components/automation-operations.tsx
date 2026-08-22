@@ -96,14 +96,20 @@ export function AutomationOperations({
                 {schedules.map((schedule) => (
                   <tr key={schedule.id}>
                     <td>
-                      <Link href={`/case-suites/${schedule.suiteId}`}>
-                        {suiteName(suites, schedule.suiteId)}
-                      </Link>
-                      <small>{schedule.suiteId}</small>
+                      <span className="table-cell-stack">
+                        <Link href={`/case-suites/${schedule.suiteId}`}>
+                          {suiteName(suites, schedule.suiteId)}
+                        </Link>
+                        <small title={schedule.suiteId}>
+                          任务 ID · {shortId(schedule.suiteId)}
+                        </small>
+                      </span>
                     </td>
                     <td>
-                      <code>{schedule.cronExpression}</code>
-                      <small>{schedule.timeZone}</small>
+                      <span className="table-cell-stack">
+                        <code className="cron-expression">{schedule.cronExpression}</code>
+                        <small>{schedule.timeZone}</small>
+                      </span>
                     </td>
                     <td>
                       {schedule.enabled ? "启用" : "暂停"}
@@ -115,13 +121,18 @@ export function AutomationOperations({
                       </small>
                     </td>
                     <td>
-                      {schedule.lastTriggerAt ? formatDate(schedule.lastTriggerAt) : "尚未触发"}
-                      <small>下次：{formatDate(schedule.nextTriggerAt)}</small>
+                      <span className="table-cell-stack">
+                        <span>
+                          上次：
+                          {schedule.lastTriggerAt ? formatDate(schedule.lastTriggerAt) : "尚未触发"}
+                        </span>
+                        <small>下次：{formatDate(schedule.nextTriggerAt)}</small>
+                      </span>
                     </td>
                     <td>
                       {schedule.lastBatchId ? (
                         <Link href={`/run-batches/${schedule.lastBatchId}`}>
-                          {schedule.lastBatchId}
+                          批次 {shortId(schedule.lastBatchId)}
                         </Link>
                       ) : (
                         "—"
@@ -129,26 +140,34 @@ export function AutomationOperations({
                     </td>
                     <td>
                       {canManageSchedule(schedule) ? (
-                        <Button
-                          className="table-action"
-                          disabled={pending}
-                          onClick={() =>
-                            void request(
-                              `/api/v1/case-suites/${schedule.suiteId}/schedule`,
-                              jsonRequest("PUT", {
-                                cronExpression: schedule.cronExpression,
-                                timeZone: schedule.timeZone,
-                                missedRunPolicy: schedule.missedRunPolicy,
-                                enabled: !schedule.enabled,
-                                expectedRevision: schedule.revision,
-                              }),
-                              schedule.enabled ? "计划已暂停。" : "计划已启用。",
-                            )
-                          }
-                          type="button"
-                        >
-                          {schedule.enabled ? "暂停" : "启用"}
-                        </Button>
+                        <span className="button-row">
+                          <Link
+                            className="button button-secondary"
+                            href={`/case-suites/${schedule.suiteId}`}
+                          >
+                            编辑
+                          </Link>
+                          <Button
+                            className="table-action"
+                            disabled={pending}
+                            onClick={() =>
+                              void request(
+                                `/api/v1/case-suites/${schedule.suiteId}/schedule`,
+                                jsonRequest("PUT", {
+                                  cronExpression: schedule.cronExpression,
+                                  timeZone: schedule.timeZone,
+                                  missedRunPolicy: schedule.missedRunPolicy,
+                                  enabled: !schedule.enabled,
+                                  expectedRevision: schedule.revision,
+                                }),
+                                schedule.enabled ? "计划已暂停。" : "计划已启用。",
+                              )
+                            }
+                            type="button"
+                          >
+                            {schedule.enabled ? "暂停" : "启用"}
+                          </Button>
+                        </span>
                       ) : (
                         "仅查看"
                       )}
@@ -265,6 +284,10 @@ function jsonRequest(method: string, body: unknown): RequestInit {
 
 function suiteName(suites: Array<{ id: string; name: string }>, suiteId: string): string {
   return suites.find((suite) => suite.id === suiteId)?.name ?? suiteId;
+}
+
+function shortId(value: string): string {
+  return value.slice(0, 8);
 }
 
 function triggerStatusLabel(status: NonNullable<CaseSuiteSchedule["lastTriggerStatus"]>): string {

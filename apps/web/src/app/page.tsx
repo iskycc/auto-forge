@@ -129,9 +129,7 @@ export default async function DashboardPage() {
             </strong>
             <span>/ 100</span>
             {qualityDelta !== null && currentAnalytics && currentAnalytics.sampleCount > 0 ? (
-              <b className={qualityDelta >= 0 ? "trend-positive" : "trend-negative"}>
-                {qualityDelta >= 0 ? "↑" : "↓"} {Math.abs(qualityDelta).toFixed(1)}
-              </b>
+              <b className={deltaToneClass(qualityDelta)}>{deltaLabel(qualityDelta)}</b>
             ) : null}
           </div>
           <p className="quality-caption">
@@ -150,23 +148,19 @@ export default async function DashboardPage() {
             <DashboardMetric
               label="通过率"
               value={percent(currentAnalytics?.successRate ?? 0)}
-              detail={
-                qualityDelta === null
-                  ? "暂无上周基线"
-                  : `${qualityDelta >= 0 ? "↑" : "↓"} ${Math.abs(qualityDelta).toFixed(1)}%`
-              }
+              detail={qualityDelta === null ? "暂无上周基线" : `${deltaLabel(qualityDelta)}%`}
               tone="success"
             />
             <DashboardMetric
               label="失败数"
               value={currentAnalytics?.failed ?? 0}
-              detail={percent(currentAnalytics?.failureRate ?? 0)}
+              detail={`失败率 ${percent(currentAnalytics?.failureRate ?? 0)}`}
               tone="danger"
             />
             <DashboardMetric
               label="跳过数"
               value={currentAnalytics?.skipped ?? 0}
-              detail={percent(currentAnalytics?.skippedRate ?? 0)}
+              detail={`跳过率 ${percent(currentAnalytics?.skippedRate ?? 0)}`}
               tone="warning"
             />
           </div>
@@ -210,7 +204,7 @@ export default async function DashboardPage() {
                   <span>
                     <strong>{activeBatch.suiteName}</strong>
                     <small>
-                      {runBatchStatusLabel(activeBatch.status)} ·{" "}
+                      {dashboardRunStatusLabel(activeBatch.status)} ·{" "}
                       {activeBatch.selectedRunnerIds.length} 台执行机
                     </small>
                   </span>
@@ -261,7 +255,7 @@ export default async function DashboardPage() {
               <div>
                 <h2>执行机组</h2>
                 <span className="runner-health-label">
-                  <i /> 在线 {onlineRunners.length}/{runners.length}
+                  <i /> 执行机在线 {onlineRunners.length}/{runners.length}
                 </span>
               </div>
               <Link href="/runners?section=groups">查看全部</Link>
@@ -377,8 +371,8 @@ export default async function DashboardPage() {
                     )}
                   </span>
                   <span>
-                    <strong>{item.title}</strong>
-                    <small>{item.detail}</small>
+                    <strong title={item.title}>{item.title}</strong>
+                    <small title={item.detail}>{item.detail}</small>
                   </span>
                   <time dateTime={item.at}>{formatDate(item.at)}</time>
                 </Link>
@@ -531,8 +525,8 @@ function buildRecentActivity(
           ? `执行完成 · ${batch.suiteName}`
           : batch.status === "failed"
             ? `执行失败 · ${batch.suiteName}`
-            : `执行${runBatchStatusLabel(batch.status)} · ${batch.suiteName}`,
-      detail: `通过 ${batch.succeededRuns} / ${batch.totalRuns} · 失败 ${batch.failedRuns + batch.timedOutRuns}`,
+            : `执行${dashboardRunStatusLabel(batch.status)} · ${batch.suiteName}`,
+      detail: `批次 #${batch.sequenceNumber} · 通过 ${batch.succeededRuns} / ${batch.totalRuns} · 失败 ${batch.failedRuns + batch.timedOutRuns}`,
       at: batch.updatedAt,
       href: `/run-batches/${batch.id}`,
       tone:
@@ -554,6 +548,21 @@ function buildRecentActivity(
       tone: "info",
     })),
   ].sort((left, right) => right.at.localeCompare(left.at));
+}
+
+function deltaLabel(value: number): string {
+  if (Math.abs(value) < 0.05) return "— 0.0";
+  return `${value > 0 ? "↑" : "↓"} ${Math.abs(value).toFixed(1)}`;
+}
+
+function deltaToneClass(value: number): string {
+  if (Math.abs(value) < 0.05) return "trend-neutral";
+  return value > 0 ? "trend-positive" : "trend-negative";
+}
+
+function dashboardRunStatusLabel(status: RunBatch["status"]): string {
+  if (status === "dispatching" || status === "scheduled") return "准备执行";
+  return runBatchStatusLabel(status);
 }
 
 function availableRunnerSlots(runners: readonly Runner[]): number {

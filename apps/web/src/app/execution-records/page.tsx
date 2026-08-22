@@ -53,6 +53,7 @@ export default async function ExecutionRecordsPage({
   const refreshQuery = refreshQueryFromFilter(filter);
   const nextQuery = new URLSearchParams(refreshQuery);
   if (batchPage.nextCursor) nextQuery.set("cursor", batchPage.nextCursor);
+  const observedAt = new Date().toISOString();
   const rows: ExecutionRecordRow[] = batchPage.items.map((batch) => ({
     id: batch.id,
     sequenceNumber: batch.sequenceNumber,
@@ -68,6 +69,7 @@ export default async function ExecutionRecordsPage({
     selectedRunnerCount: batch.selectedRunnerIds.length,
     createdAt: batch.createdAt,
     updatedAt: batch.updatedAt,
+    observedAt,
     ...(batch.terminationRequestedAt
       ? { terminationRequestedAt: batch.terminationRequestedAt }
       : {}),

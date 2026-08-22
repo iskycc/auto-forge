@@ -75,6 +75,46 @@ test("administration entries are exposed as four-character first-level navigatio
   await expect(automationPage.getByRole("link", { name: "LDAP 配置", exact: true })).toHaveCount(0);
 });
 
+test("audit findings use bounded, localized, and unambiguous controls", async ({ page }) => {
+  await ensureAdministrator(page);
+
+  await page.goto("/settings/platform?section=configuration");
+  const deploymentMode = page.getByLabel("部署模式");
+  await expect(deploymentMode).toContainText(/Lite|Full/u);
+  await expect(deploymentMode.locator("select")).toHaveCount(0);
+  await expect(page.getByRole("main")).not.toContainText("/opt/auto-forge/");
+
+  await page.goto("/settings/access?section=ldap");
+  const ldapEnabled = page.getByLabel("启用 LDAP 登录");
+  if (!(await ldapEnabled.isChecked())) {
+    await expect(page.getByLabel("Bind DN")).toBeDisabled();
+    const testConnection = page.getByRole("button", { name: "测试连接" });
+    await expect(testConnection).toBeDisabled();
+    await expect(testConnection).toHaveCSS("background-color", "rgb(240, 240, 243)");
+    await ldapEnabled.check();
+    await expect(page.getByLabel("Bind DN")).toBeEnabled();
+  }
+
+  await page.goto("/audit");
+  await expect(page.getByRole("navigation", { name: "运维审计" })).toHaveCount(0);
+  await expect(page.getByLabel("操作者")).toHaveAttribute("list", "audit-actor-options");
+
+  await page.goto("/runners");
+  await expect(page.getByRole("navigation", { name: "执行资源视图" })).toHaveCount(0);
+
+  await page.goto("/case-suites");
+  await page.getByRole("button", { name: "创建任务" }).click();
+  const suiteDialog = page.getByRole("dialog", { name: "创建用例任务" });
+  await expect(suiteDialog.getByText("TestNG Suite Name")).toHaveCount(0);
+  await suiteDialog.getByLabel("使用 CoTest TestNG Adapter").check();
+  await expect(suiteDialog.getByText("TestNG Suite Name")).toBeVisible();
+  await page.keyboard.press("Escape");
+
+  await page.goto("/route-that-does-not-exist");
+  await expect(page.getByRole("heading", { name: "页面不存在" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "返回工作概览" })).toBeVisible();
+});
+
 test("top-bar project context persists across pages and removes local project switchers", async ({
   page,
 }) => {

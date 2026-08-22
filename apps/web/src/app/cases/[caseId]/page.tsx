@@ -27,6 +27,53 @@ function formatDate(value: string): string {
   }).format(new Date(value));
 }
 
+function executionStatusLabel(status: string): string {
+  return (
+    {
+      queued: "等待资源",
+      assigned: "已分配",
+      running: "执行中",
+      succeeded: "成功",
+      failed: "失败",
+      timed_out: "超时",
+      cancelled: "已取消",
+    }[status] ?? "未知状态"
+  );
+}
+
+function resultCodeLabel(code: string | undefined): string {
+  if (!code) return "—";
+  return (
+    {
+      succeeded: "成功",
+      failed: "失败",
+      skipped: "跳过",
+      timed_out: "超时",
+      cancelled: "已取消",
+      TESTNG_SUCCEEDED: "TestNG 通过",
+      TESTNG_SUCCEEDED_WITH_SKIPS: "TestNG 通过（含跳过）",
+      TESTNG_ASSERTIONS_FAILED: "TestNG 断言失败",
+      TESTNG_CONFIGURATION_FAILED: "TestNG 配置失败",
+      TESTNG_EXIT_NONZERO: "TestNG 异常退出",
+      TESTNG_FAILURE: "TestNG 执行失败",
+      TESTNG_NO_TESTS: "未发现 TestNG 测试",
+      ADAPTER_CASE_TIMEOUT: "Adapter 用例超时",
+      EXECUTION_TIMEOUT: "执行超时",
+      EXECUTION_CANCELLED: "执行已取消",
+      CANCELLED_BY_CONTROL_PLANE: "由控制面取消",
+      ASSIGNMENT_CLAIM_TIMEOUT: "执行机领取超时",
+      LEASE_EXPIRED: "执行租约已过期",
+      PROCESS_START_FAILED: "进程启动失败",
+      RESOURCE_MEMORY_EXCEEDED: "超出内存限制",
+      AGENT_RESTARTED_DURING_EXECUTION: "执行期间 Agent 重启",
+      BATCH_TERMINATED_BEFORE_EXECUTION: "执行前批次已终止",
+      OK: "成功",
+      PASSED: "通过",
+      TEST_ASSERTION_FAILED: "测试断言失败",
+    }[code] ?? "其他结果"
+  );
+}
+
 export default async function CaseDetailPage({ params }: CaseDetailPageProps) {
   const { identity, projectIds } = await requirePageProjectScope("case.read");
   const { caseId } = await params;
@@ -52,6 +99,11 @@ export default async function CaseDetailPage({ params }: CaseDetailPageProps) {
   const canManage = hasPermission(identity, "case.manage", definition.projectId);
   const canRun = hasPermission(identity, "run.create", definition.projectId);
   const canReadSource = hasPermission(identity, "case_source.read", definition.projectId);
+  const runnerDirectory = new Map(
+    hasPermission(identity, "runner.read")
+      ? (await services.runnerControl.list(500)).map((runner) => [runner.id, runner.name] as const)
+      : [],
+  );
   const sourceRecord = await services.caseSources.get(definition.sourceId, projectIds);
   const executable = sourceRecord.inspection.executable !== false;
   let sourceView: Awaited<ReturnType<typeof services.caseSources.readClassSource>> = null;
@@ -81,7 +133,7 @@ export default async function CaseDetailPage({ params }: CaseDetailPageProps) {
             <ArrowLeft size={15} aria-hidden="true" /> 返回用例管理
           </Link>
           <span className="eyebrow case-detail-eyebrow">Case Definition</span>
-          <h1>{definition.displayName}</h1>
+          <h1 title={definition.displayName}>{definition.displayName}</h1>
           <p>
             <code>{definition.className}</code>
           </p>
@@ -176,9 +228,13 @@ export default async function CaseDetailPage({ params }: CaseDetailPageProps) {
               {activity.executions.map((execution) => (
                 <tr key={execution.runId}>
                   <td>{formatDate(execution.finishedAt ?? execution.createdAt)}</td>
-                  <td>{execution.status}</td>
-                  <td>{execution.resultCode ?? "—"}</td>
-                  <td>{execution.runnerId ?? "—"}</td>
+                  <td>{executionStatusLabel(execution.status)}</td>
+                  <td title={execution.resultCode}>{resultCodeLabel(execution.resultCode)}</td>
+                  <td title={execution.runnerId}>
+                    {execution.runnerId
+                      ? (runnerDirectory.get(execution.runnerId) ?? execution.runnerId.slice(0, 8))
+                      : "—"}
+                  </td>
                   <td>
                     <Link href={`/run-batches/${encodeURIComponent(execution.batchId)}`}>
                       查看批次
@@ -217,7 +273,9 @@ export default async function CaseDetailPage({ params }: CaseDetailPageProps) {
               {activity.analyses.map((analysis) => (
                 <tr key={analysis.attemptId}>
                   <td>{formatDate(analysis.completedAt)}</td>
-                  <td>{analysis.resultCode ?? analysis.outcome}</td>
+                  <td title={analysis.resultCode ?? analysis.outcome}>
+                    {resultCodeLabel(analysis.resultCode ?? analysis.outcome)}
+                  </td>
                   <td>
                     {analysis.passed} / {analysis.failed} / {analysis.skipped}
                   </td>

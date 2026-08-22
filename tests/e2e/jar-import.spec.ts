@@ -1228,11 +1228,13 @@ public class MixedVisibleTest {
   await expect(page.locator(".settings-stack > .settings-section")).toHaveCount(1);
 
   await page.goto("/audit");
-  const operationsNavigation = page.getByRole("navigation", { name: "运维审计" });
-  await expect(operationsNavigation).toBeVisible();
-  await operationsNavigation.getByRole("link", { name: "运维计划" }).click();
+  await expect(page.getByRole("navigation", { name: "运维审计" })).toHaveCount(0);
+  await page
+    .getByRole("navigation", { name: "主导航" })
+    .getByRole("link", { name: "运维计划" })
+    .click();
   await expect(page.getByRole("heading", { name: "计划与目录作业" })).toBeVisible();
-  await expect(page.getByRole("navigation", { name: "运维审计" })).toBeVisible();
+  await expect(page.getByRole("navigation", { name: "运维审计" })).toHaveCount(0);
 
   for (const route of ["/settings/platform", "/settings/access"]) {
     await page.goto(route);

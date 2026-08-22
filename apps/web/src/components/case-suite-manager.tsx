@@ -9,6 +9,8 @@ import { ArrowRight, Layers3, LoaderCircle, Plus } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
 
+import { formatLocalDateTime } from "@/lib/run-batch-presentation";
+
 export function CaseSuiteManager({
   canManage,
   initialSuites,
@@ -121,34 +123,35 @@ export function CaseSuiteManager({
               />
               使用 CoTest TestNG Adapter
             </label>
-            <label>
-              <span>TestNG Suite Name</span>
-              <Input
-                value={adapterSuiteName}
-                onChange={(event) => setAdapterSuiteName(event.target.value)}
-                maxLength={512}
-                disabled={!adapterEnabled}
-              />
-            </label>
-            <label>
-              <span>TestNG Test Name</span>
-              <Input
-                value={adapterTestName}
-                onChange={(event) => setAdapterTestName(event.target.value)}
-                maxLength={512}
-                disabled={!adapterEnabled}
-              />
-            </label>
-            <label>
-              <span>环境 IP / 地址（每行一个）</span>
-              <Textarea
-                value={environmentAddresses}
-                onChange={(event) => setEnvironmentAddresses(event.target.value)}
-                rows={3}
-                placeholder={"10.0.0.11\n10.0.0.12"}
-                disabled={!adapterEnabled}
-              />
-            </label>
+            {adapterEnabled ? (
+              <>
+                <label>
+                  <span>TestNG Suite Name</span>
+                  <Input
+                    value={adapterSuiteName}
+                    onChange={(event) => setAdapterSuiteName(event.target.value)}
+                    maxLength={512}
+                  />
+                </label>
+                <label>
+                  <span>TestNG Test Name</span>
+                  <Input
+                    value={adapterTestName}
+                    onChange={(event) => setAdapterTestName(event.target.value)}
+                    maxLength={512}
+                  />
+                </label>
+                <label>
+                  <span>环境 IP / 地址（每行一个）</span>
+                  <Textarea
+                    value={environmentAddresses}
+                    onChange={(event) => setEnvironmentAddresses(event.target.value)}
+                    rows={3}
+                    placeholder={"10.0.0.11\n10.0.0.12"}
+                  />
+                </label>
+              </>
+            ) : null}
           </div>
           {error && (
             <span className="inline-error" role="alert">
@@ -175,13 +178,27 @@ export function CaseSuiteManager({
           </div>
         ) : (
           suites.map((suite) => (
-            <Link className="card suite-card" href={`/case-suites/${suite.id}`} key={suite.id}>
+            <Link
+              className={`card suite-card ${suite.status === "archived" ? "suite-card-archived" : ""} ${!suite.enabled ? "suite-card-disabled" : ""}`.trim()}
+              href={`/case-suites/${suite.id}`}
+              key={suite.id}
+            >
               <span className="suite-icon">
                 <Layers3 size={20} />
               </span>
               <span className="suite-copy">
-                <strong>{suite.name}</strong>
+                <span className="suite-title-line">
+                  <strong>{suite.name}</strong>
+                  <span
+                    className={`status-badge ${suite.status === "archived" || !suite.enabled ? "warning" : ""}`.trim()}
+                  >
+                    {suite.status === "archived" ? "已归档" : suite.enabled ? "已启用" : "已停用"}
+                  </span>
+                </span>
                 <small>{suite.description || "暂无说明"}</small>
+                <small>
+                  v{suite.version} · 更新于 {formatLocalDateTime(suite.updatedAt)}
+                </small>
               </span>
               <span className="suite-count">
                 <strong>{suite.caseCount}</strong>

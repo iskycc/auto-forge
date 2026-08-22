@@ -190,6 +190,15 @@ export function RunnerAgentInstaller({ controlPlaneUrl, profiles }: RunnerAgentI
           <span>当前使用明文 HTTP，Runner 凭据和任务数据不会被传输层加密，请仅用于可信内网。</span>
         </div>
       ) : null}
+      {controlPlaneUrl && isLoopbackUrl(controlPlaneUrl) ? (
+        <div className="inline-notice warning-notice" role="status">
+          <ShieldAlert size={18} />
+          <span>
+            当前控制面地址仅本机可达。安装到其他主机前，请在“平台配置”中设置 Runner
+            可访问的外部地址并重启平台。
+          </span>
+        </div>
+      ) : null}
 
       {profiles.length > 0 ? (
         <div className="runner-saved-profile-row">
@@ -475,4 +484,13 @@ async function postJson(path: string, body: unknown): Promise<unknown> {
 
 function errorMessage(cause: unknown): string {
   return cause instanceof Error ? cause.message : "执行机操作失败。";
+}
+
+function isLoopbackUrl(value: string): boolean {
+  try {
+    const hostname = new URL(value).hostname.toLowerCase();
+    return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]";
+  } catch {
+    return false;
+  }
 }

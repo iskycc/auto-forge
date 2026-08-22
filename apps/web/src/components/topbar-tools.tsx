@@ -7,11 +7,17 @@ import { Bell, Check, Search, X } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 
+import { notificationMessage, searchResultSubtitle } from "@/lib/topbar-presentation";
+
+type NotificationPage = { items: Notification[]; nextCursor?: string };
+
 export function TopbarTools() {
   const [query, setQuery] = useState("");
   const [searchItems, setSearchItems] = useState<GlobalSearchResult["items"]>([]);
   const [searchOpen, setSearchOpen] = useState(false);
   const [notifications, setNotifications] = useState<Notification[]>([]);
+  const [notificationCursor, setNotificationCursor] = useState<string>();
+  const [notificationsLoading, setNotificationsLoading] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [error, setError] = useState("");
   const searchInput = useRef<HTMLInputElement>(null);
@@ -69,13 +75,34 @@ export function TopbarTools() {
     setSearchOpen(false);
     if (!nextOpen) return;
     try {
-      const page = await requestJson<{ items: Notification[] }>(
+      const page = await requestJson<NotificationPage>(
         "/api/v1/notifications?unreadOnly=false&limit=30",
       );
       setNotifications(page.items);
+      setNotificationCursor(page.nextCursor);
       setError("");
     } catch (problem) {
       setError(problem instanceof Error ? problem.message : "读取通知失败。");
+    }
+  }
+
+  async function loadMoreNotifications() {
+    if (!notificationCursor || notificationsLoading) return;
+    setNotificationsLoading(true);
+    try {
+      const page = await requestJson<NotificationPage>(
+        `/api/v1/notifications?unreadOnly=false&limit=30&cursor=${encodeURIComponent(notificationCursor)}`,
+      );
+      setNotifications((current) => {
+        const knownIds = new Set(current.map((item) => item.id));
+        return [...current, ...page.items.filter((item) => !knownIds.has(item.id))];
+      });
+      setNotificationCursor(page.nextCursor);
+      setError("");
+    } catch (problem) {
+      setError(problem instanceof Error ? problem.message : "读取通知失败。");
+    } finally {
+      setNotificationsLoading(false);
     }
   }
 
@@ -142,7 +169,17 @@ export function TopbarTools() {
                   <span className="search-result-kind">{kindLabel(item.kind)}</span>
                   <span>
                     <strong>{item.title}</strong>
-                    <small>{item.subtitle}</small>
+                    <small>
+                      {searchResultSubtitle(
+                        item,
+                        searchItems.filter(
+                          (candidate) =>
+                            candidate.kind === item.kind &&
+                            candidate.title === item.title &&
+                            candidate.subtitle === item.subtitle,
+                        ).length > 1,
+                      )}
+                    </small>
                   </span>
                 </Link>
               ))
@@ -156,6 +193,7 @@ export function TopbarTools() {
           aria-label={unreadCount > 0 ? `${unreadCount} 条未读通知` : "通知"}
           className="icon-button"
           onClick={() => void openNotifications()}
+          title="通知中心"
           type="button"
         >
           <Bell size={19} />
@@ -186,13 +224,23 @@ export function TopbarTools() {
                   <span className={`notification-severity ${notification.severity}`} />
                   <span>
                     <strong>{notification.title}</strong>
-                    <small>{notification.message}</small>
+                    <small>{notificationMessage(notification)}</small>
                     <time>{formatDate(notification.createdAt)}</time>
                   </span>
                   {notification.readAt ? <Check size={14} aria-label="已读" /> : null}
                 </Button>
               ))
             )}
+            {notificationCursor ? (
+              <Button
+                className="notification-load-more"
+                disabled={notificationsLoading}
+                onClick={() => void loadMoreNotifications()}
+                type="button"
+              >
+                {notificationsLoading ? "正在加载…" : "加载更多通知"}
+              </Button>
+            ) : null}
           </div>
         ) : null}
       </div>

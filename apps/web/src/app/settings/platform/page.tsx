@@ -28,6 +28,13 @@ export default async function PlatformSettingsPage({
         ? "accounts"
         : "configuration";
   const heading = platformSectionHeading(activeSection);
+  const platformView = platformConfigurationView(
+    configuration,
+    services.configurationStore.paths.configurationFile,
+  );
+  const publicConfiguration = Object.fromEntries(
+    Object.entries(platformView).filter(([key]) => key !== "configurationFile"),
+  ) as Omit<typeof platformView, "configurationFile">;
   const [retentionPolicies, serviceAccounts, projects] = await Promise.all([
     activeSection === "retention"
       ? services.platformOperations.listRetentionPolicies(identity)
@@ -77,10 +84,7 @@ export default async function PlatformSettingsPage({
       {activeSection === "configuration" ? (
         <PlatformSettings
           canManage={hasPermission(identity, "settings.manage")}
-          initial={platformConfigurationView(
-            configuration,
-            services.configurationStore.paths.configurationFile,
-          )}
+          initial={publicConfiguration}
         />
       ) : null}
       {activeSection === "accounts" || activeSection === "retention" ? (

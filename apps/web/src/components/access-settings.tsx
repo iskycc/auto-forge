@@ -87,6 +87,7 @@ export function AccessSettings({
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [pending, setPending] = useState(false);
+  const [ldapEnabled, setLdapEnabled] = useState(ldap?.enabled ?? false);
   const [createDialog, setCreateDialog] = useState<
     "user" | "password" | "role" | "assignment" | null
   >(null);
@@ -224,7 +225,7 @@ export function AccessSettings({
 
   function submitLdapForm(formElement: HTMLFormElement, testOnly: boolean) {
     const form = new FormData(formElement);
-    const payload = ldapPayload(form);
+    const payload = ldapPayload(form, ldap, ldapEnabled);
     void request(
       testOnly ? "/api/v1/ldap/test" : "/api/v1/ldap/configuration",
       jsonRequest(testOnly ? "POST" : "PUT", payload),
@@ -725,115 +726,125 @@ export function AccessSettings({
               }}
             >
               <label className="checkbox-field">
-                <Input defaultChecked={ldap?.enabled ?? false} name="enabled" type="checkbox" />
+                <Input
+                  checked={ldapEnabled}
+                  name="enabled"
+                  onChange={(event) => setLdapEnabled(event.target.checked)}
+                  type="checkbox"
+                />
                 启用 LDAP 登录
               </label>
-              <label>
-                TLS 模式
-                <Select defaultValue={ldap?.tlsMode ?? "ldaps"} name="tlsMode">
-                  <option value="ldaps">LDAPS</option>
-                  <option value="starttls">StartTLS</option>
-                </Select>
-              </label>
-              <label className="settings-wide-field">
-                服务器地址（每行一个）
-                <Textarea
-                  defaultValue={ldap?.urls.join("\n") ?? "ldaps://ldap.internal:636"}
-                  name="urls"
-                  required
-                  rows={2}
-                />
-              </label>
-              <label>
-                Bind DN
-                <Input defaultValue={ldap?.bindDn} name="bindDn" required />
-              </label>
-              <label>
-                Bind 密码
-                <Input
-                  name="bindPassword"
-                  placeholder={ldap?.bindPasswordConfigured ? "留空以保持现有密文" : "必填"}
-                  required={!ldap?.bindPasswordConfigured}
-                  type="password"
-                />
-              </label>
-              <label>
-                LDAP 分页大小
-                <Input
-                  defaultValue={ldap?.pageSize ?? 500}
-                  max={1000}
-                  min={50}
-                  name="pageSize"
-                  type="number"
-                />
-              </label>
-              <label>
-                单次同步用户上限
-                <Input
-                  defaultValue={ldap?.maximumUsers ?? 5000}
-                  max={50000}
-                  min={1}
-                  name="maximumUsers"
-                  type="number"
-                />
-              </label>
-              <label>
-                计划同步间隔（分钟，0 为关闭）
-                <Input
-                  defaultValue={ldap?.synchronizationIntervalMinutes ?? 0}
-                  max={10080}
-                  min={0}
-                  name="synchronizationIntervalMinutes"
-                  type="number"
-                />
-              </label>
-              <label className="settings-wide-field">
-                用户 Base DN
-                <Input defaultValue={ldap?.userBaseDn} name="userBaseDn" required />
-              </label>
-              <label className="settings-wide-field">
-                用户过滤器
-                <Input
-                  defaultValue={ldap?.userFilter ?? "(&(objectClass=person)(uid={username}))"}
-                  name="userFilter"
-                  required
-                />
-              </label>
-              <label>
-                稳定 ID 属性
-                <Input defaultValue={ldap?.userIdAttribute ?? "entryUUID"} name="userIdAttribute" />
-              </label>
-              <label>
-                用户名属性
-                <Input defaultValue={ldap?.usernameAttribute ?? "uid"} name="usernameAttribute" />
-              </label>
-              <label>
-                显示名属性
-                <Input
-                  defaultValue={ldap?.displayNameAttribute ?? "displayName"}
-                  name="displayNameAttribute"
-                />
-              </label>
-              <label>
-                邮箱属性
-                <Input defaultValue={ldap?.emailAttribute ?? "mail"} name="emailAttribute" />
-              </label>
-              <label className="settings-wide-field">
-                组 Base DN（可选）
-                <Input defaultValue={ldap?.groupBaseDn} name="groupBaseDn" />
-              </label>
-              <label className="settings-wide-field">
-                组过滤器（可选，使用 {"{userDn}"}）
-                <Input defaultValue={ldap?.groupFilter} name="groupFilter" />
-              </label>
-              <label className="settings-wide-field">
-                私有 CA PEM（可选）
-                <Textarea defaultValue={ldap?.caPem} name="caPem" rows={5} />
-              </label>
+              <fieldset className="settings-form-fieldset" disabled={!ldapEnabled}>
+                <label>
+                  TLS 模式
+                  <Select defaultValue={ldap?.tlsMode ?? "ldaps"} name="tlsMode">
+                    <option value="ldaps">LDAPS</option>
+                    <option value="starttls">StartTLS</option>
+                  </Select>
+                </label>
+                <label className="settings-wide-field">
+                  服务器地址（每行一个）
+                  <Textarea
+                    defaultValue={ldap?.urls.join("\n") ?? "ldaps://ldap.internal:636"}
+                    name="urls"
+                    required
+                    rows={2}
+                  />
+                </label>
+                <label>
+                  Bind DN
+                  <Input defaultValue={ldap?.bindDn} name="bindDn" required />
+                </label>
+                <label>
+                  Bind 密码
+                  <Input
+                    name="bindPassword"
+                    placeholder={ldap?.bindPasswordConfigured ? "留空以保持现有密文" : "必填"}
+                    required={!ldap?.bindPasswordConfigured}
+                    type="password"
+                  />
+                </label>
+                <label>
+                  LDAP 分页大小
+                  <Input
+                    defaultValue={ldap?.pageSize ?? 500}
+                    max={1000}
+                    min={50}
+                    name="pageSize"
+                    type="number"
+                  />
+                </label>
+                <label>
+                  单次同步用户上限
+                  <Input
+                    defaultValue={ldap?.maximumUsers ?? 5000}
+                    max={50000}
+                    min={1}
+                    name="maximumUsers"
+                    type="number"
+                  />
+                </label>
+                <label>
+                  计划同步间隔（分钟，0 为关闭）
+                  <Input
+                    defaultValue={ldap?.synchronizationIntervalMinutes ?? 0}
+                    max={10080}
+                    min={0}
+                    name="synchronizationIntervalMinutes"
+                    type="number"
+                  />
+                </label>
+                <label className="settings-wide-field">
+                  用户 Base DN
+                  <Input defaultValue={ldap?.userBaseDn} name="userBaseDn" required />
+                </label>
+                <label className="settings-wide-field">
+                  用户过滤器
+                  <Input
+                    defaultValue={ldap?.userFilter ?? "(&(objectClass=person)(uid={username}))"}
+                    name="userFilter"
+                    required
+                  />
+                </label>
+                <label>
+                  稳定 ID 属性
+                  <Input
+                    defaultValue={ldap?.userIdAttribute ?? "entryUUID"}
+                    name="userIdAttribute"
+                  />
+                </label>
+                <label>
+                  用户名属性
+                  <Input defaultValue={ldap?.usernameAttribute ?? "uid"} name="usernameAttribute" />
+                </label>
+                <label>
+                  显示名属性
+                  <Input
+                    defaultValue={ldap?.displayNameAttribute ?? "displayName"}
+                    name="displayNameAttribute"
+                  />
+                </label>
+                <label>
+                  邮箱属性
+                  <Input defaultValue={ldap?.emailAttribute ?? "mail"} name="emailAttribute" />
+                </label>
+                <label className="settings-wide-field">
+                  组 Base DN（可选）
+                  <Input defaultValue={ldap?.groupBaseDn} name="groupBaseDn" />
+                </label>
+                <label className="settings-wide-field">
+                  组过滤器（可选，使用 {"{userDn}"}）
+                  <Input defaultValue={ldap?.groupFilter} name="groupFilter" />
+                </label>
+                <label className="settings-wide-field">
+                  私有 CA PEM（可选）
+                  <Textarea defaultValue={ldap?.caPem} name="caPem" rows={5} />
+                </label>
+              </fieldset>
               <div className="settings-form-actions">
                 <Button
                   className="secondary-button"
-                  disabled={pending}
+                  disabled={pending || !ldapEnabled}
                   onClick={(event) => {
                     const form = event.currentTarget.form;
                     if (form) submitLdapForm(form, true);
@@ -842,7 +853,11 @@ export function AccessSettings({
                 >
                   <RefreshCw size={16} /> 测试连接
                 </Button>
-                <Button className="primary-button" disabled={pending} type="submit">
+                <Button
+                  className="primary-button"
+                  disabled={pending || (!ldapEnabled && !ldap)}
+                  type="submit"
+                >
                   保存 LDAP 配置
                 </Button>
               </div>
@@ -1043,10 +1058,33 @@ function assignedRoleCount(
   );
 }
 
-function ldapPayload(form: FormData) {
+function ldapPayload(form: FormData, current: LdapView | null, enabled: boolean) {
+  if (!enabled && current) {
+    return {
+      enabled: false,
+      urls: current.urls,
+      tlsMode: current.tlsMode,
+      caPem: current.caPem,
+      connectTimeoutMs: current.connectTimeoutMs,
+      operationTimeoutMs: current.operationTimeoutMs,
+      pageSize: current.pageSize,
+      maximumUsers: current.maximumUsers,
+      synchronizationIntervalMinutes: current.synchronizationIntervalMinutes,
+      bindDn: current.bindDn,
+      userBaseDn: current.userBaseDn,
+      userFilter: current.userFilter,
+      userIdAttribute: current.userIdAttribute,
+      usernameAttribute: current.usernameAttribute,
+      displayNameAttribute: current.displayNameAttribute,
+      emailAttribute: current.emailAttribute,
+      groupBaseDn: current.groupBaseDn,
+      groupFilter: current.groupFilter,
+      groupMemberAttribute: current.groupMemberAttribute,
+    };
+  }
   const optional = (name: string) => String(form.get(name) ?? "").trim() || undefined;
   return {
-    enabled: form.get("enabled") === "on",
+    enabled,
     urls: String(form.get("urls") ?? "")
       .split(/\r?\n/)
       .map((value) => value.trim())

@@ -9,6 +9,8 @@ import type {
 import { projectIdsForPermission } from "@autoforge/domain";
 import { cookies } from "next/headers";
 
+import { fallbackProjectId } from "./project-selection";
+
 export const SELECTED_PROJECT_COOKIE_NAME = "autoforge_project";
 export const SELECTED_PROJECT_VERSION_COOKIE_NAME = "autoforge_project_version";
 export const SELECTED_TEST_STAGE_COOKIE_NAME = "autoforge_test_stage";
@@ -62,7 +64,7 @@ export async function selectedProjectId(
   const requestedProjectId = (await cookies()).get(SELECTED_PROJECT_COOKIE_NAME)?.value;
   return accessibleProjects.some((project) => project.id === requestedProjectId)
     ? requestedProjectId
-    : accessibleProjects[0]?.id;
+    : fallbackProjectId(accessibleProjects);
 }
 
 export async function selectedProjectHierarchy(

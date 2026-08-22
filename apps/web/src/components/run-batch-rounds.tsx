@@ -728,12 +728,14 @@ function RoundDetailPanel({
     0,
     summary.executed - summary.passed - summary.failed - summary.timedOut - summary.cancelled,
   );
+  const notExecuted = Math.max(0, batch.totalRuns - summary.executed);
   const resultSegments: DonutChartSegment[] = [
     { label: "通过", value: summary.passed, color: "var(--color-success)" },
     { label: "失败", value: summary.failed, color: "var(--color-danger)" },
     { label: "超时", value: summary.timedOut, color: "var(--color-warning)" },
     { label: "进行中", value: inProgress, color: "var(--color-info)" },
     { label: "取消", value: summary.cancelled, color: "var(--color-text-tertiary)" },
+    { label: "未执行", value: notExecuted, color: "var(--color-border-strong)" },
   ];
   const progressSegments: DonutChartSegment[] = [
     { label: "累计通过", value: passedRunsSoFar, color: "var(--color-success)" },
@@ -806,7 +808,7 @@ function RoundDetailPanel({
               segments={resultSegments}
               centerValue={String(summary.executed)}
               centerLabel="已执行"
-              ariaLabel={`本轮结果分布：通过 ${summary.passed}，失败 ${summary.failed}，超时 ${summary.timedOut}，进行中 ${inProgress}，取消 ${summary.cancelled}`}
+              ariaLabel={`本轮结果分布：通过 ${summary.passed}，失败 ${summary.failed}，超时 ${summary.timedOut}，进行中 ${inProgress}，取消 ${summary.cancelled}，未执行 ${notExecuted}`}
             />
           </div>
           <div className="round-donut-block">

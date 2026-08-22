@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   executionRecordColumnWidths,
+  executionRecordDurationMs,
   executionRecordStatusLabel,
   type ExecutionRecordRow,
 } from "./execution-record-columns";
@@ -22,6 +23,7 @@ function row(index: number, suiteName = "日常回归任务"): ExecutionRecordRo
     selectedRunnerCount: 2,
     createdAt: "2026-08-20T08:00:00.000Z",
     updatedAt: "2026-08-20T08:00:12.000Z",
+    observedAt: "2026-08-20T08:01:00.000Z",
   };
 }
 
@@ -50,5 +52,11 @@ describe("executionRecordColumnWidths", () => {
     expect(executionRecordStatusLabel("failed")).toBe("执行异常");
     expect(executionRecordStatusLabel("cancelled")).toBe("已终止");
     expect(executionRecordStatusLabel("succeeded")).toBe("执行完成");
+  });
+
+  it("uses observation time only while a batch is active", () => {
+    const active = { ...row(1), status: "running" as const };
+    expect(executionRecordDurationMs(active)).toBe(60_000);
+    expect(executionRecordDurationMs({ ...active, status: "failed" })).toBe(12_000);
   });
 });

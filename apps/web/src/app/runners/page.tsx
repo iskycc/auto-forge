@@ -1,4 +1,4 @@
-import { Clock3, Server, ShieldCheck } from "lucide-react";
+import { Clock3, Search, Server, ShieldCheck } from "lucide-react";
 import {
   assessRunnerCompatibility,
   hasPermission,
@@ -13,7 +13,6 @@ import { RunnerTerminal } from "@/components/runner-terminal";
 import { RunnerUpdateDialog } from "@/components/runner-update-dialog";
 import { RunnerGroupManager } from "@/components/runner-group-manager";
 import { BatchRunnerUpdate } from "@/components/batch-runner-update";
-import { SectionTabs } from "@/components/section-tabs";
 import { getPlatformServices } from "@/lib/services";
 import { requirePagePermission } from "@/lib/auth";
 import {
@@ -22,6 +21,9 @@ import {
   runnerToolchainSummary,
 } from "@/lib/runner-compatibility";
 import { selectableProjectIds, selectedProjectId } from "@/lib/selected-project";
+import { runBatchStatusLabel } from "@/lib/run-batch-presentation";
+import { Button, Input, Select } from "@/components/ui";
+import Link from "next/link";
 
 export const dynamic = "force-dynamic";
 
@@ -61,13 +63,6 @@ export default async function RunnersPage({
           </div>
           <span className="storage-pill">{runnerGroups.length} 个资源组</span>
         </section>
-        <SectionTabs
-          label="执行资源视图"
-          tabs={[
-            { href: "/runners", label: "执行机", active: false },
-            { href: "/runners?section=groups", label: "执行机组", active: true },
-          ]}
-        />
         <RunnerGroupManager canManage={canManage} initialGroups={runnerGroups} runners={runners} />
       </div>
     );
@@ -85,6 +80,23 @@ export default async function RunnersPage({
     // Runner operators without run.read can manage node lifecycle without seeing project execution data.
   }
   const onlineCount = runners.filter((runner) => runner.state === "online").length;
+  const runnerQuery = singleParameter(parameters.query).toLocaleLowerCase("zh-CN");
+  const runnerState = runnerStateParameter(parameters.state);
+  const filteredRunners = runners.filter(
+    (runner) =>
+      (!runnerState || runner.state === runnerState) &&
+      (!runnerQuery ||
+        `${runner.name} ${runner.id} ${runner.labels.join(" ")}`
+          .toLocaleLowerCase("zh-CN")
+          .includes(runnerQuery)),
+  );
+  const pageSize = 12;
+  const pageCount = Math.max(1, Math.ceil(filteredRunners.length / pageSize));
+  const currentPage = Math.min(pageCount, positiveInteger(parameters.page));
+  const visibleRunners = filteredRunners.slice(
+    (currentPage - 1) * pageSize,
+    currentPage * pageSize,
+  );
   const incompatibleCount = runners.filter(
     (runner) => !assessRunnerCompatibility(runner).compatible,
   ).length;
@@ -131,13 +143,6 @@ export default async function RunnersPage({
           <span className="live-dot" /> 在线 {onlineCount} / {runners.length}
         </span>
       </section>
-      <SectionTabs
-        label="执行资源视图"
-        tabs={[
-          { href: "/runners", label: "执行机", active: true },
-          { href: "/runners?section=groups", label: "执行机组", active: false },
-        ]}
-      />
       {canManage ? (
         <RunnerAgentInstaller
           controlPlaneUrl={services.config.web.publicBaseUrl}
@@ -171,9 +176,36 @@ export default async function RunnersPage({
             {canManage && bundledAgentVersion ? (
               <BatchRunnerUpdate latestVersion={bundledAgentVersion} targets={updateTargets} />
             ) : null}
-            <span className="table-count">共 {runners.length} 台</span>
+            <span className="table-count">
+              {filteredRunners.length === runners.length
+                ? `共 ${runners.length} 台`
+                : `匹配 ${filteredRunners.length} / ${runners.length} 台`}
+            </span>
           </div>
         </div>
+        <form action="/runners" className="runner-list-filter" method="get">
+          <label>
+            搜索执行机
+            <Input
+              defaultValue={singleParameter(parameters.query)}
+              name="query"
+              placeholder="名称或标签"
+            />
+          </label>
+          <label>
+            状态
+            <Select defaultValue={runnerState ?? ""} name="state">
+              <option value="">全部状态</option>
+              <option value="online">在线</option>
+              <option value="offline">离线</option>
+              <option value="draining">排空中</option>
+              <option value="disabled">已禁用</option>
+            </Select>
+          </label>
+          <Button type="submit" variant="secondary">
+            <Search size={16} /> 筛选
+          </Button>
+        </form>
         {runners.length === 0 ? (
           <div className="empty-state table-empty">
             <span className="empty-icon">
@@ -182,9 +214,11 @@ export default async function RunnersPage({
             <strong>尚未注册执行机</strong>
             <p>在上方填写执行机连接信息并完成自动安装后，Agent 会自动注册并出现在这里。</p>
           </div>
+        ) : visibleRunners.length === 0 ? (
+          <div className="inline-empty">没有匹配当前筛选条件的执行机。</div>
         ) : (
           <div className="runner-list" role="table" aria-label="执行机列表">
-            {runners.map((runner) => {
+            {visibleRunners.map((runner) => {
               const compatibility = assessRunnerCompatibility(runner);
               const updateAvailable = bundledAgentVersion
                 ? isAgentUpdateAvailable(runner.agentVersion, bundledAgentVersion)
@@ -288,9 +322,53 @@ export default async function RunnersPage({
             })}
           </div>
         )}
+        {pageCount > 1 ? (
+          <nav aria-label="执行机分页" className="pagination">
+            {currentPage > 1 ? (
+              <Link href={runnerPageHref(parameters, currentPage - 1)}>上一页</Link>
+            ) : (
+              <span />
+            )}
+            <span>
+              第 {currentPage} / {pageCount} 页
+            </span>
+            {currentPage < pageCount ? (
+              <Link href={runnerPageHref(parameters, currentPage + 1)}>下一页</Link>
+            ) : null}
+          </nav>
+        ) : null}
       </section>
     </div>
   );
+}
+
+function singleParameter(value: string | string[] | undefined): string {
+  return (Array.isArray(value) ? value[0] : value)?.trim().slice(0, 120) ?? "";
+}
+
+function runnerStateParameter(value: string | string[] | undefined): Runner["state"] | undefined {
+  const state = singleParameter(value);
+  return ["online", "offline", "draining", "disabled"].includes(state)
+    ? (state as Runner["state"])
+    : undefined;
+}
+
+function positiveInteger(value: string | string[] | undefined): number {
+  const parsed = Number(singleParameter(value));
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : 1;
+}
+
+function runnerPageHref(
+  parameters: Record<string, string | string[] | undefined>,
+  page: number,
+): string {
+  const next = new URLSearchParams();
+  const query = singleParameter(parameters.query);
+  const state = runnerStateParameter(parameters.state);
+  if (query) next.set("query", query);
+  if (state) next.set("state", state);
+  next.set("page", String(page));
+  return `/runners?${next}`;
 }
 
 function runnerStateLabel(runner: Runner): string {
@@ -310,5 +388,5 @@ function runnerResourceSummary(runner: Runner): string {
 
 function recentBatchLabel(batches: RunBatch[], runnerId: string): string {
   const batch = batches.find((candidate) => candidate.selectedRunnerIds.includes(runnerId));
-  return batch ? `${batch.suiteName} · ${batch.status}` : "暂无可见任务";
+  return batch ? `${batch.suiteName} · ${runBatchStatusLabel(batch.status)}` : "暂无可见任务";
 }

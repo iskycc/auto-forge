@@ -1,6 +1,6 @@
 "use client";
 
-import { Button, Input, Select, Textarea } from "@/components/ui";
+import { Button, Input, Textarea } from "@/components/ui";
 
 import type { PlatformConfigurationView } from "@autoforge/contracts";
 import { Save, ServerCog } from "lucide-react";
@@ -10,10 +10,9 @@ export function PlatformSettings({
   initial,
   canManage,
 }: {
-  initial: PlatformConfigurationView;
+  initial: Omit<PlatformConfigurationView, "configurationFile">;
   canManage: boolean;
 }) {
-  const [mode, setMode] = useState(initial.mode);
   const [revision, setRevision] = useState(initial.revision);
   const [pending, setPending] = useState(false);
   const [message, setMessage] = useState("");
@@ -32,7 +31,7 @@ export function PlatformSettings({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           revision,
-          mode,
+          mode: initial.mode,
           web: {
             hostname: form.get("hostname"),
             port: numberValue(form, "port"),
@@ -64,7 +63,7 @@ export function PlatformSettings({
             metricsEnabled: form.get("workerMetricsEnabled") === "on",
             shutdownGraceMs: numberValue(form, "workerShutdownGraceMs"),
           },
-          ...(mode === "full" ? { full: fullConfiguration(form) } : {}),
+          ...(initial.mode === "full" ? { full: fullConfiguration(form) } : {}),
         }),
       });
       const body = (await response.json()) as {
@@ -106,17 +105,18 @@ export function PlatformSettings({
             <ServerCog size={22} aria-hidden="true" />
           </div>
           <p className="settings-note">
-            配置持久化到 <code>{initial.configurationFile}</code>
-            ，不从环境变量读取。运行模式仅在重启时生效。
+            配置保存在平台数据目录中，不从环境变量读取。运行参数仅在重启时生效。
           </p>
           <div className="settings-grid-form">
-            <label>
-              部署模式
-              <Select value={mode} onChange={(event) => setMode(event.target.value as typeof mode)}>
-                <option value="lite">Lite · SQLite 与本地对象</option>
-                <option value="full">Full · PostgreSQL/NATS/MinIO/Redis</option>
-              </Select>
-            </label>
+            <div className="deployment-mode-display" aria-label="部署模式">
+              <span>部署模式</span>
+              <strong>
+                {initial.mode === "lite"
+                  ? "Lite · SQLite 与本地对象"
+                  : "Full · PostgreSQL/NATS/MinIO/Redis"}
+              </strong>
+              <small>由部署配置决定，不能在运行中的管理页面切换。</small>
+            </div>
             <label>
               监听地址
               <Input defaultValue={initial.web.hostname} name="hostname" required />
@@ -154,7 +154,7 @@ export function PlatformSettings({
           </div>
         </section>
 
-        {mode === "full" ? (
+        {initial.mode === "full" ? (
           <section className="content-card settings-section">
             <div className="section-heading">
               <div>

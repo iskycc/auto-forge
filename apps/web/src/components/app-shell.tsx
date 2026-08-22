@@ -293,14 +293,24 @@ export function AppShell({
             ) : null}
             {!forcePasswordChange && granted.has("case_source.manage") ? (
               <>
-                <Link className="icon-button" href="/cases/import" aria-label="JAR 导入帮助">
+                <Link
+                  className="icon-button"
+                  href="/cases/import"
+                  aria-label="JAR 导入帮助"
+                  title="JAR 导入帮助"
+                >
                   <CircleHelp size={19} />
                 </Link>
                 <span className="header-divider" aria-hidden="true" />
               </>
             ) : null}
             {userName ? (
-              <Link className="icon-button" href="/account/security" aria-label="账号安全">
+              <Link
+                className="icon-button"
+                href="/account/security"
+                aria-label="账号安全"
+                title="账号安全"
+              >
                 <KeyRound size={18} />
               </Link>
             ) : null}

@@ -18,6 +18,7 @@ export type ExecutionRecordRow = {
   selectedRunnerCount: number;
   createdAt: string;
   updatedAt: string;
+  observedAt: string;
   terminationRequestedAt?: string;
 };
 
@@ -131,10 +132,7 @@ export const EXECUTION_RECORD_COLUMNS: readonly ExecutionRecordColumnDefinition[
     defaultWidth: 100,
     minWidth: 70,
     maxWidth: 130,
-    text: (row) =>
-      executionRecordIsActive(row.status)
-        ? "执行中"
-        : formatBatchDuration(executionRecordDurationMs(row)),
+    text: (row) => formatBatchDuration(executionRecordDurationMs(row)),
   },
   {
     key: "actions",
@@ -205,10 +203,10 @@ export function executionRecordPassRate(
 }
 
 export function executionRecordDurationMs(
-  row: Pick<ExecutionRecordRow, "createdAt" | "updatedAt">,
+  row: Pick<ExecutionRecordRow, "createdAt" | "updatedAt" | "observedAt" | "status">,
 ): number {
   const start = Date.parse(row.createdAt);
-  const end = Date.parse(row.updatedAt);
+  const end = Date.parse(executionRecordIsActive(row.status) ? row.observedAt : row.updatedAt);
   return Number.isNaN(start) || Number.isNaN(end) || end <= start ? 0 : end - start;
 }
 

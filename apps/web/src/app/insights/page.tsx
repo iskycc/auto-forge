@@ -7,7 +7,6 @@ import Link from "next/link";
 
 import { requireAuthorizedPageProjectScope, requirePageProjectScope } from "@/lib/auth";
 import { getPlatformServices } from "@/lib/services";
-import { listCompleteCaseDirectory } from "@/lib/case-directory";
 import { formatRate, type CaseLatestRun } from "@/lib/case-selection-stats";
 import { classifyAttemptResult } from "@autoforge/domain";
 import { AnalyticsExportControl } from "@/components/analytics-export-control";
@@ -16,8 +15,9 @@ import {
   selectedProjectHierarchy,
   selectedProjectId,
 } from "@/lib/selected-project";
+import { formatLocalDateTime, runBatchStatusLabel } from "@/lib/run-batch-presentation";
 
-const CASE_OUTCOME_DETAIL_LIMIT = 500;
+const CASE_OUTCOME_PAGE_SIZE = 25;
 
 type CaseOutcomeReport = {
   projectId: string;
@@ -28,6 +28,7 @@ type CaseOutcomeReport = {
   cases: CaseDefinitionWithMethods[];
   outcomes: Map<string, CaseLatestRun>;
   executedAt: Map<string, string>;
+  nextCursor?: string;
 };
 
 export const dynamic = "force-dynamic";
@@ -60,10 +61,11 @@ export default async function InsightsPage({
     ...(hierarchy.projectVersionId ? { projectVersionId: hierarchy.projectVersionId } : {}),
     ...(hierarchy.testStageId ? { testStageId: hierarchy.testStageId } : {}),
   };
-  const [summary, suites, runners] = await Promise.all([
+  const [summary, suites, runners, recentBatches] = await Promise.all([
     services.platformOperations.analytics(identity, filter),
     services.caseSuites.list(500, caseProjectId ? [caseProjectId] : []),
     services.runnerControl.list(500),
+    services.runBatches.list(100, caseProjectId ? [caseProjectId] : []),
   ]);
   const comparison =
     typeof parameters.leftBatchId === "string" && typeof parameters.rightBatchId === "string"
@@ -79,7 +81,11 @@ export default async function InsightsPage({
     ...(hierarchy.projectVersionId ? { caseProjectVersionId: hierarchy.projectVersionId } : {}),
     ...(hierarchy.testStageId ? { caseTestStageId: hierarchy.testStageId } : {}),
     ...(projectIds ? { allowedProjectIds: projectIds } : {}),
+    ...(stringParameter(parameters.caseCursor)
+      ? { cursor: stringParameter(parameters.caseCursor) }
+      : {}),
   });
+  const caseCursorTrail = cursorTrail(parameters.caseTrail);
   const methodSampleCount = summary.passed + summary.failed + summary.skipped;
   const trendMaximum = Math.max(1, ...summary.trend.map((entry) => entry.total));
   return (
@@ -149,14 +155,14 @@ export default async function InsightsPage({
               <Input defaultValue={filter.failureSignature ?? ""} name="failureSignature" />
             </label>
             <label>
-              开始时间（UTC）
+              开始时间（本地）
               <DatetimeInput
                 defaultValue={dateTimeLocal(filter.completedAfter)}
                 name="completedAfter"
               />
             </label>
             <label>
-              结束时间（UTC）
+              结束时间（本地）
               <DatetimeInput
                 defaultValue={dateTimeLocal(filter.completedBefore)}
                 name="completedBefore"
@@ -191,7 +197,7 @@ export default async function InsightsPage({
               <h2>每日趋势</h2>
             </div>
             <span className="muted">
-              UTC · {methodSampleCount} 个方法结果 · {summary.sampleCount} 次执行
+              已确认方法结果 {methodSampleCount} 个 · 执行样本 {summary.sampleCount} 次
             </span>
           </div>
           {summary.trend.length === 0 ? (
@@ -248,30 +254,33 @@ export default async function InsightsPage({
             </>
           )}
           {summary.trend.length > 0 ? (
-            <div className="table-scroll">
-              <table className="data-table insight-data-table">
-                <thead>
-                  <tr>
-                    <th>日期（UTC）</th>
-                    <th>方法总数</th>
-                    <th>通过方法</th>
-                    <th>失败方法</th>
-                    <th>跳过方法</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {summary.trend.map((bucket) => (
-                    <tr key={bucket.bucket}>
-                      <td>{bucket.bucket.slice(0, 10)}</td>
-                      <td>{bucket.total}</td>
-                      <td>{bucket.passed}</td>
-                      <td>{bucket.failed}</td>
-                      <td>{bucket.skipped}</td>
+            <details className="insight-trend-details">
+              <summary>查看每日明细（{summary.trend.length} 天）</summary>
+              <div className="table-scroll">
+                <table className="data-table insight-data-table">
+                  <thead>
+                    <tr>
+                      <th>日期（UTC）</th>
+                      <th>方法总数</th>
+                      <th>通过方法</th>
+                      <th>失败方法</th>
+                      <th>跳过方法</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                  </thead>
+                  <tbody>
+                    {summary.trend.map((bucket) => (
+                      <tr key={bucket.bucket}>
+                        <td>{bucket.bucket.slice(0, 10)}</td>
+                        <td>{bucket.total}</td>
+                        <td>{bucket.passed}</td>
+                        <td>{bucket.failed}</td>
+                        <td>{bucket.skipped}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </details>
           ) : null}
         </article>
 
@@ -290,9 +299,7 @@ export default async function InsightsPage({
                 <li key={failure.signature}>
                   <span>
                     <strong title={failure.description}>{failure.description}</strong>
-                    <small>
-                      最近出现于 {failure.lastSeenAt.slice(0, 19).replace("T", " ")} UTC
-                    </small>
+                    <small>最近出现于 {formatLocalDateTime(failure.lastSeenAt)}</small>
                   </span>
                   <b>{failure.count} 次</b>
                 </li>
@@ -349,13 +356,17 @@ export default async function InsightsPage({
           </div>
           {caseOutcomeReport ? (
             <span className="muted">
-              {caseOutcomeReport.versionName} / {caseOutcomeReport.stageName} · 共{" "}
+              {caseOutcomeReport.versionName} / {caseOutcomeReport.stageName} · 本页{" "}
               {caseOutcomeReport.cases.length} 个用例
             </span>
           ) : null}
         </div>
         {caseOutcomeReport ? (
-          <CaseOutcomeSummary report={caseOutcomeReport} />
+          <CaseOutcomeSummary
+            parameters={parameters}
+            report={caseOutcomeReport}
+            trail={caseCursorTrail}
+          />
         ) : (
           <div className="inline-empty">请在顶栏选择项目，并确认该项目已配置可用版本。</div>
         )}
@@ -369,22 +380,35 @@ export default async function InsightsPage({
           </div>
         </div>
         <form className="batch-comparison-form" method="get">
-          <Input
-            name="leftBatchId"
+          <Select
             defaultValue={stringParameter(parameters.leftBatchId)}
-            placeholder="基准批次 ID"
+            name="leftBatchId"
             required
-          />
-          <Input
-            name="rightBatchId"
+          >
+            <option value="">选择基准批次</option>
+            {recentBatches.map((batch) => (
+              <option key={batch.id} value={batch.id}>
+                #{batch.sequenceNumber} · {batch.suiteName} · {runBatchStatusLabel(batch.status)}
+              </option>
+            ))}
+          </Select>
+          <Select
             defaultValue={stringParameter(parameters.rightBatchId)}
-            placeholder="对比批次 ID"
+            name="rightBatchId"
             required
-          />
+          >
+            <option value="">选择对比批次</option>
+            {recentBatches.map((batch) => (
+              <option key={batch.id} value={batch.id}>
+                #{batch.sequenceNumber} · {batch.suiteName} · {runBatchStatusLabel(batch.status)}
+              </option>
+            ))}
+          </Select>
           <Button className="button button-secondary" type="submit">
             开始对比
           </Button>
         </form>
+        <p className="muted">可选择当前项目最近 100 个批次；更早记录请先在执行记录中定位。</p>
         {comparison ? (
           <>
             <p className={comparison.comparableScope ? "status-success" : "status-warning"}>
@@ -430,7 +454,7 @@ export default async function InsightsPage({
           </>
         ) : (
           <div className="inline-empty">
-            输入两个可访问批次 ID，按相同用例范围比较版本、环境、Runner、结果和耗时。
+            选择两个可访问批次，按相同用例范围比较版本、环境、Runner、结果和耗时。
           </div>
         )}
       </section>
@@ -509,7 +533,15 @@ function dateTimeLocal(value?: string): string {
   return value ? value.slice(0, 16) : "";
 }
 
-function CaseOutcomeSummary({ report }: { report: CaseOutcomeReport }) {
+function CaseOutcomeSummary({
+  report,
+  parameters,
+  trail,
+}: {
+  report: CaseOutcomeReport;
+  parameters: Record<string, string | string[] | undefined>;
+  trail: readonly string[];
+}) {
   const total = report.cases.length;
   let succeededCount = 0;
   let failedCount = 0;
@@ -541,7 +573,7 @@ function CaseOutcomeSummary({ report }: { report: CaseOutcomeReport }) {
     <>
       <div className="case-outcome-summary" role="status">
         <span>
-          共 <strong>{total}</strong> 个用例
+          本页 <strong>{total}</strong> 个用例
         </span>
         <span className="batch-status batch-status-succeeded">
           成功 {succeededCount}（{formatRate(succeededCount, total)}）
@@ -566,11 +598,11 @@ function CaseOutcomeSummary({ report }: { report: CaseOutcomeReport }) {
                 <th>用例</th>
                 <th>类名</th>
                 <th>最近结果</th>
-                <th>最近执行时间（UTC）</th>
+                <th>最近执行时间</th>
               </tr>
             </thead>
             <tbody>
-              {rows.slice(0, CASE_OUTCOME_DETAIL_LIMIT).map((item) => {
+              {rows.map((item) => {
                 const outcome = report.outcomes.get(item.id);
                 return (
                   <tr key={item.id}>
@@ -585,7 +617,18 @@ function CaseOutcomeSummary({ report }: { report: CaseOutcomeReport }) {
                         {outcomeLabel(outcome)}
                       </span>
                     </td>
-                    <td>{report.executedAt.get(item.id) ?? "—"}</td>
+                    <td>
+                      {report.executedAt.has(item.id) ? (
+                        <time
+                          dateTime={report.executedAt.get(item.id)}
+                          title={`UTC：${report.executedAt.get(item.id)}`}
+                        >
+                          {formatLocalDateTime(report.executedAt.get(item.id)!)}
+                        </time>
+                      ) : (
+                        "—"
+                      )}
+                    </td>
                   </tr>
                 );
               })}
@@ -593,11 +636,19 @@ function CaseOutcomeSummary({ report }: { report: CaseOutcomeReport }) {
           </table>
         </div>
       )}
-      {total > CASE_OUTCOME_DETAIL_LIMIT ? (
-        <p className="muted">
-          共 {total} 个用例，此处仅展示前 {CASE_OUTCOME_DETAIL_LIMIT}{" "}
-          个；请在顶栏调整项目层级以缩小范围。
-        </p>
+      {trail.length > 0 || report.nextCursor ? (
+        <nav aria-label="用例执行情况分页" className="pagination">
+          {trail.length > 0 ? (
+            <Link href={`/insights?${casePreviousParameters(parameters, trail)}`}>上一页</Link>
+          ) : (
+            <span />
+          )}
+          {report.nextCursor ? (
+            <Link href={`/insights?${caseNextParameters(parameters, report.nextCursor, trail)}`}>
+              下一页
+            </Link>
+          ) : null}
+        </nav>
       ) : null}
     </>
   );
@@ -645,9 +696,16 @@ async function loadCaseOutcomeReport(input: {
   caseProjectVersionId?: string;
   caseTestStageId?: string;
   allowedProjectIds?: string[];
+  cursor?: string;
 }): Promise<CaseOutcomeReport | undefined> {
-  const { services, caseProjectId, caseProjectVersionId, caseTestStageId, allowedProjectIds } =
-    input;
+  const {
+    services,
+    caseProjectId,
+    caseProjectVersionId,
+    caseTestStageId,
+    allowedProjectIds,
+    cursor,
+  } = input;
   if (!caseProjectId) return undefined;
   if (allowedProjectIds && !allowedProjectIds.includes(caseProjectId)) return undefined;
   const structure = await services.projectStructures.list(caseProjectId).catch(() => undefined);
@@ -662,12 +720,15 @@ async function loadCaseOutcomeReport(input: {
       (candidate) => candidate.id === caseTestStageId && candidate.status === "active",
     ) ?? version.stages.find((candidate) => candidate.status === "active");
   if (!stage) return undefined;
-  const cases = await listCompleteCaseDirectory(services.catalog, {
+  const casePage = await services.catalog.listCases({
     projectIds: [caseProjectId],
     projectVersionId: version.id,
     testStageId: stage.id,
     scopedOnly: true,
+    limit: CASE_OUTCOME_PAGE_SIZE,
+    ...(cursor ? { cursor } : {}),
   });
+  const cases = casePage.items;
   const latestRuns =
     cases.length > 0
       ? await services.caseDefinitions.latestRunOutcomes(
@@ -693,5 +754,55 @@ async function loadCaseOutcomeReport(input: {
     cases,
     outcomes,
     executedAt,
+    ...(casePage.nextCursor ? { nextCursor: casePage.nextCursor } : {}),
   };
+}
+
+function cursorTrail(value: string | string[] | undefined): string[] {
+  const raw = stringParameter(value);
+  if (!raw) return [];
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return Array.isArray(parsed)
+      ? parsed
+          .filter((item): item is string => typeof item === "string" && item.length <= 512)
+          .slice(-20)
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+function casePageParameters(
+  parameters: Record<string, string | string[] | undefined>,
+): URLSearchParams {
+  const next = new URLSearchParams();
+  for (const [key, value] of Object.entries(parameters)) {
+    if (key === "caseCursor" || key === "caseTrail" || Array.isArray(value) || !value) continue;
+    next.set(key, value);
+  }
+  return next;
+}
+
+function caseNextParameters(
+  parameters: Record<string, string | string[] | undefined>,
+  cursor: string,
+  trail: readonly string[],
+): URLSearchParams {
+  const next = casePageParameters(parameters);
+  next.set("caseCursor", cursor);
+  next.set("caseTrail", JSON.stringify([...trail, stringParameter(parameters.caseCursor)]));
+  return next;
+}
+
+function casePreviousParameters(
+  parameters: Record<string, string | string[] | undefined>,
+  trail: readonly string[],
+): URLSearchParams {
+  const next = casePageParameters(parameters);
+  const previousCursor = trail.at(-1);
+  if (previousCursor) next.set("caseCursor", previousCursor);
+  const remaining = trail.slice(0, -1);
+  if (remaining.length > 0) next.set("caseTrail", JSON.stringify(remaining));
+  return next;
 }
