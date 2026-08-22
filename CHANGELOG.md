@@ -22,6 +22,8 @@ and known limitations.
   stable permission codes, including a visible fallback for permissions introduced by newer versions.
 - Refined dense administration and execution pages with localized state/action labels, clearer
   control grouping, bounded identifiers and logs, and viewport-safe low-frequency action dialogs.
+- Extended tagged release assembly to 45 minutes so variable GitHub upload throughput cannot cancel
+  publication while transferring the four large, platform-specific offline backend archives.
 - Added graceful task termination to the execution-record list and batch details. A termination
   request immediately blocks scheduling and claims, closes work that has not started, lets valid
   in-flight leases finish naturally, suppresses retries, and then presents the batch as terminated.

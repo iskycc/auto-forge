@@ -238,7 +238,7 @@ jobs:
     name: Assemble and publish GitHub Release
     needs: [prepare, backend, jenkins-plugins]
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 45
     permissions:
       attestations: write
       contents: write

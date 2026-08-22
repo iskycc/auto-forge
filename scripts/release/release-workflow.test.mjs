@@ -27,6 +27,7 @@ test("publishes complete release assets without waiting for checks", async () =>
   assert.match(workflow, /GITHUB_EVENT_NAME.*workflow_dispatch.*revision.*GITHUB_SHA/);
   assert.doesNotMatch(workflow, /^  toolchain:/m);
   assert.match(workflow, /  publish:\n[\s\S]*?    needs: \[prepare, backend, jenkins-plugins\]/);
+  assert.match(workflow, /  publish:\n[\s\S]*?    timeout-minutes: 45/);
 });
 
 test("partitions tagged and published checks without polling inside a test job", async () => {
