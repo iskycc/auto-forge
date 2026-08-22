@@ -1,15 +1,22 @@
 import { Button, DatetimeInput, Input, Select } from "@/components/ui";
 
-import type { AnalyticsFilter } from "@autoforge/contracts";
+import type {
+  AnalyticsBatchComparison,
+  AnalyticsFilter,
+  AnalyticsSummary,
+} from "@autoforge/contracts";
 import type { CaseDefinitionWithMethods } from "@autoforge/domain";
 import { BarChart3, FlaskConical, SlidersHorizontal, TrendingUp } from "lucide-react";
 import Link from "next/link";
+import type { CSSProperties } from "react";
 
 import { requireAuthorizedPageProjectScope, requirePageProjectScope } from "@/lib/auth";
 import { getPlatformServices } from "@/lib/services";
 import { formatRate, type CaseLatestRun } from "@/lib/case-selection-stats";
 import { classifyAttemptResult } from "@autoforge/domain";
 import { AnalyticsExportControl } from "@/components/analytics-export-control";
+import { BatchComparisonDetails } from "@/components/batch-comparison-details";
+import { InsightDetailDialog } from "@/components/insight-detail-dialog";
 import {
   selectableProjectIds,
   selectedProjectHierarchy,
@@ -87,7 +94,6 @@ export default async function InsightsPage({
   });
   const caseCursorTrail = cursorTrail(parameters.caseTrail);
   const methodSampleCount = summary.passed + summary.failed + summary.skipped;
-  const trendMaximum = Math.max(1, ...summary.trend.map((entry) => entry.total));
   return (
     <div className="page-stack insights-page">
       <section className="page-hero">
@@ -190,273 +196,243 @@ export default async function InsightsPage({
       </section>
 
       <section className="insight-grid">
-        <article className="content-card insight-trend-card">
+        <article className="content-card insight-chart-card insight-trend-card">
           <div className="section-heading">
             <div>
               <span className="eyebrow">TREND</span>
               <h2>每日趋势</h2>
             </div>
-            <span className="muted">
-              已确认方法结果 {methodSampleCount} 个 · 执行样本 {summary.sampleCount} 次
-            </span>
+            <div className="insight-heading-actions">
+              <span className="muted">
+                已确认方法结果 {methodSampleCount} 个 · 执行样本 {summary.sampleCount} 次
+              </span>
+              <InsightDetailDialog
+                description="逐日查看通过、失败与跳过的方法数量。表头固定，数据区域可独立滚动。"
+                title="每日趋势明细"
+              >
+                <div className="insight-detail-table-scroll">
+                  <table className="data-table insight-data-table">
+                    <thead>
+                      <tr>
+                        <th>日期（UTC）</th>
+                        <th>方法总数</th>
+                        <th>通过方法</th>
+                        <th>失败方法</th>
+                        <th>跳过方法</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {summary.trend.map((bucket) => (
+                        <tr key={bucket.bucket}>
+                          <td>{bucket.bucket.slice(0, 10)}</td>
+                          <td>{bucket.total}</td>
+                          <td>{bucket.passed}</td>
+                          <td>{bucket.failed}</td>
+                          <td>{bucket.skipped}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  {summary.trend.length === 0 ? (
+                    <div className="inline-empty">当前筛选范围还没有已确认执行结果。</div>
+                  ) : null}
+                </div>
+              </InsightDetailDialog>
+            </div>
           </div>
           {summary.trend.length === 0 ? (
             <div className="inline-empty">当前筛选范围还没有已确认执行结果。</div>
           ) : (
-            <>
-              <div className="trend-legend" aria-hidden="true">
-                <span>
-                  <i className="trend-passed" />
-                  通过
-                </span>
-                <span>
-                  <i className="trend-failed" />
-                  失败
-                </span>
-                <span>
-                  <i className="trend-skipped" />
-                  跳过
-                </span>
-              </div>
-              <div
-                className="trend-bars"
-                role="img"
-                aria-label="每日 TestNG 方法通过、失败与跳过趋势图"
-                style={{
-                  gridTemplateColumns: `repeat(${summary.trend.length}, minmax(54px, 84px))`,
-                  maxWidth: `${summary.trend.length * 92}px`,
-                }}
-              >
-                {summary.trend.map((bucket) => (
-                  <div className="trend-column" key={bucket.bucket}>
-                    <div
-                      className="trend-column-bars"
-                      title={`${bucket.bucket.slice(0, 10)}：通过 ${bucket.passed}，失败 ${bucket.failed}，跳过 ${bucket.skipped}`}
-                    >
-                      <span
-                        className="trend-passed"
-                        style={{ height: `${(bucket.passed / trendMaximum) * 100}%` }}
-                      />
-                      <span
-                        className="trend-failed"
-                        style={{ height: `${(bucket.failed / trendMaximum) * 100}%` }}
-                      />
-                      <span
-                        className="trend-skipped"
-                        style={{ height: `${(bucket.skipped / trendMaximum) * 100}%` }}
-                      />
-                    </div>
-                    <em>{bucket.total}</em>
-                    <small>{bucket.bucket.slice(5, 10)}</small>
-                  </div>
-                ))}
-              </div>
-            </>
+            <TrendLineChart trend={summary.trend} />
           )}
-          {summary.trend.length > 0 ? (
-            <details className="insight-trend-details">
-              <summary>查看每日明细（{summary.trend.length} 天）</summary>
-              <div className="table-scroll">
-                <table className="data-table insight-data-table">
-                  <thead>
-                    <tr>
-                      <th>日期（UTC）</th>
-                      <th>方法总数</th>
-                      <th>通过方法</th>
-                      <th>失败方法</th>
-                      <th>跳过方法</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {summary.trend.map((bucket) => (
-                      <tr key={bucket.bucket}>
-                        <td>{bucket.bucket.slice(0, 10)}</td>
-                        <td>{bucket.total}</td>
-                        <td>{bucket.passed}</td>
-                        <td>{bucket.failed}</td>
-                        <td>{bucket.skipped}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </details>
-          ) : null}
         </article>
 
-        <article className="content-card insight-failure-card">
+        <article className="content-card insight-chart-card insight-failure-card">
           <div className="section-heading">
             <div>
               <span className="eyebrow">FAILURES</span>
               <h2>失败原因</h2>
             </div>
+            <InsightDetailDialog
+              description="按出现次数排序的失败聚类，保留最近出现时间和稳定结果码。"
+              title="失败原因明细"
+            >
+              <div className="insight-detail-table-scroll">
+                <table className="data-table insight-detail-wide-table">
+                  <thead>
+                    <tr>
+                      <th>失败原因</th>
+                      <th>结果码</th>
+                      <th>次数</th>
+                      <th>最近出现时间</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {summary.failures.map((failure) => (
+                      <tr key={failure.signature}>
+                        <td className="insight-detail-long-text">{failure.description}</td>
+                        <td>{failure.resultCode ?? "—"}</td>
+                        <td>{failure.count}</td>
+                        <td>
+                          <time dateTime={failure.lastSeenAt} title={`UTC：${failure.lastSeenAt}`}>
+                            {formatLocalDateTime(failure.lastSeenAt)}
+                          </time>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                {summary.failures.length === 0 ? (
+                  <div className="inline-empty">暂无可聚类的失败。</div>
+                ) : null}
+              </div>
+            </InsightDetailDialog>
           </div>
           {summary.failures.length === 0 ? (
             <div className="inline-empty">暂无可聚类的失败。</div>
           ) : (
-            <ol className="failure-signature-list">
-              {summary.failures.map((failure) => (
-                <li key={failure.signature}>
-                  <span>
-                    <strong title={failure.description}>{failure.description}</strong>
-                    <small>最近出现于 {formatLocalDateTime(failure.lastSeenAt)}</small>
-                  </span>
-                  <b>{failure.count} 次</b>
-                </li>
-              ))}
-            </ol>
+            <FailureReasonChart failures={summary.failures} />
           )}
         </article>
 
-        <article className="content-card insight-flaky-card">
+        <article className="content-card insight-chart-card insight-flaky-card">
           <div className="section-heading">
             <div>
               <span className="eyebrow">FLAKY</span>
               <h2>不稳定用例</h2>
             </div>
+            <InsightDetailDialog
+              description="查看当前分析返回的不稳定用例，以及用于判断的成功、失败样本和置信度。"
+              title="不稳定用例明细"
+            >
+              <div className="insight-detail-table-scroll">
+                <table className="data-table insight-detail-wide-table">
+                  <thead>
+                    <tr>
+                      <th>用例</th>
+                      <th>样本</th>
+                      <th>成功</th>
+                      <th>失败</th>
+                      <th>置信度</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {summary.flakyCases.map((item) => (
+                      <tr key={item.caseDefinitionId}>
+                        <td>
+                          <Link href={`/cases/${encodeURIComponent(item.caseDefinitionId)}`}>
+                            {item.displayName}
+                          </Link>
+                        </td>
+                        <td>{item.samples}</td>
+                        <td>{item.passed}</td>
+                        <td>{item.failed}</td>
+                        <td>{percent(item.confidence)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                {summary.flakyCases.length === 0 ? (
+                  <div className="inline-empty">至少需要 5 个成功与失败混合样本。</div>
+                ) : null}
+              </div>
+            </InsightDetailDialog>
           </div>
           {summary.flakyCases.length === 0 ? (
             <div className="inline-empty">至少需要 5 个成功与失败混合样本。</div>
           ) : (
-            <div className="table-scroll">
-              <table className="data-table">
-                <thead>
-                  <tr>
-                    <th>用例</th>
-                    <th>样本</th>
-                    <th>成功/失败</th>
-                    <th>置信</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {summary.flakyCases.map((item) => (
-                    <tr key={item.caseDefinitionId}>
-                      <td>
-                        <Link href={`/cases/${item.caseDefinitionId}`}>{item.displayName}</Link>
-                      </td>
-                      <td>{item.samples}</td>
-                      <td>
-                        {item.passed}/{item.failed}
-                      </td>
-                      <td>{percent(item.confidence)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+            <FlakyCaseChart cases={summary.flakyCases} />
+          )}
+        </article>
+
+        <article
+          aria-label="当前层级用例执行情况"
+          className="content-card insight-chart-card insight-case-outcome-card"
+        >
+          <div className="section-heading">
+            <div>
+              <span className="eyebrow">CASE OUTCOMES</span>
+              <h2>当前层级用例执行情况</h2>
+            </div>
+            {caseOutcomeReport ? (
+              <div className="insight-heading-actions">
+                <span className="muted">
+                  {caseOutcomeReport.versionName} / {caseOutcomeReport.stageName} · 本页{" "}
+                  {caseOutcomeReport.cases.length} 个用例
+                </span>
+                <InsightDetailDialog
+                  description="失败与阻塞用例优先排列；表格按当前项目层级有界分页。"
+                  title="当前层级用例执行明细"
+                >
+                  <CaseOutcomeDetails
+                    parameters={parameters}
+                    report={caseOutcomeReport}
+                    trail={caseCursorTrail}
+                  />
+                </InsightDetailDialog>
+              </div>
+            ) : null}
+          </div>
+          {caseOutcomeReport ? (
+            <CaseOutcomeChart report={caseOutcomeReport} />
+          ) : (
+            <div className="inline-empty">请在顶栏选择项目，并确认该项目已配置可用版本。</div>
+          )}
+        </article>
+
+        <article className="content-card insight-chart-card insight-comparison-card">
+          <div className="section-heading">
+            <div>
+              <span className="eyebrow">COMPARE</span>
+              <h2>批次对比</h2>
+            </div>
+            {comparison ? (
+              <InsightDetailDialog
+                description="逐用例核对版本、结果与耗时变化。数据区域限制在视口内并支持双向滚动。"
+                title="批次对比明细"
+              >
+                <BatchComparisonDetails cases={comparison.cases} />
+              </InsightDetailDialog>
+            ) : null}
+          </div>
+          <form className="batch-comparison-form" method="get">
+            <Select
+              defaultValue={stringParameter(parameters.leftBatchId)}
+              name="leftBatchId"
+              required
+            >
+              <option value="">选择基准批次</option>
+              {recentBatches.map((batch) => (
+                <option key={batch.id} value={batch.id}>
+                  #{batch.sequenceNumber} · {batch.suiteName} · {runBatchStatusLabel(batch.status)}
+                </option>
+              ))}
+            </Select>
+            <Select
+              defaultValue={stringParameter(parameters.rightBatchId)}
+              name="rightBatchId"
+              required
+            >
+              <option value="">选择对比批次</option>
+              {recentBatches.map((batch) => (
+                <option key={batch.id} value={batch.id}>
+                  #{batch.sequenceNumber} · {batch.suiteName} · {runBatchStatusLabel(batch.status)}
+                </option>
+              ))}
+            </Select>
+            <Button className="button button-secondary" type="submit">
+              开始对比
+            </Button>
+          </form>
+          <p className="muted">可选择当前项目最近 100 个批次；更早记录请先在执行记录中定位。</p>
+          {comparison ? (
+            <BatchComparisonChart comparison={comparison} />
+          ) : (
+            <div className="inline-empty">
+              选择两个可访问批次，按相同用例范围比较版本、环境、Runner、结果和耗时。
             </div>
           )}
         </article>
-      </section>
-
-      <section aria-label="当前层级用例执行情况" className="content-card insight-case-outcome-card">
-        <div className="section-heading">
-          <div>
-            <span className="eyebrow">CASE OUTCOMES</span>
-            <h2>当前层级用例执行情况</h2>
-          </div>
-          {caseOutcomeReport ? (
-            <span className="muted">
-              {caseOutcomeReport.versionName} / {caseOutcomeReport.stageName} · 本页{" "}
-              {caseOutcomeReport.cases.length} 个用例
-            </span>
-          ) : null}
-        </div>
-        {caseOutcomeReport ? (
-          <CaseOutcomeSummary
-            parameters={parameters}
-            report={caseOutcomeReport}
-            trail={caseCursorTrail}
-          />
-        ) : (
-          <div className="inline-empty">请在顶栏选择项目，并确认该项目已配置可用版本。</div>
-        )}
-      </section>
-
-      <section className="content-card insight-comparison-card">
-        <div className="section-heading">
-          <div>
-            <span className="eyebrow">COMPARE</span>
-            <h2>批次对比</h2>
-          </div>
-        </div>
-        <form className="batch-comparison-form" method="get">
-          <Select
-            defaultValue={stringParameter(parameters.leftBatchId)}
-            name="leftBatchId"
-            required
-          >
-            <option value="">选择基准批次</option>
-            {recentBatches.map((batch) => (
-              <option key={batch.id} value={batch.id}>
-                #{batch.sequenceNumber} · {batch.suiteName} · {runBatchStatusLabel(batch.status)}
-              </option>
-            ))}
-          </Select>
-          <Select
-            defaultValue={stringParameter(parameters.rightBatchId)}
-            name="rightBatchId"
-            required
-          >
-            <option value="">选择对比批次</option>
-            {recentBatches.map((batch) => (
-              <option key={batch.id} value={batch.id}>
-                #{batch.sequenceNumber} · {batch.suiteName} · {runBatchStatusLabel(batch.status)}
-              </option>
-            ))}
-          </Select>
-          <Button className="button button-secondary" type="submit">
-            开始对比
-          </Button>
-        </form>
-        <p className="muted">可选择当前项目最近 100 个批次；更早记录请先在执行记录中定位。</p>
-        {comparison ? (
-          <>
-            <p className={comparison.comparableScope ? "status-success" : "status-warning"}>
-              共同用例 {comparison.commonCaseCount} 个；仅基准 {comparison.onlyLeftCaseCount}{" "}
-              个；仅对比 {comparison.onlyRightCaseCount} 个。
-              {comparison.comparableScope
-                ? " 样本范围一致。"
-                : " 样本范围不同，不直接比较总体百分比。"}
-            </p>
-            <div className="table-scroll">
-              <table className="data-table">
-                <thead>
-                  <tr>
-                    <th>用例</th>
-                    <th>版本变化</th>
-                    <th>结果变化</th>
-                    <th>耗时变化</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {comparison.cases.map((item) => (
-                    <tr key={item.caseDefinitionId}>
-                      <td>
-                        {item.displayName}
-                        <small className="table-secondary">{item.caseDefinitionId}</small>
-                      </td>
-                      <td>
-                        {item.leftVersion ?? "-"} → {item.rightVersion ?? "-"}
-                      </td>
-                      <td>
-                        {item.leftOutcome ?? "-"} → {item.rightOutcome ?? "-"}
-                      </td>
-                      <td>
-                        {item.durationDeltaMs === undefined
-                          ? "-"
-                          : `${item.durationDeltaMs >= 0 ? "+" : ""}${item.durationDeltaMs} ms`}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </>
-        ) : (
-          <div className="inline-empty">
-            选择两个可访问批次，按相同用例范围比较版本、环境、Runner、结果和耗时。
-          </div>
-        )}
       </section>
     </div>
   );
@@ -482,6 +458,320 @@ function Metric({
       <strong>{value}</strong>
     </article>
   );
+}
+
+const INSIGHT_CHART_ITEM_LIMIT = 6;
+const FAILURE_CHART_COLORS = [
+  "var(--color-danger)",
+  "var(--color-chart-coral)",
+  "var(--color-warning)",
+  "var(--color-violet)",
+  "var(--color-info)",
+] as const;
+
+function TrendLineChart({ trend }: { trend: AnalyticsSummary["trend"] }) {
+  const width = 600;
+  const height = 210;
+  const horizontalInset = 12;
+  const verticalInset = 14;
+  const chartHeight = height - verticalInset * 2;
+  const chartWidth = width - horizontalInset * 2;
+  const maximum = Math.max(1, ...trend.map((bucket) => bucket.total));
+  const x = (index: number) =>
+    trend.length === 1 ? width / 2 : horizontalInset + (index / (trend.length - 1)) * chartWidth;
+  const y = (value: number) => verticalInset + chartHeight * (1 - value / maximum);
+  const points = (value: (bucket: AnalyticsSummary["trend"][number]) => number) => {
+    if (trend.length === 1) {
+      const singleValueY = y(value(trend[0]!)).toFixed(2);
+      return `${horizontalInset},${singleValueY} ${width - horizontalInset},${singleValueY}`;
+    }
+    return trend
+      .map((bucket, index) => `${x(index).toFixed(2)},${y(value(bucket)).toFixed(2)}`)
+      .join(" ");
+  };
+  const totalPoints = points((bucket) => bucket.total);
+  const lastBucket = trend.at(-1)!;
+  const markerStep = Math.max(1, Math.ceil(trend.length / 18));
+  return (
+    <div className="insight-line-chart">
+      <div className="insight-line-summary" aria-hidden="true">
+        <span>
+          <i className="trend-passed" />
+          通过 <b>{lastBucket.passed}</b>
+        </span>
+        <span>
+          <i className="trend-failed" />
+          失败 <b>{lastBucket.failed}</b>
+        </span>
+        <span>
+          <i className="trend-skipped" />
+          跳过 <b>{lastBucket.skipped}</b>
+        </span>
+        <small>最新一天</small>
+      </div>
+      <svg
+        aria-label={`从 ${trend[0]!.bucket.slice(0, 10)} 到 ${lastBucket.bucket.slice(0, 10)} 的方法执行折线趋势`}
+        className="insight-line-plot"
+        role="img"
+        viewBox={`0 0 ${width} ${height}`}
+      >
+        <defs>
+          <linearGradient id="insight-trend-area" x1="0" x2="0" y1="0" y2="1">
+            <stop offset="0%" stopColor="var(--color-info)" stopOpacity="0.18" />
+            <stop offset="100%" stopColor="var(--color-info)" stopOpacity="0.01" />
+          </linearGradient>
+          <filter id="insight-line-shadow" x="-10%" y="-10%" width="120%" height="120%">
+            <feDropShadow dx="0" dy="2" floodOpacity="0.14" stdDeviation="2" />
+          </filter>
+        </defs>
+        {[0, 0.25, 0.5, 0.75, 1].map((ratio) => (
+          <line
+            className="insight-line-grid"
+            key={ratio}
+            x1={horizontalInset}
+            x2={width - horizontalInset}
+            y1={verticalInset + chartHeight * ratio}
+            y2={verticalInset + chartHeight * ratio}
+          />
+        ))}
+        <polygon
+          className="insight-line-area"
+          points={`${horizontalInset},${height - verticalInset} ${totalPoints} ${width - horizontalInset},${height - verticalInset}`}
+        />
+        <polyline className="insight-line-total" points={totalPoints} />
+        <polyline
+          className="insight-line-passed"
+          filter="url(#insight-line-shadow)"
+          points={points((bucket) => bucket.passed)}
+        />
+        <polyline className="insight-line-failed" points={points((bucket) => bucket.failed)} />
+        <polyline className="insight-line-skipped" points={points((bucket) => bucket.skipped)} />
+        {trend.map((bucket, index) =>
+          index % markerStep === 0 || index === trend.length - 1 ? (
+            <circle
+              className="insight-line-marker"
+              cx={x(index)}
+              cy={y(bucket.total)}
+              key={bucket.bucket}
+              r="3.5"
+            >
+              <title>
+                {bucket.bucket.slice(0, 10)}：通过 {bucket.passed}，失败 {bucket.failed}，跳过{" "}
+                {bucket.skipped}
+              </title>
+            </circle>
+          ) : null,
+        )}
+      </svg>
+      <div
+        className={`insight-line-axis${trend.length === 1 ? " insight-line-axis-single" : ""}`}
+        aria-hidden="true"
+      >
+        <span>{trend[0]!.bucket.slice(5, 10)}</span>
+        {trend.length > 1 ? <span>{lastBucket.bucket.slice(5, 10)}</span> : null}
+      </div>
+    </div>
+  );
+}
+
+function FailureReasonChart({ failures }: { failures: AnalyticsSummary["failures"] }) {
+  const visibleFailures = failures.slice(0, FAILURE_CHART_COLORS.length);
+  const visibleCount = visibleFailures.reduce((total, failure) => total + failure.count, 0);
+  const totalCount = failures.reduce((total, failure) => total + failure.count, 0);
+  const otherCount = Math.max(0, totalCount - visibleCount);
+  return (
+    <div className="insight-failure-pie-chart">
+      <div
+        aria-label={`失败原因饼图，共 ${failures.length} 类、${totalCount} 次失败`}
+        className="insight-pie"
+        role="img"
+        style={pieStyle(
+          [
+            ...visibleFailures.map((failure, index) => ({
+              count: failure.count,
+              color: FAILURE_CHART_COLORS[index]!,
+            })),
+            { count: otherCount, color: "var(--color-text-tertiary)" },
+          ],
+          totalCount,
+        )}
+      >
+        <span>
+          <strong>{totalCount}</strong>
+          <small>失败次数</small>
+        </span>
+      </div>
+      <div className="insight-pie-legend">
+        {visibleFailures.map((failure, index) => (
+          <span key={failure.signature} title={failure.description}>
+            <i style={{ background: FAILURE_CHART_COLORS[index] }} />
+            <b>{failure.description}</b>
+            <em>{failure.count}</em>
+          </span>
+        ))}
+        {otherCount > 0 ? (
+          <span>
+            <i className="insight-chart-neutral" />
+            <b>其他原因</b>
+            <em>{otherCount}</em>
+          </span>
+        ) : null}
+        <p className="insight-chart-caption">
+          展示出现次数最高的 {visibleFailures.length} 类，共 {failures.length} 类
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function FlakyCaseChart({ cases }: { cases: AnalyticsSummary["flakyCases"] }) {
+  const visibleCases = cases.slice(0, INSIGHT_CHART_ITEM_LIMIT);
+  const maximum = Math.max(1, ...visibleCases.map((item) => item.samples));
+  return (
+    <div className="insight-flaky-column-chart" role="img" aria-label="不稳定用例样本柱状图">
+      <div className="insight-chart-legend" aria-hidden="true">
+        <span>
+          <i className="insight-chart-success" />
+          成功
+        </span>
+        <span>
+          <i className="insight-chart-danger" />
+          失败
+        </span>
+      </div>
+      <div className="insight-flaky-columns">
+        {visibleCases.map((item) => {
+          const samples = Math.max(1, item.passed + item.failed);
+          return (
+            <div className="insight-flaky-column" key={item.caseDefinitionId}>
+              <b>{item.samples}</b>
+              <span className="insight-column-track">
+                <span
+                  aria-label={`${item.displayName}：成功 ${item.passed}，失败 ${item.failed}`}
+                  className="insight-column-stack"
+                  style={{ height: `${Math.max(8, (item.samples / maximum) * 100)}%` }}
+                  title={`${item.displayName}：${item.samples} 个样本，置信度 ${percent(item.confidence)}`}
+                >
+                  <i
+                    className="insight-chart-danger"
+                    style={{ height: `${(item.failed / samples) * 100}%` }}
+                  />
+                  <i
+                    className="insight-chart-success"
+                    style={{ height: `${(item.passed / samples) * 100}%` }}
+                  />
+                </span>
+              </span>
+              <small title={item.displayName}>{item.displayName}</small>
+              <em>{percent(item.confidence)}</em>
+            </div>
+          );
+        })}
+      </div>
+      <p className="insight-chart-caption">
+        展示置信度最高的 {visibleCases.length} 个用例，共 {cases.length} 个
+      </p>
+    </div>
+  );
+}
+
+function BatchComparisonChart({ comparison }: { comparison: AnalyticsBatchComparison }) {
+  const comparableCases = comparison.cases.filter(
+    (item) => item.leftVersion !== undefined && item.rightVersion !== undefined,
+  );
+  const changes = [
+    {
+      label: "结果变化",
+      count: comparableCases.filter((item) => item.leftOutcome !== item.rightOutcome).length,
+      tone: "danger",
+    },
+    {
+      label: "版本变化",
+      count: comparableCases.filter((item) => item.leftVersion !== item.rightVersion).length,
+      tone: "violet",
+    },
+    {
+      label: "耗时上升",
+      count: comparableCases.filter((item) => (item.durationDeltaMs ?? 0) > 0).length,
+      tone: "warning",
+    },
+    {
+      label: "耗时下降",
+      count: comparableCases.filter((item) => (item.durationDeltaMs ?? 0) < 0).length,
+      tone: "success",
+    },
+  ] as const;
+  const comparisonMaximum = Math.max(1, ...changes.map((item) => item.count));
+  const scopeTotal =
+    comparison.commonCaseCount + comparison.onlyLeftCaseCount + comparison.onlyRightCaseCount;
+  return (
+    <div className="insight-comparison-overview">
+      <div className="insight-donut-group">
+        <div
+          aria-label={`共同用例 ${comparison.commonCaseCount}，仅基准 ${comparison.onlyLeftCaseCount}，仅对比 ${comparison.onlyRightCaseCount}`}
+          className="insight-donut"
+          role="img"
+          style={donutStyle(
+            [
+              { count: comparison.commonCaseCount, color: "var(--color-info)" },
+              { count: comparison.onlyLeftCaseCount, color: "var(--color-warning)" },
+              { count: comparison.onlyRightCaseCount, color: "var(--color-violet)" },
+            ],
+            scopeTotal,
+          )}
+        >
+          <span>
+            <strong>{scopeTotal}</strong>
+            <small>范围用例</small>
+          </span>
+        </div>
+        <div className="insight-donut-legend">
+          <span>
+            <i className="insight-chart-info" />
+            共同 {comparison.commonCaseCount}
+          </span>
+          <span>
+            <i className="insight-chart-warning" />
+            仅基准 {comparison.onlyLeftCaseCount}
+          </span>
+          <span>
+            <i className="insight-chart-violet" />
+            仅对比 {comparison.onlyRightCaseCount}
+          </span>
+        </div>
+      </div>
+      <div className="insight-change-column-chart" aria-label="共同用例变化柱状图">
+        <div className="insight-change-columns">
+          {changes.map((item) => (
+            <div className="insight-change-column" key={item.label}>
+              <b>{item.count}</b>
+              <span>
+                <i
+                  className={`insight-chart-${item.tone}`}
+                  style={{
+                    height: `${Math.max(item.count > 0 ? 6 : 0, (item.count / comparisonMaximum) * 100)}%`,
+                  }}
+                />
+              </span>
+              <small>{item.label}</small>
+            </div>
+          ))}
+        </div>
+        <p className={comparison.comparableScope ? "status-success" : "status-warning"}>
+          {comparison.comparableScope
+            ? "样本范围一致，可直接比较。"
+            : "样本范围不同，不直接比较总体百分比。"}
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function pieStyle(
+  segments: ReadonlyArray<{ count: number; color: string }>,
+  total: number,
+): CSSProperties {
+  return segmentedCircleStyle(segments, total);
 }
 
 function analyticsFilter(
@@ -533,7 +823,92 @@ function dateTimeLocal(value?: string): string {
   return value ? value.slice(0, 16) : "";
 }
 
-function CaseOutcomeSummary({
+type CaseOutcomeCounts = {
+  total: number;
+  succeeded: number;
+  failed: number;
+  blocked: number;
+  neverRun: number;
+};
+
+function caseOutcomeCounts(report: CaseOutcomeReport): CaseOutcomeCounts {
+  const total = report.cases.length;
+  let succeeded = 0;
+  let failed = 0;
+  let blocked = 0;
+  for (const item of report.cases) {
+    const run = report.outcomes.get(item.id);
+    if (!run) continue;
+    switch (classifyAttemptResult(run)) {
+      case "succeeded":
+        succeeded += 1;
+        break;
+      case "failed":
+        failed += 1;
+        break;
+      case "blocked":
+        blocked += 1;
+        break;
+    }
+  }
+  return { total, succeeded, failed, blocked, neverRun: total - succeeded - failed - blocked };
+}
+
+function CaseOutcomeChart({ report }: { report: CaseOutcomeReport }) {
+  const counts = caseOutcomeCounts(report);
+  if (counts.total === 0) return <div className="inline-empty">该项目版本还没有用例。</div>;
+  return (
+    <div className="insight-case-outcome-chart">
+      <div
+        aria-label={`成功 ${counts.succeeded}，失败 ${counts.failed}，阻塞 ${counts.blocked}，未执行 ${counts.neverRun}`}
+        className="insight-donut insight-case-outcome-donut"
+        role="img"
+        style={donutStyle(
+          [
+            { count: counts.succeeded, color: "var(--color-success)" },
+            { count: counts.failed, color: "var(--color-danger)" },
+            { count: counts.blocked, color: "var(--color-warning)" },
+            { count: counts.neverRun, color: "var(--color-text-tertiary)" },
+          ],
+          counts.total,
+        )}
+      >
+        <span>
+          <strong>{counts.total}</strong>
+          <small>本页用例</small>
+        </span>
+      </div>
+      <div className="insight-outcome-legend">
+        <span>
+          <i className="insight-chart-success" />
+          <small>成功</small>
+          <strong>{counts.succeeded}</strong>
+          <em>{formatRate(counts.succeeded, counts.total)}</em>
+        </span>
+        <span>
+          <i className="insight-chart-danger" />
+          <small>失败</small>
+          <strong>{counts.failed}</strong>
+          <em>{formatRate(counts.failed, counts.total)}</em>
+        </span>
+        <span>
+          <i className="insight-chart-warning" />
+          <small>阻塞</small>
+          <strong>{counts.blocked}</strong>
+          <em>{formatRate(counts.blocked, counts.total)}</em>
+        </span>
+        <span>
+          <i className="insight-chart-neutral" />
+          <small>未执行</small>
+          <strong>{counts.neverRun}</strong>
+          <em>{formatRate(counts.neverRun, counts.total)}</em>
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function CaseOutcomeDetails({
   report,
   parameters,
   trail,
@@ -542,26 +917,7 @@ function CaseOutcomeSummary({
   parameters: Record<string, string | string[] | undefined>;
   trail: readonly string[];
 }) {
-  const total = report.cases.length;
-  let succeededCount = 0;
-  let failedCount = 0;
-  let blockedCount = 0;
-  for (const item of report.cases) {
-    const run = report.outcomes.get(item.id);
-    if (!run) continue;
-    switch (classifyAttemptResult(run)) {
-      case "succeeded":
-        succeededCount += 1;
-        break;
-      case "failed":
-        failedCount += 1;
-        break;
-      case "blocked":
-        blockedCount += 1;
-        break;
-    }
-  }
-  const neverRunCount = total - succeededCount - failedCount - blockedCount;
+  const counts = caseOutcomeCounts(report);
   // 失败与阻塞优先展示：把尚未稳定的用例排在表格前面。
   const rows = [...report.cases].sort(
     (left, right) =>
@@ -570,29 +926,29 @@ function CaseOutcomeSummary({
       ) || left.displayName.localeCompare(right.displayName),
   );
   return (
-    <>
+    <div className="insight-detail-content">
       <div className="case-outcome-summary" role="status">
         <span>
-          本页 <strong>{total}</strong> 个用例
+          本页 <strong>{counts.total}</strong> 个用例
         </span>
         <span className="batch-status batch-status-succeeded">
-          成功 {succeededCount}（{formatRate(succeededCount, total)}）
+          成功 {counts.succeeded}（{formatRate(counts.succeeded, counts.total)}）
         </span>
         <span className="batch-status batch-status-failed">
-          失败 {failedCount}（{formatRate(failedCount, total)}）
+          失败 {counts.failed}（{formatRate(counts.failed, counts.total)}）
         </span>
         <span className="batch-status batch-status-blocked">
-          阻塞 {blockedCount}（{formatRate(blockedCount, total)}）
+          阻塞 {counts.blocked}（{formatRate(counts.blocked, counts.total)}）
         </span>
         <span className="batch-status batch-status-neutral">
-          未执行 {neverRunCount}（{formatRate(neverRunCount, total)}）
+          未执行 {counts.neverRun}（{formatRate(counts.neverRun, counts.total)}）
         </span>
       </div>
-      {total === 0 ? (
+      {counts.total === 0 ? (
         <div className="inline-empty">该项目版本还没有用例。</div>
       ) : (
-        <div className="table-scroll">
-          <table className="data-table">
+        <div className="insight-detail-table-scroll">
+          <table className="data-table insight-detail-wide-table">
             <thead>
               <tr>
                 <th>用例</th>
@@ -650,8 +1006,33 @@ function CaseOutcomeSummary({
           ) : null}
         </nav>
       ) : null}
-    </>
+    </div>
   );
+}
+
+function donutStyle(
+  segments: ReadonlyArray<{ count: number; color: string }>,
+  total: number,
+): CSSProperties {
+  return segmentedCircleStyle(segments, total);
+}
+
+function segmentedCircleStyle(
+  segments: ReadonlyArray<{ count: number; color: string }>,
+  total: number,
+): CSSProperties {
+  if (total <= 0) return { background: "var(--color-surface-muted)" };
+  let cursor = 0;
+  const stops = segments.flatMap((segment) => {
+    if (segment.count <= 0) return [];
+    const start = cursor;
+    cursor = Math.min(360, cursor + (segment.count / total) * 360);
+    return `${segment.color} ${start.toFixed(2)}deg ${cursor.toFixed(2)}deg`;
+  });
+  if (cursor < 360) {
+    stops.push(`var(--color-surface-muted) ${cursor.toFixed(2)}deg 360deg`);
+  }
+  return { background: `conic-gradient(${stops.join(", ")})` };
 }
 
 function outcomeRank(run: CaseLatestRun | undefined): string {

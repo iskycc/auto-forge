@@ -8,12 +8,14 @@ import { Button } from "./ui";
 
 export function ActionDialog({
   children,
+  className,
   description,
   open,
   title,
   onClose,
 }: {
   children: ReactNode;
+  className?: string;
   description?: string;
   open: boolean;
   title: string;
@@ -84,7 +86,7 @@ export function ActionDialog({
       <section
         aria-label={title}
         aria-modal="true"
-        className="action-dialog"
+        className={`action-dialog${className ? ` ${className}` : ""}`}
         onMouseDown={(event) => event.stopPropagation()}
         ref={dialogRef}
         role="dialog"

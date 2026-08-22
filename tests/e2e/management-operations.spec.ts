@@ -24,7 +24,11 @@ test("service account lifecycle immediately narrows token access and produces ex
   await createForm.getByRole("button", { name: "创建服务账号", exact: true }).click();
   const account = (await (await accountResponse).json()) as { id: string };
   const accountCard = page.locator("article", { hasText: accountName });
-  await expect(accountCard).toContainText("active");
+  await expect(accountCard).toContainText("启用");
+  await expect(accountCard).toContainText("查看用例");
+  await expect(accountCard).toContainText("查看安全审计");
+  await expect(accountCard).not.toContainText("case.read");
+  await expect(accountCard).not.toContainText("audit.read");
 
   const tokenForm = accountCard.locator("form", {
     has: page.getByRole("button", { name: "签发" }),

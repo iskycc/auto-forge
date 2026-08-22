@@ -161,18 +161,22 @@ test("administrator unlocks and disables a locked user and manages a custom role
   await roleForm.getByLabel("角色标识").fill(roleKey);
   await roleForm.getByLabel("角色名称").fill(roleName);
   await roleForm.getByLabel("作用域").selectOption("project");
-  await roleForm.getByLabel("权限（英文逗号分隔）").fill("case.read,run.read");
+  await roleForm.getByLabel("权限").selectOption(["case.read", "run.read"]);
   await roleForm.getByLabel("描述").fill("E2E custom role");
   await roleForm.getByRole("button", { name: "创建角色" }).click();
   await expect(page.getByText("自定义角色已创建。")).toBeVisible();
 
   let roleCard = page.locator("article", { hasText: roleName });
+  await expect(roleCard).toContainText("查看用例");
+  await expect(roleCard).toContainText("查看执行与质量洞察");
+  await expect(roleCard).not.toContainText("case.read");
+  await expect(roleCard).not.toContainText("run.read");
   await roleCard.getByText("编辑角色").click();
   const editor = roleCard.locator("form", {
     has: page.getByRole("button", { name: "保存角色" }),
   });
   await editor.getByLabel("角色名称").fill(`${roleName} 已更新`);
-  await editor.getByLabel("权限（英文逗号分隔）").fill("case.read,run.read,artifact.read");
+  await editor.getByLabel("权限").selectOption(["case.read", "run.read", "artifact.read"]);
   await editor.getByRole("button", { name: "保存角色" }).click();
   await expect(page.getByText("角色定义已更新，受影响用户的旧会话已撤销。")).toBeVisible();
 

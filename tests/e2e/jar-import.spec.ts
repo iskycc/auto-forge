@@ -859,11 +859,28 @@ public class MixedVisibleTest {
   );
   await expect(page.locator(".insight-metric-success")).toContainText("50.0%");
   await expect(page.locator(".insight-metric-danger")).toContainText("50.0%");
+  await expect(page.locator(".insight-line-plot")).toBeVisible();
+  await expect(page.getByRole("img", { name: /方法执行折线趋势/ })).toBeVisible();
   const failureReasonCard = page.locator(".insight-failure-card");
+  await expect(failureReasonCard.locator(".insight-pie")).toBeVisible();
+  await expect(page.getByRole("img", { name: /失败原因饼图/ })).toBeVisible();
   await expect(failureReasonCard).toContainText("java.lang.AssertionError: 中文断言失败");
   await expect(failureReasonCard).not.toContainText("TESTNG_SUCCEEDED");
   await expect(failureReasonCard).not.toContainText("TEST_ASSERTION_FAILED");
-  const trendRow = page.locator(".insight-data-table tbody tr").first();
+  await captureUi(page, "quality-insights-charts-1536");
+  await page.setViewportSize({ width: 1024, height: 768 });
+  await expect(failureReasonCard.locator(".insight-pie > span")).toBeVisible();
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= document.documentElement.clientWidth,
+    ),
+  ).toBe(true);
+  expect(await page.evaluate(() => document.documentElement.scrollHeight)).toBeLessThan(2_200);
+  await captureUi(page, "quality-insights-charts-1024");
+  await page.setViewportSize({ width: 1536, height: 1024 });
+  await page.locator(".insight-trend-card").getByRole("button", { name: "查看明细" }).click();
+  const trendDialog = page.getByRole("dialog", { name: "每日趋势明细" });
+  const trendRow = trendDialog.locator(".insight-data-table tbody tr").first();
   await expect(trendRow.locator("td").nth(1)).toHaveText("2");
   await expect(trendRow.locator("td").nth(2)).toHaveText("1");
   await expect(trendRow.locator("td").nth(3)).toHaveText("1");
@@ -1003,7 +1020,7 @@ public class MixedVisibleTest {
       .locator("..")
       .getByText(String(expectedSampleCount), { exact: true }),
   ).toBeVisible();
-  const filteredFailureReasons = page.locator(".failure-signature-list");
+  const filteredFailureReasons = page.locator(".insight-failure-card");
   await expect(filteredFailureReasons).toContainText("java.lang.AssertionError: 中文断言失败");
   await expect(filteredFailureReasons).not.toContainText("TEST_ASSERTION_FAILED");
   await expect(filteredFailureReasons).not.toContainText("TESTNG_SUCCEEDED");
@@ -1013,7 +1030,15 @@ public class MixedVisibleTest {
     `/insights?outcome=succeeded&leftBatchId=${encodeURIComponent(batch.id)}&rightBatchId=${encodeURIComponent(cancellationBatch.id)}`,
   );
   await expect(page.getByLabel("结果")).toHaveValue("succeeded");
-  await expect(page.getByText(/共同用例 1 个/)).toBeVisible();
+  await expect(page.getByRole("img", { name: /共同用例 1/ })).toBeVisible();
+  await expect(page.locator(".insight-change-columns")).toBeVisible();
+  await page.locator(".insight-comparison-card").getByRole("button", { name: "查看明细" }).click();
+  const comparisonDialog = page.getByRole("dialog", { name: "批次对比明细" });
+  await expect(comparisonDialog.locator(".insight-comparison-table tbody tr")).toHaveCount(1);
+  await expect(comparisonDialog).toContainText("成功");
+  await expect(comparisonDialog).not.toContainText("succeeded");
+  await expect(comparisonDialog.getByText("第 1–1 项，共 1 项")).toBeVisible();
+  await comparisonDialog.getByRole("button", { name: "关闭批次对比明细" }).click();
   await page.getByRole("button", { name: "导出当前范围" }).click();
   const exportLink = page.getByRole("link", { name: /下载 \d+ 行/ });
   await expect(exportLink).toBeVisible({ timeout: 30_000 });

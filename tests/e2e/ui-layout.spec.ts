@@ -475,8 +475,41 @@ test("specified dense pages expose stable product controls", async ({ page }) =>
   ]);
   expect(trendBox?.y).toBe(failureBox?.y);
   expect(flakyBox!.y).toBeGreaterThan(Math.max(trendBox!.y, failureBox!.y));
+  expect(flakyBox?.y).toBe(caseOutcomeBox?.y);
   expect(metricsBox!.y).toBeLessThan(caseOutcomeBox!.y);
   expect(trendBox!.y).toBeLessThan(caseOutcomeBox!.y);
+
+  await trendCard.getByRole("button", { name: "查看明细" }).click();
+  const trendDialog = page.getByRole("dialog", { name: "每日趋势明细" });
+  await expect(trendDialog).toBeVisible();
+  await expect(trendDialog.locator(".insight-data-table")).toBeVisible();
+  const [dialogBox, tableScrollBox, tableOverflow] = await Promise.all([
+    trendDialog.boundingBox(),
+    trendDialog.locator(".insight-detail-table-scroll").boundingBox(),
+    trendDialog.locator(".insight-detail-table-scroll").evaluate((element) => ({
+      overflowX: getComputedStyle(element).overflowX,
+      overflowY: getComputedStyle(element).overflowY,
+    })),
+  ]);
+  expect(dialogBox!.width).toBeLessThanOrEqual(1536 - 40);
+  expect(dialogBox!.height).toBeLessThanOrEqual(1024 - 40);
+  expect(tableScrollBox!.height).toBeLessThan(dialogBox!.height);
+  expect(tableOverflow).toEqual({ overflowX: "auto", overflowY: "auto" });
+  await trendDialog.getByRole("button", { name: "关闭每日趋势明细" }).click();
+  await expect(trendDialog).toHaveCount(0);
+
+  await page.setViewportSize({ width: 1024, height: 768 });
+  const [compactTrendBox, compactFailureBox, compactFlakyBox, compactCaseOutcomeBox, pageHeight] =
+    await Promise.all([
+      trendCard.boundingBox(),
+      failureCard.boundingBox(),
+      flakyCard.boundingBox(),
+      caseOutcomeCard.boundingBox(),
+      page.evaluate(() => document.documentElement.scrollHeight),
+    ]);
+  expect(compactTrendBox?.y).toBe(compactFailureBox?.y);
+  expect(compactFlakyBox?.y).toBe(compactCaseOutcomeBox?.y);
+  expect(pageHeight).toBeLessThan(2_200);
 
   await page.goto("/runners");
   await expect(page.getByRole("heading", { name: "执行机列表" })).toBeVisible();

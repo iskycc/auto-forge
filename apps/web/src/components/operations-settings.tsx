@@ -13,6 +13,7 @@ import { permissionCatalog } from "@autoforge/domain";
 import { KeyRound, Plus, RefreshCw, ShieldCheck, Trash2 } from "lucide-react";
 import { useState, type FormEvent } from "react";
 import { ActionDialog } from "@/components/action-dialog";
+import { permissionDescription, permissionLabel } from "@/lib/permission-presentation";
 
 export function OperationsSettings({
   initialAccounts,
@@ -288,7 +289,13 @@ export function OperationsSettings({
                 系统权限
                 <Select multiple name="permissions" required size={6}>
                   {permissionCatalog.map((permission) => (
-                    <option key={permission}>{permission}</option>
+                    <option
+                      key={permission}
+                      title={permissionDescription(permission)}
+                      value={permission}
+                    >
+                      {permissionLabel(permission)}
+                    </option>
                   ))}
                 </Select>
               </label>
@@ -311,7 +318,8 @@ export function OperationsSettings({
                     <span>
                       <strong>{account.name}</strong>
                       <small>
-                        {account.description || "无说明"} · {account.status}
+                        {account.description || "无说明"} ·{" "}
+                        {account.status === "active" ? "启用" : "禁用"}
                       </small>
                     </span>
                     <Button
@@ -325,7 +333,13 @@ export function OperationsSettings({
                   </div>
                   <div className="permission-chip-row">
                     {account.systemPermissions.map((permission) => (
-                      <code key={permission}>{permission}</code>
+                      <span
+                        className="permission-chip"
+                        key={permission}
+                        title={permissionDescription(permission)}
+                      >
+                        {permissionLabel(permission)}
+                      </span>
                     ))}
                   </div>
                   {canManageTokens ? (
@@ -352,7 +366,13 @@ export function OperationsSettings({
                             size={6}
                           >
                             {permissionCatalog.map((permission) => (
-                              <option key={permission}>{permission}</option>
+                              <option
+                                key={permission}
+                                title={permissionDescription(permission)}
+                                value={permission}
+                              >
+                                {permissionLabel(permission)}
+                              </option>
                             ))}
                           </Select>
                         </label>
@@ -413,7 +433,9 @@ export function OperationsSettings({
                               ...Object.values(account.projectPermissions).flat(),
                             ]),
                           ].map((scope) => (
-                            <option key={scope}>{scope}</option>
+                            <option key={scope} title={permissionDescription(scope)} value={scope}>
+                              {permissionLabel(scope)}
+                            </option>
                           ))}
                         </Select>
                       </label>
@@ -553,7 +575,13 @@ function ProjectPermissionFields({
               size={5}
             >
               {permissionCatalog.map((permission) => (
-                <option key={permission}>{permission}</option>
+                <option
+                  key={permission}
+                  title={permissionDescription(permission)}
+                  value={permission}
+                >
+                  {permissionLabel(permission)}
+                </option>
               ))}
             </Select>
             <small>{project.id}</small>

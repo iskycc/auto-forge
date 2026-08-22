@@ -2,11 +2,18 @@
 
 import { Button, Input, Select, Textarea } from "@/components/ui";
 
-import type { Project, Role, User, UserSession } from "@autoforge/domain";
+import {
+  permissionCatalog,
+  type Project,
+  type Role,
+  type User,
+  type UserSession,
+} from "@autoforge/domain";
 import { Network, Plus, RefreshCw, Search, Shield, UserRound } from "lucide-react";
 import { useEffect, useState, type FormEvent } from "react";
 
 import { readApiErrorMessage } from "@/lib/client-api";
+import { permissionDescription, permissionLabel } from "@/lib/permission-presentation";
 import { formatLocalDateTime } from "@/lib/run-batch-presentation";
 import { ActionDialog } from "@/components/action-dialog";
 
@@ -141,7 +148,7 @@ export function AccessSettings({
         name: form.get("name"),
         description: form.get("description"),
         scope: form.get("scope"),
-        permissions: parseCommaSeparatedValues(form.get("permissions")),
+        permissions: form.getAll("permissions").map(String),
       }),
       "自定义角色已创建。",
     );
@@ -155,7 +162,7 @@ export function AccessSettings({
       jsonRequest("PATCH", {
         name: form.get("name"),
         description: form.get("description"),
-        permissions: parseCommaSeparatedValues(form.get("permissions")),
+        permissions: form.getAll("permissions").map(String),
       }),
       "角色定义已更新，受影响用户的旧会话已撤销。",
     );
@@ -590,8 +597,19 @@ export function AccessSettings({
                 </Select>
               </label>
               <label className="settings-wide-field">
-                权限（英文逗号分隔）
-                <Input name="permissions" placeholder="case.read,run.read,run.create" required />
+                权限
+                <Select multiple name="permissions" required size={8}>
+                  {permissionCatalog.map((permission) => (
+                    <option
+                      key={permission}
+                      title={permissionDescription(permission)}
+                      value={permission}
+                    >
+                      {permissionLabel(permission)}
+                    </option>
+                  ))}
+                </Select>
+                <small>可按 Ctrl（macOS 使用 Command）多选；权限名称已按实际用途展示。</small>
               </label>
               <label className="settings-wide-field">
                 描述
@@ -615,7 +633,13 @@ export function AccessSettings({
                 <p>{role.description || "无描述"}</p>
                 <div className="permission-list">
                   {role.permissions.map((permission) => (
-                    <code key={permission}>{permission}</code>
+                    <span
+                      className="permission-chip"
+                      key={permission}
+                      title={permissionDescription(permission)}
+                    >
+                      {permissionLabel(permission)}
+                    </span>
                   ))}
                 </div>
                 {capabilities.roleManage ? (
@@ -652,12 +676,27 @@ export function AccessSettings({
                               <Input defaultValue={role.name} name="name" required />
                             </label>
                             <label className="settings-wide-field">
-                              权限（英文逗号分隔）
-                              <Input
-                                defaultValue={role.permissions.join(",")}
+                              权限
+                              <Select
+                                defaultValue={role.permissions}
+                                multiple
                                 name="permissions"
                                 required
-                              />
+                                size={8}
+                              >
+                                {permissionCatalog.map((permission) => (
+                                  <option
+                                    key={permission}
+                                    title={permissionDescription(permission)}
+                                    value={permission}
+                                  >
+                                    {permissionLabel(permission)}
+                                  </option>
+                                ))}
+                              </Select>
+                              <small>
+                                可按 Ctrl（macOS 使用 Command）多选；悬停角色权限可查看用途。
+                              </small>
                             </label>
                             <label className="settings-wide-field">
                               描述
@@ -1005,13 +1044,6 @@ function roleOption(role: Role) {
       {role.name}
     </option>
   );
-}
-
-function parseCommaSeparatedValues(value: FormDataEntryValue | null): string[] {
-  return String(value ?? "")
-    .split(",")
-    .map((entry) => entry.trim())
-    .filter(Boolean);
 }
 
 function projectOption(project: Project) {
