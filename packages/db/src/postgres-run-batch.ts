@@ -82,6 +82,7 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
     const claimTimeoutMs = record.claimTimeoutMs ?? 300_000;
     const executionTimeoutMs = record.executionTimeoutMs ?? 3_600_000;
     const uploadTimeoutMs = record.uploadTimeoutMs ?? 600_000;
+    const scheduledFor = record.scheduledFor ?? record.createdAt;
     const adapterRuntime = await postgresProjectAdapterRuntime(
       this.handle,
       record.projectId ?? DEFAULT_PROJECT_ID,
@@ -117,6 +118,7 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
         policyJson: record.policy ? JSON.stringify(record.policy) : null,
         adapterRuntimeJson: adapterRuntime ? JSON.stringify(adapterRuntime) : null,
         totalRuns: record.runs.length,
+        scheduledFor,
         createdAt: record.createdAt,
         updatedAt: record.createdAt,
       });
@@ -144,7 +146,7 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
             assignedRunnerId: null,
             attemptCount: 0,
             schedulingScore: null,
-            queueDeadlineAt: addMilliseconds(record.createdAt, queueTimeoutMs),
+            queueDeadlineAt: addMilliseconds(scheduledFor, queueTimeoutMs),
             executionTimeoutMs,
             uploadTimeoutMs,
             createdAt: record.createdAt,
@@ -164,7 +166,7 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
              ${"autoforge.jobs.v1.ready"},
              ${JSON.stringify(record.dispatchJob)}::jsonb,
              ${record.dispatchJob.deduplicationKey}, ${record.dispatchJob.createdAt},
-             ${record.dispatchJob.createdAt})
+             ${scheduledFor})
         `);
       }
     });
@@ -210,8 +212,8 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
         : []),
       ...(input.suiteId ? [eq(pgRunBatches.suiteId, input.suiteId)] : []),
       ...(input.status ? [eq(pgRunBatches.status, input.status)] : []),
-      ...(input.createdAfter ? [gte(pgRunBatches.createdAt, input.createdAfter)] : []),
-      ...(input.createdBefore ? [lte(pgRunBatches.createdAt, input.createdBefore)] : []),
+      ...(input.createdAfter ? [gte(pgRunBatches.scheduledFor, input.createdAfter)] : []),
+      ...(input.createdBefore ? [lte(pgRunBatches.scheduledFor, input.createdBefore)] : []),
       ...(cursor
         ? [
             or(
@@ -340,9 +342,10 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
     const result = await this.handle.pool.query<{ id: string }>(
       `SELECT id FROM run_batches
        WHERE status IN ('queued','dispatching','running') AND cancel_requested_at IS NULL
+         AND scheduled_for <= $1
        ORDER BY priority + LEAST(100, GREATEST(0, FLOOR(
-         EXTRACT(EPOCH FROM ($1::timestamptz-created_at::timestamptz)) / 60 / $2
-       ))) DESC, created_at, id LIMIT $3`,
+         EXTRACT(EPOCH FROM ($1::timestamptz-scheduled_for::timestamptz)) / 60 / $2
+       ))) DESC, scheduled_for, id LIMIT $3`,
       [now, agingIntervalMinutes, limit],
     );
     return result.rows.map((row) => row.id);
@@ -358,10 +361,10 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
     const result = await this.handle.pool.query<{ id: string }>(
       `SELECT b.id FROM run_batches b JOIN run_batch_runners br ON br.batch_id=b.id
        WHERE br.runner_id=$1 AND b.status IN ('queued','dispatching','running')
-         AND b.cancel_requested_at IS NULL
+         AND b.cancel_requested_at IS NULL AND b.scheduled_for <= $2
        ORDER BY b.priority + LEAST(100, GREATEST(0, FLOOR(
-         EXTRACT(EPOCH FROM ($2::timestamptz-b.created_at::timestamptz)) / 60 / $3
-       ))) DESC, b.created_at, b.id LIMIT $4`,
+         EXTRACT(EPOCH FROM ($2::timestamptz-b.scheduled_for::timestamptz)) / 60 / $3
+       ))) DESC, b.scheduled_for, b.id LIMIT $4`,
       [runnerId, now, agingIntervalMinutes, limit],
     );
     return result.rows.map((row) => row.id);
@@ -828,15 +831,7 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
     const outcomeRows = (
       await Promise.all(
         batchesOf(batchIds, RELATIONAL_ID_QUERY_BATCH_SIZE).map((ids) =>
-          this.handle.db
-            .select({
-              batchId: pgExecutionRuns.batchId,
-              failed: sql<number>`sum(case when ${pgExecutionRuns.status} = 'failed' and (${pgExecutionRuns.terminalOutcome} is null or ${pgExecutionRuns.terminalOutcome} <> 'timed_out') then 1 else 0 end)`,
-              timedOut: sql<number>`sum(case when ${pgExecutionRuns.terminalOutcome} = 'timed_out' then 1 else 0 end)`,
-            })
-            .from(pgExecutionRuns)
-            .where(inArray(pgExecutionRuns.batchId, ids))
-            .groupBy(pgExecutionRuns.batchId),
+          this.finalOutcomeCounts(ids),
         ),
       )
     ).flat();
@@ -867,7 +862,7 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
     row: typeof pgRunBatches.$inferSelect,
     selectedRunnerIds: string[],
     byStatus: Map<string, number>,
-    outcomeCount: { failed: number | null; timedOut: number | null } | undefined,
+    outcomeCount: FinalOutcomeCounts | undefined,
   ): RunBatch {
     const policy = batchPolicy(row.policyJson);
     return {
@@ -896,15 +891,67 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
       queuedRuns: byStatus.get("queued") ?? 0,
       assignedRuns: (byStatus.get("assigned") ?? 0) + (byStatus.get("running") ?? 0),
       runningRuns: byStatus.get("running") ?? 0,
-      succeededRuns: byStatus.get("succeeded") ?? 0,
+      succeededRuns: Number(outcomeCount?.succeeded ?? byStatus.get("succeeded") ?? 0),
       failedRuns: Number(outcomeCount?.failed ?? 0),
       timedOutRuns: Number(outcomeCount?.timedOut ?? 0),
-      cancelledRuns: byStatus.get("cancelled") ?? 0,
+      cancelledRuns: Number(outcomeCount?.cancelled ?? byStatus.get("cancelled") ?? 0),
       ...(row.cancelRequestedAt ? { terminationRequestedAt: row.cancelRequestedAt } : {}),
       version: row.version,
+      scheduledFor: row.scheduledFor,
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
     };
+  }
+
+  /** attempt 按“总结”规则选择；无 attempt 的终态使用 run 结果作防御性回退。 */
+  private async finalOutcomeCounts(batchIds: readonly string[]): Promise<FinalOutcomeCounts[]> {
+    if (batchIds.length === 0) return [];
+    const result = await this.handle.pool.query<{
+      batchId: string;
+      succeeded: string;
+      failed: string;
+      timedOut: string;
+      cancelled: string;
+    }>(
+      `WITH ranked_attempts AS (
+         SELECT run.batch_id, attempt.execution_run_id,
+                COALESCE(attempt.outcome, attempt.status) AS final_outcome,
+                ROW_NUMBER() OVER (
+                  PARTITION BY attempt.execution_run_id
+                  ORDER BY CASE WHEN COALESCE(attempt.outcome, attempt.status) = 'succeeded'
+                                    THEN 0 ELSE 1 END,
+                           attempt.attempt_number DESC
+                ) AS outcome_rank
+         FROM run_attempts attempt
+         JOIN execution_runs run ON run.id = attempt.execution_run_id
+         WHERE run.batch_id = ANY($1::text[])
+       ), selected_outcomes AS (
+         SELECT execution_run_id, final_outcome
+         FROM ranked_attempts WHERE outcome_rank = 1
+       ), run_outcomes AS (
+         SELECT run.batch_id,
+                COALESCE(selected.final_outcome, run.terminal_outcome,
+                  CASE WHEN run.status IN ('succeeded','failed','cancelled')
+                       THEN run.status END) AS final_outcome
+         FROM execution_runs run
+         LEFT JOIN selected_outcomes selected ON selected.execution_run_id = run.id
+         WHERE run.batch_id = ANY($1::text[])
+       )
+       SELECT batch_id AS "batchId",
+              SUM(CASE WHEN final_outcome = 'succeeded' THEN 1 ELSE 0 END)::text AS succeeded,
+              SUM(CASE WHEN final_outcome = 'failed' THEN 1 ELSE 0 END)::text AS failed,
+              SUM(CASE WHEN final_outcome = 'timed_out' THEN 1 ELSE 0 END)::text AS "timedOut",
+              SUM(CASE WHEN final_outcome = 'cancelled' THEN 1 ELSE 0 END)::text AS cancelled
+       FROM run_outcomes GROUP BY batch_id`,
+      [[...batchIds]],
+    );
+    return result.rows.map((row) => ({
+      batchId: row.batchId,
+      succeeded: Number(row.succeeded),
+      failed: Number(row.failed),
+      timedOut: Number(row.timedOut),
+      cancelled: Number(row.cancelled),
+    }));
   }
 
   private async activeReservations(runnerIds: string[]): Promise<Map<string, number>> {
@@ -929,6 +976,14 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
     );
   }
 }
+
+type FinalOutcomeCounts = {
+  batchId: string;
+  succeeded: number;
+  failed: number;
+  timedOut: number;
+  cancelled: number;
+};
 
 function toRunBatchStatusEvent(
   row: typeof pgRunBatchStatusEvents.$inferSelect,

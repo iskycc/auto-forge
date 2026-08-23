@@ -635,11 +635,13 @@ export const runBatches = sqliteTable(
     adapterRuntimeJson: text("adapter_runtime_json"),
     cancelRequestedAt: text("cancel_requested_at"),
     version: integer("version").notNull().default(1),
+    scheduledFor: text("scheduled_for").notNull().default("1970-01-01T00:00:00.000Z"),
     createdAt: text("created_at").notNull(),
     updatedAt: text("updated_at").notNull(),
   },
   (table) => [
     index("run_batches_status_created_at_idx").on(table.status, table.createdAt),
+    index("run_batches_status_scheduled_for_idx").on(table.status, table.scheduledFor),
     index("run_batches_suite_id_idx").on(table.suiteId),
     index("run_batches_project_created_id_idx").on(table.projectId, table.createdAt, table.id),
   ],

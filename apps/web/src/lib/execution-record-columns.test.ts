@@ -21,6 +21,7 @@ function row(index: number, suiteName = "日常回归任务"): ExecutionRecordRo
     retryMode: "immediate",
     currentRound: 1,
     selectedRunnerCount: 2,
+    scheduledFor: "2026-08-20T08:00:00.000Z",
     createdAt: "2026-08-20T08:00:00.000Z",
     updatedAt: "2026-08-20T08:00:12.000Z",
     observedAt: "2026-08-20T08:01:00.000Z",
@@ -58,5 +59,17 @@ describe("executionRecordColumnWidths", () => {
     const active = { ...row(1), status: "running" as const };
     expect(executionRecordDurationMs(active)).toBe(60_000);
     expect(executionRecordDurationMs({ ...active, status: "failed" })).toBe(12_000);
+  });
+
+  it("shows a live countdown and does not count it as execution duration", () => {
+    const delayed = {
+      ...row(1),
+      status: "queued" as const,
+      scheduledFor: "2026-08-20T08:05:00.000Z",
+      observedAt: "2026-08-20T08:04:01.000Z",
+    };
+
+    expect(executionRecordStatusLabel(delayed)).toBe("倒计时 00:59");
+    expect(executionRecordDurationMs(delayed)).toBe(0);
   });
 });

@@ -1172,6 +1172,7 @@ export type CreateRunBatchRecord = {
   }>;
   adapter?: CaseSuiteExecutionPolicy["adapter"];
   dispatchJob?: JobEnvelope;
+  scheduledFor?: string;
   createdAt: string;
 };
 

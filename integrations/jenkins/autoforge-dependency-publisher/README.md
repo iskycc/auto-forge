@@ -19,3 +19,5 @@ withCredentials([string(credentialsId: 'autoforge-api-key', variable: 'AUTOFORGE
 ```
 
 API 密钥需要目标项目的 `project.manage` 权限。同一项目版本每次只保留最新依赖元数据；新链接会原子替换旧链接，不累积历史文件。
+
+完整构建、归档、发布依赖并执行任务的 Declarative Pipeline 见 [`examples/jenkins/Jenkinsfile`](../../../examples/jenkins/Jenkinsfile)。依赖 URL 必须能由 AutoForge 控制面和 Runner 所在网络读取。

@@ -7,10 +7,18 @@ import {
 } from "../src/scheduling";
 
 describe("createRunBatchInputSchema", () => {
-  it("only accepts the task id so execution always uses the stored task snapshot", () => {
+  it("only accepts the task id and bounded scheduling delay", () => {
     expect(createRunBatchInputSchema.parse({ suiteId: "suite-1" })).toEqual({
       suiteId: "suite-1",
+      delaySeconds: 0,
     });
+    expect(createRunBatchInputSchema.parse({ suiteId: "suite-1", delaySeconds: 300 })).toEqual({
+      suiteId: "suite-1",
+      delaySeconds: 300,
+    });
+    expect(() =>
+      createRunBatchInputSchema.parse({ suiteId: "suite-1", delaySeconds: 604_801 }),
+    ).toThrow();
     expect(() => createRunBatchInputSchema.parse({ suiteId: "suite-1", retryLimit: 2 })).toThrow();
   });
 

@@ -101,6 +101,7 @@ export class RunBatchSchedulingService {
       ...(suitePolicy.executor === "testng-container" ? ["executor:testng-container-v1"] : []),
     ]);
     const createdAt = this.clock.now().toISOString();
+    const scheduledFor = delayedStart(createdAt, validated.delaySeconds);
     const batchId = this.ids.next();
     const dispatchJob = {
       schemaVersion: 1 as const,
@@ -152,6 +153,7 @@ export class RunBatchSchedulingService {
         parameters: { ...item.caseDefinition.parameters },
       })),
       dispatchJob,
+      scheduledFor,
       createdAt,
     });
     return this.schedule(batchId);
@@ -224,6 +226,7 @@ export class RunBatchSchedulingService {
       ...(usesTaskAdapter(validated.adapter) ? [COTEST_ADAPTER_CAPABILITY] : []),
     ]);
     const createdAt = this.clock.now().toISOString();
+    const scheduledFor = delayedStart(createdAt, validated.delaySeconds);
     const batchId = this.ids.next();
     const priority = validated.priority ?? defaultCaseSuiteExecutionPolicy.priority;
     const dispatchJob = {
@@ -282,6 +285,7 @@ export class RunBatchSchedulingService {
         },
       ],
       dispatchJob,
+      scheduledFor,
       createdAt,
     });
     return this.schedule(batchId);
@@ -350,6 +354,11 @@ export class RunBatchSchedulingService {
       Math.min(MAXIMUM_SCHEDULING_WINDOW, this.projectMaximumConcurrency),
     );
     if (!snapshot) throw new DomainError("RUN_BATCH_NOT_FOUND", "指定的执行批次不存在。");
+    // 队列/outbox 的 availableAt 是第一道门；此处是权威防线，避免恢复、Runner
+    // 生命周期或直接 API 调度绕过延时。
+    if (Date.parse(snapshot.batch.scheduledFor) > now.getTime()) {
+      return { batch: snapshot.batch, reserved: 0 };
+    }
     if (snapshot.queuedRuns.length > 0) {
       // 批次策略的并发上限按在途（assigned+running）run 数扣减；assignedRuns 已包含 running。
       const suiteMaximumAssignments = snapshot.batch.policy
@@ -892,6 +901,10 @@ export class RunBatchSchedulingService {
       return [];
     }
   }
+}
+
+function delayedStart(createdAt: string, delaySeconds: number): string {
+  return new Date(Date.parse(createdAt) + delaySeconds * 1_000).toISOString();
 }
 function usesTaskAdapter(
   adapter:

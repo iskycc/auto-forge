@@ -17,15 +17,9 @@ import {
   runBatchPassRate,
 } from "@/lib/run-batch-presentation";
 
-// 批次没有 startedAt 字段：开始时间取所有 attempt 的最早 startedAt，无 attempt 时回退创建时间。
+// 计划开始时间由服务端在创建批次时固化；资源等待不能悄悄改写用户选择的开始时间。
 function batchStartedAt(batch: RunBatchDetails): string {
-  let earliest = batch.createdAt;
-  for (const attempt of batch.attempts) {
-    if (attempt.startedAt && Date.parse(attempt.startedAt) < Date.parse(earliest)) {
-      earliest = attempt.startedAt;
-    }
-  }
-  return earliest;
+  return batch.scheduledFor;
 }
 
 // 终态批次的结束时间取最晚的 attempt finishedAt，缺失时回退批次 updatedAt。
@@ -63,8 +57,11 @@ export function ExecutionBatchDetails({
   const router = useRouter();
   const [actionError, setActionError] = useState("");
   const [actionPending, setActionPending] = useState<"cancel" | "retry" | undefined>();
+  const [observedAtMs, setObservedAtMs] = useState(() => Date.now());
   const activeBatch = isActiveRunBatch(batch.status);
   const startedAt = batchStartedAt(batch);
+  const awaitingScheduledStart =
+    batch.status === "queued" && Date.parse(batch.scheduledFor) > observedAtMs;
 
   // 进行中的批次每 5 秒刷新服务端数据，让轮次进度自动推进；组件卸载时清理。
   useEffect(() => {
@@ -72,6 +69,12 @@ export function ExecutionBatchDetails({
     const timer = window.setInterval(() => router.refresh(), 5_000);
     return () => window.clearInterval(timer);
   }, [activeBatch, router]);
+
+  useEffect(() => {
+    if (!activeBatch) return;
+    const timer = window.setInterval(() => setObservedAtMs(Date.now()), 1_000);
+    return () => window.clearInterval(timer);
+  }, [activeBatch]);
 
   async function terminateBatch(): Promise<void> {
     if (
@@ -127,7 +130,10 @@ export function ExecutionBatchDetails({
   return (
     <div className="execution-detail-layout">
       <section className="batch-metrics-band" aria-label="批次概览">
-        <Metric label="状态" value={runBatchCompletionLabel(batch)} />
+        <Metric
+          label="状态"
+          value={awaitingScheduledStart ? "倒计时" : runBatchCompletionLabel(batch)}
+        />
         <Metric label="总通过率" value={`${runBatchPassRate(batch)}%`} />
         <Metric
           label="用例总数"
@@ -139,7 +145,11 @@ export function ExecutionBatchDetails({
           value={formatLocalDateTime(startedAt)}
           title={`UTC ${startedAt}`}
         />
-        <ElapsedMetric active={activeBatch} batch={batch} startedAt={startedAt} />
+        {awaitingScheduledStart ? (
+          <CountdownMetric nowMs={observedAtMs} scheduledFor={batch.scheduledFor} />
+        ) : (
+          <ElapsedMetric active={activeBatch} batch={batch} startedAt={startedAt} />
+        )}
         <Metric
           label="当前轮次"
           value={
@@ -211,6 +221,15 @@ export function ExecutionBatchDetails({
         runnerDirectory={runnerDirectory}
       />
     </div>
+  );
+}
+
+function CountdownMetric({ scheduledFor, nowMs }: { scheduledFor: string; nowMs: number }) {
+  return (
+    <Metric
+      label="距离开始"
+      value={formatBatchDuration(Math.max(0, Date.parse(scheduledFor) - nowMs))}
+    />
   );
 }
 

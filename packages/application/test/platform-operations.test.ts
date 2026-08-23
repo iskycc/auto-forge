@@ -267,6 +267,7 @@ function batch(
     timedOutRuns: 0,
     cancelledRuns: 0,
     version: 1,
+    scheduledFor: timestamp,
     createdAt: timestamp,
     updatedAt: timestamp,
     runs,

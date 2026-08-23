@@ -7,7 +7,7 @@ import type {
   Runner,
   RunnerGroup,
 } from "@autoforge/domain";
-import { Check, LoaderCircle, Play, Server, UsersRound, X } from "lucide-react";
+import { Check, Clock3, LoaderCircle, Play, Server, UsersRound, X } from "lucide-react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
@@ -30,6 +30,7 @@ type ProjectRunOptions = {
 
 type RunKind = "suite" | "case";
 type RunnerSelectionKind = "runners" | "group";
+type StartMode = "immediate" | "delayed";
 
 export function OpenRunDialogButton({
   caseDefinitionId,
@@ -89,6 +90,10 @@ export function GlobalRunDialog({
   const [adapterSuiteName, setAdapterSuiteName] = useState("");
   const [adapterTestName, setAdapterTestName] = useState("");
   const [environmentAddresses, setEnvironmentAddresses] = useState("");
+  const [startMode, setStartMode] = useState<StartMode>("immediate");
+  const [delayMinutes, setDelayMinutes] = useState(5);
+  const [delaySecondsPart, setDelaySecondsPart] = useState(0);
+  const [previewNowMs, setPreviewNowMs] = useState(() => Date.now());
   const contextKey = `${projectId ?? ""}:${projectVersionId ?? ""}:${testStageId ?? ""}`;
   const options = projectOptions?.contextKey === contextKey ? projectOptions.value : undefined;
 
@@ -99,6 +104,7 @@ export function GlobalRunDialog({
     : false;
   const selectedProjectId =
     runKind === "suite" ? selectedSuite?.projectId : selectedCase?.projectId;
+  const configuredDelaySeconds = startMode === "delayed" ? delayMinutes * 60 + delaySecondsPart : 0;
   const visibleCases = useMemo(() => {
     const normalizedQuery = caseQuery.trim().toLocaleLowerCase("zh-CN");
     if (!normalizedQuery) return options?.cases ?? [];
@@ -115,6 +121,7 @@ export function GlobalRunDialog({
         setRunKind("case");
         setCaseDefinitionId(requestedCaseId);
       }
+      setPreviewNowMs(Date.now());
       setOpen(true);
       if (loading) return;
       setLoading(true);
@@ -183,6 +190,12 @@ export function GlobalRunDialog({
     };
   }, [closeDialog, open, submitting]);
 
+  useEffect(() => {
+    if (!open || startMode !== "delayed") return;
+    const timer = window.setInterval(() => setPreviewNowMs(Date.now()), 1_000);
+    return () => window.clearInterval(timer);
+  }, [open, startMode]);
+
   function toggleRunner(runnerId: string): void {
     setRunnerIds((current) =>
       current.includes(runnerId)
@@ -211,11 +224,19 @@ export function GlobalRunDialog({
       setError("请选择执行机组。");
       return;
     }
+    if (startMode === "delayed" && configuredDelaySeconds <= 0) {
+      setError("倒计时必须大于 0 秒。");
+      return;
+    }
+    if (configuredDelaySeconds > 604_800) {
+      setError("倒计时最长为 7 天。");
+      return;
+    }
     setSubmitting(true);
     try {
       let batch: RunBatch;
       if (runKind === "suite") {
-        const requestBody = { suiteId };
+        const requestBody = { suiteId, delaySeconds: configuredDelaySeconds };
         const preflight = await requestJson<{
           ready: boolean;
           blockers: Array<{ message: string }>;
@@ -234,6 +255,7 @@ export function GlobalRunDialog({
             method: "POST",
             body: {
               projectId: selectedProjectId,
+              delaySeconds: configuredDelaySeconds,
               runnerIds: runnerSelectionKind === "runners" ? runnerIds : [],
               ...(runnerSelectionKind === "group" ? { runnerGroupId } : {}),
               retryLimit,
@@ -590,6 +612,112 @@ export function GlobalRunDialog({
                       </>
                     )}
 
+                    <section className="global-run-step global-run-start-step">
+                      <div className="global-run-step-title">
+                        <span>
+                          <Clock3 aria-hidden="true" size={15} />
+                        </span>
+                        <div>
+                          <h3>设置开始时间</h3>
+                          <p>倒计时由服务端持久化，页面关闭或服务重启都不会丢失。</p>
+                        </div>
+                      </div>
+                      <div className="start-mode-layout">
+                        <div className="segmented-control start-mode-control" aria-label="开始方式">
+                          <Button
+                            aria-pressed={startMode === "immediate"}
+                            onClick={() => setStartMode("immediate")}
+                            type="button"
+                          >
+                            立即执行
+                          </Button>
+                          <Button
+                            aria-pressed={startMode === "delayed"}
+                            onClick={() => setStartMode("delayed")}
+                            type="button"
+                          >
+                            倒计时执行
+                          </Button>
+                        </div>
+                        {startMode === "delayed" ? (
+                          <div className="delay-start-panel">
+                            <div className="delay-time-fields">
+                              <label className="field-stack">
+                                <span>分钟</span>
+                                <Input
+                                  aria-label="倒计时分钟"
+                                  max={10_080}
+                                  min={0}
+                                  onChange={(event) => {
+                                    const minutes = boundedInteger(event.target.value, 0, 10_080);
+                                    setDelayMinutes(minutes);
+                                    if (minutes === 10_080) setDelaySecondsPart(0);
+                                  }}
+                                  type="number"
+                                  value={delayMinutes}
+                                />
+                              </label>
+                              <label className="field-stack">
+                                <span>秒</span>
+                                <Input
+                                  aria-label="倒计时秒"
+                                  max={delayMinutes === 10_080 ? 0 : 59}
+                                  min={0}
+                                  onChange={(event) =>
+                                    setDelaySecondsPart(
+                                      boundedInteger(
+                                        event.target.value,
+                                        0,
+                                        delayMinutes === 10_080 ? 0 : 59,
+                                      ),
+                                    )
+                                  }
+                                  type="number"
+                                  value={delaySecondsPart}
+                                />
+                              </label>
+                            </div>
+                            <div className="delay-presets" aria-label="常用倒计时">
+                              {[1, 5, 10, 30].map((minutes) => (
+                                <Button
+                                  key={minutes}
+                                  onClick={() => {
+                                    setDelayMinutes(minutes);
+                                    setDelaySecondsPart(0);
+                                  }}
+                                  type="button"
+                                >
+                                  {minutes} 分钟
+                                </Button>
+                              ))}
+                            </div>
+                            <div className="delay-start-preview" role="status">
+                              <Clock3 aria-hidden="true" size={18} />
+                              <span>
+                                <small>计划开始</small>
+                                <strong>
+                                  {configuredDelaySeconds > 0
+                                    ? new Date(
+                                        previewNowMs + configuredDelaySeconds * 1_000,
+                                      ).toLocaleString("zh-CN", {
+                                        month: "2-digit",
+                                        day: "2-digit",
+                                        hour: "2-digit",
+                                        minute: "2-digit",
+                                        second: "2-digit",
+                                      })
+                                    : "请设置有效倒计时"}
+                                </strong>
+                              </span>
+                              <em>{formatCountdown(configuredDelaySeconds)}</em>
+                            </div>
+                          </div>
+                        ) : (
+                          <p className="immediate-start-note">提交并通过预检后立即进入资源调度。</p>
+                        )}
+                      </div>
+                    </section>
+
                     {error ? (
                       <p className="form-error global-run-error" role="alert">
                         {error}
@@ -614,7 +742,11 @@ export function GlobalRunDialog({
                         ) : (
                           <Play size={16} />
                         )}
-                        {submitting ? "正在创建…" : "确认并开始执行"}
+                        {submitting
+                          ? "正在创建…"
+                          : startMode === "delayed"
+                            ? "确认倒计时执行"
+                            : "确认并开始执行"}
                       </Button>
                     </footer>
                   </form>
@@ -729,4 +861,22 @@ function parseLines(value: string): string[] {
         .filter(Boolean),
     ),
   ];
+}
+
+function boundedInteger(value: string, minimum: number, maximum: number): number {
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed)) return minimum;
+  return Math.min(maximum, Math.max(minimum, parsed));
+}
+
+function formatCountdown(totalSeconds: number): string {
+  if (totalSeconds <= 0) return "未设置";
+  const hours = Math.floor(totalSeconds / 3_600);
+  const minutes = Math.floor((totalSeconds % 3_600) / 60);
+  const seconds = totalSeconds % 60;
+  return [
+    ...(hours > 0 ? [`${hours} 小时`] : []),
+    ...(minutes > 0 ? [`${minutes} 分`] : []),
+    ...(seconds > 0 ? [`${seconds} 秒`] : []),
+  ].join(" ");
 }

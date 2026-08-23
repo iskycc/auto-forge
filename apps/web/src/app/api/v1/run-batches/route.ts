@@ -62,7 +62,12 @@ export async function POST(request: Request): Promise<NextResponse> {
       resourceId: batch.id,
       projectId: batch.projectId,
       requestId: currentRequestId,
-      details: { totalRuns: batch.totalRuns, retryLimit: batch.retryLimit },
+      details: {
+        totalRuns: batch.totalRuns,
+        retryLimit: batch.retryLimit,
+        delaySeconds: input.delaySeconds,
+        scheduledFor: batch.scheduledFor,
+      },
     });
     return NextResponse.json(batch, { status: 201 });
   } catch (error) {

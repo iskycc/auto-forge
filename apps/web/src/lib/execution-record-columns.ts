@@ -16,6 +16,7 @@ export type ExecutionRecordRow = {
   retryMode: "immediate" | "round";
   currentRound: number;
   selectedRunnerCount: number;
+  scheduledFor: string;
   createdAt: string;
   updatedAt: string;
   observedAt: string;
@@ -120,11 +121,11 @@ export const EXECUTION_RECORD_COLUMNS: readonly ExecutionRecordColumnDefinition[
   },
   {
     key: "createdAt",
-    label: "创建时间",
+    label: "开始时间",
     defaultWidth: 150,
     minWidth: 110,
     maxWidth: 190,
-    text: (row) => formatExecutionRecordTime(row.createdAt),
+    text: (row) => formatExecutionRecordTime(row.scheduledFor),
   },
   {
     key: "duration",
@@ -174,7 +175,9 @@ export function executionRecordIsActive(status: RunBatch["status"]): boolean {
 }
 
 export function executionRecordStatusLabel(
-  value: RunBatch["status"] | Pick<ExecutionRecordRow, "status" | "terminationRequestedAt">,
+  value:
+    | RunBatch["status"]
+    | Pick<ExecutionRecordRow, "status" | "terminationRequestedAt" | "scheduledFor" | "observedAt">,
 ): string {
   if (
     typeof value !== "string" &&
@@ -182,6 +185,15 @@ export function executionRecordStatusLabel(
     executionRecordIsActive(value.status)
   ) {
     return "终止中";
+  }
+  if (
+    typeof value !== "string" &&
+    value.status === "queued" &&
+    Date.parse(value.scheduledFor) > Date.parse(value.observedAt)
+  ) {
+    return `倒计时 ${compactCountdown(
+      Math.ceil((Date.parse(value.scheduledFor) - Date.parse(value.observedAt)) / 1_000),
+    )}`;
   }
   const status = typeof value === "string" ? value : value.status;
   const labels: Record<RunBatch["status"], string> = {
@@ -203,11 +215,20 @@ export function executionRecordPassRate(
 }
 
 export function executionRecordDurationMs(
-  row: Pick<ExecutionRecordRow, "createdAt" | "updatedAt" | "observedAt" | "status">,
+  row: Pick<ExecutionRecordRow, "scheduledFor" | "updatedAt" | "observedAt" | "status">,
 ): number {
-  const start = Date.parse(row.createdAt);
+  const start = Date.parse(row.scheduledFor);
   const end = Date.parse(executionRecordIsActive(row.status) ? row.observedAt : row.updatedAt);
   return Number.isNaN(start) || Number.isNaN(end) || end <= start ? 0 : end - start;
+}
+
+function compactCountdown(totalSeconds: number): string {
+  const hours = Math.floor(totalSeconds / 3_600);
+  const minutes = Math.floor((totalSeconds % 3_600) / 60);
+  const seconds = Math.max(0, totalSeconds % 60);
+  return hours > 0
+    ? `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`
+    : `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
 }
 
 export function formatExecutionRecordTime(value: string): string {

@@ -243,7 +243,7 @@ export function ExecutionRecordsTable({
                 </td>
                 <td>
                   <span className={`batch-status batch-status-${row.status}`}>
-                    {executionRecordStatusLabel(row)}
+                    {executionRecordStatusLabel({ ...row, observedAt })}
                   </span>
                 </td>
                 <td>{executionRecordPassRate(row)}%</td>
@@ -253,7 +253,9 @@ export function ExecutionRecordsTable({
                 <td>{row.retryMode === "round" ? "整轮轮次" : "立即重跑"}</td>
                 <td>{row.selectedRunnerCount}</td>
                 <td>
-                  <time dateTime={row.createdAt}>{formatExecutionRecordTime(row.createdAt)}</time>
+                  <time dateTime={row.scheduledFor}>
+                    {formatExecutionRecordTime(row.scheduledFor)}
+                  </time>
                 </td>
                 <td>{formatBatchDuration(executionRecordDurationMs({ ...row, observedAt }))}</td>
                 <td>

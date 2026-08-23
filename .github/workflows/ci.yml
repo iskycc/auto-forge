@@ -69,7 +69,7 @@ jobs:
           mvn --batch-mode --file adapters/cotest-testng/pom.xml test
 
   jenkins-plugins:
-    name: Jenkins plugin verification
+    name: Jenkins HPI and Pipeline E2E
     runs-on: ubuntu-24.04
     timeout-minutes: 8
     steps:

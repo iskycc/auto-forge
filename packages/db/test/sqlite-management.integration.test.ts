@@ -1480,7 +1480,8 @@ describe("SQLite management repositories", () => {
       ]);
       expect(await batches.get("batch-expiry-control")).toMatchObject({
         status: "queued",
-        timedOutRuns: 0,
+        // 历史列表与详情“总结”一致：下一轮 attempt 尚未创建时，最新一轮超时仍可见。
+        timedOutRuns: 1,
       });
       const lateCompletion = await executions.completeAttempt({
         runnerId: "runner-control",
@@ -1501,7 +1502,7 @@ describe("SQLite management repositories", () => {
       expect(lateCompletion).toMatchObject({ disposition: "late", retryScheduled: false });
       expect(await batches.get("batch-expiry-control")).toMatchObject({
         status: "queued",
-        timedOutRuns: 0,
+        timedOutRuns: 1,
       });
 
       await batches.create({
@@ -2024,7 +2025,9 @@ describe("SQLite management repositories", () => {
       expect(await batches.get("batch-terminate-after-retry")).toMatchObject({
         status: "cancelled",
         terminationRequestedAt: "2026-08-09T00:04:09.000Z",
-        cancelledRuns: 1,
+        // 批次生命周期已终止，但用例最终统计仍采用“总结”的最后 attempt 结果。
+        failedRuns: 1,
+        cancelledRuns: 0,
         attempts: [expect.objectContaining({ status: "failed" })],
       });
 

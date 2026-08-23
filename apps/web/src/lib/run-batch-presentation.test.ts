@@ -169,6 +169,7 @@ function batch(overrides: Partial<RunBatch>): RunBatch {
     timedOutRuns: 0,
     cancelledRuns: 0,
     version: 1,
+    scheduledFor: "2026-08-10T00:00:00.000Z",
     createdAt: "2026-08-10T00:00:00.000Z",
     updatedAt: "2026-08-10T00:00:00.000Z",
     ...overrides,

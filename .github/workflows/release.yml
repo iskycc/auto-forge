@@ -197,6 +197,9 @@ jobs:
           -Dchangelist=
           verify
 
+      - name: Verify packaged Jenkins HPI metadata and Pipeline steps
+        run: bash scripts/verify-jenkins-hpis.sh "${{ needs.prepare.outputs.version }}"
+
       - name: Stage Jenkins plugins
         run: |
           mkdir -p dist/release

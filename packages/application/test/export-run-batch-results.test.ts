@@ -41,6 +41,7 @@ function makeDetails(overrides: Partial<RunBatchDetails> = {}): RunBatchDetails 
     timedOutRuns: 0,
     cancelledRuns: 0,
     version: 1,
+    scheduledFor: "2026-08-17T00:00:00.000Z",
     createdAt: "2026-08-17T00:00:00.000Z",
     updatedAt: "2026-08-17T00:10:00.000Z",
     statusHistory: [],

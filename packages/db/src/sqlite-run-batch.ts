@@ -77,6 +77,7 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
     const claimTimeoutMs = record.claimTimeoutMs ?? 300_000;
     const executionTimeoutMs = record.executionTimeoutMs ?? 3_600_000;
     const uploadTimeoutMs = record.uploadTimeoutMs ?? 600_000;
+    const scheduledFor = record.scheduledFor ?? record.createdAt;
     const adapterRuntime = projectAdapterRuntime(
       this.handle,
       record.projectId ?? DEFAULT_PROJECT_ID,
@@ -115,6 +116,7 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
           policyJson: record.policy ? JSON.stringify(record.policy) : null,
           adapterRuntimeJson: adapterRuntime ? JSON.stringify(adapterRuntime) : null,
           totalRuns: record.runs.length,
+          scheduledFor,
           createdAt: record.createdAt,
           updatedAt: record.createdAt,
         })
@@ -149,7 +151,7 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
               assignedRunnerId: null,
               attemptCount: 0,
               schedulingScore: null,
-              queueDeadlineAt: addMilliseconds(record.createdAt, queueTimeoutMs),
+              queueDeadlineAt: addMilliseconds(scheduledFor, queueTimeoutMs),
               executionTimeoutMs,
               uploadTimeoutMs,
               createdAt: record.createdAt,
@@ -176,7 +178,7 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
             JSON.stringify(record.dispatchJob.payload),
             record.dispatchJob.priority,
             record.dispatchJob.deduplicationKey,
-            record.dispatchJob.createdAt,
+            scheduledFor,
             record.dispatchJob.createdAt,
             record.dispatchJob.createdAt,
           );
@@ -223,8 +225,8 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
         : []),
       ...(input.suiteId ? [eq(runBatches.suiteId, input.suiteId)] : []),
       ...(input.status ? [eq(runBatches.status, input.status)] : []),
-      ...(input.createdAfter ? [gte(runBatches.createdAt, input.createdAfter)] : []),
-      ...(input.createdBefore ? [lte(runBatches.createdAt, input.createdBefore)] : []),
+      ...(input.createdAfter ? [gte(runBatches.scheduledFor, input.createdAfter)] : []),
+      ...(input.createdBefore ? [lte(runBatches.scheduledFor, input.createdBefore)] : []),
       ...(cursor
         ? [
             or(
@@ -354,11 +356,12 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
         .prepare(
           `SELECT id FROM run_batches
            WHERE status IN ('queued','dispatching','running') AND cancel_requested_at IS NULL
+             AND scheduled_for <= ?
            ORDER BY priority + MIN(100, MAX(0, CAST(
-             (julianday(?) - julianday(created_at)) * 1440 / ? AS INTEGER
-           ))) DESC, created_at, id LIMIT ?`,
+             (julianday(?) - julianday(scheduled_for)) * 1440 / ? AS INTEGER
+           ))) DESC, scheduled_for, id LIMIT ?`,
         )
-        .all(now, agingIntervalMinutes, limit) as Array<{ id: string }>
+        .all(now, now, agingIntervalMinutes, limit) as Array<{ id: string }>
     ).map((row) => row.id);
   }
 
@@ -373,12 +376,12 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
         .prepare(
           `SELECT b.id FROM run_batches b JOIN run_batch_runners br ON br.batch_id=b.id
            WHERE br.runner_id=? AND b.status IN ('queued','dispatching','running')
-             AND b.cancel_requested_at IS NULL
+             AND b.cancel_requested_at IS NULL AND b.scheduled_for <= ?
            ORDER BY b.priority + MIN(100, MAX(0, CAST(
-             (julianday(?) - julianday(b.created_at)) * 1440 / ? AS INTEGER
-           ))) DESC, b.created_at, b.id LIMIT ?`,
+             (julianday(?) - julianday(b.scheduled_for)) * 1440 / ? AS INTEGER
+           ))) DESC, b.scheduled_for, b.id LIMIT ?`,
         )
-        .all(runnerId, now, agingIntervalMinutes, limit) as Array<{ id: string }>
+        .all(runnerId, now, now, agingIntervalMinutes, limit) as Array<{ id: string }>
     ).map((row) => row.id);
   }
 
@@ -744,16 +747,7 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
         .all(),
     );
     const outcomeRows = batchesOf(batchIds, RELATIONAL_ID_QUERY_BATCH_SIZE).flatMap((ids) =>
-      this.handle.db
-        .select({
-          batchId: executionRuns.batchId,
-          failed: sql<number>`sum(case when ${executionRuns.status} = 'failed' and (${executionRuns.terminalOutcome} is null or ${executionRuns.terminalOutcome} <> 'timed_out') then 1 else 0 end)`,
-          timedOut: sql<number>`sum(case when ${executionRuns.terminalOutcome} = 'timed_out' then 1 else 0 end)`,
-        })
-        .from(executionRuns)
-        .where(inArray(executionRuns.batchId, ids))
-        .groupBy(executionRuns.batchId)
-        .all(),
+      this.finalOutcomeCounts(ids),
     );
     const runnerIdsByBatch = new Map<string, string[]>();
     for (const runner of selectedRunnerRows) {
@@ -782,7 +776,7 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
     row: typeof runBatches.$inferSelect,
     selectedRunnerIds: string[],
     byStatus: Map<string, number>,
-    outcomeCounts: { failed: number | null; timedOut: number | null } | undefined,
+    outcomeCounts: FinalOutcomeCounts | undefined,
   ): RunBatch {
     const policy = batchPolicy(row.policyJson);
     return {
@@ -811,17 +805,69 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
       queuedRuns: byStatus.get("queued") ?? 0,
       assignedRuns: (byStatus.get("assigned") ?? 0) + (byStatus.get("running") ?? 0),
       runningRuns: byStatus.get("running") ?? 0,
-      succeededRuns: byStatus.get("succeeded") ?? 0,
+      succeededRuns: Number(outcomeCounts?.succeeded ?? byStatus.get("succeeded") ?? 0),
       failedRuns: Number(outcomeCounts?.failed ?? 0),
       timedOutRuns: Number(outcomeCounts?.timedOut ?? 0),
-      cancelledRuns: byStatus.get("cancelled") ?? 0,
+      cancelledRuns: Number(outcomeCounts?.cancelled ?? byStatus.get("cancelled") ?? 0),
       ...(row.cancelRequestedAt ? { terminationRequestedAt: row.cancelRequestedAt } : {}),
       version: row.version,
+      scheduledFor: row.scheduledFor,
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
     };
   }
+
+  /**
+   * attempt 选择与领域总结保持一致：每个 run 曾成功则成功，否则取最高轮次。
+   * 从未产生 attempt 的排队超时等终态回退 run 结果；聚合留在数据库内。
+   */
+  private finalOutcomeCounts(batchIds: readonly string[]): FinalOutcomeCounts[] {
+    if (batchIds.length === 0) return [];
+    const placeholders = batchIds.map(() => "?").join(",");
+    return this.handle.client
+      .prepare(
+        `WITH ranked_attempts AS (
+           SELECT run.batch_id, attempt.execution_run_id,
+                  COALESCE(attempt.outcome, attempt.status) AS final_outcome,
+                  ROW_NUMBER() OVER (
+                    PARTITION BY attempt.execution_run_id
+                    ORDER BY CASE WHEN COALESCE(attempt.outcome, attempt.status) = 'succeeded'
+                                      THEN 0 ELSE 1 END,
+                             attempt.attempt_number DESC
+                  ) AS outcome_rank
+           FROM run_attempts attempt
+           JOIN execution_runs run ON run.id = attempt.execution_run_id
+           WHERE run.batch_id IN (${placeholders})
+         ), selected_outcomes AS (
+           SELECT execution_run_id, final_outcome
+           FROM ranked_attempts WHERE outcome_rank = 1
+         ), run_outcomes AS (
+           SELECT run.batch_id,
+                  COALESCE(selected.final_outcome, run.terminal_outcome,
+                    CASE WHEN run.status IN ('succeeded','failed','cancelled')
+                         THEN run.status END) AS final_outcome
+           FROM execution_runs run
+           LEFT JOIN selected_outcomes selected ON selected.execution_run_id = run.id
+           WHERE run.batch_id IN (${placeholders})
+         )
+         SELECT batch_id AS batchId,
+                SUM(CASE WHEN final_outcome = 'succeeded' THEN 1 ELSE 0 END) AS succeeded,
+                SUM(CASE WHEN final_outcome = 'failed' THEN 1 ELSE 0 END) AS failed,
+                SUM(CASE WHEN final_outcome = 'timed_out' THEN 1 ELSE 0 END) AS timedOut,
+                SUM(CASE WHEN final_outcome = 'cancelled' THEN 1 ELSE 0 END) AS cancelled
+         FROM run_outcomes GROUP BY batch_id`,
+      )
+      .all(...batchIds, ...batchIds) as FinalOutcomeCounts[];
+  }
 }
+
+type FinalOutcomeCounts = {
+  batchId: string;
+  succeeded: number | null;
+  failed: number | null;
+  timedOut: number | null;
+  cancelled: number | null;
+};
 
 // policy_json 为 NULL（历史数据）时返回 undefined，保留旧行为。
 function batchPolicy(json: string | null): RunBatchExecutionPolicy | undefined {

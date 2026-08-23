@@ -22,6 +22,7 @@ import { describe, expect, it } from "vitest";
 type RefillHarness = {
   batches: RunBatchRepository;
   executions: ExecutionControlRepository;
+  projectId: string;
   runnerId: string;
   batchRunningId: string;
   batchQueuedId: string;
@@ -79,6 +80,90 @@ async function createSqliteHarness(): Promise<RefillHarness> {
 }
 
 function schedulingRefillCases(createHarness: () => Promise<RefillHarness>): void {
+  it("keeps delayed batches out of every schedulable view until their planned start", async () => {
+    const harness = await createHarness();
+    try {
+      await harness.rawQuery("UPDATE run_batches SET scheduled_for = ? WHERE id = ?", [
+        "2026-08-10T00:15:00.000Z",
+        harness.batchQueuedId,
+      ]);
+      await expect(
+        harness.batches.listSchedulableBatchIds(10, "2026-08-10T00:14:59.000Z"),
+      ).resolves.not.toContain(harness.batchQueuedId);
+      await expect(
+        harness.batches.listSchedulableBatchIds(10, "2026-08-10T00:15:00.000Z"),
+      ).resolves.toContain(harness.batchQueuedId);
+    } finally {
+      await harness.dispose();
+      await cleanupTemporaryDirectories();
+    }
+  });
+
+  it("counts any passed round as passed and only the selected final failure as failed", async () => {
+    const harness = await createHarness();
+    const batchId = randomUUID();
+    const passedRunId = randomUUID();
+    const failedRunId = randomUUID();
+    const at = "2026-08-10T00:04:00.000Z";
+    try {
+      await harness.rawQuery(
+        `INSERT INTO run_batches
+           (id, suite_id, suite_name, suite_version, status, retry_limit, retry_mode,
+            environment_json, total_runs, project_id, scheduled_for, created_at, updated_at)
+         VALUES (?, 'suite-final-counts', 'Final count suite', 1, 'failed', 1, 'round',
+                 '[]', 2, ?, ?, ?, ?)`,
+        [batchId, harness.projectId, at, at, at],
+      );
+      for (const [runId, displayName] of [
+        [passedRunId, "Passed once"],
+        [failedRunId, "Failed finally"],
+      ]) {
+        await harness.rawQuery(
+          `INSERT INTO execution_runs
+             (id, batch_id, case_definition_id, case_version, display_name, class_name,
+              status, attempt_count, terminal_outcome, created_at, updated_at)
+           VALUES (?, ?, ?, 1, ?, 'example.FinalCountTest', 'failed', 2, 'failed', ?, ?)`,
+          [runId, batchId, `case-${runId}`, displayName, at, at],
+        );
+      }
+      for (const [runId, firstOutcome, secondOutcome] of [
+        [passedRunId, "succeeded", "failed"],
+        [failedRunId, "failed", "failed"],
+      ]) {
+        await harness.rawQuery(
+          `INSERT INTO run_attempts
+             (id, execution_run_id, runner_id, attempt_number, status, outcome,
+              scheduling_score, created_at)
+           VALUES (?, ?, ?, 1, ?, ?, 1, ?), (?, ?, ?, 2, ?, ?, 1, ?)`,
+          [
+            randomUUID(),
+            runId,
+            harness.runnerId,
+            firstOutcome,
+            firstOutcome,
+            at,
+            randomUUID(),
+            runId,
+            harness.runnerId,
+            secondOutcome,
+            secondOutcome,
+            at,
+          ],
+        );
+      }
+
+      await expect(harness.batches.getSummary(batchId)).resolves.toMatchObject({
+        totalRuns: 2,
+        succeededRuns: 1,
+        failedRuns: 1,
+        timedOutRuns: 0,
+      });
+    } finally {
+      await harness.dispose();
+      await cleanupTemporaryDirectories();
+    }
+  });
+
   it("lists running batches as schedulable alongside queued ones", async () => {
     const harness = await createHarness();
     try {

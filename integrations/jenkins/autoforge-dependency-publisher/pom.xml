@@ -17,7 +17,7 @@
   <description>Replaces the version-scoped AutoForge dependency archive from Jenkins Pipeline.</description>
   <url>https://github.com/iskycc/auto-forge</url>
   <properties>
-    <revision>0.9.1</revision>
+    <revision>1.0.0</revision>
     <changelist>-SNAPSHOT</changelist>
     <jenkins.version>2.479.3</jenkins.version>
   </properties>
@@ -47,6 +47,24 @@
       <groupId>org.jenkins-ci.plugins.workflow</groupId>
       <artifactId>workflow-step-api</artifactId>
       <version>724.v538c2362b_dfb_</version>
+    </dependency>
+    <dependency>
+      <groupId>org.jenkins-ci.plugins.workflow</groupId>
+      <artifactId>workflow-job</artifactId>
+      <version>1508.v9cb_c3a_a_89dfd</version>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.jenkins-ci.plugins.workflow</groupId>
+      <artifactId>workflow-cps</artifactId>
+      <version>4009.v0089238351a_9</version>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.jenkins-ci.plugins</groupId>
+      <artifactId>scm-api</artifactId>
+      <version>698.v8e3b_c788f0a_6</version>
+      <scope>test</scope>
     </dependency>
   </dependencies>
 </project>

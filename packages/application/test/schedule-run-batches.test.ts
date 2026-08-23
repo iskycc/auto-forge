@@ -396,6 +396,52 @@ describe("run batch creation with suite policy", () => {
     });
   });
 
+  it("persists an authoritative delayed start and refuses early direct scheduling", async () => {
+    const created: Array<{ scheduledFor: string }> = [];
+    const reserveAssignments = vi.fn();
+    const batches = {
+      create: vi.fn(async (record: { scheduledFor: string }) => {
+        created.push(record);
+        return { id: "batch-1" };
+      }),
+      getSchedulingSnapshot: vi.fn().mockResolvedValue({
+        batch: {
+          id: "batch-1",
+          scheduledFor: "2026-08-09T00:05:00.000Z",
+          assignedRuns: 0,
+          secretBindings: [],
+        },
+        queuedRuns: [queuedRun("run-1")],
+        candidates: [{ runner: schedulingRunner(), reservedSlots: 0 }],
+        projectActiveRuns: 0,
+      }),
+      reserveAssignments,
+      getSummary: vi.fn().mockResolvedValue({
+        id: "batch-1",
+        scheduledFor: "2026-08-09T00:05:00.000Z",
+      }),
+    } as unknown as RunBatchRepository;
+    const service = new RunBatchSchedulingService(
+      batches,
+      { get: vi.fn().mockResolvedValue(readySuite({})) } as unknown as CaseSuiteRepository,
+      runnersFake(),
+      { now: () => new Date(timestamp) },
+      { next: () => "generated-id" },
+      {
+        maximumCpuUtilizationPercent: 85,
+        maximumMemoryUtilizationPercent: 85,
+        maximumLoadPerCpu: 1,
+      },
+      45,
+      { catalog: readyCatalogFake(), objectStore: objectStoreFake() },
+    );
+
+    await service.create({ suiteId: "suite-1", delaySeconds: 300 });
+
+    expect(created[0]?.scheduledFor).toBe("2026-08-09T00:05:00.000Z");
+    expect(reserveAssignments).not.toHaveBeenCalled();
+  });
+
   it("drops saved artifact patterns when global artifact collection is disabled", async () => {
     const suite = readySuite({
       policy: { artifactPatterns: ["reports/**"] },

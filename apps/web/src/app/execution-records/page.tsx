@@ -83,6 +83,7 @@ export default async function ExecutionRecordsPage({
     retryMode: batch.retryMode,
     currentRound: batch.currentRound,
     selectedRunnerCount: batch.selectedRunnerIds.length,
+    scheduledFor: batch.scheduledFor,
     createdAt: batch.createdAt,
     updatedAt: batch.updatedAt,
     observedAt,

@@ -116,7 +116,30 @@ test("tasks and execution history follow the selected project version", async ({
   const suiteOptions = runDialog.locator('select[aria-label="执行用例任务"] option');
   await expect(suiteOptions.filter({ hasText: firstSuiteName })).toHaveCount(1);
   await expect(suiteOptions.filter({ hasText: secondSuiteName })).toHaveCount(0);
-  await page.keyboard.press("Escape");
+  await runDialog.locator('select[aria-label="执行用例任务"]').selectOption(firstSuite.id);
+  await runDialog.getByRole("button", { name: "倒计时执行", exact: true }).click();
+  await runDialog.getByLabel("倒计时分钟").fill("0");
+  await runDialog.getByLabel("倒计时秒").fill("30");
+  await expect(runDialog.getByText("30 秒", { exact: true })).toBeVisible();
+  const delayedResponse = page.waitForResponse(
+    (candidate) =>
+      candidate.request().method() === "POST" &&
+      new URL(candidate.url()).pathname === "/api/v1/run-batches",
+  );
+  await runDialog.getByRole("button", { name: "确认倒计时执行" }).click();
+  const delayedCreated = await delayedResponse;
+  expect(delayedCreated.status()).toBe(201);
+  const delayedBatch = (await delayedCreated.json()) as {
+    id: string;
+    scheduledFor: string;
+    createdAt: string;
+    assignedRuns: number;
+  };
+  expect(Date.parse(delayedBatch.scheduledFor) - Date.parse(delayedBatch.createdAt)).toBe(30_000);
+  expect(delayedBatch.assignedRuns).toBe(0);
+  await expect(page).toHaveURL(new RegExp(`/run-batches/${delayedBatch.id}$`));
+  await expect(page.locator(".batch-metrics-band")).toContainText("倒计时");
+  await expect(page.locator(".batch-metrics-band")).toContainText("距离开始");
   await page.goto(`/run-batches/${encodeURIComponent(firstBatch.id)}`);
   await expect(page.locator(".execution-detail-hero")).toContainText(
     "项目版本「Lifecycle version」",

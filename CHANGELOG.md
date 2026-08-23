@@ -6,6 +6,52 @@ and known limitations.
 
 ## Unreleased
 
+## 1.0.0 - 2026-08-23
+
+### Added
+
+- Added persistent delayed execution to the global task/single-case dialog. Users can choose an
+  immediate start or a second-accurate countdown up to seven days, use common presets, and inspect
+  the planned local start time before submitting. Execution records and batch details show the
+  authoritative planned start and a live countdown.
+- Added real Jenkins Pipeline DSL end-to-end tests for both HPI plugins using the Jenkins test
+  harness and mock AutoForge HTTP contracts. A packaged-HPI verifier now checks manifests, declared
+  dependencies, embedded plugin JARs and step classes after every Maven build.
+- Added a complete declarative [Jenkinsfile](examples/jenkins/Jenkinsfile) covering Java build/test,
+  version-scoped dependency publication, task execution, credentials and archived diagnostics.
+
+### Changed
+
+- Unified execution-history result counts with the detail “总结” rule: a case that passed in any
+  round counts as passed; otherwise its highest attempt round supplies the final failure, timeout or
+  cancellation. The adapters aggregate this rule inside SQLite/PostgreSQL without loading large
+  attempt histories into application memory.
+- Queue deadlines and priority aging now begin at the planned start, so a countdown never consumes
+  queue timeout or gains artificial scheduling priority. Queue availability and the scheduling
+  service independently reject early dispatch.
+
+### Database
+
+- Added SQLite migration `0040_delayed_run_batches.sql` and PostgreSQL migration
+  `0039_delayed_run_batches.sql`. They backfill `run_batches.scheduled_for` from `created_at` and add
+  a due-batch scheduling index. Existing batches therefore preserve their original start semantics.
+
+### Tests
+
+- Added contract/application regressions for delay bounds, authoritative planned time and direct
+  scheduling guards; added shared SQLite/PostgreSQL integration coverage for due-time visibility and
+  final-round counts.
+- Extended Playwright functional/UI coverage at 1024 and 1536 pixels to configure a countdown,
+  verify the exact persisted start offset, confirm no early assignment and inspect live detail
+  countdown/layout behavior.
+
+### Compatibility
+
+- Runner Protocol v1 is unchanged. Existing clients that omit `delaySeconds` remain immediate; task
+  policy remains the sole execution configuration because the new field is scheduling metadata.
+- The `v1.0.0` HPI plugins require Jenkins `2.479.3` or newer and are verified against Pipeline Job
+  `1508.v9cb_c3a_a_89dfd` and Pipeline Groovy `4009.v0089238351a_9` in CI.
+
 ## 0.9.11 - 2026-08-23
 
 ### Changed

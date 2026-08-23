@@ -281,6 +281,7 @@ test("global execution dialog covers and centers within the whole viewport", asy
     await expect(backdrop).toBeVisible();
     await expect(dialog).toBeVisible();
     await expect(dialog.locator(".global-run-loading")).toHaveCount(0);
+    await dialog.getByRole("button", { name: "用例任务", exact: true }).click();
 
     await expectViewportDialog(backdrop, dialog, viewport);
     expect(
@@ -288,6 +289,10 @@ test("global execution dialog covers and centers within the whole viewport", asy
         document.elementFromPoint(8, 8)?.classList.contains("global-run-backdrop"),
       ),
     ).toBe(true);
+    await dialog.getByRole("button", { name: "倒计时执行", exact: true }).click();
+    await expect(dialog.getByLabel("倒计时分钟")).toBeVisible();
+    await expect(dialog.getByLabel("倒计时秒")).toBeVisible();
+    await expect(dialog.locator(".delay-start-panel")).toBeInViewport();
     await captureUi(page, "/global-run-dialog-suite", viewport.width, false);
 
     await dialog.getByRole("button", { name: "单个用例", exact: true }).click();

@@ -31,6 +31,8 @@ export async function POST(request: Request, context: Context): Promise<NextResp
         caseDefinitionId,
         runnerSelection: input.runnerGroupId ? "group" : "runners",
         adapterEnabled: input.adapter.enabled,
+        delaySeconds: input.delaySeconds,
+        scheduledFor: batch.scheduledFor,
       },
     });
     return NextResponse.json(batch, { status: 201 });

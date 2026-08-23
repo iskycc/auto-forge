@@ -1,0 +1,78 @@
+pipeline {
+  agent { label 'linux && jdk21' }
+
+  options {
+    timestamps()
+    disableConcurrentBuilds()
+  }
+
+  parameters {
+    string(name: 'AUTOFORGE_BASE_URL', defaultValue: 'https://autoforge.internal', description: 'AutoForge 控制面地址')
+    string(name: 'AUTOFORGE_PROJECT_ID', defaultValue: '', description: '目标项目 ID')
+    string(name: 'AUTOFORGE_PROJECT_VERSION', defaultValue: '1.0.0', description: '目标项目版本名称')
+    string(name: 'AUTOFORGE_SUITE_ID', defaultValue: '', description: '已绑定同一项目版本的用例任务 ID')
+  }
+
+  environment {
+    DEPENDENCY_ARCHIVE = 'target/autoforge-dependencies.zip'
+  }
+
+  stages {
+    stage('Build and test') {
+      steps {
+        sh 'mvn --batch-mode clean test dependency:copy-dependencies -DoutputDirectory=target/autoforge-dependencies'
+        sh '(cd target/autoforge-dependencies && zip -q -r ../autoforge-dependencies.zip .)'
+      }
+    }
+
+    stage('Publish dependency archive') {
+      steps {
+        archiveArtifacts artifacts: "${DEPENDENCY_ARCHIVE}", fingerprint: true
+        script {
+          env.DEPENDENCY_SHA256 = sh(
+            script: "sha256sum '${DEPENDENCY_ARCHIVE}' | awk '{print \\$1}'",
+            returnStdout: true
+          ).trim()
+          env.DEPENDENCY_SIZE = sh(
+            script: "stat -c %s '${DEPENDENCY_ARCHIVE}'",
+            returnStdout: true
+          ).trim()
+        }
+        withCredentials([string(credentialsId: 'autoforge-api-key', variable: 'AUTOFORGE_API_KEY')]) {
+          autoforgePublishDependencies(
+            baseUrl: params.AUTOFORGE_BASE_URL,
+            apiKey: env.AUTOFORGE_API_KEY,
+            projectId: params.AUTOFORGE_PROJECT_ID,
+            version: params.AUTOFORGE_PROJECT_VERSION,
+            dependencyUrl: "${env.BUILD_URL}artifact/${env.DEPENDENCY_ARCHIVE}",
+            fileName: 'autoforge-dependencies.zip',
+            sha256: env.DEPENDENCY_SHA256,
+            sizeBytes: env.DEPENDENCY_SIZE as Long,
+            archiveFormat: 'zip'
+          )
+        }
+      }
+    }
+
+    stage('Run AutoForge task') {
+      steps {
+        script {
+          withCredentials([string(credentialsId: 'autoforge-api-key', variable: 'AUTOFORGE_API_KEY')]) {
+            def result = autoforgeRun(
+              baseUrl: params.AUTOFORGE_BASE_URL,
+              apiKey: env.AUTOFORGE_API_KEY,
+              suiteId: params.AUTOFORGE_SUITE_ID
+            )
+            currentBuild.description = "AutoForge ${result.batchId}: ${result.totalPassed}/${result.totalCases} passed"
+          }
+        }
+      }
+    }
+  }
+
+  post {
+    always {
+      archiveArtifacts artifacts: 'target/surefire-reports/**', allowEmptyArchive: true
+    }
+  }
+}
