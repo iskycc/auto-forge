@@ -22,6 +22,7 @@ RUN if command -v apt-get >/dev/null 2>&1; then \
 RUN corepack enable && corepack prepare pnpm@11.20.0 --activate
 
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY vendor/ ./vendor/
 RUN pnpm fetch --frozen-lockfile --ignore-scripts
 
 FROM dependencies AS builder

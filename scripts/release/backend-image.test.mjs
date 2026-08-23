@@ -11,6 +11,14 @@ test("packages the custom Next.js server with production workspace dependencies"
   assert.doesNotMatch(nextConfiguration, /output:\s*["']standalone["']/);
   assert.match(dockerfile, /\bCI=1\b/);
 
+  const vendoredDependencies = dockerfile.indexOf("COPY vendor/ ./vendor/");
+  const dependencyFetch = dockerfile.indexOf("pnpm fetch --frozen-lockfile --ignore-scripts");
+  assert.ok(vendoredDependencies >= 0, "vendored offline dependencies must enter the image");
+  assert.ok(
+    dependencyFetch > vendoredDependencies,
+    "vendored offline dependencies must be available before pnpm fetch",
+  );
+
   const webBuild = dockerfile.indexOf("pnpm --filter @autoforge/web build");
   const workerBuild = dockerfile.indexOf("pnpm --filter @autoforge/worker build");
   const productionInstall = dockerfile.indexOf(
