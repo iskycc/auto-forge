@@ -71,6 +71,10 @@ import type {
   UserSession,
   UserStatus,
   TestStage,
+  WebhookConfiguration,
+  WebhookDelivery,
+  WebhookDispatchClaim,
+  WebhookRequestMethod,
 } from "@autoforge/domain";
 
 export type CreateProjectVersionRecord = {
@@ -1479,4 +1483,79 @@ export interface AttemptLogShareRepository {
     now: string,
   ): Promise<AttemptLogShareRecord[]>;
   findActiveByTokenHash(tokenHash: string, now: string): Promise<AttemptLogShareRecord | null>;
+}
+
+export interface WebhookRepository {
+  listConfigurations(projectId: string): Promise<WebhookConfiguration[]>;
+  getConfiguration(
+    webhookId: string,
+    projectIds?: readonly string[],
+  ): Promise<WebhookConfiguration | null>;
+  createConfiguration(input: {
+    id: string;
+    projectId: string;
+    name: string;
+    normalizedName: string;
+    description: string;
+    targetUrl: string;
+    method: WebhookRequestMethod;
+    bodyTemplate?: string;
+    enabled: boolean;
+    recordedAt: string;
+  }): Promise<WebhookConfiguration>;
+  updateConfiguration(input: {
+    webhookId: string;
+    expectedRevision: number;
+    name?: string;
+    normalizedName?: string;
+    description?: string;
+    targetUrl?: string;
+    method?: WebhookRequestMethod;
+    bodyTemplate?: string | null;
+    enabled?: boolean;
+    updatedAt: string;
+    projectIds?: readonly string[];
+  }): Promise<WebhookConfiguration | null>;
+  deleteConfiguration(input: {
+    webhookId: string;
+    deletedAt: string;
+    projectIds?: readonly string[];
+  }): Promise<boolean>;
+  listSuiteBindings(suiteId: string, projectIds?: readonly string[]): Promise<string[]>;
+  replaceSuiteBindings(input: {
+    suiteId: string;
+    webhookIds: readonly string[];
+    recordedAt: string;
+    projectIds?: readonly string[];
+  }): Promise<string[]>;
+  listDeliveries(projectId: string, limit: number): Promise<WebhookDelivery[]>;
+  materializeDeliveries(input: { now: string; limit: number }): Promise<number>;
+  claimDueDeliveries(input: {
+    owner: string;
+    now: string;
+    leaseExpiresAt: string;
+    limit: number;
+  }): Promise<WebhookDispatchClaim[]>;
+  completeDelivery(input: {
+    deliveryId: string;
+    owner: string;
+    responseStatus: number;
+    completedAt: string;
+  }): Promise<void>;
+  failDelivery(input: {
+    deliveryId: string;
+    owner: string;
+    errorMessage: string;
+    responseStatus?: number;
+    retryAt?: string;
+    failedAt: string;
+  }): Promise<void>;
+}
+
+export interface WebhookTransport {
+  send(input: {
+    method: WebhookRequestMethod;
+    url: string;
+    body?: string;
+  }): Promise<{ statusCode: number }>;
 }

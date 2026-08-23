@@ -8,7 +8,54 @@ import {
   updateRunnerAgentInputSchema,
   caseSuiteExecutionPolicySchema,
   updateCaseSuiteItemsInputSchema,
+  createWebhookConfigurationInputSchema,
 } from "../src/management";
+
+describe("webhook configuration contracts", () => {
+  it("accepts GET endpoints and POST JSON templates with documented variables", () => {
+    expect(
+      createWebhookConfigurationInputSchema.parse({
+        projectId: "project-1",
+        name: "内部通知",
+        targetUrl: "http://quality-gateway.internal/autoforge",
+        method: "GET",
+      }),
+    ).toMatchObject({ method: "GET", enabled: true });
+    expect(
+      createWebhookConfigurationInputSchema.parse({
+        projectId: "project-1",
+        name: "质量机器人",
+        targetUrl: "https://hooks.example.test/quality",
+        method: "POST",
+        bodyTemplate: '{"batch":"{{batch.id}}","failed":"{{summary.failed}}"}',
+      }),
+    ).toMatchObject({ method: "POST" });
+  });
+
+  it("rejects credentials, non-HTTP targets, invalid JSON and unknown variables", () => {
+    for (const input of [
+      { targetUrl: "file:///tmp/result", bodyTemplate: '{"batch":"{{batch.id}}"}' },
+      {
+        targetUrl: "https://user:password@hooks.example.test/result",
+        bodyTemplate: '{"batch":"{{batch.id}}"}',
+      },
+      { targetUrl: "https://hooks.example.test/result", bodyTemplate: "not-json" },
+      {
+        targetUrl: "https://hooks.example.test/result",
+        bodyTemplate: '{"batch":"{{unknown.value}}"}',
+      },
+    ]) {
+      expect(() =>
+        createWebhookConfigurationInputSchema.parse({
+          projectId: "project-1",
+          name: "错误配置",
+          method: "POST",
+          ...input,
+        }),
+      ).toThrow();
+    }
+  });
+});
 
 const connection = {
   host: "10.20.30.40",

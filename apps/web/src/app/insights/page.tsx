@@ -270,8 +270,10 @@ export default async function InsightsPage({
                   <tbody>
                     {summary.failures.map((failure) => (
                       <tr key={failure.signature}>
-                        <td className="insight-detail-long-text">{failure.description}</td>
-                        <td>{failure.resultCode ?? "—"}</td>
+                        <td className="insight-detail-long-text" title={failure.description}>
+                          {failure.description}
+                        </td>
+                        <td title={failure.resultCode ?? "—"}>{failure.resultCode ?? "—"}</td>
                         <td>{failure.count}</td>
                         <td>
                           <time dateTime={failure.lastSeenAt} title={`UTC：${failure.lastSeenAt}`}>
@@ -319,7 +321,7 @@ export default async function InsightsPage({
                   <tbody>
                     {summary.flakyCases.map((item) => (
                       <tr key={item.caseDefinitionId}>
-                        <td>
+                        <td title={item.displayName}>
                           <Link href={`/cases/${encodeURIComponent(item.caseDefinitionId)}`}>
                             {item.displayName}
                           </Link>
@@ -388,7 +390,7 @@ export default async function InsightsPage({
             </div>
             {comparison ? (
               <InsightDetailDialog
-                description="逐用例核对版本、结果与耗时变化。数据区域限制在视口内并支持双向滚动。"
+                description="逐用例核对版本、结果与耗时变化。列宽随视口压缩，数据区域只进行纵向滚动。"
                 title="批次对比明细"
               >
                 <BatchComparisonDetails cases={comparison.cases} />
@@ -962,10 +964,10 @@ function CaseOutcomeDetails({
                 const outcome = report.outcomes.get(item.id);
                 return (
                   <tr key={item.id}>
-                    <td>
+                    <td title={item.displayName}>
                       <Link href={`/cases/${encodeURIComponent(item.id)}`}>{item.displayName}</Link>
                     </td>
-                    <td>
+                    <td title={item.className}>
                       <code>{item.className}</code>
                     </td>
                     <td>

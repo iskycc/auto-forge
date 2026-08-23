@@ -15,6 +15,7 @@ import {
   Layers3,
   ShieldCheck,
   Sparkles,
+  Webhook,
 } from "lucide-react";
 import type { Permission } from "@autoforge/domain";
 import Link from "next/link";
@@ -69,6 +70,12 @@ const administrationNavigation: NavigationItem[] = [
     icon: ShieldCheck,
     anyPermissions: ["settings.read", "user.read", "role.read", "ldap.read"],
     activePrefixes: ["/settings/access"],
+  },
+  {
+    label: "回调通知",
+    href: "/settings/webhooks",
+    icon: Webhook,
+    permission: "project.read",
   },
   {
     label: "运维计划",

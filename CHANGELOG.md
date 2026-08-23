@@ -6,6 +6,52 @@ and known limitations.
 
 ## Unreleased
 
+## 0.9.10 - 2026-08-23
+
+### Added
+
+- Added project-scoped completion Webhooks with a dedicated “回调通知” page. Endpoints support GET
+  query notifications or POST JSON templates, documented batch/result variables, enable/disable,
+  optimistic editing, deletion, recent delivery diagnostics and task-level multi-endpoint binding.
+- Persisted each eligible terminal batch notification once and dispatch it through a leased,
+  restart-safe queue in both Lite and Full. Network errors and non-2xx responses use four bounded
+  retries; notification failures never change the authoritative batch or TestNG result.
+
+### Changed
+
+- Expanded Quality Insight detail dialogs to the available desktop viewport and switched every
+  detail table to fixed, viewport-aware columns. Long cells truncate with their complete value
+  available as a title, tables scroll vertically only, and no dialog requires a horizontal
+  scrollbar at the supported 1024-pixel minimum width.
+
+### Database
+
+- Added SQLite migration `0039_webhook_notifications.sql` and PostgreSQL migration
+  `0038_webhook_notifications.sql`. They add project-scoped endpoint configurations, task bindings
+  and immutable delivery request snapshots with due time, lease, retry and response diagnostics.
+
+### Tests
+
+- Added contract and application coverage for URL/template validation, GET/POST rendering, 2xx
+  completion and bounded retry behavior; added SQLite/PostgreSQL adapter coverage for idempotent
+  terminal-event materialization, binding time boundaries and assertion-failure summaries.
+- Added browser coverage for endpoint configuration and task binding, plus 1024/1536-pixel UI
+  integrity checks that open every available Quality Insight detail dialog and reject horizontal
+  overflow.
+
+### Compatibility
+
+- Runner Protocol v1 is unchanged. Webhook delivery is inactive until an administrator creates and
+  binds an endpoint, so upgraded offline deployments make no new outbound requests by default.
+- Release images, deployment bundles, embedded static Runner binaries, Jenkins HPI plugins, SBOMs,
+  checksums and build provenance are regenerated for `v0.9.10` by the tagged Release workflow.
+
+### Known limitations
+
+- Webhooks intentionally support JSON request bodies without arbitrary secret headers. Credentials
+  must not be embedded in URLs; place an authenticated internal relay in front of receivers that
+  require proprietary authentication.
+
 ## 0.9.9 - 2026-08-23
 
 ### Changed

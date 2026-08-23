@@ -8283,10 +8283,11 @@ button.icon-button:disabled {
   white-space: nowrap;
 }
 
-.insight-detail-dialog {
-  width: min(1120px, calc(100dvw - 40px));
-  height: min(820px, calc(100dvh - 40px));
-  max-height: calc(100dvh - 40px);
+.action-dialog.insight-detail-dialog {
+  box-sizing: border-box;
+  width: min(1380px, calc(100dvw - 36px));
+  height: min(860px, calc(100dvh - 36px));
+  max-height: calc(100dvh - 36px);
 }
 
 .insight-detail-dialog .action-dialog-body {
@@ -8323,7 +8324,8 @@ button.icon-button:disabled {
   width: 100%;
   min-height: 0;
   flex: 1 1 auto;
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
   overscroll-behavior: contain;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-card);
@@ -8331,7 +8333,9 @@ button.icon-button:disabled {
 }
 
 .insight-detail-table-scroll .data-table {
-  min-width: 760px;
+  width: 100%;
+  min-width: 0;
+  table-layout: fixed;
 }
 
 .insight-detail-table-scroll .data-table th {
@@ -8344,6 +8348,9 @@ button.icon-button:disabled {
 .insight-detail-table-scroll .data-table td {
   padding-block: 13px;
   line-height: 1.5;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .insight-detail-table-scroll .data-table tbody tr:nth-child(even) {
@@ -8352,17 +8359,15 @@ button.icon-button:disabled {
 
 .insight-detail-long-text {
   width: 52%;
-  min-width: 360px;
-  overflow-wrap: anywhere;
-  white-space: normal;
+  min-width: 0;
 }
 
 .insight-detail-wide-table {
-  min-width: 860px !important;
+  min-width: 0 !important;
 }
 
 .insight-comparison-table {
-  min-width: 940px !important;
+  min-width: 0 !important;
   table-layout: fixed;
 }
 
@@ -8371,7 +8376,8 @@ button.icon-button:disabled {
 }
 
 .insight-comparison-table td:first-child {
-  overflow-wrap: anywhere;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .insight-line-chart {
@@ -10762,6 +10768,7 @@ button.icon-button:disabled {
   position: fixed;
   z-index: 100;
   display: grid;
+  box-sizing: border-box;
   width: 100dvw;
   height: 100dvh;
   overflow: auto;
@@ -11455,6 +11462,359 @@ button.icon-button:disabled {
 
 .action-dialog-form {
   margin-top: 0;
+}
+
+/* Project-scoped completion webhooks: compact cards keep endpoints readable at a glance. */
+.webhook-settings-stack {
+  display: grid;
+  gap: 18px;
+}
+
+.webhook-metric-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.webhook-metric {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 13px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-card);
+  padding: 17px 18px;
+  background: var(--color-surface);
+  box-shadow: var(--shadow-card);
+}
+
+.webhook-metric > span {
+  display: grid;
+  width: 38px;
+  height: 38px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 12px;
+  background: var(--color-surface-muted);
+  color: var(--color-text-secondary);
+}
+
+.webhook-metric-blue > span {
+  background: rgba(49, 130, 246, 0.1);
+  color: var(--color-info);
+}
+.webhook-metric-green > span {
+  background: rgba(35, 157, 91, 0.1);
+  color: var(--color-success);
+}
+.webhook-metric-orange > span {
+  background: var(--color-warning-soft);
+  color: var(--color-warning);
+}
+
+.webhook-metric > div {
+  display: grid;
+  gap: 1px;
+}
+.webhook-metric strong {
+  font-size: 23px;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+.webhook-metric small,
+.webhook-section-title p {
+  color: var(--color-text-secondary);
+}
+
+.webhook-configurations-card,
+.webhook-deliveries-card,
+.case-suite-webhooks-card {
+  padding: 20px;
+}
+.webhook-section-title {
+  align-items: flex-start;
+}
+.webhook-section-title h2,
+.webhook-section-title p {
+  margin: 0;
+}
+.webhook-section-title p {
+  margin-top: 5px;
+  font-size: var(--font-size-control);
+}
+
+.webhook-card-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 17px;
+}
+
+.webhook-endpoint-card {
+  display: grid;
+  min-width: 0;
+  gap: 14px;
+  border: 1px solid var(--color-border);
+  border-radius: 15px;
+  padding: 17px;
+  background: linear-gradient(150deg, var(--color-surface), var(--color-surface-muted));
+}
+
+.webhook-endpoint-heading,
+.webhook-card-actions,
+.webhook-editor-actions,
+.case-suite-webhook-footer,
+.webhook-template-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.webhook-method {
+  display: inline-flex;
+  width: fit-content;
+  align-items: center;
+  border-radius: 7px;
+  padding: 4px 7px;
+  font-family: var(--font-family-mono);
+  font-size: 12px;
+  font-weight: 760;
+  letter-spacing: 0.04em;
+}
+
+.webhook-method-post {
+  background: rgba(89, 86, 214, 0.11);
+  color: #4d4ac3;
+}
+.webhook-method-get {
+  background: rgba(35, 157, 91, 0.11);
+  color: var(--color-success);
+}
+
+.webhook-state {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-caption);
+}
+
+.webhook-state i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--color-text-tertiary);
+}
+.webhook-state.enabled i {
+  background: var(--color-success);
+  box-shadow: 0 0 0 3px rgba(35, 157, 91, 0.11);
+}
+.webhook-endpoint-card h3,
+.webhook-endpoint-card p {
+  margin: 0;
+}
+.webhook-endpoint-card h3 {
+  font-size: 17px;
+}
+.webhook-endpoint-card p {
+  margin-top: 5px;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-control);
+  line-height: 1.5;
+}
+
+.webhook-endpoint-card code {
+  overflow: hidden;
+  border-radius: 9px;
+  padding: 9px 10px;
+  background: rgba(19, 29, 46, 0.055);
+  color: var(--color-info);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.webhook-card-actions {
+  justify-content: flex-end;
+}
+.webhook-editor-dialog {
+  width: min(860px, calc(100dvw - 32px));
+  max-height: min(880px, calc(100dvh - 24px));
+}
+.webhook-editor-form,
+.webhook-template-editor {
+  display: grid;
+  gap: 14px;
+}
+.webhook-editor-grid {
+  display: grid;
+  grid-template-columns: 1.5fr 1fr;
+  gap: 13px;
+}
+.webhook-editor-wide {
+  grid-column: 1 / -1;
+}
+.webhook-editor-grid .ui-select,
+.webhook-editor-grid .ui-input {
+  width: 100%;
+}
+.webhook-template-heading > span {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-weight: 650;
+}
+.webhook-template-heading small {
+  color: var(--color-text-tertiary);
+}
+
+.webhook-variable-list {
+  display: flex;
+  max-height: 76px;
+  flex-wrap: wrap;
+  gap: 6px;
+  overflow-y: auto;
+}
+
+.webhook-variable-list .webhook-variable-token {
+  border: 1px solid var(--color-border);
+  border-radius: 7px;
+  padding: 4px 7px;
+  background: var(--color-surface-muted);
+  color: var(--color-info);
+  font-family: var(--font-family-mono);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.webhook-template-editor textarea {
+  width: 100%;
+  resize: vertical;
+  font-family: var(--font-family-mono);
+  font-size: 12px;
+  line-height: 1.55;
+}
+.webhook-get-preview,
+.case-suite-webhooks-empty {
+  border: 1px solid rgba(49, 130, 246, 0.18);
+  border-radius: 12px;
+  padding: 13px 14px;
+  background: rgba(49, 130, 246, 0.055);
+}
+.webhook-get-preview p {
+  margin: 4px 0 0;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-control);
+}
+.webhook-enabled-field {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.webhook-enabled-field > span,
+.case-suite-webhooks-empty > span,
+.case-suite-webhook-options label > span:nth-of-type(2) {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+.webhook-enabled-field small,
+.case-suite-webhooks-empty small,
+.case-suite-webhook-options small {
+  color: var(--color-text-secondary);
+}
+.webhook-editor-actions {
+  justify-content: flex-end;
+}
+
+.webhook-delivery-table-wrap {
+  overflow: hidden;
+  margin-top: 16px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-card);
+}
+.webhook-delivery-table {
+  width: 100%;
+  table-layout: fixed;
+}
+.webhook-delivery-table td:first-child,
+.webhook-delivery-table td:nth-child(3) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.webhook-delivery-table td:first-child small,
+.webhook-delivery-table td:nth-child(3) small {
+  display: block;
+  overflow: hidden;
+  margin-top: 3px;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.webhook-delivery-status {
+  font-size: var(--font-size-caption);
+  font-weight: 650;
+}
+.webhook-delivery-status.succeeded {
+  color: var(--color-success);
+}
+.webhook-delivery-status.failed {
+  color: var(--color-danger);
+}
+.webhook-delivery-status.pending {
+  color: var(--color-warning);
+}
+.webhook-delivery-status.delivering {
+  color: var(--color-info);
+}
+
+.case-suite-webhook-options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 16px;
+}
+.case-suite-webhook-options label {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: auto auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  padding: 12px;
+  cursor: pointer;
+}
+.case-suite-webhook-options label.selected {
+  border-color: rgba(49, 130, 246, 0.34);
+  background: rgba(49, 130, 246, 0.045);
+}
+.case-suite-webhook-options small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.case-suite-webhooks-empty {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  margin-top: 15px;
+}
+.case-suite-webhook-footer {
+  min-height: 36px;
+  margin-top: 14px;
+}
+
+@media (max-width: 1180px) {
+  .webhook-metric-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .webhook-card-grid,
+  .case-suite-webhook-options {
+    grid-template-columns: 1fr;
+  }
 }
 
 .suite-manager,

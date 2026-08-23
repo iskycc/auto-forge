@@ -1,5 +1,131 @@
 import { z } from "zod";
 
+export const WEBHOOK_BODY_VARIABLES = [
+  "batch.id",
+  "batch.sequenceNumber",
+  "batch.projectId",
+  "batch.suiteId",
+  "batch.suiteName",
+  "batch.status",
+  "batch.displayStatus",
+  "batch.createdAt",
+  "batch.completedAt",
+  "summary.total",
+  "summary.succeeded",
+  "summary.failed",
+  "summary.cancelled",
+] as const;
+
+const webhookVariableNames = new Set<string>(WEBHOOK_BODY_VARIABLES);
+
+export const DEFAULT_WEBHOOK_BODY_TEMPLATE = JSON.stringify(
+  {
+    event: "run_batch.completed",
+    batchId: "{{batch.id}}",
+    batchNumber: "{{batch.sequenceNumber}}",
+    suiteId: "{{batch.suiteId}}",
+    suiteName: "{{batch.suiteName}}",
+    status: "{{batch.status}}",
+    displayStatus: "{{batch.displayStatus}}",
+    total: "{{summary.total}}",
+    succeeded: "{{summary.succeeded}}",
+    failed: "{{summary.failed}}",
+    cancelled: "{{summary.cancelled}}",
+    completedAt: "{{batch.completedAt}}",
+  },
+  null,
+  2,
+);
+
+const webhookTargetUrlSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(2_048)
+  .superRefine((value, context) => {
+    try {
+      const url = new URL(value);
+      if (!["http:", "https:"].includes(url.protocol)) {
+        context.addIssue({ code: "custom", message: "Webhook 地址只支持 HTTP 或 HTTPS。" });
+      }
+      if (url.username || url.password) {
+        context.addIssue({ code: "custom", message: "Webhook 地址不能内嵌账号或密码。" });
+      }
+    } catch {
+      context.addIssue({ code: "custom", message: "Webhook 地址格式无效。" });
+    }
+  });
+
+const webhookBodyTemplateSchema = z
+  .string()
+  .trim()
+  .min(2)
+  .max(65_536)
+  .superRefine((value, context) => {
+    try {
+      const parsed: unknown = JSON.parse(value);
+      if (parsed === null || typeof parsed !== "object") {
+        context.addIssue({ code: "custom", message: "请求体必须是 JSON 对象或数组。" });
+      }
+    } catch {
+      context.addIssue({ code: "custom", message: "请求体必须是有效 JSON。" });
+    }
+    for (const match of value.matchAll(/\{\{([^{}]+)\}\}/gu)) {
+      if (!webhookVariableNames.has(match[1]!)) {
+        context.addIssue({ code: "custom", message: `不支持的 Webhook 变量：${match[1]}` });
+      }
+    }
+  });
+
+export const createWebhookConfigurationInputSchema = z
+  .object({
+    projectId: z.string().min(1).max(128),
+    name: z.string().trim().min(1).max(120),
+    description: z.string().trim().max(500).default(""),
+    targetUrl: webhookTargetUrlSchema,
+    method: z.enum(["GET", "POST"]),
+    bodyTemplate: webhookBodyTemplateSchema.optional(),
+    enabled: z.boolean().default(true),
+  })
+  .superRefine((value, context) => {
+    if (value.method === "POST" && !value.bodyTemplate) {
+      context.addIssue({
+        code: "custom",
+        path: ["bodyTemplate"],
+        message: "POST Webhook 必须配置 JSON 请求体。",
+      });
+    }
+  });
+
+export const updateWebhookConfigurationInputSchema = z
+  .object({
+    name: z.string().trim().min(1).max(120).optional(),
+    description: z.string().trim().max(500).optional(),
+    targetUrl: webhookTargetUrlSchema.optional(),
+    method: z.enum(["GET", "POST"]).optional(),
+    bodyTemplate: webhookBodyTemplateSchema.nullable().optional(),
+    enabled: z.boolean().optional(),
+    expectedRevision: z.number().int().positive(),
+  })
+  .superRefine((value, context) => {
+    if (value.method === "POST" && value.bodyTemplate === null) {
+      context.addIssue({
+        code: "custom",
+        path: ["bodyTemplate"],
+        message: "POST Webhook 必须配置 JSON 请求体。",
+      });
+    }
+  });
+
+export const replaceCaseSuiteWebhooksInputSchema = z.object({
+  webhookIds: z.array(z.string().min(1).max(128)).max(20),
+});
+
+export const webhookDeliveryListQuerySchema = z.object({
+  projectId: z.string().min(1).max(128),
+  limit: z.coerce.number().int().min(1).max(100).default(30),
+});
+
 export const objectEntrySchema = z.object({
   objectKey: z.string().min(1),
   sizeBytes: z.number().int().nonnegative(),
@@ -401,6 +527,8 @@ export const createTerminalSessionResultSchema = z.object({
 export type ObjectEntry = z.infer<typeof objectEntrySchema>;
 export type ObjectListPage = z.infer<typeof objectListPageSchema>;
 export type CreateCaseSuiteInput = z.infer<typeof createCaseSuiteInputSchema>;
+export type CreateWebhookConfigurationInput = z.infer<typeof createWebhookConfigurationInputSchema>;
+export type UpdateWebhookConfigurationInput = z.infer<typeof updateWebhookConfigurationInputSchema>;
 export type CaseSuiteAdapterConfigurationInput = z.infer<
   typeof caseSuiteAdapterConfigurationSchema
 >;

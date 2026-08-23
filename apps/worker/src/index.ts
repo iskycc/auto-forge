@@ -7,6 +7,7 @@ import {
   JobWorker,
   PlatformOperationsService,
   RunBatchSchedulingService,
+  WebhookNotificationService,
   type WorkerLogger,
 } from "@autoforge/application";
 import {
@@ -17,6 +18,7 @@ import {
   PostgresRunBatchRepository,
   PostgresRunnerRepository,
   PostgresPlatformOperationsRepository,
+  PostgresWebhookRepository,
 } from "@autoforge/db/postgres";
 import { uuidV7 } from "@autoforge/ids";
 import { MinioObjectStore } from "@autoforge/object-store/minio";
@@ -100,6 +102,25 @@ const platformOperations = new PlatformOperationsService(
   objectStore,
 );
 await platformOperations.initialize();
+const webhooks = new WebhookNotificationService(
+  new PostgresWebhookRepository(database),
+  {
+    send: async (request) => {
+      const response = await fetch(request.url, {
+        method: request.method,
+        ...(request.body !== undefined
+          ? { headers: { "content-type": "application/json; charset=utf-8" }, body: request.body }
+          : {}),
+        redirect: "error",
+        signal: AbortSignal.timeout(10_000),
+      });
+      await response.body?.cancel();
+      return { statusCode: response.status };
+    },
+  },
+  clock,
+  ids,
+);
 const catalog = new PostgresCaseCatalogRepository(database);
 const caseSources = new CaseSourceService(catalog, objectStore, clock, ids);
 const jarImports = new ImportTestNgJarService({
@@ -180,6 +201,7 @@ const loops = Promise.all([
       return batch.id;
     });
     await platformOperations.generateNotifications();
+    await webhooks.dispatchDue(`${config.workerId}-webhooks`);
     await platformOperationsRepository.rebuildAnalyticsFacts(1_000);
   }),
   runPeriodic(shutdown.signal, 3_600_000, async () => {

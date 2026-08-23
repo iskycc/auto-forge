@@ -174,3 +174,60 @@ test("schedule overview can pause and delete plans while LDAP failures remain di
   await expect(page.getByText("计划任务已删除。")).toBeVisible();
   await expect(page.getByRole("row", { name: new RegExp(suiteName) })).toHaveCount(0);
 });
+
+test("project webhooks support custom POST bodies and task binding", async ({ page }) => {
+  await ensureAdministrator(page);
+  const webhookName = uniqueName("quality-webhook");
+  const suiteName = uniqueName("webhook-suite");
+  const configuration = await browserJson<{ id: string; method: string }>(
+    page,
+    "/api/v1/webhooks",
+    {
+      method: "POST",
+      body: {
+        projectId: "00000000-0000-7000-8000-000000000001",
+        name: webhookName,
+        description: "Webhook E2E",
+        targetUrl: "http://127.0.0.1:18999/autoforge-completed",
+        method: "POST",
+        bodyTemplate:
+          '{"batchId":"{{batch.id}}","suite":"{{batch.suiteName}}","status":"{{batch.displayStatus}}"}',
+        enabled: true,
+      },
+    },
+  );
+  expect(configuration.status).toBe(201);
+  expect(configuration.body.method).toBe("POST");
+  const suite = await browserJson<{ id: string }>(page, "/api/v1/case-suites", {
+    method: "POST",
+    body: { name: suiteName, description: "Webhook binding E2E" },
+  });
+  expect(suite.status).toBe(201);
+
+  await page.goto("/settings/webhooks");
+  const endpointCard = page.locator(".webhook-endpoint-card", { hasText: webhookName });
+  await expect(endpointCard).toBeVisible();
+  await expect(endpointCard).toContainText("POST");
+  await expect(endpointCard).toContainText("已启用");
+
+  await page.goto(`/case-suites/${suite.body.id}`);
+  const bindingCard = page.locator(".case-suite-webhooks-card");
+  await expect(bindingCard).toBeVisible();
+  const endpointOption = bindingCard.locator("label", { hasText: webhookName });
+  await endpointOption.locator('input[type="checkbox"]').check();
+  await bindingCard.getByRole("button", { name: "保存通知绑定" }).click();
+  await expect(bindingCard.getByText("Webhook 绑定已保存。")).toBeVisible();
+
+  const bindings = await browserJson<{ webhookIds: string[] }>(
+    page,
+    `/api/v1/case-suites/${suite.body.id}/webhooks`,
+  );
+  expect(bindings.status).toBe(200);
+  expect(bindings.body.webhookIds).toContain(configuration.body.id);
+
+  await page.goto("/settings/webhooks");
+  await endpointCard.getByRole("button", { name: "编辑" }).click();
+  const editor = page.getByRole("dialog", { name: "编辑 Webhook" });
+  await expect(editor.getByLabel("JSON 请求体模板")).toContainText("batch.displayStatus");
+  await page.keyboard.press("Escape");
+});

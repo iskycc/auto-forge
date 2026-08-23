@@ -29,7 +29,7 @@ export function BatchComparisonDetails({ cases }: { cases: AnalyticsBatchCompari
           <tbody>
             {visibleCases.map((item) => (
               <tr key={item.caseDefinitionId}>
-                <td>
+                <td title={`${item.displayName} · ${item.caseDefinitionId}`}>
                   {item.displayName}
                   <small className="table-secondary">{item.caseDefinitionId}</small>
                 </td>

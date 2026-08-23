@@ -20,6 +20,7 @@ import {
   RunnerControlService,
   RunnerInstallationProfileService,
   RunnerGroupService,
+  WebhookNotificationService,
   type AttemptLogShareRepository,
   type CaseCatalogRepository,
   type CaseSuiteRepository,
@@ -35,6 +36,7 @@ import {
   type PlatformStatisticsRepository,
   type PlatformOperationsRepository,
   type ProjectStructureRepository,
+  type WebhookRepository,
 } from "@autoforge/application";
 import { MemoryCache } from "@autoforge/cache/memory";
 import {
@@ -52,6 +54,7 @@ import {
   SqlitePlatformStatisticsRepository,
   SqlitePlatformOperationsRepository,
   SqliteProjectStructureRepository,
+  SqliteWebhookRepository,
 } from "@autoforge/db/sqlite";
 import { LocalObjectStore } from "@autoforge/object-store/local";
 import { SqliteJobQueue } from "@autoforge/queue/sqlite";
@@ -100,6 +103,7 @@ async function createPlatformServices() {
   let statisticsRepository: PlatformStatisticsRepository;
   let operationsRepository: PlatformOperationsRepository;
   let projectStructuresRepository: ProjectStructureRepository;
+  let webhookRepository: WebhookRepository;
   let closeDatabase: () => Promise<void>;
   let runnerRequestLimiter: RequestLimiter = new MemoryRequestLimiter();
   let infrastructure: RuntimeInfrastructure | undefined;
@@ -129,6 +133,7 @@ async function createPlatformServices() {
     statisticsRepository = new SqlitePlatformStatisticsRepository(database);
     operationsRepository = new SqlitePlatformOperationsRepository(database, attemptLogs);
     projectStructuresRepository = new SqliteProjectStructureRepository(database);
+    webhookRepository = new SqliteWebhookRepository(database);
     closeDatabase = async () => {
       attemptLogs.close();
       database.close();
@@ -149,6 +154,7 @@ async function createPlatformServices() {
         PostgresPlatformStatisticsRepository,
         PostgresPlatformOperationsRepository,
         PostgresProjectStructureRepository,
+        PostgresWebhookRepository,
       },
       { MinioObjectStore },
       { JetStreamJobQueue },
@@ -237,6 +243,7 @@ async function createPlatformServices() {
     statisticsRepository = new PostgresPlatformStatisticsRepository(database);
     operationsRepository = new PostgresPlatformOperationsRepository(database, attemptLogs);
     projectStructuresRepository = new PostgresProjectStructureRepository(database);
+    webhookRepository = new PostgresWebhookRepository(database);
   }
   const discovery = new TestNgJarDiscovery({
     maxJarBytes: config.maxJarBytes,
@@ -244,6 +251,25 @@ async function createPlatformServices() {
   });
   const clock = { now: () => new Date() };
   const ids = { next: () => uuidV7() };
+  const webhooks = new WebhookNotificationService(
+    webhookRepository,
+    {
+      send: async (request) => {
+        const response = await fetch(request.url, {
+          method: request.method,
+          ...(request.body !== undefined
+            ? { headers: { "content-type": "application/json; charset=utf-8" }, body: request.body }
+            : {}),
+          redirect: "error",
+          signal: AbortSignal.timeout(10_000),
+        });
+        await response.body?.cancel();
+        return { statusCode: response.status };
+      },
+    },
+    clock,
+    ids,
+  );
   const importTestNgJar = new ImportTestNgJarService({
     discovery,
     objectStore,
@@ -424,6 +450,7 @@ async function createPlatformServices() {
             return batch.id;
           });
           await platformOperations.generateNotifications();
+          await webhooks.dispatchDue(`lite-web-${process.pid}-webhooks`);
           await operationsRepository.rebuildAnalyticsFacts(1_000);
         })
       : Promise.resolve();
@@ -486,6 +513,7 @@ async function createPlatformServices() {
     runBatchExport,
     publicStatistics,
     platformOperations,
+    webhooks,
     runBatches,
     runScheduling,
     runnerRequestLimiter,

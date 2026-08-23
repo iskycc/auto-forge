@@ -3,6 +3,7 @@ import Link from "next/link";
 
 import { CaseSuiteDetailsView } from "@/components/case-suite-details";
 import { CaseSuiteEditor } from "@/components/case-suite-editor";
+import { CaseSuiteWebhookBindings } from "@/components/case-suite-webhook-bindings";
 import { getPlatformServices } from "@/lib/services";
 import { requirePageProjectScope } from "@/lib/auth";
 import { hasPermission } from "@autoforge/domain";
@@ -17,11 +18,14 @@ export default async function CaseSuitePage({ params }: Props) {
   const services = await getPlatformServices();
   const suite = await services.caseSuites.get(suiteId, projectIds);
   const canManage = hasPermission(identity, "case_suite.manage", suite.projectId);
-  const [runners, runnerGroups, projectStructure] = await Promise.all([
-    services.runnerControl.list(500),
-    services.runnerGroups.list(),
-    services.projectStructures.list(suite.projectId),
-  ]);
+  const [runners, runnerGroups, projectStructure, webhookConfigurations, webhookIds] =
+    await Promise.all([
+      services.runnerControl.list(500),
+      services.runnerGroups.list(),
+      services.projectStructures.list(suite.projectId),
+      services.webhooks.listConfigurations(suite.projectId),
+      services.webhooks.listSuiteBindings(suiteId, projectIds),
+    ]);
   const schedule = (await services.platformOperations.listSchedules(identity)).find(
     (candidate) => candidate.suiteId === suiteId,
   );
@@ -49,6 +53,12 @@ export default async function CaseSuitePage({ params }: Props) {
         runners={runners}
         {...(schedule ? { schedule } : {})}
         suite={suite}
+      />
+      <CaseSuiteWebhookBindings
+        canManage={canManage}
+        configurations={webhookConfigurations}
+        initialWebhookIds={webhookIds}
+        suiteId={suiteId}
       />
       <CaseSuiteDetailsView canManage={canManage} initialSuite={suite} />
     </div>

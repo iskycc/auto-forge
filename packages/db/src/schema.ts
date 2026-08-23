@@ -667,6 +667,85 @@ export const runBatchStatusEvents = sqliteTable(
   ],
 );
 
+export const webhookConfigurations = sqliteTable(
+  "webhook_configurations",
+  {
+    id: text("id").primaryKey(),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    normalizedName: text("normalized_name").notNull(),
+    description: text("description").notNull().default(""),
+    targetUrl: text("target_url").notNull(),
+    method: text("method", { enum: ["GET", "POST"] }).notNull(),
+    bodyTemplate: text("body_template"),
+    enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+    enabledAt: text("enabled_at"),
+    revision: integer("revision").notNull().default(1),
+    deletedAt: text("deleted_at"),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("webhook_configurations_project_name_uq")
+      .on(table.projectId, table.normalizedName)
+      .where(sql`${table.deletedAt} IS NULL`),
+    index("webhook_configurations_project_idx").on(table.projectId, table.createdAt),
+  ],
+);
+
+export const caseSuiteWebhookBindings = sqliteTable(
+  "case_suite_webhook_bindings",
+  {
+    suiteId: text("suite_id")
+      .notNull()
+      .references(() => caseSuites.id, { onDelete: "cascade" }),
+    webhookId: text("webhook_id")
+      .notNull()
+      .references(() => webhookConfigurations.id, { onDelete: "restrict" }),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.suiteId, table.webhookId] }),
+    index("case_suite_webhook_bindings_webhook_idx").on(table.webhookId, table.suiteId),
+  ],
+);
+
+export const webhookDeliveries = sqliteTable(
+  "webhook_deliveries",
+  {
+    id: text("id").primaryKey(),
+    webhookId: text("webhook_id")
+      .notNull()
+      .references(() => webhookConfigurations.id, { onDelete: "restrict" }),
+    batchId: text("batch_id")
+      .notNull()
+      .references(() => runBatches.id, { onDelete: "cascade" }),
+    webhookName: text("webhook_name").notNull(),
+    requestUrl: text("request_url").notNull(),
+    requestMethod: text("request_method", { enum: ["GET", "POST"] }).notNull(),
+    requestBodyTemplate: text("request_body_template"),
+    status: text("status", {
+      enum: ["pending", "delivering", "succeeded", "failed"],
+    }).notNull(),
+    attempts: integer("attempts").notNull().default(0),
+    availableAt: text("available_at").notNull(),
+    leaseOwner: text("lease_owner"),
+    leaseExpiresAt: text("lease_expires_at"),
+    responseStatus: integer("response_status"),
+    errorMessage: text("error_message"),
+    createdAt: text("created_at").notNull(),
+    deliveredAt: text("delivered_at"),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("webhook_deliveries_webhook_batch_uq").on(table.webhookId, table.batchId),
+    index("webhook_deliveries_due_idx").on(table.status, table.availableAt, table.leaseExpiresAt),
+    index("webhook_deliveries_webhook_created_idx").on(table.webhookId, table.createdAt),
+  ],
+);
+
 export const runBatchRunners = sqliteTable(
   "run_batch_runners",
   {
@@ -1328,6 +1407,9 @@ export const schema = {
   executionSecretVersions,
   runBatches,
   runBatchStatusEvents,
+  webhookConfigurations,
+  caseSuiteWebhookBindings,
+  webhookDeliveries,
   runBatchRunners,
   executionRuns,
   runAttempts,

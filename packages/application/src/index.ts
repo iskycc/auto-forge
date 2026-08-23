@@ -10,6 +10,7 @@ export * from "./manage-case-suites";
 export * from "./manage-identity-access";
 export * from "./manage-project-structure";
 export * from "./manage-runners";
+export * from "./manage-webhooks";
 export * from "./manage-runner-installation-profiles";
 export * from "./manage-runner-groups";
 export * from "./ports";

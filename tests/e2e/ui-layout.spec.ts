@@ -21,6 +21,7 @@ const primaryRoutes = [
   "/runners?section=groups",
   "/insights",
   "/settings/automation",
+  "/settings/webhooks",
   "/audit",
   "/settings/projects?section=members",
   "/settings/projects?section=execution",
@@ -44,6 +45,7 @@ test("administration entries are exposed as four-character first-level navigatio
   for (const label of [
     "项目管理",
     "访问管理",
+    "回调通知",
     "运维计划",
     "执行机组",
     "安全审计",
@@ -352,6 +354,13 @@ test("remaining low-frequency management actions expose reviewable dialogs", asy
     bottomAction?: string;
   }> = [
     {
+      route: "/settings/webhooks",
+      trigger: "新建 Webhook",
+      dialog: "新建 Webhook",
+      screenshot: "webhook-create-dialog",
+      bottomAction: "创建端点",
+    },
+    {
       route: "/case-suites",
       trigger: "创建任务",
       dialog: "创建用例任务",
@@ -506,12 +515,18 @@ test("specified dense pages expose stable product controls", async ({ page }) =>
     trendDialog.locator(".insight-detail-table-scroll").evaluate((element) => ({
       overflowX: getComputedStyle(element).overflowX,
       overflowY: getComputedStyle(element).overflowY,
+      fitsHorizontally: element.scrollWidth <= element.clientWidth,
     })),
   ]);
-  expect(dialogBox!.width).toBeLessThanOrEqual(1536 - 40);
-  expect(dialogBox!.height).toBeLessThanOrEqual(1024 - 40);
+  expect(dialogBox!.width).toBeLessThanOrEqual(1536 - 24);
+  expect(dialogBox!.width).toBeGreaterThanOrEqual(1_300);
+  expect(dialogBox!.height).toBeLessThanOrEqual(1024 - 24);
   expect(tableScrollBox!.height).toBeLessThan(dialogBox!.height);
-  expect(tableOverflow).toEqual({ overflowX: "auto", overflowY: "auto" });
+  expect(tableOverflow).toEqual({
+    overflowX: "hidden",
+    overflowY: "auto",
+    fitsHorizontally: true,
+  });
   await trendDialog.getByRole("button", { name: "关闭每日趋势明细" }).click();
   await expect(trendDialog).toHaveCount(0);
 
@@ -527,6 +542,32 @@ test("specified dense pages expose stable product controls", async ({ page }) =>
   expect(compactTrendBox?.y).toBe(compactFailureBox?.y);
   expect(compactFlakyBox?.y).toBe(compactCaseOutcomeBox?.y);
   expect(pageHeight).toBeLessThan(2_200);
+
+  const detailButtons = page.getByRole("button", { name: "查看明细" });
+  const detailCount = await detailButtons.count();
+  for (let index = 0; index < detailCount; index += 1) {
+    await detailButtons.nth(index).click();
+    const activeDialog = page.getByRole("dialog");
+    await expect(activeDialog).toBeVisible();
+    const activeDialogBox = await activeDialog.boundingBox();
+    expect(activeDialogBox!.x).toBeGreaterThanOrEqual(12);
+    expect(activeDialogBox!.x + activeDialogBox!.width).toBeLessThanOrEqual(1012);
+    expect(activeDialogBox!.width).toBeGreaterThanOrEqual(980);
+    expect(activeDialogBox!.y).toBeGreaterThanOrEqual(12);
+    expect(activeDialogBox!.y + activeDialogBox!.height).toBeLessThanOrEqual(756);
+    const scrollAreas = activeDialog.locator(".insight-detail-table-scroll");
+    for (let areaIndex = 0; areaIndex < (await scrollAreas.count()); areaIndex += 1) {
+      expect(
+        await scrollAreas.nth(areaIndex).evaluate((element) => ({
+          fitsHorizontally: element.scrollWidth <= element.clientWidth,
+          overflowX: getComputedStyle(element).overflowX,
+        })),
+      ).toEqual({ fitsHorizontally: true, overflowX: "hidden" });
+    }
+    await captureUi(page, `/insight-detail-${index + 1}`, 1024, false);
+    await activeDialog.getByRole("button", { name: /^关闭/ }).click();
+    await expect(activeDialog).toHaveCount(0);
+  }
 
   await page.goto("/runners");
   await expect(page.getByRole("heading", { name: "执行机列表" })).toBeVisible();
