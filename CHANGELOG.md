@@ -6,6 +6,24 @@ and known limitations.
 
 ## Unreleased
 
+## 1.0.2 - 2026-08-24
+
+### Fixed
+
+- Dynamic retry and Jenkins recovery rule creation now works when AutoForge is opened through a
+  plain-HTTP host or container IP. Client rule IDs use `crypto.getRandomValues`, which remains
+  available outside secure contexts, instead of the secure-context-only `crypto.randomUUID`.
+
+### Tests
+
+- Playwright now removes `crypto.randomUUID` before exercising the task policy editor, matching the
+  published offline-container acceptance origin and preventing the secure-localhost blind spot.
+
+### Compatibility
+
+- No database, API or Runner Protocol changes. This release supersedes `v1.0.1` for plain-HTTP
+  deployments; all `v1.0.1` migrations and persisted policies remain compatible.
+
 ## 1.0.1 - 2026-08-24
 
 ### Added

@@ -959,7 +959,7 @@ function optionalNumberInput(value: string): number | undefined {
 function newRetryConcurrencyRule(retryLimit: number): EditableRetryConcurrencyRule {
   const maximumRound = Math.max(2, Math.min(11, retryLimit + 1));
   return {
-    id: crypto.randomUUID(),
+    id: createRuleId("retry"),
     executionRoundFrom: "2",
     executionRoundTo: String(maximumRound),
     previousRoundPassRateMinimum: "",
@@ -972,13 +972,21 @@ function newRetryConcurrencyRule(retryLimit: number): EditableRetryConcurrencyRu
 
 function newRoundRecoveryRule(): EditableRoundRecoveryRule {
   return {
-    id: crypto.randomUUID(),
+    id: createRuleId("recovery"),
     afterRound: "1",
     jenkinsJobUrl: "",
     waitMinutes: "5",
     apiKey: "",
     apiKeyConfigured: false,
   };
+}
+
+function createRuleId(prefix: "retry" | "recovery"): string {
+  const bytes = new Uint8Array(16);
+  // randomUUID 仅在安全上下文可用；AutoForge 离线部署也必须支持通过普通 HTTP/IP 访问。
+  globalThis.crypto.getRandomValues(bytes);
+  const suffix = Array.from(bytes, (value) => value.toString(16).padStart(2, "0")).join("");
+  return `${prefix}-${suffix}`;
 }
 
 function toRetryConcurrencyRuleInput(rule: EditableRetryConcurrencyRule) {

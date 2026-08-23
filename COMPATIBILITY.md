@@ -36,6 +36,10 @@ state without changing Runner Protocol v1. Existing policies default to empty ru
 round recovery requires the Rebuilder plugin and a single `username:API Token` credential; that
 credential is encrypted with the existing AutoForge master key and cannot be configured without it.
 
+Control plane `1.0.2` keeps the `1.0.1` database and protocol contracts and fixes policy-rule editing
+when the UI is served from a plain-HTTP hostname or IP address. Persisted `1.0.1` task policies and
+credentials remain directly compatible.
+
 Control plane `0.9.10` adds persisted Webhook configuration and delivery tables without changing
 Runner Protocol v1. Existing installations have no endpoint or binding after migration and therefore
 retain the prior no-outbound-request behavior until a project administrator explicitly configures one.

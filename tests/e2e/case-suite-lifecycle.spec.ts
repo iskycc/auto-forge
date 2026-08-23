@@ -193,6 +193,13 @@ test("case metadata, immutable versions and suite policy survive lifecycle chang
   page,
 }) => {
   test.setTimeout(240_000);
+  await page.addInitScript(() => {
+    // 容器 IP 的普通 HTTP 不暴露 randomUUID；覆盖该真实离线部署边界。
+    Object.defineProperty(globalThis.crypto, "randomUUID", {
+      configurable: true,
+      value: undefined,
+    });
+  });
   await ensureAdministrator(page);
   const suffix = uniqueName("lifecycle");
   const project = await createProject(page, suffix);
