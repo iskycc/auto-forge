@@ -1388,6 +1388,231 @@ export const caseImportJobs = sqliteTable(
   ],
 );
 
+export const ddtImportJobs = sqliteTable(
+  "ddt_import_jobs",
+  {
+    id: text("id").primaryKey(),
+    projectId: text("project_id").notNull(),
+    projectVersionId: text("project_version_id").notNull(),
+    testStageId: text("test_stage_id").notNull(),
+    status: text("status", {
+      enum: [
+        "previewed",
+        "queued",
+        "running",
+        "cancel_requested",
+        "succeeded",
+        "partially_succeeded",
+        "failed",
+        "cancelled",
+      ],
+    }).notNull(),
+    conflictStrategy: text("conflict_strategy", { enum: ["overwrite", "skip", "error"] }),
+    uploadsJson: text("uploads_json").notNull().default("[]"),
+    progressPercent: integer("progress_percent").notNull().default(0),
+    totalFiles: integer("total_files").notNull().default(0),
+    validFiles: integer("valid_files").notNull().default(0),
+    totalRows: integer("total_rows").notNull().default(0),
+    insertedCount: integer("inserted_count").notNull().default(0),
+    updatedCount: integer("updated_count").notNull().default(0),
+    unchangedCount: integer("unchanged_count").notNull().default(0),
+    skippedCount: integer("skipped_count").notNull().default(0),
+    failedFiles: integer("failed_files").notNull().default(0),
+    errorCode: text("error_code"),
+    errorSummary: text("error_summary"),
+    requestedBy: text("requested_by"),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+    startedAt: text("started_at"),
+    finishedAt: text("finished_at"),
+  },
+  (table) => [
+    index("ddt_import_jobs_scope_created_idx").on(
+      table.projectId,
+      table.projectVersionId,
+      table.testStageId,
+      table.createdAt,
+      table.id,
+    ),
+    index("ddt_import_jobs_status_idx").on(table.status, table.updatedAt),
+  ],
+);
+
+export const ddtImportFiles = sqliteTable(
+  "ddt_import_files",
+  {
+    id: text("id").primaryKey(),
+    jobId: text("job_id").notNull(),
+    uploadId: text("upload_id").notNull(),
+    fileName: text("file_name").notNull(),
+    archiveEntryName: text("archive_entry_name"),
+    status: text("status", {
+      enum: ["valid", "excluded", "pending", "importing", "succeeded", "failed", "cancelled"],
+    }).notNull(),
+    rowCount: integer("row_count").notNull().default(0),
+    insertedCount: integer("inserted_count").notNull().default(0),
+    updatedCount: integer("updated_count").notNull().default(0),
+    unchangedCount: integer("unchanged_count").notNull().default(0),
+    skippedCount: integer("skipped_count").notNull().default(0),
+    errorSummary: text("error_summary"),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [index("ddt_import_files_job_idx").on(table.jobId, table.createdAt, table.id)],
+);
+
+export const ddtCases = sqliteTable(
+  "ddt_cases",
+  {
+    id: text("id").primaryKey(),
+    projectId: text("project_id").notNull(),
+    projectVersionId: text("project_version_id").notNull(),
+    testStageId: text("test_stage_id").notNull(),
+    caseId: text("case_id").notNull(),
+    caseIdNormalized: text("case_id_normalized").notNull(),
+    srNum: text("sr_num").notNull(),
+    srNumNormalized: text("sr_num_normalized").notNull(),
+    caseKind: text("case_kind", { enum: ["standard", "journey"] }).notNull(),
+    dataJson: text("data_json").notNull(),
+    sourceFileId: text("source_file_id"),
+    sourceName: text("source_name").notNull().default(""),
+    revision: integer("revision").notNull().default(1),
+    createdBy: text("created_by"),
+    updatedBy: text("updated_by"),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("ddt_cases_scope_case_id_uq").on(
+      table.projectId,
+      table.projectVersionId,
+      table.testStageId,
+      table.caseIdNormalized,
+    ),
+    index("ddt_cases_scope_sr_num_idx").on(
+      table.projectId,
+      table.projectVersionId,
+      table.testStageId,
+      table.srNumNormalized,
+      table.caseIdNormalized,
+    ),
+    index("ddt_cases_scope_updated_idx").on(
+      table.projectId,
+      table.projectVersionId,
+      table.testStageId,
+      table.updatedAt,
+      table.id,
+    ),
+  ],
+);
+
+export const ddtCaseHistory = sqliteTable(
+  "ddt_case_history",
+  {
+    id: text("id").primaryKey(),
+    ddtCaseId: text("ddt_case_id").notNull(),
+    caseId: text("case_id").notNull(),
+    changeType: text("change_type", {
+      enum: ["edit", "bulk_edit", "import_overwrite", "restore"],
+    }).notNull(),
+    actorId: text("actor_id"),
+    sourceName: text("source_name").notNull().default(""),
+    beforeJson: text("before_json").notNull(),
+    afterJson: text("after_json").notNull(),
+    changesJson: text("changes_json").notNull(),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [index("ddt_case_history_case_idx").on(table.ddtCaseId, table.createdAt, table.id)],
+);
+
+export const ddtDeletedCases = sqliteTable(
+  "ddt_deleted_cases",
+  {
+    id: text("id").primaryKey(),
+    ddtCaseId: text("ddt_case_id").notNull(),
+    projectId: text("project_id").notNull(),
+    projectVersionId: text("project_version_id").notNull(),
+    testStageId: text("test_stage_id").notNull(),
+    caseId: text("case_id").notNull(),
+    caseIdNormalized: text("case_id_normalized").notNull(),
+    srNum: text("sr_num").notNull(),
+    srNumNormalized: text("sr_num_normalized").notNull(),
+    caseKind: text("case_kind", { enum: ["standard", "journey"] }).notNull(),
+    dataJson: text("data_json").notNull(),
+    sourceFileId: text("source_file_id"),
+    sourceName: text("source_name").notNull().default(""),
+    caseCreatedAt: text("case_created_at").notNull(),
+    caseUpdatedAt: text("case_updated_at").notNull(),
+    deletedBy: text("deleted_by"),
+    deletedAt: text("deleted_at").notNull(),
+  },
+  (table) => [
+    index("ddt_deleted_cases_scope_idx").on(
+      table.projectId,
+      table.projectVersionId,
+      table.testStageId,
+      table.deletedAt,
+      table.id,
+    ),
+    index("ddt_deleted_cases_case_id_idx").on(
+      table.projectId,
+      table.projectVersionId,
+      table.testStageId,
+      table.caseIdNormalized,
+    ),
+  ],
+);
+
+export const ddtCaseTemplates = sqliteTable(
+  "ddt_case_templates",
+  {
+    id: text("id").primaryKey(),
+    projectId: text("project_id").notNull(),
+    projectVersionId: text("project_version_id").notNull(),
+    testStageId: text("test_stage_id").notNull(),
+    srNum: text("sr_num").notNull(),
+    srNumNormalized: text("sr_num_normalized").notNull(),
+    name: text("name").notNull(),
+    description: text("description").notNull().default(""),
+    rulesJson: text("rules_json").notNull().default("[]"),
+    revision: integer("revision").notNull().default(1),
+    createdBy: text("created_by"),
+    updatedBy: text("updated_by"),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("ddt_case_templates_scope_sr_num_uq").on(
+      table.projectId,
+      table.projectVersionId,
+      table.testStageId,
+      table.srNumNormalized,
+    ),
+    index("ddt_case_templates_scope_updated_idx").on(
+      table.projectId,
+      table.projectVersionId,
+      table.testStageId,
+      table.updatedAt,
+      table.id,
+    ),
+  ],
+);
+
+export const ddtImportCaseIds = sqliteTable(
+  "ddt_import_case_ids",
+  {
+    jobId: text("job_id").notNull(),
+    caseId: text("case_id").notNull(),
+    caseIdNormalized: text("case_id_normalized").notNull(),
+    outcome: text("outcome", { enum: ["inserted", "updated", "unchanged", "skipped"] }).notNull(),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.jobId, table.caseIdNormalized] }),
+    index("ddt_import_case_ids_order_idx").on(table.jobId, table.caseIdNormalized),
+  ],
+);
+
 export const schema = {
   projects,
   projectVersions,
@@ -1449,4 +1674,11 @@ export const schema = {
   analyticsFacts,
   systemSettings,
   caseImportJobs,
+  ddtImportJobs,
+  ddtImportFiles,
+  ddtCases,
+  ddtCaseHistory,
+  ddtDeletedCases,
+  ddtCaseTemplates,
+  ddtImportCaseIds,
 };

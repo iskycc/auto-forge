@@ -117,6 +117,7 @@
       "owner": "asset-lifecycle",
       "evidence": [
         "tests/e2e/case-suite-lifecycle.spec.ts",
+        "tests/e2e/ddt-management.spec.ts",
         "tests/e2e/jar-import.spec.ts",
         "tests/e2e/real-agent.spec.ts"
       ],

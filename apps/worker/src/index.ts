@@ -3,6 +3,7 @@ import { join } from "node:path";
 
 import {
   CaseSourceService,
+  DdtImportService,
   ImportTestNgJarService,
   JobWorker,
   PlatformOperationsService,
@@ -15,11 +16,13 @@ import {
   createPostgresDatabase,
   PostgresCaseCatalogRepository,
   PostgresCaseSuiteRepository,
+  PostgresDdtRepository,
   PostgresRunBatchRepository,
   PostgresRunnerRepository,
   PostgresPlatformOperationsRepository,
   PostgresWebhookRepository,
 } from "@autoforge/db/postgres";
+import { parseDdtUpload } from "@autoforge/ddt-import";
 import { uuidV7 } from "@autoforge/ids";
 import { MinioObjectStore } from "@autoforge/object-store/minio";
 import { JetStreamJobQueue } from "@autoforge/queue/jetstream";
@@ -133,6 +136,13 @@ const jarImports = new ImportTestNgJarService({
     targetJavaVersion: config.testNgTargetJavaVersion,
   }),
 });
+const ddtImports = new DdtImportService(
+  new PostgresDdtRepository(database),
+  objectStore,
+  { parseUpload: parseDdtUpload },
+  clock,
+  ids,
+);
 const jobWorker = new JobWorker(
   queue,
   {
@@ -143,6 +153,7 @@ const jobWorker = new JobWorker(
     },
     "object-cleanup": caseSources.objectCleanupHandler(),
     "jar-import": jarImports.jobHandler(),
+    "ddt-import": ddtImports.jobHandler(),
     "analytics-export": platformOperations.analyticsExportJobHandler(),
   },
   clock,

@@ -272,6 +272,23 @@ export class SqliteCaseSuiteRepository implements CaseSuiteRepository {
     return Object.fromEntries(rows.map((row) => [row.ruleId, row.apiKeyCiphertext]));
   }
 
+  async findMemberCaseDefinitionIds(
+    suiteId: string,
+    candidateIds: readonly string[],
+  ): Promise<string[]> {
+    if (candidateIds.length === 0) return [];
+    return batchesOf(candidateIds, RELATIONAL_ID_QUERY_BATCH_SIZE).flatMap((ids) =>
+      this.handle.db
+        .select({ caseDefinitionId: caseSuiteItems.caseDefinitionId })
+        .from(caseSuiteItems)
+        .where(
+          and(eq(caseSuiteItems.suiteId, suiteId), inArray(caseSuiteItems.caseDefinitionId, ids)),
+        )
+        .all()
+        .map((row) => row.caseDefinitionId),
+    );
+  }
+
   async addCases(input: {
     suiteId: string;
     items: Array<{ id: string; caseDefinitionId: string }>;

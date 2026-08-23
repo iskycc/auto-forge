@@ -313,6 +313,35 @@ export class CaseSuiteService {
     });
   }
 
+  async missingCaseIds(
+    suiteId: string,
+    requestedIds: string[],
+    projectIds?: readonly string[],
+  ): Promise<string[]> {
+    const suite = await this.getSummary(suiteId, projectIds);
+    const projectVersionId = suite.policy.projectVersionId;
+    if (!projectVersionId) {
+      throw new DomainError(
+        "CASE_SUITE_VERSION_REQUIRED",
+        "历史任务尚未关联项目版本，请先在任务设置中选择版本。",
+      );
+    }
+    const uniqueIds = [...new Set(requestedIds)];
+    const existingIds = await this.catalog.findExistingCaseIds(
+      uniqueIds,
+      suite.projectId,
+      projectVersionId,
+    );
+    if (existingIds.length !== uniqueIds.length) {
+      throw new DomainError(
+        "CASE_DEFINITION_VERSION_MISMATCH",
+        "筛选范围包含不存在或不属于任务版本的用例。",
+      );
+    }
+    const memberIds = new Set(await this.suites.findMemberCaseDefinitionIds(suiteId, existingIds));
+    return uniqueIds.filter((caseDefinitionId) => !memberIds.has(caseDefinitionId));
+  }
+
   async removeCase(
     suiteId: string,
     caseDefinitionId: string,

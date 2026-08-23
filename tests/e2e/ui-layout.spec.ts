@@ -497,6 +497,16 @@ test("specified dense pages expose stable product controls", async ({ page }) =>
       expect(locator).toBeVisible(),
     ),
   );
+  await expect
+    .poll(async () => {
+      const boxes = await Promise.all(
+        [trendCard, failureCard, flakyCard, metrics, caseOutcomeCard].map((locator) =>
+          locator.boundingBox(),
+        ),
+      );
+      return boxes.every((box) => box !== null);
+    })
+    .toBe(true);
   const [trendBox, failureBox, flakyBox, metricsBox, caseOutcomeBox] = await Promise.all([
     trendCard.boundingBox(),
     failureCard.boundingBox(),

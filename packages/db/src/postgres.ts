@@ -1,5 +1,6 @@
 export * from "./attempt-log-store";
 export * from "./postgres-database";
+export * from "./postgres-ddt";
 export * from "./postgres-identity-access";
 export * from "./postgres-execution-control";
 export * from "./postgres-platform-repository";

@@ -15,6 +15,7 @@ import {
   FileCode2,
   Folder,
   Layers3,
+  ListFilter,
   LoaderCircle,
   Search,
   Trash2,
@@ -100,6 +101,9 @@ export function CaseSelectionTable({
   const [checkedCaseIds, setCheckedCaseIds] = useState(() => new Set<string>());
   const [activeCaseId, setActiveCaseId] = useState<string>();
   const [suiteId, setSuiteId] = useState(suites[0]?.id ?? "");
+  const [missingOnly, setMissingOnly] = useState(false);
+  const [missingCaseIds, setMissingCaseIds] = useState<Set<string> | null>(null);
+  const [membershipPending, setMembershipPending] = useState(false);
   const [search, setSearch] = useState(initialSearch);
   const [outcomeFilter, setOutcomeFilter] = useState<CaseOutcomeFilter>("all");
   const [pending, setPending] = useState(false);
@@ -117,31 +121,13 @@ export function CaseSelectionTable({
     () => cases.filter((item) => !deletedCaseIds.has(item.id)),
     [cases, deletedCaseIds],
   );
-  const visibleCases = useMemo(
-    () =>
-      availableCases.filter(
-        (item) =>
-          matchesSearch(item, normalizedSearch) &&
-          matchesOutcomeFilter(latestOutcomes.get(item.id), deferredOutcomeFilter),
-      ),
-    [availableCases, normalizedSearch, deferredOutcomeFilter, latestOutcomes],
-  );
-  const directoryTree = useMemo(() => buildDirectoryTree(visibleCases), [visibleCases]);
-  const selectionStats = useMemo(
-    () => computeSelectionStats(checkedCaseIds, latestOutcomes),
-    [checkedCaseIds, latestOutcomes],
-  );
   const canManageCases = (projectId: string): boolean =>
     caseManagementProjectIds === undefined || caseManagementProjectIds.includes(projectId);
   const canManageSuites = (projectId: string): boolean =>
     suiteManagementProjectIds === undefined || suiteManagementProjectIds.includes(projectId);
   const canSelectCase = (projectId: string): boolean =>
     canManageCases(projectId) || canManageSuites(projectId);
-  const selectableCases = visibleCases.filter((item) => canSelectCase(item.projectId));
   const manageableSuites = suites.filter((suite) => canManageSuites(suite.projectId));
-  const canSelectAnyCase = selectableCases.length > 0;
-  const allSelected =
-    selectableCases.length > 0 && selectableCases.every((item) => checkedCaseIds.has(item.id));
   const selectedProjects = new Set(
     availableCases.filter((item) => checkedCaseIds.has(item.id)).map((item) => item.projectId),
   );
@@ -153,6 +139,31 @@ export function CaseSelectionTable({
   const effectiveSuiteId = targetSuites.some((suite) => suite.id === suiteId)
     ? suiteId
     : (targetSuites[0]?.id ?? "");
+  const searchedCases = useMemo(
+    () =>
+      availableCases.filter(
+        (item) =>
+          matchesSearch(item, normalizedSearch) &&
+          matchesOutcomeFilter(latestOutcomes.get(item.id), deferredOutcomeFilter),
+      ),
+    [availableCases, normalizedSearch, deferredOutcomeFilter, latestOutcomes],
+  );
+  const visibleCases = useMemo(
+    () =>
+      missingOnly && missingCaseIds
+        ? searchedCases.filter((item) => missingCaseIds.has(item.id))
+        : searchedCases,
+    [missingCaseIds, missingOnly, searchedCases],
+  );
+  const directoryTree = useMemo(() => buildDirectoryTree(visibleCases), [visibleCases]);
+  const selectionStats = useMemo(
+    () => computeSelectionStats(checkedCaseIds, latestOutcomes),
+    [checkedCaseIds, latestOutcomes],
+  );
+  const selectableCases = visibleCases.filter((item) => canSelectCase(item.projectId));
+  const canSelectAnyCase = selectableCases.length > 0;
+  const allSelected =
+    selectableCases.length > 0 && selectableCases.every((item) => checkedCaseIds.has(item.id));
   const selectedCases = availableCases.filter((item) => checkedCaseIds.has(item.id));
   const selectedCasesCanJoinSuite =
     selectedCases.length > 0 && selectedCases.every((item) => canManageSuites(item.projectId));
@@ -194,6 +205,44 @@ export function CaseSelectionTable({
       });
     return () => controller.abort();
   }, [activeCaseId, detailReload]);
+
+  useEffect(() => {
+    if (!missingOnly || !effectiveSuiteId) return;
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => {
+      if (availableCases.length === 0) {
+        setMissingCaseIds(new Set());
+        setMembershipPending(false);
+        return;
+      }
+      setMembershipPending(true);
+      setMessage(null);
+      void fetch(`/api/v1/case-suites/${encodeURIComponent(effectiveSuiteId)}/cases/missing`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ caseDefinitionIds: availableCases.map((item) => item.id) }),
+        cache: "no-store",
+        signal: controller.signal,
+      })
+        .then(async (response) => {
+          if (!response.ok) throw new Error(await responseErrorMessage(response));
+          return (await response.json()) as { caseDefinitionIds: string[] };
+        })
+        .then((result) => setMissingCaseIds(new Set(result.caseDefinitionIds)))
+        .catch((error: unknown) => {
+          if (error instanceof DOMException && error.name === "AbortError") return;
+          setMissingOnly(false);
+          setMessage(error instanceof Error ? error.message : "读取任务成员失败。");
+        })
+        .finally(() => {
+          if (!controller.signal.aborted) setMembershipPending(false);
+        });
+    }, 0);
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [availableCases, effectiveSuiteId, missingOnly]);
 
   function importFromTable(matched: CaseDefinitionWithMethods[], unmatchedCount: number): void {
     setCheckedCaseIds((current) => {
@@ -256,6 +305,12 @@ export function CaseSelectionTable({
         addedCount += caseDefinitionIds.length;
       }
       setMessage(`已将 ${selectedCaseIds.length} 个用例加入任务。`);
+      setMissingCaseIds((current) => {
+        if (!current) return current;
+        const next = new Set(current);
+        for (const caseDefinitionId of selectedCaseIds) next.delete(caseDefinitionId);
+        return next;
+      });
       setCheckedCaseIds(new Set());
     } catch (caught) {
       setMessage(caught instanceof Error ? caught.message : "添加用例失败。");
@@ -350,11 +405,12 @@ export function CaseSelectionTable({
         </div>
         <div className="case-browser-summary">
           <span>全部 {availableCases.length} 个用例</span>
-          {filtering ? (
+          {filtering || membershipPending ? (
             <span className="list-filter-progress" role="status">
-              <LoaderCircle aria-hidden="true" className="spin" size={14} /> 正在筛选
+              <LoaderCircle aria-hidden="true" className="spin" size={14} />
+              {membershipPending ? "正在读取任务成员" : "正在筛选"}
             </span>
-          ) : normalizedSearch || deferredOutcomeFilter !== "all" ? (
+          ) : normalizedSearch || deferredOutcomeFilter !== "all" || missingOnly ? (
             <strong>匹配 {visibleCases.length} 个</strong>
           ) : null}
         </div>
@@ -406,7 +462,12 @@ export function CaseSelectionTable({
               <>
                 <Select
                   value={effectiveSuiteId}
-                  onChange={(event) => setSuiteId(event.target.value)}
+                  onChange={(event) => {
+                    setSuiteId(event.target.value);
+                    setMissingOnly(false);
+                    setMissingCaseIds(null);
+                    setMembershipPending(false);
+                  }}
                   aria-label="目标用例任务"
                 >
                   {targetSuites.map((suite) => (
@@ -415,6 +476,26 @@ export function CaseSelectionTable({
                     </option>
                   ))}
                 </Select>
+                <Button
+                  aria-pressed={missingOnly}
+                  disabled={!effectiveSuiteId || membershipPending}
+                  onClick={() => {
+                    setCheckedCaseIds(new Set());
+                    const next = !missingOnly;
+                    setMissingOnly(next);
+                    setMissingCaseIds(null);
+                    setMembershipPending(next);
+                  }}
+                  type="button"
+                  variant={missingOnly ? "primary" : "secondary"}
+                >
+                  {membershipPending ? (
+                    <LoaderCircle className="spin" size={15} />
+                  ) : (
+                    <ListFilter size={15} />
+                  )}
+                  {missingOnly ? "仅看未加入" : "筛选未加入"}
+                </Button>
                 <Button
                   className="button button-primary"
                   type="button"

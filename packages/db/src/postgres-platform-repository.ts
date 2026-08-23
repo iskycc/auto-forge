@@ -1934,6 +1934,28 @@ export class PostgresCaseSuiteRepository implements CaseSuiteRepository {
     return Object.fromEntries(rows.map((row) => [row.ruleId, row.apiKeyCiphertext]));
   }
 
+  async findMemberCaseDefinitionIds(
+    suiteId: string,
+    candidateIds: readonly string[],
+  ): Promise<string[]> {
+    await this.ready();
+    if (candidateIds.length === 0) return [];
+    const memberIds: string[] = [];
+    for (const ids of batchesOf(candidateIds, RELATIONAL_ID_QUERY_BATCH_SIZE)) {
+      const rows = await this.handle.db
+        .select({ caseDefinitionId: pgCaseSuiteItems.caseDefinitionId })
+        .from(pgCaseSuiteItems)
+        .where(
+          and(
+            eq(pgCaseSuiteItems.suiteId, suiteId),
+            inArray(pgCaseSuiteItems.caseDefinitionId, ids),
+          ),
+        );
+      memberIds.push(...rows.map((row) => row.caseDefinitionId));
+    }
+    return memberIds;
+  }
+
   async addCases(input: {
     suiteId: string;
     items: Array<{ id: string; caseDefinitionId: string }>;

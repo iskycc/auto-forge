@@ -2,6 +2,8 @@
 
 | Control plane | Runner Agent       | Protocol | Java/TestNG baseline     | Result                                                                        |
 | ------------- | ------------------ | -------- | ------------------------ | ----------------------------------------------------------------------------- |
+| `1.1.x`       | embedded `1.1.x`   | v1       | Java 11+ / TestNG 7.11.0 | supported                                                                     |
+| `1.1.x`       | embedded `1.0.x`   | v1       | Java 11+ / TestNG 7.11.0 | supported; control-plane DDT features do not change the Runner contract       |
 | `1.0.x`       | embedded `1.0.x`   | v1       | Java 11+ / TestNG 7.11.0 | supported                                                                     |
 | `1.0.x`       | embedded `0.9.x`   | v1       | capability dependent     | supported; upgrade recommended                                                |
 | `0.9.x`       | embedded `0.9.x`   | v1       | Java 11+ / TestNG 7.11.0 | supported                                                                     |
@@ -22,7 +24,7 @@ Protocol v1 keeps the historical `environment` and `secretReferences` JSON field
 Control plane `0.9.x` emits empty values, and the embedded Agent rejects non-empty values because product-level
 managed execution environments and secrets have been retired.
 
-The `v1.0.x` Jenkins HPI plugins require Jenkins `2.479.3` or newer. CI loads each installed Pipeline
+The `v1.0.x` and `v1.1.x` Jenkins HPI plugins require Jenkins `2.479.3` or newer. CI loads each installed Pipeline
 step through Jenkins Pipeline Job `1508.v9cb_c3a_a_89dfd` and Pipeline Groovy
 `4009.v0089238351a_9`, then verifies the packaged HPI manifest and step bytecode. The execution plugin requires an
 API key with `run.create`; the dependency publisher requires `project.manage` for the target project.
@@ -39,6 +41,11 @@ credential is encrypted with the existing AutoForge master key and cannot be con
 Control plane `1.0.2` keeps the `1.0.1` database and protocol contracts and fixes policy-rule editing
 when the UI is served from a plain-HTTP hostname or IP address. Persisted `1.0.1` task policies and
 credentials remain directly compatible.
+
+Control plane `1.1.0` adds version-scoped DDT tables and raw spreadsheet objects without changing
+Runner Protocol v1 or existing TestNG assets. The Web and Full worker must be upgraded together so
+`ddt-import` jobs have a registered consumer. Database downgrade requires restoring the database and
+object store backup taken before migrations `0042` (SQLite) or `0041` (PostgreSQL).
 
 Control plane `0.9.10` adds persisted Webhook configuration and delivery tables without changing
 Runner Protocol v1. Existing installations have no endpoint or binding after migration and therefore

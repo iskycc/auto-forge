@@ -79,6 +79,9 @@ importers:
       "@autoforge/db":
         specifier: workspace:*
         version: link:../../packages/db
+      "@autoforge/ddt-import":
+        specifier: workspace:*
+        version: link:../../packages/ddt-import
       "@autoforge/domain":
         specifier: workspace:*
         version: link:../../packages/domain
@@ -185,6 +188,9 @@ importers:
       "@autoforge/db":
         specifier: workspace:*
         version: link:../../packages/db
+      "@autoforge/ddt-import":
+        specifier: workspace:*
+        version: link:../../packages/ddt-import
       "@autoforge/ids":
         specifier: workspace:*
         version: link:../../packages/ids
@@ -280,6 +286,31 @@ importers:
       typescript:
         specifier: 5.9.3
         version: 5.9.3
+
+  packages/ddt-import:
+    dependencies:
+      "@autoforge/contracts":
+        specifier: workspace:*
+        version: link:../contracts
+      "@autoforge/domain":
+        specifier: workspace:*
+        version: link:../domain
+      xlsx:
+        specifier: file:../../vendor/xlsx-0.20.3.tgz
+        version: file:vendor/xlsx-0.20.3.tgz
+    devDependencies:
+      "@types/node":
+        specifier: 24.13.3
+        version: 24.13.3
+      fflate:
+        specifier: 0.8.3
+        version: 0.8.3
+      typescript:
+        specifier: 5.9.3
+        version: 5.9.3
+      vitest:
+        specifier: 4.1.10
+        version: 4.1.10(@types/node@24.13.3)(vite@8.2.1(@types/node@24.13.3)(esbuild@0.28.2))
 
   packages/domain:
     devDependencies:
@@ -5260,6 +5291,16 @@ packages:
       utf-8-validate:
         optional: true
 
+  xlsx@file:vendor/xlsx-0.20.3.tgz:
+    resolution:
+      {
+        integrity: sha512-IeNUd19TDKjS/5/9dFOnsWtKtZ8PHiKKIQrsIjAjXEJQYJ9gzlKFLvIKCy1KOEX270yhC2zm03zs0Vyie/+86Q==,
+        tarball: file:vendor/xlsx-0.20.3.tgz,
+      }
+    version: 0.20.3
+    engines: { node: ">=0.8" }
+    hasBin: true
+
   xml-naming@0.3.0:
     resolution:
       {
@@ -8322,6 +8363,8 @@ snapshots:
   wrappy@1.0.2: {}
 
   ws@8.21.3: {}
+
+  xlsx@file:vendor/xlsx-0.20.3.tgz: {}
 
   xml-naming@0.3.0: {}
 

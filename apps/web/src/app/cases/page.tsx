@@ -1,7 +1,8 @@
-import { FileArchive, Import } from "lucide-react";
+import { DatabaseZap, FileArchive, Import } from "lucide-react";
 import Link from "next/link";
 
 import { CaseSelectionTable } from "@/components/case-selection-table";
+import { DdtManagementWorkspace } from "@/components/ddt-management-workspace";
 import { listCompleteCaseDirectory } from "@/lib/case-directory";
 import { getPlatformServices } from "@/lib/services";
 import { requireAuthorizedPageProjectScope, requirePageProjectScope } from "@/lib/auth";
@@ -18,6 +19,7 @@ export const dynamic = "force-dynamic";
 type CasesPageProps = {
   searchParams: Promise<{
     query?: string | string[];
+    tab?: string | string[];
   }>;
 };
 
@@ -29,6 +31,7 @@ export default async function CasesPage({ searchParams }: CasesPageProps) {
   const { identity } = await requirePageProjectScope("case.read");
   const parameters = await searchParams;
   const query = single(parameters.query)?.trim();
+  const activeTab = single(parameters.tab) === "ddt" ? "ddt" : "testng";
   const services = await getPlatformServices();
   const projects = await services.identities
     .listProjects(selectableProjectIds(identity))
@@ -49,20 +52,23 @@ export default async function CasesPage({ searchParams }: CasesPageProps) {
     (version) => version.id === hierarchy.projectVersionId,
   );
   const testStage = projectVersion?.stages.find((stage) => stage.id === hierarchy.testStageId);
-  const [cases, suites] = await Promise.all([
-    listCompleteCaseDirectory(services.catalog, {
-      ...(effectiveProjectIds ? { projectIds: effectiveProjectIds } : {}),
-      ...(projectVersion ? { projectVersionId: projectVersion.id } : {}),
-      ...(testStage ? { testStageId: testStage.id } : {}),
-      scopedOnly: true,
-    }),
-    projectVersion
-      ? services.caseSuites.list(200, effectiveProjectIds, projectVersion.id)
-      : Promise.resolve([]),
-  ]);
+  const [cases, suites] =
+    activeTab === "testng"
+      ? await Promise.all([
+          listCompleteCaseDirectory(services.catalog, {
+            ...(effectiveProjectIds ? { projectIds: effectiveProjectIds } : {}),
+            ...(projectVersion ? { projectVersionId: projectVersion.id } : {}),
+            ...(testStage ? { testStageId: testStage.id } : {}),
+            scopedOnly: true,
+          }),
+          projectVersion
+            ? services.caseSuites.list(200, effectiveProjectIds, projectVersion.id)
+            : Promise.resolve([]),
+        ])
+      : [[], []];
   // 目录已按项目范围加载；这里直接取每用例最近终态执行结果，供筛选与统计使用。
   const latestRunOutcomes =
-    cases.length > 0
+    activeTab === "testng" && cases.length > 0
       ? await services.caseDefinitions.latestRunOutcomes(
           cases.map((item) => item.id),
           effectiveProjectIds,
@@ -82,16 +88,29 @@ export default async function CasesPage({ searchParams }: CasesPageProps) {
     <div className="page-stack">
       <section className="page-hero">
         <div>
-          <span className="eyebrow">TestNG 资产</span>
+          <span className="eyebrow">{activeTab === "ddt" ? "数据驱动测试" : "TestNG 资产"}</span>
           <h1>用例管理</h1>
-          <p>一个 TestNG 测试类对应一个用例定义，测试方法作为可执行项保存在版本快照中。</p>
+          <p>
+            {activeTab === "ddt"
+              ? "在当前项目版本与测试阶段内管理动态字段用例、用户旅程、模板和导入来源。"
+              : "一个 TestNG 测试类对应一个用例定义，测试方法作为可执行项保存在版本快照中。"}
+          </p>
         </div>
-        {canImport ? (
+        {canImport && activeTab === "testng" ? (
           <Link className="button button-primary button-large" href="/cases/import">
             <Import size={18} aria-hidden="true" /> 导入 JAR
           </Link>
         ) : null}
       </section>
+
+      <nav className="case-kind-tabs" aria-label="用例类型">
+        <Link className={activeTab === "testng" ? "active" : ""} href="/cases?tab=testng">
+          <FileArchive size={17} aria-hidden="true" /> TestNG 用例
+        </Link>
+        <Link className={activeTab === "ddt" ? "active" : ""} href="/cases?tab=ddt">
+          <DatabaseZap size={17} aria-hidden="true" /> DDT 管理
+        </Link>
+      </nav>
 
       <section className="card case-scope-toolbar" aria-label="用例范围">
         <div className="case-scope-heading">
@@ -110,7 +129,30 @@ export default async function CasesPage({ searchParams }: CasesPageProps) {
         </div>
       </section>
 
-      {cases.length === 0 ? (
+      {activeTab === "ddt" ? (
+        projectId && projectVersion && testStage ? (
+          <DdtManagementWorkspace
+            scope={{
+              projectId,
+              projectVersionId: projectVersion.id,
+              testStageId: testStage.id,
+            }}
+            canManage={
+              caseManagementProjectIds === undefined || caseManagementProjectIds.includes(projectId)
+            }
+          />
+        ) : (
+          <section className="card case-library-empty-card">
+            <div className="empty-state case-library-empty">
+              <span className="empty-icon">
+                <DatabaseZap size={27} />
+              </span>
+              <strong>请先选择完整的项目层级</strong>
+              <p>DDT 用例严格绑定项目、项目版本和测试阶段，配置完整后即可开始导入。</p>
+            </div>
+          </section>
+        )
+      ) : cases.length === 0 ? (
         <section className="card case-library-empty-card">
           <div className="empty-state case-library-empty">
             <span className="empty-icon">

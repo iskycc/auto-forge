@@ -102,6 +102,10 @@ jobs:
             specs: tests/e2e/case-suite-lifecycle.spec.ts tests/e2e/jar-import.spec.ts tests/e2e/project-isolation.spec.ts
             project_maximum_concurrency: ""
             screenshots: true
+          - scenario: ddt
+            specs: tests/e2e/ddt-management.spec.ts
+            project_maximum_concurrency: ""
+            screenshots: true
           - scenario: execution
             specs: tests/e2e/execution-recovery.spec.ts tests/e2e/single-case-run.spec.ts
             project_maximum_concurrency: "1"

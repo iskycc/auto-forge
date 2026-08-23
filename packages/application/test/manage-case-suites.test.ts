@@ -279,6 +279,30 @@ describe("case suite update and copy", () => {
     expect(suites.addCases).not.toHaveBeenCalled();
   });
 
+  it("returns only candidates that are not already members of the selected suite", async () => {
+    const suites = suiteRepositoryFake();
+    suites.findMemberCaseDefinitionIds.mockResolvedValue(["case-2"]);
+    const catalog = {
+      findExistingCaseIds: vi.fn().mockResolvedValue(["case-1", "case-2", "case-3"]),
+    } as unknown as CaseCatalogRepository;
+    const service = new CaseSuiteService(
+      suites,
+      catalog,
+      projectStructuresFake(),
+      { now: () => new Date(timestamp) },
+      { next: () => "generated-id" },
+    );
+
+    await expect(
+      service.missingCaseIds("suite-1", ["case-1", "case-2", "case-2", "case-3"]),
+    ).resolves.toEqual(["case-1", "case-3"]);
+    expect(suites.findMemberCaseDefinitionIds).toHaveBeenCalledWith("suite-1", [
+      "case-1",
+      "case-2",
+      "case-3",
+    ]);
+  });
+
   it("rejects moving a suite while it contains cases from the original version", async () => {
     const suites = suiteRepositoryFake();
     const service = new CaseSuiteService(
@@ -335,6 +359,7 @@ function suiteRepositoryFake() {
     copySuite: vi.fn().mockResolvedValue(suite),
     addCases: vi.fn().mockResolvedValue(suite),
     removeCases: vi.fn().mockResolvedValue(suite),
+    findMemberCaseDefinitionIds: vi.fn().mockResolvedValue([]),
     getRoundRecoveryCredentials: vi.fn().mockResolvedValue({}),
   } as unknown as CaseSuiteRepository & {
     create: ReturnType<typeof vi.fn>;
@@ -343,6 +368,7 @@ function suiteRepositoryFake() {
     copySuite: ReturnType<typeof vi.fn>;
     addCases: ReturnType<typeof vi.fn>;
     removeCases: ReturnType<typeof vi.fn>;
+    findMemberCaseDefinitionIds: ReturnType<typeof vi.fn>;
   };
 }
 

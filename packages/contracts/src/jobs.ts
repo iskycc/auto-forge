@@ -18,6 +18,7 @@ export const jobEnvelopeSchema = z.object({
     "object-cleanup",
     "jar-import",
     "analytics-export",
+    "ddt-import",
   ]),
   payload: z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()])),
 });

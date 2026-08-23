@@ -34,7 +34,15 @@ test("tasks and execution history follow the selected project version", async ({
   expect(secondStage.status).toBe(201);
 
   const firstClassName = `com.example.VersionOne${Date.now()}Test`;
-  await importJar(page, project, `${suffix}-one.jar`, firstClassName, ["versionOne"]);
+  const unassignedClassName = firstClassName.replace(/Test$/u, "UnassignedTest");
+  await importJar(
+    page,
+    project,
+    `${suffix}-one.jar`,
+    firstClassName,
+    ["versionOne"],
+    [{ className: unassignedClassName, methodNames: ["notYetInTask"] }],
+  );
   await selectProjectContext(page, project.id, secondVersion.body.id, secondStage.body.id);
   const secondProjectContext = {
     ...project,
@@ -81,6 +89,16 @@ test("tasks and execution history follow the selected project version", async ({
   );
   expect(crossVersionAdd.status).toBe(400);
   expect(crossVersionAdd.body.error?.code).toBe("CASE_DEFINITION_VERSION_MISMATCH");
+
+  await selectProjectContext(page, project.id, project.versionId, project.stageId);
+  await page.goto("/cases");
+  await page.locator('select[aria-label="目标用例任务"]').selectOption(firstSuite.id);
+  await page.getByRole("button", { name: "筛选未加入" }).click();
+  await expect(page.getByLabel(`选择 ${unassignedClassName.split(".").at(-1)!}`)).toBeVisible();
+  await expect(page.getByLabel(`选择 ${firstClassName.split(".").at(-1)!}`)).toHaveCount(0);
+  await page.getByLabel(`选择 ${unassignedClassName.split(".").at(-1)!}`).check();
+  await page.getByRole("button", { name: "加入任务" }).click();
+  await expect(page.getByText("已将 1 个用例加入任务。")).toBeVisible();
 
   const runner = await registerRunner(page, suffix);
   await configureTaskExecution(page, firstSuite.id, runner.id);

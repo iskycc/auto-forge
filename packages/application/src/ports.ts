@@ -76,6 +76,27 @@ import type {
   WebhookDispatchClaim,
   WebhookRequestMethod,
 } from "@autoforge/domain";
+import type {
+  DdtCaseListPage,
+  DdtCaseListQuery,
+  DdtDashboard,
+  DdtDeletedCase,
+  DdtExportSelection,
+  DdtImportCaseOutcome,
+  DdtImportFile,
+  DdtImportFileResult,
+  DdtImportJob,
+  DdtImportPreviewFile,
+  DdtImportedRow,
+  DdtTemplateWriteRecord,
+} from "./ddt-types";
+import type {
+  DdtCase,
+  DdtCaseData,
+  DdtCaseHistory,
+  DdtCaseTemplate,
+  DdtScope,
+} from "@autoforge/domain";
 
 export type CreateProjectVersionRecord = {
   id: string;
@@ -908,6 +929,118 @@ export type CreateCaseSuiteRecord = {
   createdAt: string;
 };
 
+export interface DdtRepository {
+  listCases(query: DdtCaseListQuery): Promise<DdtCaseListPage>;
+  getCase(scope: DdtScope, caseId: string): Promise<DdtCase | null>;
+  getCases(scope: DdtScope, caseIds: readonly string[]): Promise<DdtCase[]>;
+  findCaseData(scope: DdtScope, caseIds: readonly string[]): Promise<Map<string, DdtCaseData>>;
+  listGroups(
+    scope: DdtScope,
+    query?: string,
+    limit?: number,
+  ): Promise<Array<{ srNum: string; count: number }>>;
+  dashboard(scope: DdtScope): Promise<DdtDashboard>;
+  exportCases(selection: DdtExportSelection): Promise<DdtCaseData[]>;
+  updateCases(
+    records: Array<{
+      scope: DdtScope;
+      caseId: string;
+      expectedRevision: number;
+      nextData: DdtCaseData;
+      historyId: string;
+      historyType: DdtCaseHistory["changeType"];
+      sourceName: string;
+      actorId?: string;
+      updatedAt: string;
+    }>,
+  ): Promise<DdtCase[]>;
+  trashCases(input: {
+    scope: DdtScope;
+    caseIds: readonly string[];
+    recycleIds: readonly string[];
+    actorId?: string;
+    deletedAt: string;
+  }): Promise<number>;
+  listDeletedCases(input: DdtScope & { query?: string; cursor?: string; limit: number }): Promise<{
+    items: DdtDeletedCase[];
+    nextCursor?: string;
+  }>;
+  restoreDeletedCase(input: {
+    scope: DdtScope;
+    recycleId: string;
+    restoredAt: string;
+    actorId?: string;
+  }): Promise<DdtCase>;
+  purgeDeletedCase(scope: DdtScope, recycleId: string): Promise<boolean>;
+  listHistory(input: DdtScope & { caseId: string; cursor?: string; limit: number }): Promise<{
+    items: DdtCaseHistory[];
+    nextCursor?: string;
+  }>;
+  getHistory(scope: DdtScope, caseId: string, historyId: string): Promise<DdtCaseHistory | null>;
+  listTemplates(scope: DdtScope): Promise<DdtCaseTemplate[]>;
+  getTemplateForSrNum(scope: DdtScope, srNum: string): Promise<DdtCaseTemplate | null>;
+  writeTemplate(record: DdtTemplateWriteRecord): Promise<DdtCaseTemplate>;
+  deleteTemplate(scope: DdtScope, templateId: string, expectedRevision: number): Promise<boolean>;
+  createImportPreview(input: {
+    job: Omit<DdtImportJob, "files">;
+    files: DdtImportPreviewFile[];
+  }): Promise<DdtImportJob>;
+  confirmImport(input: {
+    jobId: string;
+    conflictStrategy: "overwrite" | "skip" | "error";
+    dispatchJob: JobEnvelope;
+    updatedAt: string;
+    projectIds?: readonly string[];
+  }): Promise<DdtImportJob>;
+  getImportJob(jobId: string, projectIds?: readonly string[]): Promise<DdtImportJob | null>;
+  listImportJobs(input: DdtScope & { cursor?: string; limit: number }): Promise<{
+    items: DdtImportJob[];
+    nextCursor?: string;
+  }>;
+  claimImportJob(jobId: string, startedAt: string): Promise<DdtImportJob | null>;
+  requestImportCancellation(
+    jobId: string,
+    updatedAt: string,
+    projectIds?: readonly string[],
+  ): Promise<DdtImportJob>;
+  updateImportJob(input: {
+    jobId: string;
+    status: DdtImportJob["status"];
+    progressPercent: number;
+    insertedCount?: number;
+    updatedCount?: number;
+    unchangedCount?: number;
+    skippedCount?: number;
+    failedFiles?: number;
+    errorCode?: string;
+    errorSummary?: string;
+    updatedAt: string;
+    finishedAt?: string;
+  }): Promise<DdtImportJob>;
+  updateImportFile(input: {
+    fileId: string;
+    status: DdtImportFile["status"];
+    result?: DdtImportFileResult;
+    errorSummary?: string;
+    updatedAt: string;
+  }): Promise<void>;
+  importFile(input: {
+    jobId: string;
+    fileId: string;
+    scope: DdtScope;
+    sourceName: string;
+    rows: DdtImportedRow[];
+    conflictStrategy: "overwrite" | "skip" | "error";
+    actorId?: string;
+    importedAt: string;
+    historyIds: readonly string[];
+  }): Promise<DdtImportFileResult>;
+  listImportCaseIds(
+    jobId: string,
+    projectIds?: readonly string[],
+  ): Promise<Array<{ caseId: string; outcome: DdtImportCaseOutcome }>>;
+}
+
 export interface CaseSuiteRepository {
   create(record: CreateCaseSuiteRecord): Promise<CaseSuite>;
   list(
@@ -917,6 +1050,7 @@ export interface CaseSuiteRepository {
   ): Promise<CaseSuite[]>;
   getSummary(suiteId: string, projectIds?: readonly string[]): Promise<CaseSuite | null>;
   get(suiteId: string, projectIds?: readonly string[]): Promise<CaseSuiteDetails | null>;
+  findMemberCaseDefinitionIds(suiteId: string, candidateIds: readonly string[]): Promise<string[]>;
   getRoundRecoveryCredentials(
     suiteId: string,
     ruleIds: readonly string[],

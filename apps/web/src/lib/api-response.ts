@@ -1,6 +1,11 @@
 import { randomUUID } from "node:crypto";
 
 import { DomainError, isDomainError } from "@autoforge/domain";
+import {
+  DDT_IMPORT_FILE_BYTES,
+  DDT_IMPORT_FILE_LIMIT,
+  DDT_IMPORT_TOTAL_BYTES,
+} from "@autoforge/contracts";
 import { isJarInspectionError } from "@autoforge/testng-discovery";
 import { NextResponse } from "next/server";
 import { ZodError } from "zod";
@@ -9,6 +14,8 @@ export type JarUpload = {
   fileName: string;
   content: Uint8Array;
 };
+
+export type DdtUpload = JarUpload & { mediaType: string };
 
 type UploadPolicy = {
   missingCode: string;
@@ -28,6 +35,37 @@ export async function readJarUpload(request: Request, maxJarBytes: number): Prom
     emptyMessage: "JAR 文件为空。",
     tooLarge: jarTooLargeError,
   });
+}
+
+export async function readDdtUploads(request: Request): Promise<DdtUpload[]> {
+  const tooLarge = () =>
+    new DomainError("DDT_UPLOAD_TOO_LARGE", "DDT 上传总大小不能超过 512 MiB。");
+  rejectOversizedUpload(request, DDT_IMPORT_TOTAL_BYTES, tooLarge);
+  const formData = await parseMultipartFormData(request, DDT_IMPORT_TOTAL_BYTES, tooLarge);
+  const files = [...formData.getAll("files"), ...formData.getAll("file")].filter(
+    (entry): entry is File => entry instanceof File,
+  );
+  if (files.length === 0) throw new DomainError("DDT_FILE_REQUIRED", "请选择 DDT 表格或 ZIP。");
+  if (files.length > DDT_IMPORT_FILE_LIMIT)
+    throw new DomainError(
+      "DDT_FILE_LIMIT_EXCEEDED",
+      `一次最多上传 ${DDT_IMPORT_FILE_LIMIT} 个文件。`,
+    );
+  let totalBytes = 0;
+  const uploads: DdtUpload[] = [];
+  for (const file of files) {
+    if (file.size === 0) throw new DomainError("DDT_FILE_EMPTY", `文件“${file.name}”为空。`);
+    if (file.size > DDT_IMPORT_FILE_BYTES)
+      throw new DomainError("DDT_FILE_TOO_LARGE", `文件“${file.name}”超过 128 MiB。`);
+    totalBytes += file.size;
+    if (totalBytes > DDT_IMPORT_TOTAL_BYTES) throw tooLarge();
+    uploads.push({
+      fileName: file.name,
+      mediaType: file.type || "application/octet-stream",
+      content: new Uint8Array(await file.arrayBuffer()),
+    });
+  }
+  return uploads;
 }
 
 async function readBoundedUpload(
@@ -196,7 +234,7 @@ function redactSecrets(value: string): string {
 }
 
 function domainErrorStatus(code: string): number {
-  if (code === "REQUEST_BODY_TOO_LARGE" || code === "JAR_TOO_LARGE") return 413;
+  if (code === "REQUEST_BODY_TOO_LARGE" || code.endsWith("_TOO_LARGE")) return 413;
   if (code === "RATE_LIMITED") return 429;
   if (code === "RUNNER_AGENT_RESOURCE_UNAVAILABLE") return 503;
   if (code === "RUNTIME_ASSET_STORAGE_FULL") return 507;

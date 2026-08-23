@@ -244,6 +244,7 @@ run_adapter_tests() {
   AUTOFORGE_TEST_NATS_URL=nats://127.0.0.1:54229 \
     pnpm exec vitest run \
       packages/db/test/postgres-migrations.integration.test.ts \
+      packages/db/test/postgres-ddt.integration.test.ts \
       packages/db/test/postgres-platform.integration.test.ts \
       packages/db/test/postgres-round-recovery.integration.test.ts \
       packages/db/test/postgres-webhook.integration.test.ts \

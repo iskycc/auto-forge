@@ -7024,6 +7024,793 @@ button.icon-button:disabled {
   }
 }
 
+/* DDT management keeps dynamic data dense, scoped and readable on desktop canvases. */
+.case-kind-tabs,
+.ddt-subtabs,
+.ddt-workspace-bar,
+.ddt-filterbar,
+.ddt-selection-bar,
+.ddt-section > header,
+.ddt-chart-card header,
+.ddt-dialog > header,
+.ddt-drawer > header {
+  display: flex;
+  align-items: center;
+}
+
+.case-kind-tabs {
+  width: fit-content;
+  gap: 4px;
+  border: 1px solid var(--color-border);
+  border-radius: 13px;
+  padding: 4px;
+  background: rgba(255, 255, 255, 0.74);
+  box-shadow: var(--shadow-control);
+}
+
+.case-kind-tabs a,
+.ddt-subtabs button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border: 0;
+  border-radius: 9px;
+  padding: 9px 14px;
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-weight: 650;
+}
+
+.case-kind-tabs a.active,
+.ddt-subtabs button.active {
+  background: var(--color-surface);
+  color: var(--color-text);
+  box-shadow: 0 1px 5px rgba(20, 23, 31, 0.11);
+}
+
+.ddt-workspace {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-4);
+}
+
+.ddt-workspace-bar {
+  gap: 10px;
+}
+
+.ddt-workspace-bar > div:first-child,
+.ddt-section > header > div,
+.ddt-chart-card header > div {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+  margin-right: auto;
+}
+
+.ddt-workspace-bar span,
+.ddt-section > header span,
+.ddt-chart-card header span {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-caption);
+}
+
+.ddt-subtabs {
+  gap: 3px;
+  border-bottom: 1px solid var(--color-border);
+  padding-bottom: 8px;
+}
+
+.ddt-subtabs button {
+  position: relative;
+  box-shadow: none;
+}
+
+.ddt-subtabs button.active {
+  background: var(--color-info-soft);
+  color: var(--color-info);
+  box-shadow: none;
+}
+
+.ddt-subtabs small {
+  display: inline-grid;
+  min-width: 18px;
+  height: 18px;
+  place-items: center;
+  border-radius: 9px;
+  background: var(--color-danger-soft);
+  color: var(--color-danger);
+}
+
+.ddt-workspace .inline-notice {
+  justify-content: space-between;
+}
+.ddt-workspace .inline-notice.success {
+  border-color: rgba(36, 138, 61, 0.2);
+  background: var(--color-success-soft);
+  color: var(--color-success);
+}
+.ddt-workspace .inline-notice.error {
+  border-color: rgba(215, 0, 21, 0.16);
+  background: var(--color-danger-soft);
+  color: var(--color-danger);
+}
+.ddt-workspace .inline-notice button {
+  display: grid;
+  border: 0;
+  background: transparent;
+  color: currentColor;
+}
+
+.ddt-loading,
+.ddt-empty {
+  display: grid;
+  min-height: 220px;
+  place-items: center;
+  align-content: center;
+  gap: 8px;
+  color: var(--color-text-secondary);
+  text-align: center;
+}
+.ddt-loading strong,
+.ddt-empty strong {
+  color: var(--color-text);
+}
+.ddt-empty p {
+  margin: 0;
+}
+
+.ddt-overview,
+.ddt-section,
+.ddt-case-panel {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-4);
+}
+.ddt-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--space-3);
+}
+.ddt-metric {
+  display: grid;
+  gap: 5px;
+  padding: 18px;
+}
+.ddt-metric > span,
+.ddt-metric small {
+  color: var(--color-text-secondary);
+}
+.ddt-metric strong {
+  font-size: 27px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.04em;
+}
+.ddt-chart-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.9fr);
+  gap: var(--space-4);
+}
+.ddt-chart-card {
+  min-width: 0;
+  padding: 20px;
+}
+.ddt-bars {
+  display: flex;
+  height: 210px;
+  align-items: end;
+  gap: 12px;
+  border-bottom: 1px solid var(--color-border);
+  padding: 25px 8px 0;
+}
+.ddt-bars > div {
+  display: grid;
+  height: 100%;
+  flex: 1;
+  align-items: end;
+  gap: 7px;
+  text-align: center;
+}
+.ddt-bars > div > span {
+  display: block;
+  min-height: 7px;
+  border-radius: 7px 7px 2px 2px;
+  background: linear-gradient(180deg, #4f9bf5, var(--color-info));
+  box-shadow: 0 5px 13px rgba(6, 104, 216, 0.15);
+}
+.ddt-bars small {
+  color: var(--color-text-tertiary);
+}
+.ddt-chart-empty {
+  margin: auto;
+  color: var(--color-text-secondary);
+}
+.ddt-group-ranking {
+  display: grid;
+  gap: 8px;
+  margin-top: 17px;
+}
+.ddt-group-ranking button {
+  display: grid;
+  grid-template-columns: 24px minmax(90px, 0.7fr) minmax(80px, 1fr) 32px;
+  align-items: center;
+  gap: 9px;
+  border: 0;
+  border-radius: 9px;
+  padding: 7px;
+  background: transparent;
+  color: var(--color-text);
+  text-align: left;
+}
+.ddt-group-ranking button:hover {
+  background: var(--color-surface-muted);
+}
+.ddt-group-ranking button > span {
+  display: grid;
+  height: 24px;
+  place-items: center;
+  border-radius: 7px;
+  background: var(--color-info-soft);
+  color: var(--color-info);
+  font-size: 12px;
+}
+.ddt-group-ranking i {
+  height: 7px;
+  border-radius: 8px;
+  background: linear-gradient(90deg, #7c63d7, #a694e6);
+}
+
+.ddt-filterbar {
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.ddt-filterbar > label:not(.search-field) {
+  display: grid;
+  gap: 3px;
+}
+.ddt-filterbar label > span {
+  color: var(--color-text-secondary);
+  font-size: 12px;
+}
+.ddt-filterbar select,
+.ddt-workspace input:not([type="checkbox"]):not([type="radio"]),
+.ddt-workspace textarea,
+.ddt-workspace select {
+  min-height: 39px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-control);
+  outline: 0;
+  padding: 0 11px;
+  background: var(--color-control);
+  color: var(--color-text);
+}
+.ddt-workspace textarea {
+  min-height: 90px;
+  padding-block: 9px;
+  resize: vertical;
+}
+.ddt-workspace input:focus,
+.ddt-workspace textarea:focus,
+.ddt-workspace select:focus {
+  border-color: var(--color-info);
+  box-shadow: 0 0 0 3px var(--color-focus-ring);
+}
+.ddt-filterbar .search-field {
+  display: flex;
+  min-width: 260px;
+  flex: 1;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-control);
+  padding-left: 11px;
+  color: var(--color-text-secondary);
+  background: var(--color-control);
+}
+.ddt-filterbar .search-field input {
+  width: 100%;
+  border: 0;
+  box-shadow: none;
+}
+.ddt-filter-count {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: auto;
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+}
+.ddt-selection-bar {
+  gap: 9px;
+  border: 1px solid rgba(6, 104, 216, 0.16);
+  border-radius: 12px;
+  padding: 9px 12px;
+  background: var(--color-info-soft);
+}
+.ddt-selection-bar strong {
+  margin-right: auto;
+  color: var(--color-info);
+}
+.ddt-workspace .text-button,
+.ddt-case-link {
+  display: inline-flex;
+  min-height: 32px;
+  align-items: center;
+  gap: 5px;
+  border: 0;
+  padding: 3px;
+  background: transparent;
+  color: var(--color-info);
+  font-weight: 600;
+}
+.ddt-workspace .text-button.danger,
+.ddt-workspace .icon-button.danger {
+  color: var(--color-danger);
+}
+.ddt-workspace .button-danger {
+  border-color: rgba(215, 0, 21, 0.15);
+  background: var(--color-danger-soft);
+  color: var(--color-danger);
+}
+.ddt-table-shell {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-card);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-card);
+}
+.ddt-table {
+  table-layout: fixed;
+}
+.ddt-table th:nth-child(1) {
+  width: 46px;
+}
+.ddt-table th:nth-child(2) {
+  width: 24%;
+}
+.ddt-table th:nth-child(3) {
+  width: 15%;
+}
+.ddt-table th:nth-child(4) {
+  width: 110px;
+}
+.ddt-table th:last-child {
+  width: 50px;
+}
+.ddt-table td {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ddt-table input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+}
+.ddt-group-tag,
+.ddt-kind,
+.ddt-status {
+  display: inline-flex;
+  width: fit-content;
+  border-radius: 999px;
+  padding: 4px 8px;
+  background: var(--color-surface-muted);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-caption);
+  font-style: normal;
+  white-space: nowrap;
+}
+.ddt-kind.journey {
+  background: rgba(118, 85, 197, 0.11);
+  color: var(--color-violet);
+}
+.ddt-status.running,
+.ddt-status.queued {
+  background: var(--color-info-soft);
+  color: var(--color-info);
+}
+.ddt-status.succeeded {
+  background: var(--color-success-soft);
+  color: var(--color-success);
+}
+.ddt-status.failed {
+  background: var(--color-danger-soft);
+  color: var(--color-danger);
+}
+.ddt-status.previewed,
+.ddt-status.partially_succeeded {
+  background: var(--color-warning-soft);
+  color: var(--color-warning);
+}
+.ddt-load-more {
+  width: fit-content;
+  margin: auto;
+}
+
+.ddt-section > header {
+  gap: 12px;
+}
+.ddt-job-list,
+.ddt-template-grid {
+  display: grid;
+  gap: var(--space-3);
+}
+.ddt-template-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.ddt-job,
+.ddt-template {
+  position: relative;
+  display: grid;
+  gap: 13px;
+  padding: 17px;
+}
+.ddt-job-main {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 10px;
+}
+.ddt-job-main small {
+  color: var(--color-text-secondary);
+}
+.ddt-job-progress {
+  display: grid;
+  grid-template-columns: 1fr 42px;
+  align-items: center;
+  gap: 9px;
+}
+.ddt-job-progress > div {
+  height: 7px;
+  overflow: hidden;
+  border-radius: 8px;
+  background: var(--color-surface-muted);
+}
+.ddt-job-progress i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--color-info);
+}
+.ddt-job-results {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.ddt-job-results span {
+  border-radius: 8px;
+  padding: 6px 9px;
+  background: var(--color-surface-muted);
+  color: var(--color-text-secondary);
+  font-size: 12px;
+}
+.ddt-job details {
+  border-top: 1px solid var(--color-border);
+  padding-top: 10px;
+}
+.ddt-job summary {
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+.ddt-file-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 70px 80px;
+  gap: 8px;
+  padding-top: 9px;
+}
+.ddt-file-row small {
+  grid-column: 1 / -1;
+  color: var(--color-danger);
+}
+.ddt-template {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+.ddt-template > div:first-child {
+  display: grid;
+  gap: 7px;
+}
+.ddt-template p {
+  margin: 0;
+  color: var(--color-text-secondary);
+}
+.ddt-rule-chips {
+  display: flex;
+  grid-column: 1 / -1;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.ddt-rule-chips > span {
+  display: grid;
+  gap: 1px;
+  border-radius: 8px;
+  padding: 6px 9px;
+  background: var(--color-surface-muted);
+}
+.ddt-rule-chips small {
+  color: var(--color-text-tertiary);
+}
+
+.modal-backdrop {
+  position: fixed;
+  z-index: 120;
+  display: grid;
+  overflow: auto;
+  padding: 20px;
+  background: rgba(13, 15, 20, 0.46);
+  backdrop-filter: blur(8px);
+  inset: 0;
+  place-items: center;
+}
+.ddt-dialog {
+  display: flex;
+  width: min(760px, calc(100dvw - 40px));
+  max-height: calc(100dvh - 40px);
+  flex-direction: column;
+  overflow: auto;
+  border: 1px solid rgba(255, 255, 255, 0.7);
+  border-radius: var(--radius-large);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-elevated);
+}
+.ddt-dialog > header,
+.ddt-drawer > header {
+  flex: 0 0 auto;
+  justify-content: space-between;
+  gap: 18px;
+  border-bottom: 1px solid var(--color-border);
+  padding: 18px 20px;
+}
+.ddt-dialog > header h2,
+.ddt-dialog > header p,
+.ddt-drawer > header h2,
+.ddt-drawer > header p {
+  margin: 0;
+}
+.ddt-dialog > header p,
+.ddt-drawer > header p {
+  margin-top: 4px;
+  color: var(--color-text-secondary);
+}
+.ddt-import-dialog,
+.ddt-template-form,
+.ddt-bulk-form {
+  padding: 20px;
+}
+.ddt-dropzone {
+  display: grid;
+  width: 100%;
+  min-height: 170px;
+  place-items: center;
+  align-content: center;
+  gap: 7px;
+  border: 1px dashed rgba(6, 104, 216, 0.42);
+  border-radius: 14px;
+  background: var(--color-info-soft);
+  color: var(--color-info);
+}
+.ddt-dropzone span {
+  max-width: 520px;
+  color: var(--color-text-secondary);
+  text-align: center;
+}
+.ddt-picked-files,
+.ddt-preview-files {
+  display: grid;
+  gap: 7px;
+  margin-top: 12px;
+}
+.ddt-picked-files > span,
+.ddt-preview-files > div {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-radius: 9px;
+  padding: 9px 11px;
+  background: var(--color-surface-muted);
+}
+.ddt-picked-files small,
+.ddt-preview-files span {
+  margin-left: auto;
+  color: var(--color-text-secondary);
+}
+.ddt-preview-files small {
+  flex-basis: 100%;
+  color: var(--color-danger);
+}
+.ddt-preview-files i {
+  color: var(--color-success);
+  font-size: 12px;
+}
+.ddt-import-dialog footer,
+.ddt-template-form footer,
+.ddt-bulk-form footer,
+.ddt-drawer footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 9px;
+  margin-top: 17px;
+}
+.ddt-preview-summary {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+}
+.ddt-preview-summary span {
+  display: grid;
+  gap: 3px;
+  border-radius: 10px;
+  padding: 11px;
+  background: var(--color-surface-muted);
+}
+.ddt-preview-summary small {
+  color: var(--color-text-secondary);
+}
+.ddt-preview-summary strong {
+  font-size: 19px;
+}
+.ddt-strategy {
+  display: flex;
+  gap: 8px;
+  margin-top: 15px;
+  border: 0;
+  padding: 0;
+}
+.ddt-strategy legend {
+  margin-bottom: 7px;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+}
+.ddt-strategy label {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  padding: 10px;
+}
+.form-grid.ddt-template-form,
+.form-grid.ddt-bulk-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 13px;
+}
+.ddt-template-form > label,
+.ddt-bulk-form > label {
+  display: grid;
+  gap: 5px;
+}
+.full-span {
+  grid-column: 1 / -1;
+}
+.ddt-rule-builder {
+  display: grid;
+  gap: 8px;
+}
+.ddt-rule-builder > div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 130px 80px 36px;
+  align-items: center;
+  gap: 8px;
+}
+.ddt-rule-builder > div:first-child {
+  display: flex;
+  justify-content: space-between;
+}
+.ddt-rule-builder > div > label {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.ddt-drawer {
+  position: fixed;
+  top: 0;
+  right: 0;
+  display: flex;
+  width: min(720px, calc(100dvw - 80px));
+  height: 100dvh;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--color-surface);
+  box-shadow: -20px 0 50px rgba(15, 18, 25, 0.2);
+}
+.ddt-drawer-body {
+  min-height: 0;
+  flex: 1;
+  overflow: auto;
+  padding: 18px 20px;
+}
+.ddt-drawer footer {
+  flex: 0 0 auto;
+  border-top: 1px solid var(--color-border);
+  padding: 14px 20px;
+  margin: 0;
+}
+.ddt-field-list {
+  display: grid;
+  gap: 1px;
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  background: var(--color-border);
+}
+.ddt-field-list > div {
+  display: grid;
+  grid-template-columns: minmax(120px, 0.35fr) minmax(0, 1fr);
+  gap: 12px;
+  padding: 11px 13px;
+  background: var(--color-surface);
+}
+.ddt-field-list > div > span {
+  color: var(--color-text-secondary);
+}
+.ddt-field-list pre {
+  max-height: 260px;
+  overflow: auto;
+  margin: 0;
+  border-radius: 8px;
+  padding: 10px;
+  background: var(--color-code-background);
+  color: var(--color-code-text);
+  white-space: pre-wrap;
+}
+.ddt-json-editor {
+  display: grid;
+  gap: 7px;
+}
+.ddt-json-editor textarea {
+  min-height: 430px;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  line-height: 1.55;
+}
+.ddt-json-editor small {
+  color: var(--color-text-secondary);
+}
+.ddt-history {
+  display: grid;
+  gap: 8px;
+  margin-top: 20px;
+}
+.ddt-history h3 {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0;
+}
+.ddt-history article {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border-top: 1px solid var(--color-border);
+  padding: 10px 0;
+}
+.ddt-history article > div {
+  display: grid;
+  gap: 2px;
+  margin-right: auto;
+}
+.ddt-history span,
+.ddt-history small {
+  color: var(--color-text-secondary);
+}
+.table-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+@media (max-width: 1180px) {
+  .ddt-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .ddt-chart-grid {
+    grid-template-columns: 1fr;
+  }
+  .ddt-template-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 .topbar-tools {
   position: relative;
   display: flex;

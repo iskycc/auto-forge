@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@autoforge/application": "workspace:*",
+    "@autoforge/ddt-import": "workspace:*",
     "@autoforge/db": "workspace:*",
     "@autoforge/ids": "workspace:*",
     "@autoforge/object-store": "workspace:*",

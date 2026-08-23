@@ -8,4 +8,5 @@ export * from "./platform";
 export * from "./operations";
 export * from "./project-structure";
 export * from "./attempt-log-share";
+export * from "./ddt";
 export * from "./runner-group";

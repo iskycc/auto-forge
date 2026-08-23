@@ -8,6 +8,8 @@ import {
   CaseDefinitionService,
   CaseSourceService,
   CaseSuiteService,
+  DdtCaseService,
+  DdtImportService,
   ExecutionControlService,
   ImportTestNgJarService,
   IdentityAccessService,
@@ -25,6 +27,7 @@ import {
   type AttemptLogShareRepository,
   type CaseCatalogRepository,
   type CaseSuiteRepository,
+  type DdtRepository,
   type JarObjectStorePort,
   type IdentityAccessRepository,
   type ExecutionControlRepository,
@@ -47,6 +50,7 @@ import {
   SqliteAttemptLogShareRepository,
   SqliteCaseCatalogRepository,
   SqliteCaseSuiteRepository,
+  SqliteDdtRepository,
   SqliteExecutionControlRepository,
   SqliteIdentityAccessRepository,
   SqliteRunBatchRepository,
@@ -59,6 +63,7 @@ import {
   SqliteProjectStructureRepository,
   SqliteWebhookRepository,
 } from "@autoforge/db/sqlite";
+import { parseDdtUpload } from "@autoforge/ddt-import";
 import { LocalObjectStore } from "@autoforge/object-store/local";
 import { SqliteJobQueue } from "@autoforge/queue/sqlite";
 import { TestNgJarDiscovery } from "@autoforge/testng-discovery";
@@ -94,6 +99,7 @@ async function createPlatformServices() {
   const configurationStore = appConfigurationStore(config);
   let catalog: CaseCatalogRepository;
   let suites: CaseSuiteRepository;
+  let ddtRepository: DdtRepository;
   let runners: RunnerRepository;
   let runnerInstallationProfileRepository: RunnerInstallationProfileRepository;
   let runnerGroupsRepository: RunnerGroupRepository;
@@ -120,6 +126,7 @@ async function createPlatformServices() {
     const attemptLogs = createAttemptLogStore(join(config.dataDirectory, "attempt-logs"));
     catalog = new SqliteCaseCatalogRepository(database);
     suites = new SqliteCaseSuiteRepository(database);
+    ddtRepository = new SqliteDdtRepository(database);
     runners = new SqliteRunnerRepository(database);
     runnerInstallationProfileRepository = new SqliteRunnerInstallationProfileRepository(database);
     runnerGroupsRepository = new SqliteRunnerGroupRepository(database);
@@ -151,6 +158,7 @@ async function createPlatformServices() {
         PostgresAttemptLogShareRepository,
         PostgresCaseCatalogRepository,
         PostgresCaseSuiteRepository,
+        PostgresDdtRepository,
         PostgresIdentityAccessRepository,
         PostgresExecutionControlRepository,
         PostgresRunBatchRepository,
@@ -235,6 +243,7 @@ async function createPlatformServices() {
     }
     catalog = new PostgresCaseCatalogRepository(database);
     suites = new PostgresCaseSuiteRepository(database);
+    ddtRepository = new PostgresDdtRepository(database);
     runners = new PostgresRunnerRepository(database);
     runnerInstallationProfileRepository = new PostgresRunnerInstallationProfileRepository(database);
     runnerGroupsRepository = new PostgresRunnerGroupRepository(database);
@@ -296,6 +305,14 @@ async function createPlatformServices() {
     secretCipher,
   );
   const caseDefinitions = new CaseDefinitionService(catalog, clock, ids);
+  const ddtCases = new DdtCaseService(ddtRepository, clock, ids);
+  const ddtImports = new DdtImportService(
+    ddtRepository,
+    objectStore,
+    { parseUpload: parseDdtUpload },
+    clock,
+    ids,
+  );
   const projectStructures = new ProjectStructureService(
     projectStructuresRepository,
     objectStore,
@@ -376,6 +393,7 @@ async function createPlatformServices() {
         },
         "object-cleanup": caseSources.objectCleanupHandler(),
         "jar-import": importTestNgJar.jobHandler(),
+        "ddt-import": ddtImports.jobHandler(),
         "analytics-export": platformOperations.analyticsExportJobHandler(),
       },
       clock,
@@ -524,6 +542,8 @@ async function createPlatformServices() {
     suites,
     caseSuites,
     caseDefinitions,
+    ddtCases,
+    ddtImports,
     projectStructures,
     runners,
     identities,

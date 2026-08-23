@@ -1564,6 +1564,13 @@
     },
     {
       "ecosystem": "npm",
+      "name": "xlsx",
+      "version": "0.20.3",
+      "license": "Apache-2.0",
+      "homepage": "https://sheetjs.com/"
+    },
+    {
+      "ecosystem": "npm",
       "name": "xml-naming",
       "version": "0.3.0",
       "license": "MIT",

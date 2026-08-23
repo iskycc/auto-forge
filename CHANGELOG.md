@@ -6,6 +6,47 @@ and known limitations.
 
 ## Unreleased
 
+## 1.1.0 - 2026-08-24
+
+### Added
+
+- Added a project-version/test-stage-scoped DDT workspace to case management. It supports dynamic
+  fields, CaseID/srNum grouping, standard and multi-step journey cases, dashboard charts, advanced
+  field search, bounded pagination, bulk edit/delete/export, field templates, immutable history and
+  recycle restore/purge.
+- Merged the differential functionality from `iskycc/ddt-insight` commit `705f552`: offline
+  XLSX/XLS/XLSB/CSV/ODS parsing; bounded ZIP/ZIP64, Chinese-path and CSV-encoding handling; partial
+  preview; overwrite/skip/error conflict policies; persistent asynchronous import, cancellation,
+  crash recovery, source traceability and per-job CaseID export.
+- Added authenticated `/api/v1/ddt/**` endpoints using existing service-account tokens, project RBAC,
+  CSRF protection and audit events. Duplicate identity, LDAP, audit, backup and diagnostics stacks
+  were deliberately replaced by the existing AutoForge implementations after a capability audit.
+- Added reverse case-suite membership filtering in case management, allowing users to select a task,
+  show only cases not yet included and add the resulting selection.
+
+### Database
+
+- Added SQLite migration `0042_ddt_management.sql` and PostgreSQL migration
+  `0041_ddt_management.sql` for scoped DDT cases, history, recycle snapshots, templates, import jobs,
+  per-file progress and imported CaseID outcomes. Full confirmation uses the transactional outbox;
+  Lite confirmation uses the SQLite persistent queue.
+
+### Tests
+
+- Added domain/parser tests for templates, journey synchronization, spreadsheet round trips and
+  Chinese ZIP entries, plus matching SQLite/PostgreSQL repository integration coverage.
+- Added a compact Playwright DDT lifecycle covering import, UI layout at 1024/1536 pixels, dynamic
+  editing, history, templates, bulk mutation, recycle and authenticated API access. CI runs it in a
+  separate parallel browser partition so it does not extend the existing serial scenario critical
+  path; the task lifecycle scenario now also verifies reverse membership filtering and add-back.
+
+### Compatibility
+
+- Runner Protocol v1 is unchanged. DDT data is new and isolated by project, version and test stage.
+  Downgrading after either new migration requires restoring the pre-upgrade database/object backup.
+- The `v1.1.0` Jenkins HPI plugins keep the existing Pipeline step contracts and require Jenkins
+  `2.479.3` or newer.
+
 ## 1.0.2 - 2026-08-24
 
 ### Fixed
