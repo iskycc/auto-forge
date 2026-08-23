@@ -16,6 +16,7 @@ import {
   DomainError,
   REQUIRED_EXECUTION_LABELS,
   scheduleExecutionRuns,
+  type CaseSuiteDetails,
   type RunBatch,
   type RunBatchDetails,
   type RunnerCompatibilityIssue,
@@ -194,6 +195,21 @@ export class RunBatchSchedulingService {
     ) {
       throw new DomainError("EXECUTION_INPUT_UNAVAILABLE", "用例的权威 JAR 输入不可用。");
     }
+    if (!definition.projectVersionId) {
+      throw new DomainError("CASE_VERSION_REQUIRED", "历史用例尚未关联项目版本，不能直接执行。");
+    }
+    if (this.projectStructures) {
+      const structure = await this.projectStructures.list(projectId);
+      const projectVersion = structure.versions.find(
+        (version) => version.id === definition.projectVersionId,
+      );
+      if (!projectVersion || projectVersion.status !== "active") {
+        throw new DomainError(
+          "CASE_VERSION_UNAVAILABLE",
+          "用例关联的项目版本不存在或已归档，不能执行。",
+        );
+      }
+    }
     const runnerIds = await this.resolveRunnerSelection(validated);
     const adapterBlockers: RunBatchPreflightBlocker[] = [];
     if (usesTaskAdapter(validated.adapter)) {
@@ -287,8 +303,8 @@ export class RunBatchSchedulingService {
     return this.preflightValidated(parsed.data);
   }
 
-  async list(limit = 100, projectIds?: readonly string[]) {
-    return this.batches.list(limit, projectIds);
+  async list(limit = 100, projectIds?: readonly string[], projectVersionId?: string) {
+    return this.batches.list(limit, projectIds, projectVersionId);
   }
 
   async listPage(input: import("./ports").RunBatchListQuery) {
@@ -526,6 +542,7 @@ export class RunBatchSchedulingService {
       );
     } else {
       const enabledCases = suite.items.filter((item) => item.caseDefinition.enabled);
+      await this.inspectSuiteVersion(suite, enabledCases, blockers);
       if (enabledCases.length === 0) {
         blockers.push(
           blocker("RUN_BATCH_EMPTY", "parameter", "用例任务中没有可执行的启用用例。", {
@@ -548,6 +565,48 @@ export class RunBatchSchedulingService {
       suite ? usesTaskAdapter(suite.policy.adapter) : false,
     );
     return { ready: blockers.length === 0, blockers };
+  }
+
+  private async inspectSuiteVersion(
+    suite: CaseSuiteDetails,
+    enabledCases: CaseSuiteDetails["items"],
+    blockers: RunBatchPreflightBlocker[],
+  ): Promise<void> {
+    const projectVersionId = suite.policy.projectVersionId;
+    if (!projectVersionId) {
+      blockers.push(
+        blocker(
+          "CASE_SUITE_VERSION_REQUIRED",
+          "parameter",
+          "历史任务尚未关联项目版本，请先在任务设置中选择版本。",
+          { path: ["suiteId"] },
+        ),
+      );
+      return;
+    }
+    if (enabledCases.some((item) => item.caseDefinition.projectVersionId !== projectVersionId)) {
+      blockers.push(
+        blocker(
+          "CASE_SUITE_VERSION_MISMATCH",
+          "input",
+          "任务中包含其他项目版本的用例，请重新整理任务成员。",
+          { path: ["suiteId"] },
+        ),
+      );
+    }
+    if (!this.projectStructures) return;
+    const structure = await this.projectStructures.list(suite.projectId);
+    const version = structure.versions.find((entry) => entry.id === projectVersionId);
+    if (!version || version.status !== "active") {
+      blockers.push(
+        blocker(
+          "CASE_SUITE_VERSION_UNAVAILABLE",
+          "input",
+          "任务关联的项目版本不存在或已归档，不能执行。",
+          { path: ["suiteId"] },
+        ),
+      );
+    }
   }
 
   private async inspectAdapterRuntime(

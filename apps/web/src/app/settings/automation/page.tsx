@@ -3,6 +3,11 @@ import { projectIdsForPermission } from "@autoforge/domain";
 import { AutomationOperations } from "@/components/automation-operations";
 import { hasPermissionInAnyScope, requirePageAnyPermission } from "@/lib/auth";
 import { getPlatformServices } from "@/lib/services";
+import {
+  selectableProjectIds,
+  selectedProjectHierarchy,
+  selectedProjectId,
+} from "@/lib/selected-project";
 
 export default async function AutomationOperationsPage() {
   const identity = await requirePageAnyPermission(["case_suite.read", "ldap.read"]);
@@ -12,11 +17,28 @@ export default async function AutomationOperationsPage() {
   const scheduleProjectIds = canReadSchedules
     ? projectIdsForPermission(identity, "case_suite.read")
     : [];
-  const [schedules, suites, ldapJobs] = await Promise.all([
+  const projects = canReadSchedules
+    ? await services.identities.listProjects(selectableProjectIds(identity)).catch(() => [])
+    : [];
+  const projectId = canReadSchedules
+    ? await selectedProjectId(identity, projects, "case_suite.read")
+    : undefined;
+  const hierarchy = await selectedProjectHierarchy(
+    projectId ? await services.projectStructures.list(projectId).catch(() => undefined) : undefined,
+  );
+  const [allSchedules, suites, ldapJobs] = await Promise.all([
     canReadSchedules ? services.platformOperations.listSchedules(identity) : Promise.resolve([]),
-    canReadSchedules ? services.caseSuites.list(500, scheduleProjectIds) : Promise.resolve([]),
+    canReadSchedules && hierarchy.projectVersionId
+      ? services.caseSuites.list(
+          500,
+          projectId ? [projectId] : scheduleProjectIds,
+          hierarchy.projectVersionId,
+        )
+      : Promise.resolve([]),
     canReadLdap ? services.platformOperations.listLdapSyncJobs(identity, 100) : Promise.resolve([]),
   ]);
+  const visibleSuiteIds = new Set(suites.map((suite) => suite.id));
+  const schedules = allSchedules.filter((schedule) => visibleSuiteIds.has(schedule.suiteId));
 
   return (
     <section className="page-stack">

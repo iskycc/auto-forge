@@ -278,7 +278,7 @@ async function createPlatformServices() {
     ids,
   });
   const caseSources = new CaseSourceService(catalog, objectStore, clock, ids, jobQueue, discovery);
-  const caseSuites = new CaseSuiteService(suites, catalog, clock, ids);
+  const caseSuites = new CaseSuiteService(suites, catalog, projectStructuresRepository, clock, ids);
   const caseDefinitions = new CaseDefinitionService(catalog, clock, ids);
   const projectStructures = new ProjectStructureService(
     projectStructuresRepository,

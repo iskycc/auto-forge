@@ -198,6 +198,7 @@ test("every built-in role receives only its authorized navigation and API surfac
 }) => {
   test.setTimeout(240_000);
   await ensureAdministrator(page);
+  const projectVersionId = await ensureDefaultProjectVersion(page);
   const password = "BuiltInRole!Password123";
   const roleUsers = [
     {
@@ -314,6 +315,8 @@ test("every built-in role receives only its authorized navigation and API surfac
     const auditStatus = await browserStatus(rolePage, "/api/v1/audit-events?limit=1");
     const caseStatus = await browserStatus(rolePage, "/api/v1/case-definitions?limit=1");
     const createSuiteStatus = await browserStatus(rolePage, "/api/v1/case-suites", "POST", {
+      projectId: DEFAULT_PROJECT_ID,
+      projectVersionId,
       name: uniqueName(`${roleUser.key}-suite`),
     });
     const terminalStatus = await browserStatus(rolePage, "/api/v1/terminal-sessions", "POST", {
@@ -352,6 +355,21 @@ test("every built-in role receives only its authorized navigation and API surfac
     await context.close();
   }
 });
+
+async function ensureDefaultProjectVersion(page: Page): Promise<string> {
+  const structure = await browserJson<{
+    versions: Array<{ id: string; status: "active" | "archived" }>;
+  }>(page, `/api/v1/projects/${DEFAULT_PROJECT_ID}/structure`);
+  const activeVersion = structure.body.versions.find((version) => version.status === "active");
+  if (activeVersion) return activeVersion.id;
+  const version = await browserJson<{ id: string }>(
+    page,
+    `/api/v1/projects/${DEFAULT_PROJECT_ID}/versions`,
+    { method: "POST", body: { name: uniqueName("rbac-version") } },
+  );
+  expect(version.status).toBe(201);
+  return version.body.id;
+}
 
 async function createActiveUser(page: Page, username: string, password: string) {
   const response = await browserJson<{ id?: string }>(page, "/api/v1/users", {

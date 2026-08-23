@@ -56,7 +56,9 @@ export default async function CasesPage({ searchParams }: CasesPageProps) {
       ...(testStage ? { testStageId: testStage.id } : {}),
       scopedOnly: true,
     }),
-    services.caseSuites.list(200, effectiveProjectIds),
+    projectVersion
+      ? services.caseSuites.list(200, effectiveProjectIds, projectVersion.id)
+      : Promise.resolve([]),
   ]);
   // 目录已按项目范围加载；这里直接取每用例最近终态执行结果，供筛选与统计使用。
   const latestRunOutcomes =

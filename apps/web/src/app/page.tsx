@@ -23,7 +23,11 @@ import {
   runBatchStatusLabel,
 } from "@/lib/run-batch-presentation";
 import { getPlatformServices } from "@/lib/services";
-import { selectableProjectIds, selectedProjectId } from "@/lib/selected-project";
+import {
+  selectableProjectIds,
+  selectedProjectHierarchy,
+  selectedProjectId,
+} from "@/lib/selected-project";
 
 export const dynamic = "force-dynamic";
 
@@ -42,6 +46,10 @@ export default async function DashboardPage() {
     .listProjects(selectableProjectIds(identity))
     .catch(() => []);
   const activeProjectId = await selectedProjectId(identity, projects);
+  const projectStructure = activeProjectId
+    ? await services.projectStructures.list(activeProjectId).catch(() => undefined)
+    : undefined;
+  const hierarchy = await selectedProjectHierarchy(projectStructure);
   const canReadCases = Boolean(
     activeProjectId && hasPermission(identity, "case.read", activeProjectId),
   );
@@ -73,17 +81,21 @@ export default async function DashboardPage() {
     services.catalog.getDashboardSummary(caseProjectIds),
     canReadRunners ? services.runnerControl.list(500) : Promise.resolve([]),
     canReadRunners ? services.runnerGroups.list() : Promise.resolve([]),
-    canReadRuns ? services.runBatches.list(8, runProjectIds) : Promise.resolve([]),
+    canReadRuns && hierarchy.projectVersionId
+      ? services.runBatches.list(8, runProjectIds, hierarchy.projectVersionId)
+      : Promise.resolve([]),
     canReadSources ? services.catalog.listRecentSources(5, caseProjectIds) : Promise.resolve([]),
-    canReadRuns
+    canReadRuns && hierarchy.projectVersionId
       ? services.platformOperations.analytics(identity, {
           ...(runProjectIds?.[0] ? { projectId: runProjectIds[0] } : {}),
+          projectVersionId: hierarchy.projectVersionId,
           completedAfter: currentWeekStartedAt,
         })
       : Promise.resolve(null),
-    canReadRuns
+    canReadRuns && hierarchy.projectVersionId
       ? services.platformOperations.analytics(identity, {
           ...(runProjectIds?.[0] ? { projectId: runProjectIds[0] } : {}),
+          projectVersionId: hierarchy.projectVersionId,
           completedAfter: previousWeekStartedAt,
           completedBefore: currentWeekStartedAt,
         })

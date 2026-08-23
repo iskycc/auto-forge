@@ -35,6 +35,7 @@ describe("run batch preflight", () => {
     const suites = {
       get: vi.fn().mockResolvedValue({
         id: "suite-1",
+        projectId: "project-1",
         name: "Smoke",
         version: 1,
         status: "active",
@@ -156,6 +157,66 @@ describe("run batch preflight", () => {
     expect(catalog.getSource).not.toHaveBeenCalled();
   });
 
+  it("blocks legacy suites without a project version and cross-version members", async () => {
+    for (const [suite, expectedCode] of [
+      [readySuite({ policy: { projectVersionId: undefined } }), "CASE_SUITE_VERSION_REQUIRED"],
+      [readySuite({ caseProjectVersionId: "version-2" }), "CASE_SUITE_VERSION_MISMATCH"],
+    ] as const) {
+      const service = preflightService({
+        suites: { get: vi.fn().mockResolvedValue(suite) } as unknown as CaseSuiteRepository,
+        runners: runnersFake(),
+        catalog: readyCatalogFake(),
+        objectStore: { exists: vi.fn().mockResolvedValue(true) } as unknown as JarObjectStorePort,
+      });
+
+      const result = await service.preflight({ suiteId: "suite-1" });
+
+      expect(result.ready).toBe(false);
+      expect(result.blockers.map((entry) => entry.code)).toContain(expectedCode);
+    }
+  });
+
+  it("blocks suites bound to an archived project version", async () => {
+    const projectStructures = {
+      list: vi.fn().mockResolvedValue({
+        versions: [
+          {
+            id: "version-1",
+            projectId: "project-1",
+            name: "V1",
+            status: "archived",
+            revision: 2,
+            createdAt: timestamp,
+            updatedAt: timestamp,
+            stages: [],
+            adapterConfiguration: {
+              projectId: "project-1",
+              projectVersionId: "version-1",
+              revision: 1,
+              updatedAt: timestamp,
+            },
+          },
+        ],
+        adapterConfiguration: {
+          projectId: "project-1",
+          revision: 1,
+          updatedAt: timestamp,
+        },
+      }),
+    } as unknown as ProjectStructureRepository;
+    const service = preflightService({
+      suites: { get: vi.fn().mockResolvedValue(readySuite({})) } as unknown as CaseSuiteRepository,
+      runners: runnersFake(),
+      catalog: readyCatalogFake(),
+      objectStore: { exists: vi.fn().mockResolvedValue(true) } as unknown as JarObjectStorePort,
+      projectStructures,
+    });
+
+    const result = await service.preflight({ suiteId: "suite-1" });
+
+    expect(result.blockers.map((entry) => entry.code)).toContain("CASE_SUITE_VERSION_UNAVAILABLE");
+  });
+
   it("reports runners missing the suite policy labels", async () => {
     const service = preflightService({
       suites: {
@@ -260,6 +321,7 @@ describe("run batch preflight", () => {
       catalog: readyCatalogFake(),
       objectStore: objectStoreFake(),
       projectStructures: {
+        list: vi.fn().mockResolvedValue(activeProjectStructure()),
         getAdapterConfiguration: vi.fn().mockResolvedValue({
           projectId: "project-1",
           revision: 0,
@@ -642,6 +704,7 @@ describe("run batch creation with suite policy", () => {
       get: vi.fn().mockResolvedValue({ id: "generated-id", assignedRuns: 0 }),
     } as unknown as RunBatchRepository;
     const projectStructures = {
+      list: vi.fn().mockResolvedValue(activeProjectStructure()),
       getAdapterConfiguration: vi.fn().mockResolvedValue({
         projectId: "project-1",
         jarBundleAsset: {
@@ -902,6 +965,7 @@ const readyPolicy = {
   queueTimeoutMs: 86_400_000,
   claimTimeoutMs: 300_000,
   uploadTimeoutMs: 600_000,
+  projectVersionId: "version-1" as string | undefined,
   runnerIds: ["runner-1"] as string[],
   runnerGroupId: undefined as string | undefined,
   runnerLabels: [] as string[],
@@ -913,9 +977,10 @@ function readySuite(overrides: {
   status?: "active" | "archived";
   enabled?: boolean;
   runnerLabels?: string[];
+  caseProjectVersionId?: string;
   policy?: Partial<typeof readyPolicy>;
 }) {
-  const { status, enabled, runnerLabels, policy } = overrides;
+  const { status, enabled, runnerLabels, caseProjectVersionId, policy } = overrides;
   return {
     id: "suite-1",
     projectId: "project-1",
@@ -940,6 +1005,7 @@ function readySuite(overrides: {
         caseDefinition: {
           id: "case-1",
           projectId: "project-1",
+          projectVersionId: caseProjectVersionId ?? "version-1",
           sourceId: "source-1",
           className: "com.example.SmokeTest",
           packageName: "com.example",
@@ -1091,4 +1157,32 @@ function preflightService(input: {
     5,
     input.projectStructures,
   );
+}
+
+function activeProjectStructure() {
+  return {
+    versions: [
+      {
+        id: "version-1",
+        projectId: "project-1",
+        name: "V1",
+        status: "active" as const,
+        revision: 1,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+        stages: [],
+        adapterConfiguration: {
+          projectId: "project-1",
+          projectVersionId: "version-1",
+          revision: 1,
+          updatedAt: timestamp,
+        },
+      },
+    ],
+    adapterConfiguration: {
+      projectId: "project-1",
+      revision: 1,
+      updatedAt: timestamp,
+    },
+  };
 }

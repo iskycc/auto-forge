@@ -639,9 +639,10 @@ async function loadRunOptions(
   if (projectVersionId) contextQuery.set("projectVersionId", projectVersionId);
   if (testStageId) contextQuery.set("testStageId", testStageId);
   const query = contextQuery.size > 0 ? `&${contextQuery.toString()}` : "";
-  const projectQuery = projectId ? `&projectId=${encodeURIComponent(projectId)}` : "";
   const [suitePage, casePage, requestedCase, runnerPage, groupPage] = await Promise.all([
-    requestJson<{ items: CaseSuite[] }>(`/api/v1/case-suites?limit=200${projectQuery}`),
+    projectVersionId
+      ? requestJson<{ items: CaseSuite[] }>(`/api/v1/case-suites?limit=200${query}`)
+      : Promise.resolve({ items: [] }),
     requestJson<{ items: CaseDefinitionWithMethods[] }>(
       `/api/v1/case-definitions?limit=100${query}`,
     ),
@@ -657,8 +658,7 @@ async function loadRunOptions(
     ? [requestedCase, ...casePage.items.filter((candidate) => candidate.id !== requestedCase.id)]
     : casePage.items;
   return {
-    // 任务自身的版本化策略是批量执行的唯一配置来源；顶栏版本只约束单用例选择，
-    // 不能二次隐藏当前项目中可直接执行的任务。
+    // 顶栏版本约束可选任务；执行时仍只提交 suiteId，并由任务快照作为唯一配置来源。
     suites: suitePage.items.filter((suite) => suite.enabled && suite.status === "active"),
     cases: cases.filter((definition) => definition.enabled && !definition.archived),
     runners: runnerPage.items,

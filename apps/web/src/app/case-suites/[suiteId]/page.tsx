@@ -29,6 +29,9 @@ export default async function CaseSuitePage({ params }: Props) {
   const schedule = (await services.platformOperations.listSchedules(identity)).find(
     (candidate) => candidate.suiteId === suiteId,
   );
+  const projectVersion = projectStructure.versions.find(
+    (version) => version.id === suite.policy.projectVersionId,
+  );
   return (
     <div className="page-stack">
       <section className="page-hero">
@@ -37,7 +40,10 @@ export default async function CaseSuitePage({ params }: Props) {
             <ArrowLeft size={15} /> 用例任务
           </Link>
           <h1>{suite.name}</h1>
-          <p>{suite.description || "未填写任务说明。"}</p>
+          <p>
+            {suite.description || "未填写任务说明。"} · 项目版本
+            {projectVersion ? `「${projectVersion.name}」` : "未关联"}
+          </p>
         </div>
         {canManage ? (
           <Link className="button button-primary button-large" href="/cases">

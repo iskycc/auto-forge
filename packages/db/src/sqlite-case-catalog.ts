@@ -1282,7 +1282,11 @@ export class SqliteCaseCatalogRepository implements CaseCatalogRepository {
     throw new DomainError("CASE_DEFINITION_REVISION_CONFLICT", "用例已被并发修改，请刷新后重试。");
   }
 
-  async findExistingCaseIds(caseDefinitionIds: string[], projectId?: string): Promise<string[]> {
+  async findExistingCaseIds(
+    caseDefinitionIds: string[],
+    projectId?: string,
+    projectVersionId?: string,
+  ): Promise<string[]> {
     if (caseDefinitionIds.length === 0) return [];
     return batchesOf(caseDefinitionIds, RELATIONAL_ID_QUERY_BATCH_SIZE).flatMap((ids) =>
       this.handle.db
@@ -1292,6 +1296,7 @@ export class SqliteCaseCatalogRepository implements CaseCatalogRepository {
           and(
             inArray(caseDefinitions.id, ids),
             ...(projectId ? [eq(caseDefinitions.projectId, projectId)] : []),
+            ...(projectVersionId ? [eq(caseDefinitions.projectVersionId, projectVersionId)] : []),
           ),
         )
         .all()

@@ -171,13 +171,26 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
     return this.requiredBatchSummary(record.id);
   }
 
-  async list(limit: number, projectIds?: readonly string[]): Promise<RunBatch[]> {
+  async list(
+    limit: number,
+    projectIds?: readonly string[],
+    projectVersionId?: string,
+  ): Promise<RunBatch[]> {
     await this.ready();
     if (projectIds?.length === 0) return [];
     const rows = await this.handle.db
       .select()
       .from(pgRunBatches)
-      .where(projectIds ? inArray(pgRunBatches.projectId, [...projectIds]) : undefined)
+      .where(
+        and(
+          ...(projectIds ? [inArray(pgRunBatches.projectId, [...projectIds])] : []),
+          ...(projectVersionId
+            ? [
+                sql`(${pgRunBatches.policyJson}::jsonb ->> 'projectVersionId') = ${projectVersionId}`,
+              ]
+            : []),
+        ),
+      )
       .orderBy(desc(pgRunBatches.createdAt))
       .limit(limit);
     return this.mapBatches(rows);
@@ -190,6 +203,11 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
     const conditions = [
       ...(input.projectIds ? [inArray(pgRunBatches.projectId, [...input.projectIds])] : []),
       ...(input.projectId ? [eq(pgRunBatches.projectId, input.projectId)] : []),
+      ...(input.projectVersionId
+        ? [
+            sql`(${pgRunBatches.policyJson}::jsonb ->> 'projectVersionId') = ${input.projectVersionId}`,
+          ]
+        : []),
       ...(input.suiteId ? [eq(pgRunBatches.suiteId, input.suiteId)] : []),
       ...(input.status ? [eq(pgRunBatches.status, input.status)] : []),
       ...(input.createdAfter ? [gte(pgRunBatches.createdAt, input.createdAfter)] : []),
@@ -940,6 +958,9 @@ function batchPolicy(json: string | null): RunBatchExecutionPolicy | undefined {
         typeof concurrency === "number" && Number.isInteger(concurrency) && concurrency >= 1
           ? concurrency
           : 4,
+      ...(typeof record.projectVersionId === "string" && record.projectVersionId
+        ? { projectVersionId: record.projectVersionId }
+        : {}),
       runnerLabels: Array.isArray(record.runnerLabels)
         ? record.runnerLabels.filter((label): label is string => typeof label === "string")
         : [],

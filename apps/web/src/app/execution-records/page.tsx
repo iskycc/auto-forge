@@ -13,7 +13,11 @@ import {
   requireAuthorizedPageProjectScope,
   requirePageProjectScope,
 } from "@/lib/auth";
-import { selectableProjectIds, selectedProjectId } from "@/lib/selected-project";
+import {
+  selectableProjectIds,
+  selectedProjectHierarchy,
+  selectedProjectId,
+} from "@/lib/selected-project";
 import { hasPermission } from "@autoforge/domain";
 import {
   localDateTimeInputValue,
@@ -38,16 +42,28 @@ export default async function ExecutionRecordsPage({
     .catch(() => []);
   const projectId = await selectedProjectId(identity, projects, "run.read");
   requireAuthorizedPageProjectScope(identity, "run.read", projectId);
+  const structure = projectId
+    ? await services.projectStructures.list(projectId).catch(() => undefined)
+    : undefined;
+  const hierarchy = await selectedProjectHierarchy(structure);
+  const projectVersion = structure?.versions.find(
+    (version) => version.id === hierarchy.projectVersionId,
+  );
   const filter = {
     ...runBatchFilterFromSearch(
       { ...parameters, projectId: undefined },
       projectId ? [projectId] : [],
     ),
     ...(projectId ? { projectId } : {}),
+    ...(hierarchy.projectVersionId ? { projectVersionId: hierarchy.projectVersionId } : {}),
   };
   const [batchPage, suites, runners] = await Promise.all([
-    services.runBatches.listPage(filter),
-    services.caseSuites.list(200, projectId ? [projectId] : []),
+    hierarchy.projectVersionId
+      ? services.runBatches.listPage(filter)
+      : Promise.resolve({ items: [], nextCursor: undefined }),
+    hierarchy.projectVersionId
+      ? services.caseSuites.list(200, projectId ? [projectId] : [], hierarchy.projectVersionId)
+      : Promise.resolve([]),
     canReadRunners ? services.runnerControl.list(500) : Promise.resolve([]),
   ]);
   const refreshQuery = refreshQueryFromFilter(filter);
@@ -85,6 +101,18 @@ export default async function ExecutionRecordsPage({
         <span className="hero-icon violet">
           <ClipboardList size={24} />
         </span>
+      </section>
+      <section className="card case-scope-toolbar" aria-label="执行记录范围">
+        <div className="case-scope-heading">
+          <strong>当前执行范围</strong>
+          <span>仅展示顶栏当前项目版本创建的任务和执行批次。</span>
+        </div>
+        <div className="case-scope-current">
+          <span>
+            <small>项目版本</small>
+            <strong>{projectVersion?.name ?? "尚未配置"}</strong>
+          </span>
+        </div>
       </section>
       <form className="content-card run-history-filter" method="get">
         <label>

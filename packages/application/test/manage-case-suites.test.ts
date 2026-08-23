@@ -3,7 +3,11 @@ import { describe, expect, it, vi } from "vitest";
 import { DomainError, defaultCaseSuiteExecutionPolicy } from "@autoforge/domain";
 
 import { CaseSuiteService } from "../src/manage-case-suites";
-import type { CaseCatalogRepository, CaseSuiteRepository } from "../src/ports";
+import type {
+  CaseCatalogRepository,
+  CaseSuiteRepository,
+  ProjectStructureRepository,
+} from "../src/ports";
 
 const timestamp = "2026-08-09T00:00:00.000Z";
 
@@ -13,6 +17,7 @@ describe("case suite update and copy", () => {
     const service = new CaseSuiteService(
       suites,
       {} as CaseCatalogRepository,
+      projectStructuresFake(["version-1", "version-2"]),
       { now: () => new Date(timestamp) },
       { next: () => "suite-new" },
     );
@@ -41,6 +46,7 @@ describe("case suite update and copy", () => {
     const service = new CaseSuiteService(
       suites,
       {} as CaseCatalogRepository,
+      projectStructuresFake(),
       { now: () => new Date(timestamp) },
       { next: () => "generated-id" },
     );
@@ -59,6 +65,7 @@ describe("case suite update and copy", () => {
         changeReason: "suite.update:policy+disable",
         policy: {
           ...defaultCaseSuiteExecutionPolicy,
+          projectVersionId: "version-1",
           runnerIds: ["runner-1"],
           runnerLabels: ["gpu"],
           concurrency: 8,
@@ -72,6 +79,7 @@ describe("case suite update and copy", () => {
     const service = new CaseSuiteService(
       suites,
       {} as CaseCatalogRepository,
+      projectStructuresFake(),
       { now: () => new Date(timestamp) },
       { next: () => "generated-id" },
     );
@@ -91,6 +99,7 @@ describe("case suite update and copy", () => {
     const service = new CaseSuiteService(
       suites,
       {} as CaseCatalogRepository,
+      projectStructuresFake(),
       { now: () => new Date(timestamp) },
       { next: () => `id-${++generated}` },
     );
@@ -104,6 +113,7 @@ describe("case suite update and copy", () => {
       description: "smoke suite",
       policy: {
         ...defaultCaseSuiteExecutionPolicy,
+        projectVersionId: "version-1",
         runnerIds: ["runner-1"],
         runnerLabels: ["gpu"],
       },
@@ -119,6 +129,7 @@ describe("case suite update and copy", () => {
     const service = new CaseSuiteService(
       suites,
       {} as CaseCatalogRepository,
+      projectStructuresFake(),
       { now: () => new Date(timestamp) },
       { next: () => "version-3" },
     );
@@ -153,6 +164,7 @@ describe("case suite update and copy", () => {
     const service = new CaseSuiteService(
       suites,
       catalog,
+      projectStructuresFake(),
       { now: () => new Date(timestamp) },
       { next: () => "generated-id" },
     );
@@ -165,6 +177,70 @@ describe("case suite update and copy", () => {
         items: [{ id: "generated-id", caseDefinitionId: "case-500" }],
       }),
     );
+    expect(catalog.findExistingCaseIds).toHaveBeenCalledWith(
+      ["case-500"],
+      "project-1",
+      "version-1",
+    );
+  });
+
+  it("rejects an omitted version when a project has multiple active versions", async () => {
+    const suites = suiteRepositoryFake();
+    const service = new CaseSuiteService(
+      suites,
+      {} as CaseCatalogRepository,
+      projectStructuresFake(["version-1", "version-2"]),
+      { now: () => new Date(timestamp) },
+      { next: () => "generated-id" },
+    );
+
+    await expect(
+      service.create({ projectId: "project-1", name: "Ambiguous" }),
+    ).rejects.toMatchObject({ code: "CASE_SUITE_VERSION_REQUIRED" });
+    expect(suites.create).not.toHaveBeenCalled();
+  });
+
+  it("rejects adding cases from another project version", async () => {
+    const suites = suiteRepositoryFake();
+    const catalog = {
+      findExistingCaseIds: vi.fn().mockResolvedValue([]),
+    } as unknown as CaseCatalogRepository;
+    const service = new CaseSuiteService(
+      suites,
+      catalog,
+      projectStructuresFake(),
+      { now: () => new Date(timestamp) },
+      { next: () => "generated-id" },
+    );
+
+    await expect(service.addCases("suite-1", ["case-from-version-2"])).rejects.toMatchObject({
+      code: "CASE_DEFINITION_VERSION_MISMATCH",
+    });
+    expect(catalog.findExistingCaseIds).toHaveBeenCalledWith(
+      ["case-from-version-2"],
+      "project-1",
+      "version-1",
+    );
+    expect(suites.addCases).not.toHaveBeenCalled();
+  });
+
+  it("rejects moving a suite while it contains cases from the original version", async () => {
+    const suites = suiteRepositoryFake();
+    const service = new CaseSuiteService(
+      suites,
+      {} as CaseCatalogRepository,
+      projectStructuresFake(["version-1", "version-2"]),
+      { now: () => new Date(timestamp) },
+      { next: () => "generated-id" },
+    );
+
+    await expect(
+      service.update("suite-1", {
+        policy: { projectVersionId: "version-2" },
+        expectedRevision: 2,
+      }),
+    ).rejects.toMatchObject({ code: "CASE_SUITE_VERSION_MISMATCH" });
+    expect(suites.updateSuite).not.toHaveBeenCalled();
   });
 });
 
@@ -180,6 +256,7 @@ function suiteRepositoryFake() {
     enabled: true,
     policy: {
       ...defaultCaseSuiteExecutionPolicy,
+      projectVersionId: "version-1",
       runnerIds: ["runner-1"],
       runnerLabels: ["gpu"],
     },
@@ -191,7 +268,7 @@ function suiteRepositoryFake() {
         id: "item-1",
         suiteId: "suite-1",
         addedAt: timestamp,
-        caseDefinition: { id: "case-1" },
+        caseDefinition: { id: "case-1", projectVersionId: "version-1" },
       },
     ],
   };
@@ -211,4 +288,32 @@ function suiteRepositoryFake() {
     addCases: ReturnType<typeof vi.fn>;
     removeCases: ReturnType<typeof vi.fn>;
   };
+}
+
+function projectStructuresFake(versionIds = ["version-1"]): ProjectStructureRepository {
+  return {
+    list: vi.fn().mockResolvedValue({
+      versions: versionIds.map((id) => ({
+        id,
+        projectId: "project-1",
+        name: id,
+        status: "active" as const,
+        revision: 1,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+        stages: [],
+        adapterConfiguration: {
+          projectId: "project-1",
+          projectVersionId: id,
+          revision: 1,
+          updatedAt: timestamp,
+        },
+      })),
+      adapterConfiguration: {
+        projectId: "project-1",
+        revision: 1,
+        updatedAt: timestamp,
+      },
+    }),
+  } as unknown as ProjectStructureRepository;
 }

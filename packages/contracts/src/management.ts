@@ -193,7 +193,7 @@ export const caseSuiteExecutionPolicySchema = z
     queueTimeoutMs: z.number().int().min(1_000).max(604_800_000).optional(),
     claimTimeoutMs: z.number().int().min(1_000).max(3_600_000).optional(),
     uploadTimeoutMs: z.number().int().min(1_000).max(3_600_000).optional(),
-    projectVersionId: z.string().trim().max(128).optional(),
+    projectVersionId: z.string().trim().min(1).max(128).optional(),
     runnerIds: z
       .array(z.string().trim().min(1).max(128))
       .max(64)

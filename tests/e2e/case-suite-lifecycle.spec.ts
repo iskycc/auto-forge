@@ -12,6 +12,131 @@ import {
 } from "./support/session";
 import { freshRunnerBootstrapToken } from "./support/runner-bootstrap";
 import { selectJarForInspection } from "./support/jar-import";
+import { configureTaskExecution, createTaskRun } from "./support/task-execution";
+import { expectUiIntegrity } from "./support/ui-guard";
+
+test("tasks and execution history follow the selected project version", async ({ page }) => {
+  test.setTimeout(240_000);
+  await ensureAdministrator(page);
+  const suffix = uniqueName("version-scoped-suite");
+  const project = await createProject(page, suffix);
+  const secondVersion = await browserJson<{ id: string }>(
+    page,
+    `/api/v1/projects/${encodeURIComponent(project.id)}/versions`,
+    { method: "POST", body: { name: "Lifecycle version 2" } },
+  );
+  expect(secondVersion.status).toBe(201);
+  const secondStage = await browserJson<{ id: string }>(
+    page,
+    `/api/v1/projects/${encodeURIComponent(project.id)}/versions/${encodeURIComponent(secondVersion.body.id)}/stages`,
+    { method: "POST", body: { name: "Lifecycle stage 2", description: "Version scope" } },
+  );
+  expect(secondStage.status).toBe(201);
+
+  const firstClassName = `com.example.VersionOne${Date.now()}Test`;
+  await importJar(page, project, `${suffix}-one.jar`, firstClassName, ["versionOne"]);
+  await selectProjectContext(page, project.id, secondVersion.body.id, secondStage.body.id);
+  const secondProjectContext = {
+    ...project,
+    versionId: secondVersion.body.id,
+    stageId: secondStage.body.id,
+  };
+  const secondClassName = `com.example.VersionTwo${Date.now()}Test`;
+  await importJar(page, secondProjectContext, `${suffix}-two.jar`, secondClassName, ["versionTwo"]);
+
+  const firstDefinition = await findVersionCase(
+    page,
+    project.id,
+    project.versionId,
+    project.stageId,
+    firstClassName,
+  );
+  const secondDefinition = await findVersionCase(
+    page,
+    project.id,
+    secondVersion.body.id,
+    secondStage.body.id,
+    secondClassName,
+  );
+  const firstSuiteName = `Version one suite ${suffix}`;
+  const secondSuiteName = `Version two suite ${suffix}`;
+  const firstSuite = await createVersionSuite(
+    page,
+    project.id,
+    project.versionId,
+    firstSuiteName,
+    firstDefinition.id,
+  );
+  const secondSuite = await createVersionSuite(
+    page,
+    project.id,
+    secondVersion.body.id,
+    secondSuiteName,
+    secondDefinition.id,
+  );
+  const crossVersionAdd = await browserJson<{ error?: { code?: string } }>(
+    page,
+    `/api/v1/case-suites/${encodeURIComponent(firstSuite.id)}/cases`,
+    { method: "POST", body: { caseDefinitionIds: [secondDefinition.id] } },
+  );
+  expect(crossVersionAdd.status).toBe(400);
+  expect(crossVersionAdd.body.error?.code).toBe("CASE_DEFINITION_VERSION_MISMATCH");
+
+  const runner = await registerRunner(page, suffix);
+  await configureTaskExecution(page, firstSuite.id, runner.id);
+  await configureTaskExecution(page, secondSuite.id, runner.id);
+  const firstBatch = await createTaskRun(page, firstSuite.id);
+  await createTaskRun(page, secondSuite.id);
+
+  await selectProjectContext(page, project.id, project.versionId, project.stageId);
+  await page.goto("/case-suites");
+  await expect(page.getByText(firstSuiteName, { exact: true })).toBeVisible();
+  await expect(page.getByText(secondSuiteName, { exact: true })).toHaveCount(0);
+  await expect(page.getByText(/当前版本「Lifecycle version」共 1 个任务/u)).toBeVisible();
+  for (const viewport of [
+    { width: 1024, height: 768 },
+    { width: 1536, height: 1024 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await expectUiIntegrity(page);
+    await captureUi(page, `version-scoped-case-suites-${viewport.width}`);
+  }
+  await page.goto(`/case-suites/${encodeURIComponent(firstSuite.id)}`);
+  await expect(page.locator(".execution-detail-hero, .page-hero").first()).toContainText(
+    "项目版本「Lifecycle version」",
+  );
+
+  await page.goto("/execution-records");
+  await expect(page.getByLabel("执行记录范围")).toContainText("Lifecycle version");
+  const firstVersionRecords = page.locator(".execution-records-table");
+  await expect(firstVersionRecords).toContainText(firstSuiteName);
+  await expect(firstVersionRecords).not.toContainText(secondSuiteName);
+  await page.getByRole("button", { name: "开始执行", exact: true }).click();
+  const runDialog = page.getByRole("dialog", { name: "开始执行" });
+  const suiteOptions = runDialog.locator('select[aria-label="执行用例任务"] option');
+  await expect(suiteOptions.filter({ hasText: firstSuiteName })).toHaveCount(1);
+  await expect(suiteOptions.filter({ hasText: secondSuiteName })).toHaveCount(0);
+  await page.keyboard.press("Escape");
+  await page.goto(`/run-batches/${encodeURIComponent(firstBatch.id)}`);
+  await expect(page.locator(".execution-detail-hero")).toContainText(
+    "项目版本「Lifecycle version」",
+  );
+
+  await selectProjectContext(page, project.id, secondVersion.body.id, secondStage.body.id);
+  for (const viewport of [
+    { width: 1024, height: 768 },
+    { width: 1536, height: 1024 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await page.goto("/execution-records");
+    await expect(page.getByLabel("执行记录范围")).toContainText("Lifecycle version 2");
+    const secondVersionRecords = page.locator(".execution-records-table");
+    await expect(secondVersionRecords).toContainText(secondSuiteName);
+    await expect(secondVersionRecords).not.toContainText(firstSuiteName);
+    await expectUiIntegrity(page);
+    await captureUi(page, `version-scoped-execution-records-${viewport.width}`);
+  }
+});
 
 async function captureUi(page: Page, name: string): Promise<void> {
   const screenshotDirectory = process.env.AUTOFORGE_UI_SCREENSHOT_DIR;
@@ -121,7 +246,12 @@ test("case metadata, immutable versions and suite policy survive lifecycle chang
   const suiteName = `Lifecycle suite ${suffix}`;
   const suite = await browserJson<{ id: string; revision: number }>(page, "/api/v1/case-suites", {
     method: "POST",
-    body: { projectId: project.id, name: suiteName, description: "lifecycle E2E suite" },
+    body: {
+      projectId: project.id,
+      projectVersionId: project.versionId,
+      name: suiteName,
+      description: "lifecycle E2E suite",
+    },
   });
   expect(suite.status).toBe(201);
   const companionDefinitions = await browserJson<{
@@ -333,6 +463,50 @@ async function importJar(
   await expect(page.getByRole("status")).toContainText(/已导入|已返回现有用例/, {
     timeout: 60_000,
   });
+}
+
+async function findVersionCase(
+  page: Page,
+  projectId: string,
+  projectVersionId: string,
+  testStageId: string,
+  className: string,
+): Promise<{ id: string }> {
+  const response = await browserJson<{ items: Array<{ id: string; className: string }> }>(
+    page,
+    `/api/v1/case-definitions?${new URLSearchParams({
+      projectId,
+      projectVersionId,
+      testStageId,
+      query: className,
+      limit: "100",
+    }).toString()}`,
+  );
+  expect(response.status).toBe(200);
+  const definition = response.body.items.find((item) => item.className === className);
+  expect(definition).toBeTruthy();
+  return definition!;
+}
+
+async function createVersionSuite(
+  page: Page,
+  projectId: string,
+  projectVersionId: string,
+  name: string,
+  caseDefinitionId: string,
+): Promise<{ id: string }> {
+  const suite = await browserJson<{ id: string }>(page, "/api/v1/case-suites", {
+    method: "POST",
+    body: { projectId, projectVersionId, name },
+  });
+  expect(suite.status).toBe(201);
+  const cases = await browserJson(
+    page,
+    `/api/v1/case-suites/${encodeURIComponent(suite.body.id)}/cases`,
+    { method: "POST", body: { caseDefinitionIds: [caseDefinitionId] } },
+  );
+  expect(cases.status).toBe(200);
+  return suite.body;
 }
 
 async function registerRunner(page: Page, suffix: string): Promise<{ id: string; name: string }> {

@@ -84,7 +84,9 @@ export function CaseSuiteManager({
     <div className="suite-manager">
       {canManage ? (
         <div className="suite-manager-toolbar">
-          <span>当前项目共 {suites.length} 个任务</span>
+          <span>
+            当前版本「{selectedProjectVersionName ?? "尚未配置"}」共 {suites.length} 个任务
+          </span>
           <Button onClick={() => setCreateOpen(true)} type="button" variant="primary">
             <Plus size={16} /> 创建任务
           </Button>

@@ -6,6 +6,41 @@ and known limitations.
 
 ## Unreleased
 
+## 0.9.11 - 2026-08-23
+
+### Changed
+
+- Made the selected project version the visible scope for case-suite lists, case-to-suite selection,
+  the global run dialog, execution history, dashboard summaries, Quality Insights, Runner activity
+  and schedule operations. The UI displays the human-readable version name instead of leaking its
+  internal identifier.
+- Strengthened task execution invariants: new tasks bind an active version, task members must come
+  from that version, moving a populated task across versions is rejected, and copies retain the
+  validated association. Batch and single-case preflight now reject missing, archived or mismatched
+  version context across browser, schedule, Jenkins and API entry points.
+- Added version filtering to the task and execution-history repository contracts before pagination,
+  so a busy neighboring version cannot starve the selected version's rows.
+
+### Database
+
+- No schema migration is required. Existing task and batch policy snapshots already persist
+  `projectVersionId`; legacy ambiguous records remain readable from detail/audit paths but are blocked
+  from new execution until a valid version is selected.
+
+### Tests
+
+- Added application regression coverage for ambiguous task creation, cross-version membership,
+  version moves and execution preflight, plus matching SQLite/PostgreSQL filter assertions.
+- Added Playwright functional and visual coverage for two versions in one project at 1024 and 1536
+  pixels, including task/history isolation, human-readable scope, global-run options and cross-version
+  mutation rejection.
+
+### Compatibility
+
+- Runner Protocol v1 and all persisted schemas are unchanged. `v0.9.11` can read existing task and
+  batch snapshots; only unsafe legacy records without an unambiguous version require administrator
+  repair before they can execute.
+
 ## 0.9.10 - 2026-08-23
 
 ### Added

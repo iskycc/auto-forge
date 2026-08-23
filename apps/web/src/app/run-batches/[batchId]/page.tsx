@@ -23,6 +23,11 @@ export default async function RunBatchDetailsPage({
   } catch {
     notFound();
   }
+  const projectVersion = batch.policy?.projectVersionId
+    ? (await services.projectStructures.list(batch.projectId)).versions.find(
+        (version) => version.id === batch.policy?.projectVersionId,
+      )
+    : undefined;
 
   // 执行机目录把 UUID 映射为名称与实时资源快照；没有 runner.read 权限时
   // 传空目录，组件回落展示 UUID 短码，不泄露执行机清单。
@@ -46,7 +51,8 @@ export default async function RunBatchDetailsPage({
           <span className="eyebrow">Execution Batch</span>
           <h1>{batch.suiteName}</h1>
           <p title={batch.id}>
-            批次 #{batch.sequenceNumber} · 任务版本 v{batch.suiteVersion}
+            批次 #{batch.sequenceNumber} · 任务版本 v{batch.suiteVersion} · 项目版本
+            {projectVersion ? `「${projectVersion.name}」` : "未关联"}
           </p>
         </div>
         <span className="hero-icon violet">

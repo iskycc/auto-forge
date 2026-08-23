@@ -1249,7 +1249,11 @@ export class PostgresCaseCatalogRepository implements CaseCatalogRepository {
     throw new DomainError("CASE_DEFINITION_REVISION_CONFLICT", "用例已被并发修改，请刷新后重试。");
   }
 
-  async findExistingCaseIds(caseDefinitionIds: string[], projectId?: string): Promise<string[]> {
+  async findExistingCaseIds(
+    caseDefinitionIds: string[],
+    projectId?: string,
+    projectVersionId?: string,
+  ): Promise<string[]> {
     await this.ready();
     if (!caseDefinitionIds.length) return [];
     const existingIds: string[] = [];
@@ -1263,6 +1267,9 @@ export class PostgresCaseCatalogRepository implements CaseCatalogRepository {
               and(
                 inArray(pgCaseDefinitions.id, ids),
                 ...(projectId ? [eq(pgCaseDefinitions.projectId, projectId)] : []),
+                ...(projectVersionId
+                  ? [eq(pgCaseDefinitions.projectVersionId, projectVersionId)]
+                  : []),
               ),
             )
         ).map((row) => row.id),
@@ -1767,14 +1774,27 @@ export class PostgresCaseSuiteRepository implements CaseSuiteRepository {
     return toSuite(row, 0);
   }
 
-  async list(limit: number, projectIds?: readonly string[]): Promise<CaseSuite[]> {
+  async list(
+    limit: number,
+    projectIds?: readonly string[],
+    projectVersionId?: string,
+  ): Promise<CaseSuite[]> {
     await this.ready();
     if (projectIds?.length === 0) return [];
     const [rows, counts] = await Promise.all([
       this.handle.db
         .select()
         .from(pgCaseSuites)
-        .where(projectIds ? inArray(pgCaseSuites.projectId, [...projectIds]) : undefined)
+        .where(
+          and(
+            ...(projectIds ? [inArray(pgCaseSuites.projectId, [...projectIds])] : []),
+            ...(projectVersionId
+              ? [
+                  sql`(${pgCaseSuites.policyJson}::jsonb ->> 'projectVersionId') = ${projectVersionId}`,
+                ]
+              : []),
+          ),
+        )
         .orderBy(desc(pgCaseSuites.updatedAt))
         .limit(limit),
       this.handle.db

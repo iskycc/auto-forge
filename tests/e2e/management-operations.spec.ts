@@ -1,6 +1,13 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 
-import { browserJson, ensureAdministrator, uniqueName } from "./support/session";
+import {
+  browserJson,
+  ensureAdministrator,
+  selectProjectContext,
+  uniqueName,
+} from "./support/session";
+
+const DEFAULT_PROJECT_ID = "00000000-0000-7000-8000-000000000001";
 
 test("service account lifecycle immediately narrows token access and produces exportable audit", async ({
   page,
@@ -128,10 +135,17 @@ test("schedule overview can pause and delete plans while LDAP failures remain di
   page,
 }) => {
   await ensureAdministrator(page);
+  const projectVersionId = await ensureDefaultProjectVersion(page);
+  await selectProjectContext(page, DEFAULT_PROJECT_ID, projectVersionId);
   const suiteName = uniqueName("scheduled-suite");
   const suite = await browserJson<{ id: string }>(page, "/api/v1/case-suites", {
     method: "POST",
-    body: { name: suiteName, description: "Schedule operations E2E" },
+    body: {
+      projectId: DEFAULT_PROJECT_ID,
+      projectVersionId,
+      name: suiteName,
+      description: "Schedule operations E2E",
+    },
   });
   expect(suite.status).toBe(201);
   const schedule = await browserJson<{ id: string; revision: number }>(
@@ -177,6 +191,7 @@ test("schedule overview can pause and delete plans while LDAP failures remain di
 
 test("project webhooks support custom POST bodies and task binding", async ({ page }) => {
   await ensureAdministrator(page);
+  const projectVersionId = await ensureDefaultProjectVersion(page);
   const webhookName = uniqueName("quality-webhook");
   const suiteName = uniqueName("webhook-suite");
   const configuration = await browserJson<{ id: string; method: string }>(
@@ -185,7 +200,7 @@ test("project webhooks support custom POST bodies and task binding", async ({ pa
     {
       method: "POST",
       body: {
-        projectId: "00000000-0000-7000-8000-000000000001",
+        projectId: DEFAULT_PROJECT_ID,
         name: webhookName,
         description: "Webhook E2E",
         targetUrl: "http://127.0.0.1:18999/autoforge-completed",
@@ -200,7 +215,12 @@ test("project webhooks support custom POST bodies and task binding", async ({ pa
   expect(configuration.body.method).toBe("POST");
   const suite = await browserJson<{ id: string }>(page, "/api/v1/case-suites", {
     method: "POST",
-    body: { name: suiteName, description: "Webhook binding E2E" },
+    body: {
+      projectId: DEFAULT_PROJECT_ID,
+      projectVersionId,
+      name: suiteName,
+      description: "Webhook binding E2E",
+    },
   });
   expect(suite.status).toBe(201);
 
@@ -231,3 +251,18 @@ test("project webhooks support custom POST bodies and task binding", async ({ pa
   await expect(editor.getByLabel("JSON 请求体模板")).toContainText("batch.displayStatus");
   await page.keyboard.press("Escape");
 });
+
+async function ensureDefaultProjectVersion(page: Page): Promise<string> {
+  const structure = await browserJson<{
+    versions: Array<{ id: string; status: "active" | "archived" }>;
+  }>(page, `/api/v1/projects/${DEFAULT_PROJECT_ID}/structure`);
+  const activeVersion = structure.body.versions.find((version) => version.status === "active");
+  if (activeVersion) return activeVersion.id;
+  const version = await browserJson<{ id: string }>(
+    page,
+    `/api/v1/projects/${DEFAULT_PROJECT_ID}/versions`,
+    { method: "POST", body: { name: uniqueName("management-version") } },
+  );
+  expect(version.status).toBe(201);
+  return version.body.id;
+}

@@ -4,7 +4,7 @@ import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 
 import { describe, expect, it, vi } from "vitest";
-import { scheduleExecutionRuns } from "@autoforge/domain";
+import { defaultCaseSuiteExecutionPolicy, scheduleExecutionRuns } from "@autoforge/domain";
 import { CaseSourceService, type JarObjectStorePort } from "@autoforge/application";
 import type { JobEnvelope } from "@autoforge/contracts";
 
@@ -416,9 +416,17 @@ describe.skipIf(!connectionString)("PostgreSQL platform repositories", () => {
       await suites.create({
         id: suiteId,
         name: "PostgreSQL smoke suite",
+        policy: {
+          ...defaultCaseSuiteExecutionPolicy,
+          projectVersionId: analyticsProjectVersion.id,
+        },
         createdAt: "2026-08-09T00:00:00.000Z",
       });
       expect((await suites.get(suiteId))?.name).toBe("PostgreSQL smoke suite");
+      await expect(
+        suites.list(10, [defaultProjectId], analyticsProjectVersion.id),
+      ).resolves.toMatchObject([{ id: suiteId }]);
+      await expect(suites.list(10, [defaultProjectId], projectVersion.id)).resolves.toEqual([]);
 
       await runners.register({
         id: runnerId,
@@ -515,6 +523,13 @@ describe.skipIf(!connectionString)("PostgreSQL platform repositories", () => {
         retryLimit: 1,
         environmentVariables: [],
         runnerIds: [runnerId],
+        policy: {
+          executor: "testng",
+          concurrency: 1,
+          projectVersionId: analyticsProjectVersion.id,
+          runnerLabels: [],
+          artifactPatterns: [],
+        },
         runs: [
           {
             id: `run-${runnerId}`,
@@ -571,6 +586,13 @@ describe.skipIf(!connectionString)("PostgreSQL platform repositories", () => {
         retryLimit: 0,
         environmentVariables: [],
         runnerIds: [runnerId],
+        policy: {
+          executor: "testng",
+          concurrency: 1,
+          projectVersionId: projectVersion.id,
+          runnerLabels: [],
+          artifactPatterns: [],
+        },
         runs: [
           {
             id: `run-project-${runnerId}`,
@@ -585,6 +607,20 @@ describe.skipIf(!connectionString)("PostgreSQL platform repositories", () => {
       await expect(batches.list(10, [secondProjectId])).resolves.toMatchObject([
         { id: secondProjectBatchId, projectId: secondProjectId },
       ]);
+      await expect(
+        batches.listPage({
+          projectId: defaultProjectId,
+          projectVersionId: analyticsProjectVersion.id,
+          limit: 10,
+        }),
+      ).resolves.toMatchObject({
+        items: [
+          {
+            id: `batch-${runnerId}`,
+            policy: { projectVersionId: analyticsProjectVersion.id },
+          },
+        ],
+      });
       await expect(batches.get(`batch-${runnerId}`, [secondProjectId])).resolves.toBeNull();
       await handle.pool.query(
         `INSERT INTO case_sources (

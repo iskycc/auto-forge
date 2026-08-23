@@ -185,12 +185,25 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
     return this.requiredBatchSummary(record.id);
   }
 
-  async list(limit: number, projectIds?: readonly string[]): Promise<RunBatch[]> {
+  async list(
+    limit: number,
+    projectIds?: readonly string[],
+    projectVersionId?: string,
+  ): Promise<RunBatch[]> {
     if (projectIds?.length === 0) return [];
     const rows = this.handle.db
       .select()
       .from(runBatches)
-      .where(projectIds ? inArray(runBatches.projectId, [...projectIds]) : undefined)
+      .where(
+        and(
+          ...(projectIds ? [inArray(runBatches.projectId, [...projectIds])] : []),
+          ...(projectVersionId
+            ? [
+                sql`json_extract(${runBatches.policyJson}, '$.projectVersionId') = ${projectVersionId}`,
+              ]
+            : []),
+        ),
+      )
       .orderBy(desc(runBatches.createdAt))
       .limit(limit)
       .all();
@@ -203,6 +216,11 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
     const conditions = [
       ...(input.projectIds ? [inArray(runBatches.projectId, [...input.projectIds])] : []),
       ...(input.projectId ? [eq(runBatches.projectId, input.projectId)] : []),
+      ...(input.projectVersionId
+        ? [
+            sql`json_extract(${runBatches.policyJson}, '$.projectVersionId') = ${input.projectVersionId}`,
+          ]
+        : []),
       ...(input.suiteId ? [eq(runBatches.suiteId, input.suiteId)] : []),
       ...(input.status ? [eq(runBatches.status, input.status)] : []),
       ...(input.createdAfter ? [gte(runBatches.createdAt, input.createdAfter)] : []),
@@ -819,6 +837,9 @@ function batchPolicy(json: string | null): RunBatchExecutionPolicy | undefined {
         typeof concurrency === "number" && Number.isInteger(concurrency) && concurrency >= 1
           ? concurrency
           : 4,
+      ...(typeof record.projectVersionId === "string" && record.projectVersionId
+        ? { projectVersionId: record.projectVersionId }
+        : {}),
       runnerLabels: Array.isArray(record.runnerLabels)
         ? record.runnerLabels.filter((label): label is string => typeof label === "string")
         : [],

@@ -20,7 +20,11 @@ import {
   runnerCompatibilitySummary,
   runnerToolchainSummary,
 } from "@/lib/runner-compatibility";
-import { selectableProjectIds, selectedProjectId } from "@/lib/selected-project";
+import {
+  selectableProjectIds,
+  selectedProjectHierarchy,
+  selectedProjectId,
+} from "@/lib/selected-project";
 import { runBatchStatusLabel } from "@/lib/run-batch-presentation";
 import { Button, Input, Select } from "@/components/ui";
 import Link from "next/link";
@@ -72,9 +76,19 @@ export default async function RunnersPage({
     const projects = await services.identities.listProjects(selectableProjectIds(identity));
     const projectId = await selectedProjectId(identity, projects, "run.read");
     if (projectId && hasPermission(identity, "run.read", projectId)) {
-      recentBatches = (
-        await services.runBatches.listPage({ limit: 200, projectId, projectIds: [projectId] })
-      ).items;
+      const hierarchy = await selectedProjectHierarchy(
+        await services.projectStructures.list(projectId),
+      );
+      recentBatches = hierarchy.projectVersionId
+        ? (
+            await services.runBatches.listPage({
+              limit: 200,
+              projectId,
+              projectIds: [projectId],
+              projectVersionId: hierarchy.projectVersionId,
+            })
+          ).items
+        : [];
     }
   } catch {
     // Runner operators without run.read can manage node lifecycle without seeing project execution data.

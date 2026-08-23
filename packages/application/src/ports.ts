@@ -824,7 +824,11 @@ export interface CaseCatalogRepository {
     actorId: string;
     restoredAt: string;
   }): Promise<CaseDefinitionWithMethods>;
-  findExistingCaseIds(caseDefinitionIds: string[], projectId?: string): Promise<string[]>;
+  findExistingCaseIds(
+    caseDefinitionIds: string[],
+    projectId?: string,
+    projectVersionId?: string,
+  ): Promise<string[]>;
   listRecentSources(limit: number, projectIds?: readonly string[]): Promise<CaseSource[]>;
   listSources(limit: number, projectIds?: readonly string[]): Promise<CaseSource[]>;
   getSource(
@@ -906,7 +910,11 @@ export type CreateCaseSuiteRecord = {
 
 export interface CaseSuiteRepository {
   create(record: CreateCaseSuiteRecord): Promise<CaseSuite>;
-  list(limit: number, projectIds?: readonly string[]): Promise<CaseSuite[]>;
+  list(
+    limit: number,
+    projectIds?: readonly string[],
+    projectVersionId?: string,
+  ): Promise<CaseSuite[]>;
   getSummary(suiteId: string, projectIds?: readonly string[]): Promise<CaseSuite | null>;
   get(suiteId: string, projectIds?: readonly string[]): Promise<CaseSuiteDetails | null>;
   updateSuite(input: UpdateCaseSuiteRecord): Promise<CaseSuite>;
@@ -1189,6 +1197,7 @@ export type ReserveSchedulingAssignmentsInput = {
 export type RunBatchListQuery = {
   projectIds?: readonly string[];
   projectId?: string;
+  projectVersionId?: string;
   suiteId?: string;
   caseDefinitionId?: string;
   status?: RunBatch["status"];
@@ -1212,7 +1221,11 @@ export interface RunBatchSchedulingPort {
 
 export interface RunBatchRepository {
   create(record: CreateRunBatchRecord): Promise<RunBatch>;
-  list(limit: number, projectIds?: readonly string[]): Promise<RunBatch[]>;
+  list(
+    limit: number,
+    projectIds?: readonly string[],
+    projectVersionId?: string,
+  ): Promise<RunBatch[]>;
   listPage(input: RunBatchListQuery): Promise<RunBatchListPage>;
   getSummary(batchId: string, projectIds?: readonly string[]): Promise<RunBatch | null>;
   get(batchId: string, projectIds?: readonly string[]): Promise<RunBatchDetails | null>;

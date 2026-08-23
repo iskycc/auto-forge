@@ -26,6 +26,33 @@ afterEach(async () => {
 });
 
 describe("SQLite case suite lifecycle", () => {
+  it("filters tasks by their bound project version before applying the result limit", async () => {
+    const { handle, suites } = await fixture();
+    try {
+      for (const [id, projectVersionId, updatedAt] of [
+        ["suite-v1-old", "version-1", "2026-08-09T00:00:00.000Z"],
+        ["suite-v2", "version-2", "2026-08-09T00:01:00.000Z"],
+        ["suite-v1-new", "version-1", "2026-08-09T00:02:00.000Z"],
+      ] as const) {
+        await suites.create({
+          id,
+          name: id,
+          policy: { ...defaultCaseSuiteExecutionPolicy, projectVersionId },
+          createdAt: updatedAt,
+        });
+      }
+
+      await expect(suites.list(1, [DEFAULT_PROJECT_ID], "version-1")).resolves.toMatchObject([
+        { id: "suite-v1-new", policy: { projectVersionId: "version-1" } },
+      ]);
+      await expect(suites.list(10, [DEFAULT_PROJECT_ID], "version-2")).resolves.toMatchObject([
+        { id: "suite-v2" },
+      ]);
+    } finally {
+      handle.close();
+    }
+  });
+
   it("records version snapshots for updates and case changes, and enforces revisions", async () => {
     const { handle, suites } = await fixture();
     try {
@@ -205,6 +232,14 @@ describe("SQLite case suite lifecycle", () => {
            VALUES (?, 'legacy-project-suite', 'legacy-project-test', '192.0.2.1', ?, ?, 1, NULL, ?)`,
         )
         .run(DEFAULT_PROJECT_ID, "jdk-runtime", "jar-runtime", timestamp);
+      await new SqliteProjectStructureRepository(handle).updateAdapterConfiguration({
+        projectId: DEFAULT_PROJECT_ID,
+        projectVersionId: "project-version-1",
+        jdkAssetId: "jdk-runtime",
+        jarBundleAssetId: "jar-runtime",
+        expectedRevision: 0,
+        updatedAt: timestamp,
+      });
       await suites.create({ id: "suite-1", name: "Smoke", createdAt: timestamp });
       await suites.addCases({
         suiteId: "suite-1",
@@ -232,6 +267,7 @@ describe("SQLite case suite lifecycle", () => {
           priority: 5,
           concurrency: 2,
           retryLimit: 3,
+          projectVersionId: "project-version-1",
           queueTimeoutMs: 120_000,
           runnerIds: ["runner-1"],
           runnerLabels: ["gpu"],
@@ -302,6 +338,8 @@ describe("SQLite case suite lifecycle", () => {
         new SqliteProjectStructureRepository(handle),
       );
 
+      const preflight = await scheduler.preflight({ suiteId: "suite-1" });
+      expect(preflight.blockers).toEqual([]);
       const batch = await scheduler.create({ suiteId: "suite-1" });
 
       expect(batch).toMatchObject({
@@ -405,7 +443,16 @@ async function fixture() {
     migrationsFolder: resolve(import.meta.dirname, "../drizzle/sqlite"),
   });
   const catalog = new SqliteCaseCatalogRepository(handle);
+  await new SqliteProjectStructureRepository(handle).createVersion({
+    id: "project-version-1",
+    projectId: DEFAULT_PROJECT_ID,
+    name: "V1",
+    normalizedName: "v1",
+    recordedAt: timestamp,
+  });
   await catalog.importCatalog({
+    projectId: DEFAULT_PROJECT_ID,
+    projectVersionId: "project-version-1",
     sourceId: "source-1",
     objectKey: "jars/aa/source.jar",
     displayName: "source",

@@ -11,6 +11,7 @@ import { SqliteCaseSuiteRepository } from "../src/sqlite-case-suite";
 import { SqliteRunBatchRepository } from "../src/sqlite-run-batch";
 import { SqliteExecutionControlRepository } from "../src/sqlite-execution-control";
 import { SqliteRunnerRepository } from "../src/sqlite-runner";
+import { SqliteProjectStructureRepository } from "../src/sqlite-project-structure";
 import { defaultCaseSuiteExecutionPolicy, scheduleExecutionRuns } from "@autoforge/domain";
 import { RunBatchSchedulingService, type JarObjectStorePort } from "@autoforge/application";
 
@@ -609,6 +610,13 @@ describe("SQLite management repositories", () => {
         retryLimit: 0,
         environmentVariables: [],
         runnerIds: ["runner-scheduling"],
+        policy: {
+          executor: "testng",
+          concurrency: 1,
+          projectVersionId: "version-project-b",
+          runnerLabels: [],
+          artifactPatterns: [],
+        },
         runs: [
           {
             id: "run-project-b",
@@ -623,9 +631,13 @@ describe("SQLite management repositories", () => {
       await expect(batches.list(10, ["project-b"])).resolves.toMatchObject([
         { id: "batch-project-b", projectId: "project-b" },
       ]);
+      await expect(batches.list(10, ["project-b"], "version-project-b")).resolves.toMatchObject([
+        { id: "batch-project-b", policy: { projectVersionId: "version-project-b" } },
+      ]);
       await expect(
         batches.listPage({
           projectIds: ["project-b"],
+          projectVersionId: "version-project-b",
           caseDefinitionId: "case-project-b",
           suiteId: "suite-project-b",
           createdAfter: "2026-08-09T00:01:30.000Z",
@@ -755,6 +767,7 @@ describe("SQLite management repositories", () => {
         policy: {
           ...defaultCaseSuiteExecutionPolicy,
           retryLimit: 1,
+          projectVersionId: "project-version-1",
           runnerIds: ["runner-dynamic"],
         },
         createdAt: timestamp,
@@ -2534,7 +2547,16 @@ async function fixture() {
     migrationsFolder: resolve(import.meta.dirname, "../drizzle/sqlite"),
   });
   const catalog = new SqliteCaseCatalogRepository(handle);
+  await new SqliteProjectStructureRepository(handle).createVersion({
+    id: "project-version-1",
+    projectId: "00000000-0000-7000-8000-000000000001",
+    name: "V1",
+    normalizedName: "v1",
+    recordedAt: timestamp,
+  });
   await catalog.importCatalog({
+    projectId: "00000000-0000-7000-8000-000000000001",
+    projectVersionId: "project-version-1",
     sourceId: "source-1",
     objectKey: "jars/aa/source.jar",
     displayName: "source",

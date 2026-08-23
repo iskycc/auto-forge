@@ -70,9 +70,21 @@ export default async function InsightsPage({
   };
   const [summary, suites, runners, recentBatches] = await Promise.all([
     services.platformOperations.analytics(identity, filter),
-    services.caseSuites.list(500, caseProjectId ? [caseProjectId] : []),
+    hierarchy.projectVersionId
+      ? services.caseSuites.list(
+          500,
+          caseProjectId ? [caseProjectId] : [],
+          hierarchy.projectVersionId,
+        )
+      : Promise.resolve([]),
     services.runnerControl.list(500),
-    services.runBatches.list(100, caseProjectId ? [caseProjectId] : []),
+    hierarchy.projectVersionId
+      ? services.runBatches.list(
+          100,
+          caseProjectId ? [caseProjectId] : [],
+          hierarchy.projectVersionId,
+        )
+      : Promise.resolve([]),
   ]);
   const comparison =
     typeof parameters.leftBatchId === "string" && typeof parameters.rightBatchId === "string"

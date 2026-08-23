@@ -13,6 +13,7 @@ import { DEFAULT_PROJECT_ID } from "@autoforge/domain";
 
 const querySchema = z.object({
   projectId: z.string().min(1).max(128).optional(),
+  projectVersionId: z.string().min(1).max(128).optional(),
   limit: z.coerce.number().int().min(1).max(200).default(100),
 });
 
@@ -20,13 +21,16 @@ export async function GET(request: Request): Promise<NextResponse> {
   try {
     const identity = await authenticateRequest(request);
     const url = new URL(request.url);
-    const { limit, projectId } = querySchema.parse({
+    const { limit, projectId, projectVersionId } = querySchema.parse({
       projectId: url.searchParams.get("projectId") ?? undefined,
+      projectVersionId: url.searchParams.get("projectVersionId") ?? undefined,
       limit: url.searchParams.get("limit") ?? undefined,
     });
     const projectIds = authorizedProjectScope(identity, "case_suite.read", projectId);
     return NextResponse.json({
-      items: await (await getPlatformServices()).caseSuites.list(limit, projectIds),
+      items: await (
+        await getPlatformServices()
+      ).caseSuites.list(limit, projectIds, projectVersionId),
     });
   } catch (error) {
     return apiErrorResponse(error);

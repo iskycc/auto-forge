@@ -121,12 +121,25 @@ export class SqliteCaseSuiteRepository implements CaseSuiteRepository {
     return toSuite(row, 0);
   }
 
-  async list(limit: number, projectIds?: readonly string[]): Promise<CaseSuite[]> {
+  async list(
+    limit: number,
+    projectIds?: readonly string[],
+    projectVersionId?: string,
+  ): Promise<CaseSuite[]> {
     if (projectIds?.length === 0) return [];
     const suiteRows = this.handle.db
       .select()
       .from(caseSuites)
-      .where(projectIds ? inArray(caseSuites.projectId, [...projectIds]) : undefined)
+      .where(
+        and(
+          ...(projectIds ? [inArray(caseSuites.projectId, [...projectIds])] : []),
+          ...(projectVersionId
+            ? [
+                sql`json_extract(${caseSuites.policyJson}, '$.projectVersionId') = ${projectVersionId}`,
+              ]
+            : []),
+        ),
+      )
       .orderBy(desc(caseSuites.updatedAt))
       .limit(limit)
       .all();

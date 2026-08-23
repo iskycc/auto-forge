@@ -10,34 +10,46 @@ import {
   mergeCaseSuiteExecutionPolicy,
 } from "@autoforge/domain";
 
-import type { CaseCatalogRepository, CaseSuiteRepository, Clock, IdGenerator } from "./ports";
+import type {
+  CaseCatalogRepository,
+  CaseSuiteRepository,
+  Clock,
+  IdGenerator,
+  ProjectStructureRepository,
+} from "./ports";
 
 export class CaseSuiteService {
   constructor(
     private readonly suites: CaseSuiteRepository,
     private readonly catalog: CaseCatalogRepository,
+    private readonly projectStructures: ProjectStructureRepository,
     private readonly clock: Clock,
     private readonly ids: IdGenerator,
   ) {}
 
   async create(input: CreateCaseSuiteInput, actorId?: string) {
     const description = input.description?.trim();
+    const projectId = input.projectId ?? DEFAULT_PROJECT_ID;
+    const projectVersionId = await this.resolveActiveProjectVersion(
+      projectId,
+      input.projectVersionId,
+    );
     return this.suites.create({
       id: this.ids.next(),
-      projectId: input.projectId ?? DEFAULT_PROJECT_ID,
+      projectId,
       ...(actorId ? { actorId } : {}),
       name: input.name.trim(),
       ...(description ? { description } : {}),
       policy: mergeCaseSuiteExecutionPolicy(defaultCaseSuiteExecutionPolicy, {
         ...(input.adapter ? { adapter: input.adapter } : {}),
-        ...(input.projectVersionId ? { projectVersionId: input.projectVersionId } : {}),
+        projectVersionId,
       }),
       createdAt: this.clock.now().toISOString(),
     });
   }
 
-  list(limit = 200, projectIds?: readonly string[]) {
-    return this.suites.list(limit, projectIds);
+  list(limit = 200, projectIds?: readonly string[], projectVersionId?: string) {
+    return this.suites.list(limit, projectIds, projectVersionId);
   }
 
   async get(suiteId: string, projectIds?: readonly string[]) {
@@ -67,6 +79,20 @@ export class CaseSuiteService {
       ? mergeCaseSuiteExecutionPolicy(suite.policy, input.policy)
       : undefined;
     if (policy) assertRunnableResourceSelection(policy);
+    if (policy?.projectVersionId && policy.projectVersionId !== suite.policy.projectVersionId) {
+      await this.resolveActiveProjectVersion(suite.projectId, policy.projectVersionId);
+      const details = await this.get(suiteId, projectIds);
+      if (
+        details.items.some(
+          (item) => item.caseDefinition.projectVersionId !== policy.projectVersionId,
+        )
+      ) {
+        throw new DomainError(
+          "CASE_SUITE_VERSION_MISMATCH",
+          "任务中的用例不属于目标项目版本，请先清空或重新选择用例。",
+        );
+      }
+    }
     const changeReason = describeSuiteChange(input);
     return this.suites.updateSuite({
       suiteId,
@@ -92,6 +118,14 @@ export class CaseSuiteService {
     projectIds?: readonly string[],
   ) {
     const source = await this.get(suiteId, projectIds);
+    const projectVersionId = source.policy.projectVersionId;
+    if (!projectVersionId) {
+      throw new DomainError(
+        "CASE_SUITE_VERSION_REQUIRED",
+        "历史任务尚未关联项目版本，请先在任务设置中选择版本。",
+      );
+    }
+    await this.resolveActiveProjectVersion(source.projectId, projectVersionId);
     const createdAt = this.clock.now().toISOString();
     return this.suites.copySuite({
       id: this.ids.next(),
@@ -116,10 +150,24 @@ export class CaseSuiteService {
     projectIds?: readonly string[],
   ) {
     const suite = await this.getSummary(suiteId, projectIds);
+    const projectVersionId = suite.policy.projectVersionId;
+    if (!projectVersionId) {
+      throw new DomainError(
+        "CASE_SUITE_VERSION_REQUIRED",
+        "历史任务尚未关联项目版本，请先在任务设置中选择版本。",
+      );
+    }
     const uniqueIds = [...new Set(requestedIds)];
-    const existingIds = await this.catalog.findExistingCaseIds(uniqueIds, suite.projectId);
+    const existingIds = await this.catalog.findExistingCaseIds(
+      uniqueIds,
+      suite.projectId,
+      projectVersionId,
+    );
     if (existingIds.length !== uniqueIds.length) {
-      throw new DomainError("CASE_DEFINITION_NOT_FOUND", "选择中包含不存在的用例。");
+      throw new DomainError(
+        "CASE_DEFINITION_VERSION_MISMATCH",
+        "选择中包含不存在或不属于任务版本的用例。",
+      );
     }
     return this.suites.addCases({
       suiteId,
@@ -160,6 +208,31 @@ export class CaseSuiteService {
       ...(actorId ? { actorId } : {}),
       updatedAt: this.clock.now().toISOString(),
     });
+  }
+
+  private async resolveActiveProjectVersion(
+    projectId: string,
+    requestedProjectVersionId?: string,
+  ): Promise<string> {
+    const structure = await this.projectStructures.list(projectId);
+    if (requestedProjectVersionId) {
+      const version = structure.versions.find((entry) => entry.id === requestedProjectVersionId);
+      if (!version || version.projectId !== projectId) {
+        throw new DomainError(
+          "PROJECT_VERSION_NOT_FOUND",
+          "指定的项目版本不存在或不属于当前项目。",
+        );
+      }
+      if (version.status !== "active") {
+        throw new DomainError("PROJECT_VERSION_ARCHIVED", "已归档的项目版本不能关联新任务。");
+      }
+      return version.id;
+    }
+    const activeVersions = structure.versions.filter((version) => version.status === "active");
+    if (activeVersions.length !== 1) {
+      throw new DomainError("CASE_SUITE_VERSION_REQUIRED", "请先选择任务所属的项目版本。");
+    }
+    return activeVersions[0]!.id;
   }
 }
 

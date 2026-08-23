@@ -25,11 +25,11 @@ export default async function CaseSuitesPage() {
     "case_suite.read",
     activeProjectId,
   );
-  const [suites, structure] = await Promise.all([
-    services.caseSuites.list(200, effectiveProjectIds),
-    services.projectStructures.list(activeProjectId),
-  ]);
+  const structure = await services.projectStructures.list(activeProjectId);
   const hierarchy = await selectedProjectHierarchy(structure);
+  const suites = hierarchy.projectVersionId
+    ? await services.caseSuites.list(200, effectiveProjectIds, hierarchy.projectVersionId)
+    : [];
   const selectedVersion = structure.versions.find(
     (version) => version.id === hierarchy.projectVersionId,
   );
