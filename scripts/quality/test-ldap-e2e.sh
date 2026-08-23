@@ -84,7 +84,15 @@ prepare_certificates() {
     -CAcreateserial \
     -extfile "${repository_root}/tests/fixtures/ldap/server-cert.ext" \
     -out "${acceptance_directory}/certs/ldap.crt" >/dev/null 2>&1
-  chmod 0600 "${acceptance_directory}/certs/ldap.key" "${acceptance_directory}/certs/ca.key"
+  # OpenLDAP otherwise generates a fresh 2048-bit safe prime during startup.
+  # Using the standardized ffdhe2048 group keeps the TLS fixture equally strong
+  # while removing an unbounded source of hosted-runner startup variance.
+  openssl genpkey -genparam -algorithm DH -pkeyopt group:ffdhe2048 \
+    -out "${acceptance_directory}/certs/dhparam.pem" >/dev/null 2>&1
+  chmod 0600 \
+    "${acceptance_directory}/certs/ldap.key" \
+    "${acceptance_directory}/certs/ca.key" \
+    "${acceptance_directory}/certs/dhparam.pem"
 }
 
 prepare_directory_entries() {
