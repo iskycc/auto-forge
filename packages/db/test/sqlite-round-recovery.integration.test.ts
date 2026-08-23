@@ -17,6 +17,33 @@ afterEach(async () => {
 });
 
 describe("SqliteRoundRecoveryRepository", () => {
+  it("does not request the SQLite writer lock when no recovery is due", async () => {
+    const directory = await mkdtemp(resolve(tmpdir(), "autoforge-round-recovery-idle-"));
+    directories.push(directory);
+    const options = {
+      databasePath: resolve(directory, "autoforge.sqlite"),
+      migrationsFolder: resolve(import.meta.dirname, "../drizzle/sqlite"),
+    };
+    const writer = createSqliteDatabase(options);
+    const poller = createSqliteDatabase(options);
+    writer.client.exec("BEGIN IMMEDIATE");
+    try {
+      const repository = new SqliteRoundRecoveryRepository(poller);
+      await expect(
+        repository.claimDue({
+          workerId: "idle-worker",
+          now: createdAt,
+          leaseExpiresAt: "2026-08-23T00:00:30.000Z",
+          limit: 10,
+        }),
+      ).resolves.toEqual([]);
+    } finally {
+      writer.client.exec("ROLLBACK");
+      writer.close();
+      poller.close();
+    }
+  });
+
   it("leases a due recovery and atomically releases the held next round after waiting", async () => {
     const handle = await database();
     seedRecovery(handle, "batch-1", "pending");

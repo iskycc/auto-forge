@@ -24,21 +24,10 @@ export class SqliteRoundRecoveryRepository implements RoundRecoveryRepository {
   async claimDue(
     input: Parameters<RoundRecoveryRepository["claimDue"]>[0],
   ): Promise<RoundRecoveryClaim[]> {
+    // 空闲轮询只读，避免每 5 秒用无效 BEGIN IMMEDIATE 与 Lite 工作器争抢单写者。
+    if (input.limit <= 0 || this.dueRows(input.now, 1).length === 0) return [];
     return runSqliteWriteTransaction(this.handle, () => {
-      const rows = this.handle.client
-        .prepare(
-          `SELECT recovery.*, batch.suite_id
-           FROM run_batch_round_recoveries recovery
-           JOIN run_batches batch ON batch.id = recovery.batch_id
-           WHERE recovery.status IN ('pending','polling','waiting')
-             AND recovery.available_at <= ?
-             AND (recovery.lease_expires_at IS NULL OR recovery.lease_expires_at <= ?)
-             AND batch.status IN ('queued','dispatching','scheduled','running')
-             AND batch.cancel_requested_at IS NULL
-           ORDER BY recovery.available_at, recovery.batch_id, recovery.after_round
-           LIMIT ?`,
-        )
-        .all(input.now, input.now, input.limit) as RecoveryRow[];
+      const rows = this.dueRows(input.now, input.limit);
       const claims: RoundRecoveryClaim[] = [];
       for (const row of rows) {
         const claimed = this.handle.client
@@ -61,6 +50,23 @@ export class SqliteRoundRecoveryRepository implements RoundRecoveryRepository {
       }
       return claims;
     });
+  }
+
+  private dueRows(now: string, limit: number): RecoveryRow[] {
+    return this.handle.client
+      .prepare(
+        `SELECT recovery.*, batch.suite_id
+         FROM run_batch_round_recoveries recovery
+         JOIN run_batches batch ON batch.id = recovery.batch_id
+         WHERE recovery.status IN ('pending','polling','waiting')
+           AND recovery.available_at <= ?
+           AND (recovery.lease_expires_at IS NULL OR recovery.lease_expires_at <= ?)
+           AND batch.status IN ('queued','dispatching','scheduled','running')
+           AND batch.cancel_requested_at IS NULL
+         ORDER BY recovery.available_at, recovery.batch_id, recovery.after_round
+         LIMIT ?`,
+      )
+      .all(now, now, limit) as RecoveryRow[];
   }
 
   async markPolling(
