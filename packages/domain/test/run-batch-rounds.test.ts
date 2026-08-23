@@ -92,6 +92,24 @@ describe("summarizeRunBatchRounds", () => {
     expect(running?.durationMs).toBeNull();
   });
 
+  it("excludes running attempts from the current-round pass-rate denominator", () => {
+    const batch = makeBatch({ currentRound: 1, totalRuns: 2 });
+    const runs = [makeRun("run-1"), makeRun("run-2")];
+    const attempts = [
+      makeAttempt("a1", "run-1", 1, "succeeded"),
+      makeAttempt("a2", "run-2", 1, undefined, { status: "running" }),
+    ];
+
+    const [summary] = summarizeRunBatchRounds(batch, runs, attempts);
+
+    expect(summary).toMatchObject({
+      executed: 2,
+      passed: 1,
+      roundPassRate: 100,
+      status: "running",
+    });
+  });
+
   it("keeps an incomplete current round live after all existing attempts finish", () => {
     const batch = makeBatch({ currentRound: 1, totalRuns: 3 });
     const runs = [makeRun("run-1"), makeRun("run-2"), makeRun("run-3")];

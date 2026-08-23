@@ -2,6 +2,7 @@ import type {
   ExecutionEnvironmentSecretBinding,
   ExecutionEnvironmentVariable,
 } from "./environment";
+import type { RetryConcurrencyRule } from "./case-suite";
 
 export type RunBatchStatus =
   "queued" | "dispatching" | "scheduled" | "running" | "succeeded" | "failed" | "cancelled";
@@ -59,6 +60,7 @@ export type RunBatchExecutionPolicy = {
   projectVersionId?: string;
   runnerLabels: string[];
   artifactPatterns: string[];
+  retryConcurrencyRules?: RetryConcurrencyRule[];
 };
 
 // 产物规则的媒体类型只是上传提示，按扩展名做保守推断，未知一律 octet-stream。
@@ -186,7 +188,8 @@ export type RunBatchRoundSummary = {
   cancelled: number;
   // 属于本轮但尚未产生 attempt 的用例数；进行中的轮次也必须实时计算。
   notExecuted: number;
-  // 本轮通过率（百分比，0-100）；本轮尚无 attempt 时为 null，由 UI 显示中间态。
+  // 本轮通过率（百分比，0-100）；只以已进入终态的 attempt 为分母，进行中的
+  // attempt 不属于“已执行完成”，本轮尚无终态 attempt 时为 null。
   roundPassRate: number | null;
   // 截至本轮末，曾经通过的 run（按 executionRunId 去重）占总用例数的百分比。
   overallPassRate: number;
@@ -229,6 +232,7 @@ export function summarizeRunBatchRounds(
     const timedOut = countOutcome(roundAttempts, "timed_out");
     const failed = countOutcome(roundAttempts, "failed");
     const cancelled = countOutcome(roundAttempts, "cancelled");
+    const completed = passed + failed + timedOut + cancelled;
     return {
       round,
       status,
@@ -239,7 +243,7 @@ export function summarizeRunBatchRounds(
       timedOut,
       cancelled,
       notExecuted: Math.max(0, eligibleRuns.length - executed),
-      roundPassRate: executed === 0 ? null : Math.round((passed / executed) * 100),
+      roundPassRate: completed === 0 ? null : Math.round((passed / completed) * 100),
       overallPassRate:
         batch.totalRuns === 0 ? 0 : Math.round((passedRunIds.size / batch.totalRuns) * 100),
       startedAt: roundStartedAt(roundAttempts),

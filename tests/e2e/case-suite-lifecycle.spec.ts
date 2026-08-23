@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 import { zipSync } from "fflate";
 import { mkdir } from "node:fs/promises";
 import { resolve } from "node:path";
@@ -169,6 +169,26 @@ async function captureUi(page: Page, name: string): Promise<void> {
   await page.screenshot({ path: resolve(absoluteDirectory, `${name}.png`), fullPage: false });
 }
 
+async function expectHorizontalIntegrity(locator: Locator): Promise<void> {
+  const dimensions = await locator.evaluate((element) => {
+    const bounds = element.getBoundingClientRect();
+    return {
+      left: bounds.left,
+      right: bounds.right,
+      scrollWidth: element.scrollWidth,
+      clientWidth: element.clientWidth,
+      viewportWidth: window.innerWidth,
+    };
+  });
+  expect(dimensions.left, "card escapes the left viewport boundary").toBeGreaterThanOrEqual(0);
+  expect(dimensions.right, "card escapes the right viewport boundary").toBeLessThanOrEqual(
+    dimensions.viewportWidth,
+  );
+  expect(dimensions.scrollWidth, "card has horizontal content overflow").toBeLessThanOrEqual(
+    dimensions.clientWidth + 2,
+  );
+}
+
 test("case metadata, immutable versions and suite policy survive lifecycle changes", async ({
   page,
 }) => {
@@ -299,6 +319,20 @@ test("case metadata, immutable versions and suite policy survive lifecycle chang
   await page.getByLabel("优先级（-100 到 100）").fill("42");
   await page.getByLabel("并发度（同时在途执行数）").fill("3");
   await page.getByLabel("重试次数上限").fill("2");
+  await page.getByLabel("失败重跑方式").selectOption("round");
+  await page.getByRole("button", { name: "添加规则" }).click();
+  await page.getByLabel("规则 1 开始轮次").fill("2");
+  await page.getByLabel("规则 1 结束轮次").fill("3");
+  await page.getByLabel("规则 1 上轮通过率上限").fill("20");
+  await page.getByLabel("规则 1 剩余用例下限").fill("50");
+  await page.getByLabel("规则 1 命中并发").fill("10");
+  await page.getByRole("button", { name: "添加恢复步骤" }).click();
+  await page.getByLabel("恢复步骤 1 暂停轮次").fill("1");
+  await page
+    .getByLabel("恢复步骤 1 Jenkins 任务链接")
+    .fill("https://jenkins.internal/job/environment-reset/");
+  await page.getByLabel("恢复步骤 1 API 密钥").fill("e2e-user:e2e-api-token");
+  await page.getByLabel("恢复步骤 1 成功后等待分钟").fill("3");
   await page.getByLabel("排队超时（分钟）").fill("7");
   await page
     .locator(".global-run-runner", { hasText: runner.name })
@@ -308,11 +342,20 @@ test("case metadata, immutable versions and suite policy survive lifecycle chang
   await expect(page.getByText("参数模板")).toHaveCount(0);
   await expect(page.locator('[name="parameters"]')).toHaveCount(0);
   const adapterToggle = page.getByLabel("使用 CoTest TestNG Adapter");
+  const retryOrchestrationCards = page.locator(".retry-orchestration-card");
   for (const viewport of [
     { width: 1536, height: 1024 },
     { width: 1024, height: 768 },
   ]) {
     await page.setViewportSize(viewport);
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await expectUiIntegrity(page);
+    await retryOrchestrationCards.first().scrollIntoViewIfNeeded();
+    await expectHorizontalIntegrity(retryOrchestrationCards.first());
+    await captureUi(page, `case-suite-dynamic-concurrency-${viewport.width}`);
+    await retryOrchestrationCards.nth(1).scrollIntoViewIfNeeded();
+    await expectHorizontalIntegrity(retryOrchestrationCards.nth(1));
+    await captureUi(page, `case-suite-round-recovery-${viewport.width}`);
     await adapterToggle.scrollIntoViewIfNeeded();
     await captureUi(page, `case-suite-execution-policy-${viewport.width}`);
   }
@@ -320,6 +363,20 @@ test("case metadata, immutable versions and suite policy survive lifecycle chang
   await page.getByLabel("产物规则（每行一个相对路径 glob）").fill("reports/**/*.xml");
   await page.getByRole("button", { name: "保存修改" }).click();
   await expect(page.getByRole("status")).toContainText("用例任务已更新");
+  const retryPolicy = await browserJson<{
+    policy: {
+      retryConcurrencyRules: Array<{ concurrency: number; remainingRunsMinimum?: number }>;
+      roundRecoveryRules: Array<{ apiKeyConfigured: boolean; apiKey?: string }>;
+    };
+  }>(page, `/api/v1/case-suites/${suite.body.id}`);
+  expect(retryPolicy.body.policy.retryConcurrencyRules).toEqual([
+    expect.objectContaining({ concurrency: 10, remainingRunsMinimum: 50 }),
+  ]);
+  expect(retryPolicy.body.policy.roundRecoveryRules).toEqual([
+    expect.objectContaining({ apiKeyConfigured: true }),
+  ]);
+  expect(retryPolicy.body.policy.roundRecoveryRules[0]).not.toHaveProperty("apiKey");
+  expect(JSON.stringify(retryPolicy.body)).not.toContain("e2e-api-token");
 
   await page.getByLabel("Cron（分 时 日 月 周）").fill("17 8 * * 1-5");
   await page.getByLabel("IANA 时区").fill("Asia/Shanghai");
@@ -365,7 +422,13 @@ test("case metadata, immutable versions and suite policy survive lifecycle chang
   const disabledSuite = await browserJson<{
     enabled: boolean;
     status: string;
-    policy: { priority: number; concurrency: number; retryLimit: number };
+    policy: {
+      priority: number;
+      concurrency: number;
+      retryLimit: number;
+      retryConcurrencyRules: Array<{ concurrency: number }>;
+      roundRecoveryRules: Array<{ apiKeyConfigured: boolean }>;
+    };
   }>(page, `/api/v1/case-suites/${suite.body.id}`);
   expect(disabledSuite.body).toMatchObject({
     enabled: false,
@@ -374,6 +437,8 @@ test("case metadata, immutable versions and suite policy survive lifecycle chang
       priority: 42,
       concurrency: 3,
       retryLimit: 2,
+      retryConcurrencyRules: [expect.objectContaining({ concurrency: 10 })],
+      roundRecoveryRules: [expect.objectContaining({ apiKeyConfigured: true })],
     },
   });
   expect(disabledSuite.body.policy).not.toHaveProperty("parameters");

@@ -4,6 +4,7 @@ export * from "./postgres-identity-access";
 export * from "./postgres-execution-control";
 export * from "./postgres-platform-repository";
 export * from "./postgres-run-batch";
+export * from "./postgres-round-recovery";
 export * from "./postgres-runner-group";
 export * from "./postgres-runner-installation-profile";
 export * from "./postgres-schema";

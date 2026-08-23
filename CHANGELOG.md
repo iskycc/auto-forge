@@ -6,6 +6,46 @@ and known limitations.
 
 ## Unreleased
 
+## 1.0.1 - 2026-08-24
+
+### Added
+
+- Added ordered dynamic concurrency rules for round retries. A rule can combine the actual execution
+  round, previous-round pass-rate range and current-round remaining-case range; the first match sets
+  the in-flight limit and unmatched rounds retain the task's base concurrency.
+- Added persisted Jenkins recovery boundaries between retry rounds. AutoForge rebuilds the previous
+  Pipeline through the Jenkins Rebuilder endpoint, follows the exact rebuild cause to completion,
+  waits the configured minutes and only then atomically releases the next round. The single
+  `username:API Token` credential is encrypted outside task policy JSON and is never returned to the
+  browser.
+
+### Fixed
+
+- Current-round pass rate now divides passed cases by terminal attempts only. Assigned and running
+  attempts remain visible as in progress but no longer lower the displayed pass rate.
+- Removing a Jenkins round-recovery rule now deletes its separately encrypted task credential in
+  the same task-update transaction.
+
+### Database
+
+- Added SQLite migration `0041_retry_round_orchestration.sql` and PostgreSQL migration
+  `0040_retry_round_orchestration.sql` for encrypted per-task Jenkins credentials and leased
+  per-batch recovery state. Existing task and batch snapshots default to no rules and preserve prior
+  scheduling behavior.
+
+### Tests
+
+- Added domain/application regressions for terminal-only pass rate, ordered concurrency matching and
+  Jenkins recovery transitions; added matching Lite/Full repository coverage and Jenkins HTTP
+  transport tests, including rebuild-cause correlation and returned-URL scope enforcement.
+- Extended Playwright task lifecycle coverage at 1024 and 1536 pixels to configure both rule types,
+  persist them, verify credential redaction and copy the encrypted configuration.
+
+### Compatibility
+
+- Runner Protocol v1 is unchanged. Jenkins recovery requires Jenkins `2.479.3` or newer plus the
+  Rebuilder plugin; the configured Jenkins identity needs read/build permission for the selected job.
+
 ## 1.0.0 - 2026-08-23
 
 ### Added

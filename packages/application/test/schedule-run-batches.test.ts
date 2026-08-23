@@ -561,6 +561,78 @@ describe("run batch creation with suite policy", () => {
     ).toEqual(["run-1", "run-2"]);
   });
 
+  it("applies the first dynamic concurrency rule matching the current retry context", async () => {
+    const decisions: unknown[] = [];
+    const batches = {
+      getSchedulingSnapshot: vi.fn().mockResolvedValue({
+        batch: {
+          id: "batch-1",
+          currentRound: 3,
+          assignedRuns: 0,
+          queuedRuns: 4,
+          secretBindings: [],
+          policy: {
+            concurrency: 8,
+            runnerLabels: [],
+            artifactPatterns: [],
+            retryConcurrencyRules: [
+              {
+                id: "low-pass-remainder",
+                executionRoundFrom: 2,
+                executionRoundTo: 4,
+                previousRoundPassRateMaximum: 20,
+                remainingRunsMinimum: 4,
+                concurrency: 2,
+              },
+              {
+                id: "third-round",
+                executionRoundFrom: 3,
+                executionRoundTo: 3,
+                concurrency: 6,
+              },
+            ],
+          },
+        },
+        queuedRuns: [
+          queuedRun("run-1"),
+          queuedRun("run-2"),
+          queuedRun("run-3"),
+          queuedRun("run-4"),
+        ],
+        candidates: [{ runner: schedulingRunner(), reservedSlots: 0 }],
+        projectActiveRuns: 0,
+        retryContext: {
+          executionRound: 3,
+          previousRoundPassRate: 20,
+          remainingRuns: 4,
+        },
+      }),
+      reserveAssignments: vi.fn(async (input: { decisions: unknown[] }) => {
+        decisions.push(...input.decisions);
+        return input.decisions.length;
+      }),
+      appendSchedulingEvents: vi.fn().mockResolvedValue(undefined),
+      getSummary: vi.fn().mockResolvedValue({ id: "batch-1", assignedRuns: 2 }),
+    } as unknown as RunBatchRepository;
+    const service = new RunBatchSchedulingService(
+      batches,
+      {} as CaseSuiteRepository,
+      {} as RunnerRepository,
+      { now: () => new Date(timestamp) },
+      { next: () => "generated-id" },
+      {
+        maximumCpuUtilizationPercent: 85,
+        maximumMemoryUtilizationPercent: 85,
+        maximumLoadPerCpu: 1,
+      },
+      45,
+    );
+
+    await service.schedule("batch-1");
+
+    expect(decisions).toHaveLength(2);
+  });
+
   it("does not schedule when the project concurrency budget is exhausted", async () => {
     const batches = {
       getSchedulingSnapshot: vi.fn().mockResolvedValue({
@@ -1017,6 +1089,8 @@ const readyPolicy = {
   runnerLabels: [] as string[],
   parameters: {} as Record<string, string>,
   artifactPatterns: ["reports/testng/**"],
+  retryConcurrencyRules: [],
+  roundRecoveryRules: [],
 };
 
 function readySuite(overrides: {

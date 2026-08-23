@@ -886,6 +886,13 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
           throw new DomainError("RUN_BATCH_VERSION_CONFLICT", "执行批次已被并发修改。");
         }
       }
+      this.handle.client
+        .prepare(
+          `UPDATE run_batch_round_recoveries
+           SET status = 'cancelled', lease_owner = NULL, lease_expires_at = NULL, updated_at = ?
+           WHERE batch_id = ? AND status IN ('idle','pending','polling','waiting')`,
+        )
+        .run(input.requestedAt, input.batchId);
       const changed = this.terminateWaitingRuns(input.batchId, input.reason, input.requestedAt);
       this.updateBatchStatus(
         input.batchId,
@@ -1605,6 +1612,23 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
       )
       .get(batchId) as { value: number | null };
     if (nextRound.value === null) return;
+    const recovery = this.handle.client
+      .prepare(
+        `SELECT status FROM run_batch_round_recoveries
+         WHERE batch_id = ? AND after_round = ?`,
+      )
+      .get(batchId, nextRound.value - 1) as { status: string } | undefined;
+    if (recovery?.status === "idle") {
+      this.handle.client
+        .prepare(
+          `UPDATE run_batch_round_recoveries
+           SET status = 'pending', available_at = ?, updated_at = ?
+           WHERE batch_id = ? AND after_round = ? AND status = 'idle'`,
+        )
+        .run(updatedAt, updatedAt, batchId, nextRound.value - 1);
+      return;
+    }
+    if (recovery && recovery.status !== "succeeded") return;
     this.handle.client
       .prepare(
         `UPDATE execution_runs SET held_round = 0, updated_at = ?

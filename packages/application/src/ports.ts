@@ -917,6 +917,10 @@ export interface CaseSuiteRepository {
   ): Promise<CaseSuite[]>;
   getSummary(suiteId: string, projectIds?: readonly string[]): Promise<CaseSuite | null>;
   get(suiteId: string, projectIds?: readonly string[]): Promise<CaseSuiteDetails | null>;
+  getRoundRecoveryCredentials(
+    suiteId: string,
+    ruleIds: readonly string[],
+  ): Promise<Record<string, string>>;
   updateSuite(input: UpdateCaseSuiteRecord): Promise<CaseSuite>;
   copySuite(input: CopyCaseSuiteRecord): Promise<CaseSuite>;
   addCases(input: {
@@ -950,6 +954,7 @@ export type UpdateCaseSuiteRecord = {
   archived?: boolean;
   // policy 必须是与现有策略合并后的完整策略。
   policy?: CaseSuiteExecutionPolicy;
+  roundRecoveryCredentialUpserts?: Record<string, string>;
 };
 
 export type CopyCaseSuiteRecord = {
@@ -963,6 +968,7 @@ export type CopyCaseSuiteRecord = {
   versionId: string;
   actorId?: string;
   createdAt: string;
+  roundRecoveryCredentials?: Record<string, string>;
 };
 
 export type RegisterRunnerRecord = {
@@ -1162,6 +1168,13 @@ export type CreateRunBatchRecord = {
   runnerIds: string[];
   // 创建时固化的执行策略快照；缺省保持历史行为（不限并发、内置标签与默认产物规则）。
   policy?: RunBatchExecutionPolicy;
+  roundRecoveries?: Array<{
+    ruleId: string;
+    afterRound: number;
+    jenkinsJobUrl: string;
+    apiKeyCiphertext: string;
+    waitMinutes: number;
+  }>;
   runs: Array<{
     id: string;
     caseDefinitionId: string;
@@ -1182,6 +1195,11 @@ export type SchedulingSnapshot = {
   candidates: Array<{ runner: Runner; reservedSlots: number }>;
   runnerFailureIdsByRun: Record<string, string[]>;
   projectActiveRuns: number;
+  retryContext?: {
+    executionRound: number;
+    previousRoundPassRate: number | null;
+    remainingRuns: number;
+  };
 };
 
 export type ReserveSchedulingAssignmentsInput = {
@@ -1269,6 +1287,83 @@ export interface RunBatchRepository {
     afterId?: string;
     limit: number;
   }): Promise<{ items: SchedulingEvent[]; nextAfterId?: string }>;
+}
+
+export type RoundRecoveryStatus = "pending" | "polling" | "waiting";
+
+export type RoundRecoveryClaim = {
+  batchId: string;
+  suiteId: string;
+  ruleId: string;
+  afterRound: number;
+  nextRound: number;
+  jenkinsJobUrl: string;
+  apiKeyCiphertext: string;
+  waitMinutes: number;
+  status: RoundRecoveryStatus;
+  sourceBuildNumber?: number;
+  rebuildNumber?: number;
+  rebuildUrl?: string;
+};
+
+export interface RoundRecoveryRepository {
+  claimDue(input: {
+    workerId: string;
+    now: string;
+    leaseExpiresAt: string;
+    limit: number;
+  }): Promise<RoundRecoveryClaim[]>;
+  markPolling(input: {
+    batchId: string;
+    ruleId: string;
+    workerId: string;
+    sourceBuildNumber: number;
+    rebuildNumber?: number;
+    rebuildUrl?: string;
+    availableAt: string;
+    updatedAt: string;
+  }): Promise<boolean>;
+  markWaiting(input: {
+    batchId: string;
+    ruleId: string;
+    workerId: string;
+    availableAt: string;
+    updatedAt: string;
+  }): Promise<boolean>;
+  resume(input: {
+    batchId: string;
+    ruleId: string;
+    workerId: string;
+    updatedAt: string;
+  }): Promise<boolean>;
+  fail(input: {
+    batchId: string;
+    ruleId: string;
+    workerId: string;
+    errorMessage: string;
+    eventId: string;
+    updatedAt: string;
+  }): Promise<boolean>;
+}
+
+export type JenkinsRebuildState =
+  | { status: "discovering" }
+  | { status: "running"; buildNumber: number; buildUrl: string }
+  | { status: "succeeded"; buildNumber: number; buildUrl: string }
+  | { status: "failed"; buildNumber: number; buildUrl: string; result: string };
+
+export interface JenkinsRoundRecoveryTransport {
+  rebuildLast(input: {
+    jobUrl: string;
+    credential: string;
+  }): Promise<{ sourceBuildNumber: number }>;
+  inspectRebuild(input: {
+    jobUrl: string;
+    credential: string;
+    sourceBuildNumber: number;
+    rebuildNumber?: number;
+    rebuildUrl?: string;
+  }): Promise<JenkinsRebuildState>;
 }
 
 export type ApiTokenAuthentication = {

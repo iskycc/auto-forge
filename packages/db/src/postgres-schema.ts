@@ -512,6 +512,19 @@ export const pgCaseSuites = pgTable(
   (table) => [index("case_suites_updated_at_idx").on(table.updatedAt)],
 );
 
+export const pgCaseSuiteRoundRecoveryCredentials = pgTable(
+  "case_suite_round_recovery_credentials",
+  {
+    suiteId: text("suite_id")
+      .notNull()
+      .references(() => pgCaseSuites.id, { onDelete: "cascade" }),
+    ruleId: text("rule_id").notNull(),
+    apiKeyCiphertext: text("api_key_ciphertext").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.suiteId, table.ruleId] })],
+);
+
 export const pgCaseSuiteItems = pgTable(
   "case_suite_items",
   {
@@ -1401,6 +1414,7 @@ export const postgresSchema = {
   caseVersions: pgCaseVersions,
   testMethods: pgTestMethods,
   caseSuites: pgCaseSuites,
+  caseSuiteRoundRecoveryCredentials: pgCaseSuiteRoundRecoveryCredentials,
   caseSuiteItems: pgCaseSuiteItems,
   runners: pgRunners,
   runnerBootstrapUses: pgRunnerBootstrapUses,

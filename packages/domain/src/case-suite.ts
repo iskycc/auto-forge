@@ -32,7 +32,88 @@ export type CaseSuiteExecutionPolicy = {
   runnerGroupId?: string;
   runnerLabels: string[];
   artifactPatterns: string[];
+  retryConcurrencyRules: RetryConcurrencyRule[];
+  roundRecoveryRules: RoundRecoveryRule[];
 };
+
+/**
+ * 整轮重跑的动态并发规则。执行轮次从 1 开始，因此第一轮重跑是第 2 轮。
+ * 多条规则按数组顺序匹配，首条命中的规则生效，未命中时回退任务基础并发数。
+ */
+export type RetryConcurrencyRule = {
+  id: string;
+  executionRoundFrom: number;
+  executionRoundTo: number;
+  previousRoundPassRateMinimum?: number;
+  previousRoundPassRateMaximum?: number;
+  remainingRunsMinimum?: number;
+  remainingRunsMaximum?: number;
+  concurrency: number;
+};
+
+/** 在 afterRound 完成后、释放下一轮前执行一次 Jenkins Rebuild。 */
+export type RoundRecoveryRule = {
+  id: string;
+  afterRound: number;
+  jenkinsJobUrl: string;
+  waitMinutes: number;
+  // 只表示服务端已保存密钥；密钥明文和密文都不得进入领域对象或 HTTP 输出。
+  apiKeyConfigured: boolean;
+};
+
+export type RetryConcurrencyContext = {
+  executionRound: number;
+  previousRoundPassRate: number | null;
+  remainingRuns: number;
+};
+
+export function retryConcurrencyForRound(
+  baseConcurrency: number,
+  rules: readonly RetryConcurrencyRule[],
+  context: RetryConcurrencyContext,
+): number {
+  const matched = rules.find((rule) => retryConcurrencyRuleMatches(rule, context));
+  return matched?.concurrency ?? baseConcurrency;
+}
+
+function retryConcurrencyRuleMatches(
+  rule: RetryConcurrencyRule,
+  context: RetryConcurrencyContext,
+): boolean {
+  if (
+    context.executionRound < rule.executionRoundFrom ||
+    context.executionRound > rule.executionRoundTo
+  ) {
+    return false;
+  }
+  if (
+    rule.previousRoundPassRateMinimum !== undefined &&
+    (context.previousRoundPassRate === null ||
+      context.previousRoundPassRate < rule.previousRoundPassRateMinimum)
+  ) {
+    return false;
+  }
+  if (
+    rule.previousRoundPassRateMaximum !== undefined &&
+    (context.previousRoundPassRate === null ||
+      context.previousRoundPassRate > rule.previousRoundPassRateMaximum)
+  ) {
+    return false;
+  }
+  if (
+    rule.remainingRunsMinimum !== undefined &&
+    context.remainingRuns < rule.remainingRunsMinimum
+  ) {
+    return false;
+  }
+  if (
+    rule.remainingRunsMaximum !== undefined &&
+    context.remainingRuns > rule.remainingRunsMaximum
+  ) {
+    return false;
+  }
+  return true;
+}
 
 export type CaseSuiteAdapterConfiguration = {
   enabled: boolean;
@@ -63,6 +144,8 @@ export const defaultCaseSuiteExecutionPolicy: CaseSuiteExecutionPolicy = {
   runnerIds: [],
   runnerLabels: [],
   artifactPatterns: ["reports/testng/**"],
+  retryConcurrencyRules: [],
+  roundRecoveryRules: [],
 };
 
 // 策略覆盖输入：与 Partial 的区别是显式允许 undefined 值，兼容 exactOptionalPropertyTypes
@@ -117,6 +200,12 @@ export function mergeCaseSuiteExecutionPolicy(
     artifactPatterns: override.artifactPatterns
       ? [...override.artifactPatterns]
       : [...base.artifactPatterns],
+    retryConcurrencyRules: (override.retryConcurrencyRules ?? base.retryConcurrencyRules).map(
+      (rule) => ({ ...rule }),
+    ),
+    roundRecoveryRules: (override.roundRecoveryRules ?? base.roundRecoveryRules).map((rule) => ({
+      ...rule,
+    })),
   };
 }
 

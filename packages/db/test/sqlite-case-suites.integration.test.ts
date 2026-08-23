@@ -53,6 +53,53 @@ describe("SQLite case suite lifecycle", () => {
     }
   });
 
+  it("keeps Jenkins credentials outside policy JSON and removes them with deleted rules", async () => {
+    const { handle, suites } = await fixture();
+    try {
+      await suites.create({ id: "suite-recovery", name: "Recovery", createdAt: timestamp });
+      const recoveryPolicy = {
+        ...defaultCaseSuiteExecutionPolicy,
+        retryMode: "round" as const,
+        retryLimit: 1,
+        roundRecoveryRules: [
+          {
+            id: "recovery-1",
+            afterRound: 1,
+            jenkinsJobUrl: "https://jenkins.internal/job/reset/",
+            waitMinutes: 5,
+            apiKeyConfigured: true,
+          },
+        ],
+      };
+      await suites.updateSuite({
+        suiteId: "suite-recovery",
+        expectedRevision: 1,
+        versionId: "sv-recovery-2",
+        changeReason: "suite.update:policy",
+        updatedAt: timestamp,
+        policy: recoveryPolicy,
+        roundRecoveryCredentialUpserts: { "recovery-1": "encrypted-credential" },
+      });
+      await expect(
+        suites.getRoundRecoveryCredentials("suite-recovery", ["recovery-1"]),
+      ).resolves.toEqual({ "recovery-1": "encrypted-credential" });
+
+      await suites.updateSuite({
+        suiteId: "suite-recovery",
+        expectedRevision: 2,
+        versionId: "sv-recovery-3",
+        changeReason: "suite.update:policy",
+        updatedAt: timestamp,
+        policy: { ...defaultCaseSuiteExecutionPolicy },
+      });
+      await expect(
+        suites.getRoundRecoveryCredentials("suite-recovery", ["recovery-1"]),
+      ).resolves.toEqual({});
+    } finally {
+      handle.close();
+    }
+  });
+
   it("records version snapshots for updates and case changes, and enforces revisions", async () => {
     const { handle, suites } = await fixture();
     try {

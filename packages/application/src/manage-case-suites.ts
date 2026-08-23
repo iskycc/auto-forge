@@ -8,6 +8,9 @@ import {
   DomainError,
   defaultCaseSuiteExecutionPolicy,
   mergeCaseSuiteExecutionPolicy,
+  type CaseSuiteExecutionPolicy,
+  type RetryConcurrencyRule,
+  type RoundRecoveryRule,
 } from "@autoforge/domain";
 
 import type {
@@ -16,7 +19,9 @@ import type {
   Clock,
   IdGenerator,
   ProjectStructureRepository,
+  SecretCipherPort,
 } from "./ports";
+import { roundRecoverySecretPurpose } from "./round-recovery-credentials";
 
 export class CaseSuiteService {
   constructor(
@@ -25,6 +30,7 @@ export class CaseSuiteService {
     private readonly projectStructures: ProjectStructureRepository,
     private readonly clock: Clock,
     private readonly ids: IdGenerator,
+    private readonly secretCipher?: SecretCipherPort,
   ) {}
 
   async create(input: CreateCaseSuiteInput, actorId?: string) {
@@ -75,9 +81,10 @@ export class CaseSuiteService {
       throw new DomainError("CASE_SUITE_REVISION_CONFLICT", "用例任务已被他人修改，请刷新后重试。");
     }
     const name = input.name?.trim();
-    const policy = input.policy
-      ? mergeCaseSuiteExecutionPolicy(suite.policy, input.policy)
+    const policyUpdate = input.policy
+      ? await this.preparePolicyUpdate(suite.id, suite.policy, input.policy)
       : undefined;
+    const policy = policyUpdate?.policy;
     if (policy) assertRunnableResourceSelection(policy);
     if (policy?.projectVersionId && policy.projectVersionId !== suite.policy.projectVersionId) {
       await this.resolveActiveProjectVersion(suite.projectId, policy.projectVersionId);
@@ -108,6 +115,9 @@ export class CaseSuiteService {
       ...(input.enabled !== undefined ? { enabled: input.enabled } : {}),
       ...(input.archived !== undefined ? { archived: input.archived } : {}),
       ...(policy ? { policy } : {}),
+      ...(policyUpdate && Object.keys(policyUpdate.credentialUpserts).length > 0
+        ? { roundRecoveryCredentialUpserts: policyUpdate.credentialUpserts }
+        : {}),
     });
   }
 
@@ -127,12 +137,28 @@ export class CaseSuiteService {
     }
     await this.resolveActiveProjectVersion(source.projectId, projectVersionId);
     const createdAt = this.clock.now().toISOString();
+    const copiedSuiteId = this.ids.next();
+    const sourceCredentials =
+      source.policy.roundRecoveryRules.length === 0
+        ? {}
+        : await this.suites.getRoundRecoveryCredentials(
+            source.id,
+            source.policy.roundRecoveryRules.map((rule) => rule.id),
+          );
+    const copiedRecovery = this.copyRoundRecoveryRules(
+      source.id,
+      copiedSuiteId,
+      source.policy.roundRecoveryRules,
+      sourceCredentials,
+    );
     return this.suites.copySuite({
-      id: this.ids.next(),
+      id: copiedSuiteId,
       projectId: source.projectId,
       name: input.name.trim(),
       ...(source.description ? { description: source.description } : {}),
-      policy: mergeCaseSuiteExecutionPolicy(source.policy, {}),
+      policy: mergeCaseSuiteExecutionPolicy(source.policy, {
+        roundRecoveryRules: copiedRecovery.rules,
+      }),
       items: source.items.map((item) => ({
         id: this.ids.next(),
         caseDefinitionId: item.caseDefinition.id,
@@ -140,7 +166,113 @@ export class CaseSuiteService {
       versionId: this.ids.next(),
       ...(actorId ? { actorId } : {}),
       createdAt,
+      ...(Object.keys(copiedRecovery.credentials).length > 0
+        ? { roundRecoveryCredentials: copiedRecovery.credentials }
+        : {}),
     });
+  }
+
+  private async preparePolicyUpdate(
+    suiteId: string,
+    current: CaseSuiteExecutionPolicy,
+    input: NonNullable<UpdateCaseSuiteInput["policy"]>,
+  ): Promise<{ policy: CaseSuiteExecutionPolicy; credentialUpserts: Record<string, string> }> {
+    const { retryConcurrencyRules, roundRecoveryRules, ...baseInput } = input;
+    const normalizedRetryRules = retryConcurrencyRules?.map(normalizeRetryConcurrencyRule);
+    const existingCredentials = roundRecoveryRules
+      ? await this.suites.getRoundRecoveryCredentials(
+          suiteId,
+          roundRecoveryRules.map((rule) => rule.id),
+        )
+      : {};
+    const normalizedRecovery = roundRecoveryRules
+      ? this.prepareRoundRecoveryRules(suiteId, roundRecoveryRules, existingCredentials)
+      : undefined;
+    const policy = mergeCaseSuiteExecutionPolicy(current, {
+      ...baseInput,
+      ...(normalizedRetryRules ? { retryConcurrencyRules: normalizedRetryRules } : {}),
+      ...(normalizedRecovery ? { roundRecoveryRules: normalizedRecovery.rules } : {}),
+    });
+    assertRetryOrchestrationPolicy(policy);
+    return { policy, credentialUpserts: normalizedRecovery?.credentialUpserts ?? {} };
+  }
+
+  private prepareRoundRecoveryRules(
+    suiteId: string,
+    input: NonNullable<NonNullable<UpdateCaseSuiteInput["policy"]>["roundRecoveryRules"]>,
+    existingCredentials: Record<string, string>,
+  ): { rules: RoundRecoveryRule[]; credentialUpserts: Record<string, string> } {
+    const credentialUpserts: Record<string, string> = {};
+    const rules = input.map((rule): RoundRecoveryRule => {
+      const suppliedApiKey = rule.apiKey;
+      const credentialSeparator = suppliedApiKey?.indexOf(":") ?? -1;
+      if (
+        suppliedApiKey !== undefined &&
+        (credentialSeparator <= 0 || credentialSeparator === suppliedApiKey.length - 1)
+      ) {
+        throw new DomainError(
+          "JENKINS_CREDENTIAL_INVALID",
+          "Jenkins API 密钥需填写为“用户名:API Token”。",
+        );
+      }
+      if (suppliedApiKey !== undefined) {
+        if (!this.secretCipher?.available) {
+          throw new DomainError(
+            "SECRET_CIPHER_UNAVAILABLE",
+            "配置 Jenkins 环境恢复前必须先设置 AutoForge 主密钥。",
+          );
+        }
+        credentialUpserts[rule.id] = this.secretCipher.encrypt(
+          suppliedApiKey,
+          roundRecoverySecretPurpose(suiteId, rule.id),
+        );
+      }
+      if (!credentialUpserts[rule.id] && !existingCredentials[rule.id]) {
+        throw new DomainError(
+          "JENKINS_CREDENTIAL_REQUIRED",
+          `第 ${rule.afterRound} 轮后的 Jenkins 环境恢复尚未配置 API 密钥。`,
+        );
+      }
+      return {
+        id: rule.id,
+        afterRound: rule.afterRound,
+        jenkinsJobUrl: normalizeJenkinsJobUrl(rule.jenkinsJobUrl),
+        waitMinutes: rule.waitMinutes,
+        apiKeyConfigured: true,
+      };
+    });
+    return { rules, credentialUpserts };
+  }
+
+  private copyRoundRecoveryRules(
+    sourceSuiteId: string,
+    targetSuiteId: string,
+    sourceRules: readonly RoundRecoveryRule[],
+    sourceCredentials: Record<string, string>,
+  ): { rules: RoundRecoveryRule[]; credentials: Record<string, string> } {
+    if (sourceRules.length === 0) return { rules: [], credentials: {} };
+    if (!this.secretCipher?.available) {
+      throw new DomainError(
+        "SECRET_CIPHER_UNAVAILABLE",
+        "复制含 Jenkins 环境恢复配置的任务需要当前 AutoForge 主密钥。",
+      );
+    }
+    const cipher = this.secretCipher;
+    const credentials: Record<string, string> = {};
+    const rules = sourceRules.map((sourceRule) => {
+      const ciphertext = sourceCredentials[sourceRule.id];
+      if (!ciphertext) {
+        throw new DomainError("JENKINS_CREDENTIAL_REQUIRED", "源任务的 Jenkins API 密钥缺失。");
+      }
+      const id = this.ids.next();
+      const plaintext = cipher.decrypt(
+        ciphertext,
+        roundRecoverySecretPurpose(sourceSuiteId, sourceRule.id),
+      );
+      credentials[id] = cipher.encrypt(plaintext, roundRecoverySecretPurpose(targetSuiteId, id));
+      return { ...sourceRule, id };
+    });
+    return { rules, credentials };
   }
 
   async addCases(
@@ -234,6 +366,60 @@ export class CaseSuiteService {
     }
     return activeVersions[0]!.id;
   }
+}
+
+function normalizeRetryConcurrencyRule(
+  rule: NonNullable<NonNullable<UpdateCaseSuiteInput["policy"]>["retryConcurrencyRules"]>[number],
+): RetryConcurrencyRule {
+  return {
+    id: rule.id,
+    executionRoundFrom: rule.executionRoundFrom,
+    executionRoundTo: rule.executionRoundTo,
+    ...(rule.previousRoundPassRateMinimum !== undefined
+      ? { previousRoundPassRateMinimum: rule.previousRoundPassRateMinimum }
+      : {}),
+    ...(rule.previousRoundPassRateMaximum !== undefined
+      ? { previousRoundPassRateMaximum: rule.previousRoundPassRateMaximum }
+      : {}),
+    ...(rule.remainingRunsMinimum !== undefined
+      ? { remainingRunsMinimum: rule.remainingRunsMinimum }
+      : {}),
+    ...(rule.remainingRunsMaximum !== undefined
+      ? { remainingRunsMaximum: rule.remainingRunsMaximum }
+      : {}),
+    concurrency: rule.concurrency,
+  };
+}
+
+function assertRetryOrchestrationPolicy(policy: CaseSuiteExecutionPolicy): void {
+  if (
+    policy.retryMode !== "round" &&
+    (policy.retryConcurrencyRules.length > 0 || policy.roundRecoveryRules.length > 0)
+  ) {
+    throw new DomainError(
+      "ROUND_RETRY_REQUIRED",
+      "动态重跑并发和 Jenkins 环境恢复只适用于整轮重跑模式。",
+    );
+  }
+  const maximumExecutionRound = policy.retryLimit + 1;
+  if (
+    policy.retryConcurrencyRules.some(
+      (rule) =>
+        rule.executionRoundFrom > maximumExecutionRound ||
+        rule.executionRoundTo > maximumExecutionRound,
+    )
+  ) {
+    throw new DomainError("RETRY_RULE_ROUND_INVALID", "动态并发规则的轮次超过了任务最大重跑轮次。");
+  }
+  if (policy.roundRecoveryRules.some((rule) => rule.afterRound > policy.retryLimit)) {
+    throw new DomainError("RECOVERY_RULE_ROUND_INVALID", "环境恢复边界之后必须存在下一轮重跑。");
+  }
+}
+
+function normalizeJenkinsJobUrl(value: string): string {
+  const url = new URL(value);
+  if (!url.pathname.endsWith("/")) url.pathname += "/";
+  return url.toString();
 }
 
 function assertRunnableResourceSelection(policy: {

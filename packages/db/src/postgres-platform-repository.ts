@@ -51,6 +51,7 @@ import {
   isNull,
   like,
   lt,
+  notInArray,
   or,
   sql,
   type SQL,
@@ -70,6 +71,7 @@ import {
   pgCaseSourceComparisons,
   pgCaseSources,
   pgCaseSuiteItems,
+  pgCaseSuiteRoundRecoveryCredentials,
   pgCaseSuites,
   pgCaseSuiteVersions,
   pgCaseVersions,
@@ -1909,6 +1911,29 @@ export class PostgresCaseSuiteRepository implements CaseSuiteRepository {
     return { ...toSuite(suite, items.length), items };
   }
 
+  async getRoundRecoveryCredentials(
+    suiteId: string,
+    ruleIds: readonly string[],
+  ): Promise<Record<string, string>> {
+    await this.ready();
+    if (ruleIds.length === 0) return {};
+    const rows = [];
+    for (const ids of batchesOf(ruleIds, RELATIONAL_ID_QUERY_BATCH_SIZE)) {
+      rows.push(
+        ...(await this.handle.db
+          .select()
+          .from(pgCaseSuiteRoundRecoveryCredentials)
+          .where(
+            and(
+              eq(pgCaseSuiteRoundRecoveryCredentials.suiteId, suiteId),
+              inArray(pgCaseSuiteRoundRecoveryCredentials.ruleId, ids),
+            ),
+          )),
+      );
+    }
+    return Object.fromEntries(rows.map((row) => [row.ruleId, row.apiKeyCiphertext]));
+  }
+
   async addCases(input: {
     suiteId: string;
     items: Array<{ id: string; caseDefinitionId: string }>;
@@ -2031,6 +2056,33 @@ export class PostgresCaseSuiteRepository implements CaseSuiteRepository {
         )
         .returning({ id: pgCaseSuites.id });
       if (updated.length !== 1) await throwPostgresSuiteConflict(transaction, input.suiteId);
+      for (const [ruleId, apiKeyCiphertext] of Object.entries(
+        input.roundRecoveryCredentialUpserts ?? {},
+      )) {
+        await transaction
+          .insert(pgCaseSuiteRoundRecoveryCredentials)
+          .values({ suiteId: input.suiteId, ruleId, apiKeyCiphertext, updatedAt: input.updatedAt })
+          .onConflictDoUpdate({
+            target: [
+              pgCaseSuiteRoundRecoveryCredentials.suiteId,
+              pgCaseSuiteRoundRecoveryCredentials.ruleId,
+            ],
+            set: { apiKeyCiphertext, updatedAt: input.updatedAt },
+          });
+      }
+      if (input.policy) {
+        const activeRuleIds = input.policy.roundRecoveryRules.map((rule) => rule.id);
+        await transaction
+          .delete(pgCaseSuiteRoundRecoveryCredentials)
+          .where(
+            activeRuleIds.length === 0
+              ? eq(pgCaseSuiteRoundRecoveryCredentials.suiteId, input.suiteId)
+              : and(
+                  eq(pgCaseSuiteRoundRecoveryCredentials.suiteId, input.suiteId),
+                  notInArray(pgCaseSuiteRoundRecoveryCredentials.ruleId, activeRuleIds),
+                ),
+          );
+      }
       await this.insertVersionSnapshot(
         transaction,
         input.suiteId,
@@ -2072,6 +2124,17 @@ export class PostgresCaseSuiteRepository implements CaseSuiteRepository {
             })),
           );
         }
+      }
+      const recoveryCredentials = Object.entries(input.roundRecoveryCredentials ?? {});
+      if (recoveryCredentials.length > 0) {
+        await transaction.insert(pgCaseSuiteRoundRecoveryCredentials).values(
+          recoveryCredentials.map(([ruleId, apiKeyCiphertext]) => ({
+            suiteId: input.id,
+            ruleId,
+            apiKeyCiphertext,
+            updatedAt: input.createdAt,
+          })),
+        );
       }
       await this.insertVersionSnapshot(transaction, input.id, input.versionId, "suite.copy", {
         ...(input.actorId ? { actorId: input.actorId } : {}),

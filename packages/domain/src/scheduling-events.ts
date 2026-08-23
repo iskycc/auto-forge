@@ -7,6 +7,7 @@ export type SchedulingEventType =
   | "attempt_completed" // attempt 终态（succeeded/failed/timed_out/cancelled）
   | "run_held_for_round" // 轮次重试：失败 run 被推迟到下一轮
   | "runner_fault_rescheduled" // Runner/传输异常触发的有界自动重调度
+  | "round_recovery" // 整轮重跑间的 Jenkins 环境恢复状态
   | "runner_metrics"; // runner 资源快照（应用层节流写入）
 
 export type SchedulingEvent = {

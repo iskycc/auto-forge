@@ -136,6 +136,18 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
           .insert(pgRunBatchRunners)
           .values(record.runnerIds.map((runnerId) => ({ batchId: record.id, runnerId })));
       }
+      for (const recovery of record.roundRecoveries ?? []) {
+        await transaction.execute(sql`
+          INSERT INTO run_batch_round_recoveries
+            (batch_id, rule_id, after_round, next_round, jenkins_job_url,
+             api_key_ciphertext, wait_minutes, status, available_at, created_at, updated_at)
+          VALUES
+            (${record.id}, ${recovery.ruleId}, ${recovery.afterRound},
+             ${recovery.afterRound + 1}, ${recovery.jenkinsJobUrl},
+             ${recovery.apiKeyCiphertext}, ${recovery.waitMinutes}, 'idle',
+             ${record.createdAt}, ${record.createdAt}, ${record.createdAt})
+        `);
+      }
       for (const runs of batchesOf(record.runs, POSTGRES_WRITE_BATCH_SIZE)) {
         await transaction.insert(pgExecutionRuns).values(
           runs.map((run) => ({
@@ -421,6 +433,7 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
         [batch.projectId],
       ),
     ]);
+    const retryContextValue = await retryContext(this.handle, batch);
     const [runtimeRow] = await this.handle.db
       .select({ adapterRuntimeJson: pgRunBatches.adapterRuntimeJson })
       .from(pgRunBatches)
@@ -441,6 +454,7 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
       candidates,
       runnerFailureIdsByRun: runnerFailureIdsByExecutionRun(attemptRows.map(toRunAttempt)),
       projectActiveRuns: Number(activeProjectRuns.rows[0]?.count ?? 0),
+      retryContext: retryContextValue,
     };
   }
 
@@ -1024,10 +1038,63 @@ function batchPolicy(json: string | null): RunBatchExecutionPolicy | undefined {
             (pattern): pattern is string => typeof pattern === "string",
           )
         : ["reports/testng/**"],
+      retryConcurrencyRules: retryConcurrencyRules(record.retryConcurrencyRules),
     };
   } catch {
     return undefined;
   }
+}
+
+function retryConcurrencyRules(
+  value: unknown,
+): NonNullable<RunBatchExecutionPolicy["retryConcurrencyRules"]> {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((candidate) => {
+    if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) return [];
+    const rule = candidate as Record<string, unknown>;
+    if (
+      typeof rule.id !== "string" ||
+      !Number.isInteger(rule.executionRoundFrom) ||
+      !Number.isInteger(rule.executionRoundTo) ||
+      !Number.isInteger(rule.concurrency)
+    ) {
+      return [];
+    }
+    return [candidate as NonNullable<RunBatchExecutionPolicy["retryConcurrencyRules"]>[number]];
+  });
+}
+
+async function retryContext(
+  handle: PostgresDatabaseHandle,
+  batch: RunBatch,
+): Promise<NonNullable<SchedulingSnapshot["retryContext"]>> {
+  const remainingResult = await handle.pool.query<{ value: string }>(
+    `SELECT COUNT(*) AS value FROM execution_runs
+     WHERE batch_id = $1 AND (
+       status IN ('assigned', 'running') OR (status = 'queued' AND held_round = 0)
+     )`,
+    [batch.id],
+  );
+  const remainingRuns = Number(remainingResult.rows[0]?.value ?? 0);
+  if (batch.currentRound <= 1) {
+    return { executionRound: batch.currentRound, previousRoundPassRate: null, remainingRuns };
+  }
+  const previousResult = await handle.pool.query<{ passed: string; completed: string }>(
+    `SELECT
+       COUNT(*) FILTER (WHERE a.status = 'succeeded') AS passed,
+       COUNT(*) FILTER (WHERE a.status IN ('succeeded','failed','timed_out','cancelled')) AS completed
+     FROM run_attempts a JOIN execution_runs r ON r.id = a.execution_run_id
+     WHERE r.batch_id = $1 AND a.attempt_number = $2`,
+    [batch.id, batch.currentRound - 1],
+  );
+  const previous = previousResult.rows[0];
+  const completed = Number(previous?.completed ?? 0);
+  return {
+    executionRound: batch.currentRound,
+    previousRoundPassRate:
+      completed === 0 ? null : Math.round((Number(previous?.passed ?? 0) / completed) * 100),
+    remainingRuns,
+  };
 }
 
 function executionSpec(input: {

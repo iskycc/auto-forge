@@ -22,7 +22,7 @@ Protocol v1 keeps the historical `environment` and `secretReferences` JSON field
 Control plane `0.9.x` emits empty values, and the embedded Agent rejects non-empty values because product-level
 managed execution environments and secrets have been retired.
 
-The `v1.0.0` Jenkins HPI plugins require Jenkins `2.479.3` or newer. CI loads each installed Pipeline
+The `v1.0.x` Jenkins HPI plugins require Jenkins `2.479.3` or newer. CI loads each installed Pipeline
 step through Jenkins Pipeline Job `1508.v9cb_c3a_a_89dfd` and Pipeline Groovy
 `4009.v0089238351a_9`, then verifies the packaged HPI manifest and step bytecode. The execution plugin requires an
 API key with `run.create`; the dependency publisher requires `project.manage` for the target project.
@@ -30,6 +30,11 @@ API key with `run.create`; the dependency publisher requires `project.manage` fo
 Control plane `1.0.0` adds `run_batches.scheduled_for`. Upgrades backfill it from `created_at`; API
 callers that omit `delaySeconds` retain immediate execution. Database downgrade still requires a
 pre-upgrade database/object backup.
+
+Control plane `1.0.1` adds task-level dynamic retry concurrency and leased Jenkins round recovery
+state without changing Runner Protocol v1. Existing policies default to empty rule arrays. Jenkins
+round recovery requires the Rebuilder plugin and a single `username:API Token` credential; that
+credential is encrypted with the existing AutoForge master key and cannot be configured without it.
 
 Control plane `0.9.10` adds persisted Webhook configuration and delivery tables without changing
 Runner Protocol v1. Existing installations have no endpoint or binding after migration and therefore

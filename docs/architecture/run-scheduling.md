@@ -80,9 +80,21 @@ score = 100 × (
 
 `retryLimit` 表示首次执行之外允许的用例失败重跑次数。例如配置 2 时，TestNG 失败的 attempt 1 和 attempt 2 后重新排队，attempt 3 失败后形成该用例最终结果。Runner/传输异常使用独立的两次恢复预算并优先换机，不消耗这里的重跑次数。Agent 完成上报在权威事务中固化终态、状态事件和下一次 attempt；重复或迟到上报不会覆盖新租约持有者的结果。
 
+整轮模式可保存有序动态并发规则。上下文使用实际执行轮次（首轮为 1、第一次重跑为
+2）、上一轮仅终态 attempt 的通过率，以及当前轮仍处于 queued/assigned/running 的用例数；首条
+命中规则覆盖该轮在途上限，未命中时回退任务基础并发。规则随 `RunBatch.policy` 固化，运行中修改
+任务不会改变既有批次。
+
+整轮模式还可在第 N 轮结束与第 N+1 轮释放之间配置 Jenkins 恢复屏障。批次保存 Jenkins 链接、
+等待时间和加密凭据快照；Lite/Full 使用同一有租约恢复契约，先读取 `lastBuild`，再调用 Rebuilder
+的 `lastBuild/rebuild/?autorebuild=1`，并只接受引用该源构建的 `RebuildCause`。构建成功后进入持久
+等待，期限到达才在一个事务中释放 held run 并推进 `currentRound`。失败会以
+`JENKINS_ROUND_RECOVERY_FAILED` 结束剩余用例和批次；终止批次会取消尚未完成的恢复。返回的构建
+URL 必须与任务链接同源且位于相同 job 路径，避免凭据被重定向到其他地址。
+
 批次终态描述生命周期是否完整，而不是用例断言结果：全部用例按策略正常执行完毕为 `succeeded`（界面“执行完成”），即使其中仍有最终失败用例；Runner/控制面等非正常异常耗尽恢复预算为 `failed`（“执行异常”）；用户终止为 `cancelled`（“已终止”）。用例通过/失败只在批次计数、总结轮次和分析事实中表达。
 
-执行记录与“总结”使用同一最终结果口径：一个用例只要任一 attempt 成功就计入通过；从未成功时取 `attemptNumber` 最大的一轮作为失败、超时或取消。SQLite/PostgreSQL 使用窗口函数在数据库内按 run 去重聚合，列表不会加载全部 attempt，也不会在重跑开始后暂时把上一轮失败误当作最终失败。
+执行记录与“总结”使用同一最终结果口径：一个用例只要任一 attempt 成功就计入通过；从未成功时取 `attemptNumber` 最大的一轮作为失败、超时或取消。SQLite/PostgreSQL 使用窗口函数在数据库内按 run 去重聚合，列表不会加载全部 attempt，也不会在重跑开始后暂时把上一轮失败误当作最终失败。单轮通过率只以该轮已进入成功、失败、超时或取消终态的 attempt 为分母；assigned/running 只显示为进行中，不提前计入未通过。
 
 `POST /api/v1/run-batches/{batchId}/terminate` 保存不可逆的终止请求。事务立即把 queued、未领取或
 已经失去有效 lease 的 run 关闭为 `BATCH_TERMINATED_BEFORE_EXECUTION`，随后所有调度查询、预留和

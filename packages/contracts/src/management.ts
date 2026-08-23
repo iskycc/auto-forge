@@ -182,6 +182,76 @@ export const caseSuiteArtifactPatternSchema = z
     message: "产物规则必须是相对路径，且不能包含 .. 段。",
   });
 
+const retryConcurrencyRuleSchema = z
+  .object({
+    id: z.string().trim().min(1).max(128),
+    executionRoundFrom: z.number().int().min(2).max(11),
+    executionRoundTo: z.number().int().min(2).max(11),
+    previousRoundPassRateMinimum: z.number().int().min(0).max(100).optional(),
+    previousRoundPassRateMaximum: z.number().int().min(0).max(100).optional(),
+    remainingRunsMinimum: z.number().int().min(0).max(100_000).optional(),
+    remainingRunsMaximum: z.number().int().min(0).max(100_000).optional(),
+    concurrency: z.number().int().min(1).max(10_000),
+  })
+  .strict()
+  .superRefine((rule, context) => {
+    if (rule.executionRoundFrom > rule.executionRoundTo) {
+      context.addIssue({
+        code: "custom",
+        path: ["executionRoundTo"],
+        message: "结束轮次不能早于开始轮次。",
+      });
+    }
+    if (
+      rule.previousRoundPassRateMinimum !== undefined &&
+      rule.previousRoundPassRateMaximum !== undefined &&
+      rule.previousRoundPassRateMinimum > rule.previousRoundPassRateMaximum
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["previousRoundPassRateMaximum"],
+        message: "通过率上限不能小于下限。",
+      });
+    }
+    if (
+      rule.remainingRunsMinimum !== undefined &&
+      rule.remainingRunsMaximum !== undefined &&
+      rule.remainingRunsMinimum > rule.remainingRunsMaximum
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["remainingRunsMaximum"],
+        message: "用例数上限不能小于下限。",
+      });
+    }
+  });
+
+const jenkinsJobUrlSchema = z
+  .url()
+  .max(2_048)
+  .refine((value) => {
+    const url = new URL(value);
+    return (
+      (url.protocol === "http:" || url.protocol === "https:") &&
+      !url.username &&
+      !url.password &&
+      !url.search &&
+      !url.hash &&
+      url.pathname.includes("/job/")
+    );
+  }, "Jenkins 任务链接必须使用 HTTP(S)，且不能内嵌凭据。");
+
+const roundRecoveryRuleInputSchema = z
+  .object({
+    id: z.string().trim().min(1).max(128),
+    afterRound: z.number().int().min(1).max(10),
+    jenkinsJobUrl: jenkinsJobUrlSchema,
+    waitMinutes: z.number().int().min(0).max(1_440),
+    apiKey: z.string().min(3).max(2_048).optional(),
+    apiKeyConfigured: z.boolean().optional(),
+  })
+  .strict();
+
 export const caseSuiteExecutionPolicySchema = z
   .object({
     executor: z.enum(["testng", "testng-container"]).optional(),
@@ -204,8 +274,29 @@ export const caseSuiteExecutionPolicySchema = z
     runnerGroupId: z.string().trim().max(128).optional(),
     runnerLabels: z.array(z.string().trim().min(1).max(64)).max(64).optional(),
     artifactPatterns: z.array(caseSuiteArtifactPatternSchema).max(32).optional(),
+    retryConcurrencyRules: z.array(retryConcurrencyRuleSchema).max(20).optional(),
+    roundRecoveryRules: z.array(roundRecoveryRuleInputSchema).max(10).optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((policy, context) => {
+    for (const field of ["retryConcurrencyRules", "roundRecoveryRules"] as const) {
+      const rules = policy[field];
+      if (rules && new Set(rules.map((rule) => rule.id)).size !== rules.length) {
+        context.addIssue({ code: "custom", path: [field], message: "规则 ID 不能重复。" });
+      }
+    }
+    const recoveryRules = policy.roundRecoveryRules;
+    if (
+      recoveryRules &&
+      new Set(recoveryRules.map((rule) => rule.afterRound)).size !== recoveryRules.length
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["roundRecoveryRules"],
+        message: "同一轮次边界只能配置一次环境恢复。",
+      });
+    }
+  });
 
 export const updateCaseSuiteInputSchema = z.object({
   name: z.string().trim().min(1).max(120).optional(),

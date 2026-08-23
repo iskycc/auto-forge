@@ -17,6 +17,7 @@ import {
   ProjectStructureService,
   RunBatchExportService,
   RunBatchSchedulingService,
+  RoundRecoveryService,
   RunnerControlService,
   RunnerInstallationProfileService,
   RunnerGroupService,
@@ -30,6 +31,7 @@ import {
   type CachePort,
   type JobQueuePort,
   type RunBatchRepository,
+  type RoundRecoveryRepository,
   type RunnerRepository,
   type RunnerInstallationProfileRepository,
   type RunnerGroupRepository,
@@ -48,6 +50,7 @@ import {
   SqliteExecutionControlRepository,
   SqliteIdentityAccessRepository,
   SqliteRunBatchRepository,
+  SqliteRoundRecoveryRepository,
   SqliteRunnerRepository,
   SqliteRunnerInstallationProfileRepository,
   SqliteRunnerGroupRepository,
@@ -64,6 +67,7 @@ import { uuidV7 } from "@autoforge/ids";
 
 import { appConfigurationStore, loadAppConfig } from "./config";
 import { LdapDirectory } from "./ldap-directory";
+import { JenkinsRebuildTransport } from "./jenkins-round-recovery";
 import { ScryptPasswordHasher } from "./password-hasher";
 import { MemoryRequestLimiter, RedisRequestLimiter, type RequestLimiter } from "./request-limiter";
 import { natsReconnectOptions, redisReconnectDelay } from "./resilient-connections";
@@ -96,6 +100,7 @@ async function createPlatformServices() {
   let identities: IdentityAccessRepository;
   let executions: ExecutionControlRepository;
   let batches: RunBatchRepository;
+  let roundRecoveries: RoundRecoveryRepository;
   let attemptLogSharesRepository: AttemptLogShareRepository;
   let objectStore: JarObjectStorePort;
   let jobQueue: JobQueuePort;
@@ -126,6 +131,7 @@ async function createPlatformServices() {
       config.caseExecutionTimeoutSeconds,
       config.artifactCollectionEnabled,
     );
+    roundRecoveries = new SqliteRoundRecoveryRepository(database);
     attemptLogSharesRepository = new SqliteAttemptLogShareRepository(database);
     objectStore = new LocalObjectStore(config.dataDirectory);
     jobQueue = new SqliteJobQueue(database);
@@ -148,6 +154,7 @@ async function createPlatformServices() {
         PostgresIdentityAccessRepository,
         PostgresExecutionControlRepository,
         PostgresRunBatchRepository,
+        PostgresRoundRecoveryRepository,
         PostgresRunnerRepository,
         PostgresRunnerInstallationProfileRepository,
         PostgresRunnerGroupRepository,
@@ -238,6 +245,7 @@ async function createPlatformServices() {
       config.caseExecutionTimeoutSeconds,
       config.artifactCollectionEnabled,
     );
+    roundRecoveries = new PostgresRoundRecoveryRepository(database);
     attemptLogSharesRepository = new PostgresAttemptLogShareRepository(database);
     objectStore = new MinioObjectStore(config.minio);
     statisticsRepository = new PostgresPlatformStatisticsRepository(database);
@@ -251,6 +259,7 @@ async function createPlatformServices() {
   });
   const clock = { now: () => new Date() };
   const ids = { next: () => uuidV7() };
+  const secretCipher = new AesGcmSecretCipher(config.masterKey);
   const webhooks = new WebhookNotificationService(
     webhookRepository,
     {
@@ -278,7 +287,14 @@ async function createPlatformServices() {
     ids,
   });
   const caseSources = new CaseSourceService(catalog, objectStore, clock, ids, jobQueue, discovery);
-  const caseSuites = new CaseSuiteService(suites, catalog, projectStructuresRepository, clock, ids);
+  const caseSuites = new CaseSuiteService(
+    suites,
+    catalog,
+    projectStructuresRepository,
+    clock,
+    ids,
+    secretCipher,
+  );
   const caseDefinitions = new CaseDefinitionService(catalog, clock, ids);
   const projectStructures = new ProjectStructureService(
     projectStructuresRepository,
@@ -316,6 +332,15 @@ async function createPlatformServices() {
     config.artifactCollectionEnabled,
   );
   const runScheduling = new CoalescingSchedulingPort(runBatches, workDispatcher);
+  const roundRecovery = new RoundRecoveryService(
+    roundRecoveries,
+    new JenkinsRebuildTransport(),
+    secretCipher,
+    batches,
+    runScheduling,
+    clock,
+    ids,
+  );
   const runnerControl = new RunnerControlService(
     runners,
     runnerCredentials,
@@ -384,7 +409,6 @@ async function createPlatformServices() {
     };
   }
   if (!infrastructure) throw new Error("Runtime infrastructure was not initialized.");
-  const secretCipher = new AesGcmSecretCipher(config.masterKey);
   const runnerInstallationProfiles = new RunnerInstallationProfileService(
     runnerInstallationProfileRepository,
     secretCipher,
@@ -440,6 +464,9 @@ async function createPlatformServices() {
     config.publicDashboardRefreshSeconds,
   );
   const scheduleAbort = new AbortController();
+  const roundRecoveryLoop = runPeriodic(scheduleAbort.signal, 5_000, async () => {
+    await roundRecovery.dispatchDue(`web-${process.pid}-round-recovery`);
+  });
   const scheduleLoop =
     config.mode === "lite"
       ? runPeriodic(scheduleAbort.signal, 30_000, async () => {
@@ -472,7 +499,7 @@ async function createPlatformServices() {
     ready: () => runtimeInfrastructure.ready(),
     close: async () => {
       scheduleAbort.abort();
-      await Promise.all([scheduleLoop, retentionLoop, ldapSynchronizationLoop]);
+      await Promise.all([scheduleLoop, retentionLoop, ldapSynchronizationLoop, roundRecoveryLoop]);
       await runtimeInfrastructure.close();
     },
   };

@@ -68,6 +68,63 @@ describe("case suite execution policy", () => {
   it("rejects the retired task parameter template", () => {
     expect(() => caseSuiteExecutionPolicySchema.parse({ parameters: { REGION: "cn" } })).toThrow();
   });
+
+  it("accepts ordered retry concurrency and Jenkins round recovery rules", () => {
+    expect(
+      caseSuiteExecutionPolicySchema.parse({
+        retryMode: "round",
+        retryConcurrencyRules: [
+          {
+            id: "rule-1",
+            executionRoundFrom: 3,
+            executionRoundTo: 3,
+            previousRoundPassRateMaximum: 20,
+            remainingRunsMinimum: 50,
+            concurrency: 10,
+          },
+        ],
+        roundRecoveryRules: [
+          {
+            id: "recovery-1",
+            afterRound: 1,
+            jenkinsJobUrl: "https://jenkins.internal/job/reset-environment/",
+            waitMinutes: 5,
+            apiKey: "jenkins-user:api-token",
+          },
+        ],
+      }),
+    ).toMatchObject({ retryMode: "round" });
+  });
+
+  it("rejects inverted ranges, duplicate boundaries and credentials in Jenkins URLs", () => {
+    expect(() =>
+      caseSuiteExecutionPolicySchema.parse({
+        retryConcurrencyRules: [
+          { id: "rule", executionRoundFrom: 4, executionRoundTo: 2, concurrency: 10 },
+        ],
+      }),
+    ).toThrow();
+    expect(() =>
+      caseSuiteExecutionPolicySchema.parse({
+        roundRecoveryRules: [
+          { id: "a", afterRound: 1, jenkinsJobUrl: "https://jenkins/job/a/", waitMinutes: 0 },
+          { id: "b", afterRound: 1, jenkinsJobUrl: "https://jenkins/job/b/", waitMinutes: 0 },
+        ],
+      }),
+    ).toThrow();
+    expect(() =>
+      caseSuiteExecutionPolicySchema.parse({
+        roundRecoveryRules: [
+          {
+            id: "a",
+            afterRound: 1,
+            jenkinsJobUrl: "https://user:token@jenkins/job/a/",
+            waitMinutes: 0,
+          },
+        ],
+      }),
+    ).toThrow();
+  });
 });
 
 describe("case suite item mutation contracts", () => {

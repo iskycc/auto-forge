@@ -414,6 +414,19 @@ export const caseSuites = sqliteTable(
   (table) => [index("case_suites_updated_at_idx").on(table.updatedAt)],
 );
 
+export const caseSuiteRoundRecoveryCredentials = sqliteTable(
+  "case_suite_round_recovery_credentials",
+  {
+    suiteId: text("suite_id")
+      .notNull()
+      .references(() => caseSuites.id, { onDelete: "cascade" }),
+    ruleId: text("rule_id").notNull(),
+    apiKeyCiphertext: text("api_key_ciphertext").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.suiteId, table.ruleId] })],
+);
+
 export const runners = sqliteTable(
   "runners",
   {
@@ -1397,6 +1410,7 @@ export const schema = {
   caseVersions,
   testMethods,
   caseSuites,
+  caseSuiteRoundRecoveryCredentials,
   caseSuiteItems,
   runners,
   runnerBootstrapUses,

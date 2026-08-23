@@ -6,6 +6,7 @@ export * from "./sqlite-case-suite";
 export * from "./sqlite-identity-access";
 export * from "./sqlite-execution-control";
 export * from "./sqlite-run-batch";
+export * from "./sqlite-round-recovery";
 export * from "./sqlite-runner";
 export * from "./sqlite-runner-installation-profile";
 export * from "./sqlite-runner-group";

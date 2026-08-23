@@ -11,6 +11,7 @@ export * from "./manage-identity-access";
 export * from "./manage-project-structure";
 export * from "./manage-runners";
 export * from "./manage-webhooks";
+export * from "./run-round-recovery";
 export * from "./manage-runner-installation-profiles";
 export * from "./manage-runner-groups";
 export * from "./ports";

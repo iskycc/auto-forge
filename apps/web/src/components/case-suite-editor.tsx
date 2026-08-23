@@ -10,11 +10,42 @@ import type {
   Runner,
   RunnerGroup,
 } from "@autoforge/domain";
-import { CalendarClock, Copy, LoaderCircle, Save, Server, Trash2, UsersRound } from "lucide-react";
+import {
+  ArrowDown,
+  ArrowUp,
+  CalendarClock,
+  Copy,
+  LoaderCircle,
+  Plus,
+  Save,
+  Server,
+  Trash2,
+  UsersRound,
+} from "lucide-react";
 import { useRouter } from "next/navigation";
 import { FormEvent, useState } from "react";
 
 import { ActionDialog } from "@/components/action-dialog";
+
+type EditableRetryConcurrencyRule = {
+  id: string;
+  executionRoundFrom: string;
+  executionRoundTo: string;
+  previousRoundPassRateMinimum: string;
+  previousRoundPassRateMaximum: string;
+  remainingRunsMinimum: string;
+  remainingRunsMaximum: string;
+  concurrency: string;
+};
+
+type EditableRoundRecoveryRule = {
+  id: string;
+  afterRound: string;
+  jenkinsJobUrl: string;
+  waitMinutes: string;
+  apiKey: string;
+  apiKeyConfigured: boolean;
+};
 
 export function CaseSuiteEditor({
   suite,
@@ -41,6 +72,32 @@ export function CaseSuiteEditor({
   const [message, setMessage] = useState<string | null>(null);
   const [runnerSelectionKind, setRunnerSelectionKind] = useState<"runners" | "group">(
     suite.policy.runnerGroupId ? "group" : "runners",
+  );
+  const [retryMode, setRetryMode] = useState(suite.policy.retryMode);
+  const [retryLimit, setRetryLimit] = useState(String(suite.policy.retryLimit));
+  const [retryConcurrencyRules, setRetryConcurrencyRules] = useState<
+    EditableRetryConcurrencyRule[]
+  >(() =>
+    suite.policy.retryConcurrencyRules.map((rule) => ({
+      id: rule.id,
+      executionRoundFrom: String(rule.executionRoundFrom),
+      executionRoundTo: String(rule.executionRoundTo),
+      previousRoundPassRateMinimum: optionalNumber(rule.previousRoundPassRateMinimum),
+      previousRoundPassRateMaximum: optionalNumber(rule.previousRoundPassRateMaximum),
+      remainingRunsMinimum: optionalNumber(rule.remainingRunsMinimum),
+      remainingRunsMaximum: optionalNumber(rule.remainingRunsMaximum),
+      concurrency: String(rule.concurrency),
+    })),
+  );
+  const [roundRecoveryRules, setRoundRecoveryRules] = useState<EditableRoundRecoveryRule[]>(() =>
+    suite.policy.roundRecoveryRules.map((rule) => ({
+      id: rule.id,
+      afterRound: String(rule.afterRound),
+      jenkinsJobUrl: rule.jenkinsJobUrl,
+      waitMinutes: String(rule.waitMinutes),
+      apiKey: "",
+      apiKeyConfigured: rule.apiKeyConfigured,
+    })),
   );
   const selectableProjectVersions = projectVersions.filter(
     (version) =>
@@ -90,8 +147,8 @@ export function CaseSuiteEditor({
             },
             priority: Number(form.get("priority")),
             concurrency: Number(form.get("concurrency")),
-            retryLimit: Number(form.get("retryLimit")),
-            retryMode: form.get("retryMode"),
+            retryLimit: Number(retryLimit),
+            retryMode,
             queueTimeoutMs: Math.round(Number(form.get("queueTimeoutMinutes")) * 60_000),
             claimTimeoutMs: Math.round(Number(form.get("claimTimeoutMinutes")) * 60_000),
             uploadTimeoutMs: Math.round(Number(form.get("uploadTimeoutMinutes")) * 60_000),
@@ -101,6 +158,8 @@ export function CaseSuiteEditor({
               runnerSelectionKind === "group" ? String(form.get("runnerGroupId") ?? "") : "",
             runnerLabels,
             artifactPatterns: artifactsEnabled ? artifactPatterns : [],
+            retryConcurrencyRules: retryConcurrencyRules.map(toRetryConcurrencyRuleInput),
+            roundRecoveryRules: roundRecoveryRules.map(toRoundRecoveryRuleInput),
           },
           expectedRevision: suite.revision,
         }),
@@ -198,6 +257,18 @@ export function CaseSuiteEditor({
     }
   }
 
+  function updateRetryRule(ruleId: string, patch: Partial<EditableRetryConcurrencyRule>): void {
+    setRetryConcurrencyRules((rules) =>
+      rules.map((rule) => (rule.id === ruleId ? { ...rule, ...patch } : rule)),
+    );
+  }
+
+  function updateRecoveryRule(ruleId: string, patch: Partial<EditableRoundRecoveryRule>): void {
+    setRoundRecoveryRules((rules) =>
+      rules.map((rule) => (rule.id === ruleId ? { ...rule, ...patch } : rule)),
+    );
+  }
+
   return (
     <section className="card">
       <div className="section-title-row">
@@ -243,16 +314,328 @@ export function CaseSuiteEditor({
                 min={0}
                 max={10}
                 step={1}
-                defaultValue={suite.policy.retryLimit}
+                value={retryLimit}
+                onChange={(event) => setRetryLimit(event.currentTarget.value)}
               />
             </label>
             <label>
               失败重跑方式
-              <Select name="retryMode" defaultValue={suite.policy.retryMode}>
+              <Select
+                name="retryMode"
+                value={retryMode}
+                onChange={(event) =>
+                  setRetryMode(event.currentTarget.value as "immediate" | "round")
+                }
+              >
                 <option value="immediate">立即重跑（失败后马上重试）</option>
                 <option value="round">整轮轮次（本轮结束后统一重试）</option>
               </Select>
             </label>
+            <div className="settings-wide-field retry-orchestration-card">
+              <div className="retry-orchestration-heading">
+                <span>
+                  <strong>动态重跑并发</strong>
+                  <small>按顺序匹配；首条命中规则生效，未命中时使用上方基础并发度。</small>
+                </span>
+                <Button
+                  size="compact"
+                  type="button"
+                  onClick={() =>
+                    setRetryConcurrencyRules((rules) => [
+                      ...rules,
+                      newRetryConcurrencyRule(Number(retryLimit)),
+                    ])
+                  }
+                >
+                  <Plus size={14} /> 添加规则
+                </Button>
+              </div>
+              {retryMode !== "round" && retryConcurrencyRules.length > 0 ? (
+                <small className="form-error" role="alert">
+                  动态并发只适用于整轮轮次，请切换重跑方式或删除规则。
+                </small>
+              ) : null}
+              {retryConcurrencyRules.length === 0 ? (
+                <p className="retry-orchestration-empty">暂无规则，所有轮次使用基础并发度。</p>
+              ) : (
+                <div className="retry-rule-list">
+                  {retryConcurrencyRules.map((rule, index) => (
+                    <article className="retry-rule-row" key={rule.id}>
+                      <div className="retry-rule-order" aria-label={`规则 ${index + 1}`}>
+                        <strong>{index + 1}</strong>
+                        <span>
+                          <Button
+                            aria-label="上移规则"
+                            disabled={index === 0}
+                            size="compact"
+                            type="button"
+                            onClick={() =>
+                              setRetryConcurrencyRules((rules) => moveRule(rules, index, index - 1))
+                            }
+                          >
+                            <ArrowUp size={13} />
+                          </Button>
+                          <Button
+                            aria-label="下移规则"
+                            disabled={index === retryConcurrencyRules.length - 1}
+                            size="compact"
+                            type="button"
+                            onClick={() =>
+                              setRetryConcurrencyRules((rules) => moveRule(rules, index, index + 1))
+                            }
+                          >
+                            <ArrowDown size={13} />
+                          </Button>
+                        </span>
+                      </div>
+                      <div className="retry-rule-fields">
+                        <label>
+                          执行轮次 从
+                          <Input
+                            aria-label={`规则 ${index + 1} 开始轮次`}
+                            min={2}
+                            max={11}
+                            required
+                            type="number"
+                            value={rule.executionRoundFrom}
+                            onChange={(event) =>
+                              updateRetryRule(rule.id, {
+                                executionRoundFrom: event.currentTarget.value,
+                              })
+                            }
+                          />
+                        </label>
+                        <label>
+                          到
+                          <Input
+                            aria-label={`规则 ${index + 1} 结束轮次`}
+                            min={2}
+                            max={11}
+                            required
+                            type="number"
+                            value={rule.executionRoundTo}
+                            onChange={(event) =>
+                              updateRetryRule(rule.id, {
+                                executionRoundTo: event.currentTarget.value,
+                              })
+                            }
+                          />
+                        </label>
+                        <label>
+                          上轮通过率 ≥ %
+                          <Input
+                            aria-label={`规则 ${index + 1} 上轮通过率下限`}
+                            min={0}
+                            max={100}
+                            placeholder="不限"
+                            type="number"
+                            value={rule.previousRoundPassRateMinimum}
+                            onChange={(event) =>
+                              updateRetryRule(rule.id, {
+                                previousRoundPassRateMinimum: event.currentTarget.value,
+                              })
+                            }
+                          />
+                        </label>
+                        <label>
+                          上轮通过率 ≤ %
+                          <Input
+                            aria-label={`规则 ${index + 1} 上轮通过率上限`}
+                            min={0}
+                            max={100}
+                            placeholder="不限"
+                            type="number"
+                            value={rule.previousRoundPassRateMaximum}
+                            onChange={(event) =>
+                              updateRetryRule(rule.id, {
+                                previousRoundPassRateMaximum: event.currentTarget.value,
+                              })
+                            }
+                          />
+                        </label>
+                        <label>
+                          本轮剩余用例 ≥
+                          <Input
+                            aria-label={`规则 ${index + 1} 剩余用例下限`}
+                            min={0}
+                            max={100000}
+                            placeholder="不限"
+                            type="number"
+                            value={rule.remainingRunsMinimum}
+                            onChange={(event) =>
+                              updateRetryRule(rule.id, {
+                                remainingRunsMinimum: event.currentTarget.value,
+                              })
+                            }
+                          />
+                        </label>
+                        <label>
+                          本轮剩余用例 ≤
+                          <Input
+                            aria-label={`规则 ${index + 1} 剩余用例上限`}
+                            min={0}
+                            max={100000}
+                            placeholder="不限"
+                            type="number"
+                            value={rule.remainingRunsMaximum}
+                            onChange={(event) =>
+                              updateRetryRule(rule.id, {
+                                remainingRunsMaximum: event.currentTarget.value,
+                              })
+                            }
+                          />
+                        </label>
+                        <label>
+                          命中后并发
+                          <Input
+                            aria-label={`规则 ${index + 1} 命中并发`}
+                            min={1}
+                            max={10000}
+                            required
+                            type="number"
+                            value={rule.concurrency}
+                            onChange={(event) =>
+                              updateRetryRule(rule.id, { concurrency: event.currentTarget.value })
+                            }
+                          />
+                        </label>
+                      </div>
+                      <Button
+                        aria-label={`删除规则 ${index + 1}`}
+                        size="compact"
+                        type="button"
+                        variant="danger"
+                        onClick={() =>
+                          setRetryConcurrencyRules((rules) =>
+                            rules.filter((candidate) => candidate.id !== rule.id),
+                          )
+                        }
+                      >
+                        <Trash2 size={14} />
+                      </Button>
+                    </article>
+                  ))}
+                </div>
+              )}
+            </div>
+            <div className="settings-wide-field retry-orchestration-card">
+              <div className="retry-orchestration-heading">
+                <span>
+                  <strong>轮次间环境恢复</strong>
+                  <small>
+                    指定轮次结束后 Rebuild Jenkins 上一次流水线；成功后等待设定时间再释放下一轮。
+                  </small>
+                </span>
+                <Button
+                  size="compact"
+                  type="button"
+                  onClick={() =>
+                    setRoundRecoveryRules((rules) => [...rules, newRoundRecoveryRule()])
+                  }
+                >
+                  <Plus size={14} /> 添加恢复步骤
+                </Button>
+              </div>
+              {retryMode !== "round" && roundRecoveryRules.length > 0 ? (
+                <small className="form-error" role="alert">
+                  环境恢复只适用于整轮轮次，请切换重跑方式或删除恢复步骤。
+                </small>
+              ) : null}
+              {roundRecoveryRules.length === 0 ? (
+                <p className="retry-orchestration-empty">暂无轮次间环境恢复。</p>
+              ) : (
+                <div className="retry-rule-list">
+                  {roundRecoveryRules.map((rule, index) => (
+                    <article className="recovery-rule-row" key={rule.id}>
+                      <label>
+                        第几轮后暂停
+                        <Input
+                          aria-label={`恢复步骤 ${index + 1} 暂停轮次`}
+                          min={1}
+                          max={10}
+                          required
+                          type="number"
+                          value={rule.afterRound}
+                          onChange={(event) =>
+                            updateRecoveryRule(rule.id, { afterRound: event.currentTarget.value })
+                          }
+                        />
+                      </label>
+                      <label className="recovery-job-url">
+                        Jenkins 任务链接
+                        <Input
+                          aria-label={`恢复步骤 ${index + 1} Jenkins 任务链接`}
+                          maxLength={2048}
+                          placeholder="https://jenkins.example/job/environment-reset/"
+                          required
+                          type="url"
+                          value={rule.jenkinsJobUrl}
+                          onChange={(event) =>
+                            updateRecoveryRule(rule.id, {
+                              jenkinsJobUrl: event.currentTarget.value,
+                            })
+                          }
+                        />
+                      </label>
+                      <label>
+                        API 密钥
+                        <Input
+                          aria-label={`恢复步骤 ${index + 1} API 密钥`}
+                          autoComplete="new-password"
+                          placeholder={
+                            rule.apiKeyConfigured ? "已配置；留空保持不变" : "用户名:API Token"
+                          }
+                          required={!rule.apiKeyConfigured}
+                          type="password"
+                          value={rule.apiKey}
+                          onChange={(event) =>
+                            updateRecoveryRule(rule.id, { apiKey: event.currentTarget.value })
+                          }
+                        />
+                      </label>
+                      <label>
+                        成功后等待（分钟）
+                        <Input
+                          aria-label={`恢复步骤 ${index + 1} 成功后等待分钟`}
+                          min={0}
+                          max={1440}
+                          required
+                          type="number"
+                          value={rule.waitMinutes}
+                          onChange={(event) =>
+                            updateRecoveryRule(rule.id, { waitMinutes: event.currentTarget.value })
+                          }
+                        />
+                      </label>
+                      <span className="recovery-rule-status">
+                        {rule.apiKeyConfigured
+                          ? "密钥已加密保存"
+                          : rule.apiKey
+                            ? "保存后加密"
+                            : "等待配置密钥"}
+                      </span>
+                      <Button
+                        aria-label={`删除恢复步骤 ${index + 1}`}
+                        size="compact"
+                        type="button"
+                        variant="danger"
+                        onClick={() =>
+                          setRoundRecoveryRules((rules) =>
+                            rules.filter((candidate) => candidate.id !== rule.id),
+                          )
+                        }
+                      >
+                        <Trash2 size={14} />
+                      </Button>
+                    </article>
+                  ))}
+                </div>
+              )}
+              <p className="form-help">
+                API 密钥使用单个“用户名:API Token”字段，服务端加密保存；页面不会回显。Jenkins 需安装
+                Rebuilder 插件。
+              </p>
+            </div>
             <label>
               排队超时（分钟）
               <Input
@@ -563,4 +946,74 @@ function parseEnvironmentAddresses(value: string): string[] {
         .filter(Boolean),
     ),
   ];
+}
+
+function optionalNumber(value: number | undefined): string {
+  return value === undefined ? "" : String(value);
+}
+
+function optionalNumberInput(value: string): number | undefined {
+  return value === "" ? undefined : Number(value);
+}
+
+function newRetryConcurrencyRule(retryLimit: number): EditableRetryConcurrencyRule {
+  const maximumRound = Math.max(2, Math.min(11, retryLimit + 1));
+  return {
+    id: crypto.randomUUID(),
+    executionRoundFrom: "2",
+    executionRoundTo: String(maximumRound),
+    previousRoundPassRateMinimum: "",
+    previousRoundPassRateMaximum: "",
+    remainingRunsMinimum: "",
+    remainingRunsMaximum: "",
+    concurrency: "4",
+  };
+}
+
+function newRoundRecoveryRule(): EditableRoundRecoveryRule {
+  return {
+    id: crypto.randomUUID(),
+    afterRound: "1",
+    jenkinsJobUrl: "",
+    waitMinutes: "5",
+    apiKey: "",
+    apiKeyConfigured: false,
+  };
+}
+
+function toRetryConcurrencyRuleInput(rule: EditableRetryConcurrencyRule) {
+  const previousRoundPassRateMinimum = optionalNumberInput(rule.previousRoundPassRateMinimum);
+  const previousRoundPassRateMaximum = optionalNumberInput(rule.previousRoundPassRateMaximum);
+  const remainingRunsMinimum = optionalNumberInput(rule.remainingRunsMinimum);
+  const remainingRunsMaximum = optionalNumberInput(rule.remainingRunsMaximum);
+  return {
+    id: rule.id,
+    executionRoundFrom: Number(rule.executionRoundFrom),
+    executionRoundTo: Number(rule.executionRoundTo),
+    ...(previousRoundPassRateMinimum === undefined ? {} : { previousRoundPassRateMinimum }),
+    ...(previousRoundPassRateMaximum === undefined ? {} : { previousRoundPassRateMaximum }),
+    ...(remainingRunsMinimum === undefined ? {} : { remainingRunsMinimum }),
+    ...(remainingRunsMaximum === undefined ? {} : { remainingRunsMaximum }),
+    concurrency: Number(rule.concurrency),
+  };
+}
+
+function toRoundRecoveryRuleInput(rule: EditableRoundRecoveryRule) {
+  return {
+    id: rule.id,
+    afterRound: Number(rule.afterRound),
+    jenkinsJobUrl: rule.jenkinsJobUrl,
+    waitMinutes: Number(rule.waitMinutes),
+    apiKeyConfigured: rule.apiKeyConfigured,
+    ...(rule.apiKey ? { apiKey: rule.apiKey } : {}),
+  };
+}
+
+function moveRule<T>(rules: readonly T[], from: number, to: number): T[] {
+  if (to < 0 || to >= rules.length) return [...rules];
+  const next = [...rules];
+  const [moved] = next.splice(from, 1);
+  if (moved === undefined) return [...rules];
+  next.splice(to, 0, moved);
+  return next;
 }

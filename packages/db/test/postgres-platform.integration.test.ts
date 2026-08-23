@@ -1471,6 +1471,8 @@ describe.skipIf(!connectionString)("PostgreSQL platform repositories", () => {
           runnerIds: [runnerId],
           runnerLabels: ["gpu"],
           artifactPatterns: ["reports/**"],
+          retryConcurrencyRules: [],
+          roundRecoveryRules: [],
         },
       });
       expect(updated).toMatchObject({ name: "PG nightly", version: 3, revision: 3 });

@@ -139,6 +139,27 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
           .values(record.runnerIds.map((runnerId) => ({ batchId: record.id, runnerId })))
           .run();
       }
+      for (const recovery of record.roundRecoveries ?? []) {
+        this.handle.client
+          .prepare(
+            `INSERT INTO run_batch_round_recoveries
+             (batch_id, rule_id, after_round, next_round, jenkins_job_url,
+              api_key_ciphertext, wait_minutes, status, available_at, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, 'idle', ?, ?, ?)`,
+          )
+          .run(
+            record.id,
+            recovery.ruleId,
+            recovery.afterRound,
+            recovery.afterRound + 1,
+            recovery.jenkinsJobUrl,
+            recovery.apiKeyCiphertext,
+            recovery.waitMinutes,
+            record.createdAt,
+            record.createdAt,
+            record.createdAt,
+          );
+      }
       for (const runs of batchesOf(record.runs, RELATIONAL_WRITE_BATCH_SIZE)) {
         this.handle.db
           .insert(executionRuns)
@@ -441,6 +462,7 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
       candidates,
       runnerFailureIdsByRun: runnerFailureIdsByExecutionRun(attemptRows.map(toRunAttempt)),
       projectActiveRuns: projectActiveRuns(this.handle, batch.projectId),
+      retryContext: retryContext(this.handle, batch),
     };
   }
 
@@ -894,10 +916,67 @@ function batchPolicy(json: string | null): RunBatchExecutionPolicy | undefined {
             (pattern): pattern is string => typeof pattern === "string",
           )
         : ["reports/testng/**"],
+      retryConcurrencyRules: retryConcurrencyRules(record.retryConcurrencyRules),
     };
   } catch {
     return undefined;
   }
+}
+
+function retryConcurrencyRules(
+  value: unknown,
+): NonNullable<RunBatchExecutionPolicy["retryConcurrencyRules"]> {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((candidate) => {
+    if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) return [];
+    const rule = candidate as Record<string, unknown>;
+    if (
+      typeof rule.id !== "string" ||
+      !Number.isInteger(rule.executionRoundFrom) ||
+      !Number.isInteger(rule.executionRoundTo) ||
+      !Number.isInteger(rule.concurrency)
+    ) {
+      return [];
+    }
+    return [candidate as NonNullable<RunBatchExecutionPolicy["retryConcurrencyRules"]>[number]];
+  });
+}
+
+function retryContext(
+  handle: SqliteDatabaseHandle,
+  batch: RunBatch,
+): NonNullable<SchedulingSnapshot["retryContext"]> {
+  const remaining = handle.client
+    .prepare(
+      `SELECT COUNT(*) AS value FROM execution_runs
+       WHERE batch_id = ? AND (
+         status IN ('assigned', 'running') OR (status = 'queued' AND held_round = 0)
+       )`,
+    )
+    .get(batch.id) as { value: number };
+  if (batch.currentRound <= 1) {
+    return {
+      executionRound: batch.currentRound,
+      previousRoundPassRate: null,
+      remainingRuns: remaining.value,
+    };
+  }
+  const previous = handle.client
+    .prepare(
+      `SELECT
+         SUM(CASE WHEN a.status = 'succeeded' THEN 1 ELSE 0 END) AS passed,
+         SUM(CASE WHEN a.status IN ('succeeded','failed','timed_out','cancelled') THEN 1 ELSE 0 END) AS completed
+       FROM run_attempts a JOIN execution_runs r ON r.id = a.execution_run_id
+       WHERE r.batch_id = ? AND a.attempt_number = ?`,
+    )
+    .get(batch.id, batch.currentRound - 1) as { passed: number | null; completed: number | null };
+  const completed = previous.completed ?? 0;
+  return {
+    executionRound: batch.currentRound,
+    previousRoundPassRate:
+      completed === 0 ? null : Math.round(((previous.passed ?? 0) / completed) * 100),
+    remainingRuns: remaining.value,
+  };
 }
 
 function executionSpec(input: {

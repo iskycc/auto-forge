@@ -15,6 +15,7 @@ import {
   DEFAULT_PROJECT_ID,
   DomainError,
   REQUIRED_EXECUTION_LABELS,
+  retryConcurrencyForRound,
   scheduleExecutionRuns,
   type CaseSuiteDetails,
   type RunBatch,
@@ -94,6 +95,23 @@ export class RunBatchSchedulingService {
     }
     // 任务执行只读取任务的版本化策略快照。顶栏快捷执行不得制造一份易漂移的第二配置源。
     const suitePolicy = suite.policy;
+    const roundRecoveryRules = suitePolicy.roundRecoveryRules ?? [];
+    const roundRecoveryCredentials =
+      roundRecoveryRules.length === 0
+        ? {}
+        : await this.suites.getRoundRecoveryCredentials(
+            suite.id,
+            roundRecoveryRules.map((rule) => rule.id),
+          );
+    const missingRecoveryCredential = roundRecoveryRules.find(
+      (rule) => !roundRecoveryCredentials[rule.id],
+    );
+    if (missingRecoveryCredential) {
+      throw new DomainError(
+        "JENKINS_CREDENTIAL_REQUIRED",
+        `第 ${missingRecoveryCredential.afterRound} 轮后的 Jenkins 环境恢复缺少 API 密钥。`,
+      );
+    }
     const runnerIds = await this.resolveRunnerSelection(suitePolicy);
     const projectId = suite.projectId;
     await this.ensureRunnersExist(runnerIds, [
@@ -137,7 +155,17 @@ export class RunBatchSchedulingService {
         ...(suitePolicy.projectVersionId ? { projectVersionId: suitePolicy.projectVersionId } : {}),
         runnerLabels: [...suitePolicy.runnerLabels],
         artifactPatterns: this.artifactCollectionEnabled ? [...suitePolicy.artifactPatterns] : [],
+        retryConcurrencyRules: (suitePolicy.retryConcurrencyRules ?? []).map((rule) => ({
+          ...rule,
+        })),
       },
+      roundRecoveries: roundRecoveryRules.map((rule) => ({
+        ruleId: rule.id,
+        afterRound: rule.afterRound,
+        jenkinsJobUrl: rule.jenkinsJobUrl,
+        apiKeyCiphertext: roundRecoveryCredentials[rule.id]!,
+        waitMinutes: rule.waitMinutes,
+      })),
       adapter: {
         enabled: suitePolicy.adapter.enabled,
         suiteName: suitePolicy.adapter.suiteName,
@@ -267,6 +295,7 @@ export class RunBatchSchedulingService {
             ? [...validated.artifactPatterns]
             : [...defaultCaseSuiteExecutionPolicy.artifactPatterns]
           : [],
+        retryConcurrencyRules: [],
       },
       adapter: {
         enabled: validated.adapter.enabled,
@@ -362,7 +391,18 @@ export class RunBatchSchedulingService {
     if (snapshot.queuedRuns.length > 0) {
       // 批次策略的并发上限按在途（assigned+running）run 数扣减；assignedRuns 已包含 running。
       const suiteMaximumAssignments = snapshot.batch.policy
-        ? Math.max(0, snapshot.batch.policy.concurrency - snapshot.batch.assignedRuns)
+        ? Math.max(
+            0,
+            retryConcurrencyForRound(
+              snapshot.batch.policy.concurrency,
+              snapshot.batch.policy.retryConcurrencyRules ?? [],
+              snapshot.retryContext ?? {
+                executionRound: snapshot.batch.currentRound,
+                previousRoundPassRate: null,
+                remainingRuns: snapshot.batch.queuedRuns + snapshot.batch.assignedRuns,
+              },
+            ) - snapshot.batch.assignedRuns,
+          )
         : undefined;
       const projectMaximumAssignments = Math.max(
         0,

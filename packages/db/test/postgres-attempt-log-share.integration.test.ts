@@ -30,7 +30,7 @@ async function createHarness(): Promise<AttemptLogShareHarness> {
        (id, credential_hash, name, disabled, draining, os, architecture, agent_version,
         protocol_version, labels_json, capabilities_json, max_concurrency, busy_slots,
         last_seen_at, created_at, updated_at)
-     VALUES ($1, 'hash', 'Runner One', FALSE, FALSE, 'linux', 'amd64', '0.4.0',
+     VALUES ($1, $1, 'Runner One', FALSE, FALSE, 'linux', 'amd64', '0.4.0',
              1, '{}', '[]', 2, 0, '2026-08-17T00:00:00.000Z',
              '2026-08-17T00:00:00.000Z', '2026-08-17T00:00:00.000Z')`,
     [runnerId],

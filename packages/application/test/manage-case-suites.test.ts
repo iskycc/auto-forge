@@ -7,6 +7,7 @@ import type {
   CaseCatalogRepository,
   CaseSuiteRepository,
   ProjectStructureRepository,
+  SecretCipherPort,
 } from "../src/ports";
 
 const timestamp = "2026-08-09T00:00:00.000Z";
@@ -72,6 +73,60 @@ describe("case suite update and copy", () => {
         },
       }),
     );
+  });
+
+  it("encrypts Jenkins credentials outside the public task policy", async () => {
+    const suites = suiteRepositoryFake();
+    const cipher = {
+      available: true,
+      encrypt: vi.fn().mockReturnValue("encrypted-api-key"),
+      decrypt: vi.fn(),
+    } as SecretCipherPort;
+    const service = new CaseSuiteService(
+      suites,
+      {} as CaseCatalogRepository,
+      projectStructuresFake(),
+      { now: () => new Date(timestamp) },
+      { next: () => "generated-id" },
+      cipher,
+    );
+
+    await service.update("suite-1", {
+      policy: {
+        retryMode: "round",
+        retryLimit: 2,
+        roundRecoveryRules: [
+          {
+            id: "recovery-1",
+            afterRound: 1,
+            jenkinsJobUrl: "https://jenkins.internal/job/reset",
+            waitMinutes: 5,
+            apiKey: "jenkins-user:api-token",
+          },
+        ],
+      },
+      expectedRevision: 2,
+    });
+
+    expect(cipher.encrypt).toHaveBeenCalledWith(
+      "jenkins-user:api-token",
+      "case-suite-round-recovery:suite-1:recovery-1",
+    );
+    expect(suites.updateSuite).toHaveBeenCalledWith(
+      expect.objectContaining({
+        policy: expect.objectContaining({
+          roundRecoveryRules: [
+            expect.objectContaining({
+              id: "recovery-1",
+              apiKeyConfigured: true,
+              jenkinsJobUrl: "https://jenkins.internal/job/reset/",
+            }),
+          ],
+        }),
+        roundRecoveryCredentialUpserts: { "recovery-1": "encrypted-api-key" },
+      }),
+    );
+    expect(JSON.stringify(suites.updateSuite.mock.calls)).not.toContain("api-token");
   });
 
   it("rejects stale revisions before touching the repository", async () => {
@@ -280,6 +335,7 @@ function suiteRepositoryFake() {
     copySuite: vi.fn().mockResolvedValue(suite),
     addCases: vi.fn().mockResolvedValue(suite),
     removeCases: vi.fn().mockResolvedValue(suite),
+    getRoundRecoveryCredentials: vi.fn().mockResolvedValue({}),
   } as unknown as CaseSuiteRepository & {
     create: ReturnType<typeof vi.fn>;
     getSummary: ReturnType<typeof vi.fn>;

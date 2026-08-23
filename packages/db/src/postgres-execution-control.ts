@@ -936,6 +936,12 @@ export class PostgresExecutionControlRepository implements ExecutionControlRepos
           throw new DomainError("RUN_BATCH_VERSION_CONFLICT", "执行批次已被并发修改。");
         }
       }
+      await client.query(
+        `UPDATE run_batch_round_recoveries
+         SET status = 'cancelled', lease_owner = NULL, lease_expires_at = NULL, updated_at = $1
+         WHERE batch_id = $2 AND status IN ('idle','pending','polling','waiting')`,
+        [input.requestedAt, input.batchId],
+      );
       const changed = await terminateWaitingRuns(
         client,
         input.batchId,
@@ -1726,6 +1732,22 @@ async function advanceRoundIfIdle(
   );
   const nextRoundValue = nextRound.rows[0]?.value;
   if (nextRoundValue === null || nextRoundValue === undefined) return;
+  const recovery = await client.query<{ status: string }>(
+    `SELECT status FROM run_batch_round_recoveries
+     WHERE batch_id = $1 AND after_round = $2`,
+    [batchId, nextRoundValue - 1],
+  );
+  const recoveryStatus = recovery.rows[0]?.status;
+  if (recoveryStatus === "idle") {
+    await client.query(
+      `UPDATE run_batch_round_recoveries
+       SET status = 'pending', available_at = $1, updated_at = $1
+       WHERE batch_id = $2 AND after_round = $3 AND status = 'idle'`,
+      [updatedAt, batchId, nextRoundValue - 1],
+    );
+    return;
+  }
+  if (recoveryStatus && recoveryStatus !== "succeeded") return;
   await client.query(
     `UPDATE execution_runs SET held_round = 0, updated_at = $1
      WHERE batch_id = $2 AND status = 'queued' AND held_round <= $3`,

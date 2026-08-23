@@ -16,7 +16,7 @@ import {
   type CaseSuiteDetails,
   type TestMethod,
 } from "@autoforge/domain";
-import { and, asc, count, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, inArray, notInArray, sql } from "drizzle-orm";
 
 import type { SqliteDatabaseHandle } from "./database";
 import {
@@ -27,6 +27,7 @@ import {
 import {
   caseDefinitions,
   caseSuiteItems,
+  caseSuiteRoundRecoveryCredentials,
   caseSuites,
   caseSuiteVersions,
   testMethods,
@@ -251,6 +252,26 @@ export class SqliteCaseSuiteRepository implements CaseSuiteRepository {
     return { ...toSuite(suiteRow, items.length), items };
   }
 
+  async getRoundRecoveryCredentials(
+    suiteId: string,
+    ruleIds: readonly string[],
+  ): Promise<Record<string, string>> {
+    if (ruleIds.length === 0) return {};
+    const rows = batchesOf(ruleIds, RELATIONAL_ID_QUERY_BATCH_SIZE).flatMap((ids) =>
+      this.handle.db
+        .select()
+        .from(caseSuiteRoundRecoveryCredentials)
+        .where(
+          and(
+            eq(caseSuiteRoundRecoveryCredentials.suiteId, suiteId),
+            inArray(caseSuiteRoundRecoveryCredentials.ruleId, ids),
+          ),
+        )
+        .all(),
+    );
+    return Object.fromEntries(rows.map((row) => [row.ruleId, row.apiKeyCiphertext]));
+  }
+
   async addCases(input: {
     suiteId: string;
     items: Array<{ id: string; caseDefinitionId: string }>;
@@ -357,6 +378,35 @@ export class SqliteCaseSuiteRepository implements CaseSuiteRepository {
         )
         .run();
       if (result.changes !== 1) throwCaseSuiteConflict(this.handle, input.suiteId);
+      for (const [ruleId, apiKeyCiphertext] of Object.entries(
+        input.roundRecoveryCredentialUpserts ?? {},
+      )) {
+        this.handle.db
+          .insert(caseSuiteRoundRecoveryCredentials)
+          .values({ suiteId: input.suiteId, ruleId, apiKeyCiphertext, updatedAt: input.updatedAt })
+          .onConflictDoUpdate({
+            target: [
+              caseSuiteRoundRecoveryCredentials.suiteId,
+              caseSuiteRoundRecoveryCredentials.ruleId,
+            ],
+            set: { apiKeyCiphertext, updatedAt: input.updatedAt },
+          })
+          .run();
+      }
+      if (input.policy) {
+        const activeRuleIds = input.policy.roundRecoveryRules.map((rule) => rule.id);
+        this.handle.db
+          .delete(caseSuiteRoundRecoveryCredentials)
+          .where(
+            activeRuleIds.length === 0
+              ? eq(caseSuiteRoundRecoveryCredentials.suiteId, input.suiteId)
+              : and(
+                  eq(caseSuiteRoundRecoveryCredentials.suiteId, input.suiteId),
+                  notInArray(caseSuiteRoundRecoveryCredentials.ruleId, activeRuleIds),
+                ),
+          )
+          .run();
+      }
       this.insertVersionSnapshot(input.suiteId, input.versionId, input.changeReason, input);
     })();
     const suite = await this.getSummary(input.suiteId);
@@ -392,6 +442,14 @@ export class SqliteCaseSuiteRepository implements CaseSuiteRepository {
             caseDefinitionId: item.caseDefinitionId,
             addedAt: input.createdAt,
           })
+          .run();
+      }
+      for (const [ruleId, apiKeyCiphertext] of Object.entries(
+        input.roundRecoveryCredentials ?? {},
+      )) {
+        this.handle.db
+          .insert(caseSuiteRoundRecoveryCredentials)
+          .values({ suiteId: input.id, ruleId, apiKeyCiphertext, updatedAt: input.createdAt })
           .run();
       }
       this.insertVersionSnapshot(input.id, input.versionId, "suite.copy", {
