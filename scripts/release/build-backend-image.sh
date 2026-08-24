@@ -35,7 +35,6 @@ mkdir -p "${output_directory}"
 
 readonly image_reference="autoforge/backend:${version}-${variant}"
 readonly docker_archive="${output_directory}/autoforge-backend-${version}-${variant}.docker.tar"
-readonly compressed_archive="${docker_archive}.zst"
 readonly build_date="$(release_created_at)"
 readonly revision="$(release_revision)"
 
@@ -63,11 +62,4 @@ docker buildx build \
   --tag "${image_reference}" \
   "${repository_root}"
 
-# Release latency matters more than the small size gain from zstd level 19.
-zstd --threads=0 -10 -f "${docker_archive}" -o "${compressed_archive}"
-
-if [[ "${AUTOFORGE_KEEP_DOCKER_TAR:-0}" != "1" ]]; then
-  rm -- "${docker_archive}"
-fi
-
-printf '%s\n' "${compressed_archive}"
+printf '%s\n' "${docker_archive}"

@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 
 import { apiErrorResponse } from "@/lib/api-response";
 import { authenticateRequest } from "@/lib/auth";
+import { readPermanentShareToken } from "@/lib/permanent-share-token";
 import { buildRunProgress } from "@/lib/run-progress";
 import { verifyRunProgressToken } from "@/lib/run-progress-token";
 import { getPlatformServices } from "@/lib/services";
@@ -16,7 +17,17 @@ export async function GET(request: Request, context: Context): Promise<NextRespo
     const accessToken = new URL(request.url).searchParams.get("access_token");
     let batch;
     if (accessToken) {
-      if (!verifyRunProgressToken(services.config.masterKey, accessToken, batchId)) {
+      const validTemporaryToken = verifyRunProgressToken(
+        services.config.masterKey,
+        accessToken,
+        batchId,
+      );
+      const permanentBatchId = readPermanentShareToken(
+        services.config.masterKey,
+        accessToken,
+        "run_batch",
+      );
+      if (!validTemporaryToken && permanentBatchId !== batchId) {
         throw new DomainError("RUN_PROGRESS_TOKEN_INVALID", "执行进度访问令牌无效或已过期。");
       }
       batch = await services.runBatches.get(batchId);

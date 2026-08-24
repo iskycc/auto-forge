@@ -51,7 +51,7 @@ export type RetryConcurrencyRule = {
   concurrency: number;
 };
 
-/** 在 afterRound 完成后、释放下一轮前执行一次 Jenkins Rebuild。 */
+/** 在 afterRound 完成后参与同轮屏障的一次 Jenkins Rebuild。 */
 export type RoundRecoveryRule = {
   id: string;
   afterRound: number;

@@ -285,17 +285,6 @@ export const caseSuiteExecutionPolicySchema = z
         context.addIssue({ code: "custom", path: [field], message: "规则 ID 不能重复。" });
       }
     }
-    const recoveryRules = policy.roundRecoveryRules;
-    if (
-      recoveryRules &&
-      new Set(recoveryRules.map((rule) => rule.afterRound)).size !== recoveryRules.length
-    ) {
-      context.addIssue({
-        code: "custom",
-        path: ["roundRecoveryRules"],
-        message: "同一轮次边界只能配置一次环境恢复。",
-      });
-    }
   });
 
 export const updateCaseSuiteInputSchema = z.object({

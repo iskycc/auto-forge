@@ -17,14 +17,14 @@ AutoForge 是一个面向自动化测试场景的用例工厂，用于统一管�
 - Next.js 16.3.0 App Router 主平台，采用已选方案 E 的 Apple-like Bento 工作台。
 - 未登录首页提供实时公开统计、平台能力介绍和初始化/登录入口；大盘按可见性有界轮询聚合数据，不公开项目、用户或秘密详情。
 - 主平台首次启动自动生成 Lite 持久配置和不同用途的随机秘密；平台设置页管理模式、监听、Full 基础设施、容量和调度阈值，不读取应用配置环境变量。
-- 项目下使用可展开的“版本 → 多个测试阶段”树组织新用例；导入必须选择该层级，旧的未归属用例不进入新用例库。用例按 Java 包路径展示为可展开目录树，详情页集中展示执行历史、分析历史、源码、方法与版本；指定来源/目标阶段可跨版本继承用例，目标定义和版本历史独立，底层 JAR 对象安全共享。
+- 项目下使用可展开的“版本 → 多个测试阶段”树组织新用例；导入必须选择该层级，旧的未归属用例不进入新用例库。用例按 Java 包路径展示为可展开目录树，详情页集中展示执行历史、分析历史、源码、方法与版本，并可按 `case.read` 权限签发永久匿名只读详情链接；公开页不包含源码、执行控制或项目其他数据。指定来源/目标阶段可跨版本继承用例，目标定义和版本历史独立，底层 JAR 对象安全共享。
 - 用例管理新增独立“DDT 管理”Tab：动态字段、CaseID/srNum、普通 `data` 表格与 `step1…stepN` 用户旅程、XLSX/XLS/XLSB/CSV/ODS/ZIP 导入、中文文件名与编码、逐文件预检、覆盖/跳过/报错策略、异步进度/取消/恢复、来源与任务 CaseID 导出、字段模板、永久历史、回收站、批量编辑/导出和项目隔离 API 均已接入 Lite/Full 共享核心。重复的用户、LDAP、审计、备份和诊断能力直接复用主平台，不维护第二套事实。详见 [DDT 管理与融合说明](./docs/architecture/ddt-management.md)。
 - TestNG JAR 上传、静态检查、按版本/阶段导入和层级内 SHA-256 去重；同一内容寻址对象可安全共享给不同版本/阶段。
 - `CaseDefinition`、不可变 `CaseVersion`、测试方法契约及应用用例。
 - Drizzle ORM + SQLite/PostgreSQL 持久化，两种方言使用独立版本化迁移；SQLite 启用外键、WAL 与 busy timeout。
 - Lite 本地对象存储和 Full MinIO 对象存储：JAR 按内容摘要保存，页面只浏览 AutoForge 纳管的对象空间。
 - JAR 来源列表、持久化扫描预览和唯一权威全量来源设置；同一项目版本/测试阶段重导不同 JAR 时，完整类名相同的用例沿用稳定定义 ID、保留人工元数据和任务关系，替换可执行方法并立即追加指向新来源的不可变版本。来源间目录对比继续展示新增/变化/移除/冲突并确认权威来源，消失用例按保留语义不自动禁用，排队批次继续按已固化版本读取原 JAR。支持归档/恢复与守卫式删除，共享对象只有在最后一个来源删除后才异步回收。生命周期语义见[用例来源生命周期](./docs/architecture/case-sources.md)。
-- 用例文件夹支持递归整选、取消和半选状态；选择目标任务后可反向筛出尚未加入的用例，再批量加入。用例任务创建、任务详情以及任务内用例树形新增/批量删除均使用有界分页渲染。任务不再有 500 个用例的产品上限，Lite/Full 均以分批 SQL 和调度窗口支持 10 万级任务及执行批次；每个任务强制绑定一个有效项目版本，成员只能来自该版本，任务列表、快捷执行、执行记录、洞察和计划视图均跟随顶栏当前版本并显示版本友好名称。任务支持重命名、描述、复制、归档、启停、版本/变更快照与修订号并发冲突保护，执行策略覆盖 Runner/Runner Group、项目版本、Adapter 环境地址、优先级、基础并发度、按轮次/上轮通过率/本轮剩余量动态调整的重跑并发、轮次间 Jenkins 环境恢复、重试、排队/领取/上传恢复时限、Runner 标签与产物规则并在批次创建前逐项预检。单用例执行时限只读取平台全局配置。
+- 用例文件夹支持递归整选、取消和半选状态；选择目标任务后可反向筛出尚未加入的用例，再批量加入。用例任务创建、任务详情以及任务内用例树形新增/批量删除均使用有界分页渲染。任务不再有 500 个用例的产品上限，Lite/Full 均以分批 SQL 和调度窗口支持 10 万级任务及执行批次；每个任务强制绑定一个有效项目版本，成员只能来自该版本，任务列表、快捷执行、执行记录、洞察和计划视图均跟随顶栏当前版本并显示版本友好名称。任务支持重命名、描述、复制、归档、启停、版本/变更快照与修订号并发冲突保护，执行策略覆盖 Runner/Runner Group、项目版本、Adapter 环境地址、优先级、基础并发度、按轮次/上轮通过率/本轮剩余量动态调整的重跑并发、同轮多 Jenkins 环境并行恢复屏障、重试、排队/领取/上传恢复时限、Runner 标签与产物规则并在批次创建前逐项预检。单用例执行时限只读取平台全局配置。
 - 项目级任务完成 Webhook 支持 GET 查询参数和 POST JSON 模板，可在独立“回调通知”页面管理并与多个任务绑定。Lite/Full 都先按终态事件幂等持久化通知快照，再以有界租约和退避重试发送；接收端失败不会改变任务执行结果，未配置或未绑定时不会产生任何出站请求。详细语义见 [Webhook 完成通知](./docs/architecture/webhook-notifications.md)。
 - 用例定义支持展示名、描述、标签与启停编辑，版本历史可查看来源、创建人与变更原因，并允许从旧版本恢复生成新版本而不覆盖历史。用例库支持按 `case.manage` 权限单删和批量删除；删除同步清理任务成员关系，但保留已经物化的执行与分析历史。
 - Runner Agent 注册、身份凭据落盘、周期心跳、在线/离线判定和执行机控制台；支持凭据轮换（旧凭据有明确失效窗口）、撤销、禁用、排空与注销，注销后活跃租约立即到期回收，撤销或注销后心跳、claim、上报与终端均被拒绝。
@@ -34,7 +34,7 @@ AutoForge 是一个面向自动化测试场景的用例工厂，用于统一管�
 - 顶栏提供全局项目切换，首页、用例、任务、记录、洞察、来源、审计和项目设置共享同一服务端校验上下文。任务快捷执行只提交 `suiteId` 并使用任务保存的完整配置；单用例快捷执行允许临时选择 Runner/Runner Group、重跑和 Adapter 环境地址，并默认启用 CoTest Adapter。任务与单用例均不提供手工参数覆盖；TestNG 发现参数只读固化。产品级执行环境与执行密文页面、API 和任务字段已退役，新批次不再接受这两类配置。
 - 批次执行前预检一次返回任务状态、参数、Runner capability/标签、项目版本 Java/TestNG 工具链、权威 JAR 对象和资源限制的逐项 blocker；正式创建复用相同规则，调度、claim 和下载仍执行权威复核。
 - 顶栏执行弹窗支持立即执行或最长七天、精确到秒的持久化倒计时。计划开始时间由服务端固化，Lite/Full 在到点前都不会分配用例，排队超时也从到点后开始；执行记录和详情会显示实时倒计时。
-- Jenkins Pipeline 插件提供 `autoforgeRun` 与 `autoforgePublishDependencies` 两个步骤：前者使用 API Key 启动任务，按服务端建议周期打印轮次/通过/失败与免登录进展链接，并在可配置总时限内等待批次终态；后者按项目版本替换依赖压缩包链接，不保存历史版本文件，拒绝时会显示服务端可操作错误。两个客户端固定使用 HTTP/1.1，兼容未配置 TLS 代理的 Lite 地址。两个 HPI、SBOM、校验和与发布清单随 Release 分发，并通过真实 Pipeline DSL E2E 与 HPI 包结构校验。完整流水线见 [`examples/jenkins/Jenkinsfile`](./examples/jenkins/Jenkinsfile)。
+- Jenkins Pipeline 插件提供 `autoforgeRun` 与 `autoforgePublishDependencies` 两个步骤：前者使用 API Key 启动任务，按服务端建议周期打印轮次/通过/失败与免登录进展链接，在可配置总时限内等待批次终态，并在完成后输出永久匿名结果链接 `resultUrl`；后者按项目版本替换依赖压缩包链接，不保存历史版本文件，拒绝时会显示服务端可操作错误。两个客户端固定使用 HTTP/1.1，兼容未配置 TLS 代理的 Lite 地址。两个 HPI、SBOM、校验和与发布清单随 Release 分发，并通过真实 Pipeline DSL E2E 与 HPI 包结构校验。完整流水线见 [`examples/jenkins/Jenkinsfile`](./examples/jenkins/Jenkinsfile)。
 - 本地账号首次管理员引导、scrypt 密码、本地/LDAP 登录、安全会话、锁定/解锁、密码恢复、六种内置角色和服务端 RBAC；自定义角色可创建、编辑、停用与删除（内置角色不可变，引用中角色与最后一位系统管理员受保护，权限变更全量审计并撤销相关会话）；项目支持创建、归档、成员角色分配与负责人转移。批次、日志、Attempt 时间线、产物下载和取消按权威项目过滤，跨项目 ID 猜测不会读取内容。
 - LDAP 的 LDAPS/StartTLS、私有 CA、多服务器、分页上限、即时建号、组角色映射、手动同步和离职停用；bind 密码使用主密钥加密，连接测试区分 DNS、TLS、超时、bind、Base DN、过滤器和读取权限故障。
 - 用户管理支持 URL 驱动的搜索、来源筛选和游标分页，以及本地账号创建、启停/解锁、密码重置和按用户撤销全部会话；LDAP 管理属性不提供本地编辑入口。
@@ -80,6 +80,7 @@ AutoForge 是一个面向自动化测试场景的用例工厂，用于统一管�
 | `GET`          | `/api/v1/case-definitions`                                | 游标分页查询用例，可使用 `query`、`cursor`、`limit`  |
 | `DELETE`       | `/api/v1/case-definitions`                                | 批量删除有管理权限的用例                             |
 | `DELETE`       | `/api/v1/case-definitions/{caseDefinitionId}`             | 删除单个有管理权限的用例                             |
+| `POST`         | `/api/v1/case-definitions/{caseDefinitionId}/share`       | 生成永久匿名用例详情只读链接                         |
 | `GET`          | `/api/v1/case-sources`                                    | 查询 JAR 来源及权威全量来源状态                      |
 | `GET`          | `/api/v1/case-sources/{sourceId}`                         | 读取已持久化的 JAR 扫描结果                          |
 | `PUT`          | `/api/v1/case-sources/{sourceId}/authoritative`           | 将一个 JAR 设为唯一权威全量来源                      |
@@ -111,7 +112,7 @@ AutoForge 是一个面向自动化测试场景的用例工厂，用于统一管�
 | `GET`          | `/api/v1/run-batches/{batchId}/progress`                  | API Key 或批次签名参数读取 Jenkins 进展摘要          |
 | `POST`         | `/api/v1/run-batches/{batchId}/terminate`                 | 终止批次调度，在途用例自然完成后关闭任务             |
 | `POST`         | `/api/v1/run-batches/{batchId}/cancel`                    | 兼容旧客户端的批次终止别名                           |
-| `POST`         | `/api/v1/jenkins/runs`                                    | API Key 按任务快照启动批次并返回进展链接             |
+| `POST`         | `/api/v1/jenkins/runs`                                    | API Key 启动批次并返回临时进展与永久结果链接         |
 | `POST`         | `/api/v1/jenkins/dependencies`                            | API Key 按项目版本替换依赖压缩包链接                 |
 | `POST`         | `/api/v1/runner-agents/{runnerId}/claims`                 | 认证长轮询并原子领取 assignment                      |
 | `POST`         | `/api/v1/runner-agents/{runnerId}/leases/{leaseId}/renew` | 续租并获取取消/排空指令                              |
@@ -497,7 +498,7 @@ Playwright 首次运行需要已有 Chromium。联网开发机可按 Playwright 
 
 仓库的 `Release` workflow 由 `vX.Y.Z` tag 触发，立即并行构建 `amd64`、`arm64`、`amd64-musl`、`arm64-musl` 后端镜像，制品完整、签名和清单生成成功后直接发布。标签源码质量检查按静态检查、单元/集成、构建、Full 与断网 Lite 分区并行执行；Release 成功公开后，独立 `Published Release acceptance` workflow 再并行验证签名资产、上一正式版本升级、迁移失败回滚、备份恢复、真实 Agent 和 LDAP。检查失败会保留明确状态，但不会阻塞、取消或撤回已经完成的发布。Release 还包含版本化 Lite/Full Compose 部署包、每个镜像和部署资产的 SPDX JSON SBOM、`SHA256SUMS`、机器可读清单和构建来源证明。
 
-后端标准版使用 Debian/glibc，musl 版使用 Alpine/musl；Agent 四个文件均为 `CGO_ENABLED=0` 的 Linux 静态二进制，其中 musl 后缀表示发布目标而不是动态链接 musl。正式 Release 发布 AutoForge 自身镜像，不重新分发 PostgreSQL、NATS、MinIO 或 Redis 镜像；xterm.js、WebSocket 和 PTY 库已经固定版本并打入 AutoForge 发布物，不产生运行时下载。
+后端标准版使用 Debian/glibc，musl 版使用 Alpine/musl；Agent 四个文件均为 `CGO_ENABLED=0` 的 Linux 静态二进制，其中 musl 后缀表示发布目标而不是动态链接 musl。正式 Release 的离线镜像直接使用 Docker 原生 `.docker.tar`，可通过 `docker load --input` 导入，不要求目标机安装 zstd。Release 发布 AutoForge 自身镜像，不重新分发 PostgreSQL、NATS、MinIO 或 Redis 镜像；xterm.js、WebSocket 和 PTY 库已经固定版本并打入 AutoForge 发布物，不产生运行时下载。
 
 具体资产命名、tag 流程、校验、离线导入和本地构建命令见 [Release 与离线交付](./docs/operations/releases.md)。
 

@@ -72,6 +72,8 @@ final class AutoForgeRunClient {
         JSONObject started = post("api/v1/jenkins/runs", request);
         String progressApiUrl = requiredString(started, "progressApiUrl");
         String progressUrl = requiredString(started, "progressUrl");
+        String resultUrl = optionalString(started, "resultUrl", progressUrl);
+        boolean permanentResultAvailable = started.containsKey("resultUrl");
         int pollIntervalSeconds = positiveInt(
             started, "pollIntervalSeconds", DEFAULT_POLL_INTERVAL_SECONDS);
         long serverTimeoutSeconds = positiveLong(
@@ -90,12 +92,16 @@ final class AutoForgeRunClient {
                 String status = requiredString(progress, "status");
                 String statusLabel = requiredString(progress, "statusLabel");
                 int finalFailed = nonNegativeInt(progress, "finalFailed");
+                logger.printf(
+                    "AutoForge: task completed | %s %s%n",
+                    permanentResultAvailable ? "permanent result" : "result",
+                    resultUrl);
                 if (!"succeeded".equals(status)) {
                     throw new AbortException(
                         "AutoForge task ended with status " + status + " (" + statusLabel
-                            + ", final failed " + finalFailed + "): " + progressUrl);
+                            + ", final failed " + finalFailed + "): " + resultUrl);
                 }
-                return result(progress, progressUrl);
+                return result(progress, progressUrl, resultUrl);
             }
             sleepBeforeNextPoll(deadlineNanos, effectiveTimeoutSeconds, pollIntervalSeconds, progressUrl);
         }
@@ -116,7 +122,7 @@ final class AutoForgeRunClient {
             progressUrl);
     }
 
-    private Map<String, Object> result(JSONObject progress, String progressUrl) {
+    private Map<String, Object> result(JSONObject progress, String progressUrl, String resultUrl) {
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("batchId", requiredString(progress, "batchId"));
         result.put("status", requiredString(progress, "status"));
@@ -125,6 +131,7 @@ final class AutoForgeRunClient {
         result.put("totalPassed", progress.getInt("totalPassed"));
         result.put("finalFailed", progress.getInt("finalFailed"));
         result.put("progressUrl", progressUrl);
+        result.put("resultUrl", resultUrl);
         return result;
     }
 
@@ -174,6 +181,11 @@ final class AutoForgeRunClient {
         String value = json.optString(key, "");
         if (value.isBlank()) throw new IllegalArgumentException("AutoForge response is missing " + key);
         return value;
+    }
+
+    private static String optionalString(JSONObject json, String key, String fallback) {
+        String value = json.optString(key, "");
+        return value.isBlank() ? fallback : value;
     }
 
     private static int positiveInt(JSONObject json, String key, int fallback) {

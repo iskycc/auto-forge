@@ -66,7 +66,7 @@ describe.skipIf(!connectionString)("PostgreSQL round recovery", () => {
     }
   });
 
-  it("leases and resumes a held retry round with the same semantics as Lite", async () => {
+  it("releases a held retry round only after every parallel recovery is ready", async () => {
     const handle = createPostgresDatabase({
       connectionString: connectionString!,
       migrationsFolder: resolve(import.meta.dirname, "../drizzle/postgresql"),
@@ -76,6 +76,7 @@ describe.skipIf(!connectionString)("PostgreSQL round recovery", () => {
     const batchId = `recovery-batch-${suffix}`;
     const runId = `recovery-run-${suffix}`;
     const ruleId = `recovery-rule-${suffix}`;
+    const secondRuleId = `recovery-rule-second-${suffix}`;
     try {
       await handle.pool.query(
         `INSERT INTO run_batches
@@ -101,8 +102,10 @@ describe.skipIf(!connectionString)("PostgreSQL round recovery", () => {
          (batch_id, rule_id, after_round, next_round, jenkins_job_url,
           api_key_ciphertext, wait_minutes, status, available_at, created_at, updated_at)
          VALUES ($1, $2, 1, 2, 'https://jenkins.internal/job/reset/',
-          'encrypted', 0, 'waiting', $3, $3, $3)`,
-        [batchId, ruleId, createdAt],
+                  'encrypted', 0, 'waiting', $4, $4, $4),
+                ($1, $3, 1, 2, 'https://jenkins.internal/job/reset-second/',
+                  'encrypted-second', 10, 'waiting', '2026-08-23T00:10:00.000Z', $4, $4)`,
+        [batchId, ruleId, secondRuleId, createdAt],
       );
       const repository = new PostgresRoundRecoveryRepository(handle);
 
@@ -114,13 +117,42 @@ describe.skipIf(!connectionString)("PostgreSQL round recovery", () => {
       });
       expect(claim).toMatchObject({ batchId, ruleId, status: "waiting", nextRound: 2 });
       await expect(
-        repository.resume({
+        repository.completeWaitingStep({
           batchId,
           ruleId,
           workerId: "full-worker",
           updatedAt: createdAt,
         }),
-      ).resolves.toBe(true);
+      ).resolves.toEqual({ outcome: "step_completed", remainingSteps: 1 });
+
+      await expect(
+        handle.pool.query<{ current_round: number }>(
+          "SELECT current_round FROM run_batches WHERE id = $1",
+          [batchId],
+        ),
+      ).resolves.toMatchObject({ rows: [{ current_round: 1 }] });
+      await expect(
+        handle.pool.query<{ held_round: number }>(
+          "SELECT held_round FROM execution_runs WHERE id = $1",
+          [runId],
+        ),
+      ).resolves.toMatchObject({ rows: [{ held_round: 2 }] });
+
+      const [lastClaim] = await repository.claimDue({
+        workerId: "full-worker-2",
+        now: "2026-08-23T00:10:00.000Z",
+        leaseExpiresAt: "2026-08-23T00:10:30.000Z",
+        limit: 10,
+      });
+      expect(lastClaim).toMatchObject({ batchId, ruleId: secondRuleId, status: "waiting" });
+      await expect(
+        repository.completeWaitingStep({
+          batchId,
+          ruleId: secondRuleId,
+          workerId: "full-worker-2",
+          updatedAt: "2026-08-23T00:10:00.000Z",
+        }),
+      ).resolves.toEqual({ outcome: "round_released" });
 
       await expect(
         handle.pool.query<{ current_round: number }>(

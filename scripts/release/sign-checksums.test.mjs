@@ -19,7 +19,7 @@ test("signs and verifies a release checksum list with Ed25519", async () => {
   try {
     await execute("openssl", ["genpkey", "-algorithm", "ED25519", "-out", privateKey]);
     await execute("openssl", ["pkey", "-in", privateKey, "-pubout", "-out", publicKey]);
-    await writeFile(checksums, `${"a".repeat(64)}  artifact.tar.zst\n`);
+    await writeFile(checksums, `${"a".repeat(64)}  artifact.tar\n`);
 
     await execute(
       "bash",
@@ -39,7 +39,7 @@ test("signs and verifies a release checksum list with Ed25519", async () => {
       checksums,
     ]);
 
-    await writeFile(checksums, `${"b".repeat(64)}  artifact.tar.zst\n`);
+    await writeFile(checksums, `${"b".repeat(64)}  artifact.tar\n`);
     await assert.rejects(
       execute("openssl", [
         "pkeyutl",

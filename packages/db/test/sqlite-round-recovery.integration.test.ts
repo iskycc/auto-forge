@@ -107,13 +107,13 @@ describe("SqliteRoundRecoveryRepository", () => {
     });
     expect(resumeClaim?.status).toBe("waiting");
     await expect(
-      repository.resume({
+      repository.completeWaitingStep({
         batchId: "batch-1",
         ruleId: "recovery-1",
         workerId: "worker-2",
         updatedAt: "2026-08-23T00:05:05.000Z",
       }),
-    ).resolves.toBe(true);
+    ).resolves.toEqual({ outcome: "round_released" });
 
     expect(
       handle.client
@@ -124,6 +124,83 @@ describe("SqliteRoundRecoveryRepository", () => {
       handle.client
         .prepare("SELECT held_round AS held FROM execution_runs WHERE id = ?")
         .get("run-1"),
+    ).toEqual({ held: 0 });
+    handle.close();
+  });
+
+  it("keeps the next round held until every parallel recovery wait has elapsed", async () => {
+    const handle = await database();
+    seedRecovery(handle, "batch-parallel", "waiting");
+    handle.client
+      .prepare(
+        `INSERT INTO run_batch_round_recoveries
+         (batch_id, rule_id, after_round, next_round, jenkins_job_url, api_key_ciphertext,
+          wait_minutes, status, available_at, created_at, updated_at)
+         VALUES ('batch-parallel', 'recovery-2', 1, 2,
+          'https://jenkins.internal/job/reset-second/', 'encrypted-second', 10, 'waiting',
+          '2026-08-23T00:10:00.000Z', ?, ?)`,
+      )
+      .run(createdAt, createdAt);
+    const repository = new SqliteRoundRecoveryRepository(handle);
+
+    const [firstClaim] = await repository.claimDue({
+      workerId: "worker-1",
+      now: createdAt,
+      leaseExpiresAt: "2026-08-23T00:00:30.000Z",
+      limit: 10,
+    });
+    expect(firstClaim?.ruleId).toBe("recovery-1");
+    await expect(
+      repository.completeWaitingStep({
+        batchId: "batch-parallel",
+        ruleId: "recovery-1",
+        workerId: "worker-1",
+        updatedAt: createdAt,
+      }),
+    ).resolves.toEqual({ outcome: "step_completed", remainingSteps: 1 });
+    expect(
+      handle.client
+        .prepare("SELECT current_round AS round FROM run_batches WHERE id = ?")
+        .get("batch-parallel"),
+    ).toEqual({ round: 1 });
+    expect(
+      handle.client
+        .prepare("SELECT held_round AS held FROM execution_runs WHERE id = 'run-1'")
+        .get(),
+    ).toEqual({ held: 2 });
+
+    await expect(
+      repository.claimDue({
+        workerId: "worker-2",
+        now: "2026-08-23T00:09:59.999Z",
+        leaseExpiresAt: "2026-08-23T00:10:29.999Z",
+        limit: 10,
+      }),
+    ).resolves.toEqual([]);
+    const [lastClaim] = await repository.claimDue({
+      workerId: "worker-2",
+      now: "2026-08-23T00:10:00.000Z",
+      leaseExpiresAt: "2026-08-23T00:10:30.000Z",
+      limit: 10,
+    });
+    expect(lastClaim?.ruleId).toBe("recovery-2");
+    await expect(
+      repository.completeWaitingStep({
+        batchId: "batch-parallel",
+        ruleId: "recovery-2",
+        workerId: "worker-2",
+        updatedAt: "2026-08-23T00:10:00.000Z",
+      }),
+    ).resolves.toEqual({ outcome: "round_released" });
+    expect(
+      handle.client
+        .prepare("SELECT current_round AS round FROM run_batches WHERE id = ?")
+        .get("batch-parallel"),
+    ).toEqual({ round: 2 });
+    expect(
+      handle.client
+        .prepare("SELECT held_round AS held FROM execution_runs WHERE id = 'run-1'")
+        .get(),
     ).toEqual({ held: 0 });
     handle.close();
   });

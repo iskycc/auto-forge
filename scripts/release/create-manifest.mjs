@@ -37,11 +37,7 @@ async function artifact(directory, name) {
 export function expectedArtifactNames(version) {
   const platformArtifacts = releaseVariants.flatMap((variant) => {
     const backendName = `autoforge-backend-${version}-${variant}`;
-    return [
-      `${backendName}.docker.tar.zst`,
-      `${backendName}.image.json`,
-      `${backendName}.spdx.json`,
-    ];
+    return [`${backendName}.docker.tar`, `${backendName}.image.json`, `${backendName}.spdx.json`];
   });
   return [
     ...platformArtifacts,

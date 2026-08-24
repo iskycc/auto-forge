@@ -66,6 +66,7 @@ pipeline {
               timeoutSeconds: params.AUTOFORGE_TIMEOUT_SECONDS as Long
             )
             currentBuild.description = "AutoForge ${result.batchId}: ${result.totalPassed}/${result.totalCases} passed"
+            echo "AutoForge permanent result: ${result.resultUrl}"
           }
         }
       }

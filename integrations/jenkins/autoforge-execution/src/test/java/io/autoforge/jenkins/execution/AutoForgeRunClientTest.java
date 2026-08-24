@@ -43,9 +43,10 @@ class AutoForgeRunClientTest {
             protocol.set(exchange.getProtocol());
             respond(exchange, 201, """
                 {"batchId":"batch-1","progressUrl":"%sprogress/batch-1?access_token=read-only",
+                 "resultUrl":"%sshare/run/permanent-result",
                  "progressApiUrl":"%sapi/v1/run-batches/batch-1/progress?access_token=read-only",
                  "pollIntervalSeconds":7,"completionTimeoutSeconds":120}
-                """.formatted(baseUrl, baseUrl));
+                """.formatted(baseUrl, baseUrl, baseUrl));
         });
         server.createContext("/api/v1/run-batches/batch-1/progress", exchange -> {
             progressAuthorization.set(exchange.getRequestHeaders().getFirst("authorization"));
@@ -75,10 +76,12 @@ class AutoForgeRunClientTest {
         assertEquals("batch-1", result.get("batchId"));
         assertEquals("succeeded", result.get("status"));
         assertEquals(1, result.get("finalFailed"));
+        assertEquals(baseUrl + "share/run/permanent-result", result.get("resultUrl"));
         String log = output.toString(StandardCharsets.UTF_8);
         assertTrue(log.contains("第 2/2 轮"));
         assertTrue(log.contains("累计通过 9/10"));
         assertTrue(log.contains("access_token=read-only"));
+        assertTrue(log.contains("task completed | permanent result " + baseUrl + "share/run/permanent-result"));
     }
 
     @Test
@@ -115,9 +118,10 @@ class AutoForgeRunClientTest {
         String baseUrl = "http://127.0.0.1:" + server.getAddress().getPort() + "/";
         server.createContext("/api/v1/jenkins/runs", exchange -> respond(exchange, 201, """
             {"batchId":"batch-failed","progressUrl":"%sprogress/batch-failed?access_token=read-only",
+             "resultUrl":"%sshare/run/permanent-failed",
              "progressApiUrl":"%sapi/v1/run-batches/batch-failed/progress?access_token=read-only",
              "pollIntervalSeconds":30,"completionTimeoutSeconds":120}
-            """.formatted(baseUrl, baseUrl)));
+            """.formatted(baseUrl, baseUrl, baseUrl)));
         server.createContext("/api/v1/run-batches/batch-failed/progress", exchange ->
             respond(exchange, 200, progress(false, "failed", "Finished", 0)));
         server.start();
@@ -134,6 +138,7 @@ class AutoForgeRunClientTest {
 
         assertTrue(failure.getMessage().contains("status failed"));
         assertTrue(failure.getMessage().contains("Finished"));
+        assertTrue(failure.getMessage().contains("share/run/permanent-failed"));
     }
 
     private static AutoForgeRunClient client(

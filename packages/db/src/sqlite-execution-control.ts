@@ -1612,13 +1612,20 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
       )
       .get(batchId) as { value: number | null };
     if (nextRound.value === null) return;
-    const recovery = this.handle.client
+    const recoveryBarrier = this.handle.client
       .prepare(
-        `SELECT status FROM run_batch_round_recoveries
+        `SELECT COUNT(*) AS total_steps,
+                SUM(CASE WHEN status = 'idle' THEN 1 ELSE 0 END) AS idle_steps,
+                SUM(CASE WHEN status = 'succeeded' THEN 1 ELSE 0 END) AS succeeded_steps
+         FROM run_batch_round_recoveries
          WHERE batch_id = ? AND after_round = ?`,
       )
-      .get(batchId, nextRound.value - 1) as { status: string } | undefined;
-    if (recovery?.status === "idle") {
+      .get(batchId, nextRound.value - 1) as {
+      total_steps: number;
+      idle_steps: number | null;
+      succeeded_steps: number | null;
+    };
+    if (recoveryBarrier.total_steps > 0 && (recoveryBarrier.idle_steps ?? 0) > 0) {
       this.handle.client
         .prepare(
           `UPDATE run_batch_round_recoveries
@@ -1628,7 +1635,12 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
         .run(updatedAt, updatedAt, batchId, nextRound.value - 1);
       return;
     }
-    if (recovery && recovery.status !== "succeeded") return;
+    if (
+      recoveryBarrier.total_steps > 0 &&
+      (recoveryBarrier.succeeded_steps ?? 0) < recoveryBarrier.total_steps
+    ) {
+      return;
+    }
     this.handle.client
       .prepare(
         `UPDATE execution_runs SET held_round = 0, updated_at = ?

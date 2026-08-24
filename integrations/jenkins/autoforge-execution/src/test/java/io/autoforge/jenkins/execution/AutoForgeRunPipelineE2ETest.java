@@ -28,9 +28,10 @@ class AutoForgeRunPipelineE2ETest {
         String baseUrl = "http://127.0.0.1:" + server.getAddress().getPort() + "/";
         server.createContext("/api/v1/jenkins/runs", exchange -> respond(exchange, 201, """
             {"batchId":"batch-pipeline-e2e","progressUrl":"%sprogress/batch-pipeline-e2e?access_token=read-only",
+             "resultUrl":"%sshare/run/permanent-pipeline-e2e",
              "progressApiUrl":"%sapi/v1/run-batches/batch-pipeline-e2e/progress?access_token=read-only",
              "pollIntervalSeconds":30,"completionTimeoutSeconds":604800}
-            """.formatted(baseUrl, baseUrl)));
+            """.formatted(baseUrl, baseUrl, baseUrl)));
         server.createContext("/api/v1/run-batches/batch-pipeline-e2e/progress", exchange ->
             respond(exchange, 200, """
                 {"batchId":"batch-pipeline-e2e","status":"succeeded","statusLabel":"执行完成",
@@ -50,6 +51,8 @@ class AutoForgeRunPipelineE2ETest {
         jenkins.assertLogContains("AutoForge: task started", run);
         jenkins.assertLogContains("累计通过 3/3", run);
         jenkins.assertLogContains("batch-pipeline-e2e", run);
+        jenkins.assertLogContains("task completed | permanent result", run);
+        jenkins.assertLogContains("share/run/permanent-pipeline-e2e", run);
     }
 
     private static void respond(HttpExchange exchange, int status, String body) throws IOException {

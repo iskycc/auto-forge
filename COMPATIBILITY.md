@@ -51,6 +51,14 @@ Control plane `1.1.1` keeps the `1.1.0` database schema and Runner Protocol v1. 
 assignment claims after disabled/draining state is cleared. Jenkins HPI `1.1.1` forces HTTP/1.1,
 honors server polling guidance and adds a bounded wait timeout; existing Pipeline calls remain valid.
 
+Control plane `1.1.5` adds SQLite migration `0043` and PostgreSQL migration `0042` so one retry-round
+boundary can persist multiple concurrent Jenkins recovery steps. Runner Protocol v1 is unchanged.
+The Jenkins run response adds an optional permanent anonymous `resultUrl`; HPI `1.1.5` returns and
+prints it after terminal completion while retaining compatibility with older servers. Case and run
+permanent links are scoped HMAC capabilities tied to the stable installation master key and become
+unresolvable when the referenced record is deleted. v1.1.5 replaces release `.docker.tar.zst`
+archives with Docker-native `.docker.tar`; upgrade acceptance can still import an older zstd archive.
+
 Control plane `0.9.10` adds persisted Webhook configuration and delivery tables without changing
 Runner Protocol v1. Existing installations have no endpoint or binding after migration and therefore
 retain the prior no-outbound-request behavior until a project administrator explicitly configures one.

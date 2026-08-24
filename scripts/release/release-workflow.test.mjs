@@ -100,7 +100,7 @@ test("declares the official Jenkins repository in every plugin POM", async () =>
   }
 });
 
-test("uses cached builds and parallel archive compression", async () => {
+test("uses cached builds and publishes Docker-native tar archives", async () => {
   const [workflow, buildScript] = await Promise.all([
     readFile(".github/workflows/release.yml", "utf8"),
     readFile("scripts/release/build-backend-image.sh", "utf8"),
@@ -108,7 +108,8 @@ test("uses cached builds and parallel archive compression", async () => {
 
   assert.match(workflow, /AUTOFORGE_BUILDX_CACHE_FROM: type=gha/);
   assert.match(workflow, /AUTOFORGE_BUILDX_CACHE_TO: type=gha/);
-  assert.match(buildScript, /zstd --threads=0 -10 -f/);
+  assert.match(buildScript, /\.docker\.tar/);
+  assert.doesNotMatch(buildScript, /zstd/);
 });
 
 test("shares the release asset contract with published acceptance", async () => {

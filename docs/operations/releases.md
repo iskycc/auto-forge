@@ -11,7 +11,7 @@ git tag -s v0.2.2 -m "AutoForge v0.2.2"
 git push origin v0.2.2
 ```
 
-`Release` 只保留发布所需的关键路径：校验 tag 后构建一次 CoTest Adapter，四个平台复用该内部制品并行构建，随后组装部署包、生成 SBOM/清单、签名、生成来源证明并公开 GitHub Release。后端构建使用按 variant 隔离的 GitHub Actions BuildKit 缓存，离线 Docker 归档使用多线程 zstd 压缩；不再构建耗时的 `toolchain-amd64/arm64` Release 资产。任一平台、SBOM、签名或清单失败仍会阻止发布，因而不会公开缺少必需资产的部分 Release。
+`Release` 只保留发布所需的关键路径：校验 tag 后构建一次 CoTest Adapter，四个平台复用该内部制品并行构建，随后组装部署包、生成 SBOM/清单、签名、生成来源证明并公开 GitHub Release。后端构建使用按 variant 隔离的 GitHub Actions BuildKit 缓存，离线 Docker 归档直接发布 Docker 原生 tar，目标机不需要额外安装 zstd；不再构建耗时的 `toolchain-amd64/arm64` Release 资产。任一平台、SBOM、签名或清单失败仍会阻止发布，因而不会公开缺少必需资产的部分 Release。
 
 `Release checks` 将格式/lint/类型、单元/集成、性能、构建、Full 场景和断网 Lite 场景拆成独立矩阵并行执行。`Published Release acceptance` 只在发布完成后启动，将资产签名、业务、真实 Agent、私有 CA LDAP、备份恢复、上一正式版本升级和注入迁移失败回滚拆成隔离分区；各测试 Job 以五分钟内完成为目标，八分钟超时仅为托管 Runner 抖动保留诊断空间。两类检查都不属于 `Release` 的依赖，不会阻塞、取消或撤回发布；失败版本应通过问题修复和新版本 hotfix 处理。普通 CI 与依赖安全 workflow 不在 tag push 上重复运行，以免与发布矩阵争抢并发资源。
 
@@ -32,7 +32,7 @@ Web 进程为同源终端 WebSocket 使用 Next.js 自定义 Server。Next.js �
 
 每个 variant 生成：
 
-- `autoforge-backend-VERSION-VARIANT.docker.tar.zst`：可由 Docker 直接导入的压缩离线镜像归档；
+- `autoforge-backend-VERSION-VARIANT.docker.tar`：可由 Docker 直接导入的离线镜像归档；
 - `autoforge-backend-VERSION-VARIANT.image.json`：Docker config 内容摘要形式的不可变 image ID、平台和 OCI 标签；
 - `autoforge-backend-VERSION-VARIANT.spdx.json`：包含内置 Agent 文件的后端镜像 SBOM。
 
@@ -50,7 +50,7 @@ openssl pkeyutl -verify -rawin -pubin \
   -sigfile SHA256SUMS.sig \
   -in SHA256SUMS
 sha256sum --check SHA256SUMS
-zstd --decompress --stdout autoforge-backend-0.2.2-amd64.docker.tar.zst | docker load
+docker load --input autoforge-backend-0.2.2-amd64.docker.tar
 node -e "const m=require('./autoforge-backend-0.2.2-amd64.image.json'); console.log(m.immutableImageId)"
 docker run --detach \
   --name autoforge \
@@ -82,7 +82,7 @@ musl 归档的镜像标签相应为 `autoforge/backend:0.2.2-amd64-musl`。必�
 
 ## 本地构建与验证
 
-单个平台可使用与 CI 相同的脚本构建。后端需要 Docker Buildx、zstd、Go 1.26.x 和 `file`；构建脚本会先生成两个内置 Agent 资源：
+单个平台可使用与 CI 相同的脚本构建。后端需要 Docker Buildx、Go 1.26.x 和 `file`；构建脚本会先生成两个内置 Agent 资源：
 
 ```bash
 SOURCE_DATE_EPOCH=0 AUTOFORGE_RELEASE_REVISION=local \

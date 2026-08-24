@@ -71,7 +71,7 @@ stop_agent_loopback_proxy() {
 
 require_tools() {
   local missing=0
-  for command_name in curl docker node openssl pnpm sha256sum sudo tar zstd; do
+  for command_name in curl docker node openssl pnpm sha256sum sudo tar; do
     if ! command -v "${command_name}" >/dev/null 2>&1; then
       echo "Missing release acceptance command: ${command_name}" >&2
       missing=1
@@ -135,9 +135,21 @@ verify_signature() {
 load_release_image() {
   local version="${1:?version is required}"
   local directory="${2:?release directory is required}"
-  local archive="${directory}/autoforge-backend-${version}-amd64.docker.tar.zst"
+  local archive="${directory}/autoforge-backend-${version}-amd64.docker.tar"
+  local legacy_archive="${archive}.zst"
   local metadata="${directory}/autoforge-backend-${version}-amd64.image.json"
-  zstd --decompress --stdout "${archive}" | docker load >/dev/null
+  if [[ -f "${archive}" ]]; then
+    docker load --input "${archive}" >/dev/null
+  elif [[ -f "${legacy_archive}" ]]; then
+    if ! command -v zstd >/dev/null 2>&1; then
+      echo "Legacy Release ${version} requires zstd for upgrade acceptance." >&2
+      exit 1
+    fi
+    zstd --decompress --stdout "${legacy_archive}" | docker load >/dev/null
+  else
+    echo "Release ${version} does not contain a Docker image archive." >&2
+    exit 1
+  fi
   local image
   image="$(node -p "JSON.parse(require('node:fs').readFileSync(process.argv[1], 'utf8')).immutableImageId" "${metadata}")"
   if [[ ! "${image}" =~ ^sha256:[a-f0-9]{64}$ ]]; then

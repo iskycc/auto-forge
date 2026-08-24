@@ -109,7 +109,9 @@ export class SqliteRoundRecoveryRepository implements RoundRecoveryRepository {
     return result.changes === 1;
   }
 
-  async resume(input: Parameters<RoundRecoveryRepository["resume"]>[0]): Promise<boolean> {
+  async completeWaitingStep(
+    input: Parameters<RoundRecoveryRepository["completeWaitingStep"]>[0],
+  ): ReturnType<RoundRecoveryRepository["completeWaitingStep"]> {
     return runSqliteWriteTransaction(this.handle, () => {
       const updated = this.handle.client
         .prepare(
@@ -118,13 +120,22 @@ export class SqliteRoundRecoveryRepository implements RoundRecoveryRepository {
            WHERE batch_id = ? AND rule_id = ? AND lease_owner = ? AND status = 'waiting'`,
         )
         .run(input.updatedAt, input.batchId, input.ruleId, input.workerId);
-      if (updated.changes !== 1) return false;
+      if (updated.changes !== 1) return { outcome: "claim_lost" };
       const recovery = this.handle.client
         .prepare(
-          `SELECT next_round FROM run_batch_round_recoveries
+          `SELECT after_round, next_round FROM run_batch_round_recoveries
            WHERE batch_id = ? AND rule_id = ?`,
         )
-        .get(input.batchId, input.ruleId) as { next_round: number };
+        .get(input.batchId, input.ruleId) as { after_round: number; next_round: number };
+      const barrier = this.handle.client
+        .prepare(
+          `SELECT COUNT(*) AS remaining_steps FROM run_batch_round_recoveries
+           WHERE batch_id = ? AND after_round = ? AND status <> 'succeeded'`,
+        )
+        .get(input.batchId, recovery.after_round) as { remaining_steps: number };
+      if (barrier.remaining_steps > 0) {
+        return { outcome: "step_completed", remainingSteps: barrier.remaining_steps };
+      }
       this.handle.client
         .prepare(
           `UPDATE execution_runs SET held_round = 0, updated_at = ?
@@ -134,7 +145,7 @@ export class SqliteRoundRecoveryRepository implements RoundRecoveryRepository {
       this.handle.client
         .prepare("UPDATE run_batches SET current_round = ?, updated_at = ? WHERE id = ?")
         .run(recovery.next_round, input.updatedAt, input.batchId);
-      return true;
+      return { outcome: "round_released" };
     });
   }
 

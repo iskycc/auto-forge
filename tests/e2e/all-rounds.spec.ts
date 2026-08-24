@@ -485,6 +485,7 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
   const jenkinsRun = (await jenkinsRunResponse.json()) as {
     batchId: string;
     progressUrl: string;
+    resultUrl: string;
     progressApiUrl: string;
     pollIntervalSeconds: number;
     completionTimeoutSeconds: number;
@@ -492,6 +493,7 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
   expect(jenkinsRun.pollIntervalSeconds).toBe(30);
   expect(jenkinsRun.completionTimeoutSeconds).toBe(7 * 24 * 60 * 60);
   expect(jenkinsRun.progressUrl).toContain(`/progress/${jenkinsRun.batchId}`);
+  expect(jenkinsRun.resultUrl).toContain("/share/run/");
   const anonymousContext = await browser.newContext();
   const anonymousProgressPage = await anonymousContext.newPage();
   const progressPageResponse = await anonymousProgressPage.goto(jenkinsRun.progressUrl);
@@ -528,6 +530,15 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
     .toBe("false:执行完成:2/2");
   await anonymousProgressPage.reload();
   await expect(anonymousProgressPage.getByText("执行完成", { exact: true })).toBeVisible();
+  const anonymousResultPage = await anonymousContext.newPage();
+  const resultPageResponse = await anonymousResultPage.goto(jenkinsRun.resultUrl);
+  expect(resultPageResponse?.status()).toBe(200);
+  expect(new URL(anonymousResultPage.url()).pathname).not.toBe("/login");
+  await expect(
+    anonymousResultPage.getByText("永久只读结果 · 每 30 秒自动刷新", { exact: true }),
+  ).toBeVisible();
+  await expect(anonymousResultPage.getByText("执行完成", { exact: true })).toBeVisible();
+  await expect(anonymousResultPage.locator(".app-shell, .app-sidebar, .topbar")).toHaveCount(0);
   await anonymousContext.close();
 
   // 执行记录真机布局：一个极端长值只能在自身单元格内截断，不能改变列宽或整表宽度。

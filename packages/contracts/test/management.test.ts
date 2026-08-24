@@ -96,7 +96,19 @@ describe("case suite execution policy", () => {
     ).toMatchObject({ retryMode: "round" });
   });
 
-  it("rejects inverted ranges, duplicate boundaries and credentials in Jenkins URLs", () => {
+  it("accepts multiple Jenkins recoveries at the same round boundary", () => {
+    expect(
+      caseSuiteExecutionPolicySchema.parse({
+        retryMode: "round",
+        roundRecoveryRules: [
+          { id: "a", afterRound: 1, jenkinsJobUrl: "https://jenkins/job/a/", waitMinutes: 0 },
+          { id: "b", afterRound: 1, jenkinsJobUrl: "https://jenkins/job/b/", waitMinutes: 5 },
+        ],
+      }).roundRecoveryRules,
+    ).toHaveLength(2);
+  });
+
+  it("rejects inverted ranges, duplicate rule IDs and credentials in Jenkins URLs", () => {
     expect(() =>
       caseSuiteExecutionPolicySchema.parse({
         retryConcurrencyRules: [
@@ -107,8 +119,8 @@ describe("case suite execution policy", () => {
     expect(() =>
       caseSuiteExecutionPolicySchema.parse({
         roundRecoveryRules: [
-          { id: "a", afterRound: 1, jenkinsJobUrl: "https://jenkins/job/a/", waitMinutes: 0 },
-          { id: "b", afterRound: 1, jenkinsJobUrl: "https://jenkins/job/b/", waitMinutes: 0 },
+          { id: "same", afterRound: 1, jenkinsJobUrl: "https://jenkins/job/a/", waitMinutes: 0 },
+          { id: "same", afterRound: 2, jenkinsJobUrl: "https://jenkins/job/b/", waitMinutes: 0 },
         ],
       }),
     ).toThrow();

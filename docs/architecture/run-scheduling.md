@@ -85,10 +85,11 @@ score = 100 × (
 命中规则覆盖该轮在途上限，未命中时回退任务基础并发。规则随 `RunBatch.policy` 固化，运行中修改
 任务不会改变既有批次。
 
-整轮模式还可在第 N 轮结束与第 N+1 轮释放之间配置 Jenkins 恢复屏障。批次保存 Jenkins 链接、
-等待时间和加密凭据快照；Lite/Full 使用同一有租约恢复契约，先读取 `lastBuild`，再调用 Rebuilder
-的 `lastBuild/rebuild/?autorebuild=1`，并只接受引用该源构建的 `RebuildCause`。构建成功后进入持久
-等待，期限到达才在一个事务中释放 held run 并推进 `currentRound`。失败会以
+整轮模式还可在第 N 轮结束与第 N+1 轮释放之间配置一个或多个 Jenkins 恢复步骤。批次保存各步骤
+的 Jenkins 链接、等待时间和加密凭据快照；Lite/Full 使用同一有租约恢复契约，并发触发同一边界
+的所有步骤。每个步骤先读取 `lastBuild`，再调用 Rebuilder 的 `lastBuild/rebuild/?autorebuild=1`，
+并只接受引用该源构建的 `RebuildCause`。构建成功后各自进入持久等待；只有全部步骤完成各自等待，
+才在一个事务中释放 held run 并推进 `currentRound`。任一步骤失败会以
 `JENKINS_ROUND_RECOVERY_FAILED` 结束剩余用例和批次；终止批次会取消尚未完成的恢复。返回的构建
 URL 必须与任务链接同源且位于相同 job 路径，避免凭据被重定向到其他地址。
 
@@ -115,6 +116,6 @@ claim 都排除该批次。持有有效 lease 的 attempt 不设置取消指令�
 
 ## Jenkins 与只读进展
 
-Jenkins Pipeline 使用服务账号签发的最小权限 `af_api_` API Key。`POST /api/v1/jenkins/runs` 需要项目级 `run.create`，只接受 `suiteId`，返回批次 ID、30 秒建议轮询周期、鉴权 API 地址和带批次绑定 HMAC 的只读进展地址。Jenkins 步骤必须轮询到批次终态才结束，并打印当前轮次、本轮完成/通过/失败、累计通过、最终失败和进展链接；正常用例失败不使 Jenkins 步骤失败，执行异常或中断才失败。
+Jenkins Pipeline 使用服务账号签发的最小权限 `af_api_` API Key。`POST /api/v1/jenkins/runs` 需要项目级 `run.create`，只接受 `suiteId`，返回批次 ID、30 秒建议轮询周期、鉴权 API 地址、带批次绑定 HMAC 的七天只读进展地址，以及不带过期时间的永久只读结果地址。Jenkins 步骤必须轮询到批次终态才结束，并打印当前轮次、本轮完成/通过/失败、累计通过、最终失败和进展链接；到达终态后再打印永久结果链接并通过 `resultUrl` 返回。正常用例失败不使 Jenkins 步骤失败，执行异常或中断才失败。
 
-`GET /api/v1/run-batches/{batchId}/progress` 可使用 `run.read` API Key，或使用七天有效、只绑定该批次的签名参数。`/progress/{batchId}` 只渲染进度卡片，不渲染应用顶栏、侧栏或其他业务数据。签名参数不能访问日志、产物或其他 API。
+`GET /api/v1/run-batches/{batchId}/progress` 可使用 `run.read` API Key，或使用只绑定该批次的临时/永久签名参数。`/progress/{batchId}` 使用七天临时令牌，`/share/run/{token}` 使用永久令牌；两者只渲染进度卡片，不渲染应用顶栏、侧栏或其他业务数据。签名参数不能访问日志、产物或其他 API。永久链接依赖部署主密钥保持稳定，删除对应批次后失效。

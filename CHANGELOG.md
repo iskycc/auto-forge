@@ -6,6 +6,50 @@ and known limitations.
 
 ## Unreleased
 
+## 1.1.5 - 2026-08-24
+
+### Added
+
+- A retry-round boundary can now contain multiple Jenkins environment recovery steps. AutoForge
+  triggers due steps concurrently and releases the next round only after every Jenkins rebuild and
+  its own post-success wait have completed; any failed step still fails the batch.
+- Case details can now issue permanent, anonymous, resource-scoped read-only links. The public view
+  shows friendly version/stage names and current case metadata and methods without exposing source,
+  execution controls, history or neighboring project data.
+- Jenkins run creation now returns a permanent anonymous `resultUrl`. The execution HPI prints it
+  only after the batch reaches a terminal state and includes it in the Pipeline step result; the
+  existing seven-day live progress link remains available while Jenkins waits.
+
+### Changed
+
+- Offline backend images are published directly as Docker-native `.docker.tar` archives. Target
+  hosts can use `docker load --input` without installing zstd; published acceptance keeps read-only
+  support for prior `.docker.tar.zst` releases when testing upgrades.
+
+### Database
+
+- Added SQLite migration `0043_parallel_round_recoveries.sql` and PostgreSQL migration
+  `0042_parallel_round_recoveries.sql`. They preserve existing recovery state while replacing the
+  one-step-per-boundary constraint with an indexed multi-step barrier.
+
+### Tests
+
+- Added contract, snapshot, application, Lite/Full repository, upgrade-migration and Playwright
+  coverage for two same-round Jenkins recovery steps with different wait durations.
+- Added permanent-token tamper/scope tests, anonymous Playwright coverage for case and completed-run
+  pages at 1024/1536 pixel widths, Jenkins client/Pipeline result-link checks and Docker tar release
+  contract tests.
+
+### Compatibility
+
+- Runner Protocol v1 is unchanged. The Jenkins run response adds `resultUrl`; the v1.1.5 HPI falls
+  back to the temporary progress URL against an older server, while older HPI clients ignore the
+  additive field. Permanent links depend on the installation master key remaining stable and stop
+  resolving after their underlying case or batch is deleted.
+- Web and worker processes must be upgraded together; database downgrade requires restoring the
+  pre-migration backup. Automation that downloaded `.docker.tar.zst` must switch to `.docker.tar`;
+  Docker itself is the only decompressor required for v1.1.5 offline images.
+
 ## 1.1.1 - 2026-08-24
 
 ### Fixed

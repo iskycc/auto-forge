@@ -145,17 +145,35 @@ export class RoundRecoveryService {
 
   private async resume(workerId: string, claim: RoundRecoveryClaim): Promise<void> {
     const updatedAt = this.clock.now().toISOString();
-    const resumed = await this.repository.resume({
+    const completion = await this.repository.completeWaitingStep({
       batchId: claim.batchId,
       ruleId: claim.ruleId,
       workerId,
       updatedAt,
     });
-    if (!resumed) return;
-    await this.appendEvent(claim, `环境恢复等待结束，开始调度第 ${claim.nextRound} 轮`, updatedAt, {
-      state: "resumed",
-      nextRound: claim.nextRound,
-    });
+    if (completion.outcome === "claim_lost") return;
+    if (completion.outcome === "step_completed") {
+      await this.appendEvent(
+        claim,
+        `环境恢复步骤等待结束，仍有 ${completion.remainingSteps} 个同轮步骤未就绪`,
+        updatedAt,
+        {
+          state: "step_completed",
+          remainingSteps: completion.remainingSteps,
+        },
+      );
+      return;
+    }
+    await this.appendEvent(
+      claim,
+      `本轮全部环境恢复步骤等待结束，开始调度第 ${claim.nextRound} 轮`,
+      updatedAt,
+      {
+        state: "resumed",
+        barrierComplete: true,
+        nextRound: claim.nextRound,
+      },
+    );
     await this.scheduling.schedule(claim.batchId);
   }
 

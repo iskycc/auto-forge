@@ -747,6 +747,72 @@ describe("SQLite migrations", { timeout: 15_000 }, () => {
       database.close();
     }
   });
+
+  it("preserves existing recovery state while allowing parallel same-round steps", async () => {
+    const directory = await mkdtemp(resolve(tmpdir(), "autoforge-parallel-recovery-migration-"));
+    temporaryDirectories.push(directory);
+    const databasePath = resolve(directory, "autoforge.sqlite");
+    const migrationsFolder = resolve(import.meta.dirname, "../drizzle/sqlite");
+    const migrationFiles = (await readdir(migrationsFolder))
+      .filter((name) => /^\d+_.+\.sql$/.test(name))
+      .sort();
+    const migration = "0043_parallel_round_recoveries.sql";
+    const migrationIndex = migrationFiles.indexOf(migration);
+    expect(migrationIndex).toBeGreaterThan(0);
+
+    const database = new Database(databasePath);
+    try {
+      database.pragma("foreign_keys = ON");
+      for (const fileName of migrationFiles.slice(0, migrationIndex)) {
+        database.exec(await readFile(resolve(migrationsFolder, fileName), "utf8"));
+      }
+      database.exec(`
+        INSERT INTO run_batches
+          (id, sequence_number, suite_id, suite_name, suite_version, status, retry_limit,
+           retry_mode, current_round, environment_json, secret_bindings_json, total_runs,
+           project_id, scheduled_for, created_at, updated_at)
+        VALUES
+          ('batch-parallel-migration', 9001, 'suite-migration', 'Migration suite', 1,
+           'queued', 1, 'round', 1, '[]', '[]', 1,
+           '00000000-0000-7000-8000-000000000001', '2026-08-23T00:00:00.000Z',
+           '2026-08-23T00:00:00.000Z', '2026-08-23T00:00:00.000Z');
+        INSERT INTO run_batch_round_recoveries
+          (batch_id, rule_id, after_round, next_round, jenkins_job_url,
+           api_key_ciphertext, wait_minutes, status, available_at, created_at, updated_at)
+        VALUES
+          ('batch-parallel-migration', 'existing-step', 1, 2,
+           'https://jenkins.internal/job/existing/', 'encrypted-existing', 3, 'waiting',
+           '2026-08-23T00:03:00.000Z', '2026-08-23T00:00:00.000Z',
+           '2026-08-23T00:00:00.000Z');
+      `);
+
+      database.exec(await readFile(resolve(migrationsFolder, migration), "utf8"));
+      expect(
+        database
+          .prepare(
+            `SELECT rule_id, status, wait_minutes FROM run_batch_round_recoveries
+             WHERE batch_id = 'batch-parallel-migration'`,
+          )
+          .get(),
+      ).toEqual({ rule_id: "existing-step", status: "waiting", wait_minutes: 3 });
+      expect(() =>
+        database
+          .prepare(
+            `INSERT INTO run_batch_round_recoveries
+             (batch_id, rule_id, after_round, next_round, jenkins_job_url,
+              api_key_ciphertext, wait_minutes, status, available_at, created_at, updated_at)
+             VALUES ('batch-parallel-migration', 'second-step', 1, 2,
+              'https://jenkins.internal/job/second/', 'encrypted-second', 5, 'idle',
+              '2026-08-23T00:00:00.000Z', '2026-08-23T00:00:00.000Z',
+              '2026-08-23T00:00:00.000Z')`,
+          )
+          .run(),
+      ).not.toThrow();
+      expect(database.pragma("foreign_key_check")).toEqual([]);
+    } finally {
+      database.close();
+    }
+  });
 });
 
 type MigrationWorkerInput = {

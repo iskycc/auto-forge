@@ -1440,6 +1440,11 @@ export type RoundRecoveryClaim = {
   rebuildUrl?: string;
 };
 
+export type RoundRecoveryStepCompletion =
+  | { outcome: "claim_lost" }
+  | { outcome: "step_completed"; remainingSteps: number }
+  | { outcome: "round_released" };
+
 export interface RoundRecoveryRepository {
   claimDue(input: {
     workerId: string;
@@ -1464,12 +1469,12 @@ export interface RoundRecoveryRepository {
     availableAt: string;
     updatedAt: string;
   }): Promise<boolean>;
-  resume(input: {
+  completeWaitingStep(input: {
     batchId: string;
     ruleId: string;
     workerId: string;
     updatedAt: string;
-  }): Promise<boolean>;
+  }): Promise<RoundRecoveryStepCompletion>;
   fail(input: {
     batchId: string;
     ruleId: string;

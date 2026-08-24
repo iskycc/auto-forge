@@ -13,7 +13,7 @@ test("creates a deterministic manifest and checksum list", async () => {
   try {
     for (const variant of ["amd64", "arm64", "amd64-musl", "arm64-musl"]) {
       const backendName = `autoforge-backend-1.2.3-${variant}`;
-      await writeFile(resolve(directory, `${backendName}.docker.tar.zst`), `image-${variant}`);
+      await writeFile(resolve(directory, `${backendName}.docker.tar`), `image-${variant}`);
       await writeFile(resolve(directory, `${backendName}.image.json`), "{}");
       await writeFile(resolve(directory, `${backendName}.spdx.json`), "{}");
     }

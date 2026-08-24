@@ -8,9 +8,11 @@ import type { RunProgress } from "@/lib/run-progress";
 export function PublicRunProgress({
   initial,
   accessToken,
+  permanent = false,
 }: {
   initial: RunProgress;
   accessToken: string;
+  permanent?: boolean;
 }) {
   const [progress, setProgress] = useState(initial);
   const [refreshError, setRefreshError] = useState("");
@@ -51,7 +53,7 @@ export function PublicRunProgress({
           <div>
             <span className="eyebrow">AUTOFORGE EXECUTION</span>
             <h1>{progress.suiteName}</h1>
-            <p>只读执行进展 · 每 30 秒自动刷新</p>
+            <p>{permanent ? "永久只读结果" : "只读执行进展"} · 每 30 秒自动刷新</p>
           </div>
           <span className={`public-progress-status status-${progress.status}`}>
             <StatusIcon className={progress.active ? "spin" : ""} size={20} />

@@ -523,7 +523,7 @@ export function CaseSuiteEditor({
                 <span>
                   <strong>轮次间环境恢复</strong>
                   <small>
-                    指定轮次结束后 Rebuild Jenkins 上一次流水线；成功后等待设定时间再释放下一轮。
+                    同一轮可配置多个环境并行 Rebuild；全部构建及各自等待均结束后才释放下一轮。
                   </small>
                 </span>
                 <Button
@@ -633,7 +633,7 @@ export function CaseSuiteEditor({
               )}
               <p className="form-help">
                 API 密钥使用单个“用户名:API Token”字段，服务端加密保存；页面不会回显。Jenkins 需安装
-                Rebuilder 插件。
+                Rebuilder 插件。同一暂停轮次的步骤会并行触发，任一步骤失败都会终止批次。
               </p>
             </div>
             <label>

@@ -96,18 +96,30 @@ export class PostgresRoundRecoveryRepository implements RoundRecoveryRepository 
     return result.rowCount === 1;
   }
 
-  async resume(input: Parameters<RoundRecoveryRepository["resume"]>[0]): Promise<boolean> {
+  async completeWaitingStep(
+    input: Parameters<RoundRecoveryRepository["completeWaitingStep"]>[0],
+  ): ReturnType<RoundRecoveryRepository["completeWaitingStep"]> {
     await this.handle.ready;
     return withTransaction(this.handle, async (client) => {
-      const updated = await client.query<{ next_round: number }>(
+      // 同轮步骤可以在不同 Web/Worker 实例上同时到期。锁定批次可避免两个
+      // 最后步骤互相看不到未提交结果，导致全部 succeeded 却无人释放下一轮。
+      await client.query("SELECT id FROM run_batches WHERE id = $1 FOR UPDATE", [input.batchId]);
+      const updated = await client.query<{ after_round: number; next_round: number }>(
         `UPDATE run_batch_round_recoveries
          SET status = 'succeeded', lease_owner = NULL, lease_expires_at = NULL, updated_at = $1
          WHERE batch_id = $2 AND rule_id = $3 AND lease_owner = $4 AND status = 'waiting'
-         RETURNING next_round`,
+         RETURNING after_round, next_round`,
         [input.updatedAt, input.batchId, input.ruleId, input.workerId],
       );
       const recovery = updated.rows[0];
-      if (!recovery) return false;
+      if (!recovery) return { outcome: "claim_lost" };
+      const barrier = await client.query<{ remaining_steps: string }>(
+        `SELECT COUNT(*) AS remaining_steps FROM run_batch_round_recoveries
+         WHERE batch_id = $1 AND after_round = $2 AND status <> 'succeeded'`,
+        [input.batchId, recovery.after_round],
+      );
+      const remainingSteps = Number(barrier.rows[0]?.remaining_steps ?? 0);
+      if (remainingSteps > 0) return { outcome: "step_completed", remainingSteps };
       await client.query(
         `UPDATE execution_runs SET held_round = 0, updated_at = $1
          WHERE batch_id = $2 AND status = 'queued' AND held_round <= $3`,
@@ -117,7 +129,7 @@ export class PostgresRoundRecoveryRepository implements RoundRecoveryRepository 
         "UPDATE run_batches SET current_round = $1, updated_at = $2 WHERE id = $3",
         [recovery.next_round, input.updatedAt, input.batchId],
       );
-      return true;
+      return { outcome: "round_released" };
     });
   }
 

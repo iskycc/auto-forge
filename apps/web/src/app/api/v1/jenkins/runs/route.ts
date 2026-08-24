@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 
 import { apiErrorResponse, readJsonBody } from "@/lib/api-response";
 import { authenticateRequest, requestId, requireSameOrigin } from "@/lib/auth";
+import { issuePermanentShareToken } from "@/lib/permanent-share-token";
 import { issueRunProgressToken, RUN_PROGRESS_TOKEN_TTL_SECONDS } from "@/lib/run-progress-token";
 import { getPlatformServices } from "@/lib/services";
 
@@ -18,6 +19,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     services.identityAccess.authorize(identity, "run.create", suite.projectId);
     const batch = await services.runBatches.create(input);
     const progressToken = issueRunProgressToken(services.config.masterKey, batch.id);
+    const resultToken = issuePermanentShareToken(services.config.masterKey, "run_batch", batch.id);
     const baseUrl = services.config.web.publicBaseUrl ?? new URL(request.url).origin;
     const progressUrl = new URL(`/progress/${encodeURIComponent(batch.id)}`, baseUrl);
     progressUrl.searchParams.set("access_token", progressToken);
@@ -34,6 +36,7 @@ export async function POST(request: Request): Promise<NextResponse> {
         batchId: batch.id,
         status: batch.status,
         progressUrl: progressUrl.toString(),
+        resultUrl: new URL(`/share/run/${encodeURIComponent(resultToken)}`, baseUrl).toString(),
         progressApiUrl: new URL(
           `/api/v1/run-batches/${encodeURIComponent(batch.id)}/progress?access_token=${encodeURIComponent(progressToken)}`,
           baseUrl,

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 
 import { CaseDefinitionEditor } from "@/components/case-definition-editor";
+import { CasePermanentShare } from "@/components/case-permanent-share";
 import { CaseVersionHistory } from "@/components/case-version-history";
 import { StatusBadge } from "@/components/status-badge";
 import { OpenRunDialogButton } from "@/components/global-run-dialog";
@@ -139,6 +140,7 @@ export default async function CaseDetailPage({ params }: CaseDetailPageProps) {
           </p>
         </div>
         <div className="case-detail-actions">
+          <CasePermanentShare caseDefinitionId={definition.id} />
           {canRun && definition.enabled && !definition.archived && executable ? (
             <OpenRunDialogButton
               caseDefinitionId={definition.id}

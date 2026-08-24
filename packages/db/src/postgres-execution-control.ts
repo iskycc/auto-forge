@@ -1732,13 +1732,21 @@ async function advanceRoundIfIdle(
   );
   const nextRoundValue = nextRound.rows[0]?.value;
   if (nextRoundValue === null || nextRoundValue === undefined) return;
-  const recovery = await client.query<{ status: string }>(
-    `SELECT status FROM run_batch_round_recoveries
+  const recoveryBarrier = await client.query<{
+    total_steps: string;
+    idle_steps: string;
+    succeeded_steps: string;
+  }>(
+    `SELECT COUNT(*) AS total_steps,
+            COUNT(*) FILTER (WHERE status = 'idle') AS idle_steps,
+            COUNT(*) FILTER (WHERE status = 'succeeded') AS succeeded_steps
+     FROM run_batch_round_recoveries
      WHERE batch_id = $1 AND after_round = $2`,
     [batchId, nextRoundValue - 1],
   );
-  const recoveryStatus = recovery.rows[0]?.status;
-  if (recoveryStatus === "idle") {
+  const recoverySteps = recoveryBarrier.rows[0];
+  const totalRecoverySteps = Number(recoverySteps?.total_steps ?? 0);
+  if (totalRecoverySteps > 0 && Number(recoverySteps?.idle_steps ?? 0) > 0) {
     await client.query(
       `UPDATE run_batch_round_recoveries
        SET status = 'pending', available_at = $1, updated_at = $1
@@ -1747,7 +1755,7 @@ async function advanceRoundIfIdle(
     );
     return;
   }
-  if (recoveryStatus && recoveryStatus !== "succeeded") return;
+  if (totalRecoverySteps > Number(recoverySteps?.succeeded_steps ?? 0)) return;
   await client.query(
     `UPDATE execution_runs SET held_round = 0, updated_at = $1
      WHERE batch_id = $2 AND status = 'queued' AND held_round <= $3`,

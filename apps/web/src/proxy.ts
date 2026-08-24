@@ -1,7 +1,8 @@
 import { NextResponse, type NextRequest } from "next/server";
 
 const PUBLIC_PATHS = new Set(["/", "/login", "/setup"]);
-// 只读公开页由各自页面按限资源、限时 token 校验访问；代理只负责让匿名请求到达页面。
+// 只读公开页由各自页面按限资源的签名 token 校验访问；其中进度链接限时，
+// `/share/` 下的显式分享链接永久有效。代理只负责让匿名请求到达页面。
 const PUBLIC_PREFIXES = ["/share/", "/progress/"];
 
 export function isPublicPath(pathname: string): boolean {

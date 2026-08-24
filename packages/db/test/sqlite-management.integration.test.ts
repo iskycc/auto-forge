@@ -10,6 +10,7 @@ import { SqliteCaseCatalogRepository } from "../src/sqlite-case-catalog";
 import { SqliteCaseSuiteRepository } from "../src/sqlite-case-suite";
 import { SqliteRunBatchRepository } from "../src/sqlite-run-batch";
 import { SqliteExecutionControlRepository } from "../src/sqlite-execution-control";
+import { SqliteRoundRecoveryRepository } from "../src/sqlite-round-recovery";
 import { SqliteRunnerRepository } from "../src/sqlite-runner";
 import { SqliteProjectStructureRepository } from "../src/sqlite-project-structure";
 import { defaultCaseSuiteExecutionPolicy, scheduleExecutionRuns } from "@autoforge/domain";
@@ -2138,7 +2139,7 @@ describe("SQLite management repositories", () => {
     }
   });
 
-  it("holds failed runs until the whole round completes in round retry mode", async () => {
+  it("holds failed runs behind every same-round Jenkins recovery step", async () => {
     const { handle, runners, batches, executions, catalog } = await fixture();
     try {
       await catalog.importCatalog({
@@ -2247,6 +2248,22 @@ describe("SQLite management repositories", () => {
         retryMode: "round",
         environmentVariables: [],
         runnerIds: ["runner-round"],
+        roundRecoveries: [
+          {
+            ruleId: "recovery-app",
+            afterRound: 1,
+            jenkinsJobUrl: "https://jenkins.internal/job/reset-app/",
+            apiKeyCiphertext: "encrypted-app",
+            waitMinutes: 3,
+          },
+          {
+            ruleId: "recovery-database",
+            afterRound: 1,
+            jenkinsJobUrl: "https://jenkins.internal/job/reset-database/",
+            apiKeyCiphertext: "encrypted-database",
+            waitMinutes: 7,
+          },
+        ],
         runs: [
           {
             id: "run-round-a",
@@ -2364,11 +2381,72 @@ describe("SQLite management repositories", () => {
         acceptedAt: "2026-08-09T00:01:20.000Z",
       });
 
-      const snapshotAfterRound = await batches.getSchedulingSnapshot(
+      const snapshotBehindRecovery = await batches.getSchedulingSnapshot(
         "batch-round",
         "2026-08-09T00:00:30.000Z",
       );
-      expect(snapshotAfterRound?.queuedRuns.map((run) => run.id).sort()).toEqual([
+      expect(snapshotBehindRecovery?.queuedRuns).toEqual([]);
+      expect(
+        handle.client
+          .prepare(
+            `SELECT rule_id, status FROM run_batch_round_recoveries
+             WHERE batch_id = 'batch-round' ORDER BY rule_id`,
+          )
+          .all(),
+      ).toEqual([
+        { rule_id: "recovery-app", status: "pending" },
+        { rule_id: "recovery-database", status: "pending" },
+      ]);
+      expect(
+        handle.client
+          .prepare("SELECT current_round FROM run_batches WHERE id = 'batch-round'")
+          .get(),
+      ).toEqual({ current_round: 1 });
+      expect(
+        handle.client
+          .prepare("SELECT status, held_round FROM execution_runs WHERE id = 'run-round-a'")
+          .get(),
+      ).toEqual({ status: "queued", held_round: 2 });
+
+      // 外部 Jenkins 成功和各自等待由编排服务推进；这里将两个步骤置为到期，
+      // 验证第一步只完成自身、第二步才原子释放整个下一轮。
+      handle.client
+        .prepare(
+          `UPDATE run_batch_round_recoveries
+           SET status = 'waiting', available_at = '2026-08-09T00:01:21.000Z'
+           WHERE batch_id = 'batch-round' AND status = 'pending'`,
+        )
+        .run();
+      const recoveries = new SqliteRoundRecoveryRepository(handle);
+      const recoveryClaims = await recoveries.claimDue({
+        workerId: "round-recovery-worker",
+        now: "2026-08-09T00:01:21.000Z",
+        leaseExpiresAt: "2026-08-09T00:01:51.000Z",
+        limit: 10,
+      });
+      expect(recoveryClaims).toHaveLength(2);
+      await expect(
+        recoveries.completeWaitingStep({
+          batchId: "batch-round",
+          ruleId: recoveryClaims[0]!.ruleId,
+          workerId: "round-recovery-worker",
+          updatedAt: "2026-08-09T00:01:21.000Z",
+        }),
+      ).resolves.toEqual({ outcome: "step_completed", remainingSteps: 1 });
+      await expect(
+        recoveries.completeWaitingStep({
+          batchId: "batch-round",
+          ruleId: recoveryClaims[1]!.ruleId,
+          workerId: "round-recovery-worker",
+          updatedAt: "2026-08-09T00:01:21.000Z",
+        }),
+      ).resolves.toEqual({ outcome: "round_released" });
+
+      const snapshotAfterRecovery = await batches.getSchedulingSnapshot(
+        "batch-round",
+        "2026-08-09T00:00:30.000Z",
+      );
+      expect(snapshotAfterRecovery?.queuedRuns.map((run) => run.id).sort()).toEqual([
         "run-round-a",
         "run-round-b",
       ]);

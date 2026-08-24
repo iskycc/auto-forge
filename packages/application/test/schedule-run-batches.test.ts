@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
+import type { RoundRecoveryRule } from "@autoforge/domain";
+
 import { RunBatchSchedulingService } from "../src/schedule-run-batches";
 import type {
   CaseCatalogRepository,
@@ -350,9 +352,32 @@ describe("run batch creation with suite policy", () => {
         queueTimeoutMs: 60_000,
         runnerLabels: [],
         artifactPatterns: ["reports/**"],
+        retryMode: "round",
+        roundRecoveryRules: [
+          {
+            id: "recovery-app",
+            afterRound: 1,
+            jenkinsJobUrl: "https://jenkins.internal/job/reset-app/",
+            waitMinutes: 3,
+            apiKeyConfigured: true,
+          },
+          {
+            id: "recovery-database",
+            afterRound: 1,
+            jenkinsJobUrl: "https://jenkins.internal/job/reset-database/",
+            waitMinutes: 7,
+            apiKeyConfigured: true,
+          },
+        ],
       },
     });
-    const suites = { get: vi.fn().mockResolvedValue(suite) } as unknown as CaseSuiteRepository;
+    const suites = {
+      get: vi.fn().mockResolvedValue(suite),
+      getRoundRecoveryCredentials: vi.fn().mockResolvedValue({
+        "recovery-app": "encrypted-app",
+        "recovery-database": "encrypted-database",
+      }),
+    } as unknown as CaseSuiteRepository;
     const created: unknown[] = [];
     const batches = {
       create: vi.fn(async (record: unknown) => {
@@ -392,6 +417,10 @@ describe("run batch creation with suite policy", () => {
       queueTimeoutMs: 60_000,
       executionTimeoutMs: 600_000,
       policy: { concurrency: 2, runnerLabels: [], artifactPatterns: ["reports/**"] },
+      roundRecoveries: [
+        expect.objectContaining({ ruleId: "recovery-app", afterRound: 1, waitMinutes: 3 }),
+        expect.objectContaining({ ruleId: "recovery-database", afterRound: 1, waitMinutes: 7 }),
+      ],
       runs: [{ parameters: { SHARED: "case" } }],
     });
   });
@@ -1090,7 +1119,7 @@ const readyPolicy = {
   parameters: {} as Record<string, string>,
   artifactPatterns: ["reports/testng/**"],
   retryConcurrencyRules: [],
-  roundRecoveryRules: [],
+  roundRecoveryRules: [] as RoundRecoveryRule[],
 };
 
 function readySuite(overrides: {

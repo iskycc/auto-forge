@@ -209,6 +209,7 @@ async function expectHorizontalIntegrity(locator: Locator): Promise<void> {
 
 test("case metadata, immutable versions and suite policy survive lifecycle changes", async ({
   page,
+  browser,
 }) => {
   test.setTimeout(240_000);
   await page.addInitScript(() => {
@@ -297,10 +298,35 @@ test("case metadata, immutable versions and suite policy survive lifecycle chang
 
   await page.goto(`/cases/${encodeURIComponent(definition!.id)}`);
   await expect(page.getByRole("heading", { name: `Lifecycle display ${suffix}` })).toBeVisible();
+  await page.getByRole("button", { name: "匿名分享", exact: true }).click();
+  const permanentShareLink = page.getByRole("link", { name: "在新窗口打开永久分享链接" });
+  await expect(permanentShareLink).toBeVisible();
+  const shareUrl = await permanentShareLink.getAttribute("href");
+  expect(shareUrl).toContain("/share/case/");
+  const anonymousContext = await browser.newContext();
+  const sharedCasePage = await anonymousContext.newPage();
+  const sharedCaseResponse = await sharedCasePage.goto(shareUrl!);
+  expect(sharedCaseResponse?.status()).toBe(200);
+  expect(new URL(sharedCasePage.url()).pathname).not.toBe("/login");
+  await expect(
+    sharedCasePage.getByRole("heading", { name: `Lifecycle display ${suffix}` }),
+  ).toBeVisible();
+  await expect(sharedCasePage.getByText(className, { exact: true })).toBeVisible();
+  await expect(sharedCasePage.getByText("永久只读链接", { exact: true })).toBeVisible();
+  await expect(sharedCasePage.locator(".app-shell, .app-sidebar, .topbar")).toHaveCount(0);
+  for (const viewport of [
+    { width: 1024, height: 768 },
+    { width: 1536, height: 1024 },
+  ]) {
+    await sharedCasePage.setViewportSize(viewport);
+    await expectUiIntegrity(sharedCasePage);
+    await captureUi(sharedCasePage, `shared-case-${viewport.width}`);
+  }
+  await anonymousContext.close();
   await page.getByLabel("标签（逗号分隔）").fill("lifecycle, browser-update");
   await page.getByLabel(/启用（禁用后/).uncheck();
   await page.getByRole("button", { name: "保存修改" }).click();
-  await expect(page.getByRole("status")).toContainText("用例已更新");
+  await expect(page.getByText("用例已更新。", { exact: true })).toBeVisible();
   await expect(page.getByText("版本历史（2）")).toBeVisible();
   await page.getByLabel("基准版本").selectOption("1");
   await page.getByLabel("对比版本").selectOption("2");
@@ -358,6 +384,14 @@ test("case metadata, immutable versions and suite policy survive lifecycle chang
     .fill("https://jenkins.internal/job/environment-reset/");
   await page.getByLabel("恢复步骤 1 API 密钥").fill("e2e-user:e2e-api-token");
   await page.getByLabel("恢复步骤 1 成功后等待分钟").fill("3");
+  await page.getByRole("button", { name: "添加恢复步骤" }).click();
+  await page.getByLabel("恢复步骤 2 暂停轮次").fill("1");
+  await page
+    .getByLabel("恢复步骤 2 Jenkins 任务链接")
+    .fill("https://jenkins.internal/job/database-reset/");
+  await page.getByLabel("恢复步骤 2 API 密钥").fill("e2e-user:second-api-token");
+  await page.getByLabel("恢复步骤 2 成功后等待分钟").fill("7");
+  await expect(page.getByText("同一轮可配置多个环境并行 Rebuild")).toBeVisible();
   await page.getByLabel("排队超时（分钟）").fill("7");
   await page
     .locator(".global-run-runner", { hasText: runner.name })
@@ -399,9 +433,12 @@ test("case metadata, immutable versions and suite policy survive lifecycle chang
   ]);
   expect(retryPolicy.body.policy.roundRecoveryRules).toEqual([
     expect.objectContaining({ apiKeyConfigured: true }),
+    expect.objectContaining({ apiKeyConfigured: true }),
   ]);
   expect(retryPolicy.body.policy.roundRecoveryRules[0]).not.toHaveProperty("apiKey");
+  expect(retryPolicy.body.policy.roundRecoveryRules[1]).not.toHaveProperty("apiKey");
   expect(JSON.stringify(retryPolicy.body)).not.toContain("e2e-api-token");
+  expect(JSON.stringify(retryPolicy.body)).not.toContain("second-api-token");
 
   await page.getByLabel("Cron（分 时 日 月 周）").fill("17 8 * * 1-5");
   await page.getByLabel("IANA 时区").fill("Asia/Shanghai");
@@ -463,7 +500,10 @@ test("case metadata, immutable versions and suite policy survive lifecycle chang
       concurrency: 3,
       retryLimit: 2,
       retryConcurrencyRules: [expect.objectContaining({ concurrency: 10 })],
-      roundRecoveryRules: [expect.objectContaining({ apiKeyConfigured: true })],
+      roundRecoveryRules: [
+        expect.objectContaining({ apiKeyConfigured: true }),
+        expect.objectContaining({ apiKeyConfigured: true }),
+      ],
     },
   });
   expect(disabledSuite.body.policy).not.toHaveProperty("parameters");

@@ -243,7 +243,6 @@ jobs:
     env:
       AUTOFORGE_BUILDX_CACHE_FROM: type=gha,scope=ci-verification-backend-amd64,timeout=2m
       AUTOFORGE_BUILDX_CACHE_TO: type=gha,mode=max,scope=ci-verification-backend-amd64,timeout=2m,ignore-error=true
-      AUTOFORGE_KEEP_DOCKER_TAR: "1"
       AUTOFORGE_RELEASE_REVISION: ${{ github.sha }}
       BACKEND_IMAGE: autoforge/backend:0.0.0-ci.${{ github.run_id }}-amd64
       BACKEND_PLATFORM: linux/amd64
@@ -264,7 +263,7 @@ jobs:
           cache-dependency-path: apps/runner-agent/go.mod
       - name: Record reproducible build time
         run: echo "SOURCE_DATE_EPOCH=$(git show -s --format=%ct HEAD)" >> "${GITHUB_ENV}"
-      - name: Build compressed verification image
+      - name: Build Docker-native verification image
         run: >-
           bash scripts/release/build-backend-image.sh
           "${VERIFICATION_VERSION}" amd64 dist/verification
@@ -272,12 +271,11 @@ jobs:
         run: |
           docker load --input "dist/verification/autoforge-backend-${VERIFICATION_VERSION}-amd64.docker.tar"
           bash scripts/release/verify-backend-image.sh "${BACKEND_IMAGE}" "${BACKEND_PLATFORM}"
-          rm -- "dist/verification/autoforge-backend-${VERIFICATION_VERSION}-amd64.docker.tar"
-      - name: Upload compressed verification image
+      - name: Upload verification image
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: verification-backend-amd64-${{ github.sha }}
-          path: dist/verification/*.docker.tar.zst
+          path: dist/verification/*.docker.tar
           if-no-files-found: error
           retention-days: 1
           compression-level: 0

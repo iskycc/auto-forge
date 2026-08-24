@@ -14,7 +14,7 @@ const now = "2026-08-23T00:00:00.000Z";
 
 describe("RoundRecoveryService", () => {
   it("decrypts the snapshot credential and triggers Rebuild for the last Jenkins build", async () => {
-    const repository = repositoryWithClaim(claim({ status: "pending" }));
+    const repository = repositoryWithClaims(claim({ status: "pending" }));
     const transport = {
       rebuildLast: vi.fn().mockResolvedValue({ sourceBuildNumber: 41 }),
       inspectRebuild: vi.fn(),
@@ -33,8 +33,40 @@ describe("RoundRecoveryService", () => {
     expect(repository.fail).not.toHaveBeenCalled();
   });
 
+  it("triggers every Jenkins recovery at the same round boundary in one dispatch", async () => {
+    const repository = repositoryWithClaims(
+      claim({ status: "pending", jenkinsJobUrl: "https://jenkins.internal/job/reset-a/" }),
+      claim({
+        ruleId: "recovery-2",
+        status: "pending",
+        jenkinsJobUrl: "https://jenkins.internal/job/reset-b/",
+      }),
+    );
+    const transport = {
+      rebuildLast: vi
+        .fn()
+        .mockResolvedValueOnce({ sourceBuildNumber: 41 })
+        .mockResolvedValueOnce({ sourceBuildNumber: 91 }),
+      inspectRebuild: vi.fn(),
+    } as JenkinsRoundRecoveryTransport;
+    const service = createService(repository, transport);
+
+    await service.dispatchDue("worker-1");
+
+    expect(transport.rebuildLast).toHaveBeenCalledTimes(2);
+    expect(transport.rebuildLast).toHaveBeenCalledWith({
+      jobUrl: "https://jenkins.internal/job/reset-a/",
+      credential: "jenkins-user:api-token",
+    });
+    expect(transport.rebuildLast).toHaveBeenCalledWith({
+      jobUrl: "https://jenkins.internal/job/reset-b/",
+      credential: "jenkins-user:api-token",
+    });
+    expect(repository.markPolling).toHaveBeenCalledTimes(2);
+  });
+
   it("waits after a successful rebuild before releasing the next round", async () => {
-    const repository = repositoryWithClaim(claim({ status: "polling", sourceBuildNumber: 41 }));
+    const repository = repositoryWithClaims(claim({ status: "polling", sourceBuildNumber: 41 }));
     const transport = {
       rebuildLast: vi.fn(),
       inspectRebuild: vi.fn().mockResolvedValue({
@@ -54,11 +86,19 @@ describe("RoundRecoveryService", () => {
       availableAt: "2026-08-23T00:05:00.000Z",
       updatedAt: now,
     });
-    expect(repository.resume).not.toHaveBeenCalled();
+    expect(repository.completeWaitingStep).not.toHaveBeenCalled();
   });
 
-  it("atomically releases held runs and immediately asks the scheduler to refill", async () => {
-    const repository = repositoryWithClaim(claim({ status: "waiting" }));
+  it("releases held runs only after every same-round recovery step is ready", async () => {
+    const repository = repositoryWithClaims(
+      claim({ status: "waiting" }),
+      claim({ ruleId: "recovery-2", status: "waiting" }),
+    );
+    repository.completeWaitingStep.mockImplementation(async ({ ruleId }) =>
+      ruleId === "recovery-1"
+        ? { outcome: "step_completed", remainingSteps: 1 }
+        : { outcome: "round_released" },
+    );
     const scheduling = { schedule: vi.fn(), scheduleForRunner: vi.fn() };
     const service = createService(
       repository,
@@ -68,17 +108,25 @@ describe("RoundRecoveryService", () => {
 
     await service.dispatchDue("worker-1");
 
-    expect(repository.resume).toHaveBeenCalledWith({
+    expect(repository.completeWaitingStep).toHaveBeenCalledWith({
       batchId: "batch-1",
       ruleId: "recovery-1",
       workerId: "worker-1",
       updatedAt: now,
     });
+    expect(repository.completeWaitingStep).toHaveBeenCalledWith({
+      batchId: "batch-1",
+      ruleId: "recovery-2",
+      workerId: "worker-1",
+      updatedAt: now,
+    });
+    expect(repository.completeWaitingStep).toHaveBeenCalledTimes(2);
     expect(scheduling.schedule).toHaveBeenCalledWith("batch-1");
+    expect(scheduling.schedule).toHaveBeenCalledTimes(1);
   });
 
   it("marks orchestration failure without exposing the credential", async () => {
-    const repository = repositoryWithClaim(claim({ status: "pending" }));
+    const repository = repositoryWithClaims(claim({ status: "pending" }));
     const service = createService(repository, {
       rebuildLast: vi.fn().mockRejectedValue(new Error("Jenkins returned HTTP 500")),
       inspectRebuild: vi.fn(),
@@ -97,7 +145,7 @@ describe("RoundRecoveryService", () => {
 });
 
 function createService(
-  repository: ReturnType<typeof repositoryWithClaim>,
+  repository: ReturnType<typeof repositoryWithClaims>,
   transport: JenkinsRoundRecoveryTransport,
   scheduling: RunBatchSchedulingPort = { schedule: vi.fn(), scheduleForRunner: vi.fn() },
 ) {
@@ -106,7 +154,7 @@ function createService(
     encrypt: vi.fn(),
     decrypt: vi.fn((ciphertext, purpose) => {
       expect(ciphertext).toBe("encrypted-api-key");
-      expect(purpose).toBe("case-suite-round-recovery:suite-1:recovery-1");
+      expect(purpose).toMatch(/^case-suite-round-recovery:suite-1:recovery-[12]$/u);
       return "jenkins-user:api-token";
     }),
   };
@@ -121,12 +169,12 @@ function createService(
   );
 }
 
-function repositoryWithClaim(recoveryClaim: RoundRecoveryClaim) {
+function repositoryWithClaims(...recoveryClaims: RoundRecoveryClaim[]) {
   return {
-    claimDue: vi.fn().mockResolvedValue([recoveryClaim]),
+    claimDue: vi.fn().mockResolvedValue(recoveryClaims),
     markPolling: vi.fn().mockResolvedValue(true),
     markWaiting: vi.fn().mockResolvedValue(true),
-    resume: vi.fn().mockResolvedValue(true),
+    completeWaitingStep: vi.fn().mockResolvedValue({ outcome: "round_released" }),
     fail: vi.fn().mockResolvedValue(true),
   } satisfies RoundRecoveryRepository;
 }
