@@ -59,6 +59,11 @@ permanent links are scoped HMAC capabilities tied to the stable installation mas
 unresolvable when the referenced record is deleted. v1.1.5 replaces release `.docker.tar.zst`
 archives with Docker-native `.docker.tar`; upgrade acceptance can still import an older zstd archive.
 
+Control plane `1.1.6` keeps the v1.1.5 database and Runner Protocol contracts. It corrects absolute
+public-link fallback behind direct containers and reverse proxies; an explicitly configured public
+base URL still takes precedence. Jenkins HPI `1.1.6` keeps the v1.1.5 Pipeline arguments and result
+map, and release images remain Docker-native `.docker.tar` archives.
+
 Control plane `0.9.10` adds persisted Webhook configuration and delivery tables without changing
 Runner Protocol v1. Existing installations have no endpoint or binding after migration and therefore
 retain the prior no-outbound-request behavior until a project administrator explicitly configures one.

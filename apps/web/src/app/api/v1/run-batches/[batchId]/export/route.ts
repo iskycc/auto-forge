@@ -5,6 +5,7 @@ import { z } from "zod";
 
 import { apiErrorResponse } from "@/lib/api-response";
 import { authenticateRequest } from "@/lib/auth";
+import { publicLinkBase } from "@/lib/public-link-base";
 import { buildRunBatchExportWorkbook, exportContentDisposition } from "@/lib/run-batch-export-xlsx";
 import { getPlatformServices } from "@/lib/services";
 
@@ -49,7 +50,7 @@ export async function GET(request: Request, context: Context): Promise<NextRespo
       batchId,
       identity.user.id,
     );
-    const base = shareLinkBase(services.config.web.publicBaseUrl, request);
+    const base = publicLinkBase(services.config.web.publicBaseUrl, request);
     const shareLinks = new Map(
       [...tokens.entries()].map(([attemptId, token]) => [
         attemptId,
@@ -83,10 +84,4 @@ function parseOutcomeFilter(raw: string): ExportOutcomeFilter[] {
   }
   // 按契约固定顺序去重，保证相同筛选的请求得到相同结果。
   return EXPORT_OUTCOME_FILTERS.filter((filter) => values.includes(filter));
-}
-
-function shareLinkBase(publicBaseUrl: string | undefined, request: Request): string {
-  const configured = publicBaseUrl?.trim();
-  if (configured) return configured.replace(/\/$/, "");
-  return new URL(request.url).origin;
 }

@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { apiErrorResponse } from "@/lib/api-response";
 import { authenticateRequest, requestId, requireSameOrigin } from "@/lib/auth";
 import { issuePermanentShareToken } from "@/lib/permanent-share-token";
+import { publicLinkBase } from "@/lib/public-link-base";
 import { getPlatformServices } from "@/lib/services";
 
 type Context = { params: Promise<{ caseDefinitionId: string }> };
@@ -24,7 +25,7 @@ export async function POST(request: Request, context: Context): Promise<NextResp
       "case_definition",
       definition.id,
     );
-    const baseUrl = services.config.web.publicBaseUrl ?? new URL(request.url).origin;
+    const baseUrl = publicLinkBase(services.config.web.publicBaseUrl, request);
     const shareUrl = new URL(`/share/case/${encodeURIComponent(token)}`, baseUrl).toString();
     await services.identityAccess.recordAuthorizedOperation(identity, {
       action: "case_definition.share",

@@ -6,6 +6,26 @@ and known limitations.
 
 ## Unreleased
 
+## 1.1.6 - 2026-08-24
+
+### Fixed
+
+- Permanent case links, Jenkins progress/result links and exported attempt-log links now derive their
+  fallback origin from trusted forwarding headers or the request Host instead of Next's internal
+  listener URL. Direct offline containers therefore produce reachable links even when an explicit
+  public base URL has not been configured.
+
+### Tests
+
+- Added origin-selection regressions for explicit configuration, reverse proxies, direct container
+  Host headers and local fallback. Published offline asset lifecycle acceptance covers the direct
+  container-IP path that exposed the defect.
+
+### Compatibility
+
+- No database or Runner Protocol change from v1.1.5. HPI Pipeline contracts remain additive and the
+  Docker offline archive format remains `.docker.tar`.
+
 ## 1.1.5 - 2026-08-24
 
 ### Added

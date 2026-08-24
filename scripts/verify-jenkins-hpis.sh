@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-expected_plugin_version="${1:-1.1.5-SNAPSHOT}"
+expected_plugin_version="${1:-1.1.6-SNAPSHOT}"
 verification_dir="$(mktemp -d)"
 trap 'rm -rf "${verification_dir}"' EXIT
 

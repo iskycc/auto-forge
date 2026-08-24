@@ -17,7 +17,7 @@
   <description>Starts an AutoForge task from Pipeline and follows it through its terminal lifecycle.</description>
   <url>https://github.com/iskycc/auto-forge</url>
   <properties>
-    <revision>1.1.5</revision>
+    <revision>1.1.6</revision>
     <changelist>-SNAPSHOT</changelist>
     <jenkins.version>2.479.3</jenkins.version>
   </properties>
