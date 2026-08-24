@@ -24,9 +24,13 @@ test("configuration conflicts, diagnostics and retention controls remain observa
 
   const publicBaseUrl = page.getByLabel("外部访问地址");
   const originalPublicBaseUrl = await publicBaseUrl.inputValue();
+  const testPublicBaseUrl =
+    originalPublicBaseUrl === "http://127.0.0.1:3199"
+      ? "http://127.0.0.1:3197"
+      : "http://127.0.0.1:3199";
   const artifactCollection = page.getByLabel(/启用产物收集/);
   const originalArtifactCollection = await artifactCollection.isChecked();
-  await publicBaseUrl.fill("http://127.0.0.1:3199");
+  await publicBaseUrl.fill(testPublicBaseUrl);
   await artifactCollection.setChecked(!originalArtifactCollection);
   await page.getByRole("button", { name: "保存平台配置" }).click();
   await expect(page.getByText(/外部访问地址、产物收集已立即生效.*无需重启/)).toBeVisible();
