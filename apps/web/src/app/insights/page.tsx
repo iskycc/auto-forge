@@ -82,9 +82,8 @@ export default async function InsightsPage({
       ? { completedBefore: dateTimeParameter(parameters.flakyCompletedBefore) }
       : {}),
   };
-  const [summary, flakySummary, suites, runners, recentBatches] = await Promise.all([
+  const [summary, suites, runners, recentBatches] = await Promise.all([
     services.platformOperations.analytics(identity, filter),
-    services.platformOperations.analytics(identity, flakyFilter),
     hierarchy.projectVersionId
       ? services.caseSuites.list(
           500,
@@ -101,6 +100,9 @@ export default async function InsightsPage({
         )
       : Promise.resolve([]),
   ]);
+  // Full 会在读取时增量物化统计事实。先完成主查询再读取不稳定用例，避免两个
+  // SKIP LOCKED 物化事务竞争时其中一个摘要短暂读到空结果。
+  const flakySummary = await services.platformOperations.analytics(identity, flakyFilter);
   const comparison =
     typeof parameters.leftBatchId === "string" && typeof parameters.rightBatchId === "string"
       ? await services.platformOperations.compareBatches(
