@@ -9254,6 +9254,37 @@ button.icon-button:disabled {
   gap: 12px;
 }
 
+.insight-flaky-filter {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3);
+  align-items: end;
+  padding: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-medium);
+  background: var(--color-surface-muted);
+}
+
+.insight-flaky-filter label:first-child {
+  grid-column: 1 / -1;
+}
+
+.insight-flaky-filter > .ui-button {
+  width: fit-content;
+}
+
+.insight-flaky-filter label {
+  display: grid;
+  gap: calc(var(--space-2) / 2);
+  min-width: 0;
+  font-size: var(--font-size-control);
+  color: var(--color-text-secondary);
+}
+
+.insight-flaky-scope {
+  margin: 0;
+}
+
 .insight-primary-filters label,
 .insight-advanced-filters label {
   display: grid;
@@ -13547,6 +13578,12 @@ button.icon-button:disabled {
   display: inline-flex;
   align-items: center;
   gap: var(--space-2);
+}
+
+.run-share-action {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--space-2) / 2);
 }
 
 .list-filter-progress {

@@ -549,6 +549,28 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
   await page.reload();
   const executionRecordsTable = page.locator(".execution-records-table");
   await expect(executionRecordsTable).toBeVisible();
+  const jenkinsRecord = executionRecordsTable.locator("tbody tr", {
+    has: page.locator(`a[href="/run-batches/${jenkinsRun.batchId}"]`),
+  });
+  const shareResponse = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      new URL(response.url()).pathname === `/api/v1/run-batches/${jenkinsRun.batchId}/share`,
+  );
+  await jenkinsRecord
+    .getByRole("button", { name: new RegExp(`生成批次 #\\d+ 永久分享链接`) })
+    .click();
+  expect((await shareResponse).status()).toBe(200);
+  const sharedResultHref = await jenkinsRecord
+    .getByRole("link", { name: /打开批次 #\d+ 永久分享链接/ })
+    .getAttribute("href");
+  expect(sharedResultHref).toContain("/share/run/");
+  const historyAnonymousContext = await browser.newContext();
+  const historyAnonymousPage = await historyAnonymousContext.newPage();
+  const historyShareResponse = await historyAnonymousPage.goto(sharedResultHref!);
+  expect(historyShareResponse?.status()).toBe(200);
+  await expect(historyAnonymousPage.getByText("永久只读结果", { exact: false })).toBeVisible();
+  await historyAnonymousContext.close();
   const suiteCell = executionRecordsTable.locator("tbody tr").first().locator("td").nth(1);
   const widthBeforeOutlier = await executionRecordsTable.evaluate((table) => ({
     table: table.getBoundingClientRect().width,

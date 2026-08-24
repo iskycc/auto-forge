@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { createServer } from "node:http";
 
 import {
   browserJson,
@@ -190,66 +191,95 @@ test("schedule overview can pause and delete plans while LDAP failures remain di
 });
 
 test("project webhooks support custom POST bodies and task binding", async ({ page }) => {
-  await ensureAdministrator(page);
-  const projectVersionId = await ensureDefaultProjectVersion(page);
-  const webhookName = uniqueName("quality-webhook");
-  const suiteName = uniqueName("webhook-suite");
-  const configuration = await browserJson<{ id: string; method: string }>(
-    page,
-    "/api/v1/webhooks",
-    {
+  const receivedBodies: string[] = [];
+  const webhookServer = createServer((request, response) => {
+    const chunks: Buffer[] = [];
+    request.on("data", (chunk: Buffer) => chunks.push(chunk));
+    request.on("end", () => {
+      receivedBodies.push(Buffer.concat(chunks).toString("utf8"));
+      response.writeHead(204).end();
+    });
+  });
+  await new Promise<void>((resolve, reject) => {
+    webhookServer.once("error", reject);
+    webhookServer.listen(0, "127.0.0.1", resolve);
+  });
+  const address = webhookServer.address();
+  if (!address || typeof address === "string") throw new Error("Webhook test server did not bind.");
+  try {
+    await ensureAdministrator(page);
+    const projectVersionId = await ensureDefaultProjectVersion(page);
+    const webhookName = uniqueName("quality-webhook");
+    const suiteName = uniqueName("webhook-suite");
+    const configuration = await browserJson<{ id: string; method: string }>(
+      page,
+      "/api/v1/webhooks",
+      {
+        method: "POST",
+        body: {
+          projectId: DEFAULT_PROJECT_ID,
+          name: webhookName,
+          description: "Webhook E2E",
+          targetUrl: `http://127.0.0.1:${address.port}/autoforge-completed`,
+          method: "POST",
+          bodyTemplate:
+            '{"batchId":"{{batch.id}}","suite":"{{batch.suiteName}}","status":"{{batch.displayStatus}}","passRate":"{{summary.passRate}}"}',
+          enabled: true,
+        },
+      },
+    );
+    expect(configuration.status).toBe(201);
+    expect(configuration.body.method).toBe("POST");
+    const suite = await browserJson<{ id: string }>(page, "/api/v1/case-suites", {
       method: "POST",
       body: {
         projectId: DEFAULT_PROJECT_ID,
-        name: webhookName,
-        description: "Webhook E2E",
-        targetUrl: "http://127.0.0.1:18999/autoforge-completed",
-        method: "POST",
-        bodyTemplate:
-          '{"batchId":"{{batch.id}}","suite":"{{batch.suiteName}}","status":"{{batch.displayStatus}}"}',
-        enabled: true,
+        projectVersionId,
+        name: suiteName,
+        description: "Webhook binding E2E",
       },
-    },
-  );
-  expect(configuration.status).toBe(201);
-  expect(configuration.body.method).toBe("POST");
-  const suite = await browserJson<{ id: string }>(page, "/api/v1/case-suites", {
-    method: "POST",
-    body: {
-      projectId: DEFAULT_PROJECT_ID,
-      projectVersionId,
-      name: suiteName,
-      description: "Webhook binding E2E",
-    },
-  });
-  expect(suite.status).toBe(201);
+    });
+    expect(suite.status).toBe(201);
 
-  await page.goto("/settings/webhooks");
-  const endpointCard = page.locator(".webhook-endpoint-card", { hasText: webhookName });
-  await expect(endpointCard).toBeVisible();
-  await expect(endpointCard).toContainText("POST");
-  await expect(endpointCard).toContainText("已启用");
+    await page.goto("/settings/webhooks");
+    const endpointCard = page.locator(".webhook-endpoint-card", { hasText: webhookName });
+    await expect(endpointCard).toBeVisible();
+    await expect(endpointCard).toContainText("POST");
+    await expect(endpointCard).toContainText("已启用");
+    await endpointCard.getByRole("button", { name: "测试" }).click();
+    await expect(page.getByText(/测试成功.*HTTP 204.*预置通过率 80%/)).toBeVisible();
+    await expect.poll(() => receivedBodies.length).toBe(1);
+    expect(JSON.parse(receivedBodies[0]!)).toMatchObject({
+      batchId: "webhook-test-batch",
+      status: "执行完成",
+      passRate: "80.0",
+    });
 
-  await page.goto(`/case-suites/${suite.body.id}`);
-  const bindingCard = page.locator(".case-suite-webhooks-card");
-  await expect(bindingCard).toBeVisible();
-  const endpointOption = bindingCard.locator("label", { hasText: webhookName });
-  await endpointOption.locator('input[type="checkbox"]').check();
-  await bindingCard.getByRole("button", { name: "保存通知绑定" }).click();
-  await expect(bindingCard.getByText("Webhook 绑定已保存。")).toBeVisible();
+    await page.goto(`/case-suites/${suite.body.id}`);
+    const bindingCard = page.locator(".case-suite-webhooks-card");
+    await expect(bindingCard).toBeVisible();
+    const endpointOption = bindingCard.locator("label", { hasText: webhookName });
+    await endpointOption.locator('input[type="checkbox"]').check();
+    await bindingCard.getByRole("button", { name: "保存通知绑定" }).click();
+    await expect(bindingCard.getByText("Webhook 绑定已保存。")).toBeVisible();
 
-  const bindings = await browserJson<{ webhookIds: string[] }>(
-    page,
-    `/api/v1/case-suites/${suite.body.id}/webhooks`,
-  );
-  expect(bindings.status).toBe(200);
-  expect(bindings.body.webhookIds).toContain(configuration.body.id);
+    const bindings = await browserJson<{ webhookIds: string[] }>(
+      page,
+      `/api/v1/case-suites/${suite.body.id}/webhooks`,
+    );
+    expect(bindings.status).toBe(200);
+    expect(bindings.body.webhookIds).toContain(configuration.body.id);
 
-  await page.goto("/settings/webhooks");
-  await endpointCard.getByRole("button", { name: "编辑" }).click();
-  const editor = page.getByRole("dialog", { name: "编辑 Webhook" });
-  await expect(editor.getByLabel("JSON 请求体模板")).toContainText("batch.displayStatus");
-  await page.keyboard.press("Escape");
+    await page.goto("/settings/webhooks");
+    await endpointCard.getByRole("button", { name: "编辑" }).click();
+    const editor = page.getByRole("dialog", { name: "编辑 Webhook" });
+    await expect(editor.getByLabel("JSON 请求体模板")).toContainText("batch.displayStatus");
+    await page.keyboard.press("Escape");
+  } finally {
+    await new Promise<void>((resolve, reject) =>
+      webhookServer.close((error) => (error ? reject(error) : resolve())),
+    );
+  }
 });
 
 async function ensureDefaultProjectVersion(page: Page): Promise<string> {

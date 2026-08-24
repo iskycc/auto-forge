@@ -37,7 +37,7 @@ class AutoForgePublishDependenciesPipelineE2ETest {
             autoforgePublishDependencies baseUrl: '%s', apiKey: 'af_api_pipeline-e2e',
               projectId: 'project-e2e', version: '1.0.0',
               dependencyUrl: 'https://jenkins.example/job/1/artifact/dependencies.zip',
-              fileName: 'dependencies.zip', sha256: '%s', sizeBytes: 4096, archiveFormat: 'zip'
+              sha256: '%s', sizeBytes: 4096
             """.formatted(baseUrl, "a".repeat(64)), true));
 
         WorkflowRun run = jenkins.buildAndAssertSuccess(job);

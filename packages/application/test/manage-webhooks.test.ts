@@ -62,6 +62,40 @@ describe("WebhookNotificationService", () => {
       suiteId: "suite-1",
       status: "succeeded",
       completedAt: "2026-08-23T07:59:00.000Z",
+      passRate: "75.0",
+    });
+  });
+
+  it("sends a configuration test with an explicit preset pass rate", async () => {
+    const transport = { send: vi.fn().mockResolvedValue({ statusCode: 202 }) };
+    const service = createService(
+      {
+        getConfiguration: vi.fn().mockResolvedValue({
+          id: "webhook-1",
+          projectId: "project-1",
+          name: "Quality Bot",
+          description: "",
+          targetUrl: "https://hooks.example.test/notify",
+          method: "POST",
+          bodyTemplate: '{"passRate":"{{summary.passRate}}","total":"{{summary.total}}"}',
+          enabled: false,
+          revision: 1,
+          createdAt: NOW.toISOString(),
+          updatedAt: NOW.toISOString(),
+        }),
+      },
+      transport,
+    );
+
+    await expect(service.testConfiguration("webhook-1", ["project-1"])).resolves.toEqual({
+      method: "POST",
+      presetPassRate: 80,
+      statusCode: 202,
+    });
+    expect(transport.send).toHaveBeenCalledWith({
+      method: "POST",
+      url: "https://hooks.example.test/notify",
+      body: '{"passRate":"80.0","total":"100"}',
     });
   });
 

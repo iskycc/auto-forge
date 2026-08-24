@@ -8,7 +8,7 @@
   <version>${revision}${changelist}</version>
   <packaging>pom</packaging>
   <properties>
-    <revision>1.1.10</revision>
+    <revision>1.2.0</revision>
     <changelist>-SNAPSHOT</changelist>
   </properties>
   <modules>

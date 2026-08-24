@@ -81,7 +81,6 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
   constructor(
     private readonly handle: PostgresDatabaseHandle,
     private readonly caseExecutionTimeoutSeconds = DEFAULT_CASE_EXECUTION_TIMEOUT_SECONDS,
-    private readonly artifactCollectionEnabled = true,
   ) {}
 
   async create(record: CreateRunBatchRecord): Promise<RunBatch> {
@@ -718,7 +717,6 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
               executionTimeoutMs: batch.executionTimeoutMs,
               uploadTimeoutMs: batch.uploadTimeoutMs,
               caseTimeoutSeconds: this.caseExecutionTimeoutSeconds,
-              artifactCollectionEnabled: this.artifactCollectionEnabled,
               ...(policy ? { policy } : {}),
             }),
           ),
@@ -1155,13 +1153,10 @@ function executionSpec(input: {
   executionTimeoutMs: number;
   uploadTimeoutMs: number;
   caseTimeoutSeconds: number;
-  artifactCollectionEnabled: boolean;
   policy?: RunBatchExecutionPolicy;
 }): ExecutionSpec {
-  // 产物收集全局开关关闭时不下发任何产物规则，Agent 端据此跳过扫描与上传。
-  const artifactPatterns = input.artifactCollectionEnabled
-    ? (input.policy?.artifactPatterns ?? ["reports/testng/**"])
-    : [];
+  // 产物开关属于批次策略快照；Full worker 不再用启动时配置二次覆盖它。
+  const artifactPatterns = input.policy?.artifactPatterns ?? ["reports/testng/**"];
   const runtimeInputs = input.adapterRuntime ? runtimeAssetInputs(input.adapterRuntime) : [];
   const executionInputs: ExecutionSpec["inputs"] = [
     {

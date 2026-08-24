@@ -159,7 +159,7 @@ export default async function RunnersPage({
       </section>
       {canManage ? (
         <RunnerAgentInstaller
-          controlPlaneUrl={services.config.web.publicBaseUrl}
+          controlPlaneUrl={services.configurationStore.read().web.publicBaseUrl}
           profiles={installationProfiles}
         />
       ) : null}

@@ -39,7 +39,7 @@ type ConnectedHost = {
 
 type InstallerDependencies = {
   resources: RunnerAgentResourceStore;
-  controlPlaneUrl: string | undefined;
+  controlPlaneUrl(): string | undefined;
   issueBootstrapToken(): string;
 };
 
@@ -54,7 +54,7 @@ export class RunnerAgentInstaller {
   }
 
   async install(input: InstallRunnerAgentInput): Promise<RunnerAgentInstallationResult> {
-    const controlPlaneUrl = normalizeRunnerControlPlaneUrl(this.dependencies.controlPlaneUrl);
+    const controlPlaneUrl = normalizeRunnerControlPlaneUrl(this.dependencies.controlPlaneUrl());
     const dataDirectory = resolveRunnerDataDirectory(input.dataDirectory);
     const probe = await this.inspectHost(
       input.connection,

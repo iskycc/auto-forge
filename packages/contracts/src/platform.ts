@@ -73,6 +73,8 @@ export const platformConfigurationViewSchema = updatePlatformConfigurationInputS
     configurationFile: z.string().min(1),
     fullConfigured: z.boolean(),
     restartRequired: z.boolean(),
+    appliedImmediatelyFields: z.array(z.string().min(1).max(120)).max(20).default([]),
+    restartRequiredFields: z.array(z.string().min(1).max(120)).max(50).default([]),
   });
 
 export type PlatformConfigurationView = z.infer<typeof platformConfigurationViewSchema>;

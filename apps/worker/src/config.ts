@@ -2,6 +2,7 @@ import { hostname } from "node:os";
 
 import {
   loadPlatformConfiguration,
+  PlatformConfigurationStore,
   type LoadPlatformConfigurationOptions,
 } from "@autoforge/platform-config";
 
@@ -10,6 +11,7 @@ export type WorkerConfig = ReturnType<typeof loadWorkerConfig>;
 export function loadWorkerConfig(options: LoadPlatformConfigurationOptions = {}) {
   const runtime = loadPlatformConfiguration(options);
   const configuration = runtime.persisted;
+  const configurationStore = new PlatformConfigurationStore(runtime.paths.dataDirectory);
   if (configuration.mode !== "full" || !configuration.full) {
     throw new Error("独立 worker 只能在已初始化的 Full 模式配置下启动。");
   }
@@ -43,6 +45,6 @@ export function loadWorkerConfig(options: LoadPlatformConfigurationOptions = {})
     maxJarBytes: configuration.limits.maxJarBytes,
     testNgTargetJavaVersion: configuration.limits.testNgTargetJavaVersion,
     caseExecutionTimeoutSeconds: configuration.limits.caseExecutionTimeoutSeconds,
-    artifactCollectionEnabled: configuration.limits.artifactCollectionEnabled,
+    artifactCollectionEnabled: () => configurationStore.read().limits.artifactCollectionEnabled,
   };
 }

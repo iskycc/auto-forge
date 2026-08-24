@@ -68,11 +68,25 @@ export function PlatformSettings({
       });
       const body = (await response.json()) as {
         revision?: number;
+        appliedImmediatelyFields?: string[];
+        restartRequiredFields?: string[];
         error?: { message?: string };
       };
       if (!response.ok) throw new Error(body.error?.message ?? "平台配置保存失败。");
       if (body.revision !== undefined) setRevision(body.revision);
-      setMessage("平台配置已保存。为保证组合根一致，请在维护窗口重启 Web 和 worker。");
+      const immediate = body.appliedImmediatelyFields ?? [];
+      const restart = body.restartRequiredFields ?? [];
+      setMessage(
+        [
+          "平台配置已保存。",
+          immediate.length > 0 ? `${immediate.join("、")}已立即生效。` : "",
+          restart.length > 0
+            ? `${restart.join("、")}需要重启 Web${initial.mode === "full" ? " 和 worker" : ""} 后生效。`
+            : "无需重启。",
+        ]
+          .filter(Boolean)
+          .join(" "),
+      );
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "平台配置保存失败。");
     } finally {
@@ -105,7 +119,7 @@ export function PlatformSettings({
             <ServerCog size={22} aria-hidden="true" />
           </div>
           <p className="settings-note">
-            配置保存在平台数据目录中，不从环境变量读取。运行参数仅在重启时生效。
+            配置保存在平台数据目录中。外部访问地址与产物收集保存后立即生效；进程监听、基础设施、容量和调度参数需要重启。
           </p>
           <div className="settings-grid-form">
             <div className="deployment-mode-display" aria-label="部署模式">
@@ -140,6 +154,7 @@ export function PlatformSettings({
                 type="url"
               />
               <small>可信内网可使用 HTTP/IP 直连；跨不可信网络仍应使用 HTTPS。</small>
+              <small>保存后立即用于新生成的分享链接、Jenkins 链接与 Runner 安装。</small>
             </label>
             <label>
               公开大盘刷新间隔（秒）
@@ -255,6 +270,7 @@ export function PlatformSettings({
                 type="checkbox"
               />
               启用产物收集（关闭后执行不扫描、不上传产物，详情页不展示产物）
+              <small>保存后立即应用到新建批次；已创建批次保持原有执行快照。</small>
             </label>
             <NumberInput
               label="调度 CPU 上限（%）"

@@ -320,7 +320,7 @@ function configureAuthentication(client: Connection, authentication: ProbeAuthen
 function installer(): RunnerAgentInstaller {
   return new RunnerAgentInstaller({
     resources: new RunnerAgentResourceStore("/unused"),
-    controlPlaneUrl: "https://autoforge.internal",
+    controlPlaneUrl: () => "https://autoforge.internal",
     issueBootstrapToken: () => "unused",
   });
 }

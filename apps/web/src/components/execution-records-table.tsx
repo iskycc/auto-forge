@@ -18,6 +18,7 @@ import {
 } from "@/lib/execution-record-columns";
 import { formatBatchDuration } from "@/lib/run-batch-presentation";
 import { Button } from "@/components/ui";
+import { RunBatchPermanentShare } from "@/components/run-batch-permanent-share";
 
 export type { ExecutionRecordRow } from "@/lib/execution-record-columns";
 
@@ -267,6 +268,7 @@ export function ExecutionRecordsTable({
                     >
                       <ExternalLink size={14} aria-hidden="true" /> 详情
                     </Link>
+                    <RunBatchPermanentShare batchId={row.id} sequenceNumber={row.sequenceNumber} />
                     {canTerminate && executionRecordIsActive(row.status) ? (
                       <Button
                         className="button button-danger-quiet compact-button"

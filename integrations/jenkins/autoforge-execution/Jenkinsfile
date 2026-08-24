@@ -1,0 +1,17 @@
+pipeline {
+  agent any
+
+  stages {
+    stage('Run AutoForge task') {
+      steps {
+        withCredentials([string(credentialsId: 'autoforge-api-key', variable: 'AUTOFORGE_API_KEY')]) {
+          autoforgeRun(
+            baseUrl: 'https://autoforge.internal',
+            apiKey: env.AUTOFORGE_API_KEY,
+            suiteId: 'replace-with-suite-id'
+          )
+        }
+      }
+    }
+  }
+}

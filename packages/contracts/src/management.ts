@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 export const WEBHOOK_BODY_VARIABLES = [
+  "event.name",
   "batch.id",
   "batch.sequenceNumber",
   "batch.projectId",
@@ -14,13 +15,14 @@ export const WEBHOOK_BODY_VARIABLES = [
   "summary.succeeded",
   "summary.failed",
   "summary.cancelled",
+  "summary.passRate",
 ] as const;
 
 const webhookVariableNames = new Set<string>(WEBHOOK_BODY_VARIABLES);
 
 export const DEFAULT_WEBHOOK_BODY_TEMPLATE = JSON.stringify(
   {
-    event: "run_batch.completed",
+    event: "{{event.name}}",
     batchId: "{{batch.id}}",
     batchNumber: "{{batch.sequenceNumber}}",
     suiteId: "{{batch.suiteId}}",
@@ -31,6 +33,7 @@ export const DEFAULT_WEBHOOK_BODY_TEMPLATE = JSON.stringify(
     succeeded: "{{summary.succeeded}}",
     failed: "{{summary.failed}}",
     cancelled: "{{summary.cancelled}}",
+    passRate: "{{summary.passRate}}",
     completedAt: "{{batch.completedAt}}",
   },
   null,

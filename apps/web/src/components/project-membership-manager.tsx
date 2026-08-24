@@ -2,14 +2,14 @@
 
 import type { Project, Role, User } from "@autoforge/domain";
 import { ShieldCheck, UserPlus } from "lucide-react";
-import { useEffect, useState, type FormEvent } from "react";
+import { useRouter } from "next/navigation";
+import { useState, type FormEvent } from "react";
 
 import { Button, Input, Select } from "@/components/ui";
 import { readApiErrorMessage } from "@/lib/client-api";
 import { ActionDialog } from "@/components/action-dialog";
 
 type ProjectMember = { user: User; roleIds: string[] };
-const RELOAD_MESSAGE_KEY = "autoforge:project-memberships:message";
 
 export function ProjectMembershipManager({
   project,
@@ -24,17 +24,11 @@ export function ProjectMembershipManager({
   canManage: boolean;
   canCreateProject: boolean;
 }) {
+  const router = useRouter();
   const [pending, setPending] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [actionDialog, setActionDialog] = useState<"project" | "member" | "owner" | null>(null);
-
-  useEffect(() => {
-    const timeoutId = window.setTimeout(() => {
-      setMessage(takeReloadMessage());
-    }, 0);
-    return () => window.clearTimeout(timeoutId);
-  }, []);
 
   async function request(path: string, init: RequestInit, success: string) {
     setPending(true);
@@ -44,8 +38,10 @@ export function ProjectMembershipManager({
       const response = await fetch(path, init);
       const errorMessage = await readApiErrorMessage(response, "操作失败。");
       if (errorMessage) throw new Error(errorMessage);
-      window.sessionStorage.setItem(RELOAD_MESSAGE_KEY, success);
-      window.location.reload();
+      setMessage(success);
+      setActionDialog(null);
+      router.refresh();
+      setPending(false);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "操作失败。");
       setPending(false);
@@ -294,11 +290,4 @@ function jsonRequest(method: string, body: unknown): RequestInit {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   };
-}
-
-function takeReloadMessage(): string {
-  if (typeof window === "undefined") return "";
-  const message = window.sessionStorage.getItem(RELOAD_MESSAGE_KEY) ?? "";
-  window.sessionStorage.removeItem(RELOAD_MESSAGE_KEY);
-  return message;
 }

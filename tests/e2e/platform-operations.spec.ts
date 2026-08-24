@@ -22,6 +22,19 @@ test("configuration conflicts, diagnostics and retention controls remain observa
   await expect(page.getByText(/平台配置已保存/)).toBeVisible();
   await concurrentPage.close();
 
+  const publicBaseUrl = page.getByLabel("外部访问地址");
+  const originalPublicBaseUrl = await publicBaseUrl.inputValue();
+  const artifactCollection = page.getByLabel(/启用产物收集/);
+  const originalArtifactCollection = await artifactCollection.isChecked();
+  await publicBaseUrl.fill("http://127.0.0.1:3199");
+  await artifactCollection.setChecked(!originalArtifactCollection);
+  await page.getByRole("button", { name: "保存平台配置" }).click();
+  await expect(page.getByText(/外部访问地址、产物收集已立即生效.*无需重启/)).toBeVisible();
+  await publicBaseUrl.fill(originalPublicBaseUrl);
+  await artifactCollection.setChecked(originalArtifactCollection);
+  await page.getByRole("button", { name: "保存平台配置" }).click();
+  await expect(page.getByText(/外部访问地址、产物收集已立即生效.*无需重启/)).toBeVisible();
+
   await expandAdministrationGroup(page, "平台运维");
   await page.getByRole("link", { name: "系统诊断" }).click();
   await expect(page.getByRole("heading", { name: "系统诊断" })).toBeVisible();

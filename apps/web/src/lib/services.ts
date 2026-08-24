@@ -135,11 +135,7 @@ async function createPlatformServices() {
     identities = new SqliteIdentityAccessRepository(database);
     const localExecutions = new SqliteExecutionControlRepository(database, attemptLogs);
     executions = workerBackedExecutionControlRepository(localExecutions, workDispatcher);
-    batches = new SqliteRunBatchRepository(
-      database,
-      config.caseExecutionTimeoutSeconds,
-      config.artifactCollectionEnabled,
-    );
+    batches = new SqliteRunBatchRepository(database, config.caseExecutionTimeoutSeconds);
     roundRecoveries = new SqliteRoundRecoveryRepository(database);
     attemptLogSharesRepository = new SqliteAttemptLogShareRepository(database);
     objectStore = new LocalObjectStore(config.dataDirectory);
@@ -251,11 +247,7 @@ async function createPlatformServices() {
     runnerGroupsRepository = new PostgresRunnerGroupRepository(database);
     identities = new PostgresIdentityAccessRepository(database);
     executions = new PostgresExecutionControlRepository(database, attemptLogs);
-    batches = new PostgresRunBatchRepository(
-      database,
-      config.caseExecutionTimeoutSeconds,
-      config.artifactCollectionEnabled,
-    );
+    batches = new PostgresRunBatchRepository(database, config.caseExecutionTimeoutSeconds);
     roundRecoveries = new PostgresRoundRecoveryRepository(database);
     attemptLogSharesRepository = new PostgresAttemptLogShareRepository(database);
     objectStore = new MinioObjectStore(config.minio);
@@ -354,7 +346,7 @@ async function createPlatformServices() {
     projectStructuresRepository,
     runnerGroupsRepository,
     config.caseExecutionTimeoutSeconds * 1_000,
-    config.artifactCollectionEnabled,
+    () => configurationStore.read().limits.artifactCollectionEnabled,
   );
   const runScheduling = new CoalescingSchedulingPort(runBatches, workDispatcher);
   const roundRecovery = new RoundRecoveryService(
@@ -540,7 +532,7 @@ async function createPlatformServices() {
   );
   const runnerAgentInstaller = new RunnerAgentInstaller({
     resources: runnerAgentResources,
-    controlPlaneUrl: config.web.publicBaseUrl,
+    controlPlaneUrl: () => configurationStore.read().web.publicBaseUrl,
     issueBootstrapToken: () => runnerControl.issueBootstrapToken(),
   });
 

@@ -169,7 +169,8 @@ export function CaseSuiteEditor({
             runnerGroupId:
               runnerSelectionKind === "group" ? String(form.get("runnerGroupId") ?? "") : "",
             runnerLabels,
-            artifactPatterns: artifactsEnabled ? artifactPatterns : [],
+            // 全局开关只影响新批次快照，不应在编辑其他任务字段时抹掉任务规则。
+            artifactPatterns,
             retryConcurrencyRules: retryConcurrencyRules.map(toRetryConcurrencyRuleInput),
             roundRecoveryRules: roundRecoveryRules.map(toRoundRecoveryRuleInput),
           },

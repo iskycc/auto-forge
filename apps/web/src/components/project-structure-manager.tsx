@@ -6,6 +6,7 @@ import type {
   ProjectStructure,
 } from "@autoforge/domain";
 import { FolderTree, Link2, Plus, Trash2, UploadCloud } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
 
 import { Button, FileInput, Input, OperationProgress, Select } from "@/components/ui";
@@ -24,6 +25,7 @@ export function ProjectStructureManager({
   initialVersionId?: string;
   canManage: boolean;
 }) {
+  const router = useRouter();
   const [structure, setStructure] = useState(initialStructure);
   const [pending, setPending] = useState(false);
   const [message, setMessage] = useState("");
@@ -56,6 +58,7 @@ export function ProjectStructureManager({
         : (nextStructure.versions[0]?.id ?? ""),
     );
     setMessage(success);
+    router.refresh();
   }
 
   async function submitJson(path: string, method: "POST" | "PUT", body: unknown) {

@@ -77,7 +77,6 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
   constructor(
     private readonly handle: SqliteDatabaseHandle,
     private readonly caseExecutionTimeoutSeconds = DEFAULT_CASE_EXECUTION_TIMEOUT_SECONDS,
-    private readonly artifactCollectionEnabled = true,
   ) {}
 
   async create(record: CreateRunBatchRecord): Promise<RunBatch> {
@@ -694,7 +693,6 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
                 executionTimeoutMs: batchScope.executionTimeoutMs,
                 uploadTimeoutMs: batchScope.uploadTimeoutMs,
                 caseTimeoutSeconds: this.caseExecutionTimeoutSeconds,
-                artifactCollectionEnabled: this.artifactCollectionEnabled,
                 ...(policy ? { policy } : {}),
               }),
             ),
@@ -1036,13 +1034,11 @@ function executionSpec(input: {
   executionTimeoutMs: number;
   uploadTimeoutMs: number;
   caseTimeoutSeconds: number;
-  artifactCollectionEnabled: boolean;
   policy?: RunBatchExecutionPolicy;
 }): ExecutionSpec {
-  // 产物收集全局开关关闭时不下发任何产物规则，Agent 端据此跳过扫描与上传。
-  const artifactPatterns = input.artifactCollectionEnabled
-    ? (input.policy?.artifactPatterns ?? ["reports/testng/**"])
-    : [];
+  // 批次创建时已经把平台开关固化进策略快照；领取阶段只读快照，避免 Web 与
+  // 独立 worker 的进程内配置不一致，也保证运行中的批次不会被后续设置改写。
+  const artifactPatterns = input.policy?.artifactPatterns ?? ["reports/testng/**"];
   const runtimeInputs = input.adapterRuntime ? runtimeAssetInputs(input.adapterRuntime) : [];
   const executionInputs: ExecutionSpec["inputs"] = [
     {

@@ -472,6 +472,7 @@ describe("run batch creation with suite policy", () => {
   });
 
   it("drops saved artifact patterns when global artifact collection is disabled", async () => {
+    let artifactCollectionEnabled = false;
     const suite = readySuite({
       policy: { artifactPatterns: ["reports/**"] },
     });
@@ -508,12 +509,15 @@ describe("run batch creation with suite policy", () => {
       undefined,
       undefined,
       600_000,
-      false,
+      () => artifactCollectionEnabled,
     );
 
     await service.create({ suiteId: "suite-1" });
-
     expect(created[0]?.policy.artifactPatterns).toEqual([]);
+
+    artifactCollectionEnabled = true;
+    await service.create({ suiteId: "suite-1" });
+    expect(created[1]?.policy.artifactPatterns).toEqual(["reports/**"]);
   });
 
   it("rejects creating batches for archived suites", async () => {

@@ -96,11 +96,7 @@ function schedulingService(): RunBatchSchedulingService {
   const catalog = new SqliteCaseCatalogRepository(handle);
   const suites = new SqliteCaseSuiteRepository(handle);
   const runners = new SqliteRunnerRepository(handle);
-  const batches = new SqliteRunBatchRepository(
-    handle,
-    configuration.caseExecutionTimeoutSeconds,
-    configuration.artifactCollectionEnabled,
-  );
+  const batches = new SqliteRunBatchRepository(handle, configuration.caseExecutionTimeoutSeconds);
   scheduler = new RunBatchSchedulingService(
     batches,
     suites,
@@ -122,7 +118,7 @@ function schedulingService(): RunBatchSchedulingService {
     new SqliteProjectStructureRepository(handle),
     new SqliteRunnerGroupRepository(handle),
     configuration.caseExecutionTimeoutSeconds * 1_000,
-    configuration.artifactCollectionEnabled,
+    () => configuration.artifactCollectionEnabled,
   );
   return scheduler;
 }

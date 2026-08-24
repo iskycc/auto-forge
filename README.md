@@ -25,7 +25,7 @@ AutoForge 是一个面向自动化测试场景的用例工厂，用于统一管�
 - Lite 本地对象存储和 Full MinIO 对象存储：JAR 按内容摘要保存，页面只浏览 AutoForge 纳管的对象空间。
 - JAR 来源列表、持久化扫描预览和唯一权威全量来源设置；同一项目版本/测试阶段重导不同 JAR 时，完整类名相同的用例沿用稳定定义 ID、保留人工元数据和任务关系，替换可执行方法并立即追加指向新来源的不可变版本。来源间目录对比继续展示新增/变化/移除/冲突并确认权威来源，消失用例按保留语义不自动禁用，排队批次继续按已固化版本读取原 JAR。支持归档/恢复与守卫式删除，共享对象只有在最后一个来源删除后才异步回收。生命周期语义见[用例来源生命周期](./docs/architecture/case-sources.md)。
 - 用例文件夹支持递归整选、取消和半选状态；选择目标任务后可反向筛出尚未加入的用例，再批量加入。用例任务创建、任务详情以及任务内用例树形新增/批量删除均使用有界分页渲染。任务不再有 500 个用例的产品上限，Lite/Full 均以分批 SQL 和调度窗口支持 10 万级任务及执行批次；每个任务强制绑定一个有效项目版本，成员只能来自该版本，任务列表、快捷执行、执行记录、洞察和计划视图均跟随顶栏当前版本并显示版本友好名称。任务支持重命名、描述、复制、归档、启停、版本/变更快照与修订号并发冲突保护，执行策略覆盖 Runner/Runner Group、项目版本、Adapter 环境地址、优先级、基础并发度、在指定轮次判断且命中后持续生效的重跑并发、同轮多 Jenkins 环境并行恢复屏障、重试、排队/领取/上传恢复时限、Runner 标签与产物规则并在批次创建前逐项预检。每条 Jenkins 恢复配置可只读测试任务信息和上一构建，不会触发构建。单用例执行时限只读取平台全局配置。
-- 项目级任务完成 Webhook 支持 GET 查询参数和 POST JSON 模板，可在独立“回调通知”页面管理并与多个任务绑定。Lite/Full 都先按终态事件幂等持久化通知快照，再以有界租约和退避重试发送；接收端失败不会改变任务执行结果，未配置或未绑定时不会产生任何出站请求。详细语义见 [Webhook 完成通知](./docs/architecture/webhook-notifications.md)。
+- 项目级任务完成 Webhook 支持 GET 查询参数和 POST JSON 模板，可在独立“回调通知”页面管理并与多个任务绑定；每个端点可用 100 个用例、80% 通过率的预置消息直接测试连通性和模板。Lite/Full 都先按终态事件幂等持久化通知快照，再以有界租约和退避重试发送；接收端失败不会改变任务执行结果，未配置或未绑定时不会产生任何出站请求。详细语义见 [Webhook 完成通知](./docs/architecture/webhook-notifications.md)。
 - 用例定义支持展示名、描述、标签与启停编辑，版本历史可查看来源、创建人与变更原因，并允许从旧版本恢复生成新版本而不覆盖历史。用例库支持按 `case.manage` 权限单删和批量删除；删除同步清理任务成员关系，但保留已经物化的执行与分析历史。
 - Runner Agent 注册、身份凭据落盘、周期心跳、在线/离线判定和执行机控制台；支持凭据轮换（旧凭据有明确失效窗口）、撤销、禁用、排空与注销，注销后活跃租约立即到期回收，撤销或注销后心跳、claim、上报与终端均被拒绝。
 - 首页按本周质量、活动执行、用例库、执行机组、失败洞察和最近动态展示真实工作数据；有 `run.create` 权限的用户可在任意页面通过顶栏“开始执行”发起任务或单用例执行。
@@ -34,7 +34,7 @@ AutoForge 是一个面向自动化测试场景的用例工厂，用于统一管�
 - 顶栏提供全局项目切换，首页、用例、任务、记录、洞察、来源、审计和项目设置共享同一服务端校验上下文。任务快捷执行只提交 `suiteId` 并使用任务保存的完整配置；单用例快捷执行允许临时选择 Runner/Runner Group、重跑和 Adapter 环境地址，并默认启用 CoTest Adapter。任务与单用例均不提供手工参数覆盖；TestNG 发现参数只读固化。产品级执行环境与执行密文页面、API 和任务字段已退役，新批次不再接受这两类配置。
 - 批次执行前预检一次返回任务状态、参数、Runner capability/标签、项目版本 Java/TestNG 工具链、权威 JAR 对象和资源限制的逐项 blocker；正式创建复用相同规则，调度、claim 和下载仍执行权威复核。
 - 顶栏执行弹窗支持立即执行或最长七天、精确到秒的持久化倒计时。计划开始时间由服务端固化，Lite/Full 在到点前都不会分配用例，排队超时也从到点后开始；执行记录和详情会显示实时倒计时。
-- Jenkins Pipeline 插件提供 `autoforgeRun` 与 `autoforgePublishDependencies` 两个步骤：前者使用 API Key 启动任务，按服务端建议周期打印轮次/通过/失败与免登录进展链接，在可配置总时限内等待批次终态，并在完成后输出永久匿名结果链接 `resultUrl`；后者按项目版本替换依赖压缩包链接，不保存历史版本文件，拒绝时会显示服务端可操作错误。两个客户端固定使用 HTTP/1.1，兼容未配置 TLS 代理的 Lite 地址。两个 HPI、SBOM、校验和与发布清单随 Release 分发，并通过真实 Pipeline DSL E2E 与 HPI 包结构校验。完整流水线见 [`examples/jenkins/Jenkinsfile`](./examples/jenkins/Jenkinsfile)。
+- Jenkins Pipeline 插件提供 `autoforgeRun` 与 `autoforgePublishDependencies` 两个步骤：前者使用 API Key 启动任务，按服务端建议周期打印轮次/通过/失败与免登录进展链接，在可配置总时限内等待批次终态，并在完成后输出永久匿名结果链接 `resultUrl`；后者按项目版本替换依赖压缩包链接，不保存历史版本文件，拒绝时会显示服务端可操作错误。两个客户端固定使用 HTTP/1.1，兼容未配置 TLS 代理的 Lite 地址；各插件目录都包含只填写必需参数的 `Jenkinsfile`，ZIP 依赖发布无需重复填写文件名和格式。两个 HPI、SBOM、校验和与发布清单随 Release 分发，并通过真实 Pipeline DSL E2E 与 HPI 包结构校验。完整流水线见 [`examples/jenkins/Jenkinsfile`](./examples/jenkins/Jenkinsfile)。
 - 本地账号首次管理员引导、scrypt 密码、本地/LDAP 登录、安全会话、锁定/解锁、密码恢复、六种内置角色和服务端 RBAC；自定义角色可创建、编辑、停用与删除（内置角色不可变，引用中角色与最后一位系统管理员受保护，权限变更全量审计并撤销相关会话）；项目支持创建、归档、成员角色分配与负责人转移。批次、日志、Attempt 时间线、产物下载和取消按权威项目过滤，跨项目 ID 猜测不会读取内容。
 - LDAP 的 LDAPS/StartTLS、私有 CA、多服务器、分页上限、即时建号、组角色映射、手动同步和离职停用；bind 密码使用主密钥加密，连接测试区分 DNS、TLS、超时、bind、Base DN、过滤器和读取权限故障。
 - 用户管理支持 URL 驱动的搜索、来源筛选和游标分页，以及本地账号创建、启停/解锁、密码重置和按用户撤销全部会话；LDAP 管理属性不提供本地编辑入口。
@@ -94,6 +94,7 @@ AutoForge 是一个面向自动化测试场景的用例工厂，用于统一管�
 | `GET/PUT`      | `/api/v1/case-suites/{suiteId}/webhooks`                  | 查询或替换任务绑定的完成通知端点                     |
 | `GET/POST`     | `/api/v1/webhooks`                                        | 查询或创建当前项目的 Webhook                         |
 | `PATCH/DELETE` | `/api/v1/webhooks/{webhookId}`                            | 按修订号编辑或删除 Webhook                           |
+| `POST`         | `/api/v1/webhooks/{webhookId}/test`                       | 使用预置 80% 通过率消息测试端点                      |
 | `GET`          | `/api/v1/webhook-deliveries`                              | 有界查询项目最近投递结果                             |
 | `POST`         | `/api/v1/runner-agents/register`                          | 使用 bootstrap token 注册 Agent                      |
 | `POST`         | `/api/v1/runner-agents/{runnerId}/heartbeat`              | Agent 认证心跳与容量上报                             |
@@ -110,6 +111,7 @@ AutoForge 是一个面向自动化测试场景的用例工厂，用于统一管�
 | `POST`         | `/api/v1/run-batches/preflight`                           | 返回创建前逐项配置阻塞原因                           |
 | `GET`          | `/api/v1/run-batches/{batchId}`                           | 查询批次、ExecutionRun 与 RunAttempt                 |
 | `GET`          | `/api/v1/run-batches/{batchId}/progress`                  | API Key 或批次签名参数读取 Jenkins 进展摘要          |
+| `POST`         | `/api/v1/run-batches/{batchId}/share`                     | 为任意状态批次生成永久匿名只读链接                   |
 | `POST`         | `/api/v1/run-batches/{batchId}/terminate`                 | 终止批次调度，在途用例自然完成后关闭任务             |
 | `POST`         | `/api/v1/run-batches/{batchId}/cancel`                    | 兼容旧客户端的批次终止别名                           |
 | `POST`         | `/api/v1/jenkins/runs`                                    | API Key 启动批次并返回临时进展与永久结果链接         |
@@ -186,7 +188,7 @@ SQLite WAL 和短事务仍是权威并发边界，Web 主线程主要负责鉴�
 
 - 成功率、失败率、耗时分位数和趋势分析。
 - 按项目、用例、标签、执行机、时间范围和失败类型筛选。
-- 批次对比、失败聚类和不稳定用例识别。
+- 批次对比、失败聚类，以及按指定任务和起止时间识别不稳定用例。
 - 任务审计、状态变更历史和可关联的结构化日志。
 
 ## 前端设计方向
@@ -393,7 +395,7 @@ pnpm start -- --data-dir=/var/lib/autoforge
 - `platform.json`：schema v1 平台配置，权限 `0600`；包含模式、Web、容量、调度、worker、Full 基础设施和随机秘密；
 - `initial-admin-token`：权限 `0600` 的首位管理员一次性令牌，管理员创建成功后删除。
 
-没有显式参数时，已存在的 `/var/lib/autoforge` 优先，否则使用当前目录的 `data`。默认配置为 Lite，可在没有 PostgreSQL、NATS、MinIO 或 Redis 的条件下独立启动。管理员通过 `/settings/platform` 管理监听地址、执行机可访问的 HTTP/HTTPS 地址、Lite/Full 模式、Full 连接信息、容量与调度阈值；秘密字段只写不回显。配置采用 revision 条件和原子替换，保存后需要在维护窗口重启 Web/worker。HTTP/IP 直连仅适用于可信内网，跨不可信网络应使用 HTTPS。
+没有显式参数时，已存在的 `/var/lib/autoforge` 优先，否则使用当前目录的 `data`。默认配置为 Lite，可在没有 PostgreSQL、NATS、MinIO 或 Redis 的条件下独立启动。管理员通过 `/settings/platform` 管理监听地址、执行机可访问的 HTTP/HTTPS 地址、Lite/Full 模式、Full 连接信息、容量与调度阈值；秘密字段只写不回显。配置采用 revision 条件和原子替换：外部访问地址及产物收集保存后立即生效，后者只影响新批次并固化进批次快照；监听端口、基础设施、容量、调度与 worker 参数保存后会明确提示需要重启。HTTP/IP 直连仅适用于可信内网，跨不可信网络应使用 HTTPS。
 
 Runner Agent 由主平台自动生成独立 JSON 配置并以 `--config /etc/autoforge-agent/config.json` 启动，不复用服务端数据库或基础设施凭据。自动安装支持已有 SSH、Bash、systemd 和基础系统命令的 Ubuntu/openSUSE；cgroup v2 可用时自动启用，缺失时使用降级隔离。服务默认使用专用非特权账号，管理员也可显式选择 root 模式；安装过程不会联网或调用系统包管理器。JDK/TestNG 与业务依赖可由项目上传或登记 Runner 可访问的内网链接，也可使用执行机本地预置工具链作为后备。
 

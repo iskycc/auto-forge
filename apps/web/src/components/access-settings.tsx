@@ -10,7 +10,8 @@ import {
   type UserSession,
 } from "@autoforge/domain";
 import { Network, Plus, RefreshCw, Search, Shield, UserRound } from "lucide-react";
-import { useEffect, useState, type FormEvent } from "react";
+import { useRouter } from "next/navigation";
+import { useState, type FormEvent } from "react";
 
 import { readApiErrorMessage } from "@/lib/client-api";
 import { permissionDescription, permissionLabel } from "@/lib/permission-presentation";
@@ -40,8 +41,6 @@ type LdapView = {
   groupMemberAttribute: string;
   version: number;
 };
-
-const RELOAD_MESSAGE_KEY = "autoforge:access-settings:message";
 
 export type AccessSection = "users" | "roles" | "ldap" | "sessions";
 
@@ -91,6 +90,7 @@ export function AccessSettings({
   };
   activeSection: AccessSection;
 }) {
+  const router = useRouter();
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [pending, setPending] = useState(false);
@@ -98,13 +98,6 @@ export function AccessSettings({
   const [createDialog, setCreateDialog] = useState<
     "user" | "password" | "role" | "assignment" | null
   >(null);
-
-  useEffect(() => {
-    const timeoutId = window.setTimeout(() => {
-      setMessage(takeReloadMessage(RELOAD_MESSAGE_KEY));
-    }, 0);
-    return () => window.clearTimeout(timeoutId);
-  }, []);
 
   async function request(path: string, init: RequestInit, success: string) {
     setPending(true);
@@ -114,8 +107,10 @@ export function AccessSettings({
       const response = await fetch(path, init);
       const errorMessage = await readApiErrorMessage(response, "操作失败。");
       if (errorMessage) throw new Error(errorMessage);
-      window.sessionStorage.setItem(RELOAD_MESSAGE_KEY, success);
-      window.location.reload();
+      setMessage(success);
+      setCreateDialog(null);
+      router.refresh();
+      setPending(false);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "操作失败。");
       setPending(false);
@@ -1147,11 +1142,4 @@ function userPageHref(query: string, source: string, cursor: string): string {
   if (query) parameters.set("query", query);
   if (source) parameters.set("source", source);
   return `/settings/access?${parameters}`;
-}
-
-function takeReloadMessage(key: string): string {
-  if (typeof window === "undefined") return "";
-  const message = window.sessionStorage.getItem(key) ?? "";
-  window.sessionStorage.removeItem(key);
-  return message;
 }

@@ -32,6 +32,7 @@ export type WebhookDelivery = {
 };
 
 export type WebhookDispatchClaim = {
+  eventName?: "run_batch.completed" | "webhook.test";
   deliveryId: string;
   webhookId: string;
   webhookName: string;

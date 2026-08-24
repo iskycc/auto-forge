@@ -4,7 +4,11 @@ import {
   type CreateWebhookConfigurationInput,
   type UpdateWebhookConfigurationInput,
 } from "@autoforge/contracts";
-import { DomainError, type WebhookDispatchClaim } from "@autoforge/domain";
+import {
+  DomainError,
+  type WebhookConfiguration,
+  type WebhookDispatchClaim,
+} from "@autoforge/domain";
 
 import type { Clock, IdGenerator, WebhookRepository, WebhookTransport } from "./ports";
 
@@ -119,6 +123,28 @@ export class WebhookNotificationService {
     return this.repository.listDeliveries(projectId, Math.min(100, Math.max(1, limit)));
   }
 
+  async testConfiguration(webhookId: string, projectIds?: readonly string[]) {
+    const configuration = await this.repository.getConfiguration(webhookId, projectIds);
+    if (!configuration) throw new DomainError("WEBHOOK_NOT_FOUND", "Webhook 配置不存在。");
+    const presetPassRate = 80;
+    const request = webhookRequest(
+      testDispatchClaim(configuration, this.clock.now(), presetPassRate),
+    );
+    try {
+      const response = await this.transport.send(request);
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw new DomainError(
+          "WEBHOOK_TEST_REJECTED",
+          `Webhook 测试请求返回 HTTP ${response.statusCode}。`,
+        );
+      }
+      return { statusCode: response.statusCode, method: request.method, presetPassRate };
+    } catch (error) {
+      if (error instanceof DomainError) throw error;
+      throw new DomainError("WEBHOOK_TEST_FAILED", boundedErrorMessage(error), { cause: error });
+    }
+  }
+
   async dispatchDue(
     owner: string,
     limit = 20,
@@ -200,11 +226,16 @@ export function webhookRequest(claim: WebhookDispatchClaim): {
   const variables = webhookVariables(claim);
   if (claim.method === "GET") {
     const url = new URL(claim.targetUrl);
-    url.searchParams.set("event", "run_batch.completed");
+    url.searchParams.set("event", claim.eventName ?? "run_batch.completed");
     url.searchParams.set("batchId", claim.batch.id);
     url.searchParams.set("suiteId", claim.batch.suiteId);
     url.searchParams.set("status", claim.batch.status);
     url.searchParams.set("completedAt", claim.batch.completedAt);
+    url.searchParams.set("total", String(claim.batch.totalRuns));
+    url.searchParams.set("succeeded", String(claim.batch.succeededRuns));
+    url.searchParams.set("failed", String(claim.batch.failedRuns));
+    url.searchParams.set("cancelled", String(claim.batch.cancelledRuns));
+    url.searchParams.set("passRate", passRate(claim.batch));
     return { method: "GET", url: url.toString() };
   }
   if (!claim.bodyTemplate) throw new Error("POST Webhook 没有请求体模板。");
@@ -218,6 +249,7 @@ export function webhookRequest(claim: WebhookDispatchClaim): {
 
 function webhookVariables(claim: WebhookDispatchClaim): Record<string, string> {
   return {
+    "event.name": claim.eventName ?? "run_batch.completed",
     "batch.id": claim.batch.id,
     "batch.sequenceNumber": String(claim.batch.sequenceNumber),
     "batch.projectId": claim.batch.projectId,
@@ -231,6 +263,46 @@ function webhookVariables(claim: WebhookDispatchClaim): Record<string, string> {
     "summary.succeeded": String(claim.batch.succeededRuns),
     "summary.failed": String(claim.batch.failedRuns),
     "summary.cancelled": String(claim.batch.cancelledRuns),
+    "summary.passRate": passRate(claim.batch),
+  };
+}
+
+function passRate(batch: WebhookDispatchClaim["batch"]): string {
+  return batch.totalRuns === 0 ? "0" : ((batch.succeededRuns / batch.totalRuns) * 100).toFixed(1);
+}
+
+function testDispatchClaim(
+  configuration: WebhookConfiguration,
+  now: Date,
+  presetPassRate: number,
+): WebhookDispatchClaim {
+  const totalRuns = 100;
+  const succeededRuns = presetPassRate;
+  const timestamp = now.toISOString();
+  return {
+    eventName: "webhook.test",
+    deliveryId: "webhook-test",
+    webhookId: configuration.id,
+    webhookName: configuration.name,
+    targetUrl: configuration.targetUrl,
+    method: configuration.method,
+    ...(configuration.bodyTemplate ? { bodyTemplate: configuration.bodyTemplate } : {}),
+    attemptNumber: 1,
+    leaseOwner: "webhook-test",
+    batch: {
+      id: "webhook-test-batch",
+      sequenceNumber: 0,
+      projectId: configuration.projectId,
+      suiteId: "webhook-test-suite",
+      suiteName: "Webhook 配置测试",
+      status: "succeeded",
+      totalRuns,
+      succeededRuns,
+      failedRuns: totalRuns - succeededRuns,
+      cancelledRuns: 0,
+      createdAt: timestamp,
+      completedAt: timestamp,
+    },
   };
 }
 

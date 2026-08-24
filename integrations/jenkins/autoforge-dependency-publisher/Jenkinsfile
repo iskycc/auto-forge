@@ -1,0 +1,21 @@
+pipeline {
+  agent any
+
+  stages {
+    stage('Publish AutoForge dependencies') {
+      steps {
+        withCredentials([string(credentialsId: 'autoforge-api-key', variable: 'AUTOFORGE_API_KEY')]) {
+          autoforgePublishDependencies(
+            baseUrl: 'https://autoforge.internal',
+            apiKey: env.AUTOFORGE_API_KEY,
+            projectId: 'replace-with-project-id',
+            version: '1.0.0',
+            dependencyUrl: "${env.BUILD_URL}artifact/target/autoforge-dependencies.zip",
+            sha256: env.DEPENDENCY_SHA256,
+            sizeBytes: env.DEPENDENCY_SIZE as Long
+          )
+        }
+      }
+    }
+  }
+}

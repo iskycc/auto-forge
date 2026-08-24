@@ -21,7 +21,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     const batch = await services.runBatches.create(input);
     const progressToken = issueRunProgressToken(services.config.masterKey, batch.id);
     const resultToken = issuePermanentShareToken(services.config.masterKey, "run_batch", batch.id);
-    const baseUrl = publicLinkBase(services.config.web.publicBaseUrl, request);
+    const baseUrl = publicLinkBase(services.configurationStore.read().web.publicBaseUrl, request);
     const progressUrl = new URL(`/progress/${encodeURIComponent(batch.id)}`, baseUrl);
     progressUrl.searchParams.set("access_token", progressToken);
     await services.identityAccess.recordAuthorizedOperation(identity, {

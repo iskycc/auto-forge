@@ -3,12 +3,11 @@
 import type { CaseSuiteSchedule, LdapSyncJob } from "@autoforge/contracts";
 import { CalendarClock, RefreshCw, Trash2 } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+import { useState } from "react";
 
 import { Button } from "@/components/ui";
 import { readApiErrorMessage } from "@/lib/client-api";
-
-const RELOAD_MESSAGE_KEY = "autoforge:automation-operations:message";
 
 export function AutomationOperations({
   schedules,
@@ -23,16 +22,10 @@ export function AutomationOperations({
   manageableScheduleProjectIds: string[] | undefined;
   canManageLdap: boolean;
 }) {
+  const router = useRouter();
   const [pending, setPending] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
-
-  useEffect(() => {
-    const timeoutId = window.setTimeout(() => {
-      setMessage(takeReloadMessage());
-    }, 0);
-    return () => window.clearTimeout(timeoutId);
-  }, []);
 
   async function request(path: string, init: RequestInit, success: string) {
     setPending(true);
@@ -42,8 +35,9 @@ export function AutomationOperations({
       const response = await fetch(path, init);
       const errorMessage = await readApiErrorMessage(response, "操作失败。");
       if (errorMessage) throw new Error(errorMessage);
-      window.sessionStorage.setItem(RELOAD_MESSAGE_KEY, success);
-      window.location.reload();
+      setMessage(success);
+      router.refresh();
+      setPending(false);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "操作失败。");
       setPending(false);
@@ -327,11 +321,4 @@ function formatDate(value: string): string {
     dateStyle: "medium",
     timeStyle: "medium",
   }).format(new Date(value));
-}
-
-function takeReloadMessage(): string {
-  if (typeof window === "undefined") return "";
-  const message = window.sessionStorage.getItem(RELOAD_MESSAGE_KEY) ?? "";
-  window.sessionStorage.removeItem(RELOAD_MESSAGE_KEY);
-  return message;
 }

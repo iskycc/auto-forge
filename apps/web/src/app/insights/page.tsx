@@ -68,8 +68,23 @@ export default async function InsightsPage({
     ...(hierarchy.projectVersionId ? { projectVersionId: hierarchy.projectVersionId } : {}),
     ...(hierarchy.testStageId ? { testStageId: hierarchy.testStageId } : {}),
   };
-  const [summary, suites, runners, recentBatches] = await Promise.all([
+  const flakyFilter: AnalyticsFilter = {
+    ...(caseProjectId ? { projectId: caseProjectId } : {}),
+    ...(hierarchy.projectVersionId ? { projectVersionId: hierarchy.projectVersionId } : {}),
+    ...(hierarchy.testStageId ? { testStageId: hierarchy.testStageId } : {}),
+    ...(stringParameter(parameters.flakySuiteId)
+      ? { suiteId: stringParameter(parameters.flakySuiteId) }
+      : {}),
+    ...(dateTimeParameter(parameters.flakyCompletedAfter)
+      ? { completedAfter: dateTimeParameter(parameters.flakyCompletedAfter) }
+      : {}),
+    ...(dateTimeParameter(parameters.flakyCompletedBefore)
+      ? { completedBefore: dateTimeParameter(parameters.flakyCompletedBefore) }
+      : {}),
+  };
+  const [summary, flakySummary, suites, runners, recentBatches] = await Promise.all([
     services.platformOperations.analytics(identity, filter),
+    services.platformOperations.analytics(identity, flakyFilter),
     hierarchy.projectVersionId
       ? services.caseSuites.list(
           500,
@@ -331,7 +346,7 @@ export default async function InsightsPage({
                     </tr>
                   </thead>
                   <tbody>
-                    {summary.flakyCases.map((item) => (
+                    {flakySummary.flakyCases.map((item) => (
                       <tr key={item.caseDefinitionId}>
                         <td title={item.displayName}>
                           <Link href={`/cases/${encodeURIComponent(item.caseDefinitionId)}`}>
@@ -346,16 +361,56 @@ export default async function InsightsPage({
                     ))}
                   </tbody>
                 </table>
-                {summary.flakyCases.length === 0 ? (
+                {flakySummary.flakyCases.length === 0 ? (
                   <div className="inline-empty">至少需要 5 个成功与失败混合样本。</div>
                 ) : null}
               </div>
             </InsightDetailDialog>
           </div>
-          {summary.flakyCases.length === 0 ? (
+          <form className="insight-flaky-filter" method="get">
+            <label>
+              指定任务
+              <Select defaultValue={stringParameter(parameters.flakySuiteId)} name="flakySuiteId">
+                <option value="">全部任务</option>
+                {suites.map((suite) => (
+                  <option key={suite.id} value={suite.id}>
+                    {suite.name}
+                  </option>
+                ))}
+              </Select>
+            </label>
+            <label>
+              开始时间（本地）
+              <DatetimeInput
+                defaultValue={stringParameter(parameters.flakyCompletedAfter).slice(0, 16)}
+                name="flakyCompletedAfter"
+              />
+            </label>
+            <label>
+              结束时间（本地）
+              <DatetimeInput
+                defaultValue={stringParameter(parameters.flakyCompletedBefore).slice(0, 16)}
+                name="flakyCompletedBefore"
+              />
+            </label>
+            <Button type="submit" variant="secondary">
+              筛选不稳定用例
+            </Button>
+          </form>
+          <p className="muted insight-flaky-scope">
+            当前范围：
+            {stringParameter(parameters.flakySuiteId)
+              ? (suites.find((suite) => suite.id === stringParameter(parameters.flakySuiteId))
+                  ?.name ?? "指定任务")
+              : "全部任务"}
+            {flakyFilter.completedAfter || flakyFilter.completedBefore
+              ? ` · ${flakyFilter.completedAfter ? formatLocalDateTime(flakyFilter.completedAfter) : "最早记录"} 至 ${flakyFilter.completedBefore ? formatLocalDateTime(flakyFilter.completedBefore) : "现在"}`
+              : " · 全部时间"}
+          </p>
+          {flakySummary.flakyCases.length === 0 ? (
             <div className="inline-empty">至少需要 5 个成功与失败混合样本。</div>
           ) : (
-            <FlakyCaseChart cases={summary.flakyCases} />
+            <FlakyCaseChart cases={flakySummary.flakyCases} />
           )}
         </article>
 
@@ -821,6 +876,13 @@ function analyticsFilter(
 
 function stringParameter(value: string | string[] | undefined): string {
   return typeof value === "string" ? value : "";
+}
+
+function dateTimeParameter(value: string | string[] | undefined): string | undefined {
+  const raw = stringParameter(value);
+  if (!raw) return undefined;
+  const parsed = new Date(raw);
+  return Number.isNaN(parsed.getTime()) ? undefined : parsed.toISOString();
 }
 
 function percent(value: number): string {

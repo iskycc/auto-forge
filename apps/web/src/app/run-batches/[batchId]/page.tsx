@@ -73,7 +73,7 @@ export default async function RunBatchDetailsPage({
         canReadArtifacts={canAuthorize(() =>
           services.identityAccess.authorize(identity, "artifact.read", batch.projectId),
         )}
-        artifactsEnabled={services.config.artifactCollectionEnabled}
+        artifactsEnabled={services.configurationStore.read().limits.artifactCollectionEnabled}
         runnerDirectory={runnerDirectory}
       />
     </div>

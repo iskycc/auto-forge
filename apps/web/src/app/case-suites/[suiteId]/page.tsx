@@ -52,7 +52,7 @@ export default async function CaseSuitePage({ params }: Props) {
         ) : null}
       </section>
       <CaseSuiteEditor
-        artifactsEnabled={services.config.artifactCollectionEnabled}
+        artifactsEnabled={services.configurationStore.read().limits.artifactCollectionEnabled}
         canManage={canManage}
         projectVersions={projectStructure.versions}
         runnerGroups={runnerGroups}

@@ -77,6 +77,13 @@ accepted and map `executionRoundFrom` to that trigger. Runner Protocol v1 and Je
 unchanged. Jenkins HPI `1.1.10` remains compatible with the prior server contract, and release images
 remain Docker-native `.docker.tar` archives.
 
+Control plane `1.2.0` keeps the v1.1.10 persisted schemas and Runner Protocol v1. Public-base and
+artifact-collection settings are hot-applied; other persisted configuration fields still require the
+explicit restart reported by the settings UI. Existing Jenkins Pipeline calls remain valid, while HPI
+`1.2.0` defaults dependency metadata to ZIP so `fileName` and `archiveFormat` may be omitted. Permanent
+run links and Webhook test calls are additive HTTP APIs. Release images remain Docker-native
+`.docker.tar` archives.
+
 Control plane `0.9.10` adds persisted Webhook configuration and delivery tables without changing
 Runner Protocol v1. Existing installations have no endpoint or binding after migration and therefore
 retain the prior no-outbound-request behavior until a project administrator explicitly configures one.

@@ -138,10 +138,10 @@ export const EXECUTION_RECORD_COLUMNS: readonly ExecutionRecordColumnDefinition[
   {
     key: "actions",
     label: "操作",
-    defaultWidth: 190,
-    minWidth: 100,
-    maxWidth: 220,
-    text: (row) => (executionRecordIsActive(row.status) ? "详情 终止任务" : "详情"),
+    defaultWidth: 270,
+    minWidth: 190,
+    maxWidth: 360,
+    text: (row) => (executionRecordIsActive(row.status) ? "详情 分享 终止任务" : "详情 分享"),
   },
 ];
 

@@ -1,7 +1,11 @@
 import type { PersistedPlatformConfiguration } from "@autoforge/platform-config";
 import { describe, expect, it } from "vitest";
 
-import { mergePlatformConfiguration, platformConfigurationView } from "./platform-configuration";
+import {
+  mergePlatformConfiguration,
+  platformConfigurationActivation,
+  platformConfigurationView,
+} from "./platform-configuration";
 
 describe("platform configuration mapping", () => {
   it("never returns persisted secrets in the administrator view", () => {
@@ -50,6 +54,19 @@ describe("platform configuration mapping", () => {
     });
 
     expect(merged.full).toEqual(current.full);
+  });
+
+  it("distinguishes immediately applied settings from restart-only process settings", () => {
+    const current = configuration();
+    const saved = configuration({
+      web: { ...current.web, publicBaseUrl: "https://new.autoforge.test", port: 3200 },
+      limits: { ...current.limits, artifactCollectionEnabled: false, maxJarBytes: 67_108_864 },
+    });
+
+    expect(platformConfigurationActivation(current, saved)).toEqual({
+      appliedImmediatelyFields: ["外部访问地址", "产物收集"],
+      restartRequiredFields: ["HTTP 端口", "容量与会话限制"],
+    });
   });
 });
 

@@ -14,6 +14,7 @@ import org.jenkinsci.plugins.workflow.steps.StepDescriptor;
 import org.jenkinsci.plugins.workflow.steps.StepExecution;
 import org.jenkinsci.plugins.workflow.steps.SynchronousNonBlockingStepExecution;
 import org.kohsuke.stapler.DataBoundConstructor;
+import org.kohsuke.stapler.DataBoundSetter;
 
 public final class AutoForgePublishDependenciesStep extends Step {
     private final String baseUrl;
@@ -21,10 +22,10 @@ public final class AutoForgePublishDependenciesStep extends Step {
     private final String projectId;
     private final String version;
     private final String dependencyUrl;
-    private final String fileName;
+    private String fileName;
     private final String sha256;
     private final long sizeBytes;
-    private final String archiveFormat;
+    private String archiveFormat;
 
     @DataBoundConstructor
     public AutoForgePublishDependenciesStep(
@@ -33,19 +34,17 @@ public final class AutoForgePublishDependenciesStep extends Step {
             String projectId,
             String version,
             String dependencyUrl,
-            String fileName,
             String sha256,
-            long sizeBytes,
-            String archiveFormat) {
+            long sizeBytes) {
         this.baseUrl = baseUrl;
         this.apiKey = Secret.fromString(apiKey);
         this.projectId = projectId;
         this.version = version;
         this.dependencyUrl = dependencyUrl;
-        this.fileName = fileName;
+        this.fileName = "autoforge-dependencies.zip";
         this.sha256 = sha256;
         this.sizeBytes = sizeBytes;
-        this.archiveFormat = archiveFormat;
+        this.archiveFormat = "zip";
     }
 
     public String getBaseUrl() { return baseUrl; }
@@ -57,6 +56,24 @@ public final class AutoForgePublishDependenciesStep extends Step {
     public String getSha256() { return sha256; }
     public long getSizeBytes() { return sizeBytes; }
     public String getArchiveFormat() { return archiveFormat; }
+
+    /** Optional for tar.gz/tgz artifacts; ZIP is the default used by the minimal example. */
+    @DataBoundSetter
+    public void setFileName(String fileName) {
+        if (fileName == null || fileName.isBlank()) {
+            throw new IllegalArgumentException("fileName must not be blank");
+        }
+        this.fileName = fileName;
+    }
+
+    /** Optional for tar.gz/tgz artifacts; ZIP is the default used by the minimal example. */
+    @DataBoundSetter
+    public void setArchiveFormat(String archiveFormat) {
+        if (!"zip".equals(archiveFormat) && !"tar.gz".equals(archiveFormat)) {
+            throw new IllegalArgumentException("archiveFormat must be zip or tar.gz");
+        }
+        this.archiveFormat = archiveFormat;
+    }
 
     @Override
     public StepExecution start(StepContext context) {

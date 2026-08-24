@@ -50,7 +50,7 @@ export async function GET(request: Request, context: Context): Promise<NextRespo
       batchId,
       identity.user.id,
     );
-    const base = publicLinkBase(services.config.web.publicBaseUrl, request);
+    const base = publicLinkBase(services.configurationStore.read().web.publicBaseUrl, request);
     const shareLinks = new Map(
       [...tokens.entries()].map(([attemptId, token]) => [
         attemptId,

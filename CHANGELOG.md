@@ -4,6 +4,45 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## 1.2.0 - 2026-08-24
+
+### Added
+
+- Execution history can generate a permanent anonymous result link for a batch in any lifecycle
+  state; the public page remains resource-scoped and read-only.
+- Unstable-case insight has an independent task and local start/end-time filter.
+- Webhook endpoints can send an immediate synthetic test with 100 cases and an 80% pass rate; the UI
+  reports the request method and response status without creating a retryable delivery record.
+- Each Jenkins HPI directory now contains a minimal `Jenkinsfile` in addition to the combined example.
+
+### Changed
+
+- Public base URL and artifact collection settings now apply without restart. Artifact collection is
+  resolved when a batch is created and stored in its immutable policy snapshot, so Lite and Full
+  workers observe the same decision. Restart-only settings are listed explicitly after save.
+- The dependency-publisher HPI defaults to ZIP metadata, reducing its normal Pipeline invocation by
+  two parameters while preserving `fileName` and `archiveFormat` as optional setters for tarballs.
+- Project, version, member, access and automation mutations refresh Server Component data without a
+  full browser reload.
+
+### Database
+
+- No schema migration. Existing platform configuration, batches, Webhooks and permanent links remain
+  valid.
+
+### Tests
+
+- Added application regressions for hot artifact settings and Webhook test payloads, configuration
+  activation classification, real Jenkins Pipeline DSL verification, and Playwright coverage for
+  hot settings, anonymous history sharing, scoped flaky filters, Webhook testing, no-reload project
+  creation and supported desktop layouts.
+
+### Compatibility
+
+- Runner Protocol v1 and persisted schemas are unchanged. Existing Jenkins Pipeline invocations
+  remain source-compatible; HPI 1.2.0 only makes ZIP metadata optional. Release images remain
+  Docker-native `.docker.tar` archives.
+
 ## 1.1.10 - 2026-08-24
 
 ### Added

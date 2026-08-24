@@ -70,7 +70,7 @@ export class RunBatchSchedulingService {
     private readonly projectStructures?: ProjectStructureRepository,
     private readonly runnerGroups?: RunnerGroupRepository,
     private readonly caseExecutionTimeoutMs = DEFAULT_CASE_EXECUTION_TIMEOUT_SECONDS * 1_000,
-    private readonly artifactCollectionEnabled = true,
+    private readonly artifactCollectionEnabled: () => boolean = () => true,
   ) {}
 
   async create(input: CreateRunBatchInput): Promise<RunBatch> {
@@ -154,7 +154,7 @@ export class RunBatchSchedulingService {
         concurrency: suitePolicy.concurrency,
         ...(suitePolicy.projectVersionId ? { projectVersionId: suitePolicy.projectVersionId } : {}),
         runnerLabels: [...suitePolicy.runnerLabels],
-        artifactPatterns: this.artifactCollectionEnabled ? [...suitePolicy.artifactPatterns] : [],
+        artifactPatterns: this.artifactCollectionEnabled() ? [...suitePolicy.artifactPatterns] : [],
         retryConcurrencyRules: (suitePolicy.retryConcurrencyRules ?? []).map((rule) => ({
           ...rule,
         })),
@@ -290,7 +290,7 @@ export class RunBatchSchedulingService {
         concurrency: 1,
         ...(definition.projectVersionId ? { projectVersionId: definition.projectVersionId } : {}),
         runnerLabels: [],
-        artifactPatterns: this.artifactCollectionEnabled
+        artifactPatterns: this.artifactCollectionEnabled()
           ? validated.artifactPatterns.length > 0
             ? [...validated.artifactPatterns]
             : [...defaultCaseSuiteExecutionPolicy.artifactPatterns]

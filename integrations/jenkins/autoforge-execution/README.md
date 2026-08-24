@@ -7,8 +7,7 @@ withCredentials([string(credentialsId: 'autoforge-api-key', variable: 'AUTOFORGE
   def result = autoforgeRun(
     baseUrl: 'https://autoforge.internal.example',
     apiKey: env.AUTOFORGE_API_KEY,
-    suiteId: '018f-task-id',
-    timeoutSeconds: 86400
+    suiteId: '018f-task-id'
   )
   echo "AutoForge batch: ${result.batchId}"
   echo "Permanent result: ${result.resultUrl}"
@@ -21,4 +20,4 @@ withCredentials([string(credentialsId: 'autoforge-api-key', variable: 'AUTOFORGE
 在任务到达终态后输出独立的永久匿名结果链接，返回值中也可通过 `result.resultUrl` 获取。
 两种链接都只读且只绑定本批次。客户端固定使用 HTTP/1.1，支持 `http://` Lite 部署。
 
-仓库根目录的 [`examples/jenkins/Jenkinsfile`](../../../examples/jenkins/Jenkinsfile) 给出了与依赖发布步骤组合的完整 Declarative Pipeline。`pnpm test:jenkins-plugins` 会把该步骤加载进真实 Jenkins Pipeline Job 执行，并在 Maven `verify` 后检查 HPI manifest、依赖和内部 step class。
+当前插件目录的 [`Jenkinsfile`](./Jenkinsfile) 只填写三个必需参数，可直接复制后替换地址与任务 ID。仓库根目录的 [`examples/jenkins/Jenkinsfile`](../../../examples/jenkins/Jenkinsfile) 给出了与依赖发布步骤组合的完整 Declarative Pipeline。`pnpm test:jenkins-plugins` 会把该步骤加载进真实 Jenkins Pipeline Job 执行，并在 Maven `verify` 后检查 HPI manifest、依赖和内部 step class。

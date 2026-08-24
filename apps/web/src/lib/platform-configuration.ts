@@ -6,6 +6,10 @@ export function platformConfigurationView(
   configuration: PersistedPlatformConfiguration,
   configurationFile: string,
   restartRequired = false,
+  activation: PlatformConfigurationActivation = {
+    appliedImmediatelyFields: [],
+    restartRequiredFields: [],
+  },
 ) {
   return {
     revision: configuration.revision,
@@ -17,7 +21,53 @@ export function platformConfigurationView(
     configurationFile,
     fullConfigured: Boolean(configuration.full),
     restartRequired,
+    ...activation,
   };
+}
+
+export type PlatformConfigurationActivation = {
+  appliedImmediatelyFields: string[];
+  restartRequiredFields: string[];
+};
+
+export function platformConfigurationActivation(
+  current: PersistedPlatformConfiguration,
+  saved: PersistedPlatformConfiguration,
+): PlatformConfigurationActivation {
+  const appliedImmediatelyFields = [
+    changed(current.web.publicBaseUrl, saved.web.publicBaseUrl) ? "外部访问地址" : undefined,
+    changed(current.limits.artifactCollectionEnabled, saved.limits.artifactCollectionEnabled)
+      ? "产物收集"
+      : undefined,
+  ].filter((value): value is string => Boolean(value));
+  const restartRequiredFields = [
+    changed(current.mode, saved.mode) ? "部署模式" : undefined,
+    changed(current.web.hostname, saved.web.hostname) ? "监听地址" : undefined,
+    changed(current.web.port, saved.web.port) ? "HTTP 端口" : undefined,
+    changed(current.web.publicDashboardRefreshSeconds, saved.web.publicDashboardRefreshSeconds)
+      ? "公开大盘刷新间隔"
+      : undefined,
+    changed(restartOnlyLimits(current), restartOnlyLimits(saved)) ? "容量与会话限制" : undefined,
+    changed(current.scheduler, saved.scheduler) ? "调度阈值" : undefined,
+    changed(current.worker, saved.worker) ? "后台 worker" : undefined,
+    changed(current.full, saved.full) ? "Full 基础设施" : undefined,
+  ].filter((value): value is string => Boolean(value));
+  return { appliedImmediatelyFields, restartRequiredFields };
+}
+
+function restartOnlyLimits(configuration: PersistedPlatformConfiguration) {
+  return {
+    maxJarBytes: configuration.limits.maxJarBytes,
+    testNgTargetJavaVersion: configuration.limits.testNgTargetJavaVersion,
+    runnerClaimRateLimitPerMinute: configuration.limits.runnerClaimRateLimitPerMinute,
+    sessionTtlHours: configuration.limits.sessionTtlHours,
+    authLoginAttemptsPerWindow: configuration.limits.authLoginAttemptsPerWindow,
+    caseExecutionTimeoutSeconds: configuration.limits.caseExecutionTimeoutSeconds,
+  };
+}
+
+function changed(left: unknown, right: unknown): boolean {
+  return JSON.stringify(left) !== JSON.stringify(right);
 }
 
 export function mergePlatformConfiguration(

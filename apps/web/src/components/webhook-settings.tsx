@@ -59,6 +59,8 @@ export function WebhookSettings({
   const [editor, setEditor] = useState<EditorState>();
   const [deleting, setDeleting] = useState<WebhookConfiguration>();
   const [pending, setPending] = useState(false);
+  const [testingId, setTestingId] = useState("");
+  const [testMessage, setTestMessage] = useState("");
   const [error, setError] = useState("");
   const bodyRef = useRef<HTMLTextAreaElement>(null);
   const enabledCount = configurations.filter((item) => item.enabled).length;
@@ -121,6 +123,26 @@ export function WebhookSettings({
     }
   }
 
+  async function test(configuration: WebhookConfiguration): Promise<void> {
+    setTestingId(configuration.id);
+    setError("");
+    setTestMessage("");
+    try {
+      const result = await requestJson<{
+        statusCode: number;
+        method: WebhookRequestMethod;
+        presetPassRate: number;
+      }>(`/api/v1/webhooks/${encodeURIComponent(configuration.id)}/test`, { method: "POST" });
+      setTestMessage(
+        `「${configuration.name}」测试成功：${result.method} · HTTP ${result.statusCode} · 预置通过率 ${result.presetPassRate}%。`,
+      );
+    } catch (problem) {
+      setError(problem instanceof Error ? problem.message : "Webhook 测试失败。");
+    } finally {
+      setTestingId("");
+    }
+  }
+
   function insertVariable(variable: string): void {
     if (!editor) return;
     const textarea = bodyRef.current;
@@ -169,6 +191,7 @@ export function WebhookSettings({
             {error}
           </p>
         ) : null}
+        {testMessage ? <p className="inline-success">{testMessage}</p> : null}
         {configurations.length === 0 ? (
           <div className="empty-state table-empty webhook-empty-state">
             <span className="empty-icon">
@@ -201,6 +224,20 @@ export function WebhookSettings({
                 <code title={configuration.targetUrl}>{configuration.targetUrl}</code>
                 {canManage ? (
                   <div className="webhook-card-actions">
+                    <Button
+                      disabled={Boolean(testingId)}
+                      onClick={() => void test(configuration)}
+                      size="compact"
+                      type="button"
+                      variant="secondary"
+                    >
+                      {testingId === configuration.id ? (
+                        <LoaderCircle className="spin" size={14} />
+                      ) : (
+                        <Send size={14} />
+                      )}
+                      测试
+                    </Button>
                     <Button
                       onClick={() => setEditor(toEditor(configuration))}
                       size="compact"

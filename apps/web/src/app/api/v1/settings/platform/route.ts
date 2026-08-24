@@ -6,6 +6,7 @@ import { NextResponse } from "next/server";
 import { authorizeRequest, requestId, requireSameOrigin } from "@/lib/auth";
 import { apiErrorResponse, readJsonBody } from "@/lib/api-response";
 import {
+  platformConfigurationActivation,
   mergePlatformConfiguration,
   platformConfigurationView,
 } from "@/lib/platform-configuration";
@@ -47,8 +48,14 @@ export async function PATCH(request: Request): Promise<NextResponse> {
       { mode: saved.mode, revision: saved.revision },
       currentRequestId,
     );
+    const activation = platformConfigurationActivation(current, saved);
     return NextResponse.json(
-      platformConfigurationView(saved, services.configurationStore.paths.configurationFile, true),
+      platformConfigurationView(
+        saved,
+        services.configurationStore.paths.configurationFile,
+        activation.restartRequiredFields.length > 0,
+        activation,
+      ),
     );
   } catch (error) {
     return apiErrorResponse(platformConfigurationError(error), currentRequestId);

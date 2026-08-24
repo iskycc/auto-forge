@@ -227,6 +227,41 @@ test("top-bar project context persists across pages and removes local project sw
   }
 });
 
+test("project and version creation update the shell without a document reload", async ({
+  page,
+}) => {
+  await ensureAdministrator(page);
+  await selectProjectContext(page, DEFAULT_PROJECT_ID);
+  await page.goto("/settings/projects?section=members");
+  const navigationEntriesBefore = await page.evaluate(
+    () => performance.getEntriesByType("navigation").length,
+  );
+  const suffix = uniqueName("instant-project");
+  const projectName = `即时项目 ${suffix}`;
+  await page.getByRole("button", { name: "创建项目" }).click();
+  const projectDialog = page.getByRole("dialog", { name: "创建项目" });
+  await projectDialog.getByLabel("项目名称").fill(projectName);
+  await projectDialog.getByLabel("Slug").fill(suffix);
+  await projectDialog.getByRole("button", { name: "创建项目", exact: true }).click();
+  await expect(page.getByText("项目已创建，可从顶栏切换到新项目。")).toBeVisible();
+  expect(await page.evaluate(() => performance.getEntriesByType("navigation").length)).toBe(
+    navigationEntriesBefore,
+  );
+  const switcher = page.locator(".global-project-switcher");
+  await switcher.locator(".project-picker-trigger").click();
+  await expect(page.getByRole("option", { name: projectName })).toBeVisible();
+  await page.getByRole("option", { name: projectName }).click();
+
+  await page.goto("/settings/projects?section=execution");
+  await page.getByRole("button", { name: "创建版本" }).click();
+  const versionDialog = page.getByRole("dialog", { name: "创建项目版本" });
+  await versionDialog.getByLabel("版本名称").fill("1.0.0-e2e");
+  await versionDialog.getByRole("button", { name: "创建版本", exact: true }).click();
+  await expect(page.getByText("项目版本已创建。")).toBeVisible();
+  await expect(page.getByRole("tree", { name: "项目版本与测试阶段" })).toContainText("1.0.0-e2e");
+  await expect(switcher).toContainText("1.0.0-e2e");
+});
+
 test("homepage mirrors the designed six-card workspace and exposes global execution", async ({
   page,
 }) => {
@@ -490,6 +525,13 @@ test("specified dense pages expose stable product controls", async ({ page }) =>
   await page.goto("/insights");
   await expect(page.locator(".insight-metric-success")).toContainText("方法通过率");
   await expect(page.locator(".insight-metric-danger")).toContainText("方法失败率");
+  const flakyFilter = page.locator(".insight-flaky-filter");
+  await expect(flakyFilter.getByLabel("指定任务")).toBeVisible();
+  await flakyFilter.getByLabel("开始时间（本地）").fill("2026-08-01T00:00");
+  await flakyFilter.getByLabel("结束时间（本地）").fill("2026-08-24T23:59");
+  await flakyFilter.getByRole("button", { name: "筛选不稳定用例" }).click();
+  await expect(page).toHaveURL(/flakyCompletedAfter=.*flakyCompletedBefore=/u);
+  await expect(page.locator(".insight-flaky-scope")).toContainText("2026");
   await page.setViewportSize({ width: 1536, height: 1024 });
   const trendCard = page.locator(".insight-trend-card");
   const failureCard = page.locator(".insight-failure-card");

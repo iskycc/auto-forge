@@ -668,7 +668,7 @@ describe("SQLite management repositories", () => {
   it("omits artifact rules from assignment specs when artifact collection is disabled", async () => {
     const { handle, runners } = await fixture();
     try {
-      const disabledBatches = new SqliteRunBatchRepository(handle, undefined, false);
+      const disabledBatches = new SqliteRunBatchRepository(handle);
       await runners.register({
         id: "runner-artifacts-off",
         bootstrapTokenHash: "bootstrap-artifacts-off",
@@ -707,6 +707,13 @@ describe("SQLite management repositories", () => {
         suiteName: "Artifacts off",
         suiteVersion: 1,
         retryLimit: 0,
+        policy: {
+          executor: "testng",
+          concurrency: 1,
+          runnerLabels: [],
+          artifactPatterns: [],
+          retryConcurrencyRules: [],
+        },
         environmentVariables: [],
         runnerIds: ["runner-artifacts-off"],
         runs: [
@@ -752,7 +759,7 @@ describe("SQLite management repositories", () => {
         .prepare("SELECT execution_spec_json FROM assignments WHERE id = ?")
         .get("assignment-artifacts-off") as { execution_spec_json: string };
       const spec = JSON.parse(assignment.execution_spec_json) as { artifactRules: unknown[] };
-      // 开关关闭时不下发任何产物规则，Agent 端据此跳过扫描与上传。
+      // 平台开关在创建批次时固化为空规则，领取阶段不得用进程启动配置覆盖快照。
       expect(spec.artifactRules).toEqual([]);
     } finally {
       handle.close();
