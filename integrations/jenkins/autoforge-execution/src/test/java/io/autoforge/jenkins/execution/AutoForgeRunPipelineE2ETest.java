@@ -28,7 +28,8 @@ class AutoForgeRunPipelineE2ETest {
         String baseUrl = "http://127.0.0.1:" + server.getAddress().getPort() + "/";
         server.createContext("/api/v1/jenkins/runs", exchange -> respond(exchange, 201, """
             {"batchId":"batch-pipeline-e2e","progressUrl":"%sprogress/batch-pipeline-e2e?access_token=read-only",
-             "progressApiUrl":"%sapi/v1/run-batches/batch-pipeline-e2e/progress?access_token=read-only"}
+             "progressApiUrl":"%sapi/v1/run-batches/batch-pipeline-e2e/progress?access_token=read-only",
+             "pollIntervalSeconds":30,"completionTimeoutSeconds":604800}
             """.formatted(baseUrl, baseUrl)));
         server.createContext("/api/v1/run-batches/batch-pipeline-e2e/progress", exchange ->
             respond(exchange, 200, """
@@ -41,7 +42,8 @@ class AutoForgeRunPipelineE2ETest {
 
         WorkflowJob job = jenkins.createProject(WorkflowJob.class, "autoforge-run-pipeline-e2e");
         job.setDefinition(new CpsFlowDefinition("""
-            autoforgeRun baseUrl: '%s', apiKey: 'af_api_pipeline-e2e', suiteId: 'suite-e2e'
+            autoforgeRun baseUrl: '%s', apiKey: 'af_api_pipeline-e2e',
+              suiteId: 'suite-e2e', timeoutSeconds: 120
             """.formatted(baseUrl), true));
 
         WorkflowRun run = jenkins.buildAndAssertSuccess(job);

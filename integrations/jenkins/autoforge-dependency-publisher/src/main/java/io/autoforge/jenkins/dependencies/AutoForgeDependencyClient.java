@@ -30,7 +30,10 @@ final class AutoForgeDependencyClient {
         this.endpoint = baseUri.resolve("api/v1/jenkins/dependencies");
         this.apiKey = apiKey;
         this.logger = logger;
-        this.httpClient = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(15)).build();
+        this.httpClient = HttpClient.newBuilder()
+            .version(HttpClient.Version.HTTP_1_1)
+            .connectTimeout(Duration.ofSeconds(15))
+            .build();
     }
 
     Map<String, Object> replace(
@@ -65,8 +68,13 @@ final class AutoForgeDependencyClient {
             .build();
         HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
         if (response.statusCode() < 200 || response.statusCode() >= 300) {
-            logger.printf("AutoForge: dependency publication rejected with HTTP %d%n", response.statusCode());
-            throw new AbortException("AutoForge dependency API rejected the request");
+            String message = safeMessage(response.body());
+            logger.printf(
+                "AutoForge: dependency publication rejected with HTTP %d: %s%n",
+                response.statusCode(),
+                message);
+            throw new AbortException(
+                "AutoForge dependency API returned HTTP " + response.statusCode() + ": " + message);
         }
         JSONObject json = JSONObject.fromObject(response.body());
         Map<String, Object> result = new LinkedHashMap<>();
@@ -87,5 +95,17 @@ final class AutoForgeDependencyClient {
         String value = json.optString(key, "");
         if (value.isBlank()) throw new IllegalArgumentException("AutoForge response is missing " + key);
         return value;
+    }
+
+    private static String safeMessage(String body) {
+        try {
+            JSONObject json = JSONObject.fromObject(body);
+            JSONObject error = json.optJSONObject("error");
+            String message = error == null ? "" : error.optString("message", "").trim();
+            if (message.isEmpty()) return "request failed";
+            return message.length() <= 500 ? message : message.substring(0, 500) + "…";
+        } catch (RuntimeException ignored) {
+            return "request failed";
+        }
     }
 }

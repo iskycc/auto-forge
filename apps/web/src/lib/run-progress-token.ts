@@ -3,7 +3,8 @@ import "server-only";
 import { createHmac, timingSafeEqual } from "node:crypto";
 
 const TOKEN_VERSION = 1;
-const DEFAULT_TTL_MS = 7 * 24 * 60 * 60 * 1_000;
+export const RUN_PROGRESS_TOKEN_TTL_SECONDS = 7 * 24 * 60 * 60;
+const DEFAULT_TTL_MS = RUN_PROGRESS_TOKEN_TTL_SECONDS * 1_000;
 
 type RunProgressClaims = {
   version: 1;

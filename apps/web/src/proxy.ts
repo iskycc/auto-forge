@@ -1,10 +1,10 @@
 import { NextResponse, type NextRequest } from "next/server";
 
 const PUBLIC_PATHS = new Set(["/", "/login", "/setup"]);
-// /share/ 承载免登录的只读公开页（如执行日志公开访问），由页面自身按 token 校验访问。
-const PUBLIC_PREFIXES = ["/share/"];
+// 只读公开页由各自页面按限资源、限时 token 校验访问；代理只负责让匿名请求到达页面。
+const PUBLIC_PREFIXES = ["/share/", "/progress/"];
 
-function isPublicPath(pathname: string): boolean {
+export function isPublicPath(pathname: string): boolean {
   return (
     PUBLIC_PATHS.has(pathname) || PUBLIC_PREFIXES.some((prefix) => pathname.startsWith(prefix))
   );

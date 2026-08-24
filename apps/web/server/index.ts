@@ -12,6 +12,7 @@ import {
 } from "../src/lib/lite-work-runtime.ts";
 import { recordHttpRequest } from "../src/lib/runtime-metrics.ts";
 import { TerminalGateway, type TerminalAuditEvent } from "./terminal-gateway.ts";
+import { rejectH2cUpgrade } from "./http-upgrade.ts";
 import { LogStreamGateway } from "./log-stream-gateway.ts";
 import { LogStreamRelay } from "./log-stream-relay.ts";
 import { LiteWorkerPool } from "./lite-worker-pool.ts";
@@ -100,6 +101,10 @@ const server = createServer((request, response) => {
 });
 
 server.on("upgrade", (request, socket, head) => {
+  if (rejectH2cUpgrade(request, socket)) {
+    log("warn", "Rejected unsupported plaintext HTTP/2 upgrade", { path: request.url });
+    return;
+  }
   if (logStreamGateway.handles(request)) {
     logStreamGateway.upgrade(request, socket, head);
     return;

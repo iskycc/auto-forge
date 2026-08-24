@@ -197,6 +197,7 @@ async function completeAttempt(
 }
 
 test("all-rounds virtual round annotates every record and later rounds hide previously passed cases", async ({
+  browser,
   page,
 }) => {
   test.setTimeout(300_000);
@@ -486,12 +487,20 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
     progressUrl: string;
     progressApiUrl: string;
     pollIntervalSeconds: number;
+    completionTimeoutSeconds: number;
   };
   expect(jenkinsRun.pollIntervalSeconds).toBe(30);
+  expect(jenkinsRun.completionTimeoutSeconds).toBe(7 * 24 * 60 * 60);
   expect(jenkinsRun.progressUrl).toContain(`/progress/${jenkinsRun.batchId}`);
-  await page.goto(jenkinsRun.progressUrl);
-  await expect(page.getByText("只读执行进展 · 每 30 秒自动刷新", { exact: true })).toBeVisible();
-  await expect(page.locator(".app-shell, .app-sidebar, .topbar")).toHaveCount(0);
+  const anonymousContext = await browser.newContext();
+  const anonymousProgressPage = await anonymousContext.newPage();
+  const progressPageResponse = await anonymousProgressPage.goto(jenkinsRun.progressUrl);
+  expect(progressPageResponse?.status()).toBe(200);
+  expect(new URL(anonymousProgressPage.url()).pathname).not.toBe("/login");
+  await expect(
+    anonymousProgressPage.getByText("只读执行进展 · 每 30 秒自动刷新", { exact: true }),
+  ).toBeVisible();
+  await expect(anonymousProgressPage.locator(".app-shell, .app-sidebar, .topbar")).toHaveCount(0);
 
   expect((await postHeartbeat(page, identity, 0)).status()).toBe(200);
   for (let claimed = 0; claimed < 2; claimed += 1) {
@@ -517,8 +526,9 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
       return `${body.active}:${body.statusLabel}:${body.totalPassed}/${body.totalCases}`;
     })
     .toBe("false:执行完成:2/2");
-  await page.reload();
-  await expect(page.getByText("执行完成", { exact: true })).toBeVisible();
+  await anonymousProgressPage.reload();
+  await expect(anonymousProgressPage.getByText("执行完成", { exact: true })).toBeVisible();
+  await anonymousContext.close();
 
   // 执行记录真机布局：一个极端长值只能在自身单元格内截断，不能改变列宽或整表宽度。
   await page.goto("/execution-records");

@@ -23,7 +23,10 @@ import (
 
 var sha256Pattern = regexp.MustCompile(`^[a-f0-9]{64}$`)
 
-const liveLogUploadInterval = 500 * time.Millisecond
+const (
+	liveLogUploadInterval = 500 * time.Millisecond
+	drainPollInterval     = 500 * time.Millisecond
+)
 
 type attemptSupervisor struct {
 	client        *Client
@@ -40,6 +43,7 @@ type attemptSupervisor struct {
 	waitGroup     sync.WaitGroup
 	mutex         sync.Mutex
 	cancellations map[string]context.CancelFunc
+	claimCancel   context.CancelFunc
 	runExecution  func(context.Context, executor.Spec, executor.RunOptions) (executor.Result, error)
 }
 
@@ -87,10 +91,14 @@ func (supervisor *attemptSupervisor) Start(ctx context.Context) error {
 	if err := supervisor.cleanOrphanedWorkspaces(); err != nil {
 		return err
 	}
+	claimContext, claimCancel := context.WithCancel(ctx)
+	supervisor.mutex.Lock()
+	supervisor.claimCancel = claimCancel
+	supervisor.mutex.Unlock()
 	supervisor.waitGroup.Add(1)
 	go func() {
 		defer supervisor.waitGroup.Done()
-		supervisor.claimLoop(ctx)
+		supervisor.claimLoop(claimContext)
 	}()
 	return nil
 }
@@ -110,7 +118,13 @@ func (supervisor *attemptSupervisor) ApplyClosedBatchIDs(batchIDs []string) {
 }
 
 func (supervisor *attemptSupervisor) BeginDrain() {
-	supervisor.draining.Store(true)
+	supervisor.SetDraining(true)
+}
+
+// SetDraining pauses or resumes assignment claims without destroying the claim
+// goroutine. Existing attempts continue renewing their leases while drained.
+func (supervisor *attemptSupervisor) SetDraining(draining bool) bool {
+	return supervisor.draining.Swap(draining) != draining
 }
 
 func (supervisor *attemptSupervisor) UpdateIdentity(identity Identity) {
@@ -127,6 +141,13 @@ func (supervisor *attemptSupervisor) currentIdentity() Identity {
 
 func (supervisor *attemptSupervisor) Close() {
 	supervisor.BeginDrain()
+	supervisor.mutex.Lock()
+	claimCancel := supervisor.claimCancel
+	supervisor.claimCancel = nil
+	supervisor.mutex.Unlock()
+	if claimCancel != nil {
+		claimCancel()
+	}
 	completed := make(chan struct{})
 	go func() {
 		supervisor.waitGroup.Wait()
@@ -148,8 +169,14 @@ func (supervisor *attemptSupervisor) Close() {
 func (supervisor *attemptSupervisor) claimLoop(ctx context.Context) {
 	backoff := time.Second
 	for {
-		if ctx.Err() != nil || supervisor.draining.Load() {
+		if ctx.Err() != nil {
 			return
+		}
+		if supervisor.draining.Load() {
+			if !waitFor(ctx, drainPollInterval) {
+				return
+			}
+			continue
 		}
 		availableSlots := supervisor.configuration.MaxConcurrent - supervisor.BusySlots()
 		if availableSlots <= 0 || !supervisor.configuration.CanClaimExecutions() {

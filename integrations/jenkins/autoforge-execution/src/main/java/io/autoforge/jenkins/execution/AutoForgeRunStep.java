@@ -13,12 +13,14 @@ import org.jenkinsci.plugins.workflow.steps.StepDescriptor;
 import org.jenkinsci.plugins.workflow.steps.StepExecution;
 import org.jenkinsci.plugins.workflow.steps.SynchronousNonBlockingStepExecution;
 import org.kohsuke.stapler.DataBoundConstructor;
+import org.kohsuke.stapler.DataBoundSetter;
 import org.jenkinsci.Symbol;
 
 public final class AutoForgeRunStep extends Step {
     private final String baseUrl;
     private final String suiteId;
     private final Secret apiKey;
+    private long timeoutSeconds;
 
     @DataBoundConstructor
     public AutoForgeRunStep(String baseUrl, String suiteId, String apiKey) {
@@ -30,6 +32,18 @@ public final class AutoForgeRunStep extends Step {
     public String getBaseUrl() { return baseUrl; }
     public String getSuiteId() { return suiteId; }
     public Secret getApiKey() { return apiKey; }
+    public long getTimeoutSeconds() { return timeoutSeconds; }
+
+    /** Zero uses the server recommendation; an explicit value may only shorten the signed-link lifetime. */
+    @DataBoundSetter
+    public void setTimeoutSeconds(long timeoutSeconds) {
+        if (timeoutSeconds < 0 || timeoutSeconds > AutoForgeRunClient.MAXIMUM_COMPLETION_TIMEOUT_SECONDS) {
+            throw new IllegalArgumentException(
+                "timeoutSeconds must be zero or between 1 and "
+                    + AutoForgeRunClient.MAXIMUM_COMPLETION_TIMEOUT_SECONDS);
+        }
+        this.timeoutSeconds = timeoutSeconds;
+    }
 
     @Override
     public StepExecution start(StepContext context) {
@@ -41,12 +55,14 @@ public final class AutoForgeRunStep extends Step {
         private final String baseUrl;
         private final String suiteId;
         private final Secret apiKey;
+        private final long timeoutSeconds;
 
         Execution(AutoForgeRunStep step, StepContext context) {
             super(context);
             this.baseUrl = step.baseUrl;
             this.suiteId = step.suiteId;
             this.apiKey = step.apiKey;
+            this.timeoutSeconds = step.timeoutSeconds;
         }
 
         @Override
@@ -56,7 +72,7 @@ public final class AutoForgeRunStep extends Step {
             return new AutoForgeRunClient(
                     baseUrl,
                     apiKey.getPlainText(),
-                    30,
+                    timeoutSeconds,
                     listener.getLogger())
                 .runToCompletion(suiteId);
         }

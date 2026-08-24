@@ -88,6 +88,8 @@ unregistered -> registering -> online -> draining -> offline
 - `online` 表示控制通道健康，不表示某个执行租约仍有效。
 - `draining` 停止领取新任务，已有任务在时限内完成。
 - 服务端禁用后，Agent 不得继续领取或执行任务。
+- 管理员把仍在线的执行机恢复为 active 后，下一次心跳会清除排空状态；同一领取循环继续工作，
+  不要求重启 Agent。排空只暂停领取协程，Agent 心跳、缓存回收和既有 attempt 收尾不停止。
 - Agent/协议版本不兼容时进入 `incompatible`，界面提供明确升级提示。
 - Agent 通过 `POST /api/v1/runner-agents/{runnerId}/credentials/rotate` 轮换凭据（CLI `autoforge-agent rotate-credential`）：控制面签发新凭据并递增 `credentialVersion`，旧凭据保留 15 分钟宽限期，Agent 保存新身份失败时可用旧凭据安全重试；宽限期内新旧凭据均可通过认证。
 - 管理员可在执行机列表撤销凭据（`credential_revoked_at`）或注销执行机（`deregistered_at`）：两者都会立即使全部 Runner Protocol 认证失败，注销还会禁用执行机并把活跃租约立即到期，由统一的过期回收重新排队。
@@ -259,7 +261,7 @@ AUTOFORGE_AGENT_DATA_DIR/
 
 同一批次的 `test-jar`、`dependency-jar`、`jar-bundle` 和 `jdk-archive` 输入在同一台 Agent 上只下载一次：`batchId` 校验为安全路径段后定位到 `work/batches/<batch-id>/`，同批次并发 attempt 通过批次锁串行化下载，已存在的输入流式重算 SHA-256，匹配则跳过、不匹配重新下载。CoTest Adapter 的主 JAR、独立依赖 JAR、依赖压缩包解压结果与可选 JDK 在临时目录完整生成后原子发布到 `runtime/cotest/`；每个 attempt 创建真实 `test-jars` 目录并以文件级硬链接复用其中 JAR（跨文件系统时回退复制），避免 Java 的非跟随式目录遍历跳过符号链接根目录；`runtime/jdk` 继续使用受控符号链接。非 Adapter 输入同样以硬链接（不支持时回退复制）进入 attempt 工作目录。
 
-批次注册表记录本机在途 attempt 数与已确认终态：完成响应的 `batchClosed=true` 会持久到最后一个本地 attempt 收尾，避免并发完成次序造成目录泄漏。Agent 还会在 heartbeat 与 claim 中上报本机已空闲的 `cachedBatchIds`；控制面仅把该 Runner 仍被选中且尚未终态的批次视为可复用，其余 ID 通过 `closedBatchIds` 通知回收。因此多 Runner 批次中没有提交最后一份结果的节点以及已进入排空、不再 claim 的节点都能及时清理。禁用状态只保留心跳认证以便下发 drain 和执行该回收握手，claim、续租、完成和凭据轮换仍被拒绝。
+批次注册表记录本机在途 attempt 数与已确认终态：完成响应的 `batchClosed=true` 会持久到最后一个本地 attempt 收尾，避免并发完成次序造成目录泄漏。Agent 还会在 heartbeat 与 claim 中上报本机已空闲的 `cachedBatchIds`；控制面仅把该 Runner 仍被选中且尚未终态的批次视为可复用，其余 ID 通过 `closedBatchIds` 通知回收。因此多 Runner 批次中没有提交最后一份结果的节点以及已进入排空、暂停 claim 的节点都能及时清理。禁用状态只保留心跳认证以便下发 drain 和执行该回收握手，claim、续租、完成和凭据轮换仍被拒绝；恢复 active 后心跳返回 `draining=false`，领取循环恢复。
 
 启动 reconcile 前只清理 `work/` 下无本地状态引用的 `<attemptId>-*` 独立工作目录；有状态引用的崩溃 attempt 会保存进程组 leader PID 与 Linux 内核启动时钟，重启后先核对两者以防 PID 复用误杀，再终止仍存活的原进程组，并在完成 reconcile、日志/产物/结果重传后连同状态一起回收。reconcile 后再次扫描孤儿目录，关闭状态已确认删除而旧进程刚结束写入的崩溃窗口；本地 attempt 状态 v2 可读取并自动升级不含进程身份的 v1 记录。安全的 `batches/<batch-id>` 会恢复为空闲缓存，避免 Agent 崩溃后同批次的后续用例重新下载或解压。reconcile 完成后由上述 heartbeat/claim 核对批次是否仍可能派发；终态、已删除或不属于该 Runner 的目录才会回收，非法批次路径和非目录内容直接清理。
 

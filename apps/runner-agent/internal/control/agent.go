@@ -127,8 +127,12 @@ func Run(ctx context.Context, configuration config.Config, info buildinfo.Info, 
 			if terminalConnector != nil {
 				terminalConnector.UpdateToken(response.TerminalConnectionToken)
 			}
-			if response.Draining {
-				supervisor.BeginDrain()
+			if supervisor.SetDraining(response.Draining) {
+				if response.Draining {
+					fmt.Fprintln(diagnostics, "assignment claiming paused by the control plane")
+				} else {
+					fmt.Fprintln(diagnostics, "assignment claiming resumed by the control plane")
+				}
 			}
 			if response.RotateCredential {
 				rotated, rotationErr := client.RotateCredential(ctx, identity)

@@ -14,7 +14,7 @@ tag/commit、四平台 variant、镜像 digest、SHA256SUMS、SBOM、来源证�
 6. 执行停止状态备份，恢复到新卷，核对登录、执行、对象摘要和分析；携带上一正式版本夹具升级，
    模拟迁移失败并按手册回滚。
 7. 检查 Agent/JDK/TestNG/浏览器全程无公网获取，诊断包不含凭据，保留/清理有审计且死信可见。
-8. 先执行 `pnpm test:jenkins-plugins` 验证真实 Pipeline DSL 和已打包 HPI，再从 Release 安装两个 Jenkins HPI，按 [`examples/jenkins/Jenkinsfile`](../../examples/jenkins/Jenkinsfile) 以最小权限 API Key 验证依赖按项目版本替换、任务全生命周期等待、30 秒进度日志和免登录只读进展页。
+8. 先执行 `pnpm test:jenkins-plugins` 验证真实 Pipeline DSL 和已打包 HPI，再从 Release 安装两个 Jenkins HPI，按 [`examples/jenkins/Jenkinsfile`](../../examples/jenkins/Jenkinsfile) 以最小权限 API Key 验证依赖按项目版本替换、任务有限时长的全生命周期等待、服务端建议周期进度日志和匿名浏览器可直接打开的只读进展页；`http://` 地址也必须可用。
 
 独立 `Published Release acceptance` workflow 在同 tag 的 `Release` 成功完成后启动，自动消费已发布的签名资产和上一正式 Release，而不是源码构建结果。资产完整性、业务、真实 Agent、LDAP、停止状态备份恢复、迁移完整性故障、旧版本回滚与成功升级分别在隔离 Job 中并行执行，避免把发布等待和所有场景串成一个长任务。它核对可信公钥、manifest 全部资产、摘要、镜像/部署 SBOM 与许可证，使用 `--internal` Docker 网络启动发布镜像，并提取镜像内 Agent 与 Adapter 完成真实执行。该 workflow 的成功或失败不参与 `Release` 依赖链；失败会保留 Gate E 红灯和诊断证据，并要求后续 hotfix，但不会阻塞或撤回发布。
 

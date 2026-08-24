@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 
 import { apiErrorResponse, readJsonBody } from "@/lib/api-response";
 import { authenticateRequest, requestId, requireSameOrigin } from "@/lib/auth";
-import { issueRunProgressToken } from "@/lib/run-progress-token";
+import { issueRunProgressToken, RUN_PROGRESS_TOKEN_TTL_SECONDS } from "@/lib/run-progress-token";
 import { getPlatformServices } from "@/lib/services";
 
 export async function POST(request: Request): Promise<NextResponse> {
@@ -39,6 +39,7 @@ export async function POST(request: Request): Promise<NextResponse> {
           baseUrl,
         ).toString(),
         pollIntervalSeconds: 30,
+        completionTimeoutSeconds: RUN_PROGRESS_TOKEN_TTL_SECONDS,
       },
       { status: 201 },
     );

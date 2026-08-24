@@ -11,6 +11,7 @@ pipeline {
     string(name: 'AUTOFORGE_PROJECT_ID', defaultValue: '', description: '目标项目 ID')
     string(name: 'AUTOFORGE_PROJECT_VERSION', defaultValue: '1.0.0', description: '目标项目版本名称')
     string(name: 'AUTOFORGE_SUITE_ID', defaultValue: '', description: '已绑定同一项目版本的用例任务 ID')
+    string(name: 'AUTOFORGE_TIMEOUT_SECONDS', defaultValue: '86400', description: '等待 AutoForge 批次终态的总时限（1–604800 秒）')
   }
 
   environment {
@@ -61,7 +62,8 @@ pipeline {
             def result = autoforgeRun(
               baseUrl: params.AUTOFORGE_BASE_URL,
               apiKey: env.AUTOFORGE_API_KEY,
-              suiteId: params.AUTOFORGE_SUITE_ID
+              suiteId: params.AUTOFORGE_SUITE_ID,
+              timeoutSeconds: params.AUTOFORGE_TIMEOUT_SECONDS as Long
             )
             currentBuild.description = "AutoForge ${result.batchId}: ${result.totalPassed}/${result.totalCases} passed"
           }

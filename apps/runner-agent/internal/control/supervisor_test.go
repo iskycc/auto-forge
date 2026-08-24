@@ -123,6 +123,76 @@ func TestSupervisorClaimsDownloadsExecutesAndCompletesAssignment(t *testing.T) {
 	supervisor.Close()
 }
 
+func TestSupervisorResumesClaimsAfterDrainIsCleared(t *testing.T) {
+	claims := make(chan struct{}, 8)
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/api/v1/runner-agents/runner-1/claims" {
+			http.NotFound(writer, request)
+			return
+		}
+		claims <- struct{}{}
+		writer.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(writer).Encode(ClaimResponse{
+			SchemaVersion: 1,
+			RequestID:     "claim-response",
+			RetryAfterMs:  10,
+		})
+	}))
+	defer server.Close()
+
+	configuration := config.Config{
+		ServerURL:     mustParseURL(t, server.URL),
+		DataDirectory: t.TempDir(),
+		MaxConcurrent: 1,
+		Toolchain: config.ToolchainConfig{
+			JavaExecutable: "/bin/true",
+			Classpath:      []string{"testng.jar"},
+		},
+		Claim: config.ClaimConfig{MaximumBackoff: time.Second},
+	}
+	client, err := NewClient(configuration)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	supervisor := newAttemptSupervisor(
+		client,
+		Identity{RunnerID: "runner-1", Credential: "runner-credential-with-more-than-32-bytes"},
+		configuration,
+		io.Discard,
+	)
+	supervisor.SetDraining(true)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		supervisor.claimLoop(ctx)
+		close(done)
+	}()
+
+	select {
+	case <-claims:
+		cancel()
+		t.Fatal("drained supervisor claimed an assignment")
+	case <-time.After(drainPollInterval + 100*time.Millisecond):
+	}
+	if !supervisor.SetDraining(false) {
+		cancel()
+		t.Fatal("clearing drain state did not report a lifecycle transition")
+	}
+	select {
+	case <-claims:
+	case <-time.After(2 * time.Second):
+		cancel()
+		t.Fatal("supervisor did not resume assignment claims")
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("claim loop did not stop after cancellation")
+	}
+}
+
 func TestStreamAttemptLogsUploadsWhileAttemptIsRunning(t *testing.T) {
 	uploaded := make(chan struct{}, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {

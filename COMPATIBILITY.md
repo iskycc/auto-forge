@@ -47,6 +47,10 @@ Runner Protocol v1 or existing TestNG assets. The Web and Full worker must be up
 `ddt-import` jobs have a registered consumer. Database downgrade requires restoring the database and
 object store backup taken before migrations `0042` (SQLite) or `0041` (PostgreSQL).
 
+Control plane `1.1.1` keeps the `1.1.0` database schema and Runner Protocol v1. Online Agents resume
+assignment claims after disabled/draining state is cleared. Jenkins HPI `1.1.1` forces HTTP/1.1,
+honors server polling guidance and adds a bounded wait timeout; existing Pipeline calls remain valid.
+
 Control plane `0.9.10` adds persisted Webhook configuration and delivery tables without changing
 Runner Protocol v1. Existing installations have no endpoint or binding after migration and therefore
 retain the prior no-outbound-request behavior until a project administrator explicitly configures one.

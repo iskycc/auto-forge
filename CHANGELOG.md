@@ -6,6 +6,32 @@ and known limitations.
 
 ## Unreleased
 
+## 1.1.1 - 2026-08-24
+
+### Fixed
+
+- Signed Jenkins progress pages now bypass the session proxy and perform their existing batch-bound
+  token validation anonymously, matching the already public progress API.
+- Runner Agents pause assignment claims while disabled or draining and resume the same claim loop
+  after an active heartbeat, eliminating online-but-idle runners after re-enablement.
+- Both Jenkins clients force HTTP/1.1 so plain-HTTP Lite deployments do not attempt h2c. The server
+  also returns an explicit error for unsupported h2c upgrades instead of closing the socket silently.
+- Dependency publication failures now include the server's safe error message. `autoforgeRun` uses
+  machine status rather than localized labels, follows the server polling interval and has a bounded,
+  configurable total timeout (seven days by default).
+
+### Tests
+
+- Added anonymous-browser progress acceptance, reversible Runner drain coverage, explicit h2c
+  response tests and Jenkins client/Pipeline tests for HTTP/1.1, timeout, status and error contracts.
+
+### Compatibility
+
+- Runner Protocol v1 remains unchanged. The optional Jenkins `timeoutSeconds` argument accepts zero
+  for the server default or a shorter value up to 604800 seconds.
+- The `v1.1.1` Jenkins HPI plugins require Jenkins `2.479.3` or newer and remain compatible with the
+  existing `autoforgeRun` and `autoforgePublishDependencies` Pipeline step names.
+
 ## 1.1.0 - 2026-08-24
 
 ### Added
