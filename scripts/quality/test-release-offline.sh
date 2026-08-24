@@ -182,6 +182,10 @@ container_ip() {
     "${1:?container name is required}"
 }
 
+network_gateway() {
+  docker network inspect --format '{{(index .IPAM.Config 0).Gateway}}' "${network_name}"
+}
+
 start_platform() {
   local name="${1:?container name is required}"
   local image="${2:?image is required}"
@@ -302,6 +306,7 @@ run_current_release_browser() {
   E2E_ADMIN_BOOTSTRAP_TOKEN="${admin_token}" \
   E2E_RUNNER_BOOTSTRAP_TOKEN="${runner_token}" \
   E2E_RUNNER_BOOTSTRAP_MASTER_KEY="${runner_master_key}" \
+  E2E_WEBHOOK_CALLBACK_HOST="$(network_gateway)" \
     pnpm exec playwright test --config playwright.full.config.ts \
       "${browser_specs[@]}"
 }

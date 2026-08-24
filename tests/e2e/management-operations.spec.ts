@@ -192,6 +192,7 @@ test("schedule overview can pause and delete plans while LDAP failures remain di
 
 test("project webhooks support custom POST bodies and task binding", async ({ page }) => {
   const receivedBodies: string[] = [];
+  const callbackHost = process.env.E2E_WEBHOOK_CALLBACK_HOST ?? "127.0.0.1";
   const webhookServer = createServer((request, response) => {
     const chunks: Buffer[] = [];
     request.on("data", (chunk: Buffer) => chunks.push(chunk));
@@ -202,7 +203,7 @@ test("project webhooks support custom POST bodies and task binding", async ({ pa
   });
   await new Promise<void>((resolve, reject) => {
     webhookServer.once("error", reject);
-    webhookServer.listen(0, "127.0.0.1", resolve);
+    webhookServer.listen(0, "0.0.0.0", resolve);
   });
   const address = webhookServer.address();
   if (!address || typeof address === "string") throw new Error("Webhook test server did not bind.");
@@ -220,7 +221,7 @@ test("project webhooks support custom POST bodies and task binding", async ({ pa
           projectId: DEFAULT_PROJECT_ID,
           name: webhookName,
           description: "Webhook E2E",
-          targetUrl: `http://127.0.0.1:${address.port}/autoforge-completed`,
+          targetUrl: `http://${callbackHost}:${address.port}/autoforge-completed`,
           method: "POST",
           bodyTemplate:
             '{"batchId":"{{batch.id}}","suite":"{{batch.suiteName}}","status":"{{batch.displayStatus}}","passRate":"{{summary.passRate}}"}',
