@@ -494,10 +494,12 @@ export function ProgressBar({
   value,
   max = 100,
   label,
+  indeterminate = false,
 }: {
   value: number;
   max?: number;
   label?: string;
+  indeterminate?: boolean;
 }) {
   const clamped = Math.max(0, Math.min(max, value));
   const percent = max > 0 ? (clamped / max) * 100 : 0;
@@ -505,13 +507,37 @@ export function ProgressBar({
     <span
       aria-valuemax={max}
       aria-valuemin={0}
-      aria-valuenow={clamped}
+      aria-valuenow={indeterminate ? undefined : clamped}
       className="ui-progress"
+      data-indeterminate={indeterminate ? "true" : undefined}
       role="progressbar"
       aria-label={label}
     >
       <span className="ui-progress-fill" style={{ width: `${percent}%` }} />
     </span>
+  );
+}
+
+export function OperationProgress({
+  label,
+  detail,
+  value,
+  indeterminate = false,
+}: {
+  label: string;
+  detail: string;
+  value: number;
+  indeterminate?: boolean;
+}) {
+  return (
+    <div className="ui-operation-progress" role="status" aria-live="polite">
+      <div>
+        <strong>{label}</strong>
+        <span>{indeterminate ? "处理中" : `${Math.round(value)}%`}</span>
+      </div>
+      <ProgressBar indeterminate={indeterminate} label={`${label}进度`} max={100} value={value} />
+      <small>{detail}</small>
+    </div>
   );
 }
 

@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page, type Route } from "@playwright/test";
 
 import { buildExportWorkbook } from "../../packages/ddt-import/src";
 import {
@@ -53,8 +53,17 @@ test("DDT workspace imports, edits, validates and recovers version-scoped cases"
     buffer: workbook,
   });
   await expect(importDialog.getByText(`ddt-${hierarchy.suffix}.xlsx`)).toBeVisible();
+  const previewRoute = "**/api/v1/ddt/imports/preview?**";
+  const delayPreview = async (route: Route) => {
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    await route.continue();
+  };
+  await page.route(previewRoute, delayPreview);
   await importDialog.getByRole("button", { name: "开始预检" }).click();
+  await expect(importDialog.getByRole("progressbar")).toBeVisible();
+  await expect(importDialog.locator(".ui-operation-progress")).toContainText(/上传|解析并预检/u);
   await expect(importDialog.getByText("2", { exact: true }).first()).toBeVisible();
+  await page.unroute(previewRoute, delayPreview);
   await expect(importDialog.getByText("覆盖并保留历史")).toBeVisible();
   await importDialog.getByRole("button", { name: "确认并后台导入" }).click();
 
@@ -118,8 +127,18 @@ test("DDT workspace imports, edits, validates and recovers version-scoped cases"
   await expect(bulkDialog).toBeHidden();
 
   await page.getByLabel(`选择 LOGIN-${hierarchy.suffix}`).check();
+  const deleteRoute = "**/api/v1/ddt/cases/bulk-delete?**";
+  const delayDelete = async (route: Route) => {
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    await route.continue();
+  };
+  await page.route(deleteRoute, delayDelete);
   page.once("dialog", (dialog) => dialog.accept());
   await page.getByRole("button", { name: "移入回收站" }).click();
+  await expect(page.getByRole("progressbar", { name: "正在移入回收站进度" })).toBeVisible();
+  await expect(page.getByText("已处理 0 / 1 条用例")).toBeVisible();
+  await expect(page.getByText(`已将 1 条用例移入回收站。`)).toBeVisible();
+  await page.unroute(deleteRoute, delayDelete);
   await page.getByRole("tab", { name: /回收站/u }).click();
   const deletedRow = page.getByRole("row", { name: new RegExp(`LOGIN-${hierarchy.suffix}`) });
   await expect(deletedRow).toBeVisible();

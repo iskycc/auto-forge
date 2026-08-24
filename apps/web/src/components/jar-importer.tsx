@@ -1,6 +1,6 @@
 "use client";
 
-import { Button, Input, ProgressBar } from "@/components/ui";
+import { Button, Input, OperationProgress, ProgressBar } from "@/components/ui";
 
 import {
   apiErrorSchema,
@@ -28,8 +28,15 @@ import { useCallback, useEffect, useId, useState, useSyncExternalStore } from "r
 
 import { CLASS_PREVIEW_LIMIT, uniqueInspectionClasses } from "@/lib/class-preview";
 import { formatMethodSignature } from "@/lib/jvm-signature";
+import { uploadWithProgress } from "@/lib/upload-with-progress";
 
 type Phase = "idle" | "inspecting" | "ready" | "importing" | "done";
+
+type JarUploadProgress = {
+  label: string;
+  detail: string;
+  percent: number;
+};
 
 function subscribeToClientReadiness(): () => void {
   return () => undefined;
@@ -85,6 +92,7 @@ export function JarImporter({
   const [result, setResult] = useState<JarImportResult | null>(null);
   const [job, setJob] = useState<JarImportJob | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [uploadProgress, setUploadProgress] = useState<JarUploadProgress | null>(null);
   const projectId = initialProjectId ?? "";
 
   const applyJobState = useCallback(
@@ -117,10 +125,11 @@ export function JarImporter({
     setResult(null);
     setJob(null);
     setError(null);
+    setUploadProgress(null);
     setPhase("idle");
   }
 
-  async function sendFile(url: string): Promise<Response> {
+  async function sendFile(url: string, processingLabel: string): Promise<Response> {
     if (!file) throw new Error("请先选择 JAR 文件。");
     const formData = new FormData();
     formData.set("file", file);
@@ -128,7 +137,14 @@ export function JarImporter({
     if (projectId) target.searchParams.set("projectId", projectId);
     if (projectVersionId) target.searchParams.set("projectVersionId", projectVersionId);
     if (testStageId) target.searchParams.set("testStageId", testStageId);
-    return fetch(`${target.pathname}${target.search}`, { method: "POST", body: formData });
+    const detail = `${file.name} · ${formatBytes(file.size)}`;
+    setUploadProgress({ label: "正在上传 JAR", detail, percent: 0 });
+    return uploadWithProgress({
+      url: `${target.pathname}${target.search}`,
+      body: formData,
+      onProgress: ({ percent }) => setUploadProgress({ label: "正在上传 JAR", detail, percent }),
+      onUploadComplete: () => setUploadProgress({ label: processingLabel, detail, percent: 100 }),
+    });
   }
 
   async function inspectJar(): Promise<void> {
@@ -144,13 +160,18 @@ export function JarImporter({
     }
     setPhase("inspecting");
     try {
-      const response = await sendFile("/api/v1/case-sources/jar/inspect");
+      const response = await sendFile(
+        "/api/v1/case-sources/jar/inspect",
+        "上传完成，正在扫描测试类",
+      );
       if (!response.ok) throw new Error(await errorMessage(response));
       const parsed = jarInspectionSchema.parse(await response.json());
       setInspection(parsed);
+      setUploadProgress(null);
       setPhase("ready");
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "扫描 JAR 失败。");
+      setUploadProgress(null);
       setPhase("idle");
     }
   }
@@ -160,9 +181,13 @@ export function JarImporter({
     setError(null);
     setPhase("importing");
     try {
-      const response = await sendFile("/api/v1/case-sources/jar/import");
+      const response = await sendFile(
+        "/api/v1/case-sources/jar/import",
+        "上传完成，正在创建后台导入任务",
+      );
       if (!response.ok) throw new Error(await errorMessage(response));
       const parsed = jarImportJobSchema.parse(await response.json());
+      setUploadProgress(null);
       // Idempotent duplicate imports can return an already-terminal job. Apply
       // that state immediately because no progress poll will run for it. A
       // succeeded job returned directly by POST is a replay of the implicit
@@ -175,6 +200,7 @@ export function JarImporter({
       );
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "导入 JAR 失败。");
+      setUploadProgress(null);
       setPhase("ready");
     }
   }
@@ -331,14 +357,34 @@ export function JarImporter({
         </div>
       )}
 
+      {uploadProgress ? (
+        <OperationProgress
+          detail={uploadProgress.detail}
+          label={uploadProgress.label}
+          value={uploadProgress.percent}
+        />
+      ) : null}
+
       {job && phase !== "done" ? (
         <section className="card import-progress" aria-live="polite">
-          <div>
+          <div className="import-progress-heading">
             <strong>后台导入 · {job.progressPercent}%</strong>
             <span>{importJobStatus(job.status)}</span>
           </div>
           <ProgressBar label="导入进度" max={100} value={job.progressPercent} />
-          <div className="button-row">
+          {workerWaitWarning(job) ? (
+            <div className="import-worker-warning" role="alert">
+              <AlertCircle size={17} aria-hidden="true" />
+              <span>
+                <strong>后台工作器尚未领取任务</strong>
+                <small>
+                  Lite 模式会自动恢复嵌入式工作器；若持续等待，请检查 Web readiness
+                  与错误日志。工作器恢复后，当前积压任务会自动继续。
+                </small>
+              </span>
+            </div>
+          ) : null}
+          <div className="import-progress-actions">
             {["queued", "running", "cancel_requested"].includes(job.status) ? (
               <Button className="button button-secondary" type="button" onClick={cancelImport}>
                 取消导入
@@ -523,4 +569,10 @@ function importJobStatus(status: JarImportJob["status"]): string {
     succeeded: "已完成",
     failed: "失败，保留诊断并可幂等重试",
   }[status];
+}
+
+function workerWaitWarning(job: JarImportJob): boolean {
+  if (job.status !== "queued") return false;
+  const updatedAt = Date.parse(job.updatedAt);
+  return Number.isFinite(updatedAt) && Date.now() - updatedAt >= 10_000;
 }

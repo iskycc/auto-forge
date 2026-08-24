@@ -175,6 +175,9 @@ async function uploadAdapterDependencies(page: Page, projectId: string): Promise
   await expect(page.getByText("运行时资源已上传并设为当前配置。")).toBeVisible({
     timeout: 60_000,
   });
+  await expect(
+    uploadForm.getByRole("progressbar", { name: "运行时资源上传完成进度" }),
+  ).toHaveAttribute("aria-valuenow", "100");
 }
 
 async function importSingleCase(

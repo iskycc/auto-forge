@@ -64,6 +64,12 @@ public-link fallback behind direct containers and reverse proxies; an explicitly
 base URL still takes precedence. Jenkins HPI `1.1.6` keeps the v1.1.5 Pipeline arguments and result
 map, and release images remain Docker-native `.docker.tar` archives.
 
+Control plane `1.1.8` keeps the v1.1.6 database, persisted configuration and Runner Protocol
+contracts. Lite continues to run its job worker in the Web process and does not require a separate
+worker service; transient SQLite queue failures are now retried with bounded backoff. Jenkins HPI
+`1.1.8` keeps the existing Pipeline arguments and result map, and release images remain Docker-native
+`.docker.tar` archives.
+
 Control plane `0.9.10` adds persisted Webhook configuration and delivery tables without changing
 Runner Protocol v1. Existing installations have no endpoint or binding after migration and therefore
 retain the prior no-outbound-request behavior until a project administrator explicitly configures one.

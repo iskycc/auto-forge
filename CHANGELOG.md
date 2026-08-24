@@ -6,6 +6,34 @@ and known limitations.
 
 ## Unreleased
 
+## 1.1.8 - 2026-08-24
+
+### Added
+
+- TestNG JAR inspection/import, DDT import, version-scoped Java/dependency archive uploads, local case
+  list parsing and case/DDT deletion now expose bounded, accessible progress feedback instead of
+  leaving long-running operations behind an unchanged action button.
+
+### Fixed
+
+- Lite's embedded job worker now retries transient queue failures with bounded exponential backoff.
+  A temporary SQLite claim error no longer leaves JAR or DDT imports permanently queued until the
+  Web process is restarted; repeated unrecoverable failures still make readiness fail explicitly.
+- The JAR background-import progress card now preserves its inner spacing, wraps long status text and
+  action controls, and prevents horizontal overflow at supported desktop widths.
+
+### Tests
+
+- Added unit coverage for browser upload progress and Lite worker recovery after a failed queue claim.
+- Extended Playwright coverage for TestNG/DDT uploads, runtime archive uploads, bulk deletion progress
+  and JAR progress-card layout at the minimum supported desktop width.
+
+### Compatibility
+
+- No database, persisted-configuration or Runner Protocol change from v1.1.6. Lite still embeds its
+  worker and requires no separate worker process. Jenkins HPI Pipeline contracts and Docker-native
+  `.docker.tar` release assets are unchanged.
+
 ## 1.1.6 - 2026-08-24
 
 ### Fixed

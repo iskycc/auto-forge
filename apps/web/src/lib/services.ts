@@ -14,6 +14,7 @@ import {
   ImportTestNgJarService,
   IdentityAccessService,
   JobWorker,
+  runWithTransientRecovery,
   PublicPlatformStatisticsService,
   PlatformOperationsService,
   ProjectStructureService,
@@ -406,7 +407,12 @@ async function createPlatformServices() {
       },
       workerLogger,
     );
-    const workerRun = worker.run(workerAbort.signal).catch((error: unknown) => {
+    const workerRun = runWithTransientRecovery(
+      workerAbort.signal,
+      () => worker.run(workerAbort.signal),
+      workerLogger,
+      { operationName: "Lite embedded job worker" },
+    ).catch((error: unknown) => {
       workerFailure = error;
       workerLogger.error("embedded worker stopped unexpectedly", {
         error: error instanceof Error ? error.message : "unknown error",

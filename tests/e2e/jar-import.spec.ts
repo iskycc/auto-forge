@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page, type Route } from "@playwright/test";
 import { unzipSync, zipSync } from "fflate";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { mkdir, readFile } from "node:fs/promises";
@@ -295,6 +295,21 @@ public class MixedVisibleTest {
   );
   await page.getByRole("button", { name: "确认导入" }).click();
   expect((await largeImportResponse).status()).toBe(202);
+  const importProgress = page.locator(".import-progress");
+  await expect(importProgress).toBeVisible();
+  const progressBounds = await importProgress.evaluate((element) => {
+    const card = element.getBoundingClientRect();
+    const bar = element.querySelector('[role="progressbar"]')?.getBoundingClientRect();
+    return {
+      cardLeft: card.left,
+      cardRight: card.right,
+      barLeft: bar?.left ?? card.left,
+      barRight: bar?.right ?? card.right,
+    };
+  });
+  expect(progressBounds.barLeft - progressBounds.cardLeft).toBeGreaterThanOrEqual(12);
+  expect(progressBounds.cardRight - progressBounds.barRight).toBeGreaterThanOrEqual(12);
+  await expectUiConsistency(page);
   await page.getByRole("button", { name: "取消导入" }).click();
   const retryLargeImport = page.getByRole("button", { name: "幂等重试" });
   await expect
@@ -318,9 +333,17 @@ public class MixedVisibleTest {
     mimeType: "application/java-archive",
     buffer: Buffer.from(jar),
   });
+  const inspectRoute = "**/api/v1/case-sources/jar/inspect?**";
+  const delayInspection = async (route: Route) => {
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    await route.continue();
+  };
+  await page.route(inspectRoute, delayInspection);
   await page.getByRole("button", { name: "扫描测试类" }).click();
+  await expect(page.getByRole("progressbar", { name: /JAR|扫描测试类/u })).toBeVisible();
 
   await expect(page.getByText("com.example.CheckoutTest")).toBeVisible({ timeout: 20_000 });
+  await page.unroute(inspectRoute, delayInspection);
   await expect(page.locator(".method-row code")).toHaveText("checkout");
   await expect(page.locator(".method-row .method-signature")).toHaveText("入参：空，返回值：空");
   await expect(page.locator(".method-row")).not.toContainText("()V");
@@ -1228,9 +1251,18 @@ public class MixedVisibleTest {
   await page.getByLabel("选择当前搜索结果中的全部用例").check();
   await expect(page.locator(".case-selection-toolbar")).toContainText("已选 2");
   await captureUi(page, "case-library-bulk-delete");
+  const deleteCasesRoute = "**/api/v1/case-definitions";
+  const delayCaseDeletion = async (route: Route) => {
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    await route.continue();
+  };
+  await page.route(deleteCasesRoute, delayCaseDeletion);
   page.once("dialog", (dialog) => dialog.accept());
   await page.getByRole("button", { name: "批量删除" }).click();
+  await expect(page.getByRole("progressbar", { name: "正在删除用例进度" })).toBeVisible();
+  await expect(page.getByText("已删除 0 / 2 个用例")).toBeVisible();
   await expect(page.locator(".inline-feedback")).toContainText("已删除 2 个用例");
+  await page.unroute(deleteCasesRoute, delayCaseDeletion);
   await expect(page.getByRole("button", { name: /查看 BulkDelete/ })).toHaveCount(0);
 
   await page.getByLabel("页内搜索用例").fill("SingleDeleteFixture");

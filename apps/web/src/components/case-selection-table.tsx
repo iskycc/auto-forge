@@ -1,13 +1,9 @@
 "use client";
 
-import { Button, Input, Select } from "@/components/ui";
+import { Button, Input, OperationProgress, Select } from "@/components/ui";
 import { formatMethodSignature } from "@/lib/jvm-signature";
 
-import {
-  apiErrorSchema,
-  CASE_DEFINITION_DELETE_LIMIT,
-  CASE_SUITE_ITEM_MUTATION_LIMIT,
-} from "@autoforge/contracts";
+import { apiErrorSchema, CASE_SUITE_ITEM_MUTATION_LIMIT } from "@autoforge/contracts";
 import type { CaseDefinitionWithMethods, CaseSuite, CaseVersion } from "@autoforge/domain";
 import {
   AlertCircle,
@@ -82,6 +78,7 @@ type CaseWorkspaceDetail = {
 };
 
 const TREE_RENDER_PAGE_SIZE = 250;
+const CASE_DELETE_PROGRESS_BATCH_SIZE = 5_000;
 
 export function CaseSelectionTable({
   cases,
@@ -112,6 +109,10 @@ export function CaseSelectionTable({
   const [detail, setDetail] = useState<CaseWorkspaceDetail | null>(null);
   const [detailError, setDetailError] = useState<{ caseId: string; message: string } | null>(null);
   const [deletedCaseIds, setDeletedCaseIds] = useState(() => new Set<string>());
+  const [deletionProgress, setDeletionProgress] = useState<{
+    completed: number;
+    total: number;
+  }>();
 
   const deferredSearch = useDeferredValue(search);
   const deferredOutcomeFilter = useDeferredValue(outcomeFilter);
@@ -330,6 +331,7 @@ export function CaseSelectionTable({
     setPending(true);
     setMessage(null);
     let deletedCount = 0;
+    setDeletionProgress({ completed: 0, total: caseDefinitionIds.length });
     try {
       if (caseDefinitionIds.length === 1) {
         const response = await fetch(
@@ -338,8 +340,9 @@ export function CaseSelectionTable({
         );
         if (!response.ok) throw new Error(await responseErrorMessage(response));
         deletedCount = 1;
+        setDeletionProgress({ completed: 1, total: 1 });
       } else {
-        for (const batch of batchesOf(caseDefinitionIds, CASE_DEFINITION_DELETE_LIMIT)) {
+        for (const batch of batchesOf(caseDefinitionIds, CASE_DELETE_PROGRESS_BATCH_SIZE)) {
           const response = await fetch("/api/v1/case-definitions", {
             method: "DELETE",
             headers: { "content-type": "application/json" },
@@ -352,6 +355,7 @@ export function CaseSelectionTable({
             );
           }
           deletedCount += batch.length;
+          setDeletionProgress({ completed: deletedCount, total: caseDefinitionIds.length });
         }
       }
       const removed = new Set(caseDefinitionIds);
@@ -370,6 +374,7 @@ export function CaseSelectionTable({
     } catch (caught) {
       setMessage(caught instanceof Error ? caught.message : "删除用例失败。");
     } finally {
+      setDeletionProgress(undefined);
       setPending(false);
     }
   }
@@ -523,6 +528,19 @@ export function CaseSelectionTable({
           <div className="inline-feedback" role="status">
             {message}
           </div>
+        ) : null}
+
+        {deletionProgress ? (
+          <OperationProgress
+            detail={`已删除 ${deletionProgress.completed} / ${deletionProgress.total} 个用例`}
+            indeterminate={deletionProgress.completed === 0}
+            label="正在删除用例"
+            value={
+              deletionProgress.total > 0
+                ? (deletionProgress.completed / deletionProgress.total) * 100
+                : 0
+            }
+          />
         ) : null}
 
         {checkedCaseIds.size > 0 ? (

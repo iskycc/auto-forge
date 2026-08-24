@@ -8,8 +8,9 @@ import type {
 import { FolderTree, Link2, Plus, Trash2, UploadCloud } from "lucide-react";
 import { useState, type FormEvent } from "react";
 
-import { Button, FileInput, Input, Select } from "@/components/ui";
+import { Button, FileInput, Input, OperationProgress, Select } from "@/components/ui";
 import { readApiErrorMessage } from "@/lib/client-api";
+import { uploadWithProgress } from "@/lib/upload-with-progress";
 import { ActionDialog } from "@/components/action-dialog";
 
 export function ProjectStructureManager({
@@ -27,6 +28,11 @@ export function ProjectStructureManager({
   const [pending, setPending] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [runtimeUploadProgress, setRuntimeUploadProgress] = useState<{
+    label: string;
+    detail: string;
+    percent: number;
+  }>();
   const [createDialog, setCreateDialog] = useState<"version" | "stage" | "inherit-cases" | null>(
     null,
   );
@@ -173,24 +179,56 @@ export function ProjectStructureManager({
       setError("请选择非空运行时压缩包。");
       return;
     }
+    const assetLabel = kind === "jdk" ? "JDK 压缩包" : "依赖 JAR 压缩包";
+    const uploadDetail = `${file.name} · ${formatBytes(file.size)}`;
     void run(async () => {
-      const response = await fetch(
-        `/api/v1/projects/${projectId}/runtime-assets/upload?${new URLSearchParams({ kind, archiveFormat })}`,
-        {
+      setRuntimeUploadProgress({
+        label: `正在上传${assetLabel}`,
+        detail: uploadDetail,
+        percent: 0,
+      });
+      try {
+        const response = await uploadWithProgress({
+          url: `/api/v1/projects/${projectId}/runtime-assets/upload?${new URLSearchParams({ kind, archiveFormat })}`,
           method: "POST",
           headers: {
             "content-type": archiveFormat === "zip" ? "application/zip" : "application/gzip",
             "x-autoforge-file-name": encodeURIComponent(file.name),
           },
           body: file,
-        },
-      );
-      const errorMessage = await readApiErrorMessage(response, "上传运行时资源失败。");
-      if (errorMessage) throw new Error(errorMessage);
-      const asset = (await response.json()) as ProjectRuntimeAsset;
-      await saveConfiguration(selectedVersionId, withAsset(configuration, asset));
-      form.reset();
-      await refresh("运行时资源已上传并设为当前配置。");
+          onProgress: ({ percent }) =>
+            setRuntimeUploadProgress({
+              label: `正在上传${assetLabel}`,
+              detail: uploadDetail,
+              percent,
+            }),
+          onUploadComplete: () =>
+            setRuntimeUploadProgress({
+              label: "上传完成，正在校验压缩包",
+              detail: `${assetLabel} · ${uploadDetail}`,
+              percent: 100,
+            }),
+        });
+        const errorMessage = await readApiErrorMessage(response, "上传运行时资源失败。");
+        if (errorMessage) throw new Error(errorMessage);
+        const asset = (await response.json()) as ProjectRuntimeAsset;
+        setRuntimeUploadProgress({
+          label: "压缩包已保存，正在启用当前版本",
+          detail: `${assetLabel} · ${uploadDetail}`,
+          percent: 100,
+        });
+        await saveConfiguration(selectedVersionId, withAsset(configuration, asset));
+        form.reset();
+        await refresh("运行时资源已上传并设为当前配置。");
+        setRuntimeUploadProgress({
+          label: "运行时资源上传完成",
+          detail: `${assetLabel} · ${uploadDetail}`,
+          percent: 100,
+        });
+      } catch (cause) {
+        setRuntimeUploadProgress(undefined);
+        throw cause;
+      }
     });
   }
 
@@ -451,7 +489,10 @@ export function ProjectStructureManager({
           配置所属版本
           <Select
             value={selectedVersionId}
-            onChange={(event) => setSelectedVersionId(event.currentTarget.value)}
+            onChange={(event) => {
+              setSelectedVersionId(event.currentTarget.value);
+              setRuntimeUploadProgress(undefined);
+            }}
             disabled={structure.versions.length === 0}
           >
             {structure.versions.length === 0 ? <option value="">尚无项目版本</option> : null}
@@ -549,6 +590,15 @@ export function ProjectStructureManager({
             <Button className="primary-button" disabled={pending || !canManage} type="submit">
               上传并启用
             </Button>
+            {runtimeUploadProgress ? (
+              <div className="project-runtime-upload-progress">
+                <OperationProgress
+                  detail={runtimeUploadProgress.detail}
+                  label={runtimeUploadProgress.label}
+                  value={runtimeUploadProgress.percent}
+                />
+              </div>
+            ) : null}
           </form>
           <form
             className="settings-grid-form settings-subform project-structure-subform"
@@ -625,4 +675,10 @@ function withAsset(
 function assetSummary(asset: ProjectRuntimeAsset | undefined): string {
   if (!asset) return "未配置";
   return `${asset.fileName}（${asset.sourceType === "upload" ? "已上传" : "链接"}）`;
+}
+
+function formatBytes(value: number): string {
+  if (value < 1_024) return `${value} B`;
+  if (value < 1_048_576) return `${(value / 1_024).toFixed(1)} KiB`;
+  return `${(value / 1_048_576).toFixed(1)} MiB`;
 }

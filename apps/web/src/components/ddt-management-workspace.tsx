@@ -23,7 +23,8 @@ import {
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 
-import { Button, Input, Select, Textarea } from "@/components/ui";
+import { Button, Input, OperationProgress, Select, Textarea } from "@/components/ui";
+import { uploadWithProgress } from "@/lib/upload-with-progress";
 
 type Scope = { projectId: string; projectVersionId: string; testStageId: string };
 type CaseSummary = Scope & {
@@ -135,6 +136,11 @@ export function DdtManagementWorkspace({ scope, canManage }: { scope: Scope; can
   const [showImport, setShowImport] = useState(false);
   const [showTemplate, setShowTemplate] = useState(false);
   const [showBulk, setShowBulk] = useState(false);
+  const [deleteProgress, setDeleteProgress] = useState<{
+    completed: number;
+    total: number;
+    label: string;
+  }>();
   const hasLoaded = useRef(false);
 
   const endpoint = useCallback(
@@ -248,17 +254,28 @@ export function DdtManagementWorkspace({ scope, canManage }: { scope: Scope; can
   };
 
   const deleteSelected = async () => {
-    if (!window.confirm(`将 ${selected.size} 条 DDT 用例移入回收站？`)) return;
+    const caseIds = [...selected];
+    if (!window.confirm(`将 ${caseIds.length} 条 DDT 用例移入回收站？`)) return;
+    setError("");
+    setNotice("");
+    setDeleteProgress({ completed: 0, total: caseIds.length, label: "正在移入回收站" });
     try {
       await requestJson(endpoint("cases/bulk-delete"), {
         method: "POST",
         headers: jsonHeaders,
-        body: JSON.stringify({ caseIds: [...selected] }),
+        body: JSON.stringify({ caseIds }),
       });
-      setNotice(`已将 ${selected.size} 条用例移入回收站。`);
+      setDeleteProgress({
+        completed: caseIds.length,
+        total: caseIds.length,
+        label: "删除完成，正在刷新用例列表",
+      });
+      setNotice(`已将 ${caseIds.length} 条用例移入回收站。`);
       await load();
     } catch (deleteError) {
       setError(messageOf(deleteError));
+    } finally {
+      setDeleteProgress(undefined);
     }
   };
 
@@ -345,6 +362,16 @@ export function DdtManagementWorkspace({ scope, canManage }: { scope: Scope; can
             <X size={14} />
           </Button>
         </div>
+      ) : null}
+      {deleteProgress ? (
+        <OperationProgress
+          detail={`已处理 ${deleteProgress.completed} / ${deleteProgress.total} 条用例`}
+          indeterminate={deleteProgress.completed === 0}
+          label={deleteProgress.label}
+          value={
+            deleteProgress.total > 0 ? (deleteProgress.completed / deleteProgress.total) * 100 : 0
+          }
+        />
       ) : null}
 
       {busy && cases.length === 0 ? <WorkspaceLoading /> : null}
@@ -510,9 +537,15 @@ export function DdtManagementWorkspace({ scope, canManage }: { scope: Scope; can
                   <Button
                     className="button button-danger"
                     type="button"
+                    disabled={Boolean(deleteProgress)}
                     onClick={() => void deleteSelected()}
                   >
-                    <Trash2 size={15} /> 移入回收站
+                    {deleteProgress ? (
+                      <LoaderCircle className="spin" size={15} />
+                    ) : (
+                      <Trash2 size={15} />
+                    )}{" "}
+                    移入回收站
                   </Button>
                 </>
               ) : null}
@@ -1173,15 +1206,38 @@ function ImportDialog({
   const [strategy, setStrategy] = useState("overwrite");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [uploadProgress, setUploadProgress] = useState<{
+    label: string;
+    detail: string;
+    percent: number;
+  }>();
   const preview = async () => {
     setBusy(true);
     setError("");
+    const totalBytes = files.reduce((sum, file) => sum + file.size, 0);
+    const detail = `${files.length} 个文件 · ${formatBytes(totalBytes)}`;
+    setUploadProgress({ label: "正在上传用例文件", detail, percent: 0 });
     try {
       const body = new FormData();
       files.forEach((file) => body.append("files", file));
-      setJob(await requestJson<ImportJob>(endpoint("imports/preview"), { method: "POST", body }));
+      const response = await uploadWithProgress({
+        url: endpoint("imports/preview"),
+        body,
+        onProgress: ({ percent }) =>
+          setUploadProgress({ label: "正在上传用例文件", detail, percent }),
+        onUploadComplete: () =>
+          setUploadProgress({
+            label: "上传完成，正在解析并预检",
+            detail,
+            percent: 100,
+          }),
+      });
+      if (!response.ok) throw await responseError(response);
+      setJob((await response.json()) as ImportJob);
+      setUploadProgress(undefined);
     } catch (previewError) {
       setError(messageOf(previewError));
+      setUploadProgress(undefined);
     } finally {
       setBusy(false);
     }
@@ -1233,6 +1289,13 @@ function ImportDialog({
                   </span>
                 ))}
               </div>
+            ) : null}
+            {uploadProgress ? (
+              <OperationProgress
+                detail={uploadProgress.detail}
+                label={uploadProgress.label}
+                value={uploadProgress.percent}
+              />
             ) : null}
             <footer>
               <Button className="button button-secondary" type="button" onClick={onClose}>

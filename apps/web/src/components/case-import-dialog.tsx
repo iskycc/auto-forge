@@ -4,8 +4,9 @@ import type { CaseDefinitionWithMethods } from "@autoforge/domain";
 import { Table2, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
-import { Button, FileInput, Textarea } from "@/components/ui";
+import { Button, FileInput, OperationProgress, Textarea } from "@/components/ui";
 import { parseCasePathFile } from "@/lib/case-path-file";
+import { readFileWithProgress } from "@/lib/read-file-with-progress";
 import {
   matchCasePaths,
   parseCasePathColumn,
@@ -25,6 +26,10 @@ export function CaseImportDialog({ cases, onImport }: CaseImportDialogProps) {
   const [fileName, setFileName] = useState("");
   const [fileError, setFileError] = useState("");
   const [readingFile, setReadingFile] = useState(false);
+  const [fileProgress, setFileProgress] = useState<{
+    label: string;
+    percent: number;
+  }>();
   const [pastedText, setPastedText] = useState("");
   const [result, setResult] = useState<CasePathMatchResult | null>(null);
   const fileReadGeneration = useRef(0);
@@ -45,6 +50,7 @@ export function CaseImportDialog({ cases, onImport }: CaseImportDialogProps) {
     setFileName("");
     setFileError("");
     setReadingFile(false);
+    setFileProgress(undefined);
     setPastedText("");
     setResult(null);
   }
@@ -60,8 +66,21 @@ export function CaseImportDialog({ cases, onImport }: CaseImportDialogProps) {
     setFileName(file.name);
     setFileError("");
     setReadingFile(true);
+    setFileProgress({ label: "正在读取用例表格", percent: 0 });
     try {
-      const paths = await parseCasePathFile(file);
+      const buffer = await readFileWithProgress(file, (percent) => {
+        if (generation === fileReadGeneration.current) {
+          setFileProgress({ label: "正在读取用例表格", percent });
+        }
+      });
+      if (generation !== fileReadGeneration.current) return;
+      setFileProgress({ label: "读取完成，正在解析用例路径", percent: 100 });
+      const paths = await parseCasePathFile({
+        name: file.name,
+        size: file.size,
+        type: file.type,
+        arrayBuffer: async () => buffer,
+      });
       if (generation !== fileReadGeneration.current) return;
       setFilePaths(paths);
       if (paths.length === 0) setFileError("首列没有可导入的用例路径。");
@@ -69,7 +88,10 @@ export function CaseImportDialog({ cases, onImport }: CaseImportDialogProps) {
       if (generation !== fileReadGeneration.current) return;
       setFileError(error instanceof Error ? error.message : "用例列表读取失败。");
     } finally {
-      if (generation === fileReadGeneration.current) setReadingFile(false);
+      if (generation === fileReadGeneration.current) {
+        setReadingFile(false);
+        setFileProgress(undefined);
+      }
     }
   }
 
@@ -156,6 +178,13 @@ export function CaseImportDialog({ cases, onImport }: CaseImportDialogProps) {
                   />
                 </label>
               </div>
+              {fileProgress ? (
+                <OperationProgress
+                  detail={fileName}
+                  label={fileProgress.label}
+                  value={fileProgress.percent}
+                />
+              ) : null}
               <div className="runner-installer-actions">
                 <Button
                   className="button-primary"

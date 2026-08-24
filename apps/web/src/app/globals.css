@@ -564,6 +564,49 @@
   transition: width 200ms ease;
 }
 
+.ui-progress[data-indeterminate="true"] .ui-progress-fill {
+  width: 38% !important;
+  animation: operation-progress-indeterminate 1.2s ease-in-out infinite;
+}
+
+.ui-operation-progress {
+  display: grid;
+  gap: 8px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  padding: 12px;
+  background: var(--color-info-soft);
+}
+
+.ui-operation-progress > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.ui-operation-progress strong {
+  color: var(--color-text);
+}
+
+.ui-operation-progress span,
+.ui-operation-progress small {
+  color: var(--color-text-secondary);
+}
+
+.project-runtime-upload-progress {
+  grid-column: 1 / -1;
+}
+
+@keyframes operation-progress-indeterminate {
+  from {
+    transform: translateX(-110%);
+  }
+  to {
+    transform: translateX(275%);
+  }
+}
+
 .ui-button {
   min-height: 38px;
   display: inline-flex;
@@ -2951,19 +2994,59 @@ button.icon-button:disabled {
 
 .import-progress {
   display: grid;
+  min-width: 0;
   gap: var(--space-3);
+  overflow: hidden;
+  padding: 16px 18px;
 }
 
-.import-progress > div:first-child {
-  display: flex;
+.import-progress-heading {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
   justify-content: space-between;
   gap: var(--space-3);
   color: var(--color-text-secondary);
 }
 
-.import-progress progress {
-  width: 100%;
-  accent-color: var(--color-info);
+.import-progress-heading strong,
+.import-progress-heading span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.import-progress-heading span {
+  max-width: min(52vw, 520px);
+  text-align: right;
+}
+
+.import-progress-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.import-worker-warning {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 9px;
+  border-radius: var(--radius-control);
+  padding: 10px 12px;
+  background: var(--color-warning-soft);
+  color: var(--color-warning);
+}
+
+.import-worker-warning span {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.import-worker-warning small {
+  color: var(--color-text-secondary);
+  overflow-wrap: anywhere;
 }
 
 .import-card,
