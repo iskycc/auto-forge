@@ -366,14 +366,47 @@ test("case metadata, immutable versions and suite policy survive lifecycle chang
   const runner = await registerRunner(page, suffix);
 
   await page.goto(`/case-suites/${encodeURIComponent(suite.body.id)}`);
+  await page.route(
+    `**/api/v1/case-suites/${encodeURIComponent(suite.body.id)}/round-recovery/inspect`,
+    async (route) => {
+      const body = route.request().postDataJSON() as {
+        jenkinsJobUrl: string;
+        apiKey?: string;
+      };
+      expect(route.request().method()).toBe("POST");
+      expect(body).toMatchObject({
+        jenkinsJobUrl: "https://jenkins.internal/job/environment-reset/",
+        apiKey: "e2e-user:e2e-api-token",
+      });
+      await route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify({
+          name: "environment-reset",
+          fullName: "platform/environment-reset",
+          url: "https://jenkins.internal/job/environment-reset/",
+          buildable: true,
+          inQueue: false,
+          lastBuild: {
+            number: 73,
+            url: "https://jenkins.internal/job/environment-reset/73/",
+            building: false,
+            result: "SUCCESS",
+            startedAt: "2026-08-24T02:00:00.000Z",
+            durationMs: 12_000,
+          },
+        }),
+      });
+    },
+  );
   await page.getByLabel("任务名称").fill(`${suiteName} updated`);
   await page.getByLabel("优先级（-100 到 100）").fill("42");
   await page.getByLabel("并发度（同时在途执行数）").fill("3");
   await page.getByLabel("重试次数上限").fill("2");
   await page.getByLabel("失败重跑方式").selectOption("round");
   await page.getByRole("button", { name: "添加规则" }).click();
-  await page.getByLabel("规则 1 开始轮次").fill("2");
-  await page.getByLabel("规则 1 结束轮次").fill("3");
+  await expect(page.getByText(/命中后从本轮起持续生效/u)).toBeVisible();
+  await expect(page.getByText(/每条规则只在指定轮次内判断/u)).toBeVisible();
+  await page.getByLabel("规则 1 判断轮次").fill("2");
   await page.getByLabel("规则 1 上轮通过率上限").fill("20");
   await page.getByLabel("规则 1 剩余用例下限").fill("50");
   await page.getByLabel("规则 1 命中并发").fill("10");
@@ -384,6 +417,10 @@ test("case metadata, immutable versions and suite policy survive lifecycle chang
     .fill("https://jenkins.internal/job/environment-reset/");
   await page.getByLabel("恢复步骤 1 API 密钥").fill("e2e-user:e2e-api-token");
   await page.getByLabel("恢复步骤 1 成功后等待分钟").fill("3");
+  await page.getByRole("button", { name: "测试恢复步骤 1 Jenkins 配置" }).click();
+  await expect(page.getByText("连接成功 · platform/environment-reset")).toBeVisible();
+  await expect(page.getByText(/上一构建 #73 成功/u)).toBeVisible();
+  await expect(page.getByText(/只读取任务与上一构建信息，不会触发构建/u)).toBeVisible();
   await page.getByRole("button", { name: "添加恢复步骤" }).click();
   await page.getByLabel("恢复步骤 2 暂停轮次").fill("1");
   await page

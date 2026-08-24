@@ -182,49 +182,60 @@ export const caseSuiteArtifactPatternSchema = z
     message: "产物规则必须是相对路径，且不能包含 .. 段。",
   });
 
-const retryConcurrencyRuleSchema = z
-  .object({
-    id: z.string().trim().min(1).max(128),
-    executionRoundFrom: z.number().int().min(2).max(11),
-    executionRoundTo: z.number().int().min(2).max(11),
-    previousRoundPassRateMinimum: z.number().int().min(0).max(100).optional(),
-    previousRoundPassRateMaximum: z.number().int().min(0).max(100).optional(),
-    remainingRunsMinimum: z.number().int().min(0).max(100_000).optional(),
-    remainingRunsMaximum: z.number().int().min(0).max(100_000).optional(),
-    concurrency: z.number().int().min(1).max(10_000),
-  })
-  .strict()
-  .superRefine((rule, context) => {
-    if (rule.executionRoundFrom > rule.executionRoundTo) {
-      context.addIssue({
-        code: "custom",
-        path: ["executionRoundTo"],
-        message: "结束轮次不能早于开始轮次。",
-      });
-    }
-    if (
-      rule.previousRoundPassRateMinimum !== undefined &&
-      rule.previousRoundPassRateMaximum !== undefined &&
-      rule.previousRoundPassRateMinimum > rule.previousRoundPassRateMaximum
-    ) {
-      context.addIssue({
-        code: "custom",
-        path: ["previousRoundPassRateMaximum"],
-        message: "通过率上限不能小于下限。",
-      });
-    }
-    if (
-      rule.remainingRunsMinimum !== undefined &&
-      rule.remainingRunsMaximum !== undefined &&
-      rule.remainingRunsMinimum > rule.remainingRunsMaximum
-    ) {
-      context.addIssue({
-        code: "custom",
-        path: ["remainingRunsMaximum"],
-        message: "用例数上限不能小于下限。",
-      });
-    }
-  });
+const retryConcurrencyRuleSchema = z.preprocess(
+  legacyRetryConcurrencyRule,
+  z
+    .object({
+      id: z.string().trim().min(1).max(128),
+      executionRound: z.number().int().min(2).max(11),
+      previousRoundPassRateMinimum: z.number().int().min(0).max(100).optional(),
+      previousRoundPassRateMaximum: z.number().int().min(0).max(100).optional(),
+      remainingRunsMinimum: z.number().int().min(0).max(100_000).optional(),
+      remainingRunsMaximum: z.number().int().min(0).max(100_000).optional(),
+      concurrency: z.number().int().min(1).max(10_000),
+    })
+    .strict()
+    .superRefine((rule, context) => {
+      if (
+        rule.previousRoundPassRateMinimum !== undefined &&
+        rule.previousRoundPassRateMaximum !== undefined &&
+        rule.previousRoundPassRateMinimum > rule.previousRoundPassRateMaximum
+      ) {
+        context.addIssue({
+          code: "custom",
+          path: ["previousRoundPassRateMaximum"],
+          message: "通过率上限不能小于下限。",
+        });
+      }
+      if (
+        rule.remainingRunsMinimum !== undefined &&
+        rule.remainingRunsMaximum !== undefined &&
+        rule.remainingRunsMinimum > rule.remainingRunsMaximum
+      ) {
+        context.addIssue({
+          code: "custom",
+          path: ["remainingRunsMaximum"],
+          message: "用例数上限不能小于下限。",
+        });
+      }
+    }),
+);
+
+function legacyRetryConcurrencyRule(value: unknown): unknown {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  const record = value as Record<string, unknown>;
+  if (
+    record.executionRound !== undefined ||
+    !Number.isInteger(record.executionRoundFrom) ||
+    !Number.isInteger(record.executionRoundTo)
+  ) {
+    return value;
+  }
+  const current = { ...record };
+  delete current.executionRoundFrom;
+  delete current.executionRoundTo;
+  return { ...current, executionRound: record.executionRoundFrom };
+}
 
 const jenkinsJobUrlSchema = z
   .url()
@@ -251,6 +262,32 @@ const roundRecoveryRuleInputSchema = z
     apiKeyConfigured: z.boolean().optional(),
   })
   .strict();
+
+export const inspectRoundRecoveryConfigurationInputSchema = z
+  .object({
+    ruleId: z.string().trim().min(1).max(128),
+    jenkinsJobUrl: jenkinsJobUrlSchema,
+    apiKey: z.string().min(3).max(2_048).optional(),
+  })
+  .strict();
+
+const jenkinsLastBuildInspectionSchema = z.object({
+  number: z.number().int().nonnegative(),
+  url: z.url(),
+  building: z.boolean(),
+  result: z.string().min(1).max(128).optional(),
+  startedAt: z.string().datetime().optional(),
+  durationMs: z.number().int().nonnegative().optional(),
+});
+
+export const jenkinsJobInspectionSchema = z.object({
+  name: z.string().min(1).max(512),
+  fullName: z.string().min(1).max(2_048).optional(),
+  url: z.url(),
+  buildable: z.boolean(),
+  inQueue: z.boolean(),
+  lastBuild: jenkinsLastBuildInspectionSchema.optional(),
+});
 
 export const caseSuiteExecutionPolicySchema = z
   .object({
@@ -614,6 +651,10 @@ export type CaseSuiteAdapterConfigurationInput = z.infer<
 >;
 export type CaseSuiteExecutionPolicyInput = z.infer<typeof caseSuiteExecutionPolicySchema>;
 export type UpdateCaseSuiteInput = z.infer<typeof updateCaseSuiteInputSchema>;
+export type InspectRoundRecoveryConfigurationInput = z.infer<
+  typeof inspectRoundRecoveryConfigurationInputSchema
+>;
+export type JenkinsJobInspection = z.infer<typeof jenkinsJobInspectionSchema>;
 export type CopyCaseSuiteInput = z.infer<typeof copyCaseSuiteInputSchema>;
 export type CaseSourceComparisonResult = z.infer<typeof caseSourceComparisonSchema>;
 export type ConfirmCaseSourceSyncInput = z.infer<typeof confirmCaseSourceSyncInputSchema>;

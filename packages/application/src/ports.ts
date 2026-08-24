@@ -9,6 +9,7 @@ import type {
   JarInspection,
   JarImportJob,
   JarImportResult,
+  JenkinsJobInspection,
   JavaSourceReference,
   JobEnvelope,
   ObjectEntry,
@@ -57,6 +58,7 @@ import type {
   ProjectVersionDependency,
   Role,
   RoleScope,
+  RetryConcurrencyState,
   RunBatch,
   RunBatchDetails,
   RunBatchExecutionPolicy,
@@ -1329,6 +1331,7 @@ export type SchedulingSnapshot = {
   candidates: Array<{ runner: Runner; reservedSlots: number }>;
   runnerFailureIdsByRun: Record<string, string[]>;
   projectActiveRuns: number;
+  retryConcurrencyState?: RetryConcurrencyState;
   retryContext?: {
     executionRound: number;
     previousRoundPassRate: number | null;
@@ -1400,6 +1403,13 @@ export interface RunBatchRepository {
     offlineBefore: string,
     maximumQueuedRuns?: number,
   ): Promise<SchedulingSnapshot | null>;
+  activateRetryConcurrency(input: {
+    batchId: string;
+    executionRound: number;
+    expectedRuleId: string | null;
+    state: RetryConcurrencyState;
+    updatedAt: string;
+  }): Promise<RetryConcurrencyState | null>;
   reserveAssignments(input: ReserveSchedulingAssignmentsInput): Promise<number>;
   appendSchedulingEvents(
     events: Array<{
@@ -1492,6 +1502,7 @@ export type JenkinsRebuildState =
   | { status: "failed"; buildNumber: number; buildUrl: string; result: string };
 
 export interface JenkinsRoundRecoveryTransport {
+  inspectJob(input: { jobUrl: string; credential: string }): Promise<JenkinsJobInspection>;
   rebuildLast(input: {
     jobUrl: string;
     credential: string;

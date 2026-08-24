@@ -245,7 +245,8 @@ function domainErrorStatus(code: string): number {
     code === "RUNNER_HOST_CONNECTION_REFUSED" ||
     code === "RUNNER_HOST_CONNECTION_TIMEOUT" ||
     code === "RUNNER_HOST_HANDSHAKE_FAILED" ||
-    code === "RUNNER_INSTALLATION_FAILED"
+    code === "RUNNER_INSTALLATION_FAILED" ||
+    code === "JENKINS_CONFIGURATION_TEST_FAILED"
   ) {
     return 502;
   }

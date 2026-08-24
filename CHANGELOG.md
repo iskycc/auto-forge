@@ -4,7 +4,39 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
-## Unreleased
+## 1.1.10 - 2026-08-24
+
+### Added
+
+- Every Jenkins round-recovery rule now has a read-only configuration test. It validates Basic API
+  credentials and the configured job URL by showing job availability, queue state and the previous
+  build, without invoking the Rebuilder endpoint or starting a build.
+
+### Changed
+
+- Dynamic whole-round retry concurrency rules now use one explicit trigger round instead of a round
+  range. A rule is evaluated only while that round is current; when it matches, its concurrency takes
+  effect for that round and remains active until a later ordered rule matches in its own trigger round.
+- Stored range-based retry rules remain readable and use their former starting round as the new
+  trigger round.
+
+### Database
+
+- Added SQLite migration `0044_sticky_retry_concurrency.sql` and PostgreSQL migration
+  `0043_sticky_retry_concurrency.sql` to persist the active retry-concurrency stage across Web/worker
+  restarts and Full control-plane replicas.
+
+### Tests
+
+- Added domain, scheduler, Lite/Full repository and upgrade-migration regressions for one-round
+  triggers, sticky concurrency and ordered overrides.
+- Added application and HTTP transport coverage proving Jenkins configuration tests reuse encrypted
+  credentials when needed and issue no rebuild request, plus Playwright UI and layout verification.
+
+### Compatibility
+
+- Runner Protocol v1 and Jenkins Pipeline step arguments/results are unchanged. Jenkins HPI 1.1.10
+  contains no Pipeline contract break; release images remain Docker-native `.docker.tar` archives.
 
 ## 1.1.8 - 2026-08-24
 

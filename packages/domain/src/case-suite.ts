@@ -38,12 +38,11 @@ export type CaseSuiteExecutionPolicy = {
 
 /**
  * 整轮重跑的动态并发规则。执行轮次从 1 开始，因此第一轮重跑是第 2 轮。
- * 多条规则按数组顺序匹配，首条命中的规则生效，未命中时回退任务基础并发数。
+ * 规则只在 executionRound 指定的轮次内判断；命中后持续生效，直到后续规则命中。
  */
 export type RetryConcurrencyRule = {
   id: string;
-  executionRoundFrom: number;
-  executionRoundTo: number;
+  executionRound: number;
   previousRoundPassRateMinimum?: number;
   previousRoundPassRateMaximum?: number;
   remainingRunsMinimum?: number;
@@ -67,25 +66,89 @@ export type RetryConcurrencyContext = {
   remainingRuns: number;
 };
 
+/**
+ * 批次已经激活的动态并发阶段。规则在批次快照内不可变，ruleIndex 因而可以作为
+ * 单调游标：只有排在当前阶段之后的规则才能在后续轮次触发并覆盖它。
+ */
+export type RetryConcurrencyState = {
+  ruleId: string;
+  ruleIndex: number;
+  concurrency: number;
+  activatedRound: number;
+};
+
+export type RetryConcurrencyDecision = {
+  concurrency: number;
+  activeState?: RetryConcurrencyState;
+  transition?: RetryConcurrencyState;
+};
+
 export function retryConcurrencyForRound(
   baseConcurrency: number,
   rules: readonly RetryConcurrencyRule[],
   context: RetryConcurrencyContext,
+  activeState?: RetryConcurrencyState,
 ): number {
-  const matched = rules.find((rule) => retryConcurrencyRuleMatches(rule, context));
-  return matched?.concurrency ?? baseConcurrency;
+  return retryConcurrencyDecisionForRound(baseConcurrency, rules, context, activeState).concurrency;
+}
+
+/**
+ * 动态并发是有状态的阶段规则：首次命中后持续生效；同一轮不会连续跨过多个阶段，
+ * 后续轮次只有列表中位于当前规则之后的规则可以再次切换并发。
+ */
+export function retryConcurrencyDecisionForRound(
+  baseConcurrency: number,
+  rules: readonly RetryConcurrencyRule[],
+  context: RetryConcurrencyContext,
+  state?: RetryConcurrencyState,
+): RetryConcurrencyDecision {
+  const activeState = validRetryConcurrencyState(rules, context.executionRound, state);
+  if (activeState && activeState.activatedRound === context.executionRound) {
+    return { concurrency: activeState.concurrency, activeState };
+  }
+
+  const firstEligibleRuleIndex = activeState ? activeState.ruleIndex + 1 : 0;
+  const matchedRuleIndex = rules.findIndex(
+    (rule, index) => index >= firstEligibleRuleIndex && retryConcurrencyRuleMatches(rule, context),
+  );
+  const matchedRule = rules[matchedRuleIndex];
+  if (matchedRule) {
+    const transition: RetryConcurrencyState = {
+      ruleId: matchedRule.id,
+      ruleIndex: matchedRuleIndex,
+      concurrency: matchedRule.concurrency,
+      activatedRound: context.executionRound,
+    };
+    return { concurrency: transition.concurrency, activeState: transition, transition };
+  }
+  if (activeState) return { concurrency: activeState.concurrency, activeState };
+  return { concurrency: baseConcurrency };
+}
+
+function validRetryConcurrencyState(
+  rules: readonly RetryConcurrencyRule[],
+  executionRound: number,
+  state: RetryConcurrencyState | undefined,
+): RetryConcurrencyState | undefined {
+  if (
+    !state ||
+    state.activatedRound > executionRound ||
+    state.ruleIndex < 0 ||
+    !Number.isInteger(state.ruleIndex)
+  ) {
+    return undefined;
+  }
+  const activeRule = rules[state.ruleIndex];
+  return activeRule?.id === state.ruleId && activeRule.concurrency === state.concurrency
+    ? state
+    : undefined;
 }
 
 function retryConcurrencyRuleMatches(
   rule: RetryConcurrencyRule,
   context: RetryConcurrencyContext,
 ): boolean {
-  if (
-    context.executionRound < rule.executionRoundFrom ||
-    context.executionRound > rule.executionRoundTo
-  ) {
-    return false;
-  }
+  if (context.executionRound !== rule.executionRound) return false;
   if (
     rule.previousRoundPassRateMinimum !== undefined &&
     (context.previousRoundPassRate === null ||
@@ -200,13 +263,54 @@ export function mergeCaseSuiteExecutionPolicy(
     artifactPatterns: override.artifactPatterns
       ? [...override.artifactPatterns]
       : [...base.artifactPatterns],
-    retryConcurrencyRules: (override.retryConcurrencyRules ?? base.retryConcurrencyRules).map(
-      (rule) => ({ ...rule }),
+    retryConcurrencyRules: normalizeStoredRetryConcurrencyRules(
+      override.retryConcurrencyRules ?? base.retryConcurrencyRules,
     ),
     roundRecoveryRules: (override.roundRecoveryRules ?? base.roundRecoveryRules).map((rule) => ({
       ...rule,
     })),
   };
+}
+
+/**
+ * v1.1.8 及以前的草案数据使用起止轮次。升级后仅以开始轮次作为触发轮次，
+ * 使历史配置符合新的单次触发语义，同时不会在读取旧任务时丢失规则。
+ */
+export function normalizeStoredRetryConcurrencyRules(value: unknown): RetryConcurrencyRule[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((candidate) => {
+    if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) return [];
+    const rule = candidate as Record<string, unknown>;
+    const executionRound = Number.isInteger(rule.executionRound)
+      ? rule.executionRound
+      : rule.executionRoundFrom;
+    if (
+      typeof rule.id !== "string" ||
+      !Number.isInteger(executionRound) ||
+      !Number.isInteger(rule.concurrency)
+    ) {
+      return [];
+    }
+    const previousRoundPassRateMinimum = optionalInteger(rule.previousRoundPassRateMinimum);
+    const previousRoundPassRateMaximum = optionalInteger(rule.previousRoundPassRateMaximum);
+    const remainingRunsMinimum = optionalInteger(rule.remainingRunsMinimum);
+    const remainingRunsMaximum = optionalInteger(rule.remainingRunsMaximum);
+    return [
+      {
+        id: rule.id,
+        executionRound: executionRound as number,
+        ...(previousRoundPassRateMinimum === undefined ? {} : { previousRoundPassRateMinimum }),
+        ...(previousRoundPassRateMaximum === undefined ? {} : { previousRoundPassRateMaximum }),
+        ...(remainingRunsMinimum === undefined ? {} : { remainingRunsMinimum }),
+        ...(remainingRunsMaximum === undefined ? {} : { remainingRunsMaximum }),
+        concurrency: rule.concurrency as number,
+      },
+    ];
+  });
+}
+
+function optionalInteger(value: unknown): number | undefined {
+  return Number.isInteger(value) ? (value as number) : undefined;
 }
 
 export type CaseSuiteVersionSnapshot = {

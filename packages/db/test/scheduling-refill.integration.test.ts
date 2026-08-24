@@ -80,6 +80,86 @@ async function createSqliteHarness(): Promise<RefillHarness> {
 }
 
 function schedulingRefillCases(createHarness: () => Promise<RefillHarness>): void {
+  it("persists an activated retry concurrency until a later ordered rule takes over", async () => {
+    const harness = await createHarness();
+    const firstState = {
+      ruleId: "high-pass",
+      ruleIndex: 0,
+      concurrency: 40,
+      activatedRound: 2,
+    };
+    const laterState = {
+      ruleId: "small-remainder",
+      ruleIndex: 1,
+      concurrency: 10,
+      activatedRound: 4,
+    };
+    const policy = {
+      executor: "testng",
+      concurrency: 100,
+      runnerLabels: [],
+      artifactPatterns: [],
+      retryConcurrencyRules: [
+        {
+          id: "high-pass",
+          executionRound: 2,
+          previousRoundPassRateMinimum: 70,
+          concurrency: 40,
+        },
+        {
+          id: "small-remainder",
+          executionRound: 4,
+          remainingRunsMaximum: 20,
+          concurrency: 10,
+        },
+      ],
+    };
+    try {
+      await harness.rawQuery(
+        "UPDATE run_batches SET retry_mode = 'round', current_round = 2, policy_json = ? WHERE id = ?",
+        [JSON.stringify(policy), harness.batchQueuedId],
+      );
+      await expect(
+        harness.batches.activateRetryConcurrency({
+          batchId: harness.batchQueuedId,
+          executionRound: 2,
+          expectedRuleId: null,
+          state: firstState,
+          updatedAt: "2026-08-10T00:01:00.000Z",
+        }),
+      ).resolves.toEqual(firstState);
+      // 同一轮最多激活一个阶段，避免两条同时满足时连续跳级。
+      await expect(
+        harness.batches.activateRetryConcurrency({
+          batchId: harness.batchQueuedId,
+          executionRound: 2,
+          expectedRuleId: "high-pass",
+          state: { ...laterState, activatedRound: 2 },
+          updatedAt: "2026-08-10T00:01:01.000Z",
+        }),
+      ).resolves.toEqual(firstState);
+
+      await harness.rawQuery("UPDATE run_batches SET current_round = 4 WHERE id = ?", [
+        harness.batchQueuedId,
+      ]);
+      await expect(
+        harness.batches.activateRetryConcurrency({
+          batchId: harness.batchQueuedId,
+          executionRound: 4,
+          expectedRuleId: "high-pass",
+          state: laterState,
+          updatedAt: "2026-08-10T00:02:00.000Z",
+        }),
+      ).resolves.toEqual(laterState);
+      await expect(
+        harness.batches.getSchedulingSnapshot(harness.batchQueuedId, "2026-08-10T00:00:00.000Z"),
+      ).resolves.toMatchObject({ retryConcurrencyState: laterState });
+    } finally {
+      await harness.dispose();
+      await cleanupTemporaryDirectories();
+    }
+  });
+
   it("keeps delayed batches out of every schedulable view until their planned start", async () => {
     const harness = await createHarness();
     try {

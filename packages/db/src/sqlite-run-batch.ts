@@ -14,6 +14,7 @@ import {
   DomainError,
   evaluateRunnerForScheduling,
   MINIMUM_JAVA_MAJOR_VERSION,
+  normalizeStoredRetryConcurrencyRules,
   REQUIRED_EXECUTION_LABELS,
   SUPPORTED_TESTNG_VERSION,
   transitionRunBatch,
@@ -24,6 +25,7 @@ import {
   type RunBatch,
   type RunBatchDetails,
   type RunBatchExecutionPolicy,
+  type RetryConcurrencyState,
   type RunBatchStatusEvent,
   type RunBatchStatus,
   type SchedulingEvent,
@@ -47,6 +49,11 @@ import {
   type RuntimeAssetSnapshot,
 } from "./project-adapter-runtime";
 import { mapStoredRunner } from "./runner-mapper";
+import {
+  assertRetryConcurrencyTransition,
+  retryConcurrencyActivationDecision,
+  retryConcurrencyStateFromRow,
+} from "./retry-concurrency-state";
 import { runnerFailureIdsByExecutionRun } from "./runner-failure-history";
 import { decodeRunBatchCursor, encodeRunBatchCursor } from "./run-batch-list";
 import {
@@ -56,6 +63,7 @@ import {
   executionRuns,
   runAttempts,
   runBatchRunners,
+  runBatchRetryConcurrencyStates,
   runBatches,
   runBatchStatusEvents,
   runners,
@@ -448,6 +456,11 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
       .where(eq(runBatches.id, batchId))
       .get();
     const adapterRuntime = parseProjectAdapterRuntime(runtimeRow?.adapterRuntimeJson ?? null);
+    const retryConcurrencyStateRow = this.handle.db
+      .select()
+      .from(runBatchRetryConcurrencyStates)
+      .where(eq(runBatchRetryConcurrencyStates.batchId, batchId))
+      .get();
     const candidates = runnerRows
       .map((row) => ({
         runner: mapStoredRunner(row, offlineBefore),
@@ -462,8 +475,47 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
       candidates,
       runnerFailureIdsByRun: runnerFailureIdsByExecutionRun(attemptRows.map(toRunAttempt)),
       projectActiveRuns: projectActiveRuns(this.handle, batch.projectId),
+      ...(retryConcurrencyStateRow
+        ? { retryConcurrencyState: retryConcurrencyStateFromRow(retryConcurrencyStateRow) }
+        : {}),
       retryContext: retryContext(this.handle, batch),
     };
+  }
+
+  async activateRetryConcurrency(
+    input: Parameters<RunBatchRepository["activateRetryConcurrency"]>[0],
+  ): Promise<RetryConcurrencyState | null> {
+    return runSqliteWriteTransaction(this.handle, () => {
+      const batch = this.handle.db
+        .select({ currentRound: runBatches.currentRound, policyJson: runBatches.policyJson })
+        .from(runBatches)
+        .where(eq(runBatches.id, input.batchId))
+        .get();
+      if (!batch) throw new DomainError("RUN_BATCH_NOT_FOUND", "指定的执行批次不存在。");
+      const storedRow = this.handle.db
+        .select()
+        .from(runBatchRetryConcurrencyStates)
+        .where(eq(runBatchRetryConcurrencyStates.batchId, input.batchId))
+        .get();
+      const storedState = storedRow ? retryConcurrencyStateFromRow(storedRow) : undefined;
+      const activation = retryConcurrencyActivationDecision(storedState, batch.currentRound, input);
+      if (activation.outcome === "stale") return null;
+      if (activation.outcome === "unchanged") return activation.state;
+      assertRetryConcurrencyTransition(
+        batchPolicy(batch.policyJson),
+        input.executionRound,
+        input.state,
+      );
+      this.handle.db
+        .insert(runBatchRetryConcurrencyStates)
+        .values({ batchId: input.batchId, ...input.state, updatedAt: input.updatedAt })
+        .onConflictDoUpdate({
+          target: runBatchRetryConcurrencyStates.batchId,
+          set: { ...input.state, updatedAt: input.updatedAt },
+        })
+        .run();
+      return input.state;
+    });
   }
 
   async reserveAssignments(input: ReserveSchedulingAssignmentsInput): Promise<number> {
@@ -491,9 +543,14 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
         (input.projectMaximumConcurrency ?? Number.MAX_SAFE_INTEGER) -
           projectActiveRuns(this.handle, batchScope.projectId),
       );
-      const batchConcurrency = batchPolicy(batchScope.policyJson)?.concurrency;
       const adapterRuntime = parseProjectAdapterRuntime(batchScope.adapterRuntimeJson);
       const policy = batchPolicy(batchScope.policyJson);
+      const retryConcurrencyState = this.handle.db
+        .select({ concurrency: runBatchRetryConcurrencyStates.concurrency })
+        .from(runBatchRetryConcurrencyStates)
+        .where(eq(runBatchRetryConcurrencyStates.batchId, input.batchId))
+        .get();
+      const batchConcurrency = retryConcurrencyState?.concurrency ?? policy?.concurrency;
       let remainingBatchSlots =
         batchConcurrency === undefined
           ? Number.POSITIVE_INFINITY
@@ -926,20 +983,7 @@ function batchPolicy(json: string | null): RunBatchExecutionPolicy | undefined {
 function retryConcurrencyRules(
   value: unknown,
 ): NonNullable<RunBatchExecutionPolicy["retryConcurrencyRules"]> {
-  if (!Array.isArray(value)) return [];
-  return value.flatMap((candidate) => {
-    if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) return [];
-    const rule = candidate as Record<string, unknown>;
-    if (
-      typeof rule.id !== "string" ||
-      !Number.isInteger(rule.executionRoundFrom) ||
-      !Number.isInteger(rule.executionRoundTo) ||
-      !Number.isInteger(rule.concurrency)
-    ) {
-      return [];
-    }
-    return [candidate as NonNullable<RunBatchExecutionPolicy["retryConcurrencyRules"]>[number]];
-  });
+  return normalizeStoredRetryConcurrencyRules(value);
 }
 
 function retryContext(

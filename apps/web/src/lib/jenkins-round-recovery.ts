@@ -1,11 +1,38 @@
 import "server-only";
 
 import type { JenkinsRebuildState, JenkinsRoundRecoveryTransport } from "@autoforge/application";
+import type { JenkinsJobInspection } from "@autoforge/contracts";
 
 type FetchLike = typeof fetch;
 
 export class JenkinsRebuildTransport implements JenkinsRoundRecoveryTransport {
   constructor(private readonly request: FetchLike = fetch) {}
+
+  async inspectJob(input: { jobUrl: string; credential: string }): Promise<JenkinsJobInspection> {
+    const jobUrl = normalizedJobUrl(input.jobUrl);
+    const query = new URLSearchParams({
+      tree: "name,fullName,url,buildable,inQueue,lastBuild[number,url,building,result,timestamp,duration]",
+    });
+    const job = await this.readJson(
+      childUrl(jobUrl, `api/json?${query.toString()}`),
+      input.credential,
+    );
+    const inspectedUrl = safeBuildUrl(
+      jobUrl,
+      stringField(job, "url", "Jenkins 任务链接缺失。"),
+    ).toString();
+    const lastBuild = isRecord(job.lastBuild)
+      ? inspectedLastBuild(job.lastBuild, jobUrl)
+      : undefined;
+    return {
+      name: stringField(job, "name", "Jenkins 任务名称缺失。"),
+      ...(typeof job.fullName === "string" && job.fullName ? { fullName: job.fullName } : {}),
+      url: inspectedUrl,
+      buildable: booleanField(job, "buildable", "Jenkins 任务可构建状态无效。"),
+      inQueue: booleanField(job, "inQueue", "Jenkins 任务排队状态无效。"),
+      ...(lastBuild ? { lastBuild } : {}),
+    };
+  }
 
   async rebuildLast(input: {
     jobUrl: string;
@@ -105,6 +132,24 @@ function buildState(build: Record<string, unknown>, jobUrl: URL): JenkinsRebuild
   return { status: "failed", buildNumber, buildUrl, result: build.result };
 }
 
+function inspectedLastBuild(
+  build: Record<string, unknown>,
+  jobUrl: URL,
+): NonNullable<JenkinsJobInspection["lastBuild"]> {
+  const timestamp = numericValue(build.timestamp);
+  const duration = numericValue(build.duration);
+  return {
+    number: integerField(build, "number", "Jenkins 最近构建编号无效。"),
+    url: safeBuildUrl(jobUrl, stringField(build, "url", "Jenkins 最近构建链接缺失。")).toString(),
+    building: booleanField(build, "building", "Jenkins 最近构建状态无效。"),
+    ...(typeof build.result === "string" && build.result ? { result: build.result } : {}),
+    ...(Number.isFinite(timestamp) && timestamp >= 0
+      ? { startedAt: new Date(timestamp).toISOString() }
+      : {}),
+    ...(Number.isInteger(duration) && duration >= 0 ? { durationMs: duration } : {}),
+  };
+}
+
 function normalizedJobUrl(value: string): URL {
   const url = new URL(value);
   if (url.protocol !== "http:" && url.protocol !== "https:") {
@@ -140,6 +185,18 @@ function integerField(value: Record<string, unknown>, field: string, message: st
   const number = numericValue(value[field]);
   if (!Number.isInteger(number) || number < 0) throw new Error(message);
   return number;
+}
+
+function stringField(value: Record<string, unknown>, field: string, message: string): string {
+  const text = value[field];
+  if (typeof text !== "string" || !text) throw new Error(message);
+  return text;
+}
+
+function booleanField(value: Record<string, unknown>, field: string, message: string): boolean {
+  const flag = value[field];
+  if (typeof flag !== "boolean") throw new Error(message);
+  return flag;
 }
 
 function numericValue(value: unknown): number {

@@ -15,7 +15,7 @@ import {
   DEFAULT_PROJECT_ID,
   DomainError,
   REQUIRED_EXECUTION_LABELS,
-  retryConcurrencyForRound,
+  retryConcurrencyDecisionForRound,
   scheduleExecutionRuns,
   type CaseSuiteDetails,
   type RunBatch,
@@ -390,20 +390,42 @@ export class RunBatchSchedulingService {
     }
     if (snapshot.queuedRuns.length > 0) {
       // 批次策略的并发上限按在途（assigned+running）run 数扣减；assignedRuns 已包含 running。
-      const suiteMaximumAssignments = snapshot.batch.policy
-        ? Math.max(
-            0,
-            retryConcurrencyForRound(
-              snapshot.batch.policy.concurrency,
-              snapshot.batch.policy.retryConcurrencyRules ?? [],
-              snapshot.retryContext ?? {
-                executionRound: snapshot.batch.currentRound,
-                previousRoundPassRate: null,
-                remainingRuns: snapshot.batch.queuedRuns + snapshot.batch.assignedRuns,
-              },
-            ) - snapshot.batch.assignedRuns,
-          )
-        : undefined;
+      let effectiveBatchConcurrency = snapshot.batch.policy?.concurrency;
+      if (snapshot.batch.policy) {
+        const retryContext = snapshot.retryContext ?? {
+          executionRound: snapshot.batch.currentRound,
+          previousRoundPassRate: null,
+          remainingRuns: snapshot.batch.queuedRuns + snapshot.batch.assignedRuns,
+        };
+        const decision = retryConcurrencyDecisionForRound(
+          snapshot.batch.policy.concurrency,
+          snapshot.batch.policy.retryConcurrencyRules ?? [],
+          retryContext,
+          snapshot.retryConcurrencyState,
+        );
+        if (decision.transition) {
+          const activated = await this.batches.activateRetryConcurrency({
+            batchId,
+            executionRound: retryContext.executionRound,
+            expectedRuleId: snapshot.retryConcurrencyState?.ruleId ?? null,
+            state: decision.transition,
+            updatedAt: now.toISOString(),
+          });
+          // 轮次已被其他完成/恢复事务推进时丢弃旧快照，等待下一次调度读取新上下文。
+          if (!activated) {
+            const batch = await this.batches.getSummary(batchId);
+            if (!batch) throw new DomainError("RUN_BATCH_NOT_FOUND", "指定的执行批次不存在。");
+            return { batch, reserved: 0 };
+          }
+          effectiveBatchConcurrency = activated.concurrency;
+        } else {
+          effectiveBatchConcurrency = decision.concurrency;
+        }
+      }
+      const suiteMaximumAssignments =
+        effectiveBatchConcurrency === undefined
+          ? undefined
+          : Math.max(0, effectiveBatchConcurrency - snapshot.batch.assignedRuns);
       const projectMaximumAssignments = Math.max(
         0,
         this.projectMaximumConcurrency - snapshot.projectActiveRuns,

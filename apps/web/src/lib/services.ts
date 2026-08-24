@@ -20,6 +20,7 @@ import {
   ProjectStructureService,
   RunBatchExportService,
   RunBatchSchedulingService,
+  RoundRecoveryConfigurationInspector,
   RoundRecoveryService,
   RunnerControlService,
   RunnerInstallationProfileService,
@@ -297,12 +298,18 @@ async function createPlatformServices() {
     ids,
   });
   const caseSources = new CaseSourceService(catalog, objectStore, clock, ids, jobQueue, discovery);
+  const jenkinsRoundRecoveryTransport = new JenkinsRebuildTransport();
   const caseSuites = new CaseSuiteService(
     suites,
     catalog,
     projectStructuresRepository,
     clock,
     ids,
+    secretCipher,
+  );
+  const roundRecoveryConfigurationInspector = new RoundRecoveryConfigurationInspector(
+    suites,
+    jenkinsRoundRecoveryTransport,
     secretCipher,
   );
   const caseDefinitions = new CaseDefinitionService(catalog, clock, ids);
@@ -352,7 +359,7 @@ async function createPlatformServices() {
   const runScheduling = new CoalescingSchedulingPort(runBatches, workDispatcher);
   const roundRecovery = new RoundRecoveryService(
     roundRecoveries,
-    new JenkinsRebuildTransport(),
+    jenkinsRoundRecoveryTransport,
     secretCipher,
     batches,
     runScheduling,
@@ -547,6 +554,7 @@ async function createPlatformServices() {
     caseSources,
     suites,
     caseSuites,
+    roundRecoveryConfigurationInspector,
     caseDefinitions,
     ddtCases,
     ddtImports,

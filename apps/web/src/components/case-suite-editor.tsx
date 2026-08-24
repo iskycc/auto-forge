@@ -2,7 +2,12 @@
 
 import { Button, Input, Select, Textarea } from "@/components/ui";
 
-import { apiErrorSchema, type CaseSuiteSchedule } from "@autoforge/contracts";
+import {
+  apiErrorSchema,
+  jenkinsJobInspectionSchema,
+  type CaseSuiteSchedule,
+  type JenkinsJobInspection,
+} from "@autoforge/contracts";
 import type {
   CaseSuite,
   CaseSuiteDetails,
@@ -14,6 +19,8 @@ import {
   ArrowDown,
   ArrowUp,
   CalendarClock,
+  CircleAlert,
+  CircleCheck,
   Copy,
   LoaderCircle,
   Plus,
@@ -29,8 +36,7 @@ import { ActionDialog } from "@/components/action-dialog";
 
 type EditableRetryConcurrencyRule = {
   id: string;
-  executionRoundFrom: string;
-  executionRoundTo: string;
+  executionRound: string;
   previousRoundPassRateMinimum: string;
   previousRoundPassRateMaximum: string;
   remainingRunsMinimum: string;
@@ -46,6 +52,9 @@ type EditableRoundRecoveryRule = {
   apiKey: string;
   apiKeyConfigured: boolean;
 };
+
+type RecoveryInspectionState =
+  { status: "succeeded"; inspection: JenkinsJobInspection } | { status: "failed"; message: string };
 
 export function CaseSuiteEditor({
   suite,
@@ -80,8 +89,7 @@ export function CaseSuiteEditor({
   >(() =>
     suite.policy.retryConcurrencyRules.map((rule) => ({
       id: rule.id,
-      executionRoundFrom: String(rule.executionRoundFrom),
-      executionRoundTo: String(rule.executionRoundTo),
+      executionRound: String(rule.executionRound),
       previousRoundPassRateMinimum: optionalNumber(rule.previousRoundPassRateMinimum),
       previousRoundPassRateMaximum: optionalNumber(rule.previousRoundPassRateMaximum),
       remainingRunsMinimum: optionalNumber(rule.remainingRunsMinimum),
@@ -99,6 +107,10 @@ export function CaseSuiteEditor({
       apiKeyConfigured: rule.apiKeyConfigured,
     })),
   );
+  const [inspectingRecoveryRuleId, setInspectingRecoveryRuleId] = useState<string | null>(null);
+  const [recoveryInspections, setRecoveryInspections] = useState<
+    Record<string, RecoveryInspectionState>
+  >({});
   const selectableProjectVersions = projectVersions.filter(
     (version) =>
       version.status === "active" ||
@@ -267,6 +279,58 @@ export function CaseSuiteEditor({
     setRoundRecoveryRules((rules) =>
       rules.map((rule) => (rule.id === ruleId ? { ...rule, ...patch } : rule)),
     );
+    if (patch.jenkinsJobUrl !== undefined || patch.apiKey !== undefined) {
+      setRecoveryInspections((inspections) => {
+        const remaining = { ...inspections };
+        delete remaining[ruleId];
+        return remaining;
+      });
+    }
+  }
+
+  async function inspectRecoveryConfiguration(rule: EditableRoundRecoveryRule): Promise<void> {
+    setInspectingRecoveryRuleId(rule.id);
+    setRecoveryInspections((inspections) => {
+      const remaining = { ...inspections };
+      delete remaining[rule.id];
+      return remaining;
+    });
+    try {
+      const response = await fetch(
+        `/api/v1/case-suites/${encodeURIComponent(suite.id)}/round-recovery/inspect`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            ruleId: rule.id,
+            jenkinsJobUrl: rule.jenkinsJobUrl,
+            ...(rule.apiKey ? { apiKey: rule.apiKey } : {}),
+          }),
+        },
+      );
+      const payload: unknown = await response.json().catch(() => null);
+      if (!response.ok) {
+        const parsed = apiErrorSchema.safeParse(payload);
+        throw new Error(
+          parsed.success ? parsed.data.error.message : `验证失败（HTTP ${response.status}）。`,
+        );
+      }
+      const inspection = jenkinsJobInspectionSchema.parse(payload);
+      setRecoveryInspections((inspections) => ({
+        ...inspections,
+        [rule.id]: { status: "succeeded", inspection },
+      }));
+    } catch (caught) {
+      setRecoveryInspections((inspections) => ({
+        ...inspections,
+        [rule.id]: {
+          status: "failed",
+          message: caught instanceof Error ? caught.message : "无法验证 Jenkins 配置。",
+        },
+      }));
+    } finally {
+      setInspectingRecoveryRuleId(null);
+    }
   }
 
   return (
@@ -335,16 +399,16 @@ export function CaseSuiteEditor({
               <div className="retry-orchestration-heading">
                 <span>
                   <strong>动态重跑并发</strong>
-                  <small>按顺序匹配；首条命中规则生效，未命中时使用上方基础并发度。</small>
+                  <small>
+                    每条规则只在指定轮次内判断；命中后从本轮起持续生效，只有其后的规则在指定轮次命中才会切换。
+                    首条规则之前使用基础并发度。
+                  </small>
                 </span>
                 <Button
                   size="compact"
                   type="button"
                   onClick={() =>
-                    setRetryConcurrencyRules((rules) => [
-                      ...rules,
-                      newRetryConcurrencyRule(Number(retryLimit)),
-                    ])
+                    setRetryConcurrencyRules((rules) => [...rules, newRetryConcurrencyRule()])
                   }
                 >
                   <Plus size={14} /> 添加规则
@@ -390,33 +454,17 @@ export function CaseSuiteEditor({
                       </div>
                       <div className="retry-rule-fields">
                         <label>
-                          执行轮次 从
+                          判断轮次
                           <Input
-                            aria-label={`规则 ${index + 1} 开始轮次`}
+                            aria-label={`规则 ${index + 1} 判断轮次`}
                             min={2}
                             max={11}
                             required
                             type="number"
-                            value={rule.executionRoundFrom}
+                            value={rule.executionRound}
                             onChange={(event) =>
                               updateRetryRule(rule.id, {
-                                executionRoundFrom: event.currentTarget.value,
-                              })
-                            }
-                          />
-                        </label>
-                        <label>
-                          到
-                          <Input
-                            aria-label={`规则 ${index + 1} 结束轮次`}
-                            min={2}
-                            max={11}
-                            required
-                            type="number"
-                            value={rule.executionRoundTo}
-                            onChange={(event) =>
-                              updateRetryRule(rule.id, {
-                                executionRoundTo: event.currentTarget.value,
+                                executionRound: event.currentTarget.value,
                               })
                             }
                           />
@@ -614,26 +662,50 @@ export function CaseSuiteEditor({
                             ? "保存后加密"
                             : "等待配置密钥"}
                       </span>
-                      <Button
-                        aria-label={`删除恢复步骤 ${index + 1}`}
-                        size="compact"
-                        type="button"
-                        variant="danger"
-                        onClick={() =>
-                          setRoundRecoveryRules((rules) =>
-                            rules.filter((candidate) => candidate.id !== rule.id),
-                          )
-                        }
-                      >
-                        <Trash2 size={14} />
-                      </Button>
+                      <span className="recovery-rule-actions">
+                        <Button
+                          aria-label={`测试恢复步骤 ${index + 1} Jenkins 配置`}
+                          disabled={
+                            !rule.jenkinsJobUrl ||
+                            (!rule.apiKey && !rule.apiKeyConfigured) ||
+                            inspectingRecoveryRuleId !== null
+                          }
+                          size="compact"
+                          type="button"
+                          onClick={() => void inspectRecoveryConfiguration(rule)}
+                        >
+                          {inspectingRecoveryRuleId === rule.id ? (
+                            <LoaderCircle className="spin" size={14} />
+                          ) : (
+                            <CircleCheck size={14} />
+                          )}
+                          测试配置
+                        </Button>
+                        <Button
+                          aria-label={`删除恢复步骤 ${index + 1}`}
+                          size="compact"
+                          type="button"
+                          variant="danger"
+                          onClick={() =>
+                            setRoundRecoveryRules((rules) =>
+                              rules.filter((candidate) => candidate.id !== rule.id),
+                            )
+                          }
+                        >
+                          <Trash2 size={14} />
+                        </Button>
+                      </span>
+                      {recoveryInspections[rule.id] ? (
+                        <RecoveryInspectionResult state={recoveryInspections[rule.id]} />
+                      ) : null}
                     </article>
                   ))}
                 </div>
               )}
               <p className="form-help">
                 API 密钥使用单个“用户名:API Token”字段，服务端加密保存；页面不会回显。Jenkins 需安装
-                Rebuilder 插件。同一暂停轮次的步骤会并行触发，任一步骤失败都会终止批次。
+                Rebuilder
+                插件。同一暂停轮次的步骤会并行触发，任一步骤失败都会终止批次。“测试配置”只读取任务与上一构建信息，不会触发构建。
               </p>
             </div>
             <label>
@@ -931,6 +1003,64 @@ export function CaseSuiteEditor({
   );
 }
 
+function RecoveryInspectionResult({ state }: { state: RecoveryInspectionState | undefined }) {
+  if (!state) return null;
+  if (state.status === "failed") {
+    return (
+      <div className="recovery-inspection-result is-error" role="alert">
+        <CircleAlert size={16} />
+        <span>
+          <strong>配置验证失败</strong>
+          <small>{state.message}</small>
+        </span>
+      </div>
+    );
+  }
+  const { inspection } = state;
+  return (
+    <div aria-live="polite" className="recovery-inspection-result is-success">
+      <CircleCheck size={16} />
+      <span>
+        <strong>连接成功 · {inspection.fullName ?? inspection.name}</strong>
+        <small>
+          {inspection.buildable ? "允许构建" : "当前不可构建"} ·{" "}
+          {inspection.inQueue ? "正在排队" : "未排队"}
+          {inspection.lastBuild
+            ? ` · 上一构建 #${inspection.lastBuild.number} ${jenkinsBuildResultLabel(inspection.lastBuild)}`
+            : " · 暂无历史构建"}
+        </small>
+        {inspection.lastBuild?.startedAt ? (
+          <small>
+            开始于 {formatDate(inspection.lastBuild.startedAt)}
+            {inspection.lastBuild.durationMs !== undefined
+              ? ` · 用时 ${formatDuration(inspection.lastBuild.durationMs)}`
+              : ""}
+          </small>
+        ) : null}
+      </span>
+    </div>
+  );
+}
+
+function jenkinsBuildResultLabel(build: NonNullable<JenkinsJobInspection["lastBuild"]>): string {
+  if (build.building) return "执行中";
+  const labels: Record<string, string> = {
+    SUCCESS: "成功",
+    FAILURE: "失败",
+    ABORTED: "已中止",
+    UNSTABLE: "不稳定",
+    NOT_BUILT: "未执行",
+  };
+  return build.result ? (labels[build.result] ?? build.result) : "状态未知";
+}
+
+function formatDuration(durationMs: number): string {
+  if (durationMs < 1_000) return `${durationMs} 毫秒`;
+  const seconds = Math.round(durationMs / 1_000);
+  if (seconds < 60) return `${seconds} 秒`;
+  return `${Math.floor(seconds / 60)} 分 ${seconds % 60} 秒`;
+}
+
 function formatDate(value: string): string {
   return new Intl.DateTimeFormat("zh-CN", { dateStyle: "medium", timeStyle: "short" }).format(
     new Date(value),
@@ -956,12 +1086,10 @@ function optionalNumberInput(value: string): number | undefined {
   return value === "" ? undefined : Number(value);
 }
 
-function newRetryConcurrencyRule(retryLimit: number): EditableRetryConcurrencyRule {
-  const maximumRound = Math.max(2, Math.min(11, retryLimit + 1));
+function newRetryConcurrencyRule(): EditableRetryConcurrencyRule {
   return {
     id: createRuleId("retry"),
-    executionRoundFrom: "2",
-    executionRoundTo: String(maximumRound),
+    executionRound: "2",
     previousRoundPassRateMinimum: "",
     previousRoundPassRateMaximum: "",
     remainingRunsMinimum: "",
@@ -996,8 +1124,7 @@ function toRetryConcurrencyRuleInput(rule: EditableRetryConcurrencyRule) {
   const remainingRunsMaximum = optionalNumberInput(rule.remainingRunsMaximum);
   return {
     id: rule.id,
-    executionRoundFrom: Number(rule.executionRoundFrom),
-    executionRoundTo: Number(rule.executionRoundTo),
+    executionRound: Number(rule.executionRound),
     ...(previousRoundPassRateMinimum === undefined ? {} : { previousRoundPassRateMinimum }),
     ...(previousRoundPassRateMaximum === undefined ? {} : { previousRoundPassRateMaximum }),
     ...(remainingRunsMinimum === undefined ? {} : { remainingRunsMinimum }),

@@ -14,6 +14,7 @@ import {
   DomainError,
   evaluateRunnerForScheduling,
   MINIMUM_JAVA_MAJOR_VERSION,
+  normalizeStoredRetryConcurrencyRules,
   REQUIRED_EXECUTION_LABELS,
   SUPPORTED_TESTNG_VERSION,
   transitionRunBatch,
@@ -24,6 +25,7 @@ import {
   type RunBatch,
   type RunBatchDetails,
   type RunBatchExecutionPolicy,
+  type RetryConcurrencyState,
   type RunBatchStatusEvent,
   type RunBatchStatus,
   type SchedulingEvent,
@@ -54,6 +56,7 @@ import {
   pgAssignments,
   pgRunAttempts,
   pgRunBatchRunners,
+  pgRunBatchRetryConcurrencyStates,
   pgRunBatches,
   pgRunBatchStatusEvents,
   pgRunners,
@@ -63,6 +66,11 @@ import {
   pgProjectRuntimeAssets,
 } from "./postgres-schema";
 import { mapStoredRunner } from "./runner-mapper";
+import {
+  assertRetryConcurrencyTransition,
+  retryConcurrencyActivationDecision,
+  retryConcurrencyStateFromRow,
+} from "./retry-concurrency-state";
 import { decodeRunBatchCursor, encodeRunBatchCursor } from "./run-batch-list";
 
 const activeAttemptStatuses = ["assigned", "running"] as const;
@@ -440,6 +448,11 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
       .where(eq(pgRunBatches.id, batchId))
       .limit(1);
     const adapterRuntime = parseProjectAdapterRuntime(runtimeRow?.adapterRuntimeJson ?? null);
+    const [retryConcurrencyStateRow] = await this.handle.db
+      .select()
+      .from(pgRunBatchRetryConcurrencyStates)
+      .where(eq(pgRunBatchRetryConcurrencyStates.batchId, batchId))
+      .limit(1);
     const candidates = runnerRows
       .map((row) => ({
         runner: mapStoredRunner(row, offlineBefore),
@@ -454,8 +467,47 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
       candidates,
       runnerFailureIdsByRun: runnerFailureIdsByExecutionRun(attemptRows.map(toRunAttempt)),
       projectActiveRuns: Number(activeProjectRuns.rows[0]?.count ?? 0),
+      ...(retryConcurrencyStateRow
+        ? { retryConcurrencyState: retryConcurrencyStateFromRow(retryConcurrencyStateRow) }
+        : {}),
       retryContext: retryContextValue,
     };
+  }
+
+  async activateRetryConcurrency(
+    input: Parameters<RunBatchRepository["activateRetryConcurrency"]>[0],
+  ): Promise<RetryConcurrencyState | null> {
+    await this.ready();
+    return this.handle.db.transaction(async (transaction) => {
+      const [batch] = await transaction
+        .select({ currentRound: pgRunBatches.currentRound, policyJson: pgRunBatches.policyJson })
+        .from(pgRunBatches)
+        .where(eq(pgRunBatches.id, input.batchId))
+        .for("update");
+      if (!batch) throw new DomainError("RUN_BATCH_NOT_FOUND", "指定的执行批次不存在。");
+      const [storedRow] = await transaction
+        .select()
+        .from(pgRunBatchRetryConcurrencyStates)
+        .where(eq(pgRunBatchRetryConcurrencyStates.batchId, input.batchId))
+        .limit(1);
+      const storedState = storedRow ? retryConcurrencyStateFromRow(storedRow) : undefined;
+      const activation = retryConcurrencyActivationDecision(storedState, batch.currentRound, input);
+      if (activation.outcome === "stale") return null;
+      if (activation.outcome === "unchanged") return activation.state;
+      assertRetryConcurrencyTransition(
+        batchPolicy(batch.policyJson),
+        input.executionRound,
+        input.state,
+      );
+      await transaction
+        .insert(pgRunBatchRetryConcurrencyStates)
+        .values({ batchId: input.batchId, ...input.state, updatedAt: input.updatedAt })
+        .onConflictDoUpdate({
+          target: pgRunBatchRetryConcurrencyStates.batchId,
+          set: { ...input.state, updatedAt: input.updatedAt },
+        });
+      return input.state;
+    });
   }
 
   async reserveAssignments(input: ReserveSchedulingAssignmentsInput): Promise<number> {
@@ -506,7 +558,13 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
         (input.projectMaximumConcurrency ?? Number.MAX_SAFE_INTEGER) -
           Number(projectActive[0]?.value ?? 0),
       );
-      const batchConcurrency = batchPolicy(lockedBatch.policyJson)?.concurrency;
+      const policy = batchPolicy(lockedBatch.policyJson);
+      const [retryConcurrencyState] = await transaction
+        .select({ concurrency: pgRunBatchRetryConcurrencyStates.concurrency })
+        .from(pgRunBatchRetryConcurrencyStates)
+        .where(eq(pgRunBatchRetryConcurrencyStates.batchId, input.batchId))
+        .limit(1);
+      const batchConcurrency = retryConcurrencyState?.concurrency ?? policy?.concurrency;
       const adapterRuntime = parseProjectAdapterRuntime(lockedBatch.adapterRuntimeJson);
       let remainingBatchSlots =
         batchConcurrency === undefined
@@ -1048,20 +1106,7 @@ function batchPolicy(json: string | null): RunBatchExecutionPolicy | undefined {
 function retryConcurrencyRules(
   value: unknown,
 ): NonNullable<RunBatchExecutionPolicy["retryConcurrencyRules"]> {
-  if (!Array.isArray(value)) return [];
-  return value.flatMap((candidate) => {
-    if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) return [];
-    const rule = candidate as Record<string, unknown>;
-    if (
-      typeof rule.id !== "string" ||
-      !Number.isInteger(rule.executionRoundFrom) ||
-      !Number.isInteger(rule.executionRoundTo) ||
-      !Number.isInteger(rule.concurrency)
-    ) {
-      return [];
-    }
-    return [candidate as NonNullable<RunBatchExecutionPolicy["retryConcurrencyRules"]>[number]];
-  });
+  return normalizeStoredRetryConcurrencyRules(value);
 }
 
 async function retryContext(

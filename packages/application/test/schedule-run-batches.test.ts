@@ -592,6 +592,9 @@ describe("run batch creation with suite policy", () => {
 
   it("applies the first dynamic concurrency rule matching the current retry context", async () => {
     const decisions: unknown[] = [];
+    const activateRetryConcurrency = vi.fn(
+      async (input: { state: { concurrency: number } }) => input.state,
+    );
     const batches = {
       getSchedulingSnapshot: vi.fn().mockResolvedValue({
         batch: {
@@ -607,16 +610,14 @@ describe("run batch creation with suite policy", () => {
             retryConcurrencyRules: [
               {
                 id: "low-pass-remainder",
-                executionRoundFrom: 2,
-                executionRoundTo: 4,
+                executionRound: 3,
                 previousRoundPassRateMaximum: 20,
                 remainingRunsMinimum: 4,
                 concurrency: 2,
               },
               {
                 id: "third-round",
-                executionRoundFrom: 3,
-                executionRoundTo: 3,
+                executionRound: 3,
                 concurrency: 6,
               },
             ],
@@ -636,6 +637,7 @@ describe("run batch creation with suite policy", () => {
           remainingRuns: 4,
         },
       }),
+      activateRetryConcurrency,
       reserveAssignments: vi.fn(async (input: { decisions: unknown[] }) => {
         decisions.push(...input.decisions);
         return input.decisions.length;
@@ -660,6 +662,86 @@ describe("run batch creation with suite policy", () => {
     await service.schedule("batch-1");
 
     expect(decisions).toHaveLength(2);
+    expect(activateRetryConcurrency).toHaveBeenCalledWith(
+      expect.objectContaining({
+        executionRound: 3,
+        expectedRuleId: null,
+        state: expect.objectContaining({ ruleId: "low-pass-remainder", concurrency: 2 }),
+      }),
+    );
+  });
+
+  it("keeps the activated concurrency when its condition misses in a later round", async () => {
+    const decisions: unknown[] = [];
+    const activateRetryConcurrency = vi.fn();
+    const batches = {
+      getSchedulingSnapshot: vi.fn().mockResolvedValue({
+        batch: {
+          id: "batch-1",
+          currentRound: 5,
+          assignedRuns: 0,
+          queuedRuns: 4,
+          secretBindings: [],
+          policy: {
+            concurrency: 8,
+            runnerLabels: [],
+            artifactPatterns: [],
+            retryConcurrencyRules: [
+              {
+                id: "high-pass",
+                executionRound: 2,
+                previousRoundPassRateMinimum: 70,
+                concurrency: 2,
+              },
+            ],
+          },
+        },
+        queuedRuns: [
+          queuedRun("run-1"),
+          queuedRun("run-2"),
+          queuedRun("run-3"),
+          queuedRun("run-4"),
+        ],
+        candidates: [{ runner: schedulingRunner(), reservedSlots: 0 }],
+        projectActiveRuns: 0,
+        retryConcurrencyState: {
+          ruleId: "high-pass",
+          ruleIndex: 0,
+          concurrency: 2,
+          activatedRound: 2,
+        },
+        retryContext: {
+          executionRound: 5,
+          previousRoundPassRate: 60,
+          remainingRuns: 4,
+        },
+      }),
+      activateRetryConcurrency,
+      reserveAssignments: vi.fn(async (input: { decisions: unknown[] }) => {
+        decisions.push(...input.decisions);
+        return input.decisions.length;
+      }),
+      appendSchedulingEvents: vi.fn().mockResolvedValue(undefined),
+      getSummary: vi.fn().mockResolvedValue({ id: "batch-1", assignedRuns: 2 }),
+    } as unknown as RunBatchRepository;
+    const service = new RunBatchSchedulingService(
+      batches,
+      {} as CaseSuiteRepository,
+      {} as RunnerRepository,
+      { now: () => new Date(timestamp) },
+      { next: () => "generated-id" },
+      {
+        maximumCpuUtilizationPercent: 85,
+        maximumMemoryUtilizationPercent: 85,
+        maximumLoadPerCpu: 1,
+      },
+      45,
+    );
+
+    await service.schedule("batch-1");
+
+    expect(decisions).toHaveLength(2);
+    expect(activateRetryConcurrency).not.toHaveBeenCalled();
   });
 
   it("does not schedule when the project concurrency budget is exhausted", async () => {

@@ -618,4 +618,54 @@ describe.skipIf(!connectionString)("PostgreSQL migrations", () => {
       await client.end();
     }
   });
+
+  it("adds empty sticky retry-concurrency state without changing existing batches", async () => {
+    const admin = new Client({ connectionString });
+    await admin.connect();
+    const scratch = await createScratchDatabase(admin);
+    await admin.end();
+
+    const client = new Client({ connectionString: connectionStringFor(scratch) });
+    await client.connect();
+    const migrationsFolder = resolve(import.meta.dirname, "../drizzle/postgresql");
+    const migrationFiles = (await readdir(migrationsFolder))
+      .filter((name) => /^\d+_.+\.sql$/.test(name))
+      .sort();
+    const migration = "0043_sticky_retry_concurrency.sql";
+    const migrationIndex = migrationFiles.indexOf(migration);
+    expect(migrationIndex).toBeGreaterThan(0);
+    try {
+      for (const fileName of migrationFiles.slice(0, migrationIndex)) {
+        await client.query(await readFile(resolve(migrationsFolder, fileName), "utf8"));
+      }
+      await client.query(`
+        INSERT INTO run_batches
+          (id, sequence_number, suite_id, suite_name, suite_version, status, retry_limit,
+           retry_mode, current_round, environment_json, secret_bindings_json, total_runs,
+           project_id, scheduled_for, created_at, updated_at)
+        VALUES
+          ('batch-sticky-migration', nextval('run_batch_sequence_numbers'), 'suite-migration',
+           'Migration suite', 1, 'queued', 10, 'round', 5, '[]', '[]', 1,
+           '00000000-0000-7000-8000-000000000001', '2026-08-24T00:00:00.000Z',
+           '2026-08-24T00:00:00.000Z', '2026-08-24T00:00:00.000Z');
+      `);
+
+      await client.query(await readFile(resolve(migrationsFolder, migration), "utf8"));
+      await expect(
+        client.query("SELECT COUNT(*)::int AS count FROM run_batch_retry_concurrency_states"),
+      ).resolves.toMatchObject({ rows: [{ count: 0 }] });
+      await client.query(
+        `INSERT INTO run_batch_retry_concurrency_states
+         (batch_id, rule_id, rule_index, concurrency, activated_round, updated_at)
+         VALUES ('batch-sticky-migration', 'high-pass', 0, 40, 2,
+                 '2026-08-24T00:01:00.000Z')`,
+      );
+      await client.query("DELETE FROM run_batches WHERE id = 'batch-sticky-migration'");
+      await expect(
+        client.query("SELECT COUNT(*)::int AS count FROM run_batch_retry_concurrency_states"),
+      ).resolves.toMatchObject({ rows: [{ count: 0 }] });
+    } finally {
+      await client.end();
+    }
+  });
 });

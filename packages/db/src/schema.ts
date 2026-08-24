@@ -660,6 +660,17 @@ export const runBatches = sqliteTable(
   ],
 );
 
+export const runBatchRetryConcurrencyStates = sqliteTable("run_batch_retry_concurrency_states", {
+  batchId: text("batch_id")
+    .primaryKey()
+    .references(() => runBatches.id, { onDelete: "cascade" }),
+  ruleId: text("rule_id").notNull(),
+  ruleIndex: integer("rule_index").notNull(),
+  concurrency: integer("concurrency").notNull(),
+  activatedRound: integer("activated_round").notNull(),
+  updatedAt: text("updated_at").notNull(),
+});
+
 export const runBatchStatusEvents = sqliteTable(
   "run_batch_status_events",
   {

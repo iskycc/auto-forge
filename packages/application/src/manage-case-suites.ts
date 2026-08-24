@@ -402,8 +402,7 @@ function normalizeRetryConcurrencyRule(
 ): RetryConcurrencyRule {
   return {
     id: rule.id,
-    executionRoundFrom: rule.executionRoundFrom,
-    executionRoundTo: rule.executionRoundTo,
+    executionRound: rule.executionRound,
     ...(rule.previousRoundPassRateMinimum !== undefined
       ? { previousRoundPassRateMinimum: rule.previousRoundPassRateMinimum }
       : {}),
@@ -431,13 +430,7 @@ function assertRetryOrchestrationPolicy(policy: CaseSuiteExecutionPolicy): void 
     );
   }
   const maximumExecutionRound = policy.retryLimit + 1;
-  if (
-    policy.retryConcurrencyRules.some(
-      (rule) =>
-        rule.executionRoundFrom > maximumExecutionRound ||
-        rule.executionRoundTo > maximumExecutionRound,
-    )
-  ) {
+  if (policy.retryConcurrencyRules.some((rule) => rule.executionRound > maximumExecutionRound)) {
     throw new DomainError("RETRY_RULE_ROUND_INVALID", "动态并发规则的轮次超过了任务最大重跑轮次。");
   }
   if (policy.roundRecoveryRules.some((rule) => rule.afterRound > policy.retryLimit)) {

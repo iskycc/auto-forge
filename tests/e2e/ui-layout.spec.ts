@@ -244,8 +244,12 @@ test("homepage mirrors the designed six-card workspace and exposes global execut
   ]) {
     await page.setViewportSize(viewport);
     await page.goto("/");
-    const dashboard = await page.locator(".dashboard-page").boundingBox();
-    const sidebar = await page.locator(".sidebar").boundingBox();
+    const dashboardPage = page.locator(".dashboard-page");
+    const sidebarRegion = page.locator(".sidebar");
+    await expect(dashboardPage).toBeVisible();
+    await expect(sidebarRegion).toBeVisible();
+    const dashboard = await dashboardPage.boundingBox();
+    const sidebar = await sidebarRegion.boundingBox();
     expect(dashboard).not.toBeNull();
     expect(sidebar).not.toBeNull();
     const availableWidth = viewport.width - sidebar!.width;

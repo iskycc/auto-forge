@@ -70,6 +70,13 @@ worker service; transient SQLite queue failures are now retried with bounded bac
 `1.1.8` keeps the existing Pipeline arguments and result map, and release images remain Docker-native
 `.docker.tar` archives.
 
+Control plane `1.1.10` adds SQLite migration `0044_sticky_retry_concurrency.sql` and PostgreSQL
+migration `0043_sticky_retry_concurrency.sql` for the batch-level active concurrency stage. Dynamic
+concurrency output and current input use one `executionRound`; stored and legacy API range rules remain
+accepted and map `executionRoundFrom` to that trigger. Runner Protocol v1 and Jenkins Pipeline arguments/results are
+unchanged. Jenkins HPI `1.1.10` remains compatible with the prior server contract, and release images
+remain Docker-native `.docker.tar` archives.
+
 Control plane `0.9.10` adds persisted Webhook configuration and delivery tables without changing
 Runner Protocol v1. Existing installations have no endpoint or binding after migration and therefore
 retain the prior no-outbound-request behavior until a project administrator explicitly configures one.

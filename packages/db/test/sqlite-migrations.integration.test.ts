@@ -813,6 +813,56 @@ describe("SQLite migrations", { timeout: 15_000 }, () => {
       database.close();
     }
   });
+
+  it("adds empty sticky retry-concurrency state without changing existing batches", async () => {
+    const directory = await mkdtemp(resolve(tmpdir(), "autoforge-sticky-concurrency-migration-"));
+    temporaryDirectories.push(directory);
+    const databasePath = resolve(directory, "autoforge.sqlite");
+    const migrationsFolder = resolve(import.meta.dirname, "../drizzle/sqlite");
+    const migrationFiles = (await readdir(migrationsFolder))
+      .filter((name) => /^\d+_.+\.sql$/.test(name))
+      .sort();
+    const migration = "0044_sticky_retry_concurrency.sql";
+    const migrationIndex = migrationFiles.indexOf(migration);
+    expect(migrationIndex).toBeGreaterThan(0);
+
+    const database = new Database(databasePath);
+    try {
+      database.pragma("foreign_keys = ON");
+      for (const fileName of migrationFiles.slice(0, migrationIndex)) {
+        database.exec(await readFile(resolve(migrationsFolder, fileName), "utf8"));
+      }
+      database.exec(`
+        INSERT INTO run_batches
+          (id, sequence_number, suite_id, suite_name, suite_version, status, retry_limit,
+           retry_mode, current_round, environment_json, secret_bindings_json, total_runs,
+           project_id, scheduled_for, created_at, updated_at)
+        VALUES
+          ('batch-sticky-migration', 9002, 'suite-migration', 'Migration suite', 1,
+           'queued', 10, 'round', 5, '[]', '[]', 1,
+           '00000000-0000-7000-8000-000000000001', '2026-08-24T00:00:00.000Z',
+           '2026-08-24T00:00:00.000Z', '2026-08-24T00:00:00.000Z');
+      `);
+
+      database.exec(await readFile(resolve(migrationsFolder, migration), "utf8"));
+      expect(
+        database.prepare("SELECT COUNT(*) AS count FROM run_batch_retry_concurrency_states").get(),
+      ).toEqual({ count: 0 });
+      database
+        .prepare(
+          `INSERT INTO run_batch_retry_concurrency_states
+           (batch_id, rule_id, rule_index, concurrency, activated_round, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+        )
+        .run("batch-sticky-migration", "high-pass", 0, 40, 2, "2026-08-24T00:01:00.000Z");
+      database.prepare("DELETE FROM run_batches WHERE id = 'batch-sticky-migration'").run();
+      expect(
+        database.prepare("SELECT COUNT(*) AS count FROM run_batch_retry_concurrency_states").get(),
+      ).toEqual({ count: 0 });
+    } finally {
+      database.close();
+    }
+  });
 });
 
 type MigrationWorkerInput = {

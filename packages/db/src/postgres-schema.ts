@@ -776,6 +776,17 @@ export const pgRunBatches = pgTable(
   ],
 );
 
+export const pgRunBatchRetryConcurrencyStates = pgTable("run_batch_retry_concurrency_states", {
+  batchId: text("batch_id")
+    .primaryKey()
+    .references(() => pgRunBatches.id, { onDelete: "cascade" }),
+  ruleId: text("rule_id").notNull(),
+  ruleIndex: integer("rule_index").notNull(),
+  concurrency: integer("concurrency").notNull(),
+  activatedRound: integer("activated_round").notNull(),
+  updatedAt: text("updated_at").notNull(),
+});
+
 export const pgRunBatchStatusEvents = pgTable(
   "run_batch_status_events",
   {

@@ -5,6 +5,49 @@ vi.mock("server-only", () => ({}));
 import { JenkinsRebuildTransport } from "./jenkins-round-recovery";
 
 describe("JenkinsRebuildTransport", () => {
+  it("inspects job metadata and the last build without sending a build request", async () => {
+    const request = vi.fn<typeof fetch>().mockResolvedValue(
+      jsonResponse({
+        name: "reset",
+        fullName: "environments/reset",
+        url: "https://jenkins.internal/job/reset/",
+        buildable: true,
+        inQueue: false,
+        lastBuild: {
+          number: 41,
+          url: "https://jenkins.internal/job/reset/41/",
+          building: false,
+          result: "SUCCESS",
+          timestamp: 1_785_974_400_000,
+          duration: 12_500,
+        },
+      }),
+    );
+    const transport = new JenkinsRebuildTransport(request);
+
+    await expect(
+      transport.inspectJob({
+        jobUrl: "https://jenkins.internal/job/reset/",
+        credential: "jenkins-user:api-token",
+      }),
+    ).resolves.toMatchObject({
+      name: "reset",
+      fullName: "environments/reset",
+      buildable: true,
+      inQueue: false,
+      lastBuild: { number: 41, result: "SUCCESS", durationMs: 12_500 },
+    });
+
+    expect(request).toHaveBeenCalledOnce();
+    expect(request.mock.calls[0]?.[1]?.method).toBeUndefined();
+    expect(request.mock.calls[0]?.[1]?.redirect).toBe("error");
+    const headers = request.mock.calls[0]?.[1]?.headers as Headers;
+    expect(headers.get("authorization")).toBe(
+      `Basic ${Buffer.from("jenkins-user:api-token").toString("base64")}`,
+    );
+    expect(String(request.mock.calls[0]?.[0])).toContain("/api/json?tree=");
+  });
+
   it("reads lastBuild then invokes the Rebuilder endpoint with preemptive Basic auth", async () => {
     const request = vi
       .fn<typeof fetch>()

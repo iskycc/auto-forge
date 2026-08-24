@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   DEFAULT_RUNNER_DATA_DIRECTORY,
   installRunnerAgentInputSchema,
+  inspectRoundRecoveryConfigurationInputSchema,
   runnerHeartbeatInputSchema,
   runnerHeartbeatResultSchema,
   updateRunnerAgentInputSchema,
@@ -65,6 +66,16 @@ const connection = {
 };
 
 describe("case suite execution policy", () => {
+  it("accepts a read-only Jenkins recovery inspection request", () => {
+    expect(
+      inspectRoundRecoveryConfigurationInputSchema.parse({
+        ruleId: "recovery-1",
+        jenkinsJobUrl: "https://jenkins.internal/job/reset/",
+        apiKey: "jenkins-user:api-token",
+      }),
+    ).toMatchObject({ ruleId: "recovery-1" });
+  });
+
   it("rejects the retired task parameter template", () => {
     expect(() => caseSuiteExecutionPolicySchema.parse({ parameters: { REGION: "cn" } })).toThrow();
   });
@@ -76,8 +87,7 @@ describe("case suite execution policy", () => {
         retryConcurrencyRules: [
           {
             id: "rule-1",
-            executionRoundFrom: 3,
-            executionRoundTo: 3,
+            executionRound: 3,
             previousRoundPassRateMaximum: 20,
             remainingRunsMinimum: 50,
             concurrency: 10,
@@ -108,14 +118,14 @@ describe("case suite execution policy", () => {
     ).toHaveLength(2);
   });
 
-  it("rejects inverted ranges, duplicate rule IDs and credentials in Jenkins URLs", () => {
-    expect(() =>
+  it("maps legacy ranges and rejects duplicate rule IDs and credentials in Jenkins URLs", () => {
+    expect(
       caseSuiteExecutionPolicySchema.parse({
         retryConcurrencyRules: [
-          { id: "rule", executionRoundFrom: 4, executionRoundTo: 2, concurrency: 10 },
+          { id: "rule", executionRoundFrom: 4, executionRoundTo: 6, concurrency: 10 },
         ],
-      }),
-    ).toThrow();
+      }).retryConcurrencyRules,
+    ).toEqual([{ id: "rule", executionRound: 4, concurrency: 10 }]);
     expect(() =>
       caseSuiteExecutionPolicySchema.parse({
         roundRecoveryRules: [

@@ -16,6 +16,7 @@ describe("RoundRecoveryService", () => {
   it("decrypts the snapshot credential and triggers Rebuild for the last Jenkins build", async () => {
     const repository = repositoryWithClaims(claim({ status: "pending" }));
     const transport = {
+      inspectJob: vi.fn(),
       rebuildLast: vi.fn().mockResolvedValue({ sourceBuildNumber: 41 }),
       inspectRebuild: vi.fn(),
     } as JenkinsRoundRecoveryTransport;
@@ -43,6 +44,7 @@ describe("RoundRecoveryService", () => {
       }),
     );
     const transport = {
+      inspectJob: vi.fn(),
       rebuildLast: vi
         .fn()
         .mockResolvedValueOnce({ sourceBuildNumber: 41 })
@@ -68,6 +70,7 @@ describe("RoundRecoveryService", () => {
   it("waits after a successful rebuild before releasing the next round", async () => {
     const repository = repositoryWithClaims(claim({ status: "polling", sourceBuildNumber: 41 }));
     const transport = {
+      inspectJob: vi.fn(),
       rebuildLast: vi.fn(),
       inspectRebuild: vi.fn().mockResolvedValue({
         status: "succeeded",
@@ -102,7 +105,7 @@ describe("RoundRecoveryService", () => {
     const scheduling = { schedule: vi.fn(), scheduleForRunner: vi.fn() };
     const service = createService(
       repository,
-      { rebuildLast: vi.fn(), inspectRebuild: vi.fn() },
+      { inspectJob: vi.fn(), rebuildLast: vi.fn(), inspectRebuild: vi.fn() },
       scheduling,
     );
 
@@ -128,6 +131,7 @@ describe("RoundRecoveryService", () => {
   it("marks orchestration failure without exposing the credential", async () => {
     const repository = repositoryWithClaims(claim({ status: "pending" }));
     const service = createService(repository, {
+      inspectJob: vi.fn(),
       rebuildLast: vi.fn().mockRejectedValue(new Error("Jenkins returned HTTP 500")),
       inspectRebuild: vi.fn(),
     });
