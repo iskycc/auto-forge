@@ -10,8 +10,29 @@ trap 'rm -rf -- "${fixture_root}"' EXIT
 source_root="${fixture_root}/cases"
 output_file="${fixture_root}/normal-cases.xlsx"
 compiled_classes="${fixture_root}/classes"
+scope_workspace="${fixture_root}/scope-workspace"
+scope_output_file="${scope_workspace}/scope.xlsx"
 mkdir -p "${source_root}/account" "${source_root}/orders"
 mkdir -p "${compiled_classes}"
+mkdir -p "${scope_workspace}/groovy-test" "${scope_workspace}/unrelated"
+
+normalize_classpath() {
+  local raw_classpath="$1"
+  local -a entries=()
+  local -a absolute_entries=()
+  IFS=':' read -r -a entries <<<"${raw_classpath}"
+  for entry in "${entries[@]}"; do
+    absolute_entries+=("$(realpath "${entry}")")
+  done
+  local IFS=':'
+  printf '%s' "${absolute_entries[*]}"
+}
+
+if [[ -z "${POI_CLASSPATH:-}" ]]; then
+  echo 'Set POI_CLASSPATH to Apache POI 3.13 and its transitive dependencies.' >&2
+  exit 1
+fi
+POI_CLASSPATH="$(normalize_classpath "${POI_CLASSPATH}")"
 
 printf '%s\n' \
   'package sample.account' \
@@ -67,28 +88,44 @@ printf '%s\n' \
   'class BrokenCase {' \
   '    void testIncomplete(' >"${source_root}/BrokenCase.groovy"
 
+printf '%s\n' \
+  'class IncludedCase {' \
+  '    void testIncluded() { assert true }' \
+  '}' >"${scope_workspace}/groovy-test/IncludedCase.groovy"
+
+printf '%s\n' \
+  'class OutsideSuspendedCase {' \
+  '    void testOutsideSuspended() { assert true }' \
+  '}' >"${scope_workspace}/unrelated/OutsideSuspendedCase.groovy"
+
 run_analyzer() {
-  if [[ -z "${POI_CLASSPATH:-}" ]]; then
-    echo 'Set POI_CLASSPATH to Apache POI 3.13 and its transitive dependencies.' >&2
-    return 1
-  fi
   javac -encoding UTF-8 -cp "${POI_CLASSPATH}" -d "${compiled_classes}" "${source_path}"
   java -cp "${compiled_classes}:${POI_CLASSPATH}" AnalyzeNormalGroovyCases \
     --source "${source_root}" --output "${output_file}"
 }
 
 run_output="$(run_analyzer)"
+scope_run_output="$({
+  cd "${scope_workspace}"
+  java -cp "${compiled_classes}:${POI_CLASSPATH}" AnalyzeNormalGroovyCases \
+    --output "${scope_output_file}"
+})"
 grep -Fq 'Scanned 5 Groovy file(s) and 13 case candidate(s).' <<<"${run_output}"
 grep -Fq 'Exported 7 included case(s); 6 candidate(s) were excluded.' <<<"${run_output}"
 grep -Fq "1 file(s) require review; see the '扫描问题' worksheet." <<<"${run_output}"
+grep -Fq "Source root: ${scope_workspace}/groovy-test" <<<"${scope_run_output}"
+grep -Fq 'Scanned 1 Groovy file(s) and 1 case candidate(s).' <<<"${scope_run_output}"
 unzip -t "${output_file}" >/dev/null
+unzip -t "${scope_output_file}" >/dev/null
 
-node --input-type=module - "${repository_root}" "${output_file}" <<'NODE'
+node --input-type=module - \
+  "${repository_root}" "${output_file}" "${scope_output_file}" <<'NODE'
 import { pathToFileURL } from "node:url";
 import { readFileSync } from "node:fs";
 
 const repositoryRoot = process.argv[2];
 const outputFile = process.argv[3];
+const scopeOutputFile = process.argv[4];
 const xlsxModule = await import(
   pathToFileURL(`${repositoryRoot}/packages/ddt-import/node_modules/xlsx/xlsx.mjs`).href
 );
@@ -154,6 +191,19 @@ if (!issues.some((row) => row["相对路径"] === "BrokenCase.groovy")) {
 }
 if (!normalCases.some((row) => row["类名"] === "BrokenCase")) {
   throw new Error("An unparseable source was not included under the conservative policy");
+}
+
+const scopeWorkbook = xlsxModule.read(readFileSync(scopeOutputFile));
+const scopedCases = xlsxModule.utils.sheet_to_json(scopeWorkbook.Sheets["导出用例"]);
+const scopedExcludedCases = xlsxModule.utils.sheet_to_json(
+  scopeWorkbook.Sheets["排除明细"],
+);
+if (
+  scopedCases.length !== 1 ||
+  scopedCases[0]?.["类名"] !== "IncludedCase" ||
+  scopedExcludedCases.length !== 0
+) {
+  throw new Error("Default scanning escaped the groovy-test directory boundary");
 }
 NODE
 

@@ -19,6 +19,10 @@ java -cp "groovy-test/target/classes:groovy-test/target/dependency/*" \
   --output ./normal-cases.xlsx
 ```
 
+When `--source` is omitted, the analyzer anchors the scan to its `groovy-test` directory even if
+the Java process was started from the repository root by an IDE. The recursive walk does not
+follow symbolic links. The resolved root is printed as `Source root: ...` before scanning.
+
 The default exclusion keywords are `Abnormal`, `Exception`, `Error`, `Suspended`, `Insufficient`,
 `Closed`, `Frozen`, and `Dormant` (case-insensitive). Add explicitly agreed keywords with
 `--extra-keywords A,B,C`.

@@ -51,6 +51,7 @@ public final class AnalyzeNormalGroovyCases {
         return;
       }
 
+      System.out.println("Source root: " + options.sourceRoot);
       AnalysisReport report = new GroovyCaseAnalyzer(options).analyze();
       new CaseWorkbookWriter().write(report, options);
 
@@ -102,7 +103,7 @@ public final class AnalyzeNormalGroovyCases {
     }
 
     private static AnalyzerOptions parse(List<String> arguments) {
-      Path sourceRoot = Paths.get(".").toAbsolutePath().normalize();
+      Path sourceRoot = defaultSourceRoot();
       Path outputFile = null;
       List<String> extraKeywords = new ArrayList<>();
       boolean showHelp = false;
@@ -179,7 +180,7 @@ public final class AnalyzeNormalGroovyCases {
           "  java -cp \"classes:lib/*\" AnalyzeNormalGroovyCases [options]",
           "",
           "Options:",
-          "  --source DIR              Directory to scan recursively (default: current directory)",
+          "  --source DIR              Override the analyzer directory used as the scan root",
           "  --output FILE.xlsx        Output workbook (default: DIR/normal-groovy-cases.xlsx)",
           "  --extra-keywords A,B,C    Add comma-separated exclusion keywords",
           "  -h, --help                Show this help",
@@ -187,6 +188,46 @@ public final class AnalyzeNormalGroovyCases {
           "Example:",
           "  java -cp \"target/classes:lib/*\" AnalyzeNormalGroovyCases \\",
           "    --source ./cases --output ./normal-cases.xlsx");
+    }
+
+    private static Path defaultSourceRoot() {
+      Path workingDirectory = Paths.get("").toAbsolutePath().normalize();
+      if (workingDirectory.getFileName() != null
+          && workingDirectory.getFileName().toString().equals("groovy-test")) {
+        return workingDirectory;
+      }
+
+      Path groovyTestChild = workingDirectory.resolve("groovy-test");
+      if (Files.isDirectory(groovyTestChild)) {
+        return groovyTestChild.toAbsolutePath().normalize();
+      }
+
+      Path codeLocation = analyzerCodeLocation();
+      for (Path candidate = codeLocation; candidate != null; candidate = candidate.getParent()) {
+        if (candidate.getFileName() != null
+            && candidate.getFileName().toString().equals("groovy-test")) {
+          return candidate.toAbsolutePath().normalize();
+        }
+      }
+      return workingDirectory;
+    }
+
+    private static Path analyzerCodeLocation() {
+      try {
+        Path location =
+            Paths.get(
+                    AnalyzeNormalGroovyCases.class
+                        .getProtectionDomain()
+                        .getCodeSource()
+                        .getLocation()
+                        .toURI())
+                .toAbsolutePath()
+                .normalize();
+        return Files.isDirectory(location) ? location : location.getParent();
+      } catch (Exception ignored) {
+        // A restricted class loader may hide its code source; the working directory remains safe.
+        return null;
+      }
     }
 
     private static String requiredValue(List<String> arguments, int index, String option) {
