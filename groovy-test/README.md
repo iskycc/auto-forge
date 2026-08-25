@@ -25,7 +25,9 @@ follow symbolic links. The resolved root is printed as `Source root: ...` before
 
 The default exclusion keywords are `Abnormal`, `Exception`, `Error`, `Suspended`, `Insufficient`,
 `Closed`, `Frozen`, and `Dormant` (case-insensitive). Add explicitly agreed keywords with
-`--extra-keywords A,B,C`.
+`--extra-keywords A,B,C`. A concatenated keyword also matches the equivalent CamelCase word
+sequence, so `statusnew` matches `StatusNew` and `statuspendingactive` matches
+`StatusPendingActive`.
 
 Classification follows a conservative inclusion rule:
 

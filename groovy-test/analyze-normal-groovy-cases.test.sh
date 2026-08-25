@@ -62,6 +62,18 @@ printf '%s\n' \
   '    @Test(description = "Customer state")' \
   '    void testDormantCustomer() { assert true }' \
   '' \
+  '    @Test(description = "Status transition")' \
+  '    void testStatusNewWorkflow() { assert true }' \
+  '' \
+  '    @Test(description = "Pending activation")' \
+  '    void testStatusPendingActiveWorkflow() { assert true }' \
+  '' \
+  '    @Test(description = "Similar but distinct status")' \
+  '    void testStatusNewerWorkflow() { assert true }' \
+  '' \
+  '    @Test(description = "Completes without StatusNew")' \
+  '    void testCompletesWithoutStatusNew() { assert true }' \
+  '' \
   '    @Test(description = "Invalid password returns an Error")' \
   '    void testInvalidPassword() {' \
   '        shouldFail(IllegalArgumentException) { throw new IllegalArgumentException("bad") }' \
@@ -101,7 +113,8 @@ printf '%s\n' \
 run_analyzer() {
   javac -encoding UTF-8 -cp "${POI_CLASSPATH}" -d "${compiled_classes}" "${source_path}"
   java -cp "${compiled_classes}:${POI_CLASSPATH}" AnalyzeNormalGroovyCases \
-    --source "${source_root}" --output "${output_file}"
+    --source "${source_root}" --output "${output_file}" \
+    --extra-keywords statusnew,statuspendingactive
 }
 
 run_output="$(run_analyzer)"
@@ -110,8 +123,8 @@ scope_run_output="$({
   java -cp "${compiled_classes}:${POI_CLASSPATH}" AnalyzeNormalGroovyCases \
     --output "${scope_output_file}"
 })"
-grep -Fq 'Scanned 5 Groovy file(s) and 13 case candidate(s).' <<<"${run_output}"
-grep -Fq 'Exported 7 included case(s); 6 candidate(s) were excluded.' <<<"${run_output}"
+grep -Fq 'Scanned 5 Groovy file(s) and 17 case candidate(s).' <<<"${run_output}"
+grep -Fq 'Exported 9 included case(s); 8 candidate(s) were excluded.' <<<"${run_output}"
 grep -Fq "1 file(s) require review; see the '扫描问题' worksheet." <<<"${run_output}"
 grep -Fq "Source root: ${scope_workspace}/groovy-test" <<<"${scope_run_output}"
 grep -Fq 'Scanned 1 Groovy file(s) and 1 case candidate(s).' <<<"${scope_run_output}"
@@ -142,7 +155,7 @@ const normalCases = xlsxModule.utils.sheet_to_json(workbook.Sheets["导出用例
 const excludedCases = xlsxModule.utils.sheet_to_json(workbook.Sheets["排除明细"]);
 const issues = xlsxModule.utils.sheet_to_json(workbook.Sheets["扫描问题"]);
 
-if (normalCases.length !== 7 || excludedCases.length !== 6 || issues.length !== 1) {
+if (normalCases.length !== 9 || excludedCases.length !== 8 || issues.length !== 1) {
   throw new Error("Unexpected workbook row counts");
 }
 if (!normalCases.some((row) => row["测试方法"] === "testSuccessfulLogin")) {
@@ -156,6 +169,12 @@ if (!normalCases.some((row) => row["测试方法"] === "testReportSummary")) {
 }
 if (!normalCases.some((row) => row["测试方法"] === "testBusinessGuard")) {
   throw new Error("A business throw statement was incorrectly treated as a negative test");
+}
+if (!normalCases.some((row) => row["测试方法"] === "testStatusNewerWorkflow")) {
+  throw new Error("A concatenated keyword incorrectly matched a longer identifier word");
+}
+if (!normalCases.some((row) => row["测试方法"] === "testCompletesWithoutStatusNew")) {
+  throw new Error("A negated concatenated keyword was incorrectly classified as abnormal");
 }
 if (!normalCases.some((row) => row["类名"] === "ScriptSmoke")) {
   throw new Error("Normal Groovy script was not exported");
@@ -171,6 +190,8 @@ for (const methodName of [
   "testClosedAccount",
   "testFrozenCard",
   "testDormantCustomer",
+  "testStatusNewWorkflow",
+  "testStatusPendingActiveWorkflow",
 ]) {
   if (!excludedCases.some((row) => row["测试方法"] === methodName)) {
     throw new Error(`New exclusion keyword did not exclude ${methodName}`);

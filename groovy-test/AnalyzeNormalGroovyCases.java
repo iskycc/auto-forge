@@ -41,6 +41,10 @@ import org.apache.poi.xssf.streaming.SXSSFWorkbook;
  * analyzer intentionally has no dependency on Groovy, Grape, or Apache Ivy.
  */
 public final class AnalyzeNormalGroovyCases {
+  private static final String METADATA_FIELD_SEPARATOR = "\u0000";
+  private static final Pattern IDENTIFIER_WORD_PATTERN =
+      Pattern.compile("[\\p{L}\\p{N}]+");
+
   private AnalyzeNormalGroovyCases() {}
 
   public static void main(String[] arguments) {
@@ -703,11 +707,8 @@ public final class AnalyzeNormalGroovyCases {
       candidate.title = preferredTitle(classSpan.annotations, classSpan.name);
       candidate.discoveryKind = "类级用例（未发现测试方法）";
       candidate.metadata =
-          baseName(relativePath)
-              + " "
-              + classSpan.name
-              + " "
-              + classSpan.annotations;
+          joinMetadataFields(
+              baseName(relativePath), classSpan.name, classSpan.annotations);
       candidate.sourceScope =
           source.substring(
               tokens.get(classSpan.classToken).start,
@@ -722,15 +723,12 @@ public final class AnalyzeNormalGroovyCases {
       candidate.title = preferredTitle(method.annotations, method.name);
       candidate.discoveryKind = method.discoveryKind;
       candidate.metadata =
-          baseName(relativePath)
-              + " "
-              + classSpan.name
-              + " "
-              + method.name
-              + " "
-              + classSpan.annotations
-              + " "
-              + method.annotations;
+          joinMetadataFields(
+              baseName(relativePath),
+              classSpan.name,
+              method.name,
+              classSpan.annotations,
+              method.annotations);
       candidate.sourceScope =
           source.substring(
               tokens.get(method.startToken).start, tokens.get(method.closeBraceToken).end);
@@ -1364,7 +1362,60 @@ public final class AnalyzeNormalGroovyCases {
             "(?iu)(?<![\\p{L}\\p{N}])"
                 + Pattern.quote(normalizedKeyword)
                 + "(?![\\p{L}\\p{N}])");
-    return pattern.matcher(text).find();
+    return pattern.matcher(text).find()
+        || containsConcatenatedIdentifierKeyword(text, normalizedKeyword);
+  }
+
+  private static boolean containsConcatenatedIdentifierKeyword(
+      String text, String normalizedKeyword) {
+    String compactKeyword = normalizedKeyword.replaceAll("\\s+", "");
+    if (compactKeyword.isEmpty()) {
+      return false;
+    }
+
+    for (String metadataField : text.split(METADATA_FIELD_SEPARATOR, -1)) {
+      List<String> identifierWords = identifierWords(metadataField);
+      for (int start = 0; start < identifierWords.size(); start++) {
+        StringBuilder joinedWords = new StringBuilder(compactKeyword.length());
+        for (int end = start; end < identifierWords.size(); end++) {
+          joinedWords.append(identifierWords.get(end));
+          if (joinedWords.length() > compactKeyword.length()) {
+            break;
+          }
+          if (joinedWords.toString().equals(compactKeyword)
+              && !isNegatedIdentifierSequence(identifierWords, start)) {
+            return true;
+          }
+        }
+      }
+    }
+    return false;
+  }
+
+  private static List<String> identifierWords(String text) {
+    List<String> words = new ArrayList<>();
+    Matcher matcher = IDENTIFIER_WORD_PATTERN.matcher(text);
+    while (matcher.find()) {
+      words.add(matcher.group());
+    }
+    return words;
+  }
+
+  private static boolean isNegatedIdentifierSequence(List<String> words, int matchStart) {
+    int precedingWord = matchStart - 1;
+    if (precedingWord >= 0
+        && (words.get(precedingWord).equals("a")
+            || words.get(precedingWord).equals("an"))) {
+      precedingWord--;
+    }
+    if (precedingWord < 0) {
+      return false;
+    }
+    String word = words.get(precedingWord);
+    return word.equals("no")
+        || word.equals("not")
+        || word.equals("without")
+        || word.equals("never");
   }
 
   private static String splitIdentifierWords(String value) {
@@ -1389,6 +1440,10 @@ public final class AnalyzeNormalGroovyCases {
       }
     }
     return cleaned;
+  }
+
+  private static String joinMetadataFields(String... fields) {
+    return String.join(METADATA_FIELD_SEPARATOR, fields);
   }
 
   private static String narrativeText(String source) {
