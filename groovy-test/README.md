@@ -19,8 +19,9 @@ java -cp "groovy-test/target/classes:groovy-test/target/dependency/*" \
   --output ./normal-cases.xlsx
 ```
 
-The default exclusion keywords are only `Abnormal`, `Exception`, `Error`, and `Suspended`
-(case-insensitive). Add explicitly agreed keywords with `--extra-keywords A,B,C`.
+The default exclusion keywords are `Abnormal`, `Exception`, `Error`, `Suspended`, `Insufficient`,
+`Closed`, `Frozen`, and `Dormant` (case-insensitive). Add explicitly agreed keywords with
+`--extra-keywords A,B,C`.
 
 Classification follows a conservative inclusion rule:
 

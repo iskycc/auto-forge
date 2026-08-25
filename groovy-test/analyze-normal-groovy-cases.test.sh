@@ -15,6 +15,7 @@ mkdir -p "${compiled_classes}"
 
 printf '%s\n' \
   'package sample.account' \
+  'import sample.fixture.LoginSupport' \
   'class LoginSpec {' \
   '    @Test(description = "用户可以正常登录")' \
   '    void testSuccessfulLogin() { assert true }' \
@@ -28,6 +29,18 @@ printf '%s\n' \
   '    @Test(description = "Business guard")' \
   '    void testBusinessGuard() { throw new IllegalStateException("guard") }' \
   '' \
+  '    @Test(description = "Balance state")' \
+  '    void testInsufficientBalance() { assert true }' \
+  '' \
+  '    @Test(description = "Account state")' \
+  '    void testClosedAccount() { assert true }' \
+  '' \
+  '    @Test(description = "Card state")' \
+  '    void testFrozenCard() { assert true }' \
+  '' \
+  '    @Test(description = "Customer state")' \
+  '    void testDormantCustomer() { assert true }' \
+  '' \
   '    @Test(description = "Invalid password returns an Error")' \
   '    void testInvalidPassword() {' \
   '        shouldFail(IllegalArgumentException) { throw new IllegalArgumentException("bad") }' \
@@ -36,7 +49,8 @@ printf '%s\n' \
 
 printf '%s\n' \
   '@Grab("missing.fixture:must-not-be-resolved:1.0")' \
-  'package sample.orders' \
+  'package sample.orders; // optional trailing punctuation' \
+  'import sample.fixture.CheckoutSupport' \
   'class CheckoutCase {' \
   '    void testHappyPath() { assert "success" }' \
   '}' >"${source_root}/orders/CheckoutCase.groovy"
@@ -64,8 +78,8 @@ run_analyzer() {
 }
 
 run_output="$(run_analyzer)"
-grep -Fq 'Scanned 5 Groovy file(s) and 9 case candidate(s).' <<<"${run_output}"
-grep -Fq 'Exported 7 included case(s); 2 candidate(s) were excluded.' <<<"${run_output}"
+grep -Fq 'Scanned 5 Groovy file(s) and 13 case candidate(s).' <<<"${run_output}"
+grep -Fq 'Exported 7 included case(s); 6 candidate(s) were excluded.' <<<"${run_output}"
 grep -Fq "1 file(s) require review; see the '扫描问题' worksheet." <<<"${run_output}"
 unzip -t "${output_file}" >/dev/null
 
@@ -91,7 +105,7 @@ const normalCases = xlsxModule.utils.sheet_to_json(workbook.Sheets["导出用例
 const excludedCases = xlsxModule.utils.sheet_to_json(workbook.Sheets["排除明细"]);
 const issues = xlsxModule.utils.sheet_to_json(workbook.Sheets["扫描问题"]);
 
-if (normalCases.length !== 7 || excludedCases.length !== 2 || issues.length !== 1) {
+if (normalCases.length !== 7 || excludedCases.length !== 6 || issues.length !== 1) {
   throw new Error("Unexpected workbook row counts");
 }
 if (!normalCases.some((row) => row["测试方法"] === "testSuccessfulLogin")) {
@@ -114,6 +128,26 @@ if (!excludedCases.some((row) => row["测试方法"] === "testInvalidPassword"))
 }
 if (!excludedCases.some((row) => row["类名"] === "SuspendedAccountCase")) {
   throw new Error("Negative class name was not excluded");
+}
+for (const methodName of [
+  "testInsufficientBalance",
+  "testClosedAccount",
+  "testFrozenCard",
+  "testDormantCustomer",
+]) {
+  if (!excludedCases.some((row) => row["测试方法"] === methodName)) {
+    throw new Error(`New exclusion keyword did not exclude ${methodName}`);
+  }
+}
+const loginCases = [...normalCases, ...excludedCases].filter(
+  (row) => row["类名"] === "LoginSpec",
+);
+if (loginCases.some((row) => row["包名"] !== "sample.account")) {
+  throw new Error("Package parsing crossed the declaration line into an import");
+}
+const checkoutCase = normalCases.find((row) => row["测试方法"] === "testHappyPath");
+if (checkoutCase?.["包名"] !== "sample.orders") {
+  throw new Error("Trailing package punctuation was not removed");
 }
 if (!issues.some((row) => row["相对路径"] === "BrokenCase.groovy")) {
   throw new Error("A malformed Groovy source was not reported");

@@ -78,7 +78,15 @@ public final class AnalyzeNormalGroovyCases {
   private static final class AnalyzerOptions {
     private static final List<String> DEFAULT_NEGATIVE_KEYWORDS =
         Collections.unmodifiableList(
-            Arrays.asList("abnormal", "exception", "error", "suspended"));
+            Arrays.asList(
+                "abnormal",
+                "exception",
+                "error",
+                "suspended",
+                "insufficient",
+                "closed",
+                "frozen",
+                "dormant"));
 
     private final Path sourceRoot;
     private final Path outputFile;
@@ -457,6 +465,15 @@ public final class AnalyzeNormalGroovyCases {
   }
 
   private static final class GroovyDeclarationParser {
+    private static final String PACKAGE_IDENTIFIER =
+        "[\\p{javaJavaIdentifierStart}][\\p{javaJavaIdentifierPart}]*";
+    private static final Pattern PACKAGE_DECLARATION =
+        Pattern.compile(
+            "(?m)^[ \\t]*package[ \\t]+("
+                + PACKAGE_IDENTIFIER
+                + "(?:[ \\t]*\\.[ \\t]*"
+                + PACKAGE_IDENTIFIER
+                + ")*)");
     private static final Pattern ANNOTATION_TITLE =
         Pattern.compile(
             "(?is)(?:description|title|name|value)\\s*=\\s*(['\"])(.*?)\\1");
@@ -507,24 +524,12 @@ public final class AnalyzeNormalGroovyCases {
     }
 
     private String discoverPackageName() {
-      for (int index = 0; index < tokens.size(); index++) {
-        if (!tokens.get(index).isIdentifier("package")) {
-          continue;
-        }
-        StringBuilder packageName = new StringBuilder();
-        for (int cursor = index + 1; cursor < tokens.size(); cursor++) {
-          Token token = tokens.get(cursor);
-          if (token.type == TokenType.IDENTIFIER) {
-            packageName.append(token.text);
-          } else if (token.isSymbol(".")) {
-            packageName.append('.');
-          } else {
-            break;
-          }
-        }
-        return packageName.toString();
-      }
-      return "";
+      // Groovy package declarations normally have no semicolon. Matching the declaration line
+      // directly prevents the following import statement from being appended when no punctuation
+      // separates the two lines. The identifier-only capture also ignores optional trailing
+      // semicolons or comments.
+      Matcher matcher = PACKAGE_DECLARATION.matcher(maskCommentsAndStrings(source));
+      return matcher.find() ? matcher.group(1).replaceAll("[ \\t]", "") : "";
     }
 
     private List<ClassSpan> discoverClasses() {
@@ -1298,7 +1303,7 @@ public final class AnalyzeNormalGroovyCases {
     if (text == null || text.isEmpty()) {
       return Collections.emptyList();
     }
-    String searchable = removeNegatedPhrases(splitIdentifierWords(text));
+    String searchable = removeNegatedPhrases(splitIdentifierWords(text), keywords);
     List<String> matches = new ArrayList<>();
     for (String keyword : keywords) {
       if (containsKeyword(searchable, keyword)) {
@@ -1329,11 +1334,20 @@ public final class AnalyzeNormalGroovyCases {
         .toLowerCase(Locale.ROOT);
   }
 
-  private static String removeNegatedPhrases(String value) {
-    return value.replaceAll(
-        "(?iu)\\b(?:no|not|without|never)\\s+(?:an?\\s+)?"
-            + "(?:abnormal|exception|error|suspended)\\b",
-        " ");
+  private static String removeNegatedPhrases(String value, List<String> keywords) {
+    String cleaned = value;
+    for (String keyword : keywords) {
+      String normalizedKeyword = splitIdentifierWords(keyword).trim();
+      if (!normalizedKeyword.isEmpty()) {
+        cleaned =
+            cleaned.replaceAll(
+                "(?iu)\\b(?:no|not|without|never)\\s+(?:an?\\s+)?"
+                    + Pattern.quote(normalizedKeyword)
+                    + "(?![\\p{L}\\p{N}])",
+                " ");
+      }
+    }
+    return cleaned;
   }
 
   private static String narrativeText(String source) {
