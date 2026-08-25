@@ -6,18 +6,17 @@ readonly SCRIPT_NAME="$(basename -- "$0")"
 
 print_usage() {
   cat <<EOF
-用法: $SCRIPT_NAME [--all] <项目内目录>
+用法: $SCRIPT_NAME <项目内目录>
 
-列出指定目录及其所有子目录中，曾被 Git 删除的文件路径。
-输出路径相对于 Git 仓库根目录，并进行去重和排序。
+沿当前分支的第一父提交链，列出指定目录及其所有子目录中曾被 Git 删除的文件。
+不会遍历其他分支，也不会统计合并提交带入的删除。文件路径相对于 Git 仓库根目录。
 
 选项:
-  --all       查询所有 refs 可达的历史；默认只查询当前分支历史
   -h, --help  显示帮助
 
 示例:
   $SCRIPT_NAME apps/web/src
-  $SCRIPT_NAME --all packages/db
+  $SCRIPT_NAME packages/db
 EOF
 }
 
@@ -27,14 +26,10 @@ fail() {
 }
 
 parse_arguments() {
-  INCLUDE_ALL_REFS=false
   TARGET_DIRECTORY=""
 
   while (($# > 0)); do
     case "$1" in
-      --all)
-        INCLUDE_ALL_REFS=true
-        ;;
       -h | --help)
         print_usage
         exit 0
@@ -69,6 +64,8 @@ resolve_repository_directory() {
   repository_root="$(git rev-parse --show-toplevel 2>/dev/null)" ||
     fail "当前目录不在 Git 仓库中"
   REPOSITORY_ROOT="$(realpath -e -- "$repository_root")"
+  CURRENT_BRANCH="$(git -C "$REPOSITORY_ROOT" symbolic-ref --quiet --short HEAD)" ||
+    fail "当前仓库处于 detached HEAD 状态，无法确定当前分支"
   requested_directory="$(realpath -m -- "$TARGET_DIRECTORY")"
 
   if [[ "$requested_directory" == "$REPOSITORY_ROOT" ]]; then
@@ -85,12 +82,7 @@ resolve_repository_directory() {
 }
 
 list_deleted_files() {
-  local -a history_scope=()
   local pathspec
-
-  if [[ "$INCLUDE_ALL_REFS" == true ]]; then
-    history_scope+=(--all)
-  fi
 
   if [[ -n "$REPOSITORY_DIRECTORY" ]]; then
     pathspec=":(top,literal)$REPOSITORY_DIRECTORY"
@@ -98,17 +90,16 @@ list_deleted_files() {
     pathspec=":(top)**"
   fi
 
-  git -C "$REPOSITORY_ROOT" log \
-    "${history_scope[@]}" \
+  printf '当前分支: %s\n' "$CURRENT_BRANCH"
+  printf '查询目录: %s\n\n' "${REPOSITORY_DIRECTORY:-.}"
+
+  git -C "$REPOSITORY_ROOT" -c core.quotePath=false log HEAD \
+    --first-parent \
+    --no-merges \
     --diff-filter=D \
-    --format= \
+    --format='----------------------------------------%nCommit ID: %H%n提交时间: %cI%n提交人: %cn <%ce>%n提交信息: %s%n删除文件:' \
     --name-only \
-    -z \
-    -- "$pathspec" |
-    LC_ALL=C sort -zu |
-    while IFS= read -r -d '' deleted_file; do
-      [[ -n "$deleted_file" ]] && printf '%s\n' "$deleted_file"
-    done
+    -- "$pathspec"
 }
 
 main() {
