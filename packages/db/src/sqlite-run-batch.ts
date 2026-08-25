@@ -25,6 +25,7 @@ import {
   type RunBatch,
   type RunBatchDetails,
   type RunBatchExecutionPolicy,
+  type RunBatchRoundRecovery,
   type RetryConcurrencyState,
   type RunBatchStatusEvent,
   type RunBatchStatus,
@@ -72,6 +73,25 @@ import {
 const activeAttemptStatuses = ["assigned", "running"] as const;
 const activeBatchStatuses = ["queued", "dispatching", "scheduled", "running"] as const;
 const SCHEDULING_RUN_WINDOW_SIZE = 4_096;
+
+type RoundRecoveryDetailRow = {
+  rule_id: string;
+  after_round: number;
+  next_round: number;
+  jenkins_job_url: string;
+  wait_minutes: number;
+  status: RunBatchRoundRecovery["status"];
+  source_build_number: number | null;
+  rebuild_number: number | null;
+  rebuild_url: string | null;
+  activated_at: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+  build_result: string | null;
+  error_message: string | null;
+  created_at: string;
+  updated_at: string;
+};
 
 export class SqliteRunBatchRepository implements RunBatchRepository {
   constructor(
@@ -331,10 +351,21 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
       .orderBy(runBatchStatusEvents.recordedAt, runBatchStatusEvents.id)
       .all()
       .map(toRunBatchStatusEvent);
+    const roundRecoveries = this.handle.client
+      .prepare(
+        `SELECT rule_id, after_round, next_round, jenkins_job_url, wait_minutes, status,
+                source_build_number, rebuild_number, rebuild_url, activated_at, started_at,
+                finished_at, build_result, error_message, created_at, updated_at
+         FROM run_batch_round_recoveries
+         WHERE batch_id = ?
+         ORDER BY after_round, rule_id`,
+      )
+      .all(batchId) as RoundRecoveryDetailRow[];
     return {
       ...(await this.mapBatch(batchRow)),
       runs: runRows.map(toExecutionRun),
       attempts: attemptRows.map(toRunAttempt),
+      roundRecoveries: roundRecoveries.map(toRoundRecoveryDetail),
       statusHistory,
     };
   }
@@ -950,6 +981,27 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
       )
       .all(...batchIds, ...batchIds) as FinalOutcomeCounts[];
   }
+}
+
+function toRoundRecoveryDetail(row: RoundRecoveryDetailRow): RunBatchRoundRecovery {
+  return {
+    ruleId: row.rule_id,
+    afterRound: row.after_round,
+    nextRound: row.next_round,
+    jenkinsJobUrl: row.jenkins_job_url,
+    waitMinutes: row.wait_minutes,
+    status: row.status,
+    ...(row.source_build_number === null ? {} : { sourceBuildNumber: row.source_build_number }),
+    ...(row.rebuild_number === null ? {} : { rebuildNumber: row.rebuild_number }),
+    ...(row.rebuild_url === null ? {} : { rebuildUrl: row.rebuild_url }),
+    ...(row.activated_at === null ? {} : { activatedAt: row.activated_at }),
+    ...(row.started_at === null ? {} : { startedAt: row.started_at }),
+    ...(row.finished_at === null ? {} : { finishedAt: row.finished_at }),
+    ...(row.build_result === null ? {} : { buildResult: row.build_result }),
+    ...(row.error_message === null ? {} : { errorMessage: row.error_message }),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
 }
 
 type FinalOutcomeCounts = {

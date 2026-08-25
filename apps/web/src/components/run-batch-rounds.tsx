@@ -3,7 +3,7 @@
 import type { AttemptArtifactList, AttemptEventPage } from "@autoforge/contracts";
 import type {
   RunAttempt,
-  RunBatchDetails,
+  RunBatchRoundRecovery,
   RunBatchRoundSummary,
   RunnerResourceSnapshot,
 } from "@autoforge/domain";
@@ -18,6 +18,7 @@ import {
   ChevronRight,
   Download,
   Eye,
+  ExternalLink,
   FileText,
   Globe,
   AlertTriangle,
@@ -35,6 +36,7 @@ import { RunnerFaultDialog } from "@/components/runner-fault-dialog";
 import { SchedulingLogViewer } from "@/components/scheduling-log-viewer";
 import { Button, Input, Select } from "@/components/ui";
 import { readApiErrorMessage } from "@/lib/client-api";
+import type { ExecutionBatchView } from "@/lib/execution-batch-view";
 import { buildRunnerFaultIncidents } from "@/lib/runner-fault-incidents";
 import {
   buildRoundCaseRows,
@@ -72,11 +74,19 @@ export type RunnerDirectoryEntry = {
   resourceSnapshot?: RunnerResourceSnapshot;
 };
 
-type CaseStatusFilter = "all" | "succeeded" | "failed" | "timed_out" | "cancelled" | "pending";
+type CaseStatusFilter = "all" | "pending" | RunAttempt["status"];
+
+type RecoveryGroup = {
+  afterRound: number;
+  steps: RunBatchRoundRecovery[];
+  activatedAt: string;
+  finishedAt: string | null;
+  status: "running" | "succeeded" | "failed" | "cancelled";
+};
 
 // 轮次行命名：第 1 轮是初始执行，round 模式之后叫「重跑第 N 轮」，
 // immediate 模式按第几次尝试叫「重试第 N 次」，两种模式的文案不得混用。
-function roundLabel(retryMode: RunBatchDetails["retryMode"], round: number): string {
+function roundLabel(retryMode: ExecutionBatchView["retryMode"], round: number): string {
   if (round === 1) return "初始轮次";
   return retryMode === "round" ? `重跑第 ${round - 1} 轮` : `重试第 ${round - 1} 次`;
 }
@@ -91,6 +101,58 @@ function roundStatusClass(summary: RunBatchRoundSummary): string {
   if (summary.status === "running") return "";
   if (summary.status === "completed") return "batch-status-succeeded";
   return "batch-status-neutral";
+}
+
+function recoveryGroups(recoveries: readonly RunBatchRoundRecovery[]): RecoveryGroup[] {
+  const grouped = new Map<number, RunBatchRoundRecovery[]>();
+  for (const recovery of recoveries) {
+    // 尚未触发的未来规则不占时间线；被用户在触发前取消的规则也没有激活时间。
+    if (!recovery.activatedAt) continue;
+    const group = grouped.get(recovery.afterRound) ?? [];
+    group.push(recovery);
+    grouped.set(recovery.afterRound, group);
+  }
+  return [...grouped.entries()]
+    .sort(([left], [right]) => left - right)
+    .map(([afterRound, steps]) => {
+      const activatedAt = steps.reduce(
+        (earliest, step) =>
+          Date.parse(step.activatedAt!) < Date.parse(earliest) ? step.activatedAt! : earliest,
+        steps[0]!.activatedAt!,
+      );
+      const terminal = steps.every((step) =>
+        ["succeeded", "failed", "cancelled"].includes(step.status),
+      );
+      const finishedAt = terminal
+        ? steps.reduce(
+            (latest, step) =>
+              Date.parse(step.updatedAt) > Date.parse(latest) ? step.updatedAt : latest,
+            steps[0]!.updatedAt,
+          )
+        : null;
+      const status = steps.some((step) => step.status === "failed")
+        ? "failed"
+        : steps.every((step) => step.status === "succeeded")
+          ? "succeeded"
+          : terminal
+            ? "cancelled"
+            : "running";
+      return { afterRound, steps, activatedAt, finishedAt, status };
+    });
+}
+
+function recoveryStatusLabel(status: RecoveryGroup["status"]): string {
+  if (status === "succeeded") return "恢复完成";
+  if (status === "failed") return "恢复失败";
+  if (status === "cancelled") return "已取消";
+  return "恢复中";
+}
+
+function recoveryStatusClass(status: RecoveryGroup["status"]): string {
+  if (status === "succeeded") return "batch-status-succeeded";
+  if (status === "failed") return "batch-status-failed";
+  if (status === "cancelled") return "batch-status-neutral";
+  return "";
 }
 
 function attemptStatusLabel(attempt: RunAttempt): string {
@@ -152,13 +214,15 @@ export function RunBatchRounds({
   batch,
   canCancelRuns,
   canReadLogs,
+  canReadAttemptEvents,
   canReadArtifacts,
   artifactsEnabled,
   runnerDirectory,
 }: {
-  batch: RunBatchDetails;
+  batch: ExecutionBatchView;
   canCancelRuns: boolean;
   canReadLogs: boolean;
+  canReadAttemptEvents: boolean;
   canReadArtifacts: boolean;
   artifactsEnabled: boolean;
   runnerDirectory: readonly RunnerDirectoryEntry[];
@@ -170,6 +234,7 @@ export function RunBatchRounds({
     () => summarizeRunBatchRounds(batch, batch.runs, batch.attempts),
     [batch],
   );
+  const recoveries = useMemo(() => recoveryGroups(batch.roundRecoveries), [batch.roundRecoveries]);
   const runnerDirectoryById = useMemo(
     () => new Map(runnerDirectory.map((entry) => [entry.id, entry])),
     [runnerDirectory],
@@ -178,6 +243,10 @@ export function RunBatchRounds({
   // round=all/summary 都是虚拟轮次，不对应真实 attemptNumber。
   const allRoundsSelected = requestedRoundParam === "all";
   const summarySelected = requestedRoundParam === "summary";
+  const requestedRecoveryRound = requestedRoundParam?.match(/^recovery-(\d+)$/u)?.[1];
+  const selectedRecovery = recoveries.find(
+    (recovery) => recovery.afterRound === Number(requestedRecoveryRound),
+  );
   const requestedRound = Number(requestedRoundParam ?? "");
   // 默认落在最后一个已执行的轮次；纯等待轮（还没有任何 attempt）不作为默认选中。
   const defaultRound =
@@ -212,7 +281,7 @@ export function RunBatchRounds({
     });
   }, []);
 
-  function selectRound(round: number | "all" | "summary"): void {
+  function selectRound(round: number | "all" | "summary" | `recovery-${number}`): void {
     const parameters = new URLSearchParams(searchParams.toString());
     parameters.set("round", String(round));
     router.replace(`${pathname}?${parameters.toString()}`, { scroll: false });
@@ -251,7 +320,10 @@ export function RunBatchRounds({
             <span className="step-label">ROUNDS</span>
             <h2>轮次</h2>
           </div>
-          <span className="muted">共 {summaries.length} 轮</span>
+          <span className="muted">
+            共 {summaries.length} 轮
+            {recoveries.length > 0 ? ` · ${recoveries.length} 次环境恢复` : ""}
+          </span>
         </div>
         <div className="table-scroll round-table-scroll">
           <table className="data-table execution-round-table">
@@ -348,73 +420,139 @@ export function RunBatchRounds({
                 <td>—</td>
                 <td>—</td>
               </tr>
-              {summaries.map((summary) => (
-                <tr
-                  key={summary.round}
-                  className={
-                    !allRoundsSelected && !summarySelected && summary.round === selectedRound
-                      ? "selected-row"
-                      : undefined
-                  }
-                  onClick={() => selectRound(summary.round)}
-                >
-                  <td>
-                    <Button
-                      className="round-select-button"
-                      variant="ghost"
-                      size="compact"
-                      type="button"
-                      aria-pressed={
-                        !allRoundsSelected && !summarySelected && summary.round === selectedRound
+              {summaries.flatMap((summary) => {
+                const recovery = recoveries.find((item) => item.afterRound === summary.round);
+                const rows = [
+                  <tr
+                    key={`round-${summary.round}`}
+                    className={
+                      !allRoundsSelected &&
+                      !summarySelected &&
+                      !selectedRecovery &&
+                      summary.round === selectedRound
+                        ? "selected-row"
+                        : undefined
+                    }
+                    onClick={() => selectRound(summary.round)}
+                  >
+                    <td>
+                      <Button
+                        className="round-select-button"
+                        variant="ghost"
+                        size="compact"
+                        type="button"
+                        aria-pressed={
+                          !allRoundsSelected && !summarySelected && summary.round === selectedRound
+                        }
+                        onClick={() => selectRound(summary.round)}
+                      >
+                        {roundLabel(batch.retryMode, summary.round)}
+                      </Button>
+                    </td>
+                    <td>
+                      <span className={`batch-status ${roundStatusClass(summary)}`.trim()}>
+                        {roundStatusLabel(summary, batch.currentRound)}
+                      </span>
+                    </td>
+                    <td>{summary.totalRuns}</td>
+                    <td>{summary.overallPassRate}%</td>
+                    <td>
+                      {summary.roundPassRate === null
+                        ? "—"
+                        : `${summary.roundPassRate}%${summary.status === "running" ? "（进行中）" : ""}`}
+                    </td>
+                    <td>{summary.passed}</td>
+                    <td>{summary.failed + summary.timedOut}</td>
+                    <td>{summary.notExecuted}</td>
+                    <td>
+                      {summary.startedAt ? (
+                        <time title={`UTC ${summary.startedAt}`}>
+                          {formatLocalDateTime(summary.startedAt)}
+                        </time>
+                      ) : (
+                        "—"
+                      )}
+                    </td>
+                    <td>
+                      {summary.durationMs !== null
+                        ? formatBatchDuration(summary.durationMs)
+                        : summary.status === "running" && summary.startedAt
+                          ? "进行中"
+                          : "—"}
+                    </td>
+                  </tr>,
+                ];
+                if (recovery) {
+                  const succeeded = recovery.steps.filter(
+                    (step) => step.status === "succeeded",
+                  ).length;
+                  const failed = recovery.steps.filter((step) => step.status === "failed").length;
+                  rows.push(
+                    <tr
+                      key={`recovery-${recovery.afterRound}`}
+                      className={
+                        selectedRecovery?.afterRound === recovery.afterRound
+                          ? "selected-row recovery-round-row"
+                          : "recovery-round-row"
                       }
-                      onClick={() => selectRound(summary.round)}
+                      onClick={() => selectRound(`recovery-${recovery.afterRound}`)}
                     >
-                      {roundLabel(batch.retryMode, summary.round)}
-                    </Button>
-                  </td>
-                  <td>
-                    <span className={`batch-status ${roundStatusClass(summary)}`.trim()}>
-                      {roundStatusLabel(summary, batch.currentRound)}
-                    </span>
-                  </td>
-                  <td>{summary.totalRuns}</td>
-                  <td>{summary.overallPassRate}%</td>
-                  <td>
-                    {summary.roundPassRate === null
-                      ? "—"
-                      : `${summary.roundPassRate}%${summary.status === "running" ? "（进行中）" : ""}`}
-                  </td>
-                  <td>{summary.passed}</td>
-                  <td>{summary.failed + summary.timedOut}</td>
-                  <td>{summary.notExecuted}</td>
-                  <td>
-                    {summary.startedAt ? (
-                      <time title={`UTC ${summary.startedAt}`}>
-                        {formatLocalDateTime(summary.startedAt)}
-                      </time>
-                    ) : (
-                      "—"
-                    )}
-                  </td>
-                  <td>
-                    {summary.durationMs !== null
-                      ? formatBatchDuration(summary.durationMs)
-                      : summary.status === "running" && summary.startedAt
-                        ? "进行中"
-                        : "—"}
-                  </td>
-                </tr>
-              ))}
+                      <td>
+                        <Button
+                          aria-pressed={selectedRecovery?.afterRound === recovery.afterRound}
+                          className="round-select-button"
+                          onClick={() => selectRound(`recovery-${recovery.afterRound}`)}
+                          size="compact"
+                          type="button"
+                          variant="ghost"
+                        >
+                          环境恢复
+                        </Button>
+                        <small className="table-secondary">第 {recovery.afterRound} 轮后</small>
+                      </td>
+                      <td>
+                        <span
+                          className={`batch-status ${recoveryStatusClass(recovery.status)}`.trim()}
+                        >
+                          {recoveryStatusLabel(recovery.status)}
+                        </span>
+                      </td>
+                      <td colSpan={6}>
+                        Jenkins 流水线 {recovery.steps.length} 个 · 完成 {succeeded} · 失败 {failed}
+                      </td>
+                      <td>
+                        <time title={`UTC ${recovery.activatedAt}`}>
+                          {formatLocalDateTime(recovery.activatedAt)}
+                        </time>
+                      </td>
+                      <td>
+                        {recovery.finishedAt
+                          ? formatBatchDuration(
+                              Math.max(
+                                0,
+                                Date.parse(recovery.finishedAt) - Date.parse(recovery.activatedAt),
+                              ),
+                            )
+                          : "进行中"}
+                      </td>
+                    </tr>,
+                  );
+                }
+                return rows;
+              })}
             </tbody>
           </table>
         </div>
       </section>
 
-      {summarySelected ? (
+      {selectedRecovery ? (
+        <RecoveryDetailPanel recovery={selectedRecovery} />
+      ) : summarySelected ? (
         <SummaryRoundPanel
           batch={batch}
           canCancelRuns={canCancelRuns}
           canReadLogs={canReadLogs}
+          canReadAttemptEvents={canReadAttemptEvents}
           canReadArtifacts={canReadArtifacts}
           artifactsEnabled={artifactsEnabled}
           runnerDirectory={runnerDirectoryById}
@@ -430,6 +568,7 @@ export function RunBatchRounds({
           batch={batch}
           canCancelRuns={canCancelRuns}
           canReadLogs={canReadLogs}
+          canReadAttemptEvents={canReadAttemptEvents}
           canReadArtifacts={canReadArtifacts}
           artifactsEnabled={artifactsEnabled}
           runnerDirectory={runnerDirectoryById}
@@ -448,6 +587,7 @@ export function RunBatchRounds({
           onTabChange={setActiveTab}
           canCancelRuns={canCancelRuns}
           canReadLogs={canReadLogs}
+          canReadAttemptEvents={canReadAttemptEvents}
           canReadArtifacts={canReadArtifacts}
           artifactsEnabled={artifactsEnabled}
           runnerDirectory={runnerDirectoryById}
@@ -490,11 +630,130 @@ export function RunBatchRounds({
   );
 }
 
+function RecoveryDetailPanel({ recovery }: { recovery: RecoveryGroup }) {
+  return (
+    <section
+      className="round-detail-panel"
+      aria-label={`环境恢复详情：第 ${recovery.afterRound} 轮后`}
+    >
+      <div className="round-detail-header">
+        <div className="round-detail-title">
+          <h2>环境恢复 · 第 {recovery.afterRound} 轮后</h2>
+          <span className={`batch-status ${recoveryStatusClass(recovery.status)}`.trim()}>
+            {recoveryStatusLabel(recovery.status)}
+          </span>
+        </div>
+        <span className="muted">下一轮在全部流水线及等待时间结束后统一开始</span>
+      </div>
+      <div className="recovery-step-grid">
+        {recovery.steps.map((step, index) => (
+          <article className="recovery-step-card" key={step.ruleId}>
+            <div className="recovery-step-heading">
+              <div>
+                <span className="step-label">JENKINS {index + 1}</span>
+                <h3>{jenkinsJobName(step.jenkinsJobUrl)}</h3>
+              </div>
+              <span className={`batch-status ${recoveryStepStatusClass(step)}`.trim()}>
+                {recoveryStepStatusLabel(step)}
+              </span>
+            </div>
+            <dl className="recovery-step-facts">
+              <RecoveryFact
+                label="构建编号"
+                value={step.rebuildNumber ? `#${step.rebuildNumber}` : "等待发现"}
+              />
+              <RecoveryFact label="构建结果" value={step.buildResult ?? "—"} />
+              <RecoveryTimeFact label="开始时间" value={step.startedAt} />
+              <RecoveryTimeFact label="结束时间" value={step.finishedAt} />
+              <RecoveryFact
+                label="构建耗时"
+                value={
+                  step.startedAt && step.finishedAt
+                    ? formatBatchDuration(
+                        Math.max(0, Date.parse(step.finishedAt) - Date.parse(step.startedAt)),
+                      )
+                    : step.startedAt
+                      ? "执行中"
+                      : "—"
+                }
+              />
+              <RecoveryFact label="构建后等待" value={`${step.waitMinutes} 分钟`} />
+            </dl>
+            {step.errorMessage ? (
+              <p className="form-error" role="alert">
+                {step.errorMessage}
+              </p>
+            ) : null}
+            <a
+              className="button button-secondary compact-button recovery-build-link"
+              href={step.rebuildUrl ?? step.jenkinsJobUrl}
+              rel="noreferrer"
+              target="_blank"
+            >
+              <ExternalLink aria-hidden="true" size={15} />
+              {step.rebuildUrl ? "查看 Jenkins 构建" : "查看 Jenkins 任务"}
+            </a>
+          </article>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function RecoveryFact({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <dt>{label}</dt>
+      <dd>{value}</dd>
+    </div>
+  );
+}
+
+function RecoveryTimeFact({ label, value }: { label: string; value: string | undefined }) {
+  return (
+    <div>
+      <dt>{label}</dt>
+      <dd>{value ? <time title={`UTC ${value}`}>{formatLocalDateTime(value)}</time> : "—"}</dd>
+    </div>
+  );
+}
+
+function recoveryStepStatusLabel(step: RunBatchRoundRecovery): string {
+  const labels: Record<RunBatchRoundRecovery["status"], string> = {
+    idle: "等待轮次",
+    pending: "等待触发",
+    polling: step.rebuildNumber ? "构建中" : "查找构建",
+    waiting: "构建完成，等待恢复",
+    releasing: "恢复完成，继续调度",
+    succeeded: "已完成",
+    failed: "失败",
+    cancelled: "已取消",
+  };
+  return labels[step.status];
+}
+
+function recoveryStepStatusClass(step: RunBatchRoundRecovery): string {
+  if (step.status === "succeeded") return "batch-status-succeeded";
+  if (step.status === "failed") return "batch-status-failed";
+  if (step.status === "cancelled" || step.status === "idle") return "batch-status-neutral";
+  return "";
+}
+
+function jenkinsJobName(jobUrl: string): string {
+  try {
+    const segments = new URL(jobUrl).pathname.split("/").filter(Boolean);
+    return decodeURIComponent(segments.at(-1) ?? jobUrl);
+  } catch {
+    return jobUrl;
+  }
+}
+
 /** “总结”虚拟轮次：每个初始用例只保留最终口径的一行。 */
 function SummaryRoundPanel({
   batch,
   canCancelRuns,
   canReadLogs,
+  canReadAttemptEvents,
   canReadArtifacts,
   artifactsEnabled,
   runnerDirectory,
@@ -505,9 +764,10 @@ function SummaryRoundPanel({
   onCancelRun,
   onOpenLogs,
 }: {
-  batch: RunBatchDetails;
+  batch: ExecutionBatchView;
   canCancelRuns: boolean;
   canReadLogs: boolean;
+  canReadAttemptEvents: boolean;
   canReadArtifacts: boolean;
   artifactsEnabled: boolean;
   runnerDirectory: ReadonlyMap<string, RunnerDirectoryEntry>;
@@ -565,6 +825,7 @@ function SummaryRoundPanel({
           round="summary"
           canCancelRuns={canCancelRuns}
           canReadLogs={canReadLogs}
+          canReadAttemptEvents={canReadAttemptEvents}
           canReadArtifacts={canReadArtifacts}
           artifactsEnabled={artifactsEnabled}
           runnerDirectory={runnerDirectory}
@@ -587,6 +848,7 @@ function AllRoundsPanel({
   batch,
   canCancelRuns,
   canReadLogs,
+  canReadAttemptEvents,
   canReadArtifacts,
   artifactsEnabled,
   runnerDirectory,
@@ -597,9 +859,10 @@ function AllRoundsPanel({
   onCancelRun,
   onOpenLogs,
 }: {
-  batch: RunBatchDetails;
+  batch: ExecutionBatchView;
   canCancelRuns: boolean;
   canReadLogs: boolean;
+  canReadAttemptEvents: boolean;
   canReadArtifacts: boolean;
   artifactsEnabled: boolean;
   runnerDirectory: ReadonlyMap<string, RunnerDirectoryEntry>;
@@ -661,6 +924,7 @@ function AllRoundsPanel({
           round="all"
           canCancelRuns={canCancelRuns}
           canReadLogs={canReadLogs}
+          canReadAttemptEvents={canReadAttemptEvents}
           canReadArtifacts={canReadArtifacts}
           artifactsEnabled={artifactsEnabled}
           runnerDirectory={runnerDirectory}
@@ -682,6 +946,7 @@ function RoundDetailPanel({
   onTabChange,
   canCancelRuns,
   canReadLogs,
+  canReadAttemptEvents,
   canReadArtifacts,
   artifactsEnabled,
   runnerDirectory,
@@ -693,12 +958,13 @@ function RoundDetailPanel({
   onOpenLogs,
   onOpenScheduling,
 }: {
-  batch: RunBatchDetails;
+  batch: ExecutionBatchView;
   summary: RunBatchRoundSummary;
   activeTab: "cases" | "runners";
   onTabChange: (tab: "cases" | "runners") => void;
   canCancelRuns: boolean;
   canReadLogs: boolean;
+  canReadAttemptEvents: boolean;
   canReadArtifacts: boolean;
   artifactsEnabled: boolean;
   runnerDirectory: ReadonlyMap<string, RunnerDirectoryEntry>;
@@ -858,6 +1124,7 @@ function RoundDetailPanel({
               round={summary.round}
               canCancelRuns={canCancelRuns}
               canReadLogs={canReadLogs}
+              canReadAttemptEvents={canReadAttemptEvents}
               canReadArtifacts={canReadArtifacts}
               artifactsEnabled={artifactsEnabled}
               runnerDirectory={runnerDirectory}
@@ -926,6 +1193,7 @@ function RoundCasesTable({
   round,
   canCancelRuns,
   canReadLogs,
+  canReadAttemptEvents,
   canReadArtifacts,
   artifactsEnabled,
   runnerDirectory,
@@ -935,11 +1203,12 @@ function RoundCasesTable({
   onCancelRun,
   onOpenLogs,
 }: {
-  batch: RunBatchDetails;
+  batch: ExecutionBatchView;
   /** 具体轮次号，all 表示逐条尝试，summary 表示每个用例的最终结果。 */
   round: number | "all" | "summary";
   canCancelRuns: boolean;
   canReadLogs: boolean;
+  canReadAttemptEvents: boolean;
   canReadArtifacts: boolean;
   artifactsEnabled: boolean;
   runnerDirectory: ReadonlyMap<string, RunnerDirectoryEntry>;
@@ -1012,7 +1281,6 @@ function RoundCasesTable({
 
   function rowStatusKey(row: RoundCaseRowModel): CaseStatusFilter {
     if (!row.attempt) return "pending";
-    if (row.attempt.status === "assigned" || row.attempt.status === "running") return "all";
     return row.attempt.status;
   }
 
@@ -1037,6 +1305,8 @@ function RoundCasesTable({
           }}
         >
           <option value="all">全部状态</option>
+          <option value="assigned">已分配</option>
+          <option value="running">执行中</option>
           <option value="succeeded">通过</option>
           <option value="failed">失败</option>
           <option value="timed_out">超时</option>
@@ -1113,6 +1383,7 @@ function RoundCasesTable({
                   }
                   canCancelRuns={canCancelRuns}
                   canReadLogs={canReadLogs}
+                  canReadAttemptEvents={canReadAttemptEvents}
                   canReadArtifacts={canReadArtifacts}
                   artifactsEnabled={artifactsEnabled}
                   runnerDirectory={runnerDirectory}
@@ -1207,6 +1478,7 @@ function RoundCaseRow({
   showRoundColumn,
   canCancelRuns,
   canReadLogs,
+  canReadAttemptEvents,
   canReadArtifacts,
   artifactsEnabled,
   runnerDirectory,
@@ -1223,6 +1495,7 @@ function RoundCaseRow({
   showRoundColumn: boolean;
   canCancelRuns: boolean;
   canReadLogs: boolean;
+  canReadAttemptEvents: boolean;
   canReadArtifacts: boolean;
   artifactsEnabled: boolean;
   runnerDirectory: ReadonlyMap<string, RunnerDirectoryEntry>;
@@ -1241,7 +1514,8 @@ function RoundCaseRow({
     isTerminalAttemptStatus(attempt.status) &&
     (attempt.testNg !== undefined || canReadArtifacts);
   // 终态 attempt 可创建日志公开访问链接；后端校验项目权限并签发永久有效链接。
-  const canShareLog = attempt !== undefined && isTerminalAttemptStatus(attempt.status);
+  const canShareLog =
+    canReadLogs && attempt !== undefined && isTerminalAttemptStatus(attempt.status);
 
   async function openShareLog(): Promise<void> {
     if (!attempt) return;
@@ -1354,6 +1628,7 @@ function RoundCaseRow({
           <td colSpan={showRoundColumn ? 6 : 5}>
             <AttemptInlineDetail
               attempt={attempt}
+              canReadAttemptEvents={canReadAttemptEvents}
               canReadArtifacts={canReadArtifacts}
               artifactsEnabled={artifactsEnabled}
               cached={detailEntry}
@@ -1368,12 +1643,14 @@ function RoundCaseRow({
 
 function AttemptInlineDetail({
   attempt,
+  canReadAttemptEvents,
   canReadArtifacts,
   artifactsEnabled,
   cached,
   onRemember,
 }: {
   attempt: RunAttempt;
+  canReadAttemptEvents: boolean;
   canReadArtifacts: boolean;
   artifactsEnabled: boolean;
   cached: AttemptDetailEntry | undefined;
@@ -1384,9 +1661,12 @@ function AttemptInlineDetail({
   );
   const [events, setEvents] = useState<AttemptEventPage["items"] | undefined>(cached?.events);
   const [error, setError] = useState(cached?.error ?? "");
+  const canLoadRemoteDetails = canReadAttemptEvents || (canReadArtifacts && artifactsEnabled);
   // 已缓存的详情不再请求：展开/收起/翻页后重开复用首次加载结果。
   const [loaded, setLoaded] = useState(
-    () => cached !== undefined && (cached.artifacts !== undefined || cached.events !== undefined),
+    () =>
+      !canLoadRemoteDetails ||
+      (cached !== undefined && (cached.artifacts !== undefined || cached.events !== undefined)),
   );
 
   useEffect(() => {
@@ -1401,21 +1681,25 @@ function AttemptInlineDetail({
                 cache: "no-store",
               })
             : null,
-          fetch(`/api/v1/run-attempts/${encodeURIComponent(attempt.id)}/events?limit=200`, {
-            cache: "no-store",
-          }),
+          canReadAttemptEvents
+            ? fetch(`/api/v1/run-attempts/${encodeURIComponent(attempt.id)}/events?limit=200`, {
+                cache: "no-store",
+              })
+            : null,
         ]);
         if (artifactResponse && !artifactResponse.ok) {
           throw new Error((await readApiErrorMessage(artifactResponse, "读取产物失败。"))!);
         }
-        if (!eventResponse.ok) {
+        if (eventResponse && !eventResponse.ok) {
           throw new Error((await readApiErrorMessage(eventResponse, "读取执行时间线失败。"))!);
         }
         if (disposed) return;
         const nextArtifacts = artifactResponse
           ? ((await artifactResponse.json()) as AttemptArtifactList).items
           : undefined;
-        const nextEvents = ((await eventResponse.json()) as AttemptEventPage).items;
+        const nextEvents = eventResponse
+          ? ((await eventResponse.json()) as AttemptEventPage).items
+          : undefined;
         setArtifacts(nextArtifacts);
         setEvents(nextEvents);
         setLoaded(true);
@@ -1431,7 +1715,7 @@ function AttemptInlineDetail({
       disposed = true;
       window.clearTimeout(kick);
     };
-  }, [attempt.id, artifactsEnabled, canReadArtifacts, loaded, onRemember]);
+  }, [attempt.id, artifactsEnabled, canReadArtifacts, canReadAttemptEvents, loaded, onRemember]);
 
   return (
     <div className="attempt-inline-detail">
@@ -1491,34 +1775,36 @@ function AttemptInlineDetail({
           )}
         </div>
       ) : null}
-      <div className="attempt-inline-block">
-        <h3>状态事件</h3>
-        {events === undefined ? (
-          <div className="inline-empty">正在读取状态事件...</div>
-        ) : events.length === 0 ? (
-          <div className="inline-empty">当前尝试暂无状态事件。</div>
-        ) : (
-          <ol className="execution-timeline">
-            {events.map((event) => (
-              <li key={event.eventId}>
-                <span className="timeline-marker" aria-hidden="true" />
-                <div>
-                  <strong>{eventLabel(event.eventType)}</strong>
-                  <span>
-                    {event.fromStatus && event.toStatus
-                      ? `${event.fromStatus} → ${event.toStatus}`
-                      : (event.toStatus ?? event.fromStatus ?? event.reasonCode ?? "状态记录")}
-                  </span>
-                  <small>
-                    UTC {event.recordedAt}
-                    {event.reasonCode ? ` · ${event.reasonCode}` : ""}
-                  </small>
-                </div>
-              </li>
-            ))}
-          </ol>
-        )}
-      </div>
+      {canReadAttemptEvents ? (
+        <div className="attempt-inline-block">
+          <h3>状态事件</h3>
+          {events === undefined ? (
+            <div className="inline-empty">正在读取状态事件...</div>
+          ) : events.length === 0 ? (
+            <div className="inline-empty">当前尝试暂无状态事件。</div>
+          ) : (
+            <ol className="execution-timeline">
+              {events.map((event) => (
+                <li key={event.eventId}>
+                  <span className="timeline-marker" aria-hidden="true" />
+                  <div>
+                    <strong>{eventLabel(event.eventType)}</strong>
+                    <span>
+                      {event.fromStatus && event.toStatus
+                        ? `${event.fromStatus} → ${event.toStatus}`
+                        : (event.toStatus ?? event.fromStatus ?? event.reasonCode ?? "状态记录")}
+                    </span>
+                    <small>
+                      UTC {event.recordedAt}
+                      {event.reasonCode ? ` · ${event.reasonCode}` : ""}
+                    </small>
+                  </div>
+                </li>
+              ))}
+            </ol>
+          )}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -1530,7 +1816,7 @@ function RoundRunnerCards({
   runnerDirectory,
   onOpenScheduling,
 }: {
-  batch: RunBatchDetails;
+  batch: ExecutionBatchView;
   round: number;
   canReadLogs: boolean;
   runnerDirectory: ReadonlyMap<string, RunnerDirectoryEntry>;

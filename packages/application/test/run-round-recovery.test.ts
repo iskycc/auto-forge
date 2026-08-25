@@ -76,6 +76,9 @@ describe("RoundRecoveryService", () => {
         status: "succeeded",
         buildNumber: 42,
         buildUrl: "https://jenkins.internal/job/reset/42/",
+        startedAt: "2026-08-22T23:59:00.000Z",
+        finishedAt: "2026-08-23T00:00:00.000Z",
+        result: "SUCCESS",
       }),
     } as JenkinsRoundRecoveryTransport;
     const service = createService(repository, transport);
@@ -86,6 +89,11 @@ describe("RoundRecoveryService", () => {
       batchId: "batch-1",
       ruleId: "recovery-1",
       workerId: "worker-1",
+      rebuildNumber: 42,
+      rebuildUrl: "https://jenkins.internal/job/reset/42/",
+      startedAt: "2026-08-22T23:59:00.000Z",
+      finishedAt: "2026-08-23T00:00:00.000Z",
+      buildResult: "SUCCESS",
       availableAt: "2026-08-23T00:05:00.000Z",
       updatedAt: now,
     });

@@ -1480,6 +1480,7 @@ export interface RoundRecoveryRepository {
     sourceBuildNumber: number;
     rebuildNumber?: number;
     rebuildUrl?: string;
+    startedAt?: string;
     availableAt: string;
     updatedAt: string;
   }): Promise<boolean>;
@@ -1487,6 +1488,11 @@ export interface RoundRecoveryRepository {
     batchId: string;
     ruleId: string;
     workerId: string;
+    rebuildNumber: number;
+    rebuildUrl: string;
+    startedAt?: string;
+    finishedAt?: string;
+    buildResult: string;
     availableAt: string;
     updatedAt: string;
   }): Promise<boolean>;
@@ -1515,6 +1521,11 @@ export interface RoundRecoveryRepository {
     ruleId: string;
     workerId: string;
     errorMessage: string;
+    rebuildNumber?: number;
+    rebuildUrl?: string;
+    startedAt?: string;
+    finishedAt?: string;
+    buildResult?: string;
     eventId: string;
     updatedAt: string;
   }): Promise<boolean>;
@@ -1522,9 +1533,23 @@ export interface RoundRecoveryRepository {
 
 export type JenkinsRebuildState =
   | { status: "discovering" }
-  | { status: "running"; buildNumber: number; buildUrl: string }
-  | { status: "succeeded"; buildNumber: number; buildUrl: string }
-  | { status: "failed"; buildNumber: number; buildUrl: string; result: string };
+  | { status: "running"; buildNumber: number; buildUrl: string; startedAt?: string }
+  | {
+      status: "succeeded";
+      buildNumber: number;
+      buildUrl: string;
+      startedAt?: string;
+      finishedAt?: string;
+      result: "SUCCESS";
+    }
+  | {
+      status: "failed";
+      buildNumber: number;
+      buildUrl: string;
+      startedAt?: string;
+      finishedAt?: string;
+      result: string;
+    };
 
 export interface JenkinsRoundRecoveryTransport {
   inspectJob(input: { jobUrl: string; credential: string }): Promise<JenkinsJobInspection>;

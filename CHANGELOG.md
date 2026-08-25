@@ -4,6 +4,50 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## Unreleased
+
+## 1.3.2 - 2026-08-25
+
+### Added
+
+- Execution round timelines now insert an environment-recovery node between the affected rounds.
+  The node contributes its complete pause interval to elapsed time and shows every parallel Jenkins
+  Pipeline separately with build number, URL, actual start/end time, result and post-build wait.
+- Round case tables can now filter `assigned` and `running` attempts directly through the human-readable
+  “已分配” and “执行中” states.
+
+### Fixed
+
+- Permanent execution-history links now render the same batch overview, round summaries, result
+  charts and case tables as the authenticated execution detail page. The anonymous view omits the
+  application shell and authenticated actions instead of collapsing the result into a progress card.
+
+### Changed
+
+- Scheduler capacity behavior was audited without changing its safety algorithm. There is no fixed
+  concurrency reserve: healthy eligible Runners can fill the configured task/project/Runner minimum;
+  CPU, memory, load, stale metrics and claim/heartbeat visibility can legitimately keep observed
+  utilization below the configured upper bound.
+
+### Tests
+
+- Added Lite/Full migration coverage for recovery timeline fields, Jenkins timestamp/result parsing,
+  application/repository persistence tests, and Playwright coverage for the running filter plus two
+  parallel Jenkins recovery steps and their responsive timeline details.
+
+### Database
+
+- Added SQLite `0046_round_recovery_timeline.sql` and PostgreSQL
+  `0045_round_recovery_timeline.sql`. Existing activated recovery rows conservatively use their last
+  update as activation time; historical Jenkins start/end/result values remain empty because they
+  cannot be reconstructed. Existing permanent run-share tokens resolve to the corrected detail view.
+
+### Compatibility
+
+- Runner Protocol v1, Jenkins Pipeline step contracts and release archive formats are unchanged.
+  The new columns and detail DTO fields are additive; recovery API credentials remain excluded from
+  authenticated and anonymous batch-detail responses.
+
 ## 1.3.0 - 2026-08-25
 
 ### Fixed

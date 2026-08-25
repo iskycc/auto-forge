@@ -68,13 +68,13 @@ export class JenkinsRebuildTransport implements JenkinsRoundRecoveryTransport {
     if (input.rebuildNumber !== undefined && input.rebuildUrl) {
       const buildUrl = safeBuildUrl(jobUrl, input.rebuildUrl);
       const build = await this.readJson(
-        childUrl(buildUrl, "api/json?tree=number,url,building,result"),
+        childUrl(buildUrl, "api/json?tree=number,url,building,result,timestamp,duration"),
         input.credential,
       );
       return buildState(build, jobUrl);
     }
     const query = new URLSearchParams({
-      tree: "builds[number,url,building,result,actions[causes[_class,upstreamBuild]]]{0,20}",
+      tree: "builds[number,url,building,result,timestamp,duration,actions[causes[_class,upstreamBuild]]]{0,20}",
     });
     const response = await this.readJson(
       childUrl(jobUrl, `api/json?${query.toString()}`),
@@ -124,12 +124,36 @@ function buildState(build: Record<string, unknown>, jobUrl: URL): JenkinsRebuild
   const buildNumber = integerField(build, "number", "Jenkins Rebuild 构建编号无效。");
   if (typeof build.url !== "string") throw new Error("Jenkins Rebuild 构建链接缺失。");
   const buildUrl = safeBuildUrl(jobUrl, build.url).toString();
+  const timestamp = numericValue(build.timestamp);
+  const duration = numericValue(build.duration);
+  const startedAt =
+    Number.isFinite(timestamp) && timestamp >= 0 ? new Date(timestamp).toISOString() : undefined;
+  const finishedAt =
+    startedAt && Number.isFinite(duration) && duration >= 0
+      ? new Date(timestamp + duration).toISOString()
+      : undefined;
   if (build.building === true || build.result === null || build.result === undefined) {
-    return { status: "running", buildNumber, buildUrl };
+    return { status: "running", buildNumber, buildUrl, ...(startedAt ? { startedAt } : {}) };
   }
-  if (build.result === "SUCCESS") return { status: "succeeded", buildNumber, buildUrl };
+  if (build.result === "SUCCESS") {
+    return {
+      status: "succeeded",
+      buildNumber,
+      buildUrl,
+      result: "SUCCESS",
+      ...(startedAt ? { startedAt } : {}),
+      ...(finishedAt ? { finishedAt } : {}),
+    };
+  }
   if (typeof build.result !== "string") throw new Error("Jenkins Rebuild 构建结果无效。");
-  return { status: "failed", buildNumber, buildUrl, result: build.result };
+  return {
+    status: "failed",
+    buildNumber,
+    buildUrl,
+    result: build.result,
+    ...(startedAt ? { startedAt } : {}),
+    ...(finishedAt ? { finishedAt } : {}),
+  };
 }
 
 function inspectedLastBuild(

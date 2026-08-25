@@ -13,7 +13,7 @@ The suite is divided by failure domain so each scenario can run alone with an is
 | `single-case-run`         | `playwright test tests/e2e/single-case-run.spec.ts`      | Global execution dialog, Runner Group selection, single-case scheduling and Adapter address propagation |
 | `ui-layout`               | `playwright test tests/e2e/ui-layout.spec.ts`            | 1024px+ layout guards, global project context, full-viewport dialogs and review screenshots             |
 | `scheduling-refill`       | `playwright test tests/e2e/scheduling-refill.spec.ts`    | Immediate slot refill, overlapping retry and idempotent completion replay                               |
-| `round-summary`           | `playwright test tests/e2e/all-rounds.spec.ts`           | Final summary round, infrastructure rescheduling/incidents and real fixed-layout column geometry        |
+| `round-summary`           | `playwright test tests/e2e/all-rounds.spec.ts`           | Final summary, running-case filter, parallel Jenkins recovery timeline and fixed-layout geometry        |
 | `runner-real-lite`        | `scripts/quality/test-real-agent.sh`                     | Release-built Go Agent, offline Java/TestNG and real PTY lifecycle in Lite                              |
 | `batch-input-sharing`     | `scripts/quality/test-batch-input-sharing.sh`            | Real Agent JAR/JDK reuse across refill/restart and terminal cleanup                                     |
 | `ldap-real`               | `scripts/quality/test-ldap-e2e.sh`                       | Private-CA LDAPS/StartTLS directory in an internal container network                                    |

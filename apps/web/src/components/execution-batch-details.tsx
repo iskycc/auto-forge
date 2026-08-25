@@ -1,6 +1,5 @@
 "use client";
 
-import type { RunBatchDetails } from "@autoforge/domain";
 import { OctagonX, RotateCcw } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
@@ -8,6 +7,7 @@ import { useEffect, useState } from "react";
 import { RunBatchRounds, type RunnerDirectoryEntry } from "@/components/run-batch-rounds";
 import { Button } from "@/components/ui";
 import { readApiErrorMessage } from "@/lib/client-api";
+import type { ExecutionBatchView } from "@/lib/execution-batch-view";
 import {
   formatBatchDuration,
   formatLocalDateTime,
@@ -18,17 +18,21 @@ import {
 } from "@/lib/run-batch-presentation";
 
 // 计划开始时间由服务端在创建批次时固化；资源等待不能悄悄改写用户选择的开始时间。
-function batchStartedAt(batch: RunBatchDetails): string {
+function batchStartedAt(batch: ExecutionBatchView): string {
   return batch.scheduledFor;
 }
 
-// 终态批次的结束时间取最晚的 attempt finishedAt，缺失时回退批次 updatedAt。
-function batchFinishedAt(batch: RunBatchDetails): string {
+// 终态批次的结束时间取最晚的 attempt 或环境恢复更新时间，缺失时回退批次
+// updatedAt。这样 Jenkins 恢复及构建后的等待不会从任务总时长中被扣除。
+function batchFinishedAt(batch: ExecutionBatchView): string {
   let latest = batch.updatedAt;
   for (const attempt of batch.attempts) {
     if (attempt.finishedAt && Date.parse(attempt.finishedAt) > Date.parse(latest)) {
       latest = attempt.finishedAt;
     }
+  }
+  for (const recovery of batch.roundRecoveries) {
+    if (Date.parse(recovery.updatedAt) > Date.parse(latest)) latest = recovery.updatedAt;
   }
   return latest;
 }
@@ -39,17 +43,21 @@ function batchFinishedAt(batch: RunBatchDetails): string {
  */
 export function ExecutionBatchDetails({
   batch,
+  retrySuiteId,
   canCancelRuns,
   canCreateRuns,
   canReadLogs,
+  canReadAttemptEvents,
   canReadArtifacts,
   artifactsEnabled,
   runnerDirectory,
 }: {
-  batch: RunBatchDetails;
+  batch: ExecutionBatchView;
+  retrySuiteId?: string;
   canCancelRuns: boolean;
   canCreateRuns: boolean;
   canReadLogs: boolean;
+  canReadAttemptEvents: boolean;
   canReadArtifacts: boolean;
   artifactsEnabled: boolean;
   runnerDirectory: readonly RunnerDirectoryEntry[];
@@ -106,13 +114,14 @@ export function ExecutionBatchDetails({
   }
 
   async function retryBatch(): Promise<void> {
+    if (!retrySuiteId) return;
     setActionPending("retry");
     setActionError("");
     try {
       const response = await fetch("/api/v1/run-batches", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ suiteId: batch.suiteId }),
+        body: JSON.stringify({ suiteId: retrySuiteId }),
       });
       if (!response.ok) {
         throw new Error((await readApiErrorMessage(response, "重新执行失败。"))!);
@@ -160,7 +169,7 @@ export function ExecutionBatchDetails({
         />
       </section>
 
-      {(canCancelRuns || canCreateRuns) && (
+      {(canCancelRuns || (canCreateRuns && retrySuiteId)) && (
         <section className="execution-detail-actions" aria-label="批次操作">
           <div>
             <strong>
@@ -192,7 +201,7 @@ export function ExecutionBatchDetails({
                     : "终止任务"}
               </Button>
             ) : null}
-            {canCreateRuns && !activeBatch ? (
+            {canCreateRuns && retrySuiteId && !activeBatch ? (
               <Button
                 className="button button-primary"
                 disabled={actionPending !== undefined}
@@ -216,6 +225,7 @@ export function ExecutionBatchDetails({
         batch={batch}
         canCancelRuns={canCancelRuns}
         canReadLogs={canReadLogs}
+        canReadAttemptEvents={canReadAttemptEvents}
         canReadArtifacts={canReadArtifacts}
         artifactsEnabled={artifactsEnabled}
         runnerDirectory={runnerDirectory}
@@ -260,7 +270,7 @@ function ElapsedMetric({
   startedAt,
 }: {
   active: boolean;
-  batch: RunBatchDetails;
+  batch: ExecutionBatchView;
   startedAt: string;
 }) {
   const terminal = isTerminalRunBatch(batch.status);

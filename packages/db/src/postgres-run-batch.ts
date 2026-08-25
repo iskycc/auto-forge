@@ -25,6 +25,7 @@ import {
   type RunBatch,
   type RunBatchDetails,
   type RunBatchExecutionPolicy,
+  type RunBatchRoundRecovery,
   type RetryConcurrencyState,
   type RunBatchStatusEvent,
   type RunBatchStatus,
@@ -76,6 +77,27 @@ import { decodeRunBatchCursor, encodeRunBatchCursor } from "./run-batch-list";
 const activeAttemptStatuses = ["assigned", "running"] as const;
 const activeBatchStatuses = ["queued", "dispatching", "scheduled", "running"] as const;
 const SCHEDULING_RUN_WINDOW_SIZE = 4_096;
+
+type DatabaseTimestamp = string | Date;
+
+type RoundRecoveryDetailRow = {
+  rule_id: string;
+  after_round: number;
+  next_round: number;
+  jenkins_job_url: string;
+  wait_minutes: number;
+  status: RunBatchRoundRecovery["status"];
+  source_build_number: number | null;
+  rebuild_number: number | null;
+  rebuild_url: string | null;
+  activated_at: DatabaseTimestamp | null;
+  started_at: DatabaseTimestamp | null;
+  finished_at: DatabaseTimestamp | null;
+  build_result: string | null;
+  error_message: string | null;
+  created_at: DatabaseTimestamp;
+  updated_at: DatabaseTimestamp;
+};
 
 export class PostgresRunBatchRepository implements RunBatchRepository {
   constructor(
@@ -307,10 +329,20 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
         .where(eq(pgRunBatchStatusEvents.batchId, batchId))
         .orderBy(pgRunBatchStatusEvents.recordedAt, pgRunBatchStatusEvents.id)
     ).map(toRunBatchStatusEvent);
+    const roundRecoveries = await this.handle.pool.query<RoundRecoveryDetailRow>(
+      `SELECT rule_id, after_round, next_round, jenkins_job_url, wait_minutes, status,
+              source_build_number, rebuild_number, rebuild_url, activated_at, started_at,
+              finished_at, build_result, error_message, created_at, updated_at
+       FROM run_batch_round_recoveries
+       WHERE batch_id = $1
+       ORDER BY after_round, rule_id`,
+      [batchId],
+    );
     return {
       ...(await this.mapBatch(batchRow)),
       runs: runRows.map(toExecutionRun),
       attempts: attemptRows.map(toRunAttempt),
+      roundRecoveries: roundRecoveries.rows.map(toRoundRecoveryDetail),
       statusHistory,
     };
   }
@@ -1059,6 +1091,31 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
       ).map((row) => [row.runnerId, row.value]),
     );
   }
+}
+
+function toRoundRecoveryDetail(row: RoundRecoveryDetailRow): RunBatchRoundRecovery {
+  return {
+    ruleId: row.rule_id,
+    afterRound: row.after_round,
+    nextRound: row.next_round,
+    jenkinsJobUrl: row.jenkins_job_url,
+    waitMinutes: row.wait_minutes,
+    status: row.status,
+    ...(row.source_build_number === null ? {} : { sourceBuildNumber: row.source_build_number }),
+    ...(row.rebuild_number === null ? {} : { rebuildNumber: row.rebuild_number }),
+    ...(row.rebuild_url === null ? {} : { rebuildUrl: row.rebuild_url }),
+    ...(row.activated_at === null ? {} : { activatedAt: isoTimestamp(row.activated_at) }),
+    ...(row.started_at === null ? {} : { startedAt: isoTimestamp(row.started_at) }),
+    ...(row.finished_at === null ? {} : { finishedAt: isoTimestamp(row.finished_at) }),
+    ...(row.build_result === null ? {} : { buildResult: row.build_result }),
+    ...(row.error_message === null ? {} : { errorMessage: row.error_message }),
+    createdAt: isoTimestamp(row.created_at),
+    updatedAt: isoTimestamp(row.updated_at),
+  };
+}
+
+function isoTimestamp(value: DatabaseTimestamp): string {
+  return value instanceof Date ? value.toISOString() : new Date(value).toISOString();
 }
 
 type FinalOutcomeCounts = {

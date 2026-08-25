@@ -44,6 +44,7 @@ function makeBatchDetails(attemptOutcome: "succeeded" | "failed"): RunBatchDetai
     createdAt: "2026-08-17T00:00:00.000Z",
     updatedAt: "2026-08-17T00:05:00.000Z",
     statusHistory: [],
+    roundRecoveries: [],
     runs: [
       {
         id: "run-1",

@@ -2,6 +2,8 @@ import { expect, test, type Page } from "@playwright/test";
 import { unzipSync, zipSync } from "fflate";
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile } from "node:fs/promises";
+import { createServer, type Server } from "node:http";
+import type { AddressInfo } from "node:net";
 import { resolve } from "node:path";
 
 import { buildClassFile } from "../../packages/testng-discovery/test/class-fixture";
@@ -9,6 +11,7 @@ import { DEFAULT_PROJECT_ID } from "@autoforge/domain";
 import { freshRunnerBootstrapToken } from "./support/runner-bootstrap";
 import { configureTaskExecution, startTaskFromTopbar } from "./support/task-execution";
 import { browserJson, ensureAdministrator, uniqueName } from "./support/session";
+import { expectUiIntegrity } from "./support/ui-guard";
 
 /**
  * 全部轮次虚拟轮次视图的验收：一个批次两个用例，一个首轮通过、
@@ -35,6 +38,77 @@ type ClaimedAssignment = {
   };
   lease: { token: string };
 };
+
+type FakeJenkins = { baseUrl: string; close: () => Promise<void> };
+
+async function startFakeJenkins(): Promise<FakeJenkins> {
+  const sourceBuilds = new Map([
+    ["reset-app", 41],
+    ["reset-database", 91],
+  ]);
+  const server = createServer((request, response) => {
+    const url = new URL(request.url ?? "/", "http://127.0.0.1");
+    const jobName = url.pathname.match(/^\/job\/([^/]+)\//u)?.[1];
+    const sourceBuild = jobName ? sourceBuilds.get(jobName) : undefined;
+    if (!jobName || sourceBuild === undefined) {
+      response.writeHead(404).end();
+      return;
+    }
+    if (request.method === "POST" && url.pathname.endsWith("/lastBuild/rebuild/")) {
+      response.writeHead(201).end();
+      return;
+    }
+    response.setHeader("content-type", "application/json");
+    if (url.pathname.endsWith("/lastBuild/api/json")) {
+      response.end(JSON.stringify({ number: sourceBuild }));
+      return;
+    }
+    if (url.pathname.endsWith("/api/json")) {
+      const startedAt = Date.now() - 2_000;
+      response.end(
+        JSON.stringify({
+          builds: [
+            {
+              number: sourceBuild + 1,
+              url: `http://127.0.0.1:${(server.address() as AddressInfo).port}/job/${jobName}/${sourceBuild + 1}/`,
+              building: false,
+              result: "SUCCESS",
+              timestamp: startedAt,
+              duration: 1_500,
+              actions: [
+                {
+                  causes: [
+                    {
+                      _class: "com.sonyericsson.rebuild.RebuildCause",
+                      upstreamBuild: sourceBuild,
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        }),
+      );
+      return;
+    }
+    response.writeHead(404).end();
+  });
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  const address = server.address() as AddressInfo;
+  return {
+    baseUrl: `http://127.0.0.1:${address.port}`,
+    close: () => closeServer(server),
+  };
+}
+
+function closeServer(server: Server): Promise<void> {
+  return new Promise((resolve, reject) =>
+    server.close((error) => (error ? reject(error) : resolve())),
+  );
+}
 
 function runnerHeaders(identity: RunnerIdentity, leaseToken?: string): Record<string, string> {
   return {
@@ -201,6 +275,7 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
   page,
 }) => {
   test.setTimeout(300_000);
+  const suiteName = "全部轮次验收任务";
   await page.emulateMedia({ reducedMotion: "reduce" });
   await ensureAdministrator(page);
   await ensureProjectHierarchy(page);
@@ -234,10 +309,10 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
   await page.goto(`/case-suites?projectId=${encodeURIComponent(DEFAULT_PROJECT_ID)}`);
   await page.getByRole("button", { name: "创建任务" }).click();
   const createSuiteDialog = page.getByRole("dialog", { name: "创建用例任务" });
-  await createSuiteDialog.getByLabel("任务名称").fill("全部轮次验收任务");
+  await createSuiteDialog.getByLabel("任务名称").fill(suiteName);
   await createSuiteDialog.getByLabel("说明").fill("验证全部轮次虚拟轮次视图");
   await createSuiteDialog.getByRole("button", { name: "创建任务" }).click();
-  const suiteLink = page.getByRole("link", { name: /全部轮次验收任务/ });
+  const suiteLink = page.getByRole("link", { name: new RegExp(suiteName) });
   await expect(suiteLink).toBeVisible();
   const suiteHref = await suiteLink.getAttribute("href");
   const suiteId = new URL(suiteHref!, page.url()).pathname.split("/").at(-1)!;
@@ -297,6 +372,15 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
     const names = await runNames();
     const caseName = names.get(claim.assignment.executionSpec.executionRunId) ?? "";
     const stable = caseName.includes("AllRoundsStableTest");
+    if (claimed === 0) {
+      await page.goto(`/run-batches/${encodeURIComponent(batch.id)}`);
+      await page.getByRole("button", { name: "初始轮次", exact: true }).click();
+      const runningCases = page.locator(".round-cases");
+      await runningCases.locator('select[aria-label="按状态筛选"]').selectOption("running");
+      await expect(runningCases.locator("tbody tr")).toHaveCount(1);
+      await expect(runningCases.locator("tbody tr").first()).toContainText("运行中");
+      await runningCases.locator('select[aria-label="按状态筛选"]').selectOption("all");
+    }
     await completeAttempt(page, identity, claim, {
       completionId: `e2e-allround-r1-${claimed}`,
       status: stable ? "succeeded" : "failed",
@@ -427,6 +511,113 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
   await page.getByRole("button", { name: "用例", exact: true }).click();
   await expect(casesRegion.getByRole("row", { name: /AllRounds/ })).toHaveCount(2);
 
+  // 真实编排一轮双 Jenkins 环境恢复：两个 Rebuild 并行触发并共同形成轮次屏障，
+  // 页面时间线展示一个恢复节点，详情按流水线分别展示实际起止时间与结果。
+  const fakeJenkins = await startFakeJenkins();
+  try {
+    await configureTaskExecution(page, suiteId, identity.runnerId, {
+      retryLimit: 1,
+      retryMode: "round",
+      roundRecoveryRules: [
+        {
+          id: "e2e-reset-app",
+          afterRound: 1,
+          jenkinsJobUrl: `${fakeJenkins.baseUrl}/job/reset-app/`,
+          waitMinutes: 0,
+          apiKey: "e2e-user:e2e-token",
+        },
+        {
+          id: "e2e-reset-database",
+          afterRound: 1,
+          jenkinsJobUrl: `${fakeJenkins.baseUrl}/job/reset-database/`,
+          waitMinutes: 0,
+          apiKey: "e2e-user:e2e-token",
+        },
+      ],
+    });
+    const recoveryBatch = await startTaskFromTopbar(page, suiteId);
+    expect((await postHeartbeat(page, identity, 0)).status()).toBe(200);
+    for (let claimed = 0; claimed < 2; claimed += 1) {
+      const claim = await claimAssignment(page, identity);
+      await completeAttempt(page, identity, claim, {
+        completionId: `e2e-recovery-round-1-${claimed}`,
+        status: claimed === 0 ? "failed" : "succeeded",
+        resultCode: claimed === 0 ? "TESTNG_ASSERTIONS_FAILED" : "TESTNG_SUCCEEDED",
+        summary: claimed === 0 ? "retry after recovery" : "stable case passed",
+      });
+      expect((await postHeartbeat(page, identity, 0)).status()).toBe(200);
+    }
+    await expect
+      .poll(
+        async () => {
+          const response = await page.request.get(
+            `/api/v1/run-batches/${encodeURIComponent(recoveryBatch.id)}`,
+            { headers: userHeaders },
+          );
+          const details = (await response.json()) as {
+            roundRecoveries: Array<{
+              status: string;
+              startedAt?: string;
+              finishedAt?: string;
+              buildResult?: string;
+            }>;
+          };
+          return details.roundRecoveries.map((item) => ({
+            status: item.status,
+            hasStartedAt: Boolean(item.startedAt),
+            hasFinishedAt: Boolean(item.finishedAt),
+            result: item.buildResult,
+          }));
+        },
+        { timeout: 30_000 },
+      )
+      .toEqual([
+        { status: "succeeded", hasStartedAt: true, hasFinishedAt: true, result: "SUCCESS" },
+        { status: "succeeded", hasStartedAt: true, hasFinishedAt: true, result: "SUCCESS" },
+      ]);
+
+    const recoveryRetry = await claimAssignment(page, identity);
+    await completeAttempt(page, identity, recoveryRetry, {
+      completionId: "e2e-recovery-round-2",
+      status: "succeeded",
+      resultCode: "TESTNG_SUCCEEDED",
+      summary: "recovery retry passed",
+    });
+    await expect
+      .poll(async () => {
+        const response = await page.request.get(
+          `/api/v1/run-batches/${encodeURIComponent(recoveryBatch.id)}`,
+          { headers: userHeaders },
+        );
+        return ((await response.json()) as { status: string }).status;
+      })
+      .toBe("succeeded");
+
+    await page.goto(`/run-batches/${encodeURIComponent(recoveryBatch.id)}`);
+    const recoveryRow = page
+      .locator(".execution-round-table")
+      .getByRole("row", { name: /环境恢复.*第 1 轮后/u });
+    await expect(recoveryRow).toContainText("Jenkins 流水线 2 个 · 完成 2 · 失败 0");
+    await expect(recoveryRow).toContainText("恢复完成");
+    await recoveryRow.getByRole("button", { name: "环境恢复", exact: true }).click();
+    const recoveryPanel = page.getByRole("region", { name: "环境恢复详情：第 1 轮后" });
+    await expect(recoveryPanel.locator(".recovery-step-card")).toHaveCount(2);
+    await expect(recoveryPanel).toContainText("reset-app");
+    await expect(recoveryPanel).toContainText("reset-database");
+    await expect(recoveryPanel.getByText("SUCCESS", { exact: true })).toHaveCount(2);
+    await expect(recoveryPanel.getByText("—", { exact: true })).toHaveCount(0);
+    for (const viewport of [
+      { width: 1024, height: 768 },
+      { width: 1536, height: 960 },
+    ]) {
+      await page.setViewportSize(viewport);
+      await expectUiIntegrity(page);
+      await captureUi(page, `round-recovery-timeline-${viewport.width}`);
+    }
+  } finally {
+    await fakeJenkins.close();
+  }
+
   // 全部轮次导出：scope=all，Excel 首列为轮次，文件名带 all-rounds。
   await page.getByRole("button", { name: "全部轮次", exact: true }).click();
   // 等面板切换完成再点导出，否则导航重渲染会重置对话框的打开状态（偶发丢失点击）。
@@ -454,7 +645,7 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
   expect(sharedStrings).toContain("轮次");
 
   // Jenkins 的两个 Pipeline 步骤使用同一种 API Key：依赖按项目版本替换，执行接口
-  // 返回免登录进展链接；链接页不渲染产品顶栏和侧栏，且生命周期持续到批次终态。
+  // 返回免登录进展链接；终态结果链接复用完整执行详情（只移除外壳与鉴权操作）。
   const jenkinsToken = await issueJenkinsApiToken(page);
   const dependencyPublication = await page.request.post("/api/v1/jenkins/dependencies", {
     headers: { authorization: `Bearer ${jenkinsToken}` },
@@ -534,11 +725,29 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
   const resultPageResponse = await anonymousResultPage.goto(jenkinsRun.resultUrl);
   expect(resultPageResponse?.status()).toBe(200);
   expect(new URL(anonymousResultPage.url()).pathname).not.toBe("/login");
+  await expect(anonymousResultPage.getByText("永久匿名只读执行详情")).toBeVisible();
+  await expect(anonymousResultPage.getByRole("heading", { name: suiteName })).toBeVisible();
+  await expect(anonymousResultPage.getByRole("region", { name: "批次概览" })).toBeVisible();
   await expect(
-    anonymousResultPage.getByText("永久只读结果 · 每 30 秒自动刷新", { exact: true }),
+    anonymousResultPage.getByRole("heading", { name: "轮次", exact: true }),
   ).toBeVisible();
-  await expect(anonymousResultPage.getByText("执行完成", { exact: true })).toBeVisible();
+  await expect(anonymousResultPage.locator(".execution-round-table")).toBeVisible();
+  await expect(anonymousResultPage.locator(".execution-case-table tbody tr")).toHaveCount(2);
+  await expect(anonymousResultPage.locator(".public-progress-card")).toHaveCount(0);
+  await expect(
+    anonymousResultPage.getByRole("button", {
+      name: /终止任务|再次执行|导出结果|查看日志|公开日志|调度日志/,
+    }),
+  ).toHaveCount(0);
   await expect(anonymousResultPage.locator(".app-shell, .app-sidebar, .topbar")).toHaveCount(0);
+  for (const viewport of [
+    { width: 1024, height: 768 },
+    { width: 1536, height: 960 },
+  ]) {
+    await anonymousResultPage.setViewportSize(viewport);
+    await expectUiIntegrity(anonymousResultPage);
+    await captureUi(anonymousResultPage, `shared-run-details-${viewport.width}`);
+  }
   await anonymousContext.close();
 
   // 执行记录真机布局：一个极端长值只能在自身单元格内截断，不能改变列宽或整表宽度。
@@ -569,7 +778,11 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
   const historyAnonymousPage = await historyAnonymousContext.newPage();
   const historyShareResponse = await historyAnonymousPage.goto(sharedResultHref!);
   expect(historyShareResponse?.status()).toBe(200);
-  await expect(historyAnonymousPage.getByText("永久只读结果", { exact: false })).toBeVisible();
+  await expect(historyAnonymousPage.getByText("永久匿名只读执行详情")).toBeVisible();
+  await expect(historyAnonymousPage.getByRole("region", { name: "批次概览" })).toBeVisible();
+  await expect(historyAnonymousPage.locator(".execution-round-table")).toBeVisible();
+  await expect(historyAnonymousPage.locator(".public-progress-card")).toHaveCount(0);
+  await expect(historyAnonymousPage.locator(".app-shell, .app-sidebar, .topbar")).toHaveCount(0);
   await historyAnonymousContext.close();
   const suiteCell = executionRecordsTable.locator("tbody tr").first().locator("td").nth(1);
   const widthBeforeOutlier = await executionRecordsTable.evaluate((table) => ({
