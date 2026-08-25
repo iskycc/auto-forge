@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { issueTerminalTicket, verifyTerminalTicket } from "./terminal-ticket";
+import {
+  issueTerminalTicket,
+  verifyTerminalTicket,
+  verifyTerminalUpgradeTicket,
+} from "./terminal-ticket";
 
 const secret = "terminal-test-secret-that-is-longer-than-32-bytes";
 const now = new Date("2026-08-09T00:00:00.000Z");
@@ -39,5 +43,24 @@ describe("terminal tickets", () => {
 
     expect(verifyTerminalTicket(secret, `${encoded}x`, now)).toBeNull();
     expect(verifyTerminalTicket(secret, encoded, new Date("2026-08-09T00:00:31.000Z"))).toBeNull();
+  });
+
+  it("accepts an Agent ticket from the WebSocket subprotocol when a proxy removed Authorization", () => {
+    const encoded = issueTerminalTicket(secret, {
+      role: "agent",
+      runnerId: "runner-behind-proxy",
+      ttlSeconds: 90,
+      now,
+    });
+
+    expect(
+      verifyTerminalUpgradeTicket(
+        secret,
+        {
+          "sec-websocket-protocol": `autoforge-runner-terminal-v1, autoforge-ticket.${encoded}`,
+        },
+        now,
+      ),
+    ).toMatchObject({ role: "agent", runnerId: "runner-behind-proxy" });
   });
 });

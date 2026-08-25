@@ -238,6 +238,7 @@ export function RunnerAgentInstaller({
               {profiles.map((profile) => (
                 <option key={profile.id} value={profile.id}>
                   {profile.runnerName} · {profile.username}@{profile.host}:{profile.port}
+                  {profile.runnerId ? ` · Runner ${profile.runnerId.slice(0, 8)}` : " · 待绑定"}
                 </option>
               ))}
             </Select>

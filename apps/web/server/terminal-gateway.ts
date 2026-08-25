@@ -3,7 +3,7 @@ import type { Duplex } from "node:stream";
 
 import { WebSocket, WebSocketServer } from "ws";
 
-import { verifyTerminalTicket, type TerminalTicket } from "../src/lib/terminal-ticket.ts";
+import { verifyTerminalUpgradeTicket, type TerminalTicket } from "../src/lib/terminal-ticket.ts";
 import {
   parseAgentMessage,
   parseBrowserMessage,
@@ -118,20 +118,8 @@ export class TerminalGateway {
   }
 
   private authenticate(request: IncomingMessage): TerminalTicket | null {
-    const authorization = request.headers.authorization ?? "";
-    if (authorization.startsWith("Bearer ")) {
-      const ticket = verifyTerminalTicket(this.secret!, authorization.slice(7).trim());
-      return ticket?.role === "agent" ? ticket : null;
-    }
-    const protocols = String(request.headers["sec-websocket-protocol"] ?? "")
-      .split(",")
-      .map((value) => value.trim());
-    const encodedTicket = protocols
-      .find((value) => value.startsWith("autoforge-ticket."))
-      ?.slice("autoforge-ticket.".length);
-    if (!encodedTicket) return null;
-    const ticket = verifyTerminalTicket(this.secret!, encodedTicket);
-    return ticket?.role === "browser" ? ticket : null;
+    const ticket = verifyTerminalUpgradeTicket(this.secret!, request.headers);
+    return ticket?.role === "browser" || ticket?.role === "agent" ? ticket : null;
   }
 
   private allowUpgrade(remoteAddress: string): boolean {

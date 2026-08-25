@@ -32,6 +32,11 @@ func TestTerminalConnectorBridgesCommandsToPTY(t *testing.T) {
 			writer.WriteHeader(http.StatusUnauthorized)
 			return
 		}
+		if !strings.Contains(request.Header.Get("Sec-WebSocket-Protocol"), "autoforge-ticket.terminal-ticket") {
+			serverResult <- fmt.Errorf("Sec-WebSocket-Protocol = %q", request.Header.Get("Sec-WebSocket-Protocol"))
+			writer.WriteHeader(http.StatusUnauthorized)
+			return
+		}
 		connection, err := websocket.Accept(writer, request, &websocket.AcceptOptions{
 			Subprotocols: []string{"autoforge-runner-terminal-v1"},
 		})

@@ -980,6 +980,63 @@ describe.skipIf(!connectionString)("PostgreSQL platform repositories", () => {
     }
   });
 
+  it("recovers an existing Runner identity without changing its logical id", async () => {
+    const handle = createPostgresDatabase({
+      connectionString: connectionString!,
+      migrationsFolder: resolve(import.meta.dirname, "../drizzle/postgresql"),
+    });
+    const runners = new PostgresRunnerRepository(handle);
+    const runnerId = randomUUID();
+    const now = "2026-08-09T00:00:00.000Z";
+    try {
+      await handle.ready;
+      await runners.register({
+        id: runnerId,
+        bootstrapTokenHash: randomUUID(),
+        credentialHash: `credential-original-${runnerId}`,
+        name: "postgres-runner-before",
+        os: "linux",
+        architecture: "amd64",
+        agentVersion: "1.2.6",
+        protocolVersion: 1,
+        labels: ["before"],
+        capabilities: ["executor:testng-v1"],
+        maxConcurrency: 1,
+        terminalEnabled: false,
+        recordedAt: now,
+      });
+      const recovered = await runners.register({
+        id: runnerId,
+        recoverExistingIdentity: true,
+        bootstrapTokenHash: randomUUID(),
+        credentialHash: `credential-reinstalled-${runnerId}`,
+        name: "postgres-runner-after",
+        os: "linux",
+        architecture: "amd64",
+        agentVersion: "1.2.7",
+        protocolVersion: 1,
+        labels: ["after"],
+        capabilities: ["executor:testng-v1", "runtime:project-assets-v1"],
+        maxConcurrency: 4,
+        terminalEnabled: true,
+        recordedAt: "2026-08-09T00:01:00.000Z",
+      });
+      expect(recovered).toMatchObject({
+        id: runnerId,
+        name: "postgres-runner-after",
+        credentialVersion: 2,
+        terminalEnabled: true,
+        maxConcurrency: 4,
+      });
+      expect(await runners.findByCredentialHash(`credential-original-${runnerId}`, now)).toBeNull();
+      expect(
+        (await runners.findByCredentialHash(`credential-reinstalled-${runnerId}`, now))?.id,
+      ).toBe(runnerId);
+    } finally {
+      await handle.close();
+    }
+  });
+
   it("rotates, revokes and deregisters runner credentials", async () => {
     const handle = createPostgresDatabase({
       connectionString: connectionString!,

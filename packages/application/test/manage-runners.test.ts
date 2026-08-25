@@ -21,6 +21,7 @@ function serviceWith(
     issueBootstrapToken: vi.fn().mockReturnValue("issued-bootstrap-token"),
     hash: vi.fn((value: string) => `hash:${value}`),
     verifyBootstrapToken: vi.fn().mockReturnValue(true),
+    replacementRunnerId: vi.fn().mockReturnValue(undefined),
   };
   const scheduling: RunBatchSchedulingPort = {
     schedule: vi.fn().mockResolvedValue(undefined),
@@ -40,6 +41,41 @@ function serviceWith(
 }
 
 describe("RunnerControlService credentials", () => {
+  it("recovers the existing logical Runner id during an authenticated reinstall", async () => {
+    const register = vi.fn().mockImplementation(async (record) => ({
+      id: record.id,
+      name: record.name,
+      state: "online",
+    }));
+    const { service, credentials } = serviceWith({ register });
+    credentials.replacementRunnerId = vi.fn().mockReturnValue("runner-existing");
+
+    await expect(
+      service.register("reinstall-bootstrap", {
+        schemaVersion: 1,
+        name: "runner-a",
+        os: "linux",
+        architecture: "amd64",
+        agentVersion: "1.2.7",
+        protocolVersion: 1,
+        labels: ["linux"],
+        capabilities: ["executor:testng-v1"],
+        maxConcurrency: 2,
+        terminalEnabled: true,
+      }),
+    ).resolves.toMatchObject({
+      runner: { id: "runner-existing" },
+      result: { runnerId: "runner-existing" },
+    });
+    expect(register).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: "runner-existing",
+        recoverExistingIdentity: true,
+        credentialHash: "hash:issued-credential",
+      }),
+    );
+  });
+
   it("tells a re-enabled runner to resume assignment claims", async () => {
     const { service } = serviceWith({
       findByCredentialHash: vi.fn().mockResolvedValue({

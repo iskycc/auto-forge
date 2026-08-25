@@ -16,6 +16,7 @@ func TestLoadFileReadsVersionedPrivateConfiguration(t *testing.T) {
   "labels": ["linux", "internal"],
   "maxConcurrency": 3,
   "bootstrapToken": "one-time-token",
+  "recoverIdentity": true,
   "terminal": {"enabled": false}
 }`
 	if err := os.WriteFile(configurationPath, []byte(configuration), 0o600); err != nil {
@@ -29,7 +30,7 @@ func TestLoadFileReadsVersionedPrivateConfiguration(t *testing.T) {
 	if loaded.Name != "runner-west-1" || loaded.MaxConcurrent != 3 {
 		t.Fatalf("loaded = %#v", loaded)
 	}
-	if !loaded.HasBootstrap || len(loaded.Labels) != 2 {
+	if !loaded.HasBootstrap || !loaded.RecoverIdentity || len(loaded.Labels) != 2 {
 		t.Fatalf("loaded bootstrap/labels = %#v", loaded)
 	}
 }
@@ -61,7 +62,8 @@ func TestConsumeBootstrapTokenAtomicallyRemovesSecret(t *testing.T) {
 	configuration := `{
   "schemaVersion": 1,
   "serverUrl": "https://autoforge.internal",
-  "bootstrapToken": "one-time-token"
+  "bootstrapToken": "one-time-token",
+  "recoverIdentity": true
 }`
 	if err := os.WriteFile(configurationPath, []byte(configuration), 0o600); err != nil {
 		t.Fatal(err)
@@ -73,7 +75,7 @@ func TestConsumeBootstrapTokenAtomicallyRemovesSecret(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if loaded.HasBootstrap || loaded.BootstrapToken != "" {
+	if loaded.HasBootstrap || loaded.BootstrapToken != "" || loaded.RecoverIdentity {
 		t.Fatalf("bootstrap token was not removed: %#v", loaded)
 	}
 	info, err := os.Stat(configurationPath)

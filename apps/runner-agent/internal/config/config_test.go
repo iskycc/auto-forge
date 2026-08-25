@@ -129,6 +129,16 @@ func TestLoadEnablesTerminalWithBoundedPolicy(t *testing.T) {
 	}
 }
 
+func TestLoadRequiresBootstrapTokenForIdentityRecovery(t *testing.T) {
+	_, err := Load(mapLookup(map[string]string{
+		"AUTOFORGE_SERVER_URL":             "https://autoforge.internal",
+		"AUTOFORGE_AGENT_RECOVER_IDENTITY": "true",
+	}))
+	if err == nil || !strings.Contains(err.Error(), "requires a bootstrap token") {
+		t.Fatalf("Load() error = %v", err)
+	}
+}
+
 func TestLoadUsesBashAsTheDefaultTerminalShell(t *testing.T) {
 	loaded, err := Load(mapLookup(map[string]string{
 		"AUTOFORGE_SERVER_URL": "https://autoforge.internal",

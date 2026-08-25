@@ -479,13 +479,9 @@ func linkSharedRegularTree(sourceRoot, destinationRoot string) error {
 // 既有孤儿，后者清理本轮刚删除状态的目录。批次目录不能在重启时直接删除：同一
 // 批次可能仍有待派发用例；恢复为 idle 后再由控制面确认是否可回收。
 func (supervisor *attemptSupervisor) cleanOrphanedWorkspaces() error {
-	states, err := supervisor.store.list()
+	known, err := supervisor.store.identifiers()
 	if err != nil {
 		return fmt.Errorf("load local attempts for workspace cleanup: %w", err)
-	}
-	known := make(map[string]struct{}, len(states))
-	for _, state := range states {
-		known[state.Claimed.Assignment.AttemptID] = struct{}{}
 	}
 	workRoot := filepath.Join(supervisor.configuration.DataDirectory, "work")
 	entries, err := os.ReadDir(workRoot)

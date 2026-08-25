@@ -91,6 +91,28 @@ export function verifyTerminalTicket(
   }
 }
 
+export function verifyTerminalUpgradeTicket(
+  secret: string,
+  headers: {
+    authorization?: string | string[] | undefined;
+    "sec-websocket-protocol"?: string | string[] | undefined;
+  },
+  now = new Date(),
+): TerminalTicket | null {
+  const authorization = firstHeaderValue(headers.authorization) ?? "";
+  if (authorization.startsWith("Bearer ")) {
+    const ticket = verifyTerminalTicket(secret, authorization.slice(7).trim(), now);
+    if (ticket?.role === "agent") return ticket;
+  }
+  const protocols = headerValues(headers["sec-websocket-protocol"])
+    .flatMap((value) => value.split(","))
+    .map((value) => value.trim());
+  const encodedTicket = protocols
+    .find((value) => value.startsWith("autoforge-ticket."))
+    ?.slice("autoforge-ticket.".length);
+  return encodedTicket ? verifyTerminalTicket(secret, encodedTicket, now) : null;
+}
+
 function isTerminalTicket(value: unknown): value is TerminalTicket {
   if (!value || typeof value !== "object") return false;
   const candidate = value as Record<string, unknown>;
@@ -129,6 +151,15 @@ function validTerminalSize(columns: unknown, rows: unknown): columns is number {
     Number(rows) >= 5 &&
     Number(rows) <= 200
   );
+}
+
+function headerValues(value: string | string[] | undefined): string[] {
+  if (Array.isArray(value)) return value;
+  return value ? [value] : [];
+}
+
+function firstHeaderValue(value: string | string[] | undefined): string | undefined {
+  return headerValues(value)[0];
 }
 
 function signature(secret: string, payload: string): string {

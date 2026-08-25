@@ -4,6 +4,43 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## 1.3.0 - 2026-08-25
+
+### Fixed
+
+- Saved-profile Agent reinstalls now recover the existing logical Runner identity when the durable
+  identity file is missing or corrupt. Suites, Runner groups and queued batches therefore remain
+  bound to the same Runner id instead of waiting forever on an abandoned identity.
+- Agent startup no longer aborts when more than 256 unfinished attempt records have accumulated.
+  Recovery sends protocol-sized pages and only starts claims after every page has been reconciled.
+- Restart recovery maps the Agent-only `uploading` phase to the protocol-v1 `finishing` phase. A
+  restart during artifact upload no longer leaves systemd repeatedly starting an Agent that appears
+  online from its initial heartbeat but never claims assignments.
+- Terminal-enabled Agents obtain their direct WebSocket ticket before potentially long spool recovery,
+  so the terminal channel can become ready while reconciliation is still running.
+- Agent terminal WebSocket authentication now carries its signed short-lived ticket in both the
+  authorization header and a secondary WebSocket subprotocol, allowing operation through proxies
+  that strip authorization headers from Upgrade requests.
+
+### Tests
+
+- Added Lite and PostgreSQL identity-recovery repository coverage, corrupt-identity Agent coverage,
+  proxy-stripped terminal authentication coverage, and a real SSH/systemd reinstall assertion that
+  the Runner id is preserved.
+- Added an Agent restart regression with 257 persisted upload-phase attempts; it verifies 256+1
+  reconcile requests, protocol-compatible state mapping, local cleanup and subsequent claim polling.
+
+### Database
+
+- No schema migration. Existing Runner rows, suite bindings and persisted Agent configuration remain
+  compatible.
+
+### Compatibility
+
+- Runner Protocol v1, Jenkins Pipeline contracts and Docker-native release archive formats are
+  unchanged. Targeted reinstall tokens and `recoverIdentity` are consumed only by the new Agent
+  installation flow; ordinary registration and existing Agent configuration remain compatible.
+
 ## 1.2.6 - 2026-08-25
 
 ### Fixed

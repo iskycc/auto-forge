@@ -31,6 +31,7 @@ type Config struct {
 	CAFile            string
 	BootstrapToken    string
 	HasBootstrap      bool
+	RecoverIdentity   bool
 	Toolchain         ToolchainConfig
 	Adapter           AdapterConfig
 	Container         ContainerConfig
@@ -183,6 +184,13 @@ func Load(lookup LookupEnvironment) (Config, error) {
 	}
 
 	bootstrapToken := environmentValue(lookup, "AUTOFORGE_AGENT_BOOTSTRAP_TOKEN")
+	recoverIdentity, err := optionalBoolean(environmentValue(lookup, "AUTOFORGE_AGENT_RECOVER_IDENTITY"))
+	if err != nil {
+		return Config{}, fmt.Errorf("AUTOFORGE_AGENT_RECOVER_IDENTITY is invalid: %w", err)
+	}
+	if recoverIdentity && bootstrapToken == "" {
+		return Config{}, errors.New("AUTOFORGE_AGENT_RECOVER_IDENTITY requires a bootstrap token")
+	}
 	toolchain, err := toolchainConfig(lookup)
 	if err != nil {
 		return Config{}, err
@@ -212,21 +220,22 @@ func Load(lookup LookupEnvironment) (Config, error) {
 		return Config{}, err
 	}
 	return Config{
-		ServerURL:      serverURL,
-		DataDirectory:  dataDirectory,
-		Name:           name,
-		Labels:         labels(environmentValue(lookup, "AUTOFORGE_AGENT_LABELS")),
-		MaxConcurrent:  maxConcurrent,
-		CAFile:         caFile,
-		BootstrapToken: bootstrapToken,
-		HasBootstrap:   bootstrapToken != "",
-		Toolchain:      toolchain,
-		Adapter:        adapter,
-		Container:      container,
-		Claim:          claim,
-		Spool:          spool,
-		Resources:      resources,
-		Terminal:       terminal,
+		ServerURL:       serverURL,
+		DataDirectory:   dataDirectory,
+		Name:            name,
+		Labels:          labels(environmentValue(lookup, "AUTOFORGE_AGENT_LABELS")),
+		MaxConcurrent:   maxConcurrent,
+		CAFile:          caFile,
+		BootstrapToken:  bootstrapToken,
+		HasBootstrap:    bootstrapToken != "",
+		RecoverIdentity: recoverIdentity,
+		Toolchain:       toolchain,
+		Adapter:         adapter,
+		Container:       container,
+		Claim:           claim,
+		Spool:           spool,
+		Resources:       resources,
+		Terminal:        terminal,
 	}, nil
 }
 

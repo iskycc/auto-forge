@@ -35,7 +35,12 @@ func Run(ctx context.Context, configuration config.Config, info buildinfo.Info, 
 	}
 	defer client.Close()
 	store := NewIdentityStore(configuration.DataDirectory)
-	identity, exists, err := store.Load()
+	identity, exists, err := loadIdentityForStart(
+		store,
+		configuration.BootstrapToken,
+		configuration.RecoverIdentity,
+		diagnostics,
+	)
 	if err != nil {
 		return err
 	}
@@ -59,6 +64,7 @@ func Run(ctx context.Context, configuration config.Config, info buildinfo.Info, 
 		}
 		configuration.BootstrapToken = ""
 		configuration.HasBootstrap = false
+		configuration.RecoverIdentity = false
 		fmt.Fprintf(diagnostics, "runner registered: %s\n", identity.RunnerID)
 	} else if identity.ServerURL != configuration.ServerURL.String() {
 		return errors.New("stored runner identity belongs to a different control-plane URL")
@@ -77,6 +83,7 @@ func Run(ctx context.Context, configuration config.Config, info buildinfo.Info, 
 			}
 			configuration.BootstrapToken = ""
 			configuration.HasBootstrap = false
+			configuration.RecoverIdentity = false
 		}
 	}
 
@@ -94,6 +101,28 @@ func Run(ctx context.Context, configuration config.Config, info buildinfo.Info, 
 	}
 	resourceCollector := metrics.NewCollector()
 	supervisor := newAttemptSupervisor(client, identity, configuration, diagnostics)
+	// Startup reconciliation intentionally completes before assignment claims,
+	// but it can take longer when a previous large run left upload state behind.
+	// Obtain the terminal ticket before that recovery so an otherwise-live Agent
+	// does not present a misleading "channel not ready" state during the scan.
+	if terminalConnector != nil {
+		response, heartbeatErr := client.Heartbeat(
+			ctx,
+			identity,
+			configuration,
+			info,
+			0,
+			nil,
+			nil,
+		)
+		if heartbeatErr != nil {
+			fmt.Fprintf(diagnostics, "terminal startup heartbeat failed: %v\n", heartbeatErr)
+		} else {
+			interval = heartbeatInterval(response.HeartbeatIntervalSecond)
+			terminalConnector.UpdateToken(response.TerminalConnectionToken)
+			supervisor.SetDraining(response.Draining)
+		}
+	}
 	if err := supervisor.Start(ctx); err != nil {
 		return fmt.Errorf("start assignment supervisor: %w", err)
 	}
@@ -157,6 +186,36 @@ func Run(ctx context.Context, configuration config.Config, info buildinfo.Info, 
 		case <-timer.C:
 		}
 	}
+}
+
+func loadIdentityForStart(
+	store IdentityStore,
+	bootstrapToken string,
+	recoverIdentity bool,
+	diagnostics io.Writer,
+) (Identity, bool, error) {
+	identity, exists, err := store.Load()
+	if err == nil && !recoverIdentity {
+		return identity, exists, nil
+	}
+	// An authenticated SSH reinstall supplies a fresh one-time bootstrap token.
+	// A requested recovery must replace even a valid but wrong identity; an unreadable
+	// identity must not permanently brick an otherwise healthy service.
+	if bootstrapToken == "" {
+		if err != nil {
+			return Identity{}, false, err
+		}
+		return Identity{}, false, errors.New("runner identity recovery requires a bootstrap token")
+	}
+	if err != nil {
+		fmt.Fprintf(diagnostics, "stored runner identity is unreadable and will be recovered: %v\n", err)
+	} else if exists {
+		fmt.Fprintln(diagnostics, "stored runner identity will be replaced by the requested reinstall")
+	}
+	if removeErr := store.Remove(); removeErr != nil {
+		return Identity{}, false, errors.Join(err, removeErr)
+	}
+	return Identity{}, false, nil
 }
 
 // ensureIdentityAccepted verifies that the control plane still accepts the

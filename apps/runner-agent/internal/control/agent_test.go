@@ -6,11 +6,53 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
 	"github.com/iskycc/auto-forge/apps/runner-agent/internal/buildinfo"
 )
+
+func TestLoadIdentityForStartRecoversUnreadableIdentityDuringReinstall(t *testing.T) {
+	store := NewIdentityStore(t.TempDir())
+	identity := Identity{SchemaVersion: identitySchemaVersion, RunnerID: "runner-existing", Credential: "credential", ServerURL: "https://autoforge.internal"}
+	if err := store.Save(identity); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(store.path, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var diagnostics strings.Builder
+	_, exists, err := loadIdentityForStart(store, "fresh-bootstrap-token", false, &diagnostics)
+	if err != nil || exists {
+		t.Fatalf("loadIdentityForStart() = exists=%v err=%v", exists, err)
+	}
+	if !strings.Contains(diagnostics.String(), "will be recovered") {
+		t.Fatalf("diagnostics = %q", diagnostics.String())
+	}
+	if _, statErr := os.Stat(store.path); !os.IsNotExist(statErr) {
+		t.Fatalf("corrupt identity still exists: %v", statErr)
+	}
+}
+
+func TestLoadIdentityForStartReplacesAValidIdentityWhenReinstallRequestsRecovery(t *testing.T) {
+	store := NewIdentityStore(t.TempDir())
+	identity := Identity{SchemaVersion: identitySchemaVersion, RunnerID: "runner-wrong", Credential: "credential", ServerURL: "https://autoforge.internal"}
+	if err := store.Save(identity); err != nil {
+		t.Fatal(err)
+	}
+	var diagnostics strings.Builder
+	_, exists, err := loadIdentityForStart(store, "targeted-bootstrap-token", true, &diagnostics)
+	if err != nil || exists {
+		t.Fatalf("loadIdentityForStart() = exists=%v err=%v", exists, err)
+	}
+	if !strings.Contains(diagnostics.String(), "will be replaced") {
+		t.Fatalf("diagnostics = %q", diagnostics.String())
+	}
+	if _, statErr := os.Stat(store.path); !os.IsNotExist(statErr) {
+		t.Fatalf("previous identity still exists: %v", statErr)
+	}
+}
 
 func TestEnsureIdentityAcceptedKeepsValidIdentity(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {

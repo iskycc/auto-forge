@@ -80,7 +80,11 @@ import { MemoryRequestLimiter, RedisRequestLimiter, type RequestLimiter } from "
 import { natsReconnectOptions, redisReconnectDelay } from "./resilient-connections";
 import { RunnerAgentInstaller } from "./runner-agent-installer";
 import { RunnerAgentResourceStore } from "./runner-agent-resources";
-import { issueRunnerBootstrapToken, verifyRunnerBootstrapToken } from "./runner-bootstrap-token";
+import {
+  issueRunnerBootstrapToken,
+  replacementRunnerIdFromBootstrapToken,
+  verifyRunnerBootstrapToken,
+} from "./runner-bootstrap-token";
 import { AesGcmSecretCipher } from "./secret-cipher";
 import {
   CoalescingSchedulingPort,
@@ -321,11 +325,14 @@ async function createPlatformServices() {
   );
   const runnerCredentials = {
     issue: () => randomBytes(32).toString("base64url"),
-    issueBootstrapToken: () => issueRunnerBootstrapToken(config.masterKey, clock.now()),
+    issueBootstrapToken: (replacementRunnerId?: string) =>
+      issueRunnerBootstrapToken(config.masterKey, clock.now(), replacementRunnerId),
     hash: (value: string) => createHash("sha256").update(value).digest("hex"),
     verifyBootstrapToken: (value: string) =>
       secureEqual(value, config.runnerBootstrapToken ?? "") ||
       verifyRunnerBootstrapToken(value, config.masterKey, clock.now()),
+    replacementRunnerId: (value: string) =>
+      replacementRunnerIdFromBootstrapToken(value, config.masterKey, clock.now()),
   };
   const runnerGroups = new RunnerGroupService(runnerGroupsRepository, runners, clock, ids);
   const runBatches = new RunBatchSchedulingService(
@@ -533,7 +540,8 @@ async function createPlatformServices() {
   const runnerAgentInstaller = new RunnerAgentInstaller({
     resources: runnerAgentResources,
     controlPlaneUrl: () => configurationStore.read().web.publicBaseUrl,
-    issueBootstrapToken: () => runnerControl.issueBootstrapToken(),
+    issueBootstrapToken: (replacementRunnerId?: string) =>
+      runnerControl.issueBootstrapToken(replacementRunnerId),
   });
 
   return {

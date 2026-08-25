@@ -167,6 +167,9 @@ async function verifyInstalledSystemdService(): Promise<void> {
 
 async function exerciseOfflineUpgradeAndRollback(page: Page, runnerId: string): Promise<void> {
   const before = await installedConfigurationDigest("/etc/autoforge-agent/config.json");
+  const identityBeforeReinstall = await installedConfigurationDigest(
+    "/var/lib/autoforge-agent/identity/credentials.json",
+  );
   await page.goto("/runners");
   const savedConnections = page.getByLabel("已保存连接");
   await expect(savedConnections).toBeVisible();
@@ -183,11 +186,18 @@ async function exerciseOfflineUpgradeAndRollback(page: Page, runnerId: string): 
   await page.getByLabel("标签（逗号分隔）").fill("linux,ssh-e2e,reinstalled");
   await page.getByLabel("最大并发").fill("2");
   await page.getByLabel("我已通过可信渠道核对并确认上述 SSH 主机指纹").check();
+  // A saved-profile reinstall deliberately rotates the durable identity while
+  // recovering the same logical Runner id. This also repairs a host that had
+  // already registered a replacement id before this fix.
   await page.getByRole("button", { name: "按上述配置重新安装 Agent" }).click();
   await expect(page.getByRole("status").filter({ hasText: "服务已启动" })).toContainText("Agent", {
     timeout: 120_000,
   });
   await verifyInstalledSystemdService();
+  expect(await waitForRegisteredRunner(page, "SSH Installed Runner")).toBe(runnerId);
+  expect(
+    await installedConfigurationDigest("/var/lib/autoforge-agent/identity/credentials.json"),
+  ).not.toBe(identityBeforeReinstall);
   await expect
     .poll(() => runnerRuntimeState(page, runnerId), {
       message: "使用已保存连接重新安装后必须保留终端与执行能力",

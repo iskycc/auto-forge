@@ -2293,6 +2293,40 @@ export class PostgresRunnerRepository implements RunnerRepository {
         .onConflictDoNothing()
         .returning({ tokenHash: pgRunnerBootstrapUses.tokenHash });
       if (used.length === 0) return null;
+      if (record.recoverExistingIdentity) {
+        const [recovered] = await transaction
+          .update(pgRunners)
+          .set({
+            credentialHash: record.credentialHash,
+            credentialVersion: sql`${pgRunners.credentialVersion} + 1`,
+            credentialRevokedAt: null,
+            credentialRotationRequestedAt: null,
+            previousCredentialHash: null,
+            previousCredentialValidUntil: null,
+            name: record.name,
+            os: record.os,
+            architecture: record.architecture,
+            agentVersion: record.agentVersion,
+            protocolVersion: record.protocolVersion,
+            labelsJson: JSON.stringify(record.labels),
+            capabilitiesJson: JSON.stringify(record.capabilities),
+            maxConcurrency: record.maxConcurrency,
+            busySlots: 0,
+            lastSeenAt: record.recordedAt,
+            terminalEnabled: record.terminalEnabled,
+            updatedAt: record.recordedAt,
+          })
+          .where(
+            and(
+              eq(pgRunners.id, record.id),
+              isNull(pgRunners.credentialRevokedAt),
+              isNull(pgRunners.deregisteredAt),
+              isNull(pgRunners.purgedAt),
+            ),
+          )
+          .returning();
+        return recovered ? mapStoredRunner(recovered) : null;
+      }
       const [row] = await transaction
         .insert(pgRunners)
         .values({

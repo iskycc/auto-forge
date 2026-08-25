@@ -17,6 +17,41 @@ export class SqliteRunnerRepository implements RunnerRepository {
         .onConflictDoNothing()
         .run();
       if (use.changes === 0) return null;
+      if (record.recoverExistingIdentity) {
+        const recovered = this.handle.db
+          .update(runners)
+          .set({
+            credentialHash: record.credentialHash,
+            credentialVersion: sql`${runners.credentialVersion} + 1`,
+            credentialRevokedAt: null,
+            credentialRotationRequestedAt: null,
+            previousCredentialHash: null,
+            previousCredentialValidUntil: null,
+            name: record.name,
+            os: record.os,
+            architecture: record.architecture,
+            agentVersion: record.agentVersion,
+            protocolVersion: record.protocolVersion,
+            labelsJson: JSON.stringify(record.labels),
+            capabilitiesJson: JSON.stringify(record.capabilities),
+            maxConcurrency: record.maxConcurrency,
+            busySlots: 0,
+            lastSeenAt: record.recordedAt,
+            terminalEnabled: record.terminalEnabled,
+            updatedAt: record.recordedAt,
+          })
+          .where(
+            and(
+              eq(runners.id, record.id),
+              isNull(runners.credentialRevokedAt),
+              isNull(runners.deregisteredAt),
+              isNull(runners.purgedAt),
+            ),
+          )
+          .returning()
+          .get();
+        return recovered ? mapStoredRunner(recovered) : null;
+      }
       const row = this.handle.db
         .insert(runners)
         .values({

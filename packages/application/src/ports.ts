@@ -1109,6 +1109,8 @@ export type CopyCaseSuiteRecord = {
 
 export type RegisterRunnerRecord = {
   id: string;
+  /** Rebind a reinstall to an existing, non-revoked Runner identity. */
+  recoverExistingIdentity?: boolean;
   bootstrapTokenHash: string;
   credentialHash: string;
   name: string;
@@ -1219,9 +1221,10 @@ export type IdGenerator = {
 
 export interface RunnerCredentialPort {
   issue(): string;
-  issueBootstrapToken(): string;
+  issueBootstrapToken(replacementRunnerId?: string): string;
   hash(value: string): string;
   verifyBootstrapToken(value: string): boolean;
+  replacementRunnerId?(value: string): string | undefined;
 }
 
 export type ClaimedJob = {

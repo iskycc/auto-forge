@@ -44,7 +44,7 @@ type ConnectedHost = {
 type InstallerDependencies = {
   resources: RunnerAgentResourceStore;
   controlPlaneUrl(): string | undefined;
-  issueBootstrapToken(): string;
+  issueBootstrapToken(replacementRunnerId?: string): string;
 };
 
 export class RunnerAgentInstaller {
@@ -58,7 +58,10 @@ export class RunnerAgentInstaller {
     return this.inspectHost(connection, expectedHostKeySha256, installationMode);
   }
 
-  async install(input: InstallRunnerAgentInput): Promise<RunnerAgentInstallationResult> {
+  async install(
+    input: InstallRunnerAgentInput,
+    replacementRunnerId?: string,
+  ): Promise<RunnerAgentInstallationResult> {
     const controlPlaneUrl = normalizeRunnerControlPlaneUrl(this.dependencies.controlPlaneUrl());
     const dataDirectory = resolveRunnerDataDirectory(input.dataDirectory);
     const probe = await this.inspectHost(
@@ -78,7 +81,8 @@ export class RunnerAgentInstaller {
         resources,
         controlPlaneUrl,
         dataDirectory,
-        bootstrapToken: this.dependencies.issueBootstrapToken(),
+        bootstrapToken: this.dependencies.issueBootstrapToken(replacementRunnerId),
+        recoverIdentity: Boolean(replacementRunnerId),
         temporaryDirectory,
       });
       try {
@@ -746,6 +750,7 @@ export function installationFiles(input: {
   controlPlaneUrl: string;
   dataDirectory: string;
   bootstrapToken: string;
+  recoverIdentity: boolean;
   temporaryDirectory: string;
 }): InstallationFile[] {
   const configuration = Buffer.from(
@@ -759,6 +764,7 @@ export function installationFiles(input: {
         maxConcurrency: input.input.maxConcurrency,
         ...(input.input.caCertificatePem ? { caFile: REMOTE_CA_PATH } : {}),
         bootstrapToken: input.bootstrapToken,
+        ...(input.recoverIdentity ? { recoverIdentity: true } : {}),
         resources: input.probe.cgroupV2Available
           ? { cgroupRoot: "/sys/fs/cgroup/system.slice/autoforge-agent.service" }
           : {},

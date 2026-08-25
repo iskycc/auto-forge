@@ -28,10 +28,21 @@ export async function POST(request: Request): Promise<NextResponse> {
       ),
     );
     let input: InstallRunnerAgentInput;
+    let replacementRunnerId: string | undefined;
     if ("profileId" in requestInput) {
       const stored = await services.runnerInstallationProfiles.connectionByProfileId(
         requestInput.profileId,
       );
+      if (stored.profile.runnerId) {
+        const linkedRunner = await services.runnerControl.get(stored.profile.runnerId);
+        if (
+          !linkedRunner.credentialRevokedAt &&
+          !linkedRunner.deregisteredAt &&
+          !linkedRunner.purgedAt
+        ) {
+          replacementRunnerId = linkedRunner.id;
+        }
+      }
       input = {
         connection: stored.connection,
         expectedHostKeySha256: requestInput.expectedHostKeySha256,
@@ -51,7 +62,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     } else {
       input = requestInput;
     }
-    const installed = await services.runnerAgentInstaller.install(input);
+    const installed = await services.runnerAgentInstaller.install(input, replacementRunnerId);
     // Agent 可能在 systemd 健康检查完成前已经注册；此时直接绑定。若仍未注册，
     // 先保存为 pending，注册入口会按名称补绑，覆盖两种时序。
     const registeredRunner = (await services.runnerControl.list(500)).find(

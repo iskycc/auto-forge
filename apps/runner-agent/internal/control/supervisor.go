@@ -24,8 +24,10 @@ import (
 var sha256Pattern = regexp.MustCompile(`^[a-f0-9]{64}$`)
 
 const (
-	liveLogUploadInterval = 500 * time.Millisecond
-	drainPollInterval     = 500 * time.Millisecond
+	liveLogUploadInterval        = 500 * time.Millisecond
+	drainPollInterval            = 500 * time.Millisecond
+	maximumReconcileAttempts     = 256
+	reconcileUploadingLocalState = "finishing"
 )
 
 type attemptSupervisor struct {
@@ -863,18 +865,28 @@ func (supervisor *attemptSupervisor) reportCompletion(ctx context.Context, state
 }
 
 func (supervisor *attemptSupervisor) reconcile(ctx context.Context) error {
-	states, err := supervisor.store.list()
-	if err != nil {
-		return fmt.Errorf("load local attempts for reconciliation: %w", err)
+	if err := supervisor.store.visitPages(maximumReconcileAttempts, func(states []attemptState) error {
+		return supervisor.reconcilePage(ctx, states)
+	}); err != nil {
+		return fmt.Errorf("reconcile local attempts: %w", err)
 	}
-	if len(states) == 0 {
-		return nil
-	}
+	return nil
+}
+
+func (supervisor *attemptSupervisor) reconcilePage(ctx context.Context, states []attemptState) error {
 	attempts := make([]localAttempt, 0, len(states))
 	stateByID := make(map[string]attemptState, len(states))
 	for _, state := range states {
 		attemptID := state.Claimed.Assignment.AttemptID
-		attempts = append(attempts, localAttempt{AttemptID: attemptID, LeaseID: state.Claimed.Lease.LeaseID, LeaseVersion: state.Claimed.Lease.Version, LocalState: state.LocalState})
+		localState := state.LocalState
+		// "uploading" is an Agent persistence detail that predates the v1
+		// reconcile contract. Report it as the equivalent terminal recovery phase
+		// so a restart during artifact upload is accepted by both old and new
+		// control planes instead of trapping the Agent in a restart loop.
+		if localState == "uploading" {
+			localState = reconcileUploadingLocalState
+		}
+		attempts = append(attempts, localAttempt{AttemptID: attemptID, LeaseID: state.Claimed.Lease.LeaseID, LeaseVersion: state.Claimed.Lease.Version, LocalState: localState})
 		stateByID[attemptID] = state
 	}
 	response, err := supervisor.client.Reconcile(ctx, supervisor.currentIdentity(), attempts)

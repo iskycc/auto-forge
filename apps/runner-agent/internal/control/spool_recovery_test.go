@@ -7,16 +7,129 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/iskycc/auto-forge/apps/runner-agent/internal/config"
 )
+
+func TestSupervisorStartsAfterReconcilingMoreThanOneProtocolPage(t *testing.T) {
+	var reconcileMutex sync.Mutex
+	reconcilePageSizes := make([]int, 0, 2)
+	claimed := make(chan struct{}, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		switch request.URL.Path {
+		case "/api/v1/runner-agents/runner-1/reconcile":
+			var reconciliation reconcileRequest
+			if err := json.NewDecoder(request.Body).Decode(&reconciliation); err != nil {
+				http.Error(writer, err.Error(), http.StatusBadRequest)
+				return
+			}
+			if len(reconciliation.Attempts) == 0 || len(reconciliation.Attempts) > maximumReconcileAttempts {
+				t.Errorf("reconcile page contains %d attempts", len(reconciliation.Attempts))
+			}
+			decisions := make([]ReconcileDecision, 0, len(reconciliation.Attempts))
+			for _, attempt := range reconciliation.Attempts {
+				if attempt.LocalState != reconcileUploadingLocalState {
+					t.Errorf("reconcile local state = %q, want %q", attempt.LocalState, reconcileUploadingLocalState)
+				}
+				decisions = append(decisions, ReconcileDecision{AttemptID: attempt.AttemptID, Action: "clean"})
+			}
+			reconcileMutex.Lock()
+			reconcilePageSizes = append(reconcilePageSizes, len(reconciliation.Attempts))
+			reconcileMutex.Unlock()
+			_ = json.NewEncoder(writer).Encode(ReconcileResponse{SchemaVersion: 1, Decisions: decisions})
+		case "/api/v1/runner-agents/runner-1/claims":
+			var claim claimRequest
+			if err := json.NewDecoder(request.Body).Decode(&claim); err != nil {
+				http.Error(writer, err.Error(), http.StatusBadRequest)
+				return
+			}
+			select {
+			case claimed <- struct{}{}:
+			default:
+			}
+			_ = json.NewEncoder(writer).Encode(ClaimResponse{
+				SchemaVersion: 1,
+				RequestID:     claim.RequestID,
+				RetryAfterMs:  100,
+			})
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+
+	configuration := config.Config{
+		ServerURL:     mustParseURL(t, server.URL),
+		DataDirectory: t.TempDir(),
+		MaxConcurrent: 1,
+		Spool:         config.SpoolConfig{MaximumBytes: 8 << 20, Retention: time.Hour},
+		Toolchain: config.ToolchainConfig{
+			JavaExecutable: "/bin/true",
+			Classpath:      []string{"testng.jar"},
+		},
+	}
+	client, err := NewClient(configuration)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	supervisor := newAttemptSupervisor(
+		client,
+		Identity{RunnerID: "runner-1", Credential: "runner-credential-with-more-than-32-bytes"},
+		configuration,
+		io.Discard,
+	)
+	for index := 0; index <= maximumReconcileAttempts; index++ {
+		attemptID := fmt.Sprintf("attempt-%03d", index)
+		if err := supervisor.store.save(attemptState{
+			SchemaVersion: attemptStateSchemaVersion,
+			LocalState:    "uploading",
+			Claimed: ClaimedAssignment{
+				Assignment: Assignment{AttemptID: attemptID},
+				Lease:      Lease{LeaseID: fmt.Sprintf("lease-%03d", index)},
+			},
+		}); err != nil {
+			t.Fatalf("save state %s: %v", attemptID, err)
+		}
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	if err := supervisor.Start(ctx); err != nil {
+		cancel()
+		t.Fatalf("Start() error = %v", err)
+	}
+	select {
+	case <-claimed:
+	case <-time.After(3 * time.Second):
+		cancel()
+		supervisor.Close()
+		t.Fatal("assignment claiming did not start after paged reconciliation")
+	}
+	cancel()
+	supervisor.Close()
+
+	reconcileMutex.Lock()
+	pageSizes := append([]int(nil), reconcilePageSizes...)
+	reconcileMutex.Unlock()
+	if len(pageSizes) != 2 || pageSizes[0] != maximumReconcileAttempts || pageSizes[1] != 1 {
+		t.Fatalf("reconcile page sizes = %v, want [%d 1]", pageSizes, maximumReconcileAttempts)
+	}
+	states, err := supervisor.store.list()
+	if err != nil || len(states) != 0 {
+		t.Fatalf("remaining states = %d, error = %v", len(states), err)
+	}
+}
 
 func TestArtifactSpoolSharesQuotaAndRemovesConfirmedPayload(t *testing.T) {
 	dataDirectory := t.TempDir()

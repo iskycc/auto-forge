@@ -54,7 +54,11 @@ location /api/v1/terminal-stream {
 }
 ```
 
-浏览器连接执行严格同源校验。反向代理应覆盖而不是透传客户端伪造的 `X-Forwarded-Host` 和 `X-Forwarded-Proto`。访问日志必须隐藏 `Authorization` 与 `Sec-WebSocket-Protocol`，后者包含短时浏览器票据。
+浏览器连接执行严格同源校验。Agent 的短时票据同时放在 `Authorization` 和 WebSocket 子协议中，
+以兼容会移除 Upgrade 请求认证头的企业代理；两条通道使用同一份签名、有效期和一次性 nonce，
+不是长期凭据降级。反向代理应覆盖而不是透传客户端伪造的 `X-Forwarded-Host` 和
+`X-Forwarded-Proto`。访问日志必须同时隐藏 `Authorization` 与 `Sec-WebSocket-Protocol`，后者也
+包含短时票据。
 
 当前单进程 Lite 和单副本 Full 可直接使用。Full 多 Web 副本部署终端时，负载均衡器必须让同一 Runner 通道和对应浏览器会话落到同一控制面实例；任务与心跳 API 不需要这项亲和。后续如通过 NATS 实现跨实例终端中继，应先新增协议与威胁模型 ADR。
 

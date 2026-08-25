@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strings"
 )
 
 const (
@@ -122,63 +123,117 @@ func (store attemptStore) save(state attemptState) error {
 }
 
 func (store attemptStore) list() ([]attemptState, error) {
+	states := make([]attemptState, 0)
+	if err := store.visitPages(maximumReconcileAttempts, func(page []attemptState) error {
+		states = append(states, page...)
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	return states, nil
+}
+
+// visitPages snapshots only directory entries, then decodes attempt payloads in
+// bounded pages. A Runner can accumulate more than one protocol request worth
+// of recoverable states when completion uploads are unavailable; startup must
+// reconcile those pages instead of refusing to start after an arbitrary count.
+func (store attemptStore) visitPages(pageSize int, visit func([]attemptState) error) error {
+	if pageSize < 1 {
+		return errors.New("attempt spool page size must be positive")
+	}
 	entries, err := os.ReadDir(store.directory)
 	if errors.Is(err, os.ErrNotExist) {
-		return nil, nil
+		return nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("read attempt spool: %w", err)
-	}
-	if len(entries) > 256 {
-		return nil, errors.New("attempt spool exceeds 256 entries")
+		return fmt.Errorf("read attempt spool: %w", err)
 	}
 	sort.Slice(entries, func(left, right int) bool { return entries[left].Name() < entries[right].Name() })
-	states := make([]attemptState, 0, len(entries))
+	for offset := 0; offset < len(entries); {
+		states := make([]attemptState, 0, pageSize)
+		for offset < len(entries) && len(states) < pageSize {
+			entry := entries[offset]
+			offset++
+			if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
+				continue
+			}
+			state, loadErr := store.load(entry)
+			if loadErr != nil {
+				return loadErr
+			}
+			states = append(states, state)
+		}
+		if len(states) > 0 {
+			if err := visit(states); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func (store attemptStore) load(entry os.DirEntry) (attemptState, error) {
+	path := filepath.Join(store.directory, entry.Name())
+	info, statErr := os.Lstat(path)
+	if statErr != nil {
+		return attemptState{}, fmt.Errorf("inspect attempt state %s: %w", entry.Name(), statErr)
+	}
+	if !info.Mode().IsRegular() || info.Mode().Perm()&0o077 != 0 || info.Size() > 2<<20 {
+		return attemptState{}, fmt.Errorf("attempt state %s is unsafe", entry.Name())
+	}
+	file, openErr := os.Open(path)
+	if openErr != nil {
+		return attemptState{}, fmt.Errorf("open attempt state %s: %w", entry.Name(), openErr)
+	}
+	var state attemptState
+	decoder := json.NewDecoder(file)
+	decoder.DisallowUnknownFields()
+	decodeErr := decoder.Decode(&state)
+	if decodeErr == nil {
+		var trailing struct{}
+		if trailingErr := decoder.Decode(&trailing); !errors.Is(trailingErr, io.EOF) {
+			decodeErr = errors.New("attempt state contains trailing JSON data")
+		}
+	}
+	closeErr := file.Close()
+	if decodeErr != nil {
+		return attemptState{}, fmt.Errorf("decode attempt state %s: %w", entry.Name(), decodeErr)
+	}
+	if closeErr != nil {
+		return attemptState{}, fmt.Errorf("close attempt state %s: %w", entry.Name(), closeErr)
+	}
+	if !supportedAttemptStateSchemaVersion(state.SchemaVersion) || !validLocalAttemptState(state.LocalState) || store.path(state.Claimed.Assignment.AttemptID) != path {
+		return attemptState{}, fmt.Errorf("attempt state %s has an invalid identity", entry.Name())
+	}
+	if !validAttemptProcess(state.Process) {
+		return attemptState{}, fmt.Errorf("attempt state %s has an invalid process identity", entry.Name())
+	}
+	// Version 1 did not persist process identity. Normalize it in memory so
+	// the next state write atomically upgrades the record.
+	state.SchemaVersion = attemptStateSchemaVersion
+	return state, nil
+}
+
+func (store attemptStore) identifiers() (map[string]struct{}, error) {
+	entries, err := os.ReadDir(store.directory)
+	if errors.Is(err, os.ErrNotExist) {
+		return map[string]struct{}{}, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read attempt spool identities: %w", err)
+	}
+	identifiers := make(map[string]struct{}, len(entries))
 	for _, entry := range entries {
 		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
 			continue
 		}
-		path := filepath.Join(store.directory, entry.Name())
-		info, statErr := os.Lstat(path)
-		if statErr != nil {
-			return nil, fmt.Errorf("inspect attempt state %s: %w", entry.Name(), statErr)
+		attemptID := strings.TrimSuffix(entry.Name(), ".json")
+		if !localIdentifierPattern.MatchString(attemptID) {
+			return nil, fmt.Errorf("attempt state %s has an invalid file name", entry.Name())
 		}
-		if !info.Mode().IsRegular() || info.Mode().Perm()&0o077 != 0 || info.Size() > 2<<20 {
-			return nil, fmt.Errorf("attempt state %s is unsafe", entry.Name())
-		}
-		file, openErr := os.Open(path)
-		if openErr != nil {
-			return nil, fmt.Errorf("open attempt state %s: %w", entry.Name(), openErr)
-		}
-		var state attemptState
-		decoder := json.NewDecoder(file)
-		decoder.DisallowUnknownFields()
-		decodeErr := decoder.Decode(&state)
-		if decodeErr == nil {
-			var trailing struct{}
-			if trailingErr := decoder.Decode(&trailing); !errors.Is(trailingErr, io.EOF) {
-				decodeErr = errors.New("attempt state contains trailing JSON data")
-			}
-		}
-		closeErr := file.Close()
-		if decodeErr != nil {
-			return nil, fmt.Errorf("decode attempt state %s: %w", entry.Name(), decodeErr)
-		}
-		if closeErr != nil {
-			return nil, fmt.Errorf("close attempt state %s: %w", entry.Name(), closeErr)
-		}
-		if !supportedAttemptStateSchemaVersion(state.SchemaVersion) || !validLocalAttemptState(state.LocalState) || store.path(state.Claimed.Assignment.AttemptID) != path {
-			return nil, fmt.Errorf("attempt state %s has an invalid identity", entry.Name())
-		}
-		if !validAttemptProcess(state.Process) {
-			return nil, fmt.Errorf("attempt state %s has an invalid process identity", entry.Name())
-		}
-		// Version 1 did not persist process identity. Normalize it in memory so
-		// the next state write atomically upgrades the record.
-		state.SchemaVersion = attemptStateSchemaVersion
-		states = append(states, state)
+		identifiers[attemptID] = struct{}{}
 	}
-	return states, nil
+	return identifiers, nil
 }
 
 func supportedAttemptStateSchemaVersion(version int) bool {

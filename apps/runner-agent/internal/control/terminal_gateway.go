@@ -125,9 +125,13 @@ func (connector *terminalConnector) serve(ctx context.Context, token string) err
 	headers := make(http.Header)
 	headers.Set("Authorization", "Bearer "+token)
 	connection, response, err := websocket.Dial(ctx, connector.endpoint(), &websocket.DialOptions{
-		HTTPClient:   connector.client.http,
-		HTTPHeader:   headers,
-		Subprotocols: []string{"autoforge-runner-terminal-v1"},
+		HTTPClient: connector.client.http,
+		HTTPHeader: headers,
+		// Some enterprise reverse proxies intentionally remove Authorization from
+		// WebSocket upgrades even though ordinary heartbeat/claim HTTP requests keep
+		// it. Carry the same short-lived one-time ticket as a secondary subprotocol;
+		// the control plane accepts either transport and still verifies the ticket.
+		Subprotocols: []string{"autoforge-runner-terminal-v1", "autoforge-ticket." + token},
 	})
 	if err != nil {
 		if response != nil {

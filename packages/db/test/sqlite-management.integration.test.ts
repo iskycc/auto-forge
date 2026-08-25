@@ -217,6 +217,58 @@ describe("SQLite management repositories", () => {
     }
   });
 
+  it("recovers an existing Runner identity without changing its logical id", async () => {
+    const { handle, runners } = await fixture();
+    try {
+      await runners.register({
+        id: "runner-reinstall",
+        bootstrapTokenHash: "bootstrap-original",
+        credentialHash: "credential-original",
+        name: "runner-before",
+        os: "linux",
+        architecture: "amd64",
+        agentVersion: "1.2.6",
+        protocolVersion: 1,
+        labels: ["before"],
+        capabilities: ["executor:testng-v1"],
+        maxConcurrency: 1,
+        terminalEnabled: false,
+        recordedAt: timestamp,
+      });
+
+      const recovered = await runners.register({
+        id: "runner-reinstall",
+        recoverExistingIdentity: true,
+        bootstrapTokenHash: "bootstrap-reinstall",
+        credentialHash: "credential-reinstalled",
+        name: "runner-after",
+        os: "linux",
+        architecture: "amd64",
+        agentVersion: "1.2.7",
+        protocolVersion: 1,
+        labels: ["after"],
+        capabilities: ["executor:testng-v1", "runtime:project-assets-v1"],
+        maxConcurrency: 4,
+        terminalEnabled: true,
+        recordedAt: "2026-08-09T00:01:00.000Z",
+      });
+
+      expect(recovered).toMatchObject({
+        id: "runner-reinstall",
+        name: "runner-after",
+        credentialVersion: 2,
+        terminalEnabled: true,
+        maxConcurrency: 4,
+      });
+      expect(await runners.findByCredentialHash("credential-original", timestamp)).toBeNull();
+      expect((await runners.findByCredentialHash("credential-reinstalled", timestamp))?.id).toBe(
+        "runner-reinstall",
+      );
+    } finally {
+      handle.close();
+    }
+  });
+
   it("rotates, revokes and deregisters runner credentials", async () => {
     const { handle, runners, batches, executions } = await fixture();
     try {

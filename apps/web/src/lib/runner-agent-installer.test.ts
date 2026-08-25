@@ -181,6 +181,7 @@ describe("Runner Agent installation policy", () => {
       controlPlaneUrl: "https://autoforge.internal",
       dataDirectory: "/data/autoforge-agent",
       bootstrapToken: "one-time-token",
+      recoverIdentity: false,
       temporaryDirectory: "/tmp/autoforge-install-1",
     });
     const configuration = files.find((file) => file.path.endsWith("/config.json"));
@@ -199,6 +200,7 @@ describe("Runner Agent installation policy", () => {
       controlPlaneUrl: "https://autoforge.internal",
       dataDirectory: DEFAULT_RUNNER_DATA_DIRECTORY,
       bootstrapToken: "one-time-token",
+      recoverIdentity: false,
       temporaryDirectory: "/tmp/autoforge-install-1",
     });
     const configuration = files.find((file) => file.path.endsWith("/config.json"));
@@ -206,6 +208,24 @@ describe("Runner Agent installation policy", () => {
     expect(rendered.dataDirectory).toBe(DEFAULT_RUNNER_DATA_DIRECTORY);
     const unit = files.find((file) => file.path.endsWith("/autoforge-agent.service"));
     expect(unit!.content.toString("utf8")).toContain("StateDirectory=autoforge-agent\n");
+  });
+
+  it("marks a saved-profile reinstall for logical Runner identity recovery", () => {
+    const files = installationFiles({
+      input: baseInstallInput({}),
+      probe: probeResult,
+      resources: stubResources(),
+      controlPlaneUrl: "https://autoforge.internal",
+      dataDirectory: DEFAULT_RUNNER_DATA_DIRECTORY,
+      bootstrapToken: "targeted-one-time-token",
+      recoverIdentity: true,
+      temporaryDirectory: "/tmp/autoforge-install-1",
+    });
+    const configuration = files.find((file) => file.path.endsWith("/config.json"));
+    expect(JSON.parse(configuration!.content.toString("utf8"))).toMatchObject({
+      bootstrapToken: "targeted-one-time-token",
+      recoverIdentity: true,
+    });
   });
 
   it("preserves a previously configured data directory when reading remote state", () => {

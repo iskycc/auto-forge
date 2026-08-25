@@ -26,6 +26,13 @@ Agent 诊断日志和数据盘空间，不要直接删除身份文件。
 
 安装请求会再次强制匹配已确认指纹。平台读取内置资源时校验清单，SFTP 上传后读回并复核大小/SHA-256，再以固定参数执行脚本。首次安装成功后，主机、端口、用户名、密码和可选私有 CA 会使用平台主密钥及 AES-256-GCM 保存为版本化连接档案；API 只返回不含密码和 CA 的摘要，审计与日志也不记录这些明文。使用已保存档案重新安装时，平台先用加密凭据探测并校验既有主机指纹，再开放完整安装配置供管理员确认或修正，不会直接采用表单默认值安装。
 
+使用已绑定 Runner 的保存档案重新安装时，短期 bootstrap token 会绑定原 Runner ID。即使本地
+`identity/credentials.json` 丢失、截断、权限损坏，或主机已经误注册成另一个身份，Agent 也会在本次
+受控重装中替换当前身份并恢复原逻辑节点；任务、执行中批次和 Runner 组不会因生成新 ID 而失去目标。直接填写一台新主机、已撤销
+凭据或已注销节点仍按新 Runner 注册，不能借重装绕过生命周期撤销。
+如果同一主机曾误注册出多个同名节点，保存连接下拉框会显示绑定 Runner ID 的短前缀；应选择任务原先
+绑定的那一项执行恢复重装。
+
 默认模式会创建专用 `autoforge-agent` 系统账号；root 模式直接使用已有 root 账号。两种模式都安装：
 
 ```text
@@ -58,7 +65,7 @@ sudo -u autoforge-agent /opt/autoforge/bin/autoforge-agent doctor \
 systemctl restart autoforge-agent
 ```
 
-停止时 Agent 先停止领取，在配置的 grace period 内排空在途 attempt；下次启动先读取身份、attempt 与 spool 并执行 reconcile。不要通过删除 `/var/lib/autoforge-agent` 处理未完成任务。
+停止时 Agent 先停止领取，在配置的 grace period 内排空在途 attempt；下次启动先读取身份、attempt 与 spool，并按每页最多 256 条执行 reconcile。启用直连终端时，出站终端通道会在恢复扫描前建立；assignment claim 仍须等待全部本地状态完成核对。不要通过删除 `/var/lib/autoforge-agent` 处理未完成任务。
 
 cgroup v2 可用时，每个 attempt 使用委派的 cgroup 与 rlimit 控制 CPU、内存、进程数和文件大小。没有 cgroup v2 时仍应用文件大小/打开文件数/core dump rlimit、进程组清理、执行超时和工作目录字节/条目监督，但 CPU、内存和整个后代进程数量不具备同等级硬限制。扫描仍有一个采样周期的瞬时超写窗口；严格防止共享磁盘耗尽时，应为 `/var/lib/autoforge-agent/work` 使用独立限额文件系统或项目配额。
 

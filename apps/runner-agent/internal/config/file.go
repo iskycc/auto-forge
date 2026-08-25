@@ -15,21 +15,22 @@ import (
 const fileSchemaVersion = 1
 
 type fileConfiguration struct {
-	SchemaVersion  int                 `json:"schemaVersion"`
-	ServerURL      string              `json:"serverUrl"`
-	DataDirectory  string              `json:"dataDirectory"`
-	Name           string              `json:"name"`
-	Labels         []string            `json:"labels"`
-	MaxConcurrency *int                `json:"maxConcurrency"`
-	CAFile         string              `json:"caFile"`
-	BootstrapToken string              `json:"bootstrapToken"`
-	Toolchain      fileToolchainConfig `json:"toolchain"`
-	Adapter        fileAdapterConfig   `json:"adapter"`
-	Container      fileContainerConfig `json:"container"`
-	Claim          fileClaimConfig     `json:"claim"`
-	Spool          fileSpoolConfig     `json:"spool"`
-	Resources      fileResourceConfig  `json:"resources"`
-	Terminal       fileTerminalConfig  `json:"terminal"`
+	SchemaVersion   int                 `json:"schemaVersion"`
+	ServerURL       string              `json:"serverUrl"`
+	DataDirectory   string              `json:"dataDirectory"`
+	Name            string              `json:"name"`
+	Labels          []string            `json:"labels"`
+	MaxConcurrency  *int                `json:"maxConcurrency"`
+	CAFile          string              `json:"caFile"`
+	BootstrapToken  string              `json:"bootstrapToken"`
+	RecoverIdentity *bool               `json:"recoverIdentity,omitempty"`
+	Toolchain       fileToolchainConfig `json:"toolchain"`
+	Adapter         fileAdapterConfig   `json:"adapter"`
+	Container       fileContainerConfig `json:"container"`
+	Claim           fileClaimConfig     `json:"claim"`
+	Spool           fileSpoolConfig     `json:"spool"`
+	Resources       fileResourceConfig  `json:"resources"`
+	Terminal        fileTerminalConfig  `json:"terminal"`
 }
 
 type fileAdapterConfig struct {
@@ -105,10 +106,11 @@ func ConsumeBootstrapToken(path string) error {
 	if err != nil {
 		return err
 	}
-	if persisted.BootstrapToken == "" {
+	if persisted.BootstrapToken == "" && persisted.RecoverIdentity == nil {
 		return nil
 	}
 	persisted.BootstrapToken = ""
+	persisted.RecoverIdentity = nil
 	randomValue := make([]byte, 12)
 	if _, err := rand.Read(randomValue); err != nil {
 		return fmt.Errorf("generate temporary Agent configuration name: %w", err)
@@ -198,6 +200,7 @@ func configurationLookup(persisted fileConfiguration) LookupEnvironment {
 		"AUTOFORGE_AGENT_TERMINAL_SHELL":             persisted.Terminal.Shell,
 		"AUTOFORGE_AGENT_TERMINAL_MAX_DURATION":      persisted.Terminal.MaximumDuration,
 	}
+	setOptionalBoolean(values, "AUTOFORGE_AGENT_RECOVER_IDENTITY", persisted.RecoverIdentity)
 	setOptionalInteger(values, "AUTOFORGE_AGENT_MAX_CONCURRENCY", persisted.MaxConcurrency)
 	setOptionalInteger(values, "AUTOFORGE_AGENT_LOG_UPLOAD_BATCH", persisted.Spool.UploadBatch)
 	setOptionalInt64(values, "AUTOFORGE_AGENT_SPOOL_MAX_BYTES", persisted.Spool.MaximumBytes)

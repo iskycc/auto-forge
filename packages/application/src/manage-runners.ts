@@ -66,13 +66,18 @@ export class RunnerControlService {
   ) {}
 
   async register(bootstrapToken: string, input: RunnerRegistrationInput) {
+    // Resolve the optional reinstall target before the second validity check.
+    // If the token crosses its expiry boundary between the two calls, registration
+    // is rejected instead of silently falling back to a brand-new Runner id.
+    const replacementRunnerId = this.credentials.replacementRunnerId?.(bootstrapToken);
     if (!this.credentials.verifyBootstrapToken(bootstrapToken)) {
       throw new DomainError("RUNNER_BOOTSTRAP_REJECTED", "执行机注册令牌无效。");
     }
     const credential = this.credentials.issue();
     const recordedAt = this.clock.now().toISOString();
     const runner = await this.runners.register({
-      id: this.ids.next(),
+      id: replacementRunnerId ?? this.ids.next(),
+      ...(replacementRunnerId ? { recoverExistingIdentity: true } : {}),
       bootstrapTokenHash: this.credentials.hash(bootstrapToken),
       credentialHash: this.credentials.hash(credential),
       name: input.name,
@@ -105,8 +110,8 @@ export class RunnerControlService {
     };
   }
 
-  issueBootstrapToken(): string {
-    return this.credentials.issueBootstrapToken();
+  issueBootstrapToken(replacementRunnerId?: string): string {
+    return this.credentials.issueBootstrapToken(replacementRunnerId);
   }
 
   async heartbeat(runnerId: string, credential: string, input: RunnerHeartbeatInput) {
