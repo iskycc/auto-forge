@@ -3,13 +3,15 @@
 set -euo pipefail
 
 repository_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-script_path="${repository_root}/groovy-test/AnalyzeNormalGroovyCases.groovy"
+source_path="${repository_root}/groovy-test/AnalyzeNormalGroovyCases.java"
 
 fixture_root="$(mktemp -d)"
 trap 'rm -rf -- "${fixture_root}"' EXIT
 source_root="${fixture_root}/cases"
 output_file="${fixture_root}/normal-cases.xlsx"
+compiled_classes="${fixture_root}/classes"
 mkdir -p "${source_root}/account" "${source_root}/orders"
+mkdir -p "${compiled_classes}"
 
 printf '%s\n' \
   'package sample.account' \
@@ -19,6 +21,12 @@ printf '%s\n' \
   '' \
   '    @Test(description = "Completes without Error")' \
   '    void testCompletesWithoutError() { assert true }' \
+  '' \
+  '    @Test(description = "Ordinary reporting mentions a count")' \
+  '    void testReportSummary() { println "Error count is zero" }' \
+  '' \
+  '    @Test(description = "Business guard")' \
+  '    void testBusinessGuard() { throw new IllegalStateException("guard") }' \
   '' \
   '    @Test(description = "Invalid password returns an Error")' \
   '    void testInvalidPassword() {' \
@@ -50,23 +58,15 @@ run_analyzer() {
     echo 'Set POI_CLASSPATH to Apache POI 3.13 and its transitive dependencies.' >&2
     return 1
   fi
-  if command -v groovy >/dev/null 2>&1; then
-    groovy -cp "${POI_CLASSPATH}" \
-      "${script_path}" --source "${source_root}" --output "${output_file}"
-    return
-  fi
-  if [[ -z "${GROOVY_JAR:-}" ]]; then
-    echo 'Install Groovy or set GROOVY_JAR to run this test.' >&2
-    return 1
-  fi
-  java -cp "${GROOVY_JAR}:${POI_CLASSPATH}" groovy.ui.GroovyMain \
-    "${script_path}" --source "${source_root}" --output "${output_file}"
+  javac -encoding UTF-8 -cp "${POI_CLASSPATH}" -d "${compiled_classes}" "${source_path}"
+  java -cp "${compiled_classes}:${POI_CLASSPATH}" AnalyzeNormalGroovyCases \
+    --source "${source_root}" --output "${output_file}"
 }
 
 run_output="$(run_analyzer)"
-grep -Fq 'Scanned 5 Groovy file(s) and 6 case candidate(s).' <<<"${run_output}"
-grep -Fq 'Exported 4 normal case(s); 2 candidate(s) were excluded.' <<<"${run_output}"
-grep -Fq "1 file(s) could not be analyzed; see the '扫描问题' worksheet." <<<"${run_output}"
+grep -Fq 'Scanned 5 Groovy file(s) and 9 case candidate(s).' <<<"${run_output}"
+grep -Fq 'Exported 7 included case(s); 2 candidate(s) were excluded.' <<<"${run_output}"
+grep -Fq "1 file(s) require review; see the '扫描问题' worksheet." <<<"${run_output}"
 unzip -t "${output_file}" >/dev/null
 
 node --input-type=module - "${repository_root}" "${output_file}" <<'NODE'
@@ -87,11 +87,11 @@ try {
   console.error = originalConsoleError;
 }
 
-const normalCases = xlsxModule.utils.sheet_to_json(workbook.Sheets["正常用例"]);
+const normalCases = xlsxModule.utils.sheet_to_json(workbook.Sheets["导出用例"]);
 const excludedCases = xlsxModule.utils.sheet_to_json(workbook.Sheets["排除明细"]);
 const issues = xlsxModule.utils.sheet_to_json(workbook.Sheets["扫描问题"]);
 
-if (normalCases.length !== 4 || excludedCases.length !== 2 || issues.length !== 1) {
+if (normalCases.length !== 7 || excludedCases.length !== 2 || issues.length !== 1) {
   throw new Error("Unexpected workbook row counts");
 }
 if (!normalCases.some((row) => row["测试方法"] === "testSuccessfulLogin")) {
@@ -99,6 +99,12 @@ if (!normalCases.some((row) => row["测试方法"] === "testSuccessfulLogin")) {
 }
 if (!normalCases.some((row) => row["测试方法"] === "testCompletesWithoutError")) {
   throw new Error("A negated error phrase was incorrectly classified as abnormal");
+}
+if (!normalCases.some((row) => row["测试方法"] === "testReportSummary")) {
+  throw new Error("An uncertain content-only signal was incorrectly excluded");
+}
+if (!normalCases.some((row) => row["测试方法"] === "testBusinessGuard")) {
+  throw new Error("A business throw statement was incorrectly treated as a negative test");
 }
 if (!normalCases.some((row) => row["类名"] === "ScriptSmoke")) {
   throw new Error("Normal Groovy script was not exported");
@@ -111,6 +117,9 @@ if (!excludedCases.some((row) => row["类名"] === "SuspendedAccountCase")) {
 }
 if (!issues.some((row) => row["相对路径"] === "BrokenCase.groovy")) {
   throw new Error("A malformed Groovy source was not reported");
+}
+if (!normalCases.some((row) => row["类名"] === "BrokenCase")) {
+  throw new Error("An unparseable source was not included under the conservative policy");
 }
 NODE
 
