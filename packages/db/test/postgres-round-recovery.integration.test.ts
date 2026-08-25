@@ -81,10 +81,10 @@ describe.skipIf(!connectionString)("PostgreSQL round recovery", () => {
       await handle.pool.query(
         `INSERT INTO run_batches
          (id, sequence_number, suite_id, suite_name, suite_version, status, retry_limit,
-          retry_mode, current_round, environment_json, secret_bindings_json, total_runs,
+          retry_mode, current_round, queue_timeout_ms, environment_json, secret_bindings_json, total_runs,
           project_id, scheduled_for, created_at, updated_at)
          VALUES ($1, nextval('run_batch_sequence_numbers'), 'suite-full', 'Smoke', 1,
-          'queued', 1, 'round', 1, '[]', '[]', 1,
+          'queued', 1, 'round', 1, 60000, '[]', '[]', 1,
           '00000000-0000-7000-8000-000000000001', $2, $2, $2)`,
         [batchId, createdAt],
       );
@@ -161,11 +161,13 @@ describe.skipIf(!connectionString)("PostgreSQL round recovery", () => {
         ),
       ).resolves.toMatchObject({ rows: [{ current_round: 2 }] });
       await expect(
-        handle.pool.query<{ held_round: number }>(
-          "SELECT held_round FROM execution_runs WHERE id = $1",
+        handle.pool.query<{ held_round: number; queue_deadline_at: string }>(
+          "SELECT held_round, queue_deadline_at FROM execution_runs WHERE id = $1",
           [runId],
         ),
-      ).resolves.toMatchObject({ rows: [{ held_round: 0 }] });
+      ).resolves.toMatchObject({
+        rows: [{ held_round: 0, queue_deadline_at: "2026-08-23T00:11:00.000Z" }],
+      });
       await expect(
         repository.retryRoundRelease({
           batchId,

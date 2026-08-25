@@ -46,6 +46,7 @@ async function startFakeJenkins(): Promise<FakeJenkins> {
     ["reset-app", 41],
     ["reset-database", 91],
   ]);
+  const transientPollFailures = new Set<string>();
   const server = createServer((request, response) => {
     const url = new URL(request.url ?? "/", "http://127.0.0.1");
     const jobName = url.pathname.match(/^\/job\/([^/]+)\//u)?.[1];
@@ -64,6 +65,11 @@ async function startFakeJenkins(): Promise<FakeJenkins> {
       return;
     }
     if (url.pathname.endsWith("/api/json")) {
+      if (jobName === "reset-app" && !transientPollFailures.has(jobName)) {
+        transientPollFailures.add(jobName);
+        response.writeHead(503).end(JSON.stringify({ message: "temporary Jenkins outage" }));
+        return;
+      }
       const startedAt = Date.now() - 2_000;
       response.end(
         JSON.stringify({
@@ -512,7 +518,8 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
   await expect(casesRegion.getByRole("row", { name: /AllRounds/ })).toHaveCount(2);
 
   // 真实编排一轮双 Jenkins 环境恢复：两个 Rebuild 并行触发并共同形成轮次屏障，
-  // 页面时间线展示一个恢复节点，详情按流水线分别展示实际起止时间与结果。
+  // 其中一个状态查询先返回瞬时 503，验证有界重试不会把批次直接判为失败；页面时间线
+  // 展示一个恢复节点，详情按流水线分别展示实际起止时间与结果。
   const fakeJenkins = await startFakeJenkins();
   try {
     await configureTaskExecution(page, suiteId, identity.runnerId, {

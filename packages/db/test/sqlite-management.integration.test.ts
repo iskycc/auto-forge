@@ -1753,6 +1753,46 @@ describe("SQLite management repositories", () => {
       });
 
       await batches.create({
+        id: "batch-held-round-timeout",
+        suiteId: "suite-1",
+        suiteName: "Held round queue timeout suite",
+        suiteVersion: 1,
+        retryLimit: 1,
+        retryMode: "round",
+        queueTimeoutMs: 1_000,
+        environmentVariables: [],
+        runnerIds: ["runner-control"],
+        runs: [
+          {
+            id: "run-held-round-timeout",
+            caseDefinitionId: "case-1",
+            caseVersion: 1,
+            displayName: "Held round must not time out",
+            className: "com.example.HeldRoundTest",
+          },
+        ],
+        createdAt: "2026-08-09T00:03:12.000Z",
+      });
+      handle.client
+        .prepare(
+          `UPDATE execution_runs SET held_round = 2
+           WHERE id = 'run-held-round-timeout'`,
+        )
+        .run();
+      await expect(
+        executions.recoverExpired({
+          now: "2026-08-09T00:03:13.001Z",
+          eventIds: ["unused-held-round-timeout-event"],
+          limit: 1,
+        }),
+      ).resolves.toEqual([]);
+      expect(await batches.get("batch-held-round-timeout")).toMatchObject({
+        status: "queued",
+        timedOutRuns: 0,
+        runs: [expect.objectContaining({ status: "queued", heldRound: 2 })],
+      });
+
+      await batches.create({
         id: "batch-claim-timeout",
         suiteId: "suite-1",
         suiteName: "Claim timeout suite",

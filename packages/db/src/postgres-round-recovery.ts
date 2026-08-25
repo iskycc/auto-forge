@@ -2,6 +2,7 @@ import type { RoundRecoveryClaim, RoundRecoveryRepository } from "@autoforge/app
 import type { RunBatchStatus } from "@autoforge/domain";
 import type { PoolClient } from "pg";
 
+import { queueDeadlineAfter } from "./execution-queue-timing";
 import type { PostgresDatabaseHandle } from "./postgres-database";
 
 type RecoveryRow = {
@@ -14,6 +15,7 @@ type RecoveryRow = {
   api_key_ciphertext: string;
   wait_minutes: number;
   status: "pending" | "polling" | "waiting" | "releasing";
+  poll_failure_count: number;
   source_build_number: number | null;
   rebuild_number: number | null;
   rebuild_url: string | null;
@@ -66,6 +68,7 @@ export class PostgresRoundRecoveryRepository implements RoundRecoveryRepository 
            rebuild_number = COALESCE($2, rebuild_number),
            rebuild_url = COALESCE($3, rebuild_url),
            started_at = COALESCE($4, started_at), available_at = $5,
+           poll_failure_count = 0, error_message = NULL,
            lease_owner = NULL, lease_expires_at = NULL, updated_at = $6
        WHERE batch_id = $7 AND rule_id = $8 AND lease_owner = $9
          AND status IN ('pending','polling')`,
@@ -92,7 +95,8 @@ export class PostgresRoundRecoveryRepository implements RoundRecoveryRepository 
       `UPDATE run_batch_round_recoveries
        SET status = 'waiting', rebuild_number = $1, rebuild_url = $2,
            started_at = COALESCE($3, started_at), finished_at = $4, build_result = $5,
-           available_at = $6, lease_owner = NULL, lease_expires_at = NULL, updated_at = $7
+           available_at = $6, poll_failure_count = 0, error_message = NULL,
+           lease_owner = NULL, lease_expires_at = NULL, updated_at = $7
        WHERE batch_id = $8 AND rule_id = $9 AND lease_owner = $10 AND status = 'polling'`,
       [
         input.rebuildNumber,
@@ -117,7 +121,12 @@ export class PostgresRoundRecoveryRepository implements RoundRecoveryRepository 
     return withTransaction(this.handle, async (client) => {
       // 同轮步骤可以在不同 Web/Worker 实例上同时到期。锁定批次可避免两个
       // 最后步骤互相看不到未提交结果，导致全部 succeeded 却无人释放下一轮。
-      await client.query("SELECT id FROM run_batches WHERE id = $1 FOR UPDATE", [input.batchId]);
+      const batch = await client.query<{ queue_timeout_ms: number }>(
+        "SELECT queue_timeout_ms FROM run_batches WHERE id = $1 FOR UPDATE",
+        [input.batchId],
+      );
+      const queueTimeoutMs = batch.rows[0]?.queue_timeout_ms;
+      if (queueTimeoutMs === undefined) return { outcome: "claim_lost" };
       const updated = await client.query<{ after_round: number; next_round: number }>(
         `UPDATE run_batch_round_recoveries
          SET status = 'succeeded', updated_at = $1
@@ -148,9 +157,14 @@ export class PostgresRoundRecoveryRepository implements RoundRecoveryRepository 
         [input.batchId, input.ruleId, input.workerId],
       );
       await client.query(
-        `UPDATE execution_runs SET held_round = 0, updated_at = $1
-         WHERE batch_id = $2 AND status = 'queued' AND held_round <= $3`,
-        [input.updatedAt, input.batchId, recovery.next_round],
+        `UPDATE execution_runs SET held_round = 0, queue_deadline_at = $1, updated_at = $2
+         WHERE batch_id = $3 AND status = 'queued' AND held_round <= $4`,
+        [
+          queueDeadlineAfter(input.updatedAt, queueTimeoutMs),
+          input.updatedAt,
+          input.batchId,
+          recovery.next_round,
+        ],
       );
       await client.query(
         "UPDATE run_batches SET current_round = $1, updated_at = $2 WHERE id = $3",
@@ -183,6 +197,27 @@ export class PostgresRoundRecoveryRepository implements RoundRecoveryRepository 
        SET error_message = $1, available_at = $2, lease_owner = NULL,
            lease_expires_at = NULL, updated_at = $3
        WHERE batch_id = $4 AND rule_id = $5 AND lease_owner = $6 AND status = 'releasing'`,
+      [
+        input.errorMessage,
+        input.availableAt,
+        input.updatedAt,
+        input.batchId,
+        input.ruleId,
+        input.workerId,
+      ],
+    );
+    return result.rowCount === 1;
+  }
+
+  async deferPollingFailure(
+    input: Parameters<RoundRecoveryRepository["deferPollingFailure"]>[0],
+  ): Promise<boolean> {
+    await this.handle.ready;
+    const result = await this.handle.pool.query(
+      `UPDATE run_batch_round_recoveries
+       SET poll_failure_count = poll_failure_count + 1, error_message = $1, available_at = $2,
+           lease_owner = NULL, lease_expires_at = NULL, updated_at = $3
+       WHERE batch_id = $4 AND rule_id = $5 AND lease_owner = $6 AND status = 'polling'`,
       [
         input.errorMessage,
         input.availableAt,
@@ -288,6 +323,7 @@ function toClaim(row: RecoveryRow): RoundRecoveryClaim {
     apiKeyCiphertext: row.api_key_ciphertext,
     waitMinutes: row.wait_minutes,
     status: row.status,
+    pollFailureCount: row.poll_failure_count,
     ...(row.source_build_number === null ? {} : { sourceBuildNumber: row.source_build_number }),
     ...(row.rebuild_number === null ? {} : { rebuildNumber: row.rebuild_number }),
     ...(row.rebuild_url === null ? {} : { rebuildUrl: row.rebuild_url }),

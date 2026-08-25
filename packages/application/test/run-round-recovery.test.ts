@@ -210,6 +210,45 @@ describe("RoundRecoveryService", () => {
     );
     expect(JSON.stringify(repository.fail.mock.calls)).not.toContain("api-token");
   });
+
+  it("retries transient Jenkins polling failures without failing the batch", async () => {
+    const repository = repositoryWithClaims(claim({ status: "polling", sourceBuildNumber: 41 }));
+    const service = createService(repository, {
+      inspectJob: vi.fn(),
+      rebuildLast: vi.fn(),
+      inspectRebuild: vi.fn().mockRejectedValue(new Error("Jenkins request timed out")),
+    });
+
+    await service.dispatchDue("worker-1");
+
+    expect(repository.deferPollingFailure).toHaveBeenCalledWith({
+      batchId: "batch-1",
+      ruleId: "recovery-1",
+      workerId: "worker-1",
+      errorMessage: "Jenkins request timed out",
+      availableAt: "2026-08-23T00:00:05.000Z",
+      updatedAt: now,
+    });
+    expect(repository.fail).not.toHaveBeenCalled();
+  });
+
+  it("fails after the bounded Jenkins polling retry budget is exhausted", async () => {
+    const repository = repositoryWithClaims(
+      claim({ status: "polling", sourceBuildNumber: 41, pollFailureCount: 10 }),
+    );
+    const service = createService(repository, {
+      inspectJob: vi.fn(),
+      rebuildLast: vi.fn(),
+      inspectRebuild: vi.fn().mockRejectedValue(new Error("Jenkins remains unavailable")),
+    });
+
+    await service.dispatchDue("worker-1");
+
+    expect(repository.deferPollingFailure).not.toHaveBeenCalled();
+    expect(repository.fail).toHaveBeenCalledWith(
+      expect.objectContaining({ errorMessage: "Jenkins remains unavailable" }),
+    );
+  });
 });
 
 function createService(
@@ -245,6 +284,7 @@ function repositoryWithClaims(...recoveryClaims: RoundRecoveryClaim[]) {
     completeWaitingStep: vi.fn().mockResolvedValue({ outcome: "round_releasing" }),
     completeRoundRelease: vi.fn().mockResolvedValue(true),
     retryRoundRelease: vi.fn().mockResolvedValue(true),
+    deferPollingFailure: vi.fn().mockResolvedValue(true),
     fail: vi.fn().mockResolvedValue(true),
   } satisfies RoundRecoveryRepository;
 }
@@ -260,6 +300,7 @@ function claim(overrides: Partial<RoundRecoveryClaim>): RoundRecoveryClaim {
     apiKeyCiphertext: "encrypted-api-key",
     waitMinutes: 5,
     status: "pending",
+    pollFailureCount: 0,
     ...overrides,
   };
 }
