@@ -160,6 +160,13 @@ export default async function RunnersPage({
       {canManage ? (
         <RunnerAgentInstaller
           controlPlaneUrl={services.configurationStore.read().web.publicBaseUrl}
+          linkedRunners={runners.map((runner) => ({
+            id: runner.id,
+            labels: runner.labels,
+            maxConcurrency: runner.maxConcurrency,
+            name: runner.name,
+            terminalEnabled: runner.terminalEnabled,
+          }))}
           profiles={installationProfiles}
         />
       ) : null}

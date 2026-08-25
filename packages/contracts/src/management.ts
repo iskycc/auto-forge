@@ -424,6 +424,16 @@ export const probeRunnerHostInputSchema = z.object({
   installationMode: runnerInstallationModeSchema.default("auto"),
 });
 
+export const probeRunnerHostFromProfileInputSchema = z.object({
+  profileId: z.string().min(1),
+  installationMode: runnerInstallationModeSchema.default("auto"),
+});
+
+export const probeRunnerHostRequestSchema = z.union([
+  probeRunnerHostInputSchema,
+  probeRunnerHostFromProfileInputSchema,
+]);
+
 export const runnerHostProbeResultSchema = z.object({
   hostKeySha256: z.string().regex(/^SHA256:[a-zA-Z0-9+/]{43}$/),
   operatingSystemId: z.enum(["ubuntu", "opensuse", "opensuse-leap", "opensuse-tumbleweed"]),
@@ -476,10 +486,15 @@ export const installRunnerAgentInputSchema = z.object({
 
 export const installRunnerAgentFromProfileInputSchema = z.object({
   profileId: z.string().min(1),
+  expectedHostKeySha256: z.string().regex(/^SHA256:[a-zA-Z0-9+/]{43}$/),
   name: z.string().trim().min(1).max(128),
-  labels: z.array(z.string().trim().min(1).max(64)).max(64).default([]),
-  maxConcurrency: z.number().int().min(1).max(64).default(1),
-  terminalEnabled: z.boolean().default(false),
+  labels: z.array(z.string().trim().min(1).max(64)).max(64),
+  maxConcurrency: z.number().int().min(1).max(64),
+  terminalEnabled: z.boolean(),
+  runAsRoot: z.boolean(),
+  installationMode: runnerInstallationModeSchema,
+  dataDirectory: runnerDataDirectorySchema.optional(),
+  caCertificatePem: installRunnerAgentInputSchema.shape.caCertificatePem,
 });
 
 export const installRunnerAgentRequestSchema = z.union([
@@ -666,6 +681,7 @@ export type DeleteCaseSourceInput = z.infer<typeof deleteCaseSourceInputSchema>;
 export type RunnerRegistrationInput = z.infer<typeof runnerRegistrationInputSchema>;
 export type RunnerRegistrationResult = z.infer<typeof runnerRegistrationResultSchema>;
 export type ProbeRunnerHostInput = z.infer<typeof probeRunnerHostInputSchema>;
+export type ProbeRunnerHostRequest = z.infer<typeof probeRunnerHostRequestSchema>;
 export type RunnerHostConnection = z.infer<typeof runnerHostConnectionSchema>;
 export type RunnerInstallationMode = z.infer<typeof runnerInstallationModeSchema>;
 export type RunnerHostProbeResult = z.infer<typeof runnerHostProbeResultSchema>;

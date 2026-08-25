@@ -1,4 +1,8 @@
-import { probeRunnerHostInputSchema, runnerHostProbeResultSchema } from "@autoforge/contracts";
+import {
+  probeRunnerHostRequestSchema,
+  runnerHostProbeResultSchema,
+  type RunnerHostConnection,
+} from "@autoforge/contracts";
 import { NextResponse } from "next/server";
 
 import { apiErrorResponse, readJsonBody, rejectRateLimited } from "@/lib/api-response";
@@ -12,7 +16,7 @@ export async function POST(request: Request): Promise<NextResponse> {
   try {
     requireSameOrigin(request);
     const identity = await authorizeRequest(request, "runner.manage");
-    const input = probeRunnerHostInputSchema.parse(await readJsonBody(request, 16 * 1024));
+    const input = probeRunnerHostRequestSchema.parse(await readJsonBody(request, 16 * 1024));
     const services = await getPlatformServices();
     rejectRateLimited(
       await services.runnerRequestLimiter.allow(
@@ -21,13 +25,28 @@ export async function POST(request: Request): Promise<NextResponse> {
         60_000,
       ),
     );
+    let connection: RunnerHostConnection;
+    let expectedHostKeySha256: string | undefined;
+    if ("profileId" in input) {
+      const stored = await services.runnerInstallationProfiles.connectionByProfileId(
+        input.profileId,
+      );
+      connection = stored.connection;
+      expectedHostKeySha256 = stored.profile.expectedHostKeySha256;
+    } else {
+      connection = input.connection;
+    }
     const result = runnerHostProbeResultSchema.parse(
-      await services.runnerAgentInstaller.probe(input.connection, input.installationMode),
+      await services.runnerAgentInstaller.probe(
+        connection,
+        input.installationMode,
+        expectedHostKeySha256,
+      ),
     );
     await services.identityAccess.recordAuthorizedOperation(identity, {
       action: "runner.install.probe",
       resourceType: "runner_host",
-      resourceId: input.connection.host,
+      resourceId: connection.host,
       requestId: currentRequestId,
       details: {
         operatingSystemId: result.operatingSystemId,

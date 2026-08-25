@@ -16,7 +16,12 @@ export type RunnerAgentUpdateTarget = {
   caCertificatePem?: string;
 };
 
-/** 原地更新共享实现：UI 单机更新和批量更新必须走同一配置保留规则。 */
+export type RunnerAgentUpgradeTarget = Pick<
+  RunnerAgentUpdateTarget,
+  "connection" | "expectedHostKeySha256" | "installationMode"
+>;
+
+/** 单机更新会应用对话框中明确提交的部署配置；批量升级不得调用此实现。 */
 export async function updateRunnerAgent(
   installer: RunnerAgentInstaller,
   runner: Runner,
@@ -39,4 +44,22 @@ export async function updateRunnerAgent(
     terminalEnabled: runner.terminalEnabled,
   });
   return { ...result, dataDirectory };
+}
+
+/** 批量升级不携带配置变更，只替换 Agent 与 Adapter 程序资源。 */
+export async function upgradeRunnerAgent(
+  installer: RunnerAgentInstaller,
+  runner: Runner,
+  target: RunnerAgentUpgradeTarget,
+): Promise<RunnerAgentInstallationResult> {
+  if (runner.deregisteredAt || runner.purgedAt) {
+    throw new DomainError("RUNNER_UPDATE_NOT_ALLOWED", "执行机已注销，不能原地更新。", {
+      details: { runnerId: runner.id },
+    });
+  }
+  return installer.upgrade({
+    connection: target.connection,
+    expectedHostKeySha256: target.expectedHostKeySha256,
+    installationMode: target.installationMode,
+  });
 }

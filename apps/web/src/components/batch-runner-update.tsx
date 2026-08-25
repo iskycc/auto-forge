@@ -98,6 +98,13 @@ export function BatchRunnerUpdate({
             </header>
             <div className="runner-update-body">
               <div className="batch-runner-update-list">
+                <div className="inline-notice" role="status">
+                  <CheckCircle2 size={18} />
+                  <span>
+                    本次只替换 Agent 与 Adapter 程序，远端配置、systemd
+                    服务、身份和数据目录保持不变。
+                  </span>
+                </div>
                 {targets.map((target) => (
                   <label className="batch-runner-update-row" key={target.runnerId}>
                     <Input

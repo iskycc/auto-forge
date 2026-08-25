@@ -34,15 +34,19 @@ export async function POST(request: Request): Promise<NextResponse> {
       );
       input = {
         connection: stored.connection,
-        expectedHostKeySha256: stored.profile.expectedHostKeySha256,
+        expectedHostKeySha256: requestInput.expectedHostKeySha256,
         name: requestInput.name,
         labels: requestInput.labels,
         maxConcurrency: requestInput.maxConcurrency,
         terminalEnabled: requestInput.terminalEnabled,
-        runAsRoot: stored.profile.runAsRoot,
-        installationMode: stored.profile.installationMode,
-        ...(stored.profile.dataDirectory ? { dataDirectory: stored.profile.dataDirectory } : {}),
-        ...(stored.caCertificatePem ? { caCertificatePem: stored.caCertificatePem } : {}),
+        runAsRoot: requestInput.runAsRoot,
+        installationMode: requestInput.installationMode,
+        ...(requestInput.dataDirectory ? { dataDirectory: requestInput.dataDirectory } : {}),
+        ...(requestInput.caCertificatePem
+          ? { caCertificatePem: requestInput.caCertificatePem }
+          : stored.caCertificatePem
+            ? { caCertificatePem: stored.caCertificatePem }
+            : {}),
       };
     } else {
       input = requestInput;

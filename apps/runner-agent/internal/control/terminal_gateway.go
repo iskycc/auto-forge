@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"sync"
@@ -41,19 +42,21 @@ type terminalEvent struct {
 }
 
 type terminalConnector struct {
-	client  *Client
-	manager *terminal.Manager
+	client      *Client
+	manager     *terminal.Manager
+	diagnostics io.Writer
 
 	mu     sync.Mutex
 	token  string
 	notify chan struct{}
 }
 
-func newTerminalConnector(client *Client, manager *terminal.Manager) *terminalConnector {
+func newTerminalConnector(client *Client, manager *terminal.Manager, diagnostics io.Writer) *terminalConnector {
 	return &terminalConnector{
-		client:  client,
-		manager: manager,
-		notify:  make(chan struct{}, 1),
+		client:      client,
+		manager:     manager,
+		diagnostics: diagnostics,
+		notify:      make(chan struct{}, 1),
 	}
 }
 
@@ -77,7 +80,9 @@ func (connector *terminalConnector) Run(ctx context.Context) {
 		if !ok {
 			return
 		}
-		_ = connector.serve(ctx, token)
+		if err := connector.serve(ctx, token); err != nil && ctx.Err() == nil {
+			fmt.Fprintf(connector.diagnostics, "terminal gateway connection failed: %v\n", err)
+		}
 		if ctx.Err() != nil {
 			return
 		}
@@ -132,6 +137,7 @@ func (connector *terminalConnector) serve(ctx context.Context, token string) err
 	}
 	defer connection.CloseNow()
 	defer connector.manager.CloseAll()
+	fmt.Fprintln(connector.diagnostics, "terminal gateway connected")
 	connection.SetReadLimit(maximumTerminalMessageBytes)
 
 	for {

@@ -80,7 +80,7 @@ test("probes and installs the embedded Agent through real SSH and systemd", asyn
   await installThroughUi(page);
   await verifyInstalledSystemdService();
   const runnerId = await waitForRegisteredRunner(page, "SSH Installed Runner");
-  await exerciseOfflineUpgradeAndRollback(page);
+  await exerciseOfflineUpgradeAndRollback(page, runnerId);
   await verifyStoredProfileAndBatchUpdate(page, runnerId);
   await exerciseRunnerLifecycle(page, "SSH Installed Runner");
   await exerciseDeregisteredReinstall(page);
@@ -165,7 +165,7 @@ async function verifyInstalledSystemdService(): Promise<void> {
   expect(JSON.parse(version.stdout)).toMatchObject({ version: expect.stringMatching(/^\d+\./) });
 }
 
-async function exerciseOfflineUpgradeAndRollback(page: Page): Promise<void> {
+async function exerciseOfflineUpgradeAndRollback(page: Page, runnerId: string): Promise<void> {
   const before = await installedConfigurationDigest("/etc/autoforge-agent/config.json");
   await page.goto("/runners");
   const savedConnections = page.getByLabel("已保存连接");
@@ -178,11 +178,32 @@ async function exerciseOfflineUpgradeAndRollback(page: Page): Promise<void> {
   expect(profileId).toBeTruthy();
   await savedConnections.selectOption(profileId!);
   await expect(page.getByLabel("SSH / sudo 密码")).toHaveValue("");
-  await page.getByRole("button", { name: "使用已保存连接安装" }).click();
+  await page.getByRole("button", { name: "载入连接并探测" }).click();
+  await expect(page.getByText(/Ubuntu 24\.04/)).toBeVisible();
+  await page.getByLabel("标签（逗号分隔）").fill("linux,ssh-e2e,reinstalled");
+  await page.getByLabel("最大并发").fill("2");
+  await page.getByLabel("我已通过可信渠道核对并确认上述 SSH 主机指纹").check();
+  await page.getByRole("button", { name: "按上述配置重新安装 Agent" }).click();
   await expect(page.getByRole("status").filter({ hasText: "服务已启动" })).toContainText("Agent", {
     timeout: 120_000,
   });
   await verifyInstalledSystemdService();
+  await expect
+    .poll(() => runnerRuntimeState(page, runnerId), {
+      message: "使用已保存连接重新安装后必须保留终端与执行能力",
+      timeout: 30_000,
+      intervals: [500, 1_000],
+    })
+    .toMatchObject({
+      state: "online",
+      terminalEnabled: true,
+      labels: expect.arrayContaining(["linux", "ssh-e2e", "reinstalled"]),
+      maxConcurrency: 2,
+      capabilities: expect.arrayContaining([
+        "adapter:cotest-testng-v1",
+        "runtime:project-assets-v1",
+      ]),
+    });
   const container = requiredEnvironment("E2E_SSH_CONTAINER");
   for (const previousFile of [
     "/opt/autoforge/bin/autoforge-agent.autoforge-previous",
@@ -258,6 +279,14 @@ async function verifyStoredProfileAndBatchUpdate(page: Page, runnerId: string): 
     }),
   );
 
+  await appendRemoteConfigurationWhitespace();
+  const configurationBeforeUpdate = await installedConfigurationDigest(
+    "/etc/autoforge-agent/config.json",
+  );
+  const serviceUnitBeforeUpdate = await installedConfigurationDigest(
+    "/etc/systemd/system/autoforge-agent.service",
+  );
+  const claimReadyCountBeforeUpdate = await agentJournalOccurrences("assignment claiming active");
   const batchUpdate = await browserJson<{
     items: Array<{ runnerId: string; status: string }>;
   }>(page, "/api/v1/runners/updates", {
@@ -269,6 +298,92 @@ async function verifyStoredProfileAndBatchUpdate(page: Page, runnerId: string): 
     expect.objectContaining({ runnerId, status: "updated" }),
   );
   await verifyInstalledSystemdService();
+  expect(await installedConfigurationDigest("/etc/autoforge-agent/config.json")).toBe(
+    configurationBeforeUpdate,
+  );
+  expect(await installedConfigurationDigest("/etc/systemd/system/autoforge-agent.service")).toBe(
+    serviceUnitBeforeUpdate,
+  );
+  await expect
+    .poll(() => agentJournalOccurrences("assignment claiming active"), {
+      message: "原地更新后的 Agent 新进程必须恢复 assignment claim 轮询",
+      timeout: 30_000,
+      intervals: [500, 1_000],
+    })
+    .toBeGreaterThan(claimReadyCountBeforeUpdate);
+  await exerciseTerminalAfterUpdate(page, runnerId);
+}
+
+async function appendRemoteConfigurationWhitespace(): Promise<void> {
+  await execFileAsync("docker", [
+    "exec",
+    requiredEnvironment("E2E_SSH_CONTAINER"),
+    "/bin/sh",
+    "-c",
+    "printf '\\n' >> /etc/autoforge-agent/config.json",
+  ]);
+}
+
+async function agentJournalOccurrences(marker: string): Promise<number> {
+  const journal = await execFileAsync("docker", [
+    "exec",
+    requiredEnvironment("E2E_SSH_CONTAINER"),
+    "journalctl",
+    "-u",
+    "autoforge-agent.service",
+    "--output=cat",
+    "--no-pager",
+  ]);
+  return journal.stdout.split(marker).length - 1;
+}
+
+async function runnerRuntimeState(page: Page, runnerId: string) {
+  const response = await page.request.get("/api/v1/runners?limit=100");
+  expect(response.status()).toBe(200);
+  const body = (await response.json()) as {
+    items: Array<{
+      id: string;
+      state: string;
+      terminalEnabled: boolean;
+      labels: string[];
+      maxConcurrency: number;
+      capabilities: string[];
+    }>;
+  };
+  return body.items.find((runner) => runner.id === runnerId);
+}
+
+async function exerciseTerminalAfterUpdate(page: Page, runnerId: string): Promise<void> {
+  await expect
+    .poll(() => runnerRuntimeState(page, runnerId), {
+      message: "原地更新后 Runner 应继续在线并启用终端",
+      timeout: 30_000,
+      intervals: [500, 1_000],
+    })
+    .toMatchObject({ state: "online", terminalEnabled: true });
+  await page.goto("/runners");
+  const runnerRow = page.getByRole("row", { name: /SSH Installed Runner/ });
+  const terminalButton = runnerRow.getByRole("button", { name: "终端浮窗" });
+  await expect(terminalButton).toBeEnabled();
+  await terminalButton.click();
+  await page.getByRole("button", { name: "连接终端" }).click();
+  await expect(page.getByText("已连接", { exact: true })).toBeVisible({ timeout: 20_000 });
+  const terminalInput = page.locator(".terminal-window .xterm-helper-textarea");
+  await expect(terminalInput).toBeFocused();
+  await terminalInput.evaluate((textarea) => {
+    const clipboardData = new DataTransfer();
+    clipboardData.setData("text/plain", "printf 'RUNNER_UPDATE_TERMINAL_OK\\n'");
+    textarea.dispatchEvent(
+      new ClipboardEvent("paste", {
+        bubbles: true,
+        cancelable: true,
+        clipboardData,
+      }),
+    );
+  });
+  await terminalInput.press("Enter");
+  await expect(page.locator(".terminal-viewport")).toContainText("RUNNER_UPDATE_TERMINAL_OK");
+  await page.getByRole("button", { name: "关闭终端" }).click();
 }
 
 async function exerciseRunnerLifecycle(page: Page, name: string): Promise<void> {

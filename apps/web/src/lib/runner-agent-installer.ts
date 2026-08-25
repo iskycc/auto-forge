@@ -31,6 +31,10 @@ const readRemoteConfigurationCommand = `cat ${shellQuote(REMOTE_CONFIGURATION_PA
 
 type HostConnection = InstallRunnerAgentInput["connection"];
 type InstallationMode = InstallRunnerAgentInput["installationMode"];
+type UpgradeRunnerAgentInput = Pick<
+  InstallRunnerAgentInput,
+  "connection" | "expectedHostKeySha256" | "installationMode"
+>;
 
 type ConnectedHost = {
   client: Client;
@@ -49,8 +53,9 @@ export class RunnerAgentInstaller {
   async probe(
     connection: HostConnection,
     installationMode: InstallationMode = "auto",
+    expectedHostKeySha256?: string,
   ): Promise<RunnerHostProbeResult> {
-    return this.inspectHost(connection, undefined, installationMode);
+    return this.inspectHost(connection, expectedHostKeySha256, installationMode);
   }
 
   async install(input: InstallRunnerAgentInput): Promise<RunnerAgentInstallationResult> {
@@ -93,6 +98,65 @@ export class RunnerAgentInstaller {
         await executeRemoteCommand(
           connected.client,
           command,
+          probe.privilegeMode === "sudo" ? `${input.connection.password}\n` : undefined,
+          INSTALL_COMMAND_TIMEOUT_MS,
+        );
+      } finally {
+        await removeRemoteFiles(
+          sftp,
+          uploaded.map((file) => file.path),
+          temporaryDirectory,
+        );
+      }
+    } finally {
+      connected.client.end();
+    }
+    return {
+      installed: true,
+      host: input.connection.host,
+      operatingSystemName: probe.operatingSystemName,
+      architecture: probe.architecture,
+      agentVersion: resources.version,
+      serviceName: "autoforge-agent.service",
+    };
+  }
+
+  /**
+   * 原地升级只替换版本化程序资源。远端 config.json、systemd unit、CA 和数据目录
+   * 都保持原字节不变；配置调整必须走显式重新安装流程。
+   */
+  async upgrade(input: UpgradeRunnerAgentInput): Promise<RunnerAgentInstallationResult> {
+    const probe = await this.inspectHost(
+      input.connection,
+      input.expectedHostKeySha256,
+      input.installationMode,
+    );
+    const resources = await this.dependencies.resources.read(probe.architecture);
+    const temporaryDirectory = `/tmp/autoforge-upgrade-${randomUUID()}`;
+    const connected = await connectHost(input.connection, input.expectedHostKeySha256);
+    try {
+      const sftp = await openSftp(connected.client);
+      await makeRemoteDirectory(sftp, temporaryDirectory);
+      const uploaded = [
+        {
+          path: `${temporaryDirectory}/autoforge-agent`,
+          content: resources.binary,
+          mode: 0o700,
+        },
+        {
+          path: `${temporaryDirectory}/cotest-testng-adapter.jar`,
+          content: resources.adapter,
+          mode: 0o600,
+        },
+      ];
+      try {
+        for (const file of uploaded) {
+          await writeRemoteFile(sftp, file.path, file.content, file.mode);
+          await verifyRemoteFile(sftp, file.path, file.content);
+        }
+        await executeRemoteCommand(
+          connected.client,
+          upgradeCommand(uploaded[0]!.path, uploaded[1]!.path, probe.privilegeMode, probe.bashPath),
           probe.privilegeMode === "sudo" ? `${input.connection.password}\n` : undefined,
           INSTALL_COMMAND_TIMEOUT_MS,
         );
@@ -775,6 +839,55 @@ export function installationCommand(
   const command = `${shellQuote(bashPath)} ${argumentsList.join(" ")}`;
   return privilegeMode === "sudo" ? `sudo -S -k -p '' ${command}` : command;
 }
+
+export function upgradeCommand(
+  agentBinary: string,
+  adapterJar: string,
+  privilegeMode: "root" | "sudo",
+  bashPath: string,
+): string {
+  const command = `${shellQuote(bashPath)} -c ${shellQuote(agentUpgradeScript)} -- ${shellQuote(agentBinary)} ${shellQuote(adapterJar)}`;
+  return privilegeMode === "sudo" ? `sudo -S -k -p '' ${command}` : command;
+}
+
+const agentUpgradeScript = `set -Eeuo pipefail
+candidate_binary="\${1:?Agent binary path is required}"
+candidate_adapter="\${2:?Adapter JAR path is required}"
+installed_binary=/opt/autoforge/bin/autoforge-agent
+installed_adapter=/opt/autoforge/lib/cotest-testng-adapter.jar
+installed_configuration=/etc/autoforge-agent/config.json
+installed_service_unit=/etc/systemd/system/autoforge-agent.service
+backup_suffix=.autoforge-previous
+
+for required in "$installed_binary" "$installed_adapter" "$installed_configuration" "$installed_service_unit"; do
+  if [ ! -f "$required" ]; then
+    echo "Existing Agent installation is incomplete: $required" >&2
+    exit 41
+  fi
+done
+"$candidate_binary" version >/dev/null
+
+for target in "$installed_binary" "$installed_adapter" "$installed_configuration" "$installed_service_unit"; do
+  cp -p "$target" "$target$backup_suffix"
+done
+
+rollback_upgrade() {
+  for target in "$installed_binary" "$installed_adapter" "$installed_configuration" "$installed_service_unit"; do
+    if [ -f "$target$backup_suffix" ]; then
+      cp -p "$target$backup_suffix" "$target"
+    fi
+  done
+  systemctl daemon-reload || true
+  systemctl restart autoforge-agent.service || true
+}
+trap rollback_upgrade ERR
+install -m 0755 "$candidate_binary" "$installed_binary"
+install -m 0644 "$candidate_adapter" "$installed_adapter"
+systemctl restart autoforge-agent.service
+systemctl is-active --quiet autoforge-agent.service
+trap - ERR
+printf '%s\n' "AutoForge Agent binary upgrade completed; configuration preserved"
+`;
 
 function rollbackCommand(privilegeMode: "root" | "sudo", bashPath: string): string {
   const command = `${shellQuote(bashPath)} -c ${shellQuote(agentRollbackScript)}`;

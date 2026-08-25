@@ -1,6 +1,7 @@
 package control
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -130,12 +131,17 @@ func TestSupervisorResumesClaimsAfterDrainIsCleared(t *testing.T) {
 			http.NotFound(writer, request)
 			return
 		}
+		var claim claimRequest
+		if err := json.NewDecoder(request.Body).Decode(&claim); err != nil {
+			http.Error(writer, err.Error(), http.StatusBadRequest)
+			return
+		}
 		claims <- struct{}{}
 		writer.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(writer).Encode(ClaimResponse{
 			SchemaVersion: 1,
-			RequestID:     "claim-response",
-			RetryAfterMs:  10,
+			RequestID:     claim.RequestID,
+			RetryAfterMs:  100,
 		})
 	}))
 	defer server.Close()
@@ -155,11 +161,12 @@ func TestSupervisorResumesClaimsAfterDrainIsCleared(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer client.Close()
+	var diagnostics bytes.Buffer
 	supervisor := newAttemptSupervisor(
 		client,
 		Identity{RunnerID: "runner-1", Credential: "runner-credential-with-more-than-32-bytes"},
 		configuration,
-		io.Discard,
+		&diagnostics,
 	)
 	supervisor.SetDraining(true)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -185,11 +192,22 @@ func TestSupervisorResumesClaimsAfterDrainIsCleared(t *testing.T) {
 		cancel()
 		t.Fatal("supervisor did not resume assignment claims")
 	}
+	// The next request can only begin after the first successful response was
+	// parsed and the one-time readiness diagnostic was emitted.
+	select {
+	case <-claims:
+	case <-time.After(time.Second):
+		cancel()
+		t.Fatal("supervisor did not continue assignment claim polling")
+	}
 	cancel()
 	select {
 	case <-done:
 	case <-time.After(time.Second):
 		t.Fatal("claim loop did not stop after cancellation")
+	}
+	if !strings.Contains(diagnostics.String(), "assignment claiming active") {
+		t.Fatalf("successful claim polling was not diagnosed: %q", diagnostics.String())
 	}
 }
 

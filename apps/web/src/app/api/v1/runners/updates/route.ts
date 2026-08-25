@@ -6,7 +6,7 @@ import { NextResponse } from "next/server";
 
 import { apiErrorResponse, readJsonBody, rejectRateLimited } from "@/lib/api-response";
 import { authorizeRequest, requestId, requireSameOrigin } from "@/lib/auth";
-import { updateRunnerAgent } from "@/lib/runner-agent-update";
+import { upgradeRunnerAgent } from "@/lib/runner-agent-update";
 import { getPlatformServices, type PlatformServices } from "@/lib/services";
 
 export const runtime = "nodejs";
@@ -64,17 +64,8 @@ async function updateOne(services: PlatformServices, runnerId: string) {
       connection: stored.connection,
       expectedHostKeySha256: stored.profile.expectedHostKeySha256,
       installationMode: stored.profile.installationMode,
-      runAsRoot: stored.profile.runAsRoot,
-      ...(stored.profile.dataDirectory ? { dataDirectory: stored.profile.dataDirectory } : {}),
-      ...(stored.caCertificatePem ? { caCertificatePem: stored.caCertificatePem } : {}),
     };
-    const result = await updateRunnerAgent(services.runnerAgentInstaller, runner, target);
-    await services.runnerInstallationProfiles.save({
-      runnerId,
-      runnerName: runner.name,
-      ...target,
-      dataDirectory: result.dataDirectory,
-    });
+    const result = await upgradeRunnerAgent(services.runnerAgentInstaller, runner, target);
     return {
       runnerId,
       runnerName: runner.name,

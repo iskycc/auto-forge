@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -105,7 +106,7 @@ func TestTerminalConnectorBridgesCommandsToPTY(t *testing.T) {
 		MaximumDuration: time.Minute,
 	})
 	defer manager.CloseAll()
-	connector := newTerminalConnector(client, manager)
+	connector := newTerminalConnector(client, manager, io.Discard)
 	connectorResult := make(chan error, 1)
 	go func() { connectorResult <- connector.serve(testContext, "terminal-ticket") }()
 
@@ -117,5 +118,31 @@ func TestTerminalConnectorBridgesCommandsToPTY(t *testing.T) {
 	case <-connectorResult:
 	case <-time.After(3 * time.Second):
 		t.Fatal("terminal connector did not stop")
+	}
+}
+
+func TestTerminalConnectorReportsGatewayFailures(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		http.Error(writer, "upgrade rejected", http.StatusBadGateway)
+	}))
+	defer server.Close()
+	configuration := testConfiguration(t, server.URL)
+	client, err := NewClient(configuration)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	manager := terminal.NewManager(ctx, terminal.Configuration{
+		Shell: "/bin/sh", WorkDirectory: t.TempDir(), MaxSessions: 1, MaximumDuration: time.Minute,
+	})
+	defer manager.CloseAll()
+	var diagnostics bytes.Buffer
+	connector := newTerminalConnector(client, manager, &diagnostics)
+	connector.UpdateToken("terminal-ticket")
+	connector.Run(ctx)
+	if !strings.Contains(diagnostics.String(), "terminal gateway connection failed") {
+		t.Fatalf("terminal failure was not diagnosed: %q", diagnostics.String())
 	}
 }

@@ -2,10 +2,12 @@ import { describe, expect, it } from "vitest";
 
 import {
   DEFAULT_RUNNER_DATA_DIRECTORY,
+  installRunnerAgentRequestSchema,
   installRunnerAgentInputSchema,
   inspectRoundRecoveryConfigurationInputSchema,
   runnerHeartbeatInputSchema,
   runnerHeartbeatResultSchema,
+  probeRunnerHostRequestSchema,
   updateRunnerAgentInputSchema,
   caseSuiteExecutionPolicySchema,
   updateCaseSuiteItemsInputSchema,
@@ -198,6 +200,36 @@ describe("runner data directory contracts", () => {
         installRunnerAgentInputSchema.parse({ ...installInput, dataDirectory: invalid }),
       ).toThrow();
     }
+  });
+});
+
+describe("saved Runner installation contracts", () => {
+  it("requires a fresh host-key confirmation and complete explicit configuration", () => {
+    expect(
+      installRunnerAgentRequestSchema.parse({
+        profileId: "profile-1",
+        expectedHostKeySha256: `SHA256:${"a".repeat(43)}`,
+        name: "recovered-runner",
+        labels: ["linux", "recovered"],
+        maxConcurrency: 8,
+        terminalEnabled: true,
+        runAsRoot: false,
+        installationMode: "auto",
+        dataDirectory: "/data/autoforge",
+      }),
+    ).toMatchObject({ profileId: "profile-1", maxConcurrency: 8, terminalEnabled: true });
+    expect(() =>
+      installRunnerAgentRequestSchema.parse({
+        profileId: "profile-1",
+        name: "must-probe-first",
+      }),
+    ).toThrow();
+  });
+
+  it("allows probing with encrypted stored credentials", () => {
+    expect(
+      probeRunnerHostRequestSchema.parse({ profileId: "profile-1", installationMode: "ubuntu" }),
+    ).toEqual({ profileId: "profile-1", installationMode: "ubuntu" });
   });
 });
 

@@ -89,7 +89,7 @@ func Run(ctx context.Context, configuration config.Config, info buildinfo.Info, 
 			MaximumDuration: configuration.Terminal.MaximumDuration,
 		})
 		defer terminalManager.CloseAll()
-		terminalConnector = newTerminalConnector(client, terminalManager)
+		terminalConnector = newTerminalConnector(client, terminalManager, diagnostics)
 		go terminalConnector.Run(ctx)
 	}
 	resourceCollector := metrics.NewCollector()

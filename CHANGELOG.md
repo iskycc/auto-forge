@@ -4,6 +4,39 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## 1.2.6 - 2026-08-25
+
+### Fixed
+
+- Reinstalling an Agent through a saved SSH profile no longer bypasses host probing or silently
+  overwrites Runner labels, concurrency and terminal access with form defaults. Administrators now
+  probe with the encrypted stored credentials, confirm the host key, and explicitly review or repair
+  the complete deployment configuration before reinstalling.
+- Batch Agent upgrades now replace only the versioned Agent binary and CoTest Adapter. Existing
+  `config.json`, private CA, systemd unit, identity and data directory remain byte-for-byte unchanged;
+  a coherent predecessor is still retained for offline rollback.
+- Runner processes now diagnose successful assignment polling and terminal-gateway connection
+  failures. This makes an online Agent that cannot claim work or establish its terminal channel
+  distinguishable from a healthy Runner.
+
+### Tests
+
+- Extended the real SSH/systemd Playwright gate to reinstall with repaired labels and concurrency,
+  perform a batch binary upgrade, compare configuration and service-unit SHA-256 digests, confirm
+  assignment polling resumes, and execute a command through the real browser terminal.
+- Added Runner control diagnostics regressions and saved-profile request contract coverage.
+
+### Database
+
+- No schema migration. Existing encrypted Runner installation profiles, identities and execution
+  history remain compatible.
+
+### Compatibility
+
+- Runner Protocol v1 and Jenkins Pipeline contracts are unchanged. Existing batch-upgrade requests
+  remain source-compatible but no longer rewrite deployment configuration. Release archives remain
+  Docker-native `.docker.tar` assets.
+
 ## 1.2.2 - 2026-08-25
 
 ### Fixed

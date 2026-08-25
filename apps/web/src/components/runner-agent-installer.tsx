@@ -19,9 +19,20 @@ import { useState } from "react";
 type RunnerAgentInstallerProps = {
   controlPlaneUrl: string | undefined;
   profiles: readonly RunnerInstallationProfile[];
+  linkedRunners: readonly {
+    id: string;
+    labels: readonly string[];
+    maxConcurrency: number;
+    name: string;
+    terminalEnabled: boolean;
+  }[];
 };
 
-export function RunnerAgentInstaller({ controlPlaneUrl, profiles }: RunnerAgentInstallerProps) {
+export function RunnerAgentInstaller({
+  controlPlaneUrl,
+  profiles,
+  linkedRunners,
+}: RunnerAgentInstallerProps) {
   const router = useRouter();
   const [host, setHost] = useState("");
   const [port, setPort] = useState(22);
@@ -42,11 +53,12 @@ export function RunnerAgentInstaller({ controlPlaneUrl, profiles }: RunnerAgentI
   const [fingerprintConfirmed, setFingerprintConfirmed] = useState(false);
   const [result, setResult] = useState<RunnerAgentInstallationResult>();
   const [rollbackResult, setRollbackResult] = useState<RunnerAgentRollbackResult>();
-  const [pending, setPending] = useState<"probe" | "install" | "stored-install" | "rollback">();
+  const [pending, setPending] = useState<"probe" | "install" | "rollback">();
   const [error, setError] = useState("");
 
-  function connectionChanged(change: () => void) {
+  function connectionChanged(change: () => void, clearStoredProfile = true) {
     change();
+    if (clearStoredProfile) setSelectedProfileId("");
     setProbe(undefined);
     setFingerprintConfirmed(false);
     setResult(undefined);
@@ -61,7 +73,9 @@ export function RunnerAgentInstaller({ controlPlaneUrl, profiles }: RunnerAgentI
     setRollbackResult(undefined);
     try {
       const response = await postJson("/api/v1/runners/installations/probe", {
-        connection: { host, port, username, password },
+        ...(selectedProfileId && !password
+          ? { profileId: selectedProfileId }
+          : { connection: { host, port, username, password } }),
         installationMode,
       });
       const inspected = runnerHostProbeResultSchema.parse(response);
@@ -82,8 +96,7 @@ export function RunnerAgentInstaller({ controlPlaneUrl, profiles }: RunnerAgentI
     setError("");
     setRollbackResult(undefined);
     try {
-      const response = await postJson("/api/v1/runners/installations", {
-        connection: { host, port, username, password },
+      const configuration = {
         expectedHostKeySha256: probe.hostKeySha256,
         name,
         labels: labels
@@ -94,38 +107,19 @@ export function RunnerAgentInstaller({ controlPlaneUrl, profiles }: RunnerAgentI
         terminalEnabled,
         runAsRoot,
         installationMode,
-        ...(dataDirectory.trim() ? { dataDirectory: dataDirectory.trim() } : {}),
+        dataDirectory: dataDirectory.trim() || DEFAULT_RUNNER_DATA_DIRECTORY,
         ...(caCertificatePem.trim() ? { caCertificatePem } : {}),
+      };
+      const response = await postJson("/api/v1/runners/installations", {
+        ...(selectedProfileId && !password
+          ? { profileId: selectedProfileId }
+          : { connection: { host, port, username, password } }),
+        ...configuration,
       });
       const installed = runnerAgentInstallationResultSchema.parse(response);
       setResult(installed);
       setPassword("");
       setFingerprintConfirmed(false);
-      router.refresh();
-    } catch (cause) {
-      setError(errorMessage(cause));
-    } finally {
-      setPending(undefined);
-    }
-  }
-
-  async function installFromStoredProfile() {
-    if (!selectedProfileId) return;
-    setPending("stored-install");
-    setError("");
-    setRollbackResult(undefined);
-    try {
-      const response = await postJson("/api/v1/runners/installations", {
-        profileId: selectedProfileId,
-        name,
-        labels: labels
-          .split(",")
-          .map((label) => label.trim())
-          .filter(Boolean),
-        maxConcurrency,
-        terminalEnabled,
-      });
-      setResult(runnerAgentInstallationResultSchema.parse(response));
       router.refresh();
     } catch (cause) {
       setError(errorMessage(cause));
@@ -218,9 +212,25 @@ export function RunnerAgentInstaller({ controlPlaneUrl, profiles }: RunnerAgentI
                 setInstallationMode(profile.installationMode);
                 setRunAsRoot(profile.runAsRoot);
                 setDataDirectory(profile.dataDirectory ?? "");
+                setCaCertificatePem("");
+                setLabels("linux");
+                setMaxConcurrency(1);
+                setTerminalEnabled(false);
+                const linkedRunner = profile.runnerId
+                  ? linkedRunners.find((runner) => runner.id === profile.runnerId)
+                  : undefined;
+                if (linkedRunner) {
+                  setName(linkedRunner.name);
+                  setLabels(linkedRunner.labels.join(","));
+                  setMaxConcurrency(linkedRunner.maxConcurrency);
+                  setTerminalEnabled(linkedRunner.terminalEnabled);
+                }
                 setPassword("");
                 setProbe(undefined);
                 setFingerprintConfirmed(false);
+                setResult(undefined);
+                setRollbackResult(undefined);
+                setError("");
               }}
               value={selectedProfileId}
             >
@@ -235,11 +245,11 @@ export function RunnerAgentInstaller({ controlPlaneUrl, profiles }: RunnerAgentI
           <Button
             className="button button-primary"
             disabled={!selectedProfileId || !name.trim() || Boolean(pending)}
-            onClick={() => void installFromStoredProfile()}
+            onClick={() => void probeHost()}
             type="button"
           >
-            <HardDriveDownload size={16} />
-            {pending === "stored-install" ? "正在重新安装…" : "使用已保存连接安装"}
+            <Search size={16} />
+            {pending === "probe" ? "正在探测…" : "载入连接并探测"}
           </Button>
         </div>
       ) : null}
@@ -250,8 +260,9 @@ export function RunnerAgentInstaller({ controlPlaneUrl, profiles }: RunnerAgentI
           <Select
             disabled={Boolean(pending)}
             onChange={(event) =>
-              connectionChanged(() =>
-                setInstallationMode(event.target.value as typeof installationMode),
+              connectionChanged(
+                () => setInstallationMode(event.target.value as typeof installationMode),
+                false,
               )
             }
             value={installationMode}
@@ -310,7 +321,7 @@ export function RunnerAgentInstaller({ controlPlaneUrl, profiles }: RunnerAgentI
       <div className="runner-installer-actions">
         <Button
           className="button-secondary"
-          disabled={!host || !username || !password || Boolean(pending)}
+          disabled={!host || !username || (!password && !selectedProfileId) || Boolean(pending)}
           onClick={() => void probeHost()}
           type="button"
         >
@@ -434,11 +445,15 @@ export function RunnerAgentInstaller({ controlPlaneUrl, profiles }: RunnerAgentI
               type="button"
             >
               <HardDriveDownload size={16} />
-              {pending === "install" ? "正在安装并启动…" : "安装内置 Agent"}
+              {pending === "install"
+                ? "正在安装并启动…"
+                : selectedProfileId
+                  ? "按上述配置重新安装 Agent"
+                  : "安装内置 Agent"}
             </Button>
             <Button
               className="button-danger-quiet"
-              disabled={!fingerprintConfirmed || Boolean(pending)}
+              disabled={!fingerprintConfirmed || !password || Boolean(pending)}
               onClick={() => void rollbackAgent()}
               type="button"
             >

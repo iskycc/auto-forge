@@ -168,6 +168,7 @@ func (supervisor *attemptSupervisor) Close() {
 
 func (supervisor *attemptSupervisor) claimLoop(ctx context.Context) {
 	backoff := time.Second
+	claimingAnnounced := false
 	for {
 		if ctx.Err() != nil {
 			return
@@ -201,6 +202,10 @@ func (supervisor *attemptSupervisor) claimLoop(ctx context.Context) {
 			continue
 		}
 		backoff = time.Second
+		if !claimingAnnounced {
+			fmt.Fprintln(supervisor.diagnostics, "assignment claiming active")
+			claimingAnnounced = true
+		}
 		supervisor.ApplyClosedBatchIDs(response.ClosedBatchIDs)
 		for _, claimed := range response.Assignments {
 			if err := supervisor.startAttempt(claimed); err != nil {
