@@ -392,6 +392,8 @@ export const runnerRegistrationResultSchema = z.object({
   runnerId: z.string().min(1),
   credential: z.string().min(32),
   heartbeatIntervalSeconds: z.number().int().min(5).max(300),
+  /** 可选新增：让新注册 Agent 在启动恢复前建立直连终端。 */
+  terminalConnectionToken: z.string().min(1).optional(),
 });
 
 export const runnerHostConnectionSchema = z.object({

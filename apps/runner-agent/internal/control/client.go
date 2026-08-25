@@ -55,6 +55,7 @@ type registrationResponse struct {
 	RunnerID                string `json:"runnerId"`
 	Credential              string `json:"credential"`
 	HeartbeatIntervalSecond int    `json:"heartbeatIntervalSeconds"`
+	TerminalConnectionToken string `json:"terminalConnectionToken,omitempty"`
 }
 
 type rotateCredentialResponse struct {
@@ -139,7 +140,7 @@ func (client *Client) Close() {
 	client.http.CloseIdleConnections()
 }
 
-func (client *Client) Register(ctx context.Context, configuration config.Config, info buildinfo.Info) (Identity, time.Duration, error) {
+func (client *Client) Register(ctx context.Context, configuration config.Config, info buildinfo.Info) (Identity, time.Duration, string, error) {
 	request := registrationRequest{
 		SchemaVersion:   protocolVersion,
 		Name:            configuration.Name,
@@ -154,17 +155,17 @@ func (client *Client) Register(ctx context.Context, configuration config.Config,
 	}
 	var response registrationResponse
 	if err := client.post(ctx, "/api/v1/runner-agents/register", configuration.BootstrapToken, request, &response); err != nil {
-		return Identity{}, 0, fmt.Errorf("register runner: %w", err)
+		return Identity{}, 0, "", fmt.Errorf("register runner: %w", err)
 	}
 	if response.SchemaVersion != protocolVersion || response.RunnerID == "" || len(response.Credential) < 32 || !validHeartbeatInterval(response.HeartbeatIntervalSecond) {
-		return Identity{}, 0, errors.New("register runner: control plane returned an incompatible response")
+		return Identity{}, 0, "", errors.New("register runner: control plane returned an incompatible response")
 	}
 	return Identity{
 		SchemaVersion: identitySchemaVersion,
 		RunnerID:      response.RunnerID,
 		Credential:    response.Credential,
 		ServerURL:     client.baseURL.String(),
-	}, heartbeatInterval(response.HeartbeatIntervalSecond), nil
+	}, heartbeatInterval(response.HeartbeatIntervalSecond), response.TerminalConnectionToken, nil
 }
 
 // RotateCredential exchanges the current credential for a newly issued one.

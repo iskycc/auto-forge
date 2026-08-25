@@ -125,6 +125,7 @@ func TestClientRegistersAndSendsAuthenticatedHeartbeat(t *testing.T) {
 			}
 			json.NewEncoder(writer).Encode(map[string]any{
 				"schemaVersion": 1, "runnerId": "runner-1", "credential": "runner-credential-with-more-than-32-bytes", "heartbeatIntervalSeconds": 15,
+				"terminalConnectionToken": "registration-terminal-ticket",
 			})
 		case "/api/v1/runner-agents/runner-1/heartbeat":
 			if request.Header.Get("Authorization") != "Bearer runner-credential-with-more-than-32-bytes" {
@@ -152,9 +153,12 @@ func TestClientRegistersAndSendsAuthenticatedHeartbeat(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewClient() error = %v", err)
 	}
-	identity, _, err := client.Register(context.Background(), configuration, buildinfo.Info{Version: "0.2.0"})
+	identity, _, terminalToken, err := client.Register(context.Background(), configuration, buildinfo.Info{Version: "0.2.0"})
 	if err != nil {
 		t.Fatalf("Register() error = %v", err)
+	}
+	if terminalToken != "registration-terminal-ticket" {
+		t.Fatalf("registration terminal token = %q", terminalToken)
 	}
 	snapshot := &metrics.Snapshot{CPUUtilizationPercent: 20, MemoryUtilizationPercent: 30, LoadAverage1m: 0.5, LogicalCPUCount: 4, ObservedAt: "2026-08-09T00:00:00Z"}
 	heartbeat, err := client.Heartbeat(

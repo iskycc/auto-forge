@@ -64,6 +64,7 @@ func TestEnsureIdentityAcceptedKeepsValidIdentity(t *testing.T) {
 		_ = json.NewEncoder(writer).Encode(map[string]any{
 			"schemaVersion": 1, "acceptedAt": "2026-08-09T00:00:00.000Z",
 			"heartbeatIntervalSeconds": 20, "draining": false, "rotateCredential": false,
+			"terminalConnectionToken": "terminal-ticket-from-heartbeat",
 		})
 	}))
 	defer server.Close()
@@ -76,7 +77,7 @@ func TestEnsureIdentityAcceptedKeepsValidIdentity(t *testing.T) {
 	store := NewIdentityStore(t.TempDir())
 	identity := Identity{SchemaVersion: identitySchemaVersion, RunnerID: "runner-1", Credential: "valid-credential-with-more-than-32-bytes", ServerURL: server.URL}
 
-	result, interval, err := ensureIdentityAccepted(context.Background(), client, store, identity, configuration, buildinfo.Info{Version: "0.3.0"}, io.Discard)
+	result, interval, terminalToken, err := ensureIdentityAccepted(context.Background(), client, store, identity, configuration, buildinfo.Info{Version: "0.3.0"}, io.Discard)
 	if err != nil {
 		t.Fatalf("ensureIdentityAccepted() error = %v", err)
 	}
@@ -85,6 +86,9 @@ func TestEnsureIdentityAcceptedKeepsValidIdentity(t *testing.T) {
 	}
 	if interval.Seconds() != 20 {
 		t.Fatalf("interval = %v, want 20s", interval)
+	}
+	if terminalToken != "terminal-ticket-from-heartbeat" {
+		t.Fatalf("terminal token = %q", terminalToken)
 	}
 }
 
@@ -102,6 +106,7 @@ func TestEnsureIdentityAcceptedReRegistersWhenCredentialRejected(t *testing.T) {
 			_ = json.NewEncoder(writer).Encode(map[string]any{
 				"schemaVersion": 1, "runnerId": "runner-new",
 				"credential": "new-credential-with-more-than-32-bytes", "heartbeatIntervalSeconds": 15,
+				"terminalConnectionToken": "terminal-ticket-from-registration",
 			})
 		default:
 			http.NotFound(writer, request)
@@ -120,12 +125,15 @@ func TestEnsureIdentityAcceptedReRegistersWhenCredentialRejected(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result, _, err := ensureIdentityAccepted(context.Background(), client, store, stale, configuration, buildinfo.Info{Version: "0.3.0"}, io.Discard)
+	result, _, terminalToken, err := ensureIdentityAccepted(context.Background(), client, store, stale, configuration, buildinfo.Info{Version: "0.3.0"}, io.Discard)
 	if err != nil {
 		t.Fatalf("ensureIdentityAccepted() error = %v", err)
 	}
 	if result.RunnerID != "runner-new" {
 		t.Fatalf("RunnerID = %q, want runner-new", result.RunnerID)
+	}
+	if terminalToken != "terminal-ticket-from-registration" {
+		t.Fatalf("terminal token = %q", terminalToken)
 	}
 	// 旧身份必须已被删除并替换为新身份。
 	persisted, exists, loadErr := store.Load()
@@ -157,7 +165,7 @@ func TestEnsureIdentityAcceptedFailsWithoutBootstrapToken(t *testing.T) {
 	store := NewIdentityStore(t.TempDir())
 	stale := Identity{SchemaVersion: identitySchemaVersion, RunnerID: "runner-old", Credential: "stale-credential-with-more-than-32-bytes", ServerURL: server.URL}
 
-	_, _, err = ensureIdentityAccepted(context.Background(), client, store, stale, configuration, buildinfo.Info{Version: "0.3.0"}, io.Discard)
+	_, _, _, err = ensureIdentityAccepted(context.Background(), client, store, stale, configuration, buildinfo.Info{Version: "0.3.0"}, io.Discard)
 	if err == nil {
 		t.Fatal("ensureIdentityAccepted() succeeded without a bootstrap token")
 	}
@@ -180,7 +188,7 @@ func TestEnsureIdentityAcceptedToleratesTransientErrors(t *testing.T) {
 	store := NewIdentityStore(t.TempDir())
 	identity := Identity{SchemaVersion: identitySchemaVersion, RunnerID: "runner-1", Credential: "valid-credential-with-more-than-32-bytes", ServerURL: server.URL}
 
-	result, interval, err := ensureIdentityAccepted(context.Background(), client, store, identity, configuration, buildinfo.Info{Version: "0.3.0"}, io.Discard)
+	result, interval, terminalToken, err := ensureIdentityAccepted(context.Background(), client, store, identity, configuration, buildinfo.Info{Version: "0.3.0"}, io.Discard)
 	if err != nil {
 		t.Fatalf("ensureIdentityAccepted() error = %v", err)
 	}
@@ -189,6 +197,9 @@ func TestEnsureIdentityAcceptedToleratesTransientErrors(t *testing.T) {
 	}
 	if interval.Seconds() != 15 {
 		t.Fatalf("interval = %v, want default 15s", interval)
+	}
+	if terminalToken != "" {
+		t.Fatalf("terminal token = %q, want empty", terminalToken)
 	}
 }
 

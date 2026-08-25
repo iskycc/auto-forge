@@ -1,6 +1,7 @@
 import { runnerRegistrationInputSchema } from "@autoforge/contracts";
 import { apiErrorResponse, bearerToken, readJsonBody, rejectRateLimited } from "@/lib/api-response";
 import { getPlatformServices } from "@/lib/services";
+import { issueTerminalTicket } from "@/lib/terminal-ticket";
 import { NextResponse } from "next/server";
 import { requestId } from "@/lib/auth";
 
@@ -17,7 +18,23 @@ export async function POST(request: Request): Promise<NextResponse> {
       requestId: currentRequestId,
       details: { name: registration.runner.name },
     });
-    return NextResponse.json(registration.result, { status: 201 });
+    const terminalConnectionToken =
+      input.terminalEnabled &&
+      registration.runner.state !== "disabled" &&
+      services.config.terminalAccessToken
+        ? issueTerminalTicket(services.config.terminalAccessToken, {
+            role: "agent",
+            runnerId: registration.runner.id,
+            ttlSeconds: 90,
+          })
+        : undefined;
+    return NextResponse.json(
+      {
+        ...registration.result,
+        ...(terminalConnectionToken ? { terminalConnectionToken } : {}),
+      },
+      { status: 201 },
+    );
   } catch (error) {
     return apiErrorResponse(error, currentRequestId);
   }

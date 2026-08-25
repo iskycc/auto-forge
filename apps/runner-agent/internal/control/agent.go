@@ -45,11 +45,12 @@ func Run(ctx context.Context, configuration config.Config, info buildinfo.Info, 
 		return err
 	}
 	interval := 15 * time.Second
+	terminalConnectionToken := ""
 	if !exists {
 		if configuration.BootstrapToken == "" {
 			return errors.New("runner is not registered and the bootstrap token is missing")
 		}
-		identity, interval, err = client.Register(ctx, configuration, info)
+		identity, interval, terminalConnectionToken, err = client.Register(ctx, configuration, info)
 		if err != nil {
 			return err
 		}
@@ -73,7 +74,7 @@ func Run(ctx context.Context, configuration config.Config, info buildinfo.Info, 
 		// 必须先验证凭据仍然有效，再消费 bootstrap token；否则旧凭据被拒绝后 Agent 将既无法
 		// 认证也无法重新注册。验证失败且凭据被永久拒绝时，删除本地身份并用新的 bootstrap
 		// token 重新注册。
-		identity, interval, err = ensureIdentityAccepted(ctx, client, store, identity, configuration, info, diagnostics)
+		identity, interval, terminalConnectionToken, err = ensureIdentityAccepted(ctx, client, store, identity, configuration, info, diagnostics)
 		if err != nil {
 			return err
 		}
@@ -97,32 +98,11 @@ func Run(ctx context.Context, configuration config.Config, info buildinfo.Info, 
 		})
 		defer terminalManager.CloseAll()
 		terminalConnector = newTerminalConnector(client, terminalManager, diagnostics)
+		terminalConnector.UpdateToken(terminalConnectionToken)
 		go terminalConnector.Run(ctx)
 	}
 	resourceCollector := metrics.NewCollector()
 	supervisor := newAttemptSupervisor(client, identity, configuration, diagnostics)
-	// Startup reconciliation intentionally completes before assignment claims,
-	// but it can take longer when a previous large run left upload state behind.
-	// Obtain the terminal ticket before that recovery so an otherwise-live Agent
-	// does not present a misleading "channel not ready" state during the scan.
-	if terminalConnector != nil {
-		response, heartbeatErr := client.Heartbeat(
-			ctx,
-			identity,
-			configuration,
-			info,
-			0,
-			nil,
-			nil,
-		)
-		if heartbeatErr != nil {
-			fmt.Fprintf(diagnostics, "terminal startup heartbeat failed: %v\n", heartbeatErr)
-		} else {
-			interval = heartbeatInterval(response.HeartbeatIntervalSecond)
-			terminalConnector.UpdateToken(response.TerminalConnectionToken)
-			supervisor.SetDraining(response.Draining)
-		}
-	}
 	if err := supervisor.Start(ctx); err != nil {
 		return fmt.Errorf("start assignment supervisor: %w", err)
 	}
@@ -232,31 +212,31 @@ func ensureIdentityAccepted(
 	configuration config.Config,
 	info buildinfo.Info,
 	diagnostics io.Writer,
-) (Identity, time.Duration, error) {
+) (Identity, time.Duration, string, error) {
 	heartbeat, heartbeatErr := client.Heartbeat(ctx, identity, configuration, info, 0, nil, nil)
 	if heartbeatErr == nil {
-		return identity, heartbeatInterval(heartbeat.HeartbeatIntervalSecond), nil
+		return identity, heartbeatInterval(heartbeat.HeartbeatIntervalSecond), heartbeat.TerminalConnectionToken, nil
 	}
 	if !isCredentialRejected(heartbeatErr) {
-		return identity, 15 * time.Second, nil
+		return identity, 15 * time.Second, "", nil
 	}
 	fmt.Fprintf(diagnostics, "stored runner credential was rejected by the control plane: %v\n", heartbeatErr)
 	if configuration.BootstrapToken == "" {
-		return identity, 0, fmt.Errorf("runner credential is no longer valid and no bootstrap token is available for re-registration")
+		return identity, 0, "", fmt.Errorf("runner credential is no longer valid and no bootstrap token is available for re-registration")
 	}
 	if err := store.Remove(); err != nil {
-		return identity, 0, fmt.Errorf("remove rejected runner identity: %w", err)
+		return identity, 0, "", fmt.Errorf("remove rejected runner identity: %w", err)
 	}
-	reregistered, interval, err := client.Register(ctx, configuration, info)
+	reregistered, interval, terminalConnectionToken, err := client.Register(ctx, configuration, info)
 	if err != nil {
-		return identity, 0, err
+		return identity, 0, "", err
 	}
 	if err := store.Save(reregistered); err != nil {
-		return identity, 0, err
+		return identity, 0, "", err
 	}
 	_ = os.Unsetenv("AUTOFORGE_AGENT_BOOTSTRAP_TOKEN")
 	fmt.Fprintf(diagnostics, "runner re-registered: %s\n", reregistered.RunnerID)
-	return reregistered, interval, nil
+	return reregistered, interval, terminalConnectionToken, nil
 }
 
 func persistRotatedIdentity(ctx context.Context, store IdentityStore, identity Identity, diagnostics io.Writer) error {

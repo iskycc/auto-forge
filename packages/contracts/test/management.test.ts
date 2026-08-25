@@ -5,6 +5,7 @@ import {
   installRunnerAgentRequestSchema,
   installRunnerAgentInputSchema,
   inspectRoundRecoveryConfigurationInputSchema,
+  runnerRegistrationResultSchema,
   runnerHeartbeatInputSchema,
   runnerHeartbeatResultSchema,
   probeRunnerHostRequestSchema,
@@ -13,6 +14,20 @@ import {
   updateCaseSuiteItemsInputSchema,
   createWebhookConfigurationInputSchema,
 } from "../src/management";
+
+describe("Runner registration contracts", () => {
+  it("accepts the optional startup terminal ticket without changing protocol v1", () => {
+    expect(
+      runnerRegistrationResultSchema.parse({
+        schemaVersion: 1,
+        runnerId: "runner-1",
+        credential: "runner-credential-with-more-than-32-bytes",
+        heartbeatIntervalSeconds: 15,
+        terminalConnectionToken: "short-lived-terminal-ticket",
+      }),
+    ).toMatchObject({ terminalConnectionToken: "short-lived-terminal-ticket" });
+  });
+});
 
 describe("webhook configuration contracts", () => {
   it("accepts GET endpoints and POST JSON templates with documented variables", () => {
