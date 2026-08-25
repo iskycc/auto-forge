@@ -1,7 +1,6 @@
 #!/usr/bin/env groovy
 
-@Grab('org.apache.poi:poi-ooxml:3.13')
-
+import groovy.grape.Grape
 import groovy.transform.CompileStatic
 import org.apache.poi.ss.usermodel.Cell
 import org.apache.poi.ss.usermodel.CellStyle
@@ -41,9 +40,8 @@ import java.util.stream.Stream
  * Recursively finds Groovy test cases below the selected directory, excludes
  * abnormal/negative scenarios, and writes the result to an XLSX workbook.
  *
- * Run `groovy AnalyzeNormalGroovyCases.groovy --help` for usage. Apache POI is
- * resolved through Groovy Grape, so an internal repository can be configured
- * in ~/.groovy/grapeConfig.xml when Maven Central is not directly reachable.
+ * Run `groovy -cp 'lib/*' AnalyzeNormalGroovyCases.groovy --help` for usage.
+ * The classpath must provide Apache POI 3.13 and its transitive dependencies.
  */
 final class AnalyzeNormalGroovyCases {
     public static void main(String[] arguments) {
@@ -340,7 +338,7 @@ final class GroovyCaseAnalyzer {
     }
 
     private List<CaseCandidate> discoverCandidates(Path sourceFile, String source) {
-        List<ASTNode> nodes = new AstBuilder().buildFromString(CompilePhase.CONVERSION, false, source)
+        List<ASTNode> nodes = parseWithoutDependencyResolution(source)
         List<ClassNode> declaredClasses = []
         nodes.findAll { ASTNode node -> node instanceof ClassNode }
             .each { ASTNode node -> collectClasses((ClassNode) node, declaredClasses) }
@@ -398,6 +396,18 @@ final class GroovyCaseAnalyzer {
             }
         }
         return candidates
+    }
+
+    private static List<ASTNode> parseWithoutDependencyResolution(String source) {
+        boolean grapesWereEnabled = Grape.enableGrapes
+        Grape.setEnableGrapes(false)
+        try {
+            // AstBuilder invokes Groovy compiler transformations. Disabling Grape prevents
+            // scanned @Grab annotations from resolving dependencies or requiring Apache Ivy.
+            return new AstBuilder().buildFromString(CompilePhase.CONVERSION, false, source)
+        } finally {
+            Grape.setEnableGrapes(grapesWereEnabled)
+        }
     }
 
     private static void collectClasses(ClassNode classNode, List<ClassNode> classes) {
