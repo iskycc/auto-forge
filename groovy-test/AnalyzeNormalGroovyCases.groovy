@@ -1,18 +1,14 @@
 #!/usr/bin/env groovy
 
-@Grab('org.apache.poi:poi-ooxml:5.5.1')
+@Grab('org.apache.poi:poi-ooxml:3.13')
 
 import groovy.transform.CompileStatic
-import org.apache.poi.ss.usermodel.BorderStyle
 import org.apache.poi.ss.usermodel.Cell
 import org.apache.poi.ss.usermodel.CellStyle
-import org.apache.poi.ss.usermodel.FillPatternType
 import org.apache.poi.ss.usermodel.Font
-import org.apache.poi.ss.usermodel.HorizontalAlignment
 import org.apache.poi.ss.usermodel.IndexedColors
 import org.apache.poi.ss.usermodel.Row
 import org.apache.poi.ss.usermodel.Sheet
-import org.apache.poi.ss.usermodel.VerticalAlignment
 import org.apache.poi.ss.usermodel.Workbook
 import org.apache.poi.ss.util.CellRangeAddress
 import org.apache.poi.xssf.streaming.SXSSFWorkbook
@@ -50,7 +46,7 @@ import java.util.stream.Stream
  * in ~/.groovy/grapeConfig.xml when Maven Central is not directly reachable.
  */
 final class AnalyzeNormalGroovyCases {
-    static void main(String[] arguments) {
+    public static void main(String[] arguments) {
         try {
             if (System.getProperty('log4j2.loggerContextFactory') == null) {
                 System.setProperty(
@@ -846,35 +842,35 @@ final class WorkbookStyles {
 
     static WorkbookStyles create(Workbook workbook) {
         Font headerFont = workbook.createFont()
-        headerFont.bold = true
+        headerFont.boldweight = Font.BOLDWEIGHT_BOLD
         headerFont.color = IndexedColors.WHITE.index
 
         CellStyle header = workbook.createCellStyle()
         header.setFont(headerFont)
         header.fillForegroundColor = IndexedColors.DARK_BLUE.index
-        header.fillPattern = FillPatternType.SOLID_FOREGROUND
-        header.alignment = HorizontalAlignment.CENTER
-        header.verticalAlignment = VerticalAlignment.CENTER
+        header.fillPattern = CellStyle.SOLID_FOREGROUND
+        header.alignment = CellStyle.ALIGN_CENTER
+        header.verticalAlignment = CellStyle.VERTICAL_CENTER
         header.wrapText = true
         addBorders(header)
 
         CellStyle body = workbook.createCellStyle()
-        body.verticalAlignment = VerticalAlignment.TOP
+        body.verticalAlignment = CellStyle.VERTICAL_TOP
         body.wrapText = true
         addBorders(body)
 
         CellStyle number = workbook.createCellStyle()
         number.cloneStyleFrom(body)
-        number.alignment = HorizontalAlignment.CENTER
+        number.alignment = CellStyle.ALIGN_CENTER
 
         return new WorkbookStyles(header: header, body: body, number: number)
     }
 
     private static void addBorders(CellStyle style) {
-        style.borderTop = BorderStyle.THIN
-        style.borderRight = BorderStyle.THIN
-        style.borderBottom = BorderStyle.THIN
-        style.borderLeft = BorderStyle.THIN
+        style.borderTop = CellStyle.BORDER_THIN
+        style.borderRight = CellStyle.BORDER_THIN
+        style.borderBottom = CellStyle.BORDER_THIN
+        style.borderLeft = CellStyle.BORDER_THIN
         style.topBorderColor = IndexedColors.GREY_25_PERCENT.index
         style.rightBorderColor = IndexedColors.GREY_25_PERCENT.index
         style.bottomBorderColor = IndexedColors.GREY_25_PERCENT.index
