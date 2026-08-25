@@ -124,6 +124,10 @@ test("executes a TestNG JAR through the real Go Agent", async ({ page }, testInf
       .poll(async () => page.locator(".execution-log").textContent(), { timeout: 30_000 })
       .toContain("AutoForge Runner Agent started the attempt.");
     await waitForLocalAttemptState(restartAttemptId, "running");
+    // Local "running" is persisted immediately before the child process starts.
+    // Wait for the fixture's durable side effect so SIGKILL cannot race ahead of
+    // Java startup and make the retry look like a first execution.
+    await waitForFile(requiredEnvironment("E2E_REAL_AGENT_RESTART_MARKER"), 30_000);
     await killAgentAbruptly(agent);
     agent = await startAgent();
     agents.push(agent);
