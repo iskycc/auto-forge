@@ -36,6 +36,7 @@ import {
 
 import type { AttemptLogStore } from "./attempt-log-store";
 import { runSqliteWriteTransaction, type SqliteDatabaseHandle } from "./database";
+import { queueDeadlineAfter, retryQueueTiming } from "./execution-queue-timing";
 import { QUERY_IN_CHUNK_SIZE, splitIntoChunks } from "./query-chunks";
 
 type AssignmentRow = {
@@ -79,6 +80,7 @@ type AttemptControlRow = {
   run_status: ExecutionRunStatus;
   retry_limit: number;
   retry_mode: "immediate" | "round";
+  queue_timeout_ms: number;
   batch_id: string;
   project_id: string;
   run_cancel_requested_at: string | null;
@@ -745,7 +747,7 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
         .prepare(
           `SELECT r.id, r.batch_id FROM execution_runs r
            JOIN run_batches b ON b.id = r.batch_id
-           WHERE r.status = 'queued' AND r.queue_deadline_at IS NOT NULL
+           WHERE r.status = 'queued' AND r.held_round = 0 AND r.queue_deadline_at IS NOT NULL
              AND r.queue_deadline_at <= ?
              AND b.status IN ('queued','dispatching','scheduled','running')
            ORDER BY r.queue_deadline_at, r.id LIMIT ?`,
@@ -759,7 +761,7 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
           .prepare(
             `UPDATE execution_runs SET status = 'failed', terminal_outcome = 'timed_out',
              terminal_reason_code = 'QUEUE_TIMEOUT', updated_at = ?, version = version + 1
-             WHERE id = ? AND status = 'queued' AND queue_deadline_at <= ?
+             WHERE id = ? AND status = 'queued' AND held_round = 0 AND queue_deadline_at <= ?
                AND EXISTS (
                  SELECT 1 FROM run_batches b
                  WHERE b.id = execution_runs.batch_id
@@ -920,6 +922,14 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
     const assignmentStatus = transitionAssignment(assignment.status, "completed");
     const leaseStatus = transitionLease(lease.status, "released");
     const executionRunStatus = transitionExecutionRun(control.run_status, runStatus);
+    const queueTiming = retryQueueTiming({
+      runStatus: executionRunStatus,
+      retryMode: control.retry_mode,
+      retryableRunnerFailure: isRetryableRunnerFailure(result.resultCode),
+      attemptNumber: control.attempt_number,
+      eligibleAt: input.acceptedAt,
+      queueTimeoutMs: control.queue_timeout_ms,
+    });
     this.handle.client
       .prepare(
         `UPDATE run_attempts SET status = ?, outcome = ?, result_code = ?, result_summary = ?,
@@ -949,7 +959,8 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
     this.handle.client
       .prepare(
         `UPDATE execution_runs SET status = ?, terminal_outcome = ?, assigned_runner_id = ?,
-         terminal_reason_code = ?, held_round = ?, updated_at = ?, version = version + 1
+         terminal_reason_code = ?, held_round = ?, queue_deadline_at = ?, updated_at = ?,
+         version = version + 1
          WHERE id = ? AND status IN ('assigned', 'running')`,
       )
       .run(
@@ -957,11 +968,8 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
         executionRunStatus === "queued" ? null : attemptStatus,
         executionRunStatus === "queued" ? null : control.runner_id,
         executionRunStatus === "queued" ? null : result.resultCode,
-        executionRunStatus === "queued" &&
-          control.retry_mode === "round" &&
-          !isRetryableRunnerFailure(result.resultCode)
-          ? control.attempt_number + 1
-          : 0,
+        queueTiming.heldRound,
+        queueTiming.queueDeadlineAt,
         input.acceptedAt,
         control.execution_run_id,
       );
@@ -1120,6 +1128,14 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
     });
     const attemptStatus = transitionRunAttempt(control.status, "timed_out");
     const runStatus = transitionExecutionRun(control.run_status, decision.runStatus);
+    const queueTiming = retryQueueTiming({
+      runStatus,
+      retryMode: control.retry_mode,
+      retryableRunnerFailure: isRetryableRunnerFailure(expiration.resultCode),
+      attemptNumber: control.attempt_number,
+      eligibleAt: recordedAt,
+      queueTimeoutMs: control.queue_timeout_ms,
+    });
     const assignment = this.requiredAssignment(assignmentId);
     const assignmentStatus = transitionAssignment(assignment.status, "expired");
     this.handle.client
@@ -1137,18 +1153,16 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
     this.handle.client
       .prepare(
         `UPDATE execution_runs SET status = ?, terminal_outcome = ?, assigned_runner_id = NULL,
-         terminal_reason_code = ?, held_round = ?, updated_at = ?, version = version + 1
+         terminal_reason_code = ?, held_round = ?, queue_deadline_at = ?, updated_at = ?,
+         version = version + 1
          WHERE id = ? AND status IN ('assigned', 'running')`,
       )
       .run(
         runStatus,
         runStatus === "queued" ? null : attemptStatus,
         runStatus === "queued" ? null : expiration.resultCode,
-        runStatus === "queued" &&
-          control.retry_mode === "round" &&
-          !isRetryableRunnerFailure(expiration.resultCode)
-          ? control.attempt_number + 1
-          : 0,
+        queueTiming.heldRound,
+        queueTiming.queueDeadlineAt,
         recordedAt,
         control.execution_run_id,
       );
@@ -1420,7 +1434,7 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
       .prepare(
         `SELECT a.id, a.execution_run_id, a.runner_id, a.attempt_number, a.status,
          r.status AS run_status, r.cancel_requested_at AS run_cancel_requested_at,
-         b.retry_limit, b.retry_mode, b.id AS batch_id, b.project_id,
+         b.retry_limit, b.retry_mode, b.queue_timeout_ms, b.id AS batch_id, b.project_id,
          b.cancel_requested_at AS batch_termination_requested_at
          FROM run_attempts a JOIN execution_runs r ON r.id = a.execution_run_id
          JOIN run_batches b ON b.id = r.batch_id WHERE a.id = ?`,
@@ -1511,20 +1525,21 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
   ): RunBatchStatus {
     const batch = this.handle.client
       .prepare(
-        "SELECT status, version, retry_mode, cancel_requested_at FROM run_batches WHERE id = ?",
+        "SELECT status, version, retry_mode, queue_timeout_ms, cancel_requested_at FROM run_batches WHERE id = ?",
       )
       .get(batchId) as
       | {
           status: RunBatchStatus;
           version: number;
           retry_mode: "immediate" | "round";
+          queue_timeout_ms: number;
           cancel_requested_at: string | null;
         }
       | undefined;
     if (!batch) throw new DomainError("RUN_BATCH_NOT_FOUND", "指定的执行批次不存在。");
     // 轮次制下先释放等待下一轮的失败 run，再聚合状态，确保释放的 run 计入批次状态。
     if (!batch.cancel_requested_at) {
-      this.advanceRoundIfIdle(batchId, batch.retry_mode, updatedAt);
+      this.advanceRoundIfIdle(batchId, batch.retry_mode, batch.queue_timeout_ms, updatedAt);
     }
     const status = this.aggregateStoredBatchStatus(batchId, batch.cancel_requested_at !== null);
     transitionRunBatch(batch.status, status);
@@ -1591,6 +1606,7 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
   private advanceRoundIfIdle(
     batchId: string,
     retryMode: "immediate" | "round",
+    queueTimeoutMs: number,
     updatedAt: string,
   ): void {
     if (retryMode !== "round") return;
@@ -1644,10 +1660,10 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
     }
     this.handle.client
       .prepare(
-        `UPDATE execution_runs SET held_round = 0, updated_at = ?
+        `UPDATE execution_runs SET held_round = 0, queue_deadline_at = ?, updated_at = ?
          WHERE batch_id = ? AND status = 'queued' AND held_round <= ?`,
       )
-      .run(updatedAt, batchId, nextRound.value);
+      .run(queueDeadlineAfter(updatedAt, queueTimeoutMs), updatedAt, batchId, nextRound.value);
     this.handle.client
       .prepare("UPDATE run_batches SET current_round = ?, updated_at = ? WHERE id = ?")
       .run(nextRound.value, updatedAt, batchId);

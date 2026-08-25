@@ -6,6 +6,36 @@ and known limitations.
 
 ## Unreleased
 
+## 1.3.5 - 2026-08-25
+
+### Fixed
+
+- Round-mode retries no longer inherit the batch creation queue deadline while they are held between
+  rounds or waiting for Jenkins environment recovery. Held runs are excluded from queue-timeout
+  recovery, and receive a fresh task-configured queue window only when the next round is released.
+- Immediate retries and retryable Runner-fault reschedules now also receive a new queue deadline from
+  the moment they become eligible, instead of reusing a deadline consumed by the previous attempt.
+- A transient Jenkins status request no longer immediately marks environment recovery and the batch
+  as failed. Polling failures persist across worker restarts and retry up to ten consecutive times
+  with bounded backoff; an explicit unsuccessful Jenkins build still fails immediately.
+
+### Tests
+
+- Added shared queue-timing unit coverage, a Lite regression proving expired held runs cannot be
+  reclaimed as `QUEUE_TIMEOUT`, and Lite/Full repository assertions that the released round receives
+  a renewed deadline. Added bounded Jenkins polling retry and migration upgrade coverage.
+
+### Database
+
+- Added SQLite `0047_round_recovery_poll_retries.sql` and PostgreSQL
+  `0046_round_recovery_poll_retries.sql`. Existing recovery rows receive a zeroed consecutive polling
+  failure counter; no task configuration or execution history is rewritten.
+
+### Compatibility
+
+- Runner Protocol v1, Jenkins Pipeline step contracts, task policy fields and release archive formats
+  are unchanged. Lite and Full apply the same queue-timeout and Jenkins polling-retry semantics.
+
 ## 1.3.2 - 2026-08-25
 
 ### Added

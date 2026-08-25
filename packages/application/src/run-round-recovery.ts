@@ -14,6 +14,8 @@ import type {
 
 const RECOVERY_LEASE_MS = 30_000;
 const JENKINS_POLL_MS = 5_000;
+const MAX_CONSECUTIVE_POLL_FAILURES = 10;
+const MAX_POLL_RETRY_DELAY_MS = 60_000;
 
 export class RoundRecoveryService {
   constructor(
@@ -46,20 +48,48 @@ export class RoundRecoveryService {
       else if (claim.status === "waiting") await this.resume(workerId, claim);
       else await this.releaseRound(workerId, claim);
     } catch (error) {
-      const updatedAt = this.clock.now().toISOString();
+      const updatedAt = this.clock.now();
       const errorMessage = safeErrorMessage(error);
+      if (claim.status === "polling" && claim.pollFailureCount < MAX_CONSECUTIVE_POLL_FAILURES) {
+        const failureCount = claim.pollFailureCount + 1;
+        const retryAt = new Date(updatedAt.getTime() + pollRetryDelayMs(failureCount));
+        const deferred = await this.repository.deferPollingFailure({
+          batchId: claim.batchId,
+          ruleId: claim.ruleId,
+          workerId,
+          errorMessage,
+          availableAt: retryAt.toISOString(),
+          updatedAt: updatedAt.toISOString(),
+        });
+        if (deferred) {
+          await this.appendEvent(
+            claim,
+            `Jenkins 状态轮询暂时失败（第 ${failureCount}/${MAX_CONSECUTIVE_POLL_FAILURES} 次），将自动重试：${errorMessage}`,
+            updatedAt.toISOString(),
+            {
+              state: "poll_retrying",
+              consecutiveFailures: failureCount,
+              retryAt: retryAt.toISOString(),
+            },
+          );
+        }
+        return;
+      }
       const failed = await this.repository.fail({
         batchId: claim.batchId,
         ruleId: claim.ruleId,
         workerId,
         errorMessage,
         eventId: this.ids.next(),
-        updatedAt,
+        updatedAt: updatedAt.toISOString(),
       });
       if (failed) {
-        await this.appendEvent(claim, `Jenkins 环境恢复失败：${errorMessage}`, updatedAt, {
-          state: "failed",
-        });
+        await this.appendEvent(
+          claim,
+          `Jenkins 环境恢复失败：${errorMessage}`,
+          updatedAt.toISOString(),
+          { state: "failed" },
+        );
       }
     }
   }
@@ -268,4 +298,8 @@ export class RoundRecoveryService {
 function safeErrorMessage(error: unknown): string {
   const message = error instanceof Error ? error.message : "未知错误";
   return message.slice(0, 1_000);
+}
+
+function pollRetryDelayMs(failureCount: number): number {
+  return Math.min(JENKINS_POLL_MS * 2 ** Math.max(0, failureCount - 1), MAX_POLL_RETRY_DELAY_MS);
 }

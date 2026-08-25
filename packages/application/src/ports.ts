@@ -1456,6 +1456,7 @@ export type RoundRecoveryClaim = {
   apiKeyCiphertext: string;
   waitMinutes: number;
   status: RoundRecoveryStatus;
+  pollFailureCount: number;
   sourceBuildNumber?: number;
   rebuildNumber?: number;
   rebuildUrl?: string;
@@ -1509,6 +1510,14 @@ export interface RoundRecoveryRepository {
     updatedAt: string;
   }): Promise<boolean>;
   retryRoundRelease(input: {
+    batchId: string;
+    ruleId: string;
+    workerId: string;
+    errorMessage: string;
+    availableAt: string;
+    updatedAt: string;
+  }): Promise<boolean>;
+  deferPollingFailure(input: {
     batchId: string;
     ruleId: string;
     workerId: string;

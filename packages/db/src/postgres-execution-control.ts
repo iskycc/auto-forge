@@ -36,6 +36,7 @@ import {
 import type { PoolClient } from "pg";
 
 import type { AttemptLogStore } from "./attempt-log-store";
+import { queueDeadlineAfter, retryQueueTiming } from "./execution-queue-timing";
 import type { PostgresDatabaseHandle } from "./postgres-database";
 import { QUERY_IN_CHUNK_SIZE, splitIntoChunks } from "./query-chunks";
 
@@ -80,6 +81,7 @@ type AttemptControlRow = {
   run_status: ExecutionRunStatus;
   retry_limit: number;
   retry_mode: "immediate" | "round";
+  queue_timeout_ms: number;
   batch_id: string;
   project_id: string;
   run_cancel_requested_at: string | null;
@@ -797,7 +799,7 @@ export class PostgresExecutionControlRepository implements ExecutionControlRepos
       const queued = await client.query<{ id: string; batch_id: string }>(
         `SELECT r.id, r.batch_id FROM execution_runs r
          JOIN run_batches b ON b.id = r.batch_id
-         WHERE r.status = 'queued' AND r.queue_deadline_at IS NOT NULL
+         WHERE r.status = 'queued' AND r.held_round = 0 AND r.queue_deadline_at IS NOT NULL
            AND r.queue_deadline_at::timestamptz <= $1::timestamptz
            AND b.status IN ('queued','dispatching','scheduled','running')
          ORDER BY r.queue_deadline_at::timestamptz, r.id
@@ -811,7 +813,7 @@ export class PostgresExecutionControlRepository implements ExecutionControlRepos
         const update = await client.query(
           `UPDATE execution_runs SET status = 'failed', terminal_outcome = 'timed_out',
            terminal_reason_code = 'QUEUE_TIMEOUT', updated_at = $1, version = version + 1
-           WHERE id = $2 AND status = 'queued'
+           WHERE id = $2 AND status = 'queued' AND held_round = 0
              AND queue_deadline_at::timestamptz <= $1::timestamptz
              AND EXISTS (
                SELECT 1 FROM run_batches b
@@ -1100,6 +1102,14 @@ async function persistCompletion(
   const assignmentStatus = transitionAssignment(assignment.status, "completed");
   const leaseStatus = transitionLease(lease.status, "released");
   const executionRunStatus = transitionExecutionRun(control.run_status, runStatus);
+  const queueTiming = retryQueueTiming({
+    runStatus: executionRunStatus,
+    retryMode: control.retry_mode,
+    retryableRunnerFailure: isRetryableRunnerFailure(result.resultCode),
+    attemptNumber: control.attempt_number,
+    eligibleAt: input.acceptedAt,
+    queueTimeoutMs: control.queue_timeout_ms,
+  });
   await client.query(
     `UPDATE run_attempts SET status = $1, outcome = $1, result_code = $2, result_summary = $3,
      completion_digest = $4, duration_ms = $5, testng_result_json = $6, finished_at = $7,
@@ -1127,18 +1137,16 @@ async function persistCompletion(
   );
   await client.query(
     `UPDATE execution_runs SET status = $1, terminal_outcome = $2, assigned_runner_id = $3,
-     terminal_reason_code = $4, held_round = $5, updated_at = $6, version = version + 1
-     WHERE id = $7 AND status IN ('assigned', 'running')`,
+     terminal_reason_code = $4, held_round = $5, queue_deadline_at = $6, updated_at = $7,
+     version = version + 1
+     WHERE id = $8 AND status IN ('assigned', 'running')`,
     [
       executionRunStatus,
       executionRunStatus === "queued" ? null : attemptStatus,
       executionRunStatus === "queued" ? null : control.runner_id,
       executionRunStatus === "queued" ? null : result.resultCode,
-      executionRunStatus === "queued" &&
-      control.retry_mode === "round" &&
-      !isRetryableRunnerFailure(result.resultCode)
-        ? control.attempt_number + 1
-        : 0,
+      queueTiming.heldRound,
+      queueTiming.queueDeadlineAt,
       input.acceptedAt,
       control.execution_run_id,
     ],
@@ -1242,6 +1250,14 @@ async function expireAttempt(
   });
   const attemptStatus = transitionRunAttempt(control.status, "timed_out");
   const runStatus = transitionExecutionRun(control.run_status, decision.runStatus);
+  const queueTiming = retryQueueTiming({
+    runStatus,
+    retryMode: control.retry_mode,
+    retryableRunnerFailure: isRetryableRunnerFailure(expiration.resultCode),
+    attemptNumber: control.attempt_number,
+    eligibleAt: recordedAt,
+    queueTimeoutMs: control.queue_timeout_ms,
+  });
   const assignment = await requiredAssignment(client, assignmentId);
   const assignmentStatus = transitionAssignment(assignment.status, "expired");
   await client.query(
@@ -1256,17 +1272,15 @@ async function expireAttempt(
   );
   await client.query(
     `UPDATE execution_runs SET status = $1, terminal_outcome = $2, assigned_runner_id = NULL,
-     terminal_reason_code = $3, held_round = $4, updated_at = $5, version = version + 1
-     WHERE id = $6 AND status IN ('assigned', 'running')`,
+     terminal_reason_code = $3, held_round = $4, queue_deadline_at = $5, updated_at = $6,
+     version = version + 1
+     WHERE id = $7 AND status IN ('assigned', 'running')`,
     [
       runStatus,
       runStatus === "queued" ? null : attemptStatus,
       runStatus === "queued" ? null : expiration.resultCode,
-      runStatus === "queued" &&
-      control.retry_mode === "round" &&
-      !isRetryableRunnerFailure(expiration.resultCode)
-        ? control.attempt_number + 1
-        : 0,
+      queueTiming.heldRound,
+      queueTiming.queueDeadlineAt,
       recordedAt,
       control.execution_run_id,
     ],
@@ -1518,7 +1532,7 @@ async function findAttemptControl(
   const result = await client.query<AttemptControlRow>(
     `SELECT a.id, a.execution_run_id, a.runner_id, a.attempt_number, a.status,
      r.status AS run_status, r.cancel_requested_at AS run_cancel_requested_at,
-     b.retry_limit, b.retry_mode, b.id AS batch_id, b.project_id,
+     b.retry_limit, b.retry_mode, b.queue_timeout_ms, b.id AS batch_id, b.project_id,
      b.cancel_requested_at AS batch_termination_requested_at
      FROM run_attempts a JOIN execution_runs r ON r.id = a.execution_run_id
      JOIN run_batches b ON b.id = r.batch_id WHERE a.id = $1${lock ? " FOR UPDATE OF a, r" : ""}`,
@@ -1597,15 +1611,23 @@ async function updateBatchStatus(
     status: RunBatchStatus;
     version: number;
     retry_mode: "immediate" | "round";
+    queue_timeout_ms: number;
     cancel_requested_at: string | null;
-  }>("SELECT status, version, retry_mode, cancel_requested_at FROM run_batches WHERE id = $1", [
-    batchId,
-  ]);
+  }>(
+    "SELECT status, version, retry_mode, queue_timeout_ms, cancel_requested_at FROM run_batches WHERE id = $1",
+    [batchId],
+  );
   let batchState = batch.rows[0];
   if (!batchState) throw new DomainError("RUN_BATCH_NOT_FOUND", "指定的执行批次不存在。");
   // 轮次制下先释放等待下一轮的失败 run，再聚合状态，确保释放的 run 计入批次状态。
   if (!batchState.cancel_requested_at) {
-    await advanceRoundIfIdle(client, batchId, batchState.retry_mode, updatedAt);
+    await advanceRoundIfIdle(
+      client,
+      batchId,
+      batchState.retry_mode,
+      batchState.queue_timeout_ms,
+      updatedAt,
+    );
   }
   let status = await aggregateStoredBatchStatus(
     client,
@@ -1621,15 +1643,22 @@ async function updateBatchStatus(
     status: RunBatchStatus;
     version: number;
     retry_mode: "immediate" | "round";
+    queue_timeout_ms: number;
     cancel_requested_at: string | null;
   }>(
-    "SELECT status, version, retry_mode, cancel_requested_at FROM run_batches WHERE id = $1 FOR UPDATE",
+    "SELECT status, version, retry_mode, queue_timeout_ms, cancel_requested_at FROM run_batches WHERE id = $1 FOR UPDATE",
     [batchId],
   );
   batchState = lockedBatch.rows[0];
   if (!batchState) throw new DomainError("RUN_BATCH_NOT_FOUND", "指定的执行批次不存在。");
   if (!batchState.cancel_requested_at) {
-    await advanceRoundIfIdle(client, batchId, batchState.retry_mode, updatedAt);
+    await advanceRoundIfIdle(
+      client,
+      batchId,
+      batchState.retry_mode,
+      batchState.queue_timeout_ms,
+      updatedAt,
+    );
   }
   status = await aggregateStoredBatchStatus(
     client,
@@ -1713,6 +1742,7 @@ async function advanceRoundIfIdle(
   client: PoolClient,
   batchId: string,
   retryMode: "immediate" | "round",
+  queueTimeoutMs: number,
   updatedAt: string,
 ): Promise<void> {
   if (retryMode !== "round") return;
@@ -1758,9 +1788,9 @@ async function advanceRoundIfIdle(
   }
   if (totalRecoverySteps > Number(recoverySteps?.succeeded_steps ?? 0)) return;
   await client.query(
-    `UPDATE execution_runs SET held_round = 0, updated_at = $1
-     WHERE batch_id = $2 AND status = 'queued' AND held_round <= $3`,
-    [updatedAt, batchId, nextRoundValue],
+    `UPDATE execution_runs SET held_round = 0, queue_deadline_at = $1, updated_at = $2
+     WHERE batch_id = $3 AND status = 'queued' AND held_round <= $4`,
+    [queueDeadlineAfter(updatedAt, queueTimeoutMs), updatedAt, batchId, nextRoundValue],
   );
   await client.query("UPDATE run_batches SET current_round = $1, updated_at = $2 WHERE id = $3", [
     nextRoundValue,

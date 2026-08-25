@@ -103,6 +103,11 @@ score = 100 × (
 `JENKINS_ROUND_RECOVERY_FAILED` 结束剩余用例和批次；终止批次会取消尚未完成的恢复。返回的构建
 URL 必须与任务链接同源且位于相同 job 路径，避免凭据被重定向到其他地址。
 
+Jenkins 已返回明确失败结果时立即结束恢复。仅状态查询出现超时、临时网络或响应解析异常时，恢复
+记录持久化连续失败次数，并以 5 秒起、最长 60 秒的退避重试；连续 10 次仍无法读取状态才按恢复
+异常终止。任何一次有效的 discovering/running/succeeded 响应都会清零计数，因此 Web/worker
+重启或 Full 副本切换不会丢失重试预算，也不会因单次控制面抖动误判 Jenkins 构建失败。
+
 恢复屏障激活时间、Jenkins 返回的实际构建开始时间、由 `timestamp + duration` 得到的结束时间、
 构建号、构建 URL 和原始结果会随批次持久化。执行详情把恢复屏障插入第 N 轮与第 N+1 轮之间，
 恢复节点时长覆盖并行构建、各自构建后等待和下一轮释放交接；多个流水线在节点详情中逐项展示。
@@ -127,7 +132,11 @@ claim 都排除该批次。持有有效 lease 的 attempt 不设置取消指令�
 
 任务可配置 `queueTimeoutMs`、`claimTimeoutMs` 和 `uploadTimeoutMs`，入口分别限制在 7 天、1 小时和 1 小时以内。任务不再保存 `executionTimeoutMs`；批次创建统一读取平台配置的 `caseExecutionTimeoutSeconds`，避免同一概念出现两份冲突配置。所有 deadline 由控制面 UTC 时钟计算并持久化，恢复扫描不依赖 Web/worker 进程内定时器：
 
-- queued run 越过排队期限后进入最终 `failed/timed_out`，原因码为 `QUEUE_TIMEOUT`；assignment 条件更新也检查排队期限，防止扫描前的竞态领取。
+- queued run 仅在 `held_round = 0`、实际可调度期间计算排队时间；越过期限后进入最终
+  `failed/timed_out`，原因码为 `QUEUE_TIMEOUT`，assignment 条件更新也检查排队期限以防扫描前
+  的竞态领取。整轮失败用例在等待本轮结束及 Jenkins 环境恢复时暂停排队计时并清空 deadline；
+  下一轮释放时从释放时刻按批次固化的 `queueTimeoutMs` 启动新窗口。立即重跑和 Runner 异常回排
+  则从本次重新可调度时刻直接启动新窗口，不继承上一次 attempt 已消耗的排队时间。
 - pending assignment 越过领取期限后 attempt 使用 `ASSIGNMENT_CLAIM_TIMEOUT`，并按已固化重试策略回排或终结。
 - 已领取 attempt 在上传阶段开始前使用 `EXECUTION_TIMEOUT`；lease 提前失效仍使用独立 `LEASE_EXPIRED`。
 - Agent 完成进程执行后总会调用产物声明，零产物时发送空数组。服务端首次声明原子记录 `upload_started_at`，此后恢复扫描停止计算执行期限并改用 `UPLOAD_TIMEOUT`。

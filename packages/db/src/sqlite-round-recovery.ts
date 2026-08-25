@@ -2,6 +2,7 @@ import type { RoundRecoveryClaim, RoundRecoveryRepository } from "@autoforge/app
 import type { RunBatchStatus } from "@autoforge/domain";
 
 import { runSqliteWriteTransaction, type SqliteDatabaseHandle } from "./database";
+import { queueDeadlineAfter } from "./execution-queue-timing";
 
 type RecoveryRow = {
   batch_id: string;
@@ -13,6 +14,7 @@ type RecoveryRow = {
   api_key_ciphertext: string;
   wait_minutes: number;
   status: "pending" | "polling" | "waiting" | "releasing";
+  poll_failure_count: number;
   source_build_number: number | null;
   rebuild_number: number | null;
   rebuild_url: string | null;
@@ -79,6 +81,7 @@ export class SqliteRoundRecoveryRepository implements RoundRecoveryRepository {
              rebuild_number = COALESCE(?, rebuild_number),
              rebuild_url = COALESCE(?, rebuild_url),
              started_at = COALESCE(?, started_at), available_at = ?,
+             poll_failure_count = 0, error_message = NULL,
              lease_owner = NULL, lease_expires_at = NULL, updated_at = ?
          WHERE batch_id = ? AND rule_id = ? AND lease_owner = ?
            AND status IN ('pending','polling')`,
@@ -105,7 +108,8 @@ export class SqliteRoundRecoveryRepository implements RoundRecoveryRepository {
         `UPDATE run_batch_round_recoveries
          SET status = 'waiting', rebuild_number = ?, rebuild_url = ?,
              started_at = COALESCE(?, started_at), finished_at = ?, build_result = ?,
-             available_at = ?, lease_owner = NULL, lease_expires_at = NULL, updated_at = ?
+             available_at = ?, poll_failure_count = 0, error_message = NULL,
+             lease_owner = NULL, lease_expires_at = NULL, updated_at = ?
          WHERE batch_id = ? AND rule_id = ? AND lease_owner = ? AND status = 'polling'`,
       )
       .run(
@@ -135,6 +139,9 @@ export class SqliteRoundRecoveryRepository implements RoundRecoveryRepository {
         )
         .run(input.updatedAt, input.batchId, input.ruleId, input.workerId);
       if (updated.changes !== 1) return { outcome: "claim_lost" };
+      const batch = this.handle.client
+        .prepare("SELECT queue_timeout_ms FROM run_batches WHERE id = ?")
+        .get(input.batchId) as { queue_timeout_ms: number };
       const recovery = this.handle.client
         .prepare(
           `SELECT after_round, next_round FROM run_batch_round_recoveries
@@ -165,10 +172,15 @@ export class SqliteRoundRecoveryRepository implements RoundRecoveryRepository {
         .run(input.batchId, input.ruleId, input.workerId);
       this.handle.client
         .prepare(
-          `UPDATE execution_runs SET held_round = 0, updated_at = ?
+          `UPDATE execution_runs SET held_round = 0, queue_deadline_at = ?, updated_at = ?
            WHERE batch_id = ? AND status = 'queued' AND held_round <= ?`,
         )
-        .run(input.updatedAt, input.batchId, recovery.next_round);
+        .run(
+          queueDeadlineAfter(input.updatedAt, batch.queue_timeout_ms),
+          input.updatedAt,
+          input.batchId,
+          recovery.next_round,
+        );
       this.handle.client
         .prepare("UPDATE run_batches SET current_round = ?, updated_at = ? WHERE id = ?")
         .run(recovery.next_round, input.updatedAt, input.batchId);
@@ -199,6 +211,27 @@ export class SqliteRoundRecoveryRepository implements RoundRecoveryRepository {
          SET error_message = ?, available_at = ?, lease_owner = NULL,
              lease_expires_at = NULL, updated_at = ?
          WHERE batch_id = ? AND rule_id = ? AND lease_owner = ? AND status = 'releasing'`,
+      )
+      .run(
+        input.errorMessage,
+        input.availableAt,
+        input.updatedAt,
+        input.batchId,
+        input.ruleId,
+        input.workerId,
+      );
+    return result.changes === 1;
+  }
+
+  async deferPollingFailure(
+    input: Parameters<RoundRecoveryRepository["deferPollingFailure"]>[0],
+  ): Promise<boolean> {
+    const result = this.handle.client
+      .prepare(
+        `UPDATE run_batch_round_recoveries
+         SET poll_failure_count = poll_failure_count + 1, error_message = ?, available_at = ?,
+             lease_owner = NULL, lease_expires_at = NULL, updated_at = ?
+         WHERE batch_id = ? AND rule_id = ? AND lease_owner = ? AND status = 'polling'`,
       )
       .run(
         input.errorMessage,
@@ -286,6 +319,7 @@ function toClaim(row: RecoveryRow): RoundRecoveryClaim {
     apiKeyCiphertext: row.api_key_ciphertext,
     waitMinutes: row.wait_minutes,
     status: row.status,
+    pollFailureCount: row.poll_failure_count,
     ...(row.source_build_number === null ? {} : { sourceBuildNumber: row.source_build_number }),
     ...(row.rebuild_number === null ? {} : { rebuildNumber: row.rebuild_number }),
     ...(row.rebuild_url === null ? {} : { rebuildUrl: row.rebuild_url }),
