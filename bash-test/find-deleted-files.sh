@@ -13,6 +13,7 @@ print_usage() {
 使用 --branch 只查询指定分支；短名称会同时匹配本地分支和各 remote 下的同名分支。
 结果按提交时间从新到旧写入项目根目录的 delete-result.log。
 文件路径相对于 Git 仓库根目录。相关分支表示当前仍包含对应提交的分支。
+扫描完成后按删除提交批次逐一确认恢复；恢复只写工作区，不自动暂存。
 
 选项:
   --all              查询所有本地和远端跟踪分支的历史
@@ -32,9 +33,13 @@ fail() {
   exit 1
 }
 
-cleanup_temporary_output() {
+cleanup_temporary_files() {
   if [[ -n "${TEMPORARY_OUTPUT_FILE:-}" && -f "$TEMPORARY_OUTPUT_FILE" ]]; then
     rm -f -- "$TEMPORARY_OUTPUT_FILE"
+  fi
+
+  if [[ -n "${TEMPORARY_PATH_FILE:-}" && -f "$TEMPORARY_PATH_FILE" ]]; then
+    rm -f -- "$TEMPORARY_PATH_FILE"
   fi
 }
 
@@ -226,6 +231,14 @@ format_containing_branches() {
   fi
 }
 
+print_commit_metadata() {
+  local commit_id="$1"
+
+  git -C "$REPOSITORY_ROOT" show --no-patch \
+    --format='----------------------------------------%nCommit ID: %H%n提交时间: %cI%n提交人: %cn <%ce>%n提交信息: %s' \
+    "$commit_id"
+}
+
 print_deleted_commit() {
   local commit_id="$1"
   local pathspec="$2"
@@ -233,9 +246,7 @@ print_deleted_commit() {
 
   containing_branches="$(format_containing_branches "$commit_id")"
 
-  git -C "$REPOSITORY_ROOT" show --no-patch \
-    --format='----------------------------------------%nCommit ID: %H%n提交时间: %cI%n提交人: %cn <%ce>%n提交信息: %s' \
-    "$commit_id"
+  print_commit_metadata "$commit_id"
   printf '相关分支: %s\n' "$containing_branches"
   printf '删除文件:\n\n'
   git -C "$REPOSITORY_ROOT" -c core.quotePath=false show \
@@ -247,8 +258,7 @@ print_deleted_commit() {
 }
 
 list_deleted_files() {
-  local -a deleted_commit_ids=()
-  local -a revision_scope=(HEAD --first-parent --no-merges)
+  local -a revision_scope=(HEAD --first-parent)
   local commit_id
   local commit_timestamp
   local deleted_commit_records
@@ -262,6 +272,8 @@ list_deleted_files() {
   else
     pathspec=":(top)**"
   fi
+  RECOVERY_PATHSPEC="$pathspec"
+  DELETION_COMMIT_IDS=()
 
   printf '当前分支: %s\n' "$CURRENT_BRANCH"
   printf '查询目录: %s\n\n' "${REPOSITORY_DIRECTORY:-.}"
@@ -280,6 +292,7 @@ list_deleted_files() {
   deleted_commit_records="$(
     git -C "$REPOSITORY_ROOT" log \
       "${revision_scope[@]}" \
+      --no-merges \
       --diff-filter=D \
       --format='%ct %H' \
       -- "$pathspec" |
@@ -289,11 +302,11 @@ list_deleted_files() {
   if [[ -n "$deleted_commit_records" ]]; then
     while IFS=' ' read -r commit_timestamp commit_id; do
       [[ -n "$commit_timestamp" && -n "$commit_id" ]] || continue
-      deleted_commit_ids+=("$commit_id")
+      DELETION_COMMIT_IDS+=("$commit_id")
     done <<<"$deleted_commit_records"
   fi
 
-  total_commit_count="${#deleted_commit_ids[@]}"
+  total_commit_count="${#DELETION_COMMIT_IDS[@]}"
   printf '找到 %d 个删除提交。\n' "$total_commit_count" >&2
 
   if ((total_commit_count == 0)); then
@@ -301,7 +314,7 @@ list_deleted_files() {
     return
   fi
 
-  for commit_id in "${deleted_commit_ids[@]}"; do
+  for commit_id in "${DELETION_COMMIT_IDS[@]}"; do
     ((processed_commit_count += 1))
     progress_percent=$((processed_commit_count * 100 / total_commit_count))
     printf '\r处理进度: %d/%d (%3d%%) Commit %.12s' \
@@ -319,7 +332,7 @@ write_result_file() {
   OUTPUT_FILE="$REPOSITORY_ROOT/delete-result.log"
   TEMPORARY_OUTPUT_FILE="$(mktemp "$REPOSITORY_ROOT/.delete-result.log.tmp.XXXXXX")" ||
     fail "无法在项目根目录创建临时结果文件"
-  trap cleanup_temporary_output EXIT
+  trap cleanup_temporary_files EXIT
 
   printf '结果文件: %s\n' "$OUTPUT_FILE" >&2
   list_deleted_files >"$TEMPORARY_OUTPUT_FILE"
@@ -330,11 +343,222 @@ write_result_file() {
   printf '扫描完成，结果已写入 %s\n' "$OUTPUT_FILE" >&2
 }
 
+load_deleted_paths() {
+  local commit_id="$1"
+  local pathspec="$2"
+  local destination_name="$3"
+  local parent_destination_name="$4"
+  local -n destination_paths="$destination_name"
+  local -n destination_parent="$parent_destination_name"
+
+  destination_parent="$(
+    git -C "$REPOSITORY_ROOT" rev-parse --verify "$commit_id^1"
+  )" || fail "无法读取删除提交 $commit_id 的父提交"
+
+  TEMPORARY_PATH_FILE="$(mktemp)" || fail "无法创建临时路径文件"
+  git -C "$REPOSITORY_ROOT" diff \
+    --diff-filter=D \
+    --name-only \
+    -z \
+    "$destination_parent" \
+    "$commit_id" \
+    -- "$pathspec" >"$TEMPORARY_PATH_FILE" ||
+    fail "无法读取提交 $commit_id 删除的文件"
+
+  destination_paths=()
+  mapfile -d '' -t destination_paths <"$TEMPORARY_PATH_FILE"
+  rm -- "$TEMPORARY_PATH_FILE"
+  TEMPORARY_PATH_FILE=""
+}
+
+is_safe_restore_path() {
+  local deleted_path="$1"
+  local resolved_target
+
+  case "$deleted_path" in
+    "" | /* | .. | ../* | */../*)
+      return 1
+      ;;
+  esac
+
+  resolved_target="$(realpath -m -- "$REPOSITORY_ROOT/$deleted_path")" || return 1
+  [[ "$resolved_target" == "$REPOSITORY_ROOT/"* ]]
+}
+
+path_exists_in_worktree() {
+  local deleted_path="$1"
+  local target_path="$REPOSITORY_ROOT/$deleted_path"
+
+  [[ -e "$target_path" || -L "$target_path" ]]
+}
+
+print_path_group() {
+  local label="$1"
+  local deleted_path
+  shift
+
+  (($# > 0)) || return 0
+  printf '%s (%d):\n' "$label" "$#" >&2
+  for deleted_path in "$@"; do
+    printf '  - %s\n' "$deleted_path" >&2
+  done
+}
+
+confirm_recovery_batch() {
+  local answer
+
+  while true; do
+    printf '是否恢复本批次以上所有待恢复文件？[y/N]: ' >&2
+    if ! IFS= read -r answer; then
+      printf '\n输入已关闭，停止后续恢复审批。\n' >&2
+      return 2
+    fi
+
+    case "${answer,,}" in
+      y | yes | 是)
+        return 0
+        ;;
+      "" | n | no | 否)
+        return 1
+        ;;
+      *)
+        printf '请输入 y/yes/是 或 n/no/否。\n' >&2
+        ;;
+    esac
+  done
+}
+
+restore_path_batch() {
+  local parent_commit="$1"
+  shift
+
+  (($# > 0)) || return 0
+  TEMPORARY_PATH_FILE="$(mktemp)" || fail "无法创建恢复路径文件"
+  printf '%s\0' "$@" >"$TEMPORARY_PATH_FILE"
+
+  git -C "$REPOSITORY_ROOT" --literal-pathspecs restore \
+    --source="$parent_commit" \
+    --worktree \
+    --pathspec-from-file="$TEMPORARY_PATH_FILE" \
+    --pathspec-file-nul ||
+    fail "批次恢复失败；请检查工作区状态"
+
+  rm -- "$TEMPORARY_PATH_FILE"
+  TEMPORARY_PATH_FILE=""
+}
+
+review_recovery_batches() {
+  local -A reviewed_deleted_paths=()
+  local -a candidate_paths
+  local -a deleted_paths
+  local -a duplicate_paths
+  local -a existing_paths
+  local -a restore_paths
+  local -a unsafe_paths
+  local batch_index=0
+  local commit_id
+  local confirmation_status
+  local containing_branches
+  local deleted_path
+  local declined_batch_count=0
+  local parent_commit
+  local restored_batch_count=0
+  local restored_file_count=0
+  local total_batch_count="${#DELETION_COMMIT_IDS[@]}"
+
+  if ((total_batch_count == 0)); then
+    printf '没有需要审批的删除批次。\n' >&2
+    return
+  fi
+
+  if [[ ! -t 0 || ! -t 2 ]]; then
+    printf '未检测到交互式终端，已生成报告但跳过恢复审批。\n' >&2
+    return
+  fi
+
+  printf '\n开始按提交批次审批恢复，共 %d 个删除批次。\n' "$total_batch_count" >&2
+
+  for commit_id in "${DELETION_COMMIT_IDS[@]}"; do
+    ((batch_index += 1))
+    candidate_paths=()
+    deleted_paths=()
+    duplicate_paths=()
+    existing_paths=()
+    unsafe_paths=()
+
+    load_deleted_paths "$commit_id" "$RECOVERY_PATHSPEC" deleted_paths parent_commit
+
+    for deleted_path in "${deleted_paths[@]}"; do
+      if [[ -n "${reviewed_deleted_paths[$deleted_path]+present}" ]]; then
+        duplicate_paths+=("$deleted_path")
+        continue
+      fi
+      reviewed_deleted_paths["$deleted_path"]=1
+
+      if ! is_safe_restore_path "$deleted_path"; then
+        unsafe_paths+=("$deleted_path")
+      elif path_exists_in_worktree "$deleted_path"; then
+        existing_paths+=("$deleted_path")
+      else
+        candidate_paths+=("$deleted_path")
+      fi
+    done
+
+    containing_branches="$(format_containing_branches "$commit_id")"
+    printf '\n恢复审批批次 %d/%d\n' "$batch_index" "$total_batch_count" >&2
+    print_commit_metadata "$commit_id" >&2
+    printf '相关分支: %s\n' "$containing_branches" >&2
+    print_path_group "待恢复文件" "${candidate_paths[@]}"
+    print_path_group "当前已存在，安全跳过" "${existing_paths[@]}"
+    print_path_group "已由较新的删除批次覆盖，跳过" "${duplicate_paths[@]}"
+    print_path_group "路径安全校验失败，跳过" "${unsafe_paths[@]}"
+
+    if ((${#candidate_paths[@]} == 0)); then
+      printf '本批次没有可恢复文件，无需确认。\n' >&2
+      continue
+    fi
+
+    if confirm_recovery_batch; then
+      restore_paths=()
+      for deleted_path in "${candidate_paths[@]}"; do
+        if is_safe_restore_path "$deleted_path" && ! path_exists_in_worktree "$deleted_path"; then
+          restore_paths+=("$deleted_path")
+        else
+          printf '恢复前路径状态已变化，安全跳过: %s\n' "$deleted_path" >&2
+        fi
+      done
+
+      if ((${#restore_paths[@]} > 0)); then
+        restore_path_batch "$parent_commit" "${restore_paths[@]}"
+        ((restored_batch_count += 1))
+        ((restored_file_count += ${#restore_paths[@]}))
+        printf '已恢复本批次 %d 个文件到工作区（未暂存）。\n' \
+          "${#restore_paths[@]}" >&2
+      else
+        printf '本批次文件状态已变化，没有执行恢复。\n' >&2
+      fi
+    else
+      confirmation_status=$?
+      if ((confirmation_status == 2)); then
+        break
+      fi
+      ((declined_batch_count += 1))
+      printf '已跳过本批次，不恢复任何文件。\n' >&2
+    fi
+  done
+
+  printf '\n恢复审批结束：已恢复 %d 个批次、%d 个文件；主动跳过 %d 个批次。\n' \
+    "$restored_batch_count" \
+    "$restored_file_count" \
+    "$declined_batch_count" >&2
+}
+
 main() {
   parse_arguments "$@"
   resolve_repository_directory
   resolve_branch_filter
   write_result_file
+  review_recovery_batches
 }
 
 main "$@"
