@@ -933,8 +933,18 @@ public class MixedVisibleTest {
   expect(await failureHint.textContent()).toBe(expectedFailureSummary);
   // 总体调度日志必须能定位用例之外/失败的异常：原因码与精简摘要都要出现在事件里。
   await page.getByRole("button", { name: "总体调度日志" }).click();
-  await expect(page.locator(".scheduling-log")).toContainText("TEST_ASSERTION_FAILED");
-  await expect(page.locator(".scheduling-log")).toContainText("中文断言失败");
+  const schedulingDialog = page.getByRole("dialog", { name: "总体调度日志" });
+  const schedulingLog = schedulingDialog.locator(".scheduling-log");
+  await expect(schedulingLog).toContainText("TEST_ASSERTION_FAILED");
+  await expect(schedulingLog).toContainText("中文断言失败");
+  await expect(schedulingDialog.getByRole("button", { name: "加载更多" })).toHaveCount(0);
+  await expect
+    .poll(() =>
+      schedulingLog.evaluate(
+        (element) => element.scrollHeight - element.scrollTop - element.clientHeight,
+      ),
+    )
+    .toBeLessThanOrEqual(2);
   await page.keyboard.press("Escape");
   await expect(page.locator(".scheduling-log")).toHaveCount(0);
   await page.getByRole("button", { name: "查看日志" }).click();

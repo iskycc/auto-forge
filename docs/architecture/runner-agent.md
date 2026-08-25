@@ -209,8 +209,17 @@ type LogChunk = {
 
 - `(attemptId, stream, sequence)` 是去重键；上传和服务端写入都按至少一次处理。
 - 按字节而不是按行读取，使用流式 UTF-8 解码处理跨块字符。
+- 子进程管道先写入受单用例日志字节上限约束的异步内存队列，再由后台持久化到 spool；磁盘延迟和
+  其他 attempt 的日志操作不得阻塞 Java 的 stdout/stderr。spool 按 attempt 分片加锁，同一
+  attempt 的追加、读取和确认仍保持串行；平台执行已有 sink 时不再保留第二份完整内存日志。
 - 建议在 `64 KiB` 或 `250ms` 任一条件达到时批量发送，最终值通过压测确定。
-- Agent 在写本地 spool 前完成秘密脱敏；控制面再做第二层防护。
+- 本地 spool 用于控制面暂时不可达和 Agent 重启后的未确认日志重传，不能以同步网络上报替代。
+- 日志块使用临时文件关闭后原子重命名，保证 Agent 进程崩溃不会发布半块；不再对每个日志块单独
+  `fsync`，避免大批量下把共享存储延迟传回测试进程。attempt 与完成元数据仍执行强持久化；整机
+  或存储设备断电时，操作系统尚未刷新的最后少量日志可能丢失。
+- Agent 在写本地 spool 前完成秘密脱敏；控制面再做第二层防护。仅匹配任务已知密文和带
+  `Bearer`、`password`、`token`、`secret`、`api-key` 等明确上下文的凭据，不把普通点分标识符或
+  Java 类路径猜测成 JWT，也不为无密文的普通日志固定扣留尾部字节。
 - 日志、完成结果和待上传产物共享 `AUTOFORGE_AGENT_SPOOL_MAX_BYTES` 硬预算；按最大并发预留最多一半预算给原子完成元数据，负载达到上限时以 `LOG_SPOOL_QUOTA_EXCEEDED` 或 `ARTIFACT_SPOOL_QUOTA_EXCEEDED` 明确终止，禁止静默丢弃。
 - 服务端只确认连续序号；Agent 根据确认水位删除 spool 并重传缺口。
 - Agent 同时受配置的块数上限和控制面 2 MiB JSON 请求上限约束，按实际编码后的字节数自动拆批；

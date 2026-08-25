@@ -13,7 +13,7 @@ type RecoveryRow = {
   jenkins_job_url: string;
   api_key_ciphertext: string;
   wait_minutes: number;
-  status: "pending" | "polling" | "waiting";
+  status: "pending" | "polling" | "waiting" | "releasing";
   source_build_number: number | null;
   rebuild_number: number | null;
   rebuild_url: string | null;
@@ -31,7 +31,7 @@ export class PostgresRoundRecoveryRepository implements RoundRecoveryRepository 
         `SELECT recovery.*, batch.suite_id
          FROM run_batch_round_recoveries recovery
          JOIN run_batches batch ON batch.id = recovery.batch_id
-         WHERE recovery.status IN ('pending','polling','waiting')
+         WHERE recovery.status IN ('pending','polling','waiting','releasing')
            AND recovery.available_at <= $1
            AND (recovery.lease_expires_at IS NULL OR recovery.lease_expires_at <= $1)
            AND batch.status IN ('queued','dispatching','scheduled','running')
@@ -46,7 +46,7 @@ export class PostgresRoundRecoveryRepository implements RoundRecoveryRepository 
           `UPDATE run_batch_round_recoveries
            SET lease_owner = $1, lease_expires_at = $2, updated_at = $3
            WHERE batch_id = $4 AND rule_id = $5
-             AND status IN ('pending','polling','waiting')
+             AND status IN ('pending','polling','waiting','releasing')
              AND (lease_expires_at IS NULL OR lease_expires_at <= $3)`,
           [input.workerId, input.leaseExpiresAt, input.now, row.batch_id, row.rule_id],
         );
@@ -106,7 +106,7 @@ export class PostgresRoundRecoveryRepository implements RoundRecoveryRepository 
       await client.query("SELECT id FROM run_batches WHERE id = $1 FOR UPDATE", [input.batchId]);
       const updated = await client.query<{ after_round: number; next_round: number }>(
         `UPDATE run_batch_round_recoveries
-         SET status = 'succeeded', lease_owner = NULL, lease_expires_at = NULL, updated_at = $1
+         SET status = 'succeeded', updated_at = $1
          WHERE batch_id = $2 AND rule_id = $3 AND lease_owner = $4 AND status = 'waiting'
          RETURNING after_round, next_round`,
         [input.updatedAt, input.batchId, input.ruleId, input.workerId],
@@ -119,7 +119,20 @@ export class PostgresRoundRecoveryRepository implements RoundRecoveryRepository 
         [input.batchId, recovery.after_round],
       );
       const remainingSteps = Number(barrier.rows[0]?.remaining_steps ?? 0);
-      if (remainingSteps > 0) return { outcome: "step_completed", remainingSteps };
+      if (remainingSteps > 0) {
+        await client.query(
+          `UPDATE run_batch_round_recoveries
+           SET lease_owner = NULL, lease_expires_at = NULL
+           WHERE batch_id = $1 AND rule_id = $2 AND lease_owner = $3 AND status = 'succeeded'`,
+          [input.batchId, input.ruleId, input.workerId],
+        );
+        return { outcome: "step_completed", remainingSteps };
+      }
+      await client.query(
+        `UPDATE run_batch_round_recoveries SET status = 'releasing'
+         WHERE batch_id = $1 AND rule_id = $2 AND lease_owner = $3 AND status = 'succeeded'`,
+        [input.batchId, input.ruleId, input.workerId],
+      );
       await client.query(
         `UPDATE execution_runs SET held_round = 0, updated_at = $1
          WHERE batch_id = $2 AND status = 'queued' AND held_round <= $3`,
@@ -129,8 +142,43 @@ export class PostgresRoundRecoveryRepository implements RoundRecoveryRepository 
         "UPDATE run_batches SET current_round = $1, updated_at = $2 WHERE id = $3",
         [recovery.next_round, input.updatedAt, input.batchId],
       );
-      return { outcome: "round_released" };
+      return { outcome: "round_releasing" };
     });
+  }
+
+  async completeRoundRelease(
+    input: Parameters<RoundRecoveryRepository["completeRoundRelease"]>[0],
+  ): Promise<boolean> {
+    await this.handle.ready;
+    const result = await this.handle.pool.query(
+      `UPDATE run_batch_round_recoveries
+       SET status = 'succeeded', error_message = NULL, lease_owner = NULL,
+           lease_expires_at = NULL, updated_at = $1
+       WHERE batch_id = $2 AND rule_id = $3 AND lease_owner = $4 AND status = 'releasing'`,
+      [input.updatedAt, input.batchId, input.ruleId, input.workerId],
+    );
+    return result.rowCount === 1;
+  }
+
+  async retryRoundRelease(
+    input: Parameters<RoundRecoveryRepository["retryRoundRelease"]>[0],
+  ): Promise<boolean> {
+    await this.handle.ready;
+    const result = await this.handle.pool.query(
+      `UPDATE run_batch_round_recoveries
+       SET error_message = $1, available_at = $2, lease_owner = NULL,
+           lease_expires_at = NULL, updated_at = $3
+       WHERE batch_id = $4 AND rule_id = $5 AND lease_owner = $6 AND status = 'releasing'`,
+      [
+        input.errorMessage,
+        input.availableAt,
+        input.updatedAt,
+        input.batchId,
+        input.ruleId,
+        input.workerId,
+      ],
+    );
+    return result.rowCount === 1;
   }
 
   async fail(input: Parameters<RoundRecoveryRepository["fail"]>[0]): Promise<boolean> {

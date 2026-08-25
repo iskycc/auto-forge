@@ -668,4 +668,76 @@ describe.skipIf(!connectionString)("PostgreSQL migrations", () => {
       await client.end();
     }
   });
+
+  it("preserves recovery rows while adding the retryable round-release state", async () => {
+    const admin = new Client({ connectionString });
+    await admin.connect();
+    const scratch = await createScratchDatabase(admin);
+    await admin.end();
+
+    const client = new Client({ connectionString: connectionStringFor(scratch) });
+    await client.connect();
+    const migrationsFolder = resolve(import.meta.dirname, "../drizzle/postgresql");
+    const migrationFiles = (await readdir(migrationsFolder))
+      .filter((name) => /^\d+_.+\.sql$/.test(name))
+      .sort();
+    const migration = "0044_retryable_round_release.sql";
+    const migrationIndex = migrationFiles.indexOf(migration);
+    expect(migrationIndex).toBeGreaterThan(0);
+    try {
+      for (const fileName of migrationFiles.slice(0, migrationIndex)) {
+        await client.query(await readFile(resolve(migrationsFolder, fileName), "utf8"));
+      }
+      await client.query(`
+        INSERT INTO run_batches
+          (id, sequence_number, suite_id, suite_name, suite_version, status, retry_limit,
+           retry_mode, current_round, environment_json, secret_bindings_json, total_runs,
+           project_id, scheduled_for, created_at, updated_at)
+        VALUES
+          ('batch-release-migration', nextval('run_batch_sequence_numbers'), 'suite-migration',
+           'Migration suite', 1, 'queued', 1, 'round', 2, '[]', '[]', 1,
+           '00000000-0000-7000-8000-000000000001', '2026-08-25T00:00:00.000Z',
+           '2026-08-25T00:00:00.000Z', '2026-08-25T00:00:00.000Z');
+        INSERT INTO run_batch_round_recoveries
+          (batch_id, rule_id, after_round, next_round, jenkins_job_url,
+           api_key_ciphertext, wait_minutes, status, available_at, created_at, updated_at)
+        VALUES
+          ('batch-release-migration', 'existing-step', 2, 3,
+           'https://jenkins.internal/job/existing/', 'encrypted-existing', 3, 'waiting',
+           '2026-08-25T00:03:00.000Z', '2026-08-25T00:00:00.000Z',
+           '2026-08-25T00:00:00.000Z'),
+          ('batch-release-migration', 'stranded-step', 1, 2,
+           'https://jenkins.internal/job/stranded/', 'encrypted-stranded', 0, 'succeeded',
+           '2026-08-25T00:00:00.000Z', '2026-08-25T00:00:00.000Z',
+           '2026-08-25T00:00:00.000Z');
+        INSERT INTO execution_runs
+          (id, batch_id, case_definition_id, case_version, display_name, class_name,
+           parameters_json, status, attempt_count, held_round, queue_deadline_at,
+           execution_timeout_ms, upload_timeout_ms, version, created_at, updated_at)
+        VALUES
+          ('run-release-migration', 'batch-release-migration', 'case-release-migration', 1,
+           'Case 1', 'example.Case1', '{}', 'queued', 1, 0,
+           '2026-08-26T00:00:00.000Z', 600000, 600000, 1,
+           '2026-08-25T00:00:00.000Z', '2026-08-25T00:00:00.000Z');
+      `);
+
+      await client.query(await readFile(resolve(migrationsFolder, migration), "utf8"));
+      await expect(
+        client.query("SELECT rule_id, status FROM run_batch_round_recoveries ORDER BY rule_id"),
+      ).resolves.toMatchObject({
+        rows: [
+          { rule_id: "existing-step", status: "waiting" },
+          { rule_id: "stranded-step", status: "releasing" },
+        ],
+      });
+      await expect(
+        client.query(
+          `UPDATE run_batch_round_recoveries SET status = 'releasing'
+           WHERE batch_id = 'batch-release-migration'`,
+        ),
+      ).resolves.toBeDefined();
+    } finally {
+      await client.end();
+    }
+  });
 });

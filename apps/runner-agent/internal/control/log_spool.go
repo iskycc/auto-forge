@@ -16,11 +16,13 @@ import (
 
 var errLogSpoolQuotaExceeded = errSpoolQuotaExceeded
 
+const logSpoolLockShardCount = 256
+
 type logSpool struct {
-	root      string
-	retention time.Duration
-	mu        sync.Mutex
-	budget    *spoolBudget
+	root         string
+	retention    time.Duration
+	attemptLocks [logSpoolLockShardCount]sync.Mutex
+	budget       *spoolBudget
 }
 
 func newLogSpool(dataDirectory string, policy config.SpoolConfig, maximumConcurrent int) (*logSpool, error) {
@@ -79,8 +81,8 @@ func (spool *logSpool) append(attemptID string, chunk logChunk) error {
 	if err != nil {
 		return fmt.Errorf("encode log chunk: %w", err)
 	}
-	spool.mu.Lock()
-	defer spool.mu.Unlock()
+	unlock := spool.lockAttempt(attemptID)
+	defer unlock()
 	directory := filepath.Join(spool.root, attemptID, chunk.Stream)
 	if err := os.MkdirAll(directory, 0o700); err != nil {
 		return fmt.Errorf("create log stream spool: %w", err)
@@ -117,10 +119,12 @@ func (spool *logSpool) append(attemptID string, chunk logChunk) error {
 		temporary.Close()
 		return fmt.Errorf("write temporary log chunk: %w", err)
 	}
-	if err := temporary.Sync(); err != nil {
-		temporary.Close()
-		return fmt.Errorf("sync temporary log chunk: %w", err)
-	}
+	// Log chunks are atomically published for Agent-process restart recovery,
+	// but deliberately do not fsync every chunk. Per-chunk durable flushes make
+	// child stdout latency proportional to shared-disk latency under large
+	// batches. Authoritative attempt/completion metadata keeps its stronger
+	// fsync boundary; an operating-system or storage-device loss may omit only
+	// the last unflushed log chunks.
 	if err := temporary.Close(); err != nil {
 		return fmt.Errorf("close temporary log chunk: %w", err)
 	}
@@ -135,8 +139,8 @@ func (spool *logSpool) list(attemptID string, limit int) ([]logChunk, error) {
 	if !localIdentifierPattern.MatchString(attemptID) || limit < 1 {
 		return nil, errors.New("log spool list request is invalid")
 	}
-	spool.mu.Lock()
-	defer spool.mu.Unlock()
+	unlock := spool.lockAttempt(attemptID)
+	defer unlock()
 	paths, err := filepath.Glob(filepath.Join(spool.root, attemptID, "*", "*.json"))
 	if err != nil {
 		return nil, fmt.Errorf("list log spool: %w", err)
@@ -161,8 +165,11 @@ func (spool *logSpool) list(attemptID string, limit int) ([]logChunk, error) {
 }
 
 func (spool *logSpool) acknowledge(attemptID string, watermark logWatermark) error {
-	spool.mu.Lock()
-	defer spool.mu.Unlock()
+	if !localIdentifierPattern.MatchString(attemptID) {
+		return errors.New("log spool acknowledgement attempt identifier is invalid")
+	}
+	unlock := spool.lockAttempt(attemptID)
+	defer unlock()
 	for stream, sequence := range map[string]int64{
 		"stdout": watermark.Stdout,
 		"stderr": watermark.Stderr,
@@ -195,6 +202,24 @@ func (spool *logSpool) acknowledge(attemptID string, watermark logWatermark) err
 	}
 	_ = os.Remove(filepath.Join(spool.root, attemptID))
 	return nil
+}
+
+func (spool *logSpool) lockAttempt(attemptID string) func() {
+	lock := &spool.attemptLocks[logSpoolLockIndex(attemptID)]
+	lock.Lock()
+	return lock.Unlock
+}
+
+func logSpoolLockIndex(attemptID string) uint32 {
+	// FNV-1a provides a stable, allocation-free spread across the fixed shard
+	// set. Attempts on different shards persist independently, while operations
+	// for one attempt remain serialized with acknowledgement and upload reads.
+	hash := uint32(2_166_136_261)
+	for index := 0; index < len(attemptID); index++ {
+		hash ^= uint32(attemptID[index])
+		hash *= 16_777_619
+	}
+	return hash % logSpoolLockShardCount
 }
 
 func (spool *logSpool) removeExpired(now time.Time) error {

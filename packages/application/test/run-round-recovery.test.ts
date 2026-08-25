@@ -100,7 +100,7 @@ describe("RoundRecoveryService", () => {
     repository.completeWaitingStep.mockImplementation(async ({ ruleId }) =>
       ruleId === "recovery-1"
         ? { outcome: "step_completed", remainingSteps: 1 }
-        : { outcome: "round_released" },
+        : { outcome: "round_releasing" },
     );
     const scheduling = { schedule: vi.fn(), scheduleForRunner: vi.fn() };
     const service = createService(
@@ -126,6 +126,62 @@ describe("RoundRecoveryService", () => {
     expect(repository.completeWaitingStep).toHaveBeenCalledTimes(2);
     expect(scheduling.schedule).toHaveBeenCalledWith("batch-1");
     expect(scheduling.schedule).toHaveBeenCalledTimes(1);
+    expect(repository.completeRoundRelease).toHaveBeenCalledWith({
+      batchId: "batch-1",
+      ruleId: "recovery-2",
+      workerId: "worker-1",
+      updatedAt: now,
+    });
+  });
+
+  it("keeps a released round retryable when the scheduling handoff fails", async () => {
+    const repository = repositoryWithClaims(claim({ status: "waiting" }));
+    const scheduling = {
+      schedule: vi.fn().mockRejectedValue(new Error("scheduler unavailable")),
+      scheduleForRunner: vi.fn(),
+    };
+    const service = createService(
+      repository,
+      { inspectJob: vi.fn(), rebuildLast: vi.fn(), inspectRebuild: vi.fn() },
+      scheduling,
+    );
+
+    await service.dispatchDue("worker-1");
+
+    expect(repository.completeWaitingStep).toHaveBeenCalledOnce();
+    expect(repository.completeRoundRelease).not.toHaveBeenCalled();
+    expect(repository.retryRoundRelease).toHaveBeenCalledWith({
+      batchId: "batch-1",
+      ruleId: "recovery-1",
+      workerId: "worker-1",
+      errorMessage: "scheduler unavailable",
+      availableAt: "2026-08-23T00:00:05.000Z",
+      updatedAt: now,
+    });
+    expect(repository.fail).not.toHaveBeenCalled();
+  });
+
+  it("retries an interrupted round release without polling or rebuilding Jenkins again", async () => {
+    const repository = repositoryWithClaims(claim({ status: "releasing" }));
+    const transport = {
+      inspectJob: vi.fn(),
+      rebuildLast: vi.fn(),
+      inspectRebuild: vi.fn(),
+    };
+    const scheduling = { schedule: vi.fn(), scheduleForRunner: vi.fn() };
+    const service = createService(repository, transport, scheduling);
+
+    await service.dispatchDue("worker-2");
+
+    expect(scheduling.schedule).toHaveBeenCalledWith("batch-1");
+    expect(repository.completeRoundRelease).toHaveBeenCalledWith({
+      batchId: "batch-1",
+      ruleId: "recovery-1",
+      workerId: "worker-2",
+      updatedAt: now,
+    });
+    expect(transport.rebuildLast).not.toHaveBeenCalled();
+    expect(transport.inspectRebuild).not.toHaveBeenCalled();
   });
 
   it("marks orchestration failure without exposing the credential", async () => {
@@ -178,7 +234,9 @@ function repositoryWithClaims(...recoveryClaims: RoundRecoveryClaim[]) {
     claimDue: vi.fn().mockResolvedValue(recoveryClaims),
     markPolling: vi.fn().mockResolvedValue(true),
     markWaiting: vi.fn().mockResolvedValue(true),
-    completeWaitingStep: vi.fn().mockResolvedValue({ outcome: "round_released" }),
+    completeWaitingStep: vi.fn().mockResolvedValue({ outcome: "round_releasing" }),
+    completeRoundRelease: vi.fn().mockResolvedValue(true),
+    retryRoundRelease: vi.fn().mockResolvedValue(true),
     fail: vi.fn().mockResolvedValue(true),
   } satisfies RoundRecoveryRepository;
 }

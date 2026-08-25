@@ -6160,10 +6160,34 @@ button.icon-button:disabled {
 
 .log-viewer-body .scheduling-log {
   margin: 0 16px 16px;
+  white-space: pre;
+  overflow-wrap: normal;
 }
 
 .scheduling-log .scheduling-event {
   display: block;
+  height: 22px;
+  line-height: 22px;
+}
+
+.scheduling-log-window {
+  position: relative;
+  min-width: 100%;
+}
+
+.scheduling-log-visible-rows {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: max-content;
+  min-width: 100%;
+}
+
+.scheduling-log-status,
+.log-output-policy-note {
+  margin: 0 16px 10px;
+  color: #9aa0aa;
+  font-size: var(--font-size-caption);
 }
 
 .scheduling-log .scheduling-event .ansi-bright-black {

@@ -812,6 +812,10 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
   ): ReturnType<RunBatchRepository["listSchedulingEvents"]> {
     await this.ready();
     const limit = Math.min(Math.max(1, Math.trunc(input.limit)), 500);
+    if (input.afterId !== undefined && (input.beforeId !== undefined || input.latest === true)) {
+      throw new TypeError("Scheduling event cursors cannot mix forward and backward reads.");
+    }
+    const backwards = input.beforeId !== undefined || input.latest === true;
     const parameters: Array<string | number> = [input.batchId];
     let filters = "";
     if (input.runnerId !== undefined) {
@@ -822,6 +826,11 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
       // 游标用 (recorded_at, id) 元组比较定位，id 为唯一键保证边界不重复、不遗漏。
       parameters.push(input.afterId);
       filters += ` AND (recorded_at, id) > (
+        SELECT recorded_at, id FROM scheduling_events WHERE id = $${parameters.length})`;
+    }
+    if (input.beforeId !== undefined) {
+      parameters.push(input.beforeId);
+      filters += ` AND (recorded_at, id) < (
         SELECT recorded_at, id FROM scheduling_events WHERE id = $${parameters.length})`;
     }
     parameters.push(limit);
@@ -840,15 +849,20 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
               message, payload_json, recorded_at
        FROM scheduling_events
        WHERE batch_id = $1${filters}
-       ORDER BY recorded_at ASC, id ASC
+       ORDER BY recorded_at ${backwards ? "DESC" : "ASC"}, id ${backwards ? "DESC" : "ASC"}
        LIMIT $${parameters.length}`,
       parameters,
     );
     const items = result.rows.map(schedulingEventFromRow);
-    const last = items.at(-1);
+    if (backwards) items.reverse();
+    const cursor = backwards ? items.at(0) : items.at(-1);
     return {
       items,
-      ...(items.length === limit && last ? { nextAfterId: last.id } : {}),
+      ...(items.length === limit && cursor
+        ? backwards
+          ? { nextBeforeId: cursor.id }
+          : { nextAfterId: cursor.id }
+        : {}),
     };
   }
 

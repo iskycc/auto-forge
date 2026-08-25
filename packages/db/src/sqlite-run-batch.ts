@@ -750,6 +750,10 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
     input: Parameters<RunBatchRepository["listSchedulingEvents"]>[0],
   ): ReturnType<RunBatchRepository["listSchedulingEvents"]> {
     const limit = Math.min(Math.max(1, Math.trunc(input.limit)), 500);
+    if (input.afterId !== undefined && (input.beforeId !== undefined || input.latest === true)) {
+      throw new TypeError("Scheduling event cursors cannot mix forward and backward reads.");
+    }
+    const backwards = input.beforeId !== undefined || input.latest === true;
     const parameters: Array<string | number> = [input.batchId];
     let filters = "";
     if (input.runnerId !== undefined) {
@@ -762,6 +766,11 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
       filters += ` AND (recorded_at, id) > (
         SELECT recorded_at, id FROM scheduling_events WHERE id = ?)`;
     }
+    if (input.beforeId !== undefined) {
+      parameters.push(input.beforeId);
+      filters += ` AND (recorded_at, id) < (
+        SELECT recorded_at, id FROM scheduling_events WHERE id = ?)`;
+    }
     parameters.push(limit);
     const rows = this.handle.client
       .prepare(
@@ -769,7 +778,7 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
                 message, payload_json, recorded_at
          FROM scheduling_events
          WHERE batch_id = ?${filters}
-         ORDER BY recorded_at ASC, id ASC
+         ORDER BY recorded_at ${backwards ? "DESC" : "ASC"}, id ${backwards ? "DESC" : "ASC"}
          LIMIT ?`,
       )
       .all(...parameters) as Array<{
@@ -784,10 +793,15 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
       recorded_at: string;
     }>;
     const items = rows.map(schedulingEventFromRow);
-    const last = items.at(-1);
+    if (backwards) items.reverse();
+    const cursor = backwards ? items.at(0) : items.at(-1);
     return {
       items,
-      ...(items.length === limit && last ? { nextAfterId: last.id } : {}),
+      ...(items.length === limit && cursor
+        ? backwards
+          ? { nextBeforeId: cursor.id }
+          : { nextAfterId: cursor.id }
+        : {}),
     };
   }
 

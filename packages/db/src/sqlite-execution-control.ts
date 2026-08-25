@@ -890,7 +890,7 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
         .prepare(
           `UPDATE run_batch_round_recoveries
            SET status = 'cancelled', lease_owner = NULL, lease_expires_at = NULL, updated_at = ?
-           WHERE batch_id = ? AND status IN ('idle','pending','polling','waiting')`,
+           WHERE batch_id = ? AND status IN ('idle','pending','polling','waiting','releasing')`,
         )
         .run(input.requestedAt, input.batchId);
       const changed = this.terminateWaitingRuns(input.batchId, input.reason, input.requestedAt);

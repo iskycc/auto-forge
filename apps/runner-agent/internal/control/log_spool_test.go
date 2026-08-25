@@ -42,7 +42,9 @@ func TestLogCollectorRedactsCrossChunkSecretBeforeSpooling(t *testing.T) {
 	if strings.Contains(combined, "cross-boundary-secret") || !strings.Contains(combined, "[REDACTED]") {
 		t.Fatalf("secret was not redacted: %q", combined)
 	}
-	if err := spool.acknowledge("attempt-1", logWatermark{Stdout: 0, Stderr: -1, Agent: -1}); err != nil {
+	if err := spool.acknowledge("attempt-1", logWatermark{
+		Stdout: chunks[len(chunks)-1].Sequence, Stderr: -1, Agent: -1,
+	}); err != nil {
 		t.Fatalf("acknowledge spool: %v", err)
 	}
 	remaining, err := spool.list("attempt-1", 10)
@@ -78,6 +80,32 @@ func TestLogCollectorFlushesAgentStreamImmediately(t *testing.T) {
 	}
 }
 
+func TestLogCollectorFlushesOrdinaryTestOutputWithoutWaitingForClose(t *testing.T) {
+	spool, err := newLogSpool(t.TempDir(), config.SpoolConfig{
+		MaximumBytes: 1 << 20,
+		Retention:    time.Hour,
+		UploadBatch:  10,
+	}, 1)
+	if err != nil {
+		t.Fatalf("create spool: %v", err)
+	}
+	collector := newAttemptLogCollector("attempt-live-tail", spool, nil)
+	content := "AfterClass: test.cases.abcdefghijklmnop.qrstuvwxyz.abcd1234\n"
+	if err := collector.Write(executor.LogChunk{
+		Stream: "stdout", Content: content, RecordedAt: time.Now(),
+	}); err != nil {
+		t.Fatalf("collect log: %v", err)
+	}
+
+	chunks, err := spool.list("attempt-live-tail", 10)
+	if err != nil {
+		t.Fatalf("list spool: %v", err)
+	}
+	if len(chunks) != 1 || chunks[0].Content != content {
+		t.Fatalf("live test output was withheld or changed: %#v", chunks)
+	}
+}
+
 func TestLogSpoolRejectsQuotaOverflow(t *testing.T) {
 	spool, err := newLogSpool(t.TempDir(), config.SpoolConfig{
 		MaximumBytes: 32,
@@ -92,6 +120,40 @@ func TestLogSpoolRejectsQuotaOverflow(t *testing.T) {
 	})
 	if err != errLogSpoolQuotaExceeded {
 		t.Fatalf("append error = %v, want quota error", err)
+	}
+}
+
+func TestLogSpoolDoesNotSerializeDifferentAttemptShards(t *testing.T) {
+	spool, err := newLogSpool(t.TempDir(), config.SpoolConfig{
+		MaximumBytes: 1 << 20,
+		Retention:    time.Hour,
+		UploadBatch:  10,
+	}, 2)
+	if err != nil {
+		t.Fatalf("create spool: %v", err)
+	}
+	lockedAttempt := "attempt-locked"
+	independentAttempt := "attempt-independent"
+	if logSpoolLockIndex(lockedAttempt) == logSpoolLockIndex(independentAttempt) {
+		t.Fatal("test attempts unexpectedly share a spool lock shard")
+	}
+	unlock := spool.lockAttempt(lockedAttempt)
+	defer unlock()
+
+	completed := make(chan error, 1)
+	go func() {
+		completed <- spool.append(independentAttempt, logChunk{
+			Stream: "stdout", Sequence: 0, Content: "independent",
+			RecordedAt: time.Now().UTC().Format(time.RFC3339Nano),
+		})
+	}()
+	select {
+	case err := <-completed:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("an unrelated attempt was blocked by another attempt's spool operation")
 	}
 }
 

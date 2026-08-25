@@ -1429,11 +1429,19 @@ export interface RunBatchRepository {
     runnerId?: string;
     // 游标：返回该 id 之后的记录（按 recorded_at, id 定位）
     afterId?: string;
+    // 反向游标：返回该 id 之前最近的一页，结果仍按时间正序返回。
+    beforeId?: string;
+    // 未提供游标时从最新一页开始读取。
+    latest?: boolean;
     limit: number;
-  }): Promise<{ items: SchedulingEvent[]; nextAfterId?: string }>;
+  }): Promise<{
+    items: SchedulingEvent[];
+    nextAfterId?: string;
+    nextBeforeId?: string;
+  }>;
 }
 
-export type RoundRecoveryStatus = "pending" | "polling" | "waiting";
+export type RoundRecoveryStatus = "pending" | "polling" | "waiting" | "releasing";
 
 export type RoundRecoveryClaim = {
   batchId: string;
@@ -1453,7 +1461,7 @@ export type RoundRecoveryClaim = {
 export type RoundRecoveryStepCompletion =
   | { outcome: "claim_lost" }
   | { outcome: "step_completed"; remainingSteps: number }
-  | { outcome: "round_released" };
+  | { outcome: "round_releasing" };
 
 export interface RoundRecoveryRepository {
   claimDue(input: {
@@ -1485,6 +1493,20 @@ export interface RoundRecoveryRepository {
     workerId: string;
     updatedAt: string;
   }): Promise<RoundRecoveryStepCompletion>;
+  completeRoundRelease(input: {
+    batchId: string;
+    ruleId: string;
+    workerId: string;
+    updatedAt: string;
+  }): Promise<boolean>;
+  retryRoundRelease(input: {
+    batchId: string;
+    ruleId: string;
+    workerId: string;
+    errorMessage: string;
+    availableAt: string;
+    updatedAt: string;
+  }): Promise<boolean>;
   fail(input: {
     batchId: string;
     ruleId: string;

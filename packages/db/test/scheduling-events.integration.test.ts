@@ -221,6 +221,52 @@ function schedulingEventCases(createHarness: () => Promise<SchedulingEventHarnes
     }
   });
 
+  it("reads the latest page first and walks backwards without reversing display order", async () => {
+    const harness = await createHarness();
+    const eventIds = Array.from(
+      { length: 5 },
+      (_, index) => `${harness.eventPrefix}-backward-${index}`,
+    );
+    try {
+      await harness.batches.appendSchedulingEvents(
+        eventIds.map((eventId, index) => ({
+          id: eventId,
+          batchId: harness.batchIdA,
+          eventType: "batch_scheduled" as SchedulingEventType,
+          message: `反向事件 ${index}。`,
+          recordedAt: `2026-08-10T00:0${index}:00.000Z`,
+        })),
+      );
+
+      const latest = await harness.batches.listSchedulingEvents({
+        batchId: harness.batchIdA,
+        latest: true,
+        limit: 2,
+      });
+      expect(latest.items.map((event) => event.id)).toEqual(eventIds.slice(3));
+      expect(latest.nextBeforeId).toBe(eventIds[3]);
+
+      const previous = await harness.batches.listSchedulingEvents({
+        batchId: harness.batchIdA,
+        beforeId: latest.nextBeforeId!,
+        limit: 2,
+      });
+      expect(previous.items.map((event) => event.id)).toEqual(eventIds.slice(1, 3));
+      expect(previous.nextBeforeId).toBe(eventIds[1]);
+
+      const oldest = await harness.batches.listSchedulingEvents({
+        batchId: harness.batchIdA,
+        beforeId: previous.nextBeforeId!,
+        limit: 2,
+      });
+      expect(oldest.items.map((event) => event.id)).toEqual(eventIds.slice(0, 1));
+      expect(oldest.nextBeforeId).toBeUndefined();
+    } finally {
+      await harness.dispose();
+      await cleanupTemporaryDirectories();
+    }
+  });
+
   it("clamps oversized limits to the 500 cap", async () => {
     const harness = await createHarness();
     try {

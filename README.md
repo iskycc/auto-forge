@@ -39,6 +39,7 @@ AutoForge 是一个面向自动化测试场景的用例工厂，用于统一管�
 - LDAP 的 LDAPS/StartTLS、私有 CA、多服务器、分页上限、即时建号、组角色映射、手动同步和离职停用；bind 密码使用主密钥加密，连接测试区分 DNS、TLS、超时、bind、Base DN、过滤器和读取权限故障。
 - 用户管理支持 URL 驱动的搜索、来源筛选和游标分页，以及本地账号创建、启停/解锁、密码重置和按用户撤销全部会话；LDAP 管理属性不提供本地编辑入口。
 - SQLite/PostgreSQL assignment、lease、状态事件、完成回执、日志水位和产物元数据，以及原子 claim、续租、回收、reconcile、取消、失败重排和批次聚合；冲突完成会保留事件证据，领取/lease/单用例执行超时使用不同稳定结果码。正常执行完毕统一显示“执行完成”，即使仍有用例失败；基础设施异常和中断分别显示“执行异常”“执行中断”。
+- 总体与单 Runner 调度日志首次读取最新一页并默认定位末尾，历史事件通过反向游标自动补齐；当前页面内重复打开复用有界 LRU 缓存，新事件按正向游标增量刷新，事件行使用窗口化渲染且不再要求手工“加载更多”。
 - Lite/Full 共用持久审计模型，覆盖身份、LDAP、来源/任务、批次/执行取消、Runner 和终端操作；自动重试审计与执行状态事务一致，详情只保留稳定 ID、结果码和计数等脱敏摘要。
 - `packages/runner-sdk` 中的 Runner Protocol v1 输入校验、兼容协商和有界长轮询控制器。
 - Agent 上报 CPU、内存、1 分钟负载与逻辑 CPU 数；调度阈值集中配置，过载或指标过期的节点不会获得新分配。
@@ -50,7 +51,7 @@ AutoForge 是一个面向自动化测试场景的用例工厂，用于统一管�
 - Go 1.26 Runner Agent 的版本信息、配置诊断、受控工作目录、无 Shell 命令执行、日志上限、超时与 Linux 进程组清理。
 - Agent 的有界 claim/退避/并发槽位、独立 lease 续租、重启 reconcile、权威测试/依赖 JAR 下载校验、离线工具链 capability，以及按 `methodName+JVM descriptor` 精确选择重载方法的 TestNG 完成上报。
 - CoTest Adapter 的启用状态、Suite、Test 与多个环境地址保存在用例任务中，批次按稳定用例顺序轮询分配地址；每个项目版本独立保存上传或 HTTP(S) 链接登记的 JDK/完整 JAR 压缩包，也可显式从同项目其他版本继承共享对象引用，并可分别删除当前版本资源。上传采用流式处理且没有固定业务大小上限，Runner 仍按任务工作区配额校验、下载和安全解压；同一批次在同一 Runner 上只下载一次输入并只解压一次依赖包/JDK，各 attempt 通过批次目录复用 `test-jars`，Agent 重启后仍保留未终态批次的已校验运行时。完成响应、heartbeat 或 claim 确认该批次不再可能派发到本机后才回收。每个用例仍在独立进程和独立子优先 ClassLoader 中执行，主用例 JAR 固定处于 classpath 首位。
-- Agent stdout/stderr/诊断流的 UTF-8 分块、双层秘密脱敏、有界磁盘 spool、连续确认水位和断线重传；执行期间每 500 ms 尝试上传新增块，控制面先持久化，再由 Lite 进程内通道或 Full NATS 跨副本广播通过同源、短时票据 WebSocket 推送到执行详情。
+- Agent stdout/stderr/诊断流的 UTF-8 分块、精确的双层秘密脱敏、有界异步磁盘 spool、连续确认水位和断线重传；子进程输出与 spool 持久化解耦，不同 attempt 不再共用全局落盘锁，已有 sink 时不保留第二份完整内存日志，普通 Java 类路径不会被误判为 JWT 或因固定尾部缓冲而延迟显示。执行期间每 500 ms 尝试上传新增块，控制面先持久化，再由 Lite 进程内通道或 Full NATS 跨副本广播通过同源、短时票据 WebSocket 推送到执行详情。
 - 产物安全发现、SHA-256 声明和鉴权下载；Lite 经控制面流式写入本地对象目录，Full 使用 15 分钟单对象 MinIO 预签名目标，Agent 不持有长期凭据，finalize 前由控制面重新核对大小和 SHA-256。TestNG XML 以禁用 DTD/实体的有界流式解析器提取 suite/test/class/method、耗时和汇总，结果由 SQLite/PostgreSQL 持久化并在执行详情展示，原始 XML 保留为产物。
 - SQLite 持久任务和 Lite 嵌入式 worker；PostgreSQL transactional outbox、JetStream 显式确认和 Full 独立 worker。SQLite/JetStream 运行同一套至少一次投递契约测试，覆盖去重、延迟、租约恢复、死信和关闭排空。
 - 可重建的 Lite 内存缓存与 Full Redis 缓存适配器；缓存不作为业务事实来源。
@@ -266,7 +267,7 @@ MinIO 上游仓库已于 2026 年 4 月归档。AutoForge 继续通过标准 S3 
 
 配置 cgroup 根且 doctor 验证 `cpu`、`memory`、`pids` controller 的真实委派和子 cgroup 写权限后，Runner 上报 `isolation:cgroup-v2`。每个 attempt 在用户 Java 启动前进入独立 cgroup，CPU 使用 `cpu.max`、内存使用 `memory.max` 且禁用 swap、任务数使用 `pids.max`；包装进程同时设置 `RLIMIT_FSIZE`、`RLIMIT_NOFILE` 并禁用 core dump。未启用 cgroup v2 时，Agent 仍使用 rlimit、进程组、超时和工作区扫描，但不能硬性限制整个进程树的 CPU、内存和进程数，因此只适合受控执行机。工作目录总字节数和条目数每 100ms 扫描；普通目录的扫描无法阻止两次采样间的瞬时超写，需要严格磁盘容量隔离时还必须配置专用文件系统或项目配额。
 
-Runner Agent 是安装在执行机上的 Go 守护进程。`start` 会通过 bootstrap token 注册、以 `0600` 权限保存身份和在途 attempt，发送 Linux CPU、内存和负载快照，并运行有界 assignment claim 与独立 lease 续租循环。Agent 只在离线 Java/TestNG 工具链配置完整时上报精确版本 capability；领取后经控制面下载一个权威测试 JAR 和有界依赖 JAR 集，逐项校验路径、大小与 SHA-256，并在传输前校验总磁盘限制和可用空间，再在独立工作目录中以确定性 classpath 参数调用 Java，不经过 Shell。启动时先 reconcile 本地状态，未获服务端决定不会自行重跑。日志在写入有配额的本地 spool 前脱敏，控制面再次脱敏并只确认连续序号；产物在工作目录内发现、校验和上传。
+Runner Agent 是安装在执行机上的 Go 守护进程。`start` 会通过 bootstrap token 注册、以 `0600` 权限保存身份和在途 attempt，发送 Linux CPU、内存和负载快照，并运行有界 assignment claim 与独立 lease 续租循环。Agent 只在离线 Java/TestNG 工具链配置完整时上报精确版本 capability；领取后经控制面下载一个权威测试 JAR 和有界依赖 JAR 集，逐项校验路径、大小与 SHA-256，并在传输前校验总磁盘限制和可用空间，再在独立工作目录中以确定性 classpath 参数调用 Java，不经过 Shell。启动时先 reconcile 本地状态，未获服务端决定不会自行重跑。日志先进入有界异步队列，再在写入有配额的本地 spool 前执行精确脱敏；控制面再次脱敏并只确认连续序号。spool 用于网络中断与 Agent 重启恢复，不位于 Java 输出的同步持久化链路；产物在工作目录内发现、校验和上传。
 
 最终协议仍坚持 Agent 只主动连接 AutoForge 控制面，不直接访问业务数据库、NATS、Redis，也不持有 MinIO 长期凭据，因此同一个 Agent 将连接 Lite 或 Full。
 

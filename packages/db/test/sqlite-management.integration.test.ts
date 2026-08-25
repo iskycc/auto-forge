@@ -2447,7 +2447,15 @@ describe("SQLite management repositories", () => {
           workerId: "round-recovery-worker",
           updatedAt: "2026-08-09T00:01:21.000Z",
         }),
-      ).resolves.toEqual({ outcome: "round_released" });
+      ).resolves.toEqual({ outcome: "round_releasing" });
+      await expect(
+        recoveries.completeRoundRelease({
+          batchId: "batch-round",
+          ruleId: recoveryClaims[1]!.ruleId,
+          workerId: "round-recovery-worker",
+          updatedAt: "2026-08-09T00:01:21.000Z",
+        }),
+      ).resolves.toBe(true);
 
       const snapshotAfterRecovery = await batches.getSchedulingSnapshot(
         "batch-round",

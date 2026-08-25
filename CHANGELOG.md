@@ -4,6 +4,45 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## 1.2.2 - 2026-08-25
+
+### Fixed
+
+- Jenkins round recovery now keeps the next-round scheduling handoff in a leased, retryable state.
+  A transient scheduler, event-store or process failure after a successful Jenkins build no longer
+  leaves the batch permanently suspended; retrying the handoff does not trigger Jenkins again.
+- Runner stdout/stderr forwarding no longer lets a slow shared spool apply backpressure to Java.
+  Log persistence now drains asynchronously per attempt, avoids per-chunk `fsync`, and does not keep
+  a second complete output copy in memory. This removes a high-concurrency failure mode where a test
+  could reach `AfterTest`/`AfterClass` and then exceed its execution timeout while writing its tail.
+- Long Java package and class names are no longer guessed to be JWT credentials. Ordinary test output
+  is emitted immediately instead of retaining a fixed tail; explicit task secrets and credential forms
+  such as Bearer tokens, passwords, tokens and API keys remain protected.
+
+### Changed
+
+- Overall and per-Runner scheduling logs open on the newest events, follow the tail by default, and
+  automatically read older pages without a manual “load more” action. Reopening a log reuses a bounded
+  page-local cache and refreshes only the new tail; virtualized rows keep large histories responsive.
+
+### Database
+
+- Added SQLite migration `0045_retryable_round_release.sql` and PostgreSQL migration
+  `0044_retryable_round_release.sql` for the durable round-release state. The upgrade also requeues
+  the scheduling handoff for a non-terminal batch already stranded by the old behavior.
+
+### Tests
+
+- Added Runner regressions for non-blocking log persistence, per-attempt spool isolation, immediate
+  ordinary-log delivery and duplicate-buffer removal; race checks cover the affected Go packages.
+- Added shared SQLite/PostgreSQL scheduling-event cursor coverage, Lite/Full round-release recovery and
+  migration regressions, plus Playwright verification for tail-following scheduling-log dialogs.
+
+### Compatibility
+
+- Runner Protocol v1, Jenkins Pipeline step contracts and release archive formats are unchanged.
+  Existing Lite and Full installations apply the new round-recovery migration during normal upgrade.
+
 ## 1.2.0 - 2026-08-24
 
 ### Added

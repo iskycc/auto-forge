@@ -113,7 +113,7 @@ describe("SqliteRoundRecoveryRepository", () => {
         workerId: "worker-2",
         updatedAt: "2026-08-23T00:05:05.000Z",
       }),
-    ).resolves.toEqual({ outcome: "round_released" });
+    ).resolves.toEqual({ outcome: "round_releasing" });
 
     expect(
       handle.client
@@ -125,6 +125,14 @@ describe("SqliteRoundRecoveryRepository", () => {
         .prepare("SELECT held_round AS held FROM execution_runs WHERE id = ?")
         .get("run-1"),
     ).toEqual({ held: 0 });
+    await expect(
+      repository.completeRoundRelease({
+        batchId: "batch-1",
+        ruleId: "recovery-1",
+        workerId: "worker-2",
+        updatedAt: "2026-08-23T00:05:05.000Z",
+      }),
+    ).resolves.toBe(true);
     handle.close();
   });
 
@@ -191,7 +199,7 @@ describe("SqliteRoundRecoveryRepository", () => {
         workerId: "worker-2",
         updatedAt: "2026-08-23T00:10:00.000Z",
       }),
-    ).resolves.toEqual({ outcome: "round_released" });
+    ).resolves.toEqual({ outcome: "round_releasing" });
     expect(
       handle.client
         .prepare("SELECT current_round AS round FROM run_batches WHERE id = ?")
@@ -202,6 +210,66 @@ describe("SqliteRoundRecoveryRepository", () => {
         .prepare("SELECT held_round AS held FROM execution_runs WHERE id = 'run-1'")
         .get(),
     ).toEqual({ held: 0 });
+    await expect(
+      repository.completeRoundRelease({
+        batchId: "batch-parallel",
+        ruleId: "recovery-2",
+        workerId: "worker-2",
+        updatedAt: "2026-08-23T00:10:00.000Z",
+      }),
+    ).resolves.toBe(true);
+    handle.close();
+  });
+
+  it("reclaims a released round when scheduling was interrupted", async () => {
+    const handle = await database();
+    seedRecovery(handle, "batch-retry", "waiting");
+    const repository = new SqliteRoundRecoveryRepository(handle);
+    await repository.claimDue({
+      workerId: "worker-1",
+      now: createdAt,
+      leaseExpiresAt: "2026-08-23T00:00:30.000Z",
+      limit: 10,
+    });
+    await expect(
+      repository.completeWaitingStep({
+        batchId: "batch-retry",
+        ruleId: "recovery-1",
+        workerId: "worker-1",
+        updatedAt: createdAt,
+      }),
+    ).resolves.toEqual({ outcome: "round_releasing" });
+    await expect(
+      repository.retryRoundRelease({
+        batchId: "batch-retry",
+        ruleId: "recovery-1",
+        workerId: "worker-1",
+        errorMessage: "scheduler unavailable",
+        availableAt: "2026-08-23T00:00:05.000Z",
+        updatedAt: createdAt,
+      }),
+    ).resolves.toBe(true);
+
+    const [retryClaim] = await repository.claimDue({
+      workerId: "worker-2",
+      now: "2026-08-23T00:00:05.000Z",
+      leaseExpiresAt: "2026-08-23T00:00:35.000Z",
+      limit: 10,
+    });
+    expect(retryClaim).toMatchObject({ batchId: "batch-retry", status: "releasing" });
+    await expect(
+      repository.completeRoundRelease({
+        batchId: "batch-retry",
+        ruleId: "recovery-1",
+        workerId: "worker-2",
+        updatedAt: "2026-08-23T00:00:05.000Z",
+      }),
+    ).resolves.toBe(true);
+    expect(
+      handle.client
+        .prepare("SELECT status, error_message AS error FROM run_batch_round_recoveries")
+        .get(),
+    ).toEqual({ status: "succeeded", error: null });
     handle.close();
   });
 

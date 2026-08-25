@@ -43,7 +43,8 @@ export class RoundRecoveryService {
     try {
       if (claim.status === "pending") await this.trigger(workerId, claim);
       else if (claim.status === "polling") await this.poll(workerId, claim);
-      else await this.resume(workerId, claim);
+      else if (claim.status === "waiting") await this.resume(workerId, claim);
+      else await this.releaseRound(workerId, claim);
     } catch (error) {
       const updatedAt = this.clock.now().toISOString();
       const errorMessage = safeErrorMessage(error);
@@ -164,17 +165,44 @@ export class RoundRecoveryService {
       );
       return;
     }
+    await this.releaseRound(workerId, claim);
+  }
+
+  private async releaseRound(workerId: string, claim: RoundRecoveryClaim): Promise<void> {
+    let completed: boolean;
+    try {
+      await this.scheduling.schedule(claim.batchId);
+      const updatedAt = this.clock.now().toISOString();
+      completed = await this.repository.completeRoundRelease({
+        batchId: claim.batchId,
+        ruleId: claim.ruleId,
+        workerId,
+        updatedAt,
+      });
+    } catch (error) {
+      const updatedAt = this.clock.now();
+      await this.repository.retryRoundRelease({
+        batchId: claim.batchId,
+        ruleId: claim.ruleId,
+        workerId,
+        errorMessage: safeErrorMessage(error),
+        availableAt: new Date(updatedAt.getTime() + JENKINS_POLL_MS).toISOString(),
+        updatedAt: updatedAt.toISOString(),
+      });
+      return;
+    }
+    if (!completed) return;
+    const recordedAt = this.clock.now().toISOString();
     await this.appendEvent(
       claim,
       `本轮全部环境恢复步骤等待结束，开始调度第 ${claim.nextRound} 轮`,
-      updatedAt,
+      recordedAt,
       {
         state: "resumed",
         barrierComplete: true,
         nextRound: claim.nextRound,
       },
     );
-    await this.scheduling.schedule(claim.batchId);
   }
 
   private decryptCredential(claim: RoundRecoveryClaim): string {

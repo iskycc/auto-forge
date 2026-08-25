@@ -688,7 +688,6 @@ function unique(values: readonly string[]): string[] {
 const tokenPatterns = [
   /\bBearer\s+[A-Za-z0-9._~+/-]{12,}={0,2}\b/gi,
   /\b(?:password|passwd|token|secret|api[_-]?key)\s*[=:]\s*[^\s,;]+/gi,
-  /\b[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g,
 ] as const;
 
 export function redactLogContent(content: string, secrets: readonly string[]): string {

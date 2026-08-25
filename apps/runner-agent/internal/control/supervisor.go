@@ -390,6 +390,7 @@ func (supervisor *attemptSupervisor) runTestNG(
 		supervisor.logSpool,
 		nil,
 	)
+	processLogs := newAsynchronousLogSink(collector.Write)
 	_ = collector.Write(executor.LogChunk{
 		Stream:     "agent",
 		Content:    "AutoForge Runner Agent started the attempt.\n",
@@ -417,7 +418,7 @@ func (supervisor *attemptSupervisor) runTestNG(
 			ApplyRlimits:  true,
 		},
 		ProcessStarted: persistProcess,
-		LogSink:        collector.Write,
+		LogSink:        processLogs.Write,
 		PrepareWorkspace: func(workspace string) error {
 			if executionSpec.BatchID != "" {
 				// 批次共享：同批次输入只下载解压一次，attempt 工作目录通过
@@ -443,9 +444,13 @@ func (supervisor *attemptSupervisor) runTestNG(
 			)
 		},
 	})
+	processLogErr := processLogs.Close()
 	stopLiveLogUpload()
 	streamedWatermarks := <-liveLogWatermarks
-	if closeErr := collector.Close(time.Now().UTC().Format(time.RFC3339Nano)); closeErr != nil {
+	if closeErr := errors.Join(
+		processLogErr,
+		collector.Close(time.Now().UTC().Format(time.RFC3339Nano)),
+	); closeErr != nil {
 		if errors.Is(closeErr, errLogSpoolQuotaExceeded) {
 			return platformFailure("LOG_SPOOL_QUOTA_EXCEEDED", closeErr)
 		}

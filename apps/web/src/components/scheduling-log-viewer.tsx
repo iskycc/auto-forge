@@ -1,10 +1,8 @@
 "use client";
 
-import { RefreshCw } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import { TerminalLogViewer } from "@/components/terminal-log-viewer";
-import { Button } from "@/components/ui";
 import { readApiErrorMessage } from "@/lib/client-api";
 
 type SchedulingEventType =
@@ -31,7 +29,20 @@ type SchedulingEvent = {
 type SchedulingEventPage = {
   items: SchedulingEvent[];
   nextAfterId?: string;
+  nextBeforeId?: string;
 };
+
+type SchedulingEventCacheEntry = {
+  events: SchedulingEvent[];
+  nextBeforeId?: string;
+  historyComplete: boolean;
+};
+
+const SCHEDULING_EVENT_PAGE_SIZE = 500;
+const SCHEDULING_EVENT_ROW_HEIGHT_PX = 22;
+const SCHEDULING_EVENT_OVERSCAN_ROWS = 24;
+const MAXIMUM_SCHEDULING_EVENT_CACHE_ENTRIES = 6;
+const schedulingEventCache = new Map<string, SchedulingEventCacheEntry>();
 
 const SCHEDULING_EVENT_CLASS: Record<SchedulingEventType, string> = {
   batch_scheduled: "scheduling-event-blue",
@@ -57,7 +68,36 @@ function formatEventTime(value: string): string {
   return date.toLocaleTimeString("zh-CN", { hour12: false });
 }
 
-/** 调度日志弹窗：批次级或单 Runner 级调度事件流，支持游标翻页与打开期间轮询。 */
+function schedulingCacheKey(batchId: string, runnerId: string | undefined): string {
+  return `${batchId}:${runnerId ?? "all"}`;
+}
+
+function readSchedulingEventCache(key: string): SchedulingEventCacheEntry | undefined {
+  const cached = schedulingEventCache.get(key);
+  if (!cached) return undefined;
+  schedulingEventCache.delete(key);
+  schedulingEventCache.set(key, cached);
+  return cached;
+}
+
+function writeSchedulingEventCache(key: string, entry: SchedulingEventCacheEntry): void {
+  schedulingEventCache.delete(key);
+  schedulingEventCache.set(key, entry);
+  while (schedulingEventCache.size > MAXIMUM_SCHEDULING_EVENT_CACHE_ENTRIES) {
+    const oldestKey = schedulingEventCache.keys().next().value as string | undefined;
+    if (!oldestKey) return;
+    schedulingEventCache.delete(oldestKey);
+  }
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof DOMException && error.name === "AbortError";
+}
+
+/**
+ * 调度日志弹窗首先读取最新一页并定位末尾，随后自动反向补齐历史。事件数据可以完整保留，
+ * 但视图只渲染当前可见窗口，避免大批次生成无界 DOM。
+ */
 export function SchedulingLogViewer({
   batchId,
   runnerId,
@@ -69,93 +109,231 @@ export function SchedulingLogViewer({
   title: string;
   onClose: () => void;
 }) {
-  const [events, setEvents] = useState<SchedulingEvent[]>([]);
-  const [nextAfterId, setNextAfterId] = useState<string | undefined>();
-  const [loading, setLoading] = useState(false);
+  const cacheKey = schedulingCacheKey(batchId, runnerId);
+  const [initialCache] = useState(() => readSchedulingEventCache(cacheKey));
+  const [events, setEvents] = useState<SchedulingEvent[]>(initialCache?.events ?? []);
+  const [loadingHistory, setLoadingHistory] = useState(initialCache?.historyComplete !== true);
   const [error, setError] = useState("");
-  const logRef = useRef<HTMLPreElement | null>(null);
-  const lastEventIdRef = useRef<string | undefined>(undefined);
+  const [scrollTop, setScrollTop] = useState(0);
+  const [viewportHeight, setViewportHeight] = useState(560);
+  const logRef = useRef<HTMLDivElement | null>(null);
+  const eventsRef = useRef(initialCache?.events ?? []);
+  const knownEventIdsRef = useRef(new Set((initialCache?.events ?? []).map((event) => event.id)));
+  const nextBeforeIdRef = useRef(initialCache?.nextBeforeId);
+  const historyCompleteRef = useRef(initialCache?.historyComplete === true);
+  const followTailRef = useRef(true);
+  const prependedRowsRef = useRef(0);
+
+  const persistCache = useCallback(() => {
+    writeSchedulingEventCache(cacheKey, {
+      events: eventsRef.current,
+      ...(nextBeforeIdRef.current ? { nextBeforeId: nextBeforeIdRef.current } : {}),
+      historyComplete: historyCompleteRef.current,
+    });
+  }, [cacheKey]);
+
+  const applyPage = useCallback(
+    (incoming: SchedulingEvent[], direction: "older" | "newer" | "replace") => {
+      const additions = incoming.filter((event) => {
+        if (knownEventIdsRef.current.has(event.id)) return false;
+        knownEventIdsRef.current.add(event.id);
+        return true;
+      });
+      if (additions.length === 0) return;
+      const next =
+        direction === "replace"
+          ? additions
+          : direction === "older"
+            ? [...additions, ...eventsRef.current]
+            : [...eventsRef.current, ...additions];
+      if (direction === "older") prependedRowsRef.current += additions.length;
+      eventsRef.current = next;
+      setEvents(next);
+      persistCache();
+    },
+    [persistCache],
+  );
 
   const fetchPage = useCallback(
-    async (afterId: string | undefined) => {
-      setLoading(true);
-      setError("");
-      try {
-        const parameters = new URLSearchParams({ limit: "200" });
-        if (runnerId) parameters.set("runnerId", runnerId);
-        if (afterId) parameters.set("afterId", afterId);
-        const response = await fetch(
-          `/api/v1/run-batches/${encodeURIComponent(batchId)}/scheduling-events?${parameters}`,
-          { cache: "no-store" },
-        );
-        if (!response.ok) {
-          // readApiErrorMessage 仅在响应成功时返回 undefined，这里已排除该分支。
-          throw new Error((await readApiErrorMessage(response, "读取调度日志失败。"))!);
-        }
-        const page = (await response.json()) as SchedulingEventPage;
-        setEvents((current) => {
-          const knownIds = new Set(current.map((event) => event.id));
-          const additions = page.items.filter((event) => !knownIds.has(event.id));
-          return additions.length > 0 ? [...current, ...additions] : current;
-        });
-        const newest = page.items.at(-1);
-        if (newest) lastEventIdRef.current = newest.id;
-        setNextAfterId(page.nextAfterId);
-      } catch (loadError) {
-        setError(loadError instanceof Error ? loadError.message : "读取调度日志失败。");
-      } finally {
-        setLoading(false);
+    async (
+      cursor: { latest?: true; beforeId?: string; afterId?: string },
+      signal: AbortSignal,
+    ): Promise<SchedulingEventPage> => {
+      const parameters = new URLSearchParams({ limit: String(SCHEDULING_EVENT_PAGE_SIZE) });
+      if (runnerId) parameters.set("runnerId", runnerId);
+      if (cursor.latest) parameters.set("latest", "true");
+      if (cursor.beforeId) parameters.set("beforeId", cursor.beforeId);
+      if (cursor.afterId) parameters.set("afterId", cursor.afterId);
+      const response = await fetch(
+        `/api/v1/run-batches/${encodeURIComponent(batchId)}/scheduling-events?${parameters}`,
+        { cache: "no-store", signal },
+      );
+      if (!response.ok) {
+        throw new Error((await readApiErrorMessage(response, "读取调度日志失败。"))!);
       }
+      return (await response.json()) as SchedulingEventPage;
     },
     [batchId, runnerId],
   );
 
-  // 首次加载与打开期间的增量轮询合并为一个 effect：
-  // 通过 setTimeout/setInterval 回调触发异步拉取，避免在 effect 体内同步 setState。
   useEffect(() => {
-    const kick = window.setTimeout(() => void fetchPage(undefined), 0);
-    const timer = window.setInterval(() => void fetchPage(lastEventIdRef.current), 3_000);
+    const controller = new AbortController();
+    let disposed = false;
+    const loadCompleteHistory = async () => {
+      setLoadingHistory(!historyCompleteRef.current);
+      setError("");
+      try {
+        if (eventsRef.current.length === 0) {
+          const latest = await fetchPage({ latest: true }, controller.signal);
+          if (disposed) return;
+          applyPage(latest.items, "replace");
+          nextBeforeIdRef.current = latest.nextBeforeId;
+          historyCompleteRef.current = latest.nextBeforeId === undefined;
+          persistCache();
+        }
+        while (!disposed && nextBeforeIdRef.current) {
+          const previous = await fetchPage(
+            { beforeId: nextBeforeIdRef.current },
+            controller.signal,
+          );
+          if (disposed) return;
+          applyPage(previous.items, "older");
+          nextBeforeIdRef.current = previous.nextBeforeId;
+          historyCompleteRef.current = previous.nextBeforeId === undefined;
+          persistCache();
+        }
+      } catch (loadError) {
+        if (!isAbortError(loadError)) {
+          setError(loadError instanceof Error ? loadError.message : "读取调度日志失败。");
+        }
+      } finally {
+        if (!disposed) setLoadingHistory(false);
+      }
+    };
+    void loadCompleteHistory();
     return () => {
-      window.clearTimeout(kick);
+      disposed = true;
+      controller.abort();
+    };
+  }, [applyPage, fetchPage, persistCache]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    let requestRunning = false;
+    const poll = async () => {
+      if (requestRunning) return;
+      requestRunning = true;
+      try {
+        const newest = eventsRef.current.at(-1);
+        if (!newest) {
+          const latest = await fetchPage({ latest: true }, controller.signal);
+          applyPage(latest.items, "replace");
+          return;
+        }
+        let afterId: string | undefined = newest.id;
+        while (afterId) {
+          const page = await fetchPage({ afterId }, controller.signal);
+          applyPage(page.items, "newer");
+          afterId = page.nextAfterId;
+        }
+      } catch (pollError) {
+        if (!isAbortError(pollError)) {
+          setError(pollError instanceof Error ? pollError.message : "刷新调度日志失败。");
+        }
+      } finally {
+        requestRunning = false;
+      }
+    };
+    // Cached rows render synchronously on reopen; refresh only the delta in the
+    // background so the dialog never presents stale tail state for three seconds.
+    void poll();
+    const timer = window.setInterval(() => void poll(), 3_000);
+    return () => {
+      controller.abort();
       window.clearInterval(timer);
     };
-  }, [fetchPage]);
+  }, [applyPage, fetchPage]);
 
   useEffect(() => {
     const log = logRef.current;
-    if (log) log.scrollTop = log.scrollHeight;
+    if (!log) return;
+    const updateHeight = () => setViewportHeight(log.clientHeight);
+    updateHeight();
+    const observer = new ResizeObserver(updateHeight);
+    observer.observe(log);
+    return () => observer.disconnect();
+  }, []);
+
+  useLayoutEffect(() => {
+    const log = logRef.current;
+    if (!log) return;
+    if (followTailRef.current) {
+      log.scrollTop = log.scrollHeight;
+    } else if (prependedRowsRef.current > 0) {
+      log.scrollTop += prependedRowsRef.current * SCHEDULING_EVENT_ROW_HEIGHT_PX;
+    }
+    prependedRowsRef.current = 0;
+    setScrollTop(log.scrollTop);
   }, [events]);
+
+  const visibleRange = useMemo(() => {
+    const first = Math.max(
+      0,
+      Math.floor(scrollTop / SCHEDULING_EVENT_ROW_HEIGHT_PX) - SCHEDULING_EVENT_OVERSCAN_ROWS,
+    );
+    const count =
+      Math.ceil(viewportHeight / SCHEDULING_EVENT_ROW_HEIGHT_PX) +
+      SCHEDULING_EVENT_OVERSCAN_ROWS * 2;
+    return { first, last: Math.min(events.length, first + count) };
+  }, [events.length, scrollTop, viewportHeight]);
+  const visibleEvents = events.slice(visibleRange.first, visibleRange.last);
 
   return (
     <TerminalLogViewer title={title} onClose={onClose}>
       {error ? <p className="form-error">{error}</p> : null}
-      <pre
+      {loadingHistory ? (
+        <p className="scheduling-log-status" role="status">
+          正在自动同步历史调度日志，已加载 {events.length} 条…
+        </p>
+      ) : null}
+      <div
         className="execution-log execution-log-dark scheduling-log"
         aria-live="polite"
         ref={logRef}
+        role="log"
+        onScroll={(event) => {
+          const log = event.currentTarget;
+          setScrollTop(log.scrollTop);
+          followTailRef.current =
+            log.scrollHeight - log.scrollTop - log.clientHeight <=
+            SCHEDULING_EVENT_ROW_HEIGHT_PX * 2;
+        }}
       >
-        {events.length > 0
-          ? events.map((event) => (
-              <span className={`scheduling-event ${schedulingEventClass(event)}`} key={event.id}>
-                <span className="ansi-bright-black">[{formatEventTime(event.recordedAt)}]</span>{" "}
-                {event.message}
-                {"\n"}
-              </span>
-            ))
-          : loading
-            ? "正在读取调度日志..."
-            : "暂无调度日志"}
-      </pre>
-      {nextAfterId !== undefined ? (
-        <Button
-          className="button button-secondary compact-button"
-          disabled={loading}
-          onClick={() => void fetchPage(nextAfterId)}
-          type="button"
-        >
-          <RefreshCw size={15} /> 加载更多
-        </Button>
-      ) : null}
+        {events.length > 0 ? (
+          <div
+            className="scheduling-log-window"
+            style={{ height: events.length * SCHEDULING_EVENT_ROW_HEIGHT_PX }}
+          >
+            <div
+              className="scheduling-log-visible-rows"
+              style={{
+                transform: `translateY(${visibleRange.first * SCHEDULING_EVENT_ROW_HEIGHT_PX}px)`,
+              }}
+            >
+              {visibleEvents.map((event) => (
+                <div className={`scheduling-event ${schedulingEventClass(event)}`} key={event.id}>
+                  <span className="ansi-bright-black">[{formatEventTime(event.recordedAt)}]</span>{" "}
+                  {event.message}
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : loadingHistory ? (
+          "正在读取调度日志..."
+        ) : (
+          "暂无调度日志"
+        )}
+      </div>
     </TerminalLogViewer>
   );
 }

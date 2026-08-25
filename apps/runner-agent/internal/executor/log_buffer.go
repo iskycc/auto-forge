@@ -44,17 +44,23 @@ func (budget *logBudget) wasTruncated() bool {
 }
 
 type streamBuffer struct {
-	content  bytes.Buffer
-	budget   *logBudget
-	stream   string
-	sink     func(LogChunk) error
-	pending  []byte
-	sequence int64
-	err      error
+	content       bytes.Buffer
+	budget        *logBudget
+	stream        string
+	sink          func(LogChunk) error
+	retainContent bool
+	pending       []byte
+	sequence      int64
+	err           error
 }
 
 func newStreamBuffer(stream string, budget *logBudget, sink func(LogChunk) error) *streamBuffer {
-	return &streamBuffer{budget: budget, stream: stream, sink: sink}
+	// Platform executions persist through sink and never consume Result.Stdout/
+	// Stderr. Retaining both copies can multiply memory use by the Runner's
+	// concurrency. Diagnostic callers without a sink keep the original result.
+	return &streamBuffer{
+		budget: budget, stream: stream, sink: sink, retainContent: sink == nil,
+	}
 }
 
 func (buffer *streamBuffer) Write(content []byte) (int, error) {
@@ -63,7 +69,9 @@ func (buffer *streamBuffer) Write(content []byte) (int, error) {
 	}
 	accepted := buffer.budget.claim(len(content))
 	if accepted > 0 {
-		_, _ = buffer.content.Write(content[:accepted])
+		if buffer.retainContent {
+			_, _ = buffer.content.Write(content[:accepted])
+		}
 		buffer.pending = append(buffer.pending, content[:accepted]...)
 		if err := buffer.emitCompleteRunes(false); err != nil {
 			buffer.err = err

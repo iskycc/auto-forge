@@ -44,6 +44,11 @@ describe("execution log redaction", () => {
     ).not.toContain("hunter2");
     expect(redactLogContent("Bearer abcdefghijklmnopqrstuv", [])).toBe("[REDACTED]");
   });
+
+  it("does not treat a long Java class path as a credential", () => {
+    const classPath = "test.cases.abcdefghijklmnop.qrstuvwxyz.abcd1234";
+    expect(redactLogContent(`AfterClass: ${classPath}`, [])).toBe(`AfterClass: ${classPath}`);
+  });
 });
 
 describe("execution data scope", () => {

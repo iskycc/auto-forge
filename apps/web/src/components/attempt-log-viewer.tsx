@@ -284,6 +284,10 @@ export function AttemptLogViewer({
         </Button>
       </div>
       {error ? <p className="form-error">{error}</p> : null}
+      <p className="log-output-policy-note" role="note">
+        测试日志不限制类名、包名或普通关键字；仅明确的 Bearer、密码、Token 与 API Key
+        凭据格式执行安全保护。
+      </p>
       {logsTruncated ? (
         <p className="status-warning" role="status">
           日志已达到保留上限，后续内容被明确截断。

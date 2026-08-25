@@ -477,7 +477,13 @@ export class RunBatchSchedulingService {
 
   async listSchedulingEvents(
     batchId: string,
-    input: { runnerId?: string; afterId?: string; limit: number },
+    input: {
+      runnerId?: string;
+      afterId?: string;
+      beforeId?: string;
+      latest?: boolean;
+      limit: number;
+    },
   ) {
     await this.get(batchId);
     return this.batches.listSchedulingEvents({ batchId, ...input });

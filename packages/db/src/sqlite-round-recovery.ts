@@ -12,7 +12,7 @@ type RecoveryRow = {
   jenkins_job_url: string;
   api_key_ciphertext: string;
   wait_minutes: number;
-  status: "pending" | "polling" | "waiting";
+  status: "pending" | "polling" | "waiting" | "releasing";
   source_build_number: number | null;
   rebuild_number: number | null;
   rebuild_url: string | null;
@@ -35,7 +35,7 @@ export class SqliteRoundRecoveryRepository implements RoundRecoveryRepository {
             `UPDATE run_batch_round_recoveries
              SET lease_owner = ?, lease_expires_at = ?, updated_at = ?
              WHERE batch_id = ? AND rule_id = ?
-               AND status IN ('pending','polling','waiting')
+               AND status IN ('pending','polling','waiting','releasing')
                AND (lease_expires_at IS NULL OR lease_expires_at <= ?)`,
           )
           .run(
@@ -58,7 +58,7 @@ export class SqliteRoundRecoveryRepository implements RoundRecoveryRepository {
         `SELECT recovery.*, batch.suite_id
          FROM run_batch_round_recoveries recovery
          JOIN run_batches batch ON batch.id = recovery.batch_id
-         WHERE recovery.status IN ('pending','polling','waiting')
+         WHERE recovery.status IN ('pending','polling','waiting','releasing')
            AND recovery.available_at <= ?
            AND (recovery.lease_expires_at IS NULL OR recovery.lease_expires_at <= ?)
            AND batch.status IN ('queued','dispatching','scheduled','running')
@@ -116,7 +116,7 @@ export class SqliteRoundRecoveryRepository implements RoundRecoveryRepository {
       const updated = this.handle.client
         .prepare(
           `UPDATE run_batch_round_recoveries
-           SET status = 'succeeded', lease_owner = NULL, lease_expires_at = NULL, updated_at = ?
+           SET status = 'succeeded', updated_at = ?
            WHERE batch_id = ? AND rule_id = ? AND lease_owner = ? AND status = 'waiting'`,
         )
         .run(input.updatedAt, input.batchId, input.ruleId, input.workerId);
@@ -134,8 +134,21 @@ export class SqliteRoundRecoveryRepository implements RoundRecoveryRepository {
         )
         .get(input.batchId, recovery.after_round) as { remaining_steps: number };
       if (barrier.remaining_steps > 0) {
+        this.handle.client
+          .prepare(
+            `UPDATE run_batch_round_recoveries
+             SET lease_owner = NULL, lease_expires_at = NULL
+             WHERE batch_id = ? AND rule_id = ? AND lease_owner = ? AND status = 'succeeded'`,
+          )
+          .run(input.batchId, input.ruleId, input.workerId);
         return { outcome: "step_completed", remainingSteps: barrier.remaining_steps };
       }
+      this.handle.client
+        .prepare(
+          `UPDATE run_batch_round_recoveries SET status = 'releasing'
+           WHERE batch_id = ? AND rule_id = ? AND lease_owner = ? AND status = 'succeeded'`,
+        )
+        .run(input.batchId, input.ruleId, input.workerId);
       this.handle.client
         .prepare(
           `UPDATE execution_runs SET held_round = 0, updated_at = ?
@@ -145,8 +158,43 @@ export class SqliteRoundRecoveryRepository implements RoundRecoveryRepository {
       this.handle.client
         .prepare("UPDATE run_batches SET current_round = ?, updated_at = ? WHERE id = ?")
         .run(recovery.next_round, input.updatedAt, input.batchId);
-      return { outcome: "round_released" };
+      return { outcome: "round_releasing" };
     });
+  }
+
+  async completeRoundRelease(
+    input: Parameters<RoundRecoveryRepository["completeRoundRelease"]>[0],
+  ): Promise<boolean> {
+    const result = this.handle.client
+      .prepare(
+        `UPDATE run_batch_round_recoveries
+         SET status = 'succeeded', error_message = NULL, lease_owner = NULL,
+             lease_expires_at = NULL, updated_at = ?
+         WHERE batch_id = ? AND rule_id = ? AND lease_owner = ? AND status = 'releasing'`,
+      )
+      .run(input.updatedAt, input.batchId, input.ruleId, input.workerId);
+    return result.changes === 1;
+  }
+
+  async retryRoundRelease(
+    input: Parameters<RoundRecoveryRepository["retryRoundRelease"]>[0],
+  ): Promise<boolean> {
+    const result = this.handle.client
+      .prepare(
+        `UPDATE run_batch_round_recoveries
+         SET error_message = ?, available_at = ?, lease_owner = NULL,
+             lease_expires_at = NULL, updated_at = ?
+         WHERE batch_id = ? AND rule_id = ? AND lease_owner = ? AND status = 'releasing'`,
+      )
+      .run(
+        input.errorMessage,
+        input.availableAt,
+        input.updatedAt,
+        input.batchId,
+        input.ruleId,
+        input.workerId,
+      );
+    return result.changes === 1;
   }
 
   async fail(input: Parameters<RoundRecoveryRepository["fail"]>[0]): Promise<boolean> {

@@ -11,14 +11,13 @@ import (
 )
 
 const (
-	maximumLogChunkBytes = 256 << 10
-	credentialCarryBytes = 512
+	maximumLogChunkBytes        = 256 << 10
+	credentialMarkerWindowBytes = 512
 )
 
 var credentialPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)\bBearer\s+[A-Za-z0-9._~+/=-]{12,}`),
 	regexp.MustCompile(`(?i)\b(password|passwd|token|secret|api[_-]?key)\s*[=:]\s*[^\s,;]+`),
-	regexp.MustCompile(`\b[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b`),
 }
 
 type attemptLogCollector struct {
@@ -33,7 +32,7 @@ type attemptLogCollector struct {
 
 func newAttemptLogCollector(attemptID string, spool *logSpool, environment []EnvironmentEntry) *attemptLogCollector {
 	secrets := make([]string, 0)
-	carrySize := credentialCarryBytes
+	carrySize := 0
 	for _, entry := range environment {
 		if !entry.Secret || entry.Value == "" {
 			continue
@@ -124,7 +123,7 @@ func safeRedactionBoundary(content string, boundary int, secrets []string) int {
 			}
 		}
 	}
-	markerWindowStart := max(0, boundary-credentialCarryBytes)
+	markerWindowStart := max(0, boundary-credentialMarkerWindowBytes)
 	lower := strings.ToLower(content[markerWindowStart:boundary])
 	for _, marker := range []string{"bearer ", "password=", "password:", "token=", "token:", "secret=", "secret:", "api_key=", "api-key="} {
 		if index := strings.LastIndex(lower, marker); index >= 0 {

@@ -75,3 +75,14 @@ func TestStreamBufferSplitsLargeWritesIntoProtocolSizedChunks(t *testing.T) {
 		t.Fatal("split chunks did not preserve the UTF-8 log")
 	}
 }
+
+func TestStreamBufferDoesNotRetainASecondCopyWhenStreamingToASink(t *testing.T) {
+	budget := newLogBudget(1024)
+	buffer := newStreamBuffer("stdout", budget, func(LogChunk) error { return nil })
+	if _, err := buffer.Write([]byte("streamed output")); err != nil {
+		t.Fatal(err)
+	}
+	if buffer.String() != "" {
+		t.Fatalf("streamed output was retained in memory: %q", buffer.String())
+	}
+}

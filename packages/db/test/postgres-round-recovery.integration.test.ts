@@ -152,7 +152,7 @@ describe.skipIf(!connectionString)("PostgreSQL round recovery", () => {
           workerId: "full-worker-2",
           updatedAt: "2026-08-23T00:10:00.000Z",
         }),
-      ).resolves.toEqual({ outcome: "round_released" });
+      ).resolves.toEqual({ outcome: "round_releasing" });
 
       await expect(
         handle.pool.query<{ current_round: number }>(
@@ -166,6 +166,31 @@ describe.skipIf(!connectionString)("PostgreSQL round recovery", () => {
           [runId],
         ),
       ).resolves.toMatchObject({ rows: [{ held_round: 0 }] });
+      await expect(
+        repository.retryRoundRelease({
+          batchId,
+          ruleId: secondRuleId,
+          workerId: "full-worker-2",
+          errorMessage: "scheduler unavailable",
+          availableAt: "2026-08-23T00:10:05.000Z",
+          updatedAt: "2026-08-23T00:10:00.000Z",
+        }),
+      ).resolves.toBe(true);
+      const [retryClaim] = await repository.claimDue({
+        workerId: "full-worker-3",
+        now: "2026-08-23T00:10:05.000Z",
+        leaseExpiresAt: "2026-08-23T00:10:35.000Z",
+        limit: 10,
+      });
+      expect(retryClaim).toMatchObject({ batchId, ruleId: secondRuleId, status: "releasing" });
+      await expect(
+        repository.completeRoundRelease({
+          batchId,
+          ruleId: secondRuleId,
+          workerId: "full-worker-3",
+          updatedAt: "2026-08-23T00:10:05.000Z",
+        }),
+      ).resolves.toBe(true);
     } finally {
       await handle.pool.query("DELETE FROM run_batches WHERE id = $1", [batchId]);
       await handle.close();

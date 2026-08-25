@@ -939,7 +939,7 @@ export class PostgresExecutionControlRepository implements ExecutionControlRepos
       await client.query(
         `UPDATE run_batch_round_recoveries
          SET status = 'cancelled', lease_owner = NULL, lease_expires_at = NULL, updated_at = $1
-         WHERE batch_id = $2 AND status IN ('idle','pending','polling','waiting')`,
+         WHERE batch_id = $2 AND status IN ('idle','pending','polling','waiting','releasing')`,
         [input.requestedAt, input.batchId],
       );
       const changed = await terminateWaitingRuns(

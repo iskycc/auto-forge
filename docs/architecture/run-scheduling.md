@@ -91,7 +91,9 @@ score = 100 × (
 的 Jenkins 链接、等待时间和加密凭据快照；Lite/Full 使用同一有租约恢复契约，并发触发同一边界
 的所有步骤。每个步骤先读取 `lastBuild`，再调用 Rebuilder 的 `lastBuild/rebuild/?autorebuild=1`，
 并只接受引用该源构建的 `RebuildCause`。构建成功后各自进入持久等待；只有全部步骤完成各自等待，
-才在一个事务中释放 held run 并推进 `currentRound`。任一步骤失败会以
+才在一个事务中释放 held run 并推进 `currentRound`。最后一个步骤随后保留在有租约的
+`releasing` 交接态，调度成功后才确认 `succeeded`；进程退出或调度暂时失败时只重试下一轮调度，
+不会再次触发 Jenkins，也不会丢失已经释放的轮次。任一步骤失败会以
 `JENKINS_ROUND_RECOVERY_FAILED` 结束剩余用例和批次；终止批次会取消尚未完成的恢复。返回的构建
 URL 必须与任务链接同源且位于相同 job 路径，避免凭据被重定向到其他地址。
 
