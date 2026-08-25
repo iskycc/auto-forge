@@ -756,23 +756,31 @@ final class CaseWorkbookWriter {
         AnalysisReport report,
         AnalyzerOptions options
     ) {
-        List<List<Object>> rows = [
-            ['生成时间（UTC）', Instant.now().toString()],
-            ['扫描目录', options.sourceRoot.toString()],
-            ['输出文件', options.outputFile.toString()],
-            ['Groovy 文件数', report.sourceFileCount],
-            ['候选用例数', report.candidateCount()],
-            ['正常用例数', report.normalCases.size()],
-            ['排除用例数', report.excludedCases.size()],
-            ['扫描问题数', report.scanIssues.size()],
-            ['异常关键词', options.negativeKeywords.join(', ')],
-            ['判断规则', '文件/路径、类名、测试方法、注解标题、注释和字符串命中异常关键词时排除；' +
-                'shouldFail/assertThrows/thrown/expected exception/throw/catch 等异常测试语义也会排除。'],
-            ['粒度', '优先按 @Test、Spock 特性或 test* 方法逐项分析；没有测试方法的类按类分析；' +
-                '没有显式类的 Groovy 脚本按文件分析。'],
-            ['复核建议', '关键词和静态语义属于启发式判断。请在“排除明细”中检查误判，' +
-                '并对“未发现异常信号”的正常用例抽样复核。']
-        ]
+        List<List<Object>> rows = []
+        rows.add(['生成时间（UTC）', Instant.now().toString()] as List<Object>)
+        rows.add(['扫描目录', options.sourceRoot.toString()] as List<Object>)
+        rows.add(['输出文件', options.outputFile.toString()] as List<Object>)
+        rows.add(['Groovy 文件数', report.sourceFileCount] as List<Object>)
+        rows.add(['候选用例数', report.candidateCount()] as List<Object>)
+        rows.add(['正常用例数', report.normalCases.size()] as List<Object>)
+        rows.add(['排除用例数', report.excludedCases.size()] as List<Object>)
+        rows.add(['扫描问题数', report.scanIssues.size()] as List<Object>)
+        rows.add(['异常关键词', options.negativeKeywords.join(', ')] as List<Object>)
+        rows.add([
+            '判断规则',
+            '文件/路径、类名、测试方法、注解标题、注释和字符串命中异常关键词时排除；' +
+                'shouldFail/assertThrows/thrown/expected exception/throw/catch 等异常测试语义也会排除。'
+        ] as List<Object>)
+        rows.add([
+            '粒度',
+            '优先按 @Test、Spock 特性或 test* 方法逐项分析；没有测试方法的类按类分析；' +
+                '没有显式类的 Groovy 脚本按文件分析。'
+        ] as List<Object>)
+        rows.add([
+            '复核建议',
+            '关键词和静态语义属于启发式判断。请在“排除明细”中检查误判，' +
+                '并对“未发现异常信号”的正常用例抽样复核。'
+        ] as List<Object>)
         writeTable(workbook, styles, '扫描说明', ['项目', '内容'], rows, [24, 120])
     }
 
