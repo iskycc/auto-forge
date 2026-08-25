@@ -127,6 +127,30 @@ export type RunBatchStatusEvent = {
   recordedAt: string;
 };
 
+export type RunBatchRoundRecoveryStatus =
+  "idle" | "pending" | "polling" | "waiting" | "releasing" | "succeeded" | "failed" | "cancelled";
+
+// 批次创建时固化的 Jenkins 环境恢复步骤。凭据只存在恢复仓储中，详情 DTO
+// 仅暴露复盘所需的任务、构建与时间信息，可安全用于登录详情页和匿名分享页。
+export type RunBatchRoundRecovery = {
+  ruleId: string;
+  afterRound: number;
+  nextRound: number;
+  jenkinsJobUrl: string;
+  waitMinutes: number;
+  status: RunBatchRoundRecoveryStatus;
+  sourceBuildNumber?: number;
+  rebuildNumber?: number;
+  rebuildUrl?: string;
+  activatedAt?: string;
+  startedAt?: string;
+  finishedAt?: string;
+  buildResult?: string;
+  errorMessage?: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type ExecutionRun = {
   id: string;
   batchId: string;
@@ -170,6 +194,7 @@ export type RunAttempt = {
 export type RunBatchDetails = RunBatch & {
   runs: ExecutionRun[];
   attempts: RunAttempt[];
+  roundRecoveries: RunBatchRoundRecovery[];
   statusHistory: RunBatchStatusEvent[];
 };
 
@@ -213,7 +238,7 @@ export type RunBatchFinalSummary = RunBatchAllRoundsSummary;
 
 // 纯函数聚合：不读取系统时间，进行中的轮次 durationMs 为 null，由调用方决定如何倒计时。
 export function summarizeRunBatchRounds(
-  batch: RunBatch,
+  batch: Pick<RunBatch, "currentRound" | "retryMode" | "status" | "totalRuns">,
   runs: readonly ExecutionRun[],
   attempts: readonly RunAttempt[],
 ): RunBatchRoundSummary[] {

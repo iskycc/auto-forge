@@ -100,6 +100,7 @@ function batch(
     runs: [run("run-1", "case-1"), run("run-2", "case-2")],
     attempts: [],
     statusHistory: [],
+    roundRecoveries: [],
     ...overrides,
   };
 }

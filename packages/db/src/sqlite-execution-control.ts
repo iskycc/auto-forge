@@ -1629,10 +1629,11 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
       this.handle.client
         .prepare(
           `UPDATE run_batch_round_recoveries
-           SET status = 'pending', available_at = ?, updated_at = ?
+           SET status = 'pending', available_at = ?, activated_at = COALESCE(activated_at, ?),
+               updated_at = ?
            WHERE batch_id = ? AND after_round = ? AND status = 'idle'`,
         )
-        .run(updatedAt, updatedAt, batchId, nextRound.value - 1);
+        .run(updatedAt, updatedAt, updatedAt, batchId, nextRound.value - 1);
       return;
     }
     if (

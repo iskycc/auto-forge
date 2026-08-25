@@ -1749,7 +1749,8 @@ async function advanceRoundIfIdle(
   if (totalRecoverySteps > 0 && Number(recoverySteps?.idle_steps ?? 0) > 0) {
     await client.query(
       `UPDATE run_batch_round_recoveries
-       SET status = 'pending', available_at = $1, updated_at = $1
+       SET status = 'pending', available_at = $1,
+           activated_at = COALESCE(activated_at, $1), updated_at = $1
        WHERE batch_id = $2 AND after_round = $3 AND status = 'idle'`,
       [updatedAt, batchId, nextRoundValue - 1],
     );

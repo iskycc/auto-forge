@@ -77,7 +77,8 @@ export class SqliteRoundRecoveryRepository implements RoundRecoveryRepository {
         `UPDATE run_batch_round_recoveries
          SET status = 'polling', source_build_number = ?,
              rebuild_number = COALESCE(?, rebuild_number),
-             rebuild_url = COALESCE(?, rebuild_url), available_at = ?,
+             rebuild_url = COALESCE(?, rebuild_url),
+             started_at = COALESCE(?, started_at), available_at = ?,
              lease_owner = NULL, lease_expires_at = NULL, updated_at = ?
          WHERE batch_id = ? AND rule_id = ? AND lease_owner = ?
            AND status IN ('pending','polling')`,
@@ -86,6 +87,7 @@ export class SqliteRoundRecoveryRepository implements RoundRecoveryRepository {
         input.sourceBuildNumber,
         input.rebuildNumber ?? null,
         input.rebuildUrl ?? null,
+        input.startedAt ?? null,
         input.availableAt,
         input.updatedAt,
         input.batchId,
@@ -101,11 +103,23 @@ export class SqliteRoundRecoveryRepository implements RoundRecoveryRepository {
     const result = this.handle.client
       .prepare(
         `UPDATE run_batch_round_recoveries
-         SET status = 'waiting', available_at = ?, lease_owner = NULL,
-             lease_expires_at = NULL, updated_at = ?
+         SET status = 'waiting', rebuild_number = ?, rebuild_url = ?,
+             started_at = COALESCE(?, started_at), finished_at = ?, build_result = ?,
+             available_at = ?, lease_owner = NULL, lease_expires_at = NULL, updated_at = ?
          WHERE batch_id = ? AND rule_id = ? AND lease_owner = ? AND status = 'polling'`,
       )
-      .run(input.availableAt, input.updatedAt, input.batchId, input.ruleId, input.workerId);
+      .run(
+        input.rebuildNumber,
+        input.rebuildUrl,
+        input.startedAt ?? null,
+        input.finishedAt ?? null,
+        input.buildResult,
+        input.availableAt,
+        input.updatedAt,
+        input.batchId,
+        input.ruleId,
+        input.workerId,
+      );
     return result.changes === 1;
   }
 
@@ -202,12 +216,28 @@ export class SqliteRoundRecoveryRepository implements RoundRecoveryRepository {
       const recovery = this.handle.client
         .prepare(
           `UPDATE run_batch_round_recoveries
-           SET status = 'failed', error_message = ?, lease_owner = NULL,
+           SET status = 'failed', error_message = ?,
+               rebuild_number = COALESCE(?, rebuild_number),
+               rebuild_url = COALESCE(?, rebuild_url),
+               started_at = COALESCE(?, started_at),
+               finished_at = COALESCE(?, finished_at),
+               build_result = COALESCE(?, build_result), lease_owner = NULL,
                lease_expires_at = NULL, updated_at = ?
            WHERE batch_id = ? AND rule_id = ? AND lease_owner = ?
              AND status IN ('pending','polling','waiting')`,
         )
-        .run(input.errorMessage, input.updatedAt, input.batchId, input.ruleId, input.workerId);
+        .run(
+          input.errorMessage,
+          input.rebuildNumber ?? null,
+          input.rebuildUrl ?? null,
+          input.startedAt ?? null,
+          input.finishedAt ?? null,
+          input.buildResult ?? null,
+          input.updatedAt,
+          input.batchId,
+          input.ruleId,
+          input.workerId,
+        );
       if (recovery.changes !== 1) return false;
       this.handle.client
         .prepare(

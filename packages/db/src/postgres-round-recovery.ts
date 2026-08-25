@@ -64,14 +64,16 @@ export class PostgresRoundRecoveryRepository implements RoundRecoveryRepository 
       `UPDATE run_batch_round_recoveries
        SET status = 'polling', source_build_number = $1,
            rebuild_number = COALESCE($2, rebuild_number),
-           rebuild_url = COALESCE($3, rebuild_url), available_at = $4,
-           lease_owner = NULL, lease_expires_at = NULL, updated_at = $5
-       WHERE batch_id = $6 AND rule_id = $7 AND lease_owner = $8
+           rebuild_url = COALESCE($3, rebuild_url),
+           started_at = COALESCE($4, started_at), available_at = $5,
+           lease_owner = NULL, lease_expires_at = NULL, updated_at = $6
+       WHERE batch_id = $7 AND rule_id = $8 AND lease_owner = $9
          AND status IN ('pending','polling')`,
       [
         input.sourceBuildNumber,
         input.rebuildNumber ?? null,
         input.rebuildUrl ?? null,
+        input.startedAt ?? null,
         input.availableAt,
         input.updatedAt,
         input.batchId,
@@ -88,10 +90,22 @@ export class PostgresRoundRecoveryRepository implements RoundRecoveryRepository 
     await this.handle.ready;
     const result = await this.handle.pool.query(
       `UPDATE run_batch_round_recoveries
-       SET status = 'waiting', available_at = $1, lease_owner = NULL,
-           lease_expires_at = NULL, updated_at = $2
-       WHERE batch_id = $3 AND rule_id = $4 AND lease_owner = $5 AND status = 'polling'`,
-      [input.availableAt, input.updatedAt, input.batchId, input.ruleId, input.workerId],
+       SET status = 'waiting', rebuild_number = $1, rebuild_url = $2,
+           started_at = COALESCE($3, started_at), finished_at = $4, build_result = $5,
+           available_at = $6, lease_owner = NULL, lease_expires_at = NULL, updated_at = $7
+       WHERE batch_id = $8 AND rule_id = $9 AND lease_owner = $10 AND status = 'polling'`,
+      [
+        input.rebuildNumber,
+        input.rebuildUrl,
+        input.startedAt ?? null,
+        input.finishedAt ?? null,
+        input.buildResult,
+        input.availableAt,
+        input.updatedAt,
+        input.batchId,
+        input.ruleId,
+        input.workerId,
+      ],
     );
     return result.rowCount === 1;
   }
@@ -186,11 +200,27 @@ export class PostgresRoundRecoveryRepository implements RoundRecoveryRepository 
     return withTransaction(this.handle, async (client) => {
       const recovery = await client.query(
         `UPDATE run_batch_round_recoveries
-         SET status = 'failed', error_message = $1, lease_owner = NULL,
-             lease_expires_at = NULL, updated_at = $2
-         WHERE batch_id = $3 AND rule_id = $4 AND lease_owner = $5
+         SET status = 'failed', error_message = $1,
+             rebuild_number = COALESCE($2, rebuild_number),
+             rebuild_url = COALESCE($3, rebuild_url),
+             started_at = COALESCE($4, started_at),
+             finished_at = COALESCE($5, finished_at),
+             build_result = COALESCE($6, build_result), lease_owner = NULL,
+             lease_expires_at = NULL, updated_at = $7
+         WHERE batch_id = $8 AND rule_id = $9 AND lease_owner = $10
            AND status IN ('pending','polling','waiting')`,
-        [input.errorMessage, input.updatedAt, input.batchId, input.ruleId, input.workerId],
+        [
+          input.errorMessage,
+          input.rebuildNumber ?? null,
+          input.rebuildUrl ?? null,
+          input.startedAt ?? null,
+          input.finishedAt ?? null,
+          input.buildResult ?? null,
+          input.updatedAt,
+          input.batchId,
+          input.ruleId,
+          input.workerId,
+        ],
       );
       if (recovery.rowCount !== 1) return false;
       await client.query(

@@ -34,7 +34,7 @@
     "test:runner-install-e2e": "bash scripts/quality/test-runner-install-e2e.sh",
     "test:offline": "bash scripts/quality/test-offline.sh",
     "test:performance": "vitest run --config vitest.performance.config.ts",
-    "test:lite-concurrency": "playwright test tests/e2e/lite-high-concurrency.spec.ts",
+    "test:lite-concurrency": "E2E_PROJECT_MAXIMUM_CONCURRENCY=${E2E_PROJECT_MAXIMUM_CONCURRENCY:-500} playwright test tests/e2e/lite-high-concurrency.spec.ts",
     "release:backend": "bash scripts/release/build-backend-image.sh",
     "release:deploy": "bash scripts/release/build-deployment-bundle.sh"
   },

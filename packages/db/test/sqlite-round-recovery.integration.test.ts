@@ -87,8 +87,26 @@ describe("SqliteRoundRecoveryRepository", () => {
       batchId: "batch-1",
       ruleId: "recovery-1",
       workerId: "worker-1",
+      rebuildNumber: 42,
+      rebuildUrl: "https://jenkins.internal/job/reset/42/",
+      startedAt: "2026-08-23T00:00:01.000Z",
+      finishedAt: "2026-08-23T00:00:05.000Z",
+      buildResult: "SUCCESS",
       availableAt: "2026-08-23T00:05:05.000Z",
       updatedAt: "2026-08-23T00:00:05.000Z",
+    });
+    expect(
+      handle.client
+        .prepare(
+          `SELECT started_at AS startedAt, finished_at AS finishedAt,
+                  build_result AS buildResult
+           FROM run_batch_round_recoveries WHERE batch_id = ?`,
+        )
+        .get("batch-1"),
+    ).toEqual({
+      startedAt: "2026-08-23T00:00:01.000Z",
+      finishedAt: "2026-08-23T00:00:05.000Z",
+      buildResult: "SUCCESS",
     });
 
     await expect(

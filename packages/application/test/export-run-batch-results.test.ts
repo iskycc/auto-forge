@@ -45,6 +45,7 @@ function makeDetails(overrides: Partial<RunBatchDetails> = {}): RunBatchDetails 
     createdAt: "2026-08-17T00:00:00.000Z",
     updatedAt: "2026-08-17T00:10:00.000Z",
     statusHistory: [],
+    roundRecoveries: [],
     runs: [
       run("run-a", "succeeded", { heldRound: 0 }),
       run("run-b", "queued", { heldRound: 3 }),

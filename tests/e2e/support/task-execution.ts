@@ -11,6 +11,13 @@ type SuitePolicyOverrides = {
   uploadTimeoutMs?: number;
   runnerLabels?: string[];
   artifactPatterns?: string[];
+  roundRecoveryRules?: Array<{
+    id: string;
+    afterRound: number;
+    jenkinsJobUrl: string;
+    waitMinutes: number;
+    apiKey: string;
+  }>;
 };
 
 type NamedResource = { id: string; name: string };

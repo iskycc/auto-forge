@@ -272,6 +272,7 @@ function batch(
     updatedAt: timestamp,
     runs,
     attempts,
+    roundRecoveries: [],
     statusHistory: [],
   };
 }

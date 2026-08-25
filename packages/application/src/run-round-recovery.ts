@@ -102,7 +102,33 @@ export class RoundRecoveryService {
     });
     const updatedAt = this.clock.now();
     if (result.status === "failed") {
-      throw new Error(`Jenkins 构建 #${result.buildNumber} 结果为 ${result.result}。`);
+      const errorMessage = `Jenkins 构建 #${result.buildNumber} 结果为 ${result.result}。`;
+      const failed = await this.repository.fail({
+        batchId: claim.batchId,
+        ruleId: claim.ruleId,
+        workerId,
+        errorMessage,
+        rebuildNumber: result.buildNumber,
+        rebuildUrl: result.buildUrl,
+        ...(result.startedAt ? { startedAt: result.startedAt } : {}),
+        ...(result.finishedAt ? { finishedAt: result.finishedAt } : {}),
+        buildResult: result.result,
+        eventId: this.ids.next(),
+        updatedAt: updatedAt.toISOString(),
+      });
+      if (failed) {
+        await this.appendEvent(
+          claim,
+          `Jenkins 环境恢复失败：${errorMessage}`,
+          updatedAt.toISOString(),
+          {
+            state: "failed",
+            buildNumber: result.buildNumber,
+            buildResult: result.result,
+          },
+        );
+      }
+      return;
     }
     if (result.status === "succeeded") {
       const resumeAt = new Date(updatedAt.getTime() + claim.waitMinutes * 60_000);
@@ -110,6 +136,11 @@ export class RoundRecoveryService {
         batchId: claim.batchId,
         ruleId: claim.ruleId,
         workerId,
+        rebuildNumber: result.buildNumber,
+        rebuildUrl: result.buildUrl,
+        ...(result.startedAt ? { startedAt: result.startedAt } : {}),
+        ...(result.finishedAt ? { finishedAt: result.finishedAt } : {}),
+        buildResult: result.result,
         availableAt: resumeAt.toISOString(),
         updatedAt: updatedAt.toISOString(),
       });
@@ -129,7 +160,11 @@ export class RoundRecoveryService {
       workerId,
       sourceBuildNumber: claim.sourceBuildNumber,
       ...(result.status === "running"
-        ? { rebuildNumber: result.buildNumber, rebuildUrl: result.buildUrl }
+        ? {
+            rebuildNumber: result.buildNumber,
+            rebuildUrl: result.buildUrl,
+            ...(result.startedAt ? { startedAt: result.startedAt } : {}),
+          }
         : {}),
       availableAt: new Date(updatedAt.getTime() + JENKINS_POLL_MS).toISOString(),
       updatedAt: updatedAt.toISOString(),

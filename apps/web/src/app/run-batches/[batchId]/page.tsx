@@ -1,10 +1,10 @@
-import { ArrowLeft, Clock3 } from "lucide-react";
-import Link from "next/link";
 import { notFound } from "next/navigation";
 
 import { ExecutionBatchDetails } from "@/components/execution-batch-details";
+import { RunBatchDetailHero } from "@/components/run-batch-detail-hero";
 import type { RunnerDirectoryEntry } from "@/components/run-batch-rounds";
 import { hasPermissionInAnyScope, requirePageProjectScope } from "@/lib/auth";
+import { toExecutionBatchView } from "@/lib/execution-batch-view";
 import { getPlatformServices } from "@/lib/services";
 
 export const dynamic = "force-dynamic";
@@ -43,24 +43,16 @@ export default async function RunBatchDetailsPage({
 
   return (
     <div className="page-stack">
-      <Link className="back-link" href="/execution-records">
-        <ArrowLeft size={16} /> 返回执行记录
-      </Link>
-      <section className="page-hero execution-detail-hero">
-        <div>
-          <span className="eyebrow">Execution Batch</span>
-          <h1>{batch.suiteName}</h1>
-          <p title={batch.id}>
-            批次 #{batch.sequenceNumber} · 任务版本 v{batch.suiteVersion} · 项目版本
-            {projectVersion ? `「${projectVersion.name}」` : "未关联"}
-          </p>
-        </div>
-        <span className="hero-icon violet">
-          <Clock3 size={24} />
-        </span>
-      </section>
+      <RunBatchDetailHero
+        batchId={batch.id}
+        sequenceNumber={batch.sequenceNumber}
+        suiteName={batch.suiteName}
+        suiteVersion={batch.suiteVersion}
+        {...(projectVersion ? { projectVersionName: projectVersion.name } : {})}
+      />
       <ExecutionBatchDetails
-        batch={batch}
+        batch={toExecutionBatchView(batch)}
+        retrySuiteId={batch.suiteId}
         canCancelRuns={canAuthorize(() =>
           services.identityAccess.authorize(identity, "run.cancel", batch.projectId),
         )}
@@ -70,6 +62,7 @@ export default async function RunBatchDetailsPage({
         canReadLogs={canAuthorize(() =>
           services.identityAccess.authorize(identity, "log.read", batch.projectId),
         )}
+        canReadAttemptEvents
         canReadArtifacts={canAuthorize(() =>
           services.identityAccess.authorize(identity, "artifact.read", batch.projectId),
         )}

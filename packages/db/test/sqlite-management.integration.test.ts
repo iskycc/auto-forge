@@ -2466,6 +2466,20 @@ describe("SQLite management repositories", () => {
           .prepare("SELECT status, held_round FROM execution_runs WHERE id = 'run-round-a'")
           .get(),
       ).toEqual({ status: "queued", held_round: 2 });
+      const recoveryDetails = await batches.get("batch-round");
+      expect(recoveryDetails?.roundRecoveries).toEqual([
+        expect.objectContaining({
+          ruleId: "recovery-app",
+          status: "pending",
+          activatedAt: "2026-08-09T00:01:20.000Z",
+        }),
+        expect.objectContaining({
+          ruleId: "recovery-database",
+          status: "pending",
+          activatedAt: "2026-08-09T00:01:20.000Z",
+        }),
+      ]);
+      expect(JSON.stringify(recoveryDetails?.roundRecoveries)).not.toContain("encrypted-");
 
       // 外部 Jenkins 成功和各自等待由编排服务推进；这里将两个步骤置为到期，
       // 验证第一步只完成自身、第二步才原子释放整个下一轮。

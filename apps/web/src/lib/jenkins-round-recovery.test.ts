@@ -91,6 +91,8 @@ describe("JenkinsRebuildTransport", () => {
             url: "https://jenkins.internal/job/reset/42/",
             building: true,
             result: null,
+            timestamp: 1_785_974_400_000,
+            duration: 3_000,
             actions: [
               {
                 causes: [
@@ -117,6 +119,39 @@ describe("JenkinsRebuildTransport", () => {
       status: "running",
       buildNumber: 42,
       buildUrl: "https://jenkins.internal/job/reset/42/",
+      startedAt: "2026-08-06T00:00:00.000Z",
+    });
+  });
+
+  it("returns the actual Jenkins start, finish and terminal result", async () => {
+    const transport = new JenkinsRebuildTransport(
+      vi.fn<typeof fetch>().mockResolvedValue(
+        jsonResponse({
+          number: 42,
+          url: "https://jenkins.internal/job/reset/42/",
+          building: false,
+          result: "SUCCESS",
+          timestamp: 1_785_974_400_000,
+          duration: 12_500,
+        }),
+      ),
+    );
+
+    await expect(
+      transport.inspectRebuild({
+        jobUrl: "https://jenkins.internal/job/reset/",
+        credential: "jenkins-user:api-token",
+        sourceBuildNumber: 41,
+        rebuildNumber: 42,
+        rebuildUrl: "https://jenkins.internal/job/reset/42/",
+      }),
+    ).resolves.toEqual({
+      status: "succeeded",
+      buildNumber: 42,
+      buildUrl: "https://jenkins.internal/job/reset/42/",
+      result: "SUCCESS",
+      startedAt: "2026-08-06T00:00:00.000Z",
+      finishedAt: "2026-08-06T00:00:12.500Z",
     });
   });
 

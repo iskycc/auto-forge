@@ -27,6 +27,7 @@ printf '%s\n' \
   '}' >"${source_root}/account/LoginSpec.groovy"
 
 printf '%s\n' \
+  '@Grab("missing.fixture:must-not-be-resolved:1.0")' \
   'package sample.orders' \
   'class CheckoutCase {' \
   '    void testHappyPath() { assert "success" }' \
@@ -45,15 +46,20 @@ printf '%s\n' \
   '    void testIncomplete(' >"${source_root}/BrokenCase.groovy"
 
 run_analyzer() {
-  if command -v groovy >/dev/null 2>&1; then
-    groovy "${script_path}" --source "${source_root}" --output "${output_file}"
-    return
-  fi
-  if [[ -z "${GROOVY_JAR:-}" || -z "${IVY_JAR:-}" ]]; then
-    echo 'Install Groovy or set GROOVY_JAR and IVY_JAR to run this test.' >&2
+  if [[ -z "${POI_CLASSPATH:-}" ]]; then
+    echo 'Set POI_CLASSPATH to Apache POI 3.13 and its transitive dependencies.' >&2
     return 1
   fi
-  java -cp "${GROOVY_JAR}:${IVY_JAR}" groovy.ui.GroovyMain \
+  if command -v groovy >/dev/null 2>&1; then
+    groovy -cp "${POI_CLASSPATH}" \
+      "${script_path}" --source "${source_root}" --output "${output_file}"
+    return
+  fi
+  if [[ -z "${GROOVY_JAR:-}" ]]; then
+    echo 'Install Groovy or set GROOVY_JAR to run this test.' >&2
+    return 1
+  fi
+  java -cp "${GROOVY_JAR}:${POI_CLASSPATH}" groovy.ui.GroovyMain \
     "${script_path}" --source "${source_root}" --output "${output_file}"
 }
 

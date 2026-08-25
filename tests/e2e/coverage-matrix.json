@@ -167,7 +167,7 @@
         "realAgent": "not-applicable",
         "success": "partial",
         "failure": "partial",
-        "recovery": "planned"
+        "recovery": "partial"
       }
     },
     {
@@ -189,7 +189,7 @@
         "realAgent": "partial",
         "success": "partial",
         "failure": "partial",
-        "recovery": "planned"
+        "recovery": "partial"
       }
     },
     {
