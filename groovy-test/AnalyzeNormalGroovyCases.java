@@ -282,7 +282,6 @@ public final class AnalyzeNormalGroovyCases {
     private String title;
     private String packageName;
     private String className;
-    private String methodName;
     private String relativePath;
     private int lineNumber;
     private String discoveryKind;
@@ -296,7 +295,6 @@ public final class AnalyzeNormalGroovyCases {
     private String title;
     private String packageName;
     private String className;
-    private String methodName;
     private String relativePath;
     private int lineNumber;
     private String discoveryKind;
@@ -424,7 +422,6 @@ public final class AnalyzeNormalGroovyCases {
       candidate.title = baseName(sourceFile);
       candidate.packageName = "";
       candidate.className = baseName(sourceFile);
-      candidate.methodName = "";
       candidate.relativePath = relativePath;
       candidate.lineNumber = 1;
       candidate.discoveryKind = "文件级兜底（解析失败）";
@@ -484,7 +481,6 @@ public final class AnalyzeNormalGroovyCases {
       analyzedCase.title = candidate.title;
       analyzedCase.packageName = candidate.packageName;
       analyzedCase.className = candidate.className;
-      analyzedCase.methodName = candidate.methodName;
       analyzedCase.relativePath = candidate.relativePath;
       analyzedCase.lineNumber = candidate.lineNumber;
       analyzedCase.discoveryKind = candidate.discoveryKind;
@@ -557,13 +553,7 @@ public final class AnalyzeNormalGroovyCases {
       List<CaseCandidate> candidates = new ArrayList<>();
       for (ClassSpan classSpan : classes) {
         List<MethodSpan> methods = discoverTestMethods(classSpan);
-        if (methods.isEmpty()) {
-          candidates.add(classCandidate(packageName, classSpan));
-        } else {
-          for (MethodSpan method : methods) {
-            candidates.add(methodCandidate(packageName, classSpan, method));
-          }
-        }
+        candidates.add(classCandidate(packageName, classSpan, methods));
       }
       return candidates;
     }
@@ -672,18 +662,7 @@ public final class AnalyzeNormalGroovyCases {
         boolean testStyleName = isTestStyleName(methodName);
         boolean classMethod = classLevelTest && !containsWord(prefix, "private");
         if (annotatedTest || testStyleName || classMethod || spockSpecification) {
-          methods.add(
-              new MethodSpan(
-                  methodName,
-                  token.line,
-                  annotationStart,
-                  bodyClose,
-                  prefix,
-                  annotatedTest
-                      ? "@Test/测试注解方法"
-                      : spockSpecification
-                          ? "Spock 特性方法"
-                          : classMethod ? "类级 @Test 方法" : "test* 命名方法"));
+          methods.add(new MethodSpan(methodName, prefix));
         }
         index = bodyClose;
         memberStart = bodyClose + 1;
@@ -693,7 +672,7 @@ public final class AnalyzeNormalGroovyCases {
 
     private CaseCandidate scriptCandidate(String packageName) {
       String name = baseName(relativePath);
-      CaseCandidate candidate = baseCandidate(packageName, name, "", 1);
+      CaseCandidate candidate = baseCandidate(packageName, name, 1);
       candidate.title = name;
       candidate.discoveryKind = "Groovy 脚本";
       candidate.metadata = name;
@@ -701,14 +680,24 @@ public final class AnalyzeNormalGroovyCases {
       return candidate;
     }
 
-    private CaseCandidate classCandidate(String packageName, ClassSpan classSpan) {
+    private CaseCandidate classCandidate(
+        String packageName, ClassSpan classSpan, List<MethodSpan> methods) {
       CaseCandidate candidate =
-          baseCandidate(packageName, classSpan.name, "", classSpan.line);
+          baseCandidate(packageName, classSpan.name, classSpan.line);
       candidate.title = preferredTitle(classSpan.annotations, classSpan.name);
-      candidate.discoveryKind = "类级用例（未发现测试方法）";
-      candidate.metadata =
-          joinMetadataFields(
-              baseName(relativePath), classSpan.name, classSpan.annotations);
+      candidate.discoveryKind =
+          methods.isEmpty()
+              ? "类级用例（未发现测试方法）"
+              : "类级用例（汇总 " + methods.size() + " 个测试方法）";
+      List<String> metadataFields = new ArrayList<>();
+      metadataFields.add(baseName(relativePath));
+      metadataFields.add(classSpan.name);
+      metadataFields.add(classSpan.annotations);
+      for (MethodSpan method : methods) {
+        metadataFields.add(method.name);
+        metadataFields.add(method.annotations);
+      }
+      candidate.metadata = joinMetadataFields(metadataFields);
       candidate.sourceScope =
           source.substring(
               tokens.get(classSpan.classToken).start,
@@ -716,31 +705,10 @@ public final class AnalyzeNormalGroovyCases {
       return candidate;
     }
 
-    private CaseCandidate methodCandidate(
-        String packageName, ClassSpan classSpan, MethodSpan method) {
-      CaseCandidate candidate =
-          baseCandidate(packageName, classSpan.name, method.name, method.line);
-      candidate.title = preferredTitle(method.annotations, method.name);
-      candidate.discoveryKind = method.discoveryKind;
-      candidate.metadata =
-          joinMetadataFields(
-              baseName(relativePath),
-              classSpan.name,
-              method.name,
-              classSpan.annotations,
-              method.annotations);
-      candidate.sourceScope =
-          source.substring(
-              tokens.get(method.startToken).start, tokens.get(method.closeBraceToken).end);
-      return candidate;
-    }
-
-    private CaseCandidate baseCandidate(
-        String packageName, String className, String methodName, int line) {
+    private CaseCandidate baseCandidate(String packageName, String className, int line) {
       CaseCandidate candidate = new CaseCandidate();
       candidate.packageName = packageName;
       candidate.className = className;
-      candidate.methodName = methodName;
       candidate.relativePath = relativePath;
       candidate.lineNumber = line;
       return candidate;
@@ -1022,25 +990,11 @@ public final class AnalyzeNormalGroovyCases {
 
   private static final class MethodSpan {
     private final String name;
-    private final int line;
-    private final int startToken;
-    private final int closeBraceToken;
     private final String annotations;
-    private final String discoveryKind;
 
-    private MethodSpan(
-        String name,
-        int line,
-        int startToken,
-        int closeBraceToken,
-        String annotations,
-        String discoveryKind) {
+    private MethodSpan(String name, String annotations) {
       this.name = name;
-      this.line = line;
-      this.startToken = startToken;
-      this.closeBraceToken = closeBraceToken;
       this.annotations = annotations;
-      this.discoveryKind = discoveryKind;
     }
   }
 
@@ -1110,7 +1064,6 @@ public final class AnalyzeNormalGroovyCases {
               "用例标题",
               "包名",
               "类名",
-              "测试方法",
               "相对路径",
               "起始行",
               "识别方式",
@@ -1125,7 +1078,6 @@ public final class AnalyzeNormalGroovyCases {
                 testCase.title,
                 testCase.packageName,
                 testCase.className,
-                testCase.methodName,
                 testCase.relativePath,
                 testCase.lineNumber,
                 testCase.discoveryKind,
@@ -1138,7 +1090,7 @@ public final class AnalyzeNormalGroovyCases {
           "导出用例",
           headers,
           rows,
-          Arrays.asList(8, 34, 28, 30, 30, 48, 10, 24, 42, 72));
+          Arrays.asList(8, 34, 28, 30, 48, 10, 32, 42, 72));
     }
 
     private static void writeExcludedCases(
@@ -1149,7 +1101,6 @@ public final class AnalyzeNormalGroovyCases {
               "用例标题",
               "包名",
               "类名",
-              "测试方法",
               "相对路径",
               "起始行",
               "识别方式",
@@ -1165,7 +1116,6 @@ public final class AnalyzeNormalGroovyCases {
                 testCase.title,
                 testCase.packageName,
                 testCase.className,
-                testCase.methodName,
                 testCase.relativePath,
                 testCase.lineNumber,
                 testCase.discoveryKind,
@@ -1179,7 +1129,7 @@ public final class AnalyzeNormalGroovyCases {
           "排除明细",
           headers,
           rows,
-          Arrays.asList(8, 34, 28, 30, 30, 48, 10, 24, 36, 30, 72));
+          Arrays.asList(8, 34, 28, 30, 48, 10, 32, 36, 30, 72));
     }
 
     private static void writeScanIssues(
@@ -1442,7 +1392,7 @@ public final class AnalyzeNormalGroovyCases {
     return cleaned;
   }
 
-  private static String joinMetadataFields(String... fields) {
+  private static String joinMetadataFields(List<String> fields) {
     return String.join(METADATA_FIELD_SEPARATOR, fields);
   }
 

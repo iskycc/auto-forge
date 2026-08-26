@@ -41,15 +41,6 @@ printf '%s\n' \
   '    @Test(description = "用户可以正常登录")' \
   '    void testSuccessfulLogin() { assert true }' \
   '' \
-  '    @Test(description = "Completes without Error")' \
-  '    void testCompletesWithoutError() { assert true }' \
-  '' \
-  '    @Test(description = "Ordinary reporting mentions a count")' \
-  '    void testReportSummary() { println "Error count is zero" }' \
-  '' \
-  '    @Test(description = "Business guard")' \
-  '    void testBusinessGuard() { throw new IllegalStateException("guard") }' \
-  '' \
   '    @Test(description = "Balance state")' \
   '    void testInsufficientBalance() { assert true }' \
   '' \
@@ -68,16 +59,27 @@ printf '%s\n' \
   '    @Test(description = "Pending activation")' \
   '    void testStatusPendingActiveWorkflow() { assert true }' \
   '' \
+  '    @Test(description = "Invalid password returns an Error")' \
+  '    void testInvalidPassword() {' \
+  '        shouldFail(IllegalArgumentException) { throw new IllegalArgumentException("bad") }' \
+  '    }' \
+  '}' \
+  '' \
+  'class NormalSignalsSpec {' \
+  '    @Test(description = "Completes without Error")' \
+  '    void testCompletesWithoutError() { assert true }' \
+  '' \
+  '    @Test(description = "Ordinary reporting mentions a count")' \
+  '    void testReportSummary() { println "Error count is zero" }' \
+  '' \
+  '    @Test(description = "Business guard")' \
+  '    void testBusinessGuard() { throw new IllegalStateException("guard") }' \
+  '' \
   '    @Test(description = "Similar but distinct status")' \
   '    void testStatusNewerWorkflow() { assert true }' \
   '' \
   '    @Test(description = "Completes without StatusNew")' \
   '    void testCompletesWithoutStatusNew() { assert true }' \
-  '' \
-  '    @Test(description = "Invalid password returns an Error")' \
-  '    void testInvalidPassword() {' \
-  '        shouldFail(IllegalArgumentException) { throw new IllegalArgumentException("bad") }' \
-  '    }' \
   '}' >"${source_root}/account/LoginSpec.groovy"
 
 printf '%s\n' \
@@ -123,8 +125,8 @@ scope_run_output="$({
   java -cp "${compiled_classes}:${POI_CLASSPATH}" AnalyzeNormalGroovyCases \
     --output "${scope_output_file}"
 })"
-grep -Fq 'Scanned 5 Groovy file(s) and 17 case candidate(s).' <<<"${run_output}"
-grep -Fq 'Exported 9 included case(s); 8 candidate(s) were excluded.' <<<"${run_output}"
+grep -Fq 'Scanned 5 Groovy file(s) and 6 case candidate(s).' <<<"${run_output}"
+grep -Fq 'Exported 4 included case(s); 2 candidate(s) were excluded.' <<<"${run_output}"
 grep -Fq "1 file(s) require review; see the '扫描问题' worksheet." <<<"${run_output}"
 grep -Fq "Source root: ${scope_workspace}/groovy-test" <<<"${scope_run_output}"
 grep -Fq 'Scanned 1 Groovy file(s) and 1 case candidate(s).' <<<"${scope_run_output}"
@@ -155,55 +157,38 @@ const normalCases = xlsxModule.utils.sheet_to_json(workbook.Sheets["导出用例
 const excludedCases = xlsxModule.utils.sheet_to_json(workbook.Sheets["排除明细"]);
 const issues = xlsxModule.utils.sheet_to_json(workbook.Sheets["扫描问题"]);
 
-if (normalCases.length !== 9 || excludedCases.length !== 8 || issues.length !== 1) {
+if (normalCases.length !== 4 || excludedCases.length !== 2 || issues.length !== 1) {
   throw new Error("Unexpected workbook row counts");
 }
-if (!normalCases.some((row) => row["测试方法"] === "testSuccessfulLogin")) {
-  throw new Error("Normal annotated test method was not exported");
-}
-if (!normalCases.some((row) => row["测试方法"] === "testCompletesWithoutError")) {
-  throw new Error("A negated error phrase was incorrectly classified as abnormal");
-}
-if (!normalCases.some((row) => row["测试方法"] === "testReportSummary")) {
-  throw new Error("An uncertain content-only signal was incorrectly excluded");
-}
-if (!normalCases.some((row) => row["测试方法"] === "testBusinessGuard")) {
-  throw new Error("A business throw statement was incorrectly treated as a negative test");
-}
-if (!normalCases.some((row) => row["测试方法"] === "testStatusNewerWorkflow")) {
-  throw new Error("A concatenated keyword incorrectly matched a longer identifier word");
-}
-if (!normalCases.some((row) => row["测试方法"] === "testCompletesWithoutStatusNew")) {
-  throw new Error("A negated concatenated keyword was incorrectly classified as abnormal");
+const normalSignalsCase = normalCases.find((row) => row["类名"] === "NormalSignalsSpec");
+if (!normalSignalsCase) {
+  throw new Error("Conservatively normal method signals did not keep their class included");
 }
 if (!normalCases.some((row) => row["类名"] === "ScriptSmoke")) {
   throw new Error("Normal Groovy script was not exported");
 }
-if (!excludedCases.some((row) => row["测试方法"] === "testInvalidPassword")) {
-  throw new Error("Negative method in a mixed class was not excluded independently");
+const loginCases = [...normalCases, ...excludedCases].filter(
+  (row) => row["类名"] === "LoginSpec",
+);
+if (loginCases.length !== 1 || loginCases[0]["测试方法"] !== undefined) {
+  throw new Error("Multiple methods in one class were exported as separate cases");
+}
+if (!String(loginCases[0]["命中关键词"]).includes("statusnew")) {
+  throw new Error("A compact keyword did not match a CamelCase method in its class");
+}
+if (!String(loginCases[0]["命中关键词"]).includes("statuspendingactive")) {
+  throw new Error("A multi-word compact keyword did not match a CamelCase method in its class");
 }
 if (!excludedCases.some((row) => row["类名"] === "SuspendedAccountCase")) {
   throw new Error("Negative class name was not excluded");
 }
-for (const methodName of [
-  "testInsufficientBalance",
-  "testClosedAccount",
-  "testFrozenCard",
-  "testDormantCustomer",
-  "testStatusNewWorkflow",
-  "testStatusPendingActiveWorkflow",
-]) {
-  if (!excludedCases.some((row) => row["测试方法"] === methodName)) {
-    throw new Error(`New exclusion keyword did not exclude ${methodName}`);
-  }
-}
-const loginCases = [...normalCases, ...excludedCases].filter(
-  (row) => row["类名"] === "LoginSpec",
-);
 if (loginCases.some((row) => row["包名"] !== "sample.account")) {
   throw new Error("Package parsing crossed the declaration line into an import");
 }
-const checkoutCase = normalCases.find((row) => row["测试方法"] === "testHappyPath");
+if (normalSignalsCase["包名"] !== "sample.account") {
+  throw new Error("Package parsing was not applied to every class in a source file");
+}
+const checkoutCase = normalCases.find((row) => row["类名"] === "CheckoutCase");
 if (checkoutCase?.["包名"] !== "sample.orders") {
   throw new Error("Trailing package punctuation was not removed");
 }

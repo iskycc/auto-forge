@@ -31,9 +31,11 @@ sequence, so `statusnew` matches `StatusNew` and `statuspendingactive` matches
 
 Classification follows a conservative inclusion rule:
 
-- A case is excluded only when its file/class/method/annotation title clearly matches a configured
-  keyword, or its code uses an explicit negative-test construct such as `shouldFail`,
-  `assertThrows`, `thrown`, or an expected-exception annotation.
+- Each declared class produces one case row. Multiple test methods in the same class are aggregated
+  and are never exported as separate rows; Groovy scripts without a class produce one file-level row.
+- A class is excluded when its file/class name, any test method name or annotation title clearly
+  matches a configured keyword, or its code uses an explicit negative-test construct such as
+  `shouldFail`, `assertThrows`, `thrown`, or an expected-exception annotation.
 - A keyword found only in ordinary comments or strings, a business `throw`/`catch`, malformed
   source, or any other uncertain signal stays in the `导出用例` worksheet with a review hint.
 - `排除明细` records the exact evidence used for exclusions, while `扫描问题` records parse
