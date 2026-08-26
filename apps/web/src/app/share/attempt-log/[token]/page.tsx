@@ -1,6 +1,7 @@
 import type { SharedAttemptLogView } from "@autoforge/contracts";
 import { Link2Off } from "lucide-react";
 import type { Metadata } from "next";
+import Link from "next/link";
 import type { ReactNode } from "react";
 
 import { highlightLogLevels } from "@/lib/log-levels";
@@ -21,22 +22,29 @@ export const metadata: Metadata = {
 };
 
 /**
- * 免登录的执行日志公开访问页。token 只标识一次执行尝试的只读视图，
- * 链接永久有效；token 无效或记录已被删除时渲染整页错误态而不是跳转登录。
+ * 免登录的执行日志公开访问页。token 以签发 attempt 为锚点，并允许只读切换该
+ * ExecutionRun 的其他已完成轮次；链接永久有效，失效时渲染整页错误态而不是跳转登录。
  */
 export default async function SharedAttemptLogPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ token: string }>;
+  searchParams: Promise<{ attempt?: string | string[] }>;
 }) {
   const { token } = await params;
+  const attemptParameter = (await searchParams).attempt;
+  const selectedAttemptId =
+    typeof attemptParameter === "string" && attemptParameter.length <= 128
+      ? attemptParameter
+      : undefined;
   const services = await getPlatformServices();
-  const view = await services.attemptLogShares.getSharedAttemptLog(token);
+  const view = await services.attemptLogShares.getSharedAttemptLog(token, selectedAttemptId);
   if (!view) return <InvalidShareView />;
-  return <SharedAttemptLogContent view={view} />;
+  return <SharedAttemptLogContent token={token} view={view} />;
 }
 
-function SharedAttemptLogContent({ view }: { view: SharedAttemptLogView }) {
+function SharedAttemptLogContent({ token, view }: { token: string; view: SharedAttemptLogView }) {
   const { text: logText, truncated } = truncateSharedLogText(visibleAttemptLogText(view.logText));
   const renderedSegments = highlightLogLevels(parseSafeAnsi(logText));
   return (
@@ -50,6 +58,7 @@ function SharedAttemptLogContent({ view }: { view: SharedAttemptLogView }) {
               {sharedOutcomeLabel(view.outcome)}
             </span>
           </div>
+          {view.rounds.length > 1 ? <RoundLogNavigation token={token} view={view} /> : null}
           <dl className="share-log-facts">
             <ShareFact label="用例路径">
               <code>{view.casePath}</code>
@@ -75,9 +84,9 @@ function SharedAttemptLogContent({ view }: { view: SharedAttemptLogView }) {
             <ShareFact label="执行耗时">
               {view.durationMs !== null ? `${(view.durationMs / 1_000).toFixed(1)} 秒` : "—"}
             </ShareFact>
-            <ShareFact label="批次 / 尝试号">
+            <ShareFact label="批次 / 当前轮次">
               <span title={`批次 ${view.batchId} · 尝试 ${view.attemptId}`}>
-                批次 #{view.batchSequenceNumber} · 第 {view.attemptNumber} 次尝试
+                批次 #{view.batchSequenceNumber} · 第 {view.attemptNumber} 轮
               </span>
             </ShareFact>
           </dl>
@@ -100,6 +109,45 @@ function SharedAttemptLogContent({ view }: { view: SharedAttemptLogView }) {
         </section>
       </div>
     </main>
+  );
+}
+
+function RoundLogNavigation({ token, view }: { token: string; view: SharedAttemptLogView }) {
+  return (
+    <nav className="share-log-rounds" aria-label="同一用例的轮次日志">
+      <div className="share-log-rounds-heading">
+        <h2>轮次日志</h2>
+        <span>{view.rounds.length} 个结果</span>
+      </div>
+      <ol className="share-log-round-list">
+        {view.rounds.map((round) => {
+          const active = round.attemptId === view.attemptId;
+          return (
+            <li className="share-log-round-item" key={round.attemptId}>
+              <Link
+                aria-current={active ? "page" : undefined}
+                className={`share-log-round-link${active ? " active" : ""}`}
+                href={`/share/attempt-log/${encodeURIComponent(token)}?attempt=${encodeURIComponent(round.attemptId)}`}
+                prefetch={false}
+              >
+                <span className="share-log-round-link-heading">
+                  <strong>第 {round.attemptNumber} 轮</strong>
+                  <span className={`batch-status ${sharedOutcomeClass(round.outcome)}`}>
+                    {sharedOutcomeLabel(round.outcome)}
+                  </span>
+                </span>
+                <span className="share-log-round-meta">
+                  <ShareTime value={round.finishedAt ?? round.startedAt} />
+                  {round.durationMs !== null ? (
+                    <span>{(round.durationMs / 1_000).toFixed(1)} 秒</span>
+                  ) : null}
+                </span>
+              </Link>
+            </li>
+          );
+        })}
+      </ol>
+    </nav>
   );
 }
 

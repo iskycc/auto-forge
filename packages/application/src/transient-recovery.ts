@@ -7,6 +7,7 @@ type RecoveryOptions = {
   maximumDelayMs?: number;
   stableRunResetMs?: number;
   now?: () => number;
+  shouldKeepRecovering?: (error: unknown) => boolean;
 };
 
 export async function runWithTransientRecovery(
@@ -34,11 +35,13 @@ export async function runWithTransientRecovery(
       if (signal.aborted) return;
       if (now() - startedAt >= stableRunResetMs) consecutiveFailures = 0;
       consecutiveFailures += 1;
-      if (consecutiveFailures >= maximumConsecutiveFailures) {
+      const recoveryLimitReached = consecutiveFailures >= maximumConsecutiveFailures;
+      if (recoveryLimitReached && !options.shouldKeepRecovering?.(error)) {
         throw new Error(`${options.operationName} exceeded its transient recovery limit.`, {
           cause: error,
         });
       }
+      if (recoveryLimitReached) consecutiveFailures = maximumConsecutiveFailures;
       const delayMs = Math.min(
         maximumDelayMs,
         initialDelayMs * 2 ** Math.min(consecutiveFailures - 1, 5),

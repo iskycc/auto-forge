@@ -12,7 +12,11 @@ import {
   type TestStage,
 } from "@autoforge/domain";
 
-import type { SqliteDatabaseHandle } from "./database";
+import {
+  retrySqliteLockContention,
+  runSqliteWriteTransaction,
+  type SqliteDatabaseHandle,
+} from "./database";
 
 type VersionRow = {
   id: string;
@@ -105,25 +109,27 @@ export class SqliteProjectStructureRepository implements ProjectStructureReposit
   }
 
   async createVersion(record: CreateProjectVersionRecord): Promise<ProjectVersion> {
-    try {
-      this.handle.client
-        .prepare(
-          `INSERT INTO project_versions
-           (id, project_id, name, normalized_name, status, revision, created_at, updated_at)
-           VALUES (?, ?, ?, ?, 'active', 1, ?, ?)`,
-        )
-        .run(
-          record.id,
-          record.projectId,
-          record.name,
-          record.normalizedName,
-          record.recordedAt,
-          record.recordedAt,
-        );
-      return this.requiredVersion(record.id);
-    } catch (error) {
-      throw mapStructureWriteError(error);
-    }
+    return retrySqliteLockContention(() => {
+      try {
+        this.handle.client
+          .prepare(
+            `INSERT INTO project_versions
+             (id, project_id, name, normalized_name, status, revision, created_at, updated_at)
+             VALUES (?, ?, ?, ?, 'active', 1, ?, ?)`,
+          )
+          .run(
+            record.id,
+            record.projectId,
+            record.name,
+            record.normalizedName,
+            record.recordedAt,
+            record.recordedAt,
+          );
+        return this.requiredVersion(record.id);
+      } catch (error) {
+        throw mapStructureWriteError(error);
+      }
+    });
   }
 
   async createStage(record: CreateTestStageRecord): Promise<TestStage> {
@@ -201,49 +207,51 @@ export class SqliteProjectStructureRepository implements ProjectStructureReposit
     projectVersionId: string,
     record: CreateProjectRuntimeAssetRecord,
   ) {
-    try {
-      return this.handle.client.transaction(() => {
-        const version = this.handle.client
-          .prepare("SELECT * FROM project_versions WHERE id = ? AND project_id = ?")
-          .get(projectVersionId, record.projectId) as VersionRow | undefined;
-        if (!version) {
-          throw new DomainError(
-            "PROJECT_VERSION_NOT_FOUND",
-            "指定的项目版本不存在或不属于当前项目。",
-          );
-        }
-        const previous = this.versionRuntimeRow(projectVersionId);
-        this.insertRuntimeAsset(record);
-        this.handle.client
-          .prepare(
-            `INSERT INTO project_version_runtime_assets
-             (project_version_id, project_id, jar_bundle_asset_id, revision, updated_by, updated_at)
-             VALUES (?, ?, ?, 1, ?, ?)
-             ON CONFLICT(project_version_id) DO UPDATE SET
-               jar_bundle_asset_id = excluded.jar_bundle_asset_id,
-               inherited_from_project_version_id = NULL,
-               revision = project_version_runtime_assets.revision + 1,
-               updated_by = excluded.updated_by,
-               updated_at = excluded.updated_at`,
-          )
-          .run(
-            projectVersionId,
-            record.projectId,
-            record.id,
-            record.createdBy ?? null,
-            record.createdAt,
-          );
-        if (previous && previous.jar_bundle_asset_id !== record.id) {
-          if (previous.jar_bundle_asset_id) {
-            this.deleteAssetMetadataIfUnreferenced(previous.jar_bundle_asset_id);
+    return retrySqliteLockContention(() => {
+      try {
+        return runSqliteWriteTransaction(this.handle, () => {
+          const version = this.handle.client
+            .prepare("SELECT * FROM project_versions WHERE id = ? AND project_id = ?")
+            .get(projectVersionId, record.projectId) as VersionRow | undefined;
+          if (!version) {
+            throw new DomainError(
+              "PROJECT_VERSION_NOT_FOUND",
+              "指定的项目版本不存在或不属于当前项目。",
+            );
           }
-        }
-        return { version: mapVersion(version), asset: this.requiredAsset(record.id) };
-      })();
-    } catch (error) {
-      if (error instanceof DomainError) throw error;
-      throw mapStructureWriteError(error);
-    }
+          const previous = this.versionRuntimeRow(projectVersionId);
+          this.insertRuntimeAsset(record);
+          this.handle.client
+            .prepare(
+              `INSERT INTO project_version_runtime_assets
+               (project_version_id, project_id, jar_bundle_asset_id, revision, updated_by, updated_at)
+               VALUES (?, ?, ?, 1, ?, ?)
+               ON CONFLICT(project_version_id) DO UPDATE SET
+                 jar_bundle_asset_id = excluded.jar_bundle_asset_id,
+                 inherited_from_project_version_id = NULL,
+                 revision = project_version_runtime_assets.revision + 1,
+                 updated_by = excluded.updated_by,
+                 updated_at = excluded.updated_at`,
+            )
+            .run(
+              projectVersionId,
+              record.projectId,
+              record.id,
+              record.createdBy ?? null,
+              record.createdAt,
+            );
+          if (previous && previous.jar_bundle_asset_id !== record.id) {
+            if (previous.jar_bundle_asset_id) {
+              this.deleteAssetMetadataIfUnreferenced(previous.jar_bundle_asset_id);
+            }
+          }
+          return { version: mapVersion(version), asset: this.requiredAsset(record.id) };
+        });
+      } catch (error) {
+        if (error instanceof DomainError) throw error;
+        throw mapStructureWriteError(error);
+      }
+    });
   }
 
   async updateAdapterConfiguration(

@@ -8,7 +8,8 @@
  * 响应：200 application/vnd.openxmlformats-officedocument.spreadsheetml.sheet 附件。
  *
  * 免登日志页：/share/attempt-log/[token]
- * token 在导出时由服务端生成并持久化（存 SHA-256 哈希），链接永久有效。
+ * token 在导出时由服务端生成并持久化（存 SHA-256 哈希），链接永久有效；token
+ * 以签发 attempt 为锚点，可访问同一批次、同一用例的其他已完成轮次。
  */
 
 /** 导出筛选项；blocked 表示仍被轮次持有/等待中、尚未执行的用例（无执行时间与日志）。 */
@@ -22,6 +23,19 @@ export const EXPORT_OUTCOME_FILTERS: readonly ExportOutcomeFilter[] = [
   "blocked",
 ];
 
+export type SharedAttemptLogOutcome = "succeeded" | "failed" | "timed_out" | "cancelled";
+
+/** 同一批次、同一用例的已完成轮次，用于公开日志页的安全导航。 */
+export interface SharedAttemptLogRoundView {
+  attemptId: string;
+  attemptNumber: number;
+  outcome: SharedAttemptLogOutcome;
+  resultCode: string | null;
+  startedAt: string | null;
+  finishedAt: string | null;
+  durationMs: number | null;
+}
+
 /** 导出/日志公开访问页共用的单行数据结构。 */
 export interface SharedAttemptLogView {
   batchId: string;
@@ -33,7 +47,7 @@ export interface SharedAttemptLogView {
   casePath: string;
   /** 用例名称（方法级显示名） */
   displayName: string;
-  outcome: "succeeded" | "failed" | "timed_out" | "cancelled";
+  outcome: SharedAttemptLogOutcome;
   resultCode: string | null;
   /** 完整失败描述（可包含多行与非 ASCII 文本），仅非成功时有值 */
   summary: string | null;
@@ -43,6 +57,8 @@ export interface SharedAttemptLogView {
   durationMs: number | null;
   /** adapter 执行该用例的完整输出流日志（已脱敏） */
   logText: string;
+  /** 按轮次升序排列，仅包含当前分享链接所授权用例的已完成尝试。 */
+  rounds: SharedAttemptLogRoundView[];
   /**
    * 兼容字段：链接当前永久有效，新记录固定为永久哨兵值（9999-12-31），
    * 旧版记录的有限过期时间仍按原值比较。保留字段以免破坏既有消费者。

@@ -20,6 +20,18 @@ export type CreateSqliteDatabaseOptions = {
   migrationsFolder: string;
 };
 
+export type SqliteLockRetryOptions = {
+  maximumAttempts?: number;
+  initialDelayMs?: number;
+  maximumDelayMs?: number;
+};
+
+const DEFAULT_SQLITE_LOCK_RETRY = {
+  maximumAttempts: 6,
+  initialDelayMs: 25,
+  maximumDelayMs: 500,
+} as const;
+
 export function createSqliteDatabase(options: CreateSqliteDatabaseOptions): SqliteDatabaseHandle {
   mkdirSync(dirname(options.databasePath), { recursive: true });
   const client = new Database(options.databasePath);
@@ -45,4 +57,68 @@ export function runSqliteWriteTransaction<Result>(
   operation: () => Result,
 ): Result {
   return handle.client.transaction(operation).immediate();
+}
+
+/**
+ * busy_timeout cannot recover a WAL transaction that loses a read-to-write upgrade race, and a
+ * writer may also legitimately hold the database beyond that timeout. Retry the whole idempotent
+ * adapter operation so the next attempt starts from a fresh SQLite transaction snapshot.
+ */
+export async function retrySqliteLockContention<Result>(
+  operation: () => Result | Promise<Result>,
+  options: SqliteLockRetryOptions = {},
+): Promise<Result> {
+  const maximumAttempts = options.maximumAttempts ?? DEFAULT_SQLITE_LOCK_RETRY.maximumAttempts;
+  const initialDelayMs = options.initialDelayMs ?? DEFAULT_SQLITE_LOCK_RETRY.initialDelayMs;
+  const maximumDelayMs = options.maximumDelayMs ?? DEFAULT_SQLITE_LOCK_RETRY.maximumDelayMs;
+  validateSqliteLockRetryOptions(maximumAttempts, initialDelayMs, maximumDelayMs);
+
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      return await operation();
+    } catch (error) {
+      if (!isSqliteLockContentionError(error) || attempt >= maximumAttempts) throw error;
+      const retryDelayMs = Math.min(maximumDelayMs, initialDelayMs * 2 ** (attempt - 1));
+      await delay(retryDelayMs);
+    }
+  }
+}
+
+export function isSqliteLockContentionError(error: unknown): boolean {
+  const pending: unknown[] = [error];
+  const visited = new Set<object>();
+  while (pending.length > 0 && visited.size < 16) {
+    const candidate = pending.shift();
+    if (!candidate || typeof candidate !== "object" || visited.has(candidate)) continue;
+    visited.add(candidate);
+    const code = "code" in candidate ? candidate.code : undefined;
+    if (typeof code === "string" && /^(?:SQLITE_BUSY|SQLITE_LOCKED)(?:_|$)/u.test(code)) {
+      return true;
+    }
+    if ("cause" in candidate) pending.push(candidate.cause);
+    if (candidate instanceof AggregateError) pending.push(...candidate.errors);
+  }
+  return false;
+}
+
+function validateSqliteLockRetryOptions(
+  maximumAttempts: number,
+  initialDelayMs: number,
+  maximumDelayMs: number,
+): void {
+  if (!Number.isInteger(maximumAttempts) || maximumAttempts < 1) {
+    throw new Error("SQLite lock retry attempts must be a positive integer.");
+  }
+  if (
+    !Number.isInteger(initialDelayMs) ||
+    initialDelayMs < 1 ||
+    !Number.isInteger(maximumDelayMs) ||
+    maximumDelayMs < initialDelayMs
+  ) {
+    throw new Error("SQLite lock retry timing options are invalid.");
+  }
+}
+
+function delay(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }

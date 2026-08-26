@@ -11,6 +11,7 @@ export type WorkerLogger = {
 
 export class JobWorker {
   private readonly inFlight = new Set<Promise<void>>();
+  private inFlightFailure: unknown;
 
   constructor(
     private readonly queue: JobQueuePort,
@@ -34,9 +35,11 @@ export class JobWorker {
     await this.queue.ready();
     let pollDelay = this.options.minimumPollMs;
     while (!signal.aborted) {
+      this.throwInFlightFailure();
       const available = this.options.concurrency - this.inFlight.size;
       if (available <= 0) {
         await Promise.race(this.inFlight);
+        this.throwInFlightFailure();
         continue;
       }
       const now = this.clock.now();
@@ -53,9 +56,13 @@ export class JobWorker {
       }
       pollDelay = this.options.minimumPollMs;
       for (const delivery of claimed) {
-        const processing = this.process(delivery, signal).finally(() => {
-          this.inFlight.delete(processing);
-        });
+        const processing = this.process(delivery, signal)
+          .catch((error: unknown) => {
+            this.inFlightFailure ??= error;
+          })
+          .finally(() => {
+            this.inFlight.delete(processing);
+          });
         this.inFlight.add(processing);
       }
     }
@@ -64,6 +71,13 @@ export class JobWorker {
 
   async close(): Promise<void> {
     await this.queue.close();
+  }
+
+  private throwInFlightFailure(): void {
+    if (this.inFlightFailure === undefined) return;
+    const failure = this.inFlightFailure;
+    this.inFlightFailure = undefined;
+    throw failure;
   }
 
   private async process(

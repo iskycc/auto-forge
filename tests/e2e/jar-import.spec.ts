@@ -1025,6 +1025,18 @@ public class MixedVisibleTest {
     await expect(anonymousPage.locator(".share-log-output")).not.toContainText(
       "TestCase Run Failed Stack Base64",
     );
+    const roundLogNavigation = anonymousPage.getByRole("navigation", {
+      name: "同一用例的轮次日志",
+    });
+    await expect(roundLogNavigation).toBeVisible();
+    const firstRoundLink = roundLogNavigation.getByRole("link", { name: /第 1 轮.*失败/u });
+    const secondRoundLink = roundLogNavigation.getByRole("link", { name: /第 2 轮.*通过/u });
+    await expect(firstRoundLink).toHaveAttribute("aria-current", "page");
+    await secondRoundLink.click();
+    await expect(secondRoundLink).toHaveAttribute("aria-current", "page");
+    await expect(anonymousPage.locator(".share-log-output")).toContainText("retry passed");
+    expect(anonymousContext.pages()).toHaveLength(1);
+    expect(new URL(anonymousPage.url()).pathname).toBe(failureSharePath);
     await anonymousPage.goto("/share/attempt-log/e2e-invalid-token");
     await expect(anonymousPage.getByRole("heading", { name: "链接无效" })).toBeVisible();
   } finally {

@@ -6,6 +6,58 @@ and known limitations.
 
 ## Unreleased
 
+## 1.3.7 - 2026-08-26
+
+### Added
+
+- Permanent anonymous attempt-log pages now show a chronological sidebar for every completed round
+  of the same case in the same batch. Selecting a round replaces the log in the current browser tab,
+  preserves browser history, and displays that round's result, completion time and duration.
+
+### Fixed
+
+- Lite's embedded persistent-job worker no longer stops permanently after sustained SQLite writer
+  contention. Queue publication, claim, renewal, acknowledgement, rejection and lease recovery retry
+  `SQLITE_BUSY`/`SQLITE_LOCKED` with bounded exponential backoff; lock failures beyond the ordinary
+  supervisor limit continue restarting until the database becomes writable or the service shuts down.
+- In-flight acknowledgement/rejection failures are now observed by the worker loop instead of
+  becoming detached promise rejections that can silently halt queue progress.
+- Jenkins dependency publication creates missing project versions and atomically replaces version
+  archives through the same SQLite lock-recovery boundary. Empty Lite queue polls remain read-only so
+  the recovery mechanism does not manufacture a recurring writer lock.
+- The standalone normal-Groovy analyzer now matches compact exclusion keywords across CamelCase word
+  boundaries while preserving negated phrases and longer, distinct identifier words.
+
+### Security
+
+- An attempt-log share token intentionally authorizes completed attempts only for the token's original
+  `ExecutionRun` inside its recorded batch. Supplying an attempt from another case or batch returns the
+  same invalid-link response and does not reveal whether that attempt exists.
+
+### Tests
+
+- Added real dual-connection SQLite contention regressions for persistent jobs and Jenkins dependency
+  replacement, worker supervisor/in-flight failure tests, and application authorization/order coverage
+  for public round navigation.
+- Extended the Lite Playwright JAR-import scenario through a failed first round and successful retry,
+  verifying anonymous same-tab log switching, active-round state and cross-round log isolation.
+
+### Database
+
+- No schema migration. Existing queue rows, dependency assets and attempt-log share records remain
+  valid; no persisted configuration is rewritten.
+
+### Compatibility
+
+- Runner Protocol v1, Jenkins Pipeline step inputs and Docker-native release archive formats are
+  unchanged. `SharedAttemptLogView.rounds` is additive. SQLite remains a single-writer database, so a
+  sustained writer can increase latency, but it no longer requires restarting Lite to resume jobs.
+
+### Known limitations
+
+- Public attempt-log navigation lists terminal rounds only. A currently assigned or running round is
+  added after it reaches a final result; live anonymous log streaming is not introduced in this release.
+
 ## 1.3.5 - 2026-08-25
 
 ### Fixed

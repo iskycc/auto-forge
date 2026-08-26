@@ -38,33 +38,66 @@ export class AttemptLogShareService {
   ) {}
 
   /**
-   * 免登读取公开日志。token 无效、失效（旧记录过期或批次/attempt 已删除）时统一返回 null，
-   * 不向外区分失败原因。公开页无会话，不能再按项目裁剪权限。
+   * 免登读取公开日志。token 以签发时的 attempt 为授权锚点，可在同一批次、同一
+   * ExecutionRun 的已完成轮次之间切换；目标 attempt 不满足该边界时统一返回 null。
+   * token 无效、失效（旧记录过期或批次/attempt 已删除）时也返回 null，不向外
+   * 区分失败原因。公开页无会话，不能再按项目裁剪权限。
    */
-  async getSharedAttemptLog(token: string): Promise<SharedAttemptLogView | null> {
+  async getSharedAttemptLog(
+    token: string,
+    selectedAttemptId?: string,
+  ): Promise<SharedAttemptLogView | null> {
     const now = this.clock.now().toISOString();
     const share = await this.shares.findActiveByTokenHash(this.tokens.hash(token), now);
     if (!share) return null;
     const batch = await this.batches.get(share.batchId);
-    const attempt = batch?.attempts.find((candidate) => candidate.id === share.attemptId);
-    if (!batch || !attempt) return null;
-    const outcome = runAttemptOutcome(attempt);
-    if (!outcome) return null;
-    const run = batch.runs.find((candidate) => candidate.id === attempt.executionRunId);
+    const sharedAttempt = batch?.attempts.find((candidate) => candidate.id === share.attemptId);
+    if (!batch || !sharedAttempt) return null;
+    const run = batch.runs.find((candidate) => candidate.id === sharedAttempt.executionRunId);
+    if (!run) return null;
+    const completedAttempts = batch.attempts
+      .filter((candidate) => candidate.executionRunId === run.id)
+      .map((candidate) => ({ attempt: candidate, outcome: runAttemptOutcome(candidate) }))
+      .filter(
+        (
+          candidate,
+        ): candidate is {
+          attempt: (typeof batch.attempts)[number];
+          outcome: NonNullable<ReturnType<typeof runAttemptOutcome>>;
+        } => candidate.outcome !== undefined,
+      )
+      .sort((left, right) => {
+        const byRound = left.attempt.attemptNumber - right.attempt.attemptNumber;
+        return byRound || left.attempt.createdAt.localeCompare(right.attempt.createdAt);
+      });
+    const selected = completedAttempts.find(
+      ({ attempt }) => attempt.id === (selectedAttemptId ?? share.attemptId),
+    );
+    if (!selected) return null;
+    const { attempt, outcome } = selected;
     return {
       batchId: batch.id,
       batchSequenceNumber: batch.sequenceNumber,
       attemptId: attempt.id,
       attemptNumber: attempt.attemptNumber,
-      casePath: run?.className ?? "",
-      displayName: run?.displayName ?? "",
+      casePath: run.className,
+      displayName: run.displayName,
       outcome,
       resultCode: attempt.resultCode ?? null,
       summary: outcome === "succeeded" ? null : (attempt.resultSummary ?? null),
       startedAt: attempt.startedAt ?? null,
       finishedAt: attempt.finishedAt ?? null,
       durationMs: attempt.durationMs ?? null,
-      logText: await this.readAttemptLogText(share.attemptId),
+      logText: await this.readAttemptLogText(attempt.id),
+      rounds: completedAttempts.map(({ attempt: candidate, outcome: candidateOutcome }) => ({
+        attemptId: candidate.id,
+        attemptNumber: candidate.attemptNumber,
+        outcome: candidateOutcome,
+        resultCode: candidate.resultCode ?? null,
+        startedAt: candidate.startedAt ?? null,
+        finishedAt: candidate.finishedAt ?? null,
+        durationMs: candidate.durationMs ?? null,
+      })),
       expiresAt: share.expiresAt,
     };
   }

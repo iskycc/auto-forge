@@ -49,6 +49,7 @@ import { MemoryCache } from "@autoforge/cache/memory";
 import {
   createAttemptLogStore,
   createSqliteDatabase,
+  isSqliteLockContentionError,
   SqliteAttemptLogShareRepository,
   SqliteCaseCatalogRepository,
   SqliteCaseSuiteRepository,
@@ -417,7 +418,10 @@ async function createPlatformServices() {
       workerAbort.signal,
       () => worker.run(workerAbort.signal),
       workerLogger,
-      { operationName: "Lite embedded job worker" },
+      {
+        operationName: "Lite embedded job worker",
+        shouldKeepRecovering: isSqliteLockContentionError,
+      },
     ).catch((error: unknown) => {
       workerFailure = error;
       workerLogger.error("embedded worker stopped unexpectedly", {

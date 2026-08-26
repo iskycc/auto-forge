@@ -168,4 +168,55 @@ describe("SQLite project version structure", () => {
       handle.close();
     }
   });
+
+  it("retries Jenkins dependency replacement after lock contention", async () => {
+    const directory = await mkdtemp(resolve(tmpdir(), "autoforge-project-contention-"));
+    temporaryDirectories.push(directory);
+    const databasePath = resolve(directory, "autoforge.db");
+    const handle = createSqliteDatabase({
+      databasePath,
+      migrationsFolder: resolve("packages/db/drizzle/sqlite"),
+    });
+    const lockHandle = createSqliteDatabase({
+      databasePath,
+      migrationsFolder: resolve("packages/db/drizzle/sqlite"),
+    });
+    const repository = new SqliteProjectStructureRepository(handle);
+    handle.client.pragma("busy_timeout = 1");
+    const now = "2026-08-26T00:00:00.000Z";
+    try {
+      const version = await repository.createVersion({
+        id: "version-contention",
+        projectId: DEFAULT_PROJECT_ID,
+        name: "3.0.0",
+        normalizedName: "3.0.0",
+        recordedAt: now,
+      });
+      lockHandle.client.exec("BEGIN IMMEDIATE");
+      const releaseLock = setTimeout(() => lockHandle.client.exec("COMMIT"), 20);
+      try {
+        await expect(
+          repository.replaceVersionRuntimeAsset(version.id, {
+            id: "bundle-contention",
+            projectId: DEFAULT_PROJECT_ID,
+            kind: "jar-bundle",
+            sourceType: "url",
+            fileName: "dependencies.zip",
+            url: "http://jenkins.internal/dependencies.zip",
+            sha256: "d".repeat(64),
+            sizeBytes: 8_192,
+            archiveFormat: "zip",
+            createdBy: "jenkins",
+            createdAt: now,
+          }),
+        ).resolves.toMatchObject({ asset: { id: "bundle-contention" } });
+      } finally {
+        clearTimeout(releaseLock);
+        if (lockHandle.client.inTransaction) lockHandle.client.exec("ROLLBACK");
+      }
+    } finally {
+      lockHandle.close();
+      handle.close();
+    }
+  });
 });

@@ -84,7 +84,13 @@ function makeBatchDetails(attemptOutcome: "succeeded" | "failed"): RunBatchDetai
 
 type FakeState = {
   records: AttemptLogShareRecord[];
-  logChunks: Array<{ stream: string; sequence: number; content: string; recordedAt: string }>;
+  logChunks: Array<{
+    attemptId?: string;
+    stream: string;
+    sequence: number;
+    content: string;
+    recordedAt: string;
+  }>;
   /** 批量存在性校验能找到的 attempt 集合，缺省只包含 attempt-1。 */
   knownAttemptIds: Set<string>;
   /** 记录每次 createMany 的批量大小，验证批量写入是单次调用而非逐条。 */
@@ -103,7 +109,7 @@ function makeState(
   };
 }
 
-function makeService(state: FakeState) {
+function makeService(state: FakeState, batch: RunBatchDetails = makeBatchDetails("failed")) {
   const shares: AttemptLogShareRepository = {
     create: async (record) => {
       state.records.push(record);
@@ -134,7 +140,7 @@ function makeService(state: FakeState) {
       null,
   };
   const batches = {
-    get: async () => makeBatchDetails("failed"),
+    get: async () => batch,
   } as unknown as RunBatchRepository;
   const executions = {
     resolveAttemptSchedulingContext: async (attemptId: string) =>
@@ -153,7 +159,10 @@ function makeService(state: FakeState) {
       state.knownAttemptIds.has(attemptId) ? "project-1" : null,
     listLogChunks: async (input: { attemptId: string; stream: string; afterSequence: number }) => ({
       items: state.logChunks.filter(
-        (chunk) => chunk.stream === input.stream && chunk.sequence > input.afterSequence,
+        (chunk) =>
+          (!chunk.attemptId || chunk.attemptId === input.attemptId) &&
+          chunk.stream === input.stream &&
+          chunk.sequence > input.afterSequence,
       ),
       acknowledgedSequence: input.afterSequence,
       truncated: false,
@@ -218,6 +227,43 @@ describe("AttemptLogShareService", () => {
 
     state.records[0]!.expiresAt = "2026-08-16T00:00:00.000Z";
     expect(await service.getSharedAttemptLog("token-1")).toBeNull();
+  });
+
+  it("navigates terminal rounds of the shared case without authorizing another case", async () => {
+    const state = makeState({
+      logChunks: [
+        {
+          attemptId: "attempt-1",
+          stream: "stdout",
+          sequence: 0,
+          content: "round one\n",
+          recordedAt: "2026-08-17T00:01:01.000Z",
+        },
+        {
+          attemptId: "attempt-3",
+          stream: "stdout",
+          sequence: 0,
+          content: "round three\n",
+          recordedAt: "2026-08-17T00:05:01.000Z",
+        },
+      ],
+    });
+    const service = makeService(state, makeMultiRoundBatchDetails());
+    await service.ensureSharesForAttempts(["attempt-1"], "user-1");
+
+    const view = await service.getSharedAttemptLog("token-1", "attempt-3");
+
+    expect(view).toMatchObject({
+      attemptId: "attempt-3",
+      attemptNumber: 3,
+      logText: "round three\n",
+      rounds: [
+        { attemptId: "attempt-1", attemptNumber: 1, outcome: "failed" },
+        { attemptId: "attempt-2", attemptNumber: 2, outcome: "timed_out" },
+        { attemptId: "attempt-3", attemptNumber: 3, outcome: "failed" },
+      ],
+    });
+    expect(await service.getSharedAttemptLog("token-1", "other-attempt")).toBeNull();
   });
 
   it("reuses an existing active record's expiry instead of recomputing it", async () => {
@@ -345,3 +391,46 @@ describe("AttemptLogShareService", () => {
     });
   });
 });
+
+function makeMultiRoundBatchDetails(): RunBatchDetails {
+  const batch = makeBatchDetails("failed");
+  const firstAttempt = batch.attempts[0]!;
+  batch.retryLimit = 2;
+  batch.currentRound = 3;
+  batch.runs[0] = { ...batch.runs[0]!, attemptCount: 3 };
+  batch.runs.push({
+    ...batch.runs[0]!,
+    id: "other-run",
+    caseDefinitionId: "other-case",
+    displayName: "other#method",
+    className: "com.example.Other",
+    attemptCount: 1,
+  });
+  batch.attempts = [
+    {
+      ...firstAttempt,
+      id: "attempt-3",
+      attemptNumber: 3,
+      startedAt: "2026-08-17T00:05:00.000Z",
+      finishedAt: "2026-08-17T00:06:00.000Z",
+      createdAt: "2026-08-17T00:04:30.000Z",
+    },
+    firstAttempt,
+    {
+      ...firstAttempt,
+      id: "other-attempt",
+      executionRunId: "other-run",
+    },
+    {
+      ...firstAttempt,
+      id: "attempt-2",
+      attemptNumber: 2,
+      status: "timed_out",
+      outcome: "timed_out",
+      startedAt: "2026-08-17T00:03:00.000Z",
+      finishedAt: "2026-08-17T00:04:00.000Z",
+      createdAt: "2026-08-17T00:02:30.000Z",
+    },
+  ];
+  return batch;
+}
