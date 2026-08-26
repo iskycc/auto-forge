@@ -17,6 +17,8 @@ import {
   type TextareaHTMLAttributes,
 } from "react";
 
+import { platformDateTimeInputValue } from "../lib/platform-date-time";
+
 type ButtonVariant = "neutral" | "primary" | "secondary" | "danger" | "ghost";
 type ButtonSize = "compact" | "regular" | "large";
 
@@ -318,9 +320,9 @@ export const DatetimeInput = forwardRef<HTMLInputElement, DatetimeInputProps>(
     }
 
     const parts = parseDatetimeParts(currentValue);
-    const now = new Date();
-    const viewYear = parts.year ?? now.getFullYear();
-    const viewMonth = parts.month ?? now.getMonth() + 1;
+    const platformNow = parseDatetimeParts(platformDateTimeInputValue(new Date()));
+    const viewYear = parts.year ?? platformNow.year ?? new Date().getUTCFullYear();
+    const viewMonth = parts.month ?? platformNow.month ?? new Date().getUTCMonth() + 1;
     const calendarDays = buildCalendarDays(viewYear, viewMonth);
 
     function commit(datetimeValue: string): void {
@@ -346,7 +348,7 @@ export const DatetimeInput = forwardRef<HTMLInputElement, DatetimeInputProps>(
       setTimeText(nextTime);
       const base =
         currentValue?.split("T")[0] ??
-        `${now.getFullYear()}-${twoDigits(now.getMonth() + 1)}-${twoDigits(now.getDate())}`;
+        `${viewYear}-${twoDigits(viewMonth)}-${twoDigits(platformNow.day ?? 1)}`;
       commit(`${base}T${nextTime}`);
     }
 

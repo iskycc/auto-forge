@@ -26,6 +26,7 @@ import { LogoutButton } from "./logout-button";
 import { TopbarTools } from "./topbar-tools";
 import { GlobalRunDialog } from "./global-run-dialog";
 import { GlobalProjectSwitcher } from "./global-project-switcher";
+import { configurePlatformTimeZone } from "@/lib/platform-date-time";
 
 type NavigationItem = {
   label: string;
@@ -150,6 +151,7 @@ function usesFallbackNavigation(item: NavigationItem, granted: ReadonlySet<Permi
 export function AppShell({
   children,
   mode,
+  timeZone,
   userName,
   permissions = [],
   forcePasswordChange = false,
@@ -161,6 +163,7 @@ export function AppShell({
 }: {
   children: ReactNode;
   mode: "lite" | "full";
+  timeZone: string;
   userName?: string;
   permissions?: Permission[] | undefined;
   forcePasswordChange?: boolean;
@@ -174,6 +177,7 @@ export function AppShell({
   selectedProjectVersionId?: string | undefined;
   selectedTestStageId?: string | undefined;
 }) {
+  configurePlatformTimeZone(timeZone);
   const pathname = usePathname();
   const currentSection = useSearchParams().get("section");
   // 保留 /run-batches/[id] 详情路由，但所有批次入口统一归属“执行记录”。

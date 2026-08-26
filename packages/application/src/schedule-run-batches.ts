@@ -23,6 +23,7 @@ import {
   type RunBatch,
   type RunBatchDetails,
   type RunBatchRoundConcurrencySource,
+  type RunAttemptStatus,
   type RunnerCompatibilityIssue,
   type SchedulingDecision,
   type SchedulingEventType,
@@ -47,6 +48,12 @@ import { CoalescedOperation } from "./coalesced-operation";
 const OFFLINE_AFTER_SECONDS = 45;
 const RUNNER_METRICS_THROTTLE_MS = 30_000;
 const MAXIMUM_SCHEDULING_WINDOW = 4_096;
+
+export type CaseLogRerunLogTarget = {
+  projectId: string;
+  batchStatus: RunBatch["status"];
+  attempt: { id: string; status: RunAttemptStatus } | null;
+};
 
 export class RunBatchSchedulingService {
   // runner_metrics 节流：记录每个 runner 最近一次写入资源快照事件的时间。
@@ -425,6 +432,28 @@ export class RunBatchSchedulingService {
     const parent = await this.batches.getSummary(batch.parentBatchId);
     if (!parent) throw new DomainError("RUN_BATCH_NOT_FOUND", "原始执行批次不存在。");
     return { projectId: parent.projectId };
+  }
+
+  /**
+   * 诊断重跑不会进入普通执行历史，因此只通过这个最小查询暴露实时日志目标。
+   * assignment 尚未创建时 attempt 为 null，调用方可有界轮询，避免把隐藏批次详情重新公开。
+   */
+  async getCaseLogRerunLogTarget(batchId: string): Promise<CaseLogRerunLogTarget> {
+    const batch = await this.batches.get(batchId);
+    if (!batch || batch.kind !== "case_log_rerun") {
+      throw new DomainError("RUN_BATCH_NOT_FOUND", "指定的手动执行记录不存在。");
+    }
+    const attempt = [...batch.attempts]
+      .sort((left, right) => {
+        const byTime = right.createdAt.localeCompare(left.createdAt);
+        return byTime || right.id.localeCompare(left.id);
+      })
+      .at(0);
+    return {
+      projectId: batch.projectId,
+      batchStatus: batch.status,
+      attempt: attempt ? { id: attempt.id, status: attempt.status } : null,
+    };
   }
 
   async rerunFinalFailures(

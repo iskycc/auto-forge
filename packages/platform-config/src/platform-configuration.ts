@@ -20,6 +20,23 @@ export const PLATFORM_CONFIGURATION_FILE = "platform.json";
 export const INITIAL_ADMIN_TOKEN_FILE = "initial-admin-token";
 export const MINIMUM_JAR_UPLOAD_BYTES = 1_048_576;
 export const MAXIMUM_JAR_UPLOAD_BYTES = 268_435_456;
+export const DEFAULT_PLATFORM_TIME_ZONE = "Asia/Shanghai";
+
+function isSupportedTimeZone(value: string): boolean {
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: value }).format(0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+const platformTimeZoneSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(120)
+  .refine(isSupportedTimeZone, "请输入有效的 IANA 时区，例如 Asia/Shanghai。");
 
 const schedulerSchema = z.object({
   maximumCpuUtilizationPercent: z.number().min(1).max(100),
@@ -51,6 +68,8 @@ export const persistedPlatformConfigurationSchema = z
     web: z.object({
       hostname: z.string().min(1).max(255),
       port: z.number().int().min(1).max(65_535),
+      // 旧版本没有时区字段；升级读取时统一回落到东八区，不依赖宿主机时区。
+      timeZone: platformTimeZoneSchema.default(DEFAULT_PLATFORM_TIME_ZONE),
       publicBaseUrl: z
         .url()
         .max(2_048)
@@ -255,6 +274,7 @@ function defaultConfiguration(
     web: {
       hostname: "0.0.0.0",
       port: 3000,
+      timeZone: DEFAULT_PLATFORM_TIME_ZONE,
       publicDashboardRefreshSeconds: 15,
     },
     limits: {

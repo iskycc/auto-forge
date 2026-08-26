@@ -862,6 +862,7 @@ export class SqlitePlatformOperationsRepository implements PlatformOperationsRep
     return aggregateAnalytics(
       this.analyticsRows(input.filter, input.projectIds),
       input.generatedAt,
+      input.filter.timeZone,
     );
   }
 

@@ -4,7 +4,68 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
-## Unreleased
+## 1.3.10 - 2026-08-26
+
+### Added
+
+- Manual single-case executions now expose a “查看实时日志” entry in the attempt-log dialog as soon
+  as an assignment exists. In-progress manual reruns also appear in the permanent log page's case
+  history, where authenticated log readers can open the same live stream without waiting for
+  completion.
+- Administrators can configure a platform-wide IANA time zone from Platform Settings. New and legacy
+  installations default to `Asia/Shanghai` (UTC+8), and saving the setting takes effect without a
+  Web or worker restart.
+
+### Changed
+
+- Failure signatures preserve the original capitalization of exception names and messages while
+  continuing to normalize UUIDs, integer values and whitespace for grouping. Existing lowercase
+  analytics facts are rebuilt automatically in both Lite and Full modes.
+- Authenticated pages, anonymous share/progress pages, notifications, scheduling logs and date-time
+  inputs now use the platform time zone consistently. Quality trend days are grouped by that same
+  calendar boundary; persistence, APIs, leases, deadlines and execution duration calculations remain
+  UTC-based.
+- Terminal attempt-log dialogs and permanent public log pages expose the same “执行此用例” action.
+  Authenticated users with log-read and run-create permission can launch the hidden diagnostic rerun
+  directly; anonymous readers are directed to sign in and are never allowed to execute through the
+  permanent token alone.
+
+### Compatibility
+
+- Existing `platform.json` files and v1 setup clients may omit `web.timeZone`; old files receive the
+  UTC+8 default, while update clients that omit the field preserve the currently configured value.
+- Runner Protocol v1, Jenkins Pipeline inputs and release archive formats are unchanged. Permanent
+  log tokens remain read-only for anonymous visitors; live-log tickets and manual execution still
+  require an authenticated user with project-scoped permission.
+
+### Tests
+
+- Extended the Lite Playwright all-rounds flow through a live manual rerun: the Runner claims the
+  hidden batch, uploads an in-progress log chunk, and both the source log dialog and permanent log
+  page read it before completion. Platform settings E2E now verifies an immediate time-zone update.
+- Added application and database coverage for in-progress diagnostic history, permission-bounded log
+  targets, platform time-zone compatibility, configured calendar boundaries, capitalization-preserving
+  failure signatures and automatic v3 analytics-fact rebuilds.
+
+### Database and persisted configuration
+
+- No SQLite or PostgreSQL DDL migration is required. Analytics facts advance from logical schema v3
+  to v4 and are rebuilt from authoritative attempt summaries by the existing Lite/Full background
+  worker path.
+- `platform.json` gains the optional `web.timeZone` IANA identifier. Missing values default to
+  `Asia/Shanghai`; persistence remains backward compatible with v1 setup/update clients.
+
+### Offline assets
+
+- The four backend variants, embedded static Runner Agent resources, Jenkins HPI files, deployment
+  bundle, SBOMs, checksums, signature and release manifest retain the existing release matrix. No new
+  runtime network dependency was introduced.
+
+### Known limitations
+
+- Anonymous permanent-log visitors can read persisted chunks from an in-progress manual rerun but
+  cannot subscribe to its WebSocket stream; live streaming requires login and `log.read` permission.
+- One permanent log link continues to bound its same-case diagnostic history to 500 rerun batches.
 
 ## 1.3.8 - 2026-08-26
 

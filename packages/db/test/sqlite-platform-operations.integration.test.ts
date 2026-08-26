@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { createAttemptLogStore } from "../src/attempt-log-store";
 import { createSqliteDatabase } from "../src/database";
+import { SqliteCaseCatalogRepository } from "../src/sqlite-case-catalog";
 import { SqlitePlatformOperationsRepository } from "../src/sqlite-platform-operations";
 
 const temporaryDirectories: string[] = [];
@@ -258,6 +259,42 @@ describe("SQLite platform operations", () => {
           generatedAt: "2026-08-11T03:00:00.000Z",
         }),
       ).toMatchObject({ passed: 3, failures: [{ description: "expected 1 but got 2" }] });
+
+      // schema v3 会把异常类名强制转成小写；升级后从权威 attempt 摘要重建，
+      // 保留原始大小写，同时继续归一化数字等动态值。
+      handle.client
+        .prepare(
+          `UPDATE run_attempts SET result_summary='java.lang.AssertionError: expected 1 but got 2'
+           WHERE id='attempt-1'`,
+        )
+        .run();
+      handle.client
+        .prepare(
+          `UPDATE analytics_facts
+           SET failure_signature='java.lang.assertionerror: expected <n> but got <n>', schema_version=3
+           WHERE attempt_id='attempt-1'`,
+        )
+        .run();
+      expect(await repository.rebuildAnalyticsFacts(100)).toBe(1);
+      expect(
+        handle.client
+          .prepare(
+            "SELECT failure_signature AS signature, schema_version AS version FROM analytics_facts WHERE attempt_id='attempt-1'",
+          )
+          .get(),
+      ).toEqual({
+        signature: "java.lang.AssertionError: expected <n> but got <n>",
+        version: 4,
+      });
+      await expect(
+        new SqliteCaseCatalogRepository(handle).listCaseActivity("case-1", 10),
+      ).resolves.toMatchObject({
+        analyses: expect.arrayContaining([
+          expect.objectContaining({
+            failureSignature: "java.lang.AssertionError: expected <n> but got <n>",
+          }),
+        ]),
+      });
       expect(
         (
           await repository.globalSearch({

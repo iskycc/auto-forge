@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { platformTimeZoneSchema } from "./platform";
 
 const identifierSchema = z.string().trim().min(1).max(128);
 const permissionSchema = z.string().trim().min(1).max(128);
@@ -186,6 +187,7 @@ export const analyticsFilterSchema = z.object({
   tag: z.string().trim().min(1).max(128).optional(),
   completedAfter: z.string().datetime().optional(),
   completedBefore: z.string().datetime().optional(),
+  timeZone: platformTimeZoneSchema.optional(),
 });
 
 const analyticsBatchSnapshotSchema = z.object({

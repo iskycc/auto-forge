@@ -29,6 +29,7 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
   // while configuring the same database.
   await connection();
   const services = await getPlatformServices();
+  const platformTimeZone = services.configurationStore.read().web.timeZone;
   const identity = await currentIdentity();
   const permissions = identity
     ? ([
@@ -57,10 +58,11 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
           .map(({ id, name }) => ({ id, name })),
       })) ?? [];
   return (
-    <html lang="zh-CN">
+    <html data-time-zone={platformTimeZone} lang="zh-CN">
       <body>
         <AppShell
           mode={services.config.mode}
+          timeZone={platformTimeZone}
           {...(identity
             ? {
                 userName: identity.user.displayName,

@@ -3,15 +3,17 @@
 import type { AttemptLogPage, LogChunk } from "@autoforge/contracts";
 import type { RunAttempt } from "@autoforge/domain";
 import { isTerminalAttemptStatus } from "@autoforge/domain";
-import { RefreshCw, RotateCcw, Search } from "lucide-react";
+import { RefreshCw, Search } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { TerminalLogViewer } from "@/components/terminal-log-viewer";
+import { AttemptRerunAction, type LiveLogAttempt } from "@/components/attempt-rerun-action";
 import { Button, DatetimeInput, Input } from "@/components/ui";
 import { readApiErrorMessage } from "@/lib/client-api";
 import { visibleAttemptLogText } from "@/lib/log-presentation";
 import { highlightLogLevels } from "@/lib/log-levels";
 import { parseSafeAnsi } from "@/lib/safe-ansi";
+import { platformDateTimeInputToIso } from "@/lib/platform-date-time";
 
 type LogStream = "stdout" | "stderr" | "agent";
 
@@ -52,9 +54,7 @@ function mergeLogChunks(current: LogChunk[], incoming: LogChunk[]): LogChunk[] {
 }
 
 function toIsoFilter(value: string): string | undefined {
-  if (!value) return undefined;
-  const timestamp = new Date(value);
-  return Number.isNaN(timestamp.getTime()) ? undefined : timestamp.toISOString();
+  return value ? platformDateTimeInputToIso(value) : undefined;
 }
 
 /**
@@ -87,9 +87,12 @@ export function AttemptLogViewer({
   const [loading, setLoading] = useState(false);
   const [liveLogs, setLiveLogs] = useState(false);
   const [error, setError] = useState("");
-  const [rerunPending, setRerunPending] = useState(false);
-  const [rerunMessage, setRerunMessage] = useState("");
-  const attemptTerminal = isTerminalAttemptStatus(attemptStatus);
+  const [activeAttempt, setActiveAttempt] = useState<LiveLogAttempt>({
+    id: attemptId,
+    status: attemptStatus,
+  });
+  const viewingManualRerun = activeAttempt.id !== attemptId;
+  const attemptTerminal = isTerminalAttemptStatus(activeAttempt.status);
 
   const loadLogs = useCallback(
     async (
@@ -113,7 +116,7 @@ export function AttemptLogViewer({
         if (afterTimestamp) parameters.set("recordedAfter", afterTimestamp);
         if (beforeTimestamp) parameters.set("recordedBefore", beforeTimestamp);
         const response = await fetch(
-          `/api/v1/run-attempts/${encodeURIComponent(attemptId)}/logs?${parameters}`,
+          `/api/v1/run-attempts/${encodeURIComponent(activeAttempt.id)}/logs?${parameters}`,
           { cache: "no-store" },
         );
         if (!response.ok) {
@@ -129,7 +132,7 @@ export function AttemptLogViewer({
         setLoading(false);
       }
     },
-    [attemptId],
+    [activeAttempt.id],
   );
 
   useEffect(() => {
@@ -159,7 +162,7 @@ export function AttemptLogViewer({
     const connect = async (): Promise<void> => {
       try {
         const response = await fetch(
-          `/api/v1/run-attempts/${encodeURIComponent(attemptId)}/log-stream-ticket`,
+          `/api/v1/run-attempts/${encodeURIComponent(activeAttempt.id)}/log-stream-ticket`,
           { method: "POST" },
         );
         if (!response.ok || disposed) return;
@@ -198,7 +201,15 @@ export function AttemptLogViewer({
       if (reconnectTimer !== undefined) window.clearTimeout(reconnectTimer);
       socket?.close(1000, "Log view changed");
     };
-  }, [activeQuery, activeTimeRange, attemptId, attemptTerminal, canReadLogs, loadLogs, stream]);
+  }, [
+    activeAttempt.id,
+    activeQuery,
+    activeTimeRange,
+    attemptTerminal,
+    canReadLogs,
+    loadLogs,
+    stream,
+  ]);
 
   const sequenceGaps = useMemo(() => {
     const gaps: Array<{ after: number; before: number }> = [];
@@ -220,28 +231,9 @@ export function AttemptLogViewer({
     [visibleLogText],
   );
 
-  async function rerunCase(): Promise<void> {
-    setRerunPending(true);
-    setRerunMessage("");
-    setError("");
-    try {
-      const response = await fetch(`/api/v1/run-attempts/${encodeURIComponent(attemptId)}/rerun`, {
-        method: "POST",
-      });
-      if (!response.ok) {
-        throw new Error((await readApiErrorMessage(response, "重新执行用例失败。"))!);
-      }
-      setRerunMessage("已提交诊断重跑；完成后会显示在该用例的公开日志执行历史中。");
-    } catch (rerunError) {
-      setError(rerunError instanceof Error ? rerunError.message : "重新执行用例失败。");
-    } finally {
-      setRerunPending(false);
-    }
-  }
-
   return (
     <TerminalLogViewer
-      title={`执行日志 · ${attemptId.slice(0, 8)} · ${streamLabel(stream)}${liveLogs ? " · 实时" : ""}`}
+      title={`执行日志 · ${activeAttempt.id.slice(0, 8)} · ${streamLabel(stream)}${liveLogs ? " · 实时" : ""}`}
       onClose={onClose}
     >
       <div className="log-toolbar">
@@ -305,24 +297,20 @@ export function AttemptLogViewer({
         >
           {darkLogs ? "浅色日志" : "深色日志"}
         </Button>
-        {canCreateRuns && attemptTerminal ? (
+        {viewingManualRerun ? (
           <Button
-            className="button button-primary compact-button"
-            disabled={rerunPending}
-            onClick={() => void rerunCase()}
+            className="button button-secondary compact-button"
+            onClick={() => setActiveAttempt({ id: attemptId, status: attemptStatus })}
             type="button"
           >
-            <RotateCcw size={15} />
-            {rerunPending ? "正在提交…" : "重新执行"}
+            返回原日志
           </Button>
+        ) : null}
+        {canCreateRuns && attemptTerminal && !viewingManualRerun ? (
+          <AttemptRerunAction attemptId={attemptId} compact onOpenLiveLogs={setActiveAttempt} />
         ) : null}
       </div>
       {error ? <p className="form-error">{error}</p> : null}
-      {rerunMessage ? (
-        <p className="status-success" role="status">
-          {rerunMessage}
-        </p>
-      ) : null}
       <p className="log-output-policy-note" role="note">
         测试日志不限制类名、包名或普通关键字；仅明确的 Bearer、密码、Token 与 API Key
         凭据格式执行安全保护。

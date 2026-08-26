@@ -83,6 +83,49 @@ describe("derived run batches", () => {
     ]);
   });
 
+  it("exposes only the latest realtime log target for a hidden case rerun", async () => {
+    const details = rerunSnapshot().batch as RunBatchDetails;
+    details.id = "diagnostic-batch";
+    details.kind = "case_log_rerun";
+    details.status = "running";
+    details.attempts = [
+      {
+        ...attempt("manual-attempt-1", "manual-run", "failed"),
+        createdAt: "2026-08-26T02:00:01.000Z",
+      },
+      {
+        id: "manual-attempt-2",
+        executionRunId: "manual-run",
+        runnerId: "runner-1",
+        attemptNumber: 1,
+        status: "running",
+        schedulingScore: 1,
+        version: 1,
+        createdAt: "2026-08-26T02:00:02.000Z",
+      },
+    ];
+    const service = schedulingService({
+      get: vi.fn().mockResolvedValue(details),
+    } as unknown as RunBatchRepository);
+
+    await expect(service.getCaseLogRerunLogTarget(details.id)).resolves.toEqual({
+      projectId: "project-1",
+      batchStatus: "running",
+      attempt: { id: "manual-attempt-2", status: "running" },
+    });
+  });
+
+  it("does not expose standard batches through the diagnostic log target", async () => {
+    const details = rerunSnapshot().batch as RunBatchDetails;
+    const service = schedulingService({
+      get: vi.fn().mockResolvedValue(details),
+    } as unknown as RunBatchRepository);
+
+    await expect(service.getCaseLogRerunLogTarget(details.id)).rejects.toMatchObject({
+      code: "RUN_BATCH_NOT_FOUND",
+    });
+  });
+
   it("rejects final-failure reruns before the source batch reaches a terminal state", async () => {
     const snapshot = rerunSnapshot();
     snapshot.batch.status = "running";

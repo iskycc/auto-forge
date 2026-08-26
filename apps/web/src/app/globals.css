@@ -5227,6 +5227,11 @@ button.icon-button:disabled {
   color: var(--color-warning);
 }
 
+.batch-status-running {
+  background: var(--color-info-soft);
+  color: var(--color-info);
+}
+
 /* blocked：adapter 非正常结束（超时强杀、未拉起、执行异常、取消等） */
 .batch-status-blocked {
   background: var(--color-warning-soft);
@@ -10763,6 +10768,37 @@ button.icon-button:disabled {
   font-size: 20px;
   line-height: 1.35;
   overflow-wrap: anywhere;
+}
+
+.attempt-rerun-action {
+  display: grid;
+  justify-items: start;
+  gap: 8px;
+  margin-bottom: 18px;
+}
+
+.attempt-rerun-action.compact {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+}
+
+.attempt-rerun-action p {
+  margin: 0;
+}
+
+.attempt-rerun-action.compact p {
+  max-width: 360px;
+  font-size: var(--font-size-caption);
+}
+
+.share-log-rerun-login {
+  margin-bottom: 18px;
+}
+
+.shared-attempt-log-actions > .button {
+  margin-bottom: 18px;
 }
 
 .share-log-rounds {

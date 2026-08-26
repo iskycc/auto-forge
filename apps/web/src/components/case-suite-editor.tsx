@@ -1,5 +1,7 @@
 "use client";
 
+import { activePlatformTimeZone, formatPlatformDateTime } from "@/lib/platform-date-time";
+
 import { Button, Input, Select, Textarea } from "@/components/ui";
 
 import {
@@ -960,9 +962,7 @@ export function CaseSuiteEditor({
             <label>
               IANA 时区
               <Input
-                defaultValue={
-                  schedule?.timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone
-                }
+                defaultValue={schedule?.timeZone ?? activePlatformTimeZone()}
                 name="timeZone"
                 required
               />
@@ -1063,9 +1063,7 @@ function formatDuration(durationMs: number): string {
 }
 
 function formatDate(value: string): string {
-  return new Intl.DateTimeFormat("zh-CN", { dateStyle: "medium", timeStyle: "short" }).format(
-    new Date(value),
-  );
+  return formatPlatformDateTime(value, undefined, { dateStyle: "medium", timeStyle: "short" });
 }
 
 function parseEnvironmentAddresses(value: string): string[] {

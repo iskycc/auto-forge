@@ -28,18 +28,19 @@ import {
 import { runBatchStatusLabel } from "@/lib/run-batch-presentation";
 import { Button, Input, Select } from "@/components/ui";
 import Link from "next/link";
+import { formatPlatformDateTime } from "@/lib/platform-date-time";
 
 export const dynamic = "force-dynamic";
 
-function formatDate(value: string): string {
-  return new Intl.DateTimeFormat("zh-CN", {
+function formatDate(value: string, timeZone: string): string {
+  return formatPlatformDateTime(value, timeZone, {
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
     hour: "2-digit",
     minute: "2-digit",
     second: "2-digit",
-  }).format(new Date(value));
+  });
 }
 
 export default async function RunnersPage({
@@ -50,6 +51,7 @@ export default async function RunnersPage({
   const identity = await requirePagePermission("runner.read");
   const canManage = hasPermission(identity, "runner.manage");
   const services = await getPlatformServices();
+  const timeZone = services.configurationStore.read().web.timeZone;
   const parameters = await searchParams;
   const activeSection = parameters.section === "groups" ? "groups" : "runners";
   const [runners, runnerGroups] = await Promise.all([
@@ -291,7 +293,9 @@ export default async function RunnersPage({
                     <div role="cell">
                       <span>最近心跳</span>
                       <strong>
-                        <time dateTime={runner.lastSeenAt}>{formatDate(runner.lastSeenAt)}</time>
+                        <time dateTime={runner.lastSeenAt} title={`UTC：${runner.lastSeenAt}`}>
+                          {formatDate(runner.lastSeenAt, timeZone)}
+                        </time>
                       </strong>
                       <small>{recentBatchLabel(recentBatches, runner.id)}</small>
                     </div>

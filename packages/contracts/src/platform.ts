@@ -1,5 +1,23 @@
 import { z } from "zod";
 
+export const DEFAULT_PLATFORM_TIME_ZONE = "Asia/Shanghai";
+
+function isSupportedTimeZone(value: string): boolean {
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: value }).format(0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export const platformTimeZoneSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(120)
+  .refine(isSupportedTimeZone, "请输入有效的 IANA 时区，例如 Asia/Shanghai。");
+
 const schedulerConfigurationSchema = z.object({
   maximumCpuUtilizationPercent: z.number().min(1).max(100),
   maximumMemoryUtilizationPercent: z.number().min(1).max(100),
@@ -9,21 +27,26 @@ const schedulerConfigurationSchema = z.object({
   priorityAgingIntervalMinutes: z.number().int().min(1).max(1_440),
 });
 
+const platformWebConfigurationInputSchema = z.object({
+  hostname: z.string().trim().min(1).max(255),
+  port: z.number().int().min(1).max(65_535),
+  // Optional on the v1 write contract so older setup clients remain compatible.
+  // The application merge keeps the current persisted value when omitted.
+  timeZone: platformTimeZoneSchema.optional(),
+  publicBaseUrl: z
+    .url()
+    .max(2_048)
+    .refine((value) => ["http:", "https:"].includes(new URL(value).protocol), {
+      message: "执行机可访问地址必须使用 HTTP 或 HTTPS。",
+    })
+    .optional(),
+  publicDashboardRefreshSeconds: z.number().int().min(5).max(300),
+});
+
 export const updatePlatformConfigurationInputSchema = z.object({
   revision: z.number().int().positive(),
   mode: z.enum(["lite", "full"]),
-  web: z.object({
-    hostname: z.string().trim().min(1).max(255),
-    port: z.number().int().min(1).max(65_535),
-    publicBaseUrl: z
-      .url()
-      .max(2_048)
-      .refine((value) => ["http:", "https:"].includes(new URL(value).protocol), {
-        message: "执行机可访问地址必须使用 HTTP 或 HTTPS。",
-      })
-      .optional(),
-    publicDashboardRefreshSeconds: z.number().int().min(5).max(300),
-  }),
+  web: platformWebConfigurationInputSchema,
   limits: z.object({
     maxJarBytes: z.number().int().min(1_048_576).max(268_435_456),
     testNgTargetJavaVersion: z.number().int().min(8).max(100),
@@ -70,6 +93,7 @@ export type InitializePlatformConfigurationInput = z.infer<
 export const platformConfigurationViewSchema = updatePlatformConfigurationInputSchema
   .omit({ full: true })
   .extend({
+    web: platformWebConfigurationInputSchema.extend({ timeZone: platformTimeZoneSchema }),
     configurationFile: z.string().min(1),
     fullConfigured: z.boolean(),
     restartRequired: z.boolean(),

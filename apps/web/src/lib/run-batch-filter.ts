@@ -1,4 +1,5 @@
 import type { RunBatchListQuery } from "@autoforge/application";
+import { platformDateTimeInputValue, platformDateTimeParameterToIso } from "./platform-date-time";
 
 /** 执行记录每页条数可选项；URL 中的 limit 只接受这些值，其余回落默认 50。 */
 export const RUN_BATCH_PAGE_SIZE_OPTIONS = [10, 50, 100, 500] as const;
@@ -15,6 +16,7 @@ function pageSizeFromValue(value: string | undefined): number {
 export function runBatchFilterFromSearch(
   parameters: Record<string, string | string[] | undefined>,
   projectIds: string[] | undefined,
+  timeZone?: string,
 ): RunBatchListQuery {
   const value = (key: string) =>
     typeof parameters[key] === "string" && parameters[key]
@@ -23,8 +25,7 @@ export function runBatchFilterFromSearch(
   const date = (key: string) => {
     const raw = value(key);
     if (!raw) return undefined;
-    const parsed = new Date(raw);
-    return Number.isNaN(parsed.getTime()) ? undefined : parsed.toISOString();
+    return platformDateTimeParameterToIso(raw, timeZone);
   };
   const status = value("status");
   const cursor = value("cursor");
@@ -67,6 +68,6 @@ export function refreshQueryFromFilter(filter: RunBatchListQuery): URLSearchPara
   return refreshQuery;
 }
 
-export function localDateTimeInputValue(value: string | undefined): string {
-  return value ? value.slice(0, 16) : "";
+export function localDateTimeInputValue(value: string | undefined, timeZone?: string): string {
+  return platformDateTimeInputValue(value, timeZone);
 }

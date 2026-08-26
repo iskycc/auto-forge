@@ -1,5 +1,7 @@
 "use client";
 
+import { formatPlatformDateTime } from "@/lib/platform-date-time";
+
 import { DEFAULT_WEBHOOK_BODY_TEMPLATE, WEBHOOK_BODY_VARIABLES } from "@autoforge/contracts";
 import type {
   WebhookConfiguration,
@@ -489,7 +491,7 @@ function DeliveryRow({ delivery }: { delivery: WebhookDelivery }) {
         ) : null}
       </td>
       <td>{delivery.attempts} 次</td>
-      <td>{new Date(delivery.updatedAt).toLocaleString("zh-CN", { hour12: false })}</td>
+      <td>{formatPlatformDateTime(delivery.updatedAt)}</td>
     </tr>
   );
 }

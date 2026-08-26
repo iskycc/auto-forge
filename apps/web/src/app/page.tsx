@@ -28,11 +28,13 @@ import {
   selectedProjectHierarchy,
   selectedProjectId,
 } from "@/lib/selected-project";
+import { formatPlatformDateTime } from "@/lib/platform-date-time";
 
 export const dynamic = "force-dynamic";
 
 export default async function DashboardPage() {
   const services = await getPlatformServices();
+  const timeZone = services.configurationStore.read().web.timeZone;
   const identity = await currentIdentity();
   if (!identity) {
     const [statistics, setupRequired] = await Promise.all([
@@ -90,6 +92,7 @@ export default async function DashboardPage() {
           ...(runProjectIds?.[0] ? { projectId: runProjectIds[0] } : {}),
           projectVersionId: hierarchy.projectVersionId,
           completedAfter: currentWeekStartedAt,
+          timeZone,
         })
       : Promise.resolve(null),
     canReadRuns && hierarchy.projectVersionId
@@ -98,6 +101,7 @@ export default async function DashboardPage() {
           projectVersionId: hierarchy.projectVersionId,
           completedAfter: previousWeekStartedAt,
           completedBefore: currentWeekStartedAt,
+          timeZone,
         })
       : Promise.resolve(null),
   ]);
@@ -116,7 +120,7 @@ export default async function DashboardPage() {
     <div className="dashboard-page">
       <header className="dashboard-welcome">
         <h1>
-          <span>{greeting(now)}，</span>
+          <span>{greeting(now, timeZone)}，</span>
           <strong>{identity.user.displayName}</strong>
         </h1>
         <p>这里是自动化质量、执行进度和资源容量的实时概览。</p>
@@ -386,7 +390,7 @@ export default async function DashboardPage() {
                     <strong title={item.title}>{item.title}</strong>
                     <small title={item.detail}>{item.detail}</small>
                   </span>
-                  <time dateTime={item.at}>{formatDate(item.at)}</time>
+                  <time dateTime={item.at}>{formatDate(item.at, timeZone)}</time>
                 </Link>
               ))}
             </div>
@@ -636,8 +640,10 @@ function conicGradient(
   return stops.length > 0 ? `conic-gradient(${stops.join(", ")})` : remainderColor;
 }
 
-function greeting(now: Date): string {
-  const hour = now.getHours();
+function greeting(now: Date, timeZone: string): string {
+  const hour = Number(
+    new Intl.DateTimeFormat("en-US", { timeZone, hour: "2-digit", hourCycle: "h23" }).format(now),
+  );
   if (hour < 11) return "早上好";
   if (hour < 14) return "中午好";
   if (hour < 18) return "下午好";
@@ -648,11 +654,11 @@ function percent(rate: number): string {
   return `${(rate * 100).toFixed(1)}%`;
 }
 
-function formatDate(value: string): string {
-  return new Intl.DateTimeFormat("zh-CN", {
+function formatDate(value: string, timeZone: string): string {
+  return formatPlatformDateTime(value, timeZone, {
     month: "2-digit",
     day: "2-digit",
     hour: "2-digit",
     minute: "2-digit",
-  }).format(new Date(value));
+  });
 }

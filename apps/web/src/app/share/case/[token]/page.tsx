@@ -4,6 +4,7 @@ import type { Metadata } from "next";
 import { formatMethodSignature } from "@/lib/jvm-signature";
 import { readPermanentShareToken } from "@/lib/permanent-share-token";
 import { getPlatformServices } from "@/lib/services";
+import { formatPlatformDateTime } from "@/lib/platform-date-time";
 
 export const dynamic = "force-dynamic";
 
@@ -14,6 +15,7 @@ export const metadata: Metadata = {
 export default async function SharedCasePage({ params }: { params: Promise<{ token: string }> }) {
   const { token } = await params;
   const services = await getPlatformServices();
+  const timeZone = services.configurationStore.read().web.timeZone;
   const caseDefinitionId = readPermanentShareToken(
     services.config.masterKey,
     token,
@@ -81,7 +83,7 @@ export default async function SharedCasePage({ params }: { params: Promise<{ tok
             <dt>最近更新</dt>
             <dd>
               <time dateTime={definition.updatedAt} title={`UTC ${definition.updatedAt}`}>
-                {formatDate(definition.updatedAt)}
+                {formatDate(definition.updatedAt, timeZone)}
               </time>
             </dd>
           </div>
@@ -157,12 +159,12 @@ function InvalidCaseShare() {
   );
 }
 
-function formatDate(value: string): string {
-  return new Intl.DateTimeFormat("zh-CN", {
+function formatDate(value: string, timeZone: string): string {
+  return formatPlatformDateTime(value, timeZone, {
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
     hour: "2-digit",
     minute: "2-digit",
-  }).format(new Date(value));
+  });
 }

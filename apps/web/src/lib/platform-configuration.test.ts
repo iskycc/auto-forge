@@ -56,15 +56,47 @@ describe("platform configuration mapping", () => {
     expect(merged.full).toEqual(current.full);
   });
 
+  it("preserves the configured time zone for older v1 clients that omit it", () => {
+    const current = configuration({
+      web: {
+        hostname: "0.0.0.0",
+        port: 3000,
+        timeZone: "America/New_York",
+        publicDashboardRefreshSeconds: 15,
+      },
+    });
+    const legacyWeb = {
+      hostname: current.web.hostname,
+      port: current.web.port,
+      publicDashboardRefreshSeconds: current.web.publicDashboardRefreshSeconds,
+    };
+
+    const merged = mergePlatformConfiguration(current, {
+      revision: current.revision,
+      mode: current.mode,
+      web: legacyWeb,
+      limits: current.limits,
+      scheduler: current.scheduler,
+      worker: current.worker,
+    });
+
+    expect(merged.web.timeZone).toBe("America/New_York");
+  });
+
   it("distinguishes immediately applied settings from restart-only process settings", () => {
     const current = configuration();
     const saved = configuration({
-      web: { ...current.web, publicBaseUrl: "https://new.autoforge.test", port: 3200 },
+      web: {
+        ...current.web,
+        publicBaseUrl: "https://new.autoforge.test",
+        port: 3200,
+        timeZone: "UTC",
+      },
       limits: { ...current.limits, artifactCollectionEnabled: false, maxJarBytes: 67_108_864 },
     });
 
     expect(platformConfigurationActivation(current, saved)).toEqual({
-      appliedImmediatelyFields: ["外部访问地址", "产物收集"],
+      appliedImmediatelyFields: ["外部访问地址", "平台时区", "产物收集"],
       restartRequiredFields: ["HTTP 端口", "容量与会话限制"],
     });
   });
@@ -77,7 +109,12 @@ function configuration(
     schemaVersion: 1,
     revision: 1,
     mode: "lite",
-    web: { hostname: "0.0.0.0", port: 3000, publicDashboardRefreshSeconds: 15 },
+    web: {
+      hostname: "0.0.0.0",
+      port: 3000,
+      timeZone: "Asia/Shanghai",
+      publicDashboardRefreshSeconds: 15,
+    },
     limits: {
       maxJarBytes: 33_554_432,
       testNgTargetJavaVersion: 21,

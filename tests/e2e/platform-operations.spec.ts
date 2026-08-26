@@ -22,6 +22,20 @@ test("configuration conflicts, diagnostics and retention controls remain observa
   await expect(page.getByText(/平台配置已保存/)).toBeVisible();
   await concurrentPage.close();
 
+  const timeZone = page.getByLabel("平台时区");
+  const originalTimeZone = await timeZone.inputValue();
+  const testTimeZone = originalTimeZone === "UTC" ? "Asia/Shanghai" : "UTC";
+  await timeZone.fill(testTimeZone);
+  await page.getByRole("button", { name: "保存平台配置" }).click();
+  await expect(page.getByText(/平台时区已立即生效.*无需重启/)).toBeVisible();
+  await expect(page.locator("html")).toHaveAttribute("data-time-zone", testTimeZone);
+  await page.reload();
+  await expect(page.getByLabel("平台时区")).toHaveValue(testTimeZone);
+  await page.getByLabel("平台时区").fill(originalTimeZone);
+  await page.getByRole("button", { name: "保存平台配置" }).click();
+  await expect(page.getByText(/平台时区已立即生效.*无需重启/)).toBeVisible();
+  await expect(page.locator("html")).toHaveAttribute("data-time-zone", originalTimeZone);
+
   const publicBaseUrl = page.getByLabel("外部访问地址");
   const originalPublicBaseUrl = await publicBaseUrl.inputValue();
   const testPublicBaseUrl =

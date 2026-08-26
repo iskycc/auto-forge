@@ -1,5 +1,7 @@
 "use client";
 
+import { formatPlatformDateTime } from "@/lib/platform-date-time";
+
 import { CheckCircle2, CircleAlert, LoaderCircle, RotateCw } from "lucide-react";
 import { useEffect, useState } from "react";
 
@@ -95,7 +97,7 @@ export function PublicRunProgress({
         <footer>
           <span>批次 {progress.batchId}</span>
           <span>
-            <RotateCw size={13} /> 更新于 {new Date(progress.updatedAt).toLocaleString("zh-CN")}
+            <RotateCw size={13} /> 更新于 {formatPlatformDateTime(progress.updatedAt)}
           </span>
         </footer>
         {refreshError ? <p className="form-error">{refreshError}</p> : null}

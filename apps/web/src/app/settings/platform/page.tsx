@@ -107,7 +107,7 @@ function platformSectionHeading(section: PlatformSection): { title: string; desc
     case "configuration":
       return {
         title: "平台配置",
-        description: "管理运行模式、监听地址、基础设施、容量限制和调度阈值。",
+        description: "管理运行模式、平台时区、监听地址、基础设施、容量限制和调度阈值。",
       };
     case "accounts":
       return { title: "服务账号", description: "管理服务账号、项目权限和 API 令牌。" };

@@ -17,6 +17,8 @@ export function truncateSharedLogText(logText: string): { text: string; truncate
 }
 
 const OUTCOME_LABELS: Record<SharedAttemptLogView["outcome"], string> = {
+  assigned: "等待执行",
+  running: "执行中",
   succeeded: "通过",
   failed: "失败",
   timed_out: "超时",
@@ -30,6 +32,8 @@ export function sharedOutcomeLabel(outcome: SharedAttemptLogView["outcome"]): st
 // 复用轮次表的结果徽章配色：成功/失败/超时/取消分别对应语义色 token。
 export function sharedOutcomeClass(outcome: SharedAttemptLogView["outcome"]): string {
   const classes: Record<SharedAttemptLogView["outcome"], string> = {
+    assigned: "batch-status-queued",
+    running: "batch-status-running",
     succeeded: "batch-status-succeeded",
     failed: "batch-status-failed",
     timed_out: "batch-status-queued",

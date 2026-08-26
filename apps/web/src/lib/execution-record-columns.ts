@@ -1,5 +1,6 @@
 import type { RunBatch } from "@autoforge/domain";
 
+import { formatPlatformDateTime } from "./platform-date-time";
 import { formatBatchDuration } from "./run-batch-presentation";
 import { columnCharacterWidthAtCoverage } from "./table-column-width";
 
@@ -232,14 +233,11 @@ function compactCountdown(totalSeconds: number): string {
 }
 
 export function formatExecutionRecordTime(value: string): string {
-  const date = new Date(value);
-  return Number.isNaN(date.getTime())
-    ? value
-    : date.toLocaleString("zh-CN", {
-        year: "numeric",
-        month: "2-digit",
-        day: "2-digit",
-        hour: "2-digit",
-        minute: "2-digit",
-      });
+  return formatPlatformDateTime(value, undefined, {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }

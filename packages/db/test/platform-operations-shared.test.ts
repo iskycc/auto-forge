@@ -40,7 +40,7 @@ describe("analytics fact semantics", () => {
         "TESTNG_ASSERTIONS_FAILED",
         "java.lang.AssertionError: expected 200 but was 500",
       ),
-    ).toBe("java.lang.assertionerror: expected <n> but was <n>");
+    ).toBe("java.lang.AssertionError: expected <n> but was <n>");
     expect(
       failureSignature("failed", "PROCESS_START_FAILED", "failed to start the process"),
     ).toBeNull();
@@ -50,12 +50,12 @@ describe("analytics fact semantics", () => {
     const rows = [
       fact("attempt-1", "2026-08-18T01:00:00.000Z", "succeeded", "TESTNG_SUCCEEDED", 1, 0),
       fact("attempt-2", "2026-08-18T02:00:00.000Z", "failed", "TESTNG_ASSERTIONS_FAILED", 0, 1, {
-        failureSignature: "java.lang.assertionerror: expected <n> but was <n>",
+        failureSignature: "java.lang.AssertionError: expected <n> but was <n>",
         failureDescription: "java.lang.AssertionError: expected 200 but was 500",
       }),
       fact("attempt-3", "2026-08-19T01:00:00.000Z", "succeeded", "TESTNG_SUCCEEDED", 1, 0),
       fact("attempt-4", "2026-08-19T02:00:00.000Z", "failed", "TESTNG_ASSERTIONS_FAILED", 0, 1, {
-        failureSignature: "java.lang.assertionerror: expected <n> but was <n>",
+        failureSignature: "java.lang.AssertionError: expected <n> but was <n>",
         failureDescription: "java.lang.AssertionError: expected 201 but was 503",
       }),
       fact("attempt-5", "2026-08-19T03:00:00.000Z", "succeeded", "TESTNG_SUCCEEDED", 1, 0),
@@ -75,7 +75,7 @@ describe("analytics fact semantics", () => {
       ],
       failures: [
         {
-          signature: "java.lang.assertionerror: expected <n> but was <n>",
+          signature: "java.lang.AssertionError: expected <n> but was <n>",
           description: "java.lang.AssertionError: expected 201 but was 503",
           count: 2,
         },
@@ -113,6 +113,18 @@ describe("analytics fact semantics", () => {
       failures: [],
       flakyCases: [],
     });
+  });
+
+  it("groups trend samples by the configured platform calendar day", () => {
+    const rows = [
+      fact("attempt-1", "2026-08-18T15:59:00.000Z", "succeeded", "TESTNG_SUCCEEDED", 1, 0),
+      fact("attempt-2", "2026-08-18T16:01:00.000Z", "succeeded", "TESTNG_SUCCEEDED", 1, 0),
+    ];
+
+    expect(aggregateAnalytics(rows, "2026-08-20T00:00:00.000Z", "Asia/Shanghai").trend).toEqual([
+      { bucket: "2026-08-18T00:00:00.000Z", total: 1, passed: 1, failed: 0, skipped: 0 },
+      { bucket: "2026-08-19T00:00:00.000Z", total: 1, passed: 1, failed: 0, skipped: 0 },
+    ]);
   });
 });
 

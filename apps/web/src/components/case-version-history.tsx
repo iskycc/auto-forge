@@ -1,5 +1,7 @@
 "use client";
 
+import { formatPlatformDateTime } from "@/lib/platform-date-time";
+
 import {
   apiErrorSchema,
   testNgClassCandidateSchema,
@@ -347,11 +349,11 @@ function versionOption(version: CaseVersion) {
 }
 
 function formatDate(value: string): string {
-  return new Intl.DateTimeFormat("zh-CN", {
+  return formatPlatformDateTime(value, undefined, {
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
     hour: "2-digit",
     minute: "2-digit",
-  }).format(new Date(value));
+  });
 }

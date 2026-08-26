@@ -1,5 +1,7 @@
 import type { RunAttempt, RunBatch, RunBatchDetails } from "@autoforge/domain";
 
+import { formatPlatformDateTime } from "./platform-date-time";
+
 const activeStatuses = new Set<RunBatch["status"]>([
   "queued",
   "dispatching",
@@ -103,12 +105,9 @@ export function attemptFailureHint(
   return summary || resultCode;
 }
 
-// 详情页时间统一用用户时区展示；UTC 原值由调用方放在 title 中提供。
-export function formatLocalDateTime(value: string): string {
-  return new Intl.DateTimeFormat("zh-CN", {
-    dateStyle: "short",
-    timeStyle: "medium",
-  }).format(new Date(value));
+// 详情页时间统一用平台时区展示；UTC 原值由调用方放在 title 中提供。
+export function formatLocalDateTime(value: string, timeZone?: string): string {
+  return formatPlatformDateTime(value, timeZone);
 }
 
 export function formatAttemptDuration(durationMs: number): string {

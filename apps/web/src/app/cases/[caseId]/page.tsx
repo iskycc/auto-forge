@@ -11,6 +11,7 @@ import { OpenRunDialogButton } from "@/components/global-run-dialog";
 import { requirePageProjectScope } from "@/lib/auth";
 import { formatMethodSignature } from "@/lib/jvm-signature";
 import { getPlatformServices } from "@/lib/services";
+import { formatPlatformDateTime } from "@/lib/platform-date-time";
 
 export const dynamic = "force-dynamic";
 
@@ -18,14 +19,14 @@ type CaseDetailPageProps = {
   params: Promise<{ caseId: string }>;
 };
 
-function formatDate(value: string): string {
-  return new Intl.DateTimeFormat("zh-CN", {
+function formatDate(value: string, timeZone: string): string {
+  return formatPlatformDateTime(value, timeZone, {
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
     hour: "2-digit",
     minute: "2-digit",
-  }).format(new Date(value));
+  });
 }
 
 function executionStatusLabel(status: string): string {
@@ -79,6 +80,7 @@ export default async function CaseDetailPage({ params }: CaseDetailPageProps) {
   const { identity, projectIds } = await requirePageProjectScope("case.read");
   const { caseId } = await params;
   const services = await getPlatformServices();
+  const timeZone = services.configurationStore.read().web.timeZone;
   let definition;
   let versions;
   let activity;
@@ -182,7 +184,7 @@ export default async function CaseDetailPage({ params }: CaseDetailPageProps) {
           </div>
           <div>
             <span>最近更新</span>
-            <strong>{formatDate(definition.updatedAt)}</strong>
+            <strong>{formatDate(definition.updatedAt, timeZone)}</strong>
           </div>
           <div className="source-meta-wide">
             <span>参数</span>
@@ -229,7 +231,7 @@ export default async function CaseDetailPage({ params }: CaseDetailPageProps) {
               ) : null}
               {activity.executions.map((execution) => (
                 <tr key={execution.runId}>
-                  <td>{formatDate(execution.finishedAt ?? execution.createdAt)}</td>
+                  <td>{formatDate(execution.finishedAt ?? execution.createdAt, timeZone)}</td>
                   <td>{executionStatusLabel(execution.status)}</td>
                   <td title={execution.resultCode}>{resultCodeLabel(execution.resultCode)}</td>
                   <td title={execution.runnerId}>
@@ -274,7 +276,7 @@ export default async function CaseDetailPage({ params }: CaseDetailPageProps) {
               ) : null}
               {activity.analyses.map((analysis) => (
                 <tr key={analysis.attemptId}>
-                  <td>{formatDate(analysis.completedAt)}</td>
+                  <td>{formatDate(analysis.completedAt, timeZone)}</td>
                   <td title={analysis.resultCode ?? analysis.outcome}>
                     {resultCodeLabel(analysis.resultCode ?? analysis.outcome)}
                   </td>

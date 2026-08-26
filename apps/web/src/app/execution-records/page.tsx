@@ -35,6 +35,7 @@ export default async function ExecutionRecordsPage({
 }) {
   const { identity } = await requirePageProjectScope("run.read");
   const services = await getPlatformServices();
+  const timeZone = services.configurationStore.read().web.timeZone;
   const parameters = await searchParams;
   const canReadRunners = hasPermissionInAnyScope(identity, "runner.read");
   const projects = await services.identities
@@ -53,6 +54,7 @@ export default async function ExecutionRecordsPage({
     ...runBatchFilterFromSearch(
       { ...parameters, projectId: undefined },
       projectId ? [projectId] : [],
+      timeZone,
     ),
     ...(projectId ? { projectId } : {}),
     ...(hierarchy.projectVersionId ? { projectVersionId: hierarchy.projectVersionId } : {}),
@@ -156,14 +158,14 @@ export default async function ExecutionRecordsPage({
         <label>
           开始时间
           <DatetimeInput
-            defaultValue={localDateTimeInputValue(filter.createdAfter)}
+            defaultValue={localDateTimeInputValue(filter.createdAfter, timeZone)}
             name="createdAfter"
           />
         </label>
         <label>
           结束时间
           <DatetimeInput
-            defaultValue={localDateTimeInputValue(filter.createdBefore)}
+            defaultValue={localDateTimeInputValue(filter.createdBefore, timeZone)}
             name="createdBefore"
           />
         </label>

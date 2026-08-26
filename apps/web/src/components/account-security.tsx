@@ -1,5 +1,7 @@
 "use client";
 
+import { formatPlatformDateTime } from "@/lib/platform-date-time";
+
 import type { AuthenticatedIdentity, UserSession } from "@autoforge/domain";
 import { KeyRound, LogOut, ShieldCheck } from "lucide-react";
 import { useState, type FormEvent } from "react";
@@ -181,7 +183,5 @@ async function responseMessage(response: Response, fallback: string): Promise<st
 }
 
 function formatDate(value: string): string {
-  return new Intl.DateTimeFormat("zh-CN", { dateStyle: "medium", timeStyle: "short" }).format(
-    new Date(value),
-  );
+  return formatPlatformDateTime(value, undefined, { dateStyle: "medium", timeStyle: "short" });
 }

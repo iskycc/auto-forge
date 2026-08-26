@@ -862,6 +862,7 @@ export class PostgresPlatformOperationsRepository implements PlatformOperationsR
     return aggregateAnalytics(
       await this.analyticsRows(input.filter, input.projectIds),
       input.generatedAt,
+      input.filter.timeZone,
     );
   }
 

@@ -1,5 +1,7 @@
 "use client";
 
+import { formatPlatformDateTime } from "@/lib/platform-date-time";
+
 import { Button, Input, OperationProgress, Select } from "@/components/ui";
 import { formatMethodSignature } from "@/lib/jvm-signature";
 
@@ -1089,13 +1091,13 @@ async function responseErrorMessage(response: Response): Promise<string> {
 }
 
 function formatDate(value: string): string {
-  return new Intl.DateTimeFormat("zh-CN", {
+  return formatPlatformDateTime(value, undefined, {
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
     hour: "2-digit",
     minute: "2-digit",
-  }).format(new Date(value));
+  });
 }
 
 function batchesOf<T>(items: readonly T[], size: number): T[][] {

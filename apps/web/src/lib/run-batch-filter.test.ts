@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  localDateTimeInputValue,
   refreshQueryFromFilter,
   RUN_BATCH_PAGE_SIZE_OPTIONS,
   runBatchFilterFromSearch,
@@ -25,5 +26,18 @@ describe("runBatchFilterFromSearch", () => {
     const query = refreshQueryFromFilter(filter);
     expect(query.get("limit")).toBe("100");
     expect(query.get("status")).toBe("failed");
+  });
+
+  it("parses and renders date filters in the configured platform time zone", () => {
+    const filter = runBatchFilterFromSearch(
+      { createdAfter: "2026-08-26T08:30" },
+      undefined,
+      "Asia/Shanghai",
+    );
+
+    expect(filter.createdAfter).toBe("2026-08-26T00:30:00.000Z");
+    expect(localDateTimeInputValue(filter.createdAfter, "America/New_York")).toBe(
+      "2026-08-25T20:30",
+    );
   });
 });

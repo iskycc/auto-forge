@@ -322,6 +322,64 @@ describe("AttemptLogShareService", () => {
     });
   });
 
+  it("includes an in-progress diagnostic rerun so its realtime log can be opened", async () => {
+    const state = makeState({
+      logChunks: [
+        {
+          attemptId: "manual-running-attempt",
+          stream: "stdout",
+          sequence: 0,
+          content: "manual rerun is still running\n",
+          recordedAt: "2026-08-17T00:08:00.000Z",
+        },
+      ],
+    });
+    const source = makeBatchDetails("failed");
+    const diagnostic = makeBatchDetails("succeeded");
+    diagnostic.id = "diagnostic-running-batch";
+    diagnostic.kind = "case_log_rerun";
+    diagnostic.parentBatchId = source.id;
+    diagnostic.sourceExecutionRunId = "run-1";
+    diagnostic.status = "running";
+    diagnostic.requestedBy = { username: "c12345678", source: "ldap" };
+    diagnostic.runs[0] = {
+      ...diagnostic.runs[0]!,
+      id: "manual-running-run",
+      batchId: diagnostic.id,
+      status: "running",
+    };
+    diagnostic.attempts[0] = {
+      id: "manual-running-attempt",
+      executionRunId: "manual-running-run",
+      runnerId: "runner-1",
+      attemptNumber: 1,
+      status: "running",
+      schedulingScore: 1,
+      version: 1,
+      startedAt: "2026-08-17T00:07:45.000Z",
+      createdAt: "2026-08-17T00:07:30.000Z",
+    };
+    const service = makeService(state, source, [diagnostic]);
+    await service.ensureSharesForAttempts(["attempt-1"], "user-1");
+
+    const view = await service.getSharedAttemptLog("token-1", "manual-running-attempt");
+
+    expect(view).toMatchObject({
+      attemptId: "manual-running-attempt",
+      outcome: "running",
+      kind: "manual_rerun",
+      logText: "manual rerun is still running\n",
+      rounds: [
+        expect.objectContaining({ attemptId: "attempt-1", outcome: "failed" }),
+        expect.objectContaining({
+          attemptId: "manual-running-attempt",
+          outcome: "running",
+          kind: "manual_rerun",
+        }),
+      ],
+    });
+  });
+
   it("reuses an existing active record's expiry instead of recomputing it", async () => {
     const state = makeState();
     const service = makeService(state);

@@ -1,5 +1,11 @@
 "use client";
 
+import {
+  formatPlatformDateTime,
+  platformDateTimeInputToIso,
+  platformDateTimeInputValue,
+} from "@/lib/platform-date-time";
+
 import { Button, DatetimeInput, Input, Select } from "@/components/ui";
 
 import type {
@@ -72,7 +78,7 @@ export function OperationsSettings({
           body: JSON.stringify({
             name: form.get("name"),
             scopes: form.getAll("scopes"),
-            expiresAt: new Date(String(form.get("expiresAt"))).toISOString(),
+            expiresAt: requiredPlatformDateTimeIso(String(form.get("expiresAt"))),
           }),
         },
       );
@@ -419,7 +425,7 @@ export function OperationsSettings({
                       <label>
                         过期时间
                         <DatetimeInput
-                          min={new Date().toISOString().slice(0, 16)}
+                          min={platformDateTimeInputValue(new Date())}
                           name="expiresAt"
                           required
                         />
@@ -626,9 +632,13 @@ function retentionLabel(category: RetentionPolicy["category"]): string {
   }[category];
 }
 function formatDate(value: string): string {
-  return new Intl.DateTimeFormat("zh-CN", { dateStyle: "medium", timeStyle: "short" }).format(
-    new Date(value),
-  );
+  return formatPlatformDateTime(value, undefined, { dateStyle: "medium", timeStyle: "short" });
+}
+
+function requiredPlatformDateTimeIso(value: string): string {
+  const iso = platformDateTimeInputToIso(value);
+  if (!iso) throw new Error("过期时间无效，请按平台时区重新选择。");
+  return iso;
 }
 function formatBytes(value: number): string {
   return value < 1024

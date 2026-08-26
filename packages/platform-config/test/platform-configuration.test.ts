@@ -19,6 +19,7 @@ describe("platform configuration store", () => {
     const configuration = store.initialize(new Date("2026-08-11T00:00:00.000Z"));
 
     expect(configuration.mode).toBe("lite");
+    expect(configuration.web.timeZone).toBe("Asia/Shanghai");
     expect(configuration.revision).toBe(1);
     expect(configuration.limits.maxJarBytes).toBe(256 * 1024 * 1024);
     expect(configuration.secrets.masterKey).toHaveLength(44);
@@ -27,6 +28,19 @@ describe("platform configuration store", () => {
     expect(readFileSync(store.paths.initialAdminTokenFile, "utf8").trim()).toBe(
       configuration.secrets.adminBootstrapToken,
     );
+  });
+
+  it("keeps old configuration files readable with the UTC+8 default", () => {
+    const dataDirectory = mkdtempSync(join(tmpdir(), "autoforge-config-"));
+    const store = new PlatformConfigurationStore(dataDirectory);
+    store.initialize(new Date("2026-08-11T00:00:00.000Z"));
+    const legacy = JSON.parse(readFileSync(store.paths.configurationFile, "utf8")) as {
+      web: { timeZone?: string };
+    };
+    delete legacy.web.timeZone;
+    writeFileSync(store.paths.configurationFile, JSON.stringify(legacy), { mode: 0o600 });
+
+    expect(store.read().web.timeZone).toBe("Asia/Shanghai");
   });
 
   it("uses revision conditions and preserves generated secrets", () => {
@@ -72,6 +86,24 @@ describe("platform configuration store", () => {
         updated.revision,
       ),
     ).toThrow("HTTP 或 HTTPS");
+  });
+
+  it("accepts IANA time zones and rejects unknown values", () => {
+    const dataDirectory = mkdtempSync(join(tmpdir(), "autoforge-config-"));
+    const store = new PlatformConfigurationStore(dataDirectory);
+    const current = store.initialize(new Date("2026-08-11T00:00:00.000Z"));
+
+    const updated = store.replace(
+      { ...current, web: { ...current.web, timeZone: "America/New_York" } },
+      current.revision,
+    );
+    expect(updated.web.timeZone).toBe("America/New_York");
+    expect(() =>
+      store.replace(
+        { ...updated, web: { ...updated.web, timeZone: "Mars/Olympus" } },
+        updated.revision,
+      ),
+    ).toThrow("IANA 时区");
   });
 
   it("recovers when the private token was persisted before platform.json", () => {

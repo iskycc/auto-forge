@@ -9,7 +9,7 @@
  *
  * 免登日志页：/share/attempt-log/[token]
  * token 在导出时由服务端生成并持久化（存 SHA-256 哈希），链接永久有效；token
- * 以签发 attempt 为锚点，可访问同一批次、同一用例的其他已完成轮次。
+ * 以签发 attempt 为锚点，可访问同一批次、同一用例的其他轮次和手动诊断重跑。
  */
 
 /** 导出筛选项；blocked 表示仍被轮次持有/等待中、尚未执行的用例（无执行时间与日志）。 */
@@ -23,9 +23,10 @@ export const EXPORT_OUTCOME_FILTERS: readonly ExportOutcomeFilter[] = [
   "blocked",
 ];
 
-export type SharedAttemptLogOutcome = "succeeded" | "failed" | "timed_out" | "cancelled";
+export type SharedAttemptLogOutcome =
+  "assigned" | "running" | "succeeded" | "failed" | "timed_out" | "cancelled";
 
-/** 同一批次、同一用例的已完成轮次，用于公开日志页的安全导航。 */
+/** 同一批次、同一用例的轮次和手动重跑，用于公开日志页的安全导航。 */
 export interface SharedAttemptLogRoundView {
   attemptId: string;
   attemptNumber: number;
@@ -61,7 +62,7 @@ export interface SharedAttemptLogView {
   requestedBy?: { username: string; source: "local" | "ldap" } | null;
   /** adapter 执行该用例的完整输出流日志（仅执行明确凭据保护） */
   logText: string;
-  /** 按执行时间排列，仅包含当前分享链接所授权用例的已完成轮次与诊断重跑。 */
+  /** 按执行时间排列，仅包含当前分享链接所授权用例的轮次与诊断重跑。 */
   rounds: SharedAttemptLogRoundView[];
   /**
    * 兼容字段：链接当前永久有效，新记录固定为永久哨兵值（9999-12-31），

@@ -20,6 +20,7 @@ export async function POST(request: Request, context: Context): Promise<NextResp
       username: identity.user.username,
       source: identity.user.source,
     });
+    const logTarget = await services.runBatches.getCaseLogRerunLogTarget(batch.id);
     await services.identityAccess.recordAuthorizedOperation(identity, {
       action: "run_attempt.rerun",
       resourceType: "run_attempt",
@@ -28,7 +29,10 @@ export async function POST(request: Request, context: Context): Promise<NextResp
       requestId: currentRequestId,
       details: { diagnosticBatchId: batch.id },
     });
-    return NextResponse.json({ batchId: batch.id }, { status: 201 });
+    return NextResponse.json(
+      { batchId: batch.id, batchStatus: logTarget.batchStatus, attempt: logTarget.attempt },
+      { status: 201 },
+    );
   } catch (error) {
     return apiErrorResponse(error, currentRequestId);
   }

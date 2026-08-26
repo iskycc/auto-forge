@@ -1015,6 +1015,7 @@ public class MixedVisibleTest {
     await anonymousPage.goto(sharePath!);
     expect(anonymousPage.url()).toContain("/share/attempt-log/");
     await expect(anonymousPage.getByText("用例路径", { exact: true }).first()).toBeVisible();
+    await expect(anonymousPage.getByRole("link", { name: "登录后执行此用例" })).toBeVisible();
     await expect(anonymousPage.locator(".share-log-output")).toContainText(
       /first attempt assertion failed|retry passed/,
     );

@@ -16,7 +16,8 @@ import {
   type Permission,
 } from "@autoforge/domain";
 
-export const ANALYTICS_FACT_SCHEMA_VERSION = 3;
+// v4 保留失败摘要原始大小写；旧版强制小写的签名会由 Lite/Full 工作器自动重建。
+export const ANALYTICS_FACT_SCHEMA_VERSION = 4;
 
 export type ServiceAccountRow = {
   id: string;
@@ -252,6 +253,7 @@ export function mapNotification(row: NotificationRow): Notification {
 export function aggregateAnalytics(
   rows: AnalyticsFactRow[],
   generatedAt: string,
+  timeZone = "UTC",
 ): AnalyticsSummary {
   // 可自动换机恢复的 Runner/传输异常不是 TestNG 质量结果；它们由执行详情的
   // “执行机异常事件”承载，不能污染通过率、失败洞察或不稳定用例。
@@ -307,7 +309,7 @@ export function aggregateAnalytics(
 
     const methodCount = row.passed + row.failed + row.skipped;
     if (methodCount > 0) {
-      const bucket = `${row.completed_at.slice(0, 10)}T00:00:00.000Z`;
+      const bucket = analyticsDateBucket(row.completed_at, timeZone);
       const daily = trend.get(bucket) ?? { total: 0, passed: 0, failed: 0, skipped: 0 };
       daily.total += methodCount;
       daily.passed += row.passed;
@@ -355,6 +357,19 @@ export function aggregateAnalytics(
   };
 }
 
+function analyticsDateBucket(value: string, timeZone: string): string {
+  const date = new Date(value);
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(date);
+  const field = (type: Intl.DateTimeFormatPartTypes) =>
+    parts.find((part) => part.type === type)?.value ?? "00";
+  return `${field("year")}-${field("month")}-${field("day")}T00:00:00.000Z`;
+}
+
 export function resultCounts(testNgResultJson: string | null): {
   passed: number;
   failed: number;
@@ -391,8 +406,7 @@ export function failureSignature(
   const category = attemptResultCategory(outcome, resultCode);
   if (category === "succeeded" || outcome === "cancelled") return null;
   const normalized = failureDescription(summary)
-    .toLocaleLowerCase("en-US")
-    .replace(/[0-9a-f]{8}-[0-9a-f-]{27,}/g, "<id>")
+    .replace(/[0-9a-f]{8}-[0-9a-f-]{27,}/gi, "<id>")
     .replace(/\b\d+\b/g, "<n>")
     .replace(/\s+/g, " ")
     .trim()

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 
 import { TerminalLogViewer } from "@/components/terminal-log-viewer";
 import { readApiErrorMessage } from "@/lib/client-api";
+import { formatPlatformTime } from "@/lib/platform-date-time";
 
 type SchedulingEventType =
   | "batch_scheduled"
@@ -67,9 +68,7 @@ function schedulingEventClass(event: SchedulingEvent): string {
 }
 
 function formatEventTime(value: string): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "--:--:--";
-  return date.toLocaleTimeString("zh-CN", { hour12: false });
+  return Number.isNaN(Date.parse(value)) ? "--:--:--" : formatPlatformTime(value);
 }
 
 function schedulingCacheKey(batchId: string, runnerId: string | undefined): string {

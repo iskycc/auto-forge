@@ -39,7 +39,8 @@ export class AttemptLogShareService {
 
   /**
    * 免登读取公开日志。token 以签发时的 attempt 为授权锚点，可在同一批次、同一
-   * ExecutionRun 的已完成轮次及其手动诊断重跑之间切换；目标 attempt 不满足该边界时
+   * ExecutionRun 的轮次及其手动诊断重跑之间切换；进行中的手动重跑也会进入历史，
+   * 以便已登录用户从日志详情直接打开实时日志。目标 attempt 不满足该边界时
    * 统一返回 null。
    * token 无效、失效（旧记录过期或批次/attempt 已删除）时也返回 null，不向外
    * 区分失败原因。公开页无会话，不能再按项目裁剪权限。
@@ -89,21 +90,23 @@ export class AttemptLogShareService {
         })),
       ),
     ];
-    const completedAttempts: Array<{
+    const visibleAttempts: Array<{
       attempt: RunAttempt;
       outcome: SharedAttemptLogOutcome;
       kind: "round" | "manual_rerun";
       requestedBy: { username: string; source: "local" | "ldap" } | null;
     }> = familyAttempts
       .flatMap((candidate) => {
-        const outcome = runAttemptOutcome(candidate.attempt);
+        const outcome =
+          runAttemptOutcome(candidate.attempt) ??
+          (["assigned", "running"] as const).find((status) => status === candidate.attempt.status);
         return outcome ? [{ ...candidate, outcome }] : [];
       })
       .sort((left, right) => {
         const byTime = left.attempt.createdAt.localeCompare(right.attempt.createdAt);
         return byTime || left.attempt.id.localeCompare(right.attempt.id);
       });
-    const selected = completedAttempts.find(
+    const selected = visibleAttempts.find(
       ({ attempt }) => attempt.id === (selectedAttemptId ?? share.attemptId),
     );
     if (!selected) return null;
@@ -124,7 +127,7 @@ export class AttemptLogShareService {
       kind,
       requestedBy,
       logText: await this.readAttemptLogText(attempt.id),
-      rounds: completedAttempts.map(
+      rounds: visibleAttempts.map(
         ({ attempt: candidate, outcome: candidateOutcome, kind: candidateKind, requestedBy }) => ({
           attemptId: candidate.id,
           attemptNumber: candidate.attemptNumber,

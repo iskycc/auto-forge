@@ -13,12 +13,16 @@ export async function GET(request: Request): Promise<NextResponse> {
       Object.fromEntries(new URL(request.url).searchParams),
     );
     const services = await getPlatformServices();
+    const timeZone = services.configurationStore.read().web.timeZone;
     rejectRateLimited(
       await services.runnerRequestLimiter.allow(`analytics:v1:${identity.user.id}`, 60, 60_000),
     );
-    return NextResponse.json(await services.platformOperations.analytics(identity, filter), {
-      headers: { "Cache-Control": "private, no-store" },
-    });
+    return NextResponse.json(
+      await services.platformOperations.analytics(identity, { ...filter, timeZone }),
+      {
+        headers: { "Cache-Control": "private, no-store" },
+      },
+    );
   } catch (error) {
     return apiErrorResponse(error, currentRequestId);
   }

@@ -4,7 +4,20 @@ import { Button, Input, Textarea } from "@/components/ui";
 
 import type { PlatformConfigurationView } from "@autoforge/contracts";
 import { Save, ServerCog } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
+
+const COMMON_TIME_ZONES = [
+  "Asia/Shanghai",
+  "Asia/Hong_Kong",
+  "Asia/Tokyo",
+  "Asia/Singapore",
+  "Europe/London",
+  "Europe/Berlin",
+  "America/New_York",
+  "America/Los_Angeles",
+  "UTC",
+] as const;
 
 export function PlatformSettings({
   initial,
@@ -13,6 +26,7 @@ export function PlatformSettings({
   initial: Omit<PlatformConfigurationView, "configurationFile">;
   canManage: boolean;
 }) {
+  const router = useRouter();
   const [revision, setRevision] = useState(initial.revision);
   const [pending, setPending] = useState(false);
   const [message, setMessage] = useState("");
@@ -35,6 +49,7 @@ export function PlatformSettings({
           web: {
             hostname: form.get("hostname"),
             port: numberValue(form, "port"),
+            timeZone: stringValue(form, "timeZone"),
             ...(stringValue(form, "publicBaseUrl")
               ? { publicBaseUrl: stringValue(form, "publicBaseUrl") }
               : {}),
@@ -70,10 +85,14 @@ export function PlatformSettings({
         revision?: number;
         appliedImmediatelyFields?: string[];
         restartRequiredFields?: string[];
+        web?: { timeZone?: string };
         error?: { message?: string };
       };
       if (!response.ok) throw new Error(body.error?.message ?? "平台配置保存失败。");
       if (body.revision !== undefined) setRevision(body.revision);
+      if (body.web?.timeZone) {
+        document.documentElement.dataset.timeZone = body.web.timeZone;
+      }
       const immediate = body.appliedImmediatelyFields ?? [];
       const restart = body.restartRequiredFields ?? [];
       setMessage(
@@ -87,6 +106,7 @@ export function PlatformSettings({
           .filter(Boolean)
           .join(" "),
       );
+      router.refresh();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "平台配置保存失败。");
     } finally {
@@ -119,7 +139,7 @@ export function PlatformSettings({
             <ServerCog size={22} aria-hidden="true" />
           </div>
           <p className="settings-note">
-            配置保存在平台数据目录中。外部访问地址与产物收集保存后立即生效；进程监听、基础设施、容量和调度参数需要重启。
+            配置保存在平台数据目录中。平台时区、外部访问地址与产物收集保存后立即生效；进程监听、基础设施、容量和调度参数需要重启。
           </p>
           <div className="settings-grid-form">
             <div className="deployment-mode-display" aria-label="部署模式">
@@ -144,6 +164,25 @@ export function PlatformSettings({
                 name="port"
                 type="number"
               />
+            </label>
+            <label>
+              平台时区
+              <Input
+                defaultValue={initial.web.timeZone}
+                list="platform-time-zone-options"
+                name="timeZone"
+                placeholder="Asia/Shanghai"
+                required
+              />
+              <datalist id="platform-time-zone-options">
+                {COMMON_TIME_ZONES.map((timeZone) => (
+                  <option key={timeZone} value={timeZone} />
+                ))}
+              </datalist>
+              <small>
+                使用 IANA 时区名称；默认
+                Asia/Shanghai（东八区）。保存后页面时间与时间筛选立即按此时区显示和解析。
+              </small>
             </label>
             <label>
               外部访问地址

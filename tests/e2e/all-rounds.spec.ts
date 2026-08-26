@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 import { unzipSync, zipSync } from "fflate";
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile } from "node:fs/promises";
@@ -32,6 +32,17 @@ async function captureUi(page: Page, name: string): Promise<void> {
   const absoluteDirectory = resolve(screenshotDirectory);
   await mkdir(absoluteDirectory, { recursive: true });
   await page.screenshot({ path: resolve(absoluteDirectory, `${name}.png`), fullPage: true });
+}
+
+async function expectDialogFitsViewport(page: Page, dialog: Locator): Promise<void> {
+  const bounds = await dialog.boundingBox();
+  const viewport = page.viewportSize();
+  expect(bounds).not.toBeNull();
+  expect(viewport).not.toBeNull();
+  expect(bounds!.x).toBeGreaterThanOrEqual(0);
+  expect(bounds!.y).toBeGreaterThanOrEqual(0);
+  expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(viewport!.width);
+  expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(viewport!.height);
 }
 
 type RunnerIdentity = { runnerId: string; credential: string };
@@ -275,6 +286,34 @@ async function completeAttempt(
           logWatermarks: { stdout: 0, stderr: -1, agent: -1 },
           artifacts: [],
         },
+      },
+    },
+  );
+  expect(response.status()).toBe(200);
+}
+
+async function uploadAttemptLog(
+  page: Page,
+  identity: RunnerIdentity,
+  claim: ClaimedAssignment,
+  content: string,
+): Promise<void> {
+  const response = await page.request.post(
+    `/api/v1/run-attempts/${encodeURIComponent(claim.assignment.attemptId)}/logs`,
+    {
+      headers: runnerHeaders(identity),
+      data: {
+        schemaVersion: 1,
+        requestId: `e2e-manual-log-${randomUUID()}`,
+        leaseToken: claim.lease.token,
+        chunks: [
+          {
+            stream: "stdout",
+            sequence: 0,
+            content,
+            recordedAt: new Date().toISOString(),
+          },
+        ],
       },
     },
   );
@@ -930,15 +969,14 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
       response.request().method() === "POST" &&
       /^\/api\/v1\/run-attempts\/[^/]+\/rerun$/u.test(new URL(response.url()).pathname),
   );
-  await page.getByRole("button", { name: "重新执行", exact: true }).click();
+  await page.getByRole("button", { name: "执行此用例", exact: true }).click();
   const diagnosticResponse = await diagnosticResponsePromise;
   expect(diagnosticResponse.status()).toBe(201);
   const sharedAttemptId = decodeURIComponent(
     new URL(diagnosticResponse.url()).pathname.split("/").at(-2)!,
   );
   const diagnosticBatchId = ((await diagnosticResponse.json()) as { batchId: string }).batchId;
-  await expect(page.getByRole("status")).toContainText("已提交诊断重跑");
-  await page.getByRole("button", { name: "关闭日志终端" }).click();
+  await expect(page.getByRole("status")).toContainText(/手动执行|等待调度/);
 
   const visibleBatchPage = await browserJson<{ items: Array<{ id: string }> }>(
     page,
@@ -949,6 +987,47 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
   expect((await postHeartbeat(page, identity, 0)).status()).toBe(200);
   const diagnosticClaim = await claimAssignment(page, identity);
   expect(diagnosticClaim.assignment.executionSpec.executionRunId).toBeTruthy();
+  await expect(page.getByRole("button", { name: "查看实时日志", exact: true })).toBeVisible({
+    timeout: 10_000,
+  });
+  await page.getByRole("button", { name: "查看实时日志", exact: true }).click();
+  const liveLogDialog = page.getByRole("dialog", { name: /执行日志/ });
+  await expect(liveLogDialog).toContainText("返回原日志");
+  const realtimeMarker = "manual diagnostic realtime log\n";
+  await uploadAttemptLog(page, identity, diagnosticClaim, realtimeMarker);
+  await expect(liveLogDialog.locator("pre.execution-log")).toContainText(realtimeMarker.trim(), {
+    timeout: 10_000,
+  });
+  await expectDialogFitsViewport(page, liveLogDialog);
+  await captureUi(page, "manual-rerun-live-log");
+  await page.getByRole("button", { name: "关闭日志终端" }).click();
+
+  // 手动执行尚未结束时，永久日志详情的执行历史也必须立即出现“执行中”记录，
+  // 登录用户可在当前页面打开实时日志，而不是等到完成后才看到它。
+  await page.goto(`/run-batches/${encodeURIComponent(failedSourceBatch.id)}`);
+  await page.getByRole("button", { name: "初始轮次", exact: true }).click();
+  const runningSourceRow = page.locator(".round-cases tbody tr").filter({ hasText: "失败" });
+  const runningPublicLogPopupPromise = page.waitForEvent("popup");
+  await runningSourceRow.getByRole("button", { name: "公开日志" }).click();
+  const runningPublicLogPage = await runningPublicLogPopupPromise;
+  await runningPublicLogPage.waitForLoadState("domcontentloaded");
+  const runningHistory = runningPublicLogPage.getByRole("navigation", {
+    name: "同一用例的执行历史",
+  });
+  const runningManualLink = runningHistory.getByRole("link", {
+    name: /手动重跑.*执行中/u,
+  });
+  await expect(runningManualLink).toBeVisible();
+  await runningManualLink.click();
+  await runningPublicLogPage.getByRole("button", { name: "查看实时日志", exact: true }).click();
+  const sharedLiveLogDialog = runningPublicLogPage.getByRole("dialog", { name: /执行日志/ });
+  await expect(sharedLiveLogDialog.locator("pre.execution-log")).toContainText(
+    realtimeMarker.trim(),
+  );
+  await expectDialogFitsViewport(runningPublicLogPage, sharedLiveLogDialog);
+  await runningPublicLogPage.getByRole("button", { name: "关闭日志终端" }).click();
+  await runningPublicLogPage.close();
+
   await completeAttempt(page, identity, diagnosticClaim, {
     completionId: "e2e-diagnostic-rerun",
     status: "succeeded",
@@ -975,6 +1054,9 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
     name: "同一用例的执行历史",
   });
   await expect(executionHistory).toBeVisible();
+  await expect(
+    publicLogPage.getByRole("button", { name: "执行此用例", exact: true }),
+  ).toBeVisible();
   await expect(executionHistory.getByText(`by ${E2E_ADMIN_USERNAME}（本地）`)).toBeVisible();
   for (const viewport of [
     { width: 1024, height: 768 },

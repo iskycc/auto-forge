@@ -11,6 +11,10 @@ import {
 import { getPlatformServices } from "@/lib/services";
 import { formatLocalDateTime } from "@/lib/run-batch-presentation";
 import { selectableProjectIds, selectedProjectId } from "@/lib/selected-project";
+import {
+  platformDateTimeInputValue,
+  platformDateTimeParameterToIso,
+} from "@/lib/platform-date-time";
 
 export const dynamic = "force-dynamic";
 
@@ -21,6 +25,7 @@ type AuditPageProps = {
 export default async function AuditPage({ searchParams }: AuditPageProps) {
   const { identity } = await requirePageProjectScope("audit.read");
   const services = await getPlatformServices();
+  const timeZone = services.configurationStore.read().web.timeZone;
   const values = await searchParams;
   const projects = await services.identities
     .listProjects(selectableProjectIds(identity))
@@ -33,8 +38,8 @@ export default async function AuditPage({ searchParams }: AuditPageProps) {
     ...optionalFilter("action", values.action),
     ...optionalFilter("resourceType", values.resourceType),
     ...optionalResult(values.result),
-    ...optionalDate("recordedAfter", values.recordedAfter),
-    ...optionalDate("recordedBefore", values.recordedBefore),
+    ...optionalDate("recordedAfter", values.recordedAfter, timeZone),
+    ...optionalDate("recordedBefore", values.recordedBefore, timeZone),
     ...optionalFilter("cursor", values.cursor),
     limit: 30,
   };
@@ -54,7 +59,7 @@ export default async function AuditPage({ searchParams }: AuditPageProps) {
   const runnerNames = new Map(runners.map((runner) => [runner.id, runner.name] as const));
   const projectNames = new Map(projects.map((project) => [project.id, project.name] as const));
   const cursorTrail = auditCursorTrail(values.trail);
-  const exportParameters = auditParameters(values, projectId);
+  const exportParameters = auditParameters(values, projectId, timeZone);
   exportParameters.set("maximumEvents", "5000");
 
   return (
@@ -122,11 +127,17 @@ export default async function AuditPage({ searchParams }: AuditPageProps) {
         </label>
         <label>
           开始时间
-          <DatetimeInput defaultValue={single(values.recordedAfter)} name="recordedAfter" />
+          <DatetimeInput
+            defaultValue={dateInputValue(values.recordedAfter, timeZone)}
+            name="recordedAfter"
+          />
         </label>
         <label>
           结束时间
-          <DatetimeInput defaultValue={single(values.recordedBefore)} name="recordedBefore" />
+          <DatetimeInput
+            defaultValue={dateInputValue(values.recordedBefore, timeZone)}
+            name="recordedBefore"
+          />
         </label>
         <Button className="button button-primary" type="submit">
           <Search size={16} /> 查询
@@ -163,7 +174,7 @@ export default async function AuditPage({ searchParams }: AuditPageProps) {
                   <tr key={event.id}>
                     <td>
                       <time dateTime={event.recordedAt} title={`UTC：${event.recordedAt}`}>
-                        {formatLocalDateTime(event.recordedAt)}
+                        {formatLocalDateTime(event.recordedAt, timeZone)}
                       </time>
                     </td>
                     <td>
@@ -202,7 +213,7 @@ export default async function AuditPage({ searchParams }: AuditPageProps) {
             {cursorTrail.length > 0 ? (
               <Link
                 className="button button-secondary"
-                href={`/audit?${previousPageParameters(values, projectId, cursorTrail)}`}
+                href={`/audit?${previousPageParameters(values, projectId, cursorTrail, timeZone)}`}
               >
                 上一页
               </Link>
@@ -212,7 +223,7 @@ export default async function AuditPage({ searchParams }: AuditPageProps) {
             {events.nextCursor ? (
               <Link
                 className="button button-secondary"
-                href={`/audit?${nextPageParameters(values, projectId, events.nextCursor, cursorTrail)}`}
+                href={`/audit?${nextPageParameters(values, projectId, events.nextCursor, cursorTrail, timeZone)}`}
               >
                 下一页
               </Link>
@@ -252,18 +263,24 @@ function optionalResult(value: string | string[] | undefined): {
 function optionalDate<Key extends "recordedAfter" | "recordedBefore">(
   key: Key,
   value: string | string[] | undefined,
+  timeZone: string,
 ): Partial<Record<Key, string>> {
   const normalized = single(value);
   if (!normalized) return {};
-  const timestamp = new Date(normalized);
-  return Number.isNaN(timestamp.getTime())
-    ? {}
-    : ({ [key]: timestamp.toISOString() } as Partial<Record<Key, string>>);
+  const timestamp = platformDateTimeParameterToIso(normalized, timeZone);
+  return timestamp ? ({ [key]: timestamp } as Partial<Record<Key, string>>) : {};
+}
+
+function dateInputValue(value: string | string[] | undefined, timeZone: string): string {
+  const timestamp = single(value);
+  const iso = timestamp ? platformDateTimeParameterToIso(timestamp, timeZone) : undefined;
+  return platformDateTimeInputValue(iso, timeZone);
 }
 
 function auditParameters(
   values: Record<string, string | string[] | undefined>,
-  projectId?: string,
+  projectId: string | undefined,
+  timeZone: string,
 ): URLSearchParams {
   const parameters = new URLSearchParams();
   for (const key of ["actorId", "action", "resourceType", "result"] as const) {
@@ -271,7 +288,7 @@ function auditParameters(
     if (value) parameters.set(key, value);
   }
   for (const key of ["recordedAfter", "recordedBefore"] as const) {
-    const value = optionalDate(key, values[key])[key];
+    const value = optionalDate(key, values[key], timeZone)[key];
     if (value) parameters.set(key, value);
   }
   if (projectId) parameters.set("projectId", projectId);
@@ -283,8 +300,9 @@ function nextPageParameters(
   projectId: string | undefined,
   cursor: string,
   trail: readonly string[],
+  timeZone: string,
 ): URLSearchParams {
-  const parameters = auditParameters(values, projectId);
+  const parameters = auditParameters(values, projectId, timeZone);
   parameters.set("cursor", cursor);
   parameters.set("trail", JSON.stringify([...trail, single(values.cursor) ?? ""]));
   return parameters;
@@ -294,8 +312,9 @@ function previousPageParameters(
   values: Record<string, string | string[] | undefined>,
   projectId: string | undefined,
   trail: readonly string[],
+  timeZone: string,
 ): URLSearchParams {
-  const parameters = auditParameters(values, projectId);
+  const parameters = auditParameters(values, projectId, timeZone);
   const previousCursor = trail.at(-1);
   if (previousCursor) parameters.set("cursor", previousCursor);
   const remainingTrail = trail.slice(0, -1);

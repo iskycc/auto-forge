@@ -6,6 +6,7 @@ import { getPlatformServices } from "@/lib/services";
 import { requireAuthorizedPageProjectScope, requirePageProjectScope } from "@/lib/auth";
 import { hasPermission, projectIdsForPermission } from "@autoforge/domain";
 import { selectableProjectIds, selectedProjectId } from "@/lib/selected-project";
+import { formatPlatformDateTime } from "@/lib/platform-date-time";
 
 export const dynamic = "force-dynamic";
 
@@ -15,19 +16,20 @@ function formatBytes(value: number): string {
   return `${(value / 1024 / 1024).toFixed(1)} MiB`;
 }
 
-function formatDate(value: string): string {
-  return new Intl.DateTimeFormat("zh-CN", {
+function formatDate(value: string, timeZone: string): string {
+  return formatPlatformDateTime(value, timeZone, {
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
     hour: "2-digit",
     minute: "2-digit",
-  }).format(new Date(value));
+  });
 }
 
 export default async function ObjectsPage() {
   const { identity } = await requirePageProjectScope("case_source.read");
   const services = await getPlatformServices();
+  const timeZone = services.configurationStore.read().web.timeZone;
   const projects = await services.identities
     .listProjects(selectableProjectIds(identity))
     .catch(() => []);
@@ -109,7 +111,9 @@ export default async function ObjectsPage() {
                       <code className="digest">{source.sha256.slice(0, 12)}…</code>
                     </td>
                     <td>
-                      <time dateTime={source.createdAt}>{formatDate(source.createdAt)}</time>
+                      <time dateTime={source.createdAt} title={`UTC：${source.createdAt}`}>
+                        {formatDate(source.createdAt, timeZone)}
+                      </time>
                     </td>
                     <td>
                       <span className="row-actions">
@@ -181,7 +185,9 @@ export default async function ObjectsPage() {
                       <td>{source ? "TestNG JAR" : "受管对象"}</td>
                       <td>{formatBytes(item.sizeBytes)}</td>
                       <td>
-                        <time dateTime={item.lastModified}>{formatDate(item.lastModified)}</time>
+                        <time dateTime={item.lastModified} title={`UTC：${item.lastModified}`}>
+                          {formatDate(item.lastModified, timeZone)}
+                        </time>
                       </td>
                     </tr>
                   );

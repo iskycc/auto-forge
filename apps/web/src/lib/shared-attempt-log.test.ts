@@ -34,7 +34,9 @@ describe("truncateSharedLogText", () => {
 describe("shared outcome presentation", () => {
   it("maps outcomes to labels and semantic badge classes", () => {
     expect(sharedOutcomeLabel("succeeded")).toBe("通过");
+    expect(sharedOutcomeLabel("running")).toBe("执行中");
     expect(sharedOutcomeLabel("timed_out")).toBe("超时");
+    expect(sharedOutcomeClass("assigned")).toBe("batch-status-queued");
     expect(sharedOutcomeClass("failed")).toBe("batch-status-failed");
     expect(sharedOutcomeClass("cancelled")).toBe("batch-status-neutral");
   });

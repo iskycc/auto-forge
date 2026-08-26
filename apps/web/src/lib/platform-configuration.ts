@@ -36,6 +36,7 @@ export function platformConfigurationActivation(
 ): PlatformConfigurationActivation {
   const appliedImmediatelyFields = [
     changed(current.web.publicBaseUrl, saved.web.publicBaseUrl) ? "外部访问地址" : undefined,
+    changed(current.web.timeZone, saved.web.timeZone) ? "平台时区" : undefined,
     changed(current.limits.artifactCollectionEnabled, saved.limits.artifactCollectionEnabled)
       ? "产物收集"
       : undefined,
@@ -77,7 +78,7 @@ export function mergePlatformConfiguration(
   return {
     ...current,
     mode: input.mode,
-    web: { ...input.web },
+    web: { ...input.web, timeZone: input.web.timeZone ?? current.web.timeZone },
     limits: { ...input.limits },
     scheduler: { ...input.scheduler },
     worker: { ...input.worker },

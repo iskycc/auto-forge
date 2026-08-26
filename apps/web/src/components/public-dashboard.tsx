@@ -1,5 +1,7 @@
 "use client";
 
+import { formatPlatformTime } from "@/lib/platform-date-time";
+
 import {
   publicPlatformStatisticsSchema,
   type PublicPlatformStatistics,
@@ -297,9 +299,5 @@ function percentage(value: number, total: number): number {
 }
 
 function formatTime(value: string): string {
-  return new Intl.DateTimeFormat("zh-CN", {
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  }).format(new Date(value));
+  return formatPlatformTime(value);
 }

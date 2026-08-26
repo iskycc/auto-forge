@@ -8,6 +8,7 @@ import Link from "next/link";
 import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 
 import { notificationMessage, searchResultSubtitle } from "@/lib/topbar-presentation";
+import { formatPlatformDateTime } from "@/lib/platform-date-time";
 
 type NotificationPage = { items: Notification[]; nextCursor?: string };
 
@@ -282,10 +283,10 @@ function kindLabel(kind: GlobalSearchResult["items"][number]["kind"]): string {
 }
 
 function formatDate(value: string): string {
-  return new Intl.DateTimeFormat("zh-CN", {
+  return formatPlatformDateTime(value, undefined, {
     month: "2-digit",
     day: "2-digit",
     hour: "2-digit",
     minute: "2-digit",
-  }).format(new Date(value));
+  });
 }

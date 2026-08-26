@@ -1,5 +1,7 @@
 "use client";
 
+import { formatPlatformDateTime } from "@/lib/platform-date-time";
+
 import type { CaseSuiteSchedule, LdapSyncJob } from "@autoforge/contracts";
 import { CalendarClock, RefreshCw, Trash2 } from "lucide-react";
 import Link from "next/link";
@@ -317,8 +319,8 @@ function jobStatusLabel(status: LdapSyncJob["status"]): string {
 }
 
 function formatDate(value: string): string {
-  return new Intl.DateTimeFormat("zh-CN", {
+  return formatPlatformDateTime(value, undefined, {
     dateStyle: "medium",
     timeStyle: "medium",
-  }).format(new Date(value));
+  });
 }

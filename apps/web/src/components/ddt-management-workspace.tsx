@@ -1,5 +1,7 @@
 "use client";
 
+import { formatPlatformDateTime } from "@/lib/platform-date-time";
+
 import {
   ArchiveRestore,
   BarChart3,
@@ -1667,9 +1669,7 @@ function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : "操作失败，请稍后重试。";
 }
 function formatDate(value: string): string {
-  return new Intl.DateTimeFormat("zh-CN", { dateStyle: "medium", timeStyle: "short" }).format(
-    new Date(value),
-  );
+  return formatPlatformDateTime(value, undefined, { dateStyle: "medium", timeStyle: "short" });
 }
 function formatBytes(value: number): string {
   return value >= 1_048_576

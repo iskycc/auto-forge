@@ -23,6 +23,10 @@ import {
   selectedProjectId,
 } from "@/lib/selected-project";
 import { formatLocalDateTime, runBatchStatusLabel } from "@/lib/run-batch-presentation";
+import {
+  platformDateTimeInputValue,
+  platformDateTimeParameterToIso,
+} from "@/lib/platform-date-time";
 
 const CASE_OUTCOME_PAGE_SIZE = 25;
 
@@ -47,6 +51,7 @@ export default async function InsightsPage({
 }) {
   const { identity, projectIds } = await requirePageProjectScope("run.read");
   const services = await getPlatformServices();
+  const timeZone = services.configurationStore.read().web.timeZone;
   const parameters = await searchParams;
   const projects = await services.identities
     .listProjects(selectableProjectIds(identity))
@@ -58,28 +63,33 @@ export default async function InsightsPage({
     : undefined;
   const hierarchy = await selectedProjectHierarchy(projectStructure);
   const filter = {
-    ...analyticsFilter({
-      ...parameters,
-      projectId: undefined,
-      projectVersionId: undefined,
-      testStageId: undefined,
-    }),
+    ...analyticsFilter(
+      {
+        ...parameters,
+        projectId: undefined,
+        projectVersionId: undefined,
+        testStageId: undefined,
+      },
+      timeZone,
+    ),
+    timeZone,
     ...(caseProjectId ? { projectId: caseProjectId } : {}),
     ...(hierarchy.projectVersionId ? { projectVersionId: hierarchy.projectVersionId } : {}),
     ...(hierarchy.testStageId ? { testStageId: hierarchy.testStageId } : {}),
   };
   const flakyFilter: AnalyticsFilter = {
+    timeZone,
     ...(caseProjectId ? { projectId: caseProjectId } : {}),
     ...(hierarchy.projectVersionId ? { projectVersionId: hierarchy.projectVersionId } : {}),
     ...(hierarchy.testStageId ? { testStageId: hierarchy.testStageId } : {}),
     ...(stringParameter(parameters.flakySuiteId)
       ? { suiteId: stringParameter(parameters.flakySuiteId) }
       : {}),
-    ...(dateTimeParameter(parameters.flakyCompletedAfter)
-      ? { completedAfter: dateTimeParameter(parameters.flakyCompletedAfter) }
+    ...(dateTimeParameter(parameters.flakyCompletedAfter, timeZone)
+      ? { completedAfter: dateTimeParameter(parameters.flakyCompletedAfter, timeZone) }
       : {}),
-    ...(dateTimeParameter(parameters.flakyCompletedBefore)
-      ? { completedBefore: dateTimeParameter(parameters.flakyCompletedBefore) }
+    ...(dateTimeParameter(parameters.flakyCompletedBefore, timeZone)
+      ? { completedBefore: dateTimeParameter(parameters.flakyCompletedBefore, timeZone) }
       : {}),
   };
   const [summary, suites, runners, recentBatches] = await Promise.all([
@@ -190,16 +200,16 @@ export default async function InsightsPage({
               <Input defaultValue={filter.failureSignature ?? ""} name="failureSignature" />
             </label>
             <label>
-              开始时间（本地）
+              开始时间（平台时区）
               <DatetimeInput
-                defaultValue={dateTimeLocal(filter.completedAfter)}
+                defaultValue={dateTimeLocal(filter.completedAfter, timeZone)}
                 name="completedAfter"
               />
             </label>
             <label>
-              结束时间（本地）
+              结束时间（平台时区）
               <DatetimeInput
-                defaultValue={dateTimeLocal(filter.completedBefore)}
+                defaultValue={dateTimeLocal(filter.completedBefore, timeZone)}
                 name="completedBefore"
               />
             </label>
@@ -243,7 +253,7 @@ export default async function InsightsPage({
                   <table className="data-table insight-data-table">
                     <thead>
                       <tr>
-                        <th>日期（UTC）</th>
+                        <th>日期（{timeZone}）</th>
                         <th>方法总数</th>
                         <th>通过方法</th>
                         <th>失败方法</th>
@@ -306,7 +316,7 @@ export default async function InsightsPage({
                         <td>{failure.count}</td>
                         <td>
                           <time dateTime={failure.lastSeenAt} title={`UTC：${failure.lastSeenAt}`}>
-                            {formatLocalDateTime(failure.lastSeenAt)}
+                            {formatLocalDateTime(failure.lastSeenAt, timeZone)}
                           </time>
                         </td>
                       </tr>
@@ -382,16 +392,16 @@ export default async function InsightsPage({
               </Select>
             </label>
             <label>
-              开始时间（本地）
+              开始时间（平台时区）
               <DatetimeInput
-                defaultValue={stringParameter(parameters.flakyCompletedAfter).slice(0, 16)}
+                defaultValue={dateTimeLocal(flakyFilter.completedAfter, timeZone)}
                 name="flakyCompletedAfter"
               />
             </label>
             <label>
-              结束时间（本地）
+              结束时间（平台时区）
               <DatetimeInput
-                defaultValue={stringParameter(parameters.flakyCompletedBefore).slice(0, 16)}
+                defaultValue={dateTimeLocal(flakyFilter.completedBefore, timeZone)}
                 name="flakyCompletedBefore"
               />
             </label>
@@ -406,7 +416,7 @@ export default async function InsightsPage({
                   ?.name ?? "指定任务")
               : "全部任务"}
             {flakyFilter.completedAfter || flakyFilter.completedBefore
-              ? ` · ${flakyFilter.completedAfter ? formatLocalDateTime(flakyFilter.completedAfter) : "最早记录"} 至 ${flakyFilter.completedBefore ? formatLocalDateTime(flakyFilter.completedBefore) : "现在"}`
+              ? ` · ${flakyFilter.completedAfter ? formatLocalDateTime(flakyFilter.completedAfter, timeZone) : "最早记录"} 至 ${flakyFilter.completedBefore ? formatLocalDateTime(flakyFilter.completedBefore, timeZone) : "现在"}`
               : " · 全部时间"}
           </p>
           {flakySummary.flakyCases.length === 0 ? (
@@ -439,6 +449,7 @@ export default async function InsightsPage({
                     parameters={parameters}
                     report={caseOutcomeReport}
                     trail={caseCursorTrail}
+                    timeZone={timeZone}
                   />
                 </InsightDetailDialog>
               </div>
@@ -847,6 +858,7 @@ function pieStyle(
 
 function analyticsFilter(
   parameters: Record<string, string | string[] | undefined>,
+  timeZone: string,
 ): AnalyticsFilter {
   const value = (key: string) =>
     typeof parameters[key] === "string" && parameters[key]
@@ -855,8 +867,7 @@ function analyticsFilter(
   const iso = (key: string) => {
     const raw = value(key);
     if (!raw) return undefined;
-    const date = new Date(raw);
-    return Number.isNaN(date.getTime()) ? undefined : date.toISOString();
+    return platformDateTimeParameterToIso(raw, timeZone);
   };
   const outcome = value("outcome");
   return {
@@ -880,11 +891,12 @@ function stringParameter(value: string | string[] | undefined): string {
   return typeof value === "string" ? value : "";
 }
 
-function dateTimeParameter(value: string | string[] | undefined): string | undefined {
+function dateTimeParameter(
+  value: string | string[] | undefined,
+  timeZone: string,
+): string | undefined {
   const raw = stringParameter(value);
-  if (!raw) return undefined;
-  const parsed = new Date(raw);
-  return Number.isNaN(parsed.getTime()) ? undefined : parsed.toISOString();
+  return raw ? platformDateTimeParameterToIso(raw, timeZone) : undefined;
 }
 
 function percent(value: number): string {
@@ -897,8 +909,8 @@ function duration(value?: number): string {
       ? `${value} ms`
       : `${(value / 1_000).toFixed(2)} s`;
 }
-function dateTimeLocal(value?: string): string {
-  return value ? value.slice(0, 16) : "";
+function dateTimeLocal(value: string | undefined, timeZone: string): string {
+  return platformDateTimeInputValue(value, timeZone);
 }
 
 type CaseOutcomeCounts = {
@@ -990,10 +1002,12 @@ function CaseOutcomeDetails({
   report,
   parameters,
   trail,
+  timeZone,
 }: {
   report: CaseOutcomeReport;
   parameters: Record<string, string | string[] | undefined>;
   trail: readonly string[];
+  timeZone: string;
 }) {
   const counts = caseOutcomeCounts(report);
   // 失败与阻塞优先展示：把尚未稳定的用例排在表格前面。
@@ -1057,7 +1071,7 @@ function CaseOutcomeDetails({
                           dateTime={report.executedAt.get(item.id)}
                           title={`UTC：${report.executedAt.get(item.id)}`}
                         >
-                          {formatLocalDateTime(report.executedAt.get(item.id)!)}
+                          {formatLocalDateTime(report.executedAt.get(item.id)!, timeZone)}
                         </time>
                       ) : (
                         "—"

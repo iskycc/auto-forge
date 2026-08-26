@@ -9,6 +9,9 @@ import { visibleAttemptLogText } from "@/lib/log-presentation";
 import { formatLocalDateTime } from "@/lib/run-batch-presentation";
 import { parseSafeAnsi } from "@/lib/safe-ansi";
 import { getPlatformServices } from "@/lib/services";
+import { currentIdentity } from "@/lib/auth";
+import { SharedAttemptLogActions } from "@/components/shared-attempt-log-actions";
+import { Button } from "@/components/ui";
 import {
   sharedOutcomeClass,
   sharedOutcomeLabel,
@@ -23,7 +26,7 @@ export const metadata: Metadata = {
 
 /**
  * 免登录的执行日志公开访问页。token 以签发 attempt 为锚点，并允许只读切换该
- * ExecutionRun 的其他已完成轮次；链接永久有效，失效时渲染整页错误态而不是跳转登录。
+ * ExecutionRun 的其他轮次及手动重跑；链接永久有效，失效时渲染整页错误态而不是跳转登录。
  */
 export default async function SharedAttemptLogPage({
   params,
@@ -39,12 +42,32 @@ export default async function SharedAttemptLogPage({
       ? attemptParameter
       : undefined;
   const services = await getPlatformServices();
+  const timeZone = services.configurationStore.read().web.timeZone;
   const view = await services.attemptLogShares.getSharedAttemptLog(token, selectedAttemptId);
   if (!view) return <InvalidShareView />;
-  return <SharedAttemptLogContent token={token} view={view} />;
+  const identity = await currentIdentity();
+  const rerunAccess = await sharedLogRerunAccess(services, identity, view.attemptId);
+  return (
+    <SharedAttemptLogContent
+      rerunAccess={rerunAccess}
+      timeZone={timeZone}
+      token={token}
+      view={view}
+    />
+  );
 }
 
-function SharedAttemptLogContent({ token, view }: { token: string; view: SharedAttemptLogView }) {
+function SharedAttemptLogContent({
+  token,
+  view,
+  timeZone,
+  rerunAccess,
+}: {
+  token: string;
+  view: SharedAttemptLogView;
+  timeZone: string;
+  rerunAccess: "allowed" | "read_only" | "login" | "forbidden";
+}) {
   const { text: logText, truncated } = truncateSharedLogText(visibleAttemptLogText(view.logText));
   const renderedSegments = highlightLogLevels(parseSafeAnsi(logText));
   return (
@@ -58,7 +81,13 @@ function SharedAttemptLogContent({ token, view }: { token: string; view: SharedA
               {sharedOutcomeLabel(view.outcome)}
             </span>
           </div>
-          {view.rounds.length > 1 ? <RoundLogNavigation token={token} view={view} /> : null}
+          <SharedLogRerunAction
+            access={rerunAccess}
+            attempt={{ id: view.attemptId, status: view.outcome }}
+          />
+          {view.rounds.length > 1 ? (
+            <RoundLogNavigation timeZone={timeZone} token={token} view={view} />
+          ) : null}
           <dl className="share-log-facts">
             <ShareFact label="用例路径">
               <code>{view.casePath}</code>
@@ -76,10 +105,10 @@ function SharedAttemptLogContent({ token, view }: { token: string; view: SharedA
               </ShareFact>
             ) : null}
             <ShareFact label="执行开始时间">
-              <ShareTime value={view.startedAt} />
+              <ShareTime timeZone={timeZone} value={view.startedAt} />
             </ShareFact>
             <ShareFact label="执行结束时间">
-              <ShareTime value={view.finishedAt} />
+              <ShareTime timeZone={timeZone} value={view.finishedAt} />
             </ShareFact>
             <ShareFact label="执行耗时">
               {view.durationMs !== null ? `${(view.durationMs / 1_000).toFixed(1)} 秒` : "—"}
@@ -114,7 +143,81 @@ function SharedAttemptLogContent({ token, view }: { token: string; view: SharedA
   );
 }
 
-function RoundLogNavigation({ token, view }: { token: string; view: SharedAttemptLogView }) {
+function SharedLogRerunAction({
+  access,
+  attempt,
+}: {
+  access: "allowed" | "read_only" | "login" | "forbidden";
+  attempt: { id: string; status: SharedAttemptLogView["outcome"] };
+}) {
+  if (access === "allowed") {
+    return <SharedAttemptLogActions attempt={attempt} canCreateRuns />;
+  }
+  if (access === "read_only") {
+    if (attempt.status === "assigned" || attempt.status === "running") {
+      return <SharedAttemptLogActions attempt={attempt} canCreateRuns={false} />;
+    }
+    return (
+      <Button
+        className="button button-secondary share-log-rerun-login"
+        disabled
+        title="当前账号没有该项目的执行创建权限"
+        type="button"
+      >
+        无权执行此用例
+      </Button>
+    );
+  }
+  if (access === "login") {
+    return (
+      <Link className="button button-secondary share-log-rerun-login" href="/login">
+        登录后执行此用例
+      </Link>
+    );
+  }
+  return (
+    <Button
+      className="button button-secondary share-log-rerun-login"
+      disabled
+      title="当前账号没有该项目的日志读取或执行创建权限"
+      type="button"
+    >
+      无权执行此用例
+    </Button>
+  );
+}
+
+async function sharedLogRerunAccess(
+  services: Awaited<ReturnType<typeof getPlatformServices>>,
+  identity: Awaited<ReturnType<typeof currentIdentity>>,
+  attemptId: string,
+): Promise<"allowed" | "read_only" | "login" | "forbidden"> {
+  if (!identity) return "login";
+  if (identity.user.forcePasswordChange) return "forbidden";
+  let context: { projectId: string };
+  try {
+    context = await services.runBatches.getAttemptRerunContext(attemptId);
+    services.identityAccess.authorize(identity, "log.read", context.projectId);
+  } catch {
+    return "forbidden";
+  }
+  try {
+    services.identityAccess.authorize(identity, "run.create", context.projectId);
+    return "allowed";
+  } catch {
+    return "read_only";
+  }
+}
+
+function RoundLogNavigation({
+  token,
+  view,
+  timeZone,
+}: {
+  token: string;
+  view: SharedAttemptLogView;
+  timeZone: string;
+}) {
   return (
     <nav className="share-log-rounds" aria-label="同一用例的执行历史">
       <div className="share-log-rounds-heading">
@@ -142,7 +245,7 @@ function RoundLogNavigation({ token, view }: { token: string; view: SharedAttemp
                 </span>
                 <span className="share-log-round-meta">
                   <span className="share-log-round-time">
-                    <ShareTime value={round.finishedAt ?? round.startedAt} />
+                    <ShareTime timeZone={timeZone} value={round.finishedAt ?? round.startedAt} />
                     {round.durationMs !== null ? (
                       <span>{(round.durationMs / 1_000).toFixed(1)} 秒</span>
                     ) : null}
@@ -175,10 +278,10 @@ function ShareFact({ label, children }: { label: string; children: ReactNode }) 
   );
 }
 
-/** 时间统一用用户时区展示，UTC 原值放在 title 中，与详情页约定一致。 */
-function ShareTime({ value }: { value: string | null }) {
+/** 时间统一用平台时区展示，UTC 原值放在 title 中，与详情页约定一致。 */
+function ShareTime({ value, timeZone }: { value: string | null; timeZone: string }) {
   if (!value) return <>—</>;
-  return <time title={`UTC ${value}`}>{formatLocalDateTime(value)}</time>;
+  return <time title={`UTC ${value}`}>{formatLocalDateTime(value, timeZone)}</time>;
 }
 
 function InvalidShareView() {

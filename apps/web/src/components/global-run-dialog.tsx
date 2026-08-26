@@ -1,5 +1,7 @@
 "use client";
 
+import { formatPlatformDateTime } from "@/lib/platform-date-time";
+
 import type {
   CaseDefinitionWithMethods,
   CaseSuite,
@@ -697,15 +699,17 @@ export function GlobalRunDialog({
                                 <small>计划开始</small>
                                 <strong>
                                   {configuredDelaySeconds > 0
-                                    ? new Date(
+                                    ? formatPlatformDateTime(
                                         previewNowMs + configuredDelaySeconds * 1_000,
-                                      ).toLocaleString("zh-CN", {
-                                        month: "2-digit",
-                                        day: "2-digit",
-                                        hour: "2-digit",
-                                        minute: "2-digit",
-                                        second: "2-digit",
-                                      })
+                                        undefined,
+                                        {
+                                          month: "2-digit",
+                                          day: "2-digit",
+                                          hour: "2-digit",
+                                          minute: "2-digit",
+                                          second: "2-digit",
+                                        },
+                                      )
                                     : "请设置有效倒计时"}
                                 </strong>
                               </span>

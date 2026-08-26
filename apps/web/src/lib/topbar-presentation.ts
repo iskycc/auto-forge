@@ -1,5 +1,7 @@
 import type { GlobalSearchResult, Notification } from "@autoforge/contracts";
 
+import { formatPlatformDateTime } from "./platform-date-time";
+
 const STATUS_LABELS: Record<string, string> = {
   queued: "等待资源",
   dispatching: "分配中",
@@ -37,14 +39,12 @@ export function searchResultSubtitle(
 }
 
 function formatLocalTime(value: string): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return new Intl.DateTimeFormat("zh-CN", {
+  return formatPlatformDateTime(value, undefined, {
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
     hour: "2-digit",
     minute: "2-digit",
     second: "2-digit",
-  }).format(date);
+  });
 }
