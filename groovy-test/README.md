@@ -33,11 +33,15 @@ Classification follows a conservative inclusion rule:
 
 - Each declared class produces one case row. Multiple test methods in the same class are aggregated
   and are never exported as separate rows; Groovy scripts without a class produce one file-level row.
-- A class is excluded when its file/class name, any test method name or annotation title clearly
+- The case title is always the class name immediately following the `class` keyword. It takes
+  precedence over annotation descriptions and other text when classifying a case.
+- A class is excluded when its title/file name, any test method name or annotation title clearly
   matches a configured keyword, or its code uses an explicit negative-test construct such as
   `shouldFail`, `assertThrows`, `thrown`, or an expected-exception annotation.
-- A keyword found only in ordinary comments or strings, a business `throw`/`catch`, malformed
-  source, or any other uncertain signal stays in the `导出用例` worksheet with a review hint.
+- A keyword found only in ordinary comments or strings remains a review hint. When the same keyword
+  is already matched by the class title or other clear metadata, it is not reported again as a
+  suspected comment/string match. Business `throw`/`catch`, malformed source, or any other uncertain
+  signal stays in the `导出用例` worksheet with a review hint.
 - `排除明细` records the exact evidence used for exclusions, while `扫描问题` records parse
   failures that were conservatively included.
 

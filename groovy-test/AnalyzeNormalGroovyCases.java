@@ -437,12 +437,25 @@ public final class AnalyzeNormalGroovyCases {
       List<String> clearEvidence = new ArrayList<>();
       List<String> reviewHints = new ArrayList<>();
 
+      List<String> titleMatches =
+          findKeywords(candidate.title, options.negativeKeywords);
+      if (!titleMatches.isEmpty()) {
+        matchedKeywords.addAll(titleMatches);
+        String titleSource =
+            candidate.discoveryKind.startsWith("类级用例")
+                ? "标题（class 后的类名）"
+                : "文件标题";
+        clearEvidence.add(
+            titleSource + "明确命中：" + String.join(", ", titleMatches));
+      }
+
       List<String> metadataMatches =
           findKeywords(candidate.metadata, options.negativeKeywords);
+      metadataMatches.removeAll(titleMatches);
       if (!metadataMatches.isEmpty()) {
         matchedKeywords.addAll(metadataMatches);
         clearEvidence.add(
-            "文件名、类名、方法名或注解标题明确命中："
+            "文件名、方法名或注解标题明确命中："
                 + String.join(", ", metadataMatches));
       }
 
@@ -458,6 +471,8 @@ public final class AnalyzeNormalGroovyCases {
       String narrative = narrativeText(candidate.sourceScope);
       List<String> narrativeMatches =
           findKeywords(narrative, options.negativeKeywords);
+      narrativeMatches.removeAll(titleMatches);
+      narrativeMatches.removeAll(metadataMatches);
       if (!narrativeMatches.isEmpty()) {
         matchedKeywords.addAll(narrativeMatches);
         reviewHints.add(
@@ -515,9 +530,6 @@ public final class AnalyzeNormalGroovyCases {
                 + "(?:[ \\t]*\\.[ \\t]*"
                 + PACKAGE_IDENTIFIER
                 + ")*)");
-    private static final Pattern ANNOTATION_TITLE =
-        Pattern.compile(
-            "(?is)(?:description|title|name|value)\\s*=\\s*(['\"])(.*?)\\1");
     private static final Set<String> NON_METHOD_NAMES =
         Collections.unmodifiableSet(
             new LinkedHashSet<>(
@@ -684,14 +696,13 @@ public final class AnalyzeNormalGroovyCases {
         String packageName, ClassSpan classSpan, List<MethodSpan> methods) {
       CaseCandidate candidate =
           baseCandidate(packageName, classSpan.name, classSpan.line);
-      candidate.title = preferredTitle(classSpan.annotations, classSpan.name);
+      candidate.title = classSpan.name;
       candidate.discoveryKind =
           methods.isEmpty()
               ? "类级用例（未发现测试方法）"
               : "类级用例（汇总 " + methods.size() + " 个测试方法）";
       List<String> metadataFields = new ArrayList<>();
       metadataFields.add(baseName(relativePath));
-      metadataFields.add(classSpan.name);
       metadataFields.add(classSpan.annotations);
       for (MethodSpan method : methods) {
         metadataFields.add(method.name);
@@ -813,10 +824,6 @@ public final class AnalyzeNormalGroovyCases {
           .find();
     }
 
-    private static String preferredTitle(String annotations, String fallback) {
-      Matcher matcher = ANNOTATION_TITLE.matcher(annotations);
-      return matcher.find() ? matcher.group(2).trim() : fallback;
-    }
   }
 
   private enum TokenType {
@@ -1165,8 +1172,9 @@ public final class AnalyzeNormalGroovyCases {
       rows.add(
           Arrays.asList(
               "疑似从无原则",
-              "只有名称/注解标题明确命中关键词，或出现明确异常测试断言时才排除；"
-                  + "普通正文、throw/catch、解析失败或无法判断的场景全部纳入导出并提示复核。"));
+              "class 后的类名作为标题并优先判定；只有标题、文件/方法名、注解标题明确命中关键词，"
+                  + "或出现明确异常测试断言时才排除；普通正文、throw/catch、解析失败或无法判断的场景"
+                  + "全部纳入导出并提示复核。"));
       rows.add(
           Arrays.asList(
               "分析边界",

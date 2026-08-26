@@ -80,6 +80,12 @@ printf '%s\n' \
   '' \
   '    @Test(description = "Completes without StatusNew")' \
   '    void testCompletesWithoutStatusNew() { assert true }' \
+  '}' \
+  '' \
+  '@Test(description = "User-visible alias")' \
+  'class FrozenCommentCase {' \
+  '    @Test(description = "Contains frozen narrative")' \
+  '    void testNormal() { println "frozen account" }' \
   '}' >"${source_root}/account/LoginSpec.groovy"
 
 printf '%s\n' \
@@ -125,8 +131,8 @@ scope_run_output="$({
   java -cp "${compiled_classes}:${POI_CLASSPATH}" AnalyzeNormalGroovyCases \
     --output "${scope_output_file}"
 })"
-grep -Fq 'Scanned 5 Groovy file(s) and 6 case candidate(s).' <<<"${run_output}"
-grep -Fq 'Exported 4 included case(s); 2 candidate(s) were excluded.' <<<"${run_output}"
+grep -Fq 'Scanned 5 Groovy file(s) and 7 case candidate(s).' <<<"${run_output}"
+grep -Fq 'Exported 4 included case(s); 3 candidate(s) were excluded.' <<<"${run_output}"
 grep -Fq "1 file(s) require review; see the '扫描问题' worksheet." <<<"${run_output}"
 grep -Fq "Source root: ${scope_workspace}/groovy-test" <<<"${scope_run_output}"
 grep -Fq 'Scanned 1 Groovy file(s) and 1 case candidate(s).' <<<"${scope_run_output}"
@@ -157,7 +163,7 @@ const normalCases = xlsxModule.utils.sheet_to_json(workbook.Sheets["导出用例
 const excludedCases = xlsxModule.utils.sheet_to_json(workbook.Sheets["排除明细"]);
 const issues = xlsxModule.utils.sheet_to_json(workbook.Sheets["扫描问题"]);
 
-if (normalCases.length !== 4 || excludedCases.length !== 2 || issues.length !== 1) {
+if (normalCases.length !== 4 || excludedCases.length !== 3 || issues.length !== 1) {
   throw new Error("Unexpected workbook row counts");
 }
 const normalSignalsCase = normalCases.find((row) => row["类名"] === "NormalSignalsSpec");
@@ -181,6 +187,15 @@ if (!String(loginCases[0]["命中关键词"]).includes("statuspendingactive")) {
 }
 if (!excludedCases.some((row) => row["类名"] === "SuspendedAccountCase")) {
   throw new Error("Negative class name was not excluded");
+}
+const frozenCommentCase = excludedCases.find(
+  (row) => row["类名"] === "FrozenCommentCase",
+);
+if (frozenCommentCase?.["用例标题"] !== "FrozenCommentCase") {
+  throw new Error("The class name after the class keyword was not used as the case title");
+}
+if (frozenCommentCase?.["明确证据"] !== "标题（class 后的类名）明确命中：frozen") {
+  throw new Error("A title keyword was still reported as a comment/string-only signal");
 }
 if (loginCases.some((row) => row["包名"] !== "sample.account")) {
   throw new Error("Package parsing crossed the declaration line into an import");
