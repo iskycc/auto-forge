@@ -45,6 +45,8 @@ and known limitations.
   page read it before completion. Platform settings E2E now verifies an immediate time-zone update.
 - Hardened the batch-shared Runner input E2E flow to wait for the JAR import page to hydrate before
   selecting and scanning the fixture, eliminating the hosted-CI race against disabled controls.
+- Updated the dense-layout browser guard to exercise quality-insight date filters through their
+  platform-time-zone labels instead of the retired browser-local labels.
 - Added application and database coverage for in-progress diagnostic history, permission-bounded log
   targets, platform time-zone compatibility, configured calendar boundaries, capitalization-preserving
   failure signatures and automatic v3 analytics-fact rebuilds.

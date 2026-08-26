@@ -527,8 +527,8 @@ test("specified dense pages expose stable product controls", async ({ page }) =>
   await expect(page.locator(".insight-metric-danger")).toContainText("方法失败率");
   const flakyFilter = page.locator(".insight-flaky-filter");
   await expect(flakyFilter.getByLabel("指定任务")).toBeVisible();
-  await flakyFilter.getByLabel("开始时间（本地）").fill("2026-08-01T00:00");
-  await flakyFilter.getByLabel("结束时间（本地）").fill("2026-08-24T23:59");
+  await flakyFilter.getByLabel("开始时间（平台时区）").fill("2026-08-01T00:00");
+  await flakyFilter.getByLabel("结束时间（平台时区）").fill("2026-08-24T23:59");
   await flakyFilter.getByRole("button", { name: "筛选不稳定用例" }).click();
   await expect(page).toHaveURL(/flakyCompletedAfter=.*flakyCompletedBefore=/u);
   await expect(page.locator(".insight-flaky-scope")).toContainText("2026");
