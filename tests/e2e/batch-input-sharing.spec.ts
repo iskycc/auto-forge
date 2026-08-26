@@ -319,10 +319,12 @@ async function importJavaCasesJar(page: Page): Promise<void> {
   await ensureProjectHierarchy(page);
   await uploadAdapterDependencies(page);
   await page.goto(`/cases/import?projectId=${encodeURIComponent(DEFAULT_PROJECT_ID)}`);
-  await page
-    .locator('input[type="file"]')
-    .setInputFiles(requiredEnvironment("E2E_BATCH_SHARE_TEST_JAR"));
-  await page.getByRole("button", { name: "扫描测试类" }).click();
+  const jarInput = page.locator('input[type="file"]');
+  await expect(jarInput).toBeEnabled();
+  await jarInput.setInputFiles(requiredEnvironment("E2E_BATCH_SHARE_TEST_JAR"));
+  const inspectButton = page.getByRole("button", { name: "扫描测试类" });
+  await expect(inspectButton).toBeEnabled();
+  await inspectButton.click();
   await expect(page.getByText("com.autoforge.javacases.JavaCasesFixture")).toBeVisible({
     timeout: 20_000,
   });

@@ -43,6 +43,8 @@ and known limitations.
 - Extended the Lite Playwright all-rounds flow through a live manual rerun: the Runner claims the
   hidden batch, uploads an in-progress log chunk, and both the source log dialog and permanent log
   page read it before completion. Platform settings E2E now verifies an immediate time-zone update.
+- Hardened the batch-shared Runner input E2E flow to wait for the JAR import page to hydrate before
+  selecting and scanning the fixture, eliminating the hosted-CI race against disabled controls.
 - Added application and database coverage for in-progress diagnostic history, permission-bounded log
   targets, platform time-zone compatibility, configured calendar boundaries, capitalization-preserving
   failure signatures and automatic v3 analytics-fact rebuilds.
