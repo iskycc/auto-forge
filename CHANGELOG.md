@@ -29,6 +29,9 @@ and known limitations.
   Authenticated users with log-read and run-create permission can launch the hidden diagnostic rerun
   directly; anonymous readers are directed to sign in and are never allowed to execute through the
   permanent token alone.
+- The standalone normal-Groovy analyzer now uses the identifier immediately following `class` as the
+  case title and evaluates that title before annotation descriptions or narrative text. Duplicate
+  keyword evidence is suppressed when the class title already provides the decisive match.
 
 ### Compatibility
 
