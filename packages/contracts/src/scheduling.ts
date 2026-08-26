@@ -51,6 +51,16 @@ export const createRunBatchInputSchema = z
 
 export type CreateRunBatchInput = z.input<typeof createRunBatchInputSchema>;
 
+export const rerunFinalFailuresInputSchema = z
+  .object({
+    concurrency: z.number().int().min(1).max(10_000),
+    enableRetryConcurrencyRules: z.boolean().default(true),
+    enableRoundRecovery: z.boolean().default(true),
+  })
+  .strict();
+
+export type RerunFinalFailuresInput = z.input<typeof rerunFinalFailuresInputSchema>;
+
 export const createSingleCaseRunInputSchema = z
   .object({
     ...executionInputFields,

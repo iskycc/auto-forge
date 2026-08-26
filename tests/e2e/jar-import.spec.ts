@@ -1026,7 +1026,7 @@ public class MixedVisibleTest {
       "TestCase Run Failed Stack Base64",
     );
     const roundLogNavigation = anonymousPage.getByRole("navigation", {
-      name: "同一用例的轮次日志",
+      name: "同一用例的执行历史",
     });
     await expect(roundLogNavigation).toBeVisible();
     const firstRoundLink = roundLogNavigation.getByRole("link", { name: /第 1 轮.*失败/u });

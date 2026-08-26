@@ -1,8 +1,10 @@
 import {
   createRunBatchInputSchema,
   createSingleCaseRunInputSchema,
+  rerunFinalFailuresInputSchema,
   type CreateRunBatchInput,
   type CreateSingleCaseRunInput,
+  type RerunFinalFailuresInput,
   type RunBatchPreflightBlocker,
   type RunBatchPreflightResult,
 } from "@autoforge/contracts";
@@ -20,6 +22,7 @@ import {
   type CaseSuiteDetails,
   type RunBatch,
   type RunBatchDetails,
+  type RunBatchRoundConcurrencySource,
   type RunnerCompatibilityIssue,
   type SchedulingDecision,
   type SchedulingEventType,
@@ -346,14 +349,195 @@ export class RunBatchSchedulingService {
 
   async get(batchId: string, projectIds?: readonly string[]): Promise<RunBatchDetails> {
     const batch = await this.batches.get(batchId, projectIds);
-    if (!batch) throw new DomainError("RUN_BATCH_NOT_FOUND", "指定的执行批次不存在。");
+    if (!batch || batch.kind === "case_log_rerun") {
+      throw new DomainError("RUN_BATCH_NOT_FOUND", "指定的执行批次不存在。");
+    }
     return batch;
   }
 
   async getSummary(batchId: string, projectIds?: readonly string[]): Promise<RunBatch> {
     const batch = await this.batches.getSummary(batchId, projectIds);
-    if (!batch) throw new DomainError("RUN_BATCH_NOT_FOUND", "指定的执行批次不存在。");
+    if (!batch || batch.kind === "case_log_rerun") {
+      throw new DomainError("RUN_BATCH_NOT_FOUND", "指定的执行批次不存在。");
+    }
     return batch;
+  }
+
+  async rerunCaseFromAttempt(
+    attemptId: string,
+    requestedBy: NonNullable<RunBatch["requestedBy"]>,
+  ): Promise<RunBatch> {
+    const source = await this.batches.resolveAttemptRerunSource(attemptId);
+    if (!source) throw new DomainError("RUN_ATTEMPT_NOT_FOUND", "指定的执行日志不存在。");
+    if (source.attemptStatus === "assigned" || source.attemptStatus === "running") {
+      throw new DomainError("RUN_ATTEMPT_NOT_TERMINAL", "用例执行完成后才能重新执行。");
+    }
+    const sourceBatch = await this.batches.get(source.batchId);
+    if (!sourceBatch) throw new DomainError("RUN_BATCH_NOT_FOUND", "指定的执行批次不存在。");
+    const rootBatchId =
+      sourceBatch.kind === "case_log_rerun" ? sourceBatch.parentBatchId : source.batchId;
+    const rootExecutionRunId =
+      sourceBatch.kind === "case_log_rerun"
+        ? sourceBatch.sourceExecutionRunId
+        : source.executionRunId;
+    if (!rootBatchId || !rootExecutionRunId) {
+      throw new DomainError("RUN_RERUN_SOURCE_INVALID", "无法定位原始用例执行快照。");
+    }
+    const snapshot = await this.batches.getRerunSnapshot(rootBatchId, {
+      executionRunId: rootExecutionRunId,
+    });
+    if (!snapshot) throw new DomainError("RUN_BATCH_NOT_FOUND", "原始执行批次不存在。");
+    const runIndex = snapshot.runs.findIndex((run) => run.id === rootExecutionRunId);
+    const run = snapshot.runs[runIndex];
+    if (!run || !snapshot.batch.policy) {
+      throw new DomainError("RUN_RERUN_SOURCE_INVALID", "原始执行配置快照不完整，无法重新执行。");
+    }
+    return this.createDerivedBatch({
+      snapshot,
+      kind: "case_log_rerun",
+      parentBatchId: rootBatchId,
+      sourceExecutionRunId: rootExecutionRunId,
+      requestedBy,
+      suiteName: `${snapshot.batch.suiteName} · ${run.displayName} 诊断重跑`,
+      retryLimit: 0,
+      retryMode: "immediate",
+      policy: {
+        ...snapshot.batch.policy,
+        concurrency: 1,
+        runnerLabels: [...snapshot.batch.policy.runnerLabels],
+        artifactPatterns: [...snapshot.batch.policy.artifactPatterns],
+        retryConcurrencyRules: [],
+      },
+      roundRecoveries: [],
+      selectedRuns: [{ run, sourceIndex: runIndex }],
+    });
+  }
+
+  async getAttemptRerunContext(attemptId: string): Promise<{ projectId: string }> {
+    const source = await this.batches.resolveAttemptRerunSource(attemptId);
+    if (!source) throw new DomainError("RUN_ATTEMPT_NOT_FOUND", "指定的执行日志不存在。");
+    const batch = await this.batches.getSummary(source.batchId);
+    if (!batch) throw new DomainError("RUN_BATCH_NOT_FOUND", "指定的执行批次不存在。");
+    if (batch.kind !== "case_log_rerun") return { projectId: batch.projectId };
+    if (!batch.parentBatchId) {
+      throw new DomainError("RUN_RERUN_SOURCE_INVALID", "无法定位原始用例执行快照。");
+    }
+    const parent = await this.batches.getSummary(batch.parentBatchId);
+    if (!parent) throw new DomainError("RUN_BATCH_NOT_FOUND", "原始执行批次不存在。");
+    return { projectId: parent.projectId };
+  }
+
+  async rerunFinalFailures(
+    batchId: string,
+    input: RerunFinalFailuresInput,
+    requestedBy: NonNullable<RunBatch["requestedBy"]>,
+  ): Promise<RunBatch> {
+    const validated = rerunFinalFailuresInputSchema.parse(input);
+    const snapshot = await this.batches.getRerunSnapshot(batchId, { finalFailuresOnly: true });
+    if (!snapshot || snapshot.batch.kind === "case_log_rerun") {
+      throw new DomainError("RUN_BATCH_NOT_FOUND", "指定的执行批次不存在。");
+    }
+    if (!isTerminalBatch(snapshot.batch.status)) {
+      throw new DomainError("RUN_BATCH_NOT_TERMINAL", "任务完全结束后才能重跑最后失败用例。");
+    }
+    if (!snapshot.batch.policy) {
+      throw new DomainError("RUN_RERUN_SOURCE_INVALID", "原始执行配置快照不完整，无法重新执行。");
+    }
+    const selectedRuns = snapshot.runs.map((run, sourceIndex) => ({ run, sourceIndex }));
+    if (selectedRuns.length === 0) {
+      throw new DomainError("RUN_BATCH_NO_FINAL_FAILURES", "最后一轮没有可重新执行的失败用例。");
+    }
+    return this.createDerivedBatch({
+      snapshot,
+      kind: "final_failure_rerun",
+      parentBatchId: batchId,
+      requestedBy,
+      suiteName: `${snapshot.batch.suiteName} · 最后一轮失败重跑`,
+      retryLimit: snapshot.batch.retryLimit,
+      retryMode: snapshot.batch.retryMode,
+      policy: {
+        ...snapshot.batch.policy,
+        concurrency: validated.concurrency,
+        runnerLabels: [...snapshot.batch.policy.runnerLabels],
+        artifactPatterns: [...snapshot.batch.policy.artifactPatterns],
+        retryConcurrencyRules: validated.enableRetryConcurrencyRules
+          ? (snapshot.batch.policy.retryConcurrencyRules ?? []).map((rule) => ({ ...rule }))
+          : [],
+      },
+      roundRecoveries: validated.enableRoundRecovery ? snapshot.roundRecoveries : [],
+      selectedRuns,
+    });
+  }
+
+  private async createDerivedBatch(input: {
+    snapshot: NonNullable<Awaited<ReturnType<RunBatchRepository["getRerunSnapshot"]>>>;
+    kind: "case_log_rerun" | "final_failure_rerun";
+    parentBatchId: string;
+    sourceExecutionRunId?: string;
+    requestedBy: NonNullable<RunBatch["requestedBy"]>;
+    suiteName: string;
+    retryLimit: number;
+    retryMode: "immediate" | "round";
+    policy: NonNullable<RunBatch["policy"]>;
+    roundRecoveries: NonNullable<import("./ports").CreateRunBatchRecord["roundRecoveries"]>;
+    selectedRuns: Array<{
+      run: import("./ports").CreateRunBatchRecord["runs"][number];
+      sourceIndex: number;
+    }>;
+  }): Promise<RunBatch> {
+    const createdAt = this.clock.now().toISOString();
+    const batchId = this.ids.next();
+    const runs = input.selectedRuns.map(({ run }) => ({ ...run, id: this.ids.next() }));
+    await this.batches.create({
+      id: batchId,
+      projectId: input.snapshot.batch.projectId,
+      eventId: this.ids.next(),
+      suiteId: input.snapshot.batch.suiteId,
+      suiteName: input.suiteName,
+      suiteVersion: input.snapshot.batch.suiteVersion,
+      kind: input.kind,
+      parentBatchId: input.parentBatchId,
+      ...(input.sourceExecutionRunId ? { sourceExecutionRunId: input.sourceExecutionRunId } : {}),
+      requestedBy: input.requestedBy,
+      retryLimit: input.retryLimit,
+      retryMode: input.retryMode,
+      priority: input.snapshot.batch.priority,
+      queueTimeoutMs: input.snapshot.batch.queueTimeoutMs,
+      claimTimeoutMs: input.snapshot.batch.claimTimeoutMs,
+      executionTimeoutMs: input.snapshot.batch.executionTimeoutMs,
+      uploadTimeoutMs: input.snapshot.batch.uploadTimeoutMs,
+      // 产品级执行环境和密文已经退役；派生批次只继承当前仍受支持的任务快照。
+      environmentVariables: [],
+      secretBindings: [],
+      runnerIds: [...input.snapshot.batch.selectedRunnerIds],
+      policy: input.policy,
+      roundRecoveries: input.roundRecoveries.map((recovery) => ({ ...recovery })),
+      ...(input.snapshot.adapterRuntime
+        ? {
+            adapterRuntimeSnapshot: {
+              ...input.snapshot.adapterRuntime,
+              environmentAddresses: input.selectedRuns.map(
+                ({ sourceIndex }) =>
+                  input.snapshot.adapterRuntime!.environmentAddresses[sourceIndex] ?? "",
+              ),
+            },
+          }
+        : {}),
+      runs,
+      dispatchJob: {
+        schemaVersion: 1,
+        messageId: this.ids.next(),
+        runId: batchId,
+        attempt: 1,
+        createdAt,
+        priority: input.snapshot.batch.priority,
+        deduplicationKey: `dispatch-batch:${batchId}:1`,
+        kind: "dispatch-run",
+        payload: { batchId },
+      },
+      createdAt,
+    });
+    return this.schedule(batchId);
   }
 
   async schedule(batchId: string): Promise<RunBatch> {
@@ -391,6 +575,11 @@ export class RunBatchSchedulingService {
     if (snapshot.queuedRuns.length > 0) {
       // 批次策略的并发上限按在途（assigned+running）run 数扣减；assignedRuns 已包含 running。
       let effectiveBatchConcurrency = snapshot.batch.policy?.concurrency;
+      let roundConcurrencySource: RunBatchRoundConcurrencySource = "base";
+      let activeConcurrencyRuleId: string | undefined;
+      let previousConcurrency: number | undefined;
+      let concurrencyTransitionEvent:
+        { id: string; message: string; payload: Record<string, unknown> } | undefined;
       if (snapshot.batch.policy) {
         const retryContext = snapshot.retryContext ?? {
           executionRound: snapshot.batch.currentRound,
@@ -418,9 +607,42 @@ export class RunBatchSchedulingService {
             return { batch, reserved: 0 };
           }
           effectiveBatchConcurrency = activated.concurrency;
+          roundConcurrencySource = "rule_transition";
+          activeConcurrencyRuleId = activated.ruleId;
+          previousConcurrency =
+            snapshot.retryConcurrencyState?.concurrency ?? snapshot.batch.policy.concurrency;
+          concurrencyTransitionEvent = {
+            id: this.ids.next(),
+            message: `第 ${retryContext.executionRound} 轮触发动态并发规则，并发数由 ${previousConcurrency} 调整为 ${activated.concurrency}`,
+            payload: {
+              executionRound: retryContext.executionRound,
+              ruleId: activated.ruleId,
+              previousConcurrency,
+              concurrency: activated.concurrency,
+              previousRoundPassRate: retryContext.previousRoundPassRate,
+              remainingRuns: retryContext.remainingRuns,
+            },
+          };
         } else {
           effectiveBatchConcurrency = decision.concurrency;
+          if (decision.activeState) {
+            roundConcurrencySource =
+              decision.activeState.activatedRound === retryContext.executionRound
+                ? "rule_transition"
+                : "inherited_rule";
+            activeConcurrencyRuleId = decision.activeState.ruleId;
+          }
         }
+        await this.batches.recordRoundConcurrency({
+          batchId,
+          round: retryContext.executionRound,
+          concurrency: effectiveBatchConcurrency,
+          source: roundConcurrencySource,
+          ...(activeConcurrencyRuleId ? { ruleId: activeConcurrencyRuleId } : {}),
+          ...(previousConcurrency === undefined ? {} : { previousConcurrency }),
+          ...(concurrencyTransitionEvent ? { transitionEvent: concurrencyTransitionEvent } : {}),
+          recordedAt: now.toISOString(),
+        });
       }
       const suiteMaximumAssignments =
         effectiveBatchConcurrency === undefined
@@ -974,6 +1196,11 @@ export class RunBatchSchedulingService {
 function delayedStart(createdAt: string, delaySeconds: number): string {
   return new Date(Date.parse(createdAt) + delaySeconds * 1_000).toISOString();
 }
+
+function isTerminalBatch(status: RunBatch["status"]): boolean {
+  return status === "succeeded" || status === "failed" || status === "cancelled";
+}
+
 function usesTaskAdapter(
   adapter:
     | {

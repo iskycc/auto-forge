@@ -21,6 +21,7 @@ export type ExecutionBatchView = Pick<
   | "runs"
   | "attempts"
   | "roundRecoveries"
+  | "roundConcurrencies"
 >;
 
 export function toExecutionBatchView(batch: RunBatchDetails): ExecutionBatchView {
@@ -42,5 +43,6 @@ export function toExecutionBatchView(batch: RunBatchDetails): ExecutionBatchView
     runs: batch.runs,
     attempts: batch.attempts,
     roundRecoveries: batch.roundRecoveries,
+    roundConcurrencies: batch.roundConcurrencies ?? [],
   };
 }

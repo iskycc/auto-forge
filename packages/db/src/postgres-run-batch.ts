@@ -26,6 +26,7 @@ import {
   type RunBatchDetails,
   type RunBatchExecutionPolicy,
   type RunBatchRoundRecovery,
+  type RunBatchRoundConcurrency,
   type RetryConcurrencyState,
   type RunBatchStatusEvent,
   type RunBatchStatus,
@@ -58,6 +59,7 @@ import {
   pgRunAttempts,
   pgRunBatchRunners,
   pgRunBatchRetryConcurrencyStates,
+  pgRunBatchRoundConcurrencies,
   pgRunBatches,
   pgRunBatchStatusEvents,
   pgRunners,
@@ -112,13 +114,15 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
     const executionTimeoutMs = record.executionTimeoutMs ?? 3_600_000;
     const uploadTimeoutMs = record.uploadTimeoutMs ?? 600_000;
     const scheduledFor = record.scheduledFor ?? record.createdAt;
-    const adapterRuntime = await postgresProjectAdapterRuntime(
-      this.handle,
-      record.projectId ?? DEFAULT_PROJECT_ID,
-      record.adapter,
-      record.runs,
-      record.policy?.projectVersionId,
-    );
+    const adapterRuntime = record.adapterRuntimeSnapshot
+      ? runtimeSnapshotForRuns(record.adapterRuntimeSnapshot, record.runs)
+      : await postgresProjectAdapterRuntime(
+          this.handle,
+          record.projectId ?? DEFAULT_PROJECT_ID,
+          record.adapter,
+          record.runs,
+          record.policy?.projectVersionId,
+        );
     await this.handle.db.transaction(async (transaction) => {
       // 独立序列生成展示编号，避免并发创建竞争；nextval 不参与回滚，空洞不影响展示。
       const sequenceResult = await transaction.execute(
@@ -134,6 +138,11 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
         suiteId: record.suiteId,
         suiteName: record.suiteName,
         suiteVersion: record.suiteVersion,
+        batchKind: record.kind ?? "standard",
+        parentBatchId: record.parentBatchId,
+        sourceExecutionRunId: record.sourceExecutionRunId,
+        requestedByUsername: record.requestedBy?.username,
+        requestedBySource: record.requestedBy?.source,
         status: "queued",
         retryLimit: record.retryLimit,
         retryMode: record.retryMode ?? "immediate",
@@ -158,6 +167,13 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
         toStatus: "queued",
         batchVersion: 1,
         reason: "batch.created",
+        recordedAt: record.createdAt,
+      });
+      await transaction.insert(pgRunBatchRoundConcurrencies).values({
+        batchId: record.id,
+        executionRound: 1,
+        concurrency: record.policy?.concurrency ?? 4,
+        source: "base",
         recordedAt: record.createdAt,
       });
       if (record.runnerIds.length > 0) {
@@ -226,6 +242,7 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
       .from(pgRunBatches)
       .where(
         and(
+          sql`${pgRunBatches.batchKind} <> 'case_log_rerun'`,
           ...(projectIds ? [inArray(pgRunBatches.projectId, [...projectIds])] : []),
           ...(projectVersionId
             ? [
@@ -244,6 +261,7 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
     if (input.projectIds?.length === 0) return { items: [] };
     const cursor = decodeRunBatchCursor(input.cursor);
     const conditions = [
+      sql`${pgRunBatches.batchKind} <> 'case_log_rerun'`,
       ...(input.projectIds ? [inArray(pgRunBatches.projectId, [...input.projectIds])] : []),
       ...(input.projectId ? [eq(pgRunBatches.projectId, input.projectId)] : []),
       ...(input.projectVersionId
@@ -338,13 +356,122 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
        ORDER BY after_round, rule_id`,
       [batchId],
     );
+    const roundConcurrencies = await this.handle.db
+      .select()
+      .from(pgRunBatchRoundConcurrencies)
+      .where(eq(pgRunBatchRoundConcurrencies.batchId, batchId))
+      .orderBy(pgRunBatchRoundConcurrencies.executionRound);
     return {
       ...(await this.mapBatch(batchRow)),
       runs: runRows.map(toExecutionRun),
       attempts: attemptRows.map(toRunAttempt),
       roundRecoveries: roundRecoveries.rows.map(toRoundRecoveryDetail),
+      roundConcurrencies: roundConcurrencies.map(toRoundConcurrency),
       statusHistory,
     };
+  }
+
+  async resolveAttemptRerunSource(attemptId: string) {
+    await this.ready();
+    const result = await this.handle.pool.query<{
+      batchId: string;
+      executionRunId: string;
+      attemptStatus: RunAttempt["status"];
+    }>(
+      `SELECT run.batch_id AS "batchId", attempt.execution_run_id AS "executionRunId",
+              attempt.status AS "attemptStatus"
+       FROM run_attempts attempt
+       JOIN execution_runs run ON run.id = attempt.execution_run_id
+       WHERE attempt.id = $1`,
+      [attemptId],
+    );
+    return result.rows[0] ?? null;
+  }
+
+  async getRerunSnapshot(
+    batchId: string,
+    selection: { executionRunId?: string; finalFailuresOnly?: boolean },
+  ) {
+    await this.ready();
+    const batch = await this.getSummary(batchId);
+    if (!batch) return null;
+    const [runtimeRow] = await this.handle.db
+      .select({ adapterRuntimeJson: pgRunBatches.adapterRuntimeJson })
+      .from(pgRunBatches)
+      .where(eq(pgRunBatches.id, batchId))
+      .limit(1);
+    const runtime = parseProjectAdapterRuntime(runtimeRow?.adapterRuntimeJson ?? null);
+    const runSelection = and(
+      eq(pgExecutionRuns.batchId, batchId),
+      ...(selection.executionRunId ? [eq(pgExecutionRuns.id, selection.executionRunId)] : []),
+      ...(selection.finalFailuresOnly ? [finalFailureRunCondition(pgExecutionRuns)] : []),
+    );
+    const runRows = await this.handle.db
+      .select()
+      .from(pgExecutionRuns)
+      .where(runSelection)
+      .orderBy(pgExecutionRuns.createdAt, pgExecutionRuns.id);
+    const recoveries = await this.handle.pool.query<{
+      ruleId: string;
+      afterRound: number;
+      jenkinsJobUrl: string;
+      apiKeyCiphertext: string;
+      waitMinutes: number;
+    }>(
+      `SELECT rule_id AS "ruleId", after_round AS "afterRound",
+              jenkins_job_url AS "jenkinsJobUrl", api_key_ciphertext AS "apiKeyCiphertext",
+              wait_minutes AS "waitMinutes"
+       FROM run_batch_round_recoveries
+       WHERE batch_id = $1 ORDER BY after_round, rule_id`,
+      [batchId],
+    );
+    return {
+      batch,
+      ...(runtime
+        ? {
+            adapterRuntime: {
+              suiteName: runtime.suiteName,
+              testName: runtime.testName,
+              environmentAddresses: runRows.map((run) =>
+                adapterEnvironmentAddress(runtime, run.id),
+              ),
+              ...(runtime.jdk ? { jdk: { ...runtime.jdk } } : {}),
+              ...(runtime.jarBundle ? { jarBundle: { ...runtime.jarBundle } } : {}),
+            },
+          }
+        : {}),
+      roundRecoveries: recoveries.rows,
+      runs: runRows.map((run) => ({
+        id: run.id,
+        caseDefinitionId: run.caseDefinitionId,
+        caseVersion: run.caseVersion,
+        displayName: run.displayName,
+        className: run.className,
+        parameters: stringRecord(run.parametersJson),
+      })),
+    };
+  }
+
+  async listCaseLogRerunBatches(
+    parentBatchId: string,
+    sourceExecutionRunId: string,
+    limit: number,
+  ): Promise<RunBatchDetails[]> {
+    await this.ready();
+    const rows = await this.handle.db
+      .select({ id: pgRunBatches.id })
+      .from(pgRunBatches)
+      .where(
+        and(
+          eq(pgRunBatches.batchKind, "case_log_rerun"),
+          eq(pgRunBatches.parentBatchId, parentBatchId),
+          eq(pgRunBatches.sourceExecutionRunId, sourceExecutionRunId),
+        ),
+      )
+      .orderBy(pgRunBatches.createdAt, pgRunBatches.id)
+      .limit(Math.min(Math.max(1, limit), 500));
+    const batches = await Promise.all(rows.map(({ id }) => this.get(id)));
+    return batches.filter((batch): batch is RunBatchDetails => batch !== null);
   }
 
   async getSummary(batchId: string, projectIds?: readonly string[]): Promise<RunBatch | null> {
@@ -538,6 +665,129 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
           set: { ...input.state, updatedAt: input.updatedAt },
         });
       return input.state;
+    });
+  }
+
+  async recordRoundConcurrency(
+    input: Parameters<RunBatchRepository["recordRoundConcurrency"]>[0],
+  ): Promise<"created" | "existing"> {
+    await this.ready();
+    return this.handle.db.transaction(async (transaction) => {
+      const [existing] = await transaction
+        .select({
+          batchId: pgRunBatchRoundConcurrencies.batchId,
+          concurrency: pgRunBatchRoundConcurrencies.concurrency,
+          source: pgRunBatchRoundConcurrencies.source,
+          ruleId: pgRunBatchRoundConcurrencies.ruleId,
+        })
+        .from(pgRunBatchRoundConcurrencies)
+        .where(
+          and(
+            eq(pgRunBatchRoundConcurrencies.batchId, input.batchId),
+            eq(pgRunBatchRoundConcurrencies.executionRound, input.round),
+          ),
+        )
+        .for("update");
+      if (existing) {
+        if (input.transitionEvent && !sameRoundConcurrencyTransition(existing, input)) {
+          await transaction
+            .update(pgRunBatchRoundConcurrencies)
+            .set({
+              concurrency: input.concurrency,
+              source: "rule_transition",
+              ruleId: input.ruleId,
+              previousConcurrency: input.previousConcurrency,
+              recordedAt: input.recordedAt,
+            })
+            .where(
+              and(
+                eq(pgRunBatchRoundConcurrencies.batchId, input.batchId),
+                eq(pgRunBatchRoundConcurrencies.executionRound, input.round),
+              ),
+            );
+          await transaction.execute(sql`
+            INSERT INTO scheduling_events
+              (id, batch_id, event_type, message, payload_json, recorded_at)
+            VALUES
+              (${input.transitionEvent.id}, ${input.batchId},
+               'retry_concurrency_changed', ${input.transitionEvent.message},
+               ${JSON.stringify(input.transitionEvent.payload)}::jsonb, ${input.recordedAt})
+            ON CONFLICT (id) DO NOTHING
+          `);
+        }
+        return "existing";
+      }
+      const inserted = await transaction
+        .insert(pgRunBatchRoundConcurrencies)
+        .values({
+          batchId: input.batchId,
+          executionRound: input.round,
+          concurrency: input.concurrency,
+          source: input.source,
+          ruleId: input.ruleId,
+          previousConcurrency: input.previousConcurrency,
+          recordedAt: input.recordedAt,
+        })
+        .onConflictDoNothing()
+        .returning({ batchId: pgRunBatchRoundConcurrencies.batchId });
+      if (inserted.length === 0) {
+        const [concurrent] = await transaction
+          .select({
+            concurrency: pgRunBatchRoundConcurrencies.concurrency,
+            source: pgRunBatchRoundConcurrencies.source,
+            ruleId: pgRunBatchRoundConcurrencies.ruleId,
+          })
+          .from(pgRunBatchRoundConcurrencies)
+          .where(
+            and(
+              eq(pgRunBatchRoundConcurrencies.batchId, input.batchId),
+              eq(pgRunBatchRoundConcurrencies.executionRound, input.round),
+            ),
+          )
+          .limit(1);
+        if (
+          input.transitionEvent &&
+          concurrent &&
+          !sameRoundConcurrencyTransition(concurrent, input)
+        ) {
+          await transaction
+            .update(pgRunBatchRoundConcurrencies)
+            .set({
+              concurrency: input.concurrency,
+              source: "rule_transition",
+              ruleId: input.ruleId,
+              previousConcurrency: input.previousConcurrency,
+              recordedAt: input.recordedAt,
+            })
+            .where(
+              and(
+                eq(pgRunBatchRoundConcurrencies.batchId, input.batchId),
+                eq(pgRunBatchRoundConcurrencies.executionRound, input.round),
+              ),
+            );
+          await transaction.execute(sql`
+            INSERT INTO scheduling_events
+              (id, batch_id, event_type, message, payload_json, recorded_at)
+            VALUES
+              (${input.transitionEvent.id}, ${input.batchId},
+               'retry_concurrency_changed', ${input.transitionEvent.message},
+               ${JSON.stringify(input.transitionEvent.payload)}::jsonb, ${input.recordedAt})
+            ON CONFLICT (id) DO NOTHING
+          `);
+        }
+        return "existing";
+      }
+      if (input.transitionEvent) {
+        await transaction.execute(sql`
+          INSERT INTO scheduling_events
+            (id, batch_id, event_type, message, payload_json, recorded_at)
+          VALUES
+            (${input.transitionEvent.id}, ${input.batchId},
+             'retry_concurrency_changed', ${input.transitionEvent.message},
+             ${JSON.stringify(input.transitionEvent.payload)}::jsonb, ${input.recordedAt})
+        `);
+      }
+      return "created";
     });
   }
 
@@ -990,6 +1240,17 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
       suiteId: row.suiteId,
       suiteName: row.suiteName,
       suiteVersion: row.suiteVersion,
+      kind: row.batchKind,
+      ...(row.parentBatchId ? { parentBatchId: row.parentBatchId } : {}),
+      ...(row.sourceExecutionRunId ? { sourceExecutionRunId: row.sourceExecutionRunId } : {}),
+      ...(row.requestedByUsername && row.requestedBySource
+        ? {
+            requestedBy: {
+              username: row.requestedByUsername,
+              source: row.requestedBySource,
+            },
+          }
+        : {}),
       status: row.status,
       priority: row.priority,
       retryLimit: row.retryLimit,
@@ -1112,6 +1373,44 @@ function toRoundRecoveryDetail(row: RoundRecoveryDetailRow): RunBatchRoundRecove
     createdAt: isoTimestamp(row.created_at),
     updatedAt: isoTimestamp(row.updated_at),
   };
+}
+
+function toRoundConcurrency(
+  row: typeof pgRunBatchRoundConcurrencies.$inferSelect,
+): RunBatchRoundConcurrency {
+  return {
+    round: row.executionRound,
+    concurrency: row.concurrency,
+    source: row.source,
+    ...(row.ruleId ? { ruleId: row.ruleId } : {}),
+    ...(row.previousConcurrency === null ? {} : { previousConcurrency: row.previousConcurrency }),
+    recordedAt: isoTimestamp(row.recordedAt),
+  };
+}
+
+function sameRoundConcurrencyTransition(
+  current: { concurrency: number; source: string; ruleId: string | null },
+  input: { concurrency: number; ruleId?: string },
+): boolean {
+  return (
+    current.source === "rule_transition" &&
+    current.ruleId === (input.ruleId ?? null) &&
+    current.concurrency === input.concurrency
+  );
+}
+
+function finalFailureRunCondition(table: typeof pgExecutionRuns) {
+  return sql`COALESCE(
+    (SELECT COALESCE(attempt.outcome, attempt.status)
+       FROM run_attempts attempt
+      WHERE attempt.execution_run_id = ${table.id}
+      ORDER BY CASE WHEN COALESCE(attempt.outcome, attempt.status) = 'succeeded'
+                    THEN 0 ELSE 1 END,
+               attempt.attempt_number DESC
+      LIMIT 1),
+    ${table.terminalOutcome},
+    CASE WHEN ${table.status} IN ('succeeded','failed','cancelled') THEN ${table.status} END
+  ) IN ('failed','timed_out')`;
 }
 
 function isoTimestamp(value: DatabaseTimestamp): string {
@@ -1371,6 +1670,20 @@ async function postgresProjectAdapterRuntime(
 
 function hasTaskAdapterSettings(adapter: CreateRunBatchRecord["adapter"]): boolean {
   return adapter?.enabled === true;
+}
+
+function runtimeSnapshotForRuns(
+  snapshot: NonNullable<CreateRunBatchRecord["adapterRuntimeSnapshot"]>,
+  runs: CreateRunBatchRecord["runs"],
+): ProjectAdapterRuntime {
+  return {
+    suiteName: snapshot.suiteName,
+    testName: snapshot.testName,
+    environmentAddressByRunId: assignEnvironmentAddresses(snapshot.environmentAddresses, runs),
+    fallbackEnvironmentAddress: "",
+    ...(snapshot.jdk ? { jdk: { ...snapshot.jdk } } : {}),
+    ...(snapshot.jarBundle ? { jarBundle: { ...snapshot.jarBundle } } : {}),
+  };
 }
 
 function assignEnvironmentAddresses(

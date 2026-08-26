@@ -26,6 +26,7 @@ import {
   type RunBatchDetails,
   type RunBatchExecutionPolicy,
   type RunBatchRoundRecovery,
+  type RunBatchRoundConcurrency,
   type RetryConcurrencyState,
   type RunBatchStatusEvent,
   type RunBatchStatus,
@@ -65,6 +66,7 @@ import {
   runAttempts,
   runBatchRunners,
   runBatchRetryConcurrencyStates,
+  runBatchRoundConcurrencies,
   runBatches,
   runBatchStatusEvents,
   runners,
@@ -105,13 +107,15 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
     const executionTimeoutMs = record.executionTimeoutMs ?? 3_600_000;
     const uploadTimeoutMs = record.uploadTimeoutMs ?? 600_000;
     const scheduledFor = record.scheduledFor ?? record.createdAt;
-    const adapterRuntime = projectAdapterRuntime(
-      this.handle,
-      record.projectId ?? DEFAULT_PROJECT_ID,
-      record.adapter,
-      record.runs,
-      record.policy?.projectVersionId,
-    );
+    const adapterRuntime = record.adapterRuntimeSnapshot
+      ? runtimeSnapshotForRuns(record.adapterRuntimeSnapshot, record.runs)
+      : projectAdapterRuntime(
+          this.handle,
+          record.projectId ?? DEFAULT_PROJECT_ID,
+          record.adapter,
+          record.runs,
+          record.policy?.projectVersionId,
+        );
     runSqliteWriteTransaction(this.handle, () => {
       // SQLite 单写者下，同一事务内取 MAX+1 即为全局唯一递增编号。
       const nextSequence = (
@@ -130,6 +134,11 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
           suiteId: record.suiteId,
           suiteName: record.suiteName,
           suiteVersion: record.suiteVersion,
+          batchKind: record.kind ?? "standard",
+          parentBatchId: record.parentBatchId,
+          sourceExecutionRunId: record.sourceExecutionRunId,
+          requestedByUsername: record.requestedBy?.username,
+          requestedBySource: record.requestedBy?.source,
           status: "queued",
           retryLimit: record.retryLimit,
           retryMode: record.retryMode ?? "immediate",
@@ -146,6 +155,16 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
           scheduledFor,
           createdAt: record.createdAt,
           updatedAt: record.createdAt,
+        })
+        .run();
+      this.handle.db
+        .insert(runBatchRoundConcurrencies)
+        .values({
+          batchId: record.id,
+          executionRound: 1,
+          concurrency: record.policy?.concurrency ?? 4,
+          source: "base",
+          recordedAt: record.createdAt,
         })
         .run();
       this.handle.db
@@ -246,6 +265,7 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
       .from(runBatches)
       .where(
         and(
+          sql`${runBatches.batchKind} <> 'case_log_rerun'`,
           ...(projectIds ? [inArray(runBatches.projectId, [...projectIds])] : []),
           ...(projectVersionId
             ? [
@@ -264,6 +284,7 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
     if (input.projectIds?.length === 0) return { items: [] };
     const cursor = decodeRunBatchCursor(input.cursor);
     const conditions = [
+      sql`${runBatches.batchKind} <> 'case_log_rerun'`,
       ...(input.projectIds ? [inArray(runBatches.projectId, [...input.projectIds])] : []),
       ...(input.projectId ? [eq(runBatches.projectId, input.projectId)] : []),
       ...(input.projectVersionId
@@ -361,13 +382,126 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
          ORDER BY after_round, rule_id`,
       )
       .all(batchId) as RoundRecoveryDetailRow[];
+    const roundConcurrencies = this.handle.db
+      .select()
+      .from(runBatchRoundConcurrencies)
+      .where(eq(runBatchRoundConcurrencies.batchId, batchId))
+      .orderBy(runBatchRoundConcurrencies.executionRound)
+      .all();
     return {
       ...(await this.mapBatch(batchRow)),
       runs: runRows.map(toExecutionRun),
       attempts: attemptRows.map(toRunAttempt),
       roundRecoveries: roundRecoveries.map(toRoundRecoveryDetail),
+      roundConcurrencies: roundConcurrencies.map(toRoundConcurrency),
       statusHistory,
     };
+  }
+
+  async resolveAttemptRerunSource(attemptId: string) {
+    const row = this.handle.client
+      .prepare(
+        `SELECT run.batch_id AS batchId, attempt.execution_run_id AS executionRunId,
+                attempt.status AS attemptStatus
+         FROM run_attempts attempt
+         JOIN execution_runs run ON run.id = attempt.execution_run_id
+         WHERE attempt.id = ?`,
+      )
+      .get(attemptId) as
+      | {
+          batchId: string;
+          executionRunId: string;
+          attemptStatus: RunAttempt["status"];
+        }
+      | undefined;
+    return row ?? null;
+  }
+
+  async getRerunSnapshot(
+    batchId: string,
+    selection: { executionRunId?: string; finalFailuresOnly?: boolean },
+  ) {
+    const batch = await this.getSummary(batchId);
+    if (!batch) return null;
+    const runtimeRow = this.handle.db
+      .select({ adapterRuntimeJson: runBatches.adapterRuntimeJson })
+      .from(runBatches)
+      .where(eq(runBatches.id, batchId))
+      .get();
+    const runtime = parseProjectAdapterRuntime(runtimeRow?.adapterRuntimeJson ?? null);
+    const runSelection = and(
+      eq(executionRuns.batchId, batchId),
+      ...(selection.executionRunId ? [eq(executionRuns.id, selection.executionRunId)] : []),
+      ...(selection.finalFailuresOnly ? [finalFailureRunCondition(executionRuns)] : []),
+    );
+    const runRows = this.handle.db
+      .select()
+      .from(executionRuns)
+      .where(runSelection)
+      .orderBy(executionRuns.createdAt, executionRuns.id)
+      .all();
+    const recoveries = this.handle.client
+      .prepare(
+        `SELECT rule_id AS ruleId, after_round AS afterRound,
+                jenkins_job_url AS jenkinsJobUrl, api_key_ciphertext AS apiKeyCiphertext,
+                wait_minutes AS waitMinutes
+         FROM run_batch_round_recoveries
+         WHERE batch_id = ? ORDER BY after_round, rule_id`,
+      )
+      .all(batchId) as Array<{
+      ruleId: string;
+      afterRound: number;
+      jenkinsJobUrl: string;
+      apiKeyCiphertext: string;
+      waitMinutes: number;
+    }>;
+    return {
+      batch,
+      ...(runtime
+        ? {
+            adapterRuntime: {
+              suiteName: runtime.suiteName,
+              testName: runtime.testName,
+              environmentAddresses: runRows.map((run) =>
+                adapterEnvironmentAddress(runtime, run.id),
+              ),
+              ...(runtime.jdk ? { jdk: { ...runtime.jdk } } : {}),
+              ...(runtime.jarBundle ? { jarBundle: { ...runtime.jarBundle } } : {}),
+            },
+          }
+        : {}),
+      roundRecoveries: recoveries,
+      runs: runRows.map((run) => ({
+        id: run.id,
+        caseDefinitionId: run.caseDefinitionId,
+        caseVersion: run.caseVersion,
+        displayName: run.displayName,
+        className: run.className,
+        parameters: stringRecord(run.parametersJson),
+      })),
+    };
+  }
+
+  async listCaseLogRerunBatches(
+    parentBatchId: string,
+    sourceExecutionRunId: string,
+    limit: number,
+  ): Promise<RunBatchDetails[]> {
+    const rows = this.handle.db
+      .select({ id: runBatches.id })
+      .from(runBatches)
+      .where(
+        and(
+          eq(runBatches.batchKind, "case_log_rerun"),
+          eq(runBatches.parentBatchId, parentBatchId),
+          eq(runBatches.sourceExecutionRunId, sourceExecutionRunId),
+        ),
+      )
+      .orderBy(runBatches.createdAt, runBatches.id)
+      .limit(Math.min(Math.max(1, limit), 500))
+      .all();
+    const batches = await Promise.all(rows.map(({ id }) => this.get(id)));
+    return batches.filter((batch): batch is RunBatchDetails => batch !== null);
   }
 
   async getSummary(batchId: string, projectIds?: readonly string[]): Promise<RunBatch | null> {
@@ -545,6 +679,91 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
         })
         .run();
       return input.state;
+    });
+  }
+
+  async recordRoundConcurrency(
+    input: Parameters<RunBatchRepository["recordRoundConcurrency"]>[0],
+  ): Promise<"created" | "existing"> {
+    return runSqliteWriteTransaction(this.handle, () => {
+      const existing = this.handle.db
+        .select({
+          batchId: runBatchRoundConcurrencies.batchId,
+          concurrency: runBatchRoundConcurrencies.concurrency,
+          source: runBatchRoundConcurrencies.source,
+          ruleId: runBatchRoundConcurrencies.ruleId,
+        })
+        .from(runBatchRoundConcurrencies)
+        .where(
+          and(
+            eq(runBatchRoundConcurrencies.batchId, input.batchId),
+            eq(runBatchRoundConcurrencies.executionRound, input.round),
+          ),
+        )
+        .get();
+      if (existing) {
+        if (input.transitionEvent && !sameRoundConcurrencyTransition(existing, input)) {
+          this.handle.db
+            .update(runBatchRoundConcurrencies)
+            .set({
+              concurrency: input.concurrency,
+              source: "rule_transition",
+              ruleId: input.ruleId,
+              previousConcurrency: input.previousConcurrency,
+              recordedAt: input.recordedAt,
+            })
+            .where(
+              and(
+                eq(runBatchRoundConcurrencies.batchId, input.batchId),
+                eq(runBatchRoundConcurrencies.executionRound, input.round),
+              ),
+            )
+            .run();
+          this.handle.client
+            .prepare(
+              `INSERT INTO scheduling_events
+                (id, batch_id, event_type, message, payload_json, recorded_at)
+               VALUES (?, ?, 'retry_concurrency_changed', ?, ?, ?)
+               ON CONFLICT(id) DO NOTHING`,
+            )
+            .run(
+              input.transitionEvent.id,
+              input.batchId,
+              input.transitionEvent.message,
+              JSON.stringify(input.transitionEvent.payload),
+              input.recordedAt,
+            );
+        }
+        return "existing";
+      }
+      this.handle.db
+        .insert(runBatchRoundConcurrencies)
+        .values({
+          batchId: input.batchId,
+          executionRound: input.round,
+          concurrency: input.concurrency,
+          source: input.source,
+          ruleId: input.ruleId,
+          previousConcurrency: input.previousConcurrency,
+          recordedAt: input.recordedAt,
+        })
+        .run();
+      if (input.transitionEvent) {
+        this.handle.client
+          .prepare(
+            `INSERT INTO scheduling_events
+              (id, batch_id, event_type, message, payload_json, recorded_at)
+             VALUES (?, ?, 'retry_concurrency_changed', ?, ?, ?)`,
+          )
+          .run(
+            input.transitionEvent.id,
+            input.batchId,
+            input.transitionEvent.message,
+            JSON.stringify(input.transitionEvent.payload),
+            input.recordedAt,
+          );
+      }
+      return "created";
     });
   }
 
@@ -910,6 +1129,17 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
       suiteId: row.suiteId,
       suiteName: row.suiteName,
       suiteVersion: row.suiteVersion,
+      kind: row.batchKind,
+      ...(row.parentBatchId ? { parentBatchId: row.parentBatchId } : {}),
+      ...(row.sourceExecutionRunId ? { sourceExecutionRunId: row.sourceExecutionRunId } : {}),
+      ...(row.requestedByUsername && row.requestedBySource
+        ? {
+            requestedBy: {
+              username: row.requestedByUsername,
+              source: row.requestedBySource,
+            },
+          }
+        : {}),
       status: row.status,
       priority: row.priority,
       retryLimit: row.retryLimit,
@@ -1002,6 +1232,44 @@ function toRoundRecoveryDetail(row: RoundRecoveryDetailRow): RunBatchRoundRecove
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
+}
+
+function toRoundConcurrency(
+  row: typeof runBatchRoundConcurrencies.$inferSelect,
+): RunBatchRoundConcurrency {
+  return {
+    round: row.executionRound,
+    concurrency: row.concurrency,
+    source: row.source,
+    ...(row.ruleId ? { ruleId: row.ruleId } : {}),
+    ...(row.previousConcurrency === null ? {} : { previousConcurrency: row.previousConcurrency }),
+    recordedAt: row.recordedAt,
+  };
+}
+
+function sameRoundConcurrencyTransition(
+  current: { concurrency: number; source: string; ruleId: string | null },
+  input: { concurrency: number; ruleId?: string },
+): boolean {
+  return (
+    current.source === "rule_transition" &&
+    current.ruleId === (input.ruleId ?? null) &&
+    current.concurrency === input.concurrency
+  );
+}
+
+function finalFailureRunCondition(table: typeof executionRuns) {
+  return sql`COALESCE(
+    (SELECT COALESCE(attempt.outcome, attempt.status)
+       FROM run_attempts attempt
+      WHERE attempt.execution_run_id = ${table.id}
+      ORDER BY CASE WHEN COALESCE(attempt.outcome, attempt.status) = 'succeeded'
+                    THEN 0 ELSE 1 END,
+               attempt.attempt_number DESC
+      LIMIT 1),
+    ${table.terminalOutcome},
+    CASE WHEN ${table.status} IN ('succeeded','failed','cancelled') THEN ${table.status} END
+  ) IN ('failed','timed_out')`;
 }
 
 type FinalOutcomeCounts = {
@@ -1255,6 +1523,20 @@ function projectAdapterRuntime(
 
 function hasTaskAdapterSettings(adapter: CreateRunBatchRecord["adapter"]): boolean {
   return adapter?.enabled === true;
+}
+
+function runtimeSnapshotForRuns(
+  snapshot: NonNullable<CreateRunBatchRecord["adapterRuntimeSnapshot"]>,
+  runs: CreateRunBatchRecord["runs"],
+): ProjectAdapterRuntime {
+  return {
+    suiteName: snapshot.suiteName,
+    testName: snapshot.testName,
+    environmentAddressByRunId: assignEnvironmentAddresses(snapshot.environmentAddresses, runs),
+    fallbackEnvironmentAddress: "",
+    ...(snapshot.jdk ? { jdk: { ...snapshot.jdk } } : {}),
+    ...(snapshot.jarBundle ? { jarBundle: { ...snapshot.jarBundle } } : {}),
+  };
 }
 
 function assignEnvironmentAddresses(

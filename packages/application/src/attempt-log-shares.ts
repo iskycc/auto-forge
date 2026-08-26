@@ -1,5 +1,5 @@
-import type { SharedAttemptLogView } from "@autoforge/contracts";
-import { DomainError, runAttemptOutcome } from "@autoforge/domain";
+import type { SharedAttemptLogOutcome, SharedAttemptLogView } from "@autoforge/contracts";
+import { DomainError, runAttemptOutcome, type RunAttempt } from "@autoforge/domain";
 
 import type {
   AttemptLogShareRecord,
@@ -39,7 +39,8 @@ export class AttemptLogShareService {
 
   /**
    * 免登读取公开日志。token 以签发时的 attempt 为授权锚点，可在同一批次、同一
-   * ExecutionRun 的已完成轮次之间切换；目标 attempt 不满足该边界时统一返回 null。
+   * ExecutionRun 的已完成轮次及其手动诊断重跑之间切换；目标 attempt 不满足该边界时
+   * 统一返回 null。
    * token 无效、失效（旧记录过期或批次/attempt 已删除）时也返回 null，不向外
    * 区分失败原因。公开页无会话，不能再按项目裁剪权限。
    */
@@ -50,31 +51,63 @@ export class AttemptLogShareService {
     const now = this.clock.now().toISOString();
     const share = await this.shares.findActiveByTokenHash(this.tokens.hash(token), now);
     if (!share) return null;
-    const batch = await this.batches.get(share.batchId);
-    const sharedAttempt = batch?.attempts.find((candidate) => candidate.id === share.attemptId);
-    if (!batch || !sharedAttempt) return null;
-    const run = batch.runs.find((candidate) => candidate.id === sharedAttempt.executionRunId);
+    const anchorBatch = await this.batches.get(share.batchId);
+    const sharedAttempt = anchorBatch?.attempts.find(
+      (candidate) => candidate.id === share.attemptId,
+    );
+    if (!anchorBatch || !sharedAttempt) return null;
+    const rootBatchId =
+      anchorBatch.kind === "case_log_rerun" ? anchorBatch.parentBatchId : anchorBatch.id;
+    const rootExecutionRunId =
+      anchorBatch.kind === "case_log_rerun"
+        ? anchorBatch.sourceExecutionRunId
+        : sharedAttempt.executionRunId;
+    if (!rootBatchId || !rootExecutionRunId) return null;
+    const batch =
+      rootBatchId === anchorBatch.id ? anchorBatch : await this.batches.get(rootBatchId);
+    if (!batch) return null;
+    const run = batch.runs.find((candidate) => candidate.id === rootExecutionRunId);
     if (!run) return null;
-    const completedAttempts = batch.attempts
-      .filter((candidate) => candidate.executionRunId === run.id)
-      .map((candidate) => ({ attempt: candidate, outcome: runAttemptOutcome(candidate) }))
-      .filter(
-        (
-          candidate,
-        ): candidate is {
-          attempt: (typeof batch.attempts)[number];
-          outcome: NonNullable<ReturnType<typeof runAttemptOutcome>>;
-        } => candidate.outcome !== undefined,
-      )
+    const diagnosticBatches = await this.batches.listCaseLogRerunBatches(
+      rootBatchId,
+      rootExecutionRunId,
+      500,
+    );
+    const familyAttempts = [
+      ...batch.attempts
+        .filter((candidate) => candidate.executionRunId === run.id)
+        .map((attempt) => ({
+          attempt,
+          kind: "round" as const,
+          requestedBy: null,
+        })),
+      ...diagnosticBatches.flatMap((diagnosticBatch) =>
+        diagnosticBatch.attempts.map((attempt) => ({
+          attempt,
+          kind: "manual_rerun" as const,
+          requestedBy: diagnosticBatch.requestedBy ?? null,
+        })),
+      ),
+    ];
+    const completedAttempts: Array<{
+      attempt: RunAttempt;
+      outcome: SharedAttemptLogOutcome;
+      kind: "round" | "manual_rerun";
+      requestedBy: { username: string; source: "local" | "ldap" } | null;
+    }> = familyAttempts
+      .flatMap((candidate) => {
+        const outcome = runAttemptOutcome(candidate.attempt);
+        return outcome ? [{ ...candidate, outcome }] : [];
+      })
       .sort((left, right) => {
-        const byRound = left.attempt.attemptNumber - right.attempt.attemptNumber;
-        return byRound || left.attempt.createdAt.localeCompare(right.attempt.createdAt);
+        const byTime = left.attempt.createdAt.localeCompare(right.attempt.createdAt);
+        return byTime || left.attempt.id.localeCompare(right.attempt.id);
       });
     const selected = completedAttempts.find(
       ({ attempt }) => attempt.id === (selectedAttemptId ?? share.attemptId),
     );
     if (!selected) return null;
-    const { attempt, outcome } = selected;
+    const { attempt, outcome, kind, requestedBy } = selected;
     return {
       batchId: batch.id,
       batchSequenceNumber: batch.sequenceNumber,
@@ -88,16 +121,22 @@ export class AttemptLogShareService {
       startedAt: attempt.startedAt ?? null,
       finishedAt: attempt.finishedAt ?? null,
       durationMs: attempt.durationMs ?? null,
+      kind,
+      requestedBy,
       logText: await this.readAttemptLogText(attempt.id),
-      rounds: completedAttempts.map(({ attempt: candidate, outcome: candidateOutcome }) => ({
-        attemptId: candidate.id,
-        attemptNumber: candidate.attemptNumber,
-        outcome: candidateOutcome,
-        resultCode: candidate.resultCode ?? null,
-        startedAt: candidate.startedAt ?? null,
-        finishedAt: candidate.finishedAt ?? null,
-        durationMs: candidate.durationMs ?? null,
-      })),
+      rounds: completedAttempts.map(
+        ({ attempt: candidate, outcome: candidateOutcome, kind: candidateKind, requestedBy }) => ({
+          attemptId: candidate.id,
+          attemptNumber: candidate.attemptNumber,
+          outcome: candidateOutcome,
+          resultCode: candidate.resultCode ?? null,
+          startedAt: candidate.startedAt ?? null,
+          finishedAt: candidate.finishedAt ?? null,
+          durationMs: candidate.durationMs ?? null,
+          kind: candidateKind,
+          requestedBy,
+        }),
+      ),
       expiresAt: share.expiresAt,
     };
   }

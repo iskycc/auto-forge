@@ -46,6 +46,7 @@ import type {
   CleanupJob,
   ExecutionEnvironmentSecretBinding,
   ExecutionEnvironmentVariable,
+  RunAttempt,
   ExecutionRun,
   ExternalIdentity,
   Permission,
@@ -62,6 +63,7 @@ import type {
   RunBatch,
   RunBatchDetails,
   RunBatchExecutionPolicy,
+  RunBatchRoundConcurrencySource,
   Runner,
   RunnerGroup,
   SchedulingDecision,
@@ -1295,6 +1297,10 @@ export type CreateRunBatchRecord = {
   suiteId: string;
   suiteName: string;
   suiteVersion: number;
+  kind?: RunBatch["kind"];
+  parentBatchId?: string;
+  sourceExecutionRunId?: string;
+  requestedBy?: RunBatch["requestedBy"];
   retryLimit: number;
   retryMode?: "immediate" | "round";
   priority?: number;
@@ -1323,9 +1329,44 @@ export type CreateRunBatchRecord = {
     parameters?: Record<string, string>;
   }>;
   adapter?: CaseSuiteExecutionPolicy["adapter"];
+  adapterRuntimeSnapshot?: RunBatchAdapterRuntimeSnapshot;
   dispatchJob?: JobEnvelope;
   scheduledFor?: string;
   createdAt: string;
+};
+
+export type RunBatchRuntimeAssetSnapshot = {
+  id: string;
+  sourceType: "upload" | "url";
+  url?: string;
+  sha256: string;
+  sizeBytes: number;
+  archiveFormat: "zip" | "tar.gz";
+};
+
+export type RunBatchAdapterRuntimeSnapshot = {
+  suiteName: string;
+  testName: string;
+  environmentAddresses: string[];
+  jdk?: RunBatchRuntimeAssetSnapshot;
+  jarBundle?: RunBatchRuntimeAssetSnapshot;
+};
+
+/**
+ * 派生执行必须读取原批次的不可变快照，而不是重新读取可能已经变更的任务配置。
+ * Jenkins 密钥只在应用层编排和仓储之间传递，不进入 RunBatchDetails 或 HTTP DTO。
+ */
+export type RunBatchRerunSnapshot = {
+  batch: RunBatch;
+  adapterRuntime?: RunBatchAdapterRuntimeSnapshot;
+  roundRecoveries: NonNullable<CreateRunBatchRecord["roundRecoveries"]>;
+  runs: CreateRunBatchRecord["runs"];
+};
+
+export type AttemptRerunSource = {
+  batchId: string;
+  executionRunId: string;
+  attemptStatus: RunAttempt["status"];
 };
 
 export type SchedulingSnapshot = {
@@ -1380,6 +1421,16 @@ export interface RunBatchSchedulingPort {
 
 export interface RunBatchRepository {
   create(record: CreateRunBatchRecord): Promise<RunBatch>;
+  resolveAttemptRerunSource(attemptId: string): Promise<AttemptRerunSource | null>;
+  getRerunSnapshot(
+    batchId: string,
+    selection: { executionRunId?: string; finalFailuresOnly?: boolean },
+  ): Promise<RunBatchRerunSnapshot | null>;
+  listCaseLogRerunBatches(
+    parentBatchId: string,
+    sourceExecutionRunId: string,
+    limit: number,
+  ): Promise<RunBatchDetails[]>;
   list(
     limit: number,
     projectIds?: readonly string[],
@@ -1413,6 +1464,20 @@ export interface RunBatchRepository {
     state: RetryConcurrencyState;
     updatedAt: string;
   }): Promise<RetryConcurrencyState | null>;
+  recordRoundConcurrency(input: {
+    batchId: string;
+    round: number;
+    concurrency: number;
+    source: RunBatchRoundConcurrencySource;
+    ruleId?: string;
+    previousConcurrency?: number;
+    transitionEvent?: {
+      id: string;
+      message: string;
+      payload: Record<string, unknown>;
+    };
+    recordedAt: string;
+  }): Promise<"created" | "existing">;
   reserveAssignments(input: ReserveSchedulingAssignmentsInput): Promise<number>;
   appendSchedulingEvents(
     events: Array<{

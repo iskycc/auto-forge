@@ -25,13 +25,19 @@ export class SqlitePlatformStatisticsRepository implements PlatformStatisticsRep
             (SELECT COUNT(*) FROM runners
               WHERE deregistered_at IS NULL AND disabled = 0 AND last_seen_at >= ? AND busy_slots > 0) AS busyRunnerCount,
             (SELECT COUNT(*) FROM run_batches
-              WHERE status IN ('queued', 'dispatching', 'scheduled', 'running')) AS activeBatchCount,
+              WHERE batch_kind <> 'case_log_rerun'
+                AND status IN ('queued', 'dispatching', 'scheduled', 'running')) AS activeBatchCount,
             (SELECT COUNT(*) FROM run_batches
-              WHERE status IN ('succeeded', 'failed', 'cancelled')) AS completedBatchCount,
-            (SELECT COUNT(*) FROM execution_runs) AS totalRunCount,
-            (SELECT COUNT(*) FROM execution_runs WHERE terminal_outcome = 'succeeded') AS succeededRunCount,
-            (SELECT COUNT(*) FROM execution_runs
-              WHERE terminal_outcome IN ('failed', 'timed_out')) AS failedRunCount
+              WHERE batch_kind <> 'case_log_rerun'
+                AND status IN ('succeeded', 'failed', 'cancelled')) AS completedBatchCount,
+            (SELECT COUNT(*) FROM execution_runs r JOIN run_batches b ON b.id=r.batch_id
+              WHERE b.batch_kind <> 'case_log_rerun') AS totalRunCount,
+            (SELECT COUNT(*) FROM execution_runs r JOIN run_batches b ON b.id=r.batch_id
+              WHERE b.batch_kind <> 'case_log_rerun'
+                AND r.terminal_outcome = 'succeeded') AS succeededRunCount,
+            (SELECT COUNT(*) FROM execution_runs r JOIN run_batches b ON b.id=r.batch_id
+              WHERE b.batch_kind <> 'case_log_rerun'
+                AND r.terminal_outcome IN ('failed', 'timed_out')) AS failedRunCount
         `,
       )
       .get(onlineSince, onlineSince) as StatisticsRow | undefined;

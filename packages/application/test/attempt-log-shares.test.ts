@@ -109,7 +109,11 @@ function makeState(
   };
 }
 
-function makeService(state: FakeState, batch: RunBatchDetails = makeBatchDetails("failed")) {
+function makeService(
+  state: FakeState,
+  batch: RunBatchDetails = makeBatchDetails("failed"),
+  diagnosticBatches: RunBatchDetails[] = [],
+) {
   const shares: AttemptLogShareRepository = {
     create: async (record) => {
       state.records.push(record);
@@ -141,6 +145,7 @@ function makeService(state: FakeState, batch: RunBatchDetails = makeBatchDetails
   };
   const batches = {
     get: async () => batch,
+    listCaseLogRerunBatches: async () => diagnosticBatches,
   } as unknown as RunBatchRepository;
   const executions = {
     resolveAttemptSchedulingContext: async (attemptId: string) =>
@@ -264,6 +269,57 @@ describe("AttemptLogShareService", () => {
       ],
     });
     expect(await service.getSharedAttemptLog("token-1", "other-attempt")).toBeNull();
+  });
+
+  it("includes diagnostic reruns with the requesting LDAP username in the same log history", async () => {
+    const state = makeState({
+      logChunks: [
+        {
+          attemptId: "manual-attempt",
+          stream: "stdout",
+          sequence: 0,
+          content: "manual rerun\n",
+          recordedAt: "2026-08-17T00:08:00.000Z",
+        },
+      ],
+    });
+    const source = makeBatchDetails("failed");
+    const diagnostic = makeBatchDetails("succeeded");
+    diagnostic.id = "diagnostic-batch";
+    diagnostic.kind = "case_log_rerun";
+    diagnostic.parentBatchId = source.id;
+    diagnostic.sourceExecutionRunId = "run-1";
+    diagnostic.requestedBy = { username: "c12345678", source: "ldap" };
+    diagnostic.runs[0] = {
+      ...diagnostic.runs[0]!,
+      id: "manual-run",
+      batchId: diagnostic.id,
+    };
+    diagnostic.attempts[0] = {
+      ...diagnostic.attempts[0]!,
+      id: "manual-attempt",
+      executionRunId: "manual-run",
+      createdAt: "2026-08-17T00:07:30.000Z",
+    };
+    const service = makeService(state, source, [diagnostic]);
+    await service.ensureSharesForAttempts(["attempt-1"], "user-1");
+
+    const view = await service.getSharedAttemptLog("token-1", "manual-attempt");
+
+    expect(view).toMatchObject({
+      attemptId: "manual-attempt",
+      kind: "manual_rerun",
+      requestedBy: { username: "c12345678", source: "ldap" },
+      logText: "manual rerun\n",
+      rounds: [
+        expect.objectContaining({ attemptId: "attempt-1", kind: "round" }),
+        expect.objectContaining({
+          attemptId: "manual-attempt",
+          kind: "manual_rerun",
+          requestedBy: { username: "c12345678", source: "ldap" },
+        }),
+      ],
+    });
   });
 
   it("reuses an existing active record's expiry instead of recomputing it", async () => {

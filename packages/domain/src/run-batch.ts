@@ -7,6 +7,12 @@ import type { RetryConcurrencyRule } from "./case-suite";
 export type RunBatchStatus =
   "queued" | "dispatching" | "scheduled" | "running" | "succeeded" | "failed" | "cancelled";
 
+/**
+ * 普通批次进入执行历史和质量统计；日志诊断重跑只作为原用例的日志历史存在，
+ * 不得污染原批次轮次、Webhook、执行记录或质量洞察。
+ */
+export type RunBatchKind = "standard" | "final_failure_rerun" | "case_log_rerun";
+
 export type ExecutionRunStatus =
   "queued" | "assigned" | "running" | "succeeded" | "failed" | "cancelled";
 
@@ -85,6 +91,13 @@ export type RunBatch = {
   suiteId: string;
   suiteName: string;
   suiteVersion: number;
+  kind?: RunBatchKind;
+  parentBatchId?: string;
+  sourceExecutionRunId?: string;
+  requestedBy?: {
+    username: string;
+    source: "local" | "ldap";
+  };
   status: RunBatchStatus;
   priority: number;
   retryLimit: number;
@@ -194,8 +207,21 @@ export type RunAttempt = {
 export type RunBatchDetails = RunBatch & {
   runs: ExecutionRun[];
   attempts: RunAttempt[];
+  roundConcurrencies?: RunBatchRoundConcurrency[];
   roundRecoveries: RunBatchRoundRecovery[];
   statusHistory: RunBatchStatusEvent[];
+};
+
+export type RunBatchRoundConcurrencySource = "base" | "inherited_rule" | "rule_transition";
+
+/** 每一轮首次进入调度时固化的有效并发，供批跑效率复盘使用。 */
+export type RunBatchRoundConcurrency = {
+  round: number;
+  concurrency: number;
+  source: RunBatchRoundConcurrencySource;
+  ruleId?: string;
+  previousConcurrency?: number;
+  recordedAt: string;
 };
 
 export type RunBatchRoundStatus = "running" | "completed" | "waiting";

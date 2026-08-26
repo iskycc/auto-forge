@@ -10,7 +10,12 @@ import { buildClassFile } from "../../packages/testng-discovery/test/class-fixtu
 import { DEFAULT_PROJECT_ID } from "@autoforge/domain";
 import { freshRunnerBootstrapToken } from "./support/runner-bootstrap";
 import { configureTaskExecution, startTaskFromTopbar } from "./support/task-execution";
-import { browserJson, ensureAdministrator, uniqueName } from "./support/session";
+import {
+  browserJson,
+  E2E_ADMIN_USERNAME,
+  ensureAdministrator,
+  uniqueName,
+} from "./support/session";
 import { expectUiIntegrity } from "./support/ui-guard";
 
 /**
@@ -402,10 +407,10 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
   const roundTable = page.locator(".execution-round-table");
   const initialRoundRow = roundTable.getByRole("row", { name: /初始轮次/ });
   const retryRoundRow = roundTable.getByRole("row", { name: /重跑第 1 轮/ });
-  await expect(initialRoundRow.locator("td").nth(2)).toHaveText("2");
-  await expect(initialRoundRow.locator("td").nth(7)).toHaveText("0");
-  await expect(retryRoundRow.locator("td").nth(2)).toHaveText("1");
-  await expect(retryRoundRow.locator("td").nth(7)).toHaveText("0");
+  await expect(initialRoundRow.locator("td").nth(3)).toHaveText("2");
+  await expect(initialRoundRow.locator("td").nth(8)).toHaveText("0");
+  await expect(retryRoundRow.locator("td").nth(3)).toHaveText("1");
+  await expect(retryRoundRow.locator("td").nth(8)).toHaveText("0");
   await page.getByRole("button", { name: "初始轮次", exact: true }).click();
   const failedFirstRoundRow = page.locator(".round-cases tbody tr").filter({ hasText: "失败" });
   await expect(failedFirstRoundRow).toHaveCount(1);
@@ -437,11 +442,11 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
   const completedAllRoundsRow = page
     .locator(".execution-round-table")
     .getByRole("row", { name: /全部轮次/ });
-  await expect(completedAllRoundsRow.locator("td").nth(2)).toHaveText("3");
-  await expect(completedAllRoundsRow.locator("td").nth(3)).toHaveText("67%");
-  await expect(completedAllRoundsRow.locator("td").nth(5)).toHaveText("2");
-  await expect(completedAllRoundsRow.locator("td").nth(6)).toHaveText("1");
-  await expect(completedAllRoundsRow.locator("td").nth(7)).toHaveText("0");
+  await expect(completedAllRoundsRow.locator("td").nth(3)).toHaveText("3");
+  await expect(completedAllRoundsRow.locator("td").nth(4)).toHaveText("67%");
+  await expect(completedAllRoundsRow.locator("td").nth(6)).toHaveText("2");
+  await expect(completedAllRoundsRow.locator("td").nth(7)).toHaveText("1");
+  await expect(completedAllRoundsRow.locator("td").nth(8)).toHaveText("0");
   await page.getByRole("button", { name: "全部轮次", exact: true }).click();
   await expect(page).toHaveURL(/round=all/);
   const casesRegion = page.locator(".round-cases");
@@ -495,10 +500,10 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
 
   // “总结”按初始用例去重：首轮通过 + 重试通过共 2 个，通过率 100%，列表也只有 2 行。
   const summaryRow = roundTable.getByRole("row", { name: /总结/ });
-  await expect(summaryRow.locator("td").nth(2)).toHaveText("2");
-  await expect(summaryRow.locator("td").nth(3)).toHaveText("100%");
-  await expect(summaryRow.locator("td").nth(5)).toHaveText("2");
-  await expect(summaryRow.locator("td").nth(6)).toHaveText("0");
+  await expect(summaryRow.locator("td").nth(3)).toHaveText("2");
+  await expect(summaryRow.locator("td").nth(4)).toHaveText("100%");
+  await expect(summaryRow.locator("td").nth(6)).toHaveText("2");
+  await expect(summaryRow.locator("td").nth(7)).toHaveText("0");
   await page.getByRole("button", { name: "总结", exact: true }).click();
   await expect(page).toHaveURL(/round=summary/);
   await expect(casesRegion.getByRole("row", { name: /AllRounds/ })).toHaveCount(2);
@@ -523,8 +528,16 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
   const fakeJenkins = await startFakeJenkins();
   try {
     await configureTaskExecution(page, suiteId, identity.runnerId, {
+      concurrency: 2,
       retryLimit: 1,
       retryMode: "round",
+      retryConcurrencyRules: [
+        {
+          id: "e2e-recovery-round-two-concurrency",
+          executionRound: 2,
+          concurrency: 1,
+        },
+      ],
       roundRecoveryRules: [
         {
           id: "e2e-reset-app",
@@ -601,6 +614,23 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
       .toBe("succeeded");
 
     await page.goto(`/run-batches/${encodeURIComponent(recoveryBatch.id)}`);
+    const recoveryRoundTable = page.locator(".execution-round-table");
+    await expect(
+      recoveryRoundTable
+        .getByRole("row", { name: /初始轮次/ })
+        .locator("td")
+        .nth(2),
+    ).toHaveText("2");
+    const changedConcurrency = recoveryRoundTable
+      .getByRole("row", { name: /重跑第 1 轮/ })
+      .locator(".round-concurrency");
+    await expect(changedConcurrency).toContainText("1");
+    await expect(changedConcurrency).toContainText("已变更");
+    await page.getByRole("button", { name: "重跑第 1 轮", exact: true }).click();
+    await page.getByRole("button", { name: "总体调度日志", exact: true }).click();
+    const schedulingLogDialog = page.getByRole("dialog", { name: "总体调度日志" });
+    await expect(schedulingLogDialog).toContainText("第 2 轮触发动态并发规则，并发数由 2 调整为 1");
+    await schedulingLogDialog.getByRole("button", { name: "关闭日志终端" }).click();
     const recoveryRow = page
       .locator(".execution-round-table")
       .getByRole("row", { name: /环境恢复.*第 1 轮后/u });
@@ -810,4 +840,216 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
     scrollWidth: cell.scrollWidth,
   }));
   expect(overflow.scrollWidth).toBeGreaterThan(overflow.clientWidth);
+
+  // 终态失败批次提供两条互不污染统计的重跑路径：单用例日志里的诊断重跑隐藏于
+  // 常规执行记录，末轮失败集重跑则创建可追踪的新批次，并允许关闭动态并发和环境恢复。
+  let failedSourceBatch!: { id: string };
+  let failedAttemptId = "";
+  const derivedFakeJenkins = await startFakeJenkins();
+  try {
+    await configureTaskExecution(page, suiteId, identity.runnerId, {
+      concurrency: 2,
+      retryLimit: 1,
+      retryMode: "round",
+      retryConcurrencyRules: [
+        {
+          id: "e2e-final-failure-concurrency",
+          executionRound: 2,
+          concurrency: 1,
+        },
+      ],
+      roundRecoveryRules: [
+        {
+          id: "e2e-final-failure-recovery",
+          afterRound: 1,
+          jenkinsJobUrl: `${derivedFakeJenkins.baseUrl}/job/reset-app/`,
+          waitMinutes: 0,
+          apiKey: "e2e-user:e2e-token",
+        },
+      ],
+    });
+    failedSourceBatch = await startTaskFromTopbar(page, suiteId);
+    expect((await postHeartbeat(page, identity, 0)).status()).toBe(200);
+    for (let claimed = 0; claimed < 2; claimed += 1) {
+      const claim = await claimAssignment(page, identity);
+      const fails = claimed === 0;
+      await completeAttempt(page, identity, claim, {
+        completionId: `e2e-derived-source-round-one-${claimed}`,
+        status: fails ? "failed" : "succeeded",
+        resultCode: fails ? "TESTNG_ASSERTIONS_FAILED" : "TESTNG_SUCCEEDED",
+        summary: fails ? "retry after environment recovery" : "source stable case passed",
+      });
+      expect((await postHeartbeat(page, identity, 0)).status()).toBe(200);
+    }
+    await expect
+      .poll(
+        async () => {
+          const response = await page.request.get(
+            `/api/v1/run-batches/${encodeURIComponent(failedSourceBatch.id)}`,
+            { headers: userHeaders },
+          );
+          const details = (await response.json()) as {
+            roundRecoveries: Array<{ status: string }>;
+          };
+          return details.roundRecoveries.map((recovery) => recovery.status);
+        },
+        { timeout: 30_000 },
+      )
+      .toEqual(["succeeded"]);
+    const finalRoundFailure = await claimAssignment(page, identity);
+    failedAttemptId = finalRoundFailure.assignment.attemptId;
+    await completeAttempt(page, identity, finalRoundFailure, {
+      completionId: "e2e-derived-source-round-two",
+      status: "failed",
+      resultCode: "TESTNG_ASSERTIONS_FAILED",
+      summary: "final failure selected for rerun",
+    });
+    expect((await postHeartbeat(page, identity, 0)).status()).toBe(200);
+    await expect
+      .poll(async () => {
+        const response = await page.request.get(
+          `/api/v1/run-batches/${encodeURIComponent(failedSourceBatch.id)}`,
+          { headers: userHeaders },
+        );
+        const details = (await response.json()) as { status: string; failedRuns: number };
+        return `${details.status}:${details.failedRuns}`;
+      })
+      .toBe("succeeded:1");
+  } finally {
+    await derivedFakeJenkins.close();
+  }
+  expect(failedAttemptId).not.toBe("");
+
+  await page.goto(`/run-batches/${encodeURIComponent(failedSourceBatch.id)}`);
+  await page.getByRole("button", { name: "初始轮次", exact: true }).click();
+  const failedCaseRow = page.locator(".round-cases tbody tr").filter({ hasText: "失败" });
+  await expect(failedCaseRow).toHaveCount(1);
+  await failedCaseRow.getByRole("button", { name: "查看日志" }).click();
+  const diagnosticResponsePromise = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      /^\/api\/v1\/run-attempts\/[^/]+\/rerun$/u.test(new URL(response.url()).pathname),
+  );
+  await page.getByRole("button", { name: "重新执行", exact: true }).click();
+  const diagnosticResponse = await diagnosticResponsePromise;
+  expect(diagnosticResponse.status()).toBe(201);
+  const sharedAttemptId = decodeURIComponent(
+    new URL(diagnosticResponse.url()).pathname.split("/").at(-2)!,
+  );
+  const diagnosticBatchId = ((await diagnosticResponse.json()) as { batchId: string }).batchId;
+  await expect(page.getByRole("status")).toContainText("已提交诊断重跑");
+  await page.getByRole("button", { name: "关闭日志终端" }).click();
+
+  const visibleBatchPage = await browserJson<{ items: Array<{ id: string }> }>(
+    page,
+    "/api/v1/run-batches?limit=200",
+  );
+  expect(visibleBatchPage.status).toBe(200);
+  expect(visibleBatchPage.body.items.map((item) => item.id)).not.toContain(diagnosticBatchId);
+  expect((await postHeartbeat(page, identity, 0)).status()).toBe(200);
+  const diagnosticClaim = await claimAssignment(page, identity);
+  expect(diagnosticClaim.assignment.executionSpec.executionRunId).toBeTruthy();
+  await completeAttempt(page, identity, diagnosticClaim, {
+    completionId: "e2e-diagnostic-rerun",
+    status: "succeeded",
+    resultCode: "TESTNG_SUCCEEDED",
+    summary: "manual diagnostic rerun passed",
+  });
+  expect((await postHeartbeat(page, identity, 0)).status()).toBe(200);
+
+  await page.goto(`/run-batches/${encodeURIComponent(failedSourceBatch.id)}`);
+  await page.getByRole("button", { name: "初始轮次", exact: true }).click();
+  const refreshedFailedCaseRow = page.locator(".round-cases tbody tr").filter({ hasText: "失败" });
+  const publicLogPopupPromise = page.waitForEvent("popup");
+  const publicLogResponsePromise = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      new URL(response.url()).pathname ===
+        `/api/v1/run-attempts/${encodeURIComponent(sharedAttemptId)}/log-share`,
+  );
+  await refreshedFailedCaseRow.getByRole("button", { name: "公开日志" }).click();
+  expect((await publicLogResponsePromise).status()).toBe(200);
+  const publicLogPage = await publicLogPopupPromise;
+  await publicLogPage.waitForLoadState("domcontentloaded");
+  const executionHistory = publicLogPage.getByRole("navigation", {
+    name: "同一用例的执行历史",
+  });
+  await expect(executionHistory).toBeVisible();
+  await expect(executionHistory.getByText(`by ${E2E_ADMIN_USERNAME}（本地）`)).toBeVisible();
+  for (const viewport of [
+    { width: 1024, height: 768 },
+    { width: 1536, height: 960 },
+  ]) {
+    await publicLogPage.setViewportSize(viewport);
+    await expectUiIntegrity(publicLogPage);
+    await captureUi(publicLogPage, `shared-diagnostic-history-${viewport.width}`);
+  }
+  const openPageCount = publicLogPage.context().pages().length;
+  const manualRerunLink = executionHistory.getByRole("link", { name: /手动重跑.*通过/u });
+  await manualRerunLink.click();
+  await expect(manualRerunLink).toHaveAttribute("aria-current", "page");
+  expect(publicLogPage.context().pages()).toHaveLength(openPageCount);
+  expect(publicLogPage.url()).toContain(
+    `attempt=${encodeURIComponent(diagnosticClaim.assignment.attemptId)}`,
+  );
+  await publicLogPage.close();
+
+  await page.goto(`/run-batches/${encodeURIComponent(failedSourceBatch.id)}`);
+  await page.getByRole("button", { name: "重新执行最后一轮", exact: true }).click();
+  const finalFailureDialog = page.getByRole("dialog", { name: "重新执行最后一轮" });
+  await expect(finalFailureDialog).toContainText("仅使用当前批次最后仍失败或超时的 1 个用例");
+  for (const viewport of [
+    { width: 1024, height: 768 },
+    { width: 1536, height: 960 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await expectUiIntegrity(page);
+    await captureUi(page, `rerun-final-failures-dialog-${viewport.width}`);
+  }
+  await finalFailureDialog.getByLabel("本次并发数").fill("1");
+  await finalFailureDialog.getByLabel("启用动态并发规则").uncheck();
+  await finalFailureDialog.getByLabel("启用 Jenkins 环境恢复").uncheck();
+  const finalFailureResponsePromise = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      new URL(response.url()).pathname ===
+        `/api/v1/run-batches/${encodeURIComponent(failedSourceBatch.id)}/rerun-final-failures`,
+  );
+  await finalFailureDialog.getByRole("button", { name: "执行 1 个用例" }).click();
+  const finalFailureResponse = await finalFailureResponsePromise;
+  expect(finalFailureResponse.status()).toBe(201);
+  const finalFailureBatchId = ((await finalFailureResponse.json()) as { id: string }).id;
+  await expect(page).toHaveURL(
+    new RegExp(`/run-batches/${finalFailureBatchId.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")}`),
+  );
+  const finalFailureDetails = await browserJson<{
+    kind: string;
+    parentBatchId: string;
+    totalRuns: number;
+    policy: { concurrency: number; retryConcurrencyRules: unknown[] };
+    roundRecoveries: unknown[];
+  }>(page, `/api/v1/run-batches/${encodeURIComponent(finalFailureBatchId)}`);
+  expect(finalFailureDetails.status).toBe(200);
+  expect(finalFailureDetails.body).toMatchObject({
+    kind: "final_failure_rerun",
+    parentBatchId: failedSourceBatch.id,
+    totalRuns: 1,
+    policy: { concurrency: 1, retryConcurrencyRules: [] },
+    roundRecoveries: [],
+  });
+  const visibleBatchesAfterFinalRerun = await browserJson<{ items: Array<{ id: string }> }>(
+    page,
+    "/api/v1/run-batches?limit=200",
+  );
+  expect(visibleBatchesAfterFinalRerun.body.items.map((item) => item.id)).toContain(
+    finalFailureBatchId,
+  );
+  expect((await postHeartbeat(page, identity, 0)).status()).toBe(200);
+  const finalFailureClaim = await claimAssignment(page, identity);
+  await completeAttempt(page, identity, finalFailureClaim, {
+    completionId: "e2e-final-failure-rerun",
+    status: "succeeded",
+    resultCode: "TESTNG_SUCCEEDED",
+    summary: "final failure rerun passed",
+  });
 });

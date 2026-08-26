@@ -620,6 +620,15 @@ export const runBatches = sqliteTable(
     suiteId: text("suite_id").notNull(),
     suiteName: text("suite_name").notNull(),
     suiteVersion: integer("suite_version").notNull(),
+    batchKind: text("batch_kind", {
+      enum: ["standard", "final_failure_rerun", "case_log_rerun"],
+    })
+      .notNull()
+      .default("standard"),
+    parentBatchId: text("parent_batch_id"),
+    sourceExecutionRunId: text("source_execution_run_id"),
+    requestedByUsername: text("requested_by_username"),
+    requestedBySource: text("requested_by_source", { enum: ["local", "ldap"] }),
     status: text("status", {
       enum: ["queued", "dispatching", "scheduled", "running", "succeeded", "failed", "cancelled"],
     }).notNull(),
@@ -670,6 +679,22 @@ export const runBatchRetryConcurrencyStates = sqliteTable("run_batch_retry_concu
   activatedRound: integer("activated_round").notNull(),
   updatedAt: text("updated_at").notNull(),
 });
+
+export const runBatchRoundConcurrencies = sqliteTable(
+  "run_batch_round_concurrencies",
+  {
+    batchId: text("batch_id")
+      .notNull()
+      .references(() => runBatches.id, { onDelete: "cascade" }),
+    executionRound: integer("execution_round").notNull(),
+    concurrency: integer("concurrency").notNull(),
+    source: text("source", { enum: ["base", "inherited_rule", "rule_transition"] }).notNull(),
+    ruleId: text("rule_id"),
+    previousConcurrency: integer("previous_concurrency"),
+    recordedAt: text("recorded_at").notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.batchId, table.executionRound] })],
+);
 
 export const runBatchStatusEvents = sqliteTable(
   "run_batch_status_events",
@@ -1658,6 +1683,8 @@ export const schema = {
   executionSecrets,
   executionSecretVersions,
   runBatches,
+  runBatchRetryConcurrencyStates,
+  runBatchRoundConcurrencies,
   runBatchStatusEvents,
   webhookConfigurations,
   caseSuiteWebhookBindings,

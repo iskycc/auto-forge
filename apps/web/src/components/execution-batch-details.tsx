@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import { RunBatchRounds, type RunnerDirectoryEntry } from "@/components/run-batch-rounds";
+import { RerunFinalFailuresDialog } from "@/components/rerun-final-failures-dialog";
 import { Button } from "@/components/ui";
 import { readApiErrorMessage } from "@/lib/client-api";
 import type { ExecutionBatchView } from "@/lib/execution-batch-view";
@@ -44,6 +45,7 @@ function batchFinishedAt(batch: ExecutionBatchView): string {
 export function ExecutionBatchDetails({
   batch,
   retrySuiteId,
+  rerunConfiguration,
   canCancelRuns,
   canCreateRuns,
   canReadLogs,
@@ -54,6 +56,10 @@ export function ExecutionBatchDetails({
 }: {
   batch: ExecutionBatchView;
   retrySuiteId?: string;
+  rerunConfiguration?: {
+    defaultConcurrency: number;
+    hasRetryConcurrencyRules: boolean;
+  };
   canCancelRuns: boolean;
   canCreateRuns: boolean;
   canReadLogs: boolean;
@@ -66,10 +72,14 @@ export function ExecutionBatchDetails({
   const [actionError, setActionError] = useState("");
   const [actionPending, setActionPending] = useState<"cancel" | "retry" | undefined>();
   const [observedAtMs, setObservedAtMs] = useState(() => Date.now());
+  const [finalFailuresDialogOpen, setFinalFailuresDialogOpen] = useState(false);
   const activeBatch = isActiveRunBatch(batch.status);
   const startedAt = batchStartedAt(batch);
   const awaitingScheduledStart =
     batch.status === "queued" && Date.parse(batch.scheduledFor) > observedAtMs;
+  const finalFailureCount = batch.failedRuns + batch.timedOutRuns;
+  const canRerunFinalFailures =
+    canCreateRuns && !activeBatch && finalFailureCount > 0 && rerunConfiguration !== undefined;
 
   // 进行中的批次每 5 秒刷新服务端数据，让轮次进度自动推进；组件卸载时清理。
   useEffect(() => {
@@ -169,7 +179,7 @@ export function ExecutionBatchDetails({
         />
       </section>
 
-      {(canCancelRuns || (canCreateRuns && retrySuiteId)) && (
+      {(canCancelRuns || (canCreateRuns && retrySuiteId) || canRerunFinalFailures) && (
         <section className="execution-detail-actions" aria-label="批次操作">
           <div>
             <strong>
@@ -212,6 +222,17 @@ export function ExecutionBatchDetails({
                 {actionPending === "retry" ? "正在创建…" : "再次执行"}
               </Button>
             ) : null}
+            {canRerunFinalFailures ? (
+              <Button
+                className="button button-secondary"
+                disabled={actionPending !== undefined}
+                onClick={() => setFinalFailuresDialogOpen(true)}
+                type="button"
+              >
+                <RotateCcw size={16} />
+                重新执行最后一轮
+              </Button>
+            ) : null}
           </div>
           {actionError ? (
             <p className="form-error" role="alert">
@@ -225,11 +246,25 @@ export function ExecutionBatchDetails({
         batch={batch}
         canCancelRuns={canCancelRuns}
         canReadLogs={canReadLogs}
+        canCreateRuns={canCreateRuns}
         canReadAttemptEvents={canReadAttemptEvents}
         canReadArtifacts={canReadArtifacts}
         artifactsEnabled={artifactsEnabled}
         runnerDirectory={runnerDirectory}
       />
+      {finalFailuresDialogOpen ? (
+        <RerunFinalFailuresDialog
+          batchId={batch.id}
+          defaultConcurrency={rerunConfiguration?.defaultConcurrency ?? 1}
+          failedCount={finalFailureCount}
+          hasRetryConcurrencyRules={rerunConfiguration?.hasRetryConcurrencyRules ?? false}
+          hasRoundRecovery={batch.roundRecoveries.length > 0}
+          onClose={() => setFinalFailuresDialogOpen(false)}
+          onCreated={(createdBatchId) =>
+            router.push(`/run-batches/${encodeURIComponent(createdBatchId)}`)
+          }
+        />
+      ) : null}
     </div>
   );
 }

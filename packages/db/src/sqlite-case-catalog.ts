@@ -842,12 +842,13 @@ export class SqliteCaseCatalogRepository implements CaseCatalogRepository {
         `SELECT r.id AS run_id, r.batch_id, r.status, r.created_at,
                 a.id AS attempt_id, a.runner_id, a.result_code, a.duration_ms, a.finished_at
          FROM execution_runs r
+         JOIN run_batches b ON b.id = r.batch_id
          LEFT JOIN run_attempts a ON a.execution_run_id = r.id
            AND a.attempt_number = (
              SELECT MAX(latest.attempt_number) FROM run_attempts latest
              WHERE latest.execution_run_id = r.id
            )
-         WHERE r.case_definition_id = ?
+         WHERE r.case_definition_id = ? AND b.batch_kind <> 'case_log_rerun'
          ORDER BY r.created_at DESC, r.id DESC LIMIT ?`,
       )
       .all(caseDefinitionId, limit) as Array<{
@@ -929,7 +930,9 @@ export class SqliteCaseCatalogRepository implements CaseCatalogRepository {
                       ORDER BY r.created_at DESC, r.id DESC
                     ) AS row_number
              FROM execution_runs r
+             JOIN run_batches b ON b.id = r.batch_id
              WHERE r.case_definition_id IN (${placeholders})
+               AND b.batch_kind <> 'case_log_rerun'
                AND r.status IN ('succeeded', 'failed', 'cancelled')
            ) WHERE row_number = 1`,
         )

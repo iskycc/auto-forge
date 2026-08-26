@@ -559,6 +559,7 @@ export class SqlitePlatformOperationsRepository implements PlatformOperationsRep
              UNION SELECT id AS project_id,owner_user_id AS user_id FROM projects WHERE owner_user_id IS NOT NULL
            ) recipients ON recipients.project_id=b.project_id
            WHERE b.status IN ('succeeded','failed','cancelled')
+             AND b.batch_kind <> 'case_log_rerun'
            ORDER BY b.updated_at DESC LIMIT ?`,
         )
         .run(input.now, input.limit).changes;
@@ -780,6 +781,7 @@ export class SqlitePlatformOperationsRepository implements PlatformOperationsRep
          JOIN run_batches b ON b.id = r.batch_id
          LEFT JOIN analytics_facts f ON f.attempt_id = a.id
          WHERE (f.attempt_id IS NULL OR f.schema_version < ?)
+           AND b.batch_kind <> 'case_log_rerun'
            AND a.finished_at IS NOT NULL AND a.outcome IS NOT NULL
          ORDER BY a.finished_at, a.id LIMIT ?`,
       )
@@ -1042,7 +1044,8 @@ export class SqlitePlatformOperationsRepository implements PlatformOperationsRep
     const batches = this.handle.client
       .prepare(
         `SELECT id, project_id, suite_name AS title, status AS subtitle
-         FROM run_batches WHERE (instr(lower(suite_name), ?) > 0 OR instr(lower(id), ?) > 0)
+         FROM run_batches WHERE batch_kind <> 'case_log_rerun'
+           AND (instr(lower(suite_name), ?) > 0 OR instr(lower(id), ?) > 0)
            ${projectFilter} ORDER BY created_at DESC LIMIT ?`,
       )
       .all(...parameters([search, search])) as SearchRow[];
@@ -1050,7 +1053,8 @@ export class SqlitePlatformOperationsRepository implements PlatformOperationsRep
       .prepare(
         `SELECT r.id, b.project_id, r.display_name AS title, r.status AS subtitle
          FROM execution_runs r JOIN run_batches b ON b.id = r.batch_id
-         WHERE (instr(lower(r.display_name), ?) > 0 OR instr(lower(r.id), ?) > 0)
+         WHERE b.batch_kind <> 'case_log_rerun'
+           AND (instr(lower(r.display_name), ?) > 0 OR instr(lower(r.id), ?) > 0)
            ${input.projectIds ? `AND b.project_id IN (${input.projectIds.map(() => "?").join(",")})` : ""}
          ORDER BY r.created_at DESC LIMIT ?`,
       )

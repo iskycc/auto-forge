@@ -214,6 +214,7 @@ export function RunBatchRounds({
   batch,
   canCancelRuns,
   canReadLogs,
+  canCreateRuns,
   canReadAttemptEvents,
   canReadArtifacts,
   artifactsEnabled,
@@ -222,6 +223,7 @@ export function RunBatchRounds({
   batch: ExecutionBatchView;
   canCancelRuns: boolean;
   canReadLogs: boolean;
+  canCreateRuns: boolean;
   canReadAttemptEvents: boolean;
   canReadArtifacts: boolean;
   artifactsEnabled: boolean;
@@ -235,6 +237,10 @@ export function RunBatchRounds({
     [batch],
   );
   const recoveries = useMemo(() => recoveryGroups(batch.roundRecoveries), [batch.roundRecoveries]);
+  const concurrencyByRound = useMemo(
+    () => new Map((batch.roundConcurrencies ?? []).map((entry) => [entry.round, entry])),
+    [batch.roundConcurrencies],
+  );
   const runnerDirectoryById = useMemo(
     () => new Map(runnerDirectory.map((entry) => [entry.id, entry])),
     [runnerDirectory],
@@ -330,6 +336,7 @@ export function RunBatchRounds({
             <colgroup>
               <col className="round-column-name" />
               <col className="round-column-status" />
+              <col className="round-column-count" />
               <col className="round-column-count" span={6} />
               <col className="round-column-start" />
               <col className="round-column-duration" />
@@ -338,6 +345,7 @@ export function RunBatchRounds({
               <tr>
                 <th>轮次</th>
                 <th>状态</th>
+                <th>并发数</th>
                 <th>总用例数</th>
                 <th>总通过率</th>
                 <th>轮次通过率</th>
@@ -384,6 +392,7 @@ export function RunBatchRounds({
                         : "实时汇总"}
                   </span>
                 </td>
+                <td>—</td>
                 <td>{finalStats.totalRuns}</td>
                 <td>{finalStats.passRate}%</td>
                 <td>—</td>
@@ -411,6 +420,7 @@ export function RunBatchRounds({
                   </Button>
                 </td>
                 <td>—</td>
+                <td>—</td>
                 <td>{allRoundsStats.totalRuns}</td>
                 <td>{allRoundsStats.passRate}%</td>
                 <td>—</td>
@@ -422,6 +432,7 @@ export function RunBatchRounds({
               </tr>
               {summaries.flatMap((summary) => {
                 const recovery = recoveries.find((item) => item.afterRound === summary.round);
+                const roundConcurrency = concurrencyByRound.get(summary.round);
                 const rows = [
                   <tr
                     key={`round-${summary.round}`}
@@ -453,6 +464,31 @@ export function RunBatchRounds({
                       <span className={`batch-status ${roundStatusClass(summary)}`.trim()}>
                         {roundStatusLabel(summary, batch.currentRound)}
                       </span>
+                    </td>
+                    <td>
+                      {roundConcurrency ? (
+                        <span
+                          className={
+                            roundConcurrency.source === "rule_transition"
+                              ? "round-concurrency changed"
+                              : "round-concurrency"
+                          }
+                          title={
+                            roundConcurrency.source === "rule_transition"
+                              ? `动态规则 ${roundConcurrency.ruleId ?? ""}：${roundConcurrency.previousConcurrency ?? "—"} → ${roundConcurrency.concurrency}`
+                              : roundConcurrency.source === "inherited_rule"
+                                ? `沿用动态规则 ${roundConcurrency.ruleId ?? ""}`
+                                : "任务基础并发"
+                          }
+                        >
+                          {roundConcurrency.concurrency}
+                          {roundConcurrency.source === "rule_transition" ? (
+                            <small>已变更</small>
+                          ) : null}
+                        </span>
+                      ) : (
+                        "—"
+                      )}
                     </td>
                     <td>{summary.totalRuns}</td>
                     <td>{summary.overallPassRate}%</td>
@@ -517,7 +553,7 @@ export function RunBatchRounds({
                           {recoveryStatusLabel(recovery.status)}
                         </span>
                       </td>
-                      <td colSpan={6}>
+                      <td colSpan={7}>
                         Jenkins 流水线 {recovery.steps.length} 个 · 完成 {succeeded} · 失败 {failed}
                       </td>
                       <td>
@@ -615,6 +651,7 @@ export function RunBatchRounds({
           attemptId={logAttempt.id}
           attemptStatus={logAttempt.status}
           canReadLogs={canReadLogs}
+          canCreateRuns={canCreateRuns}
           onClose={() => setLogAttempt(undefined)}
         />
       ) : null}

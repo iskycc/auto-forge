@@ -11,6 +11,15 @@ type SuitePolicyOverrides = {
   uploadTimeoutMs?: number;
   runnerLabels?: string[];
   artifactPatterns?: string[];
+  retryConcurrencyRules?: Array<{
+    id: string;
+    executionRound: number;
+    previousRoundPassRateMinimum?: number;
+    previousRoundPassRateMaximum?: number;
+    remainingRunsMinimum?: number;
+    remainingRunsMaximum?: number;
+    concurrency: number;
+  }>;
   roundRecoveryRules?: Array<{
     id: string;
     afterRound: number;

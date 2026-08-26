@@ -829,12 +829,13 @@ export class PostgresCaseCatalogRepository implements CaseCatalogRepository {
         `SELECT r.id AS run_id, r.batch_id, r.status, r.created_at,
                 a.id AS attempt_id, a.runner_id, a.result_code, a.duration_ms, a.finished_at
          FROM execution_runs r
+         JOIN run_batches b ON b.id = r.batch_id
          LEFT JOIN LATERAL (
            SELECT * FROM run_attempts latest
            WHERE latest.execution_run_id = r.id
            ORDER BY latest.attempt_number DESC LIMIT 1
          ) a ON TRUE
-         WHERE r.case_definition_id = $1
+         WHERE r.case_definition_id = $1 AND b.batch_kind <> 'case_log_rerun'
          ORDER BY r.created_at DESC, r.id DESC LIMIT $2`,
         [caseDefinitionId, limit],
       ),
@@ -905,15 +906,17 @@ export class PostgresCaseCatalogRepository implements CaseCatalogRepository {
         created_at: string;
         result_code: string | null;
       }>(
-        `SELECT DISTINCT ON (case_definition_id)
-                case_definition_id, status, terminal_outcome, created_at,
+        `SELECT DISTINCT ON (r.case_definition_id)
+                r.case_definition_id, r.status, r.terminal_outcome, r.created_at,
                 (SELECT a.result_code FROM run_attempts a
-                  WHERE a.execution_run_id = execution_runs.id
+                  WHERE a.execution_run_id = r.id
                   ORDER BY a.attempt_number DESC LIMIT 1) AS result_code
-         FROM execution_runs
-         WHERE case_definition_id IN (${placeholders})
-           AND status IN ('succeeded', 'failed', 'cancelled')
-         ORDER BY case_definition_id, created_at DESC, id DESC`,
+         FROM execution_runs r
+         JOIN run_batches b ON b.id = r.batch_id
+         WHERE r.case_definition_id IN (${placeholders})
+           AND b.batch_kind <> 'case_log_rerun'
+           AND r.status IN ('succeeded', 'failed', 'cancelled')
+         ORDER BY r.case_definition_id, r.created_at DESC, r.id DESC`,
         batch,
       );
       for (const row of result.rows) {

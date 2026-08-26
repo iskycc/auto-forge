@@ -6,6 +6,54 @@ and known limitations.
 
 ## Unreleased
 
+## 1.3.8 - 2026-08-26
+
+### Added
+
+- Execution details persist and display the effective concurrency for every round. A dynamic-rule
+  transition is marked inline and recorded once in the scheduling log with the previous/new limits,
+  previous-round pass rate and remaining case count.
+- A terminal case log can launch a one-case diagnostic rerun from the original immutable Runner,
+  Adapter asset, version and timeout snapshot. Diagnostic reruns stay out of execution history,
+  analytics, statistics, search, webhooks and completion notifications; the permanent public log
+  sidebar shows them chronologically with the requesting local or LDAP username.
+- A terminal batch can create a normal new batch from only its final failed/timed-out cases. The
+  dialog accepts a one-off base concurrency and can disable dynamic concurrency rules or Jenkins
+  round recovery for that rerun without changing the source task.
+
+### Fixed
+
+- Concurrent scheduler passes cannot emit duplicate dynamic-concurrency transition events for the
+  same round, rule and effective limit.
+- The execution-recovery Playwright fixture now waits for client hydration before selecting its JAR,
+  removing a full-suite race against the intentionally disabled pre-hydration upload control.
+
+### Tests
+
+- Added application coverage for immutable single-case/final-failure derivation and public diagnostic
+  history, shared SQLite/PostgreSQL repository contracts for hidden reruns, final-failure selection and
+  idempotent concurrency events, plus migration upgrade coverage.
+- Extended the Lite Playwright all-rounds flow through a concurrency transition, Jenkins recovery,
+  hidden user-attributed diagnostic rerun, anonymous same-tab history navigation and configurable
+  final-failure rerun at both 1024px and 1536px desktop widths.
+
+### Database
+
+- Added SQLite `0048_round_rerun_observability.sql` and PostgreSQL
+  `0047_round_rerun_observability.sql`. Existing batches are classified as standard and receive a
+  first-round concurrency snapshot from their persisted policy (or the historical default of 4).
+
+### Compatibility
+
+- Runner Protocol v1, Jenkins Pipeline inputs and release archive formats are unchanged. New batch
+  metadata, public-log requester fields and round concurrency fields are additive. Lite and Full use
+  the same derivation, visibility and idempotency rules.
+
+### Known limitations
+
+- The public log sidebar remains terminal-only and bounds one case family to 500 diagnostic rerun
+  batches. Active diagnostic attempts appear after completion; anonymous live streaming is unchanged.
+
 ## 1.3.7 - 2026-08-26
 
 ### Added

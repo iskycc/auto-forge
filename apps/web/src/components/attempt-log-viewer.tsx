@@ -3,7 +3,7 @@
 import type { AttemptLogPage, LogChunk } from "@autoforge/contracts";
 import type { RunAttempt } from "@autoforge/domain";
 import { isTerminalAttemptStatus } from "@autoforge/domain";
-import { RefreshCw, Search } from "lucide-react";
+import { RefreshCw, RotateCcw, Search } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { TerminalLogViewer } from "@/components/terminal-log-viewer";
@@ -65,11 +65,13 @@ export function AttemptLogViewer({
   attemptId,
   attemptStatus,
   canReadLogs,
+  canCreateRuns,
   onClose,
 }: {
   attemptId: string;
   attemptStatus: RunAttempt["status"];
   canReadLogs: boolean;
+  canCreateRuns: boolean;
   onClose: () => void;
 }) {
   const [stream, setStream] = useState<LogStream>("stdout");
@@ -85,6 +87,8 @@ export function AttemptLogViewer({
   const [loading, setLoading] = useState(false);
   const [liveLogs, setLiveLogs] = useState(false);
   const [error, setError] = useState("");
+  const [rerunPending, setRerunPending] = useState(false);
+  const [rerunMessage, setRerunMessage] = useState("");
   const attemptTerminal = isTerminalAttemptStatus(attemptStatus);
 
   const loadLogs = useCallback(
@@ -216,6 +220,25 @@ export function AttemptLogViewer({
     [visibleLogText],
   );
 
+  async function rerunCase(): Promise<void> {
+    setRerunPending(true);
+    setRerunMessage("");
+    setError("");
+    try {
+      const response = await fetch(`/api/v1/run-attempts/${encodeURIComponent(attemptId)}/rerun`, {
+        method: "POST",
+      });
+      if (!response.ok) {
+        throw new Error((await readApiErrorMessage(response, "重新执行用例失败。"))!);
+      }
+      setRerunMessage("已提交诊断重跑；完成后会显示在该用例的公开日志执行历史中。");
+    } catch (rerunError) {
+      setError(rerunError instanceof Error ? rerunError.message : "重新执行用例失败。");
+    } finally {
+      setRerunPending(false);
+    }
+  }
+
   return (
     <TerminalLogViewer
       title={`执行日志 · ${attemptId.slice(0, 8)} · ${streamLabel(stream)}${liveLogs ? " · 实时" : ""}`}
@@ -282,8 +305,24 @@ export function AttemptLogViewer({
         >
           {darkLogs ? "浅色日志" : "深色日志"}
         </Button>
+        {canCreateRuns && attemptTerminal ? (
+          <Button
+            className="button button-primary compact-button"
+            disabled={rerunPending}
+            onClick={() => void rerunCase()}
+            type="button"
+          >
+            <RotateCcw size={15} />
+            {rerunPending ? "正在提交…" : "重新执行"}
+          </Button>
+        ) : null}
       </div>
       {error ? <p className="form-error">{error}</p> : null}
+      {rerunMessage ? (
+        <p className="status-success" role="status">
+          {rerunMessage}
+        </p>
+      ) : null}
       <p className="log-output-policy-note" role="note">
         测试日志不限制类名、包名或普通关键字；仅明确的 Bearer、密码、Token 与 API Key
         凭据格式执行安全保护。

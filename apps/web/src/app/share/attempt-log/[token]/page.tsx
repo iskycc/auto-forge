@@ -86,8 +86,10 @@ function SharedAttemptLogContent({ token, view }: { token: string; view: SharedA
             </ShareFact>
             <ShareFact label="批次 / 当前轮次">
               <span title={`批次 ${view.batchId} · 尝试 ${view.attemptId}`}>
-                批次 #{view.batchSequenceNumber} · 第 {view.attemptNumber} 轮
+                批次 #{view.batchSequenceNumber} ·{" "}
+                {view.kind === "manual_rerun" ? "手动重跑" : `第 ${view.attemptNumber} 轮`}
               </span>
+              {view.requestedBy ? <span>{requesterLabel(view.requestedBy)}</span> : null}
             </ShareFact>
           </dl>
         </aside>
@@ -114,9 +116,9 @@ function SharedAttemptLogContent({ token, view }: { token: string; view: SharedA
 
 function RoundLogNavigation({ token, view }: { token: string; view: SharedAttemptLogView }) {
   return (
-    <nav className="share-log-rounds" aria-label="同一用例的轮次日志">
+    <nav className="share-log-rounds" aria-label="同一用例的执行历史">
       <div className="share-log-rounds-heading">
-        <h2>轮次日志</h2>
+        <h2>执行历史</h2>
         <span>{view.rounds.length} 个结果</span>
       </div>
       <ol className="share-log-round-list">
@@ -131,15 +133,24 @@ function RoundLogNavigation({ token, view }: { token: string; view: SharedAttemp
                 prefetch={false}
               >
                 <span className="share-log-round-link-heading">
-                  <strong>第 {round.attemptNumber} 轮</strong>
+                  <strong>
+                    {round.kind === "manual_rerun" ? "手动重跑" : `第 ${round.attemptNumber} 轮`}
+                  </strong>
                   <span className={`batch-status ${sharedOutcomeClass(round.outcome)}`}>
                     {sharedOutcomeLabel(round.outcome)}
                   </span>
                 </span>
                 <span className="share-log-round-meta">
-                  <ShareTime value={round.finishedAt ?? round.startedAt} />
-                  {round.durationMs !== null ? (
-                    <span>{(round.durationMs / 1_000).toFixed(1)} 秒</span>
+                  <span className="share-log-round-time">
+                    <ShareTime value={round.finishedAt ?? round.startedAt} />
+                    {round.durationMs !== null ? (
+                      <span>{(round.durationMs / 1_000).toFixed(1)} 秒</span>
+                    ) : null}
+                  </span>
+                  {round.requestedBy ? (
+                    <span className="share-log-round-requester">
+                      {requesterLabel(round.requestedBy)}
+                    </span>
                   ) : null}
                 </span>
               </Link>
@@ -149,6 +160,10 @@ function RoundLogNavigation({ token, view }: { token: string; view: SharedAttemp
       </ol>
     </nav>
   );
+}
+
+function requesterLabel(requestedBy: { username: string; source: "local" | "ldap" }): string {
+  return `by ${requestedBy.username}（${requestedBy.source === "ldap" ? "LDAP" : "本地"}）`;
 }
 
 function ShareFact({ label, children }: { label: string; children: ReactNode }) {

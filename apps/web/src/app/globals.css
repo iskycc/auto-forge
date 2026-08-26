@@ -10284,6 +10284,27 @@ button.icon-button:disabled {
   font-weight: 650;
 }
 
+.round-concurrency {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 650;
+}
+
+.round-concurrency.changed {
+  color: var(--color-warning);
+}
+
+.round-concurrency small {
+  border-radius: 999px;
+  padding: 2px 5px;
+  background: var(--color-warning-soft);
+  font-size: var(--font-size-caption);
+  font-weight: 700;
+  white-space: nowrap;
+}
+
 .recovery-round-row > td {
   background: color-mix(in srgb, var(--color-info-soft) 42%, var(--color-surface));
 }
@@ -10847,14 +10868,27 @@ button.icon-button:disabled {
 }
 
 .share-log-round-meta {
+  flex-wrap: wrap;
   justify-content: flex-start;
+  row-gap: 4px;
   color: var(--color-text-tertiary);
   font-size: var(--font-size-caption);
 }
 
-.share-log-round-meta > :not(:last-child)::after {
+.share-log-round-time {
+  display: inline-flex;
+  gap: 10px;
+  white-space: nowrap;
+}
+
+.share-log-round-time > :not(:last-child)::after {
   margin-left: 10px;
   content: "·";
+}
+
+.share-log-round-requester {
+  flex: 1 0 100%;
+  white-space: nowrap;
 }
 
 .share-log-facts {
@@ -13239,6 +13273,56 @@ button.icon-button:disabled {
 
 .action-dialog-form {
   margin-top: 0;
+}
+
+.rerun-failures-dialog {
+  width: min(560px, calc(100dvw - 40px));
+}
+
+.rerun-failures-form {
+  display: grid;
+  gap: 16px;
+}
+
+.rerun-failures-form > .field {
+  display: grid;
+  gap: 7px;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-caption);
+  font-weight: 650;
+}
+
+.rerun-failures-form > .field small,
+.rerun-option small {
+  display: block;
+  margin-top: 3px;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-caption);
+  font-weight: 400;
+  line-height: 1.45;
+}
+
+.rerun-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  padding: 12px 13px;
+  background: var(--color-surface-muted);
+}
+
+.rerun-option .ui-input {
+  width: auto;
+  margin-top: 2px;
+}
+
+.action-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 9px;
+  border-top: 1px solid var(--color-border);
+  padding-top: 16px;
 }
 
 /* Project-scoped completion webhooks: compact cards keep endpoints readable at a glance. */

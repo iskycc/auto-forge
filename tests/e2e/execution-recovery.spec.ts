@@ -181,7 +181,9 @@ async function createExecutableFixture(page: Page): Promise<ExecutableFixture> {
     }).toString()}`,
   );
   await expect(page.locator(".global-project-switcher")).toContainText(project.body.name);
-  await page.locator('input[type="file"]').setInputFiles({
+  const jarInput = page.locator('input[type="file"]');
+  await expect(jarInput).toBeEnabled();
+  await jarInput.setInputFiles({
     name: "execution-recovery.jar",
     mimeType: "application/java-archive",
     buffer: Buffer.from(jar),

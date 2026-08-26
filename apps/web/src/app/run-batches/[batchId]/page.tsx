@@ -53,6 +53,14 @@ export default async function RunBatchDetailsPage({
       <ExecutionBatchDetails
         batch={toExecutionBatchView(batch)}
         retrySuiteId={batch.suiteId}
+        {...(batch.policy
+          ? {
+              rerunConfiguration: {
+                defaultConcurrency: batch.policy.concurrency,
+                hasRetryConcurrencyRules: (batch.policy.retryConcurrencyRules?.length ?? 0) > 0,
+              },
+            }
+          : {})}
         canCancelRuns={canAuthorize(() =>
           services.identityAccess.authorize(identity, "run.cancel", batch.projectId),
         )}

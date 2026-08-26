@@ -3,11 +3,18 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 
-import type { ExecutionControlRepository, RunBatchRepository } from "@autoforge/application";
+import type {
+  CaseActivity,
+  ExecutionControlRepository,
+  LatestCaseRunOutcome,
+  RunBatchRepository,
+} from "@autoforge/application";
 import {
   createPostgresDatabase,
   createSqliteDatabase,
+  PostgresCaseCatalogRepository,
   PostgresRunBatchRepository,
+  SqliteCaseCatalogRepository,
   SqliteRunBatchRepository,
   type PostgresDatabaseHandle,
   type SqliteDatabaseHandle,
@@ -22,6 +29,8 @@ import { describe, expect, it } from "vitest";
 type RefillHarness = {
   batches: RunBatchRepository;
   executions: ExecutionControlRepository;
+  listCaseActivity(caseDefinitionId: string, limit: number): Promise<CaseActivity>;
+  listLatestRunOutcomes(caseDefinitionIds: readonly string[]): Promise<LatestCaseRunOutcome[]>;
   projectId: string;
   runnerId: string;
   batchRunningId: string;
@@ -69,6 +78,10 @@ async function createSqliteHarness(): Promise<RefillHarness> {
       handle,
       createAttemptLogStore(resolve(directory, "attempt-logs")),
     ),
+    listCaseActivity: (caseDefinitionId, limit) =>
+      new SqliteCaseCatalogRepository(handle).listCaseActivity(caseDefinitionId, limit),
+    listLatestRunOutcomes: (caseDefinitionIds) =>
+      new SqliteCaseCatalogRepository(handle).listLatestRunOutcomes(caseDefinitionIds),
     ...fixture,
     rawQuery: async (sql, parameters) => {
       handle.client.prepare(sql).run(...(parameters ?? []));
@@ -80,6 +93,129 @@ async function createSqliteHarness(): Promise<RefillHarness> {
 }
 
 function schedulingRefillCases(createHarness: () => Promise<RefillHarness>): void {
+  it("persists each round concurrency and records a dynamic transition event atomically", async () => {
+    const harness = await createHarness();
+    try {
+      await expect(
+        harness.batches.recordRoundConcurrency({
+          batchId: harness.batchQueuedId,
+          round: 2,
+          concurrency: 80,
+          source: "base",
+          recordedAt: "2026-08-10T00:00:30.000Z",
+        }),
+      ).resolves.toBe("created");
+      await expect(
+        harness.batches.recordRoundConcurrency({
+          batchId: harness.batchQueuedId,
+          round: 2,
+          concurrency: 40,
+          source: "rule_transition",
+          ruleId: "high-pass",
+          previousConcurrency: 80,
+          transitionEvent: {
+            id: randomUUID(),
+            message: "第 2 轮动态并发由 80 调整为 40",
+            payload: { executionRound: 2, previousConcurrency: 80, concurrency: 40 },
+          },
+          recordedAt: "2026-08-10T00:00:31.000Z",
+        }),
+      ).resolves.toBe("existing");
+      await expect(
+        harness.batches.recordRoundConcurrency({
+          batchId: harness.batchQueuedId,
+          round: 2,
+          concurrency: 40,
+          source: "rule_transition",
+          ruleId: "high-pass",
+          previousConcurrency: 80,
+          transitionEvent: {
+            id: randomUUID(),
+            message: "重复调度快照不得重复记录事件",
+            payload: { executionRound: 2, previousConcurrency: 80, concurrency: 40 },
+          },
+          recordedAt: "2026-08-10T00:00:32.000Z",
+        }),
+      ).resolves.toBe("existing");
+
+      const details = await harness.batches.get(harness.batchQueuedId);
+      expect(details?.roundConcurrencies).toContainEqual({
+        round: 2,
+        concurrency: 40,
+        source: "rule_transition",
+        ruleId: "high-pass",
+        previousConcurrency: 80,
+        recordedAt: "2026-08-10T00:00:31.000Z",
+      });
+      const events = await harness.batches.listSchedulingEvents({
+        batchId: harness.batchQueuedId,
+        limit: 20,
+      });
+      expect(
+        events.items.filter((event) => event.eventType === "retry_concurrency_changed"),
+      ).toEqual([
+        expect.objectContaining({
+          payload: { executionRound: 2, previousConcurrency: 80, concurrency: 40 },
+        }),
+      ]);
+    } finally {
+      await harness.dispose();
+      await cleanupTemporaryDirectories();
+    }
+  });
+
+  it("hides diagnostic case reruns from execution history while preserving direct log lookup", async () => {
+    const harness = await createHarness();
+    const caseDefinitionId = `case-diagnostic-${randomUUID()}`;
+    const visibleRunId = randomUUID();
+    const diagnosticRunId = randomUUID();
+    try {
+      await harness.rawQuery(
+        `UPDATE run_batches
+         SET batch_kind = 'case_log_rerun', parent_batch_id = ?,
+             source_execution_run_id = ?, requested_by_username = 'c12345678',
+             requested_by_source = 'ldap'
+         WHERE id = ?`,
+        [harness.batchRunningId, harness.completion.attempt1Id, harness.batchQueuedId],
+      );
+      await harness.rawQuery(
+        `INSERT INTO execution_runs
+           (id, batch_id, case_definition_id, case_version, display_name, class_name,
+            status, attempt_count, terminal_outcome, created_at, updated_at)
+         VALUES (?, ?, ?, 1, 'Visible run', 'example.VisibleTest', 'succeeded', 0,
+                 'succeeded', '2026-08-10T00:00:00.000Z', '2026-08-10T00:00:00.000Z'),
+                (?, ?, ?, 1, 'Diagnostic run', 'example.VisibleTest', 'failed', 0,
+                 'failed', '2026-08-10T00:01:00.000Z', '2026-08-10T00:01:00.000Z')`,
+        [
+          visibleRunId,
+          harness.batchSucceededId,
+          caseDefinitionId,
+          diagnosticRunId,
+          harness.batchQueuedId,
+          caseDefinitionId,
+        ],
+      );
+
+      await expect(harness.batches.list(100)).resolves.not.toContainEqual(
+        expect.objectContaining({ id: harness.batchQueuedId }),
+      );
+      await expect(harness.batches.get(harness.batchQueuedId)).resolves.toMatchObject({
+        id: harness.batchQueuedId,
+        kind: "case_log_rerun",
+        requestedBy: { username: "c12345678", source: "ldap" },
+      });
+      await expect(harness.listCaseActivity(caseDefinitionId, 20)).resolves.toMatchObject({
+        executions: [{ runId: visibleRunId }],
+      });
+      await expect(harness.listLatestRunOutcomes([caseDefinitionId])).resolves.toMatchObject([
+        { caseDefinitionId, outcome: "succeeded" },
+      ]);
+    } finally {
+      await harness.dispose();
+      await cleanupTemporaryDirectories();
+    }
+  });
+
   it("persists an activated retry concurrency until a later ordered rule takes over", async () => {
     const harness = await createHarness();
     const firstState = {
@@ -237,6 +373,11 @@ function schedulingRefillCases(createHarness: () => Promise<RefillHarness>): voi
         succeededRuns: 1,
         failedRuns: 1,
         timedOutRuns: 0,
+      });
+      await expect(
+        harness.batches.getRerunSnapshot(batchId, { finalFailuresOnly: true }),
+      ).resolves.toMatchObject({
+        runs: [{ id: failedRunId, displayName: "Failed finally" }],
       });
     } finally {
       await harness.dispose();
@@ -670,6 +811,10 @@ describe.skipIf(!postgresConnectionString)("PostgreSQL scheduling refill contrac
     return {
       batches: new PostgresRunBatchRepository(handle),
       executions: new PostgresExecutionControlRepository(handle, attemptLogs),
+      listCaseActivity: (caseDefinitionId, limit) =>
+        new PostgresCaseCatalogRepository(handle).listCaseActivity(caseDefinitionId, limit),
+      listLatestRunOutcomes: (caseDefinitionIds) =>
+        new PostgresCaseCatalogRepository(handle).listLatestRunOutcomes(caseDefinitionIds),
       ...fixture,
       rawQuery: async (sql, parameters) => {
         await handle.pool.query(toPostgresPlaceholders(sql), parameters ?? []);

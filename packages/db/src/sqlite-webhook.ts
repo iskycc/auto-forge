@@ -255,6 +255,7 @@ export class SqliteWebhookRepository implements WebhookRepository {
          JOIN case_suite_webhook_bindings binding ON binding.suite_id = b.suite_id
          JOIN webhook_configurations w ON w.id = binding.webhook_id
          WHERE e.to_status IN ('succeeded', 'failed', 'cancelled')
+           AND b.batch_kind <> 'case_log_rerun'
            AND NOT EXISTS (
              SELECT 1 FROM webhook_deliveries existing
              WHERE existing.webhook_id = w.id AND existing.batch_id = b.id

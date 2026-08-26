@@ -1046,6 +1046,50 @@ describe("SQLite migrations", { timeout: 15_000 }, () => {
       database.close();
     }
   });
+
+  it("adds rerun metadata and backfills the first-round concurrency snapshot", async () => {
+    const directory = await mkdtemp(resolve(tmpdir(), "autoforge-rerun-observability-migration-"));
+    temporaryDirectories.push(directory);
+    const databasePath = resolve(directory, "autoforge.sqlite");
+    const migrationsFolder = resolve(import.meta.dirname, "../drizzle/sqlite");
+    const migrationFiles = (await readdir(migrationsFolder))
+      .filter((name) => /^\d+_.+\.sql$/.test(name))
+      .sort();
+    const migration = "0048_round_rerun_observability.sql";
+    const migrationIndex = migrationFiles.indexOf(migration);
+    expect(migrationIndex).toBeGreaterThan(0);
+    const database = new Database(databasePath);
+    try {
+      database.pragma("foreign_keys = ON");
+      for (const fileName of migrationFiles.slice(0, migrationIndex)) {
+        database.exec(await readFile(resolve(migrationsFolder, fileName), "utf8"));
+      }
+      database.exec(`
+        INSERT INTO run_batches
+          (id, sequence_number, suite_id, suite_name, suite_version, status, retry_limit,
+           retry_mode, current_round, environment_json, secret_bindings_json, total_runs,
+           project_id, policy_json, scheduled_for, created_at, updated_at)
+        VALUES
+          ('batch-rerun-migration', 9006, 'suite-migration', 'Migration suite', 1,
+           'succeeded', 1, 'round', 3, '[]', '[]', 1,
+           '00000000-0000-7000-8000-000000000001', '{"concurrency":17}',
+           '2026-08-26T00:00:00.000Z', '2026-08-26T00:00:00.000Z',
+           '2026-08-26T00:01:00.000Z');
+      `);
+      database.exec(await readFile(resolve(migrationsFolder, migration), "utf8"));
+      expect(
+        database
+          .prepare(
+            `SELECT b.batch_kind, c.execution_round, c.concurrency, c.source
+             FROM run_batches b JOIN run_batch_round_concurrencies c ON c.batch_id=b.id
+             WHERE b.id='batch-rerun-migration'`,
+          )
+          .get(),
+      ).toEqual({ batch_kind: "standard", execution_round: 1, concurrency: 17, source: "base" });
+    } finally {
+      database.close();
+    }
+  });
 });
 
 type MigrationWorkerInput = {

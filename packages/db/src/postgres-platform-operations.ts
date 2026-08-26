@@ -564,7 +564,9 @@ export class PostgresPlatformOperationsRepository implements PlatformOperationsR
               SELECT project_id,user_id FROM project_role_bindings
               UNION SELECT id,owner_user_id FROM projects WHERE owner_user_id IS NOT NULL
             ) recipients ON recipients.project_id=b.project_id
-            WHERE b.status IN ('succeeded','failed','cancelled') ORDER BY b.updated_at DESC LIMIT $2
+            WHERE b.status IN ('succeeded','failed','cancelled')
+              AND b.batch_kind <> 'case_log_rerun'
+            ORDER BY b.updated_at DESC LIMIT $2
             ON CONFLICT DO NOTHING`,
           values: [input.now, input.limit],
         },
@@ -795,6 +797,7 @@ export class PostgresPlatformOperationsRepository implements PlatformOperationsR
          FROM run_attempts a JOIN execution_runs r ON r.id=a.execution_run_id
          JOIN run_batches b ON b.id=r.batch_id LEFT JOIN analytics_facts f ON f.attempt_id=a.id
          WHERE (f.attempt_id IS NULL OR f.schema_version < $1)
+           AND b.batch_kind <> 'case_log_rerun'
            AND a.finished_at IS NOT NULL AND a.outcome IS NOT NULL
          ORDER BY a.finished_at,a.id LIMIT $2 FOR UPDATE OF a SKIP LOCKED`,
         [ANALYTICS_FACT_SCHEMA_VERSION, limit],
@@ -1037,14 +1040,16 @@ export class PostgresPlatformOperationsRepository implements PlatformOperationsR
       ),
       this.handle.pool.query<SearchRow>(
         `SELECT id,project_id,suite_name AS title,status AS subtitle FROM run_batches
-         WHERE (lower(suite_name) LIKE $1 ESCAPE '\\' OR lower(id) LIKE $1 ESCAPE '\\') ${scope}
+         WHERE batch_kind <> 'case_log_rerun'
+           AND (lower(suite_name) LIKE $1 ESCAPE '\\' OR lower(id) LIKE $1 ESCAPE '\\') ${scope}
          ORDER BY created_at DESC LIMIT ${limitParameter}`,
         values,
       ),
       this.handle.pool.query<SearchRow>(
         `SELECT r.id,b.project_id,r.display_name AS title,r.status AS subtitle
          FROM execution_runs r JOIN run_batches b ON b.id=r.batch_id
-         WHERE (lower(r.display_name) LIKE $1 ESCAPE '\\' OR lower(r.id) LIKE $1 ESCAPE '\\')
+         WHERE b.batch_kind <> 'case_log_rerun'
+           AND (lower(r.display_name) LIKE $1 ESCAPE '\\' OR lower(r.id) LIKE $1 ESCAPE '\\')
          ${input.projectIds ? "AND b.project_id=ANY($2::text[])" : ""}
          ORDER BY r.created_at DESC LIMIT ${limitParameter}`,
         values,

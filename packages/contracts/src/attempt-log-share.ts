@@ -34,6 +34,8 @@ export interface SharedAttemptLogRoundView {
   startedAt: string | null;
   finishedAt: string | null;
   durationMs: number | null;
+  kind?: "round" | "manual_rerun";
+  requestedBy?: { username: string; source: "local" | "ldap" } | null;
 }
 
 /** 导出/日志公开访问页共用的单行数据结构。 */
@@ -55,9 +57,11 @@ export interface SharedAttemptLogView {
   startedAt: string | null;
   finishedAt: string | null;
   durationMs: number | null;
-  /** adapter 执行该用例的完整输出流日志（已脱敏） */
+  kind?: "round" | "manual_rerun";
+  requestedBy?: { username: string; source: "local" | "ldap" } | null;
+  /** adapter 执行该用例的完整输出流日志（仅执行明确凭据保护） */
   logText: string;
-  /** 按轮次升序排列，仅包含当前分享链接所授权用例的已完成尝试。 */
+  /** 按执行时间排列，仅包含当前分享链接所授权用例的已完成轮次与诊断重跑。 */
   rounds: SharedAttemptLogRoundView[];
   /**
    * 兼容字段：链接当前永久有效，新记录固定为永久哨兵值（9999-12-31），

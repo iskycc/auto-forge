@@ -564,6 +564,7 @@ describe("run batch creation with suite policy", () => {
         candidates: [{ runner: schedulingRunner(), reservedSlots: 0 }],
         projectActiveRuns: 0,
       }),
+      recordRoundConcurrency: vi.fn().mockResolvedValue("created"),
       reserveAssignments: vi.fn(async (input: { decisions: unknown[] }) => {
         decisions.push(...input.decisions);
         return input.decisions.length;
@@ -641,6 +642,7 @@ describe("run batch creation with suite policy", () => {
           remainingRuns: 4,
         },
       }),
+      recordRoundConcurrency: vi.fn().mockResolvedValue("created"),
       activateRetryConcurrency,
       reserveAssignments: vi.fn(async (input: { decisions: unknown[] }) => {
         decisions.push(...input.decisions);
@@ -671,6 +673,18 @@ describe("run batch creation with suite policy", () => {
         executionRound: 3,
         expectedRuleId: null,
         state: expect.objectContaining({ ruleId: "low-pass-remainder", concurrency: 2 }),
+      }),
+    );
+    expect(batches.recordRoundConcurrency).toHaveBeenCalledWith(
+      expect.objectContaining({
+        round: 3,
+        concurrency: 2,
+        source: "rule_transition",
+        ruleId: "low-pass-remainder",
+        previousConcurrency: 8,
+        transitionEvent: expect.objectContaining({
+          payload: expect.objectContaining({ previousRoundPassRate: 20, remainingRuns: 4 }),
+        }),
       }),
     );
   });
@@ -720,6 +734,7 @@ describe("run batch creation with suite policy", () => {
           remainingRuns: 4,
         },
       }),
+      recordRoundConcurrency: vi.fn().mockResolvedValue("created"),
       activateRetryConcurrency,
       reserveAssignments: vi.fn(async (input: { decisions: unknown[] }) => {
         decisions.push(...input.decisions);
@@ -746,6 +761,14 @@ describe("run batch creation with suite policy", () => {
 
     expect(decisions).toHaveLength(2);
     expect(activateRetryConcurrency).not.toHaveBeenCalled();
+    expect(batches.recordRoundConcurrency).toHaveBeenCalledWith(
+      expect.objectContaining({
+        round: 5,
+        concurrency: 2,
+        source: "inherited_rule",
+        ruleId: "high-pass",
+      }),
+    );
   });
 
   it("does not schedule when the project concurrency budget is exhausted", async () => {
@@ -761,6 +784,7 @@ describe("run batch creation with suite policy", () => {
         candidates: [{ runner: schedulingRunner(), reservedSlots: 0 }],
         projectActiveRuns: 2,
       }),
+      recordRoundConcurrency: vi.fn().mockResolvedValue("created"),
       reserveAssignments: vi.fn(),
       getSummary: vi.fn().mockResolvedValue({ id: "batch-1", assignedRuns: 0 }),
       get: vi.fn().mockResolvedValue({ id: "batch-1", assignedRuns: 0 }),
@@ -1067,6 +1091,7 @@ describe("scheduling event log", () => {
         candidates: [{ runner: schedulingRunner(), reservedSlots: 0 }],
         projectActiveRuns: 0,
       }),
+      recordRoundConcurrency: vi.fn().mockResolvedValue("created"),
       reserveAssignments: vi.fn(async (input: { decisions: unknown[] }) => input.decisions.length),
       appendSchedulingEvents: vi.fn(async (events: Array<Record<string, unknown>>) => {
         appended.push(events);

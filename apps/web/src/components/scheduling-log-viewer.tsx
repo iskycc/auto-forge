@@ -11,7 +11,9 @@ type SchedulingEventType =
   | "attempt_claimed"
   | "attempt_completed"
   | "run_held_for_round"
+  | "retry_concurrency_changed"
   | "runner_fault_rescheduled"
+  | "round_recovery"
   | "runner_metrics";
 
 type SchedulingEvent = {
@@ -50,7 +52,9 @@ const SCHEDULING_EVENT_CLASS: Record<SchedulingEventType, string> = {
   attempt_claimed: "scheduling-event-blue",
   attempt_completed: "",
   run_held_for_round: "scheduling-event-yellow",
+  retry_concurrency_changed: "scheduling-event-yellow",
   runner_fault_rescheduled: "scheduling-event-red",
+  round_recovery: "scheduling-event-blue",
   runner_metrics: "scheduling-event-blue",
 };
 
