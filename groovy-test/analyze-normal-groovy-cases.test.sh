@@ -75,6 +75,11 @@ printf '%s\n' \
   '    @Test(description = "Business guard")' \
   '    void testBusinessGuard() { throw new IllegalStateException("guard") }' \
   '' \
+  '    @Test(description = "Catch guard")' \
+  '    void testCatchGuard() {' \
+  '        try { assert true } catch (IllegalStateException error) { assert false }' \
+  '    }' \
+  '' \
   '    @Test(description = "Similar but distinct status")' \
   '    void testStatusNewerWorkflow() { assert true }' \
   '' \
@@ -132,8 +137,8 @@ scope_run_output="$({
     --output "${scope_output_file}"
 })"
 grep -Fq 'Scanned 5 Groovy file(s) and 7 case candidate(s).' <<<"${run_output}"
-grep -Fq 'Exported 4 included case(s); 3 candidate(s) were excluded.' <<<"${run_output}"
-grep -Fq "1 file(s) require review; see the '扫描问题' worksheet." <<<"${run_output}"
+grep -Fq 'Exported 2 included case(s); 5 candidate(s) were excluded.' <<<"${run_output}"
+grep -Fq "1 file(s) had scan issues; see the '扫描问题' worksheet." <<<"${run_output}"
 grep -Fq "Source root: ${scope_workspace}/groovy-test" <<<"${scope_run_output}"
 grep -Fq 'Scanned 1 Groovy file(s) and 1 case candidate(s).' <<<"${scope_run_output}"
 unzip -t "${output_file}" >/dev/null
@@ -163,12 +168,23 @@ const normalCases = xlsxModule.utils.sheet_to_json(workbook.Sheets["导出用例
 const excludedCases = xlsxModule.utils.sheet_to_json(workbook.Sheets["排除明细"]);
 const issues = xlsxModule.utils.sheet_to_json(workbook.Sheets["扫描问题"]);
 
-if (normalCases.length !== 4 || excludedCases.length !== 3 || issues.length !== 1) {
+if (normalCases.length !== 2 || excludedCases.length !== 5 || issues.length !== 1) {
   throw new Error("Unexpected workbook row counts");
 }
-const normalSignalsCase = normalCases.find((row) => row["类名"] === "NormalSignalsSpec");
-if (!normalSignalsCase) {
-  throw new Error("Conservatively normal method signals did not keep their class included");
+const formerReviewCase = excludedCases.find(
+  (row) => row["类名"] === "NormalSignalsSpec",
+);
+if (!String(formerReviewCase?.["排除证据"]).includes("注释或字符串命中：error")) {
+  throw new Error("A comment/string keyword signal was not promoted to exclusion evidence");
+}
+if (!String(formerReviewCase?.["排除证据"]).includes("代码主动抛出异常")) {
+  throw new Error("A throw signal was not promoted to exclusion evidence");
+}
+if (!String(formerReviewCase?.["排除证据"]).includes("代码捕获异常")) {
+  throw new Error("A catch signal was not promoted to exclusion evidence");
+}
+if (normalCases.some((row) => row["复核提示"] !== undefined)) {
+  throw new Error("The obsolete review hint column is still exported");
 }
 if (!normalCases.some((row) => row["类名"] === "ScriptSmoke")) {
   throw new Error("Normal Groovy script was not exported");
@@ -194,13 +210,13 @@ const frozenCommentCase = excludedCases.find(
 if (frozenCommentCase?.["用例标题"] !== "FrozenCommentCase") {
   throw new Error("The class name after the class keyword was not used as the case title");
 }
-if (frozenCommentCase?.["明确证据"] !== "标题（class 后的类名）明确命中：frozen") {
+if (frozenCommentCase?.["排除证据"] !== "标题（class 后的类名）明确命中：frozen") {
   throw new Error("A title keyword was still reported as a comment/string-only signal");
 }
 if (loginCases.some((row) => row["包名"] !== "sample.account")) {
   throw new Error("Package parsing crossed the declaration line into an import");
 }
-if (normalSignalsCase["包名"] !== "sample.account") {
+if (formerReviewCase?.["包名"] !== "sample.account") {
   throw new Error("Package parsing was not applied to every class in a source file");
 }
 const checkoutCase = normalCases.find((row) => row["类名"] === "CheckoutCase");
@@ -210,8 +226,12 @@ if (checkoutCase?.["包名"] !== "sample.orders") {
 if (!issues.some((row) => row["相对路径"] === "BrokenCase.groovy")) {
   throw new Error("A malformed Groovy source was not reported");
 }
-if (!normalCases.some((row) => row["类名"] === "BrokenCase")) {
-  throw new Error("An unparseable source was not included under the conservative policy");
+const brokenCase = excludedCases.find((row) => row["类名"] === "BrokenCase");
+if (!String(brokenCase?.["排除证据"]).includes("无法可靠解析，已排除")) {
+  throw new Error("An unparseable source was not excluded");
+}
+if (!issues.some((row) => row["处理结果"] === "已排除")) {
+  throw new Error("A scan issue did not record its exclusion result");
 }
 
 const scopeWorkbook = xlsxModule.read(readFileSync(scopeOutputFile));

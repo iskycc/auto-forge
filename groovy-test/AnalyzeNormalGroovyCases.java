@@ -67,7 +67,7 @@ public final class AnalyzeNormalGroovyCases {
           report.includedCases.size(), report.excludedCases.size());
       if (!report.scanIssues.isEmpty()) {
         System.out.printf(
-            "%d file(s) require review; see the '扫描问题' worksheet.%n",
+            "%d file(s) had scan issues; see the '扫描问题' worksheet.%n",
             report.scanIssues.size());
       }
       System.out.println("Workbook: " + options.outputFile);
@@ -287,8 +287,7 @@ public final class AnalyzeNormalGroovyCases {
     private String discoveryKind;
     private String decision;
     private List<String> matchedKeywords = Collections.emptyList();
-    private List<String> clearEvidence = Collections.emptyList();
-    private List<String> reviewHints = Collections.emptyList();
+    private List<String> exclusionEvidence = Collections.emptyList();
   }
 
   private static final class CaseCandidate {
@@ -300,7 +299,7 @@ public final class AnalyzeNormalGroovyCases {
     private String discoveryKind;
     private String metadata;
     private String sourceScope;
-    private String forcedReviewReason;
+    private String forcedExclusionReason;
   }
 
   private static final class GroovyCaseAnalyzer {
@@ -340,7 +339,7 @@ public final class AnalyzeNormalGroovyCases {
                     Pattern.compile(
                         "(?i)\\bexpected(?:Exceptions?)?\\s*=\\s*"
                             + "[^,)}\\r\\n]*(?:Exception|Error)\\b"))));
-    private static final List<SemanticPattern> REVIEW_ONLY_SEMANTICS =
+    private static final List<SemanticPattern> ADDITIONAL_EXCLUSION_SEMANTICS =
         Collections.unmodifiableList(
             Arrays.asList(
                 new SemanticPattern(
@@ -389,7 +388,7 @@ public final class AnalyzeNormalGroovyCases {
     }
 
     private void addClassifiedCase(AnalysisReport report, AnalyzedCase analyzedCase) {
-      if (analyzedCase.clearEvidence.isEmpty()) {
+      if (analyzedCase.exclusionEvidence.isEmpty()) {
         report.includedCases.add(analyzedCase);
       } else {
         report.excludedCases.add(analyzedCase);
@@ -427,15 +426,13 @@ public final class AnalyzeNormalGroovyCases {
       candidate.discoveryKind = "文件级兜底（解析失败）";
       candidate.metadata = baseName(sourceFile);
       candidate.sourceScope = "";
-      candidate.forcedReviewReason =
-          "无法可靠解析，按疑似从无原则纳入导出：" + rootMessage(error);
+      candidate.forcedExclusionReason = "无法可靠解析，已排除：" + rootMessage(error);
       return candidate;
     }
 
     private AnalyzedCase classify(CaseCandidate candidate) {
       LinkedHashSet<String> matchedKeywords = new LinkedHashSet<>();
-      List<String> clearEvidence = new ArrayList<>();
-      List<String> reviewHints = new ArrayList<>();
+      List<String> exclusionEvidence = new ArrayList<>();
 
       List<String> titleMatches =
           findKeywords(candidate.title, options.negativeKeywords);
@@ -445,7 +442,7 @@ public final class AnalyzeNormalGroovyCases {
             candidate.discoveryKind.startsWith("类级用例")
                 ? "标题（class 后的类名）"
                 : "文件标题";
-        clearEvidence.add(
+        exclusionEvidence.add(
             titleSource + "明确命中：" + String.join(", ", titleMatches));
       }
 
@@ -454,7 +451,7 @@ public final class AnalyzeNormalGroovyCases {
       metadataMatches.removeAll(titleMatches);
       if (!metadataMatches.isEmpty()) {
         matchedKeywords.addAll(metadataMatches);
-        clearEvidence.add(
+        exclusionEvidence.add(
             "文件名、方法名或注解标题明确命中："
                 + String.join(", ", metadataMatches));
       }
@@ -463,7 +460,7 @@ public final class AnalyzeNormalGroovyCases {
       for (SemanticPattern semantic : CLEAR_NEGATIVE_SEMANTICS) {
         Matcher matcher = semantic.pattern.matcher(code);
         if (matcher.find()) {
-          clearEvidence.add(
+          exclusionEvidence.add(
               semantic.label + "：" + compactExcerpt(candidate.sourceScope, matcher.start()));
         }
       }
@@ -475,21 +472,18 @@ public final class AnalyzeNormalGroovyCases {
       narrativeMatches.removeAll(metadataMatches);
       if (!narrativeMatches.isEmpty()) {
         matchedKeywords.addAll(narrativeMatches);
-        reviewHints.add(
-            "注释或字符串仅疑似命中，未据此排除："
-                + String.join(", ", narrativeMatches));
+        exclusionEvidence.add(
+            "注释或字符串命中：" + String.join(", ", narrativeMatches));
       }
-      for (SemanticPattern semantic : REVIEW_ONLY_SEMANTICS) {
+      for (SemanticPattern semantic : ADDITIONAL_EXCLUSION_SEMANTICS) {
         Matcher matcher = semantic.pattern.matcher(code);
         if (matcher.find()) {
-          reviewHints.add(
-              semantic.label
-                  + "，不能单独证明是异常用例："
-                  + compactExcerpt(candidate.sourceScope, matcher.start()));
+          exclusionEvidence.add(
+              semantic.label + "：" + compactExcerpt(candidate.sourceScope, matcher.start()));
         }
       }
-      if (candidate.forcedReviewReason != null) {
-        reviewHints.add(candidate.forcedReviewReason);
+      if (candidate.forcedExclusionReason != null) {
+        exclusionEvidence.add(candidate.forcedExclusionReason);
       }
 
       AnalyzedCase analyzedCase = new AnalyzedCase();
@@ -500,14 +494,11 @@ public final class AnalyzeNormalGroovyCases {
       analyzedCase.lineNumber = candidate.lineNumber;
       analyzedCase.discoveryKind = candidate.discoveryKind;
       analyzedCase.matchedKeywords = new ArrayList<>(matchedKeywords);
-      analyzedCase.clearEvidence = clearEvidence;
-      analyzedCase.reviewHints = reviewHints;
-      if (!clearEvidence.isEmpty()) {
-        analyzedCase.decision = "排除（存在明确异常场景信号）";
-      } else if (!reviewHints.isEmpty()) {
-        analyzedCase.decision = "纳入（存在疑似信号，按疑似从无原则待复核）";
+      analyzedCase.exclusionEvidence = exclusionEvidence;
+      if (!exclusionEvidence.isEmpty()) {
+        analyzedCase.decision = "排除（命中排除信号）";
       } else {
-        analyzedCase.decision = "纳入（未发现明确异常场景信号）";
+        analyzedCase.decision = "纳入（未发现排除信号）";
       }
       return analyzedCase;
     }
@@ -1074,8 +1065,7 @@ public final class AnalyzeNormalGroovyCases {
               "相对路径",
               "起始行",
               "识别方式",
-              "导出判断",
-              "复核提示");
+              "导出判断");
       List<List<Object>> rows = new ArrayList<>();
       for (int index = 0; index < cases.size(); index++) {
         AnalyzedCase testCase = cases.get(index);
@@ -1088,8 +1078,7 @@ public final class AnalyzeNormalGroovyCases {
                 testCase.relativePath,
                 testCase.lineNumber,
                 testCase.discoveryKind,
-                testCase.decision,
-                String.join("\n", testCase.reviewHints)));
+                testCase.decision));
       }
       writeTable(
           workbook,
@@ -1097,7 +1086,7 @@ public final class AnalyzeNormalGroovyCases {
           "导出用例",
           headers,
           rows,
-          Arrays.asList(8, 34, 28, 30, 48, 10, 32, 42, 72));
+          Arrays.asList(8, 34, 28, 30, 48, 10, 32, 42));
     }
 
     private static void writeExcludedCases(
@@ -1113,7 +1102,7 @@ public final class AnalyzeNormalGroovyCases {
               "识别方式",
               "排除判断",
               "命中关键词",
-              "明确证据");
+              "排除证据");
       List<List<Object>> rows = new ArrayList<>();
       for (int index = 0; index < cases.size(); index++) {
         AnalyzedCase testCase = cases.get(index);
@@ -1128,7 +1117,7 @@ public final class AnalyzeNormalGroovyCases {
                 testCase.discoveryKind,
                 testCase.decision,
                 String.join(", ", testCase.matchedKeywords),
-                String.join("\n", testCase.clearEvidence)));
+                String.join("\n", testCase.exclusionEvidence)));
       }
       writeTable(
           workbook,
@@ -1143,7 +1132,7 @@ public final class AnalyzeNormalGroovyCases {
         Workbook workbook, WorkbookStyles styles, List<ScanIssue> issues) {
       List<List<Object>> rows = new ArrayList<>();
       for (ScanIssue issue : issues) {
-        rows.add(Arrays.asList(issue.relativePath, issue.message, "已按疑似从无原则纳入导出"));
+        rows.add(Arrays.asList(issue.relativePath, issue.message, "已排除"));
       }
       writeTable(
           workbook,
@@ -1167,14 +1156,13 @@ public final class AnalyzeNormalGroovyCases {
       rows.add(Arrays.asList("候选用例数", report.candidateCount()));
       rows.add(Arrays.asList("导出用例数", report.includedCases.size()));
       rows.add(Arrays.asList("排除用例数", report.excludedCases.size()));
-      rows.add(Arrays.asList("待复核文件数", report.scanIssues.size()));
+      rows.add(Arrays.asList("扫描问题文件数", report.scanIssues.size()));
       rows.add(Arrays.asList("默认异常关键词", String.join(", ", options.negativeKeywords)));
       rows.add(
           Arrays.asList(
-              "疑似从无原则",
-              "class 后的类名作为标题并优先判定；只有标题、文件/方法名、注解标题明确命中关键词，"
-                  + "或出现明确异常测试断言时才排除；普通正文、throw/catch、解析失败或无法判断的场景"
-                  + "全部纳入导出并提示复核。"));
+              "排除规则",
+              "class 后的类名作为标题并优先判定；标题、文件/方法名、注解标题、注释或字符串命中关键词，"
+                  + "以及异常断言、throw/catch、解析失败等任何原复核信号，均直接排除。"));
       rows.add(
           Arrays.asList(
               "分析边界",

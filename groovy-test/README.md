@@ -29,7 +29,7 @@ The default exclusion keywords are `Abnormal`, `Exception`, `Error`, `Suspended`
 sequence, so `statusnew` matches `StatusNew` and `statuspendingactive` matches
 `StatusPendingActive`.
 
-Classification follows a conservative inclusion rule:
+Classification follows an exclusion-first rule:
 
 - Each declared class produces one case row. Multiple test methods in the same class are aggregated
   and are never exported as separate rows; Groovy scripts without a class produce one file-level row.
@@ -38,12 +38,12 @@ Classification follows a conservative inclusion rule:
 - A class is excluded when its title/file name, any test method name or annotation title clearly
   matches a configured keyword, or its code uses an explicit negative-test construct such as
   `shouldFail`, `assertThrows`, `thrown`, or an expected-exception annotation.
-- A keyword found only in ordinary comments or strings remains a review hint. When the same keyword
-  is already matched by the class title or other clear metadata, it is not reported again as a
-  suspected comment/string match. Business `throw`/`catch`, malformed source, or any other uncertain
-  signal stays in the `导出用例` worksheet with a review hint.
+- Keywords found in ordinary comments or strings, business `throw`/`catch`, malformed source, and
+  every signal that previously required review now exclude the class directly. When the same keyword
+  is already matched by the class title or other metadata, it is recorded only once using the
+  higher-priority evidence.
 - `排除明细` records the exact evidence used for exclusions, while `扫描问题` records parse
-  failures that were conservatively included.
+  failures that were excluded.
 
 Run the focused regression test after building a POI 3.13 classpath:
 
