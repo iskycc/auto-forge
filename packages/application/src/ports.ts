@@ -745,6 +745,39 @@ export type CaseActivity = {
   }>;
 };
 
+export type CaseExecutionHistoryAttempt = {
+  id: string;
+  attemptNumber: number;
+  status: RunAttempt["status"];
+  runnerId: string;
+  runnerName?: string;
+  resultCode?: string;
+  durationMs?: number;
+  createdAt: string;
+  finishedAt?: string;
+};
+
+export type CaseExecutionHistoryItem = {
+  runId: string;
+  batchId: string;
+  batchSequenceNumber: number;
+  batchName: string;
+  status: ExecutionRun["status"];
+  createdAt: string;
+  attempts: CaseExecutionHistoryAttempt[];
+};
+
+export type CaseExecutionHistoryQuery = {
+  cursor?: string;
+  limit: number;
+  includeRunnerNames?: boolean;
+};
+
+export type CaseExecutionHistoryPage = {
+  items: CaseExecutionHistoryItem[];
+  nextCursor?: string;
+};
+
 export type DashboardSummary = {
   sourceCount: number;
   caseCount: number;
@@ -813,6 +846,10 @@ export interface CaseCatalogRepository {
     projectIds?: readonly string[],
   ): Promise<CaseDefinitionWithMethods | null>;
   listCaseActivity?(caseDefinitionId: string, limit: number): Promise<CaseActivity>;
+  listCaseExecutionHistory(
+    caseDefinitionId: string,
+    query: CaseExecutionHistoryQuery,
+  ): Promise<CaseExecutionHistoryPage>;
   // 批量查询每个用例最新一条终态 run 的结果；无终态记录或入参为空时不返回该用例。
   listLatestRunOutcomes(caseDefinitionIds: readonly string[]): Promise<LatestCaseRunOutcome[]>;
   updateCaseDefinition(input: {

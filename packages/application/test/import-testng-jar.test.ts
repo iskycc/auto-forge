@@ -225,6 +225,7 @@ function catalogFake(
       if (importError) throw importError;
     }),
     listCases: vi.fn(),
+    listCaseExecutionHistory: vi.fn(),
     listLatestRunOutcomes: vi.fn(async () => []),
     findExistingCaseIds: vi.fn(),
     listRecentSources: vi.fn(),

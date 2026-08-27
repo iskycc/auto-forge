@@ -968,6 +968,7 @@ export const pgExecutionRuns = pgTable(
     index("execution_runs_batch_status_idx").on(table.batchId, table.status),
     index("execution_runs_batch_created_idx").on(table.batchId, table.createdAt, table.id),
     index("execution_runs_batch_name_idx").on(table.batchId, table.displayName, table.id),
+    index("execution_runs_case_created_idx").on(table.caseDefinitionId, table.createdAt, table.id),
     index("execution_runs_runner_status_idx").on(table.assignedRunnerId, table.status),
   ],
 );

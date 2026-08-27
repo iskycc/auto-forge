@@ -1,6 +1,8 @@
 import type {
   CaseCatalogRepository,
   CaseActivity,
+  CaseExecutionHistoryPage,
+  CaseExecutionHistoryQuery,
   CaseListPage,
   CaseListQuery,
   CaseSourceVersionMerge,
@@ -58,6 +60,10 @@ import {
 } from "drizzle-orm";
 
 import type { PostgresDatabaseHandle } from "./postgres-database";
+import {
+  decodeCaseExecutionHistoryCursor,
+  encodeCaseExecutionHistoryCursor,
+} from "./case-execution-history";
 import {
   batchesOf,
   POSTGRES_WRITE_BATCH_SIZE,
@@ -882,6 +888,105 @@ export class PostgresCaseCatalogRepository implements CaseCatalogRepository {
         skipped: row.skipped,
         completedAt: row.completed_at,
       })),
+    };
+  }
+
+  async listCaseExecutionHistory(
+    caseDefinitionId: string,
+    query: CaseExecutionHistoryQuery,
+  ): Promise<CaseExecutionHistoryPage> {
+    await this.ready();
+    const cursor = decodeCaseExecutionHistoryCursor(query.cursor);
+    const parameters: unknown[] = [caseDefinitionId];
+    let cursorClause = "";
+    if (cursor) {
+      parameters.push(cursor.createdAt, cursor.runId);
+      cursorClause = "AND (r.created_at < $2 OR (r.created_at = $2 AND r.id < $3))";
+    }
+    parameters.push(query.limit + 1);
+    const limitParameter = `$${parameters.length}`;
+    const runResult = await this.handle.pool.query<{
+      run_id: string;
+      batch_id: string;
+      status: CaseExecutionHistoryPage["items"][number]["status"];
+      created_at: string;
+      sequence_number: number;
+      suite_name: string;
+    }>(
+      `SELECT r.id AS run_id, r.batch_id, r.status, r.created_at,
+              b.sequence_number, b.suite_name
+       FROM execution_runs r
+       JOIN run_batches b ON b.id = r.batch_id
+       WHERE r.case_definition_id = $1 AND b.batch_kind <> 'case_log_rerun'
+       ${cursorClause}
+       ORDER BY r.created_at DESC, r.id DESC LIMIT ${limitParameter}`,
+      parameters,
+    );
+    const hasMore = runResult.rows.length > query.limit;
+    const pageRows = runResult.rows.slice(0, query.limit);
+    const attemptsByRunId = new Map<
+      string,
+      CaseExecutionHistoryPage["items"][number]["attempts"]
+    >();
+    if (pageRows.length > 0) {
+      const attemptResult = await this.handle.pool.query<{
+        id: string;
+        execution_run_id: string;
+        attempt_number: number;
+        status: CaseExecutionHistoryPage["items"][number]["attempts"][number]["status"];
+        runner_id: string;
+        runner_name: string | null;
+        result_code: string | null;
+        duration_ms: string | number | null;
+        created_at: string;
+        finished_at: string | null;
+      }>(
+        `SELECT a.id, a.execution_run_id, a.attempt_number, a.status, a.runner_id,
+                runner.name AS runner_name, a.result_code, a.duration_ms,
+                a.created_at, a.finished_at
+         FROM run_attempts a
+         LEFT JOIN runners runner ON runner.id = a.runner_id
+         WHERE a.execution_run_id = ANY($1::text[])
+         ORDER BY a.execution_run_id, a.attempt_number`,
+        [pageRows.map((row) => row.run_id)],
+      );
+      for (const attempt of attemptResult.rows) {
+        const runAttempts = attemptsByRunId.get(attempt.execution_run_id) ?? [];
+        runAttempts.push({
+          id: attempt.id,
+          attemptNumber: attempt.attempt_number,
+          status: attempt.status,
+          runnerId: attempt.runner_id,
+          ...(query.includeRunnerNames && attempt.runner_name
+            ? { runnerName: attempt.runner_name }
+            : {}),
+          ...(attempt.result_code ? { resultCode: attempt.result_code } : {}),
+          ...(attempt.duration_ms === null ? {} : { durationMs: Number(attempt.duration_ms) }),
+          createdAt: attempt.created_at,
+          ...(attempt.finished_at ? { finishedAt: attempt.finished_at } : {}),
+        });
+        attemptsByRunId.set(attempt.execution_run_id, runAttempts);
+      }
+    }
+    const last = pageRows.at(-1);
+    return {
+      items: pageRows.map((row) => ({
+        runId: row.run_id,
+        batchId: row.batch_id,
+        batchSequenceNumber: row.sequence_number,
+        batchName: row.suite_name,
+        status: row.status,
+        createdAt: row.created_at,
+        attempts: attemptsByRunId.get(row.run_id) ?? [],
+      })),
+      ...(hasMore && last
+        ? {
+            nextCursor: encodeCaseExecutionHistoryCursor({
+              createdAt: last.created_at,
+              runId: last.run_id,
+            }),
+          }
+        : {}),
     };
   }
 

@@ -10,6 +10,7 @@ import type { CaseDefinitionWithMethods, CaseSuite, CaseVersion } from "@autofor
 import {
   AlertCircle,
   Check,
+  Eye,
   FileCode2,
   Folder,
   Layers3,
@@ -643,7 +644,15 @@ function CaseInspector({
           <h2>{definition.displayName}</h2>
           <code>{definition.className}</code>
         </div>
-        <span className="storage-pill">v{definition.currentVersion}</span>
+        <div className="case-inspector-header-actions">
+          <span className="storage-pill">v{definition.currentVersion}</span>
+          <Link
+            className="button button-secondary compact-button"
+            href={`/cases/${encodeURIComponent(definition.id)}`}
+          >
+            完整详情与全部历史
+          </Link>
+        </div>
       </header>
 
       <div className="case-inspector-meta">
@@ -966,12 +975,10 @@ function DirectoryNode({
                 onChange={() => onToggle(item.id)}
               />
             ) : null}
-            <Button
-              aria-label={`查看 ${item.displayName}`}
+            <Link
+              aria-label={`查看 ${item.displayName} 详情`}
               className="case-tree-activate"
-              onClick={() => onActivate(item.id)}
-              type="button"
-              variant="ghost"
+              href={`/cases/${encodeURIComponent(item.id)}`}
             >
               <FileCode2 size={16} aria-hidden="true" />
               <span>
@@ -984,6 +991,17 @@ function DirectoryNode({
                   {outcomeLabel}
                 </span>
               ) : null}
+            </Link>
+            <Button
+              aria-label={`快速预览 ${item.displayName}`}
+              className="case-tree-preview"
+              onClick={() => onActivate(item.id)}
+              title="在右侧快速预览"
+              type="button"
+              variant="ghost"
+              size="compact"
+            >
+              <Eye size={15} aria-hidden="true" />
             </Button>
           </div>
         );

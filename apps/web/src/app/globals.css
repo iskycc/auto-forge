@@ -8711,7 +8711,7 @@ button.icon-button:disabled {
 .case-tree-case {
   display: grid;
   min-width: 0;
-  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   gap: 5px;
   border: 1px solid transparent;
@@ -8728,20 +8728,29 @@ button.icon-button:disabled {
   background: var(--color-info-soft);
 }
 
-.case-tree-activate.ui-button {
+.case-tree-activate {
   display: grid;
   min-width: 0;
   min-height: 44px;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center;
   justify-content: stretch;
   gap: 8px;
   padding: 4px 6px;
+  border-radius: 8px;
+  color: inherit;
   text-align: left;
+  text-decoration: none;
 }
 
-.case-tree-activate.ui-button:hover:not(:disabled) {
-  transform: none;
-  background: transparent;
+.case-tree-activate:hover {
+  background: rgba(6, 104, 216, 0.06);
+}
+
+.case-tree-preview.ui-button {
+  width: 32px;
+  height: 32px;
+  padding: 0;
 }
 
 .case-tree-activate > span {
@@ -8822,6 +8831,44 @@ button.icon-button:disabled {
 .case-inspector-header code {
   color: var(--color-text-secondary);
   overflow-wrap: anywhere;
+}
+
+.case-inspector-header .case-inspector-header-actions {
+  justify-items: end;
+  flex: 0 0 auto;
+}
+
+.case-execution-history .card-heading p {
+  margin: 4px 0 0;
+  color: var(--color-text-secondary);
+}
+
+.case-history-batch-name,
+.case-history-attempt-result {
+  display: block;
+  margin-top: 3px;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-caption);
+}
+
+.case-history-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  white-space: nowrap;
+}
+
+.case-history-load-more {
+  display: flex;
+  justify-content: center;
+  padding: 14px 16px 18px;
+}
+
+.case-history-complete {
+  margin: 0;
+  padding: 14px 16px 18px;
+  color: var(--color-text-tertiary);
+  text-align: center;
 }
 
 .case-inspector-meta {
@@ -11120,10 +11167,6 @@ button.icon-button:disabled {
 }
 
 /* 用例行内结果徽章：目录行网格追加第 4 列 */
-.case-tree-activate.ui-button {
-  grid-template-columns: auto minmax(0, 1fr) auto auto;
-}
-
 .case-tree-activate .batch-status {
   align-self: center;
 }

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 
 import { CaseDefinitionEditor } from "@/components/case-definition-editor";
+import { CaseExecutionHistory } from "@/components/case-execution-history";
 import { CasePermanentShare } from "@/components/case-permanent-share";
 import { CaseVersionHistory } from "@/components/case-version-history";
 import { StatusBadge } from "@/components/status-badge";
@@ -12,6 +13,7 @@ import { requirePageProjectScope } from "@/lib/auth";
 import { formatMethodSignature } from "@/lib/jvm-signature";
 import { getPlatformServices } from "@/lib/services";
 import { formatPlatformDateTime } from "@/lib/platform-date-time";
+import { caseExecutionResultLabel } from "@/lib/case-execution-presentation";
 
 export const dynamic = "force-dynamic";
 
@@ -29,53 +31,6 @@ function formatDate(value: string, timeZone: string): string {
   });
 }
 
-function executionStatusLabel(status: string): string {
-  return (
-    {
-      queued: "等待资源",
-      assigned: "已分配",
-      running: "执行中",
-      succeeded: "成功",
-      failed: "失败",
-      timed_out: "超时",
-      cancelled: "已取消",
-    }[status] ?? "未知状态"
-  );
-}
-
-function resultCodeLabel(code: string | undefined): string {
-  if (!code) return "—";
-  return (
-    {
-      succeeded: "成功",
-      failed: "失败",
-      skipped: "跳过",
-      timed_out: "超时",
-      cancelled: "已取消",
-      TESTNG_SUCCEEDED: "TestNG 通过",
-      TESTNG_SUCCEEDED_WITH_SKIPS: "TestNG 通过（含跳过）",
-      TESTNG_ASSERTIONS_FAILED: "TestNG 断言失败",
-      TESTNG_CONFIGURATION_FAILED: "TestNG 配置失败",
-      TESTNG_EXIT_NONZERO: "TestNG 异常退出",
-      TESTNG_FAILURE: "TestNG 执行失败",
-      TESTNG_NO_TESTS: "未发现 TestNG 测试",
-      ADAPTER_CASE_TIMEOUT: "Adapter 用例超时",
-      EXECUTION_TIMEOUT: "执行超时",
-      EXECUTION_CANCELLED: "执行已取消",
-      CANCELLED_BY_CONTROL_PLANE: "由控制面取消",
-      ASSIGNMENT_CLAIM_TIMEOUT: "执行机领取超时",
-      LEASE_EXPIRED: "执行租约已过期",
-      PROCESS_START_FAILED: "进程启动失败",
-      RESOURCE_MEMORY_EXCEEDED: "超出内存限制",
-      AGENT_RESTARTED_DURING_EXECUTION: "执行期间 Agent 重启",
-      BATCH_TERMINATED_BEFORE_EXECUTION: "执行前批次已终止",
-      OK: "成功",
-      PASSED: "通过",
-      TEST_ASSERTION_FAILED: "测试断言失败",
-    }[code] ?? "其他结果"
-  );
-}
-
 export default async function CaseDetailPage({ params }: CaseDetailPageProps) {
   const { identity, projectIds } = await requirePageProjectScope("case.read");
   const { caseId } = await params;
@@ -84,10 +39,16 @@ export default async function CaseDetailPage({ params }: CaseDetailPageProps) {
   let definition;
   let versions;
   let activity;
+  let executionHistory;
   try {
     definition = await services.caseDefinitions.get(caseId, projectIds);
-    versions = await services.caseDefinitions.listVersions(caseId, projectIds);
-    activity = await services.caseDefinitions.listActivity(caseId, projectIds);
+    [versions, activity, executionHistory] = await Promise.all([
+      services.caseDefinitions.listVersions(caseId, projectIds),
+      services.caseDefinitions.listActivity(caseId, projectIds),
+      services.caseDefinitions.listExecutionHistory(caseId, projectIds, {
+        includeRunnerNames: hasPermission(identity, "runner.read"),
+      }),
+    ]);
   } catch (error) {
     if (isDomainError(error) && error.code === "CASE_DEFINITION_NOT_FOUND") notFound();
     throw error;
@@ -101,12 +62,8 @@ export default async function CaseDetailPage({ params }: CaseDetailPageProps) {
   if (!projectVersion || !testStage) notFound();
   const canManage = hasPermission(identity, "case.manage", definition.projectId);
   const canRun = hasPermission(identity, "run.create", definition.projectId);
+  const canReadLogs = hasPermission(identity, "log.read", definition.projectId);
   const canReadSource = hasPermission(identity, "case_source.read", definition.projectId);
-  const runnerDirectory = new Map(
-    hasPermission(identity, "runner.read")
-      ? (await services.runnerControl.list(500)).map((runner) => [runner.id, runner.name] as const)
-      : [],
-  );
   const sourceRecord = await services.caseSources.get(definition.sourceId, projectIds);
   const executable = sourceRecord.inspection.executable !== false;
   let sourceView: Awaited<ReturnType<typeof services.caseSources.readClassSource>> = null;
@@ -205,51 +162,13 @@ export default async function CaseDetailPage({ params }: CaseDetailPageProps) {
         </div>
       ) : null}
 
-      <section className="card table-card">
-        <div className="card-heading">
-          <div>
-            <span className="eyebrow">Execution history</span>
-            <h2>执行历史（{activity.executions.length}）</h2>
-          </div>
-        </div>
-        <div className="table-scroll">
-          <table className="data-table">
-            <thead>
-              <tr>
-                <th>时间</th>
-                <th>状态</th>
-                <th>结果</th>
-                <th>Runner</th>
-                <th>详情</th>
-              </tr>
-            </thead>
-            <tbody>
-              {activity.executions.length === 0 ? (
-                <tr>
-                  <td colSpan={5}>当前用例尚无执行记录。</td>
-                </tr>
-              ) : null}
-              {activity.executions.map((execution) => (
-                <tr key={execution.runId}>
-                  <td>{formatDate(execution.finishedAt ?? execution.createdAt, timeZone)}</td>
-                  <td>{executionStatusLabel(execution.status)}</td>
-                  <td title={execution.resultCode}>{resultCodeLabel(execution.resultCode)}</td>
-                  <td title={execution.runnerId}>
-                    {execution.runnerId
-                      ? (runnerDirectory.get(execution.runnerId) ?? execution.runnerId.slice(0, 8))
-                      : "—"}
-                  </td>
-                  <td>
-                    <Link href={`/run-batches/${encodeURIComponent(execution.batchId)}`}>
-                      查看批次
-                    </Link>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </section>
+      <CaseExecutionHistory
+        caseDefinitionId={definition.id}
+        initialPage={executionHistory}
+        canReadLogs={canReadLogs}
+        canCreateRuns={canRun}
+        timeZone={timeZone}
+      />
 
       <section className="card table-card">
         <div className="card-heading">
@@ -278,7 +197,7 @@ export default async function CaseDetailPage({ params }: CaseDetailPageProps) {
                 <tr key={analysis.attemptId}>
                   <td>{formatDate(analysis.completedAt, timeZone)}</td>
                   <td title={analysis.resultCode ?? analysis.outcome}>
-                    {resultCodeLabel(analysis.resultCode ?? analysis.outcome)}
+                    {caseExecutionResultLabel(analysis.resultCode ?? analysis.outcome)}
                   </td>
                   <td>
                     {analysis.passed} / {analysis.failed} / {analysis.skipped}

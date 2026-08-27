@@ -5,6 +5,8 @@ import { resolve } from "node:path";
 
 import type {
   CaseActivity,
+  CaseExecutionHistoryPage,
+  CaseExecutionHistoryQuery,
   ExecutionControlRepository,
   LatestCaseRunOutcome,
   RunBatchRepository,
@@ -30,6 +32,10 @@ type RefillHarness = {
   batches: RunBatchRepository;
   executions: ExecutionControlRepository;
   listCaseActivity(caseDefinitionId: string, limit: number): Promise<CaseActivity>;
+  listCaseExecutionHistory(
+    caseDefinitionId: string,
+    query: CaseExecutionHistoryQuery,
+  ): Promise<CaseExecutionHistoryPage>;
   listLatestRunOutcomes(caseDefinitionIds: readonly string[]): Promise<LatestCaseRunOutcome[]>;
   projectId: string;
   runnerId: string;
@@ -80,6 +86,8 @@ async function createSqliteHarness(): Promise<RefillHarness> {
     ),
     listCaseActivity: (caseDefinitionId, limit) =>
       new SqliteCaseCatalogRepository(handle).listCaseActivity(caseDefinitionId, limit),
+    listCaseExecutionHistory: (caseDefinitionId, query) =>
+      new SqliteCaseCatalogRepository(handle).listCaseExecutionHistory(caseDefinitionId, query),
     listLatestRunOutcomes: (caseDefinitionIds) =>
       new SqliteCaseCatalogRepository(handle).listLatestRunOutcomes(caseDefinitionIds),
     ...fixture,
@@ -167,8 +175,10 @@ function schedulingRefillCases(createHarness: () => Promise<RefillHarness>): voi
   it("hides diagnostic case reruns from execution history while preserving direct log lookup", async () => {
     const harness = await createHarness();
     const caseDefinitionId = `case-diagnostic-${randomUUID()}`;
-    const visibleRunId = randomUUID();
+    const visibleRunIds = [randomUUID(), randomUUID(), randomUUID()];
     const diagnosticRunId = randomUUID();
+    const firstAttemptId = randomUUID();
+    const secondAttemptId = randomUUID();
     try {
       await harness.rawQuery(
         `UPDATE run_batches
@@ -182,17 +192,44 @@ function schedulingRefillCases(createHarness: () => Promise<RefillHarness>): voi
         `INSERT INTO execution_runs
            (id, batch_id, case_definition_id, case_version, display_name, class_name,
             status, attempt_count, terminal_outcome, created_at, updated_at)
-         VALUES (?, ?, ?, 1, 'Visible run', 'example.VisibleTest', 'succeeded', 0,
+         VALUES (?, ?, ?, 1, 'Visible run 1', 'example.VisibleTest', 'succeeded', 0,
                  'succeeded', '2026-08-10T00:00:00.000Z', '2026-08-10T00:00:00.000Z'),
+                (?, ?, ?, 1, 'Visible run 2', 'example.VisibleTest', 'failed', 0,
+                 'failed', '2026-08-10T00:01:00.000Z', '2026-08-10T00:01:00.000Z'),
+                (?, ?, ?, 1, 'Visible run 3', 'example.VisibleTest', 'succeeded', 2,
+                 'succeeded', '2026-08-10T00:02:00.000Z', '2026-08-10T00:02:00.000Z'),
                 (?, ?, ?, 1, 'Diagnostic run', 'example.VisibleTest', 'failed', 0,
-                 'failed', '2026-08-10T00:01:00.000Z', '2026-08-10T00:01:00.000Z')`,
+                 'failed', '2026-08-10T00:03:00.000Z', '2026-08-10T00:03:00.000Z')`,
         [
-          visibleRunId,
+          visibleRunIds[0],
           harness.batchSucceededId,
+          caseDefinitionId,
+          visibleRunIds[1],
+          harness.batchRunningId,
+          caseDefinitionId,
+          visibleRunIds[2],
+          harness.completion.batchId,
           caseDefinitionId,
           diagnosticRunId,
           harness.batchQueuedId,
           caseDefinitionId,
+        ],
+      );
+      await harness.rawQuery(
+        `INSERT INTO run_attempts
+           (id, execution_run_id, runner_id, attempt_number, status, scheduling_score,
+            result_code, duration_ms, created_at, finished_at)
+         VALUES (?, ?, ?, 1, 'failed', 0.8, 'TEST_ASSERTION_FAILED', 200,
+                 '2026-08-10T00:02:10.000Z', '2026-08-10T00:02:11.000Z'),
+                (?, ?, ?, 2, 'succeeded', 0.9, 'TESTNG_SUCCEEDED', 120,
+                 '2026-08-10T00:02:20.000Z', '2026-08-10T00:02:21.000Z')`,
+        [
+          firstAttemptId,
+          visibleRunIds[2],
+          harness.runnerId,
+          secondAttemptId,
+          visibleRunIds[2],
+          harness.runnerId,
         ],
       );
 
@@ -205,8 +242,39 @@ function schedulingRefillCases(createHarness: () => Promise<RefillHarness>): voi
         requestedBy: { username: "c12345678", source: "ldap" },
       });
       await expect(harness.listCaseActivity(caseDefinitionId, 20)).resolves.toMatchObject({
-        executions: [{ runId: visibleRunId }],
+        executions: [...visibleRunIds].reverse().map((runId) => ({ runId })),
       });
+      const firstPage = await harness.listCaseExecutionHistory(caseDefinitionId, {
+        limit: 2,
+        includeRunnerNames: true,
+      });
+      expect(firstPage.items.map((item) => item.runId)).toEqual([
+        visibleRunIds[2],
+        visibleRunIds[1],
+      ]);
+      expect(firstPage.items[0]?.attempts).toEqual([
+        expect.objectContaining({
+          id: firstAttemptId,
+          attemptNumber: 1,
+          runnerName: "runner-refill",
+          resultCode: "TEST_ASSERTION_FAILED",
+        }),
+        expect.objectContaining({
+          id: secondAttemptId,
+          attemptNumber: 2,
+          resultCode: "TESTNG_SUCCEEDED",
+        }),
+      ]);
+      expect(firstPage.nextCursor).toBeTruthy();
+      const finalPage = await harness.listCaseExecutionHistory(caseDefinitionId, {
+        cursor: firstPage.nextCursor!,
+        limit: 2,
+      });
+      expect(finalPage.items).toMatchObject([{ runId: visibleRunIds[0] }]);
+      expect(finalPage.nextCursor).toBeUndefined();
+      await expect(
+        harness.listCaseExecutionHistory(caseDefinitionId, { cursor: "invalid", limit: 2 }),
+      ).rejects.toMatchObject({ code: "CASE_EXECUTION_CURSOR_INVALID" });
       await expect(harness.listLatestRunOutcomes([caseDefinitionId])).resolves.toMatchObject([
         { caseDefinitionId, outcome: "succeeded" },
       ]);
@@ -813,6 +881,8 @@ describe.skipIf(!postgresConnectionString)("PostgreSQL scheduling refill contrac
       executions: new PostgresExecutionControlRepository(handle, attemptLogs),
       listCaseActivity: (caseDefinitionId, limit) =>
         new PostgresCaseCatalogRepository(handle).listCaseActivity(caseDefinitionId, limit),
+      listCaseExecutionHistory: (caseDefinitionId, query) =>
+        new PostgresCaseCatalogRepository(handle).listCaseExecutionHistory(caseDefinitionId, query),
       listLatestRunOutcomes: (caseDefinitionIds) =>
         new PostgresCaseCatalogRepository(handle).listLatestRunOutcomes(caseDefinitionIds),
       ...fixture,

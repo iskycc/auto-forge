@@ -121,6 +121,19 @@ export class CaseDefinitionService {
       : { executions: [], analyses: [] };
   }
 
+  async listExecutionHistory(
+    caseDefinitionId: string,
+    projectIds?: readonly string[],
+    query: { cursor?: string; limit?: number; includeRunnerNames?: boolean } = {},
+  ) {
+    await this.get(caseDefinitionId, projectIds);
+    return this.catalog.listCaseExecutionHistory(caseDefinitionId, {
+      limit: Math.max(1, Math.min(query.limit ?? 50, 100)),
+      includeRunnerNames: query.includeRunnerNames ?? false,
+      ...(query.cursor ? { cursor: query.cursor } : {}),
+    });
+  }
+
   /**
    * 批量查询每个用例最近一次终态执行结果；`projectIds` 用于按项目范围裁剪，
    * 调用方已持有范围化用例 ID 时可省略。无终态记录的用例不出现在结果中。

@@ -4,6 +4,46 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## 1.5.1 - 2026-08-27
+
+### Changed
+
+- Case names in the case-management directory now navigate directly to the dedicated case detail
+  page. The existing in-page inspector remains available through an explicitly labelled quick-preview
+  button and links onward to the full detail and history view.
+- Case details now expose the complete execution history through stable cursor pagination instead of
+  a fixed recent window. Each execution expands every attempt, identifies its Runner when authorized and
+  result, and lets authorized users open that attempt's full or live log without leaving the page.
+
+### Tests
+
+- Added shared SQLite/PostgreSQL repository coverage for stable execution-history pagination, all
+  attempts in a run, Runner display names, invalid cursors and exclusion of diagnostic log reruns.
+- Extended the Lite Playwright JAR workflow to navigate from the case directory into the detail page
+  and open both original and retry attempt logs from the new history table.
+
+### Database and persisted configuration
+
+- SQLite migration `0050_case_execution_history_index.sql` and PostgreSQL migration
+  `0049_case_execution_history_index.sql` add an additive `(case_definition_id, created_at, id)` index
+  for bounded history traversal. No data rewrite or persisted-configuration change is required.
+
+### Compatibility
+
+- Runner Protocol v1, Jenkins Pipeline inputs, task snapshots, permanent-share tokens and release
+  archive formats are unchanged. Diagnostic `case_log_rerun` batches remain visible only in log-side
+  history and do not enter ordinary case execution history.
+
+### Offline assets
+
+- No production dependency, remote asset or runtime network requirement was added. Lite and Full use
+  the same application pagination contract with native SQLite/PostgreSQL adapters.
+
+### Known limitations
+
+- The execution-history total is intentionally not counted up front; the page reports how many rows
+  are loaded and whether all history has been reached, avoiding a separate full-history count query.
+
 ## 1.5.0 - 2026-08-27
 
 ### Changed

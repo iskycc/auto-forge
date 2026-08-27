@@ -47,6 +47,26 @@ describe("CaseDefinitionService", () => {
     ).rejects.toMatchObject({ code: "CASE_DEFINITION_REVISION_CONFLICT" });
   });
 
+  it("authorizes and bounds complete execution-history pages", async () => {
+    const getCaseDefinition = vi.fn().mockResolvedValue({ id: "case-1", projectId: "project-1" });
+    const listCaseExecutionHistory = vi.fn().mockResolvedValue({ items: [] });
+    const service = serviceWith({ getCaseDefinition, listCaseExecutionHistory });
+
+    await expect(
+      service.listExecutionHistory("case-1", ["project-1"], {
+        cursor: "older-page",
+        limit: 500,
+        includeRunnerNames: true,
+      }),
+    ).resolves.toEqual({ items: [] });
+    expect(getCaseDefinition).toHaveBeenCalledWith("case-1", ["project-1"]);
+    expect(listCaseExecutionHistory).toHaveBeenCalledWith("case-1", {
+      cursor: "older-page",
+      limit: 100,
+      includeRunnerNames: true,
+    });
+  });
+
   it("deletes a deduplicated selection only inside the authorized project scope", async () => {
     const deleteCaseDefinitions = vi.fn().mockResolvedValue([
       { id: "case-1", projectId: "project-a", displayName: "Case One" },

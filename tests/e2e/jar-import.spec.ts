@@ -370,7 +370,7 @@ public class MixedVisibleTest {
   await page.setViewportSize({ width: 1536, height: 1024 });
   await folderCheckbox.uncheck();
   await page.getByLabel("页内搜索用例").fill("CheckoutTest");
-  await expect(page.getByRole("button", { name: "查看 CheckoutTest" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "查看 CheckoutTest 详情" })).toBeVisible();
   await expectUiConsistency(page);
   await captureUi(page, "case-library");
 
@@ -378,7 +378,7 @@ public class MixedVisibleTest {
     (response) =>
       response.url().includes("/api/v1/case-definitions/") && response.url().endsWith("/workspace"),
   );
-  await page.getByRole("button", { name: "查看 CheckoutTest" }).click();
+  await page.getByRole("button", { name: "快速预览 CheckoutTest" }).click();
   const checkoutWorkspace = (await (await checkoutWorkspaceResponse).json()) as {
     definition: { id: string };
   };
@@ -429,7 +429,7 @@ public class MixedVisibleTest {
   });
   await page.getByRole("link", { name: "查看用例管理" }).click();
   await page.getByLabel("页内搜索用例").fill("MixedVisibleTest");
-  await page.getByRole("button", { name: "查看 MixedVisibleTest" }).click();
+  await page.getByRole("button", { name: "快速预览 MixedVisibleTest" }).click();
   await page.locator(".case-inspector-section").getByText("用例源码", { exact: true }).click();
   await expect(page.locator(".case-inspector-pane .source-code-viewer").first()).toContainText(
     "AUTOFORGE_MIXED_SOURCE_E2E",
@@ -873,6 +873,21 @@ public class MixedVisibleTest {
     completedBatch.attempts.find((attempt) => attempt.attemptNumber === 1)?.resultSummary,
   ).toBe(expectedFailureSummary);
 
+  // 用例名称本身必须进入独立详情页；该页按时间分页展示全部执行记录，且同一 run
+  // 的每个重试轮次都有直接日志入口，不能再被右侧“最近记录”预览截断。
+  await page.goto("/cases");
+  await page.getByLabel("页内搜索用例").fill(taskCase.displayName);
+  await page.getByRole("link", { name: `查看 ${taskCase.displayName} 详情` }).click();
+  await expect(page).toHaveURL(`/cases/${encodeURIComponent(taskCase.id)}`);
+  await expect(page.getByRole("heading", { name: "全部执行历史" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "查看第 1 次尝试日志" })).toBeVisible();
+  await page.getByRole("button", { name: "查看第 2 次尝试日志" }).click();
+  await expect(page.locator(".execution-log")).toContainText("retry passed");
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".execution-log")).toHaveCount(0);
+  await expect(page.getByText("已显示该用例的全部执行历史。")).toBeVisible();
+  await expectUiConsistency(page);
+
   // 分析闭环必须使用 TestNG 方法计数与权威错误描述：一次失败、一次成功即 50%，
   // 成功码和断言分类码都不能再冒充“失败原因”。该断言通过真实 HTTP 完成协议写入数据，
   // 随根级 test:e2e 在 CI 运行，防止只在展示层伪装修复。
@@ -1247,7 +1262,7 @@ public class MixedVisibleTest {
   });
   await page.getByRole("link", { name: "查看用例管理" }).click();
   await page.getByLabel("页内搜索用例").fill("SourceVisibleTest");
-  await page.getByRole("button", { name: "查看 SourceVisibleTest" }).click();
+  await page.getByRole("button", { name: "快速预览 SourceVisibleTest" }).click();
   await page.locator(".case-inspector-section").getByText("用例源码", { exact: true }).click();
   await expect(page.locator(".case-inspector-pane .source-code-viewer").first()).toContainText(
     "AUTOFORGE_SOURCE_VIEW_E2E",
@@ -1270,7 +1285,7 @@ public class MixedVisibleTest {
   );
   await page.goto("/cases");
   await page.getByLabel("页内搜索用例").fill("BulkDelete");
-  await expect(page.getByRole("button", { name: /查看 BulkDelete/ })).toHaveCount(2);
+  await expect(page.getByRole("link", { name: /查看 BulkDelete.*详情/ })).toHaveCount(2);
   await page.getByLabel("选择当前搜索结果中的全部用例").check();
   await expect(page.locator(".case-selection-toolbar")).toContainText("已选 2");
   await captureUi(page, "case-library-bulk-delete");
@@ -1286,10 +1301,10 @@ public class MixedVisibleTest {
   await expect(page.getByText("已删除 0 / 2 个用例")).toBeVisible();
   await expect(page.locator(".inline-feedback")).toContainText("已删除 2 个用例");
   await page.unroute(deleteCasesRoute, delayCaseDeletion);
-  await expect(page.getByRole("button", { name: /查看 BulkDelete/ })).toHaveCount(0);
+  await expect(page.getByRole("link", { name: /查看 BulkDelete.*详情/ })).toHaveCount(0);
 
   await page.getByLabel("页内搜索用例").fill("SingleDeleteFixture");
-  await page.getByRole("button", { name: "查看 SingleDeleteFixture" }).click();
+  await page.getByRole("button", { name: "快速预览 SingleDeleteFixture" }).click();
   await page.locator(".case-inspector-section").getByText("管理用例", { exact: true }).click();
   const singleDeleteButton = page.getByRole("button", { name: "删除用例", exact: true });
   await singleDeleteButton.scrollIntoViewIfNeeded();
@@ -1297,7 +1312,7 @@ public class MixedVisibleTest {
   page.once("dialog", (dialog) => dialog.accept());
   await singleDeleteButton.click();
   await expect(page.locator(".inline-feedback")).toContainText("已删除 1 个用例");
-  await expect(page.getByRole("button", { name: "查看 SingleDeleteFixture" })).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "查看 SingleDeleteFixture 详情" })).toHaveCount(0);
 
   await page.goto("/settings/access?section=users");
   await expect(page.getByRole("heading", { name: "用户管理" }).first()).toBeVisible();
