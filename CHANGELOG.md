@@ -29,7 +29,9 @@ and known limitations.
   immediately effective across replicas.
 - The standalone Groovy analyzer can resume interactive L0/L1 review from an existing workbook,
   saves each choice immediately, supports returning to the previous row and safe interruption, and
-  now builds and runs on Java 8 or newer.
+  now builds and runs on Java 8 or newer. Reviewers can also mark a row as L2 to move it into the
+  exclusion worksheet while preserving the case metadata, exclusion evidence and continuous row
+  numbering.
 
 ### Tests
 
