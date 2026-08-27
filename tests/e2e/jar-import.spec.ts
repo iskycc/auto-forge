@@ -1169,6 +1169,21 @@ public class MixedVisibleTest {
   await expect(e2eRunnerRow).toBeVisible();
   await expectUiConsistency(page);
   await captureUi(page, "runner-list-compact");
+  const managementMenu = e2eRunnerRow.locator("details.runner-actions-menu");
+  await managementMenu.getByText("管理操作", { exact: true }).click();
+  const drainAction = managementMenu.getByRole("button", { name: "排空", exact: true });
+  await expect(drainAction).toBeVisible();
+  expect(
+    await drainAction.evaluate((button) => {
+      const bounds = button.getBoundingClientRect();
+      const hit = document.elementFromPoint(
+        bounds.left + bounds.width / 2,
+        bounds.top + bounds.height / 2,
+      );
+      return hit === button || (hit !== null && button.contains(hit));
+    }),
+  ).toBe(true);
+  await managementMenu.getByText("管理操作", { exact: true }).click();
   await e2eRunnerRow.getByRole("button", { name: "终端浮窗" }).click();
   const terminalWindow = page.getByRole("dialog", { name: "E2E Runner 直连终端" });
   const initialTerminalBox = await terminalWindow.boundingBox();

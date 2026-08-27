@@ -18,7 +18,8 @@ and known limitations.
 - Runner inventory rows are substantially denser. Host JDK/TestNG compatibility and raw capability
   strings are no longer repeated in each row; platform, Agent/protocol, slots/resources, heartbeat and
   lifecycle actions remain visible. Agents that accept project runtime assets are no longer blocked by
-  an unrelated host JDK/TestNG version because the assignment supplies the authoritative runtime.
+  an unrelated host JDK/TestNG version because the assignment supplies the authoritative runtime. The
+  compact row's management menu also remains above surrounding summary cards so every action is clickable.
 - Active run details poll a bounded overview endpoint and update metrics, rounds and the current case
   page locally. They no longer refresh the entire Server Component tree every five seconds, preserve
   filters/expanded rows/scroll position, and keep current rows visible while fresh data is fetched.
@@ -30,7 +31,7 @@ and known limitations.
 
 - Extended Playwright coverage for checkbox-based RBAC/service-account flows, anonymous and signed-in
   permanent-log action colors, terminal expand/restore behavior and bounded active-batch overview
-  polling without page navigation.
+  polling without page navigation, plus pointer hit-testing for the compact Runner management menu.
 - Extended the shared SQLite/JetStream queue contract to inspect a dead letter, redrive it and verify
   that its new delivery starts at attempt one; added project-runtime compatibility regression coverage.
 
