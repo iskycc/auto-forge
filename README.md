@@ -35,7 +35,7 @@ AutoForge 是一个面向自动化测试场景的用例工厂，用于统一管�
 - 批次执行前预检一次返回任务状态、参数、Runner capability/标签、项目版本 Java/TestNG 工具链、权威 JAR 对象和资源限制的逐项 blocker；正式创建复用相同规则，调度、claim 和下载仍执行权威复核。
 - 顶栏执行弹窗支持立即执行或最长七天、精确到秒的持久化倒计时。计划开始时间由服务端固化，Lite/Full 在到点前都不会分配用例，排队超时也从到点后开始；执行记录和详情会显示实时倒计时。
 - Jenkins Pipeline 插件提供 `autoforgeRun` 与 `autoforgePublishDependencies` 两个步骤：前者使用 API Key 启动任务，按服务端建议周期打印轮次/通过/失败与免登录进展链接，在可配置总时限内等待批次终态，并在完成后输出永久匿名结果链接 `resultUrl`；永久页复用执行历史详情的概览、轮次、图表和用例表格，但不加载产品侧栏或鉴权操作。后者按项目版本替换依赖压缩包链接，不保存历史版本文件，拒绝时会显示服务端可操作错误。两个客户端固定使用 HTTP/1.1，兼容未配置 TLS 代理的 Lite 地址；各插件目录都包含只填写必需参数的 `Jenkinsfile`，ZIP 依赖发布无需重复填写文件名和格式。两个 HPI、SBOM、校验和与发布清单随 Release 分发，并通过真实 Pipeline DSL E2E 与 HPI 包结构校验。完整流水线见 [`examples/jenkins/Jenkinsfile`](./examples/jenkins/Jenkinsfile)。
-- 本地账号首次管理员引导、scrypt 密码、本地/LDAP 登录、安全会话、锁定/解锁、密码恢复、六种内置角色和服务端 RBAC；自定义角色可创建、编辑、停用与删除（内置角色不可变，引用中角色与最后一位系统管理员受保护，权限变更全量审计并撤销相关会话）；项目支持创建、归档、成员角色分配与负责人转移。批次、日志、Attempt 时间线、产物下载和取消按权威项目过滤，跨项目 ID 猜测不会读取内容。
+- 本地账号首次管理员引导、scrypt 密码、本地/LDAP 登录、安全会话、锁定/解锁、密码恢复、六种内置角色和服务端 RBAC；角色、服务账号、项目作用域和 API 令牌权限统一使用带人类友好名称与用途说明的复选框组。自定义角色可创建、编辑、停用与删除（内置角色不可变，引用中角色与最后一位系统管理员受保护，权限变更全量审计并撤销相关会话）；项目支持创建、归档、成员角色分配与负责人转移。批次、日志、Attempt 时间线、产物下载和取消按权威项目过滤，跨项目 ID 猜测不会读取内容。
 - LDAP 的 LDAPS/StartTLS、私有 CA、多服务器、分页上限、即时建号、组角色映射、手动同步和离职停用；bind 密码使用主密钥加密，连接测试区分 DNS、TLS、超时、bind、Base DN、过滤器和读取权限故障。
 - 用户管理支持 URL 驱动的搜索、来源筛选和游标分页，以及本地账号创建、启停/解锁、密码重置和按用户撤销全部会话；LDAP 管理属性不提供本地编辑入口。
 - SQLite/PostgreSQL assignment、lease、状态事件、完成回执、日志水位和产物元数据，以及原子 claim、续租、回收、reconcile、取消、失败重排和批次聚合；冲突完成会保留事件证据，领取/lease/单用例执行超时使用不同稳定结果码。正常执行完毕统一显示“执行完成”，即使仍有用例失败；基础设施异常和中断分别显示“执行异常”“执行中断”。执行详情可按已分配、执行中、通过、失败、超时、取消和未执行筛选用例；单次 attempt 的永久匿名日志页按时间顺序列出同批次、同用例的全部终态轮次，并在当前标签页切换日志。
@@ -43,8 +43,8 @@ AutoForge 是一个面向自动化测试场景的用例工厂，用于统一管�
 - Lite/Full 共用持久审计模型，覆盖身份、LDAP、来源/任务、批次/执行取消、Runner 和终端操作；自动重试审计与执行状态事务一致，详情只保留稳定 ID、结果码和计数等脱敏摘要。
 - `packages/runner-sdk` 中的 Runner Protocol v1 输入校验、兼容协商和有界长轮询控制器。
 - Agent 上报 CPU、内存、1 分钟负载与逻辑 CPU 数；调度阈值集中配置，过载或指标过期的节点不会获得新分配。
-- Runner 页面展示 Agent/协议、Linux 架构、Java/TestNG 工具链与 cgroup v2 能力；不可变 `ExecutionSpec` 固化 Linux `amd64/arm64`、Java 11+ 和 TestNG 7.11.0 要求。缺少 cgroup v2 的节点会显示降级隔离提示，但不再被阻止调度；其他不兼容节点仍在批次选择、服务端调度、assignment claim 和 Agent 本地校验四层被阻止。批次、执行、尝试、assignment 和 lease 均以版本条件保护写入，批次与 attempt 状态历史可审计。
-- 可选的 Agent 直连终端：方案 E 浮窗使用 xterm.js，登录会话通过独立 `runner.terminal` 权限换取一次性短时票据，再由同源 WebSocket 中继到 Agent 的受控 PTY；请求、开始、结束、断开原因和有界流量摘要进入持久审计，不记录命令内容或终端输出。
+- Runner 页面以紧凑行展示状态、Agent/协议、Linux 架构、槽位/资源、心跳和生命周期操作，不重复展示主机 JDK/TestNG 与原始 capability。不可变 `ExecutionSpec` 仍固化运行时要求；接受项目运行时资产的 Agent 使用任务下发的权威 JDK/依赖，不因主机探测版本被阻止，旧 Agent 仍校验主机 Java 11+ 与 TestNG 7.11.0。协议、平台和执行能力不兼容仍在批次选择、服务端调度、assignment claim 和 Agent 本地校验四层被阻止。
+- 可选的 Agent 直连终端：方案 E 浮窗使用 xterm.js，支持标题栏一键铺满可用视口并还原；登录会话通过独立 `runner.terminal` 权限换取一次性短时票据，再由同源 WebSocket 中继到 Agent 的受控 PTY；请求、开始、结束、断开原因和有界流量摘要进入持久审计，不记录命令内容或终端输出。
 - Full 模式按需连接 PostgreSQL、NATS、MinIO、Redis，readiness 实际检查四项依赖；Lite 启动不加载 Full 客户端。
 - `/api/v1` 管理接口，以及 liveness/readiness 健康检查。
 - TestNG 解析单元测试、SQLite/PostgreSQL/本地对象/MinIO 集成测试和浏览器管理闭环测试；Agent 安全、日志/spool 与产物矩阵覆盖参数注入、越界 cwd、环境泄漏、失效凭据、资源/进程树清理、跨块、交错流、确认缺口、断线重传、重启、配额、脱敏、恶意路径、摘要冲突和对象故障恢复。
@@ -53,7 +53,7 @@ AutoForge 是一个面向自动化测试场景的用例工厂，用于统一管�
 - CoTest Adapter 的启用状态、Suite、Test 与多个环境地址保存在用例任务中，批次按稳定用例顺序轮询分配地址；每个项目版本独立保存上传或 HTTP(S) 链接登记的 JDK/完整 JAR 压缩包，也可显式从同项目其他版本继承共享对象引用，并可分别删除当前版本资源。上传采用流式处理且没有固定业务大小上限，Runner 仍按任务工作区配额校验、下载和安全解压；同一批次在同一 Runner 上只下载一次输入并只解压一次依赖包/JDK，各 attempt 通过批次目录复用 `test-jars`，Agent 重启后仍保留未终态批次的已校验运行时。完成响应、heartbeat 或 claim 确认该批次不再可能派发到本机后才回收。每个用例仍在独立进程和独立子优先 ClassLoader 中执行，主用例 JAR 固定处于 classpath 首位。
 - Agent stdout/stderr/诊断流的 UTF-8 分块、精确的双层秘密脱敏、有界异步磁盘 spool、连续确认水位和断线重传；子进程输出与 spool 持久化解耦，不同 attempt 不再共用全局落盘锁，已有 sink 时不保留第二份完整内存日志，普通 Java 类路径不会被误判为 JWT 或因固定尾部缓冲而延迟显示。执行期间每 500 ms 尝试上传新增块，控制面先持久化，再由 Lite 进程内通道或 Full NATS 跨副本广播通过同源、短时票据 WebSocket 推送到执行详情。
 - 产物安全发现、SHA-256 声明和鉴权下载；Lite 经控制面流式写入本地对象目录，Full 使用 15 分钟单对象 MinIO 预签名目标，Agent 不持有长期凭据，finalize 前由控制面重新核对大小和 SHA-256。TestNG XML 以禁用 DTD/实体的有界流式解析器提取 suite/test/class/method、耗时和汇总，结果由 SQLite/PostgreSQL 持久化并在执行详情展示，原始 XML 保留为产物。
-- SQLite 持久任务和 Lite 嵌入式 worker；PostgreSQL transactional outbox、JetStream 显式确认和 Full 独立 worker。SQLite 队列使用短写事务与 `SQLITE_BUSY`/`SQLITE_LOCKED` 退避，持续锁竞争解除后内嵌 worker 自动恢复。SQLite/JetStream 运行同一套至少一次投递契约测试，覆盖去重、延迟、租约恢复、死信和关闭排空。
+- SQLite 持久任务和 Lite 嵌入式 worker；PostgreSQL transactional outbox、JetStream 显式确认和 Full 独立 worker。SQLite 队列使用短写事务与 `SQLITE_BUSY`/`SQLITE_LOCKED` 退避，持续锁竞争解除后内嵌 worker 自动恢复。系统诊断会显示死信类型、关联对象与最后错误，管理员确认故障已修复后可重新投递；SQLite/JetStream 运行同一套至少一次投递契约测试，覆盖去重、延迟、租约恢复、死信、重投和关闭排空。
 - 可重建的 Lite 内存缓存与 Full Redis 缓存适配器；缓存不作为业务事实来源。
 - GitHub Actions CI，以及四变体后端离线镜像和独立发布后 Gate E 检查流水线；耗时验收按独立状态分区并行执行，单个测试 Job 以五分钟内完成为目标。每个后端镜像均内置 Linux `amd64`/`arm64` Agent 与 Adapter。Release 不再构建 `toolchain-amd64/arm64`，JDK 和测试依赖由项目上传或登记内网链接。
 

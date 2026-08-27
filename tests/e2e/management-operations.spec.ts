@@ -20,10 +20,11 @@ test("service account lifecycle immediately narrows token access and produces ex
   const createForm = page.getByRole("dialog", { name: "创建服务账号" });
   await createForm.getByLabel("账号名称").fill(accountName);
   await createForm.getByLabel("用途说明").fill("E2E service account lifecycle");
-  await createForm.locator('select[name="permissions"]').selectOption(["case.read", "audit.read"]);
-  const projectPermissionSelect = createForm.locator('select[name^="projectPermissions:"]').first();
-  if ((await projectPermissionSelect.count()) > 0) {
-    await projectPermissionSelect.selectOption(["run.read"]);
+  await createForm.locator('input[name="permissions"][value="case.read"]').check();
+  await createForm.locator('input[name="permissions"][value="audit.read"]').check();
+  const projectPermissionGroup = createForm.locator(".project-permission-group").first();
+  if ((await projectPermissionGroup.count()) > 0) {
+    await projectPermissionGroup.locator('input[value="run.read"]').check();
   }
   const accountResponse = page.waitForResponse(
     (response) =>
@@ -45,7 +46,8 @@ test("service account lifecycle immediately narrows token access and produces ex
   await tokenForm
     .getByLabel("过期时间")
     .fill(new Date(Date.now() + 86_400_000).toISOString().slice(0, 16));
-  await tokenForm.getByLabel("作用域").selectOption(["case.read", "audit.read"]);
+  await tokenForm.locator('input[name="scopes"][value="case.read"]').check();
+  await tokenForm.locator('input[name="scopes"][value="audit.read"]').check();
   await tokenForm.getByRole("button", { name: "签发" }).click();
   const token = await page.locator(".issued-token code").textContent();
   expect(token).toMatch(/^af_api_/);
@@ -59,14 +61,13 @@ test("service account lifecycle immediately narrows token access and produces ex
     has: page.getByRole("button", { name: "保存账号" }),
   });
   await editor.getByLabel("用途说明").fill("Permissions narrowed by E2E");
-  await editor.locator('select[name="permissions"]').selectOption(["audit.read"]);
-  await editor.locator('select[name^="projectPermissions:"]').evaluateAll((selects) => {
-    for (const select of selects) {
-      for (const option of Array.from((select as HTMLSelectElement).options))
-        option.selected = false;
-      select.dispatchEvent(new Event("change", { bubbles: true }));
-    }
-  });
+  for (const checkbox of await editor.locator('input[name="permissions"]').all()) {
+    await checkbox.uncheck();
+  }
+  await editor.locator('input[name="permissions"][value="audit.read"]').check();
+  for (const checkbox of await editor.locator('input[name^="projectPermissions:"]').all()) {
+    await checkbox.uncheck();
+  }
   await editor.getByRole("button", { name: "保存账号" }).click();
   await expect(page.getByText(/权限缩减.*立即生效/)).toBeVisible();
   const narrowed = await page.request.get("/api/v1/case-definitions", {
@@ -108,7 +109,7 @@ test("service account lifecycle immediately narrows token access and produces ex
   await replacementForm
     .getByLabel("过期时间")
     .fill(new Date(Date.now() + 86_400_000).toISOString().slice(0, 16));
-  await replacementForm.getByLabel("作用域").selectOption(["audit.read"]);
+  await replacementForm.locator('input[name="scopes"][value="audit.read"]').check();
   await replacementForm.getByRole("button", { name: "签发" }).click();
   await expect.poll(() => page.locator(".issued-token code").textContent()).not.toBe(token);
   const replacementToken = await page.locator(".issued-token code").textContent();

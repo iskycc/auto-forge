@@ -426,6 +426,14 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
       await page.goto(`/run-batches/${encodeURIComponent(batch.id)}`);
       await page.getByRole("button", { name: "初始轮次", exact: true }).click();
       const runningCases = page.locator(".round-cases");
+      const overviewResponse = page.waitForResponse(
+        (response) =>
+          response.request().method() === "GET" &&
+          new URL(response.url()).pathname ===
+            `/api/v1/run-batches/${encodeURIComponent(batch.id)}/overview`,
+      );
+      await overviewResponse;
+      await expect(runningCases).toBeVisible();
       await runningCases.locator('select[aria-label="按状态筛选"]').selectOption("running");
       await expect(runningCases.locator("tbody tr")).toHaveCount(1);
       await expect(runningCases.locator("tbody tr").first()).toContainText("运行中");
@@ -1019,7 +1027,12 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
   });
   await expect(runningManualLink).toBeVisible();
   await runningManualLink.click();
-  await runningPublicLogPage.getByRole("button", { name: "查看实时日志", exact: true }).click();
+  const sharedRealtimeButton = runningPublicLogPage.getByRole("button", {
+    name: "查看实时日志",
+    exact: true,
+  });
+  await expect(sharedRealtimeButton).toHaveCSS("color", "rgb(255, 255, 255)");
+  await sharedRealtimeButton.click();
   const sharedLiveLogDialog = runningPublicLogPage.getByRole("dialog", { name: /执行日志/ });
   await expect(sharedLiveLogDialog.locator("pre.execution-log")).toContainText(
     realtimeMarker.trim(),

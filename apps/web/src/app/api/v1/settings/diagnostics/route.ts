@@ -2,7 +2,7 @@ import { systemDiagnosticSchema, type SystemDiagnostic } from "@autoforge/contra
 import { NextResponse } from "next/server";
 
 import { apiErrorResponse } from "@/lib/api-response";
-import { authorizeRequest } from "@/lib/auth";
+import { authorizeRequest, requestId, requireSameOrigin } from "@/lib/auth";
 import { getPlatformServices } from "@/lib/services";
 import { platformVersion } from "@/lib/version";
 import { readDiskCapacity } from "@/lib/disk-capacity";
@@ -20,6 +20,8 @@ export async function GET(request: Request): Promise<NextResponse> {
       health("cache", () => services.cache.get("diagnostics", "system", 1, "readiness")),
     ]);
     const queueDepth = checks[2]?.ready ? await services.jobQueue.depth() : undefined;
+    const deadLetters =
+      queueDepth && queueDepth.deadLetter > 0 ? await services.jobQueue.listDeadLetters(20) : [];
     const dataDisk = await readDiskCapacity(services.config.dataDirectory);
     const generatedAt = new Date().toISOString();
     const recentErrors: SystemDiagnostic["recentErrors"] = checks
@@ -52,8 +54,11 @@ export async function GET(request: Request): Promise<NextResponse> {
       objectStore: toView(checks[1]!),
       queue: toView(
         checks[2]!,
-        queueDepth ? `可用 ${queueDepth.available} / 租约 ${queueDepth.leased}` : undefined,
+        queueDepth
+          ? `可用 ${queueDepth.available} / 租约 ${queueDepth.leased} / 死信 ${queueDepth.deadLetter}`
+          : undefined,
       ),
+      deadLetters,
       cache: toView(checks[3]!),
       dataDisk,
       recentErrors: recentErrors.slice(0, 50),
@@ -71,6 +76,27 @@ export async function GET(request: Request): Promise<NextResponse> {
     });
   } catch (error) {
     return apiErrorResponse(error);
+  }
+}
+
+export async function POST(request: Request): Promise<NextResponse> {
+  const currentRequestId = requestId(request);
+  try {
+    requireSameOrigin(request);
+    const identity = await authorizeRequest(request, "settings.manage");
+    const services = await getPlatformServices();
+    const redriven = await services.jobQueue.redriveDeadLetters({
+      redrivenAt: new Date().toISOString(),
+      limit: 100,
+    });
+    await services.identityAccess.recordQueueDeadLetterRedrive(
+      identity,
+      { redriven },
+      currentRequestId,
+    );
+    return NextResponse.json({ redriven });
+  } catch (error) {
+    return apiErrorResponse(error, currentRequestId);
   }
 }
 

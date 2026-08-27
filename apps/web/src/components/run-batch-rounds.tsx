@@ -209,6 +209,7 @@ export function RunBatchRounds({
   canReadArtifacts,
   artifactsEnabled,
   runnerDirectory,
+  onRefresh,
 }: {
   batch: ExecutionBatchView;
   canCancelRuns: boolean;
@@ -218,6 +219,7 @@ export function RunBatchRounds({
   canReadArtifacts: boolean;
   artifactsEnabled: boolean;
   runnerDirectory: readonly RunnerDirectoryEntry[];
+  onRefresh: () => void;
 }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -259,8 +261,8 @@ export function RunBatchRounds({
   >();
   const [cancelPending, setCancelPending] = useState(false);
   const [actionError, setActionError] = useState("");
-  // 行内详情缓存按批次组件生命周期存活；刷新按钮触发 router.refresh() 后
-  // 服务端数据更新，缓存仍按 attemptId 复用已加载的产物与事件。
+  // 行内详情缓存按批次组件生命周期存活；概要与当前用例页局部刷新时，
+  // 缓存仍按 attemptId 复用已加载的产物与事件。
   const [detailCache, setDetailCache] = useState<Map<string, AttemptDetailEntry>>(new Map());
 
   const rememberAttemptDetail = useCallback((attemptId: string, entry: AttemptDetailEntry) => {
@@ -294,7 +296,7 @@ export function RunBatchRounds({
       if (!response.ok) {
         throw new Error((await readApiErrorMessage(response, "取消用例执行失败。"))!);
       }
-      router.refresh();
+      onRefresh();
     } catch (actionFailure) {
       setActionError(actionFailure instanceof Error ? actionFailure.message : "取消用例执行失败。");
     } finally {
@@ -582,6 +584,7 @@ export function RunBatchRounds({
           onRememberAttemptDetail={rememberAttemptDetail}
           onCancelRun={(runId) => void cancelRun(runId)}
           onOpenLogs={setLogAttempt}
+          onRefresh={onRefresh}
         />
       ) : allRoundsSelected ? (
         <AllRoundsPanel
@@ -598,6 +601,7 @@ export function RunBatchRounds({
           onRememberAttemptDetail={rememberAttemptDetail}
           onCancelRun={(runId) => void cancelRun(runId)}
           onOpenLogs={setLogAttempt}
+          onRefresh={onRefresh}
         />
       ) : selectedSummary ? (
         <RoundDetailPanel
@@ -617,6 +621,7 @@ export function RunBatchRounds({
           onRememberAttemptDetail={rememberAttemptDetail}
           onCancelRun={(runId) => void cancelRun(runId)}
           onOpenLogs={setLogAttempt}
+          onRefresh={onRefresh}
           onOpenScheduling={(runnerId) =>
             setSchedulingViewer(
               runnerId
@@ -784,6 +789,7 @@ function SummaryRoundPanel({
   onRememberAttemptDetail,
   onCancelRun,
   onOpenLogs,
+  onRefresh,
 }: {
   batch: ExecutionBatchView;
   canCancelRuns: boolean;
@@ -798,8 +804,8 @@ function SummaryRoundPanel({
   onRememberAttemptDetail: (attemptId: string, entry: AttemptDetailEntry) => void;
   onCancelRun: (runId: string) => void;
   onOpenLogs: (attempt: RunAttempt) => void;
+  onRefresh: () => void;
 }) {
-  const router = useRouter();
   const [exportDialogOpen, setExportDialogOpen] = useState(false);
   return (
     <section className="round-detail-panel" aria-label="轮次详情：总结">
@@ -811,7 +817,7 @@ function SummaryRoundPanel({
         <div className="round-detail-header-actions">
           <Button
             className="button button-secondary compact-button"
-            onClick={() => router.refresh()}
+            onClick={onRefresh}
             type="button"
           >
             <RefreshCw size={15} /> 刷新
@@ -879,6 +885,7 @@ function AllRoundsPanel({
   onRememberAttemptDetail,
   onCancelRun,
   onOpenLogs,
+  onRefresh,
 }: {
   batch: ExecutionBatchView;
   canCancelRuns: boolean;
@@ -893,8 +900,8 @@ function AllRoundsPanel({
   onRememberAttemptDetail: (attemptId: string, entry: AttemptDetailEntry) => void;
   onCancelRun: (runId: string) => void;
   onOpenLogs: (attempt: RunAttempt) => void;
+  onRefresh: () => void;
 }) {
-  const router = useRouter();
   const [exportDialogOpen, setExportDialogOpen] = useState(false);
 
   return (
@@ -907,7 +914,7 @@ function AllRoundsPanel({
         <div className="round-detail-header-actions">
           <Button
             className="button button-secondary compact-button"
-            onClick={() => router.refresh()}
+            onClick={onRefresh}
             type="button"
             title="重新从服务端拉取最新执行状态"
           >
@@ -977,6 +984,7 @@ function RoundDetailPanel({
   onRememberAttemptDetail,
   onCancelRun,
   onOpenLogs,
+  onRefresh,
   onOpenScheduling,
 }: {
   batch: ExecutionBatchView;
@@ -995,10 +1003,10 @@ function RoundDetailPanel({
   onRememberAttemptDetail: (attemptId: string, entry: AttemptDetailEntry) => void;
   onCancelRun: (runId: string) => void;
   onOpenLogs: (attempt: RunAttempt) => void;
+  onRefresh: () => void;
   onOpenScheduling: (runnerId: string | undefined) => void;
 }) {
   const label = roundLabel(batch.retryMode, summary.round);
-  const router = useRouter();
   const [exportDialogOpen, setExportDialogOpen] = useState(false);
   const [faultDialogOpen, setFaultDialogOpen] = useState(false);
   const faultIncidents = batch.runnerFaultIncidents;
@@ -1040,7 +1048,7 @@ function RoundDetailPanel({
         <div className="round-detail-header-actions">
           <Button
             className="button button-secondary compact-button"
-            onClick={() => router.refresh()}
+            onClick={onRefresh}
             type="button"
             title="重新从服务端拉取最新执行状态"
           >
@@ -1247,13 +1255,15 @@ function RoundCasesTable({
   const requestKey = `${casePageUrl}\u0000${batch.updatedAt}`;
   const [loadedPage, setLoadedPage] = useState<{
     requestKey: string;
+    pageUrl: string;
     rows: RoundCaseRowModel[];
     total: number;
     error: string;
-  }>({ requestKey: "", rows: [], total: 0, error: "" });
+  }>({ requestKey: "", pageUrl: "", rows: [], total: 0, error: "" });
   const loading = loadedPage.requestKey !== requestKey;
-  const rows = loading ? EMPTY_CASE_ROWS : loadedPage.rows;
-  const totalRows = loading ? 0 : loadedPage.total;
+  const retainingCurrentPage = loadedPage.pageUrl === casePageUrl;
+  const rows = retainingCurrentPage ? loadedPage.rows : EMPTY_CASE_ROWS;
+  const totalRows = retainingCurrentPage ? loadedPage.total : 0;
   const loadError = loading ? "" : loadedPage.error;
 
   useEffect(() => {
@@ -1266,16 +1276,23 @@ function RoundCasesTable({
         return response.json() as Promise<{ items: RoundCaseRowModel[]; total: number }>;
       })
       .then((result) => {
-        setLoadedPage({ requestKey, rows: result.items, total: result.total, error: "" });
+        setLoadedPage({
+          requestKey,
+          pageUrl: casePageUrl,
+          rows: result.items,
+          total: result.total,
+          error: "",
+        });
       })
       .catch((error: unknown) => {
         if (error instanceof DOMException && error.name === "AbortError") return;
-        setLoadedPage({
+        setLoadedPage((current) => ({
           requestKey,
-          rows: [],
-          total: 0,
+          pageUrl: casePageUrl,
+          rows: current.pageUrl === casePageUrl ? current.rows : [],
+          total: current.pageUrl === casePageUrl ? current.total : 0,
           error: error instanceof Error ? error.message : "读取用例列表失败。",
-        });
+        }));
       });
     return () => controller.abort();
   }, [casePageUrl, requestKey]);
@@ -1352,12 +1369,17 @@ function RoundCasesTable({
             }}
           />
         </span>
+        {loading && retainingCurrentPage ? (
+          <span className="round-inline-refresh" role="status">
+            <RefreshCw className="spin" size={14} /> 正在同步最新数据
+          </span>
+        ) : null}
       </div>
-      {loadError ? (
+      {loadError && rows.length === 0 ? (
         <div className="inline-empty" role="alert">
           {loadError}
         </div>
-      ) : loading ? (
+      ) : loading && rows.length === 0 ? (
         <div className="inline-empty" aria-live="polite">
           正在读取当前页用例…
         </div>

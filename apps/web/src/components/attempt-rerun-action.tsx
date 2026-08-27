@@ -99,9 +99,10 @@ export function AttemptRerunAction({
       </Button>
       {liveAttempt && onOpenLiveLogs ? (
         <Button
-          className="button button-secondary compact-button"
+          className="button button-primary compact-button"
           onClick={() => onOpenLiveLogs(liveAttempt)}
           type="button"
+          variant="primary"
         >
           查看实时日志
         </Button>

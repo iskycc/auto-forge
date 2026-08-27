@@ -99,6 +99,25 @@ describe("Runner compatibility", () => {
     });
   });
 
+  it("does not block project-runtime Agents because of the host JDK and TestNG versions", () => {
+    expect(
+      assessRunnerCompatibility({
+        os: "linux",
+        architecture: "amd64",
+        agentVersion: "0.2.2",
+        protocolVersion: 1,
+        capabilities: [
+          "executor:testng-v1",
+          "isolation:cgroup-v2",
+          "adapter:cotest-testng-v1",
+          "runtime:project-assets-v1",
+          "java:1.8.0_452",
+          "testng:7.10.2",
+        ],
+      }),
+    ).toMatchObject({ compatible: true, status: "compatible", issues: [] });
+  });
+
   it("rejects Java and TestNG versions outside the offline execution baseline", () => {
     expect(
       assessRunnerCompatibility({

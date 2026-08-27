@@ -1,4 +1,4 @@
-import type { ClaimedJob, JobQueuePort } from "@autoforge/application";
+import type { ClaimedJob, DeadLetterJob, JobQueuePort } from "@autoforge/application";
 import { jobEnvelopeSchema, type JobEnvelope } from "@autoforge/contracts";
 import {
   AckPolicy,
@@ -165,10 +165,18 @@ export class JetStreamJobQueue implements JobQueuePort {
         codec.encode(
           JSON.stringify({
             ...delivery.job,
-            deadLetter: { code: input.errorCode, summary: input.errorSummary },
+            deadLetter: {
+              code: input.errorCode,
+              summary: input.errorSummary,
+              failedAt: input.rejectedAt,
+            },
           }),
         ),
-        { msgID: `${delivery.job.messageId}:dead` },
+        {
+          // 同一业务任务重投后可能再次失败；stream sequence 区分每次投递周期，
+          // 同一 active delivery 的重试仍保持幂等。
+          msgID: `${delivery.job.messageId}:dead:${delivery.message.info.streamSequence}`,
+        },
       );
       if (!(await delivery.message.ackAck({ timeout: 5_000 }))) {
         throw new Error("JetStream did not confirm the dead-letter acknowledgement.");
@@ -186,6 +194,56 @@ export class JetStreamJobQueue implements JobQueuePort {
 
   async recoverExpired(): Promise<number> {
     return 0;
+  }
+
+  async listDeadLetters(limit: number): Promise<DeadLetterJob[]> {
+    validateAdministrativeLimit(limit);
+    const messages = await this.readDeadLetterMessages(limit);
+    return messages.flatMap((message) => {
+      const parsed = parseDeadLetter(message.data);
+      if (!parsed) return [];
+      return [
+        {
+          messageId: parsed.job.messageId,
+          runId: parsed.job.runId,
+          kind: parsed.job.kind,
+          deliveryAttempts: this.settings.maximumDeliveries,
+          errorCode: parsed.errorCode,
+          errorSummary: parsed.errorSummary,
+          failedAt: parsed.failedAt,
+        },
+      ];
+    });
+  }
+
+  async redriveDeadLetters(input: { redrivenAt: string; limit: number }): Promise<number> {
+    validateAdministrativeLimit(input.limit);
+    const messages = await this.readDeadLetterMessages(input.limit);
+    let redriven = 0;
+    for (const message of messages) {
+      const parsed = parseDeadLetter(message.data);
+      if (!parsed) continue;
+      const readyHeaders = headers();
+      readyHeaders.set("AutoForge-Available-At", input.redrivenAt);
+      await this.jetStream.publish(
+        this.settings.readySubject,
+        codec.encode(JSON.stringify(parsed.job)),
+        {
+          msgID: `autoforge-redrive:${parsed.job.messageId}:${message.sequence}`,
+          headers: readyHeaders,
+        },
+      );
+      const deleted = await this.manager.streams.deleteMessage(
+        this.settings.streamName,
+        message.sequence,
+        false,
+      );
+      if (!deleted) {
+        throw new Error("JetStream accepted a redriven job but did not remove its dead letter.");
+      }
+      redriven += 1;
+    }
+    return redriven;
   }
 
   async depth(): Promise<{ available: number; leased: number; deadLetter: number }> {
@@ -223,6 +281,63 @@ export class JetStreamJobQueue implements JobQueuePort {
     if (!(await message.ackAck({ timeout: 5_000 }))) {
       throw new Error("JetStream did not confirm the deferred job promotion.");
     }
+  }
+
+  private async readDeadLetterMessages(
+    limit: number,
+  ): Promise<Array<{ data: Uint8Array; sequence: number }>> {
+    const stream = await this.manager.streams.info(this.settings.streamName, {
+      subjects_filter: this.settings.deadLetterSubject,
+    });
+    const deadLetterCount = stream.state.subjects?.[this.settings.deadLetterSubject] ?? 0;
+    if (deadLetterCount === 0) return [];
+    const consumer = await this.jetStream.consumers.get(this.settings.streamName, {
+      filterSubjects: this.settings.deadLetterSubject,
+    });
+    try {
+      const fetched = await consumer.fetch({
+        max_messages: Math.min(limit, deadLetterCount),
+        expires: 1_000,
+      });
+      const messages: Array<{ data: Uint8Array; sequence: number }> = [];
+      for await (const message of fetched) {
+        messages.push({
+          data: message.data,
+          sequence: message.info.streamSequence,
+        });
+      }
+      return messages;
+    } finally {
+      await consumer.delete();
+    }
+  }
+}
+
+function parseDeadLetter(
+  data: Uint8Array,
+): { job: JobEnvelope; errorCode: string; errorSummary: string; failedAt: string } | null {
+  try {
+    const raw: unknown = JSON.parse(codec.decode(data));
+    if (!raw || typeof raw !== "object") return null;
+    const record = raw as Record<string, unknown>;
+    const deadLetter = record.deadLetter;
+    if (!deadLetter || typeof deadLetter !== "object") return null;
+    const error = deadLetter as Record<string, unknown>;
+    return {
+      job: jobEnvelopeSchema.parse(record),
+      errorCode: typeof error.code === "string" ? error.code : "UNKNOWN",
+      errorSummary: typeof error.summary === "string" ? error.summary : "任务超过最大投递次数。",
+      failedAt:
+        typeof error.failedAt === "string" ? error.failedAt : String(record.createdAt ?? ""),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function validateAdministrativeLimit(limit: number): void {
+  if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
+    throw new Error("Dead-letter operation limit must be between 1 and 100.");
   }
 }
 

@@ -1030,7 +1030,9 @@ public class MixedVisibleTest {
     await anonymousPage.goto(sharePath!);
     expect(anonymousPage.url()).toContain("/share/attempt-log/");
     await expect(anonymousPage.getByText("用例路径", { exact: true }).first()).toBeVisible();
-    await expect(anonymousPage.getByRole("link", { name: "登录后执行此用例" })).toBeVisible();
+    const loginToRerun = anonymousPage.getByRole("link", { name: "登录后执行此用例" });
+    await expect(loginToRerun).toBeVisible();
+    await expect(loginToRerun).toHaveCSS("color", "rgb(255, 255, 255)");
     await expect(anonymousPage.locator(".share-log-output")).toContainText(
       /first attempt assertion failed|retry passed/,
     );
@@ -1166,7 +1168,19 @@ public class MixedVisibleTest {
     .filter({ has: page.getByText("E2E Runner", { exact: true }) });
   await expect(e2eRunnerRow).toBeVisible();
   await expectUiConsistency(page);
+  await captureUi(page, "runner-list-compact");
   await e2eRunnerRow.getByRole("button", { name: "终端浮窗" }).click();
+  const terminalWindow = page.getByRole("dialog", { name: "E2E Runner 直连终端" });
+  const initialTerminalBox = await terminalWindow.boundingBox();
+  await page.getByRole("button", { name: "放大终端窗口" }).click();
+  await expect(terminalWindow).toHaveClass(/terminal-window-expanded/u);
+  await expect(page.getByRole("button", { name: "还原终端窗口" })).toBeVisible();
+  await expect
+    .poll(async () => (await terminalWindow.boundingBox())?.width ?? 0)
+    .toBeGreaterThan(initialTerminalBox?.width ?? 0);
+  await captureUi(page, "runner-terminal-expanded");
+  await page.getByRole("button", { name: "还原终端窗口" }).click();
+  await expect(terminalWindow).not.toHaveClass(/terminal-window-expanded/u);
 
   const openCommand = new Promise<Record<string, unknown>>((resolve, reject) => {
     const timeout = setTimeout(

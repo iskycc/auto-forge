@@ -3,13 +3,15 @@
 import { Button } from "@/components/ui";
 
 import type { SystemDiagnostic } from "@autoforge/contracts";
-import { Download, RefreshCw, Stethoscope } from "lucide-react";
+import { Download, RefreshCw, RotateCcw, Stethoscope } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
-export function SystemDiagnostics() {
+export function SystemDiagnostics({ canManage }: { canManage: boolean }) {
   const [diagnostic, setDiagnostic] = useState<SystemDiagnostic>();
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
+  const [redriving, setRedriving] = useState(false);
+  const [message, setMessage] = useState("");
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -25,6 +27,27 @@ export function SystemDiagnostics() {
       setLoading(false);
     }
   }, []);
+
+  async function redriveDeadLetters(): Promise<void> {
+    if (!window.confirm("重新投递当前死信任务？任务会从第 1 次投递重新执行。")) return;
+    setRedriving(true);
+    setError("");
+    setMessage("");
+    try {
+      const response = await fetch("/api/v1/settings/diagnostics", { method: "POST" });
+      const body = (await response.json()) as {
+        redriven?: number;
+        error?: { message?: string };
+      };
+      if (!response.ok) throw new Error(body.error?.message ?? "重新投递死信失败。");
+      setMessage(`已重新投递 ${body.redriven ?? 0} 个死信任务。`);
+      await refresh();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "重新投递死信失败。");
+    } finally {
+      setRedriving(false);
+    }
+  }
 
   useEffect(() => {
     const pendingRefresh = window.setTimeout(() => void refresh(), 0);
@@ -43,6 +66,11 @@ export function SystemDiagnostics() {
       {error ? (
         <p className="form-error" role="alert">
           {error}
+        </p>
+      ) : null}
+      {message ? (
+        <p className="inline-success" role="status">
+          {message}
         </p>
       ) : null}
       {loading && !diagnostic ? <div className="inline-empty">正在执行有界健康检查…</div> : null}
@@ -93,6 +121,59 @@ export function SystemDiagnostics() {
           ) : (
             <div className="inline-success">本次诊断未发现依赖错误或队列死信。</div>
           )}
+          {diagnostic.deadLetters.length > 0 ? (
+            <div className="diagnostic-dead-letters">
+              <div className="section-heading">
+                <div>
+                  <h3>死信任务</h3>
+                  <p>保留最后一次失败原因；确认问题已修复后可重新投递。</p>
+                </div>
+                {canManage ? (
+                  <Button
+                    disabled={redriving || loading}
+                    onClick={() => void redriveDeadLetters()}
+                    type="button"
+                    variant="secondary"
+                  >
+                    <RotateCcw size={15} /> {redriving ? "正在重新投递…" : "重新投递全部"}
+                  </Button>
+                ) : null}
+              </div>
+              <div className="table-scroll">
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>任务类型</th>
+                      <th>关联对象</th>
+                      <th>失败原因</th>
+                      <th>投递次数</th>
+                      <th>失败时间</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {diagnostic.deadLetters.map((deadLetter) => (
+                      <tr key={deadLetter.messageId}>
+                        <td>{queueJobKindLabel(deadLetter.kind)}</td>
+                        <td>
+                          <code title={deadLetter.runId}>{shortId(deadLetter.runId)}</code>
+                        </td>
+                        <td>
+                          <strong>{deadLetter.errorCode}</strong>
+                          <small className="table-secondary">{deadLetter.errorSummary}</small>
+                        </td>
+                        <td>{deadLetter.deliveryAttempts}</td>
+                        <td>
+                          <time dateTime={deadLetter.failedAt}>
+                            {formatDate(deadLetter.failedAt)}
+                          </time>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          ) : null}
         </>
       ) : null}
       <div className="settings-form-actions">
@@ -110,6 +191,31 @@ export function SystemDiagnostics() {
       </div>
     </section>
   );
+}
+
+function queueJobKindLabel(kind: string): string {
+  const labels: Record<string, string> = {
+    "dispatch-run": "执行调度",
+    "ldap-sync": "LDAP 同步",
+    "analytics-rollup": "质量统计",
+    "retention-cleanup": "数据清理",
+    "object-cleanup": "对象清理",
+    "jar-import": "JAR 导入",
+    "analytics-export": "质量导出",
+    "ddt-import": "DDT 导入",
+  };
+  return labels[kind] ?? kind;
+}
+
+function shortId(value: string): string {
+  return value.length > 16 ? `${value.slice(0, 8)}…${value.slice(-6)}` : value;
+}
+
+function formatDate(value: string): string {
+  return new Intl.DateTimeFormat("zh-CN", {
+    dateStyle: "short",
+    timeStyle: "medium",
+  }).format(new Date(value));
 }
 
 function formatBytes(value: number): string {

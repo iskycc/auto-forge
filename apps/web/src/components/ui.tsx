@@ -46,6 +46,83 @@ export const Input = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputE
   },
 );
 
+export type CheckboxGroupOption = {
+  value: string;
+  label: string;
+  description?: string;
+};
+
+/**
+ * 权限与作用域使用显式复选框，避免原生 multiple select 依赖 Ctrl/Command。
+ * 相同的 name 会按标准 FormData 语义提交全部勾选值。
+ */
+export function CheckboxGroup({
+  className,
+  defaultValue = [],
+  disabled = false,
+  label,
+  name,
+  options,
+  required = false,
+}: {
+  className?: string;
+  defaultValue?: readonly string[];
+  disabled?: boolean;
+  label: string;
+  name: string;
+  options: readonly CheckboxGroupOption[];
+  required?: boolean;
+}) {
+  const initialSelection = useRef(new Set(defaultValue));
+  const fieldsetRef = useRef<HTMLFieldSetElement | null>(null);
+  const [selected, setSelected] = useState(() => new Set(defaultValue));
+
+  useEffect(() => {
+    const form = fieldsetRef.current?.closest("form");
+    if (!form) return;
+    const resetSelection = () => setSelected(new Set(initialSelection.current));
+    form.addEventListener("reset", resetSelection);
+    return () => form.removeEventListener("reset", resetSelection);
+  }, []);
+
+  function updateSelection(value: string, checked: boolean): void {
+    setSelected((current) => {
+      const next = new Set(current);
+      if (checked) next.add(value);
+      else next.delete(value);
+      return next;
+    });
+  }
+
+  return (
+    <fieldset
+      className={classes("ui-checkbox-group", className)}
+      disabled={disabled}
+      ref={fieldsetRef}
+    >
+      <legend>{label}</legend>
+      <div className="ui-checkbox-group-options">
+        {options.map((option, index) => (
+          <label className="ui-checkbox-option" key={option.value} title={option.description}>
+            <Input
+              checked={selected.has(option.value)}
+              name={name}
+              onChange={(event) => updateSelection(option.value, event.target.checked)}
+              required={required && selected.size === 0 && index === 0}
+              type="checkbox"
+              value={option.value}
+            />
+            <span>
+              <strong>{option.label}</strong>
+              {option.description ? <small>{option.description}</small> : null}
+            </span>
+          </label>
+        ))}
+      </div>
+    </fieldset>
+  );
+}
+
 export const Textarea = forwardRef<
   HTMLTextAreaElement,
   TextareaHTMLAttributes<HTMLTextAreaElement>

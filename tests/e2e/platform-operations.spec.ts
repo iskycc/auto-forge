@@ -1,4 +1,6 @@
 import { expect, test } from "@playwright/test";
+import { DatabaseSync } from "node:sqlite";
+import { resolve } from "node:path";
 
 import { appAlert, ensureAdministrator, expandAdministrationGroup } from "./support/session";
 
@@ -63,9 +65,22 @@ test("configuration conflicts, diagnostics and retention controls remain observa
   expect(diagnostic.status()).toBe(200);
   expect(diagnostic.headers()["content-disposition"]).toContain("attachment");
   const diagnosticBody = (await diagnostic.json()) as Record<string, unknown>;
+  expect(diagnosticBody).toHaveProperty("deadLetters");
+  expect(Array.isArray(diagnosticBody.deadLetters)).toBe(true);
   expect(diagnosticBody).not.toHaveProperty("secrets");
   expect(JSON.stringify(diagnosticBody)).not.toContain("adminBootstrapToken");
   expect(JSON.stringify(diagnosticBody)).not.toContain("databaseUrl");
+
+  insertDeadLetterFixture();
+  await page.getByRole("button", { name: "刷新诊断" }).click();
+  const deadLetterPanel = page.locator(".diagnostic-dead-letters");
+  await expect(deadLetterPanel).toContainText("对象清理");
+  await expect(deadLetterPanel).toContainText("E2E_DEAD_LETTER");
+  await expect(deadLetterPanel).toContainText("模拟可恢复死信");
+  page.once("dialog", (dialog) => dialog.accept());
+  await deadLetterPanel.getByRole("button", { name: "重新投递全部" }).click();
+  await expect(page.getByRole("status")).toContainText("已重新投递 1 个死信任务");
+  await expect(deadLetterPanel).toHaveCount(0);
 
   await page.getByRole("link", { name: "数据保留" }).click();
   const logRetention = page.locator(".retention-policy-grid form").filter({ hasText: "日志" });
@@ -87,3 +102,34 @@ test("configuration conflicts, diagnostics and retention controls remain observa
     items: [expect.objectContaining({ action: "retention.execute", resourceId: "log" })],
   });
 });
+
+function insertDeadLetterFixture(): void {
+  const dataDirectory = process.env.AUTOFORGE_E2E_DATA_DIR;
+  if (!dataDirectory) throw new Error("Playwright data directory is unavailable.");
+  const database = new DatabaseSync(resolve(dataDirectory, "db", "autoforge.sqlite"));
+  try {
+    database.exec("PRAGMA busy_timeout = 5000");
+    const now = new Date().toISOString();
+    database
+      .prepare(
+        `INSERT INTO queue_jobs
+          (message_id, run_id, attempt, schema_version, kind, payload_json, priority,
+           deduplication_key, status, available_at, delivery_attempts, maximum_deliveries,
+           last_error_code, last_error_summary, created_at, updated_at)
+         VALUES (?, ?, 1, 1, 'object-cleanup', ?, 0, ?, 'dead_letter', ?, 8, 8, ?, ?, ?, ?)`,
+      )
+      .run(
+        "e2e-diagnostic-dead-letter",
+        "e2e-cleanup-missing",
+        JSON.stringify({ cleanupJobId: "e2e-cleanup-missing" }),
+        "e2e-dead-letter-fixture",
+        now,
+        "E2E_DEAD_LETTER",
+        "模拟可恢复死信",
+        now,
+        now,
+      );
+  } finally {
+    database.close();
+  }
+}

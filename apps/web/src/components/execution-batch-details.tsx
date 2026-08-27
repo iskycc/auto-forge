@@ -2,7 +2,7 @@
 
 import { OctagonX, RotateCcw } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import { RunBatchRounds, type RunnerDirectoryEntry } from "@/components/run-batch-rounds";
 import { RerunFinalFailuresDialog } from "@/components/rerun-final-failures-dialog";
@@ -34,7 +34,7 @@ function batchFinishedAt(batch: ExecutionBatchView): string {
  * 自动刷新；轮次列表与轮次详情由 RunBatchRounds 承载。
  */
 export function ExecutionBatchDetails({
-  batch,
+  batch: initialBatch,
   retrySuiteId,
   rerunConfiguration,
   canCancelRuns,
@@ -62,6 +62,7 @@ export function ExecutionBatchDetails({
   accessToken?: string;
 }) {
   const router = useRouter();
+  const [batch, setBatch] = useState(initialBatch);
   const [actionError, setActionError] = useState("");
   const [actionPending, setActionPending] = useState<"cancel" | "retry" | undefined>();
   const [observedAtMs, setObservedAtMs] = useState(() => Date.now());
@@ -74,12 +75,45 @@ export function ExecutionBatchDetails({
   const canRerunFinalFailures =
     canCreateRuns && !activeBatch && finalFailureCount > 0 && rerunConfiguration !== undefined;
 
-  // 进行中的批次每 5 秒刷新服务端数据，让轮次进度自动推进；组件卸载时清理。
+  const refreshBatch = useCallback(
+    async (signal?: AbortSignal): Promise<void> => {
+      const parameters = new URLSearchParams();
+      if (accessToken) parameters.set("access_token", accessToken);
+      const response = await fetch(
+        `/api/v1/run-batches/${encodeURIComponent(initialBatch.id)}/overview${parameters.size > 0 ? `?${parameters.toString()}` : ""}`,
+        { cache: "no-store", ...(signal ? { signal } : {}) },
+      );
+      if (!response.ok) {
+        throw new Error((await readApiErrorMessage(response, "刷新执行详情失败。"))!);
+      }
+      const latest = (await response.json()) as ExecutionBatchView;
+      setBatch(accessToken ? { ...latest, accessToken } : latest);
+    },
+    [accessToken, initialBatch.id],
+  );
+
+  // 只拉取有界概要并更新当前组件，不再 router.refresh() 重跑整页 Server Component。
   useEffect(() => {
     if (!activeBatch) return;
-    const timer = window.setInterval(() => router.refresh(), 5_000);
-    return () => window.clearInterval(timer);
-  }, [activeBatch, router]);
+    const controller = new AbortController();
+    let timer: number | undefined;
+    const poll = async (): Promise<void> => {
+      try {
+        await refreshBatch(controller.signal);
+      } catch (cause) {
+        if (!(cause instanceof DOMException && cause.name === "AbortError")) {
+          setActionError(cause instanceof Error ? cause.message : "刷新执行详情失败。");
+        }
+      } finally {
+        if (!controller.signal.aborted) timer = window.setTimeout(() => void poll(), 5_000);
+      }
+    };
+    timer = window.setTimeout(() => void poll(), 5_000);
+    return () => {
+      controller.abort();
+      if (timer !== undefined) window.clearTimeout(timer);
+    };
+  }, [activeBatch, refreshBatch]);
 
   useEffect(() => {
     if (!activeBatch) return;
@@ -108,7 +142,7 @@ export function ExecutionBatchDetails({
       if (!response.ok) {
         throw new Error((await readApiErrorMessage(response, "终止任务失败。"))!);
       }
-      router.refresh();
+      await refreshBatch();
     } catch (actionFailure) {
       setActionError(actionFailure instanceof Error ? actionFailure.message : "终止任务失败。");
     } finally {
@@ -136,6 +170,15 @@ export function ExecutionBatchDetails({
       setActionError(actionFailure instanceof Error ? actionFailure.message : "重新执行失败。");
     } finally {
       setActionPending(undefined);
+    }
+  }
+
+  async function refreshVisibleBatch(): Promise<void> {
+    setActionError("");
+    try {
+      await refreshBatch();
+    } catch (cause) {
+      setActionError(cause instanceof Error ? cause.message : "刷新执行详情失败。");
     }
   }
 
@@ -244,6 +287,7 @@ export function ExecutionBatchDetails({
         canReadArtifacts={canReadArtifacts}
         artifactsEnabled={artifactsEnabled}
         runnerDirectory={runnerDirectory}
+        onRefresh={() => void refreshVisibleBatch()}
       />
       {finalFailuresDialogOpen ? (
         <RerunFinalFailuresDialog

@@ -414,6 +414,22 @@ export class IdentityAccessService {
     });
   }
 
+  async recordQueueDeadLetterRedrive(
+    actor: AuthenticatedIdentity,
+    input: { redriven: number },
+    requestId?: string,
+  ): Promise<void> {
+    this.authorize(actor, "settings.manage");
+    await this.audit({
+      actorId: actor.user.id,
+      action: "settings.queue_dead_letter.redrive",
+      resourceType: "job_queue",
+      result: "succeeded",
+      requestId,
+      details: { redriven: input.redriven },
+    });
+  }
+
   async createRole(actor: AuthenticatedIdentity, input: CreateRoleInput, requestId?: string) {
     this.authorize(actor, "role.manage");
     const permissions = validatedPermissions(input.permissions);

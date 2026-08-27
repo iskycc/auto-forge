@@ -1,4 +1,4 @@
-import type { ClaimedJob, JobQueuePort } from "@autoforge/application";
+import type { ClaimedJob, DeadLetterJob, JobQueuePort } from "@autoforge/application";
 import { jobEnvelopeSchema, type JobEnvelope } from "@autoforge/contracts";
 import {
   retrySqliteLockContention,
@@ -22,6 +22,9 @@ type QueueJobRow = {
   delivery_attempts: number;
   maximum_deliveries: number;
   created_at: string;
+  updated_at: string;
+  last_error_code: string | null;
+  last_error_summary: string | null;
 };
 
 export class SqliteJobQueue implements JobQueuePort {
@@ -193,6 +196,55 @@ export class SqliteJobQueue implements JobQueuePort {
     );
   }
 
+  async listDeadLetters(limit: number): Promise<DeadLetterJob[]> {
+    validateAdministrativeLimit(limit);
+    return retrySqliteLockContention(() => {
+      const rows = this.handle.client
+        .prepare(
+          `SELECT * FROM queue_jobs WHERE status = 'dead_letter'
+           ORDER BY updated_at DESC, message_id LIMIT ?`,
+        )
+        .all(limit) as QueueJobRow[];
+      return rows.map((row) => ({
+        messageId: row.message_id,
+        runId: row.run_id,
+        kind: row.kind,
+        deliveryAttempts: row.delivery_attempts,
+        errorCode: row.last_error_code ?? "UNKNOWN",
+        errorSummary: row.last_error_summary ?? "任务超过最大投递次数。",
+        failedAt: row.updated_at,
+      }));
+    });
+  }
+
+  async redriveDeadLetters(input: { redrivenAt: string; limit: number }): Promise<number> {
+    validateAdministrativeLimit(input.limit);
+    return retrySqliteLockContention(() =>
+      runSqliteWriteTransaction(this.handle, () => {
+        const rows = this.handle.client
+          .prepare(
+            `SELECT message_id FROM queue_jobs WHERE status = 'dead_letter'
+             ORDER BY updated_at, message_id LIMIT ?`,
+          )
+          .all(input.limit) as Array<{ message_id: string }>;
+        let redriven = 0;
+        for (const row of rows) {
+          const result = this.handle.client
+            .prepare(
+              `UPDATE queue_jobs
+               SET status = 'available', available_at = ?, lease_owner = NULL,
+                   lease_expires_at = NULL, delivery_attempts = 0,
+                   last_error_code = NULL, last_error_summary = NULL, updated_at = ?
+               WHERE message_id = ? AND status = 'dead_letter'`,
+            )
+            .run(input.redrivenAt, input.redrivenAt, row.message_id);
+          redriven += result.changes;
+        }
+        return redriven;
+      }),
+    );
+  }
+
   async depth(): Promise<{ available: number; leased: number; deadLetter: number }> {
     return retrySqliteLockContention(() => {
       const rows = this.handle.client
@@ -279,4 +331,10 @@ function validateClaim(input: {
     throw new Error("Job claim limit must be between 1 and 256.");
   }
   if (input.leaseExpiresAt <= input.now) throw new Error("Job lease expiry must be in the future.");
+}
+
+function validateAdministrativeLimit(limit: number): void {
+  if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
+    throw new Error("Dead-letter operation limit must be between 1 and 100.");
+  }
 }

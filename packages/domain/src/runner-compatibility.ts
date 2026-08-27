@@ -63,16 +63,20 @@ export function assessRunnerCompatibility(
     issues.push("resource_isolation_missing");
   }
   const javaVersion = capabilityVersion(runner.capabilities, "java:");
-  if (!javaVersion) {
-    if (!acceptsProjectRuntime) issues.push("java_version_unknown");
-  } else if ((javaMajorVersion(javaVersion) ?? 0) < MINIMUM_JAVA_MAJOR_VERSION) {
-    issues.push("java_version_unsupported");
+  // 项目运行时能力会为每次 assignment 下发权威 JDK 与依赖；Agent 主机上偶然
+  // 探测到的 Java/TestNG 只用于诊断，不能阻断调度。
+  if (!acceptsProjectRuntime) {
+    if (!javaVersion) issues.push("java_version_unknown");
+    else if ((javaMajorVersion(javaVersion) ?? 0) < MINIMUM_JAVA_MAJOR_VERSION) {
+      issues.push("java_version_unsupported");
+    }
   }
   const testNgVersion = capabilityVersion(runner.capabilities, "testng:");
-  if (!testNgVersion) {
-    if (!acceptsProjectRuntime) issues.push("testng_version_unknown");
-  } else if (testNgVersion !== SUPPORTED_TESTNG_VERSION) {
-    issues.push("testng_version_unsupported");
+  if (!acceptsProjectRuntime) {
+    if (!testNgVersion) issues.push("testng_version_unknown");
+    else if (testNgVersion !== SUPPORTED_TESTNG_VERSION) {
+      issues.push("testng_version_unsupported");
+    }
   }
   if (!semanticVersionPattern.test(runner.agentVersion)) {
     issues.push("agent_version_unversioned");

@@ -6,7 +6,7 @@ import {
   platformDateTimeInputValue,
 } from "@/lib/platform-date-time";
 
-import { Button, DatetimeInput, Input, Select } from "@/components/ui";
+import { Button, CheckboxGroup, DatetimeInput, Input } from "@/components/ui";
 
 import type {
   ApiToken,
@@ -291,20 +291,7 @@ export function OperationsSettings({
                 用途说明
                 <Input name="description" />
               </label>
-              <label className="settings-wide-field">
-                系统权限
-                <Select multiple name="permissions" required size={6}>
-                  {permissionCatalog.map((permission) => (
-                    <option
-                      key={permission}
-                      title={permissionDescription(permission)}
-                      value={permission}
-                    >
-                      {permissionLabel(permission)}
-                    </option>
-                  ))}
-                </Select>
-              </label>
+              <PermissionCheckboxGroup label="系统权限" name="permissions" required />
               <ProjectPermissionFields projects={projects} />
               <Button className="button button-primary" disabled={pending} type="submit">
                 <Plus size={16} /> 创建服务账号
@@ -363,25 +350,11 @@ export function OperationsSettings({
                           用途说明
                           <Input defaultValue={account.description} name="description" />
                         </label>
-                        <label className="settings-wide-field">
-                          系统权限
-                          <Select
-                            defaultValue={account.systemPermissions}
-                            multiple
-                            name="permissions"
-                            size={6}
-                          >
-                            {permissionCatalog.map((permission) => (
-                              <option
-                                key={permission}
-                                title={permissionDescription(permission)}
-                                value={permission}
-                              >
-                                {permissionLabel(permission)}
-                              </option>
-                            ))}
-                          </Select>
-                        </label>
+                        <PermissionCheckboxGroup
+                          defaultValue={account.systemPermissions}
+                          label="系统权限"
+                          name="permissions"
+                        />
                         <ProjectPermissionFields
                           initialPermissions={account.projectPermissions}
                           projects={projects}
@@ -430,21 +403,21 @@ export function OperationsSettings({
                           required
                         />
                       </label>
-                      <label>
-                        作用域
-                        <Select multiple name="scopes" required size={4}>
-                          {[
-                            ...new Set([
-                              ...account.systemPermissions,
-                              ...Object.values(account.projectPermissions).flat(),
-                            ]),
-                          ].map((scope) => (
-                            <option key={scope} title={permissionDescription(scope)} value={scope}>
-                              {permissionLabel(scope)}
-                            </option>
-                          ))}
-                        </Select>
-                      </label>
+                      <CheckboxGroup
+                        label="作用域"
+                        name="scopes"
+                        options={[
+                          ...new Set([
+                            ...account.systemPermissions,
+                            ...Object.values(account.projectPermissions).flat(),
+                          ]),
+                        ].map((scope) => ({
+                          value: scope,
+                          label: permissionLabel(scope),
+                          description: permissionDescription(scope),
+                        }))}
+                        required
+                      />
                       <Button className="button button-primary" disabled={pending} type="submit">
                         签发
                       </Button>
@@ -572,29 +545,45 @@ function ProjectPermissionFields({
       <legend>项目作用域权限</legend>
       <div className="settings-paired-forms">
         {projects.map((project) => (
-          <label key={project.id}>
-            {project.name}
-            <Select
-              defaultValue={initialPermissions[project.id] ?? []}
-              multiple
-              name={`projectPermissions:${project.id}`}
-              size={5}
-            >
-              {permissionCatalog.map((permission) => (
-                <option
-                  key={permission}
-                  title={permissionDescription(permission)}
-                  value={permission}
-                >
-                  {permissionLabel(permission)}
-                </option>
-              ))}
-            </Select>
-            <small>{project.id}</small>
-          </label>
+          <PermissionCheckboxGroup
+            className="project-permission-group"
+            defaultValue={initialPermissions[project.id] ?? []}
+            key={project.id}
+            label={project.name}
+            name={`projectPermissions:${project.id}`}
+          />
         ))}
       </div>
     </fieldset>
+  );
+}
+
+function PermissionCheckboxGroup({
+  className,
+  defaultValue,
+  label,
+  name,
+  required,
+}: {
+  className?: string;
+  defaultValue?: readonly string[];
+  label: string;
+  name: string;
+  required?: boolean;
+}) {
+  return (
+    <CheckboxGroup
+      className={`settings-wide-field${className ? ` ${className}` : ""}`}
+      {...(defaultValue ? { defaultValue } : {})}
+      label={label}
+      name={name}
+      options={permissionCatalog.map((permission) => ({
+        value: permission,
+        label: permissionLabel(permission),
+        description: permissionDescription(permission),
+      }))}
+      {...(required !== undefined ? { required } : {})}
+    />
   );
 }
 

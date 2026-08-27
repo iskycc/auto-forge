@@ -4,6 +4,57 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## 1.5.2 - 2026-08-27
+
+### Changed
+
+- Permanent attempt-log actions now use explicit brand/dark-page colors: “查看实时日志”, “执行此用例”
+  and the anonymous “登录后执行此用例” link no longer inherit a white secondary surface on the dark
+  share page.
+- Role, service-account, project-scope and API-token permission editors now use accessible checkbox
+  groups with human-readable names and descriptions instead of native Ctrl/Command multi-selects.
+- The Runner terminal title-bar expand control is now interactive, supports full-viewport and restored
+  modes, refits xterm after resizing, and lets Escape restore an expanded window before closing it.
+- Runner inventory rows are substantially denser. Host JDK/TestNG compatibility and raw capability
+  strings are no longer repeated in each row; platform, Agent/protocol, slots/resources, heartbeat and
+  lifecycle actions remain visible. Agents that accept project runtime assets are no longer blocked by
+  an unrelated host JDK/TestNG version because the assignment supplies the authoritative runtime.
+- Active run details poll a bounded overview endpoint and update metrics, rounds and the current case
+  page locally. They no longer refresh the entire Server Component tree every five seconds, preserve
+  filters/expanded rows/scroll position, and keep current rows visible while fresh data is fetched.
+- System diagnostics now show each dead-letter job's type, related ID, final error and delivery count.
+  Administrators can explicitly redrive up to 100 visible dead letters; SQLite resets them atomically
+  and JetStream republishes before removing the original DLQ message.
+
+### Tests
+
+- Extended Playwright coverage for checkbox-based RBAC/service-account flows, anonymous and signed-in
+  permanent-log action colors, terminal expand/restore behavior and bounded active-batch overview
+  polling without page navigation.
+- Extended the shared SQLite/JetStream queue contract to inspect a dead letter, redrive it and verify
+  that its new delivery starts at attempt one; added project-runtime compatibility regression coverage.
+
+### Database and persisted configuration
+
+- No SQLite/PostgreSQL migration or persisted-configuration change is required. Existing SQLite
+  `queue_jobs` rows and JetStream DLQ messages remain readable and can be redriven in place.
+
+### Compatibility
+
+- Runner Protocol v1, Jenkins inputs, task snapshots and release archives are unchanged. The system
+  diagnostics response adds the backward-compatible `deadLetters` array. Host toolchain versions remain
+  enforced for legacy Agents that do not accept project runtime assets.
+
+### Offline assets
+
+- No production dependency, remote static asset or runtime internet requirement was added. Lite and
+  Full implement the same administrative dead-letter operations with their existing queue backends.
+
+### Known limitations
+
+- Diagnostics display the newest 20 dead letters and one redrive action processes at most 100. A job
+  whose underlying business error is not fixed can return to the DLQ after the normal retry budget.
+
 ## 1.5.1 - 2026-08-27
 
 ### Changed

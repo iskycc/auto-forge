@@ -1,4 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
+import { mkdir } from "node:fs/promises";
+import { resolve } from "node:path";
 
 import {
   appAlert,
@@ -18,6 +20,14 @@ const TEST_MANAGER_ROLE_ID = "00000000-0000-7000-8100-000000000003";
 const EXECUTION_OPERATOR_ROLE_ID = "00000000-0000-7000-8100-000000000004";
 const VIEWER_ROLE_ID = "00000000-0000-7000-8100-000000000005";
 const AUDITOR_ROLE_ID = "00000000-0000-7000-8100-000000000006";
+
+async function captureUi(page: Page, name: string): Promise<void> {
+  const screenshotDirectory = process.env.AUTOFORGE_UI_SCREENSHOT_DIR;
+  if (!screenshotDirectory) return;
+  const absoluteDirectory = resolve(screenshotDirectory);
+  await mkdir(absoluteDirectory, { recursive: true });
+  await page.screenshot({ path: resolve(absoluteDirectory, `${name}.png`), fullPage: true });
+}
 
 test("local user completes forced password change and self-service session lifecycle", async ({
   page,
@@ -161,7 +171,11 @@ test("administrator unlocks and disables a locked user and manages a custom role
   await roleForm.getByLabel("角色标识").fill(roleKey);
   await roleForm.getByLabel("角色名称").fill(roleName);
   await roleForm.getByLabel("作用域").selectOption("project");
-  await roleForm.getByLabel("权限").selectOption(["case.read", "run.read"]);
+  const rolePermissions = roleForm.getByRole("group", { name: "权限" });
+  expect(await rolePermissions.getByRole("checkbox").count()).toBeGreaterThan(1);
+  await rolePermissions.locator('input[value="case.read"]').check();
+  await rolePermissions.locator('input[value="run.read"]').check();
+  await captureUi(page, "role-permission-checkboxes");
   await roleForm.getByLabel("描述").fill("E2E custom role");
   await roleForm.getByRole("button", { name: "创建角色" }).click();
   await expect(page.getByText("自定义角色已创建。")).toBeVisible();
@@ -176,7 +190,7 @@ test("administrator unlocks and disables a locked user and manages a custom role
     has: page.getByRole("button", { name: "保存角色" }),
   });
   await editor.getByLabel("角色名称").fill(`${roleName} 已更新`);
-  await editor.getByLabel("权限").selectOption(["case.read", "run.read", "artifact.read"]);
+  await editor.locator('input[name="permissions"][value="artifact.read"]').check();
   await editor.getByRole("button", { name: "保存角色" }).click();
   await expect(page.getByText("角色定义已更新，受影响用户的旧会话已撤销。")).toBeVisible();
 

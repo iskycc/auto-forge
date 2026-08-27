@@ -26,6 +26,7 @@ export function SharedAttemptLogActions({
           className="button button-primary"
           onClick={() => setOpenAttempt(attempt)}
           type="button"
+          variant="primary"
         >
           <Radio size={15} /> 查看实时日志
         </Button>

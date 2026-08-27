@@ -328,6 +328,17 @@ export const systemDiagnosticSchema = z.object({
   database: z.object({ ready: z.boolean(), detail: z.string() }),
   objectStore: z.object({ ready: z.boolean(), detail: z.string() }),
   queue: z.object({ ready: z.boolean(), detail: z.string() }),
+  deadLetters: z.array(
+    z.object({
+      messageId: z.string().min(1).max(128),
+      runId: z.string().min(1).max(128),
+      kind: z.string().min(1).max(64),
+      deliveryAttempts: z.number().int().nonnegative(),
+      errorCode: z.string().min(1).max(128),
+      errorSummary: z.string().max(2_048),
+      failedAt: z.string().datetime(),
+    }),
+  ),
   cache: z.object({ ready: z.boolean(), detail: z.string() }),
   dataDisk: z.object({
     capacityBytes: z.number().int().positive(),

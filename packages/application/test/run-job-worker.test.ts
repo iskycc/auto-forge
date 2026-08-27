@@ -108,6 +108,14 @@ class FakeQueue implements JobQueuePort {
     return 0;
   }
 
+  async listDeadLetters() {
+    return [];
+  }
+
+  async redriveDeadLetters(): Promise<number> {
+    return 0;
+  }
+
   async depth() {
     return { available: 0, leased: 0, deadLetter: 0 };
   }

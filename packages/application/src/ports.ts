@@ -1278,6 +1278,16 @@ export type ClaimedJob = {
   deliveryAttempt: number;
 };
 
+export type DeadLetterJob = {
+  messageId: string;
+  runId: string;
+  kind: JobEnvelope["kind"];
+  deliveryAttempts: number;
+  errorCode: string;
+  errorSummary: string;
+  failedAt: string;
+};
+
 export interface JobQueuePort {
   publish(job: JobEnvelope, availableAt?: string): Promise<"published" | "duplicate">;
   claim(input: {
@@ -1306,6 +1316,8 @@ export interface JobQueuePort {
     rejectedAt: string;
   }): Promise<"retrying" | "dead_letter">;
   recoverExpired(now: string, limit: number): Promise<number>;
+  listDeadLetters(limit: number): Promise<DeadLetterJob[]>;
+  redriveDeadLetters(input: { redrivenAt: string; limit: number }): Promise<number>;
   depth(): Promise<{ available: number; leased: number; deadLetter: number }>;
   ready(): Promise<void>;
   close(): Promise<void>;

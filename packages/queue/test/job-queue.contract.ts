@@ -117,6 +117,45 @@ export function jobQueueContract(adapterName: string, createHarness: HarnessFact
           leased: 0,
           deadLetter: 1,
         });
+        await expect(queue.listDeadLetters(10)).resolves.toEqual([
+          expect.objectContaining({
+            messageId: "message-dead",
+            runId: "run-dead",
+            kind: "dispatch-run",
+            deliveryAttempts: 8,
+            errorCode: "CONTRACT_FAILURE",
+            errorSummary: "contract failure",
+          }),
+        ]);
+        await expect(
+          queue.redriveDeadLetters({ redrivenAt: timestamp(), limit: 10 }),
+        ).resolves.toBe(1);
+        const [redriven] = await claimEventually(queue, "worker-redrive");
+        expect(redriven).toMatchObject({
+          deliveryAttempt: 1,
+          job: { messageId: "message-dead" },
+        });
+        let redelivery = redriven;
+        for (let attempt = 1; attempt <= 8; attempt += 1) {
+          expect(redelivery?.deliveryAttempt).toBe(attempt);
+          const rejectedAt = timestamp();
+          await expect(
+            queue.reject({
+              workerId: "worker-redrive",
+              deliveryId: redelivery?.deliveryId ?? "missing",
+              errorCode: "CONTRACT_FAILURE_AGAIN",
+              errorSummary: "contract failure after redrive",
+              retryAt: rejectedAt,
+              rejectedAt,
+            }),
+          ).resolves.toBe(attempt === 8 ? "dead_letter" : "retrying");
+          if (attempt < 8) [redelivery] = await claimEventually(queue, "worker-redrive");
+        }
+        await expect(queue.depth()).resolves.toEqual({
+          available: 0,
+          leased: 0,
+          deadLetter: 1,
+        });
       });
     });
 

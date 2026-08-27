@@ -16,11 +16,6 @@ import { BatchRunnerUpdate } from "@/components/batch-runner-update";
 import { getPlatformServices } from "@/lib/services";
 import { requirePagePermission } from "@/lib/auth";
 import {
-  runnerCompatibilityLabel,
-  runnerCompatibilitySummary,
-  runnerToolchainSummary,
-} from "@/lib/runner-compatibility";
-import {
   selectableProjectIds,
   selectedProjectHierarchy,
   selectedProjectId,
@@ -242,7 +237,6 @@ export default async function RunnersPage({
         ) : (
           <div className="runner-list" role="table" aria-label="执行机列表">
             {visibleRunners.map((runner) => {
-              const compatibility = assessRunnerCompatibility(runner);
               const updateAvailable = bundledAgentVersion
                 ? isAgentUpdateAvailable(runner.agentVersion, bundledAgentVersion)
                 : false;
@@ -272,18 +266,6 @@ export default async function RunnersPage({
                       </small>
                     </div>
                     <div role="cell">
-                      <span>兼容性</span>
-                      <strong>
-                        <span
-                          className={`runner-state runner-compatibility-${compatibility.status}`}
-                          title={runnerCompatibilitySummary(compatibility)}
-                        >
-                          <i /> {runnerCompatibilityLabel(compatibility.status)}
-                        </span>
-                      </strong>
-                      <small>{runnerToolchainSummary(compatibility)}</small>
-                    </div>
-                    <div role="cell">
                       <span>容量与资源</span>
                       <strong>
                         {runner.busySlots} / {runner.maxConcurrency} 槽位
@@ -302,12 +284,6 @@ export default async function RunnersPage({
                   </div>
 
                   <footer className="runner-list-actions" role="cell">
-                    <span
-                      className="runner-capability-summary"
-                      title={runner.capabilities.join(", ")}
-                    >
-                      {runner.capabilities.join(" · ") || "未声明能力"}
-                    </span>
                     {runner.credentialRevokedAt && !runner.deregisteredAt ? (
                       <span className="tag">凭据已撤销</span>
                     ) : null}

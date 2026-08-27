@@ -5,7 +5,7 @@ import { Button } from "@/components/ui";
 import { apiErrorSchema, createTerminalSessionResultSchema } from "@autoforge/contracts";
 import type { FitAddon } from "@xterm/addon-fit";
 import type { Terminal } from "@xterm/xterm";
-import { LoaderCircle, Maximize2, ShieldCheck, TerminalSquare, X } from "lucide-react";
+import { LoaderCircle, Maximize2, Minimize2, ShieldCheck, TerminalSquare, X } from "lucide-react";
 import { FormEvent, useEffect, useRef, useState } from "react";
 
 type ConnectionState = "authorization" | "connecting" | "connected" | "closed";
@@ -26,6 +26,7 @@ export function RunnerTerminal({
   runnerOnline,
 }: RunnerTerminalProps) {
   const [open, setOpen] = useState(false);
+  const [expanded, setExpanded] = useState(false);
   const [connectionState, setConnectionState] = useState<ConnectionState>("authorization");
   const [error, setError] = useState<string | null>(null);
   const viewportRef = useRef<HTMLDivElement>(null);
@@ -124,7 +125,9 @@ export function RunnerTerminal({
   useEffect(() => {
     if (!open) return;
     const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") closeTerminal();
+      if (event.key !== "Escape") return;
+      if (expanded) setExpanded(false);
+      else closeTerminal();
     };
     window.addEventListener("keydown", closeOnEscape);
     return () => window.removeEventListener("keydown", closeOnEscape);
@@ -210,8 +213,14 @@ export function RunnerTerminal({
     }
     socket?.close(1000, "Terminal window closed");
     setOpen(false);
+    setExpanded(false);
     setConnectionState("authorization");
     setError(null);
+  }
+
+  function toggleExpanded(): void {
+    setExpanded((current) => !current);
+    window.requestAnimationFrame(() => fitAddonRef.current?.fit());
   }
 
   return (
@@ -228,7 +237,7 @@ export function RunnerTerminal({
       {open && (
         <div className="terminal-backdrop" role="presentation" onMouseDown={closeTerminal}>
           <section
-            className="terminal-window"
+            className={`terminal-window${expanded ? " terminal-window-expanded" : ""}`}
             role="dialog"
             aria-modal="true"
             aria-label={`${runnerName} 直连终端`}
@@ -249,7 +258,20 @@ export function RunnerTerminal({
                 <i />
                 {connectionLabel(connectionState)}
               </span>
-              <Maximize2 aria-hidden="true" size={14} />
+              <Button
+                aria-label={expanded ? "还原终端窗口" : "放大终端窗口"}
+                aria-pressed={expanded}
+                onClick={toggleExpanded}
+                title={expanded ? "还原窗口" : "铺满窗口"}
+                type="button"
+                variant="ghost"
+              >
+                {expanded ? (
+                  <Minimize2 aria-hidden="true" size={14} />
+                ) : (
+                  <Maximize2 aria-hidden="true" size={14} />
+                )}
+              </Button>
               <Button type="button" aria-label="关闭终端" onClick={closeTerminal}>
                 <X size={16} />
               </Button>

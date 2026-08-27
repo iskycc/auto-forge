@@ -170,7 +170,7 @@ function SharedLogRerunAction({
   }
   if (access === "login") {
     return (
-      <Link className="button button-secondary share-log-rerun-login" href="/login">
+      <Link className="button button-primary share-log-rerun-login" href="/login">
         登录后执行此用例
       </Link>
     );

@@ -97,7 +97,9 @@ export default async function PlatformSettingsPage({
           visibleSection={activeSection}
         />
       ) : null}
-      {activeSection === "diagnostics" ? <SystemDiagnostics /> : null}
+      {activeSection === "diagnostics" ? (
+        <SystemDiagnostics canManage={hasPermission(identity, "settings.manage")} />
+      ) : null}
     </section>
   );
 }

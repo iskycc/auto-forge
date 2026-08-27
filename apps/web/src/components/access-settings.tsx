@@ -1,6 +1,6 @@
 "use client";
 
-import { Button, Input, Select, Textarea } from "@/components/ui";
+import { Button, CheckboxGroup, Input, Select, Textarea } from "@/components/ui";
 
 import {
   permissionCatalog,
@@ -591,21 +591,17 @@ export function AccessSettings({
                   <option value="system">系统</option>
                 </Select>
               </label>
-              <label className="settings-wide-field">
-                权限
-                <Select multiple name="permissions" required size={8}>
-                  {permissionCatalog.map((permission) => (
-                    <option
-                      key={permission}
-                      title={permissionDescription(permission)}
-                      value={permission}
-                    >
-                      {permissionLabel(permission)}
-                    </option>
-                  ))}
-                </Select>
-                <small>可按 Ctrl（macOS 使用 Command）多选；权限名称已按实际用途展示。</small>
-              </label>
+              <CheckboxGroup
+                className="settings-wide-field"
+                label="权限"
+                name="permissions"
+                options={permissionCatalog.map((permission) => ({
+                  value: permission,
+                  label: permissionLabel(permission),
+                  description: permissionDescription(permission),
+                }))}
+                required
+              />
               <label className="settings-wide-field">
                 描述
                 <Input name="description" />
@@ -670,29 +666,18 @@ export function AccessSettings({
                               角色名称
                               <Input defaultValue={role.name} name="name" required />
                             </label>
-                            <label className="settings-wide-field">
-                              权限
-                              <Select
-                                defaultValue={role.permissions}
-                                multiple
-                                name="permissions"
-                                required
-                                size={8}
-                              >
-                                {permissionCatalog.map((permission) => (
-                                  <option
-                                    key={permission}
-                                    title={permissionDescription(permission)}
-                                    value={permission}
-                                  >
-                                    {permissionLabel(permission)}
-                                  </option>
-                                ))}
-                              </Select>
-                              <small>
-                                可按 Ctrl（macOS 使用 Command）多选；悬停角色权限可查看用途。
-                              </small>
-                            </label>
+                            <CheckboxGroup
+                              className="settings-wide-field"
+                              defaultValue={role.permissions}
+                              label="权限"
+                              name="permissions"
+                              options={permissionCatalog.map((permission) => ({
+                                value: permission,
+                                label: permissionLabel(permission),
+                                description: permissionDescription(permission),
+                              }))}
+                              required
+                            />
                             <label className="settings-wide-field">
                               描述
                               <Input defaultValue={role.description} name="description" />
