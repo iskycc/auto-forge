@@ -1,12 +1,16 @@
 import type { RegisterRunnerRecord, RunnerRepository } from "@autoforge/application";
 import type { Runner } from "@autoforge/domain";
-import { and, desc, eq, gt, isNull, or, sql } from "drizzle-orm";
+import { and, desc, eq, gt, inArray, isNull, or, sql } from "drizzle-orm";
 
 import { runSqliteWriteTransaction, type SqliteDatabaseHandle } from "./database";
+import { batchesOf, RELATIONAL_ID_QUERY_BATCH_SIZE } from "./database-batches";
+import { RunnerCredentialLookupCache } from "./runner-credential-cache";
 import { mapStoredRunner } from "./runner-mapper";
 import { assignmentLeases, runnerBootstrapUses, runners } from "./schema";
 
 export class SqliteRunnerRepository implements RunnerRepository {
+  private readonly credentialLookups = new RunnerCredentialLookupCache();
+
   constructor(private readonly handle: SqliteDatabaseHandle) {}
 
   async register(record: RegisterRunnerRecord): Promise<Runner | null> {
@@ -50,6 +54,7 @@ export class SqliteRunnerRepository implements RunnerRepository {
           )
           .returning()
           .get();
+        if (recovered) this.credentialLookups.invalidateRunner(record.id);
         return recovered ? mapStoredRunner(recovered) : null;
       }
       const row = this.handle.db
@@ -81,20 +86,28 @@ export class SqliteRunnerRepository implements RunnerRepository {
   }
 
   async findByCredentialHash(credentialHash: string, now: string): Promise<Runner | null> {
-    const row = this.handle.db
-      .select()
-      .from(runners)
-      .where(
-        or(
-          eq(runners.credentialHash, credentialHash),
-          and(
-            eq(runners.previousCredentialHash, credentialHash),
-            gt(runners.previousCredentialValidUntil, now),
-          ),
-        ),
-      )
-      .get();
-    return row ? mapStoredRunner(row) : null;
+    return this.credentialLookups.resolve(
+      async (hash, lookupNow) => {
+        const row = this.handle.db
+          .select()
+          .from(runners)
+          .where(
+            or(
+              eq(runners.credentialHash, hash),
+              and(
+                eq(runners.previousCredentialHash, hash),
+                gt(runners.previousCredentialValidUntil, lookupNow),
+              ),
+            ),
+          )
+          .get();
+        if (!row) return { runner: null, cacheable: false };
+        // 只有当前凭据命中可缓存；历史凭据命中依赖查找时间，必须逐次核验。
+        return { runner: mapStoredRunner(row), cacheable: row.credentialHash === hash };
+      },
+      credentialHash,
+      now,
+    );
   }
 
   async heartbeat(input: {
@@ -139,6 +152,7 @@ export class SqliteRunnerRepository implements RunnerRepository {
       .returning()
       .get();
     if (!row) throw new Error(`Runner ${input.runnerId} does not exist.`);
+    this.credentialLookups.invalidateRunner(input.runnerId);
     return mapStoredRunner(row);
   }
 
@@ -158,6 +172,21 @@ export class SqliteRunnerRepository implements RunnerRepository {
     return row ? mapStoredRunner(row, offlineBefore) : null;
   }
 
+  async listByIds(runnerIds: readonly string[], offlineBefore: string): Promise<Runner[]> {
+    if (runnerIds.length === 0) return [];
+    const rows = [];
+    for (const ids of batchesOf(runnerIds, RELATIONAL_ID_QUERY_BATCH_SIZE)) {
+      rows.push(
+        ...this.handle.db
+          .select()
+          .from(runners)
+          .where(inArray(runners.id, [...ids]))
+          .all(),
+      );
+    }
+    return rows.map((row) => mapStoredRunner(row, offlineBefore));
+  }
+
   async setLifecycleState(input: {
     runnerId: string;
     state: "active" | "draining" | "disabled";
@@ -174,6 +203,7 @@ export class SqliteRunnerRepository implements RunnerRepository {
       .returning()
       .get();
     if (!row) throw new Error(`Runner ${input.runnerId} does not exist.`);
+    this.credentialLookups.invalidateRunner(input.runnerId);
     return mapStoredRunner(row);
   }
 
@@ -197,6 +227,7 @@ export class SqliteRunnerRepository implements RunnerRepository {
       .returning()
       .get();
     if (!row) throw new Error(`Runner ${input.runnerId} does not exist.`);
+    this.credentialLookups.invalidateRunner(input.runnerId);
     return mapStoredRunner(row);
   }
 
@@ -211,6 +242,7 @@ export class SqliteRunnerRepository implements RunnerRepository {
       .returning()
       .get();
     if (!row) throw new Error(`Runner ${input.runnerId} does not exist.`);
+    this.credentialLookups.invalidateRunner(input.runnerId);
     return mapStoredRunner(row);
   }
 
@@ -228,6 +260,7 @@ export class SqliteRunnerRepository implements RunnerRepository {
       .returning()
       .get();
     if (!row) throw new Error(`Runner ${input.runnerId} does not exist.`);
+    this.credentialLookups.invalidateRunner(input.runnerId);
     return mapStoredRunner(row);
   }
 
@@ -257,6 +290,7 @@ export class SqliteRunnerRepository implements RunnerRepository {
           ),
         )
         .run();
+      this.credentialLookups.invalidateRunner(input.runnerId);
       return mapStoredRunner(row);
     });
   }
@@ -280,6 +314,7 @@ export class SqliteRunnerRepository implements RunnerRepository {
       .returning()
       .get();
     if (!row) throw new Error(`Runner ${input.runnerId} does not exist.`);
+    this.credentialLookups.invalidateRunner(input.runnerId);
     return mapStoredRunner(row);
   }
 }

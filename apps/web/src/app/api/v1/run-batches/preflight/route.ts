@@ -13,7 +13,8 @@ export async function POST(request: Request): Promise<NextResponse> {
     const input = createRunBatchInputSchema.parse(await readJsonBody(request, 128 * 1024));
     const services = await getPlatformServices();
     const projectScope = services.identityAccess.projectScope(identity, "run.create");
-    const suite = await services.caseSuites.get(input.suiteId, projectScope);
+    // 授权只需任务的归属项目；预检内部会按需读取完整任务快照。
+    const suite = await services.caseSuites.getSummary(input.suiteId, projectScope);
     services.identityAccess.authorize(identity, "run.create", suite.projectId);
     return NextResponse.json(await services.runBatches.preflight(input));
   } catch (error) {

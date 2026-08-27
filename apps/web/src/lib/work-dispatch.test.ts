@@ -2,13 +2,10 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { ExecutionControlRepository, RunBatchSchedulingPort } from "@autoforge/application";
 
-import {
-  CoalescingSchedulingPort,
-  workerBackedExecutionControlRepository,
-} from "./lite-work-dispatch";
-import type { LiteWorkDispatcher } from "./lite-work-runtime";
+import { CoalescingSchedulingPort, workerBackedExecutionControlRepository } from "./work-dispatch";
+import type { WorkDispatcher } from "./work-runtime";
 
-describe("Lite scheduling coalescing", () => {
+describe("scheduling coalescing", () => {
   it("merges a burst into a leading and one trailing scan without losing a refill", async () => {
     let release!: () => void;
     const gate = new Promise<void>((resolve) => {
@@ -33,7 +30,7 @@ describe("Lite scheduling coalescing", () => {
   });
 });
 
-describe("Lite execution control dispatch", () => {
+describe("execution control work dispatch", () => {
   it("moves whole-batch termination away from the Web event loop", async () => {
     const input = {
       batchId: "batch-1",
@@ -45,7 +42,7 @@ describe("Lite execution control dispatch", () => {
     const localTerminate = vi.fn().mockResolvedValue(0);
     const workerTerminate = vi.fn().mockResolvedValue(42);
     const local = { terminateBatch: localTerminate } as unknown as ExecutionControlRepository;
-    const dispatcher = { terminateBatch: workerTerminate } as unknown as LiteWorkDispatcher;
+    const dispatcher = { terminateBatch: workerTerminate } as unknown as WorkDispatcher;
     const repository = workerBackedExecutionControlRepository(local, dispatcher);
 
     await expect(repository.terminateBatch(input)).resolves.toBe(42);
@@ -71,7 +68,7 @@ describe("Lite execution control dispatch", () => {
     const localAppend = vi.fn().mockResolvedValue({ acknowledgedSequence: { stdout: -1 } });
     const workerAppend = vi.fn().mockResolvedValue({ acknowledgedSequence: { stdout: 0 } });
     const local = { appendLogChunks: localAppend } as unknown as ExecutionControlRepository;
-    const dispatcher = { appendAttemptLogChunks: workerAppend } as unknown as LiteWorkDispatcher;
+    const dispatcher = { appendAttemptLogChunks: workerAppend } as unknown as WorkDispatcher;
     const repository = workerBackedExecutionControlRepository(local, dispatcher);
 
     await expect(repository.appendLogChunks(input)).resolves.toEqual({

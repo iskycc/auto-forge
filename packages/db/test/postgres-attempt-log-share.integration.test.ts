@@ -66,6 +66,9 @@ async function createHarness(): Promise<AttemptLogShareHarness> {
     repository: new PostgresAttemptLogShareRepository(handle),
     fixture: { batchId, attemptIds },
     async dispose() {
+      // 共享测试库必须带走夹具行，避免残留 running 批次影响其他测试的调度视图。
+      await handle.pool.query("DELETE FROM run_batches WHERE id = $1", [batchId]);
+      await handle.pool.query("DELETE FROM runners WHERE id = $1", [runnerId]);
       await handle.close();
     },
   };

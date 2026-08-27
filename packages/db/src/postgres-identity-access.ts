@@ -331,45 +331,47 @@ export class PostgresIdentityAccessRepository implements IdentityAccessRepositor
 
   async resolveSession(tokenHash: string, now: string): Promise<AuthenticatedIdentity | null> {
     await this.ready();
-    const sessionResult = await this.handle.pool.query<{ id: string; user_id: string }>(
-      `UPDATE user_sessions SET last_seen_at = $2
-       WHERE token_hash = $1 AND revoked_at IS NULL AND expires_at > $2
-       RETURNING id, user_id`,
+    // 会话续期、用户读取与角色聚合合并为单条语句：鉴权是每次页面/探针读取
+    // 的固定成本，四段串行往返在高并发下会被事件循环排队显著放大。
+    const result = await this.handle.pool.query<
+      { session_id: string } & UserDatabaseRow & {
+          system_permissions: string[] | null;
+          project_bindings: Array<{ p: string; r: string }> | null;
+        }
+    >(
+      `WITH touched AS (
+         UPDATE user_sessions SET last_seen_at = $2
+         WHERE token_hash = $1 AND revoked_at IS NULL AND expires_at > $2
+         RETURNING id, user_id
+       )
+       SELECT s.id AS session_id, u.*,
+         (SELECT json_agg(r.permissions_json) FROM user_system_roles b
+           JOIN roles r ON r.id = b.role_id AND r.active = TRUE
+           WHERE b.user_id = u.id) AS system_permissions,
+         (SELECT json_agg(json_build_object('p', b.project_id, 'r', r.permissions_json))
+           FROM project_role_bindings b
+           JOIN roles r ON r.id = b.role_id AND r.active = TRUE
+           WHERE b.user_id = u.id) AS project_bindings
+       FROM touched s
+       JOIN users u ON u.id = s.user_id
+       WHERE u.status = 'active'`,
       [tokenHash, now],
     );
-    const session = sessionResult.rows[0];
-    if (!session) return null;
-    const userResult = await this.handle.pool.query<UserDatabaseRow>(
-      "SELECT * FROM users WHERE id = $1 AND status = 'active'",
-      [session.user_id],
-    );
-    const user = userResult.rows[0];
-    if (!user) return null;
-    const [system, project] = await Promise.all([
-      this.handle.pool.query<{ permissions_json: string }>(
-        `SELECT r.permissions_json FROM user_system_roles b
-         JOIN roles r ON r.id = b.role_id AND r.active = TRUE WHERE b.user_id = $1`,
-        [user.id],
-      ),
-      this.handle.pool.query<{ project_id: string; permissions_json: string }>(
-        `SELECT b.project_id, r.permissions_json FROM project_role_bindings b
-         JOIN roles r ON r.id = b.role_id AND r.active = TRUE WHERE b.user_id = $1`,
-        [user.id],
-      ),
-    ]);
+    const row = result.rows[0];
+    if (!row) return null;
     const projectPermissions: Record<string, Permission[]> = {};
-    for (const row of project.rows) {
-      projectPermissions[row.project_id] = mergePermissions(
-        projectPermissions[row.project_id] ?? [],
-        permissions(row.permissions_json),
+    for (const binding of row.project_bindings ?? []) {
+      projectPermissions[binding.p] = mergePermissions(
+        projectPermissions[binding.p] ?? [],
+        permissions(binding.r),
       );
     }
     return {
-      user: mapUserRow(user),
-      sessionId: session.id,
+      user: mapUserRow(row),
+      sessionId: row.session_id,
       systemPermissions: mergePermissions(
         [],
-        system.rows.flatMap((row) => permissions(row.permissions_json)),
+        (row.system_permissions ?? []).flatMap((entry) => permissions(entry)),
       ),
       projectPermissions,
     };

@@ -1243,6 +1243,9 @@ async function executePostgresRetention(
     if (batchIds.length === 0) {
       return { deletedRecords: 0, objectKeys: [], removedBatchStoreIds: [] };
     }
+    // scheduling_events 不再以外键引用 run_batches（见迁移 0047）；删除批次前
+    // 显式清理诊断流水，避免留下孤儿事件。
+    await client.query(`DELETE FROM scheduling_events WHERE batch_id=ANY($1)`, [batchIds]);
     const deleted = await client.query(`DELETE FROM run_batches WHERE id=ANY($1)`, [batchIds]);
     return {
       deletedRecords: deleted.rowCount ?? 0,

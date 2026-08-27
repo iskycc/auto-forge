@@ -98,6 +98,9 @@ describe("run batch preflight", () => {
         createdAt: timestamp,
         updatedAt: timestamp,
       }),
+      listByIds: vi.fn(async (runnerIds: readonly string[]) =>
+        Promise.all(runnerIds.map(async (id) => ({ ...(await runners.get(id, timestamp))!, id }))),
+      ),
     } as unknown as RunnerRepository;
     const catalog = {
       getSource: vi.fn().mockResolvedValue({
@@ -384,6 +387,7 @@ describe("run batch creation with suite policy", () => {
         created.push(record);
         return { id: "batch-1" };
       }),
+      hasSchedulableRuns: vi.fn().mockResolvedValue(true),
       getSchedulingSnapshot: vi.fn().mockResolvedValue({
         batch: { assignedRuns: 0, secretBindings: [] },
         queuedRuns: [],
@@ -433,6 +437,7 @@ describe("run batch creation with suite policy", () => {
         created.push(record);
         return { id: "batch-1" };
       }),
+      hasSchedulableRuns: vi.fn().mockResolvedValue(true),
       getSchedulingSnapshot: vi.fn().mockResolvedValue({
         batch: {
           id: "batch-1",
@@ -482,6 +487,7 @@ describe("run batch creation with suite policy", () => {
         created.push(record);
         return { id: "batch-1" };
       }),
+      hasSchedulableRuns: vi.fn().mockResolvedValue(true),
       getSchedulingSnapshot: vi.fn().mockResolvedValue({
         batch: { assignedRuns: 0, secretBindings: [] },
         queuedRuns: [],
@@ -548,6 +554,7 @@ describe("run batch creation with suite policy", () => {
     const decisions: unknown[] = [];
     const suites = { get: vi.fn() } as unknown as CaseSuiteRepository;
     const batches = {
+      hasSchedulableRuns: vi.fn().mockResolvedValue(true),
       getSchedulingSnapshot: vi.fn().mockResolvedValue({
         batch: {
           id: "batch-1",
@@ -564,9 +571,12 @@ describe("run batch creation with suite policy", () => {
         candidates: [{ runner: schedulingRunner(), reservedSlots: 0 }],
         projectActiveRuns: 0,
       }),
-      reserveAssignments: vi.fn(async (input: { decisions: unknown[] }) => {
+      reserveAssignments: vi.fn(async (input: { decisions: Array<{ attemptId: string }> }) => {
         decisions.push(...input.decisions);
-        return input.decisions.length;
+        return {
+          reserved: input.decisions.length,
+          acceptedAttemptIds: input.decisions.map((decision) => decision.attemptId),
+        };
       }),
       appendSchedulingEvents: vi.fn().mockResolvedValue(undefined),
       getSummary: vi.fn().mockResolvedValue({ id: "batch-1", assignedRuns: 3 }),
@@ -600,6 +610,7 @@ describe("run batch creation with suite policy", () => {
       async (input: { state: { concurrency: number } }) => input.state,
     );
     const batches = {
+      hasSchedulableRuns: vi.fn().mockResolvedValue(true),
       getSchedulingSnapshot: vi.fn().mockResolvedValue({
         batch: {
           id: "batch-1",
@@ -642,9 +653,12 @@ describe("run batch creation with suite policy", () => {
         },
       }),
       activateRetryConcurrency,
-      reserveAssignments: vi.fn(async (input: { decisions: unknown[] }) => {
+      reserveAssignments: vi.fn(async (input: { decisions: Array<{ attemptId: string }> }) => {
         decisions.push(...input.decisions);
-        return input.decisions.length;
+        return {
+          reserved: input.decisions.length,
+          acceptedAttemptIds: input.decisions.map((decision) => decision.attemptId),
+        };
       }),
       appendSchedulingEvents: vi.fn().mockResolvedValue(undefined),
       getSummary: vi.fn().mockResolvedValue({ id: "batch-1", assignedRuns: 2 }),
@@ -679,6 +693,7 @@ describe("run batch creation with suite policy", () => {
     const decisions: unknown[] = [];
     const activateRetryConcurrency = vi.fn();
     const batches = {
+      hasSchedulableRuns: vi.fn().mockResolvedValue(true),
       getSchedulingSnapshot: vi.fn().mockResolvedValue({
         batch: {
           id: "batch-1",
@@ -721,9 +736,12 @@ describe("run batch creation with suite policy", () => {
         },
       }),
       activateRetryConcurrency,
-      reserveAssignments: vi.fn(async (input: { decisions: unknown[] }) => {
+      reserveAssignments: vi.fn(async (input: { decisions: Array<{ attemptId: string }> }) => {
         decisions.push(...input.decisions);
-        return input.decisions.length;
+        return {
+          reserved: input.decisions.length,
+          acceptedAttemptIds: input.decisions.map((decision) => decision.attemptId),
+        };
       }),
       appendSchedulingEvents: vi.fn().mockResolvedValue(undefined),
       getSummary: vi.fn().mockResolvedValue({ id: "batch-1", assignedRuns: 2 }),
@@ -750,6 +768,7 @@ describe("run batch creation with suite policy", () => {
 
   it("does not schedule when the project concurrency budget is exhausted", async () => {
     const batches = {
+      hasSchedulableRuns: vi.fn().mockResolvedValue(true),
       getSchedulingSnapshot: vi.fn().mockResolvedValue({
         batch: {
           id: "batch-1",
@@ -806,6 +825,7 @@ describe("run batch creation with suite policy", () => {
     const create = vi.fn();
     const batches = {
       create,
+      hasSchedulableRuns: vi.fn().mockResolvedValue(true),
       getSchedulingSnapshot: vi.fn().mockResolvedValue({
         batch: { assignedRuns: 0, secretBindings: [] },
         queuedRuns: [],
@@ -855,6 +875,7 @@ describe("run batch creation with suite policy", () => {
     const create = vi.fn();
     const batches = {
       create,
+      hasSchedulableRuns: vi.fn().mockResolvedValue(true),
       getSchedulingSnapshot: vi.fn().mockResolvedValue({
         batch: { assignedRuns: 0, secretBindings: [] },
         queuedRuns: [],
@@ -875,6 +896,9 @@ describe("run batch creation with suite policy", () => {
         ...(await runnersFake().get("runner-1", timestamp))!,
         id: runnerId,
       })),
+      listByIds: vi.fn(async (runnerIds: readonly string[]) =>
+        Promise.all(runnerIds.map(async (id) => ({ ...(await runners.get(id, timestamp))!, id }))),
+      ),
     } as unknown as RunnerRepository;
     const service = new RunBatchSchedulingService(
       batches,
@@ -927,6 +951,7 @@ describe("run batch creation with suite policy", () => {
     const create = vi.fn();
     const batches = {
       create,
+      hasSchedulableRuns: vi.fn().mockResolvedValue(true),
       getSchedulingSnapshot: vi.fn().mockResolvedValue({
         batch: { assignedRuns: 0, secretBindings: [] },
         queuedRuns: [],
@@ -1056,6 +1081,7 @@ describe("scheduling event log", () => {
   function schedulingBatchesFake() {
     const appended: Array<Array<Record<string, unknown>>> = [];
     const batches = {
+      hasSchedulableRuns: vi.fn().mockResolvedValue(true),
       getSchedulingSnapshot: vi.fn().mockResolvedValue({
         batch: {
           id: "batch-1",
@@ -1067,7 +1093,10 @@ describe("scheduling event log", () => {
         candidates: [{ runner: schedulingRunner(), reservedSlots: 0 }],
         projectActiveRuns: 0,
       }),
-      reserveAssignments: vi.fn(async (input: { decisions: unknown[] }) => input.decisions.length),
+      reserveAssignments: vi.fn(async (input: { decisions: Array<{ attemptId: string }> }) => ({
+        reserved: input.decisions.length,
+        acceptedAttemptIds: input.decisions.map((decision) => decision.attemptId),
+      })),
       appendSchedulingEvents: vi.fn(async (events: Array<Record<string, unknown>>) => {
         appended.push(events);
       }),
@@ -1269,31 +1298,35 @@ function runnersFake(
     "testng:7.11.0",
   ],
 ) {
+  const runner = {
+    id: "runner-1",
+    name: "Runner",
+    state: "online",
+    os: "linux",
+    architecture: "amd64",
+    agentVersion: "0.2.2",
+    protocolVersion: 1,
+    labels: ["java", "testng"],
+    capabilities,
+    maxConcurrency: 4,
+    busySlots: 0,
+    lastSeenAt: timestamp,
+    resourceSnapshot: {
+      cpuUtilizationPercent: 20,
+      memoryUtilizationPercent: 30,
+      loadAverage1m: 0.5,
+      logicalCpuCount: 1,
+      observedAt: timestamp,
+    },
+    terminalEnabled: false,
+    createdAt: timestamp,
+    updatedAt: timestamp,
+  };
   return {
-    get: vi.fn().mockResolvedValue({
-      id: "runner-1",
-      name: "Runner",
-      state: "online",
-      os: "linux",
-      architecture: "amd64",
-      agentVersion: "0.2.2",
-      protocolVersion: 1,
-      labels: ["java", "testng"],
-      capabilities,
-      maxConcurrency: 4,
-      busySlots: 0,
-      lastSeenAt: timestamp,
-      resourceSnapshot: {
-        cpuUtilizationPercent: 20,
-        memoryUtilizationPercent: 30,
-        loadAverage1m: 0.5,
-        logicalCpuCount: 1,
-        observedAt: timestamp,
-      },
-      terminalEnabled: false,
-      createdAt: timestamp,
-      updatedAt: timestamp,
-    }),
+    get: vi.fn().mockResolvedValue(runner),
+    listByIds: vi.fn(async (runnerIds: readonly string[]) =>
+      runnerIds.map((id) => ({ ...runner, id })),
+    ),
   } as unknown as RunnerRepository;
 }
 

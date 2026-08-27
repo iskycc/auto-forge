@@ -63,6 +63,7 @@ import {
   POSTGRES_WRITE_BATCH_SIZE,
   RELATIONAL_ID_QUERY_BATCH_SIZE,
 } from "./database-batches";
+import { RunnerCredentialLookupCache } from "./runner-credential-cache";
 import { mapStoredRunner } from "./runner-mapper";
 import {
   pgAssignmentLeases,
@@ -2278,6 +2279,8 @@ async function throwPostgresSourceConflict(
 }
 
 export class PostgresRunnerRepository implements RunnerRepository {
+  private readonly credentialLookups = new RunnerCredentialLookupCache();
+
   constructor(private readonly handle: PostgresDatabaseHandle) {}
 
   private async ready(): Promise<void> {
@@ -2325,6 +2328,7 @@ export class PostgresRunnerRepository implements RunnerRepository {
             ),
           )
           .returning();
+        if (recovered) this.credentialLookups.invalidateRunner(record.id);
         return recovered ? mapStoredRunner(recovered) : null;
       }
       const [row] = await transaction
@@ -2357,20 +2361,28 @@ export class PostgresRunnerRepository implements RunnerRepository {
 
   async findByCredentialHash(credentialHash: string, now: string): Promise<Runner | null> {
     await this.ready();
-    const [row] = await this.handle.db
-      .select()
-      .from(pgRunners)
-      .where(
-        or(
-          eq(pgRunners.credentialHash, credentialHash),
-          and(
-            eq(pgRunners.previousCredentialHash, credentialHash),
-            gt(pgRunners.previousCredentialValidUntil, now),
-          ),
-        ),
-      )
-      .limit(1);
-    return row ? mapStoredRunner(row) : null;
+    return this.credentialLookups.resolve(
+      async (hash, lookupNow) => {
+        const [row] = await this.handle.db
+          .select()
+          .from(pgRunners)
+          .where(
+            or(
+              eq(pgRunners.credentialHash, hash),
+              and(
+                eq(pgRunners.previousCredentialHash, hash),
+                gt(pgRunners.previousCredentialValidUntil, lookupNow),
+              ),
+            ),
+          )
+          .limit(1);
+        if (!row) return { runner: null, cacheable: false };
+        // 只有当前凭据命中可缓存；历史凭据命中依赖查找时间，必须逐次核验。
+        return { runner: mapStoredRunner(row), cacheable: row.credentialHash === hash };
+      },
+      credentialHash,
+      now,
+    );
   }
 
   async heartbeat(input: {
@@ -2415,6 +2427,7 @@ export class PostgresRunnerRepository implements RunnerRepository {
       .where(eq(pgRunners.id, input.runnerId))
       .returning();
     if (!row) throw new Error(`Runner ${input.runnerId} does not exist.`);
+    this.credentialLookups.invalidateRunner(input.runnerId);
     return mapStoredRunner(row);
   }
 
@@ -2440,6 +2453,21 @@ export class PostgresRunnerRepository implements RunnerRepository {
     return row ? mapStoredRunner(row, offlineBefore) : null;
   }
 
+  async listByIds(runnerIds: readonly string[], offlineBefore: string): Promise<Runner[]> {
+    await this.ready();
+    if (runnerIds.length === 0) return [];
+    const rows = [];
+    for (const ids of batchesOf(runnerIds, RELATIONAL_ID_QUERY_BATCH_SIZE)) {
+      rows.push(
+        ...(await this.handle.db
+          .select()
+          .from(pgRunners)
+          .where(inArray(pgRunners.id, [...ids]))),
+      );
+    }
+    return rows.map((row) => mapStoredRunner(row, offlineBefore));
+  }
+
   async setLifecycleState(input: {
     runnerId: string;
     state: "active" | "draining" | "disabled";
@@ -2456,6 +2484,7 @@ export class PostgresRunnerRepository implements RunnerRepository {
       .where(eq(pgRunners.id, input.runnerId))
       .returning();
     if (!row) throw new Error(`Runner ${input.runnerId} does not exist.`);
+    this.credentialLookups.invalidateRunner(input.runnerId);
     return mapStoredRunner(row);
   }
 
@@ -2479,6 +2508,7 @@ export class PostgresRunnerRepository implements RunnerRepository {
       .where(eq(pgRunners.id, input.runnerId))
       .returning();
     if (!row) throw new Error(`Runner ${input.runnerId} does not exist.`);
+    this.credentialLookups.invalidateRunner(input.runnerId);
     return mapStoredRunner(row);
   }
 
@@ -2493,6 +2523,7 @@ export class PostgresRunnerRepository implements RunnerRepository {
       .where(eq(pgRunners.id, input.runnerId))
       .returning();
     if (!row) throw new Error(`Runner ${input.runnerId} does not exist.`);
+    this.credentialLookups.invalidateRunner(input.runnerId);
     return mapStoredRunner(row);
   }
 
@@ -2510,6 +2541,7 @@ export class PostgresRunnerRepository implements RunnerRepository {
       .where(eq(pgRunners.id, input.runnerId))
       .returning();
     if (!row) throw new Error(`Runner ${input.runnerId} does not exist.`);
+    this.credentialLookups.invalidateRunner(input.runnerId);
     return mapStoredRunner(row);
   }
 
@@ -2538,6 +2570,7 @@ export class PostgresRunnerRepository implements RunnerRepository {
             gt(pgAssignmentLeases.expiresAt, input.deregisteredAt),
           ),
         );
+      this.credentialLookups.invalidateRunner(input.runnerId);
       return mapStoredRunner(row);
     });
   }
@@ -2561,6 +2594,7 @@ export class PostgresRunnerRepository implements RunnerRepository {
       .where(eq(pgRunners.id, input.runnerId))
       .returning();
     if (!row) throw new Error(`Runner ${input.runnerId} does not exist.`);
+    this.credentialLookups.invalidateRunner(input.runnerId);
     return mapStoredRunner(row);
   }
 }

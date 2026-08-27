@@ -279,13 +279,16 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
 
   async completeAttempt(
     input: Parameters<ExecutionControlRepository["completeAttempt"]>[0],
+    completionEvents?: Parameters<ExecutionControlRepository["completeAttempt"]>[1],
   ): Promise<CompleteAttemptResponse> {
     const result = runSqliteWriteTransaction(
       this.handle,
       (): { response: CompleteAttemptResponse } | { conflict: true } => {
-        const control = this.requiredAttemptControl(input.attemptId);
-        const assignment = this.assignmentForAttempt(input.attemptId);
-        const lease = assignment ? this.latestLeaseForAssignment(assignment.id) : undefined;
+        const opening = this.completionOpening(input.attemptId);
+        if (!opening) {
+          throw new DomainError("RUN_ATTEMPT_NOT_FOUND", "指定的执行尝试不存在。");
+        }
+        const { control, assignment, lease, latestAttemptNumber, batchStatus } = opening;
         if (
           !assignment ||
           !lease ||
@@ -319,23 +322,27 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
             });
             return { conflict: true };
           }
+          const storedResponse = completeAttemptResponseSchema.parse(
+            JSON.parse(existing.response_json),
+          );
+          // 回执在批次锁之前写入，存储的 batchClosed 可能是锁前快照；重放时
+          // 读取当前批次状态校正，保证重复上报返回准确的终态信息。
+          const liveBatch = this.handle.client
+            .prepare("SELECT status FROM run_batches WHERE id = ?")
+            .get(control.batch_id) as { status: RunBatchStatus } | undefined;
           return {
             response: {
-              ...completeAttemptResponseSchema.parse(JSON.parse(existing.response_json)),
+              ...storedResponse,
               disposition: "duplicate" as const,
+              ...(liveBatch ? { batchClosed: isTerminalBatchStatus(liveBatch.status) } : {}),
             },
           };
         }
 
-        const currentAttempt = this.handle.client
-          .prepare(
-            "SELECT MAX(attempt_number) AS value FROM run_attempts WHERE execution_run_id = ?",
-          )
-          .get(control.execution_run_id) as { value: number };
         const isLate =
           lease.status !== "active" ||
           lease.expires_at <= input.acceptedAt ||
-          currentAttempt.value !== control.attempt_number ||
+          latestAttemptNumber !== control.attempt_number ||
           isTerminalRunStatus(control.run_status);
         const response: CompleteAttemptResponse = {
           schemaVersion: 1 as const,
@@ -344,11 +351,16 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
           disposition: isLate ? "late" : "accepted",
           retryScheduled: false,
           batchId: control.batch_id,
-          batchClosed: this.batchClosed(control.batch_id),
+          batchClosed: isTerminalBatchStatus(batchStatus),
         };
         if (!isLate) {
           const effectiveResult = cancellationResult(input.result, control.run_cancel_requested_at);
-          const failureCounts = this.failureCounts(control.execution_run_id);
+          // succeeded 结果在领域决策中直接短路返回，不消费失败计数；跳过查询，
+          // 与 PostgreSQL 适配器保持同形（parity）。
+          const failureCounts =
+            effectiveResult.status === "succeeded"
+              ? { runner: 0, ordinary: 0 }
+              : this.failureCounts(control.execution_run_id);
           const decision = outcomeAfterCompletion({
             outcome: effectiveResult.status,
             attemptNumber: control.attempt_number,
@@ -360,6 +372,21 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
             retrySuppressed: control.batch_termination_requested_at !== null,
           });
           response.retryScheduled = decision.retryScheduled;
+          // 回执先于批次行锁写入：batchClosed 暂用锁前快照，重复上报重放时按
+          // 当前批次状态校正。这样批次锁持有期间只剩聚合与提交两步，显著缩短
+          // 高并发完成上报的锁队列。与 PostgreSQL 适配器保持相同语义。
+          this.handle.client
+            .prepare(
+              `INSERT INTO attempt_completion_receipts
+             (attempt_id, completion_id, result_digest, response_json, accepted_at) VALUES (?, ?, ?, ?, ?)`,
+            )
+            .run(
+              input.attemptId,
+              input.completionId,
+              input.resultDigest,
+              JSON.stringify(response),
+              input.acceptedAt,
+            );
           // persistCompletion 内部已聚合批次状态，直接用其返回值判定终态。
           response.batchClosed = isTerminalBatchStatus(
             this.persistCompletion(
@@ -371,19 +398,38 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
               decision.runStatus,
             ),
           );
+          // 与 PostgreSQL 适配器同形：提交后探测是否存在可调度 run，供路由层
+          // 短路补调度（SQLite 单进程内该探针成本可忽略）。
+          response.hasSchedulableRuns = this.hasSchedulableRuns(control.batch_id);
+          // 调度事件与完成写入同事务提交，与 PostgreSQL 适配器保持同形。
+          if (completionEvents && assignment) {
+            const drafts = completionEvents(
+              {
+                batchId: control.batch_id,
+                executionRunId: control.execution_run_id,
+                runnerId: assignment.runner_id,
+                attemptNumber: control.attempt_number,
+                displayName: opening.displayName,
+                ...(opening.heldRound > 0 ? { heldRound: opening.heldRound } : {}),
+              },
+              response.retryScheduled,
+            );
+            this.appendSchedulingEventDrafts(drafts);
+          }
+        } else {
+          this.handle.client
+            .prepare(
+              `INSERT INTO attempt_completion_receipts
+             (attempt_id, completion_id, result_digest, response_json, accepted_at) VALUES (?, ?, ?, ?, ?)`,
+            )
+            .run(
+              input.attemptId,
+              input.completionId,
+              input.resultDigest,
+              JSON.stringify(response),
+              input.acceptedAt,
+            );
         }
-        this.handle.client
-          .prepare(
-            `INSERT INTO attempt_completion_receipts
-           (attempt_id, completion_id, result_digest, response_json, accepted_at) VALUES (?, ?, ?, ?, ?)`,
-          )
-          .run(
-            input.attemptId,
-            input.completionId,
-            input.resultDigest,
-            JSON.stringify(response),
-            input.acceptedAt,
-          );
         return { response };
       },
     );
@@ -1041,14 +1087,6 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
     return row.batch_id;
   }
 
-  // late 路径不经过 persistCompletion，直接读当前批次聚合状态判定终态。
-  private batchClosed(batchId: string): boolean {
-    const row = this.handle.client
-      .prepare("SELECT status FROM run_batches WHERE id = ?")
-      .get(batchId) as { status: RunBatchStatus } | undefined;
-    return row ? isTerminalBatchStatus(row.status) : false;
-  }
-
   private recordAttemptLogsPath(batchId: string): void {
     if (this.recordedAttemptLogPaths.has(batchId)) return;
     // 主库只保存批次日志文件相对数据目录的路径；日志内容在独立 SQLite 文件中。
@@ -1066,6 +1104,19 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
     return this.handle.client
       .prepare("SELECT * FROM attempt_artifacts WHERE attempt_id = ? AND id = ?")
       .get(attemptId, artifactId) as ArtifactRow | undefined;
+  }
+
+  /** 批次内是否仍有可调度（queued 且未扣留）的 run。 */
+  private hasSchedulableRuns(batchId: string): boolean {
+    const row = this.handle.client
+      .prepare(
+        `SELECT EXISTS(
+           SELECT 1 FROM execution_runs
+           WHERE batch_id = ? AND status = 'queued' AND held_round = 0
+         ) AS value`,
+      )
+      .get(batchId) as { value: number };
+    return row.value === 1;
   }
 
   private persistCompletionMetadata(
@@ -1393,6 +1444,190 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
     return row;
   }
 
+  /**
+   * 单语句取回完成上报所需的全部上下文（attempt、run、batch、assignment、最新
+   * lease、run 的最新 attempt 号），与 PostgreSQL 适配器保持同形。
+   */
+  /** 在调用方事务内逐行写入调度事件；语句与 RunBatch 仓储补写路径保持同形。 */
+  private appendSchedulingEventDrafts(
+    events: ReturnType<NonNullable<Parameters<ExecutionControlRepository["completeAttempt"]>[1]>>,
+  ): void {
+    const statement = this.handle.client.prepare(
+      `INSERT INTO scheduling_events
+       (id, batch_id, runner_id, execution_run_id, attempt_id, event_type,
+        message, payload_json, recorded_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+    for (const event of events) {
+      statement.run(
+        event.id,
+        event.batchId,
+        event.runnerId ?? null,
+        event.executionRunId ?? null,
+        event.attemptId ?? null,
+        event.eventType,
+        event.message,
+        event.payload ? JSON.stringify(event.payload) : null,
+        event.recordedAt,
+      );
+    }
+  }
+
+  private completionOpening(attemptId: string):
+    | {
+        control: AttemptControlRow;
+        assignment: AssignmentRow | undefined;
+        lease: LeaseRow | undefined;
+        latestAttemptNumber: number | null;
+        batchStatus: RunBatchStatus;
+        displayName: string;
+        heldRound: number;
+      }
+    | undefined {
+    const row = this.handle.client
+      .prepare(
+        `SELECT
+           a.id AS attempt_id, a.execution_run_id, a.runner_id AS attempt_runner_id,
+           a.attempt_number, a.status AS attempt_status,
+           r.status AS run_status, r.cancel_requested_at AS run_cancel_requested_at,
+           r.display_name AS run_display_name, r.held_round AS run_held_round,
+           b.id AS batch_id, b.project_id, b.retry_limit, b.retry_mode, b.queue_timeout_ms,
+           b.status AS batch_status, b.cancel_requested_at AS batch_termination_requested_at,
+           asn.id AS assignment_id, asn.attempt_id AS assignment_attempt_id,
+           asn.execution_run_id AS assignment_execution_run_id,
+           asn.batch_id AS assignment_batch_id, asn.runner_id AS assignment_runner_id,
+           asn.status AS assignment_status, asn.priority AS assignment_priority,
+           asn.execution_spec_json AS assignment_execution_spec_json,
+           asn.available_at AS assignment_available_at,
+           asn.claim_deadline_at AS assignment_claim_deadline_at,
+           asn.claimed_at AS assignment_claimed_at, asn.completed_at AS assignment_completed_at,
+           asn.cancel_requested_at AS assignment_cancel_requested_at,
+           asn.version AS assignment_version, asn.created_at AS assignment_created_at,
+           asn.updated_at AS assignment_updated_at,
+           l.id AS lease_id, l.assignment_id AS lease_assignment_id,
+           l.runner_id AS lease_runner_id, l.token_hash, l.token_encrypted,
+           l.status AS lease_status, l.version AS lease_version, l.expires_at,
+           l.renewed_at, l.created_at AS lease_created_at,
+           (SELECT MAX(attempt_number) FROM run_attempts
+             WHERE execution_run_id = a.execution_run_id) AS latest_attempt_number
+         FROM run_attempts a
+         JOIN execution_runs r ON r.id = a.execution_run_id
+         JOIN run_batches b ON b.id = r.batch_id
+         LEFT JOIN assignments asn ON asn.attempt_id = a.id
+         LEFT JOIN assignment_leases l ON l.id = (
+           SELECT id FROM assignment_leases
+           WHERE assignment_id = asn.id
+           ORDER BY created_at DESC LIMIT 1
+         )
+         WHERE a.id = ?`,
+      )
+      .get(attemptId) as
+      | {
+          attempt_id: string;
+          execution_run_id: string;
+          attempt_runner_id: string;
+          attempt_number: number;
+          attempt_status: RunAttemptStatus;
+          run_status: ExecutionRunStatus;
+          run_cancel_requested_at: string | null;
+          run_display_name: string;
+          run_held_round: number;
+          batch_id: string;
+          project_id: string;
+          retry_limit: number;
+          retry_mode: "immediate" | "round";
+          queue_timeout_ms: number;
+          batch_status: RunBatchStatus;
+          batch_termination_requested_at: string | null;
+          assignment_id: string | null;
+          assignment_attempt_id: string | null;
+          assignment_execution_run_id: string | null;
+          assignment_batch_id: string | null;
+          assignment_runner_id: string | null;
+          assignment_status: AssignmentStatus | null;
+          assignment_priority: number | null;
+          assignment_execution_spec_json: string | null;
+          assignment_available_at: string | null;
+          assignment_claim_deadline_at: string | null;
+          assignment_claimed_at: string | null;
+          assignment_completed_at: string | null;
+          assignment_cancel_requested_at: string | null;
+          assignment_version: number | null;
+          assignment_created_at: string | null;
+          assignment_updated_at: string | null;
+          lease_id: string | null;
+          lease_assignment_id: string | null;
+          lease_runner_id: string | null;
+          token_hash: string | null;
+          token_encrypted: string | null;
+          lease_status: LeaseRow["status"] | null;
+          lease_version: number | null;
+          expires_at: string | null;
+          renewed_at: string | null;
+          lease_created_at: string | null;
+          latest_attempt_number: number | null;
+        }
+      | undefined;
+    if (!row) return undefined;
+    const assignment: AssignmentRow | undefined = row.assignment_id
+      ? {
+          id: row.assignment_id,
+          attempt_id: row.assignment_attempt_id!,
+          execution_run_id: row.assignment_execution_run_id!,
+          batch_id: row.assignment_batch_id!,
+          runner_id: row.assignment_runner_id!,
+          status: row.assignment_status!,
+          priority: row.assignment_priority!,
+          execution_spec_json: row.assignment_execution_spec_json!,
+          available_at: row.assignment_available_at!,
+          claim_deadline_at: row.assignment_claim_deadline_at!,
+          claimed_at: row.assignment_claimed_at,
+          completed_at: row.assignment_completed_at,
+          cancel_requested_at: row.assignment_cancel_requested_at,
+          version: row.assignment_version!,
+          created_at: row.assignment_created_at!,
+          updated_at: row.assignment_updated_at!,
+        }
+      : undefined;
+    const lease: LeaseRow | undefined = row.lease_id
+      ? {
+          id: row.lease_id,
+          assignment_id: row.lease_assignment_id!,
+          runner_id: row.lease_runner_id!,
+          token_hash: row.token_hash!,
+          token_encrypted: row.token_encrypted!,
+          status: row.lease_status!,
+          version: row.lease_version!,
+          expires_at: row.expires_at!,
+          renewed_at: row.renewed_at!,
+          created_at: row.lease_created_at!,
+        }
+      : undefined;
+    return {
+      control: {
+        id: row.attempt_id,
+        execution_run_id: row.execution_run_id,
+        runner_id: row.attempt_runner_id,
+        attempt_number: row.attempt_number,
+        status: row.attempt_status,
+        run_status: row.run_status,
+        retry_limit: row.retry_limit,
+        retry_mode: row.retry_mode,
+        queue_timeout_ms: row.queue_timeout_ms,
+        batch_id: row.batch_id,
+        project_id: row.project_id,
+        run_cancel_requested_at: row.run_cancel_requested_at,
+        batch_termination_requested_at: row.batch_termination_requested_at,
+      },
+      assignment,
+      lease,
+      latestAttemptNumber: row.latest_attempt_number,
+      batchStatus: row.batch_status,
+      displayName: row.run_display_name,
+      heldRound: row.run_held_round,
+    };
+  }
+
   private assignmentForAttempt(attemptId: string): AssignmentRow | undefined {
     return this.handle.client
       .prepare("SELECT * FROM assignments WHERE attempt_id = ?")
@@ -1413,20 +1648,6 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
         "SELECT * FROM assignment_leases WHERE assignment_id = ? AND status = 'active' ORDER BY created_at DESC LIMIT 1",
       )
       .get(assignmentId) as LeaseRow | undefined;
-  }
-
-  private latestLeaseForAssignment(assignmentId: string): LeaseRow | undefined {
-    return this.handle.client
-      .prepare(
-        "SELECT * FROM assignment_leases WHERE assignment_id = ? ORDER BY created_at DESC LIMIT 1",
-      )
-      .get(assignmentId) as LeaseRow | undefined;
-  }
-
-  private requiredAttemptControl(attemptId: string): AttemptControlRow {
-    const row = this.findAttemptControl(attemptId);
-    if (!row) throw new DomainError("RUN_ATTEMPT_NOT_FOUND", "指定的执行尝试不存在。");
-    return row;
   }
 
   private findAttemptControl(attemptId: string): AttemptControlRow | undefined {

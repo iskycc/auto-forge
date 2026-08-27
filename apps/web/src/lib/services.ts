@@ -88,9 +88,9 @@ import {
 import { AesGcmSecretCipher } from "./secret-cipher";
 import {
   CoalescingSchedulingPort,
-  liteWorkDispatcher,
+  workDispatcher,
   workerBackedExecutionControlRepository,
-} from "./lite-work-dispatch";
+} from "./work-dispatch";
 
 export type PlatformServices = Awaited<ReturnType<typeof createPlatformServices>>;
 
@@ -101,7 +101,7 @@ type RuntimeInfrastructure = {
 
 async function createPlatformServices() {
   const config = loadAppConfig();
-  const workDispatcher = config.mode === "lite" ? liteWorkDispatcher() : undefined;
+  const dispatcher = workDispatcher();
   const configurationStore = appConfigurationStore(config);
   let catalog: CaseCatalogRepository;
   let suites: CaseSuiteRepository;
@@ -138,7 +138,7 @@ async function createPlatformServices() {
     runnerGroupsRepository = new SqliteRunnerGroupRepository(database);
     identities = new SqliteIdentityAccessRepository(database);
     const localExecutions = new SqliteExecutionControlRepository(database, attemptLogs);
-    executions = workerBackedExecutionControlRepository(localExecutions, workDispatcher);
+    executions = workerBackedExecutionControlRepository(localExecutions, dispatcher);
     batches = new SqliteRunBatchRepository(database, config.caseExecutionTimeoutSeconds);
     roundRecoveries = new SqliteRoundRecoveryRepository(database);
     attemptLogSharesRepository = new SqliteAttemptLogShareRepository(database);
@@ -190,6 +190,7 @@ async function createPlatformServices() {
     const database = createPostgresDatabase({
       connectionString: config.databaseUrl,
       migrationsFolder: config.migrationsFolder,
+      poolMax: config.databasePoolMax,
     });
     try {
       await database.ready;
@@ -250,6 +251,10 @@ async function createPlatformServices() {
     runnerInstallationProfileRepository = new PostgresRunnerInstallationProfileRepository(database);
     runnerGroupsRepository = new PostgresRunnerGroupRepository(database);
     identities = new PostgresIdentityAccessRepository(database);
+    // Full 执行仓储保持内联：r39 基准实测把完成/日志/领取卸载到工作线程虽把
+    // 完成请求服务端 p50 从 42ms 降到 28ms，但执行阶段墙钟由客户端驱动未改善，
+    // 领取/批次创建反而因车道连接池争用回退；仅补位调度经 runScheduling 交给
+    // 工作线程。
     executions = new PostgresExecutionControlRepository(database, attemptLogs);
     batches = new PostgresRunBatchRepository(database, config.caseExecutionTimeoutSeconds);
     roundRecoveries = new PostgresRoundRecoveryRepository(database);
@@ -355,7 +360,7 @@ async function createPlatformServices() {
     config.caseExecutionTimeoutSeconds * 1_000,
     () => configurationStore.read().limits.artifactCollectionEnabled,
   );
-  const runScheduling = new CoalescingSchedulingPort(runBatches, workDispatcher);
+  const runScheduling = new CoalescingSchedulingPort(runBatches, dispatcher);
   const roundRecovery = new RoundRecoveryService(
     roundRecoveries,
     jenkinsRoundRecoveryTransport,
@@ -643,7 +648,7 @@ function abortableDelay(signal: AbortSignal, delayMs: number): Promise<void> {
 }
 
 const globalServices = globalThis as typeof globalThis & {
-  __autoforgePlatformServices?: Promise<PlatformServices>;
+  __autoforgePlatformServices?: Promise<PlatformServices> | undefined;
   __autoforgeClosePlatformServices?: () => Promise<void>;
   __autoforgeRecordTerminalAudit?: (event: {
     actorId: string;
@@ -658,6 +663,13 @@ const globalServices = globalThis as typeof globalThis & {
 };
 
 export function getPlatformServices(): Promise<PlatformServices> {
-  globalServices.__autoforgePlatformServices ??= createPlatformServices();
+  // 初始化失败不得永久记忆化：清除缓存让后续请求重试，避免启动期瞬时失败
+  //（如 Lite 老库升级迁移持锁）把整个进程钉在 500 直到重启。
+  globalServices.__autoforgePlatformServices ??= createPlatformServices().catch(
+    (error: unknown) => {
+      globalServices.__autoforgePlatformServices = undefined;
+      throw error;
+    },
+  );
   return globalServices.__autoforgePlatformServices;
 }

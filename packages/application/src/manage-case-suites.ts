@@ -64,7 +64,8 @@ export class CaseSuiteService {
     return suite;
   }
 
-  private async getSummary(suiteId: string, projectIds?: readonly string[]) {
+  /** 只读任务摘要（不含用例成员）：授权与轻量校验入口不必加载全量成员。 */
+  async getSummary(suiteId: string, projectIds?: readonly string[]) {
     const suite = await this.suites.getSummary(suiteId, projectIds);
     if (!suite) throw new DomainError("CASE_SUITE_NOT_FOUND", "指定的用例任务不存在。");
     return suite;

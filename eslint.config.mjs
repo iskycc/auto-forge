@@ -11,6 +11,7 @@ export default defineConfig([
     },
   },
   globalIgnores([
+    "**/.local/**",
     "**/.next/**",
     "**/coverage/**",
     "**/dist/**",
@@ -18,6 +19,7 @@ export default defineConfig([
     "**/node_modules/**",
     "**/target/**",
     "data/**",
+    "jenkins-test/**",
     "playwright-report/**",
     "test-results/**",
   ]),

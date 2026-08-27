@@ -9,7 +9,8 @@ import type {
   RunnerRepository,
 } from "../src/ports";
 
-// 调度事件写入在 claim/complete 路径上只用到 appendSchedulingEvents；
+// 调度事件写入在 claim/恢复路径上只用到 appendSchedulingEvents（complete 路径的
+// 事件改为完成事务内经事件工厂写入）；
 // 其余方法在现有用例中不会被触达，缺失时以运行时错误暴露。
 function batchesRepositoryFake(): RunBatchRepository {
   return {
@@ -354,12 +355,27 @@ describe("attempt completion scheduling events", () => {
   }) {
     const appended: Array<Array<Record<string, unknown>>> = [];
     const executions = {
-      completeAttempt: vi.fn().mockResolvedValue({
-        schemaVersion: 1,
-        completionId: "completion-1",
-        acceptedAt: "2026-08-09T00:00:00.000Z",
-        ...options.response,
-      }),
+      // 与适配器同事务语义对齐：仅 accepted 分支求值事件工厂并随完成写入落库，
+      // 这里用 appended 捕获模拟事务内持久化。
+      completeAttempt: vi.fn(
+        async (
+          _input: unknown,
+          completionEvents?: (
+            context: NonNullable<typeof options.context>,
+            retryScheduled: boolean,
+          ) => Array<Record<string, unknown>>,
+        ) => {
+          if (options.response.disposition === "accepted" && options.context && completionEvents) {
+            appended.push(completionEvents(options.context, options.response.retryScheduled));
+          }
+          return {
+            schemaVersion: 1,
+            completionId: "completion-1",
+            acceptedAt: "2026-08-09T00:00:00.000Z",
+            ...options.response,
+          };
+        },
+      ),
       resolveAttemptSchedulingContext: vi.fn().mockResolvedValue(options.context),
     } as unknown as ExecutionControlRepository;
     const runners = {
@@ -779,6 +795,7 @@ describe("failure summary log fallback", () => {
           summary: "java.lang.AssertionError: expected checkout to succeed",
         }),
       }),
+      expect.any(Function),
     );
   });
 
@@ -798,6 +815,7 @@ describe("failure summary log fallback", () => {
       expect.objectContaining({
         result: expect.objectContaining({ summary: "TestNG exited with code 1." }),
       }),
+      expect.any(Function),
     );
   });
 
@@ -834,6 +852,7 @@ describe("failure summary log fallback", () => {
           summary: "Runner Agent restarted before the attempt completed.",
         }),
       }),
+      expect.any(Function),
     );
   });
 
@@ -847,6 +866,7 @@ describe("failure summary log fallback", () => {
       expect.objectContaining({
         result: expect.objectContaining({ summary: "TestNG exited with code 1." }),
       }),
+      expect.any(Function),
     );
   });
 
@@ -891,6 +911,7 @@ describe("failure summary log fallback", () => {
           summary: "java.lang.AssertionError: expected <200> but was <500>",
         }),
       }),
+      expect.any(Function),
     );
   });
 
@@ -927,6 +948,7 @@ describe("failure summary log fallback", () => {
           summary: "java.lang.AssertionError: early authoritative failure",
         }),
       }),
+      expect.any(Function),
     );
   });
 
@@ -995,6 +1017,7 @@ describe("failure summary log fallback", () => {
           summary: "java.lang.AssertionError: expected <200> but was <500>",
         }),
       }),
+      expect.any(Function),
     );
   });
 
@@ -1059,6 +1082,7 @@ describe("failure summary log fallback", () => {
       expect.objectContaining({
         result: expect.objectContaining({ summary: "java.lang.AssertionError: 中文详情必须保留" }),
       }),
+      expect.any(Function),
     );
   });
 
@@ -1094,6 +1118,7 @@ describe("failure summary log fallback", () => {
       expect.objectContaining({
         result: expect.objectContaining({ summary: failureSummary.replace(/\s+/g, " ") }),
       }),
+      expect.any(Function),
     );
   });
 
@@ -1120,6 +1145,7 @@ describe("failure summary log fallback", () => {
       expect.objectContaining({
         result: expect.objectContaining({ summary: legacySummary.replace(/\s+/g, " ") }),
       }),
+      expect.any(Function),
     );
   });
 
@@ -1153,6 +1179,7 @@ describe("failure summary log fallback", () => {
           summary: 'assert OrderId != ""',
         }),
       }),
+      expect.any(Function),
     );
   });
 
@@ -1185,6 +1212,7 @@ describe("failure summary log fallback", () => {
       expect.objectContaining({
         result: expect.objectContaining({ summary: 'assert OrderId != ""' }),
       }),
+      expect.any(Function),
     );
   });
 });

@@ -25,21 +25,20 @@ export async function GET(request: Request): Promise<NextResponse> {
     const query = querySchema.parse(Object.fromEntries(url.searchParams));
     const services = await getPlatformServices();
     const projectIds = services.identityAccess.projectScope(identity, "run.read");
-    return NextResponse.json(
-      await services.runBatches.listPage({
-        limit: query.limit,
-        ...(projectIds ? { projectIds } : {}),
-        ...(query.cursor ? { cursor: query.cursor } : {}),
-        ...(query.projectId ? { projectId: query.projectId } : {}),
-        ...(query.projectVersionId ? { projectVersionId: query.projectVersionId } : {}),
-        ...(query.suiteId ? { suiteId: query.suiteId } : {}),
-        ...(query.caseDefinitionId ? { caseDefinitionId: query.caseDefinitionId } : {}),
-        ...(query.status ? { status: query.status } : {}),
-        ...(query.runnerId ? { runnerId: query.runnerId } : {}),
-        ...(query.createdAfter ? { createdAfter: query.createdAfter } : {}),
-        ...(query.createdBefore ? { createdBefore: query.createdBefore } : {}),
-      }),
-    );
+    const result = await services.runBatches.listPage({
+      limit: query.limit,
+      ...(projectIds ? { projectIds } : {}),
+      ...(query.cursor ? { cursor: query.cursor } : {}),
+      ...(query.projectId ? { projectId: query.projectId } : {}),
+      ...(query.projectVersionId ? { projectVersionId: query.projectVersionId } : {}),
+      ...(query.suiteId ? { suiteId: query.suiteId } : {}),
+      ...(query.caseDefinitionId ? { caseDefinitionId: query.caseDefinitionId } : {}),
+      ...(query.status ? { status: query.status } : {}),
+      ...(query.runnerId ? { runnerId: query.runnerId } : {}),
+      ...(query.createdAfter ? { createdAfter: query.createdAfter } : {}),
+      ...(query.createdBefore ? { createdBefore: query.createdBefore } : {}),
+    });
+    return NextResponse.json(result);
   } catch (error) {
     return apiErrorResponse(error);
   }
@@ -53,7 +52,8 @@ export async function POST(request: Request): Promise<NextResponse> {
     const input = createRunBatchInputSchema.parse(await readJsonBody(request, 128 * 1024));
     const services = await getPlatformServices();
     const projectScope = services.identityAccess.projectScope(identity, "run.create");
-    const suite = await services.caseSuites.get(input.suiteId, projectScope);
+    // 授权只需任务的归属项目；完整任务快照由 create 内部读取一次，避免重复加载全量用例成员。
+    const suite = await services.caseSuites.getSummary(input.suiteId, projectScope);
     services.identityAccess.authorize(identity, "run.create", suite.projectId);
     const batch = await services.runBatches.create(input);
     await services.identityAccess.recordAuthorizedOperation(identity, {

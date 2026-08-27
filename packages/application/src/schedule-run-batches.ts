@@ -377,6 +377,13 @@ export class RunBatchSchedulingService {
   private async scheduleBatch(batchId: string): Promise<{ batch: RunBatch; reserved: number }> {
     const now = this.clock.now();
     let reserved = 0;
+    // 完成上报后的补位调度绝大多数时候无 run 可分配；单个索引探针短路，
+    // 避免每次完成都支付整页快照（含候选执行机与项目计数）的成本。
+    if (!(await this.batches.hasSchedulableRuns(batchId))) {
+      const batch = await this.batches.getSummary(batchId);
+      if (!batch) throw new DomainError("RUN_BATCH_NOT_FOUND", "指定的执行批次不存在。");
+      return { batch, reserved: 0 };
+    }
     const snapshot = await this.batches.getSchedulingSnapshot(
       batchId,
       offlineBefore(now),
@@ -457,7 +464,7 @@ export class RunBatchSchedulingService {
           attemptId: this.ids.next(),
           assignmentId: this.ids.next(),
         }));
-        reserved = await this.batches.reserveAssignments({
+        const reservation = await this.batches.reserveAssignments({
           batchId,
           eventId: this.ids.next(),
           projectMaximumConcurrency: this.projectMaximumConcurrency,
@@ -467,7 +474,21 @@ export class RunBatchSchedulingService {
           metricsFreshAfter: metricsFreshAfter(now, this.metricsMaximumAgeSeconds),
           scheduledAt: now.toISOString(),
         });
-        await this.appendSchedulingRoundEvents(batchId, snapshot, plan, decisions, reserved, now);
+        reserved = reservation.reserved;
+        // 被并发调度轮抢占的决策没有创建 run_attempts，
+        // 调度事件只能引用真正被接受的 attempt，否则触发外键冲突。
+        const acceptedAttemptIds = new Set(reservation.acceptedAttemptIds);
+        const acceptedDecisions = decisions.filter((decision) =>
+          acceptedAttemptIds.has(decision.attemptId),
+        );
+        await this.appendSchedulingRoundEvents(
+          batchId,
+          snapshot,
+          plan,
+          acceptedDecisions,
+          reserved,
+          now,
+        );
       }
     }
     const batch = await this.batches.getSummary(batchId);
@@ -746,8 +767,10 @@ export class RunBatchSchedulingService {
     requiresAdapter = false,
   ): Promise<void> {
     const offlineCutoff = offlineBefore(this.clock.now());
+    const stored = await this.runners.listByIds(runnerIds, offlineCutoff);
+    const runnerById = new Map(stored.map((runner) => [runner.id, runner]));
     for (const runnerId of runnerIds) {
-      const runner = await this.runners.get(runnerId, offlineCutoff);
+      const runner = runnerById.get(runnerId) ?? null;
       if (!runner) {
         blockers.push(blocker("RUNNER_NOT_FOUND", "runner", "指定的执行机不存在。", { runnerId }));
         continue;
@@ -903,9 +926,10 @@ export class RunBatchSchedulingService {
     additionalCapabilities: readonly string[],
   ): Promise<void> {
     const offlineCutoff = offlineBefore(this.clock.now());
-    const resolved = await Promise.all(
-      runnerIds.map((runnerId) => this.runners.get(runnerId, offlineCutoff)),
-    );
+    // 单次批量读取替代逐台查询：创建/预检路径不再随执行机数量放大数据库往返。
+    const stored = await this.runners.listByIds(runnerIds, offlineCutoff);
+    const runnerById = new Map(stored.map((runner) => [runner.id, runner]));
+    const resolved = runnerIds.map((runnerId) => runnerById.get(runnerId));
     if (resolved.some((runner) => !runner)) {
       throw new DomainError("RUNNER_NOT_FOUND", "所选执行机中包含不存在的节点。");
     }

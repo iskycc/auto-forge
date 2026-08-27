@@ -1,5 +1,6 @@
 import type {
   CreateRunBatchRecord,
+  ReserveAssignmentsOutcome,
   ReserveSchedulingAssignmentsInput,
   RunBatchListQuery,
   RunBatchRepository,
@@ -32,7 +33,7 @@ import {
   type SchedulingEvent,
   type SchedulingEventType,
 } from "@autoforge/domain";
-import { and, count, desc, eq, gt, gte, inArray, isNull, lt, lte, or, sql } from "drizzle-orm";
+import { and, count, desc, eq, gte, inArray, isNull, lt, lte, or, sql } from "drizzle-orm";
 
 import { runSqliteWriteTransaction, type SqliteDatabaseHandle } from "./database";
 import {
@@ -548,7 +549,21 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
     });
   }
 
-  async reserveAssignments(input: ReserveSchedulingAssignmentsInput): Promise<number> {
+  async hasSchedulableRuns(batchId: string): Promise<boolean> {
+    const row = this.handle.client
+      .prepare(
+        `SELECT EXISTS(
+           SELECT 1 FROM execution_runs
+           WHERE batch_id = ? AND status = 'queued' AND held_round = 0
+         ) AS value`,
+      )
+      .get(batchId) as { value: number } | undefined;
+    return Boolean(row?.value);
+  }
+
+  async reserveAssignments(
+    input: ReserveSchedulingAssignmentsInput,
+  ): Promise<ReserveAssignmentsOutcome> {
     return runSqliteWriteTransaction(this.handle, () => {
       const batchScope = this.handle.db
         .select({
@@ -567,7 +582,7 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
         .where(eq(runBatches.id, input.batchId))
         .get();
       if (!batchScope) throw new DomainError("RUN_BATCH_NOT_FOUND", "指定的执行批次不存在。");
-      if (batchScope.terminationRequestedAt) return 0;
+      if (batchScope.terminationRequestedAt) return { reserved: 0, acceptedAttemptIds: [] };
       let remainingProjectSlots = Math.max(
         0,
         (input.projectMaximumConcurrency ?? Number.MAX_SAFE_INTEGER) -
@@ -637,7 +652,13 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
             .all(),
       );
       const executionInputByRunId = new Map(executionInputRows.map((row) => [row.id, row]));
-      let accepted = 0;
+      // 决策过滤完全在内存中按序进行（槽位扣减与运行机资格），随后一条条件
+      // UPDATE 批量推进全部被接受的 run，再分批插入 attempt 与 assignment。被并发
+      // 调度轮抢先的 run 不产生 attempt；其槽位本轮视为已消耗（下一调度轮自愈），
+      // 保证语句有界且不回滚。
+      const acceptedDecisions: Array<
+        ReserveSchedulingAssignmentsInput["decisions"][number] & { score: number }
+      > = [];
       for (const decision of input.decisions) {
         if (remainingProjectSlots === 0 || remainingBatchSlots === 0) break;
         const runnerRow = runnerById.get(decision.runnerId);
@@ -654,89 +675,110 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
           input.metricsFreshAfter,
         );
         if (!evaluation.eligible || evaluation.score === undefined) continue;
-        const executionInput = executionInputByRunId.get(decision.executionRunId);
-        if (!executionInput) continue;
-
-        const updatedRun = this.handle.db
-          .update(executionRuns)
-          .set({
-            status: "assigned",
-            assignedRunnerId: decision.runnerId,
-            attemptCount: sql`${executionRuns.attemptCount} + 1`,
-            schedulingScore: evaluation.score,
-            assignedAt: input.scheduledAt,
-            updatedAt: input.scheduledAt,
-          })
-          .where(
-            and(
-              eq(executionRuns.id, decision.executionRunId),
-              eq(executionRuns.batchId, input.batchId),
-              eq(executionRuns.status, "queued"),
-              eq(executionRuns.heldRound, 0),
-              or(
-                isNull(executionRuns.queueDeadlineAt),
-                gt(executionRuns.queueDeadlineAt, input.scheduledAt),
-              ),
-            ),
-          )
-          .returning({
-            attemptCount: executionRuns.attemptCount,
-          })
-          .get();
-        if (!updatedRun) continue;
-        this.handle.db
-          .insert(runAttempts)
-          .values({
-            id: decision.attemptId,
-            executionRunId: decision.executionRunId,
-            runnerId: decision.runnerId,
-            attemptNumber: updatedRun.attemptCount,
-            status: "assigned",
-            schedulingScore: evaluation.score,
-            createdAt: input.scheduledAt,
-          })
-          .run();
-        this.handle.db
-          .insert(assignments)
-          .values({
-            id: decision.assignmentId,
-            attemptId: decision.attemptId,
-            executionRunId: decision.executionRunId,
-            batchId: input.batchId,
-            runnerId: decision.runnerId,
-            status: "pending",
-            priority: batchScope.priority,
-            executionSpecJson: JSON.stringify(
-              executionSpec({
-                attemptId: decision.attemptId,
-                executionRunId: decision.executionRunId,
-                batchId: input.batchId,
-                className: executionInput.className,
-                parameters: stringRecord(executionInput.parametersJson),
-                source: {
-                  id: executionInput.sourceId,
-                  sha256: executionInput.sourceSha256,
-                  sizeBytes: executionInput.sourceSizeBytes,
-                },
-                ...(adapterRuntime ? { adapterRuntime } : {}),
-                environment: environmentVariables(batchScope.environmentJson),
-                secretBindings: secretBindings(batchScope.secretBindingsJson),
-                executionTimeoutMs: batchScope.executionTimeoutMs,
-                uploadTimeoutMs: batchScope.uploadTimeoutMs,
-                caseTimeoutSeconds: this.caseExecutionTimeoutSeconds,
-                ...(policy ? { policy } : {}),
-              }),
-            ),
-            availableAt: input.scheduledAt,
-            claimDeadlineAt: addMilliseconds(input.scheduledAt, batchScope.claimTimeoutMs),
-            createdAt: input.scheduledAt,
-            updatedAt: input.scheduledAt,
-          })
-          .run();
-        accepted += 1;
+        if (!executionInputByRunId.has(decision.executionRunId)) continue;
+        acceptedDecisions.push({ ...decision, score: evaluation.score });
         reservations.set(decision.runnerId, (reservations.get(decision.runnerId) ?? 0) + 1);
         remainingProjectSlots -= 1;
         remainingBatchSlots -= 1;
+      }
+      let accepted = 0;
+      const acceptedAttemptIds: string[] = [];
+      for (const decisionChunk of batchesOf(acceptedDecisions, RELATIONAL_WRITE_BATCH_SIZE)) {
+        const updatedRows = this.handle.client
+          .prepare(
+            `UPDATE execution_runs
+             SET status = 'assigned',
+                 assigned_runner_id = decision.column2,
+                 attempt_count = attempt_count + 1,
+                 scheduling_score = decision.column3,
+                 assigned_at = ?,
+                 updated_at = ?
+             FROM (VALUES ${decisionChunk.map(() => "(?, ?, ?)").join(", ")}) AS decision
+             WHERE execution_runs.id = decision.column1
+               AND execution_runs.batch_id = ?
+               AND execution_runs.status = 'queued'
+               AND execution_runs.held_round = 0
+               AND (execution_runs.queue_deadline_at IS NULL
+                    OR execution_runs.queue_deadline_at > ?)
+             RETURNING id, attempt_count`,
+          )
+          .all(
+            input.scheduledAt,
+            input.scheduledAt,
+            ...decisionChunk.flatMap((decision) => [
+              decision.executionRunId,
+              decision.runnerId,
+              decision.score,
+            ]),
+            input.batchId,
+            input.scheduledAt,
+          ) as Array<{ id: string; attempt_count: number }>;
+        const attemptCountByRunId = new Map(updatedRows.map((row) => [row.id, row.attempt_count]));
+        const reservedDecisions = decisionChunk.filter((decision) =>
+          attemptCountByRunId.has(decision.executionRunId),
+        );
+        if (reservedDecisions.length === 0) continue;
+        const environment = environmentVariables(batchScope.environmentJson);
+        const secretBindingsList = secretBindings(batchScope.secretBindingsJson);
+        const claimDeadlineAt = addMilliseconds(input.scheduledAt, batchScope.claimTimeoutMs);
+        this.handle.db
+          .insert(runAttempts)
+          .values(
+            reservedDecisions.map((decision) => ({
+              id: decision.attemptId,
+              executionRunId: decision.executionRunId,
+              runnerId: decision.runnerId,
+              attemptNumber: attemptCountByRunId.get(decision.executionRunId)!,
+              status: "assigned" as const,
+              schedulingScore: decision.score,
+              createdAt: input.scheduledAt,
+            })),
+          )
+          .run();
+        this.handle.db
+          .insert(assignments)
+          .values(
+            reservedDecisions.map((decision) => {
+              const executionInput = executionInputByRunId.get(decision.executionRunId)!;
+              return {
+                id: decision.assignmentId,
+                attemptId: decision.attemptId,
+                executionRunId: decision.executionRunId,
+                batchId: input.batchId,
+                runnerId: decision.runnerId,
+                status: "pending" as const,
+                priority: batchScope.priority,
+                executionSpecJson: JSON.stringify(
+                  executionSpec({
+                    attemptId: decision.attemptId,
+                    executionRunId: decision.executionRunId,
+                    batchId: input.batchId,
+                    className: executionInput.className,
+                    parameters: stringRecord(executionInput.parametersJson),
+                    source: {
+                      id: executionInput.sourceId,
+                      sha256: executionInput.sourceSha256,
+                      sizeBytes: executionInput.sourceSizeBytes,
+                    },
+                    ...(adapterRuntime ? { adapterRuntime } : {}),
+                    environment,
+                    secretBindings: secretBindingsList,
+                    executionTimeoutMs: batchScope.executionTimeoutMs,
+                    uploadTimeoutMs: batchScope.uploadTimeoutMs,
+                    caseTimeoutSeconds: this.caseExecutionTimeoutSeconds,
+                    ...(policy ? { policy } : {}),
+                  }),
+                ),
+                availableAt: input.scheduledAt,
+                claimDeadlineAt,
+                createdAt: input.scheduledAt,
+                updatedAt: input.scheduledAt,
+              };
+            }),
+          )
+          .run();
+        accepted += reservedDecisions.length;
+        acceptedAttemptIds.push(...reservedDecisions.map((decision) => decision.attemptId));
       }
       updateBatchSchedulingStatus(
         this.handle,
@@ -744,7 +786,7 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
         input.scheduledAt,
         input.eventId ?? input.decisions[0]?.assignmentId ?? input.batchId,
       );
-      return accepted;
+      return { reserved: accepted, acceptedAttemptIds };
     });
   }
 
@@ -860,17 +902,7 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
         .orderBy(runBatchRunners.batchId, runBatchRunners.runnerId)
         .all(),
     );
-    const statusRows = batchesOf(batchIds, RELATIONAL_ID_QUERY_BATCH_SIZE).flatMap((ids) =>
-      this.handle.db
-        .select({ batchId: executionRuns.batchId, status: executionRuns.status, value: count() })
-        .from(executionRuns)
-        .where(inArray(executionRuns.batchId, ids))
-        .groupBy(executionRuns.batchId, executionRuns.status)
-        .all(),
-    );
-    const outcomeRows = batchesOf(batchIds, RELATIONAL_ID_QUERY_BATCH_SIZE).flatMap((ids) =>
-      this.finalOutcomeCounts(ids),
-    );
+    const { statusRows, outcomeRows } = this.batchRunCounts(batchIds);
     const runnerIdsByBatch = new Map<string, string[]>();
     for (const runner of selectedRunnerRows) {
       const ids = runnerIdsByBatch.get(runner.batchId) ?? [];
@@ -943,7 +975,105 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
    * attempt 选择与领域总结保持一致：每个 run 曾成功则成功，否则取最高轮次。
    * 从未产生 attempt 的排队超时等终态回退 run 结果；聚合留在数据库内。
    */
-  private finalOutcomeCounts(batchIds: readonly string[]): FinalOutcomeCounts[] {
+  /**
+   * 状态计数与最终结果计数共享同一次 run/attempt 扫描。无重试批次（列表探针
+   * 热点）合并为单条查询；仅当存在重试 run 时退回窗口排序路径并保留两次查询。
+   */
+  private batchRunCounts(batchIds: readonly string[]): {
+    statusRows: Array<{ batchId: string; status: string; value: number }>;
+    outcomeRows: FinalOutcomeCounts[];
+  } {
+    if (batchIds.length === 0) return { statusRows: [], outcomeRows: [] };
+    const placeholders = batchIds.map(() => "?").join(",");
+    const retried = this.handle.client
+      .prepare(
+        `SELECT EXISTS(
+           SELECT 1 FROM execution_runs
+           WHERE batch_id IN (${placeholders}) AND attempt_count > 1
+         ) AS value`,
+      )
+      .get(...batchIds) as { value: number } | undefined;
+    if (retried?.value) {
+      const statusRows = batchesOf(batchIds, RELATIONAL_ID_QUERY_BATCH_SIZE).flatMap((ids) =>
+        this.handle.db
+          .select({
+            batchId: executionRuns.batchId,
+            status: executionRuns.status,
+            value: count(),
+          })
+          .from(executionRuns)
+          .where(inArray(executionRuns.batchId, ids))
+          .groupBy(executionRuns.batchId, executionRuns.status)
+          .all(),
+      );
+      const outcomeRows = batchesOf(batchIds, RELATIONAL_ID_QUERY_BATCH_SIZE).flatMap((ids) =>
+        this.windowedFinalOutcomeCounts(ids),
+      );
+      return { statusRows, outcomeRows };
+    }
+    // 无重试快速路径：每个 run 至多一条 attempt，LEFT JOIN 不会放大行数；
+    // 状态计数与最终结果计数在同一分组结果上聚合，扫描从两次降为一次。
+    const mergedRows = batchesOf(batchIds, RELATIONAL_ID_QUERY_BATCH_SIZE).flatMap(
+      (ids) =>
+        this.handle.client
+          .prepare(
+            `SELECT run.batch_id AS batchId,
+                    run.status AS status,
+                    COALESCE(attempt.outcome,
+                      CASE WHEN attempt.status IN ('succeeded','failed','cancelled','timed_out')
+                           THEN attempt.status END,
+                      run.terminal_outcome,
+                      CASE WHEN run.status IN ('succeeded','failed','cancelled')
+                           THEN run.status END
+                    ) AS finalOutcome,
+                    count(*) AS value
+             FROM execution_runs run
+             LEFT JOIN run_attempts attempt ON attempt.execution_run_id = run.id
+             WHERE run.batch_id IN (${ids.map(() => "?").join(",")})
+             GROUP BY 1, 2, 3`,
+          )
+          .all(...ids) as Array<{
+          batchId: string;
+          status: string;
+          finalOutcome: string | null;
+          value: number;
+        }>,
+    );
+    const statusAggregates = new Map<string, Map<string, number>>();
+    const outcomeAggregates = new Map<
+      string,
+      { succeeded: number; failed: number; timedOut: number; cancelled: number }
+    >();
+    for (const row of mergedRows) {
+      const statuses = statusAggregates.get(row.batchId) ?? new Map<string, number>();
+      statuses.set(row.status, (statuses.get(row.status) ?? 0) + row.value);
+      statusAggregates.set(row.batchId, statuses);
+      if (row.finalOutcome === null) continue;
+      const outcomes = outcomeAggregates.get(row.batchId) ?? {
+        succeeded: 0,
+        failed: 0,
+        timedOut: 0,
+        cancelled: 0,
+      };
+      if (row.finalOutcome === "succeeded") outcomes.succeeded += row.value;
+      else if (row.finalOutcome === "failed") outcomes.failed += row.value;
+      else if (row.finalOutcome === "timed_out") outcomes.timedOut += row.value;
+      else if (row.finalOutcome === "cancelled") outcomes.cancelled += row.value;
+      outcomeAggregates.set(row.batchId, outcomes);
+    }
+    return {
+      statusRows: [...statusAggregates.entries()].flatMap(([batchId, statuses]) =>
+        [...statuses.entries()].map(([status, value]) => ({ batchId, status, value })),
+      ),
+      outcomeRows: [...outcomeAggregates.entries()].map(([batchId, outcomes]) => ({
+        batchId,
+        ...outcomes,
+      })),
+    };
+  }
+
+  /** 重试批次的最终结果：按成功优先、轮次倒序挑选决定结果的 attempt。 */
+  private windowedFinalOutcomeCounts(batchIds: readonly string[]): FinalOutcomeCounts[] {
     if (batchIds.length === 0) return [];
     const placeholders = batchIds.map(() => "?").join(",");
     return this.handle.client

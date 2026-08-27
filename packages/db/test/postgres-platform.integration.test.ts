@@ -40,6 +40,7 @@ describe.skipIf(!connectionString)("PostgreSQL platform repositories", () => {
       connectionString: connectionString!,
       migrationsFolder: resolve(import.meta.dirname, "../drizzle/postgresql"),
     });
+    await handle.ready;
     const catalog = new PostgresCaseCatalogRepository(handle);
     const structures = new PostgresProjectStructureRepository(handle);
     const suffix = randomUUID();
@@ -2089,6 +2090,65 @@ describe.skipIf(!connectionString)("PostgreSQL platform repositories", () => {
     } finally {
       await handle.pool.query("DELETE FROM transactional_outbox WHERE message_id=$1", [messageId]);
       await handle.pool.query("DELETE FROM analytics_export_jobs WHERE id=$1", [exportId]);
+      await handle.close();
+    }
+  });
+
+  it("deletes scheduling events explicitly when execution retention removes batches", async () => {
+    const handle = createPostgresDatabase({
+      connectionString: connectionString!,
+      migrationsFolder: resolve(import.meta.dirname, "../drizzle/postgresql"),
+    });
+    const repository = new PostgresPlatformOperationsRepository(handle);
+    const suffix = randomUUID();
+    const userId = `retention-user-${suffix}`;
+    const projectId = randomUUID();
+    const batchId = randomUUID();
+    try {
+      await handle.ready;
+      await handle.pool.query(
+        `INSERT INTO users
+         (id, username, normalized_username, display_name, source, status,
+          force_password_change, failed_login_attempts, created_at, updated_at, version)
+         VALUES ($1, $2, $2, 'Retention Actor', 'local', 'active', false, 0,
+                 '2026-08-11T00:00:00.000Z', '2026-08-11T00:00:00.000Z', 1)`,
+        [userId, `retention-${suffix}`],
+      );
+      await handle.pool.query(
+        `INSERT INTO projects (id, name, slug, is_default, archived, created_at, updated_at, owner_user_id)
+         VALUES ($1, $2, $3, false, false, '2026-08-11T00:00:00.000Z', '2026-08-11T00:00:00.000Z', $4)`,
+        [projectId, `Retention ${suffix}`, `retention-${suffix}`, userId],
+      );
+      await handle.pool.query(
+        `INSERT INTO run_batches
+         (id, suite_id, suite_name, suite_version, status, retry_limit, environment_json,
+          total_runs, project_id, created_at, updated_at)
+         VALUES ($1, $2, 'Retention', 1, 'succeeded', 0, '[]', 1, $3,
+                 '2026-08-11T01:00:00.000Z', '2026-08-11T01:00:00.000Z')`,
+        [batchId, `suite-retention-${suffix}`, projectId],
+      );
+      // 迁移 0047 之后事件不再依赖外键级联，保留周期必须显式清理。
+      await handle.pool.query(
+        `INSERT INTO scheduling_events (id, batch_id, event_type, message, recorded_at)
+         VALUES ($1, $2, 'batch_scheduled', 'retention fixture', '2026-08-11T01:00:00.000Z')`,
+        [`event-retention-${suffix}`, batchId],
+      );
+      const executed = await repository.executeRetention({
+        category: "execution",
+        cutoffAt: "2026-08-12T00:00:00.000Z",
+        limit: 10,
+        recordedAt: "2026-08-12T00:00:00.000Z",
+      });
+      expect(executed.deletedRecords).toBe(1);
+      const batches = await handle.pool.query("SELECT id FROM run_batches WHERE id=$1", [batchId]);
+      expect(batches.rows).toHaveLength(0);
+      const events = await handle.pool.query("SELECT id FROM scheduling_events WHERE batch_id=$1", [
+        batchId,
+      ]);
+      expect(events.rows).toHaveLength(0);
+    } finally {
+      await handle.pool.query("DELETE FROM projects WHERE id=$1", [projectId]);
+      await handle.pool.query("DELETE FROM users WHERE id=$1", [userId]);
       await handle.close();
     }
   });

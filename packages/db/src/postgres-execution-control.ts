@@ -33,10 +33,11 @@ import {
   type RunAttemptStatus,
   type RunBatchStatus,
 } from "@autoforge/domain";
-import type { PoolClient } from "pg";
+import type { PoolClient, QueryResult } from "pg";
 
 import type { AttemptLogStore } from "./attempt-log-store";
 import { queueDeadlineAfter, retryQueueTiming } from "./execution-queue-timing";
+import type { SchedulingEventDraft } from "@autoforge/application";
 import type { PostgresDatabaseHandle } from "./postgres-database";
 import { QUERY_IN_CHUNK_SIZE, splitIntoChunks } from "./query-chunks";
 
@@ -142,59 +143,27 @@ export class PostgresExecutionControlRepository implements ExecutionControlRepos
         .filter((assignment) =>
           matchesAgent(parseSpec(assignment), input.labels, input.capabilities),
         )
-        .slice(0, input.availableSlots);
-      const claimed: ClaimedAssignmentRecord[] = [];
-      const claimedBatchEvents = new Map<string, string>();
+        .slice(0, Math.min(input.availableSlots, input.leaseSeeds.length));
+      // 批量领取：候选行已被上方 FOR UPDATE 锁定。旧实现每个 assignment 串行
+      // 5 条语句（64 槽约 320 次往返），高并发下领取事务长时间占用事件循环；
+      // 现在整组候选用 5 条集合语句完成，逐行守卫（状态、批次未取消）保留在
+      // 条件中，成功集合经 RETURNING 回传后按候选原顺序配对租约种子。
+      const claimedIds = await bulkClaimAssignments(client, {
+        candidateIds: selected.map((assignment) => assignment.id),
+        now: input.now,
+      });
+      const claimedSet = new Set(claimedIds);
+      // 租约种子按候选原顺序配对：失败行占据的种子作废，与逐行实现一致。
+      const claimPairs: Array<{ assignment: AssignmentRow; seed: ClaimLeaseSeed }> = [];
       for (const [index, assignment] of selected.entries()) {
+        if (!claimedSet.has(assignment.id)) continue;
         const seed = input.leaseSeeds[index];
         if (!seed) break;
-        const update = await client.query(
-          `UPDATE assignments SET status = 'claimed', claimed_at = $1, updated_at = $1, version = version + 1
-           WHERE id = $2 AND status = 'pending'
-             AND EXISTS (SELECT 1 FROM run_batches b
-                         WHERE b.id = assignments.batch_id AND b.cancel_requested_at IS NULL)`,
-          [input.now, assignment.id],
-        );
-        if (update.rowCount !== 1) continue;
-        await client.query(
-          `INSERT INTO assignment_leases
-           (id, assignment_id, runner_id, token_hash, token_encrypted, status, version, expires_at, renewed_at, created_at)
-           VALUES ($1, $2, $3, $4, $5, 'active', 1, $6, $7, $7)`,
-          [
-            seed.id,
-            assignment.id,
-            input.runnerId,
-            seed.tokenHash,
-            seed.tokenEncrypted,
-            input.leaseExpiresAt,
-            input.now,
-          ],
-        );
-        await client.query(
-          `UPDATE run_attempts SET status = 'running', started_at = COALESCE(started_at, $1), version = version + 1
-           WHERE id = $2 AND status = 'assigned'`,
-          [input.now, assignment.attempt_id],
-        );
-        await client.query(
-          `UPDATE execution_runs SET status = 'running', version = version + 1, updated_at = $1
-           WHERE id = $2 AND status = 'assigned'`,
-          [input.now, assignment.execution_run_id],
-        );
-        await appendAttemptEvent(client, {
-          id: seed.eventId,
-          attemptId: assignment.attempt_id,
-          eventType: "assignment.claimed",
-          fromStatus: "assigned",
-          toStatus: "running",
-          actorType: "runner",
-          actorId: input.runnerId,
-          details: {
-            assignmentId: assignment.id,
-            leaseId: seed.id,
-            leaseExpiresAt: input.leaseExpiresAt,
-          },
-          recordedAt: input.now,
-        });
+        claimPairs.push({ assignment, seed });
+      }
+      const claimed: ClaimedAssignmentRecord[] = [];
+      const claimedBatchEvents = new Map<string, string>();
+      for (const { assignment, seed } of claimPairs) {
         if (!claimedBatchEvents.has(assignment.batch_id)) {
           claimedBatchEvents.set(assignment.batch_id, seed.eventId);
         }
@@ -214,8 +183,13 @@ export class PostgresExecutionControlRepository implements ExecutionControlRepos
           },
         });
       }
-      for (const [batchId, eventId] of claimedBatchEvents) {
-        await updateBatchStatus(client, batchId, input.now, eventId, "assignment.claimed");
+      if (claimPairs.length > 0) {
+        await persistBulkClaimSideEffects(client, {
+          pairs: claimPairs,
+          runnerId: input.runnerId,
+          now: input.now,
+          leaseExpiresAt: input.leaseExpiresAt,
+        });
       }
       if (claimed.length > 0) {
         await this.saveClaimRequest(
@@ -228,6 +202,12 @@ export class PostgresExecutionControlRepository implements ExecutionControlRepos
           })),
           input.now,
         );
+      }
+      // 批次状态推进放在事务最后：批次行锁只在提交前短暂持有。通用“先锁再聚合”
+      // 更新会让同批次的并发领取互相排队（锁持有跨越多条语句与客户端往返），
+      // 领取只会把 run 置为 running，用单语句条件迁移替代。
+      for (const [batchId, eventId] of claimedBatchEvents) {
+        await markBatchActiveOnClaim(client, batchId, input.now, eventId);
       }
       return claimed;
     });
@@ -275,118 +255,179 @@ export class PostgresExecutionControlRepository implements ExecutionControlRepos
 
   async completeAttempt(
     input: Parameters<ExecutionControlRepository["completeAttempt"]>[0],
+    completionEvents?: Parameters<ExecutionControlRepository["completeAttempt"]>[1],
   ): Promise<CompleteAttemptResponse> {
     await this.handle.ready;
-    const result = await this.transaction(
-      async (client): Promise<{ response: CompleteAttemptResponse } | { conflict: true }> => {
-        const control = await requiredAttemptControl(client, input.attemptId, true);
-        const assignment = await assignmentForAttempt(client, input.attemptId);
-        const lease = assignment
-          ? await latestLeaseForAssignment(client, assignment.id)
-          : undefined;
-        if (
-          !assignment ||
-          !lease ||
-          lease.runner_id !== input.runnerId ||
-          lease.token_hash !== input.leaseTokenHash
-        ) {
-          throw new DomainError("LEASE_AUTH_REJECTED", "完成上报的租约凭据无效。");
-        }
-        const existing = await client.query<{ result_digest: string; response_json: string }>(
-          "SELECT result_digest, response_json FROM attempt_completion_receipts WHERE attempt_id = $1 FOR UPDATE",
-          [input.attemptId],
-        );
-        if (existing.rows[0]) {
-          if (existing.rows[0].result_digest !== input.resultDigest) {
-            await appendAttemptEvent(client, {
-              id: input.eventId,
-              attemptId: input.attemptId,
-              eventType: "attempt.completion_conflict",
-              fromStatus: control.status,
-              toStatus: control.status,
-              reasonCode: "ATTEMPT_COMPLETION_CONFLICT",
-              actorType: "runner",
-              actorId: input.runnerId,
-              details: {
-                completionId: input.completionId,
-                receivedDigest: input.resultDigest,
-                storedDigest: existing.rows[0].result_digest,
-              },
-              recordedAt: input.acceptedAt,
-            });
-            return { conflict: true };
-          }
-          return {
-            response: {
-              ...completeAttemptResponseSchema.parse(JSON.parse(existing.rows[0].response_json)),
-              disposition: "duplicate" as const,
-            },
-          };
-        }
-        const current = await client.query<{ value: number }>(
-          "SELECT MAX(attempt_number)::integer AS value FROM run_attempts WHERE execution_run_id = $1",
-          [control.execution_run_id],
-        );
-        const isLate =
-          lease.status !== "active" ||
-          lease.expires_at <= input.acceptedAt ||
-          current.rows[0]?.value !== control.attempt_number ||
-          isTerminalRunStatus(control.run_status);
-        const response: CompleteAttemptResponse = {
-          schemaVersion: 1 as const,
-          completionId: input.completionId,
-          acceptedAt: input.acceptedAt,
-          disposition: isLate ? "late" : "accepted",
-          retryScheduled: false,
-          batchId: control.batch_id,
-          batchClosed: await batchClosed(client, control.batch_id),
-        };
-        if (!isLate) {
-          const effectiveResult = cancellationResult(input.result, control.run_cancel_requested_at);
-          const failureCounts = await executionFailureCounts(client, control.execution_run_id);
-          const decision = outcomeAfterCompletion({
-            outcome: effectiveResult.status,
-            attemptNumber: control.attempt_number,
-            retryLimit: control.retry_limit,
-            cancellationRequested: control.run_cancel_requested_at !== null,
-            retryableRunnerFailure: isRetryableRunnerFailure(effectiveResult.resultCode),
-            runnerFailuresBefore: failureCounts.runner,
-            ordinaryFailuresBefore: failureCounts.ordinary,
-            retrySuppressed: control.batch_termination_requested_at !== null,
-          });
-          response.retryScheduled = decision.retryScheduled;
-          // persistCompletion 内部已聚合批次状态，直接用其返回值判定终态。
-          response.batchClosed = isTerminalBatchStatus(
-            await persistCompletion(
-              client,
-              this.attemptLogs,
-              control,
-              assignment,
-              lease,
-              effectiveResult,
-              input,
-              decision.runStatus,
-            ),
-          );
-        }
-        await client.query(
-          `INSERT INTO attempt_completion_receipts
-         (attempt_id, completion_id, result_digest, response_json, accepted_at) VALUES ($1, $2, $3, $4, $5)`,
-          [
-            input.attemptId,
-            input.completionId,
-            input.resultDigest,
-            JSON.stringify(response),
-            input.acceptedAt,
-          ],
-        );
-        return { response };
-      },
-    );
-    if ("conflict" in result) {
-      throw new DomainError("ATTEMPT_COMPLETION_CONFLICT", "该执行尝试已收到不同的完成结果。");
+    // 完成上报是高并发最热写路径，手动管理客户端而不用通用事务包装：BEGIN 并入
+    // 首个多语句束；写事务的 COMMIT 与提交后的在途聚合合并为单次往返，快路径
+    // 完全不持有批次行锁（旧“先锁再聚合”使全部完成上报在批次行上串行，
+    // pg_stat_statements 中单条 FOR UPDATE 累计数十秒锁等待）。只有批次最后
+    // 一个完成上报触发的终态迁移/轮次收尾才在独立小事务中加锁完成。
+    const client = await this.handle.pool.connect();
+    try {
+      const result = await this.completeAttemptTransaction(client, input, completionEvents);
+      if (!result.committed) {
+        await client.query("COMMIT");
+      }
+      if ("conflict" in result) {
+        throw new DomainError("ATTEMPT_COMPLETION_CONFLICT", "该执行尝试已收到不同的完成结果。");
+      }
+      return result.response;
+    } catch (error) {
+      await rollbackQuietly(client);
+      throw error;
+    } finally {
+      client.release();
     }
-    return result.response;
+  }
+
+  private async completeAttemptTransaction(
+    client: PoolClient,
+    input: Parameters<ExecutionControlRepository["completeAttempt"]>[0],
+    completionEvents?: Parameters<ExecutionControlRepository["completeAttempt"]>[1],
+  ): Promise<
+    ({ response: CompleteAttemptResponse } | { conflict: true }) & { committed: boolean }
+  > {
+    const { opening, receipt } = await openCompletion(client, input.attemptId);
+    if (!opening) {
+      throw new DomainError("RUN_ATTEMPT_NOT_FOUND", "指定的执行尝试不存在。");
+    }
+    const { control, assignment, lease, latestAttemptNumber, batchStatus } = opening;
+    if (
+      !assignment ||
+      !lease ||
+      lease.runner_id !== input.runnerId ||
+      lease.token_hash !== input.leaseTokenHash
+    ) {
+      throw new DomainError("LEASE_AUTH_REJECTED", "完成上报的租约凭据无效。");
+    }
+    if (receipt) {
+      if (receipt.result_digest !== input.resultDigest) {
+        await appendAttemptEvent(client, {
+          id: input.eventId,
+          attemptId: input.attemptId,
+          eventType: "attempt.completion_conflict",
+          fromStatus: control.status,
+          toStatus: control.status,
+          reasonCode: "ATTEMPT_COMPLETION_CONFLICT",
+          actorType: "runner",
+          actorId: input.runnerId,
+          details: {
+            completionId: input.completionId,
+            receivedDigest: input.resultDigest,
+            storedDigest: receipt.result_digest,
+          },
+          recordedAt: input.acceptedAt,
+        });
+        return { conflict: true, committed: false };
+      }
+      const storedResponse = completeAttemptResponseSchema.parse(JSON.parse(receipt.response_json));
+      // 重复上报按当前批次状态校正；若遭遇“写事务已提交而终态迁移失败”的
+      // 罕见窗口，借重放机会补做迁移，保证批次终态最终成立。
+      const liveStatus = await repairBatchSettlementIfStalled(
+        client,
+        control.batch_id,
+        input.acceptedAt,
+        input.eventId,
+      );
+      return {
+        response: {
+          ...storedResponse,
+          disposition: "duplicate" as const,
+          ...(liveStatus !== null ? { batchClosed: isTerminalBatchStatus(liveStatus) } : {}),
+        },
+        committed: false,
+      };
+    }
+    const isLate =
+      lease.status !== "active" ||
+      lease.expires_at <= input.acceptedAt ||
+      latestAttemptNumber !== control.attempt_number ||
+      isTerminalRunStatus(control.run_status);
+    const response: CompleteAttemptResponse = {
+      schemaVersion: 1 as const,
+      completionId: input.completionId,
+      acceptedAt: input.acceptedAt,
+      disposition: isLate ? "late" : "accepted",
+      retryScheduled: false,
+      batchId: control.batch_id,
+      batchClosed: isTerminalBatchStatus(batchStatus),
+    };
+    if (!isLate) {
+      const effectiveResult = cancellationResult(input.result, control.run_cancel_requested_at);
+      // succeeded 结果在领域决策中直接短路返回，不消费失败计数；跳过查询，
+      // 避免每次成功完成都多付一次串行往返（高并发基准中的主路径）。
+      const failureCounts =
+        effectiveResult.status === "succeeded"
+          ? { runner: 0, ordinary: 0 }
+          : await executionFailureCounts(client, control.execution_run_id);
+      const decision = outcomeAfterCompletion({
+        outcome: effectiveResult.status,
+        attemptNumber: control.attempt_number,
+        retryLimit: control.retry_limit,
+        cancellationRequested: control.run_cancel_requested_at !== null,
+        retryableRunnerFailure: isRetryableRunnerFailure(effectiveResult.resultCode),
+        runnerFailuresBefore: failureCounts.runner,
+        ordinaryFailuresBefore: failureCounts.ordinary,
+        retrySuppressed: control.batch_termination_requested_at !== null,
+      });
+      response.retryScheduled = decision.retryScheduled;
+      // 调度事件工厂在写入前求值：草稿作为参数并入同一条多 CTE 语句，
+      // 完成热路径不再为事件追加支付任何额外往返。
+      const schedulingDrafts = completionEvents
+        ? completionEvents(
+            {
+              batchId: control.batch_id,
+              executionRunId: control.execution_run_id,
+              runnerId: assignment.runner_id,
+              attemptNumber: control.attempt_number,
+              displayName: opening.displayName,
+              ...(opening.heldRound > 0 ? { heldRound: opening.heldRound } : {}),
+            },
+            response.retryScheduled,
+          )
+        : [];
+      // 回执、四条行更新与调度事件合并为单条多 CTE 语句，全部先于提交完成。
+      await persistCompletionWrites(
+        client,
+        this.attemptLogs,
+        control,
+        assignment,
+        lease,
+        effectiveResult,
+        input,
+        decision.runStatus,
+        JSON.stringify(response),
+        schedulingDrafts,
+      );
+      // COMMIT 与在途聚合同一往返：聚合在提交后的新快照上评估，可见自身迁移
+      // 与所有已提交完成，因此最后提交者必然观察到零在途并完成终态迁移；
+      // 仍见在途的上报直接跳过，全程不持批次行锁。
+      const tail = await commitWithInFlightPresence(client, control.batch_id);
+      response.hasSchedulableRuns = tail.schedulable;
+      if (tail.running || tail.assigned) {
+        response.batchClosed = false;
+        return { response, committed: true };
+      }
+      // 稀有路径：批次最后一个完成（或轮次收尾）触发终态迁移/轮次推进，
+      // 在独立小事务中加锁完成；失败时由重复上报路径补做。
+      response.batchClosed = isTerminalBatchStatus(
+        await settleBatchAfterCompletion(client, control.batch_id, input.acceptedAt, input.eventId),
+      );
+      return { response, committed: true };
+    }
+    await client.query(
+      `INSERT INTO attempt_completion_receipts
+     (attempt_id, completion_id, result_digest, response_json, accepted_at) VALUES ($1, $2, $3, $4, $5)`,
+      [
+        input.attemptId,
+        input.completionId,
+        input.resultDigest,
+        JSON.stringify(response),
+        input.acceptedAt,
+      ],
+    );
+    return { response, committed: false };
   }
 
   async reconcile(
@@ -486,8 +527,11 @@ export class PostgresExecutionControlRepository implements ExecutionControlRepos
     input: Parameters<ExecutionControlRepository["appendLogChunks"]>[0],
   ): ReturnType<ExecutionControlRepository["appendLogChunks"]> {
     await this.handle.ready;
-    await authorizedTransferContext(this.handle.pool, { ...input, now: input.receivedAt });
-    const batchId = await this.requiredBatchIdForAttempt(input.attemptId);
+    // 授权上下文一次往返同时带回 batch_id，日志追加不再额外解析批次。
+    const { batchId } = await authorizedTransferContext(this.handle.pool, {
+      ...input,
+      now: input.receivedAt,
+    });
     // 日志内容写入每批次独立 SQLite 文件；PG 主库不再保存日志行。
     const acknowledgedSequence = await this.attemptLogs.appendChunks({
       batchId,
@@ -1031,12 +1075,19 @@ async function authorizedTransferContext(
   client: Pick<PoolClient, "query">,
   input: { runnerId: string; attemptId: string; leaseTokenHash: string; now: string },
   lock = false,
-): Promise<{ assignment: AssignmentRow }> {
+): Promise<{ assignment: AssignmentRow; batchId: string }> {
   const result = await client.query<
-    AssignmentRow & { token_hash: string; lease_status: string; expires_at: string }
+    AssignmentRow & {
+      token_hash: string;
+      lease_status: string;
+      expires_at: string;
+      batch_id: string;
+    }
   >(
-    `SELECT a.*, l.token_hash, l.status AS lease_status, l.expires_at
-     FROM assignments a JOIN assignment_leases l ON l.assignment_id = a.id
+    `SELECT a.*, l.token_hash, l.status AS lease_status, l.expires_at, r.batch_id
+     FROM assignments a
+     JOIN assignment_leases l ON l.assignment_id = a.id
+     JOIN execution_runs r ON r.id = a.execution_run_id
      WHERE a.attempt_id = $1 ORDER BY l.created_at DESC LIMIT 1${lock ? " FOR UPDATE OF l" : ""}`,
     [input.attemptId],
   );
@@ -1050,7 +1101,7 @@ async function authorizedTransferContext(
   ) {
     throw new DomainError("ATTEMPT_TRANSFER_FORBIDDEN", "日志或产物传输未获得有效租约授权。");
   }
-  return { assignment: row };
+  return { assignment: row, batchId: row.batch_id };
 }
 
 async function artifactRow(
@@ -1088,7 +1139,195 @@ function mapArtifactRow(row: ArtifactRow) {
   };
 }
 
-async function persistCompletion(
+type CompletionOpening = {
+  control: AttemptControlRow;
+  assignment: AssignmentRow | undefined;
+  lease: LeaseRow | undefined;
+  latestAttemptNumber: number | null;
+  batchStatus: RunBatchStatus;
+  displayName: string;
+  heldRound: number;
+};
+
+type CompletionOpeningRow = {
+  attempt_id: string;
+  execution_run_id: string;
+  attempt_runner_id: string;
+  attempt_number: number;
+  attempt_status: RunAttemptStatus;
+  run_status: ExecutionRunStatus;
+  run_cancel_requested_at: string | null;
+  run_display_name: string;
+  run_held_round: number;
+  batch_id: string;
+  project_id: string;
+  retry_limit: number;
+  retry_mode: "immediate" | "round";
+  queue_timeout_ms: number;
+  batch_status: RunBatchStatus;
+  batch_termination_requested_at: string | null;
+  assignment_id: string | null;
+  assignment_status: AssignmentStatus | null;
+  assignment_priority: number | null;
+  assignment_execution_spec_json: string | null;
+  assignment_available_at: string | null;
+  assignment_claim_deadline_at: string | null;
+  assignment_claimed_at: string | null;
+  assignment_completed_at: string | null;
+  assignment_cancel_requested_at: string | null;
+  assignment_version: number | null;
+  assignment_created_at: string | null;
+  assignment_updated_at: string | null;
+  lease_id: string | null;
+  lease_assignment_id: string | null;
+  lease_runner_id: string | null;
+  token_hash: string | null;
+  token_encrypted: string | null;
+  lease_status: LeaseRow["status"] | null;
+  lease_version: number | null;
+  expires_at: string | null;
+  renewed_at: string | null;
+  lease_created_at: string | null;
+  latest_attempt_number: number | null;
+};
+
+type CompletionReceiptRow = {
+  result_digest: string;
+  response_json: string;
+};
+
+/**
+ * 单语句取回完成上报所需的全部上下文（attempt、run、batch、assignment、最新
+ * lease、run 的最新 attempt 号）。完成上报是最高频的执行机请求，拆成多次串行
+ * 查询会在高并发下被 Node 事件循环间隔逐条放大延迟。
+ */
+const COMPLETION_OPENING_SELECT = `SELECT
+       a.id AS attempt_id, a.execution_run_id, a.runner_id AS attempt_runner_id,
+       a.attempt_number, a.status AS attempt_status,
+       r.status AS run_status, r.cancel_requested_at AS run_cancel_requested_at,
+       r.display_name AS run_display_name, r.held_round AS run_held_round,
+       b.id AS batch_id, b.project_id, b.retry_limit, b.retry_mode, b.queue_timeout_ms,
+       b.status AS batch_status, b.cancel_requested_at AS batch_termination_requested_at,
+       asn.id AS assignment_id, asn.status AS assignment_status, asn.priority AS assignment_priority,
+       asn.execution_spec_json AS assignment_execution_spec_json,
+       asn.available_at AS assignment_available_at,
+       asn.claim_deadline_at AS assignment_claim_deadline_at,
+       asn.claimed_at AS assignment_claimed_at, asn.completed_at AS assignment_completed_at,
+       asn.cancel_requested_at AS assignment_cancel_requested_at,
+       asn.version AS assignment_version, asn.created_at AS assignment_created_at,
+       asn.updated_at AS assignment_updated_at,
+       l.id AS lease_id, l.assignment_id AS lease_assignment_id, l.runner_id AS lease_runner_id,
+       l.token_hash, l.token_encrypted, l.status AS lease_status, l.version AS lease_version,
+       l.expires_at, l.renewed_at, l.created_at AS lease_created_at,
+       (SELECT MAX(attempt_number) FROM run_attempts
+         WHERE execution_run_id = a.execution_run_id) AS latest_attempt_number
+     FROM run_attempts a
+     JOIN execution_runs r ON r.id = a.execution_run_id
+     JOIN run_batches b ON b.id = r.batch_id
+     LEFT JOIN assignments asn ON asn.attempt_id = a.id
+     LEFT JOIN LATERAL (
+       SELECT * FROM assignment_leases
+       WHERE assignment_id = asn.id
+       ORDER BY created_at DESC LIMIT 1
+     ) l ON true
+     WHERE a.id = $1
+     FOR UPDATE OF a, r`;
+
+function completionOpeningBundleSql(attemptLiteral: string): string {
+  const openingSelect = COMPLETION_OPENING_SELECT.replace("$1", attemptLiteral);
+  return `BEGIN;
+    ${openingSelect};
+    SELECT result_digest, response_json FROM attempt_completion_receipts
+    WHERE attempt_id = ${attemptLiteral} FOR UPDATE`;
+}
+
+/**
+ * 启动完成上报事务，并在简单查询协议的一次往返内完成“BEGIN + 上下文读取 +
+ * 回执行锁”。简单协议不支持绑定参数，标识符经严格 UUID 校验后内联；
+ * READ COMMITTED 下束内每条语句各取独立快照，先锁后读保持逐条下发的语义。
+ */
+async function openCompletion(
+  client: PoolClient,
+  attemptId: string,
+): Promise<{
+  opening: CompletionOpening | undefined;
+  receipt: CompletionReceiptRow | undefined;
+}> {
+  const attemptLiteral = quoteIdentifierForInlineSql(attemptId, "执行尝试");
+  const results = await executeSimpleStatementBundle(
+    client,
+    completionOpeningBundleSql(attemptLiteral),
+  );
+  const openingRow = (results[1]?.rows as CompletionOpeningRow[] | undefined)?.[0];
+  const receipt = (results[2]?.rows as CompletionReceiptRow[] | undefined)?.[0];
+  return { opening: completionOpeningFromRow(openingRow, attemptId), receipt };
+}
+
+function completionOpeningFromRow(
+  row: CompletionOpeningRow | undefined,
+  attemptId: string,
+): CompletionOpening | undefined {
+  if (!row) return undefined;
+  const assignment: AssignmentRow | undefined = row.assignment_id
+    ? {
+        id: row.assignment_id,
+        attempt_id: attemptId,
+        execution_run_id: row.execution_run_id,
+        batch_id: row.batch_id,
+        runner_id: row.attempt_runner_id,
+        status: row.assignment_status!,
+        priority: row.assignment_priority!,
+        execution_spec_json: row.assignment_execution_spec_json!,
+        available_at: row.assignment_available_at!,
+        claim_deadline_at: row.assignment_claim_deadline_at!,
+        claimed_at: row.assignment_claimed_at,
+        completed_at: row.assignment_completed_at,
+        cancel_requested_at: row.assignment_cancel_requested_at,
+        version: row.assignment_version!,
+        created_at: row.assignment_created_at!,
+        updated_at: row.assignment_updated_at!,
+      }
+    : undefined;
+  const lease: LeaseRow | undefined = row.lease_id
+    ? {
+        id: row.lease_id,
+        assignment_id: row.lease_assignment_id!,
+        runner_id: row.lease_runner_id!,
+        token_hash: row.token_hash!,
+        token_encrypted: row.token_encrypted!,
+        status: row.lease_status!,
+        version: row.lease_version!,
+        expires_at: row.expires_at!,
+        renewed_at: row.renewed_at!,
+        created_at: row.lease_created_at!,
+      }
+    : undefined;
+  return {
+    control: {
+      id: row.attempt_id,
+      execution_run_id: row.execution_run_id,
+      runner_id: row.attempt_runner_id,
+      attempt_number: row.attempt_number,
+      status: row.attempt_status,
+      run_status: row.run_status,
+      retry_limit: row.retry_limit,
+      retry_mode: row.retry_mode,
+      queue_timeout_ms: row.queue_timeout_ms,
+      batch_id: row.batch_id,
+      project_id: row.project_id,
+      run_cancel_requested_at: row.run_cancel_requested_at,
+      batch_termination_requested_at: row.batch_termination_requested_at,
+    },
+    assignment,
+    lease,
+    latestAttemptNumber: row.latest_attempt_number,
+    batchStatus: row.batch_status,
+    displayName: row.run_display_name,
+    heldRound: row.run_held_round,
+  };
+}
+
+async function persistCompletionWrites(
   client: PoolClient,
   attemptLogs: AttemptLogStore,
   control: AttemptControlRow,
@@ -1097,7 +1336,9 @@ async function persistCompletion(
   result: CompletionResult,
   input: Parameters<ExecutionControlRepository["completeAttempt"]>[0],
   runStatus: "queued" | "succeeded" | "failed" | "cancelled",
-): Promise<RunBatchStatus> {
+  responseJson: string,
+  schedulingDrafts: readonly SchedulingEventDraft[],
+): Promise<void> {
   const attemptStatus = transitionRunAttempt(control.status, result.status);
   const assignmentStatus = transitionAssignment(assignment.status, "completed");
   const leaseStatus = transitionLease(lease.status, "released");
@@ -1110,11 +1351,54 @@ async function persistCompletion(
     eligibleAt: input.acceptedAt,
     queueTimeoutMs: control.queue_timeout_ms,
   });
+  // 完成上报是高并发主路径：回执、四条互不依赖的行更新与 attempt 事件合并为
+  // 单条多 CTE 语句，全部先于批次行锁完成；子语句各自只接触目标行，共享快照
+  // 不影响正确性。数据修改型 CTE 无论主查询是否读取都会执行一次。
   await client.query(
-    `UPDATE run_attempts SET status = $1, outcome = $1, result_code = $2, result_summary = $3,
-     completion_digest = $4, duration_ms = $5, testng_result_json = $6, finished_at = $7,
-     version = version + 1
-     WHERE id = $8 AND status IN ('assigned', 'running')`,
+    `WITH ins_receipt AS (
+       INSERT INTO attempt_completion_receipts
+         (attempt_id, completion_id, result_digest, response_json, accepted_at)
+       VALUES ($29, $30, $31, $32, $33) RETURNING attempt_id
+     ), upd_attempt AS (
+       UPDATE run_attempts SET status = $1, outcome = $1, result_code = $2, result_summary = $3,
+         completion_digest = $4, duration_ms = $5, testng_result_json = $6, finished_at = $7,
+         version = version + 1
+       WHERE id = $8 AND status IN ('assigned', 'running') RETURNING id
+     ), upd_assignment AS (
+       UPDATE assignments SET status = $9, completed_at = $10, updated_at = $10,
+         version = version + 1
+       WHERE id = $11 AND status IN ('claimed', 'running') RETURNING id
+     ), upd_lease AS (
+       UPDATE assignment_leases SET status = $12
+       WHERE id = $13 AND status = 'active' RETURNING id
+     ), upd_run AS (
+       UPDATE execution_runs SET status = $14, terminal_outcome = $15, assigned_runner_id = $16,
+         terminal_reason_code = $17, held_round = $18, queue_deadline_at = $19, updated_at = $20,
+         version = version + 1
+       WHERE id = $21 AND status IN ('assigned', 'running') RETURNING id
+     ), ins_event AS (
+       INSERT INTO attempt_state_events
+         (id, attempt_id, event_type, from_status, to_status, reason_code,
+          actor_type, actor_id, details_json, recorded_at)
+       VALUES ($22, $23, 'attempt.completed', $24, $25, NULL, 'runner', $26, $27, $28)
+       RETURNING id
+     ), ins_sched AS (
+       INSERT INTO scheduling_events
+         (id, batch_id, runner_id, execution_run_id, attempt_id, event_type, message,
+          payload_json, recorded_at)
+       SELECT s.id, s.batch_id, s.runner_id, s.execution_run_id, s.attempt_id,
+              s.event_type, s.message, s.payload_json, s.recorded_at
+       FROM unnest($34::text[], $35::text[], $36::text[], $37::text[], $38::text[],
+                   $39::text[], $40::text[], $41::text[], $42::text[])
+         AS s(id, batch_id, runner_id, execution_run_id, attempt_id, event_type,
+              message, payload_json, recorded_at)
+       RETURNING id
+     )
+     SELECT (SELECT count(*) FROM upd_attempt) AS attempt_rows,
+            (SELECT count(*) FROM upd_assignment) AS assignment_rows,
+            (SELECT count(*) FROM upd_lease) AS lease_rows,
+            (SELECT count(*) FROM upd_run) AS run_rows,
+            (SELECT count(*) FROM ins_sched) AS sched_rows`,
     [
       attemptStatus,
       result.resultCode,
@@ -1124,23 +1408,11 @@ async function persistCompletion(
       result.testNg ? JSON.stringify(result.testNg) : null,
       input.acceptedAt,
       input.attemptId,
-    ],
-  );
-  await client.query(
-    `UPDATE assignments SET status = $1, completed_at = $2, updated_at = $2, version = version + 1
-     WHERE id = $3 AND status IN ('claimed', 'running')`,
-    [assignmentStatus, input.acceptedAt, assignment.id],
-  );
-  await client.query(
-    "UPDATE assignment_leases SET status = $1 WHERE id = $2 AND status = 'active'",
-    [leaseStatus, lease.id],
-  );
-  await client.query(
-    `UPDATE execution_runs SET status = $1, terminal_outcome = $2, assigned_runner_id = $3,
-     terminal_reason_code = $4, held_round = $5, queue_deadline_at = $6, updated_at = $7,
-     version = version + 1
-     WHERE id = $8 AND status IN ('assigned', 'running')`,
-    [
+      assignmentStatus,
+      input.acceptedAt,
+      assignment.id,
+      leaseStatus,
+      lease.id,
       executionRunStatus,
       executionRunStatus === "queued" ? null : attemptStatus,
       executionRunStatus === "queued" ? null : control.runner_id,
@@ -1149,6 +1421,30 @@ async function persistCompletion(
       queueTiming.queueDeadlineAt,
       input.acceptedAt,
       control.execution_run_id,
+      input.eventId,
+      input.attemptId,
+      control.status,
+      attemptStatus,
+      input.runnerId,
+      JSON.stringify({
+        resultCode: result.resultCode,
+        retryScheduled: runStatus === "queued",
+      }),
+      input.acceptedAt,
+      input.attemptId,
+      input.completionId,
+      input.resultDigest,
+      responseJson,
+      input.acceptedAt,
+      schedulingDrafts.map((draft) => draft.id),
+      schedulingDrafts.map((draft) => draft.batchId),
+      schedulingDrafts.map((draft) => draft.runnerId ?? null),
+      schedulingDrafts.map((draft) => draft.executionRunId ?? null),
+      schedulingDrafts.map((draft) => draft.attemptId ?? null),
+      schedulingDrafts.map((draft) => draft.eventType),
+      schedulingDrafts.map((draft) => draft.message),
+      schedulingDrafts.map((draft) => (draft.payload ? JSON.stringify(draft.payload) : null)),
+      schedulingDrafts.map((draft) => draft.recordedAt),
     ],
   );
   await persistCompletionMetadata(
@@ -1159,17 +1455,6 @@ async function persistCompletion(
     result,
     input.acceptedAt,
   );
-  await appendAttemptEvent(client, {
-    id: input.eventId,
-    attemptId: input.attemptId,
-    eventType: "attempt.completed",
-    fromStatus: control.status,
-    toStatus: attemptStatus,
-    actorType: "runner",
-    actorId: input.runnerId,
-    details: { resultCode: result.resultCode, retryScheduled: runStatus === "queued" },
-    recordedAt: input.acceptedAt,
-  });
   if (runStatus === "queued") {
     await appendRetryAudit(client, {
       id: input.auditEventId ?? input.eventId,
@@ -1180,13 +1465,133 @@ async function persistCompletion(
       recordedAt: input.acceptedAt,
     });
   }
-  return updateBatchStatus(
+}
+
+/**
+ * 写事务的 COMMIT、提交后的在途聚合与可调度探针同属简单查询协议的一次往返。
+ * READ COMMITTED 下 COMMIT 之后的语句取新快照，聚合可见自身迁移与所有已提交
+ * 的其他完成：最后提交的上报必然观察到零在途并驱动终态迁移，其余上报安全跳过。
+ * 可调度探针（存在未被扣留的 queued run）供路由层决定是否触发补调度，避免每次
+ * 完成都额外支付一次调度短路查询。
+ */
+async function commitWithInFlightPresence(
+  client: PoolClient,
+  batchId: string,
+): Promise<BatchTailSnapshot> {
+  const batchLiteral = quoteIdentifierForInlineSql(batchId, "执行批次");
+  const results = await executeSimpleStatementBundle(
     client,
-    control.batch_id,
-    input.acceptedAt,
-    input.eventId,
-    "attempt.completed",
+    `COMMIT;
+     SELECT
+       EXISTS(SELECT 1 FROM execution_runs WHERE batch_id = ${batchLiteral} AND status = 'running') AS running,
+       EXISTS(SELECT 1 FROM execution_runs WHERE batch_id = ${batchLiteral} AND status = 'assigned') AS assigned,
+       EXISTS(SELECT 1 FROM execution_runs WHERE batch_id = ${batchLiteral} AND status = 'queued' AND held_round = 0) AS schedulable`,
   );
+  const presence = (results[1]?.rows as BatchTailSnapshot[] | undefined)?.[0];
+  return presence ?? { running: false, assigned: false, schedulable: false };
+}
+
+/**
+ * 稀有路径：完成写事务已提交后，以独立小事务完成终态迁移或轮次收尾。
+ * updateBatchStatus 内部完成批次行加锁、聚合与版本化写入；此步失败时，
+ * 重复上报路径经 repairBatchSettlementIfStalled 补做，终态不会丢失。
+ */
+async function settleBatchAfterCompletion(
+  client: PoolClient,
+  batchId: string,
+  updatedAt: string,
+  eventId: string,
+): Promise<RunBatchStatus> {
+  await client.query("BEGIN");
+  try {
+    const status = await updateBatchStatus(
+      client,
+      batchId,
+      updatedAt,
+      eventId,
+      "attempt.completed",
+    );
+    await client.query("COMMIT");
+    return status;
+  } catch (error) {
+    await rollbackQuietly(client);
+    throw error;
+  }
+}
+
+/**
+ * 重复上报的批次终态校正：读取当前批次状态；若批次停留在非终态且已无在途
+ * run（对应“完成已提交而终态迁移失败”的罕见窗口），就地补做迁移。
+ * 批次行不存在时返回 null，调用方保留存储回执中的原值。
+ */
+async function repairBatchSettlementIfStalled(
+  client: PoolClient,
+  batchId: string,
+  updatedAt: string,
+  eventId: string,
+): Promise<RunBatchStatus | null> {
+  const statusRow = await client.query<{ status: RunBatchStatus }>(
+    "SELECT status FROM run_batches WHERE id = $1",
+    [batchId],
+  );
+  const currentStatus = statusRow.rows[0]?.status;
+  if (!currentStatus) return null;
+  if (isTerminalBatchStatus(currentStatus)) return currentStatus;
+  const presence = await inFlightPresence(client, batchId);
+  if (presence.running || presence.assigned) return currentStatus;
+  return updateBatchStatus(client, batchId, updatedAt, eventId, "attempt.completed");
+}
+
+type BatchInFlightRow = {
+  running: boolean;
+  assigned: boolean;
+};
+
+type BatchTailSnapshot = BatchInFlightRow & {
+  schedulable: boolean;
+};
+
+async function inFlightPresence(client: PoolClient, batchId: string): Promise<BatchInFlightRow> {
+  const result = await client.query<BatchInFlightRow>(
+    `SELECT
+       EXISTS(SELECT 1 FROM execution_runs WHERE batch_id = $1 AND status = 'running') AS running,
+       EXISTS(SELECT 1 FROM execution_runs WHERE batch_id = $1 AND status = 'assigned') AS assigned`,
+    [batchId],
+  );
+  return result.rows[0] ?? { running: false, assigned: false };
+}
+
+/** 连接可能已断开或事务已提交；ROLLBACK 失败不得掩盖原始错误。 */
+async function rollbackQuietly(client: PoolClient): Promise<void> {
+  try {
+    await client.query("ROLLBACK");
+  } catch {
+    // 见注释：保留原始错误。
+  }
+}
+
+// 简单查询协议不支持绑定参数。内联进束语句的标识符必须落在安全字符集内
+// （字母、数字、连字符、下划线），不含引号、空白与分号，杜绝注入面；产品
+// 标识符为 UUIDv7，集成测试夹具使用可读 ID，两者都满足该形态。
+const INLINE_SAFE_IDENTIFIER_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
+
+function quoteIdentifierForInlineSql(value: string, subject: string): string {
+  if (!INLINE_SAFE_IDENTIFIER_PATTERN.test(value)) {
+    throw new DomainError("MALFORMED_IDENTIFIER", `${subject}标识符格式非法，无法构造束语句。`);
+  }
+  return `'${value}'`;
+}
+
+/** 简单查询协议的多语句束按语句顺序各返回一个结果；返回非数组说明协议假设被破坏。 */
+async function executeSimpleStatementBundle(
+  client: PoolClient,
+  sql: string,
+): Promise<readonly QueryResult[]> {
+  const result: unknown = await client.query(sql);
+  if (!Array.isArray(result)) {
+    throw new Error("多语句束必须在简单查询协议下返回结果数组");
+  }
+  return result as QueryResult[];
 }
 
 async function persistCompletionMetadata(
@@ -1514,16 +1919,6 @@ async function latestLeaseForAssignment(
   return result.rows[0];
 }
 
-async function requiredAttemptControl(
-  client: PoolClient,
-  attemptId: string,
-  lock = false,
-): Promise<AttemptControlRow> {
-  const row = await findAttemptControl(client, attemptId, lock);
-  if (!row) throw new DomainError("RUN_ATTEMPT_NOT_FOUND", "指定的执行尝试不存在。");
-  return row;
-}
-
 async function findAttemptControl(
   client: PoolClient,
   attemptId: string,
@@ -1566,6 +1961,93 @@ async function appendRetryAudit(
   );
 }
 
+type ClaimLeaseSeed = { id: string; eventId: string; tokenHash: string; tokenEncrypted: string };
+
+/**
+ * 批量将候选 assignment 置为 claimed：单条集合 UPDATE 替代逐行更新。
+ * 逐行守卫保留在条件里（仍为 pending、批次未请求取消），实际成功集合经
+ * RETURNING 回传；候选行已被调用方的 FOR UPDATE 锁定，无竞争窗口。
+ */
+async function bulkClaimAssignments(
+  client: PoolClient,
+  input: { candidateIds: string[]; now: string },
+): Promise<string[]> {
+  if (input.candidateIds.length === 0) return [];
+  const result = await client.query<{ id: string }>(
+    `UPDATE assignments a
+     SET status = 'claimed', claimed_at = $2, updated_at = $2, version = version + 1
+     FROM unnest($1::text[]) AS s(id)
+     WHERE a.id = s.id AND a.status = 'pending'
+       AND EXISTS (SELECT 1 FROM run_batches b
+                   WHERE b.id = a.batch_id AND b.cancel_requested_at IS NULL)
+     RETURNING a.id`,
+    [input.candidateIds, input.now],
+  );
+  return result.rows.map((row) => row.id);
+}
+
+/**
+ * 批量写入领取的从属副作用：租约、执行/尝试状态迁移与状态事件各用一条
+ * 集合语句完成。顺序不承载语义（租约种子与 assignment 的配对在调用方生成），
+ * 因此集合写入与逐行写入的可观察结果一致。
+ */
+async function persistBulkClaimSideEffects(
+  client: PoolClient,
+  input: {
+    pairs: Array<{ assignment: AssignmentRow; seed: ClaimLeaseSeed }>;
+    runnerId: string;
+    now: string;
+    leaseExpiresAt: string;
+  },
+): Promise<void> {
+  if (input.pairs.length === 0) return;
+  await client.query(
+    `INSERT INTO assignment_leases
+     (id, assignment_id, runner_id, token_hash, token_encrypted, status, version, expires_at, renewed_at, created_at)
+     SELECT s.lease_id, s.assignment_id, $1, s.token_hash, s.token_encrypted, 'active', 1, $2, $3, $3
+     FROM unnest($4::text[], $5::text[], $6::text[], $7::text[])
+       AS s(lease_id, assignment_id, token_hash, token_encrypted)`,
+    [
+      input.runnerId,
+      input.leaseExpiresAt,
+      input.now,
+      input.pairs.map((pair) => pair.seed.id),
+      input.pairs.map((pair) => pair.assignment.id),
+      input.pairs.map((pair) => pair.seed.tokenHash),
+      input.pairs.map((pair) => pair.seed.tokenEncrypted),
+    ],
+  );
+  await client.query(
+    `UPDATE run_attempts SET status = 'running', started_at = COALESCE(started_at, $1), version = version + 1
+     WHERE id = ANY($2::text[]) AND status = 'assigned'`,
+    [input.now, input.pairs.map((pair) => pair.assignment.attempt_id)],
+  );
+  await client.query(
+    `UPDATE execution_runs SET status = 'running', version = version + 1, updated_at = $1
+     WHERE id = ANY($2::text[]) AND status = 'assigned'`,
+    [input.now, input.pairs.map((pair) => pair.assignment.execution_run_id)],
+  );
+  await client.query(
+    `INSERT INTO attempt_state_events
+     (id, attempt_id, event_type, from_status, to_status, reason_code, actor_type, actor_id, details_json, recorded_at)
+     SELECT s.event_id, s.attempt_id, 'assignment.claimed', 'assigned', 'running', NULL, 'runner', $1, s.details, $2
+     FROM unnest($3::text[], $4::text[], $5::jsonb[]) AS s(event_id, attempt_id, details)`,
+    [
+      input.runnerId,
+      input.now,
+      input.pairs.map((pair) => pair.seed.eventId),
+      input.pairs.map((pair) => pair.assignment.attempt_id),
+      input.pairs.map((pair) =>
+        JSON.stringify({
+          assignmentId: pair.assignment.id,
+          leaseId: pair.seed.id,
+          leaseExpiresAt: input.leaseExpiresAt,
+        }),
+      ),
+    ],
+  );
+}
+
 async function appendAttemptEvent(
   client: PoolClient,
   input: {
@@ -1600,6 +2082,57 @@ async function appendAttemptEvent(
   );
 }
 
+/**
+ * 领取路径专用的批次状态迁移：领取只会把 run 置为 running，聚合结果由
+ * execution_runs 的活跃状态唯一确定，无需通用“先锁再聚合”的完整流程。
+ * 单条语句内完成批次行锁定、活跃状态聚合、条件迁移与事件写入，使批次行锁
+ * 只持有单语句执行窗口；同批次并发领取不再跨多条语句互相排队。
+ * 终态批次（含并发取消）不会被迁移，语义与聚合路径一致。
+ */
+async function markBatchActiveOnClaim(
+  client: Pick<PoolClient, "query">,
+  batchId: string,
+  updatedAt: string,
+  eventId: string,
+): Promise<void> {
+  await client.query(
+    `WITH presence AS (
+       SELECT EXISTS(SELECT 1 FROM execution_runs WHERE batch_id = $1 AND status = 'running') AS running,
+              EXISTS(SELECT 1 FROM execution_runs WHERE batch_id = $1 AND status = 'assigned') AS assigned,
+              EXISTS(SELECT 1 FROM execution_runs WHERE batch_id = $1 AND status = 'queued') AS queued
+     ),
+     locked AS (
+       SELECT status FROM run_batches WHERE id = $1 FOR UPDATE
+     ),
+     decision AS (
+       SELECT locked.status AS old_status,
+              CASE
+                WHEN locked.status IN ('succeeded', 'failed', 'cancelled') THEN NULL
+                WHEN presence.running THEN 'running'
+                WHEN presence.assigned AND presence.queued THEN 'dispatching'
+                WHEN presence.assigned THEN 'scheduled'
+                ELSE NULL
+              END AS new_status
+       FROM locked, presence
+     ),
+     transition AS (
+       UPDATE run_batches
+       SET status = decision.new_status, updated_at = $2, version = version + 1
+       FROM decision
+       WHERE run_batches.id = $1
+         AND decision.new_status IS NOT NULL
+         AND decision.new_status <> decision.old_status
+       RETURNING decision.old_status, decision.new_status, run_batches.version
+     )
+     INSERT INTO run_batch_status_events
+       (id, batch_id, from_status, to_status, batch_version, reason, recorded_at)
+     SELECT $3, $1, transition.old_status, transition.new_status, transition.version,
+            'assignment.claimed', $2
+     FROM transition`,
+    [batchId, updatedAt, eventId],
+  );
+}
+
 async function updateBatchStatus(
   client: PoolClient,
   batchId: string,
@@ -1607,38 +2140,9 @@ async function updateBatchStatus(
   eventId: string,
   reason: string,
 ): Promise<RunBatchStatus> {
-  const batch = await client.query<{
-    status: RunBatchStatus;
-    version: number;
-    retry_mode: "immediate" | "round";
-    queue_timeout_ms: number;
-    cancel_requested_at: string | null;
-  }>(
-    "SELECT status, version, retry_mode, queue_timeout_ms, cancel_requested_at FROM run_batches WHERE id = $1",
-    [batchId],
-  );
-  let batchState = batch.rows[0];
-  if (!batchState) throw new DomainError("RUN_BATCH_NOT_FOUND", "指定的执行批次不存在。");
-  // 轮次制下先释放等待下一轮的失败 run，再聚合状态，确保释放的 run 计入批次状态。
-  if (!batchState.cancel_requested_at) {
-    await advanceRoundIfIdle(
-      client,
-      batchId,
-      batchState.retry_mode,
-      batchState.queue_timeout_ms,
-      updatedAt,
-    );
-  }
-  let status = await aggregateStoredBatchStatus(
-    client,
-    batchId,
-    batchState.cancel_requested_at !== null,
-  );
-  transitionRunBatch(batchState.status, status);
-  // 高频完成上报的批次状态通常仍是 running，快路径不锁、不写热点批次行。
-  if (batchState.status === status) return status;
-
-  // 只有生命周期真正可能变化时才串行化批次行，并在锁内重新读取聚合状态。
+  // 必须先串行化批次行，再在锁内聚合状态；终态批次在锁下短路返回。
+  // 若无锁预聚合，最后两个并发完成上报会各自观察到对方尚未提交的 running 态，
+  // 双双得出“状态未变”的结论并提交，终态迁移永久丢失（批次卡死在 running）。
   const lockedBatch = await client.query<{
     status: RunBatchStatus;
     version: number;
@@ -1649,8 +2153,10 @@ async function updateBatchStatus(
     "SELECT status, version, retry_mode, queue_timeout_ms, cancel_requested_at FROM run_batches WHERE id = $1 FOR UPDATE",
     [batchId],
   );
-  batchState = lockedBatch.rows[0];
+  const batchState = lockedBatch.rows[0];
   if (!batchState) throw new DomainError("RUN_BATCH_NOT_FOUND", "指定的执行批次不存在。");
+  if (isTerminalBatchStatus(batchState.status)) return batchState.status;
+  // 轮次制下先释放等待下一轮的失败 run，再聚合状态，确保释放的 run 计入批次状态。
   if (!batchState.cancel_requested_at) {
     await advanceRoundIfIdle(
       client,
@@ -1660,7 +2166,7 @@ async function updateBatchStatus(
       updatedAt,
     );
   }
-  status = await aggregateStoredBatchStatus(
+  const status = await aggregateStoredBatchStatus(
     client,
     batchId,
     batchState.cancel_requested_at !== null,
@@ -1675,14 +2181,12 @@ async function updateBatchStatus(
   if (update.rowCount !== 1) {
     throw new DomainError("RUN_BATCH_VERSION_CONFLICT", "执行批次已被并发修改。");
   }
-  if (batchState.status !== status) {
-    await client.query(
-      `INSERT INTO run_batch_status_events
-       (id, batch_id, from_status, to_status, batch_version, reason, recorded_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-      [eventId, batchId, batchState.status, status, batchState.version + 1, reason, updatedAt],
-    );
-  }
+  await client.query(
+    `INSERT INTO run_batch_status_events
+     (id, batch_id, from_status, to_status, batch_version, reason, recorded_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+    [eventId, batchId, batchState.status, status, batchState.version + 1, reason, updatedAt],
+  );
   return status;
 }
 
@@ -1726,15 +2230,6 @@ async function aggregateStoredBatchStatus(
       ...(terminalReasonCode ? { terminalReasonCode } : {}),
     })),
   ]);
-}
-
-// late 路径不经过 persistCompletion，直接读当前批次聚合状态判定终态。
-async function batchClosed(client: PoolClient, batchId: string): Promise<boolean> {
-  const row = await client.query<{ status: RunBatchStatus }>(
-    "SELECT status FROM run_batches WHERE id = $1",
-    [batchId],
-  );
-  return row.rows[0] ? isTerminalBatchStatus(row.rows[0].status) : false;
 }
 
 // 轮次制：整轮无在途且无未扣留的 queued run 时，把等待下一轮的失败 run 统一释放。

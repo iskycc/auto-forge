@@ -1,5 +1,6 @@
 import type {
   CreateRunBatchRecord,
+  ReserveAssignmentsOutcome,
   ReserveSchedulingAssignmentsInput,
   RunBatchListQuery,
   RunBatchRepository,
@@ -32,7 +33,20 @@ import {
   type SchedulingEvent,
   type SchedulingEventType,
 } from "@autoforge/domain";
-import { and, count, desc, eq, gt, gte, inArray, isNull, lt, lte, or, sql } from "drizzle-orm";
+import {
+  and,
+  count,
+  desc,
+  eq,
+  getTableColumns,
+  gte,
+  inArray,
+  isNull,
+  lt,
+  lte,
+  or,
+  sql,
+} from "drizzle-orm";
 
 import type { PostgresDatabaseHandle } from "./postgres-database";
 import {
@@ -50,11 +64,9 @@ import {
   type RuntimeAssetSnapshot,
 } from "./project-adapter-runtime";
 import { runnerFailureIdsByExecutionRun } from "./runner-failure-history";
+import { insertSchedulingEventDrafts } from "./scheduling-event-insert";
 import {
-  pgCaseSources,
-  pgCaseVersions,
   pgExecutionRuns,
-  pgAssignments,
   pgRunAttempts,
   pgRunBatchRunners,
   pgRunBatchRetryConcurrencyStates,
@@ -119,38 +131,40 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
       record.runs,
       record.policy?.projectVersionId,
     );
+    let createdRow: typeof pgRunBatches.$inferSelect | undefined;
     await this.handle.db.transaction(async (transaction) => {
-      // 独立序列生成展示编号，避免并发创建竞争；nextval 不参与回滚，空洞不影响展示。
-      const sequenceResult = await transaction.execute(
-        sql`SELECT nextval('run_batch_sequence_numbers') AS next`,
-      );
-      const nextSequence = Number(sequenceResult.rows[0]?.next ?? 0);
-      await transaction.insert(pgRunBatches).values({
-        id: record.id,
-        sequenceNumber: nextSequence,
-        projectId: record.projectId,
-        environmentId: record.environmentId,
-        environmentVersionId: record.environmentVersionId,
-        suiteId: record.suiteId,
-        suiteName: record.suiteName,
-        suiteVersion: record.suiteVersion,
-        status: "queued",
-        retryLimit: record.retryLimit,
-        retryMode: record.retryMode ?? "immediate",
-        priority: record.priority ?? 0,
-        queueTimeoutMs,
-        claimTimeoutMs,
-        executionTimeoutMs,
-        uploadTimeoutMs,
-        environmentJson: JSON.stringify(record.environmentVariables),
-        secretBindingsJson: JSON.stringify(record.secretBindings ?? []),
-        policyJson: record.policy ? JSON.stringify(record.policy) : null,
-        adapterRuntimeJson: adapterRuntime ? JSON.stringify(adapterRuntime) : null,
-        totalRuns: record.runs.length,
-        scheduledFor,
-        createdAt: record.createdAt,
-        updatedAt: record.createdAt,
-      });
+      // 展示编号在同一插入语句内取序列（nextval 不参与回滚，空洞不影响展示），
+      // RETURNING 直接带回完整批次行，创建完成后无需再往返读取摘要。
+      const insertedRows = await transaction
+        .insert(pgRunBatches)
+        .values({
+          id: record.id,
+          sequenceNumber: sql<number>`nextval('run_batch_sequence_numbers')`,
+          projectId: record.projectId,
+          environmentId: record.environmentId,
+          environmentVersionId: record.environmentVersionId,
+          suiteId: record.suiteId,
+          suiteName: record.suiteName,
+          suiteVersion: record.suiteVersion,
+          status: "queued",
+          retryLimit: record.retryLimit,
+          retryMode: record.retryMode ?? "immediate",
+          priority: record.priority ?? 0,
+          queueTimeoutMs,
+          claimTimeoutMs,
+          executionTimeoutMs,
+          uploadTimeoutMs,
+          environmentJson: JSON.stringify(record.environmentVariables),
+          secretBindingsJson: JSON.stringify(record.secretBindings ?? []),
+          policyJson: record.policy ? JSON.stringify(record.policy) : null,
+          adapterRuntimeJson: adapterRuntime ? JSON.stringify(adapterRuntime) : null,
+          totalRuns: record.runs.length,
+          scheduledFor,
+          createdAt: record.createdAt,
+          updatedAt: record.createdAt,
+        })
+        .returning();
+      createdRow = insertedRows[0];
       await transaction.insert(pgRunBatchStatusEvents).values({
         id: record.eventId ?? record.id,
         batchId: record.id,
@@ -177,24 +191,30 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
              ${record.createdAt}, ${record.createdAt}, ${record.createdAt})
         `);
       }
+      const queueDeadlineAt = addMilliseconds(scheduledFor, queueTimeoutMs);
       for (const runs of batchesOf(record.runs, POSTGRES_WRITE_BATCH_SIZE)) {
-        await transaction.insert(pgExecutionRuns).values(
-          runs.map((run) => ({
-            ...run,
-            parametersJson: JSON.stringify(run.parameters ?? {}),
-            batchId: record.id,
-            status: "queued" as const,
-            assignedRunnerId: null,
-            attemptCount: 0,
-            schedulingScore: null,
-            queueDeadlineAt: addMilliseconds(scheduledFor, queueTimeoutMs),
-            executionTimeoutMs,
-            uploadTimeoutMs,
-            createdAt: record.createdAt,
-            assignedAt: null,
-            updatedAt: record.createdAt,
-          })),
-        );
+        // unnest 数组批量写入：逐行 VALUES 绑定参数在数百行规模显著拖慢创建。
+        await transaction.execute(sql`
+          INSERT INTO execution_runs
+            (id, batch_id, case_definition_id, case_version, display_name, class_name,
+             parameters_json, status, attempt_count, queue_deadline_at, execution_timeout_ms,
+             upload_timeout_ms, created_at, updated_at)
+          SELECT s.id, ${record.id}, s.case_definition_id, s.case_version, s.display_name,
+                 s.class_name, s.parameters_json, 'queued', 0, ${queueDeadlineAt},
+                 ${executionTimeoutMs}, ${uploadTimeoutMs}, ${record.createdAt},
+                 ${record.createdAt}
+          FROM jsonb_to_recordset(${JSON.stringify(
+            runs.map((run) => ({
+              id: run.id,
+              case_definition_id: run.caseDefinitionId,
+              case_version: run.caseVersion,
+              display_name: run.displayName,
+              class_name: run.className,
+              parameters_json: JSON.stringify(run.parameters ?? {}),
+            })),
+          )}::jsonb)
+                 AS s(id text, case_definition_id text, case_version integer, display_name text,
+                      class_name text, parameters_json text)`);
       }
       if (record.dispatchJob) {
         await transaction.execute(sql`
@@ -211,7 +231,17 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
         `);
       }
     });
-    return this.requiredBatchSummary(record.id);
+    if (!createdRow) {
+      throw new Error(`Run batch ${record.id} was not returned after creation.`);
+    }
+    // 创建即摘要：全部运行处于排队态，计数与选定执行机直接来自创建输入，
+    // 与创建后重新读取的行完全一致，省去列表映射的两次往返。
+    return this.mapBatchRow(
+      createdRow,
+      [...record.runnerIds].sort(),
+      new Map([["queued", record.runs.length]]),
+      undefined,
+    );
   }
 
   async list(
@@ -274,15 +304,25 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
           ]
         : []),
     ];
+    // 页内批次的选定执行机随页查询一次取回（有序数组聚合），列表探针往返
+    // 由“页 + 执行机 + 计数预检 + 计数”收敛为“页 + 计数”两次。
     const rows = await this.handle.db
-      .select()
+      .select({
+        ...getTableColumns(pgRunBatches),
+        selectedRunnerIds: sql<string[]>`(SELECT COALESCE(
+          array_agg(br.runner_id ORDER BY br.runner_id), ARRAY[]::text[]
+        ) FROM run_batch_runners br WHERE br.batch_id = ${pgRunBatches.id})`,
+      })
       .from(pgRunBatches)
       .where(conditions.length > 0 ? and(...conditions) : undefined)
       .orderBy(desc(pgRunBatches.createdAt), desc(pgRunBatches.id))
       .limit(input.limit + 1);
     const hasMore = rows.length > input.limit;
     const pageRows = rows.slice(0, input.limit);
-    const items = await this.mapBatches(pageRows);
+    const runnerIdsByBatch = new Map<string, string[]>(
+      pageRows.map((row) => [row.id, row.selectedRunnerIds ?? []]),
+    );
+    const items = await this.mapBatches(pageRows, runnerIdsByBatch);
     const last = pageRows.at(-1);
     return {
       items,
@@ -541,7 +581,21 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
     });
   }
 
-  async reserveAssignments(input: ReserveSchedulingAssignmentsInput): Promise<number> {
+  async hasSchedulableRuns(batchId: string): Promise<boolean> {
+    await this.ready();
+    const result = await this.handle.pool.query<{ value: boolean }>(
+      `SELECT EXISTS(
+         SELECT 1 FROM execution_runs
+         WHERE batch_id = $1 AND status = 'queued' AND held_round = 0
+       ) AS value`,
+      [batchId],
+    );
+    return Boolean(result.rows[0]?.value);
+  }
+
+  async reserveAssignments(
+    input: ReserveSchedulingAssignmentsInput,
+  ): Promise<ReserveAssignmentsOutcome> {
     await this.ready();
     return this.handle.db.transaction(async (transaction) => {
       const [lockedBatch] = await transaction
@@ -550,12 +604,18 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
           policyJson: pgRunBatches.policyJson,
           adapterRuntimeJson: pgRunBatches.adapterRuntimeJson,
           terminationRequestedAt: pgRunBatches.cancelRequestedAt,
+          environmentJson: pgRunBatches.environmentJson,
+          secretBindingsJson: pgRunBatches.secretBindingsJson,
+          priority: pgRunBatches.priority,
+          claimTimeoutMs: pgRunBatches.claimTimeoutMs,
+          executionTimeoutMs: pgRunBatches.executionTimeoutMs,
+          uploadTimeoutMs: pgRunBatches.uploadTimeoutMs,
         })
         .from(pgRunBatches)
         .where(eq(pgRunBatches.id, input.batchId))
         .for("update");
       if (!lockedBatch) throw new DomainError("RUN_BATCH_NOT_FOUND", "指定的执行批次不存在。");
-      if (lockedBatch.terminationRequestedAt) return 0;
+      if (lockedBatch.terminationRequestedAt) return { reserved: 0, acceptedAttemptIds: [] };
       await transaction
         .select({ id: pgProjects.id })
         .from(pgProjects)
@@ -640,7 +700,11 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
               ).map((row) => [row.runnerId, row.value]),
             );
 
-      let accepted = 0;
+      // 决策过滤完全在内存中按序进行（槽位扣减、运行机资格与资源评估），
+      // 只有被接受的决策进入后续批量写入；单事务内每类写入各一条语句。
+      const acceptedDecisions: Array<
+        ReserveSchedulingAssignmentsInput["decisions"][number] & { score: number }
+      > = [];
       for (const decision of input.decisions) {
         if (remainingProjectSlots === 0 || remainingBatchSlots === 0) break;
         const runnerRow = runnerById.get(decision.runnerId);
@@ -657,110 +721,178 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
           input.metricsFreshAfter,
         );
         if (!evaluation.eligible || evaluation.score === undefined) continue;
-        const [updatedRun] = await transaction
-          .update(pgExecutionRuns)
-          .set({
-            status: "assigned",
-            assignedRunnerId: decision.runnerId,
-            attemptCount: sql`${pgExecutionRuns.attemptCount} + 1`,
-            schedulingScore: evaluation.score,
-            assignedAt: input.scheduledAt,
-            updatedAt: input.scheduledAt,
-          })
-          .where(
-            and(
-              eq(pgExecutionRuns.id, decision.executionRunId),
-              eq(pgExecutionRuns.batchId, input.batchId),
-              eq(pgExecutionRuns.status, "queued"),
-              eq(pgExecutionRuns.heldRound, 0),
-              or(
-                isNull(pgExecutionRuns.queueDeadlineAt),
-                gt(pgExecutionRuns.queueDeadlineAt, input.scheduledAt),
-              ),
-            ),
-          )
-          .returning({
-            attemptCount: pgExecutionRuns.attemptCount,
-            caseDefinitionId: pgExecutionRuns.caseDefinitionId,
-            caseVersion: pgExecutionRuns.caseVersion,
-            className: pgExecutionRuns.className,
-            parametersJson: pgExecutionRuns.parametersJson,
-          });
-        if (!updatedRun) continue;
-        const [source] = await transaction
-          .select({
-            id: pgCaseSources.id,
-            sha256: pgCaseSources.sha256,
-            sizeBytes: pgCaseSources.sizeBytes,
-          })
-          .from(pgCaseVersions)
-          .innerJoin(pgCaseSources, eq(pgCaseSources.id, pgCaseVersions.sourceId))
-          .where(
-            and(
-              eq(pgCaseVersions.caseDefinitionId, updatedRun.caseDefinitionId),
-              eq(pgCaseVersions.version, updatedRun.caseVersion),
-            ),
-          )
-          .limit(1);
-        if (!source) throw new Error("Cannot schedule a case without its source JAR.");
-        await transaction.insert(pgRunAttempts).values({
-          id: decision.attemptId,
-          executionRunId: decision.executionRunId,
-          runnerId: decision.runnerId,
-          attemptNumber: updatedRun.attemptCount,
-          status: "assigned",
-          schedulingScore: evaluation.score,
-          createdAt: input.scheduledAt,
-        });
-        const [batch] = await transaction
-          .select({
-            environmentJson: pgRunBatches.environmentJson,
-            secretBindingsJson: pgRunBatches.secretBindingsJson,
-            policyJson: pgRunBatches.policyJson,
-            priority: pgRunBatches.priority,
-            claimTimeoutMs: pgRunBatches.claimTimeoutMs,
-            executionTimeoutMs: pgRunBatches.executionTimeoutMs,
-            uploadTimeoutMs: pgRunBatches.uploadTimeoutMs,
-          })
-          .from(pgRunBatches)
-          .where(eq(pgRunBatches.id, input.batchId))
-          .limit(1);
-        if (!batch) continue;
-        const policy = batchPolicy(batch.policyJson);
-        await transaction.insert(pgAssignments).values({
-          id: decision.assignmentId,
-          attemptId: decision.attemptId,
-          executionRunId: decision.executionRunId,
-          batchId: input.batchId,
-          runnerId: decision.runnerId,
-          status: "pending",
-          priority: batch.priority,
-          executionSpecJson: JSON.stringify(
-            executionSpec({
-              attemptId: decision.attemptId,
-              executionRunId: decision.executionRunId,
-              batchId: input.batchId,
-              className: updatedRun.className,
-              parameters: stringRecord(updatedRun.parametersJson),
-              source,
-              ...(adapterRuntime ? { adapterRuntime } : {}),
-              environment: environmentVariables(batch.environmentJson),
-              secretBindings: secretBindings(batch.secretBindingsJson),
-              executionTimeoutMs: batch.executionTimeoutMs,
-              uploadTimeoutMs: batch.uploadTimeoutMs,
-              caseTimeoutSeconds: this.caseExecutionTimeoutSeconds,
-              ...(policy ? { policy } : {}),
-            }),
-          ),
-          availableAt: input.scheduledAt,
-          claimDeadlineAt: addMilliseconds(input.scheduledAt, batch.claimTimeoutMs),
-          createdAt: input.scheduledAt,
-          updatedAt: input.scheduledAt,
-        });
+        acceptedDecisions.push({ ...decision, score: evaluation.score });
         reservations.set(decision.runnerId, (reservations.get(decision.runnerId) ?? 0) + 1);
         remainingProjectSlots -= 1;
         remainingBatchSlots -= 1;
-        accepted += 1;
+      }
+
+      let accepted = 0;
+      const acceptedAttemptIds: string[] = [];
+      if (acceptedDecisions.length > 0) {
+        // 批量条件迁移：仅仍排队的 run 可被分配。被并发调度轮抢先的 run 不产生
+        // attempt；其槽位本轮视为已消耗（下一调度轮自愈），保证语句有界且不回滚。
+        // 大批量写入用 unnest 数组参数：每行展开的 VALUES 参数会让语句绑定开销
+        // 随行数线性放大（500 行实测比等量 unnest 慢一个数量级）。
+        const updatedRuns = await transaction.execute<{
+          id: string;
+          attempt_count: number;
+          case_definition_id: string;
+          case_version: number;
+          class_name: string;
+          parameters_json: string;
+        }>(sql`
+          UPDATE execution_runs run
+          SET status = 'assigned',
+              assigned_runner_id = decision.runner_id,
+              attempt_count = run.attempt_count + 1,
+              scheduling_score = decision.score,
+              assigned_at = ${input.scheduledAt},
+              updated_at = ${input.scheduledAt}
+          FROM jsonb_to_recordset(${JSON.stringify(
+            acceptedDecisions.map((decision) => ({
+              run_id: decision.executionRunId,
+              runner_id: decision.runnerId,
+              score: decision.score,
+            })),
+          )}::jsonb) AS decision(run_id text, runner_id text, score float8)
+          WHERE run.id = decision.run_id
+            AND run.batch_id = ${input.batchId}
+            AND run.status = 'queued'
+            AND run.held_round = 0
+            AND (run.queue_deadline_at IS NULL OR run.queue_deadline_at > ${input.scheduledAt})
+          RETURNING run.id, run.attempt_count, run.case_definition_id, run.case_version,
+                    run.class_name, run.parameters_json`);
+        const updatedRunById = new Map(updatedRuns.rows.map((row) => [row.id, row]));
+        const reservedDecisions = acceptedDecisions.filter((decision) =>
+          updatedRunById.has(decision.executionRunId),
+        );
+        if (reservedDecisions.length > 0) {
+          // 一次性预取全部用例版本的来源 JAR，避免逐决策查询。
+          const uniqueCaseVersions = [
+            ...new Map(
+              reservedDecisions.map((decision) => {
+                const run = updatedRunById.get(decision.executionRunId)!;
+                return [
+                  `${run.case_definition_id}:${run.case_version}`,
+                  { caseDefinitionId: run.case_definition_id, caseVersion: run.case_version },
+                ] as const;
+              }),
+            ).values(),
+          ];
+          const sources = await transaction.execute<{
+            case_definition_id: string;
+            version: number;
+            id: string;
+            sha256: string;
+            size_bytes: string | number;
+          }>(sql`
+            SELECT cv.case_definition_id, cv.version, cs.id, cs.sha256, cs.size_bytes
+            FROM case_versions cv
+            JOIN case_sources cs ON cs.id = cv.source_id
+            JOIN jsonb_to_recordset(${JSON.stringify(
+              uniqueCaseVersions.map((pair) => ({
+                case_definition_id: pair.caseDefinitionId,
+                version: pair.caseVersion,
+              })),
+            )}::jsonb) AS pairs(case_definition_id text, version integer)
+              ON cv.case_definition_id = pairs.case_definition_id
+             AND cv.version = pairs.version`);
+          const sourceByCase = new Map(
+            sources.rows.map((row) => [
+              `${row.case_definition_id}:${row.version}`,
+              { id: row.id, sha256: row.sha256, sizeBytes: Number(row.size_bytes) },
+            ]),
+          );
+          const attemptRows = [];
+          const assignmentRows = [];
+          for (const decision of reservedDecisions) {
+            const run = updatedRunById.get(decision.executionRunId)!;
+            const source = sourceByCase.get(`${run.case_definition_id}:${run.case_version}`);
+            if (!source) throw new Error("Cannot schedule a case without its source JAR.");
+            attemptRows.push({
+              id: decision.attemptId,
+              executionRunId: decision.executionRunId,
+              runnerId: decision.runnerId,
+              attemptNumber: run.attempt_count,
+              status: "assigned" as const,
+              schedulingScore: decision.score,
+              createdAt: input.scheduledAt,
+            });
+            assignmentRows.push({
+              id: decision.assignmentId,
+              attemptId: decision.attemptId,
+              executionRunId: decision.executionRunId,
+              batchId: input.batchId,
+              runnerId: decision.runnerId,
+              status: "pending" as const,
+              priority: lockedBatch.priority,
+              executionSpecJson: JSON.stringify(
+                executionSpec({
+                  attemptId: decision.attemptId,
+                  executionRunId: decision.executionRunId,
+                  batchId: input.batchId,
+                  className: run.class_name,
+                  parameters: stringRecord(run.parameters_json),
+                  source,
+                  ...(adapterRuntime ? { adapterRuntime } : {}),
+                  environment: environmentVariables(lockedBatch.environmentJson),
+                  secretBindings: secretBindings(lockedBatch.secretBindingsJson),
+                  executionTimeoutMs: lockedBatch.executionTimeoutMs,
+                  uploadTimeoutMs: lockedBatch.uploadTimeoutMs,
+                  caseTimeoutSeconds: this.caseExecutionTimeoutSeconds,
+                  ...(policy ? { policy } : {}),
+                }),
+              ),
+              availableAt: input.scheduledAt,
+              claimDeadlineAt: addMilliseconds(input.scheduledAt, lockedBatch.claimTimeoutMs),
+              createdAt: input.scheduledAt,
+              updatedAt: input.scheduledAt,
+            });
+          }
+          for (const rows of batchesOf(attemptRows, POSTGRES_WRITE_BATCH_SIZE)) {
+            await transaction.execute(sql`
+              INSERT INTO run_attempts
+                (id, execution_run_id, runner_id, attempt_number, status, scheduling_score, created_at)
+              SELECT s.id, s.execution_run_id, s.runner_id, s.attempt_number, 'assigned',
+                     s.scheduling_score, ${input.scheduledAt}
+              FROM jsonb_to_recordset(${JSON.stringify(
+                rows.map((row) => ({
+                  id: row.id,
+                  execution_run_id: row.executionRunId,
+                  runner_id: row.runnerId,
+                  attempt_number: row.attemptNumber,
+                  scheduling_score: row.schedulingScore,
+                })),
+              )}::jsonb)
+                     AS s(id text, execution_run_id text, runner_id text, attempt_number integer,
+                          scheduling_score float8)`);
+          }
+          for (const rows of batchesOf(assignmentRows, POSTGRES_WRITE_BATCH_SIZE)) {
+            await transaction.execute(sql`
+              INSERT INTO assignments
+                (id, attempt_id, execution_run_id, batch_id, runner_id, status, priority,
+                 execution_spec_json, available_at, claim_deadline_at, created_at, updated_at)
+              SELECT s.id, s.attempt_id, s.execution_run_id, ${input.batchId}, s.runner_id,
+                     'pending', s.priority, s.execution_spec_json, ${input.scheduledAt},
+                     ${addMilliseconds(input.scheduledAt, lockedBatch.claimTimeoutMs)},
+                     ${input.scheduledAt}, ${input.scheduledAt}
+              FROM jsonb_to_recordset(${JSON.stringify(
+                rows.map((row) => ({
+                  id: row.id,
+                  attempt_id: row.attemptId,
+                  execution_run_id: row.executionRunId,
+                  runner_id: row.runnerId,
+                  priority: row.priority,
+                  execution_spec_json: row.executionSpecJson,
+                })),
+              )}::jsonb)
+                     AS s(id text, attempt_id text, execution_run_id text, runner_id text,
+                          priority integer, execution_spec_json text)`);
+          }
+          accepted = reservedDecisions.length;
+          acceptedAttemptIds.push(...reservedDecisions.map((decision) => decision.attemptId));
+        }
       }
 
       const counts = await transaction
@@ -802,7 +934,7 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
           recordedAt: input.scheduledAt,
         });
       }
-      return accepted;
+      return { reserved: accepted, acceptedAttemptIds };
     });
   }
 
@@ -811,32 +943,7 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
   ): Promise<void> {
     if (events.length === 0) return;
     await this.ready();
-    // 多行 INSERT 为单条语句，天然原子：一轮调度产生的事件要么整体可见，要么整体失败。
-    const columns =
-      "id, batch_id, runner_id, execution_run_id, attempt_id, event_type, message, payload_json, recorded_at";
-    const parameters: Array<string | null> = [];
-    const valueTuples = events.map((event) => {
-      const values = [
-        event.id,
-        event.batchId,
-        event.runnerId ?? null,
-        event.executionRunId ?? null,
-        event.attemptId ?? null,
-        event.eventType,
-        event.message,
-        event.payload ? JSON.stringify(event.payload) : null,
-        event.recordedAt,
-      ];
-      const placeholders = values.map((value) => {
-        parameters.push(value);
-        return `$${parameters.length}`;
-      });
-      return `(${placeholders.join(", ")})`;
-    });
-    await this.handle.pool.query(
-      `INSERT INTO scheduling_events (${columns}) VALUES ${valueTuples.join(", ")}`,
-      parameters,
-    );
+    await insertSchedulingEventDrafts(this.handle.pool, events);
   }
 
   async listSchedulingEvents(
@@ -902,12 +1009,6 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
     await this.handle.ready;
   }
 
-  private async requiredBatchSummary(batchId: string): Promise<RunBatch> {
-    const batch = await this.getSummary(batchId);
-    if (!batch) throw new Error(`Run batch ${batchId} does not exist after creation.`);
-    return batch;
-  }
-
   private async mapBatch(row: typeof pgRunBatches.$inferSelect): Promise<RunBatch> {
     const [batch] = await this.mapBatches([row]);
     if (!batch) throw new Error(`Cannot map run batch ${row.id}.`);
@@ -915,48 +1016,33 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
   }
 
   /** 列表页按绑定参数上限分批读取关联计数，查询量不再随批次数线性增长。 */
-  private async mapBatches(rows: Array<typeof pgRunBatches.$inferSelect>): Promise<RunBatch[]> {
+  private async mapBatches(
+    rows: Array<typeof pgRunBatches.$inferSelect>,
+    preloadedRunnerIds?: Map<string, string[]>,
+  ): Promise<RunBatch[]> {
     if (rows.length === 0) return [];
     const batchIds = rows.map((row) => row.id);
-    const selectedRunnerRows = (
-      await Promise.all(
-        batchesOf(batchIds, RELATIONAL_ID_QUERY_BATCH_SIZE).map((ids) =>
-          this.handle.db
-            .select({ batchId: pgRunBatchRunners.batchId, runnerId: pgRunBatchRunners.runnerId })
-            .from(pgRunBatchRunners)
-            .where(inArray(pgRunBatchRunners.batchId, ids))
-            .orderBy(pgRunBatchRunners.batchId, pgRunBatchRunners.runnerId),
-        ),
-      )
-    ).flat();
-    const statusRows = (
-      await Promise.all(
-        batchesOf(batchIds, RELATIONAL_ID_QUERY_BATCH_SIZE).map((ids) =>
-          this.handle.db
-            .select({
-              batchId: pgExecutionRuns.batchId,
-              status: pgExecutionRuns.status,
-              value: count(),
-            })
-            .from(pgExecutionRuns)
-            .where(inArray(pgExecutionRuns.batchId, ids))
-            .groupBy(pgExecutionRuns.batchId, pgExecutionRuns.status),
-        ),
-      )
-    ).flat();
-    const outcomeRows = (
-      await Promise.all(
-        batchesOf(batchIds, RELATIONAL_ID_QUERY_BATCH_SIZE).map((ids) =>
-          this.finalOutcomeCounts(ids),
-        ),
-      )
-    ).flat();
-    const runnerIdsByBatch = new Map<string, string[]>();
-    for (const runner of selectedRunnerRows) {
-      const ids = runnerIdsByBatch.get(runner.batchId) ?? [];
-      ids.push(runner.runnerId);
-      runnerIdsByBatch.set(runner.batchId, ids);
+    let runnerIdsByBatch = preloadedRunnerIds;
+    if (!runnerIdsByBatch) {
+      const selectedRunnerRows = (
+        await Promise.all(
+          batchesOf(batchIds, RELATIONAL_ID_QUERY_BATCH_SIZE).map((ids) =>
+            this.handle.db
+              .select({ batchId: pgRunBatchRunners.batchId, runnerId: pgRunBatchRunners.runnerId })
+              .from(pgRunBatchRunners)
+              .where(inArray(pgRunBatchRunners.batchId, ids))
+              .orderBy(pgRunBatchRunners.batchId, pgRunBatchRunners.runnerId),
+          ),
+        )
+      ).flat();
+      runnerIdsByBatch = new Map<string, string[]>();
+      for (const runner of selectedRunnerRows) {
+        const ids = runnerIdsByBatch.get(runner.batchId) ?? [];
+        ids.push(runner.runnerId);
+        runnerIdsByBatch.set(runner.batchId, ids);
+      }
     }
+    const { statusRows, outcomeRows } = await this.batchRunCounts(batchIds);
     const statusByBatch = new Map<string, Map<string, number>>();
     for (const entry of statusRows) {
       const counts = statusByBatch.get(entry.batchId) ?? new Map<string, number>();
@@ -1019,55 +1105,94 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
     };
   }
 
-  /** attempt 按“总结”规则选择；无 attempt 的终态使用 run 结果作防御性回退。 */
-  private async finalOutcomeCounts(batchIds: readonly string[]): Promise<FinalOutcomeCounts[]> {
-    if (batchIds.length === 0) return [];
-    const result = await this.handle.pool.query<{
-      batchId: string;
-      succeeded: string;
-      failed: string;
-      timedOut: string;
-      cancelled: string;
-    }>(
-      `WITH ranked_attempts AS (
-         SELECT run.batch_id, attempt.execution_run_id,
-                COALESCE(attempt.outcome, attempt.status) AS final_outcome,
-                ROW_NUMBER() OVER (
-                  PARTITION BY attempt.execution_run_id
-                  ORDER BY CASE WHEN COALESCE(attempt.outcome, attempt.status) = 'succeeded'
-                                    THEN 0 ELSE 1 END,
-                           attempt.attempt_number DESC
-                ) AS outcome_rank
-         FROM run_attempts attempt
-         JOIN execution_runs run ON run.id = attempt.execution_run_id
-         WHERE run.batch_id = ANY($1::text[])
-       ), selected_outcomes AS (
-         SELECT execution_run_id, final_outcome
-         FROM ranked_attempts WHERE outcome_rank = 1
-       ), run_outcomes AS (
-         SELECT run.batch_id,
-                COALESCE(selected.final_outcome, run.terminal_outcome,
-                  CASE WHEN run.status IN ('succeeded','failed','cancelled')
-                       THEN run.status END) AS final_outcome
-         FROM execution_runs run
-         LEFT JOIN selected_outcomes selected ON selected.execution_run_id = run.id
-         WHERE run.batch_id = ANY($1::text[])
-       )
-       SELECT batch_id AS "batchId",
-              SUM(CASE WHEN final_outcome = 'succeeded' THEN 1 ELSE 0 END)::text AS succeeded,
-              SUM(CASE WHEN final_outcome = 'failed' THEN 1 ELSE 0 END)::text AS failed,
-              SUM(CASE WHEN final_outcome = 'timed_out' THEN 1 ELSE 0 END)::text AS "timedOut",
-              SUM(CASE WHEN final_outcome = 'cancelled' THEN 1 ELSE 0 END)::text AS cancelled
-       FROM run_outcomes GROUP BY batch_id`,
-      [[...batchIds]],
-    );
-    return result.rows.map((row) => ({
-      batchId: row.batchId,
-      succeeded: Number(row.succeeded),
-      failed: Number(row.failed),
-      timedOut: Number(row.timedOut),
-      cancelled: Number(row.cancelled),
-    }));
+  /**
+   * 状态计数与最终结果计数合并为单条重试安全查询：按“总结”规则（成功优先、
+   * attempt_number 倒序）为每个 run 挑选决定结果的 attempt，再按批次状态与
+   * 最终结果分组。attempt_count > 1 的 run 才可能有多条 attempt 竞争结果；
+   * 无重试批次（探针热路径）的 CTE 因此是空扫描，不再随在途 attempt 更新
+   * 反复扫描 run_attempts。与 SQLite 仓储的无重试快速路径语义一致。
+   */
+  private async batchRunCounts(batchIds: readonly string[]): Promise<{
+    statusRows: Array<{ batchId: string; status: string; value: number }>;
+    outcomeRows: FinalOutcomeCounts[];
+  }> {
+    if (batchIds.length === 0) return { statusRows: [], outcomeRows: [] };
+    const mergedRows = (
+      await Promise.all(
+        batchesOf(batchIds, RELATIONAL_ID_QUERY_BATCH_SIZE).map((ids) =>
+          this.handle.pool.query<{
+            batchId: string;
+            status: string;
+            finalOutcome: string | null;
+            value: string;
+          }>(
+            `WITH ranked_attempts AS (
+               SELECT attempt.execution_run_id,
+                      COALESCE(attempt.outcome, attempt.status) AS attempt_outcome,
+                      ROW_NUMBER() OVER (
+                        PARTITION BY attempt.execution_run_id
+                        ORDER BY CASE WHEN COALESCE(attempt.outcome, attempt.status) = 'succeeded'
+                                      THEN 0 ELSE 1 END,
+                                 attempt.attempt_number DESC
+                      ) AS outcome_rank
+               FROM run_attempts attempt
+               WHERE attempt.execution_run_id IN (
+                 SELECT id FROM execution_runs
+                 WHERE batch_id = ANY($1::text[]) AND attempt_count > 1
+               )
+             )
+             SELECT run.batch_id AS "batchId",
+                    run.status AS status,
+                    COALESCE(selected.attempt_outcome,
+                      run.terminal_outcome,
+                      CASE WHEN run.status IN ('succeeded','failed','cancelled')
+                           THEN run.status END
+                    ) AS "finalOutcome",
+                    count(*)::text AS value
+             FROM execution_runs run
+             LEFT JOIN ranked_attempts selected
+               ON selected.execution_run_id = run.id AND selected.outcome_rank = 1
+             WHERE run.batch_id = ANY($1::text[])
+             GROUP BY 1, 2, 3`,
+            [ids],
+          ),
+        ),
+      )
+    )
+      .flat()
+      .flatMap((result) => result.rows);
+    const statusAggregates = new Map<string, Map<string, number>>();
+    const outcomeAggregates = new Map<
+      string,
+      { succeeded: number; failed: number; timedOut: number; cancelled: number }
+    >();
+    for (const row of mergedRows) {
+      const value = Number(row.value);
+      const statuses = statusAggregates.get(row.batchId) ?? new Map<string, number>();
+      statuses.set(row.status, (statuses.get(row.status) ?? 0) + value);
+      statusAggregates.set(row.batchId, statuses);
+      if (row.finalOutcome === null) continue;
+      const outcomes = outcomeAggregates.get(row.batchId) ?? {
+        succeeded: 0,
+        failed: 0,
+        timedOut: 0,
+        cancelled: 0,
+      };
+      if (row.finalOutcome === "succeeded") outcomes.succeeded += value;
+      else if (row.finalOutcome === "failed") outcomes.failed += value;
+      else if (row.finalOutcome === "timed_out") outcomes.timedOut += value;
+      else if (row.finalOutcome === "cancelled") outcomes.cancelled += value;
+      outcomeAggregates.set(row.batchId, outcomes);
+    }
+    return {
+      statusRows: [...statusAggregates.entries()].flatMap(([batchId, statuses]) =>
+        [...statuses.entries()].map(([status, value]) => ({ batchId, status, value })),
+      ),
+      outcomeRows: [...outcomeAggregates.entries()].map(([batchId, outcomes]) => ({
+        batchId,
+        ...outcomes,
+      })),
+    };
   }
 
   private async activeReservations(runnerIds: string[]): Promise<Map<string, number>> {

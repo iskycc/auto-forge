@@ -1,31 +1,36 @@
 import { availableParallelism } from "node:os";
 import { Worker } from "node:worker_threads";
 
-import type { LiteWorkDispatcher } from "../src/lib/lite-work-runtime.ts";
-import { liteWorkerLaneCount } from "../src/lib/lite-worker-sizing.ts";
+import type { WorkDispatcher } from "../src/lib/work-runtime.ts";
+import { workerLaneCount } from "../src/lib/worker-sizing.ts";
 import type {
-  LiteWorkerConfiguration,
-  LiteWorkerRequest,
-  LiteWorkerResponse,
-  LiteWorkerTask,
-} from "./lite-work-protocol.ts";
+  WorkRequest,
+  WorkResponse,
+  WorkTask,
+  WorkThreadConfiguration,
+} from "./work-protocol.ts";
 
 type PendingRequest = {
   resolve(value: unknown): void;
   reject(error: unknown): void;
 };
 
-export class LiteWorkerPool implements LiteWorkDispatcher {
+export class WorkerPool implements WorkDispatcher {
   private readonly schedulingLanes: WorkerLane[];
   private readonly logLanes: WorkerLane[];
   private schedulingCursor = 0;
 
   constructor(
-    configuration: LiteWorkerConfiguration,
+    configuration: WorkThreadConfiguration,
     backgroundConcurrency: number,
     shutdownGraceMs: number,
   ) {
-    const laneCount = liteWorkerLaneCount(availableParallelism(), backgroundConcurrency);
+    // Full 模式每条车道内并发执行数据库事务，并行度来自车道内并发而非车道数；
+    // 少量车道即可吃满 PostgreSQL 并行，避免线程过多在有限核数上互相抢占。
+    const laneCount =
+      configuration.mode === "full"
+        ? Math.min(2, workerLaneCount(availableParallelism(), backgroundConcurrency))
+        : workerLaneCount(availableParallelism(), backgroundConcurrency);
     this.schedulingLanes = Array.from(
       { length: laneCount },
       () => new WorkerLane(configuration, shutdownGraceMs),
@@ -114,6 +119,17 @@ export class LiteWorkerPool implements LiteWorkDispatcher {
     })) as number;
   }
 
+  /**
+   * 启动预热所有车道：工作线程按需构建数据库句柄、执行迁移校验并预热连接池，
+   * 不预热时这些冷启动成本会落在首个真实任务（通常是 Runner 心跳触发的补位
+   * 调度）上。失败无害——首个真实任务会退回按需冷启动，错误在那时照常暴露。
+   */
+  async warmup(): Promise<void> {
+    await Promise.allSettled(
+      [...this.schedulingLanes, ...this.logLanes].map((lane) => lane.dispatch({ kind: "warmup" })),
+    );
+  }
+
   async close(): Promise<void> {
     await Promise.all([...this.schedulingLanes, ...this.logLanes].map((lane) => lane.close()));
   }
@@ -137,18 +153,18 @@ class WorkerLane {
   private closing = false;
 
   constructor(
-    private readonly configuration: LiteWorkerConfiguration,
+    private readonly configuration: WorkThreadConfiguration,
     private readonly shutdownGraceMs: number,
   ) {}
 
-  dispatch(task: LiteWorkerTask): Promise<unknown> {
-    if (this.closing) return Promise.reject(new Error("Lite worker pool is closing."));
+  dispatch(task: WorkTask): Promise<unknown> {
+    if (this.closing) return Promise.reject(new Error("Work thread pool is closing."));
     const worker = this.ensureWorker();
     const id = this.nextRequestId;
     this.nextRequestId += 1;
     return new Promise((resolve, reject) => {
       this.pending.set(id, { resolve, reject });
-      worker.postMessage({ id, task } satisfies LiteWorkerRequest);
+      worker.postMessage({ id, task } satisfies WorkRequest);
     });
   }
 
@@ -157,7 +173,7 @@ class WorkerLane {
     if (!this.worker) return;
     await this.waitForDrain();
     if (this.pending.size > 0) {
-      this.fail(new Error("Lite worker did not drain before the shutdown deadline."));
+      this.fail(new Error("Work thread did not drain before the shutdown deadline."));
     }
     await this.worker.terminate();
     this.worker = undefined;
@@ -166,11 +182,11 @@ class WorkerLane {
   private ensureWorker(): Worker {
     if (this.worker) return this.worker;
     const worker = new Worker(workerModuleUrl(), { workerData: this.configuration });
-    worker.on("message", (response: LiteWorkerResponse) => this.receive(response));
+    worker.on("message", (response: WorkResponse) => this.receive(response));
     worker.on("error", (error) => this.fail(error));
     worker.on("exit", (code) => {
       if (code !== 0 && !this.closing) {
-        this.fail(new Error(`Lite worker stopped unexpectedly with exit code ${code}.`));
+        this.fail(new Error(`Work thread stopped unexpectedly with exit code ${code}.`));
       }
       if (this.worker === worker) this.worker = undefined;
     });
@@ -178,7 +194,7 @@ class WorkerLane {
     return worker;
   }
 
-  private receive(response: LiteWorkerResponse): void {
+  private receive(response: WorkResponse): void {
     const request = this.pending.get(response.id);
     if (!request) return;
     this.pending.delete(response.id);
@@ -217,9 +233,7 @@ class WorkerLane {
 
 function workerModuleUrl(): URL {
   return new URL(
-    import.meta.url.endsWith(".ts")
-      ? "../dist-server/server/lite-work-thread.js"
-      : "./lite-work-thread.js",
+    import.meta.url.endsWith(".ts") ? "../dist-server/server/work-thread.js" : "./work-thread.js",
     import.meta.url,
   );
 }

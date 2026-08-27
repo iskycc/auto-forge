@@ -750,5 +750,10 @@ function mapStructureWriteError(error: unknown): Error {
   if (typeof error === "object" && error !== null && "code" in error && error.code === "23505") {
     return new DomainError("PROJECT_STRUCTURE_NAME_CONFLICT", "同一层级下已存在同名记录。");
   }
+  // 结构写入前已校验版本/阶段等父记录，外键冲突实际含义是项目不存在
+  // （或写入期间项目被并发删除），返回可区分的领域错误而不是泛化 500。
+  if (typeof error === "object" && error !== null && "code" in error && error.code === "23503") {
+    return new DomainError("PROJECT_NOT_FOUND", "指定的项目不存在。", { cause: error });
+  }
   return new Error("无法写入项目版本结构。", { cause: error });
 }

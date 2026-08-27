@@ -64,13 +64,21 @@ export function createAttemptLogStore(attemptLogsDirectory: string): AttemptLogS
   mkdirSync(attemptLogsDirectory, { recursive: true });
   const openStores = new Map<string, BatchStoreHandle>();
 
-  function openBatch(batchId: string): Database.Database {
+  function prepared(handle: BatchStoreHandle, sql: string): Database.Statement {
+    const cached = handle.statements.get(sql);
+    if (cached) return cached;
+    const statement = handle.client.prepare(sql);
+    handle.statements.set(sql, statement);
+    return statement;
+  }
+
+  function openBatch(batchId: string): BatchStoreHandle {
     const cached = openStores.get(batchId);
     if (cached) {
       // LRU：命中后移到队尾，驱逐时总是关闭最久未用的句柄。
       openStores.delete(batchId);
       openStores.set(batchId, cached);
-      return cached.client;
+      return cached;
     }
     if (openStores.size >= MAX_OPEN_STORES) {
       const oldest = openStores.keys().next().value as string | undefined;
@@ -78,6 +86,10 @@ export function createAttemptLogStore(attemptLogsDirectory: string): AttemptLogS
     }
     const client = new Database(storePath(attemptLogsDirectory, batchId));
     client.pragma("journal_mode = WAL");
+    // 与主库一致的 WAL 持久化折衷：NORMAL 在操作系统崩溃时最多丢失最后一段
+    // 已提交日志，不会损坏库文件。日志写入位于 Web 事件循环上的同步调用，
+    // FULL 模式的每次提交 fsync 会阻塞全部请求处理，高并发基准中代价显著。
+    client.pragma("synchronous = NORMAL");
     client.pragma("foreign_keys = OFF");
     client.pragma("busy_timeout = 5000");
     client.exec(`
@@ -101,8 +113,9 @@ export function createAttemptLogStore(attemptLogsDirectory: string): AttemptLogS
         PRIMARY KEY (attempt_id, stream)
       );
     `);
-    openStores.set(batchId, { client });
-    return client;
+    const handle: BatchStoreHandle = { client, statements: new Map() };
+    openStores.set(batchId, handle);
+    return handle;
   }
 
   function closeStore(batchId: string): void {
@@ -114,53 +127,49 @@ export function createAttemptLogStore(attemptLogsDirectory: string): AttemptLogS
   }
 
   function advanceWatermark(
-    client: Database.Database,
+    handle: BatchStoreHandle,
     attemptId: string,
     stream: AttemptLogStream,
     updatedAt: string,
   ): number {
     // 水位推进语义与迁移前的主库实现一致：从当前水位起只承认严格连续的序号。
-    const existing = client
-      .prepare(
-        "SELECT acknowledged_sequence FROM attempt_log_watermarks WHERE attempt_id = ? AND stream = ?",
-      )
-      .get(attemptId, stream) as { acknowledged_sequence: number } | undefined;
+    const existing = prepared(
+      handle,
+      "SELECT acknowledged_sequence FROM attempt_log_watermarks WHERE attempt_id = ? AND stream = ?",
+    ).get(attemptId, stream) as { acknowledged_sequence: number } | undefined;
     let acknowledged = existing?.acknowledged_sequence ?? -1;
-    const sequences = client
-      .prepare(
-        `SELECT sequence FROM attempt_log_chunks
-         WHERE attempt_id = ? AND stream = ? AND sequence > ? ORDER BY sequence`,
-      )
-      .all(attemptId, stream, acknowledged) as Array<{ sequence: number }>;
+    const sequences = prepared(
+      handle,
+      `SELECT sequence FROM attempt_log_chunks
+       WHERE attempt_id = ? AND stream = ? AND sequence > ? ORDER BY sequence`,
+    ).all(attemptId, stream, acknowledged) as Array<{ sequence: number }>;
     for (const row of sequences) {
       if (row.sequence !== acknowledged + 1) break;
       acknowledged = row.sequence;
     }
-    client
-      .prepare(
-        `INSERT INTO attempt_log_watermarks (attempt_id, stream, acknowledged_sequence, updated_at)
-         VALUES (?, ?, ?, ?)
-         ON CONFLICT(attempt_id, stream) DO UPDATE SET
-         acknowledged_sequence = MAX(attempt_log_watermarks.acknowledged_sequence, excluded.acknowledged_sequence),
-         updated_at = excluded.updated_at`,
-      )
-      .run(attemptId, stream, acknowledged, updatedAt);
+    prepared(
+      handle,
+      `INSERT INTO attempt_log_watermarks (attempt_id, stream, acknowledged_sequence, updated_at)
+       VALUES (?, ?, ?, ?)
+       ON CONFLICT(attempt_id, stream) DO UPDATE SET
+       acknowledged_sequence = MAX(attempt_log_watermarks.acknowledged_sequence, excluded.acknowledged_sequence),
+       updated_at = excluded.updated_at`,
+    ).run(attemptId, stream, acknowledged, updatedAt);
     return acknowledged;
   }
 
   return {
     async appendChunks(input) {
       assertBatchId(input.batchId);
-      const client = openBatch(input.batchId);
-      return client
+      const handle = openBatch(input.batchId);
+      return handle.client
         .transaction(() => {
           for (const chunk of input.chunks) {
-            const existing = client
-              .prepare(
-                `SELECT content, recorded_at FROM attempt_log_chunks
-               WHERE attempt_id = ? AND stream = ? AND sequence = ?`,
-              )
-              .get(input.attemptId, chunk.stream, chunk.sequence) as
+            const existing = prepared(
+              handle,
+              `SELECT content, recorded_at FROM attempt_log_chunks
+             WHERE attempt_id = ? AND stream = ? AND sequence = ?`,
+            ).get(input.attemptId, chunk.stream, chunk.sequence) as
               { content: string; recorded_at: string } | undefined;
             if (existing) {
               if (existing.content !== chunk.content || existing.recorded_at !== chunk.recordedAt) {
@@ -168,26 +177,25 @@ export function createAttemptLogStore(attemptLogsDirectory: string): AttemptLogS
               }
               continue;
             }
-            client
-              .prepare(
-                `INSERT INTO attempt_log_chunks
-               (attempt_id, stream, sequence, content, size_bytes, recorded_at, received_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?)`,
-              )
-              .run(
-                input.attemptId,
-                chunk.stream,
-                chunk.sequence,
-                chunk.content,
-                Buffer.byteLength(chunk.content, "utf8"),
-                chunk.recordedAt,
-                input.receivedAt,
-              );
+            prepared(
+              handle,
+              `INSERT INTO attempt_log_chunks
+             (attempt_id, stream, sequence, content, size_bytes, recorded_at, received_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?)`,
+            ).run(
+              input.attemptId,
+              chunk.stream,
+              chunk.sequence,
+              chunk.content,
+              Buffer.byteLength(chunk.content, "utf8"),
+              chunk.recordedAt,
+              input.receivedAt,
+            );
           }
           return {
-            stdout: advanceWatermark(client, input.attemptId, "stdout", input.receivedAt),
-            stderr: advanceWatermark(client, input.attemptId, "stderr", input.receivedAt),
-            agent: advanceWatermark(client, input.attemptId, "agent", input.receivedAt),
+            stdout: advanceWatermark(handle, input.attemptId, "stdout", input.receivedAt),
+            stderr: advanceWatermark(handle, input.attemptId, "stderr", input.receivedAt),
+            agent: advanceWatermark(handle, input.attemptId, "agent", input.receivedAt),
           };
         })
         .immediate();
@@ -195,7 +203,7 @@ export function createAttemptLogStore(attemptLogsDirectory: string): AttemptLogS
 
     listChunks(input) {
       assertBatchId(input.batchId);
-      const client = openBatch(input.batchId);
+      const handle = openBatch(input.batchId);
       const clauses: string[] = [];
       const parameters: Array<string | number> = [
         input.attemptId,
@@ -216,13 +224,12 @@ export function createAttemptLogStore(attemptLogsDirectory: string): AttemptLogS
       }
       parameters.push(input.limit + 1);
       const filters = clauses.length > 0 ? `AND ${clauses.join(" AND ")}` : "";
-      const rows = client
-        .prepare(
-          `SELECT stream, sequence, content, recorded_at FROM attempt_log_chunks
-           WHERE attempt_id = ? AND stream = ? AND sequence > ? ${filters}
-           ORDER BY sequence ASC LIMIT ?`,
-        )
-        .all(...parameters) as Array<{
+      const rows = prepared(
+        handle,
+        `SELECT stream, sequence, content, recorded_at FROM attempt_log_chunks
+         WHERE attempt_id = ? AND stream = ? AND sequence > ? ${filters}
+         ORDER BY sequence ASC LIMIT ?`,
+      ).all(...parameters) as Array<{
         stream: AttemptLogStream;
         sequence: number;
         content: string;
@@ -241,26 +248,26 @@ export function createAttemptLogStore(attemptLogsDirectory: string): AttemptLogS
 
     acknowledgedSequence(batchId, attemptId, stream) {
       assertBatchId(batchId);
-      const client = openBatch(batchId);
-      const row = client
-        .prepare(
-          "SELECT acknowledged_sequence FROM attempt_log_watermarks WHERE attempt_id = ? AND stream = ?",
-        )
-        .get(attemptId, stream) as { acknowledged_sequence: number } | undefined;
+      const handle = openBatch(batchId);
+      const row = prepared(
+        handle,
+        "SELECT acknowledged_sequence FROM attempt_log_watermarks WHERE attempt_id = ? AND stream = ?",
+      ).get(attemptId, stream) as { acknowledged_sequence: number } | undefined;
       return row?.acknowledged_sequence ?? -1;
     },
 
     recordWatermarks(input) {
       assertBatchId(input.batchId);
-      const client = openBatch(input.batchId);
-      const upsert = client.prepare(
+      const handle = openBatch(input.batchId);
+      const upsert = prepared(
+        handle,
         `INSERT INTO attempt_log_watermarks (attempt_id, stream, acknowledged_sequence, updated_at)
          VALUES (?, ?, ?, ?)
          ON CONFLICT(attempt_id, stream) DO UPDATE SET
          acknowledged_sequence = MAX(attempt_log_watermarks.acknowledged_sequence, excluded.acknowledged_sequence),
          updated_at = excluded.updated_at`,
       );
-      client
+      handle.client
         .transaction(() => {
           for (const stream of ["stdout", "stderr", "agent"] as const) {
             upsert.run(input.attemptId, stream, input.watermarks[stream], input.recordedAt);
@@ -336,4 +343,6 @@ function storePath(directory: string, batchId: string): string {
 
 type BatchStoreHandle = {
   client: Database.Database;
+  /** 预编译语句缓存：better-sqlite3 的 prepare 每次解析 SQL，日志热路径按语句文本复用。 */
+  statements: Map<string, Database.Statement>;
 };

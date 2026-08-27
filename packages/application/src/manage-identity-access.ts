@@ -37,6 +37,8 @@ import type {
   StoredLdapConfiguration,
 } from "./ports";
 
+import { SessionIdentityCache } from "./session-identity-cache";
+
 const SYSTEM_ADMIN_ROLE_ID = "00000000-0000-7000-8100-000000000001";
 const PROJECT_ADMIN_ROLE_ID = "00000000-0000-7000-8100-000000000002";
 const LDAP_PROVIDER_ID = "ldap:default";
@@ -73,6 +75,13 @@ export class IdentityAccessService {
     private readonly ids: IdGenerator,
     private readonly sessionTtlHours: number,
   ) {}
+
+  /**
+   * 会话身份缓存：鉴权读取是所有认证请求的固定成本，短 TTL 让热点会话跳过
+   * 数据库往返。所有会撤销会话或改变权限的操作必须调用
+   * invalidateCachedSessionIdentities()；跨进程部署下缓存失效以 TTL 为上限。
+   */
+  private readonly sessionIdentities = new SessionIdentityCache(1_500);
 
   async initialize(): Promise<void> {
     await this.repository.ensureBuiltInRoles(builtInRoleDefinitions, this.now());
@@ -172,11 +181,21 @@ export class IdentityAccessService {
 
   async authenticateSession(token: string): Promise<AuthenticatedIdentity> {
     if (!token) throw new DomainError("AUTH_REQUIRED", "请先登录。");
-    const identity = await this.repository.resolveSession(this.tokens.hash(token), this.now());
+    const tokenHash = this.tokens.hash(token);
+    const nowMs = this.clock.now().getTime();
+    const cached = this.sessionIdentities.get(tokenHash, nowMs);
+    if (cached) return cached;
+    const identity = await this.repository.resolveSession(tokenHash, this.now());
     if (!identity || identity.user.status !== "active") {
       throw new DomainError("AUTH_REQUIRED", "登录会话无效或已过期。");
     }
+    this.sessionIdentities.set(tokenHash, identity, nowMs);
     return identity;
+  }
+
+  /** 撤销类/权限类变更的统一失效钩子；见 sessionIdentities 字段注释。 */
+  private invalidateCachedSessionIdentities(): void {
+    this.sessionIdentities.clear();
   }
 
   authorize(identity: AuthenticatedIdentity, permission: Permission, projectId?: string): void {
@@ -197,6 +216,7 @@ export class IdentityAccessService {
   async logout(identity: AuthenticatedIdentity, requestId?: string): Promise<void> {
     const revokedAt = this.now();
     await this.repository.revokeSession(identity.sessionId, revokedAt);
+    this.invalidateCachedSessionIdentities();
     await this.audit({
       actorId: identity.user.id,
       action: "auth.logout",
@@ -254,6 +274,7 @@ export class IdentityAccessService {
     const updatedAt = this.now();
     const user = await this.repository.updateUserStatus(userId, status, updatedAt);
     if (status === "disabled") await this.repository.revokeUserSessions(userId, updatedAt);
+    this.invalidateCachedSessionIdentities();
     await this.audit({
       actorId: actor.user.id,
       action: status === "disabled" ? "user.disable" : "user.enable",
@@ -286,6 +307,7 @@ export class IdentityAccessService {
       updatedAt,
     );
     await this.repository.revokeUserSessions(userId, updatedAt);
+    this.invalidateCachedSessionIdentities();
     await this.audit({
       actorId: actor.user.id,
       action: "user.password_reset",
@@ -307,6 +329,7 @@ export class IdentityAccessService {
     await this.requiredUser(userId);
     const revokedAt = this.now();
     await this.repository.revokeUserSessions(userId, revokedAt);
+    this.invalidateCachedSessionIdentities();
     await this.audit({
       actorId: actor.user.id,
       action: "user.sessions_revoke",
@@ -342,6 +365,7 @@ export class IdentityAccessService {
       changedAt,
     );
     await this.repository.revokeUserSessions(actor.user.id, changedAt);
+    this.invalidateCachedSessionIdentities();
     await this.audit({
       actorId: actor.user.id,
       action: "user.password_change",
@@ -370,6 +394,7 @@ export class IdentityAccessService {
     if (!session) throw new DomainError("SESSION_NOT_FOUND", "指定会话不存在。");
     if (session.userId !== actor.user.id) this.authorize(actor, "user.manage");
     await this.repository.revokeSession(sessionId, this.now());
+    this.invalidateCachedSessionIdentities();
     await this.audit({
       actorId: actor.user.id,
       action: "session.revoke",
@@ -463,6 +488,7 @@ export class IdentityAccessService {
       updatedAt: this.now(),
     });
     await this.repository.revokeUserSessionsForRole(roleId, this.now());
+    this.invalidateCachedSessionIdentities();
     await this.audit({
       actorId: actor.user.id,
       action: "role.update",
@@ -489,6 +515,7 @@ export class IdentityAccessService {
     if (!(await this.repository.deleteRole(roleId))) {
       throw new DomainError("ROLE_IN_USE", "仍被引用的角色不能删除。");
     }
+    this.invalidateCachedSessionIdentities();
     await this.audit({
       actorId: actor.user.id,
       action: "role.delete",
@@ -518,6 +545,7 @@ export class IdentityAccessService {
     const assignedAt = this.now();
     await this.repository.assignSystemRole(userId, roleId, actor.user.id, assignedAt);
     await this.repository.revokeUserSessions(userId, assignedAt);
+    this.invalidateCachedSessionIdentities();
     await this.audit({
       actorId: actor.user.id,
       action: "role.assign_system",
@@ -554,6 +582,7 @@ export class IdentityAccessService {
       assignedAt,
     });
     await this.repository.revokeUserSessions(userId, assignedAt);
+    this.invalidateCachedSessionIdentities();
     await this.audit({
       actorId: actor.user.id,
       action: "role.assign_project",
@@ -578,6 +607,7 @@ export class IdentityAccessService {
       throw new DomainError("ROLE_BINDING_NOT_FOUND", "指定的系统角色绑定不存在。");
     }
     await this.repository.revokeUserSessions(userId, this.now());
+    this.invalidateCachedSessionIdentities();
     await this.audit({
       actorId: actor.user.id,
       action: "role.remove_system",
@@ -602,6 +632,7 @@ export class IdentityAccessService {
       throw new DomainError("ROLE_BINDING_NOT_FOUND", "指定的项目角色绑定不存在。");
     }
     await this.repository.revokeUserSessions(userId, this.now());
+    this.invalidateCachedSessionIdentities();
     await this.audit({
       actorId: actor.user.id,
       action: "role.remove_project",
@@ -669,6 +700,7 @@ export class IdentityAccessService {
         assignedAt: this.now(),
       });
       await this.repository.revokeUserSessions(owner.id, this.now());
+      this.invalidateCachedSessionIdentities();
     }
     const project = await this.repository.transferProjectOwner({
       projectId,
@@ -901,6 +933,7 @@ export class IdentityAccessService {
       requestId,
       details: { createdOrUpdated, disabled: disabledUserIds.length },
     });
+    this.invalidateCachedSessionIdentities();
     return { synchronizedAt, createdOrUpdated, disabledUserIds };
   }
 

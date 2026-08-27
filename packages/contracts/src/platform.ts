@@ -50,6 +50,7 @@ export const updatePlatformConfigurationInputSchema = z.object({
       minioSecretKey: z.string().min(1).max(4_096).optional(),
       minioBucket: z.string().min(3).max(63).optional(),
       minioRegion: z.string().min(1).max(128).optional(),
+      databasePoolMax: z.number().int().min(1).max(100).optional(),
     })
     .optional(),
 });

@@ -478,6 +478,16 @@ describe.skipIf(!postgresConnectionString)("PostgreSQL scheduling events contrac
       async dispose() {
         attemptLogs.close();
         await rm(logsDirectory, { recursive: true, force: true });
+        // 共享测试库必须带走夹具行：残留的可调度批次会挤占其他测试的
+        // LIMIT 窗口，造成与执行顺序相关的偶发失败。
+        await handle.pool.query("DELETE FROM run_batches WHERE id IN ($1, $2)", [
+          fixture.batchIdA,
+          fixture.batchIdB,
+        ]);
+        await handle.pool.query("DELETE FROM runners WHERE id IN ($1, $2)", [
+          fixture.runnerIdA,
+          fixture.runnerIdB,
+        ]);
         await handle.close();
       },
     };

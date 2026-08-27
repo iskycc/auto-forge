@@ -18,6 +18,7 @@ describe("worker configuration", () => {
         mode: "full",
         full: {
           databaseUrl: "postgresql://autoforge:secret@postgres:5432/autoforge",
+          databasePoolMax: 10,
           natsServers: ["nats://nats:4222"],
           redisUrl: "redis://redis:6379",
           minio: {

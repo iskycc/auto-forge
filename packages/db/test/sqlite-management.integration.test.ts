@@ -1727,7 +1727,7 @@ describe("SQLite management repositories", () => {
           metricsFreshAfter: "2026-08-09T00:00:30.000Z",
           scheduledAt: "2026-08-09T00:03:11.001Z",
         }),
-      ).resolves.toBe(0);
+      ).resolves.toEqual({ reserved: 0, acceptedAttemptIds: [] });
       // 排队超时的 run 从未产生 attempt，不进入回收明细；批次状态断言在下方覆盖。
       await expect(
         executions.recoverExpired({
