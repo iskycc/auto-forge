@@ -98,7 +98,10 @@ printf '%s\n' \
   'package sample.orders; // optional trailing punctuation' \
   'import sample.fixture.CheckoutSupport' \
   'class CheckoutCase {' \
-  '    void testHappyPath() { assert "success" }' \
+  '    void testHappyPath() {' \
+  '        def type = String.class' \
+  '        context { assert "success" }' \
+  '    }' \
   '}' >"${source_root}/orders/CheckoutCase.groovy"
 
 printf '%s\n' \
@@ -127,14 +130,14 @@ run_analyzer() {
   javac -encoding UTF-8 -cp "${POI_CLASSPATH}" -d "${compiled_classes}" "${source_path}"
   java -cp "${compiled_classes}:${POI_CLASSPATH}" AnalyzeNormalGroovyCases \
     --source "${source_root}" --output "${output_file}" \
-    --extra-keywords statusnew,statuspendingactive
+    --extra-keywords statusnew,statuspendingactive --no-review
 }
 
 run_output="$(run_analyzer)"
 scope_run_output="$({
   cd "${scope_workspace}"
   java -cp "${compiled_classes}:${POI_CLASSPATH}" AnalyzeNormalGroovyCases \
-    --output "${scope_output_file}"
+    --output "${scope_output_file}" --no-review
 })"
 grep -Fq 'Scanned 5 Groovy file(s) and 7 case candidate(s).' <<<"${run_output}"
 grep -Fq 'Exported 2 included case(s); 5 candidate(s) were excluded.' <<<"${run_output}"
@@ -143,6 +146,21 @@ grep -Fq "Source root: ${scope_workspace}/groovy-test" <<<"${scope_run_output}"
 grep -Fq 'Scanned 1 Groovy file(s) and 1 case candidate(s).' <<<"${scope_run_output}"
 unzip -t "${output_file}" >/dev/null
 unzip -t "${scope_output_file}" >/dev/null
+
+first_review_output="$(printf '0' | java \
+  -cp "${compiled_classes}:${POI_CLASSPATH}" AnalyzeNormalGroovyCases \
+  --source "${source_root}" --output "${output_file}")"
+grep -Fq 'Workbook exists; skipping scan and resuming case-level review.' \
+  <<<"${first_review_output}"
+grep -Fq '人工分级已暂停，剩余 1 条未确认；下次运行将自动继续。' \
+  <<<"${first_review_output}"
+
+resumed_review_output="$(printf '910' | java \
+  -cp "${compiled_classes}:${POI_CLASSPATH}" AnalyzeNormalGroovyCases \
+  --source "${source_root}" --output "${output_file}")"
+grep -Fq '[2/2]' <<<"${resumed_review_output}"
+grep -Fq '[1/2]' <<<"${resumed_review_output}"
+grep -Fq '人工分级已完成，所有导出用例均已标记。' <<<"${resumed_review_output}"
 
 node --input-type=module - \
   "${repository_root}" "${output_file}" "${scope_output_file}" <<'NODE'
@@ -188,6 +206,13 @@ if (normalCases.some((row) => row["复核提示"] !== undefined)) {
 }
 if (!normalCases.some((row) => row["类名"] === "ScriptSmoke")) {
   throw new Error("Normal Groovy script was not exported");
+}
+if ([...normalCases, ...excludedCases].some((row) => row["类名"] === "context")) {
+  throw new Error("A .class literal caused the following context block to be parsed as a class");
+}
+const reviewedLevels = normalCases.map((row) => row["人工等级"]);
+if (reviewedLevels.join(",") !== "L1,L0") {
+  throw new Error(`Interactive review did not persist/resume correctly: ${reviewedLevels}`);
 }
 const loginCases = [...normalCases, ...excludedCases].filter(
   (row) => row["类名"] === "LoginSpec",

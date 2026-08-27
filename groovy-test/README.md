@@ -1,8 +1,9 @@
 # Groovy case analyzer
 
 `AnalyzeNormalGroovyCases.java` recursively analyzes `.groovy` source files without compiling,
-loading, or executing them. It exports an XLSX workbook through Apache POI 3.13 and does not use
-Groovy, Grape, or Apache Ivy.
+loading, or executing them. It exports an XLSX workbook through Apache POI 3.13, uses
+JLine 3.25.1/Jansi 2.4.1 for interactive terminal input, and does not use Groovy, Grape, or
+Apache Ivy.
 
 Build the analyzer and copy its runtime dependencies:
 
@@ -18,6 +19,14 @@ java -cp "groovy-test/target/classes:groovy-test/target/dependency/*" \
   --source ./cases \
   --output ./normal-cases.xlsx
 ```
+
+After creating the workbook, the analyzer reviews every row in `导出用例` interactively. Press
+`0` for `L0`, `1` for `L1`, or `9` to return to the previous row; a real terminal reads each key
+immediately without Enter. Press `Ctrl+C` to pause safely. Every selection is written to the
+`人工等级` column at once. Only rows in `导出用例` are reviewed. If the workbook already exists,
+scanning is skipped and review resumes at the first unclassified row. Use `--regenerate` to
+intentionally replace it, or `--no-review` for non-interactive batch runs. Single-key input requires
+a real terminal; some IDE run consoles may buffer input until Enter.
 
 When `--source` is omitted, the analyzer anchors the scan to its `groovy-test` directory even if
 the Java process was started from the repository root by an IDE. The recursive walk does not

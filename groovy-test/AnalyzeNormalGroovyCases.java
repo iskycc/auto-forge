@@ -1,4 +1,5 @@
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.ByteBuffer;
 import java.nio.charset.CharacterCodingException;
@@ -25,6 +26,7 @@ import java.util.regex.Pattern;
 import java.util.stream.Stream;
 import org.apache.poi.ss.usermodel.Cell;
 import org.apache.poi.ss.usermodel.CellStyle;
+import org.apache.poi.ss.usermodel.DataFormatter;
 import org.apache.poi.ss.usermodel.Font;
 import org.apache.poi.ss.usermodel.IndexedColors;
 import org.apache.poi.ss.usermodel.Row;
@@ -32,13 +34,16 @@ import org.apache.poi.ss.usermodel.Sheet;
 import org.apache.poi.ss.usermodel.Workbook;
 import org.apache.poi.ss.util.CellRangeAddress;
 import org.apache.poi.xssf.streaming.SXSSFWorkbook;
+import org.apache.poi.xssf.usermodel.XSSFWorkbook;
+import org.jline.terminal.Terminal;
+import org.jline.terminal.TerminalBuilder;
 
 /**
  * Statically analyzes Groovy source files without loading or compiling them and exports likely
  * normal test cases to an XLSX workbook.
  *
- * <p>The runtime classpath must provide Apache POI 3.13 and its transitive dependencies. The
- * analyzer intentionally has no dependency on Groovy, Grape, or Apache Ivy.
+ * <p>The runtime classpath must provide Apache POI 3.13, JLine 3.25.1, and their transitive
+ * dependencies. The analyzer intentionally has no dependency on Groovy, Grape, or Apache Ivy.
  */
 public final class AnalyzeNormalGroovyCases {
   private static final String METADATA_FIELD_SEPARATOR = "\u0000";
@@ -56,21 +61,33 @@ public final class AnalyzeNormalGroovyCases {
       }
 
       System.out.println("Source root: " + options.sourceRoot);
-      AnalysisReport report = new GroovyCaseAnalyzer(options).analyze();
-      new CaseWorkbookWriter().write(report, options);
+      boolean workbookExists = Files.exists(options.outputFile, LinkOption.NOFOLLOW_LINKS);
+      if (workbookExists && !options.regenerate) {
+        if (!Files.isRegularFile(options.outputFile, LinkOption.NOFOLLOW_LINKS)) {
+          throw new IllegalArgumentException(
+              "Existing output path is not a regular file: " + options.outputFile);
+        }
+        System.out.println("Workbook exists; skipping scan and resuming case-level review.");
+      } else {
+        AnalysisReport report = new GroovyCaseAnalyzer(options).analyze();
+        new CaseWorkbookWriter().write(report, options);
 
-      System.out.printf(
-          "Scanned %d Groovy file(s) and %d case candidate(s).%n",
-          report.sourceFileCount, report.candidateCount());
-      System.out.printf(
-          "Exported %d included case(s); %d candidate(s) were excluded.%n",
-          report.includedCases.size(), report.excludedCases.size());
-      if (!report.scanIssues.isEmpty()) {
         System.out.printf(
-            "%d file(s) had scan issues; see the '扫描问题' worksheet.%n",
-            report.scanIssues.size());
+            "Scanned %d Groovy file(s) and %d case candidate(s).%n",
+            report.sourceFileCount, report.candidateCount());
+        System.out.printf(
+            "Exported %d included case(s); %d candidate(s) were excluded.%n",
+            report.includedCases.size(), report.excludedCases.size());
+        if (!report.scanIssues.isEmpty()) {
+          System.out.printf(
+              "%d file(s) had scan issues; see the '扫描问题' worksheet.%n",
+              report.scanIssues.size());
+        }
       }
       System.out.println("Workbook: " + options.outputFile);
+      if (options.reviewEnabled) {
+        new CaseLevelReviewer().review(options.outputFile);
+      }
     } catch (IllegalArgumentException error) {
       System.err.println("Invalid arguments: " + error.getMessage());
       System.err.println(AnalyzerOptions.usage());
@@ -97,13 +114,22 @@ public final class AnalyzeNormalGroovyCases {
     private final Path outputFile;
     private final List<String> negativeKeywords;
     private final boolean showHelp;
+    private final boolean reviewEnabled;
+    private final boolean regenerate;
 
     private AnalyzerOptions(
-        Path sourceRoot, Path outputFile, List<String> negativeKeywords, boolean showHelp) {
+        Path sourceRoot,
+        Path outputFile,
+        List<String> negativeKeywords,
+        boolean showHelp,
+        boolean reviewEnabled,
+        boolean regenerate) {
       this.sourceRoot = sourceRoot;
       this.outputFile = outputFile;
       this.negativeKeywords = negativeKeywords;
       this.showHelp = showHelp;
+      this.reviewEnabled = reviewEnabled;
+      this.regenerate = regenerate;
     }
 
     private static AnalyzerOptions parse(List<String> arguments) {
@@ -111,6 +137,8 @@ public final class AnalyzeNormalGroovyCases {
       Path outputFile = null;
       List<String> extraKeywords = new ArrayList<>();
       boolean showHelp = false;
+      boolean reviewEnabled = true;
+      boolean regenerate = false;
 
       for (int index = 0; index < arguments.size(); index++) {
         String argument = arguments.get(index);
@@ -130,6 +158,12 @@ public final class AnalyzeNormalGroovyCases {
           case "--extra-keywords":
             extraKeywords.addAll(
                 splitKeywords(requiredValue(arguments, ++index, argument)));
+            break;
+          case "--no-review":
+            reviewEnabled = false;
+            break;
+          case "--regenerate":
+            regenerate = true;
             break;
           case "--help":
           case "-h":
@@ -174,7 +208,9 @@ public final class AnalyzeNormalGroovyCases {
           sourceRoot,
           resolvedOutput,
           Collections.unmodifiableList(keywords),
-          showHelp);
+          showHelp,
+          reviewEnabled,
+          regenerate);
     }
 
     private static String usage() {
@@ -187,6 +223,8 @@ public final class AnalyzeNormalGroovyCases {
           "  --source DIR              Override the analyzer directory used as the scan root",
           "  --output FILE.xlsx        Output workbook (default: DIR/normal-groovy-cases.xlsx)",
           "  --extra-keywords A,B,C    Add comma-separated exclusion keywords",
+          "  --no-review               Generate/resume without interactive L0/L1 review",
+          "  --regenerate              Replace an existing workbook with a fresh scan",
           "  -h, --help                Show this help",
           "",
           "Example:",
@@ -575,6 +613,11 @@ public final class AnalyzeNormalGroovyCases {
       for (int index = 0; index < tokens.size() - 2; index++) {
         Token keyword = tokens.get(index);
         if (!keyword.isIdentifier("class")) {
+          continue;
+        }
+        // A Groovy class literal such as String.class is a property access, not a declaration.
+        // Without this guard, a following `context {}` block can become a phantom class.
+        if (index > 0 && tokens.get(index - 1).isSymbol(".")) {
           continue;
         }
         Token name = tokens.get(index + 1);
@@ -1232,6 +1275,376 @@ public final class AnalyzeNormalGroovyCases {
             StandardCopyOption.REPLACE_EXISTING);
       } catch (AtomicMoveNotSupportedException ignored) {
         Files.move(source, target, StandardCopyOption.REPLACE_EXISTING);
+      }
+    }
+  }
+
+  private static final class CaseLevelReviewer {
+    private static final String INCLUDED_CASES_SHEET = "导出用例";
+    private static final String LEVEL_HEADER = "人工等级";
+    private static final String TITLE_HEADER = "用例标题";
+    private static final String CLASS_HEADER = "类名";
+    private static final String PATH_HEADER = "相对路径";
+
+    private final DataFormatter dataFormatter = new DataFormatter();
+
+    private void review(Path workbookPath) throws IOException {
+      XSSFWorkbook workbook;
+      try (InputStream input = Files.newInputStream(workbookPath)) {
+        workbook = new XSSFWorkbook(input);
+      }
+
+      try (XSSFWorkbook closeableWorkbook = workbook) {
+        Sheet sheet = closeableWorkbook.getSheet(INCLUDED_CASES_SHEET);
+        if (sheet == null) {
+          throw new IOException(
+              "Workbook does not contain the '" + INCLUDED_CASES_SHEET + "' worksheet");
+        }
+        Row header = sheet.getRow(0);
+        if (header == null) {
+          throw new IOException("The included-cases worksheet has no header row");
+        }
+
+        int titleColumn = requiredColumn(header, TITLE_HEADER);
+        int classColumn = requiredColumn(header, CLASS_HEADER);
+        int pathColumn = requiredColumn(header, PATH_HEADER);
+        int levelColumn = findColumn(header, LEVEL_HEADER);
+        if (levelColumn < 0) {
+          levelColumn = addLevelColumn(sheet, header);
+          saveWorkbook(closeableWorkbook, workbookPath);
+        }
+
+        List<Integer> caseRows = caseRows(sheet, titleColumn);
+        int current = firstUnclassified(caseRows, sheet, levelColumn);
+        if (current < 0) {
+          System.out.println("人工分级已完成，没有待确认的用例。");
+          return;
+        }
+
+        PosixRawTerminal posixRawTerminal = PosixRawTerminal.open();
+        if (posixRawTerminal != null) {
+          try {
+            reviewLoop(
+                closeableWorkbook,
+                workbookPath,
+                sheet,
+                caseRows,
+                current,
+                titleColumn,
+                classColumn,
+                pathColumn,
+                levelColumn,
+                System.in::read);
+          } finally {
+            posixRawTerminal.close();
+          }
+          return;
+        }
+
+        Terminal terminal = openRawTerminal();
+        if (terminal == null) {
+          reviewLoop(
+              closeableWorkbook,
+              workbookPath,
+              sheet,
+              caseRows,
+              current,
+              titleColumn,
+              classColumn,
+              pathColumn,
+              levelColumn,
+              System.in::read);
+          return;
+        }
+        try (Terminal closeableTerminal = terminal) {
+          reviewLoop(
+              closeableWorkbook,
+              workbookPath,
+              sheet,
+              caseRows,
+              current,
+              titleColumn,
+              classColumn,
+              pathColumn,
+              levelColumn,
+              closeableTerminal.reader()::read);
+        }
+      }
+    }
+
+    private static Terminal openRawTerminal() {
+      Terminal terminal = null;
+      try {
+        terminal =
+            TerminalBuilder.builder()
+                .system(true)
+                .providers("jansi,exec")
+                .dumb(false)
+                .build();
+        terminal.enterRawMode();
+        return terminal;
+      } catch (IOException | IllegalStateException unavailableTerminal) {
+        if (terminal != null) {
+          try {
+            terminal.close();
+          } catch (IOException ignored) {
+            // The terminal was not usable; there is no additional recovery action.
+          }
+        }
+        return null;
+      }
+    }
+
+    private void reviewLoop(
+        XSSFWorkbook workbook,
+        Path workbookPath,
+        Sheet sheet,
+        List<Integer> caseRows,
+        int initialCase,
+        int titleColumn,
+        int classColumn,
+        int pathColumn,
+        int levelColumn,
+        KeyReader keyReader)
+        throws IOException {
+      int current = initialCase;
+      while (current >= 0) {
+        Row row = sheet.getRow(caseRows.get(current));
+        printCase(row, current, caseRows.size(), titleColumn, classColumn, pathColumn, levelColumn);
+        int key = nextReviewKey(keyReader);
+        if (key < 0) {
+          System.out.printf(
+              "%n人工分级已暂停，剩余 %d 条未确认；下次运行将自动继续。%n",
+              countUnclassified(caseRows, sheet, levelColumn));
+          return;
+        }
+        if (key == '9') {
+          if (current == 0) {
+            System.out.println("\n已经是第一条，无法继续返回。");
+          } else {
+            current--;
+          }
+          continue;
+        }
+
+        String level = key == '0' ? "L0" : "L1";
+        Cell levelCell = row.getCell(levelColumn);
+        if (levelCell == null) {
+          levelCell = row.createCell(levelColumn);
+          Cell classCell = row.getCell(classColumn);
+          if (classCell != null) {
+            levelCell.setCellStyle(classCell.getCellStyle());
+          }
+        }
+        levelCell.setCellValue(level);
+        saveWorkbook(workbook, workbookPath);
+        System.out.printf("%n已标记 %s 并保存。%n", level);
+        current = nextUnclassifiedAfter(caseRows, sheet, levelColumn, current);
+      }
+      System.out.println("人工分级已完成，所有导出用例均已标记。");
+    }
+
+    private void printCase(
+        Row row,
+        int current,
+        int total,
+        int titleColumn,
+        int classColumn,
+        int pathColumn,
+        int levelColumn) {
+      String currentLevel = cellText(row, levelColumn);
+      System.out.printf(
+          "%n[%d/%d] 标题：%s%n类名：%s%n路径：%s%n当前等级：%s%n"
+              + "按 0 标记 L0，按 1 标记 L1，按 9 返回上一条（Ctrl+C 暂停）：",
+          current + 1,
+          total,
+          cellText(row, titleColumn),
+          cellText(row, classColumn),
+          cellText(row, pathColumn),
+          currentLevel.isEmpty() ? "未标记" : currentLevel);
+      System.out.flush();
+    }
+
+    private static int nextReviewKey(KeyReader keyReader) throws IOException {
+      while (true) {
+        int key = keyReader.read();
+        if (key < 0 || key == 3) {
+          return -1;
+        }
+        if (key == '0' || key == '1' || key == '9') {
+          return key;
+        }
+      }
+    }
+
+    private int addLevelColumn(Sheet sheet, Row header) {
+      int levelColumn = Math.max(0, header.getLastCellNum());
+      Cell cell = header.createCell(levelColumn);
+      cell.setCellValue(LEVEL_HEADER);
+      if (levelColumn > 0 && header.getCell(levelColumn - 1) != null) {
+        cell.setCellStyle(header.getCell(levelColumn - 1).getCellStyle());
+      }
+      sheet.setColumnWidth(levelColumn, 12 * 256);
+      sheet.setAutoFilter(
+          new CellRangeAddress(0, Math.max(0, sheet.getLastRowNum()), 0, levelColumn));
+      return levelColumn;
+    }
+
+    private List<Integer> caseRows(Sheet sheet, int titleColumn) {
+      List<Integer> rows = new ArrayList<>();
+      for (int rowIndex = 1; rowIndex <= sheet.getLastRowNum(); rowIndex++) {
+        Row row = sheet.getRow(rowIndex);
+        if (row != null && !cellText(row, titleColumn).isEmpty()) {
+          rows.add(rowIndex);
+        }
+      }
+      return rows;
+    }
+
+    private int firstUnclassified(List<Integer> caseRows, Sheet sheet, int levelColumn) {
+      return nextUnclassifiedAfter(caseRows, sheet, levelColumn, -1);
+    }
+
+    private int nextUnclassifiedAfter(
+        List<Integer> caseRows, Sheet sheet, int levelColumn, int current) {
+      for (int index = current + 1; index < caseRows.size(); index++) {
+        if (!isClassified(sheet.getRow(caseRows.get(index)), levelColumn)) {
+          return index;
+        }
+      }
+      return -1;
+    }
+
+    private int countUnclassified(List<Integer> caseRows, Sheet sheet, int levelColumn) {
+      int remaining = 0;
+      for (int rowIndex : caseRows) {
+        if (!isClassified(sheet.getRow(rowIndex), levelColumn)) {
+          remaining++;
+        }
+      }
+      return remaining;
+    }
+
+    private boolean isClassified(Row row, int levelColumn) {
+      String level = cellText(row, levelColumn);
+      return level.equals("L0") || level.equals("L1");
+    }
+
+    private int requiredColumn(Row header, String headerName) throws IOException {
+      int column = findColumn(header, headerName);
+      if (column < 0) {
+        throw new IOException("Missing required worksheet column: " + headerName);
+      }
+      return column;
+    }
+
+    private int findColumn(Row header, String headerName) {
+      for (int column = 0; column < header.getLastCellNum(); column++) {
+        Cell cell = header.getCell(column);
+        if (cell != null && dataFormatter.formatCellValue(cell).trim().equals(headerName)) {
+          return column;
+        }
+      }
+      return -1;
+    }
+
+    private String cellText(Row row, int column) {
+      Cell cell = row.getCell(column);
+      return cell == null ? "" : dataFormatter.formatCellValue(cell).trim();
+    }
+
+    private static void saveWorkbook(XSSFWorkbook workbook, Path workbookPath)
+        throws IOException {
+      Path parent = workbookPath.getParent();
+      if (parent == null) {
+        throw new IOException("Workbook path must have a parent directory");
+      }
+      Path temporaryFile = Files.createTempFile(parent, ".case-level-review-", ".xlsx");
+      try {
+        try (OutputStream output =
+            Files.newOutputStream(
+                temporaryFile,
+                StandardOpenOption.TRUNCATE_EXISTING,
+                StandardOpenOption.WRITE)) {
+          workbook.write(output);
+        }
+        CaseWorkbookWriter.moveAtomically(temporaryFile, workbookPath);
+      } finally {
+        Files.deleteIfExists(temporaryFile);
+      }
+    }
+  }
+
+  @FunctionalInterface
+  private interface KeyReader {
+    int read() throws IOException;
+  }
+
+  private static final class PosixRawTerminal implements AutoCloseable {
+    private final String originalAttributes;
+
+    private PosixRawTerminal(String originalAttributes) {
+      this.originalAttributes = originalAttributes;
+    }
+
+    private static PosixRawTerminal open() throws IOException {
+      if (System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("win")) {
+        return null;
+      }
+      String originalAttributes;
+      try {
+        originalAttributes = captureSttyAttributes();
+      } catch (IOException unavailableStty) {
+        if (Thread.currentThread().isInterrupted()) {
+          throw unavailableStty;
+        }
+        return null;
+      }
+      if (originalAttributes == null) {
+        return null;
+      }
+      boolean rawModeEnabled =
+          runStty("-icanon", "-echo", "-isig", "min", "1", "time", "0");
+      return rawModeEnabled ? new PosixRawTerminal(originalAttributes) : null;
+    }
+
+    @Override
+    public void close() throws IOException {
+      if (!runStty(originalAttributes)) {
+        throw new IOException("Failed to restore terminal attributes after case-level review");
+      }
+    }
+
+    private static String captureSttyAttributes() throws IOException {
+      Process process = sttyProcess("-g").redirectOutput(ProcessBuilder.Redirect.PIPE).start();
+      String output;
+      try (InputStream input = process.getInputStream()) {
+        output = new String(input.readAllBytes(), StandardCharsets.UTF_8).trim();
+      }
+      return waitFor(process) == 0 && !output.isEmpty() ? output : null;
+    }
+
+    private static boolean runStty(String... arguments) throws IOException {
+      Process process =
+          sttyProcess(arguments).redirectOutput(ProcessBuilder.Redirect.DISCARD).start();
+      return waitFor(process) == 0;
+    }
+
+    private static ProcessBuilder sttyProcess(String... arguments) {
+      List<String> command = new ArrayList<>();
+      command.add("stty");
+      command.addAll(Arrays.asList(arguments));
+      return new ProcessBuilder(command)
+          .redirectInput(ProcessBuilder.Redirect.INHERIT)
+          .redirectError(ProcessBuilder.Redirect.DISCARD);
+    }
+
+    private static int waitFor(Process process) throws IOException {
+      try {
+        return process.waitFor();
+      } catch (InterruptedException interrupted) {
+        Thread.currentThread().interrupt();
+        throw new IOException("Interrupted while configuring single-key terminal input", interrupted);
       }
     }
   }
