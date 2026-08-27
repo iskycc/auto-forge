@@ -17,12 +17,13 @@ export default async function RunBatchDetailsPage({
   const { identity, projectIds } = await requirePageProjectScope("run.read");
   const { batchId } = await params;
   const services = await getPlatformServices();
-  let batch;
+  let overview;
   try {
-    batch = await services.runBatches.get(batchId, projectIds);
+    overview = await services.runBatches.getDetailOverview(batchId, projectIds);
   } catch {
     notFound();
   }
+  const batch = overview.batch;
   const projectVersion = batch.policy?.projectVersionId
     ? (await services.projectStructures.list(batch.projectId)).versions.find(
         (version) => version.id === batch.policy?.projectVersionId,
@@ -51,7 +52,7 @@ export default async function RunBatchDetailsPage({
         {...(projectVersion ? { projectVersionName: projectVersion.name } : {})}
       />
       <ExecutionBatchDetails
-        batch={toExecutionBatchView(batch)}
+        batch={toExecutionBatchView(overview)}
         retrySuiteId={batch.suiteId}
         {...(batch.policy
           ? {

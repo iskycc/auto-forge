@@ -75,6 +75,58 @@ async function createSqliteHarness(): Promise<SchedulingEventHarness> {
 }
 
 function schedulingEventCases(createHarness: () => Promise<SchedulingEventHarness>): void {
+  it("loads a bounded detail overview and pages case rows in the database", async () => {
+    const harness = await createHarness();
+    const extraRunId = `${harness.eventPrefix}-case-page-run`;
+    try {
+      await harness.rawQuery("UPDATE run_batches SET total_runs=2 WHERE id=?", [harness.batchIdA]);
+      await harness.rawQuery(
+        `INSERT INTO execution_runs
+           (id,batch_id,case_definition_id,case_version,display_name,class_name,status,
+            attempt_count,created_at,updated_at)
+         VALUES (?,?,'case-extra',1,'Another case','com.example.AnotherTest','queued',0,?,?)`,
+        [extraRunId, harness.batchIdA, "2026-08-10T00:00:01.000Z", "2026-08-10T00:00:01.000Z"],
+      );
+
+      const overview = await harness.batches.getDetailOverview(harness.batchIdA);
+      expect(overview).toMatchObject({
+        batch: { id: harness.batchIdA, totalRuns: 2 },
+        roundSummaries: [{ round: 1, totalRuns: 2, executed: 1, notExecuted: 1 }],
+        finalSummary: { totalRuns: 2, notExecuted: 2 },
+      });
+      expect(overview).not.toHaveProperty("runs");
+      expect(overview).not.toHaveProperty("attempts");
+
+      const firstPage = await harness.batches.listCasePage({
+        batchId: harness.batchIdA,
+        scope: 1,
+        sort: "name",
+        direction: "asc",
+        offset: 0,
+        limit: 1,
+      });
+      expect(firstPage).toMatchObject({ total: 2 });
+      expect(firstPage?.items).toHaveLength(1);
+
+      const pending = await harness.batches.listCasePage({
+        batchId: harness.batchIdA,
+        scope: 1,
+        status: "pending",
+        sort: "none",
+        direction: "asc",
+        offset: 0,
+        limit: 50,
+      });
+      expect(pending).toMatchObject({
+        total: 1,
+        items: [{ run: { id: extraRunId, displayName: "Another case" }, round: 1 }],
+      });
+    } finally {
+      await harness.dispose();
+      await cleanupTemporaryDirectories();
+    }
+  });
+
   it("reads events back in time order with payload round-trip", async () => {
     const harness = await createHarness();
     const earlyId = `${harness.eventPrefix}-early`;

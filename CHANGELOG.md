@@ -4,6 +4,57 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## 1.5.0 - 2026-08-27
+
+### Changed
+
+- The authenticated dashboard and quality insights now aggregate confirmed execution facts inside
+  SQLite/PostgreSQL. Counts and trends remain exact beyond 100,000 samples instead of stopping at a
+  hard-coded row limit, and the Web process no longer materializes up to 200,000 fact rows for one
+  dashboard request.
+- Run-batch details now load bounded database aggregates for rounds, final outcomes, Runner activity,
+  infrastructure incidents and recovery timing. Case rows are searched, filtered, sorted and paged
+  on the server (20–500 rows per page), so a 100,000-case batch is never serialized into the initial
+  page or repeatedly resent by active-batch refreshes.
+- Permanent anonymous result pages, temporary progress pages, sharing and scheduling-log permission
+  checks use bounded summaries rather than loading every run and attempt. Identical default insight
+  and flaky-case filters reuse one aggregate result.
+- Analytics exports issue their configured bounded SQL limit directly rather than reading a larger
+  fixed window and slicing it in memory.
+
+### Tests
+
+- Added an exact 100,005-sample dashboard regression and shared SQLite/PostgreSQL repository contract
+  coverage for bounded batch overviews, case pagination and pending-state filters.
+- Extended the 100,000-run performance gate to verify that the detail overview returns no run/attempt
+  arrays, the first page contains only 50 rows and both operations complete within the bounded budget.
+- Re-ran the Playwright all-rounds workflow across live scheduling, status filters, Runner fault
+  aggregation, permanent anonymous result sharing and desktop layout.
+
+### Database and persisted configuration
+
+- SQLite migration `0049_large_batch_detail_indexes.sql` and PostgreSQL migration
+  `0048_large_batch_detail_indexes.sql` add batch/creation and batch/display-name indexes for stable
+  detail pagination. They are additive and require no data rewrite or configuration change.
+- Existing analytics facts remain schema v4 and are reused without migration or rebuild.
+
+### Compatibility
+
+- Runner Protocol v1, Jenkins Pipeline parameters, task snapshots, permanent-share tokens and release
+  archive formats are unchanged. The existing unbounded batch-result export remains an explicitly
+  requested background operation; interactive detail pages are now bounded.
+
+### Offline assets
+
+- No production dependency or runtime network request was added. Lite and Full use the same
+  application contract and their native database aggregation implementation.
+
+### Known limitations
+
+- Failure-incident cards return the 100 most frequent grouped Runner faults and the latest 20 distinct
+  affected case names for each group; each displayed group's count is exact, and paged case rows remain
+  available for complete record inspection.
+
 ## 1.3.10 - 2026-08-26
 
 ### Added

@@ -36,8 +36,8 @@ export async function GET(request: Request, context: Context): Promise<NextRespo
     const query = querySchema.parse(Object.fromEntries(url.searchParams));
     const services = await getPlatformServices();
     const projectIds = services.identityAccess.projectScope(identity, "run.read");
-    // get 会校验批次存在性并过滤项目范围；随后读取事件。
-    await services.runBatches.get(batchId, projectIds);
+    // 只读取批次摘要完成范围校验，不能为了鉴权加载数十万条 run/attempt。
+    await services.runBatches.getSummary(batchId, projectIds);
     const page = await services.runBatches.listSchedulingEvents(batchId, {
       limit: query.limit,
       ...(query.runnerId ? { runnerId: query.runnerId } : {}),

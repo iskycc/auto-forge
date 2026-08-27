@@ -1,5 +1,6 @@
 import type {
   AnalyticsFilter,
+  AnalyticsSummary,
   ApiToken,
   CaseSuiteSchedule,
   GlobalSearchResult,
@@ -11,14 +12,20 @@ import type {
   ServiceAccount,
 } from "@autoforge/contracts";
 import type { PlatformOperationsRepository } from "@autoforge/application";
-import { DomainError, isPermission, type Permission } from "@autoforge/domain";
+import {
+  ADAPTER_FAILURE_RESULT_CODES,
+  ADAPTER_SUCCESS_RESULT_CODES,
+  DomainError,
+  isPermission,
+  RETRYABLE_RUNNER_FAILURE_RESULT_CODES,
+  type Permission,
+} from "@autoforge/domain";
 import type { PoolClient } from "pg";
 
 import type { AttemptLogStore } from "./attempt-log-store";
 import type { PostgresDatabaseHandle } from "./postgres-database";
 import {
   ANALYTICS_FACT_SCHEMA_VERSION,
-  aggregateAnalytics,
   analyticsExportProjectIds,
   failureSignature,
   mapApiToken,
@@ -859,18 +866,199 @@ export class PostgresPlatformOperationsRepository implements PlatformOperationsR
 
   async readAnalytics(input: Parameters<PlatformOperationsRepository["readAnalytics"]>[0]) {
     await this.rebuildAnalyticsFacts(10_000);
-    return aggregateAnalytics(
-      await this.analyticsRows(input.filter, input.projectIds),
-      input.generatedAt,
-      input.filter.timeZone,
-    );
+    const overview = await this.readAnalyticsOverview(input);
+    const selection = postgresAnalyticsSelection(input.filter, input.projectIds);
+    if (!selection) return overview;
+    const values = [...selection.values, [...RETRYABLE_RUNNER_FAILURE_RESULT_CODES]];
+    const retryableParameter = `$${values.length}`;
+    const qualityWhere = [
+      ...selection.where,
+      `(result_code IS NULL OR NOT (result_code=ANY(${retryableParameter}::text[])))`,
+    ];
+    const whereSql = `WHERE ${qualityWhere.join(" AND ")}`;
+    const flakyValues = [
+      ...values,
+      [...ADAPTER_SUCCESS_RESULT_CODES],
+      [...ADAPTER_FAILURE_RESULT_CODES],
+    ];
+    const successCodesParameter = `$${flakyValues.length - 1}`;
+    const failureCodesParameter = `$${flakyValues.length}`;
+    const [durationResult, projects, suites, runners, outcomes, flakyResult] = await Promise.all([
+      this.handle.pool.query<{ p50: string | number | null; p95: string | number | null }>(
+        `SELECT PERCENTILE_DISC(0.5) WITHIN GROUP (ORDER BY duration_ms) AS p50,
+                PERCENTILE_DISC(0.95) WITHIN GROUP (ORDER BY duration_ms) AS p95
+         FROM analytics_facts ${whereSql} AND duration_ms IS NOT NULL AND duration_ms>=0`,
+        values,
+      ),
+      postgresAnalyticsDimensions(this.handle.pool, "project_id", whereSql, values),
+      postgresAnalyticsDimensions(this.handle.pool, "suite_id", whereSql, values),
+      postgresAnalyticsDimensions(this.handle.pool, "runner_id", whereSql, values),
+      postgresAnalyticsDimensions(this.handle.pool, "outcome", whereSql, values),
+      this.handle.pool.query<{
+        caseDefinitionId: string;
+        displayName: string;
+        samples: string;
+        passed: string;
+        failed: string;
+      }>(
+        `SELECT fact.case_definition_id AS "caseDefinitionId",
+                COALESCE(case_definition.display_name,fact.case_definition_id) AS "displayName",
+                COUNT(*) AS samples,
+                COUNT(*) FILTER (
+                  WHERE fact.outcome='succeeded'
+                     OR (fact.outcome='failed' AND fact.result_code=ANY(${successCodesParameter}::text[]))
+                ) AS passed,
+                COUNT(*) FILTER (
+                  WHERE fact.outcome='failed' AND fact.result_code=ANY(${failureCodesParameter}::text[])
+                ) AS failed
+         FROM analytics_facts fact
+         LEFT JOIN case_definitions case_definition ON case_definition.id=fact.case_definition_id
+         ${qualifyPostgresAnalyticsWhere(whereSql)}
+           AND fact.outcome IN ('succeeded','failed')
+         GROUP BY fact.case_definition_id,case_definition.display_name
+         HAVING COUNT(*)>=5
+            AND COUNT(*) FILTER (
+              WHERE fact.outcome='succeeded'
+                 OR (fact.outcome='failed' AND fact.result_code=ANY(${successCodesParameter}::text[]))
+            )>0
+            AND COUNT(*) FILTER (
+              WHERE fact.outcome='failed' AND fact.result_code=ANY(${failureCodesParameter}::text[])
+            )>0
+         ORDER BY samples DESC,fact.case_definition_id LIMIT 20`,
+        flakyValues,
+      ),
+    ]);
+    const duration = durationResult.rows[0];
+    return {
+      ...overview,
+      ...(duration?.p50 === null || duration?.p50 === undefined
+        ? {}
+        : { durationP50Ms: Number(duration.p50) }),
+      ...(duration?.p95 === null || duration?.p95 === undefined
+        ? {}
+        : { durationP95Ms: Number(duration.p95) }),
+      dimensions: { projects, suites, runners, outcomes },
+      flakyCases: flakyResult.rows.map((row) => {
+        const samples = Number(row.samples);
+        return {
+          caseDefinitionId: row.caseDefinitionId,
+          displayName: row.displayName,
+          samples,
+          passed: Number(row.passed),
+          failed: Number(row.failed),
+          confidence: Math.round((1 - 1 / Math.sqrt(samples)) * 10_000) / 10_000,
+        };
+      }),
+    };
+  }
+
+  async readAnalyticsOverview(
+    input: Parameters<PlatformOperationsRepository["readAnalyticsOverview"]>[0],
+  ): Promise<AnalyticsSummary> {
+    await this.ready();
+    const selection = postgresAnalyticsSelection(input.filter, input.projectIds);
+    if (!selection) return emptyPostgresAnalyticsSummary(input.generatedAt);
+    const values = [...selection.values, [...RETRYABLE_RUNNER_FAILURE_RESULT_CODES]];
+    const retryableParameter = `$${values.length}`;
+    const qualityWhere = [
+      ...selection.where,
+      `(result_code IS NULL OR NOT (result_code=ANY(${retryableParameter}::text[])))`,
+    ];
+    const whereSql = `WHERE ${qualityWhere.join(" AND ")}`;
+    const trendValues = [...values, input.filter.timeZone ?? "UTC"];
+    const timeZoneParameter = `$${trendValues.length}`;
+    const [totalsResult, trendResult, failuresResult] = await Promise.all([
+      this.handle.pool.query<{
+        sampleCount: string;
+        passed: string;
+        failed: string;
+        skipped: string;
+      }>(
+        `SELECT COUNT(*) AS "sampleCount",COALESCE(SUM(passed),0) AS passed,
+                  COALESCE(SUM(failed),0) AS failed,COALESCE(SUM(skipped),0) AS skipped
+           FROM analytics_facts ${whereSql}`,
+        values,
+      ),
+      this.handle.pool.query<{
+        bucket: string;
+        total: string;
+        passed: string;
+        failed: string;
+        skipped: string;
+      }>(
+        `SELECT TO_CHAR(completed_at::timestamptz AT TIME ZONE ${timeZoneParameter},'YYYY-MM-DD')
+                    || 'T00:00:00.000Z' AS bucket,
+                  SUM(passed+failed+skipped) AS total,SUM(passed) AS passed,
+                  SUM(failed) AS failed,SUM(skipped) AS skipped
+           FROM analytics_facts ${whereSql}
+           GROUP BY bucket HAVING SUM(passed+failed+skipped)>0 ORDER BY bucket`,
+        trendValues,
+      ),
+      this.handle.pool.query<{
+        signature: string;
+        description: string;
+        resultCode: string | null;
+        count: string;
+        lastSeenAt: Date | string;
+      }>(
+        `WITH matching AS (
+             SELECT fact.failure_signature,fact.result_code,fact.completed_at,
+                    COALESCE(NULLIF(BTRIM(attempt.result_summary),''),'执行失败，但执行机未提供错误描述。') AS description
+             FROM analytics_facts fact LEFT JOIN run_attempts attempt ON attempt.id=fact.attempt_id
+             ${qualifyPostgresAnalyticsWhere(whereSql)} AND fact.failure_signature IS NOT NULL
+           ), ranked AS (
+             SELECT *,ROW_NUMBER() OVER (PARTITION BY failure_signature ORDER BY completed_at DESC) AS rank
+             FROM matching
+           )
+           SELECT failure_signature AS signature,
+                  MAX(description) FILTER (WHERE rank=1) AS description,
+                  MAX(result_code) FILTER (WHERE rank=1) AS "resultCode",
+                  COUNT(*) AS count,MAX(completed_at) AS "lastSeenAt"
+           FROM ranked GROUP BY failure_signature ORDER BY count DESC,signature LIMIT 20`,
+        values,
+      ),
+    ]);
+    const totalsRow = totalsResult.rows[0];
+    const totals = {
+      sampleCount: Number(totalsRow?.sampleCount ?? 0),
+      passed: Number(totalsRow?.passed ?? 0),
+      failed: Number(totalsRow?.failed ?? 0),
+      skipped: Number(totalsRow?.skipped ?? 0),
+    };
+    const methodSamples = totals.passed + totals.failed + totals.skipped;
+    return {
+      ...totals,
+      successRate: postgresAnalyticsRatio(totals.passed, methodSamples),
+      failureRate: postgresAnalyticsRatio(totals.failed, methodSamples),
+      skippedRate: postgresAnalyticsRatio(totals.skipped, methodSamples),
+      generatedAt: input.generatedAt,
+      dimensions: { projects: [], suites: [], runners: [], outcomes: [] },
+      trend: trendResult.rows.map((row) => ({
+        bucket: row.bucket,
+        total: Number(row.total),
+        passed: Number(row.passed),
+        failed: Number(row.failed),
+        skipped: Number(row.skipped),
+      })),
+      failures: failuresResult.rows.map((row) => ({
+        signature: row.signature,
+        description: row.description,
+        ...(row.resultCode ? { resultCode: row.resultCode } : {}),
+        count: Number(row.count),
+        lastSeenAt:
+          row.lastSeenAt instanceof Date
+            ? row.lastSeenAt.toISOString()
+            : new Date(row.lastSeenAt).toISOString(),
+      })),
+      flakyCases: [],
+    };
   }
 
   async exportAnalytics(input: Parameters<PlatformOperationsRepository["exportAnalytics"]>[0]) {
     await this.rebuildAnalyticsFacts(input.maximumRows);
-    return (await this.analyticsRows(input.filter, input.projectIds))
-      .slice(0, input.maximumRows)
-      .map((row) => ({ ...row }));
+    return (await this.analyticsRows(input.filter, input.projectIds, input.maximumRows)).map(
+      (row) => ({ ...row }),
+    );
   }
 
   async createAnalyticsExportJob(
@@ -1137,45 +1325,12 @@ export class PostgresPlatformOperationsRepository implements PlatformOperationsR
   private async analyticsRows(
     filter: AnalyticsFilter,
     projectIds?: readonly string[],
+    limit = 100_000,
   ): Promise<AnalyticsFactRow[]> {
-    if (projectIds?.length === 0) return [];
-    const where: string[] = [];
-    const values: unknown[] = [];
-    const add = (column: string, value: string | undefined, operator = "=") => {
-      if (value === undefined) return;
-      values.push(value);
-      where.push(`${column}${operator}$${values.length}`);
-    };
-    if (projectIds) {
-      values.push([...projectIds]);
-      where.push(`project_id=ANY($${values.length}::text[])`);
-    }
-    add("project_id", filter.projectId);
-    if (filter.projectVersionId) {
-      values.push(filter.projectVersionId);
-      where.push(
-        `EXISTS (SELECT 1 FROM case_definitions c WHERE c.id=analytics_facts.case_definition_id AND c.project_version_id=$${values.length})`,
-      );
-    }
-    if (filter.testStageId) {
-      values.push(filter.testStageId);
-      where.push(
-        `EXISTS (SELECT 1 FROM case_definitions c WHERE c.id=analytics_facts.case_definition_id AND c.test_stage_id=$${values.length})`,
-      );
-    }
-    add("suite_id", filter.suiteId);
-    add("case_definition_id", filter.caseDefinitionId);
-    add("runner_id", filter.runnerId);
-    add("outcome", filter.outcome);
-    add("failure_signature", filter.failureSignature);
-    if (filter.tag) {
-      values.push(filter.tag);
-      where.push(
-        `EXISTS (SELECT 1 FROM case_definitions c WHERE c.id=analytics_facts.case_definition_id AND c.tags_json::jsonb ? $${values.length})`,
-      );
-    }
-    add("completed_at", filter.completedAfter, ">=");
-    add("completed_at", filter.completedBefore, "<=");
+    const selection = postgresAnalyticsSelection(filter, projectIds);
+    if (!selection) return [];
+    const { where, values } = selection;
+    values.push(limit);
     const result = await this.handle.pool.query<AnalyticsFactRow>(
       `SELECT analytics_facts.*,
               COALESCE(
@@ -1186,7 +1341,7 @@ export class PostgresPlatformOperationsRepository implements PlatformOperationsR
               (SELECT a.result_summary FROM run_attempts a
                WHERE a.id=analytics_facts.attempt_id) AS failure_description
        FROM analytics_facts ${where.length > 0 ? `WHERE ${where.join(" AND ")}` : ""}
-       ORDER BY completed_at,attempt_id LIMIT 100000`,
+       ORDER BY completed_at,attempt_id LIMIT $${values.length}`,
       values,
     );
     return result.rows.map((row) => ({
@@ -1194,6 +1349,95 @@ export class PostgresPlatformOperationsRepository implements PlatformOperationsR
       duration_ms: row.duration_ms === null ? null : Number(row.duration_ms),
     }));
   }
+}
+
+function postgresAnalyticsSelection(
+  filter: AnalyticsFilter,
+  projectIds?: readonly string[],
+): { where: string[]; values: unknown[] } | null {
+  if (projectIds?.length === 0) return null;
+  const where: string[] = [];
+  const values: unknown[] = [];
+  const add = (column: string, value: string | undefined, operator = "=") => {
+    if (value === undefined) return;
+    values.push(value);
+    where.push(`${column}${operator}$${values.length}`);
+  };
+  if (projectIds) {
+    values.push([...projectIds]);
+    where.push(`project_id=ANY($${values.length}::text[])`);
+  }
+  add("project_id", filter.projectId);
+  if (filter.projectVersionId) {
+    values.push(filter.projectVersionId);
+    where.push(
+      `EXISTS (SELECT 1 FROM case_definitions c WHERE c.id=analytics_facts.case_definition_id AND c.project_version_id=$${values.length})`,
+    );
+  }
+  if (filter.testStageId) {
+    values.push(filter.testStageId);
+    where.push(
+      `EXISTS (SELECT 1 FROM case_definitions c WHERE c.id=analytics_facts.case_definition_id AND c.test_stage_id=$${values.length})`,
+    );
+  }
+  add("suite_id", filter.suiteId);
+  add("case_definition_id", filter.caseDefinitionId);
+  add("runner_id", filter.runnerId);
+  add("outcome", filter.outcome);
+  add("failure_signature", filter.failureSignature);
+  if (filter.tag) {
+    values.push(filter.tag);
+    where.push(
+      `EXISTS (SELECT 1 FROM case_definitions c WHERE c.id=analytics_facts.case_definition_id AND c.tags_json::jsonb ? $${values.length})`,
+    );
+  }
+  add("completed_at", filter.completedAfter, ">=");
+  add("completed_at", filter.completedBefore, "<=");
+  return { where: where.length > 0 ? where : ["1=1"], values };
+}
+
+function qualifyPostgresAnalyticsWhere(whereSql: string): string {
+  return whereSql
+    .replaceAll("analytics_facts.", "fact.")
+    .replace(
+      /(?<![\w.])(project_id|suite_id|case_definition_id|runner_id|outcome|failure_signature|completed_at|result_code)\b/gu,
+      "fact.$1",
+    );
+}
+
+async function postgresAnalyticsDimensions(
+  queryable: Queryable,
+  column: "project_id" | "suite_id" | "runner_id" | "outcome",
+  whereSql: string,
+  values: readonly unknown[],
+): Promise<AnalyticsSummary["dimensions"]["projects"]> {
+  const result = await queryable.query<{ id: string; count: string }>(
+    `SELECT ${column} AS id,COUNT(*) AS count FROM analytics_facts ${whereSql}
+     GROUP BY ${column} ORDER BY count DESC,id`,
+    [...values],
+  );
+  return result.rows.map((row) => ({ id: row.id, count: Number(row.count) }));
+}
+
+function emptyPostgresAnalyticsSummary(generatedAt: string): AnalyticsSummary {
+  return {
+    sampleCount: 0,
+    passed: 0,
+    failed: 0,
+    skipped: 0,
+    successRate: 0,
+    failureRate: 0,
+    skippedRate: 0,
+    generatedAt,
+    dimensions: { projects: [], suites: [], runners: [], outcomes: [] },
+    trend: [],
+    failures: [],
+    flakyCases: [],
+  };
+}
+
+function postgresAnalyticsRatio(value: number, total: number): number {
+  return total === 0 ? 0 : Math.round((value / total) * 10_000) / 10_000;
 }
 
 type SearchRow = { id: string; project_id: string | null; title: string; subtitle: string };

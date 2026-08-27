@@ -850,6 +850,8 @@ export const executionRuns = sqliteTable(
   (table) => [
     uniqueIndex("execution_runs_batch_case_uq").on(table.batchId, table.caseDefinitionId),
     index("execution_runs_batch_status_idx").on(table.batchId, table.status),
+    index("execution_runs_batch_created_idx").on(table.batchId, table.createdAt, table.id),
+    index("execution_runs_batch_name_idx").on(table.batchId, table.displayName, table.id),
     index("execution_runs_runner_status_idx").on(table.assignedRunnerId, table.status),
   ],
 );

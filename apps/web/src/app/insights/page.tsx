@@ -110,9 +110,11 @@ export default async function InsightsPage({
         )
       : Promise.resolve([]),
   ]);
-  // Full 会在读取时增量物化统计事实。先完成主查询再读取不稳定用例，避免两个
-  // SKIP LOCKED 物化事务竞争时其中一个摘要短暂读到空结果。
-  const flakySummary = await services.platformOperations.analytics(identity, flakyFilter);
+  // 默认不稳定用例范围与主筛选一致时复用同一份数据库聚合，避免洞察首屏把
+  // 大事实表完整统计两遍；用户单独调整范围后才执行第二次查询。
+  const flakySummary = analyticsFiltersEqual(filter, flakyFilter)
+    ? summary
+    : await services.platformOperations.analytics(identity, flakyFilter);
   const comparison =
     typeof parameters.leftBatchId === "string" && typeof parameters.rightBatchId === "string"
       ? await services.platformOperations.compareBatches(
@@ -889,6 +891,12 @@ function analyticsFilter(
 
 function stringParameter(value: string | string[] | undefined): string {
   return typeof value === "string" ? value : "";
+}
+
+function analyticsFiltersEqual(left: AnalyticsFilter, right: AnalyticsFilter): boolean {
+  const entries = (filter: AnalyticsFilter) =>
+    Object.entries(filter).sort(([leftKey], [rightKey]) => leftKey.localeCompare(rightKey));
+  return JSON.stringify(entries(left)) === JSON.stringify(entries(right));
 }
 
 function dateTimeParameter(

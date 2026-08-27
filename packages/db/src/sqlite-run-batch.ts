@@ -2,6 +2,8 @@ import type {
   CreateRunBatchRecord,
   ReserveSchedulingAssignmentsInput,
   RunBatchListQuery,
+  RunBatchCasePageQuery,
+  RunBatchDetailOverview,
   RunBatchRepository,
   SchedulingSnapshot,
 } from "@autoforge/application";
@@ -16,6 +18,7 @@ import {
   MINIMUM_JAVA_MAJOR_VERSION,
   normalizeStoredRetryConcurrencyRules,
   REQUIRED_EXECUTION_LABELS,
+  RETRYABLE_RUNNER_FAILURE_RESULT_CODES,
   SUPPORTED_TESTNG_VERSION,
   transitionRunBatch,
   type ExecutionEnvironmentVariable,
@@ -27,6 +30,7 @@ import {
   type RunBatchExecutionPolicy,
   type RunBatchRoundRecovery,
   type RunBatchRoundConcurrency,
+  type RunBatchRoundSummary,
   type RetryConcurrencyState,
   type RunBatchStatusEvent,
   type RunBatchStatus,
@@ -94,6 +98,49 @@ type RoundRecoveryDetailRow = {
   created_at: string;
   updated_at: string;
 };
+
+type SqliteRoundAggregateRow = {
+  round: number;
+  totalRuns: number;
+  executed: number;
+  passed: number;
+  failed: number;
+  timedOut: number;
+  cancelled: number;
+  active: number;
+  startedAt: string | null;
+  finishedAt: string | null;
+};
+
+type SqliteRunnerFaultRow = {
+  runnerId: string;
+  resultCode: string;
+  summary: string;
+  count: number;
+  attemptNumbers: string;
+  caseNames: string | null;
+  lastOccurredAt: string;
+};
+
+const SQLITE_BATCH_ROUND_CTES = `WITH batch_runs AS (
+  SELECT * FROM execution_runs WHERE batch_id=?
+), round_numbers(round) AS (
+  SELECT 1
+  UNION SELECT current_round FROM run_batches WHERE id=?
+  UNION SELECT attempt.attempt_number FROM run_attempts attempt
+        JOIN batch_runs run ON run.id=attempt.execution_run_id
+  UNION SELECT held_round FROM batch_runs WHERE held_round>0
+), eligible_runs(execution_run_id,round) AS (
+  SELECT id,1 FROM batch_runs
+  UNION SELECT attempt.execution_run_id,attempt.attempt_number
+        FROM run_attempts attempt JOIN batch_runs run ON run.id=attempt.execution_run_id
+  UNION SELECT attempt.execution_run_id,attempt.attempt_number+1
+        FROM run_attempts attempt JOIN batch_runs run ON run.id=attempt.execution_run_id
+        JOIN round_numbers rounds ON rounds.round=attempt.attempt_number+1
+        WHERE COALESCE(attempt.outcome,attempt.status) IN ('failed','timed_out')
+  UNION SELECT id,held_round FROM batch_runs
+        WHERE held_round>0 AND held_round IN (SELECT round FROM round_numbers)
+)`;
 
 export class SqliteRunBatchRepository implements RunBatchRepository {
   constructor(
@@ -516,6 +563,192 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
       )
       .get();
     return row ? this.mapBatch(row) : null;
+  }
+
+  async getDetailOverview(
+    batchId: string,
+    projectIds?: readonly string[],
+  ): Promise<RunBatchDetailOverview | null> {
+    const batch = await this.getSummary(batchId, projectIds);
+    if (!batch) return null;
+    const roundRows = this.handle.client
+      .prepare(
+        `${SQLITE_BATCH_ROUND_CTES}
+         SELECT rounds.round,
+                COUNT(eligible.execution_run_id) AS totalRuns,
+                COUNT(attempt.id) AS executed,
+                SUM(CASE WHEN COALESCE(attempt.outcome, attempt.status)='succeeded' THEN 1 ELSE 0 END) AS passed,
+                SUM(CASE WHEN COALESCE(attempt.outcome, attempt.status)='failed' THEN 1 ELSE 0 END) AS failed,
+                SUM(CASE WHEN COALESCE(attempt.outcome, attempt.status)='timed_out' THEN 1 ELSE 0 END) AS timedOut,
+                SUM(CASE WHEN COALESCE(attempt.outcome, attempt.status)='cancelled' THEN 1 ELSE 0 END) AS cancelled,
+                SUM(CASE WHEN attempt.status IN ('assigned','running') THEN 1 ELSE 0 END) AS active,
+                MIN(COALESCE(attempt.started_at,attempt.created_at)) AS startedAt,
+                MAX(attempt.finished_at) AS finishedAt
+         FROM round_numbers rounds
+         LEFT JOIN eligible_runs eligible ON eligible.round=rounds.round
+         LEFT JOIN run_attempts attempt
+           ON attempt.execution_run_id=eligible.execution_run_id
+          AND attempt.attempt_number=rounds.round
+         GROUP BY rounds.round ORDER BY rounds.round`,
+      )
+      .all(batchId, batchId) as SqliteRoundAggregateRow[];
+    const firstPassRows = this.handle.client
+      .prepare(
+        `SELECT MIN(attempt.attempt_number) AS firstRound, COUNT(*) AS count
+         FROM (
+           SELECT execution_run_id, MIN(attempt_number) AS attempt_number
+           FROM run_attempts
+           WHERE COALESCE(outcome,status)='succeeded'
+             AND EXISTS (SELECT 1 FROM execution_runs run
+                         WHERE run.id=run_attempts.execution_run_id AND run.batch_id=?)
+           GROUP BY execution_run_id
+         ) attempt GROUP BY attempt.attempt_number ORDER BY attempt.attempt_number`,
+      )
+      .all(batchId) as Array<{ firstRound: number; count: number }>;
+    const roundSummaries = mapRoundSummaries(batch, roundRows, firstPassRows);
+    const roundRecoveries = this.handle.client
+      .prepare(
+        `SELECT rule_id, after_round, next_round, jenkins_job_url, wait_minutes, status,
+                source_build_number, rebuild_number, rebuild_url, activated_at, started_at,
+                finished_at, build_result, error_message, created_at, updated_at
+         FROM run_batch_round_recoveries WHERE batch_id=? ORDER BY after_round,rule_id`,
+      )
+      .all(batchId) as RoundRecoveryDetailRow[];
+    const roundConcurrencies = this.handle.db
+      .select()
+      .from(runBatchRoundConcurrencies)
+      .where(eq(runBatchRoundConcurrencies.batchId, batchId))
+      .orderBy(runBatchRoundConcurrencies.executionRound)
+      .all()
+      .map(toRoundConcurrency);
+    const runnerRoundSummaries = this.handle.client
+      .prepare(
+        `SELECT attempt.attempt_number AS round,attempt.runner_id AS runnerId,
+                COUNT(*) AS executed,
+                SUM(CASE WHEN COALESCE(attempt.outcome,attempt.status)='succeeded' THEN 1 ELSE 0 END) AS passed,
+                SUM(CASE WHEN COALESCE(attempt.outcome,attempt.status) IN ('failed','timed_out') THEN 1 ELSE 0 END) AS failed,
+                MAX(COALESCE(attempt.finished_at,attempt.started_at,attempt.created_at)) AS lastActivity
+         FROM run_attempts attempt JOIN execution_runs run ON run.id=attempt.execution_run_id
+         WHERE run.batch_id=? GROUP BY attempt.attempt_number,attempt.runner_id
+         ORDER BY attempt.attempt_number,attempt.runner_id`,
+      )
+      .all(batchId) as Array<{
+      round: number;
+      runnerId: string;
+      executed: number;
+      passed: number;
+      failed: number;
+      lastActivity: string;
+    }>;
+    const runnerFaultIncidents = this.runnerFaultIncidents(batchId);
+    const participatingRunnerIds = (
+      this.handle.client
+        .prepare(
+          `SELECT DISTINCT attempt.runner_id AS runnerId
+           FROM run_attempts attempt JOIN execution_runs run ON run.id=attempt.execution_run_id
+           WHERE run.batch_id=? ORDER BY attempt.runner_id`,
+        )
+        .all(batchId) as Array<{ runnerId: string }>
+    ).map(({ runnerId }) => runnerId);
+    const finalSummary = finalSummaryFromBatch(batch);
+    return {
+      batch,
+      roundSummaries,
+      allRoundsSummary: allRoundsSummary(roundSummaries),
+      finalSummary,
+      roundRecoveries: roundRecoveries.map(toRoundRecoveryDetail),
+      roundConcurrencies,
+      runnerRoundSummaries,
+      runnerFaultIncidents,
+      participatingRunnerIds,
+      finishedAt: latestBatchActivity(batch.updatedAt, roundRows, roundRecoveries),
+    };
+  }
+
+  async listCasePage(input: RunBatchCasePageQuery) {
+    const batch = await this.getSummary(input.batchId, input.projectIds);
+    if (!batch) return null;
+    const { sqlText, parameters } = sqliteCasePageQuery(input);
+    const keys = this.handle.client.prepare(sqlText).all(...parameters) as Array<{
+      runId: string;
+      attemptId: string | null;
+      round: number;
+      total: number;
+    }>;
+    if (keys.length === 0) return { items: [], total: 0 };
+    const runIds = [...new Set(keys.map((row) => row.runId))];
+    const attemptIds = keys.flatMap((row) => (row.attemptId ? [row.attemptId] : []));
+    const runRows = this.handle.db
+      .select()
+      .from(executionRuns)
+      .where(inArray(executionRuns.id, runIds))
+      .all();
+    const attemptRows =
+      attemptIds.length === 0
+        ? []
+        : this.handle.db
+            .select()
+            .from(runAttempts)
+            .where(inArray(runAttempts.id, attemptIds))
+            .all();
+    const runsById = new Map(runRows.map((row) => [row.id, toExecutionRun(row)]));
+    const attemptsById = new Map(attemptRows.map((row) => [row.id, toRunAttempt(row)]));
+    return {
+      items: keys.flatMap((key) => {
+        const run = runsById.get(key.runId);
+        if (!run) return [];
+        const attempt = key.attemptId ? attemptsById.get(key.attemptId) : undefined;
+        return [{ run, ...(attempt ? { attempt } : {}), round: key.round }];
+      }),
+      total: keys[0]?.total ?? 0,
+    };
+  }
+
+  private runnerFaultIncidents(batchId: string) {
+    if (RETRYABLE_RUNNER_FAILURE_RESULT_CODES.length === 0) return [];
+    const placeholders = RETRYABLE_RUNNER_FAILURE_RESULT_CODES.map(() => "?").join(",");
+    const rows = this.handle.client
+      .prepare(
+        `WITH faults AS (
+           SELECT attempt.runner_id AS runnerId,attempt.result_code AS resultCode,
+                  COALESCE(NULLIF(TRIM(attempt.result_summary),''),'执行机未提供错误描述。') AS summary,
+                  attempt.attempt_number AS attemptNumber,run.display_name AS caseName,
+                  COALESCE(attempt.finished_at,attempt.started_at,attempt.created_at) AS occurredAt
+           FROM run_attempts attempt JOIN execution_runs run ON run.id=attempt.execution_run_id
+           WHERE run.batch_id=? AND attempt.result_code IN (${placeholders})
+         ), grouped AS (
+           SELECT runnerId,resultCode,summary,COUNT(*) AS count,
+                  GROUP_CONCAT(DISTINCT attemptNumber) AS attemptNumbers,
+                  MAX(occurredAt) AS lastOccurredAt
+           FROM faults GROUP BY runnerId,resultCode,summary
+           ORDER BY count DESC,lastOccurredAt DESC LIMIT 100
+         ), name_candidates AS (
+           SELECT runnerId,resultCode,summary,caseName,MAX(occurredAt) AS lastOccurredAt
+           FROM faults GROUP BY runnerId,resultCode,summary,caseName
+         ), ranked_names AS (
+           SELECT *,ROW_NUMBER() OVER (
+             PARTITION BY runnerId,resultCode,summary ORDER BY lastOccurredAt DESC,caseName
+           ) AS nameRank FROM name_candidates
+         ), names AS (
+           SELECT runnerId,resultCode,summary,GROUP_CONCAT(caseName,CHAR(10)) AS caseNames
+           FROM ranked_names WHERE nameRank<=20 GROUP BY runnerId,resultCode,summary
+         )
+         SELECT grouped.*,names.caseNames FROM grouped LEFT JOIN names
+           ON names.runnerId=grouped.runnerId AND names.resultCode=grouped.resultCode
+          AND names.summary=grouped.summary
+         ORDER BY grouped.count DESC,grouped.lastOccurredAt DESC`,
+      )
+      .all(batchId, ...RETRYABLE_RUNNER_FAILURE_RESULT_CODES) as SqliteRunnerFaultRow[];
+    return rows.map((row) => ({
+      key: `${row.runnerId}\u0000${row.resultCode}\u0000${row.summary}`,
+      runnerId: row.runnerId,
+      resultCode: row.resultCode,
+      summary: row.summary,
+      count: row.count,
+      caseNames: row.caseNames?.split("\n") ?? [],
+      attemptNumbers: row.attemptNumbers.split(",").map(Number).filter(Number.isFinite),
+      lastOccurredAt: row.lastOccurredAt,
+    }));
   }
 
   async listReusableBatchIdsForRunner(
@@ -1211,6 +1444,175 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
       )
       .all(...batchIds, ...batchIds) as FinalOutcomeCounts[];
   }
+}
+
+function mapRoundSummaries(
+  batch: RunBatch,
+  rows: readonly SqliteRoundAggregateRow[],
+  firstPassRows: readonly { firstRound: number; count: number }[],
+): RunBatchRoundSummary[] {
+  let overallPassed = 0;
+  const firstPassByRound = new Map(firstPassRows.map((row) => [row.firstRound, row.count]));
+  return rows.map((row) => {
+    overallPassed += firstPassByRound.get(row.round) ?? 0;
+    const completed = row.passed + row.failed + row.timedOut + row.cancelled;
+    const status = roundAggregateStatus(batch, row);
+    return {
+      round: row.round,
+      status,
+      totalRuns: row.totalRuns,
+      executed: row.executed,
+      passed: row.passed,
+      failed: row.failed,
+      timedOut: row.timedOut,
+      cancelled: row.cancelled,
+      notExecuted: Math.max(0, row.totalRuns - row.executed),
+      roundPassRate: completed === 0 ? null : Math.round((row.passed / completed) * 100),
+      overallPassed,
+      overallPassRate:
+        batch.totalRuns === 0 ? 0 : Math.round((overallPassed / batch.totalRuns) * 100),
+      startedAt: row.startedAt,
+      durationMs:
+        status === "running" || !row.startedAt || !row.finishedAt
+          ? null
+          : Math.max(0, Date.parse(row.finishedAt) - Date.parse(row.startedAt)),
+    };
+  });
+}
+
+function roundAggregateStatus(
+  batch: RunBatch,
+  row: SqliteRoundAggregateRow,
+): RunBatchRoundSummary["status"] {
+  if (row.active > 0) return "running";
+  if (
+    ["succeeded", "failed", "cancelled"].includes(batch.status) ||
+    row.round < batch.currentRound
+  ) {
+    return "completed";
+  }
+  if (batch.retryMode === "immediate") {
+    if (row.executed === 0) return "waiting";
+    return row.executed < row.totalRuns ? "running" : "completed";
+  }
+  if (row.round > batch.currentRound || row.executed === 0) return "waiting";
+  return row.executed < row.totalRuns ? "running" : "completed";
+}
+
+function allRoundsSummary(summaries: readonly RunBatchRoundSummary[]) {
+  const values = summaries.reduce(
+    (total, row) => ({
+      totalRuns: total.totalRuns + row.totalRuns,
+      passed: total.passed + row.passed,
+      failed: total.failed + row.failed,
+      timedOut: total.timedOut + row.timedOut,
+      cancelled: total.cancelled + row.cancelled,
+      notExecuted: total.notExecuted + row.notExecuted,
+    }),
+    { totalRuns: 0, passed: 0, failed: 0, timedOut: 0, cancelled: 0, notExecuted: 0 },
+  );
+  return {
+    ...values,
+    passRate: values.totalRuns === 0 ? 0 : Math.round((values.passed / values.totalRuns) * 100),
+  };
+}
+
+function finalSummaryFromBatch(batch: RunBatch) {
+  const terminal =
+    batch.succeededRuns + batch.failedRuns + batch.timedOutRuns + batch.cancelledRuns;
+  return {
+    totalRuns: batch.totalRuns,
+    passed: batch.succeededRuns,
+    failed: batch.failedRuns,
+    timedOut: batch.timedOutRuns,
+    cancelled: batch.cancelledRuns,
+    notExecuted: Math.max(0, batch.totalRuns - terminal),
+    passRate: batch.totalRuns === 0 ? 0 : Math.round((batch.succeededRuns / batch.totalRuns) * 100),
+  };
+}
+
+function latestBatchActivity(
+  updatedAt: string,
+  rounds: readonly SqliteRoundAggregateRow[],
+  recoveries: readonly RoundRecoveryDetailRow[],
+): string {
+  let latest = updatedAt;
+  for (const candidate of [
+    ...rounds.map((row) => row.finishedAt),
+    ...recoveries.map((recovery) => recovery.updated_at),
+  ]) {
+    if (candidate && Date.parse(candidate) > Date.parse(latest)) latest = candidate;
+  }
+  return latest;
+}
+
+function sqliteCasePageQuery(input: RunBatchCasePageQuery): {
+  sqlText: string;
+  parameters: Array<string | number>;
+} {
+  const parameters: Array<string | number> = [input.batchId, input.batchId];
+  let scopeCte: string;
+  if (input.scope === "summary") {
+    scopeCte = `, ranked_attempts AS (
+      SELECT attempt.id,attempt.execution_run_id,attempt.attempt_number,
+             ROW_NUMBER() OVER (
+               PARTITION BY attempt.execution_run_id
+               ORDER BY CASE WHEN COALESCE(attempt.outcome,attempt.status)='succeeded' THEN 0 ELSE 1 END,
+                        attempt.attempt_number DESC
+             ) AS rank
+      FROM run_attempts attempt JOIN batch_runs run ON run.id=attempt.execution_run_id
+    ), scope_rows AS (
+      SELECT run.id AS execution_run_id,COALESCE(attempt.attempt_number,1) AS round,
+             attempt.id AS attempt_id
+      FROM batch_runs run LEFT JOIN ranked_attempts attempt
+        ON attempt.execution_run_id=run.id AND attempt.rank=1
+    )`;
+  } else {
+    scopeCte = `, scope_rows AS (
+      SELECT eligible.execution_run_id,eligible.round,attempt.id AS attempt_id
+      FROM eligible_runs eligible LEFT JOIN run_attempts attempt
+        ON attempt.execution_run_id=eligible.execution_run_id
+       AND attempt.attempt_number=eligible.round
+      ${input.scope === "all" ? "" : "WHERE eligible.round=?"}
+    )`;
+    if (input.scope !== "all") parameters.push(input.scope);
+  }
+  const where: string[] = [];
+  if (input.status === "pending") where.push("scope.attempt_id IS NULL");
+  else if (input.status) {
+    where.push("attempt.status=?");
+    parameters.push(input.status);
+  }
+  if (input.query?.trim()) {
+    where.push("LOWER(run.display_name || ' ' || run.class_name) LIKE ? ESCAPE '\\'");
+    parameters.push(`%${escapeSqliteLike(input.query.trim().toLowerCase())}%`);
+  }
+  const direction = input.direction === "desc" ? "DESC" : "ASC";
+  const sortExpression = {
+    none: "run.created_at ASC,run.id ASC,scope.round ASC",
+    name: `run.display_name COLLATE NOCASE ${direction},run.id ${direction},scope.round ${direction}`,
+    status: `CASE COALESCE(attempt.status,'pending')
+      WHEN 'succeeded' THEN 0 WHEN 'failed' THEN 1 WHEN 'timed_out' THEN 2
+      WHEN 'cancelled' THEN 3 WHEN 'running' THEN 4 WHEN 'assigned' THEN 5 ELSE 6 END ${direction},
+      run.display_name COLLATE NOCASE ${direction}`,
+    runner: `COALESCE(attempt.runner_id,run.assigned_runner_id,'') ${direction},run.display_name COLLATE NOCASE ${direction}`,
+    duration: `CASE WHEN attempt.duration_ms IS NULL THEN 1 ELSE 0 END ASC,attempt.duration_ms ${direction},run.display_name COLLATE NOCASE ${direction}`,
+  }[input.sort];
+  parameters.push(input.limit, input.offset);
+  return {
+    sqlText: `${SQLITE_BATCH_ROUND_CTES}${scopeCte}
+      SELECT scope.execution_run_id AS runId,scope.attempt_id AS attemptId,scope.round,
+             COUNT(*) OVER () AS total
+      FROM scope_rows scope JOIN batch_runs run ON run.id=scope.execution_run_id
+      LEFT JOIN run_attempts attempt ON attempt.id=scope.attempt_id
+      ${where.length > 0 ? `WHERE ${where.join(" AND ")}` : ""}
+      ORDER BY ${sortExpression} LIMIT ? OFFSET ?`,
+    parameters,
+  };
+}
+
+function escapeSqliteLike(value: string): string {
+  return value.replace(/[\\%_]/gu, (character) => `\\${character}`);
 }
 
 function toRoundRecoveryDetail(row: RoundRecoveryDetailRow): RunBatchRoundRecovery {

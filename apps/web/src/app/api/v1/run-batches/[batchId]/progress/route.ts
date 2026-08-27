@@ -4,7 +4,7 @@ import { NextResponse } from "next/server";
 import { apiErrorResponse } from "@/lib/api-response";
 import { authenticateRequest } from "@/lib/auth";
 import { readPermanentShareToken } from "@/lib/permanent-share-token";
-import { buildRunProgress } from "@/lib/run-progress";
+import { buildRunProgressFromOverview } from "@/lib/run-progress";
 import { verifyRunProgressToken } from "@/lib/run-progress-token";
 import { getPlatformServices } from "@/lib/services";
 
@@ -15,7 +15,7 @@ export async function GET(request: Request, context: Context): Promise<NextRespo
     const { batchId } = await context.params;
     const services = await getPlatformServices();
     const accessToken = new URL(request.url).searchParams.get("access_token");
-    let batch;
+    let overview;
     if (accessToken) {
       const validTemporaryToken = verifyRunProgressToken(
         services.config.masterKey,
@@ -30,14 +30,14 @@ export async function GET(request: Request, context: Context): Promise<NextRespo
       if (!validTemporaryToken && permanentBatchId !== batchId) {
         throw new DomainError("RUN_PROGRESS_TOKEN_INVALID", "执行进度访问令牌无效或已过期。");
       }
-      batch = await services.runBatches.get(batchId);
+      overview = await services.runBatches.getDetailOverview(batchId);
     } else {
       const identity = await authenticateRequest(request);
       const projectIds = services.identityAccess.projectScope(identity, "run.read");
-      batch = await services.runBatches.get(batchId, projectIds);
-      services.identityAccess.authorize(identity, "run.read", batch.projectId);
+      overview = await services.runBatches.getDetailOverview(batchId, projectIds);
+      services.identityAccess.authorize(identity, "run.read", overview.batch.projectId);
     }
-    return NextResponse.json(buildRunProgress(batch), {
+    return NextResponse.json(buildRunProgressFromOverview(overview), {
       headers: { "Cache-Control": "private, no-store" },
     });
   } catch (error) {

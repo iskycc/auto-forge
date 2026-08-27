@@ -1,5 +1,6 @@
 import type {
   AnalyticsFilter,
+  AnalyticsSummary,
   ApiToken,
   CaseSuiteSchedule,
   GlobalSearchResult,
@@ -11,13 +12,20 @@ import type {
   ServiceAccount,
 } from "@autoforge/contracts";
 import type { PlatformOperationsRepository } from "@autoforge/application";
-import { DomainError, isPermission, type Permission } from "@autoforge/domain";
+import {
+  ADAPTER_FAILURE_RESULT_CODES,
+  ADAPTER_SUCCESS_RESULT_CODES,
+  DomainError,
+  isPermission,
+  RETRYABLE_RUNNER_FAILURE_RESULT_CODES,
+  type Permission,
+} from "@autoforge/domain";
 
 import type { AttemptLogStore } from "./attempt-log-store";
 import type { SqliteDatabaseHandle } from "./database";
 import {
   ANALYTICS_FACT_SCHEMA_VERSION,
-  aggregateAnalytics,
+  analyticsDateBucket,
   analyticsExportProjectIds,
   failureSignature,
   mapApiToken,
@@ -42,7 +50,13 @@ export class SqlitePlatformOperationsRepository implements PlatformOperationsRep
   constructor(
     private readonly handle: SqliteDatabaseHandle,
     private readonly attemptLogs?: AttemptLogStore,
-  ) {}
+  ) {
+    this.handle.client.function(
+      "autoforge_analytics_day",
+      { deterministic: true },
+      (completedAt: string, timeZone: string) => analyticsDateBucket(completedAt, timeZone),
+    );
+  }
 
   async readOperationalMetrics() {
     const row = this.handle.client
@@ -859,18 +873,165 @@ export class SqlitePlatformOperationsRepository implements PlatformOperationsRep
 
   async readAnalytics(input: Parameters<PlatformOperationsRepository["readAnalytics"]>[0]) {
     await this.rebuildAnalyticsFacts(10_000);
-    return aggregateAnalytics(
-      this.analyticsRows(input.filter, input.projectIds),
-      input.generatedAt,
-      input.filter.timeZone,
-    );
+    const overview = await this.readAnalyticsOverview(input);
+    const selection = sqliteAnalyticsSelection(input.filter, input.projectIds);
+    if (!selection) return overview;
+    const retryablePlaceholders = RETRYABLE_RUNNER_FAILURE_RESULT_CODES.map(() => "?").join(",");
+    const qualityWhere = [
+      ...selection.where,
+      `(result_code IS NULL OR result_code NOT IN (${retryablePlaceholders}))`,
+    ];
+    const parameters = [...selection.parameters, ...RETRYABLE_RUNNER_FAILURE_RESULT_CODES];
+    const whereSql = `WHERE ${qualityWhere.join(" AND ")}`;
+    const durationCount = (
+      this.handle.client
+        .prepare(
+          `SELECT COUNT(*) AS count FROM analytics_facts ${whereSql}
+           AND duration_ms IS NOT NULL AND duration_ms>=0`,
+        )
+        .get(...parameters) as { count: number }
+    ).count;
+    const percentile = (ratio: number): number | undefined => {
+      if (durationCount === 0) return undefined;
+      const offset = Math.floor((durationCount - 1) * ratio);
+      return (
+        this.handle.client
+          .prepare(
+            `SELECT duration_ms AS value FROM analytics_facts ${whereSql}
+             AND duration_ms IS NOT NULL AND duration_ms>=0
+             ORDER BY duration_ms LIMIT 1 OFFSET ?`,
+          )
+          .get(...parameters, offset) as { value: number }
+      ).value;
+    };
+    const successPlaceholders = ADAPTER_SUCCESS_RESULT_CODES.map(() => "?").join(",");
+    const failurePlaceholders = ADAPTER_FAILURE_RESULT_CODES.map(() => "?").join(",");
+    const flakyParameters = [
+      ...ADAPTER_SUCCESS_RESULT_CODES,
+      ...ADAPTER_FAILURE_RESULT_CODES,
+      ...parameters,
+    ];
+    const flakyCases = this.handle.client
+      .prepare(
+        `SELECT fact.case_definition_id AS caseDefinitionId,
+                COALESCE(case_definition.display_name,fact.case_definition_id) AS displayName,
+                COUNT(*) AS samples,
+                SUM(CASE WHEN fact.outcome='succeeded'
+                              OR (fact.outcome='failed' AND fact.result_code IN (${successPlaceholders}))
+                         THEN 1 ELSE 0 END) AS passed,
+                SUM(CASE WHEN fact.outcome='failed' AND fact.result_code IN (${failurePlaceholders})
+                         THEN 1 ELSE 0 END) AS failed
+         FROM analytics_facts fact
+         LEFT JOIN case_definitions case_definition ON case_definition.id=fact.case_definition_id
+         ${qualifySqliteAnalyticsWhere(whereSql)}
+           AND fact.outcome IN ('succeeded','failed')
+         GROUP BY fact.case_definition_id,displayName
+         HAVING samples>=5 AND passed>0 AND failed>0
+         ORDER BY samples DESC,fact.case_definition_id LIMIT 20`,
+      )
+      .all(...flakyParameters)
+      .map((row) => {
+        const value = row as {
+          caseDefinitionId: string;
+          displayName: string;
+          samples: number;
+          passed: number;
+          failed: number;
+        };
+        return {
+          ...value,
+          confidence: Math.round((1 - 1 / Math.sqrt(value.samples)) * 10_000) / 10_000,
+        };
+      });
+    const durationP50Ms = percentile(0.5);
+    const durationP95Ms = percentile(0.95);
+    return {
+      ...overview,
+      ...(durationP50Ms === undefined ? {} : { durationP50Ms }),
+      ...(durationP95Ms === undefined ? {} : { durationP95Ms }),
+      dimensions: {
+        projects: sqliteAnalyticsDimensions(this.handle, "project_id", whereSql, parameters),
+        suites: sqliteAnalyticsDimensions(this.handle, "suite_id", whereSql, parameters),
+        runners: sqliteAnalyticsDimensions(this.handle, "runner_id", whereSql, parameters),
+        outcomes: sqliteAnalyticsDimensions(this.handle, "outcome", whereSql, parameters),
+      },
+      flakyCases,
+    };
+  }
+
+  async readAnalyticsOverview(
+    input: Parameters<PlatformOperationsRepository["readAnalyticsOverview"]>[0],
+  ): Promise<AnalyticsSummary> {
+    const selection = sqliteAnalyticsSelection(input.filter, input.projectIds);
+    if (!selection) return emptyAnalyticsSummary(input.generatedAt);
+    const retryablePlaceholders = RETRYABLE_RUNNER_FAILURE_RESULT_CODES.map(() => "?").join(",");
+    const qualityWhere = [
+      ...selection.where,
+      `(result_code IS NULL OR result_code NOT IN (${retryablePlaceholders}))`,
+    ];
+    const parameters = [...selection.parameters, ...RETRYABLE_RUNNER_FAILURE_RESULT_CODES];
+    const whereSql = `WHERE ${qualityWhere.join(" AND ")}`;
+    const totals = this.handle.client
+      .prepare(
+        `SELECT COUNT(*) AS sampleCount,COALESCE(SUM(passed),0) AS passed,
+                COALESCE(SUM(failed),0) AS failed,COALESCE(SUM(skipped),0) AS skipped
+         FROM analytics_facts ${whereSql}`,
+      )
+      .get(...parameters) as {
+      sampleCount: number;
+      passed: number;
+      failed: number;
+      skipped: number;
+    };
+    const trend = this.handle.client
+      .prepare(
+        `SELECT autoforge_analytics_day(completed_at,?) AS bucket,
+                SUM(passed+failed+skipped) AS total,SUM(passed) AS passed,
+                SUM(failed) AS failed,SUM(skipped) AS skipped
+         FROM analytics_facts ${whereSql}
+         GROUP BY bucket HAVING total>0 ORDER BY bucket`,
+      )
+      .all(input.filter.timeZone ?? "UTC", ...parameters) as AnalyticsSummary["trend"];
+    const failures = this.handle.client
+      .prepare(
+        `WITH matching AS (
+           SELECT fact.failure_signature,fact.result_code,fact.completed_at,
+                  COALESCE(NULLIF(TRIM(attempt.result_summary),''),'执行失败，但执行机未提供错误描述。') AS description
+           FROM analytics_facts fact LEFT JOIN run_attempts attempt ON attempt.id=fact.attempt_id
+           ${qualifySqliteAnalyticsWhere(whereSql)}
+             AND fact.failure_signature IS NOT NULL
+         ), ranked AS (
+           SELECT *,ROW_NUMBER() OVER (PARTITION BY failure_signature ORDER BY completed_at DESC) AS rank
+           FROM matching
+         )
+         SELECT failure_signature AS signature,
+                MAX(CASE WHEN rank=1 THEN description END) AS description,
+                MAX(CASE WHEN rank=1 THEN result_code END) AS resultCode,
+                COUNT(*) AS count,MAX(completed_at) AS lastSeenAt
+         FROM ranked GROUP BY failure_signature
+         ORDER BY count DESC,signature LIMIT 20`,
+      )
+      .all(...parameters) as AnalyticsSummary["failures"];
+    const methodSamples = totals.passed + totals.failed + totals.skipped;
+    return {
+      ...totals,
+      successRate: analyticsRatio(totals.passed, methodSamples),
+      failureRate: analyticsRatio(totals.failed, methodSamples),
+      skippedRate: analyticsRatio(totals.skipped, methodSamples),
+      generatedAt: input.generatedAt,
+      dimensions: { projects: [], suites: [], runners: [], outcomes: [] },
+      trend,
+      failures,
+      // 工作台不渲染不稳定用例；完整洞察接口仍按原契约返回该维度。
+      flakyCases: [],
+    };
   }
 
   async exportAnalytics(input: Parameters<PlatformOperationsRepository["exportAnalytics"]>[0]) {
     await this.rebuildAnalyticsFacts(input.maximumRows);
-    return this.analyticsRows(input.filter, input.projectIds)
-      .slice(0, input.maximumRows)
-      .map((row) => ({ ...row }));
+    return this.analyticsRows(input.filter, input.projectIds, input.maximumRows).map((row) => ({
+      ...row,
+    }));
   }
 
   async createAnalyticsExportJob(
@@ -1152,45 +1313,11 @@ export class SqlitePlatformOperationsRepository implements PlatformOperationsRep
   private analyticsRows(
     filter: AnalyticsFilter,
     projectIds?: readonly string[],
+    limit = 100_000,
   ): AnalyticsFactRow[] {
-    if (projectIds?.length === 0) return [];
-    const where: string[] = [];
-    const parameters: Array<string | number> = [];
-    const add = (column: string, value: string | undefined, operator = "=") => {
-      if (value === undefined) return;
-      where.push(`${column} ${operator} ?`);
-      parameters.push(value);
-    };
-    if (projectIds) {
-      where.push(`project_id IN (${projectIds.map(() => "?").join(",")})`);
-      parameters.push(...projectIds);
-    }
-    add("project_id", filter.projectId);
-    if (filter.projectVersionId) {
-      where.push(
-        "EXISTS (SELECT 1 FROM case_definitions c WHERE c.id = analytics_facts.case_definition_id AND c.project_version_id = ?)",
-      );
-      parameters.push(filter.projectVersionId);
-    }
-    if (filter.testStageId) {
-      where.push(
-        "EXISTS (SELECT 1 FROM case_definitions c WHERE c.id = analytics_facts.case_definition_id AND c.test_stage_id = ?)",
-      );
-      parameters.push(filter.testStageId);
-    }
-    add("suite_id", filter.suiteId);
-    add("case_definition_id", filter.caseDefinitionId);
-    add("runner_id", filter.runnerId);
-    add("outcome", filter.outcome);
-    add("failure_signature", filter.failureSignature);
-    if (filter.tag) {
-      where.push(
-        "EXISTS (SELECT 1 FROM case_definitions c, json_each(c.tags_json) tag WHERE c.id = analytics_facts.case_definition_id AND tag.value = ?)",
-      );
-      parameters.push(filter.tag);
-    }
-    add("completed_at", filter.completedAfter, ">=");
-    add("completed_at", filter.completedBefore, "<=");
+    const selection = sqliteAnalyticsSelection(filter, projectIds);
+    if (!selection) return [];
+    const { where, parameters } = selection;
     return this.handle.client
       .prepare(
         `SELECT analytics_facts.*,
@@ -1202,10 +1329,99 @@ export class SqlitePlatformOperationsRepository implements PlatformOperationsRep
                 (SELECT a.result_summary FROM run_attempts a
                  WHERE a.id=analytics_facts.attempt_id) AS failure_description
          FROM analytics_facts ${where.length > 0 ? `WHERE ${where.join(" AND ")}` : ""}
-         ORDER BY completed_at, attempt_id LIMIT 100000`,
+         ORDER BY completed_at, attempt_id LIMIT ?`,
       )
-      .all(...parameters) as AnalyticsFactRow[];
+      .all(...parameters, limit) as AnalyticsFactRow[];
   }
+}
+
+function sqliteAnalyticsSelection(
+  filter: AnalyticsFilter,
+  projectIds?: readonly string[],
+): { where: string[]; parameters: Array<string | number> } | null {
+  if (projectIds?.length === 0) return null;
+  const where: string[] = [];
+  const parameters: Array<string | number> = [];
+  const add = (column: string, value: string | undefined, operator = "=") => {
+    if (value === undefined) return;
+    where.push(`${column} ${operator} ?`);
+    parameters.push(value);
+  };
+  if (projectIds) {
+    where.push(`project_id IN (${projectIds.map(() => "?").join(",")})`);
+    parameters.push(...projectIds);
+  }
+  add("project_id", filter.projectId);
+  if (filter.projectVersionId) {
+    where.push(
+      "EXISTS (SELECT 1 FROM case_definitions c WHERE c.id=analytics_facts.case_definition_id AND c.project_version_id=?)",
+    );
+    parameters.push(filter.projectVersionId);
+  }
+  if (filter.testStageId) {
+    where.push(
+      "EXISTS (SELECT 1 FROM case_definitions c WHERE c.id=analytics_facts.case_definition_id AND c.test_stage_id=?)",
+    );
+    parameters.push(filter.testStageId);
+  }
+  add("suite_id", filter.suiteId);
+  add("case_definition_id", filter.caseDefinitionId);
+  add("runner_id", filter.runnerId);
+  add("outcome", filter.outcome);
+  add("failure_signature", filter.failureSignature);
+  if (filter.tag) {
+    where.push(
+      "EXISTS (SELECT 1 FROM case_definitions c,json_each(c.tags_json) tag WHERE c.id=analytics_facts.case_definition_id AND tag.value=?)",
+    );
+    parameters.push(filter.tag);
+  }
+  add("completed_at", filter.completedAfter, ">=");
+  add("completed_at", filter.completedBefore, "<=");
+  return { where: where.length > 0 ? where : ["1=1"], parameters };
+}
+
+function emptyAnalyticsSummary(generatedAt: string): AnalyticsSummary {
+  return {
+    sampleCount: 0,
+    passed: 0,
+    failed: 0,
+    skipped: 0,
+    successRate: 0,
+    failureRate: 0,
+    skippedRate: 0,
+    generatedAt,
+    dimensions: { projects: [], suites: [], runners: [], outcomes: [] },
+    trend: [],
+    failures: [],
+    flakyCases: [],
+  };
+}
+
+function sqliteAnalyticsDimensions(
+  handle: SqliteDatabaseHandle,
+  column: "project_id" | "suite_id" | "runner_id" | "outcome",
+  whereSql: string,
+  parameters: readonly (string | number)[],
+): AnalyticsSummary["dimensions"]["projects"] {
+  return handle.client
+    .prepare(
+      `SELECT ${column} AS id,COUNT(*) AS count FROM analytics_facts ${whereSql}
+       GROUP BY ${column} ORDER BY count DESC,id`,
+    )
+    .all(...parameters) as AnalyticsSummary["dimensions"]["projects"];
+}
+
+function qualifySqliteAnalyticsWhere(whereSql: string): string {
+  return whereSql
+    .replaceAll("analytics_facts.", "fact.")
+    .replace(
+      /(?<![\w.])(project_id|suite_id|case_definition_id|runner_id|outcome|failure_signature|completed_at|result_code)\b/gu,
+      "fact.$1",
+    );
+}
+
+function analyticsRatio(value: number, total: number): number {
+  return total === 0 ? 0 : Math.round((value / total) * 10_000) / 10_000;
 }
 
 type SearchRow = {

@@ -1,3 +1,4 @@
+import type { RunBatchDetailOverview } from "@autoforge/application";
 import type { RunBatchDetails } from "@autoforge/domain";
 import { describe, expect, it } from "vitest";
 
@@ -5,15 +6,26 @@ import { toExecutionBatchView } from "./execution-batch-view";
 
 describe("execution batch public view", () => {
   it("keeps rendered results without serializing hidden execution configuration", () => {
-    const view = toExecutionBatchView(batchDetails());
+    const details = batchDetails();
+    const view = toExecutionBatchView({
+      batch: details,
+      roundSummaries: [],
+      allRoundsSummary: emptySummary(),
+      finalSummary: { ...emptySummary(), totalRuns: 1, passed: 1, passRate: 100 },
+      roundRecoveries: [],
+      roundConcurrencies: [],
+      runnerRoundSummaries: [],
+      runnerFaultIncidents: [],
+      participatingRunnerIds: ["runner-1"],
+      finishedAt: details.updatedAt,
+    } satisfies RunBatchDetailOverview);
 
     expect(view).toMatchObject({
       id: "batch-1",
       status: "succeeded",
       totalRuns: 1,
       succeededRuns: 1,
-      runs: [{ id: "run-1", displayName: "登录用例" }],
-      attempts: [{ id: "attempt-1", resultSummary: "passed" }],
+      finalSummary: { totalRuns: 1, passed: 1 },
       roundRecoveries: [],
     });
     expect(view).not.toHaveProperty("environmentVariables");
@@ -23,6 +35,8 @@ describe("execution batch public view", () => {
     expect(view).not.toHaveProperty("statusHistory");
     expect(view).not.toHaveProperty("suiteId");
     expect(view).not.toHaveProperty("projectId");
+    expect(view).not.toHaveProperty("runs");
+    expect(view).not.toHaveProperty("attempts");
   });
 });
 
@@ -110,5 +124,17 @@ function batchDetails(): RunBatchDetails {
         recordedAt: "2026-08-25T00:01:00.000Z",
       },
     ],
+  };
+}
+
+function emptySummary() {
+  return {
+    totalRuns: 0,
+    passed: 0,
+    failed: 0,
+    timedOut: 0,
+    cancelled: 0,
+    notExecuted: 0,
+    passRate: 0,
   };
 }

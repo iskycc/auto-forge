@@ -2,6 +2,8 @@ import type {
   CreateRunBatchRecord,
   ReserveSchedulingAssignmentsInput,
   RunBatchListQuery,
+  RunBatchCasePageQuery,
+  RunBatchDetailOverview,
   RunBatchRepository,
   SchedulingSnapshot,
 } from "@autoforge/application";
@@ -16,6 +18,7 @@ import {
   MINIMUM_JAVA_MAJOR_VERSION,
   normalizeStoredRetryConcurrencyRules,
   REQUIRED_EXECUTION_LABELS,
+  RETRYABLE_RUNNER_FAILURE_RESULT_CODES,
   SUPPORTED_TESTNG_VERSION,
   transitionRunBatch,
   type ExecutionEnvironmentVariable,
@@ -27,6 +30,7 @@ import {
   type RunBatchExecutionPolicy,
   type RunBatchRoundRecovery,
   type RunBatchRoundConcurrency,
+  type RunBatchRoundSummary,
   type RetryConcurrencyState,
   type RunBatchStatusEvent,
   type RunBatchStatus,
@@ -100,6 +104,39 @@ type RoundRecoveryDetailRow = {
   created_at: DatabaseTimestamp;
   updated_at: DatabaseTimestamp;
 };
+
+type PostgresRoundAggregateRow = {
+  round: number | string;
+  totalRuns: string;
+  executed: string;
+  passed: string;
+  failed: string;
+  timedOut: string;
+  cancelled: string;
+  active: string;
+  startedAt: DatabaseTimestamp | null;
+  finishedAt: DatabaseTimestamp | null;
+};
+
+const POSTGRES_BATCH_ROUND_CTES = `WITH batch_runs AS (
+  SELECT * FROM execution_runs WHERE batch_id=$1
+), round_numbers(round) AS (
+  SELECT 1
+  UNION SELECT current_round FROM run_batches WHERE id=$1
+  UNION SELECT attempt.attempt_number FROM run_attempts attempt
+        JOIN batch_runs run ON run.id=attempt.execution_run_id
+  UNION SELECT held_round FROM batch_runs WHERE held_round>0
+), eligible_runs(execution_run_id,round) AS (
+  SELECT id,1 FROM batch_runs
+  UNION SELECT attempt.execution_run_id,attempt.attempt_number
+        FROM run_attempts attempt JOIN batch_runs run ON run.id=attempt.execution_run_id
+  UNION SELECT attempt.execution_run_id,attempt.attempt_number+1
+        FROM run_attempts attempt JOIN batch_runs run ON run.id=attempt.execution_run_id
+        JOIN round_numbers rounds ON rounds.round=attempt.attempt_number+1
+        WHERE COALESCE(attempt.outcome,attempt.status) IN ('failed','timed_out')
+  UNION SELECT id,held_round FROM batch_runs
+        WHERE held_round>0 AND held_round IN (SELECT round FROM round_numbers)
+)`;
 
 export class PostgresRunBatchRepository implements RunBatchRepository {
   constructor(
@@ -487,6 +524,202 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
       )
       .limit(1);
     return row ? this.mapBatch(row) : null;
+  }
+
+  async getDetailOverview(
+    batchId: string,
+    projectIds?: readonly string[],
+  ): Promise<RunBatchDetailOverview | null> {
+    await this.ready();
+    const batch = await this.getSummary(batchId, projectIds);
+    if (!batch) return null;
+    const [
+      roundResult,
+      firstPassResult,
+      recoveryResult,
+      concurrencyRows,
+      runnerResult,
+      faultResult,
+      participatingResult,
+    ] = await Promise.all([
+      this.handle.pool.query<PostgresRoundAggregateRow>(
+        `${POSTGRES_BATCH_ROUND_CTES}
+           SELECT rounds.round,
+                  COUNT(eligible.execution_run_id) AS "totalRuns",
+                  COUNT(attempt.id) AS executed,
+                  COUNT(*) FILTER (WHERE COALESCE(attempt.outcome,attempt.status)='succeeded') AS passed,
+                  COUNT(*) FILTER (WHERE COALESCE(attempt.outcome,attempt.status)='failed') AS failed,
+                  COUNT(*) FILTER (WHERE COALESCE(attempt.outcome,attempt.status)='timed_out') AS "timedOut",
+                  COUNT(*) FILTER (WHERE COALESCE(attempt.outcome,attempt.status)='cancelled') AS cancelled,
+                  COUNT(*) FILTER (WHERE attempt.status IN ('assigned','running')) AS active,
+                  MIN(COALESCE(attempt.started_at,attempt.created_at)) AS "startedAt",
+                  MAX(attempt.finished_at) AS "finishedAt"
+           FROM round_numbers rounds
+           LEFT JOIN eligible_runs eligible ON eligible.round=rounds.round
+           LEFT JOIN run_attempts attempt
+             ON attempt.execution_run_id=eligible.execution_run_id
+            AND attempt.attempt_number=rounds.round
+           GROUP BY rounds.round ORDER BY rounds.round`,
+        [batchId],
+      ),
+      this.handle.pool.query<{ firstRound: number; count: string }>(
+        `SELECT MIN(attempt_number) AS "firstRound",COUNT(*) AS count FROM (
+             SELECT attempt.execution_run_id,MIN(attempt.attempt_number) AS attempt_number
+             FROM run_attempts attempt JOIN execution_runs run ON run.id=attempt.execution_run_id
+             WHERE run.batch_id=$1 AND COALESCE(attempt.outcome,attempt.status)='succeeded'
+             GROUP BY attempt.execution_run_id
+           ) first_pass GROUP BY attempt_number ORDER BY attempt_number`,
+        [batchId],
+      ),
+      this.handle.pool.query<RoundRecoveryDetailRow>(
+        `SELECT rule_id,after_round,next_round,jenkins_job_url,wait_minutes,status,
+                  source_build_number,rebuild_number,rebuild_url,activated_at,started_at,
+                  finished_at,build_result,error_message,created_at,updated_at
+           FROM run_batch_round_recoveries WHERE batch_id=$1 ORDER BY after_round,rule_id`,
+        [batchId],
+      ),
+      this.handle.db
+        .select()
+        .from(pgRunBatchRoundConcurrencies)
+        .where(eq(pgRunBatchRoundConcurrencies.batchId, batchId))
+        .orderBy(pgRunBatchRoundConcurrencies.executionRound),
+      this.handle.pool.query<{
+        round: number;
+        runnerId: string;
+        executed: string;
+        passed: string;
+        failed: string;
+        lastActivity: DatabaseTimestamp;
+      }>(
+        `SELECT attempt.attempt_number AS round,attempt.runner_id AS "runnerId",
+                  COUNT(*) AS executed,
+                  COUNT(*) FILTER (WHERE COALESCE(attempt.outcome,attempt.status)='succeeded') AS passed,
+                  COUNT(*) FILTER (WHERE COALESCE(attempt.outcome,attempt.status) IN ('failed','timed_out')) AS failed,
+                  MAX(COALESCE(attempt.finished_at,attempt.started_at,attempt.created_at)) AS "lastActivity"
+           FROM run_attempts attempt JOIN execution_runs run ON run.id=attempt.execution_run_id
+           WHERE run.batch_id=$1 GROUP BY attempt.attempt_number,attempt.runner_id
+           ORDER BY attempt.attempt_number,attempt.runner_id`,
+        [batchId],
+      ),
+      this.handle.pool.query<{
+        runnerId: string;
+        resultCode: string;
+        summary: string;
+        count: string;
+        attemptNumbers: number[];
+        caseNames: string | null;
+        lastOccurredAt: DatabaseTimestamp;
+      }>(
+        `WITH faults AS (
+             SELECT attempt.runner_id AS runner_id,attempt.result_code AS result_code,
+                    COALESCE(NULLIF(BTRIM(attempt.result_summary),''),'执行机未提供错误描述。') AS summary,
+                    attempt.attempt_number,run.display_name AS case_name,
+                    COALESCE(attempt.finished_at,attempt.started_at,attempt.created_at) AS occurred_at
+             FROM run_attempts attempt JOIN execution_runs run ON run.id=attempt.execution_run_id
+             WHERE run.batch_id=$1 AND attempt.result_code=ANY($2::text[])
+           ), grouped AS (
+             SELECT runner_id,result_code,summary,COUNT(*) AS count,
+                    ARRAY_AGG(DISTINCT attempt_number ORDER BY attempt_number) AS attempt_numbers,
+                    MAX(occurred_at) AS last_occurred_at
+             FROM faults GROUP BY runner_id,result_code,summary
+             ORDER BY count DESC,last_occurred_at DESC LIMIT 100
+           ), name_candidates AS (
+             SELECT runner_id,result_code,summary,case_name,MAX(occurred_at) AS last_occurred_at
+             FROM faults GROUP BY runner_id,result_code,summary,case_name
+           ), ranked_names AS (
+             SELECT *,ROW_NUMBER() OVER (
+               PARTITION BY runner_id,result_code,summary ORDER BY last_occurred_at DESC,case_name
+             ) AS name_rank FROM name_candidates
+           ), names AS (
+             SELECT runner_id,result_code,summary,
+                    STRING_AGG(case_name,E'\n' ORDER BY last_occurred_at DESC,case_name) AS case_names
+             FROM ranked_names WHERE name_rank<=20 GROUP BY runner_id,result_code,summary
+           )
+           SELECT grouped.runner_id AS "runnerId",grouped.result_code AS "resultCode",
+                  grouped.summary,grouped.count,grouped.attempt_numbers AS "attemptNumbers",
+                  grouped.last_occurred_at AS "lastOccurredAt",names.case_names AS "caseNames"
+           FROM grouped LEFT JOIN names USING (runner_id,result_code,summary)
+           ORDER BY grouped.count DESC,grouped.last_occurred_at DESC`,
+        [batchId, [...RETRYABLE_RUNNER_FAILURE_RESULT_CODES]],
+      ),
+      this.handle.pool.query<{ runnerId: string }>(
+        `SELECT DISTINCT attempt.runner_id AS "runnerId"
+           FROM run_attempts attempt JOIN execution_runs run ON run.id=attempt.execution_run_id
+           WHERE run.batch_id=$1 ORDER BY attempt.runner_id`,
+        [batchId],
+      ),
+    ]);
+    const roundRows = roundResult.rows.map(normalizePostgresRoundRow);
+    const roundSummaries = mapPostgresRoundSummaries(
+      batch,
+      roundRows,
+      firstPassResult.rows.map((row) => ({
+        firstRound: Number(row.firstRound),
+        count: Number(row.count),
+      })),
+    );
+    const roundRecoveries = recoveryResult.rows.map(toRoundRecoveryDetail);
+    return {
+      batch,
+      roundSummaries,
+      allRoundsSummary: postgresAllRoundsSummary(roundSummaries),
+      finalSummary: postgresFinalSummaryFromBatch(batch),
+      roundRecoveries,
+      roundConcurrencies: concurrencyRows.map(toRoundConcurrency),
+      runnerRoundSummaries: runnerResult.rows.map((row) => ({
+        round: Number(row.round),
+        runnerId: row.runnerId,
+        executed: Number(row.executed),
+        passed: Number(row.passed),
+        failed: Number(row.failed),
+        lastActivity: isoTimestamp(row.lastActivity),
+      })),
+      runnerFaultIncidents: faultResult.rows.map((row) => ({
+        key: `${row.runnerId}\u0000${row.resultCode}\u0000${row.summary}`,
+        runnerId: row.runnerId,
+        resultCode: row.resultCode,
+        summary: row.summary,
+        count: Number(row.count),
+        caseNames: row.caseNames?.split("\n") ?? [],
+        attemptNumbers: row.attemptNumbers.map(Number),
+        lastOccurredAt: isoTimestamp(row.lastOccurredAt),
+      })),
+      participatingRunnerIds: participatingResult.rows.map(({ runnerId }) => runnerId),
+      finishedAt: latestPostgresBatchActivity(batch.updatedAt, roundRows, recoveryResult.rows),
+    };
+  }
+
+  async listCasePage(input: RunBatchCasePageQuery) {
+    await this.ready();
+    const batch = await this.getSummary(input.batchId, input.projectIds);
+    if (!batch) return null;
+    const query = postgresCasePageQuery(input);
+    const result = await this.handle.pool.query<{
+      runId: string;
+      attemptId: string | null;
+      round: number;
+      total: string;
+    }>(query.sqlText, query.parameters);
+    if (result.rows.length === 0) return { items: [], total: 0 };
+    const runIds = [...new Set(result.rows.map((row) => row.runId))];
+    const attemptIds = result.rows.flatMap((row) => (row.attemptId ? [row.attemptId] : []));
+    const [runRows, attemptRows] = await Promise.all([
+      this.handle.db.select().from(pgExecutionRuns).where(inArray(pgExecutionRuns.id, runIds)),
+      attemptIds.length === 0
+        ? Promise.resolve([])
+        : this.handle.db.select().from(pgRunAttempts).where(inArray(pgRunAttempts.id, attemptIds)),
+    ]);
+    const runsById = new Map(runRows.map((row) => [row.id, toExecutionRun(row)]));
+    const attemptsById = new Map(attemptRows.map((row) => [row.id, toRunAttempt(row)]));
+    return {
+      items: result.rows.flatMap((key) => {
+        const run = runsById.get(key.runId);
+        if (!run) return [];
+        const attempt = key.attemptId ? attemptsById.get(key.attemptId) : undefined;
+        return [{ run, ...(attempt ? { attempt } : {}), round: Number(key.round) }];
+      }),
+      total: Number(result.rows[0]?.total ?? 0),
+    };
   }
 
   async listReusableBatchIdsForRunner(
@@ -1352,6 +1585,219 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
       ).map((row) => [row.runnerId, row.value]),
     );
   }
+}
+
+type NormalizedPostgresRoundRow = Omit<
+  SqliteCompatibleRoundAggregate,
+  "startedAt" | "finishedAt"
+> & {
+  startedAt: string | null;
+  finishedAt: string | null;
+};
+
+type SqliteCompatibleRoundAggregate = {
+  round: number;
+  totalRuns: number;
+  executed: number;
+  passed: number;
+  failed: number;
+  timedOut: number;
+  cancelled: number;
+  active: number;
+  startedAt: string | null;
+  finishedAt: string | null;
+};
+
+function normalizePostgresRoundRow(row: PostgresRoundAggregateRow): NormalizedPostgresRoundRow {
+  return {
+    round: Number(row.round),
+    totalRuns: Number(row.totalRuns),
+    executed: Number(row.executed),
+    passed: Number(row.passed),
+    failed: Number(row.failed),
+    timedOut: Number(row.timedOut),
+    cancelled: Number(row.cancelled),
+    active: Number(row.active),
+    startedAt: row.startedAt ? isoTimestamp(row.startedAt) : null,
+    finishedAt: row.finishedAt ? isoTimestamp(row.finishedAt) : null,
+  };
+}
+
+function mapPostgresRoundSummaries(
+  batch: RunBatch,
+  rows: readonly NormalizedPostgresRoundRow[],
+  firstPassRows: readonly { firstRound: number; count: number }[],
+): RunBatchRoundSummary[] {
+  let overallPassed = 0;
+  const firstPassByRound = new Map(firstPassRows.map((row) => [row.firstRound, row.count]));
+  return rows.map((row) => {
+    overallPassed += firstPassByRound.get(row.round) ?? 0;
+    const completed = row.passed + row.failed + row.timedOut + row.cancelled;
+    const status = postgresRoundAggregateStatus(batch, row);
+    return {
+      round: row.round,
+      status,
+      totalRuns: row.totalRuns,
+      executed: row.executed,
+      passed: row.passed,
+      failed: row.failed,
+      timedOut: row.timedOut,
+      cancelled: row.cancelled,
+      notExecuted: Math.max(0, row.totalRuns - row.executed),
+      roundPassRate: completed === 0 ? null : Math.round((row.passed / completed) * 100),
+      overallPassed,
+      overallPassRate:
+        batch.totalRuns === 0 ? 0 : Math.round((overallPassed / batch.totalRuns) * 100),
+      startedAt: row.startedAt,
+      durationMs:
+        status === "running" || !row.startedAt || !row.finishedAt
+          ? null
+          : Math.max(0, Date.parse(row.finishedAt) - Date.parse(row.startedAt)),
+    };
+  });
+}
+
+function postgresRoundAggregateStatus(
+  batch: RunBatch,
+  row: NormalizedPostgresRoundRow,
+): RunBatchRoundSummary["status"] {
+  if (row.active > 0) return "running";
+  if (
+    ["succeeded", "failed", "cancelled"].includes(batch.status) ||
+    row.round < batch.currentRound
+  ) {
+    return "completed";
+  }
+  if (batch.retryMode === "immediate") {
+    if (row.executed === 0) return "waiting";
+    return row.executed < row.totalRuns ? "running" : "completed";
+  }
+  if (row.round > batch.currentRound || row.executed === 0) return "waiting";
+  return row.executed < row.totalRuns ? "running" : "completed";
+}
+
+function postgresAllRoundsSummary(summaries: readonly RunBatchRoundSummary[]) {
+  const values = summaries.reduce(
+    (total, row) => ({
+      totalRuns: total.totalRuns + row.totalRuns,
+      passed: total.passed + row.passed,
+      failed: total.failed + row.failed,
+      timedOut: total.timedOut + row.timedOut,
+      cancelled: total.cancelled + row.cancelled,
+      notExecuted: total.notExecuted + row.notExecuted,
+    }),
+    { totalRuns: 0, passed: 0, failed: 0, timedOut: 0, cancelled: 0, notExecuted: 0 },
+  );
+  return {
+    ...values,
+    passRate: values.totalRuns === 0 ? 0 : Math.round((values.passed / values.totalRuns) * 100),
+  };
+}
+
+function postgresFinalSummaryFromBatch(batch: RunBatch) {
+  const terminal =
+    batch.succeededRuns + batch.failedRuns + batch.timedOutRuns + batch.cancelledRuns;
+  return {
+    totalRuns: batch.totalRuns,
+    passed: batch.succeededRuns,
+    failed: batch.failedRuns,
+    timedOut: batch.timedOutRuns,
+    cancelled: batch.cancelledRuns,
+    notExecuted: Math.max(0, batch.totalRuns - terminal),
+    passRate: batch.totalRuns === 0 ? 0 : Math.round((batch.succeededRuns / batch.totalRuns) * 100),
+  };
+}
+
+function latestPostgresBatchActivity(
+  updatedAt: string,
+  rounds: readonly NormalizedPostgresRoundRow[],
+  recoveries: readonly RoundRecoveryDetailRow[],
+): string {
+  let latest = updatedAt;
+  const candidates = [
+    ...rounds.map((row) => row.finishedAt),
+    ...recoveries.map((recovery) => isoTimestamp(recovery.updated_at)),
+  ];
+  for (const candidate of candidates) {
+    if (candidate && Date.parse(candidate) > Date.parse(latest)) latest = candidate;
+  }
+  return latest;
+}
+
+function postgresCasePageQuery(input: RunBatchCasePageQuery): {
+  sqlText: string;
+  parameters: unknown[];
+} {
+  const parameters: unknown[] = [input.batchId];
+  let scopeCte: string;
+  if (input.scope === "summary") {
+    scopeCte = `, ranked_attempts AS (
+      SELECT attempt.id,attempt.execution_run_id,attempt.attempt_number,
+             ROW_NUMBER() OVER (
+               PARTITION BY attempt.execution_run_id
+               ORDER BY CASE WHEN COALESCE(attempt.outcome,attempt.status)='succeeded' THEN 0 ELSE 1 END,
+                        attempt.attempt_number DESC
+             ) AS rank
+      FROM run_attempts attempt JOIN batch_runs run ON run.id=attempt.execution_run_id
+    ), scope_rows AS (
+      SELECT run.id AS execution_run_id,COALESCE(attempt.attempt_number,1) AS round,
+             attempt.id AS attempt_id
+      FROM batch_runs run LEFT JOIN ranked_attempts attempt
+        ON attempt.execution_run_id=run.id AND attempt.rank=1
+    )`;
+  } else {
+    const roundPlaceholder =
+      input.scope === "all" ? undefined : pushPostgresParameter(parameters, input.scope);
+    scopeCte = `, scope_rows AS (
+      SELECT eligible.execution_run_id,eligible.round,attempt.id AS attempt_id
+      FROM eligible_runs eligible LEFT JOIN run_attempts attempt
+        ON attempt.execution_run_id=eligible.execution_run_id
+       AND attempt.attempt_number=eligible.round
+      ${roundPlaceholder ? `WHERE eligible.round=${roundPlaceholder}` : ""}
+    )`;
+  }
+  const where: string[] = [];
+  if (input.status === "pending") where.push("scope.attempt_id IS NULL");
+  else if (input.status) {
+    where.push(`attempt.status=${pushPostgresParameter(parameters, input.status)}`);
+  }
+  if (input.query?.trim()) {
+    where.push(
+      `LOWER(run.display_name || ' ' || run.class_name) LIKE ${pushPostgresParameter(parameters, `%${escapePostgresLike(input.query.trim().toLowerCase())}%`)} ESCAPE '\\'`,
+    );
+  }
+  const direction = input.direction === "desc" ? "DESC" : "ASC";
+  const sortExpression = {
+    none: "run.created_at ASC,run.id ASC,scope.round ASC",
+    name: `run.display_name ${direction},run.id ${direction},scope.round ${direction}`,
+    status: `CASE COALESCE(attempt.status,'pending')
+      WHEN 'succeeded' THEN 0 WHEN 'failed' THEN 1 WHEN 'timed_out' THEN 2
+      WHEN 'cancelled' THEN 3 WHEN 'running' THEN 4 WHEN 'assigned' THEN 5 ELSE 6 END ${direction},
+      run.display_name ${direction}`,
+    runner: `COALESCE(attempt.runner_id,run.assigned_runner_id,'') ${direction},run.display_name ${direction}`,
+    duration: `CASE WHEN attempt.duration_ms IS NULL THEN 1 ELSE 0 END ASC,attempt.duration_ms ${direction},run.display_name ${direction}`,
+  }[input.sort];
+  const limit = pushPostgresParameter(parameters, input.limit);
+  const offset = pushPostgresParameter(parameters, input.offset);
+  return {
+    sqlText: `${POSTGRES_BATCH_ROUND_CTES}${scopeCte}
+      SELECT scope.execution_run_id AS "runId",scope.attempt_id AS "attemptId",scope.round,
+             COUNT(*) OVER () AS total
+      FROM scope_rows scope JOIN batch_runs run ON run.id=scope.execution_run_id
+      LEFT JOIN run_attempts attempt ON attempt.id=scope.attempt_id
+      ${where.length > 0 ? `WHERE ${where.join(" AND ")}` : ""}
+      ORDER BY ${sortExpression} LIMIT ${limit} OFFSET ${offset}`,
+    parameters,
+  };
+}
+
+function pushPostgresParameter(parameters: unknown[], value: unknown): string {
+  parameters.push(value);
+  return `$${parameters.length}`;
+}
+
+function escapePostgresLike(value: string): string {
+  return value.replace(/[\\%_]/gu, (character) => `\\${character}`);
 }
 
 function toRoundRecoveryDetail(row: RoundRecoveryDetailRow): RunBatchRoundRecovery {

@@ -370,6 +370,39 @@ export class RunBatchSchedulingService {
     return batch;
   }
 
+  async getDetailOverview(batchId: string, projectIds?: readonly string[]) {
+    const overview = await this.batches.getDetailOverview(batchId, projectIds);
+    if (!overview || overview.batch.kind === "case_log_rerun") {
+      throw new DomainError("RUN_BATCH_NOT_FOUND", "指定的执行批次不存在。");
+    }
+    return overview;
+  }
+
+  async listCasePage(
+    input: Omit<import("./ports").RunBatchCasePageQuery, "limit" | "offset"> & {
+      page: number;
+      pageSize: number;
+    },
+  ) {
+    const page = Number.isInteger(input.page) ? Math.max(1, input.page) : 1;
+    const pageSize = Number.isInteger(input.pageSize)
+      ? Math.min(500, Math.max(1, input.pageSize))
+      : 50;
+    const result = await this.batches.listCasePage({
+      batchId: input.batchId,
+      ...(input.projectIds ? { projectIds: input.projectIds } : {}),
+      scope: input.scope,
+      ...(input.status ? { status: input.status } : {}),
+      ...(input.query ? { query: input.query.slice(0, 240) } : {}),
+      sort: input.sort,
+      direction: input.direction,
+      offset: (page - 1) * pageSize,
+      limit: pageSize,
+    });
+    if (!result) throw new DomainError("RUN_BATCH_NOT_FOUND", "指定的执行批次不存在。");
+    return result;
+  }
+
   async rerunCaseFromAttempt(
     attemptId: string,
     requestedBy: NonNullable<RunBatch["requestedBy"]>,

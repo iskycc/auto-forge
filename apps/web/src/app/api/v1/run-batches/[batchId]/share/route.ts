@@ -18,7 +18,7 @@ export async function POST(request: Request, context: Context): Promise<NextResp
     const { batchId } = await context.params;
     const services = await getPlatformServices();
     const projectIds = services.identityAccess.projectScope(identity, "run.read");
-    const batch = await services.runBatches.get(batchId, projectIds);
+    const batch = await services.runBatches.getSummary(batchId, projectIds);
     services.identityAccess.authorize(identity, "run.read", batch.projectId);
     const token = issuePermanentShareToken(services.config.masterKey, "run_batch", batch.id);
     const baseUrl = publicLinkBase(services.configurationStore.read().web.publicBaseUrl, request);

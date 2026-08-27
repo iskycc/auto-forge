@@ -357,14 +357,21 @@ export function aggregateAnalytics(
   };
 }
 
-function analyticsDateBucket(value: string, timeZone: string): string {
+const analyticsDateFormatters = new Map<string, Intl.DateTimeFormat>();
+
+export function analyticsDateBucket(value: string, timeZone: string): string {
   const date = new Date(value);
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).formatToParts(date);
+  let formatter = analyticsDateFormatters.get(timeZone);
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat("en-CA", {
+      timeZone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    });
+    analyticsDateFormatters.set(timeZone, formatter);
+  }
+  const parts = formatter.formatToParts(date);
   const field = (type: Intl.DateTimeFormatPartTypes) =>
     parts.find((part) => part.type === type)?.value ?? "00";
   return `${field("year")}-${field("month")}-${field("day")}T00:00:00.000Z`;

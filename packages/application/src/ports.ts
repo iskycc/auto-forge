@@ -62,8 +62,13 @@ import type {
   RetryConcurrencyState,
   RunBatch,
   RunBatchDetails,
+  RunBatchAllRoundsSummary,
   RunBatchExecutionPolicy,
+  RunBatchFinalSummary,
+  RunBatchRoundConcurrency,
   RunBatchRoundConcurrencySource,
+  RunBatchRoundRecovery,
+  RunBatchRoundSummary,
   Runner,
   RunnerGroup,
   SchedulingDecision,
@@ -1413,6 +1418,64 @@ export type RunBatchListPage = {
   nextCursor?: string;
 };
 
+export type RunBatchCaseScope = number | "all" | "summary";
+export type RunBatchCaseStatusFilter = RunAttempt["status"] | "pending";
+export type RunBatchCaseSort = "none" | "name" | "status" | "runner" | "duration";
+
+export type RunBatchCasePageQuery = {
+  batchId: string;
+  projectIds?: readonly string[];
+  scope: RunBatchCaseScope;
+  status?: RunBatchCaseStatusFilter;
+  query?: string;
+  sort: RunBatchCaseSort;
+  direction: "asc" | "desc";
+  offset: number;
+  limit: number;
+};
+
+export type RunBatchCasePage = {
+  items: Array<{ run: ExecutionRun; attempt?: RunAttempt; round: number }>;
+  total: number;
+};
+
+export type RunBatchRoundRunnerSummary = {
+  round: number;
+  runnerId: string;
+  executed: number;
+  passed: number;
+  failed: number;
+  lastActivity: string;
+};
+
+export type RunBatchRunnerFaultIncident = {
+  key: string;
+  runnerId: string;
+  resultCode: string;
+  summary: string;
+  count: number;
+  caseNames: string[];
+  attemptNumbers: number[];
+  lastOccurredAt: string;
+};
+
+/**
+ * 批次详情首屏只携带有界聚合结果。用例/attempt 明细必须通过 listCasePage
+ * 分页读取，避免 10 万用例批次被序列化到页面或由浏览器全量排序。
+ */
+export type RunBatchDetailOverview = {
+  batch: RunBatch;
+  roundSummaries: RunBatchRoundSummary[];
+  allRoundsSummary: RunBatchAllRoundsSummary;
+  finalSummary: RunBatchFinalSummary;
+  roundRecoveries: RunBatchRoundRecovery[];
+  roundConcurrencies: RunBatchRoundConcurrency[];
+  runnerRoundSummaries: RunBatchRoundRunnerSummary[];
+  runnerFaultIncidents: RunBatchRunnerFaultIncident[];
+  participatingRunnerIds: string[];
+  finishedAt: string;
+};
+
 /** 恢复与 Runner 生命周期路径只依赖这两个调度入口，不依赖具体服务实现。 */
 export interface RunBatchSchedulingPort {
   schedule(batchId: string): Promise<unknown>;
@@ -1438,6 +1501,11 @@ export interface RunBatchRepository {
   ): Promise<RunBatch[]>;
   listPage(input: RunBatchListQuery): Promise<RunBatchListPage>;
   getSummary(batchId: string, projectIds?: readonly string[]): Promise<RunBatch | null>;
+  getDetailOverview(
+    batchId: string,
+    projectIds?: readonly string[],
+  ): Promise<RunBatchDetailOverview | null>;
+  listCasePage(input: RunBatchCasePageQuery): Promise<RunBatchCasePage | null>;
   get(batchId: string, projectIds?: readonly string[]): Promise<RunBatchDetails | null>;
   /** 返回指定 Runner 仍可能收到后续 attempt 的非终态批次 ID。 */
   listReusableBatchIdsForRunner(runnerId: string, batchIds: readonly string[]): Promise<string[]>;
@@ -1785,6 +1853,11 @@ export interface PlatformOperationsRepository {
 
   rebuildAnalyticsFacts(limit: number): Promise<number>;
   readAnalytics(input: {
+    filter: AnalyticsFilter;
+    projectIds?: readonly string[];
+    generatedAt: string;
+  }): Promise<AnalyticsSummary>;
+  readAnalyticsOverview(input: {
     filter: AnalyticsFilter;
     projectIds?: readonly string[];
     generatedAt: string;

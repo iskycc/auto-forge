@@ -26,16 +26,7 @@ function batchStartedAt(batch: ExecutionBatchView): string {
 // 终态批次的结束时间取最晚的 attempt 或环境恢复更新时间，缺失时回退批次
 // updatedAt。这样 Jenkins 恢复及构建后的等待不会从任务总时长中被扣除。
 function batchFinishedAt(batch: ExecutionBatchView): string {
-  let latest = batch.updatedAt;
-  for (const attempt of batch.attempts) {
-    if (attempt.finishedAt && Date.parse(attempt.finishedAt) > Date.parse(latest)) {
-      latest = attempt.finishedAt;
-    }
-  }
-  for (const recovery of batch.roundRecoveries) {
-    if (Date.parse(recovery.updatedAt) > Date.parse(latest)) latest = recovery.updatedAt;
-  }
-  return latest;
+  return batch.finishedAt;
 }
 
 /**
@@ -53,6 +44,7 @@ export function ExecutionBatchDetails({
   canReadArtifacts,
   artifactsEnabled,
   runnerDirectory,
+  accessToken,
 }: {
   batch: ExecutionBatchView;
   retrySuiteId?: string;
@@ -67,6 +59,7 @@ export function ExecutionBatchDetails({
   canReadArtifacts: boolean;
   artifactsEnabled: boolean;
   runnerDirectory: readonly RunnerDirectoryEntry[];
+  accessToken?: string;
 }) {
   const router = useRouter();
   const [actionError, setActionError] = useState("");
@@ -243,7 +236,7 @@ export function ExecutionBatchDetails({
       )}
 
       <RunBatchRounds
-        batch={batch}
+        batch={accessToken ? { ...batch, accessToken } : batch}
         canCancelRuns={canCancelRuns}
         canReadLogs={canReadLogs}
         canCreateRuns={canCreateRuns}

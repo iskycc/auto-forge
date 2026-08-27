@@ -7,12 +7,7 @@ import type {
   RunBatchRoundSummary,
   RunnerResourceSnapshot,
 } from "@autoforge/domain";
-import {
-  isTerminalAttemptStatus,
-  summarizeAllRunBatchRounds,
-  summarizeRunBatchFinalResults,
-  summarizeRunBatchRounds,
-} from "@autoforge/domain";
+import { isTerminalAttemptStatus } from "@autoforge/domain";
 import {
   ChevronLeft,
   ChevronRight,
@@ -37,13 +32,7 @@ import { SchedulingLogViewer } from "@/components/scheduling-log-viewer";
 import { Button, Input, Select } from "@/components/ui";
 import { readApiErrorMessage } from "@/lib/client-api";
 import type { ExecutionBatchView } from "@/lib/execution-batch-view";
-import { buildRunnerFaultIncidents } from "@/lib/runner-fault-incidents";
-import {
-  buildRoundCaseRows,
-  canCancelRoundCaseRow,
-  compareRoundCaseRowsByStatus,
-  type RoundCaseRowModel,
-} from "@/lib/round-case-rows";
+import { canCancelRoundCaseRow, type RoundCaseRowModel } from "@/lib/round-case-rows";
 import {
   attemptFailureHint,
   formatArtifactBytes,
@@ -54,6 +43,7 @@ import {
 import { columnCharacterWidthAtCoverage, widestText } from "@/lib/table-column-width";
 
 const DEFAULT_CASE_PAGE_SIZE = 50;
+const EMPTY_CASE_ROWS: RoundCaseRowModel[] = [];
 // 用户可选的每页用例数；500 为需求上限。
 const CASE_PAGE_SIZE_OPTIONS = [20, 50, 100, 200, 500] as const;
 
@@ -232,10 +222,7 @@ export function RunBatchRounds({
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  const summaries = useMemo(
-    () => summarizeRunBatchRounds(batch, batch.runs, batch.attempts),
-    [batch],
-  );
+  const summaries = batch.roundSummaries;
   const recoveries = useMemo(() => recoveryGroups(batch.roundRecoveries), [batch.roundRecoveries]);
   const concurrencyByRound = useMemo(
     () => new Map((batch.roundConcurrencies ?? []).map((entry) => [entry.round, entry])),
@@ -263,11 +250,8 @@ export function RunBatchRounds({
     ? requestedRound
     : defaultRound;
   const selectedSummary = summaries.find((summary) => summary.round === selectedRound);
-  const allRoundsStats = useMemo(() => summarizeAllRunBatchRounds(summaries), [summaries]);
-  const finalStats = useMemo(
-    () => summarizeRunBatchFinalResults(batch, batch.runs, batch.attempts),
-    [batch],
-  );
+  const allRoundsStats = batch.allRoundsSummary;
+  const finalStats = batch.finalSummary;
   const [activeTab, setActiveTab] = useState<"cases" | "runners">("cases");
   const [logAttempt, setLogAttempt] = useState<RunAttempt | undefined>();
   const [schedulingViewer, setSchedulingViewer] = useState<
@@ -1017,16 +1001,8 @@ function RoundDetailPanel({
   const router = useRouter();
   const [exportDialogOpen, setExportDialogOpen] = useState(false);
   const [faultDialogOpen, setFaultDialogOpen] = useState(false);
-  const faultIncidents = useMemo(() => buildRunnerFaultIncidents(batch), [batch]);
-  const passedRunsSoFar = useMemo(() => {
-    const passed = new Set<string>();
-    for (const attempt of batch.attempts) {
-      if (attempt.attemptNumber <= summary.round && attempt.outcome === "succeeded") {
-        passed.add(attempt.executionRunId);
-      }
-    }
-    return passed.size;
-  }, [batch.attempts, summary.round]);
+  const faultIncidents = batch.runnerFaultIncidents;
+  const passedRunsSoFar = summary.overallPassed;
   const inProgress = Math.max(
     0,
     summary.executed - summary.passed - summary.failed - summary.timedOut - summary.cancelled,
@@ -1200,31 +1176,6 @@ type CaseSortSpec = {
   direction: "asc" | "desc";
 };
 
-function compareRowsBy(
-  left: RoundCaseRowModel,
-  right: RoundCaseRowModel,
-  key: CaseSortKey,
-): number {
-  switch (key) {
-    case "name":
-      return left.run.displayName.localeCompare(right.run.displayName, "zh-CN");
-    case "status":
-      return compareRoundCaseRowsByStatus(left, right);
-    case "runner": {
-      const leftRunner = left.attempt?.runnerId ?? left.run.assignedRunnerId ?? "";
-      const rightRunner = right.attempt?.runnerId ?? right.run.assignedRunnerId ?? "";
-      return leftRunner.localeCompare(rightRunner);
-    }
-    case "duration": {
-      // 无耗时的行排在有耗时之后（升序时），无穷大之间视为相等避免 NaN。
-      const leftDuration = left.attempt?.durationMs ?? Number.POSITIVE_INFINITY;
-      const rightDuration = right.attempt?.durationMs ?? Number.POSITIVE_INFINITY;
-      if (leftDuration === rightDuration) return 0;
-      return leftDuration - rightDuration;
-    }
-  }
-}
-
 function RoundCasesTable({
   batch,
   round,
@@ -1255,15 +1206,80 @@ function RoundCasesTable({
   onCancelRun: (runId: string) => void;
   onOpenLogs: (attempt: RunAttempt) => void;
 }) {
-  const rows = useMemo<RoundCaseRowModel[]>(() => buildRoundCaseRows(batch, round), [batch, round]);
   const showRoundColumn = round === "all";
   const [statusFilter, setStatusFilter] = useState<CaseStatusFilter>("all");
   const [nameQuery, setNameQuery] = useState("");
+  const [debouncedNameQuery, setDebouncedNameQuery] = useState("");
   const [pageSize, setPageSize] = useState<number>(DEFAULT_CASE_PAGE_SIZE);
   const [page, setPage] = useState(1);
   // 不再自动展开行内详情：无论单用例还是多用例，都需用户主动点击详情。
   const [expandedAttemptId, setExpandedAttemptId] = useState<string | undefined>();
   const [sortSpec, setSortSpec] = useState<CaseSortSpec>({ key: "none", direction: "asc" });
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebouncedNameQuery(nameQuery.trim()), 250);
+    return () => window.clearTimeout(timer);
+  }, [nameQuery]);
+
+  const casePageUrl = useMemo(() => {
+    const parameters = new URLSearchParams({
+      scope: String(round),
+      sort: sortSpec.key,
+      direction: sortSpec.direction,
+      page: String(page),
+      pageSize: String(pageSize),
+    });
+    if (statusFilter !== "all") parameters.set("status", statusFilter);
+    if (debouncedNameQuery) parameters.set("query", debouncedNameQuery);
+    if (batch.accessToken) parameters.set("access_token", batch.accessToken);
+    return `/api/v1/run-batches/${encodeURIComponent(batch.id)}/cases?${parameters.toString()}`;
+  }, [
+    batch.accessToken,
+    batch.id,
+    debouncedNameQuery,
+    page,
+    pageSize,
+    round,
+    sortSpec.direction,
+    sortSpec.key,
+    statusFilter,
+  ]);
+  const requestKey = `${casePageUrl}\u0000${batch.updatedAt}`;
+  const [loadedPage, setLoadedPage] = useState<{
+    requestKey: string;
+    rows: RoundCaseRowModel[];
+    total: number;
+    error: string;
+  }>({ requestKey: "", rows: [], total: 0, error: "" });
+  const loading = loadedPage.requestKey !== requestKey;
+  const rows = loading ? EMPTY_CASE_ROWS : loadedPage.rows;
+  const totalRows = loading ? 0 : loadedPage.total;
+  const loadError = loading ? "" : loadedPage.error;
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void fetch(casePageUrl, { signal: controller.signal })
+      .then(async (response) => {
+        if (!response.ok) {
+          throw new Error((await readApiErrorMessage(response, "读取用例列表失败。"))!);
+        }
+        return response.json() as Promise<{ items: RoundCaseRowModel[]; total: number }>;
+      })
+      .then((result) => {
+        setLoadedPage({ requestKey, rows: result.items, total: result.total, error: "" });
+      })
+      .catch((error: unknown) => {
+        if (error instanceof DOMException && error.name === "AbortError") return;
+        setLoadedPage({
+          requestKey,
+          rows: [],
+          total: 0,
+          error: error instanceof Error ? error.message : "读取用例列表失败。",
+        });
+      });
+    return () => controller.abort();
+  }, [casePageUrl, requestKey]);
+
   const columnWidths = useMemo(
     () => ({
       case: columnCharacterWidthAtCoverage(
@@ -1292,34 +1308,8 @@ function RoundCasesTable({
     [rows, runnerDirectory],
   );
 
-  const filteredRows = useMemo(() => {
-    const keyword = nameQuery.trim().toLowerCase();
-    const filtered = rows.filter((row) => {
-      if (statusFilter !== "all" && rowStatusKey(row) !== statusFilter) return false;
-      if (!keyword) return true;
-      return `${row.run.displayName} ${row.run.className}`.toLowerCase().includes(keyword);
-    });
-    if (sortSpec.key === "none") return filtered;
-    const direction = sortSpec.direction === "asc" ? 1 : -1;
-    const sortKey = sortSpec.key;
-    return [...filtered].sort((left, right) => {
-      const comparison = compareRowsBy(left, right, sortKey);
-      // 排序键相同时按用例名兜底，保证结果稳定。
-      return (
-        (comparison !== 0
-          ? comparison
-          : left.run.displayName.localeCompare(right.run.displayName, "zh-CN")) * direction
-      );
-    });
-  }, [nameQuery, rows, sortSpec, statusFilter]);
-  const pageCount = Math.max(1, Math.ceil(filteredRows.length / pageSize));
+  const pageCount = Math.max(1, Math.ceil(totalRows / pageSize));
   const currentPage = Math.min(page, pageCount);
-  const pageRows = filteredRows.slice((currentPage - 1) * pageSize, currentPage * pageSize);
-
-  function rowStatusKey(row: RoundCaseRowModel): CaseStatusFilter {
-    if (!row.attempt) return "pending";
-    return row.attempt.status;
-  }
 
   function toggleSort(key: CaseSortKey): void {
     setSortSpec((current) => {
@@ -1363,7 +1353,15 @@ function RoundCasesTable({
           />
         </span>
       </div>
-      {filteredRows.length === 0 ? (
+      {loadError ? (
+        <div className="inline-empty" role="alert">
+          {loadError}
+        </div>
+      ) : loading ? (
+        <div className="inline-empty" aria-live="polite">
+          正在读取当前页用例…
+        </div>
+      ) : rows.length === 0 ? (
         <div className="inline-empty">没有匹配当前筛选条件的用例。</div>
       ) : (
         <div className="table-scroll">
@@ -1407,7 +1405,7 @@ function RoundCasesTable({
               </tr>
             </thead>
             <tbody>
-              {pageRows.map((row) => (
+              {rows.map((row) => (
                 <RoundCaseRow
                   key={row.attempt ? row.attempt.id : `${row.run.id}:${row.round}`}
                   row={row}
@@ -1463,7 +1461,7 @@ function RoundCasesTable({
           <ChevronLeft size={15} /> 上一页
         </Button>
         <span>
-          第 {currentPage} / {pageCount} 页 · 共 {filteredRows.length} 条
+          第 {currentPage} / {pageCount} 页 · 共 {totalRows} 条
         </span>
         <Button
           className="button button-secondary compact-button"
@@ -1859,28 +1857,9 @@ function RoundRunnerCards({
   runnerDirectory: ReadonlyMap<string, RunnerDirectoryEntry>;
   onOpenScheduling: (runnerId: string | undefined) => void;
 }) {
-  const cards = useMemo(() => {
-    const byRunner = new Map<
-      string,
-      { executed: number; passed: number; failed: number; lastActivity: string }
-    >();
-    for (const attempt of batch.attempts) {
-      if (attempt.attemptNumber !== round) continue;
-      const entry = byRunner.get(attempt.runnerId) ?? {
-        executed: 0,
-        passed: 0,
-        failed: 0,
-        lastActivity: attempt.createdAt,
-      };
-      entry.executed += 1;
-      if (attempt.outcome === "succeeded") entry.passed += 1;
-      if (attempt.outcome === "failed" || attempt.outcome === "timed_out") entry.failed += 1;
-      const activity = attempt.finishedAt ?? attempt.startedAt ?? attempt.createdAt;
-      if (Date.parse(activity) > Date.parse(entry.lastActivity)) entry.lastActivity = activity;
-      byRunner.set(attempt.runnerId, entry);
-    }
-    return [...byRunner.entries()];
-  }, [batch.attempts, round]);
+  const cards = batch.runnerRoundSummaries
+    .filter((summary) => summary.round === round)
+    .map((summary) => [summary.runnerId, summary] as const);
 
   if (cards.length === 0) {
     return <div className="inline-empty">本轮还没有执行机参与执行。</div>;

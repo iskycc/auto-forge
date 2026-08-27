@@ -88,7 +88,7 @@ export default async function DashboardPage() {
       : Promise.resolve([]),
     canReadSources ? services.catalog.listRecentSources(5, caseProjectIds) : Promise.resolve([]),
     canReadRuns && hierarchy.projectVersionId
-      ? services.platformOperations.analytics(identity, {
+      ? services.platformOperations.analyticsOverview(identity, {
           ...(runProjectIds?.[0] ? { projectId: runProjectIds[0] } : {}),
           projectVersionId: hierarchy.projectVersionId,
           completedAfter: currentWeekStartedAt,
@@ -96,7 +96,7 @@ export default async function DashboardPage() {
         })
       : Promise.resolve(null),
     canReadRuns && hierarchy.projectVersionId
-      ? services.platformOperations.analytics(identity, {
+      ? services.platformOperations.analyticsOverview(identity, {
           ...(runProjectIds?.[0] ? { projectId: runProjectIds[0] } : {}),
           projectVersionId: hierarchy.projectVersionId,
           completedAfter: previousWeekStartedAt,

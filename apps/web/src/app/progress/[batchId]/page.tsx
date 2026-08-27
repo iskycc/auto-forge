@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation";
 
 import { PublicRunProgress } from "@/components/public-run-progress";
-import { buildRunProgress } from "@/lib/run-progress";
+import { buildRunProgressFromOverview } from "@/lib/run-progress";
 import { verifyRunProgressToken } from "@/lib/run-progress-token";
 import { getPlatformServices } from "@/lib/services";
 
@@ -18,7 +18,9 @@ export default async function RunProgressPage({
   const accessToken = query.access_token ?? "";
   const services = await getPlatformServices();
   if (!verifyRunProgressToken(services.config.masterKey, accessToken, batchId)) notFound();
-  const batch = await services.runBatches.get(batchId).catch(() => null);
-  if (!batch) notFound();
-  return <PublicRunProgress accessToken={accessToken} initial={buildRunProgress(batch)} />;
+  const overview = await services.runBatches.getDetailOverview(batchId).catch(() => null);
+  if (!overview) notFound();
+  return (
+    <PublicRunProgress accessToken={accessToken} initial={buildRunProgressFromOverview(overview)} />
+  );
 }

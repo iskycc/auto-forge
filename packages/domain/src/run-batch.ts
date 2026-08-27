@@ -243,6 +243,7 @@ export type RunBatchRoundSummary = {
   // attempt 不属于“已执行完成”，本轮尚无终态 attempt 时为 null。
   roundPassRate: number | null;
   // 截至本轮末，曾经通过的 run（按 executionRunId 去重）占总用例数的百分比。
+  overallPassed: number;
   overallPassRate: number;
   startedAt: string | null;
   durationMs: number | null;
@@ -295,6 +296,7 @@ export function summarizeRunBatchRounds(
       cancelled,
       notExecuted: Math.max(0, eligibleRuns.length - executed),
       roundPassRate: completed === 0 ? null : Math.round((passed / completed) * 100),
+      overallPassed: passedRunIds.size,
       overallPassRate:
         batch.totalRuns === 0 ? 0 : Math.round((passedRunIds.size / batch.totalRuns) * 100),
       startedAt: roundStartedAt(roundAttempts),

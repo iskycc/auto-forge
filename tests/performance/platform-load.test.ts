@@ -135,6 +135,32 @@ describe("bounded platform performance baseline", () => {
         schedulingWindow: snapshot?.queuedRuns.length ?? 0,
       });
 
+      const detailStartedAt = performance.now();
+      const [overview, firstCasePage] = await Promise.all([
+        repository.getDetailOverview(batch.id),
+        repository.listCasePage({
+          batchId: batch.id,
+          scope: 1,
+          sort: "none",
+          direction: "asc",
+          offset: 0,
+          limit: 50,
+        }),
+      ]);
+      const detailDurationMs = performance.now() - detailStartedAt;
+      expect(overview).toMatchObject({
+        batch: { totalRuns: 100_000 },
+        roundSummaries: [{ round: 1, totalRuns: 100_000, executed: 0 }],
+      });
+      expect(overview).not.toHaveProperty("runs");
+      expect(firstCasePage).toMatchObject({ total: 100_000 });
+      expect(firstCasePage?.items).toHaveLength(50);
+      expect(detailDurationMs).toBeLessThan(10_000);
+      recordMetric("sqlite-run-batch-detail", detailDurationMs, {
+        runs: 100_000,
+        returnedRows: firstCasePage?.items.length ?? 0,
+      });
+
       const terminationStartedAt = performance.now();
       const cancelledRuns = await executionControl.terminateBatch({
         batchId: batch.id,

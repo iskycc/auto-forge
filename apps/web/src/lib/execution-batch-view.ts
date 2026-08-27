@@ -1,11 +1,12 @@
-import type { RunBatchDetails } from "@autoforge/domain";
+import type { RunBatchDetailOverview } from "@autoforge/application";
+import type { RunBatch } from "@autoforge/domain";
 
 /**
  * 执行详情实际渲染所需的最小批次快照。公开页也使用该 DTO，避免把历史环境变量、
  * 密文引用、任务 ID、调度超时与未展示的状态历史序列化到匿名浏览器。
  */
 export type ExecutionBatchView = Pick<
-  RunBatchDetails,
+  RunBatch,
   | "id"
   | "status"
   | "retryLimit"
@@ -18,13 +19,21 @@ export type ExecutionBatchView = Pick<
   | "terminationRequestedAt"
   | "scheduledFor"
   | "updatedAt"
-  | "runs"
-  | "attempts"
-  | "roundRecoveries"
-  | "roundConcurrencies"
->;
+> &
+  Pick<
+    RunBatchDetailOverview,
+    | "roundSummaries"
+    | "allRoundsSummary"
+    | "finalSummary"
+    | "roundRecoveries"
+    | "roundConcurrencies"
+    | "runnerRoundSummaries"
+    | "runnerFaultIncidents"
+    | "finishedAt"
+  > & { accessToken?: string };
 
-export function toExecutionBatchView(batch: RunBatchDetails): ExecutionBatchView {
+export function toExecutionBatchView(overview: RunBatchDetailOverview): ExecutionBatchView {
+  const batch = overview.batch;
   return {
     id: batch.id,
     status: batch.status,
@@ -40,9 +49,13 @@ export function toExecutionBatchView(batch: RunBatchDetails): ExecutionBatchView
       : {}),
     scheduledFor: batch.scheduledFor,
     updatedAt: batch.updatedAt,
-    runs: batch.runs,
-    attempts: batch.attempts,
-    roundRecoveries: batch.roundRecoveries,
-    roundConcurrencies: batch.roundConcurrencies ?? [],
+    roundSummaries: overview.roundSummaries,
+    allRoundsSummary: overview.allRoundsSummary,
+    finalSummary: overview.finalSummary,
+    roundRecoveries: overview.roundRecoveries,
+    roundConcurrencies: overview.roundConcurrencies,
+    runnerRoundSummaries: overview.runnerRoundSummaries,
+    runnerFaultIncidents: overview.runnerFaultIncidents,
+    finishedAt: overview.finishedAt,
   };
 }

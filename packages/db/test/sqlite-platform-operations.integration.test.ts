@@ -19,6 +19,42 @@ afterEach(() => {
 });
 
 describe("SQLite platform operations", () => {
+  it("keeps dashboard analytics exact beyond one hundred thousand samples", async () => {
+    const { handle, repository } = fixture();
+    try {
+      // 分析事实的基数测试不需要复制 10 万条执行领域记录；仅在该隔离临时库关闭
+      // 外键，直接构造物化事实以验证工作台查询不存在隐藏的 100000 行截断。
+      handle.client.pragma("foreign_keys = OFF");
+      const insert = handle.client.prepare(
+        `INSERT INTO analytics_facts
+           (attempt_id,project_id,batch_id,run_id,suite_id,case_definition_id,case_version,
+            runner_id,outcome,result_code,duration_ms,passed,failed,skipped,completed_at,schema_version)
+         VALUES (?,'project-1','batch-large',?,'suite-1',?,1,'runner-1','succeeded',
+                 'TESTNG_SUCCEEDED',10,1,0,0,'2026-08-11T00:00:00.000Z',4)`,
+      );
+      handle.client.transaction(() => {
+        for (let index = 0; index < 100_005; index += 1) {
+          insert.run(`attempt-large-${index}`, `run-large-${index}`, `case-large-${index}`);
+        }
+      })();
+      handle.client.pragma("foreign_keys = ON");
+
+      const summary = await repository.readAnalyticsOverview({
+        filter: { projectId: "project-1", timeZone: "Asia/Shanghai" },
+        projectIds: ["project-1"],
+        generatedAt: "2026-08-11T03:00:00.000Z",
+      });
+      expect(summary).toMatchObject({
+        sampleCount: 100_005,
+        passed: 100_005,
+        successRate: 1,
+        trend: [{ total: 100_005, passed: 100_005 }],
+      });
+    } finally {
+      handle.close();
+    }
+  });
+
   it("manages scoped service credentials without storing raw tokens", async () => {
     const { handle, repository } = fixture();
     try {
@@ -224,6 +260,20 @@ describe("SQLite platform operations", () => {
       expect(summary.failures).not.toEqual(
         expect.arrayContaining([expect.objectContaining({ resultCode: "TESTNG_SUCCEEDED" })]),
       );
+      const overview = await repository.readAnalyticsOverview({
+        filter: { projectId: "project-1", timeZone: "Asia/Shanghai" },
+        projectIds: ["project-1"],
+        generatedAt: "2026-08-11T03:00:00.000Z",
+      });
+      expect(overview).toMatchObject({
+        sampleCount: 2,
+        passed: 3,
+        failed: 1,
+        skipped: 1,
+        successRate: 0.6,
+        trend: [{ total: 5, passed: 3, failed: 1, skipped: 1 }],
+        failures: [{ signature: "expected <n> but got <n>", count: 1 }],
+      });
       expect(
         await repository.readAnalytics({
           filter: {

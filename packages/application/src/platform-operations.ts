@@ -573,6 +573,17 @@ export class PlatformOperationsService {
     });
   }
 
+  async analyticsOverview(actor: AuthenticatedIdentity, filterInput: AnalyticsFilter) {
+    requireScopedPermission(actor, "run.read", filterInput.projectId);
+    const filter = analyticsFilterSchema.parse(filterInput);
+    const projectIds = projectIdsForPermission(actor, "run.read");
+    return this.repository.readAnalyticsOverview({
+      filter,
+      ...(projectIds ? { projectIds } : {}),
+      generatedAt: this.clock.now().toISOString(),
+    });
+  }
+
   operationalMetrics(actor: AuthenticatedIdentity) {
     requirePermission(actor, "settings.read");
     return this.repository.readOperationalMetrics();

@@ -59,7 +59,9 @@ export function RunnerFaultDialog({
                       </td>
                       <td title={incident.summary}>{incident.summary}</td>
                       <td>{incident.count}</td>
-                      <td title={incident.caseNames.join("、")}>{incident.caseNames.join("、")}</td>
+                      <td title={incident.caseNames.join("、") || "请按异常状态筛选用例"}>
+                        {incident.caseNames.join("、") || "按异常筛选查看"}
+                      </td>
                       <td>
                         <time title={`UTC ${incident.lastOccurredAt}`}>
                           {formatLocalDateTime(incident.lastOccurredAt)}
