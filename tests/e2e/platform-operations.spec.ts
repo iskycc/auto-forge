@@ -71,8 +71,9 @@ test("configuration conflicts, diagnostics and retention controls remain observa
   expect(JSON.stringify(diagnosticBody)).not.toContain("adminBootstrapToken");
   expect(JSON.stringify(diagnosticBody)).not.toContain("databaseUrl");
 
-  if (diagnosticBody.mode === "lite") {
-    insertLiteDeadLetterFixture();
+  const liteDataDirectory = process.env.AUTOFORGE_E2E_DATA_DIR;
+  if (diagnosticBody.mode === "lite" && liteDataDirectory) {
+    insertLiteDeadLetterFixture(liteDataDirectory);
     await page.getByRole("button", { name: "刷新诊断" }).click();
     const deadLetterPanel = page.locator(".diagnostic-dead-letters");
     await expect(deadLetterPanel).toContainText("对象清理");
@@ -105,9 +106,7 @@ test("configuration conflicts, diagnostics and retention controls remain observa
   });
 });
 
-function insertLiteDeadLetterFixture(): void {
-  const dataDirectory = process.env.AUTOFORGE_E2E_DATA_DIR;
-  if (!dataDirectory) throw new Error("Playwright data directory is unavailable.");
+function insertLiteDeadLetterFixture(dataDirectory: string): void {
   const database = new DatabaseSync(resolve(dataDirectory, "db", "autoforge.sqlite"));
   try {
     database.exec("PRAGMA busy_timeout = 5000");
