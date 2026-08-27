@@ -1,3 +1,4 @@
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -1616,17 +1617,19 @@ public final class AnalyzeNormalGroovyCases {
     }
 
     private static String captureSttyAttributes() throws IOException {
-      Process process = sttyProcess("-g").redirectOutput(ProcessBuilder.Redirect.PIPE).start();
+      Process process = sttyProcess("-g").start();
       String output;
       try (InputStream input = process.getInputStream()) {
-        output = new String(input.readAllBytes(), StandardCharsets.UTF_8).trim();
+        output = new String(readRemainingBytes(input), StandardCharsets.UTF_8).trim();
       }
       return waitFor(process) == 0 && !output.isEmpty() ? output : null;
     }
 
     private static boolean runStty(String... arguments) throws IOException {
-      Process process =
-          sttyProcess(arguments).redirectOutput(ProcessBuilder.Redirect.DISCARD).start();
+      Process process = sttyProcess(arguments).start();
+      try (InputStream input = process.getInputStream()) {
+        readRemainingBytes(input);
+      }
       return waitFor(process) == 0;
     }
 
@@ -1636,7 +1639,17 @@ public final class AnalyzeNormalGroovyCases {
       command.addAll(Arrays.asList(arguments));
       return new ProcessBuilder(command)
           .redirectInput(ProcessBuilder.Redirect.INHERIT)
-          .redirectError(ProcessBuilder.Redirect.DISCARD);
+          .redirectErrorStream(true);
+    }
+
+    private static byte[] readRemainingBytes(InputStream input) throws IOException {
+      ByteArrayOutputStream content = new ByteArrayOutputStream();
+      byte[] buffer = new byte[1_024];
+      int bytesRead;
+      while ((bytesRead = input.read(buffer)) >= 0) {
+        content.write(buffer, 0, bytesRead);
+      }
+      return content.toByteArray();
     }
 
     private static int waitFor(Process process) throws IOException {

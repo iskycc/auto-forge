@@ -127,7 +127,8 @@ printf '%s\n' \
   '}' >"${scope_workspace}/unrelated/OutsideSuspendedCase.groovy"
 
 run_analyzer() {
-  javac -encoding UTF-8 -cp "${POI_CLASSPATH}" -d "${compiled_classes}" "${source_path}"
+  javac -source 1.8 -target 1.8 -Xlint:-options -encoding UTF-8 -cp "${POI_CLASSPATH}" \
+    -d "${compiled_classes}" "${source_path}"
   java -cp "${compiled_classes}:${POI_CLASSPATH}" AnalyzeNormalGroovyCases \
     --source "${source_root}" --output "${output_file}" \
     --extra-keywords statusnew,statuspendingactive --no-review

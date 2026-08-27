@@ -3,7 +3,8 @@
 `AnalyzeNormalGroovyCases.java` recursively analyzes `.groovy` source files without compiling,
 loading, or executing them. It exports an XLSX workbook through Apache POI 3.13, uses
 JLine 3.25.1/Jansi 2.4.1 for interactive terminal input, and does not use Groovy, Grape, or
-Apache Ivy.
+Apache Ivy. The analyzer targets Java 8 and does not call Java 9+ runtime APIs.
+Both the Maven build and the focused regression script can be run with JDK 8 or newer.
 
 Build the analyzer and copy its runtime dependencies:
 
