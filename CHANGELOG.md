@@ -15,6 +15,7 @@ and known limitations.
   groups with human-readable names and descriptions instead of native Ctrl/Command multi-selects.
 - The Runner terminal title-bar expand control is now interactive, supports full-viewport and restored
   modes, refits xterm after resizing, and lets Escape restore an expanded window before closing it.
+  A temporarily unavailable Agent terminal channel can now be retried inside the same dialog.
 - Runner inventory rows are substantially denser. Host JDK/TestNG compatibility and raw capability
   strings are no longer repeated in each row; platform, Agent/protocol, slots/resources, heartbeat and
   lifecycle actions remain visible. Agents that accept project runtime assets are no longer blocked by

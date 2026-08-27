@@ -223,6 +223,13 @@ export function RunnerTerminal({
     window.requestAnimationFrame(() => fitAddonRef.current?.fit());
   }
 
+  function retryTerminalConnection(): void {
+    socketRef.current?.close(1000, "Retrying terminal connection");
+    socketRef.current = null;
+    setConnectionState("authorization");
+    setError(null);
+  }
+
   return (
     <>
       <Button
@@ -304,6 +311,13 @@ export function RunnerTerminal({
                 <div className="terminal-closed-card">
                   <strong>终端连接已结束</strong>
                   <p>{error ?? "关闭浮窗后可重新创建受控会话。"}</p>
+                  <Button
+                    className="button button-primary"
+                    type="button"
+                    onClick={retryTerminalConnection}
+                  >
+                    重新连接
+                  </Button>
                   <Button className="button button-secondary" type="button" onClick={closeTerminal}>
                     关闭
                   </Button>

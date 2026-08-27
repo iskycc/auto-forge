@@ -376,8 +376,23 @@ async function exerciseTerminalAfterUpdate(page: Page, runnerId: string): Promis
   const terminalButton = runnerRow.getByRole("button", { name: "终端浮窗" });
   await expect(terminalButton).toBeEnabled();
   await terminalButton.click();
-  await page.getByRole("button", { name: "连接终端" }).click();
-  await expect(page.getByText("已连接", { exact: true })).toBeVisible({ timeout: 20_000 });
+  await expect
+    .poll(
+      async () => {
+        if (await page.getByText("已连接", { exact: true }).isVisible()) return true;
+        const reconnect = page.getByRole("button", { name: "重新连接", exact: true });
+        if (await reconnect.isVisible()) await reconnect.click();
+        const connect = page.getByRole("button", { name: "连接终端", exact: true });
+        if (await connect.isVisible()) await connect.click();
+        return false;
+      },
+      {
+        message: "原地更新后终端通道应在短暂重连窗口内恢复",
+        timeout: 60_000,
+        intervals: [500, 1_000, 2_000],
+      },
+    )
+    .toBe(true);
   const terminalInput = page.locator(".terminal-window .xterm-helper-textarea");
   await expect(terminalInput).toBeFocused();
   await terminalInput.evaluate((textarea) => {
