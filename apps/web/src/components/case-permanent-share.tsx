@@ -4,6 +4,7 @@ import { Check, Copy, ExternalLink, Link2, LoaderCircle } from "lucide-react";
 import { useState } from "react";
 
 import { readApiErrorMessage } from "@/lib/client-api";
+import { copyTextToClipboard } from "@/lib/client-clipboard";
 
 import { Button } from "./ui";
 
@@ -35,12 +36,14 @@ export function CasePermanentShare({ caseDefinitionId }: { caseDefinitionId: str
   }
 
   async function copyShareUrl(url = shareUrl): Promise<void> {
+    setError("");
     try {
-      await navigator.clipboard.writeText(url);
+      await copyTextToClipboard(url);
       setCopied(true);
       window.setTimeout(() => setCopied(false), 2_000);
-    } catch {
+    } catch (copyFailure) {
       setCopied(false);
+      setError(copyFailure instanceof Error ? copyFailure.message : "复制分享链接失败。");
     }
   }
 

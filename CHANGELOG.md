@@ -4,6 +4,42 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## 1.5.6 - 2026-08-27
+
+### Fixed
+
+- The execution-history permanent-share copy action now works on plain-HTTP intranet deployments
+  where the secure-context Clipboard API is unavailable or denied. It falls back to a user-gesture
+  selection copy and reports an actionable message instead of silently ignoring a failed copy.
+- Permanent case-share links use the same copy behavior and expose accessible success/failure status
+  without changing the generated anonymous URL or its lifetime.
+
+### Tests
+
+- Added unit coverage for Clipboard API success, unavailable API, permission rejection and total
+  failure cleanup. Extended the all-rounds Playwright flow to remove `navigator.clipboard`, click the
+  execution-history copy control and verify the exact permanent URL copied by the HTTP fallback.
+
+### Database and persisted configuration
+
+- No SQLite/PostgreSQL migration or persisted-configuration change is required.
+
+### Compatibility
+
+- Runner Protocol v1, Jenkins Pipeline inputs, task snapshots, permanent-share token format and
+  release archive formats are unchanged.
+
+### Offline assets
+
+- No dependency, remote asset or runtime network requirement was added; the fallback uses browser
+  APIs already available in the bundled UI.
+
+### Known limitations
+
+- Browsers or embedded WebViews that disable both the Clipboard API and user-gesture selection copy
+  cannot be bypassed. The UI now keeps the anonymous link available and tells the user to open it and
+  copy from the address bar.
+
 ## 1.5.5 - 2026-08-27
 
 ### Changed

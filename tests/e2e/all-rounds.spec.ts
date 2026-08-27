@@ -858,6 +858,30 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
     .getByRole("link", { name: /打开批次 #\d+ 永久分享链接/ })
     .getAttribute("href");
   expect(sharedResultHref).toContain("/share/run/");
+  await page.evaluate(() => {
+    Object.defineProperty(window.navigator, "clipboard", {
+      configurable: true,
+      value: undefined,
+    });
+    window.addEventListener(
+      "copy",
+      () => {
+        const activeElement = document.activeElement;
+        Object.assign(window, {
+          __autoforgeCopiedText:
+            activeElement instanceof HTMLTextAreaElement
+              ? activeElement.value.slice(activeElement.selectionStart, activeElement.selectionEnd)
+              : (window.getSelection()?.toString() ?? ""),
+        });
+      },
+      { once: true },
+    );
+  });
+  await jenkinsRecord.getByRole("button", { name: /复制批次 #\d+ 永久分享链接/ }).click();
+  await expect(jenkinsRecord.getByRole("status")).toHaveText("永久分享链接已复制");
+  expect(
+    await page.evaluate(() => Reflect.get(window, "__autoforgeCopiedText") as string | undefined),
+  ).toBe(sharedResultHref);
   const historyAnonymousContext = await browser.newContext();
   const historyAnonymousPage = await historyAnonymousContext.newPage();
   const historyShareResponse = await historyAnonymousPage.goto(sharedResultHref!);

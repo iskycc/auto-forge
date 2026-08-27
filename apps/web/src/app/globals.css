@@ -14124,9 +14124,25 @@ button.icon-button:disabled {
 }
 
 .run-share-action {
+  position: relative;
   display: inline-flex;
   align-items: center;
   gap: calc(var(--space-2) / 2);
+}
+
+.run-share-error {
+  position: absolute;
+  z-index: 12;
+  top: calc(100% + var(--space-2));
+  right: 0;
+  width: max-content;
+  max-width: min(360px, 60vw);
+  border: 1px solid color-mix(in srgb, var(--color-danger) 28%, var(--color-border));
+  border-radius: var(--radius-control);
+  padding: 8px 10px;
+  background: var(--color-surface);
+  box-shadow: var(--shadow-elevated);
+  white-space: normal;
 }
 
 .list-filter-progress {
