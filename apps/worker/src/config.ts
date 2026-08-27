@@ -24,6 +24,7 @@ export function loadWorkerConfig(options: LoadPlatformConfigurationOptions = {})
   }
   return {
     databaseUrl: configuration.full.databaseUrl,
+    databasePoolMax: configuration.full.databasePoolMax,
     dataDirectory: runtime.paths.dataDirectory,
     natsServers: [...configuration.full.natsServers],
     workerId: `full-worker-${hostname()}-${process.pid}`,

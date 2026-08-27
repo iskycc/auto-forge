@@ -35,6 +35,43 @@ describe("JobWorker", () => {
     expect(queue.acknowledged).toEqual([]);
     expect(queue.rejected).toEqual([delivery.deliveryId]);
   });
+
+  it("keeps the minimum poll cadence for queues with blocking claims", async () => {
+    vi.useFakeTimers();
+    try {
+      const queue = new FakeQueue([]);
+      queue.blockingClaim = true;
+      const abort = new AbortController();
+      const worker = createWorker(queue, vi.fn());
+      const running = worker.run(abort.signal);
+      // minimumPollMs=1：阻塞式队列的每个空轮询周期只有一个 1ms 定时器。
+      await vi.advanceTimersByTimeAsync(100);
+      abort.abort();
+      await running;
+
+      expect(queue.claimCount).toBeGreaterThanOrEqual(90);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("backs off empty polls for non-blocking queues", async () => {
+    vi.useFakeTimers();
+    try {
+      const queue = new FakeQueue([]);
+      const abort = new AbortController();
+      const worker = createWorker(queue, vi.fn());
+      const running = worker.run(abort.signal);
+      // 非阻塞队列退避 1→2→2…（maximumPollMs=2），100ms 窗口的领取次数约为一半。
+      await vi.advanceTimersByTimeAsync(100);
+      abort.abort();
+      await running;
+
+      expect(queue.claimCount).toBeLessThanOrEqual(60);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 function createWorker(queue: JobQueuePort, handler: JobHandler) {
@@ -75,7 +112,9 @@ function dispatchDelivery(): ClaimedJob {
 class FakeQueue implements JobQueuePort {
   readonly acknowledged: string[] = [];
   readonly rejected: string[] = [];
+  blockingClaim?: boolean;
   afterReject?: () => void;
+  claimCount = 0;
   private claimed = false;
 
   constructor(private readonly deliveries: ClaimedJob[]) {}
@@ -85,6 +124,7 @@ class FakeQueue implements JobQueuePort {
   }
 
   async claim(): Promise<ClaimedJob[]> {
+    this.claimCount += 1;
     if (this.claimed) return [];
     this.claimed = true;
     return this.deliveries;

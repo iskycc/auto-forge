@@ -7,6 +7,10 @@ AutoForge 只接受 `--data-dir` 启动参数。首次启动会创建权限为 `
 访问 `/setup` 选择 Lite 或填写 Full 内部基础设施地址，保存后重启，再用一次性令牌创建首位
 系统管理员。Lite 只使用 SQLite、本地对象目录、SQLite 队列和进程内工作器；Full 使用
 PostgreSQL、JetStream、MinIO 与 Redis，但领域/API/UI 语义相同。
+Full 模式可在 `config/platform.json` 的 `full.databasePoolMax`（默认 10，范围 1–100）
+调整 Web 主请求池、Web 调度线程池的总预算以及每个独立 worker 的连接池上限；高并发完成
+上报场景可按负载上调。容量规划按每个 Web 副本最多两份该预算、每个 worker 一份该预算计算，
+并为迁移与运维连接留出余量，合计不得超过 PostgreSQL `max_connections`；修改后重启生效。
 
 ## 身份、LDAP 与权限
 

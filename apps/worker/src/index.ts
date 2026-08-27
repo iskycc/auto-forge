@@ -46,6 +46,7 @@ for (const signal of ["SIGINT", "SIGTERM"] as const) {
 const database = createPostgresDatabase({
   connectionString: config.databaseUrl,
   migrationsFolder: config.migrationsFolder,
+  poolMax: config.databasePoolMax,
 });
 database.pool.on("error", (error) => {
   // PostgreSQL reports a lost idle socket through Pool's error event. The pool

@@ -9,45 +9,30 @@ import type {
   RenewLeaseInput,
   UploadLogChunksInput,
 } from "@autoforge/contracts";
-import {
-  assessRunnerCompatibility,
-  DomainError,
-  isRetryableRunnerFailure,
-} from "@autoforge/domain";
+import { assessRunnerCompatibility, DomainError } from "@autoforge/domain";
 
 import type {
+  AttemptSchedulingContext,
   Clock,
   ExecutionControlRepository,
   IdGenerator,
+  JarObjectStorePort,
   RunBatchRepository,
   RunBatchSchedulingPort,
   RunnerCredentialPort,
-  JarObjectStorePort,
   RunnerRepository,
+  SchedulingEventDraft,
   SecretCipherPort,
 } from "./ports";
 import { assertRunnerAuthenticated } from "./manage-runners";
 import { discardableRunnerBatchCacheIds } from "./reconcile-runner-batch-cache";
+import { buildAttemptCompletionEvents } from "./completion-scheduling-events";
 import { buildRecoverySchedulingEvents } from "./recovery-scheduling-events";
 import { resolveAttemptSchedulingContexts } from "./attempt-scheduling-contexts";
 
 const LEASE_DURATION_MS = 45_000;
 const RECOVERY_SCAN_LIMIT = 100;
 const RECOVERY_MINIMUM_INTERVAL_MS = 1_000;
-// 调度日志只渲染 message，失败摘要必须压成单行短文本随消息展示。
-const SCHEDULING_SUMMARY_LIMIT = 300;
-
-// 完成结果的中文文案，用于调度事件消息。
-const COMPLETION_OUTCOME_LABELS: Record<
-  "succeeded" | "failed" | "timed_out" | "cancelled",
-  string
-> = {
-  succeeded: "成功",
-  failed: "失败",
-  timed_out: "超时",
-  cancelled: "已取消",
-};
-
 export class ExecutionControlService {
   private recoveryInFlight: Promise<void> | undefined;
   private nextRecoveryAtMs = 0;
@@ -205,22 +190,23 @@ export class ExecutionControlService {
   ) {
     await this.authenticateRunner(runnerId, credential);
     const result = await this.enrichSummaryFromFailureLog(attemptId, input.result);
-    const response = await this.executions.completeAttempt({
-      runnerId,
-      attemptId,
-      completionId: input.completionId,
-      leaseTokenHash: this.credentials.hash(input.leaseToken),
-      resultDigest: this.credentials.hash(JSON.stringify(result)),
-      result,
-      eventId: this.ids.next(),
-      auditEventId: this.ids.next(),
-      acceptedAt: this.clock.now().toISOString(),
-    });
-    // 仅在状态机接受该完成上报时记录事件；duplicate/late 不重复写入。
-    // 事件使用富化后的 result（含日志尾部提取的失败原因），否则调度日志看不到失败原因。
-    if (response.disposition === "accepted") {
-      await this.appendAttemptCompletionEvents(attemptId, result, response.retryScheduled);
-    }
+    // 事件工厂在完成事务内执行：仅在状态机接受上报时写入，事件体携带富化后的
+    // result（含日志尾部提取的失败原因），避免完成热路径追加两次数据库往返。
+    const response = await this.executions.completeAttempt(
+      {
+        runnerId,
+        attemptId,
+        completionId: input.completionId,
+        leaseTokenHash: this.credentials.hash(input.leaseToken),
+        resultDigest: this.credentials.hash(JSON.stringify(result)),
+        result,
+        eventId: this.ids.next(),
+        auditEventId: this.ids.next(),
+        acceptedAt: this.clock.now().toISOString(),
+      },
+      (context, retryScheduled) =>
+        this.buildCompletionEvents(attemptId, context, result, retryScheduled),
+    );
     return response;
   }
 
@@ -301,67 +287,19 @@ export class ExecutionControlService {
     }
   }
 
-  private async appendAttemptCompletionEvents(
+  private buildCompletionEvents(
     attemptId: string,
+    context: AttemptSchedulingContext,
     result: CompletionResult,
     retryScheduled: boolean,
-  ): Promise<void> {
-    const context = await this.executions.resolveAttemptSchedulingContext(attemptId);
-    if (!context) return;
-    const recordedAt = this.clock.now().toISOString();
-    const outcome = result.status;
-    const reasonSuffix = outcome === "succeeded" ? "" : completionReasonSuffix(result);
-    const failureSummary = outcome === "succeeded" ? "" : compactFailureSummary(result.summary);
-    const events: Array<{
-      id: string;
-      batchId: string;
-      runnerId?: string;
-      executionRunId?: string;
-      attemptId?: string;
-      eventType: "attempt_completed" | "run_held_for_round" | "runner_fault_rescheduled";
-      message: string;
-      payload?: Record<string, unknown>;
-      recordedAt: string;
-    }> = [
-      {
-        id: this.ids.next(),
-        batchId: context.batchId,
-        runnerId: context.runnerId,
-        executionRunId: context.executionRunId,
-        attemptId,
-        eventType: "attempt_completed",
-        message: `用例「${context.displayName}」第 ${context.attemptNumber} 次执行${COMPLETION_OUTCOME_LABELS[outcome]}${reasonSuffix}`,
-        payload: {
-          attemptNumber: context.attemptNumber,
-          outcome,
-          durationMs: result.durationMs,
-          ...(result.resultCode ? { resultCode: result.resultCode } : {}),
-          ...(failureSummary ? { summary: failureSummary } : {}),
-        },
-        recordedAt,
-      },
-    ];
-    if (retryScheduled) {
-      const runnerFault = isRetryableRunnerFailure(result.resultCode);
-      events.push({
-        id: this.ids.next(),
-        batchId: context.batchId,
-        ...(runnerFault ? { runnerId: context.runnerId } : {}),
-        executionRunId: context.executionRunId,
-        attemptId,
-        eventType: runnerFault ? "runner_fault_rescheduled" : "run_held_for_round",
-        message: runnerFault
-          ? `执行机异常导致用例「${context.displayName}」自动重新调度（${result.resultCode}）`
-          : `该用例已失败，等待下一轮重试${result.resultCode ? `（${result.resultCode}）` : ""}`,
-        payload: {
-          ...(context.heldRound !== undefined ? { heldRound: context.heldRound } : {}),
-          ...(result.resultCode ? { resultCode: result.resultCode } : {}),
-          ...(failureSummary ? { summary: failureSummary } : {}),
-        },
-        recordedAt,
-      });
-    }
-    await this.batches.appendSchedulingEvents(events);
+  ): SchedulingEventDraft[] {
+    return buildAttemptCompletionEvents(
+      { nextId: () => this.ids.next(), now: () => this.clock.now().toISOString() },
+      attemptId,
+      context,
+      result,
+      retryScheduled,
+    );
   }
 
   async reconcile(runnerId: string, credential: string, input: ReconcileAttemptsInput) {
@@ -732,18 +670,6 @@ function redactLogChunks(
 }
 
 // 把多行摘要折叠为单行并限长，避免堆栈撑爆调度日志消息。
-function compactFailureSummary(summary: string): string {
-  return summary.replace(/\s+/g, " ").trim().slice(0, SCHEDULING_SUMMARY_LIMIT);
-}
-
-// 调度日志只渲染 message，非成功结果必须在消息里带原因码与精简摘要；
-// resultCode 缺失（防御）时不追加括号段。
-function completionReasonSuffix(result: CompletionResult): string {
-  if (!result.resultCode) return "";
-  const summary = compactFailureSummary(result.summary);
-  return summary ? `（${result.resultCode}：${summary}）` : `（${result.resultCode}）`;
-}
-
 // Agent 重启/取消协调后重放的完成结果码；这类尝试的日志由被强杀的旧进程写入，
 // 不适合作为失败摘要的启发式来源（参见 enrichSummaryFromFailureLog）。
 const RECONCILED_COMPLETION_RESULT_CODES = new Set([

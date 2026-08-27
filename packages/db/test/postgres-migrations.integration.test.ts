@@ -433,6 +433,62 @@ describe.skipIf(!connectionString)("PostgreSQL migrations", () => {
     }
   });
 
+  it("keeps scheduling events while dropping their foreign keys", async () => {
+    const admin = new Client({ connectionString });
+    await admin.connect();
+    const scratch = await createScratchDatabase(admin);
+    await admin.end();
+
+    const client = new Client({ connectionString: connectionStringFor(scratch) });
+    await client.connect();
+    const migrationsFolder = resolve(import.meta.dirname, "../drizzle/postgresql");
+    const migrationFiles = (await readdir(migrationsFolder))
+      .filter((name) => /^\d+_.+\.sql$/.test(name))
+      .sort();
+    const eventMigration = "0050_scheduling_events_drop_foreign_keys.sql";
+    const eventMigrationIndex = migrationFiles.indexOf(eventMigration);
+    expect(eventMigrationIndex).toBeGreaterThan(0);
+    try {
+      for (const fileName of migrationFiles.slice(0, eventMigrationIndex)) {
+        await client.query(await readFile(resolve(migrationsFolder, fileName), "utf8"));
+      }
+      await client.query(`
+        INSERT INTO run_batches
+          (id, suite_id, suite_name, suite_version, status, retry_limit, environment_json,
+           total_runs, project_id, created_at, updated_at)
+        VALUES
+          ('batch-events', 'suite-events', 'Events', 1, 'running', 0, '[]', 1,
+           '00000000-0000-7000-8000-000000000001',
+           '2026-08-20T00:00:00.000Z', '2026-08-20T00:00:00.000Z');
+        INSERT INTO scheduling_events
+          (id, batch_id, event_type, message, recorded_at)
+        VALUES
+          ('event-existing', 'batch-events', 'runner_metrics', 'Existing event',
+           '2026-08-20T00:01:00.000Z'),
+          ('event-retry-concurrency', 'batch-events', 'retry_concurrency_changed',
+           'Concurrency changed', '2026-08-20T00:01:30.000Z');
+      `);
+
+      await client.query(await readFile(resolve(migrationsFolder, eventMigration), "utf8"));
+      await expect(
+        client.query("SELECT event_type FROM scheduling_events ORDER BY id"),
+      ).resolves.toMatchObject({
+        rows: [{ event_type: "runner_metrics" }, { event_type: "retry_concurrency_changed" }],
+      });
+      // 外键移除后，诊断流水允许引用已清理的历史对象（保留周期显式清理）。
+      await expect(
+        client.query(
+          `INSERT INTO scheduling_events
+             (id, batch_id, event_type, message, recorded_at)
+           VALUES ('event-after-fk-drop', 'batch-missing', 'attempt_completed',
+                   'Event without foreign key', '2026-08-20T00:02:00.000Z')`,
+        ),
+      ).resolves.toBeDefined();
+    } finally {
+      await client.end();
+    }
+  });
+
   it("upgrades version runtime resources and repairs normal TestNG batch status", async () => {
     const admin = new Client({ connectionString });
     await admin.connect();

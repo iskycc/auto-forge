@@ -2,6 +2,11 @@ import { z } from "zod";
 
 export const RUNNER_PROTOCOL_VERSION = 1 as const;
 
+/** 执行机协议高频写请求的正文上限（字节），路由层与组合根快路径共用。 */
+export const RUNNER_CLAIM_BODY_LIMIT_BYTES = 64 * 1024;
+export const RUNNER_COMPLETE_BODY_LIMIT_BYTES = 512 * 1024;
+export const RUNNER_LOG_UPLOAD_BODY_LIMIT_BYTES = 2 * 1024 * 1024;
+
 const protocolVersionSchema = z.literal(RUNNER_PROTOCOL_VERSION);
 const identifierSchema = z.string().trim().min(1).max(128);
 const isoTimestampSchema = z.iso.datetime({ offset: true });
@@ -502,6 +507,11 @@ export const completeAttemptResponseSchema = z.object({
   batchId: identifierSchema.optional(),
   /** 批次是否已进入终态：Agent 据此回收批次级共享输入目录。 */
   batchClosed: z.boolean().optional(),
+  /**
+   * 提交完成上报时是否存在可调度（queued 且未扣留）的 run。false 表示路由层
+   * 无需触发补调度；缺省（重复/迟到上报等）时调用方应保守触发。可选新增。
+   */
+  hasSchedulableRuns: z.boolean().optional(),
 });
 
 export const reconcileAttemptsInputSchema = z.object({

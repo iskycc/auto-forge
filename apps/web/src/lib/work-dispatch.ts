@@ -5,14 +5,20 @@ import {
   type RunBatchSchedulingPort,
 } from "@autoforge/application";
 
-import type { LiteWorkDispatcher } from "./lite-work-runtime";
+import type { WorkDispatcher } from "./work-runtime";
 
-export { liteWorkDispatcher } from "./lite-work-runtime";
+export { workDispatcher } from "./work-runtime";
 
-/** 高频 Runner 控制事务在 Lite 模式转交 worker thread，避免同步 SQLite 阻塞 Web。 */
+/**
+ * 高频 Runner 控制事务转交工作线程执行：Lite 模式避免同步 SQLite 阻塞 Web
+ * 事件循环，卸载全部热点操作。Full 模式不使用此代理——r39 基准实测卸载后
+ * 完成请求服务端 p50 虽由 42ms 降至 28ms，但执行阶段墙钟由客户端驱动并未
+ * 改善，领取/批次创建因车道连接池争用回退，净收益为负；Full 执行仓储保持
+ * 内联（见 services.ts），仅补位调度交给工作线程。
+ */
 export function workerBackedExecutionControlRepository(
   local: ExecutionControlRepository,
-  dispatcher: LiteWorkDispatcher | undefined,
+  dispatcher: WorkDispatcher | undefined,
 ): ExecutionControlRepository {
   if (!dispatcher) return local;
   return new Proxy(local, {
@@ -69,11 +75,11 @@ export function workerBackedExecutionControlRepository(
             dispatcher.terminateBatch(input) as ReturnType<
               ExecutionControlRepository["terminateBatch"]
             >;
-        default: {
-          const value: unknown = Reflect.get(target, property, target);
-          return typeof value === "function" ? value.bind(target) : value;
-        }
+        default:
+          break;
       }
+      const value: unknown = Reflect.get(target, property, target);
+      return typeof value === "function" ? value.bind(target) : value;
     },
   });
 }
@@ -84,7 +90,7 @@ export class CoalescingSchedulingPort implements RunBatchSchedulingPort {
 
   constructor(
     private readonly local: RunBatchSchedulingPort,
-    private readonly dispatcher: LiteWorkDispatcher | undefined,
+    private readonly dispatcher: WorkDispatcher | undefined,
   ) {}
 
   schedule(batchId: string): Promise<unknown> {

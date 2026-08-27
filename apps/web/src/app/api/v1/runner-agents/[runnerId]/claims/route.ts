@@ -1,3 +1,4 @@
+import { RUNNER_CLAIM_BODY_LIMIT_BYTES } from "@autoforge/contracts";
 import { NextResponse } from "next/server";
 
 import { apiErrorResponse, bearerToken, readJsonBody, rejectRateLimited } from "@/lib/api-response";
@@ -19,7 +20,7 @@ export async function POST(request: Request, context: Context): Promise<NextResp
     const response = await services.runnerProtocol.claim(
       runnerId,
       bearerToken(request),
-      await readJsonBody(request, 64 * 1024),
+      await readJsonBody(request, RUNNER_CLAIM_BODY_LIMIT_BYTES),
     );
     return NextResponse.json(response);
   } catch (error) {

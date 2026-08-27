@@ -1495,10 +1495,17 @@ function executeSqliteRetention(
       .all(input.cutoffAt, input.limit) as Array<{ id: string }>;
     if (rows.length > 0) {
       const ids = rows.map((row) => row.id);
+      // scheduling_events 不再以外键引用 run_batches（见迁移 0051）；删除批次前
+      // 显式清理诊断流水。attempt/run 行仍由外键级联删除；批次日志文件在事务
+      // 提交后移除。
+      handle.client
+        .prepare(
+          `DELETE FROM scheduling_events WHERE batch_id IN (${ids.map(() => "?").join(",")})`,
+        )
+        .run(...ids);
       deletedRecords = handle.client
         .prepare(`DELETE FROM run_batches WHERE id IN (${ids.map(() => "?").join(",")})`)
         .run(...ids).changes;
-      // attempt/run 行由外键级联删除；批次日志文件在事务提交后移除。
       removedBatchStoreIds.push(...ids);
     }
   } else {

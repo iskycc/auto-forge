@@ -7,5 +7,5 @@
     "noEmit": true,
     "types": ["node"]
   },
-  "include": ["server/lite-work-protocol.ts", "server/lite-work-thread.ts"]
+  "include": ["server/work-protocol.ts", "server/work-thread.ts"]
 }

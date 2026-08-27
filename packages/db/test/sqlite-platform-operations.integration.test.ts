@@ -589,6 +589,14 @@ describe("SQLite platform operations", () => {
     const batchId = "00000000-0000-4000-8000-000000000b01";
     try {
       seedCompletedAttempt(handle);
+      // 调度事件不再依赖外键级联：保留周期必须显式清理批次诊断流水。
+      handle.client
+        .prepare(
+          `INSERT INTO scheduling_events
+             (id, batch_id, event_type, message, recorded_at)
+           VALUES (?, ?, 'batch_scheduled', 'retention fixture', '2026-08-11T01:00:00.000Z')`,
+        )
+        .run("event-retention", batchId);
       await attemptLogs.appendChunks({
         batchId,
         attemptId: "attempt-1",
@@ -614,6 +622,9 @@ describe("SQLite platform operations", () => {
       expect(handle.client.prepare("SELECT count(*) AS count FROM run_batches").get()).toEqual({
         count: 0,
       });
+      expect(
+        handle.client.prepare("SELECT count(*) AS count FROM scheduling_events").get(),
+      ).toEqual({ count: 0 });
     } finally {
       handle.close();
     }

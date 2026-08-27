@@ -6,39 +6,54 @@ import { join, resolve } from "node:path";
 import next from "next";
 
 import { loadAppConfig } from "../src/lib/config.ts";
-import {
-  registerLiteWorkDispatcher,
-  unregisterLiteWorkDispatcher,
-} from "../src/lib/lite-work-runtime.ts";
+import { registerWorkDispatcher, unregisterWorkDispatcher } from "../src/lib/work-runtime.ts";
 import { recordHttpRequest } from "../src/lib/runtime-metrics.ts";
 import { TerminalGateway, type TerminalAuditEvent } from "./terminal-gateway.ts";
 import { rejectH2cUpgrade } from "./http-upgrade.ts";
 import { LogStreamGateway } from "./log-stream-gateway.ts";
 import { LogStreamRelay } from "./log-stream-relay.ts";
-import { LiteWorkerPool } from "./lite-worker-pool.ts";
+import { WorkerPool } from "./worker-pool.ts";
+import {
+  FastPathUnavailable,
+  handleRunnerFastPath,
+  matchRunnerFastPath,
+} from "./runner-fast-path.ts";
 
 const development = process.env.NODE_ENV !== "production";
 const platformConfiguration = loadAppConfig();
 const hostname = platformConfiguration.web.hostname;
 const port = platformConfiguration.web.port;
 const webDirectory = findWebDirectory(process.cwd());
-const liteWorkerPool =
-  platformConfiguration.mode === "lite"
-    ? new LiteWorkerPool(
-        {
-          databasePath: platformConfiguration.databasePath,
-          migrationsFolder: platformConfiguration.migrationsFolder,
-          attemptLogsDirectory: join(platformConfiguration.dataDirectory, "attempt-logs"),
-          dataDirectory: platformConfiguration.dataDirectory,
-          caseExecutionTimeoutSeconds: platformConfiguration.caseExecutionTimeoutSeconds,
-          artifactCollectionEnabled: platformConfiguration.artifactCollectionEnabled,
-          scheduler: { ...platformConfiguration.scheduler },
-        },
-        platformConfiguration.worker.concurrency,
-        platformConfiguration.worker.shutdownGraceMs,
-      )
-    : undefined;
-if (liteWorkerPool) registerLiteWorkDispatcher(liteWorkerPool);
+// Lite 把同步 SQLite Runner 控制事务卸载到工作线程；Full 的 Runner 写路径保留
+// 在主线程，只把补位调度交给少量工作线程，避免重复扫描阻塞 HTTP 事件循环。
+const workPool = new WorkerPool(
+  {
+    mode: platformConfiguration.mode,
+    migrationsFolder: platformConfiguration.migrationsFolder,
+    attemptLogsDirectory: join(platformConfiguration.dataDirectory, "attempt-logs"),
+    dataDirectory: platformConfiguration.dataDirectory,
+    caseExecutionTimeoutSeconds: platformConfiguration.caseExecutionTimeoutSeconds,
+    artifactCollectionEnabled: platformConfiguration.artifactCollectionEnabled,
+    scheduler: { ...platformConfiguration.scheduler },
+    ...(platformConfiguration.mode === "lite"
+      ? { sqlite: { databasePath: platformConfiguration.databasePath } }
+      : {
+          full: {
+            databaseUrl: platformConfiguration.databaseUrl,
+            // WorkerPool 会把这一总预算均分给 Full 调度车道，不为每条车道重复
+            // 创建同样大的连接池。
+            databasePoolMax: platformConfiguration.databasePoolMax,
+            minio: { ...platformConfiguration.minio },
+          },
+        }),
+  },
+  platformConfiguration.worker.concurrency,
+  platformConfiguration.worker.shutdownGraceMs,
+);
+registerWorkDispatcher(workPool);
+// 后台预热工作线程（建池、迁移校验、连接预热），不阻塞端口监听；预热失败时
+// 首个真实任务退回冷启动，行为与未预热一致。
+void workPool.warmup();
 
 if (!development) configureProductionRuntime(webDirectory);
 
@@ -89,15 +104,40 @@ const server = createServer((request, response) => {
       durationMs,
     });
   });
-  requestHandler(request, response).catch((error: unknown) => {
+  const fastPathRoute = matchRunnerFastPath(request.method, request.url);
+  if (fastPathRoute) {
+    // 执行机协议高频写路径绕过 Next.js 路由，直接复用同一份应用服务；
+    // 服务尚未就绪时回退 Next.js 路由，行为与纯路由模式一致。
+    handleRunnerFastPath(fastPathRoute, request, response, currentRequestId).catch(
+      (error: unknown) => {
+        if (error instanceof FastPathUnavailable) {
+          forwardToNext();
+          return;
+        }
+        logFastPathFailure(error);
+        if (!response.headersSent) response.writeHead(500, { "Content-Type": "text/plain" });
+        response.end("Internal Server Error");
+      },
+    );
+    return;
+  }
+  forwardToNext();
+
+  function forwardToNext(): void {
+    requestHandler(request, response).catch((error: unknown) => {
+      logFastPathFailure(error);
+      if (!response.headersSent) response.writeHead(500, { "Content-Type": "text/plain" });
+      response.end("Internal Server Error");
+    });
+  }
+
+  function logFastPathFailure(error: unknown): void {
     log("error", "HTTP request failed", {
       requestId: currentRequestId,
       path: request.url,
       error: error instanceof Error ? error.message : "Unknown error",
     });
-    if (!response.headersSent) response.writeHead(500, { "Content-Type": "text/plain" });
-    response.end("Internal Server Error");
-  });
+  }
 });
 
 server.on("upgrade", (request, socket, head) => {
@@ -139,7 +179,7 @@ async function shutdown(signal: "SIGINT" | "SIGTERM"): Promise<void> {
   await logStreamRelay.close();
   await logStreamGateway.close();
   delete runtime.__autoforgePublishAttemptLogs;
-  if (liteWorkerPool) unregisterLiteWorkDispatcher(liteWorkerPool);
+  unregisterWorkDispatcher(workPool);
   server.closeIdleConnections();
   await new Promise<void>((resolve) => {
     const timeout = setTimeout(() => {
@@ -157,7 +197,7 @@ async function shutdown(signal: "SIGINT" | "SIGTERM"): Promise<void> {
   };
   const results = await Promise.allSettled([
     app.close(),
-    liteWorkerPool?.close() ?? Promise.resolve(),
+    workPool.close(),
     serviceRuntime.__autoforgeClosePlatformServices?.() ?? Promise.resolve(),
   ]);
   const failures = results.filter((result) => result.status === "rejected");

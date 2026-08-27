@@ -16,7 +16,8 @@ export async function POST(request: Request): Promise<NextResponse> {
     const input = createRunBatchInputSchema.parse(await readJsonBody(request, 16 * 1024));
     const services = await getPlatformServices();
     const projectScope = services.identityAccess.projectScope(identity, "run.create");
-    const suite = await services.caseSuites.get(input.suiteId, projectScope);
+    // 授权只需任务的归属项目；完整任务快照由 create 内部读取一次，避免重复加载全量用例成员。
+    const suite = await services.caseSuites.getSummary(input.suiteId, projectScope);
     services.identityAccess.authorize(identity, "run.create", suite.projectId);
     const batch = await services.runBatches.create(input);
     const progressToken = issueRunProgressToken(services.config.masterKey, batch.id);

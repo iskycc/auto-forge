@@ -222,6 +222,7 @@ function rerunRepository(
       projectActiveRuns: 0,
       runnerFailureIdsByRun: {},
     })),
+    hasSchedulableRuns: vi.fn().mockResolvedValue(false),
     getSummary: vi.fn(async () => derivedSummary()),
   } as unknown as RunBatchRepository;
   return { batches, created };

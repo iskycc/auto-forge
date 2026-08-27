@@ -33,6 +33,7 @@ describe("platform configuration mapping", () => {
     const current = configuration({
       full: {
         databaseUrl: "postgresql://autoforge:secret@postgres/autoforge",
+        databasePoolMax: 10,
         natsServers: ["nats://nats:4222"],
         redisUrl: "redis://redis:6379",
         minio: {

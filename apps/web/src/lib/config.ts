@@ -53,6 +53,7 @@ export type AppConfig = CommonConfig &
     | {
         mode: "full";
         databaseUrl: string;
+        databasePoolMax: number;
         natsServers: string[];
         redisUrl: string;
         migrationsFolder: string;
@@ -115,6 +116,7 @@ export function loadAppConfig(options: LoadPlatformConfigurationOptions = {}): A
     ...common,
     mode: "full",
     databaseUrl: persisted.full.databaseUrl,
+    databasePoolMax: persisted.full.databasePoolMax,
     natsServers: [...persisted.full.natsServers],
     redisUrl: validatedRedisUrl(persisted.full.redisUrl),
     migrationsFolder: runtime.migrationsFolder,

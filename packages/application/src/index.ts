@@ -6,6 +6,7 @@ export * from "./export-run-batch-results";
 export * from "./import-testng-jar";
 export * from "./import-ddt";
 export * from "./inspect-round-recovery";
+export * from "./completion-scheduling-events";
 export * from "./control-executions";
 export * from "./manage-case-definitions";
 export * from "./manage-case-sources";

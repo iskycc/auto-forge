@@ -50,6 +50,13 @@ export class JobWorker {
         limit: available,
       });
       if (claimed.length === 0) {
+        // 阻塞式队列（JetStream fetch）的 claim 已在服务端等待过一个等待窗口，
+        // 空结果后只需最小间隔即可再次领取；非阻塞队列（SQLite SELECT）才需要
+        // 指数退避压低空闲轮询频率。
+        if (this.queue.blockingClaim) {
+          await delay(this.options.minimumPollMs, signal);
+          continue;
+        }
         await delay(pollDelay, signal);
         pollDelay = Math.min(this.options.maximumPollMs, pollDelay * 2);
         continue;

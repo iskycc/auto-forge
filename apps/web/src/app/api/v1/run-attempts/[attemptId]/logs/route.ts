@@ -1,4 +1,8 @@
-import { attemptLogQuerySchema, uploadLogChunksInputSchema } from "@autoforge/contracts";
+import {
+  attemptLogQuerySchema,
+  RUNNER_LOG_UPLOAD_BODY_LIMIT_BYTES,
+  uploadLogChunksInputSchema,
+} from "@autoforge/contracts";
 import { DomainError } from "@autoforge/domain";
 import { NextResponse } from "next/server";
 
@@ -43,7 +47,9 @@ export async function POST(request: Request, context: Context): Promise<NextResp
     rejectRateLimited(
       await services.runnerRequestLimiter.allow(`runner:logs:v1:${runnerId}`, 600, 60_000),
     );
-    const input = uploadLogChunksInputSchema.parse(await readJsonBody(request, 2 * 1024 * 1024));
+    const input = uploadLogChunksInputSchema.parse(
+      await readJsonBody(request, RUNNER_LOG_UPLOAD_BODY_LIMIT_BYTES),
+    );
     const result = await services.runnerProtocol.uploadLogs(
       runnerId,
       bearerToken(request),

@@ -1,8 +1,9 @@
 import type { RegisterRunnerRecord, RunnerRepository } from "@autoforge/application";
 import type { Runner } from "@autoforge/domain";
-import { and, desc, eq, gt, isNull, or, sql } from "drizzle-orm";
+import { and, desc, eq, gt, inArray, isNull, or, sql } from "drizzle-orm";
 
 import { runSqliteWriteTransaction, type SqliteDatabaseHandle } from "./database";
+import { batchesOf, RELATIONAL_ID_QUERY_BATCH_SIZE } from "./database-batches";
 import { mapStoredRunner } from "./runner-mapper";
 import { assignmentLeases, runnerBootstrapUses, runners } from "./schema";
 
@@ -156,6 +157,21 @@ export class SqliteRunnerRepository implements RunnerRepository {
   async get(runnerId: string, offlineBefore: string): Promise<Runner | null> {
     const row = this.handle.db.select().from(runners).where(eq(runners.id, runnerId)).get();
     return row ? mapStoredRunner(row, offlineBefore) : null;
+  }
+
+  async listByIds(runnerIds: readonly string[], offlineBefore: string): Promise<Runner[]> {
+    if (runnerIds.length === 0) return [];
+    const rows = [];
+    for (const ids of batchesOf(runnerIds, RELATIONAL_ID_QUERY_BATCH_SIZE)) {
+      rows.push(
+        ...this.handle.db
+          .select()
+          .from(runners)
+          .where(inArray(runners.id, [...ids]))
+          .all(),
+      );
+    }
+    return rows.map((row) => mapStoredRunner(row, offlineBefore));
   }
 
   async setLifecycleState(input: {

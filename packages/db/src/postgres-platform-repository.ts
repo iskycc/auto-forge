@@ -2548,6 +2548,21 @@ export class PostgresRunnerRepository implements RunnerRepository {
     return row ? mapStoredRunner(row, offlineBefore) : null;
   }
 
+  async listByIds(runnerIds: readonly string[], offlineBefore: string): Promise<Runner[]> {
+    await this.ready();
+    if (runnerIds.length === 0) return [];
+    const rows = [];
+    for (const ids of batchesOf(runnerIds, RELATIONAL_ID_QUERY_BATCH_SIZE)) {
+      rows.push(
+        ...(await this.handle.db
+          .select()
+          .from(pgRunners)
+          .where(inArray(pgRunners.id, [...ids]))),
+      );
+    }
+    return rows.map((row) => mapStoredRunner(row, offlineBefore));
+  }
+
   async setLifecycleState(input: {
     runnerId: string;
     state: "active" | "draining" | "disabled";

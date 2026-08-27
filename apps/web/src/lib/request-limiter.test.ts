@@ -29,4 +29,13 @@ describe("RedisRequestLimiter", () => {
       arguments: ["5000"],
     });
   });
+
+  it("counts every request in Redis so limits remain global across Web replicas", async () => {
+    const evaluate = vi.fn().mockResolvedValue(3);
+    const limiter = new RedisRequestLimiter(evaluate);
+
+    await expect(limiter.allow("runner", 2, 60_000)).resolves.toBe(false);
+    await expect(limiter.allow("runner", 2, 60_000)).resolves.toBe(false);
+    expect(evaluate).toHaveBeenCalledTimes(2);
+  });
 });

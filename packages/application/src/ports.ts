@@ -431,17 +431,20 @@ export interface ExecutionControlRepository {
     now: string;
     expiresAt: string;
   }): Promise<RenewLeaseResponse>;
-  completeAttempt(input: {
-    runnerId: string;
-    attemptId: string;
-    completionId: string;
-    leaseTokenHash: string;
-    resultDigest: string;
-    result: CompletionResult;
-    eventId: string;
-    auditEventId?: string;
-    acceptedAt: string;
-  }): Promise<CompleteAttemptResponse>;
+  completeAttempt(
+    input: {
+      runnerId: string;
+      attemptId: string;
+      completionId: string;
+      leaseTokenHash: string;
+      resultDigest: string;
+      result: CompletionResult;
+      eventId: string;
+      auditEventId?: string;
+      acceptedAt: string;
+    },
+    completionEvents?: CompletionSchedulingEventFactory,
+  ): Promise<CompleteAttemptResponse>;
   reconcile(input: {
     runnerId: string;
     request: ReconcileAttemptsInput;
@@ -551,6 +554,27 @@ export type AttemptSchedulingContext = {
   displayName: string;
   heldRound?: number;
 };
+
+export type SchedulingEventDraft = {
+  id: string;
+  batchId: string;
+  runnerId?: string;
+  executionRunId?: string;
+  attemptId?: string;
+  eventType: SchedulingEventType;
+  message: string;
+  payload?: Record<string, unknown>;
+  recordedAt: string;
+};
+
+/**
+ * 完成上报被状态机接受后，在同一数据库事务内生成调度事件。
+ * 仓储在提交前调用工厂并写入事件，避免完成热路径额外支付两次往返。
+ */
+export type CompletionSchedulingEventFactory = (
+  context: AttemptSchedulingContext,
+  retryScheduled: boolean,
+) => SchedulingEventDraft[];
 
 export type ScheduledAssignmentRecord = {
   assignmentId: string;
@@ -1191,6 +1215,8 @@ export interface RunnerRepository {
   }): Promise<Runner>;
   list(offlineBefore: string, limit: number): Promise<Runner[]>;
   get(runnerId: string, offlineBefore: string): Promise<Runner | null>;
+  /** 批量读取执行机，避免预检/创建路径按 ID 逐台查询形成 N+1 往返。 */
+  listByIds(runnerIds: readonly string[], offlineBefore: string): Promise<Runner[]>;
   setLifecycleState(input: {
     runnerId: string;
     state: "active" | "draining" | "disabled";
@@ -1289,6 +1315,13 @@ export type DeadLetterJob = {
 };
 
 export interface JobQueuePort {
+  /**
+   * true 表示 claim 自身携带服务端阻塞等待（如 JetStream fetch 的 expires）：
+   * 空轮询的退避已由 claim 内部承担，JobWorker 不再叠加指数退避，避免空闲期后
+   * 首个任务额外支付最长 maximumPollMs 的领取启动延迟。缺省/false 表示 claim
+   * 立即返回（如 SQLite SELECT），空闲退避由 JobWorker 负责。
+   */
+  readonly blockingClaim?: boolean;
   publish(job: JobEnvelope, availableAt?: string): Promise<"published" | "duplicate">;
   claim(input: {
     workerId: string;
@@ -1448,6 +1481,16 @@ export type ReserveSchedulingAssignmentsInput = {
   scheduledAt: string;
 };
 
+/**
+ * 调度预留结果。acceptedAttemptIds 仅包含真正写入 run_attempts 的决策，
+ * 被并发调度轮抢占（run 已不是 queued）的决策不在其中；
+ * 后续调度事件只能引用被接受的 attempt，否则会触发外键冲突。
+ */
+export type ReserveAssignmentsOutcome = {
+  reserved: number;
+  acceptedAttemptIds: readonly string[];
+};
+
 export type RunBatchListQuery = {
   projectIds?: readonly string[];
   projectId?: string;
@@ -1595,20 +1638,10 @@ export interface RunBatchRepository {
     };
     recordedAt: string;
   }): Promise<"created" | "existing">;
-  reserveAssignments(input: ReserveSchedulingAssignmentsInput): Promise<number>;
-  appendSchedulingEvents(
-    events: Array<{
-      id: string;
-      batchId: string;
-      runnerId?: string;
-      executionRunId?: string;
-      attemptId?: string;
-      eventType: SchedulingEventType;
-      message: string;
-      payload?: Record<string, unknown>;
-      recordedAt: string;
-    }>,
-  ): Promise<void>;
+  /** 批次是否仍有可立即调度的排队 run；用于短路无分配的空调度轮。 */
+  hasSchedulableRuns(batchId: string): Promise<boolean>;
+  reserveAssignments(input: ReserveSchedulingAssignmentsInput): Promise<ReserveAssignmentsOutcome>;
+  appendSchedulingEvents(events: SchedulingEventDraft[]): Promise<void>;
   listSchedulingEvents(input: {
     batchId: string;
     runnerId?: string;

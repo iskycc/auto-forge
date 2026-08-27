@@ -100,6 +100,7 @@ function mergedFullConfiguration(
   const secretKey = input?.minioSecretKey ?? current?.minio.secretKey;
   const bucket = input?.minioBucket ?? current?.minio.bucket;
   const region = input?.minioRegion ?? current?.minio.region;
+  const databasePoolMax = input?.databasePoolMax ?? current?.databasePoolMax ?? 10;
   if (
     !databaseUrl ||
     !natsServers ||
@@ -121,6 +122,7 @@ function mergedFullConfiguration(
   validatedProtocol(endpoint, ["http:", "https:"], "MinIO");
   return {
     databaseUrl,
+    databasePoolMax,
     natsServers: [...natsServers],
     redisUrl,
     minio: { endpoint, accessKey, secretKey, bucket, region },

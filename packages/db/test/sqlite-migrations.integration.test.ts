@@ -632,6 +632,79 @@ describe("SQLite migrations", { timeout: 15_000 }, () => {
     }
   });
 
+  it("keeps scheduling events while dropping their foreign keys", async () => {
+    const directory = await mkdtemp(resolve(tmpdir(), "autoforge-event-fk-migration-"));
+    temporaryDirectories.push(directory);
+    const databasePath = resolve(directory, "autoforge.sqlite");
+    const migrationsFolder = resolve(import.meta.dirname, "../drizzle/sqlite");
+    const migrationFiles = (await readdir(migrationsFolder))
+      .filter((name) => /^\d+_.+\.sql$/.test(name))
+      .sort();
+    const eventMigration = "0051_scheduling_events_drop_foreign_keys.sql";
+    const eventMigrationIndex = migrationFiles.indexOf(eventMigration);
+    expect(eventMigrationIndex).toBeGreaterThan(0);
+
+    const database = new Database(databasePath);
+    try {
+      database.pragma("foreign_keys = ON");
+      for (const fileName of migrationFiles.slice(0, eventMigrationIndex)) {
+        database.exec(await readFile(resolve(migrationsFolder, fileName), "utf8"));
+      }
+      database.exec(`
+        INSERT INTO run_batches
+          (id, suite_id, suite_name, suite_version, status, retry_limit, environment_json,
+           total_runs, project_id, created_at, updated_at)
+        VALUES
+          ('batch-events', 'suite-events', 'Events', 1, 'running', 0, '[]', 1,
+           '00000000-0000-7000-8000-000000000001',
+           '2026-08-20T00:00:00.000Z', '2026-08-20T00:00:00.000Z');
+        INSERT INTO scheduling_events
+          (id, batch_id, event_type, message, recorded_at)
+        VALUES
+          ('event-existing', 'batch-events', 'runner_metrics', 'Existing event',
+           '2026-08-20T00:01:00.000Z'),
+          ('event-retry-concurrency', 'batch-events', 'retry_concurrency_changed',
+           'Concurrency changed', '2026-08-20T00:01:30.000Z');
+      `);
+
+      database.exec(await readFile(resolve(migrationsFolder, eventMigration), "utf8"));
+      expect(
+        database.prepare("SELECT event_type FROM scheduling_events ORDER BY id").all(),
+      ).toEqual([{ event_type: "runner_metrics" }, { event_type: "retry_concurrency_changed" }]);
+      // 外键移除后，诊断流水允许引用已清理的历史对象（保留周期显式清理）。
+      expect(() =>
+        database
+          .prepare(
+            `INSERT INTO scheduling_events
+             (id, batch_id, event_type, message, recorded_at) VALUES (?, ?, ?, ?, ?)`,
+          )
+          .run(
+            "event-after-fk-drop",
+            "batch-missing",
+            "attempt_completed",
+            "Event without foreign key",
+            "2026-08-20T00:02:00.000Z",
+          ),
+      ).not.toThrow();
+      expect(() =>
+        database
+          .prepare(
+            `INSERT INTO scheduling_events
+             (id, batch_id, event_type, message, recorded_at) VALUES (?, ?, ?, ?, ?)`,
+          )
+          .run(
+            "event-retry-after-fk-drop",
+            "batch-missing",
+            "retry_concurrency_changed",
+            "Concurrency event without foreign key",
+            "2026-08-20T00:03:00.000Z",
+          ),
+      ).not.toThrow();
+    } finally {
+      database.close();
+    }
+  });
+
   it("upgrades version runtime resources and repairs normal TestNG batch status", async () => {
     const directory = await mkdtemp(resolve(tmpdir(), "autoforge-version-runtime-migration-"));
     temporaryDirectories.push(directory);

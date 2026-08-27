@@ -17,19 +17,45 @@ export type PostgresDatabaseHandle = {
 export function createPostgresDatabase(options: {
   connectionString: string;
   migrationsFolder: string;
+  poolMax?: number;
 }): PostgresDatabaseHandle {
+  const poolMax = options.poolMax ?? 10;
   const pool = new Pool({
     connectionString: options.connectionString,
-    max: 10,
+    // 默认 10 与历史行为一致；高并发部署可通过平台配置调大，避免完成上报
+    // 事务排队等待连接时拖慢同进程的只读探针。
+    max: poolMax,
     connectionTimeoutMillis: 5_000,
-    idleTimeoutMillis: 30_000,
+    // 预热连接在突发到来前保持可用：空闲 2 分钟内不回收，覆盖执行批次
+    // “导入-创建-领取-完成”各阶段之间的短暂间歇。
+    idleTimeoutMillis: 120_000,
   });
   return {
     pool,
     db: drizzle(pool, { schema: postgresSchema }),
-    ready: runPostgresMigrations(pool, options.migrationsFolder),
+    ready: runPostgresMigrations(pool, options.migrationsFolder).then(() =>
+      warmPoolConnections(pool, poolMax),
+    ),
     close: () => pool.end(),
   };
+}
+
+/**
+ * 启动时预热连接池：Postgres 按需建连在高并发突发下每次要付出 fork 后端与
+ * 认证握手的成本（实测突发中 connect 等待可达数百毫秒），读探针与完成上报
+ * 会一并被拖慢。预先建立“池上限与 40 中较小者”数量的空闲连接，突发到达时
+ * 直接复用；预热失败不阻断启动，退回按需建连。
+ */
+async function warmPoolConnections(pool: Pool, poolMax: number): Promise<void> {
+  const warmTarget = Math.min(poolMax, 40);
+  try {
+    const clients = await Promise.all(Array.from({ length: warmTarget }, () => pool.connect()));
+    for (const client of clients) client.release();
+  } catch (error) {
+    console.warn(
+      `[postgres] connection pool warm-up failed (${(error as Error).message}); falling back to on-demand connections`,
+    );
+  }
 }
 
 async function runPostgresMigrations(pool: Pool, migrationsFolder: string): Promise<void> {

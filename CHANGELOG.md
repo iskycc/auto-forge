@@ -4,6 +4,74 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## 1.5.5 - 2026-08-27
+
+### Changed
+
+- Full mode now keeps its scheduling lane warm, uses JetStream blocking claims, batches Runner and
+  attempt context reads, reserves assignments with one conditional PostgreSQL statement, and handles
+  Runner claim/log/completion traffic through the custom server's bounded protocol fast path. The
+  same application authorization, rate limiting, validation and error contracts remain authoritative.
+- PostgreSQL attempt completion now persists the terminal transition, retry decision, scheduling
+  events and completion receipt in one transaction. A post-completion schedulable-run probe prevents
+  the last concurrent completion from leaving a batch in a non-terminal state while still refilling
+  genuinely free Runner slots immediately.
+- Scheduling events are emitted only for assignments that won the conditional reservation. Event
+  rows no longer hold foreign-key locks on execution hot-path tables, and assignment lease lookup has
+  a dedicated index.
+- Full PostgreSQL pool sizing is configurable through `full.databasePoolMax` (default 10, range
+  1–100). Web scheduling lanes share one bounded pool budget instead of opening an independent
+  hard-coded pool for every lane; the administrator guide documents replica capacity planning and
+  the required restart.
+- Identity sessions, Runner credentials and Redis rate-limit allowances continue to use their
+  authoritative shared stores on every request. No replica-local authorization or allowance cache
+  was retained, so password resets, role changes, Runner revocation and global rate limits remain
+  immediately effective across replicas.
+- The standalone Groovy analyzer can resume interactive L0/L1 review from an existing workbook,
+  saves each choice immediately, supports returning to the previous row and safe interruption, and
+  now builds and runs on Java 8 or newer.
+
+### Tests
+
+- Added PostgreSQL concurrent-completion regression coverage and scheduling-event checks for
+  overlapping reservations, accepted-attempt filtering and deletion-safe diagnostic history.
+- Extended migration tests to upgrade existing databases without losing the
+  `retry_concurrency_changed` event type, and added Runner fast-path, worker sizing, JetStream claim,
+  log-store and 100,000-run performance coverage.
+- Passed the complete Full acceptance with real PostgreSQL, NATS JetStream, MinIO, Redis, two Web
+  replicas, two workers, a real Go Agent, TestNG execution, LDAPS/StartTLS and dependency fault
+  recovery; also passed Lite 500-slot concurrency and the 28-scenario Playwright suite.
+
+### Database and persisted configuration
+
+- PostgreSQL migrations `0050_scheduling_events_drop_foreign_keys.sql` and
+  `0051_assignment_leases_assignment_idx.sql`, plus SQLite migrations
+  `0051_scheduling_events_drop_foreign_keys.sql` and `0052_assignment_leases_assignment_idx.sql`,
+  remove scheduling-event foreign keys and add the assignment lease index. Existing event rows and
+  all current event types are preserved.
+- Existing Full configurations remain valid and receive `full.databasePoolMax: 10` by default. A
+  changed pool budget takes effect after restarting the affected Web/worker processes.
+
+### Compatibility
+
+- Runner Protocol v1, Jenkins Pipeline inputs, task snapshots, permanent-share tokens and release
+  archive formats are unchanged. Completion responses add only the optional
+  `hasSchedulableRuns` optimization hint; old Agents ignore it and the server conservatively schedules
+  when the hint is absent.
+
+### Offline assets
+
+- No production dependency, remote static asset or runtime internet requirement was added. The
+  optimized Lite and Full paths use the existing bundled workspace packages and infrastructure
+  clients.
+
+### Known limitations
+
+- On the recorded 4-vCPU single-host comparison, Full was slightly faster for 500 Runner claims but
+  not for every import, scheduling, completion or read phase. Full's principal advantage remains
+  horizontal Web/worker scaling and infrastructure fault isolation; the benchmark is a regression
+  reference, not a promise that Full is always faster than Lite on one machine.
+
 ## 1.5.2 - 2026-08-27
 
 ### Changed

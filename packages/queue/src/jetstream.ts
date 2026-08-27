@@ -43,6 +43,8 @@ type JetStreamQueueSettings = {
 type ActiveDelivery = { message: JsMsg; job: JobEnvelope; workerId: string };
 
 export class JetStreamJobQueue implements JobQueuePort {
+  /** claim 通过 fetch 的 expires 在服务端等待消息，空轮询自带退避。 */
+  readonly blockingClaim = true;
   private readonly active = new Map<string, ActiveDelivery>();
 
   private constructor(

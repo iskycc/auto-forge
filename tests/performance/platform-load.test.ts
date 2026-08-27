@@ -285,7 +285,7 @@ describe("bounded platform performance baseline", () => {
         thresholds,
         metricsFreshAfter: "2026-08-10T23:59:00.000Z",
       });
-      const reserved = await batches.reserveAssignments({
+      const reservation = await batches.reserveAssignments({
         batchId: "batch-concurrent-500",
         decisions: plan.decisions.map((decision, index) => ({
           ...decision,
@@ -302,10 +302,11 @@ describe("bounded platform performance baseline", () => {
       const durationMs = performance.now() - startedAt;
 
       expect(plan.decisions).toHaveLength(500);
-      expect(reserved).toBe(500);
+      expect(reservation.reserved).toBe(500);
+      expect(reservation.acceptedAttemptIds).toHaveLength(500);
       expect(durationMs).toBeLessThan(5_000);
       recordMetric("sqlite-500-concurrency", durationMs, {
-        assignments: reserved,
+        assignments: reservation.reserved,
         runners: selectedRunnerIds.length,
       });
     } finally {
