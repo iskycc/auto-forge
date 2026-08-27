@@ -1282,10 +1282,19 @@ public final class AnalyzeNormalGroovyCases {
 
   private static final class CaseLevelReviewer {
     private static final String INCLUDED_CASES_SHEET = "导出用例";
+    private static final String EXCLUDED_CASES_SHEET = "排除明细";
+    private static final String SUMMARY_SHEET = "扫描说明";
+    private static final String SEQUENCE_HEADER = "序号";
     private static final String LEVEL_HEADER = "人工等级";
     private static final String TITLE_HEADER = "用例标题";
+    private static final String PACKAGE_HEADER = "包名";
     private static final String CLASS_HEADER = "类名";
     private static final String PATH_HEADER = "相对路径";
+    private static final String LINE_HEADER = "起始行";
+    private static final String DISCOVERY_HEADER = "识别方式";
+    private static final String EXCLUSION_DECISION_HEADER = "排除判断";
+    private static final String MATCHED_KEYWORDS_HEADER = "命中关键词";
+    private static final String EXCLUSION_EVIDENCE_HEADER = "排除证据";
 
     private final DataFormatter dataFormatter = new DataFormatter();
 
@@ -1409,14 +1418,22 @@ public final class AnalyzeNormalGroovyCases {
         KeyReader keyReader)
         throws IOException {
       int current = initialCase;
+      List<Integer> currentCaseRows = new ArrayList<>(caseRows);
       while (current >= 0) {
-        Row row = sheet.getRow(caseRows.get(current));
-        printCase(row, current, caseRows.size(), titleColumn, classColumn, pathColumn, levelColumn);
+        Row row = sheet.getRow(currentCaseRows.get(current));
+        printCase(
+            row,
+            current,
+            currentCaseRows.size(),
+            titleColumn,
+            classColumn,
+            pathColumn,
+            levelColumn);
         int key = nextReviewKey(keyReader);
         if (key < 0) {
           System.out.printf(
               "%n人工分级已暂停，剩余 %d 条未确认；下次运行将自动继续。%n",
-              countUnclassified(caseRows, sheet, levelColumn));
+              countUnclassified(currentCaseRows, sheet, levelColumn));
           return;
         }
         if (key == '9') {
@@ -1425,6 +1442,17 @@ public final class AnalyzeNormalGroovyCases {
           } else {
             current--;
           }
+          continue;
+        }
+        if (key == '5') {
+          String excludedTitle = cellText(row, titleColumn);
+          moveToManualExclusion(workbook, sheet, row, levelColumn);
+          saveWorkbook(workbook, workbookPath);
+          System.out.printf("%n已标记 L2，移入排除明细并保存：%s%n", excludedTitle);
+          currentCaseRows = caseRows(sheet, titleColumn);
+          current =
+              firstUnclassifiedAtOrAfter(
+                  currentCaseRows, sheet, levelColumn, current);
           continue;
         }
 
@@ -1440,7 +1468,7 @@ public final class AnalyzeNormalGroovyCases {
         levelCell.setCellValue(level);
         saveWorkbook(workbook, workbookPath);
         System.out.printf("%n已标记 %s 并保存。%n", level);
-        current = nextUnclassifiedAfter(caseRows, sheet, levelColumn, current);
+        current = nextUnclassifiedAfter(currentCaseRows, sheet, levelColumn, current);
       }
       System.out.println("人工分级已完成，所有导出用例均已标记。");
     }
@@ -1456,7 +1484,8 @@ public final class AnalyzeNormalGroovyCases {
       String currentLevel = cellText(row, levelColumn);
       System.out.printf(
           "%n[%d/%d] 标题：%s%n类名：%s%n路径：%s%n当前等级：%s%n"
-              + "按 0 标记 L0，按 1 标记 L1，按 9 返回上一条（Ctrl+C 暂停）：",
+              + "按 0 标记 L0，按 1 标记 L1，按 5 标记 L2 并手工排除，"
+              + "按 9 返回上一条（Ctrl+C 暂停）：",
           current + 1,
           total,
           cellText(row, titleColumn),
@@ -1472,7 +1501,7 @@ public final class AnalyzeNormalGroovyCases {
         if (key < 0 || key == 3) {
           return -1;
         }
-        if (key == '0' || key == '1' || key == '9') {
+        if (key == '0' || key == '1' || key == '5' || key == '9') {
           return key;
         }
       }
@@ -1516,6 +1545,16 @@ public final class AnalyzeNormalGroovyCases {
       return -1;
     }
 
+    private int firstUnclassifiedAtOrAfter(
+        List<Integer> caseRows, Sheet sheet, int levelColumn, int start) {
+      for (int index = Math.max(0, start); index < caseRows.size(); index++) {
+        if (!isClassified(sheet.getRow(caseRows.get(index)), levelColumn)) {
+          return index;
+        }
+      }
+      return -1;
+    }
+
     private int countUnclassified(List<Integer> caseRows, Sheet sheet, int levelColumn) {
       int remaining = 0;
       for (int rowIndex : caseRows) {
@@ -1552,6 +1591,182 @@ public final class AnalyzeNormalGroovyCases {
     private String cellText(Row row, int column) {
       Cell cell = row.getCell(column);
       return cell == null ? "" : dataFormatter.formatCellValue(cell).trim();
+    }
+
+    private void moveToManualExclusion(
+        XSSFWorkbook workbook, Sheet includedSheet, Row includedRow, int includedLevelColumn)
+        throws IOException {
+      Sheet excludedSheet = workbook.getSheet(EXCLUDED_CASES_SHEET);
+      if (excludedSheet == null) {
+        throw new IOException(
+            "Workbook does not contain the '" + EXCLUDED_CASES_SHEET + "' worksheet");
+      }
+      Row includedHeader = includedSheet.getRow(0);
+      Row excludedHeader = excludedSheet.getRow(0);
+      if (includedHeader == null || excludedHeader == null) {
+        throw new IOException("The case worksheets must contain header rows");
+      }
+
+      int excludedLevelColumn = findColumn(excludedHeader, LEVEL_HEADER);
+      if (excludedLevelColumn < 0) {
+        excludedLevelColumn = addColumn(excludedSheet, excludedHeader, LEVEL_HEADER, 12);
+      }
+
+      int targetRowIndex = excludedSheet.getLastRowNum() + 1;
+      Row excludedRow = excludedSheet.createRow(targetRowIndex);
+      copySharedValue(includedHeader, includedRow, excludedHeader, excludedRow, TITLE_HEADER);
+      copySharedValue(includedHeader, includedRow, excludedHeader, excludedRow, PACKAGE_HEADER);
+      copySharedValue(includedHeader, includedRow, excludedHeader, excludedRow, CLASS_HEADER);
+      copySharedValue(includedHeader, includedRow, excludedHeader, excludedRow, PATH_HEADER);
+      copySharedValue(includedHeader, includedRow, excludedHeader, excludedRow, LINE_HEADER);
+      copySharedValue(includedHeader, includedRow, excludedHeader, excludedRow, DISCOVERY_HEADER);
+
+      CellStyle bodyStyle =
+          cellStyle(includedRow, requiredColumn(includedHeader, CLASS_HEADER));
+      setTextCell(
+          excludedRow,
+          requiredColumn(excludedHeader, EXCLUSION_DECISION_HEADER),
+          "排除（人工标记 L2）",
+          bodyStyle);
+      setTextCell(
+          excludedRow,
+          requiredColumn(excludedHeader, MATCHED_KEYWORDS_HEADER),
+          "",
+          bodyStyle);
+      setTextCell(
+          excludedRow,
+          requiredColumn(excludedHeader, EXCLUSION_EVIDENCE_HEADER),
+          "手工排除",
+          bodyStyle);
+      setTextCell(excludedRow, excludedLevelColumn, "L2", bodyStyle);
+
+      removeIncludedRow(includedSheet, includedRow.getRowNum());
+      renumberRows(includedSheet, requiredColumn(includedHeader, SEQUENCE_HEADER));
+      renumberRows(excludedSheet, requiredColumn(excludedHeader, SEQUENCE_HEADER));
+      refreshAutoFilter(includedSheet, includedLevelColumn);
+      refreshAutoFilter(excludedSheet, excludedLevelColumn);
+      updateSummaryCount(workbook, "导出用例数", includedSheet.getLastRowNum());
+      updateSummaryCount(workbook, "排除用例数", excludedSheet.getLastRowNum());
+    }
+
+    private void copySharedValue(
+        Row sourceHeader,
+        Row sourceRow,
+        Row targetHeader,
+        Row targetRow,
+        String headerName)
+        throws IOException {
+      Cell sourceCell = sourceRow.getCell(requiredColumn(sourceHeader, headerName));
+      int targetColumn = requiredColumn(targetHeader, headerName);
+      Cell targetCell = targetRow.createCell(targetColumn);
+      if (sourceCell == null) {
+        targetCell.setCellValue("");
+        return;
+      }
+      targetCell.setCellStyle(sourceCell.getCellStyle());
+      copyCellValue(sourceCell, targetCell);
+    }
+
+    private static void copyCellValue(Cell source, Cell target) {
+      switch (source.getCellType()) {
+        case Cell.CELL_TYPE_BOOLEAN:
+          target.setCellValue(source.getBooleanCellValue());
+          break;
+        case Cell.CELL_TYPE_NUMERIC:
+          target.setCellValue(source.getNumericCellValue());
+          break;
+        case Cell.CELL_TYPE_FORMULA:
+          target.setCellFormula(source.getCellFormula());
+          break;
+        case Cell.CELL_TYPE_ERROR:
+          target.setCellErrorValue(source.getErrorCellValue());
+          break;
+        case Cell.CELL_TYPE_BLANK:
+          target.setCellValue("");
+          break;
+        case Cell.CELL_TYPE_STRING:
+        default:
+          target.setCellValue(source.getStringCellValue());
+          break;
+      }
+    }
+
+    private static CellStyle cellStyle(Row row, int column) {
+      Cell cell = row.getCell(column);
+      return cell == null ? null : cell.getCellStyle();
+    }
+
+    private static void setTextCell(
+        Row row, int column, String value, CellStyle style) {
+      Cell cell = row.createCell(column);
+      cell.setCellValue(value);
+      if (style != null) {
+        cell.setCellStyle(style);
+      }
+    }
+
+    private int addColumn(Sheet sheet, Row header, String headerName, int width) {
+      int column = Math.max(0, header.getLastCellNum());
+      Cell cell = header.createCell(column);
+      cell.setCellValue(headerName);
+      if (column > 0 && header.getCell(column - 1) != null) {
+        cell.setCellStyle(header.getCell(column - 1).getCellStyle());
+      }
+      sheet.setColumnWidth(column, width * 256);
+      refreshAutoFilter(sheet, column);
+      return column;
+    }
+
+    private static void removeIncludedRow(Sheet sheet, int rowIndex) {
+      int lastRow = sheet.getLastRowNum();
+      if (rowIndex < lastRow) {
+        sheet.shiftRows(rowIndex + 1, lastRow, -1);
+      } else {
+        Row row = sheet.getRow(rowIndex);
+        if (row != null) {
+          sheet.removeRow(row);
+        }
+      }
+    }
+
+    private static void renumberRows(Sheet sheet, int sequenceColumn) {
+      int sequence = 1;
+      for (int rowIndex = 1; rowIndex <= sheet.getLastRowNum(); rowIndex++) {
+        Row row = sheet.getRow(rowIndex);
+        if (row == null) {
+          continue;
+        }
+        Cell cell = row.getCell(sequenceColumn);
+        if (cell == null) {
+          cell = row.createCell(sequenceColumn);
+        }
+        cell.setCellValue(sequence++);
+      }
+    }
+
+    private static void refreshAutoFilter(Sheet sheet, int lastColumn) {
+      sheet.setAutoFilter(
+          new CellRangeAddress(0, Math.max(0, sheet.getLastRowNum()), 0, lastColumn));
+    }
+
+    private void updateSummaryCount(
+        XSSFWorkbook workbook, String summaryItem, int value) throws IOException {
+      Sheet summarySheet = workbook.getSheet(SUMMARY_SHEET);
+      if (summarySheet == null) {
+        throw new IOException("Workbook does not contain the '" + SUMMARY_SHEET + "' worksheet");
+      }
+      for (int rowIndex = 1; rowIndex <= summarySheet.getLastRowNum(); rowIndex++) {
+        Row row = summarySheet.getRow(rowIndex);
+        if (row != null && cellText(row, 0).equals(summaryItem)) {
+          Cell valueCell = row.getCell(1);
+          if (valueCell == null) {
+            valueCell = row.createCell(1);
+          }
+          valueCell.setCellValue(value);
+          return;
+        }
+      }
+      throw new IOException("Missing summary item: " + summaryItem);
     }
 
     private static void saveWorkbook(XSSFWorkbook workbook, Path workbookPath)
