@@ -71,16 +71,18 @@ test("configuration conflicts, diagnostics and retention controls remain observa
   expect(JSON.stringify(diagnosticBody)).not.toContain("adminBootstrapToken");
   expect(JSON.stringify(diagnosticBody)).not.toContain("databaseUrl");
 
-  insertDeadLetterFixture();
-  await page.getByRole("button", { name: "刷新诊断" }).click();
-  const deadLetterPanel = page.locator(".diagnostic-dead-letters");
-  await expect(deadLetterPanel).toContainText("对象清理");
-  await expect(deadLetterPanel).toContainText("E2E_DEAD_LETTER");
-  await expect(deadLetterPanel).toContainText("模拟可恢复死信");
-  page.once("dialog", (dialog) => dialog.accept());
-  await deadLetterPanel.getByRole("button", { name: "重新投递全部" }).click();
-  await expect(page.getByRole("status")).toContainText("已重新投递 1 个死信任务");
-  await expect(deadLetterPanel).toHaveCount(0);
+  if (diagnosticBody.mode === "lite") {
+    insertLiteDeadLetterFixture();
+    await page.getByRole("button", { name: "刷新诊断" }).click();
+    const deadLetterPanel = page.locator(".diagnostic-dead-letters");
+    await expect(deadLetterPanel).toContainText("对象清理");
+    await expect(deadLetterPanel).toContainText("E2E_DEAD_LETTER");
+    await expect(deadLetterPanel).toContainText("模拟可恢复死信");
+    page.once("dialog", (dialog) => dialog.accept());
+    await deadLetterPanel.getByRole("button", { name: "重新投递全部" }).click();
+    await expect(page.getByRole("status")).toContainText("已重新投递 1 个死信任务");
+    await expect(deadLetterPanel).toHaveCount(0);
+  }
 
   await page.getByRole("link", { name: "数据保留" }).click();
   const logRetention = page.locator(".retention-policy-grid form").filter({ hasText: "日志" });
@@ -103,7 +105,7 @@ test("configuration conflicts, diagnostics and retention controls remain observa
   });
 });
 
-function insertDeadLetterFixture(): void {
+function insertLiteDeadLetterFixture(): void {
   const dataDirectory = process.env.AUTOFORGE_E2E_DATA_DIR;
   if (!dataDirectory) throw new Error("Playwright data directory is unavailable.");
   const database = new DatabaseSync(resolve(dataDirectory, "db", "autoforge.sqlite"));
