@@ -113,6 +113,11 @@ printf '%s\n' \
   'println "正常的脚本场景"' >"${source_root}/ScriptSmoke.groovy"
 
 printf '%s\n' \
+  'class AAAReviewCase {' \
+  '    void testManualReview() { assert true }' \
+  '}' >"${source_root}/AAAReviewCase.groovy"
+
+printf '%s\n' \
   'class BrokenCase {' \
   '    void testIncomplete(' >"${source_root}/BrokenCase.groovy"
 
@@ -140,8 +145,8 @@ scope_run_output="$({
   java -cp "${compiled_classes}:${POI_CLASSPATH}" AnalyzeNormalGroovyCases \
     --output "${scope_output_file}" --no-review
 })"
-grep -Fq 'Scanned 5 Groovy file(s) and 7 case candidate(s).' <<<"${run_output}"
-grep -Fq 'Exported 2 included case(s); 5 candidate(s) were excluded.' <<<"${run_output}"
+grep -Fq 'Scanned 6 Groovy file(s) and 8 case candidate(s).' <<<"${run_output}"
+grep -Fq 'Exported 3 included case(s); 5 candidate(s) were excluded.' <<<"${run_output}"
 grep -Fq "1 file(s) had scan issues; see the '扫描问题' worksheet." <<<"${run_output}"
 grep -Fq "Source root: ${scope_workspace}/groovy-test" <<<"${scope_run_output}"
 grep -Fq 'Scanned 1 Groovy file(s) and 1 case candidate(s).' <<<"${scope_run_output}"
@@ -153,15 +158,23 @@ first_review_output="$(printf '0' | java \
   --source "${source_root}" --output "${output_file}")"
 grep -Fq 'Workbook exists; skipping scan and resuming case-level review.' \
   <<<"${first_review_output}"
-grep -Fq '人工分级已暂停，剩余 1 条未确认；下次运行将自动继续。' \
+grep -Fq '人工分级已暂停，剩余 2 条未确认；下次运行将自动继续。' \
   <<<"${first_review_output}"
 
-resumed_review_output="$(printf '910' | java \
+resumed_review_output="$(printf '950' | java \
   -cp "${compiled_classes}:${POI_CLASSPATH}" AnalyzeNormalGroovyCases \
   --source "${source_root}" --output "${output_file}")"
-grep -Fq '[2/2]' <<<"${resumed_review_output}"
-grep -Fq '[1/2]' <<<"${resumed_review_output}"
-grep -Fq '人工分级已完成，所有导出用例均已标记。' <<<"${resumed_review_output}"
+grep -Fq '[2/3]' <<<"${resumed_review_output}"
+grep -Fq '[1/3]' <<<"${resumed_review_output}"
+grep -Fq '已标记 L2，移入排除明细并保存：AAAReviewCase' <<<"${resumed_review_output}"
+grep -Fq '人工分级已暂停，剩余 1 条未确认；下次运行将自动继续。' \
+  <<<"${resumed_review_output}"
+
+completed_review_output="$(printf '1' | java \
+  -cp "${compiled_classes}:${POI_CLASSPATH}" AnalyzeNormalGroovyCases \
+  --source "${source_root}" --output "${output_file}")"
+grep -Fq '人工分级已完成，所有导出用例均已标记。' \
+  <<<"${completed_review_output}"
 
 node --input-type=module - \
   "${repository_root}" "${output_file}" "${scope_output_file}" <<'NODE'
@@ -186,8 +199,9 @@ try {
 const normalCases = xlsxModule.utils.sheet_to_json(workbook.Sheets["导出用例"]);
 const excludedCases = xlsxModule.utils.sheet_to_json(workbook.Sheets["排除明细"]);
 const issues = xlsxModule.utils.sheet_to_json(workbook.Sheets["扫描问题"]);
+const summaryRows = xlsxModule.utils.sheet_to_json(workbook.Sheets["扫描说明"]);
 
-if (normalCases.length !== 2 || excludedCases.length !== 5 || issues.length !== 1) {
+if (normalCases.length !== 2 || excludedCases.length !== 6 || issues.length !== 1) {
   throw new Error("Unexpected workbook row counts");
 }
 const formerReviewCase = excludedCases.find(
@@ -212,8 +226,33 @@ if ([...normalCases, ...excludedCases].some((row) => row["类名"] === "context"
   throw new Error("A .class literal caused the following context block to be parsed as a class");
 }
 const reviewedLevels = normalCases.map((row) => row["人工等级"]);
-if (reviewedLevels.join(",") !== "L1,L0") {
+if (reviewedLevels.join(",") !== "L0,L1") {
   throw new Error(`Interactive review did not persist/resume correctly: ${reviewedLevels}`);
+}
+if (normalCases.map((row) => row["序号"]).join(",") !== "1,2") {
+  throw new Error("Included-case sequence numbers were not repaired after manual exclusion");
+}
+const manuallyExcludedCase = excludedCases.find(
+  (row) => row["类名"] === "AAAReviewCase",
+);
+if (
+  manuallyExcludedCase?.["人工等级"] !== "L2" ||
+  manuallyExcludedCase?.["排除判断"] !== "排除（人工标记 L2）" ||
+  manuallyExcludedCase?.["排除证据"] !== "手工排除"
+) {
+  throw new Error("L2 did not move the case to exclusions with manual evidence");
+}
+if (normalCases.some((row) => row["类名"] === "AAAReviewCase")) {
+  throw new Error("An L2 case remained in the included worksheet");
+}
+if (excludedCases.map((row) => row["序号"]).join(",") !== "1,2,3,4,5,6") {
+  throw new Error("Excluded-case sequence numbers were not repaired after manual exclusion");
+}
+const summary = Object.fromEntries(
+  summaryRows.map((row) => [row["项目"], row["内容"]]),
+);
+if (summary["导出用例数"] !== 2 || summary["排除用例数"] !== 6) {
+  throw new Error("Summary counts were not updated after manual exclusion");
 }
 const loginCases = [...normalCases, ...excludedCases].filter(
   (row) => row["类名"] === "LoginSpec",
