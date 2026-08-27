@@ -4366,8 +4366,6 @@ button.icon-button:disabled {
 }
 
 .runner-list-card {
-  position: relative;
-  z-index: 1;
   overflow: visible;
 }
 
