@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { ldapConfigurationInputSchema } from "../src/identity";
+import { ldapConfigurationInputSchema, loginInputSchema } from "../src/identity";
 
 const requiredConfiguration = {
   enabled: true,
@@ -25,5 +25,23 @@ describe("LDAP configuration contracts", () => {
         verifyTlsCertificate: false,
       }).verifyTlsCertificate,
     ).toBe(false);
+  });
+});
+
+describe("login contracts", () => {
+  it("accepts a unified LDAP-compatible identifier without a provider selection", () => {
+    expect(
+      loginInputSchema.parse({ username: "alice@example.test", password: "Directory!123" }),
+    ).toEqual({ username: "alice@example.test", password: "Directory!123" });
+  });
+
+  it("keeps legacy provider hints parseable during the compatibility window", () => {
+    expect(
+      loginInputSchema.parse({
+        username: "administrator",
+        password: "Admin!Password123",
+        provider: "ldap",
+      }),
+    ).toMatchObject({ provider: "ldap" });
   });
 });

@@ -66,7 +66,7 @@ test("authenticates and synchronizes against real private-CA LDAP", async ({ bro
   await expect(page.getByText(/更新\s*5[1-9]/).first()).toBeVisible();
 
   await addConflictingDirectoryUser();
-  await expectLdapConflict(browser);
+  await expectLocalAccountPrecedence(browser);
   await removeDirectoryUser("uid=e2e-admin,ou=people,dc=example,dc=test");
   await verifyDirectoryOutageAndLocalFallback(browser, page);
   await removeDirectoryUser("uid=alice,ou=people,dc=example,dc=test");
@@ -161,7 +161,7 @@ async function loginWithLdap(
   const context = await browser.newContext({ baseURL: requiredEnvironment("E2E_BASE_URL") });
   const page = await context.newPage();
   await page.goto("/login");
-  await page.getByRole("button", { name: "LDAP" }).click();
+  await expect(page.getByRole("group", { name: "登录来源" })).toHaveCount(0);
   await page.getByLabel("用户名").fill(username);
   await page.getByLabel("密码").fill(password);
   await page.getByRole("button", { name: "登录" }).click();
@@ -169,15 +169,14 @@ async function loginWithLdap(
   return context;
 }
 
-async function expectLdapConflict(browser: Browser): Promise<void> {
+async function expectLocalAccountPrecedence(browser: Browser): Promise<void> {
   const context = await browser.newContext({ baseURL: requiredEnvironment("E2E_BASE_URL") });
   const page = await context.newPage();
   await page.goto("/login");
-  await page.getByRole("button", { name: "LDAP" }).click();
   await page.getByLabel("用户名").fill("e2e-admin");
   await page.getByLabel("密码").fill("Directory!Conflict123");
   await page.getByRole("button", { name: "登录" }).click();
-  await expect(appAlert(page)).toContainText(/冲突|已有账号/);
+  await expect(appAlert(page)).toContainText("用户名或密码无效");
   await context.close();
 }
 
@@ -190,7 +189,6 @@ async function verifyDirectoryOutageAndLocalFallback(
   const ldapContext = await browser.newContext({ baseURL: requiredEnvironment("E2E_BASE_URL") });
   const ldapPage = await ldapContext.newPage();
   await ldapPage.goto("/login");
-  await ldapPage.getByRole("button", { name: "LDAP" }).click();
   await ldapPage.getByLabel("用户名").fill("alice");
   await ldapPage.getByLabel("密码").fill(directoryPassword);
   await ldapPage.getByRole("button", { name: "登录" }).click();

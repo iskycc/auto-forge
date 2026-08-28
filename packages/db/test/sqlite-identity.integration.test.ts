@@ -42,6 +42,7 @@ describe("SQLite identity access", () => {
     };
     let directoryUsers = [directoryIdentity];
     let directoryAvailable = true;
+    let directoryAuthenticationAttempts = 0;
     const service = new IdentityAccessService(
       repository,
       {
@@ -62,6 +63,7 @@ describe("SQLite identity access", () => {
       {
         test: async () => undefined,
         authenticate: async (_configuration, username, password) => {
+          directoryAuthenticationAttempts += 1;
           if (!directoryAvailable) {
             throw new DomainError("LDAP_CONNECTION_TIMEOUT", "LDAP directory timed out.");
           }
@@ -200,11 +202,21 @@ describe("SQLite identity access", () => {
         projectId: DEFAULT_PROJECT_ID,
         priority: 100,
       });
+      const directoryAttemptsBeforeLocalLogin = directoryAuthenticationAttempts;
+      const localSessionWithLegacyLdapHint = await service.login({
+        username: "permission-user",
+        password: "Permission!12345",
+        provider: "ldap",
+      });
+      await expect(
+        service.authenticateSession(localSessionWithLegacyLdapHint.token),
+      ).resolves.toMatchObject({ user: { id: permissionUser.id, source: "local" } });
+      expect(directoryAuthenticationAttempts).toBe(directoryAttemptsBeforeLocalLogin);
       const ldapSession = await service.login({
         username: "ldap.user",
         password: "Directory!123",
-        provider: "ldap",
       });
+      expect(directoryAuthenticationAttempts).toBe(directoryAttemptsBeforeLocalLogin + 1);
       const ldapIdentity = await service.authenticateSession(ldapSession.token);
       expect(ldapIdentity.user).toMatchObject({ source: "ldap", username: "ldap.user" });
       expect(ldapIdentity.projectPermissions[DEFAULT_PROJECT_ID]).toContain("case.read");
@@ -232,7 +244,6 @@ describe("SQLite identity access", () => {
         service.login({
           username: "ldap.user",
           password: "Directory!123",
-          provider: "ldap",
         }),
       ).rejects.toMatchObject({ code: "LDAP_CONNECTION_TIMEOUT" });
       await expect(service.authenticateSession(bootstrap.token)).resolves.toMatchObject({
@@ -264,7 +275,6 @@ describe("SQLite identity access", () => {
       const activeLdapSession = await service.login({
         username: "ldap.user",
         password: "Directory!123",
-        provider: "ldap",
       });
       directoryUsers = [];
       const sync = await service.synchronizeLdap(administrator);
@@ -310,7 +320,6 @@ describe("SQLite identity access", () => {
       const expiringSession = await service.login({
         username: "permission-user",
         password: "Permission!12345",
-        provider: "local",
       });
       clock.advanceHours(9);
       await expect(service.authenticateSession(expiringSession.token)).rejects.toMatchObject({

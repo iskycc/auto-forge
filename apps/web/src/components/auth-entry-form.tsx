@@ -1,7 +1,7 @@
 "use client";
 
 import { apiErrorSchema, bootstrapAdminInputSchema, loginInputSchema } from "@autoforge/contracts";
-import { LockKeyhole, Network, ShieldCheck, UserRound } from "lucide-react";
+import { LockKeyhole, ShieldCheck } from "lucide-react";
 import { useState, type FormEvent } from "react";
 
 import { Button, Input } from "@/components/ui";
@@ -9,16 +9,7 @@ import { authEntryValidationMessage } from "@/lib/auth-entry-validation";
 
 type AuthMode = "login" | "setup";
 
-export function AuthEntryForm({
-  mode,
-  ldapEnabled,
-  notice,
-}: {
-  mode: AuthMode;
-  ldapEnabled?: boolean;
-  notice?: string | undefined;
-}) {
-  const [provider, setProvider] = useState<"local" | "ldap">("local");
+export function AuthEntryForm({ mode, notice }: { mode: AuthMode; notice?: string | undefined }) {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
 
@@ -38,7 +29,6 @@ export function AuthEntryForm({
         : {
             username: stringValue(form, "username"),
             password: stringValue(form, "password"),
-            provider,
           };
     try {
       const parsed = (mode === "setup" ? bootstrapAdminInputSchema : loginInputSchema).safeParse(
@@ -82,27 +72,6 @@ export function AuthEntryForm({
           {notice}
         </p>
       ) : null}
-      {mode === "login" && ldapEnabled ? (
-        <div className="auth-provider" role="group" aria-label="登录来源">
-          <Button
-            className={provider === "local" ? "auth-provider-active" : ""}
-            onClick={() => setProvider("local")}
-            type="button"
-            variant="ghost"
-          >
-            <UserRound size={16} aria-hidden="true" /> 本地账号
-          </Button>
-          <Button
-            className={provider === "ldap" ? "auth-provider-active" : ""}
-            onClick={() => setProvider("ldap")}
-            type="button"
-            variant="ghost"
-          >
-            <Network size={16} aria-hidden="true" /> LDAP
-          </Button>
-        </div>
-      ) : null}
-
       {mode === "setup" ? (
         <label>
           <span>一次性管理员引导令牌</span>
@@ -122,10 +91,10 @@ export function AuthEntryForm({
         <span>用户名</span>
         <Input
           autoComplete="username"
-          maxLength={64}
-          minLength={3}
+          maxLength={mode === "setup" ? 64 : 256}
+          minLength={mode === "setup" ? 3 : 1}
           name="username"
-          pattern="[A-Za-z0-9][A-Za-z0-9._-]*"
+          pattern={mode === "setup" ? "[A-Za-z0-9][A-Za-z0-9._-]*" : undefined}
           required
         />
         {mode === "setup" ? (

@@ -7,6 +7,13 @@ const usernameSchema = z
   .max(64)
   .regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/, "用户名格式无效。");
 
+const loginIdentifierSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(256)
+  .regex(/^[^\u0000-\u001F\u007F]+$/u, "用户名不能包含控制字符。");
+
 const passwordSchema = z
   .string()
   .min(12)
@@ -23,9 +30,11 @@ export const bootstrapAdminInputSchema = z.object({
 });
 
 export const loginInputSchema = z.object({
-  username: usernameSchema,
+  username: loginIdentifierSchema,
   password: z.string().min(1).max(1024),
-  provider: z.enum(["local", "ldap"]).default("local"),
+  // Accepted temporarily for compatibility with older API clients. Authentication source is
+  // resolved authoritatively from the stored user and LDAP configuration, never from this hint.
+  provider: z.enum(["local", "ldap"]).optional(),
 });
 
 export const createUserInputSchema = z.object({

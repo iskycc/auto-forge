@@ -1,4 +1,4 @@
-import { expect, test, type Page, type Route } from "@playwright/test";
+import { expect, test, type Locator, type Page, type Route } from "@playwright/test";
 
 import { buildExportWorkbook } from "../../packages/ddt-import/src";
 import {
@@ -47,11 +47,17 @@ test("DDT workspace imports, edits, validates and recovers version-scoped cases"
       },
     },
   ]);
-  await importDialog.locator('input[type="file"]').setInputFiles({
+  const workbookFile = {
     name: `ddt-${hierarchy.suffix}.xlsx`,
     mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     buffer: workbook,
-  });
+  };
+  const dropzone = importDialog.locator(".ddt-dropzone");
+  await dispatchFileDrag(dropzone, "dragenter", workbookFile);
+  await expect(dropzone).toHaveClass(/drag-active/u);
+  await expect(dropzone.getByText("松开即可添加文件")).toBeVisible();
+  await dispatchFileDrag(dropzone, "drop", workbookFile);
+  await expect(dropzone).not.toHaveClass(/drag-active/u);
   await expect(importDialog.getByText(`ddt-${hierarchy.suffix}.xlsx`)).toBeVisible();
   const previewRoute = "**/api/v1/ddt/imports/preview?**";
   const delayPreview = async (route: Route) => {
@@ -196,6 +202,37 @@ test("DDT workspace imports, edits, validates and recovers version-scoped cases"
   );
   expect(isolatedRead.status()).toBe(404);
 });
+
+async function dispatchFileDrag(
+  dropzone: Locator,
+  eventType: "dragenter" | "drop",
+  file: { name: string; mimeType: string; buffer: Buffer },
+): Promise<void> {
+  await dropzone.evaluate(
+    (element, payload) => {
+      const binary = window.atob(payload.base64);
+      const bytes = new Uint8Array(binary.length);
+      for (let index = 0; index < binary.length; index += 1) {
+        bytes[index] = binary.charCodeAt(index);
+      }
+      const transfer = new DataTransfer();
+      transfer.items.add(new File([bytes], payload.name, { type: payload.mimeType }));
+      element.dispatchEvent(
+        new DragEvent(payload.eventType, {
+          bubbles: true,
+          cancelable: true,
+          dataTransfer: transfer,
+        }),
+      );
+    },
+    {
+      eventType,
+      name: file.name,
+      mimeType: file.mimeType,
+      base64: file.buffer.toString("base64"),
+    },
+  );
+}
 
 async function issueDdtApiToken(page: Page, projectId: string): Promise<string> {
   const permissions = ["case.read", "case.manage"];

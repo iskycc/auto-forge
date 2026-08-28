@@ -35,6 +35,7 @@ import type {
   PasswordHashPort,
   SecretCipherPort,
   StoredLdapConfiguration,
+  StoredUserCredential,
 } from "./ports";
 
 const SYSTEM_ADMIN_ROLE_ID = "00000000-0000-7000-8100-000000000001";
@@ -165,9 +166,15 @@ export class IdentityAccessService {
   }
 
   async login(input: LoginInput, requestId?: string): Promise<SessionResult> {
-    return input.provider === "ldap"
-      ? this.loginWithLdap(input.username, input.password, requestId)
-      : this.loginLocally(input.username, input.password, requestId);
+    const credential = await this.repository.findUserByUsername(normalizeUsername(input.username));
+    if (credential?.user.source === "local") {
+      return this.loginLocally(input.password, credential, requestId);
+    }
+    const ldapConfiguration = await this.repository.getLdapConfiguration();
+    if (credential?.user.source === "ldap" || ldapConfiguration?.enabled) {
+      return this.loginWithLdap(input.username, input.password, ldapConfiguration, requestId);
+    }
+    return this.loginLocally(input.password, null, requestId);
   }
 
   async authenticateSession(token: string): Promise<AuthenticatedIdentity> {
@@ -1099,11 +1106,10 @@ export class IdentityAccessService {
   }
 
   private async loginLocally(
-    username: string,
     password: string,
+    credential: StoredUserCredential | null,
     requestId?: string,
   ): Promise<SessionResult> {
-    const credential = await this.repository.findUserByUsername(normalizeUsername(username));
     const passwordMatches = await this.passwords.verify(
       password,
       credential?.passwordHash ?? DUMMY_PASSWORD_HASH,
@@ -1140,9 +1146,9 @@ export class IdentityAccessService {
   private async loginWithLdap(
     username: string,
     password: string,
+    configuration: StoredLdapConfiguration | null,
     requestId?: string,
   ): Promise<SessionResult> {
-    const configuration = await this.repository.getLdapConfiguration();
     if (!configuration?.enabled) return this.rejectedLogin("ldap", undefined, requestId);
     let directoryIdentity: DirectoryIdentity;
     try {

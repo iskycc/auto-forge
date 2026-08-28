@@ -23,7 +23,7 @@ import {
   X,
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { ReactNode } from "react";
+import type { DragEvent as ReactDragEvent, ReactNode } from "react";
 
 import { Button, Input, OperationProgress, Select, Textarea } from "@/components/ui";
 import { uploadWithProgress } from "@/lib/upload-with-progress";
@@ -103,6 +103,9 @@ type HistoryItem = {
   createdAt: string;
 };
 type WorkspaceTab = "overview" | "cases" | "imports" | "templates" | "recycle";
+
+const DDT_IMPORT_FILE_ACCEPT = ".xlsx,.xls,.xlsb,.csv,.ods,.zip";
+const DDT_IMPORT_FILE_EXTENSIONS = new Set(["xlsx", "xls", "xlsb", "csv", "ods", "zip"]);
 
 const emptyDashboard: Dashboard = {
   caseCount: 0,
@@ -1203,7 +1206,9 @@ function ImportDialog({
   onComplete(): Promise<void>;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
+  const dragDepthRef = useRef(0);
   const [files, setFiles] = useState<File[]>([]);
+  const [dragActive, setDragActive] = useState(false);
   const [job, setJob] = useState<ImportJob>();
   const [strategy, setStrategy] = useState("overwrite");
   const [busy, setBusy] = useState(false);
@@ -1213,6 +1218,49 @@ function ImportDialog({
     detail: string;
     percent: number;
   }>();
+  const selectFiles = (selectedFiles: File[]) => {
+    if (!selectedFiles.length) return;
+    const unsupportedFiles = selectedFiles.filter((file) => !isSupportedDdtImportFile(file));
+    if (unsupportedFiles.length) {
+      setError(
+        `不支持以下文件：${unsupportedFiles.map((file) => file.name).join("、")}。请上传 XLSX、XLS、XLSB、CSV、ODS 或 ZIP 文件。`,
+      );
+      return;
+    }
+    setFiles(selectedFiles);
+    setError("");
+  };
+  const handleDragEnter = (event: ReactDragEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (busy) return;
+    dragDepthRef.current += 1;
+    setDragActive(true);
+  };
+  const handleDragOver = (event: ReactDragEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (!busy) event.dataTransfer.dropEffect = "copy";
+  };
+  const handleDragLeave = (event: ReactDragEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    dragDepthRef.current = Math.max(0, dragDepthRef.current - 1);
+    if (dragDepthRef.current === 0) setDragActive(false);
+  };
+  const handleDrop = (event: ReactDragEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    dragDepthRef.current = 0;
+    setDragActive(false);
+    if (busy) return;
+    const droppedFiles = [...event.dataTransfer.files];
+    if (!droppedFiles.length) {
+      setError("没有检测到可上传文件，请直接拖入文件，不要拖入文件夹。");
+      return;
+    }
+    selectFiles(droppedFiles);
+  };
   const preview = async () => {
     setBusy(true);
     setError("");
@@ -1266,21 +1314,33 @@ function ImportDialog({
         {!job ? (
           <>
             <Button
-              className="ddt-dropzone"
+              className={`ddt-dropzone${dragActive ? " drag-active" : ""}`}
               type="button"
+              aria-busy={busy}
+              aria-describedby="ddt-import-file-help"
+              disabled={busy}
+              onDragEnter={handleDragEnter}
+              onDragLeave={handleDragLeave}
+              onDragOver={handleDragOver}
+              onDrop={handleDrop}
               onClick={() => inputRef.current?.click()}
             >
               <Upload size={28} />
-              <strong>选择表格或 ZIP 压缩包</strong>
-              <span>支持 XLSX、XLS、XLSB、CSV、ODS；ZIP 可包含根目录或一层子目录</span>
+              <strong>{dragActive ? "松开即可添加文件" : "选择或拖入表格、ZIP 压缩包"}</strong>
+              <span id="ddt-import-file-help">
+                支持 XLSX、XLS、XLSB、CSV、ODS；ZIP 可包含根目录或一层子目录
+              </span>
             </Button>
             <Input
               ref={inputRef}
               hidden
               multiple
               type="file"
-              accept=".xlsx,.xls,.xlsb,.csv,.ods,.zip"
-              onChange={(event) => setFiles([...(event.target.files ?? [])])}
+              accept={DDT_IMPORT_FILE_ACCEPT}
+              onChange={(event) => {
+                selectFiles([...(event.target.files ?? [])]);
+                event.target.value = "";
+              }}
             />
             {files.length ? (
               <div className="ddt-picked-files">
@@ -1675,6 +1735,10 @@ function formatBytes(value: number): string {
   return value >= 1_048_576
     ? `${(value / 1_048_576).toFixed(1)} MiB`
     : `${Math.ceil(value / 1_024)} KiB`;
+}
+function isSupportedDdtImportFile(file: File): boolean {
+  const extension = file.name.split(".").pop()?.toLocaleLowerCase("en-US");
+  return Boolean(extension && DDT_IMPORT_FILE_EXTENSIONS.has(extension));
 }
 function statusLabel(value: string): string {
   return (

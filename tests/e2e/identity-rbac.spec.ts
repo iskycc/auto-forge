@@ -55,6 +55,8 @@ test("local user completes forced password change and self-service session lifec
   await expect(page.getByText("项目成员角色已分配。")).toBeVisible();
 
   await logout(page);
+  await expect(page.getByRole("group", { name: "登录来源" })).toHaveCount(0);
+  await expect(page.getByText("系统会自动识别认证方式")).toBeVisible();
   await login(page, username, initialPassword);
   await expect(page).toHaveURL(/\/account\/security$/);
   await expect(page.getByText("管理员要求你先修改初始密码")).toBeVisible();

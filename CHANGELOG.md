@@ -4,6 +4,53 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## 1.5.9 - 2026-08-28
+
+### Added
+
+- DDT import dialogs now accept one or more spreadsheet/ZIP files by drag and drop, with an explicit
+  drop-target state and client-side rejection of unsupported file extensions before upload.
+
+### Fixed
+
+- LDAP users no longer receive a generic invalid-credential response merely because the login page
+  defaulted to the local provider. The server now selects authentication from the persisted account
+  source and enabled directory configuration, including first-login LDAP provisioning.
+
+### Changed
+
+- The login page is now a single username/password form without local/LDAP provider buttons. Existing
+  local users always use local authentication, existing LDAP users use directory authentication, and
+  unknown users try LDAP only when it is enabled. Login identifiers now accept LDAP-friendly values
+  such as UPNs while local-account creation retains its stricter naming rules.
+
+### Tests
+
+- The DDT Playwright workflow now imports its workbook through the browser drag-and-drop path and
+  verifies the active drop-target feedback.
+- Real isolated-network LDAP acceptance now verifies automatic LDAPS and StartTLS login, first-login
+  provisioning, same-name local-account precedence, directory outage handling and local-admin access
+  without a browser-selected provider.
+
+### Database and persisted configuration
+
+- No SQLite/PostgreSQL migration or persisted-configuration change is required.
+
+### Compatibility
+
+- DDT import APIs and the existing file-picker upload flow are unchanged. The login API continues to
+  accept the legacy optional `provider` field, but the server intentionally ignores it when selecting
+  the authoritative authentication source.
+
+### Offline assets
+
+- No dependency, remote asset or runtime network requirement was added.
+
+### Known limitations
+
+- Browser security still prevents selecting folders through the drop target; users should drag the
+  supported files themselves or package them in a ZIP archive.
+
 ## 1.5.8 - 2026-08-28
 
 ### Fixed
