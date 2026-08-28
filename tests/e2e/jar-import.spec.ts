@@ -582,6 +582,11 @@ public class MixedVisibleTest {
   await page.goto(`/case-suites/${encodeURIComponent(dailySuiteId)}`);
   await expectUiConsistency(page);
   await expect(page.getByRole("heading", { name: "1 个用例" })).toBeVisible();
+  const taskCaseTree = page.getByRole("tree", { name: "任务用例树" });
+  await taskCaseTree.locator("summary").first().click();
+  await expect(
+    taskCaseTree.getByRole("button", { name: `移除 ${taskCase.displayName}` }),
+  ).toBeVisible();
   page.once("dialog", (dialog) => dialog.accept());
   await page.getByRole("button", { name: `移除 ${taskCase.displayName}`, exact: true }).click();
   await expect(page.getByText("任务中还没有用例")).toBeVisible({ timeout: 20_000 });
