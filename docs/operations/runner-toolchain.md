@@ -5,6 +5,8 @@
 的共享对象引用，或登记 Runner 可访问的 HTTP(S) 链接、精确大小和 SHA-256。组织也可用下述脚本
 从已批准输入生成本机预置的后备工具链。
 浏览器、驱动和其他 SDK 仍需完成许可证、来源与摘要审查。
+计划重分发文档列出的 Java 组件时，还必须核对
+[Runner toolchain notices](../legal/runner-toolchain-notices.md) 及实际输入包内的许可证文件。
 
 将批准的 JDK 目录和 TestNG classpath JAR 放入独立目录后执行：
 

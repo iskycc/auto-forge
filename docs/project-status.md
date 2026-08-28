@@ -1,6 +1,6 @@
 # AutoForge 实现进展
 
-> 审计日期：2026-08-23。任务定义和勾选状态以 [`Todo.md`](../Todo.md) 为权威来源；E2E 完整性以 [`coverage-matrix.json`](../tests/e2e/coverage-matrix.json) 为权威来源。
+> 审计日期：2026-08-23。任务定义和勾选状态以 [`project-roadmap.md`](./project-roadmap.md) 为权威来源；E2E 完整性以 [`coverage-matrix.json`](../tests/e2e/coverage-matrix.json) 为权威来源。
 
 ## 总体进度
 

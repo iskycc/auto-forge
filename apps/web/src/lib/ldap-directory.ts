@@ -119,7 +119,7 @@ async function connect(configuration: DirectoryConfiguration, url: string): Prom
 export function ldapConnectionPlan(configuration: DirectoryConfiguration, url: string) {
   const tlsOptions = {
     minVersion: "TLSv1.2" as const,
-    rejectUnauthorized: true,
+    rejectUnauthorized: configuration.verifyTlsCertificate,
     ...(configuration.caPem ? { ca: [Buffer.from(configuration.caPem, "utf8")] } : {}),
   };
   return {

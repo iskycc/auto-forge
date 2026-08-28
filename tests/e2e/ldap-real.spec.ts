@@ -96,6 +96,7 @@ async function configureDirectory(
   });
   const enabled = form.getByLabel("启用 LDAP 登录");
   if (!(await enabled.isChecked())) await enabled.check();
+  await expect(form.getByLabel("校验 TLS 服务器证书")).toBeChecked();
   await form.getByLabel("TLS 模式").selectOption(tlsMode);
   await form
     .getByLabel("服务器地址（每行一个）")

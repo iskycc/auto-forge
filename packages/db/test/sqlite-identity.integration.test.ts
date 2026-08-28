@@ -173,6 +173,7 @@ describe("SQLite identity access", () => {
         enabled: true,
         urls: ["ldaps://ldap.example.test:636"],
         tlsMode: "ldaps",
+        verifyTlsCertificate: false,
         connectTimeoutMs: 5_000,
         operationTimeoutMs: 10_000,
         pageSize: 500,
@@ -189,6 +190,9 @@ describe("SQLite identity access", () => {
         groupBaseDn: "ou=groups,dc=example,dc=test",
         groupFilter: "(&(objectClass=groupOfNames)(member={userDn}))",
         groupMemberAttribute: "member",
+      });
+      await expect(service.getLdapConfiguration(administrator)).resolves.toMatchObject({
+        verifyTlsCertificate: false,
       });
       await service.addLdapGroupMapping(administrator, {
         groupDn: "cn=autoforge-viewers,ou=groups,dc=example,dc=test",

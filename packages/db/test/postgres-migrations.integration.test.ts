@@ -6,6 +6,8 @@ import { Client } from "pg";
 import { afterAll, describe, expect, it } from "vitest";
 
 import { migratePostgresDatabase } from "../../../apps/web/src/lib/migrate-database";
+import { createPostgresDatabase } from "../src/postgres-database";
+import { PostgresIdentityAccessRepository } from "../src/postgres-identity-access";
 
 const connectionString = process.env.AUTOFORGE_TEST_POSTGRES_URL;
 const scratchDatabases: string[] = [];
@@ -950,6 +952,90 @@ describe.skipIf(!connectionString)("PostgreSQL migrations", () => {
       });
     } finally {
       await client.end();
+    }
+  });
+
+  it("keeps TLS certificate verification enabled when upgrading existing LDAP settings", async () => {
+    const admin = new Client({ connectionString });
+    await admin.connect();
+    const scratch = await createScratchDatabase(admin);
+    await admin.end();
+    const client = new Client({ connectionString: connectionStringFor(scratch) });
+    await client.connect();
+    const migrationsFolder = resolve(import.meta.dirname, "../drizzle/postgresql");
+    const migrationFiles = (await readdir(migrationsFolder))
+      .filter((name) => /^\d+_.+\.sql$/.test(name))
+      .sort();
+    const migration = "0052_ldap_tls_certificate_verification.sql";
+    const migrationIndex = migrationFiles.indexOf(migration);
+    expect(migrationIndex).toBeGreaterThan(0);
+    try {
+      for (const fileName of migrationFiles.slice(0, migrationIndex)) {
+        await client.query(await readFile(resolve(migrationsFolder, fileName), "utf8"));
+      }
+      await client.query(`
+        INSERT INTO ldap_configurations
+          (id, enabled, urls_json, tls_mode, ca_pem, connect_timeout_ms,
+           operation_timeout_ms, page_size, maximum_users, synchronization_interval_minutes,
+           bind_dn, bind_password_encrypted, user_base_dn, user_filter, user_id_attribute,
+           username_attribute, display_name_attribute, email_attribute, group_base_dn,
+           group_filter, group_member_attribute, created_at, updated_at, version)
+        VALUES
+          ('default', TRUE, '["ldaps://ldap.internal:636"]', 'ldaps', NULL, 5000,
+           10000, 500, 5000, 0, 'cn=service,dc=example,dc=test', 'encrypted',
+           'ou=people,dc=example,dc=test', '(&(objectClass=person)(uid={username}))',
+           'entryUUID', 'uid', 'displayName', 'mail', NULL, NULL, 'member',
+           '2026-08-28T00:00:00.000Z', '2026-08-28T00:00:00.000Z', 1);
+      `);
+      await client.query(await readFile(resolve(migrationsFolder, migration), "utf8"));
+      await expect(
+        client.query("SELECT verify_tls_certificate FROM ldap_configurations WHERE id='default'"),
+      ).resolves.toMatchObject({ rows: [{ verify_tls_certificate: true }] });
+    } finally {
+      await client.end();
+    }
+  });
+
+  it("persists an explicit LDAP TLS certificate verification opt-out", async () => {
+    const admin = new Client({ connectionString });
+    await admin.connect();
+    const scratch = await createScratchDatabase(admin);
+    await admin.end();
+    const migrationsFolder = resolve(import.meta.dirname, "../drizzle/postgresql");
+    const handle = createPostgresDatabase({
+      connectionString: connectionStringFor(scratch),
+      migrationsFolder,
+      poolMax: 1,
+    });
+    const repository = new PostgresIdentityAccessRepository(handle);
+    try {
+      await handle.ready;
+      await repository.saveLdapConfiguration({
+        enabled: true,
+        urls: ["ldaps://ldap.internal:636"],
+        tlsMode: "ldaps",
+        verifyTlsCertificate: false,
+        connectTimeoutMs: 5_000,
+        operationTimeoutMs: 10_000,
+        pageSize: 500,
+        maximumUsers: 5_000,
+        synchronizationIntervalMinutes: 0,
+        bindDn: "cn=service,dc=example,dc=test",
+        bindPasswordEncrypted: "encrypted",
+        userBaseDn: "ou=people,dc=example,dc=test",
+        userFilter: "(&(objectClass=person)(uid={username}))",
+        userIdAttribute: "entryUUID",
+        usernameAttribute: "uid",
+        displayNameAttribute: "displayName",
+        emailAttribute: "mail",
+        groupMemberAttribute: "member",
+        updatedAt: "2026-08-28T00:00:00.000Z",
+      });
+      await expect(repository.getLdapConfiguration()).resolves.toMatchObject({
+        verifyTlsCertificate: false,
+      });
+    } finally {
+      await handle.close();
     }
   });
 });

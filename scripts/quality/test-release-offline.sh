@@ -82,7 +82,7 @@ require_tools() {
 
 verify_current_release() {
   cmp --silent \
-    "${repository_root}/release-signing-public-key.pem" \
+    "${repository_root}/scripts/release/assets/release-signing-public-key.pem" \
     "${current_release_directory}/release-signing-public-key.pem"
   verify_signature "${current_release_directory}"
   (cd "${current_release_directory}" && sha256sum --check --strict SHA256SUMS)

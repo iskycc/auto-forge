@@ -175,6 +175,7 @@ export type StoredLdapConfiguration = {
   enabled: boolean;
   urls: string[];
   tlsMode: "ldaps" | "starttls";
+  verifyTlsCertificate: boolean;
   caPem?: string;
   connectTimeoutMs: number;
   operationTimeoutMs: number;

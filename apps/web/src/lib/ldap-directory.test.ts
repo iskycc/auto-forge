@@ -9,6 +9,7 @@ const baseConfiguration: DirectoryConfiguration = {
   enabled: true,
   urls: ["ldaps://ldap-a.internal:636", "ldaps://ldap-b.internal:636"],
   tlsMode: "ldaps",
+  verifyTlsCertificate: true,
   connectTimeoutMs: 2_000,
   operationTimeoutMs: 5_000,
   pageSize: 250,
@@ -51,6 +52,26 @@ describe("LDAP directory matrix", () => {
     expect(startTls.startTlsOptions).toMatchObject({
       minVersion: "TLSv1.2",
       rejectUnauthorized: true,
+    });
+  });
+
+  it("keeps TLS 1.2 while explicitly allowing certificate verification to be disabled", () => {
+    const ldaps = ldapConnectionPlan(
+      { ...baseConfiguration, verifyTlsCertificate: false },
+      baseConfiguration.urls[0]!,
+    );
+    expect(ldaps.clientOptions.tlsOptions).toMatchObject({
+      minVersion: "TLSv1.2",
+      rejectUnauthorized: false,
+    });
+
+    const startTls = ldapConnectionPlan(
+      { ...baseConfiguration, tlsMode: "starttls", verifyTlsCertificate: false },
+      "ldap://ldap.internal:389",
+    );
+    expect(startTls.startTlsOptions).toMatchObject({
+      minVersion: "TLSv1.2",
+      rejectUnauthorized: false,
     });
   });
 

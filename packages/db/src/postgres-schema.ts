@@ -278,6 +278,7 @@ export const pgLdapConfigurations = pgTable("ldap_configurations", {
   enabled: boolean("enabled").notNull().default(false),
   urlsJson: text("urls_json").notNull(),
   tlsMode: text("tls_mode", { enum: ["ldaps", "starttls"] }).notNull(),
+  verifyTlsCertificate: boolean("verify_tls_certificate").notNull().default(true),
   caPem: text("ca_pem"),
   connectTimeoutMs: integer("connect_timeout_ms").notNull(),
   operationTimeoutMs: integer("operation_timeout_ms").notNull(),

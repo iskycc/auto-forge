@@ -278,6 +278,9 @@ export const ldapConfigurations = sqliteTable("ldap_configurations", {
   enabled: integer("enabled", { mode: "boolean" }).notNull().default(false),
   urlsJson: text("urls_json").notNull(),
   tlsMode: text("tls_mode", { enum: ["ldaps", "starttls"] }).notNull(),
+  verifyTlsCertificate: integer("verify_tls_certificate", { mode: "boolean" })
+    .notNull()
+    .default(true),
   caPem: text("ca_pem"),
   connectTimeoutMs: integer("connect_timeout_ms").notNull(),
   operationTimeoutMs: integer("operation_timeout_ms").notNull(),

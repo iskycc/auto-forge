@@ -9,7 +9,7 @@ import {
   type User,
   type UserSession,
 } from "@autoforge/domain";
-import { Network, Plus, RefreshCw, Search, Shield, UserRound } from "lucide-react";
+import { Network, Plus, RefreshCw, Search, Shield, ShieldAlert, UserRound } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
 
@@ -22,6 +22,7 @@ type LdapView = {
   enabled: boolean;
   urls: string[];
   tlsMode: "ldaps" | "starttls";
+  verifyTlsCertificate: boolean;
   caPem?: string;
   connectTimeoutMs: number;
   operationTimeoutMs: number;
@@ -95,6 +96,9 @@ export function AccessSettings({
   const [error, setError] = useState("");
   const [pending, setPending] = useState(false);
   const [ldapEnabled, setLdapEnabled] = useState(ldap?.enabled ?? false);
+  const [verifyLdapTlsCertificate, setVerifyLdapTlsCertificate] = useState(
+    ldap?.verifyTlsCertificate ?? true,
+  );
   const [createDialog, setCreateDialog] = useState<
     "user" | "password" | "role" | "assignment" | null
   >(null);
@@ -231,7 +235,11 @@ export function AccessSettings({
     void request(
       testOnly ? "/api/v1/ldap/test" : "/api/v1/ldap/configuration",
       jsonRequest(testOnly ? "POST" : "PUT", payload),
-      testOnly ? "LDAP 连接、TLS 和 bind 验证成功。" : "LDAP 配置已加密保存。",
+      testOnly
+        ? payload.verifyTlsCertificate
+          ? "LDAP 连接、TLS 和 bind 验证成功。"
+          : "LDAP 连接、TLS 加密和 bind 验证成功，未校验服务器证书。"
+        : "LDAP 配置已加密保存。",
     );
   }
 
@@ -761,6 +769,25 @@ export function AccessSettings({
                     <option value="starttls">StartTLS</option>
                   </Select>
                 </label>
+                <label className="checkbox-field settings-wide-field">
+                  <Input
+                    checked={verifyLdapTlsCertificate}
+                    name="verifyTlsCertificate"
+                    onChange={(event) => setVerifyLdapTlsCertificate(event.target.checked)}
+                    type="checkbox"
+                  />
+                  校验 TLS 服务器证书
+                </label>
+                {!verifyLdapTlsCertificate ? (
+                  <div className="inline-notice warning-notice settings-wide-field" role="alert">
+                    <ShieldAlert size={18} />
+                    <span>
+                      {
+                        "关闭后仍使用 TLS 加密，但无法确认目录服务器身份，存在中间人攻击风险。仅限可信隔离内网。"
+                      }
+                    </span>
+                  </div>
+                ) : null}
                 <label className="settings-wide-field">
                   服务器地址（每行一个）
                   <Textarea
@@ -890,6 +917,10 @@ export function AccessSettings({
               <div>
                 <dt>TLS</dt>
                 <dd>{ldap?.tlsMode ?? "未配置"}</dd>
+              </div>
+              <div>
+                <dt>证书校验</dt>
+                <dd>{ldap?.verifyTlsCertificate === false ? "已关闭" : "已开启"}</dd>
               </div>
               <div>
                 <dt>目录地址</dt>
@@ -1076,6 +1107,7 @@ function ldapPayload(form: FormData, current: LdapView | null, enabled: boolean)
       enabled: false,
       urls: current.urls,
       tlsMode: current.tlsMode,
+      verifyTlsCertificate: current.verifyTlsCertificate,
       caPem: current.caPem,
       connectTimeoutMs: current.connectTimeoutMs,
       operationTimeoutMs: current.operationTimeoutMs,
@@ -1102,6 +1134,7 @@ function ldapPayload(form: FormData, current: LdapView | null, enabled: boolean)
       .map((value) => value.trim())
       .filter(Boolean),
     tlsMode: form.get("tlsMode"),
+    verifyTlsCertificate: form.has("verifyTlsCertificate"),
     caPem: optional("caPem"),
     connectTimeoutMs: 5_000,
     operationTimeoutMs: 10_000,

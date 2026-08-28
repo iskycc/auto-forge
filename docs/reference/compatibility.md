@@ -1,5 +1,7 @@
 # Compatibility matrix
 
+This source document is published as `COMPATIBILITY.md` at the root of every formal release.
+
 | Control plane | Runner Agent       | Protocol | Java/TestNG baseline     | Result                                                                        |
 | ------------- | ------------------ | -------- | ------------------------ | ----------------------------------------------------------------------------- |
 | `1.1.x`       | embedded `1.1.x`   | v1       | Java 11+ / TestNG 7.11.0 | supported                                                                     |

@@ -11,7 +11,7 @@ print_usage() {
 沿当前分支的第一父提交链，列出指定目录及其所有子目录中曾被 Git 删除的文件。
 默认不会统计其他分支或合并提交带入的删除；使用 --all 查询所有本地和远端跟踪分支。
 使用 --branch 只查询指定分支；短名称会同时匹配本地分支和各 remote 下的同名分支。
-结果按提交时间从新到旧写入项目根目录的 delete-result.log。
+结果按提交时间从新到旧写入项目根目录的 test-results/deleted-files/delete-result.log。
 文件路径相对于 Git 仓库根目录。相关分支表示当前仍包含对应提交的分支。
 扫描完成后按删除提交批次逐一确认恢复；恢复只写工作区，不自动暂存。
 
@@ -329,9 +329,12 @@ list_deleted_files() {
 }
 
 write_result_file() {
-  OUTPUT_FILE="$REPOSITORY_ROOT/delete-result.log"
-  TEMPORARY_OUTPUT_FILE="$(mktemp "$REPOSITORY_ROOT/.delete-result.log.tmp.XXXXXX")" ||
-    fail "无法在项目根目录创建临时结果文件"
+  local output_directory="$REPOSITORY_ROOT/test-results/deleted-files"
+
+  mkdir -p -- "$output_directory" || fail "无法创建结果目录: $output_directory"
+  OUTPUT_FILE="$output_directory/delete-result.log"
+  TEMPORARY_OUTPUT_FILE="$(mktemp "$output_directory/.delete-result.log.tmp.XXXXXX")" ||
+    fail "无法创建临时结果文件"
   trap cleanup_temporary_files EXIT
 
   printf '结果文件: %s\n' "$OUTPUT_FILE" >&2

@@ -1,8 +1,12 @@
 # AutoForge 产品界面设计说明
 
+本文记录已落地界面的实现约束和持续审视项；视觉规范的唯一基线仍是
+[`frontend-design.md`](./frontend-design.md)。两者分别回答“如何实现”和“应该呈现成什么样”，
+不得把本文当作第二套视觉规范。
+
 本文是当前产品界面的实现约束与后续审视清单。视觉基线仍以
-[`docs/design/autoforge-apple-like-e-dashboard.png`](./docs/design/autoforge-apple-like-e-dashboard.png)
-和 [`docs/design/frontend-design.md`](./docs/design/frontend-design.md) 为准；设计图负责表达信息层级，真实页面必须使用权威业务数据与可操作组件，不能把设计图当作背景图片。
+[`autoforge-apple-like-e-dashboard.png`](./autoforge-apple-like-e-dashboard.png)
+和 [`frontend-design.md`](./frontend-design.md) 为准；设计图负责表达信息层级，真实页面必须使用权威业务数据与可操作组件，不能把设计图当作背景图片。
 
 ## 1. 本轮审视结论
 

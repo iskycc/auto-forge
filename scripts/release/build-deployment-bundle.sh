@@ -24,8 +24,11 @@ cp -R -- "${repository_root}/scripts/operations" "${staging_directory}/${package
 cp -R -- "${repository_root}/docs" "${staging_directory}/${package_name}/docs"
 cp -- "${repository_root}/LICENSE" "${repository_root}/NOTICE" \
   "${repository_root}/THIRD_PARTY_LICENSES.json" "${repository_root}/CHANGELOG.md" \
-  "${repository_root}/COMPATIBILITY.md" "${repository_root}/release-signing-public-key.pem" \
   "${staging_directory}/${package_name}/"
+cp -- "${repository_root}/docs/reference/compatibility.md" \
+  "${staging_directory}/${package_name}/COMPATIBILITY.md"
+cp -- "${repository_root}/scripts/release/assets/release-signing-public-key.pem" \
+  "${staging_directory}/${package_name}/release-signing-public-key.pem"
 
 while IFS= read -r environment_example; do
   sed -i "s/VERSION/${version}/g" "${environment_example}"

@@ -24,4 +24,4 @@ Runner 端点均执行 Bearer 身份校验、协议 schema、流式请求体限�
 
 契约源位于 `packages/contracts/src/execution.ts`、`management.ts` 和 `jobs.ts`；控制面解析与
 错误分类位于 `packages/runner-sdk`。示例必须通过这些 schema 构造，禁止维护无版本约束的第二份
-DTO。版本兼容见根 [COMPATIBILITY.md](../../COMPATIBILITY.md)。
+DTO。版本兼容见[兼容矩阵](../reference/compatibility.md)。

@@ -785,16 +785,18 @@ export class PostgresIdentityAccessRepository implements IdentityAccessRepositor
     await this.ready();
     const result = await this.handle.pool.query<LdapDatabaseRow>(
       `INSERT INTO ldap_configurations (
-         id, enabled, urls_json, tls_mode, ca_pem, connect_timeout_ms, operation_timeout_ms,
+         id, enabled, urls_json, tls_mode, ca_pem, verify_tls_certificate,
+         connect_timeout_ms, operation_timeout_ms,
          page_size, maximum_users, synchronization_interval_minutes, bind_dn, bind_password_encrypted, user_base_dn, user_filter, user_id_attribute,
          username_attribute, display_name_attribute, email_attribute, group_base_dn,
          group_filter, group_member_attribute, created_at, updated_at, version
        ) VALUES (
          'default', $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
-         $14, $15, $16, $17, $18, $19, $20, $21, $21, 1
+         $14, $15, $16, $17, $18, $19, $20, $21, $22, $22, 1
        ) ON CONFLICT (id) DO UPDATE SET
          enabled = EXCLUDED.enabled, urls_json = EXCLUDED.urls_json,
          tls_mode = EXCLUDED.tls_mode, ca_pem = EXCLUDED.ca_pem,
+         verify_tls_certificate = EXCLUDED.verify_tls_certificate,
          connect_timeout_ms = EXCLUDED.connect_timeout_ms,
          operation_timeout_ms = EXCLUDED.operation_timeout_ms,
          page_size = EXCLUDED.page_size, maximum_users = EXCLUDED.maximum_users,
@@ -815,6 +817,7 @@ export class PostgresIdentityAccessRepository implements IdentityAccessRepositor
         JSON.stringify(input.urls),
         input.tlsMode,
         input.caPem ?? null,
+        input.verifyTlsCertificate,
         input.connectTimeoutMs,
         input.operationTimeoutMs,
         input.pageSize,
@@ -1061,6 +1064,7 @@ type LdapDatabaseRow = QueryResultRow & {
   urls_json: string;
   tls_mode: "ldaps" | "starttls";
   ca_pem: string | null;
+  verify_tls_certificate: boolean;
   connect_timeout_ms: number;
   operation_timeout_ms: number;
   page_size: number;
@@ -1207,6 +1211,7 @@ function mapLdapRow(row: LdapDatabaseRow): StoredLdapConfiguration {
     enabled: row.enabled,
     urls: stringArray(row.urls_json),
     tlsMode: row.tls_mode,
+    verifyTlsCertificate: row.verify_tls_certificate,
     ...(row.ca_pem ? { caPem: row.ca_pem } : {}),
     connectTimeoutMs: row.connect_timeout_ms,
     operationTimeoutMs: row.operation_timeout_ms,

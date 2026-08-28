@@ -279,9 +279,11 @@ jobs:
           upload-release-assets: false
 
       - name: Add license and attribution files
-        run: >-
-          cp CHANGELOG.md COMPATIBILITY.md LICENSE NOTICE THIRD_PARTY_LICENSES.json
-          release-signing-public-key.pem release/
+        run: |
+          cp CHANGELOG.md LICENSE NOTICE THIRD_PARTY_LICENSES.json release/
+          cp docs/reference/compatibility.md release/COMPATIBILITY.md
+          cp scripts/release/assets/release-signing-public-key.pem \
+            release/release-signing-public-key.pem
 
       - name: Create release manifest and checksums
         run: node scripts/release/create-manifest.mjs "${{ needs.prepare.outputs.version }}" release

@@ -753,6 +753,7 @@ export class IdentityAccessService {
       enabled: input.enabled,
       urls: input.urls,
       tlsMode: input.tlsMode,
+      verifyTlsCertificate: input.verifyTlsCertificate,
       ...(input.caPem ? { caPem: input.caPem } : {}),
       connectTimeoutMs: input.connectTimeoutMs,
       operationTimeoutMs: input.operationTimeoutMs,
@@ -779,7 +780,12 @@ export class IdentityAccessService {
       resourceId: "default",
       result: "succeeded",
       requestId,
-      details: { enabled: saved.enabled, tlsMode: saved.tlsMode, serverCount: saved.urls.length },
+      details: {
+        enabled: saved.enabled,
+        tlsMode: saved.tlsMode,
+        verifyTlsCertificate: saved.verifyTlsCertificate,
+        serverCount: saved.urls.length,
+      },
     });
     return publicLdapConfiguration(saved);
   }
@@ -796,6 +802,7 @@ export class IdentityAccessService {
       enabled: input.enabled,
       urls: input.urls,
       tlsMode: input.tlsMode,
+      verifyTlsCertificate: input.verifyTlsCertificate,
       ...(input.caPem ? { caPem: input.caPem } : {}),
       connectTimeoutMs: input.connectTimeoutMs,
       operationTimeoutMs: input.operationTimeoutMs,

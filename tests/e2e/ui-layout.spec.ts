@@ -96,6 +96,19 @@ test("audit findings use bounded, localized, and unambiguous controls", async ({
     await ldapEnabled.check();
     await expect(page.getByLabel("Bind DN")).toBeEnabled();
   }
+  const verifyTlsCertificate = page.getByLabel("校验 TLS 服务器证书");
+  if (!(await verifyTlsCertificate.isChecked())) await verifyTlsCertificate.check();
+  await verifyTlsCertificate.uncheck();
+  await expect(page.getByText("中间人攻击风险", { exact: false })).toBeVisible();
+  await page.getByLabel("Bind DN").fill("cn=service,dc=example,dc=test");
+  const bindPassword = page.getByLabel("Bind 密码");
+  if ((await bindPassword.getAttribute("required")) !== null) {
+    await bindPassword.fill("Directory!Password123");
+  }
+  await page.getByLabel("用户 Base DN").fill("ou=people,dc=example,dc=test");
+  await page.getByRole("button", { name: "保存 LDAP 配置" }).click();
+  await expect(page.getByText("LDAP 配置已加密保存。")).toBeVisible();
+  await expect(page.getByLabel("校验 TLS 服务器证书")).not.toBeChecked();
 
   await page.goto("/audit");
   await expect(page.getByRole("navigation", { name: "运维审计" })).toHaveCount(0);

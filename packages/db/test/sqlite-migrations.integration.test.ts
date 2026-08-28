@@ -1163,6 +1163,48 @@ describe("SQLite migrations", { timeout: 15_000 }, () => {
       database.close();
     }
   });
+
+  it("keeps TLS certificate verification enabled when upgrading existing LDAP settings", async () => {
+    const directory = await mkdtemp(resolve(tmpdir(), "autoforge-ldap-tls-verification-"));
+    temporaryDirectories.push(directory);
+    const databasePath = resolve(directory, "autoforge.sqlite");
+    const migrationsFolder = resolve(import.meta.dirname, "../drizzle/sqlite");
+    const migrationFiles = (await readdir(migrationsFolder))
+      .filter((name) => /^\d+_.+\.sql$/.test(name))
+      .sort();
+    const migration = "0053_ldap_tls_certificate_verification.sql";
+    const migrationIndex = migrationFiles.indexOf(migration);
+    expect(migrationIndex).toBeGreaterThan(0);
+    const database = new Database(databasePath);
+    try {
+      database.pragma("foreign_keys = ON");
+      for (const fileName of migrationFiles.slice(0, migrationIndex)) {
+        database.exec(await readFile(resolve(migrationsFolder, fileName), "utf8"));
+      }
+      database.exec(`
+        INSERT INTO ldap_configurations
+          (id, enabled, urls_json, tls_mode, ca_pem, connect_timeout_ms,
+           operation_timeout_ms, page_size, maximum_users, synchronization_interval_minutes,
+           bind_dn, bind_password_encrypted, user_base_dn, user_filter, user_id_attribute,
+           username_attribute, display_name_attribute, email_attribute, group_base_dn,
+           group_filter, group_member_attribute, created_at, updated_at, version)
+        VALUES
+          ('default', 1, '["ldaps://ldap.internal:636"]', 'ldaps', NULL, 5000,
+           10000, 500, 5000, 0, 'cn=service,dc=example,dc=test', 'encrypted',
+           'ou=people,dc=example,dc=test', '(&(objectClass=person)(uid={username}))',
+           'entryUUID', 'uid', 'displayName', 'mail', NULL, NULL, 'member',
+           '2026-08-28T00:00:00.000Z', '2026-08-28T00:00:00.000Z', 1);
+      `);
+      database.exec(await readFile(resolve(migrationsFolder, migration), "utf8"));
+      expect(
+        database
+          .prepare("SELECT verify_tls_certificate FROM ldap_configurations WHERE id='default'")
+          .get(),
+      ).toEqual({ verify_tls_certificate: 1 });
+    } finally {
+      database.close();
+    }
+  });
 });
 
 type MigrationWorkerInput = {

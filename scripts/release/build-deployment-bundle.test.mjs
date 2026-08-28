@@ -42,6 +42,10 @@ test("builds a versioned deployment bundle with both Compose modes", async () =>
     );
     assert.equal(await readFile(resolve(packageDirectory, "VERSION"), "utf8"), "1.2.3\n");
     assert.match(
+      await readFile(resolve(packageDirectory, "COMPATIBILITY.md"), "utf8"),
+      /Compatibility matrix/,
+    );
+    assert.match(
       await readFile(resolve(packageDirectory, "release-signing-public-key.pem"), "utf8"),
       /BEGIN PUBLIC KEY/,
     );

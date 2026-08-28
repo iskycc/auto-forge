@@ -9,7 +9,7 @@ AutoForge 是一个面向自动化测试场景的用例工厂，用于统一管�
 
 > 当前状态：核心功能、工程事项、页面可见性以及 Gate A–D 已完成。M11 的完整 E2E 验收仍按覆盖矩阵逐项补齐，不能用页面访问或模拟 Agent 代替真实边界、失败和恢复证据；正式生产完成仍以基于新语义版本标签和不可变四平台资产执行 Gate E 为准。
 
-完整的实现事项和阶段验收门见 [AutoForge 待办路线图](./Todo.md)。
+完整的实现事项和阶段验收门见 [AutoForge 待办路线图](./docs/project-roadmap.md)。
 按里程碑统计的最新实现证据见 [AutoForge 实现进展](./docs/project-status.md)。
 
 ## 当前已实现
@@ -36,7 +36,7 @@ AutoForge 是一个面向自动化测试场景的用例工厂，用于统一管�
 - 顶栏执行弹窗支持立即执行或最长七天、精确到秒的持久化倒计时。计划开始时间由服务端固化，Lite/Full 在到点前都不会分配用例，排队超时也从到点后开始；执行记录和详情会显示实时倒计时。
 - Jenkins Pipeline 插件提供 `autoforgeRun` 与 `autoforgePublishDependencies` 两个步骤：前者使用 API Key 启动任务，按服务端建议周期打印轮次/通过/失败与免登录进展链接，在可配置总时限内等待批次终态，并在完成后输出永久匿名结果链接 `resultUrl`；永久页复用执行历史详情的概览、轮次、图表和用例表格，但不加载产品侧栏或鉴权操作。后者按项目版本替换依赖压缩包链接，不保存历史版本文件，拒绝时会显示服务端可操作错误。两个客户端固定使用 HTTP/1.1，兼容未配置 TLS 代理的 Lite 地址；各插件目录都包含只填写必需参数的 `Jenkinsfile`，ZIP 依赖发布无需重复填写文件名和格式。两个 HPI、SBOM、校验和与发布清单随 Release 分发，并通过真实 Pipeline DSL E2E 与 HPI 包结构校验。完整流水线见 [`examples/jenkins/Jenkinsfile`](./examples/jenkins/Jenkinsfile)。
 - 本地账号首次管理员引导、scrypt 密码、本地/LDAP 登录、安全会话、锁定/解锁、密码恢复、六种内置角色和服务端 RBAC；角色、服务账号、项目作用域和 API 令牌权限统一使用带人类友好名称与用途说明的复选框组。自定义角色可创建、编辑、停用与删除（内置角色不可变，引用中角色与最后一位系统管理员受保护，权限变更全量审计并撤销相关会话）；项目支持创建、归档、成员角色分配与负责人转移。批次、日志、Attempt 时间线、产物下载和取消按权威项目过滤，跨项目 ID 猜测不会读取内容。
-- LDAP 的 LDAPS/StartTLS、私有 CA、多服务器、分页上限、即时建号、组角色映射、手动同步和离职停用；bind 密码使用主密钥加密，连接测试区分 DNS、TLS、超时、bind、Base DN、过滤器和读取权限故障。
+- LDAP 的 LDAPS/StartTLS、私有 CA、多服务器、分页上限、即时建号、组角色映射、手动同步和离职停用；TLS 证书校验默认开启，可由管理员针对隔离的旧目录显式关闭并持续显示风险提示；bind 密码使用主密钥加密，连接测试区分 DNS、TLS、超时、bind、Base DN、过滤器和读取权限故障。
 - 用户管理支持 URL 驱动的搜索、来源筛选和游标分页，以及本地账号创建、启停/解锁、密码重置和按用户撤销全部会话；LDAP 管理属性不提供本地编辑入口。
 - SQLite/PostgreSQL assignment、lease、状态事件、完成回执、日志水位和产物元数据，以及原子 claim、续租、回收、reconcile、取消、失败重排和批次聚合；冲突完成会保留事件证据，领取/lease/单用例执行超时使用不同稳定结果码。正常执行完毕统一显示“执行完成”，即使仍有用例失败；基础设施异常和中断分别显示“执行异常”“执行中断”。执行详情可按已分配、执行中、通过、失败、超时、取消和未执行筛选用例；单次 attempt 的永久匿名日志页按时间顺序列出同批次、同用例的全部终态轮次，并在当前标签页切换日志。
 - 总体与单 Runner 调度日志首次读取最新一页并默认定位末尾，历史事件通过反向游标自动补齐；当前页面内重复打开复用有界 LRU 缓存，新事件按正向游标增量刷新，事件行使用窗口化渲染且不再要求手工“加载更多”。
@@ -373,9 +373,13 @@ autoforge/
 │   ├── operations/             # 备份、恢复、迁移和工具链脚本
 │   └── release/                # 内置资源、镜像、清单和签名脚本
 ├── docs/
+│   ├── project-roadmap.md      # 当前待办路线图和阶段验收门
 │   ├── architecture/           # 架构说明和 ADR
-│   ├── design/                 # UI 设计规范和已选视觉资产
-│   └── operations/             # 部署、升级、备份、恢复和排障
+│   ├── archive/                # 带版本背景的历史审计与决策记录
+│   ├── design/                 # UI 设计规范、实现约束和已选视觉资产
+│   ├── legal/                  # 可选重分发组件的补充声明
+│   ├── operations/             # 部署、升级、备份、恢复和排障
+│   └── reference/              # 协议和版本兼容参考
 ├── tests/
 │   ├── e2e/
 │   └── performance/
@@ -463,7 +467,7 @@ pnpm install --frozen-lockfile
 pnpm dev
 ```
 
-打开 <http://localhost:3000>。默认数据写入仓库根目录的 `data/`；目录已被 Git 忽略。若需修改配置，可将 `.env.example` 复制为 `apps/web/.env.local`，不要提交本地环境文件。
+打开 <http://localhost:3000>。默认数据写入仓库根目录的 `data/`；目录已被 Git 忽略。应用配置不从 `.env` 读取：首次启动后在 `/settings/platform` 中设置，或停止服务后编辑所选数据目录下的 `config/platform.json`。
 
 生产构建与启动：
 
@@ -472,7 +476,7 @@ pnpm build
 pnpm start
 ```
 
-首次访问数据库入口时会按顺序执行当前方言的版本化 SQL 迁移；不会使用 schema push。Full 模式必须提供 `.env.example` 中列出的 PostgreSQL、NATS、MinIO 和 Redis 配置。当前质量命令为：
+首次访问数据库入口时会按顺序执行当前方言的版本化 SQL 迁移；不会使用 schema push。使用 Compose 部署时，分别从 `deploy/compose/lite/.env.example` 或 `deploy/compose/full/.env.example` 复制对应模板；Full 基础设施连接由平台持久配置管理。当前质量命令为：
 
 ```bash
 pnpm format:check

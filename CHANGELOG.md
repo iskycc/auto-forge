@@ -4,6 +4,58 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## 1.5.7 - 2026-08-28
+
+### Added
+
+- LDAP configuration now exposes a `校验 TLS 服务器证书` switch for LDAPS and StartTLS. It remains
+  enabled by default; administrators can explicitly disable certificate-chain and hostname
+  verification for isolated legacy directories while TLS 1.2 encryption remains required. The UI
+  keeps a visible man-in-the-middle warning whenever verification is disabled.
+
+### Changed
+
+- Repository-level roadmap, historical review, compatibility, legal notice and release-signing
+  resources now live under purpose-specific `docs/` and `scripts/` directories instead of remaining
+  as unrelated root files. Release bundles retain the established top-level compatibility and public
+  key filenames, so offline verification commands and asset consumers do not need to change.
+- Runtime platform configuration is documented through the persisted administration page/config file;
+  the obsolete repository-root `.env.example` was removed while Lite and Full Compose templates remain
+  available beside their respective deployment definitions.
+
+### Tests
+
+- Added contract defaults, LDAPS/StartTLS connection-plan coverage, UI switch coverage, SQLite
+  persistence coverage and Lite/Full migration backfill tests.
+
+### Database and persisted configuration
+
+- SQLite migration `0053_ldap_tls_certificate_verification.sql` and PostgreSQL migration
+  `0052_ldap_tls_certificate_verification.sql` add `verify_tls_certificate`; existing LDAP
+  configurations are backfilled to `true`.
+
+### Compatibility
+
+- Existing API clients that omit `verifyTlsCertificate` retain strict certificate verification.
+  Runner Protocol v1 and Jenkins Pipeline contracts are unchanged.
+
+### Offline assets
+
+- Deployment bundles and GitHub Release assets still include `COMPATIBILITY.md` and
+  `release-signing-public-key.pem` at their existing package-root paths. No dependency, remote asset or
+  runtime network requirement was added.
+
+### Security
+
+- Disabling verification does not permit plaintext LDAP and does not lower the TLS 1.2 minimum, but
+  it removes directory-server identity verification and therefore permits man-in-the-middle attacks.
+
+### Known limitations
+
+- Certificate verification can only be disabled for an entire LDAP directory configuration, not for
+  individual URLs. Administrators should keep it enabled unless every configured endpoint is confined
+  to a trusted isolated network.
+
 ## 1.5.6 - 2026-08-27
 
 ### Fixed
@@ -1500,7 +1552,7 @@ and known limitations.
 - Added a global “开始执行” dialog to the top bar on every authorized page. It supports suite and
   single-case execution, managed or inline environments, Runner Groups, retry policy, parameter
   overrides and CoTest Adapter Suite/Test/environment addresses.
-- Added `Design.md` as the implementation-facing UI review and information-architecture guide.
+- Added an implementation-facing UI review and information-architecture guide; it now lives at `docs/design/product-interface-implementation.md`.
 
 ### Changed
 

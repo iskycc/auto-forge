@@ -100,6 +100,7 @@ export const ldapConfigurationInputSchema = z
     enabled: z.boolean(),
     urls: z.array(z.url()).min(1).max(4),
     tlsMode: z.enum(["ldaps", "starttls"]),
+    verifyTlsCertificate: z.boolean().default(true),
     caPem: z.string().max(128_000).optional(),
     connectTimeoutMs: z.number().int().min(500).max(30_000).default(5_000),
     operationTimeoutMs: z.number().int().min(500).max(60_000).default(10_000),
