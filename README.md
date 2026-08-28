@@ -220,7 +220,7 @@ AutoForge 已选择方案 E 作为视觉基线：Apple-like 的轻盈桌面 Web 
 ```mermaid
 flowchart LR
     UI[浏览器] --> WEB[Next.js Web / API]
-    AGENT[Runner Agent] -->|HTTP(S) Runner Protocol| WEB
+    AGENT[Runner Agent] -->|Runner Protocol v1| WEB
     WEB --> APP
     WORKER[Dispatcher Worker] --> APP
 

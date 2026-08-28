@@ -4,6 +4,30 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## Unreleased
+
+### Fixed
+
+- The repository homepage architecture diagram now uses Mermaid-safe edge-label syntax, so GitHub no
+  longer replaces the README diagram with an `Unable to render rich display` parse error.
+
+### Database and persisted configuration
+
+- No SQLite/PostgreSQL migration or persisted-configuration change is required.
+
+### Compatibility
+
+- Documentation only; application APIs, persisted data, Runner Protocol v1 and release assets are
+  unchanged.
+
+### Offline assets
+
+- No dependency, remote asset or runtime network requirement was added.
+
+### Known limitations
+
+- None specific to this documentation rendering fix.
+
 ## 1.5.9 - 2026-08-28
 
 ### Added
