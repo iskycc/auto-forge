@@ -7,7 +7,11 @@ import type { CaseSuite, CaseSuiteDetails, CaseSuiteItem } from "@autoforge/doma
 import { ChevronRight, FolderTree, LoaderCircle, Search, Trash2 } from "lucide-react";
 import { useDeferredValue, useMemo, useState } from "react";
 
-const SUITE_TREE_RENDER_PAGE_SIZE = 250;
+const SUITE_TREE_GROUP_PAGE_SIZE = 250;
+// A package row contains several interactive elements, so mounting 250 rows in one click can still
+// occupy the browser main thread noticeably. Keep each expansion bounded independently from the
+// number of package summaries shown on the page.
+const SUITE_TREE_CASE_PAGE_SIZE = 100;
 
 export function CaseSuiteDetailsView({
   canManage,
@@ -21,7 +25,7 @@ export function CaseSuiteDetailsView({
   const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(new Set());
   const [removing, setRemoving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [visibleGroupCount, setVisibleGroupCount] = useState(SUITE_TREE_RENDER_PAGE_SIZE);
+  const [visibleGroupCount, setVisibleGroupCount] = useState(SUITE_TREE_GROUP_PAGE_SIZE);
   const deferredQuery = useDeferredValue(query);
   const filtering = deferredQuery !== query;
   const visibleItems = useMemo(
@@ -102,7 +106,7 @@ export function CaseSuiteDetailsView({
                 aria-label="搜索任务用例"
                 onChange={(event) => {
                   setQuery(event.target.value);
-                  setVisibleGroupCount(SUITE_TREE_RENDER_PAGE_SIZE);
+                  setVisibleGroupCount(SUITE_TREE_GROUP_PAGE_SIZE);
                 }}
                 placeholder="搜索用例名称、类名或包路径"
                 type="search"
@@ -164,7 +168,7 @@ export function CaseSuiteDetailsView({
               {groups.length > visibleGroupCount ? (
                 <Button
                   onClick={() =>
-                    setVisibleGroupCount((count) => count + SUITE_TREE_RENDER_PAGE_SIZE)
+                    setVisibleGroupCount((count) => count + SUITE_TREE_GROUP_PAGE_SIZE)
                   }
                   type="button"
                   variant="ghost"
@@ -199,14 +203,21 @@ function SuitePackageGroup({
   removing: boolean;
   selectedIds: ReadonlySet<string>;
 }) {
-  const [open, setOpen] = useState(items.length <= SUITE_TREE_RENDER_PAGE_SIZE);
-  const [visibleCount, setVisibleCount] = useState(SUITE_TREE_RENDER_PAGE_SIZE);
-  const selectedCount = items.filter((item) => selectedIds.has(item.caseDefinition.id)).length;
+  // Package contents are deliberately closed on first paint. Previously every package with at most
+  // 250 cases opened at once, so 250 packages could mount roughly 62,500 interactive rows. Any
+  // details toggle then forced a layout pass across that entire tree and visibly froze the page.
+  const [open, setOpen] = useState(false);
+  const [visibleCount, setVisibleCount] = useState(SUITE_TREE_CASE_PAGE_SIZE);
+  // Opening/closing is local state and must not rescan a package that may contain 100,000 cases.
+  const selectedCount = useMemo(
+    () => items.filter((item) => selectedIds.has(item.caseDefinition.id)).length,
+    [items, selectedIds],
+  );
+  const visibleItems = useMemo(() => items.slice(0, visibleCount), [items, visibleCount]);
   return (
     <details
       aria-selected={selectedCount === items.length}
       onToggle={(event) => setOpen(event.currentTarget.open)}
-      open={open}
       role="treeitem"
     >
       <summary>
@@ -228,7 +239,7 @@ function SuitePackageGroup({
       </summary>
       {open ? (
         <div className="suite-tree-children" role="group">
-          {items.slice(0, visibleCount).map((item) => (
+          {visibleItems.map((item) => (
             <div
               aria-selected={selectedIds.has(item.caseDefinition.id)}
               className="suite-tree-case"
@@ -263,7 +274,7 @@ function SuitePackageGroup({
           ))}
           {items.length > visibleCount ? (
             <Button
-              onClick={() => setVisibleCount((count) => count + SUITE_TREE_RENDER_PAGE_SIZE)}
+              onClick={() => setVisibleCount((count) => count + SUITE_TREE_CASE_PAGE_SIZE)}
               type="button"
               variant="ghost"
             >

@@ -4,6 +4,37 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## 1.5.8 - 2026-08-28
+
+### Fixed
+
+- Task-detail package groups now mount case rows only after explicit expansion and render at most 100
+  additional cases per step. Expanding or collapsing a package no longer forces layout across as many
+  as 62,500 eagerly mounted interactive rows, and changing only the arrow state no longer rescans every
+  member of a large package to recompute selection totals.
+
+### Tests
+
+- Extended the task-lifecycle Playwright flow to verify that package contents are absent initially,
+  appear on expansion and are removed again on collapse.
+
+### Database and persisted configuration
+
+- No SQLite/PostgreSQL migration or persisted-configuration change is required.
+
+### Compatibility
+
+- Case-suite APIs, task snapshots, Runner Protocol v1 and Jenkins Pipeline inputs are unchanged.
+
+### Offline assets
+
+- No dependency, remote asset or runtime network requirement was added.
+
+### Known limitations
+
+- An expanded package initially shows 100 cases; additional members remain available through the
+  existing incremental “加载更多用例” control.
+
 ## 1.5.7 - 2026-08-28
 
 ### Added

@@ -501,6 +501,14 @@ test("case metadata, immutable versions and suite policy survive lifecycle chang
   await expect(page.getByRole("heading", { name: "2 个用例", exact: true })).toBeVisible();
   const caseTree = page.getByRole("tree", { name: "任务用例树" });
   await expect(caseTree).toBeVisible();
+  // Large tasks keep package contents out of the DOM until the user expands one package. This is a
+  // performance contract: rendering every small package eagerly can create tens of thousands of
+  // rows and make the native details arrow block the browser main thread.
+  await expect(caseTree.locator(".suite-tree-case")).toHaveCount(0);
+  await caseTree.locator("summary").first().click();
+  await expect(caseTree.locator(".suite-tree-case")).toHaveCount(2);
+  await caseTree.locator("summary").first().click();
+  await expect(caseTree.locator(".suite-tree-case")).toHaveCount(0);
   await caseTree.getByLabel(/^选择包 /u).check();
   await expect(page.getByRole("button", { name: "批量移除（2）" })).toBeVisible();
   await caseTree.scrollIntoViewIfNeeded();
