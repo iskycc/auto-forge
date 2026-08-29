@@ -27,6 +27,7 @@ reads each key immediately without Enter. L2 removes the row from `导出用例`
 `排除明细`, and records `手工排除` as its evidence. Press `Ctrl+C` to pause safely. Every selection
 is written at once. After every included row is classified, a second stage reviews exclusions whose
 only evidence is `注释或字符串命中` (rows with title or any other exclusion evidence are skipped).
+The prompt shows the previous exclusion decision, matched keywords, and complete exclusion evidence.
 In this stage, `0`/`1` moves the row back to `导出用例` as L0/L1, while `5` keeps it in
 `排除明细`, marks it L2, and appends `人工复核` to the original evidence. If the workbook already
 exists, scanning is skipped and either stage resumes from its first unfinished row. Use

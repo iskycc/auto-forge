@@ -195,6 +195,9 @@ grep -Fq '排除项复核已暂停，剩余 3 条；下次运行将自动继续�
 first_exclusion_review_output="$(printf '0' | java \
   -cp "${compiled_classes}:${POI_CLASSPATH}" AnalyzeNormalGroovyCases \
   --source "${source_root}" --output "${output_file}")"
+grep -Fq '排除判断：排除（命中排除信号）' <<<"${first_exclusion_review_output}"
+grep -Fq '命中关键词：error' <<<"${first_exclusion_review_output}"
+grep -Fq '原排除证据：注释或字符串命中：error' <<<"${first_exclusion_review_output}"
 grep -Fq '已移回导出用例并标记 L0：CommentOnlyReviewCase' \
   <<<"${first_exclusion_review_output}"
 grep -Fq '排除项复核已暂停，剩余 2 条；下次运行将自动继续。' \

@@ -1581,6 +1581,12 @@ public final class AnalyzeNormalGroovyCases {
         throws IOException {
       List<Integer> remainingRows =
           narrativeOnlyExclusionRows(excludedSheet, evidenceColumn);
+      Row excludedHeader = excludedSheet.getRow(0);
+      if (excludedHeader == null) {
+        throw new IOException("The excluded-cases worksheet has no header row");
+      }
+      int decisionColumn = requiredColumn(excludedHeader, EXCLUSION_DECISION_HEADER);
+      int matchedKeywordsColumn = requiredColumn(excludedHeader, MATCHED_KEYWORDS_HEADER);
       int total = remainingRows.size();
       int reviewed = 0;
       System.out.printf("开始复核 %d 条仅注释或字符串命中的排除项。%n", total);
@@ -1593,6 +1599,8 @@ public final class AnalyzeNormalGroovyCases {
             titleColumn,
             classColumn,
             pathColumn,
+            decisionColumn,
+            matchedKeywordsColumn,
             evidenceColumn);
         int key = nextReviewKey(keyReader);
         if (key < 0) {
@@ -1637,9 +1645,12 @@ public final class AnalyzeNormalGroovyCases {
         int titleColumn,
         int classColumn,
         int pathColumn,
+        int decisionColumn,
+        int matchedKeywordsColumn,
         int evidenceColumn) {
       System.out.printf(
-          "%n[排除项复核 %d/%d] 标题：%s%n类名：%s%n路径：%s%n原排除证据：%s%n"
+          "%n[排除项复核 %d/%d] 标题：%s%n类名：%s%n路径：%s%n"
+              + "排除判断：%s%n命中关键词：%s%n原排除证据：%s%n"
               + "按 0 移回导出用例并标记 L0，按 1 移回并标记 L1，"
               + "按 5 保留排除并追加人工复核（Ctrl+C 暂停）：",
           reviewed + 1,
@@ -1647,6 +1658,8 @@ public final class AnalyzeNormalGroovyCases {
           cellText(row, titleColumn),
           cellText(row, classColumn),
           cellText(row, pathColumn),
+          cellText(row, decisionColumn),
+          cellText(row, matchedKeywordsColumn),
           cellText(row, evidenceColumn));
       System.out.flush();
     }
