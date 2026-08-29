@@ -14,6 +14,7 @@ import {
   type DdtCaseData,
   type DdtCaseHistory,
   type DdtCaseTemplate,
+  type DdtExecutionClass,
   type DdtScope,
   type DdtTemplateFieldRule,
 } from "@autoforge/domain";
@@ -49,7 +50,8 @@ export class PostgresDdtRepository implements DdtRepository {
     const limit = builder.value(query.limit + 1);
     const result = await this.handle.pool.query<DdtCaseSummaryRow>(
       `SELECT id, project_id, project_version_id, test_stage_id, case_id,
-              case_id_normalized, sr_num, case_kind, source_name, revision, updated_at
+              case_id_normalized, sr_num, case_kind, source_name, revision, updated_at,
+              ${executionClassColumns}
        FROM ddt_cases WHERE ${builder.sql}
        ORDER BY case_id_normalized, id LIMIT ${limit}`,
       builder.values,
@@ -79,6 +81,76 @@ export class PostgresDdtRepository implements DdtRepository {
         item.data,
       ]),
     );
+  }
+
+  async listExecutionClasses(
+    scope: DdtScope,
+    query = "",
+    limit = 50,
+  ): Promise<DdtExecutionClass[]> {
+    await this.ready();
+    const normalizedQuery = query.trim().toLocaleLowerCase("en-US");
+    const pattern = `%${escapeLike(normalizedQuery)}%`;
+    const result = await this.handle.pool.query<ExecutionClassRow>(
+      `SELECT definition.id AS case_definition_id, definition.class_name,
+              definition.display_name, definition.source_id, definition.current_version,
+              definition.enabled, definition.archived
+       FROM case_definitions definition
+       JOIN case_sources source ON source.id = definition.source_id
+       WHERE definition.project_id = $1 AND definition.project_version_id = $2
+         AND definition.test_stage_id = $3 AND source.authoritative = TRUE
+         AND source.status = 'ready' AND source.lifecycle_status = 'active'
+         AND ($4 = '' OR lower(definition.class_name) LIKE $5 ESCAPE '\\'
+                      OR lower(definition.display_name) LIKE $5 ESCAPE '\\')
+       ORDER BY definition.class_name, definition.id LIMIT $6`,
+      [...scopeValues(scope), normalizedQuery, pattern, Math.min(Math.max(limit, 1), 100)],
+    );
+    return result.rows.map(mapExecutionClassRow);
+  }
+
+  async findExecutionClass(scope: DdtScope, className: string): Promise<DdtExecutionClass | null> {
+    await this.ready();
+    const result = await this.handle.pool.query<ExecutionClassRow>(
+      `SELECT definition.id AS case_definition_id, definition.class_name,
+              definition.display_name, definition.source_id, definition.current_version,
+              definition.enabled, definition.archived
+       FROM case_definitions definition
+       JOIN case_sources source ON source.id = definition.source_id
+       WHERE definition.project_id = $1 AND definition.project_version_id = $2
+         AND definition.test_stage_id = $3 AND definition.class_name = $4
+         AND source.authoritative = TRUE AND source.status = 'ready'
+         AND source.lifecycle_status = 'active' LIMIT 1`,
+      [...scopeValues(scope), className.trim()],
+    );
+    return result.rows[0] ? mapExecutionClassRow(result.rows[0]) : null;
+  }
+
+  async setExecutionClass(input: Parameters<DdtRepository["setExecutionClass"]>[0]) {
+    await this.ready();
+    let updated = 0;
+    await transaction(this.handle, async (client) => {
+      for (const caseIds of batchesOf(
+        input.caseIds.map(normalize),
+        RELATIONAL_ID_QUERY_BATCH_SIZE,
+      )) {
+        const result = await client.query(
+          `UPDATE ddt_cases
+           SET execution_case_definition_id = $1, revision = revision + 1,
+               updated_by = $2, updated_at = $3
+           WHERE project_id = $4 AND project_version_id = $5 AND test_stage_id = $6
+             AND case_id_normalized = ANY($7::text[])`,
+          [
+            input.executionCaseDefinitionId,
+            input.actorId ?? null,
+            input.updatedAt,
+            ...scopeValues(input.scope),
+            caseIds,
+          ],
+        );
+        updated += result.rowCount ?? 0;
+      }
+    });
+    return updated;
   }
 
   async listGroups(scope: DdtScope, query = "", limit = 100) {
@@ -237,15 +309,18 @@ export class PostgresDdtRepository implements DdtRepository {
       const cases = await getCasesWith(client, input.scope, input.caseIds, true);
       if (cases.length !== input.caseIds.length)
         throw new DomainError("DDT_CASE_NOT_FOUND", "删除选择中包含不存在的 DDT 用例。");
+      await assertDdtCasesAreNotSuiteMembers(client, cases);
       for (const [index, item] of cases.entries()) {
         await client.query(
           `INSERT INTO ddt_deleted_cases
            (id, ddt_case_id, project_id, project_version_id, test_stage_id, case_id,
             case_id_normalized, sr_num, sr_num_normalized, case_kind, data_json,
-            source_file_id, source_name, case_created_at, case_updated_at, deleted_by, deleted_at)
+            source_file_id, execution_case_definition_id, source_name, case_created_at,
+            case_updated_at, deleted_by, deleted_at)
            SELECT $1, id, project_id, project_version_id, test_stage_id, case_id,
                   case_id_normalized, sr_num, sr_num_normalized, case_kind, data_json,
-                  source_file_id, source_name, created_at, updated_at, $2, $3
+                  source_file_id, execution_case_definition_id, source_name, created_at,
+                  updated_at, $2, $3
            FROM ddt_cases WHERE id = $4`,
           [input.recycleIds[index], input.actorId ?? null, input.deletedAt, item.id],
         );
@@ -298,9 +373,10 @@ export class PostgresDdtRepository implements DdtRepository {
       await client.query(
         `INSERT INTO ddt_cases
          (id, project_id, project_version_id, test_stage_id, case_id, case_id_normalized,
-          sr_num, sr_num_normalized, case_kind, data_json, source_file_id, source_name,
+          sr_num, sr_num_normalized, case_kind, data_json, source_file_id,
+          execution_case_definition_id, source_name,
           revision, created_by, updated_by, created_at, updated_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,1,$13,$13,$14,$15)`,
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,1,$14,$14,$15,$16)`,
         [
           row.ddt_case_id,
           row.project_id,
@@ -313,6 +389,7 @@ export class PostgresDdtRepository implements DdtRepository {
           row.case_kind,
           row.data_json,
           row.source_file_id,
+          row.execution_case_definition_id,
           row.source_name,
           input.actorId ?? null,
           row.case_created_at,
@@ -848,6 +925,13 @@ type DdtCaseRow = {
   created_at: string;
   updated_at: string;
   updated_by: string | null;
+  execution_case_definition_id: string | null;
+  execution_class_name: string | null;
+  execution_display_name: string | null;
+  execution_source_id: string | null;
+  execution_current_version: number | null;
+  execution_enabled: boolean | null;
+  execution_archived: boolean | null;
 };
 
 type DdtCaseSummaryRow = Omit<DdtCaseRow, "data_json" | "created_at" | "updated_by"> & {
@@ -951,6 +1035,7 @@ type DeletedCaseRow = {
   case_kind: "standard" | "journey";
   data_json: string;
   source_file_id: string | null;
+  execution_case_definition_id: string | null;
   source_name: string;
   case_created_at: string;
   case_updated_at: string;
@@ -972,8 +1057,17 @@ const emptyDashboardCounts: DashboardCountRow = {
   updated_today: "0",
 };
 
+const executionClassColumns = `execution_case_definition_id,
+  (SELECT class_name FROM case_definitions WHERE id = execution_case_definition_id) AS execution_class_name,
+  (SELECT display_name FROM case_definitions WHERE id = execution_case_definition_id) AS execution_display_name,
+  (SELECT source_id FROM case_definitions WHERE id = execution_case_definition_id) AS execution_source_id,
+  (SELECT current_version FROM case_definitions WHERE id = execution_case_definition_id) AS execution_current_version,
+  (SELECT enabled FROM case_definitions WHERE id = execution_case_definition_id) AS execution_enabled,
+  (SELECT archived FROM case_definitions WHERE id = execution_case_definition_id) AS execution_archived`;
+
 const caseSelect = `SELECT id, project_id, project_version_id, test_stage_id, case_id,
-  sr_num, case_kind, data_json, source_name, revision, created_at, updated_at, updated_by
+  sr_num, case_kind, data_json, source_name, revision, created_at, updated_at, updated_by,
+  ${executionClassColumns}
   FROM ddt_cases`;
 
 async function getCaseWith(executor: PgExecutor, scope: DdtScope, caseId: string) {
@@ -1022,6 +1116,7 @@ function mapCase(row: DdtCaseRow): DdtCase {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     ...(row.updated_by ? { updatedBy: row.updated_by } : {}),
+    ...mapExecutionClass(row),
   };
 }
 
@@ -1037,7 +1132,88 @@ function mapCaseSummary(row: DdtCaseSummaryRow) {
     sourceName: row.source_name,
     revision: row.revision,
     updatedAt: row.updated_at,
+    ...mapExecutionClass(row),
   };
+}
+
+type ExecutionClassRow = {
+  case_definition_id: string;
+  class_name: string;
+  display_name: string;
+  source_id: string;
+  current_version: number;
+  enabled: boolean;
+  archived: boolean;
+};
+
+function mapExecutionClassRow(row: ExecutionClassRow): DdtExecutionClass {
+  return {
+    caseDefinitionId: row.case_definition_id,
+    className: row.class_name,
+    displayName: row.display_name,
+    sourceId: row.source_id,
+    currentVersion: row.current_version,
+    enabled: row.enabled,
+    archived: row.archived,
+  };
+}
+
+function mapExecutionClass(
+  row: Pick<
+    DdtCaseRow,
+    | "execution_case_definition_id"
+    | "execution_class_name"
+    | "execution_display_name"
+    | "execution_source_id"
+    | "execution_current_version"
+    | "execution_enabled"
+    | "execution_archived"
+  >,
+): Pick<DdtCase, "executionClass"> {
+  if (
+    !row.execution_case_definition_id ||
+    !row.execution_class_name ||
+    !row.execution_display_name ||
+    !row.execution_source_id ||
+    row.execution_current_version === null ||
+    row.execution_enabled === null ||
+    row.execution_archived === null
+  ) {
+    return {};
+  }
+  return {
+    executionClass: {
+      caseDefinitionId: row.execution_case_definition_id,
+      className: row.execution_class_name,
+      displayName: row.execution_display_name,
+      sourceId: row.execution_source_id,
+      currentVersion: row.execution_current_version,
+      enabled: row.execution_enabled,
+      archived: row.execution_archived,
+    },
+  };
+}
+
+async function assertDdtCasesAreNotSuiteMembers(
+  client: PgExecutor,
+  cases: readonly DdtCase[],
+): Promise<void> {
+  const caseById = new Map(cases.map((item) => [item.id, item]));
+  for (const ids of batchesOf([...caseById.keys()], RELATIONAL_ID_QUERY_BATCH_SIZE)) {
+    const result = await client.query<{ ddt_case_id: string }>(
+      `SELECT ddt_case_id FROM case_suite_ddt_items
+       WHERE ddt_case_id = ANY($1::text[]) LIMIT 1`,
+      [ids],
+    );
+    const member = result.rows[0];
+    if (member) {
+      const ddtCase = caseById.get(member.ddt_case_id);
+      throw new DomainError(
+        "DDT_CASE_IN_USE",
+        `DDT 用例“${ddtCase?.caseId ?? member.ddt_case_id}”仍在用例任务中，请先从任务移除。`,
+      );
+    }
+  }
 }
 
 function mapHistory(row: HistoryRow): DdtCaseHistory {

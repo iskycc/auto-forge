@@ -87,18 +87,52 @@ describe.skipIf(!connectionString)("PostgreSQL DDT repository", () => {
           historyIds: [`history-import-${suffix}`, `history-import-second-${suffix}`],
         }),
       ).resolves.toMatchObject({ insertedCount: 2 });
+      const executionDefinitionId = `ddt-execution-definition-${suffix}`;
+      await insertExecutionClass(handle, scope, suffix, executionDefinitionId);
+      await expect(repository.listExecutionClasses(scope, "Order", 10)).resolves.toEqual([
+        expect.objectContaining({
+          caseDefinitionId: executionDefinitionId,
+          className: "com.example.OrderDdtTest",
+          displayName: "订单 DDT 执行类",
+        }),
+      ]);
+      await expect(
+        repository.setExecutionClass({
+          scope,
+          caseIds: [caseId, secondCaseId],
+          executionCaseDefinitionId: executionDefinitionId,
+          updatedAt: now,
+        }),
+      ).resolves.toBe(2);
+      await insertDdtSuiteMembership(handle, suffix, `case-second-${suffix}`);
+      await expect(
+        repository.trashCases({
+          scope,
+          caseIds: [secondCaseId],
+          recycleIds: [`recycle-blocked-${suffix}`],
+          deletedAt: now,
+        }),
+      ).rejects.toMatchObject({ code: "DDT_CASE_IN_USE" });
       await expect(
         repository.listCases({
           ...scope,
           limit: 10,
           filters: [{ field: "amount", operator: "eq", value: 10 }],
         }),
-      ).resolves.toMatchObject({ items: [{ caseId, srNum: "ORDER" }] });
+      ).resolves.toMatchObject({
+        items: [
+          {
+            caseId,
+            srNum: "ORDER",
+            executionClass: { className: "com.example.OrderDdtTest" },
+          },
+        ],
+      });
       await repository.updateCases([
         {
           scope,
           caseId,
-          expectedRevision: 1,
+          expectedRevision: 2,
           nextData: { CaseID: caseId, srNum: "ORDER", amount: 20 },
           historyId: `history-${suffix}`,
           historyType: "edit",
@@ -114,7 +148,7 @@ describe.skipIf(!connectionString)("PostgreSQL DDT repository", () => {
           {
             scope,
             caseId,
-            expectedRevision: 2,
+            expectedRevision: 3,
             nextData: { CaseID: secondCaseId, srNum: "ORDER", amount: 20 },
             historyId: `history-conflict-${suffix}`,
             historyType: "edit",
@@ -133,8 +167,15 @@ describe.skipIf(!connectionString)("PostgreSQL DDT repository", () => {
       ).resolves.toBe(1);
       await expect(
         repository.restoreDeletedCase({ scope, recycleId: `recycle-${suffix}`, restoredAt: now }),
-      ).resolves.toMatchObject({ caseId });
+      ).resolves.toMatchObject({
+        caseId,
+        executionClass: { className: "com.example.OrderDdtTest" },
+      });
     } finally {
+      await handle.pool.query("DELETE FROM case_suites WHERE id = $1", [`ddt-suite-${suffix}`]);
+      await handle.pool.query("DELETE FROM case_sources WHERE project_version_id = $1", [
+        versionId,
+      ]);
       await handle.pool.query("DELETE FROM project_versions WHERE id = $1", [versionId]);
       await handle.close();
     }
@@ -152,5 +193,70 @@ async function createHierarchy(handle: PostgresDatabaseHandle, versionId: string
      description, position, created_at, updated_at)
      VALUES ($1, $2, $3, $4, $4, '', 1, $5, $5)`,
     [stageId, DEFAULT_PROJECT_ID, versionId, stageId, now],
+  );
+}
+
+async function insertExecutionClass(
+  handle: PostgresDatabaseHandle,
+  scope: { projectId: string; projectVersionId: string; testStageId: string },
+  suffix: string,
+  definitionId: string,
+): Promise<void> {
+  const sourceId = `ddt-execution-source-${suffix}`;
+  await handle.pool.query(
+    `INSERT INTO case_sources
+     (id, project_id, project_version_id, test_stage_id, display_name, original_file_name,
+      object_key, sha256, size_bytes, class_count, method_count, status, warnings_json,
+      inspection_json, authoritative, lifecycle_status, revision, created_at, updated_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 128, 1, 1, 'ready', '[]', '{}',
+             TRUE, 'active', 1, $9, $9)`,
+    [
+      sourceId,
+      scope.projectId,
+      scope.projectVersionId,
+      scope.testStageId,
+      "DDT execution source",
+      "ddt-execution.jar",
+      `jars/${suffix}/ddt-execution.jar`,
+      "d".repeat(64),
+      now,
+    ],
+  );
+  await handle.pool.query(
+    `INSERT INTO case_definitions
+     (id, project_id, project_version_id, test_stage_id, directory_path, source_id,
+      class_name, package_name, display_name, description, tags_json, parameters_json,
+      enabled, archived, revision, groups_json, current_version, created_at, updated_at)
+     VALUES ($1, $2, $3, $4, 'com/example', $5, $6, 'com.example', $7, '', '[]', '{}',
+             TRUE, FALSE, 1, '[]', 1, $8, $8)`,
+    [
+      definitionId,
+      scope.projectId,
+      scope.projectVersionId,
+      scope.testStageId,
+      sourceId,
+      "com.example.OrderDdtTest",
+      "订单 DDT 执行类",
+      now,
+    ],
+  );
+}
+
+async function insertDdtSuiteMembership(
+  handle: PostgresDatabaseHandle,
+  suffix: string,
+  ddtCaseId: string,
+): Promise<void> {
+  const suiteId = `ddt-suite-${suffix}`;
+  await handle.pool.query(
+    `INSERT INTO case_suites
+     (id, project_id, name, version, status, enabled, revision, policy_json, created_at, updated_at)
+     VALUES ($1, $2, 'DDT suite', 1, 'active', TRUE, 1, '{}', $3, $3)`,
+    [suiteId, DEFAULT_PROJECT_ID, now],
+  );
+  await handle.pool.query(
+    `INSERT INTO case_suite_ddt_items (id, suite_id, ddt_case_id, added_at)
+     VALUES ($1, $2, $3, $4)`,
+    [`ddt-suite-item-${suffix}`, suiteId, ddtCaseId, now],
   );
 }

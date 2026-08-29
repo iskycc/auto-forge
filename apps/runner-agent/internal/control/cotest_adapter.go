@@ -34,7 +34,7 @@ func cotestAdapterExecutorSpec(
 		return executor.Spec{}, nil, errors.New("CoTest execution requires 1-128 inputs")
 	}
 	inputs := append([]ExecutionInput(nil), specification.Inputs...)
-	var testJAR, jdkArchive, jarBundle *ExecutionInput
+	var testJAR, jdkArchive, jarBundle, classData *ExecutionInput
 	for index := range inputs {
 		input := &inputs[index]
 		switch input.Kind {
@@ -54,6 +54,11 @@ func cotestAdapterExecutorSpec(
 			}
 			jarBundle = input
 		case "dependency-jar":
+		case "class-data":
+			if classData != nil {
+				return executor.Spec{}, nil, errors.New("CoTest execution contains multiple class data files")
+			}
+			classData = input
 		default:
 			return executor.Spec{}, nil, fmt.Errorf("unsupported CoTest input kind %q", input.Kind)
 		}
@@ -86,6 +91,9 @@ func cotestAdapterExecutorSpec(
 			"--environment-address",
 			specification.Adapter.EnvironmentAddress,
 		)
+	}
+	if classData != nil {
+		arguments = append(arguments, "--class-data", filepath.Clean(classData.TargetPath))
 	}
 	if specification.Adapter.CaseTimeoutSeconds < 0 || specification.Adapter.CaseTimeoutSeconds > 86_400 {
 		return executor.Spec{}, nil, errors.New("adapter case timeout seconds is outside the supported range")

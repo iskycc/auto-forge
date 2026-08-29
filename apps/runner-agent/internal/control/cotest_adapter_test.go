@@ -82,6 +82,29 @@ func TestCotestAdapterExecutorPassesCaseTimeoutWhenConfigured(t *testing.T) {
 	}
 }
 
+func TestCotestAdapterExecutorPassesClassDataFile(t *testing.T) {
+	specification := testExecutionSpec()
+	specification.Adapter = &AdapterSettings{SuiteName: "suite"}
+	specification.Inputs = append(specification.Inputs, ExecutionInput{
+		InputID: "class-data-run-1", Kind: "class-data",
+		TargetPath: "inputs/class-data/run-1.json", MediaType: "application/json",
+		SizeBytes: 32, SHA256: strings.Repeat("b", 64),
+	})
+
+	mapped, _, err := cotestAdapterExecutorSpec(
+		specification,
+		config.ToolchainConfig{JavaExecutable: "/usr/bin/java"},
+		config.AdapterConfig{JarPath: "/opt/autoforge/lib/cotest-testng-adapter.jar"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	arguments := strings.Join(mapped.Command.Args, " ")
+	if !strings.Contains(arguments, "--class-data inputs/class-data/run-1.json") {
+		t.Fatalf("arguments %q do not contain class data file", arguments)
+	}
+}
+
 func TestCotestAdapterExecutorOmitsCaseTimeoutWhenAbsent(t *testing.T) {
 	specification := testExecutionSpec()
 	specification.Adapter = &AdapterSettings{SuiteName: "suite"}

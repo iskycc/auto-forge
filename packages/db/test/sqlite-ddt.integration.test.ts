@@ -139,13 +139,47 @@ describe("SQLite DDT repository", () => {
         historyIds: ["history-import-1", "history-import-2"],
       });
       expect(imported).toMatchObject({ insertedCount: 2, updatedCount: 0 });
+      insertExecutionClass(handle, scope);
+      await expect(repository.listExecutionClasses(scope, "Order", 10)).resolves.toEqual([
+        expect.objectContaining({
+          caseDefinitionId: "ddt-execution-definition",
+          className: "com.example.OrderDdtTest",
+          displayName: "订单 DDT 执行类",
+        }),
+      ]);
+      await expect(
+        repository.setExecutionClass({
+          scope,
+          caseIds: ["ORDER-1", "ORDER-2"],
+          executionCaseDefinitionId: "ddt-execution-definition",
+          updatedAt: now,
+        }),
+      ).resolves.toBe(2);
+      insertDdtSuiteMembership(handle, "ddt-case-1");
+      await expect(
+        repository.trashCases({
+          scope,
+          caseIds: ["ORDER-1"],
+          recycleIds: ["recycle-blocked-order-1"],
+          deletedAt: now,
+        }),
+      ).rejects.toMatchObject({ code: "DDT_CASE_IN_USE" });
       await expect(repository.getImportJob("ddt-job")).resolves.toMatchObject({
         files: [{ id: "ddt-file", status: "succeeded", insertedCount: 2 }],
       });
       await expect(
         repository.listCases({ ...scope, limit: 20, filters: [] }),
       ).resolves.toMatchObject({
-        items: [{ caseId: "ORDER-1" }, { caseId: "ORDER-2" }],
+        items: [
+          {
+            caseId: "ORDER-1",
+            executionClass: { className: "com.example.OrderDdtTest" },
+          },
+          {
+            caseId: "ORDER-2",
+            executionClass: { className: "com.example.OrderDdtTest" },
+          },
+        ],
       });
       await expect(repository.dashboard(scope)).resolves.toMatchObject({
         caseCount: 2,
@@ -156,7 +190,7 @@ describe("SQLite DDT repository", () => {
         {
           scope,
           caseId: "ORDER-1",
-          expectedRevision: 1,
+          expectedRevision: 2,
           nextData: { CaseID: "ORDER-1", srNum: "ORDER", amount: 15 },
           historyId: "history-edit",
           historyType: "edit",
@@ -174,7 +208,7 @@ describe("SQLite DDT repository", () => {
           {
             scope,
             caseId: "ORDER-1",
-            expectedRevision: 2,
+            expectedRevision: 3,
             nextData: { CaseID: "ORDER-2", srNum: "ORDER", amount: 15 },
             historyId: "history-conflict",
             historyType: "edit",
@@ -209,7 +243,10 @@ describe("SQLite DDT repository", () => {
       });
       await expect(
         repository.restoreDeletedCase({ scope, recycleId: "recycle-order-2", restoredAt: now }),
-      ).resolves.toMatchObject({ caseId: "ORDER-2" });
+      ).resolves.toMatchObject({
+        caseId: "ORDER-2",
+        executionClass: { className: "com.example.OrderDdtTest" },
+      });
       await expect(repository.listImportCaseIds("ddt-job", [DEFAULT_PROJECT_ID])).resolves.toEqual([
         { caseId: "ORDER-1", outcome: "inserted" },
         { caseId: "ORDER-2", outcome: "inserted" },
@@ -219,3 +256,68 @@ describe("SQLite DDT repository", () => {
     }
   });
 });
+
+function insertExecutionClass(
+  handle: ReturnType<typeof createSqliteDatabase>,
+  scope: { projectId: string; projectVersionId: string; testStageId: string },
+): void {
+  handle.client
+    .prepare(
+      `INSERT INTO case_sources
+       (id, project_id, project_version_id, test_stage_id, display_name, original_file_name,
+        object_key, sha256, size_bytes, class_count, method_count, status, warnings_json,
+        inspection_json, authoritative, lifecycle_status, revision, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 128, 1, 1, 'ready', '[]', '{}', 1, 'active', 1, ?, ?)`,
+    )
+    .run(
+      "ddt-execution-source",
+      scope.projectId,
+      scope.projectVersionId,
+      scope.testStageId,
+      "DDT execution source",
+      "ddt-execution.jar",
+      "jars/ddt-execution.jar",
+      "d".repeat(64),
+      now,
+      now,
+    );
+  handle.client
+    .prepare(
+      `INSERT INTO case_definitions
+       (id, project_id, project_version_id, test_stage_id, directory_path, source_id,
+        class_name, package_name, display_name, description, tags_json, parameters_json,
+        enabled, archived, revision, groups_json, current_version, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 'com/example', ?, ?, 'com.example', ?, '', '[]', '{}',
+               1, 0, 1, '[]', 1, ?, ?)`,
+    )
+    .run(
+      "ddt-execution-definition",
+      scope.projectId,
+      scope.projectVersionId,
+      scope.testStageId,
+      "ddt-execution-source",
+      "com.example.OrderDdtTest",
+      "订单 DDT 执行类",
+      now,
+      now,
+    );
+}
+
+function insertDdtSuiteMembership(
+  handle: ReturnType<typeof createSqliteDatabase>,
+  ddtCaseId: string,
+): void {
+  handle.client
+    .prepare(
+      `INSERT INTO case_suites
+       (id, project_id, name, version, status, enabled, revision, policy_json, created_at, updated_at)
+       VALUES ('ddt-suite', ?, 'DDT suite', 1, 'active', 1, 1, '{}', ?, ?)`,
+    )
+    .run(DEFAULT_PROJECT_ID, now, now);
+  handle.client
+    .prepare(
+      `INSERT INTO case_suite_ddt_items (id, suite_id, ddt_case_id, added_at)
+       VALUES ('ddt-suite-item', 'ddt-suite', ?, ?)`,
+    )
+    .run(ddtCaseId, now);
+}

@@ -308,6 +308,7 @@ async function createPlatformServices() {
     clock,
     ids,
     secretCipher,
+    ddtRepository,
   );
   const roundRecoveryConfigurationInspector = new RoundRecoveryConfigurationInspector(
     suites,

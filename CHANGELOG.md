@@ -4,29 +4,59 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
-## Unreleased
+## 1.6.0 - 2026-08-29
+
+### Added
+
+- DDT cases can now be bulk-bound to an authoritative ordinary TestNG class in the same project
+  version and test stage, and can be added to mixed ordinary/DDT case suites.
+- Case-suite trees now group ordinary cases by package and DDT cases by SR, while execution-detail
+  rows identify the case type and show the DDT SR.
+- DDT execution now freezes one JSON `classDataFile` per CaseID and execution run. The authenticated
+  Runner input path verifies its size and SHA-256 before the existing CoTest Adapter receives
+  `--class-data`; derived diagnostic and final-failure reruns retain the same immutable snapshot.
+- DDT cases that still belong to a case suite are protected from recycle deletion with an explicit
+  `DDT_CASE_IN_USE` error, so membership changes always pass through the versioned suite operation.
 
 ### Fixed
 
 - The repository homepage architecture diagram now uses Mermaid-safe edge-label syntax, so GitHub no
   longer replaces the README diagram with an `Unable to render rich display` parse error.
 
+### Tests
+
+- Added application and Runner contract coverage for DDT class binding, preflight failures and
+  Adapter argument construction, plus a Lite database execution-snapshot integration test.
+- Added Lite and Full upgrade-migration backfill checks and matching repository tests for
+  execution-class persistence, recycle restoration and task-membership deletion protection.
+- Extended the DDT Playwright workflow through ordinary TestNG import, bulk execution-class binding,
+  mixed-suite membership and SR task-tree rendering.
+- Extended the real Java/Runner Playwright acceptance chain through DDT import, authoritative class
+  binding, immutable `classDataFile` download, CoTest Adapter injection and a passing TestNG result.
+
 ### Database and persisted configuration
 
-- No SQLite/PostgreSQL migration or persisted-configuration change is required.
+- SQLite migration `0054_ddt_execution.sql` and PostgreSQL migration `0053_ddt_execution.sql` add
+  DDT execution-class mappings, DDT suite membership, execution type/SR fields and immutable
+  class-data snapshot metadata. Existing execution runs are backfilled as ordinary TestNG runs.
 
 ### Compatibility
 
-- Documentation only; application APIs, persisted data, Runner Protocol v1 and release assets are
-  unchanged.
+- Ordinary TestNG execution and existing Adapter arguments are unchanged. DDT execution adds the
+  optional Runner Protocol v1 `class-data` input kind and therefore requires a Runner containing this
+  change; older Runners reject DDT assignments explicitly instead of executing them without data.
+- Existing DDT assets remain valid but must be assigned an execution class before a task containing
+  them can pass execution preflight.
 
 ### Offline assets
 
-- No dependency, remote asset or runtime network requirement was added.
+- No dependency, remote asset or runtime network requirement was added. Lite serves immutable DDT
+  JSON through the existing authenticated control plane, and Full uses the same Runner protocol.
 
 ### Known limitations
 
-- None specific to this documentation rendering fix.
+- A DDT task requires the CoTest Adapter and a compatible Runner; the standard TestNG executor does
+  not interpret `classDataFile` by itself.
 
 ## 1.5.9 - 2026-08-28
 

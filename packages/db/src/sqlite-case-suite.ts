@@ -14,6 +14,7 @@ import {
   type CaseDefinitionWithMethods,
   type CaseSuite,
   type CaseSuiteDetails,
+  type DdtCase,
   type TestMethod,
 } from "@autoforge/domain";
 import { and, asc, count, desc, eq, inArray, notInArray, sql } from "drizzle-orm";
@@ -26,10 +27,12 @@ import {
 } from "./database-batches";
 import {
   caseDefinitions,
+  caseSuiteDdtItems,
   caseSuiteItems,
   caseSuiteRoundRecoveryCredentials,
   caseSuites,
   caseSuiteVersions,
+  ddtCases,
   testMethods,
 } from "./schema";
 
@@ -150,6 +153,13 @@ export class SqliteCaseSuiteRepository implements CaseSuiteRepository {
       .groupBy(caseSuiteItems.suiteId)
       .all();
     const counts = new Map(countRows.map((row) => [row.suiteId, row.value]));
+    const ddtCountRows = this.handle.db
+      .select({ suiteId: caseSuiteDdtItems.suiteId, value: count() })
+      .from(caseSuiteDdtItems)
+      .groupBy(caseSuiteDdtItems.suiteId)
+      .all();
+    for (const row of ddtCountRows)
+      counts.set(row.suiteId, (counts.get(row.suiteId) ?? 0) + row.value);
     return suiteRows.map((row) => toSuite(row, counts.get(row.id) ?? 0));
   }
 
@@ -166,13 +176,19 @@ export class SqliteCaseSuiteRepository implements CaseSuiteRepository {
       )
       .get();
     if (!row) return null;
-    const caseCount =
+    const regularCaseCount =
       this.handle.db
         .select({ value: count() })
         .from(caseSuiteItems)
         .where(eq(caseSuiteItems.suiteId, suiteId))
         .get()?.value ?? 0;
-    return toSuite(row, caseCount);
+    const ddtCaseCount =
+      this.handle.db
+        .select({ value: count() })
+        .from(caseSuiteDdtItems)
+        .where(eq(caseSuiteDdtItems.suiteId, suiteId))
+        .get()?.value ?? 0;
+    return toSuite(row, regularCaseCount + ddtCaseCount);
   }
 
   async get(suiteId: string, projectIds?: readonly string[]): Promise<CaseSuiteDetails | null> {
@@ -249,7 +265,49 @@ export class SqliteCaseSuiteRepository implements CaseSuiteRepository {
         ? [{ id: row.id, suiteId: row.suiteId, caseDefinition: definition, addedAt: row.addedAt }]
         : [];
     });
-    return { ...toSuite(suiteRow, items.length), items };
+    const ddtItemRows = this.handle.db
+      .select()
+      .from(caseSuiteDdtItems)
+      .where(eq(caseSuiteDdtItems.suiteId, suiteId))
+      .orderBy(asc(caseSuiteDdtItems.addedAt), asc(caseSuiteDdtItems.id))
+      .all();
+    const ddtIds = ddtItemRows.map((item) => item.ddtCaseId);
+    const ddtRows = batchesOf(ddtIds, RELATIONAL_ID_QUERY_BATCH_SIZE).flatMap((ids) =>
+      this.handle.db.select().from(ddtCases).where(inArray(ddtCases.id, ids)).all(),
+    );
+    const executionIds = ddtRows.flatMap((row) =>
+      row.executionCaseDefinitionId ? [row.executionCaseDefinitionId] : [],
+    );
+    const executionRows = batchesOf(executionIds, RELATIONAL_ID_QUERY_BATCH_SIZE).flatMap((ids) =>
+      this.handle.db.select().from(caseDefinitions).where(inArray(caseDefinitions.id, ids)).all(),
+    );
+    const executionClasses = new Map(executionRows.map((row) => [row.id, row]));
+    const ddtDefinitions = new Map<string, DdtCase>(
+      ddtRows.map((row) => [
+        row.id,
+        {
+          id: row.id,
+          projectId: row.projectId,
+          projectVersionId: row.projectVersionId,
+          testStageId: row.testStageId,
+          caseId: row.caseId,
+          srNum: row.srNum,
+          kind: row.caseKind,
+          data: JSON.parse(row.dataJson) as DdtCase["data"],
+          sourceName: row.sourceName,
+          revision: row.revision,
+          createdAt: row.createdAt,
+          updatedAt: row.updatedAt,
+          ...(row.updatedBy ? { updatedBy: row.updatedBy } : {}),
+          ...toDdtExecutionClass(row.executionCaseDefinitionId, executionClasses),
+        },
+      ]),
+    );
+    const ddtItems = ddtItemRows.flatMap((row) => {
+      const ddtCase = ddtDefinitions.get(row.ddtCaseId);
+      return ddtCase ? [{ id: row.id, suiteId: row.suiteId, ddtCase, addedAt: row.addedAt }] : [];
+    });
+    return { ...toSuite(suiteRow, items.length + ddtItems.length), items, ddtItems };
   }
 
   async getRoundRecoveryCredentials(
@@ -286,6 +344,20 @@ export class SqliteCaseSuiteRepository implements CaseSuiteRepository {
         )
         .all()
         .map((row) => row.caseDefinitionId),
+    );
+  }
+
+  async findMemberDdtCaseIds(suiteId: string, candidateIds: readonly string[]): Promise<string[]> {
+    if (candidateIds.length === 0) return [];
+    return batchesOf(candidateIds, RELATIONAL_ID_QUERY_BATCH_SIZE).flatMap((ids) =>
+      this.handle.db
+        .select({ ddtCaseId: caseSuiteDdtItems.ddtCaseId })
+        .from(caseSuiteDdtItems)
+        .where(
+          and(eq(caseSuiteDdtItems.suiteId, suiteId), inArray(caseSuiteDdtItems.ddtCaseId, ids)),
+        )
+        .all()
+        .map((row) => row.ddtCaseId),
     );
   }
 
@@ -365,6 +437,72 @@ export class SqliteCaseSuiteRepository implements CaseSuiteRepository {
           input.suiteId,
           input.versionId,
           "suite.cases.remove-bulk",
+          input,
+        );
+      }
+    })();
+    const suite = await this.getSummary(input.suiteId);
+    if (!suite) throw new Error(`Case suite ${input.suiteId} does not exist.`);
+    return suite;
+  }
+
+  async addDdtCases(input: {
+    suiteId: string;
+    items: Array<{ id: string; ddtCaseId: string }>;
+    versionId: string;
+    actorId?: string;
+    updatedAt: string;
+  }): Promise<CaseSuite> {
+    this.handle.client.transaction(() => {
+      let added = 0;
+      for (const item of input.items) {
+        added += this.handle.db
+          .insert(caseSuiteDdtItems)
+          .values({
+            id: item.id,
+            suiteId: input.suiteId,
+            ddtCaseId: item.ddtCaseId,
+            addedAt: input.updatedAt,
+          })
+          .onConflictDoNothing()
+          .run().changes;
+      }
+      if (added > 0) {
+        this.touchSuite(input.suiteId, input.actorId, input.updatedAt);
+        this.insertVersionSnapshot(input.suiteId, input.versionId, "suite.ddt-cases.add", input);
+      }
+    })();
+    const suite = await this.getSummary(input.suiteId);
+    if (!suite) throw new Error(`Case suite ${input.suiteId} does not exist.`);
+    return suite;
+  }
+
+  async removeDdtCases(input: {
+    suiteId: string;
+    ddtCaseIds: string[];
+    versionId: string;
+    actorId?: string;
+    updatedAt: string;
+  }): Promise<CaseSuite> {
+    this.handle.client.transaction(() => {
+      let removed = 0;
+      for (const ids of batchesOf(input.ddtCaseIds, RELATIONAL_WRITE_BATCH_SIZE)) {
+        removed += this.handle.db
+          .delete(caseSuiteDdtItems)
+          .where(
+            and(
+              eq(caseSuiteDdtItems.suiteId, input.suiteId),
+              inArray(caseSuiteDdtItems.ddtCaseId, ids),
+            ),
+          )
+          .run().changes;
+      }
+      if (removed > 0) {
+        this.touchSuite(input.suiteId, input.actorId, input.updatedAt);
+        this.insertVersionSnapshot(
+          input.suiteId,
+          input.versionId,
+          "suite.ddt-cases.remove-bulk",
           input,
         );
       }
@@ -461,6 +599,17 @@ export class SqliteCaseSuiteRepository implements CaseSuiteRepository {
           })
           .run();
       }
+      for (const item of input.ddtItems ?? []) {
+        this.handle.db
+          .insert(caseSuiteDdtItems)
+          .values({
+            id: item.id,
+            suiteId: input.id,
+            ddtCaseId: item.ddtCaseId,
+            addedAt: input.createdAt,
+          })
+          .run();
+      }
       for (const [ruleId, apiKeyCiphertext] of Object.entries(
         input.roundRecoveryCredentials ?? {},
       )) {
@@ -494,7 +643,17 @@ export class SqliteCaseSuiteRepository implements CaseSuiteRepository {
       .where(eq(caseSuiteItems.suiteId, suiteId))
       .all()
       .map((item) => item.caseDefinitionId);
-    const snapshot = buildCaseSuiteVersionSnapshot(toSuite(row, itemIds.length), itemIds);
+    const ddtItemIds = this.handle.db
+      .select({ ddtCaseId: caseSuiteDdtItems.ddtCaseId })
+      .from(caseSuiteDdtItems)
+      .where(eq(caseSuiteDdtItems.suiteId, suiteId))
+      .all()
+      .map((item) => item.ddtCaseId);
+    const snapshot = buildCaseSuiteVersionSnapshot(
+      toSuite(row, itemIds.length + ddtItemIds.length),
+      itemIds,
+      ddtItemIds,
+    );
     this.handle.db
       .insert(caseSuiteVersions)
       .values({
@@ -508,6 +667,39 @@ export class SqliteCaseSuiteRepository implements CaseSuiteRepository {
       })
       .run();
   }
+
+  private touchSuite(suiteId: string, actorId: string | undefined, updatedAt: string): void {
+    this.handle.db
+      .update(caseSuites)
+      .set({
+        version: sql`${caseSuites.version} + 1`,
+        revision: sql`${caseSuites.revision} + 1`,
+        ...(actorId ? { updatedBy: actorId } : {}),
+        updatedAt,
+      })
+      .where(eq(caseSuites.id, suiteId))
+      .run();
+  }
+}
+
+function toDdtExecutionClass(
+  executionCaseDefinitionId: string | null,
+  definitions: ReadonlyMap<string, typeof caseDefinitions.$inferSelect>,
+): Pick<DdtCase, "executionClass"> {
+  if (!executionCaseDefinitionId) return {};
+  const definition = definitions.get(executionCaseDefinitionId);
+  if (!definition) return {};
+  return {
+    executionClass: {
+      caseDefinitionId: definition.id,
+      className: definition.className,
+      displayName: definition.displayName,
+      sourceId: definition.sourceId,
+      currentVersion: definition.currentVersion,
+      enabled: definition.enabled,
+      archived: definition.archived,
+    },
+  };
 }
 
 function throwCaseSuiteConflict(handle: SqliteDatabaseHandle, suiteId: string): never {

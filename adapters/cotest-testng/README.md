@@ -48,7 +48,8 @@ Adapter 不会访问网络或自动补装缺失依赖。
 - `--config FILE`：读取前两个非空、非注释行作为 suite name 和 test name；
 - `--suite-name NAME`、`--test-name NAME`：显式值优先于配置文件；
 - `--environment-address VALUE`：配置时才加载并调用 CoTest `ProjectFileUtil`；
-- `--class-data FILE`：不提供时不会加载 `MM2DataProvider`；
+- `--class-data FILE`：不提供时不会加载 `MM2DataProvider`；平台执行 DDT 用例时会自动传入当前
+  CaseID 的不可变 JSON 快照，普通用例不会传入；
 - `--output DIR`：默认是当前目录下的 `reports/testng`。
 
 退出码 `0` 表示 TestNG 成功，`1` 表示用例或执行失败，`2` 表示 Adapter 参数无效。
@@ -71,3 +72,8 @@ Runner 安装时会同时安装本 Adapter。项目配置的 JDK/JAR 压缩包�
 任务配置提供 Suite、Test 和按用例轮询后的环境地址，随后以 `java -jar` 调用；平台选择的主用例
 JAR 始终排在其余依赖之前。每个用例使用独立进程和新建的 ClassLoader，两个用例之间不会共享
 已加载的同名业务类。
+
+DDT 用例在平台侧绑定一个同项目版本、同测试阶段的普通 TestNG 类。创建批次后，Runner 通过租约
+保护的控制面输入接口下载该 CaseID 的 JSON 快照到独立执行路径，校验大小和 SHA-256 后再传给
+`--class-data`。Adapter 的反射注入方式和普通用例执行方式没有改变；平台也不会让 Runner 直接
+读取数据库或对象存储长期凭据。

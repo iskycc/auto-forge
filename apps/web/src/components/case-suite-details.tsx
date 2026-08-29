@@ -3,8 +3,13 @@
 import { Button, Input } from "@/components/ui";
 
 import { apiErrorSchema } from "@autoforge/contracts";
-import type { CaseSuite, CaseSuiteDetails, CaseSuiteItem } from "@autoforge/domain";
-import { ChevronRight, FolderTree, LoaderCircle, Search, Trash2 } from "lucide-react";
+import type {
+  CaseSuite,
+  CaseSuiteDdtItem,
+  CaseSuiteDetails,
+  CaseSuiteItem,
+} from "@autoforge/domain";
+import { ChevronRight, DatabaseZap, FolderTree, LoaderCircle, Search, Trash2 } from "lucide-react";
 import { useDeferredValue, useMemo, useState } from "react";
 
 const SUITE_TREE_GROUP_PAGE_SIZE = 250;
@@ -23,6 +28,7 @@ export function CaseSuiteDetailsView({
   const [suite, setSuite] = useState(initialSuite);
   const [query, setQuery] = useState("");
   const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(new Set());
+  const [selectedDdtIds, setSelectedDdtIds] = useState<ReadonlySet<string>>(new Set());
   const [removing, setRemoving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [visibleGroupCount, setVisibleGroupCount] = useState(SUITE_TREE_GROUP_PAGE_SIZE);
@@ -33,6 +39,11 @@ export function CaseSuiteDetailsView({
     [deferredQuery, suite.items],
   );
   const groups = useMemo(() => packageGroups(visibleItems), [visibleItems]);
+  const visibleDdtItems = useMemo(
+    () => filterDdtItems(suite.ddtItems, deferredQuery),
+    [deferredQuery, suite.ddtItems],
+  );
+  const ddtGroups = useMemo(() => srGroups(visibleDdtItems), [visibleDdtItems]);
 
   function toggleCase(caseDefinitionId: string): void {
     setSelectedIds((current) => toggledSelection(current, [caseDefinitionId]));
@@ -75,13 +86,49 @@ export function CaseSuiteDetailsView({
     }
   }
 
+  async function removeDdtCases(ddtCaseIds: string[]): Promise<void> {
+    if (ddtCaseIds.length === 0) return;
+    if (!window.confirm(`从任务中移除选中的 ${ddtCaseIds.length} 个 DDT 用例？`)) return;
+    setRemoving(true);
+    setError(null);
+    try {
+      const response = await fetch(
+        `/api/v1/case-suites/${encodeURIComponent(suite.id)}/ddt-cases`,
+        {
+          method: "DELETE",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ ddtCaseIds }),
+        },
+      );
+      if (!response.ok) {
+        const payload: unknown = await response.json().catch(() => null);
+        const parsed = apiErrorSchema.safeParse(payload);
+        throw new Error(
+          parsed.success ? parsed.data.error.message : `请求失败（HTTP ${response.status}）。`,
+        );
+      }
+      const summary = (await response.json()) as CaseSuite;
+      const removedIds = new Set(ddtCaseIds);
+      setSuite((current) => ({
+        ...current,
+        ...summary,
+        ddtItems: current.ddtItems.filter((item) => !removedIds.has(item.ddtCase.id)),
+      }));
+      setSelectedDdtIds(new Set());
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "移除 DDT 用例失败。");
+    } finally {
+      setRemoving(false);
+    }
+  }
+
   return (
     <section className="card suite-case-tree-card">
       <div className="section-title-row">
         <div>
           <span className="eyebrow">任务内容 · v{suite.version}</span>
           <h2>{suite.caseCount} 个用例</h2>
-          <p>按包路径展开用例树，可搜索、整组选择并一次批量移除。</p>
+          <p>普通用例按包路径、DDT 用例按 SR 展开，可按类型快速识别与管理。</p>
         </div>
         <span className="soft-icon blue">
           <FolderTree size={19} />
@@ -92,7 +139,7 @@ export function CaseSuiteDetailsView({
           {error}
         </div>
       ) : null}
-      {suite.items.length === 0 ? (
+      {suite.items.length === 0 && suite.ddtItems.length === 0 ? (
         <div className="empty-state table-empty">
           <strong>任务中还没有用例</strong>
           <p>前往用例管理勾选测试类并加入当前任务。</p>
@@ -113,7 +160,7 @@ export function CaseSuiteDetailsView({
                 value={query}
               />
             </label>
-            {canManage ? (
+            {canManage && suite.items.length > 0 ? (
               <div className="suite-tree-actions">
                 <Button
                   disabled={visibleItems.length === 0 || removing}
@@ -143,41 +190,122 @@ export function CaseSuiteDetailsView({
               </span>
             ) : null}
           </div>
-          {groups.length === 0 ? (
-            <div className="inline-empty">没有匹配的任务用例。</div>
-          ) : (
-            <div
-              aria-busy={filtering}
-              aria-label="任务用例树"
-              className="suite-case-tree"
-              role="tree"
-            >
-              {groups.slice(0, visibleGroupCount).map(([packageName, items]) => (
-                <SuitePackageGroup
-                  canManage={canManage}
-                  items={items}
-                  key={packageName}
-                  onRemoveCases={removeCases}
-                  onToggleCase={toggleCase}
-                  onToggleGroup={toggleGroup}
-                  packageName={packageName}
-                  removing={removing}
-                  selectedIds={selectedIds}
-                />
-              ))}
-              {groups.length > visibleGroupCount ? (
-                <Button
-                  onClick={() =>
-                    setVisibleGroupCount((count) => count + SUITE_TREE_GROUP_PAGE_SIZE)
-                  }
-                  type="button"
-                  variant="ghost"
+          {suite.items.length > 0 ? (
+            <section className="suite-ordinary-tree-section" aria-label="普通用例树">
+              <div className="suite-tree-type-heading">
+                <span className="soft-icon blue">
+                  <FolderTree size={17} />
+                </span>
+                <div>
+                  <strong>普通用例</strong>
+                  <small>按包路径分组 · {visibleItems.length} 条</small>
+                </div>
+              </div>
+              {groups.length === 0 ? (
+                <div className="inline-empty">没有匹配的普通用例。</div>
+              ) : (
+                <div
+                  aria-busy={filtering}
+                  aria-label="任务用例树"
+                  className="suite-case-tree"
+                  role="tree"
                 >
-                  加载更多目录（剩余 {groups.length - visibleGroupCount}）
-                </Button>
-              ) : null}
-            </div>
-          )}
+                  {groups.slice(0, visibleGroupCount).map(([packageName, items]) => (
+                    <SuitePackageGroup
+                      canManage={canManage}
+                      items={items}
+                      key={packageName}
+                      onRemoveCases={removeCases}
+                      onToggleCase={toggleCase}
+                      onToggleGroup={toggleGroup}
+                      packageName={packageName}
+                      removing={removing}
+                      selectedIds={selectedIds}
+                    />
+                  ))}
+                  {groups.length > visibleGroupCount ? (
+                    <Button
+                      onClick={() =>
+                        setVisibleGroupCount((count) => count + SUITE_TREE_GROUP_PAGE_SIZE)
+                      }
+                      type="button"
+                      variant="ghost"
+                    >
+                      加载更多目录（剩余 {groups.length - visibleGroupCount}）
+                    </Button>
+                  ) : null}
+                </div>
+              )}
+            </section>
+          ) : null}
+          {suite.ddtItems.length > 0 ? (
+            <section className="suite-ddt-tree-section" aria-label="DDT 用例树">
+              <div className="suite-tree-type-heading">
+                <span className="soft-icon violet">
+                  <DatabaseZap size={17} />
+                </span>
+                <div>
+                  <strong>DDT 用例</strong>
+                  <small>按 SR 分组 · {visibleDdtItems.length} 条</small>
+                </div>
+                {canManage ? (
+                  <div className="suite-tree-actions">
+                    <Button
+                      disabled={visibleDdtItems.length === 0 || removing}
+                      onClick={() =>
+                        setSelectedDdtIds((current) =>
+                          toggledSelection(current, ddtCaseIds(visibleDdtItems)),
+                        )
+                      }
+                      type="button"
+                    >
+                      {visibleDdtItems.every((item) => selectedDdtIds.has(item.ddtCase.id))
+                        ? "取消可见"
+                        : "选择可见"}
+                    </Button>
+                    <Button
+                      className="button button-danger-quiet"
+                      disabled={selectedDdtIds.size === 0 || removing}
+                      onClick={() => void removeDdtCases([...selectedDdtIds])}
+                      type="button"
+                    >
+                      {removing ? (
+                        <LoaderCircle className="spin" size={15} />
+                      ) : (
+                        <Trash2 size={15} />
+                      )}
+                      批量移除（{selectedDdtIds.size}）
+                    </Button>
+                  </div>
+                ) : null}
+              </div>
+              {ddtGroups.length === 0 ? (
+                <div className="inline-empty">没有匹配的 DDT 用例。</div>
+              ) : (
+                <div className="suite-case-tree" role="tree" aria-label="按 SR 分组的 DDT 用例">
+                  {ddtGroups.map(([srNum, items]) => (
+                    <SuiteDdtGroup
+                      canManage={canManage}
+                      items={items}
+                      key={srNum}
+                      onRemoveCases={removeDdtCases}
+                      onToggleCase={(id) =>
+                        setSelectedDdtIds((current) => toggledSelection(current, [id]))
+                      }
+                      onToggleGroup={(groupItems) =>
+                        setSelectedDdtIds((current) =>
+                          toggledSelection(current, ddtCaseIds(groupItems)),
+                        )
+                      }
+                      removing={removing}
+                      selectedIds={selectedDdtIds}
+                      srNum={srNum}
+                    />
+                  ))}
+                </div>
+              )}
+            </section>
+          ) : null}
         </>
       )}
     </section>
@@ -258,6 +386,7 @@ function SuitePackageGroup({
                 <strong>{item.caseDefinition.displayName}</strong>
                 <code>{item.caseDefinition.className}</code>
               </span>
+              <span className="suite-case-type testng">普通用例</span>
               <small>{item.caseDefinition.methods.length} 个方法</small>
               {canManage ? (
                 <Button
@@ -265,6 +394,106 @@ function SuitePackageGroup({
                   className="button button-danger-quiet"
                   disabled={removing}
                   onClick={() => void onRemoveCases([item.caseDefinition.id])}
+                  type="button"
+                >
+                  <Trash2 size={14} />
+                </Button>
+              ) : null}
+            </div>
+          ))}
+          {items.length > visibleCount ? (
+            <Button
+              onClick={() => setVisibleCount((count) => count + SUITE_TREE_CASE_PAGE_SIZE)}
+              type="button"
+              variant="ghost"
+            >
+              加载更多用例（剩余 {items.length - visibleCount}）
+            </Button>
+          ) : null}
+        </div>
+      ) : null}
+    </details>
+  );
+}
+
+function SuiteDdtGroup({
+  canManage,
+  items,
+  onRemoveCases,
+  onToggleCase,
+  onToggleGroup,
+  removing,
+  selectedIds,
+  srNum,
+}: {
+  canManage: boolean;
+  items: CaseSuiteDdtItem[];
+  onRemoveCases(ids: string[]): Promise<void>;
+  onToggleCase(id: string): void;
+  onToggleGroup(items: CaseSuiteDdtItem[]): void;
+  removing: boolean;
+  selectedIds: ReadonlySet<string>;
+  srNum: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [visibleCount, setVisibleCount] = useState(SUITE_TREE_CASE_PAGE_SIZE);
+  const selectedCount = useMemo(
+    () => items.filter((item) => selectedIds.has(item.ddtCase.id)).length,
+    [items, selectedIds],
+  );
+  const visibleItems = useMemo(() => items.slice(0, visibleCount), [items, visibleCount]);
+  return (
+    <details
+      aria-selected={selectedCount === items.length}
+      onToggle={(event) => setOpen(event.currentTarget.open)}
+      role="treeitem"
+    >
+      <summary>
+        <ChevronRight aria-hidden="true" size={15} />
+        {canManage ? (
+          <Input
+            aria-label={`选择 SR ${srNum}`}
+            checked={selectedCount === items.length}
+            onChange={() => onToggleGroup(items)}
+            onClick={(event) => event.stopPropagation()}
+            ref={(input) => {
+              if (input) input.indeterminate = selectedCount > 0 && selectedCount < items.length;
+            }}
+            type="checkbox"
+          />
+        ) : null}
+        <span className="suite-tree-folder">SR · {srNum}</span>
+        <small>{items.length} 个 DDT 用例</small>
+      </summary>
+      {open ? (
+        <div className="suite-tree-children" role="group">
+          {visibleItems.map((item) => (
+            <div
+              aria-selected={selectedIds.has(item.ddtCase.id)}
+              className="suite-tree-case"
+              key={item.id}
+              role="treeitem"
+            >
+              {canManage ? (
+                <Input
+                  aria-label={`选择 ${item.ddtCase.caseId}`}
+                  checked={selectedIds.has(item.ddtCase.id)}
+                  onChange={() => onToggleCase(item.ddtCase.id)}
+                  type="checkbox"
+                />
+              ) : null}
+              <span>
+                <strong>{item.ddtCase.caseId}</strong>
+                <code>{item.ddtCase.executionClass?.className ?? "未设置执行类"}</code>
+              </span>
+              <span className="suite-case-type ddt">DDT</span>
+              <small>{item.ddtCase.kind === "journey" ? "用户旅程" : "数据用例"}</small>
+              {canManage ? (
+                <Button
+                  aria-label={`移除 ${item.ddtCase.caseId}`}
+                  className="button button-danger-quiet"
+                  disabled={removing}
+                  onClick={() => void onRemoveCases([item.ddtCase.id])}
                   type="button"
                 >
                   <Trash2 size={14} />
@@ -321,8 +550,40 @@ function packageGroups(items: CaseSuiteItem[]): Array<[string, CaseSuiteItem[]]>
     .sort(([left], [right]) => left.localeCompare(right, "zh-CN"));
 }
 
+function filterDdtItems(items: CaseSuiteDdtItem[], query: string): CaseSuiteDdtItem[] {
+  const normalized = query.trim().toLocaleLowerCase("zh-CN");
+  if (!normalized) return items;
+  return items.filter((item) =>
+    `${item.ddtCase.caseId} ${item.ddtCase.srNum} ${item.ddtCase.executionClass?.className ?? ""}`
+      .toLocaleLowerCase("zh-CN")
+      .includes(normalized),
+  );
+}
+
+function srGroups(items: CaseSuiteDdtItem[]): Array<[string, CaseSuiteDdtItem[]]> {
+  const groups = new Map<string, CaseSuiteDdtItem[]>();
+  for (const item of items) {
+    const entries = groups.get(item.ddtCase.srNum);
+    if (entries) entries.push(item);
+    else groups.set(item.ddtCase.srNum, [item]);
+  }
+  return [...groups.entries()]
+    .map(
+      ([srNum, entries]) =>
+        [
+          srNum,
+          entries.sort((left, right) => left.ddtCase.caseId.localeCompare(right.ddtCase.caseId)),
+        ] as [string, CaseSuiteDdtItem[]],
+    )
+    .sort(([left], [right]) => left.localeCompare(right, "zh-CN"));
+}
+
 function caseIds(items: CaseSuiteItem[]): string[] {
   return items.map((item) => item.caseDefinition.id);
+}
+
+function ddtCaseIds(items: CaseSuiteDdtItem[]): string[] {
+  return items.map((item) => item.ddtCase.id);
 }
 
 function toggledSelection(current: ReadonlySet<string>, ids: string[]): ReadonlySet<string> {

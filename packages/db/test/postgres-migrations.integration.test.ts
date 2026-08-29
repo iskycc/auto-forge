@@ -996,6 +996,71 @@ describe.skipIf(!connectionString)("PostgreSQL migrations", () => {
     }
   });
 
+  it("backfills existing execution runs when adding DDT execution snapshots", async () => {
+    const admin = new Client({ connectionString });
+    await admin.connect();
+    const scratch = await createScratchDatabase(admin);
+    await admin.end();
+    const client = new Client({ connectionString: connectionStringFor(scratch) });
+    await client.connect();
+    const migrationsFolder = resolve(import.meta.dirname, "../drizzle/postgresql");
+    const migrationFiles = (await readdir(migrationsFolder))
+      .filter((name) => /^\d+_.+\.sql$/.test(name))
+      .sort();
+    const migration = "0053_ddt_execution.sql";
+    const migrationIndex = migrationFiles.indexOf(migration);
+    expect(migrationIndex).toBeGreaterThan(0);
+    try {
+      for (const fileName of migrationFiles.slice(0, migrationIndex)) {
+        await client.query(await readFile(resolve(migrationsFolder, fileName), "utf8"));
+      }
+      await client.query(`
+        INSERT INTO run_batches
+          (id, sequence_number, suite_id, suite_name, suite_version, status, retry_limit,
+           retry_mode, current_round, environment_json, secret_bindings_json, total_runs,
+           project_id, policy_json, scheduled_for, created_at, updated_at)
+        VALUES
+          ('batch-ddt-migration', nextval('run_batch_sequence_numbers'), 'suite-migration',
+           'Migration suite', 1, 'queued', 0, 'immediate', 1, '[]', '[]', 1,
+           '00000000-0000-7000-8000-000000000001', '{"concurrency":4}',
+           '2026-08-28T00:00:00.000Z', '2026-08-28T00:00:00.000Z',
+           '2026-08-28T00:00:00.000Z');
+        INSERT INTO execution_runs
+          (id, batch_id, case_definition_id, case_version, display_name, class_name,
+           parameters_json, status, attempt_count, held_round, queue_deadline_at,
+           execution_timeout_ms, upload_timeout_ms, version, created_at, updated_at)
+        VALUES
+          ('run-ddt-migration', 'batch-ddt-migration', 'case-ddt-migration', 2,
+           'Existing case', 'example.ExistingCase', '{}', 'queued', 0, 0,
+           '2026-08-29T00:00:00.000Z', 600000, 600000, 1,
+           '2026-08-28T00:00:00.000Z', '2026-08-28T00:00:00.000Z');
+      `);
+
+      await client.query(await readFile(resolve(migrationsFolder, migration), "utf8"));
+
+      await expect(
+        client.query(
+          `SELECT case_type, execution_case_definition_id, class_data_json, ddt_sr_num
+           FROM execution_runs WHERE id = 'run-ddt-migration'`,
+        ),
+      ).resolves.toMatchObject({
+        rows: [
+          {
+            case_type: "testng",
+            execution_case_definition_id: "case-ddt-migration",
+            class_data_json: null,
+            ddt_sr_num: null,
+          },
+        ],
+      });
+      await expect(
+        client.query("SELECT to_regclass('case_suite_ddt_items') AS table_name"),
+      ).resolves.toMatchObject({ rows: [{ table_name: "case_suite_ddt_items" }] });
+    } finally {
+      await client.end();
+    }
+  });
+
   it("persists an explicit LDAP TLS certificate verification opt-out", async () => {
     const admin = new Client({ connectionString });
     await admin.connect();

@@ -1,6 +1,9 @@
 import { expect, test, type Locator, type Page, type Route } from "@playwright/test";
+import { zipSync } from "fflate";
 
 import { buildExportWorkbook } from "../../packages/ddt-import/src";
+import { buildClassFile } from "../../packages/testng-discovery/test/class-fixture";
+import { selectJarForInspection } from "./support/jar-import";
 import {
   browserJson,
   ensureAdministrator,
@@ -16,6 +19,9 @@ test("DDT workspace imports, edits, validates and recovers version-scoped cases"
   await ensureAdministrator(page);
   const hierarchy = await createHierarchy(page);
   await selectProjectContext(page, hierarchy.projectId, hierarchy.versionId, hierarchy.stageId);
+  const executionClassName = `com.example.DdtExecution${Date.now()}Test`;
+  const executionClass = await importExecutionClass(page, hierarchy, executionClassName);
+  const suite = await createDdtSuite(page, hierarchy, executionClass.id);
 
   await page.goto("/cases?tab=ddt");
   await expect(page.getByRole("link", { name: "DDT 管理" })).toHaveClass(/active/u);
@@ -81,6 +87,55 @@ test("DDT workspace imports, edits, validates and recovers version-scoped cases"
     page.getByRole("button", { name: `LOGIN-${hierarchy.suffix}`, exact: true }),
   ).toBeVisible();
   await expect(page.getByText("用户旅程", { exact: true })).toBeVisible();
+
+  const orderCaseId = `ORDER-${hierarchy.suffix}`;
+  await page.getByLabel(`选择 ${orderCaseId}`).check();
+  await page.getByRole("button", { name: "设置执行类" }).click();
+  const executionClassDialog = page.getByRole("dialog", { name: /设置 1 条 DDT 用例的执行类/u });
+  await executionClassDialog.getByLabel(executionClassName, { exact: false }).check();
+  await executionClassDialog.getByRole("button", { name: "保存执行类" }).click();
+  await expect(
+    page.getByText(`已将 1 条 DDT 用例的执行类设置为 ${executionClassName}。`),
+  ).toBeVisible();
+
+  await page.getByLabel(`选择 ${orderCaseId}`).check();
+  await page.getByRole("button", { name: "加入用例任务" }).click();
+  const suiteDialog = page.getByRole("dialog", { name: /将 1 条 DDT 用例加入任务/u });
+  await suiteDialog.getByLabel("目标用例任务").selectOption(suite.id);
+  await suiteDialog.getByRole("button", { name: "加入任务" }).click();
+  await expect(page.getByText(`已将 1 条 DDT 用例加入任务“${suite.name}”。`)).toBeVisible();
+
+  const suiteDetails = await browserJson<{
+    caseCount: number;
+    items: Array<{ caseDefinition: { className: string } }>;
+    ddtItems: Array<{
+      ddtCase: { caseId: string; srNum: string; executionClass?: { className: string } };
+    }>;
+  }>(page, `/api/v1/case-suites/${encodeURIComponent(suite.id)}`);
+  expect(suiteDetails.status).toBe(200);
+  expect(suiteDetails.body).toMatchObject({
+    caseCount: 2,
+    items: [{ caseDefinition: { className: executionClassName } }],
+    ddtItems: [
+      {
+        ddtCase: {
+          caseId: orderCaseId,
+          srNum: "ORDER",
+          executionClass: { className: executionClassName },
+        },
+      },
+    ],
+  });
+  await page.goto(`/case-suites/${encodeURIComponent(suite.id)}`);
+  await expect(page.getByText("普通用例", { exact: true })).toBeVisible();
+  await expect(page.getByText("DDT 用例", { exact: true })).toBeVisible();
+  await page.getByText("com.example", { exact: true }).click();
+  await page.getByText("SR · ORDER", { exact: true }).click();
+  await expect(page.getByText(orderCaseId, { exact: true })).toBeVisible();
+  await expect(page.getByText(executionClassName, { exact: true })).toHaveCount(2);
+
+  await page.goto("/cases?tab=ddt");
+  await page.getByRole("tab", { name: "用例" }).click();
 
   for (const viewport of [
     { width: 1024, height: 768 },
@@ -282,6 +337,101 @@ async function createHierarchy(page: Page) {
   );
   expect(stage.status).toBe(201);
   return { suffix, projectId: project.body.id, versionId: version.body.id, stageId: stage.body.id };
+}
+
+async function importExecutionClass(
+  page: Page,
+  hierarchy: { projectId: string; versionId: string; stageId: string; suffix: string },
+  className: string,
+): Promise<{ id: string }> {
+  const jar = zipSync({
+    [`${className.replaceAll(".", "/")}.class`]: buildClassFile({
+      className,
+      methods: [
+        {
+          name: "executeDdtCase",
+          annotations: [{ type: "Test", values: { groups: ["ddt"] } }],
+        },
+      ],
+    }),
+  });
+  await page.goto(
+    `/cases/import?${new URLSearchParams({
+      projectId: hierarchy.projectId,
+      projectVersionId: hierarchy.versionId,
+      testStageId: hierarchy.stageId,
+    }).toString()}`,
+  );
+  const fileName = `ddt-execution-${hierarchy.suffix}.jar`;
+  await selectJarForInspection(page, {
+    name: fileName,
+    mimeType: "application/java-archive",
+    buffer: Buffer.from(jar),
+  });
+  await page.getByRole("button", { name: "扫描测试类" }).click();
+  await expect(page.getByText(className)).toBeVisible({ timeout: 20_000 });
+  await page.getByRole("button", { name: "确认导入" }).click();
+  await expect(page.getByRole("status")).toContainText(/已导入|已返回现有用例/u, {
+    timeout: 60_000,
+  });
+  const sources = await browserJson<{
+    items: Array<{ id: string; originalFileName: string }>;
+  }>(
+    page,
+    `/api/v1/case-sources?${new URLSearchParams({
+      projectId: hierarchy.projectId,
+      projectVersionId: hierarchy.versionId,
+      testStageId: hierarchy.stageId,
+      limit: "200",
+    }).toString()}`,
+  );
+  const source = sources.body.items.find((item) => item.originalFileName === fileName);
+  expect(source).toBeTruthy();
+  const authoritative = await browserJson(
+    page,
+    `/api/v1/case-sources/${encodeURIComponent(source!.id)}/authoritative`,
+    { method: "PUT", body: { authoritative: true } },
+  );
+  expect(authoritative.status).toBe(200);
+  const definitions = await browserJson<{
+    items: Array<{ id: string; className: string }>;
+  }>(
+    page,
+    `/api/v1/case-definitions?${new URLSearchParams({
+      projectId: hierarchy.projectId,
+      projectVersionId: hierarchy.versionId,
+      testStageId: hierarchy.stageId,
+      query: className,
+      limit: "100",
+    }).toString()}`,
+  );
+  const definition = definitions.body.items.find((item) => item.className === className);
+  expect(definition).toBeTruthy();
+  return definition!;
+}
+
+async function createDdtSuite(
+  page: Page,
+  hierarchy: { projectId: string; versionId: string; suffix: string },
+  caseDefinitionId: string,
+): Promise<{ id: string; name: string }> {
+  const name = `DDT mixed suite ${hierarchy.suffix}`;
+  const suite = await browserJson<{ id: string; name: string }>(page, "/api/v1/case-suites", {
+    method: "POST",
+    body: {
+      projectId: hierarchy.projectId,
+      projectVersionId: hierarchy.versionId,
+      name,
+    },
+  });
+  expect(suite.status).toBe(201);
+  const addition = await browserJson(
+    page,
+    `/api/v1/case-suites/${encodeURIComponent(suite.body.id)}/cases`,
+    { method: "POST", body: { caseDefinitionIds: [caseDefinitionId] } },
+  );
+  expect(addition.status).toBe(200);
+  return { id: suite.body.id, name };
 }
 
 function ddtPath(

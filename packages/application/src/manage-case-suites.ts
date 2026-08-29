@@ -17,6 +17,7 @@ import type {
   CaseCatalogRepository,
   CaseSuiteRepository,
   Clock,
+  DdtRepository,
   IdGenerator,
   ProjectStructureRepository,
   SecretCipherPort,
@@ -31,6 +32,7 @@ export class CaseSuiteService {
     private readonly clock: Clock,
     private readonly ids: IdGenerator,
     private readonly secretCipher?: SecretCipherPort,
+    private readonly ddt?: DdtRepository,
   ) {}
 
   async create(input: CreateCaseSuiteInput, actorId?: string) {
@@ -93,6 +95,9 @@ export class CaseSuiteService {
       if (
         details.items.some(
           (item) => item.caseDefinition.projectVersionId !== policy.projectVersionId,
+        ) ||
+        (details.ddtItems ?? []).some(
+          (item) => item.ddtCase.projectVersionId !== policy.projectVersionId,
         )
       ) {
         throw new DomainError(
@@ -164,6 +169,14 @@ export class CaseSuiteService {
         id: this.ids.next(),
         caseDefinitionId: item.caseDefinition.id,
       })),
+      ...((source.ddtItems?.length ?? 0) > 0
+        ? {
+            ddtItems: source.ddtItems.map((item) => ({
+              id: this.ids.next(),
+              ddtCaseId: item.ddtCase.id,
+            })),
+          }
+        : {}),
       versionId: this.ids.next(),
       ...(actorId ? { actorId } : {}),
       createdAt,
@@ -370,6 +383,84 @@ export class CaseSuiteService {
       ...(actorId ? { actorId } : {}),
       updatedAt: this.clock.now().toISOString(),
     });
+  }
+
+  async addDdtCases(
+    suiteId: string,
+    testStageId: string,
+    requestedIds: string[],
+    actorId?: string,
+    projectIds?: readonly string[],
+  ) {
+    const { caseIds } = await this.validateDdtSelection(
+      suiteId,
+      testStageId,
+      requestedIds,
+      projectIds,
+    );
+    return this.suites.addDdtCases({
+      suiteId,
+      items: caseIds.map((ddtCaseId) => ({ id: this.ids.next(), ddtCaseId })),
+      versionId: this.ids.next(),
+      ...(actorId ? { actorId } : {}),
+      updatedAt: this.clock.now().toISOString(),
+    });
+  }
+
+  async removeDdtCases(
+    suiteId: string,
+    requestedIds: string[],
+    actorId?: string,
+    projectIds?: readonly string[],
+  ) {
+    await this.getSummary(suiteId, projectIds);
+    const caseIds = [...new Set(requestedIds.map((id) => id.trim()).filter(Boolean))];
+    if (caseIds.length === 0) {
+      throw new DomainError("CASE_SUITE_SELECTION_INVALID", "请至少选择一个 DDT 用例。");
+    }
+    return this.suites.removeDdtCases({
+      suiteId,
+      ddtCaseIds: caseIds,
+      versionId: this.ids.next(),
+      ...(actorId ? { actorId } : {}),
+      updatedAt: this.clock.now().toISOString(),
+    });
+  }
+
+  private async validateDdtSelection(
+    suiteId: string,
+    testStageId: string,
+    requestedIds: string[],
+    projectIds?: readonly string[],
+  ): Promise<{ caseIds: string[] }> {
+    const suite = await this.getSummary(suiteId, projectIds);
+    const projectVersionId = suite.policy.projectVersionId;
+    if (!projectVersionId) {
+      throw new DomainError(
+        "CASE_SUITE_VERSION_REQUIRED",
+        "历史任务尚未关联项目版本，请先在任务设置中选择版本。",
+      );
+    }
+    const requestedCaseIds = [...new Set(requestedIds.map((id) => id.trim()).filter(Boolean))];
+    if (requestedCaseIds.length === 0) {
+      throw new DomainError("CASE_SUITE_SELECTION_INVALID", "请至少选择一个 DDT 用例。");
+    }
+    const cases = await this.requireDdtRepository().getCases(
+      { projectId: suite.projectId, projectVersionId, testStageId },
+      requestedCaseIds,
+    );
+    if (cases.length !== requestedCaseIds.length) {
+      throw new DomainError(
+        "DDT_CASE_VERSION_MISMATCH",
+        "选择中包含不存在或不属于任务项目版本、测试阶段的 DDT 用例。",
+      );
+    }
+    return { caseIds: cases.map((item) => item.id) };
+  }
+
+  private requireDdtRepository(): DdtRepository {
+    if (!this.ddt) throw new Error("DDT repository is not configured for case-suite management.");
+    return this.ddt;
   }
 
   private async resolveActiveProjectVersion(

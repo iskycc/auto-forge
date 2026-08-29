@@ -1205,6 +1205,72 @@ describe("SQLite migrations", { timeout: 15_000 }, () => {
       database.close();
     }
   });
+
+  it("backfills existing execution runs when adding DDT execution snapshots", async () => {
+    const directory = await mkdtemp(resolve(tmpdir(), "autoforge-ddt-execution-migration-"));
+    temporaryDirectories.push(directory);
+    const databasePath = resolve(directory, "autoforge.sqlite");
+    const migrationsFolder = resolve(import.meta.dirname, "../drizzle/sqlite");
+    const migrationFiles = (await readdir(migrationsFolder))
+      .filter((name) => /^\d+_.+\.sql$/.test(name))
+      .sort();
+    const migration = "0054_ddt_execution.sql";
+    const migrationIndex = migrationFiles.indexOf(migration);
+    expect(migrationIndex).toBeGreaterThan(0);
+    const database = new Database(databasePath);
+    try {
+      database.pragma("foreign_keys = ON");
+      for (const fileName of migrationFiles.slice(0, migrationIndex)) {
+        database.exec(await readFile(resolve(migrationsFolder, fileName), "utf8"));
+      }
+      database.exec(`
+        INSERT INTO run_batches
+          (id, sequence_number, suite_id, suite_name, suite_version, status, retry_limit,
+           retry_mode, current_round, environment_json, secret_bindings_json, total_runs,
+           project_id, policy_json, scheduled_for, created_at, updated_at)
+        VALUES
+          ('batch-ddt-migration', 9010, 'suite-migration', 'Migration suite', 1,
+           'queued', 0, 'immediate', 1, '[]', '[]', 1,
+           '00000000-0000-7000-8000-000000000001', '{"concurrency":4}',
+           '2026-08-28T00:00:00.000Z', '2026-08-28T00:00:00.000Z',
+           '2026-08-28T00:00:00.000Z');
+        INSERT INTO execution_runs
+          (id, batch_id, case_definition_id, case_version, display_name, class_name,
+           parameters_json, status, attempt_count, held_round, queue_deadline_at,
+           execution_timeout_ms, upload_timeout_ms, version, created_at, updated_at)
+        VALUES
+          ('run-ddt-migration', 'batch-ddt-migration', 'case-ddt-migration', 2,
+           'Existing case', 'example.ExistingCase', '{}', 'queued', 0, 0,
+           '2026-08-29T00:00:00.000Z', 600000, 600000, 1,
+           '2026-08-28T00:00:00.000Z', '2026-08-28T00:00:00.000Z');
+      `);
+
+      database.exec(await readFile(resolve(migrationsFolder, migration), "utf8"));
+
+      expect(
+        database
+          .prepare(
+            `SELECT case_type, execution_case_definition_id, class_data_json, ddt_sr_num
+             FROM execution_runs WHERE id = 'run-ddt-migration'`,
+          )
+          .get(),
+      ).toEqual({
+        case_type: "testng",
+        execution_case_definition_id: "case-ddt-migration",
+        class_data_json: null,
+        ddt_sr_num: null,
+      });
+      expect(
+        database
+          .prepare(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'case_suite_ddt_items'",
+          )
+          .get(),
+      ).toEqual({ name: "case_suite_ddt_items" });
+    } finally {
+      database.close();
+    }
+  });
 });
 
 type MigrationWorkerInput = {

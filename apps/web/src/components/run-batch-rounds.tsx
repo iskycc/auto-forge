@@ -1601,8 +1601,16 @@ function RoundCaseRow({
     <>
       <tr>
         <td>
-          <strong>{run.displayName}</strong>
+          <span className="execution-case-heading">
+            <strong>{run.displayName}</strong>
+            <span className={`execution-case-type ${run.caseType === "ddt" ? "ddt" : "testng"}`}>
+              {run.caseType === "ddt" ? "DDT" : "普通用例"}
+            </span>
+          </span>
           <small className="table-secondary">{run.className}</small>
+          {run.caseType === "ddt" && run.ddtSrNum ? (
+            <small className="table-secondary">SR · {run.ddtSrNum}</small>
+          ) : null}
         </td>
         {showRoundColumn ? <td className="round-cell-nowrap">第 {row.round} 轮</td> : null}
         <td>

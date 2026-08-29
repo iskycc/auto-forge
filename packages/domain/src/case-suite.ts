@@ -1,4 +1,5 @@
 import type { CaseDefinitionWithMethods } from "./case-definition";
+import type { DdtCase } from "./ddt";
 
 export type CaseSuite = {
   id: string;
@@ -320,12 +321,14 @@ export type CaseSuiteVersionSnapshot = {
   enabled: boolean;
   policy: CaseSuiteExecutionPolicy;
   caseDefinitionIds: string[];
+  ddtCaseIds?: string[];
 };
 
 // 快照记录变更完成后的状态，版本号与 case_suites.version 同步递增。
 export function buildCaseSuiteVersionSnapshot(
   suite: CaseSuite,
   caseDefinitionIds: readonly string[],
+  ddtCaseIds: readonly string[] = [],
 ): CaseSuiteVersionSnapshot {
   return {
     name: suite.name,
@@ -334,6 +337,7 @@ export function buildCaseSuiteVersionSnapshot(
     enabled: suite.enabled,
     policy: mergeCaseSuiteExecutionPolicy(suite.policy, {}),
     caseDefinitionIds: [...caseDefinitionIds].sort(),
+    ...(ddtCaseIds.length > 0 ? { ddtCaseIds: [...ddtCaseIds].sort() } : {}),
   };
 }
 
@@ -361,6 +365,14 @@ export type CaseSuiteItem = {
   addedAt: string;
 };
 
+export type CaseSuiteDdtItem = {
+  id: string;
+  suiteId: string;
+  ddtCase: DdtCase;
+  addedAt: string;
+};
+
 export type CaseSuiteDetails = CaseSuite & {
   items: CaseSuiteItem[];
+  ddtItems: CaseSuiteDdtItem[];
 };

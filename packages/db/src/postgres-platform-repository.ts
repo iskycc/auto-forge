@@ -39,6 +39,7 @@ import {
   type CaseSuiteDetails,
   type CaseVersion,
   type CleanupJob,
+  type DdtCase,
   type Runner,
   type TestMethod,
 } from "@autoforge/domain";
@@ -76,12 +77,14 @@ import {
   pgCaseImportJobs,
   pgCaseSourceComparisons,
   pgCaseSources,
+  pgCaseSuiteDdtItems,
   pgCaseSuiteItems,
   pgCaseSuiteRoundRecoveryCredentials,
   pgCaseSuites,
   pgCaseSuiteVersions,
   pgCaseVersions,
   pgCleanupJobs,
+  pgDdtCases,
   pgExecutionRuns,
   pgRunners,
   pgRunnerBootstrapUses,
@@ -1891,7 +1894,7 @@ export class PostgresCaseSuiteRepository implements CaseSuiteRepository {
   ): Promise<CaseSuite[]> {
     await this.ready();
     if (projectIds?.length === 0) return [];
-    const [rows, counts] = await Promise.all([
+    const [rows, counts, ddtCounts] = await Promise.all([
       this.handle.db
         .select()
         .from(pgCaseSuites)
@@ -1911,15 +1914,22 @@ export class PostgresCaseSuiteRepository implements CaseSuiteRepository {
         .select({ suiteId: pgCaseSuiteItems.suiteId, value: count() })
         .from(pgCaseSuiteItems)
         .groupBy(pgCaseSuiteItems.suiteId),
+      this.handle.db
+        .select({ suiteId: pgCaseSuiteDdtItems.suiteId, value: count() })
+        .from(pgCaseSuiteDdtItems)
+        .groupBy(pgCaseSuiteDdtItems.suiteId),
     ]);
     const countBySuite = new Map(counts.map((row) => [row.suiteId, row.value]));
+    for (const row of ddtCounts) {
+      countBySuite.set(row.suiteId, (countBySuite.get(row.suiteId) ?? 0) + row.value);
+    }
     return rows.map((row) => toSuite(row, countBySuite.get(row.id) ?? 0));
   }
 
   async getSummary(suiteId: string, projectIds?: readonly string[]): Promise<CaseSuite | null> {
     await this.ready();
     if (projectIds?.length === 0) return null;
-    const [rows, counts] = await Promise.all([
+    const [rows, counts, ddtCounts] = await Promise.all([
       this.handle.db
         .select()
         .from(pgCaseSuites)
@@ -1934,10 +1944,14 @@ export class PostgresCaseSuiteRepository implements CaseSuiteRepository {
         .select({ value: count() })
         .from(pgCaseSuiteItems)
         .where(eq(pgCaseSuiteItems.suiteId, suiteId)),
+      this.handle.db
+        .select({ value: count() })
+        .from(pgCaseSuiteDdtItems)
+        .where(eq(pgCaseSuiteDdtItems.suiteId, suiteId)),
     ]);
     const row = rows[0];
     if (!row) return null;
-    return toSuite(row, counts[0]?.value ?? 0);
+    return toSuite(row, (counts[0]?.value ?? 0) + (ddtCounts[0]?.value ?? 0));
   }
 
   async get(suiteId: string, projectIds?: readonly string[]): Promise<CaseSuiteDetails | null> {
@@ -2016,7 +2030,57 @@ export class PostgresCaseSuiteRepository implements CaseSuiteRepository {
         ? [{ id: row.id, suiteId: row.suiteId, caseDefinition: definition, addedAt: row.addedAt }]
         : [];
     });
-    return { ...toSuite(suite, items.length), items };
+    const ddtItemRows = await this.handle.db
+      .select()
+      .from(pgCaseSuiteDdtItems)
+      .where(eq(pgCaseSuiteDdtItems.suiteId, suiteId))
+      .orderBy(asc(pgCaseSuiteDdtItems.addedAt), asc(pgCaseSuiteDdtItems.id));
+    const ddtIds = ddtItemRows.map((item) => item.ddtCaseId);
+    const ddtRows = [];
+    for (const idBatch of batchesOf(ddtIds, RELATIONAL_ID_QUERY_BATCH_SIZE)) {
+      ddtRows.push(
+        ...(await this.handle.db.select().from(pgDdtCases).where(inArray(pgDdtCases.id, idBatch))),
+      );
+    }
+    const executionIds = ddtRows.flatMap((row) =>
+      row.executionCaseDefinitionId ? [row.executionCaseDefinitionId] : [],
+    );
+    const executionRows = [];
+    for (const idBatch of batchesOf(executionIds, RELATIONAL_ID_QUERY_BATCH_SIZE)) {
+      executionRows.push(
+        ...(await this.handle.db
+          .select()
+          .from(pgCaseDefinitions)
+          .where(inArray(pgCaseDefinitions.id, idBatch))),
+      );
+    }
+    const executionClasses = new Map(executionRows.map((row) => [row.id, row]));
+    const ddtDefinitions = new Map<string, DdtCase>(
+      ddtRows.map((row) => [
+        row.id,
+        {
+          id: row.id,
+          projectId: row.projectId,
+          projectVersionId: row.projectVersionId,
+          testStageId: row.testStageId,
+          caseId: row.caseId,
+          srNum: row.srNum,
+          kind: row.caseKind,
+          data: JSON.parse(row.dataJson) as DdtCase["data"],
+          sourceName: row.sourceName,
+          revision: row.revision,
+          createdAt: row.createdAt,
+          updatedAt: row.updatedAt,
+          ...(row.updatedBy ? { updatedBy: row.updatedBy } : {}),
+          ...toPostgresDdtExecutionClass(row.executionCaseDefinitionId, executionClasses),
+        },
+      ]),
+    );
+    const ddtItems = ddtItemRows.flatMap((row) => {
+      const ddtCase = ddtDefinitions.get(row.ddtCaseId);
+      return ddtCase ? [{ id: row.id, suiteId: row.suiteId, ddtCase, addedAt: row.addedAt }] : [];
+    });
+    return { ...toSuite(suite, items.length + ddtItems.length), items, ddtItems };
   }
 
   async getRoundRecoveryCredentials(
@@ -2060,6 +2124,25 @@ export class PostgresCaseSuiteRepository implements CaseSuiteRepository {
           ),
         );
       memberIds.push(...rows.map((row) => row.caseDefinitionId));
+    }
+    return memberIds;
+  }
+
+  async findMemberDdtCaseIds(suiteId: string, candidateIds: readonly string[]): Promise<string[]> {
+    await this.ready();
+    if (candidateIds.length === 0) return [];
+    const memberIds: string[] = [];
+    for (const ids of batchesOf(candidateIds, RELATIONAL_ID_QUERY_BATCH_SIZE)) {
+      const rows = await this.handle.db
+        .select({ ddtCaseId: pgCaseSuiteDdtItems.ddtCaseId })
+        .from(pgCaseSuiteDdtItems)
+        .where(
+          and(
+            eq(pgCaseSuiteDdtItems.suiteId, suiteId),
+            inArray(pgCaseSuiteDdtItems.ddtCaseId, ids),
+          ),
+        );
+      memberIds.push(...rows.map((row) => row.ddtCaseId));
     }
     return memberIds;
   }
@@ -2152,6 +2235,86 @@ export class PostgresCaseSuiteRepository implements CaseSuiteRepository {
           input.suiteId,
           input.versionId,
           "suite.cases.remove-bulk",
+          input,
+        );
+      }
+    });
+    const suite = await this.getSummary(input.suiteId);
+    if (!suite) throw new Error(`Case suite ${input.suiteId} does not exist.`);
+    return suite;
+  }
+
+  async addDdtCases(input: {
+    suiteId: string;
+    items: Array<{ id: string; ddtCaseId: string }>;
+    versionId: string;
+    actorId?: string;
+    updatedAt: string;
+  }): Promise<CaseSuite> {
+    await this.ready();
+    await this.handle.db.transaction(async (transaction) => {
+      let added = 0;
+      for (const items of batchesOf(input.items, POSTGRES_WRITE_BATCH_SIZE)) {
+        const inserted = await transaction
+          .insert(pgCaseSuiteDdtItems)
+          .values(
+            items.map((item) => ({
+              id: item.id,
+              suiteId: input.suiteId,
+              ddtCaseId: item.ddtCaseId,
+              addedAt: input.updatedAt,
+            })),
+          )
+          .onConflictDoNothing()
+          .returning({ id: pgCaseSuiteDdtItems.id });
+        added += inserted.length;
+      }
+      if (added > 0) {
+        await touchPostgresSuite(transaction, input.suiteId, input.actorId, input.updatedAt);
+        await this.insertVersionSnapshot(
+          transaction,
+          input.suiteId,
+          input.versionId,
+          "suite.ddt-cases.add",
+          input,
+        );
+      }
+    });
+    const suite = await this.getSummary(input.suiteId);
+    if (!suite) throw new Error(`Case suite ${input.suiteId} does not exist.`);
+    return suite;
+  }
+
+  async removeDdtCases(input: {
+    suiteId: string;
+    ddtCaseIds: string[];
+    versionId: string;
+    actorId?: string;
+    updatedAt: string;
+  }): Promise<CaseSuite> {
+    await this.ready();
+    await this.handle.db.transaction(async (transaction) => {
+      let removed = 0;
+      for (const ids of batchesOf(input.ddtCaseIds, POSTGRES_WRITE_BATCH_SIZE)) {
+        removed += (
+          await transaction
+            .delete(pgCaseSuiteDdtItems)
+            .where(
+              and(
+                eq(pgCaseSuiteDdtItems.suiteId, input.suiteId),
+                inArray(pgCaseSuiteDdtItems.ddtCaseId, ids),
+              ),
+            )
+            .returning({ id: pgCaseSuiteDdtItems.id })
+        ).length;
+      }
+      if (removed > 0) {
+        await touchPostgresSuite(transaction, input.suiteId, input.actorId, input.updatedAt);
+        await this.insertVersionSnapshot(
+          transaction,
+          input.suiteId,
+          input.versionId,
+          "suite.ddt-cases.remove-bulk",
           input,
         );
       }
@@ -2255,6 +2418,18 @@ export class PostgresCaseSuiteRepository implements CaseSuiteRepository {
           );
         }
       }
+      if (input.ddtItems?.length) {
+        for (const items of batchesOf(input.ddtItems, POSTGRES_WRITE_BATCH_SIZE)) {
+          await transaction.insert(pgCaseSuiteDdtItems).values(
+            items.map((item) => ({
+              id: item.id,
+              suiteId: input.id,
+              ddtCaseId: item.ddtCaseId,
+              addedAt: input.createdAt,
+            })),
+          );
+        }
+      }
       const recoveryCredentials = Object.entries(input.roundRecoveryCredentials ?? {});
       if (recoveryCredentials.length > 0) {
         await transaction.insert(pgCaseSuiteRoundRecoveryCredentials).values(
@@ -2296,7 +2471,17 @@ export class PostgresCaseSuiteRepository implements CaseSuiteRepository {
         .from(pgCaseSuiteItems)
         .where(eq(pgCaseSuiteItems.suiteId, suiteId))
     ).map((item) => item.caseDefinitionId);
-    const snapshot = buildCaseSuiteVersionSnapshot(toSuite(row, itemIds.length), itemIds);
+    const ddtItemIds = (
+      await transaction
+        .select({ ddtCaseId: pgCaseSuiteDdtItems.ddtCaseId })
+        .from(pgCaseSuiteDdtItems)
+        .where(eq(pgCaseSuiteDdtItems.suiteId, suiteId))
+    ).map((item) => item.ddtCaseId);
+    const snapshot = buildCaseSuiteVersionSnapshot(
+      toSuite(row, itemIds.length + ddtItemIds.length),
+      itemIds,
+      ddtItemIds,
+    );
     await transaction.insert(pgCaseSuiteVersions).values({
       id: versionId,
       suiteId,
@@ -2307,6 +2492,43 @@ export class PostgresCaseSuiteRepository implements CaseSuiteRepository {
       createdAt: input.updatedAt,
     });
   }
+}
+
+function toPostgresDdtExecutionClass(
+  executionCaseDefinitionId: string | null,
+  definitions: ReadonlyMap<string, typeof pgCaseDefinitions.$inferSelect>,
+): Pick<DdtCase, "executionClass"> {
+  if (!executionCaseDefinitionId) return {};
+  const definition = definitions.get(executionCaseDefinitionId);
+  if (!definition) return {};
+  return {
+    executionClass: {
+      caseDefinitionId: definition.id,
+      className: definition.className,
+      displayName: definition.displayName,
+      sourceId: definition.sourceId,
+      currentVersion: definition.currentVersion,
+      enabled: definition.enabled,
+      archived: definition.archived,
+    },
+  };
+}
+
+async function touchPostgresSuite(
+  transaction: PostgresSuiteTransaction,
+  suiteId: string,
+  actorId: string | undefined,
+  updatedAt: string,
+): Promise<void> {
+  await transaction
+    .update(pgCaseSuites)
+    .set({
+      version: sql`${pgCaseSuites.version} + 1`,
+      revision: sql`${pgCaseSuites.revision} + 1`,
+      ...(actorId ? { updatedBy: actorId } : {}),
+      updatedAt,
+    })
+    .where(eq(pgCaseSuites.id, suiteId));
 }
 
 type PostgresSuiteTransaction = Parameters<

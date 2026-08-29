@@ -7,6 +7,7 @@ import {
   validateDdtCaseAgainstTemplate,
   type DdtCase,
   type DdtCaseData,
+  type DdtExecutionClass,
   type DdtScope,
 } from "@autoforge/domain";
 
@@ -39,6 +40,49 @@ export class DdtCaseService {
 
   dashboard(scope: DdtScope) {
     return this.repository.dashboard(scope);
+  }
+
+  executionClasses(scope: DdtScope, query?: string, limit = 50) {
+    return this.repository.listExecutionClasses(scope, query, limit);
+  }
+
+  async setExecutionClass(
+    scope: DdtScope,
+    caseIds: readonly string[],
+    className: string,
+    actorId?: string,
+  ): Promise<{ updatedCount: number; executionClass: DdtExecutionClass }> {
+    const uniqueIds = normalizedIds(caseIds);
+    const [cases, executionClass] = await Promise.all([
+      this.repository.getCases(scope, uniqueIds),
+      this.repository.findExecutionClass(scope, className),
+    ]);
+    if (cases.length !== uniqueIds.length) {
+      throw new DomainError("DDT_CASE_NOT_FOUND", "批量选择中包含不存在的 DDT 用例。");
+    }
+    if (!executionClass) {
+      throw new DomainError(
+        "DDT_EXECUTION_CLASS_NOT_FOUND",
+        "执行类不存在，或不属于当前项目版本和测试阶段的有效用例来源。",
+      );
+    }
+    if (!executionClass.enabled || executionClass.archived) {
+      throw new DomainError("DDT_EXECUTION_CLASS_UNAVAILABLE", "所选执行类当前不可执行。");
+    }
+    const updatedCount = await this.repository.setExecutionClass({
+      scope,
+      caseIds: uniqueIds,
+      executionCaseDefinitionId: executionClass.caseDefinitionId,
+      ...(actorId ? { actorId } : {}),
+      updatedAt: this.clock.now().toISOString(),
+    });
+    if (updatedCount !== uniqueIds.length) {
+      throw new DomainError(
+        "DDT_EXECUTION_CLASS_UPDATE_CONFLICT",
+        "部分 DDT 用例已被删除或移出当前范围，请刷新后重试。",
+      );
+    }
+    return { updatedCount, executionClass };
   }
 
   async get(scope: DdtScope, caseId: string): Promise<DdtCase> {

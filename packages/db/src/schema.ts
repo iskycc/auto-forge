@@ -827,6 +827,14 @@ export const executionRuns = sqliteTable(
     caseVersion: integer("case_version").notNull(),
     displayName: text("display_name").notNull(),
     className: text("class_name").notNull(),
+    caseType: text("case_type", { enum: ["testng", "ddt"] })
+      .notNull()
+      .default("testng"),
+    executionCaseDefinitionId: text("execution_case_definition_id"),
+    classDataJson: text("class_data_json"),
+    classDataSizeBytes: integer("class_data_size_bytes"),
+    classDataSha256: text("class_data_sha256"),
+    ddtSrNum: text("ddt_sr_num"),
     parametersJson: text("parameters_json").notNull().default("{}"),
     status: text("status", {
       enum: ["queued", "assigned", "running", "succeeded", "failed", "cancelled"],
@@ -1516,6 +1524,10 @@ export const ddtCases = sqliteTable(
     srNumNormalized: text("sr_num_normalized").notNull(),
     caseKind: text("case_kind", { enum: ["standard", "journey"] }).notNull(),
     dataJson: text("data_json").notNull(),
+    executionCaseDefinitionId: text("execution_case_definition_id").references(
+      () => caseDefinitions.id,
+      { onDelete: "set null" },
+    ),
     sourceFileId: text("source_file_id"),
     sourceName: text("source_name").notNull().default(""),
     revision: integer("revision").notNull().default(1),
@@ -1545,6 +1557,24 @@ export const ddtCases = sqliteTable(
       table.updatedAt,
       table.id,
     ),
+  ],
+);
+
+export const caseSuiteDdtItems = sqliteTable(
+  "case_suite_ddt_items",
+  {
+    id: text("id").primaryKey(),
+    suiteId: text("suite_id")
+      .notNull()
+      .references(() => caseSuites.id, { onDelete: "cascade" }),
+    ddtCaseId: text("ddt_case_id")
+      .notNull()
+      .references(() => ddtCases.id, { onDelete: "restrict" }),
+    addedAt: text("added_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("case_suite_ddt_items_suite_case_uq").on(table.suiteId, table.ddtCaseId),
+    index("case_suite_ddt_items_suite_idx").on(table.suiteId),
   ],
 );
 
@@ -1581,6 +1611,10 @@ export const ddtDeletedCases = sqliteTable(
     srNumNormalized: text("sr_num_normalized").notNull(),
     caseKind: text("case_kind", { enum: ["standard", "journey"] }).notNull(),
     dataJson: text("data_json").notNull(),
+    executionCaseDefinitionId: text("execution_case_definition_id").references(
+      () => caseDefinitions.id,
+      { onDelete: "set null" },
+    ),
     sourceFileId: text("source_file_id"),
     sourceName: text("source_name").notNull().default(""),
     caseCreatedAt: text("case_created_at").notNull(),
@@ -1679,6 +1713,7 @@ export const schema = {
   caseSuites,
   caseSuiteRoundRecoveryCredentials,
   caseSuiteItems,
+  caseSuiteDdtItems,
   runners,
   runnerBootstrapUses,
   runnerInstallationProfiles,

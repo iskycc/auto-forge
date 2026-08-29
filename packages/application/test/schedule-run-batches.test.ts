@@ -181,6 +181,44 @@ describe("run batch preflight", () => {
     }
   });
 
+  it("blocks DDT members without an execution class or enabled Adapter", async () => {
+    const suite = readySuite({
+      ddtItems: [
+        {
+          id: "ddt-item-1",
+          suiteId: "suite-1",
+          addedAt: timestamp,
+          ddtCase: {
+            id: "ddt-1",
+            projectId: "project-1",
+            projectVersionId: "version-1",
+            testStageId: "stage-1",
+            caseId: "ORDER-1",
+            srNum: "SR-ORDER",
+            kind: "standard",
+            data: { CaseID: "ORDER-1", srNum: "SR-ORDER" },
+            sourceName: "orders.xlsx",
+            revision: 1,
+            createdAt: timestamp,
+            updatedAt: timestamp,
+          },
+        },
+      ],
+    });
+    const service = preflightService({
+      suites: { get: vi.fn().mockResolvedValue(suite) } as unknown as CaseSuiteRepository,
+      runners: runnersFake(),
+      catalog: readyCatalogFake(),
+      objectStore: objectStoreFake(),
+    });
+
+    const result = await service.preflight({ suiteId: "suite-1" });
+
+    expect(result.blockers.map((entry) => entry.code)).toEqual(
+      expect.arrayContaining(["DDT_EXECUTION_CLASS_REQUIRED", "DDT_ADAPTER_REQUIRED"]),
+    );
+  });
+
   it("blocks suites bound to an archived project version", async () => {
     const projectStructures = {
       list: vi.fn().mockResolvedValue({
@@ -1268,6 +1306,7 @@ function readySuite(overrides: {
   runnerLabels?: string[];
   caseProjectVersionId?: string;
   policy?: Partial<typeof readyPolicy>;
+  ddtItems?: import("@autoforge/domain").CaseSuiteDetails["ddtItems"];
 }) {
   const { status, enabled, runnerLabels, caseProjectVersionId, policy } = overrides;
   return {
@@ -1312,6 +1351,7 @@ function readySuite(overrides: {
         },
       },
     ],
+    ddtItems: overrides.ddtItems ?? [],
   };
 }
 

@@ -1134,6 +1134,10 @@ func validateClaimedAssignment(
 			if !validArchive {
 				return errors.New("assignment runtime archive input is invalid")
 			}
+		case "class-data":
+			if input.MediaType != "application/json" || !strings.HasSuffix(lowerPath, ".json") || !usesAdapter {
+				return errors.New("assignment class data input is invalid")
+			}
 		default:
 			return errors.New("assignment execution input kind is unsupported")
 		}

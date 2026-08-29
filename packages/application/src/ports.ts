@@ -102,6 +102,7 @@ import type {
 import type {
   DdtCase,
   DdtCaseData,
+  DdtExecutionClass,
   DdtCaseHistory,
   DdtCaseTemplate,
   DdtScope,
@@ -457,7 +458,10 @@ export interface ExecutionControlRepository {
     inputId: string;
     leaseTokenHash: string;
     now: string;
-  }): Promise<{ objectKey: string; sizeBytes: number; sha256: string }>;
+  }): Promise<
+    | { kind: "object"; objectKey: string; sizeBytes: number; sha256: string; mediaType: string }
+    | { kind: "inline"; content: Uint8Array; sizeBytes: number; sha256: string; mediaType: string }
+  >;
   appendLogChunks(input: {
     runnerId: string;
     attemptId: string;
@@ -1005,6 +1009,19 @@ export interface DdtRepository {
   getCase(scope: DdtScope, caseId: string): Promise<DdtCase | null>;
   getCases(scope: DdtScope, caseIds: readonly string[]): Promise<DdtCase[]>;
   findCaseData(scope: DdtScope, caseIds: readonly string[]): Promise<Map<string, DdtCaseData>>;
+  listExecutionClasses(
+    scope: DdtScope,
+    query?: string,
+    limit?: number,
+  ): Promise<DdtExecutionClass[]>;
+  findExecutionClass(scope: DdtScope, className: string): Promise<DdtExecutionClass | null>;
+  setExecutionClass(input: {
+    scope: DdtScope;
+    caseIds: readonly string[];
+    executionCaseDefinitionId: string;
+    actorId?: string;
+    updatedAt: string;
+  }): Promise<number>;
   listGroups(
     scope: DdtScope,
     query?: string,
@@ -1122,6 +1139,7 @@ export interface CaseSuiteRepository {
   getSummary(suiteId: string, projectIds?: readonly string[]): Promise<CaseSuite | null>;
   get(suiteId: string, projectIds?: readonly string[]): Promise<CaseSuiteDetails | null>;
   findMemberCaseDefinitionIds(suiteId: string, candidateIds: readonly string[]): Promise<string[]>;
+  findMemberDdtCaseIds(suiteId: string, candidateIds: readonly string[]): Promise<string[]>;
   getRoundRecoveryCredentials(
     suiteId: string,
     ruleIds: readonly string[],
@@ -1138,6 +1156,20 @@ export interface CaseSuiteRepository {
   removeCases(input: {
     suiteId: string;
     caseDefinitionIds: string[];
+    versionId: string;
+    actorId?: string;
+    updatedAt: string;
+  }): Promise<CaseSuite>;
+  addDdtCases(input: {
+    suiteId: string;
+    items: Array<{ id: string; ddtCaseId: string }>;
+    versionId: string;
+    actorId?: string;
+    updatedAt: string;
+  }): Promise<CaseSuite>;
+  removeDdtCases(input: {
+    suiteId: string;
+    ddtCaseIds: string[];
     versionId: string;
     actorId?: string;
     updatedAt: string;
@@ -1170,6 +1202,7 @@ export type CopyCaseSuiteRecord = {
   // 复制继承源任务的完整策略与用例清单；ID 均由应用层生成。
   policy: CaseSuiteExecutionPolicy;
   items: Array<{ id: string; caseDefinitionId: string }>;
+  ddtItems?: Array<{ id: string; ddtCaseId: string }>;
   versionId: string;
   actorId?: string;
   createdAt: string;
@@ -1415,6 +1448,14 @@ export type CreateRunBatchRecord = {
     displayName: string;
     className: string;
     parameters?: Record<string, string>;
+    caseType?: "testng" | "ddt";
+    executionCaseDefinitionId?: string;
+    ddtSrNum?: string;
+    classData?: {
+      json: string;
+      sizeBytes: number;
+      sha256: string;
+    };
   }>;
   adapter?: CaseSuiteExecutionPolicy["adapter"];
   adapterRuntimeSnapshot?: RunBatchAdapterRuntimeSnapshot;

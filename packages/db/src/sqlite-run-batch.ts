@@ -259,7 +259,17 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
           .insert(executionRuns)
           .values(
             runs.map((run) => ({
-              ...run,
+              id: run.id,
+              caseDefinitionId: run.caseDefinitionId,
+              executionCaseDefinitionId: run.executionCaseDefinitionId ?? run.caseDefinitionId,
+              caseVersion: run.caseVersion,
+              displayName: run.displayName,
+              className: run.className,
+              caseType: run.caseType ?? "testng",
+              classDataJson: run.classData?.json ?? null,
+              classDataSizeBytes: run.classData?.sizeBytes ?? null,
+              classDataSha256: run.classData?.sha256 ?? null,
+              ddtSrNum: run.ddtSrNum ?? null,
               parametersJson: JSON.stringify(run.parameters ?? {}),
               batchId: record.id,
               status: "queued" as const,
@@ -522,9 +532,21 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
       runs: runRows.map((run) => ({
         id: run.id,
         caseDefinitionId: run.caseDefinitionId,
+        executionCaseDefinitionId: run.executionCaseDefinitionId ?? run.caseDefinitionId,
         caseVersion: run.caseVersion,
         displayName: run.displayName,
         className: run.className,
+        caseType: run.caseType,
+        ...(run.ddtSrNum ? { ddtSrNum: run.ddtSrNum } : {}),
+        ...(run.classDataJson && run.classDataSizeBytes && run.classDataSha256
+          ? {
+              classData: {
+                json: run.classDataJson,
+                sizeBytes: run.classDataSizeBytes,
+                sha256: run.classDataSha256,
+              },
+            }
+          : {}),
         parameters: stringRecord(run.parametersJson),
       })),
     };
@@ -1087,6 +1109,8 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
               caseVersion: executionRuns.caseVersion,
               className: executionRuns.className,
               parametersJson: executionRuns.parametersJson,
+              classDataSizeBytes: executionRuns.classDataSizeBytes,
+              classDataSha256: executionRuns.classDataSha256,
               sourceId: caseSources.id,
               sourceSha256: caseSources.sha256,
               sourceSizeBytes: caseSources.sizeBytes,
@@ -1095,7 +1119,7 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
             .innerJoin(
               caseVersions,
               and(
-                eq(caseVersions.caseDefinitionId, executionRuns.caseDefinitionId),
+                sql`${caseVersions.caseDefinitionId} = COALESCE(${executionRuns.executionCaseDefinitionId}, ${executionRuns.caseDefinitionId})`,
                 eq(caseVersions.version, executionRuns.caseVersion),
               ),
             )
@@ -1212,6 +1236,14 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
                       sha256: executionInput.sourceSha256,
                       sizeBytes: executionInput.sourceSizeBytes,
                     },
+                    ...(executionInput.classDataSizeBytes && executionInput.classDataSha256
+                      ? {
+                          classData: {
+                            sizeBytes: executionInput.classDataSizeBytes,
+                            sha256: executionInput.classDataSha256,
+                          },
+                        }
+                      : {}),
                     ...(adapterRuntime ? { adapterRuntime } : {}),
                     environment,
                     secretBindings: secretBindingsList,
@@ -1894,6 +1926,7 @@ function executionSpec(input: {
   className: string;
   parameters: Record<string, string>;
   source: { id: string; sha256: string; sizeBytes: number };
+  classData?: { sizeBytes: number; sha256: string };
   adapterRuntime?: ProjectAdapterRuntime;
   environment: ExecutionEnvironmentVariable[];
   secretBindings: ExecutionEnvironmentSecretBinding[];
@@ -1916,6 +1949,18 @@ function executionSpec(input: {
       sha256: input.source.sha256,
     },
     ...runtimeInputs,
+    ...(input.classData
+      ? [
+          {
+            inputId: `class-data-${input.executionRunId}`,
+            kind: "class-data" as const,
+            targetPath: `inputs/class-data/${input.executionRunId}.json`,
+            mediaType: "application/json" as const,
+            sizeBytes: input.classData.sizeBytes,
+            sha256: input.classData.sha256,
+          },
+        ]
+      : []),
   ];
   return {
     schemaVersion: 1,
@@ -2266,6 +2311,8 @@ function toExecutionRun(row: typeof executionRuns.$inferSelect): ExecutionRun {
     caseVersion: row.caseVersion,
     displayName: row.displayName,
     className: row.className,
+    caseType: row.caseType,
+    ...(row.ddtSrNum ? { ddtSrNum: row.ddtSrNum } : {}),
     status: row.status,
     ...(row.assignedRunnerId ? { assignedRunnerId: row.assignedRunnerId } : {}),
     attemptCount: row.attemptCount,

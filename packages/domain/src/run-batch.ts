@@ -171,6 +171,8 @@ export type ExecutionRun = {
   caseVersion: number;
   displayName: string;
   className: string;
+  caseType?: "testng" | "ddt";
+  ddtSrNum?: string;
   status: ExecutionRunStatus;
   assignedRunnerId?: string;
   attemptCount: number;

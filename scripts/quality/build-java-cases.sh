@@ -52,7 +52,8 @@ compile_project_utility() {
     --release 11 \
     -encoding UTF-8 \
     -d "${utility_classes}" \
-    "${repository_root}/tests/fixtures/real-agent/ProjectFileUtil.java"
+    "${repository_root}/tests/fixtures/real-agent/ProjectFileUtil.java" \
+    "${module_directory}/src/main/java/cotest/auto/dataproviders/MM2DataProvider.java"
   jar --create \
     --file "${bundle_directory}/project-fixture.jar" \
     -C "${utility_classes}" .
@@ -68,6 +69,7 @@ compile_java_cases() {
     -d "${classes_directory}" \
     "${module_directory}/src/main/java/com/autoforge/javacases/JavaCasesConstants.java" \
     "${module_directory}/src/main/java/com/autoforge/javacases/JavaCasesFixture.java" \
+    "${module_directory}/src/main/java/com/autoforge/javacases/JavaCasesDdtFixture.java" \
     "${module_directory}/src/main/java/com/autoforge/javacases/JavaCasesFailureFixture.java" \
     "${module_directory}/src/main/java/com/autoforge/javacases/JavaCasesConcurrentAlphaFixture.java" \
     "${module_directory}/src/main/java/com/autoforge/javacases/JavaCasesConcurrentBetaFixture.java" \

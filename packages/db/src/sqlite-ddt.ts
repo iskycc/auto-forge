@@ -7,6 +7,7 @@ import {
   type DdtCaseData,
   type DdtCaseHistory,
   type DdtCaseTemplate,
+  type DdtExecutionClass,
   type DdtScope,
   type DdtTemplateFieldRule,
 } from "@autoforge/domain";
@@ -22,6 +23,14 @@ import { batchesOf, RELATIONAL_ID_QUERY_BATCH_SIZE } from "./database-batches";
 import { runSqliteWriteTransaction, type SqliteDatabaseHandle } from "./database";
 
 type SqlValue = string | number | null;
+
+const executionClassColumns = `execution_case_definition_id AS executionCaseDefinitionId,
+  (SELECT class_name FROM case_definitions WHERE id = execution_case_definition_id) AS executionClassName,
+  (SELECT display_name FROM case_definitions WHERE id = execution_case_definition_id) AS executionDisplayName,
+  (SELECT source_id FROM case_definitions WHERE id = execution_case_definition_id) AS executionSourceId,
+  (SELECT current_version FROM case_definitions WHERE id = execution_case_definition_id) AS executionCurrentVersion,
+  (SELECT enabled FROM case_definitions WHERE id = execution_case_definition_id) AS executionEnabled,
+  (SELECT archived FROM case_definitions WHERE id = execution_case_definition_id) AS executionArchived`;
 
 export class SqliteDdtRepository implements DdtRepository {
   constructor(private readonly handle: SqliteDatabaseHandle) {}
@@ -51,17 +60,14 @@ export class SqliteDdtRepository implements DdtRepository {
         `SELECT id, project_id AS projectId, project_version_id AS projectVersionId,
                 test_stage_id AS testStageId, case_id AS caseId,
                 case_id_normalized AS caseIdNormalized, sr_num AS srNum,
-                case_kind AS kind, source_name AS sourceName, revision, updated_at AS updatedAt
+                case_kind AS kind, source_name AS sourceName, revision, updated_at AS updatedAt,
+                ${executionClassColumns}
          FROM ddt_cases
          WHERE ${where.join(" AND ")}
          ORDER BY case_id_normalized, id
          LIMIT ?`,
       )
-      .all(...parameters, query.limit + 1) as Array<
-      DdtCase["projectId"] extends string
-        ? Omit<DdtCase, "data" | "createdAt" | "updatedBy"> & { caseIdNormalized: string }
-        : never
-    >;
+      .all(...parameters, query.limit + 1) as DdtCaseSummaryRow[];
     const items = rows.slice(0, query.limit).map((row) => ({
       id: row.id,
       projectId: row.projectId,
@@ -73,6 +79,7 @@ export class SqliteDdtRepository implements DdtRepository {
       sourceName: row.sourceName,
       revision: row.revision,
       updatedAt: row.updatedAt,
+      ...mapExecutionClass(row),
     }));
     const next = rows.length > query.limit ? rows[query.limit - 1]?.caseIdNormalized : undefined;
     return { items, ...(next ? { nextCursor: next } : {}) };
@@ -84,7 +91,8 @@ export class SqliteDdtRepository implements DdtRepository {
         `SELECT id, project_id AS projectId, project_version_id AS projectVersionId,
                 test_stage_id AS testStageId, case_id AS caseId, sr_num AS srNum,
                 case_kind AS kind, data_json AS dataJson, source_name AS sourceName,
-                revision, created_at AS createdAt, updated_at AS updatedAt, updated_by AS updatedBy
+                revision, created_at AS createdAt, updated_at AS updatedAt, updated_by AS updatedBy,
+                ${executionClassColumns}
          FROM ddt_cases
          WHERE project_id = ? AND project_version_id = ? AND test_stage_id = ?
            AND case_id_normalized = ?
@@ -104,7 +112,8 @@ export class SqliteDdtRepository implements DdtRepository {
           `SELECT id, project_id AS projectId, project_version_id AS projectVersionId,
                   test_stage_id AS testStageId, case_id AS caseId, sr_num AS srNum,
                   case_kind AS kind, data_json AS dataJson, source_name AS sourceName,
-                  revision, created_at AS createdAt, updated_at AS updatedAt, updated_by AS updatedBy
+                  revision, created_at AS createdAt, updated_at AS updatedAt, updated_by AS updatedBy,
+                  ${executionClassColumns}
            FROM ddt_cases
            WHERE project_id = ? AND project_version_id = ? AND test_stage_id = ?
              AND case_id_normalized IN (${placeholders})`,
@@ -128,6 +137,86 @@ export class SqliteDdtRepository implements DdtRepository {
         item.data,
       ]),
     );
+  }
+
+  async listExecutionClasses(
+    scope: DdtScope,
+    query = "",
+    limit = 50,
+  ): Promise<DdtExecutionClass[]> {
+    const normalizedQuery = query.trim().toLocaleLowerCase("en-US");
+    const pattern = `%${escapeLike(normalizedQuery)}%`;
+    return this.handle.client
+      .prepare(
+        `SELECT definition.id AS caseDefinitionId, definition.class_name AS className,
+                definition.display_name AS displayName, definition.source_id AS sourceId,
+                definition.current_version AS currentVersion, definition.enabled,
+                definition.archived
+         FROM case_definitions definition
+         JOIN case_sources source ON source.id = definition.source_id
+         WHERE definition.project_id = ? AND definition.project_version_id = ?
+           AND definition.test_stage_id = ? AND source.authoritative = 1
+           AND source.status = 'ready' AND source.lifecycle_status = 'active'
+           AND (? = '' OR lower(definition.class_name) LIKE ? ESCAPE '\\'
+                        OR lower(definition.display_name) LIKE ? ESCAPE '\\')
+         ORDER BY definition.class_name, definition.id LIMIT ?`,
+      )
+      .all(
+        ...scopeParameters(scope),
+        normalizedQuery,
+        pattern,
+        pattern,
+        Math.min(Math.max(limit, 1), 100),
+      ) as DdtExecutionClass[];
+  }
+
+  async findExecutionClass(scope: DdtScope, className: string): Promise<DdtExecutionClass | null> {
+    return (
+      (this.handle.client
+        .prepare(
+          `SELECT definition.id AS caseDefinitionId, definition.class_name AS className,
+                  definition.display_name AS displayName, definition.source_id AS sourceId,
+                  definition.current_version AS currentVersion, definition.enabled,
+                  definition.archived
+           FROM case_definitions definition
+           JOIN case_sources source ON source.id = definition.source_id
+           WHERE definition.project_id = ? AND definition.project_version_id = ?
+             AND definition.test_stage_id = ? AND definition.class_name = ?
+             AND source.authoritative = 1 AND source.status = 'ready'
+             AND source.lifecycle_status = 'active' LIMIT 1`,
+        )
+        .get(...scopeParameters(scope), className.trim()) as DdtExecutionClass | undefined) ?? null
+    );
+  }
+
+  async setExecutionClass(
+    input: Parameters<DdtRepository["setExecutionClass"]>[0],
+  ): Promise<number> {
+    let updated = 0;
+    runSqliteWriteTransaction(this.handle, () => {
+      for (const caseIds of batchesOf(
+        input.caseIds.map(normalize),
+        RELATIONAL_ID_QUERY_BATCH_SIZE,
+      )) {
+        const placeholders = caseIds.map(() => "?").join(",");
+        updated += this.handle.client
+          .prepare(
+            `UPDATE ddt_cases
+             SET execution_case_definition_id = ?, revision = revision + 1,
+                 updated_by = ?, updated_at = ?
+             WHERE project_id = ? AND project_version_id = ? AND test_stage_id = ?
+               AND case_id_normalized IN (${placeholders})`,
+          )
+          .run(
+            input.executionCaseDefinitionId,
+            input.actorId ?? null,
+            input.updatedAt,
+            ...scopeParameters(input.scope),
+            ...caseIds,
+          ).changes;
+      }
+    });
+    return updated;
   }
 
   async listGroups(scope: DdtScope, query = "", limit = 100) {
@@ -319,17 +408,20 @@ export class SqliteDdtRepository implements DdtRepository {
       if (cases.length !== input.caseIds.length) {
         throw new DomainError("DDT_CASE_NOT_FOUND", "删除选择中包含不存在的 DDT 用例。");
       }
+      assertDdtCasesAreNotSuiteMembers(this.handle, cases);
       for (const [index, item] of cases.entries()) {
         this.handle.client
           .prepare(
             `INSERT INTO ddt_deleted_cases
              (id, ddt_case_id, project_id, project_version_id, test_stage_id,
               case_id, case_id_normalized, sr_num, sr_num_normalized, case_kind,
-              data_json, source_file_id, source_name, case_created_at, case_updated_at,
+              data_json, source_file_id, execution_case_definition_id, source_name,
+              case_created_at, case_updated_at,
               deleted_by, deleted_at)
              SELECT ?, id, project_id, project_version_id, test_stage_id,
                     case_id, case_id_normalized, sr_num, sr_num_normalized, case_kind,
-                    data_json, source_file_id, source_name, created_at, updated_at, ?, ?
+                    data_json, source_file_id, execution_case_definition_id, source_name,
+                    created_at, updated_at, ?, ?
              FROM ddt_cases WHERE id = ?`,
           )
           .run(input.recycleIds[index], input.actorId ?? null, input.deletedAt, item.id);
@@ -389,9 +481,10 @@ export class SqliteDdtRepository implements DdtRepository {
         .prepare(
           `INSERT INTO ddt_cases
            (id, project_id, project_version_id, test_stage_id, case_id, case_id_normalized,
-            sr_num, sr_num_normalized, case_kind, data_json, source_file_id, source_name,
+            sr_num, sr_num_normalized, case_kind, data_json, source_file_id,
+            execution_case_definition_id, source_name,
             revision, created_by, updated_by, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)`,
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)`,
         )
         .run(
           row.ddt_case_id,
@@ -405,6 +498,7 @@ export class SqliteDdtRepository implements DdtRepository {
           row.case_kind,
           row.data_json,
           row.source_file_id,
+          row.execution_case_definition_id,
           row.source_name,
           input.actorId ?? null,
           input.actorId ?? null,
@@ -1003,6 +1097,17 @@ type DdtCaseRow = {
   createdAt: string;
   updatedAt: string;
   updatedBy: string | null;
+  executionCaseDefinitionId: string | null;
+  executionClassName: string | null;
+  executionDisplayName: string | null;
+  executionSourceId: string | null;
+  executionCurrentVersion: number | null;
+  executionEnabled: number | null;
+  executionArchived: number | null;
+};
+
+type DdtCaseSummaryRow = Omit<DdtCaseRow, "dataJson" | "createdAt" | "updatedBy"> & {
+  caseIdNormalized: string;
 };
 
 type HistoryRow = {
@@ -1063,6 +1168,7 @@ type DeletedCaseRow = {
   case_kind: "standard" | "journey";
   data_json: string;
   source_file_id: string | null;
+  execution_case_definition_id: string | null;
   source_name: string;
   case_created_at: string;
   case_updated_at: string;
@@ -1083,7 +1189,67 @@ function mapCase(row: DdtCaseRow): DdtCase {
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
     ...(row.updatedBy ? { updatedBy: row.updatedBy } : {}),
+    ...mapExecutionClass(row),
   };
+}
+
+function mapExecutionClass(
+  row: Pick<
+    DdtCaseRow,
+    | "executionCaseDefinitionId"
+    | "executionClassName"
+    | "executionDisplayName"
+    | "executionSourceId"
+    | "executionCurrentVersion"
+    | "executionEnabled"
+    | "executionArchived"
+  >,
+): Pick<DdtCase, "executionClass"> {
+  if (
+    !row.executionCaseDefinitionId ||
+    !row.executionClassName ||
+    !row.executionDisplayName ||
+    !row.executionSourceId ||
+    row.executionCurrentVersion === null ||
+    row.executionEnabled === null ||
+    row.executionArchived === null
+  ) {
+    return {};
+  }
+  return {
+    executionClass: {
+      caseDefinitionId: row.executionCaseDefinitionId,
+      className: row.executionClassName,
+      displayName: row.executionDisplayName,
+      sourceId: row.executionSourceId,
+      currentVersion: row.executionCurrentVersion,
+      enabled: row.executionEnabled === 1,
+      archived: row.executionArchived === 1,
+    },
+  };
+}
+
+function assertDdtCasesAreNotSuiteMembers(
+  handle: SqliteDatabaseHandle,
+  cases: readonly DdtCase[],
+): void {
+  const caseById = new Map(cases.map((item) => [item.id, item]));
+  for (const ids of batchesOf([...caseById.keys()], RELATIONAL_ID_QUERY_BATCH_SIZE)) {
+    const placeholders = ids.map(() => "?").join(",");
+    const member = handle.client
+      .prepare(
+        `SELECT ddt_case_id AS ddtCaseId FROM case_suite_ddt_items
+         WHERE ddt_case_id IN (${placeholders}) LIMIT 1`,
+      )
+      .get(...ids) as { ddtCaseId: string } | undefined;
+    if (member) {
+      const ddtCase = caseById.get(member.ddtCaseId);
+      throw new DomainError(
+        "DDT_CASE_IN_USE",
+        `DDT 用例“${ddtCase?.caseId ?? member.ddtCaseId}”仍在用例任务中，请先从任务移除。`,
+      );
+    }
+  }
 }
 
 function mapHistory(row: HistoryRow): DdtCaseHistory {

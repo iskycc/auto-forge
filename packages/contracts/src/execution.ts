@@ -51,9 +51,14 @@ const jvmMethodSelectorSchema = z
 export const executionInputSchema = z
   .object({
     inputId: identifierSchema,
-    kind: z.enum(["test-jar", "dependency-jar", "jdk-archive", "jar-bundle"]),
+    kind: z.enum(["test-jar", "dependency-jar", "jdk-archive", "jar-bundle", "class-data"]),
     targetPath: workspaceRelativePathSchema,
-    mediaType: z.enum(["application/java-archive", "application/zip", "application/gzip"]),
+    mediaType: z.enum([
+      "application/java-archive",
+      "application/zip",
+      "application/gzip",
+      "application/json",
+    ]),
     sizeBytes: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
     sha256: sha256Schema,
     downloadUrl: z
@@ -70,6 +75,12 @@ export const executionInputSchema = z
     if (["test-jar", "dependency-jar"].includes(input.kind)) {
       if (!lowerPath.endsWith(".jar") || input.mediaType !== "application/java-archive") {
         context.addIssue({ code: "custom", message: "JAR 输入的路径和媒体类型不匹配。" });
+      }
+      return;
+    }
+    if (input.kind === "class-data") {
+      if (!lowerPath.endsWith(".json") || input.mediaType !== "application/json") {
+        context.addIssue({ code: "custom", message: "DDT 类数据输入必须是 JSON 文件。" });
       }
       return;
     }
@@ -217,6 +228,23 @@ export const executionSpecSchema = z
           message: `执行输入最多包含一个 ${kind}。`,
         });
       }
+    }
+    if (specification.inputs.filter((input) => input.kind === "class-data").length > 1) {
+      context.addIssue({
+        code: "custom",
+        path: ["inputs"],
+        message: "执行输入最多包含一个 DDT 类数据文件。",
+      });
+    }
+    if (
+      specification.inputs.some((input) => input.kind === "class-data") &&
+      specification.adapter === undefined
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["adapter"],
+        message: "DDT 类数据文件只能由 CoTest Adapter 执行。",
+      });
     }
     for (const field of ["inputId", "targetPath"] as const) {
       const values = specification.inputs.map((input) => input[field]);

@@ -33,6 +33,7 @@ import {
   type RunAttemptStatus,
   type RunBatchStatus,
 } from "@autoforge/domain";
+import { createHash } from "node:crypto";
 
 import type { AttemptLogStore } from "./attempt-log-store";
 import { runSqliteWriteTransaction, type SqliteDatabaseHandle } from "./database";
@@ -487,6 +488,38 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
     if (!declaredInput) {
       throw new DomainError("ATTEMPT_INPUT_FORBIDDEN", "输入未在执行快照中声明。");
     }
+    if (declaredInput.kind === "class-data") {
+      const row = this.handle.client
+        .prepare(
+          `SELECT class_data_json, class_data_size_bytes, class_data_sha256
+           FROM execution_runs WHERE id = ?`,
+        )
+        .get(context.assignment.execution_run_id) as
+        | {
+            class_data_json: string | null;
+            class_data_size_bytes: number | null;
+            class_data_sha256: string | null;
+          }
+        | undefined;
+      const content = row?.class_data_json ? Buffer.from(row.class_data_json, "utf8") : null;
+      if (
+        !row ||
+        !content ||
+        row.class_data_size_bytes !== declaredInput.sizeBytes ||
+        row.class_data_sha256 !== declaredInput.sha256 ||
+        content.byteLength !== declaredInput.sizeBytes ||
+        createHash("sha256").update(content).digest("hex") !== declaredInput.sha256
+      ) {
+        throw new DomainError("ATTEMPT_INPUT_INVALID", "DDT classDataFile 快照元数据不一致。");
+      }
+      return {
+        kind: "inline",
+        content,
+        sizeBytes: content.byteLength,
+        sha256: declaredInput.sha256,
+        mediaType: declaredInput.mediaType,
+      };
+    }
     let row = this.handle.client
       .prepare(
         `SELECT object_key, size_bytes, sha256
@@ -513,7 +546,13 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
     if (!row || row.size_bytes !== declaredInput.sizeBytes || row.sha256 !== declaredInput.sha256) {
       throw new DomainError("ATTEMPT_INPUT_INVALID", "执行输入与权威对象元数据不一致。");
     }
-    return { objectKey: row.object_key, sizeBytes: row.size_bytes, sha256: row.sha256 };
+    return {
+      kind: "object",
+      objectKey: row.object_key,
+      sizeBytes: row.size_bytes,
+      sha256: row.sha256,
+      mediaType: declaredInput.mediaType,
+    };
   }
 
   async appendLogChunks(

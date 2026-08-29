@@ -7,12 +7,14 @@ import {
   BarChart3,
   Boxes,
   ChevronRight,
+  Code2,
   Download,
   FileSpreadsheet,
   Filter,
   History,
   Layers3,
   LoaderCircle,
+  ListPlus,
   PencilLine,
   Plus,
   RefreshCw,
@@ -29,6 +31,15 @@ import { Button, Input, OperationProgress, Select, Textarea } from "@/components
 import { uploadWithProgress } from "@/lib/upload-with-progress";
 
 type Scope = { projectId: string; projectVersionId: string; testStageId: string };
+type ExecutionClass = {
+  caseDefinitionId: string;
+  className: string;
+  displayName: string;
+  sourceId: string;
+  currentVersion: number;
+  enabled: boolean;
+  archived: boolean;
+};
 type CaseSummary = Scope & {
   id: string;
   caseId: string;
@@ -37,6 +48,7 @@ type CaseSummary = Scope & {
   sourceName: string;
   revision: number;
   updatedAt: string;
+  executionClass?: ExecutionClass;
 };
 type DdtCase = CaseSummary & { data: Record<string, unknown>; createdAt: string };
 type Dashboard = {
@@ -118,7 +130,17 @@ const emptyDashboard: Dashboard = {
   timeline: [],
 };
 
-export function DdtManagementWorkspace({ scope, canManage }: { scope: Scope; canManage: boolean }) {
+export function DdtManagementWorkspace({
+  scope,
+  canManage,
+  canManageSuites,
+  suites,
+}: {
+  scope: Scope;
+  canManage: boolean;
+  canManageSuites: boolean;
+  suites: Array<{ id: string; name: string }>;
+}) {
   const [tab, setTab] = useState<WorkspaceTab>("overview");
   const [dashboard, setDashboard] = useState(emptyDashboard);
   const [cases, setCases] = useState<CaseSummary[]>([]);
@@ -141,6 +163,8 @@ export function DdtManagementWorkspace({ scope, canManage }: { scope: Scope; can
   const [showImport, setShowImport] = useState(false);
   const [showTemplate, setShowTemplate] = useState(false);
   const [showBulk, setShowBulk] = useState(false);
+  const [showExecutionClass, setShowExecutionClass] = useState(false);
+  const [showAddToSuite, setShowAddToSuite] = useState(false);
   const [deleteProgress, setDeleteProgress] = useState<{
     completed: number;
     total: number;
@@ -540,6 +564,13 @@ export function DdtManagementWorkspace({ scope, canManage }: { scope: Scope; can
                     <PencilLine size={15} /> 批量修改
                   </Button>
                   <Button
+                    className="button button-secondary"
+                    type="button"
+                    onClick={() => setShowExecutionClass(true)}
+                  >
+                    <Code2 size={15} /> 设置执行类
+                  </Button>
+                  <Button
                     className="button button-danger"
                     type="button"
                     disabled={Boolean(deleteProgress)}
@@ -553,6 +584,16 @@ export function DdtManagementWorkspace({ scope, canManage }: { scope: Scope; can
                     移入回收站
                   </Button>
                 </>
+              ) : null}
+              {canManageSuites ? (
+                <Button
+                  className="button button-secondary"
+                  type="button"
+                  disabled={suites.length === 0}
+                  onClick={() => setShowAddToSuite(true)}
+                >
+                  <ListPlus size={15} /> 加入用例任务
+                </Button>
               ) : null}
               <Button type="button" className="text-button" onClick={() => setSelected(new Set())}>
                 清空选择
@@ -580,6 +621,7 @@ export function DdtManagementWorkspace({ scope, canManage }: { scope: Scope; can
                   <th>CaseID</th>
                   <th>srNum</th>
                   <th>结构</th>
+                  <th>执行类</th>
                   <th>来源</th>
                   <th>更新时间</th>
                   <th />
@@ -612,6 +654,16 @@ export function DdtManagementWorkspace({ scope, canManage }: { scope: Scope; can
                       <span className={`ddt-kind ${item.kind}`}>
                         {item.kind === "journey" ? "用户旅程" : "普通用例"}
                       </span>
+                    </td>
+                    <td className="ddt-execution-class-cell">
+                      {item.executionClass ? (
+                        <span title={item.executionClass.className}>
+                          <strong>{item.executionClass.displayName}</strong>
+                          <small>{item.executionClass.className}</small>
+                        </span>
+                      ) : (
+                        <span className="ddt-unmapped-class">未设置</span>
+                      )}
                     </td>
                     <td title={item.sourceName}>{item.sourceName || "人工维护"}</td>
                     <td>{formatDate(item.updatedAt)}</td>
@@ -755,6 +807,35 @@ export function DdtManagementWorkspace({ scope, canManage }: { scope: Scope; can
           onComplete={async () => {
             await load();
             setShowBulk(false);
+            setSelected(new Set());
+          }}
+        />
+      ) : null}
+      {showExecutionClass ? (
+        <ExecutionClassDialog
+          count={selected.size}
+          caseIds={[...selected]}
+          endpoint={endpoint}
+          onClose={() => setShowExecutionClass(false)}
+          onComplete={async (executionClass) => {
+            setNotice(
+              `已将 ${selected.size} 条 DDT 用例的执行类设置为 ${executionClass.className}。`,
+            );
+            setShowExecutionClass(false);
+            setSelected(new Set());
+            await load();
+          }}
+        />
+      ) : null}
+      {showAddToSuite ? (
+        <AddDdtToSuiteDialog
+          caseIds={[...selected]}
+          scope={scope}
+          suites={suites}
+          onClose={() => setShowAddToSuite(false)}
+          onComplete={async (suiteName) => {
+            setNotice(`已将 ${selected.size} 条 DDT 用例加入任务“${suiteName}”。`);
+            setShowAddToSuite(false);
             setSelected(new Set());
           }}
         />
@@ -1097,6 +1178,15 @@ function CaseDrawer({
         </header>
         {error ? <div className="inline-notice error">{error}</div> : null}
         <div className="ddt-drawer-body">
+          <section className="ddt-execution-class-summary" aria-label="DDT 执行类">
+            <span>执行类型</span>
+            <strong>DDT · classDataFile = {item.caseId}</strong>
+            <small>
+              {item.executionClass
+                ? `${item.executionClass.displayName} · ${item.executionClass.className}`
+                : "尚未设置普通用例执行类，加入任务后将无法通过执行预检。"}
+            </small>
+          </section>
           {editing ? (
             <label className="ddt-json-editor">
               <span>用例数据 JSON</span>
@@ -1653,6 +1743,191 @@ function BulkDialog({
             onClick={() => void save()}
           >
             应用修改
+          </Button>
+        </footer>
+      </div>
+    </Dialog>
+  );
+}
+
+function ExecutionClassDialog({
+  count,
+  caseIds,
+  endpoint,
+  onClose,
+  onComplete,
+}: {
+  count: number;
+  caseIds: string[];
+  endpoint(path: string, extra?: URLSearchParams): string;
+  onClose(): void;
+  onComplete(executionClass: ExecutionClass): Promise<void>;
+}) {
+  const [query, setQuery] = useState("");
+  const [items, setItems] = useState<ExecutionClass[]>([]);
+  const [selectedClassName, setSelectedClassName] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  const search = useCallback(async () => {
+    setBusy(true);
+    setError("");
+    try {
+      const result = await requestJson<{ items: ExecutionClass[] }>(
+        endpoint("execution-classes", new URLSearchParams({ query, limit: "50" })),
+      );
+      setItems(result.items);
+    } catch (searchError) {
+      setError(messageOf(searchError));
+    } finally {
+      setBusy(false);
+    }
+  }, [endpoint, query]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => void search(), 250);
+    return () => window.clearTimeout(timer);
+  }, [search]);
+
+  const save = async () => {
+    const executionClass = items.find((item) => item.className === selectedClassName);
+    if (!executionClass) return;
+    setBusy(true);
+    setError("");
+    try {
+      await requestJson(endpoint("cases/execution-class"), {
+        method: "POST",
+        headers: jsonHeaders,
+        body: JSON.stringify({ caseIds, className: executionClass.className }),
+      });
+      await onComplete(executionClass);
+    } catch (saveError) {
+      setError(messageOf(saveError));
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Dialog
+      title={`设置 ${count} 条 DDT 用例的执行类`}
+      subtitle="选择当前项目版本与测试阶段中的普通 TestNG 用例类"
+      onClose={onClose}
+    >
+      <div className="ddt-execution-class-dialog">
+        {error ? <div className="inline-notice error">{error}</div> : null}
+        <label className="search-field">
+          <Search size={16} />
+          <Input
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="搜索类名或人类友好名称"
+            aria-label="搜索 DDT 执行类"
+          />
+        </label>
+        <div className="ddt-execution-class-options" role="radiogroup" aria-label="执行类">
+          {items.map((item) => (
+            <label key={item.caseDefinitionId}>
+              <Input
+                type="radio"
+                name="ddt-execution-class"
+                value={item.className}
+                checked={selectedClassName === item.className}
+                onChange={() => setSelectedClassName(item.className)}
+              />
+              <span>
+                <strong>{item.displayName}</strong>
+                <small>{item.className}</small>
+              </span>
+            </label>
+          ))}
+          {!busy && items.length === 0 ? <p>当前范围没有可选的普通用例类。</p> : null}
+          {busy ? (
+            <p>
+              <LoaderCircle className="spin" size={16} /> 正在读取执行类…
+            </p>
+          ) : null}
+        </div>
+        <footer>
+          <Button className="button button-secondary" type="button" onClick={onClose}>
+            取消
+          </Button>
+          <Button
+            className="button button-primary"
+            type="button"
+            disabled={!selectedClassName || busy}
+            onClick={() => void save()}
+          >
+            保存执行类
+          </Button>
+        </footer>
+      </div>
+    </Dialog>
+  );
+}
+
+function AddDdtToSuiteDialog({
+  caseIds,
+  scope,
+  suites,
+  onClose,
+  onComplete,
+}: {
+  caseIds: string[];
+  scope: Scope;
+  suites: Array<{ id: string; name: string }>;
+  onClose(): void;
+  onComplete(suiteName: string): Promise<void>;
+}) {
+  const [suiteId, setSuiteId] = useState(suites[0]?.id ?? "");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const save = async () => {
+    const suite = suites.find((item) => item.id === suiteId);
+    if (!suite) return;
+    setBusy(true);
+    setError("");
+    try {
+      await requestJson(`/api/v1/case-suites/${encodeURIComponent(suiteId)}/ddt-cases`, {
+        method: "POST",
+        headers: jsonHeaders,
+        body: JSON.stringify({ testStageId: scope.testStageId, caseIds }),
+      });
+      await onComplete(suite.name);
+    } catch (saveError) {
+      setError(messageOf(saveError));
+      setBusy(false);
+    }
+  };
+  return (
+    <Dialog
+      title={`将 ${caseIds.length} 条 DDT 用例加入任务`}
+      subtitle="任务会按 srNum 展示 DDT 目录，并在执行时固化每条用例的数据快照"
+      onClose={onClose}
+    >
+      <div className="form-grid ddt-add-suite-dialog">
+        {error ? <div className="inline-notice error full-span">{error}</div> : null}
+        <label className="full-span">
+          <span>目标用例任务</span>
+          <Select value={suiteId} onChange={(event) => setSuiteId(event.target.value)}>
+            {suites.map((suite) => (
+              <option key={suite.id} value={suite.id}>
+                {suite.name}
+              </option>
+            ))}
+          </Select>
+        </label>
+        <footer className="full-span">
+          <Button className="button button-secondary" type="button" onClick={onClose}>
+            取消
+          </Button>
+          <Button
+            className="button button-primary"
+            type="button"
+            disabled={!suiteId || busy}
+            onClick={() => void save()}
+          >
+            {busy ? <LoaderCircle className="spin" size={15} /> : <ListPlus size={15} />}
+            加入任务
           </Button>
         </footer>
       </div>

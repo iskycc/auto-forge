@@ -941,6 +941,14 @@ export const pgExecutionRuns = pgTable(
     caseVersion: integer("case_version").notNull(),
     displayName: text("display_name").notNull(),
     className: text("class_name").notNull(),
+    caseType: text("case_type", { enum: ["testng", "ddt"] })
+      .notNull()
+      .default("testng"),
+    executionCaseDefinitionId: text("execution_case_definition_id"),
+    classDataJson: text("class_data_json"),
+    classDataSizeBytes: integer("class_data_size_bytes"),
+    classDataSha256: text("class_data_sha256"),
+    ddtSrNum: text("ddt_sr_num"),
     parametersJson: text("parameters_json").notNull().default("{}"),
     status: text("status", {
       enum: ["queued", "assigned", "running", "succeeded", "failed", "cancelled"],
@@ -1518,6 +1526,10 @@ export const pgDdtCases = pgTable(
     srNumNormalized: text("sr_num_normalized").notNull(),
     caseKind: text("case_kind", { enum: ["standard", "journey"] }).notNull(),
     dataJson: text("data_json").notNull(),
+    executionCaseDefinitionId: text("execution_case_definition_id").references(
+      () => pgCaseDefinitions.id,
+      { onDelete: "set null" },
+    ),
     sourceFileId: text("source_file_id"),
     sourceName: text("source_name").notNull().default(""),
     revision: integer("revision").notNull().default(1),
@@ -1547,6 +1559,24 @@ export const pgDdtCases = pgTable(
       table.updatedAt,
       table.id,
     ),
+  ],
+);
+
+export const pgCaseSuiteDdtItems = pgTable(
+  "case_suite_ddt_items",
+  {
+    id: text("id").primaryKey(),
+    suiteId: text("suite_id")
+      .notNull()
+      .references(() => pgCaseSuites.id, { onDelete: "cascade" }),
+    ddtCaseId: text("ddt_case_id")
+      .notNull()
+      .references(() => pgDdtCases.id, { onDelete: "restrict" }),
+    addedAt: text("added_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("case_suite_ddt_items_suite_case_uq").on(table.suiteId, table.ddtCaseId),
+    index("case_suite_ddt_items_suite_idx").on(table.suiteId),
   ],
 );
 
@@ -1583,6 +1613,10 @@ export const pgDdtDeletedCases = pgTable(
     srNumNormalized: text("sr_num_normalized").notNull(),
     caseKind: text("case_kind", { enum: ["standard", "journey"] }).notNull(),
     dataJson: text("data_json").notNull(),
+    executionCaseDefinitionId: text("execution_case_definition_id").references(
+      () => pgCaseDefinitions.id,
+      { onDelete: "set null" },
+    ),
     sourceFileId: text("source_file_id"),
     sourceName: text("source_name").notNull().default(""),
     caseCreatedAt: text("case_created_at").notNull(),
@@ -1681,6 +1715,7 @@ export const postgresSchema = {
   caseSuites: pgCaseSuites,
   caseSuiteRoundRecoveryCredentials: pgCaseSuiteRoundRecoveryCredentials,
   caseSuiteItems: pgCaseSuiteItems,
+  caseSuiteDdtItems: pgCaseSuiteDdtItems,
   runners: pgRunners,
   runnerBootstrapUses: pgRunnerBootstrapUses,
   runnerInstallationProfiles: pgRunnerInstallationProfiles,

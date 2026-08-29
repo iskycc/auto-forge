@@ -2,10 +2,11 @@ import { expect, test, type Page, type TestInfo } from "@playwright/test";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { once } from "node:events";
 import { mkdir } from "node:fs/promises";
-import { resolve } from "node:path";
+import { basename, resolve } from "node:path";
 
 import { DEFAULT_PROJECT_ID } from "@autoforge/domain";
-import { ensureAdministrator } from "./support/session";
+import { buildExportWorkbook } from "../../packages/ddt-import/src";
+import { ensureAdministrator, selectProjectContext, uniqueName } from "./support/session";
 import {
   configureTaskExecution,
   createTaskRun,
@@ -38,6 +39,7 @@ async function captureDetailsPage(page: Page, name: string): Promise<void> {
 const runnerName = "Java Cases Agent";
 const successSuiteName = "java-cases 成功链路验收";
 const failureSuiteName = "java-cases 失败重试验收";
+const ddtSuiteName = "java-cases DDT classData 验收";
 const environmentAddress = "10.20.30.40";
 const backupEnvironmentAddress = "10.20.30.41";
 
@@ -51,7 +53,7 @@ test("runs the java-cases module through the adapter E2E chain", async ({ page }
     await waitForOnlineRunner(page, agent);
 
     // JAR 导入：上传 java-cases-tests.jar，扫描测试类并确认导入。
-    await importJavaCasesJar(page);
+    const hierarchy = await importJavaCasesJar(page);
 
     // 任务创建 + 用例勾选：创建 Adapter 任务并把用例加入任务。
     await createExecutableSuite(page, successSuiteName, "JavaCasesFixture", 0, ["artifacts/*.txt"]);
@@ -118,6 +120,8 @@ test("runs the java-cases module through the adapter E2E chain", async ({ page }
     const artifactDownload = await page.request.get(artifactHref!);
     expect(artifactDownload.status()).toBe(200);
     expect(await artifactDownload.text()).toBe("JAVA_CASES_ARTIFACT_SAFE\n");
+
+    await exerciseDdtExecution(page, agent, hierarchy);
 
     // 失败链路：真实失败输出 + 重试一次后进入失败终态。
     await createExecutableSuite(page, failureSuiteName, "JavaCasesFailureFixture", 1);
@@ -278,6 +282,12 @@ type BatchDetails = {
   }>;
 };
 
+type ProjectHierarchy = {
+  projectId: string;
+  projectVersionId: string;
+  testStageId: string;
+};
+
 function startAgent(maxConcurrency = 1): Promise<AgentProcess> {
   const binary = requiredEnvironment("E2E_JAVA_CASES_AGENT_BINARY");
   const bootstrapToken = requiredEnvironment("E2E_RUNNER_BOOTSTRAP_TOKEN");
@@ -309,8 +319,14 @@ function startAgent(maxConcurrency = 1): Promise<AgentProcess> {
   return Promise.resolve({ child, diagnostics });
 }
 
-async function importJavaCasesJar(page: Page): Promise<void> {
-  await ensureProjectHierarchy(page);
+async function importJavaCasesJar(page: Page): Promise<ProjectHierarchy> {
+  const hierarchy = await ensureProjectHierarchy(page);
+  await selectProjectContext(
+    page,
+    hierarchy.projectId,
+    hierarchy.projectVersionId,
+    hierarchy.testStageId,
+  );
   await uploadAdapterDependencies(page);
   await page.goto(`/cases/import?projectId=${encodeURIComponent(DEFAULT_PROJECT_ID)}`);
   await page
@@ -333,9 +349,40 @@ async function importJavaCasesJar(page: Page): Promise<void> {
   await expect(page.getByRole("status")).toContainText(/已导入|已返回现有用例/, {
     timeout: 60_000,
   });
+  await markImportedSourceAuthoritative(page, hierarchy);
+  return hierarchy;
 }
 
-async function ensureProjectHierarchy(page: Page): Promise<void> {
+async function markImportedSourceAuthoritative(
+  page: Page,
+  hierarchy: ProjectHierarchy,
+): Promise<void> {
+  const sourceFileName = basename(requiredEnvironment("E2E_JAVA_CASES_TEST_JAR"));
+  const query = new URLSearchParams({
+    projectId: hierarchy.projectId,
+    projectVersionId: hierarchy.projectVersionId,
+    testStageId: hierarchy.testStageId,
+    limit: "200",
+  });
+  const listResponse = await page.request.get(`/api/v1/case-sources?${query.toString()}`);
+  expect(listResponse.status()).toBe(200);
+  const list = (await listResponse.json()) as {
+    items: Array<{ id: string; originalFileName: string; authoritative?: boolean }>;
+  };
+  const source = list.items.find((item) => item.originalFileName === sourceFileName);
+  expect(source, `Imported source ${sourceFileName} should exist`).toBeTruthy();
+  if (source!.authoritative) return;
+  const updateResponse = await page.request.put(
+    `/api/v1/case-sources/${encodeURIComponent(source!.id)}/authoritative`,
+    {
+      data: { authoritative: true },
+      headers: { origin: new URL(page.url()).origin },
+    },
+  );
+  expect(updateResponse.status()).toBe(200);
+}
+
+async function ensureProjectHierarchy(page: Page): Promise<ProjectHierarchy> {
   const projectPath = `/api/v1/projects/${encodeURIComponent(DEFAULT_PROJECT_ID)}`;
   const structureResponse = await page.request.get(`${projectPath}/structure`);
   expect(structureResponse.status()).toBe(200);
@@ -355,15 +402,23 @@ async function ensureProjectHierarchy(page: Page): Promise<void> {
       stages: Array<{ id: string }>;
     };
   }
-  if (version.stages.length > 0) return;
-  const stageResponse = await page.request.post(
-    `${projectPath}/versions/${encodeURIComponent(version.id)}/stages`,
-    {
-      data: { name: "java-cases 阶段", description: "java-cases 全链路验收" },
-      headers,
-    },
-  );
-  expect(stageResponse.status()).toBe(201);
+  let stage = version.stages[0];
+  if (!stage) {
+    const stageResponse = await page.request.post(
+      `${projectPath}/versions/${encodeURIComponent(version.id)}/stages`,
+      {
+        data: { name: "java-cases 阶段", description: "java-cases 全链路验收" },
+        headers,
+      },
+    );
+    expect(stageResponse.status()).toBe(201);
+    stage = (await stageResponse.json()) as { id: string };
+  }
+  return {
+    projectId: DEFAULT_PROJECT_ID,
+    projectVersionId: version.id,
+    testStageId: stage.id,
+  };
 }
 
 async function uploadAdapterDependencies(page: Page): Promise<void> {
@@ -395,6 +450,17 @@ async function createExecutableSuite(
   retryLimit: number,
   artifactPatterns: string[] = [],
 ): Promise<void> {
+  await createConfiguredSuite(page, suiteName, caseDisplayName, retryLimit, artifactPatterns);
+  await addOrdinaryCaseToSuite(page, suiteName, caseDisplayName);
+}
+
+async function createConfiguredSuite(
+  page: Page,
+  suiteName: string,
+  testName: string,
+  retryLimit: number,
+  artifactPatterns: string[] = [],
+): Promise<string> {
   await page.goto(`/case-suites?projectId=${encodeURIComponent(DEFAULT_PROJECT_ID)}`);
   await page.getByRole("button", { name: "创建任务" }).click();
   const createSuiteDialog = page.getByRole("dialog", { name: "创建用例任务" });
@@ -402,12 +468,8 @@ async function createExecutableSuite(
   await createSuiteDialog.getByLabel("说明").fill("java-cases 模块全链路验收任务");
   await createSuiteDialog.getByLabel("使用 CoTest TestNG Adapter").check();
   await createSuiteDialog.getByLabel("TestNG Suite Name").fill(`Adapter · ${suiteName}`);
-  await createSuiteDialog.getByLabel("TestNG Test Name").fill(caseDisplayName);
-  if (
-    caseDisplayName === "JavaCasesFixture" ||
-    caseDisplayName === "JavaCasesConcurrentAlphaFixture" ||
-    caseDisplayName === "JavaCasesConcurrentBetaFixture"
-  ) {
+  await createSuiteDialog.getByLabel("TestNG Test Name").fill(testName);
+  if (requiresEnvironmentAddress(testName)) {
     await createSuiteDialog
       .getByLabel("环境 IP / 地址（每行一个）")
       .fill(`${environmentAddress}\n${backupEnvironmentAddress}`);
@@ -425,13 +487,133 @@ async function createExecutableSuite(
   await page.getByLabel("产物规则（每行一个相对路径 glob）").fill(artifactPatterns.join("\n"));
   await page.getByRole("button", { name: "保存修改" }).click();
   await expect(page.getByRole("status")).toContainText("用例任务已更新");
+  return suiteId;
+}
 
+async function addOrdinaryCaseToSuite(
+  page: Page,
+  suiteName: string,
+  caseDisplayName: string,
+): Promise<void> {
   await page.goto(`/cases?projectId=${encodeURIComponent(DEFAULT_PROJECT_ID)}`);
   await page.getByLabel("页内搜索用例").fill(caseDisplayName);
   await page.getByLabel(`选择 ${caseDisplayName}`).first().check();
   await page.locator('select[aria-label="目标用例任务"]').selectOption({ label: suiteName });
   await page.getByRole("button", { name: "加入任务" }).click();
   await expect(page.getByRole("status")).toContainText("已将 1 个用例加入任务");
+}
+
+function requiresEnvironmentAddress(testName: string): boolean {
+  return [
+    "JavaCasesFixture",
+    "JavaCasesConcurrentAlphaFixture",
+    "JavaCasesConcurrentBetaFixture",
+    "JavaCasesDdtFixture",
+  ].includes(testName);
+}
+
+async function exerciseDdtExecution(
+  page: Page,
+  agent: AgentProcess,
+  hierarchy: ProjectHierarchy,
+): Promise<void> {
+  const caseId = uniqueName("JAVA-CASES-DDT").toUpperCase();
+  await importDdtCase(page, hierarchy, caseId);
+  const suiteId = await createConfiguredSuite(page, ddtSuiteName, "JavaCasesDdtFixture", 0);
+  await addDdtCaseToSuite(page, hierarchy, suiteId, caseId);
+
+  const batchId = await scheduleExecution(page, ddtSuiteName);
+  const details = await waitForTerminalBatch(
+    page,
+    batchId,
+    agent,
+    "succeeded",
+    "TESTNG_SUCCEEDED",
+    1,
+  );
+  expect(details.attempts[0]?.testNg).toMatchObject({
+    total: 1,
+    passed: 1,
+    failed: 0,
+    skipped: 0,
+    configurationFailures: 0,
+  });
+  expect(await readAttemptLogs(page, details.attempts[0]!.id, "stdout")).toContain(
+    "JAVA_CASES_DDT_CLASS_DATA_OK:CLASS_DATA_REACHED_ADAPTER",
+  );
+
+  await page.goto(`/run-batches/${encodeURIComponent(batchId)}`);
+  const ddtRun = page.getByRole("row", { name: new RegExp(caseId) });
+  await expect(ddtRun).toBeVisible();
+  await expect(ddtRun.getByText("DDT", { exact: true })).toBeVisible();
+  await ddtRun.getByRole("button", { name: "详情" }).click();
+  await page.getByRole("button", { name: "查看日志" }).click();
+  await expect(page.locator(".execution-log")).toContainText(
+    "JAVA_CASES_DDT_CLASS_DATA_OK:CLASS_DATA_REACHED_ADAPTER",
+  );
+}
+
+async function importDdtCase(
+  page: Page,
+  hierarchy: ProjectHierarchy,
+  caseId: string,
+): Promise<void> {
+  await selectProjectContext(
+    page,
+    hierarchy.projectId,
+    hierarchy.projectVersionId,
+    hierarchy.testStageId,
+  );
+  await page.goto("/cases?tab=ddt");
+  await page.getByRole("button", { name: "导入表格" }).click();
+  const dialog = page.getByRole("dialog", { name: "导入 DDT 用例" });
+  const workbook = buildExportWorkbook([
+    {
+      CaseID: caseId,
+      srNum: "EXECUTION",
+      verificationMarker: "CLASS_DATA_REACHED_ADAPTER",
+    },
+  ]);
+  await dialog.locator('input[type="file"]').setInputFiles({
+    name: `${caseId}.xlsx`,
+    mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    buffer: workbook,
+  });
+  await dialog.getByRole("button", { name: "开始预检" }).click();
+  await expect(dialog.getByText("覆盖并保留历史")).toBeVisible({ timeout: 30_000 });
+  await dialog.getByRole("button", { name: "确认并后台导入" }).click();
+  await expect(page.locator(".ddt-status.succeeded", { hasText: "已完成" })).toBeVisible({
+    timeout: 30_000,
+  });
+}
+
+async function addDdtCaseToSuite(
+  page: Page,
+  hierarchy: ProjectHierarchy,
+  suiteId: string,
+  caseId: string,
+): Promise<void> {
+  await selectProjectContext(
+    page,
+    hierarchy.projectId,
+    hierarchy.projectVersionId,
+    hierarchy.testStageId,
+  );
+  await page.goto("/cases?tab=ddt");
+  await page.getByRole("tab", { name: "用例" }).click();
+  await page.getByLabel(`选择 ${caseId}`).check();
+  await page.getByRole("button", { name: "设置执行类" }).click();
+  const classDialog = page.getByRole("dialog", { name: /设置 1 条 DDT 用例的执行类/u });
+  await classDialog.getByLabel("JavaCasesDdtFixture", { exact: false }).check();
+  await classDialog.getByRole("button", { name: "保存执行类" }).click();
+  await expect(page.getByText(/已将 1 条 DDT 用例的执行类设置为/u)).toBeVisible();
+
+  await page.getByLabel(`选择 ${caseId}`).check();
+  await page.getByRole("button", { name: "加入用例任务" }).click();
+  const suiteDialog = page.getByRole("dialog", { name: /将 1 条 DDT 用例加入任务/u });
+  await suiteDialog.getByLabel("目标用例任务").selectOption(suiteId);
+  await suiteDialog.getByRole("button", { name: "加入任务" }).click();
+  await expect(page.getByText(`已将 1 条 DDT 用例加入任务“${ddtSuiteName}”。`)).toBeVisible();
 }
 
 async function scheduleExecution(page: Page, suiteName: string): Promise<string> {

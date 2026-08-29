@@ -75,6 +75,20 @@ export const bulkDdtCaseIdsInputSchema = z.object({
   caseIds: z.array(z.string().min(1).max(512)).min(1).max(DDT_BULK_MUTATION_LIMIT),
 });
 
+export const setDdtExecutionClassInputSchema = z.object({
+  caseIds: z.array(z.string().min(1).max(512)).min(1).max(DDT_BULK_MUTATION_LIMIT),
+  className: z.string().trim().min(1).max(1_024),
+});
+
+export const addCaseSuiteDdtItemsInputSchema = z.object({
+  testStageId: z.string().min(1).max(128),
+  caseIds: z.array(z.string().min(1).max(512)).min(1).max(100_000),
+});
+
+export const removeCaseSuiteDdtItemsInputSchema = z.object({
+  ddtCaseIds: z.array(z.string().min(1).max(128)).min(1).max(100_000),
+});
+
 export const ddtTemplateFieldTypeSchema = z.enum(["string", "number", "boolean", "date"]);
 export const ddtTemplateFieldRuleSchema = z.object({
   field: z.string().trim().min(1).max(256),

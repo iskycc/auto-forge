@@ -694,9 +694,11 @@ describe.skipIf(!connectionString)("PostgreSQL platform repositories", () => {
           now: "2026-08-09T00:01:03.000Z",
         }),
       ).resolves.toEqual({
+        kind: "object",
         objectKey: `jars/${runnerId}/support.jar`,
         sizeBytes: 64,
         sha256: "c".repeat(64),
+        mediaType: "application/java-archive",
       });
       await expect(
         executions.completeAttempt({

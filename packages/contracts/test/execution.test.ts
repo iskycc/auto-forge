@@ -103,6 +103,40 @@ describe("Runner Protocol v1 contracts", () => {
     ).toThrow();
   });
 
+  it("accepts one adapter-bound DDT class data input and rejects it without Adapter", () => {
+    const specification = validExecutionSpec();
+    const classData = {
+      inputId: "class-data-run-1",
+      kind: "class-data" as const,
+      targetPath: "inputs/class-data/run-1.json",
+      mediaType: "application/json" as const,
+      sizeBytes: 128,
+      sha256: "d".repeat(64),
+    };
+    expect(
+      executionSpecSchema
+        .parse({
+          ...specification,
+          adapter: { suiteName: "DDT", testName: "case" },
+          inputs: [...specification.inputs, classData],
+        })
+        .inputs.at(-1),
+    ).toMatchObject({ kind: "class-data", mediaType: "application/json" });
+    expect(() =>
+      executionSpecSchema.parse({
+        ...specification,
+        inputs: [...specification.inputs, classData],
+      }),
+    ).toThrow(/Adapter/);
+    expect(() =>
+      executionSpecSchema.parse({
+        ...specification,
+        adapter: { suiteName: "DDT", testName: "case" },
+        inputs: [...specification.inputs, classData, { ...classData, inputId: "class-data-run-2" }],
+      }),
+    ).toThrow(/DDT/);
+  });
+
   it("accepts project JDK and JAR archives with verified external links", () => {
     const specification = validExecutionSpec();
     expect(

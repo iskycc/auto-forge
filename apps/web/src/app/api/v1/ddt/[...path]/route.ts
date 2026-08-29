@@ -3,6 +3,7 @@ import {
   bulkUpdateDdtCasesInputSchema,
   confirmDdtImportInputSchema,
   ddtCaseListInputSchema,
+  setDdtExecutionClassInputSchema,
   updateDdtCaseInputSchema,
   upsertDdtTemplateInputSchema,
 } from "@autoforge/contracts";
@@ -44,6 +45,15 @@ export async function GET(request: Request, context: Context): Promise<NextRespo
           scope,
           url.searchParams.get("query") ?? undefined,
           boundedLimit(url, 100, 500),
+        ),
+      });
+    }
+    if (matches(path, "execution-classes")) {
+      return NextResponse.json({
+        items: await services.ddtCases.executionClasses(
+          scope,
+          url.searchParams.get("query") ?? undefined,
+          boundedLimit(url, 50, 100),
         ),
       });
     }
@@ -156,6 +166,22 @@ export async function POST(request: Request, context: Context): Promise<NextResp
           ddtActorId(identity),
         );
         await audit(identity, services, scope, currentRequestId, "ddt_case.bulk_update", result);
+        return NextResponse.json(result);
+      }
+      if (matches(path, "cases", "execution-class")) {
+        const input = setDdtExecutionClassInputSchema.parse(
+          await readJsonBody(request, 4 * 1_024 * 1_024),
+        );
+        const result = await services.ddtCases.setExecutionClass(
+          scope,
+          input.caseIds,
+          input.className,
+          ddtActorId(identity),
+        );
+        await audit(identity, services, scope, currentRequestId, "ddt_case.execution_class", {
+          updatedCount: result.updatedCount,
+          executionClassName: result.executionClass.className,
+        });
         return NextResponse.json(result);
       }
       if (matches(path, "cases", "bulk-delete")) {

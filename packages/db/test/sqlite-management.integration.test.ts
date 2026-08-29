@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
@@ -1019,6 +1020,7 @@ describe("SQLite management repositories", () => {
         .get("assignment-control") as { execution_spec_json: string };
       const executionSpec = JSON.parse(assignmentSnapshot.execution_spec_json) as {
         inputs: Array<Record<string, unknown>>;
+        adapter?: { suiteName: string; testName: string };
       };
       executionSpec.inputs.push({
         inputId: "dependency-1",
@@ -1028,9 +1030,27 @@ describe("SQLite management repositories", () => {
         sizeBytes: 64,
         sha256: "b".repeat(64),
       });
+      const classDataJson = `${JSON.stringify({ CaseID: "DDT-CONTROL", srNum: "CONTROL" })}\n`;
+      const classDataSha256 = createHash("sha256").update(classDataJson).digest("hex");
+      executionSpec.adapter = { suiteName: "DDT", testName: "control" };
+      executionSpec.inputs.push({
+        inputId: "class-data-run-control",
+        kind: "class-data",
+        targetPath: "inputs/class-data/run-control.json",
+        mediaType: "application/json",
+        sizeBytes: Buffer.byteLength(classDataJson),
+        sha256: classDataSha256,
+      });
       handle.client
         .prepare("UPDATE assignments SET execution_spec_json = ? WHERE id = ?")
         .run(JSON.stringify(executionSpec), "assignment-control");
+      handle.client
+        .prepare(
+          `UPDATE execution_runs
+           SET class_data_json = ?, class_data_size_bytes = ?, class_data_sha256 = ?
+           WHERE id = ?`,
+        )
+        .run(classDataJson, Buffer.byteLength(classDataJson), classDataSha256, "run-control");
 
       const claimInput = {
         runnerId: "runner-control",
@@ -1064,9 +1084,11 @@ describe("SQLite management repositories", () => {
           now: "2026-08-09T00:01:03.000Z",
         }),
       ).resolves.toEqual({
+        kind: "object",
         objectKey: "jars/aa/source.jar",
         sizeBytes: 128,
         sha256: "a".repeat(64),
+        mediaType: "application/java-archive",
       });
       await expect(
         executions.resolveAttemptInput({
@@ -1077,10 +1099,38 @@ describe("SQLite management repositories", () => {
           now: "2026-08-09T00:01:03.000Z",
         }),
       ).resolves.toEqual({
+        kind: "object",
         objectKey: "jars/bb/support.jar",
         sizeBytes: 64,
         sha256: "b".repeat(64),
+        mediaType: "application/java-archive",
       });
+      const resolvedClassData = await executions.resolveAttemptInput({
+        runnerId: "runner-control",
+        attemptId: "attempt-control",
+        inputId: "class-data-run-control",
+        leaseTokenHash: "lease-token-hash",
+        now: "2026-08-09T00:01:03.000Z",
+      });
+      expect(resolvedClassData).toMatchObject({
+        kind: "inline",
+        sizeBytes: Buffer.byteLength(classDataJson),
+        sha256: classDataSha256,
+        mediaType: "application/json",
+      });
+      expect(resolvedClassData.kind).toBe("inline");
+      if (resolvedClassData.kind === "inline") {
+        expect(Buffer.from(resolvedClassData.content).toString("utf8")).toBe(classDataJson);
+      }
+      // This test's source batch intentionally has no CoTest runtime. Remove the synthetic DDT
+      // fields before its later generic retry assertions build a fresh assignment.
+      handle.client
+        .prepare(
+          `UPDATE execution_runs
+           SET class_data_json = NULL, class_data_size_bytes = NULL, class_data_sha256 = NULL
+           WHERE id = ?`,
+        )
+        .run("run-control");
       await expect(
         executions.resolveAttemptInput({
           runnerId: "runner-control",

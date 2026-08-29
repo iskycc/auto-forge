@@ -23,16 +23,24 @@ export async function GET(request: Request, context: Context): Promise<Response>
       inputId,
       leaseToken,
     );
-    const content = await services.objectStore.read(authorized.objectKey);
+    const content =
+      authorized.kind === "inline"
+        ? authorized.content
+        : await services.objectStore.read(authorized.objectKey);
     if (content.byteLength !== authorized.sizeBytes) {
       throw new DomainError("ATTEMPT_INPUT_CORRUPTED", "输入对象大小与登记信息不一致。");
     }
     return new Response(Uint8Array.from(content).buffer, {
       headers: {
         "Cache-Control": "no-store",
-        "Content-Disposition": 'attachment; filename="tests.jar"',
+        "Content-Disposition":
+          authorized.mediaType === "application/json"
+            ? 'attachment; filename="class-data.json"'
+            : authorized.mediaType === "application/java-archive"
+              ? 'attachment; filename="tests.jar"'
+              : 'attachment; filename="runtime-archive.bin"',
         "Content-Length": String(content.byteLength),
-        "Content-Type": "application/java-archive",
+        "Content-Type": authorized.mediaType,
         "X-Content-Type-Options": "nosniff",
       },
     });

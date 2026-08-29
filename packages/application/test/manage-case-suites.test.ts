@@ -6,6 +6,7 @@ import { CaseSuiteService } from "../src/manage-case-suites";
 import type {
   CaseCatalogRepository,
   CaseSuiteRepository,
+  DdtRepository,
   ProjectStructureRepository,
   SecretCipherPort,
 } from "../src/ports";
@@ -201,6 +202,68 @@ describe("case suite update and copy", () => {
     });
   });
 
+  it("adds DDT CaseIDs only from the task version and selected test stage", async () => {
+    const suites = suiteRepositoryFake();
+    const ddt = {
+      getCases: vi.fn().mockResolvedValue([
+        {
+          id: "ddt-row-1",
+          projectId: "project-1",
+          projectVersionId: "version-1",
+          testStageId: "stage-1",
+          caseId: "ORDER-1",
+        },
+      ]),
+    } as unknown as DdtRepository;
+    let generated = 0;
+    const service = new CaseSuiteService(
+      suites,
+      {} as CaseCatalogRepository,
+      projectStructuresFake(),
+      { now: () => new Date(timestamp) },
+      { next: () => `ddt-id-${++generated}` },
+      undefined,
+      ddt,
+    );
+
+    await service.addDdtCases("suite-1", "stage-1", ["ORDER-1", "ORDER-1"], "user-1");
+
+    expect(ddt.getCases).toHaveBeenCalledWith(
+      {
+        projectId: "project-1",
+        projectVersionId: "version-1",
+        testStageId: "stage-1",
+      },
+      ["ORDER-1"],
+    );
+    expect(suites.addDdtCases).toHaveBeenCalledWith({
+      suiteId: "suite-1",
+      items: [{ id: "ddt-id-1", ddtCaseId: "ddt-row-1" }],
+      versionId: "ddt-id-2",
+      actorId: "user-1",
+      updatedAt: timestamp,
+    });
+  });
+
+  it("rejects DDT CaseIDs outside the task version or selected test stage", async () => {
+    const suites = suiteRepositoryFake();
+    const ddt = { getCases: vi.fn().mockResolvedValue([]) } as unknown as DdtRepository;
+    const service = new CaseSuiteService(
+      suites,
+      {} as CaseCatalogRepository,
+      projectStructuresFake(),
+      { now: () => new Date(timestamp) },
+      { next: () => "unused" },
+      undefined,
+      ddt,
+    );
+
+    await expect(
+      service.addDdtCases("suite-1", "wrong-stage", ["ORDER-OTHER"]),
+    ).rejects.toMatchObject({ code: "DDT_CASE_VERSION_MISMATCH" });
+    expect(suites.addDdtCases).not.toHaveBeenCalled();
+  });
+
   it("does not impose the retired 500-case task capacity", async () => {
     const suites = suiteRepositoryFake();
     const existingItems = Array.from({ length: 500 }, (_, index) => ({
@@ -350,6 +413,7 @@ function suiteRepositoryFake() {
         caseDefinition: { id: "case-1", projectVersionId: "version-1" },
       },
     ],
+    ddtItems: [],
   };
   return {
     create: vi.fn().mockResolvedValue(suite),
@@ -359,7 +423,10 @@ function suiteRepositoryFake() {
     copySuite: vi.fn().mockResolvedValue(suite),
     addCases: vi.fn().mockResolvedValue(suite),
     removeCases: vi.fn().mockResolvedValue(suite),
+    addDdtCases: vi.fn().mockResolvedValue(suite),
+    removeDdtCases: vi.fn().mockResolvedValue(suite),
     findMemberCaseDefinitionIds: vi.fn().mockResolvedValue([]),
+    findMemberDdtCaseIds: vi.fn().mockResolvedValue([]),
     getRoundRecoveryCredentials: vi.fn().mockResolvedValue({}),
   } as unknown as CaseSuiteRepository & {
     create: ReturnType<typeof vi.fn>;
@@ -368,6 +435,8 @@ function suiteRepositoryFake() {
     copySuite: ReturnType<typeof vi.fn>;
     addCases: ReturnType<typeof vi.fn>;
     removeCases: ReturnType<typeof vi.fn>;
+    addDdtCases: ReturnType<typeof vi.fn>;
+    removeDdtCases: ReturnType<typeof vi.fn>;
     findMemberCaseDefinitionIds: ReturnType<typeof vi.fn>;
   };
 }

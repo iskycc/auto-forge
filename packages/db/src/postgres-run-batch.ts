@@ -249,25 +249,36 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
         // unnest 数组批量写入：逐行 VALUES 绑定参数在数百行规模显著拖慢创建。
         await transaction.execute(sql`
           INSERT INTO execution_runs
-            (id, batch_id, case_definition_id, case_version, display_name, class_name,
-             parameters_json, status, attempt_count, queue_deadline_at, execution_timeout_ms,
-             upload_timeout_ms, created_at, updated_at)
-          SELECT s.id, ${record.id}, s.case_definition_id, s.case_version, s.display_name,
-                 s.class_name, s.parameters_json, 'queued', 0, ${queueDeadlineAt},
+            (id, batch_id, case_definition_id, execution_case_definition_id, case_version,
+             display_name, class_name, case_type, class_data_json, class_data_size_bytes,
+             class_data_sha256, ddt_sr_num, parameters_json, status, attempt_count,
+             queue_deadline_at, execution_timeout_ms, upload_timeout_ms, created_at, updated_at)
+          SELECT s.id, ${record.id}, s.case_definition_id, s.execution_case_definition_id,
+                 s.case_version, s.display_name, s.class_name, s.case_type, s.class_data_json,
+                 s.class_data_size_bytes, s.class_data_sha256, s.ddt_sr_num,
+                 s.parameters_json, 'queued', 0, ${queueDeadlineAt},
                  ${executionTimeoutMs}, ${uploadTimeoutMs}, ${record.createdAt},
                  ${record.createdAt}
           FROM jsonb_to_recordset(${JSON.stringify(
             runs.map((run) => ({
               id: run.id,
               case_definition_id: run.caseDefinitionId,
+              execution_case_definition_id: run.executionCaseDefinitionId ?? run.caseDefinitionId,
               case_version: run.caseVersion,
               display_name: run.displayName,
               class_name: run.className,
+              case_type: run.caseType ?? "testng",
+              class_data_json: run.classData?.json ?? null,
+              class_data_size_bytes: run.classData?.sizeBytes ?? null,
+              class_data_sha256: run.classData?.sha256 ?? null,
+              ddt_sr_num: run.ddtSrNum ?? null,
               parameters_json: JSON.stringify(run.parameters ?? {}),
             })),
           )}::jsonb)
-                 AS s(id text, case_definition_id text, case_version integer, display_name text,
-                      class_name text, parameters_json text)`);
+                 AS s(id text, case_definition_id text, execution_case_definition_id text,
+                      case_version integer, display_name text, class_name text, case_type text,
+                      class_data_json text, class_data_size_bytes integer, class_data_sha256 text,
+                      ddt_sr_num text, parameters_json text)`);
       }
       if (record.dispatchJob) {
         await transaction.execute(sql`
@@ -521,9 +532,21 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
       runs: runRows.map((run) => ({
         id: run.id,
         caseDefinitionId: run.caseDefinitionId,
+        executionCaseDefinitionId: run.executionCaseDefinitionId ?? run.caseDefinitionId,
         caseVersion: run.caseVersion,
         displayName: run.displayName,
         className: run.className,
+        caseType: run.caseType,
+        ...(run.ddtSrNum ? { ddtSrNum: run.ddtSrNum } : {}),
+        ...(run.classDataJson && run.classDataSizeBytes && run.classDataSha256
+          ? {
+              classData: {
+                json: run.classDataJson,
+                sizeBytes: run.classDataSizeBytes,
+                sha256: run.classDataSha256,
+              },
+            }
+          : {}),
         parameters: stringRecord(run.parametersJson),
       })),
     };
@@ -1221,9 +1244,12 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
           id: string;
           attempt_count: number;
           case_definition_id: string;
+          execution_case_definition_id: string | null;
           case_version: number;
           class_name: string;
           parameters_json: string;
+          class_data_size_bytes: number | null;
+          class_data_sha256: string | null;
         }>(sql`
           UPDATE execution_runs run
           SET status = 'assigned',
@@ -1245,7 +1271,8 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
             AND run.held_round = 0
             AND (run.queue_deadline_at IS NULL OR run.queue_deadline_at > ${input.scheduledAt})
           RETURNING run.id, run.attempt_count, run.case_definition_id, run.case_version,
-                    run.class_name, run.parameters_json`);
+                    run.execution_case_definition_id, run.class_name, run.parameters_json,
+                    run.class_data_size_bytes, run.class_data_sha256`);
         const updatedRunById = new Map(updatedRuns.rows.map((row) => [row.id, row]));
         const reservedDecisions = acceptedDecisions.filter((decision) =>
           updatedRunById.has(decision.executionRunId),
@@ -1257,8 +1284,11 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
               reservedDecisions.map((decision) => {
                 const run = updatedRunById.get(decision.executionRunId)!;
                 return [
-                  `${run.case_definition_id}:${run.case_version}`,
-                  { caseDefinitionId: run.case_definition_id, caseVersion: run.case_version },
+                  `${run.execution_case_definition_id ?? run.case_definition_id}:${run.case_version}`,
+                  {
+                    caseDefinitionId: run.execution_case_definition_id ?? run.case_definition_id,
+                    caseVersion: run.case_version,
+                  },
                 ] as const;
               }),
             ).values(),
@@ -1291,7 +1321,9 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
           const assignmentRows = [];
           for (const decision of reservedDecisions) {
             const run = updatedRunById.get(decision.executionRunId)!;
-            const source = sourceByCase.get(`${run.case_definition_id}:${run.case_version}`);
+            const source = sourceByCase.get(
+              `${run.execution_case_definition_id ?? run.case_definition_id}:${run.case_version}`,
+            );
             if (!source) throw new Error("Cannot schedule a case without its source JAR.");
             attemptRows.push({
               id: decision.attemptId,
@@ -1318,6 +1350,14 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
                   className: run.class_name,
                   parameters: stringRecord(run.parameters_json),
                   source,
+                  ...(run.class_data_size_bytes && run.class_data_sha256
+                    ? {
+                        classData: {
+                          sizeBytes: Number(run.class_data_size_bytes),
+                          sha256: run.class_data_sha256,
+                        },
+                      }
+                    : {}),
                   ...(adapterRuntime ? { adapterRuntime } : {}),
                   environment: environmentVariables(lockedBatch.environmentJson),
                   secretBindings: secretBindings(lockedBatch.secretBindingsJson),
@@ -2088,6 +2128,7 @@ function executionSpec(input: {
   className: string;
   parameters: Record<string, string>;
   source: { id: string; sha256: string; sizeBytes: number };
+  classData?: { sizeBytes: number; sha256: string };
   adapterRuntime?: ProjectAdapterRuntime;
   environment: ExecutionEnvironmentVariable[];
   secretBindings: ExecutionEnvironmentSecretBinding[];
@@ -2109,6 +2150,18 @@ function executionSpec(input: {
       sha256: input.source.sha256,
     },
     ...runtimeInputs,
+    ...(input.classData
+      ? [
+          {
+            inputId: `class-data-${input.executionRunId}`,
+            kind: "class-data" as const,
+            targetPath: `inputs/class-data/${input.executionRunId}.json`,
+            mediaType: "application/json" as const,
+            sizeBytes: input.classData.sizeBytes,
+            sha256: input.classData.sha256,
+          },
+        ]
+      : []),
   ];
   return {
     schemaVersion: 1,
@@ -2340,6 +2393,8 @@ function toExecutionRun(row: typeof pgExecutionRuns.$inferSelect): ExecutionRun 
     caseVersion: row.caseVersion,
     displayName: row.displayName,
     className: row.className,
+    caseType: row.caseType,
+    ...(row.ddtSrNum ? { ddtSrNum: row.ddtSrNum } : {}),
     status: row.status,
     ...(row.assignedRunnerId ? { assignedRunnerId: row.assignedRunnerId } : {}),
     attemptCount: row.attemptCount,

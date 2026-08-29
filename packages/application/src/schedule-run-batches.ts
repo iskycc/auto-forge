@@ -30,6 +30,7 @@ import {
   type SchedulingPlan,
   type SchedulingThresholds,
 } from "@autoforge/domain";
+import { createHash } from "node:crypto";
 
 import type {
   CaseSuiteRepository,
@@ -48,6 +49,7 @@ import { CoalescedOperation } from "./coalesced-operation";
 const OFFLINE_AFTER_SECONDS = 45;
 const RUNNER_METRICS_THROTTLE_MS = 30_000;
 const MAXIMUM_SCHEDULING_WINDOW = 4_096;
+const MAXIMUM_CLASS_DATA_BYTES = 128 * 1_024 * 1_024;
 
 export type CaseLogRerunLogTarget = {
   projectId: string;
@@ -100,7 +102,10 @@ export class RunBatchSchedulingService {
       throw new DomainError("CASE_SUITE_DISABLED", "已停用的用例任务不能创建新批次。");
     }
     const enabledCases = suite.items.filter((item) => item.caseDefinition.enabled);
-    if (enabledCases.length === 0) {
+    const enabledDdtCases = (suite.ddtItems ?? []).filter(
+      (item) => item.ddtCase.executionClass?.enabled && !item.ddtCase.executionClass.archived,
+    );
+    if (enabledCases.length + enabledDdtCases.length === 0) {
       throw new DomainError("RUN_BATCH_EMPTY", "用例任务中没有可执行的启用用例。");
     }
     // 任务执行只读取任务的版本化策略快照。顶栏快捷执行不得制造一份易漂移的第二配置源。
@@ -182,14 +187,19 @@ export class RunBatchSchedulingService {
         testName: suitePolicy.adapter.testName,
         environmentAddresses: [...suitePolicy.adapter.environmentAddresses],
       },
-      runs: enabledCases.map((item) => ({
-        id: this.ids.next(),
-        caseDefinitionId: item.caseDefinition.id,
-        caseVersion: item.caseDefinition.currentVersion,
-        displayName: item.caseDefinition.displayName,
-        className: item.caseDefinition.className,
-        parameters: { ...item.caseDefinition.parameters },
-      })),
+      runs: [
+        ...enabledCases.map((item) => ({
+          id: this.ids.next(),
+          caseDefinitionId: item.caseDefinition.id,
+          executionCaseDefinitionId: item.caseDefinition.id,
+          caseVersion: item.caseDefinition.currentVersion,
+          displayName: item.caseDefinition.displayName,
+          className: item.caseDefinition.className,
+          caseType: "testng" as const,
+          parameters: { ...item.caseDefinition.parameters },
+        })),
+        ...enabledDdtCases.map((item) => ddtExecutionRun(this.ids.next(), item.ddtCase)),
+      ],
       dispatchJob,
       scheduledFor,
       createdAt,
@@ -924,15 +934,72 @@ export class RunBatchSchedulingService {
       );
     } else {
       const enabledCases = suite.items.filter((item) => item.caseDefinition.enabled);
-      await this.inspectSuiteVersion(suite, enabledCases, blockers);
-      if (enabledCases.length === 0) {
+      const ddtCases = suite.ddtItems ?? [];
+      const enabledDdtCases = ddtCases.filter(
+        (item) => item.ddtCase.executionClass?.enabled && !item.ddtCase.executionClass.archived,
+      );
+      await this.inspectSuiteVersion(suite, enabledCases, ddtCases, blockers);
+      for (const item of ddtCases) {
+        if (!item.ddtCase.executionClass) {
+          blockers.push(
+            blocker(
+              "DDT_EXECUTION_CLASS_REQUIRED",
+              "input",
+              `DDT 用例 ${item.ddtCase.caseId} 尚未设置执行类。`,
+              { caseDefinitionId: item.ddtCase.id },
+            ),
+          );
+        } else if (!item.ddtCase.executionClass.enabled || item.ddtCase.executionClass.archived) {
+          blockers.push(
+            blocker(
+              "DDT_EXECUTION_CLASS_UNAVAILABLE",
+              "input",
+              `DDT 用例 ${item.ddtCase.caseId} 的执行类已停用或归档。`,
+              { caseDefinitionId: item.ddtCase.executionClass.caseDefinitionId },
+            ),
+          );
+        }
+        const bytes = Buffer.byteLength(JSON.stringify(item.ddtCase.data), "utf8");
+        if (bytes > MAXIMUM_CLASS_DATA_BYTES) {
+          blockers.push(
+            blocker(
+              "DDT_CLASS_DATA_TOO_LARGE",
+              "input",
+              `DDT 用例 ${item.ddtCase.caseId} 的 classDataFile 超过 128 MiB。`,
+              { caseDefinitionId: item.ddtCase.id },
+            ),
+          );
+        }
+      }
+      if (ddtCases.length > 0 && !usesTaskAdapter(suite.policy.adapter)) {
+        blockers.push(
+          blocker(
+            "DDT_ADAPTER_REQUIRED",
+            "parameter",
+            "任务包含 DDT 用例，必须启用 CoTest Adapter。",
+            { path: ["suiteId"] },
+          ),
+        );
+      }
+      if (enabledCases.length + enabledDdtCases.length === 0) {
         blockers.push(
           blocker("RUN_BATCH_EMPTY", "parameter", "用例任务中没有可执行的启用用例。", {
             path: ["suiteId"],
           }),
         );
       } else {
-        await this.inspectExecutionInputs(enabledCases, blockers);
+        await this.inspectExecutionInputs(
+          [
+            ...enabledCases,
+            ...enabledDdtCases.map((item) => ({
+              caseDefinition: {
+                id: item.ddtCase.executionClass!.caseDefinitionId,
+                sourceId: item.ddtCase.executionClass!.sourceId,
+              },
+            })),
+          ],
+          blockers,
+        );
       }
       if (usesTaskAdapter(suite.policy.adapter)) {
         await this.inspectAdapterRuntime(suite.projectId, blockers, suite.policy.projectVersionId);
@@ -952,6 +1019,7 @@ export class RunBatchSchedulingService {
   private async inspectSuiteVersion(
     suite: CaseSuiteDetails,
     enabledCases: CaseSuiteDetails["items"],
+    ddtCases: CaseSuiteDetails["ddtItems"],
     blockers: RunBatchPreflightBlocker[],
   ): Promise<void> {
     const projectVersionId = suite.policy.projectVersionId;
@@ -972,6 +1040,16 @@ export class RunBatchSchedulingService {
           "CASE_SUITE_VERSION_MISMATCH",
           "input",
           "任务中包含其他项目版本的用例，请重新整理任务成员。",
+          { path: ["suiteId"] },
+        ),
+      );
+    }
+    if (ddtCases.some((item) => item.ddtCase.projectVersionId !== projectVersionId)) {
+      blockers.push(
+        blocker(
+          "DDT_CASE_SUITE_VERSION_MISMATCH",
+          "input",
+          "任务中包含其他项目版本的 DDT 用例，请重新整理任务成员。",
           { path: ["suiteId"] },
         ),
       );
@@ -1277,6 +1355,43 @@ export class RunBatchSchedulingService {
       return [];
     }
   }
+}
+
+function ddtExecutionRun(
+  id: string,
+  ddtCase: CaseSuiteDetails["ddtItems"][number]["ddtCase"],
+): import("./ports").CreateRunBatchRecord["runs"][number] {
+  const executionClass = ddtCase.executionClass;
+  if (!executionClass) {
+    throw new DomainError(
+      "DDT_EXECUTION_CLASS_REQUIRED",
+      `DDT 用例 ${ddtCase.caseId} 尚未设置执行类。`,
+    );
+  }
+  const json = `${JSON.stringify(ddtCase.data)}\n`;
+  const sizeBytes = Buffer.byteLength(json, "utf8");
+  if (sizeBytes > MAXIMUM_CLASS_DATA_BYTES) {
+    throw new DomainError(
+      "DDT_CLASS_DATA_TOO_LARGE",
+      `DDT 用例 ${ddtCase.caseId} 的 classDataFile 超过 128 MiB。`,
+    );
+  }
+  return {
+    id,
+    caseDefinitionId: ddtCase.id,
+    executionCaseDefinitionId: executionClass.caseDefinitionId,
+    caseVersion: executionClass.currentVersion,
+    displayName: ddtCase.caseId,
+    className: executionClass.className,
+    caseType: "ddt",
+    ddtSrNum: ddtCase.srNum,
+    parameters: {},
+    classData: {
+      json,
+      sizeBytes,
+      sha256: createHash("sha256").update(json).digest("hex"),
+    },
+  };
 }
 
 function delayedStart(createdAt: string, delaySeconds: number): string {

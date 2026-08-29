@@ -13,6 +13,17 @@ export type DdtScope = {
   testStageId: string;
 };
 
+/** DDT 用例实际执行时复用的 TestNG 类。来源必须与 DDT 用例处于同一项目版本和测试阶段。 */
+export type DdtExecutionClass = {
+  caseDefinitionId: string;
+  className: string;
+  displayName: string;
+  sourceId: string;
+  currentVersion: number;
+  enabled: boolean;
+  archived: boolean;
+};
+
 export type DdtCaseSummary = DdtScope & {
   id: string;
   caseId: string;
@@ -21,6 +32,7 @@ export type DdtCaseSummary = DdtScope & {
   sourceName: string;
   revision: number;
   updatedAt: string;
+  executionClass?: DdtExecutionClass;
 };
 
 export type DdtCase = DdtCaseSummary & {

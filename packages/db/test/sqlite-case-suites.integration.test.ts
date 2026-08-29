@@ -297,10 +297,39 @@ describe("SQLite case suite lifecycle", () => {
         versionId: "sv-2",
         updatedAt: timestamp,
       });
+      handle.client
+        .prepare(
+          `INSERT INTO ddt_cases
+           (id, project_id, project_version_id, test_stage_id, case_id, case_id_normalized,
+            sr_num, sr_num_normalized, case_kind, data_json, execution_case_definition_id,
+            source_name, revision, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'standard', ?, ?, ?, 1, ?, ?)`,
+        )
+        .run(
+          "ddt-1",
+          DEFAULT_PROJECT_ID,
+          "project-version-1",
+          "stage-1",
+          "ORDER-1",
+          "order-1",
+          "SR-ORDER",
+          "sr-order",
+          JSON.stringify({ CaseID: "ORDER-1", srNum: "SR-ORDER", amount: 100 }),
+          "case-1",
+          "orders.xlsx",
+          timestamp,
+          timestamp,
+        );
+      await suites.addDdtCases({
+        suiteId: "suite-1",
+        items: [{ id: "ddt-item-1", ddtCaseId: "ddt-1" }],
+        versionId: "sv-ddt-3",
+        updatedAt: timestamp,
+      });
       await suites.updateSuite({
         suiteId: "suite-1",
-        expectedRevision: 2,
-        versionId: "sv-3",
+        expectedRevision: 3,
+        versionId: "sv-4",
         changeReason: "suite.update:policy",
         updatedAt: timestamp,
         policy: {
@@ -309,10 +338,10 @@ describe("SQLite case suite lifecycle", () => {
             enabled: true,
             suiteName: "task-suite",
             testName: "task-test",
-            environmentAddresses: ["10.0.0.9", "10.0.0.10"],
+            environmentAddresses: ["10.0.0.9", "10.0.0.10", "10.0.0.11"],
           },
           priority: 5,
-          concurrency: 2,
+          concurrency: 3,
           retryLimit: 3,
           projectVersionId: "project-version-1",
           queueTimeoutMs: 120_000,
@@ -395,7 +424,7 @@ describe("SQLite case suite lifecycle", () => {
         queueTimeoutMs: 120_000,
         executionTimeoutMs: 600_000,
         policy: {
-          concurrency: 2,
+          concurrency: 3,
           runnerLabels: ["gpu"],
           artifactPatterns: ["reports/**", "logs/*.txt"],
         },
@@ -405,7 +434,7 @@ describe("SQLite case suite lifecycle", () => {
           "SELECT execution_spec_json FROM assignments WHERE batch_id = ? ORDER BY execution_run_id",
         )
         .all(batch.id) as Array<{ execution_spec_json: string }>;
-      expect(specRows).toHaveLength(2);
+      expect(specRows).toHaveLength(3);
       const specs = specRows.map((row) => JSON.parse(row.execution_spec_json)) as Array<{
         requiredLabels: string[];
         requiredCapabilities: string[];
@@ -417,7 +446,15 @@ describe("SQLite case suite lifecycle", () => {
           environmentAddress: string;
           caseTimeoutSeconds: number;
         };
-        inputs: Array<{ kind: string; downloadUrl?: string }>;
+        inputs: Array<{
+          inputId: string;
+          kind: string;
+          targetPath: string;
+          mediaType: string;
+          sizeBytes: number;
+          sha256: string;
+          downloadUrl?: string;
+        }>;
         timeoutMs: number;
       }>;
       const spec = specs[0]!;
@@ -436,7 +473,44 @@ describe("SQLite case suite lifecycle", () => {
       expect(specs.map((candidate) => candidate.adapter.environmentAddress)).toEqual([
         "10.0.0.9",
         "10.0.0.10",
+        "10.0.0.11",
       ]);
+      const ddtSpec = specs.find((candidate) =>
+        candidate.inputs.some((input) => input.kind === "class-data"),
+      );
+      expect(ddtSpec).toBeDefined();
+      expect(ddtSpec?.inputs.find((input) => input.kind === "class-data")).toMatchObject({
+        inputId: expect.stringMatching(/^class-data-/),
+        targetPath: expect.stringMatching(/^inputs\/class-data\/.+\.json$/),
+        mediaType: "application/json",
+      });
+      const storedDdtRun = handle.client
+        .prepare(
+          `SELECT case_type, ddt_sr_num, class_data_json, class_data_size_bytes,
+                  class_data_sha256, execution_case_definition_id
+           FROM execution_runs WHERE case_type = 'ddt' LIMIT 1`,
+        )
+        .get() as {
+        case_type: string;
+        ddt_sr_num: string;
+        class_data_json: string;
+        class_data_size_bytes: number;
+        class_data_sha256: string;
+        execution_case_definition_id: string;
+      };
+      expect(storedDdtRun).toMatchObject({
+        case_type: "ddt",
+        ddt_sr_num: "SR-ORDER",
+        execution_case_definition_id: "case-1",
+      });
+      expect(JSON.parse(storedDdtRun.class_data_json)).toEqual({
+        CaseID: "ORDER-1",
+        srNum: "SR-ORDER",
+        amount: 100,
+      });
+      expect(Buffer.byteLength(storedDdtRun.class_data_json)).toBe(
+        storedDdtRun.class_data_size_bytes,
+      );
       expect(spec.requiredCapabilities).toEqual(
         expect.arrayContaining(["adapter:cotest-testng-v1", "runtime:project-assets-v1"]),
       );
@@ -497,9 +571,19 @@ async function fixture() {
     normalizedName: "v1",
     recordedAt: timestamp,
   });
+  await new SqliteProjectStructureRepository(handle).createStage({
+    id: "stage-1",
+    projectId: DEFAULT_PROJECT_ID,
+    projectVersionId: "project-version-1",
+    name: "System Test",
+    normalizedName: "system test",
+    description: "",
+    recordedAt: timestamp,
+  });
   await catalog.importCatalog({
     projectId: DEFAULT_PROJECT_ID,
     projectVersionId: "project-version-1",
+    testStageId: "stage-1",
     sourceId: "source-1",
     objectKey: "jars/aa/source.jar",
     displayName: "source",
