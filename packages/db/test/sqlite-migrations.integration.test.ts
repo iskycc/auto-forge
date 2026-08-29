@@ -1206,6 +1206,62 @@ describe("SQLite migrations", { timeout: 15_000 }, () => {
     }
   });
 
+  it("adds directory-authentication defaults to existing LDAP settings", async () => {
+    const directory = await mkdtemp(resolve(tmpdir(), "autoforge-ldap-directory-auth-"));
+    temporaryDirectories.push(directory);
+    const databasePath = resolve(directory, "autoforge.sqlite");
+    const migrationsFolder = resolve(import.meta.dirname, "../drizzle/sqlite");
+    const migrationFiles = (await readdir(migrationsFolder))
+      .filter((name) => /^\d+_.+\.sql$/.test(name))
+      .sort();
+    const migration = "0055_ldap_directory_authentication.sql";
+    const migrationIndex = migrationFiles.indexOf(migration);
+    expect(migrationIndex).toBeGreaterThan(0);
+    const database = new Database(databasePath);
+    try {
+      database.pragma("foreign_keys = ON");
+      for (const fileName of migrationFiles.slice(0, migrationIndex)) {
+        database.exec(await readFile(resolve(migrationsFolder, fileName), "utf8"));
+      }
+      database.exec(`
+        INSERT INTO ldap_configurations
+          (id, enabled, urls_json, tls_mode, ca_pem, verify_tls_certificate,
+           connect_timeout_ms, operation_timeout_ms, page_size, maximum_users,
+           synchronization_interval_minutes, bind_dn, bind_password_encrypted, user_base_dn,
+           user_filter, user_id_attribute, username_attribute, display_name_attribute,
+           email_attribute, group_base_dn, group_filter, group_member_attribute,
+           created_at, updated_at, version)
+        VALUES
+          ('default', 1, '["ldap://ldap.internal:389"]', 'starttls', NULL, 1,
+           5000, 10000, 500, 5000, 0, '', NULL, 'ou=people,dc=example,dc=test',
+           '(uid={username})', 'entryUUID', 'uid', 'displayName', 'mail',
+           'ou=groups,dc=example,dc=test', '(member={userDn})', 'member',
+           '2026-08-29T00:00:00.000Z', '2026-08-29T00:00:00.000Z', 1);
+      `);
+      database.exec(await readFile(resolve(migrationsFolder, migration), "utf8"));
+      expect(
+        database
+          .prepare(
+            `SELECT group_attribute, group_name_attribute, default_role, transport_mode
+             FROM ldap_configurations WHERE id='default'`,
+          )
+          .get(),
+      ).toEqual({
+        group_attribute: "memberOf",
+        group_name_attribute: "dn",
+        default_role: "editor",
+        transport_mode: "starttls",
+      });
+      expect(() =>
+        database
+          .prepare("UPDATE ldap_configurations SET default_role='owner' WHERE id='default'")
+          .run(),
+      ).toThrow();
+    } finally {
+      database.close();
+    }
+  });
+
   it("backfills existing execution runs when adding DDT execution snapshots", async () => {
     const directory = await mkdtemp(resolve(tmpdir(), "autoforge-ddt-execution-migration-"));
     temporaryDirectories.push(directory);

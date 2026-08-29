@@ -16,7 +16,7 @@ The suite is divided by failure domain so each scenario can run alone with an is
 | `round-summary`           | `playwright test tests/e2e/all-rounds.spec.ts`           | Final summary, running-case filter, parallel Jenkins recovery timeline and fixed-layout geometry        |
 | `runner-real-lite`        | `scripts/quality/test-real-agent.sh`                     | Release-built Go Agent, offline Java/TestNG and real PTY lifecycle in Lite                              |
 | `batch-input-sharing`     | `scripts/quality/test-batch-input-sharing.sh`            | Real Agent JAR/JDK reuse across refill/restart and terminal cleanup                                     |
-| `ldap-real`               | `scripts/quality/test-ldap-e2e.sh`                       | Private-CA LDAPS/StartTLS directory in an internal container network                                    |
+| `ldap-real`               | `scripts/quality/test-ldap-e2e.sh`                       | Private-CA LDAPS and plain LDAP URL-driven authentication in an internal container network              |
 | `runner-ssh-install`      | `scripts/quality/test-runner-install-e2e.sh`             | Password/PAM SSH, encrypted connection profiles, batch update and real systemd                          |
 | `container-executor`      | `scripts/quality/test-container-executor.sh`             | Immutable offline executor image, isolation and cancellation cleanup                                    |
 | `platform-retention`      | `playwright test tests/e2e/platform-operations.spec.ts`  | Configuration conflicts, diagnostics and retention previews                                             |

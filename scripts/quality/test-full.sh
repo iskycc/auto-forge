@@ -457,7 +457,7 @@ run_full_ldap_flow() {
   E2E_LDAP_EXTERNAL_BASE_URL=http://127.0.0.1:3199 \
   E2E_LDAP_EXTERNAL_DIRECTORY_HOST=127.0.0.1 \
   E2E_LDAP_LDAPS_PORT=5636 \
-  E2E_LDAP_STARTTLS_PORT=5389 \
+  E2E_LDAP_PLAIN_PORT=5389 \
   E2E_ADMIN_BOOTSTRAP_TOKEN="${admin_bootstrap_token}" \
     bash "${repository_root}/scripts/quality/test-ldap-e2e.sh"
 }

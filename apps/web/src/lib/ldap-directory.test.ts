@@ -7,8 +7,8 @@ import { LdapDirectory, ldapConnectionPlan, type LdapConnector } from "./ldap-di
 
 const baseConfiguration: DirectoryConfiguration = {
   enabled: true,
-  urls: ["ldaps://ldap-a.internal:636", "ldaps://ldap-b.internal:636"],
-  tlsMode: "ldaps",
+  url: "ldaps://ldap.internal:636",
+  transportMode: "ldaps",
   verifyTlsCertificate: true,
   connectTimeoutMs: 2_000,
   operationTimeoutMs: 5_000,
@@ -18,64 +18,107 @@ const baseConfiguration: DirectoryConfiguration = {
   bindDn: "cn=service,dc=example,dc=test",
   bindPassword: "bind-secret",
   userBaseDn: "ou=people,dc=example,dc=test",
-  userFilter: "(&(objectClass=person)(uid={username}))",
-  userIdAttribute: "entryUUID",
+  userFilter: "(&(objectClass=person)(uid={{username}}))",
   usernameAttribute: "uid",
   displayNameAttribute: "displayName",
   emailAttribute: "mail",
-  groupBaseDn: "ou=groups,dc=example,dc=test",
-  groupFilter: "(&(objectClass=groupOfNames)(member={userDn}))",
-  groupMemberAttribute: "member",
+  groupAttribute: "memberOf",
+  groupSearchBase: "ou=groups,dc=example,dc=test",
+  groupSearchFilter: "(&(objectClass=groupOfNames)(member={{userDn}}))",
+  groupNameAttribute: "cn",
+  defaultRole: "editor",
   createdAt: "2026-08-09T00:00:00.000Z",
   updatedAt: "2026-08-09T00:00:00.000Z",
   version: 1,
 };
 
-describe("LDAP directory matrix", () => {
+describe("LDAP directory compatibility", () => {
   beforeEach(() => vi.restoreAllMocks());
 
-  it("pins TLS 1.2, validates certificates and carries a private CA for LDAPS and StartTLS", () => {
+  it("derives plain LDAP and implicit TLS directly from the configured URL", () => {
     const caPem = "-----BEGIN CERTIFICATE-----\nprivate-ca\n-----END CERTIFICATE-----";
-    const ldaps = ldapConnectionPlan({ ...baseConfiguration, caPem }, baseConfiguration.urls[0]!);
+    const ldaps = ldapConnectionPlan({ ...baseConfiguration, caPem }, baseConfiguration.url);
     expect(ldaps.clientOptions).toMatchObject({
       strictDN: true,
       tlsOptions: { minVersion: "TLSv1.2", rejectUnauthorized: true },
     });
     expect(ldaps.clientOptions.tlsOptions?.ca?.[0]?.toString("utf8")).toBe(caPem);
-    expect(ldaps).not.toHaveProperty("startTlsOptions");
 
-    const startTls = ldapConnectionPlan(
-      { ...baseConfiguration, caPem, tlsMode: "starttls" },
+    const plain = ldapConnectionPlan(
+      { ...baseConfiguration, url: "ldap://ldap.internal:389", transportMode: "plain" },
       "ldap://ldap.internal:389",
     );
-    expect(startTls.clientOptions).not.toHaveProperty("tlsOptions");
-    expect(startTls.startTlsOptions).toMatchObject({
+    expect(plain.clientOptions).not.toHaveProperty("tlsOptions");
+    expect(plain).not.toHaveProperty("startTlsOptions");
+
+    const legacyStartTls = ldapConnectionPlan(
+      { ...baseConfiguration, url: "ldap://ldap.internal:636", transportMode: "starttls" },
+      "ldap://ldap.internal:636",
+    );
+    expect(legacyStartTls.clientOptions).not.toHaveProperty("tlsOptions");
+    expect(legacyStartTls.startTlsOptions).toMatchObject({
       minVersion: "TLSv1.2",
       rejectUnauthorized: true,
     });
+
+    const legacyImplicitTls = ldapConnectionPlan(
+      { ...baseConfiguration, url: "ldap://ldap.internal:636" },
+      "ldap://ldap.internal:636",
+    );
+    expect(legacyImplicitTls.clientOptions.tlsOptions).toMatchObject({ minVersion: "TLSv1.2" });
   });
 
-  it("keeps TLS 1.2 while explicitly allowing certificate verification to be disabled", () => {
+  it("keeps TLS encryption while explicitly allowing certificate verification to be disabled", () => {
     const ldaps = ldapConnectionPlan(
       { ...baseConfiguration, verifyTlsCertificate: false },
-      baseConfiguration.urls[0]!,
+      baseConfiguration.url,
     );
     expect(ldaps.clientOptions.tlsOptions).toMatchObject({
       minVersion: "TLSv1.2",
       rejectUnauthorized: false,
     });
-
-    const startTls = ldapConnectionPlan(
-      { ...baseConfiguration, tlsMode: "starttls", verifyTlsCertificate: false },
-      "ldap://ldap.internal:389",
-    );
-    expect(startTls.startTlsOptions).toMatchObject({
-      minVersion: "TLSv1.2",
-      rejectUnauthorized: false,
-    });
   });
 
-  it("uses paging, maps multiple and nested groups, and keeps user enumeration bounded", async () => {
+  it("allows anonymous search, maps case-insensitive attributes and reads direct memberOf values", async () => {
+    const search = vi.fn(async () => ({
+      searchEntries: [
+        {
+          dn: "uid=one,ou=people,dc=example,dc=test",
+          UID: "One",
+          DISPLAYNAME: "User One",
+          MAIL: "one@example.test",
+          "memberOf;range=0-*": [
+            "cn=Viewers,ou=groups,dc=example,dc=test",
+            "cn=viewers,ou=groups,dc=example,dc=test",
+          ],
+        },
+      ],
+    }));
+    const client = fakeClient(search);
+    const directory = new LdapDirectory(async () => client);
+    const configuration = {
+      ...baseConfiguration,
+      bindDn: "",
+      bindPassword: "",
+      groupSearchBase: "",
+    };
+
+    await expect(directory.authenticate(configuration, "One", "Directory!123")).resolves.toEqual(
+      expect.objectContaining({
+        subject: "one",
+        username: "One",
+        displayName: "User One",
+        groupDns: ["cn=Viewers,ou=groups,dc=example,dc=test"],
+      }),
+    );
+    expect(client.bind).not.toHaveBeenCalledWith("", "");
+    expect(client.bind).toHaveBeenCalledWith(
+      "uid=one,ou=people,dc=example,dc=test",
+      "Directory!123",
+    );
+  });
+
+  it("uses paging and maps Group search results to their configured human-readable name", async () => {
     const search = vi.fn(async (baseDn: string, options: Record<string, unknown>) => {
       if (baseDn === baseConfiguration.userBaseDn) {
         expect(options).toMatchObject({
@@ -86,7 +129,6 @@ describe("LDAP directory matrix", () => {
           searchEntries: [
             {
               dn: "uid=one,ou=people,dc=example,dc=test",
-              entryUUID: "subject-1",
               uid: "one",
               displayName: "User One",
               mail: "one@example.test",
@@ -95,31 +137,61 @@ describe("LDAP directory matrix", () => {
         };
       }
       expect(String(options.filter)).toContain("uid=one,ou=people,dc=example,dc=test");
-      return {
-        searchEntries: [
-          { dn: "cn=direct,ou=groups,dc=example,dc=test" },
-          { dn: "cn=nested,ou=groups,dc=example,dc=test" },
-        ],
-      };
+      return { searchEntries: [{ CN: "AutoForge Viewers" }, { cn: "Release Operators" }] };
     });
     const client = fakeClient(search);
     const directory = new LdapDirectory(async () => client);
+    const configuration = {
+      ...baseConfiguration,
+      emailAttribute: "",
+      groupAttribute: "",
+    };
 
-    await expect(directory.listUsers(baseConfiguration)).resolves.toEqual([
+    await expect(directory.listUsers(configuration)).resolves.toEqual([
       expect.objectContaining({
-        subject: "subject-1",
+        subject: "one",
         username: "one",
+        groupDns: ["AutoForge Viewers", "Release Operators"],
+      }),
+    ]);
+    expect(client.bind).toHaveBeenCalledWith(configuration.bindDn, configuration.bindPassword);
+    expect(search.mock.calls[0]?.[1]).toMatchObject({
+      attributes: ["uid", "displayName"],
+    });
+    expect(client.unbind).toHaveBeenCalledOnce();
+  });
+
+  it("keeps historical DN-based Group mappings usable after upgrade", async () => {
+    const search = vi.fn(async (baseDn: string) =>
+      baseDn === baseConfiguration.userBaseDn
+        ? {
+            searchEntries: [
+              {
+                dn: "uid=one,ou=people,dc=example,dc=test",
+                uid: "one",
+                displayName: "User One",
+              },
+            ],
+          }
+        : {
+            searchEntries: [
+              { dn: "cn=Viewers,ou=groups,dc=example,dc=test" },
+              { dn: "cn=Auditors,ou=groups,dc=example,dc=test" },
+            ],
+          },
+    );
+    const directory = new LdapDirectory(async () => fakeClient(search));
+
+    await expect(
+      directory.listUsers({ ...baseConfiguration, groupNameAttribute: "dn" }),
+    ).resolves.toEqual([
+      expect.objectContaining({
         groupDns: [
-          "cn=direct,ou=groups,dc=example,dc=test",
-          "cn=nested,ou=groups,dc=example,dc=test",
+          "cn=Viewers,ou=groups,dc=example,dc=test",
+          "cn=Auditors,ou=groups,dc=example,dc=test",
         ],
       }),
     ]);
-    expect(client.bind).toHaveBeenCalledWith(
-      baseConfiguration.bindDn,
-      baseConfiguration.bindPassword,
-    );
-    expect(client.unbind).toHaveBeenCalledOnce();
   });
 
   it("escapes special filter characters and rejects duplicate directory identities", async () => {
@@ -136,19 +208,7 @@ describe("LDAP directory matrix", () => {
     ).rejects.toMatchObject({ code: "LDAP_CREDENTIAL_REJECTED" });
   });
 
-  it("fails over after a timeout and reports directory loss when every server fails", async () => {
-    const working = fakeClient(
-      vi.fn().mockResolvedValue({ searchEntries: [{ entryUUID: "service" }] }),
-    );
-    let attempts = 0;
-    const connector: LdapConnector = async () => {
-      attempts += 1;
-      if (attempts === 1) throw new Error("ETIMEDOUT");
-      return working;
-    };
-    await expect(new LdapDirectory(connector).test(baseConfiguration)).resolves.toBeUndefined();
-    expect(attempts).toBe(2);
-
+  it("reports directory loss when the configured server times out", async () => {
     const unavailable = new LdapDirectory(async () => {
       throw new Error("ETIMEDOUT");
     });
@@ -162,7 +222,6 @@ function fakeClient(search: ReturnType<typeof vi.fn>) {
   return {
     bind: vi.fn().mockResolvedValue(undefined),
     search,
-    startTLS: vi.fn().mockResolvedValue(undefined),
     unbind: vi.fn().mockResolvedValue(undefined),
   } as unknown as Awaited<ReturnType<LdapConnector>>;
 }

@@ -24,4 +24,17 @@ describe("LDAP diagnostics", () => {
       message: expect.stringContaining("LDAP_DNS_FAILED"),
     });
   });
+
+  it("explains when a directory rejects plaintext bind connections", () => {
+    expect(
+      ldapDiagnostic(
+        new Error("0x60 connection closed ECONNRESET"),
+        "bind",
+        "ldap://ldap.internal:389",
+      ),
+    ).toMatchObject({
+      code: "LDAP_PLAINTEXT_BIND_REJECTED",
+      message: expect.stringContaining("ldaps://"),
+    });
+  });
 });

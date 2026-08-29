@@ -278,6 +278,9 @@ export const ldapConfigurations = sqliteTable("ldap_configurations", {
   enabled: integer("enabled", { mode: "boolean" }).notNull().default(false),
   urlsJson: text("urls_json").notNull(),
   tlsMode: text("tls_mode", { enum: ["ldaps", "starttls"] }).notNull(),
+  transportMode: text("transport_mode", { enum: ["ldaps", "starttls", "plain"] })
+    .notNull()
+    .default("ldaps"),
   verifyTlsCertificate: integer("verify_tls_certificate", { mode: "boolean" })
     .notNull()
     .default(true),
@@ -298,6 +301,11 @@ export const ldapConfigurations = sqliteTable("ldap_configurations", {
   groupBaseDn: text("group_base_dn"),
   groupFilter: text("group_filter"),
   groupMemberAttribute: text("group_member_attribute").notNull(),
+  groupAttribute: text("group_attribute").notNull().default("memberOf"),
+  groupNameAttribute: text("group_name_attribute").notNull().default("cn"),
+  defaultRole: text("default_role", { enum: ["admin", "editor", "viewer"] })
+    .notNull()
+    .default("editor"),
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull(),
   version: integer("version").notNull().default(1),

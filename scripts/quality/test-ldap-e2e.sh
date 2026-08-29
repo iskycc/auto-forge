@@ -13,7 +13,7 @@ readonly run_identity="${GITHUB_RUN_ID//[^0-9A-Za-z_-]/_}-${GITHUB_RUN_ATTEMPT//
 readonly external_network="${E2E_LDAP_EXTERNAL_NETWORK:-}"
 readonly external_directory_host="${E2E_LDAP_EXTERNAL_DIRECTORY_HOST:-}"
 readonly external_ldaps_port="${E2E_LDAP_LDAPS_PORT:-5636}"
-readonly external_starttls_port="${E2E_LDAP_STARTTLS_PORT:-5389}"
+readonly external_plain_ldap_port="${E2E_LDAP_PLAIN_PORT:-5389}"
 readonly network_name="${external_network:-autoforge-ldap-${run_identity}}"
 readonly ldap_container="autoforge-ldap-directory-${run_identity}"
 readonly web_container="autoforge-ldap-web-${run_identity}"
@@ -142,7 +142,7 @@ start_isolated_services() {
   if [[ -n "${external_directory_host}" ]]; then
     directory_publish_arguments=(
       --publish "127.0.0.1:${external_ldaps_port}:636"
-      --publish "127.0.0.1:${external_starttls_port}:389"
+      --publish "127.0.0.1:${external_plain_ldap_port}:389"
     )
   fi
   if [[ "${E2E_LDAP_SKIP_PULL:-0}" != "1" ]]; then
@@ -186,10 +186,8 @@ start_isolated_services() {
     -x -H ldaps://ldap:636 \
     -D cn=admin,dc=example,dc=test -w "Admin!Directory123" \
     -b dc=example,dc=test -s base dn
-  wait_until "OpenLDAP StartTLS" docker exec \
-    --env LDAPTLS_CACERT=/container/service/slapd/assets/certs/ca.crt \
-    "${ldap_container}" ldapsearch \
-    -x -ZZ -H ldap://ldap:389 \
+  wait_until "OpenLDAP plain LDAP" docker exec "${ldap_container}" ldapsearch \
+    -x -H ldap://ldap:389 \
     -D cn=admin,dc=example,dc=test -w "Admin!Directory123" \
     -b dc=example,dc=test -s base dn
 
@@ -240,7 +238,7 @@ export E2E_LDAP_CA_FILE="${acceptance_directory}/certs/ca.crt"
 export E2E_LDAP_CONTAINER="${ldap_container}"
 if [[ -n "${external_directory_host}" ]]; then
   export E2E_LDAP_LDAPS_URL="ldaps://${external_directory_host}:${external_ldaps_port}"
-  export E2E_LDAP_STARTTLS_URL="ldap://${external_directory_host}:${external_starttls_port}"
+  export E2E_LDAP_PLAIN_URL="ldap://${external_directory_host}:${external_plain_ldap_port}"
 fi
 if ! pnpm exec playwright test --config playwright.full.config.ts tests/e2e/ldap-real.spec.ts; then
   echo "Playwright LDAP acceptance failed; dumping container logs for diagnosis." >&2
@@ -249,7 +247,7 @@ if ! pnpm exec playwright test --config playwright.full.config.ts tests/e2e/ldap
   exit 1
 fi
 if [[ -n "${E2E_LDAP_EXTERNAL_BASE_URL:-}" ]]; then
-  printf 'Real LDAPS/StartTLS identity acceptance passed against the external control plane.\n'
+  printf 'Real LDAPS/plain-LDAP identity acceptance passed against the external control plane.\n'
 else
-  printf 'Real LDAPS/StartTLS identity acceptance passed inside an outbound-blocked service network.\n'
+  printf 'Real LDAPS/plain-LDAP identity acceptance passed inside an outbound-blocked service network.\n'
 fi

@@ -244,14 +244,65 @@ export class PostgresIdentityAccessRepository implements IdentityAccessRepositor
         );
         return mapUserRow(user);
       }
-      const collision = await client.query(
-        "SELECT id FROM users WHERE normalized_username = $1 LIMIT 1",
+      const collision = await client.query<{ id: string; source: "local" | "ldap" }>(
+        "SELECT id, source FROM users WHERE normalized_username = $1 LIMIT 1 FOR UPDATE",
         [normalizedUsername],
       );
-      if (collision.rowCount) {
-        throw new DomainError(
-          "IDENTITY_CONFLICT",
-          "LDAP 用户名与已有账号冲突，需要管理员显式处理。",
+      if (collision.rows[0]) {
+        if (collision.rows[0].source !== "ldap") {
+          throw new DomainError(
+            "IDENTITY_CONFLICT",
+            "LDAP 用户名与已有账号冲突，需要管理员显式处理。",
+          );
+        }
+        const updated = await client.query<UserDatabaseRow>(
+          `UPDATE users SET username = $1, normalized_username = $2, display_name = $3,
+             email = $4, status = 'active', updated_at = $5, version = version + 1
+           WHERE id = $6 RETURNING *`,
+          [
+            input.identity.username,
+            normalizedUsername,
+            input.identity.displayName,
+            input.identity.email ?? null,
+            input.synchronizedAt,
+            collision.rows[0].id,
+          ],
+        );
+        const linkedIdentity = await client.query<{ id: string }>(
+          `SELECT id FROM external_identities
+           WHERE provider_id = $1 AND user_id = $2 LIMIT 1 FOR UPDATE`,
+          [input.providerId, collision.rows[0].id],
+        );
+        if (linkedIdentity.rows[0]) {
+          await client.query(
+            `UPDATE external_identities SET subject = $1, directory_username = $2,
+               attributes_json = $3, synchronized_at = $4 WHERE id = $5`,
+            [
+              input.identity.subject,
+              input.identity.username,
+              JSON.stringify(input.identity.attributes),
+              input.synchronizedAt,
+              linkedIdentity.rows[0].id,
+            ],
+          );
+        } else {
+          await client.query(
+            `INSERT INTO external_identities
+             (id, user_id, provider_id, subject, directory_username, attributes_json, synchronized_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+            [
+              input.externalIdentityId,
+              collision.rows[0].id,
+              input.providerId,
+              input.identity.subject,
+              input.identity.username,
+              JSON.stringify(input.identity.attributes),
+              input.synchronizedAt,
+            ],
+          );
+        }
+        return mapUserRow(
+          requiredRow(updated.rows[0], "PostgreSQL did not return migrated LDAP user."),
         );
       }
       const created = await client.query<UserDatabaseRow>(
@@ -789,10 +840,11 @@ export class PostgresIdentityAccessRepository implements IdentityAccessRepositor
          connect_timeout_ms, operation_timeout_ms,
          page_size, maximum_users, synchronization_interval_minutes, bind_dn, bind_password_encrypted, user_base_dn, user_filter, user_id_attribute,
          username_attribute, display_name_attribute, email_attribute, group_base_dn,
-         group_filter, group_member_attribute, created_at, updated_at, version
+         group_filter, group_member_attribute, group_attribute, group_name_attribute,
+         default_role, transport_mode, created_at, updated_at, version
        ) VALUES (
          'default', $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
-         $14, $15, $16, $17, $18, $19, $20, $21, $22, $22, 1
+         $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $26, 1
        ) ON CONFLICT (id) DO UPDATE SET
          enabled = EXCLUDED.enabled, urls_json = EXCLUDED.urls_json,
          tls_mode = EXCLUDED.tls_mode, ca_pem = EXCLUDED.ca_pem,
@@ -810,12 +862,16 @@ export class PostgresIdentityAccessRepository implements IdentityAccessRepositor
          email_attribute = EXCLUDED.email_attribute, group_base_dn = EXCLUDED.group_base_dn,
          group_filter = EXCLUDED.group_filter,
          group_member_attribute = EXCLUDED.group_member_attribute,
+         group_attribute = EXCLUDED.group_attribute,
+         group_name_attribute = EXCLUDED.group_name_attribute,
+         default_role = EXCLUDED.default_role,
+         transport_mode = EXCLUDED.transport_mode,
          updated_at = EXCLUDED.updated_at, version = ldap_configurations.version + 1
        RETURNING *`,
       [
         input.enabled,
-        JSON.stringify(input.urls),
-        input.tlsMode,
+        JSON.stringify(input.url ? [input.url] : []),
+        input.transportMode === "ldaps" ? "ldaps" : "starttls",
         input.caPem ?? null,
         input.verifyTlsCertificate,
         input.connectTimeoutMs,
@@ -827,13 +883,17 @@ export class PostgresIdentityAccessRepository implements IdentityAccessRepositor
         input.bindPasswordEncrypted ?? null,
         input.userBaseDn,
         input.userFilter,
-        input.userIdAttribute,
+        input.usernameAttribute,
         input.usernameAttribute,
         input.displayNameAttribute,
         input.emailAttribute,
-        input.groupBaseDn ?? null,
-        input.groupFilter ?? null,
-        input.groupMemberAttribute,
+        input.groupSearchBase || null,
+        input.groupSearchFilter || null,
+        input.groupAttribute || "memberOf",
+        input.groupAttribute,
+        input.groupNameAttribute,
+        input.defaultRole,
+        input.transportMode,
         input.updatedAt,
       ],
     );
@@ -923,6 +983,30 @@ export class PostgresIdentityAccessRepository implements IdentityAccessRepositor
         }
       }
     });
+  }
+
+  async assignLdapInitialRole(input: {
+    userId: string;
+    roleId: string;
+    projectId?: string;
+    recordedAt: string;
+  }): Promise<void> {
+    await this.ready();
+    if (input.projectId) {
+      await this.handle.pool.query(
+        `INSERT INTO project_role_bindings
+         (user_id, project_id, role_id, source, assigned_at, assigned_by)
+         VALUES ($1, $2, $3, 'manual', $4, NULL) ON CONFLICT DO NOTHING`,
+        [input.userId, input.projectId, input.roleId, input.recordedAt],
+      );
+      return;
+    }
+    await this.handle.pool.query(
+      `INSERT INTO user_system_roles
+       (user_id, role_id, source, assigned_at, assigned_by)
+       VALUES ($1, $2, 'manual', $3, NULL) ON CONFLICT DO NOTHING`,
+      [input.userId, input.roleId, input.recordedAt],
+    );
   }
 
   async disableMissingLdapUsers(input: {
@@ -1081,6 +1165,10 @@ type LdapDatabaseRow = QueryResultRow & {
   group_base_dn: string | null;
   group_filter: string | null;
   group_member_attribute: string;
+  group_attribute: string;
+  group_name_attribute: string;
+  default_role: "admin" | "editor" | "viewer";
+  transport_mode: "ldaps" | "starttls" | "plain";
   created_at: string;
   updated_at: string;
   version: number;
@@ -1209,8 +1297,8 @@ function mapRoleRow(row: RoleDatabaseRow): Role {
 function mapLdapRow(row: LdapDatabaseRow): StoredLdapConfiguration {
   return {
     enabled: row.enabled,
-    urls: stringArray(row.urls_json),
-    tlsMode: row.tls_mode,
+    url: stringArray(row.urls_json)[0] ?? "",
+    transportMode: row.transport_mode,
     verifyTlsCertificate: row.verify_tls_certificate,
     ...(row.ca_pem ? { caPem: row.ca_pem } : {}),
     connectTimeoutMs: row.connect_timeout_ms,
@@ -1222,13 +1310,14 @@ function mapLdapRow(row: LdapDatabaseRow): StoredLdapConfiguration {
     ...(row.bind_password_encrypted ? { bindPasswordEncrypted: row.bind_password_encrypted } : {}),
     userBaseDn: row.user_base_dn,
     userFilter: row.user_filter,
-    userIdAttribute: row.user_id_attribute,
     usernameAttribute: row.username_attribute,
     displayNameAttribute: row.display_name_attribute,
     emailAttribute: row.email_attribute,
-    ...(row.group_base_dn ? { groupBaseDn: row.group_base_dn } : {}),
-    ...(row.group_filter ? { groupFilter: row.group_filter } : {}),
-    groupMemberAttribute: row.group_member_attribute,
+    groupAttribute: row.group_attribute,
+    groupSearchBase: row.group_base_dn ?? "",
+    groupSearchFilter: row.group_filter ?? "(member={{userDn}})",
+    groupNameAttribute: row.group_name_attribute,
+    defaultRole: row.default_role,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     version: row.version,

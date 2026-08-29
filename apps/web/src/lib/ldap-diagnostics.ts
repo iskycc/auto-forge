@@ -2,7 +2,11 @@ import { DomainError, isDomainError } from "@autoforge/domain";
 
 export type LdapOperationPhase = "connect" | "bind" | "search";
 
-export function ldapDiagnostic(error: unknown, phase: LdapOperationPhase): DomainError {
+export function ldapDiagnostic(
+  error: unknown,
+  phase: LdapOperationPhase,
+  url?: string,
+): DomainError {
   if (isDomainError(error)) return error;
   const signal = errorSignal(error);
   if (matches(signal, ["ENOTFOUND", "EAI_AGAIN", "getaddrinfo"])) {
@@ -37,6 +41,16 @@ export function ldapDiagnostic(error: unknown, phase: LdapOperationPhase): Domai
     );
   }
   if (phase === "bind") {
+    if (matches(signal, ["0x60"]) && matches(signal, ["ECONNRESET", "connection closed"])) {
+      const usesPlaintext = url ? new URL(url).protocol === "ldap:" : false;
+      return diagnostic(
+        usesPlaintext ? "LDAP_PLAINTEXT_BIND_REJECTED" : "LDAP_BIND_CONNECTION_RESET",
+        usesPlaintext
+          ? "LDAP 服务在 Bind 阶段重置了明文连接；目录若要求加密，请改用 ldaps:// 地址和 LDAPS 端口（通常为 636）。"
+          : "LDAP 服务在 Bind 阶段重置了连接；请检查服务地址、端口、Bind DN 及目录服务器的加密访问策略。",
+        error,
+      );
+    }
     if (
       matches(signal, ["InvalidCredentials", "invalid credentials", "code 49", "resultCode: 49"])
     ) {

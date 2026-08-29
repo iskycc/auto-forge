@@ -40,6 +40,8 @@ import type {
 
 const SYSTEM_ADMIN_ROLE_ID = "00000000-0000-7000-8100-000000000001";
 const PROJECT_ADMIN_ROLE_ID = "00000000-0000-7000-8100-000000000002";
+const TEST_MANAGER_ROLE_ID = "00000000-0000-7000-8100-000000000003";
+const VIEWER_ROLE_ID = "00000000-0000-7000-8100-000000000005";
 const LDAP_PROVIDER_ID = "ldap:default";
 const MAXIMUM_FAILED_LOGINS = 5;
 const LOGIN_LOCK_MINUTES = 15;
@@ -170,9 +172,18 @@ export class IdentityAccessService {
     if (credential?.user.source === "local") {
       return this.loginLocally(input.password, credential, requestId);
     }
+    if (credential?.user.source === "ldap" && credential.user.status !== "active") {
+      return this.rejectedLogin("ldap", credential.user.id, requestId);
+    }
     const ldapConfiguration = await this.repository.getLdapConfiguration();
     if (credential?.user.source === "ldap" || ldapConfiguration?.enabled) {
-      return this.loginWithLdap(input.username, input.password, ldapConfiguration, requestId);
+      return this.loginWithLdap(
+        input.username,
+        input.password,
+        credential,
+        ldapConfiguration,
+        requestId,
+      );
     }
     return this.loginLocally(input.password, null, requestId);
   }
@@ -744,6 +755,7 @@ export class IdentityAccessService {
     this.authorize(actor, "ldap.manage");
     const existing = await this.repository.getLdapConfiguration();
     let bindPasswordEncrypted = existing?.bindPasswordEncrypted;
+    if (input.clearBindPassword) bindPasswordEncrypted = undefined;
     if (input.bindPassword !== undefined) {
       if (!this.cipher.available) {
         throw new DomainError(
@@ -753,13 +765,13 @@ export class IdentityAccessService {
       }
       bindPasswordEncrypted = this.cipher.encrypt(input.bindPassword, "ldap:default:bind-password");
     }
-    if (!bindPasswordEncrypted) {
-      throw new DomainError("LDAP_BIND_PASSWORD_REQUIRED", "首次配置 LDAP 时必须提供 bind 密码。");
+    if (input.bindDn && !bindPasswordEncrypted) {
+      throw new DomainError("LDAP_BIND_PASSWORD_REQUIRED", "填写 Bind DN 时必须提供 bind 密码。");
     }
     const saved = await this.repository.saveLdapConfiguration({
       enabled: input.enabled,
-      urls: input.urls,
-      tlsMode: input.tlsMode,
+      url: input.url,
+      transportMode: ldapTransportMode(input),
       verifyTlsCertificate: input.verifyTlsCertificate,
       ...(input.caPem ? { caPem: input.caPem } : {}),
       connectTimeoutMs: input.connectTimeoutMs,
@@ -768,16 +780,17 @@ export class IdentityAccessService {
       maximumUsers: input.maximumUsers,
       synchronizationIntervalMinutes: input.synchronizationIntervalMinutes,
       bindDn: input.bindDn,
-      bindPasswordEncrypted,
+      ...(bindPasswordEncrypted ? { bindPasswordEncrypted } : {}),
       userBaseDn: input.userBaseDn,
       userFilter: input.userFilter,
-      userIdAttribute: input.userIdAttribute,
       usernameAttribute: input.usernameAttribute,
       displayNameAttribute: input.displayNameAttribute,
       emailAttribute: input.emailAttribute,
-      ...(input.groupBaseDn ? { groupBaseDn: input.groupBaseDn } : {}),
-      ...(input.groupFilter ? { groupFilter: input.groupFilter } : {}),
-      groupMemberAttribute: input.groupMemberAttribute,
+      groupAttribute: input.groupAttribute,
+      groupSearchBase: input.groupSearchBase,
+      groupSearchFilter: input.groupSearchFilter,
+      groupNameAttribute: input.groupNameAttribute,
+      defaultRole: input.defaultRole,
       updatedAt: this.now(),
     });
     await this.audit({
@@ -789,9 +802,8 @@ export class IdentityAccessService {
       requestId,
       details: {
         enabled: saved.enabled,
-        tlsMode: saved.tlsMode,
+        protocol: saved.transportMode,
         verifyTlsCertificate: saved.verifyTlsCertificate,
-        serverCount: saved.urls.length,
       },
     });
     return publicLdapConfiguration(saved);
@@ -804,11 +816,16 @@ export class IdentityAccessService {
   ): Promise<void> {
     this.authorize(actor, "ldap.manage");
     const existing = await this.repository.getLdapConfiguration();
-    const bindPassword = input.bindPassword ?? this.decryptStoredBindPassword(existing);
+    const bindPassword =
+      input.bindPassword ??
+      (input.bindDn && !input.clearBindPassword ? this.decryptStoredBindPassword(existing) : "");
+    if (input.bindDn && !bindPassword) {
+      throw new DomainError("LDAP_BIND_PASSWORD_REQUIRED", "填写 Bind DN 时必须提供 bind 密码。");
+    }
     await this.directory.test({
       enabled: input.enabled,
-      urls: input.urls,
-      tlsMode: input.tlsMode,
+      url: input.url,
+      transportMode: ldapTransportMode(input),
       verifyTlsCertificate: input.verifyTlsCertificate,
       ...(input.caPem ? { caPem: input.caPem } : {}),
       connectTimeoutMs: input.connectTimeoutMs,
@@ -820,13 +837,14 @@ export class IdentityAccessService {
       bindPassword,
       userBaseDn: input.userBaseDn,
       userFilter: input.userFilter,
-      userIdAttribute: input.userIdAttribute,
       usernameAttribute: input.usernameAttribute,
       displayNameAttribute: input.displayNameAttribute,
       emailAttribute: input.emailAttribute,
-      ...(input.groupBaseDn ? { groupBaseDn: input.groupBaseDn } : {}),
-      ...(input.groupFilter ? { groupFilter: input.groupFilter } : {}),
-      groupMemberAttribute: input.groupMemberAttribute,
+      groupAttribute: input.groupAttribute,
+      groupSearchBase: input.groupSearchBase,
+      groupSearchFilter: input.groupSearchFilter,
+      groupNameAttribute: input.groupNameAttribute,
+      defaultRole: input.defaultRole,
       createdAt: existing?.createdAt ?? this.now(),
       updatedAt: this.now(),
       version: existing?.version ?? 1,
@@ -838,7 +856,9 @@ export class IdentityAccessService {
       resourceId: "default",
       result: "succeeded",
       requestId,
-      details: { serverCount: input.urls.length },
+      details: {
+        protocol: ldapTransportMode(input),
+      },
     });
   }
 
@@ -898,10 +918,10 @@ export class IdentityAccessService {
     const synchronizedAt = this.now();
     let createdOrUpdated = 0;
     for (const identity of identities) {
-      const existing = await this.repository.findExternalIdentity(
-        LDAP_PROVIDER_ID,
-        identity.subject,
-      );
+      const [existing, credential] = await Promise.all([
+        this.repository.findExternalIdentity(LDAP_PROVIDER_ID, identity.subject),
+        this.repository.findUserByUsername(normalizeUsername(identity.username)),
+      ]);
       const user = await this.repository.upsertLdapUser({
         userId: existing?.userId ?? this.ids.next(),
         externalIdentityId: existing?.id ?? this.ids.next(),
@@ -915,6 +935,9 @@ export class IdentityAccessService {
         mappings,
         recordedAt: synchronizedAt,
       });
+      if (!existing && !credential) {
+        await this.assignLdapInitialRole(user.id, configuration.defaultRole, synchronizedAt);
+      }
       createdOrUpdated += 1;
     }
     const disabledUserIds = await this.repository.disableMissingLdapUsers({
@@ -1146,6 +1169,7 @@ export class IdentityAccessService {
   private async loginWithLdap(
     username: string,
     password: string,
+    credential: StoredUserCredential | null,
     configuration: StoredLdapConfiguration | null,
     requestId?: string,
   ): Promise<SessionResult> {
@@ -1190,6 +1214,9 @@ export class IdentityAccessService {
       mappings,
       recordedAt: synchronizedAt,
     });
+    if (!credential && !existing) {
+      await this.assignLdapInitialRole(user.id, configuration.defaultRole, synchronizedAt);
+    }
     const session = await this.createSession(user.id);
     await this.successfulLogin("ldap", user.id, requestId);
     return session;
@@ -1249,6 +1276,7 @@ export class IdentityAccessService {
   }
 
   private decryptStoredBindPassword(stored: StoredLdapConfiguration | null): string {
+    if (stored && !stored.bindDn) return "";
     if (!stored?.bindPasswordEncrypted || !this.cipher.available) {
       throw new DomainError(
         "LDAP_BIND_PASSWORD_UNAVAILABLE",
@@ -1262,6 +1290,27 @@ export class IdentityAccessService {
     const user = await this.repository.findUser(userId);
     if (!user) throw new DomainError("USER_NOT_FOUND", "指定用户不存在。");
     return user;
+  }
+
+  private async assignLdapInitialRole(
+    userId: string,
+    defaultRole: StoredLdapConfiguration["defaultRole"],
+    recordedAt: string,
+  ): Promise<void> {
+    if (defaultRole === "admin") {
+      await this.repository.assignLdapInitialRole({
+        userId,
+        roleId: SYSTEM_ADMIN_ROLE_ID,
+        recordedAt,
+      });
+      return;
+    }
+    await this.repository.assignLdapInitialRole({
+      userId,
+      roleId: defaultRole === "editor" ? TEST_MANAGER_ROLE_ID : VIEWER_ROLE_ID,
+      projectId: DEFAULT_PROJECT_ID,
+      recordedAt,
+    });
   }
 
   private async requiredRole(roleId: string) {
@@ -1366,6 +1415,13 @@ function validatedPermissions(values: string[]): Permission[] {
     throw new DomainError("PERMISSION_INVALID", "角色包含未知权限。");
   }
   return unique.sort() as Permission[];
+}
+
+function ldapTransportMode(
+  input: LdapConfigurationInput,
+): StoredLdapConfiguration["transportMode"] {
+  if (input.legacyStartTls) return "starttls";
+  return input.url.toLocaleLowerCase("en-US").startsWith("ldaps://") ? "ldaps" : "plain";
 }
 
 function publicLdapConfiguration(configuration: StoredLdapConfiguration) {

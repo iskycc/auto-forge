@@ -31,7 +31,7 @@ describe("SQLite identity access", () => {
     const clock = new MutableClock("2026-08-09T00:00:00.000Z");
     const ids = new SequentialIds();
     const tokens = new TestTokens();
-    const directoryIdentity: DirectoryIdentity = {
+    let directoryIdentity: DirectoryIdentity = {
       subject: "directory-subject-1",
       username: "ldap.user",
       displayName: "LDAP User",
@@ -173,8 +173,7 @@ describe("SQLite identity access", () => {
       });
       await service.saveLdapConfiguration(administrator, {
         enabled: true,
-        urls: ["ldaps://ldap.example.test:636"],
-        tlsMode: "ldaps",
+        url: "ldaps://ldap.example.test:636",
         verifyTlsCertificate: false,
         connectTimeoutMs: 5_000,
         operationTimeoutMs: 10_000,
@@ -183,15 +182,17 @@ describe("SQLite identity access", () => {
         synchronizationIntervalMinutes: 0,
         bindDn: "cn=service,dc=example,dc=test",
         bindPassword: "Bind!Password123",
+        clearBindPassword: false,
         userBaseDn: "ou=people,dc=example,dc=test",
         userFilter: "(&(objectClass=person)(uid={username}))",
-        userIdAttribute: "entryUUID",
         usernameAttribute: "uid",
         displayNameAttribute: "displayName",
         emailAttribute: "mail",
-        groupBaseDn: "ou=groups,dc=example,dc=test",
-        groupFilter: "(&(objectClass=groupOfNames)(member={userDn}))",
-        groupMemberAttribute: "member",
+        groupAttribute: "memberOf",
+        groupSearchBase: "ou=groups,dc=example,dc=test",
+        groupSearchFilter: "(&(objectClass=groupOfNames)(member={{userDn}}))",
+        groupNameAttribute: "cn",
+        defaultRole: "editor",
       });
       await expect(service.getLdapConfiguration(administrator)).resolves.toMatchObject({
         verifyTlsCertificate: false,
@@ -220,6 +221,22 @@ describe("SQLite identity access", () => {
       const ldapIdentity = await service.authenticateSession(ldapSession.token);
       expect(ldapIdentity.user).toMatchObject({ source: "ldap", username: "ldap.user" });
       expect(ldapIdentity.projectPermissions[DEFAULT_PROJECT_ID]).toContain("case.read");
+      expect(ldapIdentity.projectPermissions[DEFAULT_PROJECT_ID]).toContain("case.manage");
+      directoryIdentity = {
+        ...directoryIdentity,
+        subject: "ldap.user",
+        displayName: "LDAP User Migrated",
+      };
+      directoryUsers = [directoryIdentity];
+      const migratedLdapSession = await service.login({
+        username: "ldap.user",
+        password: "Directory!123",
+      });
+      const migratedLdapIdentity = await service.authenticateSession(migratedLdapSession.token);
+      expect(migratedLdapIdentity).toMatchObject({
+        user: { id: ldapIdentity.user.id, displayName: "LDAP User Migrated" },
+      });
+      await service.logout(migratedLdapIdentity);
       await expect(
         service.recordTerminalSession(
           ldapIdentity,
@@ -282,6 +299,11 @@ describe("SQLite identity access", () => {
       await expect(service.authenticateSession(activeLdapSession.token)).rejects.toMatchObject({
         code: "AUTH_REQUIRED",
       });
+      const attemptsBeforeDisabledLogin = directoryAuthenticationAttempts;
+      await expect(
+        service.login({ username: "ldap.user", password: "Directory!123" }),
+      ).rejects.toMatchObject({ code: "AUTHENTICATION_FAILED" });
+      expect(directoryAuthenticationAttempts).toBe(attemptsBeforeDisabledLogin);
       await service.recordTerminalLifecycle({
         actorId: administrator.user.id,
         runnerId: "runner-audit",

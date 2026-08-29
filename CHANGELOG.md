@@ -4,6 +4,59 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## 1.6.2 - 2026-08-29
+
+### Changed
+
+- LDAP directory configuration and authentication now follow the proven ddt-insight model: one
+  URL determines plain LDAP or implicit LDAPS, Bind DN is optional for directories that permit
+  anonymous search, and user filters use the explicit `{{username}}` placeholder.
+- Directory attributes are resolved case-insensitively, including option-suffixed and multi-value
+  attributes. Group authorization can use the user's direct `memberOf`-style attribute or a Group
+  search that returns a human-readable group name such as `cn`.
+- First-time LDAP users receive the configured human-readable default role. Local accounts still
+  take precedence, and a disabled LDAP account is rejected before any directory connection.
+
+### Fixed
+
+- LDAP login no longer depends on `entryUUID` or another deployment-specific stable-ID attribute.
+  Existing AutoForge LDAP identities are relinked by their normalized LDAP username on the next
+  successful login instead of being duplicated or rejected.
+- Plain LDAP Bind resets now report that the directory may require an `ldaps://` address instead of
+  collapsing into a generic connection error.
+
+### Tests
+
+- Added contract, directory-client, diagnostics, SQLite identity, SQLite upgrade and real LDAP
+  Playwright coverage for anonymous/service Bind, URL-derived transport, direct and searched groups,
+  default-role provisioning, disabled-user short-circuiting and case-insensitive attributes.
+
+### Database and persisted configuration
+
+- SQLite migration `0055_ldap_directory_authentication.sql` and PostgreSQL migration
+  `0054_ldap_directory_authentication.sql` add the direct Group attribute, Group display-name
+  attribute, default LDAP role and authoritative transport mode.
+
+### Compatibility
+
+- Existing v1 LDAP API payloads remain accepted and are normalized to the new field names. Existing
+  StartTLS rows retain their encrypted StartTLS transport after upgrade; new `ldap://` settings use
+  plain LDAP and new `ldaps://` settings use implicit TLS, matching ddt-insight. Existing Group
+  Search rows retain DN results so already-saved role mappings continue to match; new configurations
+  default to the human-readable `cn` attribute.
+
+### Offline assets
+
+- No dependency, remote asset or runtime network requirement was added.
+
+### Known limitations
+
+- The new directory form intentionally does not create new StartTLS configurations. Historical
+  StartTLS settings remain supported and visible until their LDAP URL is changed.
+- ddt-insight uses one authoritative directory URL. Legacy API payloads containing several LDAP
+  servers remain parseable, but only their first URL is retained; configure upstream LDAP
+  high-availability behind that address when failover is required.
+
 ## 1.6.1 - 2026-08-29
 
 ### Added

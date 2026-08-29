@@ -278,6 +278,9 @@ export const pgLdapConfigurations = pgTable("ldap_configurations", {
   enabled: boolean("enabled").notNull().default(false),
   urlsJson: text("urls_json").notNull(),
   tlsMode: text("tls_mode", { enum: ["ldaps", "starttls"] }).notNull(),
+  transportMode: text("transport_mode", { enum: ["ldaps", "starttls", "plain"] })
+    .notNull()
+    .default("ldaps"),
   verifyTlsCertificate: boolean("verify_tls_certificate").notNull().default(true),
   caPem: text("ca_pem"),
   connectTimeoutMs: integer("connect_timeout_ms").notNull(),
@@ -296,6 +299,11 @@ export const pgLdapConfigurations = pgTable("ldap_configurations", {
   groupBaseDn: text("group_base_dn"),
   groupFilter: text("group_filter"),
   groupMemberAttribute: text("group_member_attribute").notNull(),
+  groupAttribute: text("group_attribute").notNull().default("memberOf"),
+  groupNameAttribute: text("group_name_attribute").notNull().default("cn"),
+  defaultRole: text("default_role", { enum: ["admin", "editor", "viewer"] })
+    .notNull()
+    .default("editor"),
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull(),
   version: integer("version").notNull().default(1),

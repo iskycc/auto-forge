@@ -104,49 +104,181 @@ export const transferProjectOwnerInputSchema = z.object({
   ownerUserId: z.string().min(1).max(128),
 });
 
-export const ldapConfigurationInputSchema = z
-  .object({
-    enabled: z.boolean(),
-    urls: z.array(z.url()).min(1).max(4),
-    tlsMode: z.enum(["ldaps", "starttls"]),
-    verifyTlsCertificate: z.boolean().default(true),
-    caPem: z.string().max(128_000).optional(),
-    connectTimeoutMs: z.number().int().min(500).max(30_000).default(5_000),
-    operationTimeoutMs: z.number().int().min(500).max(60_000).default(10_000),
-    pageSize: z.number().int().min(50).max(1_000).default(500),
-    maximumUsers: z.number().int().min(1).max(50_000).default(5_000),
-    synchronizationIntervalMinutes: z.number().int().min(0).max(10_080).default(0),
-    bindDn: z.string().trim().min(1).max(1024),
-    bindPassword: z.string().min(1).max(4096).optional(),
-    userBaseDn: z.string().trim().min(1).max(1024),
-    userFilter: z.string().trim().min(1).max(1024),
-    userIdAttribute: z.string().trim().min(1).max(128).default("entryUUID"),
-    usernameAttribute: z.string().trim().min(1).max(128).default("uid"),
-    displayNameAttribute: z.string().trim().min(1).max(128).default("displayName"),
-    emailAttribute: z.string().trim().min(1).max(128).default("mail"),
-    groupBaseDn: z.string().trim().max(1024).optional(),
-    groupFilter: z.string().trim().max(1024).optional(),
-    groupMemberAttribute: z.string().trim().min(1).max(128).default("member"),
-  })
+const ldapAttributeSchema = z
+  .string()
+  .trim()
+  .max(128)
+  .regex(/^[a-zA-Z][a-zA-Z0-9;-]*$/u, "LDAP 属性格式不正确。");
+
+const ldapConfigurationCompatibilitySchema = z.object({
+  enabled: z.boolean(),
+  url: z.string().trim().max(2_048).optional(),
+  // v1 compatibility: older clients submitted a server array plus an explicit TLS mode.
+  urls: z.array(z.string().trim().max(2_048)).min(1).max(4).optional(),
+  tlsMode: z.enum(["ldaps", "starttls"]).optional(),
+  verifyTlsCertificate: z.boolean().default(true),
+  caPem: z.string().max(128_000).optional(),
+  connectTimeoutMs: z.number().int().min(1_000).max(30_000).default(5_000),
+  operationTimeoutMs: z.number().int().min(500).max(60_000).default(10_000),
+  pageSize: z.number().int().min(50).max(1_000).default(500),
+  maximumUsers: z.number().int().min(1).max(50_000).default(5_000),
+  synchronizationIntervalMinutes: z.number().int().min(0).max(10_080).default(0),
+  bindDn: z.string().trim().max(2_048).default(""),
+  bindPassword: z.string().min(1).max(4_096).optional(),
+  clearBindPassword: z.boolean().default(false),
+  userBaseDn: z.string().trim().max(2_048).default(""),
+  userFilter: z.string().trim().min(1).max(1_024).default("(uid={{username}})"),
+  usernameAttribute: ldapAttributeSchema.default("uid"),
+  displayNameAttribute: ldapAttributeSchema.default("displayName"),
+  emailAttribute: ldapAttributeSchema.or(z.literal("")).default("mail"),
+  groupAttribute: ldapAttributeSchema.or(z.literal("")).optional(),
+  groupSearchBase: z.string().trim().max(2_048).optional(),
+  groupSearchFilter: z.string().trim().max(1_024).optional(),
+  groupNameAttribute: ldapAttributeSchema.or(z.literal("")).optional(),
+  defaultRole: z.enum(["admin", "editor", "viewer"]).default("editor"),
+  // v1 compatibility aliases. They are normalized to the ddt-insight field names below.
+  userIdAttribute: ldapAttributeSchema.optional(),
+  groupBaseDn: z.string().trim().max(2_048).optional(),
+  groupFilter: z.string().trim().max(1_024).optional(),
+  groupMemberAttribute: ldapAttributeSchema.optional(),
+});
+
+export const ldapConfigurationInputSchema = ldapConfigurationCompatibilitySchema
   .superRefine((value, context) => {
-    if (!value.userFilter.includes("{username}")) {
+    const url = value.url ?? value.urls?.[0] ?? "";
+    if (value.enabled && !url) {
+      context.addIssue({
+        code: "custom",
+        path: ["url"],
+        message: "启用 LDAP 时必须填写服务地址。",
+      });
+    }
+    if (url) validateLdapUrl(url, context);
+    if (value.enabled && !value.userBaseDn) {
+      context.addIssue({
+        code: "custom",
+        path: ["userBaseDn"],
+        message: "启用 LDAP 时必须填写用户 Base DN。",
+      });
+    }
+    if (!hasUsernamePlaceholder(value.userFilter)) {
       context.addIssue({
         code: "custom",
         path: ["userFilter"],
-        message: "用户过滤器必须包含 {username} 占位符。",
+        message: "用户过滤器必须包含 {{username}} 占位符。",
       });
     }
-    if (value.tlsMode === "ldaps" && value.urls.some((url) => !url.startsWith("ldaps://"))) {
-      context.addIssue({ code: "custom", path: ["urls"], message: "LDAPS 模式只允许 ldaps://。" });
-    }
-    if (value.tlsMode === "starttls" && value.urls.some((url) => !url.startsWith("ldap://"))) {
+    const groupSearchBase = value.groupSearchBase ?? value.groupBaseDn ?? "";
+    const groupSearchFilter = value.groupSearchFilter ?? value.groupFilter ?? "";
+    if (groupSearchBase && value.groupNameAttribute === "") {
       context.addIssue({
         code: "custom",
-        path: ["urls"],
-        message: "StartTLS 模式只允许 ldap://。",
+        path: ["groupNameAttribute"],
+        message: "配置 Group Search Base 时必须填写 Group 名称属性。",
       });
     }
+    if (
+      groupSearchBase &&
+      !groupSearchFilter.includes("{{userDn}}") &&
+      !groupSearchFilter.includes("{{username}}") &&
+      !groupSearchFilter.includes("{userDn}") &&
+      !groupSearchFilter.includes("{username}")
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["groupSearchFilter"],
+        message: "Group 过滤器必须包含 {{userDn}} 或 {{username}} 占位符。",
+      });
+    }
+  })
+  .transform((value) => {
+    const rawUrl = value.url ?? value.urls?.[0] ?? "";
+    const groupSearchBase = value.groupSearchBase ?? value.groupBaseDn ?? "";
+    const groupSearchFilter = normalizeDirectoryFilter(
+      value.groupSearchFilter ?? value.groupFilter ?? "(member={{userDn}})",
+    );
+    return {
+      enabled: value.enabled,
+      // Historical StartTLS clients already declared their transport separately. Preserve their
+      // ldap:// URL verbatim so an unusual port cannot be reinterpreted as implicit TLS.
+      url: value.tlsMode === "starttls" ? rawUrl : normalizeLdapUrl(rawUrl),
+      verifyTlsCertificate: value.verifyTlsCertificate,
+      ...(value.caPem ? { caPem: value.caPem } : {}),
+      connectTimeoutMs: value.connectTimeoutMs,
+      operationTimeoutMs: value.operationTimeoutMs,
+      pageSize: value.pageSize,
+      maximumUsers: value.maximumUsers,
+      synchronizationIntervalMinutes: value.synchronizationIntervalMinutes,
+      bindDn: value.bindDn,
+      ...(value.bindPassword ? { bindPassword: value.bindPassword } : {}),
+      clearBindPassword: value.clearBindPassword,
+      userBaseDn: value.userBaseDn,
+      userFilter: normalizeDirectoryFilter(value.userFilter),
+      usernameAttribute: value.usernameAttribute,
+      displayNameAttribute: value.displayNameAttribute,
+      emailAttribute: value.emailAttribute,
+      groupAttribute: value.groupAttribute ?? value.groupMemberAttribute ?? "memberOf",
+      groupSearchBase,
+      groupSearchFilter,
+      groupNameAttribute: value.groupNameAttribute ?? "cn",
+      defaultRole: value.defaultRole,
+      ...(value.tlsMode === "starttls" ? { legacyStartTls: true as const } : {}),
+    };
   });
+
+function validateLdapUrl(value: string, context: z.RefinementCtx): void {
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    context.addIssue({ code: "custom", path: ["url"], message: "LDAP 服务地址格式不正确。" });
+    return;
+  }
+  if (parsed.protocol !== "ldap:" && parsed.protocol !== "ldaps:") {
+    context.addIssue({
+      code: "custom",
+      path: ["url"],
+      message: "LDAP 服务地址必须使用 ldap:// 或 ldaps://。",
+    });
+  }
+  if (!parsed.hostname || parsed.username || parsed.password) {
+    context.addIssue({
+      code: "custom",
+      path: ["url"],
+      message: "LDAP 服务地址不能包含用户名或密码。",
+    });
+  }
+  if ((parsed.pathname && parsed.pathname !== "/") || parsed.search || parsed.hash) {
+    context.addIssue({
+      code: "custom",
+      path: ["url"],
+      message: "LDAP 服务地址只能包含协议、主机和端口。",
+    });
+  }
+}
+
+function normalizeLdapUrl(value: string): string {
+  if (!value) return "";
+  const parsed = new URL(value);
+  return parsed.protocol === "ldap:" && (parsed.port === "636" || parsed.port === "3269")
+    ? value.replace(/^ldap:/iu, "ldaps:")
+    : value;
+}
+
+function hasUsernamePlaceholder(value: string): boolean {
+  return value.includes("{{username}}") || value.includes("{username}");
+}
+
+function normalizeDirectoryFilter(value: string): string {
+  let normalized = value;
+  if (!normalized.includes("{{username}}")) {
+    normalized = normalized.replaceAll("{username}", "{{username}}");
+  }
+  if (!normalized.includes("{{userDn}}")) {
+    normalized = normalized.replaceAll("{userDn}", "{{userDn}}");
+  }
+  return normalized;
+}
 
 export const ldapGroupMappingInputSchema = z.object({
   groupDn: z.string().trim().min(1).max(1024),

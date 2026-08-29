@@ -174,8 +174,8 @@ export interface ProjectStructureRepository {
 
 export type StoredLdapConfiguration = {
   enabled: boolean;
-  urls: string[];
-  tlsMode: "ldaps" | "starttls";
+  url: string;
+  transportMode: "ldaps" | "starttls" | "plain";
   verifyTlsCertificate: boolean;
   caPem?: string;
   connectTimeoutMs: number;
@@ -187,13 +187,14 @@ export type StoredLdapConfiguration = {
   bindPasswordEncrypted?: string;
   userBaseDn: string;
   userFilter: string;
-  userIdAttribute: string;
   usernameAttribute: string;
   displayNameAttribute: string;
   emailAttribute: string;
-  groupBaseDn?: string;
-  groupFilter?: string;
-  groupMemberAttribute: string;
+  groupAttribute: string;
+  groupSearchBase: string;
+  groupSearchFilter: string;
+  groupNameAttribute: string;
+  defaultRole: "admin" | "editor" | "viewer";
   createdAt: string;
   updatedAt: string;
   version: number;
@@ -366,6 +367,12 @@ export interface IdentityAccessRepository {
     userId: string;
     groupDns: string[];
     mappings: Array<{ groupDn: string; roleId: string; projectId?: string; priority: number }>;
+    recordedAt: string;
+  }): Promise<void>;
+  assignLdapInitialRole(input: {
+    userId: string;
+    roleId: string;
+    projectId?: string;
     recordedAt: string;
   }): Promise<void>;
   disableMissingLdapUsers(input: {

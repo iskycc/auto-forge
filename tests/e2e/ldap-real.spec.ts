@@ -21,8 +21,8 @@ test("authenticates and synchronizes against real private-CA LDAP", async ({ bro
   await ensureAdministrator(page);
   const caPem = await readFile(requiredEnvironment("E2E_LDAP_CA_FILE"), "utf8");
   await configureDirectory(page, caPem, "ldaps");
-  await addGroupMapping(page, "cn=auditors,ou=groups,dc=example,dc=test", "审计员");
-  await addGroupMapping(page, "cn=viewers,ou=groups,dc=example,dc=test", "只读观察者", "默认项目");
+  await addGroupMapping(page, "auditors", "审计员");
+  await addGroupMapping(page, "viewers", "只读观察者", "默认项目");
 
   const ldapsContext = await loginWithLdap(browser, "alice", directoryPassword);
   const ldapsPage = ldapsContext.pages()[0]!;
@@ -33,10 +33,10 @@ test("authenticates and synchronizes against real private-CA LDAP", async ({ bro
   await expect(ldapsPage.getByText("LDAP 账号密码由目录服务管理", { exact: false })).toBeVisible();
   await expect(ldapsPage.getByRole("button", { name: "修改密码并重新登录" })).toHaveCount(0);
 
-  await configureDirectory(page, caPem, "starttls");
-  const startTlsContext = await loginWithLdap(browser, "alice", directoryPassword);
+  await configureDirectory(page, caPem, "ldap");
+  const plainLdapContext = await loginWithLdap(browser, "alice", directoryPassword);
   await expect(
-    startTlsContext.pages()[0]!.getByRole("heading", { level: 1, name: /Alice Directory/ }),
+    plainLdapContext.pages()[0]!.getByRole("heading", { level: 1, name: /Alice Directory/ }),
   ).toBeVisible();
 
   const synchronization = await browserJson<{
@@ -79,16 +79,16 @@ test("authenticates and synchronizes against real private-CA LDAP", async ({ bro
   expect(departureSync.body.status).toBe("succeeded");
   expect(departureSync.body.disabledUsers).toBeGreaterThanOrEqual(1);
   await expectSessionRevoked(ldapsPage);
-  await expectSessionRevoked(startTlsContext.pages()[0]!);
+  await expectSessionRevoked(plainLdapContext.pages()[0]!);
 
   await ldapsContext.close();
-  await startTlsContext.close();
+  await plainLdapContext.close();
 });
 
 async function configureDirectory(
   page: Page,
   caPem: string,
-  tlsMode: "ldaps" | "starttls",
+  protocol: "ldaps" | "ldap",
 ): Promise<void> {
   await page.goto("/settings/access?section=ldap");
   const form = page.locator("form", {
@@ -97,30 +97,28 @@ async function configureDirectory(
   const enabled = form.getByLabel("启用 LDAP 登录");
   if (!(await enabled.isChecked())) await enabled.check();
   await expect(form.getByLabel("校验 TLS 服务器证书")).toBeChecked();
-  await form.getByLabel("TLS 模式").selectOption(tlsMode);
   await form
-    .getByLabel("服务器地址（每行一个）")
+    .getByLabel("LDAP 服务地址")
     .fill(
-      tlsMode === "ldaps"
+      protocol === "ldaps"
         ? (process.env.E2E_LDAP_LDAPS_URL ?? "ldaps://ldap:636")
-        : (process.env.E2E_LDAP_STARTTLS_URL ?? "ldap://ldap:389"),
+        : (process.env.E2E_LDAP_PLAIN_URL ?? "ldap://ldap:389"),
     );
-  await form.getByLabel("Bind DN").fill("cn=admin,dc=example,dc=test");
-  const bindPassword = form.getByLabel("Bind 密码");
-  if ((await bindPassword.getAttribute("required")) !== null) {
-    await bindPassword.fill("Admin!Directory123");
-  }
+  await form.getByLabel("Bind DN（可选）").fill("cn=admin,dc=example,dc=test");
+  await form.getByLabel("Bind 密码", { exact: true }).fill("Admin!Directory123");
   await form.getByLabel("LDAP 分页大小").fill("50");
   await form.getByLabel("单次同步用户上限").fill("500");
   await form.getByLabel("计划同步间隔（分钟，0 为关闭）").fill("1");
   await form.getByLabel("用户 Base DN").fill("ou=people,dc=example,dc=test");
-  await form.getByLabel("用户过滤器").fill("(&(objectClass=inetOrgPerson)(uid={username}))");
-  await form.getByLabel("稳定 ID 属性").fill("entryUUID");
+  await form.getByLabel("用户过滤器").fill("(&(objectClass=inetOrgPerson)(uid={{username}}))");
   await form.getByLabel("用户名属性").fill("uid");
-  await form.getByLabel("显示名属性").fill("displayName");
-  await form.getByLabel("邮箱属性").fill("mail");
-  await form.getByLabel("组 Base DN（可选）").fill("ou=groups,dc=example,dc=test");
-  await form.getByLabel(/组过滤器/).fill("(&(objectClass=groupOfNames)(member={userDn}))");
+  await form.getByLabel("显示名称属性").fill("displayName");
+  await form.getByLabel("邮箱属性（可选）").fill("mail");
+  await form.getByLabel("Group Search Base（可选）").fill("ou=groups,dc=example,dc=test");
+  await form
+    .getByLabel("Group Search Filter")
+    .fill("(&(objectClass=groupOfNames)(member={{userDn}}))");
+  await form.getByLabel("Group 名称属性").fill("cn");
   await form.getByLabel("私有 CA PEM（可选）").fill(caPem);
   await form.getByRole("button", { name: "保存 LDAP 配置" }).click();
   await expect(page.getByText("LDAP 配置已加密保存。")).toBeVisible({ timeout: 20_000 });
@@ -129,7 +127,7 @@ async function configureDirectory(
     has: page.getByRole("button", { name: "测试连接" }),
   });
   await persistedForm.getByRole("button", { name: "测试连接" }).click();
-  await expect(page.getByText("LDAP 连接、TLS 和 bind 验证成功。")).toBeVisible({
+  await expect(page.getByText("LDAP 连接、用户与 Group Base DN 验证成功。")).toBeVisible({
     timeout: 20_000,
   });
 }
@@ -144,7 +142,7 @@ async function addGroupMapping(
   const form = page.locator("form", {
     has: page.getByRole("button", { name: "添加组映射" }),
   });
-  await form.getByLabel("LDAP 组 DN").fill(groupDn);
+  await form.getByLabel("LDAP Group 标识").fill(groupDn);
   await form.locator('select[name="roleId"]').selectOption({ label: roleName });
   await form
     .getByLabel("项目（系统角色留空）")

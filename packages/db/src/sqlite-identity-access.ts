@@ -227,15 +227,68 @@ export class SqliteIdentityAccessRepository implements IdentityAccessRepository 
           .run();
       } else {
         const collision = this.handle.db
-          .select({ id: users.id })
+          .select()
           .from(users)
           .where(eq(users.normalizedUsername, normalizedUsername))
           .get();
         if (collision) {
-          throw new DomainError(
-            "IDENTITY_CONFLICT",
-            "LDAP 用户名与已有账号冲突，需要管理员显式处理。",
-          );
+          if (collision.source !== "ldap") {
+            throw new DomainError(
+              "IDENTITY_CONFLICT",
+              "LDAP 用户名与已有账号冲突，需要管理员显式处理。",
+            );
+          }
+          const updated = this.handle.db
+            .update(users)
+            .set({
+              username: input.identity.username,
+              normalizedUsername,
+              displayName: input.identity.displayName,
+              email: input.identity.email ?? null,
+              status: "active",
+              updatedAt: input.synchronizedAt,
+              version: sql`${users.version} + 1`,
+            })
+            .where(eq(users.id, collision.id))
+            .returning()
+            .get();
+          userRow = updated;
+          const linkedIdentity = this.handle.db
+            .select()
+            .from(externalIdentities)
+            .where(
+              and(
+                eq(externalIdentities.providerId, input.providerId),
+                eq(externalIdentities.userId, collision.id),
+              ),
+            )
+            .get();
+          if (linkedIdentity) {
+            this.handle.db
+              .update(externalIdentities)
+              .set({
+                subject: input.identity.subject,
+                directoryUsername: input.identity.username,
+                attributesJson: JSON.stringify(input.identity.attributes),
+                synchronizedAt: input.synchronizedAt,
+              })
+              .where(eq(externalIdentities.id, linkedIdentity.id))
+              .run();
+          } else {
+            this.handle.db
+              .insert(externalIdentities)
+              .values({
+                id: input.externalIdentityId,
+                userId: collision.id,
+                providerId: input.providerId,
+                subject: input.identity.subject,
+                directoryUsername: input.identity.username,
+                attributesJson: JSON.stringify(input.identity.attributes),
+                synchronizedAt: input.synchronizedAt,
+              })
+              .run();
+          }
+          return mapUser(userRow);
         }
         userRow = this.handle.db
           .insert(users)
@@ -918,6 +971,40 @@ export class SqliteIdentityAccessRepository implements IdentityAccessRepository 
     })();
   }
 
+  async assignLdapInitialRole(input: {
+    userId: string;
+    roleId: string;
+    projectId?: string;
+    recordedAt: string;
+  }): Promise<void> {
+    if (input.projectId) {
+      this.handle.db
+        .insert(projectRoleBindings)
+        .values({
+          userId: input.userId,
+          projectId: input.projectId,
+          roleId: input.roleId,
+          source: "manual",
+          assignedAt: input.recordedAt,
+          assignedBy: null,
+        })
+        .onConflictDoNothing()
+        .run();
+      return;
+    }
+    this.handle.db
+      .insert(userSystemRoles)
+      .values({
+        userId: input.userId,
+        roleId: input.roleId,
+        source: "manual",
+        assignedAt: input.recordedAt,
+        assignedBy: null,
+      })
+      .onConflictDoNothing()
+      .run();
+  }
+
   async disableMissingLdapUsers(input: {
     providerId: string;
     activeSubjects: string[];
@@ -1080,8 +1167,9 @@ function ldapConfigurationValues(
   return {
     id: "default",
     enabled: input.enabled,
-    urlsJson: JSON.stringify(input.urls),
-    tlsMode: input.tlsMode,
+    urlsJson: JSON.stringify(input.url ? [input.url] : []),
+    tlsMode: input.transportMode === "ldaps" ? ("ldaps" as const) : ("starttls" as const),
+    transportMode: input.transportMode,
     verifyTlsCertificate: input.verifyTlsCertificate,
     caPem: input.caPem ?? null,
     connectTimeoutMs: input.connectTimeoutMs,
@@ -1093,13 +1181,16 @@ function ldapConfigurationValues(
     bindPasswordEncrypted: input.bindPasswordEncrypted ?? null,
     userBaseDn: input.userBaseDn,
     userFilter: input.userFilter,
-    userIdAttribute: input.userIdAttribute,
+    userIdAttribute: input.usernameAttribute,
     usernameAttribute: input.usernameAttribute,
     displayNameAttribute: input.displayNameAttribute,
     emailAttribute: input.emailAttribute,
-    groupBaseDn: input.groupBaseDn ?? null,
-    groupFilter: input.groupFilter ?? null,
-    groupMemberAttribute: input.groupMemberAttribute,
+    groupBaseDn: input.groupSearchBase || null,
+    groupFilter: input.groupSearchFilter || null,
+    groupMemberAttribute: input.groupAttribute || "memberOf",
+    groupAttribute: input.groupAttribute,
+    groupNameAttribute: input.groupNameAttribute,
+    defaultRole: input.defaultRole,
     createdAt,
     updatedAt: input.updatedAt,
     version: 1,
@@ -1111,8 +1202,8 @@ function mapLdapConfiguration(
 ): StoredLdapConfiguration {
   return {
     enabled: row.enabled,
-    urls: stringArray(row.urlsJson),
-    tlsMode: row.tlsMode,
+    url: stringArray(row.urlsJson)[0] ?? "",
+    transportMode: row.transportMode,
     verifyTlsCertificate: row.verifyTlsCertificate,
     ...(row.caPem ? { caPem: row.caPem } : {}),
     connectTimeoutMs: row.connectTimeoutMs,
@@ -1124,13 +1215,14 @@ function mapLdapConfiguration(
     ...(row.bindPasswordEncrypted ? { bindPasswordEncrypted: row.bindPasswordEncrypted } : {}),
     userBaseDn: row.userBaseDn,
     userFilter: row.userFilter,
-    userIdAttribute: row.userIdAttribute,
     usernameAttribute: row.usernameAttribute,
     displayNameAttribute: row.displayNameAttribute,
     emailAttribute: row.emailAttribute,
-    ...(row.groupBaseDn ? { groupBaseDn: row.groupBaseDn } : {}),
-    ...(row.groupFilter ? { groupFilter: row.groupFilter } : {}),
-    groupMemberAttribute: row.groupMemberAttribute,
+    groupAttribute: row.groupAttribute,
+    groupSearchBase: row.groupBaseDn ?? "",
+    groupSearchFilter: row.groupFilter ?? "(member={{userDn}})",
+    groupNameAttribute: row.groupNameAttribute,
+    defaultRole: row.defaultRole,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
     version: row.version,

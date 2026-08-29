@@ -43,14 +43,14 @@ export class LdapDirectory implements DirectoryPort {
         identity.distinguishedName,
         password,
       );
-      const groupDns = await findGroups(serviceClient, configuration, identity.distinguishedName);
+      const groupDns = await findGroups(serviceClient, configuration, username, identity);
       return { ...identity, groupDns };
     });
   }
 
   async listUsers(configuration: DirectoryConfiguration): Promise<DirectoryIdentity[]> {
     return withServiceClient(configuration, this.connector, async (client) => {
-      const filter = configuration.userFilter.replaceAll("{username}", "*");
+      const filter = replaceDirectoryPlaceholder(configuration.userFilter, "username", "*");
       const result = await client.search(configuration.userBaseDn, {
         scope: "sub",
         filter,
@@ -63,7 +63,7 @@ export class LdapDirectory implements DirectoryPort {
         const identity = mapDirectoryIdentity(entry, configuration);
         identities.push({
           ...identity,
-          groupDns: await findGroups(client, configuration, identity.distinguishedName),
+          groupDns: await findGroups(client, configuration, identity.username, identity),
         });
       }
       return identities;
@@ -77,14 +77,18 @@ async function withServiceClient<T>(
   work: (client: LdapClient, url: string) => Promise<T>,
 ): Promise<T> {
   const failures: DomainError[] = [];
-  for (const url of configuration.urls) {
+  for (const url of [configuration.url]) {
     let client: LdapClient | undefined;
     try {
-      client = await runLdapPhase("connect", () => connector(configuration, url));
-      await runLdapPhase("bind", () =>
-        client!.bind(configuration.bindDn, configuration.bindPassword),
-      );
-      return await runLdapPhase("search", () => work(client!, url));
+      client = await runLdapPhase("connect", () => connector(configuration, url), url);
+      if (configuration.bindDn) {
+        await runLdapPhase(
+          "bind",
+          () => client!.bind(configuration.bindDn, configuration.bindPassword),
+          url,
+        );
+      }
+      return await runLdapPhase("search", () => work(client!, url), url);
     } catch (failure) {
       failures.push(
         isDomainError(failure)
@@ -100,11 +104,15 @@ async function withServiceClient<T>(
   throw combinedLdapFailure(failures);
 }
 
-async function runLdapPhase<T>(phase: LdapOperationPhase, operation: () => Promise<T>): Promise<T> {
+async function runLdapPhase<T>(
+  phase: LdapOperationPhase,
+  operation: () => Promise<T>,
+  url: string,
+): Promise<T> {
   try {
     return await operation();
   } catch (error) {
-    throw ldapDiagnostic(error, phase);
+    throw ldapDiagnostic(error, phase, url);
   }
 }
 
@@ -122,16 +130,25 @@ export function ldapConnectionPlan(configuration: DirectoryConfiguration, url: s
     rejectUnauthorized: configuration.verifyTlsCertificate,
     ...(configuration.caPem ? { ca: [Buffer.from(configuration.caPem, "utf8")] } : {}),
   };
+  const implicitTls = configuration.transportMode !== "starttls" && usesImplicitTls(url);
   return {
     clientOptions: {
       url,
       connectTimeout: configuration.connectTimeoutMs,
       timeout: configuration.operationTimeoutMs,
       strictDN: true,
-      ...(configuration.tlsMode === "ldaps" ? { tlsOptions } : {}),
+      ...(implicitTls ? { tlsOptions } : {}),
     },
-    ...(configuration.tlsMode === "starttls" ? { startTlsOptions: tlsOptions } : {}),
+    ...(configuration.transportMode === "starttls" ? { startTlsOptions: tlsOptions } : {}),
   };
+}
+
+function usesImplicitTls(url: string): boolean {
+  const parsed = new URL(url);
+  return (
+    parsed.protocol === "ldaps:" ||
+    (parsed.protocol === "ldap:" && (parsed.port === "636" || parsed.port === "3269"))
+  );
 }
 
 async function verifyUserPassword(
@@ -157,7 +174,11 @@ async function findUser(
   configuration: DirectoryConfiguration,
   username: string,
 ): Promise<DirectoryIdentity> {
-  const filter = configuration.userFilter.replaceAll("{username}", escapeFilterValue(username));
+  const filter = replaceDirectoryPlaceholder(
+    configuration.userFilter,
+    "username",
+    escapeFilterValue(username),
+  );
   const result = await client.search(configuration.userBaseDn, {
     scope: "sub",
     filter,
@@ -173,19 +194,30 @@ async function findUser(
 async function findGroups(
   client: LdapClient,
   configuration: DirectoryConfiguration,
-  userDn: string,
+  username: string,
+  identity: DirectoryIdentity,
 ): Promise<string[]> {
-  if (!configuration.groupBaseDn || !configuration.groupFilter) return [];
-  const filter = configuration.groupFilter.replaceAll("{userDn}", escapeFilterValue(userDn));
-  const result = await client.search(configuration.groupBaseDn, {
+  if (!configuration.groupSearchBase) return identity.groupDns;
+  const filter = replaceDirectoryPlaceholder(
+    replaceDirectoryPlaceholder(
+      configuration.groupSearchFilter,
+      "username",
+      escapeFilterValue(username),
+    ),
+    "userDn",
+    escapeFilterValue(identity.distinguishedName),
+  );
+  const result = await client.search(configuration.groupSearchBase, {
     scope: "sub",
     filter,
-    attributes: [],
-    sizeLimit: Math.min(configuration.maximumUsers, 10_000),
+    attributes: [configuration.groupNameAttribute],
+    sizeLimit: Math.min(configuration.maximumUsers, 512),
     paged: { pageSize: configuration.pageSize },
   });
-  return (result.searchEntries as SearchEntry[]).flatMap((entry) =>
-    typeof entry.dn === "string" ? [entry.dn] : [],
+  return uniqueAttributes(
+    (result.searchEntries as SearchEntry[]).flatMap((entry) =>
+      attributeTexts(entry, configuration.groupNameAttribute),
+    ),
   );
 }
 
@@ -194,20 +226,17 @@ async function validateSearchAccess(
   configuration: DirectoryConfiguration,
 ): Promise<void> {
   await client.search(configuration.userBaseDn, {
-    scope: "sub",
-    filter: configuration.userFilter.replaceAll("{username}", "*"),
-    attributes: [configuration.userIdAttribute],
+    scope: "base",
+    filter: "(objectClass=*)",
+    attributes: ["1.1"],
     sizeLimit: 1,
     timeLimit: Math.max(1, Math.ceil(configuration.operationTimeoutMs / 1_000)),
   });
-  if (!configuration.groupBaseDn || !configuration.groupFilter) return;
-  await client.search(configuration.groupBaseDn, {
-    scope: "sub",
-    filter: configuration.groupFilter.replaceAll(
-      "{userDn}",
-      escapeFilterValue(configuration.bindDn),
-    ),
-    attributes: [],
+  if (!configuration.groupSearchBase) return;
+  await client.search(configuration.groupSearchBase, {
+    scope: "base",
+    filter: "(objectClass=*)",
+    attributes: ["1.1"],
     sizeLimit: 1,
     timeLimit: Math.max(1, Math.ceil(configuration.operationTimeoutMs / 1_000)),
   });
@@ -218,20 +247,19 @@ function mapDirectoryIdentity(
   configuration: DirectoryConfiguration,
 ): DirectoryIdentity {
   const distinguishedName = stringAttribute(entry, "dn");
-  const subject = stringAttribute(entry, configuration.userIdAttribute);
   const username = stringAttribute(entry, configuration.usernameAttribute);
-  if (!distinguishedName || !subject || !username) {
-    throw new DomainError("LDAP_MAPPING_INVALID", "LDAP 用户缺少 DN、稳定标识或用户名映射属性。");
+  if (!distinguishedName || !username) {
+    throw new DomainError("LDAP_MAPPING_INVALID", "LDAP 用户缺少 DN 或用户名映射属性。");
   }
   const displayName = stringAttribute(entry, configuration.displayNameAttribute) || username;
   const email = stringAttribute(entry, configuration.emailAttribute);
   return {
-    subject,
+    subject: normalizeDirectoryUsername(username),
     username,
     displayName,
     ...(email ? { email } : {}),
     distinguishedName,
-    groupDns: [],
+    groupDns: uniqueAttributes(attributeTexts(entry, configuration.groupAttribute)),
     attributes: Object.fromEntries(
       userAttributes(configuration).flatMap((attribute) => {
         const value = stringAttribute(entry, attribute);
@@ -242,24 +270,57 @@ function mapDirectoryIdentity(
 }
 
 function userAttributes(configuration: DirectoryConfiguration): string[] {
-  return [
-    configuration.userIdAttribute,
+  return uniqueAttributes([
     configuration.usernameAttribute,
     configuration.displayNameAttribute,
     configuration.emailAttribute,
-  ];
+    configuration.groupSearchBase ? "" : configuration.groupAttribute,
+  ]);
 }
 
 function stringAttribute(entry: SearchEntry, attribute: string): string {
-  const value = entry[attribute];
-  if (typeof value === "string") return value;
-  if (Buffer.isBuffer(value)) return value.toString("utf8");
-  if (Array.isArray(value)) {
-    const first = value[0];
-    if (typeof first === "string") return first;
-    if (Buffer.isBuffer(first)) return first.toString("utf8");
+  return attributeTexts(entry, attribute)[0] ?? "";
+}
+
+function attributeTexts(entry: SearchEntry, attribute: string): string[] {
+  if (!attribute) return [];
+  const expected = attribute.toLocaleLowerCase("en-US");
+  return Object.entries(entry)
+    .filter(([name]) => {
+      const normalized = name.toLocaleLowerCase("en-US");
+      return normalized === expected || normalized.startsWith(`${expected};`);
+    })
+    .flatMap(([, value]) => (Array.isArray(value) ? value : [value]))
+    .map((value) => (Buffer.isBuffer(value) ? value.toString("utf8") : String(value ?? "")))
+    .map((value) => value.trim())
+    .filter(Boolean);
+}
+
+function uniqueAttributes(values: string[]): string[] {
+  const unique = new Map<string, string>();
+  for (const rawValue of values) {
+    const value = rawValue.trim();
+    if (!value) continue;
+    const normalized = value.toLocaleLowerCase("en-US");
+    if (!unique.has(normalized)) unique.set(normalized, value);
+    if (unique.size >= 512) break;
   }
-  return "";
+  return [...unique.values()];
+}
+
+function normalizeDirectoryUsername(username: string): string {
+  return username.trim().normalize("NFKC").toLocaleLowerCase("en-US");
+}
+
+function replaceDirectoryPlaceholder(
+  template: string,
+  placeholder: "username" | "userDn",
+  value: string,
+): string {
+  const current = `{{${placeholder}}}`;
+  return template.includes(current)
+    ? template.replaceAll(current, value)
+    : template.replaceAll(`{${placeholder}}`, value);
 }
 
 function escapeFilterValue(value: string): string {

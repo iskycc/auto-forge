@@ -996,6 +996,63 @@ describe.skipIf(!connectionString)("PostgreSQL migrations", () => {
     }
   });
 
+  it("adds directory-authentication defaults to existing LDAP settings", async () => {
+    const admin = new Client({ connectionString });
+    await admin.connect();
+    const scratch = await createScratchDatabase(admin);
+    await admin.end();
+    const client = new Client({ connectionString: connectionStringFor(scratch) });
+    await client.connect();
+    const migrationsFolder = resolve(import.meta.dirname, "../drizzle/postgresql");
+    const migrationFiles = (await readdir(migrationsFolder))
+      .filter((name) => /^\d+_.+\.sql$/.test(name))
+      .sort();
+    const migration = "0054_ldap_directory_authentication.sql";
+    const migrationIndex = migrationFiles.indexOf(migration);
+    expect(migrationIndex).toBeGreaterThan(0);
+    try {
+      for (const fileName of migrationFiles.slice(0, migrationIndex)) {
+        await client.query(await readFile(resolve(migrationsFolder, fileName), "utf8"));
+      }
+      await client.query(`
+        INSERT INTO ldap_configurations
+          (id, enabled, urls_json, tls_mode, ca_pem, verify_tls_certificate,
+           connect_timeout_ms, operation_timeout_ms, page_size, maximum_users,
+           synchronization_interval_minutes, bind_dn, bind_password_encrypted, user_base_dn,
+           user_filter, user_id_attribute, username_attribute, display_name_attribute,
+           email_attribute, group_base_dn, group_filter, group_member_attribute,
+           created_at, updated_at, version)
+        VALUES
+          ('default', TRUE, '["ldap://ldap.internal:389"]', 'starttls', NULL, TRUE,
+           5000, 10000, 500, 5000, 0, '', NULL, 'ou=people,dc=example,dc=test',
+           '(uid={username})', 'entryUUID', 'uid', 'displayName', 'mail',
+           'ou=groups,dc=example,dc=test', '(member={userDn})', 'member',
+           '2026-08-29T00:00:00.000Z', '2026-08-29T00:00:00.000Z', 1);
+      `);
+      await client.query(await readFile(resolve(migrationsFolder, migration), "utf8"));
+      await expect(
+        client.query(
+          `SELECT group_attribute, group_name_attribute, default_role, transport_mode
+           FROM ldap_configurations WHERE id='default'`,
+        ),
+      ).resolves.toMatchObject({
+        rows: [
+          {
+            group_attribute: "memberOf",
+            group_name_attribute: "dn",
+            default_role: "editor",
+            transport_mode: "starttls",
+          },
+        ],
+      });
+      await expect(
+        client.query("UPDATE ldap_configurations SET default_role='owner' WHERE id='default'"),
+      ).rejects.toThrow();
+    } finally {
+      await client.end();
+    }
+  });
+
   it("backfills existing execution runs when adding DDT execution snapshots", async () => {
     const admin = new Client({ connectionString });
     await admin.connect();
@@ -1077,8 +1134,8 @@ describe.skipIf(!connectionString)("PostgreSQL migrations", () => {
       await handle.ready;
       await repository.saveLdapConfiguration({
         enabled: true,
-        urls: ["ldaps://ldap.internal:636"],
-        tlsMode: "ldaps",
+        url: "ldaps://ldap.internal:636",
+        transportMode: "ldaps",
         verifyTlsCertificate: false,
         connectTimeoutMs: 5_000,
         operationTimeoutMs: 10_000,
@@ -1089,11 +1146,14 @@ describe.skipIf(!connectionString)("PostgreSQL migrations", () => {
         bindPasswordEncrypted: "encrypted",
         userBaseDn: "ou=people,dc=example,dc=test",
         userFilter: "(&(objectClass=person)(uid={username}))",
-        userIdAttribute: "entryUUID",
         usernameAttribute: "uid",
         displayNameAttribute: "displayName",
         emailAttribute: "mail",
-        groupMemberAttribute: "member",
+        groupAttribute: "memberOf",
+        groupSearchBase: "",
+        groupSearchFilter: "(member={{userDn}})",
+        groupNameAttribute: "cn",
+        defaultRole: "editor",
         updatedAt: "2026-08-28T00:00:00.000Z",
       });
       await expect(repository.getLdapConfiguration()).resolves.toMatchObject({
