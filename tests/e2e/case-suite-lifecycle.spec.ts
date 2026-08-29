@@ -484,8 +484,13 @@ test("case metadata, immutable versions and suite policy survive lifecycle chang
   await expect(page.getByRole("status")).toContainText("计划触发已保存");
 
   const copyName = `${suiteName} copy`;
-  await page.getByRole("button", { name: "复制任务" }).click();
-  const copyDialog = page.getByRole("dialog", { name: "复制用例任务" });
+  await page.goto("/case-suites");
+  await page.getByRole("button", { name: "创建任务" }).click();
+  const copyDialog = page.getByRole("dialog", { name: "创建用例任务" });
+  await copyDialog.getByLabel("复制已有任务", { exact: false }).check();
+  await copyDialog.locator('select[aria-label="来源任务"]').selectOption(suite.body.id);
+  await copyDialog.getByLabel("新任务名称").fill(copyName);
+  await expect(copyDialog.getByText(/新任务使用独立 ID 和成员记录/u)).toBeVisible();
   for (const viewport of [
     { width: 1536, height: 1024 },
     { width: 1024, height: 768 },
@@ -495,10 +500,32 @@ test("case metadata, immutable versions and suite policy survive lifecycle chang
     await captureUi(page, `case-suite-copy-dialog-${viewport.width}`);
   }
   await page.setViewportSize({ width: 1536, height: 1024 });
-  await copyDialog.getByLabel("复制为新任务").fill(copyName);
-  await copyDialog.getByRole("button", { name: "复制任务" }).click();
+  await copyDialog.getByRole("button", { name: "复制并编辑" }).click();
   await expect(page.getByRole("heading", { name: copyName })).toBeVisible();
   await expect(page.getByRole("heading", { name: "2 个用例", exact: true })).toBeVisible();
+  const copiedSuiteId = new URL(page.url()).pathname.split("/").at(-1)!;
+  await page.getByLabel("并发度（同时在途执行数）").fill("5");
+  await page.getByLabel("任务说明").fill("independently edited task copy");
+  await page.getByRole("button", { name: "保存修改" }).click();
+  await expect(page.getByRole("status")).toContainText("用例任务已更新");
+  const [copiedDetails, unchangedSource] = await Promise.all([
+    browserJson<{ description: string; policy: { concurrency: number } }>(
+      page,
+      `/api/v1/case-suites/${encodeURIComponent(copiedSuiteId)}`,
+    ),
+    browserJson<{ description: string; policy: { concurrency: number } }>(
+      page,
+      `/api/v1/case-suites/${encodeURIComponent(suite.body.id)}`,
+    ),
+  ]);
+  expect(copiedDetails.body).toMatchObject({
+    description: "independently edited task copy",
+    policy: { concurrency: 5 },
+  });
+  expect(unchangedSource.body).toMatchObject({
+    description: "lifecycle E2E suite",
+    policy: { concurrency: 3 },
+  });
   const caseTree = page.getByRole("tree", { name: "任务用例树" });
   await expect(caseTree).toBeVisible();
   // Large tasks keep package contents out of the DOM until the user expands one package. This is a

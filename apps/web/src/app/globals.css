@@ -3874,6 +3874,67 @@ button.icon-button:disabled {
   background: var(--color-surface-muted);
 }
 
+.suite-create-mode {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.suite-create-mode legend {
+  grid-column: 1 / -1;
+  margin-bottom: -2px;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-caption);
+  font-weight: 650;
+}
+
+.suite-create-mode label {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  background: var(--color-surface-muted);
+  cursor: pointer;
+}
+
+.suite-create-mode label.selected {
+  border-color: var(--color-info);
+  background: var(--color-info-soft);
+  box-shadow: 0 0 0 2px rgba(6, 104, 216, 0.08);
+}
+
+.suite-create-mode label:has(input:disabled) {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
+.stack-form .suite-create-mode input[type="radio"] {
+  width: 18px;
+  flex: 0 0 18px;
+  margin-top: 2px;
+  padding: 0;
+}
+
+.suite-create-mode label > span {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.suite-create-mode small,
+.suite-copy-summary small {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-caption);
+  font-weight: 400;
+  line-height: 1.45;
+}
+
 .suite-adapter-fields > strong {
   font-size: var(--font-size-body);
 }

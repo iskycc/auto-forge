@@ -4,6 +4,39 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## 1.6.1 - 2026-08-29
+
+### Added
+
+- The task creation dialog now supports choosing an existing task in the current project version and
+  copying it directly into an independently editable task.
+- Copy mode explains exactly which state is duplicated and opens the new task details immediately so
+  its name, members and execution policy can be changed without affecting the source.
+
+### Tests
+
+- Extended the case-suite Playwright lifecycle to copy from the creation dialog, edit the copied
+  policy and description, remove copied members, and verify that the source task remains unchanged.
+
+### Database and persisted configuration
+
+- No migration is required. Lite and Full continue to create independent task, member, recovery
+  credential and version-snapshot rows in their existing transactional copy implementations.
+
+### Compatibility
+
+- The existing task-copy API and task-detail copy button remain compatible. Execution history,
+  schedules and webhook bindings are intentionally not copied to avoid duplicating external effects.
+
+### Offline assets
+
+- No dependency, remote asset or runtime network requirement was added.
+
+### Known limitations
+
+- Creation-dialog copy candidates are limited to tasks in the currently selected project version;
+  switch the top-bar version before copying a task from another version.
+
 ## 1.6.0 - 2026-08-29
 
 ### Added

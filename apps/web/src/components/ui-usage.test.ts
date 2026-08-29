@@ -129,7 +129,9 @@ describe("shared UI controls", () => {
     expect(globalSwitcher).toContain('aria-label="当前项目版本"');
     expect(globalSwitcher).toContain('aria-label="当前测试阶段"');
     expect(suiteManager).not.toContain("<ProjectPicker");
-    expect(suiteManager).not.toContain("<Select");
+    expect(suiteManager).not.toContain('aria-label="当前项目"');
+    expect(suiteManager).not.toContain('aria-label="当前项目版本"');
+    expect(suiteManager).not.toContain('aria-label="当前测试阶段"');
     expect(projectPickerConsumers).toEqual(["components/global-project-switcher.tsx"]);
   });
 
