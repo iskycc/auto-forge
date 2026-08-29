@@ -118,6 +118,20 @@ printf '%s\n' \
   '}' >"${source_root}/AAAReviewCase.groovy"
 
 printf '%s\n' \
+  'class CommentOnlyReviewCase {' \
+  '    // Error is mentioned only in an ordinary comment.' \
+  '    void testHappyPath() { assert true }' \
+  '}' \
+  '' \
+  'class StringOnlyReviewCase {' \
+  '    void testHappyPath() { println "Error count is zero" }' \
+  '}' \
+  '' \
+  'class ManualNarrativeReviewCase {' \
+  '    void testHappyPath() { println "Error label is documented" }' \
+  '}' >"${source_root}/NarrativeOnlyCases.groovy"
+
+printf '%s\n' \
   'class BrokenCase {' \
   '    void testIncomplete(' >"${source_root}/BrokenCase.groovy"
 
@@ -145,8 +159,8 @@ scope_run_output="$({
   java -cp "${compiled_classes}:${POI_CLASSPATH}" AnalyzeNormalGroovyCases \
     --output "${scope_output_file}" --no-review
 })"
-grep -Fq 'Scanned 6 Groovy file(s) and 8 case candidate(s).' <<<"${run_output}"
-grep -Fq 'Exported 3 included case(s); 5 candidate(s) were excluded.' <<<"${run_output}"
+grep -Fq 'Scanned 7 Groovy file(s) and 11 case candidate(s).' <<<"${run_output}"
+grep -Fq 'Exported 3 included case(s); 8 candidate(s) were excluded.' <<<"${run_output}"
 grep -Fq "1 file(s) had scan issues; see the '扫描问题' worksheet." <<<"${run_output}"
 grep -Fq "Source root: ${scope_workspace}/groovy-test" <<<"${scope_run_output}"
 grep -Fq 'Scanned 1 Groovy file(s) and 1 case candidate(s).' <<<"${scope_run_output}"
@@ -175,6 +189,38 @@ completed_review_output="$(printf '1' | java \
   --source "${source_root}" --output "${output_file}")"
 grep -Fq '人工分级已完成，所有导出用例均已标记。' \
   <<<"${completed_review_output}"
+grep -Fq '排除项复核已暂停，剩余 3 条；下次运行将自动继续。' \
+  <<<"${completed_review_output}"
+
+first_exclusion_review_output="$(printf '0' | java \
+  -cp "${compiled_classes}:${POI_CLASSPATH}" AnalyzeNormalGroovyCases \
+  --source "${source_root}" --output "${output_file}")"
+grep -Fq '已移回导出用例并标记 L0：CommentOnlyReviewCase' \
+  <<<"${first_exclusion_review_output}"
+grep -Fq '排除项复核已暂停，剩余 2 条；下次运行将自动继续。' \
+  <<<"${first_exclusion_review_output}"
+
+second_exclusion_review_output="$(printf '1' | java \
+  -cp "${compiled_classes}:${POI_CLASSPATH}" AnalyzeNormalGroovyCases \
+  --source "${source_root}" --output "${output_file}")"
+grep -Fq '已移回导出用例并标记 L1：StringOnlyReviewCase' \
+  <<<"${second_exclusion_review_output}"
+grep -Fq '排除项复核已暂停，剩余 1 条；下次运行将自动继续。' \
+  <<<"${second_exclusion_review_output}"
+
+completed_exclusion_review_output="$(printf '5' | java \
+  -cp "${compiled_classes}:${POI_CLASSPATH}" AnalyzeNormalGroovyCases \
+  --source "${source_root}" --output "${output_file}")"
+grep -Fq '已保留在排除明细，追加人工复核并标记 L2：ManualNarrativeReviewCase' \
+  <<<"${completed_exclusion_review_output}"
+grep -Fq '仅注释或字符串命中的排除项已全部完成人工复核。' \
+  <<<"${completed_exclusion_review_output}"
+
+finished_review_output="$(java \
+  -cp "${compiled_classes}:${POI_CLASSPATH}" AnalyzeNormalGroovyCases \
+  --source "${source_root}" --output "${output_file}" </dev/null)"
+grep -Fq '人工分级和排除项复核均已完成，没有待确认的用例。' \
+  <<<"${finished_review_output}"
 
 node --input-type=module - \
   "${repository_root}" "${output_file}" "${scope_output_file}" <<'NODE'
@@ -201,7 +247,7 @@ const excludedCases = xlsxModule.utils.sheet_to_json(workbook.Sheets["排除明�
 const issues = xlsxModule.utils.sheet_to_json(workbook.Sheets["扫描问题"]);
 const summaryRows = xlsxModule.utils.sheet_to_json(workbook.Sheets["扫描说明"]);
 
-if (normalCases.length !== 2 || excludedCases.length !== 6 || issues.length !== 1) {
+if (normalCases.length !== 4 || excludedCases.length !== 7 || issues.length !== 1) {
   throw new Error("Unexpected workbook row counts");
 }
 const formerReviewCase = excludedCases.find(
@@ -225,11 +271,20 @@ if (!normalCases.some((row) => row["类名"] === "ScriptSmoke")) {
 if ([...normalCases, ...excludedCases].some((row) => row["类名"] === "context")) {
   throw new Error("A .class literal caused the following context block to be parsed as a class");
 }
-const reviewedLevels = normalCases.map((row) => row["人工等级"]);
-if (reviewedLevels.join(",") !== "L0,L1") {
-  throw new Error(`Interactive review did not persist/resume correctly: ${reviewedLevels}`);
+const reviewedLevels = Object.fromEntries(
+  normalCases.map((row) => [row["类名"], row["人工等级"]]),
+);
+if (
+  reviewedLevels.ScriptSmoke !== "L0" ||
+  reviewedLevels.CheckoutCase !== "L1" ||
+  reviewedLevels.CommentOnlyReviewCase !== "L0" ||
+  reviewedLevels.StringOnlyReviewCase !== "L1"
+) {
+  throw new Error(
+    `Interactive review did not persist/resume correctly: ${JSON.stringify(reviewedLevels)}`,
+  );
 }
-if (normalCases.map((row) => row["序号"]).join(",") !== "1,2") {
+if (normalCases.map((row) => row["序号"]).join(",") !== "1,2,3,4") {
   throw new Error("Included-case sequence numbers were not repaired after manual exclusion");
 }
 const manuallyExcludedCase = excludedCases.find(
@@ -245,13 +300,30 @@ if (
 if (normalCases.some((row) => row["类名"] === "AAAReviewCase")) {
   throw new Error("An L2 case remained in the included worksheet");
 }
-if (excludedCases.map((row) => row["序号"]).join(",") !== "1,2,3,4,5,6") {
+const manuallyReviewedExclusion = excludedCases.find(
+  (row) => row["类名"] === "ManualNarrativeReviewCase",
+);
+if (
+  manuallyReviewedExclusion?.["人工等级"] !== "L2" ||
+  manuallyReviewedExclusion?.["排除判断"] !== "排除（人工复核确认 L2）" ||
+  manuallyReviewedExclusion?.["排除证据"] !==
+    "注释或字符串命中：error\n人工复核"
+) {
+  throw new Error("Manual narrative review did not preserve and append exclusion evidence");
+}
+if (
+  excludedCases.some((row) => row["类名"] === "CommentOnlyReviewCase") ||
+  excludedCases.some((row) => row["类名"] === "StringOnlyReviewCase")
+) {
+  throw new Error("An L0/L1 narrative-only case remained in the excluded worksheet");
+}
+if (excludedCases.map((row) => row["序号"]).join(",") !== "1,2,3,4,5,6,7") {
   throw new Error("Excluded-case sequence numbers were not repaired after manual exclusion");
 }
 const summary = Object.fromEntries(
   summaryRows.map((row) => [row["项目"], row["内容"]]),
 );
-if (summary["导出用例数"] !== 2 || summary["排除用例数"] !== 6) {
+if (summary["导出用例数"] !== 4 || summary["排除用例数"] !== 7) {
   throw new Error("Summary counts were not updated after manual exclusion");
 }
 const loginCases = [...normalCases, ...excludedCases].filter(

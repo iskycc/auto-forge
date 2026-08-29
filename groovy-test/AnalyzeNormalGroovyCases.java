@@ -224,7 +224,7 @@ public final class AnalyzeNormalGroovyCases {
           "  --source DIR              Override the analyzer directory used as the scan root",
           "  --output FILE.xlsx        Output workbook (default: DIR/normal-groovy-cases.xlsx)",
           "  --extra-keywords A,B,C    Add comma-separated exclusion keywords",
-          "  --no-review               Generate/resume without interactive L0/L1 review",
+          "  --no-review               Generate/resume without interactive case review",
           "  --regenerate              Replace an existing workbook with a fresh scan",
           "  -h, --help                Show this help",
           "",
@@ -1206,7 +1206,8 @@ public final class AnalyzeNormalGroovyCases {
           Arrays.asList(
               "排除规则",
               "class 后的类名作为标题并优先判定；标题、文件/方法名、注解标题、注释或字符串命中关键词，"
-                  + "以及异常断言、throw/catch、解析失败等任何原复核信号，均直接排除。"));
+                  + "以及异常断言、throw/catch、解析失败等任何原复核信号，初筛时均直接排除；"
+                  + "仅注释或字符串命中的条目在导出用例分级后进入人工复核。"));
       rows.add(
           Arrays.asList(
               "分析边界",
@@ -1292,9 +1293,12 @@ public final class AnalyzeNormalGroovyCases {
     private static final String PATH_HEADER = "相对路径";
     private static final String LINE_HEADER = "起始行";
     private static final String DISCOVERY_HEADER = "识别方式";
+    private static final String INCLUDED_DECISION_HEADER = "导出判断";
     private static final String EXCLUSION_DECISION_HEADER = "排除判断";
     private static final String MATCHED_KEYWORDS_HEADER = "命中关键词";
     private static final String EXCLUSION_EVIDENCE_HEADER = "排除证据";
+    private static final String NARRATIVE_EVIDENCE_PREFIX = "注释或字符串命中：";
+    private static final String MANUAL_REVIEW_EVIDENCE = "人工复核";
 
     private final DataFormatter dataFormatter = new DataFormatter();
 
@@ -1305,45 +1309,70 @@ public final class AnalyzeNormalGroovyCases {
       }
 
       try (XSSFWorkbook closeableWorkbook = workbook) {
-        Sheet sheet = closeableWorkbook.getSheet(INCLUDED_CASES_SHEET);
-        if (sheet == null) {
+        Sheet includedSheet = closeableWorkbook.getSheet(INCLUDED_CASES_SHEET);
+        Sheet excludedSheet = closeableWorkbook.getSheet(EXCLUDED_CASES_SHEET);
+        if (includedSheet == null) {
           throw new IOException(
               "Workbook does not contain the '" + INCLUDED_CASES_SHEET + "' worksheet");
         }
-        Row header = sheet.getRow(0);
-        if (header == null) {
-          throw new IOException("The included-cases worksheet has no header row");
+        if (excludedSheet == null) {
+          throw new IOException(
+              "Workbook does not contain the '" + EXCLUDED_CASES_SHEET + "' worksheet");
+        }
+        Row includedHeader = includedSheet.getRow(0);
+        Row excludedHeader = excludedSheet.getRow(0);
+        if (includedHeader == null || excludedHeader == null) {
+          throw new IOException("The case worksheets must contain header rows");
         }
 
-        int titleColumn = requiredColumn(header, TITLE_HEADER);
-        int classColumn = requiredColumn(header, CLASS_HEADER);
-        int pathColumn = requiredColumn(header, PATH_HEADER);
-        int levelColumn = findColumn(header, LEVEL_HEADER);
-        if (levelColumn < 0) {
-          levelColumn = addLevelColumn(sheet, header);
+        int includedTitleColumn = requiredColumn(includedHeader, TITLE_HEADER);
+        int includedClassColumn = requiredColumn(includedHeader, CLASS_HEADER);
+        int includedPathColumn = requiredColumn(includedHeader, PATH_HEADER);
+        int includedLevelColumn = findColumn(includedHeader, LEVEL_HEADER);
+        if (includedLevelColumn < 0) {
+          includedLevelColumn = addLevelColumn(includedSheet, includedHeader);
           saveWorkbook(closeableWorkbook, workbookPath);
         }
 
-        List<Integer> caseRows = caseRows(sheet, titleColumn);
-        int current = firstUnclassified(caseRows, sheet, levelColumn);
-        if (current < 0) {
-          System.out.println("人工分级已完成，没有待确认的用例。");
+        int excludedTitleColumn = requiredColumn(excludedHeader, TITLE_HEADER);
+        int excludedClassColumn = requiredColumn(excludedHeader, CLASS_HEADER);
+        int excludedPathColumn = requiredColumn(excludedHeader, PATH_HEADER);
+        int exclusionEvidenceColumn =
+            requiredColumn(excludedHeader, EXCLUSION_EVIDENCE_HEADER);
+        List<Integer> includedRows = caseRows(includedSheet, includedTitleColumn);
+        int firstIncludedCase =
+            firstUnclassified(includedRows, includedSheet, includedLevelColumn);
+        List<Integer> narrativeOnlyRows =
+            narrativeOnlyExclusionRows(excludedSheet, exclusionEvidenceColumn);
+        if (firstIncludedCase < 0 && narrativeOnlyRows.isEmpty()) {
+          System.out.println("人工分级和排除项复核均已完成，没有待确认的用例。");
           return;
+        }
+
+        int excludedLevelColumn = findColumn(excludedHeader, LEVEL_HEADER);
+        if (!narrativeOnlyRows.isEmpty() && excludedLevelColumn < 0) {
+          excludedLevelColumn = addLevelColumn(excludedSheet, excludedHeader);
+          saveWorkbook(closeableWorkbook, workbookPath);
         }
 
         PosixRawTerminal posixRawTerminal = PosixRawTerminal.open();
         if (posixRawTerminal != null) {
           try {
-            reviewLoop(
+            reviewStages(
                 closeableWorkbook,
                 workbookPath,
-                sheet,
-                caseRows,
-                current,
-                titleColumn,
-                classColumn,
-                pathColumn,
-                levelColumn,
+                includedSheet,
+                excludedSheet,
+                firstIncludedCase,
+                includedTitleColumn,
+                includedClassColumn,
+                includedPathColumn,
+                includedLevelColumn,
+                excludedTitleColumn,
+                excludedClassColumn,
+                excludedPathColumn,
+                exclusionEvidenceColumn,
+                excludedLevelColumn,
                 System.in::read);
           } finally {
             posixRawTerminal.close();
@@ -1353,33 +1382,97 @@ public final class AnalyzeNormalGroovyCases {
 
         Terminal terminal = openRawTerminal();
         if (terminal == null) {
-          reviewLoop(
+          reviewStages(
               closeableWorkbook,
               workbookPath,
-              sheet,
-              caseRows,
-              current,
-              titleColumn,
-              classColumn,
-              pathColumn,
-              levelColumn,
+              includedSheet,
+              excludedSheet,
+              firstIncludedCase,
+              includedTitleColumn,
+              includedClassColumn,
+              includedPathColumn,
+              includedLevelColumn,
+              excludedTitleColumn,
+              excludedClassColumn,
+              excludedPathColumn,
+              exclusionEvidenceColumn,
+              excludedLevelColumn,
               System.in::read);
           return;
         }
         try (Terminal closeableTerminal = terminal) {
-          reviewLoop(
+          reviewStages(
               closeableWorkbook,
               workbookPath,
-              sheet,
-              caseRows,
-              current,
-              titleColumn,
-              classColumn,
-              pathColumn,
-              levelColumn,
+              includedSheet,
+              excludedSheet,
+              firstIncludedCase,
+              includedTitleColumn,
+              includedClassColumn,
+              includedPathColumn,
+              includedLevelColumn,
+              excludedTitleColumn,
+              excludedClassColumn,
+              excludedPathColumn,
+              exclusionEvidenceColumn,
+              excludedLevelColumn,
               closeableTerminal.reader()::read);
         }
       }
+    }
+
+    private void reviewStages(
+        XSSFWorkbook workbook,
+        Path workbookPath,
+        Sheet includedSheet,
+        Sheet excludedSheet,
+        int firstIncludedCase,
+        int includedTitleColumn,
+        int includedClassColumn,
+        int includedPathColumn,
+        int includedLevelColumn,
+        int excludedTitleColumn,
+        int excludedClassColumn,
+        int excludedPathColumn,
+        int exclusionEvidenceColumn,
+        int excludedLevelColumn,
+        KeyReader keyReader)
+        throws IOException {
+      if (firstIncludedCase >= 0
+          && !reviewIncludedCases(
+              workbook,
+              workbookPath,
+              includedSheet,
+              firstIncludedCase,
+              includedTitleColumn,
+              includedClassColumn,
+              includedPathColumn,
+              includedLevelColumn,
+              keyReader)) {
+        return;
+      }
+
+      List<Integer> narrativeOnlyRows =
+          narrativeOnlyExclusionRows(excludedSheet, exclusionEvidenceColumn);
+      if (narrativeOnlyRows.isEmpty()) {
+        System.out.println("仅注释或字符串命中的排除项无需复核或已全部复核完成。");
+        return;
+      }
+      if (excludedLevelColumn < 0) {
+        throw new IOException("Missing required worksheet column: " + LEVEL_HEADER);
+      }
+      reviewNarrativeOnlyExclusions(
+          workbook,
+          workbookPath,
+          includedSheet,
+          excludedSheet,
+          includedLevelColumn,
+          excludedTitleColumn,
+          excludedClassColumn,
+          excludedPathColumn,
+          exclusionEvidenceColumn,
+          excludedLevelColumn,
+          keyReader);
     }
 
     private static Terminal openRawTerminal() {
@@ -1405,11 +1498,10 @@ public final class AnalyzeNormalGroovyCases {
       }
     }
 
-    private void reviewLoop(
+    private boolean reviewIncludedCases(
         XSSFWorkbook workbook,
         Path workbookPath,
         Sheet sheet,
-        List<Integer> caseRows,
         int initialCase,
         int titleColumn,
         int classColumn,
@@ -1418,7 +1510,7 @@ public final class AnalyzeNormalGroovyCases {
         KeyReader keyReader)
         throws IOException {
       int current = initialCase;
-      List<Integer> currentCaseRows = new ArrayList<>(caseRows);
+      List<Integer> currentCaseRows = caseRows(sheet, titleColumn);
       while (current >= 0) {
         Row row = sheet.getRow(currentCaseRows.get(current));
         printCase(
@@ -1434,7 +1526,7 @@ public final class AnalyzeNormalGroovyCases {
           System.out.printf(
               "%n人工分级已暂停，剩余 %d 条未确认；下次运行将自动继续。%n",
               countUnclassified(currentCaseRows, sheet, levelColumn));
-          return;
+          return false;
         }
         if (key == '9') {
           if (current == 0) {
@@ -1471,6 +1563,92 @@ public final class AnalyzeNormalGroovyCases {
         current = nextUnclassifiedAfter(currentCaseRows, sheet, levelColumn, current);
       }
       System.out.println("人工分级已完成，所有导出用例均已标记。");
+      return true;
+    }
+
+    private void reviewNarrativeOnlyExclusions(
+        XSSFWorkbook workbook,
+        Path workbookPath,
+        Sheet includedSheet,
+        Sheet excludedSheet,
+        int includedLevelColumn,
+        int titleColumn,
+        int classColumn,
+        int pathColumn,
+        int evidenceColumn,
+        int excludedLevelColumn,
+        KeyReader keyReader)
+        throws IOException {
+      List<Integer> remainingRows =
+          narrativeOnlyExclusionRows(excludedSheet, evidenceColumn);
+      int total = remainingRows.size();
+      int reviewed = 0;
+      System.out.printf("开始复核 %d 条仅注释或字符串命中的排除项。%n", total);
+      while (!remainingRows.isEmpty()) {
+        Row row = excludedSheet.getRow(remainingRows.get(0));
+        printNarrativeOnlyExclusion(
+            row,
+            reviewed,
+            total,
+            titleColumn,
+            classColumn,
+            pathColumn,
+            evidenceColumn);
+        int key = nextReviewKey(keyReader);
+        if (key < 0) {
+          System.out.printf(
+              "%n排除项复核已暂停，剩余 %d 条；下次运行将自动继续。%n",
+              remainingRows.size());
+          return;
+        }
+        if (key == '9') {
+          System.out.println("\n排除项复核只包含尚未确认的条目，当前没有可返回的上一条。");
+          continue;
+        }
+
+        String title = cellText(row, titleColumn);
+        if (key == '5') {
+          confirmNarrativeOnlyExclusion(
+              excludedSheet, row, evidenceColumn, excludedLevelColumn);
+          saveWorkbook(workbook, workbookPath);
+          System.out.printf("%n已保留在排除明细，追加人工复核并标记 L2：%s%n", title);
+        } else {
+          String level = key == '0' ? "L0" : "L1";
+          moveToIncludedAfterReview(
+              workbook,
+              includedSheet,
+              excludedSheet,
+              row,
+              includedLevelColumn,
+              level);
+          saveWorkbook(workbook, workbookPath);
+          System.out.printf("%n已移回导出用例并标记 %s：%s%n", level, title);
+        }
+        reviewed++;
+        remainingRows = narrativeOnlyExclusionRows(excludedSheet, evidenceColumn);
+      }
+      System.out.println("仅注释或字符串命中的排除项已全部完成人工复核。");
+    }
+
+    private void printNarrativeOnlyExclusion(
+        Row row,
+        int reviewed,
+        int total,
+        int titleColumn,
+        int classColumn,
+        int pathColumn,
+        int evidenceColumn) {
+      System.out.printf(
+          "%n[排除项复核 %d/%d] 标题：%s%n类名：%s%n路径：%s%n原排除证据：%s%n"
+              + "按 0 移回导出用例并标记 L0，按 1 移回并标记 L1，"
+              + "按 5 保留排除并追加人工复核（Ctrl+C 暂停）：",
+          reviewed + 1,
+          total,
+          cellText(row, titleColumn),
+          cellText(row, classColumn),
+          cellText(row, pathColumn),
+          cellText(row, evidenceColumn));
+      System.out.flush();
     }
 
     private void printCase(
@@ -1593,6 +1771,106 @@ public final class AnalyzeNormalGroovyCases {
       return cell == null ? "" : dataFormatter.formatCellValue(cell).trim();
     }
 
+    private List<Integer> narrativeOnlyExclusionRows(
+        Sheet excludedSheet, int evidenceColumn) {
+      List<Integer> rows = new ArrayList<>();
+      for (int rowIndex = 1; rowIndex <= excludedSheet.getLastRowNum(); rowIndex++) {
+        Row row = excludedSheet.getRow(rowIndex);
+        if (row != null && hasOnlyNarrativeEvidence(row, evidenceColumn)) {
+          rows.add(rowIndex);
+        }
+      }
+      return rows;
+    }
+
+    private boolean hasOnlyNarrativeEvidence(Row row, int evidenceColumn) {
+      String evidence = cellText(row, evidenceColumn);
+      if (evidence.isEmpty()) {
+        return false;
+      }
+      boolean narrativeEvidenceFound = false;
+      for (String evidenceLine : evidence.split("\\r\\n|\\r|\\n")) {
+        String normalizedLine = evidenceLine.trim();
+        if (normalizedLine.isEmpty()) {
+          continue;
+        }
+        if (!normalizedLine.startsWith(NARRATIVE_EVIDENCE_PREFIX)) {
+          return false;
+        }
+        narrativeEvidenceFound = true;
+      }
+      return narrativeEvidenceFound;
+    }
+
+    private void confirmNarrativeOnlyExclusion(
+        Sheet excludedSheet,
+        Row excludedRow,
+        int evidenceColumn,
+        int excludedLevelColumn)
+        throws IOException {
+      Row excludedHeader = excludedSheet.getRow(0);
+      if (excludedHeader == null) {
+        throw new IOException("The excluded-cases worksheet has no header row");
+      }
+      int decisionColumn = requiredColumn(excludedHeader, EXCLUSION_DECISION_HEADER);
+      CellStyle evidenceStyle = cellStyle(excludedRow, evidenceColumn);
+      CellStyle decisionStyle = cellStyle(excludedRow, decisionColumn);
+      String originalEvidence = cellText(excludedRow, evidenceColumn);
+      setTextCell(
+          excludedRow,
+          evidenceColumn,
+          originalEvidence + "\n" + MANUAL_REVIEW_EVIDENCE,
+          evidenceStyle);
+      setTextCell(
+          excludedRow,
+          decisionColumn,
+          "排除（人工复核确认 L2）",
+          decisionStyle);
+      setTextCell(excludedRow, excludedLevelColumn, "L2", evidenceStyle);
+      refreshAutoFilter(excludedSheet, excludedLevelColumn);
+    }
+
+    private void moveToIncludedAfterReview(
+        XSSFWorkbook workbook,
+        Sheet includedSheet,
+        Sheet excludedSheet,
+        Row excludedRow,
+        int includedLevelColumn,
+        String level)
+        throws IOException {
+      Row includedHeader = includedSheet.getRow(0);
+      Row excludedHeader = excludedSheet.getRow(0);
+      if (includedHeader == null || excludedHeader == null) {
+        throw new IOException("The case worksheets must contain header rows");
+      }
+
+      Row includedRow = includedSheet.createRow(includedSheet.getLastRowNum() + 1);
+      copySharedValue(excludedHeader, excludedRow, includedHeader, includedRow, TITLE_HEADER);
+      copySharedValue(excludedHeader, excludedRow, includedHeader, includedRow, PACKAGE_HEADER);
+      copySharedValue(excludedHeader, excludedRow, includedHeader, includedRow, CLASS_HEADER);
+      copySharedValue(excludedHeader, excludedRow, includedHeader, includedRow, PATH_HEADER);
+      copySharedValue(excludedHeader, excludedRow, includedHeader, includedRow, LINE_HEADER);
+      copySharedValue(excludedHeader, excludedRow, includedHeader, includedRow, DISCOVERY_HEADER);
+
+      CellStyle bodyStyle =
+          cellStyle(excludedRow, requiredColumn(excludedHeader, CLASS_HEADER));
+      setTextCell(
+          includedRow,
+          requiredColumn(includedHeader, INCLUDED_DECISION_HEADER),
+          "纳入（人工复核）",
+          bodyStyle);
+      setTextCell(includedRow, includedLevelColumn, level, bodyStyle);
+
+      removeCaseRow(excludedSheet, excludedRow.getRowNum());
+      renumberRows(includedSheet, requiredColumn(includedHeader, SEQUENCE_HEADER));
+      renumberRows(excludedSheet, requiredColumn(excludedHeader, SEQUENCE_HEADER));
+      refreshAutoFilter(includedSheet, includedLevelColumn);
+      refreshAutoFilter(
+          excludedSheet, Math.max(0, excludedHeader.getLastCellNum() - 1));
+      updateSummaryCount(workbook, "导出用例数", includedSheet.getLastRowNum());
+      updateSummaryCount(workbook, "排除用例数", excludedSheet.getLastRowNum());
+    }
+
     private void moveToManualExclusion(
         XSSFWorkbook workbook, Sheet includedSheet, Row includedRow, int includedLevelColumn)
         throws IOException {
@@ -1640,7 +1918,7 @@ public final class AnalyzeNormalGroovyCases {
           bodyStyle);
       setTextCell(excludedRow, excludedLevelColumn, "L2", bodyStyle);
 
-      removeIncludedRow(includedSheet, includedRow.getRowNum());
+      removeCaseRow(includedSheet, includedRow.getRowNum());
       renumberRows(includedSheet, requiredColumn(includedHeader, SEQUENCE_HEADER));
       renumberRows(excludedSheet, requiredColumn(excludedHeader, SEQUENCE_HEADER));
       refreshAutoFilter(includedSheet, includedLevelColumn);
@@ -1717,7 +1995,7 @@ public final class AnalyzeNormalGroovyCases {
       return column;
     }
 
-    private static void removeIncludedRow(Sheet sheet, int rowIndex) {
+    private static void removeCaseRow(Sheet sheet, int rowIndex) {
       int lastRow = sheet.getLastRowNum();
       if (rowIndex < lastRow) {
         sheet.shiftRows(rowIndex + 1, lastRow, -1);

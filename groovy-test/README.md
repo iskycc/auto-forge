@@ -25,10 +25,13 @@ After creating the workbook, the analyzer reviews every row in `导出用例` in
 `0` for `L0`, `1` for `L1`, `5` for `L2`, or `9` to return to the previous row; a real terminal
 reads each key immediately without Enter. L2 removes the row from `导出用例`, appends it to
 `排除明细`, and records `手工排除` as its evidence. Press `Ctrl+C` to pause safely. Every selection
-is written at once. Only rows in `导出用例` are reviewed. If the workbook already exists, scanning
-is skipped and review resumes at the first unclassified row. Use `--regenerate` to intentionally
-replace it, or `--no-review` for non-interactive batch runs. Single-key input requires a real
-terminal; some IDE run consoles may buffer input until Enter.
+is written at once. After every included row is classified, a second stage reviews exclusions whose
+only evidence is `注释或字符串命中` (rows with title or any other exclusion evidence are skipped).
+In this stage, `0`/`1` moves the row back to `导出用例` as L0/L1, while `5` keeps it in
+`排除明细`, marks it L2, and appends `人工复核` to the original evidence. If the workbook already
+exists, scanning is skipped and either stage resumes from its first unfinished row. Use
+`--regenerate` to intentionally replace it, or `--no-review` for non-interactive batch runs.
+Single-key input requires a real terminal; some IDE run consoles may buffer input until Enter.
 
 When `--source` is omitted, the analyzer anchors the scan to its `groovy-test` directory even if
 the Java process was started from the repository root by an IDE. The recursive walk does not
