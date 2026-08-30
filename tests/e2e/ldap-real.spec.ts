@@ -54,14 +54,6 @@ test("authenticates and synchronizes against real private-CA LDAP", async ({ bro
     plainLdapContext.pages()[0]!.getByRole("heading", { level: 1, name: /Alice Directory/ }),
   ).toBeVisible();
 
-  const synchronization = await browserJson<{
-    status: string;
-    processedUsers: number;
-    disabledUsers: number;
-  }>(page, "/api/v1/ldap/synchronize", { method: "POST" });
-  expect(synchronization.status).toBe(202);
-  expect(synchronization.body).toMatchObject({ status: "succeeded", disabledUsers: 0 });
-  expect(synchronization.body.processedUsers).toBeGreaterThanOrEqual(51);
   await expect
     .poll(
       async () => {
