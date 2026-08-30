@@ -14,6 +14,7 @@ describe("buildRunBatchExportQuery", () => {
     expect(parameters.get("scope")).toBe("round");
     expect(parameters.get("round")).toBe("2");
     expect(parameters.get("outcomes")).toBe("failed,cancelled");
+    expect(parameters.get("template")).toBe("results");
   });
 
   it("omits the round parameter for final scope", () => {
@@ -47,6 +48,14 @@ describe("buildRunBatchExportQuery", () => {
 
   it("defaults to failed and blocked outcomes", () => {
     expect(DEFAULT_EXPORT_OUTCOMES).toEqual(["failed", "blocked"]);
+  });
+
+  it("marks failure-analysis exports explicitly while preserving the selected scope", () => {
+    const query = buildRunBatchExportQuery("all", undefined, [], "failure-analysis");
+    const parameters = new URLSearchParams(query);
+    expect(parameters.get("template")).toBe("failure-analysis");
+    expect(parameters.get("scope")).toBe("all");
+    expect(parameters.get("outcomes")).toBe("failed,blocked");
   });
 });
 

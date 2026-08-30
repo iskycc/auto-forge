@@ -1,4 +1,9 @@
-import { EXPORT_OUTCOME_FILTERS, type ExportOutcomeFilter } from "@autoforge/contracts";
+import {
+  EXPORT_OUTCOME_FILTERS,
+  FAILURE_ANALYSIS_EXPORT_OUTCOMES,
+  RUN_BATCH_EXPORT_TEMPLATES,
+  type ExportOutcomeFilter,
+} from "@autoforge/contracts";
 import { DomainError } from "@autoforge/domain";
 import { NextResponse } from "next/server";
 import { z } from "zod";
@@ -12,9 +17,10 @@ import { getPlatformServices } from "@/lib/services";
 type Context = { params: Promise<{ batchId: string }> };
 
 const exportQuerySchema = z.object({
+  template: z.enum(RUN_BATCH_EXPORT_TEMPLATES).default("results"),
   scope: z.enum(["round", "final", "all"]),
   round: z.coerce.number().int().min(1).optional(),
-  outcomes: z.string().min(1),
+  outcomes: z.string().default(""),
 });
 
 export const dynamic = "force-dynamic";
@@ -28,7 +34,11 @@ export async function GET(request: Request, context: Context): Promise<NextRespo
     const identity = await authenticateRequest(request);
     const { batchId } = await context.params;
     const parsed = exportQuerySchema.parse(Object.fromEntries(new URL(request.url).searchParams));
-    const outcomes = parseOutcomeFilter(parsed.outcomes);
+    // 分析清单的失败口径由服务端固定，不允许客户端将成功用例混入模板。
+    const outcomes: ExportOutcomeFilter[] =
+      parsed.template === "failure-analysis"
+        ? [...FAILURE_ANALYSIS_EXPORT_OUTCOMES]
+        : parseOutcomeFilter(parsed.outcomes);
     if (parsed.scope === "round" && parsed.round === undefined) {
       throw new DomainError("INVALID_ROUND", "按轮次导出时必须提供轮次号。");
     }
@@ -60,6 +70,7 @@ export async function GET(request: Request, context: Context): Promise<NextRespo
 
     const { buffer, filename } = await buildRunBatchExportWorkbook({
       batchId,
+      template: parsed.template,
       scope: parsed.scope,
       ...(parsed.round !== undefined ? { round: parsed.round } : {}),
       rows,

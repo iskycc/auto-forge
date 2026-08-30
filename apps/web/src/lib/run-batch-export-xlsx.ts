@@ -1,7 +1,7 @@
 import "server-only";
 
 import type { RunBatchExportRow } from "@autoforge/application";
-import type { ExportOutcomeFilter } from "@autoforge/contracts";
+import type { ExportOutcomeFilter, RunBatchExportTemplate } from "@autoforge/contracts";
 import ExcelJS from "exceljs";
 
 /**
@@ -20,6 +20,25 @@ const EXPORT_HEADERS = [
   "日志链接",
 ] as const;
 
+const FAILURE_ANALYSIS_HEADERS = [
+  "用例编号",
+  "用例名称",
+  "失败堆栈",
+  "分析责任人",
+  "分析结果",
+  "问题根因",
+  "问题单号或用例修改证明",
+  "重跑通过截图",
+  "备注",
+  "用例日志链接",
+] as const;
+
+export const FAILURE_ANALYSIS_RESULTS = ["重跑通过", "用例问题已修改", "代码问题已提单"] as const;
+
+const FAILURE_ANALYSIS_COLUMN_WIDTHS = [48, 38, 68, 18, 22, 36, 38, 26, 32, 52] as const;
+const ANALYSIS_INPUT_FIRST_COLUMN = 4;
+const ANALYSIS_INPUT_LAST_COLUMN = 9;
+
 const OUTCOME_LABELS: Record<ExportOutcomeFilter, string> = {
   succeeded: "成功",
   failed: "失败",
@@ -30,6 +49,7 @@ const OUTCOME_LABELS: Record<ExportOutcomeFilter, string> = {
 
 export type RunBatchExportWorkbookInput = {
   batchId: string;
+  template?: RunBatchExportTemplate;
   scope: "round" | "final" | "all";
   /** scope=round 时记录具体轮次，用于文件名区分。 */
   round?: number;
@@ -43,6 +63,22 @@ export async function buildRunBatchExportWorkbook(
 ): Promise<{ buffer: Buffer; filename: string }> {
   const workbook = new ExcelJS.Workbook();
   workbook.creator = "AutoForge";
+  if (input.template === "failure-analysis") {
+    buildFailureAnalysisSheet(workbook, input);
+  } else {
+    buildExecutionResultsSheet(workbook, input);
+  }
+  const buffer = Buffer.from(await workbook.xlsx.writeBuffer());
+  return {
+    buffer,
+    filename: exportFilename(input.batchId, input.scope, input.round, input.template ?? "results"),
+  };
+}
+
+function buildExecutionResultsSheet(
+  workbook: ExcelJS.Workbook,
+  input: RunBatchExportWorkbookInput,
+): void {
   const sheet = workbook.addWorksheet("执行结果", {
     views: [{ state: "frozen", ySplit: 1 }],
   });
@@ -69,9 +105,80 @@ export async function buildRunBatchExportWorkbook(
     ];
     sheet.addRow(cells);
   }
+}
 
-  const buffer = Buffer.from(await workbook.xlsx.writeBuffer());
-  return { buffer, filename: exportFilename(input.batchId, input.scope, input.round) };
+function buildFailureAnalysisSheet(
+  workbook: ExcelJS.Workbook,
+  input: RunBatchExportWorkbookInput,
+): void {
+  const sheet = workbook.addWorksheet("失败用例分析清单", {
+    views: [{ state: "frozen", xSplit: 2, ySplit: 1 }],
+    pageSetup: { orientation: "landscape", fitToPage: true, fitToWidth: 1, fitToHeight: 0 },
+  });
+  sheet.columns = FAILURE_ANALYSIS_HEADERS.map((header, index) => ({
+    header,
+    width: FAILURE_ANALYSIS_COLUMN_WIDTHS[index]!,
+  }));
+  sheet.autoFilter = { from: "A1", to: "J1" };
+  styleFailureAnalysisHeader(sheet.getRow(1));
+
+  for (const item of input.rows) {
+    const shareLink = item.attemptId ? input.shareLinks.get(item.attemptId) : undefined;
+    const row = sheet.addRow([
+      // 产品口径：用例编号就是用例类路径，不是平台 UUID。
+      item.casePath,
+      item.displayName,
+      item.summary ?? "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      shareLink ? { text: shareLink, hyperlink: shareLink } : "",
+    ]);
+    styleFailureAnalysisRow(row);
+  }
+}
+
+function styleFailureAnalysisHeader(row: ExcelJS.Row): void {
+  row.height = 32;
+  row.eachCell((cell) => {
+    cell.font = { bold: true, color: { argb: "FFFFFFFF" } };
+    cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF315B7D" } };
+    cell.alignment = { horizontal: "center", vertical: "middle", wrapText: true };
+    cell.border = {
+      bottom: { style: "thin", color: { argb: "FFD1D9E0" } },
+      left: { style: "thin", color: { argb: "FFD1D9E0" } },
+      right: { style: "thin", color: { argb: "FFD1D9E0" } },
+      top: { style: "thin", color: { argb: "FFD1D9E0" } },
+    };
+  });
+}
+
+function styleFailureAnalysisRow(row: ExcelJS.Row): void {
+  row.height = 58;
+  row.eachCell({ includeEmpty: true }, (cell, columnNumber) => {
+    cell.alignment = { vertical: "top", wrapText: true };
+    cell.border = { bottom: { style: "hair", color: { argb: "FFD9E1E8" } } };
+    if (columnNumber >= ANALYSIS_INPUT_FIRST_COLUMN && columnNumber <= ANALYSIS_INPUT_LAST_COLUMN) {
+      cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFFF8E8" } };
+    }
+  });
+  const analysisResultCell = row.getCell(5);
+  analysisResultCell.dataValidation = {
+    type: "list",
+    allowBlank: true,
+    showErrorMessage: true,
+    errorStyle: "stop",
+    errorTitle: "分析结果无效",
+    error: "请从下拉列表中选择分析结果。",
+    formulae: [`"${FAILURE_ANALYSIS_RESULTS.join(",")}"`],
+  };
+  const logCell = row.getCell(10);
+  if (typeof logCell.value === "object" && logCell.value && "hyperlink" in logCell.value) {
+    logCell.font = { color: { argb: "FF0563C1" }, underline: true };
+  }
 }
 
 function headerWidth(header: string): number {
@@ -82,10 +189,16 @@ function headerWidth(header: string): number {
   return 20;
 }
 
-function exportFilename(batchId: string, scope: "round" | "final" | "all", round?: number): string {
+function exportFilename(
+  batchId: string,
+  scope: "round" | "final" | "all",
+  round: number | undefined,
+  template: RunBatchExportTemplate,
+): string {
   const suffix =
     scope === "round" ? `round-${round ?? 0}` : scope === "all" ? "all-rounds" : "final";
-  return `run-batch-${batchId.slice(0, 8)}-${suffix}.xlsx`;
+  const templateSuffix = template === "failure-analysis" ? "failure-analysis-" : "";
+  return `run-batch-${batchId.slice(0, 8)}-${templateSuffix}${suffix}.xlsx`;
 }
 
 /** Content-Disposition 需 RFC 5987 编码，保证中文文件名可被浏览器正确解码。 */

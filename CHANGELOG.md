@@ -4,6 +4,43 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## 1.6.8 - 2026-08-30
+
+### Added
+
+- Execution-result export now offers a dedicated failure-analysis workbook for the selected current,
+  all-round or final scope. The server limits this template to normally failed and abnormally ended
+  cases and uses the case class path as the case number.
+- The workbook contains only the ten requested analysis columns, permanent public log hyperlinks and
+  a validated three-choice result dropdown (`rerun passed`, `case fixed`, or `code issue filed`).
+  Populated columns are wide and wrapped, while the editable analysis columns retain practical widths
+  and a subtle input background.
+
+### Tests
+
+- Added workbook-level coverage for exact column order, class-path case numbers, column widths,
+  editable blanks, hyperlinks and dropdown validation, plus Playwright coverage for choosing and
+  downloading the analysis template at a 1024px desktop viewport.
+
+### Database and persisted configuration
+
+- No migration or persisted-configuration change is required.
+
+### Compatibility
+
+- Existing export URLs without a `template` query parameter continue to produce the standard result
+  workbook. The new template reuses existing batch snapshots and permanent attempt-log shares.
+- No Runner Protocol change is required.
+
+### Offline assets
+
+- No dependency, remote asset or runtime network requirement was added.
+
+### Known limitations
+
+- The failure-stack column uses the structured failure summary stored with the attempt. The permanent
+  log link remains the source for the complete stdout/stderr stream and any additional stack frames.
+
 ## 1.6.7 - 2026-08-30
 
 ### Fixed

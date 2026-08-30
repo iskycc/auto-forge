@@ -1,6 +1,6 @@
 "use client";
 
-import type { ExportOutcomeFilter } from "@autoforge/contracts";
+import type { ExportOutcomeFilter, RunBatchExportTemplate } from "@autoforge/contracts";
 import { Download, LoaderCircle, X } from "lucide-react";
 import { useEffect, useState } from "react";
 
@@ -33,6 +33,7 @@ export function RunBatchExportDialog({
   onClose: () => void;
 }) {
   const [scope, setScope] = useState<RunBatchExportScope>(defaultScope ?? "round");
+  const [template, setTemplate] = useState<RunBatchExportTemplate>("results");
   const [selectedOutcomes, setSelectedOutcomes] = useState<ReadonlySet<ExportOutcomeFilter>>(
     () => new Set(DEFAULT_EXPORT_OUTCOMES),
   );
@@ -59,14 +60,14 @@ export function RunBatchExportDialog({
     });
   }
 
-  const hasSelection = selectedOutcomes.size > 0;
+  const hasSelection = template === "failure-analysis" || selectedOutcomes.size > 0;
 
   async function exportResults(): Promise<void> {
     if (!hasSelection || exporting) return;
     setExporting(true);
     setError("");
     try {
-      const query = buildRunBatchExportQuery(scope, round, [...selectedOutcomes]);
+      const query = buildRunBatchExportQuery(scope, round, [...selectedOutcomes], template);
       const response = await fetch(
         `/api/v1/run-batches/${encodeURIComponent(batchId)}/export?${query}`,
         { cache: "no-store" },
@@ -113,6 +114,33 @@ export function RunBatchExportDialog({
         </header>
         <div className="runner-update-body">
           <fieldset className="export-dialog-group">
+            <legend>导出内容</legend>
+            <label className="export-dialog-option">
+              <Input
+                checked={template === "results"}
+                name="export-template"
+                onChange={() => setTemplate("results")}
+                type="radio"
+              />
+              <span>
+                标准执行结果
+                <small>按筛选结果导出执行时间、耗时和日志链接</small>
+              </span>
+            </label>
+            <label className="export-dialog-option">
+              <Input
+                checked={template === "failure-analysis"}
+                name="export-template"
+                onChange={() => setTemplate("failure-analysis")}
+                type="radio"
+              />
+              <span>
+                失败用例分析清单
+                <small>仅包含失败或异常结束的用例，附带可填写的分析字段</small>
+              </span>
+            </label>
+          </fieldset>
+          <fieldset className="export-dialog-group">
             <legend>导出范围</legend>
             {round !== undefined ? (
               <label className="export-dialog-option">
@@ -155,20 +183,26 @@ export function RunBatchExportDialog({
               </span>
             </label>
           </fieldset>
-          <fieldset className="export-dialog-group">
-            <legend>结果类型</legend>
-            {EXPORT_OUTCOME_OPTIONS.map((option) => (
-              <label className="export-dialog-option" key={option.value}>
-                <Input
-                  checked={selectedOutcomes.has(option.value)}
-                  onChange={() => toggleOutcome(option.value)}
-                  type="checkbox"
-                />
-                <span>{option.label}</span>
-              </label>
-            ))}
-          </fieldset>
-          {!hasSelection ? (
+          {template === "results" ? (
+            <fieldset className="export-dialog-group">
+              <legend>结果类型</legend>
+              {EXPORT_OUTCOME_OPTIONS.map((option) => (
+                <label className="export-dialog-option" key={option.value}>
+                  <Input
+                    checked={selectedOutcomes.has(option.value)}
+                    onChange={() => toggleOutcome(option.value)}
+                    type="checkbox"
+                  />
+                  <span>{option.label}</span>
+                </label>
+              ))}
+            </fieldset>
+          ) : (
+            <p className="export-dialog-note">
+              分析结果列可选：重跑通过、用例问题已修改、代码问题已提单。
+            </p>
+          )}
+          {template === "results" && !hasSelection ? (
             <p className="export-dialog-hint" role="status">
               请至少选择一种结果类型后再导出。
             </p>
@@ -186,7 +220,11 @@ export function RunBatchExportDialog({
               type="button"
             >
               {exporting ? <LoaderCircle className="spin" size={15} /> : <Download size={15} />}{" "}
-              {exporting ? "正在导出..." : "导出 Excel"}
+              {exporting
+                ? "正在导出..."
+                : template === "failure-analysis"
+                  ? "导出分析清单"
+                  : "导出 Excel"}
             </Button>
           </div>
         </div>

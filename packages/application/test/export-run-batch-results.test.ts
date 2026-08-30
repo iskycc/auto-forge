@@ -156,6 +156,7 @@ describe("buildRunBatchExportRows", () => {
     expect(rows).toHaveLength(2);
     const finalRun = rows.find((row) => row.casePath === "com.example.run-a");
     expect(finalRun).toMatchObject({ attemptId: "attempt-a2", outcome: "failed", round: 2 });
+    expect(finalRun?.casePath).toBe("com.example.run-a");
     const blockedRun = rows.find((row) => row.casePath === "com.example.run-c");
     expect(blockedRun).toMatchObject({
       attemptId: "attempt-c2",

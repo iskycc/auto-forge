@@ -1028,6 +1028,56 @@ public class MixedVisibleTest {
   // 下载成功后弹窗自动关闭。
   await expect(page.getByRole("dialog", { name: "导出执行结果" })).toHaveCount(0);
 
+  // 失败分析清单沿用当前轮次，但结果口径由服务端固定为失败/异常结束。
+  // Excel 只能出现约定的 10 列，用例编号必须是类路径，分析结果为三选一。
+  await page.getByRole("button", { name: "导出结果" }).click();
+  const analysisDialog = page.getByRole("dialog", { name: "导出执行结果" });
+  await analysisDialog.getByRole("radio", { name: /^失败用例分析清单/ }).check();
+  await expect(
+    analysisDialog.getByText("重跑通过、用例问题已修改、代码问题已提单。"),
+  ).toBeVisible();
+  await expect(analysisDialog.getByRole("checkbox")).toHaveCount(0);
+  await page.setViewportSize({ width: 1024, height: 768 });
+  await expectDesktopLayoutFits(page, 1024, 768);
+  await captureUi(page, "failure-analysis-export-dialog-1024");
+
+  const analysisDownloadPromise = page.waitForEvent("download");
+  const analysisResponsePromise = page.waitForResponse((response) => {
+    const url = new URL(response.url());
+    return (
+      url.pathname.endsWith("/export") && url.searchParams.get("template") === "failure-analysis"
+    );
+  });
+  await analysisDialog.getByRole("button", { name: "导出分析清单" }).click();
+  expect((await analysisResponsePromise).status()).toBe(200);
+  const analysisDownload = await analysisDownloadPromise;
+  expect(analysisDownload.suggestedFilename()).toContain("failure-analysis-round-1.xlsx");
+  const analysisArchive = unzipSync(new Uint8Array(await readFile(await analysisDownload.path())));
+  const analysisStrings = new TextDecoder("utf-8").decode(analysisArchive["xl/sharedStrings.xml"]);
+  const analysisSheet = new TextDecoder("utf-8").decode(
+    analysisArchive["xl/worksheets/sheet1.xml"],
+  );
+  for (const header of [
+    "用例编号",
+    "用例名称",
+    "失败堆栈",
+    "分析责任人",
+    "分析结果",
+    "问题根因",
+    "问题单号或用例修改证明",
+    "重跑通过截图",
+    "备注",
+    "用例日志链接",
+  ]) {
+    expect(analysisStrings).toContain(header);
+  }
+  expect(analysisStrings).toContain(taskCase.className);
+  expect(analysisStrings).toContain(expectedFailureSummary);
+  expect(analysisStrings).not.toContain("执行开始时间");
+  expect(analysisSheet).toContain("重跑通过,用例问题已修改,代码问题已提单");
+  expect(analysisSheet).toContain('width="68"');
+  await page.setViewportSize({ width: 1536, height: 1024 });
+
   // 日志公开访问链接必须免登录可访问，且展示 adapter 完整日志；无效 token 显示失效提示而非跳登录。
   const anonymousContext = await page.context().browser()!.newContext();
   try {

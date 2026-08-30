@@ -2,7 +2,8 @@
  * 执行结果导出与日志公开访问的共享契约。
  *
  * 导出接口：GET /api/v1/run-batches/[batchId]/export
- *   ?scope=round|final        round=指定轮次的尝试；final=每个用例取最新一次尝试
+ *   ?template=results|failure-analysis
+ *   &scope=round|final|all    round=指定轮次；final=每个用例最新尝试；all=所有轮次
  *   &round=<n>               scope=round 时必填（轮次号，1 为初始轮次）
  *   &outcomes=succeeded,failed,timed_out,cancelled,blocked
  * 响应：200 application/vnd.openxmlformats-officedocument.spreadsheetml.sheet 附件。
@@ -12,7 +13,7 @@
  * 以签发 attempt 为锚点，可访问同一批次、同一用例的其他轮次和手动诊断重跑。
  */
 
-/** 导出筛选项；blocked 表示仍被轮次持有/等待中、尚未执行的用例（无执行时间与日志）。 */
+/** 导出筛选项；blocked 表示 Adapter 未正常完成的超时、取消或基础设施异常。 */
 export type ExportOutcomeFilter = "succeeded" | "failed" | "timed_out" | "cancelled" | "blocked";
 
 export const EXPORT_OUTCOME_FILTERS: readonly ExportOutcomeFilter[] = [
@@ -22,6 +23,13 @@ export const EXPORT_OUTCOME_FILTERS: readonly ExportOutcomeFilter[] = [
   "cancelled",
   "blocked",
 ];
+
+export const RUN_BATCH_EXPORT_TEMPLATES = ["results", "failure-analysis"] as const;
+export type RunBatchExportTemplate = (typeof RUN_BATCH_EXPORT_TEMPLATES)[number];
+export const FAILURE_ANALYSIS_EXPORT_OUTCOMES = [
+  "failed",
+  "blocked",
+] as const satisfies readonly ExportOutcomeFilter[];
 
 export type SharedAttemptLogOutcome =
   "assigned" | "running" | "succeeded" | "failed" | "timed_out" | "cancelled";

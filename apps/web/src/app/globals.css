@@ -11380,9 +11380,9 @@ button.icon-button:disabled {
   line-height: 1.7;
 }
 
-/* 轮次详情导出弹窗：复用 runner-update 弹窗壳，内部为范围单选 + 结果多选。 */
+/* 轮次详情导出弹窗：复用 runner-update 弹窗壳，内部为模板/范围单选 + 结果多选。 */
 .export-dialog {
-  width: min(100% - 48px, 460px);
+  width: min(100% - 48px, 500px);
 }
 
 .export-dialog-group {
@@ -11433,6 +11433,17 @@ button.icon-button:disabled {
   margin: 0;
   color: var(--color-warning);
   font-size: var(--font-size-caption);
+}
+
+.export-dialog-note {
+  margin: 0;
+  border: 1px solid color-mix(in srgb, var(--color-info), transparent 72%);
+  border-radius: var(--radius-control);
+  padding: 10px 12px;
+  background: var(--color-info-soft);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-caption);
+  line-height: 1.6;
 }
 
 /* 用例目录搜索栏追加“最近执行结果”筛选；为第 4 列腾出位置 */

@@ -1,4 +1,9 @@
-import { EXPORT_OUTCOME_FILTERS, type ExportOutcomeFilter } from "@autoforge/contracts";
+import {
+  EXPORT_OUTCOME_FILTERS,
+  FAILURE_ANALYSIS_EXPORT_OUTCOMES,
+  type ExportOutcomeFilter,
+  type RunBatchExportTemplate,
+} from "@autoforge/contracts";
 
 export type RunBatchExportScope = "round" | "final" | "all";
 
@@ -26,11 +31,15 @@ export function buildRunBatchExportQuery(
   scope: RunBatchExportScope,
   round: number | undefined,
   outcomes: readonly ExportOutcomeFilter[],
+  template: RunBatchExportTemplate = "results",
 ): string {
   const parameters = new URLSearchParams();
+  parameters.set("template", template);
   parameters.set("scope", scope);
   if (scope === "round" && round !== undefined) parameters.set("round", String(round));
-  const ordered = EXPORT_OUTCOME_FILTERS.filter((filter) => outcomes.includes(filter));
+  const requestedOutcomes =
+    template === "failure-analysis" ? FAILURE_ANALYSIS_EXPORT_OUTCOMES : outcomes;
+  const ordered = EXPORT_OUTCOME_FILTERS.filter((filter) => requestedOutcomes.includes(filter));
   parameters.set("outcomes", ordered.join(","));
   return parameters.toString();
 }
