@@ -1510,6 +1510,8 @@ export type SchedulingSnapshot = {
   queuedRuns: ExecutionRun[];
   candidates: Array<{ runner: Runner; reservedSlots: number }>;
   runnerFailureIdsByRun: Record<string, string[]>;
+  /** 每个 run 已使用的 Runner，按 attempt 顺序排列；用于重试轮询。 */
+  runnerHistoryByRun?: Record<string, string[]>;
   projectActiveRuns: number;
   retryConcurrencyState?: RetryConcurrencyState;
   retryContext?: {

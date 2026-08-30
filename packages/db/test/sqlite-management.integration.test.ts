@@ -718,6 +718,139 @@ describe("SQLite management repositories", () => {
     }
   });
 
+  it("rotates the Adapter environment in persisted specs for subsequent attempts", async () => {
+    const { handle, runners, batches } = await fixture();
+    try {
+      const runnerId = "runner-adapter-rotation";
+      const capabilities = [
+        "executor:testng-v1",
+        "isolation:cgroup-v2",
+        "java:21.0.8",
+        "testng:7.11.0",
+        "adapter:cotest-testng-v1",
+      ];
+      await runners.register({
+        id: runnerId,
+        bootstrapTokenHash: "bootstrap-adapter-rotation",
+        credentialHash: "credential-adapter-rotation",
+        name: "adapter-rotation-runner",
+        os: "linux",
+        architecture: "amd64",
+        agentVersion: "0.2.0",
+        protocolVersion: 1,
+        labels: ["java"],
+        capabilities: [],
+        maxConcurrency: 1,
+        terminalEnabled: false,
+        recordedAt: timestamp,
+      });
+      await runners.heartbeat({
+        runnerId,
+        labels: ["java", "testng"],
+        capabilities,
+        maxConcurrency: 1,
+        busySlots: 0,
+        agentVersion: "0.2.0",
+        terminalEnabled: false,
+        resourceSnapshot: {
+          cpuUtilizationPercent: 20,
+          memoryUtilizationPercent: 30,
+          loadAverage1m: 0.5,
+          logicalCpuCount: 2,
+          observedAt: "2026-08-09T00:01:00.000Z",
+        },
+        recordedAt: "2026-08-09T00:01:00.000Z",
+      });
+      await batches.create({
+        id: "batch-adapter-rotation",
+        suiteId: "suite-adapter-rotation",
+        suiteName: "Adapter rotation",
+        suiteVersion: 1,
+        retryLimit: 2,
+        environmentVariables: [],
+        runnerIds: [runnerId],
+        adapterRuntimeSnapshot: {
+          suiteName: "Rotation Suite",
+          testName: "Rotation Test",
+          environmentAddresses: ["10.0.0.11", "10.0.0.12"],
+        },
+        runs: [
+          {
+            id: "run-adapter-rotation",
+            caseDefinitionId: "case-1",
+            caseVersion: 1,
+            displayName: "SmokeTest",
+            className: "com.example.SmokeTest",
+          },
+        ],
+        createdAt: "2026-08-09T00:01:00.000Z",
+      });
+      const thresholds = {
+        maximumCpuUtilizationPercent: 80,
+        maximumMemoryUtilizationPercent: 85,
+        maximumLoadPerCpu: 1,
+      };
+      const reserveAttempt = async (attemptNumber: number) => {
+        const snapshot = await batches.getSchedulingSnapshot(
+          "batch-adapter-rotation",
+          "2026-08-09T00:00:30.000Z",
+        );
+        const plan = scheduleExecutionRuns({
+          runs: snapshot!.queuedRuns,
+          candidates: snapshot!.candidates,
+          runnerHistoryByRun: new Map(Object.entries(snapshot!.runnerHistoryByRun ?? {})),
+          thresholds,
+          metricsFreshAfter: "2026-08-09T00:00:30.000Z",
+        });
+        await batches.reserveAssignments({
+          batchId: "batch-adapter-rotation",
+          decisions: plan.decisions.map((decision) => ({
+            ...decision,
+            attemptId: `attempt-adapter-${attemptNumber}`,
+            assignmentId: `assignment-adapter-${attemptNumber}`,
+          })),
+          thresholds,
+          offlineBefore: "2026-08-09T00:00:30.000Z",
+          metricsFreshAfter: "2026-08-09T00:00:30.000Z",
+          scheduledAt: `2026-08-09T00:01:0${attemptNumber}.000Z`,
+        });
+        return snapshot;
+      };
+
+      await reserveAttempt(1);
+      handle.client
+        .prepare("UPDATE assignments SET status = 'completed' WHERE id = ?")
+        .run("assignment-adapter-1");
+      handle.client
+        .prepare(
+          "UPDATE run_attempts SET status = 'failed', outcome = 'failed', result_code = 'ASSERTION_FAILED', finished_at = ? WHERE id = ?",
+        )
+        .run("2026-08-09T00:01:01.500Z", "attempt-adapter-1");
+      handle.client
+        .prepare(
+          "UPDATE execution_runs SET status = 'queued', assigned_runner_id = NULL WHERE id = ?",
+        )
+        .run("run-adapter-rotation");
+
+      const retrySnapshot = await reserveAttempt(2);
+      expect(retrySnapshot?.runnerHistoryByRun).toEqual({
+        "run-adapter-rotation": [runnerId],
+      });
+      const specs = handle.client
+        .prepare("SELECT execution_spec_json FROM assignments ORDER BY created_at, id")
+        .all() as Array<{ execution_spec_json: string }>;
+      expect(
+        specs.map(
+          ({ execution_spec_json }) =>
+            (JSON.parse(execution_spec_json) as { adapter: { environmentAddress: string } }).adapter
+              .environmentAddress,
+        ),
+      ).toEqual(["10.0.0.11", "10.0.0.12"]);
+    } finally {
+      handle.close();
+    }
+  });
+
   it("omits artifact rules from assignment specs when artifact collection is disabled", async () => {
     const { handle, runners } = await fixture();
     try {

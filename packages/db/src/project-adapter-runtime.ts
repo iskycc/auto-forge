@@ -23,6 +23,9 @@ export type RuntimeAssetSnapshot = {
 export type ProjectAdapterRuntime = {
   suiteName: string;
   testName: string;
+  // 完整环境池必须随批次快照持久化；只保存 run -> address 会在用例数少于
+  // 环境数时丢失未被首轮选中的地址，导致后续 attempt 无法轮换环境。
+  environmentAddresses: string[];
   environmentAddressByRunId: Record<string, string>;
   fallbackEnvironmentAddress: string;
   jdk?: RuntimeAssetSnapshot;
@@ -37,14 +40,23 @@ export function parseProjectAdapterRuntime(
     const record = objectRecord(JSON.parse(snapshot));
     const jdk = optionalRuntimeAsset(record.jdk);
     const jarBundle = optionalRuntimeAsset(record.jarBundle);
+    const environmentAddressByRunId = stringRecord(record.environmentAddressByRunId);
+    const fallbackEnvironmentAddress =
+      record.fallbackEnvironmentAddress === undefined
+        ? boundedString(record.environmentAddress ?? "", 2_048)
+        : boundedString(record.fallbackEnvironmentAddress, 2_048);
     return {
       suiteName: boundedString(record.suiteName, 512),
       testName: boundedString(record.testName, 512),
-      environmentAddressByRunId: stringRecord(record.environmentAddressByRunId),
-      fallbackEnvironmentAddress:
-        record.fallbackEnvironmentAddress === undefined
-          ? boundedString(record.environmentAddress ?? "", 2_048)
-          : boundedString(record.fallbackEnvironmentAddress, 2_048),
+      environmentAddresses:
+        record.environmentAddresses === undefined
+          ? uniqueStrings([
+              ...Object.values(environmentAddressByRunId),
+              ...(fallbackEnvironmentAddress ? [fallbackEnvironmentAddress] : []),
+            ])
+          : stringArray(record.environmentAddresses),
+      environmentAddressByRunId,
+      fallbackEnvironmentAddress,
       ...(jdk ? { jdk } : {}),
       ...(jarBundle ? { jarBundle } : {}),
     };
@@ -56,8 +68,17 @@ export function parseProjectAdapterRuntime(
 export function adapterEnvironmentAddress(
   runtime: ProjectAdapterRuntime,
   executionRunId: string,
+  attemptNumber = 1,
 ): string {
-  return runtime.environmentAddressByRunId[executionRunId] ?? runtime.fallbackEnvironmentAddress;
+  const initialAddress =
+    runtime.environmentAddressByRunId[executionRunId] ?? runtime.fallbackEnvironmentAddress;
+  if (runtime.environmentAddresses.length < 2) return initialAddress;
+  const initialIndex = runtime.environmentAddresses.indexOf(initialAddress);
+  if (initialIndex < 0) return initialAddress;
+  const retryOffset = Math.max(0, Math.trunc(attemptNumber) - 1);
+  return runtime.environmentAddresses[
+    (initialIndex + retryOffset) % runtime.environmentAddresses.length
+  ]!;
 }
 
 export function projectAdapterRequiredCapabilities(
@@ -160,6 +181,15 @@ function stringRecord(value: unknown): Record<string, string> {
       boundedString(entry, 2_048, 1),
     ]),
   );
+}
+
+function stringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) throw new TypeError("Expected an array.");
+  return uniqueStrings(value.map((entry) => boundedString(entry, 2_048, 1)));
+}
+
+function uniqueStrings(values: readonly string[]): string[] {
+  return [...new Set(values)];
 }
 
 function enumValue<const Values extends readonly string[]>(

@@ -128,6 +128,79 @@ describe("dynamic execution scheduler", () => {
     expect(plan.decisions[0]?.runnerId).toBe("runner-only");
   });
 
+  it("rotates every retry to the next healthy Runner in stable order", () => {
+    const candidates = [
+      {
+        runner: runner("runner-c", { cpu: 5, memory: 10, load: 0.1, concurrency: 4 }),
+        reservedSlots: 0,
+      },
+      {
+        runner: runner("runner-a", { cpu: 30, memory: 40, load: 0.4, concurrency: 4 }),
+        reservedSlots: 0,
+      },
+      {
+        runner: runner("runner-b", { cpu: 20, memory: 30, load: 0.3, concurrency: 4 }),
+        reservedSlots: 0,
+      },
+    ];
+
+    const afterA = scheduleExecutionRuns({
+      runs: [run("run-1")],
+      candidates,
+      runnerHistoryByRun: new Map([["run-1", ["runner-a"]]]),
+      thresholds,
+      metricsFreshAfter: freshAfter,
+    });
+    const afterB = scheduleExecutionRuns({
+      runs: [run("run-1")],
+      candidates,
+      runnerHistoryByRun: new Map([["run-1", ["runner-a", "runner-b"]]]),
+      thresholds,
+      metricsFreshAfter: freshAfter,
+    });
+    const afterC = scheduleExecutionRuns({
+      runs: [run("run-1")],
+      candidates,
+      runnerHistoryByRun: new Map([["run-1", ["runner-a", "runner-b", "runner-c"]]]),
+      thresholds,
+      metricsFreshAfter: freshAfter,
+    });
+
+    expect(afterA.decisions[0]?.runnerId).toBe("runner-b");
+    expect(afterB.decisions[0]?.runnerId).toBe("runner-c");
+    expect(afterC.decisions[0]?.runnerId).toBe("runner-a");
+  });
+
+  it("skips an unavailable next Runner while retaining infrastructure exclusions", () => {
+    const unavailable = runner("runner-b", {
+      cpu: 20,
+      memory: 30,
+      load: 0.3,
+      concurrency: 1,
+    });
+    unavailable.busySlots = 1;
+    const plan = scheduleExecutionRuns({
+      runs: [run("run-1")],
+      candidates: [
+        {
+          runner: runner("runner-a", { cpu: 10, memory: 20, load: 0.2, concurrency: 2 }),
+          reservedSlots: 0,
+        },
+        { runner: unavailable, reservedSlots: 0 },
+        {
+          runner: runner("runner-c", { cpu: 30, memory: 40, load: 0.4, concurrency: 2 }),
+          reservedSlots: 0,
+        },
+      ],
+      runnerHistoryByRun: new Map([["run-1", ["runner-a"]]]),
+      excludedRunnerIdsByRun: new Map([["run-1", new Set(["runner-a"])]]),
+      thresholds,
+      metricsFreshAfter: freshAfter,
+    });
+
+    expect(plan.decisions[0]?.runnerId).toBe("runner-c");
+  });
+
   it("keeps runs queued when metrics are stale or capacity is exhausted", () => {
     const stale = runner("runner-stale", { cpu: 10, memory: 20, load: 0.1, concurrency: 1 });
     stale.resourceSnapshot = { ...stale.resourceSnapshot!, observedAt: "2026-08-08T23:59:00.000Z" };

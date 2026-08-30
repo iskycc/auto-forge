@@ -4,6 +4,50 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## 1.6.6 - 2026-08-30
+
+### Changed
+
+- A case's retry attempts now rotate through the batch's healthy Runner snapshot in stable Runner-ID
+  order instead of repeatedly selecting the same highest-scoring node. Online state, compatibility,
+  fresh metrics, resource thresholds, capacity and infrastructure-failure exclusions remain hard
+  constraints; single-Runner deployments safely fall back to the available node.
+- CoTest Adapter assignments now retain the complete configured environment pool and rotate the
+  environment address on every attempt. Initial attempts remain spread by stable case order, while
+  retries advance to the next address and wrap only after the pool is exhausted.
+- Final-failure and individual diagnostic rerun batches preserve the original complete Adapter
+  environment pool rather than reducing it to the addresses used by the selected source runs.
+
+### Tests
+
+- Added deterministic scheduler coverage for Runner rotation, wraparound, unavailable-node skipping
+  and infrastructure exclusions.
+- Added runtime compatibility and SQLite integration coverage proving legacy Adapter snapshots remain
+  readable and consecutive persisted execution specs receive different environment addresses.
+
+### Database and persisted configuration
+
+- No SQL migration is required. New batch Adapter JSON snapshots include the complete
+  `environmentAddresses` pool alongside the existing per-run initial address map.
+
+### Compatibility
+
+- Existing batches remain readable. For legacy active batches, retries can rotate across the distinct
+  addresses already represented by their stored per-run map; addresses that were configured but never
+  selected by any first attempt were not persisted by older versions and cannot be reconstructed.
+- No Runner Protocol schema change is required: each assignment still carries one resolved Adapter
+  environment address. Older Agents can execute assignments produced by v1.6.6.
+
+### Offline assets
+
+- No dependency, remote asset or runtime network requirement was added.
+
+### Known limitations
+
+- Runner retry order is based on stable Runner IDs because the persisted batch membership snapshot has
+  no user-defined node ordinal. Unhealthy or capacity-exhausted nodes are skipped, so an individual run
+  can temporarily deviate from the ideal cycle while preserving execution safety.
+
 ## 1.6.5 - 2026-08-30
 
 ### Changed

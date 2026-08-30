@@ -68,7 +68,10 @@ import {
   type ProjectAdapterRuntime,
   type RuntimeAssetSnapshot,
 } from "./project-adapter-runtime";
-import { runnerFailureIdsByExecutionRun } from "./runner-failure-history";
+import {
+  runnerFailureIdsByExecutionRun,
+  runnerHistoryIdsByExecutionRun,
+} from "./runner-failure-history";
 import { insertSchedulingEventDrafts } from "./scheduling-event-insert";
 import {
   pgExecutionRuns,
@@ -520,9 +523,7 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
             adapterRuntime: {
               suiteName: runtime.suiteName,
               testName: runtime.testName,
-              environmentAddresses: runRows.map((run) =>
-                adapterEnvironmentAddress(runtime, run.id),
-              ),
+              environmentAddresses: [...runtime.environmentAddresses],
               ...(runtime.jdk ? { jdk: { ...runtime.jdk } } : {}),
               ...(runtime.jarBundle ? { jarBundle: { ...runtime.jarBundle } } : {}),
             },
@@ -930,6 +931,7 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
       queuedRuns: queuedRows.map(toExecutionRun),
       candidates,
       runnerFailureIdsByRun: runnerFailureIdsByExecutionRun(attemptRows.map(toRunAttempt)),
+      runnerHistoryByRun: runnerHistoryIdsByExecutionRun(attemptRows.map(toRunAttempt)),
       projectActiveRuns: Number(activeProjectRuns.rows[0]?.count ?? 0),
       ...(retryConcurrencyStateRow
         ? { retryConcurrencyState: retryConcurrencyStateFromRow(retryConcurrencyStateRow) }
@@ -1356,6 +1358,7 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
                 executionSpec({
                   attemptId: decision.attemptId,
                   executionRunId: decision.executionRunId,
+                  attemptNumber: run.attempt_count,
                   batchId: input.batchId,
                   className: run.class_name,
                   parameters: stringRecord(run.parameters_json),
@@ -2134,6 +2137,7 @@ async function retryContext(
 function executionSpec(input: {
   attemptId: string;
   executionRunId: string;
+  attemptNumber: number;
   batchId: string;
   className: string;
   parameters: Record<string, string>;
@@ -2190,6 +2194,7 @@ function executionSpec(input: {
             environmentAddress: adapterEnvironmentAddress(
               input.adapterRuntime,
               input.executionRunId,
+              input.attemptNumber,
             ),
             caseTimeoutSeconds: input.caseTimeoutSeconds,
           },
@@ -2292,6 +2297,7 @@ async function postgresProjectAdapterRuntime(
   return {
     suiteName: adapter?.suiteName ?? "",
     testName: adapter?.testName ?? "",
+    environmentAddresses: [...(adapter?.environmentAddresses ?? [])],
     environmentAddressByRunId: assignEnvironmentAddresses(
       adapter?.environmentAddresses ?? [],
       runs,
@@ -2313,6 +2319,7 @@ function runtimeSnapshotForRuns(
   return {
     suiteName: snapshot.suiteName,
     testName: snapshot.testName,
+    environmentAddresses: [...snapshot.environmentAddresses],
     environmentAddressByRunId: assignEnvironmentAddresses(snapshot.environmentAddresses, runs),
     fallbackEnvironmentAddress: "",
     ...(snapshot.jdk ? { jdk: { ...snapshot.jdk } } : {}),

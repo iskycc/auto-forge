@@ -856,7 +856,7 @@ export function CaseSuiteEditor({
               />
             </label>
             <label className="settings-wide-field">
-              Adapter 环境 IP / 地址（每行一个，按用例轮询）
+              Adapter 环境 IP / 地址（每行一个，首轮按用例、重试按环境池轮询）
               <Textarea
                 name="adapterEnvironmentAddresses"
                 rows={3}

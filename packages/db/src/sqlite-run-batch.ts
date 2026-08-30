@@ -61,7 +61,10 @@ import {
   retryConcurrencyActivationDecision,
   retryConcurrencyStateFromRow,
 } from "./retry-concurrency-state";
-import { runnerFailureIdsByExecutionRun } from "./runner-failure-history";
+import {
+  runnerFailureIdsByExecutionRun,
+  runnerHistoryIdsByExecutionRun,
+} from "./runner-failure-history";
 import { decodeRunBatchCursor, encodeRunBatchCursor } from "./run-batch-list";
 import {
   assignments,
@@ -520,9 +523,7 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
             adapterRuntime: {
               suiteName: runtime.suiteName,
               testName: runtime.testName,
-              environmentAddresses: runRows.map((run) =>
-                adapterEnvironmentAddress(runtime, run.id),
-              ),
+              environmentAddresses: [...runtime.environmentAddresses],
               ...(runtime.jdk ? { jdk: { ...runtime.jdk } } : {}),
               ...(runtime.jarBundle ? { jarBundle: { ...runtime.jarBundle } } : {}),
             },
@@ -904,6 +905,7 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
       queuedRuns: queuedRows.map(toExecutionRun),
       candidates,
       runnerFailureIdsByRun: runnerFailureIdsByExecutionRun(attemptRows.map(toRunAttempt)),
+      runnerHistoryByRun: runnerHistoryIdsByExecutionRun(attemptRows.map(toRunAttempt)),
       projectActiveRuns: projectActiveRuns(this.handle, batch.projectId),
       ...(retryConcurrencyStateRow
         ? { retryConcurrencyState: retryConcurrencyStateFromRow(retryConcurrencyStateRow) }
@@ -1238,6 +1240,7 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
                   executionSpec({
                     attemptId: decision.attemptId,
                     executionRunId: decision.executionRunId,
+                    attemptNumber: attemptCountByRunId.get(decision.executionRunId)!,
                     batchId: input.batchId,
                     className: executionInput.className,
                     parameters: stringRecord(executionInput.parametersJson),
@@ -1932,6 +1935,7 @@ function retryContext(
 function executionSpec(input: {
   attemptId: string;
   executionRunId: string;
+  attemptNumber: number;
   batchId: string;
   className: string;
   parameters: Record<string, string>;
@@ -1989,6 +1993,7 @@ function executionSpec(input: {
             environmentAddress: adapterEnvironmentAddress(
               input.adapterRuntime,
               input.executionRunId,
+              input.attemptNumber,
             ),
             caseTimeoutSeconds: input.caseTimeoutSeconds,
           },
@@ -2098,6 +2103,7 @@ function projectAdapterRuntime(
   return {
     suiteName: adapter?.suiteName ?? "",
     testName: adapter?.testName ?? "",
+    environmentAddresses: [...(adapter?.environmentAddresses ?? [])],
     environmentAddressByRunId: assignEnvironmentAddresses(
       adapter?.environmentAddresses ?? [],
       runs,
@@ -2119,6 +2125,7 @@ function runtimeSnapshotForRuns(
   return {
     suiteName: snapshot.suiteName,
     testName: snapshot.testName,
+    environmentAddresses: [...snapshot.environmentAddresses],
     environmentAddressByRunId: assignEnvironmentAddresses(snapshot.environmentAddresses, runs),
     fallbackEnvironmentAddress: "",
     ...(snapshot.jdk ? { jdk: { ...snapshot.jdk } } : {}),

@@ -588,10 +588,9 @@ export class RunBatchSchedulingService {
         ? {
             adapterRuntimeSnapshot: {
               ...input.snapshot.adapterRuntime,
-              environmentAddresses: input.selectedRuns.map(
-                ({ sourceIndex }) =>
-                  input.snapshot.adapterRuntime!.environmentAddresses[sourceIndex] ?? "",
-              ),
+              // 派生批次继续使用原批次的完整环境池；新 run 会重新分配首轮起点，
+              // 后续 attempt 再按同一池轮询，不能按失败用例下标裁掉环境。
+              environmentAddresses: [...input.snapshot.adapterRuntime.environmentAddresses],
             },
           }
         : {}),
@@ -748,6 +747,12 @@ export class RunBatchSchedulingService {
           Object.entries(snapshot.runnerFailureIdsByRun ?? {}).map(([runId, runnerIds]) => [
             runId,
             new Set(runnerIds),
+          ]),
+        ),
+        runnerHistoryByRun: new Map(
+          Object.entries(snapshot.runnerHistoryByRun ?? {}).map(([runId, runnerIds]) => [
+            runId,
+            runnerIds,
           ]),
         ),
         maxAssignments,

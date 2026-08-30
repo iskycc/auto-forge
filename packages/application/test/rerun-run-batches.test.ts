@@ -39,7 +39,7 @@ describe("derived run batches", () => {
       policy: { concurrency: 1, retryConcurrencyRules: [] },
       roundRecoveries: [],
       adapterRuntimeSnapshot: {
-        environmentAddresses: ["10.0.0.12"],
+        environmentAddresses: ["10.0.0.11", "10.0.0.12", "10.0.0.13"],
         jarBundle: { id: "bundle-snapshot" },
       },
       runs: [
@@ -80,6 +80,11 @@ describe("derived run batches", () => {
     expect(created[0]!.runs.map((run) => run.caseDefinitionId)).toEqual([
       "case-failed",
       "case-timeout",
+    ]);
+    expect(created[0]?.adapterRuntimeSnapshot?.environmentAddresses).toEqual([
+      "10.0.0.11",
+      "10.0.0.12",
+      "10.0.0.13",
     ]);
   });
 
@@ -195,16 +200,6 @@ function rerunRepository(
         return {
           ...snapshot,
           runs: selectedIndexes.map((index) => snapshot.runs[index]!),
-          ...(snapshot.adapterRuntime
-            ? {
-                adapterRuntime: {
-                  ...snapshot.adapterRuntime,
-                  environmentAddresses: selectedIndexes.map(
-                    (index) => snapshot.adapterRuntime!.environmentAddresses[index]!,
-                  ),
-                },
-              }
-            : {}),
         };
       },
     ),

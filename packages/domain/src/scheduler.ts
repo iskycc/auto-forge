@@ -52,6 +52,9 @@ type ScheduleExecutionRunsInput = {
   // Runner 基础设施异常后的重调度优先避开曾使该 run 异常的节点；若没有其他
   // 合格节点则允许回退，避免单 Runner 部署永久卡住。
   excludedRunnerIdsByRun?: ReadonlyMap<string, ReadonlySet<string>>;
+  // 每个 run 的历史 Runner 按 attempt 顺序排列。首次执行仍使用资源评分；重试
+  // 从上一次 Runner 的下一个节点开始确定性轮询，健康与容量约束始终优先。
+  runnerHistoryByRun?: ReadonlyMap<string, readonly string[]>;
   // 批次策略的并发上限换算成本轮最多新增的 assignment 数；缺省表示不限制。
   maxAssignments?: number;
 };
@@ -71,12 +74,22 @@ export function scheduleExecutionRuns(input: ScheduleExecutionRunsInput): Schedu
       continue;
     }
     const excludedRunnerIds = input.excludedRunnerIdsByRun?.get(run.id);
-    const preferredCandidates = excludedRunnerIds
-      ? candidates.filter((candidate) => !excludedRunnerIds.has(candidate.runner.id))
-      : candidates;
+    const runnerHistory = input.runnerHistoryByRun?.get(run.id) ?? [];
     const selected =
-      bestCandidate(preferredCandidates, input.thresholds, input.metricsFreshAfter) ??
-      bestCandidate(candidates, input.thresholds, input.metricsFreshAfter);
+      runnerHistory.length > 0
+        ? roundRobinRetryCandidate(
+            candidates,
+            runnerHistory.at(-1)!,
+            excludedRunnerIds,
+            input.thresholds,
+            input.metricsFreshAfter,
+          )
+        : bestCandidateWithFallback(
+            candidates,
+            excludedRunnerIds,
+            input.thresholds,
+            input.metricsFreshAfter,
+          );
     if (!selected) {
       unassignedRunIds.push(run.id);
       continue;
@@ -86,6 +99,67 @@ export function scheduleExecutionRuns(input: ScheduleExecutionRunsInput): Schedu
   }
 
   return { decisions, evaluations, unassignedRunIds };
+}
+
+function bestCandidateWithFallback(
+  candidates: SchedulingCandidate[],
+  excludedRunnerIds: ReadonlySet<string> | undefined,
+  thresholds: SchedulingThresholds,
+  metricsFreshAfter: string,
+): ReturnType<typeof bestCandidate> {
+  const preferredCandidates = excludedRunnerIds
+    ? candidates.filter((candidate) => !excludedRunnerIds.has(candidate.runner.id))
+    : candidates;
+  return (
+    bestCandidate(preferredCandidates, thresholds, metricsFreshAfter) ??
+    bestCandidate(candidates, thresholds, metricsFreshAfter)
+  );
+}
+
+function roundRobinRetryCandidate(
+  candidates: SchedulingCandidate[],
+  previousRunnerId: string,
+  excludedRunnerIds: ReadonlySet<string> | undefined,
+  thresholds: SchedulingThresholds,
+  metricsFreshAfter: string,
+): ReturnType<typeof bestCandidate> {
+  const eligible = candidates
+    .map((candidate) => ({
+      candidate,
+      runner: candidate.runner,
+      evaluation: evaluateRunnerForScheduling(candidate, thresholds, metricsFreshAfter),
+    }))
+    .filter(
+      (
+        entry,
+      ): entry is typeof entry & { evaluation: RunnerSchedulingEvaluation & { score: number } } =>
+        entry.evaluation.eligible && entry.evaluation.score !== undefined,
+    );
+  if (eligible.length === 0) return undefined;
+
+  const preferred = excludedRunnerIds
+    ? eligible.filter((entry) => !excludedRunnerIds.has(entry.runner.id))
+    : eligible;
+  const pool = preferred.length > 0 ? preferred : eligible;
+  const stableRunnerIds = [...new Set(candidates.map(({ runner }) => runner.id))].sort(
+    (left, right) => left.localeCompare(right),
+  );
+  const previousIndex = stableRunnerIds.indexOf(previousRunnerId);
+  const startIndex = previousIndex < 0 ? 0 : (previousIndex + 1) % stableRunnerIds.length;
+  const cyclicDistance = (runnerId: string): number => {
+    const index = stableRunnerIds.indexOf(runnerId);
+    return index >= startIndex ? index - startIndex : stableRunnerIds.length - startIndex + index;
+  };
+  const selected = pool.sort(
+    (left, right) =>
+      cyclicDistance(left.runner.id) - cyclicDistance(right.runner.id) ||
+      left.runner.id.localeCompare(right.runner.id),
+  )[0]!;
+  return {
+    candidate: selected.candidate,
+    runner: selected.runner,
+    score: selected.evaluation.score,
+  };
 }
 
 export function evaluateRunnerForScheduling(
