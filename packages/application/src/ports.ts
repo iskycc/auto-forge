@@ -369,7 +369,7 @@ export interface IdentityAccessRepository {
     mappings: Array<{ groupDn: string; roleId: string; projectId?: string; priority: number }>;
     recordedAt: string;
   }): Promise<void>;
-  assignLdapInitialRole(input: {
+  ensureLdapDefaultRole(input: {
     userId: string;
     roleId: string;
     projectId?: string;

@@ -4,6 +4,59 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## 1.6.3 - 2026-08-30
+
+### Fixed
+
+- `/landing` now returns an immediate HTTP redirect after session and permission resolution instead
+  of waiting for the authenticated React layout to load project and version context. Login and setup
+  hand-offs no longer remain indefinitely on the global loading skeleton when that context is large
+  or slow.
+- The landing redirect now uses a relative destination, preserving the browser's actual host and
+  session cookie instead of leaking the custom server's internal `localhost` origin into the
+  response.
+- LDAP synchronization now defaults to one unified platform role and omits Group attributes and
+  per-user Group searches entirely. Large directories no longer perform an N+1 organization lookup
+  when differentiated Group authorization is not explicitly enabled and backed by a mapping.
+
+### Changed
+
+- The LDAP form now labels the default role as the unified role for every directory user. Advanced
+  Group-based authorization is behind an explicit switch, and its Group identifier/mapping controls
+  are hidden while disabled.
+- Login and synchronization ensure the configured LDAP default role for every managed directory
+  user, not only on the first provisioning attempt.
+
+### Tests
+
+- Added Playwright coverage that requires the authenticated `/landing` endpoint to return a direct
+  `307` response and complete navigation to the permission-appropriate page.
+- Added directory-client coverage proving unified-role synchronization performs one paged user
+  search even when returned entries contain thousands of organization memberships, plus UI coverage
+  for the default-disabled Group controls.
+
+### Database and persisted configuration
+
+- No migration or persisted-configuration change is required.
+
+### Compatibility
+
+- The `/landing` URL and destination priority remain unchanged; only its response is moved from a
+  rendered page redirect to a layout-independent Route Handler.
+- Existing LDAP Group settings and mappings remain available. Installations that already saved a
+  Group attribute or Search Base keep the advanced switch enabled until an administrator turns it
+  off and saves; dormant mapping rows are retained but no longer queried or applied.
+
+### Offline assets
+
+- No dependency, remote asset or runtime network requirement was added.
+
+### Known limitations
+
+- Explicitly enabling differentiated LDAP Group authorization can still require one Group search per
+  directory user. Keep the advanced switch disabled for large directories unless those mappings are
+  required and the LDAP server is sized for that query pattern.
+
 ## 1.6.2 - 2026-08-29
 
 ### Changed

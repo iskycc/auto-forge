@@ -101,6 +101,9 @@ export function AccessSettings({
     ldap?.verifyTlsCertificate ?? true,
   );
   const [clearLdapBindPassword, setClearLdapBindPassword] = useState(false);
+  const [ldapGroupMappingEnabled, setLdapGroupMappingEnabled] = useState(
+    Boolean(ldap?.groupSearchBase.trim() || ldap?.groupAttribute.trim()),
+  );
   const [createDialog, setCreateDialog] = useState<
     "user" | "password" | "role" | "assignment" | null
   >(null);
@@ -233,7 +236,7 @@ export function AccessSettings({
 
   function submitLdapForm(formElement: HTMLFormElement, testOnly: boolean) {
     const form = new FormData(formElement);
-    const payload = ldapPayload(form, ldap, ldapEnabled);
+    const payload = ldapPayload(form, ldap, ldapEnabled, ldapGroupMappingEnabled);
     void request(
       testOnly ? "/api/v1/ldap/test" : "/api/v1/ldap/configuration",
       jsonRequest(testOnly ? "POST" : "PUT", payload),
@@ -885,45 +888,65 @@ export function AccessSettings({
                   <Input defaultValue={ldap?.emailAttribute ?? "mail"} name="emailAttribute" />
                 </label>
                 <label>
-                  新 LDAP 用户默认角色
+                  LDAP 用户统一角色
                   <Select defaultValue={ldap?.defaultRole ?? "editor"} name="defaultRole">
                     <option value="editor">测试管理员（默认项目）</option>
                     <option value="viewer">只读观察者（默认项目）</option>
                     <option value="admin">系统管理员</option>
                   </Select>
-                  <small>只在用户首次成功登录或首次同步纳管时分配。</small>
+                  <small>每次登录或同步都会确保所有 LDAP 用户获得该角色。</small>
                 </label>
                 <div className="form-context-summary settings-wide-field">
-                  <span>04 · Group 检索</span>
-                  <strong>同步目录组并用于角色映射</strong>
-                  <small>留空 Group Search Base 时读取用户条目的多值 Group 属性。</small>
+                  <span>04 · 角色策略</span>
+                  <strong>默认不读取 LDAP Group</strong>
+                  <small>大型目录只执行分页用户查询，所有 LDAP 用户使用上面的统一角色。</small>
                 </div>
-                <label className="settings-wide-field">
-                  Group Search Base（可选）
-                  <Input defaultValue={ldap?.groupSearchBase} name="groupSearchBase" />
-                </label>
-                <label className="settings-wide-field">
-                  Group Search Filter
+                <label className="checkbox-field settings-wide-field">
                   <Input
-                    defaultValue={ldap?.groupSearchFilter ?? "(member={{userDn}})"}
-                    name="groupSearchFilter"
+                    checked={ldapGroupMappingEnabled}
+                    name="groupMappingEnabled"
+                    onChange={(event) => setLdapGroupMappingEnabled(event.target.checked)}
+                    type="checkbox"
                   />
-                  <small>
-                    必须包含 {"{{userDn}}"} 或 {"{{username}}"} 占位符。
-                  </small>
+                  按 LDAP Group 分配不同角色（高级功能）
                 </label>
-                <label>
-                  Group 名称属性
-                  <Input
-                    defaultValue={ldap?.groupNameAttribute ?? "cn"}
-                    name="groupNameAttribute"
-                  />
-                </label>
-                <label>
-                  用户 Group 属性（兼容模式）
-                  <Input defaultValue={ldap?.groupAttribute ?? "memberOf"} name="groupAttribute" />
-                  <small>Active Directory 通常为 memberOf。</small>
-                </label>
+                {ldapGroupMappingEnabled ? (
+                  <>
+                    <div className="inline-notice warning-notice settings-wide-field" role="status">
+                      启用后同步可能为每个用户额外查询 Group。大型 LDAP
+                      目录应保持关闭，除非确实需要按目录组分配不同权限。
+                    </div>
+                    <label className="settings-wide-field">
+                      Group Search Base（可选）
+                      <Input defaultValue={ldap?.groupSearchBase} name="groupSearchBase" />
+                    </label>
+                    <label className="settings-wide-field">
+                      Group Search Filter
+                      <Input
+                        defaultValue={ldap?.groupSearchFilter ?? "(member={{userDn}})"}
+                        name="groupSearchFilter"
+                      />
+                      <small>
+                        必须包含 {"{{userDn}}"} 或 {"{{username}}"} 占位符。
+                      </small>
+                    </label>
+                    <label>
+                      Group 名称属性
+                      <Input
+                        defaultValue={ldap?.groupNameAttribute || "cn"}
+                        name="groupNameAttribute"
+                      />
+                    </label>
+                    <label>
+                      用户 Group 属性（兼容模式）
+                      <Input
+                        defaultValue={ldap?.groupAttribute || "memberOf"}
+                        name="groupAttribute"
+                      />
+                      <small>不使用 Group Search 时，Active Directory 通常填写 memberOf。</small>
+                    </label>
+                  </>
+                ) : null}
                 <div className="form-context-summary settings-wide-field">
                   <span>05 · 同步策略</span>
                   <strong>AutoForge 目录同步边界</strong>
@@ -1029,7 +1052,7 @@ export function AccessSettings({
               </Button>
             </div>
           ) : null}
-          {capabilities.ldapManage ? (
+          {capabilities.ldapManage && ldapGroupMappingEnabled ? (
             <form className="settings-grid-form settings-subform" onSubmit={submitLdapMapping}>
               <label className="settings-wide-field">
                 LDAP Group 标识
@@ -1054,18 +1077,27 @@ export function AccessSettings({
               </Button>
             </form>
           ) : null}
-          <div className="permission-list">
-            {ldapMappings.map((mapping) => (
-              <code key={mapping.id}>
-                {mapping.groupDn} →{" "}
-                {roles.find((role) => role.id === mapping.roleId)?.name ?? mapping.roleId}
-                {mapping.projectId
-                  ? ` · ${projects.find((project) => project.id === mapping.projectId)?.name ?? mapping.projectId}`
-                  : " · 系统"}{" "}
-                · 优先级 {mapping.priority}
-              </code>
-            ))}
-          </div>
+          {ldapGroupMappingEnabled ? (
+            <div className="permission-list">
+              {ldapMappings.map((mapping) => (
+                <code key={mapping.id}>
+                  {mapping.groupDn} →{" "}
+                  {roles.find((role) => role.id === mapping.roleId)?.name ?? mapping.roleId}
+                  {mapping.projectId
+                    ? ` · ${projects.find((project) => project.id === mapping.projectId)?.name ?? mapping.projectId}`
+                    : " · 系统"}{" "}
+                  · 优先级 {mapping.priority}
+                </code>
+              ))}
+            </div>
+          ) : (
+            <div className="inline-notice settings-directory-actions" role="status">
+              LDAP Group 差异化映射已关闭。同步不会读取组织或 Group，所有 LDAP 用户使用统一角色。
+              {ldapMappings.length > 0
+                ? ` 已有 ${ldapMappings.length} 条历史映射保留但不会执行。`
+                : ""}
+            </div>
+          )}
         </section>
       ) : null}
 
@@ -1184,7 +1216,12 @@ function assignedRoleCount(
   );
 }
 
-function ldapPayload(form: FormData, current: LdapView | null, enabled: boolean) {
+function ldapPayload(
+  form: FormData,
+  current: LdapView | null,
+  enabled: boolean,
+  groupMappingEnabled: boolean,
+) {
   if (!enabled && current) {
     return {
       enabled: false,
@@ -1233,10 +1270,10 @@ function ldapPayload(form: FormData, current: LdapView | null, enabled: boolean)
     usernameAttribute: form.get("usernameAttribute"),
     displayNameAttribute: form.get("displayNameAttribute"),
     emailAttribute: form.get("emailAttribute"),
-    groupAttribute: form.get("groupAttribute"),
-    groupSearchBase: optional("groupSearchBase") ?? "",
+    groupAttribute: groupMappingEnabled ? (form.get("groupAttribute") ?? "memberOf") : "",
+    groupSearchBase: groupMappingEnabled ? (optional("groupSearchBase") ?? "") : "",
     groupSearchFilter: optional("groupSearchFilter") ?? "(member={{userDn}})",
-    groupNameAttribute: form.get("groupNameAttribute"),
+    groupNameAttribute: groupMappingEnabled ? (form.get("groupNameAttribute") ?? "cn") : "cn",
     defaultRole: form.get("defaultRole"),
   };
 }

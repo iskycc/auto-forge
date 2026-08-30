@@ -161,6 +161,45 @@ describe("LDAP directory compatibility", () => {
     expect(client.unbind).toHaveBeenCalledOnce();
   });
 
+  it("uses one user search and reads no Group data when unified-role mapping is selected", async () => {
+    const search = vi.fn(
+      async (_baseDn: string, options: { attributes?: string[]; filter?: string }) => {
+        expect(options.attributes).toEqual(["uid", "displayName", "mail"]);
+        expect(options.filter).toContain("uid=*");
+        return {
+          searchEntries: [
+            {
+              dn: "uid=one,ou=people,dc=example,dc=test",
+              uid: "one",
+              displayName: "User One",
+              mail: "one@example.test",
+              memberOf: Array.from({ length: 2_000 }, (_, index) => `cn=group-${index}`),
+            },
+            {
+              dn: "uid=two,ou=people,dc=example,dc=test",
+              uid: "two",
+              displayName: "User Two",
+              mail: "two@example.test",
+            },
+          ],
+        };
+      },
+    );
+    const directory = new LdapDirectory(async () => fakeClient(search));
+
+    await expect(
+      directory.listUsers({
+        ...baseConfiguration,
+        groupAttribute: "",
+        groupSearchBase: "",
+      }),
+    ).resolves.toEqual([
+      expect.objectContaining({ username: "one", groupDns: [] }),
+      expect.objectContaining({ username: "two", groupDns: [] }),
+    ]);
+    expect(search).toHaveBeenCalledOnce();
+  });
+
   it("keeps historical DN-based Group mappings usable after upgrade", async () => {
     const search = vi.fn(async (baseDn: string) =>
       baseDn === baseConfiguration.userBaseDn

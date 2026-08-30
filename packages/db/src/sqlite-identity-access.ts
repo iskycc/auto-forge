@@ -971,7 +971,7 @@ export class SqliteIdentityAccessRepository implements IdentityAccessRepository 
     })();
   }
 
-  async assignLdapInitialRole(input: {
+  async ensureLdapDefaultRole(input: {
     userId: string;
     roleId: string;
     projectId?: string;
@@ -984,7 +984,7 @@ export class SqliteIdentityAccessRepository implements IdentityAccessRepository 
           userId: input.userId,
           projectId: input.projectId,
           roleId: input.roleId,
-          source: "manual",
+          source: "ldap",
           assignedAt: input.recordedAt,
           assignedBy: null,
         })
@@ -997,7 +997,7 @@ export class SqliteIdentityAccessRepository implements IdentityAccessRepository 
       .values({
         userId: input.userId,
         roleId: input.roleId,
-        source: "manual",
+        source: "ldap",
         assignedAt: input.recordedAt,
         assignedBy: null,
       })

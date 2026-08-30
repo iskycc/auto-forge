@@ -177,13 +177,7 @@ export class IdentityAccessService {
     }
     const ldapConfiguration = await this.repository.getLdapConfiguration();
     if (credential?.user.source === "ldap" || ldapConfiguration?.enabled) {
-      return this.loginWithLdap(
-        input.username,
-        input.password,
-        credential,
-        ldapConfiguration,
-        requestId,
-      );
+      return this.loginWithLdap(input.username, input.password, ldapConfiguration, requestId);
     }
     return this.loginLocally(input.password, null, requestId);
   }
@@ -913,15 +907,19 @@ export class IdentityAccessService {
     if (!configuration?.enabled) {
       throw new DomainError("LDAP_DISABLED", "LDAP 未启用，不能执行同步。");
     }
-    const identities = await this.directory.listUsers(this.directoryConfiguration(configuration));
-    const mappings = await this.repository.listLdapGroupMappings();
+    const storedMappings = await this.repository.listLdapGroupMappings();
+    const groupMappingEnabled = ldapGroupMappingEnabled(configuration, storedMappings);
+    const mappings = groupMappingEnabled ? storedMappings : [];
+    const identities = await this.directory.listUsers(
+      this.directoryConfiguration(configuration, groupMappingEnabled),
+    );
     const synchronizedAt = this.now();
     let createdOrUpdated = 0;
     for (const identity of identities) {
-      const [existing, credential] = await Promise.all([
-        this.repository.findExternalIdentity(LDAP_PROVIDER_ID, identity.subject),
-        this.repository.findUserByUsername(normalizeUsername(identity.username)),
-      ]);
+      const existing = await this.repository.findExternalIdentity(
+        LDAP_PROVIDER_ID,
+        identity.subject,
+      );
       const user = await this.repository.upsertLdapUser({
         userId: existing?.userId ?? this.ids.next(),
         externalIdentityId: existing?.id ?? this.ids.next(),
@@ -935,9 +933,7 @@ export class IdentityAccessService {
         mappings,
         recordedAt: synchronizedAt,
       });
-      if (!existing && !credential) {
-        await this.assignLdapInitialRole(user.id, configuration.defaultRole, synchronizedAt);
-      }
+      await this.ensureLdapDefaultRole(user.id, configuration.defaultRole, synchronizedAt);
       createdOrUpdated += 1;
     }
     const disabledUserIds = await this.repository.disableMissingLdapUsers({
@@ -1169,15 +1165,17 @@ export class IdentityAccessService {
   private async loginWithLdap(
     username: string,
     password: string,
-    credential: StoredUserCredential | null,
     configuration: StoredLdapConfiguration | null,
     requestId?: string,
   ): Promise<SessionResult> {
     if (!configuration?.enabled) return this.rejectedLogin("ldap", undefined, requestId);
+    const storedMappings = await this.repository.listLdapGroupMappings();
+    const groupMappingEnabled = ldapGroupMappingEnabled(configuration, storedMappings);
+    const mappings = groupMappingEnabled ? storedMappings : [];
     let directoryIdentity: DirectoryIdentity;
     try {
       directoryIdentity = await this.directory.authenticate(
-        this.directoryConfiguration(configuration),
+        this.directoryConfiguration(configuration, groupMappingEnabled),
         username,
         password,
       );
@@ -1207,16 +1205,13 @@ export class IdentityAccessService {
       synchronizedAt,
     });
     if (user.status !== "active") return this.rejectedLogin("ldap", user.id, requestId);
-    const mappings = await this.repository.listLdapGroupMappings();
     await this.repository.replaceLdapRoleBindings({
       userId: user.id,
       groupDns: directoryIdentity.groupDns.map(normalizeDn),
       mappings,
       recordedAt: synchronizedAt,
     });
-    if (!credential && !existing) {
-      await this.assignLdapInitialRole(user.id, configuration.defaultRole, synchronizedAt);
-    }
+    await this.ensureLdapDefaultRole(user.id, configuration.defaultRole, synchronizedAt);
     const session = await this.createSession(user.id);
     await this.successfulLogin("ldap", user.id, requestId);
     return session;
@@ -1271,8 +1266,15 @@ export class IdentityAccessService {
     });
   }
 
-  private directoryConfiguration(stored: StoredLdapConfiguration): DirectoryConfiguration {
-    return { ...stored, bindPassword: this.decryptStoredBindPassword(stored) };
+  private directoryConfiguration(
+    stored: StoredLdapConfiguration,
+    groupMappingEnabled = true,
+  ): DirectoryConfiguration {
+    return {
+      ...stored,
+      ...(groupMappingEnabled ? {} : { groupAttribute: "", groupSearchBase: "" }),
+      bindPassword: this.decryptStoredBindPassword(stored),
+    };
   }
 
   private decryptStoredBindPassword(stored: StoredLdapConfiguration | null): string {
@@ -1292,20 +1294,20 @@ export class IdentityAccessService {
     return user;
   }
 
-  private async assignLdapInitialRole(
+  private async ensureLdapDefaultRole(
     userId: string,
     defaultRole: StoredLdapConfiguration["defaultRole"],
     recordedAt: string,
   ): Promise<void> {
     if (defaultRole === "admin") {
-      await this.repository.assignLdapInitialRole({
+      await this.repository.ensureLdapDefaultRole({
         userId,
         roleId: SYSTEM_ADMIN_ROLE_ID,
         recordedAt,
       });
       return;
     }
-    await this.repository.assignLdapInitialRole({
+    await this.repository.ensureLdapDefaultRole({
       userId,
       roleId: defaultRole === "editor" ? TEST_MANAGER_ROLE_ID : VIEWER_ROLE_ID,
       projectId: DEFAULT_PROJECT_ID,
@@ -1395,6 +1397,14 @@ export class IdentityAccessService {
   private now(): string {
     return this.clock.now().toISOString();
   }
+}
+
+function ldapGroupMappingEnabled(
+  configuration: StoredLdapConfiguration,
+  mappings: ReadonlyArray<{ groupDn: string }>,
+): boolean {
+  if (mappings.length === 0) return false;
+  return Boolean(configuration.groupSearchBase.trim() || configuration.groupAttribute.trim());
 }
 
 function normalizeUsername(username: string): string {

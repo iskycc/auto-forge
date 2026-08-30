@@ -36,7 +36,7 @@ describe("LDAP configuration contracts", () => {
     ).toMatchObject({
       url: "ldaps://ldap.internal:636",
       bindDn: "",
-      groupAttribute: "memberOf",
+      groupAttribute: "",
       groupSearchFilter: "(member={{userDn}})",
       defaultRole: "editor",
     });

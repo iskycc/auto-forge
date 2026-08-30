@@ -217,7 +217,9 @@ export const ldapConfigurationInputSchema = ldapConfigurationCompatibilitySchema
       usernameAttribute: value.usernameAttribute,
       displayNameAttribute: value.displayNameAttribute,
       emailAttribute: value.emailAttribute,
-      groupAttribute: value.groupAttribute ?? value.groupMemberAttribute ?? "memberOf",
+      // Group authorization is opt-in. Omitting both the direct attribute and Group Search
+      // keeps large directories on one paged user query and assigns the configured default role.
+      groupAttribute: value.groupAttribute ?? value.groupMemberAttribute ?? "",
       groupSearchBase,
       groupSearchFilter,
       groupNameAttribute: value.groupNameAttribute ?? "cn",

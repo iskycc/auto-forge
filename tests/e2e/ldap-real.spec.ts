@@ -20,7 +20,22 @@ test("authenticates and synchronizes against real private-CA LDAP", async ({ bro
   test.setTimeout(420_000);
   await ensureAdministrator(page);
   const caPem = await readFile(requiredEnvironment("E2E_LDAP_CA_FILE"), "utf8");
-  await configureDirectory(page, caPem, "ldaps");
+  await configureDirectory(page, caPem, "ldaps", false);
+  const unifiedRoleContext = await loginWithLdap(browser, "alice", directoryPassword);
+  const unifiedRolePage = unifiedRoleContext.pages()[0]!;
+  await expect(unifiedRolePage.getByRole("link", { name: "用例管理", exact: true })).toBeVisible();
+  await expect(unifiedRolePage.getByRole("link", { name: "安全审计" })).toHaveCount(0);
+  const unifiedSynchronization = await browserJson<{
+    status: string;
+    processedUsers: number;
+    disabledUsers: number;
+  }>(page, "/api/v1/ldap/synchronize", { method: "POST" });
+  expect(unifiedSynchronization.status).toBe(202);
+  expect(unifiedSynchronization.body).toMatchObject({ status: "succeeded", disabledUsers: 0 });
+  expect(unifiedSynchronization.body.processedUsers).toBeGreaterThanOrEqual(51);
+  await unifiedRoleContext.close();
+
+  await configureDirectory(page, caPem, "ldaps", true);
   await addGroupMapping(page, "auditors", "审计员");
   await addGroupMapping(page, "viewers", "只读观察者", "默认项目");
 
@@ -89,6 +104,7 @@ async function configureDirectory(
   page: Page,
   caPem: string,
   protocol: "ldaps" | "ldap",
+  groupMappingEnabled = true,
 ): Promise<void> {
   await page.goto("/settings/access?section=ldap");
   const form = page.locator("form", {
@@ -114,11 +130,16 @@ async function configureDirectory(
   await form.getByLabel("用户名属性").fill("uid");
   await form.getByLabel("显示名称属性").fill("displayName");
   await form.getByLabel("邮箱属性（可选）").fill("mail");
-  await form.getByLabel("Group Search Base（可选）").fill("ou=groups,dc=example,dc=test");
-  await form
-    .getByLabel("Group Search Filter")
-    .fill("(&(objectClass=groupOfNames)(member={{userDn}}))");
-  await form.getByLabel("Group 名称属性").fill("cn");
+  const groupMapping = form.getByLabel("按 LDAP Group 分配不同角色（高级功能）");
+  if (groupMappingEnabled && !(await groupMapping.isChecked())) await groupMapping.check();
+  if (!groupMappingEnabled && (await groupMapping.isChecked())) await groupMapping.uncheck();
+  if (groupMappingEnabled) {
+    await form.getByLabel("Group Search Base（可选）").fill("ou=groups,dc=example,dc=test");
+    await form
+      .getByLabel("Group Search Filter")
+      .fill("(&(objectClass=groupOfNames)(member={{userDn}}))");
+    await form.getByLabel("Group 名称属性").fill("cn");
+  }
   await form.getByLabel("私有 CA PEM（可选）").fill(caPem);
   await form.getByRole("button", { name: "保存 LDAP 配置" }).click();
   await expect(page.getByText("LDAP 配置已加密保存。")).toBeVisible({ timeout: 20_000 });
@@ -127,9 +148,13 @@ async function configureDirectory(
     has: page.getByRole("button", { name: "测试连接" }),
   });
   await persistedForm.getByRole("button", { name: "测试连接" }).click();
-  await expect(page.getByText("LDAP 连接、用户与 Group Base DN 验证成功。")).toBeVisible({
-    timeout: 20_000,
-  });
+  await expect(
+    page.getByText(
+      groupMappingEnabled
+        ? "LDAP 连接、用户与 Group Base DN 验证成功。"
+        : "LDAP 连接与用户 Base DN 验证成功。",
+    ),
+  ).toBeVisible({ timeout: 20_000 });
 }
 
 async function addGroupMapping(

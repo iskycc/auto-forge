@@ -29,6 +29,18 @@ async function captureUi(page: Page, name: string): Promise<void> {
   await page.screenshot({ path: resolve(absoluteDirectory, `${name}.png`), fullPage: true });
 }
 
+test("authenticated landing hand-off is an immediate HTTP redirect", async ({ page }) => {
+  await ensureAdministrator(page);
+
+  const response = await page.request.get("/landing", { maxRedirects: 0 });
+  expect(response.status()).toBe(307);
+  expect(response.headers().location).toBe("/");
+
+  await page.goto("/landing");
+  await expect(page).toHaveURL(/\/$/);
+  await expect(page.getByRole("navigation", { name: "主导航" })).toBeVisible();
+});
+
 test("local user completes forced password change and self-service session lifecycle", async ({
   page,
 }) => {

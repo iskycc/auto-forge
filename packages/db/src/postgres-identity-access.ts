@@ -985,7 +985,7 @@ export class PostgresIdentityAccessRepository implements IdentityAccessRepositor
     });
   }
 
-  async assignLdapInitialRole(input: {
+  async ensureLdapDefaultRole(input: {
     userId: string;
     roleId: string;
     projectId?: string;
@@ -996,7 +996,7 @@ export class PostgresIdentityAccessRepository implements IdentityAccessRepositor
       await this.handle.pool.query(
         `INSERT INTO project_role_bindings
          (user_id, project_id, role_id, source, assigned_at, assigned_by)
-         VALUES ($1, $2, $3, 'manual', $4, NULL) ON CONFLICT DO NOTHING`,
+         VALUES ($1, $2, $3, 'ldap', $4, NULL) ON CONFLICT DO NOTHING`,
         [input.userId, input.projectId, input.roleId, input.recordedAt],
       );
       return;
@@ -1004,7 +1004,7 @@ export class PostgresIdentityAccessRepository implements IdentityAccessRepositor
     await this.handle.pool.query(
       `INSERT INTO user_system_roles
        (user_id, role_id, source, assigned_at, assigned_by)
-       VALUES ($1, $2, 'manual', $3, NULL) ON CONFLICT DO NOTHING`,
+       VALUES ($1, $2, 'ldap', $3, NULL) ON CONFLICT DO NOTHING`,
       [input.userId, input.roleId, input.recordedAt],
     );
   }

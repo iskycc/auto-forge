@@ -71,17 +71,17 @@ export async function ensureAdministrator(page: Page): Promise<void> {
 async function openAuthenticatedRoot(page: Page): Promise<void> {
   // Older supported Releases can complete bootstrap or login with a valid
   // cookie while rendering a public root document prefetched before that
-  // cookie existed. Wait out the current Release's landing hand-off before
-  // making an explicit authenticated request, otherwise Playwright can race a
-  // document that is still being replaced.
+  // cookie existed. Wait out the landing hand-off before making an explicit
+  // authenticated request, otherwise Playwright can race a document that is
+  // still being replaced.
   await waitForAuthenticatedRoute(page);
   await page.goto("/", { waitUntil: "load" });
 }
 
 async function expectAdministratorShell(page: Page): Promise<void> {
-  // The authenticated shell is already mounted on /landing while its client
-  // hand-off to the final route is still pending. Returning at that point lets
-  // the delayed hand-off abort the caller's next navigation.
+  // Do not return while the landing response is still handing off to the
+  // permission-appropriate destination; that redirect can abort the caller's
+  // next navigation.
   await waitForAuthenticatedRoute(page);
   await expect(page.getByRole("navigation", { name: "主导航" })).toBeVisible({ timeout: 20_000 });
   await expect(page.getByRole("button", { name: "退出登录" })).toBeVisible();
