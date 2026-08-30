@@ -1495,6 +1495,13 @@ export type RunBatchAdapterRuntimeSnapshot = {
 export type RunBatchRerunSnapshot = {
   batch: RunBatch;
   adapterRuntime?: RunBatchAdapterRuntimeSnapshot;
+  /**
+   * 公开日志页的单用例诊断重跑会创建新的 ExecutionRun。这里保留同一原始
+   * 用例族最近一次已分配的 Adapter 环境，避免新 run 又从环境池首项开始。
+   */
+  caseLogRerunRotation?: {
+    previousAdapterEnvironmentAddress?: string;
+  };
   roundRecoveries: NonNullable<CreateRunBatchRecord["roundRecoveries"]>;
   runs: CreateRunBatchRecord["runs"];
 };

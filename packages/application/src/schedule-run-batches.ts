@@ -442,6 +442,10 @@ export class RunBatchSchedulingService {
     if (!run || !snapshot.batch.policy) {
       throw new DomainError("RUN_RERUN_SOURCE_INVALID", "原始执行配置快照不完整，无法重新执行。");
     }
+    const diagnosticAdapterAddresses = rotateAddressesAfter(
+      snapshot.adapterRuntime?.environmentAddresses ?? [],
+      snapshot.caseLogRerunRotation?.previousAdapterEnvironmentAddress,
+    );
     return this.createDerivedBatch({
       snapshot,
       kind: "case_log_rerun",
@@ -460,6 +464,7 @@ export class RunBatchSchedulingService {
       },
       roundRecoveries: [],
       selectedRuns: [{ run, sourceIndex: runIndex }],
+      adapterEnvironmentAddresses: diagnosticAdapterAddresses,
     });
   }
 
@@ -556,6 +561,7 @@ export class RunBatchSchedulingService {
       run: import("./ports").CreateRunBatchRecord["runs"][number];
       sourceIndex: number;
     }>;
+    adapterEnvironmentAddresses?: string[];
   }): Promise<RunBatch> {
     const createdAt = this.clock.now().toISOString();
     const batchId = this.ids.next();
@@ -590,7 +596,10 @@ export class RunBatchSchedulingService {
               ...input.snapshot.adapterRuntime,
               // 派生批次继续使用原批次的完整环境池；新 run 会重新分配首轮起点，
               // 后续 attempt 再按同一池轮询，不能按失败用例下标裁掉环境。
-              environmentAddresses: [...input.snapshot.adapterRuntime.environmentAddresses],
+              environmentAddresses: [
+                ...(input.adapterEnvironmentAddresses ??
+                  input.snapshot.adapterRuntime.environmentAddresses),
+              ],
             },
           }
         : {}),
@@ -1360,6 +1369,14 @@ export class RunBatchSchedulingService {
       return [];
     }
   }
+}
+
+function rotateAddressesAfter(addresses: readonly string[], previousAddress?: string): string[] {
+  if (addresses.length < 2 || !previousAddress) return [...addresses];
+  const previousIndex = addresses.indexOf(previousAddress);
+  if (previousIndex < 0) return [...addresses];
+  const nextIndex = (previousIndex + 1) % addresses.length;
+  return [...addresses.slice(nextIndex), ...addresses.slice(0, nextIndex)];
 }
 
 function ddtExecutionRun(

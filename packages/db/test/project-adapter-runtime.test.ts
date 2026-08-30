@@ -4,6 +4,7 @@ import { DEFAULT_EXECUTION_RESOURCE_LIMITS } from "@autoforge/domain";
 
 import {
   adapterEnvironmentAddress,
+  adapterEnvironmentAddressFromExecutionSpec,
   executionResourceLimitsForInputs,
   parseProjectAdapterRuntime,
 } from "../src/project-adapter-runtime";
@@ -60,5 +61,15 @@ describe("Adapter execution resource limits", () => {
 
     expect(runtime?.environmentAddresses).toEqual(["10.0.0.11", "10.0.0.12"]);
     expect(adapterEnvironmentAddress(runtime!, "run-a", 2)).toBe("10.0.0.12");
+  });
+
+  it("reads the actual Adapter address persisted in an assignment execution spec", () => {
+    expect(
+      adapterEnvironmentAddressFromExecutionSpec(
+        JSON.stringify({ adapter: { environmentAddress: "10.0.0.12" } }),
+      ),
+    ).toBe("10.0.0.12");
+    expect(adapterEnvironmentAddressFromExecutionSpec("{}")).toBeUndefined();
+    expect(adapterEnvironmentAddressFromExecutionSpec("invalid")).toBeUndefined();
   });
 });

@@ -39,7 +39,7 @@ describe("derived run batches", () => {
       policy: { concurrency: 1, retryConcurrencyRules: [] },
       roundRecoveries: [],
       adapterRuntimeSnapshot: {
-        environmentAddresses: ["10.0.0.11", "10.0.0.12", "10.0.0.13"],
+        environmentAddresses: ["10.0.0.13", "10.0.0.11", "10.0.0.12"],
         jarBundle: { id: "bundle-snapshot" },
       },
       runs: [
@@ -291,6 +291,9 @@ function rerunSnapshot(): RunBatchRerunSnapshot {
         sizeBytes: 1024,
         archiveFormat: "zip",
       },
+    },
+    caseLogRerunRotation: {
+      previousAdapterEnvironmentAddress: "10.0.0.12",
     },
     roundRecoveries: [
       {

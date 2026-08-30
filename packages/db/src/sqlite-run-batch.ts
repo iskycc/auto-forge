@@ -48,6 +48,7 @@ import {
 } from "./database-batches";
 import {
   adapterEnvironmentAddress,
+  adapterEnvironmentAddressFromExecutionSpec,
   executionResourceLimitsForInputs,
   parseProjectAdapterRuntime,
   projectAdapterRequiredCapabilities,
@@ -490,6 +491,15 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
       .where(eq(runBatches.id, batchId))
       .get();
     const runtime = parseProjectAdapterRuntime(runtimeRow?.adapterRuntimeJson ?? null);
+    const previousAdapterEnvironmentAddress =
+      runtime && selection.executionRunId
+        ? previousCaseLogAdapterEnvironmentAddress(
+            this.handle,
+            batchId,
+            selection.executionRunId,
+            runtime,
+          )
+        : undefined;
     const runSelection = and(
       eq(executionRuns.batchId, batchId),
       ...(selection.executionRunId ? [eq(executionRuns.id, selection.executionRunId)] : []),
@@ -528,6 +538,9 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
               ...(runtime.jarBundle ? { jarBundle: { ...runtime.jarBundle } } : {}),
             },
           }
+        : {}),
+      ...(previousAdapterEnvironmentAddress
+        ? { caseLogRerunRotation: { previousAdapterEnvironmentAddress } }
         : {}),
       roundRecoveries: recoveries,
       runs: runRows.map((run) => ({
@@ -900,12 +913,20 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
       .filter((candidate) =>
         supportsProjectAdapterRuntime(candidate.runner.capabilities, adapterRuntime),
       );
+    const attempts = attemptRows.map(toRunAttempt);
+    const previousFamilyRunnerId =
+      batch.kind === "case_log_rerun" && batch.parentBatchId && batch.sourceExecutionRunId
+        ? previousCaseLogRunnerId(this.handle, batch.parentBatchId, batch.sourceExecutionRunId)
+        : undefined;
+    const runnerHistoryByRun = previousFamilyRunnerId
+      ? Object.fromEntries(queuedRunIds.map((runId) => [runId, [previousFamilyRunnerId]]))
+      : runnerHistoryIdsByExecutionRun(attempts);
     return {
       batch,
       queuedRuns: queuedRows.map(toExecutionRun),
       candidates,
-      runnerFailureIdsByRun: runnerFailureIdsByExecutionRun(attemptRows.map(toRunAttempt)),
-      runnerHistoryByRun: runnerHistoryIdsByExecutionRun(attemptRows.map(toRunAttempt)),
+      runnerFailureIdsByRun: runnerFailureIdsByExecutionRun(attempts),
+      runnerHistoryByRun,
       projectActiveRuns: projectActiveRuns(this.handle, batch.projectId),
       ...(retryConcurrencyStateRow
         ? { retryConcurrencyState: retryConcurrencyStateFromRow(retryConcurrencyStateRow) }
@@ -2141,6 +2162,90 @@ function assignEnvironmentAddresses(
   return Object.fromEntries(
     runs.map((run, index) => [run.id, addresses[index % addresses.length]!]),
   );
+}
+
+function previousCaseLogAdapterEnvironmentAddress(
+  handle: SqliteDatabaseHandle,
+  parentBatchId: string,
+  sourceExecutionRunId: string,
+  sourceRuntime: ProjectAdapterRuntime,
+): string | undefined {
+  const latestDiagnostic = handle.client
+    .prepare(
+      `SELECT batch.adapter_runtime_json AS adapterRuntimeJson, run.id AS executionRunId
+       FROM run_batches batch
+       JOIN execution_runs run ON run.batch_id = batch.id
+       WHERE batch.batch_kind = 'case_log_rerun' AND batch.parent_batch_id = ?
+         AND batch.source_execution_run_id = ?
+       ORDER BY batch.created_at DESC, batch.id DESC, run.id DESC LIMIT 1`,
+    )
+    .get(parentBatchId, sourceExecutionRunId) as
+    { adapterRuntimeJson: string | null; executionRunId: string } | undefined;
+  const diagnosticRuntime = parseProjectAdapterRuntime(
+    latestDiagnostic?.adapterRuntimeJson ?? null,
+  );
+  if (latestDiagnostic && diagnosticRuntime) {
+    const address = adapterEnvironmentAddress(
+      diagnosticRuntime,
+      latestDiagnostic.executionRunId,
+      1,
+    );
+    if (address) return address;
+  }
+
+  const actualAssignment = handle.client
+    .prepare(
+      `SELECT assignment.execution_spec_json AS executionSpecJson
+       FROM assignments assignment
+       JOIN execution_runs run ON run.id = assignment.execution_run_id
+       JOIN run_batches batch ON batch.id = run.batch_id
+       WHERE (batch.id = ? AND run.id = ?)
+          OR (batch.batch_kind = 'case_log_rerun' AND batch.parent_batch_id = ?
+              AND batch.source_execution_run_id = ?)
+       ORDER BY assignment.created_at DESC, assignment.id DESC LIMIT 1`,
+    )
+    .get(parentBatchId, sourceExecutionRunId, parentBatchId, sourceExecutionRunId) as
+    { executionSpecJson: string } | undefined;
+  const actualAddress = actualAssignment
+    ? adapterEnvironmentAddressFromExecutionSpec(actualAssignment.executionSpecJson)
+    : undefined;
+  if (actualAddress) return actualAddress;
+
+  const latestSourceAttempt = handle.client
+    .prepare(
+      `SELECT attempt_number AS attemptNumber FROM run_attempts
+       WHERE execution_run_id = ?
+       ORDER BY attempt_number DESC, created_at DESC, id DESC LIMIT 1`,
+    )
+    .get(sourceExecutionRunId) as { attemptNumber: number } | undefined;
+  return latestSourceAttempt
+    ? adapterEnvironmentAddress(
+        sourceRuntime,
+        sourceExecutionRunId,
+        latestSourceAttempt.attemptNumber,
+      )
+    : sourceRuntime.environmentAddressByRunId[sourceExecutionRunId];
+}
+
+function previousCaseLogRunnerId(
+  handle: SqliteDatabaseHandle,
+  parentBatchId: string,
+  sourceExecutionRunId: string,
+): string | undefined {
+  const row = handle.client
+    .prepare(
+      `SELECT attempt.runner_id AS runnerId
+       FROM run_attempts attempt
+       JOIN execution_runs run ON run.id = attempt.execution_run_id
+       JOIN run_batches batch ON batch.id = run.batch_id
+       WHERE (batch.id = ? AND run.id = ?)
+          OR (batch.batch_kind = 'case_log_rerun' AND batch.parent_batch_id = ?
+              AND batch.source_execution_run_id = ?)
+       ORDER BY attempt.created_at DESC, attempt.id DESC LIMIT 1`,
+    )
+    .get(parentBatchId, sourceExecutionRunId, parentBatchId, sourceExecutionRunId) as
+    { runnerId: string } | undefined;
+  return row?.runnerId;
 }
 
 function runtimeAssetInputs(runtime: ProjectAdapterRuntime): ExecutionSpec["inputs"] {

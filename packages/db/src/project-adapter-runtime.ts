@@ -81,6 +81,19 @@ export function adapterEnvironmentAddress(
   ]!;
 }
 
+/** 读取 assignment 中实际下发的环境，兼容旧版本未轮换的执行规格。 */
+export function adapterEnvironmentAddressFromExecutionSpec(snapshot: string): string | undefined {
+  try {
+    const record = objectRecord(JSON.parse(snapshot));
+    const adapter = objectRecord(record.adapter);
+    const address = boundedString(adapter.environmentAddress ?? "", 2_048);
+    return address || undefined;
+  } catch {
+    // 历史执行规格可能来自更旧契约；无法识别时由调用方回退到批次运行时快照。
+    return undefined;
+  }
+}
+
 export function projectAdapterRequiredCapabilities(
   runtime: ProjectAdapterRuntime | undefined,
 ): string[] {

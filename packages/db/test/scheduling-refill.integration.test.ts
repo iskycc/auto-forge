@@ -284,6 +284,148 @@ function schedulingRefillCases(createHarness: () => Promise<RefillHarness>): voi
     }
   });
 
+  it("carries Runner and actual Adapter IP history across public-log diagnostic batches", async () => {
+    const harness = await createHarness();
+    const secondRunnerId = randomUUID();
+    const sourceRunId = randomUUID();
+    const previousDiagnosticRunId = randomUUID();
+    const currentDiagnosticRunId = randomUUID();
+    const sourceAttemptId = randomUUID();
+    const previousDiagnosticAttemptId = randomUUID();
+    const now = "2026-08-10T00:05:00.000Z";
+    const runtime = (runId: string, initialAddress: string) =>
+      JSON.stringify({
+        suiteName: "adapter-suite",
+        testName: "adapter-test",
+        environmentAddresses: ["10.0.0.11", "10.0.0.12", "10.0.0.13"],
+        environmentAddressByRunId: { [runId]: initialAddress },
+        fallbackEnvironmentAddress: "",
+      });
+    try {
+      await harness.rawQuery(
+        `INSERT INTO runners
+           (id, credential_hash, name, os, architecture, agent_version, protocol_version,
+            labels_json, capabilities_json, max_concurrency, busy_slots, last_seen_at, created_at,
+            updated_at)
+         VALUES (?, ?, 'runner-refill-2', 'linux', 'amd64', '0.2.2', 1, '[]',
+                 '["executor:testng-v1","isolation:cgroup-v2","java:21.0.8","testng:7.11.0"]',
+                 2, 0, ?, ?, ?)`,
+        [secondRunnerId, `hash-${secondRunnerId}`, now, now, now],
+      );
+      await harness.rawQuery(
+        `UPDATE run_batches SET total_runs = 1, adapter_runtime_json = ? WHERE id = ?`,
+        [runtime(sourceRunId, "10.0.0.11"), harness.batchSucceededId],
+      );
+      await harness.rawQuery(
+        `UPDATE run_batches
+         SET batch_kind = 'case_log_rerun', parent_batch_id = ?, source_execution_run_id = ?,
+             total_runs = 1, adapter_runtime_json = ?, created_at = '2026-08-10T00:04:00.000Z'
+         WHERE id = ?`,
+        [
+          harness.batchSucceededId,
+          sourceRunId,
+          runtime(previousDiagnosticRunId, "10.0.0.12"),
+          harness.batchRunningId,
+        ],
+      );
+      await harness.rawQuery(
+        `UPDATE run_batches
+         SET batch_kind = 'case_log_rerun', parent_batch_id = ?, source_execution_run_id = ?,
+             total_runs = 1, adapter_runtime_json = ?, created_at = '2026-08-10T00:03:00.000Z'
+         WHERE id = ?`,
+        [
+          harness.batchSucceededId,
+          sourceRunId,
+          runtime(currentDiagnosticRunId, "10.0.0.13"),
+          harness.batchQueuedId,
+        ],
+      );
+      for (const [runId, batchId, status, createdAt] of [
+        [sourceRunId, harness.batchSucceededId, "succeeded", "2026-08-10T00:01:00.000Z"],
+        [previousDiagnosticRunId, harness.batchRunningId, "succeeded", "2026-08-10T00:02:00.000Z"],
+        [currentDiagnosticRunId, harness.batchQueuedId, "queued", "2026-08-10T00:03:00.000Z"],
+      ]) {
+        await harness.rawQuery(
+          `INSERT INTO execution_runs
+             (id, batch_id, case_definition_id, case_version, display_name, class_name, status,
+              attempt_count, terminal_outcome, created_at, updated_at)
+           VALUES (?, ?, 'case-diagnostic-rotation', 1, 'Diagnostic rotation',
+                   'example.DiagnosticRotationTest', ?, ?, ?, ?, ?)`,
+          [
+            runId,
+            batchId,
+            status,
+            status === "queued" ? 0 : 1,
+            status === "queued" ? null : "succeeded",
+            createdAt,
+            createdAt,
+          ],
+        );
+      }
+      await harness.rawQuery(
+        `INSERT INTO run_attempts
+           (id, execution_run_id, runner_id, attempt_number, status, outcome,
+            scheduling_score, created_at)
+         VALUES (?, ?, ?, 1, 'succeeded', 'succeeded', 0.8, '2026-08-10T00:01:10.000Z'),
+                (?, ?, ?, 1, 'succeeded', 'succeeded', 0.8, '2026-08-10T00:02:10.000Z')`,
+        [
+          sourceAttemptId,
+          sourceRunId,
+          harness.runnerId,
+          previousDiagnosticAttemptId,
+          previousDiagnosticRunId,
+          secondRunnerId,
+        ],
+      );
+      await harness.rawQuery(
+        `INSERT INTO assignments
+           (id, attempt_id, execution_run_id, batch_id, runner_id, status, priority,
+            execution_spec_json, available_at, claim_deadline_at, claimed_at, version,
+            created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, 'completed', 0, ?, ?, ?, ?, 1, ?, ?)`,
+        [
+          randomUUID(),
+          previousDiagnosticAttemptId,
+          previousDiagnosticRunId,
+          harness.batchRunningId,
+          secondRunnerId,
+          JSON.stringify({ adapter: { environmentAddress: "10.0.0.12" } }),
+          now,
+          now,
+          now,
+          "2026-08-10T00:02:10.000Z",
+          "2026-08-10T00:02:11.000Z",
+        ],
+      );
+      await harness.rawQuery("INSERT INTO run_batch_runners (batch_id, runner_id) VALUES (?, ?)", [
+        harness.batchQueuedId,
+        harness.runnerId,
+      ]);
+      await harness.rawQuery("INSERT INTO run_batch_runners (batch_id, runner_id) VALUES (?, ?)", [
+        harness.batchQueuedId,
+        secondRunnerId,
+      ]);
+
+      await expect(
+        harness.batches.getRerunSnapshot(harness.batchSucceededId, {
+          executionRunId: sourceRunId,
+        }),
+      ).resolves.toMatchObject({
+        caseLogRerunRotation: { previousAdapterEnvironmentAddress: "10.0.0.12" },
+      });
+      const scheduling = await harness.batches.getSchedulingSnapshot(
+        harness.batchQueuedId,
+        "2026-08-09T00:00:00.000Z",
+      );
+      expect(scheduling?.runnerHistoryByRun).toEqual({
+        [currentDiagnosticRunId]: [secondRunnerId],
+      });
+    } finally {
+      await harness.dispose();
+      await cleanupTemporaryDirectories();
+    }
+  });
+
   it("persists an activated retry concurrency until a later ordered rule takes over", async () => {
     const harness = await createHarness();
     const firstState = {

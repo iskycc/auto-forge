@@ -61,6 +61,7 @@ import {
 } from "./database-batches";
 import {
   adapterEnvironmentAddress,
+  adapterEnvironmentAddressFromExecutionSpec,
   executionResourceLimitsForInputs,
   parseProjectAdapterRuntime,
   projectAdapterRequiredCapabilities,
@@ -492,6 +493,15 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
       .where(eq(pgRunBatches.id, batchId))
       .limit(1);
     const runtime = parseProjectAdapterRuntime(runtimeRow?.adapterRuntimeJson ?? null);
+    const previousAdapterEnvironmentAddress =
+      runtime && selection.executionRunId
+        ? await previousCaseLogAdapterEnvironmentAddress(
+            this.handle,
+            batchId,
+            selection.executionRunId,
+            runtime,
+          )
+        : undefined;
     const runSelection = and(
       eq(pgExecutionRuns.batchId, batchId),
       ...(selection.executionRunId ? [eq(pgExecutionRuns.id, selection.executionRunId)] : []),
@@ -528,6 +538,9 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
               ...(runtime.jarBundle ? { jarBundle: { ...runtime.jarBundle } } : {}),
             },
           }
+        : {}),
+      ...(previousAdapterEnvironmentAddress
+        ? { caseLogRerunRotation: { previousAdapterEnvironmentAddress } }
         : {}),
       roundRecoveries: recoveries.rows,
       runs: runRows.map((run) => ({
@@ -926,12 +939,24 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
       .filter((candidate) =>
         supportsProjectAdapterRuntime(candidate.runner.capabilities, adapterRuntime),
       );
+    const attempts = attemptRows.map(toRunAttempt);
+    const previousFamilyRunnerId =
+      batch.kind === "case_log_rerun" && batch.parentBatchId && batch.sourceExecutionRunId
+        ? await previousCaseLogRunnerId(
+            this.handle,
+            batch.parentBatchId,
+            batch.sourceExecutionRunId,
+          )
+        : undefined;
+    const runnerHistoryByRun = previousFamilyRunnerId
+      ? Object.fromEntries(queuedRunIds.map((runId) => [runId, [previousFamilyRunnerId]]))
+      : runnerHistoryIdsByExecutionRun(attempts);
     return {
       batch,
       queuedRuns: queuedRows.map(toExecutionRun),
       candidates,
-      runnerFailureIdsByRun: runnerFailureIdsByExecutionRun(attemptRows.map(toRunAttempt)),
-      runnerHistoryByRun: runnerHistoryIdsByExecutionRun(attemptRows.map(toRunAttempt)),
+      runnerFailureIdsByRun: runnerFailureIdsByExecutionRun(attempts),
+      runnerHistoryByRun,
       projectActiveRuns: Number(activeProjectRuns.rows[0]?.count ?? 0),
       ...(retryConcurrencyStateRow
         ? { retryConcurrencyState: retryConcurrencyStateFromRow(retryConcurrencyStateRow) }
@@ -2335,6 +2360,87 @@ function assignEnvironmentAddresses(
   return Object.fromEntries(
     runs.map((run, index) => [run.id, addresses[index % addresses.length]!]),
   );
+}
+
+async function previousCaseLogAdapterEnvironmentAddress(
+  handle: PostgresDatabaseHandle,
+  parentBatchId: string,
+  sourceExecutionRunId: string,
+  sourceRuntime: ProjectAdapterRuntime,
+): Promise<string | undefined> {
+  const latestDiagnostic = await handle.pool.query<{
+    adapterRuntimeJson: string | null;
+    executionRunId: string;
+  }>(
+    `SELECT batch.adapter_runtime_json AS "adapterRuntimeJson", run.id AS "executionRunId"
+     FROM run_batches batch
+     JOIN execution_runs run ON run.batch_id = batch.id
+     WHERE batch.batch_kind = 'case_log_rerun' AND batch.parent_batch_id = $1
+       AND batch.source_execution_run_id = $2
+     ORDER BY batch.created_at DESC, batch.id DESC, run.id DESC LIMIT 1`,
+    [parentBatchId, sourceExecutionRunId],
+  );
+  const latestDiagnosticRow = latestDiagnostic.rows[0];
+  const diagnosticRuntime = parseProjectAdapterRuntime(
+    latestDiagnosticRow?.adapterRuntimeJson ?? null,
+  );
+  if (latestDiagnosticRow && diagnosticRuntime) {
+    const address = adapterEnvironmentAddress(
+      diagnosticRuntime,
+      latestDiagnosticRow.executionRunId,
+      1,
+    );
+    if (address) return address;
+  }
+
+  const actualAssignment = await handle.pool.query<{ executionSpecJson: string }>(
+    `SELECT assignment.execution_spec_json AS "executionSpecJson"
+     FROM assignments assignment
+     JOIN execution_runs run ON run.id = assignment.execution_run_id
+     JOIN run_batches batch ON batch.id = run.batch_id
+     WHERE (batch.id = $1 AND run.id = $2)
+        OR (batch.batch_kind = 'case_log_rerun' AND batch.parent_batch_id = $1
+            AND batch.source_execution_run_id = $2)
+     ORDER BY assignment.created_at DESC, assignment.id DESC LIMIT 1`,
+    [parentBatchId, sourceExecutionRunId],
+  );
+  const actualAddress = actualAssignment.rows[0]
+    ? adapterEnvironmentAddressFromExecutionSpec(actualAssignment.rows[0].executionSpecJson)
+    : undefined;
+  if (actualAddress) return actualAddress;
+
+  const latestSourceAttempt = await handle.pool.query<{ attemptNumber: number }>(
+    `SELECT attempt_number AS "attemptNumber" FROM run_attempts
+     WHERE execution_run_id = $1
+     ORDER BY attempt_number DESC, created_at DESC, id DESC LIMIT 1`,
+    [sourceExecutionRunId],
+  );
+  return latestSourceAttempt.rows[0]
+    ? adapterEnvironmentAddress(
+        sourceRuntime,
+        sourceExecutionRunId,
+        latestSourceAttempt.rows[0].attemptNumber,
+      )
+    : sourceRuntime.environmentAddressByRunId[sourceExecutionRunId];
+}
+
+async function previousCaseLogRunnerId(
+  handle: PostgresDatabaseHandle,
+  parentBatchId: string,
+  sourceExecutionRunId: string,
+): Promise<string | undefined> {
+  const result = await handle.pool.query<{ runnerId: string }>(
+    `SELECT attempt.runner_id AS "runnerId"
+     FROM run_attempts attempt
+     JOIN execution_runs run ON run.id = attempt.execution_run_id
+     JOIN run_batches batch ON batch.id = run.batch_id
+     WHERE (batch.id = $1 AND run.id = $2)
+        OR (batch.batch_kind = 'case_log_rerun' AND batch.parent_batch_id = $1
+            AND batch.source_execution_run_id = $2)
+     ORDER BY attempt.created_at DESC, attempt.id DESC LIMIT 1`,
+    [parentBatchId, sourceExecutionRunId],
+  );
+  return result.rows[0]?.runnerId;
 }
 
 function runtimeAssetInputs(runtime: ProjectAdapterRuntime): ExecutionSpec["inputs"] {

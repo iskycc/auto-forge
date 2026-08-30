@@ -4,6 +4,40 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## 1.6.7 - 2026-08-30
+
+### Fixed
+
+- Single-case diagnostic runs submitted from authenticated or permanent public log pages now retain
+  the original case family's latest Runner and actual assigned Adapter environment. Each new hidden
+  diagnostic batch advances to the next healthy Runner and the next configured environment address
+  instead of restarting from the first environment because it owns a new execution-run ID.
+
+### Tests
+
+- Added shared SQLite/PostgreSQL repository contract coverage for cross-batch Runner history and the
+  actual Adapter address persisted in assignment execution specs, plus application coverage for the
+  next environment selected by a public-log diagnostic rerun.
+
+### Database and persisted configuration
+
+- No migration or persisted-configuration change is required. Rotation is derived from existing
+  parent/source links and assignment execution-spec snapshots through bounded latest-row queries.
+
+### Compatibility
+
+- Existing diagnostic batches and public log links remain valid. Reading the actual persisted
+  assignment address also preserves correct rotation for batches produced before v1.6.6.
+- No Runner Protocol change is required.
+
+### Offline assets
+
+- No dependency, remote asset or runtime network requirement was added.
+
+### Known limitations
+
+- If only one healthy compatible Runner or one Adapter address is available, that resource is reused.
+
 ## 1.6.6 - 2026-08-30
 
 ### Changed
