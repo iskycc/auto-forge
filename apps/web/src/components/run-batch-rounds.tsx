@@ -21,7 +21,8 @@ import {
   ScrollText,
   Search,
 } from "lucide-react";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { AttemptLogViewer } from "@/components/attempt-log-viewer";
@@ -221,8 +222,6 @@ export function RunBatchRounds({
   runnerDirectory: readonly RunnerDirectoryEntry[];
   onRefresh: () => void;
 }) {
-  const router = useRouter();
-  const pathname = usePathname();
   const searchParams = useSearchParams();
   const summaries = batch.roundSummaries;
   const recoveries = useMemo(() => recoveryGroups(batch.roundRecoveries), [batch.roundRecoveries]);
@@ -276,7 +275,10 @@ export function RunBatchRounds({
   function selectRound(round: number | "all" | "summary" | `recovery-${number}`): void {
     const parameters = new URLSearchParams(searchParams.toString());
     parameters.set("round", String(round));
-    router.replace(`${pathname}?${parameters.toString()}`, { scroll: false });
+    // 轮次详情的数据由当前客户端组件按页读取，切换轮次不需要重新执行整棵
+    // Server Component。原先 router.replace 会重复查询批次概要并造成明显卡顿；
+    // 原生 history API 仍会同步 Next.js 的 useSearchParams，同时保留可刷新 URL。
+    window.history.replaceState(null, "", `${window.location.pathname}?${parameters.toString()}`);
   }
 
   async function cancelRun(runId: string): Promise<void> {
@@ -351,7 +353,10 @@ export function RunBatchRounds({
                   <Button
                     aria-pressed={summarySelected}
                     className="round-select-button"
-                    onClick={() => selectRound("summary")}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      selectRound("summary");
+                    }}
                     size="compact"
                     type="button"
                     variant="ghost"
@@ -400,7 +405,10 @@ export function RunBatchRounds({
                     size="compact"
                     type="button"
                     aria-pressed={allRoundsSelected}
-                    onClick={() => selectRound("all")}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      selectRound("all");
+                    }}
                   >
                     全部轮次
                   </Button>
@@ -441,7 +449,10 @@ export function RunBatchRounds({
                         aria-pressed={
                           !allRoundsSelected && !summarySelected && summary.round === selectedRound
                         }
-                        onClick={() => selectRound(summary.round)}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          selectRound(summary.round);
+                        }}
                       >
                         {roundLabel(batch.retryMode, summary.round)}
                       </Button>
@@ -523,7 +534,10 @@ export function RunBatchRounds({
                         <Button
                           aria-pressed={selectedRecovery?.afterRound === recovery.afterRound}
                           className="round-select-button"
-                          onClick={() => selectRound(`recovery-${recovery.afterRound}`)}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            selectRound(`recovery-${recovery.afterRound}`);
+                          }}
                           size="compact"
                           type="button"
                           variant="ghost"
@@ -1009,6 +1023,7 @@ function RoundDetailPanel({
   const label = roundLabel(batch.retryMode, summary.round);
   const [exportDialogOpen, setExportDialogOpen] = useState(false);
   const [faultDialogOpen, setFaultDialogOpen] = useState(false);
+  const [runnerTabMounted, setRunnerTabMounted] = useState(activeTab === "runners");
   const faultIncidents = batch.runnerFaultIncidents;
   const passedRunsSoFar = summary.overallPassed;
   const inProgress = Math.max(
@@ -1122,7 +1137,10 @@ function RoundDetailPanel({
               <Button
                 aria-pressed={activeTab === "runners"}
                 className={activeTab === "runners" ? "active" : ""}
-                onClick={() => onTabChange("runners")}
+                onClick={() => {
+                  setRunnerTabMounted(true);
+                  onTabChange("runners");
+                }}
                 type="button"
               >
                 执行机
@@ -1138,7 +1156,7 @@ function RoundDetailPanel({
               </Button>
             ) : null}
           </div>
-          {activeTab === "cases" ? (
+          <div hidden={activeTab !== "cases"}>
             <RoundCasesTable
               key={summary.round}
               batch={batch}
@@ -1155,15 +1173,18 @@ function RoundDetailPanel({
               onCancelRun={onCancelRun}
               onOpenLogs={onOpenLogs}
             />
-          ) : (
-            <RoundRunnerCards
-              batch={batch}
-              round={summary.round}
-              canReadLogs={canReadLogs}
-              runnerDirectory={runnerDirectory}
-              onOpenScheduling={onOpenScheduling}
-            />
-          )}
+          </div>
+          {runnerTabMounted ? (
+            <div hidden={activeTab !== "runners"}>
+              <RoundRunnerCards
+                batch={batch}
+                round={summary.round}
+                canReadLogs={canReadLogs}
+                runnerDirectory={runnerDirectory}
+                onOpenScheduling={onOpenScheduling}
+              />
+            </div>
+          ) : null}
         </div>
       </div>
       {faultDialogOpen ? (
@@ -1440,6 +1461,7 @@ function RoundCasesTable({
                   }
                   canCancelRuns={canCancelRuns}
                   canReadLogs={canReadLogs}
+                  {...(batch.accessToken ? { publicRunShareToken: batch.accessToken } : {})}
                   canReadAttemptEvents={canReadAttemptEvents}
                   canReadArtifacts={canReadArtifacts}
                   artifactsEnabled={artifactsEnabled}
@@ -1535,6 +1557,7 @@ function RoundCaseRow({
   showRoundColumn,
   canCancelRuns,
   canReadLogs,
+  publicRunShareToken,
   canReadAttemptEvents,
   canReadArtifacts,
   artifactsEnabled,
@@ -1552,6 +1575,7 @@ function RoundCaseRow({
   showRoundColumn: boolean;
   canCancelRuns: boolean;
   canReadLogs: boolean;
+  publicRunShareToken?: string;
   canReadAttemptEvents: boolean;
   canReadArtifacts: boolean;
   artifactsEnabled: boolean;
@@ -1652,6 +1676,15 @@ function RoundCaseRow({
               >
                 <Eye size={15} /> 查看日志
               </Button>
+            ) : null}
+            {attempt && publicRunShareToken ? (
+              <Link
+                className="button button-secondary compact-button"
+                href={`/share/run/${encodeURIComponent(publicRunShareToken)}/attempt/${encodeURIComponent(attempt.id)}`}
+                prefetch={false}
+              >
+                <Eye size={15} /> 查看公开日志
+              </Link>
             ) : null}
             {canShareLog ? (
               <Button

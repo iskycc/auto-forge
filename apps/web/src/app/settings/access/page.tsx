@@ -46,9 +46,18 @@ export default async function AccessSettingsPage({
     availableSections.find((section) => section.id === requestedSection)?.id ??
     availableSections[0]!.id;
   const heading = accessSectionHeading(activeSection);
+  // 每个路由 Tab 只读取自己真正展示的数据。旧实现无论进入哪个 Tab 都会读取
+  // 用户、角色、LDAP、会话及全部项目成员，并形成逐项目 N+1 查询，项目较多时
+  // 单纯切换 Tab 也会被无关 I/O 阻塞。
+  const needsUsers = activeSection === "users" || activeSection === "roles";
+  const needsRoles =
+    activeSection === "users" || activeSection === "roles" || activeSection === "ldap";
+  const needsProjects = needsRoles;
+  const needsLdap = activeSection === "ldap";
+  const needsRoleBindings = activeSection === "users" || activeSection === "roles";
   const [userPage, roles, projects, ldap, ldapMappings, sessions, systemRoleBindings] =
     await Promise.all([
-      capabilities.userRead
+      needsUsers && capabilities.userRead
         ? services.identityAccess.listUsers(identity, {
             limit: 50,
             ...(query ? { query } : {}),
@@ -56,27 +65,34 @@ export default async function AccessSettingsPage({
             ...(cursor ? { cursor } : {}),
           })
         : Promise.resolve({ items: [], nextCursor: undefined }),
-      capabilities.roleRead ? services.identityAccess.listRoles(identity) : Promise.resolve([]),
-      capabilities.projectRead
+      needsRoles && capabilities.roleRead
+        ? services.identityAccess.listRoles(identity)
+        : Promise.resolve([]),
+      needsProjects && capabilities.projectRead
         ? services.identityAccess.listProjects(identity)
         : Promise.resolve([]),
-      capabilities.ldapRead
+      needsLdap && capabilities.ldapRead
         ? services.identityAccess.getLdapConfiguration(identity)
         : Promise.resolve(null),
-      capabilities.ldapRead
+      needsLdap && capabilities.ldapRead
         ? services.identityAccess.listLdapGroupMappings(identity)
         : Promise.resolve([]),
-      services.identityAccess.listSessions(identity),
-      capabilities.roleRead
+      activeSection === "sessions"
+        ? services.identityAccess.listSessions(identity)
+        : Promise.resolve([]),
+      needsRoleBindings && capabilities.roleRead
         ? services.identityAccess.listSystemRoleBindings(identity)
         : Promise.resolve([]),
     ]);
-  const projectMemberships = await Promise.all(
-    projects.map(async (project) => ({
-      projectId: project.id,
-      members: await services.identityAccess.listProjectMembers(identity, project.id),
-    })),
-  );
+  const projectMemberships =
+    activeSection === "users"
+      ? await Promise.all(
+          projects.map(async (project) => ({
+            projectId: project.id,
+            members: await services.identityAccess.listProjectMembers(identity, project.id),
+          })),
+        )
+      : [];
 
   return (
     <section className="page-stack">

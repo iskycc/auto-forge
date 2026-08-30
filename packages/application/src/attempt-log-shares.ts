@@ -17,8 +17,9 @@ import type {
  */
 export const PERMANENT_LOG_ACCESS_EXPIRY = "9999-12-31T23:59:59.999Z";
 
-/** 读取完整日志时的单页大小；日志内容在写入侧已脱敏，这里原样拼接，截断由展示层负责。 */
-const LOG_PAGE_LIMIT = 500;
+/** 小页读取并在应用层提前停止，避免单个公开页把超大日志完整载入进程内存。 */
+const LOG_PAGE_LIMIT = 16;
+const SHARED_LOG_MAX_BYTES = 512 * 1024;
 
 export type AttemptLogShareTokenPort = {
   /** 生成 32 字节随机数的 base64url 字符串作为链接 token。 */
@@ -52,36 +53,74 @@ export class AttemptLogShareService {
     const now = this.clock.now().toISOString();
     const share = await this.shares.findActiveByTokenHash(this.tokens.hash(token), now);
     if (!share) return null;
-    const anchorBatch = await this.batches.get(share.batchId);
-    const sharedAttempt = anchorBatch?.attempts.find(
-      (candidate) => candidate.id === share.attemptId,
+    return this.getAttemptLogInBatch(
+      share.batchId,
+      share.attemptId,
+      selectedAttemptId,
+      share.expiresAt,
     );
-    if (!anchorBatch || !sharedAttempt) return null;
+  }
+
+  /**
+   * 永久批次分享页复用其 HMAC 授权读取该批次中的用例日志。anchorAttemptId 必须
+   * 直接属于已分享批次；selectedAttemptId 只能在同一 ExecutionRun 的轮次/诊断
+   * 重跑家族内切换，避免通过猜测 attemptId 越过批次边界。
+   */
+  async getSharedAttemptLogForBatch(
+    batchId: string,
+    anchorAttemptId: string,
+    selectedAttemptId?: string,
+  ): Promise<SharedAttemptLogView | null> {
+    return this.getAttemptLogInBatch(
+      batchId,
+      anchorAttemptId,
+      selectedAttemptId,
+      PERMANENT_LOG_ACCESS_EXPIRY,
+    );
+  }
+
+  private async getAttemptLogInBatch(
+    anchorBatchId: string,
+    anchorAttemptId: string,
+    selectedAttemptId: string | undefined,
+    expiresAt: string,
+  ): Promise<SharedAttemptLogView | null> {
+    const anchorContext = await this.executions.resolveAttemptSchedulingContext(anchorAttemptId);
+    if (!anchorContext || anchorContext.batchId !== anchorBatchId) return null;
+    const anchorBatch = await this.batches.getSummary(anchorBatchId);
+    if (!anchorBatch) return null;
     const rootBatchId =
       anchorBatch.kind === "case_log_rerun" ? anchorBatch.parentBatchId : anchorBatch.id;
     const rootExecutionRunId =
       anchorBatch.kind === "case_log_rerun"
         ? anchorBatch.sourceExecutionRunId
-        : sharedAttempt.executionRunId;
+        : anchorContext.executionRunId;
     if (!rootBatchId || !rootExecutionRunId) return null;
-    const batch =
-      rootBatchId === anchorBatch.id ? anchorBatch : await this.batches.get(rootBatchId);
-    if (!batch) return null;
-    const run = batch.runs.find((candidate) => candidate.id === rootExecutionRunId);
+    const rootSnapshot = await this.batches.getRerunSnapshot(rootBatchId, {
+      executionRunId: rootExecutionRunId,
+    });
+    if (!rootSnapshot) return null;
+    const batch = rootSnapshot.batch;
+    const run = rootSnapshot.runs.find((candidate) => candidate.id === rootExecutionRunId);
     if (!run) return null;
+    // 生产 Lite/Full 仓储只查当前 ExecutionRun 的 attempts。兼容回退仅供仍使用旧
+    // fake 的调用方，不能成为生产大批次的默认路径。
+    const roundAttempts = this.batches.listAttemptsForExecutionRun
+      ? await this.batches.listAttemptsForExecutionRun(rootExecutionRunId)
+      : ((await this.batches.get(rootBatchId))?.attempts.filter(
+          (candidate) => candidate.executionRunId === rootExecutionRunId,
+        ) ?? []);
     const diagnosticBatches = await this.batches.listCaseLogRerunBatches(
       rootBatchId,
       rootExecutionRunId,
       500,
     );
     const familyAttempts = [
-      ...batch.attempts
-        .filter((candidate) => candidate.executionRunId === run.id)
-        .map((attempt) => ({
-          attempt,
-          kind: "round" as const,
-          requestedBy: null,
-        })),
+      ...roundAttempts.map((attempt) => ({
+        attempt,
+        kind: "round" as const,
+        requestedBy: null,
+      })),
       ...diagnosticBatches.flatMap((diagnosticBatch) =>
         diagnosticBatch.attempts.map((attempt) => ({
           attempt,
@@ -107,10 +146,11 @@ export class AttemptLogShareService {
         return byTime || left.attempt.id.localeCompare(right.attempt.id);
       });
     const selected = visibleAttempts.find(
-      ({ attempt }) => attempt.id === (selectedAttemptId ?? share.attemptId),
+      ({ attempt }) => attempt.id === (selectedAttemptId ?? anchorAttemptId),
     );
     if (!selected) return null;
     const { attempt, outcome, kind, requestedBy } = selected;
+    const log = await this.readAttemptLogText(attempt.id);
     return {
       batchId: batch.id,
       batchSequenceNumber: batch.sequenceNumber,
@@ -126,7 +166,8 @@ export class AttemptLogShareService {
       durationMs: attempt.durationMs ?? null,
       kind,
       requestedBy,
-      logText: await this.readAttemptLogText(attempt.id),
+      logText: log.text,
+      ...(log.truncated ? { logTruncated: true } : {}),
       rounds: visibleAttempts.map(
         ({ attempt: candidate, outcome: candidateOutcome, kind: candidateKind, requestedBy }) => ({
           attemptId: candidate.id,
@@ -140,7 +181,7 @@ export class AttemptLogShareService {
           requestedBy,
         }),
       ),
-      expiresAt: share.expiresAt,
+      expiresAt,
     };
   }
 
@@ -243,12 +284,16 @@ export class AttemptLogShareService {
     return tokensByAttempt;
   }
 
-  /** 复用执行控制仓储的分页读取，合并 stdout/stderr 为完整日志文本。 */
-  private async readAttemptLogText(attemptId: string): Promise<string> {
+  /** 复用执行控制仓储的分页读取；每条流有界读取，合并后再按 UTF-8 边界截断。 */
+  private async readAttemptLogText(
+    attemptId: string,
+  ): Promise<{ text: string; truncated: boolean }> {
     const chunks: Array<{ stream: string; sequence: number; content: string; recordedAt: string }> =
       [];
+    let truncated = false;
     for (const stream of ["stdout", "stderr"] as const) {
       let afterSequence = -1;
+      let streamBytes = 0;
       for (;;) {
         const page = await this.executions.listLogChunks({
           attemptId,
@@ -257,7 +302,18 @@ export class AttemptLogShareService {
           limit: LOG_PAGE_LIMIT,
         });
         chunks.push(...page.items);
-        if (page.nextSequence === undefined) break;
+        streamBytes += page.items.reduce(
+          (total, chunk) => total + utf8ByteLength(chunk.content),
+          0,
+        );
+        if (page.nextSequence === undefined) {
+          truncated ||= page.truncated;
+          break;
+        }
+        if (streamBytes >= SHARED_LOG_MAX_BYTES) {
+          truncated = true;
+          break;
+        }
         afterSequence = page.nextSequence;
       }
     }
@@ -268,6 +324,24 @@ export class AttemptLogShareService {
       if (byStream !== 0) return byStream;
       return left.sequence - right.sequence;
     });
-    return chunks.map((chunk) => chunk.content).join("");
+    const joined = chunks.map((chunk) => chunk.content).join("");
+    const bounded = truncateUtf8(joined, SHARED_LOG_MAX_BYTES);
+    return { text: bounded.text, truncated: truncated || bounded.truncated };
   }
+}
+
+function utf8ByteLength(value: string): number {
+  return new TextEncoder().encode(value).byteLength;
+}
+
+function truncateUtf8(value: string, maximumBytes: number): { text: string; truncated: boolean } {
+  const encoded = new TextEncoder().encode(value);
+  if (encoded.byteLength <= maximumBytes) return { text: value, truncated: false };
+  return {
+    // stream=true 会保留并丢弃末尾不完整的多字节字符，不产生误导性的 U+FFFD。
+    text: new TextDecoder("utf-8", { fatal: false }).decode(encoded.subarray(0, maximumBytes), {
+      stream: true,
+    }),
+    truncated: true,
+  };
 }

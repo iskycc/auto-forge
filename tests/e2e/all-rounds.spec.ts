@@ -557,6 +557,9 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
 
   // PROCESS_START_FAILED 属于执行机异常：保留原失败记录、自动重新调度，并在执行机视图聚合展示。
   await page.getByRole("button", { name: "初始轮次", exact: true }).click();
+  const retainedCaseSearch = page.getByRole("textbox", { name: "按名称搜索用例" });
+  await retainedCaseSearch.fill("AllRoundsFlakyTest");
+  await expect(casesRegion.getByRole("row", { name: /AllRounds/ })).toHaveCount(1);
   await page.getByRole("button", { name: "执行机", exact: true }).click();
   await page.getByRole("button", { name: /执行机异常 1/ }).click();
   const faultDialog = page.getByRole("dialog", { name: "执行机异常事件" });
@@ -567,6 +570,9 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
 
   // 初始轮次仍包含两个用例。
   await page.getByRole("button", { name: "用例", exact: true }).click();
+  await expect(retainedCaseSearch).toHaveValue("AllRoundsFlakyTest");
+  await expect(casesRegion.getByRole("row", { name: /AllRounds/ })).toHaveCount(1);
+  await retainedCaseSearch.fill("");
   await expect(casesRegion.getByRole("row", { name: /AllRounds/ })).toHaveCount(2);
 
   // 真实编排一轮双 Jenkins 环境恢复：两个 Rebuild 并行触发并共同形成轮次屏障，
@@ -817,6 +823,17 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
   ).toBeVisible();
   await expect(anonymousResultPage.locator(".execution-round-table")).toBeVisible();
   await expect(anonymousResultPage.locator(".execution-case-table tbody tr")).toHaveCount(2);
+  const sharedLogLinks = anonymousResultPage.getByRole("link", { name: "查看公开日志" });
+  await expect(sharedLogLinks).toHaveCount(2);
+  const sharedLogHref = await sharedLogLinks.first().getAttribute("href");
+  expect(sharedLogHref).toMatch(/^\/share\/run\/[^/]+\/attempt\/[^/]+$/u);
+  const anonymousLogPage = await anonymousContext.newPage();
+  const anonymousLogResponse = await anonymousLogPage.goto(sharedLogHref!);
+  expect(anonymousLogResponse?.status()).toBe(200);
+  expect(new URL(anonymousLogPage.url()).pathname).not.toBe("/login");
+  await expect(anonymousLogPage.getByText("本次尝试暂无日志内容。")).toBeVisible();
+  await expect(anonymousLogPage.locator(".app-shell, .app-sidebar, .topbar")).toHaveCount(0);
+  await anonymousLogPage.close();
   await expect(anonymousResultPage.locator(".public-progress-card")).toHaveCount(0);
   await expect(
     anonymousResultPage.getByRole("button", {

@@ -574,6 +574,16 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
     return batches.filter((batch): batch is RunBatchDetails => batch !== null);
   }
 
+  async listAttemptsForExecutionRun(executionRunId: string): Promise<RunAttempt[]> {
+    return this.handle.db
+      .select()
+      .from(runAttempts)
+      .where(eq(runAttempts.executionRunId, executionRunId))
+      .orderBy(runAttempts.createdAt, runAttempts.id)
+      .all()
+      .map(toRunAttempt);
+  }
+
   async getSummary(batchId: string, projectIds?: readonly string[]): Promise<RunBatch | null> {
     if (projectIds?.length === 0) return null;
     const row = this.handle.db

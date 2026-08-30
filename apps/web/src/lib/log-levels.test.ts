@@ -38,4 +38,13 @@ describe("log level highlighting", () => {
     const segments = highlightLogLevels(parseSafeAnsi("my_error_code informational infoX"));
     expect(segments).toEqual([{ text: "my_error_code informational infoX", classes: [] }]);
   });
+
+  it("bounds rendered spans while preserving pathological log text", () => {
+    const text = "prefix " + "error value ".repeat(20_000);
+
+    const segments = highlightLogLevels(parseSafeAnsi(text));
+
+    expect(segments.length).toBeLessThanOrEqual(10_000);
+    expect(segments.map((segment) => segment.text).join("")).toBe(text);
+  });
 });

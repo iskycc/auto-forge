@@ -1,6 +1,7 @@
 import type { AnsiSegment } from "./safe-ansi";
 
 const LOG_LEVEL_PATTERN = /\b(trace|debug|info|warn|warning|error|fatal|severe|critical)\b/gi;
+const MAXIMUM_HIGHLIGHT_SEGMENTS = 10_000;
 
 const LEVEL_CLASS_BY_TOKEN: Record<string, string> = {
   trace: "log-level-trace",
@@ -21,6 +22,12 @@ export function highlightLogLevels(segments: AnsiSegment[]): AnsiSegment[] {
     const key = classes.join(" ");
     const previous = output.at(-1);
     if (previous && previous.classes.join(" ") === key) {
+      previous.text += text;
+      return;
+    }
+    // 病态日志可在 512 KiB 内重复数万次 level token；限制 React span 数量，
+    // 超限后的文本并入最后一段，内容完整性优先于尾部着色精度。
+    if (output.length >= MAXIMUM_HIGHLIGHT_SEGMENTS && previous) {
       previous.text += text;
       return;
     }

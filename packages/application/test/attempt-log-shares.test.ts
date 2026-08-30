@@ -145,6 +145,14 @@ function makeService(
   };
   const batches = {
     get: async () => batch,
+    getSummary: async () => batch,
+    getRerunSnapshot: async () => ({
+      batch,
+      roundRecoveries: [],
+      runs: batch.runs,
+    }),
+    listAttemptsForExecutionRun: async (executionRunId: string) =>
+      batch.attempts.filter((attempt) => attempt.executionRunId === executionRunId),
     listCaseLogRerunBatches: async () => diagnosticBatches,
   } as unknown as RunBatchRepository;
   const executions = {
@@ -224,6 +232,29 @@ describe("AttemptLogShareService", () => {
     expect(view?.logText).toBe("start\nboom\nend\n");
   });
 
+  it("bounds public log payloads before returning them to the page", async () => {
+    const state = makeState({
+      logChunks: [
+        {
+          stream: "stdout",
+          sequence: 0,
+          content: "你".repeat(200_000),
+          recordedAt: "2026-08-17T00:01:01.000Z",
+        },
+      ],
+    });
+    const service = makeService(state);
+    await service.ensureSharesForAttempts(["attempt-1"], "user-1");
+
+    const view = await service.getSharedAttemptLog("token-1");
+
+    expect(view?.logTruncated).toBe(true);
+    expect(new TextEncoder().encode(view?.logText ?? "").byteLength).toBeLessThanOrEqual(
+      512 * 1024,
+    );
+    expect(view?.logText.endsWith("�")).toBe(false);
+  });
+
   it("returns null for unknown or expired tokens without distinguishing the reason", async () => {
     const state = makeState();
     const service = makeService(state);
@@ -269,6 +300,33 @@ describe("AttemptLogShareService", () => {
       ],
     });
     expect(await service.getSharedAttemptLog("token-1", "other-attempt")).toBeNull();
+  });
+
+  it("lets a permanent batch share read only the anchored case log family", async () => {
+    const state = makeState({
+      logChunks: [
+        {
+          attemptId: "attempt-3",
+          stream: "stdout",
+          sequence: 0,
+          content: "shared from batch\n",
+          recordedAt: "2026-08-17T00:05:01.000Z",
+        },
+      ],
+    });
+    const service = makeService(state, makeMultiRoundBatchDetails());
+
+    const view = await service.getSharedAttemptLogForBatch("batch-1", "attempt-1", "attempt-3");
+
+    expect(view).toMatchObject({
+      batchId: "batch-1",
+      attemptId: "attempt-3",
+      logText: "shared from batch\n",
+    });
+    expect(await service.getSharedAttemptLogForBatch("another-batch", "attempt-1")).toBeNull();
+    expect(
+      await service.getSharedAttemptLogForBatch("batch-1", "attempt-1", "other-attempt"),
+    ).toBeNull();
   });
 
   it("includes diagnostic reruns with the requesting LDAP username in the same log history", async () => {

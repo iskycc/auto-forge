@@ -574,6 +574,16 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
     return batches.filter((batch): batch is RunBatchDetails => batch !== null);
   }
 
+  async listAttemptsForExecutionRun(executionRunId: string): Promise<RunAttempt[]> {
+    await this.ready();
+    const rows = await this.handle.db
+      .select()
+      .from(pgRunAttempts)
+      .where(eq(pgRunAttempts.executionRunId, executionRunId))
+      .orderBy(pgRunAttempts.createdAt, pgRunAttempts.id);
+    return rows.map(toRunAttempt);
+  }
+
   async getSummary(batchId: string, projectIds?: readonly string[]): Promise<RunBatch | null> {
     await this.ready();
     if (projectIds?.length === 0) return null;

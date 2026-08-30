@@ -1635,6 +1635,11 @@ export interface RunBatchRepository {
     sourceExecutionRunId: string,
     limit: number,
   ): Promise<RunBatchDetails[]>;
+  /**
+   * 公开日志只读取单个 ExecutionRun 的轮次，避免为一个用例加载十万行批次明细。
+   * 适配器未实现时应用层保留兼容回退，生产 Lite/Full 适配器都必须实现。
+   */
+  listAttemptsForExecutionRun?(executionRunId: string): Promise<RunAttempt[]>;
   list(
     limit: number,
     projectIds?: readonly string[],

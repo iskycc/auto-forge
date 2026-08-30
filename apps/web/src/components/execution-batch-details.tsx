@@ -65,12 +65,11 @@ export function ExecutionBatchDetails({
   const [batch, setBatch] = useState(initialBatch);
   const [actionError, setActionError] = useState("");
   const [actionPending, setActionPending] = useState<"cancel" | "retry" | undefined>();
-  const [observedAtMs, setObservedAtMs] = useState(() => Date.now());
   const [finalFailuresDialogOpen, setFinalFailuresDialogOpen] = useState(false);
   const activeBatch = isActiveRunBatch(batch.status);
   const startedAt = batchStartedAt(batch);
   const awaitingScheduledStart =
-    batch.status === "queued" && Date.parse(batch.scheduledFor) > observedAtMs;
+    batch.status === "queued" && Date.parse(batch.scheduledFor) > Date.parse(batch.updatedAt);
   const finalFailureCount = batch.failedRuns + batch.timedOutRuns;
   const canRerunFinalFailures =
     canCreateRuns && !activeBatch && finalFailureCount > 0 && rerunConfiguration !== undefined;
@@ -87,7 +86,14 @@ export function ExecutionBatchDetails({
         throw new Error((await readApiErrorMessage(response, "刷新执行详情失败。"))!);
       }
       const latest = (await response.json()) as ExecutionBatchView;
-      setBatch(accessToken ? { ...latest, accessToken } : latest);
+      const next = accessToken ? { ...latest, accessToken } : latest;
+      setBatch((current) =>
+        current.updatedAt === next.updatedAt &&
+        current.finishedAt === next.finishedAt &&
+        current.status === next.status
+          ? current
+          : next,
+      );
     },
     [accessToken, initialBatch.id],
   );
@@ -114,12 +120,6 @@ export function ExecutionBatchDetails({
       if (timer !== undefined) window.clearTimeout(timer);
     };
   }, [activeBatch, refreshBatch]);
-
-  useEffect(() => {
-    if (!activeBatch) return;
-    const timer = window.setInterval(() => setObservedAtMs(Date.now()), 1_000);
-    return () => window.clearInterval(timer);
-  }, [activeBatch]);
 
   async function terminateBatch(): Promise<void> {
     if (
@@ -201,7 +201,7 @@ export function ExecutionBatchDetails({
           title={`UTC ${startedAt}`}
         />
         {awaitingScheduledStart ? (
-          <CountdownMetric nowMs={observedAtMs} scheduledFor={batch.scheduledFor} />
+          <CountdownMetric scheduledFor={batch.scheduledFor} />
         ) : (
           <ElapsedMetric active={activeBatch} batch={batch} startedAt={startedAt} />
         )}
@@ -306,7 +306,16 @@ export function ExecutionBatchDetails({
   );
 }
 
-function CountdownMetric({ scheduledFor, nowMs }: { scheduledFor: string; nowMs: number }) {
+// 倒计时只更新这一张指标卡；不能把每秒时钟放在详情根组件，否则 500 行用例表、
+// 图表和轮次树都会跟着每秒重渲染。
+function CountdownMetric({ scheduledFor }: { scheduledFor: string }) {
+  const [nowMs, setNowMs] = useState(() => Date.now());
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNowMs(Date.now()), 1_000);
+    return () => window.clearInterval(timer);
+  }, []);
+
   return (
     <Metric
       label="距离开始"

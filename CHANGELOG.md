@@ -4,6 +4,52 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## 1.6.5 - 2026-08-30
+
+### Changed
+
+- Execution-detail round selection now updates the shareable URL without re-running the full Server
+  Component page. Switching between the case and runner tabs preserves the already-loaded case page,
+  filters and pagination state instead of unmounting and fetching it again. Scheduled-run countdowns
+  now update only their metric card instead of re-rendering the entire charts and case table every
+  second, and unchanged polling responses retain the existing React tree.
+- Settings navigation now streams a route-level loading state and access-management tabs query only
+  the users, roles, projects, LDAP or sessions required by the active tab. Non-user tabs no longer run
+  the per-project membership query.
+- Permanent anonymous run-detail shares now expose a bounded “查看公开日志” link for every attempt.
+  The run token is revalidated against the anchor batch and only permits navigation within the same
+  execution-run family.
+- Public attempt-log rendering now reads at most 512 KiB through small pages before returning the
+  server-rendered view; it no longer loads an entire large batch or complete oversized log first.
+  Pathological repeated log-level tokens are capped at 10,000 rendered spans while preserving text.
+
+### Tests
+
+- Added application coverage for batch-scoped public logs, cross-batch rejection and bounded UTF-8
+  log payloads, plus Playwright coverage for anonymous navigation from a shared run to a case log and
+  preservation of case filters across execution-detail tab switches.
+
+### Database and persisted configuration
+
+- No migration or persisted-configuration change is required.
+
+### Compatibility
+
+- Existing permanent run-detail and attempt-log share URLs remain valid. The new nested public-log
+  route reuses the existing run-share token and adds no Runner Protocol or authenticated API change.
+- Public log pages intentionally return at most the first 512 KiB of an attempt log; authenticated
+  execution details and persisted log chunks are unchanged.
+
+### Offline assets
+
+- No dependency, remote asset or runtime network requirement was added.
+
+### Known limitations
+
+- The case-management directory still preserves its complete-directory semantics. Very large case
+  catalogs remain a separate optimization target; this release focuses on execution details,
+  settings navigation and anonymous shared results.
+
 ## 1.6.3 - 2026-08-30
 
 ### Fixed
