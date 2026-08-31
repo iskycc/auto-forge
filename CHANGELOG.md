@@ -4,6 +4,34 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## 1.7.2 - 2026-08-31
+
+### Fixed
+
+- Backend runtime packaging no longer treats production Next.js route directories named `test` as
+  development test output. This restores the LDAP connection test and Webhook configuration test
+  APIs in the optimized offline image.
+- The Groovy case-group utility now adds the required `cotest.define.TestCaseGroup` import when a
+  source uses the generated group values without an exact or wildcard import. Import-only repair,
+  preview, confirmation, staging and idempotent reruns are supported.
+
+### Tests
+
+- Runtime packaging and image verification now require both production test-action route files, and
+  the optimized image passes the complete governance partition plus real private-CA LDAPS/plain-LDAP
+  acceptance.
+- Groovy coverage verifies exact, wildcard and missing imports, including import-only dry runs and
+  confirmed repair.
+
+### Database and persisted configuration
+
+- No migration or persisted-configuration change is required.
+
+### Compatibility and offline assets
+
+- Lite/Full behavior, Runner Protocol v1 and the Docker-native `.docker.tar` distribution format are
+  unchanged. No dependency or runtime network requirement was added.
+
 ## 1.7.1 - 2026-08-31
 
 ### Added

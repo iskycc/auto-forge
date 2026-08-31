@@ -68,6 +68,11 @@ test("excludes development output and protects runtime packaging destinations", 
     assert.equal(isExcludedRuntimePath(path), true, `${path} must not enter the image`);
   }
   assert.equal(isExcludedRuntimePath("apps/web/.next/server/page.js"), false);
+  assert.equal(isExcludedRuntimePath("apps/web/.next/server/app/api/v1/ldap/test/route.js"), false);
+  assert.equal(
+    isExcludedRuntimePath("apps/web/.next/server/app/api/v1/webhooks/[webhookId]/test/route.js"),
+    false,
+  );
   assert.equal(isExcludedRuntimePath("packages/db/drizzle/sqlite/0001.sql"), false);
   assert.equal(isNextTraceFile("next-server.js.nft.json"), true);
   assert.equal(isNextTraceFile("next-server.js"), false);

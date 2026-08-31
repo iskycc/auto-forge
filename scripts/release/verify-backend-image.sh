@@ -35,6 +35,12 @@ for _ in $(seq 1 60); do
         const developmentPackages = /^(?:@playwright\+test|eslint|playwright|prettier|typescript|vitest)@/;
         const unexpectedPackage = readdirSync(packageStore).find((entry) => developmentPackages.test(entry));
         if (unexpectedPackage) throw new Error(`runtime image contains development dependency: ${unexpectedPackage}`);
+        for (const route of [
+          "/app/apps/web/.next/server/app/api/v1/ldap/test/route.js",
+          "/app/apps/web/.next/server/app/api/v1/webhooks/[webhookId]/test/route.js",
+        ]) {
+          if (!existsSync(route)) throw new Error(`runtime image is missing API route: ${route}`);
+        }
         const root = "/app/resources/agents";
         const manifest = JSON.parse(readFileSync(`${root}/manifest.json`, "utf8"));
         for (const key of ["linux-amd64", "linux-arm64", "installer", "adapter"]) {

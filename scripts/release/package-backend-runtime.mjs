@@ -44,6 +44,7 @@ const externalModuleClosures = ["apps/web/node_modules/nats"];
 
 export function isExcludedRuntimePath(relativePath) {
   const normalized = relativePath.replaceAll("\\", "/");
+  const isNextBuildOutput = normalized.startsWith("apps/web/.next/");
   return (
     normalized.includes("/.next/cache/") ||
     normalized.endsWith("/.next/cache") ||
@@ -56,7 +57,7 @@ export function isExcludedRuntimePath(relativePath) {
     normalized.endsWith(".nft.json") ||
     normalized.endsWith(".tsbuildinfo") ||
     /(^|\/)coverage(\/|$)/.test(normalized) ||
-    /(^|\/)(test|tests)(\/|$)/.test(normalized) ||
+    (!isNextBuildOutput && /(^|\/)(test|tests)(\/|$)/.test(normalized)) ||
     /\.(spec|test)\.[cm]?[jt]sx?$/.test(normalized)
   );
 }
@@ -175,6 +176,8 @@ async function assertPackagedRuntime(destination, sqlitePrebuild) {
     "apps/web/dist-server/server/work-thread.js",
     "apps/worker/dist/worker.mjs",
     "apps/web/node_modules/nats",
+    "apps/web/.next/server/app/api/v1/ldap/test/route.js",
+    "apps/web/.next/server/app/api/v1/webhooks/[webhookId]/test/route.js",
     sqlitePrebuildPath,
     "resources/agents/manifest.json",
   ]) {
