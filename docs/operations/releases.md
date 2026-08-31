@@ -13,7 +13,7 @@ git push origin v0.2.2
 
 `Release` 只保留发布所需的关键路径：校验 tag 后构建一次 CoTest Adapter，四个平台复用该内部制品并行构建，随后组装部署包、生成 SBOM/清单、签名、生成来源证明并公开 GitHub Release。后端构建使用按 variant 隔离的 GitHub Actions BuildKit 缓存，离线 Docker 归档直接发布 Docker 原生 tar，目标机不需要额外安装 zstd；不再构建耗时的 `toolchain-amd64/arm64` Release 资产。任一平台、SBOM、签名或清单失败仍会阻止发布，因而不会公开缺少必需资产的部分 Release。
 
-`Release checks` 将格式/lint/类型、单元/集成、性能、构建、Full 场景和断网 Lite 场景拆成独立矩阵并行执行。`Published Release acceptance` 只在发布完成后启动，将资产签名、业务、真实 Agent、私有 CA LDAP、备份恢复、上一正式版本升级和注入迁移失败回滚拆成隔离分区；各测试 Job 以五分钟内完成为目标，八分钟超时仅为托管 Runner 抖动保留诊断空间。两类检查都不属于 `Release` 的依赖，不会阻塞、取消或撤回发布；失败版本应通过问题修复和新版本 hotfix 处理。普通 CI 与依赖安全 workflow 不在 tag push 上重复运行，以免与发布矩阵争抢并发资源。
+`Release checks` 将格式/lint/类型、单元/集成、性能、构建、Full 场景和断网 Lite 场景拆成独立矩阵并行执行。`Published Release acceptance` 只在发布完成后启动，将资产签名、业务、真实 Agent、真实离线 LDAP、备份恢复、上一正式版本升级和注入迁移失败回滚拆成隔离分区；各测试 Job 以五分钟内完成为目标，八分钟超时仅为托管 Runner 抖动保留诊断空间。两类检查都不属于 `Release` 的依赖，不会阻塞、取消或撤回发布；失败版本应通过问题修复和新版本 hotfix 处理。普通 CI 与依赖安全 workflow 不在 tag push 上重复运行，以免与发布矩阵争抢并发资源。
 
 `amd64` 目标运行在 `ubuntu-24.04`，`arm64` 目标运行在 GitHub-hosted 原生 `ubuntu-24.04-arm`。后端不使用 QEMU 做跨架构模拟；内置 Agent 由 Go 原生交叉编译为两个静态架构，并在每个镜像中校验资源清单。
 

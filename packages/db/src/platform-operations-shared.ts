@@ -3,7 +3,6 @@ import type {
   AnalyticsExportJob,
   ApiToken,
   CaseSuiteSchedule,
-  LdapSyncJob,
   Notification,
   RetentionCategory,
   ServiceAccount,
@@ -57,23 +56,6 @@ export type ScheduleRow = {
   last_trigger_status?: "created" | "skipped" | "failed" | null;
   last_batch_id?: string | null;
   revision: number;
-  created_at: string;
-  updated_at: string;
-};
-
-export type LdapSyncJobRow = {
-  id: string;
-  status: LdapSyncJob["status"];
-  trigger_kind: LdapSyncJob["triggerKind"];
-  checkpoint_json: string;
-  processed_users: number;
-  disabled_users: number;
-  error_code: string | null;
-  error_summary: string | null;
-  requested_by: string | null;
-  scheduled_at: string;
-  started_at: string | null;
-  finished_at: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -210,25 +192,6 @@ export function mapSchedule(row: ScheduleRow): CaseSuiteSchedule {
     ...(row.last_trigger_status ? { lastTriggerStatus: row.last_trigger_status } : {}),
     ...(row.last_batch_id ? { lastBatchId: row.last_batch_id } : {}),
     revision: row.revision,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-  };
-}
-
-export function mapLdapSyncJob(row: LdapSyncJobRow): LdapSyncJob {
-  return {
-    id: row.id,
-    status: row.status,
-    triggerKind: row.trigger_kind,
-    checkpoint: objectRecord(row.checkpoint_json),
-    processedUsers: row.processed_users,
-    disabledUsers: row.disabled_users,
-    ...(row.error_code ? { errorCode: row.error_code } : {}),
-    ...(row.error_summary ? { errorSummary: row.error_summary } : {}),
-    ...(row.requested_by ? { requestedBy: row.requested_by } : {}),
-    scheduledAt: row.scheduled_at,
-    ...(row.started_at ? { startedAt: row.started_at } : {}),
-    ...(row.finished_at ? { finishedAt: row.finished_at } : {}),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };

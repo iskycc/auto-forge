@@ -4,7 +4,6 @@ import type {
   ApiToken,
   CaseSuiteSchedule,
   GlobalSearchResult,
-  LdapSyncJob,
   Notification,
   RetentionCategory,
   RetentionPolicy,
@@ -30,7 +29,6 @@ import {
   failureSignature,
   mapApiToken,
   mapAnalyticsExportJob,
-  mapLdapSyncJob,
   mapNotification,
   mapSchedule,
   mapServiceAccount,
@@ -38,7 +36,6 @@ import {
   type AnalyticsFactRow,
   type AnalyticsExportJobRow,
   type ApiTokenRow,
-  type LdapSyncJobRow,
   type NotificationRow,
   type ScheduleRow,
   type ServiceAccountRow,
@@ -388,117 +385,6 @@ export class SqlitePlatformOperationsRepository implements PlatformOperationsRep
     })();
   }
 
-  async createLdapSyncJob(record: LdapSyncJob): Promise<LdapSyncJob> {
-    this.handle.client
-      .prepare(
-        `INSERT INTO ldap_sync_jobs
-         (id, status, trigger_kind, checkpoint_json, processed_users, disabled_users,
-          error_code, error_summary, requested_by, scheduled_at, started_at, finished_at,
-          created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        record.id,
-        record.status,
-        record.triggerKind,
-        JSON.stringify(record.checkpoint),
-        record.processedUsers,
-        record.disabledUsers,
-        record.errorCode ?? null,
-        record.errorSummary ?? null,
-        record.requestedBy ?? null,
-        record.scheduledAt,
-        record.startedAt ?? null,
-        record.finishedAt ?? null,
-        record.createdAt,
-        record.updatedAt,
-      );
-    return record;
-  }
-
-  async updateLdapSyncJob(
-    input: Parameters<PlatformOperationsRepository["updateLdapSyncJob"]>[0],
-  ): Promise<LdapSyncJob> {
-    const current = this.requiredLdapSyncJobRow(input.jobId);
-    this.handle.client
-      .prepare(
-        `UPDATE ldap_sync_jobs
-         SET status = ?, checkpoint_json = ?, processed_users = ?, disabled_users = ?,
-             error_code = ?, error_summary = ?, started_at = ?, finished_at = ?, updated_at = ?
-         WHERE id = ?`,
-      )
-      .run(
-        input.status,
-        JSON.stringify(input.checkpoint ?? JSON.parse(current.checkpoint_json)),
-        input.processedUsers ?? current.processed_users,
-        input.disabledUsers ?? current.disabled_users,
-        input.errorCode ?? current.error_code,
-        input.errorSummary ?? current.error_summary,
-        input.startedAt ?? current.started_at,
-        input.finishedAt ?? current.finished_at,
-        input.updatedAt,
-        input.jobId,
-      );
-    return mapLdapSyncJob(this.requiredLdapSyncJobRow(input.jobId));
-  }
-
-  async listLdapSyncJobs(limit: number): Promise<LdapSyncJob[]> {
-    return (
-      this.handle.client
-        .prepare("SELECT * FROM ldap_sync_jobs ORDER BY created_at DESC, id DESC LIMIT ?")
-        .all(limit) as LdapSyncJobRow[]
-    ).map(mapLdapSyncJob);
-  }
-
-  async claimScheduledLdapSync(
-    input: Parameters<PlatformOperationsRepository["claimScheduledLdapSync"]>[0],
-  ): Promise<boolean> {
-    return this.handle.client.transaction(() => {
-      const row = this.handle.client
-        .prepare(
-          "SELECT value_json FROM system_settings WHERE setting_key='ldap.scheduled-sync.v1'",
-        )
-        .get() as { value_json: string } | undefined;
-      const state = scheduledLdapState(row?.value_json);
-      if (state.claimId && state.leaseExpiresAt && state.leaseExpiresAt > input.now) return false;
-      if (state.nextAt && state.nextAt > input.now) return false;
-      const value = JSON.stringify({
-        claimId: input.claimId,
-        leaseExpiresAt: input.leaseExpiresAt,
-        nextAt: state.nextAt ?? input.now,
-      });
-      this.handle.client
-        .prepare(
-          `INSERT INTO system_settings(setting_key,value_json,updated_at,revision)
-           VALUES ('ldap.scheduled-sync.v1',?,?,1)
-           ON CONFLICT(setting_key) DO UPDATE SET value_json=excluded.value_json,
-             updated_at=excluded.updated_at,revision=system_settings.revision+1`,
-        )
-        .run(value, input.now);
-      return true;
-    })();
-  }
-
-  async completeScheduledLdapSync(
-    input: Parameters<PlatformOperationsRepository["completeScheduledLdapSync"]>[0],
-  ): Promise<boolean> {
-    return this.handle.client.transaction(() => {
-      const row = this.handle.client
-        .prepare(
-          "SELECT value_json FROM system_settings WHERE setting_key='ldap.scheduled-sync.v1'",
-        )
-        .get() as { value_json: string } | undefined;
-      if (scheduledLdapState(row?.value_json).claimId !== input.claimId) return false;
-      const result = this.handle.client
-        .prepare(
-          `UPDATE system_settings SET value_json=?,updated_at=?,revision=revision+1
-           WHERE setting_key='ldap.scheduled-sync.v1'`,
-        )
-        .run(JSON.stringify({ nextAt: input.nextAt }), input.completedAt);
-      return result.changes === 1;
-    })();
-  }
-
   async listNotifications(input: Parameters<PlatformOperationsRepository["listNotifications"]>[0]) {
     if (input.projectIds?.length === 0) return { items: [] };
     const where = ["user_id = ?"];
@@ -592,16 +478,6 @@ export class SqlitePlatformOperationsRepository implements PlatformOperationsRep
            ORDER BY r.last_seen_at LIMIT ?`,
         )
         .run(input.now, input.runnerOfflineBefore, input.limit).changes;
-      inserted += this.handle.client
-        .prepare(
-          `INSERT OR IGNORE INTO notifications
-           (id,user_id,kind,severity,title,message,resource_type,resource_id,created_at)
-           SELECT 'notice-ldap-' || requested_by || '-' || id,requested_by,'ldap.sync_failed','warning',
-                  'LDAP 同步失败',COALESCE(error_summary,'LDAP 同步失败。'),'ldap_sync_job',id,?
-           FROM ldap_sync_jobs WHERE status='failed' AND requested_by IS NOT NULL
-           ORDER BY updated_at DESC LIMIT ?`,
-        )
-        .run(input.now, input.limit).changes;
       inserted += this.handle.client
         .prepare(
           `INSERT OR IGNORE INTO notifications
@@ -1261,14 +1137,6 @@ export class SqlitePlatformOperationsRepository implements PlatformOperationsRep
     return row;
   }
 
-  private requiredLdapSyncJobRow(jobId: string): LdapSyncJobRow {
-    const row = this.handle.client
-      .prepare("SELECT * FROM ldap_sync_jobs WHERE id = ?")
-      .get(jobId) as LdapSyncJobRow | undefined;
-    if (!row) throw new DomainError("LDAP_SYNC_JOB_NOT_FOUND", "LDAP 同步任务不存在。");
-    return row;
-  }
-
   private retentionCount(category: RetentionCategory, cutoffAt: string): CountRow {
     if (category === "log") {
       // 日志已迁移到每批次独立 SQLite 文件：按终态批次汇总文件大小。
@@ -1551,24 +1419,6 @@ function searchItems(
 
 function normalizeName(value: string): string {
   return value.trim().toLocaleLowerCase("en-US");
-}
-
-function scheduledLdapState(valueJson?: string): {
-  nextAt?: string;
-  claimId?: string;
-  leaseExpiresAt?: string;
-} {
-  if (!valueJson) return {};
-  try {
-    const value = JSON.parse(valueJson) as Record<string, unknown>;
-    return {
-      ...(typeof value.nextAt === "string" ? { nextAt: value.nextAt } : {}),
-      ...(typeof value.claimId === "string" ? { claimId: value.claimId } : {}),
-      ...(typeof value.leaseExpiresAt === "string" ? { leaseExpiresAt: value.leaseExpiresAt } : {}),
-    };
-  } catch {
-    return {};
-  }
 }
 
 function databaseConflict(error: unknown, code: string, message: string): DomainError {

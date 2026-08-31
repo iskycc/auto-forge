@@ -1135,29 +1135,26 @@ describe.skipIf(!connectionString)("PostgreSQL migrations", () => {
       await repository.saveLdapConfiguration({
         enabled: true,
         url: "ldaps://ldap.internal:636",
-        transportMode: "ldaps",
-        verifyTlsCertificate: false,
+        tlsRejectUnauthorized: false,
         connectTimeoutMs: 5_000,
-        operationTimeoutMs: 10_000,
-        pageSize: 500,
-        maximumUsers: 5_000,
-        synchronizationIntervalMinutes: 0,
         bindDn: "cn=service,dc=example,dc=test",
         bindPasswordEncrypted: "encrypted",
         userBaseDn: "ou=people,dc=example,dc=test",
         userFilter: "(&(objectClass=person)(uid={username}))",
-        usernameAttribute: "uid",
         displayNameAttribute: "displayName",
-        emailAttribute: "mail",
+        mailAttribute: "mail",
         groupAttribute: "memberOf",
         groupSearchBase: "",
         groupSearchFilter: "(member={{userDn}})",
         groupNameAttribute: "cn",
         defaultRole: "editor",
         updatedAt: "2026-08-28T00:00:00.000Z",
+        updatedBy: "administrator",
       });
       await expect(repository.getLdapConfiguration()).resolves.toMatchObject({
-        verifyTlsCertificate: false,
+        enabled: true,
+        tlsRejectUnauthorized: false,
+        updatedBy: "administrator",
       });
     } finally {
       await handle.close();

@@ -4,6 +4,68 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## 1.7.5 - 2026-08-31
+
+### Fixed
+
+- LDAP configuration and authentication now match DDT Insight: the submitted login name is the
+  platform username, so a directory entry no longer needs a separate `uid`/username mapping
+  attribute. Saving an enabled configuration also remains enabled after signing out and back in.
+- LDAP authentication uses one connection for service search and user-password bind, then restores
+  the service bind only when Group Search requires it. Anonymous search, direct Group attributes,
+  Group Search, `ldap://` and `ldaps://` remain supported with bounded searches and timeouts.
+- Backend packaging validates every module declared by Next.js `app-paths-manifest.json`, preventing
+  optimized images from silently omitting production Route Handlers whose path contains `test` or
+  another development-looking segment.
+- Published image acceptance validates the signed archive OCI config digest instead of assuming that
+  Docker classic and Docker 29 containerd image stores expose identical local image IDs.
+
+### Changed
+
+- LDAP exposes the same configuration fields as DDT Insight. StartTLS selection, private-CA upload,
+  username mapping, paging/full-directory synchronization and Group-to-role mapping are no longer
+  exposed by the UI, API, application ports or workers.
+- Directory Groups are retained only as user profile data. They never create, remove or modify
+  platform role bindings. The configured default role is assigned once when an LDAP user first
+  signs in; later logins do not overwrite administrator-managed permissions.
+- The manual and scheduled LDAP synchronization routes and operations view have been removed. Old
+  synchronization queue kinds and database tables are retained only so upgrades can diagnose and
+  dead-letter persisted work safely.
+- Published acceptance now runs the real Agent flow against the `amd64-musl` image in addition to the
+  standard amd64 partitions, verifies that backend SBOMs contain Next.js and `better-sqlite3`, and
+  checks image metadata architecture, operating system, version and reference.
+- Offline Compose documentation now uses Docker-native `.docker.tar` archives directly, explains
+  Docker image identity differences, and documents the shared reachability requirement for Full-mode
+  MinIO presigned uploads.
+
+### Tests
+
+- Real isolated OpenLDAP Playwright coverage verifies saved configuration persistence, LDAPS and
+  plain LDAP login, a user with no username attribute, Group profile display, one-time default-role
+  assignment, and the absence of synchronization and Group-mapping endpoints.
+- SQLite and PostgreSQL migration/integration coverage verifies the new LDAP configuration metadata,
+  Group profile persistence and the removal of Group-derived permissions. Release-script tests cover
+  complete Next.js route packaging, signed archive identity and musl Agent acceptance.
+
+### Database and persisted configuration
+
+- SQLite migration `0056_ldap_ddt_insight_configuration.sql` and PostgreSQL migration
+  `0055_ldap_ddt_insight_configuration.sql` add `ldap_configurations.updated_by` and
+  `users.ldap_groups_json`.
+- During upgrade, role bindings whose source is the retired LDAP Group mapping are removed, then each
+  existing LDAP user receives the LDAP configuration's single default role. Explicit platform-managed
+  role bindings are preserved.
+- Historical StartTLS configurations are disabled instead of being silently downgraded to plaintext;
+  an administrator must review and save an explicit `ldap://` or `ldaps://` URL.
+
+### Compatibility and offline assets
+
+- Lite and Full use the same LDAP contract and migration behavior. Runner Protocol v1, Jenkins plugin
+  parameters and execution behavior are unchanged.
+- Release assets remain four Docker-native backend archives (`amd64`, `arm64`, `amd64-musl`,
+  `arm64-musl`) with embedded static Agents, SPDX SBOMs, a deployment bundle, signed checksums and
+  provenance. No runtime network dependency was added.
+
 ## 1.7.2 - 2026-08-31
 
 ### Fixed

@@ -44,7 +44,6 @@ import {
   authBootstrapUses,
   externalIdentities,
   ldapConfigurations,
-  ldapGroupMappings,
   projectRoleBindings,
   projects,
   roles,
@@ -207,6 +206,7 @@ export class SqliteIdentityAccessRepository implements IdentityAccessRepository 
             normalizedUsername,
             displayName: input.identity.displayName,
             email: input.identity.email ?? null,
+            ldapGroupsJson: JSON.stringify(input.identity.groupDns),
             status: "active",
             updatedAt: input.synchronizedAt,
             version: sql`${users.version} + 1`,
@@ -245,6 +245,7 @@ export class SqliteIdentityAccessRepository implements IdentityAccessRepository 
               normalizedUsername,
               displayName: input.identity.displayName,
               email: input.identity.email ?? null,
+              ldapGroupsJson: JSON.stringify(input.identity.groupDns),
               status: "active",
               updatedAt: input.synchronizedAt,
               version: sql`${users.version} + 1`,
@@ -298,6 +299,7 @@ export class SqliteIdentityAccessRepository implements IdentityAccessRepository 
             normalizedUsername,
             displayName: input.identity.displayName,
             email: input.identity.email ?? null,
+            ldapGroupsJson: JSON.stringify(input.identity.groupDns),
             source: "ldap",
             status: "active",
             passwordHash: null,
@@ -880,97 +882,6 @@ export class SqliteIdentityAccessRepository implements IdentityAccessRepository 
     return mapLdapConfiguration(row);
   }
 
-  async listLdapGroupMappings(): Promise<
-    Array<{ id: string; groupDn: string; roleId: string; projectId?: string; priority: number }>
-  > {
-    return this.handle.db
-      .select()
-      .from(ldapGroupMappings)
-      .orderBy(desc(ldapGroupMappings.priority), ldapGroupMappings.createdAt)
-      .all()
-      .map((row) => ({
-        id: row.id,
-        groupDn: row.groupDn,
-        roleId: row.roleId,
-        ...(row.projectId ? { projectId: row.projectId } : {}),
-        priority: row.priority,
-      }));
-  }
-
-  async addLdapGroupMapping(input: {
-    id: string;
-    groupDn: string;
-    normalizedGroupDn: string;
-    roleId: string;
-    projectId?: string;
-    priority: number;
-    recordedAt: string;
-  }): Promise<void> {
-    this.handle.db
-      .insert(ldapGroupMappings)
-      .values({
-        id: input.id,
-        groupDn: input.groupDn,
-        normalizedGroupDn: input.normalizedGroupDn,
-        roleId: input.roleId,
-        projectId: input.projectId ?? null,
-        priority: input.priority,
-        createdAt: input.recordedAt,
-        updatedAt: input.recordedAt,
-      })
-      .run();
-  }
-
-  async replaceLdapRoleBindings(input: {
-    userId: string;
-    groupDns: string[];
-    mappings: Array<{ groupDn: string; roleId: string; projectId?: string; priority: number }>;
-    recordedAt: string;
-  }): Promise<void> {
-    this.handle.client.transaction(() => {
-      this.handle.db
-        .delete(userSystemRoles)
-        .where(and(eq(userSystemRoles.userId, input.userId), eq(userSystemRoles.source, "ldap")))
-        .run();
-      this.handle.db
-        .delete(projectRoleBindings)
-        .where(
-          and(eq(projectRoleBindings.userId, input.userId), eq(projectRoleBindings.source, "ldap")),
-        )
-        .run();
-      const groups = new Set(input.groupDns);
-      for (const mapping of input.mappings) {
-        if (!groups.has(normalizeDn(mapping.groupDn))) continue;
-        if (mapping.projectId) {
-          this.handle.db
-            .insert(projectRoleBindings)
-            .values({
-              userId: input.userId,
-              projectId: mapping.projectId,
-              roleId: mapping.roleId,
-              source: "ldap",
-              assignedAt: input.recordedAt,
-              assignedBy: null,
-            })
-            .onConflictDoNothing()
-            .run();
-        } else {
-          this.handle.db
-            .insert(userSystemRoles)
-            .values({
-              userId: input.userId,
-              roleId: mapping.roleId,
-              source: "ldap",
-              assignedAt: input.recordedAt,
-              assignedBy: null,
-            })
-            .onConflictDoNothing()
-            .run();
-        }
-      }
-    })();
-  }
-
   async ensureLdapDefaultRole(input: {
     userId: string;
     roleId: string;
@@ -1003,41 +914,6 @@ export class SqliteIdentityAccessRepository implements IdentityAccessRepository 
       })
       .onConflictDoNothing()
       .run();
-  }
-
-  async disableMissingLdapUsers(input: {
-    providerId: string;
-    activeSubjects: string[];
-    recordedAt: string;
-  }): Promise<string[]> {
-    return this.handle.client.transaction(() => {
-      const externalRows = this.handle.db
-        .select({ userId: externalIdentities.userId, subject: externalIdentities.subject })
-        .from(externalIdentities)
-        .innerJoin(users, eq(users.id, externalIdentities.userId))
-        .where(and(eq(externalIdentities.providerId, input.providerId), eq(users.status, "active")))
-        .all();
-      const activeSubjects = new Set(input.activeSubjects);
-      const userIds = externalRows
-        .filter((identity) => !activeSubjects.has(identity.subject))
-        .map((identity) => identity.userId);
-      if (userIds.length === 0) return [];
-      this.handle.db
-        .update(users)
-        .set({
-          status: "disabled",
-          updatedAt: input.recordedAt,
-          version: sql`${users.version} + 1`,
-        })
-        .where(inArray(users.id, userIds))
-        .run();
-      this.handle.db
-        .update(userSessions)
-        .set({ revokedAt: input.recordedAt })
-        .where(and(inArray(userSessions.userId, userIds), isNull(userSessions.revokedAt)))
-        .run();
-      return userIds;
-    })();
   }
 
   async appendAudit(event: AuditEvent): Promise<void> {
@@ -1164,27 +1040,28 @@ function ldapConfigurationValues(
   },
   createdAt: string,
 ) {
+  const transportMode = ldapTransportMode(input.url);
   return {
     id: "default",
     enabled: input.enabled,
     urlsJson: JSON.stringify(input.url ? [input.url] : []),
-    tlsMode: input.transportMode === "ldaps" ? ("ldaps" as const) : ("starttls" as const),
-    transportMode: input.transportMode,
-    verifyTlsCertificate: input.verifyTlsCertificate,
-    caPem: input.caPem ?? null,
+    tlsMode: transportMode === "ldaps" ? ("ldaps" as const) : ("starttls" as const),
+    transportMode,
+    verifyTlsCertificate: input.tlsRejectUnauthorized,
+    caPem: null,
     connectTimeoutMs: input.connectTimeoutMs,
-    operationTimeoutMs: input.operationTimeoutMs,
-    pageSize: input.pageSize,
-    maximumUsers: input.maximumUsers,
-    synchronizationIntervalMinutes: input.synchronizationIntervalMinutes,
+    operationTimeoutMs: input.connectTimeoutMs,
+    pageSize: 500,
+    maximumUsers: 5_000,
+    synchronizationIntervalMinutes: 0,
     bindDn: input.bindDn,
     bindPasswordEncrypted: input.bindPasswordEncrypted ?? null,
     userBaseDn: input.userBaseDn,
     userFilter: input.userFilter,
-    userIdAttribute: input.usernameAttribute,
-    usernameAttribute: input.usernameAttribute,
+    userIdAttribute: "uid",
+    usernameAttribute: "uid",
     displayNameAttribute: input.displayNameAttribute,
-    emailAttribute: input.emailAttribute,
+    emailAttribute: input.mailAttribute,
     groupBaseDn: input.groupSearchBase || null,
     groupFilter: input.groupSearchFilter || null,
     groupMemberAttribute: input.groupAttribute || "memberOf",
@@ -1193,6 +1070,7 @@ function ldapConfigurationValues(
     defaultRole: input.defaultRole,
     createdAt,
     updatedAt: input.updatedAt,
+    updatedBy: input.updatedBy,
     version: 1,
   };
 }
@@ -1201,23 +1079,18 @@ function mapLdapConfiguration(
   row: typeof ldapConfigurations.$inferSelect,
 ): StoredLdapConfiguration {
   return {
-    enabled: row.enabled,
+    // DDT Insight does not support StartTLS. Disable historical StartTLS rows instead of silently
+    // downgrading them to plaintext; an administrator must save an explicit ldap:// or ldaps:// URL.
+    enabled: row.transportMode === "starttls" ? false : row.enabled,
     url: stringArray(row.urlsJson)[0] ?? "",
-    transportMode: row.transportMode,
-    verifyTlsCertificate: row.verifyTlsCertificate,
-    ...(row.caPem ? { caPem: row.caPem } : {}),
+    tlsRejectUnauthorized: row.verifyTlsCertificate,
     connectTimeoutMs: row.connectTimeoutMs,
-    operationTimeoutMs: row.operationTimeoutMs,
-    pageSize: row.pageSize,
-    maximumUsers: row.maximumUsers,
-    synchronizationIntervalMinutes: row.synchronizationIntervalMinutes,
     bindDn: row.bindDn,
     ...(row.bindPasswordEncrypted ? { bindPasswordEncrypted: row.bindPasswordEncrypted } : {}),
     userBaseDn: row.userBaseDn,
     userFilter: row.userFilter,
-    usernameAttribute: row.usernameAttribute,
     displayNameAttribute: row.displayNameAttribute,
-    emailAttribute: row.emailAttribute,
+    mailAttribute: row.emailAttribute,
     groupAttribute: row.groupAttribute,
     groupSearchBase: row.groupBaseDn ?? "",
     groupSearchFilter: row.groupFilter ?? "(member={{userDn}})",
@@ -1225,8 +1098,13 @@ function mapLdapConfiguration(
     defaultRole: row.defaultRole,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
+    updatedBy: row.updatedBy,
     version: row.version,
   };
+}
+
+function ldapTransportMode(url: string): "ldaps" | "plain" {
+  return url.toLocaleLowerCase("en-US").startsWith("ldaps://") ? "ldaps" : "plain";
 }
 
 function mergePermissions(current: Permission[], incoming: Permission[]): Permission[] {
@@ -1252,8 +1130,4 @@ function stringRecord(json: string): Record<string, string> {
 
 function normalizeUsername(username: string): string {
   return username.trim().normalize("NFKC").toLocaleLowerCase("en-US");
-}
-
-function normalizeDn(distinguishedName: string): string {
-  return distinguishedName.trim().replace(/\s+/g, " ").toLocaleLowerCase("en-US");
 }

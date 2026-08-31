@@ -87,10 +87,10 @@ test("audit findings use bounded, localized, and unambiguous controls", async ({
   await expect(page.getByRole("main")).not.toContainText("/opt/auto-forge/");
 
   await page.goto("/settings/access?section=ldap");
-  const groupMapping = page.getByLabel("按 LDAP Group 分配不同角色（高级功能）");
-  await expect(groupMapping).not.toBeChecked();
-  await expect(page.getByLabel("Group Search Base（可选）")).toHaveCount(0);
-  await expect(page.getByText("所有 LDAP 用户使用统一角色", { exact: false })).toBeVisible();
+  await expect(page.getByLabel("Group Search Base（可选）")).toBeVisible();
+  await expect(page.getByText("Group 仅保存到用户档案", { exact: true })).toBeVisible();
+  await expect(page.getByText("不会根据 Group 创建或修改任何权限绑定")).toBeVisible();
+  await expect(page.getByRole("button", { name: /添加组映射|立即同步目录/ })).toHaveCount(0);
   const ldapEnabled = page.getByLabel("启用 LDAP 登录");
   if (!(await ldapEnabled.isChecked())) {
     await expect(page.getByLabel("Bind DN（可选）")).toBeDisabled();
@@ -107,6 +107,7 @@ test("audit findings use bounded, localized, and unambiguous controls", async ({
   await page.getByLabel("Bind DN（可选）").fill("cn=service,dc=example,dc=test");
   await page.getByLabel("Bind 密码", { exact: true }).fill("Directory!Password123");
   await page.getByLabel("用户 Base DN").fill("ou=people,dc=example,dc=test");
+  await page.getByLabel("用户过滤器").fill("(&(objectClass=person)(uid={{username}}))");
   await page.getByRole("button", { name: "保存 LDAP 配置" }).click();
   await expect(page.getByText("LDAP 配置已加密保存。")).toBeVisible();
   await expect(page.getByLabel("校验 TLS 服务器证书")).not.toBeChecked();

@@ -110,50 +110,35 @@ const ldapAttributeSchema = z
   .max(128)
   .regex(/^[a-zA-Z][a-zA-Z0-9;-]*$/u, "LDAP 属性格式不正确。");
 
-const ldapConfigurationCompatibilitySchema = z.object({
+const ldapConfigurationSchema = z.object({
   enabled: z.boolean(),
-  url: z.string().trim().max(2_048).optional(),
-  // v1 compatibility: older clients submitted a server array plus an explicit TLS mode.
-  urls: z.array(z.string().trim().max(2_048)).min(1).max(4).optional(),
-  tlsMode: z.enum(["ldaps", "starttls"]).optional(),
-  verifyTlsCertificate: z.boolean().default(true),
-  caPem: z.string().max(128_000).optional(),
+  url: z.string().trim().max(2_048).default(""),
+  tlsRejectUnauthorized: z.boolean().default(true),
   connectTimeoutMs: z.number().int().min(1_000).max(30_000).default(5_000),
-  operationTimeoutMs: z.number().int().min(500).max(60_000).default(10_000),
-  pageSize: z.number().int().min(50).max(1_000).default(500),
-  maximumUsers: z.number().int().min(1).max(50_000).default(5_000),
-  synchronizationIntervalMinutes: z.number().int().min(0).max(10_080).default(0),
   bindDn: z.string().trim().max(2_048).default(""),
   bindPassword: z.string().min(1).max(4_096).optional(),
   clearBindPassword: z.boolean().default(false),
   userBaseDn: z.string().trim().max(2_048).default(""),
   userFilter: z.string().trim().min(1).max(1_024).default("(uid={{username}})"),
-  usernameAttribute: ldapAttributeSchema.default("uid"),
   displayNameAttribute: ldapAttributeSchema.default("displayName"),
-  emailAttribute: ldapAttributeSchema.or(z.literal("")).default("mail"),
-  groupAttribute: ldapAttributeSchema.or(z.literal("")).optional(),
-  groupSearchBase: z.string().trim().max(2_048).optional(),
-  groupSearchFilter: z.string().trim().max(1_024).optional(),
-  groupNameAttribute: ldapAttributeSchema.or(z.literal("")).optional(),
+  mailAttribute: ldapAttributeSchema.or(z.literal("")).default("mail"),
+  groupAttribute: ldapAttributeSchema.or(z.literal("")).default("memberOf"),
+  groupSearchBase: z.string().trim().max(2_048).default(""),
+  groupSearchFilter: z.string().trim().max(1_024).default("(member={{userDn}})"),
+  groupNameAttribute: ldapAttributeSchema.or(z.literal("")).default("cn"),
   defaultRole: z.enum(["admin", "editor", "viewer"]).default("editor"),
-  // v1 compatibility aliases. They are normalized to the ddt-insight field names below.
-  userIdAttribute: ldapAttributeSchema.optional(),
-  groupBaseDn: z.string().trim().max(2_048).optional(),
-  groupFilter: z.string().trim().max(1_024).optional(),
-  groupMemberAttribute: ldapAttributeSchema.optional(),
 });
 
-export const ldapConfigurationInputSchema = ldapConfigurationCompatibilitySchema
+export const ldapConfigurationInputSchema = ldapConfigurationSchema
   .superRefine((value, context) => {
-    const url = value.url ?? value.urls?.[0] ?? "";
-    if (value.enabled && !url) {
+    if (value.enabled && !value.url) {
       context.addIssue({
         code: "custom",
         path: ["url"],
         message: "启用 LDAP 时必须填写服务地址。",
       });
     }
-    if (url) validateLdapUrl(url, context);
+    if (value.enabled || value.url) validateLdapUrl(value.url, context);
     if (value.enabled && !value.userBaseDn) {
       context.addIssue({
         code: "custom",
@@ -161,16 +146,14 @@ export const ldapConfigurationInputSchema = ldapConfigurationCompatibilitySchema
         message: "启用 LDAP 时必须填写用户 Base DN。",
       });
     }
-    if (!hasUsernamePlaceholder(value.userFilter)) {
+    if (!value.userFilter.includes("{{username}}")) {
       context.addIssue({
         code: "custom",
         path: ["userFilter"],
         message: "用户过滤器必须包含 {{username}} 占位符。",
       });
     }
-    const groupSearchBase = value.groupSearchBase ?? value.groupBaseDn ?? "";
-    const groupSearchFilter = value.groupSearchFilter ?? value.groupFilter ?? "";
-    if (groupSearchBase && value.groupNameAttribute === "") {
+    if (value.groupSearchBase && value.groupNameAttribute === "") {
       context.addIssue({
         code: "custom",
         path: ["groupNameAttribute"],
@@ -178,11 +161,9 @@ export const ldapConfigurationInputSchema = ldapConfigurationCompatibilitySchema
       });
     }
     if (
-      groupSearchBase &&
-      !groupSearchFilter.includes("{{userDn}}") &&
-      !groupSearchFilter.includes("{{username}}") &&
-      !groupSearchFilter.includes("{userDn}") &&
-      !groupSearchFilter.includes("{username}")
+      value.groupSearchBase &&
+      !value.groupSearchFilter.includes("{{userDn}}") &&
+      !value.groupSearchFilter.includes("{{username}}")
     ) {
       context.addIssue({
         code: "custom",
@@ -191,42 +172,7 @@ export const ldapConfigurationInputSchema = ldapConfigurationCompatibilitySchema
       });
     }
   })
-  .transform((value) => {
-    const rawUrl = value.url ?? value.urls?.[0] ?? "";
-    const groupSearchBase = value.groupSearchBase ?? value.groupBaseDn ?? "";
-    const groupSearchFilter = normalizeDirectoryFilter(
-      value.groupSearchFilter ?? value.groupFilter ?? "(member={{userDn}})",
-    );
-    return {
-      enabled: value.enabled,
-      // Historical StartTLS clients already declared their transport separately. Preserve their
-      // ldap:// URL verbatim so an unusual port cannot be reinterpreted as implicit TLS.
-      url: value.tlsMode === "starttls" ? rawUrl : normalizeLdapUrl(rawUrl),
-      verifyTlsCertificate: value.verifyTlsCertificate,
-      ...(value.caPem ? { caPem: value.caPem } : {}),
-      connectTimeoutMs: value.connectTimeoutMs,
-      operationTimeoutMs: value.operationTimeoutMs,
-      pageSize: value.pageSize,
-      maximumUsers: value.maximumUsers,
-      synchronizationIntervalMinutes: value.synchronizationIntervalMinutes,
-      bindDn: value.bindDn,
-      ...(value.bindPassword ? { bindPassword: value.bindPassword } : {}),
-      clearBindPassword: value.clearBindPassword,
-      userBaseDn: value.userBaseDn,
-      userFilter: normalizeDirectoryFilter(value.userFilter),
-      usernameAttribute: value.usernameAttribute,
-      displayNameAttribute: value.displayNameAttribute,
-      emailAttribute: value.emailAttribute,
-      // Group authorization is opt-in. Omitting both the direct attribute and Group Search
-      // keeps large directories on one paged user query and assigns the configured default role.
-      groupAttribute: value.groupAttribute ?? value.groupMemberAttribute ?? "",
-      groupSearchBase,
-      groupSearchFilter,
-      groupNameAttribute: value.groupNameAttribute ?? "cn",
-      defaultRole: value.defaultRole,
-      ...(value.tlsMode === "starttls" ? { legacyStartTls: true as const } : {}),
-    };
-  });
+  .transform((value) => ({ ...value, url: normalizeLdapUrl(value.url) }));
 
 function validateLdapUrl(value: string, context: z.RefinementCtx): void {
   let parsed: URL;
@@ -267,28 +213,6 @@ function normalizeLdapUrl(value: string): string {
     : value;
 }
 
-function hasUsernamePlaceholder(value: string): boolean {
-  return value.includes("{{username}}") || value.includes("{username}");
-}
-
-function normalizeDirectoryFilter(value: string): string {
-  let normalized = value;
-  if (!normalized.includes("{{username}}")) {
-    normalized = normalized.replaceAll("{username}", "{{username}}");
-  }
-  if (!normalized.includes("{{userDn}}")) {
-    normalized = normalized.replaceAll("{userDn}", "{{userDn}}");
-  }
-  return normalized;
-}
-
-export const ldapGroupMappingInputSchema = z.object({
-  groupDn: z.string().trim().min(1).max(1024),
-  roleId: z.string().min(1).max(128),
-  projectId: z.string().min(1).max(128).optional(),
-  priority: z.number().int().min(-1_000).max(1_000).default(0),
-});
-
 export const auditListQuerySchema = z.object({
   projectId: z.string().min(1).max(128).optional(),
   actorId: z.string().optional(),
@@ -309,5 +233,4 @@ export type UpdateRoleInput = z.infer<typeof updateRoleInputSchema>;
 export type CreateProjectInput = z.infer<typeof createProjectInputSchema>;
 export type TransferProjectOwnerInput = z.infer<typeof transferProjectOwnerInputSchema>;
 export type LdapConfigurationInput = z.infer<typeof ldapConfigurationInputSchema>;
-export type LdapGroupMappingInput = z.infer<typeof ldapGroupMappingInputSchema>;
 export type ChangePasswordInput = z.infer<typeof changePasswordInputSchema>;

@@ -12,6 +12,8 @@ export const jobEnvelopeSchema = z.object({
   deduplicationKey: z.string().min(1).max(256),
   kind: z.enum([
     "dispatch-run",
+    // Parsed only so upgrades can dead-letter persisted jobs from versions that exposed full
+    // directory synchronization. No producer or worker handler creates LDAP sync work anymore.
     "ldap-sync",
     "analytics-rollup",
     "retention-cleanup",

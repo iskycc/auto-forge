@@ -2,8 +2,8 @@
 
 import { formatPlatformDateTime } from "@/lib/platform-date-time";
 
-import type { CaseSuiteSchedule, LdapSyncJob } from "@autoforge/contracts";
-import { CalendarClock, RefreshCw, Trash2 } from "lucide-react";
+import type { CaseSuiteSchedule } from "@autoforge/contracts";
+import { CalendarClock, Trash2 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
@@ -14,15 +14,11 @@ import { readApiErrorMessage } from "@/lib/client-api";
 export function AutomationOperations({
   schedules,
   suites,
-  ldapJobs,
   manageableScheduleProjectIds,
-  canManageLdap,
 }: {
   schedules: CaseSuiteSchedule[];
   suites: Array<{ id: string; name: string }>;
-  ldapJobs: LdapSyncJob[];
   manageableScheduleProjectIds: string[] | undefined;
-  canManageLdap: boolean;
 }) {
   const router = useRouter();
   const [pending, setPending] = useState(false);
@@ -193,97 +189,6 @@ export function AutomationOperations({
           </div>
         </section>
       ) : null}
-
-      {ldapJobs.length > 0 || canManageLdap ? (
-        <section className="content-card settings-section">
-          <div className="section-heading">
-            <div>
-              <p className="eyebrow">Directory jobs</p>
-              <h2>LDAP 同步历史</h2>
-            </div>
-            {canManageLdap ? (
-              <Button
-                className="secondary-button"
-                disabled={pending}
-                onClick={() =>
-                  void request(
-                    "/api/v1/ldap/synchronize",
-                    { method: "POST" },
-                    "LDAP 同步作业已完成。",
-                  )
-                }
-                type="button"
-              >
-                <RefreshCw size={16} /> 立即同步 / 重试
-              </Button>
-            ) : null}
-          </div>
-          <div className="table-scroll">
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th>作业</th>
-                  <th>触发与状态</th>
-                  <th>进度 / 检查点</th>
-                  <th>处理结果</th>
-                  <th>错误摘要</th>
-                  <th>时间</th>
-                </tr>
-              </thead>
-              <tbody>
-                {ldapJobs.length === 0 ? (
-                  <tr>
-                    <td colSpan={6}>还没有 LDAP 同步记录。</td>
-                  </tr>
-                ) : null}
-                {ldapJobs.map((job) => (
-                  <tr key={job.id}>
-                    <td>
-                      <code>{job.id}</code>
-                    </td>
-                    <td>
-                      {job.triggerKind === "manual" ? "手动" : "计划"} ·{" "}
-                      {jobStatusLabel(job.status)}
-                    </td>
-                    <td>
-                      {job.status === "queued"
-                        ? "等待执行"
-                        : job.status === "running"
-                          ? "同步中"
-                          : job.status === "succeeded"
-                            ? "100%"
-                            : "已停止"}
-                      <details>
-                        <summary className="role-action-summary">检查点</summary>
-                        <pre>{JSON.stringify(job.checkpoint, null, 2)}</pre>
-                      </details>
-                    </td>
-                    <td>
-                      更新 {job.processedUsers} · 停用 {job.disabledUsers}
-                    </td>
-                    <td>
-                      {job.errorCode ? (
-                        <>
-                          <code>{job.errorCode}</code>
-                          <small>{job.errorSummary}</small>
-                        </>
-                      ) : (
-                        "—"
-                      )}
-                    </td>
-                    <td>
-                      {formatDate(job.scheduledAt)}
-                      <small>
-                        {job.finishedAt ? `完成：${formatDate(job.finishedAt)}` : "未完成"}
-                      </small>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </section>
-      ) : null}
     </div>
   );
 }
@@ -306,16 +211,6 @@ function shortId(value: string): string {
 
 function triggerStatusLabel(status: NonNullable<CaseSuiteSchedule["lastTriggerStatus"]>): string {
   return status === "created" ? "已创建批次" : status === "skipped" ? "已跳过" : "失败";
-}
-
-function jobStatusLabel(status: LdapSyncJob["status"]): string {
-  return {
-    queued: "排队中",
-    running: "执行中",
-    succeeded: "成功",
-    failed: "失败",
-    cancelled: "已取消",
-  }[status];
 }
 
 function formatDate(value: string): string {

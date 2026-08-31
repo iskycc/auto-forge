@@ -15,6 +15,14 @@ displayName: Alice Directory
 mail: alice@example.test
 userPassword: Directory!Alice123
 
+dn: cn=login-fallback,ou=people,dc=example,dc=test
+objectClass: inetOrgPerson
+cn: login-fallback
+sn: Fallback
+displayName: LDAP Login Fallback
+mail: login-fallback@example.test
+userPassword: Directory!Fallback123
+
 dn: cn=auditors,ou=groups,dc=example,dc=test
 objectClass: groupOfNames
 cn: auditors

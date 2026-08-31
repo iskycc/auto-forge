@@ -10,10 +10,9 @@ import {
 } from "@/lib/selected-project";
 
 export default async function AutomationOperationsPage() {
-  const identity = await requirePageAnyPermission(["case_suite.read", "ldap.read"]);
+  const identity = await requirePageAnyPermission(["case_suite.read"]);
   const services = await getPlatformServices();
   const canReadSchedules = hasPermissionInAnyScope(identity, "case_suite.read");
-  const canReadLdap = hasPermissionInAnyScope(identity, "ldap.read");
   const scheduleProjectIds = canReadSchedules
     ? projectIdsForPermission(identity, "case_suite.read")
     : [];
@@ -26,7 +25,7 @@ export default async function AutomationOperationsPage() {
   const hierarchy = await selectedProjectHierarchy(
     projectId ? await services.projectStructures.list(projectId).catch(() => undefined) : undefined,
   );
-  const [allSchedules, suites, ldapJobs] = await Promise.all([
+  const [allSchedules, suites] = await Promise.all([
     canReadSchedules ? services.platformOperations.listSchedules(identity) : Promise.resolve([]),
     canReadSchedules && hierarchy.projectVersionId
       ? services.caseSuites.list(
@@ -35,7 +34,6 @@ export default async function AutomationOperationsPage() {
           hierarchy.projectVersionId,
         )
       : Promise.resolve([]),
-    canReadLdap ? services.platformOperations.listLdapSyncJobs(identity, 100) : Promise.resolve([]),
   ]);
   const visibleSuiteIds = new Set(suites.map((suite) => suite.id));
   const schedules = allSchedules.filter((schedule) => visibleSuiteIds.has(schedule.suiteId));
@@ -45,13 +43,11 @@ export default async function AutomationOperationsPage() {
       <header className="page-header settings-page-header">
         <div>
           <p className="eyebrow">Automation</p>
-          <h1>计划与目录作业</h1>
-          <p>统一查看计划任务的触发状态、关联批次，以及 LDAP 同步进度和失败诊断。</p>
+          <h1>计划任务</h1>
+          <p>统一查看计划任务的触发状态与关联批次。</p>
         </div>
       </header>
       <AutomationOperations
-        canManageLdap={hasPermissionInAnyScope(identity, "ldap.manage")}
-        ldapJobs={ldapJobs}
         manageableScheduleProjectIds={projectIdsForPermission(identity, "case_suite.manage")}
         schedules={schedules}
         suites={suites.map((suite) => ({ id: suite.id, name: suite.name }))}

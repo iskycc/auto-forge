@@ -11,7 +11,7 @@ import { combinedLdapFailure, ldapDiagnostic, type LdapOperationPhase } from "./
 
 type LdapClient = Pick<
   InstanceType<(typeof import("ldapts"))["Client"]>,
-  "bind" | "search" | "startTLS" | "unbind"
+  "bind" | "search" | "unbind"
 >;
 type SearchEntry = Record<string, unknown> & { dn?: string };
 export type LdapConnector = (
@@ -34,39 +34,14 @@ export class LdapDirectory implements DirectoryPort {
     password: string,
   ): Promise<DirectoryIdentity> {
     if (!password) throw new DomainError("LDAP_CREDENTIAL_REJECTED", "LDAP 凭据无效。");
-    return withServiceClient(configuration, this.connector, async (serviceClient, url) => {
+    return withServiceClient(configuration, this.connector, async (serviceClient) => {
       const identity = await findUser(serviceClient, configuration, username);
-      await verifyUserPassword(
-        configuration,
-        this.connector,
-        url,
-        identity.distinguishedName,
-        password,
-      );
+      await verifyUserPassword(serviceClient, identity.distinguishedName, password);
+      if (configuration.groupSearchBase && configuration.bindDn) {
+        await serviceClient.bind(configuration.bindDn, configuration.bindPassword);
+      }
       const groupDns = await findGroups(serviceClient, configuration, username, identity);
       return { ...identity, groupDns };
-    });
-  }
-
-  async listUsers(configuration: DirectoryConfiguration): Promise<DirectoryIdentity[]> {
-    return withServiceClient(configuration, this.connector, async (client) => {
-      const filter = replaceDirectoryPlaceholder(configuration.userFilter, "username", "*");
-      const result = await client.search(configuration.userBaseDn, {
-        scope: "sub",
-        filter,
-        attributes: userAttributes(configuration),
-        sizeLimit: configuration.maximumUsers,
-        paged: { pageSize: configuration.pageSize },
-      });
-      const identities: DirectoryIdentity[] = [];
-      for (const entry of result.searchEntries as SearchEntry[]) {
-        const identity = mapDirectoryIdentity(entry, configuration);
-        identities.push({
-          ...identity,
-          groupDns: await findGroups(client, configuration, identity.username, identity),
-        });
-      }
-      return identities;
     });
   }
 }
@@ -119,27 +94,23 @@ async function runLdapPhase<T>(
 async function connect(configuration: DirectoryConfiguration, url: string): Promise<LdapClient> {
   const { Client } = await import("ldapts");
   const plan = ldapConnectionPlan(configuration, url);
-  const client = new Client(plan.clientOptions);
-  if (plan.startTlsOptions) await client.startTLS(plan.startTlsOptions);
-  return client;
+  return new Client(plan.clientOptions);
 }
 
 export function ldapConnectionPlan(configuration: DirectoryConfiguration, url: string) {
   const tlsOptions = {
     minVersion: "TLSv1.2" as const,
-    rejectUnauthorized: configuration.verifyTlsCertificate,
-    ...(configuration.caPem ? { ca: [Buffer.from(configuration.caPem, "utf8")] } : {}),
+    rejectUnauthorized: configuration.tlsRejectUnauthorized,
   };
-  const implicitTls = configuration.transportMode !== "starttls" && usesImplicitTls(url);
+  const implicitTls = usesImplicitTls(url);
   return {
     clientOptions: {
       url,
       connectTimeout: configuration.connectTimeoutMs,
-      timeout: configuration.operationTimeoutMs,
+      timeout: configuration.connectTimeoutMs,
       strictDN: true,
       ...(implicitTls ? { tlsOptions } : {}),
     },
-    ...(configuration.transportMode === "starttls" ? { startTlsOptions: tlsOptions } : {}),
   };
 }
 
@@ -152,20 +123,14 @@ function usesImplicitTls(url: string): boolean {
 }
 
 async function verifyUserPassword(
-  configuration: DirectoryConfiguration,
-  connector: LdapConnector,
-  url: string,
+  client: LdapClient,
   distinguishedName: string,
   password: string,
 ): Promise<void> {
-  let client: LdapClient | undefined;
   try {
-    client = await connector(configuration, url);
     await client.bind(distinguishedName, password);
   } catch (error) {
     throw new DomainError("LDAP_CREDENTIAL_REJECTED", "LDAP 凭据无效。", { cause: error });
-  } finally {
-    await client?.unbind().catch(() => undefined);
   }
 }
 
@@ -182,13 +147,17 @@ async function findUser(
   const result = await client.search(configuration.userBaseDn, {
     scope: "sub",
     filter,
-    attributes: userAttributes(configuration),
+    attributes: authenticationAttributes(configuration),
     sizeLimit: 2,
   });
   if (result.searchEntries.length !== 1) {
     throw new DomainError("LDAP_CREDENTIAL_REJECTED", "LDAP 凭据无效。");
   }
-  return mapDirectoryIdentity(result.searchEntries[0] as SearchEntry, configuration);
+  return mapAuthenticatedDirectoryIdentity(
+    result.searchEntries[0] as SearchEntry,
+    configuration,
+    username,
+  );
 }
 
 async function findGroups(
@@ -211,8 +180,7 @@ async function findGroups(
     scope: "sub",
     filter,
     attributes: [configuration.groupNameAttribute],
-    sizeLimit: Math.min(configuration.maximumUsers, 512),
-    paged: { pageSize: configuration.pageSize },
+    sizeLimit: 512,
   });
   return uniqueAttributes(
     (result.searchEntries as SearchEntry[]).flatMap((entry) =>
@@ -230,7 +198,6 @@ async function validateSearchAccess(
     filter: "(objectClass=*)",
     attributes: ["1.1"],
     sizeLimit: 1,
-    timeLimit: Math.max(1, Math.ceil(configuration.operationTimeoutMs / 1_000)),
   });
   if (!configuration.groupSearchBase) return;
   await client.search(configuration.groupSearchBase, {
@@ -238,21 +205,40 @@ async function validateSearchAccess(
     filter: "(objectClass=*)",
     attributes: ["1.1"],
     sizeLimit: 1,
-    timeLimit: Math.max(1, Math.ceil(configuration.operationTimeoutMs / 1_000)),
   });
+}
+
+function mapAuthenticatedDirectoryIdentity(
+  entry: SearchEntry,
+  configuration: DirectoryConfiguration,
+  loginUsername: string,
+): DirectoryIdentity {
+  // Match ddt-insight authentication semantics exactly: userFilter identifies one DN, while the
+  // submitted login name is the platform account identity. No directory username attribute exists.
+  const username = loginUsername.trim();
+  if (!username) {
+    throw new DomainError("LDAP_CREDENTIAL_REJECTED", "LDAP 凭据无效。");
+  }
+  return mapDirectoryIdentity(
+    entry,
+    configuration,
+    username,
+    authenticationAttributes(configuration),
+  );
 }
 
 function mapDirectoryIdentity(
   entry: SearchEntry,
   configuration: DirectoryConfiguration,
+  username: string,
+  mappedAttributes: string[],
 ): DirectoryIdentity {
   const distinguishedName = stringAttribute(entry, "dn");
-  const username = stringAttribute(entry, configuration.usernameAttribute);
-  if (!distinguishedName || !username) {
-    throw new DomainError("LDAP_MAPPING_INVALID", "LDAP 用户缺少 DN 或用户名映射属性。");
+  if (!distinguishedName) {
+    throw new DomainError("LDAP_MAPPING_INVALID", "LDAP 查询结果缺少用户 DN，无法验证用户密码。");
   }
   const displayName = stringAttribute(entry, configuration.displayNameAttribute) || username;
-  const email = stringAttribute(entry, configuration.emailAttribute);
+  const email = stringAttribute(entry, configuration.mailAttribute);
   return {
     subject: normalizeDirectoryUsername(username),
     username,
@@ -261,7 +247,7 @@ function mapDirectoryIdentity(
     distinguishedName,
     groupDns: uniqueAttributes(attributeTexts(entry, configuration.groupAttribute)),
     attributes: Object.fromEntries(
-      userAttributes(configuration).flatMap((attribute) => {
+      mappedAttributes.flatMap((attribute) => {
         const value = stringAttribute(entry, attribute);
         return value ? [[attribute, value]] : [];
       }),
@@ -269,11 +255,10 @@ function mapDirectoryIdentity(
   };
 }
 
-function userAttributes(configuration: DirectoryConfiguration): string[] {
+function authenticationAttributes(configuration: DirectoryConfiguration): string[] {
   return uniqueAttributes([
-    configuration.usernameAttribute,
     configuration.displayNameAttribute,
-    configuration.emailAttribute,
+    configuration.mailAttribute,
     configuration.groupSearchBase ? "" : configuration.groupAttribute,
   ]);
 }

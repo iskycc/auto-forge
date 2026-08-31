@@ -41,6 +41,7 @@ export type User = {
   username: string;
   displayName: string;
   email?: string;
+  groups?: string[];
   source: UserSource;
   status: UserStatus;
   forcePasswordChange: boolean;

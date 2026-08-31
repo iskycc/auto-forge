@@ -153,6 +153,7 @@ export const pgUsers = pgTable(
     normalizedUsername: text("normalized_username").notNull(),
     displayName: text("display_name").notNull(),
     email: text("email"),
+    ldapGroupsJson: text("ldap_groups_json").notNull().default("[]"),
     source: text("source", { enum: ["local", "ldap"] }).notNull(),
     status: text("status", { enum: ["active", "disabled"] }).notNull(),
     passwordHash: text("password_hash"),
@@ -306,6 +307,7 @@ export const pgLdapConfigurations = pgTable("ldap_configurations", {
     .default("editor"),
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull(),
+  updatedBy: text("updated_by").notNull().default(""),
   version: integer("version").notNull().default(1),
 });
 

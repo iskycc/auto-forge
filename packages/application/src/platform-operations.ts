@@ -11,7 +11,6 @@ import {
   upsertCaseSuiteScheduleInputSchema,
   type AnalyticsFilter,
   type AnalyticsExportJob,
-  type LdapSyncJob,
   type Notification,
   type RetentionCategory,
 } from "@autoforge/contracts";
@@ -291,102 +290,6 @@ export class PlatformOperationsService {
       }
     }
     return created;
-  }
-
-  async runLdapSynchronization(
-    actor: AuthenticatedIdentity,
-    synchronize: () => Promise<{ createdOrUpdated: number; disabledUserIds: string[] }>,
-    triggerKind: LdapSyncJob["triggerKind"] = "manual",
-  ): Promise<LdapSyncJob> {
-    requirePermission(actor, "ldap.manage");
-    return this.recordLdapSynchronization(synchronize, triggerKind, actor.user.id);
-  }
-
-  runScheduledLdapSynchronization(
-    synchronize: () => Promise<{ createdOrUpdated: number; disabledUserIds: string[] }>,
-  ): Promise<LdapSyncJob> {
-    return this.recordLdapSynchronization(synchronize, "scheduled");
-  }
-
-  async runDueLdapSynchronization(
-    intervalMinutes: number,
-    synchronize: () => Promise<{ createdOrUpdated: number; disabledUserIds: string[] }>,
-  ): Promise<boolean> {
-    if (intervalMinutes <= 0) return false;
-    const now = this.clock.now();
-    const claimId = this.ids.next();
-    const claimed = await this.repository.claimScheduledLdapSync({
-      claimId,
-      now: now.toISOString(),
-      leaseExpiresAt: new Date(now.getTime() + 5 * 60_000).toISOString(),
-    });
-    if (!claimed) return false;
-    try {
-      await this.runScheduledLdapSynchronization(synchronize);
-      return true;
-    } finally {
-      const completedAt = this.clock.now();
-      await this.repository.completeScheduledLdapSync({
-        claimId,
-        nextAt: new Date(completedAt.getTime() + intervalMinutes * 60_000).toISOString(),
-        completedAt: completedAt.toISOString(),
-      });
-    }
-  }
-
-  private async recordLdapSynchronization(
-    synchronize: () => Promise<{ createdOrUpdated: number; disabledUserIds: string[] }>,
-    triggerKind: LdapSyncJob["triggerKind"],
-    requestedBy?: string,
-  ): Promise<LdapSyncJob> {
-    const now = this.clock.now().toISOString();
-    let job = await this.repository.createLdapSyncJob({
-      id: this.ids.next(),
-      status: "queued",
-      triggerKind,
-      checkpoint: {},
-      processedUsers: 0,
-      disabledUsers: 0,
-      ...(requestedBy ? { requestedBy } : {}),
-      scheduledAt: now,
-      createdAt: now,
-      updatedAt: now,
-    });
-    job = await this.repository.updateLdapSyncJob({
-      jobId: job.id,
-      status: "running",
-      startedAt: now,
-      updatedAt: now,
-    });
-    try {
-      const result = await synchronize();
-      const finishedAt = this.clock.now().toISOString();
-      return this.repository.updateLdapSyncJob({
-        jobId: job.id,
-        status: "succeeded",
-        checkpoint: { completed: true },
-        processedUsers: result.createdOrUpdated,
-        disabledUsers: result.disabledUserIds.length,
-        finishedAt,
-        updatedAt: finishedAt,
-      });
-    } catch (error) {
-      const finishedAt = this.clock.now().toISOString();
-      await this.repository.updateLdapSyncJob({
-        jobId: job.id,
-        status: "failed",
-        errorCode: error instanceof DomainError ? error.code : "LDAP_SYNC_FAILED",
-        errorSummary: error instanceof Error ? error.message.slice(0, 1_000) : "LDAP 同步失败。",
-        finishedAt,
-        updatedAt: finishedAt,
-      });
-      throw error;
-    }
-  }
-
-  listLdapSyncJobs(actor: AuthenticatedIdentity, limit = 50) {
-    requirePermission(actor, "ldap.read");
-    return this.repository.listLdapSyncJobs(limit);
   }
 
   listNotifications(

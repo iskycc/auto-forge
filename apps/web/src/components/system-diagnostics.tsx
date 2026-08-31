@@ -196,7 +196,7 @@ export function SystemDiagnostics({ canManage }: { canManage: boolean }) {
 function queueJobKindLabel(kind: string): string {
   const labels: Record<string, string> = {
     "dispatch-run": "执行调度",
-    "ldap-sync": "LDAP 同步",
+    "ldap-sync": "历史 LDAP 同步（已停用）",
     "analytics-rollup": "质量统计",
     "retention-cleanup": "数据清理",
     "object-cleanup": "对象清理",

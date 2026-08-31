@@ -25,7 +25,7 @@ const PERMISSION_PRESENTATIONS = {
   "user.manage": { label: "管理用户", description: "创建、禁用和维护用户账号" },
   "role.read": { label: "查看角色与权限", description: "查看角色定义和授权关系" },
   "role.manage": { label: "管理角色与授权", description: "创建、编辑、分配和撤销角色" },
-  "ldap.read": { label: "查看 LDAP 配置", description: "查看目录连接和组映射配置" },
+  "ldap.read": { label: "查看 LDAP 配置", description: "查看目录连接和登录配置" },
   "ldap.manage": { label: "管理 LDAP 配置", description: "配置、测试和同步 LDAP 目录" },
   "project.read": { label: "查看项目", description: "查看项目、版本和成员信息" },
   "project.manage": { label: "管理项目", description: "创建、编辑、归档项目并管理成员" },

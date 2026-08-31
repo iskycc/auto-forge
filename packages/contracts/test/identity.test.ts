@@ -11,18 +11,32 @@ const requiredConfiguration = {
 };
 
 describe("LDAP configuration contracts", () => {
-  it("keeps certificate verification enabled for existing clients that omit the setting", () => {
-    expect(ldapConfigurationInputSchema.parse(requiredConfiguration).verifyTlsCertificate).toBe(
-      true,
-    );
+  it("uses the same configurable fields and defaults as ddt-insight", () => {
+    expect(ldapConfigurationInputSchema.parse(requiredConfiguration)).toEqual({
+      enabled: true,
+      url: "ldaps://ldap.internal:636",
+      tlsRejectUnauthorized: true,
+      connectTimeoutMs: 5_000,
+      bindDn: "cn=service,dc=example,dc=test",
+      clearBindPassword: false,
+      userBaseDn: "ou=people,dc=example,dc=test",
+      userFilter: "(&(objectClass=person)(uid={{username}}))",
+      displayNameAttribute: "displayName",
+      mailAttribute: "mail",
+      groupAttribute: "memberOf",
+      groupSearchBase: "",
+      groupSearchFilter: "(member={{userDn}})",
+      groupNameAttribute: "cn",
+      defaultRole: "editor",
+    });
   });
 
   it("accepts an explicit certificate-verification opt-out", () => {
     expect(
       ldapConfigurationInputSchema.parse({
         ...requiredConfiguration,
-        verifyTlsCertificate: false,
-      }).verifyTlsCertificate,
+        tlsRejectUnauthorized: false,
+      }).tlsRejectUnauthorized,
     ).toBe(false);
   });
 
@@ -36,54 +50,33 @@ describe("LDAP configuration contracts", () => {
     ).toMatchObject({
       url: "ldaps://ldap.internal:636",
       bindDn: "",
-      groupAttribute: "",
+      groupAttribute: "memberOf",
       groupSearchFilter: "(member={{userDn}})",
       defaultRole: "editor",
     });
   });
 
-  it("keeps older v1 payloads parseable while adopting ddt-insight placeholders", () => {
-    expect(
+  it("rejects legacy server arrays and single-brace placeholders", () => {
+    expect(() =>
       ldapConfigurationInputSchema.parse({
         enabled: true,
         urls: ["ldaps://ldap.internal:636"],
-        tlsMode: "ldaps",
         bindDn: "cn=service,dc=example,dc=test",
         userBaseDn: "ou=people,dc=example,dc=test",
         userFilter: "(uid={username})",
-        groupBaseDn: "ou=groups,dc=example,dc=test",
-        groupFilter: "(member={userDn})",
-        groupMemberAttribute: "memberOf",
       }),
-    ).toMatchObject({
-      url: "ldaps://ldap.internal:636",
-      userFilter: "(uid={{username}})",
-      groupSearchBase: "ou=groups,dc=example,dc=test",
-      groupSearchFilter: "(member={{userDn}})",
-      groupAttribute: "memberOf",
-    });
-  });
-
-  it("marks historical StartTLS payloads so upgrades cannot silently use plaintext LDAP", () => {
-    expect(
-      ldapConfigurationInputSchema.parse({
-        ...requiredConfiguration,
-        url: undefined,
-        urls: ["ldap://ldap.internal:636"],
-        tlsMode: "starttls",
-      }),
-    ).toMatchObject({ url: "ldap://ldap.internal:636", legacyStartTls: true });
+    ).toThrow(/服务地址|用户过滤器/u);
   });
 
   it("allows unused optional attributes to be blank but requires a searched Group name", () => {
     expect(
       ldapConfigurationInputSchema.parse({
         ...requiredConfiguration,
-        emailAttribute: "",
+        mailAttribute: "",
         groupAttribute: "",
         groupNameAttribute: "",
       }),
-    ).toMatchObject({ emailAttribute: "", groupAttribute: "", groupNameAttribute: "" });
+    ).toMatchObject({ mailAttribute: "", groupAttribute: "", groupNameAttribute: "" });
     expect(() =>
       ldapConfigurationInputSchema.parse({
         ...requiredConfiguration,

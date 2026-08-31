@@ -527,19 +527,12 @@ async function createPlatformServices() {
           await platformOperations.runRetentionCycle();
         })
       : Promise.resolve();
-  const ldapSynchronizationLoop = runPeriodic(scheduleAbort.signal, 60_000, async () => {
-    const ldap = await identities.getLdapConfiguration();
-    if (!ldap?.enabled || ldap.synchronizationIntervalMinutes <= 0) return;
-    await platformOperations.runDueLdapSynchronization(ldap.synchronizationIntervalMinutes, () =>
-      identityAccess.synchronizeLdapAsSystem(),
-    );
-  });
   const runtimeInfrastructure = infrastructure;
   infrastructure = {
     ready: () => runtimeInfrastructure.ready(),
     close: async () => {
       scheduleAbort.abort();
-      await Promise.all([scheduleLoop, retentionLoop, ldapSynchronizationLoop, roundRecoveryLoop]);
+      await Promise.all([scheduleLoop, retentionLoop, roundRecoveryLoop]);
       await runtimeInfrastructure.close();
     },
   };

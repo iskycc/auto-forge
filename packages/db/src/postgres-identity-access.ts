@@ -34,6 +34,7 @@ type UserDatabaseRow = QueryResultRow & {
   username: string;
   display_name: string;
   email: string | null;
+  ldap_groups_json: string;
   source: "local" | "ldap";
   status: "active" | "disabled";
   password_hash: string | null;
@@ -217,14 +218,15 @@ export class PostgresIdentityAccessRepository implements IdentityAccessRepositor
       if (external.rows[0]) {
         const result = await client.query<UserDatabaseRow>(
           `UPDATE users SET
-             username = $1, normalized_username = $2, display_name = $3, email = $4, status = 'active',
-             updated_at = $5, version = version + 1
-           WHERE id = $6 AND source = 'ldap' RETURNING *`,
+             username = $1, normalized_username = $2, display_name = $3, email = $4,
+             ldap_groups_json = $5, status = 'active', updated_at = $6, version = version + 1
+           WHERE id = $7 AND source = 'ldap' RETURNING *`,
           [
             input.identity.username,
             normalizedUsername,
             input.identity.displayName,
             input.identity.email ?? null,
+            JSON.stringify(input.identity.groupDns),
             input.synchronizedAt,
             external.rows[0].user_id,
           ],
@@ -257,13 +259,14 @@ export class PostgresIdentityAccessRepository implements IdentityAccessRepositor
         }
         const updated = await client.query<UserDatabaseRow>(
           `UPDATE users SET username = $1, normalized_username = $2, display_name = $3,
-             email = $4, status = 'active', updated_at = $5, version = version + 1
-           WHERE id = $6 RETURNING *`,
+             email = $4, ldap_groups_json = $5, status = 'active', updated_at = $6,
+             version = version + 1 WHERE id = $7 RETURNING *`,
           [
             input.identity.username,
             normalizedUsername,
             input.identity.displayName,
             input.identity.email ?? null,
+            JSON.stringify(input.identity.groupDns),
             input.synchronizedAt,
             collision.rows[0].id,
           ],
@@ -307,10 +310,10 @@ export class PostgresIdentityAccessRepository implements IdentityAccessRepositor
       }
       const created = await client.query<UserDatabaseRow>(
         `INSERT INTO users (
-           id, username, normalized_username, display_name, email, source, status,
+           id, username, normalized_username, display_name, email, ldap_groups_json, source, status,
            password_hash, password_updated_at, force_password_change, failed_login_attempts,
            locked_until, last_login_at, created_at, updated_at, version
-         ) VALUES ($1, $2, $3, $4, $5, 'ldap', 'active', NULL, NULL, FALSE, 0, NULL, NULL, $6, $6, 1)
+         ) VALUES ($1, $2, $3, $4, $5, $6, 'ldap', 'active', NULL, NULL, FALSE, 0, NULL, NULL, $7, $7, 1)
          RETURNING *`,
         [
           input.userId,
@@ -318,6 +321,7 @@ export class PostgresIdentityAccessRepository implements IdentityAccessRepositor
           normalizedUsername,
           input.identity.displayName,
           input.identity.email ?? null,
+          JSON.stringify(input.identity.groupDns),
           input.synchronizedAt,
         ],
       );
@@ -834,6 +838,7 @@ export class PostgresIdentityAccessRepository implements IdentityAccessRepositor
     },
   ): Promise<StoredLdapConfiguration> {
     await this.ready();
+    const transportMode = ldapTransportMode(input.url);
     const result = await this.handle.pool.query<LdapDatabaseRow>(
       `INSERT INTO ldap_configurations (
          id, enabled, urls_json, tls_mode, ca_pem, verify_tls_certificate,
@@ -841,10 +846,10 @@ export class PostgresIdentityAccessRepository implements IdentityAccessRepositor
          page_size, maximum_users, synchronization_interval_minutes, bind_dn, bind_password_encrypted, user_base_dn, user_filter, user_id_attribute,
          username_attribute, display_name_attribute, email_attribute, group_base_dn,
          group_filter, group_member_attribute, group_attribute, group_name_attribute,
-         default_role, transport_mode, created_at, updated_at, version
+         default_role, transport_mode, created_at, updated_at, updated_by, version
        ) VALUES (
          'default', $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
-         $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $26, 1
+         $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $26, $27, 1
        ) ON CONFLICT (id) DO UPDATE SET
          enabled = EXCLUDED.enabled, urls_json = EXCLUDED.urls_json,
          tls_mode = EXCLUDED.tls_mode, ca_pem = EXCLUDED.ca_pem,
@@ -866,123 +871,40 @@ export class PostgresIdentityAccessRepository implements IdentityAccessRepositor
          group_name_attribute = EXCLUDED.group_name_attribute,
          default_role = EXCLUDED.default_role,
          transport_mode = EXCLUDED.transport_mode,
-         updated_at = EXCLUDED.updated_at, version = ldap_configurations.version + 1
+         updated_at = EXCLUDED.updated_at, updated_by = EXCLUDED.updated_by,
+         version = ldap_configurations.version + 1
        RETURNING *`,
       [
         input.enabled,
         JSON.stringify(input.url ? [input.url] : []),
-        input.transportMode === "ldaps" ? "ldaps" : "starttls",
-        input.caPem ?? null,
-        input.verifyTlsCertificate,
+        transportMode === "ldaps" ? "ldaps" : "starttls",
+        null,
+        input.tlsRejectUnauthorized,
         input.connectTimeoutMs,
-        input.operationTimeoutMs,
-        input.pageSize,
-        input.maximumUsers,
-        input.synchronizationIntervalMinutes,
+        input.connectTimeoutMs,
+        500,
+        5_000,
+        0,
         input.bindDn,
         input.bindPasswordEncrypted ?? null,
         input.userBaseDn,
         input.userFilter,
-        input.usernameAttribute,
-        input.usernameAttribute,
+        "uid",
+        "uid",
         input.displayNameAttribute,
-        input.emailAttribute,
+        input.mailAttribute,
         input.groupSearchBase || null,
         input.groupSearchFilter || null,
         input.groupAttribute || "memberOf",
         input.groupAttribute,
         input.groupNameAttribute,
         input.defaultRole,
-        input.transportMode,
+        transportMode,
         input.updatedAt,
+        input.updatedBy,
       ],
     );
     return mapLdapRow(requiredRow(result.rows[0], "PostgreSQL did not return LDAP config."));
-  }
-
-  async listLdapGroupMappings(): Promise<
-    Array<{ id: string; groupDn: string; roleId: string; projectId?: string; priority: number }>
-  > {
-    await this.ready();
-    const result = await this.handle.pool.query<{
-      id: string;
-      group_dn: string;
-      role_id: string;
-      project_id: string | null;
-      priority: number;
-    }>(
-      "SELECT id, group_dn, role_id, project_id, priority FROM ldap_group_mappings ORDER BY priority DESC, created_at",
-    );
-    return result.rows.map((row) => ({
-      id: row.id,
-      groupDn: row.group_dn,
-      roleId: row.role_id,
-      ...(row.project_id ? { projectId: row.project_id } : {}),
-      priority: row.priority,
-    }));
-  }
-
-  async addLdapGroupMapping(input: {
-    id: string;
-    groupDn: string;
-    normalizedGroupDn: string;
-    roleId: string;
-    projectId?: string;
-    priority: number;
-    recordedAt: string;
-  }): Promise<void> {
-    await this.ready();
-    await this.handle.pool.query(
-      `INSERT INTO ldap_group_mappings
-       (id, group_dn, normalized_group_dn, role_id, project_id, priority, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $7)`,
-      [
-        input.id,
-        input.groupDn,
-        input.normalizedGroupDn,
-        input.roleId,
-        input.projectId ?? null,
-        input.priority,
-        input.recordedAt,
-      ],
-    );
-  }
-
-  async replaceLdapRoleBindings(input: {
-    userId: string;
-    groupDns: string[];
-    mappings: Array<{ groupDn: string; roleId: string; projectId?: string; priority: number }>;
-    recordedAt: string;
-  }): Promise<void> {
-    await this.ready();
-    await this.transaction(async (client) => {
-      await client.query("DELETE FROM user_system_roles WHERE user_id = $1 AND source = 'ldap'", [
-        input.userId,
-      ]);
-      await client.query(
-        "DELETE FROM project_role_bindings WHERE user_id = $1 AND source = 'ldap'",
-        [input.userId],
-      );
-      const groupSet = new Set(input.groupDns);
-      for (const mapping of input.mappings) {
-        if (!groupSet.has(normalizeDn(mapping.groupDn))) continue;
-        if (mapping.projectId) {
-          await client.query(
-            `INSERT INTO project_role_bindings
-             (user_id, project_id, role_id, source, assigned_at, assigned_by)
-             VALUES ($1, $2, $3, 'ldap', $4, NULL) ON CONFLICT DO NOTHING`,
-            [input.userId, mapping.projectId, mapping.roleId, input.recordedAt],
-          );
-        } else {
-          await client.query(
-            `INSERT INTO user_system_roles
-             (user_id, role_id, source, assigned_at, assigned_by)
-             VALUES ($1, $2, 'ldap', $3, NULL) ON CONFLICT DO NOTHING`,
-            [input.userId, mapping.roleId, input.recordedAt],
-          );
-        }
-      }
-    });
   }
 
   async ensureLdapDefaultRole(input: {
@@ -1007,38 +929,6 @@ export class PostgresIdentityAccessRepository implements IdentityAccessRepositor
        VALUES ($1, $2, 'ldap', $3, NULL) ON CONFLICT DO NOTHING`,
       [input.userId, input.roleId, input.recordedAt],
     );
-  }
-
-  async disableMissingLdapUsers(input: {
-    providerId: string;
-    activeSubjects: string[];
-    recordedAt: string;
-  }): Promise<string[]> {
-    await this.ready();
-    return this.transaction(async (client) => {
-      const result = await client.query<{ user_id: string; subject: string }>(
-        `SELECT e.user_id, e.subject FROM external_identities e
-         JOIN users u ON u.id = e.user_id
-         WHERE e.provider_id = $1 AND u.status = 'active' FOR UPDATE OF u`,
-        [input.providerId],
-      );
-      const activeSubjects = new Set(input.activeSubjects);
-      const userIds = result.rows
-        .filter((identity) => !activeSubjects.has(identity.subject))
-        .map((identity) => identity.user_id);
-      if (userIds.length === 0) return [];
-      await client.query(
-        `UPDATE users SET status = 'disabled', updated_at = $1, version = version + 1
-         WHERE id = ANY($2::text[])`,
-        [input.recordedAt, userIds],
-      );
-      await client.query(
-        `UPDATE user_sessions SET revoked_at = $1
-         WHERE user_id = ANY($2::text[]) AND revoked_at IS NULL`,
-        [input.recordedAt, userIds],
-      );
-      return userIds;
-    });
   }
 
   async appendAudit(event: AuditEvent): Promise<void> {
@@ -1171,6 +1061,7 @@ type LdapDatabaseRow = QueryResultRow & {
   transport_mode: "ldaps" | "starttls" | "plain";
   created_at: string;
   updated_at: string;
+  updated_by: string;
   version: number;
 };
 
@@ -1236,6 +1127,7 @@ function mapUserRow(row: UserDatabaseRow): User {
     username: row.username,
     displayName: row.display_name,
     ...(row.email ? { email: row.email } : {}),
+    groups: stringArray(row.ldap_groups_json),
     source: row.source,
     status: row.status,
     forcePasswordChange: row.force_password_change,
@@ -1296,23 +1188,18 @@ function mapRoleRow(row: RoleDatabaseRow): Role {
 
 function mapLdapRow(row: LdapDatabaseRow): StoredLdapConfiguration {
   return {
-    enabled: row.enabled,
+    // DDT Insight does not support StartTLS. Disable historical StartTLS rows instead of silently
+    // downgrading them to plaintext; an administrator must save an explicit ldap:// or ldaps:// URL.
+    enabled: row.transport_mode === "starttls" ? false : row.enabled,
     url: stringArray(row.urls_json)[0] ?? "",
-    transportMode: row.transport_mode,
-    verifyTlsCertificate: row.verify_tls_certificate,
-    ...(row.ca_pem ? { caPem: row.ca_pem } : {}),
+    tlsRejectUnauthorized: row.verify_tls_certificate,
     connectTimeoutMs: row.connect_timeout_ms,
-    operationTimeoutMs: row.operation_timeout_ms,
-    pageSize: row.page_size,
-    maximumUsers: row.maximum_users,
-    synchronizationIntervalMinutes: row.synchronization_interval_minutes,
     bindDn: row.bind_dn,
     ...(row.bind_password_encrypted ? { bindPasswordEncrypted: row.bind_password_encrypted } : {}),
     userBaseDn: row.user_base_dn,
     userFilter: row.user_filter,
-    usernameAttribute: row.username_attribute,
     displayNameAttribute: row.display_name_attribute,
-    emailAttribute: row.email_attribute,
+    mailAttribute: row.email_attribute,
     groupAttribute: row.group_attribute,
     groupSearchBase: row.group_base_dn ?? "",
     groupSearchFilter: row.group_filter ?? "(member={{userDn}})",
@@ -1320,8 +1207,13 @@ function mapLdapRow(row: LdapDatabaseRow): StoredLdapConfiguration {
     defaultRole: row.default_role,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    updatedBy: row.updated_by,
     version: row.version,
   };
+}
+
+function ldapTransportMode(url: string): "ldaps" | "plain" {
+  return url.toLocaleLowerCase("en-US").startsWith("ldaps://") ? "ldaps" : "plain";
 }
 
 function mapAuditRow(row: AuditDatabaseRow): AuditEvent {
@@ -1387,10 +1279,6 @@ function auditDetails(json: string): AuditEvent["details"] {
 
 function normalizeUsername(username: string): string {
   return username.trim().normalize("NFKC").toLocaleLowerCase("en-US");
-}
-
-function normalizeDn(distinguishedName: string): string {
-  return distinguishedName.trim().replace(/\s+/g, " ").toLocaleLowerCase("en-US");
 }
 
 function requiredRow<T>(row: T | undefined, message: string): T {

@@ -50,40 +50,35 @@ export default async function AccessSettingsPage({
   // 用户、角色、LDAP、会话及全部项目成员，并形成逐项目 N+1 查询，项目较多时
   // 单纯切换 Tab 也会被无关 I/O 阻塞。
   const needsUsers = activeSection === "users" || activeSection === "roles";
-  const needsRoles =
-    activeSection === "users" || activeSection === "roles" || activeSection === "ldap";
+  const needsRoles = activeSection === "users" || activeSection === "roles";
   const needsProjects = needsRoles;
   const needsLdap = activeSection === "ldap";
   const needsRoleBindings = activeSection === "users" || activeSection === "roles";
-  const [userPage, roles, projects, ldap, ldapMappings, sessions, systemRoleBindings] =
-    await Promise.all([
-      needsUsers && capabilities.userRead
-        ? services.identityAccess.listUsers(identity, {
-            limit: 50,
-            ...(query ? { query } : {}),
-            ...(source ? { source } : {}),
-            ...(cursor ? { cursor } : {}),
-          })
-        : Promise.resolve({ items: [], nextCursor: undefined }),
-      needsRoles && capabilities.roleRead
-        ? services.identityAccess.listRoles(identity)
-        : Promise.resolve([]),
-      needsProjects && capabilities.projectRead
-        ? services.identityAccess.listProjects(identity)
-        : Promise.resolve([]),
-      needsLdap && capabilities.ldapRead
-        ? services.identityAccess.getLdapConfiguration(identity)
-        : Promise.resolve(null),
-      needsLdap && capabilities.ldapRead
-        ? services.identityAccess.listLdapGroupMappings(identity)
-        : Promise.resolve([]),
-      activeSection === "sessions"
-        ? services.identityAccess.listSessions(identity)
-        : Promise.resolve([]),
-      needsRoleBindings && capabilities.roleRead
-        ? services.identityAccess.listSystemRoleBindings(identity)
-        : Promise.resolve([]),
-    ]);
+  const [userPage, roles, projects, ldap, sessions, systemRoleBindings] = await Promise.all([
+    needsUsers && capabilities.userRead
+      ? services.identityAccess.listUsers(identity, {
+          limit: 50,
+          ...(query ? { query } : {}),
+          ...(source ? { source } : {}),
+          ...(cursor ? { cursor } : {}),
+        })
+      : Promise.resolve({ items: [], nextCursor: undefined }),
+    needsRoles && capabilities.roleRead
+      ? services.identityAccess.listRoles(identity)
+      : Promise.resolve([]),
+    needsProjects && capabilities.projectRead
+      ? services.identityAccess.listProjects(identity)
+      : Promise.resolve([]),
+    needsLdap && capabilities.ldapRead
+      ? services.identityAccess.getLdapConfiguration(identity)
+      : Promise.resolve(null),
+    activeSection === "sessions"
+      ? services.identityAccess.listSessions(identity)
+      : Promise.resolve([]),
+    needsRoleBindings && capabilities.roleRead
+      ? services.identityAccess.listSystemRoleBindings(identity)
+      : Promise.resolve([]),
+  ]);
   const projectMemberships =
     activeSection === "users"
       ? await Promise.all(
@@ -115,7 +110,6 @@ export default async function AccessSettingsPage({
         activeSection={activeSection}
         capabilities={capabilities}
         ldap={ldap}
-        ldapMappings={ldapMappings}
         projects={projects}
         projectMemberships={projectMemberships}
         roles={roles}
@@ -125,6 +119,10 @@ export default async function AccessSettingsPage({
         userQuery={query ?? ""}
         userSource={source ?? ""}
         nextUserCursor={userPage.nextCursor}
+        // Query-string Tab navigation preserves client component state. Include the LDAP
+        // configuration version so entering the lazily loaded directory tab and saving a new
+        // revision both remount controlled switches from the authoritative persisted values.
+        key={`${activeSection}:${ldap?.updatedAt ?? "none"}`}
       />
     </section>
   );
@@ -151,7 +149,7 @@ function accessSectionHeading(section: AccessSection): {
     case "ldap":
       return {
         title: "LDAP 目录",
-        description: "配置离线目录连接、组映射和同步规则。",
+        description: "配置目录连接、登录属性和统一默认角色。",
         tab: "目录配置",
       };
     case "sessions":

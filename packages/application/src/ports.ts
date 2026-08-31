@@ -24,7 +24,6 @@ import type {
   ApiToken,
   CaseSuiteSchedule,
   GlobalSearchResult,
-  LdapSyncJob,
   Notification,
   RetentionCategory,
   RetentionPolicy,
@@ -176,21 +175,14 @@ export interface ProjectStructureRepository {
 export type StoredLdapConfiguration = {
   enabled: boolean;
   url: string;
-  transportMode: "ldaps" | "starttls" | "plain";
-  verifyTlsCertificate: boolean;
-  caPem?: string;
+  tlsRejectUnauthorized: boolean;
   connectTimeoutMs: number;
-  operationTimeoutMs: number;
-  pageSize: number;
-  maximumUsers: number;
-  synchronizationIntervalMinutes: number;
   bindDn: string;
   bindPasswordEncrypted?: string;
   userBaseDn: string;
   userFilter: string;
-  usernameAttribute: string;
   displayNameAttribute: string;
-  emailAttribute: string;
+  mailAttribute: string;
   groupAttribute: string;
   groupSearchBase: string;
   groupSearchFilter: string;
@@ -198,11 +190,26 @@ export type StoredLdapConfiguration = {
   defaultRole: "admin" | "editor" | "viewer";
   createdAt: string;
   updatedAt: string;
+  updatedBy: string;
   version: number;
 };
 
-export type DirectoryConfiguration = Omit<StoredLdapConfiguration, "bindPasswordEncrypted"> & {
+export type DirectoryConfiguration = {
+  enabled: boolean;
+  url: string;
+  tlsRejectUnauthorized: boolean;
+  connectTimeoutMs: number;
+  bindDn: string;
   bindPassword: string;
+  userBaseDn: string;
+  userFilter: string;
+  displayNameAttribute: string;
+  mailAttribute: string;
+  groupAttribute: string;
+  groupSearchBase: string;
+  groupSearchFilter: string;
+  groupNameAttribute: string;
+  defaultRole: "admin" | "editor" | "viewer";
 };
 
 export type DirectoryIdentity = {
@@ -352,35 +359,12 @@ export interface IdentityAccessRepository {
       updatedAt: string;
     },
   ): Promise<StoredLdapConfiguration>;
-  listLdapGroupMappings(): Promise<
-    Array<{ id: string; groupDn: string; roleId: string; projectId?: string; priority: number }>
-  >;
-  addLdapGroupMapping(input: {
-    id: string;
-    groupDn: string;
-    normalizedGroupDn: string;
-    roleId: string;
-    projectId?: string;
-    priority: number;
-    recordedAt: string;
-  }): Promise<void>;
-  replaceLdapRoleBindings(input: {
-    userId: string;
-    groupDns: string[];
-    mappings: Array<{ groupDn: string; roleId: string; projectId?: string; priority: number }>;
-    recordedAt: string;
-  }): Promise<void>;
   ensureLdapDefaultRole(input: {
     userId: string;
     roleId: string;
     projectId?: string;
     recordedAt: string;
   }): Promise<void>;
-  disableMissingLdapUsers(input: {
-    providerId: string;
-    activeSubjects: string[];
-    recordedAt: string;
-  }): Promise<string[]>;
   appendAudit(event: AuditEvent): Promise<void>;
   listAudit(input: {
     projectIds?: readonly string[];
@@ -625,7 +609,6 @@ export interface DirectoryPort {
     username: string,
     password: string,
   ): Promise<DirectoryIdentity>;
-  listUsers(configuration: DirectoryConfiguration): Promise<DirectoryIdentity[]>;
 }
 
 export interface JarDiscoveryPort {
@@ -1922,31 +1905,6 @@ export interface PlatformOperationsRepository {
     status: "created" | "skipped" | "failed";
     nextTriggerAt: string;
     recordedAt: string;
-  }): Promise<boolean>;
-
-  createLdapSyncJob(record: LdapSyncJob): Promise<LdapSyncJob>;
-  updateLdapSyncJob(input: {
-    jobId: string;
-    status: LdapSyncJob["status"];
-    checkpoint?: Record<string, unknown>;
-    processedUsers?: number;
-    disabledUsers?: number;
-    errorCode?: string;
-    errorSummary?: string;
-    startedAt?: string;
-    finishedAt?: string;
-    updatedAt: string;
-  }): Promise<LdapSyncJob>;
-  listLdapSyncJobs(limit: number): Promise<LdapSyncJob[]>;
-  claimScheduledLdapSync(input: {
-    claimId: string;
-    now: string;
-    leaseExpiresAt: string;
-  }): Promise<boolean>;
-  completeScheduledLdapSync(input: {
-    claimId: string;
-    nextAt: string;
-    completedAt: string;
   }): Promise<boolean>;
 
   listNotifications(input: {

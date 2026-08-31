@@ -31,7 +31,7 @@ AutoForge `1.1.0` 将 `iskycc/ddt-insight` 在提交 `705f552` 中的差异化�
 
 以下功能不是遗漏，而是已经由 AutoForge 提供覆盖范围更完整的实现，因此不会复制第二套页面、表或身份事实：
 
-- 本地用户、会话、LDAP、角色与权限：复用统一身份/RBAC、LDAPS/StartTLS、组映射、锁定和会话撤销。
+- 本地用户、会话、LDAP、角色与权限：LDAP 配置和鉴权字段复刻 DDT Insight，复用统一身份/RBAC、LDAPS、锁定和会话撤销；Group 只作为用户资料，不映射权限。
 - 审计：复用 Lite/Full 共享的不可变审计事件及项目权限过滤。
 - 备份恢复：复用数据库与对象目录一致性备份、Full 依赖恢复和升级回滚手册。
 - 系统诊断：复用 liveness/readiness、平台诊断、容量和依赖检查。

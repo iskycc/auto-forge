@@ -29,7 +29,7 @@ export function ldapDiagnostic(
   ) {
     return diagnostic(
       "LDAP_TLS_FAILED",
-      "LDAP TLS 校验失败，请检查主机名、证书有效期和私有 CA。",
+      "LDAP TLS 校验失败，请检查主机名、证书有效期和系统信任链，或确认是否需要关闭证书校验。",
       error,
     );
   }

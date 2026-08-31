@@ -159,35 +159,6 @@ describe("SQLite platform operations", () => {
         }),
       ).toBe(false);
 
-      expect(
-        await repository.claimScheduledLdapSync({
-          claimId: "ldap-claim-1",
-          now: "2026-08-12T01:00:00.000Z",
-          leaseExpiresAt: "2026-08-12T01:05:00.000Z",
-        }),
-      ).toBe(true);
-      expect(
-        await repository.claimScheduledLdapSync({
-          claimId: "ldap-claim-2",
-          now: "2026-08-12T01:01:00.000Z",
-          leaseExpiresAt: "2026-08-12T01:06:00.000Z",
-        }),
-      ).toBe(false);
-      expect(
-        await repository.completeScheduledLdapSync({
-          claimId: "ldap-claim-1",
-          nextAt: "2026-08-12T02:00:00.000Z",
-          completedAt: "2026-08-12T01:02:00.000Z",
-        }),
-      ).toBe(true);
-      expect(
-        await repository.claimScheduledLdapSync({
-          claimId: "ldap-claim-3",
-          now: "2026-08-12T01:59:59.000Z",
-          leaseExpiresAt: "2026-08-12T02:04:59.000Z",
-        }),
-      ).toBe(false);
-
       await repository.createNotification({
         id: "notice-1",
         userId: "user-1",

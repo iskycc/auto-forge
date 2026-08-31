@@ -12,6 +12,7 @@ export type UserRow = {
   username: string;
   displayName: string;
   email: string | null;
+  ldapGroupsJson: string;
   source: "local" | "ldap";
   status: "active" | "disabled";
   forcePasswordChange: boolean;
@@ -67,6 +68,7 @@ export function mapUser(row: UserRow): User {
     username: row.username,
     displayName: row.displayName,
     ...(row.email ? { email: row.email } : {}),
+    groups: parseStringArray(row.ldapGroupsJson),
     source: row.source,
     status: row.status,
     forcePasswordChange: row.forcePasswordChange,
@@ -123,6 +125,17 @@ export function parsePermissions(json: string): Permission[] {
           parsed.filter(
             (value): value is Permission => typeof value === "string" && isPermission(value),
           ),
+        ),
+      ]
+    : [];
+}
+
+function parseStringArray(json: string): string[] {
+  const parsed: unknown = JSON.parse(json);
+  return Array.isArray(parsed)
+    ? [
+        ...new Set(
+          parsed.filter((value): value is string => typeof value === "string" && value.length > 0),
         ),
       ]
     : [];

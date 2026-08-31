@@ -90,23 +90,6 @@ export const upsertCaseSuiteScheduleInputSchema = z.object({
   expectedRevision: z.number().int().positive().optional(),
 });
 
-export const ldapSyncJobSchema = z.object({
-  id: identifierSchema,
-  status: z.enum(["queued", "running", "succeeded", "failed", "cancelled"]),
-  triggerKind: z.enum(["manual", "scheduled"]),
-  checkpoint: z.record(z.string(), z.unknown()),
-  processedUsers: z.number().int().nonnegative(),
-  disabledUsers: z.number().int().nonnegative(),
-  errorCode: z.string().max(128).optional(),
-  errorSummary: z.string().max(1_000).optional(),
-  requestedBy: identifierSchema.optional(),
-  scheduledAt: z.string().datetime(),
-  startedAt: z.string().datetime().optional(),
-  finishedAt: z.string().datetime().optional(),
-  createdAt: z.string().datetime(),
-  updatedAt: z.string().datetime(),
-});
-
 export const notificationSchema = z.object({
   id: identifierSchema,
   userId: identifierSchema,
@@ -359,7 +342,6 @@ export type IssuedApiToken = z.infer<typeof issuedApiTokenSchema>;
 export type IssueApiTokenInput = z.infer<typeof issueApiTokenInputSchema>;
 export type CaseSuiteSchedule = z.infer<typeof caseSuiteScheduleSchema>;
 export type UpsertCaseSuiteScheduleInput = z.infer<typeof upsertCaseSuiteScheduleInputSchema>;
-export type LdapSyncJob = z.infer<typeof ldapSyncJobSchema>;
 export type Notification = z.infer<typeof notificationSchema>;
 export type RetentionCategory = z.infer<typeof retentionCategorySchema>;
 export type RetentionPolicy = z.infer<typeof retentionPolicySchema>;

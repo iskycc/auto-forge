@@ -4,7 +4,6 @@ import type {
   ApiToken,
   CaseSuiteSchedule,
   GlobalSearchResult,
-  LdapSyncJob,
   Notification,
   RetentionCategory,
   RetentionPolicy,
@@ -30,7 +29,6 @@ import {
   failureSignature,
   mapApiToken,
   mapAnalyticsExportJob,
-  mapLdapSyncJob,
   mapNotification,
   mapSchedule,
   mapServiceAccount,
@@ -38,7 +36,6 @@ import {
   type AnalyticsFactRow,
   type AnalyticsExportJobRow,
   type ApiTokenRow,
-  type LdapSyncJobRow,
   type NotificationRow,
   type ScheduleRow,
   type ServiceAccountRow,
@@ -387,120 +384,6 @@ export class PostgresPlatformOperationsRepository implements PlatformOperationsR
     });
   }
 
-  async createLdapSyncJob(record: LdapSyncJob): Promise<LdapSyncJob> {
-    await this.ready();
-    await this.handle.pool.query(
-      `INSERT INTO ldap_sync_jobs
-       (id,status,trigger_kind,checkpoint_json,processed_users,disabled_users,error_code,
-        error_summary,requested_by,scheduled_at,started_at,finished_at,created_at,updated_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
-      [
-        record.id,
-        record.status,
-        record.triggerKind,
-        JSON.stringify(record.checkpoint),
-        record.processedUsers,
-        record.disabledUsers,
-        record.errorCode ?? null,
-        record.errorSummary ?? null,
-        record.requestedBy ?? null,
-        record.scheduledAt,
-        record.startedAt ?? null,
-        record.finishedAt ?? null,
-        record.createdAt,
-        record.updatedAt,
-      ],
-    );
-    return record;
-  }
-
-  async updateLdapSyncJob(
-    input: Parameters<PlatformOperationsRepository["updateLdapSyncJob"]>[0],
-  ): Promise<LdapSyncJob> {
-    await this.ready();
-    const current = await this.requiredLdapSyncJobRow(input.jobId);
-    const result = await this.handle.pool.query<LdapSyncJobRow>(
-      `UPDATE ldap_sync_jobs SET status=$1,checkpoint_json=$2,processed_users=$3,
-       disabled_users=$4,error_code=$5,error_summary=$6,started_at=$7,finished_at=$8,
-       updated_at=$9 WHERE id=$10 RETURNING *`,
-      [
-        input.status,
-        JSON.stringify(input.checkpoint ?? JSON.parse(current.checkpoint_json)),
-        input.processedUsers ?? current.processed_users,
-        input.disabledUsers ?? current.disabled_users,
-        input.errorCode ?? current.error_code,
-        input.errorSummary ?? current.error_summary,
-        input.startedAt ?? current.started_at,
-        input.finishedAt ?? current.finished_at,
-        input.updatedAt,
-        input.jobId,
-      ],
-    );
-    return mapLdapSyncJob(result.rows[0] as LdapSyncJobRow);
-  }
-
-  async listLdapSyncJobs(limit: number): Promise<LdapSyncJob[]> {
-    await this.ready();
-    const result = await this.handle.pool.query<LdapSyncJobRow>(
-      "SELECT * FROM ldap_sync_jobs ORDER BY created_at DESC,id DESC LIMIT $1",
-      [limit],
-    );
-    return result.rows.map(mapLdapSyncJob);
-  }
-
-  async claimScheduledLdapSync(
-    input: Parameters<PlatformOperationsRepository["claimScheduledLdapSync"]>[0],
-  ): Promise<boolean> {
-    await this.ready();
-    return withTransaction(this.handle, async (client) => {
-      await client.query(
-        "SELECT pg_advisory_xact_lock(hashtext('autoforge.ldap.scheduled-sync.v1'))",
-      );
-      const result = await client.query<{ value_json: string }>(
-        "SELECT value_json FROM system_settings WHERE setting_key='ldap.scheduled-sync.v1'",
-      );
-      const state = scheduledLdapState(result.rows[0]?.value_json);
-      if (state.claimId && state.leaseExpiresAt && state.leaseExpiresAt > input.now) return false;
-      if (state.nextAt && state.nextAt > input.now) return false;
-      await client.query(
-        `INSERT INTO system_settings(setting_key,value_json,updated_at,revision)
-         VALUES ('ldap.scheduled-sync.v1',$1,$2,1)
-         ON CONFLICT(setting_key) DO UPDATE SET value_json=EXCLUDED.value_json,
-           updated_at=EXCLUDED.updated_at,revision=system_settings.revision+1`,
-        [
-          JSON.stringify({
-            claimId: input.claimId,
-            leaseExpiresAt: input.leaseExpiresAt,
-            nextAt: state.nextAt ?? input.now,
-          }),
-          input.now,
-        ],
-      );
-      return true;
-    });
-  }
-
-  async completeScheduledLdapSync(
-    input: Parameters<PlatformOperationsRepository["completeScheduledLdapSync"]>[0],
-  ): Promise<boolean> {
-    await this.ready();
-    return withTransaction(this.handle, async (client) => {
-      await client.query(
-        "SELECT pg_advisory_xact_lock(hashtext('autoforge.ldap.scheduled-sync.v1'))",
-      );
-      const result = await client.query<{ value_json: string }>(
-        "SELECT value_json FROM system_settings WHERE setting_key='ldap.scheduled-sync.v1' FOR UPDATE",
-      );
-      if (scheduledLdapState(result.rows[0]?.value_json).claimId !== input.claimId) return false;
-      const updated = await client.query(
-        `UPDATE system_settings SET value_json=$1,updated_at=$2,revision=revision+1
-         WHERE setting_key='ldap.scheduled-sync.v1'`,
-        [JSON.stringify({ nextAt: input.nextAt }), input.completedAt],
-      );
-      return updated.rowCount === 1;
-    });
-  }
-
   async listNotifications(input: Parameters<PlatformOperationsRepository["listNotifications"]>[0]) {
     await this.ready();
     if (input.projectIds?.length === 0) return { items: [] };
@@ -589,15 +472,6 @@ export class PostgresPlatformOperationsRepository implements PlatformOperationsR
                 WHERE usr.user_id=u.id AND position('runner.read' in role.permissions_json)>0
               ) ORDER BY r.last_seen_at LIMIT $3 ON CONFLICT DO NOTHING`,
           values: [input.now, input.runnerOfflineBefore, input.limit],
-        },
-        {
-          sql: `INSERT INTO notifications
-            (id,user_id,kind,severity,title,message,resource_type,resource_id,created_at)
-            SELECT 'notice-ldap-' || requested_by || '-' || id,requested_by,'ldap.sync_failed','warning',
-                   'LDAP 同步失败',COALESCE(error_summary,'LDAP 同步失败。'),'ldap_sync_job',id,$1
-            FROM ldap_sync_jobs WHERE status='failed' AND requested_by IS NOT NULL
-            ORDER BY updated_at DESC LIMIT $2 ON CONFLICT DO NOTHING`,
-          values: [input.now, input.limit],
         },
         {
           sql: `INSERT INTO notifications
@@ -1272,15 +1146,6 @@ export class PostgresPlatformOperationsRepository implements PlatformOperationsR
     return requiredServiceAccountRow(this.handle.pool, accountId);
   }
 
-  private async requiredLdapSyncJobRow(jobId: string): Promise<LdapSyncJobRow> {
-    const result = await this.handle.pool.query<LdapSyncJobRow>(
-      "SELECT * FROM ldap_sync_jobs WHERE id=$1",
-      [jobId],
-    );
-    if (!result.rows[0]) throw new DomainError("LDAP_SYNC_JOB_NOT_FOUND", "LDAP 同步任务不存在。");
-    return result.rows[0];
-  }
-
   private async retentionCount(category: RetentionCategory, cutoffAt: string): Promise<CountRow> {
     // Full 模式的任务队列由 JetStream 承担并通过 stream 保留策略回收，
     // PostgreSQL 中没有 queue_jobs 表；queue 类别在这里恒为零。
@@ -1569,24 +1434,6 @@ function searchItems(
 
 function normalizeName(value: string): string {
   return value.trim().toLocaleLowerCase("en-US");
-}
-
-function scheduledLdapState(valueJson?: string): {
-  nextAt?: string;
-  claimId?: string;
-  leaseExpiresAt?: string;
-} {
-  if (!valueJson) return {};
-  try {
-    const value = JSON.parse(valueJson) as Record<string, unknown>;
-    return {
-      ...(typeof value.nextAt === "string" ? { nextAt: value.nextAt } : {}),
-      ...(typeof value.claimId === "string" ? { claimId: value.claimId } : {}),
-      ...(typeof value.leaseExpiresAt === "string" ? { leaseExpiresAt: value.leaseExpiresAt } : {}),
-    };
-  } catch {
-    return {};
-  }
 }
 
 function databaseConflict(error: unknown, code: string, message: string): DomainError {

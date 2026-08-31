@@ -165,13 +165,6 @@ test("schedule overview can pause and delete plans while LDAP failures remain di
   );
   expect(schedule.status).toBe(200);
 
-  const failedLdap = await browserJson<{ error?: { code?: string } }>(
-    page,
-    "/api/v1/ldap/synchronize",
-    { method: "POST" },
-  );
-  expect(failedLdap.status).toBeGreaterThanOrEqual(400);
-
   await page.goto("/settings/automation");
   const scheduleRow = page.getByRole("row", { name: new RegExp(suiteName) });
   await expect(scheduleRow).toContainText("错过后补跑一次");
@@ -179,9 +172,6 @@ test("schedule overview can pause and delete plans while LDAP failures remain di
   await scheduleRow.getByRole("button", { name: "暂停" }).click();
   await expect(page.getByText("计划已暂停。")).toBeVisible();
   await expect(page.getByRole("row", { name: new RegExp(suiteName) })).toContainText("暂停");
-  await expect(page.getByRole("heading", { name: "LDAP 同步历史" })).toBeVisible();
-  await expect(page.getByText(/LDAP_.*|LDAP/).first()).toBeVisible();
-  await expect(page.getByRole("button", { name: "立即同步 / 重试" })).toBeVisible();
   page.once("dialog", (dialog) => dialog.accept());
   await page
     .getByRole("row", { name: new RegExp(suiteName) })

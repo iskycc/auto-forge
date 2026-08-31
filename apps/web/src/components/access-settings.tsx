@@ -1,6 +1,6 @@
 "use client";
 
-import { Button, CheckboxGroup, Input, Select, Textarea } from "@/components/ui";
+import { Button, CheckboxGroup, Input, Select } from "@/components/ui";
 
 import {
   permissionCatalog,
@@ -21,27 +21,21 @@ import { ActionDialog } from "@/components/action-dialog";
 type LdapView = {
   enabled: boolean;
   url: string;
-  transportMode: "ldaps" | "starttls" | "plain";
-  verifyTlsCertificate: boolean;
-  caPem?: string;
+  tlsRejectUnauthorized: boolean;
   connectTimeoutMs: number;
-  operationTimeoutMs: number;
-  pageSize: number;
-  maximumUsers: number;
-  synchronizationIntervalMinutes: number;
   bindDn: string;
-  bindPasswordConfigured: boolean;
+  hasBindPassword: boolean;
   userBaseDn: string;
   userFilter: string;
-  usernameAttribute: string;
   displayNameAttribute: string;
-  emailAttribute: string;
+  mailAttribute: string;
   groupAttribute: string;
   groupSearchBase: string;
   groupSearchFilter: string;
   groupNameAttribute: string;
   defaultRole: "admin" | "editor" | "viewer";
-  version: number;
+  updatedAt: string | null;
+  updatedBy: string;
 };
 
 export type AccessSection = "users" | "roles" | "ldap" | "sessions";
@@ -52,7 +46,6 @@ export function AccessSettings({
   projects,
   projectMemberships,
   ldap,
-  ldapMappings,
   sessions,
   systemRoleBindings,
   userQuery,
@@ -69,13 +62,6 @@ export function AccessSettings({
     members: Array<{ user: User; roleIds: string[] }>;
   }>;
   ldap: LdapView | null;
-  ldapMappings: Array<{
-    id: string;
-    groupDn: string;
-    roleId: string;
-    projectId?: string;
-    priority: number;
-  }>;
   sessions: UserSession[];
   systemRoleBindings: Array<{ userId: string; roleId: string }>;
   userQuery: string;
@@ -97,13 +83,10 @@ export function AccessSettings({
   const [error, setError] = useState("");
   const [pending, setPending] = useState(false);
   const [ldapEnabled, setLdapEnabled] = useState(ldap?.enabled ?? false);
-  const [verifyLdapTlsCertificate, setVerifyLdapTlsCertificate] = useState(
-    ldap?.verifyTlsCertificate ?? true,
+  const [tlsRejectUnauthorized, setTlsRejectUnauthorized] = useState(
+    ldap?.tlsRejectUnauthorized ?? true,
   );
   const [clearLdapBindPassword, setClearLdapBindPassword] = useState(false);
-  const [ldapGroupMappingEnabled, setLdapGroupMappingEnabled] = useState(
-    Boolean(ldap?.groupSearchBase.trim() || ldap?.groupAttribute.trim()),
-  );
   const [createDialog, setCreateDialog] = useState<
     "user" | "password" | "role" | "assignment" | null
   >(null);
@@ -218,25 +201,9 @@ export function AccessSettings({
     );
   }
 
-  function submitLdapMapping(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const form = new FormData(event.currentTarget);
-    const projectId = String(form.get("projectId") ?? "");
-    void request(
-      "/api/v1/ldap/group-mappings",
-      jsonRequest("POST", {
-        groupDn: form.get("groupDn"),
-        roleId: form.get("roleId"),
-        ...(projectId ? { projectId } : {}),
-        priority: Number(form.get("priority") ?? 0),
-      }),
-      "LDAP 组角色映射已添加。",
-    );
-  }
-
   function submitLdapForm(formElement: HTMLFormElement, testOnly: boolean) {
     const form = new FormData(formElement);
-    const payload = ldapPayload(form, ldap, ldapEnabled, ldapGroupMappingEnabled);
+    const payload = ldapPayload(form, ldap, ldapEnabled);
     void request(
       testOnly ? "/api/v1/ldap/test" : "/api/v1/ldap/configuration",
       jsonRequest(testOnly ? "POST" : "PUT", payload),
@@ -372,6 +339,11 @@ export function AccessSettings({
                         {user.username}
                         {user.email ? ` · ${user.email}` : ""} · {user.id}
                       </small>
+                      {user.source === "ldap" && user.groups?.length ? (
+                        <small className="table-secondary" title={user.groups.join("\n")}>
+                          Group · {user.groups.join("、")}
+                        </small>
+                      ) : null}
                     </td>
                     <td>{user.source === "ldap" ? "LDAP" : "本地"}</td>
                     <td>
@@ -777,7 +749,7 @@ export function AccessSettings({
                 <label className="settings-wide-field">
                   LDAP 服务地址
                   <Input
-                    defaultValue={ldap?.url ?? "ldaps://ldap.internal:636"}
+                    defaultValue={ldap?.url || "ldaps://ldap.internal:636"}
                     name="url"
                     placeholder="ldaps://ldap.example.local:636"
                     required
@@ -796,14 +768,14 @@ export function AccessSettings({
                 </label>
                 <label className="checkbox-field settings-wide-field">
                   <Input
-                    checked={verifyLdapTlsCertificate}
-                    name="verifyTlsCertificate"
-                    onChange={(event) => setVerifyLdapTlsCertificate(event.target.checked)}
+                    checked={tlsRejectUnauthorized}
+                    name="tlsRejectUnauthorized"
+                    onChange={(event) => setTlsRejectUnauthorized(event.target.checked)}
                     type="checkbox"
                   />
                   校验 TLS 服务器证书
                 </label>
-                {!verifyLdapTlsCertificate ? (
+                {!tlsRejectUnauthorized ? (
                   <div className="inline-notice warning-notice settings-wide-field" role="alert">
                     <ShieldAlert size={18} />
                     <span>
@@ -832,12 +804,12 @@ export function AccessSettings({
                   <Input
                     name="bindPassword"
                     placeholder={
-                      ldap?.bindPasswordConfigured ? "留空以保持现有密文" : "Bind DN 非空时必填"
+                      ldap?.hasBindPassword ? "留空以保持现有密文" : "Bind DN 非空时必填"
                     }
                     type="password"
                   />
                 </label>
-                {ldap?.bindPasswordConfigured ? (
+                {ldap?.hasBindPassword ? (
                   <label className="checkbox-field settings-wide-field">
                     <Input
                       checked={clearLdapBindPassword}
@@ -847,12 +819,6 @@ export function AccessSettings({
                     />
                     删除已保存的服务账户密码
                   </label>
-                ) : null}
-                {ldap?.transportMode === "starttls" ? (
-                  <div className="inline-notice warning-notice settings-wide-field" role="status">
-                    当前历史配置继续使用 StartTLS，保存其他字段不会降级连接。修改 LDAP
-                    服务地址后将按新地址切换为 URL 驱动的 LDAP/LDAPS。
-                  </div>
                 ) : null}
                 <div className="form-context-summary settings-wide-field">
                   <span>03 · 用户检索与纳管</span>
@@ -866,15 +832,11 @@ export function AccessSettings({
                 <label className="settings-wide-field">
                   用户过滤器
                   <Input
-                    defaultValue={ldap?.userFilter ?? "(&(objectClass=person)(uid={{username}}))"}
+                    defaultValue={ldap?.userFilter ?? "(uid={{username}})"}
                     name="userFilter"
                     required
                   />
                   <small>必须包含 {"{{username}}"} 占位符。</small>
-                </label>
-                <label>
-                  用户名属性
-                  <Input defaultValue={ldap?.usernameAttribute ?? "uid"} name="usernameAttribute" />
                 </label>
                 <label>
                   显示名称属性
@@ -885,7 +847,7 @@ export function AccessSettings({
                 </label>
                 <label>
                   邮箱属性（可选）
-                  <Input defaultValue={ldap?.emailAttribute ?? "mail"} name="emailAttribute" />
+                  <Input defaultValue={ldap?.mailAttribute ?? "mail"} name="mailAttribute" />
                 </label>
                 <label>
                   LDAP 用户统一角色
@@ -894,97 +856,39 @@ export function AccessSettings({
                     <option value="viewer">只读观察者（默认项目）</option>
                     <option value="admin">系统管理员</option>
                   </Select>
-                  <small>每次登录或同步都会确保所有 LDAP 用户获得该角色。</small>
+                  <small>LDAP 用户统一使用该平台角色，目录 Group 不参与权限分配。</small>
                 </label>
                 <div className="form-context-summary settings-wide-field">
-                  <span>04 · 角色策略</span>
-                  <strong>默认不读取 LDAP Group</strong>
-                  <small>大型目录只执行分页用户查询，所有 LDAP 用户使用上面的统一角色。</small>
+                  <span>04 · Group 获取与展示</span>
+                  <strong>Group 仅保存到用户档案</strong>
+                  <small>Group 不创建角色绑定，也不会提升或降低任何平台权限。</small>
                 </div>
-                <label className="checkbox-field settings-wide-field">
-                  <Input
-                    checked={ldapGroupMappingEnabled}
-                    name="groupMappingEnabled"
-                    onChange={(event) => setLdapGroupMappingEnabled(event.target.checked)}
-                    type="checkbox"
-                  />
-                  按 LDAP Group 分配不同角色（高级功能）
-                </label>
-                {ldapGroupMappingEnabled ? (
-                  <>
-                    <div className="inline-notice warning-notice settings-wide-field" role="status">
-                      启用后同步可能为每个用户额外查询 Group。大型 LDAP
-                      目录应保持关闭，除非确实需要按目录组分配不同权限。
-                    </div>
-                    <label className="settings-wide-field">
-                      Group Search Base（可选）
-                      <Input defaultValue={ldap?.groupSearchBase} name="groupSearchBase" />
-                    </label>
-                    <label className="settings-wide-field">
-                      Group Search Filter
-                      <Input
-                        defaultValue={ldap?.groupSearchFilter ?? "(member={{userDn}})"}
-                        name="groupSearchFilter"
-                      />
-                      <small>
-                        必须包含 {"{{userDn}}"} 或 {"{{username}}"} 占位符。
-                      </small>
-                    </label>
-                    <label>
-                      Group 名称属性
-                      <Input
-                        defaultValue={ldap?.groupNameAttribute || "cn"}
-                        name="groupNameAttribute"
-                      />
-                    </label>
-                    <label>
-                      用户 Group 属性（兼容模式）
-                      <Input
-                        defaultValue={ldap?.groupAttribute || "memberOf"}
-                        name="groupAttribute"
-                      />
-                      <small>不使用 Group Search 时，Active Directory 通常填写 memberOf。</small>
-                    </label>
-                  </>
-                ) : null}
-                <div className="form-context-summary settings-wide-field">
-                  <span>05 · 同步策略</span>
-                  <strong>AutoForge 目录同步边界</strong>
-                  <small>限制分页、单次纳管数量与后台同步频率。</small>
-                </div>
-                <label>
-                  LDAP 分页大小
-                  <Input
-                    defaultValue={ldap?.pageSize ?? 500}
-                    max={1000}
-                    min={50}
-                    name="pageSize"
-                    type="number"
-                  />
-                </label>
-                <label>
-                  单次同步用户上限
-                  <Input
-                    defaultValue={ldap?.maximumUsers ?? 5000}
-                    max={50000}
-                    min={1}
-                    name="maximumUsers"
-                    type="number"
-                  />
-                </label>
-                <label>
-                  计划同步间隔（分钟，0 为关闭）
-                  <Input
-                    defaultValue={ldap?.synchronizationIntervalMinutes ?? 0}
-                    max={10080}
-                    min={0}
-                    name="synchronizationIntervalMinutes"
-                    type="number"
-                  />
+                <label className="settings-wide-field">
+                  Group Search Base（可选）
+                  <Input defaultValue={ldap?.groupSearchBase} name="groupSearchBase" />
+                  <small>留空时读取用户条目的 Group 属性。</small>
                 </label>
                 <label className="settings-wide-field">
-                  私有 CA PEM（可选）
-                  <Textarea defaultValue={ldap?.caPem} name="caPem" rows={5} />
+                  Group Search Filter
+                  <Input
+                    defaultValue={ldap?.groupSearchFilter ?? "(member={{userDn}})"}
+                    name="groupSearchFilter"
+                  />
+                  <small>
+                    配置 Group Search Base 时必须包含 {"{{userDn}}"} 或 {"{{username}}"}。
+                  </small>
+                </label>
+                <label>
+                  Group 名称属性
+                  <Input
+                    defaultValue={ldap?.groupNameAttribute || "cn"}
+                    name="groupNameAttribute"
+                  />
+                </label>
+                <label>
+                  用户 Group 属性
+                  <Input defaultValue={ldap?.groupAttribute || "memberOf"} name="groupAttribute" />
+                  <small>未配置 Group Search Base 时通常填写 memberOf。</small>
                 </label>
               </fieldset>
               <div className="settings-form-actions">
@@ -1016,17 +920,11 @@ export function AccessSettings({
               </div>
               <div>
                 <dt>协议</dt>
-                <dd>
-                  {ldap?.transportMode === "starttls"
-                    ? "StartTLS（兼容）"
-                    : ldap?.url.startsWith("ldaps://")
-                      ? "LDAPS"
-                      : "LDAP"}
-                </dd>
+                <dd>{ldap?.url.startsWith("ldaps://") ? "LDAPS" : "LDAP"}</dd>
               </div>
               <div>
                 <dt>证书校验</dt>
-                <dd>{ldap?.verifyTlsCertificate === false ? "已关闭" : "已开启"}</dd>
+                <dd>{ldap?.tlsRejectUnauthorized === false ? "已关闭" : "已开启"}</dd>
               </div>
               <div>
                 <dt>目录地址</dt>
@@ -1034,70 +932,9 @@ export function AccessSettings({
               </div>
             </dl>
           )}
-          {capabilities.ldapManage ? (
-            <div className="settings-directory-actions">
-              <Button
-                className="secondary-button"
-                disabled={pending || !ldap?.enabled}
-                onClick={() =>
-                  void request(
-                    "/api/v1/ldap/synchronize",
-                    { method: "POST" },
-                    "LDAP 用户、组和停用状态同步完成。",
-                  )
-                }
-                type="button"
-              >
-                <RefreshCw size={16} /> 立即同步目录
-              </Button>
-            </div>
-          ) : null}
-          {capabilities.ldapManage && ldapGroupMappingEnabled ? (
-            <form className="settings-grid-form settings-subform" onSubmit={submitLdapMapping}>
-              <label className="settings-wide-field">
-                LDAP Group 标识
-                <Input name="groupDn" required />
-              </label>
-              <label>
-                角色<Select name="roleId">{roles.map(roleOption)}</Select>
-              </label>
-              <label>
-                项目（系统角色留空）
-                <Select defaultValue="" name="projectId">
-                  <option value="">系统作用域</option>
-                  {projects.filter((project) => !project.archived).map(projectOption)}
-                </Select>
-              </label>
-              <label>
-                优先级
-                <Input defaultValue={0} max={1000} min={-1000} name="priority" type="number" />
-              </label>
-              <Button className="secondary-button" disabled={pending} type="submit">
-                添加组映射
-              </Button>
-            </form>
-          ) : null}
-          {ldapGroupMappingEnabled ? (
-            <div className="permission-list">
-              {ldapMappings.map((mapping) => (
-                <code key={mapping.id}>
-                  {mapping.groupDn} →{" "}
-                  {roles.find((role) => role.id === mapping.roleId)?.name ?? mapping.roleId}
-                  {mapping.projectId
-                    ? ` · ${projects.find((project) => project.id === mapping.projectId)?.name ?? mapping.projectId}`
-                    : " · 系统"}{" "}
-                  · 优先级 {mapping.priority}
-                </code>
-              ))}
-            </div>
-          ) : (
-            <div className="inline-notice settings-directory-actions" role="status">
-              LDAP Group 差异化映射已关闭。同步不会读取组织或 Group，所有 LDAP 用户使用统一角色。
-              {ldapMappings.length > 0
-                ? ` 已有 ${ldapMappings.length} 条历史映射保留但不会执行。`
-                : ""}
-            </div>
-          )}
+          <div className="inline-notice settings-directory-actions" role="status">
+            LDAP Group 仅用于用户档案展示；平台不会根据 Group 创建或修改任何权限绑定。
+          </div>
         </section>
       ) : null}
 
@@ -1216,30 +1053,18 @@ function assignedRoleCount(
   );
 }
 
-function ldapPayload(
-  form: FormData,
-  current: LdapView | null,
-  enabled: boolean,
-  groupMappingEnabled: boolean,
-) {
+function ldapPayload(form: FormData, current: LdapView | null, enabled: boolean) {
   if (!enabled && current) {
     return {
       enabled: false,
       url: current.url,
-      ...(current.transportMode === "starttls" ? { tlsMode: "starttls" } : {}),
-      verifyTlsCertificate: current.verifyTlsCertificate,
-      caPem: current.caPem,
+      tlsRejectUnauthorized: current.tlsRejectUnauthorized,
       connectTimeoutMs: current.connectTimeoutMs,
-      operationTimeoutMs: current.operationTimeoutMs,
-      pageSize: current.pageSize,
-      maximumUsers: current.maximumUsers,
-      synchronizationIntervalMinutes: current.synchronizationIntervalMinutes,
       bindDn: current.bindDn,
       userBaseDn: current.userBaseDn,
       userFilter: current.userFilter,
-      usernameAttribute: current.usernameAttribute,
       displayNameAttribute: current.displayNameAttribute,
-      emailAttribute: current.emailAttribute,
+      mailAttribute: current.mailAttribute,
       groupAttribute: current.groupAttribute,
       groupSearchBase: current.groupSearchBase,
       groupSearchFilter: current.groupSearchFilter,
@@ -1252,28 +1077,19 @@ function ldapPayload(
   return {
     enabled,
     url,
-    ...(current?.transportMode === "starttls" && current.url === url
-      ? { tlsMode: "starttls" }
-      : {}),
-    verifyTlsCertificate: form.has("verifyTlsCertificate"),
-    caPem: optional("caPem"),
+    tlsRejectUnauthorized: form.has("tlsRejectUnauthorized"),
     connectTimeoutMs: Number(form.get("connectTimeoutMs") ?? 5_000),
-    operationTimeoutMs: current?.operationTimeoutMs ?? 10_000,
-    pageSize: Number(form.get("pageSize") ?? 500),
-    maximumUsers: Number(form.get("maximumUsers") ?? 5_000),
-    synchronizationIntervalMinutes: Number(form.get("synchronizationIntervalMinutes") ?? 0),
     bindDn: form.get("bindDn"),
     bindPassword: optional("bindPassword"),
     clearBindPassword: form.has("clearBindPassword"),
     userBaseDn: form.get("userBaseDn"),
     userFilter: form.get("userFilter"),
-    usernameAttribute: form.get("usernameAttribute"),
     displayNameAttribute: form.get("displayNameAttribute"),
-    emailAttribute: form.get("emailAttribute"),
-    groupAttribute: groupMappingEnabled ? (form.get("groupAttribute") ?? "memberOf") : "",
-    groupSearchBase: groupMappingEnabled ? (optional("groupSearchBase") ?? "") : "",
+    mailAttribute: form.get("mailAttribute"),
+    groupAttribute: form.get("groupAttribute") ?? "memberOf",
+    groupSearchBase: optional("groupSearchBase") ?? "",
     groupSearchFilter: optional("groupSearchFilter") ?? "(member={{userDn}})",
-    groupNameAttribute: groupMappingEnabled ? (form.get("groupNameAttribute") ?? "cn") : "cn",
+    groupNameAttribute: form.get("groupNameAttribute") ?? "cn",
     defaultRole: form.get("defaultRole"),
   };
 }

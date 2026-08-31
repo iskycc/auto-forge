@@ -1,102 +1,100 @@
 import { expect, test, type Browser, type BrowserContext, type Page } from "@playwright/test";
-import { execFile } from "node:child_process";
-import { readFile } from "node:fs/promises";
-import { promisify } from "node:util";
 
 import {
-  appAlert,
   browserJson,
   E2E_ADMIN_PASSWORD,
   E2E_ADMIN_USERNAME,
   ensureAdministrator,
-  expandAdministrationGroup,
   login,
+  logout,
 } from "./support/session";
 
-const execFileAsync = promisify(execFile);
 const directoryPassword = "Directory!Alice123";
 
-test("authenticates and synchronizes against real private-CA LDAP", async ({ browser, page }) => {
-  test.setTimeout(420_000);
+test("matches DDT Insight LDAP configuration, authentication, and Group profile semantics", async ({
+  browser,
+  page,
+}) => {
+  test.setTimeout(300_000);
   await ensureAdministrator(page);
-  const caPem = await readFile(requiredEnvironment("E2E_LDAP_CA_FILE"), "utf8");
-  await configureDirectory(page, caPem, "ldaps", false);
-  const unifiedRoleContext = await loginWithLdap(browser, "alice", directoryPassword);
-  const unifiedRolePage = unifiedRoleContext.pages()[0]!;
-  await expect(unifiedRolePage.getByRole("link", { name: "用例管理", exact: true })).toBeVisible();
-  await expect(unifiedRolePage.getByRole("link", { name: "安全审计" })).toHaveCount(0);
-  const unifiedSynchronization = await browserJson<{
-    status: string;
-    processedUsers: number;
-    disabledUsers: number;
-  }>(page, "/api/v1/ldap/synchronize", { method: "POST" });
-  expect(unifiedSynchronization.status).toBe(202);
-  expect(unifiedSynchronization.body).toMatchObject({ status: "succeeded", disabledUsers: 0 });
-  expect(unifiedSynchronization.body.processedUsers).toBeGreaterThanOrEqual(51);
-  await unifiedRoleContext.close();
+  await configureDirectory(page, "ldaps");
 
-  await configureDirectory(page, caPem, "ldaps", true);
-  await addGroupMapping(page, "auditors", "审计员");
-  await addGroupMapping(page, "viewers", "只读观察者", "默认项目");
+  await logout(page);
+  await login(page, E2E_ADMIN_USERNAME, E2E_ADMIN_PASSWORD);
+  await page.goto("/settings/access?section=users");
+  await page.getByRole("link", { name: "目录配置", exact: true }).click();
+  await expect(page.getByLabel("启用 LDAP 登录")).toBeChecked();
 
-  const ldapsContext = await loginWithLdap(browser, "alice", directoryPassword);
-  const ldapsPage = ldapsContext.pages()[0]!;
-  await expect(ldapsPage.getByRole("link", { name: "用例管理", exact: true })).toBeVisible();
-  await expandAdministrationGroup(ldapsPage, "平台运维");
-  await expect(ldapsPage.getByRole("link", { name: "安全审计" })).toBeVisible();
-  await ldapsPage.goto("/account/security");
-  await expect(ldapsPage.getByText("LDAP 账号密码由目录服务管理", { exact: false })).toBeVisible();
-  await expect(ldapsPage.getByRole("button", { name: "修改密码并重新登录" })).toHaveCount(0);
+  const persistedConfiguration = await browserJson<Record<string, unknown>>(
+    page,
+    "/api/v1/ldap/configuration",
+  );
+  expect(persistedConfiguration.status).toBe(200);
+  expect(Object.keys(persistedConfiguration.body).sort()).toEqual(
+    [
+      "bindDn",
+      "connectTimeoutMs",
+      "defaultRole",
+      "displayNameAttribute",
+      "enabled",
+      "groupAttribute",
+      "groupNameAttribute",
+      "groupSearchBase",
+      "groupSearchFilter",
+      "hasBindPassword",
+      "mailAttribute",
+      "tlsRejectUnauthorized",
+      "updatedAt",
+      "updatedBy",
+      "url",
+      "userBaseDn",
+      "userFilter",
+    ].sort(),
+  );
 
-  await configureDirectory(page, caPem, "ldap");
-  const plainLdapContext = await loginWithLdap(browser, "alice", directoryPassword);
+  const ldapContext = await loginWithLdap(browser, "alice", directoryPassword);
+  const ldapPage = ldapContext.pages()[0]!;
+  await expect(ldapPage.getByRole("heading", { level: 1, name: /Alice Directory/ })).toBeVisible();
+  await expect(ldapPage.getByRole("link", { name: "用例管理", exact: true })).toBeVisible();
+  await expect(ldapPage.getByRole("link", { name: "安全审计" })).toHaveCount(0);
+
+  await page.goto("/settings/access?section=users&query=alice&source=ldap");
+  await expect(page.getByText("Group · auditors、viewers", { exact: true })).toBeVisible();
+  await expect(page.getByText("1 个绑定", { exact: true })).toBeVisible();
+  await page.goto("/settings/access?section=ldap");
+  await expect(page.getByText("Group 仅保存到用户档案", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: /添加组映射|立即同步目录/ })).toHaveCount(0);
+  expect((await page.request.post("/api/v1/ldap/synchronize")).status()).toBe(404);
+  expect((await page.request.get("/api/v1/ldap/group-mappings")).status()).toBe(404);
+
+  await configureDirectory(page, "ldap");
+  const plainContext = await loginWithLdap(browser, "alice", directoryPassword);
   await expect(
-    plainLdapContext.pages()[0]!.getByRole("heading", { level: 1, name: /Alice Directory/ }),
+    plainContext.pages()[0]!.getByRole("heading", { level: 1, name: /Alice Directory/ }),
   ).toBeVisible();
 
-  await expect
-    .poll(
-      async () => {
-        const jobs = await browserJson<{
-          items: Array<{ triggerKind: string; status: string }>;
-        }>(page, "/api/v1/ldap/synchronize?limit=50");
-        expect(jobs.status).toBe(200);
-        return jobs.body.items.some(
-          (job) => job.triggerKind === "scheduled" && job.status === "succeeded",
-        );
-      },
-      { timeout: 120_000, intervals: [2_000, 5_000] },
-    )
-    .toBe(true);
-  await page.goto("/settings/automation");
-  await expect(page.getByRole("heading", { name: "LDAP 同步历史" })).toBeVisible();
-  await expect(page.getByText(/更新\s*5[1-9]/).first()).toBeVisible();
+  await configureDirectory(page, "ldap", "(&(objectClass=inetOrgPerson)(cn={{username}}))");
+  const attributeFreeContext = await loginWithLdap(
+    browser,
+    "login-fallback",
+    "Directory!Fallback123",
+  );
+  await expect(
+    attributeFreeContext.pages()[0]!.getByRole("heading", {
+      level: 1,
+      name: /LDAP Login Fallback/,
+    }),
+  ).toBeVisible();
 
-  await addConflictingDirectoryUser();
-  await expectLocalAccountPrecedence(browser);
-  await removeDirectoryUser("uid=e2e-admin,ou=people,dc=example,dc=test");
-  await verifyDirectoryOutageAndLocalFallback(browser, page);
-  await removeDirectoryUser("uid=alice,ou=people,dc=example,dc=test");
-  const departureSync = await browserJson<{
-    status: string;
-    processedUsers: number;
-    disabledUsers: number;
-  }>(page, "/api/v1/ldap/synchronize", { method: "POST" });
-  expect(departureSync.status).toBe(202);
-  expect(departureSync.body.status).toBe("succeeded");
-  expect(departureSync.body.disabledUsers).toBeGreaterThanOrEqual(1);
-  await expectSessionRevoked(ldapsPage);
-  await expectSessionRevoked(plainLdapContext.pages()[0]!);
-
-  await ldapsContext.close();
-  await plainLdapContext.close();
+  await ldapContext.close();
+  await plainContext.close();
+  await attributeFreeContext.close();
 });
 
 async function configureDirectory(
   page: Page,
-  caPem: string,
   protocol: "ldaps" | "ldap",
-  groupMappingEnabled = true,
+  userFilter = "(&(objectClass=inetOrgPerson)(uid={{username}}))",
 ): Promise<void> {
   await page.goto("/settings/access?section=ldap");
   const form = page.locator("form", {
@@ -104,7 +102,6 @@ async function configureDirectory(
   });
   const enabled = form.getByLabel("启用 LDAP 登录");
   if (!(await enabled.isChecked())) await enabled.check();
-  await expect(form.getByLabel("校验 TLS 服务器证书")).toBeChecked();
   await form
     .getByLabel("LDAP 服务地址")
     .fill(
@@ -112,27 +109,22 @@ async function configureDirectory(
         ? (process.env.E2E_LDAP_LDAPS_URL ?? "ldaps://ldap:636")
         : (process.env.E2E_LDAP_PLAIN_URL ?? "ldap://ldap:389"),
     );
+  const certificateVerification = form.getByLabel("校验 TLS 服务器证书");
+  if (await certificateVerification.isChecked()) await certificateVerification.uncheck();
+  await form.getByLabel("连接超时（毫秒）").fill("5000");
   await form.getByLabel("Bind DN（可选）").fill("cn=admin,dc=example,dc=test");
   await form.getByLabel("Bind 密码", { exact: true }).fill("Admin!Directory123");
-  await form.getByLabel("LDAP 分页大小").fill("50");
-  await form.getByLabel("单次同步用户上限").fill("500");
-  await form.getByLabel("计划同步间隔（分钟，0 为关闭）").fill("1");
   await form.getByLabel("用户 Base DN").fill("ou=people,dc=example,dc=test");
-  await form.getByLabel("用户过滤器").fill("(&(objectClass=inetOrgPerson)(uid={{username}}))");
-  await form.getByLabel("用户名属性").fill("uid");
+  await form.getByLabel("用户过滤器").fill(userFilter);
   await form.getByLabel("显示名称属性").fill("displayName");
   await form.getByLabel("邮箱属性（可选）").fill("mail");
-  const groupMapping = form.getByLabel("按 LDAP Group 分配不同角色（高级功能）");
-  if (groupMappingEnabled && !(await groupMapping.isChecked())) await groupMapping.check();
-  if (!groupMappingEnabled && (await groupMapping.isChecked())) await groupMapping.uncheck();
-  if (groupMappingEnabled) {
-    await form.getByLabel("Group Search Base（可选）").fill("ou=groups,dc=example,dc=test");
-    await form
-      .getByLabel("Group Search Filter")
-      .fill("(&(objectClass=groupOfNames)(member={{userDn}}))");
-    await form.getByLabel("Group 名称属性").fill("cn");
-  }
-  await form.getByLabel("私有 CA PEM（可选）").fill(caPem);
+  await form.getByLabel("LDAP 用户统一角色").selectOption("editor");
+  await form.getByLabel("Group Search Base（可选）").fill("ou=groups,dc=example,dc=test");
+  await form
+    .getByLabel("Group Search Filter")
+    .fill("(&(objectClass=groupOfNames)(member={{userDn}}))");
+  await form.getByLabel("Group 名称属性").fill("cn");
+  await form.getByLabel("用户 Group 属性").fill("memberOf");
   await form.getByRole("button", { name: "保存 LDAP 配置" }).click();
   await expect(page.getByText("LDAP 配置已加密保存。")).toBeVisible({ timeout: 20_000 });
 
@@ -140,32 +132,9 @@ async function configureDirectory(
     has: page.getByRole("button", { name: "测试连接" }),
   });
   await persistedForm.getByRole("button", { name: "测试连接" }).click();
-  await expect(
-    page.getByText(
-      groupMappingEnabled
-        ? "LDAP 连接、用户与 Group Base DN 验证成功。"
-        : "LDAP 连接与用户 Base DN 验证成功。",
-    ),
-  ).toBeVisible({ timeout: 20_000 });
-}
-
-async function addGroupMapping(
-  page: Page,
-  groupDn: string,
-  roleName: string,
-  projectName?: string,
-): Promise<void> {
-  await page.goto("/settings/access?section=ldap");
-  const form = page.locator("form", {
-    has: page.getByRole("button", { name: "添加组映射" }),
+  await expect(page.getByText("LDAP 连接、用户与 Group Base DN 验证成功。")).toBeVisible({
+    timeout: 20_000,
   });
-  await form.getByLabel("LDAP Group 标识").fill(groupDn);
-  await form.locator('select[name="roleId"]').selectOption({ label: roleName });
-  await form
-    .getByLabel("项目（系统角色留空）")
-    .selectOption(projectName ? { label: projectName } : "");
-  await form.getByRole("button", { name: "添加组映射" }).click();
-  await expect(page.getByText("LDAP 组角色映射已添加。")).toBeVisible();
 }
 
 async function loginWithLdap(
@@ -182,126 +151,6 @@ async function loginWithLdap(
   await page.getByRole("button", { name: "登录" }).click();
   await expect(page).not.toHaveURL(/\/login$/, { timeout: 20_000 });
   return context;
-}
-
-async function expectLocalAccountPrecedence(browser: Browser): Promise<void> {
-  const context = await browser.newContext({ baseURL: requiredEnvironment("E2E_BASE_URL") });
-  const page = await context.newPage();
-  await page.goto("/login");
-  await page.getByLabel("用户名").fill("e2e-admin");
-  await page.getByLabel("密码").fill("Directory!Conflict123");
-  await page.getByRole("button", { name: "登录" }).click();
-  await expect(appAlert(page)).toContainText("用户名或密码无效");
-  await context.close();
-}
-
-async function verifyDirectoryOutageAndLocalFallback(
-  browser: Browser,
-  adminPage: Page,
-): Promise<void> {
-  const container = requiredEnvironment("E2E_LDAP_CONTAINER");
-  await execFileAsync("docker", ["stop", "--time", "1", container]);
-  const ldapContext = await browser.newContext({ baseURL: requiredEnvironment("E2E_BASE_URL") });
-  const ldapPage = await ldapContext.newPage();
-  await ldapPage.goto("/login");
-  await ldapPage.getByLabel("用户名").fill("alice");
-  await ldapPage.getByLabel("密码").fill(directoryPassword);
-  await ldapPage.getByRole("button", { name: "登录" }).click();
-  await expect(appAlert(ldapPage)).toContainText(/LDAP|目录|连接/, {
-    timeout: 20_000,
-  });
-
-  const fallbackContext = await browser.newContext({
-    baseURL: requiredEnvironment("E2E_BASE_URL"),
-  });
-  const fallbackPage = await fallbackContext.newPage();
-  await login(fallbackPage, E2E_ADMIN_USERNAME, E2E_ADMIN_PASSWORD);
-  await expandAdministrationGroup(fallbackPage, "身份权限");
-  const accessManagement = fallbackPage.getByRole("link", { name: "访问管理", exact: true });
-  await expect(accessManagement).toBeVisible();
-  await accessManagement.click();
-  await expect(fallbackPage.getByRole("link", { name: "目录配置", exact: true })).toBeVisible();
-  expect((await adminPage.request.get("/api/v1/auth/session")).status()).toBe(200);
-
-  await execFileAsync("docker", ["start", container]);
-  await waitForDirectory(container);
-  await ldapContext.close();
-  await fallbackContext.close();
-}
-
-async function waitForDirectory(container: string): Promise<void> {
-  await expect
-    .poll(
-      async () => {
-        try {
-          await execFileAsync("docker", [
-            "exec",
-            container,
-            "ldapsearch",
-            "-x",
-            "-H",
-            "ldap://127.0.0.1:389",
-            "-D",
-            "cn=admin,dc=example,dc=test",
-            "-w",
-            "Admin!Directory123",
-            "-b",
-            "dc=example,dc=test",
-            "-s",
-            "base",
-            "dn",
-          ]);
-          return true;
-        } catch {
-          return false;
-        }
-      },
-      { timeout: 60_000, intervals: [500, 1_000] },
-    )
-    .toBe(true);
-}
-
-async function removeDirectoryUser(distinguishedName: string): Promise<void> {
-  const container = requiredEnvironment("E2E_LDAP_CONTAINER");
-  await execFileAsync("docker", [
-    "exec",
-    container,
-    "ldapdelete",
-    "-x",
-    "-H",
-    "ldap://127.0.0.1:389",
-    "-D",
-    "cn=admin,dc=example,dc=test",
-    "-w",
-    "Admin!Directory123",
-    distinguishedName,
-  ]);
-}
-
-async function addConflictingDirectoryUser(): Promise<void> {
-  const container = requiredEnvironment("E2E_LDAP_CONTAINER");
-  await execFileAsync("docker", [
-    "exec",
-    container,
-    "ldapadd",
-    "-x",
-    "-H",
-    "ldap://127.0.0.1:389",
-    "-D",
-    "cn=admin,dc=example,dc=test",
-    "-w",
-    "Admin!Directory123",
-    "-f",
-    "/fixtures/conflicting-user.ldif",
-  ]);
-}
-
-async function expectSessionRevoked(page: Page): Promise<void> {
-  await expect
-    .poll(async () => (await page.request.get("/api/v1/auth/session")).status(), {
-      timeout: 20_000,
-    })
-    .toBe(401);
 }
 
 function requiredEnvironment(name: string): string {

@@ -20,7 +20,7 @@ afterEach(async () => {
 });
 
 describe("SQLite identity access", () => {
-  it("bootstraps once, locks and unlocks local users, revokes sessions and maps LDAP groups", async () => {
+  it("bootstraps once, manages local users, and stores LDAP Groups without mapping permissions", async () => {
     const directory = await mkdtemp(resolve(tmpdir(), "autoforge-identity-"));
     temporaryDirectories.push(directory);
     const handle = createSqliteDatabase({
@@ -40,7 +40,6 @@ describe("SQLite identity access", () => {
       groupDns: ["cn=autoforge-viewers,ou=groups,dc=example,dc=test"],
       attributes: { uid: "ldap.user", entryUUID: "directory-subject-1" },
     };
-    let directoryUsers = [directoryIdentity];
     let directoryAvailable = true;
     let directoryAuthenticationAttempts = 0;
     const service = new IdentityAccessService(
@@ -72,7 +71,6 @@ describe("SQLite identity access", () => {
           }
           return directoryIdentity;
         },
-        listUsers: async () => directoryUsers,
       },
       clock,
       ids,
@@ -139,7 +137,9 @@ describe("SQLite identity access", () => {
 
       const roles = await service.listRoles(administrator);
       const viewer = roles.find((role) => role.key === "viewer");
+      const testManager = roles.find((role) => role.key === "test-manager");
       expect(viewer).toBeDefined();
+      expect(testManager).toBeDefined();
       const permissionUser = await service.createUser(administrator, {
         username: "permission-user",
         displayName: "Permission User",
@@ -174,20 +174,15 @@ describe("SQLite identity access", () => {
       await service.saveLdapConfiguration(administrator, {
         enabled: true,
         url: "ldaps://ldap.example.test:636",
-        verifyTlsCertificate: false,
+        tlsRejectUnauthorized: false,
         connectTimeoutMs: 5_000,
-        operationTimeoutMs: 10_000,
-        pageSize: 500,
-        maximumUsers: 5_000,
-        synchronizationIntervalMinutes: 0,
         bindDn: "cn=service,dc=example,dc=test",
         bindPassword: "Bind!Password123",
         clearBindPassword: false,
         userBaseDn: "ou=people,dc=example,dc=test",
-        userFilter: "(&(objectClass=person)(uid={username}))",
-        usernameAttribute: "uid",
+        userFilter: "(&(objectClass=person)(uid={{username}}))",
         displayNameAttribute: "displayName",
-        emailAttribute: "mail",
+        mailAttribute: "mail",
         groupAttribute: "memberOf",
         groupSearchBase: "ou=groups,dc=example,dc=test",
         groupSearchFilter: "(&(objectClass=groupOfNames)(member={{userDn}}))",
@@ -195,13 +190,9 @@ describe("SQLite identity access", () => {
         defaultRole: "editor",
       });
       await expect(service.getLdapConfiguration(administrator)).resolves.toMatchObject({
-        verifyTlsCertificate: false,
-      });
-      await service.addLdapGroupMapping(administrator, {
-        groupDn: "cn=autoforge-viewers,ou=groups,dc=example,dc=test",
-        roleId: viewer!.id,
-        projectId: DEFAULT_PROJECT_ID,
-        priority: 100,
+        enabled: true,
+        tlsRejectUnauthorized: false,
+        updatedBy: "administrator",
       });
       const directoryAttemptsBeforeLocalLogin = directoryAuthenticationAttempts;
       const localSessionWithLegacyLdapHint = await service.login({
@@ -219,23 +210,37 @@ describe("SQLite identity access", () => {
       });
       expect(directoryAuthenticationAttempts).toBe(directoryAttemptsBeforeLocalLogin + 1);
       const ldapIdentity = await service.authenticateSession(ldapSession.token);
-      expect(ldapIdentity.user).toMatchObject({ source: "ldap", username: "ldap.user" });
+      expect(ldapIdentity.user).toMatchObject({
+        source: "ldap",
+        username: "ldap.user",
+        groups: ["cn=autoforge-viewers,ou=groups,dc=example,dc=test"],
+      });
       expect(ldapIdentity.projectPermissions[DEFAULT_PROJECT_ID]).toContain("case.read");
       expect(ldapIdentity.projectPermissions[DEFAULT_PROJECT_ID]).toContain("case.manage");
+      handle.client
+        .prepare(
+          "DELETE FROM project_role_bindings WHERE user_id = ? AND project_id = ? AND role_id = ?",
+        )
+        .run(ldapIdentity.user.id, DEFAULT_PROJECT_ID, testManager!.id);
       directoryIdentity = {
         ...directoryIdentity,
         subject: "ldap.user",
         displayName: "LDAP User Migrated",
+        groupDns: ["auditors", "release-operators"],
       };
-      directoryUsers = [directoryIdentity];
       const migratedLdapSession = await service.login({
         username: "ldap.user",
         password: "Directory!123",
       });
       const migratedLdapIdentity = await service.authenticateSession(migratedLdapSession.token);
       expect(migratedLdapIdentity).toMatchObject({
-        user: { id: ldapIdentity.user.id, displayName: "LDAP User Migrated" },
+        user: {
+          id: ldapIdentity.user.id,
+          displayName: "LDAP User Migrated",
+          groups: ["auditors", "release-operators"],
+        },
       });
+      expect(migratedLdapIdentity.projectPermissions[DEFAULT_PROJECT_ID]).toBeUndefined();
       await service.logout(migratedLdapIdentity);
       await expect(
         service.recordTerminalSession(
@@ -289,21 +294,6 @@ describe("SQLite identity access", () => {
         archived: true,
       });
 
-      const activeLdapSession = await service.login({
-        username: "ldap.user",
-        password: "Directory!123",
-      });
-      directoryUsers = [];
-      const sync = await service.synchronizeLdap(administrator);
-      expect(sync.disabledUserIds).toContain(ldapIdentity.user.id);
-      await expect(service.authenticateSession(activeLdapSession.token)).rejects.toMatchObject({
-        code: "AUTH_REQUIRED",
-      });
-      const attemptsBeforeDisabledLogin = directoryAuthenticationAttempts;
-      await expect(
-        service.login({ username: "ldap.user", password: "Directory!123" }),
-      ).rejects.toMatchObject({ code: "AUTHENTICATION_FAILED" });
-      expect(directoryAuthenticationAttempts).toBe(attemptsBeforeDisabledLogin);
       await service.recordTerminalLifecycle({
         actorId: administrator.user.id,
         runnerId: "runner-audit",
@@ -322,7 +312,6 @@ describe("SQLite identity access", () => {
           expect.objectContaining({ action: "user.password_reset" }),
           expect.objectContaining({ action: "user.sessions_revoke" }),
           expect.objectContaining({ action: "ldap.configure" }),
-          expect.objectContaining({ action: "ldap.synchronize" }),
           expect.objectContaining({
             action: "terminal.session_finished",
             details: expect.objectContaining({ inputMessages: 2, outputBytes: 32 }),
@@ -383,7 +372,6 @@ describe("SQLite identity access", () => {
         authenticate: async () => {
           throw new Error("directory unavailable");
         },
-        listUsers: async () => [],
       },
       clock,
       new SequentialIds(),
