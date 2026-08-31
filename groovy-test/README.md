@@ -73,9 +73,10 @@ java -cp "groovy-test/target/classes:groovy-test/target/dependency/*" \
   --workbook ./cases/normal-groovy-cases.xlsx
 ```
 
-The tool reads graded rows from both `导出用例` and `排除明细`, identifies classes and their
+The tool reads every case row from both `导出用例` and `排除明细`, identifies classes and their
 class-level/method-level `@Test` annotations through the Groovy AST, and updates either the
-`group` or `groups` member:
+`group` or `groups` member. Rows in `导出用例` use their reviewed L0/L1/L2 value; every row in
+`排除明细` is forced to L2 regardless of whether its level cell is blank or contains another value:
 
 - `@Test` and `@Test()` become `@Test(group = [TestCaseGroup.L0])` for an L0 case.
 - Existing entries such as `TestCaseGroup.Completed` are retained and the reviewed level is
@@ -91,20 +92,23 @@ class-level/method-level `@Test` annotations through the Groovy AST, and updates
   needed. An existing exact import, `import cotest.define.*`, or a source in package
   `cotest.define` is left unchanged.
 
-The preferred level column is `人工等级`. Workbooks edited by other tools may instead use
-`人工分级`, `用例等级`, `用例级别`, `等级`, `级别`, `Case Level`, or `Level`; these names are also
-recognized. Values may be L0/L1/L2, variants such as `L0级` or `等级 L1`, the review keys 0/1/5,
-or formulas whose result is a supported level. If no graded row is found, the error reports the
-absolute workbook path plus each worksheet's actual headers, row count, detected level column, and
-graded-row count so that selecting an unreviewed or unsaved workbook is visible immediately.
+For `导出用例`, the preferred level column is `人工等级`. Workbooks edited by other tools may
+instead use `人工分级`, `用例等级`, `用例级别`, `等级`, `级别`, `Case Level`, or `Level`; these names
+are also recognized. Values may be L0/L1/L2, variants such as `L0级` or `等级 L1`, the review keys
+0/1/5, or formulas whose result is a supported level. A missing level column or blank/unsupported
+level in any exported row is rejected before source files are changed, preventing a partially
+reviewed workbook from silently omitting cases. `排除明细` does not need a level column.
 
 After each case that actually changes, the tool immediately executes `git add -- <groovy-file>`.
-This is deliberately case-based rather than file-batched: if two graded classes share one Groovy
+This is deliberately case-based rather than file-batched: if two workbook classes share one Groovy
 file, that file is updated and staged once after the first class and again after the second class.
 The source root must therefore be inside a Git worktree. A case whose annotations already contain
-the correct level is not rewritten and does not trigger `git add`.
+the correct level is not rewritten and does not trigger `git add`. The startup summary prints the
+number of unique workbook cases, represented source files, exported cases, and forced-L2 excluded
+cases. The number of files actually modified can be lower when multiple classes share one file or
+some files already contain the requested group and import.
 
-Before any source write, a real run prints every missing import plus every graded case and every
+Before any source write, a real run prints every missing import plus every workbook case and every
 class-level/method-level `@Test` as `current group -> planned group`. Review the complete list, then
 enter `y` and press Enter at the confirmation prompt to proceed. Any other input, including EOF,
 cancels the run without changing or staging a file. If a previous run already added every level but

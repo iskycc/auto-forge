@@ -96,7 +96,16 @@ public final class ApplyGroovyCaseGroups {
       }
 
       ApplyReport report = new GroupApplication().apply(options);
-      System.out.printf("Loaded %d graded case(s) from %s.%n", report.caseCount, options.workbook);
+      System.out.printf(
+          "Loaded %d workbook case(s) across %d source file(s) from %s "
+              + "(%d from %s; %d from %s forced to L2).%n",
+          report.caseCount,
+          report.sourceFileCount,
+          options.workbook,
+          report.caseCount - report.excludedCaseCount,
+          INCLUDED_CASES_SHEET,
+          report.excludedCaseCount,
+          EXCLUDED_CASES_SHEET);
       if (report.cancelled) {
         System.out.println("Cancelled by user; no Groovy source file was changed or staged.");
         return;
@@ -294,6 +303,8 @@ public final class ApplyGroovyCaseGroups {
       }
       return new ApplyReport(
           assignments.size(),
+          validation.report.sourceFileCount,
+          validation.report.excludedCaseCount,
           changedFiles.size(),
           updatedAnnotations,
           unchangedAnnotations,
@@ -365,6 +376,8 @@ public final class ApplyGroovyCaseGroups {
       ApplyReport report =
           new ApplyReport(
               assignments.size(),
+              assignmentsByFile.size(),
+              countCasesFromSheet(assignments, EXCLUDED_CASES_SHEET),
               changedFiles,
               updatedAnnotations,
               unchangedAnnotations,
@@ -372,6 +385,17 @@ public final class ApplyGroovyCaseGroups {
               0,
               false);
       return new ValidationResult(report, casePreviews, importPreviews);
+    }
+
+    private static int countCasesFromSheet(
+        List<CaseAssignment> assignments, String sheetName) {
+      int count = 0;
+      for (CaseAssignment assignment : assignments) {
+        if (assignment.sheetName.equals(sheetName)) {
+          count++;
+        }
+      }
+      return count;
     }
 
     private static void printPreviews(ValidationResult validation) {
@@ -477,8 +501,18 @@ public final class ApplyGroovyCaseGroups {
       try (InputStream input = Files.newInputStream(workbookPath);
           XSSFWorkbook workbook = new XSSFWorkbook(input)) {
         formulaEvaluator = workbook.getCreationHelper().createFormulaEvaluator();
-        sheetSummaries.add(readSheet(workbook, INCLUDED_CASES_SHEET, assignments));
-        sheetSummaries.add(readSheet(workbook, EXCLUDED_CASES_SHEET, assignments));
+        sheetSummaries.add(
+            readSheet(
+                workbook,
+                INCLUDED_CASES_SHEET,
+                AssignmentLevelPolicy.REVIEWED_LEVEL,
+                assignments));
+        sheetSummaries.add(
+            readSheet(
+                workbook,
+                EXCLUDED_CASES_SHEET,
+                AssignmentLevelPolicy.FORCED_L2,
+                assignments));
       } finally {
         formulaEvaluator = null;
       }
@@ -486,11 +520,9 @@ public final class ApplyGroovyCaseGroups {
         throw new IllegalArgumentException(
             "Workbook '"
                 + workbookPath
-                + "' contains no graded cases. Expected L0/L1/L2 in a level column named "
-                + String.join(", ", LEVEL_HEADER_ALIASES)
-                + ". Worksheets read: "
+                + "' contains no case rows. Worksheets read: "
                 + joinSheetSummaries(sheetSummaries)
-                + ". Confirm that --workbook points to the reviewed file and that it was saved.");
+                + ". Confirm that --workbook points to the analyzer workbook and that it was saved.");
       }
       return new ArrayList<>(assignments.values());
     }
@@ -498,6 +530,7 @@ public final class ApplyGroovyCaseGroups {
     private SheetReadSummary readSheet(
         XSSFWorkbook workbook,
         String sheetName,
+        AssignmentLevelPolicy levelPolicy,
         Map<CaseKey, CaseAssignment> assignments)
         throws IOException {
       Sheet sheet = workbook.getSheet(sheetName);
@@ -512,36 +545,36 @@ public final class ApplyGroovyCaseGroups {
       int classColumn = requiredColumn(header, CLASS_HEADER);
       int pathColumn = requiredColumn(header, PATH_HEADER);
       List<String> headers = headerValues(header);
-      int levelColumn = findLevelColumn(sheet, header);
-      if (levelColumn < 0) {
+      int levelColumn =
+          levelPolicy == AssignmentLevelPolicy.REVIEWED_LEVEL
+              ? findLevelColumn(sheet, header)
+              : -1;
+      if (levelPolicy == AssignmentLevelPolicy.REVIEWED_LEVEL
+          && levelColumn < 0
+          && containsCaseRows(sheet, classColumn, pathColumn)) {
+        throw new IllegalArgumentException(
+            "Worksheet '"
+                + sheetName
+                + "' contains case rows but has no reviewed level column. Expected one of: "
+                + String.join(", ", LEVEL_HEADER_ALIASES)
+                + ". Complete and save the manual review before applying groups.");
+      }
+      if (levelPolicy == AssignmentLevelPolicy.REVIEWED_LEVEL && levelColumn < 0) {
         return new SheetReadSummary(
             sheetName, Math.max(0, sheet.getLastRowNum()), headers, "not found", 0);
       }
 
-      int gradedRowCount = 0;
+      int assignedRowCount = 0;
       for (int rowIndex = 1; rowIndex <= sheet.getLastRowNum(); rowIndex++) {
         Row row = sheet.getRow(rowIndex);
         if (row == null) {
           continue;
         }
-        String rawLevel = cellText(row, levelColumn);
-        if (rawLevel.isEmpty()) {
-          continue;
-        }
-        String level = normalizeLevel(rawLevel);
-        if (level == null) {
-          throw new IllegalArgumentException(
-              "Unsupported level '"
-                  + rawLevel
-                  + "' in worksheet "
-                  + sheetName
-                  + " row "
-                  + (rowIndex + 1));
-        }
-        gradedRowCount++;
-
         String relativePathText = cellText(row, pathColumn).replace('\\', '/');
         String className = cellText(row, classColumn);
+        if (relativePathText.isEmpty() && className.isEmpty()) {
+          continue;
+        }
         if (relativePathText.isEmpty() || className.isEmpty()) {
           throw new IllegalArgumentException(
               "Missing relative path or class name in worksheet "
@@ -549,6 +582,33 @@ public final class ApplyGroovyCaseGroups {
                   + " row "
                   + (rowIndex + 1));
         }
+
+        String level;
+        if (levelPolicy == AssignmentLevelPolicy.FORCED_L2) {
+          level = "L2";
+        } else {
+          String rawLevel = cellText(row, levelColumn);
+          if (rawLevel.isEmpty()) {
+            throw new IllegalArgumentException(
+                "Missing reviewed level in worksheet "
+                    + sheetName
+                    + " row "
+                    + (rowIndex + 1)
+                    + ". Every exported case must be L0, L1, or L2 before applying groups.");
+          }
+          level = normalizeLevel(rawLevel);
+          if (level == null) {
+            throw new IllegalArgumentException(
+                "Unsupported level '"
+                    + rawLevel
+                    + "' in worksheet "
+                    + sheetName
+                    + " row "
+                    + (rowIndex + 1));
+          }
+        }
+        assignedRowCount++;
+
         Path relativePath = normalizeRelativePath(relativePathText, sheetName, rowIndex);
         CaseAssignment assignment =
             new CaseAssignment(
@@ -577,8 +637,21 @@ public final class ApplyGroovyCaseGroups {
           sheetName,
           Math.max(0, sheet.getLastRowNum()),
           headers,
-          cellText(header, levelColumn),
-          gradedRowCount);
+          levelPolicy == AssignmentLevelPolicy.FORCED_L2
+              ? "forced L2"
+              : cellText(header, levelColumn),
+          assignedRowCount);
+    }
+
+    private boolean containsCaseRows(Sheet sheet, int classColumn, int pathColumn) {
+      for (int rowIndex = 1; rowIndex <= sheet.getLastRowNum(); rowIndex++) {
+        Row row = sheet.getRow(rowIndex);
+        if (row != null
+            && (!cellText(row, classColumn).isEmpty() || !cellText(row, pathColumn).isEmpty())) {
+          return true;
+        }
+      }
+      return false;
     }
 
     private int findLevelColumn(Sheet sheet, Row header) {
@@ -753,24 +826,29 @@ public final class ApplyGroovyCaseGroups {
     }
   }
 
+  private enum AssignmentLevelPolicy {
+    REVIEWED_LEVEL,
+    FORCED_L2
+  }
+
   private static final class SheetReadSummary {
     private final String sheetName;
     private final int dataRowCount;
     private final List<String> headers;
     private final String levelHeader;
-    private final int gradedRowCount;
+    private final int assignedRowCount;
 
     private SheetReadSummary(
         String sheetName,
         int dataRowCount,
         List<String> headers,
         String levelHeader,
-        int gradedRowCount) {
+        int assignedRowCount) {
       this.sheetName = sheetName;
       this.dataRowCount = dataRowCount;
       this.headers = headers;
       this.levelHeader = levelHeader;
-      this.gradedRowCount = gradedRowCount;
+      this.assignedRowCount = assignedRowCount;
     }
 
     @Override
@@ -780,8 +858,8 @@ public final class ApplyGroovyCaseGroups {
           + dataRowCount
           + ", levelColumn="
           + levelHeader
-          + ", gradedRows="
-          + gradedRowCount
+          + ", assignedRows="
+          + assignedRowCount
           + ", headers="
           + headers
           + "}";
@@ -1593,6 +1671,8 @@ public final class ApplyGroovyCaseGroups {
 
   private static final class ApplyReport {
     private final int caseCount;
+    private final int sourceFileCount;
+    private final int excludedCaseCount;
     private final int changedFileCount;
     private final int updatedAnnotationCount;
     private final int unchangedAnnotationCount;
@@ -1602,6 +1682,8 @@ public final class ApplyGroovyCaseGroups {
 
     private ApplyReport(
         int caseCount,
+        int sourceFileCount,
+        int excludedCaseCount,
         int changedFileCount,
         int updatedAnnotationCount,
         int unchangedAnnotationCount,
@@ -1609,6 +1691,8 @@ public final class ApplyGroovyCaseGroups {
         int stagedCaseCount,
         boolean cancelled) {
       this.caseCount = caseCount;
+      this.sourceFileCount = sourceFileCount;
+      this.excludedCaseCount = excludedCaseCount;
       this.changedFileCount = changedFileCount;
       this.updatedAnnotationCount = updatedAnnotationCount;
       this.unchangedAnnotationCount = unchangedAnnotationCount;
@@ -1620,6 +1704,8 @@ public final class ApplyGroovyCaseGroups {
     private ApplyReport asCancelled() {
       return new ApplyReport(
           caseCount,
+          sourceFileCount,
+          excludedCaseCount,
           changedFileCount,
           updatedAnnotationCount,
           unchangedAnnotationCount,

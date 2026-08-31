@@ -77,6 +77,14 @@ printf '%s\n' \
   '    void testPluralGroups() { assert true }' \
   '}' >"${source_root}/05PluralGroupsCase.groovy"
 
+printf '%s\n' \
+  'package sample.cases' \
+  '' \
+  'class ExpectedErrorCase {' \
+  '    @Test(group = [TestCaseGroup.Completed])' \
+  '    void testExpectedError() { assert true }' \
+  '}' >"${source_root}/06ExpectedErrorCase.groovy"
+
 git -C "${source_root}" init -q
 git -C "${source_root}" config user.name 'Groovy group test'
 git -C "${source_root}" config user.email 'groovy-group-test@example.invalid'
@@ -96,11 +104,9 @@ if [[ ${unreviewed_status} -ne 2 ]]; then
   echo 'An unreviewed workbook did not fail with a diagnostic error.' >&2
   exit 1
 fi
-grep -Fq "Workbook '${unreviewed_workbook}' contains no graded cases." \
+grep -Fq "Worksheet '导出用例' contains case rows but has no reviewed level column." \
   <<<"${unreviewed_output}"
-grep -Fq "导出用例 {rows=6, levelColumn=not found, gradedRows=0" \
-  <<<"${unreviewed_output}"
-grep -Fq 'Confirm that --workbook points to the reviewed file and that it was saved.' \
+grep -Fq 'Complete and save the manual review before applying groups.' \
   <<<"${unreviewed_output}"
 
 review_output="$(printf '015010' | java -cp "${runtime_classpath}" AnalyzeNormalGroovyCases \
@@ -121,8 +127,10 @@ for (const sheetName of ["导出用例", "排除明细"]) {
   const sheet = workbook.Sheets[sheetName];
   const range = xlsx.utils.decode_range(sheet["!ref"]);
   let levelColumn = -1;
+  let classColumn = -1;
   for (let column = range.s.c; column <= range.e.c; column++) {
     const cell = sheet[xlsx.utils.encode_cell({ r: 0, c: column })];
+    if (cell?.v === "类名") classColumn = column;
     if (cell?.v === "人工等级") {
       levelColumn = column;
       cell.v = sheetName === "导出用例" ? "用例等级" : "Case Level";
@@ -148,6 +156,15 @@ for (const sheetName of ["导出用例", "排除明细"]) {
     }
     transformedLevel++;
   }
+  if (sheetName === "排除明细" && classColumn >= 0) {
+    for (let row = 1; row <= range.e.r; row++) {
+      const classCell = sheet[xlsx.utils.encode_cell({ r: row, c: classColumn })];
+      if (classCell?.v === "ExpectedErrorCase") {
+        const levelAddress = xlsx.utils.encode_cell({ r: row, c: levelColumn });
+        sheet[levelAddress] = { t: "s", v: "L0" };
+      }
+    }
+  }
 }
 writeFileSync(workbookPath, xlsx.write(workbook, { type: "buffer", bookType: "xlsx" }));
 NODE
@@ -156,23 +173,25 @@ before_dry_run="$(sha256sum "${source_root}"/*.groovy)"
 dry_run_output="$(java -cp "${runtime_classpath}" ApplyGroovyCaseGroups \
   --source "${source_root}" --workbook "${workbook}" --dry-run)"
 after_dry_run="$(sha256sum "${source_root}"/*.groovy)"
-grep -Fq 'Would update 7 @Test annotation(s) in 5 Groovy file(s); 0 annotation(s) were already correct.' \
+grep -Fq 'Would update 8 @Test annotation(s) in 6 Groovy file(s); 0 annotation(s) were already correct.' \
   <<<"${dry_run_output}"
-grep -Fq 'Would add 5 missing cotest.define.TestCaseGroup import(s).' \
+grep -Fq 'Would add 6 missing cotest.define.TestCaseGroup import(s).' \
   <<<"${dry_run_output}"
-grep -Fq 'Planned cotest.define.TestCaseGroup imports for 5 Groovy file(s):' \
+grep -Fq 'Planned cotest.define.TestCaseGroup imports for 6 Groovy file(s):' \
   <<<"${dry_run_output}"
 grep -Fq '<not imported> -> import cotest.define.TestCaseGroup' \
   <<<"${dry_run_output}"
 grep -Fq 'Dry run only; no Groovy source file was changed.' <<<"${dry_run_output}"
-grep -Fq '[1/6] sample.cases.EmptyParenCase (L0) - 01MixedCases.groovy' \
+grep -Fq '[1/7] sample.cases.EmptyParenCase (L0) - 01MixedCases.groovy' \
+  <<<"${dry_run_output}"
+grep -Fq 'sample.cases.ExpectedErrorCase (L2) - 06ExpectedErrorCase.groovy' \
   <<<"${dry_run_output}"
 grep -Fq '@Test line 5 (group): <not set> -> [TestCaseGroup.L0]' <<<"${dry_run_output}"
 grep -Fq '[TestCaseGroup.Completed] -> [TestCaseGroup.Completed, TestCaseGroup.L1]' \
   <<<"${dry_run_output}"
 grep -Fq '@Test line 4 (groups): [TestCaseGroup.Completed] -> [TestCaseGroup.Completed, TestCaseGroup.L0]' \
   <<<"${dry_run_output}"
-if [[ "$(grep -Ec '^\[[1-6]/6\]' <<<"${dry_run_output}")" -ne 6 ]]; then
+if [[ "$(grep -Ec '^\[[1-7]/7\]' <<<"${dry_run_output}")" -ne 7 ]]; then
   echo 'Dry run did not print every case group.' >&2
   exit 1
 fi
@@ -201,12 +220,13 @@ fi
 
 apply_output="$(printf 'y\n' | java -cp "${runtime_classpath}" ApplyGroovyCaseGroups \
   --source "${source_root}" --workbook "${workbook}")"
-grep -Fq 'Loaded 6 graded case(s)' <<<"${apply_output}"
-grep -Fq 'Updated 7 @Test annotation(s) in 5 Groovy file(s); 0 annotation(s) were already correct.' \
+grep -Fq 'Loaded 7 workbook case(s) across 6 source file(s)' <<<"${apply_output}"
+grep -Fq '(5 from 导出用例; 2 from 排除明细 forced to L2).' <<<"${apply_output}"
+grep -Fq 'Updated 8 @Test annotation(s) in 6 Groovy file(s); 0 annotation(s) were already correct.' \
   <<<"${apply_output}"
-grep -Fq 'Added 5 missing cotest.define.TestCaseGroup import(s).' <<<"${apply_output}"
-grep -Fq 'Ran git add after 6 changed case(s).' <<<"${apply_output}"
-preview_line="$(grep -nF 'Planned @Test group values for 6 case(s):' <<<"${apply_output}" | cut -d: -f1)"
+grep -Fq 'Added 6 missing cotest.define.TestCaseGroup import(s).' <<<"${apply_output}"
+grep -Fq 'Ran git add after 7 changed case(s).' <<<"${apply_output}"
+preview_line="$(grep -nF 'Planned @Test group values for 7 case(s):' <<<"${apply_output}" | cut -d: -f1)"
 confirmation_line="$(grep -nF 'Apply all group/import changes and run git add after each changed case?' \
   <<<"${apply_output}" | cut -d: -f1)"
 first_apply_line="$(grep -nF 'then ran git add --' <<<"${apply_output}" | head -n 1 | cut -d: -f1)"
@@ -214,11 +234,11 @@ if (( preview_line >= confirmation_line || confirmation_line >= first_apply_line
   echo 'Group preview and confirmation were not completed before source updates.' >&2
   exit 1
 fi
-if [[ "$(grep -Fc 'then ran git add --' <<<"${apply_output}")" -ne 6 ]]; then
+if [[ "$(grep -Fc 'then ran git add --' <<<"${apply_output}")" -ne 7 ]]; then
   echo 'git add was not run once after each changed case.' >&2
   exit 1
 fi
-if [[ "$(git -C "${source_root}" diff --cached --name-only | wc -l)" -ne 5 ]]; then
+if [[ "$(git -C "${source_root}" diff --cached --name-only | wc -l)" -ne 6 ]]; then
   echo 'The changed Groovy files were not staged.' >&2
   exit 1
 fi
@@ -257,6 +277,8 @@ grep -Fq '@Test(description = "method annotation", group = [TestCaseGroup.L1])' 
   "${source_root}/04ClassAndMethodCase.groovy"
 grep -Fq '@Test(groups = [TestCaseGroup.Completed, TestCaseGroup.L0])' \
   "${source_root}/05PluralGroupsCase.groovy"
+grep -Fq '@Test(group = [TestCaseGroup.Completed, TestCaseGroup.L2])' \
+  "${source_root}/06ExpectedErrorCase.groovy"
 if grep -Fq '@Test(groups = [TestCaseGroup.Completed], group =' \
   "${source_root}/05PluralGroupsCase.groovy"; then
   echo 'A singular group member was added beside an existing plural groups member.' >&2
@@ -271,9 +293,9 @@ before_import_dry_run="$(sha256sum "${source_root}"/*.groovy)"
 import_dry_run_output="$(java -cp "${runtime_classpath}" ApplyGroovyCaseGroups \
   --source "${source_root}" --workbook "${workbook}" --dry-run)"
 after_import_dry_run="$(sha256sum "${source_root}"/*.groovy)"
-grep -Fq 'Would update 0 @Test annotation(s) in 5 Groovy file(s); 7 annotation(s) were already correct.' \
+grep -Fq 'Would update 0 @Test annotation(s) in 6 Groovy file(s); 8 annotation(s) were already correct.' \
   <<<"${import_dry_run_output}"
-grep -Fq 'Would add 5 missing cotest.define.TestCaseGroup import(s).' \
+grep -Fq 'Would add 6 missing cotest.define.TestCaseGroup import(s).' \
   <<<"${import_dry_run_output}"
 if [[ "${before_import_dry_run}" != "${after_import_dry_run}" ]] \
   || [[ -n "$(git -C "${source_root}" diff --cached --name-only)" ]]; then
@@ -283,13 +305,13 @@ fi
 
 import_apply_output="$(printf 'y\n' | java -cp "${runtime_classpath}" ApplyGroovyCaseGroups \
   --source "${source_root}" --workbook "${workbook}")"
-grep -Fq 'Updated 0 @Test annotation(s) in 5 Groovy file(s); 7 annotation(s) were already correct.' \
+grep -Fq 'Updated 0 @Test annotation(s) in 6 Groovy file(s); 8 annotation(s) were already correct.' \
   <<<"${import_apply_output}"
-grep -Fq 'Added 5 missing cotest.define.TestCaseGroup import(s).' \
+grep -Fq 'Added 6 missing cotest.define.TestCaseGroup import(s).' \
   <<<"${import_apply_output}"
-grep -Fq 'Ran git add after 5 changed case(s).' <<<"${import_apply_output}"
-if [[ "$(grep -Fc 'then ran git add --' <<<"${import_apply_output}")" -ne 5 ]] \
-  || [[ "$(git -C "${source_root}" diff --cached --name-only | wc -l)" -ne 5 ]]; then
+grep -Fq 'Ran git add after 6 changed case(s).' <<<"${import_apply_output}"
+if [[ "$(grep -Fc 'then ran git add --' <<<"${import_apply_output}")" -ne 6 ]] \
+  || [[ "$(git -C "${source_root}" diff --cached --name-only | wc -l)" -ne 6 ]]; then
   echo 'The import-only supplement did not stage every changed file.' >&2
   exit 1
 fi
@@ -304,7 +326,7 @@ after_import_apply="$(sha256sum "${source_root}"/*.groovy)"
 idempotent_output="$(java -cp "${runtime_classpath}" ApplyGroovyCaseGroups \
   --source "${source_root}" --workbook "${workbook}")"
 after_idempotent_run="$(sha256sum "${source_root}"/*.groovy)"
-grep -Fq 'Updated 0 @Test annotation(s) in 0 Groovy file(s); 7 annotation(s) were already correct.' \
+grep -Fq 'Updated 0 @Test annotation(s) in 0 Groovy file(s); 8 annotation(s) were already correct.' \
   <<<"${idempotent_output}"
 grep -Fq 'Added 0 missing cotest.define.TestCaseGroup import(s).' <<<"${idempotent_output}"
 grep -Fq 'Ran git add after 0 changed case(s).' <<<"${idempotent_output}"
@@ -319,7 +341,7 @@ before_wildcard_run="$(sha256sum "${source_root}/05PluralGroupsCase.groovy")"
 wildcard_output="$(java -cp "${runtime_classpath}" ApplyGroovyCaseGroups \
   --source "${source_root}" --workbook "${workbook}")"
 after_wildcard_run="$(sha256sum "${source_root}/05PluralGroupsCase.groovy")"
-grep -Fq 'Updated 0 @Test annotation(s) in 0 Groovy file(s); 7 annotation(s) were already correct.' \
+grep -Fq 'Updated 0 @Test annotation(s) in 0 Groovy file(s); 8 annotation(s) were already correct.' \
   <<<"${wildcard_output}"
 grep -Fq 'Added 0 missing cotest.define.TestCaseGroup import(s).' <<<"${wildcard_output}"
 if [[ "${before_wildcard_run}" != "${after_wildcard_run}" ]]; then
