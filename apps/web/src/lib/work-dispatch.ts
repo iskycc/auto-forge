@@ -87,6 +87,7 @@ export function workerBackedExecutionControlRepository(
 /** 合并同一批次/Runner 的高频补调度请求，避免并发完成上报制造重复扫描。 */
 export class CoalescingSchedulingPort implements RunBatchSchedulingPort {
   private readonly inFlight = new Map<string, CoalescedOperation<unknown>>();
+  private readonly pendingRunnerCapacity = new Map<string, number>();
 
   constructor(
     private readonly local: RunBatchSchedulingPort,
@@ -99,12 +100,21 @@ export class CoalescingSchedulingPort implements RunBatchSchedulingPort {
     );
   }
 
-  scheduleForRunner(runnerId: string, batchLimit = 8): Promise<unknown> {
-    return this.coalesce(`runner:${runnerId}`, () =>
-      this.dispatcher
-        ? this.dispatcher.scheduleForRunner(runnerId, batchLimit)
-        : this.local.scheduleForRunner(runnerId, batchLimit),
-    );
+  scheduleForRunner(
+    runnerId: string,
+    batchLimit = 8,
+    liveAvailableSlots?: number,
+  ): Promise<unknown> {
+    if (liveAvailableSlots !== undefined) {
+      this.pendingRunnerCapacity.set(runnerId, liveAvailableSlots);
+    }
+    return this.coalesce(`runner:${runnerId}`, () => {
+      const pendingLiveAvailableSlots = this.pendingRunnerCapacity.get(runnerId);
+      this.pendingRunnerCapacity.delete(runnerId);
+      return this.dispatcher
+        ? this.dispatcher.scheduleForRunner(runnerId, batchLimit, pendingLiveAvailableSlots)
+        : this.local.scheduleForRunner(runnerId, batchLimit, pendingLiveAvailableSlots);
+    });
   }
 
   private coalesce(key: string, operation: () => Promise<unknown>): Promise<unknown> {

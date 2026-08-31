@@ -4,6 +4,8 @@ This source document is published as `COMPATIBILITY.md` at the root of every for
 
 | Control plane | Runner Agent       | Protocol | Java/TestNG baseline     | Result                                                                        |
 | ------------- | ------------------ | -------- | ------------------------ | ----------------------------------------------------------------------------- |
+| `1.7.x`       | embedded `1.7.x`   | v1       | Java 11+ / TestNG 7.11.0 | supported                                                                     |
+| `1.7.x`       | embedded `1.6.x`   | v1       | Java 11+ / TestNG 7.11.0 | supported; upgrade recommended for immediate completion-triggered slot refill |
 | `1.1.x`       | embedded `1.1.x`   | v1       | Java 11+ / TestNG 7.11.0 | supported                                                                     |
 | `1.1.x`       | embedded `1.0.x`   | v1       | Java 11+ / TestNG 7.11.0 | supported; control-plane DDT features do not change the Runner contract       |
 | `1.0.x`       | embedded `1.0.x`   | v1       | Java 11+ / TestNG 7.11.0 | supported                                                                     |
@@ -93,3 +95,10 @@ retain the prior no-outbound-request behavior until a project administrator expl
 Control plane `0.9.11` does not change persisted schemas or Runner Protocol v1. Existing suites and
 batches with a valid `projectVersionId` policy snapshot remain executable; ambiguous legacy suites
 must be assigned an active project version before any browser, schedule, Jenkins or API execution.
+
+Control plane `1.7.0` keeps the v1.6.8 database, persisted-configuration and Runner Protocol v1
+contracts. Authenticated claims add no wire field: the existing `availableSlots` value is used as a
+short-lived scheduling hint while database reservations remain authoritative. Older Agents therefore
+remain compatible; only the embedded v1.7.0 Agent wakes its claim loop immediately when a local slot
+is released. Mixed Web/worker versions remain limited to the documented drain interval because older
+workers do not preserve the live-capacity hint across their internal dispatch boundary.

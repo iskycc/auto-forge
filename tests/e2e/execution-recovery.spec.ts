@@ -300,11 +300,18 @@ async function claimAssignment(page: Page, runner: RunnerIdentity): Promise<Clai
 }
 
 async function triggerRecovery(page: Page, runner: RunnerIdentity): Promise<void> {
-  const response = await claimOnce(page, runner, randomUUID());
+  // 只触发权威超时回收，不在同一个请求里领取刚生成的基础设施重试。
+  // 补槽优化后 availableSlots=1 会立即调度并领取重试任务，旧的空响应假设不再成立。
+  const response = await claimOnce(page, runner, randomUUID(), 0);
   expect(response.assignments).toHaveLength(0);
 }
 
-async function claimOnce(page: Page, runner: RunnerIdentity, requestId: string) {
+async function claimOnce(
+  page: Page,
+  runner: RunnerIdentity,
+  requestId: string,
+  availableSlots = 1,
+) {
   const response = await page.request.post(
     `/api/v1/runner-agents/${encodeURIComponent(runner.runnerId)}/claims`,
     {
@@ -312,7 +319,7 @@ async function claimOnce(page: Page, runner: RunnerIdentity, requestId: string) 
       data: {
         schemaVersion: 1,
         requestId,
-        availableSlots: 1,
+        availableSlots,
         labels: ["linux", "java", "testng"],
         capabilities: runnerCapabilities,
         waitSeconds: 0,

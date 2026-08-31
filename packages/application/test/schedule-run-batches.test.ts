@@ -643,6 +643,58 @@ describe("run batch creation with suite policy", () => {
     ).toEqual(["run-1", "run-2"]);
   });
 
+  it("refills from live claim capacity when the last heartbeat still reports a full Runner", async () => {
+    const runner = schedulingRunner();
+    runner.busySlots = runner.maxConcurrency;
+    const reserveAssignments = vi.fn(
+      async (input: { decisions: Array<{ attemptId: string }> }) => ({
+        reserved: input.decisions.length,
+        acceptedAttemptIds: input.decisions.map((decision) => decision.attemptId),
+      }),
+    );
+    const batches = {
+      listSchedulableBatchIdsForRunner: vi.fn().mockResolvedValue(["batch-1"]),
+      hasSchedulableRuns: vi.fn().mockResolvedValue(true),
+      getSchedulingSnapshot: vi.fn().mockResolvedValue({
+        batch: {
+          id: "batch-1",
+          assignedRuns: runner.maxConcurrency - 1,
+          secretBindings: [],
+          policy: { concurrency: runner.maxConcurrency, runnerLabels: [], artifactPatterns: [] },
+        },
+        queuedRuns: [queuedRun("run-refill")],
+        candidates: [{ runner, reservedSlots: runner.maxConcurrency - 1 }],
+        projectActiveRuns: runner.maxConcurrency - 1,
+      }),
+      recordRoundConcurrency: vi.fn().mockResolvedValue("created"),
+      reserveAssignments,
+      appendSchedulingEvents: vi.fn().mockResolvedValue(undefined),
+      getSummary: vi.fn().mockResolvedValue({ id: "batch-1", assignedRuns: runner.maxConcurrency }),
+    } as unknown as RunBatchRepository;
+    const service = new RunBatchSchedulingService(
+      batches,
+      {} as CaseSuiteRepository,
+      {} as RunnerRepository,
+      { now: () => new Date(timestamp) },
+      { next: () => "generated-id" },
+      {
+        maximumCpuUtilizationPercent: 85,
+        maximumMemoryUtilizationPercent: 85,
+        maximumLoadPerCpu: 1,
+      },
+      45,
+    );
+
+    await expect(service.scheduleForRunner(runner.id, 8, 1)).resolves.toBe(1);
+
+    expect(reserveAssignments).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runnerLiveCapacities: [{ runnerId: runner.id, availableSlots: 1 }],
+        decisions: [expect.objectContaining({ executionRunId: "run-refill", runnerId: runner.id })],
+      }),
+    );
+  });
+
   it("applies the first dynamic concurrency rule matching the current retry context", async () => {
     const decisions: unknown[] = [];
     const activateRetryConcurrency = vi.fn(

@@ -67,7 +67,8 @@ Agent 与控制面使用稳定的 Runner Protocol。Full 的 JetStream 和 Lite 
 
 - **Identity Manager**：注册、保存 Runner 身份、轮换访问凭据。
 - **Capability Probe**：上报 OS、架构、Agent/协议版本、执行器和自定义标签。
-- **Claim Loop**：有界长轮询领取任务，空闲时退避。
+- **Claim Loop**：有界长轮询领取任务，空闲时退避；本地 attempt 释放槽位或退出排空状态时立即
+  唤醒，避免继续等待服务端建议的空轮询间隔。
 - **Lease Manager**：独立于心跳续租，并接收取消/排空指令。
 - **Workspace Manager**：准备隔离工作目录、输入文件和清理策略。
 - **Process Supervisor**：启动命令、限制资源、处理超时和终止进程树。

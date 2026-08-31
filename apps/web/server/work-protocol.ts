@@ -39,7 +39,12 @@ export type WorkThreadConfiguration = {
 export type WorkTask =
   | { kind: "warmup" }
   | { kind: "schedule-batch"; batchId: string }
-  | { kind: "schedule-runner"; runnerId: string; batchLimit: number }
+  | {
+      kind: "schedule-runner";
+      runnerId: string;
+      batchLimit: number;
+      liveAvailableSlots?: number;
+    }
   | { kind: "claim-assignments"; runnerId: string; input: unknown }
   | { kind: "renew-lease"; leaseId: string; input: unknown }
   | { kind: "complete-attempt"; attemptId: string; input: unknown }

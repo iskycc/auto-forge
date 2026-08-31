@@ -40,6 +40,7 @@ import type {
   JarObjectStorePort,
   ProjectStructureRepository,
   RunBatchRepository,
+  RunnerLiveCapacity,
   RunnerGroupRepository,
   RunnerRepository,
   SchedulingSnapshot,
@@ -50,6 +51,22 @@ const OFFLINE_AFTER_SECONDS = 45;
 const RUNNER_METRICS_THROTTLE_MS = 30_000;
 const MAXIMUM_SCHEDULING_WINDOW = 4_096;
 const MAXIMUM_CLASS_DATA_BYTES = 128 * 1_024 * 1_024;
+
+function mergeLiveCapacities(
+  target: Map<string, number>,
+  capacities: readonly RunnerLiveCapacity[],
+): void {
+  for (const capacity of capacities) target.set(capacity.runnerId, capacity.availableSlots);
+}
+
+function takeLiveCapacities(source: Map<string, number>): RunnerLiveCapacity[] {
+  const capacities = [...source].map(([runnerId, availableSlots]) => ({
+    runnerId,
+    availableSlots,
+  }));
+  source.clear();
+  return capacities;
+}
 
 export type CaseLogRerunLogTarget = {
   projectId: string;
@@ -62,7 +79,10 @@ export class RunBatchSchedulingService {
   private readonly lastRunnerMetricsAt = new Map<string, Date>();
   private readonly schedulingInFlight = new Map<
     string,
-    CoalescedOperation<{ batch: RunBatch; reserved: number }>
+    {
+      operation: CoalescedOperation<{ batch: RunBatch; reserved: number }>;
+      pendingLiveCapacities: Map<string, number>;
+    }
   >();
 
   constructor(
@@ -624,21 +644,35 @@ export class RunBatchSchedulingService {
     return (await this.scheduleWithCount(batchId)).batch;
   }
 
-  private async scheduleWithCount(batchId: string): Promise<{ batch: RunBatch; reserved: number }> {
+  private async scheduleWithCount(
+    batchId: string,
+    liveCapacities: readonly RunnerLiveCapacity[] = [],
+  ): Promise<{ batch: RunBatch; reserved: number }> {
     const existing = this.schedulingInFlight.get(batchId);
-    if (existing) return existing.requestAnotherPass();
-    const scheduling = new CoalescedOperation(() => this.scheduleBatch(batchId));
-    this.schedulingInFlight.set(batchId, scheduling);
+    if (existing) {
+      mergeLiveCapacities(existing.pendingLiveCapacities, liveCapacities);
+      return existing.operation.requestAnotherPass();
+    }
+    const pendingLiveCapacities = new Map<string, number>();
+    mergeLiveCapacities(pendingLiveCapacities, liveCapacities);
+    const scheduling = new CoalescedOperation(() =>
+      this.scheduleBatch(batchId, takeLiveCapacities(pendingLiveCapacities)),
+    );
+    const entry = { operation: scheduling, pendingLiveCapacities };
+    this.schedulingInFlight.set(batchId, entry);
     try {
       return await scheduling.result;
     } finally {
-      if (this.schedulingInFlight.get(batchId) === scheduling) {
+      if (this.schedulingInFlight.get(batchId) === entry) {
         this.schedulingInFlight.delete(batchId);
       }
     }
   }
 
-  private async scheduleBatch(batchId: string): Promise<{ batch: RunBatch; reserved: number }> {
+  private async scheduleBatch(
+    batchId: string,
+    liveCapacities: readonly RunnerLiveCapacity[],
+  ): Promise<{ batch: RunBatch; reserved: number }> {
     const now = this.clock.now();
     let reserved = 0;
     // 完成上报后的补位调度绝大多数时候无 run 可分配；单个索引探针短路，
@@ -743,9 +777,16 @@ export class RunBatchSchedulingService {
         suiteMaximumAssignments === undefined
           ? projectMaximumAssignments
           : Math.min(suiteMaximumAssignments, projectMaximumAssignments);
+      const liveAvailableSlotsByRunner = new Map(
+        liveCapacities.map((capacity) => [capacity.runnerId, capacity.availableSlots]),
+      );
+      const candidates = snapshot.candidates.map((candidate) => {
+        const liveAvailableSlots = liveAvailableSlotsByRunner.get(candidate.runner.id);
+        return liveAvailableSlots === undefined ? candidate : { ...candidate, liveAvailableSlots };
+      });
       const plan = scheduleExecutionRuns({
         runs: snapshot.queuedRuns,
-        candidates: snapshot.candidates.filter(
+        candidates: candidates.filter(
           ({ runner }) =>
             snapshot.batch.policy?.executor !== "testng-container" ||
             runner.capabilities.includes("executor:testng-container-v1"),
@@ -781,6 +822,7 @@ export class RunBatchSchedulingService {
           offlineBefore: offlineBefore(now),
           metricsFreshAfter: metricsFreshAfter(now, this.metricsMaximumAgeSeconds),
           scheduledAt: now.toISOString(),
+          ...(liveCapacities.length > 0 ? { runnerLiveCapacities: liveCapacities } : {}),
         });
         reserved = reservation.reserved;
         // 被并发调度轮抢占的决策没有创建 run_attempts，
@@ -904,20 +946,30 @@ export class RunBatchSchedulingService {
     return this.scheduleBatchIds(batchIds);
   }
 
-  async scheduleForRunner(runnerId: string, limit = 8): Promise<number> {
+  async scheduleForRunner(
+    runnerId: string,
+    limit = 8,
+    liveAvailableSlots?: number,
+  ): Promise<number> {
     const batchIds = await this.batches.listSchedulableBatchIdsForRunner(
       runnerId,
       limit,
       this.clock.now().toISOString(),
       this.priorityAgingIntervalMinutes,
     );
-    return this.scheduleBatchIds(batchIds);
+    return this.scheduleBatchIds(
+      batchIds,
+      liveAvailableSlots === undefined ? [] : [{ runnerId, availableSlots: liveAvailableSlots }],
+    );
   }
 
-  private async scheduleBatchIds(batchIds: string[]): Promise<number> {
+  private async scheduleBatchIds(
+    batchIds: string[],
+    liveCapacities: readonly RunnerLiveCapacity[] = [],
+  ): Promise<number> {
     let scheduled = 0;
     for (const batchId of batchIds) {
-      scheduled += (await this.scheduleWithCount(batchId)).reserved;
+      scheduled += (await this.scheduleWithCount(batchId, liveCapacities)).reserved;
     }
     return scheduled;
   }

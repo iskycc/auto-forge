@@ -4,7 +4,11 @@
  */
 export interface WorkDispatcher {
   scheduleBatch(batchId: string): Promise<unknown>;
-  scheduleForRunner(runnerId: string, batchLimit: number): Promise<number>;
+  scheduleForRunner(
+    runnerId: string,
+    batchLimit: number,
+    liveAvailableSlots?: number,
+  ): Promise<number>;
   appendAttemptLogChunks(input: unknown): Promise<unknown>;
   claimAssignments(input: unknown): Promise<unknown>;
   renewLease(input: unknown): Promise<unknown>;

@@ -71,6 +71,7 @@ import type {
   RunBatchRoundSummary,
   Runner,
   RunnerGroup,
+  SchedulingCandidate,
   SchedulingDecision,
   SchedulingEvent,
   SchedulingEventType,
@@ -1515,7 +1516,7 @@ export type AttemptRerunSource = {
 export type SchedulingSnapshot = {
   batch: RunBatch;
   queuedRuns: ExecutionRun[];
-  candidates: Array<{ runner: Runner; reservedSlots: number }>;
+  candidates: SchedulingCandidate[];
   runnerFailureIdsByRun: Record<string, string[]>;
   /** 每个 run 已使用的 Runner，按 attempt 顺序排列；用于重试轮询。 */
   runnerHistoryByRun?: Record<string, string[]>;
@@ -1528,6 +1529,11 @@ export type SchedulingSnapshot = {
   };
 };
 
+export type RunnerLiveCapacity = {
+  runnerId: string;
+  availableSlots: number;
+};
+
 export type ReserveSchedulingAssignmentsInput = {
   batchId: string;
   eventId?: string;
@@ -1537,6 +1543,8 @@ export type ReserveSchedulingAssignmentsInput = {
   offlineBefore: string;
   metricsFreshAfter: string;
   scheduledAt: string;
+  /** 仅来自已认证 Runner claim；仓储事务会再次与权威预留数取较保守值。 */
+  runnerLiveCapacities?: readonly RunnerLiveCapacity[];
 };
 
 /**
@@ -1629,7 +1637,11 @@ export type RunBatchDetailOverview = {
 /** 恢复与 Runner 生命周期路径只依赖这两个调度入口，不依赖具体服务实现。 */
 export interface RunBatchSchedulingPort {
   schedule(batchId: string): Promise<unknown>;
-  scheduleForRunner(runnerId: string, batchLimit?: number): Promise<unknown>;
+  scheduleForRunner(
+    runnerId: string,
+    batchLimit?: number,
+    liveAvailableSlots?: number,
+  ): Promise<unknown>;
 }
 
 export interface RunBatchRepository {

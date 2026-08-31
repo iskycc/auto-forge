@@ -21,6 +21,11 @@ export type SchedulingBlockReason =
 export type SchedulingCandidate = {
   runner: Runner;
   reservedSlots: number;
+  /**
+   * 最近一次已认证 claim 上报的本机实时空闲槽位。心跳中的 busySlots 最长会
+   * 落后一个心跳周期；claim 提示只覆盖容量计算，资源指标仍以心跳为准。
+   */
+  liveAvailableSlots?: number;
 };
 
 export type RunnerSchedulingEvaluation = {
@@ -169,7 +174,7 @@ export function evaluateRunnerForScheduling(
 ): RunnerSchedulingEvaluation {
   const reasons: SchedulingBlockReason[] = [];
   const runner = candidate.runner;
-  const occupiedSlots = Math.max(runner.busySlots, candidate.reservedSlots);
+  const occupiedSlots = occupiedRunnerSlots(candidate);
   const availableSlots = Math.max(0, runner.maxConcurrency - occupiedSlots);
   const metrics = runner.resourceSnapshot;
 
@@ -246,7 +251,7 @@ function schedulingScore(
 ): number {
   const metrics = candidate.runner.resourceSnapshot;
   if (!metrics) return 0;
-  const occupiedSlots = Math.max(candidate.runner.busySlots, candidate.reservedSlots);
+  const occupiedSlots = occupiedRunnerSlots(candidate);
   const capacityHeadroom =
     (candidate.runner.maxConcurrency - occupiedSlots) / candidate.runner.maxConcurrency;
   const cpuHeadroom = headroom(
@@ -262,6 +267,18 @@ function schedulingScore(
     100 *
       (0.4 * capacityHeadroom + 0.25 * cpuHeadroom + 0.2 * memoryHeadroom + 0.15 * loadHeadroom),
   );
+}
+
+function occupiedRunnerSlots(candidate: SchedulingCandidate): number {
+  const runner = candidate.runner;
+  const liveBusySlots =
+    candidate.liveAvailableSlots === undefined
+      ? runner.busySlots
+      : runner.maxConcurrency -
+        Math.min(runner.maxConcurrency, Math.max(0, candidate.liveAvailableSlots));
+  // 数据库中已预留但尚未被 Agent 启动的 assignment 也必须占槽，实时提示不能
+  // 越过权威预留；它只用于消除已完成任务仍残留在心跳 busySlots 中的假占用。
+  return Math.max(liveBusySlots, candidate.reservedSlots);
 }
 
 function headroom(value: number, maximum: number): number {

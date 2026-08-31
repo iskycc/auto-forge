@@ -100,6 +100,18 @@ async function createSqliteHarness(): Promise<RefillHarness> {
   };
 }
 
+async function insertQueuedRun(harness: RefillHarness, batchId: string): Promise<string> {
+  const runId = randomUUID();
+  await harness.rawQuery(
+    `INSERT INTO execution_runs
+       (id, batch_id, case_definition_id, case_version, display_name, class_name, status,
+        attempt_count, created_at, updated_at)
+     VALUES (?, ?, ?, 1, 'Queued refill', 'com.example.QueuedRefill', 'queued', 0, ?, ?)`,
+    [runId, batchId, `case-${runId}`, "2026-08-10T00:00:00.000Z", "2026-08-10T00:00:00.000Z"],
+  );
+  return runId;
+}
+
 function schedulingRefillCases(createHarness: () => Promise<RefillHarness>): void {
   it("persists each round concurrency and records a dynamic transition event atomically", async () => {
     const harness = await createHarness();
@@ -509,6 +521,7 @@ function schedulingRefillCases(createHarness: () => Promise<RefillHarness>): voi
   it("keeps delayed batches out of every schedulable view until their planned start", async () => {
     const harness = await createHarness();
     try {
+      await insertQueuedRun(harness, harness.batchQueuedId);
       await harness.rawQuery("UPDATE run_batches SET scheduled_for = ? WHERE id = ?", [
         "2026-08-10T00:15:00.000Z",
         harness.batchQueuedId,
@@ -598,6 +611,8 @@ function schedulingRefillCases(createHarness: () => Promise<RefillHarness>): voi
   it("lists running batches as schedulable alongside queued ones", async () => {
     const harness = await createHarness();
     try {
+      await insertQueuedRun(harness, harness.batchRunningId);
+      await insertQueuedRun(harness, harness.batchQueuedId);
       const ids = await harness.batches.listSchedulableBatchIds(10, "2026-08-10T00:10:00.000Z");
       expect(ids).toContain(harness.batchRunningId);
       expect(ids).toContain(harness.batchQueuedId);
@@ -611,6 +626,7 @@ function schedulingRefillCases(createHarness: () => Promise<RefillHarness>): voi
   it("lists running batches as schedulable for a selected runner", async () => {
     const harness = await createHarness();
     try {
+      await insertQueuedRun(harness, harness.batchRunningId);
       const ids = await harness.batches.listSchedulableBatchIdsForRunner(
         harness.runnerId,
         10,
@@ -618,6 +634,31 @@ function schedulingRefillCases(createHarness: () => Promise<RefillHarness>): voi
       );
       expect(ids).toContain(harness.batchRunningId);
       expect(ids).not.toContain(harness.batchSucceededId);
+    } finally {
+      await harness.dispose();
+      await cleanupTemporaryDirectories();
+    }
+  });
+
+  it("does not let an active batch without queued work consume a Runner scan limit", async () => {
+    const harness = await createHarness();
+    try {
+      await insertQueuedRun(harness, harness.batchQueuedId);
+      await harness.rawQuery("INSERT INTO run_batch_runners (batch_id, runner_id) VALUES (?, ?)", [
+        harness.batchQueuedId,
+        harness.runnerId,
+      ]);
+      await harness.rawQuery("UPDATE run_batches SET priority = 100 WHERE id = ?", [
+        harness.batchRunningId,
+      ]);
+
+      await expect(
+        harness.batches.listSchedulableBatchIdsForRunner(
+          harness.runnerId,
+          1,
+          "2026-08-10T00:10:00.000Z",
+        ),
+      ).resolves.toEqual([harness.batchQueuedId]);
     } finally {
       await harness.dispose();
       await cleanupTemporaryDirectories();
@@ -665,7 +706,7 @@ function schedulingRefillCases(createHarness: () => Promise<RefillHarness>): voi
     }
   });
 
-  it("reports batchClosed per completion and keeps the batch schedulable until the last run", async () => {
+  it("reports batchClosed per completion without treating only-in-flight work as refillable", async () => {
     const harness = await createHarness();
     const { completion } = harness;
     try {
@@ -688,10 +729,10 @@ function schedulingRefillCases(createHarness: () => Promise<RefillHarness>): voi
       expect(first.disposition).toBe("accepted");
       expect(first.batchId).toBe(completion.batchId);
       expect(first.batchClosed).toBe(false);
-      // 还有一个 run 在途/待调度：批次必须继续出现在可调度列表中，空闲槽立即补新任务。
+      // 另一个 run 已经在途，没有 queued run 时不应占用 Runner 的有限批次扫描窗口。
       expect(
         await harness.batches.listSchedulableBatchIds(10, "2026-08-10T00:06:00.000Z"),
-      ).toContain(completion.batchId);
+      ).not.toContain(completion.batchId);
 
       const last = await harness.executions.completeAttempt({
         runnerId: harness.runnerId,

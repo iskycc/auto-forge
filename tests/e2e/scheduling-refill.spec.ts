@@ -16,7 +16,8 @@ import { browserJson, ensureAdministrator } from "./support/session";
  * - 首轮仍有用例运行时，失败用例可立即进入第二次 attempt 并占用刚释放的槽位；
  * - 完成响应携带 batchId，且仅最后一个用例完成时 batchClosed 为 true；
  * - 批次终态后不再派发新任务。
- * 全程在批次创建后不再发送心跳，确保补槽只能来自完成触发，而非心跳调度。
+ * 初始领取后仅发送一次“已满载”心跳，此后不再心跳；补槽必须由实时 claim
+ * 容量纠正旧心跳，而不能等待下一轮心跳调度。
  */
 
 const caseNames = ["RefillCaseA", "RefillCaseB", "RefillCaseC", "RefillCaseD", "RefillCaseE"];
@@ -239,7 +240,7 @@ test("completion immediately refills free runner slots without waiting for the w
   expect(registration.status()).toBe(201);
   const identity = (await registration.json()) as RunnerIdentity;
 
-  // 仅一次心跳让执行机上线可选；此后不再心跳，补槽只能来自完成触发。
+  // 首次心跳让执行机上线可选；领取后会再写一次满载心跳来复现旧容量窗口。
   const heartbeat = await page.request.post(
     `/api/v1/runner-agents/${encodeURIComponent(identity.runnerId)}/heartbeat`,
     {
@@ -280,6 +281,32 @@ test("completion immediately refills free runner slots without waiting for the w
   const initial = await claimOnce(page, identity, 2);
   expect(initial).toHaveLength(2);
   await uploadAttemptLog(page, identity, initial[0]!);
+  // 复现真实高并发窗口：执行机占满后心跳将 busySlots=2 写入控制面；随后一个
+  // attempt 完成时，这个心跳值仍然是旧的，补槽必须使用下一次 claim 的实时
+  // availableSlots，而不能等待下一轮心跳覆盖。
+  const saturatedHeartbeat = await page.request.post(
+    `/api/v1/runner-agents/${encodeURIComponent(identity.runnerId)}/heartbeat`,
+    {
+      headers: runnerHeaders(identity),
+      data: {
+        schemaVersion: 1,
+        busySlots: 2,
+        labels: ["linux", "java", "testng"],
+        capabilities: ["executor:testng-v1", "isolation:cgroup-v2", "java:21.0.8", "testng:7.11.0"],
+        maxConcurrency: 2,
+        agentVersion: "0.2.0",
+        terminalEnabled: false,
+        resourceSnapshot: {
+          cpuUtilizationPercent: 10,
+          memoryUtilizationPercent: 20,
+          loadAverage1m: 0.1,
+          logicalCpuCount: 4,
+          observedAt: new Date().toISOString(),
+        },
+      },
+    },
+  );
+  expect(saturatedHeartbeat.status()).toBe(200);
   // 没有空闲槽时领不到新任务。
   await expectNoAssignment(page, identity);
 

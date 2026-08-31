@@ -841,6 +841,11 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
       `SELECT id FROM run_batches
        WHERE status IN ('queued','dispatching','running') AND cancel_requested_at IS NULL
          AND scheduled_for <= $1
+         AND EXISTS (
+           SELECT 1 FROM execution_runs run
+           WHERE run.batch_id = run_batches.id
+             AND run.status = 'queued' AND run.held_round = 0
+         )
        ORDER BY priority + LEAST(100, GREATEST(0, FLOOR(
          EXTRACT(EPOCH FROM ($1::timestamptz-scheduled_for::timestamptz)) / 60 / $2
        ))) DESC, scheduled_for, id LIMIT $3`,
@@ -860,6 +865,11 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
       `SELECT b.id FROM run_batches b JOIN run_batch_runners br ON br.batch_id=b.id
        WHERE br.runner_id=$1 AND b.status IN ('queued','dispatching','running')
          AND b.cancel_requested_at IS NULL AND b.scheduled_for <= $2
+         AND EXISTS (
+           SELECT 1 FROM execution_runs run
+           WHERE run.batch_id = b.id
+             AND run.status = 'queued' AND run.held_round = 0
+         )
        ORDER BY b.priority + LEAST(100, GREATEST(0, FLOOR(
          EXTRACT(EPOCH FROM ($2::timestamptz-b.scheduled_for::timestamptz)) / 60 / $3
        ))) DESC, b.scheduled_for, b.id LIMIT $4`,
@@ -1242,6 +1252,12 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
                   .groupBy(pgRunAttempts.runnerId)
               ).map((row) => [row.runnerId, row.value]),
             );
+      const liveAvailableSlotsByRunner = new Map(
+        (input.runnerLiveCapacities ?? []).map((capacity) => [
+          capacity.runnerId,
+          capacity.availableSlots,
+        ]),
+      );
 
       // 决策过滤完全在内存中按序进行（槽位扣减、运行机资格与资源评估），
       // 只有被接受的决策进入后续批量写入；单事务内每类写入各一条语句。
@@ -1255,10 +1271,12 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
         const runner = mapStoredRunner(runnerRow, input.offlineBefore);
         if (!assessRunnerCompatibility(runner).compatible) continue;
         if (!supportsProjectAdapterRuntime(runner.capabilities, adapterRuntime)) continue;
+        const liveAvailableSlots = liveAvailableSlotsByRunner.get(decision.runnerId);
         const evaluation = evaluateRunnerForScheduling(
           {
             runner,
             reservedSlots: reservations.get(decision.runnerId) ?? 0,
+            ...(liveAvailableSlots === undefined ? {} : { liveAvailableSlots }),
           },
           input.thresholds,
           input.metricsFreshAfter,

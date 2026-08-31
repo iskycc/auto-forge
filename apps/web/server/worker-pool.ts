@@ -62,11 +62,16 @@ export class WorkerPool implements WorkDispatcher {
     });
   }
 
-  async scheduleForRunner(runnerId: string, batchLimit: number): Promise<number> {
+  async scheduleForRunner(
+    runnerId: string,
+    batchLimit: number,
+    liveAvailableSlots?: number,
+  ): Promise<number> {
     return (await this.keyedControlLane(`runner:${runnerId}`).dispatch({
       kind: "schedule-runner",
       runnerId,
       batchLimit,
+      ...(liveAvailableSlots === undefined ? {} : { liveAvailableSlots }),
     })) as number;
   }
 

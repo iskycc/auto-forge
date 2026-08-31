@@ -82,11 +82,15 @@ export class ExecutionControlService {
         "领取执行任务前必须配置用于保护租约凭据的平台主密钥。",
       );
     }
-    const now = this.clock.now();
-    await this.recoverExpiredAttempts(now);
+    const recoveryNow = this.clock.now();
+    await this.recoverExpiredAttempts(recoveryNow);
     // 同一 claim 请求内完成“回收 -> 重调度 -> 领取”，避免等待下一次
     // heartbeat。每次 claim 都补调度，上次调度失败后也能幂等恢复。
     await this.scheduleForRunner(runnerId, input.availableSlots);
+    // 调度刚创建的 assignment.availableAt 使用调度事务自己的当前时间。claim
+    // 必须在调度完成后重新取时钟；复用调度前时间会让新 assignment 短暂落在
+    // “未来”，本次领取返回空并触发最长 20 秒退避。
+    const claimAt = this.clock.now();
     const leaseSeeds = Array.from({ length: input.availableSlots }, () => {
       const id = this.ids.next();
       const token = this.credentials.issue();
@@ -110,8 +114,8 @@ export class ExecutionControlService {
         tokenHash: seed.tokenHash,
         tokenEncrypted: seed.tokenEncrypted,
       })),
-      now: now.toISOString(),
-      leaseExpiresAt: new Date(now.getTime() + LEASE_DURATION_MS).toISOString(),
+      now: claimAt.toISOString(),
+      leaseExpiresAt: new Date(claimAt.getTime() + LEASE_DURATION_MS).toISOString(),
     });
     // assignment DTO 不携带 batchId/executionRunId，逐条反查调度上下文后写入领取事件。
     if (claimed.length > 0) {
@@ -568,7 +572,7 @@ export class ExecutionControlService {
       return;
     }
     const batchLimit = Math.min(8, Math.max(1, availableSlots));
-    const scheduling = this.scheduling.scheduleForRunner(runnerId, batchLimit);
+    const scheduling = this.scheduling.scheduleForRunner(runnerId, batchLimit, availableSlots);
     this.runnerSchedulingInFlight.set(runnerId, scheduling);
     try {
       await scheduling;

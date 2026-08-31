@@ -225,6 +225,48 @@ describe("dynamic execution scheduler", () => {
     ]);
   });
 
+  it("uses authenticated claim capacity without bypassing database reservations", () => {
+    const staleHeartbeat = runner("runner-live", {
+      cpu: 10,
+      memory: 20,
+      load: 0.1,
+      concurrency: 2,
+    });
+    staleHeartbeat.busySlots = 2;
+
+    const refill = scheduleExecutionRuns({
+      runs: [run("run-1")],
+      candidates: [
+        {
+          runner: staleHeartbeat,
+          reservedSlots: 1,
+          liveAvailableSlots: 1,
+        },
+      ],
+      thresholds,
+      metricsFreshAfter: freshAfter,
+    });
+    const reserved = scheduleExecutionRuns({
+      runs: [run("run-1")],
+      candidates: [
+        {
+          runner: staleHeartbeat,
+          reservedSlots: 2,
+          liveAvailableSlots: 1,
+        },
+      ],
+      thresholds,
+      metricsFreshAfter: freshAfter,
+    });
+
+    expect(refill.decisions).toEqual([
+      expect.objectContaining({ executionRunId: "run-1", runnerId: "runner-live" }),
+    ]);
+    expect(refill.evaluations[0]?.availableSlots).toBe(1);
+    expect(reserved.decisions).toEqual([]);
+    expect(reserved.evaluations[0]?.blockReasons).toContain("capacity_exhausted");
+  });
+
   it("explains incompatible Runner capabilities without assigning work", () => {
     const incompatible = runner("runner-incompatible", {
       cpu: 10,

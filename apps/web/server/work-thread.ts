@@ -98,7 +98,11 @@ async function execute(task: WorkTask): Promise<unknown> {
     case "schedule-batch":
       return schedulingService().schedule(task.batchId);
     case "schedule-runner":
-      return schedulingService().scheduleForRunner(task.runnerId, task.batchLimit);
+      return schedulingService().scheduleForRunner(
+        task.runnerId,
+        task.batchLimit,
+        task.liveAvailableSlots,
+      );
     case "claim-assignments":
       return executionRepository().claim(
         task.input as Parameters<ExecutionControlRepository["claim"]>[0],

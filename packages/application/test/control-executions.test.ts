@@ -148,7 +148,7 @@ describe("Runner execution compatibility", () => {
       closedBatchIds: ["batch-closed", "batch-foreign"],
     });
     expect(executions.claim).toHaveBeenCalledOnce();
-    expect(scheduling.scheduleForRunner).toHaveBeenCalledWith("runner-no-cgroup", 1);
+    expect(scheduling.scheduleForRunner).toHaveBeenCalledWith("runner-no-cgroup", 1, 1);
   });
 
   it("writes scheduling events for attempts recovered before claiming", async () => {
@@ -225,7 +225,7 @@ describe("Runner execution compatibility", () => {
     });
 
     expect(appended).toHaveLength(1);
-    expect(scheduling.scheduleForRunner).toHaveBeenCalledWith("runner-1", 1);
+    expect(scheduling.scheduleForRunner).toHaveBeenCalledWith("runner-1", 1, 1);
     expect(appended[0]).toEqual([
       expect.objectContaining({
         batchId: "batch-1",
@@ -249,6 +249,73 @@ describe("Runner execution compatibility", () => {
 });
 
 describe("high-concurrency execution control", () => {
+  it("captures claim time after refill so newly scheduled assignments are immediately eligible", async () => {
+    const claim = vi.fn().mockResolvedValue([]);
+    const executions = {
+      recoverExpired: vi.fn().mockResolvedValue([]),
+      claim,
+    } as unknown as ExecutionControlRepository;
+    const runners = {
+      findByCredentialHash: vi.fn().mockResolvedValue({
+        id: "runner-refill-clock",
+        name: "Runner Refill Clock",
+        state: "online",
+        os: "linux",
+        architecture: "amd64",
+        agentVersion: "0.2.2",
+        protocolVersion: 1,
+        labels: [],
+        capabilities: ["executor:testng-v1", "java:21.0.8", "testng:7.11.0"],
+        maxConcurrency: 1,
+        busySlots: 0,
+        lastSeenAt: "2026-08-09T00:00:00.000Z",
+        terminalEnabled: false,
+        createdAt: "2026-08-09T00:00:00.000Z",
+        updatedAt: "2026-08-09T00:00:00.000Z",
+      }),
+    } as unknown as RunnerRepository;
+    const scheduling = schedulingFake();
+    const now = vi
+      .fn()
+      .mockReturnValueOnce(new Date("2026-08-09T00:00:00.000Z"))
+      .mockReturnValue(new Date("2026-08-09T00:00:00.100Z"));
+    const service = new ExecutionControlService(
+      executions,
+      runners,
+      {
+        issue: vi.fn(() => "l".repeat(32)),
+        issueBootstrapToken: vi.fn(),
+        hash: (value) => `hash:${value}`,
+        verifyBootstrapToken: vi.fn(),
+      },
+      credentialCipherFake(),
+      {} as JarObjectStorePort,
+      { now },
+      { next: () => "generated-id" },
+      batchesRepositoryFake(),
+      scheduling,
+    );
+
+    await service.claim("runner-refill-clock", "credential", {
+      schemaVersion: 1,
+      requestId: "request-refill-clock",
+      availableSlots: 1,
+      labels: [],
+      capabilities: ["executor:testng-v1", "java:21.0.8", "testng:7.11.0"],
+      waitSeconds: 0,
+    });
+
+    expect(claim).toHaveBeenCalledWith(
+      expect.objectContaining({
+        now: "2026-08-09T00:00:00.100Z",
+        leaseExpiresAt: "2026-08-09T00:00:45.100Z",
+      }),
+    );
+    expect(vi.mocked(scheduling.scheduleForRunner).mock.invocationCallOrder[0]).toBeLessThan(
+      claim.mock.invocationCallOrder[0]!,
+    );
+  });
+
   it("coalesces concurrent Runner recovery and refill scans", async () => {
     let releaseScheduling!: () => void;
     const schedulingGate = new Promise<void>((resolve) => {
@@ -311,7 +378,7 @@ describe("high-concurrency execution control", () => {
     await expect(Promise.all(claims)).resolves.toHaveLength(100);
 
     expect(executions.recoverExpired).toHaveBeenCalledOnce();
-    expect(scheduling.scheduleForRunner).toHaveBeenCalledWith("runner-concurrent", 8);
+    expect(scheduling.scheduleForRunner).toHaveBeenCalledWith("runner-concurrent", 8, 500);
     expect(executions.claim).toHaveBeenCalledTimes(100);
   });
 

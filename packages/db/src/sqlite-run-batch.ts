@@ -830,6 +830,11 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
           `SELECT id FROM run_batches
            WHERE status IN ('queued','dispatching','running') AND cancel_requested_at IS NULL
              AND scheduled_for <= ?
+             AND EXISTS (
+               SELECT 1 FROM execution_runs run
+               WHERE run.batch_id = run_batches.id
+                 AND run.status = 'queued' AND run.held_round = 0
+             )
            ORDER BY priority + MIN(100, MAX(0, CAST(
              (julianday(?) - julianday(scheduled_for)) * 1440 / ? AS INTEGER
            ))) DESC, scheduled_for, id LIMIT ?`,
@@ -850,6 +855,11 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
           `SELECT b.id FROM run_batches b JOIN run_batch_runners br ON br.batch_id=b.id
            WHERE br.runner_id=? AND b.status IN ('queued','dispatching','running')
              AND b.cancel_requested_at IS NULL AND b.scheduled_for <= ?
+             AND EXISTS (
+               SELECT 1 FROM execution_runs run
+               WHERE run.batch_id = b.id
+                 AND run.status = 'queued' AND run.held_round = 0
+             )
            ORDER BY b.priority + MIN(100, MAX(0, CAST(
              (julianday(?) - julianday(b.scheduled_for)) * 1440 / ? AS INTEGER
            ))) DESC, b.scheduled_for, b.id LIMIT ?`,
@@ -1132,6 +1142,12 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
               .all();
       const runnerById = new Map(runnerRows.map((runner) => [runner.id, runner]));
       const reservations = activeReservations(this.handle, decisionRunnerIds);
+      const liveAvailableSlotsByRunner = new Map(
+        (input.runnerLiveCapacities ?? []).map((capacity) => [
+          capacity.runnerId,
+          capacity.availableSlots,
+        ]),
+      );
       const decisionRunIds = input.decisions.map((decision) => decision.executionRunId);
       const executionInputRows = batchesOf(decisionRunIds, RELATIONAL_ID_QUERY_BATCH_SIZE).flatMap(
         (ids) =>
@@ -1175,10 +1191,12 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
         const runner = mapStoredRunner(runnerRow, input.offlineBefore);
         if (!assessRunnerCompatibility(runner).compatible) continue;
         if (!supportsProjectAdapterRuntime(runner.capabilities, adapterRuntime)) continue;
+        const liveAvailableSlots = liveAvailableSlotsByRunner.get(decision.runnerId);
         const evaluation = evaluateRunnerForScheduling(
           {
             runner,
             reservedSlots: reservations.get(decision.runnerId) ?? 0,
+            ...(liveAvailableSlots === undefined ? {} : { liveAvailableSlots }),
           },
           input.thresholds,
           input.metricsFreshAfter,

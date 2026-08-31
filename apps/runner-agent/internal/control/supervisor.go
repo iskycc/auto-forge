@@ -46,6 +46,7 @@ type attemptSupervisor struct {
 	mutex         sync.Mutex
 	cancellations map[string]context.CancelFunc
 	claimCancel   context.CancelFunc
+	claimWake     chan struct{}
 	runExecution  func(context.Context, executor.Spec, executor.RunOptions) (executor.Result, error)
 }
 
@@ -58,6 +59,7 @@ func newAttemptSupervisor(client *Client, identity Identity, configuration confi
 		batches:       newBatchRegistry(configuration.DataDirectory),
 		diagnostics:   diagnostics,
 		cancellations: make(map[string]context.CancelFunc),
+		claimWake:     make(chan struct{}, 1),
 		runExecution:  executor.Run,
 	}
 }
@@ -126,7 +128,11 @@ func (supervisor *attemptSupervisor) BeginDrain() {
 // SetDraining pauses or resumes assignment claims without destroying the claim
 // goroutine. Existing attempts continue renewing their leases while drained.
 func (supervisor *attemptSupervisor) SetDraining(draining bool) bool {
-	return supervisor.draining.Swap(draining) != draining
+	changed := supervisor.draining.Swap(draining) != draining
+	if changed && !draining {
+		supervisor.signalClaimLoop()
+	}
+	return changed
 }
 
 func (supervisor *attemptSupervisor) UpdateIdentity(identity Identity) {
@@ -183,7 +189,7 @@ func (supervisor *attemptSupervisor) claimLoop(ctx context.Context) {
 		}
 		availableSlots := supervisor.configuration.MaxConcurrent - supervisor.BusySlots()
 		if availableSlots <= 0 || !supervisor.configuration.CanClaimExecutions() {
-			if !waitFor(ctx, time.Second) {
+			if !supervisor.waitForClaimOpportunity(ctx, time.Second) {
 				return
 			}
 			continue
@@ -214,7 +220,7 @@ func (supervisor *attemptSupervisor) claimLoop(ctx context.Context) {
 				fmt.Fprintf(supervisor.diagnostics, "assignment %s rejected locally: %v\n", claimed.Assignment.AssignmentID, err)
 			}
 		}
-		if len(response.Assignments) == 0 && !waitFor(ctx, time.Duration(response.RetryAfterMs)*time.Millisecond) {
+		if len(response.Assignments) == 0 && !supervisor.waitForClaimOpportunity(ctx, time.Duration(response.RetryAfterMs)*time.Millisecond) {
 			return
 		}
 	}
@@ -258,7 +264,7 @@ func (supervisor *attemptSupervisor) startAttempt(claimed ClaimedAssignment) err
 	supervisor.waitGroup.Add(1)
 	go func() {
 		defer supervisor.waitGroup.Done()
-		defer supervisor.busy.Add(-1)
+		defer supervisor.releaseBusySlot()
 		defer func() {
 			supervisor.mutex.Lock()
 			delete(supervisor.cancellations, attemptID)
@@ -268,6 +274,37 @@ func (supervisor *attemptSupervisor) startAttempt(claimed ClaimedAssignment) err
 		supervisor.executeAttempt(executionContext, cancel, state)
 	}()
 	return nil
+}
+
+func (supervisor *attemptSupervisor) releaseBusySlot() {
+	supervisor.busy.Add(-1)
+	supervisor.signalClaimLoop()
+}
+
+func (supervisor *attemptSupervisor) signalClaimLoop() {
+	if supervisor.claimWake == nil {
+		return
+	}
+	select {
+	case supervisor.claimWake <- struct{}{}:
+	default:
+	}
+}
+
+func (supervisor *attemptSupervisor) waitForClaimOpportunity(ctx context.Context, duration time.Duration) bool {
+	if supervisor.claimWake == nil {
+		return waitFor(ctx, duration)
+	}
+	timer := time.NewTimer(duration)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
+	case <-supervisor.claimWake:
+		return true
+	}
 }
 
 func (supervisor *attemptSupervisor) executeAttempt(ctx context.Context, cancel context.CancelFunc, state attemptState) {
@@ -412,6 +449,17 @@ func (supervisor *attemptSupervisor) runTestNG(
 			liveLogUploadInterval,
 		)
 	}()
+	streamedWatermarks := logWatermark{Stdout: -1, Stderr: -1, Agent: -1}
+	liveLogUploadStopped := false
+	stopLiveLogs := func() {
+		if liveLogUploadStopped {
+			return
+		}
+		liveLogUploadStopped = true
+		stopLiveLogUpload()
+		streamedWatermarks = <-liveLogWatermarks
+	}
+	defer stopLiveLogs()
 	result, runErr := supervisor.runExecution(ctx, specification, executor.RunOptions{
 		DataDirectory: supervisor.configuration.DataDirectory,
 		KeepWorkspace: true,
@@ -452,8 +500,6 @@ func (supervisor *attemptSupervisor) runTestNG(
 		},
 	})
 	processLogErr := processLogs.Close()
-	stopLiveLogUpload()
-	streamedWatermarks := <-liveLogWatermarks
 	if closeErr := errors.Join(
 		processLogErr,
 		collector.Close(time.Now().UTC().Format(time.RFC3339Nano)),
@@ -507,6 +553,9 @@ func (supervisor *attemptSupervisor) runTestNG(
 			artifacts = discovered
 		}
 	}
+	// 保持实时上传协程运行到报告解析和产物扫描结束，利用这些本地 I/O 时间
+	// 提前排空日志；最终仍执行一次权威 flush，完成契约与断线重传语义不变。
+	stopLiveLogs()
 	watermarks, uploadErr := supervisor.flushAttemptLogs(
 		ctx,
 		claimed,

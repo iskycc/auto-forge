@@ -4,6 +4,58 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## 1.7.0 - 2026-08-31
+
+### Changed
+
+- Runner claims now carry their authenticated, live free-slot count through the Web worker boundary,
+  scheduler and SQLite/PostgreSQL reservation transaction. This corrects heartbeat capacity that can
+  remain stale for one heartbeat interval while retaining active database reservations as the hard
+  lower bound, so the optimization cannot oversell a Runner.
+- Finishing a local attempt now wakes the Agent claim loop immediately instead of waiting for an
+  outstanding empty-claim delay. A claim also captures its eligibility time after refill scheduling,
+  preventing a newly created assignment from appearing a few milliseconds in the future.
+- Schedulable-batch scans now skip active batches that have only in-flight work and no eligible queued
+  run, so a high-priority busy batch cannot consume the bounded scan window and hide work that can
+  refill a Runner.
+- The existing 500 ms Agent log-upload goroutine remains active while TestNG reports and artifacts are
+  collected. This drains the log tail in parallel with local I/O while preserving the authoritative
+  final flush, continuous watermarks and restart-safe spool semantics.
+
+### Tests
+
+- Added scheduler, application, work-dispatch and Agent tests for stale-heartbeat correction,
+  reservation authority, post-scheduling claim time and immediate wake from a 30-second server retry.
+- Added shared SQLite/PostgreSQL repository coverage for bounded batch scans and real PostgreSQL
+  platform contracts.
+- Extended Playwright recovery and refill coverage to reproduce a saturated heartbeat without sending
+  another heartbeat; the complete 29-test Lite E2E suite passes.
+
+### Database and persisted configuration
+
+- No migration or persisted-configuration change is required. Existing execution-run and assignment
+  indexes support the new bounded eligibility probes.
+
+### Compatibility
+
+- Runner Protocol v1 is unchanged. Existing Agents remain compatible, but upgrading to the embedded
+  v1.7.0 Agent is required for completion-triggered claim wake-up; older Agents retain their bounded
+  polling behavior.
+- Lite and Full use the same live-capacity and reservation rules. Web and Full workers should be
+  upgraded together so the optional live-capacity hint is retained across the work-thread boundary.
+
+### Offline assets
+
+- No dependency, remote asset or runtime network requirement was added. Release images remain
+  Docker-native `.docker.tar` archives and include both static Agent architectures.
+
+### Known limitations
+
+- Configured concurrency remains a safe upper bound rather than a guaranteed occupancy target. CPU,
+  memory and load thresholds, stale resource metrics, recovery barriers and an exhausted runnable
+  queue can still keep observed utilization below 80%; this release removes the known heartbeat and
+  claim-backoff gaps without bypassing those protections.
+
 ## 1.6.8 - 2026-08-30
 
 ### Added

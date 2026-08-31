@@ -211,6 +211,79 @@ func TestSupervisorResumesClaimsAfterDrainIsCleared(t *testing.T) {
 	}
 }
 
+func TestSupervisorReleasedSlotWakesClaimLoopBeforeServerRetryDelay(t *testing.T) {
+	claims := make(chan struct{}, 4)
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/api/v1/runner-agents/runner-1/claims" {
+			http.NotFound(writer, request)
+			return
+		}
+		var claim claimRequest
+		if err := json.NewDecoder(request.Body).Decode(&claim); err != nil {
+			http.Error(writer, err.Error(), http.StatusBadRequest)
+			return
+		}
+		claims <- struct{}{}
+		writer.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(writer).Encode(ClaimResponse{
+			SchemaVersion: 1,
+			RequestID:     claim.RequestID,
+			RetryAfterMs:  30_000,
+		})
+	}))
+	defer server.Close()
+
+	configuration := config.Config{
+		ServerURL:     mustParseURL(t, server.URL),
+		DataDirectory: t.TempDir(),
+		MaxConcurrent: 1,
+		Toolchain: config.ToolchainConfig{
+			JavaExecutable: "/bin/true",
+			Classpath:      []string{"testng.jar"},
+		},
+		Claim: config.ClaimConfig{MaximumBackoff: time.Second},
+	}
+	client, err := NewClient(configuration)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	supervisor := newAttemptSupervisor(
+		client,
+		Identity{RunnerID: "runner-1", Credential: "runner-credential-with-more-than-32-bytes"},
+		configuration,
+		io.Discard,
+	)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		supervisor.claimLoop(ctx)
+		close(done)
+	}()
+
+	select {
+	case <-claims:
+	case <-time.After(time.Second):
+		cancel()
+		t.Fatal("initial claim did not arrive")
+	}
+	// 模拟一个 attempt 完成：释放槽位必须中断服务端建议的 30 秒空闲等待。
+	supervisor.busy.Store(1)
+	supervisor.releaseBusySlot()
+	select {
+	case <-claims:
+	case <-time.After(time.Second):
+		cancel()
+		t.Fatal("released slot did not wake the claim loop")
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("claim loop did not stop after cancellation")
+	}
+}
+
 func TestStreamAttemptLogsUploadsWhileAttemptIsRunning(t *testing.T) {
 	uploaded := make(chan struct{}, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {

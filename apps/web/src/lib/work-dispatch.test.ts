@@ -18,13 +18,15 @@ describe("scheduling coalescing", () => {
     const scheduling = new CoalescingSchedulingPort(local, undefined);
 
     const first = scheduling.scheduleForRunner("runner-1", 8);
-    const second = scheduling.scheduleForRunner("runner-1", 8);
+    const second = scheduling.scheduleForRunner("runner-1", 8, 1);
     expect(first).toBe(second);
     expect(local.scheduleForRunner).toHaveBeenCalledOnce();
+    expect(local.scheduleForRunner).toHaveBeenNthCalledWith(1, "runner-1", 8, undefined);
 
     release();
     await Promise.all([first, second]);
     expect(local.scheduleForRunner).toHaveBeenCalledTimes(2);
+    expect(local.scheduleForRunner).toHaveBeenNthCalledWith(2, "runner-1", 8, 1);
     await scheduling.scheduleForRunner("runner-1", 8);
     expect(local.scheduleForRunner).toHaveBeenCalledTimes(3);
   });
