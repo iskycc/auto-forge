@@ -86,6 +86,10 @@ class-level/method-level `@Test` annotations through the Groovy AST, and updates
 - Existing `groups = [...]` syntax is preserved and updated as `groups`; it is never reported as
   missing or supplemented with a second singular `group` member. An annotation containing both
   spellings is rejected as ambiguous before any file is changed.
+- When an updated or already-correct annotation uses `TestCaseGroup`, the tool verifies imports
+  through the Groovy AST and adds the exact `import cotest.define.TestCaseGroup` declaration when
+  needed. An existing exact import, `import cotest.define.*`, or a source in package
+  `cotest.define` is left unchanged.
 
 The preferred level column is `人工等级`. Workbooks edited by other tools may instead use
 `人工分级`, `用例等级`, `用例级别`, `等级`, `级别`, `Case Level`, or `Level`; these names are also
@@ -100,16 +104,19 @@ file, that file is updated and staged once after the first class and again after
 The source root must therefore be inside a Git worktree. A case whose annotations already contain
 the correct level is not rewritten and does not trigger `git add`.
 
-Before any source write, a real run prints every graded case and every class-level/method-level
-`@Test` as `current group -> planned group`. Review the complete list, then enter `y` and press Enter
-at the confirmation prompt to proceed. Any other input, including EOF, cancels the run without
-changing or staging a file. When every group is already correct, the tool prints the list and exits
-without asking for confirmation.
+Before any source write, a real run prints every missing import plus every graded case and every
+class-level/method-level `@Test` as `current group -> planned group`. Review the complete list, then
+enter `y` and press Enter at the confirmation prompt to proceed. Any other input, including EOF,
+cancels the run without changing or staging a file. If a previous run already added every level but
+missed imports, rerunning the same command supplements those imports, confirms once, and runs
+`git add` after each affected case. When both groups and imports are already correct, the tool prints
+the list and exits without asking for confirmation.
 
-Use `--dry-run` to validate and report the planned annotation/file counts without writing. The tool
-plans and validates the complete workbook first; a missing file, class, `@Test` annotation, malformed
-Groovy file, ambiguous multiple level markers, or unsafe relative path stops the run before any source
-file is changed. Before a real run it also performs a dry-run `git add` check for every target file.
+Use `--dry-run` to validate and report the planned annotation/import/file counts without writing.
+The tool plans and validates the complete workbook first; a missing file, class, `@Test` annotation,
+malformed Groovy file, ambiguous multiple level markers, or unsafe relative path stops the run before
+any source file is changed. Before a real run it also performs a dry-run `git add` check for every
+target file.
 Source files are replaced atomically, and rerunning with the same workbook is idempotent. Parsing
 stops at Groovy's conversion phase and disables the `@Grab` transformation, so the source is never
 executed and Grape/Ivy dependency resolution is not triggered. `--dry-run` never changes or stages a

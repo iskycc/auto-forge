@@ -35,6 +35,7 @@ import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.codehaus.groovy.ast.ASTNode;
 import org.codehaus.groovy.ast.AnnotationNode;
 import org.codehaus.groovy.ast.ClassNode;
+import org.codehaus.groovy.ast.ImportNode;
 import org.codehaus.groovy.ast.MethodNode;
 import org.codehaus.groovy.ast.ModuleNode;
 import org.codehaus.groovy.ast.expr.Expression;
@@ -48,7 +49,7 @@ import org.codehaus.groovy.control.SourceUnit;
 
 /**
  * Applies L0/L1/L2 values from a case-analysis workbook to {@code group} members of Groovy
- * {@code @Test} annotations.
+ * {@code @Test} annotations and adds the required {@code cotest.define.TestCaseGroup} import.
  *
  * <p>The tool uses Groovy's conversion-phase AST. It never loads, links, initializes, or executes
  * the analyzed source classes, and it disables the {@code @Grab} global transformation. After
@@ -76,6 +77,10 @@ public final class ApplyGroovyCaseGroups {
   private static final String SINGULAR_GROUP_MEMBER = "group";
   private static final String PLURAL_GROUP_MEMBER = "groups";
   private static final String TEST_CASE_GROUP_NAME = "TestCaseGroup";
+  private static final String TEST_CASE_GROUP_PACKAGE = "cotest.define";
+  private static final String TEST_CASE_GROUP_CLASS =
+      TEST_CASE_GROUP_PACKAGE + "." + TEST_CASE_GROUP_NAME;
+  private static final String TEST_CASE_GROUP_IMPORT = "import " + TEST_CASE_GROUP_CLASS;
   private static final Set<String> SUPPORTED_LEVELS =
       Collections.unmodifiableSet(
           new LinkedHashSet<>(Arrays.asList("L0", "L1", "L2")));
@@ -102,6 +107,11 @@ public final class ApplyGroovyCaseGroups {
           report.updatedAnnotationCount,
           report.changedFileCount,
           report.unchangedAnnotationCount);
+      System.out.printf(
+          "%s %d missing %s import(s).%n",
+          options.dryRun ? "Would add" : "Added",
+          report.addedImportCount,
+          TEST_CASE_GROUP_CLASS);
       if (options.dryRun) {
         System.out.println("Dry run only; no Groovy source file was changed.");
       } else {
@@ -207,7 +217,7 @@ public final class ApplyGroovyCaseGroups {
           "Options:",
           "  --source DIR          Groovy source root (default: current directory)",
           "  --workbook FILE.xlsx  Reviewed workbook (default: DIR/normal-groovy-cases.xlsx)",
-          "  --dry-run             Print all planned groups without changing or staging files",
+          "  --dry-run             Print all planned groups/imports without changing files",
           "  -h, --help            Show this help",
           "",
           "Example:",
@@ -223,14 +233,14 @@ public final class ApplyGroovyCaseGroups {
       ValidationResult validation =
           validateAllAssignments(options.sourceRoot, assignments, assignmentsByFile);
       GitStager gitStager = null;
-      if (!options.dryRun && validation.report.updatedAnnotationCount > 0) {
+      if (!options.dryRun && validation.report.changedFileCount > 0) {
         gitStager = GitStager.open(options.sourceRoot, assignmentsByFile.keySet());
       }
-      printGroupPreviews(validation.casePreviews);
+      printPreviews(validation);
       if (options.dryRun) {
         return validation.report;
       }
-      if (validation.report.updatedAnnotationCount == 0) {
+      if (validation.report.changedFileCount == 0) {
         return validation.report;
       }
       if (!confirmApplication()) {
@@ -240,6 +250,7 @@ public final class ApplyGroovyCaseGroups {
       Set<Path> changedFiles = new LinkedHashSet<>();
       int updatedAnnotations = 0;
       int unchangedAnnotations = 0;
+      int addedImports = 0;
       int stagedCases = 0;
       for (CaseAssignment assignment : assignments) {
         Path sourceFile = resolveSourceFile(options.sourceRoot, assignment.relativePath);
@@ -258,6 +269,7 @@ public final class ApplyGroovyCaseGroups {
 
         updatedAnnotations += change.updatedAnnotationCount;
         unchangedAnnotations += change.unchangedAnnotationCount;
+        addedImports += change.addedImportCount;
         if (!change.changed()) {
           continue;
         }
@@ -285,6 +297,7 @@ public final class ApplyGroovyCaseGroups {
           changedFiles.size(),
           updatedAnnotations,
           unchangedAnnotations,
+          addedImports,
           stagedCases,
           false);
     }
@@ -297,6 +310,7 @@ public final class ApplyGroovyCaseGroups {
       List<String> validationErrors = new ArrayList<>();
       int updatedAnnotations = 0;
       int unchangedAnnotations = 0;
+      int addedImports = 0;
 
       for (Map.Entry<Path, List<CaseAssignment>> entry : assignmentsByFile.entrySet()) {
         Path sourceFile = resolveSourceFile(sourceRoot, entry.getKey());
@@ -324,6 +338,7 @@ public final class ApplyGroovyCaseGroups {
           changes.add(change);
           updatedAnnotations += change.updatedAnnotationCount;
           unchangedAnnotations += change.unchangedAnnotationCount;
+          addedImports += change.addedImportCount;
         } catch (GroupPlanningException error) {
           validationErrors.add(error.getMessage());
         }
@@ -337,19 +352,43 @@ public final class ApplyGroovyCaseGroups {
 
       int changedFiles = 0;
       List<CasePreview> casePreviews = new ArrayList<>();
+      List<ImportPreview> importPreviews = new ArrayList<>();
       for (FileChange change : changes) {
         if (change.changed()) {
           changedFiles++;
+        }
+        if (change.addedImportCount > 0) {
+          importPreviews.add(new ImportPreview(change.sourceFile));
         }
         casePreviews.addAll(change.casePreviews);
       }
       ApplyReport report =
           new ApplyReport(
-              assignments.size(), changedFiles, updatedAnnotations, unchangedAnnotations, 0, false);
-      return new ValidationResult(report, casePreviews);
+              assignments.size(),
+              changedFiles,
+              updatedAnnotations,
+              unchangedAnnotations,
+              addedImports,
+              0,
+              false);
+      return new ValidationResult(report, casePreviews, importPreviews);
     }
 
-    private static void printGroupPreviews(List<CasePreview> casePreviews) {
+    private static void printPreviews(ValidationResult validation) {
+      if (!validation.importPreviews.isEmpty()) {
+        System.out.printf(
+            "%nPlanned %s imports for %d Groovy file(s):%n",
+            TEST_CASE_GROUP_CLASS,
+            validation.importPreviews.size());
+        for (ImportPreview importPreview : validation.importPreviews) {
+          System.out.printf(
+              "  %s: <not imported> -> %s%n",
+              importPreview.sourceFile,
+              TEST_CASE_GROUP_IMPORT);
+        }
+      }
+
+      List<CasePreview> casePreviews = validation.casePreviews;
       System.out.printf("%nPlanned @Test group values for %d case(s):%n", casePreviews.size());
       for (int caseIndex = 0; caseIndex < casePreviews.size(); caseIndex++) {
         CasePreview casePreview = casePreviews.get(caseIndex);
@@ -375,7 +414,7 @@ public final class ApplyGroovyCaseGroups {
 
     private static boolean confirmApplication() throws IOException {
       System.out.print(
-          "Apply all group changes and run git add after each changed case? [y/N]: ");
+          "Apply all group/import changes and run git add after each changed case? [y/N]: ");
       System.out.flush();
       BufferedReader reader =
           new BufferedReader(new InputStreamReader(System.in, StandardCharsets.UTF_8));
@@ -879,6 +918,7 @@ public final class ApplyGroovyCaseGroups {
       List<CasePreview> casePreviews = new ArrayList<>();
       int updatedAnnotations = 0;
       int unchangedAnnotations = 0;
+      boolean requiresTestCaseGroupImport = false;
 
       for (CaseAssignment assignment : assignments) {
         ClassNode caseClass = findCaseClass(module, assignment);
@@ -892,6 +932,7 @@ public final class ApplyGroovyCaseGroups {
         for (AnnotationNode annotation : testAnnotations) {
           AnnotationPlan annotationPlan = planAnnotation(annotation, assignment);
           annotationPreviews.add(annotationPlan.preview);
+          requiresTestCaseGroupImport |= annotationPlan.requiresTestCaseGroupImport;
           if (annotationPlan.edit == null) {
             unchangedAnnotations++;
           } else {
@@ -903,6 +944,11 @@ public final class ApplyGroovyCaseGroups {
         casePreviews.add(new CasePreview(assignment, annotationPreviews));
       }
 
+      int addedImportCount = 0;
+      if (requiresTestCaseGroupImport && !hasAccessibleTestCaseGroupImport(module)) {
+        edits.add(addTestCaseGroupImport(module));
+        addedImportCount = 1;
+      }
       validateNonOverlapping(edits);
       String updatedSource = applyEdits(edits);
       return new FileChange(
@@ -911,6 +957,7 @@ public final class ApplyGroovyCaseGroups {
           updatedSource,
           updatedAnnotations,
           unchangedAnnotations,
+          addedImportCount,
           casePreviews);
     }
 
@@ -995,7 +1042,8 @@ public final class ApplyGroovyCaseGroups {
             groupMember.memberName,
             "<not set>",
             "[" + desiredGroup + "]",
-            edit);
+            edit,
+            true);
       }
       SourceRange groupRange = range(groupExpression, assignment, "group value");
       String currentGroup = source.substring(groupRange.start, groupRange.end);
@@ -1018,7 +1066,12 @@ public final class ApplyGroovyCaseGroups {
       String plannedGroup =
           edit == null ? currentGroup : applyEditWithinRange(groupRange, edit);
       return annotationPlan(
-          annotation, groupMember.memberName, currentGroup, plannedGroup, edit);
+          annotation,
+          groupMember.memberName,
+          currentGroup,
+          plannedGroup,
+          edit,
+          edit != null || containsUnqualifiedTestCaseGroup(groupExpression));
     }
 
     private AnnotationGroupMember findGroupMember(
@@ -1042,7 +1095,8 @@ public final class ApplyGroovyCaseGroups {
         String memberName,
         String currentGroup,
         String plannedGroup,
-        TextEdit edit) {
+        TextEdit edit,
+        boolean requiresTestCaseGroupImport) {
       AnnotationPreview preview =
           new AnnotationPreview(
               annotation.getLineNumber(),
@@ -1050,7 +1104,94 @@ public final class ApplyGroovyCaseGroups {
               compactPreview(currentGroup),
               compactPreview(plannedGroup),
               edit != null);
-      return new AnnotationPlan(edit, preview);
+      return new AnnotationPlan(edit, preview, requiresTestCaseGroupImport);
+    }
+
+    private static boolean containsUnqualifiedTestCaseGroup(Expression expression) {
+      if (expression instanceof ListExpression) {
+        for (Expression entry : ((ListExpression) expression).getExpressions()) {
+          if (containsUnqualifiedTestCaseGroup(entry)) {
+            return true;
+          }
+        }
+        return false;
+      }
+      if (!(expression instanceof PropertyExpression)) {
+        return false;
+      }
+      PropertyExpression property = (PropertyExpression) expression;
+      return TEST_CASE_GROUP_NAME.equals(property.getObjectExpression().getText());
+    }
+
+    private boolean hasAccessibleTestCaseGroupImport(ModuleNode module) {
+      if (TEST_CASE_GROUP_PACKAGE.equals(normalizePackageName(module.getPackageName()))) {
+        return true;
+      }
+      for (ImportNode importedClass : module.getImports()) {
+        String alias = importedClass.getAlias();
+        if (TEST_CASE_GROUP_CLASS.equals(importedClass.getClassName())
+            && (alias == null || alias.isEmpty() || TEST_CASE_GROUP_NAME.equals(alias))) {
+          return true;
+        }
+      }
+      for (ImportNode importedPackage : module.getStarImports()) {
+        if (TEST_CASE_GROUP_PACKAGE.equals(
+            normalizePackageName(importedPackage.getPackageName()))) {
+          return true;
+        }
+      }
+      return false;
+    }
+
+    private TextEdit addTestCaseGroupImport(ModuleNode module) {
+      int anchorLine = 0;
+      for (ImportNode importedNode : allImports(module)) {
+        anchorLine = Math.max(anchorLine, importedNode.getLastLineNumber());
+      }
+      if (anchorLine == 0 && module.getPackage() != null) {
+        anchorLine = module.getPackage().getLastLineNumber();
+      }
+      if (anchorLine == 0 && source.startsWith("#!")) {
+        anchorLine = 1;
+      }
+
+      int insertionOffset;
+      if (anchorLine > 0) {
+        insertionOffset = sourcePositions.offsetAfterLine(anchorLine);
+      } else if (!source.isEmpty() && source.charAt(0) == '\uFEFF') {
+        insertionOffset = 1;
+      } else {
+        insertionOffset = 0;
+      }
+      String lineSeparator = source.contains("\r\n") ? "\r\n" : "\n";
+      String prefix =
+          insertionOffset > 0 && source.charAt(insertionOffset - 1) != '\n'
+              ? lineSeparator
+              : "";
+      return new TextEdit(
+          insertionOffset,
+          insertionOffset,
+          prefix + TEST_CASE_GROUP_IMPORT + lineSeparator);
+    }
+
+    private static List<ImportNode> allImports(ModuleNode module) {
+      List<ImportNode> imports = new ArrayList<>();
+      imports.addAll(module.getImports());
+      imports.addAll(module.getStarImports());
+      imports.addAll(module.getStaticImports().values());
+      imports.addAll(module.getStaticStarImports().values());
+      return imports;
+    }
+
+    private static String normalizePackageName(String packageName) {
+      if (packageName == null) {
+        return "";
+      }
+      String normalized = packageName.trim();
+      while (normalized.endsWith(".")) {
+        normalized = normalized.substring(0, normalized.length() - 1);
+      }
+      return normalized;
     }
 
     private String applyEditWithinRange(SourceRange range, TextEdit edit) {
@@ -1238,6 +1379,13 @@ public final class ApplyGroovyCaseGroups {
       int offset = lineStarts.get(oneBasedLine - 1) + oneBasedColumn - 1;
       return offset <= source.length() ? offset : -1;
     }
+
+    private int offsetAfterLine(int oneBasedLine) {
+      if (oneBasedLine < 1 || oneBasedLine > lineStarts.size()) {
+        throw new IllegalArgumentException("Invalid AST line number");
+      }
+      return oneBasedLine < lineStarts.size() ? lineStarts.get(oneBasedLine) : source.length();
+    }
   }
 
   private static final class SourceRange {
@@ -1339,6 +1487,7 @@ public final class ApplyGroovyCaseGroups {
     private final String updatedSource;
     private final int updatedAnnotationCount;
     private final int unchangedAnnotationCount;
+    private final int addedImportCount;
     private final List<CasePreview> casePreviews;
 
     private FileChange(
@@ -1347,12 +1496,14 @@ public final class ApplyGroovyCaseGroups {
         String updatedSource,
         int updatedAnnotationCount,
         int unchangedAnnotationCount,
+        int addedImportCount,
         List<CasePreview> casePreviews) {
       this.sourceFile = sourceFile;
       this.originalSource = originalSource;
       this.updatedSource = updatedSource;
       this.updatedAnnotationCount = updatedAnnotationCount;
       this.unchangedAnnotationCount = unchangedAnnotationCount;
+      this.addedImportCount = addedImportCount;
       this.casePreviews = casePreviews;
     }
 
@@ -1364,10 +1515,23 @@ public final class ApplyGroovyCaseGroups {
   private static final class ValidationResult {
     private final ApplyReport report;
     private final List<CasePreview> casePreviews;
+    private final List<ImportPreview> importPreviews;
 
-    private ValidationResult(ApplyReport report, List<CasePreview> casePreviews) {
+    private ValidationResult(
+        ApplyReport report,
+        List<CasePreview> casePreviews,
+        List<ImportPreview> importPreviews) {
       this.report = report;
       this.casePreviews = casePreviews;
+      this.importPreviews = importPreviews;
+    }
+  }
+
+  private static final class ImportPreview {
+    private final Path sourceFile;
+
+    private ImportPreview(Path sourceFile) {
+      this.sourceFile = sourceFile;
     }
   }
 
@@ -1415,10 +1579,15 @@ public final class ApplyGroovyCaseGroups {
   private static final class AnnotationPlan {
     private final TextEdit edit;
     private final AnnotationPreview preview;
+    private final boolean requiresTestCaseGroupImport;
 
-    private AnnotationPlan(TextEdit edit, AnnotationPreview preview) {
+    private AnnotationPlan(
+        TextEdit edit,
+        AnnotationPreview preview,
+        boolean requiresTestCaseGroupImport) {
       this.edit = edit;
       this.preview = preview;
+      this.requiresTestCaseGroupImport = requiresTestCaseGroupImport;
     }
   }
 
@@ -1427,6 +1596,7 @@ public final class ApplyGroovyCaseGroups {
     private final int changedFileCount;
     private final int updatedAnnotationCount;
     private final int unchangedAnnotationCount;
+    private final int addedImportCount;
     private final int stagedCaseCount;
     private final boolean cancelled;
 
@@ -1435,12 +1605,14 @@ public final class ApplyGroovyCaseGroups {
         int changedFileCount,
         int updatedAnnotationCount,
         int unchangedAnnotationCount,
+        int addedImportCount,
         int stagedCaseCount,
         boolean cancelled) {
       this.caseCount = caseCount;
       this.changedFileCount = changedFileCount;
       this.updatedAnnotationCount = updatedAnnotationCount;
       this.unchangedAnnotationCount = unchangedAnnotationCount;
+      this.addedImportCount = addedImportCount;
       this.stagedCaseCount = stagedCaseCount;
       this.cancelled = cancelled;
     }
@@ -1451,6 +1623,7 @@ public final class ApplyGroovyCaseGroups {
           changedFileCount,
           updatedAnnotationCount,
           unchangedAnnotationCount,
+          addedImportCount,
           0,
           true);
     }

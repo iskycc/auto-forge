@@ -43,6 +43,8 @@ printf '%s\n' \
 printf '%s\n' \
   'package sample.cases' \
   '' \
+  'import java.util.List' \
+  '' \
   'class WrongLevelCase {' \
   '    @org.testng.annotations.Test(' \
   '        group = [TestCaseGroup.Completed, TestCaseGroup.L1],' \
@@ -156,6 +158,12 @@ dry_run_output="$(java -cp "${runtime_classpath}" ApplyGroovyCaseGroups \
 after_dry_run="$(sha256sum "${source_root}"/*.groovy)"
 grep -Fq 'Would update 7 @Test annotation(s) in 5 Groovy file(s); 0 annotation(s) were already correct.' \
   <<<"${dry_run_output}"
+grep -Fq 'Would add 5 missing cotest.define.TestCaseGroup import(s).' \
+  <<<"${dry_run_output}"
+grep -Fq 'Planned cotest.define.TestCaseGroup imports for 5 Groovy file(s):' \
+  <<<"${dry_run_output}"
+grep -Fq '<not imported> -> import cotest.define.TestCaseGroup' \
+  <<<"${dry_run_output}"
 grep -Fq 'Dry run only; no Groovy source file was changed.' <<<"${dry_run_output}"
 grep -Fq '[1/6] sample.cases.EmptyParenCase (L0) - 01MixedCases.groovy' \
   <<<"${dry_run_output}"
@@ -181,7 +189,7 @@ before_cancel="$(sha256sum "${source_root}"/*.groovy)"
 cancel_output="$(printf 'n\n' | java -cp "${runtime_classpath}" ApplyGroovyCaseGroups \
   --source "${source_root}" --workbook "${workbook}")"
 after_cancel="$(sha256sum "${source_root}"/*.groovy)"
-grep -Fq 'Apply all group changes and run git add after each changed case? [y/N]:' \
+grep -Fq 'Apply all group/import changes and run git add after each changed case? [y/N]:' \
   <<<"${cancel_output}"
 grep -Fq 'Cancelled by user; no Groovy source file was changed or staged.' \
   <<<"${cancel_output}"
@@ -196,9 +204,10 @@ apply_output="$(printf 'y\n' | java -cp "${runtime_classpath}" ApplyGroovyCaseGr
 grep -Fq 'Loaded 6 graded case(s)' <<<"${apply_output}"
 grep -Fq 'Updated 7 @Test annotation(s) in 5 Groovy file(s); 0 annotation(s) were already correct.' \
   <<<"${apply_output}"
+grep -Fq 'Added 5 missing cotest.define.TestCaseGroup import(s).' <<<"${apply_output}"
 grep -Fq 'Ran git add after 6 changed case(s).' <<<"${apply_output}"
 preview_line="$(grep -nF 'Planned @Test group values for 6 case(s):' <<<"${apply_output}" | cut -d: -f1)"
-confirmation_line="$(grep -nF 'Apply all group changes and run git add after each changed case?' \
+confirmation_line="$(grep -nF 'Apply all group/import changes and run git add after each changed case?' \
   <<<"${apply_output}" | cut -d: -f1)"
 first_apply_line="$(grep -nF 'then ran git add --' <<<"${apply_output}" | head -n 1 | cut -d: -f1)"
 if (( preview_line >= confirmation_line || confirmation_line >= first_apply_line )); then
@@ -211,6 +220,20 @@ if [[ "$(grep -Fc 'then ran git add --' <<<"${apply_output}")" -ne 6 ]]; then
 fi
 if [[ "$(git -C "${source_root}" diff --cached --name-only | wc -l)" -ne 5 ]]; then
   echo 'The changed Groovy files were not staged.' >&2
+  exit 1
+fi
+
+for groovy_file in "${source_root}"/*.groovy; do
+  if [[ "$(grep -Fxc 'import cotest.define.TestCaseGroup' "${groovy_file}")" -ne 1 ]]; then
+    echo "The exact TestCaseGroup import was not added once to ${groovy_file}." >&2
+    exit 1
+  fi
+done
+if [[ "$(sed -n '2p' "${source_root}/01MixedCases.groovy")" \
+    != 'import cotest.define.TestCaseGroup' ]] \
+  || [[ "$(sed -n '4p' "${source_root}/02WrongLevelCase.groovy")" \
+    != 'import cotest.define.TestCaseGroup' ]]; then
+  echo 'The TestCaseGroup import was not placed after the package/import block.' >&2
   exit 1
 fi
 
@@ -240,15 +263,67 @@ if grep -Fq '@Test(groups = [TestCaseGroup.Completed], group =' \
   exit 1
 fi
 
-after_apply="$(sha256sum "${source_root}"/*.groovy)"
+sed -i '/^import cotest\.define\.TestCaseGroup$/d' "${source_root}"/*.groovy
+git -C "${source_root}" add -- '*.groovy'
+git -C "${source_root}" commit -qm 'fixture with reviewed groups and missing imports'
+
+before_import_dry_run="$(sha256sum "${source_root}"/*.groovy)"
+import_dry_run_output="$(java -cp "${runtime_classpath}" ApplyGroovyCaseGroups \
+  --source "${source_root}" --workbook "${workbook}" --dry-run)"
+after_import_dry_run="$(sha256sum "${source_root}"/*.groovy)"
+grep -Fq 'Would update 0 @Test annotation(s) in 5 Groovy file(s); 7 annotation(s) were already correct.' \
+  <<<"${import_dry_run_output}"
+grep -Fq 'Would add 5 missing cotest.define.TestCaseGroup import(s).' \
+  <<<"${import_dry_run_output}"
+if [[ "${before_import_dry_run}" != "${after_import_dry_run}" ]] \
+  || [[ -n "$(git -C "${source_root}" diff --cached --name-only)" ]]; then
+  echo 'The import-only dry run changed or staged a Groovy source file.' >&2
+  exit 1
+fi
+
+import_apply_output="$(printf 'y\n' | java -cp "${runtime_classpath}" ApplyGroovyCaseGroups \
+  --source "${source_root}" --workbook "${workbook}")"
+grep -Fq 'Updated 0 @Test annotation(s) in 5 Groovy file(s); 7 annotation(s) were already correct.' \
+  <<<"${import_apply_output}"
+grep -Fq 'Added 5 missing cotest.define.TestCaseGroup import(s).' \
+  <<<"${import_apply_output}"
+grep -Fq 'Ran git add after 5 changed case(s).' <<<"${import_apply_output}"
+if [[ "$(grep -Fc 'then ran git add --' <<<"${import_apply_output}")" -ne 5 ]] \
+  || [[ "$(git -C "${source_root}" diff --cached --name-only | wc -l)" -ne 5 ]]; then
+  echo 'The import-only supplement did not stage every changed file.' >&2
+  exit 1
+fi
+for groovy_file in "${source_root}"/*.groovy; do
+  if [[ "$(grep -Fxc 'import cotest.define.TestCaseGroup' "${groovy_file}")" -ne 1 ]]; then
+    echo "The import-only supplement failed for ${groovy_file}." >&2
+    exit 1
+  fi
+done
+
+after_import_apply="$(sha256sum "${source_root}"/*.groovy)"
 idempotent_output="$(java -cp "${runtime_classpath}" ApplyGroovyCaseGroups \
   --source "${source_root}" --workbook "${workbook}")"
 after_idempotent_run="$(sha256sum "${source_root}"/*.groovy)"
 grep -Fq 'Updated 0 @Test annotation(s) in 0 Groovy file(s); 7 annotation(s) were already correct.' \
   <<<"${idempotent_output}"
+grep -Fq 'Added 0 missing cotest.define.TestCaseGroup import(s).' <<<"${idempotent_output}"
 grep -Fq 'Ran git add after 0 changed case(s).' <<<"${idempotent_output}"
-if [[ "${after_apply}" != "${after_idempotent_run}" ]]; then
-  echo 'An idempotent rerun changed a Groovy source file.' >&2
+if [[ "${after_import_apply}" != "${after_idempotent_run}" ]]; then
+  echo 'An idempotent group/import rerun changed a Groovy source file.' >&2
+  exit 1
+fi
+
+sed -i 's/^import cotest\.define\.TestCaseGroup$/import cotest.define.*/' \
+  "${source_root}/05PluralGroupsCase.groovy"
+before_wildcard_run="$(sha256sum "${source_root}/05PluralGroupsCase.groovy")"
+wildcard_output="$(java -cp "${runtime_classpath}" ApplyGroovyCaseGroups \
+  --source "${source_root}" --workbook "${workbook}")"
+after_wildcard_run="$(sha256sum "${source_root}/05PluralGroupsCase.groovy")"
+grep -Fq 'Updated 0 @Test annotation(s) in 0 Groovy file(s); 7 annotation(s) were already correct.' \
+  <<<"${wildcard_output}"
+grep -Fq 'Added 0 missing cotest.define.TestCaseGroup import(s).' <<<"${wildcard_output}"
+if [[ "${before_wildcard_run}" != "${after_wildcard_run}" ]]; then
+  echo 'An existing cotest.define wildcard import was rewritten.' >&2
   exit 1
 fi
 
