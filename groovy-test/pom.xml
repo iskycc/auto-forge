@@ -29,6 +29,11 @@
       <artifactId>jansi</artifactId>
       <version>2.4.1</version>
     </dependency>
+    <dependency>
+      <groupId>org.codehaus.groovy</groupId>
+      <artifactId>groovy</artifactId>
+      <version>3.0.24</version>
+    </dependency>
   </dependencies>
 
   <build>
@@ -41,6 +46,7 @@
         <configuration>
           <includes>
             <include>AnalyzeNormalGroovyCases.java</include>
+            <include>ApplyGroovyCaseGroups.java</include>
           </includes>
         </configuration>
       </plugin>

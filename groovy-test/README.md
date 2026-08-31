@@ -3,8 +3,10 @@
 `AnalyzeNormalGroovyCases.java` recursively analyzes `.groovy` source files without compiling,
 loading, or executing them. It exports an XLSX workbook through Apache POI 3.13, uses
 JLine 3.25.1/Jansi 2.4.1 for interactive terminal input, and does not use Groovy, Grape, or
-Apache Ivy. The analyzer targets Java 8 and does not call Java 9+ runtime APIs.
-Both the Maven build and the focused regression script can be run with JDK 8 or newer.
+Apache Ivy. `ApplyGroovyCaseGroups.java` is a separate post-review tool that uses the Groovy
+3.0.24 conversion-phase AST to update `@Test` annotations. Both tools target Java 8 and do not
+call Java 9+ runtime APIs. The Maven build and focused regression scripts can be run with JDK 8
+or newer.
 
 Build the analyzer and copy its runtime dependencies:
 
@@ -60,9 +62,40 @@ Classification follows an exclusion-first rule:
 - `排除明细` records the exact evidence used for exclusions, while `扫描问题` records parse
   failures that were excluded.
 
+## Apply reviewed levels to Groovy `@Test` groups
+
+After every case has an `人工等级`, apply the workbook levels to the original Groovy sources:
+
+```bash
+java -cp "groovy-test/target/classes:groovy-test/target/dependency/*" \
+  ApplyGroovyCaseGroups \
+  --source ./cases \
+  --workbook ./cases/normal-groovy-cases.xlsx
+```
+
+The tool reads graded rows from both `导出用例` and `排除明细`, identifies classes and their
+class-level/method-level `@Test` annotations through the Groovy AST, and updates the singular
+`group` member:
+
+- `@Test` and `@Test()` become `@Test(group = [TestCaseGroup.L0])` for an L0 case.
+- Existing entries such as `TestCaseGroup.Completed` are retained and the reviewed level is
+  appended.
+- An existing L0/L1/L2 entry is replaced when it disagrees with the workbook and is not duplicated
+  when it already agrees.
+- Annotation-looking text in comments and strings is not considered an annotation.
+
+Use `--dry-run` to validate and report the planned annotation/file counts without writing. The tool
+plans and validates the complete workbook first; a missing file, class, `@Test` annotation, malformed
+Groovy file, ambiguous multiple level markers, or unsafe relative path stops the run before any source
+file is changed. Source files are replaced atomically, and rerunning with the same workbook is
+idempotent. Parsing stops at Groovy's conversion phase and disables the `@Grab` transformation, so
+the source is never executed and Grape/Ivy dependency resolution is not triggered.
+
 Run the focused regression test after building a POI 3.13 classpath:
 
 ```bash
 POI_CLASSPATH="$(find groovy-test/target/dependency -name '*.jar' -printf '%p:' | sed 's/:$//')" \
   bash groovy-test/analyze-normal-groovy-cases.test.sh
+
+bash groovy-test/apply-groovy-case-groups.test.sh
 ```

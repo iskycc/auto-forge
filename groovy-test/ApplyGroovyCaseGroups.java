@@ -1,0 +1,924 @@
+import java.io.IOException;
+import java.io.InputStream;
+import java.nio.ByteBuffer;
+import java.nio.charset.CharacterCodingException;
+import java.nio.charset.CodingErrorAction;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.AtomicMoveNotSupportedException;
+import java.nio.file.Files;
+import java.nio.file.LinkOption;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
+import java.nio.file.StandardOpenOption;
+import java.nio.file.attribute.PosixFilePermission;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.IdentityHashMap;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Set;
+import org.apache.poi.ss.usermodel.Cell;
+import org.apache.poi.ss.usermodel.DataFormatter;
+import org.apache.poi.ss.usermodel.Row;
+import org.apache.poi.ss.usermodel.Sheet;
+import org.apache.poi.xssf.usermodel.XSSFWorkbook;
+import org.codehaus.groovy.ast.ASTNode;
+import org.codehaus.groovy.ast.AnnotationNode;
+import org.codehaus.groovy.ast.ClassNode;
+import org.codehaus.groovy.ast.MethodNode;
+import org.codehaus.groovy.ast.ModuleNode;
+import org.codehaus.groovy.ast.expr.Expression;
+import org.codehaus.groovy.ast.expr.ListExpression;
+import org.codehaus.groovy.ast.expr.PropertyExpression;
+import org.codehaus.groovy.control.CompilationFailedException;
+import org.codehaus.groovy.control.CompilationUnit;
+import org.codehaus.groovy.control.CompilerConfiguration;
+import org.codehaus.groovy.control.Phases;
+import org.codehaus.groovy.control.SourceUnit;
+
+/**
+ * Applies L0/L1/L2 values from a case-analysis workbook to {@code group} members of Groovy
+ * {@code @Test} annotations.
+ *
+ * <p>The tool uses Groovy's conversion-phase AST. It never loads, links, initializes, or executes
+ * the analyzed source classes, and it disables the {@code @Grab} global transformation.
+ */
+public final class ApplyGroovyCaseGroups {
+  private static final String INCLUDED_CASES_SHEET = "导出用例";
+  private static final String EXCLUDED_CASES_SHEET = "排除明细";
+  private static final String PACKAGE_HEADER = "包名";
+  private static final String CLASS_HEADER = "类名";
+  private static final String PATH_HEADER = "相对路径";
+  private static final String LEVEL_HEADER = "人工等级";
+  private static final String TEST_ANNOTATION_NAME = "Test";
+  private static final String GROUP_MEMBER = "group";
+  private static final String TEST_CASE_GROUP_NAME = "TestCaseGroup";
+  private static final Set<String> SUPPORTED_LEVELS =
+      Collections.unmodifiableSet(
+          new LinkedHashSet<>(Arrays.asList("L0", "L1", "L2")));
+
+  private ApplyGroovyCaseGroups() {}
+
+  public static void main(String[] arguments) {
+    try {
+      Options options = Options.parse(Arrays.asList(arguments));
+      if (options.showHelp) {
+        System.out.println(Options.usage());
+        return;
+      }
+
+      ApplyReport report = new GroupApplication().apply(options);
+      System.out.printf("Loaded %d graded case(s) from %s.%n", report.caseCount, options.workbook);
+      System.out.printf(
+          "%s %d @Test annotation(s) in %d Groovy file(s); %d annotation(s) were already correct.%n",
+          options.dryRun ? "Would update" : "Updated",
+          report.updatedAnnotationCount,
+          report.changedFileCount,
+          report.unchangedAnnotationCount);
+      if (options.dryRun) {
+        System.out.println("Dry run only; no Groovy source file was changed.");
+      }
+    } catch (IllegalArgumentException error) {
+      System.err.println("Invalid input: " + error.getMessage());
+      System.err.println(Options.usage());
+      System.exit(2);
+    } catch (Exception error) {
+      throw new IllegalStateException("Failed to apply Groovy case groups", error);
+    }
+  }
+
+  private static final class Options {
+    private final Path sourceRoot;
+    private final Path workbook;
+    private final boolean dryRun;
+    private final boolean showHelp;
+
+    private Options(Path sourceRoot, Path workbook, boolean dryRun, boolean showHelp) {
+      this.sourceRoot = sourceRoot;
+      this.workbook = workbook;
+      this.dryRun = dryRun;
+      this.showHelp = showHelp;
+    }
+
+    private static Options parse(List<String> arguments) {
+      Path sourceRoot = Paths.get("").toAbsolutePath().normalize();
+      Path workbook = null;
+      boolean dryRun = false;
+      boolean showHelp = false;
+
+      for (int index = 0; index < arguments.size(); index++) {
+        String argument = arguments.get(index);
+        switch (argument) {
+          case "--source":
+            sourceRoot =
+                Paths.get(requiredValue(arguments, ++index, argument))
+                    .toAbsolutePath()
+                    .normalize();
+            break;
+          case "--workbook":
+            workbook =
+                Paths.get(requiredValue(arguments, ++index, argument))
+                    .toAbsolutePath()
+                    .normalize();
+            break;
+          case "--dry-run":
+            dryRun = true;
+            break;
+          case "--help":
+          case "-h":
+            showHelp = true;
+            break;
+          default:
+            throw new IllegalArgumentException("Unknown option: " + argument);
+        }
+      }
+
+      Path resolvedWorkbook =
+          workbook == null ? sourceRoot.resolve("normal-groovy-cases.xlsx") : workbook;
+      if (!showHelp) {
+        validateSourceRoot(sourceRoot);
+        validateWorkbook(resolvedWorkbook);
+      }
+      return new Options(sourceRoot, resolvedWorkbook, dryRun, showHelp);
+    }
+
+    private static void validateSourceRoot(Path sourceRoot) {
+      if (!Files.isDirectory(sourceRoot, LinkOption.NOFOLLOW_LINKS)) {
+        throw new IllegalArgumentException("Source directory does not exist: " + sourceRoot);
+      }
+    }
+
+    private static void validateWorkbook(Path workbook) {
+      if (!workbook
+          .getFileName()
+          .toString()
+          .toLowerCase(Locale.ROOT)
+          .endsWith(".xlsx")) {
+        throw new IllegalArgumentException("Workbook must have an .xlsx extension: " + workbook);
+      }
+      if (!Files.isRegularFile(workbook, LinkOption.NOFOLLOW_LINKS)) {
+        throw new IllegalArgumentException("Workbook does not exist: " + workbook);
+      }
+    }
+
+    private static String requiredValue(List<String> arguments, int index, String option) {
+      if (index >= arguments.size() || arguments.get(index).startsWith("--")) {
+        throw new IllegalArgumentException(option + " requires a value");
+      }
+      return arguments.get(index);
+    }
+
+    private static String usage() {
+      return String.join(
+          System.lineSeparator(),
+          "Usage:",
+          "  java -cp \"classes:lib/*\" ApplyGroovyCaseGroups [options]",
+          "",
+          "Options:",
+          "  --source DIR          Groovy source root (default: current directory)",
+          "  --workbook FILE.xlsx  Reviewed workbook (default: DIR/normal-groovy-cases.xlsx)",
+          "  --dry-run             Validate and preview counts without changing source files",
+          "  -h, --help            Show this help",
+          "",
+          "Example:",
+          "  java -cp \"target/classes:target/dependency/*\" ApplyGroovyCaseGroups \\",
+          "    --source ./cases --workbook ./cases/normal-groovy-cases.xlsx");
+    }
+  }
+
+  private static final class GroupApplication {
+    private ApplyReport apply(Options options) throws IOException {
+      List<CaseAssignment> assignments = new WorkbookAssignments().read(options.workbook);
+      Map<Path, List<CaseAssignment>> assignmentsByFile = groupBySourceFile(assignments);
+      List<FileChange> changes = new ArrayList<>();
+      List<String> validationErrors = new ArrayList<>();
+      int updatedAnnotations = 0;
+      int unchangedAnnotations = 0;
+
+      for (Map.Entry<Path, List<CaseAssignment>> entry : assignmentsByFile.entrySet()) {
+        Path sourceFile = resolveSourceFile(options.sourceRoot, entry.getKey());
+        if (!Files.isRegularFile(sourceFile, LinkOption.NOFOLLOW_LINKS)) {
+          validationErrors.add("Source file does not exist: " + entry.getKey());
+          continue;
+        }
+        if (Files.isSymbolicLink(sourceFile)) {
+          validationErrors.add("Symbolic-link source files are not modified: " + entry.getKey());
+          continue;
+        }
+
+        String source;
+        try {
+          source = decodeUtf8(Files.readAllBytes(sourceFile));
+        } catch (CharacterCodingException invalidEncoding) {
+          validationErrors.add("Source file is not valid UTF-8: " + entry.getKey());
+          continue;
+        }
+
+        try {
+          FileChange change =
+              new GroovyAstGroupPlanner(entry.getKey().toString(), source)
+                  .plan(sourceFile, entry.getValue());
+          changes.add(change);
+          updatedAnnotations += change.updatedAnnotationCount;
+          unchangedAnnotations += change.unchangedAnnotationCount;
+        } catch (GroupPlanningException error) {
+          validationErrors.add(error.getMessage());
+        }
+      }
+
+      if (!validationErrors.isEmpty()) {
+        throw new IllegalArgumentException(
+            "No files were changed because validation failed:\n- "
+                + String.join("\n- ", validationErrors));
+      }
+
+      int changedFiles = 0;
+      for (FileChange change : changes) {
+        if (!change.changed()) {
+          continue;
+        }
+        changedFiles++;
+        if (!options.dryRun) {
+          writeAtomically(change.sourceFile, change.updatedSource);
+        }
+      }
+      return new ApplyReport(
+          assignments.size(), changedFiles, updatedAnnotations, unchangedAnnotations);
+    }
+
+    private static Map<Path, List<CaseAssignment>> groupBySourceFile(
+        List<CaseAssignment> assignments) {
+      Map<Path, List<CaseAssignment>> assignmentsByFile = new LinkedHashMap<>();
+      for (CaseAssignment assignment : assignments) {
+        List<CaseAssignment> fileAssignments =
+            assignmentsByFile.get(assignment.relativePath);
+        if (fileAssignments == null) {
+          fileAssignments = new ArrayList<>();
+          assignmentsByFile.put(assignment.relativePath, fileAssignments);
+        }
+        fileAssignments.add(assignment);
+      }
+      return assignmentsByFile;
+    }
+
+    private static Path resolveSourceFile(Path sourceRoot, Path relativePath) {
+      Path sourceFile = sourceRoot.resolve(relativePath).normalize();
+      if (!sourceFile.startsWith(sourceRoot)) {
+        throw new IllegalArgumentException(
+            "Workbook path escapes the source directory: " + relativePath);
+      }
+      return sourceFile;
+    }
+
+    private static String decodeUtf8(byte[] content) throws CharacterCodingException {
+      return StandardCharsets.UTF_8
+          .newDecoder()
+          .onMalformedInput(CodingErrorAction.REPORT)
+          .onUnmappableCharacter(CodingErrorAction.REPORT)
+          .decode(ByteBuffer.wrap(content))
+          .toString();
+    }
+  }
+
+  private static final class WorkbookAssignments {
+    private final DataFormatter dataFormatter = new DataFormatter();
+
+    private List<CaseAssignment> read(Path workbookPath) throws IOException {
+      Map<CaseKey, CaseAssignment> assignments = new LinkedHashMap<>();
+      try (InputStream input = Files.newInputStream(workbookPath);
+          XSSFWorkbook workbook = new XSSFWorkbook(input)) {
+        readSheet(workbook, INCLUDED_CASES_SHEET, assignments);
+        readSheet(workbook, EXCLUDED_CASES_SHEET, assignments);
+      }
+      if (assignments.isEmpty()) {
+        throw new IllegalArgumentException(
+            "Workbook contains no rows with an L0, L1, or L2 level");
+      }
+      return new ArrayList<>(assignments.values());
+    }
+
+    private void readSheet(
+        XSSFWorkbook workbook,
+        String sheetName,
+        Map<CaseKey, CaseAssignment> assignments)
+        throws IOException {
+      Sheet sheet = workbook.getSheet(sheetName);
+      if (sheet == null) {
+        throw new IOException("Workbook does not contain the '" + sheetName + "' worksheet");
+      }
+      Row header = sheet.getRow(0);
+      if (header == null) {
+        throw new IOException("Worksheet has no header row: " + sheetName);
+      }
+      int packageColumn = requiredColumn(header, PACKAGE_HEADER);
+      int classColumn = requiredColumn(header, CLASS_HEADER);
+      int pathColumn = requiredColumn(header, PATH_HEADER);
+      int levelColumn = findColumn(header, LEVEL_HEADER);
+      if (levelColumn < 0) {
+        return;
+      }
+
+      for (int rowIndex = 1; rowIndex <= sheet.getLastRowNum(); rowIndex++) {
+        Row row = sheet.getRow(rowIndex);
+        if (row == null) {
+          continue;
+        }
+        String rawLevel = cellText(row, levelColumn);
+        if (rawLevel.isEmpty()) {
+          continue;
+        }
+        String level = rawLevel.toUpperCase(Locale.ROOT);
+        if (!SUPPORTED_LEVELS.contains(level)) {
+          throw new IllegalArgumentException(
+              "Unsupported level '"
+                  + rawLevel
+                  + "' in worksheet "
+                  + sheetName
+                  + " row "
+                  + (rowIndex + 1));
+        }
+
+        String relativePathText = cellText(row, pathColumn).replace('\\', '/');
+        String className = cellText(row, classColumn);
+        if (relativePathText.isEmpty() || className.isEmpty()) {
+          throw new IllegalArgumentException(
+              "Missing relative path or class name in worksheet "
+                  + sheetName
+                  + " row "
+                  + (rowIndex + 1));
+        }
+        Path relativePath = normalizeRelativePath(relativePathText, sheetName, rowIndex);
+        CaseAssignment assignment =
+            new CaseAssignment(
+                relativePath,
+                cellText(row, packageColumn),
+                className,
+                level,
+                sheetName,
+                rowIndex + 1);
+        CaseKey key = assignment.key();
+        CaseAssignment existing = assignments.get(key);
+        if (existing != null && !existing.level.equals(level)) {
+          throw new IllegalArgumentException(
+              "Conflicting levels for "
+                  + key.displayName()
+                  + ": "
+                  + existing.level
+                  + " and "
+                  + level);
+        }
+        if (existing == null) {
+          assignments.put(key, assignment);
+        }
+      }
+    }
+
+    private static Path normalizeRelativePath(
+        String pathText, String sheetName, int zeroBasedRowIndex) {
+      Path relativePath = Paths.get(pathText).normalize();
+      if (relativePath.isAbsolute()
+          || relativePath.getNameCount() == 0
+          || relativePath.startsWith("..")) {
+        throw new IllegalArgumentException(
+            "Unsafe relative path in worksheet "
+                + sheetName
+                + " row "
+                + (zeroBasedRowIndex + 1)
+                + ": "
+                + pathText);
+      }
+      return relativePath;
+    }
+
+    private int requiredColumn(Row header, String headerName) throws IOException {
+      int column = findColumn(header, headerName);
+      if (column < 0) {
+        throw new IOException("Missing required worksheet column: " + headerName);
+      }
+      return column;
+    }
+
+    private int findColumn(Row header, String headerName) {
+      for (int column = 0; column < header.getLastCellNum(); column++) {
+        Cell cell = header.getCell(column);
+        if (cell != null && dataFormatter.formatCellValue(cell).trim().equals(headerName)) {
+          return column;
+        }
+      }
+      return -1;
+    }
+
+    private String cellText(Row row, int column) {
+      Cell cell = row.getCell(column);
+      return cell == null ? "" : dataFormatter.formatCellValue(cell).trim();
+    }
+  }
+
+  private static final class GroovyAstGroupPlanner {
+    private static final Set<String> DISABLED_GLOBAL_TRANSFORMS =
+        Collections.singleton("groovy.grape.GrabAnnotationTransformation");
+
+    private final String displayPath;
+    private final String source;
+    private final SourcePositions sourcePositions;
+
+    private GroovyAstGroupPlanner(String displayPath, String source) {
+      this.displayPath = displayPath;
+      this.source = source;
+      this.sourcePositions = new SourcePositions(source);
+    }
+
+    private FileChange plan(Path sourceFile, List<CaseAssignment> assignments)
+        throws GroupPlanningException {
+      ModuleNode module = parseModule();
+      List<TextEdit> edits = new ArrayList<>();
+      int updatedAnnotations = 0;
+      int unchangedAnnotations = 0;
+
+      for (CaseAssignment assignment : assignments) {
+        ClassNode caseClass = findCaseClass(module, assignment);
+        List<AnnotationNode> testAnnotations = findTestAnnotations(caseClass);
+        if (testAnnotations.isEmpty()) {
+          throw problem(
+              assignment,
+              "no class-level or method-level @Test annotation was found");
+        }
+        for (AnnotationNode annotation : testAnnotations) {
+          TextEdit edit = planAnnotation(annotation, assignment);
+          if (edit == null) {
+            unchangedAnnotations++;
+          } else {
+            edits.add(edit);
+            updatedAnnotations++;
+          }
+        }
+      }
+
+      validateNonOverlapping(edits);
+      String updatedSource = applyEdits(edits);
+      return new FileChange(
+          sourceFile,
+          source,
+          updatedSource,
+          updatedAnnotations,
+          unchangedAnnotations);
+    }
+
+    private ModuleNode parseModule() throws GroupPlanningException {
+      CompilerConfiguration configuration = new CompilerConfiguration();
+      configuration.setTargetBytecode(CompilerConfiguration.JDK8);
+      configuration.setDisabledGlobalASTTransformations(DISABLED_GLOBAL_TRANSFORMS);
+      CompilationUnit compilationUnit = new CompilationUnit(configuration);
+      SourceUnit sourceUnit = compilationUnit.addSource(displayPath, source);
+      try {
+        compilationUnit.compile(Phases.CONVERSION);
+      } catch (CompilationFailedException error) {
+        throw new GroupPlanningException(
+            displayPath + ": Groovy AST parsing failed: " + error.getMessage(), error);
+      }
+      ModuleNode module = sourceUnit.getAST();
+      if (module == null) {
+        throw new GroupPlanningException(displayPath + ": Groovy parser returned no module AST");
+      }
+      return module;
+    }
+
+    private ClassNode findCaseClass(ModuleNode module, CaseAssignment assignment)
+        throws GroupPlanningException {
+      List<ClassNode> matches = new ArrayList<>();
+      for (ClassNode candidate : module.getClasses()) {
+        if (candidate.getOuterClass() != null) {
+          continue;
+        }
+        if (!candidate.getNameWithoutPackage().equals(assignment.className)) {
+          continue;
+        }
+        String packageName = candidate.getPackageName();
+        if (packageName == null) {
+          packageName = "";
+        }
+        if (packageName.equals(assignment.packageName)) {
+          matches.add(candidate);
+        }
+      }
+      if (matches.isEmpty()) {
+        throw problem(assignment, "the class was not found in the Groovy AST");
+      }
+      if (matches.size() > 1) {
+        throw problem(assignment, "multiple matching classes were found in the Groovy AST");
+      }
+      return matches.get(0);
+    }
+
+    private List<AnnotationNode> findTestAnnotations(ClassNode caseClass) {
+      Set<AnnotationNode> annotations =
+          Collections.newSetFromMap(new IdentityHashMap<AnnotationNode, Boolean>());
+      addTestAnnotations(caseClass.getAnnotations(), annotations);
+      for (MethodNode method : caseClass.getMethods()) {
+        if (method.getDeclaringClass() == caseClass) {
+          addTestAnnotations(method.getAnnotations(), annotations);
+        }
+      }
+      return new ArrayList<>(annotations);
+    }
+
+    private static void addTestAnnotations(
+        List<AnnotationNode> candidates, Set<AnnotationNode> annotations) {
+      for (AnnotationNode annotation : candidates) {
+        if (annotation.getClassNode().getNameWithoutPackage().equals(TEST_ANNOTATION_NAME)) {
+          annotations.add(annotation);
+        }
+      }
+    }
+
+    private TextEdit planAnnotation(AnnotationNode annotation, CaseAssignment assignment)
+        throws GroupPlanningException {
+      String desiredGroup = TEST_CASE_GROUP_NAME + "." + assignment.level;
+      Expression groupExpression = annotation.getMember(GROUP_MEMBER);
+      if (groupExpression == null) {
+        return addMissingGroup(annotation, desiredGroup, assignment);
+      }
+      if (groupExpression instanceof ListExpression) {
+        return updateGroupList(
+            (ListExpression) groupExpression, desiredGroup, assignment);
+      }
+      if (isLevelGroup(groupExpression)) {
+        if (levelName(groupExpression).equals(assignment.level)) {
+          return null;
+        }
+        SourceRange groupRange = range(groupExpression, assignment, "group value");
+        return new TextEdit(groupRange.start, groupRange.end, desiredGroup);
+      }
+
+      SourceRange groupRange = range(groupExpression, assignment, "group value");
+      String existingGroup = source.substring(groupRange.start, groupRange.end);
+      return new TextEdit(
+          groupRange.start,
+          groupRange.end,
+          "[" + existingGroup + ", " + desiredGroup + "]");
+    }
+
+    private TextEdit addMissingGroup(
+        AnnotationNode annotation, String desiredGroup, CaseAssignment assignment)
+        throws GroupPlanningException {
+      SourceRange annotationRange = range(annotation, assignment, "@Test annotation");
+      int lastToken = previousNonWhitespace(annotationRange.end - 1, annotationRange.start);
+      if (lastToken >= annotationRange.start && source.charAt(lastToken) == ')') {
+        String separator = annotation.getMembers().isEmpty() ? "" : ", ";
+        return new TextEdit(
+            lastToken,
+            lastToken,
+            separator + GROUP_MEMBER + " = [" + desiredGroup + "]");
+      }
+      if (!annotation.getMembers().isEmpty()) {
+        throw problem(
+            assignment,
+            "@Test members were parsed but the annotation closing parenthesis could not be located");
+      }
+      return new TextEdit(
+          annotationRange.end,
+          annotationRange.end,
+          "(" + GROUP_MEMBER + " = [" + desiredGroup + "])");
+    }
+
+    private TextEdit updateGroupList(
+        ListExpression groupList, String desiredGroup, CaseAssignment assignment)
+        throws GroupPlanningException {
+      List<Expression> existingLevels = new ArrayList<>();
+      for (Expression expression : groupList.getExpressions()) {
+        if (isLevelGroup(expression)) {
+          existingLevels.add(expression);
+        }
+      }
+      if (existingLevels.size() > 1) {
+        throw problem(
+            assignment,
+            "the @Test group list contains multiple L0/L1/L2 markers and is ambiguous");
+      }
+      if (existingLevels.size() == 1) {
+        Expression existingLevel = existingLevels.get(0);
+        if (levelName(existingLevel).equals(assignment.level)) {
+          return null;
+        }
+        SourceRange levelRange = range(existingLevel, assignment, "existing level group");
+        return new TextEdit(levelRange.start, levelRange.end, desiredGroup);
+      }
+
+      SourceRange listRange = range(groupList, assignment, "group list");
+      int closingBracket = previousNonWhitespace(listRange.end - 1, listRange.start);
+      if (closingBracket < listRange.start || source.charAt(closingBracket) != ']') {
+        throw problem(assignment, "the closing bracket of the @Test group list was not found");
+      }
+      int previousToken = previousNonWhitespace(closingBracket - 1, listRange.start);
+      String separator;
+      if (groupList.getExpressions().isEmpty() || previousToken < listRange.start) {
+        separator = "";
+      } else if (source.charAt(previousToken) == ',') {
+        separator = " ";
+      } else {
+        separator = ", ";
+      }
+      return new TextEdit(closingBracket, closingBracket, separator + desiredGroup);
+    }
+
+    private static boolean isLevelGroup(Expression expression) {
+      if (!(expression instanceof PropertyExpression)) {
+        return false;
+      }
+      PropertyExpression property = (PropertyExpression) expression;
+      String propertyName = property.getPropertyAsString();
+      if (!SUPPORTED_LEVELS.contains(propertyName)) {
+        return false;
+      }
+      String owner = property.getObjectExpression().getText();
+      return owner.equals(TEST_CASE_GROUP_NAME)
+          || owner.endsWith("." + TEST_CASE_GROUP_NAME);
+    }
+
+    private static String levelName(Expression expression) {
+      return ((PropertyExpression) expression).getPropertyAsString();
+    }
+
+    private SourceRange range(
+        ASTNode node, CaseAssignment assignment, String description)
+        throws GroupPlanningException {
+      try {
+        return sourcePositions.range(node);
+      } catch (IllegalArgumentException invalidPosition) {
+        throw problem(
+            assignment,
+            "Groovy AST did not provide a valid source range for " + description);
+      }
+    }
+
+    private int previousNonWhitespace(int start, int lowerBound) {
+      for (int index = start; index >= lowerBound; index--) {
+        if (!Character.isWhitespace(source.charAt(index))) {
+          return index;
+        }
+      }
+      return -1;
+    }
+
+    private void validateNonOverlapping(List<TextEdit> edits) throws GroupPlanningException {
+      List<TextEdit> ordered = new ArrayList<>(edits);
+      ordered.sort(Comparator.comparingInt(edit -> edit.start));
+      for (int index = 1; index < ordered.size(); index++) {
+        TextEdit previous = ordered.get(index - 1);
+        TextEdit current = ordered.get(index);
+        if (current.start < previous.end) {
+          throw new GroupPlanningException(
+              displayPath + ": planned @Test source edits overlap; no files were changed");
+        }
+      }
+    }
+
+    private String applyEdits(List<TextEdit> edits) {
+      List<TextEdit> descending = new ArrayList<>(edits);
+      descending.sort((left, right) -> Integer.compare(right.start, left.start));
+      StringBuilder updated = new StringBuilder(source);
+      for (TextEdit edit : descending) {
+        updated.replace(edit.start, edit.end, edit.replacement);
+      }
+      return updated.toString();
+    }
+
+    private GroupPlanningException problem(CaseAssignment assignment, String message) {
+      return new GroupPlanningException(
+          displayPath
+              + ": "
+              + assignment.qualifiedClassName()
+              + " ("
+              + assignment.sheetName
+              + " row "
+              + assignment.rowNumber
+              + "): "
+              + message);
+    }
+  }
+
+  private static final class SourcePositions {
+    private final String source;
+    private final List<Integer> lineStarts = new ArrayList<>();
+
+    private SourcePositions(String source) {
+      this.source = source;
+      lineStarts.add(0);
+      for (int index = 0; index < source.length(); index++) {
+        if (source.charAt(index) == '\n') {
+          lineStarts.add(index + 1);
+        }
+      }
+    }
+
+    private SourceRange range(ASTNode node) {
+      int start = offset(node.getLineNumber(), node.getColumnNumber());
+      int end = offset(node.getLastLineNumber(), node.getLastColumnNumber());
+      if (start < 0 || end < start || end > source.length()) {
+        throw new IllegalArgumentException("Invalid AST source range");
+      }
+      return new SourceRange(start, end);
+    }
+
+    private int offset(int oneBasedLine, int oneBasedColumn) {
+      if (oneBasedLine < 1 || oneBasedLine > lineStarts.size() || oneBasedColumn < 1) {
+        return -1;
+      }
+      int offset = lineStarts.get(oneBasedLine - 1) + oneBasedColumn - 1;
+      return offset <= source.length() ? offset : -1;
+    }
+  }
+
+  private static final class SourceRange {
+    private final int start;
+    private final int end;
+
+    private SourceRange(int start, int end) {
+      this.start = start;
+      this.end = end;
+    }
+  }
+
+  private static final class TextEdit {
+    private final int start;
+    private final int end;
+    private final String replacement;
+
+    private TextEdit(int start, int end, String replacement) {
+      this.start = start;
+      this.end = end;
+      this.replacement = replacement;
+    }
+  }
+
+  private static final class CaseAssignment {
+    private final Path relativePath;
+    private final String packageName;
+    private final String className;
+    private final String level;
+    private final String sheetName;
+    private final int rowNumber;
+
+    private CaseAssignment(
+        Path relativePath,
+        String packageName,
+        String className,
+        String level,
+        String sheetName,
+        int rowNumber) {
+      this.relativePath = relativePath;
+      this.packageName = packageName;
+      this.className = className;
+      this.level = level;
+      this.sheetName = sheetName;
+      this.rowNumber = rowNumber;
+    }
+
+    private CaseKey key() {
+      return new CaseKey(relativePath, packageName, className);
+    }
+
+    private String qualifiedClassName() {
+      return packageName.isEmpty() ? className : packageName + "." + className;
+    }
+  }
+
+  private static final class CaseKey {
+    private final Path relativePath;
+    private final String packageName;
+    private final String className;
+
+    private CaseKey(Path relativePath, String packageName, String className) {
+      this.relativePath = relativePath;
+      this.packageName = packageName;
+      this.className = className;
+    }
+
+    private String displayName() {
+      String qualifiedName = packageName.isEmpty() ? className : packageName + "." + className;
+      return qualifiedName + " in " + relativePath;
+    }
+
+    @Override
+    public boolean equals(Object other) {
+      if (this == other) {
+        return true;
+      }
+      if (!(other instanceof CaseKey)) {
+        return false;
+      }
+      CaseKey that = (CaseKey) other;
+      return relativePath.equals(that.relativePath)
+          && packageName.equals(that.packageName)
+          && className.equals(that.className);
+    }
+
+    @Override
+    public int hashCode() {
+      int result = relativePath.hashCode();
+      result = 31 * result + packageName.hashCode();
+      result = 31 * result + className.hashCode();
+      return result;
+    }
+  }
+
+  private static final class FileChange {
+    private final Path sourceFile;
+    private final String originalSource;
+    private final String updatedSource;
+    private final int updatedAnnotationCount;
+    private final int unchangedAnnotationCount;
+
+    private FileChange(
+        Path sourceFile,
+        String originalSource,
+        String updatedSource,
+        int updatedAnnotationCount,
+        int unchangedAnnotationCount) {
+      this.sourceFile = sourceFile;
+      this.originalSource = originalSource;
+      this.updatedSource = updatedSource;
+      this.updatedAnnotationCount = updatedAnnotationCount;
+      this.unchangedAnnotationCount = unchangedAnnotationCount;
+    }
+
+    private boolean changed() {
+      return !originalSource.equals(updatedSource);
+    }
+  }
+
+  private static final class ApplyReport {
+    private final int caseCount;
+    private final int changedFileCount;
+    private final int updatedAnnotationCount;
+    private final int unchangedAnnotationCount;
+
+    private ApplyReport(
+        int caseCount,
+        int changedFileCount,
+        int updatedAnnotationCount,
+        int unchangedAnnotationCount) {
+      this.caseCount = caseCount;
+      this.changedFileCount = changedFileCount;
+      this.updatedAnnotationCount = updatedAnnotationCount;
+      this.unchangedAnnotationCount = unchangedAnnotationCount;
+    }
+  }
+
+  private static final class GroupPlanningException extends Exception {
+    private GroupPlanningException(String message) {
+      super(message);
+    }
+
+    private GroupPlanningException(String message, Throwable cause) {
+      super(message, cause);
+    }
+  }
+
+  private static void writeAtomically(Path sourceFile, String content) throws IOException {
+    Path parent = sourceFile.getParent();
+    if (parent == null) {
+      throw new IOException("Source file must have a parent directory: " + sourceFile);
+    }
+    Path temporaryFile =
+        Files.createTempFile(parent, "." + sourceFile.getFileName().toString() + ".", ".tmp");
+    try {
+      Files.write(
+          temporaryFile,
+          content.getBytes(StandardCharsets.UTF_8),
+          StandardOpenOption.TRUNCATE_EXISTING,
+          StandardOpenOption.WRITE);
+      copyPosixPermissions(sourceFile, temporaryFile);
+      moveAtomically(temporaryFile, sourceFile);
+    } finally {
+      Files.deleteIfExists(temporaryFile);
+    }
+  }
+
+  private static void copyPosixPermissions(Path source, Path target) throws IOException {
+    try {
+      Set<PosixFilePermission> permissions = Files.getPosixFilePermissions(source);
+      Files.setPosixFilePermissions(target, permissions);
+    } catch (UnsupportedOperationException ignored) {
+      // Permission copying is unavailable on non-POSIX file systems.
+    }
+  }
+
+  private static void moveAtomically(Path source, Path target) throws IOException {
+    try {
+      Files.move(
+          source,
+          target,
+          StandardCopyOption.ATOMIC_MOVE,
+          StandardCopyOption.REPLACE_EXISTING);
+    } catch (AtomicMoveNotSupportedException ignored) {
+      Files.move(source, target, StandardCopyOption.REPLACE_EXISTING);
+    }
+  }
+}
