@@ -4,13 +4,34 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
-## Unreleased
+## 1.7.6 - 2026-08-31
 
 ### Fixed
 
 - Saving or testing LDAP configuration no longer refreshes the page after a successful request, so
   success feedback remains visible. Saved bind-password input is still cleared immediately, and its
   persisted-state hint updates without exposing the secret.
+
+### Tests
+
+- Real isolated OpenLDAP Playwright coverage verifies repeated LDAPS and plain-LDAP configuration,
+  connection testing, login without a dedicated username attribute, and Group profile semantics.
+- JAR import browser coverage now follows the current operations page heading and validates the
+  complete import and navigation flow in Lite, Full, and network-blocked acceptance partitions.
+
+### Database and persisted configuration
+
+- No database migration or persisted-configuration schema change is included. Existing LDAP
+  ciphertext and configuration values remain compatible.
+
+### Compatibility and offline assets
+
+- Lite and Full share the same UI behavior. Runner Protocol v1, Jenkins plugins, Adapter execution,
+  deployment configuration, and the four-platform offline asset matrix are unchanged.
+
+### Known limitations
+
+- No new known limitation is introduced by this patch release.
 
 ## 1.7.5 - 2026-08-31
 
