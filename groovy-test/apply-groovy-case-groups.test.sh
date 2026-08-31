@@ -67,6 +67,14 @@ printf '%s\n' \
   '    void testClassAndMethod() { assert true }' \
   '}' >"${source_root}/04ClassAndMethodCase.groovy"
 
+printf '%s\n' \
+  'package sample.cases' \
+  '' \
+  'class PluralGroupsCase {' \
+  '    @Test(groups = [TestCaseGroup.Completed])' \
+  '    void testPluralGroups() { assert true }' \
+  '}' >"${source_root}/05PluralGroupsCase.groovy"
+
 git -C "${source_root}" init -q
 git -C "${source_root}" config user.name 'Groovy group test'
 git -C "${source_root}" config user.email 'groovy-group-test@example.invalid'
@@ -88,12 +96,12 @@ if [[ ${unreviewed_status} -ne 2 ]]; then
 fi
 grep -Fq "Workbook '${unreviewed_workbook}' contains no graded cases." \
   <<<"${unreviewed_output}"
-grep -Fq "导出用例 {rows=5, levelColumn=not found, gradedRows=0" \
+grep -Fq "导出用例 {rows=6, levelColumn=not found, gradedRows=0" \
   <<<"${unreviewed_output}"
 grep -Fq 'Confirm that --workbook points to the reviewed file and that it was saved.' \
   <<<"${unreviewed_output}"
 
-review_output="$(printf '01501' | java -cp "${runtime_classpath}" AnalyzeNormalGroovyCases \
+review_output="$(printf '015010' | java -cp "${runtime_classpath}" AnalyzeNormalGroovyCases \
   --source "${source_root}" --output "${workbook}")"
 grep -Fq '人工分级已完成，所有导出用例均已标记。' <<<"${review_output}"
 
@@ -146,15 +154,17 @@ before_dry_run="$(sha256sum "${source_root}"/*.groovy)"
 dry_run_output="$(java -cp "${runtime_classpath}" ApplyGroovyCaseGroups \
   --source "${source_root}" --workbook "${workbook}" --dry-run)"
 after_dry_run="$(sha256sum "${source_root}"/*.groovy)"
-grep -Fq 'Would update 6 @Test annotation(s) in 4 Groovy file(s); 0 annotation(s) were already correct.' \
+grep -Fq 'Would update 7 @Test annotation(s) in 5 Groovy file(s); 0 annotation(s) were already correct.' \
   <<<"${dry_run_output}"
 grep -Fq 'Dry run only; no Groovy source file was changed.' <<<"${dry_run_output}"
-grep -Fq '[1/5] sample.cases.EmptyParenCase (L0) - 01MixedCases.groovy' \
+grep -Fq '[1/6] sample.cases.EmptyParenCase (L0) - 01MixedCases.groovy' \
   <<<"${dry_run_output}"
-grep -Fq '@Test line 5: <not set> -> [TestCaseGroup.L0]' <<<"${dry_run_output}"
+grep -Fq '@Test line 5 (group): <not set> -> [TestCaseGroup.L0]' <<<"${dry_run_output}"
 grep -Fq '[TestCaseGroup.Completed] -> [TestCaseGroup.Completed, TestCaseGroup.L1]' \
   <<<"${dry_run_output}"
-if [[ "$(grep -Ec '^\[[1-5]/5\]' <<<"${dry_run_output}")" -ne 5 ]]; then
+grep -Fq '@Test line 4 (groups): [TestCaseGroup.Completed] -> [TestCaseGroup.Completed, TestCaseGroup.L0]' \
+  <<<"${dry_run_output}"
+if [[ "$(grep -Ec '^\[[1-6]/6\]' <<<"${dry_run_output}")" -ne 6 ]]; then
   echo 'Dry run did not print every case group.' >&2
   exit 1
 fi
@@ -183,11 +193,11 @@ fi
 
 apply_output="$(printf 'y\n' | java -cp "${runtime_classpath}" ApplyGroovyCaseGroups \
   --source "${source_root}" --workbook "${workbook}")"
-grep -Fq 'Loaded 5 graded case(s)' <<<"${apply_output}"
-grep -Fq 'Updated 6 @Test annotation(s) in 4 Groovy file(s); 0 annotation(s) were already correct.' \
+grep -Fq 'Loaded 6 graded case(s)' <<<"${apply_output}"
+grep -Fq 'Updated 7 @Test annotation(s) in 5 Groovy file(s); 0 annotation(s) were already correct.' \
   <<<"${apply_output}"
-grep -Fq 'Ran git add after 5 changed case(s).' <<<"${apply_output}"
-preview_line="$(grep -nF 'Planned @Test group values for 5 case(s):' <<<"${apply_output}" | cut -d: -f1)"
+grep -Fq 'Ran git add after 6 changed case(s).' <<<"${apply_output}"
+preview_line="$(grep -nF 'Planned @Test group values for 6 case(s):' <<<"${apply_output}" | cut -d: -f1)"
 confirmation_line="$(grep -nF 'Apply all group changes and run git add after each changed case?' \
   <<<"${apply_output}" | cut -d: -f1)"
 first_apply_line="$(grep -nF 'then ran git add --' <<<"${apply_output}" | head -n 1 | cut -d: -f1)"
@@ -195,11 +205,11 @@ if (( preview_line >= confirmation_line || confirmation_line >= first_apply_line
   echo 'Group preview and confirmation were not completed before source updates.' >&2
   exit 1
 fi
-if [[ "$(grep -Fc 'then ran git add --' <<<"${apply_output}")" -ne 5 ]]; then
+if [[ "$(grep -Fc 'then ran git add --' <<<"${apply_output}")" -ne 6 ]]; then
   echo 'git add was not run once after each changed case.' >&2
   exit 1
 fi
-if [[ "$(git -C "${source_root}" diff --cached --name-only | wc -l)" -ne 4 ]]; then
+if [[ "$(git -C "${source_root}" diff --cached --name-only | wc -l)" -ne 5 ]]; then
   echo 'The changed Groovy files were not staged.' >&2
   exit 1
 fi
@@ -222,12 +232,19 @@ grep -Fq '@Test(group = [TestCaseGroup.L1])' \
   "${source_root}/04ClassAndMethodCase.groovy"
 grep -Fq '@Test(description = "method annotation", group = [TestCaseGroup.L1])' \
   "${source_root}/04ClassAndMethodCase.groovy"
+grep -Fq '@Test(groups = [TestCaseGroup.Completed, TestCaseGroup.L0])' \
+  "${source_root}/05PluralGroupsCase.groovy"
+if grep -Fq '@Test(groups = [TestCaseGroup.Completed], group =' \
+  "${source_root}/05PluralGroupsCase.groovy"; then
+  echo 'A singular group member was added beside an existing plural groups member.' >&2
+  exit 1
+fi
 
 after_apply="$(sha256sum "${source_root}"/*.groovy)"
 idempotent_output="$(java -cp "${runtime_classpath}" ApplyGroovyCaseGroups \
   --source "${source_root}" --workbook "${workbook}")"
 after_idempotent_run="$(sha256sum "${source_root}"/*.groovy)"
-grep -Fq 'Updated 0 @Test annotation(s) in 0 Groovy file(s); 6 annotation(s) were already correct.' \
+grep -Fq 'Updated 0 @Test annotation(s) in 0 Groovy file(s); 7 annotation(s) were already correct.' \
   <<<"${idempotent_output}"
 grep -Fq 'Ran git add after 0 changed case(s).' <<<"${idempotent_output}"
 if [[ "${after_apply}" != "${after_idempotent_run}" ]]; then
@@ -239,6 +256,8 @@ sed -i '0,/@Test(group = \[TestCaseGroup.L0\])/s//\@Test(group = [TestCaseGroup.
   "${source_root}/01MixedCases.groovy"
 sed -i '/@Test(group = \[TestCaseGroup.L0\])/d' \
   "${source_root}/03BareAnnotationCase.groovy"
+sed -i 's/@Test(groups = \[TestCaseGroup.Completed, TestCaseGroup.L0\])/@Test(groups = [TestCaseGroup.Completed], group = [TestCaseGroup.L0])/' \
+  "${source_root}/05PluralGroupsCase.groovy"
 before_failed_validation="$(sha256sum "${source_root}"/*.groovy)"
 set +e
 failed_validation_output="$(java -cp "${runtime_classpath}" ApplyGroovyCaseGroups \
@@ -251,6 +270,8 @@ if [[ ${failed_validation_status} -ne 2 ]]; then
   exit 1
 fi
 grep -Fq 'no class-level or method-level @Test annotation was found' \
+  <<<"${failed_validation_output}"
+grep -Fq "@Test contains both 'group' and 'groups'; the intended member is ambiguous" \
   <<<"${failed_validation_output}"
 if [[ "${before_failed_validation}" != "${after_failed_validation}" ]]; then
   echo 'Validation failure caused a partial source update.' >&2

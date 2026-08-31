@@ -74,8 +74,8 @@ java -cp "groovy-test/target/classes:groovy-test/target/dependency/*" \
 ```
 
 The tool reads graded rows from both `导出用例` and `排除明细`, identifies classes and their
-class-level/method-level `@Test` annotations through the Groovy AST, and updates the singular
-`group` member:
+class-level/method-level `@Test` annotations through the Groovy AST, and updates either the
+`group` or `groups` member:
 
 - `@Test` and `@Test()` become `@Test(group = [TestCaseGroup.L0])` for an L0 case.
 - Existing entries such as `TestCaseGroup.Completed` are retained and the reviewed level is
@@ -83,6 +83,9 @@ class-level/method-level `@Test` annotations through the Groovy AST, and updates
 - An existing L0/L1/L2 entry is replaced when it disagrees with the workbook and is not duplicated
   when it already agrees.
 - Annotation-looking text in comments and strings is not considered an annotation.
+- Existing `groups = [...]` syntax is preserved and updated as `groups`; it is never reported as
+  missing or supplemented with a second singular `group` member. An annotation containing both
+  spellings is rejected as ambiguous before any file is changed.
 
 The preferred level column is `人工等级`. Workbooks edited by other tools may instead use
 `人工分级`, `用例等级`, `用例级别`, `等级`, `级别`, `Case Level`, or `Level`; these names are also

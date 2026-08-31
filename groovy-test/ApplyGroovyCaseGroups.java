@@ -73,7 +73,8 @@ public final class ApplyGroovyCaseGroups {
                   "CASELEVEL",
                   "LEVEL")));
   private static final String TEST_ANNOTATION_NAME = "Test";
-  private static final String GROUP_MEMBER = "group";
+  private static final String SINGULAR_GROUP_MEMBER = "group";
+  private static final String PLURAL_GROUP_MEMBER = "groups";
   private static final String TEST_CASE_GROUP_NAME = "TestCaseGroup";
   private static final Set<String> SUPPORTED_LEVELS =
       Collections.unmodifiableSet(
@@ -362,8 +363,9 @@ public final class ApplyGroovyCaseGroups {
             assignment.relativePath);
         for (AnnotationPreview annotation : casePreview.annotations) {
           System.out.printf(
-              "  @Test line %d: %s -> %s%s%n",
+              "  @Test line %d (%s): %s -> %s%s%n",
               annotation.lineNumber,
+              annotation.memberName,
               annotation.currentGroup,
               annotation.plannedGroup,
               annotation.changed ? "" : " (unchanged)");
@@ -982,10 +984,18 @@ public final class ApplyGroovyCaseGroups {
     private AnnotationPlan planAnnotation(AnnotationNode annotation, CaseAssignment assignment)
         throws GroupPlanningException {
       String desiredGroup = TEST_CASE_GROUP_NAME + "." + assignment.level;
-      Expression groupExpression = annotation.getMember(GROUP_MEMBER);
+      AnnotationGroupMember groupMember = findGroupMember(annotation, assignment);
+      Expression groupExpression = groupMember.expression;
       if (groupExpression == null) {
-        TextEdit edit = addMissingGroup(annotation, desiredGroup, assignment);
-        return annotationPlan(annotation, "<not set>", "[" + desiredGroup + "]", edit);
+        TextEdit edit =
+            addMissingGroup(
+                annotation, groupMember.memberName, desiredGroup, assignment);
+        return annotationPlan(
+            annotation,
+            groupMember.memberName,
+            "<not set>",
+            "[" + desiredGroup + "]",
+            edit);
       }
       SourceRange groupRange = range(groupExpression, assignment, "group value");
       String currentGroup = source.substring(groupRange.start, groupRange.end);
@@ -1007,14 +1017,36 @@ public final class ApplyGroovyCaseGroups {
       }
       String plannedGroup =
           edit == null ? currentGroup : applyEditWithinRange(groupRange, edit);
-      return annotationPlan(annotation, currentGroup, plannedGroup, edit);
+      return annotationPlan(
+          annotation, groupMember.memberName, currentGroup, plannedGroup, edit);
+    }
+
+    private AnnotationGroupMember findGroupMember(
+        AnnotationNode annotation, CaseAssignment assignment)
+        throws GroupPlanningException {
+      Expression singular = annotation.getMember(SINGULAR_GROUP_MEMBER);
+      Expression plural = annotation.getMember(PLURAL_GROUP_MEMBER);
+      if (singular != null && plural != null) {
+        throw problem(
+            assignment,
+            "@Test contains both 'group' and 'groups'; the intended member is ambiguous");
+      }
+      if (plural != null) {
+        return new AnnotationGroupMember(PLURAL_GROUP_MEMBER, plural);
+      }
+      return new AnnotationGroupMember(SINGULAR_GROUP_MEMBER, singular);
     }
 
     private AnnotationPlan annotationPlan(
-        AnnotationNode annotation, String currentGroup, String plannedGroup, TextEdit edit) {
+        AnnotationNode annotation,
+        String memberName,
+        String currentGroup,
+        String plannedGroup,
+        TextEdit edit) {
       AnnotationPreview preview =
           new AnnotationPreview(
               annotation.getLineNumber(),
+              memberName,
               compactPreview(currentGroup),
               compactPreview(plannedGroup),
               edit != null);
@@ -1035,7 +1067,10 @@ public final class ApplyGroovyCaseGroups {
     }
 
     private TextEdit addMissingGroup(
-        AnnotationNode annotation, String desiredGroup, CaseAssignment assignment)
+        AnnotationNode annotation,
+        String memberName,
+        String desiredGroup,
+        CaseAssignment assignment)
         throws GroupPlanningException {
       SourceRange annotationRange = range(annotation, assignment, "@Test annotation");
       int lastToken = previousNonWhitespace(annotationRange.end - 1, annotationRange.start);
@@ -1044,7 +1079,7 @@ public final class ApplyGroovyCaseGroups {
         return new TextEdit(
             lastToken,
             lastToken,
-            separator + GROUP_MEMBER + " = [" + desiredGroup + "]");
+            separator + memberName + " = [" + desiredGroup + "]");
       }
       if (!annotation.getMembers().isEmpty()) {
         throw problem(
@@ -1054,7 +1089,7 @@ public final class ApplyGroovyCaseGroups {
       return new TextEdit(
           annotationRange.end,
           annotationRange.end,
-          "(" + GROUP_MEMBER + " = [" + desiredGroup + "])");
+          "(" + memberName + " = [" + desiredGroup + "])");
     }
 
     private TextEdit updateGroupList(
@@ -1348,16 +1383,32 @@ public final class ApplyGroovyCaseGroups {
 
   private static final class AnnotationPreview {
     private final int lineNumber;
+    private final String memberName;
     private final String currentGroup;
     private final String plannedGroup;
     private final boolean changed;
 
     private AnnotationPreview(
-        int lineNumber, String currentGroup, String plannedGroup, boolean changed) {
+        int lineNumber,
+        String memberName,
+        String currentGroup,
+        String plannedGroup,
+        boolean changed) {
       this.lineNumber = lineNumber;
+      this.memberName = memberName;
       this.currentGroup = currentGroup;
       this.plannedGroup = plannedGroup;
       this.changed = changed;
+    }
+  }
+
+  private static final class AnnotationGroupMember {
+    private final String memberName;
+    private final Expression expression;
+
+    private AnnotationGroupMember(String memberName, Expression expression) {
+      this.memberName = memberName;
+      this.expression = expression;
     }
   }
 
