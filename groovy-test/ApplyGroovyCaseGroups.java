@@ -1,6 +1,8 @@
+import java.io.BufferedReader;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.nio.ByteBuffer;
 import java.nio.charset.CharacterCodingException;
 import java.nio.charset.CodingErrorAction;
@@ -77,6 +79,10 @@ public final class ApplyGroovyCaseGroups {
 
       ApplyReport report = new GroupApplication().apply(options);
       System.out.printf("Loaded %d graded case(s) from %s.%n", report.caseCount, options.workbook);
+      if (report.cancelled) {
+        System.out.println("Cancelled by user; no Groovy source file was changed or staged.");
+        return;
+      }
       System.out.printf(
           "%s %d @Test annotation(s) in %d Groovy file(s); %d annotation(s) were already correct.%n",
           options.dryRun ? "Would update" : "Updated",
@@ -188,7 +194,7 @@ public final class ApplyGroovyCaseGroups {
           "Options:",
           "  --source DIR          Groovy source root (default: current directory)",
           "  --workbook FILE.xlsx  Reviewed workbook (default: DIR/normal-groovy-cases.xlsx)",
-          "  --dry-run             Validate and preview counts without changing source files",
+          "  --dry-run             Print all planned groups without changing or staging files",
           "  -h, --help            Show this help",
           "",
           "Example:",
@@ -201,14 +207,23 @@ public final class ApplyGroovyCaseGroups {
     private ApplyReport apply(Options options) throws IOException {
       List<CaseAssignment> assignments = new WorkbookAssignments().read(options.workbook);
       Map<Path, List<CaseAssignment>> assignmentsByFile = groupBySourceFile(assignments);
-      ApplyReport validationReport =
+      ValidationResult validation =
           validateAllAssignments(options.sourceRoot, assignments, assignmentsByFile);
+      GitStager gitStager = null;
+      if (!options.dryRun && validation.report.updatedAnnotationCount > 0) {
+        gitStager = GitStager.open(options.sourceRoot, assignmentsByFile.keySet());
+      }
+      printGroupPreviews(validation.casePreviews);
       if (options.dryRun) {
-        return validationReport;
+        return validation.report;
+      }
+      if (validation.report.updatedAnnotationCount == 0) {
+        return validation.report;
+      }
+      if (!confirmApplication()) {
+        return validation.report.asCancelled();
       }
 
-      GitStager gitStager =
-          GitStager.open(options.sourceRoot, assignmentsByFile.keySet());
       Set<Path> changedFiles = new LinkedHashSet<>();
       int updatedAnnotations = 0;
       int unchangedAnnotations = 0;
@@ -257,10 +272,11 @@ public final class ApplyGroovyCaseGroups {
           changedFiles.size(),
           updatedAnnotations,
           unchangedAnnotations,
-          stagedCases);
+          stagedCases,
+          false);
     }
 
-    private ApplyReport validateAllAssignments(
+    private ValidationResult validateAllAssignments(
         Path sourceRoot,
         List<CaseAssignment> assignments,
         Map<Path, List<CaseAssignment>> assignmentsByFile) {
@@ -307,13 +323,53 @@ public final class ApplyGroovyCaseGroups {
       }
 
       int changedFiles = 0;
+      List<CasePreview> casePreviews = new ArrayList<>();
       for (FileChange change : changes) {
         if (change.changed()) {
           changedFiles++;
         }
+        casePreviews.addAll(change.casePreviews);
       }
-      return new ApplyReport(
-          assignments.size(), changedFiles, updatedAnnotations, unchangedAnnotations, 0);
+      ApplyReport report =
+          new ApplyReport(
+              assignments.size(), changedFiles, updatedAnnotations, unchangedAnnotations, 0, false);
+      return new ValidationResult(report, casePreviews);
+    }
+
+    private static void printGroupPreviews(List<CasePreview> casePreviews) {
+      System.out.printf("%nPlanned @Test group values for %d case(s):%n", casePreviews.size());
+      for (int caseIndex = 0; caseIndex < casePreviews.size(); caseIndex++) {
+        CasePreview casePreview = casePreviews.get(caseIndex);
+        CaseAssignment assignment = casePreview.assignment;
+        System.out.printf(
+            "[%d/%d] %s (%s) - %s%n",
+            caseIndex + 1,
+            casePreviews.size(),
+            assignment.qualifiedClassName(),
+            assignment.level,
+            assignment.relativePath);
+        for (AnnotationPreview annotation : casePreview.annotations) {
+          System.out.printf(
+              "  @Test line %d: %s -> %s%s%n",
+              annotation.lineNumber,
+              annotation.currentGroup,
+              annotation.plannedGroup,
+              annotation.changed ? "" : " (unchanged)");
+        }
+      }
+    }
+
+    private static boolean confirmApplication() throws IOException {
+      System.out.print(
+          "Apply all group changes and run git add after each changed case? [y/N]: ");
+      System.out.flush();
+      BufferedReader reader =
+          new BufferedReader(new InputStreamReader(System.in, StandardCharsets.UTF_8));
+      String answer = reader.readLine();
+      System.out.println();
+      return answer != null
+          && (answer.trim().equalsIgnoreCase("y")
+              || answer.trim().equalsIgnoreCase("yes"));
     }
 
     private static Map<Path, List<CaseAssignment>> groupBySourceFile(
@@ -619,6 +675,7 @@ public final class ApplyGroovyCaseGroups {
         throws GroupPlanningException {
       ModuleNode module = parseModule();
       List<TextEdit> edits = new ArrayList<>();
+      List<CasePreview> casePreviews = new ArrayList<>();
       int updatedAnnotations = 0;
       int unchangedAnnotations = 0;
 
@@ -630,15 +687,19 @@ public final class ApplyGroovyCaseGroups {
               assignment,
               "no class-level or method-level @Test annotation was found");
         }
+        List<AnnotationPreview> annotationPreviews = new ArrayList<>();
         for (AnnotationNode annotation : testAnnotations) {
-          TextEdit edit = planAnnotation(annotation, assignment);
-          if (edit == null) {
+          AnnotationPlan annotationPlan = planAnnotation(annotation, assignment);
+          annotationPreviews.add(annotationPlan.preview);
+          if (annotationPlan.edit == null) {
             unchangedAnnotations++;
           } else {
-            edits.add(edit);
+            edits.add(annotationPlan.edit);
             updatedAnnotations++;
           }
         }
+        annotationPreviews.sort(Comparator.comparingInt(preview -> preview.lineNumber));
+        casePreviews.add(new CasePreview(assignment, annotationPreviews));
       }
 
       validateNonOverlapping(edits);
@@ -648,7 +709,8 @@ public final class ApplyGroovyCaseGroups {
           source,
           updatedSource,
           updatedAnnotations,
-          unchangedAnnotations);
+          unchangedAnnotations,
+          casePreviews);
     }
 
     private ModuleNode parseModule() throws GroupPlanningException {
@@ -718,31 +780,59 @@ public final class ApplyGroovyCaseGroups {
       }
     }
 
-    private TextEdit planAnnotation(AnnotationNode annotation, CaseAssignment assignment)
+    private AnnotationPlan planAnnotation(AnnotationNode annotation, CaseAssignment assignment)
         throws GroupPlanningException {
       String desiredGroup = TEST_CASE_GROUP_NAME + "." + assignment.level;
       Expression groupExpression = annotation.getMember(GROUP_MEMBER);
       if (groupExpression == null) {
-        return addMissingGroup(annotation, desiredGroup, assignment);
+        TextEdit edit = addMissingGroup(annotation, desiredGroup, assignment);
+        return annotationPlan(annotation, "<not set>", "[" + desiredGroup + "]", edit);
       }
-      if (groupExpression instanceof ListExpression) {
-        return updateGroupList(
-            (ListExpression) groupExpression, desiredGroup, assignment);
-      }
-      if (isLevelGroup(groupExpression)) {
-        if (levelName(groupExpression).equals(assignment.level)) {
-          return null;
-        }
-        SourceRange groupRange = range(groupExpression, assignment, "group value");
-        return new TextEdit(groupRange.start, groupRange.end, desiredGroup);
-      }
-
       SourceRange groupRange = range(groupExpression, assignment, "group value");
-      String existingGroup = source.substring(groupRange.start, groupRange.end);
-      return new TextEdit(
-          groupRange.start,
-          groupRange.end,
-          "[" + existingGroup + ", " + desiredGroup + "]");
+      String currentGroup = source.substring(groupRange.start, groupRange.end);
+      TextEdit edit;
+      if (groupExpression instanceof ListExpression) {
+        edit = updateGroupList((ListExpression) groupExpression, desiredGroup, assignment);
+      } else if (isLevelGroup(groupExpression)) {
+        if (levelName(groupExpression).equals(assignment.level)) {
+          edit = null;
+        } else {
+          edit = new TextEdit(groupRange.start, groupRange.end, desiredGroup);
+        }
+      } else {
+        edit =
+            new TextEdit(
+                groupRange.start,
+                groupRange.end,
+                "[" + currentGroup + ", " + desiredGroup + "]");
+      }
+      String plannedGroup =
+          edit == null ? currentGroup : applyEditWithinRange(groupRange, edit);
+      return annotationPlan(annotation, currentGroup, plannedGroup, edit);
+    }
+
+    private AnnotationPlan annotationPlan(
+        AnnotationNode annotation, String currentGroup, String plannedGroup, TextEdit edit) {
+      AnnotationPreview preview =
+          new AnnotationPreview(
+              annotation.getLineNumber(),
+              compactPreview(currentGroup),
+              compactPreview(plannedGroup),
+              edit != null);
+      return new AnnotationPlan(edit, preview);
+    }
+
+    private String applyEditWithinRange(SourceRange range, TextEdit edit) {
+      StringBuilder value = new StringBuilder(source.substring(range.start, range.end));
+      value.replace(
+          edit.start - range.start,
+          edit.end - range.start,
+          edit.replacement);
+      return value.toString();
+    }
+
+    private static String compactPreview(String value) {
+      return value.replaceAll("\\s+", " ").trim();
     }
 
     private TextEdit addMissingGroup(
@@ -1015,22 +1105,70 @@ public final class ApplyGroovyCaseGroups {
     private final String updatedSource;
     private final int updatedAnnotationCount;
     private final int unchangedAnnotationCount;
+    private final List<CasePreview> casePreviews;
 
     private FileChange(
         Path sourceFile,
         String originalSource,
         String updatedSource,
         int updatedAnnotationCount,
-        int unchangedAnnotationCount) {
+        int unchangedAnnotationCount,
+        List<CasePreview> casePreviews) {
       this.sourceFile = sourceFile;
       this.originalSource = originalSource;
       this.updatedSource = updatedSource;
       this.updatedAnnotationCount = updatedAnnotationCount;
       this.unchangedAnnotationCount = unchangedAnnotationCount;
+      this.casePreviews = casePreviews;
     }
 
     private boolean changed() {
       return !originalSource.equals(updatedSource);
+    }
+  }
+
+  private static final class ValidationResult {
+    private final ApplyReport report;
+    private final List<CasePreview> casePreviews;
+
+    private ValidationResult(ApplyReport report, List<CasePreview> casePreviews) {
+      this.report = report;
+      this.casePreviews = casePreviews;
+    }
+  }
+
+  private static final class CasePreview {
+    private final CaseAssignment assignment;
+    private final List<AnnotationPreview> annotations;
+
+    private CasePreview(CaseAssignment assignment, List<AnnotationPreview> annotations) {
+      this.assignment = assignment;
+      this.annotations = annotations;
+    }
+  }
+
+  private static final class AnnotationPreview {
+    private final int lineNumber;
+    private final String currentGroup;
+    private final String plannedGroup;
+    private final boolean changed;
+
+    private AnnotationPreview(
+        int lineNumber, String currentGroup, String plannedGroup, boolean changed) {
+      this.lineNumber = lineNumber;
+      this.currentGroup = currentGroup;
+      this.plannedGroup = plannedGroup;
+      this.changed = changed;
+    }
+  }
+
+  private static final class AnnotationPlan {
+    private final TextEdit edit;
+    private final AnnotationPreview preview;
+
+    private AnnotationPlan(TextEdit edit, AnnotationPreview preview) {
+      this.edit = edit;
+      this.preview = preview;
     }
   }
 
@@ -1040,18 +1178,31 @@ public final class ApplyGroovyCaseGroups {
     private final int updatedAnnotationCount;
     private final int unchangedAnnotationCount;
     private final int stagedCaseCount;
+    private final boolean cancelled;
 
     private ApplyReport(
         int caseCount,
         int changedFileCount,
         int updatedAnnotationCount,
         int unchangedAnnotationCount,
-        int stagedCaseCount) {
+        int stagedCaseCount,
+        boolean cancelled) {
       this.caseCount = caseCount;
       this.changedFileCount = changedFileCount;
       this.updatedAnnotationCount = updatedAnnotationCount;
       this.unchangedAnnotationCount = unchangedAnnotationCount;
       this.stagedCaseCount = stagedCaseCount;
+      this.cancelled = cancelled;
+    }
+
+    private ApplyReport asCancelled() {
+      return new ApplyReport(
+          caseCount,
+          changedFileCount,
+          updatedAnnotationCount,
+          unchangedAnnotationCount,
+          0,
+          true);
     }
   }
 

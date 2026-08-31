@@ -86,6 +86,15 @@ after_dry_run="$(sha256sum "${source_root}"/*.groovy)"
 grep -Fq 'Would update 6 @Test annotation(s) in 4 Groovy file(s); 0 annotation(s) were already correct.' \
   <<<"${dry_run_output}"
 grep -Fq 'Dry run only; no Groovy source file was changed.' <<<"${dry_run_output}"
+grep -Fq '[1/5] sample.cases.EmptyParenCase (L0) - 01MixedCases.groovy' \
+  <<<"${dry_run_output}"
+grep -Fq '@Test line 5: <not set> -> [TestCaseGroup.L0]' <<<"${dry_run_output}"
+grep -Fq '[TestCaseGroup.Completed] -> [TestCaseGroup.Completed, TestCaseGroup.L1]' \
+  <<<"${dry_run_output}"
+if [[ "$(grep -Ec '^\[[1-5]/5\]' <<<"${dry_run_output}")" -ne 5 ]]; then
+  echo 'Dry run did not print every case group.' >&2
+  exit 1
+fi
 if [[ "${before_dry_run}" != "${after_dry_run}" ]]; then
   echo 'Dry run changed a Groovy source file.' >&2
   exit 1
@@ -95,12 +104,34 @@ if [[ -n "$(git -C "${source_root}" diff --cached --name-only)" ]]; then
   exit 1
 fi
 
-apply_output="$(java -cp "${runtime_classpath}" ApplyGroovyCaseGroups \
+before_cancel="$(sha256sum "${source_root}"/*.groovy)"
+cancel_output="$(printf 'n\n' | java -cp "${runtime_classpath}" ApplyGroovyCaseGroups \
+  --source "${source_root}" --workbook "${workbook}")"
+after_cancel="$(sha256sum "${source_root}"/*.groovy)"
+grep -Fq 'Apply all group changes and run git add after each changed case? [y/N]:' \
+  <<<"${cancel_output}"
+grep -Fq 'Cancelled by user; no Groovy source file was changed or staged.' \
+  <<<"${cancel_output}"
+if [[ "${before_cancel}" != "${after_cancel}" ]] \
+  || [[ -n "$(git -C "${source_root}" diff --cached --name-only)" ]]; then
+  echo 'Declining confirmation changed or staged a Groovy source file.' >&2
+  exit 1
+fi
+
+apply_output="$(printf 'y\n' | java -cp "${runtime_classpath}" ApplyGroovyCaseGroups \
   --source "${source_root}" --workbook "${workbook}")"
 grep -Fq 'Loaded 5 graded case(s)' <<<"${apply_output}"
 grep -Fq 'Updated 6 @Test annotation(s) in 4 Groovy file(s); 0 annotation(s) were already correct.' \
   <<<"${apply_output}"
 grep -Fq 'Ran git add after 5 changed case(s).' <<<"${apply_output}"
+preview_line="$(grep -nF 'Planned @Test group values for 5 case(s):' <<<"${apply_output}" | cut -d: -f1)"
+confirmation_line="$(grep -nF 'Apply all group changes and run git add after each changed case?' \
+  <<<"${apply_output}" | cut -d: -f1)"
+first_apply_line="$(grep -nF 'then ran git add --' <<<"${apply_output}" | head -n 1 | cut -d: -f1)"
+if (( preview_line >= confirmation_line || confirmation_line >= first_apply_line )); then
+  echo 'Group preview and confirmation were not completed before source updates.' >&2
+  exit 1
+fi
 if [[ "$(grep -Fc 'then ran git add --' <<<"${apply_output}")" -ne 5 ]]; then
   echo 'git add was not run once after each changed case.' >&2
   exit 1

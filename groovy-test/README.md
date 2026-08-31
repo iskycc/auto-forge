@@ -90,6 +90,12 @@ file, that file is updated and staged once after the first class and again after
 The source root must therefore be inside a Git worktree. A case whose annotations already contain
 the correct level is not rewritten and does not trigger `git add`.
 
+Before any source write, a real run prints every graded case and every class-level/method-level
+`@Test` as `current group -> planned group`. Review the complete list, then enter `y` and press Enter
+at the confirmation prompt to proceed. Any other input, including EOF, cancels the run without
+changing or staging a file. When every group is already correct, the tool prints the list and exits
+without asking for confirmation.
+
 Use `--dry-run` to validate and report the planned annotation/file counts without writing. The tool
 plans and validates the complete workbook first; a missing file, class, `@Test` annotation, malformed
 Groovy file, ambiguous multiple level markers, or unsafe relative path stops the run before any source
