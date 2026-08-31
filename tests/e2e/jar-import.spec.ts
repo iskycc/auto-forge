@@ -1412,7 +1412,9 @@ public class MixedVisibleTest {
     .getByRole("navigation", { name: "主导航" })
     .getByRole("link", { name: "运维计划" })
     .click();
-  await expect(page.getByRole("heading", { name: "计划与目录作业" })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { level: 1, name: "计划任务", exact: true }),
+  ).toBeVisible();
   await expect(page.getByRole("navigation", { name: "运维审计" })).toHaveCount(0);
 
   for (const route of ["/settings/platform", "/settings/access"]) {

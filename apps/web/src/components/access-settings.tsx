@@ -91,7 +91,12 @@ export function AccessSettings({
     "user" | "password" | "role" | "assignment" | null
   >(null);
 
-  async function request(path: string, init: RequestInit, success: string) {
+  async function request(
+    path: string,
+    init: RequestInit,
+    success: string,
+    { refreshPage = true }: { refreshPage?: boolean } = {},
+  ) {
     setPending(true);
     setError("");
     setMessage("");
@@ -101,7 +106,7 @@ export function AccessSettings({
       if (errorMessage) throw new Error(errorMessage);
       setMessage(success);
       setCreateDialog(null);
-      router.refresh();
+      if (refreshPage) router.refresh();
       setPending(false);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "操作失败。");
@@ -212,6 +217,7 @@ export function AccessSettings({
           ? "LDAP 连接、用户与 Group Base DN 验证成功。"
           : "LDAP 连接与用户 Base DN 验证成功。"
         : "LDAP 配置已加密保存。",
+      { refreshPage: !testOnly },
     );
   }
 
