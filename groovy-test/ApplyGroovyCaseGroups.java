@@ -1,3 +1,4 @@
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.ByteBuffer;
@@ -47,7 +48,8 @@ import org.codehaus.groovy.control.SourceUnit;
  * {@code @Test} annotations.
  *
  * <p>The tool uses Groovy's conversion-phase AST. It never loads, links, initializes, or executes
- * the analyzed source classes, and it disables the {@code @Grab} global transformation.
+ * the analyzed source classes, and it disables the {@code @Grab} global transformation. After
+ * persisting each changed case, it immediately stages that case's Groovy file with {@code git add}.
  */
 public final class ApplyGroovyCaseGroups {
   private static final String INCLUDED_CASES_SHEET = "导出用例";
@@ -83,6 +85,9 @@ public final class ApplyGroovyCaseGroups {
           report.unchangedAnnotationCount);
       if (options.dryRun) {
         System.out.println("Dry run only; no Groovy source file was changed.");
+      } else {
+        System.out.printf(
+            "Ran git add after %d changed case(s).%n", report.stagedCaseCount);
       }
     } catch (IllegalArgumentException error) {
       System.err.println("Invalid input: " + error.getMessage());
@@ -196,13 +201,76 @@ public final class ApplyGroovyCaseGroups {
     private ApplyReport apply(Options options) throws IOException {
       List<CaseAssignment> assignments = new WorkbookAssignments().read(options.workbook);
       Map<Path, List<CaseAssignment>> assignmentsByFile = groupBySourceFile(assignments);
+      ApplyReport validationReport =
+          validateAllAssignments(options.sourceRoot, assignments, assignmentsByFile);
+      if (options.dryRun) {
+        return validationReport;
+      }
+
+      GitStager gitStager =
+          GitStager.open(options.sourceRoot, assignmentsByFile.keySet());
+      Set<Path> changedFiles = new LinkedHashSet<>();
+      int updatedAnnotations = 0;
+      int unchangedAnnotations = 0;
+      int stagedCases = 0;
+      for (CaseAssignment assignment : assignments) {
+        Path sourceFile = resolveSourceFile(options.sourceRoot, assignment.relativePath);
+        String source = readUtf8(sourceFile, assignment.relativePath);
+        FileChange change;
+        try {
+          change =
+              new GroovyAstGroupPlanner(assignment.relativePath.toString(), source)
+                  .plan(sourceFile, Collections.singletonList(assignment));
+        } catch (GroupPlanningException error) {
+          throw new IllegalStateException(
+              "Source changed after validation; no further cases were processed: "
+                  + error.getMessage(),
+              error);
+        }
+
+        updatedAnnotations += change.updatedAnnotationCount;
+        unchangedAnnotations += change.unchangedAnnotationCount;
+        if (!change.changed()) {
+          continue;
+        }
+        writeAtomically(sourceFile, change.updatedSource);
+        try {
+          gitStager.stage(sourceFile);
+        } catch (IOException stagingFailure) {
+          try {
+            writeAtomically(sourceFile, source);
+          } catch (IOException rollbackFailure) {
+            stagingFailure.addSuppressed(rollbackFailure);
+          }
+          throw stagingFailure;
+        }
+        changedFiles.add(sourceFile);
+        stagedCases++;
+        System.out.printf(
+            "Applied %s (%s), then ran git add -- %s%n",
+            assignment.qualifiedClassName(),
+            assignment.level,
+            gitStager.displayPath(sourceFile));
+      }
+      return new ApplyReport(
+          assignments.size(),
+          changedFiles.size(),
+          updatedAnnotations,
+          unchangedAnnotations,
+          stagedCases);
+    }
+
+    private ApplyReport validateAllAssignments(
+        Path sourceRoot,
+        List<CaseAssignment> assignments,
+        Map<Path, List<CaseAssignment>> assignmentsByFile) {
       List<FileChange> changes = new ArrayList<>();
       List<String> validationErrors = new ArrayList<>();
       int updatedAnnotations = 0;
       int unchangedAnnotations = 0;
 
       for (Map.Entry<Path, List<CaseAssignment>> entry : assignmentsByFile.entrySet()) {
-        Path sourceFile = resolveSourceFile(options.sourceRoot, entry.getKey());
+        Path sourceFile = resolveSourceFile(sourceRoot, entry.getKey());
         if (!Files.isRegularFile(sourceFile, LinkOption.NOFOLLOW_LINKS)) {
           validationErrors.add("Source file does not exist: " + entry.getKey());
           continue;
@@ -214,9 +282,9 @@ public final class ApplyGroovyCaseGroups {
 
         String source;
         try {
-          source = decodeUtf8(Files.readAllBytes(sourceFile));
-        } catch (CharacterCodingException invalidEncoding) {
-          validationErrors.add("Source file is not valid UTF-8: " + entry.getKey());
+          source = readUtf8(sourceFile, entry.getKey());
+        } catch (IOException invalidSource) {
+          validationErrors.add(invalidSource.getMessage());
           continue;
         }
 
@@ -240,16 +308,12 @@ public final class ApplyGroovyCaseGroups {
 
       int changedFiles = 0;
       for (FileChange change : changes) {
-        if (!change.changed()) {
-          continue;
-        }
-        changedFiles++;
-        if (!options.dryRun) {
-          writeAtomically(change.sourceFile, change.updatedSource);
+        if (change.changed()) {
+          changedFiles++;
         }
       }
       return new ApplyReport(
-          assignments.size(), changedFiles, updatedAnnotations, unchangedAnnotations);
+          assignments.size(), changedFiles, updatedAnnotations, unchangedAnnotations, 0);
     }
 
     private static Map<Path, List<CaseAssignment>> groupBySourceFile(
@@ -283,6 +347,14 @@ public final class ApplyGroovyCaseGroups {
           .onUnmappableCharacter(CodingErrorAction.REPORT)
           .decode(ByteBuffer.wrap(content))
           .toString();
+    }
+
+    private static String readUtf8(Path sourceFile, Path displayPath) throws IOException {
+      try {
+        return decodeUtf8(Files.readAllBytes(sourceFile));
+      } catch (CharacterCodingException invalidEncoding) {
+        throw new IOException("Source file is not valid UTF-8: " + displayPath, invalidEncoding);
+      }
     }
   }
 
@@ -417,6 +489,115 @@ public final class ApplyGroovyCaseGroups {
     private String cellText(Row row, int column) {
       Cell cell = row.getCell(column);
       return cell == null ? "" : dataFormatter.formatCellValue(cell).trim();
+    }
+  }
+
+  private static final class GitStager {
+    private final Path repositoryRoot;
+
+    private GitStager(Path repositoryRoot) {
+      this.repositoryRoot = repositoryRoot;
+    }
+
+    private static GitStager open(Path sourceRoot, Set<Path> relativeSourcePaths)
+        throws IOException {
+      CommandResult repositoryLookup =
+          runGit(sourceRoot, Arrays.asList("rev-parse", "--show-toplevel"));
+      if (repositoryLookup.exitCode != 0 || repositoryLookup.output.trim().isEmpty()) {
+        throw new IllegalArgumentException(
+            "Source root is not inside a Git worktree; git add is required after every changed case: "
+                + sourceRoot
+                + commandFailureSuffix(repositoryLookup));
+      }
+      Path repositoryRoot =
+          Paths.get(repositoryLookup.output.trim()).toAbsolutePath().normalize();
+      GitStager stager = new GitStager(repositoryRoot);
+      for (Path relativeSourcePath : relativeSourcePaths) {
+        Path sourceFile = sourceRoot.resolve(relativeSourcePath).normalize();
+        stager.requireInsideRepository(sourceFile);
+        CommandResult preflight =
+            runGit(
+                repositoryRoot,
+                Arrays.asList(
+                    "add", "--dry-run", "--", stager.displayPath(sourceFile)));
+        if (preflight.exitCode != 0) {
+          throw new IllegalArgumentException(
+              "git add preflight failed for "
+                  + stager.displayPath(sourceFile)
+                  + commandFailureSuffix(preflight));
+        }
+      }
+      return stager;
+    }
+
+    private void stage(Path sourceFile) throws IOException {
+      requireInsideRepository(sourceFile);
+      String displayPath = displayPath(sourceFile);
+      CommandResult result =
+          runGit(repositoryRoot, Arrays.asList("add", "--", displayPath));
+      if (result.exitCode != 0) {
+        throw new IOException(
+            "git add failed for " + displayPath + commandFailureSuffix(result));
+      }
+    }
+
+    private String displayPath(Path sourceFile) {
+      return repositoryRoot.relativize(sourceFile.toAbsolutePath().normalize()).toString();
+    }
+
+    private void requireInsideRepository(Path sourceFile) {
+      Path normalizedSourceFile = sourceFile.toAbsolutePath().normalize();
+      if (!normalizedSourceFile.startsWith(repositoryRoot)) {
+        throw new IllegalArgumentException(
+            "Source file is outside the Git worktree: " + normalizedSourceFile);
+      }
+    }
+
+    private static CommandResult runGit(Path workingDirectory, List<String> arguments)
+        throws IOException {
+      List<String> command = new ArrayList<>();
+      command.add("git");
+      command.add("-C");
+      command.add(workingDirectory.toString());
+      command.addAll(arguments);
+      Process process = new ProcessBuilder(command).redirectErrorStream(true).start();
+      byte[] output;
+      try (InputStream input = process.getInputStream()) {
+        output = readRemainingBytes(input);
+      }
+      int exitCode;
+      try {
+        exitCode = process.waitFor();
+      } catch (InterruptedException interrupted) {
+        Thread.currentThread().interrupt();
+        throw new IOException("Interrupted while running git", interrupted);
+      }
+      return new CommandResult(exitCode, new String(output, StandardCharsets.UTF_8));
+    }
+
+    private static byte[] readRemainingBytes(InputStream input) throws IOException {
+      ByteArrayOutputStream content = new ByteArrayOutputStream();
+      byte[] buffer = new byte[4_096];
+      int bytesRead;
+      while ((bytesRead = input.read(buffer)) >= 0) {
+        content.write(buffer, 0, bytesRead);
+      }
+      return content.toByteArray();
+    }
+
+    private static String commandFailureSuffix(CommandResult result) {
+      String output = result.output.trim();
+      return output.isEmpty() ? "" : ": " + output;
+    }
+  }
+
+  private static final class CommandResult {
+    private final int exitCode;
+    private final String output;
+
+    private CommandResult(int exitCode, String output) {
+      this.exitCode = exitCode;
+      this.output = output;
     }
   }
 
@@ -858,16 +1039,19 @@ public final class ApplyGroovyCaseGroups {
     private final int changedFileCount;
     private final int updatedAnnotationCount;
     private final int unchangedAnnotationCount;
+    private final int stagedCaseCount;
 
     private ApplyReport(
         int caseCount,
         int changedFileCount,
         int updatedAnnotationCount,
-        int unchangedAnnotationCount) {
+        int unchangedAnnotationCount,
+        int stagedCaseCount) {
       this.caseCount = caseCount;
       this.changedFileCount = changedFileCount;
       this.updatedAnnotationCount = updatedAnnotationCount;
       this.unchangedAnnotationCount = unchangedAnnotationCount;
+      this.stagedCaseCount = stagedCaseCount;
     }
   }
 

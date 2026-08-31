@@ -4,9 +4,9 @@
 loading, or executing them. It exports an XLSX workbook through Apache POI 3.13, uses
 JLine 3.25.1/Jansi 2.4.1 for interactive terminal input, and does not use Groovy, Grape, or
 Apache Ivy. `ApplyGroovyCaseGroups.java` is a separate post-review tool that uses the Groovy
-3.0.24 conversion-phase AST to update `@Test` annotations. Both tools target Java 8 and do not
-call Java 9+ runtime APIs. The Maven build and focused regression scripts can be run with JDK 8
-or newer.
+3.0.24 conversion-phase AST to update `@Test` annotations. It provides a standard
+`public static void main(String[] args)` entry point. Both tools target Java 8 and do not call
+Java 9+ runtime APIs. The Maven build and focused regression scripts can be run with JDK 8 or newer.
 
 Build the analyzer and copy its runtime dependencies:
 
@@ -84,12 +84,20 @@ class-level/method-level `@Test` annotations through the Groovy AST, and updates
   when it already agrees.
 - Annotation-looking text in comments and strings is not considered an annotation.
 
+After each case that actually changes, the tool immediately executes `git add -- <groovy-file>`.
+This is deliberately case-based rather than file-batched: if two graded classes share one Groovy
+file, that file is updated and staged once after the first class and again after the second class.
+The source root must therefore be inside a Git worktree. A case whose annotations already contain
+the correct level is not rewritten and does not trigger `git add`.
+
 Use `--dry-run` to validate and report the planned annotation/file counts without writing. The tool
 plans and validates the complete workbook first; a missing file, class, `@Test` annotation, malformed
 Groovy file, ambiguous multiple level markers, or unsafe relative path stops the run before any source
-file is changed. Source files are replaced atomically, and rerunning with the same workbook is
-idempotent. Parsing stops at Groovy's conversion phase and disables the `@Grab` transformation, so
-the source is never executed and Grape/Ivy dependency resolution is not triggered.
+file is changed. Before a real run it also performs a dry-run `git add` check for every target file.
+Source files are replaced atomically, and rerunning with the same workbook is idempotent. Parsing
+stops at Groovy's conversion phase and disables the `@Grab` transformation, so the source is never
+executed and Grape/Ivy dependency resolution is not triggered. `--dry-run` never changes or stages a
+source file.
 
 Run the focused regression test after building a POI 3.13 classpath:
 

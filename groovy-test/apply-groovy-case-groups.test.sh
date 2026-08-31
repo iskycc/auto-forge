@@ -18,6 +18,8 @@ if [[ ! -f "${compiled_classes}/ApplyGroovyCaseGroups.class" ]]; then
 fi
 
 runtime_classpath="${compiled_classes}:${dependency_directory}/*"
+javap -classpath "${compiled_classes}" ApplyGroovyCaseGroups \
+  | grep -Fq 'public static void main(java.lang.String[]);'
 
 printf '%s\n' \
   'package sample.cases' \
@@ -64,6 +66,12 @@ printf '%s\n' \
   '    void testClassAndMethod() { assert true }' \
   '}' >"${source_root}/04ClassAndMethodCase.groovy"
 
+git -C "${source_root}" init -q
+git -C "${source_root}" config user.name 'Groovy group test'
+git -C "${source_root}" config user.email 'groovy-group-test@example.invalid'
+git -C "${source_root}" add -- .
+git -C "${source_root}" commit -qm 'test fixture baseline'
+
 java -cp "${runtime_classpath}" AnalyzeNormalGroovyCases \
   --source "${source_root}" --output "${workbook}" --no-review >/dev/null
 
@@ -82,12 +90,25 @@ if [[ "${before_dry_run}" != "${after_dry_run}" ]]; then
   echo 'Dry run changed a Groovy source file.' >&2
   exit 1
 fi
+if [[ -n "$(git -C "${source_root}" diff --cached --name-only)" ]]; then
+  echo 'Dry run staged a Groovy source file.' >&2
+  exit 1
+fi
 
 apply_output="$(java -cp "${runtime_classpath}" ApplyGroovyCaseGroups \
   --source "${source_root}" --workbook "${workbook}")"
 grep -Fq 'Loaded 5 graded case(s)' <<<"${apply_output}"
 grep -Fq 'Updated 6 @Test annotation(s) in 4 Groovy file(s); 0 annotation(s) were already correct.' \
   <<<"${apply_output}"
+grep -Fq 'Ran git add after 5 changed case(s).' <<<"${apply_output}"
+if [[ "$(grep -Fc 'then ran git add --' <<<"${apply_output}")" -ne 5 ]]; then
+  echo 'git add was not run once after each changed case.' >&2
+  exit 1
+fi
+if [[ "$(git -C "${source_root}" diff --cached --name-only | wc -l)" -ne 4 ]]; then
+  echo 'The changed Groovy files were not staged.' >&2
+  exit 1
+fi
 
 grep -Fq '@Test(group = [TestCaseGroup.L0])' "${source_root}/01MixedCases.groovy"
 grep -Fq '@Test(group = [TestCaseGroup.Completed, TestCaseGroup.L1])' \
@@ -114,6 +135,7 @@ idempotent_output="$(java -cp "${runtime_classpath}" ApplyGroovyCaseGroups \
 after_idempotent_run="$(sha256sum "${source_root}"/*.groovy)"
 grep -Fq 'Updated 0 @Test annotation(s) in 0 Groovy file(s); 6 annotation(s) were already correct.' \
   <<<"${idempotent_output}"
+grep -Fq 'Ran git add after 0 changed case(s).' <<<"${idempotent_output}"
 if [[ "${after_apply}" != "${after_idempotent_run}" ]]; then
   echo 'An idempotent rerun changed a Groovy source file.' >&2
   exit 1
