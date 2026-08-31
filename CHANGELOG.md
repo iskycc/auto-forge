@@ -14,6 +14,9 @@ and known limitations.
 - The Groovy case-group utility now adds the required `cotest.define.TestCaseGroup` import when a
   source uses the generated group values without an exact or wildcard import. Import-only repair,
   preview, confirmation, staging and idempotent reruns are supported.
+- The same utility now processes every row from both workbook sheets: `导出用例` requires an
+  explicit reviewed L0/L1/L2 value, while every `排除明细` case is deterministically assigned L2
+  without requiring a level column.
 
 ### Tests
 
