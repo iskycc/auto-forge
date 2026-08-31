@@ -2,8 +2,10 @@
 .github
 **/.next
 **/node_modules
+**/target
 **/*.tsbuildinfo
 autoforge-agent-data
+backend-runtime
 coverage
 data
 dist

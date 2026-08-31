@@ -4,6 +4,55 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## 1.7.1 - 2026-08-31
+
+### Added
+
+- `groovy-test` now includes an offline `ApplyGroovyCaseGroups` CLI that reads reviewed XLSX levels
+  and updates class- or method-level Groovy `@Test` `group`/`groups` members through the
+  conversion-phase AST without
+  loading or executing test classes. It recognizes the supported reviewed-level header and value
+  variants, previews every planned change, requires explicit confirmation, supports dry runs and
+  validates the complete workbook before writing.
+- Changed Groovy sources are replaced atomically and staged after each changed case. Existing
+  non-level groups are preserved, already-correct sources remain untouched, and unsafe paths,
+  malformed sources, ambiguous levels or missing annotations stop the operation before mutation.
+
+### Changed
+
+- Backend images now bundle the custom Next.js server entry points and copy only the traced
+  production runtime, migrations, static assets and embedded Agents. Next.js build caches, source
+  maps, local data, test output and development dependencies no longer enter release images.
+- Docker build context now excludes Maven targets, and backend archive generation enforces a 180 MiB
+  regression budget. The measured Linux amd64 Docker archive decreased from about 522 MB in v1.7.0
+  to 126 MB while retaining Lite/Full in one image and both static Agent architectures.
+
+### Tests
+
+- Release checks cover runtime exclusions, safe packaging destinations, the archive-size budget and
+  the single traced-runtime Docker copy. Image acceptance still boots Lite without network, executes
+  migrations, verifies the Full-mode NATS client exports and checks both embedded Agent resources;
+  Full runtime acceptance covers real Agent execution, LDAP and dependency interruption recovery.
+- Added focused Groovy regression coverage for reviewed workbook parsing, confirmation and
+  cancellation, per-case staging, atomic rollback, idempotency, source safety, level aliases and
+  plural `groups` preservation. The focused suite now runs in normal CI and release-source checks.
+
+### Database and persisted configuration
+
+- No migration or persisted-configuration change is required.
+
+### Compatibility
+
+- Lite/Full behavior, custom-server terminal WebSockets, Runner Protocol v1 and the Docker-native
+  `.docker.tar` distribution format are unchanged.
+- The Groovy workbook utility is an optional Java 8-compatible maintenance tool and does not alter
+  the AutoForge control-plane runtime or execution protocol.
+
+### Offline assets
+
+- No dependency or runtime network requirement was added. Runtime images continue to contain both
+  Linux amd64 and arm64 static Agents.
+
 ## 1.7.0 - 2026-08-31
 
 ### Changed

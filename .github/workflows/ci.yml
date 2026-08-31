@@ -67,6 +67,7 @@ jobs:
           pnpm test:integration
           pnpm test:performance
           mvn --batch-mode --file adapters/cotest-testng/pom.xml test
+          bash scripts/quality/test-groovy-tools.sh
 
   jenkins-plugins:
     name: Jenkins HPI and Pipeline E2E

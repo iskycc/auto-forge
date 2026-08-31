@@ -2,11 +2,21 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-test("packages the custom Next.js server with production workspace dependencies", async () => {
-  const [dockerfile, nextConfiguration] = await Promise.all([
-    readFile("deploy/docker/backend.Dockerfile", "utf8"),
-    readFile("apps/web/next.config.ts", "utf8"),
-  ]);
+import {
+  assertSafeRuntimeDestination,
+  isExcludedRuntimePath,
+  isNextTraceFile,
+} from "./package-backend-runtime.mjs";
+
+test("packages only the traced custom-server runtime", async () => {
+  const [dockerfile, nextConfiguration, webPackage, serverBuild, runtimePackager] =
+    await Promise.all([
+      readFile("deploy/docker/backend.Dockerfile", "utf8"),
+      readFile("apps/web/next.config.ts", "utf8"),
+      readFile("apps/web/package.json", "utf8"),
+      readFile("apps/web/server/build-server.mjs", "utf8"),
+      readFile("scripts/release/package-backend-runtime.mjs", "utf8"),
+    ]);
 
   assert.doesNotMatch(nextConfiguration, /output:\s*["']standalone["']/);
   assert.match(dockerfile, /\bCI=1\b/);
@@ -21,38 +31,63 @@ test("packages the custom Next.js server with production workspace dependencies"
 
   const webBuild = dockerfile.indexOf("pnpm --filter @autoforge/web build");
   const workerBuild = dockerfile.indexOf("pnpm --filter @autoforge/worker build");
-  const productionInstall = dockerfile.indexOf(
-    "pnpm install --offline --frozen-lockfile --prod --ignore-scripts",
+  const runtimePackaging = dockerfile.indexOf(
+    "node scripts/release/package-backend-runtime.mjs /workspace/backend-runtime",
   );
   assert.ok(webBuild >= 0, "the Web production build must be present");
   assert.ok(workerBuild > webBuild, "the worker must be built after the Web application");
   assert.ok(
-    productionInstall > workerBuild,
-    "development dependencies must be pruned only after all production builds",
+    runtimePackaging > workerBuild,
+    "the traced runtime must be packaged only after all production builds",
   );
 
-  for (const requiredRuntimePath of [
-    "/workspace/node_modules ./node_modules",
-    "/workspace/packages ./packages",
-    "/workspace/apps/web/node_modules ./apps/web/node_modules",
-    "/workspace/apps/web/.next ./apps/web/.next",
-    "/workspace/apps/web/dist-server ./apps/web/dist-server",
-    "/workspace/apps/worker/node_modules ./apps/worker/node_modules",
-    "/workspace/apps/worker/dist ./apps/worker/dist",
-  ]) {
-    assert.match(
-      dockerfile,
-      new RegExp(requiredRuntimePath.replaceAll("/", "\\/").replaceAll(".", "\\.")),
-      `runtime image is missing ${requiredRuntimePath}`,
-    );
-  }
+  assert.match(
+    dockerfile,
+    /COPY --from=builder --chown=node:node \/workspace\/backend-runtime \.\//,
+  );
+  assert.doesNotMatch(dockerfile, /COPY --from=builder[^\n]*\/workspace\/node_modules/);
+  assert.doesNotMatch(dockerfile, /COPY --from=builder[^\n]*\/workspace\/packages/);
+  assert.doesNotMatch(dockerfile, /COPY --from=builder[^\n]*\/workspace\/apps\/web\/\.next/);
   assert.doesNotMatch(dockerfile, /\.next\/standalone/);
+
+  const scripts = JSON.parse(webPackage).scripts;
+  assert.match(scripts.build, /next build && pnpm run build:server/);
+  assert.match(scripts["build:server"], /build-server\.mjs/);
+  assert.match(serverBuild, /external:\s*\[[^\]]*"nats"/s);
+  assert.match(runtimePackager, /externalModuleClosures\s*=\s*\["apps\/web\/node_modules\/nats"\]/);
+});
+
+test("excludes development output and protects runtime packaging destinations", () => {
+  for (const path of [
+    "apps/web/.next/cache/turbopack.bin",
+    "apps/web/.next/server/page.js.map",
+    "apps/web/data/db/autoforge.sqlite",
+    "apps/web/src/page.test.ts",
+    "coverage/index.html",
+  ]) {
+    assert.equal(isExcludedRuntimePath(path), true, `${path} must not enter the image`);
+  }
+  assert.equal(isExcludedRuntimePath("apps/web/.next/server/page.js"), false);
+  assert.equal(isExcludedRuntimePath("packages/db/drizzle/sqlite/0001.sql"), false);
+  assert.equal(isNextTraceFile("next-server.js.nft.json"), true);
+  assert.equal(isNextTraceFile("next-server.js"), false);
+
+  assert.throws(() => assertSafeRuntimeDestination("/"), /unsafe runtime destination/);
+  assert.throws(() => assertSafeRuntimeDestination(process.cwd()), /unsafe runtime destination/);
+});
+
+test("enforces the backend Docker archive size budget", async () => {
+  const buildScript = await readFile("scripts/release/build-backend-image.sh", "utf8");
+  assert.match(buildScript, /AUTOFORGE_BACKEND_IMAGE_MAX_BYTES:-188743680/);
+  assert.match(buildScript, /archive_bytes > maximum_archive_bytes/);
 });
 
 test("executes the migration entry point while verifying a release image", async () => {
   const verificationScript = await readFile("scripts/release/verify-backend-image.sh", "utf8");
 
   assert.match(verificationScript, /node \/app\/apps\/web\/dist-server\/server\/migrate\.js/);
+  assert.match(verificationScript, /--workdir \/app\/apps\/web/);
+  assert.match(verificationScript, /await import\("nats"\)/);
   assert.doesNotMatch(
     verificationScript,
     /test -f \/app\/apps\/web\/dist-server\/server\/migrate\.js/,

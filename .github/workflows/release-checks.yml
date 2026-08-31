@@ -68,7 +68,7 @@ jobs:
           - name: static quality
             command: pnpm format:check && pnpm lint && pnpm typecheck && pnpm test:e2e:matrix
           - name: unit and integration
-            command: pnpm test && pnpm test:integration && mvn --batch-mode --file adapters/cotest-testng/pom.xml test
+            command: pnpm test && pnpm test:integration && mvn --batch-mode --file adapters/cotest-testng/pom.xml test && bash scripts/quality/test-groovy-tools.sh
           - name: performance
             command: pnpm test:performance
           - name: Lite 500 protocol concurrency

@@ -17,7 +17,7 @@ git push origin v0.2.2
 
 `amd64` 目标运行在 `ubuntu-24.04`，`arm64` 目标运行在 GitHub-hosted 原生 `ubuntu-24.04-arm`。后端不使用 QEMU 做跨架构模拟；内置 Agent 由 Go 原生交叉编译为两个静态架构，并在每个镜像中校验资源清单。
 
-Web 进程为同源终端 WebSocket 使用 Next.js 自定义 Server。Next.js 不支持用 standalone 输出追踪自定义 Server，因此发布镜像使用常规生产构建，并在构建完成后将 workspace 安装裁剪为仅生产依赖；镜像验证会实际启动 Web 并执行数据库迁移入口，防止遗漏自定义 Server 的运行时依赖。
+Web 进程为同源终端 WebSocket 使用 Next.js 自定义 Server。发布构建先将自定义 Server 与迁移入口打成生产 bundle，再合并 Next.js 生成的依赖追踪清单；运行时镜像只复制追踪到的生产模块、数据库迁移、静态资源和双架构 Agent。`.next/cache`、源码映射、本地数据、测试产物与开发依赖不会进入镜像。该方案保留常规 Next.js 生产运行时而不启用不兼容自定义 Server 的 `standalone` 模式；镜像验证会实际启动 Web、执行 SQLite 迁移并检查 Agent，防止瘦身遗漏运行时依赖。
 
 ## 资产矩阵
 
@@ -93,3 +93,5 @@ SOURCE_DATE_EPOCH=0 \
 ```
 
 正式构建由 GitHub Actions 固定 Node、Go、pnpm、基础镜像 digest、Action commit 和 Syft 版本。构建阶段可以获取锁定依赖；生成的运行时镜像和其中的 Agent 在离线运行时不会下载依赖或发送遥测。
+
+构建脚本默认限制单个 Docker 原生归档不超过 180 MiB，避免构建缓存或开发依赖再次进入正式镜像。特殊诊断构建可通过 `AUTOFORGE_BACKEND_IMAGE_MAX_BYTES` 临时调整预算；正式发布不得仅为绕过体积回归而提高该值。

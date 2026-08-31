@@ -4,9 +4,10 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "build:server": "node server/build-server.mjs",
     "build:work-thread": "node server/build-worker.mjs",
     "dev": "pnpm run build:work-thread && node server/index.ts",
-    "build": "next build && tsc -p tsconfig.server.json && pnpm run build:work-thread",
+    "build": "next build && pnpm run build:server && pnpm run build:work-thread",
     "start": "node dist-server/server/index.js",
     "typecheck": "next typegen && tsc --noEmit && tsc --noEmit -p tsconfig.server.json && tsc --noEmit -p tsconfig.worker.json"
   },

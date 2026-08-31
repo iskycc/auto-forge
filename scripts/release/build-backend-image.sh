@@ -62,4 +62,13 @@ docker buildx build \
   --tag "${image_reference}" \
   "${repository_root}"
 
+readonly maximum_archive_bytes="${AUTOFORGE_BACKEND_IMAGE_MAX_BYTES:-188743680}"
+readonly archive_bytes="$(stat --format='%s' "${docker_archive}")"
+if (( archive_bytes > maximum_archive_bytes )); then
+  echo "backend Docker archive exceeds the size budget: ${archive_bytes} > ${maximum_archive_bytes} bytes" >&2
+  exit 1
+fi
+printf 'Backend Docker archive size: %s bytes (budget: %s bytes)\n' \
+  "${archive_bytes}" "${maximum_archive_bytes}" >&2
+
 printf '%s\n' "${docker_archive}"

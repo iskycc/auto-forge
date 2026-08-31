@@ -21,9 +21,20 @@ for _ in $(seq 1 60); do
     healthy)
       docker exec "${container_id}" node /app/apps/web/dist-server/server/migrate.js \
         --data-dir=/tmp/autoforge-migration-check
+      docker exec --workdir /app/apps/web "${container_id}" node --input-type=module -e '
+        const nats = await import("nats");
+        if (typeof nats.connect !== "function" || typeof nats.JSONCodec !== "function") {
+          throw new Error("NATS runtime exports are incomplete");
+        }
+      '
       docker exec "${container_id}" node -e '
         const { createHash } = require("node:crypto");
-        const { readFileSync } = require("node:fs");
+        const { existsSync, readFileSync, readdirSync } = require("node:fs");
+        if (existsSync("/app/apps/web/.next/cache")) throw new Error("runtime image contains Next.js build cache");
+        const packageStore = "/app/node_modules/.pnpm";
+        const developmentPackages = /^(?:@playwright\+test|eslint|playwright|prettier|typescript|vitest)@/;
+        const unexpectedPackage = readdirSync(packageStore).find((entry) => developmentPackages.test(entry));
+        if (unexpectedPackage) throw new Error(`runtime image contains development dependency: ${unexpectedPackage}`);
         const root = "/app/resources/agents";
         const manifest = JSON.parse(readFileSync(`${root}/manifest.json`, "utf8"));
         for (const key of ["linux-amd64", "linux-arm64", "installer", "adapter"]) {
