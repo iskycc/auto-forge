@@ -234,7 +234,7 @@ async function createContainerSuite(
   ]);
   await configureTaskExecution(page, suiteId, runnerId);
   await suiteLink.click();
-  await page.getByLabel("执行器").selectOption("testng-container");
+  await page.getByLabel("执行器", { exact: true }).selectOption("testng-container");
   await page.getByRole("button", { name: "保存修改" }).click();
   await expect(page.getByRole("status")).toContainText("用例任务已更新");
 

@@ -1075,7 +1075,8 @@ public class MixedVisibleTest {
   expect(analysisStrings).toContain(expectedFailureSummary);
   expect(analysisStrings).not.toContain("执行开始时间");
   expect(analysisSheet).toContain("重跑通过,用例问题已修改,代码问题已提单");
-  expect(analysisSheet).toContain('width="68"');
+  expect(analysisSheet).toContain('width="36"');
+  expect(analysisSheet).toContain('<row r="2" ht="20"');
   await page.setViewportSize({ width: 1536, height: 1024 });
 
   // 日志公开访问链接必须免登录可访问，且展示 adapter 完整日志；无效 token 显示失效提示而非跳登录。
