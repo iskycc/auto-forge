@@ -8,6 +8,7 @@ trap 'rm -rf -- "${fixture_root}"' EXIT
 
 source_root="${fixture_root}/cases"
 workbook="${source_root}/normal-groovy-cases.xlsx"
+unreviewed_workbook="${source_root}/unreviewed-groovy-cases.xlsx"
 compiled_classes="${repository_root}/groovy-test/target/classes"
 dependency_directory="${repository_root}/groovy-test/target/dependency"
 mkdir -p "${source_root}"
@@ -74,10 +75,72 @@ git -C "${source_root}" commit -qm 'test fixture baseline'
 
 java -cp "${runtime_classpath}" AnalyzeNormalGroovyCases \
   --source "${source_root}" --output "${workbook}" --no-review >/dev/null
+cp "${workbook}" "${unreviewed_workbook}"
+
+set +e
+unreviewed_output="$(java -cp "${runtime_classpath}" ApplyGroovyCaseGroups \
+  --source "${source_root}" --workbook "${unreviewed_workbook}" --dry-run 2>&1)"
+unreviewed_status=$?
+set -e
+if [[ ${unreviewed_status} -ne 2 ]]; then
+  echo 'An unreviewed workbook did not fail with a diagnostic error.' >&2
+  exit 1
+fi
+grep -Fq "Workbook '${unreviewed_workbook}' contains no graded cases." \
+  <<<"${unreviewed_output}"
+grep -Fq "导出用例 {rows=5, levelColumn=not found, gradedRows=0" \
+  <<<"${unreviewed_output}"
+grep -Fq 'Confirm that --workbook points to the reviewed file and that it was saved.' \
+  <<<"${unreviewed_output}"
 
 review_output="$(printf '01501' | java -cp "${runtime_classpath}" AnalyzeNormalGroovyCases \
   --source "${source_root}" --output "${workbook}")"
 grep -Fq '人工分级已完成，所有导出用例均已标记。' <<<"${review_output}"
+
+node --input-type=module - "${repository_root}" "${workbook}" <<'NODE'
+import { readFileSync, writeFileSync } from "node:fs";
+import { pathToFileURL } from "node:url";
+
+const repositoryRoot = process.argv[2];
+const workbookPath = process.argv[3];
+const xlsx = await import(
+  pathToFileURL(`${repositoryRoot}/packages/ddt-import/node_modules/xlsx/xlsx.mjs`).href
+);
+const workbook = xlsx.read(readFileSync(workbookPath));
+for (const sheetName of ["导出用例", "排除明细"]) {
+  const sheet = workbook.Sheets[sheetName];
+  const range = xlsx.utils.decode_range(sheet["!ref"]);
+  let levelColumn = -1;
+  for (let column = range.s.c; column <= range.e.c; column++) {
+    const cell = sheet[xlsx.utils.encode_cell({ r: 0, c: column })];
+    if (cell?.v === "人工等级") {
+      levelColumn = column;
+      cell.v = sheetName === "导出用例" ? "用例等级" : "Case Level";
+      cell.w = cell.v;
+      break;
+    }
+  }
+  if (levelColumn < 0) continue;
+  let transformedLevel = 0;
+  for (let row = 1; row <= range.e.r; row++) {
+    const address = xlsx.utils.encode_cell({ r: row, c: levelColumn });
+    const cell = sheet[address];
+    if (!cell?.v) continue;
+    const level = String(cell.v).trim().toUpperCase();
+    if (transformedLevel === 0) {
+      sheet[address] = { t: "s", f: `="${level}"`, v: level };
+    } else if (level === "L0") {
+      sheet[address] = { t: "s", v: "L0级" };
+    } else if (level === "L1") {
+      sheet[address] = { t: "s", v: "等级 L1" };
+    } else if (level === "L2") {
+      sheet[address] = { t: "n", v: 5 };
+    }
+    transformedLevel++;
+  }
+}
+writeFileSync(workbookPath, xlsx.write(workbook, { type: "buffer", bookType: "xlsx" }));
+NODE
 
 before_dry_run="$(sha256sum "${source_root}"/*.groovy)"
 dry_run_output="$(java -cp "${runtime_classpath}" ApplyGroovyCaseGroups \

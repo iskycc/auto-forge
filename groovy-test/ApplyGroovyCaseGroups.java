@@ -28,6 +28,7 @@ import java.util.Map;
 import java.util.Set;
 import org.apache.poi.ss.usermodel.Cell;
 import org.apache.poi.ss.usermodel.DataFormatter;
+import org.apache.poi.ss.usermodel.FormulaEvaluator;
 import org.apache.poi.ss.usermodel.Row;
 import org.apache.poi.ss.usermodel.Sheet;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
@@ -59,7 +60,18 @@ public final class ApplyGroovyCaseGroups {
   private static final String PACKAGE_HEADER = "包名";
   private static final String CLASS_HEADER = "类名";
   private static final String PATH_HEADER = "相对路径";
-  private static final String LEVEL_HEADER = "人工等级";
+  private static final Set<String> LEVEL_HEADER_ALIASES =
+      Collections.unmodifiableSet(
+          new LinkedHashSet<>(
+              Arrays.asList(
+                  "人工等级",
+                  "人工分级",
+                  "用例等级",
+                  "用例级别",
+                  "等级",
+                  "级别",
+                  "CASELEVEL",
+                  "LEVEL")));
   private static final String TEST_ANNOTATION_NAME = "Test";
   private static final String GROUP_MEMBER = "group";
   private static final String TEST_CASE_GROUP_NAME = "TestCaseGroup";
@@ -416,22 +428,33 @@ public final class ApplyGroovyCaseGroups {
 
   private static final class WorkbookAssignments {
     private final DataFormatter dataFormatter = new DataFormatter();
+    private FormulaEvaluator formulaEvaluator;
 
     private List<CaseAssignment> read(Path workbookPath) throws IOException {
       Map<CaseKey, CaseAssignment> assignments = new LinkedHashMap<>();
+      List<SheetReadSummary> sheetSummaries = new ArrayList<>();
       try (InputStream input = Files.newInputStream(workbookPath);
           XSSFWorkbook workbook = new XSSFWorkbook(input)) {
-        readSheet(workbook, INCLUDED_CASES_SHEET, assignments);
-        readSheet(workbook, EXCLUDED_CASES_SHEET, assignments);
+        formulaEvaluator = workbook.getCreationHelper().createFormulaEvaluator();
+        sheetSummaries.add(readSheet(workbook, INCLUDED_CASES_SHEET, assignments));
+        sheetSummaries.add(readSheet(workbook, EXCLUDED_CASES_SHEET, assignments));
+      } finally {
+        formulaEvaluator = null;
       }
       if (assignments.isEmpty()) {
         throw new IllegalArgumentException(
-            "Workbook contains no rows with an L0, L1, or L2 level");
+            "Workbook '"
+                + workbookPath
+                + "' contains no graded cases. Expected L0/L1/L2 in a level column named "
+                + String.join(", ", LEVEL_HEADER_ALIASES)
+                + ". Worksheets read: "
+                + joinSheetSummaries(sheetSummaries)
+                + ". Confirm that --workbook points to the reviewed file and that it was saved.");
       }
       return new ArrayList<>(assignments.values());
     }
 
-    private void readSheet(
+    private SheetReadSummary readSheet(
         XSSFWorkbook workbook,
         String sheetName,
         Map<CaseKey, CaseAssignment> assignments)
@@ -447,11 +470,14 @@ public final class ApplyGroovyCaseGroups {
       int packageColumn = requiredColumn(header, PACKAGE_HEADER);
       int classColumn = requiredColumn(header, CLASS_HEADER);
       int pathColumn = requiredColumn(header, PATH_HEADER);
-      int levelColumn = findColumn(header, LEVEL_HEADER);
+      List<String> headers = headerValues(header);
+      int levelColumn = findLevelColumn(sheet, header);
       if (levelColumn < 0) {
-        return;
+        return new SheetReadSummary(
+            sheetName, Math.max(0, sheet.getLastRowNum()), headers, "not found", 0);
       }
 
+      int gradedRowCount = 0;
       for (int rowIndex = 1; rowIndex <= sheet.getLastRowNum(); rowIndex++) {
         Row row = sheet.getRow(rowIndex);
         if (row == null) {
@@ -461,8 +487,8 @@ public final class ApplyGroovyCaseGroups {
         if (rawLevel.isEmpty()) {
           continue;
         }
-        String level = rawLevel.toUpperCase(Locale.ROOT);
-        if (!SUPPORTED_LEVELS.contains(level)) {
+        String level = normalizeLevel(rawLevel);
+        if (level == null) {
           throw new IllegalArgumentException(
               "Unsupported level '"
                   + rawLevel
@@ -471,6 +497,7 @@ public final class ApplyGroovyCaseGroups {
                   + " row "
                   + (rowIndex + 1));
         }
+        gradedRowCount++;
 
         String relativePathText = cellText(row, pathColumn).replace('\\', '/');
         String className = cellText(row, classColumn);
@@ -505,6 +532,112 @@ public final class ApplyGroovyCaseGroups {
           assignments.put(key, assignment);
         }
       }
+      return new SheetReadSummary(
+          sheetName,
+          Math.max(0, sheet.getLastRowNum()),
+          headers,
+          cellText(header, levelColumn),
+          gradedRowCount);
+    }
+
+    private int findLevelColumn(Sheet sheet, Row header) {
+      for (int column = 0; column < header.getLastCellNum(); column++) {
+        if (LEVEL_HEADER_ALIASES.contains(normalizeHeader(cellText(header, column)))) {
+          return column;
+        }
+      }
+
+      List<Integer> inferredColumns = new ArrayList<>();
+      for (int column = 0; column < header.getLastCellNum(); column++) {
+        int nonBlankValues = 0;
+        int levelValues = 0;
+        for (int rowIndex = 1; rowIndex <= sheet.getLastRowNum(); rowIndex++) {
+          Row row = sheet.getRow(rowIndex);
+          if (row == null) {
+            continue;
+          }
+          String value = cellText(row, column);
+          if (value.isEmpty()) {
+            continue;
+          }
+          nonBlankValues++;
+          if (looksLikeNamedLevel(value) && normalizeLevel(value) != null) {
+            levelValues++;
+          }
+        }
+        if (nonBlankValues > 0 && nonBlankValues == levelValues) {
+          inferredColumns.add(column);
+        }
+      }
+      if (inferredColumns.size() > 1) {
+        throw new IllegalArgumentException(
+            "Multiple columns look like case levels in worksheet "
+                + sheet.getSheetName()
+                + ": "
+                + inferredColumns);
+      }
+      return inferredColumns.isEmpty() ? -1 : inferredColumns.get(0);
+    }
+
+    private static String normalizeHeader(String header) {
+      StringBuilder normalized = new StringBuilder();
+      for (int index = 0; index < header.length(); index++) {
+        char character = header.charAt(index);
+        if (Character.isLetterOrDigit(character)) {
+          normalized.append(Character.toUpperCase(character));
+        }
+      }
+      return normalized.toString();
+    }
+
+    private static boolean looksLikeNamedLevel(String rawLevel) {
+      String normalized = rawLevel.trim().toUpperCase(Locale.ROOT);
+      return normalized.startsWith("L")
+          || normalized.startsWith("等级L")
+          || normalized.startsWith("级别L");
+    }
+
+    private static String normalizeLevel(String rawLevel) {
+      String value = rawLevel.trim();
+      if (value.length() >= 4 && value.startsWith("=\"") && value.endsWith("\"")) {
+        value = value.substring(2, value.length() - 1);
+      }
+      String normalized =
+          value
+              .toUpperCase(Locale.ROOT)
+              .replaceAll("[\\s_\\-]", "")
+              .replace("等级", "")
+              .replace("级别", "")
+              .replace("级", "");
+      if (SUPPORTED_LEVELS.contains(normalized)) {
+        return normalized;
+      }
+      if (normalized.equals("0")) {
+        return "L0";
+      }
+      if (normalized.equals("1")) {
+        return "L1";
+      }
+      if (normalized.equals("2") || normalized.equals("5")) {
+        return "L2";
+      }
+      return null;
+    }
+
+    private List<String> headerValues(Row header) {
+      List<String> headers = new ArrayList<>();
+      for (int column = 0; column < header.getLastCellNum(); column++) {
+        headers.add(cellText(header, column));
+      }
+      return headers;
+    }
+
+    private static String joinSheetSummaries(List<SheetReadSummary> summaries) {
+      List<String> values = new ArrayList<>();
+      for (SheetReadSummary summary : summaries) {
+        values.add(summary.toString());
+      }
+      return String.join("; ", values);
     }
 
     private static Path normalizeRelativePath(
@@ -544,7 +677,73 @@ public final class ApplyGroovyCaseGroups {
 
     private String cellText(Row row, int column) {
       Cell cell = row.getCell(column);
-      return cell == null ? "" : dataFormatter.formatCellValue(cell).trim();
+      if (cell == null) {
+        return "";
+      }
+      try {
+        return formulaEvaluator == null
+            ? dataFormatter.formatCellValue(cell).trim()
+            : dataFormatter.formatCellValue(cell, formulaEvaluator).trim();
+      } catch (RuntimeException formulaFailure) {
+        return cachedOrFormulaText(cell);
+      }
+    }
+
+    private String cachedOrFormulaText(Cell cell) {
+      if (cell.getCellType() != Cell.CELL_TYPE_FORMULA) {
+        return dataFormatter.formatCellValue(cell).trim();
+      }
+      try {
+        switch (cell.getCachedFormulaResultType()) {
+          case Cell.CELL_TYPE_STRING:
+            return cell.getStringCellValue().trim();
+          case Cell.CELL_TYPE_NUMERIC:
+            double value = cell.getNumericCellValue();
+            long integerValue = (long) value;
+            return value == integerValue ? Long.toString(integerValue) : Double.toString(value);
+          case Cell.CELL_TYPE_BOOLEAN:
+            return Boolean.toString(cell.getBooleanCellValue());
+          default:
+            return dataFormatter.formatCellValue(cell).trim();
+        }
+      } catch (RuntimeException invalidCachedValue) {
+        return dataFormatter.formatCellValue(cell).trim();
+      }
+    }
+  }
+
+  private static final class SheetReadSummary {
+    private final String sheetName;
+    private final int dataRowCount;
+    private final List<String> headers;
+    private final String levelHeader;
+    private final int gradedRowCount;
+
+    private SheetReadSummary(
+        String sheetName,
+        int dataRowCount,
+        List<String> headers,
+        String levelHeader,
+        int gradedRowCount) {
+      this.sheetName = sheetName;
+      this.dataRowCount = dataRowCount;
+      this.headers = headers;
+      this.levelHeader = levelHeader;
+      this.gradedRowCount = gradedRowCount;
+    }
+
+    @Override
+    public String toString() {
+      return sheetName
+          + " {rows="
+          + dataRowCount
+          + ", levelColumn="
+          + levelHeader
+          + ", gradedRows="
+          + gradedRowCount
+          + ", headers="
+          + headers
+          + "}";
     }
   }
 

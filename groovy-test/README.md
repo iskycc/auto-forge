@@ -84,6 +84,13 @@ class-level/method-level `@Test` annotations through the Groovy AST, and updates
   when it already agrees.
 - Annotation-looking text in comments and strings is not considered an annotation.
 
+The preferred level column is `人工等级`. Workbooks edited by other tools may instead use
+`人工分级`, `用例等级`, `用例级别`, `等级`, `级别`, `Case Level`, or `Level`; these names are also
+recognized. Values may be L0/L1/L2, variants such as `L0级` or `等级 L1`, the review keys 0/1/5,
+or formulas whose result is a supported level. If no graded row is found, the error reports the
+absolute workbook path plus each worksheet's actual headers, row count, detected level column, and
+graded-row count so that selecting an unreviewed or unsaved workbook is visible immediately.
+
 After each case that actually changes, the tool immediately executes `git add -- <groovy-file>`.
 This is deliberately case-based rather than file-batched: if two graded classes share one Groovy
 file, that file is updated and staged once after the first class and again after the second class.
