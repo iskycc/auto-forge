@@ -86,6 +86,7 @@ export function AccessSettings({
   const [tlsRejectUnauthorized, setTlsRejectUnauthorized] = useState(
     ldap?.tlsRejectUnauthorized ?? true,
   );
+  const [hasLdapBindPassword, setHasLdapBindPassword] = useState(ldap?.hasBindPassword ?? false);
   const [clearLdapBindPassword, setClearLdapBindPassword] = useState(false);
   const [createDialog, setCreateDialog] = useState<
     "user" | "password" | "role" | "assignment" | null
@@ -96,7 +97,7 @@ export function AccessSettings({
     init: RequestInit,
     success: string,
     { refreshPage = true }: { refreshPage?: boolean } = {},
-  ) {
+  ): Promise<boolean> {
     setPending(true);
     setError("");
     setMessage("");
@@ -108,9 +109,11 @@ export function AccessSettings({
       setCreateDialog(null);
       if (refreshPage) router.refresh();
       setPending(false);
+      return true;
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "操作失败。");
       setPending(false);
+      return false;
     }
   }
 
@@ -206,10 +209,11 @@ export function AccessSettings({
     );
   }
 
-  function submitLdapForm(formElement: HTMLFormElement, testOnly: boolean) {
+  async function submitLdapForm(formElement: HTMLFormElement, action: "save" | "test") {
+    const testOnly = action === "test";
     const form = new FormData(formElement);
     const payload = ldapPayload(form, ldap, ldapEnabled);
-    void request(
+    const succeeded = await request(
       testOnly ? "/api/v1/ldap/test" : "/api/v1/ldap/configuration",
       jsonRequest(testOnly ? "POST" : "PUT", payload),
       testOnly
@@ -217,8 +221,16 @@ export function AccessSettings({
           ? "LDAP 连接、用户与 Group Base DN 验证成功。"
           : "LDAP 连接与用户 Base DN 验证成功。"
         : "LDAP 配置已加密保存。",
-      { refreshPage: !testOnly },
+      { refreshPage: false },
     );
+    if (!succeeded || testOnly) return;
+
+    const bindPasswordInput = formElement.elements.namedItem("bindPassword");
+    if (bindPasswordInput instanceof HTMLInputElement) bindPasswordInput.value = "";
+    setHasLdapBindPassword(
+      Boolean(payload.bindPassword) || (!payload.clearBindPassword && hasLdapBindPassword),
+    );
+    setClearLdapBindPassword(false);
   }
 
   return (
@@ -732,7 +744,7 @@ export function AccessSettings({
               className="settings-grid-form"
               onSubmit={(event) => {
                 event.preventDefault();
-                submitLdapForm(event.currentTarget, false);
+                void submitLdapForm(event.currentTarget, "save");
               }}
             >
               <label className="checkbox-field">
@@ -809,13 +821,11 @@ export function AccessSettings({
                   Bind 密码
                   <Input
                     name="bindPassword"
-                    placeholder={
-                      ldap?.hasBindPassword ? "留空以保持现有密文" : "Bind DN 非空时必填"
-                    }
+                    placeholder={hasLdapBindPassword ? "留空以保持现有密文" : "Bind DN 非空时必填"}
                     type="password"
                   />
                 </label>
-                {ldap?.hasBindPassword ? (
+                {hasLdapBindPassword ? (
                   <label className="checkbox-field settings-wide-field">
                     <Input
                       checked={clearLdapBindPassword}
@@ -903,7 +913,7 @@ export function AccessSettings({
                   disabled={pending || !ldapEnabled}
                   onClick={(event) => {
                     const form = event.currentTarget.form;
-                    if (form) submitLdapForm(form, true);
+                    if (form) void submitLdapForm(form, "test");
                   }}
                   type="button"
                 >

@@ -4,6 +4,14 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## Unreleased
+
+### Fixed
+
+- Saving or testing LDAP configuration no longer refreshes the page after a successful request, so
+  success feedback remains visible. Saved bind-password input is still cleared immediately, and its
+  persisted-state hint updates without exposing the secret.
+
 ## 1.7.5 - 2026-08-31
 
 ### Fixed
