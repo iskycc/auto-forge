@@ -366,6 +366,67 @@ describe("case suite update and copy", () => {
     ]);
   });
 
+  it("streams task export rows through bounded standard and DDT pages", async () => {
+    const suites = suiteRepositoryFake();
+    const firstPage = Array.from({ length: 1_000 }, (_, index) => ({
+      memberId: `member-${index.toString().padStart(4, "0")}`,
+      casePath: `com.example.Case${index}`,
+      displayName: `Case ${index}`,
+    }));
+    suites.listExportRowsPage.mockImplementation(
+      (input: { memberType: "standard" | "ddt"; afterMemberId?: string }) => {
+        if (input.memberType === "standard" && !input.afterMemberId) {
+          return Promise.resolve(firstPage);
+        }
+        if (input.memberType === "standard") {
+          return Promise.resolve([
+            {
+              memberId: "member-final",
+              casePath: "com.example.FinalCase",
+              displayName: "FinalCase",
+            },
+          ]);
+        }
+        return Promise.resolve([
+          {
+            memberId: "ddt-member",
+            casePath: "com.example.OrderDdtTest",
+            displayName: "ORDER-1",
+          },
+        ]);
+      },
+    );
+    const service = new CaseSuiteService(
+      suites,
+      {} as CaseCatalogRepository,
+      projectStructuresFake(),
+      { now: () => new Date(timestamp) },
+      { next: () => "unused" },
+    );
+
+    const prepared = await service.prepareCaseExport("suite-1", ["project-1"]);
+    const rows = [];
+    for await (const row of prepared.rows) rows.push(row);
+
+    expect(prepared.suite.id).toBe("suite-1");
+    expect(rows).toHaveLength(1_002);
+    expect(rows.at(-1)).toMatchObject({
+      casePath: "com.example.OrderDdtTest",
+      displayName: "ORDER-1",
+    });
+    expect(suites.listExportRowsPage).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        memberType: "standard",
+        afterMemberId: "member-0999",
+        limit: 1_000,
+      }),
+    );
+    expect(suites.listExportRowsPage).toHaveBeenLastCalledWith(
+      expect.objectContaining({ memberType: "ddt", limit: 1_000, projectIds: ["project-1"] }),
+    );
+  });
+
   it("rejects moving a suite while it contains cases from the original version", async () => {
     const suites = suiteRepositoryFake();
     const service = new CaseSuiteService(
@@ -425,6 +486,7 @@ function suiteRepositoryFake() {
     removeCases: vi.fn().mockResolvedValue(suite),
     addDdtCases: vi.fn().mockResolvedValue(suite),
     removeDdtCases: vi.fn().mockResolvedValue(suite),
+    listExportRowsPage: vi.fn().mockResolvedValue([]),
     findMemberCaseDefinitionIds: vi.fn().mockResolvedValue([]),
     findMemberDdtCaseIds: vi.fn().mockResolvedValue([]),
     getRoundRecoveryCredentials: vi.fn().mockResolvedValue({}),
@@ -438,6 +500,7 @@ function suiteRepositoryFake() {
     addDdtCases: ReturnType<typeof vi.fn>;
     removeDdtCases: ReturnType<typeof vi.fn>;
     findMemberCaseDefinitionIds: ReturnType<typeof vi.fn>;
+    listExportRowsPage: ReturnType<typeof vi.fn>;
   };
 }
 

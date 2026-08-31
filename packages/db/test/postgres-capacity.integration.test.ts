@@ -54,6 +54,26 @@ describe.skipIf(!connectionString)("PostgreSQL 100k task capacity", () => {
       });
 
       expect(suite).toMatchObject({ caseCount: 100_000, version: 2, revision: 2 });
+      const firstExportPage = await repository.listExportRowsPage({
+        suiteId,
+        memberType: "standard",
+        limit: 1_000,
+        projectIds: ["00000000-0000-7000-8000-000000000001"],
+      });
+      expect(firstExportPage).toHaveLength(1_000);
+      expect(firstExportPage[0]).toMatchObject({
+        casePath: "capacity.fixture.Test0",
+        displayName: "Case 0",
+      });
+      await expect(
+        repository.listExportRowsPage({
+          suiteId,
+          memberType: "standard",
+          afterMemberId: firstExportPage.at(-1)!.memberId,
+          limit: 1_000,
+          projectIds: ["00000000-0000-7000-8000-000000000001"],
+        }),
+      ).resolves.toHaveLength(1_000);
     } finally {
       await handle.pool.query("DELETE FROM case_suites WHERE id = $1", [suiteId]);
       await handle.pool.query("DELETE FROM case_sources WHERE id = $1", [sourceId]);

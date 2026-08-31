@@ -1129,6 +1129,7 @@ export interface CaseSuiteRepository {
   ): Promise<CaseSuite[]>;
   getSummary(suiteId: string, projectIds?: readonly string[]): Promise<CaseSuite | null>;
   get(suiteId: string, projectIds?: readonly string[]): Promise<CaseSuiteDetails | null>;
+  listExportRowsPage(input: CaseSuiteExportPageQuery): Promise<CaseSuiteExportRow[]>;
   findMemberCaseDefinitionIds(suiteId: string, candidateIds: readonly string[]): Promise<string[]>;
   findMemberDdtCaseIds(suiteId: string, candidateIds: readonly string[]): Promise<string[]>;
   getRoundRecoveryCredentials(
@@ -1166,6 +1167,26 @@ export interface CaseSuiteRepository {
     updatedAt: string;
   }): Promise<CaseSuite>;
 }
+
+export type CaseSuiteExportMemberType = "standard" | "ddt";
+
+/**
+ * 任务用例导出只读取生成工作簿必需的投影，避免把测试方法、DDT 数据和版本历史
+ * 一并加载到 Web 进程。memberId 仅作为稳定游标，不会写入导出文件。
+ */
+export type CaseSuiteExportRow = {
+  memberId: string;
+  casePath: string;
+  displayName: string;
+};
+
+export type CaseSuiteExportPageQuery = {
+  suiteId: string;
+  memberType: CaseSuiteExportMemberType;
+  limit: number;
+  afterMemberId?: string;
+  projectIds?: readonly string[];
+};
 
 export type UpdateCaseSuiteRecord = {
   suiteId: string;

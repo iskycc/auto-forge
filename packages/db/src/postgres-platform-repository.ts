@@ -6,6 +6,8 @@ import type {
   CaseListPage,
   CaseListQuery,
   CaseSourceVersionMerge,
+  CaseSuiteExportPageQuery,
+  CaseSuiteExportRow,
   CaseSuiteRepository,
   CopyCaseSuiteRecord,
   CreateCaseSuiteRecord,
@@ -1952,6 +1954,53 @@ export class PostgresCaseSuiteRepository implements CaseSuiteRepository {
     const row = rows[0];
     if (!row) return null;
     return toSuite(row, (counts[0]?.value ?? 0) + (ddtCounts[0]?.value ?? 0));
+  }
+
+  async listExportRowsPage(input: CaseSuiteExportPageQuery): Promise<CaseSuiteExportRow[]> {
+    await this.ready();
+    if (input.projectIds?.length === 0) return [];
+    const limit = Math.max(1, Math.min(input.limit, 1_000));
+    if (input.memberType === "standard") {
+      return this.handle.db
+        .select({
+          memberId: pgCaseSuiteItems.id,
+          casePath: pgCaseDefinitions.className,
+          displayName: pgCaseDefinitions.displayName,
+        })
+        .from(pgCaseSuiteItems)
+        .innerJoin(pgCaseSuites, eq(pgCaseSuites.id, pgCaseSuiteItems.suiteId))
+        .innerJoin(pgCaseDefinitions, eq(pgCaseDefinitions.id, pgCaseSuiteItems.caseDefinitionId))
+        .where(
+          and(
+            eq(pgCaseSuiteItems.suiteId, input.suiteId),
+            ...(input.afterMemberId ? [gt(pgCaseSuiteItems.id, input.afterMemberId)] : []),
+            ...(input.projectIds ? [inArray(pgCaseSuites.projectId, [...input.projectIds])] : []),
+          ),
+        )
+        .orderBy(asc(pgCaseSuiteItems.id))
+        .limit(limit);
+    }
+
+    const rows = await this.handle.db
+      .select({
+        memberId: pgCaseSuiteDdtItems.id,
+        casePath: pgCaseDefinitions.className,
+        displayName: pgDdtCases.caseId,
+      })
+      .from(pgCaseSuiteDdtItems)
+      .innerJoin(pgCaseSuites, eq(pgCaseSuites.id, pgCaseSuiteDdtItems.suiteId))
+      .innerJoin(pgDdtCases, eq(pgDdtCases.id, pgCaseSuiteDdtItems.ddtCaseId))
+      .leftJoin(pgCaseDefinitions, eq(pgCaseDefinitions.id, pgDdtCases.executionCaseDefinitionId))
+      .where(
+        and(
+          eq(pgCaseSuiteDdtItems.suiteId, input.suiteId),
+          ...(input.afterMemberId ? [gt(pgCaseSuiteDdtItems.id, input.afterMemberId)] : []),
+          ...(input.projectIds ? [inArray(pgCaseSuites.projectId, [...input.projectIds])] : []),
+        ),
+      )
+      .orderBy(asc(pgCaseSuiteDdtItems.id))
+      .limit(limit);
+    return rows.map((row) => ({ ...row, casePath: row.casePath ?? "" }));
   }
 
   async get(suiteId: string, projectIds?: readonly string[]): Promise<CaseSuiteDetails | null> {

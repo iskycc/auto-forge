@@ -5,12 +5,13 @@ import { ActionDialog } from "@/components/action-dialog";
 
 import { apiErrorSchema } from "@autoforge/contracts";
 import type { CaseSuite } from "@autoforge/domain";
-import { ArrowRight, Copy, Layers3, LoaderCircle, Plus } from "lucide-react";
+import { ArrowRight, Copy, Download, Layers3, LoaderCircle, Plus } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
 import { formatLocalDateTime } from "@/lib/run-batch-presentation";
+import { parseExportFilename } from "@/lib/run-batch-export";
 
 export function CaseSuiteManager({
   canManage,
@@ -38,6 +39,8 @@ export function CaseSuiteManager({
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
+  const [exportingSuiteId, setExportingSuiteId] = useState<string | null>(null);
+  const [exportError, setExportError] = useState<string | null>(null);
   const projectId = initialProjectId ?? "";
 
   function openCreateDialog(): void {
@@ -99,6 +102,33 @@ export function CaseSuiteManager({
       setError(caught instanceof Error ? caught.message : "创建用例任务失败。");
     } finally {
       setPending(false);
+    }
+  }
+
+  async function exportSuiteCases(suite: CaseSuite): Promise<void> {
+    if (exportingSuiteId) return;
+    setExportingSuiteId(suite.id);
+    setExportError(null);
+    try {
+      const response = await fetch(`/api/v1/case-suites/${encodeURIComponent(suite.id)}/export`, {
+        cache: "no-store",
+      });
+      if (!response.ok) throw await caseSuiteRequestError(response, "导出任务用例失败。");
+      const objectUrl = URL.createObjectURL(await response.blob());
+      const anchor = document.createElement("a");
+      anchor.href = objectUrl;
+      anchor.download = parseExportFilename(
+        response.headers.get("content-disposition"),
+        "case-suite-cases.xlsx",
+      );
+      document.body.append(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(objectUrl);
+    } catch (caught) {
+      setExportError(caught instanceof Error ? caught.message : "导出任务用例失败。");
+    } finally {
+      setExportingSuiteId(null);
     }
   }
 
@@ -273,6 +303,11 @@ export function CaseSuiteManager({
         </form>
       </ActionDialog>
       <section className="suite-list" aria-label="用例任务列表">
+        {exportError ? (
+          <div className="inline-feedback error suite-list-feedback" role="alert">
+            {exportError}
+          </div>
+        ) : null}
         {suites.length === 0 ? (
           <div className="card empty-state suite-empty">
             <span className="empty-icon">
@@ -283,34 +318,50 @@ export function CaseSuiteManager({
           </div>
         ) : (
           suites.map((suite) => (
-            <Link
+            <article
               className={`card suite-card ${suite.status === "archived" ? "suite-card-archived" : ""} ${!suite.enabled ? "suite-card-disabled" : ""}`.trim()}
-              href={`/case-suites/${suite.id}`}
               key={suite.id}
             >
-              <span className="suite-icon">
-                <Layers3 size={20} />
-              </span>
-              <span className="suite-copy">
-                <span className="suite-title-line">
-                  <strong>{suite.name}</strong>
-                  <span
-                    className={`status-badge ${suite.status === "archived" || !suite.enabled ? "warning" : ""}`.trim()}
-                  >
-                    {suite.status === "archived" ? "已归档" : suite.enabled ? "已启用" : "已停用"}
-                  </span>
+              <Link className="suite-card-link" href={`/case-suites/${suite.id}`}>
+                <span className="suite-icon">
+                  <Layers3 size={20} />
                 </span>
-                <small>{suite.description || "暂无说明"}</small>
-                <small>
-                  v{suite.version} · 更新于 {formatLocalDateTime(suite.updatedAt)}
-                </small>
-              </span>
-              <span className="suite-count">
-                <strong>{suite.caseCount}</strong>
-                <small>个用例</small>
-              </span>
-              <ArrowRight size={18} className="muted" />
-            </Link>
+                <span className="suite-copy">
+                  <span className="suite-title-line">
+                    <strong>{suite.name}</strong>
+                    <span
+                      className={`status-badge ${suite.status === "archived" || !suite.enabled ? "warning" : ""}`.trim()}
+                    >
+                      {suite.status === "archived" ? "已归档" : suite.enabled ? "已启用" : "已停用"}
+                    </span>
+                  </span>
+                  <small>{suite.description || "暂无说明"}</small>
+                  <small>
+                    v{suite.version} · 更新于 {formatLocalDateTime(suite.updatedAt)}
+                  </small>
+                </span>
+                <span className="suite-count">
+                  <strong>{suite.caseCount}</strong>
+                  <small>个用例</small>
+                </span>
+                <ArrowRight size={18} className="muted" />
+              </Link>
+              <Button
+                aria-label={`导出 ${suite.name} 用例`}
+                className="suite-card-export"
+                disabled={exportingSuiteId !== null}
+                onClick={() => void exportSuiteCases(suite)}
+                type="button"
+                variant="ghost"
+              >
+                {exportingSuiteId === suite.id ? (
+                  <LoaderCircle className="spin" size={15} />
+                ) : (
+                  <Download size={15} />
+                )}
+                {exportingSuiteId === suite.id ? "导出中" : "导出"}
+              </Button>
+            </article>
           ))
         )}
       </section>

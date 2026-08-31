@@ -1,11 +1,7 @@
 import type { ExecutionRun, RunAttempt } from "@autoforge/domain";
 import { describe, expect, it } from "vitest";
 
-import {
-  buildRoundCaseRows,
-  canCancelRoundCaseRow,
-  compareRoundCaseRowsByStatus,
-} from "./round-case-rows";
+import { buildRoundCaseRows, canCancelRoundCaseRow } from "./round-case-rows";
 
 function run(id: string, overrides: Partial<ExecutionRun> = {}): ExecutionRun {
   return {
@@ -122,45 +118,5 @@ describe("buildRoundCaseRows", () => {
       false,
     );
     expect(canCancelRoundCaseRow({ run: batch.runs[1]!, attempt: undefined, round: 2 })).toBe(true);
-  });
-});
-
-describe("compareRoundCaseRowsByStatus", () => {
-  it("orders failed rows by their error description instead of their case name", () => {
-    const first = {
-      run: run("z-case"),
-      round: 1,
-      attempt: {
-        ...attempt("attempt-z", "z-case", 1, "failed"),
-        resultCode: "TESTNG_ASSERTIONS_FAILED",
-        resultSummary: "AssertionError: alpha failure",
-      },
-    };
-    const second = {
-      run: run("a-case"),
-      round: 1,
-      attempt: {
-        ...attempt("attempt-a", "a-case", 1, "failed"),
-        resultCode: "TESTNG_ASSERTIONS_FAILED",
-        resultSummary: "AssertionError: zeta failure",
-      },
-    };
-
-    expect(compareRoundCaseRowsByStatus(first, second)).toBeLessThan(0);
-  });
-
-  it("keeps the status category as the primary sort key", () => {
-    const succeeded = {
-      run: run("succeeded"),
-      round: 1,
-      attempt: attempt("attempt-succeeded", "succeeded", 1, "succeeded"),
-    };
-    const failed = {
-      run: run("failed"),
-      round: 1,
-      attempt: attempt("attempt-failed", "failed", 1, "failed"),
-    };
-
-    expect(compareRoundCaseRowsByStatus(succeeded, failed)).toBeLessThan(0);
   });
 });

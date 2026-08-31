@@ -53,6 +53,103 @@ describe("SQLite case suite lifecycle", () => {
     }
   });
 
+  it("reads ordinary and DDT export projections with stable cursors and project scope", async () => {
+    const { handle, suites } = await fixture();
+    try {
+      await suites.create({ id: "suite-export", name: "Export", createdAt: timestamp });
+      await suites.addCases({
+        suiteId: "suite-export",
+        items: [
+          { id: "export-item-1", caseDefinitionId: "case-1" },
+          { id: "export-item-2", caseDefinitionId: "case-2" },
+        ],
+        versionId: "suite-export-v2",
+        updatedAt: timestamp,
+      });
+      handle.client
+        .prepare(
+          `INSERT INTO ddt_cases
+           (id, project_id, project_version_id, test_stage_id, case_id, case_id_normalized,
+            sr_num, sr_num_normalized, case_kind, data_json, execution_case_definition_id,
+            source_name, revision, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'standard', '{}', ?, ?, 1, ?, ?)`,
+        )
+        .run(
+          "export-ddt-1",
+          DEFAULT_PROJECT_ID,
+          "project-version-1",
+          "stage-1",
+          "ORDER-EXPORT-1",
+          "order-export-1",
+          "SR-EXPORT",
+          "sr-export",
+          "case-1",
+          "export.xlsx",
+          timestamp,
+          timestamp,
+        );
+      await suites.addDdtCases({
+        suiteId: "suite-export",
+        items: [{ id: "export-ddt-item-1", ddtCaseId: "export-ddt-1" }],
+        versionId: "suite-export-v3",
+        updatedAt: timestamp,
+      });
+
+      const firstPage = await suites.listExportRowsPage({
+        suiteId: "suite-export",
+        memberType: "standard",
+        limit: 1,
+        projectIds: [DEFAULT_PROJECT_ID],
+      });
+      expect(firstPage).toEqual([
+        {
+          memberId: "export-item-1",
+          casePath: "com.example.SmokeTest",
+          displayName: "SmokeTest",
+        },
+      ]);
+      await expect(
+        suites.listExportRowsPage({
+          suiteId: "suite-export",
+          memberType: "standard",
+          afterMemberId: firstPage[0]!.memberId,
+          limit: 1,
+          projectIds: [DEFAULT_PROJECT_ID],
+        }),
+      ).resolves.toEqual([
+        {
+          memberId: "export-item-2",
+          casePath: "com.example.SecondTest",
+          displayName: "SecondTest",
+        },
+      ]);
+      await expect(
+        suites.listExportRowsPage({
+          suiteId: "suite-export",
+          memberType: "ddt",
+          limit: 10,
+          projectIds: [DEFAULT_PROJECT_ID],
+        }),
+      ).resolves.toEqual([
+        {
+          memberId: "export-ddt-item-1",
+          casePath: "com.example.SmokeTest",
+          displayName: "ORDER-EXPORT-1",
+        },
+      ]);
+      await expect(
+        suites.listExportRowsPage({
+          suiteId: "suite-export",
+          memberType: "standard",
+          limit: 10,
+          projectIds: ["another-project"],
+        }),
+      ).resolves.toEqual([]);
+    } finally {
+      handle.close();
+    }
+  });
+
   it("keeps Jenkins credentials outside policy JSON and removes them with deleted rules", async () => {
     const { handle, suites } = await fixture();
     try {

@@ -4,6 +4,48 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## 1.7.10 - 2026-08-31
+
+### Added
+
+- The case-suite list can export every ordinary and DDT member to a styled XLSX workbook containing
+  only `用例编号（类路径）` and `用例名称`. Ordinary rows use the full Java class name; DDT rows use
+  their bound execution class and CaseID.
+
+### Fixed
+
+- Failure-analysis XLSX exports now use compact single-line data rows and narrower columns. Long
+  class paths, stacks, and notes remain stored in the cells without expanding each failed case into
+  a tall wrapped row.
+- Execution-detail status sorting now orders failed cases by their visible failure summary (falling
+  back to the result code) before the case name, and applies that order before database pagination in
+  both Lite and Full modes.
+
+### Performance
+
+- Case-suite export reads a two-column database projection through 1,000-row cursors and writes XLSX
+  rows through the streaming writer, avoiding full case methods and workbook rows in Web memory.
+
+### Tests
+
+- Lite and Full repository contracts verify bounded case-suite export paging and failure-summary
+  ordering before pagination. Playwright verifies that an exported workbook contains the expected
+  headers and complete Java class paths.
+
+### Database and persisted configuration
+
+- No database migration or persisted-configuration change is required.
+
+### Compatibility and offline assets
+
+- Lite and Full expose the same authenticated export API. Runner Protocol, Jenkins plugins, Adapter
+  execution, and offline assets are unchanged.
+
+### Known limitations
+
+- A DDT case without a bound execution class is exported with an empty class-path cell so the row is
+  retained and the incomplete configuration remains visible.
+
 ## 1.7.6 - 2026-08-31
 
 ### Fixed

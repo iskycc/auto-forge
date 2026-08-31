@@ -127,6 +127,85 @@ function schedulingEventCases(createHarness: () => Promise<SchedulingEventHarnes
     }
   });
 
+  it("sorts failed case pages by failure summary before case name", async () => {
+    const harness = await createHarness();
+    const alphaSummaryRunId = `${harness.eventPrefix}-alpha-summary-run`;
+    const alphaSummaryAttemptId = `${harness.eventPrefix}-alpha-summary-attempt`;
+    const timestamp = "2026-08-10T00:00:02.000Z";
+    try {
+      await harness.rawQuery(
+        `UPDATE execution_runs
+         SET display_name='A case name',status='failed',terminal_outcome='failed',attempt_count=1
+         WHERE id=?`,
+        [harness.executionRunId],
+      );
+      await harness.rawQuery(
+        `UPDATE run_attempts
+         SET status='failed',outcome='failed',result_code='TESTNG_ASSERTIONS_FAILED',
+             result_summary='AssertionError: zeta failure'
+         WHERE id=?`,
+        [harness.attemptId],
+      );
+      await harness.rawQuery(
+        `INSERT INTO execution_runs
+           (id,batch_id,case_definition_id,case_version,display_name,class_name,status,
+            terminal_outcome,attempt_count,created_at,updated_at)
+         VALUES (?,?,'case-alpha-summary',1,'Z case name','com.example.ZCase','failed',
+                 'failed',1,?,?)`,
+        [alphaSummaryRunId, harness.batchIdA, timestamp, timestamp],
+      );
+      await harness.rawQuery(
+        `INSERT INTO run_attempts
+           (id,execution_run_id,runner_id,attempt_number,status,scheduling_score,outcome,
+            result_code,result_summary,created_at)
+         VALUES (?,?,?,1,'failed',0.85,'failed','TESTNG_ASSERTIONS_FAILED',
+                 'AssertionError: alpha failure',?)`,
+        [alphaSummaryAttemptId, alphaSummaryRunId, harness.runnerIdA, timestamp],
+      );
+
+      const ascending = await harness.batches.listCasePage({
+        batchId: harness.batchIdA,
+        scope: 1,
+        status: "failed",
+        sort: "status",
+        direction: "asc",
+        offset: 0,
+        limit: 1,
+      });
+      expect(ascending).toMatchObject({
+        total: 2,
+        items: [
+          {
+            run: { id: alphaSummaryRunId, displayName: "Z case name" },
+            attempt: { resultSummary: "AssertionError: alpha failure" },
+          },
+        ],
+      });
+
+      const descending = await harness.batches.listCasePage({
+        batchId: harness.batchIdA,
+        scope: 1,
+        status: "failed",
+        sort: "status",
+        direction: "desc",
+        offset: 0,
+        limit: 1,
+      });
+      expect(descending).toMatchObject({
+        total: 2,
+        items: [
+          {
+            run: { id: harness.executionRunId, displayName: "A case name" },
+            attempt: { resultSummary: "AssertionError: zeta failure" },
+          },
+        ],
+      });
+    } finally {
+      await harness.dispose();
+      await cleanupTemporaryDirectories();
+    }
+  });
+
   it("reads events back in time order with payload round-trip", async () => {
     const harness = await createHarness();
     const earlyId = `${harness.eventPrefix}-early`;

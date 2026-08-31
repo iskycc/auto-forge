@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 
 import { PostgresDatabaseHandle, createPostgresDatabase } from "../src/postgres-database";
 import { PostgresDdtRepository } from "../src/postgres-ddt";
+import { PostgresCaseSuiteRepository } from "../src/postgres-platform-repository";
 
 const connectionString = process.env.AUTOFORGE_TEST_POSTGRES_URL;
 const now = "2026-08-24T08:00:00.000Z";
@@ -105,6 +106,20 @@ describe.skipIf(!connectionString)("PostgreSQL DDT repository", () => {
         }),
       ).resolves.toBe(2);
       await insertDdtSuiteMembership(handle, suffix, `case-second-${suffix}`);
+      await expect(
+        new PostgresCaseSuiteRepository(handle).listExportRowsPage({
+          suiteId: `ddt-suite-${suffix}`,
+          memberType: "ddt",
+          limit: 10,
+          projectIds: [DEFAULT_PROJECT_ID],
+        }),
+      ).resolves.toEqual([
+        {
+          memberId: `ddt-suite-item-${suffix}`,
+          casePath: "com.example.OrderDdtTest",
+          displayName: secondCaseId,
+        },
+      ]);
       await expect(
         repository.trashCases({
           scope,

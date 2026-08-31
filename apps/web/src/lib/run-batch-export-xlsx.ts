@@ -35,7 +35,9 @@ const FAILURE_ANALYSIS_HEADERS = [
 
 export const FAILURE_ANALYSIS_RESULTS = ["重跑通过", "用例问题已修改", "代码问题已提单"] as const;
 
-const FAILURE_ANALYSIS_COLUMN_WIDTHS = [48, 38, 68, 18, 22, 36, 38, 26, 32, 52] as const;
+// 分析清单常有数百条失败记录，优先保证纵向浏览密度。长类名、堆栈和说明保留
+// 完整单元格值，但不通过超宽列或多行行高强制展示全部内容。
+const FAILURE_ANALYSIS_COLUMN_WIDTHS = [32, 24, 36, 14, 18, 24, 24, 18, 20, 32] as const;
 const ANALYSIS_INPUT_FIRST_COLUMN = 4;
 const ANALYSIS_INPUT_LAST_COLUMN = 9;
 
@@ -142,7 +144,7 @@ function buildFailureAnalysisSheet(
 }
 
 function styleFailureAnalysisHeader(row: ExcelJS.Row): void {
-  row.height = 32;
+  row.height = 30;
   row.eachCell((cell) => {
     cell.font = { bold: true, color: { argb: "FFFFFFFF" } };
     cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF315B7D" } };
@@ -157,9 +159,9 @@ function styleFailureAnalysisHeader(row: ExcelJS.Row): void {
 }
 
 function styleFailureAnalysisRow(row: ExcelJS.Row): void {
-  row.height = 58;
+  row.height = 20;
   row.eachCell({ includeEmpty: true }, (cell, columnNumber) => {
-    cell.alignment = { vertical: "top", wrapText: true };
+    cell.alignment = { vertical: "middle", wrapText: false };
     cell.border = { bottom: { style: "hair", color: { argb: "FFD9E1E8" } } };
     if (columnNumber >= ANALYSIS_INPUT_FIRST_COLUMN && columnNumber <= ANALYSIS_INPUT_LAST_COLUMN) {
       cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFFF8E8" } };

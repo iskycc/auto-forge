@@ -1,6 +1,6 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
-import { zipSync } from "fflate";
-import { mkdir } from "node:fs/promises";
+import { unzipSync, zipSync } from "fflate";
+import { mkdir, readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 
 import { buildClassFile } from "../../packages/testng-discovery/test/class-fixture";
@@ -111,6 +111,18 @@ test("tasks and execution history follow the selected project version", async ({
   await expect(page.getByText(firstSuiteName, { exact: true })).toBeVisible();
   await expect(page.getByText(secondSuiteName, { exact: true })).toHaveCount(0);
   await expect(page.getByText(/当前版本「Lifecycle version」共 1 个任务/u)).toBeVisible();
+  const suiteExportDownload = page.waitForEvent("download");
+  await page.getByRole("button", { name: `导出 ${firstSuiteName} 用例` }).click();
+  const downloadedWorkbook = await suiteExportDownload;
+  expect(downloadedWorkbook.suggestedFilename()).toMatch(/-用例\.xlsx$/u);
+  const workbookPath = await downloadedWorkbook.path();
+  expect(workbookPath).not.toBeNull();
+  const workbookFiles = unzipSync(new Uint8Array(await readFile(workbookPath!)));
+  const worksheetXml = new TextDecoder().decode(workbookFiles["xl/worksheets/sheet1.xml"]);
+  expect(worksheetXml).toContain("用例编号（类路径）");
+  expect(worksheetXml).toContain("用例名称");
+  expect(worksheetXml).toContain(firstClassName);
+  expect(worksheetXml).toContain(unassignedClassName);
   for (const viewport of [
     { width: 1024, height: 768 },
     { width: 1536, height: 1024 },

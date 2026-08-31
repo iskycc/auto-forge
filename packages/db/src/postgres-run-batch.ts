@@ -1994,7 +1994,10 @@ function postgresCasePageQuery(input: RunBatchCasePageQuery): {
     status: `CASE COALESCE(attempt.status,'pending')
       WHEN 'succeeded' THEN 0 WHEN 'failed' THEN 1 WHEN 'timed_out' THEN 2
       WHEN 'cancelled' THEN 3 WHEN 'running' THEN 4 WHEN 'assigned' THEN 5 ELSE 6 END ${direction},
-      run.display_name ${direction}`,
+      CASE WHEN attempt.status='failed'
+        THEN COALESCE(NULLIF(TRIM(attempt.result_summary),''),attempt.result_code,'')
+        ELSE '' END ${direction},
+      run.display_name ${direction},run.id ${direction},scope.round ${direction}`,
     runner: `COALESCE(attempt.runner_id,run.assigned_runner_id,'') ${direction},run.display_name ${direction}`,
     duration: `CASE WHEN attempt.duration_ms IS NULL THEN 1 ELSE 0 END ASC,attempt.duration_ms ${direction},run.display_name ${direction}`,
   }[input.sort];

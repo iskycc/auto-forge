@@ -15,6 +15,8 @@ import {
 
 import type {
   CaseCatalogRepository,
+  CaseSuiteExportMemberType,
+  CaseSuiteExportRow,
   CaseSuiteRepository,
   Clock,
   DdtRepository,
@@ -23,6 +25,8 @@ import type {
   SecretCipherPort,
 } from "./ports";
 import { roundRecoverySecretPurpose } from "./round-recovery-credentials";
+
+const CASE_SUITE_EXPORT_PAGE_SIZE = 1_000;
 
 export class CaseSuiteService {
   constructor(
@@ -71,6 +75,41 @@ export class CaseSuiteService {
     const suite = await this.suites.getSummary(suiteId, projectIds);
     if (!suite) throw new DomainError("CASE_SUITE_NOT_FOUND", "指定的用例任务不存在。");
     return suite;
+  }
+
+  /**
+   * 为 XLSX 导出提供轻量、游标分页的数据流。先读取任务摘要完成项目授权，之后按
+   * 普通用例、DDT 用例的固定顺序输出，避免通过 get() 加载每个用例的测试方法。
+   */
+  async prepareCaseExport(suiteId: string, projectIds?: readonly string[]) {
+    const suite = await this.getSummary(suiteId, projectIds);
+    return {
+      suite,
+      rows: this.exportRows(suiteId, projectIds),
+    };
+  }
+
+  private async *exportRows(
+    suiteId: string,
+    projectIds?: readonly string[],
+  ): AsyncGenerator<CaseSuiteExportRow> {
+    const memberTypes: readonly CaseSuiteExportMemberType[] = ["standard", "ddt"];
+    for (const memberType of memberTypes) {
+      let afterMemberId: string | undefined;
+      while (true) {
+        const page = await this.suites.listExportRowsPage({
+          suiteId,
+          memberType,
+          limit: CASE_SUITE_EXPORT_PAGE_SIZE,
+          ...(afterMemberId ? { afterMemberId } : {}),
+          ...(projectIds ? { projectIds } : {}),
+        });
+        for (const row of page) yield row;
+        if (page.length < CASE_SUITE_EXPORT_PAGE_SIZE) break;
+        afterMemberId = page.at(-1)?.memberId;
+        if (!afterMemberId) break;
+      }
+    }
   }
 
   async update(

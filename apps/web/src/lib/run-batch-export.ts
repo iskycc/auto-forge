@@ -47,18 +47,21 @@ export function buildRunBatchExportQuery(
 export const EXPORT_FALLBACK_FILENAME = "run-batch-results.xlsx";
 
 /** 从 Content-Disposition 解析下载文件名；缺失或无法解析时回退到固定文件名。 */
-export function parseExportFilename(contentDisposition: string | null): string {
-  if (!contentDisposition) return EXPORT_FALLBACK_FILENAME;
+export function parseExportFilename(
+  contentDisposition: string | null,
+  fallbackFilename = EXPORT_FALLBACK_FILENAME,
+): string {
+  if (!contentDisposition) return fallbackFilename;
   const extended = /filename\*=(?:UTF-8'')?([^;]+)/i.exec(contentDisposition);
   if (extended?.[1]) {
     try {
       const decoded = decodeURIComponent(extended[1].trim().replace(/^"|"$/g, ""));
       if (decoded) return decoded;
     } catch {
-      return EXPORT_FALLBACK_FILENAME;
+      return fallbackFilename;
     }
   }
   const basic = /filename="?([^";]+)"?/i.exec(contentDisposition);
   const name = basic?.[1]?.trim();
-  return name || EXPORT_FALLBACK_FILENAME;
+  return name || fallbackFilename;
 }

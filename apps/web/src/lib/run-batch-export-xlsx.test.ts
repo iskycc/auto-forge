@@ -25,7 +25,7 @@ const failedRow: RunBatchExportRow = {
 };
 
 describe("buildRunBatchExportWorkbook", () => {
-  it("builds the failure analysis template with only the required columns and editable widths", async () => {
+  it("builds a compact single-line failure analysis template with the required columns", async () => {
     const shareLink = "https://autoforge.example/share/attempt-log/permanent-token";
     const result = await buildRunBatchExportWorkbook({
       batchId: "batch-123456789",
@@ -54,8 +54,9 @@ describe("buildRunBatchExportWorkbook", () => {
     ]);
     expect(sheet!.columnCount).toBe(10);
     expect(sheet!.columns.map((column) => column.width)).toEqual([
-      48, 38, 68, 18, 22, 36, 38, 26, 32, 52,
+      32, 24, 36, 14, 18, 24, 24, 18, 20, 32,
     ]);
+    expect(sheet!.getRow(1).height).toBe(30);
 
     const dataRow = sheet!.getRow(2);
     expect(dataRow.getCell(1).value).toBe(failedRow.casePath);
@@ -68,7 +69,10 @@ describe("buildRunBatchExportWorkbook", () => {
       formulae: ['"重跑通过,用例问题已修改,代码问题已提单"'],
     });
     expect(dataRow.getCell(10).value).toEqual({ text: shareLink, hyperlink: shareLink });
-    expect(dataRow.height).toBe(58);
+    expect(dataRow.height).toBe(20);
+    expect(dataRow.getCell(3).alignment).toMatchObject({ vertical: "middle" });
+    // OOXML 会省略 false 布尔属性；省略与 false 都表示禁用自动换行。
+    expect(dataRow.getCell(3).alignment.wrapText).not.toBe(true);
   });
 
   it("keeps the standard execution result workbook compatible when no template is supplied", async () => {

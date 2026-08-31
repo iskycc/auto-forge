@@ -1,5 +1,7 @@
 import type {
   CaseSuiteRepository,
+  CaseSuiteExportPageQuery,
+  CaseSuiteExportRow,
   CopyCaseSuiteRecord,
   CreateCaseSuiteRecord,
   UpdateCaseSuiteRecord,
@@ -17,7 +19,7 @@ import {
   type DdtCase,
   type TestMethod,
 } from "@autoforge/domain";
-import { and, asc, count, desc, eq, inArray, notInArray, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, gt, inArray, notInArray, sql } from "drizzle-orm";
 
 import type { SqliteDatabaseHandle } from "./database";
 import {
@@ -189,6 +191,54 @@ export class SqliteCaseSuiteRepository implements CaseSuiteRepository {
         .where(eq(caseSuiteDdtItems.suiteId, suiteId))
         .get()?.value ?? 0;
     return toSuite(row, regularCaseCount + ddtCaseCount);
+  }
+
+  async listExportRowsPage(input: CaseSuiteExportPageQuery): Promise<CaseSuiteExportRow[]> {
+    if (input.projectIds?.length === 0) return [];
+    const limit = Math.max(1, Math.min(input.limit, 1_000));
+    if (input.memberType === "standard") {
+      return this.handle.db
+        .select({
+          memberId: caseSuiteItems.id,
+          casePath: caseDefinitions.className,
+          displayName: caseDefinitions.displayName,
+        })
+        .from(caseSuiteItems)
+        .innerJoin(caseSuites, eq(caseSuites.id, caseSuiteItems.suiteId))
+        .innerJoin(caseDefinitions, eq(caseDefinitions.id, caseSuiteItems.caseDefinitionId))
+        .where(
+          and(
+            eq(caseSuiteItems.suiteId, input.suiteId),
+            ...(input.afterMemberId ? [gt(caseSuiteItems.id, input.afterMemberId)] : []),
+            ...(input.projectIds ? [inArray(caseSuites.projectId, [...input.projectIds])] : []),
+          ),
+        )
+        .orderBy(asc(caseSuiteItems.id))
+        .limit(limit)
+        .all();
+    }
+
+    const rows = this.handle.db
+      .select({
+        memberId: caseSuiteDdtItems.id,
+        casePath: caseDefinitions.className,
+        displayName: ddtCases.caseId,
+      })
+      .from(caseSuiteDdtItems)
+      .innerJoin(caseSuites, eq(caseSuites.id, caseSuiteDdtItems.suiteId))
+      .innerJoin(ddtCases, eq(ddtCases.id, caseSuiteDdtItems.ddtCaseId))
+      .leftJoin(caseDefinitions, eq(caseDefinitions.id, ddtCases.executionCaseDefinitionId))
+      .where(
+        and(
+          eq(caseSuiteDdtItems.suiteId, input.suiteId),
+          ...(input.afterMemberId ? [gt(caseSuiteDdtItems.id, input.afterMemberId)] : []),
+          ...(input.projectIds ? [inArray(caseSuites.projectId, [...input.projectIds])] : []),
+        ),
+      )
+      .orderBy(asc(caseSuiteDdtItems.id))
+      .limit(limit)
+      .all();
+    return rows.map((row) => ({ ...row, casePath: row.casePath ?? "" }));
   }
 
   async get(suiteId: string, projectIds?: readonly string[]): Promise<CaseSuiteDetails | null> {
