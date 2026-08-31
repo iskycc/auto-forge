@@ -134,33 +134,45 @@ jobs:
         include:
           - name: asset lifecycle
             phase: business-assets
+            variant: amd64
             needs_deploy: false
             needs_previous: false
             needs_ldap: false
           - name: governance
             phase: business-governance
+            variant: amd64
             needs_deploy: false
             needs_previous: false
             needs_ldap: false
           - name: real Agent
             phase: real-agent
+            variant: amd64
             needs_deploy: false
             needs_previous: false
             needs_ldap: false
           - name: real LDAP
             phase: ldap
+            variant: amd64
             needs_deploy: false
             needs_previous: false
             needs_ldap: true
           - name: backup and restore
             phase: backup-restore
+            variant: amd64
             needs_deploy: true
             needs_previous: false
             needs_ldap: false
           - name: upgrade and rollback
             phase: upgrade-rollback
+            variant: amd64
             needs_deploy: true
             needs_previous: true
+            needs_ldap: false
+          - name: musl real Agent
+            phase: real-agent
+            variant: amd64-musl
+            needs_deploy: false
+            needs_previous: false
             needs_ldap: false
     env:
       GH_TOKEN: ${{ github.token }}
@@ -189,12 +201,12 @@ jobs:
           fi
           echo "PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=${browser_path}" >> "${GITHUB_ENV}"
 
-      - name: Download current amd64 image
+      - name: Download current backend image
         run: |
           mkdir -p release previous-release
           gh release download "${{ needs.prepare.outputs.tag }}" --dir release \
-            --pattern "autoforge-backend-${{ needs.prepare.outputs.version }}-amd64.docker.tar" \
-            --pattern "autoforge-backend-${{ needs.prepare.outputs.version }}-amd64.image.json"
+            --pattern "autoforge-backend-${{ needs.prepare.outputs.version }}-${{ matrix.variant }}.docker.tar" \
+            --pattern "autoforge-backend-${{ needs.prepare.outputs.version }}-${{ matrix.variant }}.image.json"
 
       - name: Download current deployment bundle
         if: matrix.needs_deploy
@@ -216,6 +228,8 @@ jobs:
           osixia/openldap:1.5.0@sha256:18742e9c449c9c1afe129d3f2f3ee15fb34cc43e5f940a20f3399728f41d7c28
 
       - name: Run published Release acceptance partition
+        env:
+          AUTOFORGE_RELEASE_ACCEPTANCE_VARIANT: ${{ matrix.variant }}
         run: >-
           bash scripts/quality/test-release-offline.sh
           "${{ needs.prepare.outputs.version }}" release
@@ -226,7 +240,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: published-release-diagnostics-${{ matrix.phase }}
+          name: published-release-diagnostics-${{ matrix.variant }}-${{ matrix.phase }}
           path: test-results
           if-no-files-found: ignore
           retention-days: 7

@@ -88,6 +88,40 @@ export function selectedSqlitePrebuild() {
   return `${glibcVersion ? "linux" : "linuxmusl"}-${process.arch}.node`;
 }
 
+export async function assertPackagedNextRoutes(destination) {
+  const serverDirectory = join(destination, "apps/web/.next/server");
+  const manifestPath = join(serverDirectory, "app-paths-manifest.json");
+  const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+  if (!manifest || typeof manifest !== "object" || Array.isArray(manifest)) {
+    throw new Error("Packaged Next.js app paths manifest is invalid.");
+  }
+
+  const routes = Object.entries(manifest);
+  if (routes.length === 0) throw new Error("Packaged Next.js app paths manifest is empty.");
+
+  const missingRoutes = [];
+  for (const [route, modulePath] of routes) {
+    if (typeof modulePath !== "string") {
+      throw new Error(`Packaged Next.js route has an invalid module path: ${route}`);
+    }
+    const moduleFile = resolve(serverDirectory, modulePath);
+    const relativeModulePath = relative(serverDirectory, moduleFile);
+    if (
+      isAbsolute(relativeModulePath) ||
+      relativeModulePath === ".." ||
+      relativeModulePath.startsWith(`..${sep}`)
+    ) {
+      throw new Error(`Packaged Next.js route escapes the server directory: ${route}`);
+    }
+    if (!(await exists(moduleFile))) missingRoutes.push(`${route} -> ${modulePath}`);
+  }
+  if (missingRoutes.length > 0) {
+    throw new Error(
+      `Packaged backend runtime is missing Next.js routes: ${missingRoutes.join(", ")}`,
+    );
+  }
+}
+
 async function packageRuntime(destination) {
   const runtimeDestination = assertSafeRuntimeDestination(destination);
   await assertBuildOutputsExist();
@@ -176,8 +210,6 @@ async function assertPackagedRuntime(destination, sqlitePrebuild) {
     "apps/web/dist-server/server/work-thread.js",
     "apps/worker/dist/worker.mjs",
     "apps/web/node_modules/nats",
-    "apps/web/.next/server/app/api/v1/ldap/test/route.js",
-    "apps/web/.next/server/app/api/v1/webhooks/[webhookId]/test/route.js",
     sqlitePrebuildPath,
     "resources/agents/manifest.json",
   ]) {
@@ -185,6 +217,7 @@ async function assertPackagedRuntime(destination, sqlitePrebuild) {
       throw new Error(`Packaged backend runtime is missing: ${path}`);
     }
   }
+  await assertPackagedNextRoutes(destination);
   if (await exists(join(destination, "apps/web/.next/cache"))) {
     throw new Error("Packaged backend runtime contains the Next.js build cache.");
   }

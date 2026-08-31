@@ -112,6 +112,19 @@ for (const artifact of manifest.artifacts) {
 for (const name of readdirSync(directory).filter((entry) => entry.endsWith(".spdx.json"))) {
   const sbom = JSON.parse(readFileSync(join(directory, name), "utf8"));
   if (!String(sbom.spdxVersion ?? "").startsWith("SPDX-")) throw new Error(`Invalid SPDX document ${name}`);
+  if (!Array.isArray(sbom.packages) || sbom.packages.length === 0) {
+    throw new Error(`SPDX document contains no packages: ${name}`);
+  }
+  if (name.startsWith(`autoforge-backend-${expectedVersion}-`)) {
+    const packageNames = new Set(
+      sbom.packages.map((entry) => String(entry?.name ?? "").toLowerCase()),
+    );
+    for (const requiredPackage of ["better-sqlite3", "next"]) {
+      if (!packageNames.has(requiredPackage)) {
+        throw new Error(`Backend SPDX document ${name} is missing ${requiredPackage}`);
+      }
+    }
+  }
 }
 for (const required of ["LICENSE", "NOTICE", "THIRD_PARTY_LICENSES.json", "CHANGELOG.md", "COMPATIBILITY.md"]) {
   if (!statSync(join(directory, required)).isFile()) throw new Error(`Missing legal or operations asset ${required}`);
@@ -135,9 +148,10 @@ verify_signature() {
 load_release_image() {
   local version="${1:?version is required}"
   local directory="${2:?release directory is required}"
-  local archive="${directory}/autoforge-backend-${version}-amd64.docker.tar"
+  local variant="${3:-amd64}"
+  local archive="${directory}/autoforge-backend-${version}-${variant}.docker.tar"
   local legacy_archive="${archive}.zst"
-  local metadata="${directory}/autoforge-backend-${version}-amd64.image.json"
+  local metadata="${directory}/autoforge-backend-${version}-${variant}.image.json"
   if [[ -f "${archive}" ]]; then
     docker load --input "${archive}" >/dev/null
   elif [[ -f "${legacy_archive}" ]]; then
@@ -150,14 +164,97 @@ load_release_image() {
     echo "Release ${version} does not contain a Docker image archive." >&2
     exit 1
   fi
-  local image
-  image="$(node -p "JSON.parse(require('node:fs').readFileSync(process.argv[1], 'utf8')).immutableImageId" "${metadata}")"
-  if [[ ! "${image}" =~ ^sha256:[a-f0-9]{64}$ ]]; then
-    echo "Release image metadata does not contain an immutable image ID." >&2
+  local metadata_fields image_reference expected_config_digest metadata_version metadata_variant
+  local metadata_architecture metadata_operating_system
+  metadata_fields="$(node - "${metadata}" <<'NODE'
+const { readFileSync } = require("node:fs");
+const metadata = JSON.parse(readFileSync(process.argv[2], "utf8"));
+const fields = [
+  metadata.imageReference,
+  metadata.immutableImageId,
+  metadata.version,
+  metadata.variant,
+  metadata.architecture,
+  metadata.operatingSystem,
+];
+if (fields.some((field) => typeof field !== "string" || field.includes("\t") || field.includes("\n"))) {
+  throw new Error("Release image metadata fields are invalid.");
+}
+process.stdout.write(fields.join("\t"));
+NODE
+)"
+  IFS=$'\t' read -r image_reference expected_config_digest metadata_version metadata_variant \
+    metadata_architecture metadata_operating_system <<<"${metadata_fields}"
+  local expected_architecture
+  case "${variant}" in
+    amd64 | amd64-musl) expected_architecture="amd64" ;;
+    arm64 | arm64-musl) expected_architecture="arm64" ;;
+    *)
+      echo "Unsupported Release acceptance variant: ${variant}." >&2
+      exit 1
+      ;;
+  esac
+  if [[ "${image_reference}" != "autoforge/backend:${version}-${variant}" ]] \
+    || [[ "${metadata_version}" != "${version}" ]] \
+    || [[ "${metadata_variant}" != "${variant}" ]] \
+    || [[ "${metadata_architecture}" != "${expected_architecture}" ]] \
+    || [[ "${metadata_operating_system}" != "linux" ]] \
+    || [[ ! "${expected_config_digest}" =~ ^sha256:[a-f0-9]{64}$ ]]; then
+    echo "Release image metadata identity is invalid for ${version}-${variant}." >&2
     exit 1
   fi
-  docker image inspect "${image}" >/dev/null
-  printf '%s\n' "${image}"
+
+  local archive_config_path archive_config_digest
+  local archive_manifest
+  if [[ -f "${archive}" ]]; then
+    archive_manifest="$(tar -xOf "${archive}" manifest.json)"
+  else
+    archive_manifest="$(zstd --decompress --stdout "${legacy_archive}" | tar -xOf - manifest.json)"
+  fi
+  archive_config_path="$(node -e '
+    let source = "";
+    process.stdin.setEncoding("utf8");
+    process.stdin.on("data", (chunk) => { source += chunk; });
+    process.stdin.on("end", () => {
+      const manifest = JSON.parse(source);
+      if (!Array.isArray(manifest) || manifest.length !== 1 || typeof manifest[0]?.Config !== "string") {
+        throw new Error("Release Docker archive manifest is invalid.");
+      }
+      process.stdout.write(manifest[0].Config);
+    });
+  ' <<<"${archive_manifest}")"
+  if [[ ! "${archive_config_path}" =~ ^blobs/sha256/[a-f0-9]{64}$ ]]; then
+    echo "Release Docker archive does not contain a valid OCI config digest." >&2
+    exit 1
+  fi
+  archive_config_digest="sha256:${archive_config_path##*/}"
+  if [[ "${archive_config_digest}" != "${expected_config_digest}" ]]; then
+    echo "Release image metadata does not match the Docker archive config digest." >&2
+    exit 1
+  fi
+
+  local loaded_fields loaded_architecture loaded_operating_system loaded_version
+  loaded_fields="$(docker image inspect --format '{{json .}}' "${image_reference}" | node -e '
+    let source = "";
+    process.stdin.setEncoding("utf8");
+    process.stdin.on("data", (chunk) => { source += chunk; });
+    process.stdin.on("end", () => {
+      const image = JSON.parse(source);
+      process.stdout.write([
+        image.Architecture,
+        image.Os,
+        image.Config?.Labels?.["org.opencontainers.image.version"],
+      ].join("\t"));
+    });
+  ')"
+  IFS=$'\t' read -r loaded_architecture loaded_operating_system loaded_version <<<"${loaded_fields}"
+  if [[ "${loaded_architecture}" != "${metadata_architecture}" ]] \
+    || [[ "${loaded_operating_system}" != "${metadata_operating_system}" ]] \
+    || [[ "${loaded_version}" != "${version}" ]]; then
+    echo "Loaded release image identity differs from signed metadata." >&2
+    exit 1
+  fi
+  printf '%s\n' "${image_reference}"
 }
 
 prepare_release_content() {
@@ -505,7 +602,10 @@ verify_upgrade_and_rollback() {
 }
 
 prepare_current_platform() {
-  current_image="$(load_release_image "${current_version}" "${current_release_directory}")"
+  current_image="$(load_release_image \
+    "${current_version}" \
+    "${current_release_directory}" \
+    "${AUTOFORGE_RELEASE_ACCEPTANCE_VARIANT:-amd64}")"
   docker network create --internal "${network_name}" >/dev/null
   initialize_current_acceptance_platform
   current_base_url="$(start_platform "${current_container}" "${current_image}" "${current_data}")"

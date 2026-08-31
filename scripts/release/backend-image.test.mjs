@@ -1,8 +1,11 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 
 import {
+  assertPackagedNextRoutes,
   assertSafeRuntimeDestination,
   isExcludedRuntimePath,
   isNextTraceFile,
@@ -81,6 +84,34 @@ test("excludes development output and protects runtime packaging destinations", 
   assert.throws(() => assertSafeRuntimeDestination(process.cwd()), /unsafe runtime destination/);
 });
 
+test("requires every module declared by the Next.js app paths manifest", async () => {
+  const runtimeDirectory = await mkdtemp(join(tmpdir(), "autoforge-runtime-routes-"));
+  const serverDirectory = join(runtimeDirectory, "apps/web/.next/server");
+  const presentRoute = "app/api/v1/health/live/route.js";
+  const missingRoute = "app/api/v1/ldap/test/route.js";
+  try {
+    await mkdir(join(serverDirectory, "app/api/v1/health/live"), { recursive: true });
+    await writeFile(join(serverDirectory, presentRoute), "export const route = true;\n");
+    await writeFile(
+      join(serverDirectory, "app-paths-manifest.json"),
+      JSON.stringify({
+        "/api/v1/health/live/route": presentRoute,
+        "/api/v1/ldap/test/route": missingRoute,
+      }),
+    );
+
+    await assert.rejects(
+      assertPackagedNextRoutes(runtimeDirectory),
+      /missing Next\.js routes: \/api\/v1\/ldap\/test\/route/,
+    );
+    await mkdir(join(serverDirectory, "app/api/v1/ldap/test"), { recursive: true });
+    await writeFile(join(serverDirectory, missingRoute), "export const route = true;\n");
+    await assert.doesNotReject(assertPackagedNextRoutes(runtimeDirectory));
+  } finally {
+    await rm(runtimeDirectory, { recursive: true, force: true });
+  }
+});
+
 test("enforces the backend Docker archive size budget", async () => {
   const buildScript = await readFile("scripts/release/build-backend-image.sh", "utf8");
   assert.match(buildScript, /AUTOFORGE_BACKEND_IMAGE_MAX_BYTES:-188743680/);
@@ -108,4 +139,28 @@ test("resolves migration-integrity dependencies from the production web workspac
   );
   assert.doesNotMatch(acceptanceScript, /autoforge-runner-toolchain-linux/);
   assert.doesNotMatch(acceptanceScript, /E2E_PREBUILT_TOOLCHAIN_ROOT=/);
+});
+
+test("validates signed archive identity without assuming Docker image ID semantics", async () => {
+  const acceptanceScript = await readFile("scripts/quality/test-release-offline.sh", "utf8");
+
+  assert.match(acceptanceScript, /AUTOFORGE_RELEASE_ACCEPTANCE_VARIANT:-amd64/);
+  assert.match(acceptanceScript, /archive_config_digest="sha256:\$\{archive_config_path##\*\/\}"/);
+  assert.match(acceptanceScript, /archive_config_digest.*expected_config_digest/s);
+  assert.match(acceptanceScript, /docker image inspect --format[\s\S]*?image_reference/);
+  assert.doesNotMatch(acceptanceScript, /docker image inspect "\$\{image\}"/);
+});
+
+test("runs a published musl image through the real Agent acceptance flow", async () => {
+  const workflow = await readFile(".github/workflows/release-acceptance.yml", "utf8");
+
+  assert.match(
+    workflow,
+    /name: musl real Agent[\s\S]*?phase: real-agent[\s\S]*?variant: amd64-musl/,
+  );
+  assert.match(workflow, /AUTOFORGE_RELEASE_ACCEPTANCE_VARIANT: \$\{\{ matrix\.variant \}\}/);
+  assert.match(
+    workflow,
+    /autoforge-backend-\$\{\{ needs\.prepare\.outputs\.version \}\}-\$\{\{ matrix\.variant \}\}\.docker\.tar/,
+  );
 });

@@ -30,17 +30,28 @@ for _ in $(seq 1 60); do
       docker exec "${container_id}" node -e '
         const { createHash } = require("node:crypto");
         const { existsSync, readFileSync, readdirSync } = require("node:fs");
+        const { relative, resolve, sep } = require("node:path");
         if (existsSync("/app/apps/web/.next/cache")) throw new Error("runtime image contains Next.js build cache");
         const packageStore = "/app/node_modules/.pnpm";
         const developmentPackages = /^(?:@playwright\+test|eslint|playwright|prettier|typescript|vitest)@/;
         const unexpectedPackage = readdirSync(packageStore).find((entry) => developmentPackages.test(entry));
         if (unexpectedPackage) throw new Error(`runtime image contains development dependency: ${unexpectedPackage}`);
-        for (const route of [
-          "/app/apps/web/.next/server/app/api/v1/ldap/test/route.js",
-          "/app/apps/web/.next/server/app/api/v1/webhooks/[webhookId]/test/route.js",
-        ]) {
-          if (!existsSync(route)) throw new Error(`runtime image is missing API route: ${route}`);
+        const nextServerRoot = "/app/apps/web/.next/server";
+        const appPaths = JSON.parse(readFileSync(`${nextServerRoot}/app-paths-manifest.json`, "utf8"));
+        const routeEntries = Object.entries(appPaths);
+        if (routeEntries.length === 0) throw new Error("runtime image has no Next.js app routes");
+        const missingRoutes = [];
+        for (const [route, modulePath] of routeEntries) {
+          if (typeof modulePath !== "string") throw new Error(`invalid module path for ${route}`);
+          const moduleFile = resolve(nextServerRoot, modulePath);
+          const relativeModule = relative(nextServerRoot, moduleFile);
+          if (relativeModule === ".." || relativeModule.startsWith(`..${sep}`)) {
+            throw new Error(`Next.js route escapes server root: ${route}`);
+          }
+          if (!existsSync(moduleFile)) missingRoutes.push(`${route} -> ${modulePath}`);
         }
+        if (missingRoutes.length > 0) throw new Error(`runtime image is missing Next.js routes: ${missingRoutes.join(", ")}`);
+        process.stdout.write(`Verified ${routeEntries.length} Next.js app route modules.\n`);
         const root = "/app/resources/agents";
         const manifest = JSON.parse(readFileSync(`${root}/manifest.json`, "utf8"));
         for (const key of ["linux-amd64", "linux-arm64", "installer", "adapter"]) {
