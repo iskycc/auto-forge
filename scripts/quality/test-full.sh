@@ -427,6 +427,7 @@ run_full_browser_flow() {
   E2E_ADMIN_BOOTSTRAP_TOKEN="${admin_bootstrap_token}" \
   E2E_RUNNER_BOOTSTRAP_TOKEN="${runner_bootstrap_token}" \
   E2E_RUNNER_BOOTSTRAP_MASTER_KEY="${runner_bootstrap_master_key}" \
+  AUTOFORGE_E2E_POSTGRES_URL=postgresql://autoforge:autoforge@127.0.0.1:55439/autoforge \
     pnpm exec playwright test \
       --config playwright.full.config.ts \
       "${browser_specs[@]}"

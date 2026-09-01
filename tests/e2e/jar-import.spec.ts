@@ -7,6 +7,7 @@ import { DatabaseSync } from "node:sqlite";
 import WebSocket from "ws";
 
 import { buildClassFile } from "../../packages/testng-discovery/test/class-fixture";
+import { createPostgresDatabase } from "@autoforge/db/postgres";
 import { DEFAULT_PROJECT_ID } from "@autoforge/domain";
 import { freshRunnerBootstrapToken } from "./support/runner-bootstrap";
 import { selectJarForInspection } from "./support/jar-import";
@@ -879,43 +880,22 @@ public class MixedVisibleTest {
     completedBatch.attempts.find((attempt) => attempt.attemptNumber === 1)?.resultSummary,
   ).toBe(expectedFailureSummary);
 
-  const analysisDatabase = new DatabaseSync(
-    resolve(requiredEnvironment("AUTOFORGE_E2E_DATA_DIR"), "db", "autoforge.sqlite"),
-  );
-  try {
-    analysisDatabase.exec("PRAGMA busy_timeout = 5000");
-    const analyzedAt = new Date().toISOString();
-    analysisDatabase
-      .prepare(
-        `INSERT INTO failure_analysis_claims
-          (id,project_id,batch_id,execution_run_id,case_definition_id,attempt_id,case_name,
-           class_name,attempt_number,failure_summary,result_code,status,category,claimant_id,
-           claimant_username,claimant_display_name,claimed_at,analysis_started_at,completed_at,
-           issue_description,ticket_reference,remark,updated_at)
-         VALUES (?,?,?,?,?,?,?,?,1,?,'TEST_ASSERTION_FAILED','completed','code_issue_filed',
-                 'e2e-analysis-user','e2e-admin','E2E Administrator',?,?,?,?,?,?,?)`,
-      )
-      .run(
-        `case-history-analysis-${randomUUID()}`,
-        DEFAULT_PROJECT_ID,
-        batch.id,
-        firstClaim.assignment.executionSpec.executionRunId,
-        taskCase.id,
-        firstClaim.assignment.attemptId,
-        taskCase.displayName,
-        taskCase.className,
-        expectedFailureSummary,
-        analyzedAt,
-        analyzedAt,
-        analyzedAt,
-        "结算状态字段与接口契约不一致",
-        "BUG-E2E-4096",
-        "等待服务端修复",
-        analyzedAt,
-      );
-  } finally {
-    analysisDatabase.close();
-  }
+  const analyzedAt = new Date().toISOString();
+  await insertCompletedFailureAnalysis({
+    id: `case-history-analysis-${randomUUID()}`,
+    projectId: DEFAULT_PROJECT_ID,
+    batchId: batch.id,
+    executionRunId: firstClaim.assignment.executionSpec.executionRunId,
+    caseDefinitionId: taskCase.id,
+    attemptId: firstClaim.assignment.attemptId,
+    caseName: taskCase.displayName,
+    className: taskCase.className,
+    failureSummary: expectedFailureSummary,
+    completedAt: analyzedAt,
+    issueDescription: "结算状态字段与接口契约不一致",
+    ticketReference: "BUG-E2E-4096",
+    remark: "等待服务端修复",
+  });
 
   // 用例名称本身必须进入独立详情页；该页按时间分页展示全部任务记录。每个任务只回填
   // 一个总结结果：存在通过轮次时展示通过轮次，避免把本批次的中间失败重复记入用例历史。
@@ -1674,10 +1654,94 @@ type ClaimedAssignment = {
   lease: { token: string };
 };
 
-function requiredEnvironment(name: string): string {
-  const value = process.env[name];
-  if (!value) throw new Error(`${name} is required.`);
-  return value;
+type CompletedFailureAnalysisFixture = {
+  id: string;
+  projectId: string;
+  batchId: string;
+  executionRunId: string;
+  caseDefinitionId: string;
+  attemptId: string;
+  caseName: string;
+  className: string;
+  failureSummary: string;
+  completedAt: string;
+  issueDescription: string;
+  ticketReference: string;
+  remark: string;
+};
+
+const completedAnalysisColumns = `
+  (id,project_id,batch_id,execution_run_id,case_definition_id,attempt_id,case_name,class_name,
+   attempt_number,failure_summary,result_code,status,category,claimant_id,claimant_username,
+   claimant_display_name,claimed_at,analysis_started_at,completed_at,issue_description,
+   ticket_reference,remark,updated_at)`;
+
+function completedAnalysisValues(input: CompletedFailureAnalysisFixture): string[] {
+  return [
+    input.id,
+    input.projectId,
+    input.batchId,
+    input.executionRunId,
+    input.caseDefinitionId,
+    input.attemptId,
+    input.caseName,
+    input.className,
+    input.failureSummary,
+    input.completedAt,
+    input.completedAt,
+    input.completedAt,
+    input.issueDescription,
+    input.ticketReference,
+    input.remark,
+    input.completedAt,
+  ];
+}
+
+async function insertCompletedFailureAnalysis(
+  input: CompletedFailureAnalysisFixture,
+): Promise<void> {
+  const values = completedAnalysisValues(input);
+  const sqliteDataDirectory = process.env.AUTOFORGE_E2E_DATA_DIR;
+  if (sqliteDataDirectory) {
+    const database = new DatabaseSync(resolve(sqliteDataDirectory, "db", "autoforge.sqlite"));
+    try {
+      database.exec("PRAGMA busy_timeout = 5000");
+      database
+        .prepare(
+          `INSERT INTO failure_analysis_claims ${completedAnalysisColumns}
+           VALUES (?,?,?,?,?,?,?,?,1,?,'TEST_ASSERTION_FAILED','completed','code_issue_filed',
+                   'e2e-analysis-user','e2e-admin','E2E Administrator',?,?,?,?,?,?,?)`,
+        )
+        .run(...values);
+    } finally {
+      database.close();
+    }
+    return;
+  }
+
+  const postgresUrl = process.env.AUTOFORGE_E2E_POSTGRES_URL;
+  if (!postgresUrl) {
+    throw new Error(
+      "AUTOFORGE_E2E_DATA_DIR or AUTOFORGE_E2E_POSTGRES_URL is required for analysis fixtures.",
+    );
+  }
+  const database = createPostgresDatabase({
+    connectionString: postgresUrl,
+    migrationsFolder: resolve(import.meta.dirname, "../../packages/db/drizzle/postgresql"),
+    poolMax: 1,
+  });
+  try {
+    await database.ready;
+    await database.pool.query(
+      `INSERT INTO failure_analysis_claims ${completedAnalysisColumns}
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,1,$9,'TEST_ASSERTION_FAILED','completed',
+               'code_issue_filed','e2e-analysis-user','e2e-admin','E2E Administrator',
+               $10,$11,$12,$13,$14,$15,$16)`,
+      values,
+    );
+  } finally {
+    await database.close();
+  }
 }
 
 async function claimAssignment(page: Page, identity: RunnerIdentity): Promise<ClaimedAssignment> {
