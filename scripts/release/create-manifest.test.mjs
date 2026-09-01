@@ -11,7 +11,7 @@ test("creates a deterministic manifest and checksum list", async () => {
   const originalEpoch = process.env.SOURCE_DATE_EPOCH;
   process.env.SOURCE_DATE_EPOCH = "1786233600";
   try {
-    for (const variant of ["amd64", "arm64", "amd64-musl", "arm64-musl"]) {
+    for (const variant of ["amd64", "arm64"]) {
       const backendName = `autoforge-backend-1.2.3-${variant}`;
       await writeFile(resolve(directory, `${backendName}.docker.tar`), `image-${variant}`);
       await writeFile(
@@ -41,15 +41,13 @@ test("creates a deterministic manifest and checksum list", async () => {
     const manifest = JSON.parse(
       await readFile(resolve(directory, "release-manifest.json"), "utf8"),
     );
-    assert.equal(manifest.schemaVersion, 2);
+    assert.equal(manifest.schemaVersion, 3);
     assert.equal(manifest.version, "1.2.3");
     assert.deepEqual(
       manifest.backendImages.map((image) => [image.variant, image.version, image.architecture]),
       [
         ["amd64", "1.2.3", "amd64"],
         ["arm64", "1.2.3", "arm64"],
-        ["amd64-musl", "1.2.3", "amd64"],
-        ["arm64-musl", "1.2.3", "arm64"],
       ],
     );
     assert.deepEqual(

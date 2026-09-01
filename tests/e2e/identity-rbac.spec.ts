@@ -3,6 +3,7 @@ import { mkdir } from "node:fs/promises";
 import { resolve } from "node:path";
 
 import {
+  acceptSystemDialog,
   appAlert,
   browserJson,
   E2E_ADMIN_PASSWORD,
@@ -95,8 +96,8 @@ test("local user completes forced password change and self-service session lifec
   );
   await page.goto("/account/security");
   await expect(page.getByText("当前会话", { exact: true })).toBeVisible();
-  page.once("dialog", (dialog) => dialog.accept());
   await page.getByRole("button", { name: "终止" }).click();
+  await acceptSystemDialog(page, "终止登录会话", "终止会话");
   await expect(page).toHaveURL(/\/login$/);
 });
 
@@ -126,8 +127,8 @@ test("administrator can reset a user password and the last administrator binding
 
   await page.goto("/settings/access?section=roles");
   const administratorRow = page.getByRole("row", { name: /E2E Administrator.*系统管理员/ });
-  page.once("dialog", (dialog) => dialog.accept());
   await administratorRow.getByRole("button", { name: "撤销系统角色" }).click();
+  await acceptSystemDialog(page, "撤销系统角色", "确认撤销");
   await expect(appAlert(page)).toContainText("最后一位");
 
   await logout(page);

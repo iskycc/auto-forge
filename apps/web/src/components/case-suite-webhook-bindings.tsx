@@ -6,6 +6,7 @@ import Link from "next/link";
 import { useState } from "react";
 
 import { Button, Input } from "./ui";
+import { useToast } from "./ui-feedback";
 
 export function CaseSuiteWebhookBindings({
   suiteId,
@@ -18,15 +19,14 @@ export function CaseSuiteWebhookBindings({
   initialWebhookIds: string[];
   canManage: boolean;
 }) {
+  const toast = useToast();
   const [selected, setSelected] = useState(new Set(initialWebhookIds));
   const [saved, setSaved] = useState(new Set(initialWebhookIds));
   const [pending, setPending] = useState(false);
-  const [message, setMessage] = useState("");
   const changed = configurations.some((item) => selected.has(item.id) !== saved.has(item.id));
 
   async function save(): Promise<void> {
     setPending(true);
-    setMessage("");
     try {
       const response = await fetch(`/api/v1/case-suites/${encodeURIComponent(suiteId)}/webhooks`, {
         method: "PUT",
@@ -41,9 +41,9 @@ export function CaseSuiteWebhookBindings({
       const next = new Set(payload.webhookIds ?? []);
       setSelected(next);
       setSaved(next);
-      setMessage("Webhook 绑定已保存。");
+      toast.success("Webhook 绑定已保存。");
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "保存通知绑定失败。");
+      toast.error(error instanceof Error ? error.message : "保存通知绑定失败。");
     } finally {
       setPending(false);
     }
@@ -81,7 +81,6 @@ export function CaseSuiteWebhookBindings({
                   if (event.target.checked) next.add(item.id);
                   else next.delete(item.id);
                   setSelected(next);
-                  setMessage("");
                 }}
                 type="checkbox"
               />
@@ -99,9 +98,7 @@ export function CaseSuiteWebhookBindings({
       )}
       {canManage && configurations.length > 0 ? (
         <div className="case-suite-webhook-footer">
-          <span className={message.includes("失败") ? "form-error" : "form-success"}>
-            {message}
-          </span>
+          <span className="muted">{changed ? "存在未保存变更" : "当前配置已保存"}</span>
           <Button
             disabled={!changed || pending}
             onClick={() => void save()}

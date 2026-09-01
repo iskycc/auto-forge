@@ -4,6 +4,7 @@ import type { Permission } from "@autoforge/domain";
 import { connection } from "next/server";
 
 import { AppShell } from "@/components/app-shell";
+import { UiFeedbackProvider } from "@/components/ui-feedback";
 import { currentIdentity } from "@/lib/auth";
 import { getPlatformServices } from "@/lib/services";
 import {
@@ -60,24 +61,26 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
   return (
     <html data-time-zone={platformTimeZone} lang="zh-CN">
       <body>
-        <AppShell
-          mode={services.config.mode}
-          timeZone={platformTimeZone}
-          {...(identity
-            ? {
-                userName: identity.user.displayName,
-                permissions,
-                forcePasswordChange: identity.user.forcePasswordChange,
-                projects: projects.map(({ id, name }) => ({ id, name })),
-                selectedProjectId: activeProjectId,
-                projectVersions,
-                selectedProjectVersionId: activeHierarchy.projectVersionId,
-                selectedTestStageId: activeHierarchy.testStageId,
-              }
-            : {})}
-        >
-          {children}
-        </AppShell>
+        <UiFeedbackProvider>
+          <AppShell
+            mode={services.config.mode}
+            timeZone={platformTimeZone}
+            {...(identity
+              ? {
+                  userName: identity.user.displayName,
+                  permissions,
+                  forcePasswordChange: identity.user.forcePasswordChange,
+                  projects: projects.map(({ id, name }) => ({ id, name })),
+                  selectedProjectId: activeProjectId,
+                  projectVersions,
+                  selectedProjectVersionId: activeHierarchy.projectVersionId,
+                  selectedTestStageId: activeHierarchy.testStageId,
+                }
+              : {})}
+          >
+            {children}
+          </AppShell>
+        </UiFeedbackProvider>
       </body>
     </html>
   );

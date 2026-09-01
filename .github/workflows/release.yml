@@ -101,12 +101,6 @@ jobs:
           - variant: arm64
             runner: ubuntu-24.04-arm
             platform: linux/arm64
-          - variant: amd64-musl
-            runner: ubuntu-24.04
-            platform: linux/amd64
-          - variant: arm64-musl
-            runner: ubuntu-24.04-arm
-            platform: linux/arm64
     env:
       AUTOFORGE_BUILDX_CACHE_FROM: type=gha,scope=release-backend-${{ matrix.variant }},timeout=2m
       AUTOFORGE_BUILDX_CACHE_TO: type=gha,mode=max,scope=release-backend-${{ matrix.variant }},timeout=2m,ignore-error=true
@@ -147,6 +141,12 @@ jobs:
           node scripts/release/create-backend-image-metadata.mjs \
             "${BACKEND_IMAGE}" "${{ needs.prepare.outputs.version }}" "${{ matrix.variant }}" \
             "dist/release/autoforge-backend-${{ needs.prepare.outputs.version }}-${{ matrix.variant }}.image.json"
+
+      - name: Verify embedded Agent in musl user space
+        run: >-
+          bash scripts/release/verify-agent-musl-runtime.sh
+          "resources/agents/linux-${{ matrix.variant }}/autoforge-agent"
+          "${BACKEND_PLATFORM}"
 
       - name: Generate backend image SBOM
         uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0

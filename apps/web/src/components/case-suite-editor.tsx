@@ -35,6 +35,7 @@ import { useRouter } from "next/navigation";
 import { FormEvent, useState } from "react";
 
 import { ActionDialog } from "@/components/action-dialog";
+import { useConfirm, useToast } from "@/components/ui-feedback";
 
 type EditableRetryConcurrencyRule = {
   id: string;
@@ -76,11 +77,12 @@ export function CaseSuiteEditor({
   canManage: boolean;
 }) {
   const router = useRouter();
+  const confirmAction = useConfirm();
+  const toast = useToast();
   const [pending, setPending] = useState(false);
   const [copying, setCopying] = useState(false);
   const [copyOpen, setCopyOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [message, setMessage] = useState<string | null>(null);
   const [runnerSelectionKind, setRunnerSelectionKind] = useState<"runners" | "group">(
     suite.policy.runnerGroupId ? "group" : "runners",
   );
@@ -141,7 +143,6 @@ export function CaseSuiteEditor({
       .filter((runnerId) => runnerId.length > 0);
     setPending(true);
     setError(null);
-    setMessage(null);
     try {
       const response = await fetch(`/api/v1/case-suites/${encodeURIComponent(suite.id)}`, {
         method: "PATCH",
@@ -186,7 +187,7 @@ export function CaseSuiteEditor({
           parsed.success ? parsed.data.error.message : `请求失败（HTTP ${response.status}）。`,
         );
       }
-      setMessage("用例任务已更新。");
+      toast.success("用例任务配置已保存并立即用于后续批次。");
       router.refresh();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "更新用例任务失败。");
@@ -200,7 +201,6 @@ export function CaseSuiteEditor({
     const form = new FormData(event.currentTarget);
     setCopying(true);
     setError(null);
-    setMessage(null);
     try {
       const response = await fetch(`/api/v1/case-suites/${encodeURIComponent(suite.id)}/copy`, {
         method: "POST",
@@ -243,7 +243,16 @@ export function CaseSuiteEditor({
   }
 
   async function deleteSchedule(): Promise<void> {
-    if (!schedule || !window.confirm("删除此计划触发？历史触发记录会保留。")) return;
+    if (!schedule) return;
+    if (
+      !(await confirmAction({
+        title: "删除计划触发",
+        description: "删除后任务不再自动触发，历史触发记录与执行记录仍会保留。",
+        confirmLabel: "确认删除",
+        tone: "danger",
+      }))
+    )
+      return;
     await scheduleMutation(
       fetch(`/api/v1/case-suites/${encodeURIComponent(suite.id)}/schedule`, {
         method: "DELETE",
@@ -255,7 +264,6 @@ export function CaseSuiteEditor({
   async function scheduleMutation(responsePromise: Promise<Response>, success: string) {
     setPending(true);
     setError(null);
-    setMessage(null);
     try {
       const response = await responsePromise;
       if (!response.ok) {
@@ -263,7 +271,7 @@ export function CaseSuiteEditor({
         const parsed = apiErrorSchema.safeParse(payload);
         throw new Error(parsed.success ? parsed.data.error.message : "计划操作失败。");
       }
-      setMessage(success);
+      toast.success(success);
       router.refresh();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "计划操作失败。");
@@ -894,11 +902,6 @@ export function CaseSuiteEditor({
               {error ? (
                 <small className="form-error" role="alert">
                   {error}
-                </small>
-              ) : null}
-              {message ? (
-                <small className="inline-success" role="status">
-                  {message}
                 </small>
               ) : null}
               <Button className="primary-button" disabled={pending} type="submit">

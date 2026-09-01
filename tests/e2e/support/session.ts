@@ -11,6 +11,17 @@ export function appAlert(page: Page): Locator {
   return page.locator('[role="alert"]:not(#__next-route-announcer__)');
 }
 
+export async function acceptSystemDialog(
+  page: Page,
+  title: string | RegExp,
+  action: string | RegExp,
+): Promise<void> {
+  const dialog = page.getByRole("dialog", { name: title });
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole("button", { name: action, exact: typeof action === "string" }).click();
+  await expect(dialog).toHaveCount(0);
+}
+
 export async function ensureAdministrator(page: Page): Promise<void> {
   // Decide through the public setup-status API instead of the /login page:
   // while setup is required, /login answers 200 and only redirects to /setup

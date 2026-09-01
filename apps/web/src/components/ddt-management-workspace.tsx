@@ -28,7 +28,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { DragEvent as ReactDragEvent, ReactNode } from "react";
 
 import { Button, Input, OperationProgress, Select, Textarea } from "@/components/ui";
+import { LoadingState } from "@/components/loading-state";
 import { uploadWithProgress } from "@/lib/upload-with-progress";
+import { useConfirm, useToast } from "@/components/ui-feedback";
 
 type Scope = { projectId: string; projectVersionId: string; testStageId: string };
 type ExecutionClass = {
@@ -141,6 +143,8 @@ export function DdtManagementWorkspace({
   canManageSuites: boolean;
   suites: Array<{ id: string; name: string }>;
 }) {
+  const confirmAction = useConfirm();
+  const toast = useToast();
   const [tab, setTab] = useState<WorkspaceTab>("overview");
   const [dashboard, setDashboard] = useState(emptyDashboard);
   const [cases, setCases] = useState<CaseSummary[]>([]);
@@ -158,7 +162,6 @@ export function DdtManagementWorkspace({
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [busy, setBusy] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
   const [showImport, setShowImport] = useState(false);
   const [showTemplate, setShowTemplate] = useState(false);
@@ -284,9 +287,16 @@ export function DdtManagementWorkspace({
 
   const deleteSelected = async () => {
     const caseIds = [...selected];
-    if (!window.confirm(`将 ${caseIds.length} 条 DDT 用例移入回收站？`)) return;
+    if (
+      !(await confirmAction({
+        title: "删除 DDT 用例",
+        description: `将 ${caseIds.length} 条 DDT 用例移入回收站，之后仍可恢复。`,
+        confirmLabel: "移入回收站",
+        tone: "danger",
+      }))
+    )
+      return;
     setError("");
-    setNotice("");
     setDeleteProgress({ completed: 0, total: caseIds.length, label: "正在移入回收站" });
     try {
       await requestJson(endpoint("cases/bulk-delete"), {
@@ -299,7 +309,7 @@ export function DdtManagementWorkspace({
         total: caseIds.length,
         label: "删除完成，正在刷新用例列表",
       });
-      setNotice(`已将 ${caseIds.length} 条用例移入回收站。`);
+      toast.success(`已将 ${caseIds.length} 条用例移入回收站。`);
       await load();
     } catch (deleteError) {
       setError(messageOf(deleteError));
@@ -376,14 +386,6 @@ export function DdtManagementWorkspace({
         ))}
       </div>
 
-      {notice ? (
-        <div className="inline-notice success" role="status">
-          {notice}
-          <Button type="button" aria-label="关闭提示" onClick={() => setNotice("")}>
-            <X size={14} />
-          </Button>
-        </div>
-      ) : null}
       {error ? (
         <div className="inline-notice error" role="alert">
           {error}
@@ -734,7 +736,15 @@ export function DdtManagementWorkspace({
           canManage={canManage}
           onCreate={() => setShowTemplate(true)}
           onDelete={async (item) => {
-            if (!window.confirm(`删除模板“${item.name}”？`)) return;
+            if (
+              !(await confirmAction({
+                title: "删除 DDT 模板",
+                description: `确认删除模板“${item.name}”？已有用例数据不会被删除。`,
+                confirmLabel: "确认删除",
+                tone: "danger",
+              }))
+            )
+              return;
             await requestJson(
               endpoint(
                 `templates/${item.id}`,
@@ -755,7 +765,15 @@ export function DdtManagementWorkspace({
             await load();
           }}
           onPurge={async (id) => {
-            if (!window.confirm("永久删除后无法恢复，继续吗？")) return;
+            if (
+              !(await confirmAction({
+                title: "永久删除 DDT 用例",
+                description: "永久删除后无法恢复，请确认不再需要这条用例。",
+                confirmLabel: "永久删除",
+                tone: "danger",
+              }))
+            )
+              return;
             await requestJson(endpoint(`recycle/${id}`), { method: "DELETE" });
             await load();
           }}
@@ -769,7 +787,7 @@ export function DdtManagementWorkspace({
           canManage={canManage}
           onClose={() => setDetail(undefined)}
           onSaved={async (next) => {
-            setNotice(`已保存 ${next.caseId}`);
+            toast.success(`已保存 ${next.caseId}`);
             await load();
             await openCase(next.caseId);
           }}
@@ -818,7 +836,7 @@ export function DdtManagementWorkspace({
           endpoint={endpoint}
           onClose={() => setShowExecutionClass(false)}
           onComplete={async (executionClass) => {
-            setNotice(
+            toast.success(
               `已将 ${selected.size} 条 DDT 用例的执行类设置为 ${executionClass.className}。`,
             );
             setShowExecutionClass(false);
@@ -834,7 +852,7 @@ export function DdtManagementWorkspace({
           suites={suites}
           onClose={() => setShowAddToSuite(false)}
           onComplete={async (suiteName) => {
-            setNotice(`已将 ${selected.size} 条 DDT 用例加入任务“${suiteName}”。`);
+            toast.success(`已将 ${selected.size} 条 DDT 用例加入任务“${suiteName}”。`);
             setShowAddToSuite(false);
             setSelected(new Set());
           }}
@@ -856,11 +874,10 @@ function Metric({ label, value, hint }: { label: string; value: number; hint: st
 
 function WorkspaceLoading() {
   return (
-    <div className="card ddt-loading">
-      <LoaderCircle className="spin" size={24} />
-      <strong>正在加载 DDT 工作台</strong>
-      <span>读取当前项目版本与测试阶段的数据…</span>
-    </div>
+    <LoadingState
+      label="正在加载 DDT 工作台"
+      description="正在读取当前项目版本与测试阶段的数据。"
+    />
   );
 }
 

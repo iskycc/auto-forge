@@ -120,6 +120,10 @@ test("uses cached builds and publishes Docker-native tar archives", async () => 
   assert.match(workflow, /AUTOFORGE_BUILDX_CACHE_TO: type=gha/);
   assert.match(buildScript, /\.docker\.tar/);
   assert.doesNotMatch(buildScript, /zstd/);
+  assert.match(workflow, /variant: amd64/);
+  assert.match(workflow, /variant: arm64/);
+  assert.doesNotMatch(workflow, /variant: (?:amd64|arm64)-musl/);
+  assert.doesNotMatch(buildScript, /alpine|musl/);
 });
 
 test("shares the release asset contract with published acceptance", async () => {

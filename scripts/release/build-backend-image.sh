@@ -6,28 +6,17 @@ source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/common.sh"
 
 readonly version="$(normalize_version "${1:?usage: build-backend-image.sh VERSION VARIANT [OUTPUT_DIR]}")"
 readonly variant="${2:?usage: build-backend-image.sh VERSION VARIANT [OUTPUT_DIR]}"
-require_variant "${variant}"
+require_backend_variant "${variant}"
 readonly output_directory="$(release_output_directory "${3:-dist/release}")"
 
-readonly glibc_node_image="node:24.16.0-bookworm-slim@sha256:2c87ef9bd3c6a3bd4b472b4bec2ce9d16354b0c574f736c476489d09f560a203"
-readonly musl_node_image="node:24.16.0-alpine3.23@sha256:2bdb65ed1dab192432bc31c95f94155ca5ad7fc1392fb7eb7526ab682fa5bf14"
+readonly node_image="node:24.16.0-bookworm-slim@sha256:2c87ef9bd3c6a3bd4b472b4bec2ce9d16354b0c574f736c476489d09f560a203"
 
 case "${variant}" in
   amd64)
     readonly platform="linux/amd64"
-    readonly node_image="${glibc_node_image}"
     ;;
   arm64)
     readonly platform="linux/arm64"
-    readonly node_image="${glibc_node_image}"
-    ;;
-  amd64-musl)
-    readonly platform="linux/amd64"
-    readonly node_image="${musl_node_image}"
-    ;;
-  arm64-musl)
-    readonly platform="linux/arm64"
-    readonly node_image="${musl_node_image}"
     ;;
 esac
 

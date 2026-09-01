@@ -17,6 +17,7 @@ import {
   startTaskFromTopbar,
 } from "./support/task-execution";
 import {
+  acceptSystemDialog,
   appAlert,
   browserJson,
   E2E_ADMIN_PASSWORD,
@@ -505,8 +506,8 @@ public class MixedVisibleTest {
   const versionSnapshot = page.locator(".version-snapshot-details").first();
   await expect(versionSnapshot).toContainText('"methodSignature": "入参：空，返回值：空"');
   await expect(versionSnapshot).not.toContainText('"descriptor"');
-  page.once("dialog", (dialog) => dialog.accept());
   await page.getByRole("button", { name: "从该版本创建" }).last().click();
+  await acceptSystemDialog(page, /从 v\d+ 恢复用例/, "创建新版本");
   await expect(page.getByText("版本历史（3）")).toBeVisible({ timeout: 20_000 });
 
   const executionCases = await browserJson<{
@@ -579,7 +580,7 @@ public class MixedVisibleTest {
   await page.getByRole("button", { name: "目标用例任务", exact: true }).click();
   await page.getByRole("option", { name: "每日冒烟测试", exact: true }).click();
   await page.getByRole("button", { name: "加入任务" }).click();
-  await expect(page.locator(".inline-feedback")).toContainText("已将 1 个用例加入任务");
+  await expect(page.locator(".toast-card", { hasText: "已将 1 个用例加入任务" })).toBeVisible();
 
   await page.goto(`/case-suites/${encodeURIComponent(dailySuiteId)}`);
   await expectUiConsistency(page);
@@ -589,8 +590,8 @@ public class MixedVisibleTest {
   await expect(
     taskCaseTree.getByRole("button", { name: `移除 ${taskCase.displayName}` }),
   ).toBeVisible();
-  page.once("dialog", (dialog) => dialog.accept());
   await page.getByRole("button", { name: `移除 ${taskCase.displayName}`, exact: true }).click();
+  await acceptSystemDialog(page, "移除任务用例", "确认移除");
   await expect(page.getByText("任务中还没有用例")).toBeVisible({ timeout: 20_000 });
 
   await page.goto("/cases");
@@ -699,7 +700,7 @@ public class MixedVisibleTest {
   await page.getByRole("button", { name: "目标用例任务", exact: true }).click();
   await page.getByRole("option", { name: "每日冒烟测试", exact: true }).click();
   await page.getByRole("button", { name: "加入任务" }).click();
-  await expect(page.locator(".inline-feedback")).toContainText("已将 1 个用例加入任务");
+  await expect(page.locator(".toast-card", { hasText: "已将 1 个用例加入任务" })).toBeVisible();
 
   await configureTaskExecution(page, dailySuiteId, identity.runnerId, { retryLimit: 2 });
   const batch = await startTaskFromTopbar(page, dailySuiteId);
@@ -968,6 +969,14 @@ public class MixedVisibleTest {
   await expect(failureReasonCard).toContainText("java.lang.AssertionError: 中文断言失败");
   await expect(failureReasonCard).not.toContainText("TESTNG_SUCCEEDED");
   await expect(failureReasonCard).not.toContainText("TEST_ASSERTION_FAILED");
+  await failureReasonCard.getByRole("button", { name: "查看明细" }).click();
+  const failureReasonDialog = page.getByRole("dialog", { name: "失败原因明细" });
+  await expect(
+    failureReasonDialog.getByRole("columnheader", { name: "错误堆栈 / 错误信息" }),
+  ).toBeVisible();
+  await expect(failureReasonDialog.getByRole("columnheader", { name: "异常错误码" })).toBeVisible();
+  await expect(failureReasonDialog).not.toContainText("TEST_ASSERTION_FAILED");
+  await failureReasonDialog.getByRole("button", { name: "关闭失败原因明细" }).click();
   await captureUi(page, "quality-insights-charts-1536");
   await page.setViewportSize({ width: 1024, height: 768 });
   await expect(failureReasonCard.locator(".insight-pie > span")).toBeVisible();
@@ -1177,8 +1186,10 @@ public class MixedVisibleTest {
 
   const cancellationBatch = await createTaskRun(page, dailySuiteId);
   await page.goto(`/run-batches/${encodeURIComponent(cancellationBatch.id)}`);
-  page.once("dialog", (dialog) => dialog.accept("E2E single run cancellation"));
   await page.getByRole("button", { name: "取消该用例" }).click();
+  const cancellationDialog = page.getByRole("dialog", { name: "取消用例执行" });
+  await cancellationDialog.getByLabel("取消原因").fill("E2E single run cancellation");
+  await cancellationDialog.getByRole("button", { name: "确认取消" }).click();
   await expect(page.getByText("已取消", { exact: true }).first()).toBeVisible({ timeout: 20_000 });
   const cancelledBatchDetails = (await (
     await page.request.get(`/api/v1/run-batches/${encodeURIComponent(cancellationBatch.id)}`, {
@@ -1438,11 +1449,11 @@ public class MixedVisibleTest {
     await route.continue();
   };
   await page.route(deleteCasesRoute, delayCaseDeletion);
-  page.once("dialog", (dialog) => dialog.accept());
   await page.getByRole("button", { name: "批量删除" }).click();
+  await acceptSystemDialog(page, "批量删除用例", "确认删除");
   await expect(page.getByRole("progressbar", { name: "正在删除用例进度" })).toBeVisible();
   await expect(page.getByText("已删除 0 / 2 个用例")).toBeVisible();
-  await expect(page.locator(".inline-feedback")).toContainText("已删除 2 个用例");
+  await expect(page.getByText("已删除 2 个用例。", { exact: true })).toBeVisible();
   await page.unroute(deleteCasesRoute, delayCaseDeletion);
   await expect(page.getByRole("link", { name: /查看 BulkDelete.*详情/ })).toHaveCount(0);
 
@@ -1452,9 +1463,9 @@ public class MixedVisibleTest {
   const singleDeleteButton = page.getByRole("button", { name: "删除用例", exact: true });
   await singleDeleteButton.scrollIntoViewIfNeeded();
   await captureUi(page, "case-library-single-delete");
-  page.once("dialog", (dialog) => dialog.accept());
   await singleDeleteButton.click();
-  await expect(page.locator(".inline-feedback")).toContainText("已删除 1 个用例");
+  await acceptSystemDialog(page, "删除用例", "确认删除");
+  await expect(page.getByText("已删除 1 个用例。", { exact: true })).toBeVisible();
   await expect(page.getByRole("link", { name: "查看 SingleDeleteFixture 详情" })).toHaveCount(0);
 
   await page.goto("/settings/access?section=users");

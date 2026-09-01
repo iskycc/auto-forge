@@ -10,6 +10,7 @@ import { useState } from "react";
 
 import { Button } from "@/components/ui";
 import { readApiErrorMessage } from "@/lib/client-api";
+import { useConfirm, useToast } from "@/components/ui-feedback";
 
 export function AutomationOperations({
   schedules,
@@ -21,23 +22,21 @@ export function AutomationOperations({
   manageableScheduleProjectIds: string[] | undefined;
 }) {
   const router = useRouter();
+  const confirmAction = useConfirm();
+  const toast = useToast();
   const [pending, setPending] = useState(false);
-  const [message, setMessage] = useState("");
-  const [error, setError] = useState("");
 
   async function request(path: string, init: RequestInit, success: string) {
     setPending(true);
-    setMessage("");
-    setError("");
     try {
       const response = await fetch(path, init);
       const errorMessage = await readApiErrorMessage(response, "操作失败。");
       if (errorMessage) throw new Error(errorMessage);
-      setMessage(success);
+      toast.success(success);
       router.refresh();
       setPending(false);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "操作失败。");
+      toast.error(cause instanceof Error ? cause.message : "操作失败。");
       setPending(false);
     }
   }
@@ -51,13 +50,6 @@ export function AutomationOperations({
 
   return (
     <div className="settings-stack">
-      {message ? <div className="inline-success">{message}</div> : null}
-      {error ? (
-        <div className="auth-error" role="alert">
-          {error}
-        </div>
-      ) : null}
-
       {schedules.length > 0 || suites.length > 0 ? (
         <section className="content-card settings-section">
           <div className="section-heading">
@@ -163,14 +155,19 @@ export function AutomationOperations({
                             className="table-action"
                             disabled={pending}
                             onClick={() => {
-                              if (!window.confirm("删除这条计划任务？删除后不会再自动触发。")) {
-                                return;
-                              }
-                              void request(
-                                `/api/v1/case-suites/${schedule.suiteId}/schedule`,
-                                { method: "DELETE" },
-                                "计划任务已删除。",
-                              );
+                              void confirmAction({
+                                title: "删除计划任务",
+                                description: "删除后不会再自动触发，历史触发与执行记录仍会保留。",
+                                confirmLabel: "确认删除",
+                                tone: "danger",
+                              }).then((accepted) => {
+                                if (!accepted) return;
+                                void request(
+                                  `/api/v1/case-suites/${schedule.suiteId}/schedule`,
+                                  { method: "DELETE" },
+                                  "计划任务已删除。",
+                                );
+                              });
                             }}
                             type="button"
                             variant="danger"

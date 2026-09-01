@@ -19,6 +19,7 @@ import {
 import { formatBatchDuration } from "@/lib/run-batch-presentation";
 import { Button } from "@/components/ui";
 import { RunBatchPermanentShare } from "@/components/run-batch-permanent-share";
+import { useConfirm } from "@/components/ui-feedback";
 
 export type { ExecutionRecordRow } from "@/lib/execution-record-columns";
 
@@ -89,6 +90,7 @@ export function ExecutionRecordsTable({
   canTerminate: boolean;
 }) {
   const router = useRouter();
+  const confirmAction = useConfirm();
   const [terminatingBatchId, setTerminatingBatchId] = useState<string>();
   const [actionError, setActionError] = useState("");
   const [observedAt, setObservedAt] = useState(rows[0]?.observedAt ?? "1970-01-01T00:00:00.000Z");
@@ -168,9 +170,12 @@ export function ExecutionRecordsTable({
 
   async function terminateBatch(row: ExecutionRecordRow): Promise<void> {
     if (
-      !window.confirm(
-        `终止批次 #${row.sequenceNumber}？平台会立即停止后续调度，正在执行的用例完成后任务正式终止。`,
-      )
+      !(await confirmAction({
+        title: `终止批次 #${row.sequenceNumber}`,
+        description: "平台会立即停止后续调度，正在执行的用例完成后任务正式终止。",
+        confirmLabel: "确认终止",
+        tone: "danger",
+      }))
     ) {
       return;
     }

@@ -1,6 +1,7 @@
 "use client";
 
 import { Button } from "@/components/ui";
+import { useConfirm, useToast } from "@/components/ui-feedback";
 
 import { apiErrorSchema } from "@autoforge/contracts";
 import type { CaseSourceComparisonResult } from "@autoforge/contracts";
@@ -28,9 +29,10 @@ export function SourceLifecyclePanel({
   revision,
 }: SourceLifecyclePanelProps) {
   const router = useRouter();
+  const confirmAction = useConfirm();
+  const toast = useToast();
   const [pendingAction, setPendingAction] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [message, setMessage] = useState<string | null>(null);
   const [comparison, setComparison] = useState<CaseSourceComparisonResult | null>(null);
 
   const comparable = !authoritative && status === "ready" && lifecycleStatus === "active";
@@ -38,7 +40,6 @@ export function SourceLifecyclePanel({
   async function run(action: string, operation: () => Promise<void>): Promise<void> {
     setPendingAction(action);
     setError(null);
-    setMessage(null);
     try {
       await operation();
       router.refresh();
@@ -90,7 +91,7 @@ export function SourceLifecyclePanel({
         expectedRevision: revision,
       });
       setComparison(null);
-      setMessage("已同步为权威来源；匹配用例已生成不可变版本。");
+      toast.success("已同步为权威来源；匹配用例已生成不可变版本。");
     });
   }
 
@@ -101,17 +102,25 @@ export function SourceLifecyclePanel({
         expectedRevision: revision,
       });
       setComparison(null);
-      setMessage(archived ? "来源已归档。" : "来源已恢复为活跃状态。");
+      toast.success(archived ? "来源已归档。" : "来源已恢复为活跃状态。");
     });
   }
 
-  function remove(): Promise<void> {
+  async function remove(): Promise<void> {
+    if (
+      !(await confirmAction({
+        title: "删除用例来源",
+        description: "来源记录及其 JAR 对象将异步删除，此操作不可撤销。",
+        confirmLabel: "确认删除",
+        tone: "danger",
+      }))
+    )
+      return;
     return run("delete", async () => {
-      if (!window.confirm("确认删除该来源？将异步删除其 JAR 对象，此操作不可撤销。")) return;
       await request(`/api/v1/case-sources/${encodeURIComponent(sourceId)}`, "DELETE", {
         expectedRevision: revision,
       });
-      setMessage("来源已标记删除，JAR 对象将由后台任务清理。");
+      toast.success("来源已标记删除，JAR 对象将由后台任务清理。");
     });
   }
 
@@ -228,7 +237,6 @@ export function SourceLifecyclePanel({
         </div>
       )}
       {error && <small className="inline-error">{error}</small>}
-      {message && <small>{message}</small>}
     </section>
   );
 }

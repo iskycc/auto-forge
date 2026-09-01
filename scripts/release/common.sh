@@ -15,12 +15,23 @@ normalize_version() {
   printf '%s\n' "${normalized}"
 }
 
-require_variant() {
-  local candidate_variant="${1:?variant is required}"
+require_backend_variant() {
+  local candidate_variant="${1:?backend variant is required}"
   case "${candidate_variant}" in
-    amd64 | arm64 | amd64-musl | arm64-musl) ;;
+    amd64 | arm64) ;;
     *)
-      echo "unsupported release variant: ${candidate_variant}" >&2
+      echo "unsupported backend release variant: ${candidate_variant}" >&2
+      return 1
+      ;;
+  esac
+}
+
+require_agent_architecture() {
+  local candidate_architecture="${1:?Agent architecture is required}"
+  case "${candidate_architecture}" in
+    amd64 | arm64) ;;
+    *)
+      echo "unsupported Agent architecture: ${candidate_architecture}" >&2
       return 1
       ;;
   esac

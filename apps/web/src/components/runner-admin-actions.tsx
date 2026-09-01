@@ -1,6 +1,7 @@
 "use client";
 
 import { Button } from "@/components/ui";
+import { useConfirm } from "@/components/ui-feedback";
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
@@ -23,11 +24,20 @@ export function RunnerAdminActions({
   state,
 }: RunnerAdminActionsProps) {
   const router = useRouter();
+  const confirmAction = useConfirm();
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
 
   async function post(path: string, confirmation: string) {
-    if (!window.confirm(confirmation)) return;
+    if (
+      !(await confirmAction({
+        title: "确认执行机操作",
+        description: confirmation,
+        confirmLabel: "确认操作",
+        tone: "danger",
+      }))
+    )
+      return;
     setPending(true);
     setError("");
     try {
@@ -48,7 +58,15 @@ export function RunnerAdminActions({
     nextState: "active" | "draining" | "disabled",
     confirmation: string,
   ) {
-    if (!window.confirm(confirmation)) return;
+    if (
+      !(await confirmAction({
+        title: "变更执行机状态",
+        description: confirmation,
+        confirmLabel: "确认变更",
+        tone: nextState === "active" ? "default" : "danger",
+      }))
+    )
+      return;
     setPending(true);
     setError("");
     try {
@@ -70,7 +88,15 @@ export function RunnerAdminActions({
   }
 
   async function remove(confirmation: string) {
-    if (!window.confirm(confirmation)) return;
+    if (
+      !(await confirmAction({
+        title: "删除执行机记录",
+        description: confirmation,
+        confirmLabel: "确认删除",
+        tone: "danger",
+      }))
+    )
+      return;
     setPending(true);
     setError("");
     try {

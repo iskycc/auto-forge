@@ -5,6 +5,7 @@ import { buildExportWorkbook } from "../../packages/ddt-import/src";
 import { buildClassFile } from "../../packages/testng-discovery/test/class-fixture";
 import { selectJarForInspection } from "./support/jar-import";
 import {
+  acceptSystemDialog,
   browserJson,
   ensureAdministrator,
   selectProjectContext,
@@ -194,8 +195,8 @@ test("DDT workspace imports, edits, validates and recovers version-scoped cases"
     await route.continue();
   };
   await page.route(deleteRoute, delayDelete);
-  page.once("dialog", (dialog) => dialog.accept());
   await page.getByRole("button", { name: "移入回收站" }).click();
+  await acceptSystemDialog(page, "删除 DDT 用例", "移入回收站");
   await expect(page.getByRole("progressbar", { name: "正在移入回收站进度" })).toBeVisible();
   await expect(page.getByText("已处理 0 / 1 条用例")).toBeVisible();
   await expect(page.getByText(`已将 1 条用例移入回收站。`)).toBeVisible();

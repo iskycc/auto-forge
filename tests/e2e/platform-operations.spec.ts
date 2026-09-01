@@ -2,7 +2,12 @@ import { expect, test } from "@playwright/test";
 import { DatabaseSync } from "node:sqlite";
 import { resolve } from "node:path";
 
-import { appAlert, ensureAdministrator, expandAdministrationGroup } from "./support/session";
+import {
+  acceptSystemDialog,
+  appAlert,
+  ensureAdministrator,
+  expandAdministrationGroup,
+} from "./support/session";
 import { expectUiIntegrity } from "./support/ui-guard";
 
 test("configuration conflicts, diagnostics and retention controls remain observable", async ({
@@ -14,7 +19,7 @@ test("configuration conflicts, diagnostics and retention controls remain observa
 
   await page.getByLabel("公开大盘刷新间隔（秒）").fill("6");
   await page.getByRole("button", { name: "保存平台配置" }).click();
-  await expect(page.getByText(/平台配置已保存/)).toBeVisible();
+  await expect(page.locator(".toast-card", { hasText: /平台配置已保存/ }).last()).toBeVisible();
 
   await concurrentPage.getByLabel("公开大盘刷新间隔（秒）").fill("7");
   await concurrentPage.getByRole("button", { name: "保存平台配置" }).click();
@@ -22,7 +27,7 @@ test("configuration conflicts, diagnostics and retention controls remain observa
 
   await page.getByLabel("公开大盘刷新间隔（秒）").fill("8");
   await page.getByRole("button", { name: "保存平台配置" }).click();
-  await expect(page.getByText(/平台配置已保存/)).toBeVisible();
+  await expect(page.locator(".toast-card", { hasText: /平台配置已保存/ }).last()).toBeVisible();
   await concurrentPage.close();
 
   const timeZone = page.getByLabel("平台时区");
@@ -80,9 +85,9 @@ test("configuration conflicts, diagnostics and retention controls remain observa
     await expect(deadLetterPanel).toContainText("对象清理");
     await expect(deadLetterPanel).toContainText("E2E_DEAD_LETTER");
     await expect(deadLetterPanel).toContainText("模拟可恢复死信");
-    page.once("dialog", (dialog) => dialog.accept());
     await deadLetterPanel.getByRole("button", { name: "重新投递全部" }).click();
-    await expect(page.getByRole("status")).toContainText("已重新投递 1 个死信任务");
+    await acceptSystemDialog(page, "重新投递死信任务", "重新投递");
+    await expect(page.locator(".toast-card", { hasText: "已重新投递 1 个死信任务" })).toBeVisible();
     await expect(deadLetterPanel).toHaveCount(0);
   }
 
@@ -123,8 +128,8 @@ test("configuration conflicts, diagnostics and retention controls remain observa
   await expect(page.getByText("保留策略已更新。")).toBeVisible();
 
   await logRetention.getByRole("button", { name: "影响预览" }).click();
-  page.once("dialog", (dialog) => dialog.accept());
   await logRetention.getByRole("button", { name: "执行清理" }).click();
+  await acceptSystemDialog(page, /清理/, "确认清理");
   await expect(page.getByText(/清理已完成：删除 \d+ 条记录/)).toBeVisible();
   const cleanupAudit = await page.request.get(
     "/api/v1/audit-events?action=retention.execute&limit=10",

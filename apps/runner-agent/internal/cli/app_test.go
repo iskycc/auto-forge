@@ -15,13 +15,13 @@ func TestVersionWritesMachineReadableBuildInformation(t *testing.T) {
 		Version:   "1.2.3",
 		Commit:    "abc123",
 		BuildDate: "2026-08-09T00:00:00Z",
-		Variant:   "amd64-musl",
+		Variant:   "amd64",
 	})
 
 	if exitCode != exitSuccess {
 		t.Fatalf("exitCode = %d, stderr = %q", exitCode, stderr.String())
 	}
-	for _, expected := range []string{`"version":"1.2.3"`, `"variant":"amd64-musl"`} {
+	for _, expected := range []string{`"version":"1.2.3"`, `"variant":"amd64"`} {
 		if !strings.Contains(stdout.String(), expected) {
 			t.Fatalf("stdout = %q, want %s", stdout.String(), expected)
 		}

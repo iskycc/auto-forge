@@ -23,8 +23,6 @@ readonly -a metadata_files=(
 readonly -a sbom_files=(
   "autoforge-backend-${version}-amd64.spdx.json"
   "autoforge-backend-${version}-arm64.spdx.json"
-  "autoforge-backend-${version}-amd64-musl.spdx.json"
-  "autoforge-backend-${version}-arm64-musl.spdx.json"
   "autoforge-deploy-${version}.spdx.json"
   "autoforge-jenkins-dependency-publisher-${version}.spdx.json"
   "autoforge-jenkins-execution-${version}.spdx.json"

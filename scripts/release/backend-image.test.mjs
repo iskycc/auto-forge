@@ -151,16 +151,19 @@ test("validates signed archive identity without assuming Docker image ID semanti
   assert.doesNotMatch(acceptanceScript, /docker image inspect "\$\{image\}"/);
 });
 
-test("runs a published musl image through the real Agent acceptance flow", async () => {
-  const workflow = await readFile(".github/workflows/release-acceptance.yml", "utf8");
+test("builds host-native Agents without a libc runtime dependency", async () => {
+  const [buildScript, muslVerification, releaseWorkflow] = await Promise.all([
+    readFile("scripts/release/build-agent.sh", "utf8"),
+    readFile("scripts/release/verify-agent-musl-runtime.sh", "utf8"),
+    readFile(".github/workflows/release.yml", "utf8"),
+  ]);
 
-  assert.match(
-    workflow,
-    /name: musl real Agent[\s\S]*?phase: real-agent[\s\S]*?variant: amd64-musl/,
-  );
-  assert.match(workflow, /AUTOFORGE_RELEASE_ACCEPTANCE_VARIANT: \$\{\{ matrix\.variant \}\}/);
-  assert.match(
-    workflow,
-    /autoforge-backend-\$\{\{ needs\.prepare\.outputs\.version \}\}-\$\{\{ matrix\.variant \}\}\.docker\.tar/,
-  );
+  assert.match(buildScript, /CGO_ENABLED=0 GOARCH=/);
+  assert.match(buildScript, /readelf --program-headers[\s\S]*?'INTERP'/);
+  assert.match(buildScript, /readelf --dynamic[\s\S]*?'\(NEEDED\)'/);
+  assert.match(buildScript, /go version -m[\s\S]*?CGO_ENABLED=0/);
+  assert.match(muslVerification, /node:24\.16\.0-alpine3\.23@sha256:[a-f0-9]{64}/);
+  assert.match(muslVerification, /--network none/);
+  assert.match(muslVerification, /--entrypoint \/opt\/autoforge-agent/);
+  assert.match(releaseWorkflow, /Verify embedded Agent in musl user space/);
 });

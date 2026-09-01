@@ -3,7 +3,7 @@ import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { promisify } from "node:util";
 
-import { browserJson, ensureAdministrator } from "./support/session";
+import { acceptSystemDialog, browserJson, ensureAdministrator } from "./support/session";
 
 const execFileAsync = promisify(execFile);
 const passwordConnection = {
@@ -231,8 +231,8 @@ async function exerciseOfflineUpgradeAndRollback(page: Page, runnerId: string): 
 
   await probeThroughUi(page);
   await page.getByLabel("我已通过可信渠道核对并确认上述 SSH 主机指纹").check();
-  page.once("dialog", (dialog) => dialog.accept());
   await page.getByRole("button", { name: "回滚上次安装" }).click();
+  await acceptSystemDialog(page, "回滚 Runner Agent", "确认回滚");
   await expect(page.getByRole("status").filter({ hasText: "systemd 健康检查通过" })).toContainText(
     /Agent 已回滚到 .*systemd 健康检查通过/,
     { timeout: 120_000 },
@@ -417,18 +417,18 @@ async function exerciseRunnerLifecycle(page: Page, name: string): Promise<void> 
   );
   await page.goto("/runners");
   let row = page.getByRole("row", { name: new RegExp(name) });
-  page.once("dialog", (dialog) => dialog.accept());
   await clickRunnerManagementAction(row, "排空");
+  await acceptSystemDialog(page, "变更执行机状态", "确认变更");
   await expect(row).toContainText("排空中");
 
   row = page.getByRole("row", { name: new RegExp(name) });
-  page.once("dialog", (dialog) => dialog.accept());
   await clickRunnerManagementAction(row, "恢复接单");
+  await acceptSystemDialog(page, "变更执行机状态", "确认变更");
   await expect(row).toContainText("在线");
 
   row = page.getByRole("row", { name: new RegExp(name) });
-  page.once("dialog", (dialog) => dialog.accept());
   await clickRunnerManagementAction(row, "轮换凭据");
+  await acceptSystemDialog(page, "确认执行机操作", "确认操作");
   await expect
     .poll(
       () => installedConfigurationDigest("/var/lib/autoforge-agent/identity/credentials.json"),
@@ -449,13 +449,13 @@ async function exerciseRunnerLifecycle(page: Page, name: string): Promise<void> 
 
   await page.reload();
   row = page.getByRole("row", { name: new RegExp(name) });
-  page.once("dialog", (dialog) => dialog.accept());
   await clickRunnerManagementAction(row, "撤销凭据");
+  await acceptSystemDialog(page, "确认执行机操作", "确认操作");
   await expect(row).toContainText("凭据已撤销");
 
   row = page.getByRole("row", { name: new RegExp(name) });
-  page.once("dialog", (dialog) => dialog.accept());
   await clickRunnerManagementAction(row, "注销");
+  await acceptSystemDialog(page, "确认执行机操作", "确认操作");
   await expect(row).toContainText("已注销");
 }
 

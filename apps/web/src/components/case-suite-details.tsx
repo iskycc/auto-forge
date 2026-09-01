@@ -11,6 +11,7 @@ import type {
 } from "@autoforge/domain";
 import { ChevronRight, DatabaseZap, FolderTree, LoaderCircle, Search, Trash2 } from "lucide-react";
 import { useDeferredValue, useMemo, useState } from "react";
+import { useConfirm } from "@/components/ui-feedback";
 
 const SUITE_TREE_GROUP_PAGE_SIZE = 250;
 // A package row contains several interactive elements, so mounting 250 rows in one click can still
@@ -25,6 +26,7 @@ export function CaseSuiteDetailsView({
   canManage: boolean;
   initialSuite: CaseSuiteDetails;
 }) {
+  const confirmAction = useConfirm();
   const [suite, setSuite] = useState(initialSuite);
   const [query, setQuery] = useState("");
   const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(new Set());
@@ -55,7 +57,15 @@ export function CaseSuiteDetailsView({
 
   async function removeCases(caseDefinitionIds: string[]): Promise<void> {
     if (caseDefinitionIds.length === 0) return;
-    if (!window.confirm(`从任务中移除选中的 ${caseDefinitionIds.length} 个用例？`)) return;
+    if (
+      !(await confirmAction({
+        title: "移除任务用例",
+        description: `将从当前任务中移除选中的 ${caseDefinitionIds.length} 个用例，用例库中的定义不会删除。`,
+        confirmLabel: "确认移除",
+        tone: "danger",
+      }))
+    )
+      return;
     setRemoving(true);
     setError(null);
     try {
@@ -88,7 +98,15 @@ export function CaseSuiteDetailsView({
 
   async function removeDdtCases(ddtCaseIds: string[]): Promise<void> {
     if (ddtCaseIds.length === 0) return;
-    if (!window.confirm(`从任务中移除选中的 ${ddtCaseIds.length} 个 DDT 用例？`)) return;
+    if (
+      !(await confirmAction({
+        title: "移除 DDT 用例",
+        description: `将从当前任务中移除选中的 ${ddtCaseIds.length} 个 DDT 用例，DDT 用例库中的数据不会删除。`,
+        confirmLabel: "确认移除",
+        tone: "danger",
+      }))
+    )
+      return;
     setRemoving(true);
     setError(null);
     try {

@@ -303,8 +303,8 @@ Agent 配置同样集中解析和校验，秘密不得出现在命令行参数�
 ## 离线交付
 
 - Runner Agent 与服务端发布版本建立明确兼容矩阵。
-- GitHub Release 的四种后端镜像均内置 `amd64`、`arm64` Agent、安装脚本和 CoTest Adapter，不提供独立 Agent 或工具链 Release 资产。
-- 两种 Agent 二进制均使用 `CGO_ENABLED=0` 静态编译，不依赖目标机 glibc 或 musl。
+- GitHub Release 的两个 CPU 架构后端镜像均内置 `amd64`、`arm64` Agent、安装脚本和 CoTest Adapter，不提供独立 Agent 或工具链 Release 资产。
+- 两种 Agent 二进制均使用 `CGO_ENABLED=0` 静态编译，并校验 ELF 无程序解释器和动态库依赖，不依赖目标机 glibc 或 musl。
 - 安装包包含运行所需代码与依赖，不在首次运行时下载浏览器、驱动或 npm 包。
 - 用例确需浏览器/SDK 时，由管理员制作版本化 Runner 镜像或预置工具链，并通过 capability 上报。
 - Agent 默认不自动更新；离线升级由管理员验证校验和后执行，失败可回滚上一版本。界面在内置资源版本高于执行机上报版本时给出“可更新”提示；批量更新上传资源时逐文件校验 SHA-256，只替换 Agent/Adapter 程序并生成一致的 `.autoforge-previous` 备份，现有配置、systemd unit、执行机身份与历史记录保持不变。该路径不新增 Agent 下载端点，Agent 进程自身仍无权替换二进制（`ProtectSystem=strict`）。

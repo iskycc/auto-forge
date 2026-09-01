@@ -8,6 +8,7 @@ import { useState, type FormEvent } from "react";
 import { Button, Input, Select } from "@/components/ui";
 import { readApiErrorMessage } from "@/lib/client-api";
 import { ActionDialog } from "@/components/action-dialog";
+import { useConfirm, useToast } from "@/components/ui-feedback";
 
 type ProjectMember = { user: User; roleIds: string[] };
 
@@ -25,20 +26,20 @@ export function ProjectMembershipManager({
   canCreateProject: boolean;
 }) {
   const router = useRouter();
+  const confirmAction = useConfirm();
+  const toast = useToast();
   const [pending, setPending] = useState(false);
-  const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [actionDialog, setActionDialog] = useState<"project" | "member" | "owner" | null>(null);
 
   async function request(path: string, init: RequestInit, success: string) {
     setPending(true);
-    setMessage("");
     setError("");
     try {
       const response = await fetch(path, init);
       const errorMessage = await readApiErrorMessage(response, "操作失败。");
       if (errorMessage) throw new Error(errorMessage);
-      setMessage(success);
+      toast.success(success);
       setActionDialog(null);
       router.refresh();
       setPending(false);
@@ -69,11 +70,19 @@ export function ProjectMembershipManager({
     );
   }
 
-  function transferOwner(event: FormEvent<HTMLFormElement>) {
+  async function transferOwner(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
     const ownerUserId = String(form.get("ownerUserId") ?? "");
-    if (!window.confirm("转移负责人后，新负责人会自动获得项目管理能力。确认继续？")) return;
+    if (
+      !(await confirmAction({
+        title: "转移项目负责人",
+        description: "新负责人会自动获得项目管理能力，当前负责人将不再拥有负责人身份。",
+        confirmLabel: "确认转移",
+        tone: "danger",
+      }))
+    )
+      return;
     void request(
       `/api/v1/projects/${project.id}/owner`,
       jsonRequest("POST", { ownerUserId }),
@@ -83,7 +92,6 @@ export function ProjectMembershipManager({
 
   return (
     <div className="settings-stack">
-      {message ? <div className="inline-success">{message}</div> : null}
       {error ? (
         <div className="auth-error" role="alert">
           {error}
@@ -245,18 +253,19 @@ export function ProjectMembershipManager({
                             disabled={pending}
                             key={roleId}
                             onClick={() => {
-                              if (
-                                !window.confirm(
-                                  `撤销“${roleName(roles, roleId)}”后会立即撤销该用户的旧会话。确认继续？`,
-                                )
-                              ) {
-                                return;
-                              }
-                              void request(
-                                `/api/v1/users/${member.user.id}/project-roles/${project.id}/${roleId}`,
-                                { method: "DELETE" },
-                                "项目角色已撤销。",
-                              );
+                              void confirmAction({
+                                title: "撤销项目角色",
+                                description: `撤销“${roleName(roles, roleId)}”后会立即撤销该用户的旧会话。`,
+                                confirmLabel: "确认撤销",
+                                tone: "danger",
+                              }).then((accepted) => {
+                                if (!accepted) return;
+                                void request(
+                                  `/api/v1/users/${member.user.id}/project-roles/${project.id}/${roleId}`,
+                                  { method: "DELETE" },
+                                  "项目角色已撤销。",
+                                );
+                              });
                             }}
                             type="button"
                           >

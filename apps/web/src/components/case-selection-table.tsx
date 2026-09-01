@@ -3,6 +3,7 @@
 import { formatPlatformDateTime } from "@/lib/platform-date-time";
 
 import { Button, Input, OperationProgress, Select } from "@/components/ui";
+import { LoadingState } from "@/components/loading-state";
 import { formatMethodSignature } from "@/lib/jvm-signature";
 
 import {
@@ -32,6 +33,7 @@ import { CaseImportDialog } from "./case-import-dialog";
 import { CaseVersionHistory } from "./case-version-history";
 import { OpenRunDialogButton } from "./global-run-dialog";
 import { StatusBadge } from "./status-badge";
+import { useConfirm, useToast } from "./ui-feedback";
 import {
   computeSelectionStats,
   matchesOutcomeFilter,
@@ -106,6 +108,8 @@ export function CaseSelectionTable({
   initialSearch?: string;
   latestOutcomes?: ReadonlyMap<string, CaseLatestRun>;
 }) {
+  const confirmAction = useConfirm();
+  const toast = useToast();
   const [checkedCaseIds, setCheckedCaseIds] = useState(() => new Set<string>());
   const [activeCaseId, setActiveCaseId] = useState<string>();
   const [suiteId, setSuiteId] = useState(suites[0]?.id ?? "");
@@ -316,7 +320,7 @@ export function CaseSelectionTable({
         }
         addedCount += caseDefinitionIds.length;
       }
-      setMessage(`已将 ${selectedCaseIds.length} 个用例加入任务。`);
+      toast.success(`已将 ${selectedCaseIds.length} 个用例加入任务。`);
       setMissingCaseIds((current) => {
         if (!current) return current;
         const next = new Set(current);
@@ -325,7 +329,7 @@ export function CaseSelectionTable({
       });
       setCheckedCaseIds(new Set());
     } catch (caught) {
-      setMessage(caught instanceof Error ? caught.message : "添加用例失败。");
+      toast.error(caught instanceof Error ? caught.message : "添加用例失败。");
     } finally {
       setPending(false);
     }
@@ -333,11 +337,15 @@ export function CaseSelectionTable({
 
   async function deleteCases(caseDefinitionIds: readonly string[]): Promise<void> {
     if (caseDefinitionIds.length === 0) return;
-    const confirmed = window.confirm(
-      caseDefinitionIds.length === 1
-        ? "确认删除这个用例？它会从用例库和任务成员中移除，既有执行记录仍会保留。"
-        : `确认批量删除 ${caseDefinitionIds.length} 个用例？它们会从用例库和任务成员中移除，既有执行记录仍会保留。`,
-    );
+    const confirmed = await confirmAction({
+      title: caseDefinitionIds.length === 1 ? "删除用例" : "批量删除用例",
+      description:
+        caseDefinitionIds.length === 1
+          ? "这个用例会从用例库和任务成员中移除，既有执行记录仍会保留。"
+          : `${caseDefinitionIds.length} 个用例会从用例库和任务成员中移除，既有执行记录仍会保留。`,
+      confirmLabel: "确认删除",
+      tone: "danger",
+    });
     if (!confirmed) return;
     setPending(true);
     setMessage(null);
@@ -381,9 +389,9 @@ export function CaseSelectionTable({
         setDetail(null);
         setDetailError(null);
       }
-      setMessage(`已删除 ${deletedCount} 个用例。`);
+      toast.success(`已删除 ${deletedCount} 个用例。`);
     } catch (caught) {
-      setMessage(caught instanceof Error ? caught.message : "删除用例失败。");
+      toast.error(caught instanceof Error ? caught.message : "删除用例失败。");
     } finally {
       setDeletionProgress(undefined);
       setPending(false);
@@ -620,10 +628,10 @@ export function CaseSelectionTable({
             pending={pending}
           />
         ) : (
-          <div className="case-inspector-empty" role="status">
-            <LoaderCircle className="spin" size={24} />
-            <strong>正在加载用例详情</strong>
-          </div>
+          <LoadingState
+            label="正在加载用例详情"
+            description="正在读取用例配置、版本和最近执行信息。"
+          />
         )}
       </aside>
     </div>

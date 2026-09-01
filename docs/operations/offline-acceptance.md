@@ -1,7 +1,7 @@
 # 断网发布验收
 
 Gate E 必须在阻断所有出站网络、仅允许测试 LDAP/Runner 内网的环境执行。验收证据记录 Release
-tag/commit、四平台 variant、镜像 digest、SHA256SUMS、metadata 包内 SBOM、来源证明、基础设施摘要、硬件规模和
+tag/commit、双架构 variant、镜像 digest、SHA256SUMS、metadata 包内 SBOM、来源证明、基础设施摘要、硬件规模和
 每一步时间/结果。
 
 1. 从 Release 资产和预先导出的 Full 基础设施镜像启动，确认 `pull_policy: never` 且无 DNS/CDN/

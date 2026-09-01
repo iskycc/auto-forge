@@ -1,10 +1,11 @@
 import type { SharedAttemptLogView } from "@autoforge/contracts";
-import { Link2Off, LoaderCircle } from "lucide-react";
+import { Link2Off } from "lucide-react";
 import Link from "next/link";
 import type { ReactNode } from "react";
 
 import { SharedAttemptLogActions } from "@/components/shared-attempt-log-actions";
 import { Button } from "@/components/ui";
+import { LoadingState } from "@/components/loading-state";
 import { highlightLogLevels } from "@/lib/log-levels";
 import { visibleAttemptLogText } from "@/lib/log-presentation";
 import { formatLocalDateTime } from "@/lib/run-batch-presentation";
@@ -240,13 +241,10 @@ export function InvalidAttemptLogShareView() {
 export function SharedAttemptLogLoadingView() {
   return (
     <main className="share-log-page share-log-page-center" aria-busy="true">
-      <section className="share-log-invalid" aria-label="正在加载公开日志">
-        <span className="route-loading-spinner spin" aria-hidden="true">
-          <LoaderCircle size={30} strokeWidth={1.8} />
-        </span>
-        <h1>正在加载执行日志</h1>
-        <p>正在校验永久分享凭据并读取有界日志内容…</p>
-      </section>
+      <LoadingState
+        label="正在加载执行日志"
+        description="正在校验永久分享凭据并读取有界日志内容。"
+      />
     </main>
   );
 }

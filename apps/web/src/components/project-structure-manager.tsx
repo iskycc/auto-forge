@@ -13,6 +13,7 @@ import { Button, FileInput, Input, OperationProgress, Select } from "@/component
 import { readApiErrorMessage } from "@/lib/client-api";
 import { uploadWithProgress } from "@/lib/upload-with-progress";
 import { ActionDialog } from "@/components/action-dialog";
+import { useConfirm, useToast } from "@/components/ui-feedback";
 
 export function ProjectStructureManager({
   projectId,
@@ -26,9 +27,10 @@ export function ProjectStructureManager({
   canManage: boolean;
 }) {
   const router = useRouter();
+  const confirmAction = useConfirm();
+  const toast = useToast();
   const [structure, setStructure] = useState(initialStructure);
   const [pending, setPending] = useState(false);
-  const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [runtimeUploadProgress, setRuntimeUploadProgress] = useState<{
     label: string;
@@ -57,7 +59,7 @@ export function ProjectStructureManager({
         ? current
         : (nextStructure.versions[0]?.id ?? ""),
     );
-    setMessage(success);
+    toast.success(success);
     router.refresh();
   }
 
@@ -74,7 +76,6 @@ export function ProjectStructureManager({
 
   async function run(operation: () => Promise<void>): Promise<void> {
     setPending(true);
-    setMessage("");
     setError("");
     try {
       await operation();
@@ -270,11 +271,19 @@ export function ProjectStructureManager({
     });
   }
 
-  function deleteAsset(kind: "jdk" | "jar-bundle"): void {
+  async function deleteAsset(kind: "jdk" | "jar-bundle"): Promise<void> {
     const configuration = selectedVersionConfiguration(structure, selectedVersionId);
     if (!configuration) return;
     const label = kind === "jdk" ? "JDK 压缩包" : "依赖 JAR 压缩包";
-    if (!window.confirm(`删除当前版本的${label}？其他继承版本的引用不会受影响。`)) return;
+    if (
+      !(await confirmAction({
+        title: `删除${label}`,
+        description: `将从当前版本删除${label}，其他继承版本的引用不会受影响。`,
+        confirmLabel: "确认删除",
+        tone: "danger",
+      }))
+    )
+      return;
     void run(async () => {
       const query = new URLSearchParams({
         kind,
@@ -299,7 +308,6 @@ export function ProjectStructureManager({
   };
   return (
     <div className="settings-stack project-structure-manager">
-      {message ? <div className="inline-success">{message}</div> : null}
       {error ? (
         <div className="auth-error" role="alert">
           {error}

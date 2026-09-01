@@ -31,6 +31,8 @@ import { RunBatchExportDialog } from "@/components/run-batch-export-dialog";
 import { RunnerFaultDialog } from "@/components/runner-fault-dialog";
 import { SchedulingLogViewer } from "@/components/scheduling-log-viewer";
 import { Button, Input, Select } from "@/components/ui";
+import { LoadingState } from "@/components/loading-state";
+import { usePrompt } from "@/components/ui-feedback";
 import { readApiErrorMessage } from "@/lib/client-api";
 import type { ExecutionBatchView } from "@/lib/execution-batch-view";
 import { canCancelRoundCaseRow, type RoundCaseRowModel } from "@/lib/round-case-rows";
@@ -222,6 +224,7 @@ export function RunBatchRounds({
   runnerDirectory: readonly RunnerDirectoryEntry[];
   onRefresh: () => void;
 }) {
+  const promptAction = usePrompt();
   const searchParams = useSearchParams();
   const summaries = batch.roundSummaries;
   const recoveries = useMemo(() => recoveryGroups(batch.roundRecoveries), [batch.roundRecoveries]);
@@ -282,10 +285,15 @@ export function RunBatchRounds({
   }
 
   async function cancelRun(runId: string): Promise<void> {
-    const reason = window.prompt(
-      "请输入取消该用例执行的原因：",
-      "Cancelled from execution details.",
-    );
+    const reason = await promptAction({
+      title: "取消用例执行",
+      description: "取消原因会写入执行事件，方便后续审计与问题定位。",
+      inputLabel: "取消原因",
+      initialValue: "Cancelled from execution details.",
+      multiline: true,
+      confirmLabel: "确认取消",
+      tone: "danger",
+    });
     if (!reason?.trim()) return;
     setCancelPending(true);
     setActionError("");
@@ -1401,9 +1409,7 @@ function RoundCasesTable({
           {loadError}
         </div>
       ) : loading && rows.length === 0 ? (
-        <div className="inline-empty" aria-live="polite">
-          正在读取当前页用例…
-        </div>
+        <LoadingState compact label="正在读取当前页用例" />
       ) : rows.length === 0 ? (
         <div className="inline-empty">没有匹配当前筛选条件的用例。</div>
       ) : (

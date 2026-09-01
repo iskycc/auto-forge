@@ -18,8 +18,10 @@ const CASE_SUITE_EDITOR = join(SOURCE_ROOT, "components", "case-suite-editor.tsx
 const CASE_SELECTION_TABLE = join(SOURCE_ROOT, "components", "case-selection-table.tsx");
 const CASE_SUITE_DETAILS = join(SOURCE_ROOT, "components", "case-suite-details.tsx");
 const ROUTE_LOADING_SKELETON = join(SOURCE_ROOT, "components", "route-loading-skeleton.tsx");
+const UI_FEEDBACK = join(SOURCE_ROOT, "components", "ui-feedback.tsx");
 const AUTOMATION_PAGE = join(SOURCE_ROOT, "app", "settings", "automation", "page.tsx");
 const AUTOMATION_OPERATIONS = join(SOURCE_ROOT, "components", "automation-operations.tsx");
+const INSIGHTS_PAGE = join(SOURCE_ROOT, "app", "insights", "page.tsx");
 const PROJECT_SWITCH_FREE_FILES = [
   join(SOURCE_ROOT, "app", "cases", "page.tsx"),
   join(SOURCE_ROOT, "app", "execution-records", "page.tsx"),
@@ -185,6 +187,19 @@ describe("shared UI controls", () => {
     expect(accessSettings).toContain('title="分配用户角色"');
   });
 
+  it("uses product dialogs instead of browser-native confirmation prompts", () => {
+    const violations = typescriptReactFiles(SOURCE_ROOT)
+      .filter((file) => file !== UI_FEEDBACK)
+      .filter((file) => /window\.(?:confirm|prompt)\s*\(/.test(readFileSync(file, "utf8")))
+      .map((file) => relative(SOURCE_ROOT, file));
+
+    expect(violations).toEqual([]);
+    const feedback = readFileSync(UI_FEEDBACK, "utf8");
+    expect(feedback).toContain("<ActionDialog");
+    expect(feedback).toContain('className="toast-viewport"');
+    expect(feedback).toContain('tone === "error" ? "alert" : "status"');
+  });
+
   it("keeps dense data routes visibly responsive while loading and filtering", () => {
     for (const loadingFile of [
       join(SOURCE_ROOT, "app", "cases", "loading.tsx"),
@@ -192,6 +207,10 @@ describe("shared UI controls", () => {
       join(SOURCE_ROOT, "app", "case-suites", "[suiteId]", "loading.tsx"),
       join(SOURCE_ROOT, "app", "execution-records", "loading.tsx"),
       join(SOURCE_ROOT, "app", "case-analysis", "loading.tsx"),
+      join(SOURCE_ROOT, "app", "insights", "loading.tsx"),
+      join(SOURCE_ROOT, "app", "objects", "loading.tsx"),
+      join(SOURCE_ROOT, "app", "run-batches", "loading.tsx"),
+      join(SOURCE_ROOT, "app", "runners", "loading.tsx"),
       join(SOURCE_ROOT, "app", "run-batches", "[batchId]", "loading.tsx"),
     ]) {
       expect(readFileSync(loadingFile, "utf8"), relative(SOURCE_ROOT, loadingFile)).toContain(
@@ -201,6 +220,9 @@ describe("shared UI controls", () => {
     const skeleton = readFileSync(ROUTE_LOADING_SKELETON, "utf8");
     expect(skeleton).toContain('aria-busy="true"');
     expect(skeleton).toContain('role="status"');
+    const insights = readFileSync(INSIGHTS_PAGE, "utf8");
+    expect(insights).toContain("<NavigationSubmitButton");
+    expect(insights).toContain('pendingLabel="正在筛选质量数据…"');
     for (const component of [CASE_SELECTION_TABLE, CASE_SUITE_DETAILS]) {
       const source = readFileSync(component, "utf8");
       expect(source).toContain("useDeferredValue");

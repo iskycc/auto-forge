@@ -7,6 +7,7 @@ import type { CaseDefinitionWithMethods } from "@autoforge/domain";
 import { LoaderCircle, Save } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { FormEvent, useState } from "react";
+import { useToast } from "@/components/ui-feedback";
 
 export function CaseDefinitionEditor({
   definition,
@@ -16,9 +17,9 @@ export function CaseDefinitionEditor({
   onUpdated?: (definition: CaseDefinitionWithMethods) => void;
 }) {
   const router = useRouter();
+  const toast = useToast();
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [message, setMessage] = useState<string | null>(null);
 
   async function submit(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
@@ -29,7 +30,6 @@ export function CaseDefinitionEditor({
       .filter((tag) => tag.length > 0);
     setPending(true);
     setError(null);
-    setMessage(null);
     try {
       const response = await fetch(
         `/api/v1/case-definitions/${encodeURIComponent(definition.id)}`,
@@ -54,7 +54,7 @@ export function CaseDefinitionEditor({
         );
       }
       const updated = (await response.json()) as CaseDefinitionWithMethods;
-      setMessage("用例已更新。");
+      toast.success("用例配置已保存并立即生效。");
       onUpdated?.(updated);
       router.refresh();
     } catch (caught) {
@@ -95,11 +95,6 @@ export function CaseDefinitionEditor({
         {error ? (
           <small className="form-error" role="alert">
             {error}
-          </small>
-        ) : null}
-        {message ? (
-          <small className="inline-success" role="status">
-            {message}
           </small>
         ) : null}
         <Button className="primary-button" disabled={pending} type="submit">

@@ -11,7 +11,7 @@ git tag -s v0.2.2 -m "AutoForge v0.2.2"
 git push origin v0.2.2
 ```
 
-`Release` 只保留发布所需的关键路径：校验 tag 后构建一次 CoTest Adapter，四个平台复用该内部制品并行构建，随后组装部署包、生成 SBOM/清单、签名、生成来源证明并公开 GitHub Release。后端构建使用按 variant 隔离的 GitHub Actions BuildKit 缓存，离线 Docker 归档直接发布 Docker 原生 tar，目标机不需要额外安装 zstd；不再构建耗时的 `toolchain-amd64/arm64` Release 资产。任一平台、SBOM、签名或清单失败仍会阻止发布，因而不会公开缺少必需资产的部分 Release。
+`Release` 只保留发布所需的关键路径：校验 tag 后构建一次 CoTest Adapter，两个 CPU 架构复用该内部制品并行构建，随后组装部署包、生成 SBOM/清单、签名、生成来源证明并公开 GitHub Release。后端构建使用按 variant 隔离的 GitHub Actions BuildKit 缓存，离线 Docker 归档直接发布 Docker 原生 tar，目标机不需要额外安装 zstd；不再构建耗时的 `toolchain-amd64/arm64` Release 资产。任一架构、SBOM、签名或清单失败仍会阻止发布，因而不会公开缺少必需资产的部分 Release。
 
 `Release checks` 将格式/lint/类型、单元/集成、性能、构建、Full 场景和断网 Lite 场景拆成独立矩阵并行执行。`Published Release acceptance` 只在发布完成后启动，将资产签名、业务、真实 Agent、真实离线 LDAP、备份恢复、上一正式版本升级和注入迁移失败回滚拆成隔离分区；各测试 Job 以五分钟内完成为目标，八分钟超时仅为托管 Runner 抖动保留诊断空间。两类检查都不属于 `Release` 的依赖，不会阻塞、取消或撤回发布；失败版本应通过问题修复和新版本 hotfix 处理。普通 CI 与依赖安全 workflow 不在 tag push 上重复运行，以免与发布矩阵争抢并发资源。
 
@@ -21,14 +21,16 @@ Web 进程为同源终端 WebSocket 使用 Next.js 自定义 Server。发布构�
 
 ## 资产矩阵
 
-每个版本包含以下四个 variant：
+每个版本包含以下两个 CPU variant：
 
-| Variant      | CPU     | 后端用户空间   | 内置 Agent                          |
-| ------------ | ------- | -------------- | ----------------------------------- |
-| `amd64`      | x86-64  | Debian / glibc | Linux amd64 + arm64，均为静态       |
-| `arm64`      | AArch64 | Debian / glibc | Linux amd64 + arm64，均为静态       |
-| `amd64-musl` | x86-64  | Alpine / musl  | Linux amd64 + arm64，均无 libc 依赖 |
-| `arm64-musl` | AArch64 | Alpine / musl  | Linux amd64 + arm64，均无 libc 依赖 |
+| Variant | CPU     | 后端用户空间   | 内置 Agent                                      |
+| ------- | ------- | -------------- | ----------------------------------------------- |
+| `amd64` | x86-64  | Debian / glibc | Linux amd64 + arm64，静态且兼容 glibc/musl 主机 |
+| `arm64` | AArch64 | Debian / glibc | Linux amd64 + arm64，静态且兼容 glibc/musl 主机 |
+
+Docker/OCI 镜像携带自身用户空间，宿主机使用 glibc 还是 musl 不改变镜像选择；Alpine 宿主也只需按
+CPU 架构导入上述归档。Agent 直接在执行机宿主运行，因此构建时额外验证 `CGO_ENABLED=0`、静态链接、
+ELF 无程序解释器和动态库依赖，不需要复制一份仅有 `musl` 后缀的相同二进制。
 
 每个 variant 只发布一个用户需要下载的运行资产：
 
@@ -38,7 +40,7 @@ Web 进程为同源终端 WebSocket 使用 Next.js 自定义 Server。发布构�
 
 每个版本还生成一份 `autoforge-deploy-VERSION.tar.gz`，其中只包含 Lite/Full
 `docker-compose.yml`、环境模板、运维脚本、许可证和部署所需手册，不携带设计图、归档审计、
-roadmap 或内部实现资料。`autoforge-release-metadata-VERSION.tar.gz` 集中保存四个平台镜像、
+roadmap 或内部实现资料。`autoforge-release-metadata-VERSION.tar.gz` 集中保存两个架构镜像、
 部署包与两个 Jenkins HPI 的 SPDX JSON SBOM，以及 `LICENSE`、`NOTICE`、第三方许可证清单、
 兼容矩阵和变更记录。SBOM 内容没有删除，只是不再平铺为多个顶层 Release 资产。
 
@@ -82,7 +84,7 @@ docker compose up --detach
 
 Full 部署还需提前导入部署包说明中列出的 PostgreSQL、NATS、MinIO、MinIO Client 和 Redis 固定摘要镜像。Compose 设置了 `pull_policy: never`，因此缺少镜像时直接失败，不会在隔离区尝试联网。
 
-musl 归档的镜像标签相应为 `autoforge/backend:0.2.2-amd64-musl`。必须持久化 `/var/lib/autoforge`；删除该卷会删除 Lite 数据库和本地对象。
+必须持久化 `/var/lib/autoforge`；删除该卷会删除 Lite 数据库和本地对象。
 
 首次启动从容器日志或数据卷的 `/var/lib/autoforge/config/initial-admin-token` 获取管理员令牌。登录后先在“平台配置”设置执行机可访问的 HTTP 或 HTTPS 地址；可信内网可填写 `http://内网IP:端口`，其他网络应使用 HTTPS。再在“执行机”页面填写 IP/主机名、SSH 用户和密码。平台会探测系统与架构并显示 SSH 主机指纹；管理员通过可信渠道核对后才能安装。首次安装或手动更新成功后，平台以主密钥 AES-256-GCM 加密保存连接档案，供后续单机或批量更新复用；API 不返回密码或私有 CA 明文。Agent 注册仍使用短期一次性令牌。
 
@@ -90,7 +92,8 @@ musl 归档的镜像标签相应为 `autoforge/backend:0.2.2-amd64-musl`。必�
 
 ## 本地构建与验证
 
-单个平台可使用与 CI 相同的脚本构建。后端需要 Docker Buildx、Go 1.26.x 和 `file`；构建脚本会先生成两个内置 Agent 资源：
+单个平台可使用与 CI 相同的脚本构建。后端需要 Docker Buildx、Go 1.26.x、`file` 和提供
+`readelf` 的 binutils；构建脚本会先生成两个内置 Agent 资源并验证其没有 libc 运行时依赖：
 
 ```bash
 SOURCE_DATE_EPOCH=0 AUTOFORGE_RELEASE_REVISION=local \
@@ -100,6 +103,9 @@ SOURCE_DATE_EPOCH=0 \
   bash scripts/release/build-deployment-bundle.sh 0.2.2 dist/release
 ```
 
-正式构建由 GitHub Actions 固定 Node、Go、pnpm、基础镜像 digest、Action commit 和 Syft 版本。构建阶段可以获取锁定依赖；生成的运行时镜像和其中的 Agent 在离线运行时不会下载依赖或发送遥测。
+正式构建由 GitHub Actions 固定 Node、Go、pnpm、基础镜像 digest、Action commit 和 Syft 版本。
+每个架构构建还会在固定摘要的 Alpine/musl 用户空间中实际运行内置 Agent 的 `version` 命令；
+该镜像仅是构建期兼容性夹具，不作为 Release 资产发布。构建阶段可以获取锁定依赖；生成的运行时
+镜像和其中的 Agent 在离线运行时不会下载依赖或发送遥测。
 
 构建脚本默认限制单个 Docker 原生归档不超过 180 MiB，避免构建缓存或开发依赖再次进入正式镜像。特殊诊断构建可通过 `AUTOFORGE_BACKEND_IMAGE_MAX_BYTES` 临时调整预算；正式发布不得仅为绕过体积回归而提高该值。

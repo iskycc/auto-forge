@@ -1,6 +1,6 @@
 # ADR 0006：持久化平台配置与内置 Agent 安装
 
-- 状态：Accepted；cgroup/root 安装策略由 [ADR 0007](./0007-trusted-runner-deployment-options.md) 修订；连接档案持久化由 2026-08-21 产品决策修订
+- 状态：Accepted；cgroup/root 安装策略由 [ADR 0007](./0007-trusted-runner-deployment-options.md) 修订；连接档案持久化由 2026-08-21 产品决策修订；后端发布矩阵由 [ADR 0011](./0011-two-architecture-container-release-and-static-agent.md) 修订
 - 日期：2026-08-11
 
 ## 背景

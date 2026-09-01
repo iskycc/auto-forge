@@ -1,4 +1,4 @@
-import { Button, DatetimeInput, Input, Select } from "@/components/ui";
+import { DatetimeInput, Input, Select } from "@/components/ui";
 
 import type {
   AnalyticsBatchComparison,
@@ -17,6 +17,8 @@ import { classifyAttemptResult } from "@autoforge/domain";
 import { AnalyticsExportControl } from "@/components/analytics-export-control";
 import { BatchComparisonDetails } from "@/components/batch-comparison-details";
 import { InsightDetailDialog } from "@/components/insight-detail-dialog";
+import { NavigationSubmitButton } from "@/components/navigation-submit-button";
+import { presentAnalyticsFailure } from "@/lib/analytics-failure-presentation";
 import {
   selectableProjectIds,
   selectedProjectHierarchy,
@@ -180,9 +182,14 @@ export default async function InsightsPage({
               <option value="cancelled">取消</option>
             </Select>
           </label>
-          <Button className="button button-primary" type="submit">
+          <NavigationSubmitButton
+            className="button button-primary"
+            key={`primary-${JSON.stringify(filter)}`}
+            pendingLabel="正在筛选质量数据…"
+            type="submit"
+          >
             应用筛选
-          </Button>
+          </NavigationSubmitButton>
         </div>
         <details className="insight-advanced-filters">
           <summary>
@@ -295,34 +302,42 @@ export default async function InsightsPage({
               <h2>失败原因</h2>
             </div>
             <InsightDetailDialog
-              description="按出现次数排序的失败聚类，保留最近出现时间和稳定结果码。"
+              description="正常 TestNG 失败展示错误堆栈；调度、Runner 等异常执行同时展示错误码与错误信息。"
               title="失败原因明细"
             >
               <div className="insight-detail-table-scroll">
                 <table className="data-table insight-detail-wide-table">
                   <thead>
                     <tr>
-                      <th>失败原因</th>
-                      <th>结果码</th>
+                      <th>错误堆栈 / 错误信息</th>
+                      <th>异常错误码</th>
                       <th>次数</th>
                       <th>最近出现时间</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {summary.failures.map((failure) => (
-                      <tr key={failure.signature}>
-                        <td className="insight-detail-long-text" title={failure.description}>
-                          {failure.description}
-                        </td>
-                        <td title={failure.resultCode ?? "—"}>{failure.resultCode ?? "—"}</td>
-                        <td>{failure.count}</td>
-                        <td>
-                          <time dateTime={failure.lastSeenAt} title={`UTC：${failure.lastSeenAt}`}>
-                            {formatLocalDateTime(failure.lastSeenAt, timeZone)}
-                          </time>
-                        </td>
-                      </tr>
-                    ))}
+                    {summary.failures.map((failure) => {
+                      const presentation = presentAnalyticsFailure(failure);
+                      return (
+                        <tr key={failure.signature}>
+                          <td className="insight-detail-long-text" title={presentation.detail}>
+                            {presentation.detail}
+                          </td>
+                          <td title={presentation.errorCode ?? "正常 TestNG 失败，无需错误码"}>
+                            {presentation.errorCode ?? "—"}
+                          </td>
+                          <td>{failure.count}</td>
+                          <td>
+                            <time
+                              dateTime={failure.lastSeenAt}
+                              title={`UTC：${failure.lastSeenAt}`}
+                            >
+                              {formatLocalDateTime(failure.lastSeenAt, timeZone)}
+                            </time>
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
                 {summary.failures.length === 0 ? (
@@ -407,9 +422,14 @@ export default async function InsightsPage({
                 name="flakyCompletedBefore"
               />
             </label>
-            <Button type="submit" variant="secondary">
+            <NavigationSubmitButton
+              key={`flaky-${JSON.stringify(flakyFilter)}`}
+              pendingLabel="正在分析不稳定用例…"
+              type="submit"
+              variant="secondary"
+            >
               筛选不稳定用例
-            </Button>
+            </NavigationSubmitButton>
           </form>
           <p className="muted insight-flaky-scope">
             当前范围：
@@ -504,9 +524,14 @@ export default async function InsightsPage({
                 </option>
               ))}
             </Select>
-            <Button className="button button-secondary" type="submit">
+            <NavigationSubmitButton
+              className="button button-secondary"
+              key={`comparison-${stringParameter(parameters.leftBatchId)}-${stringParameter(parameters.rightBatchId)}`}
+              pendingLabel="正在生成批次对比…"
+              type="submit"
+            >
               开始对比
-            </Button>
+            </NavigationSubmitButton>
           </form>
           <p className="muted">可选择当前项目最近 100 个批次；更早记录请先在执行记录中定位。</p>
           {comparison ? (

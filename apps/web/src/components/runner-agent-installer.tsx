@@ -1,6 +1,7 @@
 "use client";
 
 import { Button, Input, Select, Textarea } from "@/components/ui";
+import { useConfirm } from "@/components/ui-feedback";
 
 import {
   DEFAULT_RUNNER_DATA_DIRECTORY,
@@ -34,6 +35,7 @@ export function RunnerAgentInstaller({
   linkedRunners,
 }: RunnerAgentInstallerProps) {
   const router = useRouter();
+  const confirmAction = useConfirm();
   const [host, setHost] = useState("");
   const [port, setPort] = useState(22);
   const [username, setUsername] = useState("");
@@ -130,7 +132,15 @@ export function RunnerAgentInstaller({
 
   async function rollbackAgent() {
     if (!probe || !fingerprintConfirmed) return;
-    if (!window.confirm("回滚到该执行机上一次成功安装的 Agent？服务会短暂重启。")) return;
+    if (
+      !(await confirmAction({
+        title: "回滚 Runner Agent",
+        description: "将恢复该执行机上一次成功安装的 Agent，服务会短暂重启。",
+        confirmLabel: "确认回滚",
+        tone: "danger",
+      }))
+    )
+      return;
     setPending("rollback");
     setError("");
     setRollbackResult(undefined);

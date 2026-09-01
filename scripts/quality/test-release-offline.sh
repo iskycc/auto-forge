@@ -91,7 +91,7 @@ verify_current_release() {
   manifest_schema_version="$(node -p \
     "JSON.parse(require('node:fs').readFileSync(process.argv[1], 'utf8')).schemaVersion" \
     "${current_release_directory}/release-manifest.json")"
-  if [[ "${manifest_schema_version}" == "2" ]]; then
+  if [[ "${manifest_schema_version}" == "2" || "${manifest_schema_version}" == "3" ]]; then
     mkdir -p "${current_metadata_root}"
     tar -xzf \
       "${current_release_directory}/autoforge-release-metadata-${current_version}.tar.gz" \
@@ -117,7 +117,7 @@ const {
 );
 const manifest = JSON.parse(readFileSync(join(directory, "release-manifest.json"), "utf8"));
 if (
-  ![1, releaseManifestSchemaVersion].includes(manifest.schemaVersion) ||
+  ![1, 2, releaseManifestSchemaVersion].includes(manifest.schemaVersion) ||
   manifest.product !== "AutoForge" ||
   manifest.version !== expectedVersion
 ) {
@@ -146,9 +146,39 @@ function legacyExpectedArtifactNames(version) {
   ];
 }
 
-const expectedNames = (manifest.schemaVersion === 1
-  ? legacyExpectedArtifactNames(expectedVersion)
-  : expectedArtifactNames(expectedVersion)
+function schema2ExpectedArtifactNames(version) {
+  const variants = ["amd64", "arm64", "amd64-musl", "arm64-musl"];
+  return [
+    ...variants.map((variant) => `autoforge-backend-${version}-${variant}.docker.tar`),
+    `autoforge-deploy-${version}.tar.gz`,
+    `autoforge-jenkins-dependency-publisher-${version}.hpi`,
+    `autoforge-jenkins-execution-${version}.hpi`,
+    `autoforge-release-metadata-${version}.tar.gz`,
+    "release-signing-public-key.pem",
+  ];
+}
+
+function schema2MetadataBundleFileNames(version) {
+  const variants = ["amd64", "arm64", "amd64-musl", "arm64-musl"];
+  return [
+    "CHANGELOG.md",
+    "COMPATIBILITY.md",
+    "LICENSE",
+    "NOTICE",
+    "THIRD_PARTY_LICENSES.json",
+    ...variants.map((variant) => `sbom/autoforge-backend-${version}-${variant}.spdx.json`),
+    `sbom/autoforge-deploy-${version}.spdx.json`,
+    `sbom/autoforge-jenkins-dependency-publisher-${version}.spdx.json`,
+    `sbom/autoforge-jenkins-execution-${version}.spdx.json`,
+  ];
+}
+
+const expectedNames = (
+  manifest.schemaVersion === 1
+    ? legacyExpectedArtifactNames(expectedVersion)
+    : manifest.schemaVersion === 2
+      ? schema2ExpectedArtifactNames(expectedVersion)
+      : expectedArtifactNames(expectedVersion)
 ).sort();
 const actualNames = manifest.artifacts.map((artifact) => artifact.name).sort();
 if (JSON.stringify(actualNames) !== JSON.stringify(expectedNames)) {
@@ -168,7 +198,9 @@ for (const artifact of manifest.artifacts) {
   const path = join(directory, artifact.name);
   if (!statSync(path).isFile() || statSync(path).size !== artifact.sizeBytes) throw new Error(`Invalid asset ${artifact.name}`);
 }
-const expectedVariants = ["amd64", "arm64", "amd64-musl", "arm64-musl"];
+const expectedVariants = manifest.schemaVersion <= 2
+  ? ["amd64", "arm64", "amd64-musl", "arm64-musl"]
+  : ["amd64", "arm64"];
 for (const variant of expectedVariants) {
   const image = manifest.schemaVersion === 1
     ? JSON.parse(readFileSync(join(directory, `autoforge-backend-${expectedVersion}-${variant}.image.json`), "utf8"))
@@ -200,8 +232,10 @@ function listFiles(root, prefix = "") {
 
 const expectedMetadataNames = manifest.schemaVersion === 1
   ? expectedNames.filter((entry) => entry.endsWith(".spdx.json"))
-  : expectedMetadataBundleFileNames(expectedVersion).sort();
-if (manifest.schemaVersion === releaseManifestSchemaVersion) {
+  : manifest.schemaVersion === 2
+    ? schema2MetadataBundleFileNames(expectedVersion).sort()
+    : expectedMetadataBundleFileNames(expectedVersion).sort();
+if (manifest.schemaVersion >= 2) {
   const actualMetadataNames = listFiles(metadataDirectory).sort();
   if (JSON.stringify(actualMetadataNames) !== JSON.stringify(expectedMetadataNames)) {
     throw new Error(`Unexpected release metadata files: ${actualMetadataNames.join(", ")}`);
@@ -295,8 +329,8 @@ NODE
     metadata_architecture metadata_operating_system <<<"${metadata_fields}"
   local expected_architecture
   case "${variant}" in
-    amd64 | amd64-musl) expected_architecture="amd64" ;;
-    arm64 | arm64-musl) expected_architecture="arm64" ;;
+    amd64) expected_architecture="amd64" ;;
+    arm64) expected_architecture="arm64" ;;
     *)
       echo "Unsupported Release acceptance variant: ${variant}." >&2
       exit 1

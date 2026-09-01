@@ -365,13 +365,13 @@ pnpm build
 ### 14.1 发布与平台矩阵
 
 - GitHub Release 只从已存在且指向当前提交的语义版本 tag（`vX.Y.Z`）发布，禁止从未标记分支或可变引用生成正式包。
-- 后端离线 Docker 镜像必须生成 `amd64`、`arm64`、`amd64-musl`、`arm64-musl` 四个明确命名的资产；每个镜像都内置 Linux `amd64` 与 `arm64` 两个静态 Agent 资源，不生成独立 Agent Release 资产。
-- 后端标准版基于固定 digest 的 Debian/glibc Node 镜像，musl 版基于固定 digest 的 Alpine/musl Node 镜像；不得仅复制或重命名同一个镜像伪造变体。
-- 内置 Agent 使用 `CGO_ENABLED=0` 静态构建，不动态链接 libc；资源清单记录版本、架构、大小和 SHA-256，安装前后均须校验。
-- GitHub Actions 的 `amd64*` 目标使用 `ubuntu-24.04`，`arm64*` 目标使用原生 `ubuntu-24.04-arm`；不得在 GitHub-hosted Release 流水线中用 QEMU 模拟已有原生 runner 的架构。
+- 后端离线 Docker 镜像只生成 `amd64`、`arm64` 两个明确命名的资产；容器携带自身用户空间，不按宿主机 glibc/musl 重复出包。每个镜像都内置 Linux `amd64` 与 `arm64` 两个静态 Agent 资源，不生成独立 Agent Release 资产。
+- 后端镜像基于固定 digest 的 Debian/glibc Node 镜像；宿主机只需提供与 CPU 架构匹配的 OCI 容器运行时。
+- 内置 Agent 使用 `CGO_ENABLED=0` 静态构建，不动态链接 libc，并验证 ELF 无程序解释器与动态库依赖，因此同一架构二进制必须兼容 glibc 与 musl 主机；资源清单记录版本、架构、大小和 SHA-256，安装前后均须校验。
+- GitHub Actions 的 `amd64` 目标使用 `ubuntu-24.04`，`arm64` 目标使用原生 `ubuntu-24.04-arm`；不得在 GitHub-hosted Release 流水线中用 QEMU 模拟已有原生 runner 的架构。
 - Release 同时包含每个后端/部署资产的 SPDX JSON SBOM（允许集中在一个版本化、受签名摘要保护的 metadata 归档中）、统一 `SHA256SUMS` 和机器可读 `release-manifest.json`；镜像 SBOM 覆盖其中的内置 Agent。
 - GitHub Actions 与基础镜像使用不可变 commit SHA 或镜像 digest；版本升级要单独审查并完成构建验证。
-- 发布脚本必须能在本地构建并验证单个平台；正式四平台集合由 GitHub Actions matrix 生成，任何一个目标失败都不得发布部分 Release。
+- 发布脚本必须能在本地构建并验证单个平台；正式双架构集合由 GitHub Actions matrix 生成，任何一个目标失败都不得发布部分 Release。
 
 ## 15. 可观测性
 

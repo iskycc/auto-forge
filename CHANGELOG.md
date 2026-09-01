@@ -4,6 +4,42 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## 1.8.5 - 2026-09-01
+
+### Added
+
+- 页面导航和大数据区域使用统一的产品化加载状态；质量洞察的筛选、不稳定用例分析与
+  批次对比会在提交后立即展示明确的进行中反馈。
+- 保存、删除、测试连接等一次性操作统一通过右上角悬浮通知反馈，并按成功、警告、错误
+  和提示使用不同视觉状态。危险操作与输入确认统一迁移到站内弹窗，不再依赖浏览器原生
+  `confirm` 或 `prompt`。
+
+### Fixed
+
+- 质量洞察不再把正常的 TestNG 断言/配置失败显示为内部错误码，改为直接展示错误堆栈或
+  错误信息；调度、Runner、超时等非正常执行失败仍保留稳定错误码并补充可读错误信息。
+
+### Changed
+
+- Releases publish only `amd64` and `arm64` backend Docker archives. Container images carry their
+  own Debian/glibc user space, so Alpine/musl hosts do not require duplicate backend variants.
+- Both backend images continue to embed `amd64` and `arm64` Runner Agents. Agent builds now verify
+  `CGO_ENABLED=0`, static linking, and the absence of ELF interpreter/shared-library dependencies so
+  the same architecture binary runs directly on glibc and musl hosts.
+
+### Compatibility and offline assets
+
+- `release-manifest.json` moves to schema version 3 with a two-architecture backend inventory.
+  Published acceptance still validates historical schema 1/2 Releases with their four-image contract.
+- Database schemas, persisted platform configuration, Runner Protocol and installed Agent data are
+  unchanged.
+
+### Tests
+
+- Component and static UI checks cover feedback presentation, native-dialog removal and failure-code
+  classification. Playwright covers the unified feedback dialogs, insight loading response, real JAR
+  import/execution/log/insight flow and the 1024px desktop layout boundary.
+
 ## 1.8.2 - 2026-09-01
 
 ### Changed

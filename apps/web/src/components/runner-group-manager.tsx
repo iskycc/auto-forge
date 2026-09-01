@@ -6,6 +6,7 @@ import { useState, type FormEvent } from "react";
 
 import { Button, Input, Textarea } from "./ui";
 import { ActionDialog } from "./action-dialog";
+import { useConfirm } from "./ui-feedback";
 
 export function RunnerGroupManager({
   initialGroups,
@@ -16,6 +17,7 @@ export function RunnerGroupManager({
   runners: Runner[];
   canManage: boolean;
 }) {
+  const confirmAction = useConfirm();
   const [groups, setGroups] = useState(initialGroups);
   const [editingGroupId, setEditingGroupId] = useState<string>();
   const [pending, setPending] = useState(false);
@@ -79,7 +81,14 @@ export function RunnerGroupManager({
   }
 
   async function remove(group: RunnerGroup): Promise<void> {
-    if (!window.confirm(`确定删除执行机组「${group.name}」？历史批次的执行机快照不会改变。`))
+    if (
+      !(await confirmAction({
+        title: "删除执行机组",
+        description: `确认删除执行机组“${group.name}”？历史批次的执行机快照不会改变。`,
+        confirmLabel: "确认删除",
+        tone: "danger",
+      }))
+    )
       return;
     setPending(true);
     setError("");

@@ -42,9 +42,11 @@ import {
 } from "react";
 
 import { AttemptLogViewer } from "@/components/attempt-log-viewer";
+import { LoadingState } from "@/components/loading-state";
 import { Button, Input, Textarea } from "@/components/ui";
 import { readApiErrorMessage } from "@/lib/client-api";
 import { formatPlatformDateTime } from "@/lib/platform-date-time";
+import { useToast } from "@/components/ui-feedback";
 
 type WorkspaceView = "claim" | "workbench";
 
@@ -87,6 +89,7 @@ export function FailureAnalysisWorkspace({
   initialBatchId: string;
   initialView: WorkspaceView;
 }) {
+  const toast = useToast();
   const [view, setView] = useState<WorkspaceView>(initialView);
   const [candidates, setCandidates] = useState<FailureAnalysisCandidate[]>(
     initialCandidatePage?.items ?? [],
@@ -114,7 +117,6 @@ export function FailureAnalysisWorkspace({
   const [loadingCandidates, setLoadingCandidates] = useState(false);
   const [loadingClaims, setLoadingClaims] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
   const candidateRequestSequence = useRef(0);
   const claimsRequestSequence = useRef(0);
@@ -258,7 +260,6 @@ export function FailureAnalysisWorkspace({
 
   function changeView(nextView: WorkspaceView): void {
     setView(nextView);
-    setNotice("");
     updateLocation(nextView);
   }
 
@@ -285,7 +286,6 @@ export function FailureAnalysisWorkspace({
     if (!canManage || selectedRunIds.size === 0 || submitting) return;
     setSubmitting(true);
     setError("");
-    setNotice("");
     try {
       const response = await fetch("/api/v1/failure-analysis/claims", {
         method: "POST",
@@ -300,11 +300,12 @@ export function FailureAnalysisWorkspace({
       if (!response.ok)
         throw new Error((await readApiErrorMessage(response, "认领失败用例失败。"))!);
       const result = (await response.json()) as ClaimFailureAnalysisResult;
-      setNotice(
+      const claimMessage =
         result.conflicts.length > 0
           ? `已认领 ${result.claimed.length} 个用例，另有 ${result.conflicts.length} 个已被其他用户认领。`
-          : `已认领 ${result.claimed.length} 个用例，可以开始分析。`,
-      );
+          : `已认领 ${result.claimed.length} 个用例，可以开始分析。`;
+      if (result.conflicts.length > 0) toast.warning(claimMessage);
+      else toast.success(claimMessage);
       setSelectedRunIds(new Set());
       setView("workbench");
       updateLocation("workbench");
@@ -368,7 +369,7 @@ export function FailureAnalysisWorkspace({
     );
     setDialogClaims(undefined);
     setSelectedAnalysisIds(new Set());
-    setNotice(`已完成 ${updatedClaims.length} 个用例的分析并永久保存。`);
+    toast.success(`已完成 ${updatedClaims.length} 个用例的分析并永久保存。`);
   }
 
   return (
@@ -396,7 +397,6 @@ export function FailureAnalysisWorkspace({
         </div>
 
         {error ? <p className="form-error">{error}</p> : null}
-        {notice ? <p className="form-success">{notice}</p> : null}
 
         {view === "claim" ? (
           <div className="failure-analysis-claim-view" role="tabpanel">
@@ -417,9 +417,10 @@ export function FailureAnalysisWorkspace({
               </Button>
             </form>
             {loadingCandidates ? (
-              <div className="failure-analysis-empty">
-                <LoaderCircle className="spin" size={22} /> 正在读取最终失败用例…
-              </div>
+              <LoadingState
+                label="正在读取最终失败用例"
+                description="正在按当前筛选与排序条件整理可认领用例。"
+              />
             ) : candidates.length === 0 ? (
               <div className="failure-analysis-empty">
                 <CheckCircle2 size={24} />
@@ -467,9 +468,10 @@ export function FailureAnalysisWorkspace({
               </Button>
             </div>
             {loadingClaims ? (
-              <div className="failure-analysis-empty">
-                <LoaderCircle className="spin" size={22} /> 正在读取分析队列…
-              </div>
+              <LoadingState
+                label="正在读取分析队列"
+                description="正在恢复你的认领状态、分析结论和证明材料。"
+              />
             ) : claims.length === 0 ? (
               <div className="failure-analysis-empty">
                 <ClipboardCheck size={25} />

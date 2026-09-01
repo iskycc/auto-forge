@@ -10,6 +10,7 @@ import { useRouter } from "next/navigation";
 import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
 
 import { Button, Input, Select } from "@/components/ui";
+import { LoadingState } from "@/components/loading-state";
 
 const CATEGORY_LABELS: Record<StorageInventoryCategory, string> = {
   database: "平台数据库",
@@ -174,7 +175,10 @@ export function StorageInventory({
             </div>
           </>
         ) : loading ? (
-          <div className="inline-empty">正在扫描平台文件与对象空间…</div>
+          <LoadingState
+            label="正在扫描平台存储"
+            description="正在统计数据库、JDK、依赖包、日志与对象存储空间。"
+          />
         ) : null}
       </section>
 

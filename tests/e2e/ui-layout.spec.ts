@@ -546,8 +546,24 @@ test("specified dense pages expose stable product controls", async ({ page }) =>
   await expect(flakyFilter.getByLabel("指定任务")).toBeVisible();
   await flakyFilter.getByLabel("开始时间（平台时区）").fill("2026-08-01T00:00");
   await flakyFilter.getByLabel("结束时间（平台时区）").fill("2026-08-24T23:59");
-  await flakyFilter.getByRole("button", { name: "筛选不稳定用例" }).click();
+  await page.route(
+    "**/insights?**",
+    async (route) => {
+      if (route.request().url().includes("flakyCompletedAfter=")) {
+        await new Promise((resolveDelay) => setTimeout(resolveDelay, 1_500));
+      }
+      await route.continue();
+    },
+    { times: 1 },
+  );
+  const flakySubmit = flakyFilter.locator('button[type="submit"]');
+  await expect(flakySubmit).toContainText("筛选不稳定用例");
+  const filtering = flakySubmit.click();
+  await expect(flakySubmit).toHaveAttribute("aria-busy", "true");
+  await expect(flakySubmit).toContainText("正在分析不稳定用例");
+  await filtering;
   await expect(page).toHaveURL(/flakyCompletedAfter=.*flakyCompletedBefore=/u);
+  await page.unroute("**/insights?**");
   await expect(page.locator(".insight-flaky-scope")).toContainText("2026");
   await page.setViewportSize({ width: 1536, height: 1024 });
   const trendCard = page.locator(".insight-trend-card");

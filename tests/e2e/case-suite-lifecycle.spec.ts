@@ -5,6 +5,7 @@ import { resolve } from "node:path";
 
 import { buildClassFile } from "../../packages/testng-discovery/test/class-fixture";
 import {
+  acceptSystemDialog,
   browserJson,
   ensureAdministrator,
   selectProjectContext,
@@ -345,8 +346,8 @@ test("case metadata, immutable versions and suite policy survive lifecycle chang
   await expect(
     page.locator(".version-diff-list").getByText(/方法新增：.*browserAdded/),
   ).toBeVisible();
-  page.once("dialog", (dialog) => dialog.accept());
   await page.getByRole("button", { name: "从该版本创建" }).last().click();
+  await acceptSystemDialog(page, /从 v\d+ 恢复用例/, "创建新版本");
   await expect(page.getByText("版本历史（3）")).toBeVisible();
 
   const suiteName = `Lifecycle suite ${suffix}`;
@@ -556,8 +557,8 @@ test("case metadata, immutable versions and suite policy survive lifecycle chang
   await caseTree.scrollIntoViewIfNeeded();
   await captureUi(page, "case-suite-folder-selected-1024");
   await page.setViewportSize({ width: 1536, height: 1024 });
-  page.once("dialog", (dialog) => dialog.accept());
   await page.getByRole("button", { name: "批量移除（2）" }).click();
+  await acceptSystemDialog(page, "移除任务用例", "确认移除");
   await expect(page.getByText("任务中还没有用例")).toBeVisible();
 
   await page.goto(`/case-suites/${encodeURIComponent(suite.body.id)}`);

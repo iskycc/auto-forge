@@ -24,6 +24,7 @@ import { useRef, useState, type FormEvent, type ReactNode } from "react";
 
 import { ActionDialog } from "./action-dialog";
 import { Button, Input, Select, Textarea } from "./ui";
+import { useToast } from "./ui-feedback";
 
 type EditorState = {
   id?: string;
@@ -56,13 +57,13 @@ export function WebhookSettings({
   initialDeliveries: WebhookDelivery[];
   canManage: boolean;
 }) {
+  const toast = useToast();
   const [configurations, setConfigurations] = useState(initialConfigurations);
   const [deliveries] = useState(initialDeliveries);
   const [editor, setEditor] = useState<EditorState>();
   const [deleting, setDeleting] = useState<WebhookConfiguration>();
   const [pending, setPending] = useState(false);
   const [testingId, setTestingId] = useState("");
-  const [testMessage, setTestMessage] = useState("");
   const [error, setError] = useState("");
   const bodyRef = useRef<HTMLTextAreaElement>(null);
   const enabledCount = configurations.filter((item) => item.enabled).length;
@@ -101,6 +102,7 @@ export function WebhookSettings({
         ),
       );
       setEditor(undefined);
+      toast.success(editor.id ? "Webhook 配置已保存。" : "Webhook 已创建。");
     } catch (problem) {
       setError(problem instanceof Error ? problem.message : "保存 Webhook 失败。");
     } finally {
@@ -118,6 +120,7 @@ export function WebhookSettings({
       });
       setConfigurations((current) => current.filter((item) => item.id !== deleting.id));
       setDeleting(undefined);
+      toast.success("Webhook 已删除。");
     } catch (problem) {
       setError(problem instanceof Error ? problem.message : "删除 Webhook 失败。");
     } finally {
@@ -128,15 +131,15 @@ export function WebhookSettings({
   async function test(configuration: WebhookConfiguration): Promise<void> {
     setTestingId(configuration.id);
     setError("");
-    setTestMessage("");
     try {
       const result = await requestJson<{
         statusCode: number;
         method: WebhookRequestMethod;
         presetPassRate: number;
       }>(`/api/v1/webhooks/${encodeURIComponent(configuration.id)}/test`, { method: "POST" });
-      setTestMessage(
+      toast.success(
         `「${configuration.name}」测试成功：${result.method} · HTTP ${result.statusCode} · 预置通过率 ${result.presetPassRate}%。`,
+        { title: "Webhook 连通性正常" },
       );
     } catch (problem) {
       setError(problem instanceof Error ? problem.message : "Webhook 测试失败。");
@@ -193,7 +196,6 @@ export function WebhookSettings({
             {error}
           </p>
         ) : null}
-        {testMessage ? <p className="inline-success">{testMessage}</p> : null}
         {configurations.length === 0 ? (
           <div className="empty-state table-empty webhook-empty-state">
             <span className="empty-icon">

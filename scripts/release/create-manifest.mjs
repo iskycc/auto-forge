@@ -5,8 +5,8 @@ import { pathToFileURL } from "node:url";
 
 const manifestFileName = "release-manifest.json";
 const checksumsFileName = "SHA256SUMS";
-const releaseVariants = ["amd64", "arm64", "amd64-musl", "arm64-musl"];
-export const releaseManifestSchemaVersion = 2;
+const releaseVariants = ["amd64", "arm64"];
+export const releaseManifestSchemaVersion = 3;
 
 async function sha256(filePath) {
   return createHash("sha256")

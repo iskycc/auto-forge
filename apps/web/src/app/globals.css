@@ -13989,6 +13989,124 @@ button.icon-button:disabled {
   padding-top: 16px;
 }
 
+/* 全局操作反馈：一次性结果使用右上角 Toast，确认操作使用产品内对话框。 */
+.toast-viewport {
+  position: fixed;
+  z-index: 180;
+  top: 84px;
+  right: 20px;
+  display: grid;
+  width: min(390px, calc(100dvw - 40px));
+  gap: 10px;
+  pointer-events: none;
+}
+
+.toast-card {
+  --toast-color: var(--color-info);
+  --toast-background: var(--color-info-soft);
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 11px;
+  border: 1px solid color-mix(in srgb, var(--toast-color) 24%, var(--color-border));
+  border-radius: var(--radius-medium);
+  padding: 13px 12px 13px 13px;
+  background: color-mix(in srgb, var(--toast-background) 86%, var(--color-surface));
+  box-shadow: var(--shadow-float);
+  color: var(--color-text);
+  pointer-events: auto;
+  animation: toast-enter 220ms ease-out both;
+}
+
+.toast-success {
+  --toast-color: var(--color-success);
+  --toast-background: var(--color-success-soft);
+}
+
+.toast-error {
+  --toast-color: var(--color-danger);
+  --toast-background: var(--color-danger-soft);
+}
+
+.toast-warning {
+  --toast-color: var(--color-warning);
+  --toast-background: var(--color-warning-soft);
+}
+
+.toast-icon {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  border-radius: var(--radius-control);
+  background: color-mix(in srgb, var(--toast-color) 12%, var(--color-surface));
+  color: var(--toast-color);
+}
+
+.toast-copy {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+  padding-top: 1px;
+}
+
+.toast-copy strong {
+  font-size: var(--font-size-body);
+}
+
+.toast-copy > span {
+  overflow-wrap: anywhere;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-control);
+  line-height: 1.5;
+}
+
+.toast-dismiss {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  cursor: pointer;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--color-text-tertiary);
+  place-items: center;
+}
+
+.toast-dismiss:hover,
+.toast-dismiss:focus-visible {
+  outline: 0;
+  background: color-mix(in srgb, var(--toast-color) 10%, transparent);
+  color: var(--toast-color);
+}
+
+.confirmation-dialog {
+  width: min(540px, calc(100dvw - 40px));
+}
+
+.confirmation-dialog-danger .action-dialog-header {
+  background: linear-gradient(180deg, var(--color-danger-soft), var(--color-surface));
+}
+
+.confirmation-dialog-field {
+  display: grid;
+  gap: 8px;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-control);
+  font-weight: 650;
+}
+
+@keyframes toast-enter {
+  from {
+    opacity: 0;
+    transform: translate3d(16px, -6px, 0) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+
 /* Project-scoped completion webhooks: compact cards keep endpoints readable at a glance. */
 .webhook-settings-stack {
   display: grid;
@@ -14591,10 +14709,140 @@ button.icon-button:disabled {
 }
 
 .route-loading-label {
-  display: inline-flex;
+  display: inline-grid;
+  gap: 3px;
   margin-bottom: var(--space-4);
   color: var(--color-text-secondary);
   font-size: var(--font-size-control);
+}
+
+.route-loading-label strong {
+  color: var(--color-text);
+  font-size: var(--font-size-body);
+}
+
+.route-loading-label small {
+  color: var(--color-text-tertiary);
+}
+
+.loading-state {
+  display: flex;
+  min-height: 190px;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-card);
+  padding: 28px;
+  background: linear-gradient(145deg, var(--color-surface), var(--color-surface-muted));
+  color: var(--color-text);
+}
+
+.loading-state > span:last-child {
+  display: grid;
+  gap: 4px;
+}
+
+.loading-state strong {
+  font-size: var(--font-size-body);
+}
+
+.loading-state small {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-control);
+}
+
+.loading-state-compact {
+  min-height: 0;
+  justify-content: flex-start;
+  border: 0;
+  padding: 8px 0;
+  background: transparent;
+}
+
+.loading-glyph {
+  position: relative;
+  display: inline-grid;
+  width: 48px;
+  height: 48px;
+  flex: 0 0 auto;
+  place-items: center;
+}
+
+.loading-glyph-halo,
+.loading-glyph-orbit {
+  position: absolute;
+  border-radius: 50%;
+  inset: 2px;
+}
+
+.loading-glyph-halo {
+  background: radial-gradient(circle, var(--color-info-soft), transparent 68%);
+  animation: loading-breathe 1.4s ease-in-out infinite;
+}
+
+.loading-glyph-core {
+  z-index: 1;
+  display: grid;
+  width: 30px;
+  height: 30px;
+  border-radius: 11px;
+  background: linear-gradient(145deg, var(--color-info), var(--color-violet));
+  box-shadow: 0 8px 22px color-mix(in srgb, var(--color-info) 22%, transparent);
+  color: var(--color-surface);
+  place-items: center;
+}
+
+.loading-glyph-orbit {
+  border: 1px solid color-mix(in srgb, var(--color-info) 22%, transparent);
+  animation: loading-orbit 1.1s linear infinite;
+}
+
+.loading-glyph-orbit i {
+  position: absolute;
+  top: -2px;
+  left: 50%;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--color-info);
+  box-shadow: 0 0 0 4px var(--color-info-soft);
+  transform: translateX(-50%);
+}
+
+.loading-glyph-compact {
+  width: 18px;
+  height: 18px;
+}
+
+.loading-glyph-compact .loading-glyph-core {
+  width: 14px;
+  height: 14px;
+  border-radius: 5px;
+  box-shadow: none;
+}
+
+.loading-glyph-compact .loading-glyph-orbit {
+  inset: 0;
+}
+
+.loading-glyph-compact .loading-glyph-orbit i {
+  width: 4px;
+  height: 4px;
+  box-shadow: none;
+}
+
+@keyframes loading-orbit {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes loading-breathe {
+  50% {
+    opacity: 0.55;
+    transform: scale(1.12);
+  }
 }
 
 .skeleton-line,
@@ -14926,7 +15174,10 @@ button.icon-button:disabled {
 @media (prefers-reduced-motion: reduce) {
   .skeleton-line,
   .skeleton-block,
-  .skeleton-row {
+  .skeleton-row,
+  .loading-glyph-halo,
+  .loading-glyph-orbit,
+  .toast-card {
     animation: none;
   }
 }

@@ -414,7 +414,7 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
     await page.getByLabel(`选择 ${caseName}`).check();
     await page.locator('select[aria-label="目标用例任务"]').selectOption(suiteId);
     await page.getByRole("button", { name: "加入任务" }).click();
-    await expect(page.locator(".inline-feedback")).toContainText("已将 1 个用例加入任务");
+    await expect(page.locator(".toast-card", { hasText: "已将 1 个用例加入任务" })).toBeVisible();
   }
 
   const registration = await page.request.post("/api/v1/runner-agents/register", {

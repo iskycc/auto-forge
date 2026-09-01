@@ -17,6 +17,7 @@ import { readApiErrorMessage } from "@/lib/client-api";
 import { permissionDescription, permissionLabel } from "@/lib/permission-presentation";
 import { formatLocalDateTime } from "@/lib/run-batch-presentation";
 import { ActionDialog } from "@/components/action-dialog";
+import { useConfirm, useToast } from "@/components/ui-feedback";
 
 type LdapView = {
   enabled: boolean;
@@ -79,7 +80,8 @@ export function AccessSettings({
   activeSection: AccessSection;
 }) {
   const router = useRouter();
-  const [message, setMessage] = useState("");
+  const confirmAction = useConfirm();
+  const toast = useToast();
   const [error, setError] = useState("");
   const [pending, setPending] = useState(false);
   const [ldapEnabled, setLdapEnabled] = useState(ldap?.enabled ?? false);
@@ -100,12 +102,11 @@ export function AccessSettings({
   ): Promise<boolean> {
     setPending(true);
     setError("");
-    setMessage("");
     try {
       const response = await fetch(path, init);
       const errorMessage = await readApiErrorMessage(response, "操作失败。");
       if (errorMessage) throw new Error(errorMessage);
-      setMessage(success);
+      toast.success(success);
       setCreateDialog(null);
       if (refreshPage) router.refresh();
       setPending(false);
@@ -235,7 +236,6 @@ export function AccessSettings({
 
   return (
     <div className="settings-stack">
-      {message ? <div className="inline-success">{message}</div> : null}
       {error ? (
         <div className="auth-error" role="alert">
           {error}
@@ -549,18 +549,20 @@ export function AccessSettings({
                         className="danger-text-button"
                         disabled={pending || !capabilities.roleManage}
                         onClick={() => {
-                          if (
-                            !window.confirm(
-                              "撤销系统角色会立即撤销目标用户的全部旧会话；最后一位系统管理员受服务端保护。确认继续？",
-                            )
-                          ) {
-                            return;
-                          }
-                          void request(
-                            `/api/v1/users/${binding.userId}/system-roles/${binding.roleId}`,
-                            { method: "DELETE" },
-                            "系统角色已撤销。",
-                          );
+                          void confirmAction({
+                            title: "撤销系统角色",
+                            description:
+                              "目标用户的全部旧会话会立即失效；最后一位系统管理员仍受服务端保护。",
+                            confirmLabel: "确认撤销",
+                            tone: "danger",
+                          }).then((accepted) => {
+                            if (!accepted) return;
+                            void request(
+                              `/api/v1/users/${binding.userId}/system-roles/${binding.roleId}`,
+                              { method: "DELETE" },
+                              "系统角色已撤销。",
+                            );
+                          });
                         }}
                         type="button"
                       >

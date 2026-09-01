@@ -15,6 +15,7 @@ import { useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNo
 import { createPortal } from "react-dom";
 
 import { Button, Input, Select, Textarea } from "./ui";
+import { LoadingState } from "./loading-state";
 
 const OPEN_RUN_DIALOG_EVENT = "autoforge:open-run-dialog";
 
@@ -320,9 +321,7 @@ export function GlobalRunDialog({
                 </header>
 
                 {loading ? (
-                  <div className="global-run-loading">
-                    <LoaderCircle className="spin" size={22} /> 正在读取执行配置…
-                  </div>
+                  <LoadingState compact label="正在读取执行配置" />
                 ) : (
                   <form className="global-run-form" onSubmit={(event) => void submit(event)}>
                     <section className="global-run-step">

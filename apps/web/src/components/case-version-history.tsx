@@ -15,6 +15,7 @@ import { useMemo, useState } from "react";
 
 import { Button, Select } from "@/components/ui";
 import { formatMethodSignature } from "@/lib/jvm-signature";
+import { useConfirm } from "@/components/ui-feedback";
 
 const CHANGE_REASON_LABELS: Record<string, string> = {
   "source.import": "来源导入",
@@ -38,6 +39,7 @@ export function CaseVersionHistory({
   onChanged?: () => void;
 }) {
   const router = useRouter();
+  const confirmAction = useConfirm();
   const orderedVersions = useMemo(
     () => [...versions].sort((left, right) => right.version - left.version),
     [versions],
@@ -58,8 +60,16 @@ export function CaseVersionHistory({
   async function restore(version: number): Promise<void> {
     const targetSnapshot = snapshotFor(orderedVersions, version);
     const changes = compareSnapshots(currentSnapshot, targetSnapshot);
-    const impact = changes.length > 0 ? `\n\n将发生：\n- ${changes.join("\n- ")}` : "";
-    if (!window.confirm(`确定从 v${version} 创建新版本？${impact}`)) return;
+    const impact =
+      changes.length > 0 ? `将发生以下变更：${changes.join("；")}` : "快照内容没有可见差异。";
+    if (
+      !(await confirmAction({
+        title: `从 v${version} 恢复用例`,
+        description: `${impact} 系统会据此创建一个新的不可变版本。`,
+        confirmLabel: "创建新版本",
+      }))
+    )
+      return;
 
     setPendingVersion(version);
     setError(null);

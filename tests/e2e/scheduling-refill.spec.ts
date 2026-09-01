@@ -6,7 +6,7 @@ import { buildClassFile } from "../../packages/testng-discovery/test/class-fixtu
 import { DEFAULT_PROJECT_ID } from "@autoforge/domain";
 import { freshRunnerBootstrapToken } from "./support/runner-bootstrap";
 import { configureTaskExecution, createTaskRun } from "./support/task-execution";
-import { browserJson, ensureAdministrator } from "./support/session";
+import { acceptSystemDialog, browserJson, ensureAdministrator } from "./support/session";
 
 /**
  * 即时补槽调度验收：一个批次 5 个用例、执行机并发 2。验证：
@@ -220,7 +220,7 @@ test("completion immediately refills free runner slots without waiting for the w
     .locator('select[aria-label="目标用例任务"]')
     .selectOption({ label: "即时补槽验收任务" });
   await page.getByRole("button", { name: "加入任务" }).click();
-  await expect(page.locator(".inline-feedback")).toContainText("已将 5 个用例加入任务");
+  await expect(page.locator(".toast-card", { hasText: "已将 5 个用例加入任务" })).toBeVisible();
 
   const registration = await page.request.post("/api/v1/runner-agents/register", {
     headers: { authorization: `Bearer ${freshRunnerBootstrapToken()}` },
@@ -378,8 +378,8 @@ test("completion immediately refills free runner slots without waiting for the w
     has: page.locator(`a[href="/run-batches/${terminatingBatch.id}"]`),
   });
   await expect(terminatingRow).toBeVisible();
-  page.once("dialog", (dialog) => dialog.accept());
   await terminatingRow.getByRole("button", { name: "终止任务" }).click();
+  await acceptSystemDialog(page, /终止批次/, "确认终止");
   await expect(terminatingRow).toContainText("终止中");
   await expectNoAssignment(page, identity);
 

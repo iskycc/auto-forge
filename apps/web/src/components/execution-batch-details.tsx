@@ -8,6 +8,7 @@ import { RunBatchRounds, type RunnerDirectoryEntry } from "@/components/run-batc
 import { RerunFinalFailuresDialog } from "@/components/rerun-final-failures-dialog";
 import { Button } from "@/components/ui";
 import { readApiErrorMessage } from "@/lib/client-api";
+import { useConfirm } from "@/components/ui-feedback";
 import type { ExecutionBatchView } from "@/lib/execution-batch-view";
 import {
   formatBatchDuration,
@@ -62,6 +63,7 @@ export function ExecutionBatchDetails({
   accessToken?: string;
 }) {
   const router = useRouter();
+  const confirmAction = useConfirm();
   const [batch, setBatch] = useState(initialBatch);
   const [actionError, setActionError] = useState("");
   const [actionPending, setActionPending] = useState<"cancel" | "retry" | undefined>();
@@ -123,9 +125,12 @@ export function ExecutionBatchDetails({
 
   async function terminateBatch(): Promise<void> {
     if (
-      !window.confirm(
-        "终止后会立即停止后续调度；正在执行的用例会继续到本次完成，随后任务正式终止。确认继续？",
-      )
+      !(await confirmAction({
+        title: "终止执行任务",
+        description: "平台会立即停止后续调度；正在执行的用例会继续到本次完成，随后任务正式终止。",
+        confirmLabel: "确认终止",
+        tone: "danger",
+      }))
     )
       return;
     setActionPending("cancel");

@@ -6,6 +6,7 @@ import type { PlatformConfigurationView } from "@autoforge/contracts";
 import { Save, ServerCog } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
+import { useToast } from "@/components/ui-feedback";
 
 const COMMON_TIME_ZONES = [
   "Asia/Shanghai",
@@ -27,16 +28,15 @@ export function PlatformSettings({
   canManage: boolean;
 }) {
   const router = useRouter();
+  const toast = useToast();
   const [revision, setRevision] = useState(initial.revision);
   const [pending, setPending] = useState(false);
-  const [message, setMessage] = useState("");
   const [error, setError] = useState("");
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!canManage) return;
     setPending(true);
-    setMessage("");
     setError("");
     const form = new FormData(event.currentTarget);
     try {
@@ -95,17 +95,17 @@ export function PlatformSettings({
       }
       const immediate = body.appliedImmediatelyFields ?? [];
       const restart = body.restartRequiredFields ?? [];
-      setMessage(
-        [
-          "平台配置已保存。",
-          immediate.length > 0 ? `${immediate.join("、")}已立即生效。` : "",
-          restart.length > 0
-            ? `${restart.join("、")}需要重启 Web${initial.mode === "full" ? " 和 worker" : ""} 后生效。`
-            : "无需重启。",
-        ]
-          .filter(Boolean)
-          .join(" "),
-      );
+      const message = [
+        "平台配置已保存。",
+        immediate.length > 0 ? `${immediate.join("、")}已立即生效。` : "",
+        restart.length > 0
+          ? `${restart.join("、")}需要重启 Web${initial.mode === "full" ? " 和 worker" : ""} 后生效。`
+          : "无需重启。",
+      ]
+        .filter(Boolean)
+        .join(" ");
+      if (restart.length > 0) toast.warning(message, { title: "配置已保存，等待重启" });
+      else toast.success(message, { title: "平台配置已生效" });
       router.refresh();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "平台配置保存失败。");
@@ -116,7 +116,6 @@ export function PlatformSettings({
 
   return (
     <form className="settings-stack" onSubmit={submit}>
-      {message ? <div className="inline-success">{message}</div> : null}
       {error ? (
         <div className="auth-error" role="alert">
           {error}

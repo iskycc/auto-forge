@@ -20,6 +20,7 @@ import { KeyRound, Plus, RefreshCw, ShieldCheck, Trash2 } from "lucide-react";
 import { useState, type FormEvent } from "react";
 import { ActionDialog } from "@/components/action-dialog";
 import { permissionDescription, permissionLabel } from "@/lib/permission-presentation";
+import { useConfirm, useToast } from "@/components/ui-feedback";
 
 export function OperationsSettings({
   initialAccounts,
@@ -36,14 +37,14 @@ export function OperationsSettings({
   projects: Array<{ id: string; name: string }>;
   visibleSection: "accounts" | "retention";
 }) {
+  const confirmAction = useConfirm();
+  const toast = useToast();
   const [accounts, setAccounts] = useState(initialAccounts);
   const [policies, setPolicies] = useState(initialPolicies);
   const [tokens, setTokens] = useState<Record<string, ApiToken[]>>({});
   const [issuedToken, setIssuedToken] = useState("");
   const [previews, setPreviews] = useState<Record<string, RetentionPreview>>({});
   const [pending, setPending] = useState(false);
-  const [message, setMessage] = useState("");
-  const [error, setError] = useState("");
   const [createAccountOpen, setCreateAccountOpen] = useState(false);
 
   async function createAccount(event: FormEvent<HTMLFormElement>) {
@@ -102,7 +103,15 @@ export function OperationsSettings({
   }
 
   async function revokeToken(token: ApiToken) {
-    if (!window.confirm(`撤销令牌 ${token.name}？自动化调用会立即失效。`)) return;
+    if (
+      !(await confirmAction({
+        title: "撤销 API 令牌",
+        description: `令牌“${token.name}”会立即失效，使用它的自动化调用将无法继续。`,
+        confirmLabel: "确认撤销",
+        tone: "danger",
+      }))
+    )
+      return;
     await mutate(async () => {
       const revoked = await requestJson<ApiToken>(
         `/api/v1/api-tokens/${encodeURIComponent(token.id)}/revoke`,
@@ -143,11 +152,15 @@ export function OperationsSettings({
   async function toggleAccount(account: ServiceAccount) {
     const status = account.status === "active" ? "disabled" : "active";
     if (
-      !window.confirm(
-        status === "disabled"
-          ? `禁用服务账号 ${account.name}？其全部令牌将立即失效。`
-          : `重新启用服务账号 ${account.name}？已撤销和已过期令牌不会恢复。`,
-      )
+      !(await confirmAction({
+        title: status === "disabled" ? "禁用服务账号" : "启用服务账号",
+        description:
+          status === "disabled"
+            ? `服务账号“${account.name}”的全部令牌将立即失效。`
+            : `将重新启用服务账号“${account.name}”，已撤销和已过期令牌不会恢复。`,
+        confirmLabel: "确认变更",
+        tone: status === "disabled" ? "danger" : "default",
+      }))
     ) {
       return;
     }
@@ -199,9 +212,12 @@ export function OperationsSettings({
     const preview = previews[policy.category];
     if (!preview) return;
     if (
-      !window.confirm(
-        `立即清理 ${retentionLabel(policy.category)}？当前预览为 ${preview.eligibleRecords} 条，删除后的业务记录不可恢复。`,
-      )
+      !(await confirmAction({
+        title: `清理${retentionLabel(policy.category)}`,
+        description: `当前预览为 ${preview.eligibleRecords} 条，删除后的业务记录不可恢复。`,
+        confirmLabel: "确认清理",
+        tone: "danger",
+      }))
     ) {
       return;
     }
@@ -223,12 +239,10 @@ export function OperationsSettings({
 
   async function mutate(operation: () => Promise<string>) {
     setPending(true);
-    setError("");
-    setMessage("");
     try {
-      setMessage(await operation());
+      toast.success(await operation());
     } catch (problem) {
-      setError(problem instanceof Error ? problem.message : "操作失败。");
+      toast.error(problem instanceof Error ? problem.message : "操作失败。");
     } finally {
       setPending(false);
     }
@@ -236,13 +250,6 @@ export function OperationsSettings({
 
   return (
     <div className="settings-stack operations-settings">
-      {message ? <div className="inline-success">{message}</div> : null}
-      {error ? (
-        <div className="auth-error" role="alert">
-          {error}
-        </div>
-      ) : null}
-
       {visibleSection === "accounts" ? (
         <section className="content-card settings-section">
           <div className="section-heading">

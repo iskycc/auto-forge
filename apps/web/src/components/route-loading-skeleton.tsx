@@ -1,4 +1,4 @@
-import { LoaderCircle } from "lucide-react";
+import { LoadingGlyph } from "./loading-state";
 
 export function RouteLoadingSkeleton({ label }: { label: string }) {
   return (
@@ -9,10 +9,13 @@ export function RouteLoadingSkeleton({ label }: { label: string }) {
           <span className="skeleton-line skeleton-title" />
           <span className="skeleton-line skeleton-copy" />
         </div>
-        <LoaderCircle aria-hidden="true" className="spin route-loading-spinner" size={24} />
+        <LoadingGlyph />
       </section>
       <section className="content-card route-loading-card">
-        <span className="route-loading-label">{label}</span>
+        <span className="route-loading-label">
+          <strong>{label}</strong>
+          <small>页面结构已就绪，正在读取最新数据。</small>
+        </span>
         <div className="route-loading-toolbar">
           <span className="skeleton-block" />
           <span className="skeleton-block" />

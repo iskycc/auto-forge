@@ -56,8 +56,10 @@ test("executes and cancels TestNG in a constrained immutable container", async (
     const cancellationBatchId = await scheduleExecution(page, cancellationSuiteName);
     await waitForRunningContainer(agent);
     await page.goto(`/run-batches/${encodeURIComponent(cancellationBatchId)}`);
-    page.once("dialog", (dialog) => dialog.accept("Container cleanup acceptance"));
     await page.getByRole("button", { name: "取消该用例" }).click();
+    const cancellationDialog = page.getByRole("dialog", { name: "取消用例执行" });
+    await cancellationDialog.getByLabel("取消原因").fill("Container cleanup acceptance");
+    await cancellationDialog.getByRole("button", { name: "确认取消" }).click();
     const cancelled = await waitForBatch(page, cancellationBatchId, agent, "cancelled");
     expect(cancelled.attempts.at(-1)).toMatchObject({
       status: "cancelled",

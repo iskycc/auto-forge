@@ -169,12 +169,6 @@ jobs:
             needs_deploy: true
             needs_previous: true
             needs_ldap: false
-          - name: musl real Agent
-            phase: real-agent
-            variant: amd64-musl
-            needs_deploy: false
-            needs_previous: false
-            needs_ldap: false
     env:
       GH_TOKEN: ${{ github.token }}
     steps:

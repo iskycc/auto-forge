@@ -7,6 +7,7 @@ import { KeyRound, LogOut, ShieldCheck } from "lucide-react";
 import { useState, type FormEvent } from "react";
 
 import { Button, Input } from "@/components/ui";
+import { useConfirm } from "@/components/ui-feedback";
 
 export function AccountSecurity({
   identity,
@@ -15,6 +16,7 @@ export function AccountSecurity({
   identity: AuthenticatedIdentity;
   sessions: UserSession[];
 }) {
+  const confirmAction = useConfirm();
   const [sessions, setSessions] = useState(initialSessions);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
@@ -47,7 +49,15 @@ export function AccountSecurity({
   }
 
   async function revokeSession(session: UserSession) {
-    if (!window.confirm("终止此登录会话？")) return;
+    if (
+      !(await confirmAction({
+        title: "终止登录会话",
+        description: "该设备上的登录状态会立即失效；若终止当前会话，你将返回登录页。",
+        confirmLabel: "终止会话",
+        tone: "danger",
+      }))
+    )
+      return;
     setPending(true);
     setError("");
     try {

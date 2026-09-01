@@ -1,17 +1,20 @@
 "use client";
 
 import { Button } from "@/components/ui";
+import { LoadingState } from "@/components/loading-state";
+import { useConfirm, useToast } from "@/components/ui-feedback";
 
 import type { SystemDiagnostic } from "@autoforge/contracts";
 import { Download, RefreshCw, RotateCcw, Stethoscope } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
 export function SystemDiagnostics({ canManage }: { canManage: boolean }) {
+  const confirmAction = useConfirm();
+  const toast = useToast();
   const [diagnostic, setDiagnostic] = useState<SystemDiagnostic>();
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [redriving, setRedriving] = useState(false);
-  const [message, setMessage] = useState("");
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -29,10 +32,17 @@ export function SystemDiagnostics({ canManage }: { canManage: boolean }) {
   }, []);
 
   async function redriveDeadLetters(): Promise<void> {
-    if (!window.confirm("重新投递当前死信任务？任务会从第 1 次投递重新执行。")) return;
+    if (
+      !(await confirmAction({
+        title: "重新投递死信任务",
+        description: "当前死信任务会从第 1 次投递重新执行，请确认故障原因已经处理。",
+        confirmLabel: "重新投递",
+        tone: "danger",
+      }))
+    )
+      return;
     setRedriving(true);
     setError("");
-    setMessage("");
     try {
       const response = await fetch("/api/v1/settings/diagnostics", { method: "POST" });
       const body = (await response.json()) as {
@@ -40,7 +50,7 @@ export function SystemDiagnostics({ canManage }: { canManage: boolean }) {
         error?: { message?: string };
       };
       if (!response.ok) throw new Error(body.error?.message ?? "重新投递死信失败。");
-      setMessage(`已重新投递 ${body.redriven ?? 0} 个死信任务。`);
+      toast.success(`已重新投递 ${body.redriven ?? 0} 个死信任务。`);
       await refresh();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "重新投递死信失败。");
@@ -68,12 +78,12 @@ export function SystemDiagnostics({ canManage }: { canManage: boolean }) {
           {error}
         </p>
       ) : null}
-      {message ? (
-        <p className="inline-success" role="status">
-          {message}
-        </p>
+      {loading && !diagnostic ? (
+        <LoadingState
+          label="正在执行健康检查"
+          description="正在检查数据库、对象存储、队列与缓存状态。"
+        />
       ) : null}
-      {loading && !diagnostic ? <div className="inline-empty">正在执行有界健康检查…</div> : null}
       {diagnostic ? (
         <>
           <div className="diagnostic-summary">

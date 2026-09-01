@@ -2,6 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { createServer } from "node:http";
 
 import {
+  acceptSystemDialog,
   browserJson,
   ensureAdministrator,
   selectProjectContext,
@@ -75,8 +76,8 @@ test("service account lifecycle immediately narrows token access and produces ex
   });
   expect(narrowed.status()).toBe(403);
 
-  page.once("dialog", (dialog) => dialog.accept());
   await accountCard.getByRole("button", { name: "禁用账号" }).click();
+  await acceptSystemDialog(page, "禁用服务账号", "确认变更");
   await expect(page.getByText("服务账号已禁用。")).toBeVisible();
   const disabled = await page.request.get("/api/v1/audit-events", {
     headers: { authorization: `Bearer ${token}` },
@@ -88,13 +89,13 @@ test("service account lifecycle immediately narrows token access and produces ex
   if ((await accountEditor.getAttribute("open")) === null) {
     await refreshedCard.getByText("编辑账号与权限").click();
   }
-  page.once("dialog", (dialog) => dialog.accept());
   await refreshedCard.getByRole("button", { name: "启用账号" }).click();
+  await acceptSystemDialog(page, "启用服务账号", "确认变更");
   await expect(page.getByText("服务账号已重新启用。")).toBeVisible();
   refreshedCard = page.locator("article", { hasText: accountName });
   await refreshedCard.getByRole("button", { name: "令牌" }).click();
-  page.once("dialog", (dialog) => dialog.accept());
   await refreshedCard.getByRole("button", { name: "撤销 e2e-token" }).click();
+  await acceptSystemDialog(page, "撤销 API 令牌", "确认撤销");
   await expect(page.getByText("API 令牌已撤销。")).toBeVisible();
   const revoked = await page.request.get("/api/v1/audit-events", {
     headers: { authorization: `Bearer ${token}` },
@@ -172,11 +173,11 @@ test("schedule overview can pause and delete plans while LDAP failures remain di
   await scheduleRow.getByRole("button", { name: "暂停" }).click();
   await expect(page.getByText("计划已暂停。")).toBeVisible();
   await expect(page.getByRole("row", { name: new RegExp(suiteName) })).toContainText("暂停");
-  page.once("dialog", (dialog) => dialog.accept());
   await page
     .getByRole("row", { name: new RegExp(suiteName) })
     .getByRole("button", { name: "删除" })
     .click();
+  await acceptSystemDialog(page, "删除计划任务", "确认删除");
   await expect(page.getByText("计划任务已删除。")).toBeVisible();
   await expect(page.getByRole("row", { name: new RegExp(suiteName) })).toHaveCount(0);
 });
@@ -253,7 +254,7 @@ test("project webhooks support custom POST bodies and task binding", async ({ pa
     const endpointOption = bindingCard.locator("label", { hasText: webhookName });
     await endpointOption.locator('input[type="checkbox"]').check();
     await bindingCard.getByRole("button", { name: "保存通知绑定" }).click();
-    await expect(bindingCard.getByText("Webhook 绑定已保存。")).toBeVisible();
+    await expect(page.locator(".toast-card", { hasText: "Webhook 绑定已保存。" })).toBeVisible();
 
     const bindings = await browserJson<{ webhookIds: string[] }>(
       page,
