@@ -14,6 +14,7 @@ import {
   FolderOpen,
   Layers3,
   ShieldCheck,
+  SearchCheck,
   Sparkles,
   Webhook,
 } from "lucide-react";
@@ -56,6 +57,7 @@ const primaryNavigation: NavigationItem[] = [
     defaultSection: "runners",
   },
   { label: "质量洞察", href: "/insights", icon: BarChart3, permission: "run.read" },
+  { label: "用例分析", href: "/case-analysis", icon: SearchCheck, permission: "run.read" },
 ];
 
 const administrationNavigation: NavigationItem[] = [

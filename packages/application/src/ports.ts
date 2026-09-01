@@ -84,7 +84,16 @@ import type {
   WebhookDelivery,
   WebhookDispatchClaim,
   WebhookRequestMethod,
+  FailureAnalysisCategory,
+  FailureAnalysisClaim,
+  FailureAnalysisScreenshot,
 } from "@autoforge/domain";
+import type {
+  FailureAnalysisBatch,
+  FailureAnalysisBatchPage,
+  FailureAnalysisCandidatePage,
+  FailureAnalysisSort,
+} from "@autoforge/contracts";
 import type {
   DdtCaseListPage,
   DdtCaseListQuery,
@@ -130,6 +139,12 @@ export type CreateProjectRuntimeAssetRecord = ProjectRuntimeAsset;
 
 export interface ProjectStructureRepository {
   list(projectId: string): Promise<ProjectStructure>;
+  listRuntimeAssetsPage(input: {
+    sourceType?: ProjectRuntimeAsset["sourceType"];
+    afterId?: string;
+    limit: number;
+  }): Promise<{ items: ProjectRuntimeAsset[]; nextCursor?: string }>;
+  findRuntimeAssetsByObjectKeys(objectKeys: readonly string[]): Promise<ProjectRuntimeAsset[]>;
   createVersion(record: CreateProjectVersionRecord): Promise<ProjectVersion>;
   createStage(record: CreateTestStageRecord): Promise<TestStage>;
   createRuntimeAsset(record: CreateProjectRuntimeAssetRecord): Promise<ProjectRuntimeAsset>;
@@ -1494,7 +1509,9 @@ export type RunBatchAdapterRuntimeSnapshot = {
 };
 
 /**
- * 派生执行必须读取原批次的不可变快照，而不是重新读取可能已经变更的任务配置。
+ * 派生执行读取原批次的不可变任务和用例快照。整批失败重跑继续固化原运行资产；
+ * 公开日志页的单用例诊断重跑则由应用层显式要求仓储解析当前项目版本运行资产，
+ * 用于验证依赖更新后的结果。
  * Jenkins 密钥只在应用层编排和仓储之间传递，不进入 RunBatchDetails 或 HTTP DTO。
  */
 export type RunBatchRerunSnapshot = {
@@ -1579,6 +1596,89 @@ export type RunBatchListPage = {
   items: RunBatch[];
   nextCursor?: string;
 };
+
+export interface FailureAnalysisRepository {
+  listBatches(input: {
+    projectId: string;
+    projectVersionId?: string;
+    cursor?: string;
+    limit: number;
+  }): Promise<FailureAnalysisBatchPage>;
+  getBatch(input: {
+    projectId: string;
+    projectVersionId: string;
+    batchId: string;
+  }): Promise<FailureAnalysisBatch | null>;
+  listCandidates(input: {
+    projectId: string;
+    projectVersionId: string;
+    batchId: string;
+    query?: string;
+    sort: FailureAnalysisSort;
+    direction: "asc" | "desc";
+    cursor?: string;
+    limit: number;
+  }): Promise<FailureAnalysisCandidatePage | null>;
+  claim(input: {
+    projectId: string;
+    projectVersionId: string;
+    batchId: string;
+    executionRunIds: readonly string[];
+    claims: ReadonlyArray<{ id: string; executionRunId: string }>;
+    claimantId: string;
+    claimantUsername: string;
+    claimantDisplayName: string;
+    claimedAt: string;
+  }): Promise<{
+    claims: FailureAnalysisClaim[];
+    unavailableExecutionRunIds: string[];
+  }>;
+  listClaims(input: {
+    projectId: string;
+    projectVersionId?: string;
+    claimantId: string;
+    batchId?: string;
+    cursor?: string;
+    limit: number;
+  }): Promise<{ items: FailureAnalysisClaim[]; nextCursor?: string }>;
+  start(input: {
+    analysisId: string;
+    projectId: string;
+    claimantId: string;
+    category: FailureAnalysisCategory;
+    startedAt: string;
+  }): Promise<FailureAnalysisClaim | null>;
+  findOwnedClaims(input: {
+    analysisIds: readonly string[];
+    projectId: string;
+    claimantId: string;
+  }): Promise<FailureAnalysisClaim[]>;
+  getClaim(analysisId: string, projectId: string): Promise<FailureAnalysisClaim | null>;
+  findSuccessfulManualRerunAttempts(input: {
+    analysisIds: readonly string[];
+    projectId: string;
+    claimantId: string;
+  }): Promise<Map<string, string>>;
+  attachScreenshot(input: {
+    analysisIds: readonly string[];
+    projectId: string;
+    claimantId: string;
+    screenshot: FailureAnalysisScreenshot;
+    updatedAt: string;
+  }): Promise<FailureAnalysisClaim[]>;
+  complete(input: {
+    analysisIds: readonly string[];
+    projectId: string;
+    claimantId: string;
+    category: FailureAnalysisCategory;
+    issueDescription?: string;
+    caseFixEvidence?: string;
+    ticketReference?: string;
+    remark?: string;
+    rerunProofs: ReadonlyMap<string, { attemptId: string; url: string }>;
+    completedAt: string;
+  }): Promise<FailureAnalysisClaim[]>;
+}
 
 export type RunBatchCaseScope = number | "all" | "summary";
 export type RunBatchCaseStatusFilter = RunAttempt["status"] | "pending";

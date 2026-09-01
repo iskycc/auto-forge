@@ -9,6 +9,7 @@ import type {
   IdGenerator,
   RunBatchRepository,
 } from "./ports";
+import { resolveAttemptSchedulingContexts } from "./attempt-scheduling-contexts";
 
 /**
  * 日志公开访问链接永久有效：离线部署没有外部吊销通道，链接一旦泄露只能靠删除对应
@@ -196,26 +197,34 @@ export class AttemptLogShareService {
     createdBy: string,
   ): Promise<Map<string, string>> {
     const now = this.clock.now();
+    const uniqueAttemptIds = [...new Set(attemptIds)];
+    if (uniqueAttemptIds.length === 0) return new Map();
+    const [contextsByAttempt, activeShares] = await Promise.all([
+      resolveAttemptSchedulingContexts(this.executions, uniqueAttemptIds),
+      this.shares.findActiveByAttemptIds(uniqueAttemptIds, now.toISOString()),
+    ]);
+    if (contextsByAttempt.size !== uniqueAttemptIds.length) {
+      throw new DomainError("RUN_ATTEMPT_NOT_FOUND", "指定的执行尝试不存在。");
+    }
+    const activeExpiryByAttempt = new Map(
+      activeShares.map((share) => [share.attemptId, share.expiresAt]),
+    );
     const tokensByAttempt = new Map<string, string>();
-    for (const attemptId of attemptIds) {
-      if (tokensByAttempt.has(attemptId)) continue;
-      const context = await this.executions.resolveAttemptSchedulingContext(attemptId);
-      if (!context) {
-        throw new DomainError("RUN_ATTEMPT_NOT_FOUND", "指定的执行尝试不存在。");
-      }
-      const existing = await this.shares.findActiveByAttemptId(attemptId, now.toISOString());
+    const records = uniqueAttemptIds.map((attemptId): AttemptLogShareRecord => {
+      const context = contextsByAttempt.get(attemptId)!;
       const token = this.tokens.issue();
-      await this.shares.create({
+      tokensByAttempt.set(attemptId, token);
+      return {
         id: this.ids.next(),
         tokenHash: this.tokens.hash(token),
         attemptId,
         batchId: context.batchId,
         createdBy,
         createdAt: now.toISOString(),
-        expiresAt: existing?.expiresAt ?? PERMANENT_LOG_ACCESS_EXPIRY,
-      });
-      tokensByAttempt.set(attemptId, token);
-    }
+        expiresAt: activeExpiryByAttempt.get(attemptId) ?? PERMANENT_LOG_ACCESS_EXPIRY,
+      };
+    });
+    await this.shares.createMany(records);
     return tokensByAttempt;
   }
 

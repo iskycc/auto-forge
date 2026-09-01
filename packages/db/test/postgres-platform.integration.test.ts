@@ -357,6 +357,24 @@ describe.skipIf(!connectionString)("PostgreSQL platform repositories", () => {
         archiveFormat: "tar.gz",
         createdAt: "2026-08-09T00:00:03.000Z",
       });
+      const uploadedJdk = await structures.createRuntimeAsset({
+        id: randomUUID(),
+        projectId: secondProjectId,
+        kind: "jdk",
+        sourceType: "upload",
+        fileName: "uploaded-jdk.zip",
+        objectKey: `projects/${secondProjectId}/runtime-assets/uploaded-jdk.zip`,
+        sha256: "a".repeat(64),
+        sizeBytes: 16_384,
+        archiveFormat: "zip",
+        createdAt: "2026-08-09T00:00:03.500Z",
+      });
+      await expect(
+        structures.listRuntimeAssetsPage({ sourceType: "url", limit: 1 }),
+      ).resolves.toMatchObject({ items: [expect.objectContaining({ sourceType: "url" })] });
+      await expect(
+        structures.findRuntimeAssetsByObjectKeys([uploadedJdk.objectKey!]),
+      ).resolves.toMatchObject([{ id: uploadedJdk.id, kind: "jdk", sourceType: "upload" }]);
       await structures.updateAdapterConfiguration({
         projectId: secondProjectId,
         projectVersionId: projectVersion.id,

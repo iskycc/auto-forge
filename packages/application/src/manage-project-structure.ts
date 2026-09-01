@@ -31,6 +31,14 @@ export class ProjectStructureService {
     return this.structures.list(projectId);
   }
 
+  listRuntimeAssetsPage(input: { sourceType?: "upload" | "url"; afterId?: string; limit: number }) {
+    return this.structures.listRuntimeAssetsPage(input);
+  }
+
+  findRuntimeAssetsByObjectKeys(objectKeys: readonly string[]) {
+    return this.structures.findRuntimeAssetsByObjectKeys(objectKeys);
+  }
+
   createVersion(projectId: string, input: CreateProjectVersionInput) {
     const validated = createProjectVersionInputSchema.parse(input);
     return this.structures.createVersion({

@@ -3,6 +3,7 @@ export * from "./postgres-database";
 export * from "./postgres-ddt";
 export * from "./postgres-identity-access";
 export * from "./postgres-execution-control";
+export * from "./postgres-failure-analysis";
 export * from "./postgres-platform-repository";
 export * from "./postgres-run-batch";
 export * from "./postgres-round-recovery";

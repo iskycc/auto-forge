@@ -20,6 +20,7 @@ const primaryRoutes = [
   "/runners",
   "/runners?section=groups",
   "/insights",
+  "/case-analysis",
   "/settings/automation",
   "/settings/webhooks",
   "/audit",
@@ -33,6 +34,7 @@ const primaryRoutes = [
   "/settings/platform?section=accounts",
   "/settings/platform?section=retention",
   "/settings/platform?section=diagnostics",
+  "/settings/platform?section=storage",
   "/account/security",
 ] as const;
 

@@ -27,6 +27,7 @@ AutoForge 是一个面向自动化测试场景的用例工厂，用于统一管�
 - 用例文件夹支持递归整选、取消和半选状态；选择目标任务后可反向筛出尚未加入的用例，再批量加入。用例任务创建、任务详情以及任务内用例树形新增/批量删除均使用有界分页渲染；任务列表可将全部普通/DDT 成员导出为仅包含完整类路径和用例名称的 XLSX，数据库读取与工作簿写入均采用流式分批。任务不再有 500 个用例的产品上限，Lite/Full 均以分批 SQL 和调度窗口支持 10 万级任务及执行批次；每个任务强制绑定一个有效项目版本，成员只能来自该版本，任务列表、快捷执行、执行记录、洞察和计划视图均跟随顶栏当前版本并显示版本友好名称。任务支持重命名、描述、复制、归档、启停、版本/变更快照与修订号并发冲突保护，执行策略覆盖 Runner/Runner Group、项目版本、Adapter 环境地址、优先级、基础并发度、在指定轮次判断且命中后持续生效的重跑并发、同轮多 Jenkins 环境并行恢复屏障、重试、排队/领取/上传恢复时限、Runner 标签与产物规则并在批次创建前逐项预检。每条 Jenkins 恢复配置可只读测试任务信息和上一构建，不会触发构建；触发后会作为轮次间时间节点展示，并逐流水线记录构建号、实际起止时间与结果。单用例执行时限只读取平台全局配置。
 - 项目级任务完成 Webhook 支持 GET 查询参数和 POST JSON 模板，可在独立“回调通知”页面管理并与多个任务绑定；每个端点可用 100 个用例、80% 通过率的预置消息直接测试连通性和模板。Lite/Full 都先按终态事件幂等持久化通知快照，再以有界租约和退避重试发送；接收端失败不会改变任务执行结果，未配置或未绑定时不会产生任何出站请求。详细语义见 [Webhook 完成通知](./docs/architecture/webhook-notifications.md)。
 - 用例定义支持展示名、描述、标签与启停编辑，版本历史可查看来源、创建人与变更原因，并允许从旧版本恢复生成新版本而不覆盖历史。用例库支持按 `case.manage` 权限单删和批量删除；删除同步清理任务成员关系，但保留已经物化的执行与分析历史。
+- 主导航新增“用例分析”工作台：主页按任务展示当前项目版本中已进入终态的普通用例批次，每个任务可进入独立分析详情；详情只列出该任务 `currentRound` 最后一轮仍执行失败的用例，单用例执行、日志诊断重跑、最后失败再次执行、未结束批次和较早轮次失败均不进入分析范围。候选支持按类路径、用例名称、失败堆栈和认领状态进行服务端排序与筛选。认领、单个/批量分析、三选一结论、问题说明、修改证明、问题单和备注由 Lite/Full 数据库持久化。重跑通过会优先关联公开日志页发起的成功重跑永久日志，否则要求粘贴执行通过截图并通过本地或 MinIO 对象存储保存。候选和个人队列均使用 50 行游标分页，两个 Tab 按需取数并取消过期请求；列表只传输失败摘要前 8,192 字符，完整日志按需读取，Lite/Full 均有 10 万最终失败记录的性能回归门禁。
 - Runner Agent 注册、身份凭据落盘、周期心跳、在线/离线判定和执行机控制台；支持凭据轮换（旧凭据有明确失效窗口）、撤销、禁用、排空与注销，注销后活跃租约立即到期回收，撤销或注销后心跳、claim、上报与终端均被拒绝。
 - 首页按本周质量、活动执行、用例库、执行机组、失败洞察和最近动态展示真实工作数据；有 `run.create` 权限的用户可在任意页面通过顶栏“开始执行”发起任务或单用例执行。
 - 执行机组可按机房、网络区域或能力维护成员。批次创建时将组成员固化为 Runner ID 快照，后续组变更不会改变历史或运行中的批次；任务和单用例都支持直接选择 Runner 或选择执行机组。
@@ -54,6 +55,7 @@ AutoForge 是一个面向自动化测试场景的用例工厂，用于统一管�
 - Agent stdout/stderr/诊断流的 UTF-8 分块、精确的双层秘密脱敏、有界异步磁盘 spool、连续确认水位和断线重传；子进程输出与 spool 持久化解耦，不同 attempt 不再共用全局落盘锁，已有 sink 时不保留第二份完整内存日志，普通 Java 类路径不会被误判为 JWT 或因固定尾部缓冲而延迟显示。执行期间每 500 ms 尝试上传新增块，控制面先持久化，再由 Lite 进程内通道或 Full NATS 跨副本广播通过同源、短时票据 WebSocket 推送到执行详情。
 - 产物安全发现、SHA-256 声明和鉴权下载；Lite 经控制面流式写入本地对象目录，Full 使用 15 分钟单对象 MinIO 预签名目标，Agent 不持有长期凭据，finalize 前由控制面重新核对大小和 SHA-256。TestNG XML 以禁用 DTD/实体的有界流式解析器提取 suite/test/class/method、耗时和汇总，结果由 SQLite/PostgreSQL 持久化并在执行详情展示，原始 XML 保留为产物。
 - SQLite 持久任务和 Lite 嵌入式 worker；PostgreSQL transactional outbox、JetStream 显式确认和 Full 独立 worker。SQLite 队列使用短写事务与 `SQLITE_BUSY`/`SQLITE_LOCKED` 退避，持续锁竞争解除后内嵌 worker 自动恢复。系统诊断会显示死信类型、关联对象与最后错误，管理员确认故障已修复后可重新投递；SQLite/JetStream 运行同一套至少一次投递契约测试，覆盖去重、延迟、租约恢复、死信、重投和关闭排空。
+- 管理员存储空间页汇总平台实际占用与内容逻辑大小，并以游标分页列出数据目录全部常规文件、Lite/Full 每批次日志 SQLite、Lite 受管对象、Full MinIO 对象及 URL 型 JDK/依赖引用；SQLite WAL/SHM 与主文件分别展示逻辑路径、物理位置、大小和磁盘块占用。
 - 可重建的 Lite 内存缓存与 Full Redis 缓存适配器；缓存不作为业务事实来源。
 - GitHub Actions CI，以及四变体后端离线镜像和独立发布后 Gate E 检查流水线；耗时验收按独立状态分区并行执行，单个测试 Job 以五分钟内完成为目标。每个后端镜像均内置 Linux `amd64`/`arm64` Agent 与 Adapter。Release 不再构建 `toolchain-amd64/arm64`，JDK 和测试依赖由项目上传或登记内网链接。
 
@@ -86,6 +88,14 @@ AutoForge 是一个面向自动化测试场景的用例工厂，用于统一管�
 | `GET`          | `/api/v1/case-sources/{sourceId}`                         | 读取已持久化的 JAR 扫描结果                          |
 | `PUT`          | `/api/v1/case-sources/{sourceId}/authoritative`           | 将一个 JAR 设为唯一权威全量来源                      |
 | `GET`          | `/api/v1/objects`                                         | 浏览本地对象目录或 MinIO bucket 中的受管对象         |
+| `GET`          | `/api/v1/settings/storage`                                | 分页查看平台文件、SQLite 与对象存储空间清单          |
+| `GET`          | `/api/v1/failure-analysis/batches`                        | 分页查询含最终失败用例的执行记录                     |
+| `GET`          | `/api/v1/failure-analysis/candidates`                     | 筛选和排序一次执行的最终失败用例                     |
+| `GET/POST`     | `/api/v1/failure-analysis/claims`                         | 查询个人分析队列或批量认领失败用例                   |
+| `POST`         | `/api/v1/failure-analysis/claims/{analysisId}/start`      | 选择三种失败类别之一并开始分析                       |
+| `POST`         | `/api/v1/failure-analysis/claims/complete`                | 校验并完成一个或多个失败用例分析                     |
+| `POST`         | `/api/v1/failure-analysis/claims/evidence`                | 为一个或多个分析任务上传重跑通过截图                 |
+| `GET`          | `/api/v1/failure-analysis/claims/{analysisId}/evidence`   | 读取有权限查看的分析证明截图                         |
 | `POST`         | `/api/v1/case-suites`                                     | 创建用例任务                                         |
 | `GET`          | `/api/v1/case-suites/{suiteId}`                           | 查询用例任务及其用例                                 |
 | `POST`         | `/api/v1/case-suites/{suiteId}/cases`                     | 批量添加勾选用例                                     |

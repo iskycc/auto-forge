@@ -3,6 +3,7 @@ import { DatabaseSync } from "node:sqlite";
 import { resolve } from "node:path";
 
 import { appAlert, ensureAdministrator, expandAdministrationGroup } from "./support/session";
+import { expectUiIntegrity } from "./support/ui-guard";
 
 test("configuration conflicts, diagnostics and retention controls remain observable", async ({
   page,
@@ -83,6 +84,34 @@ test("configuration conflicts, diagnostics and retention controls remain observa
     await deadLetterPanel.getByRole("button", { name: "重新投递全部" }).click();
     await expect(page.getByRole("status")).toContainText("已重新投递 1 个死信任务");
     await expect(deadLetterPanel).toHaveCount(0);
+  }
+
+  await page.getByRole("link", { name: "存储空间" }).click();
+  await expect(page.getByRole("heading", { name: "存储空间" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "空间概览" })).toBeVisible();
+  await expect(page.locator(".storage-summary-grid")).toContainText("平台实际占用");
+  await expect(page.locator(".storage-inventory-table")).toBeVisible();
+  await page.setViewportSize({ width: 1024, height: 768 });
+  await expectUiIntegrity(page);
+  const storageResponse = await page.request.get("/api/v1/settings/storage?limit=1");
+  expect(storageResponse.status()).toBe(200);
+  const storageBody = (await storageResponse.json()) as {
+    items: Array<{ logicalPath: string; storagePath: string; sizeBytes: number }>;
+    nextCursor?: string;
+    summary: { fileCount: number; allocatedBytes: number; dataDirectory: string };
+  };
+  expect(storageBody.items).toHaveLength(1);
+  expect(storageBody.summary.fileCount).toBeGreaterThan(0);
+  expect(storageBody.summary.allocatedBytes).toBeGreaterThan(0);
+  expect(storageBody.items[0]?.storagePath).toContain(storageBody.summary.dataDirectory);
+  if (diagnosticBody.mode === "lite") {
+    await page.getByRole("button", { name: "按文件类型筛选" }).click();
+    await page.getByRole("option", { name: "平台数据库" }).click();
+    await page.getByLabel("搜索文件名称或路径").fill("autoforge.sqlite");
+    await page.getByRole("button", { name: "应用筛选" }).click();
+    await expect(page).toHaveURL(/section=storage.*category=database.*query=autoforge\.sqlite/u);
+    await expect(page.locator(".storage-inventory-table")).toContainText("autoforge.sqlite");
+    await expect(page.locator(".storage-inventory-table")).toContainText("平台 SQLite 主文件");
   }
 
   await page.getByRole("link", { name: "数据保留" }).click();

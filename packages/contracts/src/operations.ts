@@ -334,6 +334,66 @@ export const systemDiagnosticSchema = z.object({
   ),
 });
 
+export const storageInventoryCategorySchema = z.enum([
+  "database",
+  "execution-log",
+  "jdk",
+  "dependency",
+  "case-source",
+  "ddt-import",
+  "artifact",
+  "analytics-export",
+  "configuration",
+  "temporary",
+  "other",
+]);
+
+export const storageInventoryLocationSchema = z.enum([
+  "data-directory",
+  "object-store",
+  "external-reference",
+]);
+
+export const storageInventoryItemSchema = z.object({
+  id: z.string().min(1).max(8_192),
+  category: storageInventoryCategorySchema,
+  location: storageInventoryLocationSchema,
+  name: z.string().min(1).max(512),
+  logicalPath: z.string().min(1).max(8_192),
+  storagePath: z.string().min(1).max(8_192),
+  sizeBytes: z.number().int().nonnegative(),
+  allocatedBytes: z.number().int().nonnegative(),
+  modifiedAt: z.string().datetime().optional(),
+  projectId: z.string().min(1).max(128).optional(),
+  detail: z.string().max(500).optional(),
+});
+
+export const storageInventorySummarySchema = z.object({
+  generatedAt: z.string().datetime(),
+  dataDirectory: z.string().min(1).max(8_192),
+  objectStore: z.enum(["local", "minio"]),
+  objectStoreRoot: z.string().min(1).max(8_192),
+  fileCount: z.number().int().nonnegative(),
+  logicalBytes: z.number().int().nonnegative(),
+  allocatedBytes: z.number().int().nonnegative(),
+  externalReferenceCount: z.number().int().nonnegative(),
+  externalReferenceBytes: z.number().int().nonnegative(),
+  categories: z.array(
+    z.object({
+      category: storageInventoryCategorySchema,
+      fileCount: z.number().int().nonnegative(),
+      logicalBytes: z.number().int().nonnegative(),
+      allocatedBytes: z.number().int().nonnegative(),
+    }),
+  ),
+});
+
+export const storageInventoryPageSchema = z.object({
+  items: z.array(storageInventoryItemSchema),
+  nextCursor: z.string().min(1).max(16_384).optional(),
+  summary: storageInventorySummarySchema,
+});
+
 export type ServiceAccount = z.infer<typeof serviceAccountSchema>;
 export type CreateServiceAccountInput = z.infer<typeof createServiceAccountInputSchema>;
 export type UpdateServiceAccountInput = z.infer<typeof updateServiceAccountInputSchema>;
@@ -355,3 +415,8 @@ export type AnalyticsExportJob = z.infer<typeof analyticsExportJobSchema>;
 export type CreateAnalyticsExportInput = z.infer<typeof createAnalyticsExportInputSchema>;
 export type GlobalSearchResult = z.infer<typeof globalSearchResultSchema>;
 export type SystemDiagnostic = z.infer<typeof systemDiagnosticSchema>;
+export type StorageInventoryCategory = z.infer<typeof storageInventoryCategorySchema>;
+export type StorageInventoryLocation = z.infer<typeof storageInventoryLocationSchema>;
+export type StorageInventoryItem = z.infer<typeof storageInventoryItemSchema>;
+export type StorageInventorySummary = z.infer<typeof storageInventorySummarySchema>;
+export type StorageInventoryPage = z.infer<typeof storageInventoryPageSchema>;

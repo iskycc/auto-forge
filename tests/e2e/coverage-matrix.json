@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-08-22",
+  "updatedAt": "2026-09-01",
   "dimensions": ["lite", "full", "offline", "realAgent", "success", "failure", "recovery"],
   "items": [
     {
@@ -277,7 +277,7 @@
       "id": "AF-E2E-015",
       "status": "partial",
       "owner": "analytics-search-notifications",
-      "evidence": ["tests/e2e/jar-import.spec.ts"],
+      "evidence": ["tests/e2e/failure-analysis.spec.ts", "tests/e2e/jar-import.spec.ts"],
       "coverage": {
         "lite": "partial",
         "full": "partial",

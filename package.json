@@ -24,7 +24,7 @@
     "test:deployment": "bash scripts/quality/test-deployment.sh",
     "licenses:generate": "node scripts/licenses/generate.mjs",
     "licenses:check": "node scripts/licenses/generate.mjs --check",
-    "test:e2e": "playwright test tests/e2e/all-rounds.spec.ts tests/e2e/case-suite-lifecycle.spec.ts tests/e2e/ddt-management.spec.ts tests/e2e/execution-recovery.spec.ts tests/e2e/identity-rbac.spec.ts tests/e2e/jar-import.spec.ts tests/e2e/management-operations.spec.ts tests/e2e/platform-operations.spec.ts tests/e2e/project-isolation.spec.ts tests/e2e/scheduling-refill.spec.ts tests/e2e/single-case-run.spec.ts tests/e2e/ui-layout.spec.ts",
+    "test:e2e": "playwright test tests/e2e/all-rounds.spec.ts tests/e2e/case-suite-lifecycle.spec.ts tests/e2e/ddt-management.spec.ts tests/e2e/execution-recovery.spec.ts tests/e2e/failure-analysis.spec.ts tests/e2e/identity-rbac.spec.ts tests/e2e/jar-import.spec.ts tests/e2e/management-operations.spec.ts tests/e2e/platform-operations.spec.ts tests/e2e/project-isolation.spec.ts tests/e2e/scheduling-refill.spec.ts tests/e2e/single-case-run.spec.ts tests/e2e/ui-layout.spec.ts",
     "test:e2e:matrix": "node scripts/quality/validate-e2e-matrix.mjs",
     "test:container-executor": "bash scripts/quality/test-container-executor.sh",
     "test:ldap-e2e": "bash scripts/quality/test-ldap-e2e.sh",

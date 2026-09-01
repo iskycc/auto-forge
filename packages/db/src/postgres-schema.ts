@@ -1025,6 +1025,78 @@ export const pgRunAttempts = pgTable(
   ],
 );
 
+export const pgFailureAnalysisClaims = pgTable(
+  "failure_analysis_claims",
+  {
+    id: text("id").primaryKey(),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => pgProjects.id, { onDelete: "cascade" }),
+    batchId: text("batch_id")
+      .notNull()
+      .references(() => pgRunBatches.id, { onDelete: "cascade" }),
+    executionRunId: text("execution_run_id")
+      .notNull()
+      .references(() => pgExecutionRuns.id, { onDelete: "cascade" }),
+    caseDefinitionId: text("case_definition_id").notNull(),
+    attemptId: text("attempt_id")
+      .notNull()
+      .references(() => pgRunAttempts.id, { onDelete: "cascade" }),
+    caseName: text("case_name").notNull(),
+    className: text("class_name").notNull(),
+    attemptNumber: integer("attempt_number").notNull(),
+    failureSummary: text("failure_summary").notNull(),
+    resultCode: text("result_code"),
+    status: text("status", { enum: ["claimed", "analyzing", "completed"] }).notNull(),
+    category: text("category", {
+      enum: ["rerun_passed", "case_fixed", "code_issue_filed"],
+    }),
+    claimantId: text("claimant_id").notNull(),
+    claimantUsername: text("claimant_username").notNull(),
+    claimantDisplayName: text("claimant_display_name").notNull(),
+    claimedAt: text("claimed_at").notNull(),
+    analysisStartedAt: text("analysis_started_at"),
+    completedAt: text("completed_at"),
+    issueDescription: text("issue_description"),
+    caseFixEvidence: text("case_fix_evidence"),
+    ticketReference: text("ticket_reference"),
+    remark: text("remark"),
+    rerunProofAttemptId: text("rerun_proof_attempt_id").references(() => pgRunAttempts.id, {
+      onDelete: "set null",
+    }),
+    rerunProofUrl: text("rerun_proof_url"),
+    screenshotObjectKey: text("screenshot_object_key"),
+    screenshotFileName: text("screenshot_file_name"),
+    screenshotMediaType: text("screenshot_media_type", {
+      enum: ["image/png", "image/jpeg", "image/webp"],
+    }),
+    screenshotSizeBytes: integer("screenshot_size_bytes"),
+    screenshotSha256: text("screenshot_sha256"),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("failure_analysis_claims_run_uq").on(table.executionRunId),
+    index("failure_analysis_claims_project_claimant_idx").on(
+      table.projectId,
+      table.claimantId,
+      table.updatedAt,
+      table.id,
+    ),
+    index("failure_analysis_claims_project_claimant_batch_idx").on(
+      table.projectId,
+      table.claimantId,
+      table.batchId,
+      table.updatedAt,
+      table.id,
+    ),
+    index("failure_analysis_claims_batch_status_idx").on(
+      table.batchId,
+      table.status,
+      table.executionRunId,
+    ),
+  ],
+);
+
 // 日志公开访问：token 明文只出现在导出响应中，库中只存 SHA-256 哈希。
 // expires_at 对新记录为永久哨兵值（应用层 PERMANENT_LOG_ACCESS_EXPIRY），列保持 NOT NULL。
 export const pgAttemptLogShares = pgTable(
@@ -1745,6 +1817,7 @@ export const postgresSchema = {
   runBatchRunners: pgRunBatchRunners,
   executionRuns: pgExecutionRuns,
   runAttempts: pgRunAttempts,
+  failureAnalysisClaims: pgFailureAnalysisClaims,
   assignments: pgAssignments,
   assignmentLeases: pgAssignmentLeases,
   assignmentClaimRequests: pgAssignmentClaimRequests,

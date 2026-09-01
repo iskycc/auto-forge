@@ -4,6 +4,98 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## 1.8.0 - 2026-09-01
+
+### Added
+
+- The new `用例分析` workspace lets users select a terminal ordinary case-suite execution and claim
+  only cases that failed in that batch's declared final `currentRound`. Single-case runs, log
+  diagnostic reruns, derived final-failure reruns, active batches and failures from earlier rounds
+  are excluded. Claims, claimant identity, claim status, selected failure category and analysis start
+  time are persisted in Lite and Full, so reloads, sign-outs and browser changes do not lose the work
+  queue.
+- A project-scoped `analysis.manage` permission gates claim and analysis mutations; read-only viewers
+  and auditors can inspect the workspace without changing ownership or categories.
+- Failure candidates support bounded server-side search, cursor pagination and sorting by class
+  path, case name, failure stack or claim status. A floating action enters the personal analysis
+  queue, where `开始分析` requires exactly one of `重跑通过`, `用例问题已修改` or
+  `代码问题已提单`.
+- The analysis landing page now presents each eligible terminal task as a compact summary card with
+  a dedicated detail entry. The detail workspace supports single and batch completion, case and
+  failure context, modal/private logs, permanent public logs, common remarks, category-specific
+  required evidence, and a second explicit risk confirmation before accepting `用例问题已修改`.
+- `重跑通过` automatically persists a permanent public-log proof when a successful rerun launched
+  from the case log page exists. Otherwise analysts must paste or select a PNG/JPEG/WebP screenshot;
+  evidence is stored through the shared ObjectStore (local filesystem in Lite and MinIO in Full),
+  bounded to 10 MiB and protected by media signature, size and SHA-256 validation.
+- Platform settings now includes a storage-space inventory for administrators. It summarizes actual
+  allocated space and logical content size, then exposes a cursor-paginated list of every regular
+  file under the AutoForge data directory, every MinIO object in Full mode, and URL-backed JDK or
+  dependency reference.
+- SQLite main databases, WAL/SHM sidecars and per-batch log databases are shown individually with
+  their logical path, physical path, file size, allocated blocks, update time and file category.
+  Uploaded JDK/dependency archives are enriched from authoritative runtime-asset metadata.
+
+### Fixed
+
+- Rerunning one case from its authenticated or public log page now resolves the JDK and dependency
+  archive currently configured for the original task's project version. The historical case version,
+  task policy, Runner selection and Adapter address rotation remain unchanged, while existing batches
+  and whole-batch final-failure reruns retain their immutable runtime snapshots.
+
+### Performance
+
+- The active failure-analysis tab is now server-rendered together with the task header while the
+  hidden tab loads only when selected. Sorting or filtering candidates no longer refetches the
+  personal queue, superseded requests are aborted and stale responses cannot overwrite the current
+  page. Tab changes update the recoverable URL without initiating a second full-page React Server
+  Component request.
+- Candidate/list payloads cap each failure-summary preview at 8,192 characters while the complete log
+  remains available through the modal and public-log actions. Successful rerun proof lookup returns
+  only the newest proof attempt per analysis instead of every historical rerun.
+- PostgreSQL batch completion now updates up to 100 analyses with one bounded `UNNEST` statement
+  instead of one network round trip per row. A task-scoped claimant index keeps the personal queue
+  bounded when one analyst has records across large task histories; populated candidate pages also
+  avoid a redundant batch-visibility query.
+- Batch “rerun passed” completion resolves all successful attempts and active share records in
+  bounded bulk queries, then persists the permanent proof links with one `createMany` call instead
+  of performing three repository operations for every selected case.
+
+### Tests
+
+- Shared SQLite/PostgreSQL repository coverage verifies final-failure selection, cursor ordering,
+  exclusive concurrent claims and persisted category transitions. Playwright verifies claim,
+  analysis start, reload recovery, return-to-claim and the 1024px layout boundary.
+- Dedicated Lite and real PostgreSQL performance regressions exercise 100,000 final failures across
+  landing aggregates, every candidate sort, stack search, 100-row claim/start/evidence/proof/completion
+  mutations and a 100,000-row personal queue. Playwright also rejects hidden-tab refetches and
+  candidate-filter refetches of the personal queue.
+- Storage inventory coverage verifies Lite local files, Full MinIO objects, external runtime assets,
+  cursor pagination, runtime-asset metadata lookup and the administrator UI.
+- Application coverage distinguishes current-runtime single-case diagnostics from immutable
+  final-failure reruns. Lite and Full repository coverage verifies that a newly created diagnostic
+  batch persists the newly selected project-version dependency asset. Playwright verifies the full
+  public-log action and the dependency input ultimately delivered to the Runner.
+
+### Database and persisted configuration
+
+- SQLite migration `0057_failure_analysis.sql` and PostgreSQL migration
+  `0056_failure_analysis.sql` add the durable `failure_analysis_claims` work queue. Existing execution
+  records are unchanged; records are created only when a user explicitly claims a final failure.
+- Built-in system/project administrators, test managers and execution operators receive
+  `analysis.manage`; read-only viewer and auditor roles remain non-mutating.
+
+### Compatibility and offline assets
+
+- Lite and Full share the same behavior. Runner Protocol, Jenkins plugins, Adapter contracts and
+  offline assets are unchanged.
+
+### Known limitations
+
+- Claims cannot yet be reassigned to another analyst. Candidate search and table previews inspect the
+  first 8,192 characters of a failure summary to keep large pages bounded; complete stdout/stderr and
+  stack context remain available through the modal and permanent public-log views.
+
 ## 1.7.10 - 2026-08-31
 
 ### Added

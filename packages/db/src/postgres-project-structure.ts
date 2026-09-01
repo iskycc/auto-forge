@@ -104,6 +104,50 @@ export class PostgresProjectStructureRepository implements ProjectStructureRepos
     };
   }
 
+  async listRuntimeAssetsPage(
+    input: Parameters<ProjectStructureRepository["listRuntimeAssetsPage"]>[0],
+  ) {
+    await this.handle.ready;
+    assertRuntimeAssetPageLimit(input.limit);
+    const conditions: string[] = [];
+    const parameters: Array<string | number> = [];
+    if (input.sourceType) {
+      parameters.push(input.sourceType);
+      conditions.push(`source_type = $${parameters.length}`);
+    }
+    if (input.afterId) {
+      parameters.push(input.afterId);
+      conditions.push(`id > $${parameters.length}`);
+    }
+    parameters.push(input.limit + 1);
+    const result = await this.handle.pool.query<AssetRow>(
+      `SELECT * FROM project_runtime_assets
+       ${conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : ""}
+       ORDER BY id LIMIT $${parameters.length}`,
+      parameters,
+    );
+    const pageRows = result.rows.slice(0, input.limit);
+    const page: { items: ProjectRuntimeAsset[]; nextCursor?: string } = {
+      items: pageRows.map(mapAsset),
+    };
+    const last = pageRows.at(-1);
+    if (result.rows.length > input.limit && last) page.nextCursor = last.id;
+    return page;
+  }
+
+  async findRuntimeAssetsByObjectKeys(
+    objectKeys: readonly string[],
+  ): Promise<ProjectRuntimeAsset[]> {
+    await this.handle.ready;
+    if (objectKeys.length === 0) return [];
+    if (objectKeys.length > 200) throw new Error("Runtime asset object-key query is too large.");
+    const result = await this.handle.pool.query<AssetRow>(
+      "SELECT * FROM project_runtime_assets WHERE object_key = ANY($1::text[]) ORDER BY id",
+      [[...objectKeys]],
+    );
+    return result.rows.map(mapAsset);
+  }
+
   async createVersion(record: CreateProjectVersionRecord): Promise<ProjectVersion> {
     await this.handle.ready;
     try {
@@ -732,6 +776,12 @@ function mapAsset(row: AssetRow): ProjectRuntimeAsset {
     ...(row.created_by ? { createdBy: row.created_by } : {}),
     createdAt: row.created_at,
   };
+}
+
+function assertRuntimeAssetPageLimit(limit: number): void {
+  if (!Number.isInteger(limit) || limit < 1 || limit > 200) {
+    throw new Error("Runtime asset page limit must be between 1 and 200.");
+  }
 }
 
 function required<T>(value: T | undefined, message: string): T {

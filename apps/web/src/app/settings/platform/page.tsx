@@ -3,31 +3,36 @@ import { hasPermission } from "@autoforge/domain";
 import { PlatformSettings } from "@/components/platform-settings";
 import { OperationsSettings } from "@/components/operations-settings";
 import { SystemDiagnostics } from "@/components/system-diagnostics";
+import { StorageInventory } from "@/components/storage-inventory";
 import { requirePagePermission } from "@/lib/auth";
 import { platformConfigurationView } from "@/lib/platform-configuration";
 import { getPlatformServices } from "@/lib/services";
 import { SectionTabs } from "@/components/section-tabs";
+import { storageInventoryCategorySchema } from "@autoforge/contracts";
 
-type PlatformSection = "configuration" | "accounts" | "retention" | "diagnostics";
+type PlatformSection = "configuration" | "accounts" | "retention" | "diagnostics" | "storage";
 
 export default async function PlatformSettingsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ section?: string }>;
+  searchParams: Promise<{ section?: string; category?: string; query?: string }>;
 }) {
   const identity = await requirePagePermission("settings.read", undefined);
   const services = await getPlatformServices();
   const configuration = services.configurationStore.read();
-  const requestedSection = (await searchParams).section;
+  const parameters = await searchParams;
+  const requestedSection = parameters.section;
   const activeSection: PlatformSection =
     requestedSection === "accounts" ||
     requestedSection === "retention" ||
-    requestedSection === "diagnostics"
+    requestedSection === "diagnostics" ||
+    requestedSection === "storage"
       ? requestedSection
       : requestedSection === "automation"
         ? "accounts"
         : "configuration";
   const heading = platformSectionHeading(activeSection);
+  const storageCategory = storageInventoryCategorySchema.safeParse(parameters.category).data;
   const platformView = platformConfigurationView(
     configuration,
     services.configurationStore.paths.configurationFile,
@@ -79,6 +84,11 @@ export default async function PlatformSettingsPage({
             label: "系统诊断",
             active: activeSection === "diagnostics",
           },
+          {
+            href: "/settings/platform?section=storage",
+            label: "存储空间",
+            active: activeSection === "storage",
+          },
         ]}
       />
       {activeSection === "configuration" ? (
@@ -100,6 +110,14 @@ export default async function PlatformSettingsPage({
       {activeSection === "diagnostics" ? (
         <SystemDiagnostics canManage={hasPermission(identity, "settings.manage")} />
       ) : null}
+      {activeSection === "storage" ? (
+        <StorageInventory
+          {...(storageCategory ? { initialCategory: storageCategory } : {})}
+          initialQuery={parameters.query?.slice(0, 240) ?? ""}
+          key={`${storageCategory ?? "all"}:${parameters.query ?? ""}`}
+          timeZone={configuration.web.timeZone}
+        />
+      ) : null}
     </section>
   );
 }
@@ -117,5 +135,7 @@ function platformSectionHeading(section: PlatformSection): { title: string; desc
       return { title: "数据保留", description: "管理平台数据保留期限和可恢复清理策略。" };
     case "diagnostics":
       return { title: "系统诊断", description: "检查平台配置、存储和运行时健康状态。" };
+    case "storage":
+      return { title: "存储空间", description: "查看平台文件、数据库与对象存储的空间占用。" };
   }
 }

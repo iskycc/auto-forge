@@ -36,6 +36,7 @@ import type {
   CaseSuiteRepository,
   CaseCatalogRepository,
   Clock,
+  CreateRunBatchRecord,
   IdGenerator,
   JarObjectStorePort,
   ProjectStructureRepository,
@@ -51,6 +52,42 @@ const OFFLINE_AFTER_SECONDS = 45;
 const RUNNER_METRICS_THROTTLE_MS = 30_000;
 const MAXIMUM_SCHEDULING_WINDOW = 4_096;
 const MAXIMUM_CLASS_DATA_BYTES = 128 * 1_024 * 1_024;
+
+type DerivedRuntimeAssetSource = "current_project_version" | "source_snapshot";
+
+function derivedBatchAdapterRuntime(input: {
+  snapshot: NonNullable<Awaited<ReturnType<RunBatchRepository["getRerunSnapshot"]>>>;
+  runtimeAssetSource: DerivedRuntimeAssetSource;
+  adapterEnvironmentAddresses?: string[];
+}): Pick<CreateRunBatchRecord, "adapter" | "adapterRuntimeSnapshot"> {
+  const runtime = input.snapshot.adapterRuntime;
+  if (!runtime) return {};
+  const environmentAddresses = [
+    ...(input.adapterEnvironmentAddresses ?? runtime.environmentAddresses),
+  ];
+
+  if (input.runtimeAssetSource === "current_project_version") {
+    // 日志页的单用例重跑用于验证当前环境。只继承 Adapter 的任务级设置，
+    // 让仓储按 policy.projectVersionId 重新固化当前 JDK/依赖包资产。
+    return {
+      adapter: {
+        enabled: true,
+        suiteName: runtime.suiteName,
+        testName: runtime.testName,
+        environmentAddresses,
+      },
+    };
+  }
+
+  return {
+    adapterRuntimeSnapshot: {
+      ...runtime,
+      // 整批失败重跑继续使用原批次的完整环境池和运行资产；新 run 会重新
+      // 分配首轮起点，后续 attempt 再按同一池轮询，不能按失败下标裁掉环境。
+      environmentAddresses,
+    },
+  };
+}
 
 function mergeLiveCapacities(
   target: Map<string, number>,
@@ -469,6 +506,7 @@ export class RunBatchSchedulingService {
     return this.createDerivedBatch({
       snapshot,
       kind: "case_log_rerun",
+      runtimeAssetSource: "current_project_version",
       parentBatchId: rootBatchId,
       sourceExecutionRunId: rootExecutionRunId,
       requestedBy,
@@ -547,6 +585,7 @@ export class RunBatchSchedulingService {
     return this.createDerivedBatch({
       snapshot,
       kind: "final_failure_rerun",
+      runtimeAssetSource: "source_snapshot",
       parentBatchId: batchId,
       requestedBy,
       suiteName: `${snapshot.batch.suiteName} · 最后一轮失败重跑`,
@@ -569,6 +608,7 @@ export class RunBatchSchedulingService {
   private async createDerivedBatch(input: {
     snapshot: NonNullable<Awaited<ReturnType<RunBatchRepository["getRerunSnapshot"]>>>;
     kind: "case_log_rerun" | "final_failure_rerun";
+    runtimeAssetSource: DerivedRuntimeAssetSource;
     parentBatchId: string;
     sourceExecutionRunId?: string;
     requestedBy: NonNullable<RunBatch["requestedBy"]>;
@@ -610,19 +650,7 @@ export class RunBatchSchedulingService {
       runnerIds: [...input.snapshot.batch.selectedRunnerIds],
       policy: input.policy,
       roundRecoveries: input.roundRecoveries.map((recovery) => ({ ...recovery })),
-      ...(input.snapshot.adapterRuntime
-        ? {
-            adapterRuntimeSnapshot: {
-              ...input.snapshot.adapterRuntime,
-              // 派生批次继续使用原批次的完整环境池；新 run 会重新分配首轮起点，
-              // 后续 attempt 再按同一池轮询，不能按失败用例下标裁掉环境。
-              environmentAddresses: [
-                ...(input.adapterEnvironmentAddresses ??
-                  input.snapshot.adapterRuntime.environmentAddresses),
-              ],
-            },
-          }
-        : {}),
+      ...derivedBatchAdapterRuntime(input),
       runs,
       dispatchJob: {
         schemaVersion: 1,

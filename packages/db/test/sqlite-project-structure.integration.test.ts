@@ -57,6 +57,18 @@ describe("SQLite project version structure", () => {
         archiveFormat: "tar.gz",
         createdAt: now,
       });
+      const uploadedJdk = await repository.createRuntimeAsset({
+        id: "jdk-uploaded",
+        projectId: DEFAULT_PROJECT_ID,
+        kind: "jdk",
+        sourceType: "upload",
+        fileName: "uploaded-jdk.zip",
+        objectKey: "projects/default/runtime-assets/jdk-uploaded.zip",
+        sha256: "d".repeat(64),
+        sizeBytes: 8192,
+        archiveFormat: "zip",
+        createdAt: now,
+      });
       const configuration = await repository.updateAdapterConfiguration({
         projectId: DEFAULT_PROJECT_ID,
         projectVersionId: version.id,
@@ -122,6 +134,19 @@ describe("SQLite project version structure", () => {
           .prepare("SELECT COUNT(*) AS value FROM project_runtime_assets WHERE id = ?")
           .get("bundle-1"),
       ).toEqual({ value: 0 });
+      await expect(
+        repository.listRuntimeAssetsPage({ sourceType: "url", limit: 1 }),
+      ).resolves.toMatchObject({ items: [{ id: "bundle-2" }], nextCursor: "bundle-2" });
+      await expect(
+        repository.listRuntimeAssetsPage({
+          sourceType: "url",
+          afterId: "bundle-2",
+          limit: 10,
+        }),
+      ).resolves.toMatchObject({ items: [{ id: "jdk-1" }] });
+      await expect(
+        repository.findRuntimeAssetsByObjectKeys([uploadedJdk.objectKey!]),
+      ).resolves.toMatchObject([{ id: uploadedJdk.id, kind: "jdk", sourceType: "upload" }]);
       await expect(
         repository.updateAdapterConfiguration({
           projectId: DEFAULT_PROJECT_ID,

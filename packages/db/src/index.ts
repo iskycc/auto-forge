@@ -1,5 +1,6 @@
 export * from "./database";
 export * from "./postgres-database";
+export * from "./postgres-failure-analysis";
 export * from "./postgres-schema";
 export * from "./postgres-platform-repository";
 export * from "./postgres-project-structure";
@@ -8,6 +9,7 @@ export * from "./postgres-round-recovery";
 export * from "./schema";
 export * from "./sqlite-case-catalog";
 export * from "./sqlite-case-suite";
+export * from "./sqlite-failure-analysis";
 export * from "./sqlite-run-batch";
 export * from "./sqlite-round-recovery";
 export * from "./sqlite-runner";

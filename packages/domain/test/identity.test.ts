@@ -38,6 +38,15 @@ describe("identity permissions", () => {
     }
   });
 
+  it("allows operators to manage failure analysis without granting mutation to read-only roles", () => {
+    for (const roleKey of ["project-admin", "test-manager", "execution-operator"]) {
+      expect(role(roleKey).permissions).toContain("analysis.manage");
+    }
+    for (const roleKey of ["viewer", "auditor"]) {
+      expect(role(roleKey).permissions).not.toContain("analysis.manage");
+    }
+  });
+
   it("defaults to deny and never leaks a project grant into another project", () => {
     const viewer = identity([], { [DEFAULT_PROJECT_ID]: role("viewer").permissions });
     expect(hasPermission(viewer, "case.read", DEFAULT_PROJECT_ID)).toBe(true);

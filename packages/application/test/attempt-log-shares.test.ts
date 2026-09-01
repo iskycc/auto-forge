@@ -157,15 +157,26 @@ function makeService(
   } as unknown as RunBatchRepository;
   const executions = {
     resolveAttemptSchedulingContext: async (attemptId: string) =>
-      attemptId === "attempt-1"
+      state.knownAttemptIds.has(attemptId)
         ? {
             batchId: "batch-1",
-            executionRunId: "run-1",
+            executionRunId: attemptId === "attempt-1" ? "run-1" : `run-${attemptId}`,
             runnerId: "runner-1",
             attemptNumber: 1,
-            displayName: "run-1#method",
+            displayName: attemptId === "attempt-1" ? "run-1#method" : `${attemptId}#method`,
           }
         : null,
+    resolveAttemptSchedulingContexts: async (attemptIds: readonly string[]) =>
+      attemptIds
+        .filter((attemptId) => state.knownAttemptIds.has(attemptId))
+        .map((attemptId) => ({
+          attemptId,
+          batchId: "batch-1",
+          executionRunId: attemptId === "attempt-1" ? "run-1" : `run-${attemptId}`,
+          runnerId: "runner-1",
+          attemptNumber: 1,
+          displayName: attemptId === "attempt-1" ? "run-1#method" : `${attemptId}#method`,
+        })),
     countExistingAttemptIds: async (attemptIds: readonly string[]) =>
       attemptIds.filter((attemptId) => state.knownAttemptIds.has(attemptId)).length,
     resolveAttemptProjectId: async (attemptId: string) =>
@@ -182,6 +193,7 @@ function makeService(
     }),
   } as unknown as ExecutionControlRepository;
   let tokenCounter = 0;
+  let idCounter = 0;
   return new AttemptLogShareService(
     shares,
     batches,
@@ -191,7 +203,7 @@ function makeService(
       hash: (value) => `hashed-${value}`,
     },
     { now: () => new Date("2026-08-17T00:00:00.000Z") },
-    { next: () => `share-id-${state.records.length + 1}` },
+    { next: () => `share-id-${++idCounter}` },
   );
 }
 
@@ -230,6 +242,19 @@ describe("AttemptLogShareService", () => {
       summary: "at com.example.Main(Main.java:10)",
     });
     expect(view?.logText).toBe("start\nboom\nend\n");
+  });
+
+  it("creates proof links for a bounded analysis selection in one bulk write", async () => {
+    const attemptIds = Array.from({ length: 100 }, (_, index) => `attempt-${index + 1}`);
+    const state = makeState({ knownAttemptIds: new Set(attemptIds) });
+    const service = makeService(state);
+
+    const tokens = await service.ensureSharesForAttempts(attemptIds, "analyst-1");
+
+    expect(tokens.size).toBe(100);
+    expect(state.records).toHaveLength(100);
+    expect(state.createManyCalls).toEqual([100]);
+    expect(new Set(state.records.map((record) => record.id)).size).toBe(100);
   });
 
   it("bounds public log payloads before returning them to the page", async () => {

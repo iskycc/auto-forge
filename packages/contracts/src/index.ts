@@ -2,6 +2,7 @@ export * from "./testng";
 export * from "./identity";
 export * from "./jobs";
 export * from "./execution";
+export * from "./failure-analysis";
 export * from "./management";
 export * from "./scheduling";
 export * from "./platform";

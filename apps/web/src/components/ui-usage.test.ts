@@ -191,6 +191,7 @@ describe("shared UI controls", () => {
       join(SOURCE_ROOT, "app", "case-suites", "loading.tsx"),
       join(SOURCE_ROOT, "app", "case-suites", "[suiteId]", "loading.tsx"),
       join(SOURCE_ROOT, "app", "execution-records", "loading.tsx"),
+      join(SOURCE_ROOT, "app", "case-analysis", "loading.tsx"),
       join(SOURCE_ROOT, "app", "run-batches", "[batchId]", "loading.tsx"),
     ]) {
       expect(readFileSync(loadingFile, "utf8"), relative(SOURCE_ROOT, loadingFile)).toContain(

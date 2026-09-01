@@ -108,6 +108,50 @@ export class SqliteProjectStructureRepository implements ProjectStructureReposit
     };
   }
 
+  async listRuntimeAssetsPage(
+    input: Parameters<ProjectStructureRepository["listRuntimeAssetsPage"]>[0],
+  ) {
+    assertRuntimeAssetPageLimit(input.limit);
+    const clauses: string[] = [];
+    const parameters: Array<string | number> = [];
+    if (input.sourceType) {
+      clauses.push("source_type = ?");
+      parameters.push(input.sourceType);
+    }
+    if (input.afterId) {
+      clauses.push("id > ?");
+      parameters.push(input.afterId);
+    }
+    const rows = this.handle.client
+      .prepare(
+        `SELECT * FROM project_runtime_assets
+         ${clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : ""}
+         ORDER BY id LIMIT ?`,
+      )
+      .all(...parameters, input.limit + 1) as AssetRow[];
+    const pageRows = rows.slice(0, input.limit);
+    const result: { items: ProjectRuntimeAsset[]; nextCursor?: string } = {
+      items: pageRows.map(mapAsset),
+    };
+    const last = pageRows.at(-1);
+    if (rows.length > input.limit && last) result.nextCursor = last.id;
+    return result;
+  }
+
+  async findRuntimeAssetsByObjectKeys(
+    objectKeys: readonly string[],
+  ): Promise<ProjectRuntimeAsset[]> {
+    if (objectKeys.length === 0) return [];
+    if (objectKeys.length > 200) throw new Error("Runtime asset object-key query is too large.");
+    const rows = this.handle.client
+      .prepare(
+        `SELECT * FROM project_runtime_assets
+         WHERE object_key IN (${objectKeys.map(() => "?").join(", ")}) ORDER BY id`,
+      )
+      .all(...objectKeys) as AssetRow[];
+    return rows.map(mapAsset);
+  }
+
   async createVersion(record: CreateProjectVersionRecord): Promise<ProjectVersion> {
     return retrySqliteLockContention(() => {
       try {
@@ -714,6 +758,12 @@ function mapAsset(row: AssetRow): ProjectRuntimeAsset {
     ...(row.created_by ? { createdBy: row.created_by } : {}),
     createdAt: row.created_at,
   };
+}
+
+function assertRuntimeAssetPageLimit(limit: number): void {
+  if (!Number.isInteger(limit) || limit < 1 || limit > 200) {
+    throw new Error("Runtime asset page limit must be between 1 and 200.");
+  }
 }
 
 function revisionConflict(): DomainError {

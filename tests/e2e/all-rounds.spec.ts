@@ -50,7 +50,10 @@ type RunnerIdentity = { runnerId: string; credential: string };
 type ClaimedAssignment = {
   assignment: {
     attemptId: string;
-    executionSpec: { executionRunId: string };
+    executionSpec: {
+      executionRunId: string;
+      inputs: Array<{ inputId: string; kind: string }>;
+    };
   };
   lease: { token: string };
 };
@@ -173,6 +176,37 @@ async function issueJenkinsApiToken(page: Page): Promise<string> {
   return token.body.token;
 }
 
+async function publishVersionDependency(
+  page: Page,
+  apiToken: string,
+  version: string,
+  label: "historical" | "current",
+): Promise<string> {
+  const response = await page.request.post("/api/v1/jenkins/dependencies", {
+    headers: { authorization: `Bearer ${apiToken}` },
+    data: {
+      projectId: DEFAULT_PROJECT_ID,
+      version,
+      dependencyArchive: {
+        url: `http://127.0.0.1:3100/jenkins-fixtures/dependencies-${label}.zip`,
+        fileName: `dependencies-${label}.zip`,
+        sha256: (label === "historical" ? "d" : "e").repeat(64),
+        sizeBytes: 1024,
+        archiveFormat: "zip",
+      },
+    },
+  });
+  expect(response.status()).toBe(200);
+  const publication = (await response.json()) as { assetId: string };
+  expect(publication.assetId).toBeTruthy();
+  return publication.assetId;
+}
+
+function dependencyInputId(claim: ClaimedAssignment): string | undefined {
+  return claim.assignment.executionSpec.inputs.find((input) => input.kind === "jar-bundle")
+    ?.inputId;
+}
+
 async function ensureProjectHierarchy(page: Page): Promise<void> {
   const structureResponse = await page.request.get(
     `/api/v1/projects/${encodeURIComponent(DEFAULT_PROJECT_ID)}/structure`,
@@ -221,6 +255,7 @@ async function claimAssignment(page: Page, identity: RunnerIdentity): Promise<Cl
             "isolation:cgroup-v2",
             "java:21.0.8",
             "testng:7.11.0",
+            "adapter:cotest-testng-v1",
           ],
           waitSeconds: 0,
         },
@@ -243,7 +278,13 @@ async function postHeartbeat(page: Page, identity: RunnerIdentity, busySlots: nu
         schemaVersion: 1,
         busySlots,
         labels: ["linux", "java", "testng"],
-        capabilities: ["executor:testng-v1", "isolation:cgroup-v2", "java:21.0.8", "testng:7.11.0"],
+        capabilities: [
+          "executor:testng-v1",
+          "isolation:cgroup-v2",
+          "java:21.0.8",
+          "testng:7.11.0",
+          "adapter:cotest-testng-v1",
+        ],
         maxConcurrency: 2,
         agentVersion: "0.2.0",
         terminalEnabled: false,
@@ -382,7 +423,13 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
       schemaVersion: 1,
       name: "E2E All-Rounds Runner",
       labels: ["linux", "java", "testng"],
-      capabilities: ["executor:testng-v1", "isolation:cgroup-v2", "java:21.0.8", "testng:7.11.0"],
+      capabilities: [
+        "executor:testng-v1",
+        "isolation:cgroup-v2",
+        "java:21.0.8",
+        "testng:7.11.0",
+        "adapter:cotest-testng-v1",
+      ],
       maxConcurrency: 2,
       os: "linux",
       architecture: "amd64",
@@ -933,6 +980,24 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
   // 常规执行记录，末轮失败集重跑则创建可追踪的新批次，并允许关闭动态并发和环境恢复。
   let failedSourceBatch!: { id: string };
   let failedAttemptId = "";
+  const suiteConfiguration = await browserJson<{
+    policy: { projectVersionId?: string };
+  }>(page, `/api/v1/case-suites/${encodeURIComponent(suiteId)}`);
+  expect(suiteConfiguration.status).toBe(200);
+  const projectStructure = await browserJson<{
+    versions: Array<{ id: string; name: string }>;
+  }>(page, `/api/v1/projects/${encodeURIComponent(DEFAULT_PROJECT_ID)}/structure`);
+  expect(projectStructure.status).toBe(200);
+  const suiteProjectVersion = projectStructure.body.versions.find(
+    (version) => version.id === suiteConfiguration.body.policy.projectVersionId,
+  );
+  if (!suiteProjectVersion) throw new Error("Suite project version is unavailable for rerun E2E.");
+  const historicalDependencyId = await publishVersionDependency(
+    page,
+    jenkinsToken,
+    suiteProjectVersion.name,
+    "historical",
+  );
   const derivedFakeJenkins = await startFakeJenkins();
   try {
     await configureTaskExecution(page, suiteId, identity.runnerId, {
@@ -955,11 +1020,18 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
           apiKey: "e2e-user:e2e-token",
         },
       ],
+      adapter: {
+        enabled: true,
+        suiteName: "rerun-dependency-suite",
+        testName: "rerun-dependency-test",
+        environmentAddresses: ["10.0.0.11", "10.0.0.12"],
+      },
     });
     failedSourceBatch = await startTaskFromTopbar(page, suiteId);
     expect((await postHeartbeat(page, identity, 0)).status()).toBe(200);
     for (let claimed = 0; claimed < 2; claimed += 1) {
       const claim = await claimAssignment(page, identity);
+      expect(dependencyInputId(claim)).toBe(historicalDependencyId);
       const fails = claimed === 0;
       await completeAttempt(page, identity, claim, {
         completionId: `e2e-derived-source-round-one-${claimed}`,
@@ -985,6 +1057,7 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
       )
       .toEqual(["succeeded"]);
     const finalRoundFailure = await claimAssignment(page, identity);
+    expect(dependencyInputId(finalRoundFailure)).toBe(historicalDependencyId);
     failedAttemptId = finalRoundFailure.assignment.attemptId;
     await completeAttempt(page, identity, finalRoundFailure, {
       completionId: "e2e-derived-source-round-two",
@@ -1007,6 +1080,13 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
     await derivedFakeJenkins.close();
   }
   expect(failedAttemptId).not.toBe("");
+  const currentDependencyId = await publishVersionDependency(
+    page,
+    jenkinsToken,
+    suiteProjectVersion.name,
+    "current",
+  );
+  expect(currentDependencyId).not.toBe(historicalDependencyId);
 
   await page.goto(`/run-batches/${encodeURIComponent(failedSourceBatch.id)}`);
   await page.getByRole("button", { name: "初始轮次", exact: true }).click();
@@ -1036,6 +1116,7 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
   expect((await postHeartbeat(page, identity, 0)).status()).toBe(200);
   const diagnosticClaim = await claimAssignment(page, identity);
   expect(diagnosticClaim.assignment.executionSpec.executionRunId).toBeTruthy();
+  expect(dependencyInputId(diagnosticClaim)).toBe(currentDependencyId);
   await expect(page.getByRole("button", { name: "查看实时日志", exact: true })).toBeVisible({
     timeout: 10_000,
   });
@@ -1182,6 +1263,7 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
   );
   expect((await postHeartbeat(page, identity, 0)).status()).toBe(200);
   const finalFailureClaim = await claimAssignment(page, identity);
+  expect(dependencyInputId(finalFailureClaim)).toBe(historicalDependencyId);
   await completeAttempt(page, identity, finalFailureClaim, {
     completionId: "e2e-final-failure-rerun",
     status: "succeeded",

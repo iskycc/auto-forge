@@ -11,6 +11,12 @@ type SuitePolicyOverrides = {
   uploadTimeoutMs?: number;
   runnerLabels?: string[];
   artifactPatterns?: string[];
+  adapter?: {
+    enabled: boolean;
+    suiteName: string;
+    testName: string;
+    environmentAddresses: string[];
+  };
   retryConcurrencyRules?: Array<{
     id: string;
     executionRound: number;

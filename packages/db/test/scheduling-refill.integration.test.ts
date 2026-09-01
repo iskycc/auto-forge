@@ -113,6 +113,129 @@ async function insertQueuedRun(harness: RefillHarness, batchId: string): Promise
 }
 
 function schedulingRefillCases(createHarness: () => Promise<RefillHarness>): void {
+  it("resolves the current project-version dependency for a diagnostic rerun", async () => {
+    const harness = await createHarness();
+    const projectVersionId = randomUUID();
+    const currentBundleId = randomUUID();
+    const sourceBatchId = randomUUID();
+    const sourceRunId = randomUUID();
+    const diagnosticBatchId = randomUUID();
+    const diagnosticRunId = randomUUID();
+    const recordedAt = "2026-08-10T00:06:00.000Z";
+    const policy = {
+      executor: "testng" as const,
+      concurrency: 1,
+      projectVersionId,
+      runnerLabels: [],
+      artifactPatterns: [],
+      retryConcurrencyRules: [],
+    };
+    const sourceRun = {
+      id: sourceRunId,
+      caseDefinitionId: randomUUID(),
+      caseVersion: 3,
+      displayName: "Dependency refresh",
+      className: "example.DependencyRefreshTest",
+    };
+    try {
+      await harness.rawQuery(
+        `INSERT INTO project_versions
+           (id, project_id, name, normalized_name, status, revision, created_at, updated_at)
+         VALUES (?, ?, ?, ?, 'active', 1, ?, ?)`,
+        [
+          projectVersionId,
+          harness.projectId,
+          `Dependency refresh ${projectVersionId}`,
+          `dependency-refresh-${projectVersionId}`,
+          recordedAt,
+          recordedAt,
+        ],
+      );
+      await harness.rawQuery(
+        `INSERT INTO project_runtime_assets
+           (id, project_id, kind, source_type, file_name, url, sha256, size_bytes,
+            archive_format, created_at)
+         VALUES (?, ?, 'jar-bundle', 'url', 'current-dependencies.tar.gz',
+                 'https://assets.example.test/current-dependencies.tar.gz', ?, 4096,
+                 'tar.gz', ?)`,
+        [currentBundleId, harness.projectId, "c".repeat(64), recordedAt],
+      );
+      await harness.rawQuery(
+        `INSERT INTO project_version_runtime_assets
+           (project_version_id, project_id, jar_bundle_asset_id, revision, updated_at)
+         VALUES (?, ?, ?, 1, ?)`,
+        [projectVersionId, harness.projectId, currentBundleId, recordedAt],
+      );
+
+      await harness.batches.create({
+        id: sourceBatchId,
+        projectId: harness.projectId,
+        suiteId: randomUUID(),
+        suiteName: "Historical dependency source",
+        suiteVersion: 1,
+        retryLimit: 0,
+        environmentVariables: [],
+        runnerIds: [],
+        policy,
+        adapterRuntimeSnapshot: {
+          suiteName: "adapter-suite",
+          testName: "adapter-test",
+          environmentAddresses: ["10.0.0.11"],
+          jarBundle: {
+            id: "historical-bundle",
+            sourceType: "upload",
+            sha256: "b".repeat(64),
+            sizeBytes: 2048,
+            archiveFormat: "zip",
+          },
+        },
+        runs: [sourceRun],
+        createdAt: recordedAt,
+      });
+      await harness.batches.create({
+        id: diagnosticBatchId,
+        projectId: harness.projectId,
+        suiteId: randomUUID(),
+        suiteName: "Current dependency diagnostic",
+        suiteVersion: 1,
+        kind: "case_log_rerun",
+        parentBatchId: sourceBatchId,
+        sourceExecutionRunId: sourceRunId,
+        retryLimit: 0,
+        environmentVariables: [],
+        runnerIds: [],
+        policy,
+        adapter: {
+          enabled: true,
+          suiteName: "adapter-suite",
+          testName: "adapter-test",
+          environmentAddresses: ["10.0.0.12"],
+        },
+        runs: [{ ...sourceRun, id: diagnosticRunId }],
+        createdAt: recordedAt,
+      });
+
+      await expect(
+        harness.batches.getRerunSnapshot(sourceBatchId, { executionRunId: sourceRunId }),
+      ).resolves.toMatchObject({
+        adapterRuntime: { jarBundle: { id: "historical-bundle" } },
+      });
+      await expect(
+        harness.batches.getRerunSnapshot(diagnosticBatchId, {
+          executionRunId: diagnosticRunId,
+        }),
+      ).resolves.toMatchObject({
+        adapterRuntime: {
+          environmentAddresses: ["10.0.0.12"],
+          jarBundle: { id: currentBundleId },
+        },
+      });
+    } finally {
+      await harness.dispose();
+      await cleanupTemporaryDirectories();
+    }
+  });
+
   it("persists each round concurrency and records a dynamic transition event atomically", async () => {
     const harness = await createHarness();
     try {

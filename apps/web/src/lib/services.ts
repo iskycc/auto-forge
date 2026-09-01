@@ -11,6 +11,7 @@ import {
   DdtCaseService,
   DdtImportService,
   ExecutionControlService,
+  FailureAnalysisService,
   ImportTestNgJarService,
   IdentityAccessService,
   JobWorker,
@@ -30,6 +31,7 @@ import {
   type CaseCatalogRepository,
   type CaseSuiteRepository,
   type DdtRepository,
+  type FailureAnalysisRepository,
   type JarObjectStorePort,
   type IdentityAccessRepository,
   type ExecutionControlRepository,
@@ -55,6 +57,7 @@ import {
   SqliteCaseSuiteRepository,
   SqliteDdtRepository,
   SqliteExecutionControlRepository,
+  SqliteFailureAnalysisRepository,
   SqliteIdentityAccessRepository,
   SqliteRunBatchRepository,
   SqliteRoundRecoveryRepository,
@@ -77,6 +80,7 @@ import { appConfigurationStore, loadAppConfig } from "./config";
 import { LdapDirectory } from "./ldap-directory";
 import { JenkinsRebuildTransport } from "./jenkins-round-recovery";
 import { ScryptPasswordHasher } from "./password-hasher";
+import { StorageInventoryService } from "./storage-inventory";
 import { MemoryRequestLimiter, RedisRequestLimiter, type RequestLimiter } from "./request-limiter";
 import { natsReconnectOptions, redisReconnectDelay } from "./resilient-connections";
 import { RunnerAgentInstaller } from "./runner-agent-installer";
@@ -107,6 +111,7 @@ async function createPlatformServices() {
   let catalog: CaseCatalogRepository;
   let suites: CaseSuiteRepository;
   let ddtRepository: DdtRepository;
+  let failureAnalysisRepository: FailureAnalysisRepository;
   let runners: RunnerRepository;
   let runnerInstallationProfileRepository: RunnerInstallationProfileRepository;
   let runnerGroupsRepository: RunnerGroupRepository;
@@ -140,6 +145,7 @@ async function createPlatformServices() {
     identities = new SqliteIdentityAccessRepository(database);
     const localExecutions = new SqliteExecutionControlRepository(database, attemptLogs);
     executions = workerBackedExecutionControlRepository(localExecutions, dispatcher);
+    failureAnalysisRepository = new SqliteFailureAnalysisRepository(database);
     batches = new SqliteRunBatchRepository(database, config.caseExecutionTimeoutSeconds);
     roundRecoveries = new SqliteRoundRecoveryRepository(database);
     attemptLogSharesRepository = new SqliteAttemptLogShareRepository(database);
@@ -164,6 +170,7 @@ async function createPlatformServices() {
         PostgresDdtRepository,
         PostgresIdentityAccessRepository,
         PostgresExecutionControlRepository,
+        PostgresFailureAnalysisRepository,
         PostgresRunBatchRepository,
         PostgresRoundRecoveryRepository,
         PostgresRunnerRepository,
@@ -257,6 +264,7 @@ async function createPlatformServices() {
     // 领取/批次创建反而因车道连接池争用回退；仅补位调度经 runScheduling 交给
     // 工作线程。
     executions = new PostgresExecutionControlRepository(database, attemptLogs);
+    failureAnalysisRepository = new PostgresFailureAnalysisRepository(database);
     batches = new PostgresRunBatchRepository(database, config.caseExecutionTimeoutSeconds);
     roundRecoveries = new PostgresRoundRecoveryRepository(database);
     attemptLogSharesRepository = new PostgresAttemptLogShareRepository(database);
@@ -330,6 +338,15 @@ async function createPlatformServices() {
     clock,
     ids,
   );
+  const storageInventory = new StorageInventoryService({
+    dataDirectory: config.dataDirectory,
+    objectStore,
+    projectStructures,
+    objectStoreRoot:
+      config.mode === "lite"
+        ? join(config.dataDirectory, "objects")
+        : `minio://${config.minio.bucket}`,
+  });
   const runnerCredentials = {
     issue: () => randomBytes(32).toString("base64url"),
     issueBootstrapToken: (replacementRunnerId?: string) =>
@@ -363,6 +380,25 @@ async function createPlatformServices() {
     () => configurationStore.read().limits.artifactCollectionEnabled,
   );
   const runScheduling = new CoalescingSchedulingPort(runBatches, dispatcher);
+  // 日志公开访问 token 与 Runner 凭据同构：随机 base64url，库中只留 SHA-256 哈希。
+  const attemptLogShares = new AttemptLogShareService(
+    attemptLogSharesRepository,
+    batches,
+    executions,
+    {
+      issue: () => randomBytes(32).toString("base64url"),
+      hash: (value) => createHash("sha256").update(value).digest("hex"),
+    },
+    clock,
+    ids,
+  );
+  const failureAnalysis = new FailureAnalysisService(
+    failureAnalysisRepository,
+    clock,
+    ids,
+    objectStore,
+    attemptLogShares,
+  );
   const roundRecovery = new RoundRecoveryService(
     roundRecoveries,
     jenkinsRoundRecoveryTransport,
@@ -484,18 +520,6 @@ async function createPlatformServices() {
     runScheduling,
   );
   const runnerProtocol = new RunnerProtocolController(executionControl);
-  // 日志公开访问 token 与 Runner 凭据同构：随机 base64url，库中只留 SHA-256 哈希。
-  const attemptLogShares = new AttemptLogShareService(
-    attemptLogSharesRepository,
-    batches,
-    executions,
-    {
-      issue: () => randomBytes(32).toString("base64url"),
-      hash: (value) => createHash("sha256").update(value).digest("hex"),
-    },
-    clock,
-    ids,
-  );
   const runBatchExport = new RunBatchExportService(batches);
   const publicStatistics = new PublicPlatformStatisticsService(
     statisticsRepository,
@@ -562,6 +586,7 @@ async function createPlatformServices() {
     ddtCases,
     ddtImports,
     projectStructures,
+    storageInventory,
     runners,
     identities,
     executions,
@@ -579,6 +604,7 @@ async function createPlatformServices() {
     platformOperations,
     webhooks,
     runBatches,
+    failureAnalysis,
     runScheduling,
     runnerRequestLimiter,
     jobQueue,

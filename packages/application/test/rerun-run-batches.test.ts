@@ -14,7 +14,7 @@ import type {
 const now = "2026-08-26T02:00:00.000Z";
 
 describe("derived run batches", () => {
-  it("reruns a terminal case as a hidden diagnostic batch from the immutable snapshot", async () => {
+  it("reruns a terminal case with current project-version runtime assets", async () => {
     const snapshot = rerunSnapshot();
     const { batches, created } = rerunRepository(snapshot, {
       batchId: snapshot.batch.id,
@@ -38,9 +38,11 @@ describe("derived run batches", () => {
       retryMode: "immediate",
       policy: { concurrency: 1, retryConcurrencyRules: [] },
       roundRecoveries: [],
-      adapterRuntimeSnapshot: {
+      adapter: {
+        enabled: true,
+        suiteName: "adapter-suite",
+        testName: "adapter-test",
         environmentAddresses: ["10.0.0.13", "10.0.0.11", "10.0.0.12"],
-        jarBundle: { id: "bundle-snapshot" },
       },
       runs: [
         expect.objectContaining({
@@ -50,6 +52,7 @@ describe("derived run batches", () => {
         }),
       ],
     });
+    expect(created[0]).not.toHaveProperty("adapterRuntimeSnapshot");
   });
 
   it("creates a visible batch from only the final failures and accepts one-off policy switches", async () => {
@@ -86,6 +89,7 @@ describe("derived run batches", () => {
       "10.0.0.12",
       "10.0.0.13",
     ]);
+    expect(created[0]?.adapterRuntimeSnapshot?.jarBundle?.id).toBe("bundle-snapshot");
   });
 
   it("exposes only the latest realtime log target for a hidden case rerun", async () => {
