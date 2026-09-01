@@ -4,6 +4,31 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## Unreleased
+
+### Changed
+
+- GitHub Release top-level assets now consolidate four image JSON files, seven SPDX documents and
+  duplicate legal/reference files into `release-manifest.json` image identities and one versioned
+  metadata archive. SBOMs, licenses, NOTICE, attribution, compatibility and change history remain
+  intact under the signed checksums and build provenance.
+- The Compose deployment archive now uses an explicit deployment-document allowlist instead of
+  carrying design images, historical audits, roadmaps and internal implementation material. Lite/Full
+  Compose files, operations scripts, user/administrator manuals, recovery, compatibility and legal
+  content remain available.
+
+### Compatibility and offline assets
+
+- `release-manifest.json` moves to schema version 2 and embeds `backendImages` in place of top-level
+  `*.image.json` files. Published acceptance retains fallback support for historical standalone image
+  metadata so upgrades and rollbacks continue across the packaging transition.
+
+### Fixed
+
+- Published Lite asset-lifecycle acceptance now exposes its bound data directory to Playwright fixture
+  setup, so analysis-history coverage runs against the released container instead of failing before
+  the assertion phase.
+
 ## 1.8.1 - 2026-09-01
 
 ### Added

@@ -1,11 +1,12 @@
 import { createHash } from "node:crypto";
-import { readdir, readFile, stat, writeFile } from "node:fs/promises";
+import { readdir, readFile, stat, unlink, writeFile } from "node:fs/promises";
 import { basename, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 const manifestFileName = "release-manifest.json";
 const checksumsFileName = "SHA256SUMS";
 const releaseVariants = ["amd64", "arm64", "amd64-musl", "arm64-musl"];
+export const releaseManifestSchemaVersion = 2;
 
 async function sha256(filePath) {
   return createHash("sha256")
@@ -35,29 +36,42 @@ async function artifact(directory, name) {
 }
 
 export function expectedArtifactNames(version) {
-  const platformArtifacts = releaseVariants.flatMap((variant) => {
-    const backendName = `autoforge-backend-${version}-${variant}`;
-    return [`${backendName}.docker.tar`, `${backendName}.image.json`, `${backendName}.spdx.json`];
-  });
+  const platformArtifacts = releaseVariants.map(
+    (variant) => `autoforge-backend-${version}-${variant}.docker.tar`,
+  );
   return [
     ...platformArtifacts,
     `autoforge-deploy-${version}.tar.gz`,
-    `autoforge-deploy-${version}.spdx.json`,
     `autoforge-jenkins-dependency-publisher-${version}.hpi`,
-    `autoforge-jenkins-dependency-publisher-${version}.spdx.json`,
     `autoforge-jenkins-execution-${version}.hpi`,
-    `autoforge-jenkins-execution-${version}.spdx.json`,
+    `autoforge-release-metadata-${version}.tar.gz`,
+    "release-signing-public-key.pem",
+  ];
+}
+
+export function expectedImageMetadataInputNames(version) {
+  return releaseVariants.map((variant) => `autoforge-backend-${version}-${variant}.image.json`);
+}
+
+export function expectedMetadataBundleFileNames(version) {
+  return [
     "CHANGELOG.md",
     "COMPATIBILITY.md",
     "LICENSE",
     "NOTICE",
-    "release-signing-public-key.pem",
     "THIRD_PARTY_LICENSES.json",
+    ...releaseVariants.map((variant) => `sbom/autoforge-backend-${version}-${variant}.spdx.json`),
+    `sbom/autoforge-deploy-${version}.spdx.json`,
+    `sbom/autoforge-jenkins-dependency-publisher-${version}.spdx.json`,
+    `sbom/autoforge-jenkins-execution-${version}.spdx.json`,
   ];
 }
 
-function verifyArtifactSet(version, names) {
-  const expected = expectedArtifactNames(version).sort();
+function verifyReleaseWorkingSet(version, names) {
+  const expected = [
+    ...expectedArtifactNames(version),
+    ...expectedImageMetadataInputNames(version),
+  ].sort();
   const actual = [...names].sort();
   const missing = expected.filter((name) => !actual.includes(name));
   const unexpected = actual.filter((name) => !expected.includes(name));
@@ -66,6 +80,51 @@ function verifyArtifactSet(version, names) {
       `Release artifact set is incomplete. Missing: ${missing.join(", ") || "none"}. Unexpected: ${unexpected.join(", ") || "none"}.`,
     );
   }
+}
+
+function validateBackendImageMetadata(metadata, version, variant, sourceName) {
+  const expectedArchitecture = variant.startsWith("amd64") ? "amd64" : "arm64";
+  const expectedReference = `autoforge/backend:${version}-${variant}`;
+  if (
+    metadata?.schemaVersion !== 1 ||
+    metadata.product !== "AutoForge Backend" ||
+    metadata.version !== version ||
+    metadata.variant !== variant ||
+    metadata.imageReference !== expectedReference ||
+    !/^sha256:[a-f0-9]{64}$/.test(metadata.immutableImageId ?? "") ||
+    metadata.architecture !== expectedArchitecture ||
+    metadata.operatingSystem !== "linux" ||
+    typeof metadata.createdAt !== "string" ||
+    !Number.isFinite(Date.parse(metadata.createdAt)) ||
+    !metadata.labels ||
+    typeof metadata.labels !== "object" ||
+    Array.isArray(metadata.labels) ||
+    Object.values(metadata.labels).some((value) => typeof value !== "string")
+  ) {
+    throw new Error(`Invalid backend image metadata: ${sourceName}`);
+  }
+  return {
+    version,
+    variant,
+    imageReference: metadata.imageReference,
+    immutableImageId: metadata.immutableImageId,
+    architecture: metadata.architecture,
+    operatingSystem: metadata.operatingSystem,
+    createdAt: metadata.createdAt,
+    labels: Object.fromEntries(
+      Object.entries(metadata.labels).sort(([left], [right]) => left.localeCompare(right)),
+    ),
+  };
+}
+
+async function readBackendImageMetadata(version, directory) {
+  return Promise.all(
+    releaseVariants.map(async (variant) => {
+      const sourceName = `autoforge-backend-${version}-${variant}.image.json`;
+      const metadata = JSON.parse(await readFile(resolve(directory, sourceName), "utf8"));
+      return validateBackendImageMetadata(metadata, version, variant, sourceName);
+    }),
+  );
 }
 
 export async function createReleaseMetadata(version, directory) {
@@ -79,15 +138,18 @@ export async function createReleaseMetadata(version, directory) {
   if (names.length === 0) {
     throw new Error("Release directory contains no artifacts.");
   }
-  verifyArtifactSet(version, names);
+  verifyReleaseWorkingSet(version, names);
 
-  const artifacts = await Promise.all(names.map((name) => artifact(outputDirectory, name)));
+  const backendImages = await readBackendImageMetadata(version, outputDirectory);
+  const artifactNames = expectedArtifactNames(version).sort();
+  const artifacts = await Promise.all(artifactNames.map((name) => artifact(outputDirectory, name)));
   const manifest = {
-    schemaVersion: 1,
+    schemaVersion: releaseManifestSchemaVersion,
     product: "AutoForge",
     repository: "https://github.com/iskycc/auto-forge",
     version,
     generatedAt: releaseDate(),
+    backendImages,
     artifacts,
   };
   const manifestPath = resolve(outputDirectory, manifestFileName);
@@ -98,6 +160,9 @@ export async function createReleaseMetadata(version, directory) {
   );
   const checksums = checksumEntries.map((entry) => `${entry.sha256}  ${entry.name}`).join("\n");
   await writeFile(resolve(outputDirectory, checksumsFileName), `${checksums}\n`, { mode: 0o644 });
+  await Promise.all(
+    expectedImageMetadataInputNames(version).map((name) => unlink(resolve(outputDirectory, name))),
+  );
 }
 
 async function main() {

@@ -37,6 +37,7 @@ readonly previous_data="${acceptance_directory}/previous-data"
 readonly failed_migration_data="${acceptance_directory}/failed-migration-data"
 readonly rollback_data="${acceptance_directory}/rollback-data"
 readonly current_deploy_root="${acceptance_directory}/current-deploy"
+readonly current_metadata_root="${acceptance_directory}/current-release-metadata"
 readonly release_agent="${acceptance_directory}/autoforge-agent"
 readonly release_adapter="${acceptance_directory}/cotest-testng-adapter.jar"
 readonly upgrade_sentinel="Release upgrade sentinel ${run_identity}"
@@ -86,36 +87,134 @@ verify_current_release() {
     "${current_release_directory}/release-signing-public-key.pem"
   verify_signature "${current_release_directory}"
   (cd "${current_release_directory}" && sha256sum --check --strict SHA256SUMS)
+  local manifest_schema_version
+  manifest_schema_version="$(node -p \
+    "JSON.parse(require('node:fs').readFileSync(process.argv[1], 'utf8')).schemaVersion" \
+    "${current_release_directory}/release-manifest.json")"
+  if [[ "${manifest_schema_version}" == "2" ]]; then
+    mkdir -p "${current_metadata_root}"
+    tar -xzf \
+      "${current_release_directory}/autoforge-release-metadata-${current_version}.tar.gz" \
+      -C "${current_metadata_root}"
+  elif [[ "${manifest_schema_version}" != "1" ]]; then
+    printf 'Unsupported Release manifest schema: %s\n' "${manifest_schema_version}" >&2
+    return 1
+  fi
   node --input-type=module - \
-    "${repository_root}" "${current_release_directory}" "${current_version}" <<'NODE'
+    "${repository_root}" "${current_release_directory}" "${current_version}" \
+    "${current_metadata_root}/autoforge-release-metadata-${current_version}" <<'NODE'
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
-const [repositoryRoot, directory, expectedVersion] = process.argv.slice(2);
-const { expectedArtifactNames } = await import(
+const [repositoryRoot, directory, expectedVersion, metadataDirectory] = process.argv.slice(2);
+const {
+  expectedArtifactNames,
+  expectedMetadataBundleFileNames,
+  releaseManifestSchemaVersion,
+} = await import(
   pathToFileURL(join(repositoryRoot, "scripts/release/create-manifest.mjs")).href
 );
 const manifest = JSON.parse(readFileSync(join(directory, "release-manifest.json"), "utf8"));
-if (manifest.schemaVersion !== 1 || manifest.product !== "AutoForge" || manifest.version !== expectedVersion) {
+if (
+  ![1, releaseManifestSchemaVersion].includes(manifest.schemaVersion) ||
+  manifest.product !== "AutoForge" ||
+  manifest.version !== expectedVersion
+) {
   throw new Error("Release manifest identity is invalid.");
 }
-const expectedNames = expectedArtifactNames(expectedVersion).sort();
+
+function legacyExpectedArtifactNames(version) {
+  const variants = ["amd64", "arm64", "amd64-musl", "arm64-musl"];
+  return [
+    ...variants.flatMap((variant) => {
+      const backendName = `autoforge-backend-${version}-${variant}`;
+      return [`${backendName}.docker.tar`, `${backendName}.image.json`, `${backendName}.spdx.json`];
+    }),
+    `autoforge-deploy-${version}.tar.gz`,
+    `autoforge-deploy-${version}.spdx.json`,
+    `autoforge-jenkins-dependency-publisher-${version}.hpi`,
+    `autoforge-jenkins-dependency-publisher-${version}.spdx.json`,
+    `autoforge-jenkins-execution-${version}.hpi`,
+    `autoforge-jenkins-execution-${version}.spdx.json`,
+    "CHANGELOG.md",
+    "COMPATIBILITY.md",
+    "LICENSE",
+    "NOTICE",
+    "release-signing-public-key.pem",
+    "THIRD_PARTY_LICENSES.json",
+  ];
+}
+
+const expectedNames = (manifest.schemaVersion === 1
+  ? legacyExpectedArtifactNames(expectedVersion)
+  : expectedArtifactNames(expectedVersion)
+).sort();
 const actualNames = manifest.artifacts.map((artifact) => artifact.name).sort();
 if (JSON.stringify(actualNames) !== JSON.stringify(expectedNames)) {
   throw new Error(`Unexpected release assets: ${actualNames.join(", ")}`);
+}
+const expectedTopLevelNames = [
+  ...expectedNames,
+  "SHA256SUMS",
+  "SHA256SUMS.sig",
+  "release-manifest.json",
+].sort();
+const actualTopLevelNames = readdirSync(directory).sort();
+if (JSON.stringify(actualTopLevelNames) !== JSON.stringify(expectedTopLevelNames)) {
+  throw new Error(`Unexpected top-level Release files: ${actualTopLevelNames.join(", ")}`);
 }
 for (const artifact of manifest.artifacts) {
   const path = join(directory, artifact.name);
   if (!statSync(path).isFile() || statSync(path).size !== artifact.sizeBytes) throw new Error(`Invalid asset ${artifact.name}`);
 }
-for (const name of readdirSync(directory).filter((entry) => entry.endsWith(".spdx.json"))) {
-  const sbom = JSON.parse(readFileSync(join(directory, name), "utf8"));
+const expectedVariants = ["amd64", "arm64", "amd64-musl", "arm64-musl"];
+for (const variant of expectedVariants) {
+  const image = manifest.schemaVersion === 1
+    ? JSON.parse(readFileSync(join(directory, `autoforge-backend-${expectedVersion}-${variant}.image.json`), "utf8"))
+    : manifest.backendImages?.find((candidate) => candidate.variant === variant);
+  const expectedArchitecture = variant.startsWith("amd64") ? "amd64" : "arm64";
+  if (
+    image?.version !== expectedVersion ||
+    image?.imageReference !== `autoforge/backend:${expectedVersion}-${variant}` ||
+    !/^sha256:[a-f0-9]{64}$/.test(image?.immutableImageId ?? "") ||
+    image?.architecture !== expectedArchitecture ||
+    image?.operatingSystem !== "linux"
+  ) {
+    throw new Error(`Release manifest image identity is invalid: ${variant}`);
+  }
+}
+if (
+  manifest.schemaVersion === releaseManifestSchemaVersion &&
+  (!Array.isArray(manifest.backendImages) || manifest.backendImages.length !== expectedVariants.length)
+) {
+  throw new Error("Release manifest backend image inventory is invalid.");
+}
+
+function listFiles(root, prefix = "") {
+  return readdirSync(join(root, prefix), { withFileTypes: true }).flatMap((entry) => {
+    const relativePath = prefix ? `${prefix}/${entry.name}` : entry.name;
+    return entry.isDirectory() ? listFiles(root, relativePath) : [relativePath];
+  });
+}
+
+const expectedMetadataNames = manifest.schemaVersion === 1
+  ? expectedNames.filter((entry) => entry.endsWith(".spdx.json"))
+  : expectedMetadataBundleFileNames(expectedVersion).sort();
+if (manifest.schemaVersion === releaseManifestSchemaVersion) {
+  const actualMetadataNames = listFiles(metadataDirectory).sort();
+  if (JSON.stringify(actualMetadataNames) !== JSON.stringify(expectedMetadataNames)) {
+    throw new Error(`Unexpected release metadata files: ${actualMetadataNames.join(", ")}`);
+  }
+}
+const metadataRoot = manifest.schemaVersion === 1 ? directory : metadataDirectory;
+for (const name of expectedMetadataNames.filter((entry) => entry.endsWith(".spdx.json"))) {
+  const sbom = JSON.parse(readFileSync(join(metadataRoot, name), "utf8"));
   if (!String(sbom.spdxVersion ?? "").startsWith("SPDX-")) throw new Error(`Invalid SPDX document ${name}`);
   if (!Array.isArray(sbom.packages) || sbom.packages.length === 0) {
     throw new Error(`SPDX document contains no packages: ${name}`);
   }
-  if (name.startsWith(`autoforge-backend-${expectedVersion}-`)) {
+  if (name.startsWith(`${manifest.schemaVersion === 1 ? "" : "sbom/"}autoforge-backend-${expectedVersion}-`)) {
     const packageNames = new Set(
       sbom.packages.map((entry) => String(entry?.name ?? "").toLowerCase()),
     );
@@ -127,7 +226,7 @@ for (const name of readdirSync(directory).filter((entry) => entry.endsWith(".spd
   }
 }
 for (const required of ["LICENSE", "NOTICE", "THIRD_PARTY_LICENSES.json", "CHANGELOG.md", "COMPATIBILITY.md"]) {
-  if (!statSync(join(directory, required)).isFile()) throw new Error(`Missing legal or operations asset ${required}`);
+  if (!statSync(join(metadataRoot, required)).isFile()) throw new Error(`Missing legal or operations metadata ${required}`);
 }
 NODE
 }
@@ -151,7 +250,8 @@ load_release_image() {
   local variant="${3:-amd64}"
   local archive="${directory}/autoforge-backend-${version}-${variant}.docker.tar"
   local legacy_archive="${archive}.zst"
-  local metadata="${directory}/autoforge-backend-${version}-${variant}.image.json"
+  local legacy_metadata="${directory}/autoforge-backend-${version}-${variant}.image.json"
+  local manifest="${directory}/release-manifest.json"
   if [[ -f "${archive}" ]]; then
     docker load --input "${archive}" >/dev/null
   elif [[ -f "${legacy_archive}" ]]; then
@@ -166,9 +266,17 @@ load_release_image() {
   fi
   local metadata_fields image_reference expected_config_digest metadata_version metadata_variant
   local metadata_architecture metadata_operating_system
-  metadata_fields="$(node - "${metadata}" <<'NODE'
-const { readFileSync } = require("node:fs");
-const metadata = JSON.parse(readFileSync(process.argv[2], "utf8"));
+  metadata_fields="$(node - "${legacy_metadata}" "${manifest}" "${variant}" <<'NODE'
+const { existsSync, readFileSync } = require("node:fs");
+const [legacyMetadataPath, manifestPath, variant] = process.argv.slice(2);
+let metadata;
+if (existsSync(legacyMetadataPath)) {
+  metadata = JSON.parse(readFileSync(legacyMetadataPath, "utf8"));
+} else {
+  const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+  metadata = manifest.backendImages?.find((candidate) => candidate.variant === variant);
+  if (!metadata) throw new Error(`Release manifest does not contain image metadata for ${variant}.`);
+}
 const fields = [
   metadata.imageReference,
   metadata.immutableImageId,
@@ -403,6 +511,7 @@ run_current_release_browser() {
   E2E_ADMIN_BOOTSTRAP_TOKEN="${admin_token}" \
   E2E_RUNNER_BOOTSTRAP_TOKEN="${runner_token}" \
   E2E_RUNNER_BOOTSTRAP_MASTER_KEY="${runner_master_key}" \
+  AUTOFORGE_E2E_DATA_DIR="${current_data}" \
   E2E_WEBHOOK_CALLBACK_HOST="$(network_gateway)" \
     pnpm exec playwright test --config playwright.full.config.ts \
       "${browser_specs[@]}"

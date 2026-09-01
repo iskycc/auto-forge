@@ -37,7 +37,9 @@ const { readFileSync } = require("node:fs");
 const configuration = JSON.parse(readFileSync(process.argv[2], "utf8"));
 const release = JSON.parse(readFileSync(process.argv[3], "utf8"));
 if (configuration.schemaVersion !== 1) throw new Error("Unsupported platform configuration schema.");
-if (release.schemaVersion !== 1 || release.product !== "AutoForge") throw new Error("Invalid release manifest.");
+if (![1, 2].includes(release.schemaVersion) || release.product !== "AutoForge") {
+  throw new Error("Invalid release manifest.");
+}
 if (!Array.isArray(release.artifacts) || release.artifacts.length === 0) throw new Error("Release has no artifacts.");
 process.stdout.write(`Configuration revision ${configuration.revision}; target release ${release.version}.\n`);
 NODE

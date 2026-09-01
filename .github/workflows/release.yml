@@ -278,10 +278,13 @@ jobs:
           upload-artifact: false
           upload-release-assets: false
 
-      - name: Add license and attribution files
+      - name: Build compact release metadata bundle
+        run: >-
+          bash scripts/release/build-release-metadata-bundle.sh
+          "${{ needs.prepare.outputs.version }}" release
+
+      - name: Add release signing public key
         run: |
-          cp CHANGELOG.md LICENSE NOTICE THIRD_PARTY_LICENSES.json release/
-          cp docs/reference/compatibility.md release/COMPATIBILITY.md
           cp scripts/release/assets/release-signing-public-key.pem \
             release/release-signing-public-key.pem
 

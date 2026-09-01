@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { promisify } from "node:util";
@@ -21,6 +21,10 @@ test("builds a versioned deployment bundle with both Compose modes", async () =>
       },
     );
     const archivePath = resolve(outputDirectory, "autoforge-deploy-1.2.3.tar.gz");
+    assert.ok(
+      (await stat(archivePath)).size < 500_000,
+      "deployment bundle must not carry repository design or archive assets",
+    );
     await execute("tar", ["-xzf", archivePath, "-C", extractedDirectory]);
 
     const packageDirectory = resolve(extractedDirectory, "autoforge-deploy-1.2.3");
@@ -61,6 +65,18 @@ test("builds a versioned deployment bundle with both Compose modes", async () =>
       await readFile(resolve(packageDirectory, "docs/manuals/administrator.md"), "utf8"),
       /备份与恢复/,
     );
+    assert.match(
+      await readFile(resolve(packageDirectory, "docs/architecture/ddt-management.md"), "utf8"),
+      /DDT/,
+    );
+    assert.match(
+      await readFile(resolve(packageDirectory, "docs/operations/performance-baseline.md"), "utf8"),
+      /性能与稳定性基线/,
+    );
+    const packagedFiles = await readdir(packageDirectory, { recursive: true });
+    assert.ok(!packagedFiles.includes("docs/design/autoforge-apple-like-e-dashboard.png"));
+    assert.ok(!packagedFiles.some((name) => name.startsWith("docs/archive/")));
+    assert.ok(!packagedFiles.includes("docs/project-roadmap.md"));
   } finally {
     await rm(outputDirectory, { recursive: true, force: true });
     await rm(extractedDirectory, { recursive: true, force: true });

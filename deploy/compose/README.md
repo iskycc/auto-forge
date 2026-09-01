@@ -27,7 +27,8 @@ cp .env.example .env
 ```
 
 将 `AUTOFORGE_BACKEND_IMAGE` 设置为导入 tar 后的同 variant 版本 tag，并使用签名
-`SHA256SUMS` 与 `*.image.json` 核对归档身份。不要把 `immutableImageId` 直接写入 Compose：
+`SHA256SUMS` 与 `release-manifest.json#backendImages` 核对归档身份。不要把
+`immutableImageId` 直接写入 Compose：
 Docker classic 与 Docker 29 containerd image store 对本地 `.Id` 分别采用 OCI config digest 和
 manifest digest，版本 tag 在已校验的离线归档中具有一致行为。`.env` 只保存镜像、宿主机端口、
 卷和网络等 Compose 编排参数；AutoForge 不从环境变量读取应用配置。

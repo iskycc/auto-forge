@@ -30,13 +30,21 @@ Web 进程为同源终端 WebSocket 使用 Next.js 自定义 Server。发布构�
 | `amd64-musl` | x86-64  | Alpine / musl  | Linux amd64 + arm64，均无 libc 依赖 |
 | `arm64-musl` | AArch64 | Alpine / musl  | Linux amd64 + arm64，均无 libc 依赖 |
 
-每个 variant 生成：
+每个 variant 只发布一个用户需要下载的运行资产：
 
 - `autoforge-backend-VERSION-VARIANT.docker.tar`：可由 Docker 直接导入的离线镜像归档；
-- `autoforge-backend-VERSION-VARIANT.image.json`：Docker config 内容摘要形式的不可变 image ID、平台和 OCI 标签；
-- `autoforge-backend-VERSION-VARIANT.spdx.json`：包含内置 Agent 文件的后端镜像 SBOM。
+- Docker config 内容摘要形式的不可变 image ID、平台和 OCI 标签统一记录在
+  `release-manifest.json#backendImages`，不再为每个平台发布零散的 `image.json`。
 
-每个版本还生成一份 `autoforge-deploy-VERSION.tar.gz`，其中包含 Lite/Full `docker-compose.yml`、环境模板、固定的基础设施镜像摘要和离线启动说明。Release 根目录同时包含 `release-manifest.json`、`SHA256SUMS`、Ed25519 签名 `SHA256SUMS.sig` 和 `release-signing-public-key.pem`。GitHub 的构建来源证明绑定 `SHA256SUMS` 中记录的全部资产摘要。
+每个版本还生成一份 `autoforge-deploy-VERSION.tar.gz`，其中只包含 Lite/Full
+`docker-compose.yml`、环境模板、运维脚本、许可证和部署所需手册，不携带设计图、归档审计、
+roadmap 或内部实现资料。`autoforge-release-metadata-VERSION.tar.gz` 集中保存四个平台镜像、
+部署包与两个 Jenkins HPI 的 SPDX JSON SBOM，以及 `LICENSE`、`NOTICE`、第三方许可证清单、
+兼容矩阵和变更记录。SBOM 内容没有删除，只是不再平铺为多个顶层 Release 资产。
+
+Release 根目录同时包含 `release-manifest.json`、`SHA256SUMS`、Ed25519 签名
+`SHA256SUMS.sig` 和 `release-signing-public-key.pem`。GitHub 的构建来源证明绑定
+`SHA256SUMS` 中记录的全部资产摘要，metadata 包内的文件由该归档摘要传递保护。
 
 后端镜像内同时包含可校验的 CoTest Adapter JAR。正式 Release 不提供 JDK/TestNG 工具链资产；管理员在项目设置中上传 JDK 与完整依赖 JAR 压缩包，或登记 Runner 可访问的内网 HTTP(S) 链接、精确大小和 SHA-256。部署包仍生成对应的 SPDX JSON SBOM。
 
@@ -51,7 +59,7 @@ openssl pkeyutl -verify -rawin -pubin \
   -in SHA256SUMS
 sha256sum --check SHA256SUMS
 docker load --input autoforge-backend-0.2.2-amd64.docker.tar
-node -e "const m=require('./autoforge-backend-0.2.2-amd64.image.json'); console.log(m.immutableImageId)"
+node -e "const m=require('./release-manifest.json'); console.log(m.backendImages.find(i=>i.variant==='amd64').immutableImageId)"
 docker run --detach \
   --name autoforge \
   --publish 3000:3000 \

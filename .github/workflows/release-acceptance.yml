@@ -113,6 +113,7 @@ jobs:
           gh release download "${{ needs.prepare.outputs.previous_tag }}" --dir previous-release \
             --pattern "autoforge-backend-${{ needs.prepare.outputs.previous_version }}-amd64.docker.tar*" \
             --pattern "autoforge-backend-${{ needs.prepare.outputs.previous_version }}-amd64.image.json" \
+            --pattern release-manifest.json \
             --pattern SHA256SUMS \
             --pattern SHA256SUMS.sig \
             --pattern release-signing-public-key.pem
@@ -206,7 +207,7 @@ jobs:
           mkdir -p release previous-release
           gh release download "${{ needs.prepare.outputs.tag }}" --dir release \
             --pattern "autoforge-backend-${{ needs.prepare.outputs.version }}-${{ matrix.variant }}.docker.tar" \
-            --pattern "autoforge-backend-${{ needs.prepare.outputs.version }}-${{ matrix.variant }}.image.json"
+            --pattern release-manifest.json
 
       - name: Download current deployment bundle
         if: matrix.needs_deploy
@@ -219,7 +220,8 @@ jobs:
         run: |
           gh release download "${{ needs.prepare.outputs.previous_tag }}" --dir previous-release \
             --pattern "autoforge-backend-${{ needs.prepare.outputs.previous_version }}-amd64.docker.tar*" \
-            --pattern "autoforge-backend-${{ needs.prepare.outputs.previous_version }}-amd64.image.json"
+            --pattern "autoforge-backend-${{ needs.prepare.outputs.previous_version }}-amd64.image.json" \
+            --pattern release-manifest.json
 
       - name: Preload fixed LDAP fixture image
         if: matrix.needs_ldap

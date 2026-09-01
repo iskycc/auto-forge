@@ -28,6 +28,11 @@ test("publishes complete release assets without waiting for checks", async () =>
   assert.doesNotMatch(workflow, /^  toolchain:/m);
   assert.match(workflow, /  publish:\n[\s\S]*?    needs: \[prepare, backend, jenkins-plugins\]/);
   assert.match(workflow, /  publish:\n[\s\S]*?    timeout-minutes: 45/);
+  assert.match(workflow, /build-release-metadata-bundle\.sh/);
+  assert.doesNotMatch(
+    workflow,
+    /cp CHANGELOG\.md LICENSE NOTICE THIRD_PARTY_LICENSES\.json release/,
+  );
 });
 
 test("partitions tagged and published checks without polling inside a test job", async () => {
@@ -56,6 +61,8 @@ test("partitions tagged and published checks without polling inside a test job",
   assert.doesNotMatch(publishedAcceptance, /sleep "\$\{wait_interval_seconds\}"/);
   assert.match(publishedAcceptance, /ref: \$\{\{ needs\.prepare\.outputs\.checks_revision \}\}/);
   assert.match(publishedAcceptance, /GITHUB_EVENT_NAME.*workflow_dispatch/);
+  assert.match(publishedAcceptance, /--pattern release-manifest\.json/);
+  assert.doesNotMatch(publishedAcceptance, /needs\.prepare\.outputs\.version[^\n]*\.image\.json/);
 });
 
 test("keeps long-running CI acceptance paths partitioned", async () => {
@@ -116,5 +123,6 @@ test("shares the release asset contract with published acceptance", async () => 
   const acceptanceScript = await readFile("scripts/quality/test-release-offline.sh", "utf8");
 
   assert.match(acceptanceScript, /expectedArtifactNames/);
+  assert.match(acceptanceScript, /AUTOFORGE_E2E_DATA_DIR="\$\{current_data\}"/);
   assert.doesNotMatch(acceptanceScript, /manifest\.artifacts\.length !== \d+/);
 });

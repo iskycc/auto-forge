@@ -39,7 +39,8 @@ public schema、平台数据卷和 MinIO bucket，因此必须显式传 `--repla
 
 ## 升级、失败与回滚
 
-1. 下载同一 Release 的 manifest、SHA256SUMS、镜像/SBOM/部署包并离线验证。
+1. 下载同一 Release 的 manifest、SHA256SUMS、目标镜像、metadata 包与部署包并离线验证；
+   metadata 包内包含对应 SBOM 和法律声明。
 2. 完成停止状态备份，运行 `operations/upgrade-preflight.sh` 检查摘要、配置 schema 与空间。
 3. 导入新镜像，保持旧镜像和备份可用；运行 `operations/migrate.sh --compose-file …`。
 4. 启动 Web，再启动 worker/Agent，检查 liveness/readiness、迁移记录、队列和对象健康。

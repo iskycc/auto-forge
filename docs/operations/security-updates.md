@@ -1,7 +1,7 @@
 # 依赖安全与离线更新
 
 CI 在每次提交和每周计划任务中生成 pnpm audit、Go govulncheck、许可证清单和依赖清单，报告作为
-构建产物保存。Release 镜像另外生成 SPDX JSON SBOM，并固定 Actions commit、Node/Go/pnpm、基础
+构建产物保存。Release 镜像另外生成 SPDX JSON SBOM 并集中收入版本化 metadata 包，同时固定 Actions commit、Node/Go/pnpm、基础
 镜像 digest 和第三方基础设施镜像 digest。
 
 Critical/High 可达漏洞默认阻断发布。例外必须记录受影响组件、不可达/补偿控制证据、审批人、到期

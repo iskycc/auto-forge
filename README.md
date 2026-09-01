@@ -517,7 +517,7 @@ Playwright 首次运行需要已有 Chromium。联网开发机可按 Playwright 
 
 ## GitHub Release 与离线包
 
-仓库的 `Release` workflow 由 `vX.Y.Z` tag 触发，立即并行构建 `amd64`、`arm64`、`amd64-musl`、`arm64-musl` 后端镜像，制品完整、签名和清单生成成功后直接发布。标签源码质量检查按静态检查、单元/集成、构建、Full 与断网 Lite 分区并行执行；Release 成功公开后，独立 `Published Release acceptance` workflow 再并行验证签名资产、上一正式版本升级、迁移失败回滚、备份恢复、真实 Agent 和 LDAP。检查失败会保留明确状态，但不会阻塞、取消或撤回已经完成的发布。Release 还包含版本化 Lite/Full Compose 部署包、每个镜像和部署资产的 SPDX JSON SBOM、`SHA256SUMS`、机器可读清单和构建来源证明。
+仓库的 `Release` workflow 由 `vX.Y.Z` tag 触发，立即并行构建 `amd64`、`arm64`、`amd64-musl`、`arm64-musl` 后端镜像，制品完整、签名和清单生成成功后直接发布。标签源码质量检查按静态检查、单元/集成、构建、Full 与断网 Lite 分区并行执行；Release 成功公开后，独立 `Published Release acceptance` workflow 再并行验证签名资产、上一正式版本升级、迁移失败回滚、备份恢复、真实 Agent 和 LDAP。检查失败会保留明确状态，但不会阻塞、取消或撤回已经完成的发布。Release 还包含版本化 Lite/Full Compose 部署包、集中保存各资产 SPDX JSON SBOM 与法律声明的 metadata 包、`SHA256SUMS`、机器可读清单和构建来源证明。
 
 后端标准版使用 Debian/glibc，musl 版使用 Alpine/musl；Agent 四个文件均为 `CGO_ENABLED=0` 的 Linux 静态二进制，其中 musl 后缀表示发布目标而不是动态链接 musl。正式 Release 的离线镜像直接使用 Docker 原生 `.docker.tar`，可通过 `docker load --input` 导入，不要求目标机安装 zstd。Release 发布 AutoForge 自身镜像，不重新分发 PostgreSQL、NATS、MinIO 或 Redis 镜像；xterm.js、WebSocket 和 PTY 库已经固定版本并打入 AutoForge 发布物，不产生运行时下载。
 

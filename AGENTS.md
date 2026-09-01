@@ -369,7 +369,7 @@ pnpm build
 - 后端标准版基于固定 digest 的 Debian/glibc Node 镜像，musl 版基于固定 digest 的 Alpine/musl Node 镜像；不得仅复制或重命名同一个镜像伪造变体。
 - 内置 Agent 使用 `CGO_ENABLED=0` 静态构建，不动态链接 libc；资源清单记录版本、架构、大小和 SHA-256，安装前后均须校验。
 - GitHub Actions 的 `amd64*` 目标使用 `ubuntu-24.04`，`arm64*` 目标使用原生 `ubuntu-24.04-arm`；不得在 GitHub-hosted Release 流水线中用 QEMU 模拟已有原生 runner 的架构。
-- Release 同时包含每个后端/部署资产的 SPDX JSON SBOM、统一 `SHA256SUMS` 和机器可读 `release-manifest.json`；镜像 SBOM 覆盖其中的内置 Agent。
+- Release 同时包含每个后端/部署资产的 SPDX JSON SBOM（允许集中在一个版本化、受签名摘要保护的 metadata 归档中）、统一 `SHA256SUMS` 和机器可读 `release-manifest.json`；镜像 SBOM 覆盖其中的内置 Agent。
 - GitHub Actions 与基础镜像使用不可变 commit SHA 或镜像 digest；版本升级要单独审查并完成构建验证。
 - 发布脚本必须能在本地构建并验证单个平台；正式四平台集合由 GitHub Actions matrix 生成，任何一个目标失败都不得发布部分 Release。
 
