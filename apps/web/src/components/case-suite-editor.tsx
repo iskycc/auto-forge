@@ -187,7 +187,7 @@ export function CaseSuiteEditor({
           parsed.success ? parsed.data.error.message : `请求失败（HTTP ${response.status}）。`,
         );
       }
-      toast.success("用例任务配置已保存并立即用于后续批次。");
+      toast.success("用例任务已更新，配置已保存并立即用于后续批次。");
       router.refresh();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "更新用例任务失败。");
