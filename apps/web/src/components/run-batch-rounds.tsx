@@ -1679,11 +1679,12 @@ function RoundCaseRow({
             ) : null}
             {attempt && publicRunShareToken ? (
               <Link
+                aria-label="查看公开日志"
                 className="button button-secondary compact-button"
                 href={`/share/run/${encodeURIComponent(publicRunShareToken)}/attempt/${encodeURIComponent(attempt.id)}`}
                 prefetch={false}
               >
-                <Eye size={15} /> 查看公开日志
+                <Eye size={15} /> 公开日志
               </Link>
             ) : null}
             {canShareLog ? (

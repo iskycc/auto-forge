@@ -3,6 +3,7 @@ import { unzipSync, zipSync } from "fflate";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { mkdir, readFile } from "node:fs/promises";
 import { resolve } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import WebSocket from "ws";
 
 import { buildClassFile } from "../../packages/testng-discovery/test/class-fixture";
@@ -23,12 +24,12 @@ import {
   selectProjectContext,
 } from "./support/session";
 
-async function captureUi(page: Page, name: string): Promise<void> {
+async function captureUi(page: Page, name: string, fullPage = true): Promise<void> {
   const screenshotDirectory = process.env.AUTOFORGE_UI_SCREENSHOT_DIR;
   if (!screenshotDirectory) return;
   const absoluteDirectory = resolve(screenshotDirectory);
   await mkdir(absoluteDirectory, { recursive: true });
-  await page.screenshot({ path: resolve(absoluteDirectory, `${name}.png`), fullPage: true });
+  await page.screenshot({ path: resolve(absoluteDirectory, `${name}.png`), fullPage });
 }
 
 function caseListXlsx(rows: string[][]): Uint8Array {
@@ -878,20 +879,97 @@ public class MixedVisibleTest {
     completedBatch.attempts.find((attempt) => attempt.attemptNumber === 1)?.resultSummary,
   ).toBe(expectedFailureSummary);
 
-  // 用例名称本身必须进入独立详情页；该页按时间分页展示全部执行记录，且同一 run
-  // 的每个重试轮次都有直接日志入口，不能再被右侧“最近记录”预览截断。
+  const analysisDatabase = new DatabaseSync(
+    resolve(requiredEnvironment("AUTOFORGE_E2E_DATA_DIR"), "db", "autoforge.sqlite"),
+  );
+  try {
+    analysisDatabase.exec("PRAGMA busy_timeout = 5000");
+    const analyzedAt = new Date().toISOString();
+    analysisDatabase
+      .prepare(
+        `INSERT INTO failure_analysis_claims
+          (id,project_id,batch_id,execution_run_id,case_definition_id,attempt_id,case_name,
+           class_name,attempt_number,failure_summary,result_code,status,category,claimant_id,
+           claimant_username,claimant_display_name,claimed_at,analysis_started_at,completed_at,
+           issue_description,ticket_reference,remark,updated_at)
+         VALUES (?,?,?,?,?,?,?,?,1,?,'TEST_ASSERTION_FAILED','completed','code_issue_filed',
+                 'e2e-analysis-user','e2e-admin','E2E Administrator',?,?,?,?,?,?,?)`,
+      )
+      .run(
+        `case-history-analysis-${randomUUID()}`,
+        DEFAULT_PROJECT_ID,
+        batch.id,
+        firstClaim.assignment.executionSpec.executionRunId,
+        taskCase.id,
+        firstClaim.assignment.attemptId,
+        taskCase.displayName,
+        taskCase.className,
+        expectedFailureSummary,
+        analyzedAt,
+        analyzedAt,
+        analyzedAt,
+        "结算状态字段与接口契约不一致",
+        "BUG-E2E-4096",
+        "等待服务端修复",
+        analyzedAt,
+      );
+  } finally {
+    analysisDatabase.close();
+  }
+
+  // 用例名称本身必须进入独立详情页；该页按时间分页展示全部任务记录。每个任务只回填
+  // 一个总结结果：存在通过轮次时展示通过轮次，避免把本批次的中间失败重复记入用例历史。
   await page.goto("/cases");
   await page.getByLabel("页内搜索用例").fill(taskCase.displayName);
   await page.getByRole("link", { name: `查看 ${taskCase.displayName} 详情` }).click();
   await expect(page).toHaveURL(`/cases/${encodeURIComponent(taskCase.id)}`);
   await expect(page.getByRole("heading", { name: "全部执行历史" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "查看第 1 次尝试日志" })).toBeVisible();
-  await page.getByRole("button", { name: "查看第 2 次尝试日志" }).click();
+  await expect(page.getByRole("heading", { name: "失败分析结论（1）" })).toBeVisible();
+  await expect(page.getByText("结算状态字段与接口契约不一致")).toBeVisible();
+  await expect(page.getByText("BUG-E2E-4096")).toBeVisible();
+  await expect(page.getByRole("button", { name: "查看第 1 轮总结日志" })).toHaveCount(0);
+  await page.getByRole("button", { name: "查看第 2 轮总结日志" }).click();
   await expect(page.locator(".execution-log")).toContainText("retry passed");
   await page.keyboard.press("Escape");
   await expect(page.locator(".execution-log")).toHaveCount(0);
   await expect(page.getByText("已显示该用例的全部执行历史。")).toBeVisible();
+  await page.setViewportSize({ width: 1024, height: 768 });
+  const fullAnalysisHistory = page.locator(".case-analysis-history").first();
+  await fullAnalysisHistory.scrollIntoViewIfNeeded();
+  await expectDesktopLayoutFits(page, 1024, 768);
   await expectUiConsistency(page);
+  await captureUi(page, "case-detail-analysis-history-1024", false);
+
+  await page.goto("/cases");
+  await page.getByLabel("页内搜索用例").fill(taskCase.displayName);
+  const analysisWorkspaceResponse = page.waitForResponse(
+    (response) =>
+      response.url().includes(`/api/v1/case-definitions/${taskCase.id}/workspace`) &&
+      response.status() === 200,
+  );
+  await page.getByRole("button", { name: `快速预览 ${taskCase.displayName}` }).click();
+  await analysisWorkspaceResponse;
+  const caseInspector = page.locator(".case-inspector-pane");
+  await expect(
+    caseInspector.locator(".case-inspector-section > summary", {
+      hasText: "失败分析结论（1）",
+    }),
+  ).toBeVisible();
+  await expect(caseInspector.getByText("BUG-E2E-4096")).toBeHidden();
+  await caseInspector.locator(".case-analysis-history-item > summary").click();
+  await expect(caseInspector.getByText("结算状态字段与接口契约不一致")).toBeVisible();
+  await expect(caseInspector.getByText("BUG-E2E-4096")).toBeVisible();
+  await expect
+    .poll(() =>
+      caseInspector
+        .locator(".case-analysis-history")
+        .evaluate((element) => element.scrollWidth <= element.clientWidth),
+    )
+    .toBe(true);
+  await expectDesktopLayoutFits(page, 1024, 768);
+  await expectUiConsistency(page);
+  await captureUi(page, "case-inspector-analysis-history-1024", false);
+  await page.setViewportSize({ width: 1536, height: 1024 });
 
   // 分析闭环必须使用 TestNG 方法计数与权威错误描述：一次失败、一次成功即 50%，
   // 成功码和断言分类码都不能再冒充“失败原因”。该断言通过真实 HTTP 完成协议写入数据，
@@ -1039,7 +1117,7 @@ public class MixedVisibleTest {
   await expect(analysisDialog.getByRole("checkbox")).toHaveCount(0);
   await page.setViewportSize({ width: 1024, height: 768 });
   await expectDesktopLayoutFits(page, 1024, 768);
-  await captureUi(page, "failure-analysis-export-dialog-1024");
+  await captureUi(page, "failure-analysis-export-dialog-1024", false);
 
   const analysisDownloadPromise = page.waitForEvent("download");
   const analysisResponsePromise = page.waitForResponse((response) => {
@@ -1595,6 +1673,12 @@ type ClaimedAssignment = {
   };
   lease: { token: string };
 };
+
+function requiredEnvironment(name: string): string {
+  const value = process.env[name];
+  if (!value) throw new Error(`${name} is required.`);
+  return value;
+}
 
 async function claimAssignment(page: Page, identity: RunnerIdentity): Promise<ClaimedAssignment> {
   const deadline = Date.now() + 15_000;

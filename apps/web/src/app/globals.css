@@ -9144,6 +9144,213 @@ button.icon-button:disabled {
   text-align: center;
 }
 
+.case-analysis-history {
+  display: grid;
+  gap: var(--space-3);
+  padding: 18px;
+}
+
+.case-analysis-history.compact {
+  padding: 10px 0 0;
+}
+
+.case-analysis-history.compact > .card-heading {
+  display: none;
+}
+
+.case-analysis-history.compact .case-analysis-history-item > summary {
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+}
+
+.case-analysis-history.compact .case-analysis-history-item > summary small {
+  grid-column: 1 / -1;
+  padding-left: 2px;
+  text-align: left;
+}
+
+.case-analysis-history.compact .analysis-status {
+  flex-wrap: nowrap;
+  white-space: nowrap;
+}
+
+.case-analysis-history.compact .case-analysis-history-content dl {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.case-analysis-history .card-heading p {
+  margin: 4px 0 0;
+  color: var(--color-text-secondary);
+}
+
+.case-analysis-history-list {
+  display: grid;
+  gap: 9px;
+}
+
+.case-analysis-history-item {
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-medium);
+  background: var(--color-surface);
+}
+
+.case-analysis-history-item > summary {
+  display: grid;
+  min-height: 54px;
+  grid-template-columns: auto minmax(150px, 1fr) minmax(220px, auto);
+  align-items: center;
+  gap: 10px;
+  padding: 10px 13px;
+  cursor: pointer;
+  list-style-position: inside;
+}
+
+.case-analysis-history-item > summary:hover {
+  background: var(--color-surface-muted);
+}
+
+.case-analysis-history-item > summary strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.case-analysis-history-item > summary small {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-text-tertiary);
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.case-analysis-history-content {
+  display: grid;
+  gap: 12px;
+  border-top: 1px solid var(--color-border);
+  padding: 13px;
+  background: var(--color-surface-muted);
+}
+
+.case-analysis-history-content dl {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 16px;
+  margin: 0;
+}
+
+.case-analysis-history-content dl > div {
+  min-width: 0;
+}
+
+.case-analysis-history-content dt {
+  margin-bottom: 3px;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-caption);
+}
+
+.case-analysis-history-content dd {
+  margin: 0;
+  color: var(--color-text-secondary);
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.case-analysis-history-content dd a,
+.case-analysis-history-links a,
+.case-analysis-history-links button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.case-analysis-history-links {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 13px;
+  font-size: var(--font-size-control);
+}
+
+.case-analysis-history-links button {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--color-info);
+  cursor: pointer;
+  font: inherit;
+}
+
+.case-analysis-history-links span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--color-text-tertiary);
+}
+
+.case-analysis-history-empty {
+  border: 1px dashed var(--color-border-strong);
+  border-radius: var(--radius-medium);
+  padding: 22px;
+  background: var(--color-surface-muted);
+  color: var(--color-text-secondary);
+  text-align: center;
+}
+
+.case-analysis-history-more {
+  display: flex;
+  justify-content: center;
+}
+
+.case-analysis-evidence-overlay {
+  position: fixed;
+  z-index: 170;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(8, 12, 20, 0.78);
+  backdrop-filter: blur(10px);
+}
+
+.case-analysis-evidence-dialog {
+  display: grid;
+  width: min(1320px, calc(100vw - 48px));
+  max-height: calc(100vh - 48px);
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+  border-radius: var(--radius-large);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-float);
+}
+
+.case-analysis-evidence-dialog > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  border-bottom: 1px solid var(--color-border);
+  padding: 11px 13px 11px 17px;
+}
+
+.case-analysis-evidence-dialog > header > span {
+  display: grid;
+  min-width: 0;
+}
+
+.case-analysis-evidence-dialog > header small {
+  color: var(--color-text-tertiary);
+}
+
+.case-analysis-evidence-dialog > img {
+  max-width: 100%;
+  max-height: calc(100vh - 112px);
+  margin: auto;
+  padding: 18px;
+  object-fit: contain;
+}
+
 .case-inspector-meta {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -9742,7 +9949,8 @@ button.icon-button:disabled {
 .action-dialog.insight-detail-dialog {
   box-sizing: border-box;
   width: min(1380px, calc(100dvw - 36px));
-  height: min(860px, calc(100dvh - 36px));
+  min-height: min(280px, calc(100dvh - 36px));
+  height: auto;
   max-height: calc(100dvh - 36px);
 }
 
@@ -11462,6 +11670,12 @@ button.icon-button:disabled {
   color: var(--color-text-secondary);
   font-size: var(--font-size-caption);
   line-height: 1.6;
+}
+
+.export-dialog .runner-installer-actions {
+  justify-content: flex-end;
+  border-top: 1px solid var(--color-border);
+  padding-top: 14px;
 }
 
 /* 用例目录搜索栏追加“最近执行结果”筛选；为第 4 列腾出位置 */
@@ -13256,6 +13470,49 @@ button.icon-button:disabled {
   margin: 0 auto;
 }
 
+/* 匿名详情没有应用侧栏，1024px 桌面宽度下操作列应直接可见；日志入口是
+   公开页面的核心操作，不能藏在横向滚动区的视口之外。 */
+.shared-run-detail-page .execution-case-table {
+  width: 100%;
+  min-width: 0;
+}
+
+.shared-run-detail-page .execution-case-table col:first-child {
+  width: 23%;
+}
+
+.shared-run-detail-page .execution-case-table col:nth-last-child(4) {
+  width: 18%;
+}
+
+.shared-run-detail-page .execution-case-table col:nth-last-child(3) {
+  width: 20%;
+}
+
+.shared-run-detail-page .execution-case-table .case-column-duration {
+  width: 5rem;
+}
+
+.shared-run-detail-page .execution-case-table .case-column-actions {
+  width: 8rem;
+}
+
+.shared-run-detail-page .round-row-actions {
+  flex-wrap: nowrap;
+}
+
+.shared-run-detail-page .round-row-actions .compact-button {
+  gap: 3px;
+  padding-inline: 4px;
+  font-size: var(--font-size-caption);
+}
+
+.shared-run-detail-page .execution-case-table th:nth-last-child(2),
+.shared-run-detail-page .execution-case-table td:nth-last-child(2) {
+  overflow-wrap: normal;
+  white-space: nowrap;
+}
+
 .shared-run-detail-notice {
   display: inline-flex;
   width: fit-content;
@@ -14674,6 +14931,63 @@ button.icon-button:disabled {
   }
 }
 /* 用例分析：大批量失败用例采用固定列宽、游标分页与服务端排序。 */
+.failure-analysis-page {
+  gap: clamp(18px, 2vw, 24px);
+}
+
+.failure-analysis-detail-heading {
+  display: grid;
+  min-width: 0;
+  gap: 5px;
+}
+
+.failure-analysis-detail-heading > .text-link {
+  width: fit-content;
+  margin-bottom: 2px;
+}
+
+.failure-analysis-detail-heading > h1 {
+  overflow-wrap: anywhere;
+}
+
+.failure-analysis-detail-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 5px;
+}
+
+.failure-analysis-detail-metrics > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  padding: 6px 10px;
+  background: color-mix(in srgb, var(--color-surface) 86%, transparent);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-caption);
+}
+
+.failure-analysis-detail-metrics strong {
+  color: var(--color-text);
+}
+
+.failure-analysis-detail-metrics .failure-metric strong,
+.failure-analysis-batch-card .failure-metric dd {
+  color: var(--color-danger);
+}
+
+.failure-analysis-detail-metrics .claimed-metric strong,
+.failure-analysis-batch-card .claimed-metric dd {
+  color: var(--color-violet);
+}
+
+.failure-analysis-detail-metrics .completed-metric strong,
+.failure-analysis-batch-card .completed-metric dd {
+  color: var(--color-success);
+}
+
 .failure-analysis-shell {
   display: grid;
   gap: var(--space-4);
@@ -14821,6 +15135,19 @@ button.icon-button:disabled {
   color: var(--color-info);
 }
 
+.failure-analysis-sort-idle {
+  color: var(--color-text-tertiary);
+  opacity: 0.62;
+}
+
+.failure-analysis-table tbody tr {
+  transition: background-color 120ms ease;
+}
+
+.failure-analysis-table tbody tr:hover {
+  background: color-mix(in srgb, var(--color-info-soft) 38%, transparent);
+}
+
 .failure-analysis-table tr:last-child td {
   border-bottom: 0;
 }
@@ -14830,6 +15157,14 @@ button.icon-button:disabled {
 .failure-analysis-table td code {
   display: block;
   min-width: 0;
+}
+
+.failure-analysis-case-name,
+.failure-analysis-class-path {
+  display: -webkit-box !important;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 
 .failure-analysis-table td small {
@@ -14850,15 +15185,15 @@ button.icon-button:disabled {
 }
 
 .failure-analysis-name-column {
-  width: 18%;
+  width: 24%;
 }
 
 .failure-analysis-path-column {
-  width: 25%;
+  width: 24%;
 }
 
 .failure-analysis-stack-column {
-  width: 39%;
+  width: 30%;
 }
 
 .failure-analysis-status-column {
@@ -14878,6 +15213,7 @@ button.icon-button:disabled {
 .analysis-status {
   display: inline-flex;
   max-width: 100%;
+  flex: 0 0 auto;
   flex-wrap: wrap;
   align-items: center;
   gap: 5px;
@@ -14971,10 +15307,10 @@ button.icon-button:disabled {
 
 .failure-analysis-card {
   display: grid;
-  grid-template-columns: 28px minmax(0, 1fr) minmax(220px, 0.34fr) auto;
+  grid-template-columns: 24px minmax(220px, 1fr) minmax(170px, 0.32fr) auto;
   align-items: center;
-  gap: var(--space-4);
-  padding: 16px;
+  gap: var(--space-3);
+  padding: 14px 16px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-medium);
   background: var(--color-surface);
@@ -14985,6 +15321,20 @@ button.icon-button:disabled {
   min-width: 0;
 }
 
+.failure-analysis-card-title {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 9px;
+}
+
+.failure-analysis-card-title h3 {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .failure-analysis-card h3,
 .failure-analysis-card p,
 .failure-analysis-card dl {
@@ -14992,7 +15342,6 @@ button.icon-button:disabled {
 }
 
 .failure-analysis-card h3 {
-  margin-top: 8px;
   font-size: 15px;
 }
 
@@ -15013,12 +15362,13 @@ button.icon-button:disabled {
   line-height: 1.45;
   overflow-wrap: anywhere;
   -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
+  -webkit-line-clamp: 1;
 }
 
 .failure-analysis-card dl {
   display: grid;
-  gap: 9px;
+  grid-template-columns: 1fr;
+  gap: 7px;
 }
 
 .failure-analysis-card dl > div {
@@ -15047,7 +15397,7 @@ button.icon-button:disabled {
   gap: var(--space-3);
   padding: 10px 10px 10px 16px;
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-medium);
+  border-radius: 999px;
   background: rgba(255, 255, 255, 0.94);
   box-shadow: var(--shadow-float);
   backdrop-filter: blur(14px) saturate(120%);
@@ -15065,7 +15415,7 @@ button.icon-button:disabled {
 
 .failure-analysis-batch-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: var(--space-4);
 }
 
@@ -15073,7 +15423,17 @@ button.icon-button:disabled {
   display: grid;
   min-width: 0;
   gap: var(--space-3);
-  padding: 20px;
+  padding: 20px 22px;
+  transition:
+    border-color 150ms ease,
+    box-shadow 150ms ease,
+    transform 150ms ease;
+}
+
+.failure-analysis-batch-card:hover {
+  transform: translateY(-1px);
+  border-color: color-mix(in srgb, var(--color-violet) 24%, var(--color-border));
+  box-shadow: var(--shadow-float);
 }
 
 .failure-analysis-batch-heading,
@@ -15126,6 +15486,48 @@ button.icon-button:disabled {
   background: var(--color-surface-muted);
 }
 
+.failure-analysis-batch-progress {
+  display: grid;
+  gap: 7px;
+}
+
+.failure-analysis-batch-progress > span {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-caption);
+}
+
+.failure-analysis-batch-progress strong {
+  color: var(--color-text-secondary);
+}
+
+.failure-analysis-batch-progress progress {
+  width: 100%;
+  height: 7px;
+  overflow: hidden;
+  border: 0;
+  border-radius: 999px;
+  background: var(--color-surface-muted);
+  appearance: none;
+}
+
+.failure-analysis-batch-progress progress::-webkit-progress-bar {
+  border-radius: 999px;
+  background: var(--color-surface-muted);
+}
+
+.failure-analysis-batch-progress progress::-webkit-progress-value {
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--color-violet), var(--color-info));
+}
+
+.failure-analysis-batch-progress progress::-moz-progress-bar {
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--color-violet), var(--color-info));
+}
+
 .failure-analysis-batch-card dt {
   color: var(--color-text-tertiary);
   font-size: var(--font-size-caption);
@@ -15136,19 +15538,67 @@ button.icon-button:disabled {
   font-weight: 750;
 }
 
-.failure-analysis-batch-card > .ui-button {
-  justify-content: center;
+.failure-analysis-batch-actions,
+.failure-analysis-detail-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.failure-analysis-batch-actions .ui-button {
   text-decoration: none;
+}
+
+.failure-analysis-export-action {
+  position: relative;
+  display: grid;
+  justify-items: end;
+}
+
+.failure-analysis-export-error {
+  position: absolute;
+  z-index: 4;
+  top: calc(100% + 6px);
+  right: 0;
+  width: max-content;
+  max-width: 320px;
+  border: 1px solid color-mix(in srgb, var(--color-danger) 25%, var(--color-border));
+  border-radius: var(--radius-control);
+  padding: 7px 9px;
+  background: var(--color-surface);
+  box-shadow: var(--shadow-float);
+  color: var(--color-danger);
+  font-size: var(--font-size-caption);
 }
 
 .failure-analysis-select-all {
   display: flex;
-  width: fit-content;
+  width: 100%;
   align-items: center;
   gap: 8px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  padding: 10px 12px;
+  background: var(--color-surface-muted);
   color: var(--color-text-secondary);
   font-size: var(--font-size-control);
   font-weight: 700;
+}
+
+.failure-analysis-select-all > span {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.failure-analysis-select-all small {
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-caption);
+  font-weight: 500;
 }
 
 .failure-analysis-completion-dialog {
@@ -15160,6 +15610,36 @@ button.icon-button:disabled {
   overflow-y: auto;
 }
 
+.failure-analysis-completion-dialog .runner-update-titlebar > span {
+  min-width: 0;
+}
+
+.failure-analysis-completion-dialog .runner-update-titlebar strong {
+  flex: 0 0 auto;
+}
+
+.failure-analysis-completion-dialog .runner-update-titlebar small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.failure-analysis-completion-dialog .dialog-actions {
+  position: sticky;
+  z-index: 2;
+  bottom: -18px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin: 0 -18px -18px;
+  border-top: 1px solid var(--color-border);
+  padding: 12px 18px;
+  background: color-mix(in srgb, var(--color-surface) 96%, transparent);
+  box-shadow: 0 -8px 18px rgba(20, 23, 31, 0.035);
+  backdrop-filter: blur(12px);
+}
+
 .failure-analysis-case-summary,
 .failure-analysis-proof-panel {
   display: grid;
@@ -15168,6 +15648,140 @@ button.icon-button:disabled {
   border: 1px solid var(--color-border);
   border-radius: var(--radius-medium);
   background: var(--color-surface-muted);
+}
+
+.failure-analysis-case-summary {
+  border-color: color-mix(in srgb, var(--color-violet) 20%, var(--color-border));
+  background:
+    radial-gradient(
+      circle at 100% 0%,
+      color-mix(in srgb, var(--color-violet-soft) 62%, transparent),
+      transparent 42%
+    ),
+    var(--color-surface-muted);
+}
+
+.failure-analysis-history-panel {
+  display: grid;
+  gap: 10px;
+  border: 1px solid color-mix(in srgb, var(--color-info) 18%, var(--color-border));
+  border-radius: var(--radius-medium);
+  padding: 13px;
+  background: color-mix(in srgb, var(--color-info-soft) 34%, var(--color-surface));
+}
+
+.failure-analysis-history-panel > header,
+.failure-analysis-history-panel > header > span,
+.failure-analysis-history-heading,
+.failure-analysis-history-actions {
+  display: flex;
+  align-items: center;
+}
+
+.failure-analysis-history-panel > header {
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.failure-analysis-history-panel > header > span {
+  gap: 7px;
+}
+
+.failure-analysis-history-panel > header small {
+  color: var(--color-text-tertiary);
+}
+
+.failure-analysis-history-state {
+  display: flex;
+  min-height: 54px;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  border: 1px dashed var(--color-border-strong);
+  border-radius: var(--radius-control);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-control);
+}
+
+.failure-analysis-history-state.error {
+  border-color: color-mix(in srgb, var(--color-danger) 28%, var(--color-border));
+  color: var(--color-danger);
+}
+
+.failure-analysis-history-cards {
+  display: grid;
+  max-height: 290px;
+  gap: 8px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.failure-analysis-history-cards > article {
+  display: grid;
+  gap: 9px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  padding: 11px;
+  background: var(--color-surface);
+}
+
+.failure-analysis-history-heading {
+  min-width: 0;
+  gap: 8px;
+}
+
+.failure-analysis-history-heading > strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.failure-analysis-history-heading > small {
+  margin-left: auto;
+  color: var(--color-text-tertiary);
+  white-space: nowrap;
+}
+
+.failure-analysis-history-cards dl {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px 14px;
+  margin: 0;
+}
+
+.failure-analysis-history-cards dl > div {
+  min-width: 0;
+}
+
+.failure-analysis-history-cards dt {
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-caption);
+}
+
+.failure-analysis-history-cards dd {
+  display: -webkit-box;
+  margin: 2px 0 0;
+  overflow: hidden;
+  color: var(--color-text-secondary);
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.failure-analysis-history-actions {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.failure-analysis-history-actions > a {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--font-size-caption);
+  font-weight: 700;
 }
 
 .failure-analysis-case-list {
@@ -15242,6 +15856,154 @@ button.icon-button:disabled {
   font-weight: 700;
 }
 
+.failure-analysis-proof-gallery {
+  display: grid !important;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 10px !important;
+}
+
+.failure-analysis-proof-thumbnail {
+  position: relative;
+  display: grid;
+  min-width: 0;
+  grid-template-columns: 104px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-medium);
+  padding: 8px;
+  background: var(--color-surface);
+  color: var(--color-text-secondary);
+  cursor: zoom-in;
+  text-align: left;
+  transition:
+    border-color 150ms ease,
+    box-shadow 150ms ease;
+}
+
+.failure-analysis-proof-thumbnail:hover {
+  border-color: color-mix(in srgb, var(--color-violet) 42%, var(--color-border));
+  box-shadow: var(--shadow-card);
+}
+
+.failure-analysis-proof-thumbnail:focus-visible {
+  outline: 3px solid var(--color-focus-ring);
+  outline-offset: 2px;
+}
+
+.failure-analysis-proof-thumbnail > img {
+  width: 104px;
+  height: 68px;
+  border-radius: calc(var(--radius-control) - 2px);
+  background: var(--color-surface-muted);
+  object-fit: contain;
+}
+
+.failure-analysis-proof-thumbnail > span {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.failure-analysis-proof-thumbnail strong,
+.failure-analysis-proof-thumbnail small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.failure-analysis-proof-thumbnail strong {
+  color: var(--color-text);
+}
+
+.failure-analysis-proof-thumbnail small {
+  color: var(--color-text-tertiary);
+}
+
+.failure-analysis-image-overlay {
+  position: fixed;
+  z-index: 180;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(8, 12, 20, 0.78);
+  backdrop-filter: blur(10px);
+}
+
+.failure-analysis-image-dialog {
+  display: grid;
+  width: min(1440px, calc(100vw - 48px));
+  height: min(900px, calc(100vh - 48px));
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, white 18%, transparent);
+  border-radius: var(--radius-large);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-float);
+}
+
+.failure-analysis-image-dialog > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border-bottom: 1px solid var(--color-border);
+  padding: 11px 13px 11px 17px;
+}
+
+.failure-analysis-image-dialog > header > span {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.failure-analysis-image-dialog > header strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.failure-analysis-image-dialog > header small {
+  color: var(--color-text-tertiary);
+}
+
+.failure-analysis-image-controls {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+}
+
+.failure-analysis-image-controls output {
+  min-width: 54px;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-caption);
+  font-weight: 700;
+  text-align: center;
+}
+
+.failure-analysis-image-viewport {
+  overflow: auto;
+  padding: 18px;
+  background:
+    linear-gradient(45deg, rgba(124, 132, 148, 0.08) 25%, transparent 25%) 0 0 / 20px 20px,
+    linear-gradient(-45deg, rgba(124, 132, 148, 0.08) 25%, transparent 25%) 0 10px / 20px 20px,
+    var(--color-surface-muted);
+  text-align: center;
+}
+
+.failure-analysis-image-viewport > img {
+  display: block;
+  height: auto;
+  max-width: none;
+  margin: 0 auto;
+  border-radius: var(--radius-control);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-card);
+}
+
 .failure-analysis-paste-zone {
   display: grid !important;
   min-height: 118px;
@@ -15293,6 +16055,14 @@ button.icon-button:disabled {
   color: var(--color-warning);
 }
 
+.failure-analysis-confirm-dialog header > svg {
+  box-sizing: content-box;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  padding: 9px;
+  background: var(--color-warning-soft);
+}
+
 .failure-analysis-confirm-dialog header > div {
   display: grid;
   gap: 7px;
@@ -15310,7 +16080,17 @@ button.icon-button:disabled {
 }
 
 .failure-analysis-confirm-dialog .dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
   margin-top: var(--space-4);
+}
+
+.failure-analysis-confirm-action.ui-button-danger {
+  border-color: transparent;
+  background: var(--color-danger);
+  color: #fff;
+  box-shadow: 0 6px 16px color-mix(in srgb, var(--color-danger) 22%, transparent);
 }
 
 .failure-analysis-dialog-body h3,
@@ -15331,20 +16111,52 @@ button.icon-button:disabled {
 
 .failure-analysis-category-options {
   display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 10px;
   padding: 0;
   border: 0;
+}
+
+.failure-analysis-category-options legend {
+  grid-column: 1 / -1;
+  margin-bottom: 1px;
+  color: var(--color-text);
+  font-size: var(--font-size-control);
+  font-weight: 720;
 }
 
 .failure-analysis-category-options > label {
   display: flex;
   align-items: flex-start;
   gap: 11px;
+  min-height: 88px;
   padding: 13px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-medium);
   background: var(--color-surface-muted);
   cursor: pointer;
+}
+
+.failure-analysis-category-options[data-read-only="true"] {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.failure-analysis-category-options[data-read-only="true"] > label {
+  min-height: auto;
+  cursor: default;
+}
+
+.failure-analysis-category-options[data-read-only="true"] > label > .ui-input {
+  display: none;
+}
+
+.failure-analysis-completion-dialog[data-read-only="true"] .ui-input:disabled,
+.failure-analysis-completion-dialog[data-read-only="true"] .ui-textarea:disabled {
+  border-color: var(--color-border);
+  background: var(--color-surface-muted);
+  color: var(--color-text);
+  opacity: 1;
+  -webkit-text-fill-color: var(--color-text);
 }
 
 .failure-analysis-category-options > label.is-selected {
@@ -15364,24 +16176,13 @@ button.icon-button:disabled {
 }
 
 @media (max-width: 1180px) {
-  .failure-analysis-batch-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
   .failure-analysis-card {
-    grid-template-columns: 28px minmax(0, 1fr) auto;
-  }
-
-  .failure-analysis-card dl {
-    grid-column: 2 / -1;
-    grid-row: 2;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: 24px minmax(200px, 1fr) minmax(155px, 0.32fr) auto;
   }
 }
 
 @media (max-width: 1024px) {
   .failure-analysis-toolbar,
-  .failure-analysis-filter,
   .failure-analysis-workbench-heading {
     align-items: stretch;
     flex-direction: column;
@@ -15393,15 +16194,15 @@ button.icon-button:disabled {
   }
 
   .failure-analysis-name-column {
-    width: 20%;
+    width: 26%;
   }
 
   .failure-analysis-path-column {
-    width: 22%;
+    width: 23%;
   }
 
   .failure-analysis-stack-column {
-    width: 36%;
+    width: 29%;
   }
 
   .failure-analysis-status-column {
@@ -15414,6 +16215,12 @@ button.icon-button:disabled {
   }
 
   .failure-analysis-batch-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 760px) {
+  .failure-analysis-category-options {
     grid-template-columns: 1fr;
   }
 }

@@ -156,7 +156,9 @@ export function ExecutionRecordsTable({
   );
 
   const columnWidth = (column: ExecutionRecordColumnDefinition): number =>
-    widths[column.key] ?? automaticWidths[column.key];
+    // 已持久化的列宽可能来自旧版约束；读取时重新执行当前下限，防止升级后
+    // localStorage 中的过窄数值继续截断状态、百分比和操作按钮。
+    Math.max(column.minWidth, widths[column.key] ?? automaticWidths[column.key]);
   // table-layout: fixed 只有在表格拥有确定宽度时才会完全忽略单元格的内在宽度。
   // 直接使用各列宽度之和，避免某个超长且不可换行的任务名通过 max-content 撑宽整列。
   const tableWidth = EXECUTION_RECORD_COLUMNS.reduce(

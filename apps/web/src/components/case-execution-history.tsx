@@ -78,7 +78,10 @@ export function CaseExecutionHistory({
           <div>
             <span className="eyebrow">Execution history</span>
             <h2>全部执行历史</h2>
-            <p>按执行时间倒序展示；已加载 {items.length} 条执行记录及其全部执行尝试。</p>
+            <p>
+              每个任务仅展示总结结果：任一轮通过则记录通过轮次，否则记录最后一轮；已加载{" "}
+              {items.length} 条执行记录。
+            </p>
           </div>
           <ListRestart size={22} aria-hidden="true" />
         </div>
@@ -122,7 +125,7 @@ export function CaseExecutionHistory({
                     </tr>
                   );
                 }
-                return item.attempts.map((attempt, attemptIndex) => (
+                return item.attempts.map((attempt) => (
                   <tr key={attempt.id}>
                     <td>{formatDate(attempt.finishedAt ?? attempt.createdAt, timeZone)}</td>
                     <td>
@@ -131,7 +134,7 @@ export function CaseExecutionHistory({
                     </td>
                     <td>{caseExecutionStatusLabel(item.status)}</td>
                     <td>
-                      <strong>第 {attempt.attemptNumber} 次尝试</strong>
+                      <strong>第 {attempt.attemptNumber} 轮总结</strong>
                       <span className="case-history-attempt-result" title={attempt.resultCode}>
                         {caseExecutionStatusLabel(attempt.status)} ·{" "}
                         {caseExecutionResultLabel(attempt.resultCode)}
@@ -149,7 +152,7 @@ export function CaseExecutionHistory({
                       <div className="case-history-actions">
                         {canReadLogs ? (
                           <Button
-                            aria-label={`查看第 ${attempt.attemptNumber} 次尝试日志`}
+                            aria-label={`查看第 ${attempt.attemptNumber} 轮总结日志`}
                             className="button button-secondary compact-button"
                             onClick={() => setLogAttempt(attempt)}
                             type="button"
@@ -157,11 +160,9 @@ export function CaseExecutionHistory({
                             查看日志
                           </Button>
                         ) : null}
-                        {attemptIndex === 0 ? (
-                          <Link href={`/run-batches/${encodeURIComponent(item.batchId)}`}>
-                            查看批次
-                          </Link>
-                        ) : null}
+                        <Link href={`/run-batches/${encodeURIComponent(item.batchId)}`}>
+                          查看批次
+                        </Link>
                       </div>
                     </td>
                   </tr>

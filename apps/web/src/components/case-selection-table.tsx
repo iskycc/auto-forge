@@ -5,7 +5,11 @@ import { formatPlatformDateTime } from "@/lib/platform-date-time";
 import { Button, Input, OperationProgress, Select } from "@/components/ui";
 import { formatMethodSignature } from "@/lib/jvm-signature";
 
-import { apiErrorSchema, CASE_SUITE_ITEM_MUTATION_LIMIT } from "@autoforge/contracts";
+import {
+  apiErrorSchema,
+  CASE_SUITE_ITEM_MUTATION_LIMIT,
+  type FailureAnalysisHistoryPageView,
+} from "@autoforge/contracts";
 import type { CaseDefinitionWithMethods, CaseSuite, CaseVersion } from "@autoforge/domain";
 import {
   AlertCircle,
@@ -23,6 +27,7 @@ import Link from "next/link";
 import { useDeferredValue, useEffect, useMemo, useState } from "react";
 
 import { CaseDefinitionEditor } from "./case-definition-editor";
+import { CaseFailureAnalysisHistory } from "./case-failure-analysis-history";
 import { CaseImportDialog } from "./case-import-dialog";
 import { CaseVersionHistory } from "./case-version-history";
 import { OpenRunDialogButton } from "./global-run-dialog";
@@ -67,12 +72,15 @@ type CaseWorkspaceDetail = {
   definition: CaseDefinitionWithMethods;
   versions: CaseVersion[];
   activity: CaseActivity;
+  failureAnalysisHistory: FailureAnalysisHistoryPageView;
   projectVersionName: string;
   testStageName: string;
   executable: boolean;
   canManage: boolean;
   canRun: boolean;
   canReadSource: boolean;
+  canReadAnalysisEvidence: boolean;
+  timeZone: string;
   sourceView: null | {
     reference: { entryPath: string };
     content: string;
@@ -769,8 +777,26 @@ function CaseInspector({
         </div>
       </details>
 
+      <details className="case-inspector-section" open>
+        <summary>
+          失败分析结论（
+          {detail.failureAnalysisHistory.nextCursor
+            ? `最近 ${detail.failureAnalysisHistory.items.length}`
+            : detail.failureAnalysisHistory.items.length}
+          ）
+        </summary>
+        <CaseFailureAnalysisHistory
+          canReadEvidence={detail.canReadAnalysisEvidence}
+          caseDefinitionId={definition.id}
+          compact
+          initialPage={detail.failureAnalysisHistory}
+          projectId={definition.projectId}
+          timeZone={detail.timeZone}
+        />
+      </details>
+
       <details className="case-inspector-section">
-        <summary>分析历史（{activity.analyses.length}）</summary>
+        <summary>执行结果统计历史（{activity.analyses.length}）</summary>
         <div className="table-scroll">
           <table className="data-table case-inspector-table">
             <thead>
@@ -783,7 +809,7 @@ function CaseInspector({
             <tbody>
               {activity.analyses.length === 0 ? (
                 <tr>
-                  <td colSpan={3}>当前用例尚无分析事实。</td>
+                  <td colSpan={3}>当前用例尚无执行结果统计。</td>
                 </tr>
               ) : null}
               {activity.analyses.map((analysis) => (

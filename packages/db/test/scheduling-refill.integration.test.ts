@@ -312,6 +312,8 @@ function schedulingRefillCases(createHarness: () => Promise<RefillHarness>): voi
     const caseDefinitionId = `case-diagnostic-${randomUUID()}`;
     const visibleRunIds = [randomUUID(), randomUUID(), randomUUID()];
     const diagnosticRunId = randomUUID();
+    const earlierFailedAttemptId = randomUUID();
+    const finalFailedAttemptId = randomUUID();
     const firstAttemptId = randomUUID();
     const secondAttemptId = randomUUID();
     try {
@@ -355,10 +357,20 @@ function schedulingRefillCases(createHarness: () => Promise<RefillHarness>): voi
            (id, execution_run_id, runner_id, attempt_number, status, scheduling_score,
             result_code, duration_ms, created_at, finished_at)
          VALUES (?, ?, ?, 1, 'failed', 0.8, 'TEST_ASSERTION_FAILED', 200,
+                 '2026-08-10T00:01:10.000Z', '2026-08-10T00:01:11.000Z'),
+                (?, ?, ?, 2, 'failed', 0.8, 'TEST_ASSERTION_FAILED_FINAL', 180,
+                 '2026-08-10T00:01:20.000Z', '2026-08-10T00:01:21.000Z'),
+                (?, ?, ?, 1, 'failed', 0.8, 'TEST_ASSERTION_FAILED', 200,
                  '2026-08-10T00:02:10.000Z', '2026-08-10T00:02:11.000Z'),
                 (?, ?, ?, 2, 'succeeded', 0.9, 'TESTNG_SUCCEEDED', 120,
                  '2026-08-10T00:02:20.000Z', '2026-08-10T00:02:21.000Z')`,
         [
+          earlierFailedAttemptId,
+          visibleRunIds[1],
+          harness.runnerId,
+          finalFailedAttemptId,
+          visibleRunIds[1],
+          harness.runnerId,
           firstAttemptId,
           visibleRunIds[2],
           harness.runnerId,
@@ -376,9 +388,12 @@ function schedulingRefillCases(createHarness: () => Promise<RefillHarness>): voi
         kind: "case_log_rerun",
         requestedBy: { username: "c12345678", source: "ldap" },
       });
-      await expect(harness.listCaseActivity(caseDefinitionId, 20)).resolves.toMatchObject({
+      const activity = await harness.listCaseActivity(caseDefinitionId, 20);
+      expect(activity).toMatchObject({
         executions: [...visibleRunIds].reverse().map((runId) => ({ runId })),
       });
+      expect(activity.executions[0]).toMatchObject({ attemptId: secondAttemptId });
+      expect(activity.executions[1]).toMatchObject({ attemptId: finalFailedAttemptId });
       const firstPage = await harness.listCaseExecutionHistory(caseDefinitionId, {
         limit: 2,
         includeRunnerNames: true,
@@ -389,15 +404,17 @@ function schedulingRefillCases(createHarness: () => Promise<RefillHarness>): voi
       ]);
       expect(firstPage.items[0]?.attempts).toEqual([
         expect.objectContaining({
-          id: firstAttemptId,
-          attemptNumber: 1,
-          runnerName: "runner-refill",
-          resultCode: "TEST_ASSERTION_FAILED",
-        }),
-        expect.objectContaining({
           id: secondAttemptId,
           attemptNumber: 2,
+          runnerName: "runner-refill",
           resultCode: "TESTNG_SUCCEEDED",
+        }),
+      ]);
+      expect(firstPage.items[1]?.attempts).toEqual([
+        expect.objectContaining({
+          id: finalFailedAttemptId,
+          attemptNumber: 2,
+          resultCode: "TEST_ASSERTION_FAILED_FINAL",
         }),
       ]);
       expect(firstPage.nextCursor).toBeTruthy();

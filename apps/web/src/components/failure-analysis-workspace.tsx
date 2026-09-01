@@ -4,21 +4,29 @@ import type {
   ClaimFailureAnalysisResult,
   FailureAnalysisCandidate,
   FailureAnalysisCandidatePage,
+  FailureAnalysisClaimView,
+  FailureAnalysisHistoryItemView,
   FailureAnalysisSort,
 } from "@autoforge/contracts";
-import type { FailureAnalysisCategory, FailureAnalysisClaim } from "@autoforge/domain";
+import type { FailureAnalysisCategory } from "@autoforge/domain";
 import {
   AlertTriangle,
   ArrowDownAZ,
   ArrowUpAZ,
+  ArrowUpDown,
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
   ClipboardCheck,
   ExternalLink,
   FileCheck2,
+  History,
   ImagePlus,
   LoaderCircle,
+  Maximize2,
+  Minus,
+  Plus,
+  RotateCcw,
   Search,
   SquareActivity,
   X,
@@ -75,7 +83,7 @@ export function FailureAnalysisWorkspace({
   projectId: string;
   projectVersionId: string;
   initialCandidatePage: FailureAnalysisCandidatePage | null | undefined;
-  initialClaimPage: { items: FailureAnalysisClaim[]; nextCursor?: string } | undefined;
+  initialClaimPage: { items: FailureAnalysisClaimView[]; nextCursor?: string } | undefined;
   initialBatchId: string;
   initialView: WorkspaceView;
 }) {
@@ -90,7 +98,7 @@ export function FailureAnalysisWorkspace({
     [],
   );
   const [candidatePageCursor, setCandidatePageCursor] = useState<string>();
-  const [claims, setClaims] = useState<FailureAnalysisClaim[]>(initialClaimPage?.items ?? []);
+  const [claims, setClaims] = useState<FailureAnalysisClaimView[]>(initialClaimPage?.items ?? []);
   const [claimsCursor, setClaimsCursor] = useState<string | undefined>(
     initialClaimPage?.nextCursor,
   );
@@ -98,7 +106,7 @@ export function FailureAnalysisWorkspace({
   const [claimsCursorHistory, setClaimsCursorHistory] = useState<Array<string | undefined>>([]);
   const [selectedRunIds, setSelectedRunIds] = useState<Set<string>>(() => new Set());
   const [selectedAnalysisIds, setSelectedAnalysisIds] = useState<Set<string>>(() => new Set());
-  const [dialogClaims, setDialogClaims] = useState<FailureAnalysisClaim[]>();
+  const [dialogClaims, setDialogClaims] = useState<FailureAnalysisClaimView[]>();
   const [sort, setSort] = useState<FailureAnalysisSort>("class_path");
   const [direction, setDirection] = useState<"asc" | "desc">("asc");
   const [queryInput, setQueryInput] = useState("");
@@ -185,7 +193,7 @@ export function FailureAnalysisWorkspace({
         if (!response.ok)
           throw new Error((await readApiErrorMessage(response, "读取已认领用例失败。"))!);
         const page = (await response.json()) as {
-          items: FailureAnalysisClaim[];
+          items: FailureAnalysisClaimView[];
           nextCursor?: string;
         };
         if (requestSequence !== claimsRequestSequence.current) return;
@@ -334,7 +342,7 @@ export function FailureAnalysisWorkspace({
     else setQuery(nextQuery);
   }
 
-  function applyCompletedClaims(updatedClaims: FailureAnalysisClaim[]): void {
+  function applyCompletedClaims(updatedClaims: FailureAnalysisClaimView[]): void {
     const updates = new Map(updatedClaims.map((claim) => [claim.id, claim]));
     setClaims((current) => current.map((claim) => updates.get(claim.id) ?? claim));
     setCandidates((current) =>
@@ -485,7 +493,10 @@ export function FailureAnalysisWorkspace({
                     }
                     type="checkbox"
                   />
-                  选择本页全部未完成分析
+                  <span>
+                    选择本页全部未完成分析
+                    <small>{selectableClaims.length} 个可分析用例</small>
+                  </span>
                 </label>
                 <div className="failure-analysis-card-list">
                   {claims.map((claim) => (
@@ -500,10 +511,12 @@ export function FailureAnalysisWorkspace({
                         type="checkbox"
                       />
                       <div className="failure-analysis-card-main">
-                        <span className={`analysis-status ${claim.status}`}>
-                          {statusLabel(claim.status)}
-                        </span>
-                        <h3>{claim.caseName}</h3>
+                        <div className="failure-analysis-card-title">
+                          <h3>{claim.caseName}</h3>
+                          <span className={`analysis-status ${claim.status}`}>
+                            {statusLabel(claim.status)}
+                          </span>
+                        </div>
                         <code>{claim.className}</code>
                         <p title={claim.failureSummary}>{claim.failureSummary}</p>
                       </div>
@@ -521,7 +534,7 @@ export function FailureAnalysisWorkspace({
                         disabled={!canManage}
                         onClick={() => setDialogClaims([claim])}
                         type="button"
-                        variant={claim.status === "completed" ? "secondary" : "primary"}
+                        variant="secondary"
                       >
                         {claim.status === "completed" ? "查看分析详情" : "开始分析"}
                       </Button>
@@ -655,11 +668,15 @@ function CandidateTable({
                 />
               </td>
               <td>
-                <strong>{candidate.caseName}</strong>
+                <strong className="failure-analysis-case-name" title={candidate.caseName}>
+                  {candidate.caseName}
+                </strong>
                 <small>最终失败 · 第 {candidate.attemptNumber} 轮</small>
               </td>
               <td>
-                <code>{candidate.className}</code>
+                <code className="failure-analysis-class-path" title={candidate.className}>
+                  {candidate.className}
+                </code>
               </td>
               <td>
                 <span className="failure-analysis-stack" title={candidate.failureSummary}>
@@ -767,7 +784,15 @@ function SortableHeading({
         variant="ghost"
       >
         {label}
-        {active && direction === "desc" ? <ArrowDownAZ size={14} /> : <ArrowUpAZ size={14} />}
+        {active ? (
+          direction === "desc" ? (
+            <ArrowDownAZ size={14} />
+          ) : (
+            <ArrowUpAZ size={14} />
+          )
+        ) : (
+          <ArrowUpDown className="failure-analysis-sort-idle" size={13} />
+        )}
       </Button>
     </th>
   );
@@ -780,11 +805,11 @@ function CompleteAnalysisDialog({
   onClose,
   onCompleted,
 }: {
-  claims: FailureAnalysisClaim[];
+  claims: FailureAnalysisClaimView[];
   projectId: string;
   readOnly: boolean;
   onClose: () => void;
-  onCompleted: (claims: FailureAnalysisClaim[]) => void;
+  onCompleted: (claims: FailureAnalysisClaimView[]) => void;
 }) {
   const initial = claims.length === 1 ? claims[0] : undefined;
   const [category, setCategory] = useState<FailureAnalysisCategory | undefined>(initial?.category);
@@ -793,14 +818,94 @@ function CompleteAnalysisDialog({
   const [ticketReference, setTicketReference] = useState(initial?.ticketReference ?? "");
   const [remark, setRemark] = useState(initial?.remark ?? "");
   const [uploadedClaims, setUploadedClaims] = useState(claims);
-  const [logClaim, setLogClaim] = useState<FailureAnalysisClaim>();
+  const [logClaim, setLogClaim] = useState<FailureAnalysisClaimView>();
+  const [previewClaim, setPreviewClaim] = useState<FailureAnalysisClaimView>();
+  const [imageZoomPercent, setImageZoomPercent] = useState(100);
   const [submitting, setSubmitting] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [showCaseConfirmation, setShowCaseConfirmation] = useState(false);
+  const [historyItems, setHistoryItems] = useState<FailureAnalysisHistoryItemView[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(true);
+  const [historyError, setHistoryError] = useState("");
+  const [inheritanceCandidate, setInheritanceCandidate] =
+    useState<FailureAnalysisHistoryItemView>();
   const [error, setError] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const imageCloseButtonRef = useRef<HTMLButtonElement>(null);
+  const imagePreviewTriggerRef = useRef<HTMLButtonElement>(null);
+  const screenshotClaims = uniqueScreenshotClaims(uploadedClaims);
+  const caseDefinitionIds = useMemo(
+    () => [...new Set(claims.map((claim) => claim.caseDefinitionId))],
+    [claims],
+  );
+  const currentAnalysisIds = useMemo(() => new Set(claims.map((claim) => claim.id)), [claims]);
+  const historyLimitPerCase = claims.length > 20 ? 1 : claims.length > 5 ? 2 : 5;
+  const reusableCodeIssue =
+    claims.length === 1
+      ? historyItems.find(
+          (item) =>
+            item.claim.caseDefinitionId === claims[0]?.caseDefinitionId &&
+            item.claim.category === "code_issue_filed" &&
+            Boolean(item.claim.issueDescription && item.claim.ticketReference),
+        )
+      : undefined;
+  const closeScreenshotPreview = useCallback(() => {
+    setPreviewClaim(undefined);
+    window.requestAnimationFrame(() => imagePreviewTriggerRef.current?.focus());
+  }, []);
 
-  async function openPublicLog(claim: FailureAnalysisClaim): Promise<void> {
+  useEffect(() => {
+    const controller = new AbortController();
+    const parameters = new URLSearchParams({
+      projectId,
+      limitPerCase: String(historyLimitPerCase),
+    });
+    for (const caseDefinitionId of caseDefinitionIds) {
+      parameters.append("caseDefinitionId", caseDefinitionId);
+    }
+    void fetch(`/api/v1/failure-analysis/history?${parameters}`, {
+      cache: "no-store",
+      signal: controller.signal,
+    })
+      .then(async (response) => {
+        if (!response.ok) {
+          throw new Error((await readApiErrorMessage(response, "读取历史分析结论失败。"))!);
+        }
+        return (await response.json()) as { items: FailureAnalysisHistoryItemView[] };
+      })
+      .then((payload) => {
+        setHistoryItems(payload.items.filter((item) => !currentAnalysisIds.has(item.claim.id)));
+      })
+      .catch((loadError: unknown) => {
+        if (loadError instanceof DOMException && loadError.name === "AbortError") return;
+        setHistoryError(loadError instanceof Error ? loadError.message : "读取历史分析结论失败。");
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setHistoryLoading(false);
+      });
+    return () => controller.abort();
+  }, [caseDefinitionIds, currentAnalysisIds, historyLimitPerCase, projectId]);
+
+  useEffect(() => {
+    if (!previewClaim) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") closeScreenshotPreview();
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    imageCloseButtonRef.current?.focus();
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [closeScreenshotPreview, previewClaim]);
+
+  function openScreenshotPreview(
+    claim: FailureAnalysisClaimView,
+    trigger: HTMLButtonElement,
+  ): void {
+    imagePreviewTriggerRef.current = trigger;
+    setImageZoomPercent(100);
+    setPreviewClaim(claim);
+  }
+
+  async function openPublicLog(claim: FailureAnalysisClaimView): Promise<void> {
     const openedWindow = window.open("", "_blank");
     setError("");
     try {
@@ -838,7 +943,7 @@ function CompleteAnalysisDialog({
       });
       if (!response.ok)
         throw new Error((await readApiErrorMessage(response, "上传重跑证明失败。"))!);
-      const payload = (await response.json()) as { items: FailureAnalysisClaim[] };
+      const payload = (await response.json()) as { items: FailureAnalysisClaimView[] };
       setUploadedClaims(payload.items);
     } catch (uploadError) {
       setError(uploadError instanceof Error ? uploadError.message : "上传重跑证明失败。");
@@ -880,7 +985,7 @@ function CompleteAnalysisDialog({
       });
       if (!response.ok)
         throw new Error((await readApiErrorMessage(response, "提交用例分析失败。"))!);
-      const payload = (await response.json()) as { items: FailureAnalysisClaim[] };
+      const payload = (await response.json()) as { items: FailureAnalysisClaimView[] };
       onCompleted(payload.items);
     } catch (completeError) {
       setError(completeError instanceof Error ? completeError.message : "提交用例分析失败。");
@@ -907,6 +1012,15 @@ function CompleteAnalysisDialog({
     void complete(false);
   }
 
+  function inheritCodeIssueConclusion(): void {
+    if (!inheritanceCandidate) return;
+    setCategory("code_issue_filed");
+    setIssueDescription(inheritanceCandidate.claim.issueDescription ?? "");
+    setTicketReference(inheritanceCandidate.claim.ticketReference ?? "");
+    setRemark(inheritanceCandidate.claim.remark ?? "");
+    setInheritanceCandidate(undefined);
+  }
+
   return (
     <>
       <div
@@ -919,7 +1033,9 @@ function CompleteAnalysisDialog({
             claims.length > 1 ? `批量分析 ${claims.length} 个用例` : `分析 ${claims[0]?.caseName}`
           }
           aria-modal="true"
+          aria-hidden={previewClaim || inheritanceCandidate ? true : undefined}
           className="runner-update-dialog failure-analysis-dialog failure-analysis-completion-dialog"
+          data-read-only={readOnly ? "true" : undefined}
           onMouseDown={(event) => event.stopPropagation()}
           role="dialog"
         >
@@ -983,26 +1099,43 @@ function CompleteAnalysisDialog({
               </div>
             </section>
 
-            <fieldset className="failure-analysis-category-options" disabled={readOnly}>
-              <legend className="sr-only">失败类别</legend>
-              {CATEGORY_OPTIONS.map((option) => (
-                <label
-                  className={category === option.value ? "is-selected" : ""}
-                  key={option.value}
-                >
-                  <Input
-                    checked={category === option.value}
-                    name="failure-category"
-                    onChange={() => setCategory(option.value)}
-                    type="radio"
-                    value={option.value}
-                  />
-                  <span>
-                    <strong>{option.label}</strong>
-                    <small>{option.description}</small>
-                  </span>
-                </label>
-              ))}
+            <AnalysisHistoryPanel
+              historyError={historyError}
+              historyItems={historyItems}
+              historyLoading={historyLoading}
+              historyLimitPerCase={historyLimitPerCase}
+              onInherit={setInheritanceCandidate}
+              onPreview={(claim, trigger) => openScreenshotPreview(claim, trigger)}
+              reusableCodeIssue={readOnly ? undefined : reusableCodeIssue}
+              selectedCaseCount={claims.length}
+            />
+
+            <fieldset
+              className="failure-analysis-category-options"
+              data-read-only={readOnly ? "true" : undefined}
+              disabled={readOnly}
+            >
+              <legend>{readOnly ? "分析结论" : "选择失败类别"}</legend>
+              {CATEGORY_OPTIONS.filter((option) => !readOnly || option.value === category).map(
+                (option) => (
+                  <label
+                    className={category === option.value ? "is-selected" : ""}
+                    key={option.value}
+                  >
+                    <Input
+                      checked={category === option.value}
+                      name="failure-category"
+                      onChange={() => setCategory(option.value)}
+                      type="radio"
+                      value={option.value}
+                    />
+                    <span>
+                      <strong>{option.label}</strong>
+                      <small>{option.description}</small>
+                    </span>
+                  </label>
+                ),
+              )}
             </fieldset>
 
             {category === "rerun_passed" ? (
@@ -1017,27 +1150,49 @@ function CompleteAnalysisDialog({
                   </span>
                 </div>
                 {uploadedClaims.some((claim) => claim.screenshot) ? (
-                  <div className="failure-analysis-uploaded-proof">
-                    <CheckCircle2 size={17} />
-                    <span>
-                      通过截图已上传到平台对象存储
-                      {claims.length > 1 ? "，并关联到全部选中用例" : ""}。
-                    </span>
-                    {uploadedClaims[0]?.screenshot ? (
-                      <a
-                        href={`/api/v1/failure-analysis/claims/${encodeURIComponent(uploadedClaims[0].id)}/evidence?projectId=${encodeURIComponent(projectId)}`}
-                        rel="noreferrer"
-                        target="_blank"
-                      >
-                        查看截图
-                      </a>
-                    ) : null}
-                  </div>
+                  <>
+                    <div className="failure-analysis-uploaded-proof">
+                      <CheckCircle2 size={17} />
+                      <span>
+                        通过截图已上传到平台对象存储
+                        {claims.length > 1 ? "，并关联到全部选中用例" : ""}。
+                      </span>
+                    </div>
+                    <div className="failure-analysis-proof-gallery" aria-label="重跑通过截图">
+                      {screenshotClaims.map((claim) => (
+                        <Button
+                          aria-label={`放大查看截图 ${claim.screenshot!.fileName}`}
+                          className="failure-analysis-proof-thumbnail"
+                          key={claim.screenshot!.sha256}
+                          onClick={(event) => openScreenshotPreview(claim, event.currentTarget)}
+                          type="button"
+                          variant="ghost"
+                        >
+                          {/* eslint-disable-next-line @next/next/no-img-element -- authenticated evidence must load directly with the browser session */}
+                          <img
+                            alt={`重跑通过截图：${claim.screenshot!.fileName}`}
+                            loading="lazy"
+                            src={failureAnalysisEvidenceUrl(claim, projectId)}
+                          />
+                          <span>
+                            <strong>{claim.screenshot!.fileName}</strong>
+                            <small>点击放大 · {formatFileSize(claim.screenshot!.sizeBytes)}</small>
+                          </span>
+                          <Maximize2 aria-hidden="true" size={16} />
+                        </Button>
+                      ))}
+                    </div>
+                  </>
                 ) : null}
                 {!readOnly ? (
                   <div
                     className="failure-analysis-paste-zone"
                     onClick={() => fileInputRef.current?.click()}
+                    onKeyDown={(event) => {
+                      if (event.key !== "Enter" && event.key !== " ") return;
+                      event.preventDefault();
+                      fileInputRef.current?.click();
+                    }}
                     onPaste={pasteScreenshot}
                     role="button"
                     tabIndex={0}
@@ -1050,7 +1205,7 @@ function CompleteAnalysisDialog({
                     <Input
                       ref={fileInputRef}
                       accept="image/png,image/jpeg,image/webp"
-                      className="sr-only"
+                      className="visually-hidden"
                       onChange={(event) => {
                         const file = event.target.files?.[0];
                         if (file) void uploadScreenshot(file);
@@ -1166,6 +1321,78 @@ function CompleteAnalysisDialog({
           onClose={() => setLogClaim(undefined)}
         />
       ) : null}
+      {previewClaim?.screenshot ? (
+        <div
+          className="failure-analysis-image-overlay"
+          onMouseDown={closeScreenshotPreview}
+          role="presentation"
+        >
+          <section
+            aria-label={`图片预览 ${previewClaim.screenshot.fileName}`}
+            aria-modal="true"
+            className="failure-analysis-image-dialog"
+            onMouseDown={(event) => event.stopPropagation()}
+            role="dialog"
+          >
+            <header>
+              <span>
+                <strong>{previewClaim.screenshot.fileName}</strong>
+                <small>{formatFileSize(previewClaim.screenshot.sizeBytes)}</small>
+              </span>
+              <div className="failure-analysis-image-controls" aria-label="图片缩放控制">
+                <Button
+                  aria-label="缩小图片"
+                  disabled={imageZoomPercent <= 50}
+                  onClick={() => setImageZoomPercent((current) => Math.max(50, current - 25))}
+                  size="compact"
+                  type="button"
+                  variant="secondary"
+                >
+                  <Minus size={15} />
+                </Button>
+                <output aria-label="当前图片缩放比例">{imageZoomPercent}%</output>
+                <Button
+                  aria-label="放大图片"
+                  disabled={imageZoomPercent >= 300}
+                  onClick={() => setImageZoomPercent((current) => Math.min(300, current + 25))}
+                  size="compact"
+                  type="button"
+                  variant="secondary"
+                >
+                  <Plus size={15} />
+                </Button>
+                <Button
+                  aria-label="重置图片大小"
+                  disabled={imageZoomPercent === 100}
+                  onClick={() => setImageZoomPercent(100)}
+                  size="compact"
+                  type="button"
+                  variant="secondary"
+                >
+                  <RotateCcw size={15} />
+                </Button>
+                <Button
+                  aria-label="关闭图片预览"
+                  onClick={closeScreenshotPreview}
+                  ref={imageCloseButtonRef}
+                  size="compact"
+                  type="button"
+                >
+                  <X size={16} />
+                </Button>
+              </div>
+            </header>
+            <div className="failure-analysis-image-viewport">
+              {/* eslint-disable-next-line @next/next/no-img-element -- authenticated evidence must load directly with the browser session */}
+              <img
+                alt={`重跑通过截图大图：${previewClaim.screenshot.fileName}`}
+                src={failureAnalysisEvidenceUrl(previewClaim, projectId)}
+                style={{ width: `${imageZoomPercent}%` }}
+              />
+            </div>
+          </section>
+        </div>
+      ) : null}
       {showCaseConfirmation ? (
         <div
           className="runner-update-overlay failure-analysis-confirm-overlay"
@@ -1197,6 +1424,7 @@ function CompleteAnalysisDialog({
                 返回检查
               </Button>
               <Button
+                className="failure-analysis-confirm-action"
                 disabled={submitting}
                 onClick={() => void complete(true)}
                 type="button"
@@ -1208,14 +1436,201 @@ function CompleteAnalysisDialog({
           </section>
         </div>
       ) : null}
+      {inheritanceCandidate ? (
+        <div
+          className="runner-update-overlay failure-analysis-confirm-overlay"
+          role="presentation"
+          onMouseDown={() => setInheritanceCandidate(undefined)}
+        >
+          <section
+            aria-label="确认继承未闭环代码问题"
+            aria-modal="true"
+            className="runner-update-dialog failure-analysis-confirm-dialog"
+            onMouseDown={(event) => event.stopPropagation()}
+            role="alertdialog"
+          >
+            <header>
+              <AlertTriangle size={24} />
+              <div>
+                <strong>确认问题单尚未闭环</strong>
+                <p>
+                  请确认问题单“{inheritanceCandidate.claim.ticketReference}
+                  ”尚未闭环，且当前失败仍由同一代码问题引起。若问题已修复或失败根因发生变化，请返回重新分析。
+                </p>
+              </div>
+            </header>
+            <div className="dialog-actions">
+              <Button
+                onClick={() => setInheritanceCandidate(undefined)}
+                type="button"
+                variant="secondary"
+              >
+                返回重新分析
+              </Button>
+              <Button
+                className="failure-analysis-confirm-action"
+                onClick={inheritCodeIssueConclusion}
+                type="button"
+                variant="danger"
+              >
+                问题仍存在，继承结论
+              </Button>
+            </div>
+          </section>
+        </div>
+      ) : null}
     </>
   );
+}
+
+function AnalysisHistoryPanel({
+  historyItems,
+  historyLoading,
+  historyError,
+  historyLimitPerCase,
+  reusableCodeIssue,
+  selectedCaseCount,
+  onInherit,
+  onPreview,
+}: {
+  historyItems: FailureAnalysisHistoryItemView[];
+  historyLoading: boolean;
+  historyError: string;
+  historyLimitPerCase: number;
+  reusableCodeIssue: FailureAnalysisHistoryItemView | undefined;
+  selectedCaseCount: number;
+  onInherit: (item: FailureAnalysisHistoryItemView) => void;
+  onPreview: (claim: FailureAnalysisClaimView, trigger: HTMLButtonElement) => void;
+}) {
+  return (
+    <section className="failure-analysis-history-panel">
+      <header>
+        <span>
+          <History size={18} />
+          <strong>历史分析结论</strong>
+        </span>
+        <small>
+          {selectedCaseCount > 1
+            ? `按用例展示最近 ${historyLimitPerCase} 条`
+            : `最近 ${historyLimitPerCase} 条`}
+        </small>
+      </header>
+      {historyLoading ? (
+        <div className="failure-analysis-history-state" role="status">
+          <LoaderCircle className="spin" size={16} /> 正在读取历史结论…
+        </div>
+      ) : historyError ? (
+        <div className="failure-analysis-history-state error" role="alert">
+          {historyError}
+        </div>
+      ) : historyItems.length === 0 ? (
+        <div className="failure-analysis-history-state">该用例暂无已完成的历史分析结论。</div>
+      ) : (
+        <div className="failure-analysis-history-cards">
+          {historyItems.map((item) => (
+            <article key={item.claim.id}>
+              <div className="failure-analysis-history-heading">
+                <span className="analysis-status completed">
+                  {categoryLabel(item.claim.category) ?? "已完成"}
+                </span>
+                <strong>{item.claim.caseName}</strong>
+                <small>
+                  #{item.batchSequenceNumber} {item.batchName} ·{" "}
+                  {formatPlatformDateTime(item.claim.completedAt ?? item.claim.updatedAt)}
+                </small>
+              </div>
+              <dl>
+                <div>
+                  <dt>分析责任人</dt>
+                  <dd>
+                    {item.claim.claimantDisplayName}（{item.claim.claimantUsername}）
+                  </dd>
+                </div>
+                {item.claim.issueDescription ? (
+                  <div>
+                    <dt>问题说明</dt>
+                    <dd>{item.claim.issueDescription}</dd>
+                  </div>
+                ) : null}
+                {item.claim.ticketReference ? (
+                  <div>
+                    <dt>问题单</dt>
+                    <dd>{item.claim.ticketReference}</dd>
+                  </div>
+                ) : null}
+                {item.claim.caseFixEvidence ? (
+                  <div>
+                    <dt>用例修改证明</dt>
+                    <dd>{item.claim.caseFixEvidence}</dd>
+                  </div>
+                ) : null}
+                {item.claim.remark ? (
+                  <div>
+                    <dt>备注</dt>
+                    <dd>{item.claim.remark}</dd>
+                  </div>
+                ) : null}
+              </dl>
+              <div className="failure-analysis-history-actions">
+                {item.claim.rerunProofUrl ? (
+                  <a href={item.claim.rerunProofUrl} rel="noreferrer" target="_blank">
+                    <ExternalLink size={13} /> 重跑通过日志
+                  </a>
+                ) : null}
+                {item.claim.screenshot ? (
+                  <Button
+                    onClick={(event) => onPreview(item.claim, event.currentTarget)}
+                    size="compact"
+                    type="button"
+                    variant="secondary"
+                  >
+                    <Maximize2 size={13} /> 查看证明截图
+                  </Button>
+                ) : null}
+                {reusableCodeIssue?.claim.id === item.claim.id ? (
+                  <Button
+                    onClick={() => onInherit(item)}
+                    size="compact"
+                    type="button"
+                    variant="secondary"
+                  >
+                    继承此代码问题结论
+                  </Button>
+                ) : null}
+              </div>
+            </article>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function uniqueScreenshotClaims(
+  claims: readonly FailureAnalysisClaimView[],
+): FailureAnalysisClaimView[] {
+  const screenshotDigests = new Set<string>();
+  return claims.filter((claim) => {
+    const digest = claim.screenshot?.sha256;
+    if (!digest || screenshotDigests.has(digest)) return false;
+    screenshotDigests.add(digest);
+    return true;
+  });
+}
+
+function failureAnalysisEvidenceUrl(claim: FailureAnalysisClaimView, projectId: string): string {
+  return `/api/v1/failure-analysis/claims/${encodeURIComponent(claim.id)}/evidence?projectId=${encodeURIComponent(projectId)}`;
+}
+
+function formatFileSize(sizeBytes: number): string {
+  if (sizeBytes < 1_024) return `${sizeBytes} B`;
+  return `${(sizeBytes / 1_024).toFixed(1)} KiB`;
 }
 
 function categoryLabel(category: FailureAnalysisCategory | undefined): string | undefined {
   return CATEGORY_OPTIONS.find((option) => option.value === category)?.label;
 }
 
-function statusLabel(status: FailureAnalysisClaim["status"]): string {
+function statusLabel(status: FailureAnalysisClaimView["status"]): string {
   return { claimed: "已认领", analyzing: "分析中", completed: "已完成" }[status];
 }

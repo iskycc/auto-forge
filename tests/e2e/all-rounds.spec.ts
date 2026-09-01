@@ -894,6 +894,16 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
   ]) {
     await anonymousResultPage.setViewportSize(viewport);
     await expectUiIntegrity(anonymousResultPage);
+    const [sharedTableViewport, firstSharedLogLink] = await Promise.all([
+      anonymousResultPage.locator(".execution-case-table").locator("xpath=..").boundingBox(),
+      sharedLogLinks.first().boundingBox(),
+    ]);
+    expect(sharedTableViewport).not.toBeNull();
+    expect(firstSharedLogLink).not.toBeNull();
+    expect(firstSharedLogLink!.x).toBeGreaterThanOrEqual(sharedTableViewport!.x);
+    expect(firstSharedLogLink!.x + firstSharedLogLink!.width).toBeLessThanOrEqual(
+      sharedTableViewport!.x + sharedTableViewport!.width + 1,
+    );
     await captureUi(anonymousResultPage, `shared-run-details-${viewport.width}`);
   }
   await anonymousContext.close();
@@ -909,6 +919,13 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
   const jenkinsRecord = executionRecordsTable.locator("tbody tr", {
     has: page.locator(`a[href="/run-batches/${jenkinsRun.batchId}"]`),
   });
+  expect(
+    await jenkinsRecord
+      .locator("td")
+      .nth(3)
+      .evaluate((cell) => cell.scrollWidth <= cell.clientWidth),
+    "the complete pass rate should fit its cell",
+  ).toBe(true);
   const shareResponse = page.waitForResponse(
     (response) =>
       response.request().method() === "POST" &&

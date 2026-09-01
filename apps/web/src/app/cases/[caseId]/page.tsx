@@ -1,3 +1,4 @@
+import { failureAnalysisHistoryPageSchema } from "@autoforge/contracts";
 import { hasPermission, isDomainError } from "@autoforge/domain";
 import { AlertCircle, ArrowLeft, FileCode2 } from "lucide-react";
 import Link from "next/link";
@@ -5,6 +6,7 @@ import { notFound } from "next/navigation";
 
 import { CaseDefinitionEditor } from "@/components/case-definition-editor";
 import { CaseExecutionHistory } from "@/components/case-execution-history";
+import { CaseFailureAnalysisHistory } from "@/components/case-failure-analysis-history";
 import { CasePermanentShare } from "@/components/case-permanent-share";
 import { CaseVersionHistory } from "@/components/case-version-history";
 import { StatusBadge } from "@/components/status-badge";
@@ -40,13 +42,19 @@ export default async function CaseDetailPage({ params }: CaseDetailPageProps) {
   let versions;
   let activity;
   let executionHistory;
+  let failureAnalysisHistory;
   try {
     definition = await services.caseDefinitions.get(caseId, projectIds);
-    [versions, activity, executionHistory] = await Promise.all([
+    [versions, activity, executionHistory, failureAnalysisHistory] = await Promise.all([
       services.caseDefinitions.listVersions(caseId, projectIds),
       services.caseDefinitions.listActivity(caseId, projectIds),
       services.caseDefinitions.listExecutionHistory(caseId, projectIds, {
         includeRunnerNames: hasPermission(identity, "runner.read"),
+      }),
+      services.failureAnalysis.listCaseHistory({
+        projectId: definition.projectId,
+        caseDefinitionId: caseId,
+        limit: 20,
       }),
     ]);
   } catch (error) {
@@ -63,6 +71,7 @@ export default async function CaseDetailPage({ params }: CaseDetailPageProps) {
   const canManage = hasPermission(identity, "case.manage", definition.projectId);
   const canRun = hasPermission(identity, "run.create", definition.projectId);
   const canReadLogs = hasPermission(identity, "log.read", definition.projectId);
+  const canReadAnalysisEvidence = hasPermission(identity, "run.read", definition.projectId);
   const canReadSource = hasPermission(identity, "case_source.read", definition.projectId);
   const sourceRecord = await services.caseSources.get(definition.sourceId, projectIds);
   const executable = sourceRecord.inspection.executable !== false;
@@ -170,11 +179,19 @@ export default async function CaseDetailPage({ params }: CaseDetailPageProps) {
         timeZone={timeZone}
       />
 
+      <CaseFailureAnalysisHistory
+        canReadEvidence={canReadAnalysisEvidence}
+        caseDefinitionId={definition.id}
+        initialPage={failureAnalysisHistoryPageSchema.parse(failureAnalysisHistory)}
+        projectId={definition.projectId}
+        timeZone={timeZone}
+      />
+
       <section className="card table-card">
         <div className="card-heading">
           <div>
-            <span className="eyebrow">Analysis history</span>
-            <h2>分析历史（{activity.analyses.length}）</h2>
+            <span className="eyebrow">Execution facts</span>
+            <h2>执行结果统计历史（{activity.analyses.length}）</h2>
           </div>
         </div>
         <div className="table-scroll">
@@ -190,7 +207,7 @@ export default async function CaseDetailPage({ params }: CaseDetailPageProps) {
             <tbody>
               {activity.analyses.length === 0 ? (
                 <tr>
-                  <td colSpan={4}>当前用例尚无分析事实。</td>
+                  <td colSpan={4}>当前用例尚无执行结果统计。</td>
                 </tr>
               ) : null}
               {activity.analyses.map((analysis) => (

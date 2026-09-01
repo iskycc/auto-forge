@@ -44,13 +44,14 @@ export async function GET(request: Request, context: Context): Promise<NextRespo
     }
     const services = await getPlatformServices();
     const projectIds = services.identityAccess.projectScope(identity, "run.read");
-    const rows = await services.runBatchExport.buildRows({
+    const exportData = await services.runBatchExport.build({
       batchId,
       scope: parsed.scope,
       ...(parsed.round !== undefined ? { round: parsed.round } : {}),
       outcomes,
       ...(projectIds ? { projectIds } : {}),
     });
+    const rows = exportData.rows;
 
     const attemptIds = rows.flatMap((row) => (row.attemptId ? [row.attemptId] : []));
     // 导出批次内全部 attempt 归属 batchId（buildRows 已校验批次存在），
@@ -67,6 +68,32 @@ export async function GET(request: Request, context: Context): Promise<NextRespo
         `${base}/share/attempt-log/${token}`,
       ]),
     );
+    const analysisClaims =
+      parsed.template === "failure-analysis"
+        ? await services.failureAnalysis.listExportClaims({
+            projectId: exportData.projectId,
+            batchId,
+            executionRunIds: rows.map((row) => row.executionRunId),
+          })
+        : [];
+    const analysisClaimsByAttempt = new Map(
+      analysisClaims.map((claim) => [claim.attemptId, claim]),
+    );
+    const analysisProofLinks = new Map(
+      analysisClaims.flatMap((claim) => {
+        if (claim.status !== "completed" || claim.category !== "rerun_passed") return [];
+        if (claim.rerunProofUrl) {
+          return [[claim.id, absoluteLink(base, claim.rerunProofUrl)] as const];
+        }
+        if (!claim.screenshot) return [];
+        const evidenceUrl = new URL(
+          `/api/v1/failure-analysis/claims/${encodeURIComponent(claim.id)}/evidence`,
+          `${base}/`,
+        );
+        evidenceUrl.searchParams.set("projectId", claim.projectId);
+        return [[claim.id, evidenceUrl.toString()] as const];
+      }),
+    );
 
     const { buffer, filename } = await buildRunBatchExportWorkbook({
       batchId,
@@ -75,6 +102,8 @@ export async function GET(request: Request, context: Context): Promise<NextRespo
       ...(parsed.round !== undefined ? { round: parsed.round } : {}),
       rows,
       shareLinks,
+      analysisClaims: analysisClaimsByAttempt,
+      analysisProofLinks,
     });
     return new NextResponse(new Uint8Array(buffer), {
       headers: {
@@ -86,6 +115,10 @@ export async function GET(request: Request, context: Context): Promise<NextRespo
   } catch (error) {
     return apiErrorResponse(error);
   }
+}
+
+function absoluteLink(base: string, value: string): string {
+  return new URL(value, `${base}/`).toString();
 }
 
 function parseOutcomeFilter(raw: string): ExportOutcomeFilter[] {

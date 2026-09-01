@@ -1641,6 +1641,22 @@ export interface FailureAnalysisRepository {
     cursor?: string;
     limit: number;
   }): Promise<{ items: FailureAnalysisClaim[]; nextCursor?: string }>;
+  findClaimsByExecutionRunIds(input: {
+    projectId: string;
+    batchId: string;
+    executionRunIds: readonly string[];
+  }): Promise<FailureAnalysisClaim[]>;
+  listCaseHistory(input: {
+    projectId: string;
+    caseDefinitionId: string;
+    cursor?: string;
+    limit: number;
+  }): Promise<FailureAnalysisHistoryPage>;
+  listRecentCaseHistories(input: {
+    projectId: string;
+    caseDefinitionIds: readonly string[];
+    limitPerCase: number;
+  }): Promise<FailureAnalysisHistoryItem[]>;
   start(input: {
     analysisId: string;
     projectId: string;
@@ -1679,6 +1695,17 @@ export interface FailureAnalysisRepository {
     completedAt: string;
   }): Promise<FailureAnalysisClaim[]>;
 }
+
+export type FailureAnalysisHistoryItem = {
+  claim: FailureAnalysisClaim;
+  batchSequenceNumber: number;
+  batchName: string;
+};
+
+export type FailureAnalysisHistoryPage = {
+  items: FailureAnalysisHistoryItem[];
+  nextCursor?: string;
+};
 
 export type RunBatchCaseScope = number | "all" | "summary";
 export type RunBatchCaseStatusFilter = RunAttempt["status"] | "pending";

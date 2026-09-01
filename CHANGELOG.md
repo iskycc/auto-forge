@@ -4,6 +4,51 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## 1.8.1 - 2026-09-01
+
+### Added
+
+- Analysis task cards and details can export the final-failure analysis workbook at any time. The
+  workbook keeps unclaimed or unfinished fields blank and fills persisted analyst identity,
+  conclusion, root cause, issue/fix evidence, rerun proof and remarks while retaining permanent case
+  log links.
+- Uploaded rerun screenshots render inline in the analysis detail and open in an authenticated
+  50%-300% zoom viewer. The XLSX proof cell links directly to the inline image response.
+- Completed failure-analysis conclusions are now permanently linked to their case definition and
+  appear in both the full case detail and case-management inspector. The analysis dialog shows
+  bounded recent conclusions for every selected case; a single case can inherit the latest prior
+  code-issue description, ticket and remark only after explicitly confirming that the ticket remains
+  open and the same defect still exists.
+
+### Fixed
+
+- Case execution history now records one representative result per task: the latest successful round
+  when any round passed, otherwise the final round. Intermediate retry failures no longer flood the
+  case-management execution and TestNG-fact histories.
+
+### Database and persisted configuration
+
+- SQLite migration `0058_failure_analysis_case_history.sql` and PostgreSQL migration
+  `0057_failure_analysis_case_history.sql` add the project/case/completion cursor index used by the
+  bounded failure-analysis history queries. Existing analysis records require no data migration.
+
+### Tests
+
+- Shared SQLite/PostgreSQL repository coverage verifies per-case analysis history and summarized
+  retry results. Playwright verifies historical code-issue inheritance with its secondary
+  confirmation, case-detail history, screenshot presentation, workbook export and the 1024px layout
+  boundary.
+
+### Compatibility and offline assets
+
+- Lite and Full share the same behavior. Runner Protocol, Jenkins plugins, Adapter contracts and
+  offline assets are unchanged.
+
+### Known limitations
+
+- Prior code-issue conclusions can be inherited only while analyzing one case at a time; batch
+  analysis still requires an explicit shared conclusion and evidence for the selected cases.
+
 ## 1.8.0 - 2026-09-01
 
 ### Added

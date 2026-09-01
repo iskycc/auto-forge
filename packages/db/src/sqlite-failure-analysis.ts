@@ -27,6 +27,11 @@ type BatchRow = {
   createdAt: string;
 };
 
+type FailureAnalysisHistoryRow = FailureAnalysisRow & {
+  batchSequenceNumber: number;
+  batchName: string;
+};
+
 export class SqliteFailureAnalysisRepository implements FailureAnalysisRepository {
   constructor(private readonly handle: SqliteDatabaseHandle) {}
 
@@ -336,6 +341,96 @@ export class SqliteFailureAnalysisRepository implements FailureAnalysisRepositor
     };
   }
 
+  async findClaimsByExecutionRunIds(
+    input: Parameters<FailureAnalysisRepository["findClaimsByExecutionRunIds"]>[0],
+  ) {
+    const claims: FailureAnalysisRow[] = [];
+    // Keep every SQLite statement below conservative bind-variable limits while
+    // using the unique execution_run_id index for each bounded lookup.
+    for (let offset = 0; offset < input.executionRunIds.length; offset += 400) {
+      const executionRunIds = input.executionRunIds.slice(offset, offset + 400);
+      const placeholders = executionRunIds.map(() => "?").join(",");
+      claims.push(
+        ...(this.handle.client
+          .prepare(
+            `${claimSelectSql()} WHERE claim.project_id=? AND claim.batch_id=?
+             AND claim.execution_run_id IN (${placeholders})`,
+          )
+          .all(input.projectId, input.batchId, ...executionRunIds) as FailureAnalysisRow[]),
+      );
+    }
+    return claims.map(toFailureAnalysisClaim);
+  }
+
+  async listCaseHistory(input: Parameters<FailureAnalysisRepository["listCaseHistory"]>[0]) {
+    const cursor = decodeRunBatchCursor(input.cursor);
+    const where = [
+      "claim.project_id=?",
+      "claim.case_definition_id=?",
+      "claim.status='completed'",
+      "claim.completed_at IS NOT NULL",
+    ];
+    const parameters: Array<string | number> = [input.projectId, input.caseDefinitionId];
+    if (cursor) {
+      where.push("(claim.completed_at<? OR (claim.completed_at=? AND claim.id<?))");
+      parameters.push(cursor.createdAt, cursor.createdAt, cursor.id);
+    }
+    parameters.push(input.limit + 1);
+    const rows = this.handle.client
+      .prepare(
+        `SELECT history.*,batch.sequence_number AS batchSequenceNumber,
+                batch.suite_name AS batchName
+         FROM (${claimSelectSql()} WHERE ${where.join(" AND ")}) history
+         JOIN run_batches batch ON batch.id=history.batchId
+         ORDER BY history.completedAt DESC,history.analysisId DESC LIMIT ?`,
+      )
+      .all(...parameters) as FailureAnalysisHistoryRow[];
+    const hasMore = rows.length > input.limit;
+    const pageRows = rows.slice(0, input.limit);
+    const last = pageRows.at(-1);
+    return {
+      items: pageRows.map(toHistoryItem),
+      ...(hasMore && last?.completedAt
+        ? {
+            nextCursor: encodeRunBatchCursor({
+              createdAt: last.completedAt,
+              id: last.analysisId!,
+            }),
+          }
+        : {}),
+    };
+  }
+
+  async listRecentCaseHistories(
+    input: Parameters<FailureAnalysisRepository["listRecentCaseHistories"]>[0],
+  ) {
+    if (input.caseDefinitionIds.length === 0) return [];
+    const placeholders = input.caseDefinitionIds.map(() => "?").join(",");
+    const rows = this.handle.client
+      .prepare(
+        `SELECT ranked.*,batch.sequence_number AS batchSequenceNumber,
+                batch.suite_name AS batchName
+         FROM (
+           SELECT history.*,
+                  ROW_NUMBER() OVER (
+                    PARTITION BY history.caseDefinitionId
+                    ORDER BY history.completedAt DESC,history.analysisId DESC
+                  ) AS historyRank
+           FROM (${claimSelectSql()}
+                 WHERE claim.project_id=? AND claim.status='completed'
+                   AND claim.completed_at IS NOT NULL
+                   AND claim.case_definition_id IN (${placeholders})) history
+         ) ranked
+         JOIN run_batches batch ON batch.id=ranked.batchId
+         WHERE ranked.historyRank<=?
+         ORDER BY ranked.caseDefinitionId,ranked.completedAt DESC,ranked.analysisId DESC`,
+      )
+      .all(input.projectId, ...input.caseDefinitionIds, input.limitPerCase) as Array<
+      FailureAnalysisHistoryRow & { historyRank: number }
+    >;
+    return rows.map(toHistoryItem);
+  }
+
   async start(input: Parameters<FailureAnalysisRepository["start"]>[0]) {
     this.handle.client
       .prepare(
@@ -536,6 +631,14 @@ function claimSelectSql(): string {
                  claim.screenshot_sha256 AS screenshotSha256,
                  claim.updated_at AS analysisUpdatedAt
           FROM failure_analysis_claims claim`;
+}
+
+function toHistoryItem(row: FailureAnalysisHistoryRow) {
+  return {
+    claim: toFailureAnalysisClaim(row),
+    batchSequenceNumber: row.batchSequenceNumber,
+    batchName: row.batchName,
+  };
 }
 
 function sqliteCandidateSortExpression(sort: FailureAnalysisSort): string {

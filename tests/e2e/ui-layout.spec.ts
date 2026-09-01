@@ -633,6 +633,12 @@ test("specified dense pages expose stable product controls", async ({ page }) =>
     expect(activeDialogBox!.width).toBeGreaterThanOrEqual(980);
     expect(activeDialogBox!.y).toBeGreaterThanOrEqual(12);
     expect(activeDialogBox!.y + activeDialogBox!.height).toBeLessThanOrEqual(756);
+    if (index === 2) {
+      expect(
+        activeDialogBox!.height,
+        "empty insight details should fit their content instead of reserving a full-screen table",
+      ).toBeLessThanOrEqual(320);
+    }
     const scrollAreas = activeDialog.locator(".insight-detail-table-scroll");
     for (let areaIndex = 0; areaIndex < (await scrollAreas.count()); areaIndex += 1) {
       expect(

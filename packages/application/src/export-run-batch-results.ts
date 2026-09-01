@@ -18,6 +18,7 @@ import type { RunBatchRepository } from "./ports";
  */
 export type RunBatchExportRow = {
   attemptId: string | null;
+  executionRunId: string;
   casePath: string;
   displayName: string;
   outcome: ExportOutcomeFilter;
@@ -40,16 +41,28 @@ export type RunBatchExportQuery = {
   projectIds?: readonly string[];
 };
 
+export type RunBatchExportData = {
+  projectId: string;
+  rows: RunBatchExportRow[];
+};
+
 export class RunBatchExportService {
   constructor(private readonly batches: RunBatchRepository) {}
 
   async buildRows(query: RunBatchExportQuery): Promise<RunBatchExportRow[]> {
+    return (await this.build(query)).rows;
+  }
+
+  async build(query: RunBatchExportQuery): Promise<RunBatchExportData> {
     const details = await this.batches.get(query.batchId, query.projectIds);
     if (!details) {
       // 不存在与无权访问统一为 BATCH_NOT_FOUND，避免通过差异探测批次是否存在。
       throw new DomainError("BATCH_NOT_FOUND", "指定的执行批次不存在。");
     }
-    return buildRunBatchExportRows(details, query);
+    return {
+      projectId: details.projectId,
+      rows: buildRunBatchExportRows(details, query),
+    };
   }
 }
 
@@ -189,6 +202,7 @@ function attemptRow(attempt: RunAttempt, run: ExecutionRun | undefined): RunBatc
   });
   return {
     attemptId: attempt.id,
+    executionRunId: attempt.executionRunId,
     casePath: run?.className ?? "",
     displayName: run?.displayName ?? "",
     outcome: category,

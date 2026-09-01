@@ -2,6 +2,7 @@ import { DEFAULT_PROJECT_ID } from "@autoforge/domain";
 import { ArrowRight, CheckCircle2, Clock3, SearchCheck } from "lucide-react";
 import Link from "next/link";
 
+import { FailureAnalysisExportButton } from "@/components/failure-analysis-export-button";
 import { requireAuthorizedPageProjectScope, requirePageProjectScope } from "@/lib/auth";
 import { formatPlatformDateTime } from "@/lib/platform-date-time";
 import {
@@ -42,7 +43,7 @@ export default async function CaseAnalysisPage({
     : { items: [] };
 
   return (
-    <div className="page-stack">
+    <div className="page-stack failure-analysis-page">
       <section className="page-hero">
         <div>
           <span className="eyebrow">Failure Analysis</span>
@@ -85,45 +86,64 @@ export default async function CaseAnalysisPage({
                 <Clock3 size={14} /> {formatPlatformDateTime(batch.createdAt)}
               </p>
               <dl>
-                <div>
+                <div className="round-metric">
                   <dt>最终轮次</dt>
                   <dd>第 {batch.currentRound} 轮</dd>
                 </div>
-                <div>
+                <div className="failure-metric">
                   <dt>最终失败</dt>
                   <dd>{batch.failedRuns}</dd>
                 </div>
-                <div>
+                <div className="claimed-metric">
                   <dt>已认领</dt>
                   <dd>{batch.claimedRuns}</dd>
                 </div>
-                <div>
+                <div className="completed-metric">
                   <dt>已完成分析</dt>
                   <dd>{batch.completedRuns}</dd>
                 </div>
               </dl>
-              <Link
-                className="ui-button ui-button-primary"
-                href={`/case-analysis/${encodeURIComponent(batch.id)}`}
-              >
-                查看用例分析详情 <ArrowRight size={15} />
-              </Link>
+              <div className="failure-analysis-batch-progress">
+                <span>
+                  分析进度
+                  <strong>
+                    {batch.completedRuns} / {batch.failedRuns}
+                  </strong>
+                </span>
+                <progress
+                  aria-label={`任务 ${batch.suiteName} 分析进度`}
+                  max={Math.max(1, batch.failedRuns)}
+                  value={batch.completedRuns}
+                />
+              </div>
+              <div className="failure-analysis-batch-actions">
+                <FailureAnalysisExportButton batchId={batch.id} />
+                <Link
+                  aria-label="查看用例分析详情"
+                  className="ui-button ui-button-secondary failure-analysis-batch-link"
+                  href={`/case-analysis/${encodeURIComponent(batch.id)}`}
+                >
+                  进入分析工作台 <ArrowRight size={15} />
+                </Link>
+              </div>
             </article>
           ))}
         </section>
       )}
 
-      <nav className="failure-analysis-pagination" aria-label="用例分析任务分页">
-        <span>本页 {batchPage.items.length} 个任务</span>
-        {batchPage.nextCursor ? (
-          <Link
-            className="ui-button ui-button-secondary"
-            href={`/case-analysis?cursor=${encodeURIComponent(batchPage.nextCursor)}`}
-          >
-            查看更早任务 <ArrowRight size={15} />
-          </Link>
-        ) : null}
-      </nav>
+      {batchPage.items.length > 0 ? (
+        <nav className="failure-analysis-pagination" aria-label="用例分析任务分页">
+          <span>本页 {batchPage.items.length} 个任务</span>
+          {batchPage.nextCursor ? (
+            <Link
+              className="ui-button ui-button-secondary"
+              href={`/case-analysis?cursor=${encodeURIComponent(batchPage.nextCursor)}`}
+            >
+              查看更早任务 <ArrowRight size={15} />
+            </Link>
+          ) : null}
+        </nav>
+      ) : null}
     </div>
   );
 }

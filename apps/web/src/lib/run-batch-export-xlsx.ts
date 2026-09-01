@@ -2,6 +2,7 @@ import "server-only";
 
 import type { RunBatchExportRow } from "@autoforge/application";
 import type { ExportOutcomeFilter, RunBatchExportTemplate } from "@autoforge/contracts";
+import type { FailureAnalysisCategory, FailureAnalysisClaim } from "@autoforge/domain";
 import ExcelJS from "exceljs";
 
 /**
@@ -35,6 +36,12 @@ const FAILURE_ANALYSIS_HEADERS = [
 
 export const FAILURE_ANALYSIS_RESULTS = ["重跑通过", "用例问题已修改", "代码问题已提单"] as const;
 
+const FAILURE_ANALYSIS_RESULT_LABELS: Record<FailureAnalysisCategory, string> = {
+  rerun_passed: "重跑通过",
+  case_fixed: "用例问题已修改",
+  code_issue_filed: "代码问题已提单",
+};
+
 // 分析清单常有数百条失败记录，优先保证纵向浏览密度。长类名、堆栈和说明保留
 // 完整单元格值，但不通过超宽列或多行行高强制展示全部内容。
 const FAILURE_ANALYSIS_COLUMN_WIDTHS = [32, 24, 36, 14, 18, 24, 24, 18, 20, 32] as const;
@@ -58,6 +65,10 @@ export type RunBatchExportWorkbookInput = {
   rows: readonly RunBatchExportRow[];
   /** attemptId -> 日志公开访问链接绝对地址。 */
   shareLinks: ReadonlyMap<string, string>;
+  /** 最终失败 attemptId -> 已持久化的分析记录；未认领用例不在映射中。 */
+  analysisClaims?: ReadonlyMap<string, FailureAnalysisClaim>;
+  /** analysisId -> 重跑公开日志或已上传截图的可访问地址。 */
+  analysisProofLinks?: ReadonlyMap<string, string>;
 };
 
 export async function buildRunBatchExportWorkbook(
@@ -126,17 +137,32 @@ function buildFailureAnalysisSheet(
 
   for (const item of input.rows) {
     const shareLink = item.attemptId ? input.shareLinks.get(item.attemptId) : undefined;
+    const claim = item.attemptId ? input.analysisClaims?.get(item.attemptId) : undefined;
+    const completedClaim = claim?.status === "completed" ? claim : undefined;
+    const proofLink =
+      completedClaim?.category === "rerun_passed"
+        ? input.analysisProofLinks?.get(completedClaim.id)
+        : undefined;
     const row = sheet.addRow([
       // 产品口径：用例编号就是用例类路径，不是平台 UUID。
       item.casePath,
       item.displayName,
       item.summary ?? "",
-      "",
-      "",
-      "",
-      "",
-      "",
-      "",
+      claim ? analystLabel(claim) : "",
+      completedClaim?.category ? FAILURE_ANALYSIS_RESULT_LABELS[completedClaim.category] : "",
+      completedClaim?.category === "case_fixed" || completedClaim?.category === "code_issue_filed"
+        ? (completedClaim.issueDescription ?? "")
+        : "",
+      completedClaim ? issueEvidenceCell(completedClaim) : "",
+      proofLink
+        ? {
+            text: completedClaim?.rerunProofUrl
+              ? "重跑通过日志"
+              : (completedClaim?.screenshot?.fileName ?? "重跑通过截图"),
+            hyperlink: proofLink,
+          }
+        : "",
+      completedClaim?.remark ?? "",
       shareLink ? { text: shareLink, hyperlink: shareLink } : "",
     ]);
     styleFailureAnalysisRow(row);
@@ -177,10 +203,31 @@ function styleFailureAnalysisRow(row: ExcelJS.Row): void {
     error: "请从下拉列表中选择分析结果。",
     formulae: [`"${FAILURE_ANALYSIS_RESULTS.join(",")}"`],
   };
-  const logCell = row.getCell(10);
-  if (typeof logCell.value === "object" && logCell.value && "hyperlink" in logCell.value) {
-    logCell.font = { color: { argb: "FF0563C1" }, underline: true };
+  for (const columnNumber of [7, 8, 10]) {
+    const cell = row.getCell(columnNumber);
+    if (typeof cell.value === "object" && cell.value && "hyperlink" in cell.value) {
+      cell.font = { color: { argb: "FF0563C1" }, underline: true };
+    }
   }
+}
+
+function analystLabel(claim: FailureAnalysisClaim): string {
+  const displayName = claim.claimantDisplayName.trim();
+  const username = claim.claimantUsername.trim();
+  if (!displayName) return username;
+  if (!username || displayName === username) return displayName;
+  return `${displayName}（${username}）`;
+}
+
+function issueEvidenceCell(claim: FailureAnalysisClaim): ExcelJS.CellValue {
+  const value =
+    claim.category === "case_fixed"
+      ? claim.caseFixEvidence
+      : claim.category === "code_issue_filed"
+        ? claim.ticketReference
+        : undefined;
+  if (!value) return "";
+  return /^https?:\/\/[^\s]+$/iu.test(value) ? { text: value, hyperlink: value } : value;
 }
 
 function headerWidth(header: string): number {

@@ -113,6 +113,49 @@ export class FailureAnalysisService {
     });
   }
 
+  async listExportClaims(input: {
+    projectId: string;
+    batchId: string;
+    executionRunIds: readonly string[];
+  }): Promise<FailureAnalysisClaim[]> {
+    return this.repository.findClaimsByExecutionRunIds({
+      projectId: input.projectId,
+      batchId: input.batchId,
+      executionRunIds: [...new Set(input.executionRunIds)],
+    });
+  }
+
+  listCaseHistory(input: {
+    projectId: string;
+    caseDefinitionId: string;
+    cursor?: string;
+    limit?: number;
+  }) {
+    return this.repository.listCaseHistory({
+      ...input,
+      limit: boundedPageSize(input.limit),
+    });
+  }
+
+  listRecentCaseHistories(input: {
+    projectId: string;
+    caseDefinitionIds: readonly string[];
+    limitPerCase?: number;
+  }) {
+    const caseDefinitionIds = [...new Set(input.caseDefinitionIds)];
+    if (caseDefinitionIds.length === 0 || caseDefinitionIds.length > MAXIMUM_CLAIM_SIZE) {
+      throw new DomainError(
+        "FAILURE_ANALYSIS_HISTORY_SELECTION_INVALID",
+        `每次需要查询 1-${MAXIMUM_CLAIM_SIZE} 个用例的分析历史。`,
+      );
+    }
+    return this.repository.listRecentCaseHistories({
+      projectId: input.projectId,
+      caseDefinitionIds,
+      limitPerCase: Math.min(10, Math.max(1, Math.trunc(input.limitPerCase ?? 5))),
+    });
+  }
+
   async start(input: {
     analysisId: string;
     projectId: string;

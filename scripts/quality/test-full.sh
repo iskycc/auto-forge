@@ -245,6 +245,7 @@ run_adapter_tests() {
     pnpm exec vitest run \
       packages/db/test/postgres-migrations.integration.test.ts \
       packages/db/test/postgres-ddt.integration.test.ts \
+      packages/db/test/postgres-failure-analysis.integration.test.ts \
       packages/db/test/postgres-platform.integration.test.ts \
       packages/db/test/postgres-round-recovery.integration.test.ts \
       packages/db/test/postgres-webhook.integration.test.ts \

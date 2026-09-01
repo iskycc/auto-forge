@@ -233,6 +233,49 @@ export function failureAnalysisContract(
           remark: "批量完成",
           completedAt: "2026-09-01T01:05:00.000Z",
         });
+        const exportedClaims = await repository.findClaimsByExecutionRunIds({
+          projectId,
+          batchId,
+          executionRunIds: [runIds[0], runIds[1], "missing-run"],
+        });
+        expect(exportedClaims).toHaveLength(2);
+        expect(exportedClaims.every((claim) => claim.status === "completed")).toBe(true);
+        const firstCaseHistory = await repository.listCaseHistory({
+          projectId,
+          caseDefinitionId: completed[0]!.caseDefinitionId,
+          limit: 10,
+        });
+        expect(firstCaseHistory.items).toEqual([
+          expect.objectContaining({
+            batchName: "失败分析任务",
+            batchSequenceNumber: expect.any(Number),
+            claim: expect.objectContaining({ id: completed[0]!.id, status: "completed" }),
+          }),
+        ]);
+        expect(firstCaseHistory.nextCursor).toBeUndefined();
+        await expect(
+          repository.listCaseHistory({
+            projectId: "another-project",
+            caseDefinitionId: completed[0]!.caseDefinitionId,
+            limit: 10,
+          }),
+        ).resolves.toEqual({ items: [] });
+        const recentHistories = await repository.listRecentCaseHistories({
+          projectId,
+          caseDefinitionIds: completed.map((claim) => claim.caseDefinitionId),
+          limitPerCase: 1,
+        });
+        expect(recentHistories).toHaveLength(2);
+        expect(recentHistories.map((item) => item.claim.id).sort()).toEqual(
+          completed.map((claim) => claim.id).sort(),
+        );
+        await expect(
+          repository.findClaimsByExecutionRunIds({
+            projectId: "another-project",
+            batchId,
+            executionRunIds: [runIds[0]],
+          }),
+        ).resolves.toEqual([]);
         await expect(
           repository.getBatch({ projectId, projectVersionId, batchId }),
         ).resolves.toMatchObject({ claimedRuns: 2, completedRuns: 2 });

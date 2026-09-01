@@ -103,6 +103,17 @@ export const failureAnalysisClaimPageSchema = z.object({
   nextCursor: z.string().optional(),
 });
 
+export const failureAnalysisHistoryItemSchema = z.object({
+  claim: failureAnalysisClaimSchema,
+  batchSequenceNumber: z.number().int().positive(),
+  batchName: z.string().min(1),
+});
+
+export const failureAnalysisHistoryPageSchema = z.object({
+  items: z.array(failureAnalysisHistoryItemSchema),
+  nextCursor: z.string().optional(),
+});
+
 export const claimFailureAnalysisInputSchema = z.object({
   projectId: z.string().min(1),
   projectVersionId: z.string().min(1),
@@ -146,4 +157,7 @@ export type FailureAnalysisCandidate = z.infer<typeof failureAnalysisCandidateSc
 export type FailureAnalysisCandidatePage = z.infer<typeof failureAnalysisCandidatePageSchema>;
 export type FailureAnalysisBatch = z.infer<typeof failureAnalysisBatchSchema>;
 export type FailureAnalysisBatchPage = z.infer<typeof failureAnalysisBatchPageSchema>;
+export type FailureAnalysisClaimView = z.infer<typeof failureAnalysisClaimSchema>;
+export type FailureAnalysisHistoryItemView = z.infer<typeof failureAnalysisHistoryItemSchema>;
+export type FailureAnalysisHistoryPageView = z.infer<typeof failureAnalysisHistoryPageSchema>;
 export type ClaimFailureAnalysisResult = z.infer<typeof claimFailureAnalysisResultSchema>;

@@ -27,6 +27,11 @@ type BatchRow = {
   createdAt: string;
 };
 
+type FailureAnalysisHistoryRow = FailureAnalysisRow & {
+  batchSequenceNumber: string | number;
+  batchName: string;
+};
+
 export class PostgresFailureAnalysisRepository implements FailureAnalysisRepository {
   constructor(private readonly handle: PostgresDatabaseHandle) {}
 
@@ -325,6 +330,90 @@ export class PostgresFailureAnalysisRepository implements FailureAnalysisReposit
     };
   }
 
+  async findClaimsByExecutionRunIds(
+    input: Parameters<FailureAnalysisRepository["findClaimsByExecutionRunIds"]>[0],
+  ) {
+    if (input.executionRunIds.length === 0) return [];
+    await this.handle.ready;
+    const result = await this.handle.pool.query<FailureAnalysisRow>(
+      `${claimSelectSql()} WHERE claim.project_id=$1 AND claim.batch_id=$2
+       AND claim.execution_run_id=ANY($3::text[])`,
+      [input.projectId, input.batchId, [...input.executionRunIds]],
+    );
+    return result.rows.map(toFailureAnalysisClaim);
+  }
+
+  async listCaseHistory(input: Parameters<FailureAnalysisRepository["listCaseHistory"]>[0]) {
+    await this.handle.ready;
+    const parameters: unknown[] = [input.projectId, input.caseDefinitionId];
+    const where = [
+      "claim.project_id=$1",
+      "claim.case_definition_id=$2",
+      "claim.status='completed'",
+      "claim.completed_at IS NOT NULL",
+    ];
+    const cursor = decodeRunBatchCursor(input.cursor);
+    if (cursor) {
+      parameters.push(cursor.createdAt, cursor.id);
+      where.push(
+        `(claim.completed_at<$${parameters.length - 1} OR
+          (claim.completed_at=$${parameters.length - 1} AND claim.id<$${parameters.length}))`,
+      );
+    }
+    parameters.push(input.limit + 1);
+    const result = await this.handle.pool.query<FailureAnalysisHistoryRow>(
+      `SELECT history.*,batch.sequence_number AS "batchSequenceNumber",
+              batch.suite_name AS "batchName"
+       FROM (${claimSelectSql()} WHERE ${where.join(" AND ")}) history
+       JOIN run_batches batch ON batch.id=history."batchId"
+       ORDER BY history."completedAt" DESC,history."analysisId" DESC
+       LIMIT $${parameters.length}`,
+      parameters,
+    );
+    const hasMore = result.rows.length > input.limit;
+    const pageRows = result.rows.slice(0, input.limit);
+    const last = pageRows.at(-1);
+    return {
+      items: pageRows.map(toHistoryItem),
+      ...(hasMore && last?.completedAt
+        ? {
+            nextCursor: encodeRunBatchCursor({
+              createdAt: last.completedAt,
+              id: last.analysisId!,
+            }),
+          }
+        : {}),
+    };
+  }
+
+  async listRecentCaseHistories(
+    input: Parameters<FailureAnalysisRepository["listRecentCaseHistories"]>[0],
+  ) {
+    if (input.caseDefinitionIds.length === 0) return [];
+    await this.handle.ready;
+    const result = await this.handle.pool.query<FailureAnalysisHistoryRow>(
+      `SELECT ranked.*,batch.sequence_number AS "batchSequenceNumber",
+              batch.suite_name AS "batchName"
+       FROM (
+         SELECT history.*,
+                ROW_NUMBER() OVER (
+                  PARTITION BY history."caseDefinitionId"
+                  ORDER BY history."completedAt" DESC,history."analysisId" DESC
+                ) AS "historyRank"
+         FROM (${claimSelectSql()}
+               WHERE claim.project_id=$1 AND claim.status='completed'
+                 AND claim.completed_at IS NOT NULL
+                 AND claim.case_definition_id=ANY($2::text[])) history
+       ) ranked
+       JOIN run_batches batch ON batch.id=ranked."batchId"
+       WHERE ranked."historyRank"<=$3
+       ORDER BY ranked."caseDefinitionId",ranked."completedAt" DESC,
+                ranked."analysisId" DESC`,
+      [input.projectId, [...input.caseDefinitionIds], input.limitPerCase],
+    );
+    return result.rows.map(toHistoryItem);
+  }
+
   async start(input: Parameters<FailureAnalysisRepository["start"]>[0]) {
     await this.handle.ready;
     const updated = await this.handle.pool.query(
@@ -499,6 +588,14 @@ function claimSelectSql(): string {
                  claim.screenshot_sha256 AS "screenshotSha256",
                  claim.updated_at AS "analysisUpdatedAt"
           FROM failure_analysis_claims claim`;
+}
+
+function toHistoryItem(row: FailureAnalysisHistoryRow) {
+  return {
+    claim: toFailureAnalysisClaim(row),
+    batchSequenceNumber: Number(row.batchSequenceNumber),
+    batchName: row.batchName,
+  };
 }
 
 function postgresCandidateSortExpression(sort: FailureAnalysisSort): string {

@@ -27,7 +27,7 @@ AutoForge 是一个面向自动化测试场景的用例工厂，用于统一管�
 - 用例文件夹支持递归整选、取消和半选状态；选择目标任务后可反向筛出尚未加入的用例，再批量加入。用例任务创建、任务详情以及任务内用例树形新增/批量删除均使用有界分页渲染；任务列表可将全部普通/DDT 成员导出为仅包含完整类路径和用例名称的 XLSX，数据库读取与工作簿写入均采用流式分批。任务不再有 500 个用例的产品上限，Lite/Full 均以分批 SQL 和调度窗口支持 10 万级任务及执行批次；每个任务强制绑定一个有效项目版本，成员只能来自该版本，任务列表、快捷执行、执行记录、洞察和计划视图均跟随顶栏当前版本并显示版本友好名称。任务支持重命名、描述、复制、归档、启停、版本/变更快照与修订号并发冲突保护，执行策略覆盖 Runner/Runner Group、项目版本、Adapter 环境地址、优先级、基础并发度、在指定轮次判断且命中后持续生效的重跑并发、同轮多 Jenkins 环境并行恢复屏障、重试、排队/领取/上传恢复时限、Runner 标签与产物规则并在批次创建前逐项预检。每条 Jenkins 恢复配置可只读测试任务信息和上一构建，不会触发构建；触发后会作为轮次间时间节点展示，并逐流水线记录构建号、实际起止时间与结果。单用例执行时限只读取平台全局配置。
 - 项目级任务完成 Webhook 支持 GET 查询参数和 POST JSON 模板，可在独立“回调通知”页面管理并与多个任务绑定；每个端点可用 100 个用例、80% 通过率的预置消息直接测试连通性和模板。Lite/Full 都先按终态事件幂等持久化通知快照，再以有界租约和退避重试发送；接收端失败不会改变任务执行结果，未配置或未绑定时不会产生任何出站请求。详细语义见 [Webhook 完成通知](./docs/architecture/webhook-notifications.md)。
 - 用例定义支持展示名、描述、标签与启停编辑，版本历史可查看来源、创建人与变更原因，并允许从旧版本恢复生成新版本而不覆盖历史。用例库支持按 `case.manage` 权限单删和批量删除；删除同步清理任务成员关系，但保留已经物化的执行与分析历史。
-- 主导航新增“用例分析”工作台：主页按任务展示当前项目版本中已进入终态的普通用例批次，每个任务可进入独立分析详情；详情只列出该任务 `currentRound` 最后一轮仍执行失败的用例，单用例执行、日志诊断重跑、最后失败再次执行、未结束批次和较早轮次失败均不进入分析范围。候选支持按类路径、用例名称、失败堆栈和认领状态进行服务端排序与筛选。认领、单个/批量分析、三选一结论、问题说明、修改证明、问题单和备注由 Lite/Full 数据库持久化。重跑通过会优先关联公开日志页发起的成功重跑永久日志，否则要求粘贴执行通过截图并通过本地或 MinIO 对象存储保存。候选和个人队列均使用 50 行游标分页，两个 Tab 按需取数并取消过期请求；列表只传输失败摘要前 8,192 字符，完整日志按需读取，Lite/Full 均有 10 万最终失败记录的性能回归门禁。
+- 主导航新增“用例分析”工作台：主页按任务展示当前项目版本中已进入终态的普通用例批次，每个任务可进入独立分析详情；详情只列出该任务 `currentRound` 最后一轮仍执行失败的用例，单用例执行、日志诊断重跑、最后失败再次执行、未结束批次和较早轮次失败均不进入分析范围。候选支持按类路径、用例名称、失败堆栈和认领状态进行服务端排序与筛选。认领、单个/批量分析、三选一结论、问题说明、修改证明、问题单和备注由 Lite/Full 数据库持久化，并通过 `caseDefinitionId` 回显到用例管理详情。分析弹窗展示当前用例最近的人工结论；上一条代码问题结论可在确认问题单未闭环且同一根因后继承。重跑通过会优先关联公开日志页发起的成功重跑永久日志，否则要求粘贴执行通过截图并通过本地或 MinIO 对象存储保存。主页和详情页均可把最终失败清单导出为 XLSX，已持久化的责任人、结论、根因、证明和备注会自动回填，未认领/未完成项保留为空。候选和个人队列均使用 50 行游标分页，两个 Tab 按需取数并取消过期请求；列表只传输失败摘要前 8,192 字符，完整日志按需读取，Lite/Full 均有 10 万最终失败记录的性能回归门禁。
 - Runner Agent 注册、身份凭据落盘、周期心跳、在线/离线判定和执行机控制台；支持凭据轮换（旧凭据有明确失效窗口）、撤销、禁用、排空与注销，注销后活跃租约立即到期回收，撤销或注销后心跳、claim、上报与终端均被拒绝。
 - 首页按本周质量、活动执行、用例库、执行机组、失败洞察和最近动态展示真实工作数据；有 `run.create` 权限的用户可在任意页面通过顶栏“开始执行”发起任务或单用例执行。
 - 执行机组可按机房、网络区域或能力维护成员。批次创建时将组成员固化为 Runner ID 快照，后续组变更不会改变历史或运行中的批次；任务和单用例都支持直接选择 Runner 或选择执行机组。
@@ -76,68 +76,70 @@ AutoForge 是一个面向自动化测试场景的用例工厂，用于统一管�
 
 当前 HTTP 接口：
 
-| 方法           | 路径                                                      | 说明                                                 |
-| -------------- | --------------------------------------------------------- | ---------------------------------------------------- |
-| `POST`         | `/api/v1/case-sources/jar/inspect`                        | 上传 `multipart/form-data` 的 `file`，只扫描不持久化 |
-| `POST`         | `/api/v1/case-sources/jar/import`                         | 扫描、内容寻址保存并事务性导入用例                   |
-| `GET`          | `/api/v1/case-definitions`                                | 游标分页查询用例，可使用 `query`、`cursor`、`limit`  |
-| `DELETE`       | `/api/v1/case-definitions`                                | 批量删除有管理权限的用例                             |
-| `DELETE`       | `/api/v1/case-definitions/{caseDefinitionId}`             | 删除单个有管理权限的用例                             |
-| `POST`         | `/api/v1/case-definitions/{caseDefinitionId}/share`       | 生成永久匿名用例详情只读链接                         |
-| `GET`          | `/api/v1/case-sources`                                    | 查询 JAR 来源及权威全量来源状态                      |
-| `GET`          | `/api/v1/case-sources/{sourceId}`                         | 读取已持久化的 JAR 扫描结果                          |
-| `PUT`          | `/api/v1/case-sources/{sourceId}/authoritative`           | 将一个 JAR 设为唯一权威全量来源                      |
-| `GET`          | `/api/v1/objects`                                         | 浏览本地对象目录或 MinIO bucket 中的受管对象         |
-| `GET`          | `/api/v1/settings/storage`                                | 分页查看平台文件、SQLite 与对象存储空间清单          |
-| `GET`          | `/api/v1/failure-analysis/batches`                        | 分页查询含最终失败用例的执行记录                     |
-| `GET`          | `/api/v1/failure-analysis/candidates`                     | 筛选和排序一次执行的最终失败用例                     |
-| `GET/POST`     | `/api/v1/failure-analysis/claims`                         | 查询个人分析队列或批量认领失败用例                   |
-| `POST`         | `/api/v1/failure-analysis/claims/{analysisId}/start`      | 选择三种失败类别之一并开始分析                       |
-| `POST`         | `/api/v1/failure-analysis/claims/complete`                | 校验并完成一个或多个失败用例分析                     |
-| `POST`         | `/api/v1/failure-analysis/claims/evidence`                | 为一个或多个分析任务上传重跑通过截图                 |
-| `GET`          | `/api/v1/failure-analysis/claims/{analysisId}/evidence`   | 读取有权限查看的分析证明截图                         |
-| `POST`         | `/api/v1/case-suites`                                     | 创建用例任务                                         |
-| `GET`          | `/api/v1/case-suites/{suiteId}`                           | 查询用例任务及其用例                                 |
-| `POST`         | `/api/v1/case-suites/{suiteId}/cases`                     | 批量添加勾选用例                                     |
-| `POST`         | `/api/v1/case-suites/{suiteId}/cases/missing`             | 从候选集合反向筛选尚未加入任务的用例                 |
-| `DELETE`       | `/api/v1/case-suites/{suiteId}/cases/{caseDefinitionId}`  | 删除任务内用例                                       |
-| `GET/POST/...` | `/api/v1/ddt/**`                                          | 版本/阶段隔离的 DDT 用例、导入、模板、历史与回收站   |
-| `GET/PUT`      | `/api/v1/case-suites/{suiteId}/webhooks`                  | 查询或替换任务绑定的完成通知端点                     |
-| `GET/POST`     | `/api/v1/webhooks`                                        | 查询或创建当前项目的 Webhook                         |
-| `PATCH/DELETE` | `/api/v1/webhooks/{webhookId}`                            | 按修订号编辑或删除 Webhook                           |
-| `POST`         | `/api/v1/webhooks/{webhookId}/test`                       | 使用预置 80% 通过率消息测试端点                      |
-| `GET`          | `/api/v1/webhook-deliveries`                              | 有界查询项目最近投递结果                             |
-| `POST`         | `/api/v1/runner-agents/register`                          | 使用 bootstrap token 注册 Agent                      |
-| `POST`         | `/api/v1/runner-agents/{runnerId}/heartbeat`              | Agent 认证心跳与容量上报                             |
-| `GET`          | `/api/v1/runners`                                         | 查询执行机及在线状态                                 |
-| `GET`          | `/api/v1/runners/installations/profiles`                  | 查询已保存 SSH 连接的无密码摘要                      |
-| `POST`         | `/api/v1/runners/updates`                                 | 使用加密连接档案有界批量更新 Agent                   |
-| `GET`          | `/api/v1/runner-groups`                                   | 查询执行机组及成员                                   |
-| `POST`         | `/api/v1/runner-groups`                                   | 创建执行机组                                         |
-| `GET`          | `/api/v1/runner-groups/{groupId}`                         | 查询单个执行机组                                     |
-| `PATCH`        | `/api/v1/runner-groups/{groupId}`                         | 按修订号更新执行机组                                 |
-| `DELETE`       | `/api/v1/runner-groups/{groupId}`                         | 删除执行机组（不改变历史批次快照）                   |
-| `GET`          | `/api/v1/run-batches`                                     | 查询批跑调度记录                                     |
-| `POST`         | `/api/v1/run-batches`                                     | 创建批次并尝试资源感知分配                           |
-| `POST`         | `/api/v1/run-batches/preflight`                           | 返回创建前逐项配置阻塞原因                           |
-| `GET`          | `/api/v1/run-batches/{batchId}`                           | 查询批次、ExecutionRun 与 RunAttempt                 |
-| `GET`          | `/api/v1/run-batches/{batchId}/progress`                  | API Key 或批次签名参数读取 Jenkins 进展摘要          |
-| `POST`         | `/api/v1/run-batches/{batchId}/share`                     | 为任意状态批次生成永久匿名只读链接                   |
-| `POST`         | `/api/v1/run-batches/{batchId}/terminate`                 | 终止批次调度，在途用例自然完成后关闭任务             |
-| `POST`         | `/api/v1/run-batches/{batchId}/cancel`                    | 兼容旧客户端的批次终止别名                           |
-| `POST`         | `/api/v1/jenkins/runs`                                    | API Key 启动批次并返回临时进展与永久结果链接         |
-| `POST`         | `/api/v1/jenkins/dependencies`                            | API Key 按项目版本替换依赖压缩包链接                 |
-| `POST`         | `/api/v1/runner-agents/{runnerId}/claims`                 | 认证长轮询并原子领取 assignment                      |
-| `POST`         | `/api/v1/runner-agents/{runnerId}/leases/{leaseId}/renew` | 续租并获取取消/排空指令                              |
-| `POST`         | `/api/v1/runner-agents/{runnerId}/reconcile`              | Agent 重启后的 attempt 恢复协商                      |
-| `POST`         | `/api/v1/run-attempts/{attemptId}/complete`               | 幂等完成上报与失败重排                               |
-| `GET`          | `/api/v1/run-attempts/{attemptId}/events`                 | 有界游标查询 claim、完成、取消和超时事件             |
-| `GET`          | `/api/v1/run-attempts/{attemptId}/logs`                   | 分页查询 stdout、stderr 或 Agent 日志                |
-| `GET`          | `/api/v1/run-attempts/{attemptId}/artifacts`              | 查询执行产物及受控下载入口                           |
-| `POST`         | `/api/v1/terminal-sessions`                               | 登录用户按 RBAC 换取一次性 WebSocket 会话票据        |
-| `WS`           | `/api/v1/terminal-stream`                                 | 中继浏览器终端与 Agent 主动建立的终端通道            |
-| `GET`          | `/api/v1/health/live`                                     | 进程存活检查                                         |
-| `GET`          | `/api/v1/health/ready`                                    | 检查当前模式要求的数据库、对象存储及 Full 服务       |
+| 方法           | 路径                                                           | 说明                                                 |
+| -------------- | -------------------------------------------------------------- | ---------------------------------------------------- |
+| `POST`         | `/api/v1/case-sources/jar/inspect`                             | 上传 `multipart/form-data` 的 `file`，只扫描不持久化 |
+| `POST`         | `/api/v1/case-sources/jar/import`                              | 扫描、内容寻址保存并事务性导入用例                   |
+| `GET`          | `/api/v1/case-definitions`                                     | 游标分页查询用例，可使用 `query`、`cursor`、`limit`  |
+| `DELETE`       | `/api/v1/case-definitions`                                     | 批量删除有管理权限的用例                             |
+| `DELETE`       | `/api/v1/case-definitions/{caseDefinitionId}`                  | 删除单个有管理权限的用例                             |
+| `POST`         | `/api/v1/case-definitions/{caseDefinitionId}/share`            | 生成永久匿名用例详情只读链接                         |
+| `GET`          | `/api/v1/case-sources`                                         | 查询 JAR 来源及权威全量来源状态                      |
+| `GET`          | `/api/v1/case-sources/{sourceId}`                              | 读取已持久化的 JAR 扫描结果                          |
+| `PUT`          | `/api/v1/case-sources/{sourceId}/authoritative`                | 将一个 JAR 设为唯一权威全量来源                      |
+| `GET`          | `/api/v1/objects`                                              | 浏览本地对象目录或 MinIO bucket 中的受管对象         |
+| `GET`          | `/api/v1/settings/storage`                                     | 分页查看平台文件、SQLite 与对象存储空间清单          |
+| `GET`          | `/api/v1/failure-analysis/batches`                             | 分页查询含最终失败用例的执行记录                     |
+| `GET`          | `/api/v1/failure-analysis/candidates`                          | 筛选和排序一次执行的最终失败用例                     |
+| `GET`          | `/api/v1/failure-analysis/history`                             | 批量读取所选用例最近的已完成人工分析结论             |
+| `GET/POST`     | `/api/v1/failure-analysis/claims`                              | 查询个人分析队列或批量认领失败用例                   |
+| `POST`         | `/api/v1/failure-analysis/claims/{analysisId}/start`           | 选择三种失败类别之一并开始分析                       |
+| `POST`         | `/api/v1/failure-analysis/claims/complete`                     | 校验并完成一个或多个失败用例分析                     |
+| `POST`         | `/api/v1/failure-analysis/claims/evidence`                     | 为一个或多个分析任务上传重跑通过截图                 |
+| `GET`          | `/api/v1/failure-analysis/claims/{analysisId}/evidence`        | 读取有权限查看的分析证明截图                         |
+| `GET`          | `/api/v1/case-definitions/{caseDefinitionId}/failure-analyses` | 分页读取一个用例的全部人工分析结论                   |
+| `POST`         | `/api/v1/case-suites`                                          | 创建用例任务                                         |
+| `GET`          | `/api/v1/case-suites/{suiteId}`                                | 查询用例任务及其用例                                 |
+| `POST`         | `/api/v1/case-suites/{suiteId}/cases`                          | 批量添加勾选用例                                     |
+| `POST`         | `/api/v1/case-suites/{suiteId}/cases/missing`                  | 从候选集合反向筛选尚未加入任务的用例                 |
+| `DELETE`       | `/api/v1/case-suites/{suiteId}/cases/{caseDefinitionId}`       | 删除任务内用例                                       |
+| `GET/POST/...` | `/api/v1/ddt/**`                                               | 版本/阶段隔离的 DDT 用例、导入、模板、历史与回收站   |
+| `GET/PUT`      | `/api/v1/case-suites/{suiteId}/webhooks`                       | 查询或替换任务绑定的完成通知端点                     |
+| `GET/POST`     | `/api/v1/webhooks`                                             | 查询或创建当前项目的 Webhook                         |
+| `PATCH/DELETE` | `/api/v1/webhooks/{webhookId}`                                 | 按修订号编辑或删除 Webhook                           |
+| `POST`         | `/api/v1/webhooks/{webhookId}/test`                            | 使用预置 80% 通过率消息测试端点                      |
+| `GET`          | `/api/v1/webhook-deliveries`                                   | 有界查询项目最近投递结果                             |
+| `POST`         | `/api/v1/runner-agents/register`                               | 使用 bootstrap token 注册 Agent                      |
+| `POST`         | `/api/v1/runner-agents/{runnerId}/heartbeat`                   | Agent 认证心跳与容量上报                             |
+| `GET`          | `/api/v1/runners`                                              | 查询执行机及在线状态                                 |
+| `GET`          | `/api/v1/runners/installations/profiles`                       | 查询已保存 SSH 连接的无密码摘要                      |
+| `POST`         | `/api/v1/runners/updates`                                      | 使用加密连接档案有界批量更新 Agent                   |
+| `GET`          | `/api/v1/runner-groups`                                        | 查询执行机组及成员                                   |
+| `POST`         | `/api/v1/runner-groups`                                        | 创建执行机组                                         |
+| `GET`          | `/api/v1/runner-groups/{groupId}`                              | 查询单个执行机组                                     |
+| `PATCH`        | `/api/v1/runner-groups/{groupId}`                              | 按修订号更新执行机组                                 |
+| `DELETE`       | `/api/v1/runner-groups/{groupId}`                              | 删除执行机组（不改变历史批次快照）                   |
+| `GET`          | `/api/v1/run-batches`                                          | 查询批跑调度记录                                     |
+| `POST`         | `/api/v1/run-batches`                                          | 创建批次并尝试资源感知分配                           |
+| `POST`         | `/api/v1/run-batches/preflight`                                | 返回创建前逐项配置阻塞原因                           |
+| `GET`          | `/api/v1/run-batches/{batchId}`                                | 查询批次、ExecutionRun 与 RunAttempt                 |
+| `GET`          | `/api/v1/run-batches/{batchId}/progress`                       | API Key 或批次签名参数读取 Jenkins 进展摘要          |
+| `POST`         | `/api/v1/run-batches/{batchId}/share`                          | 为任意状态批次生成永久匿名只读链接                   |
+| `POST`         | `/api/v1/run-batches/{batchId}/terminate`                      | 终止批次调度，在途用例自然完成后关闭任务             |
+| `POST`         | `/api/v1/run-batches/{batchId}/cancel`                         | 兼容旧客户端的批次终止别名                           |
+| `POST`         | `/api/v1/jenkins/runs`                                         | API Key 启动批次并返回临时进展与永久结果链接         |
+| `POST`         | `/api/v1/jenkins/dependencies`                                 | API Key 按项目版本替换依赖压缩包链接                 |
+| `POST`         | `/api/v1/runner-agents/{runnerId}/claims`                      | 认证长轮询并原子领取 assignment                      |
+| `POST`         | `/api/v1/runner-agents/{runnerId}/leases/{leaseId}/renew`      | 续租并获取取消/排空指令                              |
+| `POST`         | `/api/v1/runner-agents/{runnerId}/reconcile`                   | Agent 重启后的 attempt 恢复协商                      |
+| `POST`         | `/api/v1/run-attempts/{attemptId}/complete`                    | 幂等完成上报与失败重排                               |
+| `GET`          | `/api/v1/run-attempts/{attemptId}/events`                      | 有界游标查询 claim、完成、取消和超时事件             |
+| `GET`          | `/api/v1/run-attempts/{attemptId}/logs`                        | 分页查询 stdout、stderr 或 Agent 日志                |
+| `GET`          | `/api/v1/run-attempts/{attemptId}/artifacts`                   | 查询执行产物及受控下载入口                           |
+| `POST`         | `/api/v1/terminal-sessions`                                    | 登录用户按 RBAC 换取一次性 WebSocket 会话票据        |
+| `WS`           | `/api/v1/terminal-stream`                                      | 中继浏览器终端与 Agent 主动建立的终端通道            |
+| `GET`          | `/api/v1/health/live`                                          | 进程存活检查                                         |
+| `GET`          | `/api/v1/health/ready`                                         | 检查当前模式要求的数据库、对象存储及 Full 服务       |
 
 ## 批跑动态调度
 

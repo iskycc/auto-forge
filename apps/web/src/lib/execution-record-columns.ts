@@ -76,7 +76,9 @@ export const EXECUTION_RECORD_COLUMNS: readonly ExecutionRecordColumnDefinition[
     key: "passRate",
     label: "通过率",
     defaultWidth: 90,
-    minWidth: 70,
+    // 100% 在固定表格布局下仍要为左右内边距和列宽拖拽柄留出空间，
+    // 避免窄桌面视口把最常见的完整百分比渲染成 “10…”。
+    minWidth: 84,
     maxWidth: 110,
     text: (row) => `${executionRecordPassRate(row)}%`,
   },

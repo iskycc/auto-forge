@@ -850,9 +850,15 @@ export class SqliteCaseCatalogRepository implements CaseCatalogRepository {
          FROM execution_runs r
          JOIN run_batches b ON b.id = r.batch_id
          LEFT JOIN run_attempts a ON a.execution_run_id = r.id
-           AND a.attempt_number = (
-             SELECT MAX(latest.attempt_number) FROM run_attempts latest
-             WHERE latest.execution_run_id = r.id
+           AND a.id = (
+             SELECT preferred.id FROM run_attempts preferred
+             WHERE preferred.execution_run_id = r.id
+             ORDER BY CASE
+                        WHEN COALESCE(preferred.outcome,preferred.status)='succeeded' THEN 0
+                        ELSE 1
+                      END,
+                      preferred.attempt_number DESC
+             LIMIT 1
            )
          WHERE r.case_definition_id = ? AND b.batch_kind <> 'case_log_rerun'
          ORDER BY r.created_at DESC, r.id DESC LIMIT ?`,
@@ -870,10 +876,23 @@ export class SqliteCaseCatalogRepository implements CaseCatalogRepository {
     }>;
     const analyses = this.handle.client
       .prepare(
-        `SELECT attempt_id, batch_id, outcome, result_code, failure_signature, duration_ms,
-                passed, failed, skipped, completed_at
-         FROM analytics_facts WHERE case_definition_id = ?
-         ORDER BY completed_at DESC, attempt_id DESC LIMIT ?`,
+        `SELECT fact.attempt_id, fact.batch_id, fact.outcome, fact.result_code,
+                fact.failure_signature, fact.duration_ms, fact.passed, fact.failed,
+                fact.skipped, fact.completed_at
+         FROM analytics_facts fact
+         JOIN run_attempts attempt ON attempt.id=fact.attempt_id
+         WHERE fact.case_definition_id = ?
+           AND attempt.id=(
+             SELECT preferred.id FROM run_attempts preferred
+             WHERE preferred.execution_run_id=attempt.execution_run_id
+             ORDER BY CASE
+                        WHEN COALESCE(preferred.outcome,preferred.status)='succeeded' THEN 0
+                        ELSE 1
+                      END,
+                      preferred.attempt_number DESC
+             LIMIT 1
+           )
+         ORDER BY fact.completed_at DESC,fact.attempt_id DESC LIMIT ?`,
       )
       .all(caseDefinitionId, limit) as Array<{
       attempt_id: string;
@@ -957,7 +976,17 @@ export class SqliteCaseCatalogRepository implements CaseCatalogRepository {
            FROM run_attempts a
            LEFT JOIN runners runner ON runner.id = a.runner_id
            WHERE a.execution_run_id IN (${placeholders})
-           ORDER BY a.execution_run_id, a.attempt_number`,
+             AND a.id=(
+               SELECT preferred.id FROM run_attempts preferred
+               WHERE preferred.execution_run_id=a.execution_run_id
+               ORDER BY CASE
+                          WHEN COALESCE(preferred.outcome,preferred.status)='succeeded' THEN 0
+                          ELSE 1
+                        END,
+                        preferred.attempt_number DESC
+               LIMIT 1
+             )
+           ORDER BY a.execution_run_id`,
         )
         .all(...pageRows.map((row) => row.run_id)) as Array<{
         id: string;

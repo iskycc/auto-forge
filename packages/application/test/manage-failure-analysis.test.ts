@@ -6,6 +6,55 @@ import type { FailureAnalysisRepository, JarObjectStorePort } from "../src/ports
 const NOW = new Date("2026-09-01T02:00:00.000Z");
 
 describe("FailureAnalysisService", () => {
+  it("loads export claims by indexed execution run ids and deduplicates the query", async () => {
+    const requestedExecutionRunIds: string[][] = [];
+    const findClaimsByExecutionRunIds = vi.fn(
+      async (input: Parameters<FailureAnalysisRepository["findClaimsByExecutionRunIds"]>[0]) => {
+        requestedExecutionRunIds.push([...input.executionRunIds]);
+        return [];
+      },
+    );
+    const service = createService({ findClaimsByExecutionRunIds });
+
+    await service.listExportClaims({
+      projectId: "project-a",
+      batchId: "batch-a",
+      executionRunIds: ["run-a", "run-b", "run-a"],
+    });
+
+    expect(findClaimsByExecutionRunIds).toHaveBeenCalledTimes(1);
+    expect(requestedExecutionRunIds[0]).toEqual(["run-a", "run-b"]);
+  });
+
+  it("bounds and deduplicates historical analysis queries", async () => {
+    const listCaseHistory = vi.fn(async () => ({ items: [] }));
+    const listRecentCaseHistories = vi.fn(async () => []);
+    const service = createService({ listCaseHistory, listRecentCaseHistories });
+
+    await service.listCaseHistory({
+      projectId: "project-a",
+      caseDefinitionId: "case-a",
+      limit: 500,
+    });
+    await service.listRecentCaseHistories({
+      projectId: "project-a",
+      caseDefinitionIds: ["case-a", "case-b", "case-a"],
+      limitPerCase: 50,
+    });
+
+    expect(listCaseHistory).toHaveBeenCalledWith(
+      expect.objectContaining({ projectId: "project-a", caseDefinitionId: "case-a", limit: 100 }),
+    );
+    expect(listRecentCaseHistories).toHaveBeenCalledWith({
+      projectId: "project-a",
+      caseDefinitionIds: ["case-a", "case-b"],
+      limitPerCase: 10,
+    });
+    expect(() =>
+      service.listRecentCaseHistories({ projectId: "project-a", caseDefinitionIds: [] }),
+    ).toThrowError(expect.objectContaining({ code: "FAILURE_ANALYSIS_HISTORY_SELECTION_INVALID" }));
+  });
+
   it("deduplicates claims, records actor identity and reports competing claims", async () => {
     let sequence = 0;
     const claim = vi.fn(async (input) => ({

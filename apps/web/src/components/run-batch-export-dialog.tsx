@@ -5,12 +5,11 @@ import { Download, LoaderCircle, X } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { Button, Input } from "@/components/ui";
-import { readApiErrorMessage } from "@/lib/client-api";
+import { downloadRunBatchExport } from "@/lib/download-run-batch-export";
 import {
   buildRunBatchExportQuery,
   DEFAULT_EXPORT_OUTCOMES,
   EXPORT_OUTCOME_OPTIONS,
-  parseExportFilename,
   type RunBatchExportScope,
 } from "@/lib/run-batch-export";
 
@@ -68,23 +67,7 @@ export function RunBatchExportDialog({
     setError("");
     try {
       const query = buildRunBatchExportQuery(scope, round, [...selectedOutcomes], template);
-      const response = await fetch(
-        `/api/v1/run-batches/${encodeURIComponent(batchId)}/export?${query}`,
-        { cache: "no-store" },
-      );
-      if (!response.ok) {
-        throw new Error((await readApiErrorMessage(response, "导出执行结果失败。"))!);
-      }
-      const blob = await response.blob();
-      const objectUrl = URL.createObjectURL(blob);
-      const anchor = document.createElement("a");
-      anchor.href = objectUrl;
-      anchor.download = parseExportFilename(response.headers.get("content-disposition"));
-      // Firefox 要求触发下载的元素挂在 DOM 上；click 同步派发后即可移除并回收。
-      document.body.append(anchor);
-      anchor.click();
-      anchor.remove();
-      URL.revokeObjectURL(objectUrl);
+      await downloadRunBatchExport(batchId, query);
       onClose();
     } catch (exportFailure) {
       setError(exportFailure instanceof Error ? exportFailure.message : "导出执行结果失败。");

@@ -1094,6 +1094,13 @@ export const pgFailureAnalysisClaims = pgTable(
       table.status,
       table.executionRunId,
     ),
+    index("failure_analysis_claims_case_history_idx").on(
+      table.projectId,
+      table.caseDefinitionId,
+      table.status,
+      table.completedAt,
+      table.id,
+    ),
   ],
 );
 
