@@ -4,7 +4,7 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
-## 1.8.5 - 2026-09-01
+## 1.8.5 - 2026-09-02
 
 ### Added
 

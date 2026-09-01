@@ -54,7 +54,7 @@ export function CaseDefinitionEditor({
         );
       }
       const updated = (await response.json()) as CaseDefinitionWithMethods;
-      toast.success("用例配置已保存并立即生效。");
+      toast.success("用例已更新。");
       onUpdated?.(updated);
       router.refresh();
     } catch (caught) {

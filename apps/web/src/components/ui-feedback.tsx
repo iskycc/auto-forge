@@ -48,7 +48,9 @@ type DialogRequest =
   | { kind: "confirm"; options: ConfirmOptions; resolve: (accepted: boolean) => void }
   | { kind: "prompt"; options: PromptOptions; resolve: (value: string | null) => void };
 
-type ToastApi = Record<ToastTone, (message: string, options?: ToastOptions) => void>;
+type ToastApi = Record<ToastTone, (message: string, options?: ToastOptions) => void> & {
+  dismissAll: () => void;
+};
 
 type FeedbackContextValue = {
   toast: ToastApi;
@@ -69,11 +71,15 @@ export function UiFeedbackProvider({ children }: { children: ReactNode }) {
     setToasts((current) => current.filter((item) => item.id !== id));
   }, []);
 
+  const dismissAllToasts = useCallback(() => {
+    setToasts([]);
+  }, []);
+
   const showToast = useCallback(
     (tone: ToastTone, message: string, options: ToastOptions = {}) => {
       const id = nextToastId.current++;
       const item: ToastItem = { id, tone, message, ...options };
-      setToasts((current) => [...current.slice(-3), item]);
+      setToasts([item]);
       const durationMs = options.durationMs ?? (tone === "error" ? 7_000 : 4_500);
       window.setTimeout(() => dismissToast(id), durationMs);
     },
@@ -114,13 +120,14 @@ export function UiFeedbackProvider({ children }: { children: ReactNode }) {
         error: (message, options) => showToast("error", message, options),
         warning: (message, options) => showToast("warning", message, options),
         info: (message, options) => showToast("info", message, options),
+        dismissAll: dismissAllToasts,
       },
       confirm: (options) =>
         new Promise<boolean>((resolve) => openDialog({ kind: "confirm", options, resolve })),
       prompt: (options) =>
         new Promise<string | null>((resolve) => openDialog({ kind: "prompt", options, resolve })),
     }),
-    [openDialog, showToast],
+    [dismissAllToasts, openDialog, showToast],
   );
 
   const options = dialogRequest?.options;

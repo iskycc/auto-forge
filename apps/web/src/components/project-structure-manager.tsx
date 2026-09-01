@@ -77,6 +77,7 @@ export function ProjectStructureManager({
   async function run(operation: () => Promise<void>): Promise<void> {
     setPending(true);
     setError("");
+    toast.dismissAll();
     try {
       await operation();
     } catch (cause) {
