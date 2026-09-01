@@ -207,6 +207,7 @@ jobs:
           mkdir -p release previous-release
           gh release download "${{ needs.prepare.outputs.tag }}" --dir release \
             --pattern "autoforge-backend-${{ needs.prepare.outputs.version }}-${{ matrix.variant }}.docker.tar" \
+            --pattern "autoforge-backend-${{ needs.prepare.outputs.version }}-${{ matrix.variant }}.image.json" \
             --pattern release-manifest.json
 
       - name: Download current deployment bundle

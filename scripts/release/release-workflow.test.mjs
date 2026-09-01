@@ -62,7 +62,10 @@ test("partitions tagged and published checks without polling inside a test job",
   assert.match(publishedAcceptance, /ref: \$\{\{ needs\.prepare\.outputs\.checks_revision \}\}/);
   assert.match(publishedAcceptance, /GITHUB_EVENT_NAME.*workflow_dispatch/);
   assert.match(publishedAcceptance, /--pattern release-manifest\.json/);
-  assert.doesNotMatch(publishedAcceptance, /needs\.prepare\.outputs\.version[^\n]*\.image\.json/);
+  assert.match(
+    publishedAcceptance,
+    /needs\.prepare\.outputs\.version[^\n]*matrix\.variant[^\n]*\.image\.json/,
+  );
 });
 
 test("keeps long-running CI acceptance paths partitioned", async () => {

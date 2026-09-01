@@ -28,6 +28,8 @@ and known limitations.
 - Published Lite asset-lifecycle acceptance now exposes its bound data directory to Playwright fixture
   setup, so analysis-history coverage runs against the released container instead of failing before
   the assertion phase.
+- Published acceptance downloads standalone image metadata when an older schema 1 Release provides
+  it, while schema 2 Releases continue to resolve the same identity from the consolidated manifest.
 
 ## 1.8.1 - 2026-09-01
 
