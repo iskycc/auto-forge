@@ -20,6 +20,51 @@ afterEach(async () => {
 });
 
 describe("SQLite identity access", () => {
+  it("repairs a historical LDAP subject link by preferring the submitted username", async () => {
+    const directory = await mkdtemp(resolve(tmpdir(), "autoforge-ldap-link-"));
+    temporaryDirectories.push(directory);
+    const handle = createSqliteDatabase({
+      databasePath: resolve(directory, "identity.db"),
+      migrationsFolder: resolve(import.meta.dirname, "../drizzle/sqlite"),
+    });
+    const repository = new SqliteIdentityAccessRepository(handle);
+    const synchronizedAt = "2026-09-02T00:00:00.000Z";
+    try {
+      const historical = await repository.upsertLdapUser({
+        userId: "00000000-0000-7000-9100-000000000001",
+        externalIdentityId: "00000000-0000-7000-9200-000000000001",
+        providerId: "ldap:default",
+        identity: ldapIdentity("retired.name", "current.name"),
+        synchronizedAt,
+      });
+      const current = await repository.upsertLdapUser({
+        userId: "00000000-0000-7000-9100-000000000002",
+        externalIdentityId: "00000000-0000-7000-9200-000000000002",
+        providerId: "ldap:default",
+        identity: ldapIdentity("current.name", "current-directory-subject"),
+        synchronizedAt,
+      });
+
+      const repaired = await repository.upsertLdapUser({
+        userId: historical.id,
+        externalIdentityId: "00000000-0000-7000-9200-000000000003",
+        providerId: "ldap:default",
+        identity: ldapIdentity("current.name", "current.name"),
+        synchronizedAt: "2026-09-02T00:01:00.000Z",
+      });
+
+      expect(repaired.id).toBe(current.id);
+      await expect(
+        repository.findExternalIdentity("ldap:default", "current.name"),
+      ).resolves.toMatchObject({ userId: current.id, directoryUsername: "current.name" });
+      await expect(repository.findUser(historical.id)).resolves.toMatchObject({
+        username: "retired.name",
+      });
+    } finally {
+      handle.close();
+    }
+  });
+
   it("bootstraps once, manages local users, and stores LDAP Groups without mapping permissions", async () => {
     const directory = await mkdtemp(resolve(tmpdir(), "autoforge-identity-"));
     temporaryDirectories.push(directory);
@@ -258,6 +303,22 @@ describe("SQLite identity access", () => {
           DEFAULT_PROJECT_ID,
         ),
       ).resolves.toBeUndefined();
+      handle.client
+        .prepare(
+          "UPDATE external_identities SET attributes_json = ? WHERE provider_id = ? AND subject = ?",
+        )
+        .run("{invalid-json", "ldap:default", "ldap.user");
+      await expect(
+        service.login({ username: "ldap.user", password: "Directory!123" }, "ldap-request-id"),
+      ).rejects.toMatchObject({
+        code: "LDAP_LOGIN_FINALIZATION_FAILED",
+        message: expect.stringContaining("平台账号关联或会话创建失败"),
+      });
+      handle.client
+        .prepare(
+          "UPDATE external_identities SET attributes_json = '{}' WHERE provider_id = ? AND subject = ?",
+        )
+        .run("ldap:default", "ldap.user");
       directoryAvailable = false;
       await expect(service.authenticateSession(ldapSession.token)).resolves.toMatchObject({
         user: { id: ldapIdentity.user.id },
@@ -490,6 +551,17 @@ describe("SQLite identity access", () => {
     }
   });
 });
+
+function ldapIdentity(username: string, subject: string): DirectoryIdentity {
+  return {
+    subject,
+    username,
+    displayName: username,
+    distinguishedName: `uid=${username},ou=people,dc=example,dc=test`,
+    groupDns: [],
+    attributes: { uid: username },
+  };
+}
 
 class MutableClock {
   constructor(private instant: string) {}

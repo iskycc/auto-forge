@@ -35,6 +35,59 @@ function cleanupTestAttemptLogs(logs: { store: AttemptLogStore; directory: strin
 }
 
 describe.skipIf(!connectionString)("PostgreSQL platform repositories", () => {
+  it("repairs a historical LDAP subject link by preferring the submitted username", async () => {
+    const handle = createPostgresDatabase({
+      connectionString: connectionString!,
+      migrationsFolder: resolve(import.meta.dirname, "../drizzle/postgresql"),
+    });
+    const repository = new PostgresIdentityAccessRepository(handle);
+    const suffix = randomUUID();
+    const historicalUserId = `ldap-historical-${suffix}`;
+    const currentUserId = `ldap-current-${suffix}`;
+    const currentUsername = `current.${suffix}`;
+    const historicalSubject = currentUsername;
+    const currentSubject = `current-subject-${suffix}`;
+    const synchronizedAt = "2026-09-02T00:00:00.000Z";
+    try {
+      await handle.ready;
+      await repository.upsertLdapUser({
+        userId: historicalUserId,
+        externalIdentityId: `ldap-external-historical-${suffix}`,
+        providerId: "ldap:default",
+        identity: postgresLdapIdentity(`retired.${suffix}`, historicalSubject),
+        synchronizedAt,
+      });
+      const current = await repository.upsertLdapUser({
+        userId: currentUserId,
+        externalIdentityId: `ldap-external-current-${suffix}`,
+        providerId: "ldap:default",
+        identity: postgresLdapIdentity(currentUsername, currentSubject),
+        synchronizedAt,
+      });
+
+      const repaired = await repository.upsertLdapUser({
+        userId: historicalUserId,
+        externalIdentityId: `ldap-external-repair-${suffix}`,
+        providerId: "ldap:default",
+        identity: postgresLdapIdentity(currentUsername, historicalSubject),
+        synchronizedAt: "2026-09-02T00:01:00.000Z",
+      });
+
+      expect(repaired.id).toBe(current.id);
+      await expect(
+        repository.findExternalIdentity("ldap:default", historicalSubject),
+      ).resolves.toMatchObject({ userId: current.id, directoryUsername: currentUsername });
+      await expect(repository.findUser(historicalUserId)).resolves.toMatchObject({
+        username: `retired.${suffix}`,
+      });
+    } finally {
+      await handle.pool.query("DELETE FROM users WHERE id = ANY($1::text[])", [
+        [historicalUserId, currentUserId],
+      ]);
+      await handle.close();
+    }
+  });
+
   it("overwrites matching classes per hierarchy and allows one JAR object in two versions", async () => {
     const handle = createPostgresDatabase({
       connectionString: connectionString!,
@@ -2308,6 +2361,17 @@ describe.skipIf(!connectionString)("PostgreSQL platform repositories", () => {
     }
   });
 });
+
+function postgresLdapIdentity(username: string, subject: string) {
+  return {
+    subject,
+    username,
+    displayName: username,
+    distinguishedName: `uid=${username},ou=people,dc=example,dc=test`,
+    groupDns: [],
+    attributes: { uid: username },
+  };
+}
 
 function postgresTestNgResult() {
   const counts = { total: 1, passed: 1, failed: 0, skipped: 0, configurationFailures: 0 };

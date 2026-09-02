@@ -49,11 +49,14 @@ export function AuthEntryForm({ mode, notice }: { mode: AuthMode; notice?: strin
       );
       if (!response.ok) {
         const apiError = apiErrorSchema.safeParse(await response.json());
+        if (!apiError.success) throw new Error("请求未成功。");
+        const message =
+          authEntryValidationMessage(apiError.data.error.details) ?? apiError.data.error.message;
         throw new Error(
-          (apiError.success
-            ? (authEntryValidationMessage(apiError.data.error.details) ??
-              apiError.data.error.message)
-            : undefined) ?? "请求未成功。",
+          apiError.data.error.code === "INTERNAL_ERROR" ||
+            apiError.data.error.code === "LDAP_LOGIN_FINALIZATION_FAILED"
+            ? `${message} 请求 ID：${apiError.data.error.requestId}`
+            : message,
         );
       }
       // The root layout is rendered with the session state from the login/setup request.

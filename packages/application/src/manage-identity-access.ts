@@ -1084,25 +1084,34 @@ export class IdentityAccessService {
       }
       return this.rejectedLogin("ldap", undefined, requestId, error);
     }
-    const existing = await this.repository.findExternalIdentity(
-      LDAP_PROVIDER_ID,
-      directoryIdentity.subject,
-    );
-    const synchronizedAt = this.now();
-    const user = await this.repository.upsertLdapUser({
-      userId: existing?.userId ?? this.ids.next(),
-      externalIdentityId: existing?.id ?? this.ids.next(),
-      providerId: LDAP_PROVIDER_ID,
-      identity: directoryIdentity,
-      synchronizedAt,
-    });
-    if (user.status !== "active") return this.rejectedLogin("ldap", user.id, requestId);
-    if (!existing && !existingLdapAccount) {
-      await this.ensureLdapDefaultRole(user.id, configuration.defaultRole, synchronizedAt);
+    try {
+      const existing = await this.repository.findExternalIdentity(
+        LDAP_PROVIDER_ID,
+        directoryIdentity.subject,
+      );
+      const synchronizedAt = this.now();
+      const user = await this.repository.upsertLdapUser({
+        userId: existing?.userId ?? this.ids.next(),
+        externalIdentityId: existing?.id ?? this.ids.next(),
+        providerId: LDAP_PROVIDER_ID,
+        identity: directoryIdentity,
+        synchronizedAt,
+      });
+      if (user.status !== "active") return this.rejectedLogin("ldap", user.id, requestId);
+      if (!existing && !existingLdapAccount) {
+        await this.ensureLdapDefaultRole(user.id, configuration.defaultRole, synchronizedAt);
+      }
+      const session = await this.createSession(user.id);
+      await this.successfulLogin("ldap", user.id, requestId);
+      return session;
+    } catch (error) {
+      if (error instanceof DomainError) throw error;
+      throw new DomainError(
+        "LDAP_LOGIN_FINALIZATION_FAILED",
+        "LDAP 身份验证已通过，但平台账号关联或会话创建失败。请联系管理员并提供请求 ID。",
+        { cause: error },
+      );
     }
-    const session = await this.createSession(user.id);
-    await this.successfulLogin("ldap", user.id, requestId);
-    return session;
   }
 
   private async createSession(userId: string): Promise<SessionResult> {

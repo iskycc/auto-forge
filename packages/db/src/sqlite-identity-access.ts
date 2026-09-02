@@ -187,6 +187,11 @@ export class SqliteIdentityAccessRepository implements IdentityAccessRepository 
   async upsertLdapUser(input: CreateLdapUserRecord): Promise<User> {
     return this.handle.client.transaction(() => {
       const normalizedUsername = normalizeUsername(input.identity.username);
+      const usernameMatch = this.handle.db
+        .select()
+        .from(users)
+        .where(eq(users.normalizedUsername, normalizedUsername))
+        .get();
       const external = this.handle.db
         .select()
         .from(externalIdentities)
@@ -198,7 +203,81 @@ export class SqliteIdentityAccessRepository implements IdentityAccessRepository 
         )
         .get();
       let userRow: typeof users.$inferSelect;
-      if (external) {
+      if (usernameMatch) {
+        if (usernameMatch.source !== "ldap") {
+          throw new DomainError(
+            "IDENTITY_CONFLICT",
+            "LDAP 用户名与已有账号冲突，需要管理员显式处理。",
+          );
+        }
+        const updated = this.handle.db
+          .update(users)
+          .set({
+            username: input.identity.username,
+            normalizedUsername,
+            displayName: input.identity.displayName,
+            email: input.identity.email ?? null,
+            ldapGroupsJson: JSON.stringify(input.identity.groupDns),
+            status: "active",
+            updatedAt: input.synchronizedAt,
+            version: sql`${users.version} + 1`,
+          })
+          .where(eq(users.id, usernameMatch.id))
+          .returning()
+          .get();
+        userRow = updated;
+        if (external) {
+          // Historical releases used a directory subject as the primary account key. If that
+          // subject now points at a different LDAP row, keep the submitted login name authoritative
+          // (the same rule as ddt-insight) and repair only the auxiliary identity link.
+          this.handle.db
+            .update(externalIdentities)
+            .set({
+              userId: usernameMatch.id,
+              directoryUsername: input.identity.username,
+              attributesJson: JSON.stringify(input.identity.attributes),
+              synchronizedAt: input.synchronizedAt,
+            })
+            .where(eq(externalIdentities.id, external.id))
+            .run();
+        } else {
+          const linkedIdentity = this.handle.db
+            .select()
+            .from(externalIdentities)
+            .where(
+              and(
+                eq(externalIdentities.providerId, input.providerId),
+                eq(externalIdentities.userId, usernameMatch.id),
+              ),
+            )
+            .get();
+          if (linkedIdentity) {
+            this.handle.db
+              .update(externalIdentities)
+              .set({
+                subject: input.identity.subject,
+                directoryUsername: input.identity.username,
+                attributesJson: JSON.stringify(input.identity.attributes),
+                synchronizedAt: input.synchronizedAt,
+              })
+              .where(eq(externalIdentities.id, linkedIdentity.id))
+              .run();
+          } else {
+            this.handle.db
+              .insert(externalIdentities)
+              .values({
+                id: input.externalIdentityId,
+                userId: usernameMatch.id,
+                providerId: input.providerId,
+                subject: input.identity.subject,
+                directoryUsername: input.identity.username,
+                attributesJson: JSON.stringify(input.identity.attributes),
+                synchronizedAt: input.synchronizedAt,
+              })
+              .run();
+          }
+        }
+      } else if (external) {
         const updated = this.handle.db
           .update(users)
           .set({
@@ -226,71 +305,6 @@ export class SqliteIdentityAccessRepository implements IdentityAccessRepository 
           .where(eq(externalIdentities.id, external.id))
           .run();
       } else {
-        const collision = this.handle.db
-          .select()
-          .from(users)
-          .where(eq(users.normalizedUsername, normalizedUsername))
-          .get();
-        if (collision) {
-          if (collision.source !== "ldap") {
-            throw new DomainError(
-              "IDENTITY_CONFLICT",
-              "LDAP 用户名与已有账号冲突，需要管理员显式处理。",
-            );
-          }
-          const updated = this.handle.db
-            .update(users)
-            .set({
-              username: input.identity.username,
-              normalizedUsername,
-              displayName: input.identity.displayName,
-              email: input.identity.email ?? null,
-              ldapGroupsJson: JSON.stringify(input.identity.groupDns),
-              status: "active",
-              updatedAt: input.synchronizedAt,
-              version: sql`${users.version} + 1`,
-            })
-            .where(eq(users.id, collision.id))
-            .returning()
-            .get();
-          userRow = updated;
-          const linkedIdentity = this.handle.db
-            .select()
-            .from(externalIdentities)
-            .where(
-              and(
-                eq(externalIdentities.providerId, input.providerId),
-                eq(externalIdentities.userId, collision.id),
-              ),
-            )
-            .get();
-          if (linkedIdentity) {
-            this.handle.db
-              .update(externalIdentities)
-              .set({
-                subject: input.identity.subject,
-                directoryUsername: input.identity.username,
-                attributesJson: JSON.stringify(input.identity.attributes),
-                synchronizedAt: input.synchronizedAt,
-              })
-              .where(eq(externalIdentities.id, linkedIdentity.id))
-              .run();
-          } else {
-            this.handle.db
-              .insert(externalIdentities)
-              .values({
-                id: input.externalIdentityId,
-                userId: collision.id,
-                providerId: input.providerId,
-                subject: input.identity.subject,
-                directoryUsername: input.identity.username,
-                attributesJson: JSON.stringify(input.identity.attributes),
-                synchronizedAt: input.synchronizedAt,
-              })
-              .run();
-          }
-          return mapUser(userRow);
-        }
         userRow = this.handle.db
           .insert(users)
           .values({
@@ -859,7 +873,16 @@ export class SqliteIdentityAccessRepository implements IdentityAccessRepository 
       .from(ldapConfigurations)
       .where(eq(ldapConfigurations.id, "default"))
       .get();
-    return row ? mapLdapConfiguration(row) : null;
+    if (!row) return null;
+    try {
+      return mapLdapConfiguration(row);
+    } catch (error) {
+      throw new DomainError(
+        "LDAP_CONFIGURATION_INVALID",
+        "已保存的 LDAP 配置无法读取，请由管理员重新保存目录配置。",
+        { cause: error },
+      );
+    }
   }
 
   async saveLdapConfiguration(

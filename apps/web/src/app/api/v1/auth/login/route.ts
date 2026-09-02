@@ -1,8 +1,14 @@
 import { loginInputSchema } from "@autoforge/contracts";
+import { isDomainError } from "@autoforge/domain";
 import { NextResponse } from "next/server";
 
 import { clientAddress, requestId, requireSameOrigin, sessionCookie } from "@/lib/auth";
-import { apiErrorResponse, readJsonBody, rejectRateLimited } from "@/lib/api-response";
+import {
+  apiErrorResponse,
+  logServerError,
+  readJsonBody,
+  rejectRateLimited,
+} from "@/lib/api-response";
 import { getPlatformServices } from "@/lib/services";
 
 export async function POST(request: Request): Promise<NextResponse> {
@@ -23,6 +29,13 @@ export async function POST(request: Request): Promise<NextResponse> {
     response.cookies.set(sessionCookie(session.token, session.expiresAt, request));
     return response;
   } catch (error) {
+    if (
+      isDomainError(error) &&
+      error.cause !== undefined &&
+      ["LDAP_CONFIGURATION_INVALID", "LDAP_LOGIN_FINALIZATION_FAILED"].includes(error.code)
+    ) {
+      logServerError(error.cause, currentRequestId, "LDAP login persistence failed");
+    }
     return apiErrorResponse(error, currentRequestId);
   }
 }

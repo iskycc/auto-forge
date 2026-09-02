@@ -4,6 +4,25 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## 1.8.6 - 2026-09-02
+
+### Fixed
+
+- LDAP 登录在升级遗留的目录身份 subject 与当前同名 LDAP 账号不一致时，改为以登录框
+  用户名对应的平台账号为准，并只修复辅助外部身份关联。Lite/SQLite 与 Full/PostgreSQL
+  不再因用户名唯一约束冲突返回通用 500，也不会删除或合并历史用户数据。
+- 已保存 LDAP 配置损坏时返回可操作的重新保存提示；目录验证成功但账号关联或会话创建
+  失败时，登录页展示请求 ID，服务端使用同一 ID 记录真实持久化错误。
+
+### Database and persisted configuration
+
+- 无 schema 迁移或配置格式变化；历史 LDAP 身份关联在用户下次成功登录时按需修复。
+
+### Tests
+
+- SQLite 与 PostgreSQL 集成测试覆盖历史 subject/用户名冲突及错误映射；真实 OpenLDAP、
+  LDAPS/明文 LDAP 和 Playwright 生产构建验收通过。
+
 ## 1.8.5 - 2026-09-02
 
 ### Added
