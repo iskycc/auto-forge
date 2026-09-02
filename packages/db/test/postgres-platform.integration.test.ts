@@ -4,8 +4,17 @@ import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 
 import { describe, expect, it, vi } from "vitest";
-import { defaultCaseSuiteExecutionPolicy, scheduleExecutionRuns } from "@autoforge/domain";
-import { CaseSourceService, type JarObjectStorePort } from "@autoforge/application";
+import {
+  builtInRoleDefinitions,
+  DEFAULT_PROJECT_ID,
+  defaultCaseSuiteExecutionPolicy,
+  scheduleExecutionRuns,
+} from "@autoforge/domain";
+import {
+  CaseSourceService,
+  type CompleteLdapLoginRecord,
+  type JarObjectStorePort,
+} from "@autoforge/application";
 import type { JobEnvelope } from "@autoforge/contracts";
 
 import { createPostgresDatabase } from "../src/postgres-database";
@@ -84,6 +93,80 @@ describe.skipIf(!connectionString)("PostgreSQL platform repositories", () => {
       await handle.pool.query("DELETE FROM users WHERE id = ANY($1::text[])", [
         [historicalUserId, currentUserId],
       ]);
+      await handle.close();
+    }
+  });
+
+  it("rolls back the complete first LDAP login and assigns the default role only once", async () => {
+    const handle = createPostgresDatabase({
+      connectionString: connectionString!,
+      migrationsFolder: resolve(import.meta.dirname, "../drizzle/postgresql"),
+    });
+    const repository = new PostgresIdentityAccessRepository(handle);
+    const suffix = randomUUID();
+    const synchronizedAt = "2026-09-02T00:00:00.000Z";
+    const duplicateAuditId = `ldap-atomic-audit-${suffix}`;
+    const firstLogin = postgresLdapLoginRecord(suffix, duplicateAuditId, synchronizedAt, 1);
+    const secondAuditId = `ldap-atomic-audit-2-${suffix}`;
+    try {
+      await handle.ready;
+      await repository.ensureBuiltInRoles(builtInRoleDefinitions, synchronizedAt);
+      await repository.appendAudit({
+        id: duplicateAuditId,
+        actorType: "system",
+        action: "test.seed",
+        resourceType: "test",
+        result: "succeeded",
+        details: {},
+        recordedAt: synchronizedAt,
+      });
+
+      await expect(repository.completeLdapLogin(firstLogin)).rejects.toThrow();
+      await expect(repository.findUserByUsername(`atomic.${suffix}`)).resolves.toBeNull();
+      await expect(
+        repository.findExternalIdentity("ldap:default", `atomic-subject-${suffix}`),
+      ).resolves.toBeNull();
+      const rolledBack = await handle.pool.query<{ sessions: string; bindings: string }>(
+        `SELECT
+           (SELECT COUNT(*) FROM user_sessions WHERE user_id = $1) AS sessions,
+           (SELECT COUNT(*) FROM project_role_bindings WHERE user_id = $1) AS bindings`,
+        [firstLogin.ldapUser.userId],
+      );
+      expect(rolledBack.rows[0]).toEqual({ sessions: "0", bindings: "0" });
+
+      await handle.pool.query("DELETE FROM audit_events WHERE id = $1", [duplicateAuditId]);
+      const secondLogin = postgresLdapLoginRecord(
+        suffix,
+        secondAuditId,
+        "2026-09-02T00:02:00.000Z",
+        2,
+      );
+      const concurrentLogins = await Promise.all([
+        repository.completeLdapLogin(firstLogin),
+        repository.completeLdapLogin(secondLogin),
+      ]);
+      expect(concurrentLogins).toEqual([
+        expect.objectContaining({ username: `atomic.${suffix}`, source: "ldap" }),
+        expect.objectContaining({ username: `atomic.${suffix}`, source: "ldap" }),
+      ]);
+      await expect(
+        repository.resolveSession(firstLogin.session.tokenHash, "2026-09-02T00:03:00.000Z"),
+      ).resolves.toMatchObject({
+        user: { username: `atomic.${suffix}` },
+        projectPermissions: { [DEFAULT_PROJECT_ID]: expect.arrayContaining(["case.manage"]) },
+      });
+
+      const bindings = await handle.pool.query<{ value: string }>(
+        `SELECT COUNT(*) AS value FROM project_role_bindings
+         WHERE user_id = $1 AND project_id = $2 AND role_id = $3 AND source = 'ldap'`,
+        [firstLogin.ldapUser.userId, DEFAULT_PROJECT_ID, "00000000-0000-7000-8100-000000000003"],
+      );
+      expect(bindings.rows[0]?.value).toBe("1");
+    } finally {
+      await handle.pool.query("DELETE FROM audit_events WHERE id = ANY($1::text[])", [
+        [duplicateAuditId, secondAuditId],
+      ]);
+      await handle.pool.query("DELETE FROM users WHERE id = $1", [firstLogin.ldapUser.userId]);
       await handle.close();
     }
   });
@@ -2361,6 +2444,43 @@ describe.skipIf(!connectionString)("PostgreSQL platform repositories", () => {
     }
   });
 });
+
+function postgresLdapLoginRecord(
+  suffix: string,
+  auditId: string,
+  synchronizedAt: string,
+  attempt: number,
+): CompleteLdapLoginRecord {
+  return {
+    ldapUser: {
+      userId: `ldap-atomic-user-${suffix}`,
+      externalIdentityId: `ldap-atomic-external-${suffix}`,
+      providerId: "ldap:default",
+      identity: postgresLdapIdentity(`atomic.${suffix}`, `atomic-subject-${suffix}`),
+      synchronizedAt,
+    },
+    defaultRole: {
+      roleId: "00000000-0000-7000-8100-000000000003",
+      projectId: DEFAULT_PROJECT_ID,
+      recordedAt: synchronizedAt,
+    },
+    session: {
+      id: `ldap-atomic-session-${attempt}-${suffix}`,
+      tokenHash: `ldap-atomic-token-${attempt}-${suffix}`,
+      createdAt: synchronizedAt,
+      expiresAt: "2099-01-01T00:00:00.000Z",
+    },
+    audit: {
+      id: auditId,
+      actorType: "user",
+      action: "auth.login",
+      resourceType: "session",
+      result: "succeeded",
+      details: { provider: "ldap" },
+      recordedAt: synchronizedAt,
+    },
+  };
+}
 
 function postgresLdapIdentity(username: string, subject: string) {
   return {

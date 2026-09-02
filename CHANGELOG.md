@@ -4,6 +4,26 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## 1.8.7 - 2026-09-02
+
+### Fixed
+
+- LDAP 首次登录现在把平台用户、外部身份、统一角色绑定、登录会话与成功审计作为一个
+  原子操作提交。任一步骤失败都会完整回滚，不再出现首次提示“关联失败”、再次登录却已
+  留下半创建账号或角色绑定的状态。
+- Lite/SQLite 在首次登录遭遇短暂写锁竞争时会退避并重试整个幂等事务；Full/PostgreSQL
+  会串行化同一用户名的并发首次登录，避免两个请求竞争唯一约束而误报账号关联失败。
+
+### Database and persisted configuration
+
+- 无 schema 迁移或配置格式变化；已存在的 LDAP 用户及角色绑定保持不变。
+
+### Tests
+
+- SQLite 集成测试覆盖末步失败完整回滚、锁竞争自愈与默认角色唯一性；PostgreSQL 集成
+  测试覆盖完整回滚和并发首次登录。真实 OpenLDAP、LDAPS/明文 LDAP 与 Playwright
+  生产构建验收通过。
+
 ## 1.8.6 - 2026-09-02
 
 ### Fixed

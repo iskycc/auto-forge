@@ -1,5 +1,6 @@
 import type {
   AuditListPage,
+  CompleteLdapLoginRecord,
   CreateLdapUserRecord,
   CreateLocalUserRecord,
   IdentityAccessRepository,
@@ -208,154 +209,193 @@ export class PostgresIdentityAccessRepository implements IdentityAccessRepositor
 
   async upsertLdapUser(input: CreateLdapUserRecord): Promise<User> {
     await this.ready();
+    return this.transaction(
+      async (client) => (await this.upsertLdapUserInTransaction(client, input)).user,
+    );
+  }
+
+  async completeLdapLogin(input: CompleteLdapLoginRecord): Promise<User> {
+    await this.ready();
     return this.transaction(async (client) => {
-      const normalizedUsername = normalizeUsername(input.identity.username);
-      const usernameMatch = await client.query<{ id: string; source: "local" | "ldap" }>(
-        "SELECT id, source FROM users WHERE normalized_username = $1 LIMIT 1 FOR UPDATE",
-        [normalizedUsername],
-      );
-      const external = await client.query<{ id: string; user_id: string }>(
-        `SELECT id, user_id FROM external_identities
+      const upserted = await this.upsertLdapUserInTransaction(client, input.ldapUser);
+      if (upserted.created) {
+        await this.insertLdapDefaultRole(client, {
+          userId: upserted.user.id,
+          ...input.defaultRole,
+        });
+      }
+      const authenticatedUser = await this.createSessionAfterLoginInTransaction(client, {
+        ...input.session,
+        userId: upserted.user.id,
+      });
+      await this.insertAudit(client, { ...input.audit, actorId: upserted.user.id });
+      return authenticatedUser;
+    });
+  }
+
+  private async upsertLdapUserInTransaction(
+    client: PoolClient,
+    input: CreateLdapUserRecord,
+  ): Promise<{ user: User; created: boolean }> {
+    const normalizedUsername = normalizeUsername(input.identity.username);
+    // Two first-login requests for the same directory account must observe one another before
+    // checking the unique username/subject records; otherwise the loser would surface a false
+    // association failure even though the winner created a valid account.
+    await client.query(
+      "SELECT pg_advisory_xact_lock(hashtext('autoforge:ldap-login'), hashtext($1))",
+      [normalizedUsername],
+    );
+    const usernameMatch = await client.query<{ id: string; source: "local" | "ldap" }>(
+      "SELECT id, source FROM users WHERE normalized_username = $1 LIMIT 1 FOR UPDATE",
+      [normalizedUsername],
+    );
+    const external = await client.query<{ id: string; user_id: string }>(
+      `SELECT id, user_id FROM external_identities
          WHERE provider_id = $1 AND subject = $2 FOR UPDATE`,
-        [input.providerId, input.identity.subject],
-      );
-      if (usernameMatch.rows[0]) {
-        if (usernameMatch.rows[0].source !== "ldap") {
-          throw new DomainError(
-            "IDENTITY_CONFLICT",
-            "LDAP 用户名与已有账号冲突，需要管理员显式处理。",
-          );
-        }
-        const result = await client.query<UserDatabaseRow>(
-          `UPDATE users SET
+      [input.providerId, input.identity.subject],
+    );
+    if (usernameMatch.rows[0]) {
+      if (usernameMatch.rows[0].source !== "ldap") {
+        throw new DomainError(
+          "IDENTITY_CONFLICT",
+          "LDAP 用户名与已有账号冲突，需要管理员显式处理。",
+        );
+      }
+      const result = await client.query<UserDatabaseRow>(
+        `UPDATE users SET
              username = $1, normalized_username = $2, display_name = $3, email = $4,
              ldap_groups_json = $5, status = 'active', updated_at = $6, version = version + 1
            WHERE id = $7 RETURNING *`,
-          [
-            input.identity.username,
-            normalizedUsername,
-            input.identity.displayName,
-            input.identity.email ?? null,
-            JSON.stringify(input.identity.groupDns),
-            input.synchronizedAt,
-            usernameMatch.rows[0].id,
-          ],
-        );
-        if (external.rows[0]) {
-          await client.query(
-            `UPDATE external_identities SET user_id = $1, directory_username = $2,
-               attributes_json = $3, synchronized_at = $4 WHERE id = $5`,
-            [
-              usernameMatch.rows[0].id,
-              input.identity.username,
-              JSON.stringify(input.identity.attributes),
-              input.synchronizedAt,
-              external.rows[0].id,
-            ],
-          );
-        } else {
-          const linkedIdentity = await client.query<{ id: string }>(
-            `SELECT id FROM external_identities
-             WHERE provider_id = $1 AND user_id = $2 LIMIT 1 FOR UPDATE`,
-            [input.providerId, usernameMatch.rows[0].id],
-          );
-          if (linkedIdentity.rows[0]) {
-            await client.query(
-              `UPDATE external_identities SET subject = $1, directory_username = $2,
-                 attributes_json = $3, synchronized_at = $4 WHERE id = $5`,
-              [
-                input.identity.subject,
-                input.identity.username,
-                JSON.stringify(input.identity.attributes),
-                input.synchronizedAt,
-                linkedIdentity.rows[0].id,
-              ],
-            );
-          } else {
-            await client.query(
-              `INSERT INTO external_identities
-               (id, user_id, provider_id, subject, directory_username, attributes_json, synchronized_at)
-               VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-              [
-                input.externalIdentityId,
-                usernameMatch.rows[0].id,
-                input.providerId,
-                input.identity.subject,
-                input.identity.username,
-                JSON.stringify(input.identity.attributes),
-                input.synchronizedAt,
-              ],
-            );
-          }
-        }
-        return mapUserRow(
-          requiredRow(result.rows[0], "PostgreSQL did not return migrated LDAP user."),
-        );
-      }
-      if (external.rows[0]) {
-        const result = await client.query<UserDatabaseRow>(
-          `UPDATE users SET
-             username = $1, normalized_username = $2, display_name = $3, email = $4,
-             ldap_groups_json = $5, status = 'active', updated_at = $6, version = version + 1
-           WHERE id = $7 AND source = 'ldap' RETURNING *`,
-          [
-            input.identity.username,
-            normalizedUsername,
-            input.identity.displayName,
-            input.identity.email ?? null,
-            JSON.stringify(input.identity.groupDns),
-            input.synchronizedAt,
-            external.rows[0].user_id,
-          ],
-        );
-        const user = result.rows[0];
-        if (!user) throw new DomainError("IDENTITY_CONFLICT", "LDAP 身份关联的用户无效。");
-        await client.query(
-          `UPDATE external_identities SET
-             directory_username = $1, attributes_json = $2, synchronized_at = $3
-           WHERE id = $4`,
-          [
-            input.identity.username,
-            JSON.stringify(input.identity.attributes),
-            input.synchronizedAt,
-            external.rows[0].id,
-          ],
-        );
-        return mapUserRow(user);
-      }
-      const created = await client.query<UserDatabaseRow>(
-        `INSERT INTO users (
-           id, username, normalized_username, display_name, email, ldap_groups_json, source, status,
-           password_hash, password_updated_at, force_password_change, failed_login_attempts,
-           locked_until, last_login_at, created_at, updated_at, version
-         ) VALUES ($1, $2, $3, $4, $5, $6, 'ldap', 'active', NULL, NULL, FALSE, 0, NULL, NULL, $7, $7, 1)
-         RETURNING *`,
         [
-          input.userId,
           input.identity.username,
           normalizedUsername,
           input.identity.displayName,
           input.identity.email ?? null,
           JSON.stringify(input.identity.groupDns),
           input.synchronizedAt,
+          usernameMatch.rows[0].id,
         ],
       );
-      await client.query(
-        `INSERT INTO external_identities (
-           id, user_id, provider_id, subject, directory_username, attributes_json, synchronized_at
-         ) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      if (external.rows[0]) {
+        await client.query(
+          `UPDATE external_identities SET user_id = $1, directory_username = $2,
+               attributes_json = $3, synchronized_at = $4 WHERE id = $5`,
+          [
+            usernameMatch.rows[0].id,
+            input.identity.username,
+            JSON.stringify(input.identity.attributes),
+            input.synchronizedAt,
+            external.rows[0].id,
+          ],
+        );
+      } else {
+        const linkedIdentity = await client.query<{ id: string }>(
+          `SELECT id FROM external_identities
+             WHERE provider_id = $1 AND user_id = $2 LIMIT 1 FOR UPDATE`,
+          [input.providerId, usernameMatch.rows[0].id],
+        );
+        if (linkedIdentity.rows[0]) {
+          await client.query(
+            `UPDATE external_identities SET subject = $1, directory_username = $2,
+                 attributes_json = $3, synchronized_at = $4 WHERE id = $5`,
+            [
+              input.identity.subject,
+              input.identity.username,
+              JSON.stringify(input.identity.attributes),
+              input.synchronizedAt,
+              linkedIdentity.rows[0].id,
+            ],
+          );
+        } else {
+          await client.query(
+            `INSERT INTO external_identities
+               (id, user_id, provider_id, subject, directory_username, attributes_json, synchronized_at)
+               VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+            [
+              input.externalIdentityId,
+              usernameMatch.rows[0].id,
+              input.providerId,
+              input.identity.subject,
+              input.identity.username,
+              JSON.stringify(input.identity.attributes),
+              input.synchronizedAt,
+            ],
+          );
+        }
+      }
+      return {
+        user: mapUserRow(
+          requiredRow(result.rows[0], "PostgreSQL did not return migrated LDAP user."),
+        ),
+        created: false,
+      };
+    }
+    if (external.rows[0]) {
+      const result = await client.query<UserDatabaseRow>(
+        `UPDATE users SET
+             username = $1, normalized_username = $2, display_name = $3, email = $4,
+             ldap_groups_json = $5, status = 'active', updated_at = $6, version = version + 1
+           WHERE id = $7 AND source = 'ldap' RETURNING *`,
         [
-          input.externalIdentityId,
-          input.userId,
-          input.providerId,
-          input.identity.subject,
+          input.identity.username,
+          normalizedUsername,
+          input.identity.displayName,
+          input.identity.email ?? null,
+          JSON.stringify(input.identity.groupDns),
+          input.synchronizedAt,
+          external.rows[0].user_id,
+        ],
+      );
+      const user = result.rows[0];
+      if (!user) throw new DomainError("IDENTITY_CONFLICT", "LDAP 身份关联的用户无效。");
+      await client.query(
+        `UPDATE external_identities SET
+             directory_username = $1, attributes_json = $2, synchronized_at = $3
+           WHERE id = $4`,
+        [
           input.identity.username,
           JSON.stringify(input.identity.attributes),
           input.synchronizedAt,
+          external.rows[0].id,
         ],
       );
-      return mapUserRow(requiredRow(created.rows[0], "PostgreSQL did not return LDAP user."));
-    });
+      return { user: mapUserRow(user), created: false };
+    }
+    const created = await client.query<UserDatabaseRow>(
+      `INSERT INTO users (
+           id, username, normalized_username, display_name, email, ldap_groups_json, source, status,
+           password_hash, password_updated_at, force_password_change, failed_login_attempts,
+           locked_until, last_login_at, created_at, updated_at, version
+         ) VALUES ($1, $2, $3, $4, $5, $6, 'ldap', 'active', NULL, NULL, FALSE, 0, NULL, NULL, $7, $7, 1)
+         RETURNING *`,
+      [
+        input.userId,
+        input.identity.username,
+        normalizedUsername,
+        input.identity.displayName,
+        input.identity.email ?? null,
+        JSON.stringify(input.identity.groupDns),
+        input.synchronizedAt,
+      ],
+    );
+    await client.query(
+      `INSERT INTO external_identities (
+           id, user_id, provider_id, subject, directory_username, attributes_json, synchronized_at
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      [
+        input.externalIdentityId,
+        input.userId,
+        input.providerId,
+        input.identity.subject,
+        input.identity.username,
+        JSON.stringify(input.identity.attributes),
+        input.synchronizedAt,
+      ],
+    );
+    return {
+      user: mapUserRow(requiredRow(created.rows[0], "PostgreSQL did not return LDAP user.")),
+      created: true,
+    };
   }
 
   async recordLoginFailure(
@@ -380,23 +420,34 @@ export class PostgresIdentityAccessRepository implements IdentityAccessRepositor
     expiresAt: string;
   }): Promise<User> {
     await this.ready();
-    return this.transaction(async (client) => {
-      const result = await client.query<UserDatabaseRow>(
-        `UPDATE users SET failed_login_attempts = 0, locked_until = NULL,
-         last_login_at = $1, updated_at = $1, version = version + 1
-         WHERE id = $2 AND status = 'active' RETURNING *`,
-        [input.createdAt, input.userId],
-      );
-      const user = result.rows[0];
-      if (!user) throw new DomainError("AUTHENTICATION_FAILED", "用户名或密码无效。");
-      await client.query(
-        `INSERT INTO user_sessions
-           (id, user_id, token_hash, expires_at, last_seen_at, created_at, revoked_at)
-         VALUES ($1, $2, $3, $4, $5, $5, NULL)`,
-        [input.id, input.userId, input.tokenHash, input.expiresAt, input.createdAt],
-      );
-      return mapUserRow(user);
-    });
+    return this.transaction((client) => this.createSessionAfterLoginInTransaction(client, input));
+  }
+
+  private async createSessionAfterLoginInTransaction(
+    client: PoolClient,
+    input: {
+      id: string;
+      userId: string;
+      tokenHash: string;
+      createdAt: string;
+      expiresAt: string;
+    },
+  ): Promise<User> {
+    const result = await client.query<UserDatabaseRow>(
+      `UPDATE users SET failed_login_attempts = 0, locked_until = NULL,
+       last_login_at = $1, updated_at = $1, version = version + 1
+       WHERE id = $2 AND status = 'active' RETURNING *`,
+      [input.createdAt, input.userId],
+    );
+    const user = result.rows[0];
+    if (!user) throw new DomainError("AUTHENTICATION_FAILED", "用户名或密码无效。");
+    await client.query(
+      `INSERT INTO user_sessions
+         (id, user_id, token_hash, expires_at, last_seen_at, created_at, revoked_at)
+       VALUES ($1, $2, $3, $4, $5, $5, NULL)`,
+      [input.id, input.userId, input.tokenHash, input.expiresAt, input.createdAt],
+    );
+    return mapUserRow(user);
   }
 
   async resolveSession(tokenHash: string, now: string): Promise<AuthenticatedIdentity | null> {
@@ -932,15 +983,17 @@ export class PostgresIdentityAccessRepository implements IdentityAccessRepositor
     return mapLdapRow(requiredRow(result.rows[0], "PostgreSQL did not return LDAP config."));
   }
 
-  async ensureLdapDefaultRole(input: {
-    userId: string;
-    roleId: string;
-    projectId?: string;
-    recordedAt: string;
-  }): Promise<void> {
-    await this.ready();
+  private async insertLdapDefaultRole(
+    client: PoolClient,
+    input: {
+      userId: string;
+      roleId: string;
+      projectId?: string;
+      recordedAt: string;
+    },
+  ): Promise<void> {
     if (input.projectId) {
-      await this.handle.pool.query(
+      await client.query(
         `INSERT INTO project_role_bindings
          (user_id, project_id, role_id, source, assigned_at, assigned_by)
          VALUES ($1, $2, $3, 'ldap', $4, NULL) ON CONFLICT DO NOTHING`,
@@ -948,7 +1001,7 @@ export class PostgresIdentityAccessRepository implements IdentityAccessRepositor
       );
       return;
     }
-    await this.handle.pool.query(
+    await client.query(
       `INSERT INTO user_system_roles
        (user_id, role_id, source, assigned_at, assigned_by)
        VALUES ($1, $2, 'ldap', $3, NULL) ON CONFLICT DO NOTHING`,
@@ -958,7 +1011,11 @@ export class PostgresIdentityAccessRepository implements IdentityAccessRepositor
 
   async appendAudit(event: AuditEvent): Promise<void> {
     await this.ready();
-    await this.handle.pool.query(
+    await this.insertAudit(this.handle.pool, event);
+  }
+
+  private async insertAudit(client: Pick<PoolClient, "query">, event: AuditEvent): Promise<void> {
+    await client.query(
       `INSERT INTO audit_events (
          id, actor_type, actor_id, action, resource_type, resource_id,
          project_id, result, request_id, details_json, recorded_at

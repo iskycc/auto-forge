@@ -176,13 +176,7 @@ export class IdentityAccessService {
     }
     const ldapConfiguration = await this.repository.getLdapConfiguration();
     if (credential?.user.source === "ldap" || ldapConfiguration?.enabled) {
-      return this.loginWithLdap(
-        input.username,
-        input.password,
-        ldapConfiguration,
-        credential?.user.source === "ldap",
-        requestId,
-      );
+      return this.loginWithLdap(input.username, input.password, ldapConfiguration, requestId);
     }
     return this.loginLocally(input.password, null, requestId);
   }
@@ -1060,7 +1054,6 @@ export class IdentityAccessService {
     username: string,
     password: string,
     configuration: StoredLdapConfiguration | null,
-    existingLdapAccount: boolean,
     requestId?: string,
   ): Promise<SessionResult> {
     if (!configuration?.enabled) return this.rejectedLogin("ldap", undefined, requestId);
@@ -1085,25 +1078,38 @@ export class IdentityAccessService {
       return this.rejectedLogin("ldap", undefined, requestId, error);
     }
     try {
-      const existing = await this.repository.findExternalIdentity(
-        LDAP_PROVIDER_ID,
-        directoryIdentity.subject,
-      );
       const synchronizedAt = this.now();
-      const user = await this.repository.upsertLdapUser({
-        userId: existing?.userId ?? this.ids.next(),
-        externalIdentityId: existing?.id ?? this.ids.next(),
-        providerId: LDAP_PROVIDER_ID,
-        identity: directoryIdentity,
-        synchronizedAt,
+      const token = this.tokens.issue();
+      const expiresAt = new Date(
+        new Date(synchronizedAt).getTime() + this.sessionTtlHours * 60 * 60 * 1_000,
+      ).toISOString();
+      const user = await this.repository.completeLdapLogin({
+        ldapUser: {
+          userId: this.ids.next(),
+          externalIdentityId: this.ids.next(),
+          providerId: LDAP_PROVIDER_ID,
+          identity: directoryIdentity,
+          synchronizedAt,
+        },
+        defaultRole: this.ldapDefaultRole(configuration.defaultRole, synchronizedAt),
+        session: {
+          id: this.ids.next(),
+          tokenHash: this.tokens.hash(token),
+          createdAt: synchronizedAt,
+          expiresAt,
+        },
+        audit: {
+          id: this.ids.next(),
+          actorType: "user",
+          action: "auth.login",
+          resourceType: "session",
+          result: "succeeded",
+          ...(requestId ? { requestId } : {}),
+          details: { provider: "ldap" },
+          recordedAt: synchronizedAt,
+        },
       });
-      if (user.status !== "active") return this.rejectedLogin("ldap", user.id, requestId);
-      if (!existing && !existingLdapAccount) {
-        await this.ensureLdapDefaultRole(user.id, configuration.defaultRole, synchronizedAt);
-      }
-      const session = await this.createSession(user.id);
-      await this.successfulLogin("ldap", user.id, requestId);
-      return session;
+      return { token, expiresAt, userId: user.id };
     } catch (error) {
       if (error instanceof DomainError) throw error;
       throw new DomainError(
@@ -1200,25 +1206,18 @@ export class IdentityAccessService {
     return user;
   }
 
-  private async ensureLdapDefaultRole(
-    userId: string,
+  private ldapDefaultRole(
     defaultRole: StoredLdapConfiguration["defaultRole"],
     recordedAt: string,
-  ): Promise<void> {
+  ): { roleId: string; projectId?: string; recordedAt: string } {
     if (defaultRole === "admin") {
-      await this.repository.ensureLdapDefaultRole({
-        userId,
-        roleId: SYSTEM_ADMIN_ROLE_ID,
-        recordedAt,
-      });
-      return;
+      return { roleId: SYSTEM_ADMIN_ROLE_ID, recordedAt };
     }
-    await this.repository.ensureLdapDefaultRole({
-      userId,
+    return {
       roleId: defaultRole === "editor" ? TEST_MANAGER_ROLE_ID : VIEWER_ROLE_ID,
       projectId: DEFAULT_PROJECT_ID,
       recordedAt,
-    });
+    };
   }
 
   private async requiredRole(roleId: string) {

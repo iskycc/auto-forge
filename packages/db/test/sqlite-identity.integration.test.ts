@@ -2,8 +2,12 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 
-import { IdentityAccessService, type DirectoryIdentity } from "@autoforge/application";
-import { DEFAULT_PROJECT_ID, DomainError } from "@autoforge/domain";
+import {
+  IdentityAccessService,
+  type CompleteLdapLoginRecord,
+  type DirectoryIdentity,
+} from "@autoforge/application";
+import { builtInRoleDefinitions, DEFAULT_PROJECT_ID, DomainError } from "@autoforge/domain";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { createSqliteDatabase } from "../src/database";
@@ -62,6 +66,108 @@ describe("SQLite identity access", () => {
       });
     } finally {
       handle.close();
+    }
+  });
+
+  it("rolls back the complete first LDAP login and assigns the default role only once", async () => {
+    const directory = await mkdtemp(resolve(tmpdir(), "autoforge-ldap-login-"));
+    temporaryDirectories.push(directory);
+    const handle = createSqliteDatabase({
+      databasePath: resolve(directory, "identity.db"),
+      migrationsFolder: resolve(import.meta.dirname, "../drizzle/sqlite"),
+    });
+    const repository = new SqliteIdentityAccessRepository(handle);
+    const synchronizedAt = "2026-09-02T00:00:00.000Z";
+    const duplicateAuditId = "00000000-0000-7000-9600-000000000001";
+    const login = ldapLoginRecord(duplicateAuditId, synchronizedAt);
+    try {
+      await repository.ensureBuiltInRoles(builtInRoleDefinitions, synchronizedAt);
+      await repository.appendAudit({
+        id: duplicateAuditId,
+        actorType: "system",
+        action: "test.seed",
+        resourceType: "test",
+        result: "succeeded",
+        details: {},
+        recordedAt: synchronizedAt,
+      });
+
+      await expect(repository.completeLdapLogin(login)).rejects.toThrow();
+      await expect(repository.findUserByUsername("atomic.ldap")).resolves.toBeNull();
+      await expect(
+        repository.findExternalIdentity("ldap:default", "atomic-directory-subject"),
+      ).resolves.toBeNull();
+      expect(
+        handle.client
+          .prepare("SELECT COUNT(*) AS value FROM user_sessions WHERE id = ?")
+          .get(login.session.id),
+      ).toEqual({ value: 0 });
+
+      handle.client.prepare("DELETE FROM audit_events WHERE id = ?").run(duplicateAuditId);
+      await expect(repository.completeLdapLogin(login)).resolves.toMatchObject({
+        username: "atomic.ldap",
+        source: "ldap",
+      });
+      await expect(
+        repository.resolveSession(login.session.tokenHash, "2026-09-02T00:01:00.000Z"),
+      ).resolves.toMatchObject({
+        user: { username: "atomic.ldap" },
+        projectPermissions: { [DEFAULT_PROJECT_ID]: expect.arrayContaining(["case.manage"]) },
+      });
+
+      const repeatedLogin = ldapLoginRecord(
+        "00000000-0000-7000-9600-000000000002",
+        "2026-09-02T00:02:00.000Z",
+      );
+      repeatedLogin.session.id = "00000000-0000-7000-9500-000000000002";
+      repeatedLogin.session.tokenHash = "atomic-token-hash-2";
+      await repository.completeLdapLogin(repeatedLogin);
+      expect(
+        handle.client
+          .prepare(
+            `SELECT COUNT(*) AS value FROM project_role_bindings
+             WHERE user_id = ? AND project_id = ? AND role_id = ? AND source = 'ldap'`,
+          )
+          .get(login.ldapUser.userId, DEFAULT_PROJECT_ID, "00000000-0000-7000-8100-000000000003"),
+      ).toEqual({ value: 1 });
+    } finally {
+      handle.close();
+    }
+  });
+
+  it("retries the complete first LDAP login after transient SQLite write contention", async () => {
+    const directory = await mkdtemp(resolve(tmpdir(), "autoforge-ldap-busy-"));
+    temporaryDirectories.push(directory);
+    const databasePath = resolve(directory, "identity.db");
+    const migrationsFolder = resolve(import.meta.dirname, "../drizzle/sqlite");
+    const lockingHandle = createSqliteDatabase({ databasePath, migrationsFolder });
+    const loginHandle = createSqliteDatabase({ databasePath, migrationsFolder });
+    const repository = new SqliteIdentityAccessRepository(loginHandle);
+    const synchronizedAt = "2026-09-02T00:00:00.000Z";
+    let lockHeld = false;
+    let releaseLock: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await repository.ensureBuiltInRoles(builtInRoleDefinitions, synchronizedAt);
+      loginHandle.client.pragma("busy_timeout = 1");
+      lockingHandle.client.exec("BEGIN IMMEDIATE");
+      lockHeld = true;
+      releaseLock = setTimeout(() => {
+        lockingHandle.client.exec("COMMIT");
+        lockHeld = false;
+      }, 10);
+
+      const login = ldapLoginRecord("00000000-0000-7000-9600-000000000003", synchronizedAt);
+      await expect(repository.completeLdapLogin(login)).resolves.toMatchObject({
+        username: "atomic.ldap",
+      });
+      await expect(
+        repository.resolveSession(login.session.tokenHash, "2026-09-02T00:01:00.000Z"),
+      ).resolves.toMatchObject({ user: { username: "atomic.ldap" } });
+    } finally {
+      if (releaseLock) clearTimeout(releaseLock);
+      if (lockHeld) lockingHandle.client.exec("ROLLBACK");
+      loginHandle.close();
+      lockingHandle.close();
     }
   });
 
@@ -303,22 +409,6 @@ describe("SQLite identity access", () => {
           DEFAULT_PROJECT_ID,
         ),
       ).resolves.toBeUndefined();
-      handle.client
-        .prepare(
-          "UPDATE external_identities SET attributes_json = ? WHERE provider_id = ? AND subject = ?",
-        )
-        .run("{invalid-json", "ldap:default", "ldap.user");
-      await expect(
-        service.login({ username: "ldap.user", password: "Directory!123" }, "ldap-request-id"),
-      ).rejects.toMatchObject({
-        code: "LDAP_LOGIN_FINALIZATION_FAILED",
-        message: expect.stringContaining("平台账号关联或会话创建失败"),
-      });
-      handle.client
-        .prepare(
-          "UPDATE external_identities SET attributes_json = '{}' WHERE provider_id = ? AND subject = ?",
-        )
-        .run("ldap:default", "ldap.user");
       directoryAvailable = false;
       await expect(service.authenticateSession(ldapSession.token)).resolves.toMatchObject({
         user: { id: ldapIdentity.user.id },
@@ -551,6 +641,38 @@ describe("SQLite identity access", () => {
     }
   });
 });
+
+function ldapLoginRecord(auditId: string, synchronizedAt: string): CompleteLdapLoginRecord {
+  return {
+    ldapUser: {
+      userId: "00000000-0000-7000-9300-000000000001",
+      externalIdentityId: "00000000-0000-7000-9400-000000000001",
+      providerId: "ldap:default",
+      identity: ldapIdentity("atomic.ldap", "atomic-directory-subject"),
+      synchronizedAt,
+    },
+    defaultRole: {
+      roleId: "00000000-0000-7000-8100-000000000003",
+      projectId: DEFAULT_PROJECT_ID,
+      recordedAt: synchronizedAt,
+    },
+    session: {
+      id: "00000000-0000-7000-9500-000000000001",
+      tokenHash: "atomic-token-hash-1",
+      createdAt: synchronizedAt,
+      expiresAt: "2099-01-01T00:00:00.000Z",
+    },
+    audit: {
+      id: auditId,
+      actorType: "user",
+      action: "auth.login",
+      resourceType: "session",
+      result: "succeeded",
+      details: { provider: "ldap" },
+      recordedAt: synchronizedAt,
+    },
+  };
+}
 
 function ldapIdentity(username: string, subject: string): DirectoryIdentity {
   return {

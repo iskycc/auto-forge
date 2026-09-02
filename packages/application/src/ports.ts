@@ -269,6 +269,17 @@ export type CreateSessionRecord = {
   expiresAt: string;
 };
 
+export type CompleteLdapLoginRecord = {
+  ldapUser: CreateLdapUserRecord;
+  defaultRole: {
+    roleId: string;
+    projectId?: string;
+    recordedAt: string;
+  };
+  session: Omit<CreateSessionRecord, "userId">;
+  audit: AuditEvent;
+};
+
 export type IdentityListPage = { items: User[]; nextCursor?: string };
 export type AuditListPage = { items: AuditEvent[]; nextCursor?: string };
 
@@ -287,6 +298,7 @@ export interface IdentityAccessRepository {
   findUser(userId: string): Promise<User | null>;
   findExternalIdentity(providerId: string, subject: string): Promise<ExternalIdentity | null>;
   upsertLdapUser(input: CreateLdapUserRecord): Promise<User>;
+  completeLdapLogin(input: CompleteLdapLoginRecord): Promise<User>;
   recordLoginFailure(
     userId: string,
     failedAttempts: number,
@@ -374,12 +386,6 @@ export interface IdentityAccessRepository {
       updatedAt: string;
     },
   ): Promise<StoredLdapConfiguration>;
-  ensureLdapDefaultRole(input: {
-    userId: string;
-    roleId: string;
-    projectId?: string;
-    recordedAt: string;
-  }): Promise<void>;
   appendAudit(event: AuditEvent): Promise<void>;
   listAudit(input: {
     projectIds?: readonly string[];
