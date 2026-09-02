@@ -1644,6 +1644,8 @@ export interface FailureAnalysisRepository {
     projectVersionId?: string;
     claimantId: string;
     batchId?: string;
+    sort: FailureAnalysisSort;
+    direction: "asc" | "desc";
     cursor?: string;
     limit: number;
   }): Promise<{ items: FailureAnalysisClaim[]; nextCursor?: string }>;

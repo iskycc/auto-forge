@@ -177,6 +177,8 @@ describe("failure analysis performance", () => {
         projectVersionId: VERSION_ID,
         claimantId: "performance-analyst",
         batchId: BATCH_ID,
+        sort: "class_path",
+        direction: "asc",
         limit: 50,
       });
       const claimsDurationMs = performance.now() - claimsStartedAt;

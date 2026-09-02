@@ -8,7 +8,9 @@ import type {
 import type { PostgresDatabaseHandle } from "./postgres-database";
 import {
   decodeFailureAnalysisCandidateCursor,
+  decodeFailureAnalysisClaimCursor,
   encodeFailureAnalysisCandidateCursor,
+  encodeFailureAnalysisClaimCursor,
   FAILURE_ANALYSIS_SUMMARY_MAXIMUM_CHARACTERS,
   toFailureAnalysisCandidate,
   toFailureAnalysisClaim,
@@ -290,6 +292,7 @@ export class PostgresFailureAnalysisRepository implements FailureAnalysisReposit
 
   async listClaims(input: Parameters<FailureAnalysisRepository["listClaims"]>[0]) {
     await this.handle.ready;
+    const sortExpression = postgresClaimSortExpression(input.sort);
     const parameters: unknown[] = [input.projectId, input.claimantId];
     const where = ["claim.project_id=$1", "claim.claimant_id=$2"];
     if (input.projectVersionId) {
@@ -300,18 +303,20 @@ export class PostgresFailureAnalysisRepository implements FailureAnalysisReposit
       parameters.push(input.batchId);
       where.push(`claim.batch_id=$${parameters.length}`);
     }
-    const cursor = decodeRunBatchCursor(input.cursor);
+    const cursor = decodeFailureAnalysisClaimCursor(input.cursor, input.sort, input.direction);
     if (cursor) {
-      parameters.push(cursor.createdAt, cursor.id);
+      parameters.push(cursor.value, cursor.analysisId);
+      const comparison = input.direction === "desc" ? "<" : ">";
       where.push(
-        `(claim.updated_at<$${parameters.length - 1} OR (claim.updated_at=$${parameters.length - 1} AND claim.id<$${parameters.length}))`,
+        `(${sortExpression}${comparison}$${parameters.length - 1} OR (${sortExpression}=$${parameters.length - 1} AND claim.id${comparison}$${parameters.length}))`,
       );
     }
     parameters.push(input.limit + 1);
+    const direction = input.direction === "desc" ? "DESC" : "ASC";
     const result = await this.handle.pool.query<FailureAnalysisRow>(
-      `${claimSelectSql()} JOIN run_batches batch ON batch.id=claim.batch_id
+      `${claimSelectSql(`${sortExpression} AS "sortValue"`)} JOIN run_batches batch ON batch.id=claim.batch_id
        WHERE ${where.join(" AND ")}
-       ORDER BY claim.updated_at DESC,claim.id DESC LIMIT $${parameters.length}`,
+       ORDER BY ${sortExpression} ${direction},claim.id ${direction} LIMIT $${parameters.length}`,
       parameters,
     );
     const hasMore = result.rows.length > input.limit;
@@ -319,11 +324,13 @@ export class PostgresFailureAnalysisRepository implements FailureAnalysisReposit
     const last = pageRows.at(-1);
     return {
       items: pageRows.map(toFailureAnalysisClaim),
-      ...(hasMore && last?.analysisId && last.analysisUpdatedAt
+      ...(hasMore && last?.analysisId
         ? {
-            nextCursor: encodeRunBatchCursor({
-              createdAt: last.analysisUpdatedAt,
-              id: last.analysisId,
+            nextCursor: encodeFailureAnalysisClaimCursor({
+              sort: input.sort,
+              direction: input.direction,
+              value: last.sortValue ?? "",
+              analysisId: last.analysisId,
             }),
           }
         : {}),
@@ -565,7 +572,7 @@ export class PostgresFailureAnalysisRepository implements FailureAnalysisReposit
   }
 }
 
-function claimSelectSql(): string {
+function claimSelectSql(extraSelection?: string): string {
   return `SELECT claim.id AS "analysisId",claim.project_id AS "projectId",
                  claim.batch_id AS "batchId",claim.execution_run_id AS "executionRunId",
                  claim.case_definition_id AS "caseDefinitionId",claim.attempt_id AS "attemptId",
@@ -586,7 +593,7 @@ function claimSelectSql(): string {
                  claim.screenshot_media_type AS "screenshotMediaType",
                  claim.screenshot_size_bytes AS "screenshotSizeBytes",
                  claim.screenshot_sha256 AS "screenshotSha256",
-                 claim.updated_at AS "analysisUpdatedAt"
+                 claim.updated_at AS "analysisUpdatedAt"${extraSelection ? `,${extraSelection}` : ""}
           FROM failure_analysis_claims claim`;
 }
 
@@ -604,6 +611,16 @@ function postgresCandidateSortExpression(sort: FailureAnalysisSort): string {
     failure_summary: "LOWER(LEFT(COALESCE(attempt.result_summary,attempt.result_code,''),512))",
     case_name: "LOWER(LEFT(run.display_name,512))",
     claim_status: "LOWER(COALESCE(claim.status,'available'))",
+  }[sort];
+}
+
+function postgresClaimSortExpression(sort: FailureAnalysisSort): string {
+  return {
+    class_path: "LOWER(LEFT(claim.class_name,512))",
+    failure_summary: "LOWER(LEFT(claim.failure_summary,512))",
+    case_name: "LOWER(LEFT(claim.case_name,512))",
+    claim_status:
+      "CASE claim.status WHEN 'claimed' THEN '1' WHEN 'analyzing' THEN '2' ELSE '3' END",
   }[sort];
 }
 

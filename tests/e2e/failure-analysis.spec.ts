@@ -70,6 +70,11 @@ test("terminal task failures support durable single and batch analysis with evid
   }
   expect(hiddenClaimsRequests).toBe(0);
   expect(duplicateInitialCandidateRequests).toBe(0);
+  expect(
+    await page
+      .locator(".failure-analysis-table tbody tr")
+      .evaluateAll((rows) => Math.max(...rows.map((row) => row.getBoundingClientRect().height))),
+  ).toBeLessThanOrEqual(58);
   page.off("request", countInitialWorkspaceRequest);
 
   let claimsRequestsDuringSort = 0;
@@ -101,6 +106,37 @@ test("terminal task failures support durable single and batch analysis with evid
   page.on("request", countTabServerComponentRequest);
   await page.getByRole("button", { name: "认领并进入分析" }).click();
   await expect(page.getByRole("heading", { name: "我的分析队列" })).toBeVisible();
+  const claimSortResponse = page.waitForResponse((response) => {
+    const url = new URL(response.url());
+    return (
+      url.pathname === "/api/v1/failure-analysis/claims" &&
+      url.searchParams.get("sort") === "failure_summary" &&
+      url.searchParams.get("direction") === "asc"
+    );
+  });
+  await page.getByRole("button", { name: "我的分析排序字段" }).click();
+  await page.getByRole("option", { name: "失败堆栈", exact: true }).click();
+  expect((await claimSortResponse).status()).toBe(200);
+  const descendingClaimsResponse = page.waitForResponse((response) => {
+    const url = new URL(response.url());
+    return (
+      url.pathname === "/api/v1/failure-analysis/claims" &&
+      url.searchParams.get("sort") === "failure_summary" &&
+      url.searchParams.get("direction") === "desc"
+    );
+  });
+  await page.getByRole("button", { name: "当前升序，点击切换为降序" }).click();
+  expect((await descendingClaimsResponse).status()).toBe(200);
+  await expect(page.locator(".failure-analysis-card h3").first()).toHaveText(
+    fixture.failedNames[3],
+  );
+  expect(
+    await page
+      .locator(".failure-analysis-card")
+      .evaluateAll((cards) =>
+        Math.max(...cards.map((card) => card.getBoundingClientRect().height)),
+      ),
+  ).toBeLessThanOrEqual(92);
   for (const viewport of [
     { width: 1536, height: 960 },
     { width: 1024, height: 768 },
@@ -170,7 +206,15 @@ test("terminal task failures support durable single and batch analysis with evid
   await rerunDialog.getByLabel("重跑通过", { exact: false }).check();
   await rerunDialog.getByRole("button", { name: "提交分析" }).click();
   await expect(rerunDialog).toContainText("请粘贴执行通过截图");
-  await pastePng(page, ".failure-analysis-paste-zone");
+  await expect(rerunDialog).toContainText("直接按 Ctrl + V 粘贴执行通过截图");
+  await expect(rerunDialog.locator('input[type="file"]')).toHaveCount(0);
+  const pasteZone = rerunDialog.getByRole("group", {
+    name: "使用 Ctrl+V 粘贴重跑通过截图",
+  });
+  await pasteZone.scrollIntoViewIfNeeded();
+  await expect(pasteZone).toBeVisible();
+  await captureUi(page, "failure-analysis-rerun-paste-1024", false);
+  await pastePng(page);
   await expect(rerunDialog).toContainText("通过截图已上传到平台对象存储");
   await expect(rerunDialog.getByAltText("重跑通过截图：rerun-passed.png")).toBeVisible();
   await captureUi(page, "failure-analysis-rerun-evidence-1024", false);
@@ -315,11 +359,10 @@ function analysisCard(page: import("@playwright/test").Page, caseName: string) {
   return page.locator(".failure-analysis-card").filter({ hasText: caseName });
 }
 
-async function pastePng(page: import("@playwright/test").Page, selector: string): Promise<void> {
-  await page.locator(selector).focus();
-  await page.evaluate((targetSelector) => {
-    const target = document.querySelector(targetSelector);
-    if (!target) throw new Error("paste target not found");
+async function pastePng(page: import("@playwright/test").Page): Promise<void> {
+  await page.evaluate(() => {
+    const target = document.activeElement;
+    if (!(target instanceof HTMLElement)) throw new Error("active paste target not found");
     const png = Uint8Array.from(
       atob(
         "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
@@ -330,7 +373,7 @@ async function pastePng(page: import("@playwright/test").Page, selector: string)
     const transfer = new DataTransfer();
     transfer.items.add(file);
     target.dispatchEvent(new ClipboardEvent("paste", { bubbles: true, clipboardData: transfer }));
-  }, selector);
+  });
 }
 
 function insertFailureAnalysisFixture(

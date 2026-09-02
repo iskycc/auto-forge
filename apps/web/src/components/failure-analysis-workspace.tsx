@@ -18,10 +18,10 @@ import {
   ChevronLeft,
   ChevronRight,
   ClipboardCheck,
+  ClipboardPaste,
   ExternalLink,
   FileCheck2,
   History,
-  ImagePlus,
   LoaderCircle,
   Maximize2,
   Minus,
@@ -31,24 +31,23 @@ import {
   SquareActivity,
   X,
 } from "lucide-react";
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type ClipboardEvent,
-  type FormEvent,
-} from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 
 import { AttemptLogViewer } from "@/components/attempt-log-viewer";
 import { LoadingState } from "@/components/loading-state";
-import { Button, Input, Textarea } from "@/components/ui";
+import { Button, Input, Select, Textarea } from "@/components/ui";
 import { readApiErrorMessage } from "@/lib/client-api";
 import { formatPlatformDateTime } from "@/lib/platform-date-time";
 import { useToast } from "@/components/ui-feedback";
 
 type WorkspaceView = "claim" | "workbench";
+
+const CLAIM_SORT_OPTIONS: ReadonlyArray<{ value: FailureAnalysisSort; label: string }> = [
+  { value: "class_path", label: "类路径" },
+  { value: "case_name", label: "用例名称" },
+  { value: "failure_summary", label: "失败堆栈" },
+  { value: "claim_status", label: "分析状态" },
+];
 
 const CATEGORY_OPTIONS: Array<{
   value: FailureAnalysisCategory;
@@ -58,7 +57,7 @@ const CATEGORY_OPTIONS: Array<{
   {
     value: "rerun_passed",
     label: "重跑通过",
-    description: "优先自动使用从公开日志页重跑成功的永久日志链接，否则必须上传通过截图。",
+    description: "优先自动使用从公开日志页重跑成功的永久日志链接，否则必须按 Ctrl+V 粘贴通过截图。",
   },
   {
     value: "case_fixed",
@@ -112,6 +111,8 @@ export function FailureAnalysisWorkspace({
   const [dialogClaims, setDialogClaims] = useState<FailureAnalysisClaimView[]>();
   const [sort, setSort] = useState<FailureAnalysisSort>("class_path");
   const [direction, setDirection] = useState<"asc" | "desc">("asc");
+  const [claimSort, setClaimSort] = useState<FailureAnalysisSort>("class_path");
+  const [claimDirection, setClaimDirection] = useState<"asc" | "desc">("asc");
   const [queryInput, setQueryInput] = useState("");
   const [query, setQuery] = useState("");
   const [loadingCandidates, setLoadingCandidates] = useState(false);
@@ -185,6 +186,8 @@ export function FailureAnalysisWorkspace({
           projectId,
           projectVersionId,
           batchId: initialBatchId,
+          sort: claimSort,
+          direction: claimDirection,
           limit: "50",
         });
         if (cursor) parameters.set("cursor", cursor);
@@ -209,7 +212,7 @@ export function FailureAnalysisWorkspace({
         if (requestSequence === claimsRequestSequence.current) setLoadingClaims(false);
       }
     },
-    [initialBatchId, projectId, projectVersionId],
+    [claimDirection, claimSort, initialBatchId, projectId, projectVersionId],
   );
 
   useEffect(() => {
@@ -271,6 +274,20 @@ export function FailureAnalysisWorkspace({
       setSort(nextSort);
       setDirection("asc");
     }
+  }
+
+  function changeClaimSort(nextSort: FailureAnalysisSort): void {
+    if (claimSort === nextSort) return;
+    setClaimsCursorHistory([]);
+    setClaimsPageCursor(undefined);
+    setClaimSort(nextSort);
+    setClaimDirection("asc");
+  }
+
+  function toggleClaimDirection(): void {
+    setClaimsCursorHistory([]);
+    setClaimsPageCursor(undefined);
+    setClaimDirection((current) => (current === "asc" ? "desc" : "asc"));
   }
 
   function toggleSelection(setter: typeof setSelectedRunIds, id: string, checked: boolean): void {
@@ -369,6 +386,11 @@ export function FailureAnalysisWorkspace({
     );
     setDialogClaims(undefined);
     setSelectedAnalysisIds(new Set());
+    if (claimSort === "claim_status") {
+      setClaimsCursorHistory([]);
+      setClaimsPageCursor(undefined);
+      void loadClaims();
+    }
     toast.success(`已完成 ${updatedClaims.length} 个用例的分析并永久保存。`);
   }
 
@@ -463,9 +485,47 @@ export function FailureAnalysisWorkspace({
                 <h2>我的分析队列</h2>
                 <p>勾选多个用例可批量填写相同分析结论；所有状态与证明均由服务端持久化。</p>
               </div>
-              <Button onClick={() => changeView("claim")} type="button" variant="secondary">
-                返回继续认领
-              </Button>
+              <div className="failure-analysis-workbench-actions">
+                <label className="failure-analysis-order-control">
+                  <span>排列方式</span>
+                  <Select
+                    aria-label="我的分析排序字段"
+                    disabled={loadingClaims}
+                    onChange={(event) => changeClaimSort(event.target.value as FailureAnalysisSort)}
+                    value={claimSort}
+                  >
+                    {CLAIM_SORT_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </Select>
+                </label>
+                <Button
+                  aria-label={`当前${claimDirection === "asc" ? "升序" : "降序"}，点击切换为${claimDirection === "asc" ? "降序" : "升序"}`}
+                  disabled={loadingClaims}
+                  onClick={toggleClaimDirection}
+                  size="compact"
+                  title={claimDirection === "asc" ? "切换为降序" : "切换为升序"}
+                  type="button"
+                  variant="secondary"
+                >
+                  {claimDirection === "asc" ? (
+                    <ArrowUpAZ aria-hidden="true" size={15} />
+                  ) : (
+                    <ArrowDownAZ aria-hidden="true" size={15} />
+                  )}
+                  {claimDirection === "asc" ? "升序" : "降序"}
+                </Button>
+                <Button
+                  onClick={() => changeView("claim")}
+                  size="compact"
+                  type="button"
+                  variant="secondary"
+                >
+                  返回继续认领
+                </Button>
+              </div>
             </div>
             {loadingClaims ? (
               <LoadingState
@@ -535,6 +595,7 @@ export function FailureAnalysisWorkspace({
                       <Button
                         disabled={!canManage}
                         onClick={() => setDialogClaims([claim])}
+                        size="compact"
                         type="button"
                         variant="secondary"
                       >
@@ -832,9 +893,9 @@ function CompleteAnalysisDialog({
   const [inheritanceCandidate, setInheritanceCandidate] =
     useState<FailureAnalysisHistoryItemView>();
   const [error, setError] = useState("");
-  const fileInputRef = useRef<HTMLInputElement>(null);
   const imageCloseButtonRef = useRef<HTMLButtonElement>(null);
   const imagePreviewTriggerRef = useRef<HTMLButtonElement>(null);
+  const screenshotUploadInFlightRef = useRef(false);
   const screenshotClaims = uniqueScreenshotClaims(uploadedClaims);
   const caseDefinitionIds = useMemo(
     () => [...new Set(claims.map((claim) => claim.caseDefinitionId))],
@@ -928,43 +989,75 @@ function CompleteAnalysisDialog({
     }
   }
 
-  async function uploadScreenshot(file: File): Promise<void> {
-    if (uploading || readOnly) return;
-    setUploading(true);
-    setError("");
-    try {
-      const parameters = new URLSearchParams({
-        projectId,
-        fileName: file.name || "rerun-proof.png",
-      });
-      for (const claim of claims) parameters.append("analysisId", claim.id);
-      const response = await fetch(`/api/v1/failure-analysis/claims/evidence?${parameters}`, {
-        method: "POST",
-        headers: { "content-type": file.type || "application/octet-stream" },
-        body: file,
-      });
-      if (!response.ok)
-        throw new Error((await readApiErrorMessage(response, "上传重跑证明失败。"))!);
-      const payload = (await response.json()) as { items: FailureAnalysisClaimView[] };
-      setUploadedClaims(payload.items);
-    } catch (uploadError) {
-      setError(uploadError instanceof Error ? uploadError.message : "上传重跑证明失败。");
-    } finally {
-      setUploading(false);
-    }
-  }
+  const savePastedScreenshot = useCallback(
+    async (file: File): Promise<void> => {
+      if (screenshotUploadInFlightRef.current || readOnly) return;
+      screenshotUploadInFlightRef.current = true;
+      setUploading(true);
+      setError("");
+      try {
+        const parameters = new URLSearchParams({
+          projectId,
+          fileName: file.name || "rerun-proof.png",
+        });
+        for (const claim of claims) parameters.append("analysisId", claim.id);
+        const response = await fetch(`/api/v1/failure-analysis/claims/evidence?${parameters}`, {
+          method: "POST",
+          headers: { "content-type": file.type || "application/octet-stream" },
+          body: file,
+        });
+        if (!response.ok)
+          throw new Error((await readApiErrorMessage(response, "上传重跑证明失败。"))!);
+        const payload = (await response.json()) as { items: FailureAnalysisClaimView[] };
+        setUploadedClaims(payload.items);
+      } catch (uploadError) {
+        setError(uploadError instanceof Error ? uploadError.message : "上传重跑证明失败。");
+      } finally {
+        screenshotUploadInFlightRef.current = false;
+        setUploading(false);
+      }
+    },
+    [claims, projectId, readOnly],
+  );
 
-  function pasteScreenshot(event: ClipboardEvent<HTMLDivElement>): void {
-    const image = [...event.clipboardData.items]
-      .find((item) => item.kind === "file" && item.type.startsWith("image/"))
-      ?.getAsFile();
-    if (!image) {
-      setError("剪贴板中没有 PNG、JPEG 或 WebP 图片。");
+  useEffect(() => {
+    if (
+      category !== "rerun_passed" ||
+      readOnly ||
+      logClaim ||
+      previewClaim ||
+      showCaseConfirmation ||
+      inheritanceCandidate
+    ) {
       return;
     }
-    event.preventDefault();
-    void uploadScreenshot(image);
-  }
+    const handlePaste = (event: globalThis.ClipboardEvent): void => {
+      if (!event.clipboardData) return;
+      const clipboardItems = [...event.clipboardData.items];
+      const image = pastedImage(clipboardItems);
+      if (!image) {
+        if (clipboardItems.some((item) => item.kind === "file" && item.type.startsWith("image/"))) {
+          event.preventDefault();
+          setError("剪贴板图片格式不受支持，请粘贴 PNG、JPEG 或 WebP 截图。");
+        } else if (!isTextPasteTarget(event.target)) {
+          setError("剪贴板中没有可粘贴的 PNG、JPEG 或 WebP 图片。");
+        }
+        return;
+      }
+      event.preventDefault();
+      void savePastedScreenshot(image);
+    };
+    window.addEventListener("paste", handlePaste);
+    return () => window.removeEventListener("paste", handlePaste);
+  }, [
+    category,
+    inheritanceCandidate,
+    logClaim,
+    previewClaim,
+    readOnly,
+    savePastedScreenshot,
+    showCaseConfirmation,
+  ]);
 
   async function complete(caseIssueConfirmed: boolean): Promise<void> {
     if (!category || submitting) return;
@@ -1188,33 +1281,23 @@ function CompleteAnalysisDialog({
                 ) : null}
                 {!readOnly ? (
                   <div
+                    aria-busy={uploading}
+                    aria-label="使用 Ctrl+V 粘贴重跑通过截图"
                     className="failure-analysis-paste-zone"
-                    onClick={() => fileInputRef.current?.click()}
-                    onKeyDown={(event) => {
-                      if (event.key !== "Enter" && event.key !== " ") return;
-                      event.preventDefault();
-                      fileInputRef.current?.click();
-                    }}
-                    onPaste={pasteScreenshot}
-                    role="button"
+                    role="group"
                     tabIndex={0}
                   >
-                    <ImagePlus size={24} />
+                    <ClipboardPaste size={24} />
                     <strong>
-                      {uploading ? "正在上传截图…" : "点击此处后直接粘贴执行通过截图"}
+                      {uploading ? "正在保存粘贴的截图…" : "直接按 Ctrl + V 粘贴执行通过截图"}
                     </strong>
-                    <span>也可以点击选择 PNG、JPEG 或 WebP，最大 10 MB</span>
-                    <Input
-                      ref={fileInputRef}
-                      accept="image/png,image/jpeg,image/webp"
-                      className="visually-hidden"
-                      onChange={(event) => {
-                        const file = event.target.files?.[0];
-                        if (file) void uploadScreenshot(file);
-                        event.target.value = "";
-                      }}
-                      type="file"
-                    />
+                    <span>无需点击选择文件；弹窗内任意位置均可粘贴，最大 10 MB</span>
+                    <span className="failure-analysis-paste-shortcut" aria-hidden="true">
+                      <kbd>Ctrl</kbd>
+                      <b>+</b>
+                      <kbd>V</kbd>
+                      <small>macOS 使用 ⌘ + V</small>
+                    </span>
                   </div>
                 ) : null}
                 {readOnly && initial?.rerunProofUrl ? (
@@ -1618,6 +1701,26 @@ function uniqueScreenshotClaims(
     screenshotDigests.add(digest);
     return true;
   });
+}
+
+function pastedImage(items: readonly DataTransferItem[]): File | undefined {
+  return (
+    items
+      .find(
+        (item) =>
+          item.kind === "file" &&
+          (item.type === "image/png" || item.type === "image/jpeg" || item.type === "image/webp"),
+      )
+      ?.getAsFile() ?? undefined
+  );
+}
+
+function isTextPasteTarget(target: EventTarget | null): boolean {
+  if (target instanceof HTMLTextAreaElement) return true;
+  if (target instanceof HTMLInputElement) {
+    return ["email", "password", "search", "tel", "text", "url"].includes(target.type);
+  }
+  return target instanceof HTMLElement && target.isContentEditable;
 }
 
 function failureAnalysisEvidenceUrl(claim: FailureAnalysisClaimView, projectId: string): string {

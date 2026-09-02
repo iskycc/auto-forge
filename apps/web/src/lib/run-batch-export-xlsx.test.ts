@@ -84,7 +84,16 @@ describe("buildRunBatchExportWorkbook", () => {
     expect(sheet!.columns.map((column) => column.width)).toEqual([
       32, 24, 36, 14, 18, 24, 24, 18, 20, 32,
     ]);
-    expect(sheet!.getRow(1).height).toBe(30);
+    expect(sheet!.getRow(1).height).toBe(28);
+    expect(sheet!.getRow(1).getCell(1).font).toMatchObject({
+      name: "Microsoft YaHei UI",
+      bold: true,
+      color: { argb: "FFFFFFFF" },
+    });
+    expect(sheet!.getRow(1).getCell(1).fill).toMatchObject({
+      type: "pattern",
+      fgColor: { argb: "FF243B53" },
+    });
 
     const dataRow = sheet!.getRow(2);
     expect(dataRow.getCell(1).value).toBe(failedRow.casePath);
@@ -106,6 +115,14 @@ describe("buildRunBatchExportWorkbook", () => {
     });
     expect(dataRow.getCell(10).value).toEqual({ text: shareLink, hyperlink: shareLink });
     expect(dataRow.height).toBe(20);
+    expect(dataRow.getCell(2).font).toMatchObject({
+      name: "Microsoft YaHei UI",
+      bold: true,
+    });
+    expect(dataRow.getCell(5).fill).toMatchObject({
+      type: "pattern",
+      fgColor: { argb: "FFFFF3E3" },
+    });
     expect(dataRow.getCell(3).alignment).toMatchObject({ vertical: "middle" });
     // OOXML 会省略 false 布尔属性；省略与 false 都表示禁用自动换行。
     expect(dataRow.getCell(3).alignment.wrapText).not.toBe(true);

@@ -2,6 +2,7 @@ import {
   claimFailureAnalysisInputSchema,
   claimFailureAnalysisResultSchema,
   failureAnalysisClaimPageSchema,
+  failureAnalysisSortSchema,
 } from "@autoforge/contracts";
 import { NextResponse } from "next/server";
 import { z } from "zod";
@@ -14,7 +15,9 @@ const querySchema = z.object({
   projectId: z.string().min(1),
   projectVersionId: z.string().min(1).optional(),
   batchId: z.string().min(1).optional(),
-  cursor: z.string().max(512).optional(),
+  sort: failureAnalysisSortSchema.default("class_path"),
+  direction: z.enum(["asc", "desc"]).default("asc"),
+  cursor: z.string().max(1_024).optional(),
   limit: z.coerce.number().int().min(1).max(100).default(50),
 });
 
@@ -26,6 +29,8 @@ export async function GET(request: Request): Promise<NextResponse> {
     const page = await services.failureAnalysis.listMyClaims({
       projectId: input.projectId,
       claimantId: identity.user.id,
+      sort: input.sort,
+      direction: input.direction,
       limit: input.limit,
       ...(input.projectVersionId ? { projectVersionId: input.projectVersionId } : {}),
       ...(input.batchId ? { batchId: input.batchId } : {}),

@@ -47,6 +47,27 @@ const FAILURE_ANALYSIS_RESULT_LABELS: Record<FailureAnalysisCategory, string> = 
 const FAILURE_ANALYSIS_COLUMN_WIDTHS = [32, 24, 36, 14, 18, 24, 24, 18, 20, 32] as const;
 const ANALYSIS_INPUT_FIRST_COLUMN = 4;
 const ANALYSIS_INPUT_LAST_COLUMN = 9;
+const ANALYSIS_FONT_NAME = "Microsoft YaHei UI";
+const ANALYSIS_COLORS = {
+  header: "FF243B53",
+  headerAccent: "FF53B3AE",
+  headerBorder: "FF3B536A",
+  text: "FF243442",
+  mutedText: "FF526579",
+  identifier: "FF4E5FA8",
+  body: "FFFFFFFF",
+  alternateBody: "FFF8FAFC",
+  analysis: "FFF3F7FA",
+  alternateAnalysis: "FFECF3F7",
+  border: "FFDDE5EC",
+  link: "FF147D92",
+  rerunPassedFill: "FFE8F5EE",
+  rerunPassedText: "FF25704A",
+  caseFixedFill: "FFFFF3E3",
+  caseFixedText: "FF9A5A12",
+  codeIssueFill: "FFEDF1FF",
+  codeIssueText: "FF4E5FA8",
+} as const;
 
 const OUTCOME_LABELS: Record<ExportOutcomeFilter, string> = {
   succeeded: "成功",
@@ -125,7 +146,8 @@ function buildFailureAnalysisSheet(
   input: RunBatchExportWorkbookInput,
 ): void {
   const sheet = workbook.addWorksheet("失败用例分析清单", {
-    views: [{ state: "frozen", xSplit: 2, ySplit: 1 }],
+    views: [{ state: "frozen", xSplit: 2, ySplit: 1, showGridLines: false }],
+    properties: { defaultRowHeight: 20, tabColor: { argb: ANALYSIS_COLORS.headerAccent } },
     pageSetup: { orientation: "landscape", fitToPage: true, fitToWidth: 1, fitToHeight: 0 },
   });
   sheet.columns = FAILURE_ANALYSIS_HEADERS.map((header, index) => ({
@@ -165,35 +187,90 @@ function buildFailureAnalysisSheet(
       completedClaim?.remark ?? "",
       shareLink ? { text: shareLink, hyperlink: shareLink } : "",
     ]);
-    styleFailureAnalysisRow(row);
+    styleFailureAnalysisRow(row, completedClaim?.category);
   }
 }
 
 function styleFailureAnalysisHeader(row: ExcelJS.Row): void {
-  row.height = 30;
+  row.height = 28;
   row.eachCell((cell) => {
-    cell.font = { bold: true, color: { argb: "FFFFFFFF" } };
-    cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF315B7D" } };
-    cell.alignment = { horizontal: "center", vertical: "middle", wrapText: true };
+    cell.font = {
+      name: ANALYSIS_FONT_NAME,
+      size: 10.5,
+      bold: true,
+      color: { argb: "FFFFFFFF" },
+    };
+    cell.fill = {
+      type: "pattern",
+      pattern: "solid",
+      fgColor: { argb: ANALYSIS_COLORS.header },
+    };
+    cell.alignment = { horizontal: "center", vertical: "middle", wrapText: false };
     cell.border = {
-      bottom: { style: "thin", color: { argb: "FFD1D9E0" } },
-      left: { style: "thin", color: { argb: "FFD1D9E0" } },
-      right: { style: "thin", color: { argb: "FFD1D9E0" } },
-      top: { style: "thin", color: { argb: "FFD1D9E0" } },
+      bottom: { style: "medium", color: { argb: ANALYSIS_COLORS.headerAccent } },
+      left: { style: "thin", color: { argb: ANALYSIS_COLORS.headerBorder } },
+      right: { style: "thin", color: { argb: ANALYSIS_COLORS.headerBorder } },
+      top: { style: "thin", color: { argb: ANALYSIS_COLORS.headerBorder } },
     };
   });
 }
 
-function styleFailureAnalysisRow(row: ExcelJS.Row): void {
+function styleFailureAnalysisRow(
+  row: ExcelJS.Row,
+  category: FailureAnalysisCategory | undefined,
+): void {
   row.height = 20;
+  const alternate = row.number % 2 === 0;
   row.eachCell({ includeEmpty: true }, (cell, columnNumber) => {
+    cell.font = {
+      name: ANALYSIS_FONT_NAME,
+      size: 10,
+      color: { argb: ANALYSIS_COLORS.text },
+    };
     cell.alignment = { vertical: "middle", wrapText: false };
-    cell.border = { bottom: { style: "hair", color: { argb: "FFD9E1E8" } } };
+    cell.border = {
+      bottom: { style: "thin", color: { argb: ANALYSIS_COLORS.border } },
+      right: { style: "hair", color: { argb: ANALYSIS_COLORS.border } },
+    };
+    cell.fill = {
+      type: "pattern",
+      pattern: "solid",
+      fgColor: { argb: alternate ? ANALYSIS_COLORS.alternateBody : ANALYSIS_COLORS.body },
+    };
     if (columnNumber >= ANALYSIS_INPUT_FIRST_COLUMN && columnNumber <= ANALYSIS_INPUT_LAST_COLUMN) {
-      cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFFF8E8" } };
+      cell.fill = {
+        type: "pattern",
+        pattern: "solid",
+        fgColor: {
+          argb: alternate ? ANALYSIS_COLORS.alternateAnalysis : ANALYSIS_COLORS.analysis,
+        },
+      };
     }
   });
+  row.getCell(1).font = {
+    name: ANALYSIS_FONT_NAME,
+    size: 10,
+    color: { argb: ANALYSIS_COLORS.identifier },
+  };
+  row.getCell(2).font = {
+    name: ANALYSIS_FONT_NAME,
+    size: 10,
+    bold: true,
+    color: { argb: ANALYSIS_COLORS.text },
+  };
+  row.getCell(3).font = {
+    name: ANALYSIS_FONT_NAME,
+    size: 10,
+    color: { argb: ANALYSIS_COLORS.mutedText },
+  };
+  row.getCell(4).alignment = { horizontal: "center", vertical: "middle", wrapText: false };
   const analysisResultCell = row.getCell(5);
+  analysisResultCell.alignment = {
+    horizontal: "center",
+    vertical: "middle",
+    wrapText: false,
+  };
+  styleAnalysisResult(analysisResultCell, category);
   analysisResultCell.dataValidation = {
     type: "list",
     allowBlank: true,
@@ -206,9 +283,43 @@ function styleFailureAnalysisRow(row: ExcelJS.Row): void {
   for (const columnNumber of [7, 8, 10]) {
     const cell = row.getCell(columnNumber);
     if (typeof cell.value === "object" && cell.value && "hyperlink" in cell.value) {
-      cell.font = { color: { argb: "FF0563C1" }, underline: true };
+      cell.font = {
+        name: ANALYSIS_FONT_NAME,
+        size: 10,
+        bold: true,
+        color: { argb: ANALYSIS_COLORS.link },
+        underline: true,
+      };
     }
   }
+}
+
+function styleAnalysisResult(
+  cell: ExcelJS.Cell,
+  category: FailureAnalysisCategory | undefined,
+): void {
+  if (!category) return;
+  const palette = {
+    rerun_passed: {
+      fill: ANALYSIS_COLORS.rerunPassedFill,
+      text: ANALYSIS_COLORS.rerunPassedText,
+    },
+    case_fixed: {
+      fill: ANALYSIS_COLORS.caseFixedFill,
+      text: ANALYSIS_COLORS.caseFixedText,
+    },
+    code_issue_filed: {
+      fill: ANALYSIS_COLORS.codeIssueFill,
+      text: ANALYSIS_COLORS.codeIssueText,
+    },
+  }[category];
+  cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: palette.fill } };
+  cell.font = {
+    name: ANALYSIS_FONT_NAME,
+    size: 10,
+    bold: true,
+    color: { argb: palette.text },
+  };
 }
 
 function analystLabel(claim: FailureAnalysisClaim): string {

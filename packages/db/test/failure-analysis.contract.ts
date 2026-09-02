@@ -160,9 +160,60 @@ export function failureAnalysisContract(
           projectVersionId,
           claimantId: "analyst-a",
           batchId,
+          sort: "class_path",
+          direction: "asc",
           limit: 10,
         });
         expect(persisted.items).toHaveLength(2);
+        expect(persisted.items.map((claim) => claim.className)).toEqual([
+          "example.AlphaTest",
+          "example.ZetaTest",
+        ]);
+        const reverseFailureOrder = await repository.listClaims({
+          projectId,
+          projectVersionId,
+          claimantId: "analyst-a",
+          batchId,
+          sort: "failure_summary",
+          direction: "desc",
+          limit: 1,
+        });
+        expect(reverseFailureOrder.items[0]?.failureSummary).toBe("Assertion zeta");
+        const reverseFailureSecondPage = await repository.listClaims({
+          projectId,
+          projectVersionId,
+          claimantId: "analyst-a",
+          batchId,
+          sort: "failure_summary",
+          direction: "desc",
+          cursor: reverseFailureOrder.nextCursor!,
+          limit: 1,
+        });
+        expect(reverseFailureSecondPage.items[0]?.failureSummary).toBe("Assertion alpha");
+        const sameStatusFirstPage = await repository.listClaims({
+          projectId,
+          projectVersionId,
+          claimantId: "analyst-a",
+          batchId,
+          sort: "claim_status",
+          direction: "asc",
+          limit: 1,
+        });
+        const sameStatusSecondPage = await repository.listClaims({
+          projectId,
+          projectVersionId,
+          claimantId: "analyst-a",
+          batchId,
+          sort: "claim_status",
+          direction: "asc",
+          cursor: sameStatusFirstPage.nextCursor!,
+          limit: 1,
+        });
+        expect(
+          [...sameStatusFirstPage.items, ...sameStatusSecondPage.items]
+            .map((claim) => claim.id)
+            .sort(),
+        ).toEqual(["analysis-a", "analysis-b"]);
         const successfulRerunAttemptId = await harness.seedSuccessfulManualRerun(runIds[0]);
         const firstRunClaim = persisted.items.find((claim) => claim.executionRunId === runIds[0])!;
         await expect(

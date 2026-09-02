@@ -59,6 +59,8 @@ export default async function CaseAnalysisDetailPage({
           projectVersionId: hierarchy.projectVersionId,
           claimantId: identity.user.id,
           batchId,
+          sort: "class_path",
+          direction: "asc",
           limit: 50,
         })
       : undefined,

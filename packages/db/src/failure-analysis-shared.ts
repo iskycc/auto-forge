@@ -119,6 +119,13 @@ type CandidateCursor = {
   executionRunId: string;
 };
 
+type ClaimCursor = {
+  sort: FailureAnalysisSort;
+  direction: "asc" | "desc";
+  value: string;
+  analysisId: string;
+};
+
 export function encodeFailureAnalysisCandidateCursor(cursor: CandidateCursor): string {
   return Buffer.from(JSON.stringify(cursor), "utf8").toString("base64url");
 }
@@ -144,6 +151,36 @@ export function decodeFailureAnalysisCandidateCursor(
       return undefined;
     }
     return value as CandidateCursor;
+  } catch {
+    return undefined;
+  }
+}
+
+export function encodeFailureAnalysisClaimCursor(cursor: ClaimCursor): string {
+  return Buffer.from(JSON.stringify(cursor), "utf8").toString("base64url");
+}
+
+export function decodeFailureAnalysisClaimCursor(
+  encoded: string | undefined,
+  sort: FailureAnalysisSort,
+  direction: "asc" | "desc",
+): ClaimCursor | undefined {
+  if (!encoded || encoded.length > 1_024) return undefined;
+  try {
+    const value = JSON.parse(
+      Buffer.from(encoded, "base64url").toString("utf8"),
+    ) as Partial<ClaimCursor>;
+    if (
+      value.sort !== sort ||
+      value.direction !== direction ||
+      typeof value.value !== "string" ||
+      value.value.length > 512 ||
+      typeof value.analysisId !== "string" ||
+      value.analysisId.length > 128
+    ) {
+      return undefined;
+    }
+    return value as ClaimCursor;
   } catch {
     return undefined;
   }

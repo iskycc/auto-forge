@@ -104,11 +104,15 @@ export class FailureAnalysisService {
     projectVersionId?: string;
     claimantId: string;
     batchId?: string;
+    sort?: FailureAnalysisSort;
+    direction?: "asc" | "desc";
     cursor?: string;
     limit?: number;
   }) {
     return this.repository.listClaims({
       ...input,
+      sort: failureAnalysisSortSchema.parse(input.sort ?? "class_path"),
+      direction: input.direction ?? "asc",
       limit: boundedPageSize(input.limit),
     });
   }

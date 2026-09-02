@@ -8,7 +8,9 @@ import type {
 import { runSqliteWriteTransaction, type SqliteDatabaseHandle } from "./database";
 import {
   decodeFailureAnalysisCandidateCursor,
+  decodeFailureAnalysisClaimCursor,
   encodeFailureAnalysisCandidateCursor,
+  encodeFailureAnalysisClaimCursor,
   FAILURE_ANALYSIS_SUMMARY_MAXIMUM_CHARACTERS,
   toFailureAnalysisCandidate,
   toFailureAnalysisClaim,
@@ -301,7 +303,8 @@ export class SqliteFailureAnalysisRepository implements FailureAnalysisRepositor
   }
 
   async listClaims(input: Parameters<FailureAnalysisRepository["listClaims"]>[0]) {
-    const cursor = decodeRunBatchCursor(input.cursor);
+    const sortExpression = sqliteClaimSortExpression(input.sort);
+    const cursor = decodeFailureAnalysisClaimCursor(input.cursor, input.sort, input.direction);
     const where = ["claim.project_id=?", "claim.claimant_id=?"];
     const parameters: Array<string | number> = [input.projectId, input.claimantId];
     if (input.projectVersionId) {
@@ -313,16 +316,20 @@ export class SqliteFailureAnalysisRepository implements FailureAnalysisRepositor
       parameters.push(input.batchId);
     }
     if (cursor) {
-      where.push("(claim.updated_at<? OR (claim.updated_at=? AND claim.id<?))");
-      parameters.push(cursor.createdAt, cursor.createdAt, cursor.id);
+      const comparison = input.direction === "desc" ? "<" : ">";
+      where.push(
+        `(${sortExpression}${comparison}? OR (${sortExpression}=? AND claim.id${comparison}?))`,
+      );
+      parameters.push(cursor.value, cursor.value, cursor.analysisId);
     }
     parameters.push(input.limit + 1);
+    const direction = input.direction === "desc" ? "DESC" : "ASC";
     const rows = this.handle.client
       .prepare(
-        `${claimSelectSql()}
+        `${claimSelectSql(`${sortExpression} AS sortValue`)}
          JOIN run_batches batch ON batch.id=claim.batch_id
          WHERE ${where.join(" AND ")}
-         ORDER BY claim.updated_at DESC,claim.id DESC LIMIT ?`,
+         ORDER BY ${sortExpression} ${direction},claim.id ${direction} LIMIT ?`,
       )
       .all(...parameters) as FailureAnalysisRow[];
     const hasMore = rows.length > input.limit;
@@ -330,11 +337,13 @@ export class SqliteFailureAnalysisRepository implements FailureAnalysisRepositor
     const last = pageRows.at(-1);
     return {
       items: pageRows.map(toFailureAnalysisClaim),
-      ...(hasMore && last?.analysisId && last.analysisUpdatedAt
+      ...(hasMore && last?.analysisId
         ? {
-            nextCursor: encodeRunBatchCursor({
-              createdAt: last.analysisUpdatedAt,
-              id: last.analysisId,
+            nextCursor: encodeFailureAnalysisClaimCursor({
+              sort: input.sort,
+              direction: input.direction,
+              value: last.sortValue ?? "",
+              analysisId: last.analysisId,
             }),
           }
         : {}),
@@ -609,7 +618,7 @@ export class SqliteFailureAnalysisRepository implements FailureAnalysisRepositor
   }
 }
 
-function claimSelectSql(): string {
+function claimSelectSql(extraSelection?: string): string {
   return `SELECT claim.id AS analysisId,claim.project_id AS projectId,claim.batch_id AS batchId,
                  claim.execution_run_id AS executionRunId,
                  claim.case_definition_id AS caseDefinitionId,claim.attempt_id AS attemptId,
@@ -629,7 +638,7 @@ function claimSelectSql(): string {
                  claim.screenshot_media_type AS screenshotMediaType,
                  claim.screenshot_size_bytes AS screenshotSizeBytes,
                  claim.screenshot_sha256 AS screenshotSha256,
-                 claim.updated_at AS analysisUpdatedAt
+                 claim.updated_at AS analysisUpdatedAt${extraSelection ? `,${extraSelection}` : ""}
           FROM failure_analysis_claims claim`;
 }
 
@@ -647,6 +656,16 @@ function sqliteCandidateSortExpression(sort: FailureAnalysisSort): string {
     failure_summary: "LOWER(SUBSTR(COALESCE(attempt.result_summary,attempt.result_code,''),1,512))",
     case_name: "LOWER(SUBSTR(run.display_name,1,512))",
     claim_status: "LOWER(COALESCE(claim.status,'available'))",
+  }[sort];
+}
+
+function sqliteClaimSortExpression(sort: FailureAnalysisSort): string {
+  return {
+    class_path: "LOWER(SUBSTR(claim.class_name,1,512))",
+    failure_summary: "LOWER(SUBSTR(claim.failure_summary,1,512))",
+    case_name: "LOWER(SUBSTR(claim.case_name,1,512))",
+    claim_status:
+      "CASE claim.status WHEN 'claimed' THEN '1' WHEN 'analyzing' THEN '2' ELSE '3' END",
   }[sort];
 }
 

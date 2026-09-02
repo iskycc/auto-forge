@@ -15312,7 +15312,7 @@ button.icon-button:disabled {
 }
 /* 用例分析：大批量失败用例采用固定列宽、游标分页与服务端排序。 */
 .failure-analysis-page {
-  gap: clamp(18px, 2vw, 24px);
+  gap: clamp(14px, 1.5vw, 20px);
 }
 
 .failure-analysis-detail-heading {
@@ -15370,9 +15370,9 @@ button.icon-button:disabled {
 
 .failure-analysis-shell {
   display: grid;
-  gap: var(--space-4);
+  gap: var(--space-3);
   min-width: 0;
-  padding: clamp(18px, 2vw, 26px);
+  padding: clamp(15px, 1.6vw, 22px);
   overflow: hidden;
 }
 
@@ -15430,7 +15430,7 @@ button.icon-button:disabled {
 .failure-analysis-claim-view,
 .failure-analysis-workbench {
   display: grid;
-  gap: var(--space-4);
+  gap: var(--space-3);
   min-width: 0;
 }
 
@@ -15485,7 +15485,7 @@ button.icon-button:disabled {
 .failure-analysis-table th,
 .failure-analysis-table td {
   min-width: 0;
-  padding: 11px 10px;
+  padding: 7px 9px;
   border-bottom: 1px solid var(--color-border);
   vertical-align: top;
   text-align: left;
@@ -15541,14 +15541,14 @@ button.icon-button:disabled {
 
 .failure-analysis-case-name,
 .failure-analysis-class-path {
-  display: -webkit-box !important;
+  display: block !important;
   overflow: hidden;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .failure-analysis-table td small {
-  margin-top: 4px;
+  margin-top: 2px;
   color: var(--color-text-tertiary);
   font-size: var(--font-size-caption);
 }
@@ -15584,10 +15584,10 @@ button.icon-button:disabled {
   display: -webkit-box;
   overflow: hidden;
   color: var(--color-text-secondary);
-  line-height: 1.5;
+  line-height: 1.35;
   overflow-wrap: anywhere;
   -webkit-box-orient: vertical;
-  -webkit-line-clamp: 3;
+  -webkit-line-clamp: 2;
 }
 
 .analysis-status {
@@ -15597,7 +15597,7 @@ button.icon-button:disabled {
   flex-wrap: wrap;
   align-items: center;
   gap: 5px;
-  padding: 4px 8px;
+  padding: 3px 7px;
   border-radius: 999px;
   background: var(--color-surface-muted);
   color: var(--color-text-secondary);
@@ -15670,27 +15670,27 @@ button.icon-button:disabled {
 }
 
 .failure-analysis-workbench-heading h2 {
-  margin-top: 3px;
-  font-size: 20px;
+  margin-top: 2px;
+  font-size: 19px;
 }
 
 .failure-analysis-workbench-heading p {
-  margin-top: 6px;
+  margin-top: 3px;
   color: var(--color-text-secondary);
   line-height: 1.5;
 }
 
 .failure-analysis-card-list {
   display: grid;
-  gap: var(--space-3);
+  gap: 6px;
 }
 
 .failure-analysis-card {
   display: grid;
   grid-template-columns: 24px minmax(220px, 1fr) minmax(170px, 0.32fr) auto;
   align-items: center;
-  gap: var(--space-3);
-  padding: 14px 16px;
+  gap: 10px;
+  padding: 9px 11px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-medium);
   background: var(--color-surface);
@@ -15705,7 +15705,7 @@ button.icon-button:disabled {
   display: flex;
   min-width: 0;
   align-items: center;
-  gap: 9px;
+  gap: 7px;
 }
 
 .failure-analysis-card-title h3 {
@@ -15722,24 +15722,27 @@ button.icon-button:disabled {
 }
 
 .failure-analysis-card h3 {
-  font-size: 15px;
+  font-size: var(--font-size-control);
 }
 
 .failure-analysis-card code {
   display: block;
-  margin-top: 4px;
+  margin-top: 2px;
+  overflow: hidden;
   overflow-wrap: anywhere;
   color: var(--color-violet);
   font-family: var(--font-family-mono);
   font-size: var(--font-size-caption);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .failure-analysis-card p {
   display: -webkit-box;
-  margin-top: 8px;
+  margin-top: 3px;
   overflow: hidden;
   color: var(--color-text-secondary);
-  line-height: 1.45;
+  line-height: 1.35;
   overflow-wrap: anywhere;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 1;
@@ -15748,12 +15751,12 @@ button.icon-button:disabled {
 .failure-analysis-card dl {
   display: grid;
   grid-template-columns: 1fr;
-  gap: 7px;
+  gap: 3px;
 }
 
 .failure-analysis-card dl > div {
   display: grid;
-  gap: 2px;
+  gap: 1px;
 }
 
 .failure-analysis-card dt {
@@ -15796,14 +15799,14 @@ button.icon-button:disabled {
 .failure-analysis-batch-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: var(--space-4);
+  gap: var(--space-3);
 }
 
 .failure-analysis-batch-card {
   display: grid;
   min-width: 0;
-  gap: var(--space-3);
-  padding: 20px 22px;
+  gap: 9px;
+  padding: 15px 17px;
   transition:
     border-color 150ms ease,
     box-shadow 150ms ease,
@@ -15855,13 +15858,13 @@ button.icon-button:disabled {
 .failure-analysis-batch-card dl {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
+  gap: 7px;
 }
 
 .failure-analysis-batch-card dl > div {
   display: grid;
   gap: 3px;
-  padding: 10px;
+  padding: 7px 9px;
   border-radius: var(--radius-control);
   background: var(--color-surface-muted);
 }
@@ -15959,7 +15962,7 @@ button.icon-button:disabled {
   gap: 8px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-control);
-  padding: 10px 12px;
+  padding: 7px 10px;
   background: var(--color-surface-muted);
   color: var(--color-text-secondary);
   font-size: var(--font-size-control);
@@ -15979,6 +15982,27 @@ button.icon-button:disabled {
   color: var(--color-text-tertiary);
   font-size: var(--font-size-caption);
   font-weight: 500;
+}
+
+.failure-analysis-workbench-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: flex-end;
+  gap: 7px;
+}
+
+.failure-analysis-order-control {
+  display: grid;
+  min-width: 138px;
+  gap: 3px;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-caption);
+  font-weight: 700;
+}
+
+.failure-analysis-order-control .ui-select-trigger {
+  min-height: 32px;
+  padding: 0 9px;
 }
 
 .failure-analysis-completion-dialog {
@@ -16023,8 +16047,8 @@ button.icon-button:disabled {
 .failure-analysis-case-summary,
 .failure-analysis-proof-panel {
   display: grid;
-  gap: 12px;
-  padding: 14px;
+  gap: 8px;
+  padding: 10px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-medium);
   background: var(--color-surface-muted);
@@ -16043,10 +16067,10 @@ button.icon-button:disabled {
 
 .failure-analysis-history-panel {
   display: grid;
-  gap: 10px;
+  gap: 7px;
   border: 1px solid color-mix(in srgb, var(--color-info) 18%, var(--color-border));
   border-radius: var(--radius-medium);
-  padding: 13px;
+  padding: 9px;
   background: color-mix(in srgb, var(--color-info-soft) 34%, var(--color-surface));
 }
 
@@ -16091,17 +16115,17 @@ button.icon-button:disabled {
 .failure-analysis-history-cards {
   display: grid;
   max-height: 290px;
-  gap: 8px;
+  gap: 5px;
   overflow-y: auto;
   overscroll-behavior: contain;
 }
 
 .failure-analysis-history-cards > article {
   display: grid;
-  gap: 9px;
+  gap: 6px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-control);
-  padding: 11px;
+  padding: 8px 9px;
   background: var(--color-surface);
 }
 
@@ -16126,7 +16150,7 @@ button.icon-button:disabled {
 .failure-analysis-history-cards dl {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 7px 14px;
+  gap: 4px 12px;
   margin: 0;
 }
 
@@ -16167,14 +16191,14 @@ button.icon-button:disabled {
 .failure-analysis-case-list {
   display: grid;
   max-height: 236px;
-  gap: 8px;
+  gap: 4px;
   overflow-y: auto;
 }
 
 .failure-analysis-case-list article {
   justify-content: space-between;
-  gap: var(--space-3);
-  padding: 11px 12px;
+  gap: 9px;
+  padding: 7px 9px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-control);
   background: var(--color-surface);
@@ -16183,7 +16207,7 @@ button.icon-button:disabled {
 .failure-analysis-case-list article > div {
   display: grid;
   min-width: 0;
-  gap: 3px;
+  gap: 1px;
 }
 
 .failure-analysis-case-list code,
@@ -16386,21 +16410,65 @@ button.icon-button:disabled {
 
 .failure-analysis-paste-zone {
   display: grid !important;
-  min-height: 118px;
+  min-height: 146px;
   place-items: center;
   align-content: center !important;
-  gap: 5px !important;
-  border: 1px dashed var(--color-border-strong);
+  gap: 7px !important;
+  border: 1px dashed color-mix(in srgb, var(--color-info) 38%, var(--color-border));
   border-radius: var(--radius-medium);
-  background: var(--color-surface);
+  background:
+    radial-gradient(
+      circle at 50% 0,
+      color-mix(in srgb, var(--color-info-soft) 72%, transparent),
+      transparent 68%
+    ),
+    var(--color-surface);
   color: var(--color-text-secondary);
-  cursor: pointer;
   text-align: center;
+}
+
+.failure-analysis-paste-zone > svg {
+  color: var(--color-info);
+}
+
+.failure-analysis-paste-zone[aria-busy="true"] {
+  opacity: 0.72;
 }
 
 .failure-analysis-paste-zone:focus-visible {
   outline: 3px solid var(--color-focus-ring);
   outline-offset: 2px;
+}
+
+.failure-analysis-paste-shortcut {
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 5px !important;
+  margin-top: 3px;
+}
+
+.failure-analysis-paste-shortcut kbd {
+  min-width: 31px;
+  border: 1px solid var(--color-border-strong);
+  border-bottom-width: 2px;
+  border-radius: 7px;
+  padding: 4px 7px;
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-caption);
+  font-weight: 700;
+  box-shadow: var(--shadow-control);
+}
+
+.failure-analysis-paste-shortcut b {
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-caption);
+}
+
+.failure-analysis-paste-shortcut small {
+  margin-left: 5px;
+  color: var(--color-text-tertiary);
 }
 
 .failure-analysis-field {
@@ -16571,6 +16639,12 @@ button.icon-button:disabled {
   .failure-analysis-toolbar > label,
   .failure-analysis-filter > label {
     width: 100%;
+  }
+
+  .failure-analysis-workbench-actions {
+    width: 100%;
+    flex-wrap: wrap;
+    justify-content: flex-start;
   }
 
   .failure-analysis-name-column {

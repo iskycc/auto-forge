@@ -4,6 +4,33 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## 1.8.10 - 2026-09-02
+
+### Changed
+
+- 用例分析候选表、个人分析队列、批量分析用例清单和历史结论卡片改为紧凑密度，减少单条
+  用例的纵向占用；“我的分析”新增类路径、用例名称、失败堆栈、分析状态四种服务端排序及
+  升降序切换，Lite/Full 使用与排序条件绑定的稳定游标继续翻页。
+- 失败用例分析 XLSX 统一使用更适合中英文混排的微软雅黑 UI 字体、深蓝绿表头、低饱和
+  斑马纹和结论分类配色；仍保留单行数据高度、冻结表头、筛选和三选一下拉框。
+
+### Fixed
+
+- 用例分析选择“重跑通过”且没有成功重跑日志时，证明截图改为在分析弹窗任意位置直接按
+  `Ctrl+V`（macOS 为 `⌘+V`）粘贴，不再点击粘贴区打开系统文件选择器；单个与批量分析
+  共用同一粘贴、对象存储和预览流程。
+
+### Database and persisted configuration
+
+- 无 schema 迁移、配置格式或 Runner Protocol 变化；个人分析排序由 Lite/Full 仓储共享
+  同一请求语义和游标契约。
+
+### Tests
+
+- SQLite/PostgreSQL 仓储契约覆盖个人队列字段排序、降序翻页和同状态稳定翻页；10 万条
+  Lite 性能门禁覆盖新排序查询。Playwright 覆盖字段选择、升降序、紧凑行高、XLSX 导出
+  以及 1024px/1536px 桌面布局。
+
 ## 1.8.8 - 2026-09-02
 
 ### Changed
