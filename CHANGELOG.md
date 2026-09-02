@@ -4,6 +4,32 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## 1.8.8 - 2026-09-02
+
+### Changed
+
+- “平台设置 → 存储空间”不再以表格分页平铺文件，改为按数据目录、对象存储、外部引用和
+  逻辑路径直接展示可折叠目录树。后台游标批次会自动续读并合并，目录内部保持有界按需
+  渲染，文件详情可查看完整逻辑路径、实际位置、空间大小、项目与更新时间。
+- Lite 本地文件清单的游标续读会跳过已经遍历完成的目录，避免连续生成完整目录树时每批
+  都从数据目录根部重复扫描；单次读取上限由 200 提升至 500，前端合并多批结果后再重建
+  目录树，降低大目录的网络往返和渲染开销。
+
+### Documentation
+
+- Jenkins 执行与依赖发布插件的指导文件新增完整参数表，逐项标明必填/选填、类型、默认
+  值、权限、格式校验与网络可达性要求，并补充选填参数和返回值示例。
+
+### Database and persisted configuration
+
+- 无 schema 迁移、配置格式或 Runner Protocol 变化；Lite 与 Full 共享相同的目录树页面和
+  存储清单契约。
+
+### Tests
+
+- 存储清单单元测试覆盖目录聚合、深路径边界与跨批次游标续读；Playwright 覆盖目录树
+  展开、文件详情、筛选、无分页控件和 1024px 桌面视口无横向溢出。
+
 ## 1.8.7 - 2026-09-02
 
 ### Fixed

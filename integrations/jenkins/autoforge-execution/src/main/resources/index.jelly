@@ -1,4 +1,6 @@
 <?jelly escape-by-default='true'?>
 <div>
   Starts an AutoForge task from Jenkins Pipeline, reports progress every 30 seconds, and waits for its terminal lifecycle.
+  Required parameters: <code>baseUrl</code>, <code>apiKey</code>, and <code>suiteId</code>.
+  Optional parameter: <code>timeoutSeconds</code> (zero uses the server recommendation).
 </div>

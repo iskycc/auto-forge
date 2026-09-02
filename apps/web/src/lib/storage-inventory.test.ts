@@ -146,6 +146,29 @@ describe("storage inventory", () => {
       externalReferenceCount: 1,
     });
   });
+
+  it("resumes a local directory walk without skipping a sibling that shares its prefix", async () => {
+    const dataDirectory = await temporaryDataDirectory();
+    await writeDataFile(dataDirectory, "a/inside.txt", "inside");
+    await writeDataFile(dataDirectory, "a.txt", "sibling");
+    await writeDataFile(dataDirectory, "b/final.txt", "final");
+    const inventory = new StorageInventoryService({
+      dataDirectory,
+      objectStore: objectStore("local", []),
+      projectStructures: runtimeCatalog([]),
+      objectStoreRoot: join(dataDirectory, "objects"),
+    });
+
+    const items = await allItems(inventory, 1);
+
+    expect(items.map((item) => item.logicalPath)).toEqual(["a/inside.txt", "a.txt", "b/final.txt"]);
+    await expect(inventory.list({ limit: 500 })).resolves.toMatchObject({
+      items: expect.any(Array),
+    });
+    await expect(inventory.list({ limit: 501 })).rejects.toThrow(
+      "存储清单单次读取数量必须在 1 到 500 之间",
+    );
+  });
 });
 
 async function temporaryDataDirectory(): Promise<string> {

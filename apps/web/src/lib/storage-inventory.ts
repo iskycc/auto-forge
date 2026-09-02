@@ -12,8 +12,8 @@ import type { ProjectRuntimeAsset } from "@autoforge/domain";
 
 const SOURCE_ORDER = ["local", "object", "external"] as const;
 const INVENTORY_BATCH_SIZE = 200;
-// 完整汇总需要遍历数据目录和 MinIO；页面翻页只重读清单，五分钟内复用汇总，
-// 管理员仍可通过“重新扫描”显式失效缓存。
+// 完整汇总需要遍历数据目录和 MinIO；目录树通过游标分批读取并在前端自动合并，
+// 五分钟内复用汇总，管理员仍可通过“重新扫描”显式失效缓存。
 const SUMMARY_CACHE_MS = 5 * 60_000;
 
 type InventorySource = (typeof SOURCE_ORDER)[number];
@@ -140,8 +140,8 @@ export class StorageInventoryService {
 
   private async *localEntries(afterPath?: string): AsyncGenerator<InventoryEntry> {
     let pending: LocalFile[] = [];
-    for await (const file of walkFiles(resolve(this.options.dataDirectory))) {
-      if (afterPath && file.logicalPath <= afterPath) continue;
+    const root = resolve(this.options.dataDirectory);
+    for await (const file of walkFiles(root, root, afterPath?.split("/"))) {
       pending.push(file);
       if (pending.length < INVENTORY_BATCH_SIZE) continue;
       yield* this.mapLocalBatch(pending);
@@ -225,7 +225,11 @@ type LocalFile = {
   modifiedAt: string;
 };
 
-async function* walkFiles(root: string, directory = root): AsyncGenerator<LocalFile> {
+async function* walkFiles(
+  root: string,
+  directory = root,
+  afterSegments?: readonly string[],
+): AsyncGenerator<LocalFile> {
   let handle;
   try {
     handle = await opendir(directory);
@@ -235,19 +239,30 @@ async function* walkFiles(root: string, directory = root): AsyncGenerator<LocalF
   }
   const entries = [];
   for await (const entry of handle) entries.push(entry);
-  entries.sort((left, right) => left.name.localeCompare(right.name));
+  entries.sort((left, right) => comparePaths(left.name, right.name));
   for (const entry of entries) {
     const absolutePath = resolve(directory, entry.name);
+    const logicalPath = relative(root, absolutePath).split(sep).join("/");
+    const cursorSegment = afterSegments?.[0];
+    const cursorComparison = cursorSegment ? comparePaths(entry.name, cursorSegment) : 1;
+    if (afterSegments && cursorComparison < 0) continue;
     if (entry.isSymbolicLink()) continue;
     if (entry.isDirectory()) {
+      if (afterSegments && cursorComparison === 0) {
+        if (afterSegments.length > 1) {
+          yield* walkFiles(root, absolutePath, afterSegments.slice(1));
+        }
+        continue;
+      }
       yield* walkFiles(root, absolutePath);
       continue;
     }
     if (!entry.isFile()) continue;
+    if (afterSegments && cursorComparison === 0) continue;
     const metadata = await stat(absolutePath);
     yield {
       absolutePath,
-      logicalPath: relative(root, absolutePath).split(sep).join("/"),
+      logicalPath,
       sizeBytes: metadata.size,
       allocatedBytes: Number.isFinite(metadata.blocks) ? metadata.blocks * 512 : metadata.size,
       modifiedAt: metadata.mtime.toISOString(),
@@ -406,9 +421,14 @@ function decodeCursor(value: string): InventoryCursor {
 }
 
 function assertQuery(input: StorageInventoryQuery): void {
-  if (!Number.isInteger(input.limit) || input.limit < 1 || input.limit > 200) {
-    throw new Error("存储清单每页数量必须在 1 到 200 之间。");
+  if (!Number.isInteger(input.limit) || input.limit < 1 || input.limit > 500) {
+    throw new Error("存储清单单次读取数量必须在 1 到 500 之间。");
   }
+}
+
+function comparePaths(left: string, right: string): number {
+  if (left === right) return 0;
+  return left < right ? -1 : 1;
 }
 
 function addBytes(current: number, increment: number): number {

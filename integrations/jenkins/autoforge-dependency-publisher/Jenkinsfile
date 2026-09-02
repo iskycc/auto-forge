@@ -6,6 +6,7 @@ pipeline {
       steps {
         withCredentials([string(credentialsId: 'autoforge-api-key', variable: 'AUTOFORGE_API_KEY')]) {
           autoforgePublishDependencies(
+            // 必填：控制面地址、API Key、项目/版本、下载地址、摘要和实际字节数。
             baseUrl: 'https://autoforge.internal',
             apiKey: env.AUTOFORGE_API_KEY,
             projectId: 'replace-with-project-id',

@@ -35,7 +35,7 @@ AutoForge 是一个面向自动化测试场景的用例工厂，用于统一管�
 - 顶栏提供全局项目切换，首页、用例、任务、记录、洞察、来源、审计和项目设置共享同一服务端校验上下文。任务快捷执行只提交 `suiteId` 并使用任务保存的完整配置；单用例快捷执行允许临时选择 Runner/Runner Group、重跑和 Adapter 环境地址，并默认启用 CoTest Adapter。任务与单用例均不提供手工参数覆盖；TestNG 发现参数只读固化。产品级执行环境与执行密文页面、API 和任务字段已退役，新批次不再接受这两类配置。
 - 批次执行前预检一次返回任务状态、参数、Runner capability/标签、项目版本 Java/TestNG 工具链、权威 JAR 对象和资源限制的逐项 blocker；正式创建复用相同规则，调度、claim 和下载仍执行权威复核。
 - 顶栏执行弹窗支持立即执行或最长七天、精确到秒的持久化倒计时。计划开始时间由服务端固化，Lite/Full 在到点前都不会分配用例，排队超时也从到点后开始；执行记录和详情会显示实时倒计时。
-- Jenkins Pipeline 插件提供 `autoforgeRun` 与 `autoforgePublishDependencies` 两个步骤：前者使用 API Key 启动任务，按服务端建议周期打印轮次/通过/失败与免登录进展链接，在可配置总时限内等待批次终态，并在完成后输出永久匿名结果链接 `resultUrl`；永久页复用执行历史详情的概览、轮次、图表和用例表格，但不加载产品侧栏或鉴权操作。后者按项目版本替换依赖压缩包链接，不保存历史版本文件，拒绝时会显示服务端可操作错误。两个客户端固定使用 HTTP/1.1，兼容未配置 TLS 代理的 Lite 地址；各插件目录都包含只填写必需参数的 `Jenkinsfile`，ZIP 依赖发布无需重复填写文件名和格式。两个 HPI、SBOM、校验和与发布清单随 Release 分发，并通过真实 Pipeline DSL E2E 与 HPI 包结构校验。完整流水线见 [`examples/jenkins/Jenkinsfile`](./examples/jenkins/Jenkinsfile)。
+- Jenkins Pipeline 插件提供 `autoforgeRun` 与 `autoforgePublishDependencies` 两个步骤：前者使用 API Key 启动任务，按服务端建议周期打印轮次/通过/失败与免登录进展链接，在可配置总时限内等待批次终态，并在完成后输出永久匿名结果链接 `resultUrl`；永久页复用执行历史详情的概览、轮次、图表和用例表格，但不加载产品侧栏或鉴权操作。后者按项目版本替换依赖压缩包链接，不保存历史版本文件，拒绝时会显示服务端可操作错误。两个客户端固定使用 HTTP/1.1，兼容未配置 TLS 代理的 Lite 地址；各插件目录都包含只填写必需参数的 `Jenkinsfile`，ZIP 依赖发布无需重复填写文件名和格式。必填、选填、默认值、权限和网络约束分别见[执行插件参数指南](./integrations/jenkins/autoforge-execution/README.md)与[依赖发布插件参数指南](./integrations/jenkins/autoforge-dependency-publisher/README.md)。两个 HPI、SBOM、校验和与发布清单随 Release 分发，并通过真实 Pipeline DSL E2E 与 HPI 包结构校验。完整流水线见 [`examples/jenkins/Jenkinsfile`](./examples/jenkins/Jenkinsfile)。
 - 本地账号首次管理员引导、scrypt 密码、本地/LDAP 统一登录、安全会话、锁定/解锁、密码恢复、六种内置角色和服务端 RBAC；登录来源由服务端根据已有账号来源与 LDAP 启用状态自动判定，同名本地账号优先且目录故障不影响本地紧急管理员。角色、服务账号、项目作用域和 API 令牌权限统一使用带人类友好名称与用途说明的复选框组。自定义角色可创建、编辑、停用与删除（内置角色不可变，引用中角色与最后一位系统管理员受保护，权限变更全量审计并撤销相关会话）；项目支持创建、归档、成员角色分配与负责人转移。批次、日志、Attempt 时间线、产物下载和取消按权威项目过滤，跨项目 ID 猜测不会读取内容。
 - LDAP 配置字段与 DDT Insight 保持一致：`enabled`、`url`、服务 Bind、用户 Base/Filter、显示名/邮箱属性、Group 属性或 Group Search、统一默认角色、TLS 证书校验和连接超时。登录先使用服务账号（也可匿名）唯一检索用户 DN，再用同一连接绑定用户密码；平台用户名始终取登录框输入，不依赖额外的用户名映射属性。Group 仅保存到用户资料供查看，既不映射角色也不授予权限；首次建号只分配配置的统一默认角色。TLS 证书校验默认开启，可针对隔离目录显式关闭并持续显示风险提示；Bind 密码使用主密钥加密且不回显。历史 StartTLS、全量同步和 Group 权限映射字段只保留数据库升级兼容，不再通过页面、API 或后台作业执行。
 - 用户管理支持 URL 驱动的搜索、来源筛选和游标分页，以及本地账号创建、启停/解锁、密码重置和按用户撤销全部会话；LDAP 管理属性不提供本地编辑入口。
@@ -55,7 +55,7 @@ AutoForge 是一个面向自动化测试场景的用例工厂，用于统一管�
 - Agent stdout/stderr/诊断流的 UTF-8 分块、精确的双层秘密脱敏、有界异步磁盘 spool、连续确认水位和断线重传；子进程输出与 spool 持久化解耦，不同 attempt 不再共用全局落盘锁，已有 sink 时不保留第二份完整内存日志，普通 Java 类路径不会被误判为 JWT 或因固定尾部缓冲而延迟显示。执行期间每 500 ms 尝试上传新增块，控制面先持久化，再由 Lite 进程内通道或 Full NATS 跨副本广播通过同源、短时票据 WebSocket 推送到执行详情。
 - 产物安全发现、SHA-256 声明和鉴权下载；Lite 经控制面流式写入本地对象目录，Full 使用 15 分钟单对象 MinIO 预签名目标，Agent 不持有长期凭据，finalize 前由控制面重新核对大小和 SHA-256。TestNG XML 以禁用 DTD/实体的有界流式解析器提取 suite/test/class/method、耗时和汇总，结果由 SQLite/PostgreSQL 持久化并在执行详情展示，原始 XML 保留为产物。
 - SQLite 持久任务和 Lite 嵌入式 worker；PostgreSQL transactional outbox、JetStream 显式确认和 Full 独立 worker。SQLite 队列使用短写事务与 `SQLITE_BUSY`/`SQLITE_LOCKED` 退避，持续锁竞争解除后内嵌 worker 自动恢复。系统诊断会显示死信类型、关联对象与最后错误，管理员确认故障已修复后可重新投递；SQLite/JetStream 运行同一套至少一次投递契约测试，覆盖去重、延迟、租约恢复、死信、重投和关闭排空。
-- 管理员存储空间页汇总平台实际占用与内容逻辑大小，并以游标分页列出数据目录全部常规文件、Lite/Full 每批次日志 SQLite、Lite 受管对象、Full MinIO 对象及 URL 型 JDK/依赖引用；SQLite WAL/SHM 与主文件分别展示逻辑路径、物理位置、大小和磁盘块占用。
+- 管理员存储空间页汇总平台实际占用与内容逻辑大小，并按数据目录、对象存储和外部引用直接生成可折叠目录树，不再暴露分页控件；后台使用有界游标批次自动续读，单个目录按需展开，避免大量文件一次性渲染。目录覆盖全部常规文件、Lite/Full 每批次日志 SQLite、Lite 受管对象、Full MinIO 对象及 URL 型 JDK/依赖引用；展开文件可查看逻辑路径、物理位置、大小和磁盘块占用。
 - 可重建的 Lite 内存缓存与 Full Redis 缓存适配器；缓存不作为业务事实来源。
 - GitHub Actions CI，以及四变体后端离线镜像和独立发布后 Gate E 检查流水线；耗时验收按独立状态分区并行执行，单个测试 Job 以五分钟内完成为目标。每个后端镜像均内置 Linux `amd64`/`arm64` Agent 与 Adapter。Release 不再构建 `toolchain-amd64/arm64`，JDK 和测试依赖由项目上传或登记内网链接。
 
@@ -88,7 +88,7 @@ AutoForge 是一个面向自动化测试场景的用例工厂，用于统一管�
 | `GET`          | `/api/v1/case-sources/{sourceId}`                              | 读取已持久化的 JAR 扫描结果                          |
 | `PUT`          | `/api/v1/case-sources/{sourceId}/authoritative`                | 将一个 JAR 设为唯一权威全量来源                      |
 | `GET`          | `/api/v1/objects`                                              | 浏览本地对象目录或 MinIO bucket 中的受管对象         |
-| `GET`          | `/api/v1/settings/storage`                                     | 分页查看平台文件、SQLite 与对象存储空间清单          |
+| `GET`          | `/api/v1/settings/storage`                                     | 游标分批读取平台文件、SQLite 与对象存储空间清单      |
 | `GET`          | `/api/v1/failure-analysis/batches`                             | 分页查询含最终失败用例的执行记录                     |
 | `GET`          | `/api/v1/failure-analysis/candidates`                          | 筛选和排序一次执行的最终失败用例                     |
 | `GET`          | `/api/v1/failure-analysis/history`                             | 批量读取所选用例最近的已完成人工分析结论             |

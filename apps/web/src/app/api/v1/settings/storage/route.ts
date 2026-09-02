@@ -10,7 +10,7 @@ export const runtime = "nodejs";
 
 const querySchema = z.object({
   cursor: z.string().min(1).max(16_384).optional(),
-  limit: z.coerce.number().int().min(1).max(200).default(100),
+  limit: z.coerce.number().int().min(1).max(500).default(100),
   category: storageInventoryCategorySchema.optional(),
   query: z.string().trim().max(240).optional(),
   refresh: z.enum(["0", "1"]).default("0"),

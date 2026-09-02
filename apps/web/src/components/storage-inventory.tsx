@@ -4,13 +4,19 @@ import type {
   StorageInventoryCategory,
   StorageInventoryItem,
   StorageInventoryPage,
+  StorageInventorySummary,
 } from "@autoforge/contracts";
-import { ChevronLeft, ChevronRight, Database, HardDrive, RefreshCw, Search } from "lucide-react";
+import { Database, HardDrive, LoaderCircle, RefreshCw, Search } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
 
 import { Button, Input, Select } from "@/components/ui";
 import { LoadingState } from "@/components/loading-state";
+import { StorageInventoryTree } from "@/components/storage-inventory-tree";
+import { buildStorageInventoryTree } from "@/components/storage-inventory-tree-model";
+
+const INVENTORY_READ_BATCH_SIZE = 500;
+const INVENTORY_RENDER_COMMIT_SIZE = 2_000;
 
 const CATEGORY_LABELS: Record<StorageInventoryCategory, string> = {
   database: "平台数据库",
@@ -36,9 +42,8 @@ export function StorageInventory({
   timeZone: string;
 }) {
   const router = useRouter();
-  const [page, setPage] = useState<StorageInventoryPage>();
-  const [cursor, setCursor] = useState<string>();
-  const [cursorHistory, setCursorHistory] = useState<Array<string | undefined>>([]);
+  const [items, setItems] = useState<StorageInventoryItem[]>([]);
+  const [summary, setSummary] = useState<StorageInventorySummary>();
   const [draftCategory, setDraftCategory] = useState(initialCategory ?? "");
   const [draftQuery, setDraftQuery] = useState(initialQuery);
   const [loading, setLoading] = useState(true);
@@ -48,23 +53,22 @@ export function StorageInventory({
 
   useEffect(() => {
     const abort = new AbortController();
-    const parameters = new URLSearchParams({ limit: "100" });
-    if (cursor) parameters.set("cursor", cursor);
-    if (initialCategory) parameters.set("category", initialCategory);
-    if (initialQuery) parameters.set("query", initialQuery);
     const refreshSummary = refreshSequence > handledRefreshSequence.current;
-    if (refreshSummary) parameters.set("refresh", "1");
-    void fetch(`/api/v1/settings/storage?${parameters}`, {
-      cache: "no-store",
+    void loadCompleteInventory({
       signal: abort.signal,
+      initialCategory,
+      initialQuery,
+      refreshSummary,
+      onBatch(batch, nextSummary) {
+        if (abort.signal.aborted) return;
+        setItems((current) => [...current, ...batch]);
+        setSummary(nextSummary);
+      },
     })
-      .then(async (response) => {
-        const body = (await response.json()) as StorageInventoryPage & {
-          error?: { message?: string };
-        };
-        if (!response.ok) throw new Error(body.error?.message ?? "存储清单读取失败。");
-        setPage(body);
-        if (refreshSummary) handledRefreshSequence.current = refreshSequence;
+      .then(() => {
+        if (!abort.signal.aborted && refreshSummary) {
+          handledRefreshSequence.current = refreshSequence;
+        }
       })
       .catch((cause: unknown) => {
         if (abort.signal.aborted) return;
@@ -74,11 +78,21 @@ export function StorageInventory({
         if (!abort.signal.aborted) setLoading(false);
       });
     return () => abort.abort();
-  }, [cursor, initialCategory, initialQuery, refreshSequence]);
+  }, [initialCategory, initialQuery, refreshSequence]);
 
   const maximumCategoryBytes = useMemo(
-    () => Math.max(1, ...(page?.summary.categories.map((item) => item.allocatedBytes) ?? [])),
-    [page],
+    () => Math.max(1, ...(summary?.categories.map((item) => item.allocatedBytes) ?? [])),
+    [summary],
+  );
+  const tree = useMemo(
+    () =>
+      summary
+        ? buildStorageInventoryTree(items, {
+            dataDirectory: summary.dataDirectory,
+            objectStoreRoot: summary.objectStoreRoot,
+          })
+        : [],
+    [items, summary],
   );
 
   function applyFilters(event: FormEvent<HTMLFormElement>): void {
@@ -90,22 +104,6 @@ export function StorageInventory({
     if (draftCategory) parameters.set("category", draftCategory);
     if (query) parameters.set("query", query);
     router.replace(`/settings/platform?${parameters}`);
-  }
-
-  function nextPage(): void {
-    if (!page?.nextCursor) return;
-    setLoading(true);
-    setError("");
-    setCursorHistory((current) => [...current, cursor]);
-    setCursor(page.nextCursor);
-  }
-
-  function previousPage(): void {
-    const previous = cursorHistory.at(-1);
-    setLoading(true);
-    setError("");
-    setCursorHistory((current) => current.slice(0, -1));
-    setCursor(previous);
   }
 
   return (
@@ -124,37 +122,34 @@ export function StorageInventory({
             {error}
           </p>
         ) : null}
-        {page ? (
+        {summary ? (
           <>
             <div className="storage-summary-grid">
-              <StorageMetric
-                label="平台实际占用"
-                value={formatBytes(page.summary.allocatedBytes)}
-              />
-              <StorageMetric label="内容逻辑大小" value={formatBytes(page.summary.logicalBytes)} />
+              <StorageMetric label="平台实际占用" value={formatBytes(summary.allocatedBytes)} />
+              <StorageMetric label="内容逻辑大小" value={formatBytes(summary.logicalBytes)} />
               <StorageMetric
                 label="文件与引用"
-                value={`${page.summary.fileCount.toLocaleString()} 项`}
+                value={`${summary.fileCount.toLocaleString()} 项`}
               />
               <StorageMetric
                 label="外部引用"
-                value={`${page.summary.externalReferenceCount.toLocaleString()} 项 · ${formatBytes(page.summary.externalReferenceBytes)}`}
+                value={`${summary.externalReferenceCount.toLocaleString()} 项 · ${formatBytes(summary.externalReferenceBytes)}`}
               />
             </div>
             <div className="storage-roots">
               <span>
-                <HardDrive size={15} /> 数据目录 <code>{page.summary.dataDirectory}</code>
+                <HardDrive size={15} /> 数据目录 <code>{summary.dataDirectory}</code>
               </span>
               <span>
-                <Database size={15} /> 对象空间 <code>{page.summary.objectStoreRoot}</code>
+                <Database size={15} /> 对象空间 <code>{summary.objectStoreRoot}</code>
               </span>
               <small>
-                统计生成于 {formatDate(page.summary.generatedAt, timeZone)}；MinIO
-                占用为对象内容大小， 不包含存储集群副本或纠删码开销。
+                统计生成于 {formatDate(summary.generatedAt, timeZone)}；MinIO 占用为对象内容大小，
+                不包含存储集群副本或纠删码开销。
               </small>
             </div>
             <div className="storage-category-grid" aria-label="文件分类占用">
-              {page.summary.categories.map((item) => (
+              {summary.categories.map((item) => (
                 <div className="storage-category-card" key={item.category}>
                   <span>
                     {CATEGORY_LABELS[item.category]} · {item.fileCount.toLocaleString()} 项
@@ -186,12 +181,14 @@ export function StorageInventory({
         <div className="section-heading storage-list-heading">
           <div>
             <p className="eyebrow">File Inventory</p>
-            <h2>文件逻辑清单</h2>
-            <p>每页最多显示 100 项；路径可完整复制，长内容仅在当前单元格内换行。</p>
+            <h2>文件目录</h2>
+            <p>按存储位置和逻辑路径逐级展示；展开文件可复制完整逻辑路径与实际位置。</p>
           </div>
           <Button
             disabled={loading}
             onClick={() => {
+              setItems([]);
+              setSummary(undefined);
               setLoading(true);
               setError("");
               setRefreshSequence((value) => value + 1);
@@ -232,62 +229,23 @@ export function StorageInventory({
             <Search size={15} /> 应用筛选
           </Button>
         </form>
-        {page && page.items.length > 0 ? (
-          <div className="table-scroll storage-inventory-table-wrap">
-            <table className="data-table storage-inventory-table">
-              <colgroup>
-                <col className="storage-col-type" />
-                <col className="storage-col-file" />
-                <col className="storage-col-location" />
-                <col className="storage-col-size" />
-                <col className="storage-col-size" />
-                <col className="storage-col-time" />
-              </colgroup>
-              <thead>
-                <tr>
-                  <th>类型</th>
-                  <th>文件与逻辑路径</th>
-                  <th>实际位置</th>
-                  <th>内容大小</th>
-                  <th>占用空间</th>
-                  <th>更新时间</th>
-                </tr>
-              </thead>
-              <tbody>
-                {page.items.map((item) => (
-                  <StorageRow item={item} key={item.id} timeZone={timeZone} />
-                ))}
-              </tbody>
-            </table>
+        {loading && summary ? (
+          <div className="storage-tree-loading" role="status">
+            <LoaderCircle aria-hidden="true" className="spin" size={15} />
+            正在继续扫描目录，已载入 {items.length.toLocaleString()} 个文件与引用…
           </div>
-        ) : page && !loading ? (
+        ) : null}
+        {tree.length > 0 ? (
+          <StorageInventoryTree
+            forceOpen={
+              !loading && Boolean(initialQuery) && items.length <= INVENTORY_READ_BATCH_SIZE
+            }
+            roots={tree}
+            timeZone={timeZone}
+          />
+        ) : summary && !loading ? (
           <div className="inline-empty">当前筛选条件下没有文件或资源引用。</div>
         ) : null}
-        <div className="storage-pagination">
-          <span>
-            第 {cursorHistory.length + 1} 页 · 本页 {page?.items.length ?? 0} 项
-          </span>
-          <div>
-            <Button
-              aria-label="上一页文件"
-              disabled={loading || cursorHistory.length === 0}
-              onClick={previousPage}
-              type="button"
-              variant="secondary"
-            >
-              <ChevronLeft size={15} /> 上一页
-            </Button>
-            <Button
-              aria-label="下一页文件"
-              disabled={loading || !page?.nextCursor}
-              onClick={nextPage}
-              type="button"
-              variant="secondary"
-            >
-              下一页 <ChevronRight size={15} />
-            </Button>
-          </div>
-        </div>
       </section>
     </div>
   );
@@ -299,54 +257,6 @@ function StorageMetric({ label, value }: { label: string; value: string }) {
       <span>{label}</span>
       <strong>{value}</strong>
     </div>
-  );
-}
-
-function StorageRow({ item, timeZone }: { item: StorageInventoryItem; timeZone: string }) {
-  const locationLabel = {
-    "data-directory": "数据目录",
-    "object-store": "对象存储",
-    "external-reference": "外部引用",
-  }[item.location];
-  return (
-    <tr>
-      <td>
-        <span className={`status-badge storage-kind-${item.category}`}>
-          {CATEGORY_LABELS[item.category]}
-        </span>
-      </td>
-      <td>
-        <span className="storage-file-cell">
-          <strong title={item.name}>{item.name}</strong>
-          <code title={item.logicalPath}>{item.logicalPath}</code>
-          {item.detail ? <small>{item.detail}</small> : null}
-          {item.projectId ? <small>项目：{item.projectId}</small> : null}
-        </span>
-      </td>
-      <td>
-        <span className="storage-path-cell">
-          <small>{locationLabel}</small>
-          <code title={item.storagePath}>{item.storagePath}</code>
-        </span>
-      </td>
-      <td>{formatBytes(item.sizeBytes)}</td>
-      <td>
-        {item.location === "external-reference" ? (
-          <span title="文件位于外部地址，不占用平台数据空间">0 B</span>
-        ) : (
-          formatBytes(item.allocatedBytes)
-        )}
-      </td>
-      <td>
-        {item.modifiedAt ? (
-          <time dateTime={item.modifiedAt} title={`UTC：${item.modifiedAt}`}>
-            {formatDate(item.modifiedAt, timeZone)}
-          </time>
-        ) : (
-          "—"
-        )}
-      </td>
-    </tr>
   );
 }
 
@@ -368,4 +278,55 @@ function formatDate(value: string, timeZone: string): string {
     minute: "2-digit",
     second: "2-digit",
   }).format(new Date(value));
+}
+
+async function loadCompleteInventory({
+  signal,
+  initialCategory,
+  initialQuery,
+  refreshSummary,
+  onBatch,
+}: {
+  signal: AbortSignal;
+  initialCategory: StorageInventoryCategory | undefined;
+  initialQuery: string;
+  refreshSummary: boolean;
+  onBatch: (items: StorageInventoryItem[], summary: StorageInventorySummary) => void;
+}): Promise<void> {
+  let cursor: string | undefined;
+  const visitedCursors = new Set<string>();
+  let firstRequest = true;
+  let bufferedItems: StorageInventoryItem[] = [];
+
+  do {
+    const parameters = new URLSearchParams({ limit: String(INVENTORY_READ_BATCH_SIZE) });
+    if (cursor) parameters.set("cursor", cursor);
+    if (initialCategory) parameters.set("category", initialCategory);
+    if (initialQuery) parameters.set("query", initialQuery);
+    if (firstRequest && refreshSummary) parameters.set("refresh", "1");
+
+    const response = await fetch(`/api/v1/settings/storage?${parameters}`, {
+      cache: "no-store",
+      signal,
+    });
+    const body = (await response.json()) as StorageInventoryPage & {
+      error?: { message?: string };
+    };
+    if (!response.ok) {
+      throw new Error(body.error?.message ?? "存储清单读取失败。");
+    }
+    bufferedItems.push(...body.items);
+    cursor = body.nextCursor;
+    if (firstRequest || bufferedItems.length >= INVENTORY_RENDER_COMMIT_SIZE || !cursor) {
+      onBatch(bufferedItems, body.summary);
+      bufferedItems = [];
+    }
+    firstRequest = false;
+    if (cursor) {
+      if (visitedCursors.has(cursor)) {
+        throw new Error("存储清单返回了重复游标，目录加载已停止。");
+      }
+      visitedCursors.add(cursor);
+    }
+  } while (cursor);
 }

@@ -6,8 +6,11 @@ pipeline {
       steps {
         withCredentials([string(credentialsId: 'autoforge-api-key', variable: 'AUTOFORGE_API_KEY')]) {
           autoforgeRun(
+            // 必填：AutoForge 根地址、Secret text API Key、用例任务 ID。
             baseUrl: 'https://autoforge.internal',
             apiKey: env.AUTOFORGE_API_KEY,
+            // 选填：取消下一行注释可设置等待上限。
+            // timeoutSeconds: 7200,
             suiteId: 'replace-with-suite-id'
           )
         }

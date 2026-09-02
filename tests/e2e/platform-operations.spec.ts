@@ -95,7 +95,10 @@ test("configuration conflicts, diagnostics and retention controls remain observa
   await expect(page.getByRole("heading", { name: "存储空间" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "空间概览" })).toBeVisible();
   await expect(page.locator(".storage-summary-grid")).toContainText("平台实际占用");
-  await expect(page.locator(".storage-inventory-table")).toBeVisible();
+  const storageTree = page.locator(".storage-inventory-tree");
+  await expect(storageTree).toBeVisible();
+  await expect(storageTree.getByRole("treeitem").first()).toContainText(/数据目录|对象存储/);
+  await expect(page.locator(".storage-pagination")).toHaveCount(0);
   await page.setViewportSize({ width: 1024, height: 768 });
   await expectUiIntegrity(page);
   const storageResponse = await page.request.get("/api/v1/settings/storage?limit=1");
@@ -115,8 +118,21 @@ test("configuration conflicts, diagnostics and retention controls remain observa
     await page.getByLabel("搜索文件名称或路径").fill("autoforge.sqlite");
     await page.getByRole("button", { name: "应用筛选" }).click();
     await expect(page).toHaveURL(/section=storage.*category=database.*query=autoforge\.sqlite/u);
-    await expect(page.locator(".storage-inventory-table")).toContainText("autoforge.sqlite");
-    await expect(page.locator(".storage-inventory-table")).toContainText("平台 SQLite 主文件");
+    await expect(storageTree).toContainText("autoforge.sqlite");
+    const databaseFile = storageTree
+      .locator(".storage-tree-file > summary")
+      .filter({ hasText: "autoforge.sqlite" })
+      .first();
+    await databaseFile.click();
+    await expect(storageTree.locator(".storage-tree-file-detail").first()).toContainText(
+      "平台 SQLite 主文件",
+    );
+    await expect(storageTree.locator(".storage-tree-file-detail").first()).toContainText(
+      "实际位置",
+    );
+    await expect(storageTree.locator(".storage-tree-file-detail").first()).toContainText(
+      "实际占用",
+    );
   }
 
   await page.getByRole("link", { name: "数据保留" }).click();

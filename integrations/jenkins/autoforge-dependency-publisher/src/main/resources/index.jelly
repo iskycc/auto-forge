@@ -1,4 +1,7 @@
 <?jelly escape-by-default='true'?>
 <div>
   Replaces the dependency archive assigned to an AutoForge project version from Jenkins Pipeline.
+  Required parameters: <code>baseUrl</code>, <code>apiKey</code>, <code>projectId</code>,
+  <code>version</code>, <code>dependencyUrl</code>, <code>sha256</code>, and <code>sizeBytes</code>.
+  Optional parameters: <code>fileName</code> and <code>archiveFormat</code> (ZIP defaults apply).
 </div>
