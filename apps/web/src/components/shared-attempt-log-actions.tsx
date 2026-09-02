@@ -3,7 +3,8 @@
 import type { RunAttempt } from "@autoforge/domain";
 import { isTerminalAttemptStatus } from "@autoforge/domain";
 import { Radio } from "lucide-react";
-import { useState } from "react";
+import { useRouter } from "next/navigation";
+import { useCallback, useState } from "react";
 
 import { AttemptLogViewer } from "@/components/attempt-log-viewer";
 import { AttemptRerunAction, type LiveLogAttempt } from "@/components/attempt-rerun-action";
@@ -17,8 +18,10 @@ export function SharedAttemptLogActions({
   attempt: Pick<RunAttempt, "id" | "status">;
   canCreateRuns: boolean;
 }) {
+  const router = useRouter();
   const [openAttempt, setOpenAttempt] = useState<LiveLogAttempt | null>(null);
   const terminal = isTerminalAttemptStatus(attempt.status);
+  const refreshExecutionHistory = useCallback(() => router.refresh(), [router]);
   return (
     <div className="shared-attempt-log-actions">
       {!terminal ? (
@@ -32,7 +35,11 @@ export function SharedAttemptLogActions({
         </Button>
       ) : null}
       {terminal && canCreateRuns ? (
-        <AttemptRerunAction attemptId={attempt.id} onOpenLiveLogs={setOpenAttempt} />
+        <AttemptRerunAction
+          attemptId={attempt.id}
+          onOpenLiveLogs={setOpenAttempt}
+          onRerunAttemptAvailable={refreshExecutionHistory}
+        />
       ) : null}
       {openAttempt ? (
         <AttemptLogViewer

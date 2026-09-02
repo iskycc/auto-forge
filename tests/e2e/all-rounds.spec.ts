@@ -1226,6 +1226,33 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
   expect(publicLogPage.url()).toContain(
     `attempt=${encodeURIComponent(diagnosticClaim.assignment.attemptId)}`,
   );
+
+  // 从公开日志页再次执行后，新记录必须在同一页面自动进入执行历史，不能依赖手动刷新。
+  const publicPageRerunResponsePromise = publicLogPage.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      /^\/api\/v1\/run-attempts\/[^/]+\/rerun$/u.test(new URL(response.url()).pathname),
+  );
+  await publicLogPage.getByRole("button", { name: "执行此用例", exact: true }).click();
+  const publicPageRerunResponse = await publicPageRerunResponsePromise;
+  expect(publicPageRerunResponse.status()).toBe(201);
+  expect((await postHeartbeat(page, identity, 0)).status()).toBe(200);
+  const publicPageRerunClaim = await claimAssignment(page, identity);
+  const latestManualRerunLink = executionHistory.getByRole("link", {
+    name: /手动重跑.*等待执行/u,
+  });
+  await expect(latestManualRerunLink).toBeVisible({ timeout: 10_000 });
+  await expect(latestManualRerunLink).toContainText(`by ${E2E_ADMIN_USERNAME}（本地）`);
+  await expectUiIntegrity(publicLogPage);
+  await captureUi(publicLogPage, "shared-diagnostic-history-live-update");
+  expect(publicLogPage.context().pages()).toHaveLength(openPageCount);
+  await completeAttempt(page, identity, publicPageRerunClaim, {
+    completionId: "e2e-public-page-diagnostic-rerun",
+    status: "succeeded",
+    resultCode: "TESTNG_SUCCEEDED",
+    summary: "public page diagnostic rerun passed",
+  });
+  expect((await postHeartbeat(page, identity, 0)).status()).toBe(200);
   await publicLogPage.close();
 
   await page.goto(`/run-batches/${encodeURIComponent(failedSourceBatch.id)}`);

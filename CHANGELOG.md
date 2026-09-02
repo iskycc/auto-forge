@@ -4,6 +4,13 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## 1.8.11 - 2026-09-02
+
+### Fixed
+
+- 从永久公开日志页重新执行用例后，新生成的手动重跑 attempt 会自动刷新到当前页面的
+  “执行历史”侧栏，不再需要用户手动刷新浏览器；仍在当前标签页内切换并保留实时日志入口。
+
 ## 1.8.10 - 2026-09-02
 
 ### Changed

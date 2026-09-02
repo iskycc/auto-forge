@@ -13,10 +13,13 @@ export function AttemptRerunAction({
   attemptId,
   compact = false,
   onOpenLiveLogs,
+  onRerunAttemptAvailable,
 }: {
   attemptId: string;
   compact?: boolean;
   onOpenLiveLogs?: (attempt: LiveLogAttempt) => void;
+  /** 新 attempt 持久化后通知宿主刷新其执行历史快照。 */
+  onRerunAttemptAvailable?: (attempt: LiveLogAttempt) => void;
 }) {
   const toast = useToast();
   const [pending, setPending] = useState(false);
@@ -24,7 +27,7 @@ export function AttemptRerunAction({
   const [liveAttempt, setLiveAttempt] = useState<LiveLogAttempt | null>(null);
 
   useEffect(() => {
-    if (!trackingBatchId || liveAttempt || !onOpenLiveLogs) return;
+    if (!trackingBatchId || liveAttempt || (!onOpenLiveLogs && !onRerunAttemptAvailable)) return;
     let disposed = false;
     let timer: number | undefined;
     const poll = async (): Promise<void> => {
@@ -40,6 +43,7 @@ export function AttemptRerunAction({
         if (disposed) return;
         if (target.attempt) {
           setLiveAttempt(target.attempt);
+          onRerunAttemptAvailable?.(target.attempt);
           toast.success("手动执行已经调度，可以查看实时日志。");
           return;
         }
@@ -58,7 +62,7 @@ export function AttemptRerunAction({
       disposed = true;
       if (timer !== undefined) window.clearTimeout(timer);
     };
-  }, [liveAttempt, onOpenLiveLogs, toast, trackingBatchId]);
+  }, [liveAttempt, onOpenLiveLogs, onRerunAttemptAvailable, toast, trackingBatchId]);
 
   async function rerunCase(): Promise<void> {
     setPending(true);
@@ -72,6 +76,7 @@ export function AttemptRerunAction({
       const target = (await response.json()) as CaseLogRerunTargetResponse;
       setTrackingBatchId(target.batchId);
       setLiveAttempt(target.attempt);
+      if (target.attempt) onRerunAttemptAvailable?.(target.attempt);
       toast.info(
         target.attempt
           ? "手动执行已经调度，可以查看实时日志。"
