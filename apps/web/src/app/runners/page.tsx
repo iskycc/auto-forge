@@ -24,6 +24,7 @@ import { runBatchStatusLabel } from "@/lib/run-batch-presentation";
 import { Button, Input, Select } from "@/components/ui";
 import Link from "next/link";
 import { formatPlatformDateTime } from "@/lib/platform-date-time";
+import { runnerControlPlaneUrl } from "@/lib/platform-configuration";
 
 export const dynamic = "force-dynamic";
 
@@ -156,7 +157,7 @@ export default async function RunnersPage({
       </section>
       {canManage ? (
         <RunnerAgentInstaller
-          controlPlaneUrl={services.configurationStore.read().web.publicBaseUrl}
+          controlPlaneUrl={runnerControlPlaneUrl(services.configurationStore.read().web)}
           linkedRunners={runners.map((runner) => ({
             id: runner.id,
             labels: runner.labels,

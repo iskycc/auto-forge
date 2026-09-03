@@ -14,7 +14,7 @@ class SuiteConfigurationLoaderTest {
   @Test
   void readsFirstTwoMeaningfulLinesAndAllowsExplicitOverrides() throws IOException {
     Path configuration = temporaryDirectory.resolve("adapter.conf");
-    Files.writeString(
+    Utf8TestIO.write(
         configuration, "# names\n\nConfigured suite\nConfigured test\nIgnored value\n");
 
     SuiteConfiguration loaded =

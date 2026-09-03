@@ -186,6 +186,26 @@ describe("failure analysis performance", () => {
       expect(claimsPage.nextCursor).toBeTruthy();
       expect(claimsDurationMs).toBeLessThan(500);
       recordMetric("failure-analysis-claims-page", claimsDurationMs, { claims: RUN_COUNT });
+
+      const claimSearchStartedAt = performance.now();
+      const searchedClaims = await repository.listClaims({
+        projectId: PROJECT_ID,
+        projectVersionId: VERSION_ID,
+        claimantId: "performance-analyst",
+        batchId: BATCH_ID,
+        query: "needle-99999",
+        sort: "class_path",
+        direction: "asc",
+        limit: 50,
+      });
+      const claimSearchDurationMs = performance.now() - claimSearchStartedAt;
+      expect(searchedClaims.items).toEqual([
+        expect.objectContaining({ caseName: "Failure case 099999" }),
+      ]);
+      expect(claimSearchDurationMs).toBeLessThan(500);
+      recordMetric("failure-analysis-claims-search", claimSearchDurationMs, {
+        claims: RUN_COUNT,
+      });
     } finally {
       handle.close();
     }

@@ -180,7 +180,7 @@ export function RunnerAgentInstaller({
       {!controlPlaneUrl ? (
         <div className="inline-notice warning-notice" role="status">
           <ShieldAlert size={18} />
-          <span>请先在“平台配置”中设置执行机可访问的 HTTP 或 HTTPS 地址，保存并重启主平台。</span>
+          <span>请先在“平台配置”中设置内部访问地址或外部访问地址。</span>
         </div>
       ) : (
         <div className="runner-control-url">
@@ -199,7 +199,7 @@ export function RunnerAgentInstaller({
           <ShieldAlert size={18} />
           <span>
             当前控制面地址仅本机可达。安装到其他主机前，请在“平台配置”中设置 Runner
-            可访问的外部地址并重启平台。
+            可访问的内部地址。
           </span>
         </div>
       ) : null}

@@ -2,6 +2,7 @@ package com.autoforge.adapters.cotest;
 
 import java.io.PrintStream;
 import java.lang.reflect.Method;
+import java.util.Collections;
 import java.util.List;
 
 final class ReflectiveTestNgRunner {
@@ -34,9 +35,13 @@ final class ReflectiveTestNgRunner {
 
     Object xmlClass = xmlClassClass.getConstructor(Class.class).newInstance(testClass);
     ReflectionSupport.invoke(
-        xmlTestClass.getMethod("setClasses", List.class), xmlTest, List.of(xmlClass));
+        xmlTestClass.getMethod("setClasses", List.class),
+        xmlTest,
+        Collections.singletonList(xmlClass));
     ReflectionSupport.invoke(
-        testNgClass.getMethod("setXmlSuites", List.class), testNg, List.of(xmlSuite));
+        testNgClass.getMethod("setXmlSuites", List.class),
+        testNg,
+        Collections.singletonList(xmlSuite));
     ReflectionSupport.invoke(
         testNgClass.getMethod("setOutputDirectory", String.class),
         testNg,

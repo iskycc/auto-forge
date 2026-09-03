@@ -32,6 +32,7 @@ type CommonConfig = {
     hostname: string;
     port: number;
     publicBaseUrl?: string;
+    runnerBaseUrl?: string;
   };
   scheduler: {
     maximumCpuUtilizationPercent: number;
@@ -98,6 +99,7 @@ export function loadAppConfig(options: LoadPlatformConfigurationOptions = {}): A
       hostname: persisted.web.hostname,
       port: persisted.web.port,
       ...(persisted.web.publicBaseUrl ? { publicBaseUrl: persisted.web.publicBaseUrl } : {}),
+      ...(persisted.web.runnerBaseUrl ? { runnerBaseUrl: persisted.web.runnerBaseUrl } : {}),
     },
     scheduler: { ...persisted.scheduler },
   };

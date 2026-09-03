@@ -112,6 +112,7 @@ export default async function PlatformSettingsPage({
       ) : null}
       {activeSection === "storage" ? (
         <StorageInventory
+          canManage={hasPermission(identity, "settings.manage")}
           {...(storageCategory ? { initialCategory: storageCategory } : {})}
           initialQuery={parameters.query?.slice(0, 240) ?? ""}
           key={`${storageCategory ?? "all"}:${parameters.query ?? ""}`}

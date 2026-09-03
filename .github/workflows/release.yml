@@ -67,10 +67,15 @@ jobs:
         with:
           ref: ${{ needs.prepare.outputs.tag }}
 
-      - name: Build Adapter JAR
-        run: >-
-          mvn --batch-mode --no-transfer-progress
-          --file adapters/cotest-testng/pom.xml clean verify
+      - name: Set up Java 8 for Adapter
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          distribution: temurin
+          java-version: "8"
+          cache: maven
+
+      - name: Build and verify Java 8 Adapter JAR
+        run: bash scripts/quality/test-cotest-adapter-java8.sh
 
       - name: Stage embedded Adapter
         run: >-

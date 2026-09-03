@@ -35,6 +35,7 @@ export function PlatformInitialization({ initial }: { initial: PlatformConfigura
             ...(stringValue(form, "publicBaseUrl")
               ? { publicBaseUrl: stringValue(form, "publicBaseUrl") }
               : {}),
+            runnerBaseUrl: stringValue(form, "runnerBaseUrl") || null,
           },
           limits: initial.limits,
           scheduler: initial.scheduler,
@@ -135,14 +136,24 @@ export function PlatformInitialization({ initial }: { initial: PlatformConfigura
               <small>与管理员创建使用同一个一次性令牌，不会写入日志。</small>
             </label>
             <label>
-              <span>执行机可访问地址</span>
+              <span>外部访问地址</span>
               <Input
                 defaultValue={initial.web.publicBaseUrl ?? ""}
                 name="publicBaseUrl"
+                placeholder="https://autoforge.example.com"
+                type="url"
+              />
+              <small>用于分享、导出和 Jenkins 链接；面向用户访问时建议使用 HTTPS。</small>
+            </label>
+            <label>
+              <span>内部访问地址（Runner）</span>
+              <Input
+                defaultValue={initial.web.runnerBaseUrl ?? ""}
+                name="runnerBaseUrl"
                 placeholder="http://10.20.30.10:3000"
                 type="url"
               />
-              <small>可信内网可用 HTTP/IP 直连；跨不可信网络应使用可信 HTTPS。</small>
+              <small>Agent 安装使用此地址；留空时回退到外部访问地址。</small>
             </label>
           </div>
           {mode === "full" ? (

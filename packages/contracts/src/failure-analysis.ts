@@ -168,6 +168,28 @@ export const completeFailureAnalysisInputSchema = z.object({
   caseIssueConfirmed: z.boolean().default(false),
 });
 
+export const lookupFailureAnalysisRerunProofsInputSchema = z.object({
+  projectId: z.string().min(1),
+  analysisIds: z.array(z.string().min(1)).min(1).max(100),
+});
+
+export const failureAnalysisRerunProofLookupItemSchema = z.discriminatedUnion("status", [
+  z.object({
+    analysisId: z.string().min(1),
+    status: z.literal("found"),
+    attemptId: z.string().min(1),
+    url: z.string().startsWith("/share/attempt-log/").max(2_048),
+  }),
+  z.object({
+    analysisId: z.string().min(1),
+    status: z.literal("missing"),
+  }),
+]);
+
+export const failureAnalysisRerunProofLookupResultSchema = z.object({
+  items: z.array(failureAnalysisRerunProofLookupItemSchema).min(1).max(100),
+});
+
 export const uploadFailureAnalysisEvidenceQuerySchema = z.object({
   projectId: z.string().min(1),
   analysisIds: z.array(z.string().min(1)).min(1).max(100),
@@ -185,3 +207,9 @@ export type FailureAnalysisHistoryItemView = z.infer<typeof failureAnalysisHisto
 export type FailureAnalysisHistoryPageView = z.infer<typeof failureAnalysisHistoryPageSchema>;
 export type ClaimFailureAnalysisResult = z.infer<typeof claimFailureAnalysisResultSchema>;
 export type FailureAnalysisClaimReleaseView = z.infer<typeof failureAnalysisClaimReleaseSchema>;
+export type FailureAnalysisRerunProofLookupItem = z.infer<
+  typeof failureAnalysisRerunProofLookupItemSchema
+>;
+export type FailureAnalysisRerunProofLookupResult = z.infer<
+  typeof failureAnalysisRerunProofLookupResultSchema
+>;

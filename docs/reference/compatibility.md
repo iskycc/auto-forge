@@ -14,6 +14,10 @@ This source document is published as `COMPATIBILITY.md` at the root of every for
 | `0.9.x`       | `0.8.x`            | v1       | capability dependent     | upgrade recommended; incompatible capabilities are rejected before assignment |
 | `0.9.x`       | future protocol v2 | v2       | unknown                  | rejected with `RUNNER_PROTOCOL_UNSUPPORTED`                                   |
 
+从 `v1.8.19` 起，内置 CoTest Adapter 下调为 Java 8 字节码，并由 JDK 8 实际编译；同一个 Adapter
+验证 JDK 8 + TestNG 6.14.3/7.5.1 与 JDK 21 + TestNG 7.11.0。表中的历史版本仍保持原有 Java 11+
+基线。项目自带运行时必须保证 JDK、TestNG 和业务依赖彼此兼容，平台不会自动降级 TestNG。
+
 The installer always selects the Agent embedded in the running control-plane image. Credential rotation
 allows a 15-minute recovery overlap; it is not a protocol compatibility window. Database downgrade is
 not supported after new migrations are committed. Rollback therefore means restoring the pre-upgrade

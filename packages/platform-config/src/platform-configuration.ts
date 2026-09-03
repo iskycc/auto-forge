@@ -76,7 +76,15 @@ export const persistedPlatformConfigurationSchema = z
         .url()
         .max(2_048)
         .refine((value) => ["http:", "https:"].includes(new URL(value).protocol), {
-          message: "执行机可访问地址必须使用 HTTP 或 HTTPS。",
+          message: "外部访问地址必须使用 HTTP 或 HTTPS。",
+        })
+        .optional(),
+      // 旧配置缺失时 Runner 安装回退到 publicBaseUrl，无需升级迁移配置文件。
+      runnerBaseUrl: z
+        .url()
+        .max(2_048)
+        .refine((value) => ["http:", "https:"].includes(new URL(value).protocol), {
+          message: "内部访问地址必须使用 HTTP 或 HTTPS。",
         })
         .optional(),
       publicDashboardRefreshSeconds: z.number().int().min(5).max(300),

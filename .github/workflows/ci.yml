@@ -57,6 +57,12 @@ jobs:
         with:
           go-version: 1.26.5
           cache-dependency-path: apps/runner-agent/go.mod
+      - name: Set up Java 8 for Adapter
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          distribution: temurin
+          java-version: "8"
+          cache: maven
       - name: Install locked dependencies
         run: |
           corepack enable
@@ -66,7 +72,20 @@ jobs:
           pnpm test
           pnpm test:integration
           pnpm test:performance
-          mvn --batch-mode --file adapters/cotest-testng/pom.xml test
+
+      - name: Build and verify Adapter on Java 8
+        run: bash scripts/quality/test-cotest-adapter-java8.sh
+
+      - name: Set up Java 21 for current TestNG compatibility
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+
+      - name: Verify Adapter with TestNG 7.11 and Groovy tools
+        run: |
+          mvn --batch-mode --no-transfer-progress --file adapters/cotest-testng/pom.xml -Dtestng.version=7.11.0 test
           bash scripts/quality/test-groovy-tools.sh
 
   jenkins-plugins:

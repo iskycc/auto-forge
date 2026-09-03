@@ -172,11 +172,54 @@ func TestPrepareCotestWorkspaceExtractsJDKAndJars(t *testing.T) {
 func TestLocateJavaHomeRejectsMultipleIndependentJDKs(t *testing.T) {
 	root := t.TempDir()
 	writeFixture(t, filepath.Join(root, "jdk8", "bin", "java"), []byte("jdk8"))
+	writeFixture(t, filepath.Join(root, "jdk8", "bin", "javac"), []byte("jdk8 compiler"))
 	writeFixture(t, filepath.Join(root, "jdk17", "bin", "java"), []byte("jdk17"))
+	writeFixture(t, filepath.Join(root, "jdk17", "bin", "javac"), []byte("jdk17 compiler"))
 
 	_, err := locateJavaHome(root)
 	if err == nil || !strings.Contains(err.Error(), "found 2") {
 		t.Fatalf("locateJavaHome() error = %v", err)
+	}
+	for _, expected := range []string{"jdk8", "jdk17"} {
+		if !strings.Contains(err.Error(), expected) {
+			t.Fatalf("locateJavaHome() error = %q, want candidate %q", err, expected)
+		}
+	}
+	if strings.Contains(err.Error(), root) {
+		t.Fatalf("locateJavaHome() error exposes extraction root: %q", err)
+	}
+}
+
+func TestLocateJavaHomeSelectsJDKCompilerHomeOverSiblingJRE(t *testing.T) {
+	root := t.TempDir()
+	writeFixture(t, filepath.Join(root, "jdk8", "bin", "java"), []byte("jdk-java"))
+	writeFixture(t, filepath.Join(root, "jdk8", "bin", "javac"), []byte("jdk-compiler"))
+	writeFixture(t, filepath.Join(root, "jre8", "bin", "java"), []byte("jre-java"))
+
+	home, err := locateJavaHome(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if home != filepath.Join(root, "jdk8") {
+		t.Fatalf("locateJavaHome() = %q, want %q", home, filepath.Join(root, "jdk8"))
+	}
+}
+
+func TestLocateJavaHomeExcludesRenamedNestedJREFromStrippedJDK(t *testing.T) {
+	root := t.TempDir()
+	writeFixture(t, filepath.Join(root, "stripped-jdk8", "bin", "java"), []byte("jdk-java"))
+	writeFixture(
+		t,
+		filepath.Join(root, "stripped-jdk8", "runtime", "jre8", "bin", "java"),
+		[]byte("embedded-jre-java"),
+	)
+
+	home, err := locateJavaHome(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if home != filepath.Join(root, "stripped-jdk8") {
+		t.Fatalf("locateJavaHome() = %q, want %q", home, filepath.Join(root, "stripped-jdk8"))
 	}
 }
 

@@ -4,6 +4,7 @@ import java.io.FileDescriptor;
 import java.io.FileOutputStream;
 import java.io.OutputStream;
 import java.io.PrintStream;
+import java.io.UnsupportedEncodingException;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
@@ -31,7 +32,12 @@ public final class AdapterMain {
   }
 
   static PrintStream utf8PrintStream(OutputStream destination) {
-    return new PrintStream(destination, true, StandardCharsets.UTF_8);
+    try {
+      return new PrintStream(destination, true, StandardCharsets.UTF_8.name());
+    } catch (UnsupportedEncodingException impossible) {
+      // Every Java implementation is required to provide UTF-8.
+      throw new IllegalStateException("The Java runtime does not provide UTF-8.", impossible);
+    }
   }
 
   static int run(String[] arguments, PrintStream output, PrintStream errorOutput) {

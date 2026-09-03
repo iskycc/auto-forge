@@ -91,6 +91,9 @@ function domainErrorStatus(code: string): number {
   if (code === "RATE_LIMITED") return 429;
   if (code === "RUNNER_AGENT_RESOURCE_UNAVAILABLE") return 503;
   if (code === "RUNTIME_ASSET_STORAGE_FULL") return 507;
+  if (code === "RUNTIME_ASSET_DELETE_FAILED" || code === "RUNTIME_ASSET_DELETE_INCONSISTENT") {
+    return 500;
+  }
   if (code === "LDAP_LOGIN_FINALIZATION_FAILED") return 500;
   if (
     code === "RUNNER_HOST_CONNECTION_FAILED" ||

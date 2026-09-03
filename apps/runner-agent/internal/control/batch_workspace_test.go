@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -334,6 +335,43 @@ func TestEnsureBatchJDKAcceptsJDK8EmbeddedJRE(t *testing.T) {
 		if string(content) != expected {
 			t.Fatalf("%s content = %q, want %q", relative, content, expected)
 		}
+	}
+}
+
+func TestEnsureBatchJDKAcceptsJDK8WithSiblingJRE(t *testing.T) {
+	batchDir := t.TempDir()
+	archivePath := filepath.Join(batchDir, "runtime-inputs", "jdk8.tar.gz")
+	writeTarGzipFixture(t, archivePath, []tarFixtureEntry{
+		{name: "jdk8/bin/java", content: "jdk-java"},
+		{name: "jdk8/bin/javac", content: "jdk-compiler"},
+		{name: "jre8/bin/java", content: "jre-java"},
+	})
+	input := ExecutionInput{
+		Kind:       "jdk-archive",
+		TargetPath: "runtime-inputs/jdk8.tar.gz",
+		SizeBytes:  fileSize(t, archivePath),
+	}
+
+	if err := ensureBatchJDK(batchDir, []ExecutionInput{input}, ResourceLimits{
+		DiskBytes: 1 << 20,
+		FileCount: 100,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for relative, expected := range map[string]string{
+		"runtime/jdk/bin/java":  "jdk-java",
+		"runtime/jdk/bin/javac": "jdk-compiler",
+	} {
+		content, err := os.ReadFile(filepath.Join(batchDir, filepath.FromSlash(relative)))
+		if err != nil {
+			t.Fatalf("read %s: %v", relative, err)
+		}
+		if string(content) != expected {
+			t.Fatalf("%s content = %q, want %q", relative, content, expected)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(batchDir, "runtime", "jre8", "bin", "java")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("sibling JRE must not be published with the selected JDK: %v", err)
 	}
 }
 

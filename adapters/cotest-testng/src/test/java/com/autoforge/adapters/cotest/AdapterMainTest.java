@@ -7,7 +7,6 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.PrintStream;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.jar.JarEntry;
@@ -25,7 +24,7 @@ class AdapterMainTest {
       output.print("中文 assertion message");
     }
 
-    assertEquals("中文 assertion message", bytes.toString(StandardCharsets.UTF_8));
+    assertEquals("中文 assertion message", Utf8TestIO.decode(bytes));
   }
 
   @Test
@@ -35,8 +34,8 @@ class AdapterMainTest {
     ByteArrayOutputStream errorOutput = new ByteArrayOutputStream();
 
     int exitCode;
-    try (PrintStream output = new PrintStream(standardOutput, true, StandardCharsets.UTF_8);
-        PrintStream errors = new PrintStream(errorOutput, true, StandardCharsets.UTF_8)) {
+    try (PrintStream output = AdapterMain.utf8PrintStream(standardOutput);
+        PrintStream errors = AdapterMain.utf8PrintStream(errorOutput)) {
       exitCode =
           AdapterMain.run(
               new String[] {
@@ -49,7 +48,7 @@ class AdapterMainTest {
               errors);
     }
 
-    String stdout = standardOutput.toString(StandardCharsets.UTF_8);
+    String stdout = Utf8TestIO.decode(standardOutput);
     assertEquals(AdapterMain.CASE_TIMEOUT_EXIT_CODE, exitCode, stdout);
     assertTrue(stdout.contains("TestCase Execution Timeout"), stdout);
   }
@@ -62,13 +61,13 @@ class AdapterMainTest {
             "cotest/auto/dataproviders/MM2DataProvider.class",
             "fixture/AdapterCase.class");
     Path classDataFile = temporaryDirectory.resolve("class-data.json");
-    Files.writeString(classDataFile, "{}\n");
+    Utf8TestIO.write(classDataFile, "{}\n");
     ByteArrayOutputStream standardOutput = new ByteArrayOutputStream();
     ByteArrayOutputStream errorOutput = new ByteArrayOutputStream();
 
     int exitCode;
-    try (PrintStream output = new PrintStream(standardOutput, true, StandardCharsets.UTF_8);
-        PrintStream errors = new PrintStream(errorOutput, true, StandardCharsets.UTF_8)) {
+    try (PrintStream output = AdapterMain.utf8PrintStream(standardOutput);
+        PrintStream errors = AdapterMain.utf8PrintStream(errorOutput)) {
       exitCode =
           AdapterMain.run(
               new String[] {
@@ -83,7 +82,7 @@ class AdapterMainTest {
               errors);
     }
 
-    assertEquals(0, exitCode, errorOutput.toString(StandardCharsets.UTF_8));
+    assertEquals(0, exitCode, Utf8TestIO.decode(errorOutput));
   }
 
   private Path createJarDirectory(String... fixtureClasses) throws IOException {
@@ -97,7 +96,7 @@ class AdapterMainTest {
           if (contents == null) {
             throw new IOException("Missing compiled test fixture: " + resourceName);
           }
-          contents.transferTo(archive);
+          Utf8TestIO.copy(contents, archive);
         }
         archive.closeEntry();
       }

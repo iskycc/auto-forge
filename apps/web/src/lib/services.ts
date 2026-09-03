@@ -81,6 +81,7 @@ import { LdapDirectory } from "./ldap-directory";
 import { JenkinsRebuildTransport } from "./jenkins-round-recovery";
 import { ScryptPasswordHasher } from "./password-hasher";
 import { StorageInventoryService } from "./storage-inventory";
+import { runnerControlPlaneUrl } from "./platform-configuration";
 import { MemoryRequestLimiter, RedisRequestLimiter, type RequestLimiter } from "./request-limiter";
 import { natsReconnectOptions, redisReconnectDelay } from "./resilient-connections";
 import { RunnerAgentInstaller } from "./runner-agent-installer";
@@ -566,7 +567,7 @@ async function createPlatformServices() {
   );
   const runnerAgentInstaller = new RunnerAgentInstaller({
     resources: runnerAgentResources,
-    controlPlaneUrl: () => configurationStore.read().web.publicBaseUrl,
+    controlPlaneUrl: () => runnerControlPlaneUrl(configurationStore.read().web),
     issueBootstrapToken: (replacementRunnerId?: string) =>
       runnerControl.issueBootstrapToken(replacementRunnerId),
   });

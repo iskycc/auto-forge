@@ -412,6 +412,14 @@ export class SqliteFailureAnalysisRepository implements FailureAnalysisRepositor
       where.push("claim.batch_id=?");
       parameters.push(input.batchId);
     }
+    const query = input.query?.trim().slice(0, 240);
+    if (query) {
+      where.push(
+        `LOWER(claim.class_name || ' ' || claim.case_name || ' ' || claim.failure_summary)
+         LIKE ? ESCAPE '\\'`,
+      );
+      parameters.push(`%${escapeSqliteLike(query.toLowerCase())}%`);
+    }
     if (!includeCompleted) where.push("claim.status<>'completed'");
     if (cursor) {
       const comparison = input.direction === "desc" ? "<" : ">";

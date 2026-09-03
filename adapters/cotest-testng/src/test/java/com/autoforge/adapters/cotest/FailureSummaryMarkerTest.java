@@ -12,7 +12,7 @@ class FailureSummaryMarkerTest {
   @Test
   void encodesMultilineChineseFailureAsOneAsciiLineWithoutLosingContent() {
     String summary =
-        "java.lang.AssertionError: 中文断言失败\n第二行详情：" + "预期与实际不一致；".repeat(80);
+        "java.lang.AssertionError: 中文断言失败\n第二行详情：" + repeat("预期与实际不一致；", 80);
 
     String marker = FailureSummaryMarker.encode(summary);
 
@@ -25,5 +25,13 @@ class FailureSummaryMarkerTest {
     assertEquals(
         summary,
         new String(Base64.getDecoder().decode(payload), StandardCharsets.UTF_8));
+  }
+
+  private static String repeat(String value, int count) {
+    StringBuilder repeated = new StringBuilder(value.length() * count);
+    for (int index = 0; index < count; index++) {
+      repeated.append(value);
+    }
+    return repeated.toString();
   }
 }

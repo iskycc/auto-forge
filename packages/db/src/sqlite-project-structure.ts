@@ -2,6 +2,7 @@ import type {
   CreateProjectRuntimeAssetRecord,
   CreateProjectVersionRecord,
   CreateTestStageRecord,
+  DeleteRuntimeAssetMetadataResult,
   ProjectStructureRepository,
 } from "@autoforge/application";
 import {
@@ -483,6 +484,30 @@ export class SqliteProjectStructureRepository implements ProjectStructureReposit
         this.handle.client.prepare("DELETE FROM project_runtime_assets WHERE id = ?").run(assetId);
       }
     })();
+  }
+
+  async deleteRuntimeAssetIfUnreferenced(
+    assetId: string,
+  ): Promise<DeleteRuntimeAssetMetadataResult> {
+    return retrySqliteLockContention(() => {
+      try {
+        return runSqliteWriteTransaction(this.handle, () => {
+          const exists = this.handle.client
+            .prepare("SELECT 1 FROM project_runtime_assets WHERE id = ?")
+            .get(assetId);
+          if (!exists) return { status: "not_found" };
+          const asset = this.findUnreferencedAsset(assetId);
+          if (!asset) return { status: "referenced" };
+          this.handle.client
+            .prepare("DELETE FROM project_runtime_assets WHERE id = ?")
+            .run(assetId);
+          return { status: "deleted", asset };
+        });
+      } catch (error) {
+        if (error instanceof DomainError) throw error;
+        throw mapStructureWriteError(error);
+      }
+    });
   }
 
   private updateVersionConfiguration(

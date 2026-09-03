@@ -21,7 +21,7 @@ final class SuiteConfiguration {
   }
 
   private static String requireName(String value, String kind) {
-    if (value == null || value.isBlank()) {
+    if (TextValues.isBlank(value)) {
       throw new IllegalArgumentException("The TestNG " + kind + " name must not be blank.");
     }
     return value;

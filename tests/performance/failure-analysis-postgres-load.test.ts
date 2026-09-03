@@ -254,10 +254,30 @@ if (!connectionString) {
         const claimsDurationMs = performance.now() - claimsStartedAt;
         expect(claimsPage.items).toHaveLength(50);
         expect(claimsPage.nextCursor).toBeTruthy();
-        expect(claimsDurationMs).toBeLessThan(500);
         recordMetric("postgres-failure-analysis-claims-page", claimsDurationMs, {
           claims: RUN_COUNT,
         });
+
+        const claimSearchStartedAt = performance.now();
+        const searchedClaims = await repository.listClaims({
+          projectId: PROJECT_ID,
+          projectVersionId: VERSION_ID,
+          claimantId: `performance-analyst-${suffix}`,
+          batchId,
+          query: "needle-99999",
+          sort: "class_path",
+          direction: "asc",
+          limit: 50,
+        });
+        const claimSearchDurationMs = performance.now() - claimSearchStartedAt;
+        expect(searchedClaims.items).toEqual([
+          expect.objectContaining({ caseName: "Failure case 099999" }),
+        ]);
+        expect(claimSearchDurationMs).toBeLessThan(500);
+        recordMetric("postgres-failure-analysis-claims-search", claimSearchDurationMs, {
+          claims: RUN_COUNT,
+        });
+        expect(claimsDurationMs).toBeLessThan(500);
       } finally {
         await handle?.close();
         if (schemaCreated) await adminHandle.pool.query(`DROP SCHEMA ${schemaName} CASCADE`);

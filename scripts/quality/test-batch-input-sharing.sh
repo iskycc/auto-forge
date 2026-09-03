@@ -52,6 +52,7 @@ prepare_jdk_archive() {
   local java_home
   java_home="$(dirname -- "$(dirname -- "${java_executable}")")"
   local runtime_directory="${acceptance_directory}/autoforge-test-jdk"
+  local sibling_jre_directory="${acceptance_directory}/autoforge-test-jre8"
   # 只打包验收所需的模块化运行时。完整 hosted-runner JDK 包含编译器、jmods、
   # 源码与调试资产，既超过执行磁盘预算，也会掩盖真正的共享运行时行为。
   nice -n 10 jlink \
@@ -61,11 +62,17 @@ prepare_jdk_archive() {
     --no-header-files \
     --no-man-pages \
     --output "${runtime_directory}"
+  # 模拟企业内部常见的 JDK 8 重打包：完整 JDK 与另一个命名的 JRE 并列。
+  # javac 是选择 JDK 根目录的结构特征；并列 JRE 不应被发布到 attempt 工作区。
+  install -m 0755 "${java_home}/bin/javac" "${runtime_directory}/bin/javac"
+  mkdir -p "${sibling_jre_directory}/bin"
+  install -m 0755 "${java_home}/bin/java" "${sibling_jre_directory}/bin/java"
   E2E_BATCH_SHARE_JDK_ARCHIVE="${acceptance_directory}/autoforge-test-jdk.tar.gz"
   nice -n 10 tar --create --gzip --format=ustar \
     --file "${E2E_BATCH_SHARE_JDK_ARCHIVE}" \
     --directory "${acceptance_directory}" \
-    "$(basename -- "${runtime_directory}")"
+    "$(basename -- "${runtime_directory}")" \
+    "$(basename -- "${sibling_jre_directory}")"
   export E2E_BATCH_SHARE_JDK_ARCHIVE
 }
 

@@ -72,10 +72,12 @@ describe("storage inventory", () => {
       name: "jdk-1.zip",
       logicalPath: `objects/${jdkObjectKey}`,
       location: "data-directory",
+      runtimeAssetId: "jdk-1",
     });
     expect(items.find((item) => item.category === "dependency")).toMatchObject({
       allocatedBytes: 0,
       location: "external-reference",
+      runtimeAssetId: "dependency-url",
       storagePath: "https://assets.example.test/dependencies.zip?[查询参数已隐藏]",
     });
     const firstPage = await inventory.list({ limit: 2 });
@@ -144,6 +146,7 @@ describe("storage inventory", () => {
           allocatedBytes: 4096,
           createdAt: "2026-09-01T00:00:00.000Z",
           modifiedAt: "2026-09-01T00:00:00.000Z",
+          runtimeAssetId: "dependency-2",
         }),
         expect.objectContaining({ category: "artifact", location: "object-store" }),
         expect.objectContaining({
@@ -152,6 +155,7 @@ describe("storage inventory", () => {
           allocatedBytes: 0,
           createdAt: "2026-09-01T00:00:00.000Z",
           modifiedAt: "2026-09-01T00:00:00.000Z",
+          runtimeAssetId: "jdk-url",
         }),
       ]),
     );

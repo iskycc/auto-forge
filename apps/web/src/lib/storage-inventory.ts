@@ -31,6 +31,7 @@ export type StorageInventoryQuery = {
 export class StorageInventoryService {
   private summaryCache: { expiresAt: number; value: StorageInventorySummary } | undefined;
   private summaryInFlight: Promise<StorageInventorySummary> | undefined;
+  private summaryGeneration = 0;
 
   constructor(
     private readonly options: {
@@ -47,7 +48,7 @@ export class StorageInventoryService {
 
   async list(input: StorageInventoryQuery): Promise<StorageInventoryPage> {
     assertQuery(input);
-    if (input.refresh) this.summaryCache = undefined;
+    if (input.refresh) this.invalidateSummary();
     const cursor = input.cursor ? decodeCursor(input.cursor) : undefined;
     const items: InventoryEntry[] = [];
     for await (const entry of this.entries(cursor)) {
@@ -64,17 +65,27 @@ export class StorageInventoryService {
     };
   }
 
+  invalidateSummary(): void {
+    this.summaryGeneration += 1;
+    this.summaryCache = undefined;
+    this.summaryInFlight = undefined;
+  }
+
   private async summary(): Promise<StorageInventorySummary> {
     const now = Date.now();
     if (this.summaryCache && this.summaryCache.expiresAt > now) return this.summaryCache.value;
     if (this.summaryInFlight) return this.summaryInFlight;
-    this.summaryInFlight = this.buildSummary();
+    const generation = this.summaryGeneration;
+    const summaryInFlight = this.buildSummary();
+    this.summaryInFlight = summaryInFlight;
     try {
-      const value = await this.summaryInFlight;
-      this.summaryCache = { expiresAt: now + SUMMARY_CACHE_MS, value };
+      const value = await summaryInFlight;
+      if (generation === this.summaryGeneration) {
+        this.summaryCache = { expiresAt: now + SUMMARY_CACHE_MS, value };
+      }
       return value;
     } finally {
-      this.summaryInFlight = undefined;
+      if (this.summaryInFlight === summaryInFlight) this.summaryInFlight = undefined;
     }
   }
 
@@ -292,6 +303,7 @@ function localInventoryItem(
     modifiedAt: file.modifiedAt,
     ...(runBatchId ? { runBatchId } : {}),
     ...(projectIdFromObjectKey(objectKey) ? { projectId: projectIdFromObjectKey(objectKey) } : {}),
+    ...(asset ? { runtimeAssetId: asset.id } : {}),
     ...(classification.detail ? { detail: classification.detail } : {}),
   };
 }
@@ -318,6 +330,7 @@ function objectInventoryItem(
     ...(projectIdFromObjectKey(object.objectKey)
       ? { projectId: projectIdFromObjectKey(object.objectKey) }
       : {}),
+    ...(asset ? { runtimeAssetId: asset.id } : {}),
     ...(classification.detail ? { detail: classification.detail } : {}),
   };
 }
@@ -335,6 +348,7 @@ function externalInventoryItem(asset: ProjectRuntimeAsset): StorageInventoryItem
     createdAt: asset.createdAt,
     modifiedAt: asset.createdAt,
     projectId: asset.projectId,
+    runtimeAssetId: asset.id,
     detail: asset.kind === "jdk" ? "外部 JDK 包（平台未保存文件）" : "外部依赖包（平台未保存文件）",
   };
 }

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import type { ProjectVersion } from "@autoforge/domain";
+import type { ProjectRuntimeAsset, ProjectVersion } from "@autoforge/domain";
 
 import { ProjectStructureService } from "../src/manage-project-structure";
 import type { JarObjectStorePort, ProjectStructureRepository } from "../src/ports";
@@ -157,6 +157,80 @@ describe("version dependency publication", () => {
   });
 });
 
+describe("storage runtime asset deletion", () => {
+  it("deletes an unreferenced uploaded asset from metadata and object storage", async () => {
+    const asset = runtimeAsset("upload");
+    const structures = repositoryFake({ versions: [] });
+    structures.deleteRuntimeAssetIfUnreferenced.mockResolvedValue({ status: "deleted", asset });
+    const objectStore = { delete: vi.fn().mockResolvedValue(undefined) };
+    const service = new ProjectStructureService(
+      structures,
+      objectStore as unknown as JarObjectStorePort,
+      { now: () => new Date(timestamp) },
+      { next: () => "unused" },
+    );
+
+    await expect(service.deleteRuntimeAsset(asset.id)).resolves.toEqual(asset);
+    expect(objectStore.delete).toHaveBeenCalledWith(asset.objectKey);
+  });
+
+  it("deletes an unreferenced external registration without touching object storage", async () => {
+    const asset = runtimeAsset("url");
+    const structures = repositoryFake({ versions: [] });
+    structures.deleteRuntimeAssetIfUnreferenced.mockResolvedValue({ status: "deleted", asset });
+    const objectStore = { delete: vi.fn() };
+    const service = new ProjectStructureService(
+      structures,
+      objectStore as unknown as JarObjectStorePort,
+      { now: () => new Date(timestamp) },
+      { next: () => "unused" },
+    );
+
+    await expect(service.deleteRuntimeAsset(asset.id)).resolves.toEqual(asset);
+    expect(objectStore.delete).not.toHaveBeenCalled();
+  });
+
+  it("rejects referenced or missing assets without deleting a stored object", async () => {
+    const structures = repositoryFake({ versions: [] });
+    const objectStore = { delete: vi.fn() };
+    const service = new ProjectStructureService(
+      structures,
+      objectStore as unknown as JarObjectStorePort,
+      { now: () => new Date(timestamp) },
+      { next: () => "unused" },
+    );
+
+    structures.deleteRuntimeAssetIfUnreferenced.mockResolvedValueOnce({ status: "referenced" });
+    await expect(service.deleteRuntimeAsset("asset-in-use")).rejects.toMatchObject({
+      code: "RUNTIME_ASSET_DELETE_CONFLICT",
+    });
+    structures.deleteRuntimeAssetIfUnreferenced.mockResolvedValueOnce({ status: "not_found" });
+    await expect(service.deleteRuntimeAsset("asset-missing")).rejects.toMatchObject({
+      code: "RUNTIME_ASSET_NOT_FOUND",
+    });
+    expect(objectStore.delete).not.toHaveBeenCalled();
+  });
+
+  it("restores metadata when deleting the uploaded object fails", async () => {
+    const asset = runtimeAsset("upload");
+    const structures = repositoryFake({ versions: [] });
+    structures.deleteRuntimeAssetIfUnreferenced.mockResolvedValue({ status: "deleted", asset });
+    structures.createRuntimeAsset.mockResolvedValue(asset);
+    const objectStore = { delete: vi.fn().mockRejectedValue(new Error("storage unavailable")) };
+    const service = new ProjectStructureService(
+      structures,
+      objectStore as unknown as JarObjectStorePort,
+      { now: () => new Date(timestamp) },
+      { next: () => "unused" },
+    );
+
+    await expect(service.deleteRuntimeAsset(asset.id)).rejects.toMatchObject({
+      code: "RUNTIME_ASSET_DELETE_FAILED",
+    });
+    expect(structures.createRuntimeAsset).toHaveBeenCalledWith(asset);
+  });
+});
+
 function repositoryFake(structure: { versions: ReturnType<typeof projectVersion>[] }) {
   return {
     list: vi.fn().mockResolvedValue({
@@ -168,16 +242,37 @@ function repositoryFake(structure: { versions: ReturnType<typeof projectVersion>
       updatedAt: timestamp,
     }),
     createVersion: vi.fn(),
+    createRuntimeAsset: vi.fn(),
     replaceVersionRuntimeAsset: vi.fn(),
     inheritAdapterConfiguration: vi.fn(),
     detachVersionRuntimeAsset: vi.fn(),
     deleteRuntimeAssetMetadata: vi.fn(),
+    deleteRuntimeAssetIfUnreferenced: vi.fn(),
   } as unknown as ProjectStructureRepository & {
     createVersion: ReturnType<typeof vi.fn>;
+    createRuntimeAsset: ReturnType<typeof vi.fn>;
     replaceVersionRuntimeAsset: ReturnType<typeof vi.fn>;
     inheritAdapterConfiguration: ReturnType<typeof vi.fn>;
     detachVersionRuntimeAsset: ReturnType<typeof vi.fn>;
     deleteRuntimeAssetMetadata: ReturnType<typeof vi.fn>;
+    deleteRuntimeAssetIfUnreferenced: ReturnType<typeof vi.fn>;
+  };
+}
+
+function runtimeAsset(sourceType: "upload" | "url"): ProjectRuntimeAsset {
+  return {
+    id: `asset-${sourceType}`,
+    projectId: "project-1",
+    kind: "jdk",
+    sourceType,
+    fileName: "jdk.zip",
+    ...(sourceType === "upload"
+      ? { objectKey: `projects/project-1/runtime-assets/asset-${sourceType}.zip` }
+      : { url: "https://artifacts.internal/jdk.zip" }),
+    sha256: "d".repeat(64),
+    sizeBytes: 1024,
+    archiveFormat: "zip",
+    createdAt: timestamp,
   };
 }
 

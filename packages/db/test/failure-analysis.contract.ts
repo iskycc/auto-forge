@@ -309,6 +309,44 @@ export function failureAnalysisContract(
           "example.AlphaTest",
           "example.ZetaTest",
         ]);
+        const classSearch = await repository.listClaims({
+          projectId,
+          projectVersionId,
+          claimantId: "analyst-a",
+          batchId,
+          query: "zetatest",
+          sort: "class_path",
+          direction: "asc",
+          limit: 10,
+        });
+        expect(classSearch.items).toEqual([
+          expect.objectContaining({ caseName: "Zeta", className: "example.ZetaTest" }),
+        ]);
+        const failureSearch = await repository.listClaims({
+          projectId,
+          projectVersionId,
+          claimantId: "analyst-a",
+          batchId,
+          query: "ASSERTION ALPHA",
+          sort: "class_path",
+          direction: "asc",
+          limit: 10,
+        });
+        expect(failureSearch.items).toEqual([
+          expect.objectContaining({ caseName: "Alpha", failureSummary: "Assertion alpha" }),
+        ]);
+        await expect(
+          repository.listClaims({
+            projectId,
+            projectVersionId,
+            claimantId: "analyst-a",
+            batchId,
+            query: "not-present",
+            sort: "class_path",
+            direction: "asc",
+            limit: 10,
+          }),
+        ).resolves.toEqual({ items: [] });
         const reverseFailureOrder = await repository.listClaims({
           projectId,
           projectVersionId,

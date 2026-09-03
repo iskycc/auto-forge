@@ -15328,6 +15328,13 @@ button.icon-button:disabled {
   align-content: start;
 }
 
+.storage-tree-file-actions {
+  display: flex;
+  justify-content: flex-end;
+  border-top: 1px solid var(--color-border);
+  padding-top: 10px;
+}
+
 .storage-sqlite-components {
   overflow: hidden;
   border: 1px solid var(--color-border);
@@ -16554,6 +16561,43 @@ button.icon-button:disabled {
   margin-left: auto;
   color: inherit;
   font-weight: 700;
+}
+
+.failure-analysis-proof-lookup {
+  display: grid !important;
+  grid-template-columns: max-content minmax(0, 1fr);
+  align-items: center !important;
+  gap: 8px !important;
+}
+
+.failure-analysis-proof-lookup-result {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+}
+
+.failure-analysis-proof-lookup-result a,
+.failure-analysis-proof-lookup-result > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border-radius: var(--radius-control);
+  padding: 6px 8px;
+  font-size: var(--font-size-caption);
+  font-weight: 700;
+}
+
+.failure-analysis-proof-lookup-result a,
+.failure-analysis-proof-found {
+  background: var(--color-success-soft);
+  color: var(--color-success);
+}
+
+.failure-analysis-proof-missing {
+  background: var(--color-warning-soft);
+  color: var(--color-warning);
 }
 
 .failure-analysis-proof-gallery {

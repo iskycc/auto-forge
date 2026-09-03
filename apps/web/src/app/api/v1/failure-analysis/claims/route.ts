@@ -16,6 +16,7 @@ const querySchema = z.object({
   projectId: z.string().min(1),
   projectVersionId: z.string().min(1).optional(),
   batchId: z.string().min(1).optional(),
+  query: z.string().max(240).optional(),
   sort: failureAnalysisSortSchema.default("class_path"),
   direction: z.enum(["asc", "desc"]).default("asc"),
   completionOrder: failureAnalysisCompletionOrderSchema.default("pending_first"),
@@ -42,6 +43,7 @@ export async function GET(request: Request): Promise<NextResponse> {
       limit: input.limit,
       ...(input.projectVersionId ? { projectVersionId: input.projectVersionId } : {}),
       ...(input.batchId ? { batchId: input.batchId } : {}),
+      ...(input.query ? { query: input.query } : {}),
       ...(input.cursor ? { cursor: input.cursor } : {}),
     });
     return NextResponse.json(failureAnalysisClaimPageSchema.parse(page), {

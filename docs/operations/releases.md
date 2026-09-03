@@ -48,7 +48,11 @@ Release 根目录同时包含 `release-manifest.json`、`SHA256SUMS`、Ed25519 �
 `SHA256SUMS.sig` 和 `release-signing-public-key.pem`。GitHub 的构建来源证明绑定
 `SHA256SUMS` 中记录的全部资产摘要，metadata 包内的文件由该归档摘要传递保护。
 
-后端镜像内同时包含可校验的 CoTest Adapter JAR。正式 Release 不提供 JDK/TestNG 工具链资产；管理员在项目设置中上传 JDK 与完整依赖 JAR 压缩包，或登记 Runner 可访问的内网 HTTP(S) 链接、精确大小和 SHA-256。部署包仍生成对应的 SPDX JSON SBOM。
+后端镜像内同时包含可校验的 CoTest Adapter JAR。该 JAR 由发布流水线固定使用 JDK 8 编译并验证
+Java 8 字节码，同时在 CI 中复验 JDK 21 + TestNG 7.11.0；不为不同 JDK 重复发布 Adapter。
+正式 Release 不提供 JDK/TestNG 工具链资产；管理员在项目设置中上传彼此兼容的 JDK 与完整依赖
+JAR 压缩包，或登记 Runner 可访问的内网 HTTP(S) 链接、精确大小和 SHA-256。部署包仍生成对应的
+SPDX JSON SBOM。
 
 ## 离线校验与启动
 

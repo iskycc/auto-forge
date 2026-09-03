@@ -139,6 +139,11 @@ export type CreateTestStageRecord = {
 
 export type CreateProjectRuntimeAssetRecord = ProjectRuntimeAsset;
 
+export type DeleteRuntimeAssetMetadataResult =
+  | { status: "deleted"; asset: ProjectRuntimeAsset }
+  | { status: "referenced" }
+  | { status: "not_found" };
+
 export interface ProjectStructureRepository {
   list(projectId: string): Promise<ProjectStructure>;
   listRuntimeAssetsPage(input: {
@@ -183,6 +188,7 @@ export interface ProjectStructureRepository {
     orphanedAsset?: ProjectRuntimeAsset;
   }>;
   deleteRuntimeAssetMetadata(assetId: string): Promise<void>;
+  deleteRuntimeAssetIfUnreferenced(assetId: string): Promise<DeleteRuntimeAssetMetadataResult>;
   getAdapterConfiguration(
     projectId: string,
     projectVersionId?: string,
@@ -1665,6 +1671,7 @@ export interface FailureAnalysisRepository {
     projectVersionId?: string;
     claimantId: string;
     batchId?: string;
+    query?: string;
     sort: FailureAnalysisSort;
     direction: "asc" | "desc";
     completionOrder?: FailureAnalysisCompletionOrder;

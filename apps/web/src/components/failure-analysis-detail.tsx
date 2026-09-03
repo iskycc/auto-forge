@@ -10,7 +10,10 @@ import Link from "next/link";
 import { useState } from "react";
 
 import { FailureAnalysisExportButton } from "@/components/failure-analysis-export-button";
-import { FailureAnalysisWorkspace } from "@/components/failure-analysis-workspace";
+import {
+  FailureAnalysisWorkspace,
+  type FailureAnalysisWorkspaceFilters,
+} from "@/components/failure-analysis-workspace";
 
 export function FailureAnalysisDetail({
   batch,
@@ -19,6 +22,7 @@ export function FailureAnalysisDetail({
   projectVersionId,
   initialCandidatePage,
   initialClaimPage,
+  initialFilters,
   initialMyClaimCount,
   initialView,
 }: {
@@ -28,6 +32,7 @@ export function FailureAnalysisDetail({
   projectVersionId: string;
   initialCandidatePage: FailureAnalysisCandidatePage | null | undefined;
   initialClaimPage: { items: FailureAnalysisClaimView[]; nextCursor?: string } | undefined;
+  initialFilters: FailureAnalysisWorkspaceFilters;
   initialMyClaimCount: number;
   initialView: "claim" | "workbench";
 }) {
@@ -70,6 +75,7 @@ export function FailureAnalysisDetail({
         initialCandidatePage={initialCandidatePage}
         initialBatchId={batch.id}
         initialClaimPage={initialClaimPage}
+        initialFilters={initialFilters}
         initialMyClaimCount={initialMyClaimCount}
         initialView={initialView}
         onClaimCountDelta={(delta) => setClaimedRuns((current) => Math.max(0, current + delta))}

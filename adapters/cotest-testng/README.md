@@ -6,14 +6,19 @@
 
 ## 构建
 
-要求 JDK 11 或更高版本和 Maven 3.9：
+正式 Adapter 必须使用 JDK 8 和 Maven 3.9 构建。仓库提供的校验脚本会拒绝其他构建 JDK，执行
+全部模块测试，并逐个确认产物 class 的 major version 为 Java 8 的 `52`：
 
 ```bash
-mvn clean verify
+JAVA_HOME=/opt/approved-jdk8 \
+PATH=/opt/approved-jdk8/bin:$PATH \
+bash scripts/quality/test-cotest-adapter-java8.sh
 ```
 
 可执行 JAR 输出到 `target/cotest-testng-adapter-0.1.0-SNAPSHOT.jar`。生产代码没有第三方编译或
-运行时依赖；JUnit 和 TestNG 只用于模块测试，不会进入产物。
+运行时依赖；JUnit 和 TestNG 只用于模块测试，不会进入产物。Java 8 构建使用 TestNG 6.14.3
+和 7.5.1 验证旧运行时，CI 还会使用 JDK 21 + TestNG 7.11.0 复验当前基线，因此只发布一个
+Adapter，Runner 不需要按 JDK 版本选择不同 JAR。
 
 ## 准备运行目录
 
@@ -31,7 +36,7 @@ Adapter 不会访问网络或自动补装缺失依赖。
 
 ## 执行
 
-使用管理员准备的 JDK 启动：
+使用管理员准备的 JDK 8 或更高版本启动；依赖目录中的 TestNG 及业务依赖也必须兼容该 JDK：
 
 ```bash
 /opt/approved-jdk/bin/java \

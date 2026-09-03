@@ -27,19 +27,23 @@ const schedulerConfigurationSchema = z.object({
   priorityAgingIntervalMinutes: z.number().int().min(1).max(1_440),
 });
 
+const platformHttpBaseUrlSchema = z
+  .url()
+  .max(2_048)
+  .refine((value) => ["http:", "https:"].includes(new URL(value).protocol), {
+    message: "访问地址必须使用 HTTP 或 HTTPS。",
+  });
+
 const platformWebConfigurationInputSchema = z.object({
   hostname: z.string().trim().min(1).max(255),
   port: z.number().int().min(1).max(65_535),
   // Optional on the v1 write contract so older setup clients remain compatible.
   // The application merge keeps the current persisted value when omitted.
   timeZone: platformTimeZoneSchema.optional(),
-  publicBaseUrl: z
-    .url()
-    .max(2_048)
-    .refine((value) => ["http:", "https:"].includes(new URL(value).protocol), {
-      message: "执行机可访问地址必须使用 HTTP 或 HTTPS。",
-    })
-    .optional(),
+  publicBaseUrl: platformHttpBaseUrlSchema.optional(),
+  // Optional so older setup and administration clients remain compatible.
+  // null explicitly clears the value; omission preserves it during a legacy-client write.
+  runnerBaseUrl: platformHttpBaseUrlSchema.nullable().optional(),
   publicDashboardRefreshSeconds: z.number().int().min(5).max(300),
 });
 
@@ -94,7 +98,10 @@ export type InitializePlatformConfigurationInput = z.infer<
 export const platformConfigurationViewSchema = updatePlatformConfigurationInputSchema
   .omit({ full: true })
   .extend({
-    web: platformWebConfigurationInputSchema.extend({ timeZone: platformTimeZoneSchema }),
+    web: platformWebConfigurationInputSchema.extend({
+      timeZone: platformTimeZoneSchema,
+      runnerBaseUrl: platformHttpBaseUrlSchema.optional(),
+    }),
     configurationFile: z.string().min(1),
     fullConfigured: z.boolean(),
     restartRequired: z.boolean(),

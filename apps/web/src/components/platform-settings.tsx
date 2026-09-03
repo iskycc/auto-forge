@@ -56,6 +56,7 @@ export function PlatformSettings({
             ...(stringValue(form, "publicBaseUrl")
               ? { publicBaseUrl: stringValue(form, "publicBaseUrl") }
               : {}),
+            runnerBaseUrl: stringValue(form, "runnerBaseUrl") || null,
             publicDashboardRefreshSeconds: numberValue(form, "publicDashboardRefreshSeconds"),
           },
           limits: {
@@ -142,7 +143,7 @@ export function PlatformSettings({
             <ServerCog size={22} aria-hidden="true" />
           </div>
           <p className="settings-note">
-            配置保存在平台数据目录中。平台时区、外部访问地址与产物收集保存后立即生效；进程监听、基础设施、容量和调度参数需要重启。
+            配置保存在平台数据目录中。平台时区、外部/内部访问地址与产物收集保存后立即生效；进程监听、基础设施、容量和调度参数需要重启。
           </p>
           <div className="settings-grid-form">
             <div className="deployment-mode-display" aria-label="部署模式">
@@ -195,8 +196,19 @@ export function PlatformSettings({
                 placeholder="http://10.20.30.10:3000"
                 type="url"
               />
-              <small>可信内网可使用 HTTP/IP 直连；跨不可信网络仍应使用 HTTPS。</small>
-              <small>保存后立即用于新生成的分享链接、Jenkins 链接与 Runner 安装。</small>
+              <small>用于新生成的分享链接、导出日志链接与 Jenkins 链接。</small>
+              <small>面向用户跨不可信网络访问时应使用 HTTPS。</small>
+            </label>
+            <label>
+              内部访问地址（Runner）
+              <Input
+                defaultValue={initial.web.runnerBaseUrl ?? ""}
+                name="runnerBaseUrl"
+                placeholder="http://10.20.30.10:3000"
+                type="url"
+              />
+              <small>Agent 安装和重新安装使用此地址连接控制面；可信内网可以使用 HTTP/IP。</small>
+              <small>留空时兼容回退到外部访问地址。</small>
             </label>
             <label>
               公开大盘刷新间隔（秒）

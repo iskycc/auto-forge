@@ -20,6 +20,18 @@ describe("platform initialization validation messages", () => {
           path: ["configuration", "web", "publicBaseUrl"],
         },
       ]),
-    ).toBe("执行机可访问地址：请输入包含协议的完整 URL，例如 https://autoforge.internal。");
+    ).toBe("外部访问地址：请输入包含协议的完整 URL，例如 https://autoforge.internal。");
+  });
+
+  it("names an invalid internal Runner URL", () => {
+    expect(
+      platformInitializationValidationMessage([
+        {
+          code: "invalid_format",
+          format: "url",
+          path: ["configuration", "web", "runnerBaseUrl"],
+        },
+      ]),
+    ).toBe("内部访问地址（Runner）：请输入包含协议的完整 URL，例如 https://autoforge.internal。");
   });
 });

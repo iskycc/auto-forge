@@ -14,6 +14,7 @@ import {
   FileCog,
   Folder,
   FolderTree,
+  Trash2,
 } from "lucide-react";
 import { useState } from "react";
 
@@ -26,6 +27,12 @@ import type {
 } from "./storage-inventory-tree-model";
 
 const TREE_RENDER_BATCH_SIZE = 250;
+
+type RuntimeAssetDeletionControls = {
+  canManage: boolean;
+  deletingRuntimeAssetId: string | undefined;
+  onDelete: (item: StorageInventoryItem) => void;
+};
 
 const CATEGORY_LABELS: Record<StorageInventoryCategory, string> = {
   database: "平台数据库",
@@ -45,10 +52,12 @@ export function StorageInventoryTree({
   roots,
   forceOpen,
   timeZone,
+  deletion,
 }: {
   roots: readonly StorageLocationNode[];
   forceOpen: boolean;
   timeZone: string;
+  deletion: RuntimeAssetDeletionControls;
 }) {
   return (
     <div aria-label="存储文件目录" className="storage-inventory-tree" role="tree">
@@ -58,6 +67,7 @@ export function StorageInventoryTree({
           key={root.id}
           root={root}
           timeZone={timeZone}
+          deletion={deletion}
         />
       ))}
     </div>
@@ -68,10 +78,12 @@ function StorageLocationBranch({
   root,
   forceOpen,
   timeZone,
+  deletion,
 }: {
   root: StorageLocationNode;
   forceOpen: boolean;
   timeZone: string;
+  deletion: RuntimeAssetDeletionControls;
 }) {
   const [open, setOpen] = useState(true);
   const renderedOpen = forceOpen || open;
@@ -93,7 +105,12 @@ function StorageLocationBranch({
         <DirectoryMetrics directory={root} />
       </summary>
       {renderedOpen ? (
-        <StorageDirectoryChildren directory={root} forceOpen={forceOpen} timeZone={timeZone} />
+        <StorageDirectoryChildren
+          deletion={deletion}
+          directory={root}
+          forceOpen={forceOpen}
+          timeZone={timeZone}
+        />
       ) : null}
     </details>
   );
@@ -103,10 +120,12 @@ function StorageDirectoryBranch({
   directory,
   forceOpen,
   timeZone,
+  deletion,
 }: {
   directory: StorageDirectoryNode;
   forceOpen: boolean;
   timeZone: string;
+  deletion: RuntimeAssetDeletionControls;
 }) {
   const [open, setOpen] = useState(() => shouldOpenByDefault(directory));
   const renderedOpen = forceOpen || open;
@@ -128,7 +147,12 @@ function StorageDirectoryBranch({
         <DirectoryMetrics directory={directory} />
       </summary>
       {renderedOpen ? (
-        <StorageDirectoryChildren directory={directory} forceOpen={forceOpen} timeZone={timeZone} />
+        <StorageDirectoryChildren
+          deletion={deletion}
+          directory={directory}
+          forceOpen={forceOpen}
+          timeZone={timeZone}
+        />
       ) : null}
     </details>
   );
@@ -138,10 +162,12 @@ function StorageDirectoryChildren({
   directory,
   forceOpen,
   timeZone,
+  deletion,
 }: {
   directory: StorageDirectoryNode;
   forceOpen: boolean;
   timeZone: string;
+  deletion: RuntimeAssetDeletionControls;
 }) {
   const [visibleDirectoryCount, setVisibleDirectoryCount] = useState(TREE_RENDER_BATCH_SIZE);
   const [visibleFileCount, setVisibleFileCount] = useState(TREE_RENDER_BATCH_SIZE);
@@ -150,6 +176,7 @@ function StorageDirectoryChildren({
       {directory.directories.slice(0, visibleDirectoryCount).map((child) => (
         <StorageDirectoryBranch
           directory={child}
+          deletion={deletion}
           forceOpen={forceOpen}
           key={child.id}
           timeZone={timeZone}
@@ -165,7 +192,7 @@ function StorageDirectoryChildren({
         </Button>
       ) : null}
       {directory.files.slice(0, visibleFileCount).map((file) => (
-        <StorageFileBranch file={file} key={file.id} timeZone={timeZone} />
+        <StorageFileBranch deletion={deletion} file={file} key={file.id} timeZone={timeZone} />
       ))}
       {directory.files.length > visibleFileCount ? (
         <Button
@@ -180,7 +207,15 @@ function StorageDirectoryChildren({
   );
 }
 
-function StorageFileBranch({ file, timeZone }: { file: StorageFileNode; timeZone: string }) {
+function StorageFileBranch({
+  file,
+  timeZone,
+  deletion,
+}: {
+  file: StorageFileNode;
+  timeZone: string;
+  deletion: RuntimeAssetDeletionControls;
+}) {
   const item = file.primary;
   return (
     <details
@@ -265,8 +300,32 @@ function StorageFileBranch({ file, timeZone }: { file: StorageFileNode; timeZone
         {file.kind === "sqlite-group" ? (
           <SqlitePhysicalFiles files={file.physicalFiles} timeZone={timeZone} />
         ) : null}
+        {canDeleteRuntimeAsset(item, deletion.canManage) ? (
+          <div className="storage-tree-file-actions">
+            <Button
+              aria-label={`删除${CATEGORY_LABELS[item.category]} ${item.name}`}
+              disabled={deletion.deletingRuntimeAssetId === item.runtimeAssetId}
+              onClick={() => deletion.onDelete(item)}
+              type="button"
+              variant="danger"
+            >
+              <Trash2 aria-hidden="true" size={15} />
+              {deletion.deletingRuntimeAssetId === item.runtimeAssetId
+                ? "正在删除…"
+                : `删除${CATEGORY_LABELS[item.category]}`}
+            </Button>
+          </div>
+        ) : null}
       </div>
     </details>
+  );
+}
+
+function canDeleteRuntimeAsset(item: StorageInventoryItem, canManage: boolean): boolean {
+  return (
+    canManage &&
+    Boolean(item.runtimeAssetId) &&
+    (item.category === "jdk" || item.category === "dependency")
   );
 }
 

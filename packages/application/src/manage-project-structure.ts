@@ -220,6 +220,41 @@ export class ProjectStructureService {
     }
     return detached.configuration;
   }
+
+  async deleteRuntimeAsset(assetId: string) {
+    const result = await this.structures.deleteRuntimeAssetIfUnreferenced(assetId);
+    if (result.status === "not_found") {
+      throw new DomainError("RUNTIME_ASSET_NOT_FOUND", "指定的运行时资源不存在。");
+    }
+    if (result.status === "referenced") {
+      throw new DomainError(
+        "RUNTIME_ASSET_DELETE_CONFLICT",
+        "该资源仍被项目配置、项目版本或运行中的任务使用，请先解除引用后再删除。",
+      );
+    }
+
+    const asset = result.asset;
+    if (!asset.objectKey) return asset;
+    try {
+      await this.objectStore.delete(asset.objectKey);
+    } catch (deleteError) {
+      try {
+        await this.structures.createRuntimeAsset(asset);
+      } catch (restoreError) {
+        throw new DomainError(
+          "RUNTIME_ASSET_DELETE_INCONSISTENT",
+          "运行时资源文件删除失败，且元数据未能恢复，请立即检查对象存储。",
+          { cause: new AggregateError([deleteError, restoreError]) },
+        );
+      }
+      throw new DomainError(
+        "RUNTIME_ASSET_DELETE_FAILED",
+        "运行时资源文件删除失败，元数据已恢复，可稍后重试。",
+        { cause: deleteError },
+      );
+    }
+    return asset;
+  }
 }
 
 function normalizeName(value: string): string {

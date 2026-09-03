@@ -1,14 +1,16 @@
 "use client";
 
-import type {
-  ClaimFailureAnalysisResult,
-  FailureAnalysisCandidate,
-  FailureAnalysisCandidatePage,
-  FailureAnalysisClaimReleaseView,
-  FailureAnalysisClaimView,
-  FailureAnalysisCompletionOrder,
-  FailureAnalysisHistoryItemView,
-  FailureAnalysisSort,
+import {
+  failureAnalysisRerunProofLookupResultSchema,
+  type ClaimFailureAnalysisResult,
+  type FailureAnalysisCandidate,
+  type FailureAnalysisCandidatePage,
+  type FailureAnalysisClaimReleaseView,
+  type FailureAnalysisClaimView,
+  type FailureAnalysisCompletionOrder,
+  type FailureAnalysisHistoryItemView,
+  type FailureAnalysisRerunProofLookupResult,
+  type FailureAnalysisSort,
 } from "@autoforge/contracts";
 import type { FailureAnalysisCategory } from "@autoforge/domain";
 import {
@@ -31,6 +33,7 @@ import {
   Plus,
   RotateCcw,
   Search,
+  SearchCheck,
   SquareActivity,
   UserMinus,
   X,
@@ -49,6 +52,17 @@ import { useToast } from "@/components/ui-feedback";
 
 type WorkspaceView = "claim" | "workbench";
 
+export type FailureAnalysisWorkspaceFilters = {
+  candidateQuery: string;
+  candidateSort: FailureAnalysisSort;
+  candidateDirection: "asc" | "desc";
+  analysisQuery: string;
+  analysisSort: FailureAnalysisSort;
+  analysisDirection: "asc" | "desc";
+  completionOrder: FailureAnalysisCompletionOrder;
+  includeCompleted: boolean;
+};
+
 const CLAIM_SORT_OPTIONS: ReadonlyArray<{ value: FailureAnalysisSort; label: string }> = [
   { value: "class_path", label: "类路径" },
   { value: "case_name", label: "用例名称" },
@@ -64,7 +78,7 @@ const CATEGORY_OPTIONS: Array<{
   {
     value: "rerun_passed",
     label: "重跑通过",
-    description: "优先自动使用从公开日志页重跑成功的永久日志链接，否则必须按 Ctrl+V 粘贴通过截图。",
+    description: "先查找从公开日志页发起的成功重跑；查不到时必须按 Ctrl+V 粘贴通过截图。",
   },
   {
     value: "case_fixed",
@@ -86,6 +100,7 @@ export function FailureAnalysisWorkspace({
   initialClaimPage,
   initialMyClaimCount,
   initialBatchId,
+  initialFilters,
   initialView,
   onClaimCountDelta,
   onCompletedCountDelta,
@@ -97,6 +112,7 @@ export function FailureAnalysisWorkspace({
   initialClaimPage: { items: FailureAnalysisClaimView[]; nextCursor?: string } | undefined;
   initialMyClaimCount: number;
   initialBatchId: string;
+  initialFilters: FailureAnalysisWorkspaceFilters;
   initialView: WorkspaceView;
   onClaimCountDelta: (delta: number) => void;
   onCompletedCountDelta: (delta: number) => void;
@@ -124,15 +140,20 @@ export function FailureAnalysisWorkspace({
   const [selectedAnalysisIds, setSelectedAnalysisIds] = useState<Set<string>>(() => new Set());
   const [dialogClaims, setDialogClaims] = useState<FailureAnalysisClaimView[]>();
   const [releaseDialogClaim, setReleaseDialogClaim] = useState<FailureAnalysisClaimView>();
-  const [sort, setSort] = useState<FailureAnalysisSort>("class_path");
-  const [direction, setDirection] = useState<"asc" | "desc">("asc");
-  const [claimSort, setClaimSort] = useState<FailureAnalysisSort>("class_path");
-  const [claimDirection, setClaimDirection] = useState<"asc" | "desc">("asc");
-  const [completionOrder, setCompletionOrder] =
-    useState<FailureAnalysisCompletionOrder>("pending_first");
-  const [includeCompleted, setIncludeCompleted] = useState(true);
-  const [queryInput, setQueryInput] = useState("");
-  const [query, setQuery] = useState("");
+  const [sort, setSort] = useState<FailureAnalysisSort>(initialFilters.candidateSort);
+  const [direction, setDirection] = useState<"asc" | "desc">(initialFilters.candidateDirection);
+  const [claimSort, setClaimSort] = useState<FailureAnalysisSort>(initialFilters.analysisSort);
+  const [claimDirection, setClaimDirection] = useState<"asc" | "desc">(
+    initialFilters.analysisDirection,
+  );
+  const [completionOrder, setCompletionOrder] = useState<FailureAnalysisCompletionOrder>(
+    initialFilters.completionOrder,
+  );
+  const [includeCompleted, setIncludeCompleted] = useState(initialFilters.includeCompleted);
+  const [queryInput, setQueryInput] = useState(initialFilters.candidateQuery);
+  const [query, setQuery] = useState(initialFilters.candidateQuery);
+  const [analysisQueryInput, setAnalysisQueryInput] = useState(initialFilters.analysisQuery);
+  const [analysisQuery, setAnalysisQuery] = useState(initialFilters.analysisQuery);
   const [loadingCandidates, setLoadingCandidates] = useState(false);
   const [loadingClaims, setLoadingClaims] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -144,17 +165,6 @@ export function FailureAnalysisWorkspace({
   );
   const skipInitialClaimsLoad = useRef(
     initialView === "workbench" && initialClaimPage !== undefined,
-  );
-
-  const updateLocation = useCallback(
-    (nextView: WorkspaceView) => {
-      window.history.replaceState(
-        null,
-        "",
-        `/case-analysis/${encodeURIComponent(initialBatchId)}?view=${nextView}`,
-      );
-    },
-    [initialBatchId],
   );
 
   const loadCandidates = useCallback(
@@ -210,6 +220,7 @@ export function FailureAnalysisWorkspace({
           includeCompleted: String(includeCompleted),
           limit: "50",
         });
+        if (analysisQuery) parameters.set("query", analysisQuery);
         if (cursor) parameters.set("cursor", cursor);
         const response = await fetch(`/api/v1/failure-analysis/claims?${parameters}`, {
           cache: "no-store",
@@ -237,6 +248,7 @@ export function FailureAnalysisWorkspace({
       claimSort,
       completionOrder,
       includeCompleted,
+      analysisQuery,
       initialBatchId,
       projectId,
       projectVersionId,
@@ -273,6 +285,34 @@ export function FailureAnalysisWorkspace({
       controller.abort();
     };
   }, [loadClaims, view]);
+
+  useEffect(() => {
+    const parameters = new URLSearchParams({ view });
+    if (query) parameters.set("candidateQuery", query);
+    if (sort !== "class_path") parameters.set("candidateSort", sort);
+    if (direction !== "asc") parameters.set("candidateDirection", direction);
+    if (analysisQuery) parameters.set("analysisQuery", analysisQuery);
+    if (claimSort !== "class_path") parameters.set("analysisSort", claimSort);
+    if (claimDirection !== "asc") parameters.set("analysisDirection", claimDirection);
+    if (completionOrder !== "pending_first") parameters.set("completionOrder", completionOrder);
+    if (!includeCompleted) parameters.set("includeCompleted", "false");
+    window.history.replaceState(
+      null,
+      "",
+      `/case-analysis/${encodeURIComponent(initialBatchId)}?${parameters}`,
+    );
+  }, [
+    analysisQuery,
+    claimDirection,
+    claimSort,
+    completionOrder,
+    direction,
+    includeCompleted,
+    initialBatchId,
+    query,
+    sort,
+    view,
+  ]);
 
   const availableItems = useMemo(
     () => candidates.filter((candidate) => !candidate.claim),
@@ -317,7 +357,6 @@ export function FailureAnalysisWorkspace({
 
   function changeView(nextView: WorkspaceView): void {
     setView(nextView);
-    updateLocation(nextView);
   }
 
   function changeSort(nextSort: FailureAnalysisSort): void {
@@ -392,7 +431,6 @@ export function FailureAnalysisWorkspace({
       setSelectedRunIds(new Set());
       setMyClaimCount((current) => current + result.claimed.length);
       setView("workbench");
-      updateLocation("workbench");
       setClaimsCursorHistory([]);
       setClaimsPageCursor(undefined);
       onClaimCountDelta(result.claimed.length);
@@ -426,6 +464,29 @@ export function FailureAnalysisWorkspace({
     const nextQuery = queryInput.trim();
     if (nextQuery === query) void loadCandidates();
     else setQuery(nextQuery);
+  }
+
+  function submitAnalysisSearch(event: FormEvent<HTMLFormElement>): void {
+    event.preventDefault();
+    setClaimsCursorHistory([]);
+    setClaimsPageCursor(undefined);
+    const nextQuery = analysisQueryInput.trim();
+    if (nextQuery === analysisQuery) void loadClaims();
+    else setAnalysisQuery(nextQuery);
+  }
+
+  function clearCandidateSearch(): void {
+    setCandidateCursorHistory([]);
+    setCandidatePageCursor(undefined);
+    setQueryInput("");
+    setQuery("");
+  }
+
+  function clearAnalysisSearch(): void {
+    setClaimsCursorHistory([]);
+    setClaimsPageCursor(undefined);
+    setAnalysisQueryInput("");
+    setAnalysisQuery("");
   }
 
   function applyCompletedClaims(updatedClaims: FailureAnalysisClaimView[]): void {
@@ -525,6 +586,8 @@ export function FailureAnalysisWorkspace({
                 <span className="failure-analysis-search-control">
                   <Search aria-hidden="true" size={15} />
                   <Input
+                    aria-label="搜索待认领用例"
+                    maxLength={240}
                     onChange={(event) => setQueryInput(event.target.value)}
                     placeholder="输入关键字筛选"
                     value={queryInput}
@@ -543,8 +606,16 @@ export function FailureAnalysisWorkspace({
             ) : candidates.length === 0 ? (
               <div className="failure-analysis-empty">
                 <CheckCircle2 size={24} />
-                <strong>当前任务没有可认领的最终失败用例</strong>
-                <span>只统计任务最后一轮仍然失败的用例。</span>
+                <strong>
+                  {query ? "没有匹配的待认领用例" : "当前任务没有可认领的最终失败用例"}
+                </strong>
+                {query ? (
+                  <Button onClick={clearCandidateSearch} type="button" variant="secondary">
+                    清除搜索条件
+                  </Button>
+                ) : (
+                  <span>只统计任务最后一轮仍然失败的用例。</span>
+                )}
               </div>
             ) : (
               <CandidateTable
@@ -647,6 +718,24 @@ export function FailureAnalysisWorkspace({
                 </Button>
               </div>
             </div>
+            <form className="failure-analysis-filter" onSubmit={submitAnalysisSearch}>
+              <label>
+                用例名称、类路径或失败堆栈
+                <span className="failure-analysis-search-control">
+                  <Search aria-hidden="true" size={15} />
+                  <Input
+                    aria-label="搜索我的分析"
+                    maxLength={240}
+                    onChange={(event) => setAnalysisQueryInput(event.target.value)}
+                    placeholder="输入关键字搜索已认领用例"
+                    value={analysisQueryInput}
+                  />
+                </span>
+              </label>
+              <Button type="submit" variant="secondary">
+                搜索
+              </Button>
+            </form>
             {loadingClaims ? (
               <LoadingState
                 label="正在读取分析队列"
@@ -656,9 +745,17 @@ export function FailureAnalysisWorkspace({
               <div className="failure-analysis-empty">
                 <ClipboardCheck size={25} />
                 <strong>
-                  {includeCompleted ? "当前任务还没有你认领的用例" : "当前没有未完成的分析"}
+                  {analysisQuery
+                    ? "没有匹配的已认领用例"
+                    : includeCompleted
+                      ? "当前任务还没有你认领的用例"
+                      : "当前没有未完成的分析"}
                 </strong>
-                {includeCompleted ? (
+                {analysisQuery ? (
+                  <Button onClick={clearAnalysisSearch} type="button" variant="secondary">
+                    清除搜索条件
+                  </Button>
+                ) : includeCompleted ? (
                   <Button onClick={() => changeView("claim")} type="button" variant="primary">
                     去认领失败用例
                   </Button>
@@ -1162,6 +1259,8 @@ function CompleteAnalysisDialog({
   const [imageZoomPercent, setImageZoomPercent] = useState(100);
   const [submitting, setSubmitting] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [lookingUpRerunProofs, setLookingUpRerunProofs] = useState(false);
+  const [rerunProofLookup, setRerunProofLookup] = useState<FailureAnalysisRerunProofLookupResult>();
   const [showCaseConfirmation, setShowCaseConfirmation] = useState(false);
   const [historyItems, setHistoryItems] = useState<FailureAnalysisHistoryItemView[]>([]);
   const [historyLoading, setHistoryLoading] = useState(true);
@@ -1175,6 +1274,16 @@ function CompleteAnalysisDialog({
   const imagePreviewTriggerRef = useRef<HTMLButtonElement>(null);
   const screenshotUploadInFlightRef = useRef(false);
   const screenshotClaims = uniqueScreenshotClaims(uploadedClaims);
+  const screenshotAnalysisIds = new Set(
+    uploadedClaims.filter((claim) => claim.screenshot).map((claim) => claim.id),
+  );
+  const foundRerunProofs = rerunProofLookup?.items.filter((item) => item.status === "found") ?? [];
+  const missingRerunProofs =
+    rerunProofLookup?.items.filter((item) => item.status === "missing") ?? [];
+  const rerunProofReady = Boolean(
+    rerunProofLookup &&
+    missingRerunProofs.every((item) => screenshotAnalysisIds.has(item.analysisId)),
+  );
   const caseDefinitionIds = useMemo(
     () => [...new Set(claims.map((claim) => claim.caseDefinitionId))],
     [claims],
@@ -1361,8 +1470,56 @@ function CompleteAnalysisDialog({
     }
   }
 
+  async function lookupRerunProofs(): Promise<void> {
+    if (category !== "rerun_passed" || lookingUpRerunProofs || readOnly) return;
+    setLookingUpRerunProofs(true);
+    setError("");
+    try {
+      const response = await fetch("/api/v1/failure-analysis/claims/rerun-proofs", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          projectId,
+          analysisIds: claims.map((claim) => claim.id),
+        }),
+      });
+      if (!response.ok) {
+        throw new Error((await readApiErrorMessage(response, "查找重跑通过记录失败。"))!);
+      }
+      const lookup = failureAnalysisRerunProofLookupResultSchema.parse(await response.json());
+      setRerunProofLookup(lookup);
+      const missingCount = lookup.items.filter((item) => item.status === "missing").length;
+      if (missingCount > 0) {
+        toast.warning(
+          `已查找：${lookup.items.length - missingCount} 个用例有成功重跑，${missingCount} 个用例需要截图。`,
+        );
+      } else {
+        toast.success(`已找到 ${lookup.items.length} 个用例的重跑通过日志。`);
+      }
+    } catch (lookupError) {
+      setRerunProofLookup(undefined);
+      setError(lookupError instanceof Error ? lookupError.message : "查找重跑通过记录失败。");
+    } finally {
+      setLookingUpRerunProofs(false);
+    }
+  }
+
   function requestCompletion(): void {
     setError("");
+    if (category === "rerun_passed") {
+      if (!rerunProofLookup) {
+        setError("请先查找重跑通过记录，再根据结果提交日志链接或截图证明。");
+        return;
+      }
+      const missingScreenshot = missingRerunProofs.find(
+        (item) => !screenshotAnalysisIds.has(item.analysisId),
+      );
+      if (missingScreenshot) {
+        const claim = claims.find((candidate) => candidate.id === missingScreenshot.analysisId);
+        setError(`“${claim?.caseName ?? "所选用例"}”未找到成功重跑记录，必须粘贴通过截图。`);
+        return;
+      }
+    }
     if (category === "case_fixed") {
       if (!issueDescription.trim() || !caseFixEvidence.trim()) {
         setError("用例问题已修改必须填写问题说明和用例已修改证明。");
@@ -1381,6 +1538,7 @@ function CompleteAnalysisDialog({
   function inheritConclusion(): void {
     if (!inheritanceCandidate) return;
     setCategory(inheritanceCandidate.claim.category);
+    setRerunProofLookup(undefined);
     setIssueDescription(inheritanceCandidate.claim.issueDescription ?? "");
     setCaseFixEvidence(inheritanceCandidate.claim.caseFixEvidence ?? "");
     setTicketReference(inheritanceCandidate.claim.ticketReference ?? "");
@@ -1534,7 +1692,11 @@ function CompleteAnalysisDialog({
                     <Input
                       checked={category === option.value}
                       name="failure-category"
-                      onChange={() => setCategory(option.value)}
+                      onChange={() => {
+                        setCategory(option.value);
+                        setRerunProofLookup(undefined);
+                        setError("");
+                      }}
                       type="radio"
                       value={option.value}
                     />
@@ -1554,10 +1716,59 @@ function CompleteAnalysisDialog({
                   <span>
                     <strong>重跑通过证明</strong>
                     <small>
-                      提交时会自动查找这些用例从公开日志页发起的成功重跑，并生成永久公开日志链接。
+                      请先主动查找这些用例从公开日志页发起的成功重跑；查不到的用例必须粘贴通过截图。
                     </small>
                   </span>
                 </div>
+                {!readOnly ? (
+                  <div className="failure-analysis-proof-lookup">
+                    <Button
+                      disabled={lookingUpRerunProofs || uploading}
+                      onClick={() => void lookupRerunProofs()}
+                      type="button"
+                      variant="secondary"
+                    >
+                      {lookingUpRerunProofs ? (
+                        <LoaderCircle className="spin" size={15} />
+                      ) : (
+                        <SearchCheck size={15} />
+                      )}
+                      {lookingUpRerunProofs ? "正在查找…" : "查找重跑通过记录"}
+                    </Button>
+                    {!rerunProofLookup ? (
+                      <small>尚未查找，提交分析暂不可用。</small>
+                    ) : (
+                      <div className="failure-analysis-proof-lookup-result" role="status">
+                        {foundRerunProofs.map((item) => {
+                          const claim = claims.find(
+                            (candidate) => candidate.id === item.analysisId,
+                          );
+                          return (
+                            <a
+                              href={item.url}
+                              key={item.analysisId}
+                              rel="noreferrer"
+                              target="_blank"
+                            >
+                              <CheckCircle2 size={14} />
+                              {claim?.caseName ?? item.analysisId} · 查看重跑通过日志
+                            </a>
+                          );
+                        })}
+                        {missingRerunProofs.length > 0 ? (
+                          <span className="failure-analysis-proof-missing">
+                            <AlertTriangle size={15} />
+                            {missingRerunProofs.length} 个用例未找到成功重跑记录，必须提交截图。
+                          </span>
+                        ) : (
+                          <span className="failure-analysis-proof-found">
+                            <CheckCircle2 size={15} /> 全部用例均已找到重跑通过日志。
+                          </span>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                ) : null}
                 {uploadedClaims.some((claim) => claim.screenshot) ? (
                   <>
                     <div className="failure-analysis-uploaded-proof">
@@ -1593,7 +1804,7 @@ function CompleteAnalysisDialog({
                     </div>
                   </>
                 ) : null}
-                {!readOnly ? (
+                {!readOnly && rerunProofLookup && missingRerunProofs.length > 0 ? (
                   <div
                     aria-busy={uploading}
                     aria-label="使用 Ctrl+V 粘贴重跑通过截图"
@@ -1694,7 +1905,13 @@ function CompleteAnalysisDialog({
               </Button>
               {!readOnly ? (
                 <Button
-                  disabled={!category || submitting || uploading}
+                  disabled={
+                    !category ||
+                    submitting ||
+                    uploading ||
+                    lookingUpRerunProofs ||
+                    (category === "rerun_passed" && !rerunProofReady)
+                  }
                   onClick={requestCompletion}
                   type="button"
                   variant="primary"

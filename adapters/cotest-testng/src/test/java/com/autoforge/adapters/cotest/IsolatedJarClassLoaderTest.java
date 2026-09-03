@@ -10,6 +10,7 @@ import java.io.IOException;
 import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Collections;
 import java.util.List;
 import java.util.jar.JarEntry;
 import java.util.jar.JarOutputStream;
@@ -27,7 +28,7 @@ class IsolatedJarClassLoaderTest {
 
     try (IsolatedJarClassLoader loader =
         new IsolatedJarClassLoader(
-            List.of(jar.toUri().toURL()), getClass().getClassLoader())) {
+            Collections.singletonList(jar.toUri().toURL()), getClass().getClassLoader())) {
       Class<?> loaded = Class.forName("fixture.VersionedClass", true, loader);
 
       assertNotSame(VersionedClass.class, loaded);
@@ -42,7 +43,7 @@ class IsolatedJarClassLoaderTest {
     Path classes = temporaryDirectory.resolve("classes");
     Files.createDirectories(source.getParent());
     Files.createDirectories(classes);
-    Files.writeString(
+    Utf8TestIO.write(
         source,
         "package fixture; public final class VersionedClass { "
             + "public String value() { return \"child\"; } }");
@@ -53,8 +54,10 @@ class IsolatedJarClassLoaderTest {
             null,
             null,
             null,
-            "--release",
-            "11",
+            "-source",
+            "8",
+            "-target",
+            "8",
             "-d",
             classes.toString(),
             source.toString());

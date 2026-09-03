@@ -403,6 +403,14 @@ export class PostgresFailureAnalysisRepository implements FailureAnalysisReposit
       parameters.push(input.batchId);
       where.push(`claim.batch_id=$${parameters.length}`);
     }
+    const query = input.query?.trim().slice(0, 240);
+    if (query) {
+      parameters.push(`%${escapePostgresLike(query.toLowerCase())}%`);
+      where.push(
+        `LOWER(claim.class_name || ' ' || claim.case_name || ' ' || claim.failure_summary)
+         LIKE $${parameters.length} ESCAPE '\\'`,
+      );
+    }
     if (!includeCompleted) where.push("claim.status<>'completed'");
     const cursor = decodeFailureAnalysisClaimCursor(
       input.cursor,

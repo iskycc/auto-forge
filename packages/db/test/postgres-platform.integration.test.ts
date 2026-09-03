@@ -429,6 +429,7 @@ describe.skipIf(!connectionString)("PostgreSQL platform repositories", () => {
     const defaultProjectId = "00000000-0000-7000-8000-000000000001";
     const secondProjectBatchId = `batch-project-${runnerId}`;
     const terminationBatchId = `batch-termination-${runnerId}`;
+    const runtimeAssetGuardBatchId = `batch-runtime-asset-guard-${runnerId}`;
     let analyticsProjectVersionId: string | undefined;
     let analyticsTestStageId: string | undefined;
     try {
@@ -511,6 +512,37 @@ describe.skipIf(!connectionString)("PostgreSQL platform repositories", () => {
       await expect(
         structures.findRuntimeAssetsByObjectKeys([uploadedJdk.objectKey!]),
       ).resolves.toMatchObject([{ id: uploadedJdk.id, kind: "jdk", sourceType: "upload" }]);
+      await handle.pool.query(
+        `INSERT INTO run_batches
+         (id, suite_id, suite_name, suite_version, status, retry_limit, environment_json,
+          total_runs, project_id, adapter_runtime_json, created_at, updated_at)
+         VALUES ($1, $2, $3, 1, 'queued', 0, '[]', 1, $4, $5, $6, $6)`,
+        [
+          runtimeAssetGuardBatchId,
+          `suite-runtime-asset-guard-${runnerId}`,
+          "Runtime asset deletion guard",
+          secondProjectId,
+          JSON.stringify({ jdk: { id: uploadedJdk.id } }),
+          "2026-08-09T00:00:03.750Z",
+        ],
+      );
+      await expect(structures.deleteRuntimeAssetIfUnreferenced(uploadedJdk.id)).resolves.toEqual({
+        status: "referenced",
+      });
+      await handle.pool.query("UPDATE run_batches SET status = 'succeeded' WHERE id = $1", [
+        runtimeAssetGuardBatchId,
+      ]);
+      await expect(structures.deleteRuntimeAssetIfUnreferenced(uploadedJdk.id)).resolves.toEqual({
+        status: "deleted",
+        asset: uploadedJdk,
+      });
+      await expect(
+        structures.findRuntimeAssetsByObjectKeys([uploadedJdk.objectKey!]),
+      ).resolves.toEqual([]);
+      await expect(structures.deleteRuntimeAssetIfUnreferenced(uploadedJdk.id)).resolves.toEqual({
+        status: "not_found",
+      });
+      await handle.pool.query("DELETE FROM run_batches WHERE id = $1", [runtimeAssetGuardBatchId]);
       await structures.updateAdapterConfiguration({
         projectId: secondProjectId,
         projectVersionId: projectVersion.id,
@@ -518,6 +550,9 @@ describe.skipIf(!connectionString)("PostgreSQL platform repositories", () => {
         jarBundleAssetId: secondBundleId,
         expectedRevision: 2,
         updatedAt: "2026-08-09T00:00:04.000Z",
+      });
+      await expect(structures.deleteRuntimeAssetIfUnreferenced(jdkAsset.id)).resolves.toEqual({
+        status: "referenced",
       });
       const inheritedRuntimeVersion = await structures.createVersion({
         id: randomUUID(),
@@ -1012,6 +1047,7 @@ describe.skipIf(!connectionString)("PostgreSQL platform repositories", () => {
         cancelledRuns: 0,
       });
     } finally {
+      await handle.pool.query("DELETE FROM run_batches WHERE id = $1", [runtimeAssetGuardBatchId]);
       await handle.pool.query("DELETE FROM run_batches WHERE id = $1", [terminationBatchId]);
       await handle.pool.query("DELETE FROM run_batches WHERE id = $1", [secondProjectBatchId]);
       await handle.pool.query("DELETE FROM run_batches WHERE id = $1", [`batch-${runnerId}`]);

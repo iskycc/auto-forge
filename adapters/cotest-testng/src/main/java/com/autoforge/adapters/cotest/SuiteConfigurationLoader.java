@@ -6,6 +6,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 
 final class SuiteConfigurationLoader {
@@ -13,7 +14,9 @@ final class SuiteConfigurationLoader {
 
   SuiteConfiguration load(Path configurationFile, String explicitSuiteName, String explicitTestName) {
     List<String> configuredNames =
-        configurationFile == null ? List.of() : readConfiguredNames(configurationFile);
+        configurationFile == null
+            ? Collections.<String>emptyList()
+            : readConfiguredNames(configurationFile);
     String suiteName =
         firstNonBlank(
             explicitSuiteName,
@@ -47,7 +50,7 @@ final class SuiteConfigurationLoader {
 
   private static String firstNonBlank(String... values) {
     for (String value : values) {
-      if (value != null && !value.isBlank()) {
+      if (!TextValues.isBlank(value)) {
         return value;
       }
     }

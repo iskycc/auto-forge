@@ -1,6 +1,7 @@
 "use client";
 
 import type {
+  DeleteStorageRuntimeAssetResult,
   StorageInventoryCategory,
   StorageInventoryItem,
   StorageInventoryPage,
@@ -11,9 +12,11 @@ import { useRouter } from "next/navigation";
 import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
 
 import { Button, Input, Select } from "@/components/ui";
+import { useConfirm, useToast } from "@/components/ui-feedback";
 import { LoadingState } from "@/components/loading-state";
 import { StorageInventoryTree } from "@/components/storage-inventory-tree";
 import { buildStorageInventoryTree } from "@/components/storage-inventory-tree-model";
+import { readApiErrorMessage } from "@/lib/client-api";
 
 const INVENTORY_READ_BATCH_SIZE = 500;
 const INVENTORY_RENDER_COMMIT_SIZE = 2_000;
@@ -36,12 +39,16 @@ export function StorageInventory({
   initialCategory,
   initialQuery,
   timeZone,
+  canManage,
 }: {
   initialCategory?: StorageInventoryCategory;
   initialQuery: string;
   timeZone: string;
+  canManage: boolean;
 }) {
   const router = useRouter();
+  const confirmAction = useConfirm();
+  const toast = useToast();
   const [items, setItems] = useState<StorageInventoryItem[]>([]);
   const [summary, setSummary] = useState<StorageInventorySummary>();
   const [draftCategory, setDraftCategory] = useState(initialCategory ?? "");
@@ -49,6 +56,7 @@ export function StorageInventory({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [refreshSequence, setRefreshSequence] = useState(0);
+  const [deletingRuntimeAssetId, setDeletingRuntimeAssetId] = useState<string>();
   const handledRefreshSequence = useRef(0);
 
   useEffect(() => {
@@ -104,6 +112,58 @@ export function StorageInventory({
     if (draftCategory) parameters.set("category", draftCategory);
     if (query) parameters.set("query", query);
     router.replace(`/settings/platform?${parameters}`);
+  }
+
+  function refreshInventory(): void {
+    setItems([]);
+    setSummary(undefined);
+    setLoading(true);
+    setError("");
+    setRefreshSequence((value) => value + 1);
+  }
+
+  async function deleteRuntimeAsset(item: StorageInventoryItem): Promise<void> {
+    if (!item.runtimeAssetId || (item.category !== "jdk" && item.category !== "dependency")) {
+      return;
+    }
+    const categoryLabel = CATEGORY_LABELS[item.category];
+    const accepted = await confirmAction({
+      title: `删除${categoryLabel}`,
+      description:
+        item.location === "external-reference"
+          ? `确定删除“${item.name}”的外部资源登记吗？删除后无法恢复；若资源仍被项目或运行中的任务使用，平台会拒绝本次操作。`
+          : `确定永久删除“${item.name}”吗？文件及资源记录删除后无法恢复；若资源仍被项目或运行中的任务使用，平台会拒绝本次操作。`,
+      confirmLabel: "确认永久删除",
+      cancelLabel: "取消",
+      tone: "danger",
+    });
+    if (!accepted) return;
+
+    setDeletingRuntimeAssetId(item.runtimeAssetId);
+    setError("");
+    toast.dismissAll();
+    try {
+      const response = await fetch("/api/v1/settings/storage", {
+        method: "DELETE",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ runtimeAssetId: item.runtimeAssetId }),
+      });
+      const errorMessage = await readApiErrorMessage(response, `删除${categoryLabel}失败。`);
+      if (errorMessage) throw new Error(errorMessage);
+      const result = (await response.json()) as DeleteStorageRuntimeAssetResult;
+      toast.success(
+        result.sourceType === "upload"
+          ? `${categoryLabel}已永久删除，释放 ${formatBytes(result.deletedBytes)}。`
+          : `${categoryLabel}的外部资源登记已删除。`,
+      );
+      refreshInventory();
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : `删除${categoryLabel}失败。`;
+      setError(message);
+      toast.error(message);
+    } finally {
+      setDeletingRuntimeAssetId(undefined);
+    }
   }
 
   return (
@@ -187,18 +247,7 @@ export function StorageInventory({
               伴随文件合并后可展开查看。
             </p>
           </div>
-          <Button
-            disabled={loading}
-            onClick={() => {
-              setItems([]);
-              setSummary(undefined);
-              setLoading(true);
-              setError("");
-              setRefreshSequence((value) => value + 1);
-            }}
-            type="button"
-            variant="secondary"
-          >
+          <Button disabled={loading} onClick={refreshInventory} type="button" variant="secondary">
             <RefreshCw size={15} /> 重新扫描
           </Button>
         </div>
@@ -245,6 +294,11 @@ export function StorageInventory({
             }
             roots={tree}
             timeZone={timeZone}
+            deletion={{
+              canManage,
+              deletingRuntimeAssetId,
+              onDelete: (item) => void deleteRuntimeAsset(item),
+            }}
           />
         ) : summary && !loading ? (
           <div className="inline-empty">当前筛选条件下没有文件或资源引用。</div>

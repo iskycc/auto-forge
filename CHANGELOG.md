@@ -4,6 +4,37 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## 1.8.19 - 2026-09-03
+
+### Added
+
+- 平台配置新增可选的“内部访问地址（Runner）”。Runner Agent 安装与重新安装优先使用内部地址，
+  外部访问地址继续用于匿名分享、导出日志和 Jenkins 链接；旧配置未填写内部地址时保持回退兼容。
+
+### Fixed
+
+- CoTest Adapter 不再包含 `List.of`、`Path.of`、`String.isBlank` 等 Java 9+ API，并改为 Java 8
+  字节码；项目提供 JDK 8 与兼容的 TestNG/业务依赖时可直接执行，不再因 Adapter 自身出现
+  `UnsupportedClassVersionError`。仍只发布一个 Adapter，Agent 无需维护双版本选择逻辑。
+- 用例分析选择“重跑通过”后，必须先在弹窗内主动查找成功的日志重跑记录。找到时立即显示永久日志，
+  未找到的用例必须粘贴通过截图后才能提交；最终提交仍由服务端重新校验，不能绕过前端限制。
+- Runner 不再只按目录名排除 JDK 8 自带的 JRE；当重打包中 JDK 与另一个命名的 JRE 并列时，
+  会根据唯一的 `bin/javac` 选择 JDK 根目录。归档包含多个完整 JDK 时仍拒绝执行，歧义错误会
+  有界列出候选相对路径。
+
+### Database and persisted configuration
+
+- 无数据库迁移或 Runner Protocol 变化。`platform.json` 的 `web` 配置新增可选
+  `runnerBaseUrl`；旧配置无需迁移，旧管理客户端省略字段时保留现值，显式清空时回退到外部地址。
+
+### Tests
+
+- CI 与 Release 新增真实 JDK 8 编译门禁，逐个校验 Adapter class major version 52，覆盖
+  TestNG 6.14.3/7.5.1，并保留 JDK 21 + TestNG 7.11.0 兼容回归测试。
+- 新增重跑证明预查、缺少截图禁止完成、内部地址优先级/兼容回退和相关浏览器流程测试。
+- Runner 单元测试与批次输入共享 E2E 归档覆盖 JDK 8 的并列 JRE 重打包结构，并继续验证多个
+  完整 JDK 不会被任意选择。
+
 ## 1.8.18 - 2026-09-03
 
 ### Fixed

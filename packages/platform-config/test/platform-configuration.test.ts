@@ -63,7 +63,7 @@ describe("platform configuration store", () => {
     expect(() => store.replace(updated, 1)).toThrow(PlatformConfigurationConflictError);
   });
 
-  it("accepts HTTP for an internal Runner address and rejects unrelated URL schemes", () => {
+  it("persists separate external and Runner addresses and rejects unrelated URL schemes", () => {
     const dataDirectory = mkdtempSync(join(tmpdir(), "autoforge-config-"));
     const store = new PlatformConfigurationStore(dataDirectory);
     const current = store.initialize(new Date("2026-08-11T00:00:00.000Z"));
@@ -71,17 +71,22 @@ describe("platform configuration store", () => {
     const updated = store.replace(
       {
         ...current,
-        web: { ...current.web, publicBaseUrl: "http://10.20.30.40:3000" },
+        web: {
+          ...current.web,
+          publicBaseUrl: "https://autoforge.example.test",
+          runnerBaseUrl: "http://10.20.30.40:3000",
+        },
       },
       current.revision,
     );
 
-    expect(updated.web.publicBaseUrl).toBe("http://10.20.30.40:3000");
+    expect(updated.web.publicBaseUrl).toBe("https://autoforge.example.test");
+    expect(updated.web.runnerBaseUrl).toBe("http://10.20.30.40:3000");
     expect(() =>
       store.replace(
         {
           ...updated,
-          web: { ...updated.web, publicBaseUrl: "ftp://10.20.30.40" },
+          web: { ...updated.web, runnerBaseUrl: "ftp://10.20.30.40" },
         },
         updated.revision,
       ),

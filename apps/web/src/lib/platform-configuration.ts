@@ -36,6 +36,7 @@ export function platformConfigurationActivation(
 ): PlatformConfigurationActivation {
   const appliedImmediatelyFields = [
     changed(current.web.publicBaseUrl, saved.web.publicBaseUrl) ? "外部访问地址" : undefined,
+    changed(current.web.runnerBaseUrl, saved.web.runnerBaseUrl) ? "内部访问地址" : undefined,
     changed(current.web.timeZone, saved.web.timeZone) ? "平台时区" : undefined,
     changed(current.limits.artifactCollectionEnabled, saved.limits.artifactCollectionEnabled)
       ? "产物收集"
@@ -71,6 +72,12 @@ function changed(left: unknown, right: unknown): boolean {
   return JSON.stringify(left) !== JSON.stringify(right);
 }
 
+export function runnerControlPlaneUrl(
+  web: Pick<PersistedPlatformConfiguration["web"], "publicBaseUrl" | "runnerBaseUrl">,
+): string | undefined {
+  return web.runnerBaseUrl ?? web.publicBaseUrl;
+}
+
 export function mergePlatformConfiguration(
   current: PersistedPlatformConfiguration,
   input: UpdatePlatformConfigurationInput,
@@ -78,13 +85,29 @@ export function mergePlatformConfiguration(
   return {
     ...current,
     mode: input.mode,
-    web: { ...input.web, timeZone: input.web.timeZone ?? current.web.timeZone },
+    web: mergedWebConfiguration(current.web, input.web),
     limits: { ...input.limits },
     scheduler: { ...input.scheduler },
     worker: { ...input.worker },
     ...(input.mode === "full" || input.full
       ? { full: mergedFullConfiguration(current.full, input.full) }
       : {}),
+  };
+}
+
+function mergedWebConfiguration(
+  current: PersistedPlatformConfiguration["web"],
+  input: UpdatePlatformConfigurationInput["web"],
+): PersistedPlatformConfiguration["web"] {
+  const runnerBaseUrl =
+    input.runnerBaseUrl === null ? undefined : (input.runnerBaseUrl ?? current.runnerBaseUrl);
+  return {
+    hostname: input.hostname,
+    port: input.port,
+    timeZone: input.timeZone ?? current.timeZone,
+    publicDashboardRefreshSeconds: input.publicDashboardRefreshSeconds,
+    ...(input.publicBaseUrl ? { publicBaseUrl: input.publicBaseUrl } : {}),
+    ...(runnerBaseUrl ? { runnerBaseUrl } : {}),
   };
 }
 

@@ -23,4 +23,18 @@ describe("API error mapping", () => {
       },
     });
   });
+
+  it("reports runtime asset deletion storage failures as server errors", () => {
+    for (const code of [
+      "RUNTIME_ASSET_DELETE_FAILED",
+      "RUNTIME_ASSET_DELETE_INCONSISTENT",
+    ] as const) {
+      expect(
+        mapApiError(new DomainError(code, "对象存储删除失败。"), "storage-request-id"),
+      ).toMatchObject({
+        status: 500,
+        body: { error: { code, requestId: "storage-request-id" } },
+      });
+    }
+  });
 });

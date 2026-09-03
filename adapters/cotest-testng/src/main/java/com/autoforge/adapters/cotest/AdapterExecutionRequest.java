@@ -3,6 +3,8 @@ package com.autoforge.adapters.cotest;
 import java.net.URL;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 
 final class AdapterExecutionRequest {
@@ -20,7 +22,7 @@ final class AdapterExecutionRequest {
       String environmentAddress,
       Path classDataFile,
       Path outputDirectory) {
-    this.jarUrls = List.copyOf(jarUrls);
+    this.jarUrls = Collections.unmodifiableList(new ArrayList<URL>(jarUrls));
     this.className = className;
     this.suiteConfiguration = suiteConfiguration;
     this.environmentAddress = environmentAddress;

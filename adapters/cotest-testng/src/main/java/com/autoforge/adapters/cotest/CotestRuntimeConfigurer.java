@@ -17,7 +17,7 @@ final class CotestRuntimeConfigurer {
   void configure(
       ClassLoader loader, Class<?> testClass, String environmentAddress, Path classDataFile)
       throws ReflectiveOperationException {
-    if (environmentAddress != null && !environmentAddress.isBlank()) {
+    if (!TextValues.isBlank(environmentAddress)) {
       Class<?> projectFileUtility = Class.forName(PROJECT_FILE_UTILITY, true, loader);
       Method setEnvironmentAddress = projectFileUtility.getMethod("setEnvIP", String.class);
       ReflectionSupport.invoke(setEnvironmentAddress, null, environmentAddress);

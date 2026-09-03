@@ -1,6 +1,7 @@
 package com.autoforge.adapters.cotest;
 
 import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -25,14 +26,14 @@ final class AdapterArguments {
   private final int caseTimeoutSeconds;
 
   private AdapterArguments(Map<String, String> options) {
-    jarDirectory = Path.of(required(options, "--jars"));
+    jarDirectory = Paths.get(required(options, "--jars"));
     className = required(options, "--class");
     environmentAddress = options.getOrDefault("--environment-address", "");
     classDataFile = optionalPath(options, "--class-data");
     configurationFile = optionalPath(options, "--config");
     suiteName = options.get("--suite-name");
     testName = options.get("--test-name");
-    outputDirectory = Path.of(options.getOrDefault("--output", "reports/testng"));
+    outputDirectory = Paths.get(options.getOrDefault("--output", "reports/testng"));
     caseTimeoutSeconds = caseTimeoutSeconds(options);
     if (!isBinaryClassName(className)) {
       throw new IllegalArgumentException("--class must be a Java binary class name.");
@@ -50,7 +51,7 @@ final class AdapterArguments {
         throw new IllegalArgumentException("Unsupported option: " + option + ". " + USAGE);
       }
       String value = arguments[index + 1];
-      if (value.isBlank() || options.putIfAbsent(option, value) != null) {
+      if (TextValues.isBlank(value) || options.putIfAbsent(option, value) != null) {
         throw new IllegalArgumentException("Missing or duplicate value for " + option + ".");
       }
     }
@@ -105,7 +106,7 @@ final class AdapterArguments {
 
   private static Path optionalPath(Map<String, String> options, String name) {
     String value = options.get(name);
-    return value == null ? null : Path.of(value);
+    return value == null ? null : Paths.get(value);
   }
 
   private static int caseTimeoutSeconds(Map<String, String> options) {

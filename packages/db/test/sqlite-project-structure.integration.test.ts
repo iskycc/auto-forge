@@ -147,6 +147,40 @@ describe("SQLite project version structure", () => {
       await expect(
         repository.findRuntimeAssetsByObjectKeys([uploadedJdk.objectKey!]),
       ).resolves.toMatchObject([{ id: uploadedJdk.id, kind: "jdk", sourceType: "upload" }]);
+      handle.client
+        .prepare(
+          `INSERT INTO run_batches
+           (id, suite_id, suite_name, suite_version, status, retry_limit, environment_json,
+            total_runs, adapter_runtime_json, created_at, updated_at)
+           VALUES (?, ?, ?, 1, 'queued', 0, '[]', 1, ?, ?, ?)`,
+        )
+        .run(
+          "batch-runtime-asset-delete-guard",
+          "suite-runtime-asset-delete-guard",
+          "Runtime asset deletion guard",
+          JSON.stringify({ jdk: { id: uploadedJdk.id } }),
+          now,
+          now,
+        );
+      await expect(repository.deleteRuntimeAssetIfUnreferenced(uploadedJdk.id)).resolves.toEqual({
+        status: "referenced",
+      });
+      handle.client
+        .prepare("UPDATE run_batches SET status = 'succeeded' WHERE id = ?")
+        .run("batch-runtime-asset-delete-guard");
+      await expect(repository.deleteRuntimeAssetIfUnreferenced(uploadedJdk.id)).resolves.toEqual({
+        status: "deleted",
+        asset: uploadedJdk,
+      });
+      await expect(
+        repository.findRuntimeAssetsByObjectKeys([uploadedJdk.objectKey!]),
+      ).resolves.toEqual([]);
+      await expect(repository.deleteRuntimeAssetIfUnreferenced(uploadedJdk.id)).resolves.toEqual({
+        status: "not_found",
+      });
+      handle.client
+        .prepare("DELETE FROM run_batches WHERE id = ?")
+        .run("batch-runtime-asset-delete-guard");
       await expect(
         repository.updateAdapterConfiguration({
           projectId: DEFAULT_PROJECT_ID,
@@ -155,6 +189,9 @@ describe("SQLite project version structure", () => {
           updatedAt: now,
         }),
       ).rejects.toMatchObject({ code: "PROJECT_ADAPTER_CONFIGURATION_REVISION_CONFLICT" });
+      await expect(repository.deleteRuntimeAssetIfUnreferenced(jdk.id)).resolves.toEqual({
+        status: "referenced",
+      });
 
       const inheritedVersion = await repository.createVersion({
         id: "version-2",

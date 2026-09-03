@@ -68,7 +68,9 @@ jobs:
           - name: static quality
             command: pnpm format:check && pnpm lint && pnpm typecheck && pnpm test:e2e:matrix
           - name: unit and integration
-            command: pnpm test && pnpm test:integration && mvn --batch-mode --file adapters/cotest-testng/pom.xml test && bash scripts/quality/test-groovy-tools.sh
+            command: pnpm test && pnpm test:integration && bash scripts/quality/test-cotest-adapter-java8.sh && bash scripts/quality/test-groovy-tools.sh
+          - name: CoTest Adapter current runtime
+            command: mvn --batch-mode --no-transfer-progress --file adapters/cotest-testng/pom.xml -Dtestng.version=7.11.0 test
           - name: performance
             command: pnpm test:performance
           - name: Lite 500 protocol concurrency
@@ -107,6 +109,22 @@ jobs:
         with:
           go-version: 1.26.5
           cache-dependency-path: apps/runner-agent/go.mod
+
+      - name: Set up Java 8 for Adapter build
+        if: matrix.name == 'unit and integration' || matrix.name == 'production build'
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          distribution: temurin
+          java-version: "8"
+          cache: maven
+
+      - name: Set up Java 21 for current Adapter runtime
+        if: matrix.name == 'CoTest Adapter current runtime'
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
 
       - name: Install locked JavaScript dependencies
         run: |

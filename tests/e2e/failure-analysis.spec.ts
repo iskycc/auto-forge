@@ -77,6 +77,34 @@ test("terminal task failures support durable single and batch analysis with evid
   ).toBeLessThanOrEqual(58);
   page.off("request", countInitialWorkspaceRequest);
 
+  const candidateSearchInput = page.getByLabel("搜索待认领用例");
+  const candidateSearchResponse = page.waitForResponse((response) => {
+    const url = new URL(response.url());
+    return (
+      url.pathname === "/api/v1/failure-analysis/candidates" &&
+      url.searchParams.get("query") === fixture.failedNames[1]
+    );
+  });
+  await candidateSearchInput.fill(fixture.failedNames[1]);
+  await candidateSearchInput.press("Enter");
+  expect((await candidateSearchResponse).status()).toBe(200);
+  await expect(page.locator(".failure-analysis-table tbody tr")).toHaveCount(1);
+  await expect(page.getByText(fixture.failedNames[1], { exact: true })).toBeVisible();
+  await expect
+    .poll(() => new URL(page.url()).searchParams.get("candidateQuery"))
+    .toBe(fixture.failedNames[1]);
+  await page.reload();
+  await expect(candidateSearchInput).toHaveValue(fixture.failedNames[1]);
+  await expect(page.locator(".failure-analysis-table tbody tr")).toHaveCount(1);
+  const clearedCandidateSearch = page.waitForResponse((response) => {
+    const url = new URL(response.url());
+    return url.pathname === "/api/v1/failure-analysis/candidates" && !url.searchParams.has("query");
+  });
+  await candidateSearchInput.fill("");
+  await candidateSearchInput.press("Enter");
+  expect((await clearedCandidateSearch).status()).toBe(200);
+  await expect(page.locator(".failure-analysis-table tbody tr")).toHaveCount(4);
+
   let claimsRequestsDuringSort = 0;
   const countClaimsRequest = (request: import("@playwright/test").Request) => {
     if (request.url().includes("/api/v1/failure-analysis/claims?")) {
@@ -175,6 +203,33 @@ test("terminal task failures support durable single and batch analysis with evid
   page.on("request", countTabServerComponentRequest);
   await page.getByRole("button", { name: "认领并进入分析" }).click();
   await expect(page.getByRole("heading", { name: "我的分析队列" })).toBeVisible();
+  const analysisSearchInput = page.getByLabel("搜索我的分析");
+  const analysisSearchResponse = page.waitForResponse((response) => {
+    const url = new URL(response.url());
+    return (
+      url.pathname === "/api/v1/failure-analysis/claims" &&
+      url.searchParams.get("query") === fixture.failedNames[2]
+    );
+  });
+  await analysisSearchInput.fill(fixture.failedNames[2]);
+  await analysisSearchInput.press("Enter");
+  expect((await analysisSearchResponse).status()).toBe(200);
+  await expect(page.locator(".failure-analysis-card")).toHaveCount(1);
+  await expect(analysisCard(page, fixture.failedNames[2])).toBeVisible();
+  await expect
+    .poll(() => new URL(page.url()).searchParams.get("analysisQuery"))
+    .toBe(fixture.failedNames[2]);
+  await page.reload();
+  await expect(analysisSearchInput).toHaveValue(fixture.failedNames[2]);
+  await expect(page.locator(".failure-analysis-card")).toHaveCount(1);
+  const clearedAnalysisSearch = page.waitForResponse((response) => {
+    const url = new URL(response.url());
+    return url.pathname === "/api/v1/failure-analysis/claims" && !url.searchParams.has("query");
+  });
+  await analysisSearchInput.fill("");
+  await analysisSearchInput.press("Enter");
+  expect((await clearedAnalysisSearch).status()).toBe(200);
+  await expect(page.locator(".failure-analysis-card")).toHaveCount(4);
   const claimSortResponse = page.waitForResponse((response) => {
     const url = new URL(response.url());
     return (
@@ -235,6 +290,22 @@ test("terminal task failures support durable single and batch analysis with evid
   const publicLogPage = await popupPromise;
   await expect(publicLogPage).toHaveURL(/\/share\/attempt-log\//u);
   await publicLogPage.close();
+  await batchDialog.getByLabel("重跑通过", { exact: false }).check();
+  const batchSubmit = batchDialog.getByRole("button", { name: "提交分析" });
+  await expect(batchSubmit).toBeDisabled();
+  const mixedLookupResponse = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === "/api/v1/failure-analysis/claims/rerun-proofs",
+  );
+  await batchDialog.getByRole("button", { name: "查找重跑通过记录" }).click();
+  expect((await mixedLookupResponse).status()).toBe(200);
+  await expect(
+    batchDialog.getByRole("link", {
+      name: new RegExp(`${fixture.failedNames[0]}.*查看重跑通过日志`, "u"),
+    }),
+  ).toHaveAttribute("href", /\/share\/attempt-log\//u);
+  await expect(batchDialog).toContainText("1 个用例未找到成功重跑记录，必须提交截图");
+  await expect(batchSubmit).toBeDisabled();
   await batchDialog.getByLabel("用例问题已修改", { exact: false }).check();
   await batchDialog.getByLabel("问题说明 *").fill("测试数据字段已经失效");
   await batchDialog.getByLabel("用例已修改证明 *").fill("commit abc123，已更新断言数据");
@@ -361,9 +432,20 @@ test("terminal task failures support durable single and batch analysis with evid
     "commit abc123，已更新断言数据",
   );
   await rerunDialog.getByLabel("重跑通过", { exact: false }).check();
-  await rerunDialog.getByRole("button", { name: "提交分析" }).click();
-  await expect(rerunDialog).toContainText("请粘贴执行通过截图");
+  const rerunSubmit = rerunDialog.getByRole("button", { name: "提交分析" });
+  await expect(rerunSubmit).toBeDisabled();
+  await expect(
+    rerunDialog.getByRole("group", { name: "使用 Ctrl+V 粘贴重跑通过截图" }),
+  ).toHaveCount(0);
+  const missingLookupResponse = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === "/api/v1/failure-analysis/claims/rerun-proofs",
+  );
+  await rerunDialog.getByRole("button", { name: "查找重跑通过记录" }).click();
+  expect((await missingLookupResponse).status()).toBe(200);
+  await expect(rerunDialog).toContainText("1 个用例未找到成功重跑记录，必须提交截图");
   await expect(rerunDialog).toContainText("直接按 Ctrl + V 粘贴执行通过截图");
+  await expect(rerunSubmit).toBeDisabled();
   await expect(rerunDialog.locator('input[type="file"]')).toHaveCount(0);
   const pasteZone = rerunDialog.getByRole("group", {
     name: "使用 Ctrl+V 粘贴重跑通过截图",
@@ -374,8 +456,9 @@ test("terminal task failures support durable single and batch analysis with evid
   await pastePng(page);
   await expect(rerunDialog).toContainText("通过截图已上传到平台对象存储");
   await expect(rerunDialog.getByAltText("重跑通过截图：rerun-passed.png")).toBeVisible();
+  await expect(rerunSubmit).toBeEnabled();
   await captureUi(page, "failure-analysis-rerun-evidence-1024", false);
-  await rerunDialog.getByRole("button", { name: "提交分析" }).click();
+  await rerunSubmit.click();
   await expect(rerunDialog).toBeHidden();
   await expect(rerunCard).toContainText("重跑通过");
 
@@ -733,6 +816,42 @@ function insertFailureAnalysisFixture(
           recordedAt,
         );
     }
+    const rerunBatchId = `successful-rerun-batch-${suffix}`;
+    const rerunRunId = `successful-rerun-run-${suffix}`;
+    database
+      .prepare(
+        `INSERT INTO run_batches
+      (id,sequence_number,suite_id,suite_name,suite_version,status,retry_limit,batch_kind,
+       parent_batch_id,source_execution_run_id,environment_json,total_runs,project_id,policy_json,
+       created_at,updated_at)
+      VALUES (?,992,'single:analysis','成功日志重跑',1,'succeeded',0,'case_log_rerun',?,?,
+              '[]',1,?,'{}',?,?)`,
+      )
+      .run(
+        rerunBatchId,
+        batchId,
+        `run-failed-0-${suffix}`,
+        DEFAULT_PROJECT_ID,
+        recordedAt,
+        recordedAt,
+      );
+    database
+      .prepare(
+        `INSERT INTO execution_runs
+      (id,batch_id,case_definition_id,case_version,display_name,class_name,status,attempt_count,
+       terminal_outcome,created_at,updated_at)
+      VALUES (?,?,'case-successful-rerun',1,'成功日志重跑','e2e.analysis.RerunTest','succeeded',1,
+              'succeeded',?,?)`,
+      )
+      .run(rerunRunId, rerunBatchId, recordedAt, recordedAt);
+    database
+      .prepare(
+        `INSERT INTO run_attempts
+      (id,execution_run_id,runner_id,attempt_number,status,scheduling_score,outcome,result_code,
+       result_summary,created_at,finished_at)
+      VALUES (?,?,?,1,'succeeded',1,'succeeded','TESTNG_SUCCEEDED','manual rerun passed',?,?)`,
+      )
+      .run(`successful-rerun-attempt-${suffix}`, rerunRunId, runnerId, recordedAt, recordedAt);
     return { batchId, failedNames, passedName, suiteName };
   } finally {
     database.close();

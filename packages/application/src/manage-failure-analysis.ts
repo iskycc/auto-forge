@@ -18,6 +18,7 @@ import type { Clock, FailureAnalysisRepository, IdGenerator, JarObjectStorePort 
 
 const MAXIMUM_PAGE_SIZE = 100;
 const MAXIMUM_CLAIM_SIZE = 100;
+const MAXIMUM_SEARCH_QUERY_LENGTH = 240;
 export const FAILURE_ANALYSIS_SCREENSHOT_MAXIMUM_BYTES = 10 * 1024 * 1024;
 const SCREENSHOT_MEDIA_TYPES = ["image/png", "image/jpeg", "image/webp"] as const;
 type ScreenshotMediaType = (typeof SCREENSHOT_MEDIA_TYPES)[number];
@@ -57,11 +58,16 @@ export class FailureAnalysisService {
     cursor?: string;
     limit?: number;
   }) {
+    const query = boundedSearchQuery(input.query);
     return this.repository.listCandidates({
-      ...input,
+      projectId: input.projectId,
+      projectVersionId: input.projectVersionId,
+      batchId: input.batchId,
       sort: failureAnalysisSortSchema.parse(input.sort ?? "class_path"),
       direction: input.direction ?? "asc",
       limit: boundedPageSize(input.limit),
+      ...(query ? { query } : {}),
+      ...(input.cursor ? { cursor: input.cursor } : {}),
     });
   }
 
@@ -109,6 +115,7 @@ export class FailureAnalysisService {
     projectVersionId?: string;
     claimantId: string;
     batchId?: string;
+    query?: string;
     sort?: FailureAnalysisSort;
     direction?: "asc" | "desc";
     completionOrder?: FailureAnalysisCompletionOrder;
@@ -116,8 +123,10 @@ export class FailureAnalysisService {
     cursor?: string;
     limit?: number;
   }) {
+    const query = boundedSearchQuery(input.query);
     return this.repository.listClaims({
-      ...input,
+      projectId: input.projectId,
+      claimantId: input.claimantId,
       sort: failureAnalysisSortSchema.parse(input.sort ?? "class_path"),
       direction: input.direction ?? "asc",
       completionOrder: failureAnalysisCompletionOrderSchema.parse(
@@ -125,6 +134,10 @@ export class FailureAnalysisService {
       ),
       includeCompleted: input.includeCompleted ?? true,
       limit: boundedPageSize(input.limit),
+      ...(input.projectVersionId ? { projectVersionId: input.projectVersionId } : {}),
+      ...(input.batchId ? { batchId: input.batchId } : {}),
+      ...(query ? { query } : {}),
+      ...(input.cursor ? { cursor: input.cursor } : {}),
     });
   }
 
@@ -352,46 +365,24 @@ export class FailureAnalysisService {
       ...(caseFixEvidence ? { caseFixEvidence } : {}),
       ...(ticketReference ? { ticketReference } : {}),
     });
-    const successfulAttempts =
-      input.category === "rerun_passed"
-        ? await this.repository.findSuccessfulManualRerunAttempts({
-            analysisIds,
-            projectId: input.projectId,
-            claimantId: input.claimant.id,
-          })
-        : new Map<string, string>();
     const rerunProofs = new Map<string, { attemptId: string; url: string }>();
     if (input.category === "rerun_passed") {
-      if (!this.attemptLogShares) {
-        throw new DomainError(
-          "FAILURE_ANALYSIS_LOG_SHARE_UNAVAILABLE",
-          "当前无法生成重跑日志证明。",
-        );
-      }
-      for (const claim of claims) {
-        const attemptId = successfulAttempts.get(claim.id);
-        if (!attemptId && !claim.screenshot) {
+      const lookupItems = await this.resolveRerunProofs(claims, input.projectId, input.claimant.id);
+      const claimsById = new Map(claims.map((claim) => [claim.id, claim]));
+      for (const item of lookupItems) {
+        const claim = claimsById.get(item.analysisId)!;
+        if (item.status === "missing" && !claim.screenshot) {
           throw new DomainError(
             "FAILURE_ANALYSIS_RERUN_PROOF_REQUIRED",
             `“${claim.caseName}”未检测到公开日志页重跑通过记录，请粘贴执行通过截图。`,
           );
         }
-      }
-      const tokensByAttempt = await this.attemptLogShares.ensureSharesForAttempts(
-        [...new Set(successfulAttempts.values())],
-        input.claimant.id,
-      );
-      for (const claim of claims) {
-        const attemptId = successfulAttempts.get(claim.id);
-        if (!attemptId) continue;
-        const token = tokensByAttempt.get(attemptId);
-        if (!token) {
-          throw new DomainError("RUN_ATTEMPT_NOT_FOUND", "重跑通过日志不存在或已被删除。");
+        if (item.status === "found") {
+          rerunProofs.set(item.analysisId, {
+            attemptId: item.attemptId,
+            url: item.url,
+          });
         }
-        rerunProofs.set(claim.id, {
-          attemptId,
-          url: `/share/attempt-log/${token}`,
-        });
       }
     }
     return this.repository.complete({
@@ -405,6 +396,52 @@ export class FailureAnalysisService {
       ...(remark ? { remark } : {}),
       rerunProofs,
       completedAt: this.clock.now().toISOString(),
+    });
+  }
+
+  async lookupRerunProofs(input: {
+    analysisIds: readonly string[];
+    projectId: string;
+    claimantId: string;
+  }) {
+    const analysisIds = boundedAnalysisIds(input.analysisIds);
+    const claims = await this.requireOwnedClaims(analysisIds, input.projectId, input.claimantId);
+    return this.resolveRerunProofs(claims, input.projectId, input.claimantId);
+  }
+
+  private async resolveRerunProofs(
+    claims: readonly FailureAnalysisClaim[],
+    projectId: string,
+    claimantId: string,
+  ) {
+    const successfulAttempts = await this.repository.findSuccessfulManualRerunAttempts({
+      analysisIds: claims.map((claim) => claim.id),
+      projectId,
+      claimantId,
+    });
+    if (successfulAttempts.size === 0) {
+      return claims.map((claim) => ({ analysisId: claim.id, status: "missing" as const }));
+    }
+    if (!this.attemptLogShares) {
+      throw new DomainError("FAILURE_ANALYSIS_LOG_SHARE_UNAVAILABLE", "当前无法生成重跑日志证明。");
+    }
+    const tokensByAttempt = await this.attemptLogShares.ensureSharesForAttempts(
+      [...new Set(successfulAttempts.values())],
+      claimantId,
+    );
+    return claims.map((claim) => {
+      const attemptId = successfulAttempts.get(claim.id);
+      if (!attemptId) return { analysisId: claim.id, status: "missing" as const };
+      const token = tokensByAttempt.get(attemptId);
+      if (!token) {
+        throw new DomainError("RUN_ATTEMPT_NOT_FOUND", "重跑通过日志不存在或已被删除。");
+      }
+      return {
+        analysisId: claim.id,
+        status: "found" as const,
+        attemptId,
+        url: `/share/attempt-log/${token}`,
+      };
     });
   }
 
@@ -478,6 +515,10 @@ function safeScreenshotFileName(fileName: string, extension: string): string {
 function optionalTrimmed(value: string | undefined): string | undefined {
   const trimmed = value?.trim();
   return trimmed || undefined;
+}
+
+function boundedSearchQuery(value: string | undefined): string | undefined {
+  return optionalTrimmed(value)?.slice(0, MAXIMUM_SEARCH_QUERY_LENGTH);
 }
 
 function validateCompletionFields(input: {

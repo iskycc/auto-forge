@@ -7,6 +7,7 @@ import java.io.IOException;
 import java.net.URL;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Collections;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -48,6 +49,6 @@ class JarDirectoryScannerTest {
 
     List<URL> urls = new JarDirectoryScanner().scan(temporaryDirectory);
 
-    assertEquals(List.of(accepted.toUri().toURL()), urls);
+    assertEquals(Collections.singletonList(accepted.toUri().toURL()), urls);
   }
 }

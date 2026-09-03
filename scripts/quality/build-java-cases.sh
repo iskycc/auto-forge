@@ -88,7 +88,7 @@ assemble_dependency_bundle() {
 
 build_adapter_jar() {
   javac \
-    --release 11 \
+    --release 8 \
     -encoding UTF-8 \
     -d "${adapter_classes_directory}" \
     "${repository_root}/adapters/cotest-testng/src/main/java/com/autoforge/adapters/cotest/"*.java

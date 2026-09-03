@@ -6,6 +6,37 @@ import type { FailureAnalysisRepository, JarObjectStorePort } from "../src/ports
 const NOW = new Date("2026-09-01T02:00:00.000Z");
 
 describe("FailureAnalysisService", () => {
+  it("normalizes and bounds candidate and personal analysis search queries", async () => {
+    const listCandidates = vi.fn(async () => ({ items: [] }));
+    const listClaims = vi.fn(async () => ({ items: [] }));
+    const service = createService({ listCandidates, listClaims });
+    const oversizedQuery = `  ${"failure".repeat(50)}  `;
+
+    await service.listCandidates({
+      projectId: "project-a",
+      projectVersionId: "version-a",
+      batchId: "batch-a",
+      query: oversizedQuery,
+      limit: 500,
+    });
+    await service.listMyClaims({
+      projectId: "project-a",
+      projectVersionId: "version-a",
+      claimantId: "analyst-a",
+      batchId: "batch-a",
+      query: oversizedQuery,
+      limit: 500,
+    });
+
+    const expectedQuery = "failure".repeat(50).slice(0, 240);
+    expect(listCandidates).toHaveBeenCalledWith(
+      expect.objectContaining({ query: expectedQuery, limit: 100 }),
+    );
+    expect(listClaims).toHaveBeenCalledWith(
+      expect.objectContaining({ query: expectedQuery, limit: 100 }),
+    );
+  });
+
   it("loads export claims by indexed execution run ids and deduplicates the query", async () => {
     const requestedExecutionRunIds: string[][] = [];
     const findClaimsByExecutionRunIds = vi.fn(
@@ -292,6 +323,101 @@ describe("FailureAnalysisService", () => {
         ]),
       }),
     );
+  });
+
+  it("looks up successful rerun proofs before completion and reports missing cases", async () => {
+    const first = failureAnalysisClaim();
+    const second = failureAnalysisClaim({
+      id: "analysis-b",
+      executionRunId: "run-b",
+      caseDefinitionId: "case-b",
+      caseName: "失败用例 B",
+    });
+    const ensureSharesForAttempts = vi.fn(
+      async () => new Map([["successful-rerun-attempt", "permanent-token"]]),
+    );
+    const service = createService(
+      {
+        findOwnedClaims: vi.fn(async () => [first, second]),
+        findSuccessfulManualRerunAttempts: vi.fn(
+          async () => new Map([[first.id, "successful-rerun-attempt"]]),
+        ),
+      },
+      undefined,
+      undefined,
+      { ensureSharesForAttempts },
+    );
+
+    await expect(
+      service.lookupRerunProofs({
+        analysisIds: [first.id, second.id],
+        projectId: first.projectId,
+        claimantId: first.claimantId,
+      }),
+    ).resolves.toEqual([
+      {
+        analysisId: first.id,
+        status: "found",
+        attemptId: "successful-rerun-attempt",
+        url: "/share/attempt-log/permanent-token",
+      },
+      { analysisId: second.id, status: "missing" },
+    ]);
+    expect(ensureSharesForAttempts).toHaveBeenCalledWith(
+      ["successful-rerun-attempt"],
+      first.claimantId,
+    );
+  });
+
+  it("rejects rerun completion when lookup is missing and no screenshot was submitted", async () => {
+    const ownedClaim = failureAnalysisClaim();
+    const complete = vi.fn(async () => [ownedClaim]);
+    const service = createService({
+      findOwnedClaims: vi.fn(async () => [ownedClaim]),
+      findSuccessfulManualRerunAttempts: vi.fn(async () => new Map()),
+      complete,
+    });
+
+    await expect(
+      service.complete({
+        analysisIds: [ownedClaim.id],
+        projectId: ownedClaim.projectId,
+        claimant: { id: ownedClaim.claimantId, username: ownedClaim.claimantUsername },
+        category: "rerun_passed",
+        caseIssueConfirmed: false,
+      }),
+    ).rejects.toMatchObject({ code: "FAILURE_ANALYSIS_RERUN_PROOF_REQUIRED" });
+    expect(complete).not.toHaveBeenCalled();
+  });
+
+  it("accepts a screenshot when no successful rerun record exists", async () => {
+    const ownedClaim = {
+      ...failureAnalysisClaim(),
+      screenshot: {
+        objectKey: "projects/project-a/failure-analysis/batch-a/proof.png",
+        fileName: "通过截图.png",
+        mediaType: "image/png" as const,
+        sizeBytes: 128,
+        sha256: "a".repeat(64),
+      },
+    };
+    const complete = vi.fn(async () => [ownedClaim]);
+    const service = createService({
+      findOwnedClaims: vi.fn(async () => [ownedClaim]),
+      findSuccessfulManualRerunAttempts: vi.fn(async () => new Map()),
+      complete,
+    });
+
+    await expect(
+      service.complete({
+        analysisIds: [ownedClaim.id],
+        projectId: ownedClaim.projectId,
+        claimant: { id: ownedClaim.claimantId, username: ownedClaim.claimantUsername },
+        category: "rerun_passed",
+        caseIssueConfirmed: false,
+      }),
+    ).resolves.toEqual([ownedClaim]);
+    expect(complete).toHaveBeenCalledWith(expect.objectContaining({ rerunProofs: new Map() }));
   });
 
   it("stores a pasted screenshot through the configured object store for every selected claim", async () => {

@@ -3,7 +3,7 @@ package com.autoforge.adapters.cotest;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
-import java.nio.file.Path;
+import java.nio.file.Paths;
 import org.junit.jupiter.api.Test;
 
 class AdapterArgumentsTest {
@@ -21,13 +21,13 @@ class AdapterArgumentsTest {
               "--output", "/tmp/testng-output"
             });
 
-    assertEquals(Path.of("/opt/cotest/jars"), arguments.jarDirectory());
+    assertEquals(Paths.get("/opt/cotest/jars"), arguments.jarDirectory());
     assertEquals("example.AdapterCase", arguments.className());
     assertEquals("10.0.0.8", arguments.environmentAddress());
-    assertEquals(Path.of("/opt/cotest/data.json"), arguments.classDataFile());
+    assertEquals(Paths.get("/opt/cotest/data.json"), arguments.classDataFile());
     assertEquals("Regression", arguments.suiteName());
     assertEquals("Adapter cases", arguments.testName());
-    assertEquals(Path.of("/tmp/testng-output"), arguments.outputDirectory());
+    assertEquals(Paths.get("/tmp/testng-output"), arguments.outputDirectory());
     assertEquals(AdapterArguments.DEFAULT_CASE_TIMEOUT_SECONDS, arguments.caseTimeoutSeconds());
   }
 
@@ -77,6 +77,17 @@ class AdapterArgumentsTest {
                 new String[] {
                   "--jars", "jars", "--class", "not/a/class",
                   "--environment-address", "127.0.0.1"
+                }));
+  }
+
+  @Test
+  void rejectsUnicodeWhitespaceValuesOnJava8() {
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            AdapterArguments.parse(
+                new String[] {
+                  "--jars", "\u2003", "--class", "example.Case"
                 }));
   }
 }

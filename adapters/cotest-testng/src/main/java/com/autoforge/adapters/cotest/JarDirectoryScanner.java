@@ -8,6 +8,7 @@ import java.nio.file.Path;
 import java.nio.file.SimpleFileVisitor;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
@@ -25,7 +26,7 @@ final class JarDirectoryScanner {
     try {
       Files.walkFileTree(
           root,
-          java.util.Set.of(),
+          Collections.emptySet(),
           MAX_WALK_DEPTH,
           new SimpleFileVisitor<Path>() {
             @Override
@@ -63,7 +64,7 @@ final class JarDirectoryScanner {
         throw new IllegalArgumentException("Cannot convert JAR path to URL: " + jarFile, error);
       }
     }
-    return List.copyOf(urls);
+    return Collections.unmodifiableList(urls);
   }
 
   private static int classpathPriority(Path path) {

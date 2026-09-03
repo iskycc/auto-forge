@@ -1,5 +1,5 @@
-import { expect, test } from "@playwright/test";
-import { mkdirSync, utimesSync, writeFileSync } from "node:fs";
+import { expect, test, type Locator, type Page } from "@playwright/test";
+import { existsSync, mkdirSync, utimesSync, writeFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { dirname, resolve } from "node:path";
 
@@ -12,6 +12,10 @@ import { expectUiIntegrity } from "./support/ui-guard";
 
 const SQLITE_FIXTURE_LATEST_MODIFIED_AT = "2026-09-01T02:00:00.000Z";
 const SQLITE_FIXTURE_BATCH_ID = "e2e-storage-batch";
+const STORAGE_JDK_ASSET_ID = "e2e-storage-jdk-delete";
+const STORAGE_JDK_FILE_NAME = "e2e-removable-jdk.zip";
+const STORAGE_DEPENDENCY_ASSET_ID = "e2e-storage-dependency-delete";
+const STORAGE_DEPENDENCY_FILE_NAME = "e2e-removable-dependencies.tar.gz";
 
 test("configuration conflicts, diagnostics and retention controls remain observable", async ({
   page,
@@ -53,22 +57,42 @@ test("configuration conflicts, diagnostics and retention controls remain observa
   await expect(page.getByText(/平台时区已立即生效.*无需重启/)).toBeVisible();
   await expect(page.locator("html")).toHaveAttribute("data-time-zone", originalTimeZone);
 
-  const publicBaseUrl = page.getByLabel("外部访问地址");
+  const publicBaseUrl = page.locator('input[name="publicBaseUrl"]');
+  const runnerBaseUrl = page.locator('input[name="runnerBaseUrl"]');
   const originalPublicBaseUrl = await publicBaseUrl.inputValue();
+  const originalRunnerBaseUrl = await runnerBaseUrl.inputValue();
   const testPublicBaseUrl =
     originalPublicBaseUrl === "http://127.0.0.1:3199"
       ? "http://127.0.0.1:3197"
       : "http://127.0.0.1:3199";
+  const testRunnerBaseUrl =
+    originalRunnerBaseUrl === "http://10.20.30.40:3000"
+      ? "http://10.20.30.41:3000"
+      : "http://10.20.30.40:3000";
   const artifactCollection = page.getByLabel(/启用产物收集/);
   const originalArtifactCollection = await artifactCollection.isChecked();
   await publicBaseUrl.fill(testPublicBaseUrl);
+  await runnerBaseUrl.fill(testRunnerBaseUrl);
   await artifactCollection.setChecked(!originalArtifactCollection);
   await page.getByRole("button", { name: "保存平台配置" }).click();
-  await expect(page.getByText(/外部访问地址、产物收集已立即生效.*无需重启/)).toBeVisible();
-  await publicBaseUrl.fill(originalPublicBaseUrl);
+  await expect(
+    page.getByText(/外部访问地址、内部访问地址、产物收集已立即生效.*无需重启/),
+  ).toBeVisible();
+  const savedConfiguration = await page.request.get("/api/v1/settings/platform");
+  expect(savedConfiguration.status()).toBe(200);
+  expect(await savedConfiguration.json()).toMatchObject({
+    web: { publicBaseUrl: testPublicBaseUrl, runnerBaseUrl: testRunnerBaseUrl },
+  });
+  await page.goto("/runners");
+  await expect(page.locator(".runner-control-url code")).toHaveText(testRunnerBaseUrl);
+  await page.goto("/settings/platform");
+  await page.locator('input[name="publicBaseUrl"]').fill(originalPublicBaseUrl);
+  await page.locator('input[name="runnerBaseUrl"]').fill(originalRunnerBaseUrl);
   await artifactCollection.setChecked(originalArtifactCollection);
   await page.getByRole("button", { name: "保存平台配置" }).click();
-  await expect(page.getByText(/外部访问地址、产物收集已立即生效.*无需重启/)).toBeVisible();
+  await expect(
+    page.getByText(/外部访问地址、内部访问地址、产物收集已立即生效.*无需重启/),
+  ).toBeVisible();
 
   await expandAdministrationGroup(page, "平台运维");
   await page.getByRole("link", { name: "系统诊断" }).click();
@@ -177,6 +201,45 @@ test("configuration conflicts, diagnostics and retention controls remain observa
       true,
     );
     await expectUiIntegrity(page);
+
+    if (liteDataDirectory) {
+      const jdkObjectPath = runtimeAssetObjectPath(liteDataDirectory, STORAGE_JDK_ASSET_ID, "zip");
+      await verifyRuntimeAssetDeletion({
+        page,
+        storageTree,
+        category: "JDK 包",
+        fileName: STORAGE_JDK_FILE_NAME,
+        objectPath: jdkObjectPath,
+      });
+      const dependencyObjectPath = runtimeAssetObjectPath(
+        liteDataDirectory,
+        STORAGE_DEPENDENCY_ASSET_ID,
+        "tar.gz",
+      );
+      await verifyRuntimeAssetDeletion({
+        page,
+        storageTree,
+        category: "依赖包",
+        fileName: STORAGE_DEPENDENCY_FILE_NAME,
+        objectPath: dependencyObjectPath,
+      });
+      const deletionAudit = await page.request.get(
+        "/api/v1/audit-events?action=storage.runtime_asset_delete&limit=10",
+      );
+      expect(deletionAudit.status()).toBe(200);
+      expect(await deletionAudit.json()).toMatchObject({
+        items: expect.arrayContaining([
+          expect.objectContaining({
+            action: "storage.runtime_asset_delete",
+            resourceId: STORAGE_JDK_ASSET_ID,
+          }),
+          expect.objectContaining({
+            action: "storage.runtime_asset_delete",
+            resourceId: STORAGE_DEPENDENCY_ASSET_ID,
+          }),
+        ]),
+      });
+    }
   }
 
   await page.getByRole("link", { name: "数据保留" }).click();
@@ -242,4 +305,102 @@ function insertSqliteStorageFixture(dataDirectory: string): void {
     const timestamp = new Date(file.modifiedAt);
     utimesSync(file.path, timestamp, timestamp);
   }
+
+  const runtimeAssets = [
+    {
+      id: STORAGE_JDK_ASSET_ID,
+      kind: "jdk",
+      fileName: STORAGE_JDK_FILE_NAME,
+      archiveFormat: "zip",
+      bytes: 19,
+    },
+    {
+      id: STORAGE_DEPENDENCY_ASSET_ID,
+      kind: "jar-bundle",
+      fileName: STORAGE_DEPENDENCY_FILE_NAME,
+      archiveFormat: "tar.gz",
+      bytes: 23,
+    },
+  ] as const;
+  const database = new DatabaseSync(resolve(dataDirectory, "db", "autoforge.sqlite"));
+  try {
+    database.exec("PRAGMA busy_timeout = 5000");
+    const insert = database.prepare(
+      `INSERT INTO project_runtime_assets
+       (id, project_id, kind, source_type, file_name, object_key, sha256, size_bytes,
+        archive_format, created_at)
+       VALUES (?, '00000000-0000-7000-8000-000000000001', ?, 'upload', ?, ?, ?, ?, ?, ?)`,
+    );
+    for (const asset of runtimeAssets) {
+      const objectKey = runtimeAssetObjectKey(asset.id, asset.archiveFormat);
+      const objectPath = resolve(dataDirectory, "objects", objectKey);
+      mkdirSync(dirname(objectPath), { recursive: true });
+      writeFileSync(objectPath, Buffer.alloc(asset.bytes, 2));
+      insert.run(
+        asset.id,
+        asset.kind,
+        asset.fileName,
+        objectKey,
+        asset.kind === "jdk" ? "e".repeat(64) : "f".repeat(64),
+        asset.bytes,
+        asset.archiveFormat,
+        "2026-09-01T03:00:00.000Z",
+      );
+    }
+  } finally {
+    database.close();
+  }
+}
+
+async function verifyRuntimeAssetDeletion(input: {
+  page: Page;
+  storageTree: Locator;
+  category: "JDK 包" | "依赖包";
+  fileName: string;
+  objectPath: string;
+}): Promise<void> {
+  await input.page.getByRole("button", { name: "按文件类型筛选" }).click();
+  await input.page.getByRole("option", { name: input.category, exact: true }).click();
+  await input.page.getByLabel("搜索文件名称或路径").fill(input.fileName);
+  await input.page.getByRole("button", { name: "应用筛选" }).click();
+  const file = input.storageTree
+    .locator("details.storage-tree-file")
+    .filter({ hasText: input.fileName });
+  await expect(file).toHaveCount(1);
+  await file.locator(":scope > summary").click();
+  const deleteButton = file.getByRole("button", { name: `删除${input.category}` });
+  await deleteButton.click();
+  const confirmation = input.page.getByRole("dialog", { name: `删除${input.category}` });
+  await expect(confirmation).toContainText(input.fileName);
+  await expect(confirmation).toContainText("无法恢复");
+  await confirmation.getByRole("button", { name: "取消" }).click();
+  await expect(confirmation).toHaveCount(0);
+  await expect(file).toHaveCount(1);
+  expect(existsSync(input.objectPath)).toBe(true);
+
+  await deleteButton.click();
+  const deleteResponsePromise = input.page.waitForResponse(
+    (response) =>
+      response.url().endsWith("/api/v1/settings/storage") &&
+      response.request().method() === "DELETE",
+  );
+  await acceptSystemDialog(input.page, `删除${input.category}`, "确认永久删除");
+  expect((await deleteResponsePromise).status()).toBe(200);
+  await expect(
+    input.page.locator(".toast-card", { hasText: new RegExp(`${input.category}已永久删除`, "u") }),
+  ).toBeVisible();
+  await expect(file).toHaveCount(0);
+  expect(existsSync(input.objectPath)).toBe(false);
+}
+
+function runtimeAssetObjectPath(
+  dataDirectory: string,
+  assetId: string,
+  archiveFormat: "zip" | "tar.gz",
+): string {
+  return resolve(dataDirectory, "objects", runtimeAssetObjectKey(assetId, archiveFormat));
+}
+
+function runtimeAssetObjectKey(assetId: string, archiveFormat: "zip" | "tar.gz"): string {
+  return `projects/00000000-0000-7000-8000-000000000001/runtime-assets/${assetId}.${archiveFormat}`;
 }

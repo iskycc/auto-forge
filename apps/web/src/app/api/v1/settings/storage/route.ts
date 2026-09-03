@@ -1,9 +1,14 @@
-import { storageInventoryCategorySchema, storageInventoryPageSchema } from "@autoforge/contracts";
+import {
+  deleteStorageRuntimeAssetInputSchema,
+  deleteStorageRuntimeAssetResultSchema,
+  storageInventoryCategorySchema,
+  storageInventoryPageSchema,
+} from "@autoforge/contracts";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
-import { apiErrorResponse } from "@/lib/api-response";
-import { authorizeRequest } from "@/lib/auth";
+import { apiErrorResponse, readJsonBody } from "@/lib/api-response";
+import { authorizeRequest, requestId, requireSameOrigin } from "@/lib/auth";
 import { getPlatformServices } from "@/lib/services";
 
 export const runtime = "nodejs";
@@ -17,6 +22,7 @@ const querySchema = z.object({
 });
 
 export async function GET(request: Request): Promise<NextResponse> {
+  const currentRequestId = requestId(request);
   try {
     await authorizeRequest(request, "settings.read");
     const url = new URL(request.url);
@@ -40,6 +46,42 @@ export async function GET(request: Request): Promise<NextResponse> {
       ),
     );
   } catch (error) {
-    return apiErrorResponse(error);
+    return apiErrorResponse(error, currentRequestId);
+  }
+}
+
+export async function DELETE(request: Request): Promise<NextResponse> {
+  const currentRequestId = requestId(request);
+  try {
+    requireSameOrigin(request);
+    const identity = await authorizeRequest(request, "settings.manage", undefined);
+    const input = deleteStorageRuntimeAssetInputSchema.parse(await readJsonBody(request, 8 * 1024));
+    const services = await getPlatformServices();
+    const asset = await services.projectStructures.deleteRuntimeAsset(input.runtimeAssetId);
+    services.storageInventory.invalidateSummary();
+    const result = deleteStorageRuntimeAssetResultSchema.parse({
+      runtimeAssetId: asset.id,
+      projectId: asset.projectId,
+      category: asset.kind === "jdk" ? "jdk" : "dependency",
+      sourceType: asset.sourceType,
+      fileName: asset.fileName,
+      deletedBytes: asset.sourceType === "upload" ? asset.sizeBytes : 0,
+    });
+    await services.identityAccess.recordAuthorizedOperation(identity, {
+      action: "storage.runtime_asset_delete",
+      resourceType: "project_runtime_asset",
+      resourceId: asset.id,
+      projectId: asset.projectId,
+      requestId: currentRequestId,
+      details: {
+        category: result.category,
+        sourceType: result.sourceType,
+        fileName: result.fileName,
+        deletedBytes: result.deletedBytes,
+      },
+    });
+    return NextResponse.json(result);
+  } catch (error) {
+    return apiErrorResponse(error, currentRequestId);
   }
 }

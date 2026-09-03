@@ -28,6 +28,7 @@ if [[ -z "${adapter_jar}" ]]; then
   mvn --quiet --file "${repository_root}/adapters/cotest-testng/pom.xml" -DskipTests package
   adapter_jar="${repository_root}/adapters/cotest-testng/target/cotest-testng-adapter-0.1.0-SNAPSHOT.jar"
 fi
+bash "${repository_root}/scripts/quality/verify-cotest-adapter-bytecode.sh" "${adapter_jar}"
 install -m 0644 "${adapter_jar}" "${output_directory}/cotest-testng-adapter.jar"
 
 node "${repository_root}/scripts/release/create-agent-resource-manifest.mjs" \

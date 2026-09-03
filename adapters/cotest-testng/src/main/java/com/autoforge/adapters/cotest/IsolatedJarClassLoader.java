@@ -2,11 +2,12 @@ package com.autoforge.adapters.cotest;
 
 import java.net.URL;
 import java.net.URLClassLoader;
+import java.util.Arrays;
 import java.util.List;
 
 final class IsolatedJarClassLoader extends URLClassLoader {
   private static final List<String> PARENT_FIRST_PREFIXES =
-      List.of(
+      Arrays.asList(
           "java.",
           "javax.",
           "jdk.",

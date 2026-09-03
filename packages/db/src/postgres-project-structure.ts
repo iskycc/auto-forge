@@ -2,6 +2,7 @@ import type {
   CreateProjectRuntimeAssetRecord,
   CreateProjectVersionRecord,
   CreateTestStageRecord,
+  DeleteRuntimeAssetMetadataResult,
   ProjectStructureRepository,
 } from "@autoforge/application";
 import {
@@ -494,6 +495,28 @@ export class PostgresProjectStructureRepository implements ProjectStructureRepos
         await client.query("DELETE FROM project_runtime_assets WHERE id = $1", [assetId]);
       }
     });
+  }
+
+  async deleteRuntimeAssetIfUnreferenced(
+    assetId: string,
+  ): Promise<DeleteRuntimeAssetMetadataResult> {
+    await this.handle.ready;
+    try {
+      return await this.transaction(async (client) => {
+        const result = await client.query<AssetRow>(
+          "SELECT * FROM project_runtime_assets WHERE id = $1 FOR UPDATE",
+          [assetId],
+        );
+        if (!result.rows[0]) return { status: "not_found" };
+        const asset = await findUnreferencedAsset(client, assetId);
+        if (!asset) return { status: "referenced" };
+        await client.query("DELETE FROM project_runtime_assets WHERE id = $1", [assetId]);
+        return { status: "deleted", asset };
+      });
+    } catch (error) {
+      if (error instanceof DomainError) throw error;
+      throw mapStructureWriteError(error);
+    }
   }
 
   private async updateVersionConfiguration(

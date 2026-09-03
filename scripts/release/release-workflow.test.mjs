@@ -35,6 +35,41 @@ test("publishes complete release assets without waiting for checks", async () =>
   );
 });
 
+test("builds the embedded CoTest Adapter with a pinned Java 8 compiler", async () => {
+  const [
+    releaseWorkflow,
+    ciWorkflow,
+    releaseChecksWorkflow,
+    adapterPom,
+    compatibilityCheck,
+    bytecodeCheck,
+    resourceBuild,
+  ] = await Promise.all([
+    readFile(".github/workflows/release.yml", "utf8"),
+    readFile(".github/workflows/ci.yml", "utf8"),
+    readFile(".github/workflows/release-checks.yml", "utf8"),
+    readFile("adapters/cotest-testng/pom.xml", "utf8"),
+    readFile("scripts/quality/test-cotest-adapter-java8.sh", "utf8"),
+    readFile("scripts/quality/verify-cotest-adapter-bytecode.sh", "utf8"),
+    readFile("scripts/release/build-agent-resources.sh", "utf8"),
+  ]);
+
+  assert.match(adapterPom, /<maven\.compiler\.release>8<\/maven\.compiler\.release>/);
+  assert.doesNotMatch(adapterPom, /<maven\.compiler\.release>11<\/maven\.compiler\.release>/);
+  assert.match(adapterPom, /<testng\.version>7\.5\.1<\/testng\.version>/);
+  assert.match(compatibilityCheck, /java\.specification\.version = 1\.8/);
+  assert.match(bytecodeCheck, /major version[^\n]*52/);
+  assert.match(resourceBuild, /verify-cotest-adapter-bytecode\.sh/);
+
+  for (const workflow of [releaseWorkflow, ciWorkflow, releaseChecksWorkflow]) {
+    assert.match(workflow, /java-version: "8"/);
+    assert.match(workflow, /bash scripts\/quality\/test-cotest-adapter-java8\.sh/);
+  }
+  for (const workflow of [ciWorkflow, releaseChecksWorkflow]) {
+    assert.match(workflow, /-Dtestng\.version=7\.11\.0 test/);
+  }
+});
+
 test("partitions tagged and published checks without polling inside a test job", async () => {
   const [taggedChecks, publishedAcceptance] = await Promise.all([
     readFile(".github/workflows/release-checks.yml", "utf8"),

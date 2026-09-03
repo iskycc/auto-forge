@@ -371,7 +371,21 @@ export const storageInventoryItemSchema = z.object({
   modifiedAt: z.string().datetime().optional(),
   runBatchId: z.string().min(1).max(128).optional(),
   projectId: z.string().min(1).max(128).optional(),
+  runtimeAssetId: z.string().min(1).max(128).optional(),
   detail: z.string().max(500).optional(),
+});
+
+export const deleteStorageRuntimeAssetInputSchema = z.object({
+  runtimeAssetId: z.string().min(1).max(128),
+});
+
+export const deleteStorageRuntimeAssetResultSchema = z.object({
+  runtimeAssetId: z.string().min(1).max(128),
+  projectId: z.string().min(1).max(128),
+  category: z.enum(["jdk", "dependency"]),
+  sourceType: z.enum(["upload", "url"]),
+  fileName: z.string().min(1).max(512),
+  deletedBytes: z.number().int().nonnegative(),
 });
 
 export const storageInventorySummarySchema = z.object({
@@ -426,3 +440,4 @@ export type StorageInventoryLocation = z.infer<typeof storageInventoryLocationSc
 export type StorageInventoryItem = z.infer<typeof storageInventoryItemSchema>;
 export type StorageInventorySummary = z.infer<typeof storageInventorySummarySchema>;
 export type StorageInventoryPage = z.infer<typeof storageInventoryPageSchema>;
+export type DeleteStorageRuntimeAssetResult = z.infer<typeof deleteStorageRuntimeAssetResultSchema>;

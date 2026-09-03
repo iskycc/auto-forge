@@ -1,4 +1,8 @@
-import { failureAnalysisClaimSchema } from "@autoforge/contracts";
+import {
+  failureAnalysisClaimSchema,
+  failureAnalysisCompletionOrderSchema,
+  failureAnalysisSortSchema,
+} from "@autoforge/contracts";
 import { DEFAULT_PROJECT_ID, hasPermission } from "@autoforge/domain";
 import { notFound } from "next/navigation";
 
@@ -34,6 +38,20 @@ export default async function CaseAnalysisDetailPage({
   );
   if (!hierarchy.projectVersionId) notFound();
   const initialView = singleParameter(parameters.view) === "workbench" ? "workbench" : "claim";
+  const initialFilters = {
+    candidateQuery: searchQueryParameter(parameters.candidateQuery),
+    candidateSort: enumParameter(parameters.candidateSort, failureAnalysisSortSchema, "class_path"),
+    candidateDirection: directionParameter(parameters.candidateDirection),
+    analysisQuery: searchQueryParameter(parameters.analysisQuery),
+    analysisSort: enumParameter(parameters.analysisSort, failureAnalysisSortSchema, "class_path"),
+    analysisDirection: directionParameter(parameters.analysisDirection),
+    completionOrder: enumParameter(
+      parameters.completionOrder,
+      failureAnalysisCompletionOrderSchema,
+      "pending_first",
+    ),
+    includeCompleted: singleParameter(parameters.includeCompleted) !== "false",
+  } as const;
   const [batch, initialCandidatePage, initialClaimPage, initialMyClaimCount] = await Promise.all([
     services.failureAnalysis.getBatch({
       projectId,
@@ -45,9 +63,10 @@ export default async function CaseAnalysisDetailPage({
           projectId,
           projectVersionId: hierarchy.projectVersionId,
           batchId,
-          sort: "class_path",
-          direction: "asc",
+          sort: initialFilters.candidateSort,
+          direction: initialFilters.candidateDirection,
           limit: 50,
+          ...(initialFilters.candidateQuery ? { query: initialFilters.candidateQuery } : {}),
         })
       : undefined,
     initialView === "workbench"
@@ -56,9 +75,12 @@ export default async function CaseAnalysisDetailPage({
           projectVersionId: hierarchy.projectVersionId,
           claimantId: identity.user.id,
           batchId,
-          sort: "class_path",
-          direction: "asc",
+          sort: initialFilters.analysisSort,
+          direction: initialFilters.analysisDirection,
+          completionOrder: initialFilters.completionOrder,
+          includeCompleted: initialFilters.includeCompleted,
           limit: 50,
+          ...(initialFilters.analysisQuery ? { query: initialFilters.analysisQuery } : {}),
         })
       : undefined,
     services.failureAnalysis.countMyClaims({
@@ -83,6 +105,7 @@ export default async function CaseAnalysisDetailPage({
             }
           : undefined
       }
+      initialFilters={initialFilters}
       initialMyClaimCount={initialMyClaimCount}
       initialView={initialView}
       key={batch.id}
@@ -94,4 +117,23 @@ export default async function CaseAnalysisDetailPage({
 
 function singleParameter(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
+}
+
+function searchQueryParameter(value: string | string[] | undefined): string {
+  return singleParameter(value)?.trim().slice(0, 240) ?? "";
+}
+
+function directionParameter(value: string | string[] | undefined): "asc" | "desc" {
+  return singleParameter(value) === "desc" ? "desc" : "asc";
+}
+
+function enumParameter<Value extends string>(
+  value: string | string[] | undefined,
+  schema: {
+    safeParse(value: unknown): { success: true; data: Value } | { success: false };
+  },
+  fallback: Value,
+): Value {
+  const parsed = schema.safeParse(singleParameter(value));
+  return parsed.success ? parsed.data : fallback;
 }

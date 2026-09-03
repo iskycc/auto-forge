@@ -12,8 +12,11 @@ import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Base64;
+import java.util.Collections;
 import java.util.List;
 import java.util.jar.JarEntry;
 import java.util.jar.JarOutputStream;
@@ -22,7 +25,7 @@ import org.junit.jupiter.api.io.TempDir;
 
 class CotestTestNgExecutorTest {
   private static final List<String> FIXTURE_CLASSES =
-      List.of(
+      Arrays.asList(
           "com/huawei/cotest/util/ProjectFileUtil.class",
           "cotest/auto/dataproviders/MM2DataProvider.class",
           "fixture/AdapterCase.class",
@@ -36,7 +39,7 @@ class CotestTestNgExecutorTest {
       throws IOException {
     Path fixtureJar = createFixtureJar();
     Path classDataFile = temporaryDirectory.resolve("class-data.json");
-    Files.writeString(classDataFile, "{}\n");
+    Utf8TestIO.write(classDataFile, "{}\n");
     Path reports = temporaryDirectory.resolve("reports");
     ByteArrayOutputStream standardOutput = new ByteArrayOutputStream();
     ByteArrayOutputStream errorOutput = new ByteArrayOutputStream();
@@ -51,14 +54,14 @@ class CotestTestNgExecutorTest {
             classDataFile,
             reports);
     int exitCode;
-    try (PrintStream output = new PrintStream(standardOutput, true, StandardCharsets.UTF_8);
-        PrintStream errors = new PrintStream(errorOutput, true, StandardCharsets.UTF_8)) {
+    try (PrintStream output = AdapterMain.utf8PrintStream(standardOutput);
+        PrintStream errors = AdapterMain.utf8PrintStream(errorOutput)) {
       exitCode = new CotestTestNgExecutor(output, errors).execute(request);
     }
 
-    assertEquals(0, exitCode, errorOutput.toString(StandardCharsets.UTF_8));
+    assertEquals(0, exitCode, Utf8TestIO.decode(errorOutput));
     assertSame(originalContextLoader, Thread.currentThread().getContextClassLoader());
-    assertTrue(standardOutput.toString(StandardCharsets.UTF_8).contains("Passed: 1"));
+    assertTrue(Utf8TestIO.decode(standardOutput).contains("Passed: 1"));
     assertTrue(Files.isRegularFile(reports.resolve("testng-results.xml")));
   }
 
@@ -66,7 +69,7 @@ class CotestTestNgExecutorTest {
   void skippedTestsDoNotTurnTheProcessExitCodeIntoAFailure() throws IOException {
     Path fixtureJar = createFixtureJar();
     Path classDataFile = temporaryDirectory.resolve("class-data.json");
-    Files.writeString(classDataFile, "{}\n");
+    Utf8TestIO.write(classDataFile, "{}\n");
     Path reports = temporaryDirectory.resolve("reports-skipped");
     ByteArrayOutputStream standardOutput = new ByteArrayOutputStream();
     ByteArrayOutputStream errorOutput = new ByteArrayOutputStream();
@@ -80,24 +83,24 @@ class CotestTestNgExecutorTest {
             classDataFile,
             reports);
     int exitCode;
-    try (PrintStream output = new PrintStream(standardOutput, true, StandardCharsets.UTF_8);
-        PrintStream errors = new PrintStream(errorOutput, true, StandardCharsets.UTF_8)) {
+    try (PrintStream output = AdapterMain.utf8PrintStream(standardOutput);
+        PrintStream errors = AdapterMain.utf8PrintStream(errorOutput)) {
       exitCode = new CotestTestNgExecutor(output, errors).execute(request);
     }
 
-    String stdout = standardOutput.toString(StandardCharsets.UTF_8);
+    String stdout = Utf8TestIO.decode(standardOutput);
     assertTrue(stdout.contains("Passed: 1"), stdout);
     assertTrue(stdout.contains("Skipped: 1"), stdout);
     // TestNG 状态位图包含跳过位（status=2），但退出码必须为 0，由控制面按 XML 判定结果。
     assertTrue(stdout.contains("TestNG exit status: 2"), stdout);
-    assertEquals(0, exitCode, errorOutput.toString(StandardCharsets.UTF_8));
+    assertEquals(0, exitCode, Utf8TestIO.decode(errorOutput));
   }
 
   @Test
   void emitsTheCompleteFailureMarkerBeforeThePotentiallyLongStackTrace() throws IOException {
     Path fixtureJar = createFixtureJar();
     Path classDataFile = temporaryDirectory.resolve("class-data-failure.json");
-    Files.writeString(classDataFile, "{}\n");
+    Utf8TestIO.write(classDataFile, "{}\n");
     ByteArrayOutputStream standardOutput = new ByteArrayOutputStream();
     ByteArrayOutputStream errorOutput = new ByteArrayOutputStream();
     AdapterExecutionRequest request =
@@ -110,12 +113,12 @@ class CotestTestNgExecutorTest {
             temporaryDirectory.resolve("reports-failure"));
 
     int exitCode;
-    try (PrintStream output = new PrintStream(standardOutput, true, StandardCharsets.UTF_8);
-        PrintStream errors = new PrintStream(errorOutput, true, StandardCharsets.UTF_8)) {
+    try (PrintStream output = AdapterMain.utf8PrintStream(standardOutput);
+        PrintStream errors = AdapterMain.utf8PrintStream(errorOutput)) {
       exitCode = new CotestTestNgExecutor(output, errors).execute(request);
     }
 
-    String stdout = standardOutput.toString(StandardCharsets.UTF_8);
+    String stdout = Utf8TestIO.decode(standardOutput);
     int markerStart = stdout.indexOf(FailureSummaryMarker.PREFIX + "[");
     int markerEnd = stdout.indexOf(']', markerStart);
     assertEquals(1, exitCode);
@@ -141,7 +144,7 @@ class CotestTestNgExecutorTest {
           if (contents == null) {
             throw new IOException("Missing compiled test fixture: " + resourceName);
           }
-          contents.transferTo(archive);
+          Utf8TestIO.copy(contents, archive);
         }
         archive.closeEntry();
       }
@@ -155,11 +158,11 @@ class CotestTestNgExecutorTest {
     String[] classpathEntries =
         System.getProperty("java.class.path").split(java.io.File.pathSeparator);
     for (String entry : classpathEntries) {
-      Path path = Path.of(entry);
+      Path path = Paths.get(entry);
       if (Files.isRegularFile(path) && entry.endsWith(".jar")) {
         urls.add(path.toUri().toURL());
       }
     }
-    return List.copyOf(urls);
+    return Collections.unmodifiableList(urls);
   }
 }

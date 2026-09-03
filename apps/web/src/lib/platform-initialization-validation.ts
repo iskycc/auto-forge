@@ -2,7 +2,8 @@ import { validationIssueMessage, type ValidationIssue } from "./form-validation"
 
 const FIELD_LABELS: Record<string, string> = {
   bootstrapToken: "平台配置引导令牌",
-  "configuration.web.publicBaseUrl": "执行机可访问地址",
+  "configuration.web.publicBaseUrl": "外部访问地址",
+  "configuration.web.runnerBaseUrl": "内部访问地址（Runner）",
   "configuration.full.databaseUrl": "PostgreSQL URL",
   "configuration.full.natsServers": "NATS 地址",
   "configuration.full.redisUrl": "Redis URL",

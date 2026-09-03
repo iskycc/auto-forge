@@ -447,7 +447,14 @@ func locateJavaHome(root string) (string, error) {
 		if entry.IsDir() && depth > 4 {
 			return filepath.SkipDir
 		}
-		if !entry.Type().IsRegular() || entry.Name() != "java" || filepath.Base(filepath.Dir(path)) != "bin" {
+		if entry.Name() != "java" || filepath.Base(filepath.Dir(path)) != "bin" {
+			return nil
+		}
+		info, err := os.Stat(path)
+		if err != nil {
+			return fmt.Errorf("inspect Java launcher: %w", err)
+		}
+		if !info.Mode().IsRegular() {
 			return nil
 		}
 		homes = append(homes, filepath.Dir(filepath.Dir(path)))
@@ -456,32 +463,85 @@ func locateJavaHome(root string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("inspect extracted JDK: %w", err)
 	}
-	standaloneHomes := excludeEmbeddedJREHomes(homes)
+	compilerHomes := javaHomesWithCompiler(homes)
+	if len(compilerHomes) == 1 {
+		return compilerHomes[0], nil
+	}
+	if len(compilerHomes) > 1 {
+		return "", javaHomeSelectionError(root, compilerHomes, "JDK compiler homes")
+	}
+
+	standaloneHomes := excludeNestedJavaHomes(homes)
 	sort.Strings(standaloneHomes)
 	if len(standaloneHomes) != 1 {
-		return "", fmt.Errorf("JDK archive must contain exactly one bin/java, found %d", len(standaloneHomes))
+		return "", javaHomeSelectionError(root, standaloneHomes, "standalone Java homes")
 	}
 	return standaloneHomes[0], nil
 }
 
-// excludeEmbeddedJREHomes keeps a JDK 8 archive's bundled jre/bin/java from
-// being mistaken for a second independent JDK. The parent must itself contain
-// bin/java; unrelated or more deeply nested Java homes remain ambiguous.
-func excludeEmbeddedJREHomes(homes []string) []string {
-	candidates := make(map[string]struct{}, len(homes))
+func javaHomesWithCompiler(homes []string) []string {
+	compilerHomes := make([]string, 0, len(homes))
 	for _, home := range homes {
-		candidates[home] = struct{}{}
+		info, err := os.Stat(filepath.Join(home, "bin", "javac"))
+		if err == nil && info.Mode().IsRegular() {
+			compilerHomes = append(compilerHomes, home)
+		}
 	}
+	return compilerHomes
+}
+
+// excludeNestedJavaHomes is the compatibility fallback for stripped JDKs that
+// do not include javac. A Java home below another candidate is the outer
+// runtime's bundled JRE, regardless of the directory name used by the vendor.
+func excludeNestedJavaHomes(homes []string) []string {
 	standalone := make([]string, 0, len(homes))
 	for _, home := range homes {
-		if filepath.Base(home) == "jre" {
-			if _, embedded := candidates[filepath.Dir(home)]; embedded {
-				continue
+		nested := false
+		for _, possibleParent := range homes {
+			if home != possibleParent && pathIsWithin(possibleParent, home) {
+				nested = true
+				break
 			}
 		}
-		standalone = append(standalone, home)
+		if !nested {
+			standalone = append(standalone, home)
+		}
 	}
 	return standalone
+}
+
+func pathIsWithin(parent, candidate string) bool {
+	relative, err := filepath.Rel(parent, candidate)
+	return err == nil && relative != "." && filepath.IsLocal(relative)
+}
+
+func javaHomeSelectionError(root string, homes []string, kind string) error {
+	const maximumReportedHomes = 8
+
+	sortedHomes := append([]string(nil), homes...)
+	sort.Strings(sortedHomes)
+	reportedHomeCount := min(len(sortedHomes), maximumReportedHomes)
+	relativeHomes := make([]string, 0, reportedHomeCount)
+	for _, home := range sortedHomes[:reportedHomeCount] {
+		relative, err := filepath.Rel(root, home)
+		if err != nil {
+			relative = filepath.Base(home)
+		}
+		relativeHomes = append(relativeHomes, filepath.ToSlash(relative))
+	}
+	detail := strings.Join(relativeHomes, ", ")
+	if omitted := len(homes) - len(relativeHomes); omitted > 0 {
+		detail = fmt.Sprintf("%s, ... (%d more)", detail, omitted)
+	}
+	if detail == "" {
+		detail = "none"
+	}
+	return fmt.Errorf(
+		"JDK archive must contain exactly one identifiable JDK: found %d %s (%s)",
+		len(homes),
+		kind,
+		detail,
+	)
 }
 
 func copyRegularFile(source, destination string) error {

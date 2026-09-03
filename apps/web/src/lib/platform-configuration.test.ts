@@ -5,6 +5,7 @@ import {
   mergePlatformConfiguration,
   platformConfigurationActivation,
   platformConfigurationView,
+  runnerControlPlaneUrl,
 } from "./platform-configuration";
 
 describe("platform configuration mapping", () => {
@@ -90,6 +91,7 @@ describe("platform configuration mapping", () => {
       web: {
         ...current.web,
         publicBaseUrl: "https://new.autoforge.test",
+        runnerBaseUrl: "http://10.20.30.40:3000",
         port: 3200,
         timeZone: "UTC",
       },
@@ -97,9 +99,55 @@ describe("platform configuration mapping", () => {
     });
 
     expect(platformConfigurationActivation(current, saved)).toEqual({
-      appliedImmediatelyFields: ["外部访问地址", "平台时区", "产物收集"],
+      appliedImmediatelyFields: ["外部访问地址", "内部访问地址", "平台时区", "产物收集"],
       restartRequiredFields: ["HTTP 端口", "容量与会话限制"],
     });
+  });
+
+  it("uses the internal Runner address and falls back to the external address", () => {
+    expect(
+      runnerControlPlaneUrl({
+        publicBaseUrl: "https://autoforge.example.test",
+        runnerBaseUrl: "http://10.20.30.40:3000",
+      }),
+    ).toBe("http://10.20.30.40:3000");
+    expect(runnerControlPlaneUrl({ publicBaseUrl: "https://autoforge.example.test" })).toBe(
+      "https://autoforge.example.test",
+    );
+  });
+
+  it("preserves an internal address omitted by old clients and supports explicit clearing", () => {
+    const current = configuration({
+      web: {
+        ...configuration().web,
+        publicBaseUrl: "https://autoforge.example.test",
+        runnerBaseUrl: "http://10.20.30.40:3000",
+      },
+    });
+    const legacyInput = {
+      revision: current.revision,
+      mode: current.mode,
+      web: {
+        hostname: current.web.hostname,
+        port: current.web.port,
+        timeZone: current.web.timeZone,
+        publicBaseUrl: current.web.publicBaseUrl,
+        publicDashboardRefreshSeconds: current.web.publicDashboardRefreshSeconds,
+      },
+      limits: current.limits,
+      scheduler: current.scheduler,
+      worker: current.worker,
+    };
+
+    expect(mergePlatformConfiguration(current, legacyInput).web.runnerBaseUrl).toBe(
+      "http://10.20.30.40:3000",
+    );
+    expect(
+      mergePlatformConfiguration(current, {
+        ...legacyInput,
+        web: { ...legacyInput.web, runnerBaseUrl: null },
+      }).web.runnerBaseUrl,
+    ).toBeUndefined();
   });
 });
 
