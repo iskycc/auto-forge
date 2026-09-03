@@ -1189,9 +1189,6 @@ describe.skipIf(!connectionString)("PostgreSQL migrations", () => {
       await client.query(await readFile(resolve(migrationsFolder, migration), "utf8"));
 
       await expect(
-        client.query("SELECT current_round FROM run_batches WHERE id='batch-logical-round'"),
-      ).resolves.toMatchObject({ rows: [{ current_round: 11 }] });
-      await expect(
         client.query(
           `SELECT id,execution_round FROM execution_runs
            WHERE batch_id='batch-logical-round' ORDER BY id`,
@@ -1216,6 +1213,9 @@ describe.skipIf(!connectionString)("PostgreSQL migrations", () => {
           { attempt_number: 13, execution_round: 11 },
         ],
       });
+      await expect(
+        client.query("SELECT current_round FROM run_batches WHERE id='batch-logical-round'"),
+      ).resolves.toMatchObject({ rows: [{ current_round: 11 }] });
     } finally {
       await client.end();
     }

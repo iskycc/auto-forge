@@ -105,7 +105,10 @@ SET current_round = LEAST(
              OR (run.status = 'queued' AND run.held_round = 0))
     ),
     (
-      SELECT GREATEST(1, MIN(run.execution_round) - 1)
+      SELECT CASE
+        WHEN MIN(run.execution_round) IS NULL THEN NULL
+        ELSE GREATEST(1, MIN(run.execution_round) - 1)
+      END
       FROM execution_runs run
       WHERE run.batch_id = batch.id AND run.status = 'queued' AND run.held_round > 0
     ),
