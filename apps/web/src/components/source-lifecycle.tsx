@@ -1,9 +1,10 @@
 "use client";
 
 import { Button } from "@/components/ui";
+import { useConcurrentModificationFeedback } from "@/components/concurrent-modification-feedback";
 import { useConfirm, useToast } from "@/components/ui-feedback";
+import { throwApiErrorResponse } from "@/lib/client-api";
 
-import { apiErrorSchema } from "@autoforge/contracts";
 import type { CaseSourceComparisonResult } from "@autoforge/contracts";
 import { Archive, GitCompareArrows, LoaderCircle, RefreshCcw, Trash2 } from "lucide-react";
 import { useRouter } from "next/navigation";
@@ -30,6 +31,7 @@ export function SourceLifecyclePanel({
 }: SourceLifecyclePanelProps) {
   const router = useRouter();
   const confirmAction = useConfirm();
+  const showConcurrentModification = useConcurrentModificationFeedback();
   const toast = useToast();
   const [pendingAction, setPendingAction] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -44,6 +46,7 @@ export function SourceLifecyclePanel({
       await operation();
       router.refresh();
     } catch (caught) {
+      if (await showConcurrentModification(caught)) return;
       setError(caught instanceof Error ? caught.message : "操作失败，请稍后重试。");
     } finally {
       setPendingAction(null);
@@ -58,11 +61,7 @@ export function SourceLifecyclePanel({
         : { headers: { "content-type": "application/json" }, body: JSON.stringify(body) }),
     });
     if (!response.ok) {
-      const payload: unknown = await response.json().catch(() => null);
-      const parsed = apiErrorSchema.safeParse(payload);
-      throw new Error(
-        parsed.success ? parsed.data.error.message : `请求失败（HTTP ${response.status}）。`,
-      );
+      await throwApiErrorResponse(response, `请求失败（HTTP ${response.status}）。`);
     }
   }
 
@@ -73,11 +72,7 @@ export function SourceLifecyclePanel({
         { method: "POST" },
       );
       if (!response.ok) {
-        const payload: unknown = await response.json().catch(() => null);
-        const parsed = apiErrorSchema.safeParse(payload);
-        throw new Error(
-          parsed.success ? parsed.data.error.message : `请求失败（HTTP ${response.status}）。`,
-        );
+        await throwApiErrorResponse(response, `请求失败（HTTP ${response.status}）。`);
       }
       setComparison((await response.json()) as CaseSourceComparisonResult);
     });

@@ -2,12 +2,13 @@
 
 import { Button, Input, Textarea } from "@/components/ui";
 
-import { apiErrorSchema } from "@autoforge/contracts";
 import type { CaseDefinitionWithMethods } from "@autoforge/domain";
 import { LoaderCircle, Save } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { FormEvent, useState } from "react";
 import { useToast } from "@/components/ui-feedback";
+import { useConcurrentModificationFeedback } from "@/components/concurrent-modification-feedback";
+import { throwApiErrorResponse } from "@/lib/client-api";
 
 export function CaseDefinitionEditor({
   definition,
@@ -18,6 +19,7 @@ export function CaseDefinitionEditor({
 }) {
   const router = useRouter();
   const toast = useToast();
+  const showConcurrentModification = useConcurrentModificationFeedback();
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -47,17 +49,14 @@ export function CaseDefinitionEditor({
         },
       );
       if (!response.ok) {
-        const payload: unknown = await response.json().catch(() => null);
-        const parsed = apiErrorSchema.safeParse(payload);
-        throw new Error(
-          parsed.success ? parsed.data.error.message : `请求失败（HTTP ${response.status}）。`,
-        );
+        await throwApiErrorResponse(response, `请求失败（HTTP ${response.status}）。`);
       }
       const updated = (await response.json()) as CaseDefinitionWithMethods;
       toast.success("用例已更新。");
       onUpdated?.(updated);
       router.refresh();
     } catch (caught) {
+      if (await showConcurrentModification(caught)) return;
       setError(caught instanceof Error ? caught.message : "更新用例失败。");
     } finally {
       setPending(false);

@@ -33,7 +33,7 @@ export type ConfirmOptions = {
   description: string;
   confirmLabel?: string;
   cancelLabel?: string;
-  tone?: "default" | "danger";
+  tone?: "default" | "danger" | "warning";
 };
 
 export type PromptOptions = ConfirmOptions & {
@@ -142,7 +142,7 @@ export function UiFeedbackProvider({ children }: { children: ReactNode }) {
         ))}
       </div>
       <ActionDialog
-        className={`confirmation-dialog${options?.tone === "danger" ? " confirmation-dialog-danger" : ""}`}
+        className={`confirmation-dialog${options?.tone === "danger" ? " confirmation-dialog-danger" : options?.tone === "warning" ? " confirmation-dialog-warning" : ""}`}
         onClose={() => closeDialog(dialogRequest?.kind === "confirm" ? false : null)}
         open={dialogRequest !== null}
         title={options?.title ?? "确认操作"}

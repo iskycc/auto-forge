@@ -9,8 +9,9 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 
 import { Button } from "@/components/ui";
-import { readApiErrorMessage } from "@/lib/client-api";
+import { readApiError } from "@/lib/client-api";
 import { useConfirm, useToast } from "@/components/ui-feedback";
+import { useConcurrentModificationFeedback } from "@/components/concurrent-modification-feedback";
 
 export function AutomationOperations({
   schedules,
@@ -23,6 +24,7 @@ export function AutomationOperations({
 }) {
   const router = useRouter();
   const confirmAction = useConfirm();
+  const showConcurrentModification = useConcurrentModificationFeedback();
   const toast = useToast();
   const [pending, setPending] = useState(false);
 
@@ -30,13 +32,14 @@ export function AutomationOperations({
     setPending(true);
     try {
       const response = await fetch(path, init);
-      const errorMessage = await readApiErrorMessage(response, "操作失败。");
-      if (errorMessage) throw new Error(errorMessage);
+      const apiError = await readApiError(response, "操作失败。");
+      if (apiError) throw apiError;
       toast.success(success);
       router.refresh();
-      setPending(false);
     } catch (cause) {
+      if (await showConcurrentModification(cause)) return;
       toast.error(cause instanceof Error ? cause.message : "操作失败。");
+    } finally {
       setPending(false);
     }
   }

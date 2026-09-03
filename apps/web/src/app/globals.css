@@ -12727,6 +12727,11 @@ button.icon-button:disabled {
   place-items: center;
 }
 
+/* Shared confirmations may be opened from an existing drawer or image modal. */
+.action-dialog-backdrop {
+  z-index: 220;
+}
+
 .global-run-dialog {
   display: flex;
   width: min(900px, calc(100dvw - 36px));
@@ -14086,6 +14091,11 @@ button.icon-button:disabled {
 
 .confirmation-dialog-danger .action-dialog-header {
   background: linear-gradient(180deg, var(--color-danger-soft), var(--color-surface));
+}
+
+.confirmation-dialog-warning .action-dialog-header {
+  border-bottom-color: color-mix(in srgb, var(--color-warning) 22%, var(--color-border));
+  background: linear-gradient(180deg, var(--color-warning-soft), var(--color-surface));
 }
 
 .confirmation-dialog-field {

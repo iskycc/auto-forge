@@ -23,8 +23,10 @@ import {
 import { useRef, useState, type FormEvent, type ReactNode } from "react";
 
 import { ActionDialog } from "./action-dialog";
+import { useConcurrentModificationFeedback } from "./concurrent-modification-feedback";
 import { Button, Input, Select, Textarea } from "./ui";
 import { useToast } from "./ui-feedback";
+import { throwApiErrorResponse } from "@/lib/client-api";
 
 type EditorState = {
   id?: string;
@@ -58,6 +60,7 @@ export function WebhookSettings({
   canManage: boolean;
 }) {
   const toast = useToast();
+  const showConcurrentModification = useConcurrentModificationFeedback();
   const [configurations, setConfigurations] = useState(initialConfigurations);
   const [deliveries] = useState(initialDeliveries);
   const [editor, setEditor] = useState<EditorState>();
@@ -104,6 +107,7 @@ export function WebhookSettings({
       setEditor(undefined);
       toast.success(editor.id ? "Webhook 配置已保存。" : "Webhook 已创建。");
     } catch (problem) {
+      if (await showConcurrentModification(problem)) return;
       setError(problem instanceof Error ? problem.message : "保存 Webhook 失败。");
     } finally {
       setPending(false);
@@ -122,6 +126,7 @@ export function WebhookSettings({
       setDeleting(undefined);
       toast.success("Webhook 已删除。");
     } catch (problem) {
+      if (await showConcurrentModification(problem)) return;
       setError(problem instanceof Error ? problem.message : "删除 Webhook 失败。");
     } finally {
       setPending(false);
@@ -522,12 +527,6 @@ async function requestJson<T>(
       : { headers: { "content-type": "application/json" }, body: JSON.stringify(init.body) }),
   });
   if (response.status === 204) return undefined as T;
-  const payload = (await response.json()) as T | { error?: { message?: string } };
-  if (!response.ok)
-    throw new Error(
-      "error" in (payload as object)
-        ? ((payload as { error?: { message?: string } }).error?.message ?? "请求失败。")
-        : "请求失败。",
-    );
-  return payload as T;
+  if (!response.ok) await throwApiErrorResponse(response, "请求失败。");
+  return (await response.json()) as T;
 }

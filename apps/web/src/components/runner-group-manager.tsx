@@ -6,7 +6,9 @@ import { useState, type FormEvent } from "react";
 
 import { Button, Input, Textarea } from "./ui";
 import { ActionDialog } from "./action-dialog";
+import { useConcurrentModificationFeedback } from "./concurrent-modification-feedback";
 import { useConfirm } from "./ui-feedback";
+import { throwApiErrorResponse } from "@/lib/client-api";
 
 export function RunnerGroupManager({
   initialGroups,
@@ -18,6 +20,7 @@ export function RunnerGroupManager({
   canManage: boolean;
 }) {
   const confirmAction = useConfirm();
+  const showConcurrentModification = useConcurrentModificationFeedback();
   const [groups, setGroups] = useState(initialGroups);
   const [editingGroupId, setEditingGroupId] = useState<string>();
   const [pending, setPending] = useState(false);
@@ -43,6 +46,7 @@ export function RunnerGroupManager({
       formElement.reset();
       setCreateOpen(false);
     } catch (problem) {
+      if (await showConcurrentModification(problem)) return;
       setError(problem instanceof Error ? problem.message : "创建执行机组失败。");
     } finally {
       setPending(false);
@@ -74,6 +78,7 @@ export function RunnerGroupManager({
       );
       setEditingGroupId(undefined);
     } catch (problem) {
+      if (await showConcurrentModification(problem)) return;
       setError(problem instanceof Error ? problem.message : "更新执行机组失败。");
     } finally {
       setPending(false);
@@ -98,6 +103,7 @@ export function RunnerGroupManager({
       });
       setGroups((current) => current.filter((candidate) => candidate.id !== group.id));
     } catch (problem) {
+      if (await showConcurrentModification(problem)) return;
       setError(problem instanceof Error ? problem.message : "删除执行机组失败。");
     } finally {
       setPending(false);
@@ -296,11 +302,8 @@ async function requestJson<T = unknown>(
       : { headers: { "content-type": "application/json" }, body: JSON.stringify(input.body) }),
   });
   if (response.status === 204) return undefined as T;
-  const body = (await response.json().catch(() => ({}))) as {
-    error?: { message?: string };
-  };
-  if (!response.ok) throw new Error(body.error?.message ?? "执行机组操作失败。");
-  return body as T;
+  if (!response.ok) await throwApiErrorResponse(response, "执行机组操作失败。");
+  return (await response.json()) as T;
 }
 
 function compareGroups(left: RunnerGroup, right: RunnerGroup): number {

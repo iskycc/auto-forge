@@ -4,6 +4,25 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## 1.8.13 - 2026-09-03
+
+### Fixed
+
+- 所有带修订号保护的编辑入口在检测到并发修改时，统一显示站内警示弹窗，不再把“已被其他人
+  修改”降级为按钮旁的内联文字。弹窗允许暂时保留当前输入，或明确重新加载服务端最新内容，
+  并覆盖用例任务、用例、DDT、用例来源、Runner 组、Webhook、运行时与平台配置等入口。
+- 并发修改弹窗使用独立的顶层遮罩层级，从 DDT 编辑抽屉等已有浮层内触发时仍可见、可操作；
+  结构化 API 错误会保留错误码、请求 ID 与 HTTP 状态，避免前端丢失冲突类型。
+
+### Database and persisted configuration
+
+- 无数据库迁移、持久化配置格式、Runner Protocol 或离线资产兼容性变化。
+
+### Tests
+
+- 组件守卫会扫描全部修订保护编辑器和浏览器原生 `alert`/`confirm`/`prompt` 调用；Playwright
+  覆盖用例任务冲突后的保留输入、重新加载，以及 DDT 抽屉内嵌套冲突弹窗的层级与后续保存。
+
 ## 1.8.12 - 2026-09-03
 
 ### Added

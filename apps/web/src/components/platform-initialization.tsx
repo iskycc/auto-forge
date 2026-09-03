@@ -1,7 +1,6 @@
 "use client";
 
 import {
-  apiErrorSchema,
   initializePlatformConfigurationInputSchema,
   type PlatformConfigurationView,
 } from "@autoforge/contracts";
@@ -10,8 +9,11 @@ import { useState, type FormEvent } from "react";
 
 import { Button, Input } from "@/components/ui";
 import { platformInitializationValidationMessage } from "@/lib/platform-initialization-validation";
+import { readApiError } from "@/lib/client-api";
+import { useConcurrentModificationFeedback } from "@/components/concurrent-modification-feedback";
 
 export function PlatformInitialization({ initial }: { initial: PlatformConfigurationView }) {
+  const showConcurrentModification = useConcurrentModificationFeedback();
   const [mode, setMode] = useState(initial.mode);
   const [pending, setPending] = useState(false);
   const [completed, setCompleted] = useState(false);
@@ -50,18 +52,18 @@ export function PlatformInitialization({ initial }: { initial: PlatformConfigura
         headers: { "content-type": "application/json" },
         body: JSON.stringify(parsed.data),
       });
-      const body: unknown = await response.json();
-      if (!response.ok) {
-        const apiError = apiErrorSchema.safeParse(body);
-        throw new Error(
-          (apiError.success
-            ? (platformInitializationValidationMessage(apiError.data.error.details) ??
-              apiError.data.error.message)
-            : undefined) ?? "首次平台配置失败。",
-        );
+      const apiError = await readApiError(response, "首次平台配置失败。");
+      if (apiError) {
+        const validationMessage = platformInitializationValidationMessage(apiError.details);
+        if (validationMessage) throw new Error(validationMessage);
+        throw apiError;
       }
       setCompleted(true);
     } catch (cause) {
+      if (await showConcurrentModification(cause)) {
+        setPending(false);
+        return;
+      }
       setError(cause instanceof Error ? cause.message : "首次平台配置失败。");
       setPending(false);
     }

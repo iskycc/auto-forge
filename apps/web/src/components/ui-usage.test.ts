@@ -190,7 +190,9 @@ describe("shared UI controls", () => {
   it("uses product dialogs instead of browser-native confirmation prompts", () => {
     const violations = typescriptReactFiles(SOURCE_ROOT)
       .filter((file) => file !== UI_FEEDBACK)
-      .filter((file) => /window\.(?:confirm|prompt)\s*\(/.test(readFileSync(file, "utf8")))
+      .filter((file) =>
+        /(?:window|globalThis)\.(?:alert|confirm|prompt)\s*\(/.test(readFileSync(file, "utf8")),
+      )
       .map((file) => relative(SOURCE_ROOT, file));
 
     expect(violations).toEqual([]);
@@ -198,6 +200,29 @@ describe("shared UI controls", () => {
     expect(feedback).toContain("<ActionDialog");
     expect(feedback).toContain('className="toast-viewport"');
     expect(feedback).toContain('tone === "error" ? "alert" : "status"');
+  });
+
+  it("shows revision-protected editor conflicts in the shared product dialog", () => {
+    const revisionProtectedEditors = typescriptReactFiles(join(SOURCE_ROOT, "components")).filter(
+      (component) => {
+        const source = readFileSync(component, "utf8");
+        return /\brevision\b/.test(source) && /\bfetch\s*\(/.test(source);
+      },
+    );
+    expect(revisionProtectedEditors.length).toBeGreaterThanOrEqual(11);
+    for (const component of revisionProtectedEditors) {
+      const source = readFileSync(component, "utf8");
+      expect(source, relative(SOURCE_ROOT, component)).toContain(
+        "useConcurrentModificationFeedback",
+      );
+      expect(source, relative(SOURCE_ROOT, component)).toMatch(
+        /(?:readApiError|throwApiErrorResponse)/,
+      );
+    }
+    const feedback = readFileSync(UI_FEEDBACK, "utf8");
+    expect(feedback).toContain("confirmation-dialog-warning");
+    const stylesheet = readFileSync(GLOBAL_STYLES, "utf8");
+    expect(stylesheet).toMatch(/\.action-dialog-backdrop\s*\{[^}]*z-index:\s*220/s);
   });
 
   it("keeps dense data routes visibly responsive while loading and filtering", () => {

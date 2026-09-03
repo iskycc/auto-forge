@@ -7,6 +7,8 @@ import { Save, ServerCog } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
 import { useToast } from "@/components/ui-feedback";
+import { useConcurrentModificationFeedback } from "@/components/concurrent-modification-feedback";
+import { readApiError } from "@/lib/client-api";
 
 const COMMON_TIME_ZONES = [
   "Asia/Shanghai",
@@ -29,6 +31,7 @@ export function PlatformSettings({
 }) {
   const router = useRouter();
   const toast = useToast();
+  const showConcurrentModification = useConcurrentModificationFeedback();
   const [revision, setRevision] = useState(initial.revision);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
@@ -81,14 +84,14 @@ export function PlatformSettings({
           ...(initial.mode === "full" ? { full: fullConfiguration(form) } : {}),
         }),
       });
+      const apiError = await readApiError(response, "平台配置保存失败。");
+      if (apiError) throw apiError;
       const body = (await response.json()) as {
         revision?: number;
         appliedImmediatelyFields?: string[];
         restartRequiredFields?: string[];
         web?: { timeZone?: string };
-        error?: { message?: string };
       };
-      if (!response.ok) throw new Error(body.error?.message ?? "平台配置保存失败。");
       if (body.revision !== undefined) setRevision(body.revision);
       if (body.web?.timeZone) {
         document.documentElement.dataset.timeZone = body.web.timeZone;
@@ -108,6 +111,7 @@ export function PlatformSettings({
       else toast.success(message, { title: "平台配置已生效" });
       router.refresh();
     } catch (cause) {
+      if (await showConcurrentModification(cause)) return;
       setError(cause instanceof Error ? cause.message : "平台配置保存失败。");
     } finally {
       setPending(false);

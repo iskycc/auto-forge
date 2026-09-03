@@ -21,6 +21,8 @@ import { useState, type FormEvent } from "react";
 import { ActionDialog } from "@/components/action-dialog";
 import { permissionDescription, permissionLabel } from "@/lib/permission-presentation";
 import { useConfirm, useToast } from "@/components/ui-feedback";
+import { useConcurrentModificationFeedback } from "@/components/concurrent-modification-feedback";
+import { throwApiErrorResponse } from "@/lib/client-api";
 
 export function OperationsSettings({
   initialAccounts,
@@ -38,6 +40,7 @@ export function OperationsSettings({
   visibleSection: "accounts" | "retention";
 }) {
   const confirmAction = useConfirm();
+  const showConcurrentModification = useConcurrentModificationFeedback();
   const toast = useToast();
   const [accounts, setAccounts] = useState(initialAccounts);
   const [policies, setPolicies] = useState(initialPolicies);
@@ -242,6 +245,7 @@ export function OperationsSettings({
     try {
       toast.success(await operation());
     } catch (problem) {
+      if (await showConcurrentModification(problem)) return;
       toast.error(problem instanceof Error ? problem.message : "操作失败。");
     } finally {
       setPending(false);
@@ -610,9 +614,8 @@ function projectPermissionsFromForm(
 
 async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, { headers: { "Content-Type": "application/json" }, ...init });
-  const body = (await response.json()) as T & { error?: { message?: string } };
-  if (!response.ok) throw new Error(body.error?.message ?? "请求失败。");
-  return body;
+  if (!response.ok) await throwApiErrorResponse(response, "请求失败。");
+  return (await response.json()) as T;
 }
 
 function retentionLabel(category: RetentionPolicy["category"]): string {

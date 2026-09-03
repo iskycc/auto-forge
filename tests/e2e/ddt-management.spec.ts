@@ -163,7 +163,34 @@ test("DDT workspace imports, edits, validates and recovers version-scoped cases"
       2,
     ),
   );
+  const ddtCaseMutationUrl = `**/api/v1/ddt/cases/${encodeURIComponent(`LOGIN-${hierarchy.suffix}`)}?**`;
+  let conflictServed = false;
+  await page.route(ddtCaseMutationUrl, async (route) => {
+    if (route.request().method() !== "PATCH" || conflictServed) {
+      await route.fallback();
+      return;
+    }
+    conflictServed = true;
+    await route.fulfill({
+      status: 409,
+      contentType: "application/json",
+      body: JSON.stringify({
+        error: {
+          code: "DDT_CASE_REVISION_CONFLICT",
+          message: "DDT 用例已被他人修改，请刷新后重试。",
+          requestId: "ddt-case-conflict-e2e",
+        },
+      }),
+    });
+  });
   await caseDrawer.getByRole("button", { name: "保存修改" }).click();
+  const conflictDialog = page.getByRole("dialog", { name: "DDT 用例已被其他人修改" });
+  await expect(conflictDialog).toBeVisible();
+  await expectUiIntegrity(page);
+  await conflictDialog.getByRole("button", { name: "暂不重新加载" }).click();
+  await expect(caseDrawer.getByLabel("用例数据 JSON")).toHaveValue(/quality-team/u);
+  await caseDrawer.getByRole("button", { name: "保存修改" }).click();
+  await page.unroute(ddtCaseMutationUrl);
   await expect(page.getByText(`已保存 LOGIN-${hierarchy.suffix}`)).toBeVisible();
   await expect(caseDrawer.getByText("quality-team", { exact: true })).toBeVisible();
   await expect(caseDrawer.getByText("人工编辑", { exact: true })).toBeVisible();

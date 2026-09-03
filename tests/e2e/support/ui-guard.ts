@@ -42,8 +42,14 @@ export async function expectUiIntegrity(page: Page): Promise<void> {
       Array.from(element.childNodes).some(
         (node) => node.nodeType === Node.TEXT_NODE && Boolean(node.textContent?.trim()),
       );
+    const modalRoot = Array.from(document.body.querySelectorAll<HTMLElement>('[aria-modal="true"]'))
+      .filter(isVisible)
+      .at(-1);
+    // A modal intentionally overlays the page beneath it. Only its own active interaction
+    // surface should participate in control-overlap and readability checks while it is open.
+    const inspectionRoot: HTMLElement = modalRoot ?? document.body;
 
-    const fontViolations = Array.from(document.body.querySelectorAll<HTMLElement>("*"))
+    const fontViolations = Array.from(inspectionRoot.querySelectorAll<HTMLElement>("*"))
       .filter((element) => isVisible(element) && hasDirectText(element))
       .map((element) => ({
         element: element.tagName.toLowerCase(),
@@ -64,7 +70,7 @@ export async function expectUiIntegrity(page: Page): Promise<void> {
       "a.icon-button",
     ].join(",");
     const controlViolations = Array.from(
-      document.body.querySelectorAll<HTMLElement>(controlSelector),
+      inspectionRoot.querySelectorAll<HTMLElement>(controlSelector),
     )
       .filter(isVisible)
       .map((element) => ({
@@ -76,7 +82,7 @@ export async function expectUiIntegrity(page: Page): Promise<void> {
       .slice(0, 20);
 
     const interactiveElements = Array.from(
-      document.body.querySelectorAll<HTMLElement>(controlSelector),
+      inspectionRoot.querySelectorAll<HTMLElement>(controlSelector),
     ).filter(isVisible);
     const overlapViolations: UiViolation[] = [];
     for (let index = 0; index < interactiveElements.length; index += 1) {
@@ -105,7 +111,7 @@ export async function expectUiIntegrity(page: Page): Promise<void> {
     }
 
     const cardOverflow = Array.from(
-      document.body.querySelectorAll<HTMLElement>(
+      inspectionRoot.querySelectorAll<HTMLElement>(
         ".card, .content-card, .settings-section, .runner-list-item",
       ),
     )

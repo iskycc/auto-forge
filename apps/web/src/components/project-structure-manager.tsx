@@ -10,9 +10,10 @@ import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
 
 import { Button, FileInput, Input, OperationProgress, Select } from "@/components/ui";
-import { readApiErrorMessage } from "@/lib/client-api";
+import { readApiError, readApiErrorMessage } from "@/lib/client-api";
 import { uploadWithProgress } from "@/lib/upload-with-progress";
 import { ActionDialog } from "@/components/action-dialog";
+import { useConcurrentModificationFeedback } from "@/components/concurrent-modification-feedback";
 import { useConfirm, useToast } from "@/components/ui-feedback";
 
 export function ProjectStructureManager({
@@ -28,6 +29,7 @@ export function ProjectStructureManager({
 }) {
   const router = useRouter();
   const confirmAction = useConfirm();
+  const showConcurrentModification = useConcurrentModificationFeedback();
   const toast = useToast();
   const [structure, setStructure] = useState(initialStructure);
   const [pending, setPending] = useState(false);
@@ -69,8 +71,8 @@ export function ProjectStructureManager({
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body),
     });
-    const errorMessage = await readApiErrorMessage(response, "保存失败。");
-    if (errorMessage) throw new Error(errorMessage);
+    const apiError = await readApiError(response, "保存失败。");
+    if (apiError) throw apiError;
     return response.json() as Promise<unknown>;
   }
 
@@ -81,6 +83,7 @@ export function ProjectStructureManager({
     try {
       await operation();
     } catch (cause) {
+      if (await showConcurrentModification(cause)) return;
       setError(cause instanceof Error ? cause.message : "操作失败。");
     } finally {
       setPending(false);
@@ -214,8 +217,8 @@ export function ProjectStructureManager({
               percent: 100,
             }),
         });
-        const errorMessage = await readApiErrorMessage(response, "上传运行时资源失败。");
-        if (errorMessage) throw new Error(errorMessage);
+        const apiError = await readApiError(response, "上传运行时资源失败。");
+        if (apiError) throw apiError;
         const asset = (await response.json()) as ProjectRuntimeAsset;
         setRuntimeUploadProgress({
           label: "压缩包已保存，正在启用当前版本",
@@ -294,8 +297,8 @@ export function ProjectStructureManager({
         `/api/v1/projects/${projectId}/versions/${encodeURIComponent(selectedVersionId)}/adapter-configuration?${query}`,
         { method: "DELETE" },
       );
-      const errorMessage = await readApiErrorMessage(response, `删除${label}失败。`);
-      if (errorMessage) throw new Error(errorMessage);
+      const apiError = await readApiError(response, `删除${label}失败。`);
+      if (apiError) throw apiError;
       await refresh(`${label}已从当前版本删除。`);
     });
   }

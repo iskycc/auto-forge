@@ -31,6 +31,8 @@ import { Button, Input, OperationProgress, Select, Textarea } from "@/components
 import { LoadingState } from "@/components/loading-state";
 import { uploadWithProgress } from "@/lib/upload-with-progress";
 import { useConfirm, useToast } from "@/components/ui-feedback";
+import { useConcurrentModificationFeedback } from "@/components/concurrent-modification-feedback";
+import { readApiError } from "@/lib/client-api";
 
 type Scope = { projectId: string; projectVersionId: string; testStageId: string };
 type ExecutionClass = {
@@ -144,6 +146,7 @@ export function DdtManagementWorkspace({
   suites: Array<{ id: string; name: string }>;
 }) {
   const confirmAction = useConfirm();
+  const showConcurrentModification = useConcurrentModificationFeedback();
   const toast = useToast();
   const [tab, setTab] = useState<WorkspaceTab>("overview");
   const [dashboard, setDashboard] = useState(emptyDashboard);
@@ -745,14 +748,19 @@ export function DdtManagementWorkspace({
               }))
             )
               return;
-            await requestJson(
-              endpoint(
-                `templates/${item.id}`,
-                new URLSearchParams({ revision: String(item.revision) }),
-              ),
-              { method: "DELETE" },
-            );
-            await load();
+            try {
+              await requestJson(
+                endpoint(
+                  `templates/${item.id}`,
+                  new URLSearchParams({ revision: String(item.revision) }),
+                ),
+                { method: "DELETE" },
+              );
+              await load();
+            } catch (deleteError) {
+              if (await showConcurrentModification(deleteError)) return;
+              setError(messageOf(deleteError));
+            }
           }}
         />
       ) : null}
@@ -1146,6 +1154,7 @@ function CaseDrawer({
   onSaved(item: DdtCase): Promise<void>;
   endpoint(path: string, extra?: URLSearchParams): string;
 }) {
+  const showConcurrentModification = useConcurrentModificationFeedback();
   const [editing, setEditing] = useState(false);
   const [json, setJson] = useState(() => JSON.stringify(item.data, null, 2));
   const [error, setError] = useState("");
@@ -1164,6 +1173,7 @@ function CaseDrawer({
       setEditing(false);
       await onSaved(next);
     } catch (saveError) {
+      if (await showConcurrentModification(saveError)) return;
       setError(messageOf(saveError));
     }
   };
@@ -2002,10 +2012,10 @@ async function requestJson<Result = unknown>(url: string, init?: RequestInit): P
 }
 
 async function responseError(response: Response): Promise<Error> {
-  const payload = (await response.json().catch(() => null)) as {
-    error?: { message?: string };
-  } | null;
-  return new Error(payload?.error?.message ?? `请求失败（${response.status}）`);
+  return (
+    (await readApiError(response, `请求失败（${response.status}）`)) ??
+    new Error(`请求失败（${response.status}）`)
+  );
 }
 
 function toggleSet(current: Set<string>, value: string): Set<string> {

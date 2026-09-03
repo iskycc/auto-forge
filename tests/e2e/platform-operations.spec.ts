@@ -4,7 +4,6 @@ import { resolve } from "node:path";
 
 import {
   acceptSystemDialog,
-  appAlert,
   ensureAdministrator,
   expandAdministrationGroup,
 } from "./support/session";
@@ -23,7 +22,13 @@ test("configuration conflicts, diagnostics and retention controls remain observa
 
   await concurrentPage.getByLabel("公开大盘刷新间隔（秒）").fill("7");
   await concurrentPage.getByRole("button", { name: "保存平台配置" }).click();
-  await expect(appAlert(concurrentPage)).toContainText(/刷新|修订|其他操作|重新加载/);
+  const conflictDialog = concurrentPage.getByRole("dialog", {
+    name: "平台配置已被其他人修改",
+  });
+  await expect(conflictDialog).toContainText(/避免覆盖|重新加载|尚未保存/);
+  await expectUiIntegrity(concurrentPage);
+  await conflictDialog.getByRole("button", { name: "暂不重新加载" }).click();
+  await expect(concurrentPage.getByLabel("公开大盘刷新间隔（秒）")).toHaveValue("7");
 
   await page.getByLabel("公开大盘刷新间隔（秒）").fill("8");
   await page.getByRole("button", { name: "保存平台配置" }).click();

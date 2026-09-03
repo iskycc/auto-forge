@@ -490,6 +490,43 @@ test("case metadata, immutable versions and suite policy survive lifecycle chang
   expect(JSON.stringify(retryPolicy.body)).not.toContain("e2e-api-token");
   expect(JSON.stringify(retryPolicy.body)).not.toContain("second-api-token");
 
+  const suiteMutationUrl = `**/api/v1/case-suites/${encodeURIComponent(suite.body.id)}`;
+  await page.route(suiteMutationUrl, async (route) => {
+    if (route.request().method() !== "PATCH") {
+      await route.fallback();
+      return;
+    }
+    await route.fulfill({
+      status: 409,
+      contentType: "application/json",
+      body: JSON.stringify({
+        error: {
+          code: "CASE_SUITE_REVISION_CONFLICT",
+          message: "用例任务已被他人修改，请刷新后重试。",
+          requestId: "case-suite-conflict-e2e",
+        },
+      }),
+    });
+  });
+  const suiteDescription = page.getByLabel("任务说明");
+  await suiteDescription.fill("尚未保存的本地修改");
+  await page.getByRole("button", { name: "保存修改" }).click();
+  const conflictDialog = page.getByRole("dialog", { name: "用例任务已被其他人修改" });
+  await expect(conflictDialog).toBeVisible();
+  await expect(conflictDialog).toContainText("为避免覆盖其他人的修改");
+  await expect(conflictDialog.getByRole("button", { name: "重新加载最新内容" })).toBeVisible();
+  await expectUiIntegrity(page);
+  await captureUi(page, "case-suite-concurrent-modification-dialog");
+  await conflictDialog.getByRole("button", { name: "暂不重新加载" }).click();
+  await expect(suiteDescription).toHaveValue("尚未保存的本地修改");
+  await page.getByRole("button", { name: "保存修改" }).click();
+  await expect(conflictDialog).toBeVisible();
+  const reloaded = page.waitForNavigation();
+  await conflictDialog.getByRole("button", { name: "重新加载最新内容" }).click();
+  await reloaded;
+  await expect(page.getByLabel("任务说明")).toHaveValue("lifecycle E2E suite");
+  await page.unroute(suiteMutationUrl);
+
   await page.getByLabel("Cron（分 时 日 月 周）").fill("17 8 * * 1-5");
   await page.getByLabel("IANA 时区").fill("Asia/Shanghai");
   await page.getByLabel("错过触发").selectOption("skip");

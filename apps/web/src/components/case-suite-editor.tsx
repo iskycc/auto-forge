@@ -5,7 +5,6 @@ import { activePlatformTimeZone, formatPlatformDateTime } from "@/lib/platform-d
 import { Button, Input, Select, Textarea } from "@/components/ui";
 
 import {
-  apiErrorSchema,
   jenkinsJobInspectionSchema,
   type CaseSuiteSchedule,
   type JenkinsJobInspection,
@@ -35,7 +34,9 @@ import { useRouter } from "next/navigation";
 import { FormEvent, useState } from "react";
 
 import { ActionDialog } from "@/components/action-dialog";
+import { useConcurrentModificationFeedback } from "@/components/concurrent-modification-feedback";
 import { useConfirm, useToast } from "@/components/ui-feedback";
+import { throwApiErrorResponse } from "@/lib/client-api";
 
 type EditableRetryConcurrencyRule = {
   id: string;
@@ -78,6 +79,7 @@ export function CaseSuiteEditor({
 }) {
   const router = useRouter();
   const confirmAction = useConfirm();
+  const showConcurrentModification = useConcurrentModificationFeedback();
   const toast = useToast();
   const [pending, setPending] = useState(false);
   const [copying, setCopying] = useState(false);
@@ -181,15 +183,12 @@ export function CaseSuiteEditor({
         }),
       });
       if (!response.ok) {
-        const payload: unknown = await response.json().catch(() => null);
-        const parsed = apiErrorSchema.safeParse(payload);
-        throw new Error(
-          parsed.success ? parsed.data.error.message : `请求失败（HTTP ${response.status}）。`,
-        );
+        await throwApiErrorResponse(response, `请求失败（HTTP ${response.status}）。`);
       }
       toast.success("用例任务已更新，配置已保存并立即用于后续批次。");
       router.refresh();
     } catch (caught) {
+      if (await showConcurrentModification(caught)) return;
       setError(caught instanceof Error ? caught.message : "更新用例任务失败。");
     } finally {
       setPending(false);
@@ -208,15 +207,12 @@ export function CaseSuiteEditor({
         body: JSON.stringify({ name: form.get("copyName") }),
       });
       if (!response.ok) {
-        const payload: unknown = await response.json().catch(() => null);
-        const parsed = apiErrorSchema.safeParse(payload);
-        throw new Error(
-          parsed.success ? parsed.data.error.message : `请求失败（HTTP ${response.status}）。`,
-        );
+        await throwApiErrorResponse(response, `请求失败（HTTP ${response.status}）。`);
       }
       const created = (await response.json()) as CaseSuite;
       router.push(`/case-suites/${encodeURIComponent(created.id)}`);
     } catch (caught) {
+      if (await showConcurrentModification(caught)) return;
       setError(caught instanceof Error ? caught.message : "复制用例任务失败。");
     } finally {
       setCopying(false);
@@ -267,13 +263,12 @@ export function CaseSuiteEditor({
     try {
       const response = await responsePromise;
       if (!response.ok) {
-        const payload: unknown = await response.json().catch(() => null);
-        const parsed = apiErrorSchema.safeParse(payload);
-        throw new Error(parsed.success ? parsed.data.error.message : "计划操作失败。");
+        await throwApiErrorResponse(response, "计划操作失败。");
       }
       toast.success(success);
       router.refresh();
     } catch (caught) {
+      if (await showConcurrentModification(caught)) return;
       setError(caught instanceof Error ? caught.message : "计划操作失败。");
     } finally {
       setPending(false);
@@ -319,13 +314,10 @@ export function CaseSuiteEditor({
           }),
         },
       );
-      const payload: unknown = await response.json().catch(() => null);
       if (!response.ok) {
-        const parsed = apiErrorSchema.safeParse(payload);
-        throw new Error(
-          parsed.success ? parsed.data.error.message : `验证失败（HTTP ${response.status}）。`,
-        );
+        await throwApiErrorResponse(response, `验证失败（HTTP ${response.status}）。`);
       }
+      const payload: unknown = await response.json().catch(() => null);
       const inspection = jenkinsJobInspectionSchema.parse(payload);
       setRecoveryInspections((inspections) => ({
         ...inspections,
