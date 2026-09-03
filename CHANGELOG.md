@@ -4,6 +4,36 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## 1.9.0 - 2026-09-04
+
+### Changed
+
+- 工作概览增加按活动执行、失败方法、不可用执行机和用例资产选择的“今日工作焦点”，并补充
+  活动批次、方法结果、可用槽位和可执行覆盖四项关键状态。方案 E 的六卡 Bento 继续使用真实
+  权威数据，新增方法结果构成与耗时、多个活动批次、用例启停覆盖、在线资源利用率、失败原因
+  占比和执行/导入动态摘要；未配置分组时仍展示在线执行机的系统、版本、槽位与 CPU 数据，
+  并补充最近心跳以判断数据新鲜度；失败洞察增加失败类型、记录和不稳定用例计数；
+  质量卡明确显示统计生成时间，趋势补充纵轴刻度、最新点精确值和对齐的日期标签，单日期使用
+  完整基线表达，没有历史样本时不再显示误导性的周环比；1024px 至 4K 桌面布局保持完整可用。
+
+### Database and persisted configuration
+
+- 无数据库迁移、持久化配置或 Runner Protocol 变化。
+
+### Compatibility and offline assets
+
+- 本版本仅调整共享首页展示与有界数据聚合，Lite/Full 模式、Runner Agent、Jenkins 集成和既有 HTTP 契约保持兼容。
+- 未新增运行时依赖、远程资源或离线资产，阻断出站网络时的运行边界不变。
+
+### Known limitations
+
+- 工作概览只展示有界的近期批次和执行机摘要；完整历史与明细仍需通过执行记录、质量洞察和执行机页面查看。
+
+### Tests
+
+- 新增首页活动批次聚合、执行机容量和工作焦点优先级单元测试，并扩展 Playwright 首页布局场景，
+  覆盖新增决策层、业务数据区块和 1024px、1536px、2K、4K 视口。
+
 ## 1.8.19 - 2026-09-03
 
 ### Added

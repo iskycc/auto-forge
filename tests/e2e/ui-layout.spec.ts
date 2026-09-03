@@ -283,9 +283,18 @@ test("homepage mirrors the designed six-card workspace and exposes global execut
   page,
 }) => {
   await ensureAdministrator(page);
+  await expect(page.getByRole("navigation", { name: "工作台快捷入口" })).toBeVisible();
+  await expect(page.locator(".dashboard-date")).toBeVisible();
+  await expect(page.locator('[aria-label="关键状态"] .dashboard-pulse')).toHaveCount(4);
+  await expect(page.locator(".dashboard-focus")).toBeVisible();
   for (const heading of ["本周质量", "活动执行", "用例库", "执行机组", "失败洞察", "最近动态"]) {
     await expect(page.getByRole("heading", { name: heading, exact: true })).toBeVisible();
   }
+  await expect(page.locator(".quality-outcome-distribution")).toBeVisible();
+  await expect(page.locator(".dashboard-library-overview")).toBeVisible();
+  await expect(page.locator(".runner-capacity-overview")).toBeVisible();
+  await expect(page.locator(".failure-action-strip")).toBeVisible();
+  await expect(page.locator(".activity-summary-strip")).toBeVisible();
   await expect(page.getByRole("button", { name: "开始执行", exact: true })).toBeVisible();
 
   for (const viewport of [
@@ -300,6 +309,8 @@ test("homepage mirrors the designed six-card workspace and exposes global execut
     const sidebarRegion = page.locator(".sidebar");
     await expect(dashboardPage).toBeVisible();
     await expect(sidebarRegion).toBeVisible();
+    await expect(page.locator(".dashboard-focus")).toBeVisible();
+    await expect(page.locator('[aria-label="关键状态"] .dashboard-pulse')).toHaveCount(4);
     const dashboard = await dashboardPage.boundingBox();
     const sidebar = await sidebarRegion.boundingBox();
     expect(dashboard).not.toBeNull();

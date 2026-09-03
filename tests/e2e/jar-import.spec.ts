@@ -1366,7 +1366,20 @@ public class MixedVisibleTest {
 
   await page.goto("/");
   await expect(page.getByRole("heading", { level: 1, name: /E2E Administrator/ })).toBeVisible();
+  await expect(page.locator('[aria-label="关键状态"] .dashboard-pulse')).toHaveCount(4);
+  await expect(page.locator(".quality-outcome-bar")).toBeVisible();
+  await expect(page.locator(".dashboard-period-block time")).toContainText("数据截至");
+  await expect(page.locator(".quality-trend-value")).toContainText("50.0%");
+  await expect(page.locator(".quality-trend-chart > div.single")).toContainText("09-04");
+  await expect(page.locator(".runner-capacity-overview")).toBeVisible();
+  await expect(page.locator(".dashboard-runner-snapshots")).toContainText("未分组执行机");
+  await expect(page.locator(".dashboard-runner-snapshots time")).toBeVisible();
+  await expect(page.locator(".quality-metric-strip")).toContainText("暂无上周基线");
+  await expect(page.locator(".failure-scope-metrics")).toContainText("失败类型");
+  await expect(page.locator(".failure-triage-insight")).toContainText("高度集中");
+  await expect(page.locator(".activity-summary-strip")).toBeVisible();
   await expectDesktopLayoutFits(page, 1024, 768);
+  await captureUi(page, "dashboard-data-1024");
   await expectDesktopLayoutFits(page, 1920, 1080);
   await page.setViewportSize({ width: 1920, height: 1080 });
   await page.evaluate(() => {
