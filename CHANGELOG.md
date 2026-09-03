@@ -4,6 +4,23 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## 1.8.15 - 2026-09-03
+
+### Changed
+
+- 存储空间目录为普通文件显示创建与修改时间；SQLite 主文件与同名 WAL、SHM 默认聚合成一个
+  可展开节点，摘要显示合计大小和三者中最新的修改时间，展开后仍可逐个查看物理文件信息；
+  每批次用例日志库同时显示其关联的任务批次号，并支持按该编号搜索。
+
+### Database and persisted configuration
+
+- 无数据库迁移、持久化配置格式或 Runner Protocol 变化。
+
+### Tests
+
+- 单元测试覆盖 SQLite 伴随文件乱序输入、聚合大小和最新时间；Playwright 覆盖默认收起、展开
+  三个物理文件、创建/修改时间以及 1024px 桌面视口布局。
+
 ## 1.8.13 - 2026-09-03
 
 ### Fixed

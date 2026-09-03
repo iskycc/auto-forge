@@ -222,6 +222,7 @@ type LocalFile = {
   logicalPath: string;
   sizeBytes: number;
   allocatedBytes: number;
+  createdAt?: string;
   modifiedAt: string;
 };
 
@@ -265,6 +266,7 @@ async function* walkFiles(
       logicalPath,
       sizeBytes: metadata.size,
       allocatedBytes: Number.isFinite(metadata.blocks) ? metadata.blocks * 512 : metadata.size,
+      ...(metadata.birthtimeMs > 0 ? { createdAt: metadata.birthtime.toISOString() } : {}),
       modifiedAt: metadata.mtime.toISOString(),
     };
   }
@@ -276,6 +278,7 @@ function localInventoryItem(
   asset: ProjectRuntimeAsset | undefined,
 ): StorageInventoryItem {
   const classification = classify(file.logicalPath, objectKey, asset);
+  const runBatchId = runBatchIdFromAttemptLogPath(file.logicalPath);
   return {
     id: `local:${file.logicalPath}`,
     category: classification.category,
@@ -285,7 +288,9 @@ function localInventoryItem(
     storagePath: file.absolutePath,
     sizeBytes: file.sizeBytes,
     allocatedBytes: file.allocatedBytes,
+    ...(file.createdAt ? { createdAt: file.createdAt } : {}),
     modifiedAt: file.modifiedAt,
+    ...(runBatchId ? { runBatchId } : {}),
     ...(projectIdFromObjectKey(objectKey) ? { projectId: projectIdFromObjectKey(objectKey) } : {}),
     ...(classification.detail ? { detail: classification.detail } : {}),
   };
@@ -307,6 +312,8 @@ function objectInventoryItem(
     sizeBytes: object.sizeBytes,
     // MinIO 只能报告对象内容大小，后端副本/纠删码开销由存储集群负责。
     allocatedBytes: object.sizeBytes,
+    // 平台对象键不可变，因此 S3 LastModified 同时代表当前对象的创建时间。
+    createdAt: object.lastModified,
     modifiedAt: object.lastModified,
     ...(projectIdFromObjectKey(object.objectKey)
       ? { projectId: projectIdFromObjectKey(object.objectKey) }
@@ -325,6 +332,7 @@ function externalInventoryItem(asset: ProjectRuntimeAsset): StorageInventoryItem
     storagePath: safeExternalPath(asset.url),
     sizeBytes: asset.sizeBytes,
     allocatedBytes: 0,
+    createdAt: asset.createdAt,
     modifiedAt: asset.createdAt,
     projectId: asset.projectId,
     detail: asset.kind === "jdk" ? "外部 JDK 包（平台未保存文件）" : "外部依赖包（平台未保存文件）",
@@ -364,6 +372,10 @@ function sqliteDetail(path: string, prefix: string): string {
   return `${prefix} 主文件`;
 }
 
+function runBatchIdFromAttemptLogPath(path: string): string | undefined {
+  return path.match(/^attempt-logs\/([^/]+)\.sqlite(?:-(?:wal|shm|journal))?$/u)?.[1];
+}
+
 function localObjectKey(path: string): string | undefined {
   return path.startsWith("objects/") ? path.slice("objects/".length) : undefined;
 }
@@ -390,7 +402,14 @@ function matches(
   if (category && item.category !== category) return false;
   const normalized = query?.trim().toLocaleLowerCase("zh-CN");
   if (!normalized) return true;
-  return [item.name, item.logicalPath, item.storagePath, item.projectId ?? "", item.detail ?? ""]
+  return [
+    item.name,
+    item.logicalPath,
+    item.storagePath,
+    item.runBatchId ?? "",
+    item.projectId ?? "",
+    item.detail ?? "",
+  ]
     .join("\n")
     .toLocaleLowerCase("zh-CN")
     .includes(normalized);

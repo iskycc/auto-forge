@@ -44,6 +44,7 @@
   --radius-medium: 14px;
   --radius-card: 18px;
   --radius-large: 22px;
+  --radius-pill: 999px;
 }
 
 * {
@@ -15143,6 +15144,20 @@ button.icon-button:disabled {
   white-space: nowrap;
 }
 
+.storage-tree-file-identity {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.storage-tree-file-batch {
+  overflow: hidden;
+  color: var(--color-info);
+  font-size: var(--font-size-caption);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .storage-tree-name code {
   color: var(--color-text-tertiary);
   font-size: var(--font-size-caption);
@@ -15198,7 +15213,9 @@ button.icon-button:disabled {
 
 .storage-tree-file > summary {
   min-height: 46px;
-  grid-template-columns: auto auto minmax(120px, 1fr) auto minmax(72px, auto) minmax(92px, auto);
+  grid-template-columns:
+    auto auto minmax(120px, 1fr) auto minmax(72px, auto) minmax(92px, auto)
+    minmax(164px, auto);
   border-radius: var(--radius-control);
   padding: 6px 9px;
 }
@@ -15212,11 +15229,23 @@ button.icon-button:disabled {
 }
 
 .storage-tree-file-size,
-.storage-tree-file-allocation {
+.storage-tree-file-allocation,
+.storage-tree-file-times {
   color: var(--color-text-secondary);
   font-size: var(--font-size-caption);
   text-align: right;
   white-space: nowrap;
+}
+
+.storage-tree-file-times {
+  display: grid;
+  min-width: 0;
+  gap: 1px;
+}
+
+.storage-tree-file-times strong {
+  color: var(--color-text);
+  font-weight: 600;
 }
 
 .storage-tree-file-detail {
@@ -15261,6 +15290,93 @@ button.icon-button:disabled {
   align-content: start;
 }
 
+.storage-sqlite-components {
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  background: var(--color-surface);
+}
+
+.storage-sqlite-components > header {
+  display: flex;
+  min-height: 38px;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: 7px 10px;
+  background: var(--color-info-soft);
+}
+
+.storage-sqlite-components > header strong {
+  color: var(--color-info);
+  font-size: var(--font-size-control);
+}
+
+.storage-sqlite-components > header span {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-caption);
+}
+
+.storage-sqlite-components ul {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.storage-sqlite-components li {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: 62px minmax(140px, 1fr) minmax(76px, auto) minmax(164px, auto);
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+}
+
+.storage-sqlite-components li + li {
+  border-top: 1px solid color-mix(in srgb, var(--color-border) 72%, transparent);
+}
+
+.storage-sqlite-component-role {
+  border-radius: var(--radius-pill);
+  padding: 3px 7px;
+  background: var(--color-surface-muted);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-caption);
+  text-align: center;
+}
+
+.storage-sqlite-component-path,
+.storage-sqlite-component-size {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.storage-sqlite-component-path strong,
+.storage-sqlite-component-path code {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.storage-sqlite-component-path strong,
+.storage-sqlite-component-size strong {
+  color: var(--color-text);
+  font-size: var(--font-size-caption);
+}
+
+.storage-sqlite-component-path code,
+.storage-sqlite-component-size small {
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-caption);
+}
+
+.storage-sqlite-component-size {
+  text-align: right;
+  white-space: nowrap;
+}
+
 .storage-kind-database,
 .storage-kind-execution-log,
 .storage-kind-configuration {
@@ -15293,11 +15409,15 @@ button.icon-button:disabled {
   }
 
   .storage-tree-file > summary {
-    grid-template-columns: auto auto minmax(120px, 1fr) auto minmax(70px, auto);
+    grid-template-columns: auto auto minmax(120px, 1fr) auto minmax(70px, auto) minmax(164px, auto);
   }
 
   .storage-tree-file-allocation {
     display: none;
+  }
+
+  .storage-sqlite-components li {
+    grid-template-columns: 58px minmax(120px, 1fr) minmax(70px, auto) minmax(164px, auto);
   }
 }
 

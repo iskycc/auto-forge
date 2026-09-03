@@ -19,7 +19,11 @@ import { useState } from "react";
 
 import { Button } from "@/components/ui";
 
-import type { StorageDirectoryNode, StorageLocationNode } from "./storage-inventory-tree-model";
+import type {
+  StorageDirectoryNode,
+  StorageFileNode,
+  StorageLocationNode,
+} from "./storage-inventory-tree-model";
 
 const TREE_RENDER_BATCH_SIZE = 250;
 
@@ -160,8 +164,8 @@ function StorageDirectoryChildren({
           加载更多目录（剩余 {directory.directories.length - visibleDirectoryCount}）
         </Button>
       ) : null}
-      {directory.files.slice(0, visibleFileCount).map((item) => (
-        <StorageFileNode item={item} key={item.id} timeZone={timeZone} />
+      {directory.files.slice(0, visibleFileCount).map((file) => (
+        <StorageFileBranch file={file} key={file.id} timeZone={timeZone} />
       ))}
       {directory.files.length > visibleFileCount ? (
         <Button
@@ -176,24 +180,42 @@ function StorageDirectoryChildren({
   );
 }
 
-function StorageFileNode({ item, timeZone }: { item: StorageInventoryItem; timeZone: string }) {
+function StorageFileBranch({ file, timeZone }: { file: StorageFileNode; timeZone: string }) {
+  const item = file.primary;
   return (
-    <details aria-selected={false} className="storage-tree-file" role="treeitem">
+    <details
+      aria-selected={false}
+      className={`storage-tree-file${file.kind === "sqlite-group" ? " storage-tree-sqlite-group" : ""}`}
+      role="treeitem"
+    >
       <summary>
         <ChevronRight aria-hidden="true" className="storage-tree-chevron" size={14} />
         <FileTypeIcon category={item.category} />
-        <strong className="storage-tree-file-name" title={item.name}>
-          {item.name}
-        </strong>
+        <span className="storage-tree-file-identity">
+          <strong className="storage-tree-file-name" title={item.name}>
+            {item.name}
+          </strong>
+          {item.runBatchId ? (
+            <span className="storage-tree-file-batch" title={item.runBatchId}>
+              任务批次号 {item.runBatchId}
+            </span>
+          ) : null}
+        </span>
         <span className={`status-badge storage-kind-${item.category}`}>
           {CATEGORY_LABELS[item.category]}
+          {file.kind === "sqlite-group" ? ` · ${file.physicalFiles.length} 个文件` : ""}
         </span>
-        <span className="storage-tree-file-size">{formatBytes(item.sizeBytes)}</span>
+        <span className="storage-tree-file-size">{formatBytes(file.sizeBytes)}</span>
         <span className="storage-tree-file-allocation">
           {item.location === "external-reference"
             ? "外部引用"
-            : `占用 ${formatBytes(item.allocatedBytes)}`}
+            : `占用 ${formatBytes(file.allocatedBytes)}`}
         </span>
+        <FileTimeSummary
+          createdAt={file.createdAt}
+          modifiedAt={file.modifiedAt}
+          timeZone={timeZone}
+        />
       </summary>
       <div className="storage-tree-file-detail">
         <PathDetail label="逻辑路径" value={item.logicalPath} />
@@ -201,14 +223,14 @@ function StorageFileNode({ item, timeZone }: { item: StorageInventoryItem; timeZ
         <dl>
           <div>
             <dt>内容大小</dt>
-            <dd>{formatBytes(item.sizeBytes)}</dd>
+            <dd>{formatBytes(file.sizeBytes)}</dd>
           </div>
           <div>
             <dt>实际占用</dt>
             <dd>
               {item.location === "external-reference"
                 ? "0 B（文件位于外部地址）"
-                : formatBytes(item.allocatedBytes)}
+                : formatBytes(file.allocatedBytes)}
             </dd>
           </div>
           {item.detail ? (
@@ -223,21 +245,100 @@ function StorageFileNode({ item, timeZone }: { item: StorageInventoryItem; timeZ
               <dd>{item.projectId}</dd>
             </div>
           ) : null}
+          {item.runBatchId ? (
+            <div>
+              <dt>关联任务批次号</dt>
+              <dd>
+                <code title={item.runBatchId}>{item.runBatchId}</code>
+              </dd>
+            </div>
+          ) : null}
           <div>
-            <dt>更新时间</dt>
-            <dd>
-              {item.modifiedAt ? (
-                <time dateTime={item.modifiedAt} title={`UTC：${item.modifiedAt}`}>
-                  {formatDate(item.modifiedAt, timeZone)}
-                </time>
-              ) : (
-                "—"
-              )}
-            </dd>
+            <dt>创建时间</dt>
+            <dd>{renderTimestamp(file.createdAt, timeZone)}</dd>
+          </div>
+          <div>
+            <dt>{file.kind === "sqlite-group" ? "最新修改时间" : "修改时间"}</dt>
+            <dd>{renderTimestamp(file.modifiedAt, timeZone)}</dd>
           </div>
         </dl>
+        {file.kind === "sqlite-group" ? (
+          <SqlitePhysicalFiles files={file.physicalFiles} timeZone={timeZone} />
+        ) : null}
       </div>
     </details>
+  );
+}
+
+function FileTimeSummary({
+  createdAt,
+  modifiedAt,
+  timeZone,
+}: {
+  createdAt: string | undefined;
+  modifiedAt: string | undefined;
+  timeZone: string;
+}) {
+  return (
+    <span className="storage-tree-file-times">
+      <span>创建 {createdAt ? timestampElement(createdAt, timeZone) : "—"}</span>
+      <strong>修改 {modifiedAt ? timestampElement(modifiedAt, timeZone) : "—"}</strong>
+    </span>
+  );
+}
+
+function SqlitePhysicalFiles({
+  files,
+  timeZone,
+}: {
+  files: readonly StorageInventoryItem[];
+  timeZone: string;
+}) {
+  return (
+    <section className="storage-sqlite-components">
+      <header>
+        <strong>SQLite 文件组成</strong>
+        <span>{files.length} 个物理文件，已合并计入上方大小</span>
+      </header>
+      <ul>
+        {files.map((file) => (
+          <li key={file.id}>
+            <span className="storage-sqlite-component-role">{sqliteFileRole(file)}</span>
+            <span className="storage-sqlite-component-path">
+              <strong title={file.name}>{file.name}</strong>
+              <code title={file.storagePath}>{file.storagePath}</code>
+            </span>
+            <span className="storage-sqlite-component-size">
+              <strong>{formatBytes(file.sizeBytes)}</strong>
+              <small>占用 {formatBytes(file.allocatedBytes)}</small>
+            </span>
+            <FileTimeSummary
+              createdAt={file.createdAt}
+              modifiedAt={file.modifiedAt}
+              timeZone={timeZone}
+            />
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+function sqliteFileRole(item: StorageInventoryItem): string {
+  if (item.logicalPath.endsWith("-wal")) return "WAL";
+  if (item.logicalPath.endsWith("-shm")) return "SHM";
+  return "主文件";
+}
+
+function renderTimestamp(value: string | undefined, timeZone: string) {
+  return value ? timestampElement(value, timeZone) : "—";
+}
+
+function timestampElement(value: string, timeZone: string) {
+  return (
+    <time dateTime={value} title={`UTC：${value}`}>
+      {formatDate(value, timeZone)}
+    </time>
   );
 }
 

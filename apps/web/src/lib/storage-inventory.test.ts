@@ -60,6 +60,14 @@ describe("storage inventory", () => {
       ]),
     );
     expect(items.filter((item) => item.category === "database")).toHaveLength(2);
+    expect(items.find((item) => item.logicalPath === "db/autoforge.sqlite")).toMatchObject({
+      createdAt: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/u),
+      modifiedAt: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/u),
+    });
+    expect(items.find((item) => item.logicalPath === "attempt-logs/batch-1.sqlite")).toMatchObject({
+      category: "execution-log",
+      runBatchId: "batch-1",
+    });
     expect(items.find((item) => item.category === "jdk")).toMatchObject({
       name: "jdk-1.zip",
       logicalPath: `objects/${jdkObjectKey}`,
@@ -124,18 +132,26 @@ describe("storage inventory", () => {
 
     expect(page.items).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ category: "execution-log", location: "data-directory" }),
+        expect.objectContaining({
+          category: "execution-log",
+          location: "data-directory",
+          runBatchId: "batch-full",
+        }),
         expect.objectContaining({
           category: "dependency",
           location: "object-store",
           storagePath: `minio://autoforge/${dependencyKey}`,
           allocatedBytes: 4096,
+          createdAt: "2026-09-01T00:00:00.000Z",
+          modifiedAt: "2026-09-01T00:00:00.000Z",
         }),
         expect.objectContaining({ category: "artifact", location: "object-store" }),
         expect.objectContaining({
           category: "jdk",
           location: "external-reference",
           allocatedBytes: 0,
+          createdAt: "2026-09-01T00:00:00.000Z",
+          modifiedAt: "2026-09-01T00:00:00.000Z",
         }),
       ]),
     );

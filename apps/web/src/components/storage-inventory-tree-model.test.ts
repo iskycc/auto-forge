@@ -15,12 +15,23 @@ describe("storage inventory tree model", () => {
           logicalPath: "db/main.sqlite",
           sizeBytes: 10,
           allocatedBytes: 16,
+          createdAt: "2026-09-01T00:00:00.000Z",
+          modifiedAt: "2026-09-02T00:00:00.000Z",
+          runBatchId: "batch-main",
         }),
         item({
           id: "local:db/main.sqlite-wal",
           logicalPath: "db/main.sqlite-wal",
           sizeBytes: 4,
           allocatedBytes: 8,
+          modifiedAt: "2026-09-02T01:00:00.000Z",
+        }),
+        item({
+          id: "local:db/main.sqlite-shm",
+          logicalPath: "db/main.sqlite-shm",
+          sizeBytes: 2,
+          allocatedBytes: 8,
+          modifiedAt: "2026-09-02T02:00:00.000Z",
         }),
         item({
           id: "object:projects/p1/runtime-assets/jdk.zip",
@@ -37,16 +48,27 @@ describe("storage inventory tree model", () => {
     expect(tree.map((root) => root.name)).toEqual(["数据目录", "对象存储"]);
     expect(tree[0]).toMatchObject({
       storagePath: "/data",
-      fileCount: 2,
-      sizeBytes: 14,
-      allocatedBytes: 24,
+      fileCount: 3,
+      sizeBytes: 16,
+      allocatedBytes: 32,
     });
     expect(tree[0]?.directories[0]).toMatchObject({
       name: "db",
-      fileCount: 2,
+      fileCount: 3,
       files: [
-        expect.objectContaining({ name: "main.sqlite" }),
-        expect.objectContaining({ name: "main.sqlite-wal" }),
+        expect.objectContaining({
+          kind: "sqlite-group",
+          sizeBytes: 16,
+          allocatedBytes: 32,
+          createdAt: "2026-09-01T00:00:00.000Z",
+          modifiedAt: "2026-09-02T02:00:00.000Z",
+          primary: expect.objectContaining({ name: "main.sqlite", runBatchId: "batch-main" }),
+          physicalFiles: [
+            expect.objectContaining({ name: "main.sqlite" }),
+            expect.objectContaining({ name: "main.sqlite-wal" }),
+            expect.objectContaining({ name: "main.sqlite-shm" }),
+          ],
+        }),
       ],
     });
     expect(directoryIds(tree, 1)).toEqual(
@@ -73,8 +95,29 @@ describe("storage inventory tree model", () => {
     }
 
     expect(directoryDepth).toBe(16);
-    expect(directory.files[0]?.logicalPath).toBe(logicalPath);
+    expect(directory.files[0]?.primary.logicalPath).toBe(logicalPath);
     expect(directory.name).toContain("/");
+  });
+
+  it("groups SQLite companions even when a companion is received before its main file", () => {
+    const tree = buildStorageInventoryTree(
+      [
+        item({ logicalPath: "db/reordered.sqlite-wal", sizeBytes: 3 }),
+        item({ logicalPath: "db/reordered.sqlite", sizeBytes: 5 }),
+      ],
+      { dataDirectory: "/data", objectStoreRoot: "/data/objects" },
+    );
+
+    expect(tree[0]?.directories[0]?.files).toEqual([
+      expect.objectContaining({
+        kind: "sqlite-group",
+        sizeBytes: 8,
+        physicalFiles: [
+          expect.objectContaining({ logicalPath: "db/reordered.sqlite" }),
+          expect.objectContaining({ logicalPath: "db/reordered.sqlite-wal" }),
+        ],
+      }),
+    ]);
   });
 });
 

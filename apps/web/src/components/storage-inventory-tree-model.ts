@@ -12,7 +12,18 @@ export type StorageDirectoryNode = {
   sizeBytes: number;
   allocatedBytes: number;
   directories: StorageDirectoryNode[];
-  files: StorageInventoryItem[];
+  files: StorageFileNode[];
+};
+
+export type StorageFileNode = {
+  id: string;
+  kind: "file" | "sqlite-group";
+  primary: StorageInventoryItem;
+  physicalFiles: StorageInventoryItem[];
+  sizeBytes: number;
+  allocatedBytes: number;
+  createdAt?: string;
+  modifiedAt?: string;
 };
 
 export type StorageLocationNode = StorageDirectoryNode & {
@@ -20,8 +31,9 @@ export type StorageLocationNode = StorageDirectoryNode & {
   storagePath: string;
 };
 
-type MutableDirectoryNode = Omit<StorageDirectoryNode, "directories"> & {
+type MutableDirectoryNode = Omit<StorageDirectoryNode, "directories" | "files"> & {
   directories: Map<string, MutableDirectoryNode>;
+  files: StorageInventoryItem[];
 };
 
 const LOCATION_ORDER: StorageInventoryLocation[] = [
@@ -103,13 +115,77 @@ function finalizeDirectory(directory: MutableDirectoryNode): StorageDirectoryNod
     directories: [...directory.directories.values()]
       .sort((left, right) => left.name.localeCompare(right.name, "zh-CN"))
       .map(finalizeDirectory),
-    files: directory.files
-      .slice()
-      .sort(
-        (left, right) =>
-          left.name.localeCompare(right.name, "zh-CN") || left.id.localeCompare(right.id),
-      ),
+    files: groupSqliteFiles(directory.files).sort(
+      (left, right) =>
+        left.primary.name.localeCompare(right.primary.name, "zh-CN") ||
+        left.id.localeCompare(right.id),
+    ),
   };
+}
+
+function groupSqliteFiles(items: readonly StorageInventoryItem[]): StorageFileNode[] {
+  const byLogicalPath = new Map(items.map((item) => [item.logicalPath, item]));
+  const groupedCompanionPaths = new Set(
+    items
+      .filter((item) => item.logicalPath.endsWith(".sqlite"))
+      .flatMap((item) => [`${item.logicalPath}-wal`, `${item.logicalPath}-shm`])
+      .filter((path) => byLogicalPath.has(path)),
+  );
+  const nodes: StorageFileNode[] = [];
+  for (const item of items) {
+    if (groupedCompanionPaths.has(item.logicalPath)) continue;
+    if (!item.logicalPath.endsWith(".sqlite")) {
+      nodes.push(singleFileNode(item));
+      continue;
+    }
+    const companions = [`${item.logicalPath}-wal`, `${item.logicalPath}-shm`].flatMap((path) => {
+      const companion = byLogicalPath.get(path);
+      return companion ? [companion] : [];
+    });
+    if (companions.length === 0) {
+      nodes.push(singleFileNode(item));
+      continue;
+    }
+    const physicalFiles = [item, ...companions];
+    const modifiedAt = latestTimestamp(physicalFiles.map((file) => file.modifiedAt));
+    nodes.push({
+      id: item.id,
+      kind: "sqlite-group",
+      primary: item,
+      physicalFiles,
+      sizeBytes: sumBytes(physicalFiles, "sizeBytes"),
+      allocatedBytes: sumBytes(physicalFiles, "allocatedBytes"),
+      ...(item.createdAt ? { createdAt: item.createdAt } : {}),
+      ...(modifiedAt ? { modifiedAt } : {}),
+    });
+  }
+  return nodes;
+}
+
+function singleFileNode(item: StorageInventoryItem): StorageFileNode {
+  return {
+    id: item.id,
+    kind: "file",
+    primary: item,
+    physicalFiles: [item],
+    sizeBytes: item.sizeBytes,
+    allocatedBytes: item.allocatedBytes,
+    ...(item.createdAt ? { createdAt: item.createdAt } : {}),
+    ...(item.modifiedAt ? { modifiedAt: item.modifiedAt } : {}),
+  };
+}
+
+function sumBytes(
+  items: readonly StorageInventoryItem[],
+  field: "sizeBytes" | "allocatedBytes",
+): number {
+  return items.reduce((total, item) => total + item[field], 0);
+}
+
+function latestTimestamp(values: readonly (string | undefined)[]): string | undefined {
+  return values
+    .filter((value): value is string => value !== undefined)
+    .sort((left, right) => right.localeCompare(left))[0];
 }
 
 function directorySegments(logicalPath: string): string[] {

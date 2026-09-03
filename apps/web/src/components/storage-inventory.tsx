@@ -182,7 +182,10 @@ export function StorageInventory({
           <div>
             <p className="eyebrow">File Inventory</p>
             <h2>文件目录</h2>
-            <p>按存储位置和逻辑路径逐级展示；展开文件可复制完整逻辑路径与实际位置。</p>
+            <p>
+              按存储位置和逻辑路径逐级展示；文件显示创建与修改时间，SQLite
+              伴随文件合并后可展开查看。
+            </p>
           </div>
           <Button
             disabled={loading}

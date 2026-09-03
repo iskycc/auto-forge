@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
+import { mkdirSync, utimesSync, writeFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
 
 import {
   acceptSystemDialog,
@@ -8,6 +9,9 @@ import {
   expandAdministrationGroup,
 } from "./support/session";
 import { expectUiIntegrity } from "./support/ui-guard";
+
+const SQLITE_FIXTURE_LATEST_MODIFIED_AT = "2026-09-01T02:00:00.000Z";
+const SQLITE_FIXTURE_BATCH_ID = "e2e-storage-batch";
 
 test("configuration conflicts, diagnostics and retention controls remain observable", async ({
   page,
@@ -85,6 +89,7 @@ test("configuration conflicts, diagnostics and retention controls remain observa
   const liteDataDirectory = process.env.AUTOFORGE_E2E_DATA_DIR;
   if (diagnosticBody.mode === "lite" && liteDataDirectory) {
     insertLiteDeadLetterFixture(liteDataDirectory);
+    insertSqliteStorageFixture(liteDataDirectory);
     await page.getByRole("button", { name: "刷新诊断" }).click();
     const deadLetterPanel = page.locator(".diagnostic-dead-letters");
     await expect(deadLetterPanel).toContainText("对象清理");
@@ -109,7 +114,14 @@ test("configuration conflicts, diagnostics and retention controls remain observa
   const storageResponse = await page.request.get("/api/v1/settings/storage?limit=1");
   expect(storageResponse.status()).toBe(200);
   const storageBody = (await storageResponse.json()) as {
-    items: Array<{ logicalPath: string; storagePath: string; sizeBytes: number }>;
+    items: Array<{
+      logicalPath: string;
+      storagePath: string;
+      sizeBytes: number;
+      createdAt?: string;
+      modifiedAt?: string;
+      runBatchId?: string;
+    }>;
     nextCursor?: string;
     summary: { fileCount: number; allocatedBytes: number; dataDirectory: string };
   };
@@ -117,27 +129,54 @@ test("configuration conflicts, diagnostics and retention controls remain observa
   expect(storageBody.summary.fileCount).toBeGreaterThan(0);
   expect(storageBody.summary.allocatedBytes).toBeGreaterThan(0);
   expect(storageBody.items[0]?.storagePath).toContain(storageBody.summary.dataDirectory);
+  expect(storageBody.items[0]?.createdAt).toMatch(/^\d{4}-\d{2}-\d{2}T/u);
+  expect(storageBody.items[0]?.modifiedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/u);
   if (diagnosticBody.mode === "lite") {
     await page.getByRole("button", { name: "按文件类型筛选" }).click();
-    await page.getByRole("option", { name: "平台数据库" }).click();
-    await page.getByLabel("搜索文件名称或路径").fill("autoforge.sqlite");
+    await page.getByRole("option", { name: "用例日志库" }).click();
+    await page.getByLabel("搜索文件名称或路径").fill(SQLITE_FIXTURE_BATCH_ID);
     await page.getByRole("button", { name: "应用筛选" }).click();
-    await expect(page).toHaveURL(/section=storage.*category=database.*query=autoforge\.sqlite/u);
-    await expect(storageTree).toContainText("autoforge.sqlite");
-    const databaseFile = storageTree
-      .locator(".storage-tree-file > summary")
-      .filter({ hasText: "autoforge.sqlite" })
-      .first();
-    await databaseFile.click();
-    await expect(storageTree.locator(".storage-tree-file-detail").first()).toContainText(
-      "平台 SQLite 主文件",
+    await expect(page).toHaveURL(
+      new RegExp(`section=storage.*category=execution-log.*query=${SQLITE_FIXTURE_BATCH_ID}`, "u"),
     );
-    await expect(storageTree.locator(".storage-tree-file-detail").first()).toContainText(
-      "实际位置",
+    const sqliteGroup = storageTree
+      .locator("details.storage-tree-sqlite-group")
+      .filter({ hasText: `${SQLITE_FIXTURE_BATCH_ID}.sqlite` });
+    await expect(sqliteGroup).toHaveCount(1);
+    await expect(sqliteGroup).not.toHaveAttribute("open", "");
+    const sqliteSummary = sqliteGroup.locator(":scope > summary");
+    await expect(sqliteSummary).toContainText("3 个文件");
+    await expect(sqliteSummary).toContainText("23 B");
+    await expect(sqliteSummary).toContainText(`任务批次号 ${SQLITE_FIXTURE_BATCH_ID}`);
+    await expect(
+      sqliteSummary.locator(`time[datetime="${SQLITE_FIXTURE_LATEST_MODIFIED_AT}"]`),
+    ).toHaveCount(1);
+    await sqliteSummary.click();
+    const sqliteComponents = sqliteGroup.locator(".storage-sqlite-components");
+    await expect(sqliteComponents).toContainText("已合并计入上方大小");
+    await expect(sqliteComponents.locator("li")).toHaveCount(3);
+    await expect(sqliteComponents.locator(".storage-sqlite-component-role")).toHaveText([
+      "主文件",
+      "WAL",
+      "SHM",
+    ]);
+    await expect(sqliteGroup.locator(".storage-tree-file-detail")).toContainText("创建时间");
+    await expect(sqliteGroup.locator(".storage-tree-file-detail")).toContainText("最新修改时间");
+    await expect(sqliteGroup.locator(".storage-tree-file-detail")).toContainText(
+      `关联任务批次号${SQLITE_FIXTURE_BATCH_ID}`,
     );
-    await expect(storageTree.locator(".storage-tree-file-detail").first()).toContainText(
-      "实际占用",
+    const logInventoryResponse = await page.request.get(
+      `/api/v1/settings/storage?category=execution-log&query=${SQLITE_FIXTURE_BATCH_ID}&limit=3`,
     );
+    expect(logInventoryResponse.status()).toBe(200);
+    const logInventory = (await logInventoryResponse.json()) as {
+      items: Array<{ runBatchId?: string }>;
+    };
+    expect(logInventory.items).toHaveLength(3);
+    expect(logInventory.items.every((item) => item.runBatchId === SQLITE_FIXTURE_BATCH_ID)).toBe(
+      true,
+    );
+    await expectUiIntegrity(page);
   }
 
   await page.getByRole("link", { name: "数据保留" }).click();
@@ -187,5 +226,20 @@ function insertLiteDeadLetterFixture(dataDirectory: string): void {
       );
   } finally {
     database.close();
+  }
+}
+
+function insertSqliteStorageFixture(dataDirectory: string): void {
+  const mainPath = resolve(dataDirectory, "attempt-logs", `${SQLITE_FIXTURE_BATCH_ID}.sqlite`);
+  const files = [
+    { path: mainPath, bytes: 11, modifiedAt: "2026-09-01T00:00:00.000Z" },
+    { path: `${mainPath}-wal`, bytes: 7, modifiedAt: "2026-09-01T01:00:00.000Z" },
+    { path: `${mainPath}-shm`, bytes: 5, modifiedAt: SQLITE_FIXTURE_LATEST_MODIFIED_AT },
+  ];
+  mkdirSync(dirname(mainPath), { recursive: true });
+  for (const file of files) {
+    writeFileSync(file.path, Buffer.alloc(file.bytes, 1));
+    const timestamp = new Date(file.modifiedAt);
+    utimesSync(file.path, timestamp, timestamp);
   }
 }

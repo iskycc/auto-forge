@@ -367,7 +367,9 @@ export const storageInventoryItemSchema = z.object({
   storagePath: z.string().min(1).max(8_192),
   sizeBytes: z.number().int().nonnegative(),
   allocatedBytes: z.number().int().nonnegative(),
+  createdAt: z.string().datetime().optional(),
   modifiedAt: z.string().datetime().optional(),
+  runBatchId: z.string().min(1).max(128).optional(),
   projectId: z.string().min(1).max(128).optional(),
   detail: z.string().max(500).optional(),
 });
