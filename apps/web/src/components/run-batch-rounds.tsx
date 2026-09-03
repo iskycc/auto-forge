@@ -237,7 +237,7 @@ export function RunBatchRounds({
     [runnerDirectory],
   );
   const requestedRoundParam = searchParams.get("round");
-  // round=all/summary 都是虚拟轮次，不对应真实 attemptNumber。
+  // round=all/summary 都是虚拟轮次，不对应持久化的 executionRound。
   const allRoundsSelected = requestedRoundParam === "all";
   const summarySelected = requestedRoundParam === "summary";
   const requestedRecoveryRound = requestedRoundParam?.match(/^recovery-(\d+)$/u)?.[1];

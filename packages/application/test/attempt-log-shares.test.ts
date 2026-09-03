@@ -66,6 +66,7 @@ function makeBatchDetails(attemptOutcome: "succeeded" | "failed"): RunBatchDetai
         executionRunId: "run-1",
         runnerId: "runner-1",
         attemptNumber: 1,
+        executionRound: 1,
         status: attemptOutcome,
         schedulingScore: 1,
         version: 2,
@@ -317,11 +318,27 @@ describe("AttemptLogShareService", () => {
     expect(view).toMatchObject({
       attemptId: "attempt-3",
       attemptNumber: 3,
+      executionRound: 2,
       logText: "round three\n",
       rounds: [
-        { attemptId: "attempt-1", attemptNumber: 1, outcome: "failed" },
-        { attemptId: "attempt-2", attemptNumber: 2, outcome: "timed_out" },
-        { attemptId: "attempt-3", attemptNumber: 3, outcome: "failed" },
+        {
+          attemptId: "attempt-1",
+          attemptNumber: 1,
+          executionRound: 1,
+          outcome: "failed",
+        },
+        {
+          attemptId: "attempt-2",
+          attemptNumber: 2,
+          executionRound: 1,
+          outcome: "timed_out",
+        },
+        {
+          attemptId: "attempt-3",
+          attemptNumber: 3,
+          executionRound: 2,
+          outcome: "failed",
+        },
       ],
     });
     expect(await service.getSharedAttemptLog("token-1", "other-attempt")).toBeNull();
@@ -608,6 +625,7 @@ function makeMultiRoundBatchDetails(): RunBatchDetails {
       ...firstAttempt,
       id: "attempt-3",
       attemptNumber: 3,
+      executionRound: 2,
       startedAt: "2026-08-17T00:05:00.000Z",
       finishedAt: "2026-08-17T00:06:00.000Z",
       createdAt: "2026-08-17T00:04:30.000Z",
@@ -622,6 +640,7 @@ function makeMultiRoundBatchDetails(): RunBatchDetails {
       ...firstAttempt,
       id: "attempt-2",
       attemptNumber: 2,
+      executionRound: 1,
       status: "timed_out",
       outcome: "timed_out",
       startedAt: "2026-08-17T00:03:00.000Z",

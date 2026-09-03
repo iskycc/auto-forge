@@ -37,7 +37,10 @@ export type SharedAttemptLogOutcome =
 /** 同一批次、同一用例的轮次和手动重跑，用于公开日志页的安全导航。 */
 export interface SharedAttemptLogRoundView {
   attemptId: string;
+  /** 物理尝试序号；Runner 基础设施重调度会递增。 */
   attemptNumber: number;
+  /** 用户可见逻辑轮次；Runner 基础设施重调度不会递增。 */
+  executionRound: number;
   outcome: SharedAttemptLogOutcome;
   resultCode: string | null;
   startedAt: string | null;
@@ -53,7 +56,10 @@ export interface SharedAttemptLogView {
   /** 批次自然递增展示编号，界面优先展示；batchId 仍是权威 UUID。 */
   batchSequenceNumber: number;
   attemptId: string;
+  /** 物理尝试序号；用于区分同一逻辑轮次内的 Runner 重调度。 */
   attemptNumber: number;
+  /** 用户可见逻辑轮次。 */
+  executionRound: number;
   /** 用例路径，如 com.example.CheckoutTest */
   casePath: string;
   /** 用例名称（方法级显示名） */

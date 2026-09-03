@@ -99,8 +99,8 @@ failureAnalysisContract("SQLite failure analysis", async (): Promise<FailureAnal
       .prepare(
         `INSERT INTO execution_runs
           (id,batch_id,case_definition_id,case_version,display_name,class_name,status,
-           attempt_count,terminal_outcome,created_at,updated_at)
-         VALUES (?,?,?,1,?,?,?,1,?,?,?)`,
+           attempt_count,execution_round,terminal_outcome,created_at,updated_at)
+         VALUES (?,?,?,1,?,?,?,2,2,?,?,?)`,
       )
       .run(
         runId,
@@ -133,8 +133,8 @@ failureAnalysisContract("SQLite failure analysis", async (): Promise<FailureAnal
       .prepare(
         `INSERT INTO run_attempts
           (id,execution_run_id,runner_id,attempt_number,status,scheduling_score,outcome,
-           result_code,result_summary,created_at,finished_at)
-         VALUES (?,?, 'analysis-runner',2,?,1,?,'TESTNG_RESULT',?,?,?)`,
+           result_code,result_summary,execution_round,created_at,finished_at)
+         VALUES (?,?, 'analysis-runner',2,?,1,?,'TESTNG_RESULT',?,2,?,?)`,
       )
       .run(`attempt-2-${runId}`, runId, outcome, outcome, summary, RECORDED_AT, RECORDED_AT);
   }

@@ -176,6 +176,8 @@ export type ExecutionRun = {
   status: ExecutionRunStatus;
   assignedRunnerId?: string;
   attemptCount: number;
+  /** 当前或最后一次调度所属的逻辑轮次；Runner 基础设施重调度不会推进该值。 */
+  executionRound?: number;
   schedulingScore?: number;
   terminalOutcome?: "succeeded" | "failed" | "timed_out" | "cancelled";
   terminalReasonCode?: string;
@@ -193,6 +195,8 @@ export type RunAttempt = {
   executionRunId: string;
   runnerId: string;
   attemptNumber: number;
+  /** 逻辑执行轮次；旧数据或兼容调用未提供时回退到 attemptNumber。 */
+  executionRound?: number;
   status: RunAttemptStatus;
   schedulingScore: number;
   version: number;
@@ -228,8 +232,8 @@ export type RunBatchRoundConcurrency = {
 
 export type RunBatchRoundStatus = "running" | "completed" | "waiting";
 
-// 单个轮次的聚合视图。round 模式下 attemptNumber 即轮次号；immediate 模式下
-// attemptNumber 是同一 run 的第几次尝试，两种模式共用同一套按轮统计规则。
+// 单个轮次的聚合视图。round 模式下 Runner 基础设施重调度仍属于原逻辑轮次；
+// immediate 模式每次物理尝试各占一轮。
 export type RunBatchRoundSummary = {
   round: number;
   status: RunBatchRoundStatus;
@@ -274,7 +278,7 @@ export function summarizeRunBatchRounds(
   const roundNumbers = runBatchRoundNumbers(batch, runs, attempts);
   const passedRunIds = new Set<string>();
   return roundNumbers.map((round) => {
-    const roundAttempts = attempts.filter((attempt) => attempt.attemptNumber === round);
+    const roundAttempts = runAttemptsForExecutionRound(attempts, round);
     const eligibleRuns = executionRunsForRound(runs, attempts, round);
     const attemptedRunIds = new Set(roundAttempts.map((attempt) => attempt.executionRunId));
     for (const attempt of roundAttempts) {
@@ -317,17 +321,18 @@ export function runBatchRoundNumbers(
   attempts: readonly RunAttempt[],
 ): number[] {
   const numbers = new Set<number>([1, batch.currentRound]);
-  for (const attempt of attempts) numbers.add(attempt.attemptNumber);
+  for (const attempt of attempts) numbers.add(runAttemptExecutionRound(attempt));
   for (const run of runs) {
+    if (run.executionRound !== undefined) numbers.add(run.executionRound);
     if (run.heldRound !== undefined && run.heldRound > 0) numbers.add(run.heldRound);
   }
   return [...numbers].sort((left, right) => left - right);
 }
 
 /**
- * 单一轮次资格规则：首轮包含批次全部用例；后续轮次包含上一轮失败/超时的用例。
- * heldRound 补足已持有但历史 attempt 不完整的数据，当前轮已经存在的 attempt 则必须
- * 如实展示，不能因更早轮次的异常数据而被隐藏。
+ * 单一轮次资格规则：首轮包含批次全部用例；后续轮次只包含已经持久化到该逻辑
+ * 轮次的 run 或 attempt。不得仅凭上一轮失败推断资格，否则已耗尽重跑额度的用例
+ * 会被错误展示成“未执行”。旧调用未携带 executionRound 时保留原推导口径。
  */
 export function executionRunsForRound(
   runs: readonly ExecutionRun[],
@@ -336,8 +341,13 @@ export function executionRunsForRound(
 ): ExecutionRun[] {
   if (round === 1) return [...runs];
   const eligibleRunIds = new Set<string>();
+  const runsById = new Map(runs.map((run) => [run.id, run]));
   for (const attempt of attempts) {
-    if (attempt.attemptNumber === round) eligibleRunIds.add(attempt.executionRunId);
+    if (runAttemptExecutionRound(attempt) === round) {
+      eligibleRunIds.add(attempt.executionRunId);
+    }
+    const run = runsById.get(attempt.executionRunId);
+    if (run?.executionRound !== undefined || attempt.executionRound !== undefined) continue;
     if (attempt.attemptNumber !== round - 1) continue;
     const outcome = runAttemptOutcome(attempt);
     if (outcome === "failed" || outcome === "timed_out") {
@@ -345,9 +355,35 @@ export function executionRunsForRound(
     }
   }
   for (const run of runs) {
+    if (run.executionRound === round) eligibleRunIds.add(run.id);
     if (run.heldRound === round) eligibleRunIds.add(run.id);
   }
   return runs.filter((run) => eligibleRunIds.has(run.id));
+}
+
+/**
+ * 每个用例在同一逻辑轮次只展示最后一次物理尝试。前序 Runner 异常仍保存在
+ * attempt 历史和执行机异常视图中，但不能重复计入该轮用例数与通过率。
+ */
+export function runAttemptsForExecutionRound(
+  attempts: readonly RunAttempt[],
+  round: number,
+): RunAttempt[] {
+  const latestByRunId = new Map<string, RunAttempt>();
+  for (const attempt of attempts) {
+    if (runAttemptExecutionRound(attempt) !== round) continue;
+    const current = latestByRunId.get(attempt.executionRunId);
+    if (!current || attempt.attemptNumber > current.attemptNumber) {
+      latestByRunId.set(attempt.executionRunId, attempt);
+    }
+  }
+  return [...latestByRunId.values()];
+}
+
+export function runAttemptExecutionRound(
+  attempt: Pick<RunAttempt, "attemptNumber" | "executionRound">,
+): number {
+  return attempt.executionRound ?? attempt.attemptNumber;
 }
 
 /** 全部轮次按各真实轮次逐项求和，不再回退到首轮批次总数。 */

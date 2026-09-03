@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { buildRunBatchExportRows, RunBatchExportService } from "../src/export-run-batch-results";
 
 // 导出行组装是纯函数，直接基于内存 details 验证轮次/最终/阻塞语义。
-// 轮次语义：attemptNumber 即轮次号，1 为初始轮次。
+// 轮次语义：executionRound 是逻辑轮次，attemptNumber 只表示物理尝试序号。
 // blocked 新口径：除 adapter 正常成功/失败外的任何非正常结束（超时强杀、
 // 未拉起 adapter、adapter 异常、取消等）；从未执行的用例没有终止结果，不导出。
 
@@ -119,6 +119,32 @@ describe("buildRunBatchExportRows", () => {
     });
     expect(rows.map((row) => row.attemptId)).toEqual(["attempt-a1", "attempt-c1"]);
     expect(rows.map((row) => row.round)).toEqual([1, 1]);
+  });
+
+  it("exports only the last physical attempt when Runner recovery stays in one logical round", () => {
+    const first = attempt("attempt-a1", "run-a", 1, "failed", {
+      resultCode: "PROCESS_START_FAILED",
+    });
+    const second = attempt("attempt-a2", "run-a", 2, "succeeded", {
+      resultCode: "TESTNG_SUCCEEDED",
+    });
+    const details = makeDetails({
+      runs: [run("run-a", "succeeded", { attemptCount: 2, executionRound: 1 })],
+      attempts: [
+        { ...first, executionRound: 1 },
+        { ...second, executionRound: 1 },
+      ],
+    });
+
+    for (const scope of ["round", "all"] as const) {
+      const rows = buildRunBatchExportRows(details, {
+        scope,
+        ...(scope === "round" ? { round: 1 } : {}),
+        outcomes: ["succeeded", "failed", "blocked"],
+      });
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({ attemptId: "attempt-a2", round: 1 });
+    }
   });
 
   it("exports nothing for a round without attempts because never-run cases have no terminal result", () => {

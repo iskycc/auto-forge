@@ -19,10 +19,10 @@ import {
 import { expectUiIntegrity } from "./support/ui-guard";
 
 /**
- * 全部轮次虚拟轮次视图的验收：一个批次两个用例，一个首轮通过、
- * 一个首轮失败第二轮通过。验证：
+ * 全部轮次虚拟轮次视图的验收：覆盖 Runner 异常同轮重调度、真实失败整轮重跑、
+ * Jenkins 轮次恢复与公开日志。验证：
  * - 全部轮次逐条展示并用轮次列标注；通过/失败筛选可用；
- * - 第 2 轮不再把首轮已通过的用例显示为「未执行」；
+ * - Runner 异常不会消耗或虚增用例重跑轮次；
  * - 全部轮次视图导出走 scope=all（逐条记录、Excel 含轮次列）。
  */
 
@@ -309,6 +309,7 @@ async function completeAttempt(
     status: "succeeded" | "failed";
     resultCode: string;
     summary: string;
+    stdoutWatermark?: number;
   },
 ): Promise<void> {
   const response = await page.request.post(
@@ -324,7 +325,7 @@ async function completeAttempt(
           resultCode: result.resultCode,
           summary: result.summary,
           durationMs: 100,
-          logWatermarks: { stdout: 0, stderr: -1, agent: -1 },
+          logWatermarks: { stdout: result.stdoutWatermark ?? 0, stderr: -1, agent: -1 },
           artifacts: [],
         },
       },
@@ -359,6 +360,35 @@ async function uploadAttemptLog(
     },
   );
   expect(response.status()).toBe(200);
+}
+
+async function uploadCompressibleAttemptLog(
+  page: Page,
+  identity: RunnerIdentity,
+  claim: ClaimedAssignment,
+  label: string,
+): Promise<number> {
+  const marker = `compressed public log ${label}`;
+  const chunks = Array.from({ length: 160 }, (_, sequence) => ({
+    stream: "stdout" as const,
+    sequence,
+    content: `${marker} sequence=${sequence}\n${"repeatable diagnostic context ".repeat(120)}\n`,
+    recordedAt: new Date().toISOString(),
+  }));
+  const response = await page.request.post(
+    `/api/v1/run-attempts/${encodeURIComponent(claim.assignment.attemptId)}/logs`,
+    {
+      headers: runnerHeaders(identity),
+      data: {
+        schemaVersion: 1,
+        requestId: `e2e-compressed-log-${randomUUID()}`,
+        leaseToken: claim.lease.token,
+        chunks,
+      },
+    },
+  );
+  expect(response.status()).toBe(200);
+  return chunks.at(-1)!.sequence;
 }
 
 test("all-rounds virtual round annotates every record and later rounds hide previously passed cases", async ({
@@ -463,7 +493,7 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
     return new Map(details.runs.map((run) => [run.id, run.displayName]));
   };
 
-  // 第 1 轮：稳定用例通过，flaky 用例失败。
+  // 第 1 逻辑轮：稳定用例通过，flaky 用例先发生 Runner 异常。
   for (let claimed = 0; claimed < 2; claimed += 1) {
     const claim = await claimAssignment(page, identity);
     const names = await runNames();
@@ -494,23 +524,17 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
     });
   }
 
-  // 基础设施异常不等待整轮结束：第 2 轮 attempt 已调度、尚未领取，
-  // 因此本轮有 1 个用例且未执行数为 0。
-  // 首轮失败记录已经终止，即便 execution run 正处于 queued 等待重跑，也不能显示取消按钮。
+  // 基础设施异常不等待整轮结束，但新的物理 attempt 必须仍属于初始逻辑轮次；
+  // 用户重跑额度为 0 时不得凭空出现“重跑第 1 轮”。
   await page.goto(`/run-batches/${encodeURIComponent(batch.id)}`);
   const roundTable = page.locator(".execution-round-table");
   const initialRoundRow = roundTable.getByRole("row", { name: /初始轮次/ });
   const retryRoundRow = roundTable.getByRole("row", { name: /重跑第 1 轮/ });
   await expect(initialRoundRow.locator("td").nth(3)).toHaveText("2");
   await expect(initialRoundRow.locator("td").nth(8)).toHaveText("0");
-  await expect(retryRoundRow.locator("td").nth(3)).toHaveText("1");
-  await expect(retryRoundRow.locator("td").nth(8)).toHaveText("0");
-  await page.getByRole("button", { name: "初始轮次", exact: true }).click();
-  const failedFirstRoundRow = page.locator(".round-cases tbody tr").filter({ hasText: "失败" });
-  await expect(failedFirstRoundRow).toHaveCount(1);
-  await expect(failedFirstRoundRow.getByRole("button", { name: "取消该用例" })).toHaveCount(0);
+  await expect(retryRoundRow).toHaveCount(0);
 
-  // 释放 Runner 槽位并领取已自动重调度的第 2 轮。
+  // 释放 Runner 槽位并领取同一逻辑轮次内自动重调度的第 2 个物理 attempt。
   const idleHeartbeat = await postHeartbeat(page, identity, 0);
   expect(idleHeartbeat.status()).toBe(200);
   const retryClaim = await claimAssignment(page, identity);
@@ -518,7 +542,7 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
     completionId: "e2e-allround-r2",
     status: "succeeded",
     resultCode: "TESTNG_SUCCEEDED",
-    summary: "round 2 passed",
+    summary: "runner reschedule passed in logical round 1",
   });
 
   await expect
@@ -531,15 +555,42 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
     })
     .toBe("succeeded");
 
-  // 全部轮次视图：flaky 用例两条记录分别标注第 1/2 轮，稳定用例只有一条。
+  const completedDetailsResponse = await page.request.get(
+    `/api/v1/run-batches/${encodeURIComponent(batch.id)}`,
+    { headers: userHeaders },
+  );
+  expect(completedDetailsResponse.status()).toBe(200);
+  const completedDetails = (await completedDetailsResponse.json()) as {
+    currentRound: number;
+    runs: Array<{ id: string; displayName: string; executionRound: number }>;
+    attempts: Array<{ executionRunId: string; attemptNumber: number; executionRound: number }>;
+  };
+  expect(completedDetails.currentRound).toBe(1);
+  const flakyRunId = completedDetails.runs.find((run) =>
+    run.displayName.includes("AllRoundsFlakyTest"),
+  )?.id;
+  expect(flakyRunId).toBeTruthy();
+  expect(
+    completedDetails.attempts
+      .filter((attempt) => attempt.executionRunId === flakyRunId)
+      .map((attempt) => ({
+        attemptNumber: attempt.attemptNumber,
+        executionRound: attempt.executionRound,
+      })),
+  ).toEqual([
+    { attemptNumber: 1, executionRound: 1 },
+    { attemptNumber: 2, executionRound: 1 },
+  ]);
+
+  // 全部轮次视图按逻辑轮次计数：Runner 异常 attempt 不得重复计入用例总数。
   await page.goto(`/run-batches/${encodeURIComponent(batch.id)}`);
   const completedAllRoundsRow = page
     .locator(".execution-round-table")
     .getByRole("row", { name: /全部轮次/ });
-  await expect(completedAllRoundsRow.locator("td").nth(3)).toHaveText("3");
-  await expect(completedAllRoundsRow.locator("td").nth(4)).toHaveText("67%");
+  await expect(completedAllRoundsRow.locator("td").nth(3)).toHaveText("2");
+  await expect(completedAllRoundsRow.locator("td").nth(4)).toHaveText("100%");
   await expect(completedAllRoundsRow.locator("td").nth(6)).toHaveText("2");
-  await expect(completedAllRoundsRow.locator("td").nth(7)).toHaveText("1");
+  await expect(completedAllRoundsRow.locator("td").nth(7)).toHaveText("0");
   await expect(completedAllRoundsRow.locator("td").nth(8)).toHaveText("0");
   await page.getByRole("button", { name: "全部轮次", exact: true }).click();
   await expect(page).toHaveURL(/round=all/);
@@ -548,17 +599,17 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
   const stableRows = casesRegion.getByRole("row", { name: /AllRoundsStableTest/ });
   const flakyRows = casesRegion.getByRole("row", { name: /AllRoundsFlakyTest/ });
   await expect(stableRows).toHaveCount(1);
-  await expect(flakyRows).toHaveCount(2);
+  await expect(flakyRows).toHaveCount(1);
   await expect(stableRows.first()).toContainText("第 1 轮");
   await expect(stableRows.first()).toContainText("通过");
-  await expect(flakyRows.filter({ hasText: "第 1 轮" })).toContainText("失败");
-  await expect(flakyRows.filter({ hasText: "第 2 轮" })).toContainText("通过");
+  await expect(flakyRows.first()).toContainText("第 1 轮");
+  await expect(flakyRows.first()).toContainText("通过");
 
   // 通过/失败筛选在全部轮次下可用。
   await page.locator('select[aria-label="按状态筛选"]').selectOption("succeeded");
   await expect(casesRegion.getByRole("row", { name: /AllRounds/ })).toHaveCount(2);
   await page.locator('select[aria-label="按状态筛选"]').selectOption("failed");
-  await expect(casesRegion.getByRole("row", { name: /AllRounds/ })).toHaveCount(1);
+  await expect(casesRegion.getByRole("row", { name: /AllRounds/ })).toHaveCount(0);
   await page.locator('select[aria-label="按状态筛选"]').selectOption("all");
   // 布局回归：全部轮次没有环形图，用例表格必须占满面板宽度，而不是被挤进图表列。
   const panelBox = await page.locator("section.round-detail-panel").boundingBox();
@@ -581,13 +632,13 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
   expect(compactCellPadding.bottom).toBeLessThanOrEqual(8);
   await captureUi(page, "all-rounds-view");
 
-  // 第 2 轮不再把首轮已通过的稳定用例显示为「未执行」。
-  await page.getByRole("button", { name: "重跑第 1 轮", exact: true }).click();
+  // Runner 重调度完成后仍只有初始逻辑轮，且不会出现虚假的“未执行”行。
+  await page.getByRole("button", { name: "初始轮次", exact: true }).click();
   await expect(
     page.getByRole("img", { name: /截至本轮总体通过进度：累计通过 2 个用例，共 2 个/ }),
   ).toBeVisible();
   await expect(casesRegion.getByRole("row", { name: /AllRoundsFlakyTest/ })).toHaveCount(1);
-  await expect(casesRegion.getByRole("row", { name: /AllRoundsStableTest/ })).toHaveCount(0);
+  await expect(casesRegion.getByRole("row", { name: /AllRoundsStableTest/ })).toHaveCount(1);
   // 「未执行」同时是筛选下拉的选项文案，断言限定在用例行 tbody 内。
   await expect(casesRegion.locator("tbody").getByText("未执行")).toHaveCount(0);
   await captureUi(page, "round-two-cases");
@@ -606,7 +657,21 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
   await page.getByRole("button", { name: "初始轮次", exact: true }).click();
   const retainedCaseSearch = page.getByRole("textbox", { name: "按名称搜索用例" });
   await retainedCaseSearch.fill("AllRoundsFlakyTest");
-  await expect(casesRegion.getByRole("row", { name: /AllRounds/ })).toHaveCount(1);
+  const retainedFlakyRow = casesRegion.getByRole("row", { name: /AllRounds/ });
+  await expect(retainedFlakyRow).toHaveCount(1);
+  const logicalRoundLogPopupPromise = page.waitForEvent("popup");
+  await retainedFlakyRow.getByRole("button", { name: "公开日志" }).click();
+  const logicalRoundLogPage = await logicalRoundLogPopupPromise;
+  await logicalRoundLogPage.waitForLoadState("domcontentloaded");
+  const logicalRoundHistory = logicalRoundLogPage.getByRole("navigation", {
+    name: "同一用例的执行历史",
+  });
+  await expect(logicalRoundHistory.getByText("第 1 轮", { exact: true })).toBeVisible();
+  await expect(
+    logicalRoundHistory.getByText("第 1 轮 · 第 2 次尝试", { exact: true }),
+  ).toBeVisible();
+  await expect(logicalRoundHistory.getByText("第 2 轮", { exact: true })).toHaveCount(0);
+  await logicalRoundLogPage.close();
   await page.getByRole("button", { name: "执行机", exact: true }).click();
   await page.getByRole("button", { name: /执行机异常 1/ }).click();
   const faultDialog = page.getByRole("dialog", { name: "执行机异常事件" });
@@ -621,6 +686,117 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
   await expect(casesRegion.getByRole("row", { name: /AllRounds/ })).toHaveCount(1);
   await retainedCaseSearch.fill("");
   await expect(casesRegion.getByRole("row", { name: /AllRounds/ })).toHaveCount(2);
+
+  // 现场问题精确回归：用户额度 10 次 + Runner 独立重调度 2 次会产生 13 个物理
+  // attempt，但逻辑上只能是初始轮次 + 10 次重跑，绝不能出现第 12 轮。
+  await configureTaskExecution(page, suiteId, identity.runnerId, {
+    concurrency: 2,
+    retryLimit: 10,
+    retryMode: "round",
+  });
+  const cappedRetryBatch = await startTaskFromTopbar(page, suiteId);
+  const cappedRetryDetailsResponse = await page.request.get(
+    `/api/v1/run-batches/${encodeURIComponent(cappedRetryBatch.id)}`,
+    { headers: userHeaders },
+  );
+  expect(cappedRetryDetailsResponse.status()).toBe(200);
+  const cappedRunNames = new Map(
+    (
+      (await cappedRetryDetailsResponse.json()) as {
+        runs: Array<{ id: string; displayName: string }>;
+      }
+    ).runs.map((run) => [run.id, run.displayName]),
+  );
+  let cappedFlakyAttempts = 0;
+  let cappedStableCompleted = false;
+  while (cappedFlakyAttempts < 13 || !cappedStableCompleted) {
+    const claim = await claimAssignment(page, identity);
+    const runId = claim.assignment.executionSpec.executionRunId;
+    const caseName = cappedRunNames.get(runId) ?? "";
+    if (caseName.includes("AllRoundsStableTest")) {
+      cappedStableCompleted = true;
+      await completeAttempt(page, identity, claim, {
+        completionId: `e2e-retry-cap-stable-${claim.assignment.attemptId}`,
+        status: "succeeded",
+        resultCode: "TESTNG_SUCCEEDED",
+        summary: "stable case passed",
+      });
+    } else {
+      expect(caseName).toContain("AllRoundsFlakyTest");
+      cappedFlakyAttempts += 1;
+      const runnerFailure = cappedFlakyAttempts <= 2;
+      await completeAttempt(page, identity, claim, {
+        completionId: `e2e-retry-cap-flaky-${cappedFlakyAttempts}`,
+        status: "failed",
+        resultCode: runnerFailure ? "PROCESS_START_FAILED" : "TESTNG_ASSERTIONS_FAILED",
+        summary: runnerFailure
+          ? "Runner could not start the process"
+          : `ordinary failure ${cappedFlakyAttempts - 2}`,
+      });
+    }
+    expect((await postHeartbeat(page, identity, 0)).status()).toBe(200);
+  }
+  await expect
+    .poll(async () => {
+      const response = await page.request.get(
+        `/api/v1/run-batches/${encodeURIComponent(cappedRetryBatch.id)}`,
+        { headers: userHeaders },
+      );
+      const details = (await response.json()) as { status: string; attempts: unknown[] };
+      return `${details.status}:${details.attempts.length}`;
+    })
+    .toBe("succeeded:14");
+
+  const cappedCompletedResponse = await page.request.get(
+    `/api/v1/run-batches/${encodeURIComponent(cappedRetryBatch.id)}`,
+    { headers: userHeaders },
+  );
+  const cappedCompleted = (await cappedCompletedResponse.json()) as {
+    currentRound: number;
+    runs: Array<{
+      id: string;
+      displayName: string;
+      attemptCount: number;
+      executionRound: number;
+    }>;
+    attempts: Array<{ executionRunId: string; attemptNumber: number; executionRound: number }>;
+  };
+  const cappedFlakyRun = cappedCompleted.runs.find((run) =>
+    run.displayName.includes("AllRoundsFlakyTest"),
+  );
+  expect(cappedCompleted.currentRound).toBe(11);
+  expect(cappedFlakyRun).toMatchObject({ attemptCount: 13, executionRound: 11 });
+  const cappedFlakyAttemptRows = cappedCompleted.attempts.filter(
+    (attempt) => attempt.executionRunId === cappedFlakyRun?.id,
+  );
+  expect(cappedFlakyAttemptRows.at(-1)).toMatchObject({
+    attemptNumber: 13,
+    executionRound: 11,
+  });
+  expect([...new Set(cappedFlakyAttemptRows.map((attempt) => attempt.executionRound))]).toEqual(
+    Array.from({ length: 11 }, (_, index) => index + 1),
+  );
+
+  await page.goto(`/run-batches/${encodeURIComponent(cappedRetryBatch.id)}`);
+  const cappedRoundTable = page.locator(".execution-round-table");
+  await expect(cappedRoundTable.getByRole("row", { name: /重跑第 10 轮/ })).toBeVisible();
+  await expect(cappedRoundTable.getByRole("row", { name: /重跑第 11 轮/ })).toHaveCount(0);
+  await page.getByRole("button", { name: "重跑第 10 轮", exact: true }).click();
+  const cappedFinalCaseRow = page
+    .locator(".round-cases")
+    .getByRole("row", { name: /AllRoundsFlakyTest/ });
+  const cappedPublicLogPopupPromise = page.waitForEvent("popup");
+  await cappedFinalCaseRow.getByRole("button", { name: "公开日志" }).click();
+  const cappedPublicLogPage = await cappedPublicLogPopupPromise;
+  await cappedPublicLogPage.waitForLoadState("domcontentloaded");
+  const cappedPublicLogHistory = cappedPublicLogPage.getByRole("navigation", {
+    name: "同一用例的执行历史",
+  });
+  await expect(
+    cappedPublicLogHistory.getByText("第 11 轮 · 第 13 次尝试", { exact: true }),
+  ).toBeVisible();
+  await expect(cappedPublicLogHistory.getByText("第 12 轮", { exact: true })).toHaveCount(0);
+  await cappedPublicLogPage.close();
 
   // 真实编排一轮双 Jenkins 环境恢复：两个 Rebuild 并行触发并共同形成轮次屏障，
   // 其中一个状态查询先返回瞬时 503，验证有界重试不会把批次直接判为失败；页面时间线
@@ -835,11 +1011,18 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
   expect((await postHeartbeat(page, identity, 0)).status()).toBe(200);
   for (let claimed = 0; claimed < 2; claimed += 1) {
     const claim = await claimAssignment(page, identity);
+    const stdoutWatermark = await uploadCompressibleAttemptLog(
+      page,
+      identity,
+      claim,
+      `jenkins-${claimed}`,
+    );
     await completeAttempt(page, identity, claim, {
       completionId: `e2e-jenkins-completion-${claimed}`,
       status: "succeeded",
       resultCode: "TESTNG_SUCCEEDED",
       summary: "Jenkins lifecycle acceptance passed",
+      stdoutWatermark,
     });
     expect((await postHeartbeat(page, identity, 0)).status()).toBe(200);
   }
@@ -875,10 +1058,19 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
   const sharedLogHref = await sharedLogLinks.first().getAttribute("href");
   expect(sharedLogHref).toMatch(/^\/share\/run\/[^/]+\/attempt\/[^/]+$/u);
   const anonymousLogPage = await anonymousContext.newPage();
-  const anonymousLogResponse = await anonymousLogPage.goto(sharedLogHref!);
+  const anonymousLogNavigation = anonymousLogPage.goto(sharedLogHref!);
+  const platformHealthStartedAt = performance.now();
+  const platformHealthResponse = await page.request.get("/api/v1/health/live");
+  const platformHealthDurationMs = performance.now() - platformHealthStartedAt;
+  const anonymousLogResponse = await anonymousLogNavigation;
+  expect(platformHealthResponse.status()).toBe(200);
+  expect(platformHealthDurationMs).toBeLessThan(5_000);
   expect(anonymousLogResponse?.status()).toBe(200);
   expect(new URL(anonymousLogPage.url()).pathname).not.toBe("/login");
-  await expect(anonymousLogPage.getByText("本次尝试暂无日志内容。")).toBeVisible();
+  await expect(anonymousLogPage.locator("pre.execution-log")).toContainText(
+    "compressed public log jenkins-",
+  );
+  await expect(anonymousLogPage.getByRole("status")).toContainText("仅展示前 512 KB 内容");
   await expect(anonymousLogPage.locator(".app-shell, .app-sidebar, .topbar")).toHaveCount(0);
   await anonymousLogPage.close();
   await expect(anonymousResultPage.locator(".public-progress-card")).toHaveCount(0);

@@ -794,6 +794,7 @@ export type CaseActivity = {
 export type CaseExecutionHistoryAttempt = {
   id: string;
   attemptNumber: number;
+  executionRound: number;
   status: RunAttempt["status"];
   runnerId: string;
   runnerName?: string;

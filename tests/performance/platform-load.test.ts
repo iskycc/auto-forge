@@ -427,7 +427,7 @@ describe("bounded platform performance baseline", () => {
     }
   });
 
-  it("accepts and pages 20,000 authorized log chunks without unbounded reads", async () => {
+  it("compresses and pages 20,000 authorized log chunks without unbounded work", async () => {
     const directory = await temporaryDirectory("autoforge-log-load-");
     const handle = createSqliteDatabase({
       databasePath: resolve(directory, "logs.sqlite"),
@@ -437,7 +437,7 @@ describe("bounded platform performance baseline", () => {
       handle,
       createAttemptLogStore(resolve(directory, "attempt-logs")),
     );
-    const content = `${"x".repeat(508)}\n`;
+    const content = `${"repeatable compressed log context ".repeat(64)}\n`;
     const startedAt = performance.now();
     try {
       seedAuthorizedAttempt(handle.client);

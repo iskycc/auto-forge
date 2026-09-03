@@ -2,7 +2,9 @@ import { EXPORT_OUTCOME_FILTERS, type ExportOutcomeFilter } from "@autoforge/con
 import {
   classifyAttemptResult,
   DomainError,
+  runAttemptExecutionRound,
   runAttemptOutcome,
+  runAttemptsForExecutionRound,
   type AttemptResultCategory,
   type ExecutionRun,
   type RunAttempt,
@@ -14,7 +16,7 @@ import type { RunBatchRepository } from "./ports";
 /**
  * 导出单行数据。blocked 口径：除 adapter 正常成功/失败外的任何非正常结束
  * （超时强杀、未拉起 adapter、adapter 异常、取消等）；从未执行的用例没有终止
- * 结果，不导出。round 为轮次号（即 attemptNumber）。
+ * 结果，不导出。round 为逻辑执行轮次；Runner 基础设施重调度不会新增轮次。
  */
 export type RunBatchExportRow = {
   attemptId: string | null;
@@ -35,7 +37,7 @@ export type RunBatchExportQuery = {
   batchId: string;
   /** round=指定轮次；final=每个用例最新一次记录；all=所有轮次逐条记录（round 字段标注轮次）。 */
   scope: "round" | "final" | "all";
-  /** scope=round 时必填；轮次号即 attemptNumber，初始轮次为 1，与批次详情页一致。 */
+  /** scope=round 时必填；初始轮次为 1，与批次详情页一致。 */
   round?: number;
   outcomes: readonly ExportOutcomeFilter[];
   projectIds?: readonly string[];
@@ -106,7 +108,7 @@ function roundScopeRows(
   round: number,
   outcomes: ReadonlySet<ExportOutcomeFilter>,
 ): RunBatchExportRow[] {
-  const roundAttempts = details.attempts.filter((attempt) => attempt.attemptNumber === round);
+  const roundAttempts = runAttemptsForExecutionRound(details.attempts, round);
   const runsById = new Map(details.runs.map((run) => [run.id, run]));
   const rows: RunBatchExportRow[] = [];
   for (const attempt of roundAttempts) {
@@ -117,15 +119,23 @@ function roundScopeRows(
   return rows;
 }
 
-// all 口径：所有轮次的每条终态 attempt 各导出一行，round 字段标注轮次；
-// 从未执行的用例没有终止结果，与其他口径一致不导出。
+// all 口径：每个用例在每个逻辑轮次导出最后一次物理 attempt；同轮前序 Runner
+// 异常保留在执行机异常视图，不重复计入轮次结果。
 function allScopeRows(
   details: RunBatchDetails,
   outcomes: ReadonlySet<ExportOutcomeFilter>,
 ): RunBatchExportRow[] {
   const runsById = new Map(details.runs.map((run) => [run.id, run]));
-  const rows: RunBatchExportRow[] = [];
+  const latestByRunAndRound = new Map<string, RunAttempt>();
   for (const attempt of details.attempts) {
+    const key = `${attempt.executionRunId}\u0000${runAttemptExecutionRound(attempt)}`;
+    const current = latestByRunAndRound.get(key);
+    if (!current || attempt.attemptNumber > current.attemptNumber) {
+      latestByRunAndRound.set(key, attempt);
+    }
+  }
+  const rows: RunBatchExportRow[] = [];
+  for (const attempt of latestByRunAndRound.values()) {
     if (!matchesOutcomeFilter(attempt, outcomes)) continue;
     rows.push(attemptRow(attempt, runsById.get(attempt.executionRunId)));
   }
@@ -211,7 +221,7 @@ function attemptRow(attempt: RunAttempt, run: ExecutionRun | undefined): RunBatc
     startedAt: attempt.startedAt ?? null,
     finishedAt: attempt.finishedAt ?? null,
     durationMs: attempt.durationMs ?? null,
-    round: attempt.attemptNumber,
+    round: runAttemptExecutionRound(attempt),
   };
 }
 

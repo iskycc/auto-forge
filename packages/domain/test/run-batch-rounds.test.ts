@@ -204,6 +204,85 @@ describe("summarizeRunBatchRounds", () => {
     });
   });
 
+  it("keeps Runner reschedules in the same logical round and counts only their final attempt", () => {
+    const batch = makeBatch({
+      retryMode: "round",
+      retryLimit: 0,
+      currentRound: 1,
+      totalRuns: 2,
+      status: "succeeded",
+    });
+    const runs = [
+      makeRun("run-stable", { executionRound: 1, status: "succeeded" }),
+      makeRun("run-recovered", { executionRound: 1, attemptCount: 2, status: "succeeded" }),
+    ];
+    const attempts = [
+      makeAttempt("stable-1", "run-stable", 1, "succeeded", { executionRound: 1 }),
+      makeAttempt("recovered-1", "run-recovered", 1, "failed", {
+        executionRound: 1,
+        resultCode: "PROCESS_START_FAILED",
+      }),
+      makeAttempt("recovered-2", "run-recovered", 2, "succeeded", { executionRound: 1 }),
+    ];
+
+    expect(summarizeRunBatchRounds(batch, runs, attempts)).toEqual([
+      expect.objectContaining({
+        round: 1,
+        status: "completed",
+        totalRuns: 2,
+        executed: 2,
+        passed: 2,
+        failed: 0,
+        notExecuted: 0,
+      }),
+    ]);
+  });
+
+  it("does not infer a phantom round after a run exhausts its retry budget", () => {
+    const batch = makeBatch({
+      retryMode: "round",
+      retryLimit: 10,
+      currentRound: 11,
+      totalRuns: 1,
+      status: "succeeded",
+    });
+    const run = makeRun("run-exhausted", {
+      executionRound: 11,
+      attemptCount: 13,
+      status: "failed",
+    });
+    const attempts = [
+      makeAttempt("runner-fault-1", run.id, 1, "failed", {
+        executionRound: 1,
+        resultCode: "PROCESS_START_FAILED",
+      }),
+      makeAttempt("runner-fault-2", run.id, 2, "timed_out", {
+        executionRound: 1,
+        resultCode: "LEASE_EXPIRED",
+      }),
+      ...Array.from({ length: 11 }, (_, index) =>
+        makeAttempt(`ordinary-${index + 1}`, run.id, index + 3, "failed", {
+          executionRound: index + 1,
+          resultCode: "TESTNG_ASSERTIONS_FAILED",
+        }),
+      ),
+    ];
+
+    const summaries = summarizeRunBatchRounds(batch, [run], attempts);
+
+    expect(summaries.map((summary) => summary.round)).toEqual(
+      Array.from({ length: 11 }, (_, index) => index + 1),
+    );
+    expect(summaries.at(-1)).toMatchObject({
+      round: 11,
+      status: "completed",
+      totalRuns: 1,
+      executed: 1,
+      failed: 1,
+      notExecuted: 0,
+    });
+  });
+
   it("returns a single waiting round when no attempts exist", () => {
     const batch = makeBatch({ status: "queued", totalRuns: 2 });
     const runs = [makeRun("run-1"), makeRun("run-2")];

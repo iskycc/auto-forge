@@ -11,11 +11,11 @@ describe("retryQueueTiming", () => {
         runStatus: "queued",
         retryMode: "round",
         retryableRunnerFailure: false,
-        attemptNumber: 1,
+        currentExecutionRound: 1,
         eligibleAt,
         queueTimeoutMs: 60_000,
       }),
-    ).toEqual({ heldRound: 2, queueDeadlineAt: null });
+    ).toEqual({ executionRound: 2, heldRound: 2, queueDeadlineAt: null });
   });
 
   it("starts a fresh queue timeout window for an immediately eligible retry", () => {
@@ -24,11 +24,15 @@ describe("retryQueueTiming", () => {
         runStatus: "queued",
         retryMode: "immediate",
         retryableRunnerFailure: false,
-        attemptNumber: 1,
+        currentExecutionRound: 1,
         eligibleAt,
         queueTimeoutMs: 60_000,
       }),
-    ).toEqual({ heldRound: 0, queueDeadlineAt: "2026-08-25T00:01:00.000Z" });
+    ).toEqual({
+      executionRound: 2,
+      heldRound: 0,
+      queueDeadlineAt: "2026-08-25T00:01:00.000Z",
+    });
   });
 
   it("starts a fresh queue timeout window for runner-fault retries in round mode", () => {
@@ -37,10 +41,27 @@ describe("retryQueueTiming", () => {
         runStatus: "queued",
         retryMode: "round",
         retryableRunnerFailure: true,
-        attemptNumber: 1,
+        currentExecutionRound: 1,
         eligibleAt,
         queueTimeoutMs: 60_000,
       }),
-    ).toEqual({ heldRound: 0, queueDeadlineAt: "2026-08-25T00:01:00.000Z" });
+    ).toEqual({
+      executionRound: 1,
+      heldRound: 0,
+      queueDeadlineAt: "2026-08-25T00:01:00.000Z",
+    });
+  });
+
+  it("preserves the current round for terminal runs", () => {
+    expect(
+      retryQueueTiming({
+        runStatus: "failed",
+        retryMode: "round",
+        retryableRunnerFailure: false,
+        currentExecutionRound: 11,
+        eligibleAt,
+        queueTimeoutMs: 60_000,
+      }),
+    ).toEqual({ executionRound: 11, heldRound: 0, queueDeadlineAt: null });
   });
 });

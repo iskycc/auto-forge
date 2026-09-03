@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
 import { mkdtempSync, rmSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -237,6 +238,110 @@ describe("AttemptLogStore", () => {
       });
     } finally {
       database.close();
+    }
+  });
+
+  it("prioritizes completed-log reads ahead of a bounded compression backlog", async () => {
+    const store = createAttemptLogStore(temporaryDirectory());
+    const publicAttemptId = "attempt-public";
+    const compressibleContent = "public-log-compression-regression\n".repeat(128);
+    try {
+      await store.appendChunks({
+        batchId,
+        attemptId: publicAttemptId,
+        receivedAt: "2026-08-12T00:01:00.000Z",
+        chunks: [
+          {
+            stream: "stdout",
+            sequence: 0,
+            content: compressibleContent,
+            recordedAt: "2026-08-12T00:00:00.000Z",
+          },
+        ],
+      });
+
+      const completionOrder: string[] = [];
+      const compressionBacklog = store
+        .appendChunks({
+          batchId,
+          attemptId: "attempt-batch-backlog",
+          receivedAt: "2026-08-12T00:02:00.000Z",
+          // 与 Runner Protocol 单次请求上限一致。旧实现会把 256 个 gzip 一次性
+          // 提交到共享工作队列，使随后打开的公开日志只能等整个队列完成。
+          chunks: Array.from({ length: 256 }, (_, sequence) => ({
+            stream: "stdout" as const,
+            sequence,
+            content: `${compressibleContent}${sequence}`,
+            recordedAt: "2026-08-12T00:01:30.000Z",
+          })),
+        })
+        .then(() => completionOrder.push("batch-write"));
+      const publicLogRead = store
+        .listChunks({
+          batchId,
+          attemptId: publicAttemptId,
+          stream: "stdout",
+          afterSequence: -1,
+          limit: 16,
+        })
+        .then((page) => {
+          expect(page.items[0]?.content).toBe(compressibleContent);
+          completionOrder.push("public-read");
+        });
+      const unrelatedPlatformRead = readFile(import.meta.filename).then(() => {
+        completionOrder.push("platform-read");
+      });
+
+      await Promise.all([publicLogRead, unrelatedPlatformRead]);
+      expect(completionOrder).toContain("public-read");
+      expect(completionOrder).toContain("platform-read");
+      expect(completionOrder).not.toContain("batch-write");
+      await compressionBacklog;
+      expect(completionOrder.at(-1)).toBe("batch-write");
+    } finally {
+      store.close();
+    }
+  });
+
+  it("reopens an LRU-evicted batch between filtered decompression pages", async () => {
+    const store = createAttemptLogStore(temporaryDirectory());
+    const repeatedContent = "filtered compressed log line\n".repeat(64);
+    try {
+      await store.appendChunks({
+        batchId,
+        attemptId: "attempt-filtered",
+        receivedAt: "2026-08-12T00:01:00.000Z",
+        chunks: Array.from({ length: 40 }, (_, sequence) => ({
+          stream: "stdout" as const,
+          sequence,
+          content: `${repeatedContent}${sequence === 39 ? "needle" : ""}`,
+          recordedAt: "2026-08-12T00:00:00.000Z",
+        })),
+      });
+
+      const filteredRead = store.listChunks({
+        batchId,
+        attemptId: "attempt-filtered",
+        stream: "stdout",
+        afterSequence: -1,
+        limit: 1,
+        query: "needle",
+      });
+      // listChunks 已进入首批异步解压；打开 16 个其他批次会把目标句柄逐出 LRU。
+      for (let index = 0; index < 16; index += 1) {
+        store.acknowledgedSequence(
+          `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
+          "attempt-other",
+          "stdout",
+        );
+      }
+
+      await expect(filteredRead).resolves.toMatchObject({
+        items: [{ sequence: 39, content: expect.stringContaining("needle") }],
+        hasMore: false,
+      });
+    } finally {
+      store.close();
     }
   });
 

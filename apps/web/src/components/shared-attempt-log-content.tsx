@@ -79,7 +79,9 @@ export function SharedAttemptLogContent({
             <ShareFact label="批次 / 当前轮次">
               <span title={`批次 ${view.batchId} · 尝试 ${view.attemptId}`}>
                 批次 #{view.batchSequenceNumber} ·{" "}
-                {view.kind === "manual_rerun" ? "手动重跑" : `第 ${view.attemptNumber} 轮`}
+                {view.kind === "manual_rerun"
+                  ? "手动重跑"
+                  : executionRoundLabel(view.executionRound, view.attemptNumber)}
               </span>
               {view.requestedBy ? <span>{requesterLabel(view.requestedBy)}</span> : null}
             </ShareFact>
@@ -178,7 +180,9 @@ function RoundLogNavigation({
               >
                 <span className="share-log-round-link-heading">
                   <strong>
-                    {round.kind === "manual_rerun" ? "手动重跑" : `第 ${round.attemptNumber} 轮`}
+                    {round.kind === "manual_rerun"
+                      ? "手动重跑"
+                      : executionRoundLabel(round.executionRound, round.attemptNumber)}
                   </strong>
                   <span className={`batch-status ${sharedOutcomeClass(round.outcome)}`}>
                     {sharedOutcomeLabel(round.outcome)}
@@ -204,6 +208,12 @@ function RoundLogNavigation({
       </ol>
     </nav>
   );
+}
+
+function executionRoundLabel(executionRound: number, attemptNumber: number): string {
+  return executionRound === attemptNumber
+    ? `第 ${executionRound} 轮`
+    : `第 ${executionRound} 轮 · 第 ${attemptNumber} 次尝试`;
 }
 
 function requesterLabel(requestedBy: { username: string; source: "local" | "ldap" }): string {

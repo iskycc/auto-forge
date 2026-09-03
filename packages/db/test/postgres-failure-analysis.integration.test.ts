@@ -95,8 +95,8 @@ if (!connectionString) {
         await handle.pool.query(
           `INSERT INTO execution_runs
             (id,batch_id,case_definition_id,case_version,display_name,class_name,status,
-             attempt_count,terminal_outcome,created_at,updated_at)
-           VALUES ($1,$2,$3,1,$4,$5,$6,1,$6,$7,$7)`,
+             attempt_count,execution_round,terminal_outcome,created_at,updated_at)
+           VALUES ($1,$2,$3,1,$4,$5,$6,2,2,$6,$7,$7)`,
           [runId, batchId, `case-${runId}`, name, className, outcome, RECORDED_AT],
         );
         await handle.pool.query(
@@ -116,8 +116,8 @@ if (!connectionString) {
         await handle.pool.query(
           `INSERT INTO run_attempts
             (id,execution_run_id,runner_id,attempt_number,status,scheduling_score,outcome,
-             result_code,result_summary,created_at,finished_at)
-           VALUES ($1,$2,$3,2,$4,1,$4,'TESTNG_RESULT',$5,$6,$6)`,
+             result_code,result_summary,execution_round,created_at,finished_at)
+           VALUES ($1,$2,$3,2,$4,1,$4,'TESTNG_RESULT',$5,2,$6,$6)`,
           [`attempt-2-${runId}`, runId, runnerId, outcome, summary, RECORDED_AT],
         );
       }

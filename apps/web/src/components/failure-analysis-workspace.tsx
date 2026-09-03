@@ -901,7 +901,7 @@ function CandidateTable({
                 <strong className="failure-analysis-case-name" title={candidate.caseName}>
                   {candidate.caseName}
                 </strong>
-                <small>最终失败 · 第 {candidate.attemptNumber} 轮</small>
+                <small>最终失败 · 第 {candidate.attemptNumber} 次尝试</small>
               </td>
               <td>
                 <code className="failure-analysis-class-path" title={candidate.className}>
@@ -1335,7 +1335,7 @@ function CompleteAnalysisDialog({
                       <strong>{claim.caseName}</strong>
                       <code>{claim.className}</code>
                       <small>
-                        第 {claim.attemptNumber} 轮 · {claim.failureSummary}
+                        第 {claim.attemptNumber} 次尝试 · {claim.failureSummary}
                       </small>
                     </div>
                     <span>

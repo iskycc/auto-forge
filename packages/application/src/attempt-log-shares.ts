@@ -157,6 +157,7 @@ export class AttemptLogShareService {
       batchSequenceNumber: batch.sequenceNumber,
       attemptId: attempt.id,
       attemptNumber: attempt.attemptNumber,
+      executionRound: attempt.executionRound ?? attempt.attemptNumber,
       casePath: run.className,
       displayName: run.displayName,
       outcome,
@@ -173,6 +174,7 @@ export class AttemptLogShareService {
         ({ attempt: candidate, outcome: candidateOutcome, kind: candidateKind, requestedBy }) => ({
           attemptId: candidate.id,
           attemptNumber: candidate.attemptNumber,
+          executionRound: candidate.executionRound ?? candidate.attemptNumber,
           outcome: candidateOutcome,
           resultCode: candidate.resultCode ?? null,
           startedAt: candidate.startedAt ?? null,

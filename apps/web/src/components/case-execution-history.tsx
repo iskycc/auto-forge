@@ -134,8 +134,11 @@ export function CaseExecutionHistory({
                     </td>
                     <td>{caseExecutionStatusLabel(item.status)}</td>
                     <td>
-                      <strong>第 {attempt.attemptNumber} 轮总结</strong>
+                      <strong>第 {attempt.executionRound} 轮总结</strong>
                       <span className="case-history-attempt-result" title={attempt.resultCode}>
+                        {attempt.executionRound === attempt.attemptNumber
+                          ? ""
+                          : `第 ${attempt.attemptNumber} 次尝试 · `}
                         {caseExecutionStatusLabel(attempt.status)} ·{" "}
                         {caseExecutionResultLabel(attempt.resultCode)}
                       </span>
@@ -152,7 +155,7 @@ export function CaseExecutionHistory({
                       <div className="case-history-actions">
                         {canReadLogs ? (
                           <Button
-                            aria-label={`查看第 ${attempt.attemptNumber} 轮总结日志`}
+                            aria-label={`查看第 ${attempt.executionRound} 轮总结日志`}
                             className="button button-secondary compact-button"
                             onClick={() => setLogAttempt(attempt)}
                             type="button"

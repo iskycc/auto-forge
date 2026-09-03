@@ -4,6 +4,35 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## 1.8.16 - 2026-09-03
+
+### Fixed
+
+- 修复批跑并发上传压缩日志时，单次请求把最多 256 个 gzip 工作一次性排入 Node.js 共享
+  工作队列，导致已完成用例的公开日志解压长期饥饿，并连带阻塞平台文件/加密操作的问题。
+  日志编解码现在使用有界并发调度，读取享有有限优先权且不会饿死写入；压缩格式、现有日志、
+  Runner Protocol 和 Lite/Full 持久化语义不变。
+- 修复关键字搜索在异步解压期间遇到批次日志 SQLite 句柄被 LRU 驱逐后，继续使用已关闭连接
+  而读取失败的问题；每个内部扫描页会重新获取有效句柄。
+- 修复整轮重跑把 Runner 基础设施重调度的物理 attempt 误当作新逻辑轮次，导致重跑上限为
+  10 时页面出现第 12 轮、上一轮未完成即结束，以及额外“未执行”占位的问题。Runner 重调度
+  现在保留在当前逻辑轮，普通失败才推进下一轮；轮次汇总取同一用例在该轮的最后一次物理尝试，
+  基础设施异常历史仍完整保留。
+
+### Database and persisted configuration
+
+- SQLite 新增迁移 `0060_logical_execution_round.sql`，PostgreSQL 新增迁移
+  `0059_logical_execution_round.sql`，为 `ExecutionRun` 和 `RunAttempt` 持久化独立逻辑轮次，
+  并按历史普通失败与 Runner 基础设施失败回填现有批次；Runner Protocol 和任务配置不变。
+
+### Tests
+
+- 新增压缩积压下公开日志读取与无关文件操作优先完成的回归测试、异步解压期间日志句柄驱逐
+  测试；2 万日志块性能基线改为覆盖实际 gzip 路径，并扩展 Playwright 批跑验收以覆盖多页
+  压缩日志的永久公开页和并发健康检查。
+- 新增 Lite/Full 共享调度契约、SQLite/PostgreSQL 升级迁移和领域轮次回归测试，覆盖 Runner
+  重调度不推进逻辑轮、10 次重跑上限不产生第 12 轮，以及同轮最后物理尝试决定汇总结果。
+
 ## 1.8.15 - 2026-09-03
 
 ### Changed

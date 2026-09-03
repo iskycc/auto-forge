@@ -108,6 +108,22 @@ function schedulingEventCases(createHarness: () => Promise<SchedulingEventHarnes
       expect(firstPage).toMatchObject({ total: 2 });
       expect(firstPage?.items).toHaveLength(1);
 
+      const summary = await harness.batches.listCasePage({
+        batchId: harness.batchIdA,
+        scope: "summary",
+        sort: "none",
+        direction: "asc",
+        offset: 0,
+        limit: 50,
+      });
+      expect(summary).toMatchObject({
+        total: 2,
+        items: [
+          { run: { id: harness.executionRunId }, attempt: { executionRound: 1 }, round: 1 },
+          { run: { id: extraRunId }, round: 1 },
+        ],
+      });
+
       const pending = await harness.batches.listCasePage({
         batchId: harness.batchIdA,
         scope: 1,
@@ -120,6 +136,32 @@ function schedulingEventCases(createHarness: () => Promise<SchedulingEventHarnes
       expect(pending).toMatchObject({
         total: 1,
         items: [{ run: { id: extraRunId, displayName: "Another case" }, round: 1 }],
+      });
+
+      // 已取得下一轮资格、但在生成 attempt 前排队超时的 run 仍属于该逻辑轮次；
+      // 资格来自 execution_round，不得因 run 已终态而从轮次表消失。
+      await harness.rawQuery(
+        `UPDATE execution_runs
+         SET status='failed', terminal_outcome='timed_out', execution_round=2, updated_at=?
+         WHERE id=?`,
+        ["2026-08-10T00:02:00.000Z", extraRunId],
+      );
+      await harness.rawQuery(
+        "UPDATE run_batches SET retry_mode='round', current_round=2 WHERE id=?",
+        [harness.batchIdA],
+      );
+      const secondRound = await harness.batches.listCasePage({
+        batchId: harness.batchIdA,
+        scope: 2,
+        status: "pending",
+        sort: "none",
+        direction: "asc",
+        offset: 0,
+        limit: 50,
+      });
+      expect(secondRound).toMatchObject({
+        total: 1,
+        items: [{ run: { id: extraRunId }, round: 2 }],
       });
     } finally {
       await harness.dispose();

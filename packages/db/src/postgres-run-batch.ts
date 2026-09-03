@@ -136,22 +136,23 @@ type PostgresRoundAggregateRow = {
 
 const POSTGRES_BATCH_ROUND_CTES = `WITH batch_runs AS (
   SELECT * FROM execution_runs WHERE batch_id=$1
+), ranked_round_attempts AS (
+  SELECT attempt.*,ROW_NUMBER() OVER (
+    PARTITION BY attempt.execution_run_id,attempt.execution_round
+    ORDER BY attempt.attempt_number DESC
+  ) AS round_rank
+  FROM run_attempts attempt JOIN batch_runs run ON run.id=attempt.execution_run_id
+), round_attempts AS (
+  SELECT * FROM ranked_round_attempts WHERE round_rank=1
 ), round_numbers(round) AS (
   SELECT 1
   UNION SELECT current_round FROM run_batches WHERE id=$1
-  UNION SELECT attempt.attempt_number FROM run_attempts attempt
-        JOIN batch_runs run ON run.id=attempt.execution_run_id
-  UNION SELECT held_round FROM batch_runs WHERE held_round>0
+  UNION SELECT execution_round FROM round_attempts
+  UNION SELECT execution_round FROM batch_runs
 ), eligible_runs(execution_run_id,round) AS (
   SELECT id,1 FROM batch_runs
-  UNION SELECT attempt.execution_run_id,attempt.attempt_number
-        FROM run_attempts attempt JOIN batch_runs run ON run.id=attempt.execution_run_id
-  UNION SELECT attempt.execution_run_id,attempt.attempt_number+1
-        FROM run_attempts attempt JOIN batch_runs run ON run.id=attempt.execution_run_id
-        JOIN round_numbers rounds ON rounds.round=attempt.attempt_number+1
-        WHERE COALESCE(attempt.outcome,attempt.status) IN ('failed','timed_out')
-  UNION SELECT id,held_round FROM batch_runs
-        WHERE held_round>0 AND held_round IN (SELECT round FROM round_numbers)
+  UNION SELECT execution_run_id,execution_round FROM round_attempts
+  UNION SELECT id,execution_round FROM batch_runs
 )`;
 
 export class PostgresRunBatchRepository implements RunBatchRepository {
@@ -643,19 +644,19 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
                   MAX(attempt.finished_at) AS "finishedAt"
            FROM round_numbers rounds
            LEFT JOIN eligible_runs eligible ON eligible.round=rounds.round
-           LEFT JOIN run_attempts attempt
+           LEFT JOIN round_attempts attempt
              ON attempt.execution_run_id=eligible.execution_run_id
-            AND attempt.attempt_number=rounds.round
+            AND attempt.execution_round=rounds.round
            GROUP BY rounds.round ORDER BY rounds.round`,
         [batchId],
       ),
       this.handle.pool.query<{ firstRound: number; count: string }>(
-        `SELECT MIN(attempt_number) AS "firstRound",COUNT(*) AS count FROM (
-             SELECT attempt.execution_run_id,MIN(attempt.attempt_number) AS attempt_number
+        `SELECT MIN(execution_round) AS "firstRound",COUNT(*) AS count FROM (
+             SELECT attempt.execution_run_id,MIN(attempt.execution_round) AS execution_round
              FROM run_attempts attempt JOIN execution_runs run ON run.id=attempt.execution_run_id
              WHERE run.batch_id=$1 AND COALESCE(attempt.outcome,attempt.status)='succeeded'
              GROUP BY attempt.execution_run_id
-           ) first_pass GROUP BY attempt_number ORDER BY attempt_number`,
+           ) first_pass GROUP BY execution_round ORDER BY execution_round`,
         [batchId],
       ),
       this.handle.pool.query<RoundRecoveryDetailRow>(
@@ -678,14 +679,14 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
         failed: string;
         lastActivity: DatabaseTimestamp;
       }>(
-        `SELECT attempt.attempt_number AS round,attempt.runner_id AS "runnerId",
+        `SELECT attempt.execution_round AS round,attempt.runner_id AS "runnerId",
                   COUNT(*) AS executed,
                   COUNT(*) FILTER (WHERE COALESCE(attempt.outcome,attempt.status)='succeeded') AS passed,
                   COUNT(*) FILTER (WHERE COALESCE(attempt.outcome,attempt.status) IN ('failed','timed_out')) AS failed,
                   MAX(COALESCE(attempt.finished_at,attempt.started_at,attempt.created_at)) AS "lastActivity"
            FROM run_attempts attempt JOIN execution_runs run ON run.id=attempt.execution_run_id
-           WHERE run.batch_id=$1 GROUP BY attempt.attempt_number,attempt.runner_id
-           ORDER BY attempt.attempt_number,attempt.runner_id`,
+           WHERE run.batch_id=$1 GROUP BY attempt.execution_round,attempt.runner_id
+           ORDER BY attempt.execution_round,attempt.runner_id`,
         [batchId],
       ),
       this.handle.pool.query<{
@@ -1298,6 +1299,7 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
         const updatedRuns = await transaction.execute<{
           id: string;
           attempt_count: number;
+          execution_round: number;
           case_definition_id: string;
           execution_case_definition_id: string | null;
           case_version: number;
@@ -1325,7 +1327,8 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
             AND run.status = 'queued'
             AND run.held_round = 0
             AND (run.queue_deadline_at IS NULL OR run.queue_deadline_at > ${input.scheduledAt})
-          RETURNING run.id, run.attempt_count, run.case_definition_id, run.case_version,
+          RETURNING run.id, run.attempt_count, run.execution_round,
+                    run.case_definition_id, run.case_version,
                     run.execution_case_definition_id, run.class_name, run.parameters_json,
                     run.class_data_size_bytes, run.class_data_sha256`);
         const updatedRunById = new Map(updatedRuns.rows.map((row) => [row.id, row]));
@@ -1385,6 +1388,7 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
               executionRunId: decision.executionRunId,
               runnerId: decision.runnerId,
               attemptNumber: run.attempt_count,
+              executionRound: run.execution_round,
               status: "assigned" as const,
               schedulingScore: decision.score,
               createdAt: input.scheduledAt,
@@ -1432,20 +1436,22 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
           for (const rows of batchesOf(attemptRows, POSTGRES_WRITE_BATCH_SIZE)) {
             await transaction.execute(sql`
               INSERT INTO run_attempts
-                (id, execution_run_id, runner_id, attempt_number, status, scheduling_score, created_at)
-              SELECT s.id, s.execution_run_id, s.runner_id, s.attempt_number, 'assigned',
-                     s.scheduling_score, ${input.scheduledAt}
+                (id, execution_run_id, runner_id, attempt_number, execution_round, status,
+                 scheduling_score, created_at)
+              SELECT s.id, s.execution_run_id, s.runner_id, s.attempt_number,
+                     s.execution_round, 'assigned', s.scheduling_score, ${input.scheduledAt}
               FROM jsonb_to_recordset(${JSON.stringify(
                 rows.map((row) => ({
                   id: row.id,
                   execution_run_id: row.executionRunId,
                   runner_id: row.runnerId,
                   attempt_number: row.attemptNumber,
+                  execution_round: row.executionRound,
                   scheduling_score: row.schedulingScore,
                 })),
               )}::jsonb)
                      AS s(id text, execution_run_id text, runner_id text, attempt_number integer,
-                          scheduling_score float8)`);
+                          execution_round integer, scheduling_score float8)`);
           }
           for (const rows of batchesOf(assignmentRows, POSTGRES_WRITE_BATCH_SIZE)) {
             await transaction.execute(sql`
@@ -1953,7 +1959,7 @@ function postgresCasePageQuery(input: RunBatchCasePageQuery): {
   let scopeCte: string;
   if (input.scope === "summary") {
     scopeCte = `, ranked_attempts AS (
-      SELECT attempt.id,attempt.execution_run_id,attempt.attempt_number,
+      SELECT attempt.id,attempt.execution_run_id,attempt.attempt_number,attempt.execution_round,
              ROW_NUMBER() OVER (
                PARTITION BY attempt.execution_run_id
                ORDER BY CASE WHEN COALESCE(attempt.outcome,attempt.status)='succeeded' THEN 0 ELSE 1 END,
@@ -1961,7 +1967,7 @@ function postgresCasePageQuery(input: RunBatchCasePageQuery): {
              ) AS rank
       FROM run_attempts attempt JOIN batch_runs run ON run.id=attempt.execution_run_id
     ), scope_rows AS (
-      SELECT run.id AS execution_run_id,COALESCE(attempt.attempt_number,1) AS round,
+      SELECT run.id AS execution_run_id,COALESCE(attempt.execution_round,1) AS round,
              attempt.id AS attempt_id
       FROM batch_runs run LEFT JOIN ranked_attempts attempt
         ON attempt.execution_run_id=run.id AND attempt.rank=1
@@ -1971,9 +1977,9 @@ function postgresCasePageQuery(input: RunBatchCasePageQuery): {
       input.scope === "all" ? undefined : pushPostgresParameter(parameters, input.scope);
     scopeCte = `, scope_rows AS (
       SELECT eligible.execution_run_id,eligible.round,attempt.id AS attempt_id
-      FROM eligible_runs eligible LEFT JOIN run_attempts attempt
+      FROM eligible_runs eligible LEFT JOIN round_attempts attempt
         ON attempt.execution_run_id=eligible.execution_run_id
-       AND attempt.attempt_number=eligible.round
+       AND attempt.execution_round=eligible.round
       ${roundPlaceholder ? `WHERE eligible.round=${roundPlaceholder}` : ""}
     )`;
   }
@@ -2167,7 +2173,12 @@ async function retryContext(
        COUNT(*) FILTER (WHERE a.status = 'succeeded') AS passed,
        COUNT(*) FILTER (WHERE a.status IN ('succeeded','failed','timed_out','cancelled')) AS completed
      FROM run_attempts a JOIN execution_runs r ON r.id = a.execution_run_id
-     WHERE r.batch_id = $1 AND a.attempt_number = $2`,
+     WHERE r.batch_id = $1 AND a.execution_round = $2
+       AND a.attempt_number = (
+         SELECT MAX(latest.attempt_number) FROM run_attempts latest
+         WHERE latest.execution_run_id = a.execution_run_id
+           AND latest.execution_round = a.execution_round
+       )`,
     [batch.id, batch.currentRound - 1],
   );
   const previous = previousResult.rows[0];
@@ -2542,6 +2553,7 @@ function toExecutionRun(row: typeof pgExecutionRuns.$inferSelect): ExecutionRun 
     status: row.status,
     ...(row.assignedRunnerId ? { assignedRunnerId: row.assignedRunnerId } : {}),
     attemptCount: row.attemptCount,
+    executionRound: row.executionRound,
     ...(row.schedulingScore === null ? {} : { schedulingScore: row.schedulingScore }),
     ...(row.terminalOutcome ? { terminalOutcome: row.terminalOutcome } : {}),
     ...(row.terminalReasonCode ? { terminalReasonCode: row.terminalReasonCode } : {}),
@@ -2560,6 +2572,7 @@ function toRunAttempt(row: typeof pgRunAttempts.$inferSelect): RunAttempt {
     executionRunId: row.executionRunId,
     runnerId: row.runnerId,
     attemptNumber: row.attemptNumber,
+    executionRound: row.executionRound,
     status: row.status,
     schedulingScore: row.schedulingScore,
     version: row.version,

@@ -77,6 +77,7 @@ type AttemptControlRow = {
   execution_run_id: string;
   runner_id: string;
   attempt_number: number;
+  execution_round: number;
   status: RunAttemptStatus;
   run_status: ExecutionRunStatus;
   retry_limit: number;
@@ -1011,7 +1012,7 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
       runStatus: executionRunStatus,
       retryMode: control.retry_mode,
       retryableRunnerFailure: isRetryableRunnerFailure(result.resultCode),
-      attemptNumber: control.attempt_number,
+      currentExecutionRound: control.execution_round,
       eligibleAt: input.acceptedAt,
       queueTimeoutMs: control.queue_timeout_ms,
     });
@@ -1044,7 +1045,7 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
     this.handle.client
       .prepare(
         `UPDATE execution_runs SET status = ?, terminal_outcome = ?, assigned_runner_id = ?,
-         terminal_reason_code = ?, held_round = ?, queue_deadline_at = ?, updated_at = ?,
+         terminal_reason_code = ?, execution_round = ?, held_round = ?, queue_deadline_at = ?, updated_at = ?,
          version = version + 1
          WHERE id = ? AND status IN ('assigned', 'running')`,
       )
@@ -1053,6 +1054,7 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
         executionRunStatus === "queued" ? null : attemptStatus,
         executionRunStatus === "queued" ? null : control.runner_id,
         executionRunStatus === "queued" ? null : result.resultCode,
+        queueTiming.executionRound,
         queueTiming.heldRound,
         queueTiming.queueDeadlineAt,
         input.acceptedAt,
@@ -1222,7 +1224,7 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
       runStatus,
       retryMode: control.retry_mode,
       retryableRunnerFailure: isRetryableRunnerFailure(expiration.resultCode),
-      attemptNumber: control.attempt_number,
+      currentExecutionRound: control.execution_round,
       eligibleAt: recordedAt,
       queueTimeoutMs: control.queue_timeout_ms,
     });
@@ -1243,7 +1245,7 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
     this.handle.client
       .prepare(
         `UPDATE execution_runs SET status = ?, terminal_outcome = ?, assigned_runner_id = NULL,
-         terminal_reason_code = ?, held_round = ?, queue_deadline_at = ?, updated_at = ?,
+         terminal_reason_code = ?, execution_round = ?, held_round = ?, queue_deadline_at = ?, updated_at = ?,
          version = version + 1
          WHERE id = ? AND status IN ('assigned', 'running')`,
       )
@@ -1251,6 +1253,7 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
         runStatus,
         runStatus === "queued" ? null : attemptStatus,
         runStatus === "queued" ? null : expiration.resultCode,
+        queueTiming.executionRound,
         queueTiming.heldRound,
         queueTiming.queueDeadlineAt,
         recordedAt,
@@ -1527,7 +1530,7 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
       .prepare(
         `SELECT
            a.id AS attempt_id, a.execution_run_id, a.runner_id AS attempt_runner_id,
-           a.attempt_number, a.status AS attempt_status,
+           a.attempt_number, a.execution_round, a.status AS attempt_status,
            r.status AS run_status, r.cancel_requested_at AS run_cancel_requested_at,
            r.display_name AS run_display_name, r.held_round AS run_held_round,
            b.id AS batch_id, b.project_id, b.retry_limit, b.retry_mode, b.queue_timeout_ms,
@@ -1566,6 +1569,7 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
           execution_run_id: string;
           attempt_runner_id: string;
           attempt_number: number;
+          execution_round: number;
           attempt_status: RunAttemptStatus;
           run_status: ExecutionRunStatus;
           run_cancel_requested_at: string | null;
@@ -1648,6 +1652,7 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
         execution_run_id: row.execution_run_id,
         runner_id: row.attempt_runner_id,
         attempt_number: row.attempt_number,
+        execution_round: row.execution_round,
         status: row.attempt_status,
         run_status: row.run_status,
         retry_limit: row.retry_limit,
@@ -1692,7 +1697,7 @@ export class SqliteExecutionControlRepository implements ExecutionControlReposit
   private findAttemptControl(attemptId: string): AttemptControlRow | undefined {
     return this.handle.client
       .prepare(
-        `SELECT a.id, a.execution_run_id, a.runner_id, a.attempt_number, a.status,
+        `SELECT a.id, a.execution_run_id, a.runner_id, a.attempt_number, a.execution_round, a.status,
          r.status AS run_status, r.cancel_requested_at AS run_cancel_requested_at,
          b.retry_limit, b.retry_mode, b.queue_timeout_ms, b.id AS batch_id, b.project_id,
          b.cancel_requested_at AS batch_termination_requested_at

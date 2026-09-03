@@ -1,6 +1,8 @@
 import {
   classifyAttemptResult,
   executionRunsForRound,
+  runAttemptExecutionRound,
+  runAttemptsForExecutionRound,
   type RunAttempt,
   type RunBatchDetails,
 } from "@autoforge/domain";
@@ -96,9 +98,9 @@ export function buildRunProgressFromOverview(overview: RunBatchDetailOverview): 
 
 function effectiveCurrentRound(batch: RunBatchDetails): number {
   if (batch.retryMode === "round") return batch.currentRound;
-  return Math.max(1, ...batch.attempts.map((attempt) => attempt.attemptNumber));
+  return Math.max(1, ...batch.attempts.map(runAttemptExecutionRound));
 }
 
 function attemptsForRound(batch: RunBatchDetails, round: number): RunAttempt[] {
-  return batch.attempts.filter((attempt) => attempt.attemptNumber === round);
+  return runAttemptsForExecutionRound(batch.attempts, round);
 }

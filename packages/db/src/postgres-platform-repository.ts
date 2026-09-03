@@ -956,6 +956,7 @@ export class PostgresCaseCatalogRepository implements CaseCatalogRepository {
         id: string;
         execution_run_id: string;
         attempt_number: number;
+        execution_round: number;
         status: CaseExecutionHistoryPage["items"][number]["attempts"][number]["status"];
         runner_id: string;
         runner_name: string | null;
@@ -964,7 +965,7 @@ export class PostgresCaseCatalogRepository implements CaseCatalogRepository {
         created_at: string;
         finished_at: string | null;
       }>(
-        `SELECT a.id, a.execution_run_id, a.attempt_number, a.status, a.runner_id,
+        `SELECT a.id, a.execution_run_id, a.attempt_number, a.execution_round, a.status, a.runner_id,
                 runner.name AS runner_name, a.result_code, a.duration_ms,
                 a.created_at, a.finished_at
          FROM run_attempts a
@@ -988,6 +989,7 @@ export class PostgresCaseCatalogRepository implements CaseCatalogRepository {
         runAttempts.push({
           id: attempt.id,
           attemptNumber: attempt.attempt_number,
+          executionRound: attempt.execution_round,
           status: attempt.status,
           runnerId: attempt.runner_id,
           ...(query.includeRunnerNames && attempt.runner_name

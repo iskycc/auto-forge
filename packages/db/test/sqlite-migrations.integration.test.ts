@@ -1327,6 +1327,116 @@ describe("SQLite migrations", { timeout: 15_000 }, () => {
       database.close();
     }
   });
+
+  it("backfills logical rounds without counting Runner reschedules as rerun rounds", async () => {
+    const directory = await mkdtemp(resolve(tmpdir(), "autoforge-logical-round-migration-"));
+    temporaryDirectories.push(directory);
+    const databasePath = resolve(directory, "autoforge.sqlite");
+    const migrationsFolder = resolve(import.meta.dirname, "../drizzle/sqlite");
+    const migrationFiles = (await readdir(migrationsFolder))
+      .filter((name) => /^\d+_.+\.sql$/.test(name))
+      .sort();
+    const migration = "0060_logical_execution_round.sql";
+    const migrationIndex = migrationFiles.indexOf(migration);
+    expect(migrationIndex).toBeGreaterThan(0);
+    const database = new Database(databasePath);
+    try {
+      database.pragma("foreign_keys = ON");
+      for (const fileName of migrationFiles.slice(0, migrationIndex)) {
+        database.exec(await readFile(resolve(migrationsFolder, fileName), "utf8"));
+      }
+      database.exec(`
+        INSERT INTO runners
+          (id, credential_hash, name, os, architecture, agent_version, protocol_version,
+           labels_json, capabilities_json, max_concurrency, busy_slots, last_seen_at,
+           created_at, updated_at)
+        VALUES
+          ('runner-logical-round', 'runner-logical-round-hash', 'Logical round runner',
+           'linux', 'amd64', '1.0.0', 1, '[]', '[]', 1, 0,
+           '2026-09-03T00:00:00.000Z', '2026-09-03T00:00:00.000Z',
+           '2026-09-03T00:00:00.000Z');
+        INSERT INTO run_batches
+          (id, sequence_number, suite_id, suite_name, suite_version, status, retry_limit,
+           retry_mode, current_round, environment_json, secret_bindings_json, total_runs,
+           project_id, policy_json, scheduled_for, created_at, updated_at)
+        VALUES
+          ('batch-logical-round', 9011, 'suite-logical-round', 'Logical round migration', 1,
+           'succeeded', 10, 'round', 13, '[]', '[]', 2,
+           '00000000-0000-7000-8000-000000000001', '{}',
+           '2026-09-03T00:00:00.000Z', '2026-09-03T00:00:00.000Z',
+           '2026-09-03T00:10:00.000Z');
+        INSERT INTO execution_runs
+          (id, batch_id, case_definition_id, case_version, display_name, class_name,
+           status, attempt_count, terminal_outcome, terminal_reason_code, created_at, updated_at)
+        VALUES
+          ('run-ordinary', 'batch-logical-round', 'case-ordinary', 1, 'Ordinary',
+           'example.OrdinaryTest', 'failed', 11, 'failed', 'TESTNG_ASSERTIONS_FAILED',
+           '2026-09-03T00:00:00.000Z', '2026-09-03T00:10:00.000Z'),
+          ('run-runner-faults', 'batch-logical-round', 'case-runner-faults', 1,
+           'Runner faults', 'example.RunnerFaultTest', 'failed', 13, 'failed',
+           'TESTNG_ASSERTIONS_FAILED', '2026-09-03T00:00:00.000Z',
+           '2026-09-03T00:10:00.000Z');
+        WITH RECURSIVE numbers(value) AS (
+          SELECT 1 UNION ALL SELECT value + 1 FROM numbers WHERE value < 11
+        )
+        INSERT INTO run_attempts
+          (id, execution_run_id, runner_id, attempt_number, status, scheduling_score,
+           outcome, result_code, created_at, finished_at)
+        SELECT 'ordinary-' || value, 'run-ordinary', 'runner-logical-round', value,
+               'failed', 1, 'failed', 'TESTNG_ASSERTIONS_FAILED',
+               '2026-09-03T00:00:00.000Z', '2026-09-03T00:01:00.000Z'
+        FROM numbers;
+        WITH RECURSIVE numbers(value) AS (
+          SELECT 1 UNION ALL SELECT value + 1 FROM numbers WHERE value < 13
+        )
+        INSERT INTO run_attempts
+          (id, execution_run_id, runner_id, attempt_number, status, scheduling_score,
+           outcome, result_code, created_at, finished_at)
+        SELECT 'runner-faults-' || value, 'run-runner-faults', 'runner-logical-round', value,
+               CASE WHEN value = 2 THEN 'timed_out' ELSE 'failed' END, 1,
+               CASE WHEN value = 2 THEN 'timed_out' ELSE 'failed' END,
+               CASE value WHEN 1 THEN 'PROCESS_START_FAILED' WHEN 2 THEN 'LEASE_EXPIRED'
+                          ELSE 'TESTNG_ASSERTIONS_FAILED' END,
+               '2026-09-03T00:00:00.000Z', '2026-09-03T00:01:00.000Z'
+        FROM numbers;
+      `);
+
+      database.exec(await readFile(resolve(migrationsFolder, migration), "utf8"));
+
+      expect(
+        database
+          .prepare("SELECT current_round FROM run_batches WHERE id='batch-logical-round'")
+          .get(),
+      ).toEqual({ current_round: 11 });
+      expect(
+        database
+          .prepare(
+            `SELECT id,execution_round FROM execution_runs
+             WHERE batch_id='batch-logical-round' ORDER BY id`,
+          )
+          .all(),
+      ).toEqual([
+        { id: "run-ordinary", execution_round: 11 },
+        { id: "run-runner-faults", execution_round: 11 },
+      ]);
+      expect(
+        database
+          .prepare(
+            `SELECT attempt_number,execution_round FROM run_attempts
+             WHERE execution_run_id='run-runner-faults' AND attempt_number IN (1,2,3,13)
+             ORDER BY attempt_number`,
+          )
+          .all(),
+      ).toEqual([
+        { attempt_number: 1, execution_round: 1 },
+        { attempt_number: 2, execution_round: 1 },
+        { attempt_number: 3, execution_round: 1 },
+        { attempt_number: 13, execution_round: 11 },
+      ]);
+    } finally {
+      database.close();
+    }
+  });
 });
 
 type MigrationWorkerInput = {

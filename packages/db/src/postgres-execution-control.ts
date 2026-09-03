@@ -79,6 +79,7 @@ type AttemptControlRow = {
   execution_run_id: string;
   runner_id: string;
   attempt_number: number;
+  execution_round: number;
   status: RunAttemptStatus;
   run_status: ExecutionRunStatus;
   retry_limit: number;
@@ -1191,6 +1192,7 @@ type CompletionOpeningRow = {
   execution_run_id: string;
   attempt_runner_id: string;
   attempt_number: number;
+  execution_round: number;
   attempt_status: RunAttemptStatus;
   run_status: ExecutionRunStatus;
   run_cancel_requested_at: string | null;
@@ -1240,7 +1242,7 @@ type CompletionReceiptRow = {
  */
 const COMPLETION_OPENING_SELECT = `SELECT
        a.id AS attempt_id, a.execution_run_id, a.runner_id AS attempt_runner_id,
-       a.attempt_number, a.status AS attempt_status,
+       a.attempt_number, a.execution_round, a.status AS attempt_status,
        r.status AS run_status, r.cancel_requested_at AS run_cancel_requested_at,
        r.display_name AS run_display_name, r.held_round AS run_held_round,
        b.id AS batch_id, b.project_id, b.retry_limit, b.retry_mode, b.queue_timeout_ms,
@@ -1345,6 +1347,7 @@ function completionOpeningFromRow(
       execution_run_id: row.execution_run_id,
       runner_id: row.attempt_runner_id,
       attempt_number: row.attempt_number,
+      execution_round: row.execution_round,
       status: row.attempt_status,
       run_status: row.run_status,
       retry_limit: row.retry_limit,
@@ -1384,7 +1387,7 @@ async function persistCompletionWrites(
     runStatus: executionRunStatus,
     retryMode: control.retry_mode,
     retryableRunnerFailure: isRetryableRunnerFailure(result.resultCode),
-    attemptNumber: control.attempt_number,
+    currentExecutionRound: control.execution_round,
     eligibleAt: input.acceptedAt,
     queueTimeoutMs: control.queue_timeout_ms,
   });
@@ -1411,7 +1414,7 @@ async function persistCompletionWrites(
      ), upd_run AS (
        UPDATE execution_runs SET status = $14, terminal_outcome = $15, assigned_runner_id = $16,
          terminal_reason_code = $17, held_round = $18, queue_deadline_at = $19, updated_at = $20,
-         version = version + 1
+         execution_round = $43, version = version + 1
        WHERE id = $21 AND status IN ('assigned', 'running') RETURNING id
      ), ins_event AS (
        INSERT INTO attempt_state_events
@@ -1482,6 +1485,7 @@ async function persistCompletionWrites(
       schedulingDrafts.map((draft) => draft.message),
       schedulingDrafts.map((draft) => (draft.payload ? JSON.stringify(draft.payload) : null)),
       schedulingDrafts.map((draft) => draft.recordedAt),
+      queueTiming.executionRound,
     ],
   );
   await persistCompletionMetadata(
@@ -1696,7 +1700,7 @@ async function expireAttempt(
     runStatus,
     retryMode: control.retry_mode,
     retryableRunnerFailure: isRetryableRunnerFailure(expiration.resultCode),
-    attemptNumber: control.attempt_number,
+    currentExecutionRound: control.execution_round,
     eligibleAt: recordedAt,
     queueTimeoutMs: control.queue_timeout_ms,
   });
@@ -1715,7 +1719,7 @@ async function expireAttempt(
   await client.query(
     `UPDATE execution_runs SET status = $1, terminal_outcome = $2, assigned_runner_id = NULL,
      terminal_reason_code = $3, held_round = $4, queue_deadline_at = $5, updated_at = $6,
-     version = version + 1
+     execution_round = $8, version = version + 1
      WHERE id = $7 AND status IN ('assigned', 'running')`,
     [
       runStatus,
@@ -1725,6 +1729,7 @@ async function expireAttempt(
       queueTiming.queueDeadlineAt,
       recordedAt,
       control.execution_run_id,
+      queueTiming.executionRound,
     ],
   );
   await appendAttemptEvent(client, {
@@ -1962,7 +1967,7 @@ async function findAttemptControl(
   lock = false,
 ): Promise<AttemptControlRow | undefined> {
   const result = await client.query<AttemptControlRow>(
-    `SELECT a.id, a.execution_run_id, a.runner_id, a.attempt_number, a.status,
+    `SELECT a.id, a.execution_run_id, a.runner_id, a.attempt_number, a.execution_round, a.status,
      r.status AS run_status, r.cancel_requested_at AS run_cancel_requested_at,
      b.retry_limit, b.retry_mode, b.queue_timeout_ms, b.id AS batch_id, b.project_id,
      b.cancel_requested_at AS batch_termination_requested_at

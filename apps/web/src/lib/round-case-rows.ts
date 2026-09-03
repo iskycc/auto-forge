@@ -2,6 +2,8 @@ import {
   executionRunsForRound,
   finalRunAttemptByExecutionRun,
   isTerminalAttemptStatus,
+  runAttemptExecutionRound,
+  runAttemptsForExecutionRound,
   runBatchRoundNumbers,
   type ExecutionRun,
   type RunAttempt,
@@ -17,8 +19,8 @@ export type RoundCaseRowModel = {
 /**
  * 组装轮次用例表的行。
  *
- * 具体轮次：首轮包含全部用例，后续轮次只包含上一轮失败/超时或已经存在本轮
- * attempt 的用例；无 attempt 的资格行表示真正等待本轮调度。
+ * 具体轮次：首轮包含全部用例，后续轮次只包含已经持久化到该逻辑轮次的用例；
+ * 无 attempt 的资格行表示真正等待本轮调度。
  *
  * "all" 虚拟轮次：按轮次资格展开，同一用例在每个所属轮次各占一行；尚未产生
  * attempt 的资格行同样保留，保证详情行数与“全部轮次”总数/未执行数完全一致。
@@ -31,7 +33,7 @@ export function buildRoundCaseRows(
     const finalAttempts = finalRunAttemptByExecutionRun(batch.attempts);
     return batch.runs.map((run) => {
       const attempt = finalAttempts.get(run.id);
-      return { run, attempt, round: attempt?.attemptNumber ?? 1 };
+      return { run, attempt, round: attempt ? runAttemptExecutionRound(attempt) : 1 };
     });
   }
   if (round === "all") {
@@ -44,12 +46,14 @@ export function buildRoundCaseRows(
         ),
       ]),
     );
-    const attemptsByRunAndRound = new Map(
-      batch.attempts.map((attempt) => [
-        runRoundKey(attempt.executionRunId, attempt.attemptNumber),
-        attempt,
-      ]),
-    );
+    const attemptsByRunAndRound = new Map<string, RunAttempt>();
+    for (const attempt of batch.attempts) {
+      const key = runRoundKey(attempt.executionRunId, runAttemptExecutionRound(attempt));
+      const current = attemptsByRunAndRound.get(key);
+      if (!current || attempt.attemptNumber > current.attemptNumber) {
+        attemptsByRunAndRound.set(key, attempt);
+      }
+    }
     const rows: RoundCaseRowModel[] = [];
     for (const run of batch.runs) {
       for (const roundNumber of roundNumbers) {
@@ -64,12 +68,16 @@ export function buildRoundCaseRows(
     return rows;
   }
 
+  const attemptsByRunId = new Map(
+    runAttemptsForExecutionRound(batch.attempts, round).map((attempt) => [
+      attempt.executionRunId,
+      attempt,
+    ]),
+  );
   return executionRunsForRound(batch.runs, batch.attempts, round).map((run) => ({
     run,
     round,
-    attempt: batch.attempts.find(
-      (attempt) => attempt.executionRunId === run.id && attempt.attemptNumber === round,
-    ),
+    attempt: attemptsByRunId.get(run.id),
   }));
 }
 

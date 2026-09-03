@@ -16,7 +16,12 @@ const MAX_STAT_ENTRIES = 10_000;
 const MINIMUM_COMPRESSION_BYTES = 1_024;
 const MINIMUM_COMPRESSION_SAVING_BYTES = 64;
 const LOG_READ_BATCH_ROWS = 32;
-const LOG_DECOMPRESSION_CONCURRENCY = 8;
+// zlib 异步 API 与文件、DNS、部分加密操作共享进程级 libuv 工作队列。批跑上传一次
+// 最多包含 256 块；若直接 Promise.all，多个请求会把数千个 gzip 排在公开日志的
+// gunzip 前面，使整个控制面看起来卡死。每个运行上下文只提交少量在途任务，并让
+// 读取有限优先；连续读取达到上限后仍会选择写入，避免高频查看日志饿死持久化。
+const LOG_CODEC_CONCURRENCY = 2;
+const MAXIMUM_CONSECUTIVE_LOG_READS = 4;
 const gzipAsync = promisify(gzip);
 const gunzipAsync = promisify(gunzip);
 
@@ -207,7 +212,7 @@ export function createAttemptLogStore(attemptLogsDirectory: string): AttemptLogS
   return {
     async appendChunks(input) {
       assertBatchId(input.batchId);
-      const encodedChunks = await Promise.all(input.chunks.map(encodeLogChunk));
+      const encodedChunks = await mapLogCodecTasks(input.chunks, encodeLogChunk);
       // 压缩在取得 SQLite 句柄前完成；异步 zlib 运行期间 LRU 可能驱逐旧句柄，
       // 因此不能跨 await 持有可能已被关闭的数据库连接。
       const handle = openBatch(input.batchId);
@@ -268,11 +273,13 @@ export function createAttemptLogStore(attemptLogsDirectory: string): AttemptLogS
 
     async listChunks(input) {
       assertBatchId(input.batchId);
-      const handle = openBatch(input.batchId);
       const items: AttemptLogItem[] = [];
       let afterSequence = input.afterSequence;
       let exhausted = false;
       while (items.length <= input.limit && !exhausted) {
+        // 不跨异步解压持有句柄。其他批次的并发访问可能在 await 期间触发 LRU
+        // 驱逐；每次同步查询重新命中/打开句柄即可避免继续使用已关闭连接。
+        const handle = openBatch(input.batchId);
         const rows = readStoredRows(
           handle,
           {
@@ -463,9 +470,11 @@ async function encodeLogChunk(chunk: AttemptLogChunkInput): Promise<EncodedLogCh
   if (plainContent.byteLength < MINIMUM_COMPRESSION_BYTES) {
     return encodedIdentityChunk(chunk, plainContent, contentSha256);
   }
-  const compressed = await gzipAsync(plainContent, {
-    level: zlibConstants.Z_DEFAULT_COMPRESSION,
-  });
+  const compressed = await logCodecScheduler.scheduleWrite(() =>
+    gzipAsync(plainContent, {
+      level: zlibConstants.Z_DEFAULT_COMPRESSION,
+    }),
+  );
   if (compressed.byteLength > plainContent.byteLength - MINIMUM_COMPRESSION_SAVING_BYTES) {
     return encodedIdentityChunk(chunk, plainContent, contentSha256);
   }
@@ -505,17 +514,7 @@ function legacyContentEquals(stored: string | Buffer, expected: string): boolean
 }
 
 async function decodeStoredRows(rows: StoredLogRow[]): Promise<AttemptLogItem[]> {
-  const items: AttemptLogItem[] = [];
-  for (let offset = 0; offset < rows.length; offset += LOG_DECOMPRESSION_CONCURRENCY) {
-    items.push(
-      ...(await Promise.all(
-        rows
-          .slice(offset, offset + LOG_DECOMPRESSION_CONCURRENCY)
-          .map((row) => decodeStoredRow(row)),
-      )),
-    );
-  }
-  return items;
+  return mapLogCodecTasks(rows, decodeStoredRow);
 }
 
 async function decodeStoredRow(row: StoredLogRow): Promise<AttemptLogItem> {
@@ -524,7 +523,9 @@ async function decodeStoredRow(row: StoredLogRow): Promise<AttemptLogItem> {
   let plainContent: Buffer;
   try {
     plainContent =
-      row.content_encoding === "gzip" ? await gunzipAsync(storedContent) : storedContent;
+      row.content_encoding === "gzip"
+        ? await logCodecScheduler.scheduleRead(() => gunzipAsync(storedContent))
+        : storedContent;
   } catch (error) {
     throw new Error(`无法解压 ${row.stream} 日志块 ${row.sequence}，批次日志文件可能已经损坏。`, {
       cause: error,
@@ -540,3 +541,97 @@ async function decodeStoredRow(row: StoredLogRow): Promise<AttemptLogItem> {
     recordedAt: row.recorded_at,
   };
 }
+
+type ScheduledLogCodecTask = {
+  run(): Promise<void>;
+};
+
+async function mapLogCodecTasks<Input, Output>(
+  inputs: readonly Input[],
+  transform: (input: Input) => Promise<Output>,
+): Promise<Output[]> {
+  const outputs = new Array<Output>(inputs.length);
+  let nextIndex = 0;
+  const workers = Array.from(
+    { length: Math.min(LOG_CODEC_CONCURRENCY, inputs.length) },
+    async () => {
+      for (;;) {
+        const index = nextIndex;
+        nextIndex += 1;
+        if (index >= inputs.length) return;
+        outputs[index] = await transform(inputs[index]!);
+      }
+    },
+  );
+  await Promise.all(workers);
+  return outputs;
+}
+
+class LogCodecScheduler {
+  private activeTasks = 0;
+  private consecutiveReads = 0;
+  private readonly reads: ScheduledLogCodecTask[] = [];
+  private readonly writes: ScheduledLogCodecTask[] = [];
+
+  constructor(
+    private readonly concurrency: number,
+    private readonly maximumConsecutiveReads: number,
+  ) {}
+
+  scheduleRead<T>(operation: () => Promise<T>): Promise<T> {
+    return this.schedule(this.reads, operation);
+  }
+
+  scheduleWrite<T>(operation: () => Promise<T>): Promise<T> {
+    return this.schedule(this.writes, operation);
+  }
+
+  private schedule<T>(queue: ScheduledLogCodecTask[], operation: () => Promise<T>): Promise<T> {
+    const result = new Promise<T>((resolve, reject) => {
+      queue.push({
+        run: async () => {
+          try {
+            resolve(await operation());
+          } catch (error) {
+            reject(error);
+          }
+        },
+      });
+    });
+    this.dispatch();
+    return result;
+  }
+
+  private dispatch(): void {
+    while (this.activeTasks < this.concurrency) {
+      const task = this.nextTask();
+      if (!task) return;
+      this.activeTasks += 1;
+      void task.run().finally(() => {
+        this.activeTasks -= 1;
+        this.dispatch();
+      });
+    }
+  }
+
+  private nextTask(): ScheduledLogCodecTask | undefined {
+    if (
+      this.reads.length > 0 &&
+      (this.writes.length === 0 || this.consecutiveReads < this.maximumConsecutiveReads)
+    ) {
+      this.consecutiveReads += 1;
+      return this.reads.shift();
+    }
+    const write = this.writes.shift();
+    if (write) {
+      this.consecutiveReads = 0;
+      return write;
+    }
+    return this.reads.shift();
+  }
+}
+
+const logCodecScheduler = new LogCodecScheduler(
+  LOG_CODEC_CONCURRENCY,
+  MAXIMUM_CONSECUTIVE_LOG_READS,
+);

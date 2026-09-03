@@ -658,6 +658,59 @@ function schedulingRefillCases(createHarness: () => Promise<RefillHarness>): voi
     }
   });
 
+  it("calculates the prior logical-round pass rate from each run's last physical attempt", async () => {
+    const harness = await createHarness();
+    const runId = randomUUID();
+    const runnerFailureAttemptId = randomUUID();
+    const successfulAttemptId = randomUUID();
+    const recordedAt = "2026-08-10T00:03:00.000Z";
+    try {
+      await harness.rawQuery(
+        "UPDATE run_batches SET retry_mode = 'round', current_round = 2 WHERE id = ?",
+        [harness.batchQueuedId],
+      );
+      await harness.rawQuery(
+        `INSERT INTO execution_runs
+           (id, batch_id, case_definition_id, case_version, display_name, class_name, status,
+            attempt_count, execution_round, terminal_outcome, created_at, updated_at)
+         VALUES (?, ?, ?, 1, 'Logical round retry', 'example.LogicalRoundRetryTest',
+                 'succeeded', 2, 1, 'succeeded', ?, ?)`,
+        [runId, harness.batchQueuedId, `case-${runId}`, recordedAt, recordedAt],
+      );
+      await harness.rawQuery(
+        `INSERT INTO run_attempts
+           (id, execution_run_id, runner_id, attempt_number, execution_round, status, outcome,
+            result_code, scheduling_score, created_at, finished_at)
+         VALUES (?, ?, ?, 1, 1, 'failed', 'failed', 'PROCESS_START_FAILED', 0.5, ?, ?),
+                (?, ?, ?, 2, 1, 'succeeded', 'succeeded', 'TESTNG_SUCCEEDED', 0.7, ?, ?)`,
+        [
+          runnerFailureAttemptId,
+          runId,
+          harness.runnerId,
+          recordedAt,
+          recordedAt,
+          successfulAttemptId,
+          runId,
+          harness.runnerId,
+          recordedAt,
+          recordedAt,
+        ],
+      );
+
+      const snapshot = await harness.batches.getSchedulingSnapshot(
+        harness.batchQueuedId,
+        "2026-08-10T00:00:00.000Z",
+      );
+      expect(snapshot?.retryContext).toMatchObject({
+        executionRound: 2,
+        previousRoundPassRate: 100,
+      });
+    } finally {
+      await harness.dispose();
+      await cleanupTemporaryDirectories();
+    }
+  });
+
   it("keeps delayed batches out of every schedulable view until their planned start", async () => {
     const harness = await createHarness();
     try {
@@ -941,6 +994,24 @@ function schedulingRefillCases(createHarness: () => Promise<RefillHarness>): voi
       // 基础设施异常不等待整个用例轮次结束，应立即进入重调度。
       expect(snapshot?.queuedRuns).toHaveLength(1);
       expect(snapshot?.queuedRuns[0]).not.toHaveProperty("heldRound");
+      expect(snapshot?.batch.currentRound).toBe(1);
+      const details = await harness.batches.get(completion.batchId);
+      expect(details?.runs).toContainEqual(
+        expect.objectContaining({
+          status: "queued",
+          executionRound: 1,
+          attemptCount: 1,
+        }),
+      );
+      expect(details?.attempts).toContainEqual(
+        expect.objectContaining({
+          id: completion.attempt1Id,
+          attemptNumber: 1,
+          executionRound: 1,
+        }),
+      );
+      const overview = await harness.batches.getDetailOverview(completion.batchId);
+      expect(overview?.roundSummaries.map((round) => round.round)).toEqual([1]);
     } finally {
       await harness.dispose();
       await cleanupTemporaryDirectories();

@@ -853,6 +853,7 @@ export const executionRuns = sqliteTable(
       onDelete: "restrict",
     }),
     attemptCount: integer("attempt_count").notNull(),
+    executionRound: integer("execution_round").notNull().default(1),
     schedulingScore: real("scheduling_score"),
     createdAt: text("created_at").notNull(),
     version: integer("version").notNull().default(1),
@@ -871,6 +872,11 @@ export const executionRuns = sqliteTable(
   (table) => [
     uniqueIndex("execution_runs_batch_case_uq").on(table.batchId, table.caseDefinitionId),
     index("execution_runs_batch_status_idx").on(table.batchId, table.status),
+    index("execution_runs_batch_round_status_idx").on(
+      table.batchId,
+      table.executionRound,
+      table.status,
+    ),
     index("execution_runs_batch_created_idx").on(table.batchId, table.createdAt, table.id),
     index("execution_runs_batch_name_idx").on(table.batchId, table.displayName, table.id),
     index("execution_runs_case_created_idx").on(table.caseDefinitionId, table.createdAt, table.id),
@@ -889,6 +895,7 @@ export const runAttempts = sqliteTable(
       .notNull()
       .references(() => runners.id, { onDelete: "restrict" }),
     attemptNumber: integer("attempt_number").notNull(),
+    executionRound: integer("execution_round").notNull().default(1),
     status: text("status", {
       enum: ["assigned", "running", "succeeded", "failed", "timed_out", "cancelled"],
     }).notNull(),
@@ -907,6 +914,11 @@ export const runAttempts = sqliteTable(
   },
   (table) => [
     uniqueIndex("run_attempts_run_number_uq").on(table.executionRunId, table.attemptNumber),
+    index("run_attempts_run_round_number_idx").on(
+      table.executionRunId,
+      table.executionRound,
+      table.attemptNumber,
+    ),
     index("run_attempts_runner_status_idx").on(table.runnerId, table.status),
   ],
 );

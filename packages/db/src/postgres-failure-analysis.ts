@@ -53,7 +53,11 @@ export class PostgresFailureAnalysisRepository implements FailureAnalysisReposit
       "EXISTS (SELECT 1 FROM case_suites suite WHERE suite.id=batch.suite_id)",
       `EXISTS (SELECT 1 FROM execution_runs run
                JOIN run_attempts attempt ON attempt.execution_run_id=run.id
-                AND attempt.attempt_number=batch.current_round
+                AND attempt.execution_round=batch.current_round
+                AND attempt.attempt_number=(
+                  SELECT MAX(latest.attempt_number) FROM run_attempts latest
+                  WHERE latest.execution_run_id=run.id
+                    AND latest.execution_round=batch.current_round)
                WHERE run.batch_id=batch.id AND run.terminal_outcome='failed'
                  AND COALESCE(attempt.outcome,attempt.status)='failed')`,
     ];
@@ -73,7 +77,11 @@ export class PostgresFailureAnalysisRepository implements FailureAnalysisReposit
               batch.current_round AS "currentRound",
               (SELECT COUNT(*) FROM execution_runs run
                JOIN run_attempts attempt ON attempt.execution_run_id=run.id
-                AND attempt.attempt_number=batch.current_round
+                AND attempt.execution_round=batch.current_round
+                AND attempt.attempt_number=(
+                  SELECT MAX(latest.attempt_number) FROM run_attempts latest
+                  WHERE latest.execution_run_id=run.id
+                    AND latest.execution_round=batch.current_round)
                WHERE run.batch_id=batch.id AND run.terminal_outcome='failed'
                  AND COALESCE(attempt.outcome,attempt.status)='failed') AS "failedRuns",
               (SELECT COUNT(*) FROM failure_analysis_claims claim
@@ -104,7 +112,11 @@ export class PostgresFailureAnalysisRepository implements FailureAnalysisReposit
               batch.current_round AS "currentRound",
               (SELECT COUNT(*) FROM execution_runs run
                JOIN run_attempts attempt ON attempt.execution_run_id=run.id
-                AND attempt.attempt_number=batch.current_round
+                AND attempt.execution_round=batch.current_round
+                AND attempt.attempt_number=(
+                  SELECT MAX(latest.attempt_number) FROM run_attempts latest
+                  WHERE latest.execution_run_id=run.id
+                    AND latest.execution_round=batch.current_round)
                WHERE run.batch_id=batch.id AND run.terminal_outcome='failed'
                  AND COALESCE(attempt.outcome,attempt.status)='failed') AS "failedRuns",
               (SELECT COUNT(*) FROM failure_analysis_claims claim
@@ -196,7 +208,11 @@ export class PostgresFailureAnalysisRepository implements FailureAnalysisReposit
               ${claimRankExpression} AS "claimRank",${sortExpression} AS "sortValue"
        FROM run_batches batch JOIN execution_runs run ON run.batch_id=batch.id
        JOIN run_attempts attempt ON attempt.execution_run_id=run.id
-        AND attempt.attempt_number=batch.current_round
+        AND attempt.execution_round=batch.current_round
+        AND attempt.attempt_number=(
+          SELECT MAX(latest.attempt_number) FROM run_attempts latest
+          WHERE latest.execution_run_id=run.id
+            AND latest.execution_round=batch.current_round)
        LEFT JOIN failure_analysis_claims claim ON claim.execution_run_id=run.id
        WHERE ${where.join(" AND ")}
        ORDER BY ${claimRankExpression} ASC,${sortExpression} ${direction},run.id ${direction}
@@ -252,7 +268,11 @@ export class PostgresFailureAnalysisRepository implements FailureAnalysisReposit
          FROM requested JOIN execution_runs run ON run.id=requested.execution_run_id
          JOIN run_batches batch ON batch.id=run.batch_id
          JOIN run_attempts attempt ON attempt.execution_run_id=run.id
-          AND attempt.attempt_number=batch.current_round
+          AND attempt.execution_round=batch.current_round
+          AND attempt.attempt_number=(
+            SELECT MAX(latest.attempt_number) FROM run_attempts latest
+            WHERE latest.execution_run_id=run.id
+              AND latest.execution_round=batch.current_round)
          WHERE batch.id=$2 AND batch.project_id=$1 AND run.terminal_outcome='failed'
            AND batch.policy_json::jsonb ->> 'projectVersionId'=$3
            AND batch.status IN ('succeeded','failed','cancelled')
