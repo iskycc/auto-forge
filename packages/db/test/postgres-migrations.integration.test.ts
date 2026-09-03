@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 
 import { Client } from "pg";
-import { afterAll, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
 import { migratePostgresDatabase } from "../../../apps/web/src/lib/migrate-database";
 import { createPostgresDatabase } from "../src/postgres-database";
@@ -32,7 +32,7 @@ function connectionStringFor(database: string): string {
 }
 
 describe.skipIf(!connectionString)("PostgreSQL migrations", () => {
-  afterAll(async () => {
+  afterEach(async () => {
     const admin = new Client({ connectionString });
     await admin.connect();
     try {
