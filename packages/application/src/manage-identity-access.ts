@@ -190,6 +190,22 @@ export class IdentityAccessService {
     return identity;
   }
 
+  async refreshSession(identity: AuthenticatedIdentity): Promise<{ expiresAt: string }> {
+    const refreshedAt = this.clock.now();
+    const expiresAt = new Date(
+      refreshedAt.getTime() + this.sessionTtlHours * 60 * 60 * 1_000,
+    ).toISOString();
+    const renewed = await this.repository.renewSession({
+      sessionId: identity.sessionId,
+      refreshedAt: refreshedAt.toISOString(),
+      expiresAt,
+    });
+    if (!renewed) {
+      throw new DomainError("AUTH_REQUIRED", "登录会话无效、已过期或已被撤销。");
+    }
+    return { expiresAt };
+  }
+
   authorize(identity: AuthenticatedIdentity, permission: Permission, projectId?: string): void {
     if (!hasPermission(identity, permission, projectId)) {
       throw new DomainError("AUTH_FORBIDDEN", "当前账号没有执行此操作的权限。");

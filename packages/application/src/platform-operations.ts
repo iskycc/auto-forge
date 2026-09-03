@@ -306,6 +306,14 @@ export class PlatformOperationsService {
     });
   }
 
+  countUnreadNotifications(actor: AuthenticatedIdentity) {
+    const projectIds = accessibleProjectIds(actor);
+    return this.repository.countUnreadNotifications({
+      userId: actor.user.id,
+      ...(projectIds ? { projectIds } : {}),
+    });
+  }
+
   createNotification(input: Omit<Notification, "id" | "createdAt">) {
     return this.repository.createNotification({
       ...input,

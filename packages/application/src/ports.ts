@@ -86,6 +86,7 @@ import type {
   WebhookRequestMethod,
   FailureAnalysisCategory,
   FailureAnalysisClaim,
+  FailureAnalysisClaimRelease,
   FailureAnalysisScreenshot,
 } from "@autoforge/domain";
 import type {
@@ -307,7 +308,11 @@ export interface IdentityAccessRepository {
   ): Promise<void>;
   createSessionAfterLogin(input: CreateSessionRecord): Promise<User>;
   resolveSession(tokenHash: string, now: string): Promise<AuthenticatedIdentity | null>;
-  touchSession(sessionId: string, touchedAt: string): Promise<void>;
+  renewSession(input: {
+    sessionId: string;
+    refreshedAt: string;
+    expiresAt: string;
+  }): Promise<boolean>;
   revokeSession(sessionId: string, revokedAt: string): Promise<void>;
   revokeUserSessions(userId: string, revokedAt: string): Promise<void>;
   revokeUserSessionsForRole(roleId: string, revokedAt: string): Promise<void>;
@@ -1639,6 +1644,20 @@ export interface FailureAnalysisRepository {
     claims: FailureAnalysisClaim[];
     unavailableExecutionRunIds: string[];
   }>;
+  release(input: {
+    id: string;
+    analysisId: string;
+    projectId: string;
+    claimantId: string;
+    reason: string;
+    releasedAt: string;
+  }): Promise<FailureAnalysisClaimRelease | null>;
+  countClaims(input: {
+    projectId: string;
+    projectVersionId?: string;
+    claimantId: string;
+    batchId?: string;
+  }): Promise<number>;
   listClaims(input: {
     projectId: string;
     projectVersionId?: string;
@@ -2070,6 +2089,10 @@ export interface PlatformOperationsRepository {
     cursor?: string;
     limit: number;
   }): Promise<{ items: Notification[]; nextCursor?: string }>;
+  countUnreadNotifications(input: {
+    userId: string;
+    projectIds?: readonly string[];
+  }): Promise<number>;
   createNotification(record: Notification): Promise<Notification>;
   generateNotifications(input: {
     now: string;

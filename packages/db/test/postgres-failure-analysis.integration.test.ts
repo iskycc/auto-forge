@@ -148,6 +148,13 @@ if (!connectionString) {
         activeBatchId,
         excludedBatchIds,
         runIds,
+        async readClaimReleaseReason(analysisId) {
+          const result = await handle.pool.query<{ reason: string }>(
+            "SELECT reason FROM failure_analysis_claim_releases WHERE analysis_id=$1",
+            [analysisId],
+          );
+          return result.rows[0]?.reason;
+        },
         async seedSuccessfulManualRerun(sourceExecutionRunId) {
           const rerunBatchId = `analysis-log-rerun-${suffix}`;
           derivedBatchIds.push(rerunBatchId);

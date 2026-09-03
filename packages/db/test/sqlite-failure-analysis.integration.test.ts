@@ -164,6 +164,12 @@ failureAnalysisContract("SQLite failure analysis", async (): Promise<FailureAnal
     activeBatchId,
     excludedBatchIds,
     runIds,
+    async readClaimReleaseReason(analysisId) {
+      const row = handle.client
+        .prepare("SELECT reason FROM failure_analysis_claim_releases WHERE analysis_id=?")
+        .get(analysisId) as { reason: string } | undefined;
+      return row?.reason;
+    },
     async seedSuccessfulManualRerun(sourceExecutionRunId) {
       const rerunBatchId = "analysis-log-rerun";
       const rerunRunId = "analysis-log-rerun-run";

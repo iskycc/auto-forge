@@ -1,5 +1,8 @@
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, statSync, unlinkSync } from "node:fs";
 import { basename, join } from "node:path";
+import { promisify } from "node:util";
+import { constants as zlibConstants, gunzip, gzip } from "node:zlib";
 
 import Database from "better-sqlite3";
 import { DomainError } from "@autoforge/domain";
@@ -10,6 +13,12 @@ const BATCH_ID_PATTERN = /^[0-9a-f-]{8,64}$/;
 const MAX_OPEN_STORES = 16;
 // 目录字节统计的枚举上限；批次数量由保留策略控制，该上限只防御异常目录。
 const MAX_STAT_ENTRIES = 10_000;
+const MINIMUM_COMPRESSION_BYTES = 1_024;
+const MINIMUM_COMPRESSION_SAVING_BYTES = 64;
+const LOG_READ_BATCH_ROWS = 32;
+const LOG_DECOMPRESSION_CONCURRENCY = 8;
+const gzipAsync = promisify(gzip);
+const gunzipAsync = promisify(gunzip);
 
 export type AttemptLogStream = "stdout" | "stderr" | "agent";
 
@@ -43,7 +52,7 @@ export type AttemptLogStore = {
     query?: string;
     recordedAfter?: string;
     recordedBefore?: string;
-  }): { items: AttemptLogItem[]; hasMore: boolean };
+  }): Promise<{ items: AttemptLogItem[]; hasMore: boolean }>;
   acknowledgedSequence(batchId: string, attemptId: string, stream: AttemptLogStream): number;
   // Agent 完成上报会携带自己的确认水位；写入批次文件保证重传基准与块水位同源。
   recordWatermarks(input: {
@@ -97,8 +106,12 @@ export function createAttemptLogStore(attemptLogsDirectory: string): AttemptLogS
         attempt_id TEXT NOT NULL,
         stream TEXT NOT NULL CHECK (stream IN ('stdout', 'stderr', 'agent')),
         sequence INTEGER NOT NULL CHECK (sequence >= 0),
-        content TEXT NOT NULL,
+        content BLOB NOT NULL,
+        content_encoding TEXT NOT NULL DEFAULT 'identity'
+          CHECK (content_encoding IN ('identity', 'gzip')),
         size_bytes INTEGER NOT NULL CHECK (size_bytes >= 0),
+        stored_size_bytes INTEGER,
+        content_sha256 TEXT,
         recorded_at TEXT NOT NULL,
         received_at TEXT NOT NULL,
         PRIMARY KEY (attempt_id, stream, sequence)
@@ -113,6 +126,7 @@ export function createAttemptLogStore(attemptLogsDirectory: string): AttemptLogS
         PRIMARY KEY (attempt_id, stream)
       );
     `);
+    ensureCompressionColumns(client);
     const handle: BatchStoreHandle = { client, statements: new Map() };
     openStores.set(batchId, handle);
     return handle;
@@ -158,21 +172,68 @@ export function createAttemptLogStore(attemptLogsDirectory: string): AttemptLogS
     return acknowledged;
   }
 
+  function readStoredRows(
+    handle: BatchStoreHandle,
+    input: {
+      attemptId: string;
+      stream: AttemptLogStream;
+      afterSequence: number;
+      recordedAfter?: string;
+      recordedBefore?: string;
+    },
+    limit: number,
+  ): StoredLogRow[] {
+    const clauses: string[] = [];
+    const parameters: Array<string | number> = [input.attemptId, input.stream, input.afterSequence];
+    if (input.recordedAfter) {
+      clauses.push("recorded_at >= ?");
+      parameters.push(input.recordedAfter);
+    }
+    if (input.recordedBefore) {
+      clauses.push("recorded_at <= ?");
+      parameters.push(input.recordedBefore);
+    }
+    parameters.push(limit);
+    const filters = clauses.length > 0 ? `AND ${clauses.join(" AND ")}` : "";
+    return prepared(
+      handle,
+      `SELECT stream, sequence, content, content_encoding, size_bytes, recorded_at
+       FROM attempt_log_chunks
+       WHERE attempt_id = ? AND stream = ? AND sequence > ? ${filters}
+       ORDER BY sequence ASC LIMIT ?`,
+    ).all(...parameters) as StoredLogRow[];
+  }
+
   return {
     async appendChunks(input) {
       assertBatchId(input.batchId);
+      const encodedChunks = await Promise.all(input.chunks.map(encodeLogChunk));
+      // 压缩在取得 SQLite 句柄前完成；异步 zlib 运行期间 LRU 可能驱逐旧句柄，
+      // 因此不能跨 await 持有可能已被关闭的数据库连接。
       const handle = openBatch(input.batchId);
       return handle.client
         .transaction(() => {
-          for (const chunk of input.chunks) {
+          for (const chunk of encodedChunks) {
             const existing = prepared(
               handle,
-              `SELECT content, recorded_at FROM attempt_log_chunks
+              `SELECT content, content_encoding, size_bytes, content_sha256, recorded_at
+               FROM attempt_log_chunks
              WHERE attempt_id = ? AND stream = ? AND sequence = ?`,
             ).get(input.attemptId, chunk.stream, chunk.sequence) as
-              { content: string; recorded_at: string } | undefined;
+              | {
+                  content: string | Buffer;
+                  content_encoding: StoredContentEncoding;
+                  size_bytes: number;
+                  content_sha256: string | null;
+                  recorded_at: string;
+                }
+              | undefined;
             if (existing) {
-              if (existing.content !== chunk.content || existing.recorded_at !== chunk.recordedAt) {
+              const sameContent = existing.content_sha256
+                ? existing.size_bytes === chunk.sizeBytes &&
+                  existing.content_sha256 === chunk.contentSha256
+                : legacyContentEquals(existing.content, chunk.plainContent);
+              if (!sameContent || existing.recorded_at !== chunk.recordedAt) {
                 throw new DomainError("LOG_CHUNK_CONFLICT", "相同日志序号已保存不同内容。");
               }
               continue;
@@ -180,14 +241,18 @@ export function createAttemptLogStore(attemptLogsDirectory: string): AttemptLogS
             prepared(
               handle,
               `INSERT INTO attempt_log_chunks
-             (attempt_id, stream, sequence, content, size_bytes, recorded_at, received_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?)`,
+             (attempt_id, stream, sequence, content, content_encoding, size_bytes,
+              stored_size_bytes, content_sha256, recorded_at, received_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             ).run(
               input.attemptId,
               chunk.stream,
               chunk.sequence,
-              chunk.content,
-              Buffer.byteLength(chunk.content, "utf8"),
+              chunk.storedContent,
+              chunk.contentEncoding,
+              chunk.sizeBytes,
+              chunk.storedSizeBytes,
+              chunk.contentSha256,
               chunk.recordedAt,
               input.receivedAt,
             );
@@ -201,48 +266,34 @@ export function createAttemptLogStore(attemptLogsDirectory: string): AttemptLogS
         .immediate();
     },
 
-    listChunks(input) {
+    async listChunks(input) {
       assertBatchId(input.batchId);
       const handle = openBatch(input.batchId);
-      const clauses: string[] = [];
-      const parameters: Array<string | number> = [
-        input.attemptId,
-        input.stream,
-        input.afterSequence,
-      ];
-      if (input.query) {
-        clauses.push("instr(content, ?) > 0");
-        parameters.push(input.query);
+      const items: AttemptLogItem[] = [];
+      let afterSequence = input.afterSequence;
+      let exhausted = false;
+      while (items.length <= input.limit && !exhausted) {
+        const rows = readStoredRows(
+          handle,
+          {
+            ...input,
+            afterSequence,
+          },
+          input.query ? LOG_READ_BATCH_ROWS : input.limit + 1,
+        );
+        exhausted = rows.length < (input.query ? LOG_READ_BATCH_ROWS : input.limit + 1);
+        if (rows.length === 0) break;
+        afterSequence = rows.at(-1)?.sequence ?? afterSequence;
+        const decoded = await decodeStoredRows(rows);
+        for (const item of decoded) {
+          if (!input.query || item.content.includes(input.query)) items.push(item);
+          if (items.length > input.limit) break;
+        }
+        if (!input.query) break;
       }
-      if (input.recordedAfter) {
-        clauses.push("recorded_at >= ?");
-        parameters.push(input.recordedAfter);
-      }
-      if (input.recordedBefore) {
-        clauses.push("recorded_at <= ?");
-        parameters.push(input.recordedBefore);
-      }
-      parameters.push(input.limit + 1);
-      const filters = clauses.length > 0 ? `AND ${clauses.join(" AND ")}` : "";
-      const rows = prepared(
-        handle,
-        `SELECT stream, sequence, content, recorded_at FROM attempt_log_chunks
-         WHERE attempt_id = ? AND stream = ? AND sequence > ? ${filters}
-         ORDER BY sequence ASC LIMIT ?`,
-      ).all(...parameters) as Array<{
-        stream: AttemptLogStream;
-        sequence: number;
-        content: string;
-        recorded_at: string;
-      }>;
       return {
-        items: rows.slice(0, input.limit).map((row) => ({
-          stream: row.stream,
-          sequence: row.sequence,
-          content: row.content,
-          recordedAt: row.recorded_at,
-        })),
-        hasMore: rows.length > input.limit,
+        items: items.slice(0, input.limit),
+        hasMore: items.length > input.limit,
       };
     },
 
@@ -346,3 +397,146 @@ type BatchStoreHandle = {
   /** 预编译语句缓存：better-sqlite3 的 prepare 每次解析 SQL，日志热路径按语句文本复用。 */
   statements: Map<string, Database.Statement>;
 };
+
+type StoredContentEncoding = "identity" | "gzip";
+
+type StoredLogRow = {
+  stream: AttemptLogStream;
+  sequence: number;
+  content: string | Buffer;
+  content_encoding: StoredContentEncoding;
+  size_bytes: number;
+  recorded_at: string;
+};
+
+type EncodedLogChunk = Omit<AttemptLogChunkInput, "content"> & {
+  plainContent: string;
+  storedContent: Buffer;
+  contentEncoding: StoredContentEncoding;
+  sizeBytes: number;
+  storedSizeBytes: number;
+  contentSha256: string;
+};
+
+function ensureCompressionColumns(client: Database.Database): void {
+  // 批次日志库不走主数据库迁移。常量默认值让旧库只修改表元数据，不扫描或
+  // 重写可能达到 GiB 级的历史正文；旧行会继续按 identity 格式透明读取。
+  ensureColumn(
+    client,
+    "content_encoding",
+    `ALTER TABLE attempt_log_chunks ADD COLUMN content_encoding TEXT NOT NULL
+     DEFAULT 'identity' CHECK (content_encoding IN ('identity', 'gzip'))`,
+  );
+  ensureColumn(
+    client,
+    "stored_size_bytes",
+    "ALTER TABLE attempt_log_chunks ADD COLUMN stored_size_bytes INTEGER",
+  );
+  ensureColumn(
+    client,
+    "content_sha256",
+    "ALTER TABLE attempt_log_chunks ADD COLUMN content_sha256 TEXT",
+  );
+}
+
+function ensureColumn(client: Database.Database, column: string, statement: string): void {
+  if (hasColumn(client, column)) return;
+  try {
+    client.exec(statement);
+  } catch (error) {
+    // Lite 的 Web 主进程和日志 lane、Full 的多个副本可能同时首次打开同一个
+    // 旧批次库。另一连接已成功补列时视为幂等完成，其他失败保留原始 cause。
+    if (hasColumn(client, column)) return;
+    throw new Error(`批次日志库无法升级 ${column} 列。`, { cause: error });
+  }
+}
+
+function hasColumn(client: Database.Database, column: string): boolean {
+  return (client.pragma("table_info(attempt_log_chunks)") as Array<{ name: string }>).some(
+    (candidate) => candidate.name === column,
+  );
+}
+
+async function encodeLogChunk(chunk: AttemptLogChunkInput): Promise<EncodedLogChunk> {
+  const plainContent = Buffer.from(chunk.content, "utf8");
+  const contentSha256 = createHash("sha256").update(plainContent).digest("hex");
+  if (plainContent.byteLength < MINIMUM_COMPRESSION_BYTES) {
+    return encodedIdentityChunk(chunk, plainContent, contentSha256);
+  }
+  const compressed = await gzipAsync(plainContent, {
+    level: zlibConstants.Z_DEFAULT_COMPRESSION,
+  });
+  if (compressed.byteLength > plainContent.byteLength - MINIMUM_COMPRESSION_SAVING_BYTES) {
+    return encodedIdentityChunk(chunk, plainContent, contentSha256);
+  }
+  return {
+    stream: chunk.stream,
+    sequence: chunk.sequence,
+    recordedAt: chunk.recordedAt,
+    plainContent: chunk.content,
+    storedContent: compressed,
+    contentEncoding: "gzip",
+    sizeBytes: plainContent.byteLength,
+    storedSizeBytes: compressed.byteLength,
+    contentSha256,
+  };
+}
+
+function encodedIdentityChunk(
+  chunk: AttemptLogChunkInput,
+  content: Buffer,
+  contentSha256: string,
+): EncodedLogChunk {
+  return {
+    stream: chunk.stream,
+    sequence: chunk.sequence,
+    recordedAt: chunk.recordedAt,
+    plainContent: chunk.content,
+    storedContent: content,
+    contentEncoding: "identity",
+    sizeBytes: content.byteLength,
+    storedSizeBytes: content.byteLength,
+    contentSha256,
+  };
+}
+
+function legacyContentEquals(stored: string | Buffer, expected: string): boolean {
+  return (typeof stored === "string" ? stored : stored.toString("utf8")) === expected;
+}
+
+async function decodeStoredRows(rows: StoredLogRow[]): Promise<AttemptLogItem[]> {
+  const items: AttemptLogItem[] = [];
+  for (let offset = 0; offset < rows.length; offset += LOG_DECOMPRESSION_CONCURRENCY) {
+    items.push(
+      ...(await Promise.all(
+        rows
+          .slice(offset, offset + LOG_DECOMPRESSION_CONCURRENCY)
+          .map((row) => decodeStoredRow(row)),
+      )),
+    );
+  }
+  return items;
+}
+
+async function decodeStoredRow(row: StoredLogRow): Promise<AttemptLogItem> {
+  const storedContent =
+    typeof row.content === "string" ? Buffer.from(row.content, "utf8") : row.content;
+  let plainContent: Buffer;
+  try {
+    plainContent =
+      row.content_encoding === "gzip" ? await gunzipAsync(storedContent) : storedContent;
+  } catch (error) {
+    throw new Error(`无法解压 ${row.stream} 日志块 ${row.sequence}，批次日志文件可能已经损坏。`, {
+      cause: error,
+    });
+  }
+  if (plainContent.byteLength !== row.size_bytes) {
+    throw new Error(`${row.stream} 日志块 ${row.sequence} 解压后的字节数与保存元数据不一致。`);
+  }
+  return {
+    stream: row.stream,
+    sequence: row.sequence,
+    content: plainContent.toString("utf8"),
+    recordedAt: row.recorded_at,
+  };
+}

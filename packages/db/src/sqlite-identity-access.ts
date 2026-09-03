@@ -495,12 +495,19 @@ export class SqliteIdentityAccessRepository implements IdentityAccessRepository 
     };
   }
 
-  async touchSession(sessionId: string, touchedAt: string): Promise<void> {
-    this.handle.db
+  async renewSession(input: Parameters<IdentityAccessRepository["renewSession"]>[0]) {
+    const renewed = this.handle.db
       .update(userSessions)
-      .set({ lastSeenAt: touchedAt })
-      .where(eq(userSessions.id, sessionId))
+      .set({ lastSeenAt: input.refreshedAt, expiresAt: input.expiresAt })
+      .where(
+        and(
+          eq(userSessions.id, input.sessionId),
+          isNull(userSessions.revokedAt),
+          gt(userSessions.expiresAt, input.refreshedAt),
+        ),
+      )
       .run();
+    return renewed.changes === 1;
   }
 
   async revokeSession(sessionId: string, revokedAt: string): Promise<void> {

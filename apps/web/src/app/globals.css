@@ -15770,6 +15770,21 @@ button.icon-button:disabled {
   font-weight: 700;
 }
 
+.failure-analysis-card-actions {
+  display: grid;
+  min-width: 104px;
+  gap: 4px;
+}
+
+.failure-analysis-release-trigger {
+  color: var(--color-danger);
+}
+
+.failure-analysis-release-trigger:hover:not(:disabled) {
+  background: var(--color-danger-soft);
+  color: var(--color-danger);
+}
+
 .failure-analysis-floating-action {
   position: fixed;
   z-index: 40;
@@ -16532,6 +16547,66 @@ button.icon-button:disabled {
   justify-content: flex-end;
   gap: 8px;
   margin-top: var(--space-4);
+}
+
+.failure-analysis-release-dialog {
+  display: grid;
+  width: min(540px, calc(100vw - 48px));
+  gap: var(--space-4);
+  padding: 22px;
+}
+
+.failure-analysis-release-dialog > header {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.failure-analysis-release-dialog > header > div {
+  display: grid;
+  min-width: 0;
+  gap: 6px;
+}
+
+.failure-analysis-release-dialog > header strong {
+  color: var(--color-text);
+  font-size: 18px;
+}
+
+.failure-analysis-release-dialog > header p,
+.failure-analysis-release-note {
+  margin: 0;
+  color: var(--color-text-secondary);
+  line-height: 1.55;
+}
+
+.failure-analysis-release-icon {
+  display: inline-flex;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  padding: 9px;
+  background: var(--color-danger-soft);
+  color: var(--color-danger);
+}
+
+.failure-analysis-release-dialog .failure-analysis-field > small {
+  justify-self: end;
+  color: var(--color-text-tertiary);
+  font-weight: 500;
+}
+
+.failure-analysis-release-note {
+  border-left: 3px solid var(--color-warning);
+  padding: 7px 10px;
+  border-radius: 0 var(--radius-control) var(--radius-control) 0;
+  background: var(--color-warning-soft);
+  font-size: var(--font-size-caption);
+}
+
+.failure-analysis-release-dialog .dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 .failure-analysis-confirm-action.ui-button-danger {

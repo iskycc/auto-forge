@@ -37,6 +37,7 @@ export type FailureAnalysisRow = {
   screenshotSizeBytes: number | null;
   screenshotSha256: string | null;
   analysisUpdatedAt: string | null;
+  claimRank?: number | string;
   sortValue?: string;
 };
 
@@ -115,6 +116,7 @@ export function toFailureAnalysisClaim(row: FailureAnalysisRow): FailureAnalysis
 type CandidateCursor = {
   sort: FailureAnalysisSort;
   direction: "asc" | "desc";
+  claimRank: number;
   value: string;
   executionRunId: string;
 };
@@ -143,6 +145,7 @@ export function decodeFailureAnalysisCandidateCursor(
     if (
       value.sort !== sort ||
       value.direction !== direction ||
+      (value.claimRank !== 0 && value.claimRank !== 1) ||
       typeof value.value !== "string" ||
       value.value.length > 512 ||
       typeof value.executionRunId !== "string" ||

@@ -1046,6 +1046,7 @@ describe.skipIf(!connectionString)("PostgreSQL platform repositories", () => {
       migrationsFolder: resolve(import.meta.dirname, "../drizzle/postgresql"),
     });
     const identity = new PostgresIdentityAccessRepository(handle);
+    const operations = new PostgresPlatformOperationsRepository(handle);
     const roleId = randomUUID();
     const userId = randomUUID();
     const ownerId = randomUUID();
@@ -1076,13 +1077,33 @@ describe.skipIf(!connectionString)("PostgreSQL platform repositories", () => {
       await identity.assignSystemRole(userId, roleId, ownerId, now);
       await handle.pool.query(
         `INSERT INTO user_sessions (id, user_id, token_hash, expires_at, last_seen_at, created_at)
-         VALUES ($1, $2, $3, '2099-01-01T00:00:00.000Z', $4, $4)`,
+         VALUES ($1, $2, $3, '2026-08-09T08:00:00.000Z', $4, $4)`,
         [sessionId, userId, tokenHash, now],
       );
 
       expect((await identity.resolveSession(tokenHash, now))?.systemPermissions).toContain(
         "user.manage",
       );
+      await expect(
+        identity.renewSession({
+          sessionId,
+          refreshedAt: "2026-08-09T07:00:00.000Z",
+          expiresAt: "2026-08-09T15:00:00.000Z",
+        }),
+      ).resolves.toBe(true);
+      await expect(
+        handle.pool.query<{ expires_at: string; last_seen_at: string }>(
+          "SELECT expires_at,last_seen_at FROM user_sessions WHERE id=$1",
+          [sessionId],
+        ),
+      ).resolves.toMatchObject({
+        rows: [
+          {
+            expires_at: "2026-08-09T15:00:00.000Z",
+            last_seen_at: "2026-08-09T07:00:00.000Z",
+          },
+        ],
+      });
 
       const deactivated = await identity.updateRole({ id: roleId, active: false, updatedAt: now });
       expect(deactivated.active).toBe(false);
@@ -1117,6 +1138,27 @@ describe.skipIf(!connectionString)("PostgreSQL platform repositories", () => {
         createdAt: now,
       });
       expect(project.ownerUserId).toBe(ownerId);
+      await operations.createNotification({
+        id: `notification-${projectId}`,
+        userId,
+        projectId,
+        kind: "batch.completed",
+        severity: "info",
+        title: "批次完成",
+        message: "批次已完成。",
+        createdAt: now,
+      });
+      await expect(
+        operations.countUnreadNotifications({ userId, projectIds: [projectId] }),
+      ).resolves.toBe(1);
+      await operations.markNotificationRead({
+        notificationId: `notification-${projectId}`,
+        userId,
+        readAt: "2026-08-09T01:00:00.000Z",
+      });
+      await expect(
+        operations.countUnreadNotifications({ userId, projectIds: [projectId] }),
+      ).resolves.toBe(0);
       const transferred = await identity.transferProjectOwner({
         projectId,
         ownerUserId: userId,
@@ -1128,6 +1170,9 @@ describe.skipIf(!connectionString)("PostgreSQL platform repositories", () => {
           ?.ownerUserId,
       ).toBe(userId);
     } finally {
+      await handle.pool.query("DELETE FROM notifications WHERE id = $1", [
+        `notification-${projectId}`,
+      ]);
       await handle.pool.query("DELETE FROM projects WHERE id = $1", [projectId]);
       await handle.pool.query("DELETE FROM user_sessions WHERE id = $1", [sessionId]);
       await handle.pool.query("DELETE FROM user_system_roles WHERE role_id = $1", [roleId]);

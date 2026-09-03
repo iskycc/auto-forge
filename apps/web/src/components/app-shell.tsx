@@ -28,6 +28,7 @@ import { TopbarTools } from "./topbar-tools";
 import { GlobalRunDialog } from "./global-run-dialog";
 import { GlobalProjectSwitcher } from "./global-project-switcher";
 import { configurePlatformTimeZone } from "@/lib/platform-date-time";
+import { SessionKeepalive } from "./session-keepalive";
 
 type NavigationItem = {
   label: string;
@@ -221,6 +222,7 @@ export function AppShell({
 
   return (
     <div className="app-shell">
+      <SessionKeepalive />
       <aside className="sidebar">
         <Link className="brand" href="/" aria-label="AutoForge 首页">
           <span className="brand-mark" aria-hidden="true">

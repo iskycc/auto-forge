@@ -595,7 +595,7 @@ export class PostgresExecutionControlRepository implements ExecutionControlRepos
       throw new DomainError("RUN_ATTEMPT_NOT_FOUND", "指定的执行尝试不存在。");
     }
     const batchId = await this.requiredBatchIdForAttempt(input.attemptId);
-    const page = this.attemptLogs.listChunks({
+    const page = await this.attemptLogs.listChunks({
       batchId,
       attemptId: input.attemptId,
       stream: input.stream,

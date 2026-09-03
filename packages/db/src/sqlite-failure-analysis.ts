@@ -131,6 +131,7 @@ export class SqliteFailureAnalysisRepository implements FailureAnalysisRepositor
     limit: number;
   }): Promise<FailureAnalysisCandidatePage | null> {
     const sortExpression = sqliteCandidateSortExpression(input.sort);
+    const claimRankExpression = "CASE WHEN claim.id IS NULL THEN 0 ELSE 1 END";
     const cursor = decodeFailureAnalysisCandidateCursor(input.cursor, input.sort, input.direction);
     const where = [
       "batch.id=?",
@@ -158,9 +159,18 @@ export class SqliteFailureAnalysisRepository implements FailureAnalysisRepositor
     if (cursor) {
       const comparison = input.direction === "desc" ? "<" : ">";
       where.push(
-        `(${sortExpression}${comparison}? OR (${sortExpression}=? AND run.id${comparison}?))`,
+        `(${claimRankExpression}>? OR
+          (${claimRankExpression}=? AND
+           (${sortExpression}${comparison}? OR
+            (${sortExpression}=? AND run.id${comparison}?))))`,
       );
-      parameters.push(cursor.value, cursor.value, cursor.executionRunId);
+      parameters.push(
+        cursor.claimRank,
+        cursor.claimRank,
+        cursor.value,
+        cursor.value,
+        cursor.executionRunId,
+      );
     }
     parameters.push(input.limit + 1);
     const direction = input.direction === "desc" ? "DESC" : "ASC";
@@ -187,13 +197,15 @@ export class SqliteFailureAnalysisRepository implements FailureAnalysisRepositor
                 claim.screenshot_media_type AS screenshotMediaType,
                 claim.screenshot_size_bytes AS screenshotSizeBytes,
                 claim.screenshot_sha256 AS screenshotSha256,
-                claim.updated_at AS analysisUpdatedAt,${sortExpression} AS sortValue
+                claim.updated_at AS analysisUpdatedAt,
+                ${claimRankExpression} AS claimRank,${sortExpression} AS sortValue
          FROM run_batches batch JOIN execution_runs run ON run.batch_id=batch.id
          JOIN run_attempts attempt ON attempt.execution_run_id=run.id
           AND attempt.attempt_number=batch.current_round
          LEFT JOIN failure_analysis_claims claim ON claim.execution_run_id=run.id
          WHERE ${where.join(" AND ")}
-         ORDER BY ${sortExpression} ${direction},run.id ${direction} LIMIT ?`,
+         ORDER BY ${claimRankExpression} ASC,${sortExpression} ${direction},run.id ${direction}
+         LIMIT ?`,
       )
       .all(...parameters) as FailureAnalysisRow[];
     // 有数据的常规路径已经由主查询完整验证批次作用域，不再额外往返一次数据库。
@@ -214,6 +226,7 @@ export class SqliteFailureAnalysisRepository implements FailureAnalysisRepositor
             nextCursor: encodeFailureAnalysisCandidateCursor({
               sort: input.sort,
               direction: input.direction,
+              claimRank: Number(last.claimRank ?? (last.analysisId ? 1 : 0)),
               value: last.sortValue ?? "",
               executionRunId: last.executionRunId,
             }),
@@ -302,6 +315,61 @@ export class SqliteFailureAnalysisRepository implements FailureAnalysisRepositor
     });
   }
 
+  async release(input: Parameters<FailureAnalysisRepository["release"]>[0]) {
+    return runSqliteWriteTransaction(this.handle, () => {
+      const row = this.handle.client
+        .prepare(
+          `${claimSelectSql()} WHERE claim.id=? AND claim.project_id=? AND claim.claimant_id=?
+           AND claim.status IN ('claimed','analyzing')`,
+        )
+        .get(input.analysisId, input.projectId, input.claimantId) as FailureAnalysisRow | undefined;
+      if (!row) return null;
+      const claim = toFailureAnalysisClaim(row);
+      const removed = this.handle.client
+        .prepare(
+          `DELETE FROM failure_analysis_claims
+           WHERE id=? AND project_id=? AND claimant_id=? AND status IN ('claimed','analyzing')`,
+        )
+        .run(input.analysisId, input.projectId, input.claimantId);
+      if (removed.changes !== 1) return null;
+      this.handle.client
+        .prepare(
+          `INSERT INTO failure_analysis_claim_releases
+            (id,analysis_id,project_id,batch_id,execution_run_id,case_definition_id,
+             claimant_id,claimant_username,claimant_display_name,reason,claimed_at,released_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+        )
+        .run(
+          input.id,
+          claim.id,
+          claim.projectId,
+          claim.batchId,
+          claim.executionRunId,
+          claim.caseDefinitionId,
+          claim.claimantId,
+          claim.claimantUsername,
+          claim.claimantDisplayName,
+          input.reason,
+          claim.claimedAt,
+          input.releasedAt,
+        );
+      return {
+        id: input.id,
+        analysisId: claim.id,
+        projectId: claim.projectId,
+        batchId: claim.batchId,
+        executionRunId: claim.executionRunId,
+        caseDefinitionId: claim.caseDefinitionId,
+        claimantId: claim.claimantId,
+        claimantUsername: claim.claimantUsername,
+        claimantDisplayName: claim.claimantDisplayName,
+        reason: input.reason,
+        claimedAt: claim.claimedAt,
+        releasedAt: input.releasedAt,
+      };
+    });
+  }
+
   async listClaims(input: Parameters<FailureAnalysisRepository["listClaims"]>[0]) {
     const sortExpression = sqliteClaimSortExpression(input.sort);
     const cursor = decodeFailureAnalysisClaimCursor(input.cursor, input.sort, input.direction);
@@ -348,6 +416,27 @@ export class SqliteFailureAnalysisRepository implements FailureAnalysisRepositor
           }
         : {}),
     };
+  }
+
+  async countClaims(input: Parameters<FailureAnalysisRepository["countClaims"]>[0]) {
+    const where = ["claim.project_id=?", "claim.claimant_id=?"];
+    const parameters: string[] = [input.projectId, input.claimantId];
+    if (input.projectVersionId) {
+      where.push("json_extract(batch.policy_json, '$.projectVersionId')=?");
+      parameters.push(input.projectVersionId);
+    }
+    if (input.batchId) {
+      where.push("claim.batch_id=?");
+      parameters.push(input.batchId);
+    }
+    const row = this.handle.client
+      .prepare(
+        `SELECT COUNT(*) AS count FROM failure_analysis_claims claim
+         JOIN run_batches batch ON batch.id=claim.batch_id
+         WHERE ${where.join(" AND ")}`,
+      )
+      .get(...parameters) as { count: number };
+    return row.count;
   }
 
   async findClaimsByExecutionRunIds(

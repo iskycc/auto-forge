@@ -177,11 +177,23 @@ describe("SQLite platform operations", () => {
           limit: 20,
         }),
       ).toMatchObject({ items: [{ id: "notice-1" }] });
+      await expect(
+        repository.countUnreadNotifications({
+          userId: "user-1",
+          projectIds: ["project-1"],
+        }),
+      ).resolves.toBe(1);
       await repository.markNotificationRead({
         notificationId: "notice-1",
         userId: "user-1",
         readAt: "2026-08-12T02:00:00.000Z",
       });
+      await expect(
+        repository.countUnreadNotifications({
+          userId: "user-1",
+          projectIds: ["project-1"],
+        }),
+      ).resolves.toBe(0);
 
       await repository.ensureRetentionPolicies([
         {

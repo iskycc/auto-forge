@@ -9,6 +9,7 @@ export type FailureAnalysisHarness = {
   activeBatchId: string;
   excludedBatchIds: [string, string];
   runIds: [string, string, string];
+  readClaimReleaseReason(analysisId: string): Promise<string | undefined>;
   seedSuccessfulManualRerun(sourceExecutionRunId: string): Promise<string>;
   dispose(): Promise<void>;
 };
@@ -154,6 +155,145 @@ export function failureAnalysisContract(
         });
         expect(competingClaim.unavailableExecutionRunIds).toEqual([runIds[0]]);
         expect(competingClaim.claims[0]?.claimantId).toBe("analyst-a");
+        await expect(
+          repository.countClaims({
+            projectId,
+            projectVersionId,
+            claimantId: "analyst-a",
+            batchId,
+          }),
+        ).resolves.toBe(2);
+
+        const rankedAfterClaim = await repository.listCandidates({
+          projectId,
+          projectVersionId,
+          batchId,
+          sort: "class_path",
+          direction: "asc",
+          limit: 10,
+        });
+        expect(rankedAfterClaim?.items.map((item) => item.className)).toEqual([
+          "example.MiddleTest",
+          "example.AlphaTest",
+          "example.ZetaTest",
+        ]);
+        expect(rankedAfterClaim?.items.map((item) => Boolean(item.claim))).toEqual([
+          false,
+          true,
+          true,
+        ]);
+        const rankedAfterClaimDescending = await repository.listCandidates({
+          projectId,
+          projectVersionId,
+          batchId,
+          sort: "failure_summary",
+          direction: "desc",
+          limit: 10,
+        });
+        expect(rankedAfterClaimDescending?.items.map((item) => Boolean(item.claim))).toEqual([
+          false,
+          true,
+          true,
+        ]);
+        const unclaimedFirstPage = await repository.listCandidates({
+          projectId,
+          projectVersionId,
+          batchId,
+          sort: "class_path",
+          direction: "asc",
+          limit: 1,
+        });
+        expect(unclaimedFirstPage?.items[0]?.className).toBe("example.MiddleTest");
+        const claimedSecondPage = await repository.listCandidates({
+          projectId,
+          projectVersionId,
+          batchId,
+          sort: "class_path",
+          direction: "asc",
+          cursor: unclaimedFirstPage!.nextCursor!,
+          limit: 1,
+        });
+        expect(claimedSecondPage?.items[0]).toMatchObject({
+          className: "example.AlphaTest",
+          claim: expect.any(Object),
+        });
+
+        const released = await repository.release({
+          id: "release-analysis-a",
+          analysisId: "analysis-a",
+          projectId,
+          claimantId: "analyst-a",
+          reason: "误领，需要交由环境负责人分析",
+          releasedAt: "2026-09-01T01:01:30.000Z",
+        });
+        expect(released).toMatchObject({
+          analysisId: "analysis-a",
+          executionRunId: runIds[0],
+          reason: "误领，需要交由环境负责人分析",
+        });
+        await expect(harness.readClaimReleaseReason("analysis-a")).resolves.toBe(
+          "误领，需要交由环境负责人分析",
+        );
+        await expect(
+          repository.countClaims({
+            projectId,
+            projectVersionId,
+            claimantId: "analyst-a",
+            batchId,
+          }),
+        ).resolves.toBe(1);
+        await expect(
+          repository.release({
+            id: "release-completed-or-foreign",
+            analysisId: "analysis-b",
+            projectId,
+            claimantId: "analyst-b",
+            reason: "不应成功",
+            releasedAt: "2026-09-01T01:01:31.000Z",
+          }),
+        ).resolves.toBeNull();
+        const rankedAfterRelease = await repository.listCandidates({
+          projectId,
+          projectVersionId,
+          batchId,
+          sort: "class_path",
+          direction: "asc",
+          limit: 10,
+        });
+        expect(rankedAfterRelease?.items.map((item) => item.className)).toEqual([
+          "example.MiddleTest",
+          "example.ZetaTest",
+          "example.AlphaTest",
+        ]);
+        expect(rankedAfterRelease?.items.map((item) => Boolean(item.claim))).toEqual([
+          false,
+          false,
+          true,
+        ]);
+        const reclaimed = await repository.claim({
+          projectId,
+          projectVersionId,
+          batchId,
+          executionRunIds: [runIds[0]],
+          claims: [{ id: "analysis-a-reclaimed", executionRunId: runIds[0] }],
+          claimantId: "analyst-a",
+          claimantUsername: "c10001",
+          claimantDisplayName: "分析员 A",
+          claimedAt: "2026-09-01T01:01:45.000Z",
+        });
+        expect(reclaimed.unavailableExecutionRunIds).toEqual([]);
+        expect(reclaimed.claims[0]).toMatchObject({
+          id: "analysis-a-reclaimed",
+          executionRunId: runIds[0],
+        });
+        await expect(
+          repository.countClaims({
+            projectId,
+            projectVersionId,
+            claimantId: "analyst-a",
+            batchId,
+          }),
+        ).resolves.toBe(2);
 
         const persisted = await repository.listClaims({
           projectId,
@@ -213,7 +353,7 @@ export function failureAnalysisContract(
           [...sameStatusFirstPage.items, ...sameStatusSecondPage.items]
             .map((claim) => claim.id)
             .sort(),
-        ).toEqual(["analysis-a", "analysis-b"]);
+        ).toEqual(["analysis-a-reclaimed", "analysis-b"]);
         const successfulRerunAttemptId = await harness.seedSuccessfulManualRerun(runIds[0]);
         const firstRunClaim = persisted.items.find((claim) => claim.executionRunId === runIds[0])!;
         await expect(
@@ -340,8 +480,8 @@ export function failureAnalysisContract(
           limit: 10,
         });
         expect(failureSorted?.items.map((item) => item.failureSummary)).toEqual([
-          "Assertion alpha",
           "Assertion middle",
+          "Assertion alpha",
           "Assertion zeta",
         ]);
         expect(failureSorted?.items.filter((item) => item.claim)).toHaveLength(2);

@@ -4,6 +4,51 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## 1.8.12 - 2026-09-03
+
+### Added
+
+- “用例分析 → 我的分析”中的未完成用例新增“取消认领”操作。只有当前认领人可以取消，
+  必须在站内确认弹窗填写原因；原因与认领人、认领时间、取消时间会持久化保存，取消后
+  用例立即回到待认领状态，可由其他分析人员重新认领。
+- 登录后的可见 Web 页面新增滑动会话续期：进入页面后及每 5 分钟同步延长服务端会话与
+  HttpOnly Cookie；页面隐藏超过会话期限、账号停用、主动注销或管理员撤销后仍必须重新登录。
+
+### Changed
+
+- 用例分析认领页固定将未认领用例排在已认领用例之前，再按用户选择的类路径、名称、
+  失败堆栈或认领状态排序；该分组顺序不随升降序反转，并支持跨分组稳定游标翻页。
+- 顶栏通知角标改用独立的权限范围内未读总数，页面加载、窗口重新激活及每 30 秒主动同步，
+  不再依赖用户先打开通知面板。
+- 新写入的用例日志块在服务端日志存储边界选择性使用 gzip 压缩：正文达到 1 KiB 且至少
+  节省 64 字节时保存压缩 BLOB，否则原样保存。Runner Protocol、分页、关键字/时间筛选、
+  实时日志、永久公开日志和日志水位语义保持不变，读取时按日志块透明解压。
+
+### Fixed
+
+- 修复用例分析详情认领后“我的分析”角标和顶部已认领/已完成统计仍显示旧值的问题；本人
+  总数由数据库独立统计，认领、取消认领和完成分析只局部更新计数，不触发页面级重渲染。
+- 修复仅更新会话 `last_seen_at`、不延长数据库 `expires_at` 和 Cookie 到期时间，导致用户
+  持续操作平台仍会在首次登录的固定时刻掉线的问题。
+
+### Database and persisted configuration
+
+- SQLite 新增迁移 `0059_failure_analysis_claim_releases.sql`，PostgreSQL 新增迁移
+  `0058_failure_analysis_claim_releases.sql`，用于持久保存取消认领审计快照；现有分析记录、
+  平台配置和 Runner Protocol 不变。
+- 每批次日志 SQLite 首次打开时原位补充 `content_encoding`、`stored_size_bytes` 和
+  `content_sha256` 列；该升级只修改表元数据，不重写既有日志。历史明文行继续兼容读取，
+  新行可混合使用 identity/gzip 编码；主数据库无需新增迁移。
+
+### Tests
+
+- Lite/Full 共享仓储契约覆盖未认领优先、跨分组分页、本人取消、他人拒绝、原因持久化和
+  取消后重新认领；Playwright 覆盖认领页排序、权威本人计数、必填原因弹窗、取消后即时移除
+  及重新可认领。新增浏览器验收覆盖通知主动计数、已读即时扣减、前台自动续期以及数据库与
+  Cookie 到期时间一致性。
+- 批次日志仓储集成测试覆盖压缩收益判定、压缩 BLOB 元数据、幂等重传、跨内部扫描页搜索、
+  透明分页解压以及旧版明文批次库的无重写升级。
+
 ## 1.8.11 - 2026-09-02
 
 ### Fixed

@@ -131,6 +131,26 @@ export const claimFailureAnalysisResultSchema = z.object({
   ),
 });
 
+export const releaseFailureAnalysisClaimInputSchema = z.object({
+  projectId: z.string().min(1),
+  reason: z.string().trim().min(1).max(1_000),
+});
+
+export const failureAnalysisClaimReleaseSchema = z.object({
+  id: z.string().min(1),
+  analysisId: z.string().min(1),
+  projectId: z.string().min(1),
+  batchId: z.string().min(1),
+  executionRunId: z.string().min(1),
+  caseDefinitionId: z.string().min(1),
+  claimantId: z.string().min(1),
+  claimantUsername: z.string().min(1),
+  claimantDisplayName: z.string().min(1),
+  reason: z.string().min(1).max(1_000),
+  claimedAt: z.string().datetime(),
+  releasedAt: z.string().datetime(),
+});
+
 export const startFailureAnalysisInputSchema = z.object({
   category: failureAnalysisCategorySchema,
 });
@@ -161,3 +181,4 @@ export type FailureAnalysisClaimView = z.infer<typeof failureAnalysisClaimSchema
 export type FailureAnalysisHistoryItemView = z.infer<typeof failureAnalysisHistoryItemSchema>;
 export type FailureAnalysisHistoryPageView = z.infer<typeof failureAnalysisHistoryPageSchema>;
 export type ClaimFailureAnalysisResult = z.infer<typeof claimFailureAnalysisResultSchema>;
+export type FailureAnalysisClaimReleaseView = z.infer<typeof failureAnalysisClaimReleaseSchema>;

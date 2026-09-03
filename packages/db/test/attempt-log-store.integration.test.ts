@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
+import Database from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { createAttemptLogStore } from "../src/attempt-log-store";
@@ -92,7 +93,7 @@ describe("AttemptLogStore", () => {
         }),
       ).rejects.toThrowError(/相同日志序号/);
 
-      const page = store.listChunks({
+      const page = await store.listChunks({
         batchId,
         attemptId: "attempt-1",
         stream: "stdout",
@@ -102,7 +103,7 @@ describe("AttemptLogStore", () => {
       expect(page.items.map((item) => item.content)).toEqual(["first", "second", "later"]);
       expect(page.hasMore).toBe(false);
 
-      const filtered = store.listChunks({
+      const filtered = await store.listChunks({
         batchId,
         attemptId: "attempt-1",
         stream: "stdout",
@@ -136,6 +137,183 @@ describe("AttemptLogStore", () => {
     // 文件不存在时不抛错。
     expect(() => store.removeBatchStore(batchId)).not.toThrow();
     store.close();
+  });
+
+  it("compresses beneficial chunks while preserving pagination, filters and idempotency", async () => {
+    const directory = temporaryDirectory();
+    const store = createAttemptLogStore(directory);
+    const repeatedLine = "[main] INFO com.example.OrderTest - repeated diagnostic context\n";
+    const chunks = Array.from({ length: 40 }, (_, sequence) => ({
+      stream: "stdout" as const,
+      sequence,
+      content: `${repeatedLine.repeat(40)}sequence=${sequence}${
+        sequence === 35 || sequence === 39 ? " compression-target" : ""
+      }`,
+      recordedAt: `2026-08-12T00:00:${String(sequence).padStart(2, "0")}.000Z`,
+    }));
+    try {
+      await store.appendChunks({
+        batchId,
+        attemptId: "attempt-compressed",
+        receivedAt: "2026-08-12T00:01:00.000Z",
+        chunks,
+      });
+      await store.appendChunks({
+        batchId,
+        attemptId: "attempt-small",
+        receivedAt: "2026-08-12T00:01:00.000Z",
+        chunks: [
+          {
+            stream: "agent",
+            sequence: 0,
+            content: "attempt started",
+            recordedAt: "2026-08-12T00:00:00.000Z",
+          },
+        ],
+      });
+      await expect(
+        store.appendChunks({
+          batchId,
+          attemptId: "attempt-compressed",
+          receivedAt: "2026-08-12T00:01:01.000Z",
+          chunks: [chunks[0]!],
+        }),
+      ).resolves.toMatchObject({ stdout: 39 });
+
+      const firstMatch = await store.listChunks({
+        batchId,
+        attemptId: "attempt-compressed",
+        stream: "stdout",
+        afterSequence: -1,
+        limit: 1,
+        query: "compression-target",
+      });
+      expect(firstMatch.items).toEqual([expect.objectContaining({ sequence: 35 })]);
+      expect(firstMatch.hasMore).toBe(true);
+      const secondMatch = await store.listChunks({
+        batchId,
+        attemptId: "attempt-compressed",
+        stream: "stdout",
+        afterSequence: 35,
+        limit: 1,
+        query: "compression-target",
+      });
+      expect(secondMatch.items).toEqual([expect.objectContaining({ sequence: 39 })]);
+      expect(secondMatch.hasMore).toBe(false);
+    } finally {
+      store.close();
+    }
+
+    const database = new Database(join(directory, `${batchId}.sqlite`), { readonly: true });
+    try {
+      const row = database
+        .prepare(
+          `SELECT content,content_encoding,size_bytes,stored_size_bytes,content_sha256
+           FROM attempt_log_chunks WHERE attempt_id=? AND stream='stdout' AND sequence=0`,
+        )
+        .get("attempt-compressed") as {
+        content: Buffer;
+        content_encoding: string;
+        size_bytes: number;
+        stored_size_bytes: number;
+        content_sha256: string;
+      };
+      expect(row.content_encoding).toBe("gzip");
+      expect(Buffer.isBuffer(row.content)).toBe(true);
+      expect(row.stored_size_bytes).toBe(row.content.byteLength);
+      expect(row.stored_size_bytes).toBeLessThan(row.size_bytes / 2);
+      expect(row.content_sha256).toMatch(/^[0-9a-f]{64}$/u);
+      expect(
+        database
+          .prepare(
+            `SELECT content_encoding,size_bytes,stored_size_bytes
+             FROM attempt_log_chunks WHERE attempt_id='attempt-small'`,
+          )
+          .get(),
+      ).toEqual({
+        content_encoding: "identity",
+        size_bytes: Buffer.byteLength("attempt started"),
+        stored_size_bytes: Buffer.byteLength("attempt started"),
+      });
+    } finally {
+      database.close();
+    }
+  });
+
+  it("upgrades and reads legacy uncompressed batch stores without rewriting their rows", async () => {
+    const directory = temporaryDirectory();
+    const path = join(directory, `${batchId}.sqlite`);
+    const legacy = new Database(path);
+    legacy.exec(`
+      CREATE TABLE attempt_log_chunks (
+        attempt_id TEXT NOT NULL,
+        stream TEXT NOT NULL,
+        sequence INTEGER NOT NULL,
+        content TEXT NOT NULL,
+        size_bytes INTEGER NOT NULL,
+        recorded_at TEXT NOT NULL,
+        received_at TEXT NOT NULL,
+        PRIMARY KEY (attempt_id, stream, sequence)
+      );
+    `);
+    legacy
+      .prepare(
+        `INSERT INTO attempt_log_chunks
+         (attempt_id,stream,sequence,content,size_bytes,recorded_at,received_at)
+         VALUES (?,?,?,?,?,?,?)`,
+      )
+      .run(
+        "attempt-legacy",
+        "stdout",
+        0,
+        "legacy plaintext",
+        Buffer.byteLength("legacy plaintext"),
+        "2026-08-12T00:00:00.000Z",
+        "2026-08-12T00:00:01.000Z",
+      );
+    legacy.close();
+
+    const store = createAttemptLogStore(directory);
+    try {
+      await expect(
+        store.listChunks({
+          batchId,
+          attemptId: "attempt-legacy",
+          stream: "stdout",
+          afterSequence: -1,
+          limit: 10,
+        }),
+      ).resolves.toMatchObject({
+        items: [{ sequence: 0, content: "legacy plaintext" }],
+      });
+    } finally {
+      store.close();
+    }
+
+    const upgraded = new Database(path, { readonly: true });
+    try {
+      const columns = (
+        upgraded.pragma("table_info(attempt_log_chunks)") as Array<{ name: string }>
+      ).map((column) => column.name);
+      expect(columns).toEqual(
+        expect.arrayContaining(["content_encoding", "stored_size_bytes", "content_sha256"]),
+      );
+      expect(
+        upgraded
+          .prepare(
+            `SELECT content,content_encoding,stored_size_bytes,content_sha256
+             FROM attempt_log_chunks WHERE attempt_id='attempt-legacy'`,
+          )
+          .get(),
+      ).toEqual({
+        content: "legacy plaintext",
+        content_encoding: "identity",
+        stored_size_bytes: null,
+        content_sha256: null,
+      });
+    } finally {
+      upgraded.close();
+    }
   });
 
   it("keeps the main database free of log tables", async () => {

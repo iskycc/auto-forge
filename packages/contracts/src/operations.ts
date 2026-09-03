@@ -113,6 +113,10 @@ export const notificationListQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(50),
 });
 
+export const unreadNotificationCountSchema = z.object({
+  count: z.number().int().nonnegative(),
+});
+
 export const retentionCategorySchema = z.enum([
   "execution",
   "log",

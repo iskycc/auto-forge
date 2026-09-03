@@ -5,12 +5,20 @@ import { Button, Input } from "@/components/ui";
 import type { GlobalSearchResult, Notification } from "@autoforge/contracts";
 import { Bell, Check, Search, X } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+} from "react";
 
 import { notificationMessage, searchResultSubtitle } from "@/lib/topbar-presentation";
 import { formatPlatformDateTime } from "@/lib/platform-date-time";
 
 type NotificationPage = { items: Notification[]; nextCursor?: string };
+type UnreadNotificationCount = { count: number };
+const NOTIFICATION_COUNT_REFRESH_INTERVAL_MS = 30_000;
 
 export function TopbarTools() {
   const [query, setQuery] = useState("");
@@ -20,9 +28,29 @@ export function TopbarTools() {
   const [notificationCursor, setNotificationCursor] = useState<string>();
   const [notificationsLoading, setNotificationsLoading] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const [unreadCount, setUnreadCount] = useState(0);
   const [error, setError] = useState("");
   const searchInput = useRef<HTMLInputElement>(null);
   const searchResults = useRef<HTMLDivElement>(null);
+  const unreadCountRequestSequence = useRef(0);
+
+  const refreshUnreadCount = useCallback(async (signal?: AbortSignal): Promise<void> => {
+    const requestSequence = ++unreadCountRequestSequence.current;
+    try {
+      const result = await requestJson<UnreadNotificationCount>(
+        "/api/v1/notifications/unread-count",
+        signal ? { signal } : undefined,
+      );
+      if (requestSequence === unreadCountRequestSequence.current) {
+        setUnreadCount(result.count);
+      }
+    } catch (problem) {
+      if (signal?.aborted || (problem instanceof DOMException && problem.name === "AbortError")) {
+        return;
+      }
+      // 通知角标属于辅助信息；短暂读取失败时保留上一次权威数量，下一轮自动重试。
+    }
+  }, []);
 
   useEffect(() => {
     function focusSearch(event: KeyboardEvent) {
@@ -38,6 +66,25 @@ export function TopbarTools() {
     window.addEventListener("keydown", focusSearch);
     return () => window.removeEventListener("keydown", focusSearch);
   }, []);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === "visible") {
+        void refreshUnreadCount(controller.signal);
+      }
+    };
+    refreshWhenVisible();
+    const interval = window.setInterval(refreshWhenVisible, NOTIFICATION_COUNT_REFRESH_INTERVAL_MS);
+    window.addEventListener("focus", refreshWhenVisible);
+    document.addEventListener("visibilitychange", refreshWhenVisible);
+    return () => {
+      controller.abort();
+      window.clearInterval(interval);
+      window.removeEventListener("focus", refreshWhenVisible);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
+    };
+  }, [refreshUnreadCount]);
 
   useEffect(() => {
     if (query.trim().length < 2) {
@@ -82,6 +129,7 @@ export function TopbarTools() {
       setNotifications(page.items);
       setNotificationCursor(page.nextCursor);
       setError("");
+      void refreshUnreadCount();
     } catch (problem) {
       setError(problem instanceof Error ? problem.message : "读取通知失败。");
     }
@@ -117,9 +165,9 @@ export function TopbarTools() {
         item.id === notification.id ? { ...item, readAt: new Date().toISOString() } : item,
       ),
     );
+    unreadCountRequestSequence.current += 1;
+    setUnreadCount((current) => Math.max(0, current - 1));
   }
-
-  const unreadCount = notifications.filter((notification) => !notification.readAt).length;
   return (
     <div className="topbar-tools">
       <div className="global-search-shell">

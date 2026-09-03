@@ -414,6 +414,24 @@ export class PostgresPlatformOperationsRepository implements PlatformOperationsR
     };
   }
 
+  async countUnreadNotifications(
+    input: Parameters<PlatformOperationsRepository["countUnreadNotifications"]>[0],
+  ) {
+    await this.ready();
+    if (input.projectIds?.length === 0) return 0;
+    const values: unknown[] = [input.userId];
+    const where = ["user_id=$1", "read_at IS NULL"];
+    if (input.projectIds) {
+      values.push([...input.projectIds]);
+      where.push(`(project_id IS NULL OR project_id=ANY($${values.length}::text[]))`);
+    }
+    const result = await this.handle.pool.query<{ count: string }>(
+      `SELECT COUNT(*) AS count FROM notifications WHERE ${where.join(" AND ")}`,
+      values,
+    );
+    return Number(result.rows[0]?.count ?? 0);
+  }
+
   async createNotification(record: Notification): Promise<Notification> {
     await this.ready();
     await this.handle.pool.query(

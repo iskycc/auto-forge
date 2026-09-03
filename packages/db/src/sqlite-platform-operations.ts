@@ -417,6 +417,24 @@ export class SqlitePlatformOperationsRepository implements PlatformOperationsRep
     };
   }
 
+  async countUnreadNotifications(
+    input: Parameters<PlatformOperationsRepository["countUnreadNotifications"]>[0],
+  ) {
+    if (input.projectIds?.length === 0) return 0;
+    const where = ["user_id = ?", "read_at IS NULL"];
+    const parameters: string[] = [input.userId];
+    if (input.projectIds) {
+      where.push(
+        `(project_id IS NULL OR project_id IN (${input.projectIds.map(() => "?").join(",")}))`,
+      );
+      parameters.push(...input.projectIds);
+    }
+    const row = this.handle.client
+      .prepare(`SELECT COUNT(*) AS count FROM notifications WHERE ${where.join(" AND ")}`)
+      .get(...parameters) as { count: number };
+    return row.count;
+  }
+
   async createNotification(record: Notification): Promise<Notification> {
     this.handle.client
       .prepare(

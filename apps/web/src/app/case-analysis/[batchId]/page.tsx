@@ -1,11 +1,8 @@
 import { failureAnalysisClaimSchema } from "@autoforge/contracts";
 import { DEFAULT_PROJECT_ID, hasPermission } from "@autoforge/domain";
-import { ArrowLeft, SearchCheck } from "lucide-react";
-import Link from "next/link";
 import { notFound } from "next/navigation";
 
-import { FailureAnalysisExportButton } from "@/components/failure-analysis-export-button";
-import { FailureAnalysisWorkspace } from "@/components/failure-analysis-workspace";
+import { FailureAnalysisDetail } from "@/components/failure-analysis-detail";
 import { requireAuthorizedPageProjectScope, requirePageProjectScope } from "@/lib/auth";
 import {
   selectableProjectIds,
@@ -37,7 +34,7 @@ export default async function CaseAnalysisDetailPage({
   );
   if (!hierarchy.projectVersionId) notFound();
   const initialView = singleParameter(parameters.view) === "workbench" ? "workbench" : "claim";
-  const [batch, initialCandidatePage, initialClaimPage] = await Promise.all([
+  const [batch, initialCandidatePage, initialClaimPage, initialMyClaimCount] = await Promise.all([
     services.failureAnalysis.getBatch({
       projectId,
       projectVersionId: hierarchy.projectVersionId,
@@ -64,57 +61,34 @@ export default async function CaseAnalysisDetailPage({
           limit: 50,
         })
       : undefined,
+    services.failureAnalysis.countMyClaims({
+      projectId,
+      projectVersionId: hierarchy.projectVersionId,
+      claimantId: identity.user.id,
+      batchId,
+    }),
   ]);
   if (!batch) notFound();
 
   return (
-    <div className="page-stack failure-analysis-page">
-      <section className="page-hero failure-analysis-detail-hero">
-        <div className="failure-analysis-detail-heading">
-          <Link className="text-link" href="/case-analysis">
-            <ArrowLeft size={14} /> 返回分析任务
-          </Link>
-          <span className="eyebrow">Failure Analysis · #{batch.sequenceNumber}</span>
-          <h1>{batch.suiteName}</h1>
-          <div className="failure-analysis-detail-metrics" aria-label="任务分析概览">
-            <span>
-              最终轮次 <strong>第 {batch.currentRound} 轮</strong>
-            </span>
-            <span className="failure-metric">
-              最终失败 <strong>{batch.failedRuns}</strong>
-            </span>
-            <span className="claimed-metric">
-              已认领 <strong>{batch.claimedRuns}</strong>
-            </span>
-            <span className="completed-metric">
-              已完成 <strong>{batch.completedRuns}</strong>
-            </span>
-          </div>
-        </div>
-        <div className="failure-analysis-detail-actions">
-          <FailureAnalysisExportButton batchId={batch.id} />
-          <span className="hero-icon violet">
-            <SearchCheck size={24} />
-          </span>
-        </div>
-      </section>
-      <FailureAnalysisWorkspace
-        canManage={hasPermission(identity, "analysis.manage", projectId)}
-        initialCandidatePage={initialCandidatePage}
-        initialBatchId={batch.id}
-        initialClaimPage={
-          initialClaimPage
-            ? {
-                ...initialClaimPage,
-                items: failureAnalysisClaimSchema.array().parse(initialClaimPage.items),
-              }
-            : undefined
-        }
-        initialView={initialView}
-        projectId={projectId}
-        projectVersionId={hierarchy.projectVersionId}
-      />
-    </div>
+    <FailureAnalysisDetail
+      batch={batch}
+      canManage={hasPermission(identity, "analysis.manage", projectId)}
+      initialCandidatePage={initialCandidatePage}
+      initialClaimPage={
+        initialClaimPage
+          ? {
+              ...initialClaimPage,
+              items: failureAnalysisClaimSchema.array().parse(initialClaimPage.items),
+            }
+          : undefined
+      }
+      initialMyClaimCount={initialMyClaimCount}
+      initialView={initialView}
+      key={batch.id}
+      projectId={projectId}
+      projectVersionId={hierarchy.projectVersionId}
+    />
   );
 }
 

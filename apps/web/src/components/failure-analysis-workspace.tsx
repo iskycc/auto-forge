@@ -4,6 +4,7 @@ import type {
   ClaimFailureAnalysisResult,
   FailureAnalysisCandidate,
   FailureAnalysisCandidatePage,
+  FailureAnalysisClaimReleaseView,
   FailureAnalysisClaimView,
   FailureAnalysisHistoryItemView,
   FailureAnalysisSort,
@@ -29,6 +30,7 @@ import {
   RotateCcw,
   Search,
   SquareActivity,
+  UserMinus,
   X,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
@@ -77,16 +79,22 @@ export function FailureAnalysisWorkspace({
   projectVersionId,
   initialCandidatePage,
   initialClaimPage,
+  initialMyClaimCount,
   initialBatchId,
   initialView,
+  onClaimCountDelta,
+  onCompletedCountDelta,
 }: {
   canManage: boolean;
   projectId: string;
   projectVersionId: string;
   initialCandidatePage: FailureAnalysisCandidatePage | null | undefined;
   initialClaimPage: { items: FailureAnalysisClaimView[]; nextCursor?: string } | undefined;
+  initialMyClaimCount: number;
   initialBatchId: string;
   initialView: WorkspaceView;
+  onClaimCountDelta: (delta: number) => void;
+  onCompletedCountDelta: (delta: number) => void;
 }) {
   const toast = useToast();
   const [view, setView] = useState<WorkspaceView>(initialView);
@@ -101,6 +109,7 @@ export function FailureAnalysisWorkspace({
   );
   const [candidatePageCursor, setCandidatePageCursor] = useState<string>();
   const [claims, setClaims] = useState<FailureAnalysisClaimView[]>(initialClaimPage?.items ?? []);
+  const [myClaimCount, setMyClaimCount] = useState(initialMyClaimCount);
   const [claimsCursor, setClaimsCursor] = useState<string | undefined>(
     initialClaimPage?.nextCursor,
   );
@@ -109,6 +118,7 @@ export function FailureAnalysisWorkspace({
   const [selectedRunIds, setSelectedRunIds] = useState<Set<string>>(() => new Set());
   const [selectedAnalysisIds, setSelectedAnalysisIds] = useState<Set<string>>(() => new Set());
   const [dialogClaims, setDialogClaims] = useState<FailureAnalysisClaimView[]>();
+  const [releaseDialogClaim, setReleaseDialogClaim] = useState<FailureAnalysisClaimView>();
   const [sort, setSort] = useState<FailureAnalysisSort>("class_path");
   const [direction, setDirection] = useState<"asc" | "desc">("asc");
   const [claimSort, setClaimSort] = useState<FailureAnalysisSort>("class_path");
@@ -324,10 +334,12 @@ export function FailureAnalysisWorkspace({
       if (result.conflicts.length > 0) toast.warning(claimMessage);
       else toast.success(claimMessage);
       setSelectedRunIds(new Set());
+      setMyClaimCount((current) => current + result.claimed.length);
       setView("workbench");
       updateLocation("workbench");
       setClaimsCursorHistory([]);
       setClaimsPageCursor(undefined);
+      onClaimCountDelta(result.claimed.length);
     } catch (claimError) {
       setError(claimError instanceof Error ? claimError.message : "认领失败用例失败。");
     } finally {
@@ -386,12 +398,39 @@ export function FailureAnalysisWorkspace({
     );
     setDialogClaims(undefined);
     setSelectedAnalysisIds(new Set());
+    onCompletedCountDelta(
+      updatedClaims.filter((updated) => {
+        const previous = claims.find((claim) => claim.id === updated.id);
+        return previous?.status !== "completed" && updated.status === "completed";
+      }).length,
+    );
     if (claimSort === "claim_status") {
       setClaimsCursorHistory([]);
       setClaimsPageCursor(undefined);
       void loadClaims();
     }
     toast.success(`已完成 ${updatedClaims.length} 个用例的分析并永久保存。`);
+  }
+
+  function applyReleasedClaim(released: FailureAnalysisClaimReleaseView): void {
+    setClaims((current) => current.filter((claim) => claim.id !== released.analysisId));
+    setCandidates((current) =>
+      current.map((candidate) => {
+        if (candidate.claim?.id !== released.analysisId) return candidate;
+        const availableCandidate: FailureAnalysisCandidate = { ...candidate };
+        delete availableCandidate.claim;
+        return availableCandidate;
+      }),
+    );
+    setSelectedAnalysisIds((current) => {
+      const next = new Set(current);
+      next.delete(released.analysisId);
+      return next;
+    });
+    setMyClaimCount((current) => Math.max(0, current - 1));
+    setReleaseDialogClaim(undefined);
+    onClaimCountDelta(-1);
+    toast.success("已取消认领，该用例已回到待认领列表。");
   }
 
   return (
@@ -414,7 +453,7 @@ export function FailureAnalysisWorkspace({
             role="tab"
             type="button"
           >
-            我的分析 <span>{claims.length}</span>
+            我的分析 <span>{myClaimCount}</span>
           </Button>
         </div>
 
@@ -592,15 +631,29 @@ export function FailureAnalysisWorkspace({
                           <dd>{categoryLabel(claim.category) ?? "尚未选择"}</dd>
                         </div>
                       </dl>
-                      <Button
-                        disabled={!canManage}
-                        onClick={() => setDialogClaims([claim])}
-                        size="compact"
-                        type="button"
-                        variant="secondary"
-                      >
-                        {claim.status === "completed" ? "查看分析详情" : "开始分析"}
-                      </Button>
+                      <div className="failure-analysis-card-actions">
+                        <Button
+                          disabled={!canManage}
+                          onClick={() => setDialogClaims([claim])}
+                          size="compact"
+                          type="button"
+                          variant="secondary"
+                        >
+                          {claim.status === "completed" ? "查看分析详情" : "开始分析"}
+                        </Button>
+                        {claim.status !== "completed" ? (
+                          <Button
+                            className="failure-analysis-release-trigger"
+                            disabled={!canManage}
+                            onClick={() => setReleaseDialogClaim(claim)}
+                            size="compact"
+                            type="button"
+                            variant="ghost"
+                          >
+                            <UserMinus aria-hidden="true" size={14} /> 取消认领
+                          </Button>
+                        ) : null}
+                      </div>
                     </article>
                   ))}
                 </div>
@@ -646,7 +699,121 @@ export function FailureAnalysisWorkspace({
           readOnly={dialogClaims.every((claim) => claim.status === "completed")}
         />
       ) : null}
+      {releaseDialogClaim ? (
+        <ReleaseClaimDialog
+          claim={releaseDialogClaim}
+          onClose={() => setReleaseDialogClaim(undefined)}
+          onReleased={applyReleasedClaim}
+          projectId={projectId}
+        />
+      ) : null}
     </>
+  );
+}
+
+function ReleaseClaimDialog({
+  claim,
+  projectId,
+  onClose,
+  onReleased,
+}: {
+  claim: FailureAnalysisClaimView;
+  projectId: string;
+  onClose: () => void;
+  onReleased: (released: FailureAnalysisClaimReleaseView) => void;
+}) {
+  const [reason, setReason] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
+  const normalizedReason = reason.trim();
+
+  async function releaseClaim(): Promise<void> {
+    if (!normalizedReason || submitting) return;
+    setSubmitting(true);
+    setError("");
+    try {
+      const response = await fetch(
+        `/api/v1/failure-analysis/claims/${encodeURIComponent(claim.id)}/release`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ projectId, reason: normalizedReason }),
+        },
+      );
+      if (!response.ok) {
+        throw new Error(
+          (await readApiErrorMessage(response, "取消认领失败，请确认该用例仍由当前账号持有。"))!,
+        );
+      }
+      onReleased((await response.json()) as FailureAnalysisClaimReleaseView);
+    } catch (releaseError) {
+      setError(releaseError instanceof Error ? releaseError.message : "取消认领失败。");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <div
+      className="runner-update-overlay failure-analysis-confirm-overlay"
+      onMouseDown={onClose}
+      role="presentation"
+    >
+      <section
+        aria-label={`取消认领 ${claim.caseName}`}
+        aria-modal="true"
+        className="runner-update-dialog failure-analysis-release-dialog"
+        onMouseDown={(event) => event.stopPropagation()}
+        role="alertdialog"
+      >
+        <header>
+          <span className="failure-analysis-release-icon" aria-hidden="true">
+            <UserMinus size={21} />
+          </span>
+          <div>
+            <strong>确认取消认领？</strong>
+            <p>“{claim.caseName}”将重新回到待认领列表，其他分析人员可以立即认领该用例。</p>
+          </div>
+        </header>
+        <label className="failure-analysis-field">
+          <span>
+            取消原因 <strong>*</strong>
+          </span>
+          <Textarea
+            autoFocus
+            maxLength={1_000}
+            onChange={(event) => setReason(event.target.value)}
+            placeholder="请说明误领、任务调整或交接原因"
+            rows={4}
+            value={reason}
+          />
+          <small>{reason.length}/1000</small>
+        </label>
+        <p className="failure-analysis-release-note">
+          取消原因会永久记录；当前未提交的分析内容不会带给下一位认领人。
+        </p>
+        {error ? <p className="form-error">{error}</p> : null}
+        <div className="dialog-actions">
+          <Button disabled={submitting} onClick={onClose} type="button" variant="secondary">
+            返回
+          </Button>
+          <Button
+            className="failure-analysis-confirm-action"
+            disabled={!normalizedReason || submitting}
+            onClick={() => void releaseClaim()}
+            type="button"
+            variant="danger"
+          >
+            {submitting ? (
+              <LoaderCircle className="spin" size={16} />
+            ) : (
+              <UserMinus aria-hidden="true" size={16} />
+            )}
+            确认取消认领
+          </Button>
+        </div>
+      </section>
+    </div>
   );
 }
 

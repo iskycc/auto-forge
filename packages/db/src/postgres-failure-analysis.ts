@@ -135,6 +135,7 @@ export class PostgresFailureAnalysisRepository implements FailureAnalysisReposit
   }): Promise<FailureAnalysisCandidatePage | null> {
     await this.handle.ready;
     const sortExpression = postgresCandidateSortExpression(input.sort);
+    const claimRankExpression = "CASE WHEN claim.id IS NULL THEN 0 ELSE 1 END";
     const cursor = decodeFailureAnalysisCandidateCursor(input.cursor, input.sort, input.direction);
     const parameters: unknown[] = [input.batchId, input.projectId, input.projectVersionId];
     const where = [
@@ -157,9 +158,13 @@ export class PostgresFailureAnalysisRepository implements FailureAnalysisReposit
     }
     if (cursor) {
       const comparison = input.direction === "desc" ? "<" : ">";
-      parameters.push(cursor.value, cursor.executionRunId);
+      parameters.push(cursor.claimRank, cursor.value, cursor.executionRunId);
       where.push(
-        `(${sortExpression}${comparison}$${parameters.length - 1} OR (${sortExpression}=$${parameters.length - 1} AND run.id${comparison}$${parameters.length}))`,
+        `(${claimRankExpression}>$${parameters.length - 2} OR
+          (${claimRankExpression}=$${parameters.length - 2} AND
+           (${sortExpression}${comparison}$${parameters.length - 1} OR
+            (${sortExpression}=$${parameters.length - 1} AND
+             run.id${comparison}$${parameters.length}))))`,
       );
     }
     parameters.push(input.limit + 1);
@@ -187,13 +192,15 @@ export class PostgresFailureAnalysisRepository implements FailureAnalysisReposit
               claim.screenshot_media_type AS "screenshotMediaType",
               claim.screenshot_size_bytes AS "screenshotSizeBytes",
               claim.screenshot_sha256 AS "screenshotSha256",
-              claim.updated_at AS "analysisUpdatedAt",${sortExpression} AS "sortValue"
+              claim.updated_at AS "analysisUpdatedAt",
+              ${claimRankExpression} AS "claimRank",${sortExpression} AS "sortValue"
        FROM run_batches batch JOIN execution_runs run ON run.batch_id=batch.id
        JOIN run_attempts attempt ON attempt.execution_run_id=run.id
         AND attempt.attempt_number=batch.current_round
        LEFT JOIN failure_analysis_claims claim ON claim.execution_run_id=run.id
        WHERE ${where.join(" AND ")}
-       ORDER BY ${sortExpression} ${direction},run.id ${direction} LIMIT $${parameters.length}`,
+       ORDER BY ${claimRankExpression} ASC,${sortExpression} ${direction},run.id ${direction}
+       LIMIT $${parameters.length}`,
       parameters,
     );
     // 主查询已有完整的项目、版本、类型和终态守卫。有候选时无需再做一次网络往返；
@@ -214,6 +221,7 @@ export class PostgresFailureAnalysisRepository implements FailureAnalysisReposit
             nextCursor: encodeFailureAnalysisCandidateCursor({
               sort: input.sort,
               direction: input.direction,
+              claimRank: Number(last.claimRank ?? (last.analysisId ? 1 : 0)),
               value: last.sortValue ?? "",
               executionRunId: last.executionRunId,
             }),
@@ -290,6 +298,75 @@ export class PostgresFailureAnalysisRepository implements FailureAnalysisReposit
     }
   }
 
+  async release(input: Parameters<FailureAnalysisRepository["release"]>[0]) {
+    await this.handle.ready;
+    const client = await this.handle.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const selected = await client.query<FailureAnalysisRow>(
+        `${claimSelectSql()} WHERE claim.id=$1 AND claim.project_id=$2 AND claim.claimant_id=$3
+         AND claim.status IN ('claimed','analyzing') FOR UPDATE`,
+        [input.analysisId, input.projectId, input.claimantId],
+      );
+      const row = selected.rows[0];
+      if (!row) {
+        await client.query("COMMIT");
+        return null;
+      }
+      const claim = toFailureAnalysisClaim(row);
+      const removed = await client.query(
+        `DELETE FROM failure_analysis_claims
+         WHERE id=$1 AND project_id=$2 AND claimant_id=$3
+           AND status IN ('claimed','analyzing')`,
+        [input.analysisId, input.projectId, input.claimantId],
+      );
+      if (removed.rowCount !== 1) {
+        await client.query("ROLLBACK");
+        return null;
+      }
+      await client.query(
+        `INSERT INTO failure_analysis_claim_releases
+          (id,analysis_id,project_id,batch_id,execution_run_id,case_definition_id,
+           claimant_id,claimant_username,claimant_display_name,reason,claimed_at,released_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+        [
+          input.id,
+          claim.id,
+          claim.projectId,
+          claim.batchId,
+          claim.executionRunId,
+          claim.caseDefinitionId,
+          claim.claimantId,
+          claim.claimantUsername,
+          claim.claimantDisplayName,
+          input.reason,
+          claim.claimedAt,
+          input.releasedAt,
+        ],
+      );
+      await client.query("COMMIT");
+      return {
+        id: input.id,
+        analysisId: claim.id,
+        projectId: claim.projectId,
+        batchId: claim.batchId,
+        executionRunId: claim.executionRunId,
+        caseDefinitionId: claim.caseDefinitionId,
+        claimantId: claim.claimantId,
+        claimantUsername: claim.claimantUsername,
+        claimantDisplayName: claim.claimantDisplayName,
+        reason: input.reason,
+        claimedAt: claim.claimedAt,
+        releasedAt: input.releasedAt,
+      };
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
   async listClaims(input: Parameters<FailureAnalysisRepository["listClaims"]>[0]) {
     await this.handle.ready;
     const sortExpression = postgresClaimSortExpression(input.sort);
@@ -335,6 +412,27 @@ export class PostgresFailureAnalysisRepository implements FailureAnalysisReposit
           }
         : {}),
     };
+  }
+
+  async countClaims(input: Parameters<FailureAnalysisRepository["countClaims"]>[0]) {
+    await this.handle.ready;
+    const parameters: string[] = [input.projectId, input.claimantId];
+    const where = ["claim.project_id=$1", "claim.claimant_id=$2"];
+    if (input.projectVersionId) {
+      parameters.push(input.projectVersionId);
+      where.push(`batch.policy_json::jsonb ->> 'projectVersionId'=$${parameters.length}`);
+    }
+    if (input.batchId) {
+      parameters.push(input.batchId);
+      where.push(`claim.batch_id=$${parameters.length}`);
+    }
+    const result = await this.handle.pool.query<{ count: string }>(
+      `SELECT COUNT(*) AS count FROM failure_analysis_claims claim
+       JOIN run_batches batch ON batch.id=claim.batch_id
+       WHERE ${where.join(" AND ")}`,
+      parameters,
+    );
+    return Number(result.rows[0]?.count ?? 0);
   }
 
   async findClaimsByExecutionRunIds(

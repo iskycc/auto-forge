@@ -214,6 +214,10 @@ export function sessionCookie(token: string, expiresAt: string, request: Request
   };
 }
 
+export function sessionTokenFromRequest(request: Request): string {
+  return requestCookie(request, SESSION_COOKIE_NAME);
+}
+
 export function expiredSessionCookie(request: Request) {
   return {
     name: SESSION_COOKIE_NAME,

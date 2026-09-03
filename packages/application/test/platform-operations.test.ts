@@ -11,6 +11,7 @@ describe("PlatformOperationsService analytics", () => {
     const repository = {
       listSchedules: vi.fn(async () => []),
       globalSearch: vi.fn(async () => ({ items: [] })),
+      countUnreadNotifications: vi.fn(async () => 2),
     } as unknown as PlatformOperationsRepository;
     const service = new PlatformOperationsService(
       repository,
@@ -27,10 +28,15 @@ describe("PlatformOperationsService analytics", () => {
 
     await expect(service.listSchedules(reader)).resolves.toEqual([]);
     await expect(service.globalSearch(reader, "smoke", 10)).resolves.toEqual({ items: [] });
+    await expect(service.countUnreadNotifications(reader)).resolves.toBe(2);
     expect(repository.listSchedules).toHaveBeenCalledWith(["project-1"]);
     expect(repository.globalSearch).toHaveBeenCalledWith({
       query: "smoke",
       limit: 10,
+      projectIds: ["project-1"],
+    });
+    expect(repository.countUnreadNotifications).toHaveBeenCalledWith({
+      userId: reader.user.id,
       projectIds: ["project-1"],
     });
   });

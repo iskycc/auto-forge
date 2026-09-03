@@ -63,6 +63,10 @@ export const sessionListQuerySchema = z.object({
   userId: z.string().min(1).max(128).optional(),
 });
 
+export const refreshSessionResultSchema = z.object({
+  expiresAt: z.string().datetime(),
+});
+
 export const createRoleInputSchema = z.object({
   key: z
     .string()

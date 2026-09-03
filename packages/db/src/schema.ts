@@ -990,6 +990,43 @@ export const failureAnalysisClaims = sqliteTable(
   ],
 );
 
+export const failureAnalysisClaimReleases = sqliteTable(
+  "failure_analysis_claim_releases",
+  {
+    id: text("id").primaryKey(),
+    analysisId: text("analysis_id").notNull().unique(),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    batchId: text("batch_id")
+      .notNull()
+      .references(() => runBatches.id, { onDelete: "cascade" }),
+    executionRunId: text("execution_run_id")
+      .notNull()
+      .references(() => executionRuns.id, { onDelete: "cascade" }),
+    caseDefinitionId: text("case_definition_id").notNull(),
+    claimantId: text("claimant_id").notNull(),
+    claimantUsername: text("claimant_username").notNull(),
+    claimantDisplayName: text("claimant_display_name").notNull(),
+    reason: text("reason").notNull(),
+    claimedAt: text("claimed_at").notNull(),
+    releasedAt: text("released_at").notNull(),
+  },
+  (table) => [
+    index("failure_analysis_claim_releases_batch_idx").on(
+      table.batchId,
+      table.releasedAt,
+      table.id,
+    ),
+    index("failure_analysis_claim_releases_claimant_idx").on(
+      table.projectId,
+      table.claimantId,
+      table.releasedAt,
+      table.id,
+    ),
+  ],
+);
+
 export const assignments = sqliteTable(
   "assignments",
   {
@@ -1823,6 +1860,7 @@ export const schema = {
   executionRuns,
   runAttempts,
   failureAnalysisClaims,
+  failureAnalysisClaimReleases,
   assignments,
   assignmentLeases,
   assignmentClaimRequests,

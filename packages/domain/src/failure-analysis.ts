@@ -45,3 +45,19 @@ export type FailureAnalysisClaim = {
   screenshot?: FailureAnalysisScreenshot;
   updatedAt: string;
 };
+
+/** 认领释放后保留的审计快照；活动认领删除后，同一用例可以再次被认领。 */
+export type FailureAnalysisClaimRelease = {
+  id: string;
+  analysisId: string;
+  projectId: string;
+  batchId: string;
+  executionRunId: string;
+  caseDefinitionId: string;
+  claimantId: string;
+  claimantUsername: string;
+  claimantDisplayName: string;
+  reason: string;
+  claimedAt: string;
+  releasedAt: string;
+};

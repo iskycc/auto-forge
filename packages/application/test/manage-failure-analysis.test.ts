@@ -145,6 +145,64 @@ describe("FailureAnalysisService", () => {
     ).rejects.toMatchObject({ code: "FAILURE_ANALYSIS_NOT_FOUND" });
   });
 
+  it("requires a reason and only releases a claim owned by the actor", async () => {
+    const release = vi.fn(async (input) => ({
+      id: input.id,
+      analysisId: input.analysisId,
+      projectId: input.projectId,
+      batchId: "batch-a",
+      executionRunId: "run-a",
+      caseDefinitionId: "case-a",
+      claimantId: input.claimantId,
+      claimantUsername: "c10001",
+      claimantDisplayName: "分析员",
+      reason: input.reason,
+      claimedAt: "2026-09-01T01:00:00.000Z",
+      releasedAt: input.releasedAt,
+    }));
+    const service = createService({ release }, () => "release-a");
+
+    await expect(
+      service.releaseClaim({
+        analysisId: "analysis-a",
+        projectId: "project-a",
+        claimantId: "analyst",
+        reason: "   ",
+      }),
+    ).rejects.toMatchObject({ code: "FAILURE_ANALYSIS_RELEASE_REASON_REQUIRED" });
+
+    await expect(
+      service.releaseClaim({
+        analysisId: "analysis-a",
+        projectId: "project-a",
+        claimantId: "analyst",
+        reason: "  误领，需要交接  ",
+      }),
+    ).resolves.toMatchObject({
+      id: "release-a",
+      reason: "误领，需要交接",
+      releasedAt: NOW.toISOString(),
+    });
+    expect(release).toHaveBeenCalledWith({
+      id: "release-a",
+      analysisId: "analysis-a",
+      projectId: "project-a",
+      claimantId: "analyst",
+      reason: "误领，需要交接",
+      releasedAt: NOW.toISOString(),
+    });
+
+    const rejectedService = createService({ release: vi.fn(async () => null) });
+    await expect(
+      rejectedService.releaseClaim({
+        analysisId: "analysis-a",
+        projectId: "project-a",
+        claimantId: "another-user",
+        reason: "尝试取消他人的认领",
+      }),
+    ).rejects.toMatchObject({ code: "FAILURE_ANALYSIS_RELEASE_NOT_ALLOWED" });
+  });
+
   it("enforces category-specific fields and the explicit case issue confirmation", async () => {
     const ownedClaim = failureAnalysisClaim();
     const service = createService({ findOwnedClaims: vi.fn(async () => [ownedClaim]) });

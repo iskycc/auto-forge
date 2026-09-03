@@ -92,6 +92,75 @@ test("terminal task failures support durable single and batch analysis with evid
   expect(claimsRequestsDuringSort).toBe(0);
   page.off("request", countClaimsRequest);
 
+  const classSortResponse = page.waitForResponse((response) => {
+    const url = new URL(response.url());
+    return (
+      url.pathname === "/api/v1/failure-analysis/candidates" &&
+      url.searchParams.get("sort") === "class_path" &&
+      url.searchParams.get("direction") === "asc"
+    );
+  });
+  await page.getByRole("button", { name: "类路径" }).click();
+  expect((await classSortResponse).status()).toBe(200);
+  const temporarilyClaimedName = fixture.failedNames[0];
+  await page.getByLabel(`认领 ${temporarilyClaimedName}`).check();
+  await page.getByRole("button", { name: "认领并进入分析" }).click();
+  await expect(page.getByRole("heading", { name: "我的分析队列" })).toBeVisible();
+
+  const rankedCandidateResponse = page.waitForResponse((response) =>
+    response.url().includes("/api/v1/failure-analysis/candidates?"),
+  );
+  await page.getByRole("button", { name: "返回继续认领" }).click();
+  expect((await rankedCandidateResponse).status()).toBe(200);
+  const rankedCandidateRows = page.locator(".failure-analysis-table tbody tr");
+  await expect(rankedCandidateRows.last()).toContainText(temporarilyClaimedName);
+  await expect(rankedCandidateRows.last()).toContainText("已认领");
+  await expect(page.getByRole("tab", { name: "我的分析 1" })).toBeVisible();
+  await expect(page.getByLabel("任务分析概览")).toContainText("已认领 1");
+
+  await page.reload();
+  await expect(page.getByRole("tab", { name: "我的分析 1" })).toBeVisible();
+  await expect(page.getByLabel("任务分析概览")).toContainText("已认领 1");
+
+  const myClaimsResponse = page.waitForResponse((response) =>
+    response.url().includes("/api/v1/failure-analysis/claims?"),
+  );
+  await page.getByRole("tab", { name: /我的分析/u }).click();
+  expect((await myClaimsResponse).status()).toBe(200);
+  const temporarilyClaimedCard = analysisCard(page, temporarilyClaimedName);
+  await temporarilyClaimedCard.getByRole("button", { name: "取消认领" }).click();
+  const releaseDialog = page.getByRole("alertdialog", {
+    name: `取消认领 ${temporarilyClaimedName}`,
+  });
+  const releaseAction = releaseDialog.getByRole("button", { name: "确认取消认领" });
+  await expect(releaseDialog).toContainText("其他分析人员可以立即认领该用例");
+  await expect(releaseAction).toBeDisabled();
+  await releaseDialog.getByLabel("取消原因 *").fill("误领，需要由环境负责人分析");
+  await expect(releaseAction).toBeEnabled();
+  await expectDialogFitsViewport(page, releaseDialog);
+  await captureUi(page, "failure-analysis-release-claim-1024", false);
+  const releaseResponse = page.waitForResponse(
+    (response) =>
+      response.url().includes("/api/v1/failure-analysis/claims/") &&
+      response.url().endsWith("/release"),
+  );
+  await releaseAction.click();
+  expect((await releaseResponse).status()).toBe(200);
+  await expect(releaseDialog).toBeHidden();
+  await expect(temporarilyClaimedCard).toHaveCount(0);
+  await expect(page.getByRole("tab", { name: "我的分析 0" })).toBeVisible();
+  await expect(page.getByLabel("任务分析概览")).toContainText("已认领 0");
+
+  const releasedCandidateResponse = page.waitForResponse((response) =>
+    response.url().includes("/api/v1/failure-analysis/candidates?"),
+  );
+  await page.getByRole("button", { name: "返回继续认领" }).click();
+  expect((await releasedCandidateResponse).status()).toBe(200);
+  const releasedCandidateRow = page
+    .locator(".failure-analysis-table tbody tr")
+    .filter({ hasText: temporarilyClaimedName });
+  await expect(releasedCandidateRow).toContainText("待认领");
+
   await page.getByLabel("选择本页全部未认领用例").check();
   await expect(page.locator(".failure-analysis-floating-action")).toContainText("已选择 4 个用例");
   let tabServerComponentRequests = 0;

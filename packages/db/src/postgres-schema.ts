@@ -1104,6 +1104,43 @@ export const pgFailureAnalysisClaims = pgTable(
   ],
 );
 
+export const pgFailureAnalysisClaimReleases = pgTable(
+  "failure_analysis_claim_releases",
+  {
+    id: text("id").primaryKey(),
+    analysisId: text("analysis_id").notNull().unique(),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => pgProjects.id, { onDelete: "cascade" }),
+    batchId: text("batch_id")
+      .notNull()
+      .references(() => pgRunBatches.id, { onDelete: "cascade" }),
+    executionRunId: text("execution_run_id")
+      .notNull()
+      .references(() => pgExecutionRuns.id, { onDelete: "cascade" }),
+    caseDefinitionId: text("case_definition_id").notNull(),
+    claimantId: text("claimant_id").notNull(),
+    claimantUsername: text("claimant_username").notNull(),
+    claimantDisplayName: text("claimant_display_name").notNull(),
+    reason: text("reason").notNull(),
+    claimedAt: text("claimed_at").notNull(),
+    releasedAt: text("released_at").notNull(),
+  },
+  (table) => [
+    index("failure_analysis_claim_releases_batch_idx").on(
+      table.batchId,
+      table.releasedAt,
+      table.id,
+    ),
+    index("failure_analysis_claim_releases_claimant_idx").on(
+      table.projectId,
+      table.claimantId,
+      table.releasedAt,
+      table.id,
+    ),
+  ],
+);
+
 // 日志公开访问：token 明文只出现在导出响应中，库中只存 SHA-256 哈希。
 // expires_at 对新记录为永久哨兵值（应用层 PERMANENT_LOG_ACCESS_EXPIRY），列保持 NOT NULL。
 export const pgAttemptLogShares = pgTable(
@@ -1825,6 +1862,7 @@ export const postgresSchema = {
   executionRuns: pgExecutionRuns,
   runAttempts: pgRunAttempts,
   failureAnalysisClaims: pgFailureAnalysisClaims,
+  failureAnalysisClaimReleases: pgFailureAnalysisClaimReleases,
   assignments: pgAssignments,
   assignmentLeases: pgAssignmentLeases,
   assignmentClaimRequests: pgAssignmentClaimRequests,

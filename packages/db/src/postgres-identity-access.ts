@@ -498,12 +498,14 @@ export class PostgresIdentityAccessRepository implements IdentityAccessRepositor
     };
   }
 
-  async touchSession(sessionId: string, touchedAt: string): Promise<void> {
+  async renewSession(input: Parameters<IdentityAccessRepository["renewSession"]>[0]) {
     await this.ready();
-    await this.handle.pool.query("UPDATE user_sessions SET last_seen_at = $1 WHERE id = $2", [
-      touchedAt,
-      sessionId,
-    ]);
+    const result = await this.handle.pool.query(
+      `UPDATE user_sessions SET last_seen_at=$1,expires_at=$2
+       WHERE id=$3 AND revoked_at IS NULL AND expires_at>$1`,
+      [input.refreshedAt, input.expiresAt, input.sessionId],
+    );
+    return result.rowCount === 1;
   }
 
   async revokeSession(sessionId: string, revokedAt: string): Promise<void> {

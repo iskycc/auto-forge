@@ -239,6 +239,15 @@ describe("SQLite identity access", () => {
       });
       const administrator = await service.authenticateSession(bootstrap.token);
       expect(administrator.systemPermissions).toContain("user.manage");
+      clock.advanceHours(7);
+      const refreshed = await service.refreshSession(
+        await service.authenticateSession(bootstrap.token),
+      );
+      expect(refreshed.expiresAt).toBe("2026-08-09T15:00:00.000Z");
+      clock.advanceHours(2);
+      await expect(service.authenticateSession(bootstrap.token)).resolves.toMatchObject({
+        sessionId: administrator.sessionId,
+      });
       expect(await service.setupRequired()).toBe(false);
       await expect(
         service.bootstrap({
@@ -281,8 +290,12 @@ describe("SQLite identity access", () => {
         password: "Replacement!12345",
         provider: "local",
       });
+      const replacementIdentity = await service.authenticateSession(replacementSession.token);
       await service.revokeUserSessions(administrator, localUser.id);
       await expect(service.authenticateSession(replacementSession.token)).rejects.toMatchObject({
+        code: "AUTH_REQUIRED",
+      });
+      await expect(service.refreshSession(replacementIdentity)).rejects.toMatchObject({
         code: "AUTH_REQUIRED",
       });
 

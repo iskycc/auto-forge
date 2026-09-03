@@ -117,6 +117,45 @@ export class FailureAnalysisService {
     });
   }
 
+  countMyClaims(input: {
+    projectId: string;
+    projectVersionId?: string;
+    claimantId: string;
+    batchId?: string;
+  }) {
+    return this.repository.countClaims(input);
+  }
+
+  async releaseClaim(input: {
+    analysisId: string;
+    projectId: string;
+    claimantId: string;
+    reason: string;
+  }) {
+    const reason = optionalTrimmed(input.reason);
+    if (!reason || reason.length > 1_000) {
+      throw new DomainError(
+        "FAILURE_ANALYSIS_RELEASE_REASON_REQUIRED",
+        "请填写取消认领原因，最多 1000 个字符。",
+      );
+    }
+    const released = await this.repository.release({
+      id: this.ids.next(),
+      analysisId: input.analysisId,
+      projectId: input.projectId,
+      claimantId: input.claimantId,
+      reason,
+      releasedAt: this.clock.now().toISOString(),
+    });
+    if (!released) {
+      throw new DomainError(
+        "FAILURE_ANALYSIS_RELEASE_NOT_ALLOWED",
+        "分析任务不存在、不是由当前账号认领，或已经完成，无法取消认领。",
+      );
+    }
+    return released;
+  }
+
   async listExportClaims(input: {
     projectId: string;
     batchId: string;
