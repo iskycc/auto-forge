@@ -55,8 +55,9 @@ test("matches DDT Insight LDAP configuration, authentication, and Group profile 
   const ldapContext = await loginWithLdap(browser, "alice", directoryPassword);
   const ldapPage = ldapContext.pages()[0]!;
   await expect(ldapPage.getByRole("heading", { level: 1, name: /Alice Directory/ })).toBeVisible();
-  await expect(ldapPage.getByRole("link", { name: "用例管理", exact: true })).toBeVisible();
-  await expect(ldapPage.getByRole("link", { name: "安全审计" })).toHaveCount(0);
+  const mainNavigation = ldapPage.getByRole("navigation", { name: "主导航" });
+  await expect(mainNavigation.getByRole("link", { name: "用例管理", exact: true })).toBeVisible();
+  await expect(mainNavigation.getByRole("link", { name: "安全审计" })).toHaveCount(0);
 
   await page.goto("/settings/access?section=users&query=alice&source=ldap");
   await expect(page.getByText("Group · auditors、viewers", { exact: true })).toBeVisible();

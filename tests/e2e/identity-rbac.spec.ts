@@ -88,9 +88,10 @@ test("local user completes forced password change and self-service session lifec
   await expect(page).toHaveURL(/\/login\?passwordChanged=1$/);
 
   await login(page, username, replacementPassword);
-  await expect(page.getByRole("link", { name: "用例管理", exact: true })).toBeVisible();
+  const mainNavigation = page.getByRole("navigation", { name: "主导航" });
+  await expect(mainNavigation.getByRole("link", { name: "用例管理", exact: true })).toBeVisible();
   await expandAdministrationGroup(page, "执行配置");
-  await expect(page.getByRole("link", { name: "执行机组", exact: true })).toHaveAttribute(
+  await expect(mainNavigation.getByRole("link", { name: "执行机组", exact: true })).toHaveAttribute(
     "href",
     "/runners?section=groups",
   );
@@ -338,11 +339,12 @@ test("every built-in role receives only its authorized navigation and API surfac
     await expandAdministrationGroup(rolePage, "身份权限");
     await expandAdministrationGroup(rolePage, "执行配置");
     await expandAdministrationGroup(rolePage, "平台运维");
+    const mainNavigation = rolePage.getByRole("navigation", { name: "主导航" });
     for (const label of roleUser.visible) {
-      await expect(rolePage.getByRole("link", { name: label, exact: true })).toBeVisible();
+      await expect(mainNavigation.getByRole("link", { name: label, exact: true })).toBeVisible();
     }
     for (const label of roleUser.hidden) {
-      await expect(rolePage.getByRole("link", { name: label, exact: true })).toHaveCount(0);
+      await expect(mainNavigation.getByRole("link", { name: label, exact: true })).toHaveCount(0);
     }
 
     const auditStatus = await browserStatus(rolePage, "/api/v1/audit-events?limit=1");

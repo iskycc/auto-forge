@@ -1373,7 +1373,7 @@ public class MixedVisibleTest {
   await expect(page.locator(".quality-trend-chart > div.single")).toContainText("09-04");
   await expect(page.locator(".runner-capacity-overview")).toBeVisible();
   await expect(page.locator(".dashboard-runner-snapshots")).toContainText("未分组执行机");
-  await expect(page.locator(".dashboard-runner-snapshots time")).toBeVisible();
+  await expect(page.locator(".dashboard-runner-snapshots time").first()).toBeVisible();
   await expect(page.locator(".quality-metric-strip")).toContainText("暂无上周基线");
   await expect(page.locator(".failure-scope-metrics")).toContainText("失败类型");
   await expect(page.locator(".failure-triage-insight")).toContainText("高度集中");
