@@ -391,8 +391,17 @@ export class SqliteFailureAnalysisRepository implements FailureAnalysisRepositor
   }
 
   async listClaims(input: Parameters<FailureAnalysisRepository["listClaims"]>[0]) {
+    const completionOrder = input.completionOrder ?? "pending_first";
+    const includeCompleted = input.includeCompleted ?? true;
+    const completionExpression = sqliteCompletionRankExpression(completionOrder);
     const sortExpression = sqliteClaimSortExpression(input.sort);
-    const cursor = decodeFailureAnalysisClaimCursor(input.cursor, input.sort, input.direction);
+    const cursor = decodeFailureAnalysisClaimCursor(
+      input.cursor,
+      input.sort,
+      input.direction,
+      completionOrder,
+      includeCompleted,
+    );
     const where = ["claim.project_id=?", "claim.claimant_id=?"];
     const parameters: Array<string | number> = [input.projectId, input.claimantId];
     if (input.projectVersionId) {
@@ -403,21 +412,31 @@ export class SqliteFailureAnalysisRepository implements FailureAnalysisRepositor
       where.push("claim.batch_id=?");
       parameters.push(input.batchId);
     }
+    if (!includeCompleted) where.push("claim.status<>'completed'");
     if (cursor) {
       const comparison = input.direction === "desc" ? "<" : ">";
       where.push(
-        `(${sortExpression}${comparison}? OR (${sortExpression}=? AND claim.id${comparison}?))`,
+        `(${completionExpression}>? OR (${completionExpression}=? AND
+          (${sortExpression}${comparison}? OR (${sortExpression}=? AND claim.id${comparison}?))))`,
       );
-      parameters.push(cursor.value, cursor.value, cursor.analysisId);
+      parameters.push(
+        cursor.completionRank,
+        cursor.completionRank,
+        cursor.value,
+        cursor.value,
+        cursor.analysisId,
+      );
     }
     parameters.push(input.limit + 1);
     const direction = input.direction === "desc" ? "DESC" : "ASC";
     const rows = this.handle.client
       .prepare(
-        `${claimSelectSql(`${sortExpression} AS sortValue`)}
+        `${claimSelectSql(
+          `${sortExpression} AS sortValue,${completionExpression} AS completionRank`,
+        )}
          JOIN run_batches batch ON batch.id=claim.batch_id
          WHERE ${where.join(" AND ")}
-         ORDER BY ${sortExpression} ${direction},claim.id ${direction} LIMIT ?`,
+         ORDER BY ${completionExpression} ASC,${sortExpression} ${direction},claim.id ${direction} LIMIT ?`,
       )
       .all(...parameters) as FailureAnalysisRow[];
     const hasMore = rows.length > input.limit;
@@ -430,6 +449,9 @@ export class SqliteFailureAnalysisRepository implements FailureAnalysisRepositor
             nextCursor: encodeFailureAnalysisClaimCursor({
               sort: input.sort,
               direction: input.direction,
+              completionOrder,
+              completionRank: Number(last.completionRank ?? 0),
+              includeCompleted,
               value: last.sortValue ?? "",
               analysisId: last.analysisId,
             }),
@@ -503,20 +525,7 @@ export class SqliteFailureAnalysisRepository implements FailureAnalysisRepositor
          ORDER BY history.completedAt DESC,history.analysisId DESC LIMIT ?`,
       )
       .all(...parameters) as FailureAnalysisHistoryRow[];
-    const hasMore = rows.length > input.limit;
-    const pageRows = rows.slice(0, input.limit);
-    const last = pageRows.at(-1);
-    return {
-      items: pageRows.map(toHistoryItem),
-      ...(hasMore && last?.completedAt
-        ? {
-            nextCursor: encodeRunBatchCursor({
-              createdAt: last.completedAt,
-              id: last.analysisId!,
-            }),
-          }
-        : {}),
-    };
+    return historyPage(rows, input.limit);
   }
 
   async listRecentCaseHistories(
@@ -547,6 +556,44 @@ export class SqliteFailureAnalysisRepository implements FailureAnalysisRepositor
       FailureAnalysisHistoryRow & { historyRank: number }
     >;
     return rows.map(toHistoryItem);
+  }
+
+  async listCompletedConclusions(
+    input: Parameters<FailureAnalysisRepository["listCompletedConclusions"]>[0],
+  ) {
+    const cursor = decodeRunBatchCursor(input.cursor);
+    const where = [
+      "claim.project_id=?",
+      "claim.status='completed'",
+      "claim.completed_at IS NOT NULL",
+    ];
+    const parameters: Array<string | number> = [input.projectId];
+    const query = input.query?.trim().slice(0, 200);
+    if (query) {
+      where.push(`(LOWER(claim.case_name) LIKE ? ESCAPE '\\'
+        OR LOWER(claim.class_name) LIKE ? ESCAPE '\\'
+        OR LOWER(claim.failure_summary) LIKE ? ESCAPE '\\'
+        OR LOWER(COALESCE(claim.issue_description,'')) LIKE ? ESCAPE '\\'
+        OR LOWER(COALESCE(claim.ticket_reference,'')) LIKE ? ESCAPE '\\'
+        OR LOWER(COALESCE(claim.remark,'')) LIKE ? ESCAPE '\\')`);
+      const pattern = `%${escapeSqliteLike(query.toLowerCase())}%`;
+      parameters.push(pattern, pattern, pattern, pattern, pattern, pattern);
+    }
+    if (cursor) {
+      where.push("(claim.completed_at<? OR (claim.completed_at=? AND claim.id<?))");
+      parameters.push(cursor.createdAt, cursor.createdAt, cursor.id);
+    }
+    parameters.push(input.limit + 1);
+    const rows = this.handle.client
+      .prepare(
+        `SELECT history.*,batch.sequence_number AS batchSequenceNumber,
+                batch.suite_name AS batchName
+         FROM (${claimSelectSql()} WHERE ${where.join(" AND ")}) history
+         JOIN run_batches batch ON batch.id=history.batchId
+         ORDER BY history.completedAt DESC,history.analysisId DESC LIMIT ?`,
+      )
+      .all(...parameters) as FailureAnalysisHistoryRow[];
+    return historyPage(rows, input.limit);
   }
 
   async start(input: Parameters<FailureAnalysisRepository["start"]>[0]) {
@@ -776,6 +823,31 @@ function sqliteClaimSortExpression(sort: FailureAnalysisSort): string {
     claim_status:
       "CASE claim.status WHEN 'claimed' THEN '1' WHEN 'analyzing' THEN '2' ELSE '3' END",
   }[sort];
+}
+
+function sqliteCompletionRankExpression(
+  completionOrder: "pending_first" | "completed_first",
+): string {
+  return completionOrder === "pending_first"
+    ? "CASE WHEN claim.status='completed' THEN 1 ELSE 0 END"
+    : "CASE WHEN claim.status='completed' THEN 0 ELSE 1 END";
+}
+
+function historyPage(rows: FailureAnalysisHistoryRow[], limit: number) {
+  const hasMore = rows.length > limit;
+  const pageRows = rows.slice(0, limit);
+  const last = pageRows.at(-1);
+  return {
+    items: pageRows.map(toHistoryItem),
+    ...(hasMore && last?.completedAt
+      ? {
+          nextCursor: encodeRunBatchCursor({
+            createdAt: last.completedAt,
+            id: last.analysisId!,
+          }),
+        }
+      : {}),
+  };
 }
 
 function escapeSqliteLike(value: string): string {

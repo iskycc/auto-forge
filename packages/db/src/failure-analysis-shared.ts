@@ -1,4 +1,8 @@
-import type { FailureAnalysisCandidate, FailureAnalysisSort } from "@autoforge/contracts";
+import type {
+  FailureAnalysisCandidate,
+  FailureAnalysisCompletionOrder,
+  FailureAnalysisSort,
+} from "@autoforge/contracts";
 import type { FailureAnalysisClaim } from "@autoforge/domain";
 
 // 分析列表只承载失败概要；完整执行输出从弹窗日志/公开日志按需读取。限制单项概要可避免
@@ -39,6 +43,7 @@ export type FailureAnalysisRow = {
   analysisUpdatedAt: string | null;
   claimRank?: number | string;
   sortValue?: string;
+  completionRank?: number | string;
 };
 
 export function toFailureAnalysisCandidate(row: FailureAnalysisRow): FailureAnalysisCandidate {
@@ -124,6 +129,9 @@ type CandidateCursor = {
 type ClaimCursor = {
   sort: FailureAnalysisSort;
   direction: "asc" | "desc";
+  completionOrder: FailureAnalysisCompletionOrder;
+  completionRank: number;
+  includeCompleted: boolean;
   value: string;
   analysisId: string;
 };
@@ -167,6 +175,8 @@ export function decodeFailureAnalysisClaimCursor(
   encoded: string | undefined,
   sort: FailureAnalysisSort,
   direction: "asc" | "desc",
+  completionOrder: FailureAnalysisCompletionOrder,
+  includeCompleted: boolean,
 ): ClaimCursor | undefined {
   if (!encoded || encoded.length > 1_024) return undefined;
   try {
@@ -176,6 +186,9 @@ export function decodeFailureAnalysisClaimCursor(
     if (
       value.sort !== sort ||
       value.direction !== direction ||
+      value.completionOrder !== completionOrder ||
+      (value.completionRank !== 0 && value.completionRank !== 1) ||
+      value.includeCompleted !== includeCompleted ||
       typeof value.value !== "string" ||
       value.value.length > 512 ||
       typeof value.analysisId !== "string" ||

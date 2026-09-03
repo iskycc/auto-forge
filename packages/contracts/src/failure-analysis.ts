@@ -22,6 +22,8 @@ export const failureAnalysisSortSchema = z.enum([
   "claim_status",
 ]);
 
+export const failureAnalysisCompletionOrderSchema = z.enum(["pending_first", "completed_first"]);
+
 export const failureAnalysisCandidateSchema = z.object({
   executionRunId: z.string().min(1),
   caseDefinitionId: z.string().min(1),
@@ -173,6 +175,7 @@ export const uploadFailureAnalysisEvidenceQuerySchema = z.object({
 });
 
 export type FailureAnalysisSort = z.infer<typeof failureAnalysisSortSchema>;
+export type FailureAnalysisCompletionOrder = z.infer<typeof failureAnalysisCompletionOrderSchema>;
 export type FailureAnalysisCandidate = z.infer<typeof failureAnalysisCandidateSchema>;
 export type FailureAnalysisCandidatePage = z.infer<typeof failureAnalysisCandidatePageSchema>;
 export type FailureAnalysisBatch = z.infer<typeof failureAnalysisBatchSchema>;

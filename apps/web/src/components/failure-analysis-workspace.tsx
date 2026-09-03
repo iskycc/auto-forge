@@ -6,6 +6,7 @@ import type {
   FailureAnalysisCandidatePage,
   FailureAnalysisClaimReleaseView,
   FailureAnalysisClaimView,
+  FailureAnalysisCompletionOrder,
   FailureAnalysisHistoryItemView,
   FailureAnalysisSort,
 } from "@autoforge/contracts";
@@ -19,6 +20,7 @@ import {
   ChevronLeft,
   ChevronRight,
   ClipboardCheck,
+  Copy,
   ClipboardPaste,
   ExternalLink,
   FileCheck2,
@@ -36,9 +38,12 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 
 import { AttemptLogViewer } from "@/components/attempt-log-viewer";
+import { FailureAnalysisConclusionPicker } from "@/components/failure-analysis-conclusion-picker";
 import { LoadingState } from "@/components/loading-state";
 import { Button, Input, Select, Textarea } from "@/components/ui";
 import { readApiErrorMessage } from "@/lib/client-api";
+import { copyRichTextToClipboard } from "@/lib/client-clipboard";
+import { formatFailureAnalysisClipboard } from "@/lib/failure-analysis-clipboard";
 import { formatPlatformDateTime } from "@/lib/platform-date-time";
 import { useToast } from "@/components/ui-feedback";
 
@@ -123,6 +128,9 @@ export function FailureAnalysisWorkspace({
   const [direction, setDirection] = useState<"asc" | "desc">("asc");
   const [claimSort, setClaimSort] = useState<FailureAnalysisSort>("class_path");
   const [claimDirection, setClaimDirection] = useState<"asc" | "desc">("asc");
+  const [completionOrder, setCompletionOrder] =
+    useState<FailureAnalysisCompletionOrder>("pending_first");
+  const [includeCompleted, setIncludeCompleted] = useState(true);
   const [queryInput, setQueryInput] = useState("");
   const [query, setQuery] = useState("");
   const [loadingCandidates, setLoadingCandidates] = useState(false);
@@ -198,6 +206,8 @@ export function FailureAnalysisWorkspace({
           batchId: initialBatchId,
           sort: claimSort,
           direction: claimDirection,
+          completionOrder,
+          includeCompleted: String(includeCompleted),
           limit: "50",
         });
         if (cursor) parameters.set("cursor", cursor);
@@ -222,7 +232,15 @@ export function FailureAnalysisWorkspace({
         if (requestSequence === claimsRequestSequence.current) setLoadingClaims(false);
       }
     },
-    [claimDirection, claimSort, initialBatchId, projectId, projectVersionId],
+    [
+      claimDirection,
+      claimSort,
+      completionOrder,
+      includeCompleted,
+      initialBatchId,
+      projectId,
+      projectVersionId,
+    ],
   );
 
   useEffect(() => {
@@ -270,6 +288,32 @@ export function FailureAnalysisWorkspace({
   const allClaimsSelected =
     selectableClaims.length > 0 &&
     selectableClaims.every((claim) => selectedAnalysisIds.has(claim.id));
+  const claimGroups = useMemo(() => {
+    const pending = claims.filter((claim) => claim.status !== "completed");
+    const completed = claims.filter((claim) => claim.status === "completed");
+    return completionOrder === "pending_first"
+      ? [
+          { key: "pending", label: "未完成分析", claims: pending },
+          { key: "completed", label: "已完成分析", claims: completed },
+        ]
+      : [
+          { key: "completed", label: "已完成分析", claims: completed },
+          { key: "pending", label: "未完成分析", claims: pending },
+        ];
+  }, [claims, completionOrder]);
+  const modalOpen = Boolean(dialogClaims?.length || releaseDialogClaim);
+
+  useEffect(() => {
+    if (!modalOpen) return;
+    const previousOverflow = document.body.style.overflow;
+    const previousOverscrollBehavior = document.body.style.overscrollBehavior;
+    document.body.style.overflow = "hidden";
+    document.body.style.overscrollBehavior = "none";
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      document.body.style.overscrollBehavior = previousOverscrollBehavior;
+    };
+  }, [modalOpen]);
 
   function changeView(nextView: WorkspaceView): void {
     setView(nextView);
@@ -298,6 +342,18 @@ export function FailureAnalysisWorkspace({
     setClaimsCursorHistory([]);
     setClaimsPageCursor(undefined);
     setClaimDirection((current) => (current === "asc" ? "desc" : "asc"));
+  }
+
+  function changeCompletionOrder(nextOrder: FailureAnalysisCompletionOrder): void {
+    setClaimsCursorHistory([]);
+    setClaimsPageCursor(undefined);
+    setCompletionOrder(nextOrder);
+  }
+
+  function changeIncludeCompleted(nextIncludeCompleted: boolean): void {
+    setClaimsCursorHistory([]);
+    setClaimsPageCursor(undefined);
+    setIncludeCompleted(nextIncludeCompleted);
   }
 
   function toggleSelection(setter: typeof setSelectedRunIds, id: string, checked: boolean): void {
@@ -404,11 +460,9 @@ export function FailureAnalysisWorkspace({
         return previous?.status !== "completed" && updated.status === "completed";
       }).length,
     );
-    if (claimSort === "claim_status") {
-      setClaimsCursorHistory([]);
-      setClaimsPageCursor(undefined);
-      void loadClaims();
-    }
+    setClaimsCursorHistory([]);
+    setClaimsPageCursor(undefined);
+    void loadClaims();
     toast.success(`已完成 ${updatedClaims.length} 个用例的分析并永久保存。`);
   }
 
@@ -435,7 +489,11 @@ export function FailureAnalysisWorkspace({
 
   return (
     <>
-      <section className="content-card failure-analysis-shell">
+      <section
+        aria-hidden={modalOpen ? true : undefined}
+        className="content-card failure-analysis-shell"
+        inert={modalOpen ? true : undefined}
+      >
         <div className="failure-analysis-tabs" role="tablist" aria-label="用例分析步骤">
           <Button
             aria-selected={view === "claim"}
@@ -540,6 +598,29 @@ export function FailureAnalysisWorkspace({
                     ))}
                   </Select>
                 </label>
+                <label className="failure-analysis-order-control">
+                  <span>状态分组</span>
+                  <Select
+                    aria-label="分析完成状态分组"
+                    disabled={loadingClaims}
+                    onChange={(event) =>
+                      changeCompletionOrder(event.target.value as FailureAnalysisCompletionOrder)
+                    }
+                    value={completionOrder}
+                  >
+                    <option value="pending_first">未完成在前</option>
+                    <option value="completed_first">已完成在前</option>
+                  </Select>
+                </label>
+                <label className="failure-analysis-completed-filter">
+                  <Input
+                    checked={includeCompleted}
+                    disabled={loadingClaims}
+                    onChange={(event) => changeIncludeCompleted(event.target.checked)}
+                    type="checkbox"
+                  />
+                  <span>显示已完成分析</span>
+                </label>
                 <Button
                   aria-label={`当前${claimDirection === "asc" ? "升序" : "降序"}，点击切换为${claimDirection === "asc" ? "降序" : "升序"}`}
                   disabled={loadingClaims}
@@ -574,10 +655,22 @@ export function FailureAnalysisWorkspace({
             ) : claims.length === 0 ? (
               <div className="failure-analysis-empty">
                 <ClipboardCheck size={25} />
-                <strong>当前任务还没有你认领的用例</strong>
-                <Button onClick={() => changeView("claim")} type="button" variant="primary">
-                  去认领失败用例
-                </Button>
+                <strong>
+                  {includeCompleted ? "当前任务还没有你认领的用例" : "当前没有未完成的分析"}
+                </strong>
+                {includeCompleted ? (
+                  <Button onClick={() => changeView("claim")} type="button" variant="primary">
+                    去认领失败用例
+                  </Button>
+                ) : (
+                  <Button
+                    onClick={() => changeIncludeCompleted(true)}
+                    type="button"
+                    variant="secondary"
+                  >
+                    显示已完成分析
+                  </Button>
+                )}
               </div>
             ) : (
               <>
@@ -599,63 +692,78 @@ export function FailureAnalysisWorkspace({
                     <small>{selectableClaims.length} 个可分析用例</small>
                   </span>
                 </label>
-                <div className="failure-analysis-card-list">
-                  {claims.map((claim) => (
-                    <article className="failure-analysis-card" key={claim.id}>
-                      <Input
-                        aria-label={`选择分析 ${claim.caseName}`}
-                        checked={selectedAnalysisIds.has(claim.id)}
-                        disabled={!canManage || claim.status === "completed"}
-                        onChange={(event) =>
-                          toggleSelection(setSelectedAnalysisIds, claim.id, event.target.checked)
-                        }
-                        type="checkbox"
-                      />
-                      <div className="failure-analysis-card-main">
-                        <div className="failure-analysis-card-title">
-                          <h3>{claim.caseName}</h3>
-                          <span className={`analysis-status ${claim.status}`}>
-                            {statusLabel(claim.status)}
-                          </span>
+                <div className="failure-analysis-grouped-list">
+                  {claimGroups.map((group) =>
+                    group.claims.length > 0 ? (
+                      <section className="failure-analysis-claim-group" key={group.key}>
+                        <h3>
+                          {group.label} <span>本页 {group.claims.length}</span>
+                        </h3>
+                        <div className="failure-analysis-card-list">
+                          {group.claims.map((claim) => (
+                            <article className="failure-analysis-card" key={claim.id}>
+                              <Input
+                                aria-label={`选择分析 ${claim.caseName}`}
+                                checked={selectedAnalysisIds.has(claim.id)}
+                                disabled={!canManage || claim.status === "completed"}
+                                onChange={(event) =>
+                                  toggleSelection(
+                                    setSelectedAnalysisIds,
+                                    claim.id,
+                                    event.target.checked,
+                                  )
+                                }
+                                type="checkbox"
+                              />
+                              <div className="failure-analysis-card-main">
+                                <div className="failure-analysis-card-title">
+                                  <h3>{claim.caseName}</h3>
+                                  <span className={`analysis-status ${claim.status}`}>
+                                    {statusLabel(claim.status)}
+                                  </span>
+                                </div>
+                                <code>{claim.className}</code>
+                                <p title={claim.failureSummary}>{claim.failureSummary}</p>
+                              </div>
+                              <dl>
+                                <div>
+                                  <dt>认领时间</dt>
+                                  <dd>{formatPlatformDateTime(claim.claimedAt)}</dd>
+                                </div>
+                                <div>
+                                  <dt>分析结论</dt>
+                                  <dd>{categoryLabel(claim.category) ?? "尚未选择"}</dd>
+                                </div>
+                              </dl>
+                              <div className="failure-analysis-card-actions">
+                                <Button
+                                  disabled={!canManage}
+                                  onClick={() => setDialogClaims([claim])}
+                                  size="compact"
+                                  type="button"
+                                  variant="secondary"
+                                >
+                                  {claim.status === "completed" ? "查看分析详情" : "开始分析"}
+                                </Button>
+                                {claim.status !== "completed" ? (
+                                  <Button
+                                    className="failure-analysis-release-trigger"
+                                    disabled={!canManage}
+                                    onClick={() => setReleaseDialogClaim(claim)}
+                                    size="compact"
+                                    type="button"
+                                    variant="ghost"
+                                  >
+                                    <UserMinus aria-hidden="true" size={14} /> 取消认领
+                                  </Button>
+                                ) : null}
+                              </div>
+                            </article>
+                          ))}
                         </div>
-                        <code>{claim.className}</code>
-                        <p title={claim.failureSummary}>{claim.failureSummary}</p>
-                      </div>
-                      <dl>
-                        <div>
-                          <dt>认领时间</dt>
-                          <dd>{formatPlatformDateTime(claim.claimedAt)}</dd>
-                        </div>
-                        <div>
-                          <dt>分析结论</dt>
-                          <dd>{categoryLabel(claim.category) ?? "尚未选择"}</dd>
-                        </div>
-                      </dl>
-                      <div className="failure-analysis-card-actions">
-                        <Button
-                          disabled={!canManage}
-                          onClick={() => setDialogClaims([claim])}
-                          size="compact"
-                          type="button"
-                          variant="secondary"
-                        >
-                          {claim.status === "completed" ? "查看分析详情" : "开始分析"}
-                        </Button>
-                        {claim.status !== "completed" ? (
-                          <Button
-                            className="failure-analysis-release-trigger"
-                            disabled={!canManage}
-                            onClick={() => setReleaseDialogClaim(claim)}
-                            size="compact"
-                            type="button"
-                            variant="ghost"
-                          >
-                            <UserMinus aria-hidden="true" size={14} /> 取消认领
-                          </Button>
-                        ) : null}
-                      </div>
-                    </article>
-                  ))}
+                      </section>
+                    ) : null,
+                  )}
                 </div>
               </>
             )}
@@ -671,7 +779,7 @@ export function FailureAnalysisWorkspace({
         )}
       </section>
 
-      {canManage && view === "claim" && selectedRunIds.size > 0 ? (
+      {canManage && !modalOpen && view === "claim" && selectedRunIds.size > 0 ? (
         <FloatingAction
           count={selectedRunIds.size}
           label="认领并进入分析"
@@ -679,7 +787,7 @@ export function FailureAnalysisWorkspace({
           onClick={() => void claimSelected()}
         />
       ) : null}
-      {canManage && view === "workbench" && selectedAnalysisIds.size > 0 ? (
+      {canManage && !modalOpen && view === "workbench" && selectedAnalysisIds.size > 0 ? (
         <FloatingAction
           count={selectedAnalysisIds.size}
           label="批量分析"
@@ -756,14 +864,14 @@ function ReleaseClaimDialog({
   return (
     <div
       className="runner-update-overlay failure-analysis-confirm-overlay"
-      onMouseDown={onClose}
+      onClick={onClose}
       role="presentation"
     >
       <section
         aria-label={`取消认领 ${claim.caseName}`}
         aria-modal="true"
         className="runner-update-dialog failure-analysis-release-dialog"
-        onMouseDown={(event) => event.stopPropagation()}
+        onClick={(event) => event.stopPropagation()}
         role="alertdialog"
       >
         <header>
@@ -1041,6 +1149,7 @@ function CompleteAnalysisDialog({
   onClose: () => void;
   onCompleted: (claims: FailureAnalysisClaimView[]) => void;
 }) {
+  const toast = useToast();
   const initial = claims.length === 1 ? claims[0] : undefined;
   const [category, setCategory] = useState<FailureAnalysisCategory | undefined>(initial?.category);
   const [issueDescription, setIssueDescription] = useState(initial?.issueDescription ?? "");
@@ -1057,8 +1166,10 @@ function CompleteAnalysisDialog({
   const [historyItems, setHistoryItems] = useState<FailureAnalysisHistoryItemView[]>([]);
   const [historyLoading, setHistoryLoading] = useState(true);
   const [historyError, setHistoryError] = useState("");
+  const [showConclusionPicker, setShowConclusionPicker] = useState(false);
   const [inheritanceCandidate, setInheritanceCandidate] =
     useState<FailureAnalysisHistoryItemView>();
+  const [copying, setCopying] = useState(false);
   const [error, setError] = useState("");
   const imageCloseButtonRef = useRef<HTMLButtonElement>(null);
   const imagePreviewTriggerRef = useRef<HTMLButtonElement>(null);
@@ -1070,15 +1181,6 @@ function CompleteAnalysisDialog({
   );
   const currentAnalysisIds = useMemo(() => new Set(claims.map((claim) => claim.id)), [claims]);
   const historyLimitPerCase = claims.length > 20 ? 1 : claims.length > 5 ? 2 : 5;
-  const reusableCodeIssue =
-    claims.length === 1
-      ? historyItems.find(
-          (item) =>
-            item.claim.caseDefinitionId === claims[0]?.caseDefinitionId &&
-            item.claim.category === "code_issue_filed" &&
-            Boolean(item.claim.issueDescription && item.claim.ticketReference),
-        )
-      : undefined;
   const closeScreenshotPreview = useCallback(() => {
     setPreviewClaim(undefined);
     window.requestAnimationFrame(() => imagePreviewTriggerRef.current?.focus());
@@ -1194,6 +1296,7 @@ function CompleteAnalysisDialog({
       logClaim ||
       previewClaim ||
       showCaseConfirmation ||
+      showConclusionPicker ||
       inheritanceCandidate
     ) {
       return;
@@ -1224,6 +1327,7 @@ function CompleteAnalysisDialog({
     readOnly,
     savePastedScreenshot,
     showCaseConfirmation,
+    showConclusionPicker,
   ]);
 
   async function complete(caseIssueConfirmed: boolean): Promise<void> {
@@ -1274,13 +1378,35 @@ function CompleteAnalysisDialog({
     void complete(false);
   }
 
-  function inheritCodeIssueConclusion(): void {
+  function inheritConclusion(): void {
     if (!inheritanceCandidate) return;
-    setCategory("code_issue_filed");
+    setCategory(inheritanceCandidate.claim.category);
     setIssueDescription(inheritanceCandidate.claim.issueDescription ?? "");
+    setCaseFixEvidence(inheritanceCandidate.claim.caseFixEvidence ?? "");
     setTicketReference(inheritanceCandidate.claim.ticketReference ?? "");
     setRemark(inheritanceCandidate.claim.remark ?? "");
     setInheritanceCandidate(undefined);
+  }
+
+  async function copyCaseInformation(): Promise<void> {
+    if (copying) return;
+    setCopying(true);
+    try {
+      await copyRichTextToClipboard(
+        formatFailureAnalysisClipboard(claims, {
+          ...(category ? { category } : {}),
+          ...(issueDescription ? { issueDescription } : {}),
+          ...(caseFixEvidence ? { caseFixEvidence } : {}),
+          ...(ticketReference ? { ticketReference } : {}),
+          ...(remark ? { remark } : {}),
+        }),
+      );
+      toast.success(`已复制 ${claims.length} 个用例的信息和当前分析结论。`);
+    } catch (copyError) {
+      setError(copyError instanceof Error ? copyError.message : "复制用例信息失败。");
+    } finally {
+      setCopying(false);
+    }
   }
 
   return (
@@ -1288,17 +1414,25 @@ function CompleteAnalysisDialog({
       <div
         className="runner-update-overlay failure-analysis-overlay"
         role="presentation"
-        onMouseDown={onClose}
+        onClick={onClose}
       >
         <section
           aria-label={
             claims.length > 1 ? `批量分析 ${claims.length} 个用例` : `分析 ${claims[0]?.caseName}`
           }
           aria-modal="true"
-          aria-hidden={previewClaim || inheritanceCandidate ? true : undefined}
+          aria-hidden={
+            logClaim ||
+            previewClaim ||
+            showCaseConfirmation ||
+            showConclusionPicker ||
+            inheritanceCandidate
+              ? true
+              : undefined
+          }
           className="runner-update-dialog failure-analysis-dialog failure-analysis-completion-dialog"
           data-read-only={readOnly ? "true" : undefined}
-          onMouseDown={(event) => event.stopPropagation()}
+          onClick={(event) => event.stopPropagation()}
           role="dialog"
         >
           <header className="runner-update-titlebar">
@@ -1315,9 +1449,21 @@ function CompleteAnalysisDialog({
                 {claims.length > 1 ? "相同结论将应用到所有选中用例" : claims[0]?.caseName}
               </small>
             </span>
-            <Button aria-label="关闭分析弹窗" onClick={onClose} type="button">
-              <X size={16} />
-            </Button>
+            <div className="failure-analysis-titlebar-actions">
+              <Button
+                disabled={copying}
+                onClick={() => void copyCaseInformation()}
+                size="compact"
+                type="button"
+                variant="secondary"
+              >
+                {copying ? <LoaderCircle className="spin" size={14} /> : <Copy size={14} />}
+                复制用例信息
+              </Button>
+              <Button aria-label="关闭分析弹窗" onClick={onClose} type="button">
+                <X size={16} />
+              </Button>
+            </div>
           </header>
           <div className="runner-update-body failure-analysis-dialog-body">
             <section className="failure-analysis-case-summary">
@@ -1366,9 +1512,10 @@ function CompleteAnalysisDialog({
               historyItems={historyItems}
               historyLoading={historyLoading}
               historyLimitPerCase={historyLimitPerCase}
+              canInherit={!readOnly}
+              onBrowse={() => setShowConclusionPicker(true)}
               onInherit={setInheritanceCandidate}
               onPreview={(claim, trigger) => openScreenshotPreview(claim, trigger)}
-              reusableCodeIssue={readOnly ? undefined : reusableCodeIssue}
               selectedCaseCount={claims.length}
             />
 
@@ -1576,14 +1723,14 @@ function CompleteAnalysisDialog({
       {previewClaim?.screenshot ? (
         <div
           className="failure-analysis-image-overlay"
-          onMouseDown={closeScreenshotPreview}
+          onClick={closeScreenshotPreview}
           role="presentation"
         >
           <section
             aria-label={`图片预览 ${previewClaim.screenshot.fileName}`}
             aria-modal="true"
             className="failure-analysis-image-dialog"
-            onMouseDown={(event) => event.stopPropagation()}
+            onClick={(event) => event.stopPropagation()}
             role="dialog"
           >
             <header>
@@ -1649,13 +1796,13 @@ function CompleteAnalysisDialog({
         <div
           className="runner-update-overlay failure-analysis-confirm-overlay"
           role="presentation"
-          onMouseDown={() => setShowCaseConfirmation(false)}
+          onClick={() => setShowCaseConfirmation(false)}
         >
           <section
             aria-label="确认用例问题"
             aria-modal="true"
             className="runner-update-dialog failure-analysis-confirm-dialog"
-            onMouseDown={(event) => event.stopPropagation()}
+            onClick={(event) => event.stopPropagation()}
             role="alertdialog"
           >
             <header>
@@ -1688,27 +1835,53 @@ function CompleteAnalysisDialog({
           </section>
         </div>
       ) : null}
+      {showConclusionPicker ? (
+        <FailureAnalysisConclusionPicker
+          excludedAnalysisIds={currentAnalysisIds}
+          onClose={() => setShowConclusionPicker(false)}
+          onSelect={(item) => {
+            setShowConclusionPicker(false);
+            setInheritanceCandidate(item);
+          }}
+          projectId={projectId}
+        />
+      ) : null}
       {inheritanceCandidate ? (
         <div
           className="runner-update-overlay failure-analysis-confirm-overlay"
           role="presentation"
-          onMouseDown={() => setInheritanceCandidate(undefined)}
+          onClick={() => setInheritanceCandidate(undefined)}
         >
           <section
-            aria-label="确认继承未闭环代码问题"
+            aria-label={
+              inheritanceCandidate.claim.category === "code_issue_filed"
+                ? "确认继承未闭环代码问题"
+                : "确认继承分析结论"
+            }
             aria-modal="true"
             className="runner-update-dialog failure-analysis-confirm-dialog"
-            onMouseDown={(event) => event.stopPropagation()}
+            onClick={(event) => event.stopPropagation()}
             role="alertdialog"
           >
             <header>
               <AlertTriangle size={24} />
               <div>
-                <strong>确认问题单尚未闭环</strong>
-                <p>
-                  请确认问题单“{inheritanceCandidate.claim.ticketReference}
-                  ”尚未闭环，且当前失败仍由同一代码问题引起。若问题已修复或失败根因发生变化，请返回重新分析。
-                </p>
+                <strong>
+                  {inheritanceCandidate.claim.category === "code_issue_filed"
+                    ? "确认问题单尚未闭环"
+                    : "确认沿用该分析结论"}
+                </strong>
+                {inheritanceCandidate.claim.category === "code_issue_filed" ? (
+                  <p>
+                    请确认问题单“{inheritanceCandidate.claim.ticketReference}
+                    ”尚未闭环，且当前失败仍由同一代码问题引起。若问题已修复或失败根因发生变化，请返回重新分析。
+                  </p>
+                ) : (
+                  <p>
+                    将继承“{inheritanceCandidate.claim.caseName}
+                    ”的结论和说明。请确认当前失败根因一致；重跑证明不会被继承。
+                  </p>
+                )}
               </div>
             </header>
             <div className="dialog-actions">
@@ -1721,11 +1894,13 @@ function CompleteAnalysisDialog({
               </Button>
               <Button
                 className="failure-analysis-confirm-action"
-                onClick={inheritCodeIssueConclusion}
+                onClick={inheritConclusion}
                 type="button"
                 variant="danger"
               >
-                问题仍存在，继承结论
+                {inheritanceCandidate.claim.category === "code_issue_filed"
+                  ? "问题仍存在，继承结论"
+                  : "确认继承结论"}
               </Button>
             </div>
           </section>
@@ -1740,18 +1915,20 @@ function AnalysisHistoryPanel({
   historyLoading,
   historyError,
   historyLimitPerCase,
-  reusableCodeIssue,
+  canInherit,
   selectedCaseCount,
   onInherit,
+  onBrowse,
   onPreview,
 }: {
   historyItems: FailureAnalysisHistoryItemView[];
   historyLoading: boolean;
   historyError: string;
   historyLimitPerCase: number;
-  reusableCodeIssue: FailureAnalysisHistoryItemView | undefined;
+  canInherit: boolean;
   selectedCaseCount: number;
   onInherit: (item: FailureAnalysisHistoryItemView) => void;
+  onBrowse: () => void;
   onPreview: (claim: FailureAnalysisClaimView, trigger: HTMLButtonElement) => void;
 }) {
   return (
@@ -1761,11 +1938,18 @@ function AnalysisHistoryPanel({
           <History size={18} />
           <strong>历史分析结论</strong>
         </span>
-        <small>
-          {selectedCaseCount > 1
-            ? `按用例展示最近 ${historyLimitPerCase} 条`
-            : `最近 ${historyLimitPerCase} 条`}
-        </small>
+        <span className="failure-analysis-history-header-actions">
+          <small>
+            {selectedCaseCount > 1
+              ? `按用例展示最近 ${historyLimitPerCase} 条`
+              : `最近 ${historyLimitPerCase} 条`}
+          </small>
+          {canInherit ? (
+            <Button onClick={onBrowse} size="compact" type="button" variant="secondary">
+              <ClipboardPaste size={13} /> 从已分析用例继承
+            </Button>
+          ) : null}
+        </span>
       </header>
       {historyLoading ? (
         <div className="failure-analysis-history-state" role="status">
@@ -1839,14 +2023,16 @@ function AnalysisHistoryPanel({
                     <Maximize2 size={13} /> 查看证明截图
                   </Button>
                 ) : null}
-                {reusableCodeIssue?.claim.id === item.claim.id ? (
+                {canInherit ? (
                   <Button
                     onClick={() => onInherit(item)}
                     size="compact"
                     type="button"
                     variant="secondary"
                   >
-                    继承此代码问题结论
+                    {item.claim.category === "code_issue_filed"
+                      ? "继承此代码问题结论"
+                      : "继承此结论"}
                   </Button>
                 ) : null}
               </div>

@@ -1226,6 +1226,16 @@ public class MixedVisibleTest {
   await expect(comparisonDialog).toContainText("成功");
   await expect(comparisonDialog).not.toContainText("succeeded");
   await expect(comparisonDialog.getByText("第 1–1 项，共 1 项")).toBeVisible();
+  expect(
+    await comparisonDialog
+      .locator(".insight-comparison-table tbody tr")
+      .evaluate((row) => row.getBoundingClientRect().height),
+  ).toBeLessThanOrEqual(42);
+  await comparisonDialog.locator('select[aria-label="左侧批次结果"]').selectOption("failed");
+  await expect(comparisonDialog.getByText("没有符合当前条件的用例。")).toBeVisible();
+  await comparisonDialog.locator('select[aria-label="左侧批次结果"]').selectOption("all");
+  await expect(comparisonDialog.locator(".insight-comparison-table tbody tr")).toHaveCount(1);
+  await expect(comparisonDialog.getByRole("button", { name: "对比范围" })).toBeVisible();
   await comparisonDialog.getByRole("button", { name: "关闭批次对比明细" }).click();
   await page.getByRole("button", { name: "导出当前范围" }).click();
   const exportLink = page.getByRole("link", { name: /下载 \d+ 行/ });

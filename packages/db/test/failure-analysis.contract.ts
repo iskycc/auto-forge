@@ -424,6 +424,72 @@ export function failureAnalysisContract(
           remark: "批量完成",
           completedAt: "2026-09-01T01:05:00.000Z",
         });
+        const pendingClaim = await repository.claim({
+          projectId,
+          projectVersionId,
+          batchId,
+          executionRunIds: [runIds[2]],
+          claims: [{ id: "analysis-c", executionRunId: runIds[2] }],
+          claimantId: "analyst-a",
+          claimantUsername: "c10001",
+          claimantDisplayName: "分析员 A",
+          claimedAt: "2026-09-01T01:06:00.000Z",
+        });
+        expect(pendingClaim.claims).toHaveLength(1);
+        const pendingFirst = await repository.listClaims({
+          projectId,
+          projectVersionId,
+          claimantId: "analyst-a",
+          batchId,
+          sort: "class_path",
+          direction: "asc",
+          completionOrder: "pending_first",
+          limit: 10,
+        });
+        expect(pendingFirst.items.map((claim) => claim.status)).toEqual([
+          "claimed",
+          "completed",
+          "completed",
+        ]);
+        const completedFirstPage = await repository.listClaims({
+          projectId,
+          projectVersionId,
+          claimantId: "analyst-a",
+          batchId,
+          sort: "class_path",
+          direction: "asc",
+          completionOrder: "completed_first",
+          limit: 2,
+        });
+        const completedFirstSecondPage = await repository.listClaims({
+          projectId,
+          projectVersionId,
+          claimantId: "analyst-a",
+          batchId,
+          sort: "class_path",
+          direction: "asc",
+          completionOrder: "completed_first",
+          cursor: completedFirstPage.nextCursor!,
+          limit: 2,
+        });
+        expect(
+          [...completedFirstPage.items, ...completedFirstSecondPage.items].map(
+            (claim) => claim.status,
+          ),
+        ).toEqual(["completed", "completed", "claimed"]);
+        const unfinishedOnly = await repository.listClaims({
+          projectId,
+          projectVersionId,
+          claimantId: "analyst-a",
+          batchId,
+          sort: "class_path",
+          direction: "asc",
+          includeCompleted: false,
+          limit: 10,
+        });
+        expect(unfinishedOnly.items).toEqual([
+          expect.objectContaining({ id: "analysis-c", status: "claimed" }),
+        ]);
         const exportedClaims = await repository.findClaimsByExecutionRunIds({
           projectId,
           batchId,
@@ -460,6 +526,39 @@ export function failureAnalysisContract(
         expect(recentHistories.map((item) => item.claim.id).sort()).toEqual(
           completed.map((claim) => claim.id).sort(),
         );
+        const searchableConclusions = await repository.listCompletedConclusions({
+          projectId,
+          query: "alpha",
+          limit: 10,
+        });
+        expect(searchableConclusions.items).toEqual([
+          expect.objectContaining({
+            claim: expect.objectContaining({
+              caseName: "Alpha",
+              status: "completed",
+            }),
+          }),
+        ]);
+        const firstConclusionPage = await repository.listCompletedConclusions({
+          projectId,
+          limit: 1,
+        });
+        const secondConclusionPage = await repository.listCompletedConclusions({
+          projectId,
+          cursor: firstConclusionPage.nextCursor!,
+          limit: 1,
+        });
+        expect(firstConclusionPage.nextCursor).toBeTruthy();
+        expect(secondConclusionPage.items).toHaveLength(1);
+        expect(secondConclusionPage.items[0]!.claim.id).not.toBe(
+          firstConclusionPage.items[0]!.claim.id,
+        );
+        await expect(
+          repository.listCompletedConclusions({
+            projectId: "another-project",
+            limit: 10,
+          }),
+        ).resolves.toEqual({ items: [] });
         await expect(
           repository.findClaimsByExecutionRunIds({
             projectId: "another-project",
@@ -469,7 +568,7 @@ export function failureAnalysisContract(
         ).resolves.toEqual([]);
         await expect(
           repository.getBatch({ projectId, projectVersionId, batchId }),
-        ).resolves.toMatchObject({ claimedRuns: 2, completedRuns: 2 });
+        ).resolves.toMatchObject({ claimedRuns: 3, completedRuns: 2 });
 
         const failureSorted = await repository.listCandidates({
           projectId,
@@ -480,11 +579,11 @@ export function failureAnalysisContract(
           limit: 10,
         });
         expect(failureSorted?.items.map((item) => item.failureSummary)).toEqual([
-          "Assertion middle",
           "Assertion alpha",
+          "Assertion middle",
           "Assertion zeta",
         ]);
-        expect(failureSorted?.items.filter((item) => item.claim)).toHaveLength(2);
+        expect(failureSorted?.items.filter((item) => item.claim)).toHaveLength(3);
       } finally {
         await harness.dispose();
       }

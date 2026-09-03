@@ -10018,6 +10018,33 @@ button.icon-button:disabled {
   white-space: nowrap;
 }
 
+.insight-comparison-filters {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+.insight-comparison-filters > label {
+  display: grid;
+  min-width: 150px;
+  gap: 4px;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-caption);
+  font-weight: 700;
+}
+
+.insight-comparison-filters > small {
+  margin: 0 0 9px auto;
+  color: var(--color-text-tertiary);
+}
+
+.insight-comparison-filter-arrow {
+  margin-bottom: 10px;
+  color: var(--color-text-tertiary);
+}
+
 .insight-detail-table-scroll .data-table tbody tr:nth-child(even) {
   background: rgba(245, 245, 247, 0.42);
 }
@@ -10043,6 +10070,17 @@ button.icon-button:disabled {
 .insight-comparison-table td:first-child {
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.insight-detail-table-scroll .insight-comparison-table th,
+.insight-detail-table-scroll .insight-comparison-table td {
+  padding-block: 7px;
+  line-height: 1.3;
+}
+
+.insight-comparison-table .table-secondary {
+  display: inline;
+  margin-left: 8px;
 }
 
 .insight-line-chart {
@@ -16134,6 +16172,8 @@ button.icon-button:disabled {
   flex: 0 0 auto;
   align-items: flex-end;
   gap: 7px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .failure-analysis-order-control {
@@ -16148,6 +16188,46 @@ button.icon-button:disabled {
 .failure-analysis-order-control .ui-select-trigger {
   min-height: 32px;
   padding: 0 9px;
+}
+
+.failure-analysis-completed-filter {
+  display: inline-flex;
+  min-height: 32px;
+  align-items: center;
+  gap: 7px;
+  padding: 0 8px;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-caption);
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.failure-analysis-grouped-list,
+.failure-analysis-claim-group {
+  display: grid;
+  gap: 7px;
+}
+
+.failure-analysis-grouped-list {
+  gap: 12px;
+}
+
+.failure-analysis-claim-group > h3 {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-control);
+}
+
+.failure-analysis-claim-group > h3 > span {
+  border-radius: 999px;
+  padding: 2px 7px;
+  background: var(--color-surface-muted);
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-caption);
+  font-weight: 600;
 }
 
 .failure-analysis-completion-dialog {
@@ -16172,6 +16252,14 @@ button.icon-button:disabled {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.failure-analysis-titlebar-actions,
+.failure-analysis-history-header-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 7px;
 }
 
 .failure-analysis-completion-dialog .dialog-actions {
@@ -16238,6 +16326,69 @@ button.icon-button:disabled {
 
 .failure-analysis-history-panel > header small {
   color: var(--color-text-tertiary);
+}
+
+.failure-analysis-history-header-actions {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.failure-analysis-conclusion-picker {
+  width: min(820px, calc(100vw - 56px));
+  max-height: calc(100vh - 56px);
+}
+
+.failure-analysis-conclusion-picker-body,
+.failure-analysis-conclusion-results {
+  display: grid;
+  min-height: 0;
+  gap: 8px;
+}
+
+.failure-analysis-conclusion-search {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
+.failure-analysis-conclusion-results {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.failure-analysis-conclusion-results > article {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  padding: 9px 10px;
+  background: var(--color-surface-muted);
+}
+
+.failure-analysis-conclusion-results > article > div {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 3px 7px;
+}
+
+.failure-analysis-conclusion-results strong,
+.failure-analysis-conclusion-results code,
+.failure-analysis-conclusion-results small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.failure-analysis-conclusion-results code,
+.failure-analysis-conclusion-results small {
+  grid-column: 2;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-caption);
 }
 
 .failure-analysis-history-state {

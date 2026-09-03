@@ -219,10 +219,13 @@ test("terminal task failures support durable single and batch analysis with evid
 
   const firstCard = analysisCard(page, fixture.failedNames[0]);
   const secondCard = analysisCard(page, fixture.failedNames[1]);
+  await installClipboardCapture(page);
   await firstCard.getByRole("checkbox").check();
   await secondCard.getByRole("checkbox").check();
   await page.getByRole("button", { name: "批量分析" }).click();
   const batchDialog = page.getByRole("dialog", { name: "批量分析 2 个用例" });
+  await expect(page.locator(".failure-analysis-shell")).toHaveAttribute("inert", "");
+  await expect.poll(() => page.evaluate(() => document.body.style.overflow)).toBe("hidden");
   await expect(batchDialog.getByText(fixture.failedNames[0], { exact: true })).toBeVisible();
   await expect(batchDialog.getByRole("button", { name: "弹窗日志" })).toHaveCount(2);
   await expectDialogFitsViewport(page, batchDialog);
@@ -236,6 +239,19 @@ test("terminal task failures support durable single and batch analysis with evid
   await batchDialog.getByLabel("问题说明 *").fill("测试数据字段已经失效");
   await batchDialog.getByLabel("用例已修改证明 *").fill("commit abc123，已更新断言数据");
   await batchDialog.getByLabel("备注说明 选填").fill("相同根因批量处理");
+  await batchDialog.getByRole("button", { name: "复制用例信息" }).click();
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          Reflect.get(window, "__autoforgeCopiedFailureAnalysis") as
+            { html: string; text: string } | undefined,
+      ),
+    )
+    .toMatchObject({
+      html: expect.stringContaining("<h2>AutoForge 用例分析（2 个）</h2>"),
+      text: expect.stringContaining("分析结论：用例问题已修改"),
+    });
   await captureUi(page, "failure-analysis-case-fixed-dialog-1024", false);
   await batchDialog.getByRole("button", { name: "提交分析" }).click();
   const confirmation = page.getByRole("alertdialog", { name: "确认用例问题" });
@@ -245,6 +261,42 @@ test("terminal task failures support durable single and batch analysis with evid
   await expect(batchDialog).toBeHidden();
   await expect(firstCard).toContainText("已完成");
   await expect(secondCard).toContainText("用例问题已修改");
+  await expect(page.locator(".failure-analysis-shell")).not.toHaveAttribute("inert", "");
+  await expect(page.locator(".failure-analysis-claim-group > h3").first()).toContainText(
+    "未完成分析",
+  );
+  const hideCompletedResponse = page.waitForResponse((response) => {
+    const url = new URL(response.url());
+    return (
+      url.pathname === "/api/v1/failure-analysis/claims" &&
+      url.searchParams.get("includeCompleted") === "false"
+    );
+  });
+  await page.getByLabel("显示已完成分析").uncheck();
+  expect((await hideCompletedResponse).status()).toBe(200);
+  await expect(analysisCard(page, fixture.failedNames[0])).toHaveCount(0);
+  const showCompletedResponse = page.waitForResponse((response) => {
+    const url = new URL(response.url());
+    return (
+      url.pathname === "/api/v1/failure-analysis/claims" &&
+      url.searchParams.get("includeCompleted") === "true"
+    );
+  });
+  await page.getByLabel("显示已完成分析").check();
+  expect((await showCompletedResponse).status()).toBe(200);
+  const completedFirstResponse = page.waitForResponse((response) => {
+    const url = new URL(response.url());
+    return (
+      url.pathname === "/api/v1/failure-analysis/claims" &&
+      url.searchParams.get("completionOrder") === "completed_first"
+    );
+  });
+  await page.getByRole("button", { name: "分析完成状态分组" }).click();
+  await page.getByRole("option", { name: "已完成在前" }).click();
+  expect((await completedFirstResponse).status()).toBe(200);
+  await expect(page.locator(".failure-analysis-claim-group > h3").first()).toContainText(
+    "已完成分析",
+  );
 
   const codeCard = analysisCard(page, fixture.failedNames[2]);
   await codeCard.getByRole("button", { name: "开始分析" }).click();
@@ -263,6 +315,18 @@ test("terminal task failures support durable single and batch analysis with evid
   await expect(codeDialog.getByLabel("问题单链接或问题单号 *")).toHaveValue("BUG-1023");
   await codeDialog.getByLabel("问题说明 *").fill("后端返回的状态字段错误");
   await codeDialog.getByLabel("问题单链接或问题单号 *").fill("BUG-2048");
+  await codeDialog.getByRole("button", { name: "复制用例信息" }).click();
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          (
+            Reflect.get(window, "__autoforgeCopiedFailureAnalysis") as
+              { html: string; text: string } | undefined
+          )?.text,
+      ),
+    )
+    .toContain(fixture.failedNames[2]);
   await expectDialogFitsViewport(page, codeDialog);
   await captureUi(page, "failure-analysis-code-issue-dialog-1024", false);
   await codeDialog.getByRole("button", { name: "提交分析" }).click();
@@ -272,6 +336,30 @@ test("terminal task failures support durable single and batch analysis with evid
   const rerunCard = analysisCard(page, fixture.failedNames[3]);
   await rerunCard.getByRole("button", { name: "开始分析" }).click();
   const rerunDialog = page.getByRole("dialog", { name: `分析 ${fixture.failedNames[3]}` });
+  await rerunDialog.getByRole("button", { name: "从已分析用例继承" }).click();
+  const conclusionPicker = page.getByRole("dialog", { name: "选择已分析用例结论" });
+  const conclusionSearchResponse = page.waitForResponse((response) => {
+    const url = new URL(response.url());
+    return (
+      url.pathname === "/api/v1/failure-analysis/conclusions" &&
+      url.searchParams.get("query") === fixture.failedNames[0]
+    );
+  });
+  await conclusionPicker.getByLabel("搜索已分析用例").fill(fixture.failedNames[0]);
+  await conclusionPicker.getByRole("button", { name: "搜索", exact: true }).click();
+  expect((await conclusionSearchResponse).status()).toBe(200);
+  await conclusionPicker
+    .getByRole("button", { name: `选择并继承 ${fixture.failedNames[0]}` })
+    .click();
+  const generalInheritanceConfirmation = page.getByRole("alertdialog", {
+    name: "确认继承分析结论",
+  });
+  await generalInheritanceConfirmation.getByRole("button", { name: "确认继承结论" }).click();
+  await expect(rerunDialog.getByLabel("用例问题已修改", { exact: false })).toBeChecked();
+  await expect(rerunDialog.getByLabel("问题说明 *")).toHaveValue("测试数据字段已经失效");
+  await expect(rerunDialog.getByLabel("用例已修改证明 *")).toHaveValue(
+    "commit abc123，已更新断言数据",
+  );
   await rerunDialog.getByLabel("重跑通过", { exact: false }).check();
   await rerunDialog.getByRole("button", { name: "提交分析" }).click();
   await expect(rerunDialog).toContainText("请粘贴执行通过截图");
@@ -442,6 +530,28 @@ async function pastePng(page: import("@playwright/test").Page): Promise<void> {
     const transfer = new DataTransfer();
     transfer.items.add(file);
     target.dispatchEvent(new ClipboardEvent("paste", { bubbles: true, clipboardData: transfer }));
+  });
+}
+
+async function installClipboardCapture(page: import("@playwright/test").Page): Promise<void> {
+  await page.evaluate(() => {
+    Object.defineProperty(window.navigator, "clipboard", {
+      configurable: true,
+      value: {
+        async write(items: ClipboardItem[]) {
+          const item = items[0];
+          if (!item) return;
+          const [html, text] = await Promise.all([
+            item.getType("text/html").then((blob) => blob.text()),
+            item.getType("text/plain").then((blob) => blob.text()),
+          ]);
+          Reflect.set(window, "__autoforgeCopiedFailureAnalysis", { html, text });
+        },
+        async writeText(text: string) {
+          Reflect.set(window, "__autoforgeCopiedFailureAnalysis", { html: "", text });
+        },
+      },
+    });
   });
 }
 

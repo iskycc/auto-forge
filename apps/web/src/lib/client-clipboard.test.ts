@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { copyTextToClipboard } from "./client-clipboard";
+import { copyRichTextToClipboard, copyTextToClipboard } from "./client-clipboard";
 
 describe("copyTextToClipboard", () => {
   it("uses the asynchronous Clipboard API when available", async () => {
@@ -63,6 +63,44 @@ describe("copyTextToClipboard", () => {
       "浏览器未允许复制，请打开分享链接后从地址栏手动复制。",
     );
     expect(textarea.remove).toHaveBeenCalledOnce();
+  });
+});
+
+describe("copyRichTextToClipboard", () => {
+  it("writes HTML and plain text representations together", async () => {
+    const write = vi.fn().mockResolvedValue(undefined);
+    const item = {} as ClipboardItem;
+    const createClipboardItem = vi.fn().mockReturnValue(item);
+
+    await copyRichTextToClipboard(
+      { html: "<strong>用例</strong>", text: "用例" },
+      {
+        navigator: { clipboard: { write, writeText: vi.fn() } },
+        createClipboardItem,
+      },
+    );
+
+    expect(createClipboardItem).toHaveBeenCalledWith({
+      "text/html": expect.any(Blob),
+      "text/plain": expect.any(Blob),
+    });
+    expect(write).toHaveBeenCalledWith([item]);
+  });
+
+  it("falls back to plain text when rich clipboard access is rejected", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+
+    await copyRichTextToClipboard(
+      { html: "<strong>用例</strong>", text: "用例" },
+      {
+        navigator: {
+          clipboard: { write: vi.fn().mockRejectedValue(new Error("denied")), writeText },
+        },
+        createClipboardItem: () => ({}) as ClipboardItem,
+      },
+    );
+
+    expect(writeText).toHaveBeenCalledWith("用例");
   });
 });
 

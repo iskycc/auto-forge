@@ -1,6 +1,11 @@
 import { createHash } from "node:crypto";
 
-import { failureAnalysisSortSchema, type FailureAnalysisSort } from "@autoforge/contracts";
+import {
+  failureAnalysisCompletionOrderSchema,
+  failureAnalysisSortSchema,
+  type FailureAnalysisCompletionOrder,
+  type FailureAnalysisSort,
+} from "@autoforge/contracts";
 import {
   DomainError,
   failureAnalysisCategories,
@@ -106,6 +111,8 @@ export class FailureAnalysisService {
     batchId?: string;
     sort?: FailureAnalysisSort;
     direction?: "asc" | "desc";
+    completionOrder?: FailureAnalysisCompletionOrder;
+    includeCompleted?: boolean;
     cursor?: string;
     limit?: number;
   }) {
@@ -113,6 +120,10 @@ export class FailureAnalysisService {
       ...input,
       sort: failureAnalysisSortSchema.parse(input.sort ?? "class_path"),
       direction: input.direction ?? "asc",
+      completionOrder: failureAnalysisCompletionOrderSchema.parse(
+        input.completionOrder ?? "pending_first",
+      ),
+      includeCompleted: input.includeCompleted ?? true,
       limit: boundedPageSize(input.limit),
     });
   }
@@ -196,6 +207,21 @@ export class FailureAnalysisService {
       projectId: input.projectId,
       caseDefinitionIds,
       limitPerCase: Math.min(10, Math.max(1, Math.trunc(input.limitPerCase ?? 5))),
+    });
+  }
+
+  listCompletedConclusions(input: {
+    projectId: string;
+    query?: string;
+    cursor?: string;
+    limit?: number;
+  }) {
+    const query = optionalTrimmed(input.query);
+    return this.repository.listCompletedConclusions({
+      projectId: input.projectId,
+      ...(query ? { query: query.slice(0, 200) } : {}),
+      ...(input.cursor ? { cursor: input.cursor } : {}),
+      limit: boundedPageSize(input.limit),
     });
   }
 

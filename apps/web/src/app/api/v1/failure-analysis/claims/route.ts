@@ -2,6 +2,7 @@ import {
   claimFailureAnalysisInputSchema,
   claimFailureAnalysisResultSchema,
   failureAnalysisClaimPageSchema,
+  failureAnalysisCompletionOrderSchema,
   failureAnalysisSortSchema,
 } from "@autoforge/contracts";
 import { NextResponse } from "next/server";
@@ -17,6 +18,11 @@ const querySchema = z.object({
   batchId: z.string().min(1).optional(),
   sort: failureAnalysisSortSchema.default("class_path"),
   direction: z.enum(["asc", "desc"]).default("asc"),
+  completionOrder: failureAnalysisCompletionOrderSchema.default("pending_first"),
+  includeCompleted: z
+    .enum(["true", "false"])
+    .transform((value) => value === "true")
+    .default(true),
   cursor: z.string().max(1_024).optional(),
   limit: z.coerce.number().int().min(1).max(100).default(50),
 });
@@ -31,6 +37,8 @@ export async function GET(request: Request): Promise<NextResponse> {
       claimantId: identity.user.id,
       sort: input.sort,
       direction: input.direction,
+      completionOrder: input.completionOrder,
+      includeCompleted: input.includeCompleted,
       limit: input.limit,
       ...(input.projectVersionId ? { projectVersionId: input.projectVersionId } : {}),
       ...(input.batchId ? { batchId: input.batchId } : {}),

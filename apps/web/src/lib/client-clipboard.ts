@@ -1,7 +1,33 @@
 type ClipboardEnvironment = {
-  navigator?: { clipboard?: { writeText(text: string): Promise<void> } };
+  navigator?: {
+    clipboard?: {
+      write?(items: ClipboardItem[]): Promise<void>;
+      writeText(text: string): Promise<void>;
+    };
+  };
   document?: Document;
+  createClipboardItem?: (contents: Record<string, Blob>) => ClipboardItem;
 };
+
+export async function copyRichTextToClipboard(
+  content: { html: string; text: string },
+  environment: ClipboardEnvironment = browserClipboardEnvironment(),
+): Promise<void> {
+  const clipboard = environment.navigator?.clipboard;
+  if (typeof clipboard?.write === "function" && environment.createClipboardItem) {
+    try {
+      const item = environment.createClipboardItem({
+        "text/html": new Blob([content.html], { type: "text/html" }),
+        "text/plain": new Blob([content.text], { type: "text/plain" }),
+      });
+      await clipboard.write([item]);
+      return;
+    } catch {
+      // Rich clipboard may be denied while writeText or the selection fallback is still allowed.
+    }
+  }
+  await copyTextToClipboard(content.text, environment);
+}
 
 /**
  * Copy text in HTTPS/localhost browsers and in plain-HTTP intranet deployments.
@@ -31,6 +57,9 @@ function browserClipboardEnvironment(): ClipboardEnvironment {
   return {
     ...(typeof navigator === "undefined" ? {} : { navigator }),
     ...(typeof document === "undefined" ? {} : { document }),
+    ...(typeof ClipboardItem === "undefined"
+      ? {}
+      : { createClipboardItem: (contents: Record<string, Blob>) => new ClipboardItem(contents) }),
   };
 }
 

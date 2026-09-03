@@ -29,7 +29,12 @@ describe("FailureAnalysisService", () => {
   it("bounds and deduplicates historical analysis queries", async () => {
     const listCaseHistory = vi.fn(async () => ({ items: [] }));
     const listRecentCaseHistories = vi.fn(async () => []);
-    const service = createService({ listCaseHistory, listRecentCaseHistories });
+    const listCompletedConclusions = vi.fn(async () => ({ items: [] }));
+    const service = createService({
+      listCaseHistory,
+      listRecentCaseHistories,
+      listCompletedConclusions,
+    });
 
     await service.listCaseHistory({
       projectId: "project-a",
@@ -41,6 +46,11 @@ describe("FailureAnalysisService", () => {
       caseDefinitionIds: ["case-a", "case-b", "case-a"],
       limitPerCase: 50,
     });
+    await service.listCompletedConclusions({
+      projectId: "project-a",
+      query: `  ${"根因".repeat(120)}  `,
+      limit: 500,
+    });
 
     expect(listCaseHistory).toHaveBeenCalledWith(
       expect.objectContaining({ projectId: "project-a", caseDefinitionId: "case-a", limit: 100 }),
@@ -49,6 +59,11 @@ describe("FailureAnalysisService", () => {
       projectId: "project-a",
       caseDefinitionIds: ["case-a", "case-b"],
       limitPerCase: 10,
+    });
+    expect(listCompletedConclusions).toHaveBeenCalledWith({
+      projectId: "project-a",
+      query: "根因".repeat(100),
+      limit: 100,
     });
     expect(() =>
       service.listRecentCaseHistories({ projectId: "project-a", caseDefinitionIds: [] }),

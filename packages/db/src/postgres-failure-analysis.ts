@@ -389,6 +389,9 @@ export class PostgresFailureAnalysisRepository implements FailureAnalysisReposit
 
   async listClaims(input: Parameters<FailureAnalysisRepository["listClaims"]>[0]) {
     await this.handle.ready;
+    const completionOrder = input.completionOrder ?? "pending_first";
+    const includeCompleted = input.includeCompleted ?? true;
+    const completionExpression = postgresCompletionRankExpression(completionOrder);
     const sortExpression = postgresClaimSortExpression(input.sort);
     const parameters: unknown[] = [input.projectId, input.claimantId];
     const where = ["claim.project_id=$1", "claim.claimant_id=$2"];
@@ -400,20 +403,33 @@ export class PostgresFailureAnalysisRepository implements FailureAnalysisReposit
       parameters.push(input.batchId);
       where.push(`claim.batch_id=$${parameters.length}`);
     }
-    const cursor = decodeFailureAnalysisClaimCursor(input.cursor, input.sort, input.direction);
+    if (!includeCompleted) where.push("claim.status<>'completed'");
+    const cursor = decodeFailureAnalysisClaimCursor(
+      input.cursor,
+      input.sort,
+      input.direction,
+      completionOrder,
+      includeCompleted,
+    );
     if (cursor) {
-      parameters.push(cursor.value, cursor.analysisId);
+      parameters.push(cursor.completionRank, cursor.value, cursor.analysisId);
       const comparison = input.direction === "desc" ? "<" : ">";
       where.push(
-        `(${sortExpression}${comparison}$${parameters.length - 1} OR (${sortExpression}=$${parameters.length - 1} AND claim.id${comparison}$${parameters.length}))`,
+        `(${completionExpression}>$${parameters.length - 2} OR
+          (${completionExpression}=$${parameters.length - 2} AND
+           (${sortExpression}${comparison}$${parameters.length - 1} OR
+            (${sortExpression}=$${parameters.length - 1} AND claim.id${comparison}$${parameters.length}))))`,
       );
     }
     parameters.push(input.limit + 1);
     const direction = input.direction === "desc" ? "DESC" : "ASC";
     const result = await this.handle.pool.query<FailureAnalysisRow>(
-      `${claimSelectSql(`${sortExpression} AS "sortValue"`)} JOIN run_batches batch ON batch.id=claim.batch_id
+      `${claimSelectSql(
+        `${sortExpression} AS "sortValue",${completionExpression} AS "completionRank"`,
+      )} JOIN run_batches batch ON batch.id=claim.batch_id
        WHERE ${where.join(" AND ")}
-       ORDER BY ${sortExpression} ${direction},claim.id ${direction} LIMIT $${parameters.length}`,
+       ORDER BY ${completionExpression} ASC,${sortExpression} ${direction},claim.id ${direction}
+       LIMIT $${parameters.length}`,
       parameters,
     );
     const hasMore = result.rows.length > input.limit;
@@ -426,6 +442,9 @@ export class PostgresFailureAnalysisRepository implements FailureAnalysisReposit
             nextCursor: encodeFailureAnalysisClaimCursor({
               sort: input.sort,
               direction: input.direction,
+              completionOrder,
+              completionRank: Number(last.completionRank ?? 0),
+              includeCompleted,
               value: last.sortValue ?? "",
               analysisId: last.analysisId,
             }),
@@ -495,20 +514,7 @@ export class PostgresFailureAnalysisRepository implements FailureAnalysisReposit
        LIMIT $${parameters.length}`,
       parameters,
     );
-    const hasMore = result.rows.length > input.limit;
-    const pageRows = result.rows.slice(0, input.limit);
-    const last = pageRows.at(-1);
-    return {
-      items: pageRows.map(toHistoryItem),
-      ...(hasMore && last?.completedAt
-        ? {
-            nextCursor: encodeRunBatchCursor({
-              createdAt: last.completedAt,
-              id: last.analysisId!,
-            }),
-          }
-        : {}),
-    };
+    return historyPage(result.rows, input.limit);
   }
 
   async listRecentCaseHistories(
@@ -537,6 +543,48 @@ export class PostgresFailureAnalysisRepository implements FailureAnalysisReposit
       [input.projectId, [...input.caseDefinitionIds], input.limitPerCase],
     );
     return result.rows.map(toHistoryItem);
+  }
+
+  async listCompletedConclusions(
+    input: Parameters<FailureAnalysisRepository["listCompletedConclusions"]>[0],
+  ) {
+    await this.handle.ready;
+    const parameters: unknown[] = [input.projectId];
+    const where = [
+      "claim.project_id=$1",
+      "claim.status='completed'",
+      "claim.completed_at IS NOT NULL",
+    ];
+    const query = input.query?.trim().slice(0, 200);
+    if (query) {
+      parameters.push(`%${escapePostgresLike(query)}%`);
+      const placeholder = `$${parameters.length}`;
+      where.push(`(claim.case_name ILIKE ${placeholder} ESCAPE '\\'
+        OR claim.class_name ILIKE ${placeholder} ESCAPE '\\'
+        OR claim.failure_summary ILIKE ${placeholder} ESCAPE '\\'
+        OR COALESCE(claim.issue_description,'') ILIKE ${placeholder} ESCAPE '\\'
+        OR COALESCE(claim.ticket_reference,'') ILIKE ${placeholder} ESCAPE '\\'
+        OR COALESCE(claim.remark,'') ILIKE ${placeholder} ESCAPE '\\')`);
+    }
+    const cursor = decodeRunBatchCursor(input.cursor);
+    if (cursor) {
+      parameters.push(cursor.createdAt, cursor.id);
+      where.push(
+        `(claim.completed_at<$${parameters.length - 1} OR
+          (claim.completed_at=$${parameters.length - 1} AND claim.id<$${parameters.length}))`,
+      );
+    }
+    parameters.push(input.limit + 1);
+    const result = await this.handle.pool.query<FailureAnalysisHistoryRow>(
+      `SELECT history.*,batch.sequence_number AS "batchSequenceNumber",
+              batch.suite_name AS "batchName"
+       FROM (${claimSelectSql()} WHERE ${where.join(" AND ")}) history
+       JOIN run_batches batch ON batch.id=history."batchId"
+       ORDER BY history."completedAt" DESC,history."analysisId" DESC
+       LIMIT $${parameters.length}`,
+      parameters,
+    );
+    return historyPage(result.rows, input.limit);
   }
 
   async start(input: Parameters<FailureAnalysisRepository["start"]>[0]) {
@@ -740,6 +788,31 @@ function postgresClaimSortExpression(sort: FailureAnalysisSort): string {
     claim_status:
       "CASE claim.status WHEN 'claimed' THEN '1' WHEN 'analyzing' THEN '2' ELSE '3' END",
   }[sort];
+}
+
+function postgresCompletionRankExpression(
+  completionOrder: "pending_first" | "completed_first",
+): string {
+  return completionOrder === "pending_first"
+    ? "CASE WHEN claim.status='completed' THEN 1 ELSE 0 END"
+    : "CASE WHEN claim.status='completed' THEN 0 ELSE 1 END";
+}
+
+function historyPage(rows: FailureAnalysisHistoryRow[], limit: number) {
+  const hasMore = rows.length > limit;
+  const pageRows = rows.slice(0, limit);
+  const last = pageRows.at(-1);
+  return {
+    items: pageRows.map(toHistoryItem),
+    ...(hasMore && last?.completedAt
+      ? {
+          nextCursor: encodeRunBatchCursor({
+            createdAt: last.completedAt,
+            id: last.analysisId!,
+          }),
+        }
+      : {}),
+  };
 }
 
 function escapePostgresLike(value: string): string {

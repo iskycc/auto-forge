@@ -93,6 +93,7 @@ import type {
   FailureAnalysisBatch,
   FailureAnalysisBatchPage,
   FailureAnalysisCandidatePage,
+  FailureAnalysisCompletionOrder,
   FailureAnalysisSort,
 } from "@autoforge/contracts";
 import type {
@@ -1666,6 +1667,8 @@ export interface FailureAnalysisRepository {
     batchId?: string;
     sort: FailureAnalysisSort;
     direction: "asc" | "desc";
+    completionOrder?: FailureAnalysisCompletionOrder;
+    includeCompleted?: boolean;
     cursor?: string;
     limit: number;
   }): Promise<{ items: FailureAnalysisClaim[]; nextCursor?: string }>;
@@ -1685,6 +1688,12 @@ export interface FailureAnalysisRepository {
     caseDefinitionIds: readonly string[];
     limitPerCase: number;
   }): Promise<FailureAnalysisHistoryItem[]>;
+  listCompletedConclusions(input: {
+    projectId: string;
+    query?: string;
+    cursor?: string;
+    limit: number;
+  }): Promise<FailureAnalysisHistoryPage>;
   start(input: {
     analysisId: string;
     projectId: string;
