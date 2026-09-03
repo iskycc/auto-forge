@@ -4,6 +4,22 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## 1.8.18 - 2026-09-03
+
+### Fixed
+
+- Runner 现在能正确识别同时包含 JDK 根目录 `bin/java` 与内置 JRE `jre/bin/java` 的标准
+  JDK 8 压缩包，不再误报存在两个独立 JDK；归档内确实包含多个并列 JDK 时仍会拒绝执行。
+
+### Database and persisted configuration
+
+- 无数据库迁移、持久化配置格式或 Runner Protocol 变化。
+
+### Tests
+
+- Runner 单元测试覆盖逐 attempt 与批次共享工作区的 JDK 8 双 Java 入口解压路径，并保留多个
+  独立 JDK 必须拒绝的安全回归测试。
+
 ## 1.8.16 - 2026-09-03
 
 ### Fixed

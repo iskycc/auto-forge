@@ -304,6 +304,39 @@ func TestBatchRegistryMaterializesAdapterDependenciesOnce(t *testing.T) {
 	}
 }
 
+func TestEnsureBatchJDKAcceptsJDK8EmbeddedJRE(t *testing.T) {
+	batchDir := t.TempDir()
+	archivePath := filepath.Join(batchDir, "runtime-inputs", "jdk8.tar.gz")
+	writeTarGzipFixture(t, archivePath, []tarFixtureEntry{
+		{name: "jdk8/bin/java", content: "jdk-java"},
+		{name: "jdk8/jre/bin/java", content: "embedded-jre-java"},
+	})
+	input := ExecutionInput{
+		Kind:       "jdk-archive",
+		TargetPath: "runtime-inputs/jdk8.tar.gz",
+		SizeBytes:  fileSize(t, archivePath),
+	}
+
+	if err := ensureBatchJDK(batchDir, []ExecutionInput{input}, ResourceLimits{
+		DiskBytes: 1 << 20,
+		FileCount: 100,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for relative, expected := range map[string]string{
+		"runtime/jdk/bin/java":     "jdk-java",
+		"runtime/jdk/jre/bin/java": "embedded-jre-java",
+	} {
+		content, err := os.ReadFile(filepath.Join(batchDir, filepath.FromSlash(relative)))
+		if err != nil {
+			t.Fatalf("read %s: %v", relative, err)
+		}
+		if string(content) != expected {
+			t.Fatalf("%s content = %q, want %q", relative, content, expected)
+		}
+	}
+}
+
 func TestLinkSharedRegularTreeRejectsSymbolicLinks(t *testing.T) {
 	source := t.TempDir()
 	if err := os.WriteFile(filepath.Join(source, "case.jar"), []byte("jar"), 0o600); err != nil {

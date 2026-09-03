@@ -141,7 +141,8 @@ func TestPrepareCotestWorkspaceExtractsJDKAndJars(t *testing.T) {
 	workspace := t.TempDir()
 	writeFixture(t, filepath.Join(workspace, "inputs", "tests.jar"), []byte("case"))
 	writeZipFixture(t, filepath.Join(workspace, "runtime-inputs", "jdk.zip"), map[string]string{
-		"jdk-21/bin/java": "java",
+		"jdk8/bin/java":     "jdk-java",
+		"jdk8/jre/bin/java": "embedded-jre-java",
 	})
 	writeZipFixture(t, filepath.Join(workspace, "runtime-inputs", "jars.zip"), map[string]string{
 		"lib/testng.jar":  "testng",
@@ -157,6 +158,7 @@ func TestPrepareCotestWorkspaceExtractsJDKAndJars(t *testing.T) {
 	}
 	for _, expected := range []string{
 		"runtime/jdk/bin/java",
+		"runtime/jdk/jre/bin/java",
 		"test-jars/autoforge-case.jar",
 		"test-jars/lib/testng.jar",
 		"test-jars/lib/project.jar",
@@ -164,6 +166,17 @@ func TestPrepareCotestWorkspaceExtractsJDKAndJars(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(workspace, filepath.FromSlash(expected))); err != nil {
 			t.Fatalf("expected %s: %v", expected, err)
 		}
+	}
+}
+
+func TestLocateJavaHomeRejectsMultipleIndependentJDKs(t *testing.T) {
+	root := t.TempDir()
+	writeFixture(t, filepath.Join(root, "jdk8", "bin", "java"), []byte("jdk8"))
+	writeFixture(t, filepath.Join(root, "jdk17", "bin", "java"), []byte("jdk17"))
+
+	_, err := locateJavaHome(root)
+	if err == nil || !strings.Contains(err.Error(), "found 2") {
+		t.Fatalf("locateJavaHome() error = %v", err)
 	}
 }
 

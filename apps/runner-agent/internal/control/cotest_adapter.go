@@ -456,11 +456,32 @@ func locateJavaHome(root string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("inspect extracted JDK: %w", err)
 	}
-	sort.Strings(homes)
-	if len(homes) != 1 {
-		return "", fmt.Errorf("JDK archive must contain exactly one bin/java, found %d", len(homes))
+	standaloneHomes := excludeEmbeddedJREHomes(homes)
+	sort.Strings(standaloneHomes)
+	if len(standaloneHomes) != 1 {
+		return "", fmt.Errorf("JDK archive must contain exactly one bin/java, found %d", len(standaloneHomes))
 	}
-	return homes[0], nil
+	return standaloneHomes[0], nil
+}
+
+// excludeEmbeddedJREHomes keeps a JDK 8 archive's bundled jre/bin/java from
+// being mistaken for a second independent JDK. The parent must itself contain
+// bin/java; unrelated or more deeply nested Java homes remain ambiguous.
+func excludeEmbeddedJREHomes(homes []string) []string {
+	candidates := make(map[string]struct{}, len(homes))
+	for _, home := range homes {
+		candidates[home] = struct{}{}
+	}
+	standalone := make([]string, 0, len(homes))
+	for _, home := range homes {
+		if filepath.Base(home) == "jre" {
+			if _, embedded := candidates[filepath.Dir(home)]; embedded {
+				continue
+			}
+		}
+		standalone = append(standalone, home)
+	}
+	return standalone
 }
 
 func copyRegularFile(source, destination string) error {
