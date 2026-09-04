@@ -16,6 +16,7 @@ import {
   FolderTree,
   Trash2,
 } from "lucide-react";
+import Link from "next/link";
 import { useState } from "react";
 
 import { Button, Input } from "@/components/ui";
@@ -250,8 +251,10 @@ function StorageFileBranch({
             {item.name}
           </strong>
           {item.runBatchId ? (
-            <span className="storage-tree-file-batch" title={item.runBatchId}>
-              任务批次号 {item.runBatchId}
+            <span className="storage-tree-file-batch">
+              {item.runBatchSequenceNumber
+                ? `任务批次 #${item.runBatchSequenceNumber}`
+                : "关联批次记录不可用"}
             </span>
           ) : null}
         </span>
@@ -301,9 +304,19 @@ function StorageFileBranch({
           ) : null}
           {item.runBatchId ? (
             <div>
-              <dt>关联任务批次号</dt>
+              <dt>关联任务批次</dt>
               <dd>
-                <code title={item.runBatchId}>{item.runBatchId}</code>
+                {item.runBatchSequenceNumber ? (
+                  <Link
+                    className="storage-tree-batch-link"
+                    href={`/run-batches/${encodeURIComponent(item.runBatchId)}`}
+                  >
+                    查看任务批次 #{item.runBatchSequenceNumber}
+                    <ExternalLink aria-hidden="true" size={13} />
+                  </Link>
+                ) : (
+                  "批次记录已清理，无法跳转"
+                )}
               </dd>
             </div>
           ) : null}

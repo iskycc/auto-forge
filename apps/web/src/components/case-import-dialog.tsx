@@ -110,6 +110,11 @@ export function CaseImportDialog({ cases, onImport }: CaseImportDialogProps) {
   const canParse = !readingFile && Boolean(filePaths?.length || pastedText.trim());
   const visibleUnmatched = result ? result.unmatched.slice(0, MAX_UNMATCHED_PREVIEW) : [];
   const hiddenUnmatched = result ? result.unmatched.length - visibleUnmatched.length : 0;
+  const fileStatus = readingFile
+    ? { prefix: "正在读取", suffix: "…" }
+    : filePaths?.length
+      ? { prefix: "已读取", suffix: `，共 ${filePaths.length} 条路径` }
+      : null;
 
   return (
     <>
@@ -121,7 +126,7 @@ export function CaseImportDialog({ cases, onImport }: CaseImportDialogProps) {
           <section
             aria-label="导入用例"
             aria-modal="true"
-            className="runner-update-dialog"
+            className="runner-update-dialog case-import-dialog"
             onMouseDown={(event) => event.stopPropagation()}
             role="dialog"
           >
@@ -135,7 +140,7 @@ export function CaseImportDialog({ cases, onImport }: CaseImportDialogProps) {
                 <X size={16} />
               </Button>
             </header>
-            <div className="runner-update-body">
+            <div className="runner-update-body case-import-body">
               <p className="runner-update-hint">
                 上传表格文件（.xlsx / .csv / .tsv / .txt），XLSX 读取首个工作表的第一列；也可从
                 Excel 复制“用例路径”列直接粘贴。第一行可以是表头。路径支持目录写法
@@ -143,17 +148,23 @@ export function CaseImportDialog({ cases, onImport }: CaseImportDialogProps) {
                 com.example.CheckoutTest，与用例库精确匹配后批量勾选。
               </p>
               <div className="runner-update-grid">
-                <label>
-                  表格文件
+                <label className="case-import-source">
+                  <span className="case-import-field-label">表格文件</span>
                   <FileInput
                     accept=".xlsx,.csv,.tsv,.txt"
                     aria-label="选择用例表格文件"
                     onChange={(event) => void readFile(event.currentTarget)}
                   />
-                  {readingFile ? <small role="status">正在读取 {fileName}…</small> : null}
-                  {!readingFile && filePaths?.length ? (
-                    <small role="status">
-                      已读取 {fileName}，共 {filePaths.length} 条路径
+                  {fileStatus ? (
+                    <small
+                      aria-label={`${fileStatus.prefix} ${fileName}${fileStatus.suffix}`}
+                      className="case-import-file-status"
+                      role="status"
+                      title={`${fileStatus.prefix} ${fileName}${fileStatus.suffix}`}
+                    >
+                      <span>{fileStatus.prefix}</span>
+                      <span className="case-import-file-name">{fileName}</span>
+                      <span>{fileStatus.suffix}</span>
                     </small>
                   ) : null}
                   {fileError ? (
@@ -162,8 +173,8 @@ export function CaseImportDialog({ cases, onImport }: CaseImportDialogProps) {
                     </small>
                   ) : null}
                 </label>
-                <label>
-                  或直接粘贴
+                <label className="case-import-source">
+                  <span className="case-import-field-label">或直接粘贴</span>
                   <Textarea
                     aria-label="粘贴用例路径"
                     onChange={(event) => {
@@ -185,7 +196,7 @@ export function CaseImportDialog({ cases, onImport }: CaseImportDialogProps) {
                   value={fileProgress.percent}
                 />
               ) : null}
-              <div className="runner-installer-actions">
+              <div className="runner-installer-actions case-import-actions">
                 <Button
                   className="button-primary"
                   disabled={!canParse}
@@ -205,13 +216,13 @@ export function CaseImportDialog({ cases, onImport }: CaseImportDialogProps) {
                     <ul className="case-import-unmatched">
                       {visibleUnmatched.map((path) => (
                         <li key={path}>
-                          <code>{path}</code>
+                          <code title={path}>{path}</code>
                         </li>
                       ))}
                       {hiddenUnmatched > 0 ? <li>等 {result.unmatched.length} 条</li> : null}
                     </ul>
                   ) : null}
-                  <div className="runner-installer-actions">
+                  <div className="runner-installer-actions case-import-actions">
                     <Button
                       className="button-primary"
                       disabled={result.matched.length === 0}

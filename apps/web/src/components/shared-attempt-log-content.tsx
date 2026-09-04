@@ -4,6 +4,7 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 
 import { SharedAttemptLogActions } from "@/components/shared-attempt-log-actions";
+import { CustomScrollArea } from "@/components/custom-scroll-area";
 import { Button } from "@/components/ui";
 import { LoadingState } from "@/components/loading-state";
 import { highlightLogLevels } from "@/lib/log-levels";
@@ -37,55 +38,59 @@ export function SharedAttemptLogContent({
     <main className="share-log-page">
       <div className="share-log-layout">
         <aside className="share-log-aside">
-          <p className="eyebrow">Shared Attempt Log</p>
-          <div className="share-log-heading">
-            <h1>{view.displayName}</h1>
-            <span className={`batch-status ${sharedOutcomeClass(view.outcome)}`}>
-              {sharedOutcomeLabel(view.outcome)}
-            </span>
-          </div>
-          <SharedLogRerunAction
-            access={rerunAccess}
-            attempt={{ id: view.attemptId, status: view.outcome }}
-          />
-          {view.rounds.length > 1 ? (
-            <RoundLogNavigation historyHref={historyHref} timeZone={timeZone} view={view} />
-          ) : null}
-          <dl className="share-log-facts">
-            <ShareFact label="用例路径">
-              <code>{view.casePath}</code>
-            </ShareFact>
-            <ShareFact label="用例名称">{view.displayName}</ShareFact>
-            <ShareFact label="执行结果">
-              <span className={`batch-status ${sharedOutcomeClass(view.outcome)}`}>
-                {sharedOutcomeLabel(view.outcome)}
-              </span>
-              {view.resultCode ? <code>{view.resultCode}</code> : null}
-            </ShareFact>
-            {view.summary ? (
-              <ShareFact label="错误描述">
-                <pre className="share-log-summary">{view.summary}</pre>
-              </ShareFact>
-            ) : null}
-            <ShareFact label="执行开始时间">
-              <ShareTime timeZone={timeZone} value={view.startedAt} />
-            </ShareFact>
-            <ShareFact label="执行结束时间">
-              <ShareTime timeZone={timeZone} value={view.finishedAt} />
-            </ShareFact>
-            <ShareFact label="执行耗时">
-              {view.durationMs !== null ? `${(view.durationMs / 1_000).toFixed(1)} 秒` : "—"}
-            </ShareFact>
-            <ShareFact label="批次 / 当前轮次">
-              <span title={`批次 ${view.batchId} · 尝试 ${view.attemptId}`}>
-                批次 #{view.batchSequenceNumber} ·{" "}
-                {view.kind === "manual_rerun"
-                  ? "手动重跑"
-                  : executionRoundLabel(view.executionRound, view.attemptNumber)}
-              </span>
-              {view.requestedBy ? <span>{requesterLabel(view.requestedBy)}</span> : null}
-            </ShareFact>
-          </dl>
+          <CustomScrollArea ariaLabel="用例信息" className="share-log-aside-scroll">
+            <div className="share-log-aside-content">
+              <p className="eyebrow">Shared Attempt Log</p>
+              <div className="share-log-heading">
+                <h1>{view.displayName}</h1>
+                <span className={`batch-status ${sharedOutcomeClass(view.outcome)}`}>
+                  {sharedOutcomeLabel(view.outcome)}
+                </span>
+              </div>
+              <SharedLogRerunAction
+                access={rerunAccess}
+                attempt={{ id: view.attemptId, status: view.outcome }}
+              />
+              {view.rounds.length > 1 ? (
+                <RoundLogNavigation historyHref={historyHref} timeZone={timeZone} view={view} />
+              ) : null}
+              <dl className="share-log-facts">
+                <ShareFact label="用例路径">
+                  <code>{view.casePath}</code>
+                </ShareFact>
+                <ShareFact label="用例名称">{view.displayName}</ShareFact>
+                <ShareFact label="执行结果">
+                  <span className={`batch-status ${sharedOutcomeClass(view.outcome)}`}>
+                    {sharedOutcomeLabel(view.outcome)}
+                  </span>
+                  {view.resultCode ? <code>{view.resultCode}</code> : null}
+                </ShareFact>
+                {view.summary ? (
+                  <ShareFact label="错误描述">
+                    <pre className="share-log-summary">{view.summary}</pre>
+                  </ShareFact>
+                ) : null}
+                <ShareFact label="执行开始时间">
+                  <ShareTime timeZone={timeZone} value={view.startedAt} />
+                </ShareFact>
+                <ShareFact label="执行结束时间">
+                  <ShareTime timeZone={timeZone} value={view.finishedAt} />
+                </ShareFact>
+                <ShareFact label="执行耗时">
+                  {view.durationMs !== null ? `${(view.durationMs / 1_000).toFixed(1)} 秒` : "—"}
+                </ShareFact>
+                <ShareFact label="批次 / 当前轮次">
+                  <span title={`批次 ${view.batchId} · 尝试 ${view.attemptId}`}>
+                    批次 #{view.batchSequenceNumber} ·{" "}
+                    {view.kind === "manual_rerun"
+                      ? "手动重跑"
+                      : executionRoundLabel(view.executionRound, view.attemptNumber)}
+                  </span>
+                  {view.requestedBy ? <span>{requesterLabel(view.requestedBy)}</span> : null}
+                </ShareFact>
+              </dl>
+            </div>
+          </CustomScrollArea>
         </aside>
         <section className="share-log-main" aria-label="执行日志">
           {truncated ? (
@@ -93,15 +98,17 @@ export function SharedAttemptLogContent({
               日志过大已截断：仅展示前 512 KB 内容，完整日志请联系日志发布者导出。
             </p>
           ) : null}
-          <pre className="execution-log execution-log-dark share-log-output">
-            {bounded.text
-              ? renderedSegments.map((segment, index) => (
-                  <span className={segment.classes.join(" ")} key={index}>
-                    {segment.text}
-                  </span>
-                ))
-              : "本次尝试暂无日志内容。"}
-          </pre>
+          <CustomScrollArea ariaLabel="日志内容" className="share-log-output-scroll">
+            <pre className="execution-log execution-log-dark share-log-output">
+              {bounded.text
+                ? renderedSegments.map((segment, index) => (
+                    <span className={segment.classes.join(" ")} key={index}>
+                      {segment.text}
+                    </span>
+                  ))
+                : "本次尝试暂无日志内容。"}
+            </pre>
+          </CustomScrollArea>
         </section>
       </div>
     </main>

@@ -45,6 +45,55 @@ async function expectDialogFitsViewport(page: Page, dialog: Locator): Promise<vo
   expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(viewport!.height);
 }
 
+async function expectIndependentSharedLogScrolling(page: Page): Promise<void> {
+  await page.setViewportSize({ width: 1024, height: 560 });
+  const caseInformation = page.getByRole("region", { name: "用例信息" });
+  const logContent = page.getByRole("region", { name: "日志内容" });
+  const caseScrollbar = page.getByRole("scrollbar", { name: "用例信息滚动条" });
+  const logScrollbar = page.getByRole("scrollbar", { name: "日志内容滚动条" });
+  await expect(caseScrollbar).toBeVisible();
+  await expect(logScrollbar).toBeVisible();
+  await expect
+    .poll(() =>
+      page.evaluate(() => ({
+        clientHeight: document.documentElement.clientHeight,
+        scrollHeight: document.documentElement.scrollHeight,
+      })),
+    )
+    .toEqual({ clientHeight: 560, scrollHeight: 560 });
+  await expect(caseInformation).toHaveCSS("scrollbar-width", "none");
+  await expect(logContent).toHaveCSS("scrollbar-width", "none");
+
+  await caseInformation.evaluate((element) => {
+    element.scrollTop = 0;
+  });
+  await logContent.evaluate((element) => {
+    element.scrollTop = 0;
+  });
+  await caseInformation.hover();
+  await page.mouse.wheel(0, 360);
+  await expect
+    .poll(() => caseInformation.evaluate((element) => element.scrollTop))
+    .toBeGreaterThan(0);
+  expect(await logContent.evaluate((element) => element.scrollTop)).toBe(0);
+  const caseScrollTop = await caseInformation.evaluate((element) => element.scrollTop);
+
+  await logContent.hover();
+  await page.mouse.wheel(0, 480);
+  await expect.poll(() => logContent.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+  expect(await caseInformation.evaluate((element) => element.scrollTop)).toBe(caseScrollTop);
+
+  await logScrollbar.focus();
+  await logScrollbar.press("End");
+  await expect
+    .poll(() =>
+      logContent.evaluate(
+        (element) => element.scrollTop + element.clientHeight - element.scrollHeight,
+      ),
+    )
+    .toBe(0);
+}
+
 type RunnerIdentity = { runnerId: string; credential: string };
 
 type ClaimedAssignment = {
@@ -1078,6 +1127,7 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
   );
   await expect(anonymousLogPage.getByRole("status")).toContainText("仅展示前 512 KB 内容");
   await expect(anonymousLogPage.locator(".app-shell, .app-sidebar, .topbar")).toHaveCount(0);
+  await expectIndependentSharedLogScrolling(anonymousLogPage);
   await anonymousLogPage.close();
   await expect(anonymousResultPage.locator(".public-progress-card")).toHaveCount(0);
   await expect(

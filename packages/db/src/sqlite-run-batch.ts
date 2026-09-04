@@ -5,6 +5,7 @@ import type {
   RunBatchListQuery,
   RunBatchCasePageQuery,
   RunBatchDetailOverview,
+  RunBatchDisplayIdentityLookupPort,
   RunBatchRepository,
   SchedulingSnapshot,
 } from "@autoforge/application";
@@ -148,7 +149,9 @@ const SQLITE_BATCH_ROUND_CTES = `WITH batch_runs AS (
   UNION SELECT id,execution_round FROM batch_runs
 )`;
 
-export class SqliteRunBatchRepository implements RunBatchRepository {
+export class SqliteRunBatchRepository
+  implements RunBatchRepository, RunBatchDisplayIdentityLookupPort
+{
   constructor(
     private readonly handle: SqliteDatabaseHandle,
     private readonly caseExecutionTimeoutSeconds = DEFAULT_CASE_EXECUTION_TIMEOUT_SECONDS,
@@ -315,6 +318,19 @@ export class SqliteRunBatchRepository implements RunBatchRepository {
       }
     });
     return this.requiredBatchSummary(record.id);
+  }
+
+  async listDisplayIdentities(batchIds: readonly string[]) {
+    const uniqueBatchIds = [...new Set(batchIds)];
+    if (uniqueBatchIds.length === 0) return [];
+    return batchesOf(uniqueBatchIds, RELATIONAL_ID_QUERY_BATCH_SIZE).flatMap((ids) =>
+      this.handle.db
+        .select({ id: runBatches.id, sequenceNumber: runBatches.sequenceNumber })
+        .from(runBatches)
+        .where(inArray(runBatches.id, ids))
+        .all()
+        .filter((batch) => batch.sequenceNumber > 0),
+    );
   }
 
   async list(

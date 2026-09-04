@@ -47,6 +47,11 @@ import { Button, Input, Select, Textarea } from "@/components/ui";
 import { readApiErrorMessage } from "@/lib/client-api";
 import { copyRichTextToClipboard } from "@/lib/client-clipboard";
 import { formatFailureAnalysisClipboard } from "@/lib/failure-analysis-clipboard";
+import {
+  readFailureAnalysisPreferences,
+  resolveFailureAnalysisPreferences,
+  writeFailureAnalysisPreferences,
+} from "@/lib/failure-analysis-preferences";
 import { formatPlatformDateTime } from "@/lib/platform-date-time";
 import { useToast } from "@/components/ui-feedback";
 
@@ -150,6 +155,7 @@ export function FailureAnalysisWorkspace({
     initialFilters.completionOrder,
   );
   const [includeCompleted, setIncludeCompleted] = useState(initialFilters.includeCompleted);
+  const [preferencesReady, setPreferencesReady] = useState(false);
   const [queryInput, setQueryInput] = useState(initialFilters.candidateQuery);
   const [query, setQuery] = useState(initialFilters.candidateQuery);
   const [analysisQueryInput, setAnalysisQueryInput] = useState(initialFilters.analysisQuery);
@@ -166,6 +172,51 @@ export function FailureAnalysisWorkspace({
   const skipInitialClaimsLoad = useRef(
     initialView === "workbench" && initialClaimPage !== undefined,
   );
+
+  useEffect(() => {
+    const restorePreferences = window.setTimeout(() => {
+      const resolved = resolveFailureAnalysisPreferences(
+        {
+          candidateSort: initialFilters.candidateSort,
+          candidateDirection: initialFilters.candidateDirection,
+          analysisSort: initialFilters.analysisSort,
+          analysisDirection: initialFilters.analysisDirection,
+          completionOrder: initialFilters.completionOrder,
+          includeCompleted: initialFilters.includeCompleted,
+        },
+        readRememberedFailureAnalysisPreferences(),
+        window.location.search,
+      );
+      setSort(resolved.candidateSort);
+      setDirection(resolved.candidateDirection);
+      setClaimSort(resolved.analysisSort);
+      setClaimDirection(resolved.analysisDirection);
+      setCompletionOrder(resolved.completionOrder);
+      setIncludeCompleted(resolved.includeCompleted);
+      setPreferencesReady(true);
+    }, 0);
+    return () => window.clearTimeout(restorePreferences);
+  }, [initialFilters]);
+
+  useEffect(() => {
+    if (!preferencesReady) return;
+    persistFailureAnalysisPreferences({
+      candidateSort: sort,
+      candidateDirection: direction,
+      analysisSort: claimSort,
+      analysisDirection: claimDirection,
+      completionOrder,
+      includeCompleted,
+    });
+  }, [
+    claimDirection,
+    claimSort,
+    completionOrder,
+    direction,
+    includeCompleted,
+    preferencesReady,
+    sort,
+  ]);
 
   const loadCandidates = useCallback(
     async (cursor?: string, signal?: AbortSignal) => {
@@ -287,6 +338,7 @@ export function FailureAnalysisWorkspace({
   }, [loadClaims, view]);
 
   useEffect(() => {
+    if (!preferencesReady) return;
     const parameters = new URLSearchParams({ view });
     if (query) parameters.set("candidateQuery", query);
     if (sort !== "class_path") parameters.set("candidateSort", sort);
@@ -312,6 +364,7 @@ export function FailureAnalysisWorkspace({
     query,
     sort,
     view,
+    preferencesReady,
   ]);
 
   const availableItems = useMemo(
@@ -2308,4 +2361,22 @@ function categoryLabel(category: FailureAnalysisCategory | undefined): string | 
 
 function statusLabel(status: FailureAnalysisClaimView["status"]): string {
   return { claimed: "已认领", analyzing: "分析中", completed: "已完成" }[status];
+}
+
+function readRememberedFailureAnalysisPreferences() {
+  try {
+    return readFailureAnalysisPreferences(window.localStorage);
+  } catch {
+    return undefined;
+  }
+}
+
+function persistFailureAnalysisPreferences(
+  preferences: Parameters<typeof writeFailureAnalysisPreferences>[1],
+): void {
+  try {
+    writeFailureAnalysisPreferences(window.localStorage, preferences);
+  } catch {
+    // 浏览器禁用存储时继续使用当前会话内的筛选状态。
+  }
 }

@@ -346,6 +346,26 @@ test("terminal task failures support durable single and batch analysis with evid
   await page.getByLabel("显示已完成分析").uncheck();
   expect((await hideCompletedResponse).status()).toBe(200);
   await expect(analysisCard(page, fixture.failedNames[0])).toHaveCount(0);
+  const rememberedPreferencesResponse = page.waitForResponse((response) => {
+    const url = new URL(response.url());
+    return (
+      url.pathname === "/api/v1/failure-analysis/claims" &&
+      url.searchParams.get("sort") === "failure_summary" &&
+      url.searchParams.get("direction") === "desc" &&
+      url.searchParams.get("completionOrder") === "pending_first" &&
+      url.searchParams.get("includeCompleted") === "false"
+    );
+  });
+  await page.goto(`/case-analysis/${fixture.batchId}?view=workbench`);
+  await installClipboardCapture(page);
+  expect((await rememberedPreferencesResponse).status()).toBe(200);
+  await expect(page.getByRole("button", { name: "我的分析排序字段" })).toContainText("失败堆栈");
+  await expect(page.getByRole("button", { name: "分析完成状态分组" })).toContainText("未完成在前");
+  await expect(page.getByLabel("显示已完成分析")).not.toBeChecked();
+  await expect(page.getByRole("button", { name: "当前降序，点击切换为升序" })).toBeVisible();
+  await expect
+    .poll(() => new URL(page.url()).searchParams.get("analysisSort"))
+    .toBe("failure_summary");
   const showCompletedResponse = page.waitForResponse((response) => {
     const url = new URL(response.url());
     return (

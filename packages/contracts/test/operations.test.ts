@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   createServiceAccountInputSchema,
   deleteStorageRuntimeAssetsInputSchema,
+  storageInventoryItemSchema,
   updateServiceAccountInputSchema,
 } from "../src/operations";
 
@@ -36,5 +37,24 @@ describe("storage runtime asset deletion inputs", () => {
     expect(() =>
       deleteStorageRuntimeAssetsInputSchema.parse({ runtimeAssetIds: ["asset-1", "asset-1"] }),
     ).toThrow("运行时资源编号不能重复");
+  });
+});
+
+describe("storage inventory items", () => {
+  it("carries a natural batch sequence number without replacing the internal route identifier", () => {
+    expect(
+      storageInventoryItemSchema.parse({
+        id: "local:attempt-logs/batch-internal.sqlite",
+        category: "execution-log",
+        location: "data-directory",
+        name: "batch-internal.sqlite",
+        logicalPath: "attempt-logs/batch-internal.sqlite",
+        storagePath: "/data/attempt-logs/batch-internal.sqlite",
+        sizeBytes: 128,
+        allocatedBytes: 4_096,
+        runBatchId: "batch-internal",
+        runBatchSequenceNumber: 42,
+      }),
+    ).toMatchObject({ runBatchId: "batch-internal", runBatchSequenceNumber: 42 });
   });
 });

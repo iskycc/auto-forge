@@ -1819,6 +1819,16 @@ export interface RunBatchSchedulingPort {
   ): Promise<unknown>;
 }
 
+export type RunBatchDisplayIdentity = {
+  id: string;
+  sequenceNumber: number;
+};
+
+/** 批量解析内部批次 ID 对应的自然展示编号，供日志文件等外部索引安全展示。 */
+export interface RunBatchDisplayIdentityLookupPort {
+  listDisplayIdentities(batchIds: readonly string[]): Promise<RunBatchDisplayIdentity[]>;
+}
+
 export interface RunBatchRepository {
   create(record: CreateRunBatchRecord): Promise<RunBatch>;
   resolveAttemptRerunSource(attemptId: string): Promise<AttemptRerunSource | null>;

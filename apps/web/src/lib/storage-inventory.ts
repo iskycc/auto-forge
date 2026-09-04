@@ -1,7 +1,11 @@
 import { opendir, stat } from "node:fs/promises";
 import { basename, relative, resolve, sep } from "node:path";
 
-import type { JarObjectStorePort, ProjectStructureService } from "@autoforge/application";
+import type {
+  JarObjectStorePort,
+  ProjectStructureService,
+  RunBatchDisplayIdentityLookupPort,
+} from "@autoforge/application";
 import type {
   StorageInventoryCategory,
   StorageInventoryItem,
@@ -41,6 +45,7 @@ export class StorageInventoryService {
         ProjectStructureService,
         "listRuntimeAssetsPage" | "findRuntimeAssetsByObjectKeys"
       >;
+      runBatchDisplayIdentities: RunBatchDisplayIdentityLookupPort;
       objectStoreRoot: string;
       now?: () => Date;
     },
@@ -59,10 +64,25 @@ export class StorageInventoryService {
     const pageEntries = items.slice(0, input.limit);
     const last = pageEntries.at(-1);
     return {
-      items: pageEntries.map((entry) => entry.item),
+      items: await this.attachRunBatchSequenceNumbers(pageEntries.map((entry) => entry.item)),
       ...(items.length > input.limit && last ? { nextCursor: encodeCursor(last.cursor) } : {}),
       summary: await this.summary(),
     };
+  }
+
+  private async attachRunBatchSequenceNumbers(
+    items: readonly StorageInventoryItem[],
+  ): Promise<StorageInventoryItem[]> {
+    const batchIds = items.flatMap((item) => (item.runBatchId ? [item.runBatchId] : []));
+    if (batchIds.length === 0) return [...items];
+    const identities = await this.options.runBatchDisplayIdentities.listDisplayIdentities(batchIds);
+    const sequenceNumberById = new Map(
+      identities.map((identity) => [identity.id, identity.sequenceNumber]),
+    );
+    return items.map((item) => {
+      const sequenceNumber = item.runBatchId ? sequenceNumberById.get(item.runBatchId) : undefined;
+      return sequenceNumber ? { ...item, runBatchSequenceNumber: sequenceNumber } : item;
+    });
   }
 
   invalidateSummary(): void {

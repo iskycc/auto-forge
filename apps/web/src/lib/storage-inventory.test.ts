@@ -43,6 +43,7 @@ describe("storage inventory", () => {
       dataDirectory,
       objectStore: objectStore("local", []),
       projectStructures: runtimeCatalog(runtimeAssets),
+      runBatchDisplayIdentities: batchDisplayIdentities({ "batch-1": 42 }),
       objectStoreRoot: join(dataDirectory, "objects"),
       now: () => new Date("2026-09-01T00:00:00.000Z"),
     });
@@ -67,6 +68,7 @@ describe("storage inventory", () => {
     expect(items.find((item) => item.logicalPath === "attempt-logs/batch-1.sqlite")).toMatchObject({
       category: "execution-log",
       runBatchId: "batch-1",
+      runBatchSequenceNumber: 42,
     });
     expect(items.find((item) => item.category === "jdk")).toMatchObject({
       name: "jdk-1.zip",
@@ -127,6 +129,7 @@ describe("storage inventory", () => {
       dataDirectory,
       objectStore: objectStore("minio", objects),
       projectStructures: runtimeCatalog(runtimeAssets),
+      runBatchDisplayIdentities: batchDisplayIdentities({ "batch-full": 73 }),
       objectStoreRoot: "minio://autoforge",
     });
 
@@ -138,6 +141,7 @@ describe("storage inventory", () => {
           category: "execution-log",
           location: "data-directory",
           runBatchId: "batch-full",
+          runBatchSequenceNumber: 73,
         }),
         expect.objectContaining({
           category: "dependency",
@@ -176,6 +180,7 @@ describe("storage inventory", () => {
       dataDirectory,
       objectStore: objectStore("local", []),
       projectStructures: runtimeCatalog([]),
+      runBatchDisplayIdentities: batchDisplayIdentities({}),
       objectStoreRoot: join(dataDirectory, "objects"),
     });
 
@@ -195,6 +200,17 @@ async function temporaryDataDirectory(): Promise<string> {
   const directory = await mkdtemp(join(tmpdir(), "autoforge-storage-inventory-"));
   temporaryDirectories.push(directory);
   return directory;
+}
+
+function batchDisplayIdentities(sequenceNumbers: Readonly<Record<string, number>>) {
+  return {
+    async listDisplayIdentities(batchIds: readonly string[]) {
+      return [...new Set(batchIds)].flatMap((id) => {
+        const sequenceNumber = sequenceNumbers[id];
+        return sequenceNumber ? [{ id, sequenceNumber }] : [];
+      });
+    },
+  };
 }
 
 async function writeDataFile(root: string, path: string, content: string): Promise<void> {

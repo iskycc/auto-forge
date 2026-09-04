@@ -5,6 +5,7 @@ import type {
   RunBatchListQuery,
   RunBatchCasePageQuery,
   RunBatchDetailOverview,
+  RunBatchDisplayIdentityLookupPort,
   RunBatchRepository,
   SchedulingSnapshot,
 } from "@autoforge/application";
@@ -155,7 +156,9 @@ const POSTGRES_BATCH_ROUND_CTES = `WITH batch_runs AS (
   UNION SELECT id,execution_round FROM batch_runs
 )`;
 
-export class PostgresRunBatchRepository implements RunBatchRepository {
+export class PostgresRunBatchRepository
+  implements RunBatchRepository, RunBatchDisplayIdentityLookupPort
+{
   constructor(
     private readonly handle: PostgresDatabaseHandle,
     private readonly caseExecutionTimeoutSeconds = DEFAULT_CASE_EXECUTION_TIMEOUT_SECONDS,
@@ -311,6 +314,21 @@ export class PostgresRunBatchRepository implements RunBatchRepository {
       new Map([["queued", record.runs.length]]),
       undefined,
     );
+  }
+
+  async listDisplayIdentities(batchIds: readonly string[]) {
+    await this.ready();
+    const uniqueBatchIds = [...new Set(batchIds)];
+    if (uniqueBatchIds.length === 0) return [];
+    const pages = await Promise.all(
+      batchesOf(uniqueBatchIds, RELATIONAL_ID_QUERY_BATCH_SIZE).map((ids) =>
+        this.handle.db
+          .select({ id: pgRunBatches.id, sequenceNumber: pgRunBatches.sequenceNumber })
+          .from(pgRunBatches)
+          .where(inArray(pgRunBatches.id, ids)),
+      ),
+    );
+    return pages.flat().filter((batch) => batch.sequenceNumber > 0);
   }
 
   async list(

@@ -1,4 +1,4 @@
-import { expect, test, type Page, type Route } from "@playwright/test";
+import { expect, test, type Locator, type Page, type Route } from "@playwright/test";
 import { unzipSync, zipSync } from "fflate";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { mkdir, readFile } from "node:fs/promises";
@@ -11,6 +11,7 @@ import { createPostgresDatabase } from "@autoforge/db/postgres";
 import { DEFAULT_PROJECT_ID } from "@autoforge/domain";
 import { freshRunnerBootstrapToken } from "./support/runner-bootstrap";
 import { selectJarForInspection } from "./support/jar-import";
+import { expectUiIntegrity } from "./support/ui-guard";
 import {
   configureTaskExecution,
   createTaskRun,
@@ -595,9 +596,11 @@ public class MixedVisibleTest {
   await expect(page.getByText("任务中还没有用例")).toBeVisible({ timeout: 20_000 });
 
   await page.goto("/cases");
+  await page.setViewportSize({ width: 1024, height: 768 });
   await page.getByRole("button", { name: "导入用例" }).click();
   const caseImportDialog = page.getByLabel("导入用例", { exact: true });
   await expect(caseImportDialog).toBeVisible();
+  await expectUiIntegrity(page);
   await caseImportDialog.getByLabel("选择用例表格文件").setInputFiles({
     name: "cases.csv",
     mimeType: "text/csv",
@@ -611,6 +614,8 @@ public class MixedVisibleTest {
     "匹配 1 个 · 未匹配 1 个",
   );
   await expect(caseImportDialog.getByText("com/example/NoSuchCase")).toBeVisible();
+  await expectCaseImportDialogFits(caseImportDialog);
+  await expectUiIntegrity(page);
   await caseImportDialog.getByRole("button", { name: "勾选匹配用例" }).click();
   await expect(caseImportDialog).toHaveCount(0);
   await expect(page.locator(".selection-toolbar")).toContainText("已选 1");
@@ -620,36 +625,61 @@ public class MixedVisibleTest {
   await page.getByLabel(`选择 ${taskCase.displayName}`).uncheck();
   await page.getByRole("button", { name: "导入用例" }).click();
   const xlsxImportDialog = page.getByLabel("导入用例", { exact: true });
+  const longCaseRangeFileName = `${"自动化回归失败用例范围-".repeat(5)}最终确认版.xlsx`;
+  const longUnmatchedCasePath = `com.example.${"VeryLongUnmatchedCasePath".repeat(7)}`;
   await xlsxImportDialog.getByLabel("选择用例表格文件").setInputFiles({
-    name: "中文用例列表.xlsx",
+    name: longCaseRangeFileName,
     mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     buffer: Buffer.from(
       caseListXlsx([
         ["用例路径", "备注"],
         [taskCase.className, "中文备注"],
-        ["com.example.不存在的用例", "应显示为未匹配"],
+        [longUnmatchedCasePath, "应显示为未匹配"],
       ]),
     ),
   });
-  await expect(xlsxImportDialog.getByText(/已读取 中文用例列表\.xlsx，共 2 条路径/)).toBeVisible();
+  const xlsxFileStatus = xlsxImportDialog.locator("label > small[role=status]");
+  await expect(xlsxFileStatus).toContainText(longCaseRangeFileName);
+  await expect(xlsxFileStatus).toContainText("共 2 条路径");
+  await expect(xlsxFileStatus).toHaveAttribute(
+    "aria-label",
+    `已读取 ${longCaseRangeFileName}，共 2 条路径`,
+  );
+  await expect(xlsxImportDialog.locator(".ui-file-name")).toHaveAttribute(
+    "title",
+    longCaseRangeFileName,
+  );
   await xlsxImportDialog.getByRole("button", { name: "解析并预览" }).click();
   await expect(xlsxImportDialog.locator(".case-import-result")).toContainText(
     "匹配 1 个 · 未匹配 1 个",
   );
-  await expect(xlsxImportDialog.getByText("com.example.不存在的用例")).toBeVisible();
+  const unmatchedCasePath = xlsxImportDialog.locator(".case-import-unmatched code");
+  await expect(unmatchedCasePath).toHaveText(longUnmatchedCasePath);
+  await expect(unmatchedCasePath).toHaveAttribute("title", longUnmatchedCasePath);
   await captureUi(page, "case-list-xlsx-import");
+  await expectCaseImportDialogFits(xlsxImportDialog);
+  await expectUiIntegrity(page);
   await xlsxImportDialog.getByRole("button", { name: "勾选匹配用例" }).click();
   await expect(page.getByLabel(`选择 ${taskCase.displayName}`)).toBeChecked();
 
   await page.getByRole("button", { name: "导入用例" }).click();
   const pasteImportDialog = page.getByLabel("导入用例", { exact: true });
   await expect(pasteImportDialog).toBeVisible();
+  await pasteImportDialog.getByLabel("粘贴用例路径").fill(longUnmatchedCasePath);
+  await pasteImportDialog.getByRole("button", { name: "解析并预览" }).click();
+  await expect(pasteImportDialog.locator(".case-import-result")).toContainText(
+    "匹配 0 个 · 未匹配 1 个",
+  );
+  await expect(pasteImportDialog.getByRole("button", { name: "勾选匹配用例" })).toBeDisabled();
+  await expectCaseImportDialogFits(pasteImportDialog);
   await pasteImportDialog.getByLabel("粘贴用例路径").fill(taskCase.className);
   await pasteImportDialog.getByRole("button", { name: "解析并预览" }).click();
-  await expect(pasteImportDialog.getByRole("status")).toContainText("匹配 1 个");
+  await expect(pasteImportDialog.locator(".case-import-result")).toContainText("匹配 1 个");
+  await expectUiIntegrity(page);
   await pasteImportDialog.getByRole("button", { name: "勾选匹配用例" }).click();
   await expect(pasteImportDialog).toHaveCount(0);
   await expect(page.locator(".selection-toolbar")).toContainText("已选 1");
+  await page.setViewportSize({ width: 1536, height: 1024 });
 
   const registration = await page.request.post("/api/v1/runner-agents/register", {
     headers: { authorization: `Bearer ${freshRunnerBootstrapToken()}` },
@@ -1916,6 +1946,52 @@ async function expectDesktopLayoutFits(page: Page, width: number, height: number
       })),
     )
     .toEqual({ viewportWidth: width, documentWidth: width });
+}
+
+async function expectCaseImportDialogFits(dialog: Locator): Promise<void> {
+  const report = await dialog.evaluate((element) => {
+    const viewportWidth = window.innerWidth;
+    const dialogBounds = element.getBoundingClientRect();
+    const inspectedElements = Array.from(
+      element.querySelectorAll<HTMLElement>(
+        [
+          ".runner-update-body",
+          ".runner-update-grid",
+          ".runner-update-grid > label",
+          ".ui-file",
+          'label > small[role="status"]',
+          ".case-import-result",
+          ".case-import-unmatched",
+          ".case-import-unmatched > li",
+        ].join(","),
+      ),
+    );
+    const overflowingElements = inspectedElements
+      .filter((candidate) => candidate.scrollWidth > candidate.clientWidth + 1)
+      .map((candidate) => ({
+        className: candidate.className,
+        overflow: candidate.scrollWidth - candidate.clientWidth,
+        text: candidate.textContent?.trim().replace(/\s+/g, " ").slice(0, 80),
+      }));
+    return {
+      dialogLeft: Math.round(dialogBounds.left),
+      dialogRight: Math.round(dialogBounds.right),
+      overflowingElements,
+      viewportWidth,
+    };
+  });
+
+  expect(
+    report.dialogLeft,
+    "case import dialog escapes the left viewport edge",
+  ).toBeGreaterThanOrEqual(0);
+  expect(
+    report.dialogRight,
+    "case import dialog escapes the right viewport edge",
+  ).toBeLessThanOrEqual(report.viewportWidth);
+  expect(report.overflowingElements, "case import content overflows its layout container").toEqual(
+    [],
+  );
 }
 
 async function expectUiConsistency(page: Page): Promise<void> {

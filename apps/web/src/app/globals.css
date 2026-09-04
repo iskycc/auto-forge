@@ -74,6 +74,82 @@
   background-clip: padding-box;
 }
 
+.custom-scroll-area {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.custom-scroll-viewport {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: scroll;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+}
+
+.custom-scroll-viewport::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+.custom-scroll-viewport:focus-visible {
+  outline: 2px solid var(--color-info);
+  outline-offset: -2px;
+}
+
+.custom-scrollbar {
+  position: absolute;
+  z-index: 3;
+  top: 8px;
+  right: 4px;
+  bottom: 8px;
+  width: 10px;
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--color-scrollbar) 18%, transparent);
+  cursor: pointer;
+  touch-action: none;
+}
+
+.custom-scrollbar[data-visible="false"] {
+  visibility: hidden;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.custom-scrollbar:focus-visible {
+  outline: 2px solid var(--color-info);
+  outline-offset: 1px;
+}
+
+.custom-scrollbar-thumb {
+  position: absolute;
+  top: 0;
+  right: 2px;
+  display: block;
+  width: 6px;
+  min-height: 40px;
+  border-radius: var(--radius-pill);
+  background: var(--color-scrollbar);
+  cursor: grab;
+  transition: background-color 150ms ease;
+  will-change: transform;
+}
+
+.custom-scrollbar:hover .custom-scrollbar-thumb,
+.custom-scrollbar:focus-visible .custom-scrollbar-thumb {
+  background: var(--color-scrollbar-hover);
+}
+
+.custom-scrollbar-thumb:active {
+  cursor: grabbing;
+}
+
 .ui-input,
 .ui-textarea,
 .ui-select-trigger,
@@ -537,6 +613,8 @@
 }
 
 .ui-file-name {
+  min-width: 0;
+  flex: 1 1 auto;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -573,6 +651,7 @@
 
 .ui-operation-progress {
   display: grid;
+  min-width: 0;
   gap: 8px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-control);
@@ -582,18 +661,30 @@
 
 .ui-operation-progress > div {
   display: flex;
+  min-width: 0;
   align-items: center;
   justify-content: space-between;
   gap: var(--space-3);
 }
 
 .ui-operation-progress strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   color: var(--color-text);
 }
 
 .ui-operation-progress span,
 .ui-operation-progress small {
   color: var(--color-text-secondary);
+}
+
+.ui-operation-progress small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .project-runtime-upload-progress {
@@ -11335,6 +11426,7 @@ button.icon-button:disabled {
 
 .case-import-result {
   display: grid;
+  min-width: 0;
   gap: 12px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-medium);
@@ -11344,6 +11436,7 @@ button.icon-button:disabled {
 
 .case-import-unmatched {
   display: grid;
+  min-width: 0;
   gap: 4px;
   margin: 0;
   padding-left: 18px;
@@ -11352,7 +11445,69 @@ button.icon-button:disabled {
 }
 
 .case-import-unmatched code {
+  display: block;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-family: var(--font-family-mono);
+}
+
+.case-import-dialog {
+  width: min(760px, calc(100dvw - 48px));
+  max-height: calc(100dvh - 48px);
+}
+
+.case-import-dialog .runner-update-titlebar > span,
+.case-import-body,
+.case-import-body > *,
+.case-import-source {
+  min-width: 0;
+}
+
+.case-import-dialog .runner-update-titlebar small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.case-import-body {
+  overflow-x: hidden;
+}
+
+.case-import-field-label {
+  color: var(--color-text-secondary);
+}
+
+.case-import-file-status {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 4px;
+}
+
+.case-import-file-status > span:not(.case-import-file-name) {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.case-import-file-name {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  color: var(--color-text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.case-import-actions {
+  justify-content: flex-end;
+}
+
+.case-import-unmatched > li {
+  min-width: 0;
 }
 
 /* 执行日志公开访问页：左侧固定信息栏 + 右侧整页深色日志区，观感与终端弹窗一致。 */
@@ -11379,7 +11534,10 @@ button.icon-button:disabled {
   --color-scrollbar: rgba(163, 168, 179, 0.32);
   --color-scrollbar-hover: rgba(163, 168, 179, 0.5);
   --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.35), 0 8px 28px rgba(0, 0, 0, 0.3);
-  min-height: 100vh;
+  box-sizing: border-box;
+  height: 100dvh;
+  min-height: 0;
+  overflow: hidden;
   padding: 24px;
   background: var(--color-canvas);
   color: var(--color-text);
@@ -11392,17 +11550,28 @@ button.icon-button:disabled {
   gap: 18px;
   align-items: stretch;
   width: min(100%, 1680px);
-  min-height: calc(100vh - 48px);
+  height: 100%;
+  min-height: 0;
   margin: 0 auto;
 }
 
 .share-log-aside {
-  overflow: auto;
+  min-height: 0;
+  overflow: hidden;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-card);
-  padding: 24px;
   background: var(--color-surface);
   box-shadow: var(--shadow-card);
+}
+
+.share-log-aside-scroll {
+  height: 100%;
+}
+
+.share-log-aside-content {
+  box-sizing: border-box;
+  min-height: 100%;
+  padding: 24px;
 }
 
 .share-log-heading {
@@ -11628,20 +11797,35 @@ button.icon-button:disabled {
 .share-log-main {
   display: flex;
   min-width: 0;
+  min-height: 0;
   flex-direction: column;
-  gap: 12px;
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-card);
+  background: #17191d;
+  box-shadow: var(--shadow-card);
 }
 
 .share-log-truncated {
-  margin: 0;
+  flex: 0 0 auto;
+  margin: 14px 16px 0;
+}
+
+.share-log-output-scroll {
+  min-height: 0;
+  flex: 1 1 auto;
 }
 
 .share-log-output {
-  flex: 1;
-  min-height: 0;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 100%;
   max-height: none;
   margin: 0;
-  border-radius: var(--radius-control);
+  border: 0;
+  border-radius: 0;
+  padding: 18px 24px 24px;
+  overflow: visible;
 }
 
 .share-log-page-center {
@@ -16512,6 +16696,27 @@ button.icon-button:disabled {
   color: var(--color-text-secondary);
   font-size: var(--font-size-caption);
   line-height: 1.5;
+}
+
+.storage-tree-batch-link {
+  display: inline-flex;
+  width: fit-content;
+  align-items: center;
+  gap: 5px;
+  color: var(--color-info);
+  font-weight: 650;
+  text-decoration: none;
+}
+
+.storage-tree-batch-link:hover {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.storage-tree-batch-link:focus-visible {
+  border-radius: 4px;
+  outline: 2px solid var(--color-info);
+  outline-offset: 2px;
 }
 
 .storage-tree-file-detail dl {

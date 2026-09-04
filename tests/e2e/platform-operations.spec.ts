@@ -12,6 +12,7 @@ import { expectUiIntegrity } from "./support/ui-guard";
 
 const SQLITE_FIXTURE_LATEST_MODIFIED_AT = "2026-09-01T02:00:00.000Z";
 const SQLITE_FIXTURE_BATCH_ID = "e2e-storage-batch";
+const SQLITE_FIXTURE_BATCH_SEQUENCE_NUMBER = 918_273;
 const STORAGE_JDK_ASSET_ID = "e2e-storage-jdk-delete";
 const STORAGE_JDK_FILE_NAME = "e2e-removable-jdk.zip";
 const STORAGE_DEPENDENCY_ASSET_ID = "e2e-storage-dependency-delete";
@@ -151,6 +152,7 @@ test("configuration conflicts, diagnostics and retention controls remain observa
       createdAt?: string;
       modifiedAt?: string;
       runBatchId?: string;
+      runBatchSequenceNumber?: number;
     }>;
     nextCursor?: string;
     summary: { fileCount: number; allocatedBytes: number; dataDirectory: string };
@@ -177,7 +179,10 @@ test("configuration conflicts, diagnostics and retention controls remain observa
     const sqliteSummary = sqliteGroup.locator(":scope > summary");
     await expect(sqliteSummary).toContainText("3 个文件");
     await expect(sqliteSummary).toContainText("23 B");
-    await expect(sqliteSummary).toContainText(`任务批次号 ${SQLITE_FIXTURE_BATCH_ID}`);
+    await expect(sqliteSummary).toContainText(`任务批次 #${SQLITE_FIXTURE_BATCH_SEQUENCE_NUMBER}`);
+    await expect(sqliteSummary.locator(".storage-tree-file-batch")).not.toContainText(
+      SQLITE_FIXTURE_BATCH_ID,
+    );
     await expect(
       sqliteSummary.locator(`time[datetime="${SQLITE_FIXTURE_LATEST_MODIFIED_AT}"]`),
     ).toHaveCount(1);
@@ -193,20 +198,40 @@ test("configuration conflicts, diagnostics and retention controls remain observa
     await expect(sqliteGroup.locator(".storage-tree-file-detail")).toContainText("创建时间");
     await expect(sqliteGroup.locator(".storage-tree-file-detail")).toContainText("最新修改时间");
     await expect(sqliteGroup.locator(".storage-tree-file-detail")).toContainText(
-      `关联任务批次号${SQLITE_FIXTURE_BATCH_ID}`,
+      `关联任务批次查看任务批次 #${SQLITE_FIXTURE_BATCH_SEQUENCE_NUMBER}`,
+    );
+    const batchLink = sqliteGroup.getByRole("link", {
+      name: `查看任务批次 #${SQLITE_FIXTURE_BATCH_SEQUENCE_NUMBER}`,
+    });
+    await expect(batchLink).toHaveAttribute(
+      "href",
+      `/run-batches/${encodeURIComponent(SQLITE_FIXTURE_BATCH_ID)}`,
     );
     const logInventoryResponse = await page.request.get(
       `/api/v1/settings/storage?category=execution-log&query=${SQLITE_FIXTURE_BATCH_ID}&limit=3`,
     );
     expect(logInventoryResponse.status()).toBe(200);
     const logInventory = (await logInventoryResponse.json()) as {
-      items: Array<{ runBatchId?: string }>;
+      items: Array<{ runBatchId?: string; runBatchSequenceNumber?: number }>;
     };
     expect(logInventory.items).toHaveLength(3);
     expect(logInventory.items.every((item) => item.runBatchId === SQLITE_FIXTURE_BATCH_ID)).toBe(
       true,
     );
+    expect(
+      logInventory.items.every(
+        (item) => item.runBatchSequenceNumber === SQLITE_FIXTURE_BATCH_SEQUENCE_NUMBER,
+      ),
+    ).toBe(true);
     await expectUiIntegrity(page);
+    await batchLink.click();
+    await expect(page).toHaveURL(`/run-batches/${encodeURIComponent(SQLITE_FIXTURE_BATCH_ID)}`);
+    await expect(
+      page.getByText(`批次 #${SQLITE_FIXTURE_BATCH_SEQUENCE_NUMBER}`, { exact: false }).first(),
+    ).toBeVisible();
+    await page.goBack();
+    await expect(page.getByRole("heading", { name: "存储空间" })).toBeVisible();
+    await expect(storageTree).toBeVisible();
 
     if (liteDataDirectory) {
       const jdkObjectPath = runtimeAssetObjectPath(liteDataDirectory, STORAGE_JDK_ASSET_ID, "zip");
@@ -341,6 +366,20 @@ function insertSqliteStorageFixture(dataDirectory: string): void {
   const database = new DatabaseSync(resolve(dataDirectory, "db", "autoforge.sqlite"));
   try {
     database.exec("PRAGMA busy_timeout = 5000");
+    database
+      .prepare(
+        `INSERT INTO run_batches
+          (id, sequence_number, suite_id, suite_name, suite_version, status, retry_limit,
+           environment_json, secret_bindings_json, total_runs, project_id, created_at, updated_at)
+         VALUES (?, ?, 'e2e-storage-suite', '存储空间关联任务', 1, 'succeeded', 0,
+                 '[]', '[]', 1, '00000000-0000-7000-8000-000000000001', ?, ?)`,
+      )
+      .run(
+        SQLITE_FIXTURE_BATCH_ID,
+        SQLITE_FIXTURE_BATCH_SEQUENCE_NUMBER,
+        "2026-09-01T02:30:00.000Z",
+        "2026-09-01T02:30:00.000Z",
+      );
     const insert = database.prepare(
       `INSERT INTO project_runtime_assets
        (id, project_id, kind, source_type, file_name, object_key, sha256, size_bytes,

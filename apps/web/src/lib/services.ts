@@ -38,6 +38,7 @@ import {
   type CachePort,
   type JobQueuePort,
   type RunBatchRepository,
+  type RunBatchDisplayIdentityLookupPort,
   type RoundRecoveryRepository,
   type RunnerRepository,
   type RunnerInstallationProfileRepository,
@@ -118,7 +119,7 @@ async function createPlatformServices() {
   let runnerGroupsRepository: RunnerGroupRepository;
   let identities: IdentityAccessRepository;
   let executions: ExecutionControlRepository;
-  let batches: RunBatchRepository;
+  let batches: RunBatchRepository & RunBatchDisplayIdentityLookupPort;
   let roundRecoveries: RoundRecoveryRepository;
   let attemptLogSharesRepository: AttemptLogShareRepository;
   let objectStore: JarObjectStorePort;
@@ -343,6 +344,7 @@ async function createPlatformServices() {
     dataDirectory: config.dataDirectory,
     objectStore,
     projectStructures,
+    runBatchDisplayIdentities: batches,
     objectStoreRoot:
       config.mode === "lite"
         ? join(config.dataDirectory, "objects")

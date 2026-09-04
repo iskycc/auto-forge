@@ -564,7 +564,9 @@ export const FileInput = forwardRef<HTMLInputElement, FileInputProps>(function F
         <FileUp aria-hidden="true" size={15} />
         选择文件
       </label>
-      <span className="ui-file-name">{fileName ?? "未选择任何文件"}</span>
+      <span className="ui-file-name" title={fileName}>
+        {fileName ?? "未选择任何文件"}
+      </span>
     </span>
   );
 });
@@ -615,7 +617,7 @@ export function OperationProgress({
         <span>{indeterminate ? "处理中" : `${Math.round(value)}%`}</span>
       </div>
       <ProgressBar indeterminate={indeterminate} label={`${label}进度`} max={100} value={value} />
-      <small>{detail}</small>
+      <small title={detail}>{detail}</small>
     </div>
   );
 }
