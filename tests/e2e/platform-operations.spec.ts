@@ -86,7 +86,11 @@ test("configuration conflicts, diagnostics and retention controls remain observa
     web: { publicBaseUrl: testPublicBaseUrl, runnerBaseUrl: testRunnerBaseUrl },
   });
   await page.goto("/runners");
-  await expect(page.locator(".runner-control-url code")).toHaveText(testRunnerBaseUrl);
+  await page.getByRole("button", { name: "打开自动安装" }).click();
+  const installerDialog = page.getByRole("dialog", { name: "自动安装执行机 Agent" });
+  await expect(installerDialog.locator(".runner-control-url code")).toHaveText(testRunnerBaseUrl);
+  await installerDialog.getByRole("button", { name: "关闭自动安装执行机 Agent" }).click();
+  await expect(installerDialog).toHaveCount(0);
   await page.goto("/settings/platform");
   await page.locator('input[name="publicBaseUrl"]').fill(originalPublicBaseUrl);
   await page.locator('input[name="runnerBaseUrl"]').fill(originalRunnerBaseUrl);
