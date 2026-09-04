@@ -1,4 +1,4 @@
-import { expect, test, type Locator, type Page, type Route } from "@playwright/test";
+import { expect, test, type Locator, type Page, type Request, type Route } from "@playwright/test";
 import { zipSync } from "fflate";
 
 import { buildExportWorkbook } from "../../packages/ddt-import/src";
@@ -24,7 +24,24 @@ test("DDT workspace imports, edits, validates and recovers version-scoped cases"
   const executionClass = await importExecutionClass(page, hierarchy, executionClassName);
   const suite = await createDdtSuite(page, hierarchy, executionClass.id);
 
-  await page.goto("/cases?tab=ddt");
+  await page.goto("/cases?tab=testng");
+  const testngSearch = page.getByLabel("页内搜索用例");
+  await testngSearch.fill(executionClassName);
+  await expect(testngSearch).toHaveValue(executionClassName);
+  const casePageDocumentRequests: string[] = [];
+  const observeCasePageReload = (request: Request) => {
+    if (new URL(request.url()).pathname === "/cases" && request.resourceType() === "document") {
+      casePageDocumentRequests.push(request.url());
+    }
+  };
+  page.on("request", observeCasePageReload);
+  await page.getByRole("link", { name: "DDT 管理" }).click();
+  await expect(page.getByText("CaseID 在当前项目版本与测试阶段内唯一")).toBeVisible();
+  await page.getByRole("link", { name: "TestNG 用例" }).click();
+  await expect(testngSearch).toHaveValue(executionClassName);
+  await page.getByRole("link", { name: "DDT 管理" }).click();
+  page.off("request", observeCasePageReload);
+  expect(casePageDocumentRequests).toEqual([]);
   await expect(page.getByRole("link", { name: "DDT 管理" })).toHaveClass(/active/u);
   await expect(page.getByText("CaseID 在当前项目版本与测试阶段内唯一")).toBeVisible();
 

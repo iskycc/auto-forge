@@ -13,6 +13,7 @@ import {
 import {
   DomainError,
   type ProjectVersion,
+  type ProjectRuntimeAsset,
   type RuntimeArchiveFormat,
   type RuntimeAssetKind,
 } from "@autoforge/domain";
@@ -255,7 +256,23 @@ export class ProjectStructureService {
     }
     return asset;
   }
+
+  async deleteRuntimeAssets(assetIds: readonly string[]): Promise<RuntimeAssetDeletionOutcome[]> {
+    const outcomes: RuntimeAssetDeletionOutcome[] = [];
+    for (const runtimeAssetId of assetIds) {
+      try {
+        outcomes.push({ status: "deleted", asset: await this.deleteRuntimeAsset(runtimeAssetId) });
+      } catch (error) {
+        outcomes.push({ status: "failed", runtimeAssetId, error });
+      }
+    }
+    return outcomes;
+  }
 }
+
+export type RuntimeAssetDeletionOutcome =
+  | { status: "deleted"; asset: ProjectRuntimeAsset }
+  | { status: "failed"; runtimeAssetId: string; error: unknown };
 
 function normalizeName(value: string): string {
   return value.trim().normalize("NFKC").toLocaleLowerCase("en-US");

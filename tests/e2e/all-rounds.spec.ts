@@ -656,6 +656,12 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
   // PROCESS_START_FAILED 属于执行机异常：保留原失败记录、自动重新调度，并在执行机视图聚合展示。
   await page.getByRole("button", { name: "初始轮次", exact: true }).click();
   const retainedCaseSearch = page.getByRole("textbox", { name: "按名称搜索用例" });
+  const searchWidthBeforeLongQuery = (await retainedCaseSearch.boundingBox())?.width ?? 0;
+  await retainedCaseSearch.fill("AllRoundsFlakyTest".repeat(8));
+  await page.waitForTimeout(350);
+  const searchWidthAfterLongQuery = (await retainedCaseSearch.boundingBox())?.width ?? 0;
+  expect(searchWidthBeforeLongQuery).toBeGreaterThan(0);
+  expect(searchWidthAfterLongQuery).toBeGreaterThanOrEqual(searchWidthBeforeLongQuery - 1);
   await retainedCaseSearch.fill("AllRoundsFlakyTest");
   const retainedFlakyRow = casesRegion.getByRole("row", { name: /AllRounds/ });
   await expect(retainedFlakyRow).toHaveCount(1);

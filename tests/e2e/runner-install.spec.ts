@@ -88,6 +88,8 @@ test("probes and installs the embedded Agent through real SSH and systemd", asyn
 
 async function probeThroughUi(page: Page): Promise<string> {
   await page.goto("/runners");
+  await page.getByRole("button", { name: "打开自动安装" }).click();
+  await expect(page.getByRole("dialog", { name: "自动安装执行机 Agent" })).toBeVisible();
   await page.getByLabel("执行机 IP / 主机名").fill(passwordConnection.host);
   await page.getByLabel("SSH 端口").fill(String(passwordConnection.port));
   await page.getByLabel("用户名").fill(passwordConnection.username);
@@ -118,6 +120,7 @@ async function installThroughUi(page: Page): Promise<void> {
   const installationSuccess = page.getByRole("status").filter({ hasText: "服务已启动" });
   await expect(installationSuccess).toContainText("Agent", { timeout: 120_000 });
   await expect(installationSuccess).toContainText("服务已启动");
+  await page.getByRole("button", { name: "关闭自动安装执行机 Agent" }).click();
 }
 
 async function verifyInstalledSystemdService(): Promise<void> {
@@ -171,6 +174,7 @@ async function exerciseOfflineUpgradeAndRollback(page: Page, runnerId: string): 
     "/var/lib/autoforge-agent/identity/credentials.json",
   );
   await page.goto("/runners");
+  await page.getByRole("button", { name: "打开自动安装" }).click();
   const savedConnections = page.getByLabel("已保存连接");
   await expect(savedConnections).toBeVisible();
   const savedOption = savedConnections

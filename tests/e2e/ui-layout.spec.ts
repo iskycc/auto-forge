@@ -120,6 +120,13 @@ test("audit findings use bounded, localized, and unambiguous controls", async ({
 
   await page.goto("/runners");
   await expect(page.getByRole("navigation", { name: "执行资源视图" })).toHaveCount(0);
+  await expect(page.getByLabel("执行机 IP / 主机名")).toHaveCount(0);
+  await page.getByRole("button", { name: "打开自动安装" }).click();
+  const installerDialog = page.getByRole("dialog", { name: "自动安装执行机 Agent" });
+  await expect(installerDialog.getByLabel("执行机 IP / 主机名")).toBeVisible();
+  await expectUiIntegrity(page);
+  await page.keyboard.press("Escape");
+  await expect(installerDialog).toHaveCount(0);
 
   await page.goto("/case-suites");
   await page.getByRole("button", { name: "创建任务" }).click();

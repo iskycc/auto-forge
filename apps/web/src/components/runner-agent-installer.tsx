@@ -2,6 +2,7 @@
 
 import { Button, Input, Select, Textarea } from "@/components/ui";
 import { useConfirm } from "@/components/ui-feedback";
+import { ActionDialog } from "@/components/action-dialog";
 
 import {
   DEFAULT_RUNNER_DATA_DIRECTORY,
@@ -36,6 +37,7 @@ export function RunnerAgentInstaller({
 }: RunnerAgentInstallerProps) {
   const router = useRouter();
   const confirmAction = useConfirm();
+  const [open, setOpen] = useState(false);
   const [host, setHost] = useState("");
   const [port, setPort] = useState(22);
   const [username, setUsername] = useState("");
@@ -57,6 +59,10 @@ export function RunnerAgentInstaller({
   const [rollbackResult, setRollbackResult] = useState<RunnerAgentRollbackResult>();
   const [pending, setPending] = useState<"probe" | "install" | "rollback">();
   const [error, setError] = useState("");
+
+  function closeDialog(): void {
+    if (!pending) setOpen(false);
+  }
 
   function connectionChanged(change: () => void, clearStoredProfile = true) {
     change();
@@ -162,338 +168,367 @@ export function RunnerAgentInstaller({
   }
 
   return (
-    <section className="card runner-installer-card">
-      <div className="runner-installer-heading">
-        <span className="settings-icon">
-          <HardDriveDownload size={20} />
-        </span>
-        <div>
-          <span className="eyebrow">Internal Agent Resource</span>
-          <h2>自动安装执行机 Agent</h2>
-          <p>
-            平台通过 SSH 探测目标主机，核验指纹后上传内置静态 Agent，并配置为 systemd 服务。SSH
-            连接信息会使用平台主密钥 AES-GCM 加密保存，后续安装或批量更新无需重复输入密码。
-          </p>
-        </div>
-      </div>
-
-      {!controlPlaneUrl ? (
-        <div className="inline-notice warning-notice" role="status">
-          <ShieldAlert size={18} />
-          <span>请先在“平台配置”中设置内部访问地址或外部访问地址。</span>
-        </div>
-      ) : (
-        <div className="runner-control-url">
-          <span>Agent 控制面</span>
-          <code>{controlPlaneUrl}</code>
-        </div>
-      )}
-      {controlPlaneUrl?.startsWith("http:") ? (
-        <div className="inline-notice warning-notice" role="status">
-          <ShieldAlert size={18} />
-          <span>当前使用明文 HTTP，Runner 凭据和任务数据不会被传输层加密，请仅用于可信内网。</span>
-        </div>
-      ) : null}
-      {controlPlaneUrl && isLoopbackUrl(controlPlaneUrl) ? (
-        <div className="inline-notice warning-notice" role="status">
-          <ShieldAlert size={18} />
-          <span>
-            当前控制面地址仅本机可达。安装到其他主机前，请在“平台配置”中设置 Runner
-            可访问的内部地址。
+    <>
+      <section className="card runner-installer-launcher">
+        <div className="runner-installer-heading">
+          <span className="settings-icon">
+            <HardDriveDownload size={20} />
           </span>
+          <div>
+            <span className="eyebrow">Internal Agent Resource</span>
+            <h2>自动安装执行机 Agent</h2>
+            <p>通过 SSH 探测主机、核验指纹，并安装平台内置的离线 Agent。</p>
+          </div>
         </div>
-      ) : null}
-
-      {profiles.length > 0 ? (
-        <div className="runner-saved-profile-row">
-          <label>
-            已保存连接
-            <Select
-              disabled={Boolean(pending)}
-              onChange={(event) => {
-                const profileId = event.target.value;
-                setSelectedProfileId(profileId);
-                const profile = profiles.find((candidate) => candidate.id === profileId);
-                if (!profile) return;
-                setHost(profile.host);
-                setPort(profile.port);
-                setUsername(profile.username);
-                setName(profile.runnerName);
-                setInstallationMode(profile.installationMode);
-                setRunAsRoot(profile.runAsRoot);
-                setDataDirectory(profile.dataDirectory ?? "");
-                setCaCertificatePem("");
-                setLabels("linux");
-                setMaxConcurrency(1);
-                setTerminalEnabled(false);
-                const linkedRunner = profile.runnerId
-                  ? linkedRunners.find((runner) => runner.id === profile.runnerId)
-                  : undefined;
-                if (linkedRunner) {
-                  setName(linkedRunner.name);
-                  setLabels(linkedRunner.labels.join(","));
-                  setMaxConcurrency(linkedRunner.maxConcurrency);
-                  setTerminalEnabled(linkedRunner.terminalEnabled);
-                }
-                setPassword("");
-                setProbe(undefined);
-                setFingerprintConfirmed(false);
-                setResult(undefined);
-                setRollbackResult(undefined);
-                setError("");
-              }}
-              value={selectedProfileId}
-            >
-              <option value="">选择已保存的执行机连接</option>
-              {profiles.map((profile) => (
-                <option key={profile.id} value={profile.id}>
-                  {profile.runnerName} · {profile.username}@{profile.host}:{profile.port}
-                  {profile.runnerId ? ` · Runner ${profile.runnerId.slice(0, 8)}` : " · 待绑定"}
-                </option>
-              ))}
-            </Select>
-          </label>
+        <div className="runner-installer-launcher-actions">
+          <span>
+            {controlPlaneUrl
+              ? profiles.length > 0
+                ? `已有 ${profiles.length} 个加密连接配置`
+                : "尚无已保存的连接配置"
+              : "请先配置 Runner 可访问的控制面地址"}
+          </span>
           <Button
-            className="button button-primary"
-            disabled={!selectedProfileId || !name.trim() || Boolean(pending)}
-            onClick={() => void probeHost()}
+            disabled={!controlPlaneUrl}
+            onClick={() => setOpen(true)}
             type="button"
+            variant="primary"
           >
-            <Search size={16} />
-            {pending === "probe" ? "正在探测…" : "载入连接并探测"}
+            <HardDriveDownload size={16} /> 打开自动安装
           </Button>
         </div>
-      ) : null}
-
-      <div className="runner-installer-grid">
-        <label>
-          安装系统模式
-          <Select
-            disabled={Boolean(pending)}
-            onChange={(event) =>
-              connectionChanged(
-                () => setInstallationMode(event.target.value as typeof installationMode),
-                false,
-              )
-            }
-            value={installationMode}
-          >
-            <option value="auto">自动识别（推荐）</option>
-            <option value="ubuntu">强制 Ubuntu</option>
-            <option value="opensuse">强制 openSUSE</option>
-            <option value="opensuse-leap">强制 openSUSE Leap</option>
-            <option value="opensuse-tumbleweed">强制 openSUSE Tumbleweed</option>
-          </Select>
-          <small>系统标识错误时可手动选择；仍会校验 Bash、systemd、架构和权限。</small>
-        </label>
-        <label>
-          执行机 IP / 主机名
-          <Input
-            autoComplete="off"
-            disabled={Boolean(pending)}
-            onChange={(event) => connectionChanged(() => setHost(event.target.value))}
-            placeholder="10.20.30.40"
-            value={host}
-          />
-        </label>
-        <label>
-          SSH 端口
-          <Input
-            disabled={Boolean(pending)}
-            max={65_535}
-            min={1}
-            onChange={(event) => connectionChanged(() => setPort(Number(event.target.value)))}
-            type="number"
-            value={port}
-          />
-        </label>
-        <label>
-          用户名
-          <Input
-            autoComplete="username"
-            disabled={Boolean(pending)}
-            onChange={(event) => connectionChanged(() => setUsername(event.target.value))}
-            placeholder="root 或可 sudo 的用户"
-            value={username}
-          />
-        </label>
-        <label>
-          SSH / sudo 密码
-          <Input
-            autoComplete="current-password"
-            disabled={Boolean(pending)}
-            onChange={(event) => connectionChanged(() => setPassword(event.target.value))}
-            type="password"
-            value={password}
-          />
-        </label>
-      </div>
-
-      <div className="runner-installer-actions">
-        <Button
-          className="button-secondary"
-          disabled={!host || !username || (!password && !selectedProfileId) || Boolean(pending)}
-          onClick={() => void probeHost()}
-          type="button"
-        >
-          <Search size={16} /> {pending === "probe" ? "正在探测…" : "探测并核验主机"}
-        </Button>
-        <small>支持 Ubuntu、openSUSE Leap/Tumbleweed，以及 amd64、arm64。</small>
-      </div>
-
-      {probe ? (
-        <div className="runner-probe-result">
-          <div className="runner-probe-summary">
-            <CheckCircle2 size={20} />
-            <span>
-              <strong>{probe.operatingSystemName}</strong>
-              <small>
-                {probe.architecture} · systemd · {probe.privilegeMode} · {probe.bashPath}
-                {probe.cgroupV2Available ? " · cgroup v2" : " · 无 cgroup v2（降级隔离）"}
-              </small>
-            </span>
-          </div>
-          {probe.forcedInstallationMode ||
-          probe.detectedOperatingSystemId !== probe.operatingSystemId ? (
+      </section>
+      <ActionDialog
+        className="runner-installer-dialog"
+        description="填写 SSH 连接信息并完成主机探测后，再确认 Agent 的安装配置。"
+        onClose={closeDialog}
+        open={open}
+        title="自动安装执行机 Agent"
+      >
+        <div className="runner-installer-form">
+          {!controlPlaneUrl ? (
+            <div className="inline-notice warning-notice" role="status">
+              <ShieldAlert size={18} />
+              <span>请先在“平台配置”中设置内部访问地址或外部访问地址。</span>
+            </div>
+          ) : (
+            <div className="runner-control-url">
+              <span>Agent 控制面</span>
+              <code>{controlPlaneUrl}</code>
+            </div>
+          )}
+          {controlPlaneUrl?.startsWith("http:") ? (
             <div className="inline-notice warning-notice" role="status">
               <ShieldAlert size={18} />
               <span>
-                系统报告为 {probe.detectedOperatingSystemId}，将按 {probe.operatingSystemId}
-                模式安装。请确认目标机确实兼容该模式。
+                当前使用明文 HTTP，Runner 凭据和任务数据不会被传输层加密，请仅用于可信内网。
               </span>
             </div>
           ) : null}
-          <div className="runner-fingerprint">
-            <Fingerprint size={18} />
-            <span>
-              <small>SSH 主机指纹</small>
-              <code>{probe.hostKeySha256}</code>
-            </span>
-          </div>
-          <label className="checkbox-row runner-fingerprint-confirmation">
-            <Input
-              checked={fingerprintConfirmed}
-              onChange={(event) => setFingerprintConfirmed(event.target.checked)}
-              type="checkbox"
-            />
-            我已通过可信渠道核对并确认上述 SSH 主机指纹
-          </label>
+          {controlPlaneUrl && isLoopbackUrl(controlPlaneUrl) ? (
+            <div className="inline-notice warning-notice" role="status">
+              <ShieldAlert size={18} />
+              <span>
+                当前控制面地址仅本机可达。安装到其他主机前，请在“平台配置”中设置 Runner
+                可访问的内部地址。
+              </span>
+            </div>
+          ) : null}
 
-          <div className="runner-installer-grid runner-install-options">
+          {profiles.length > 0 ? (
+            <div className="runner-saved-profile-row">
+              <label>
+                已保存连接
+                <Select
+                  disabled={Boolean(pending)}
+                  onChange={(event) => {
+                    const profileId = event.target.value;
+                    setSelectedProfileId(profileId);
+                    const profile = profiles.find((candidate) => candidate.id === profileId);
+                    if (!profile) return;
+                    setHost(profile.host);
+                    setPort(profile.port);
+                    setUsername(profile.username);
+                    setName(profile.runnerName);
+                    setInstallationMode(profile.installationMode);
+                    setRunAsRoot(profile.runAsRoot);
+                    setDataDirectory(profile.dataDirectory ?? "");
+                    setCaCertificatePem("");
+                    setLabels("linux");
+                    setMaxConcurrency(1);
+                    setTerminalEnabled(false);
+                    const linkedRunner = profile.runnerId
+                      ? linkedRunners.find((runner) => runner.id === profile.runnerId)
+                      : undefined;
+                    if (linkedRunner) {
+                      setName(linkedRunner.name);
+                      setLabels(linkedRunner.labels.join(","));
+                      setMaxConcurrency(linkedRunner.maxConcurrency);
+                      setTerminalEnabled(linkedRunner.terminalEnabled);
+                    }
+                    setPassword("");
+                    setProbe(undefined);
+                    setFingerprintConfirmed(false);
+                    setResult(undefined);
+                    setRollbackResult(undefined);
+                    setError("");
+                  }}
+                  value={selectedProfileId}
+                >
+                  <option value="">选择已保存的执行机连接</option>
+                  {profiles.map((profile) => (
+                    <option key={profile.id} value={profile.id}>
+                      {profile.runnerName} · {profile.username}@{profile.host}:{profile.port}
+                      {profile.runnerId ? ` · Runner ${profile.runnerId.slice(0, 8)}` : " · 待绑定"}
+                    </option>
+                  ))}
+                </Select>
+              </label>
+              <Button
+                className="button button-primary"
+                disabled={!selectedProfileId || !name.trim() || Boolean(pending)}
+                onClick={() => void probeHost()}
+                type="button"
+              >
+                <Search size={16} />
+                {pending === "probe" ? "正在探测…" : "载入连接并探测"}
+              </Button>
+            </div>
+          ) : null}
+
+          <div className="runner-installer-grid">
             <label>
-              执行机名称
-              <Input onChange={(event) => setName(event.target.value)} value={name} />
+              安装系统模式
+              <Select
+                disabled={Boolean(pending)}
+                onChange={(event) =>
+                  connectionChanged(
+                    () => setInstallationMode(event.target.value as typeof installationMode),
+                    false,
+                  )
+                }
+                value={installationMode}
+              >
+                <option value="auto">自动识别（推荐）</option>
+                <option value="ubuntu">强制 Ubuntu</option>
+                <option value="opensuse">强制 openSUSE</option>
+                <option value="opensuse-leap">强制 openSUSE Leap</option>
+                <option value="opensuse-tumbleweed">强制 openSUSE Tumbleweed</option>
+              </Select>
+              <small>系统标识错误时可手动选择；仍会校验 Bash、systemd、架构和权限。</small>
             </label>
             <label>
-              标签（逗号分隔）
-              <Input onChange={(event) => setLabels(event.target.value)} value={labels} />
-            </label>
-            <label>
-              最大并发
-              <Input
-                max={64}
-                min={1}
-                onChange={(event) => setMaxConcurrency(Number(event.target.value))}
-                type="number"
-                value={maxConcurrency}
-              />
-            </label>
-            <label>
-              工作目录
+              执行机 IP / 主机名
               <Input
                 autoComplete="off"
-                onChange={(event) => setDataDirectory(event.target.value)}
-                placeholder={DEFAULT_RUNNER_DATA_DIRECTORY}
-                value={dataDirectory}
+                disabled={Boolean(pending)}
+                onChange={(event) => connectionChanged(() => setHost(event.target.value))}
+                placeholder="10.20.30.40"
+                value={host}
               />
-              <small>留空使用默认 {DEFAULT_RUNNER_DATA_DIRECTORY}；需为绝对路径。</small>
             </label>
-            <label className="checkbox-field">
+            <label>
+              SSH 端口
               <Input
-                checked={terminalEnabled}
-                onChange={(event) => setTerminalEnabled(event.target.checked)}
-                type="checkbox"
+                disabled={Boolean(pending)}
+                max={65_535}
+                min={1}
+                onChange={(event) => connectionChanged(() => setPort(Number(event.target.value)))}
+                type="number"
+                value={port}
               />
-              允许管理员直连终端
             </label>
-            <label className="checkbox-field">
+            <label>
+              用户名
               <Input
-                checked={runAsRoot}
-                onChange={(event) => setRunAsRoot(event.target.checked)}
-                type="checkbox"
+                autoComplete="username"
+                disabled={Boolean(pending)}
+                onChange={(event) => connectionChanged(() => setUsername(event.target.value))}
+                placeholder="root 或可 sudo 的用户"
+                value={username}
               />
-              以 root 身份运行 Agent
+            </label>
+            <label>
+              SSH / sudo 密码
+              <Input
+                autoComplete="current-password"
+                disabled={Boolean(pending)}
+                onChange={(event) => connectionChanged(() => setPassword(event.target.value))}
+                type="password"
+                value={password}
+              />
             </label>
           </div>
-          {runAsRoot ? (
-            <div className="inline-notice warning-notice" role="status">
-              <ShieldAlert size={18} />
-              <span>root 模式会扩大测试进程可访问的主机资源范围，仅建议用于受控内网执行机。</span>
-            </div>
-          ) : null}
-          {!probe.cgroupV2Available ? (
-            <div className="inline-notice warning-notice" role="status">
-              <ShieldAlert size={18} />
-              <span>
-                无 cgroup v2 时不能硬性限制整个进程树的 CPU、内存和进程数，请只运行可信用例。
-              </span>
-            </div>
-          ) : null}
-          <label>
-            私有 CA 证书（可选，PEM）
-            <Textarea
-              onChange={(event) => setCaCertificatePem(event.target.value)}
-              placeholder="控制面使用私有 CA 时粘贴；公有可信证书请留空。"
-              rows={4}
-              value={caCertificatePem}
-            />
-          </label>
+
           <div className="runner-installer-actions">
             <Button
-              className="button-primary"
-              disabled={!fingerprintConfirmed || !name.trim() || Boolean(pending)}
-              onClick={() => void installAgent()}
+              className="button-secondary"
+              disabled={!host || !username || (!password && !selectedProfileId) || Boolean(pending)}
+              onClick={() => void probeHost()}
               type="button"
             >
-              <HardDriveDownload size={16} />
-              {pending === "install"
-                ? "正在安装并启动…"
-                : selectedProfileId
-                  ? "按上述配置重新安装 Agent"
-                  : "安装内置 Agent"}
+              <Search size={16} /> {pending === "probe" ? "正在探测…" : "探测并核验主机"}
             </Button>
-            <Button
-              className="button-danger-quiet"
-              disabled={!fingerprintConfirmed || !password || Boolean(pending)}
-              onClick={() => void rollbackAgent()}
-              type="button"
-            >
-              {pending === "rollback" ? "正在回滚…" : "回滚上次安装"}
-            </Button>
-            <small>安装过程不会调用系统包管理器，也不会下载任何外部依赖。</small>
+            <small>支持 Ubuntu、openSUSE Leap/Tumbleweed，以及 amd64、arm64。</small>
           </div>
-        </div>
-      ) : null}
 
-      {result ? (
-        <div className="form-success" role="status">
-          <CheckCircle2 size={18} />
-          Agent {result.agentVersion} 已安装到 {result.host}
-          ；服务已启动，执行机将在注册后出现在下方列表。
+          {probe ? (
+            <div className="runner-probe-result">
+              <div className="runner-probe-summary">
+                <CheckCircle2 size={20} />
+                <span>
+                  <strong>{probe.operatingSystemName}</strong>
+                  <small>
+                    {probe.architecture} · systemd · {probe.privilegeMode} · {probe.bashPath}
+                    {probe.cgroupV2Available ? " · cgroup v2" : " · 无 cgroup v2（降级隔离）"}
+                  </small>
+                </span>
+              </div>
+              {probe.forcedInstallationMode ||
+              probe.detectedOperatingSystemId !== probe.operatingSystemId ? (
+                <div className="inline-notice warning-notice" role="status">
+                  <ShieldAlert size={18} />
+                  <span>
+                    系统报告为 {probe.detectedOperatingSystemId}，将按 {probe.operatingSystemId}
+                    模式安装。请确认目标机确实兼容该模式。
+                  </span>
+                </div>
+              ) : null}
+              <div className="runner-fingerprint">
+                <Fingerprint size={18} />
+                <span>
+                  <small>SSH 主机指纹</small>
+                  <code>{probe.hostKeySha256}</code>
+                </span>
+              </div>
+              <label className="checkbox-row runner-fingerprint-confirmation">
+                <Input
+                  checked={fingerprintConfirmed}
+                  onChange={(event) => setFingerprintConfirmed(event.target.checked)}
+                  type="checkbox"
+                />
+                我已通过可信渠道核对并确认上述 SSH 主机指纹
+              </label>
+
+              <div className="runner-installer-grid runner-install-options">
+                <label>
+                  执行机名称
+                  <Input onChange={(event) => setName(event.target.value)} value={name} />
+                </label>
+                <label>
+                  标签（逗号分隔）
+                  <Input onChange={(event) => setLabels(event.target.value)} value={labels} />
+                </label>
+                <label>
+                  最大并发
+                  <Input
+                    max={64}
+                    min={1}
+                    onChange={(event) => setMaxConcurrency(Number(event.target.value))}
+                    type="number"
+                    value={maxConcurrency}
+                  />
+                </label>
+                <label>
+                  工作目录
+                  <Input
+                    autoComplete="off"
+                    onChange={(event) => setDataDirectory(event.target.value)}
+                    placeholder={DEFAULT_RUNNER_DATA_DIRECTORY}
+                    value={dataDirectory}
+                  />
+                  <small>留空使用默认 {DEFAULT_RUNNER_DATA_DIRECTORY}；需为绝对路径。</small>
+                </label>
+                <label className="checkbox-field">
+                  <Input
+                    checked={terminalEnabled}
+                    onChange={(event) => setTerminalEnabled(event.target.checked)}
+                    type="checkbox"
+                  />
+                  允许管理员直连终端
+                </label>
+                <label className="checkbox-field">
+                  <Input
+                    checked={runAsRoot}
+                    onChange={(event) => setRunAsRoot(event.target.checked)}
+                    type="checkbox"
+                  />
+                  以 root 身份运行 Agent
+                </label>
+              </div>
+              {runAsRoot ? (
+                <div className="inline-notice warning-notice" role="status">
+                  <ShieldAlert size={18} />
+                  <span>
+                    root 模式会扩大测试进程可访问的主机资源范围，仅建议用于受控内网执行机。
+                  </span>
+                </div>
+              ) : null}
+              {!probe.cgroupV2Available ? (
+                <div className="inline-notice warning-notice" role="status">
+                  <ShieldAlert size={18} />
+                  <span>
+                    无 cgroup v2 时不能硬性限制整个进程树的 CPU、内存和进程数，请只运行可信用例。
+                  </span>
+                </div>
+              ) : null}
+              <label>
+                私有 CA 证书（可选，PEM）
+                <Textarea
+                  onChange={(event) => setCaCertificatePem(event.target.value)}
+                  placeholder="控制面使用私有 CA 时粘贴；公有可信证书请留空。"
+                  rows={4}
+                  value={caCertificatePem}
+                />
+              </label>
+              <div className="runner-installer-actions">
+                <Button
+                  className="button-primary"
+                  disabled={!fingerprintConfirmed || !name.trim() || Boolean(pending)}
+                  onClick={() => void installAgent()}
+                  type="button"
+                >
+                  <HardDriveDownload size={16} />
+                  {pending === "install"
+                    ? "正在安装并启动…"
+                    : selectedProfileId
+                      ? "按上述配置重新安装 Agent"
+                      : "安装内置 Agent"}
+                </Button>
+                <Button
+                  className="button-danger-quiet"
+                  disabled={!fingerprintConfirmed || !password || Boolean(pending)}
+                  onClick={() => void rollbackAgent()}
+                  type="button"
+                >
+                  {pending === "rollback" ? "正在回滚…" : "回滚上次安装"}
+                </Button>
+                <small>安装过程不会调用系统包管理器，也不会下载任何外部依赖。</small>
+              </div>
+            </div>
+          ) : null}
+
+          {result ? (
+            <div className="form-success" role="status">
+              <CheckCircle2 size={18} />
+              Agent {result.agentVersion} 已安装到 {result.host}
+              ；服务已启动，执行机将在注册后出现在下方列表。
+            </div>
+          ) : null}
+          {rollbackResult ? (
+            <div className="form-success" role="status">
+              <CheckCircle2 size={18} />
+              Agent 已回滚到 {rollbackResult.agentVersion}；systemd 健康检查通过。
+            </div>
+          ) : null}
+          {error ? (
+            <p className="form-error" role="alert">
+              {error}
+            </p>
+          ) : null}
         </div>
-      ) : null}
-      {rollbackResult ? (
-        <div className="form-success" role="status">
-          <CheckCircle2 size={18} />
-          Agent 已回滚到 {rollbackResult.agentVersion}；systemd 健康检查通过。
-        </div>
-      ) : null}
-      {error ? (
-        <p className="form-error" role="alert">
-          {error}
-        </p>
-      ) : null}
-    </section>
+      </ActionDialog>
+    </>
   );
 }
 

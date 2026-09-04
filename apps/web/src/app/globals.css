@@ -4118,14 +4118,39 @@ button.icon-button:disabled {
   font-size: 23px;
 }
 
-.runner-installer-card {
-  display: grid;
-  gap: 20px;
-  padding: clamp(20px, 2vw, 28px);
+.runner-installer-launcher {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: 18px 20px;
   overflow: hidden;
   background:
-    radial-gradient(circle at 96% 0%, rgba(73, 124, 255, 0.1), transparent 32%),
+    radial-gradient(circle at 96% 0%, rgba(73, 124, 255, 0.1), transparent 38%),
     var(--color-surface);
+}
+
+.runner-installer-launcher-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 12px;
+}
+
+.runner-installer-launcher-actions > span {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-caption);
+  white-space: nowrap;
+}
+
+.runner-installer-form {
+  display: grid;
+  gap: 20px;
+}
+
+.action-dialog.runner-installer-dialog {
+  width: min(980px, calc(100dvw - 40px));
+  max-height: min(840px, calc(100dvh - 40px));
 }
 
 .runner-update-overlay {
@@ -4393,6 +4418,10 @@ button.icon-button:disabled {
   .runner-installer-grid,
   .runner-install-options {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .runner-installer-launcher-actions > span {
+    display: none;
   }
 }
 
@@ -11104,6 +11133,7 @@ button.icon-button:disabled {
 
 .round-tab-content {
   display: grid;
+  width: 100%;
   min-width: 0;
   gap: 14px;
   justify-items: start;
@@ -11113,6 +11143,11 @@ button.icon-button:disabled {
 .round-tab-content > .runner-card-grid,
 .round-tab-content > .inline-empty {
   width: 100%;
+}
+
+.round-tab-panel {
+  width: 100%;
+  min-width: 0;
 }
 
 .round-cases {
@@ -11171,6 +11206,7 @@ button.icon-button:disabled {
 
 .round-inline-refresh {
   display: inline-flex;
+  flex: 0 0 100%;
   align-items: center;
   gap: 6px;
   color: var(--color-text-tertiary);
@@ -11185,7 +11221,8 @@ button.icon-button:disabled {
 
 .round-filter-search {
   display: flex;
-  flex: 1 1 240px;
+  min-width: min(360px, 100%);
+  flex: 1 0 360px;
   align-items: center;
   gap: 7px;
   padding: 0 10px;
@@ -11196,7 +11233,9 @@ button.icon-button:disabled {
 }
 
 .round-filter-search .ui-input {
+  width: 100%;
   min-height: 34px;
+  min-width: 0;
   flex: 1 1 auto;
   border: 0;
   padding: 0;
@@ -16192,6 +16231,34 @@ button.icon-button:disabled {
   font-size: var(--font-size-caption);
 }
 
+.storage-bulk-selection {
+  display: flex;
+  min-height: 38px;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin: calc(var(--space-2) * -1) 0 var(--space-3);
+  border: 1px solid color-mix(in srgb, var(--color-info) 16%, var(--color-border));
+  border-radius: var(--radius-control);
+  padding: 7px 11px;
+  background: color-mix(in srgb, var(--color-info-soft) 50%, var(--color-surface));
+}
+
+.storage-bulk-selection label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--color-text);
+  font-size: var(--font-size-control);
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.storage-bulk-selection > span {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-caption);
+}
+
 .storage-tree-loading {
   display: flex;
   align-items: center;
@@ -16342,10 +16409,20 @@ button.icon-button:disabled {
 .storage-tree-file > summary {
   min-height: 46px;
   grid-template-columns:
-    auto auto minmax(120px, 1fr) auto minmax(72px, auto) minmax(92px, auto)
+    auto 22px auto minmax(120px, 1fr) auto minmax(72px, auto) minmax(92px, auto)
     minmax(164px, auto);
   border-radius: var(--radius-control);
   padding: 6px 9px;
+}
+
+.storage-tree-file-selection {
+  display: grid;
+  width: 22px;
+  place-items: center;
+}
+
+.storage-tree-file-selection .ui-input[type="checkbox"] {
+  margin: 0;
 }
 
 .storage-tree-file > summary > svg:not(.storage-tree-chevron) {
@@ -16379,11 +16456,39 @@ button.icon-button:disabled {
 .storage-tree-file-detail {
   display: grid;
   gap: 9px;
-  margin: 0 9px 9px 49px;
+  margin: 0 9px 9px 80px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-control);
   padding: 11px 13px;
   background: var(--color-surface-muted);
+}
+
+.storage-deletion-floating-action {
+  position: fixed;
+  z-index: 40;
+  right: 32px;
+  bottom: 28px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid color-mix(in srgb, var(--color-danger) 20%, var(--color-border));
+  border-radius: var(--radius-pill);
+  padding: 9px 10px 9px 16px;
+  background: color-mix(in srgb, var(--color-surface) 94%, transparent);
+  box-shadow: var(--shadow-float);
+  backdrop-filter: blur(14px) saturate(120%);
+}
+
+.storage-deletion-floating-action > span {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-control);
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.storage-deletion-floating-action > span strong {
+  color: var(--color-danger);
+  font-variant-numeric: tabular-nums;
 }
 
 .storage-tree-path-detail,
@@ -16544,7 +16649,10 @@ button.icon-button:disabled {
   }
 
   .storage-tree-file > summary {
-    grid-template-columns: auto auto minmax(120px, 1fr) auto minmax(70px, auto) minmax(164px, auto);
+    grid-template-columns: auto 22px auto minmax(120px, 1fr) auto minmax(70px, auto) minmax(
+        164px,
+        auto
+      );
   }
 
   .storage-tree-file-allocation {
@@ -16553,6 +16661,11 @@ button.icon-button:disabled {
 
   .storage-sqlite-components li {
     grid-template-columns: 58px minmax(120px, 1fr) minmax(70px, auto) minmax(164px, auto);
+  }
+
+  .storage-deletion-floating-action {
+    right: 20px;
+    bottom: 20px;
   }
 }
 

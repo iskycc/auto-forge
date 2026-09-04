@@ -18,7 +18,7 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 
-import { Button } from "@/components/ui";
+import { Button, Input } from "@/components/ui";
 
 import type {
   StorageDirectoryNode,
@@ -30,8 +30,11 @@ const TREE_RENDER_BATCH_SIZE = 250;
 
 type RuntimeAssetDeletionControls = {
   canManage: boolean;
-  deletingRuntimeAssetId: string | undefined;
+  disabled: boolean;
+  pendingRuntimeAssetIds: ReadonlySet<string>;
+  selectedRuntimeAssetIds: ReadonlySet<string>;
   onDelete: (item: StorageInventoryItem) => void;
+  onSelectionChange: (runtimeAssetId: string, selected: boolean) => void;
 };
 
 const CATEGORY_LABELS: Record<StorageInventoryCategory, string> = {
@@ -225,6 +228,22 @@ function StorageFileBranch({
     >
       <summary>
         <ChevronRight aria-hidden="true" className="storage-tree-chevron" size={14} />
+        <span className="storage-tree-file-selection">
+          {canDeleteRuntimeAsset(item, deletion.canManage) ? (
+            <Input
+              aria-label={`选择${CATEGORY_LABELS[item.category]} ${item.name}`}
+              checked={deletion.selectedRuntimeAssetIds.has(item.runtimeAssetId!)}
+              disabled={
+                deletion.disabled || deletion.pendingRuntimeAssetIds.has(item.runtimeAssetId!)
+              }
+              onChange={(event) =>
+                deletion.onSelectionChange(item.runtimeAssetId!, event.currentTarget.checked)
+              }
+              onClick={(event) => event.stopPropagation()}
+              type="checkbox"
+            />
+          ) : null}
+        </span>
         <FileTypeIcon category={item.category} />
         <span className="storage-tree-file-identity">
           <strong className="storage-tree-file-name" title={item.name}>
@@ -304,13 +323,15 @@ function StorageFileBranch({
           <div className="storage-tree-file-actions">
             <Button
               aria-label={`删除${CATEGORY_LABELS[item.category]} ${item.name}`}
-              disabled={deletion.deletingRuntimeAssetId === item.runtimeAssetId}
+              disabled={
+                deletion.disabled || deletion.pendingRuntimeAssetIds.has(item.runtimeAssetId!)
+              }
               onClick={() => deletion.onDelete(item)}
               type="button"
               variant="danger"
             >
               <Trash2 aria-hidden="true" size={15} />
-              {deletion.deletingRuntimeAssetId === item.runtimeAssetId
+              {deletion.pendingRuntimeAssetIds.has(item.runtimeAssetId!)
                 ? "正在删除…"
                 : `删除${CATEGORY_LABELS[item.category]}`}
             </Button>

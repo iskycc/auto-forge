@@ -1164,7 +1164,7 @@ function RoundDetailPanel({
               </Button>
             ) : null}
           </div>
-          <div hidden={activeTab !== "cases"}>
+          <div className="round-tab-panel" hidden={activeTab !== "cases"}>
             <RoundCasesTable
               key={summary.round}
               batch={batch}
@@ -1183,7 +1183,7 @@ function RoundDetailPanel({
             />
           </div>
           {runnerTabMounted ? (
-            <div hidden={activeTab !== "runners"}>
+            <div className="round-tab-panel" hidden={activeTab !== "runners"}>
               <RoundRunnerCards
                 batch={batch}
                 round={summary.round}

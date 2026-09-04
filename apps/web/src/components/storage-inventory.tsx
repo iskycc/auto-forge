@@ -2,24 +2,27 @@
 
 import type {
   DeleteStorageRuntimeAssetResult,
+  DeleteStorageRuntimeAssetsResult,
   StorageInventoryCategory,
   StorageInventoryItem,
   StorageInventoryPage,
   StorageInventorySummary,
 } from "@autoforge/contracts";
-import { Database, HardDrive, LoaderCircle, RefreshCw, Search } from "lucide-react";
+import { Database, HardDrive, LoaderCircle, RefreshCw, Search, Trash2, X } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
 
 import { Button, Input, Select } from "@/components/ui";
 import { useConfirm, useToast } from "@/components/ui-feedback";
 import { LoadingState } from "@/components/loading-state";
+import { removeRuntimeAssetsFromInventory } from "@/components/storage-inventory-deletion";
 import { StorageInventoryTree } from "@/components/storage-inventory-tree";
 import { buildStorageInventoryTree } from "@/components/storage-inventory-tree-model";
 import { readApiErrorMessage } from "@/lib/client-api";
 
 const INVENTORY_READ_BATCH_SIZE = 500;
 const INVENTORY_RENDER_COMMIT_SIZE = 2_000;
+const RUNTIME_ASSET_DELETE_BATCH_SIZE = 100;
 
 const CATEGORY_LABELS: Record<StorageInventoryCategory, string> = {
   database: "平台数据库",
@@ -56,7 +59,12 @@ export function StorageInventory({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [refreshSequence, setRefreshSequence] = useState(0);
-  const [deletingRuntimeAssetId, setDeletingRuntimeAssetId] = useState<string>();
+  const [selectedRuntimeAssetIds, setSelectedRuntimeAssetIds] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const [pendingRuntimeAssetIds, setPendingRuntimeAssetIds] = useState<Set<string>>(
+    () => new Set(),
+  );
   const handledRefreshSequence = useRef(0);
 
   useEffect(() => {
@@ -102,6 +110,23 @@ export function StorageInventory({
         : [],
     [items, summary],
   );
+  const selectableRuntimeAssets = useMemo(() => {
+    const uniqueAssets = new Map<string, StorageInventoryItem>();
+    if (!canManage) return [];
+    for (const item of items) {
+      if (
+        item.runtimeAssetId &&
+        (item.category === "jdk" || item.category === "dependency") &&
+        !uniqueAssets.has(item.runtimeAssetId)
+      ) {
+        uniqueAssets.set(item.runtimeAssetId, item);
+      }
+    }
+    return [...uniqueAssets.values()];
+  }, [canManage, items]);
+  const allRuntimeAssetsSelected =
+    selectableRuntimeAssets.length > 0 &&
+    selectableRuntimeAssets.every((item) => selectedRuntimeAssetIds.has(item.runtimeAssetId!));
 
   function applyFilters(event: FormEvent<HTMLFormElement>): void {
     event.preventDefault();
@@ -115,6 +140,7 @@ export function StorageInventory({
   }
 
   function refreshInventory(): void {
+    setSelectedRuntimeAssetIds(new Set());
     setItems([]);
     setSummary(undefined);
     setLoading(true);
@@ -139,7 +165,7 @@ export function StorageInventory({
     });
     if (!accepted) return;
 
-    setDeletingRuntimeAssetId(item.runtimeAssetId);
+    setPendingRuntimeAssetIds(new Set([item.runtimeAssetId]));
     setError("");
     toast.dismissAll();
     try {
@@ -156,14 +182,107 @@ export function StorageInventory({
           ? `${categoryLabel}已永久删除，释放 ${formatBytes(result.deletedBytes)}。`
           : `${categoryLabel}的外部资源登记已删除。`,
       );
-      refreshInventory();
+      applyDeletedRuntimeAssets(new Set([result.runtimeAssetId]));
     } catch (cause) {
       const message = cause instanceof Error ? cause.message : `删除${categoryLabel}失败。`;
       setError(message);
       toast.error(message);
     } finally {
-      setDeletingRuntimeAssetId(undefined);
+      setPendingRuntimeAssetIds(new Set());
     }
+  }
+
+  async function deleteSelectedRuntimeAssets(): Promise<void> {
+    const runtimeAssetIds = [...selectedRuntimeAssetIds];
+    if (runtimeAssetIds.length === 0) return;
+    const accepted = await confirmAction({
+      title: "批量删除存储资源",
+      description: `确定永久删除已选择的 ${runtimeAssetIds.length} 项 JDK 包或依赖包吗？平台会逐项校验引用关系；无法删除的资源会保留并显示原因。该操作无法恢复。`,
+      confirmLabel: `永久删除 ${runtimeAssetIds.length} 项`,
+      cancelLabel: "取消",
+      tone: "danger",
+    });
+    if (!accepted) return;
+
+    setPendingRuntimeAssetIds(new Set(runtimeAssetIds));
+    setError("");
+    toast.dismissAll();
+    const deleted: DeleteStorageRuntimeAssetResult[] = [];
+    const failures: DeleteStorageRuntimeAssetsResult["failures"] = [];
+    try {
+      for (
+        let offset = 0;
+        offset < runtimeAssetIds.length;
+        offset += RUNTIME_ASSET_DELETE_BATCH_SIZE
+      ) {
+        const currentBatch = runtimeAssetIds.slice(
+          offset,
+          offset + RUNTIME_ASSET_DELETE_BATCH_SIZE,
+        );
+        const response = await fetch("/api/v1/settings/storage", {
+          method: "DELETE",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ runtimeAssetIds: currentBatch }),
+        });
+        const errorMessage = await readApiErrorMessage(response, "批量删除存储资源失败。");
+        if (errorMessage) throw new Error(errorMessage);
+        const result = (await response.json()) as DeleteStorageRuntimeAssetsResult;
+        deleted.push(...result.deleted);
+        failures.push(...result.failures);
+      }
+      const deletedIds = new Set(deleted.map((item) => item.runtimeAssetId));
+      applyDeletedRuntimeAssets(deletedIds);
+
+      if (failures.length > 0) {
+        const firstFailure = failures[0];
+        const message = `已删除 ${deleted.length} 项，${failures.length} 项未删除${firstFailure ? `：${firstFailure.message}` : "。"}`;
+        setError(message);
+        toast.warning(message, { durationMs: 7_000 });
+      } else {
+        const deletedBytes = deleted.reduce((total, item) => total + item.deletedBytes, 0);
+        toast.success(
+          deletedBytes > 0
+            ? `已永久删除 ${deleted.length} 项，释放 ${formatBytes(deletedBytes)}。`
+            : `已删除 ${deleted.length} 项外部资源登记。`,
+        );
+      }
+    } catch (cause) {
+      applyDeletedRuntimeAssets(new Set(deleted.map((item) => item.runtimeAssetId)));
+      const reason = cause instanceof Error ? cause.message : "批量删除存储资源失败。";
+      const message =
+        deleted.length > 0 ? `已删除 ${deleted.length} 项，后续请求中断：${reason}` : reason;
+      setError(message);
+      toast.error(message);
+    } finally {
+      setPendingRuntimeAssetIds(new Set());
+    }
+  }
+
+  function applyDeletedRuntimeAssets(runtimeAssetIds: ReadonlySet<string>): void {
+    if (runtimeAssetIds.size === 0 || !summary) return;
+    const patched = removeRuntimeAssetsFromInventory(items, summary, runtimeAssetIds);
+    setItems(patched.items);
+    setSummary(patched.summary);
+    setSelectedRuntimeAssetIds((current) => {
+      const next = new Set(current);
+      for (const runtimeAssetId of runtimeAssetIds) next.delete(runtimeAssetId);
+      return next;
+    });
+  }
+
+  function updateRuntimeAssetSelection(runtimeAssetId: string, selected: boolean): void {
+    setSelectedRuntimeAssetIds((current) => {
+      const next = new Set(current);
+      if (selected) next.add(runtimeAssetId);
+      else next.delete(runtimeAssetId);
+      return next;
+    });
+  }
+
+  function toggleAllRuntimeAssets(selected: boolean): void {
+    setSelectedRuntimeAssetIds(
+      selected ? new Set(selectableRuntimeAssets.map((item) => item.runtimeAssetId!)) : new Set(),
+    );
   }
 
   return (
@@ -281,6 +400,23 @@ export function StorageInventory({
             <Search size={15} /> 应用筛选
           </Button>
         </form>
+        {selectableRuntimeAssets.length > 0 ? (
+          <div className="storage-bulk-selection">
+            <label>
+              <Input
+                aria-label="选择当前结果中的全部可删除资源"
+                checked={allRuntimeAssetsSelected}
+                disabled={loading || pendingRuntimeAssetIds.size > 0}
+                onChange={(event) => toggleAllRuntimeAssets(event.currentTarget.checked)}
+                type="checkbox"
+              />
+              <span>选择当前结果中的全部可删除资源</span>
+            </label>
+            <span>
+              当前有 {selectableRuntimeAssets.length.toLocaleString()} 项 JDK 包或依赖包可管理
+            </span>
+          </div>
+        ) : null}
         {loading && summary ? (
           <div className="storage-tree-loading" role="status">
             <LoaderCircle aria-hidden="true" className="spin" size={15} />
@@ -296,14 +432,52 @@ export function StorageInventory({
             timeZone={timeZone}
             deletion={{
               canManage,
-              deletingRuntimeAssetId,
+              disabled: loading || pendingRuntimeAssetIds.size > 0,
+              pendingRuntimeAssetIds,
+              selectedRuntimeAssetIds,
               onDelete: (item) => void deleteRuntimeAsset(item),
+              onSelectionChange: updateRuntimeAssetSelection,
             }}
           />
         ) : summary && !loading ? (
           <div className="inline-empty">当前筛选条件下没有文件或资源引用。</div>
         ) : null}
       </section>
+      {selectedRuntimeAssetIds.size > 0 ? (
+        <div
+          aria-label="批量删除存储资源"
+          className="storage-deletion-floating-action"
+          role="region"
+        >
+          <span>
+            已选择 <strong>{selectedRuntimeAssetIds.size.toLocaleString()}</strong> 项
+          </span>
+          <Button
+            aria-label="清空已选择资源"
+            disabled={pendingRuntimeAssetIds.size > 0}
+            onClick={() => setSelectedRuntimeAssetIds(new Set())}
+            size="compact"
+            type="button"
+            variant="ghost"
+          >
+            <X aria-hidden="true" size={15} /> 清空
+          </Button>
+          <Button
+            disabled={loading || pendingRuntimeAssetIds.size > 0}
+            onClick={() => void deleteSelectedRuntimeAssets()}
+            size="compact"
+            type="button"
+            variant="danger"
+          >
+            {pendingRuntimeAssetIds.size > 0 ? (
+              <LoaderCircle aria-hidden="true" className="spin" size={15} />
+            ) : (
+              <Trash2 aria-hidden="true" size={15} />
+            )}
+            {pendingRuntimeAssetIds.size > 0 ? "正在删除…" : "批量删除"}
+          </Button>
+        </div>
+      ) : null}
     </div>
   );
 }

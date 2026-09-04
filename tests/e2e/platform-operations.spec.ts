@@ -1,4 +1,4 @@
-import { expect, test, type Locator, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page, type Request } from "@playwright/test";
 import { existsSync, mkdirSync, utimesSync, writeFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { dirname, resolve } from "node:path";
@@ -16,6 +16,8 @@ const STORAGE_JDK_ASSET_ID = "e2e-storage-jdk-delete";
 const STORAGE_JDK_FILE_NAME = "e2e-removable-jdk.zip";
 const STORAGE_DEPENDENCY_ASSET_ID = "e2e-storage-dependency-delete";
 const STORAGE_DEPENDENCY_FILE_NAME = "e2e-removable-dependencies.tar.gz";
+const STORAGE_DEPENDENCY_ASSET_ID_SECOND = "e2e-storage-dependency-delete-second";
+const STORAGE_DEPENDENCY_FILE_NAME_SECOND = "e2e-removable-dependencies-second.tar.gz";
 
 test("configuration conflicts, diagnostics and retention controls remain observable", async ({
   page,
@@ -211,17 +213,16 @@ test("configuration conflicts, diagnostics and retention controls remain observa
         fileName: STORAGE_JDK_FILE_NAME,
         objectPath: jdkObjectPath,
       });
-      const dependencyObjectPath = runtimeAssetObjectPath(
-        liteDataDirectory,
-        STORAGE_DEPENDENCY_ASSET_ID,
-        "tar.gz",
-      );
-      await verifyRuntimeAssetDeletion({
+      const dependencyObjectPaths = [
+        runtimeAssetObjectPath(liteDataDirectory, STORAGE_DEPENDENCY_ASSET_ID, "tar.gz"),
+        runtimeAssetObjectPath(liteDataDirectory, STORAGE_DEPENDENCY_ASSET_ID_SECOND, "tar.gz"),
+      ];
+      await verifyRuntimeAssetBatchDeletion({
         page,
         storageTree,
-        category: "依赖包",
-        fileName: STORAGE_DEPENDENCY_FILE_NAME,
-        objectPath: dependencyObjectPath,
+        assetIds: [STORAGE_DEPENDENCY_ASSET_ID, STORAGE_DEPENDENCY_ASSET_ID_SECOND],
+        fileNames: [STORAGE_DEPENDENCY_FILE_NAME, STORAGE_DEPENDENCY_FILE_NAME_SECOND],
+        objectPaths: dependencyObjectPaths,
       });
       const deletionAudit = await page.request.get(
         "/api/v1/audit-events?action=storage.runtime_asset_delete&limit=10",
@@ -236,6 +237,10 @@ test("configuration conflicts, diagnostics and retention controls remain observa
           expect.objectContaining({
             action: "storage.runtime_asset_delete",
             resourceId: STORAGE_DEPENDENCY_ASSET_ID,
+          }),
+          expect.objectContaining({
+            action: "storage.runtime_asset_delete",
+            resourceId: STORAGE_DEPENDENCY_ASSET_ID_SECOND,
           }),
         ]),
       });
@@ -321,6 +326,13 @@ function insertSqliteStorageFixture(dataDirectory: string): void {
       archiveFormat: "tar.gz",
       bytes: 23,
     },
+    {
+      id: STORAGE_DEPENDENCY_ASSET_ID_SECOND,
+      kind: "jar-bundle",
+      fileName: STORAGE_DEPENDENCY_FILE_NAME_SECOND,
+      archiveFormat: "tar.gz",
+      bytes: 29,
+    },
   ] as const;
   const database = new DatabaseSync(resolve(dataDirectory, "db", "autoforge.sqlite"));
   try {
@@ -379,6 +391,13 @@ async function verifyRuntimeAssetDeletion(input: {
   expect(existsSync(input.objectPath)).toBe(true);
 
   await deleteButton.click();
+  const inventoryGetRequests: string[] = [];
+  const observeInventoryReads = (request: Request) => {
+    if (request.url().includes("/api/v1/settings/storage?") && request.method() === "GET") {
+      inventoryGetRequests.push(request.url());
+    }
+  };
+  input.page.on("request", observeInventoryReads);
   const deleteResponsePromise = input.page.waitForResponse(
     (response) =>
       response.url().endsWith("/api/v1/settings/storage") &&
@@ -391,6 +410,73 @@ async function verifyRuntimeAssetDeletion(input: {
   ).toBeVisible();
   await expect(file).toHaveCount(0);
   expect(existsSync(input.objectPath)).toBe(false);
+  await input.page.waitForTimeout(100);
+  input.page.off("request", observeInventoryReads);
+  expect(inventoryGetRequests).toEqual([]);
+}
+
+async function verifyRuntimeAssetBatchDeletion(input: {
+  page: Page;
+  storageTree: Locator;
+  assetIds: readonly string[];
+  fileNames: readonly string[];
+  objectPaths: readonly string[];
+}): Promise<void> {
+  await input.page.getByRole("button", { name: "按文件类型筛选" }).click();
+  await input.page.getByRole("option", { name: "依赖包", exact: true }).click();
+  await input.page.getByLabel("搜索文件名称或路径").fill("e2e-removable-dependencies");
+  await input.page.getByRole("button", { name: "应用筛选" }).click();
+  const files = input.storageTree.locator("details.storage-tree-file");
+  await expect(files).toHaveCount(input.fileNames.length);
+  for (const [index, fileName] of input.fileNames.entries()) {
+    await input.page.getByLabel(`选择依赖包 ${fileName}`).check();
+    await expect(files.nth(index)).not.toHaveAttribute("open", "");
+  }
+
+  const floatingAction = input.page.getByRole("region", { name: "批量删除存储资源" });
+  await expect(floatingAction).toBeVisible();
+  await expect(floatingAction).toContainText(`已选择 ${input.fileNames.length} 项`);
+  const priorToastDismiss = input.page.getByRole("button", { name: "关闭通知" });
+  if (await priorToastDismiss.isVisible()) await priorToastDismiss.click();
+  await expectUiIntegrity(input.page);
+  await floatingAction.getByRole("button", { name: "批量删除" }).click();
+  const confirmation = input.page.getByRole("dialog", { name: "批量删除存储资源" });
+  await expect(confirmation).toContainText(`${input.fileNames.length} 项`);
+  await confirmation.getByRole("button", { name: "取消" }).click();
+  await expect(files).toHaveCount(input.fileNames.length);
+
+  await floatingAction.getByRole("button", { name: "批量删除" }).click();
+  const inventoryGetRequests: string[] = [];
+  const observeInventoryReads = (request: Request) => {
+    if (request.url().includes("/api/v1/settings/storage?") && request.method() === "GET") {
+      inventoryGetRequests.push(request.url());
+    }
+  };
+  input.page.on("request", observeInventoryReads);
+  const deleteResponsePromise = input.page.waitForResponse(
+    (response) =>
+      response.url().endsWith("/api/v1/settings/storage") &&
+      response.request().method() === "DELETE",
+  );
+  await acceptSystemDialog(input.page, "批量删除存储资源", `永久删除 ${input.fileNames.length} 项`);
+  const deleteResponse = await deleteResponsePromise;
+  expect(deleteResponse.status()).toBe(200);
+  expect(deleteResponse.request().postDataJSON()).toEqual({ runtimeAssetIds: input.assetIds });
+  expect(await deleteResponse.json()).toMatchObject({
+    deletedCount: input.fileNames.length,
+    failedCount: 0,
+  });
+  await expect(
+    input.page.locator(".toast-card", {
+      hasText: `已永久删除 ${input.fileNames.length} 项`,
+    }),
+  ).toBeVisible();
+  await expect(files).toHaveCount(0);
+  await expect(floatingAction).toHaveCount(0);
+  for (const objectPath of input.objectPaths) expect(existsSync(objectPath)).toBe(false);
+  await input.page.waitForTimeout(100);
+  input.page.off("request", observeInventoryReads);
+  expect(inventoryGetRequests).toEqual([]);
 }
 
 function runtimeAssetObjectPath(

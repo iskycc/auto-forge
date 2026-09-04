@@ -379,12 +379,36 @@ export const deleteStorageRuntimeAssetInputSchema = z.object({
   runtimeAssetId: z.string().min(1).max(128),
 });
 
+export const deleteStorageRuntimeAssetsInputSchema = z.object({
+  runtimeAssetIds: z
+    .array(z.string().min(1).max(128))
+    .min(1)
+    .max(100)
+    .refine((values) => new Set(values).size === values.length, {
+      message: "运行时资源编号不能重复。",
+    }),
+});
+
 export const deleteStorageRuntimeAssetResultSchema = z.object({
   runtimeAssetId: z.string().min(1).max(128),
   projectId: z.string().min(1).max(128),
   category: z.enum(["jdk", "dependency"]),
   sourceType: z.enum(["upload", "url"]),
   fileName: z.string().min(1).max(512),
+  deletedBytes: z.number().int().nonnegative(),
+});
+
+export const deleteStorageRuntimeAssetsResultSchema = z.object({
+  deleted: z.array(deleteStorageRuntimeAssetResultSchema),
+  failures: z.array(
+    z.object({
+      runtimeAssetId: z.string().min(1).max(128),
+      code: z.string().min(1).max(128),
+      message: z.string().min(1).max(2_000),
+    }),
+  ),
+  deletedCount: z.number().int().nonnegative(),
+  failedCount: z.number().int().nonnegative(),
   deletedBytes: z.number().int().nonnegative(),
 });
 
@@ -441,3 +465,6 @@ export type StorageInventoryItem = z.infer<typeof storageInventoryItemSchema>;
 export type StorageInventorySummary = z.infer<typeof storageInventorySummarySchema>;
 export type StorageInventoryPage = z.infer<typeof storageInventoryPageSchema>;
 export type DeleteStorageRuntimeAssetResult = z.infer<typeof deleteStorageRuntimeAssetResultSchema>;
+export type DeleteStorageRuntimeAssetsResult = z.infer<
+  typeof deleteStorageRuntimeAssetsResultSchema
+>;

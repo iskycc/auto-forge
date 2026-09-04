@@ -231,7 +231,7 @@ export default async function RunnersPage({
               <Server size={26} />
             </span>
             <strong>尚未注册执行机</strong>
-            <p>在上方填写执行机连接信息并完成自动安装后，Agent 会自动注册并出现在这里。</p>
+            <p>点击上方“打开自动安装”，填写连接信息并完成安装后，Agent 会自动出现在这里。</p>
           </div>
         ) : visibleRunners.length === 0 ? (
           <div className="inline-empty">没有匹配当前筛选条件的执行机。</div>

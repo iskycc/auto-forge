@@ -229,6 +229,37 @@ describe("storage runtime asset deletion", () => {
     });
     expect(structures.createRuntimeAsset).toHaveBeenCalledWith(asset);
   });
+
+  it("continues a batch after a referenced asset fails and reports each outcome", async () => {
+    const uploaded = { ...runtimeAsset("upload"), id: "asset-upload" };
+    const external = { ...runtimeAsset("url"), id: "asset-url" };
+    const structures = repositoryFake({ versions: [] });
+    structures.deleteRuntimeAssetIfUnreferenced
+      .mockResolvedValueOnce({ status: "deleted", asset: uploaded })
+      .mockResolvedValueOnce({ status: "referenced" })
+      .mockResolvedValueOnce({ status: "deleted", asset: external });
+    const objectStore = { delete: vi.fn().mockResolvedValue(undefined) };
+    const service = new ProjectStructureService(
+      structures,
+      objectStore as unknown as JarObjectStorePort,
+      { now: () => new Date(timestamp) },
+      { next: () => "unused" },
+    );
+
+    const outcomes = await service.deleteRuntimeAssets([
+      "asset-upload",
+      "asset-referenced",
+      "asset-url",
+    ]);
+
+    expect(outcomes).toEqual([
+      { status: "deleted", asset: uploaded },
+      expect.objectContaining({ status: "failed", runtimeAssetId: "asset-referenced" }),
+      { status: "deleted", asset: external },
+    ]);
+    expect(objectStore.delete).toHaveBeenCalledTimes(1);
+    expect(objectStore.delete).toHaveBeenCalledWith(uploaded.objectKey);
+  });
 });
 
 function repositoryFake(structure: { versions: ReturnType<typeof projectVersion>[] }) {

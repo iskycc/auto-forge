@@ -4,6 +4,41 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## Unreleased
+
+### Added
+
+- 存储空间目录中的 JDK 包与依赖包支持复选和悬浮批量删除操作；批量请求逐项校验引用关系，
+  部分失败不会阻断其他资源，失败项会保留选择并显示原因。
+
+### Changed
+
+- 执行机页面不再平铺 SSH 主机、密码和安装参数；页面保留轻量自动安装入口，点击后在带焦点约束、
+  Escape 关闭和内部滚动的系统弹窗中完成探测、指纹确认、安装及回滚。
+
+### Fixed
+
+- 删除存储资源后直接局部更新目录树与空间汇总，不再重新扫描数据目录和对象存储，避免每删除
+  一个文件都触发整页加载和目录展开状态丢失。
+- 用例管理的 TestNG 与 DDT 切换改为工作台内即时切换；访问过的面板保持挂载，TestNG 已加载目录、
+  搜索、勾选和详情状态不再因切换到 DDT 后返回而丢失。
+- 执行记录详情的用例搜索框设置稳定的最小弹性宽度，长关键字和异步筛选期间不再被相邻控件压缩。
+
+### Database and persisted configuration
+
+- 无数据库迁移、持久化配置格式或 Runner Protocol 变化。
+
+### Compatibility and offline assets
+
+- `DELETE /api/v1/settings/storage` 保留原有单项请求，并新增最多 100 项的批量请求；Lite 本地对象
+  与 Full MinIO 对象继续使用同一应用层删除规则。未新增运行时依赖或离线资产。
+
+### Tests
+
+- 新增批量删除契约、部分失败继续处理、客户端容量汇总修补测试，并扩展 Playwright 存储空间场景，
+  验证悬浮批量操作、二次确认、对象删除，以及删除完成后不重新请求存储清单。
+- Playwright 新增自动安装弹窗、TestNG/DDT 无页面请求切换及长关键字搜索框宽度回归断言。
+
 ## 1.9.0 - 2026-09-04
 
 ### Changed
