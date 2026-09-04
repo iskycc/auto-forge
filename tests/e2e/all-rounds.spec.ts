@@ -49,6 +49,17 @@ async function expectIndependentSharedLogScrolling(page: Page): Promise<void> {
   await page.setViewportSize({ width: 1024, height: 560 });
   const caseInformation = page.getByRole("region", { name: "用例信息" });
   const logContent = page.getByRole("region", { name: "日志内容" });
+  await caseInformation.evaluate((viewport) => {
+    const overflowFixture = document.createElement("div");
+    overflowFixture.ariaHidden = "true";
+    overflowFixture.dataset.playwrightScrollOverflow = "true";
+    overflowFixture.style.height = "720px";
+    overflowFixture.style.pointerEvents = "none";
+    viewport.firstElementChild?.append(overflowFixture);
+  });
+  await expect
+    .poll(() => caseInformation.evaluate((element) => element.scrollHeight > element.clientHeight))
+    .toBe(true);
   const caseScrollbar = page.getByRole("scrollbar", { name: "用例信息滚动条" });
   const logScrollbar = page.getByRole("scrollbar", { name: "日志内容滚动条" });
   await expect(caseScrollbar).toBeVisible();
