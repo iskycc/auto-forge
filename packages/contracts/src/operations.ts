@@ -266,6 +266,22 @@ export const analyticsSummarySchema = z.object({
   ),
 });
 
+export const dashboardSnapshotSchema = z.object({
+  schemaVersion: z.literal(1),
+  projectId: identifierSchema,
+  projectVersionId: identifierSchema,
+  timeZone: platformTimeZoneSchema,
+  catalog: z.object({
+    sourceCount: z.number().int().nonnegative(),
+    caseCount: z.number().int().nonnegative(),
+    methodCount: z.number().int().nonnegative(),
+    enabledMethodCount: z.number().int().nonnegative(),
+  }),
+  currentAnalytics: analyticsSummarySchema,
+  previousAnalytics: analyticsSummarySchema,
+  refreshedAt: z.string().datetime(),
+});
+
 export const analyticsExportFormatSchema = z.enum(["csv", "json"]);
 
 export const analyticsExportJobSchema = z.object({
@@ -460,6 +476,7 @@ export type RetentionPreview = z.infer<typeof retentionPreviewSchema>;
 export type RetentionExecutionResult = z.infer<typeof retentionExecutionResultSchema>;
 export type AnalyticsFilter = z.infer<typeof analyticsFilterSchema>;
 export type AnalyticsSummary = z.infer<typeof analyticsSummarySchema>;
+export type DashboardSnapshot = z.infer<typeof dashboardSnapshotSchema>;
 export type AnalyticsBatchComparison = z.infer<typeof analyticsBatchComparisonSchema>;
 export type AnalyticsExportFormat = z.infer<typeof analyticsExportFormatSchema>;
 export type AnalyticsExportJob = z.infer<typeof analyticsExportJobSchema>;

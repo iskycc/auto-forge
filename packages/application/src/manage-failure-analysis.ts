@@ -44,6 +44,41 @@ export class FailureAnalysisService {
     });
   }
 
+  statistics(input: {
+    projectId: string;
+    projectVersionId?: string;
+    cursor?: string;
+    limit?: number;
+  }) {
+    return this.repository.readStatistics({
+      projectId: input.projectId,
+      limit: boundedPageSize(input.limit),
+      generatedAt: this.clock.now().toISOString(),
+      ...(input.projectVersionId ? { projectVersionId: input.projectVersionId } : {}),
+      ...(input.cursor ? { cursor: input.cursor } : {}),
+    });
+  }
+
+  listAnalystClaims(input: {
+    projectId: string;
+    projectVersionId?: string;
+    claimantId: string;
+    cursor?: string;
+    limit?: number;
+  }) {
+    return this.repository.listClaims({
+      projectId: input.projectId,
+      claimantId: input.claimantId,
+      sort: "case_name",
+      direction: "asc",
+      completionOrder: "completed_first",
+      includeCompleted: true,
+      limit: boundedPageSize(input.limit),
+      ...(input.projectVersionId ? { projectVersionId: input.projectVersionId } : {}),
+      ...(input.cursor ? { cursor: input.cursor } : {}),
+    });
+  }
+
   getBatch(input: { projectId: string; projectVersionId: string; batchId: string }) {
     return this.repository.getBatch(input);
   }

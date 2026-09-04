@@ -474,6 +474,40 @@ export function failureAnalysisContract(
           claimedAt: "2026-09-01T01:06:00.000Z",
         });
         expect(pendingClaim.claims).toHaveLength(1);
+        const statistics = await repository.readStatistics({
+          projectId,
+          projectVersionId,
+          limit: 10,
+          generatedAt: "2026-09-01T01:07:00.000Z",
+        });
+        expect(statistics).toMatchObject({
+          summary: {
+            total: 3,
+            claimed: 1,
+            analyzing: 0,
+            completed: 2,
+            categories: { rerunPassed: 0, caseFixed: 2, codeIssueFiled: 0 },
+          },
+          analysts: [
+            {
+              claimantId: "analyst-a",
+              total: 3,
+              claimed: 1,
+              completed: 2,
+              categories: { rerunPassed: 0, caseFixed: 2, codeIssueFiled: 0 },
+            },
+          ],
+          generatedAt: "2026-09-01T01:07:00.000Z",
+        });
+        expect(statistics.nextCursor).toBeUndefined();
+        await expect(
+          repository.readStatistics({
+            projectId,
+            projectVersionId: "another-version",
+            limit: 10,
+            generatedAt: "2026-09-01T01:07:00.000Z",
+          }),
+        ).resolves.toMatchObject({ summary: { total: 0 }, analysts: [] });
         const pendingFirst = await repository.listClaims({
           projectId,
           projectVersionId,

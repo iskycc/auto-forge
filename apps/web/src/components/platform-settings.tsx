@@ -5,7 +5,7 @@ import { Button, Input, Textarea } from "@/components/ui";
 import type { PlatformConfigurationView } from "@autoforge/contracts";
 import { Save, ServerCog } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useToast } from "@/components/ui-feedback";
 import { useConcurrentModificationFeedback } from "@/components/concurrent-modification-feedback";
 import { readApiError } from "@/lib/client-api";
@@ -25,9 +25,11 @@ const COMMON_TIME_ZONES = [
 export function PlatformSettings({
   initial,
   canManage,
+  initialFocus,
 }: {
   initial: Omit<PlatformConfigurationView, "configurationFile">;
   canManage: boolean;
+  initialFocus?: string;
 }) {
   const router = useRouter();
   const toast = useToast();
@@ -35,6 +37,15 @@ export function PlatformSettings({
   const [revision, setRevision] = useState(initial.revision);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
+  const formRef = useRef<HTMLFormElement>(null);
+
+  useEffect(() => {
+    if (!initialFocus) return;
+    const control = formRef.current?.elements.namedItem(initialFocus);
+    if (!(control instanceof HTMLElement)) return;
+    control.scrollIntoView({ behavior: "smooth", block: "center" });
+    control.focus({ preventScroll: true });
+  }, [initialFocus]);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -120,7 +131,7 @@ export function PlatformSettings({
   }
 
   return (
-    <form className="settings-stack" onSubmit={submit}>
+    <form className="settings-stack" onSubmit={submit} ref={formRef}>
       {error ? (
         <div className="auth-error" role="alert">
           {error}

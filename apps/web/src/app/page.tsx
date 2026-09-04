@@ -1,5 +1,4 @@
 import type { AnalyticsSummary } from "@autoforge/contracts";
-import { DASHBOARD_ANALYTICS_SAMPLE_LIMIT } from "@autoforge/application";
 import { hasPermission, type RunBatch, type Runner, type RunnerGroup } from "@autoforge/domain";
 import {
   Activity,
@@ -79,7 +78,6 @@ export default async function DashboardPage() {
   const canReadRuns = Boolean(
     activeProjectId && hasPermission(identity, "run.read", activeProjectId),
   );
-  const caseProjectIds = canReadCases && activeProjectId ? [activeProjectId] : [];
   const runProjectIds = canReadRuns && activeProjectId ? [activeProjectId] : [];
   const canReadRunners = hasPermissionInAnyScope(identity, "runner.read");
   const canReadSources = Boolean(
@@ -92,55 +90,45 @@ export default async function DashboardPage() {
     activeProjectId && hasPermission(identity, "case_source.manage", activeProjectId),
   );
   const now = new Date();
-  const currentWeekStartedAt = new Date(now.getTime() - 7 * 86_400_000).toISOString();
-  const previousWeekStartedAt = new Date(now.getTime() - 14 * 86_400_000).toISOString();
 
-  const [
-    catalogSummary,
-    runners,
-    runnerGroups,
-    recentBatches,
-    recentSources,
-    currentAnalytics,
-    previousAnalytics,
-  ] = await Promise.all([
-    services.catalog.getDashboardSummary(caseProjectIds),
-    canReadRunners ? services.runnerControl.list(500) : Promise.resolve([]),
-    canReadRunners ? services.runnerGroups.list(DASHBOARD_RUNNER_GROUP_LIMIT) : Promise.resolve([]),
-    canReadRuns && hierarchy.projectVersionId
-      ? services.runBatches.list(
-          DASHBOARD_RUN_BATCH_LIMIT,
-          runProjectIds,
-          hierarchy.projectVersionId,
-        )
-      : Promise.resolve([]),
-    canReadSources ? services.catalog.listRecentSources(5, caseProjectIds) : Promise.resolve([]),
-    canReadRuns && hierarchy.projectVersionId
-      ? services.platformOperations.analyticsOverview(
-          identity,
-          {
-            ...(runProjectIds?.[0] ? { projectId: runProjectIds[0] } : {}),
-            projectVersionId: hierarchy.projectVersionId,
-            completedAfter: currentWeekStartedAt,
-            timeZone,
-          },
-          { maximumFacts: DASHBOARD_ANALYTICS_SAMPLE_LIMIT },
-        )
-      : Promise.resolve(null),
-    canReadRuns && hierarchy.projectVersionId
-      ? services.platformOperations.analyticsOverview(
-          identity,
-          {
-            ...(runProjectIds?.[0] ? { projectId: runProjectIds[0] } : {}),
-            projectVersionId: hierarchy.projectVersionId,
-            completedAfter: previousWeekStartedAt,
-            completedBefore: currentWeekStartedAt,
-            timeZone,
-          },
-          { maximumFacts: DASHBOARD_ANALYTICS_SAMPLE_LIMIT },
-        )
-      : Promise.resolve(null),
-  ]);
+  const [dashboardSnapshot, runners, runnerGroups, recentBatches, recentSources] =
+    await Promise.all([
+      activeProjectId && hierarchy.projectVersionId && (canReadCases || canReadRuns)
+        ? services.dashboardSnapshots
+            .read({
+              projectId: activeProjectId,
+              projectVersionId: hierarchy.projectVersionId,
+              timeZone,
+            })
+            .catch(() => null)
+        : Promise.resolve(null),
+      canReadRunners ? services.runnerControl.list(500) : Promise.resolve([]),
+      canReadRunners
+        ? services.runnerGroups.list(DASHBOARD_RUNNER_GROUP_LIMIT)
+        : Promise.resolve([]),
+      canReadRuns && hierarchy.projectVersionId
+        ? services.runBatches.list(
+            DASHBOARD_RUN_BATCH_LIMIT,
+            runProjectIds,
+            hierarchy.projectVersionId,
+          )
+        : Promise.resolve([]),
+      canReadSources && activeProjectId
+        ? services.catalog.listRecentSources(5, [activeProjectId])
+        : Promise.resolve([]),
+    ]);
+
+  const emptyCatalogSummary = {
+    sourceCount: 0,
+    caseCount: 0,
+    methodCount: 0,
+    enabledMethodCount: 0,
+  };
+  const catalogSummary = canReadCases
+    ? (dashboardSnapshot?.catalog ?? emptyCatalogSummary)
+    : emptyCatalogSummary;
+  const currentAnalytics = canReadRuns ? (dashboardSnapshot?.currentAnalytics ?? null) : null;
+  const previousAnalytics = canReadRuns ? (dashboardSnapshot?.previousAnalytics ?? null) : null;
 
   const activeBatches = recentBatches.filter((batch) => isActiveRunBatch(batch.status));
   const activeBatch = activeBatches[0];

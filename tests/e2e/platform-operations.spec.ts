@@ -15,6 +15,8 @@ const SQLITE_FIXTURE_BATCH_ID = "e2e-storage-batch";
 const SQLITE_FIXTURE_BATCH_SEQUENCE_NUMBER = 918_273;
 const STORAGE_JDK_ASSET_ID = "e2e-storage-jdk-delete";
 const STORAGE_JDK_FILE_NAME = "e2e-removable-jdk.zip";
+const STORAGE_JDK_KEEPER_ASSET_ID = "e2e-storage-jdk-keeper";
+const STORAGE_JDK_KEEPER_FILE_NAME = "e2e-removable-jdk-keeper.zip";
 const STORAGE_DEPENDENCY_ASSET_ID = "e2e-storage-dependency-delete";
 const STORAGE_DEPENDENCY_FILE_NAME = "e2e-removable-dependencies.tar.gz";
 const STORAGE_DEPENDENCY_ASSET_ID_SECOND = "e2e-storage-dependency-delete-second";
@@ -26,6 +28,14 @@ test("configuration conflicts, diagnostics and retention controls remain observa
   await ensureAdministrator(page);
   const concurrentPage = await page.context().newPage();
   await Promise.all([page.goto("/settings/platform"), concurrentPage.goto("/settings/platform")]);
+
+  await page.getByRole("button", { name: "搜索配置" }).click();
+  const configurationSearch = page.getByRole("dialog", { name: "配置搜索" });
+  await configurationSearch.getByLabel("搜索配置项").fill("内部访问地址");
+  await captureUi(page, "configuration-search-1536");
+  await configurationSearch.getByRole("link", { name: /内部访问地址/u }).click();
+  await expect(page).toHaveURL(/section=configuration&focus=runnerBaseUrl/u);
+  await expect(page.locator('input[name="runnerBaseUrl"]')).toBeFocused();
 
   await page.getByLabel("公开大盘刷新间隔（秒）").fill("6");
   await page.getByRole("button", { name: "保存平台配置" }).click();
@@ -349,6 +359,13 @@ function insertSqliteStorageFixture(dataDirectory: string): void {
       bytes: 19,
     },
     {
+      id: STORAGE_JDK_KEEPER_ASSET_ID,
+      kind: "jdk",
+      fileName: STORAGE_JDK_KEEPER_FILE_NAME,
+      archiveFormat: "zip",
+      bytes: 17,
+    },
+    {
       id: STORAGE_DEPENDENCY_ASSET_ID,
       kind: "jar-bundle",
       fileName: STORAGE_DEPENDENCY_FILE_NAME,
@@ -416,15 +433,29 @@ async function verifyRuntimeAssetDeletion(input: {
 }): Promise<void> {
   await input.page.getByRole("button", { name: "按文件类型筛选" }).click();
   await input.page.getByRole("option", { name: input.category, exact: true }).click();
-  await input.page.getByLabel("搜索文件名称或路径").fill(input.fileName);
+  await input.page
+    .getByLabel("搜索文件名称或路径")
+    .fill(input.category === "JDK 包" ? "e2e-removable-jdk" : input.fileName);
   await input.page.getByRole("button", { name: "应用筛选" }).click();
   const file = input.storageTree
     .locator("details.storage-tree-file")
     .filter({ hasText: input.fileName });
   await expect(file).toHaveCount(1);
+  if (input.category === "JDK 包") {
+    await expect(
+      input.storageTree.getByText(STORAGE_JDK_KEEPER_FILE_NAME, { exact: true }),
+    ).toBeVisible();
+  }
   await file.locator(":scope > summary").click();
   const deleteButton = file.getByRole("button", { name: `删除${input.category}` });
   await deleteButton.click();
+  const preservedTreeState = await input.storageTree.evaluate((tree) => ({
+    openNodeIds: Array.from(
+      tree.querySelectorAll<HTMLElement>("details[data-tree-node-id][open]"),
+      (element) => element.dataset.treeNodeId,
+    ),
+    scrollY: window.scrollY,
+  }));
   const confirmation = input.page.getByRole("dialog", { name: `删除${input.category}` });
   await expect(confirmation).toContainText(input.fileName);
   await expect(confirmation).toContainText("无法恢复");
@@ -452,10 +483,37 @@ async function verifyRuntimeAssetDeletion(input: {
     input.page.locator(".toast-card", { hasText: new RegExp(`${input.category}已永久删除`, "u") }),
   ).toBeVisible();
   await expect(file).toHaveCount(0);
+  for (const nodeId of preservedTreeState.openNodeIds) {
+    await expect(
+      input.storageTree.locator(`details[data-tree-node-id="${nodeId}"]`),
+    ).toHaveAttribute("open", "");
+  }
+  const scrollPosition = await input.page.evaluate(() => ({
+    current: window.scrollY,
+    maximum: Math.max(0, document.documentElement.scrollHeight - window.innerHeight),
+  }));
+  expect(scrollPosition.current).toBeCloseTo(
+    Math.min(preservedTreeState.scrollY, scrollPosition.maximum),
+    -1,
+  );
+  expect(scrollPosition.current).toBeGreaterThan(0);
+  await captureUi(
+    input.page,
+    input.category === "JDK 包"
+      ? "storage-after-jdk-deletion-1536"
+      : "storage-after-dependency-deletion-1536",
+  );
   expect(existsSync(input.objectPath)).toBe(false);
   await input.page.waitForTimeout(100);
   input.page.off("request", observeInventoryReads);
   expect(inventoryGetRequests).toEqual([]);
+}
+
+async function captureUi(page: Page, name: string): Promise<void> {
+  const screenshotDirectory = process.env.AUTOFORGE_UI_SCREENSHOT_DIR;
+  if (!screenshotDirectory) return;
+  mkdirSync(screenshotDirectory, { recursive: true });
+  await page.screenshot({ path: resolve(screenshotDirectory, `${name}.png`), fullPage: false });
 }
 
 async function verifyRuntimeAssetBatchDeletion(input: {

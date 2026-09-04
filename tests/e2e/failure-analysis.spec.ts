@@ -570,6 +570,35 @@ test("terminal task failures support durable single and batch analysis with evid
   expect(evidenceResponse.headers()["content-type"]).toBe("image/png");
   expect(evidenceResponse.headers()["content-disposition"]).toContain("inline");
 
+  await page.goto("/case-analysis");
+  await page.getByRole("link", { name: "分析统计" }).click();
+  await expect(page.getByRole("heading", { name: "分析统计" })).toBeVisible();
+  await expect(page.getByRole("region", { name: "分析总览" })).toContainText("已完成分析5");
+  await expect(page.getByText("历史分析员", { exact: true })).toBeVisible();
+  for (const viewport of [
+    { width: 1536, height: 1024 },
+    { width: 1024, height: 768 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await expectUiIntegrity(page);
+    await captureUi(page, `failure-analysis-statistics-${viewport.width}`, true);
+  }
+  await page.setViewportSize({ width: 1536, height: 1024 });
+  const administratorStatistics = page
+    .locator(".failure-analysis-analyst-row")
+    .filter({ hasText: "E2E Administrator" });
+  await expect(administratorStatistics).toContainText("4");
+  await administratorStatistics.click();
+  const administratorAnalyses = page.getByRole("dialog", {
+    name: "E2E Administrator 的分析内容",
+  });
+  await expect(administratorAnalyses).toContainText("测试数据字段已经失效");
+  await expect(administratorAnalyses).toContainText("BUG-2048");
+  await expectDialogFitsViewport(page, administratorAnalyses);
+  await captureUi(page, "failure-analysis-statistics-detail-1536");
+  await administratorAnalyses.getByRole("button", { name: "关闭" }).last().click();
+  await expectUiIntegrity(page);
+
   const emptyVersion = await browserJson<{ id: string }>(
     page,
     `/api/v1/projects/${DEFAULT_PROJECT_ID}/versions`,

@@ -292,7 +292,7 @@ export function AppShell({
                   {...(selectedTestStageId ? { selectedTestStageId } : {})}
                 />
               ) : null}
-              <TopbarTools />
+              <TopbarTools permissions={permissions} />
             </div>
           )}
           <div className="topbar-actions">

@@ -2,6 +2,7 @@ export * from "./attempt-log-shares";
 export * from "./attempt-scheduling-contexts";
 export * from "./coalesced-operation";
 export * from "./ddt-types";
+export * from "./dashboard-snapshots";
 export * from "./export-run-batch-results";
 export * from "./import-testng-jar";
 export * from "./import-ddt";

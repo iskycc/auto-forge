@@ -10,7 +10,7 @@ import type {
 } from "@autoforge/contracts";
 import { Database, HardDrive, LoaderCircle, RefreshCw, Search, Trash2, X } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { type FormEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import { Button, Input, Select } from "@/components/ui";
 import { useConfirm, useToast } from "@/components/ui-feedback";
@@ -66,6 +66,14 @@ export function StorageInventory({
     () => new Set(),
   );
   const handledRefreshSequence = useRef(0);
+  const deletionScrollPosition = useRef<number | undefined>(undefined);
+
+  useLayoutEffect(() => {
+    const scrollTop = deletionScrollPosition.current;
+    if (scrollTop === undefined) return;
+    deletionScrollPosition.current = undefined;
+    window.scrollTo({ top: scrollTop, behavior: "auto" });
+  }, [items]);
 
   useEffect(() => {
     const abort = new AbortController();
@@ -153,6 +161,7 @@ export function StorageInventory({
       return;
     }
     const categoryLabel = CATEGORY_LABELS[item.category];
+    deletionScrollPosition.current = window.scrollY;
     const accepted = await confirmAction({
       title: `删除${categoryLabel}`,
       description:
@@ -163,7 +172,10 @@ export function StorageInventory({
       cancelLabel: "取消",
       tone: "danger",
     });
-    if (!accepted) return;
+    if (!accepted) {
+      deletionScrollPosition.current = undefined;
+      return;
+    }
 
     setPendingRuntimeAssetIds(new Set([item.runtimeAssetId]));
     setError("");
@@ -184,6 +196,7 @@ export function StorageInventory({
       );
       applyDeletedRuntimeAssets(new Set([result.runtimeAssetId]));
     } catch (cause) {
+      deletionScrollPosition.current = undefined;
       const message = cause instanceof Error ? cause.message : `删除${categoryLabel}失败。`;
       setError(message);
       toast.error(message);
@@ -195,6 +208,7 @@ export function StorageInventory({
   async function deleteSelectedRuntimeAssets(): Promise<void> {
     const runtimeAssetIds = [...selectedRuntimeAssetIds];
     if (runtimeAssetIds.length === 0) return;
+    deletionScrollPosition.current = window.scrollY;
     const accepted = await confirmAction({
       title: "批量删除存储资源",
       description: `确定永久删除已选择的 ${runtimeAssetIds.length} 项 JDK 包或依赖包吗？平台会逐项校验引用关系；无法删除的资源会保留并显示原因。该操作无法恢复。`,
@@ -202,7 +216,10 @@ export function StorageInventory({
       cancelLabel: "取消",
       tone: "danger",
     });
-    if (!accepted) return;
+    if (!accepted) {
+      deletionScrollPosition.current = undefined;
+      return;
+    }
 
     setPendingRuntimeAssetIds(new Set(runtimeAssetIds));
     setError("");
@@ -232,6 +249,7 @@ export function StorageInventory({
       }
       const deletedIds = new Set(deleted.map((item) => item.runtimeAssetId));
       applyDeletedRuntimeAssets(deletedIds);
+      if (deletedIds.size === 0) deletionScrollPosition.current = undefined;
 
       if (failures.length > 0) {
         const firstFailure = failures[0];
@@ -248,6 +266,7 @@ export function StorageInventory({
       }
     } catch (cause) {
       applyDeletedRuntimeAssets(new Set(deleted.map((item) => item.runtimeAssetId)));
+      if (deleted.length === 0) deletionScrollPosition.current = undefined;
       const reason = cause instanceof Error ? cause.message : "批量删除存储资源失败。";
       const message =
         deleted.length > 0 ? `已删除 ${deleted.length} 项，后续请求中断：${reason}` : reason;
@@ -260,6 +279,10 @@ export function StorageInventory({
 
   function applyDeletedRuntimeAssets(runtimeAssetIds: ReadonlySet<string>): void {
     if (runtimeAssetIds.size === 0 || !summary) return;
+    // Removing an expanded file can shorten the document before the browser restores focus,
+    // which previously made the whole settings page jump to the top. Keep the viewport and let
+    // keyed tree branches retain their own expanded state while applying the local patch.
+    deletionScrollPosition.current ??= window.scrollY;
     const patched = removeRuntimeAssetsFromInventory(items, summary, runtimeAssetIds);
     setItems(patched.items);
     setSummary(patched.summary);

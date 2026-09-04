@@ -4,6 +4,7 @@ import { join } from "node:path";
 import {
   CaseSourceService,
   DdtImportService,
+  DashboardSnapshotService,
   ImportTestNgJarService,
   JobWorker,
   PlatformOperationsService,
@@ -17,6 +18,7 @@ import {
   PostgresCaseCatalogRepository,
   PostgresCaseSuiteRepository,
   PostgresDdtRepository,
+  PostgresDashboardSnapshotRepository,
   PostgresRunBatchRepository,
   PostgresRunnerRepository,
   PostgresPlatformOperationsRepository,
@@ -122,6 +124,12 @@ const webhooks = new WebhookNotificationService(
   ids,
 );
 const catalog = new PostgresCaseCatalogRepository(database);
+const dashboardSnapshots = new DashboardSnapshotService(
+  new PostgresDashboardSnapshotRepository(database),
+  catalog,
+  platformOperationsRepository,
+  clock,
+);
 const caseSources = new CaseSourceService(catalog, objectStore, clock, ids);
 const jarImports = new ImportTestNgJarService({
   catalog,
@@ -211,6 +219,9 @@ const loops = Promise.all([
     await platformOperations.generateNotifications();
     await webhooks.dispatchDue(`${config.workerId}-webhooks`);
     await platformOperationsRepository.rebuildAnalyticsFacts(1_000);
+  }),
+  runPeriodic(shutdown.signal, config.dashboardRefreshIntervalMs, async () => {
+    await dashboardSnapshots.refreshTracked();
   }),
   runPeriodic(shutdown.signal, 3_600_000, async () => {
     await platformOperations.runRetentionCycle();

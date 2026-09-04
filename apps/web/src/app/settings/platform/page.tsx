@@ -15,7 +15,7 @@ type PlatformSection = "configuration" | "accounts" | "retention" | "diagnostics
 export default async function PlatformSettingsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ section?: string; category?: string; query?: string }>;
+  searchParams: Promise<{ section?: string; category?: string; query?: string; focus?: string }>;
 }) {
   const identity = await requirePagePermission("settings.read", undefined);
   const services = await getPlatformServices();
@@ -95,6 +95,7 @@ export default async function PlatformSettingsPage({
         <PlatformSettings
           canManage={hasPermission(identity, "settings.manage")}
           initial={publicConfiguration}
+          {...(parameters.focus ? { initialFocus: parameters.focus.slice(0, 80) } : {})}
         />
       ) : null}
       {activeSection === "accounts" || activeSection === "retention" ? (

@@ -3,6 +3,7 @@ import type {
   FailureAnalysisBatchPage,
   FailureAnalysisCandidatePage,
   FailureAnalysisSort,
+  FailureAnalysisStatisticsPage,
 } from "@autoforge/contracts";
 
 import { runSqliteWriteTransaction, type SqliteDatabaseHandle } from "./database";
@@ -11,10 +12,13 @@ import {
   decodeFailureAnalysisClaimCursor,
   encodeFailureAnalysisCandidateCursor,
   encodeFailureAnalysisClaimCursor,
+  statisticsPage,
   FAILURE_ANALYSIS_SUMMARY_MAXIMUM_CHARACTERS,
   toFailureAnalysisCandidate,
   toFailureAnalysisClaim,
   type FailureAnalysisRow,
+  type FailureAnalysisAnalystRow,
+  type FailureAnalysisStatisticsCountRow,
 } from "./failure-analysis-shared";
 import { decodeRunBatchCursor, encodeRunBatchCursor } from "./run-batch-list";
 
@@ -36,6 +40,60 @@ type FailureAnalysisHistoryRow = FailureAnalysisRow & {
 
 export class SqliteFailureAnalysisRepository implements FailureAnalysisRepository {
   constructor(private readonly handle: SqliteDatabaseHandle) {}
+
+  async readStatistics(
+    input: Parameters<FailureAnalysisRepository["readStatistics"]>[0],
+  ): Promise<FailureAnalysisStatisticsPage> {
+    const scope = ["claim.project_id=?"];
+    const scopeParameters: string[] = [input.projectId];
+    if (input.projectVersionId) {
+      scope.push("json_extract(batch.policy_json, '$.projectVersionId')=?");
+      scopeParameters.push(input.projectVersionId);
+    }
+    const summary = this.handle.client
+      .prepare(
+        `SELECT COUNT(*) AS total,
+                SUM(CASE WHEN claim.status='claimed' THEN 1 ELSE 0 END) AS claimed,
+                SUM(CASE WHEN claim.status='analyzing' THEN 1 ELSE 0 END) AS analyzing,
+                SUM(CASE WHEN claim.status='completed' THEN 1 ELSE 0 END) AS completed,
+                SUM(CASE WHEN claim.category='rerun_passed' THEN 1 ELSE 0 END) AS rerunPassed,
+                SUM(CASE WHEN claim.category='case_fixed' THEN 1 ELSE 0 END) AS caseFixed,
+                SUM(CASE WHEN claim.category='code_issue_filed' THEN 1 ELSE 0 END) AS codeIssueFiled
+         FROM failure_analysis_claims claim
+         JOIN run_batches batch ON batch.id=claim.batch_id
+         WHERE ${scope.join(" AND ")}`,
+      )
+      .get(...scopeParameters) as FailureAnalysisStatisticsCountRow;
+    const cursor = decodeRunBatchCursor(input.cursor);
+    const analystParameters: Array<string | number> = [...scopeParameters];
+    const having = cursor
+      ? "HAVING MAX(claim.updated_at)<? OR (MAX(claim.updated_at)=? AND claim.claimant_id<?)"
+      : "";
+    if (cursor) analystParameters.push(cursor.createdAt, cursor.createdAt, cursor.id);
+    analystParameters.push(input.limit + 1);
+    const rows = this.handle.client
+      .prepare(
+        `SELECT claim.claimant_id AS claimantId,
+                MAX(claim.claimant_username) AS claimantUsername,
+                MAX(claim.claimant_display_name) AS claimantDisplayName,
+                COUNT(*) AS total,
+                SUM(CASE WHEN claim.status='claimed' THEN 1 ELSE 0 END) AS claimed,
+                SUM(CASE WHEN claim.status='analyzing' THEN 1 ELSE 0 END) AS analyzing,
+                SUM(CASE WHEN claim.status='completed' THEN 1 ELSE 0 END) AS completed,
+                SUM(CASE WHEN claim.category='rerun_passed' THEN 1 ELSE 0 END) AS rerunPassed,
+                SUM(CASE WHEN claim.category='case_fixed' THEN 1 ELSE 0 END) AS caseFixed,
+                SUM(CASE WHEN claim.category='code_issue_filed' THEN 1 ELSE 0 END) AS codeIssueFiled,
+                MAX(claim.updated_at) AS lastActivityAt
+         FROM failure_analysis_claims claim
+         JOIN run_batches batch ON batch.id=claim.batch_id
+         WHERE ${scope.join(" AND ")}
+         GROUP BY claim.claimant_id
+         ${having}
+         ORDER BY lastActivityAt DESC,claim.claimant_id DESC LIMIT ?`,
+      )
+      .all(...analystParameters) as FailureAnalysisAnalystRow[];
+    return statisticsPage(summary, rows, input.limit, input.generatedAt);
+  }
 
   async listBatches(input: {
     projectId: string;

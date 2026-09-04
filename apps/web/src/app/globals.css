@@ -36,6 +36,7 @@
   --space-2: 8px;
   --space-3: 12px;
   --space-4: 16px;
+  --space-5: 20px;
   --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.025), 0 8px 28px rgba(20, 23, 31, 0.045);
   --shadow-float: 0 18px 50px rgba(20, 23, 31, 0.12);
   --shadow-control: 0 1px 2px rgba(20, 23, 31, 0.045), 0 4px 14px rgba(20, 23, 31, 0.025);
@@ -18484,5 +18485,295 @@ button.icon-button:disabled {
 @media (max-width: 760px) {
   .failure-analysis-category-options {
     grid-template-columns: 1fr;
+  }
+}
+
+.failure-analysis-stat-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--space-4);
+}
+
+.configuration-search-dialog {
+  width: min(720px, calc(100vw - 64px));
+  max-height: min(760px, calc(100vh - 64px));
+}
+
+.configuration-search-input {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 0 var(--space-3);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-control);
+  background: var(--color-control);
+  color: var(--color-text-secondary);
+}
+
+.configuration-search-input:focus-within {
+  border-color: var(--color-info);
+  box-shadow: 0 0 0 3px var(--color-focus-ring);
+}
+
+.configuration-search-input input {
+  min-height: 46px;
+  border: 0;
+  outline: 0;
+  background: transparent;
+}
+
+.configuration-search-results {
+  display: grid;
+  max-height: 52vh;
+  margin-top: var(--space-3);
+  overflow: auto;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+}
+
+.configuration-search-results > a {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  min-height: 62px;
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--color-border);
+  color: var(--color-text);
+  text-decoration: none;
+}
+
+.configuration-search-results > a:last-child {
+  border-bottom: 0;
+}
+.configuration-search-results > a:hover,
+.configuration-search-results > a:focus-visible {
+  background: var(--color-surface-muted);
+}
+
+.configuration-search-results > a > span {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.configuration-search-results small {
+  color: var(--color-text-secondary);
+}
+
+.failure-analysis-stat-summary article {
+  display: grid;
+  gap: var(--space-2);
+  min-height: 118px;
+  align-content: center;
+}
+
+.failure-analysis-stat-summary span,
+.failure-analysis-stat-summary small {
+  color: var(--color-text-secondary);
+}
+
+.failure-analysis-stat-summary strong {
+  font-size: clamp(1.7rem, 2.4vw, 2.35rem);
+  letter-spacing: -0.04em;
+}
+
+.failure-analysis-category-statistics,
+.failure-analysis-analyst-statistics {
+  display: grid;
+  gap: var(--space-5);
+}
+
+.failure-analysis-category-statistics > header,
+.failure-analysis-category-statistics > header > span,
+.failure-analysis-analyst-statistics > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.failure-analysis-category-statistics > header > span {
+  justify-content: flex-start;
+}
+
+.failure-analysis-category-statistics time {
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-caption);
+}
+
+.failure-analysis-category-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-4);
+}
+
+.failure-analysis-category-metric {
+  display: grid;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  background: var(--color-surface-muted);
+}
+
+.failure-analysis-category-metric > span {
+  display: flex;
+  justify-content: space-between;
+}
+
+.failure-analysis-category-metric .ui-progress {
+  width: 100%;
+  height: 8px;
+  overflow: hidden;
+  border: 0;
+  border-radius: 999px;
+}
+
+.failure-analysis-category-metric .ui-progress-fill {
+  background: var(--color-info);
+}
+.failure-analysis-category-metric.green .ui-progress-fill {
+  background: var(--color-success);
+}
+.failure-analysis-category-metric.orange .ui-progress-fill {
+  background: var(--color-warning);
+}
+
+.failure-analysis-category-metric small {
+  color: var(--color-text-secondary);
+}
+
+.failure-analysis-analyst-statistics > header h2,
+.failure-analysis-analyst-statistics > header p {
+  margin: 0;
+}
+
+.failure-analysis-analyst-statistics > header p {
+  color: var(--color-text-secondary);
+}
+
+.failure-analysis-analyst-list {
+  display: grid;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  overflow: hidden;
+}
+
+.failure-analysis-analyst-row {
+  display: grid;
+  grid-template-columns:
+    42px minmax(180px, 1.4fr) repeat(3, minmax(72px, 0.6fr)) minmax(150px, 1fr)
+    20px;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: 72px;
+  padding: var(--space-3) var(--space-4);
+  border: 0;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.failure-analysis-analyst-row:last-child {
+  border-bottom: 0;
+}
+.failure-analysis-analyst-row:hover,
+.failure-analysis-analyst-row:focus-visible {
+  background: var(--color-surface-muted);
+}
+
+.failure-analysis-analyst-avatar {
+  display: grid;
+  width: 36px;
+  height: 36px;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--color-info-soft);
+  color: var(--color-info);
+  font-weight: 700;
+}
+
+.failure-analysis-analyst-identity,
+.failure-analysis-analyst-row > span:not(.failure-analysis-analyst-avatar) {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.failure-analysis-analyst-row small,
+.failure-analysis-analyst-row time {
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-caption);
+}
+
+.failure-analysis-statistics-dialog {
+  width: min(960px, calc(100vw - 64px));
+  max-height: min(820px, calc(100vh - 64px));
+}
+
+.failure-analysis-statistics-dialog-body {
+  display: grid;
+  gap: var(--space-4);
+  min-height: 180px;
+  max-height: 64vh;
+  overflow: auto;
+  padding-right: var(--space-2);
+}
+
+.failure-analysis-conclusion-card {
+  display: grid;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  background: var(--color-surface-muted);
+}
+
+.failure-analysis-conclusion-card > header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.failure-analysis-conclusion-card > header > span,
+.failure-analysis-conclusion-card dl {
+  display: grid;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.failure-analysis-conclusion-card code,
+.failure-analysis-conclusion-card time,
+.failure-analysis-conclusion-card dt {
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-caption);
+}
+
+.failure-analysis-conclusion-card dl,
+.failure-analysis-conclusion-card dd {
+  margin: 0;
+}
+.failure-analysis-conclusion-card dl > div {
+  display: grid;
+  gap: 4px;
+}
+.failure-analysis-conclusion-card dd {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 1180px) {
+  .failure-analysis-stat-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .failure-analysis-analyst-row {
+    grid-template-columns: 42px minmax(160px, 1fr) repeat(3, 74px) 20px;
+  }
+  .failure-analysis-analyst-row > span:nth-last-of-type(1) {
+    display: none;
   }
 }

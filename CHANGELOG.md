@@ -4,6 +4,49 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## 1.9.4 - 2026-09-04
+
+### Added
+
+- 顶栏新增按当前权限过滤的配置搜索，可检索平台、项目、访问和运行配置；平台字段结果会直接进入
+  对应设置分区并聚焦控件。
+- 具有 `audit.read` 权限的系统管理员、项目管理员和自定义高权限角色可进入“分析统计”，分页查看
+  人员认领/完成数量、三类结论占比，并审阅每位人员逐条填写的分析内容。
+
+### Changed
+
+- 工作概览的用例规模和近两周质量聚合改为按项目版本持久化快照。Lite 内嵌 worker 与 Full 独立
+  worker 按“公开大盘刷新间隔”轮换刷新已访问范围，首页不再为每次访问重复扫描用例和分析事实。
+- JAR 确认导入后的上传与后台任务进度移动到确认结果下方，并自动滚动到当前视口。
+
+### Fixed
+
+- 删除 JDK 包后局部修补目录树并恢复可达到的浏览位置，目录展开状态保持不变，不再跳回页面顶部
+  或重新请求完整存储清单。
+
+### Database and persisted configuration
+
+- SQLite 新增迁移 `0061_dashboard_snapshots.sql`，PostgreSQL 新增迁移
+  `0060_dashboard_snapshots.sql`，用于保存可重建的项目版本首页快照；业务事实仍由原仓储负责。
+- 无平台持久化配置格式或 Runner Protocol 变化。
+
+### Compatibility and offline assets
+
+- 新增只读失败分析统计 API；现有认领和分析 API 保持兼容。统计访问复用 `audit.read` 权限，普通
+  分析人员不会获得跨人员读取能力。
+- 未新增运行时依赖、远程资源或离线资产，Lite/Full 与现有 Runner Agent 保持兼容。
+
+### Known limitations
+
+- 首页质量快照继续只聚合当前范围最新最多 10,000 条分析事实；完整精确查询仍通过质量洞察和导出
+  提供。首次访问尚无快照的项目版本时会同步建立一次，后续由 worker 周期刷新。
+
+### Tests
+
+- 新增首页快照应用测试和 SQLite/PostgreSQL 仓储集成测试，并扩展失败分析双数据库共享契约。
+- Playwright 覆盖 JAR 进度位置、快照更新、配置搜索与字段聚焦、存储树展开/滚动保持，以及分析统计
+  汇总和逐条内容弹窗；人工审查 1024px、1536px 和 1920px 截图。
+
 ## 1.9.1 - 2026-09-04
 
 ### Added

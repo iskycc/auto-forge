@@ -301,6 +301,24 @@ public class MixedVisibleTest {
   expect((await largeImportResponse).status()).toBe(202);
   const importProgress = page.locator(".import-progress");
   await expect(importProgress).toBeVisible();
+  expect(
+    await page
+      .locator(".inspection-card, .import-progress")
+      .evaluateAll((elements) =>
+        elements.map((element) =>
+          element.classList.contains("inspection-card") ? "inspection" : "progress",
+        ),
+      ),
+  ).toEqual(["inspection", "progress"]);
+  await expect
+    .poll(() =>
+      importProgress.evaluate((element) => {
+        const bounds = element.getBoundingClientRect();
+        return bounds.top < window.innerHeight && bounds.bottom > 0;
+      }),
+    )
+    .toBe(true);
+  await captureUi(page, "jar-import-progress-1536", false);
   const progressBounds = await importProgress.evaluate((element) => {
     const card = element.getBoundingClientRect();
     const bar = element.querySelector('[role="progressbar"]')?.getBoundingClientRect();
@@ -1027,7 +1045,15 @@ public class MixedVisibleTest {
   await expect(trendRow.locator("td").nth(4)).toHaveText("0");
 
   await page.goto("/");
-  await expect(page.locator(".quality-score-row > strong")).toHaveText("50.0");
+  await expect
+    .poll(
+      async () => {
+        await page.reload();
+        return page.locator(".quality-score-row > strong").textContent();
+      },
+      { timeout: 15_000 },
+    )
+    .toBe("50.0");
   await expect(page.locator(".design-failure-card")).toContainText(
     "java.lang.AssertionError: 中文断言失败",
   );

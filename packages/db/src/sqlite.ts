@@ -2,6 +2,7 @@ export * from "./attempt-log-store";
 export * from "./database";
 export * from "./schema";
 export * from "./sqlite-case-catalog";
+export * from "./sqlite-dashboard-snapshot";
 export * from "./sqlite-case-suite";
 export * from "./sqlite-ddt";
 export * from "./sqlite-identity-access";

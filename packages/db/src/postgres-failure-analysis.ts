@@ -3,6 +3,7 @@ import type {
   FailureAnalysisBatchPage,
   FailureAnalysisCandidatePage,
   FailureAnalysisSort,
+  FailureAnalysisStatisticsPage,
 } from "@autoforge/contracts";
 
 import type { PostgresDatabaseHandle } from "./postgres-database";
@@ -11,10 +12,14 @@ import {
   decodeFailureAnalysisClaimCursor,
   encodeFailureAnalysisCandidateCursor,
   encodeFailureAnalysisClaimCursor,
+  emptyStatisticsRow,
+  statisticsPage,
   FAILURE_ANALYSIS_SUMMARY_MAXIMUM_CHARACTERS,
   toFailureAnalysisCandidate,
   toFailureAnalysisClaim,
   type FailureAnalysisRow,
+  type FailureAnalysisAnalystRow,
+  type FailureAnalysisStatisticsCountRow,
 } from "./failure-analysis-shared";
 import { decodeRunBatchCursor, encodeRunBatchCursor } from "./run-batch-list";
 
@@ -36,6 +41,66 @@ type FailureAnalysisHistoryRow = FailureAnalysisRow & {
 
 export class PostgresFailureAnalysisRepository implements FailureAnalysisRepository {
   constructor(private readonly handle: PostgresDatabaseHandle) {}
+
+  async readStatistics(
+    input: Parameters<FailureAnalysisRepository["readStatistics"]>[0],
+  ): Promise<FailureAnalysisStatisticsPage> {
+    await this.handle.ready;
+    const parameters: unknown[] = [input.projectId];
+    const where = ["claim.project_id=$1"];
+    if (input.projectVersionId) {
+      parameters.push(input.projectVersionId);
+      where.push(`batch.policy_json::jsonb ->> 'projectVersionId'=$${parameters.length}`);
+    }
+    const summaryResult = await this.handle.pool.query<FailureAnalysisStatisticsCountRow>(
+      `SELECT COUNT(*) AS total,
+              COUNT(*) FILTER (WHERE claim.status='claimed') AS claimed,
+              COUNT(*) FILTER (WHERE claim.status='analyzing') AS analyzing,
+              COUNT(*) FILTER (WHERE claim.status='completed') AS completed,
+              COUNT(*) FILTER (WHERE claim.category='rerun_passed') AS "rerunPassed",
+              COUNT(*) FILTER (WHERE claim.category='case_fixed') AS "caseFixed",
+              COUNT(*) FILTER (WHERE claim.category='code_issue_filed') AS "codeIssueFiled"
+       FROM failure_analysis_claims claim
+       JOIN run_batches batch ON batch.id=claim.batch_id
+       WHERE ${where.join(" AND ")}`,
+      parameters,
+    );
+    const cursor = decodeRunBatchCursor(input.cursor);
+    let having = "";
+    if (cursor) {
+      parameters.push(cursor.createdAt, cursor.id);
+      having = `HAVING MAX(claim.updated_at)<$${parameters.length - 1} OR
+        (MAX(claim.updated_at)=$${parameters.length - 1}
+         AND claim.claimant_id<$${parameters.length})`;
+    }
+    parameters.push(input.limit + 1);
+    const analystResult = await this.handle.pool.query<FailureAnalysisAnalystRow>(
+      `SELECT claim.claimant_id AS "claimantId",
+              MAX(claim.claimant_username) AS "claimantUsername",
+              MAX(claim.claimant_display_name) AS "claimantDisplayName",
+              COUNT(*) AS total,
+              COUNT(*) FILTER (WHERE claim.status='claimed') AS claimed,
+              COUNT(*) FILTER (WHERE claim.status='analyzing') AS analyzing,
+              COUNT(*) FILTER (WHERE claim.status='completed') AS completed,
+              COUNT(*) FILTER (WHERE claim.category='rerun_passed') AS "rerunPassed",
+              COUNT(*) FILTER (WHERE claim.category='case_fixed') AS "caseFixed",
+              COUNT(*) FILTER (WHERE claim.category='code_issue_filed') AS "codeIssueFiled",
+              MAX(claim.updated_at) AS "lastActivityAt"
+       FROM failure_analysis_claims claim
+       JOIN run_batches batch ON batch.id=claim.batch_id
+       WHERE ${where.join(" AND ")}
+       GROUP BY claim.claimant_id
+       ${having}
+       ORDER BY "lastActivityAt" DESC,claim.claimant_id DESC LIMIT $${parameters.length}`,
+      parameters,
+    );
+    return statisticsPage(
+      summaryResult.rows[0] ?? emptyStatisticsRow(),
+      analystResult.rows,
+      input.limit,
+      input.generatedAt,
+    );
+  }
 
   async listBatches(input: {
     projectId: string;

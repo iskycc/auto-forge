@@ -31,6 +31,7 @@ export function loadWorkerConfig(options: LoadPlatformConfigurationOptions = {})
     concurrency: configuration.worker.concurrency,
     healthPort: configuration.worker.healthPort,
     metricsEnabled: configuration.worker.metricsEnabled,
+    dashboardRefreshIntervalMs: configuration.web.publicDashboardRefreshSeconds * 1_000,
     shutdownGraceMs: configuration.worker.shutdownGraceMs,
     migrationsFolder: runtime.migrationsFolder,
     minio: {

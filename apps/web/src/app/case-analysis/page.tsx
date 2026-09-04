@@ -1,5 +1,5 @@
-import { DEFAULT_PROJECT_ID } from "@autoforge/domain";
-import { ArrowRight, CheckCircle2, Clock3, SearchCheck } from "lucide-react";
+import { DEFAULT_PROJECT_ID, hasPermission } from "@autoforge/domain";
+import { ArrowRight, BarChart3, CheckCircle2, Clock3, SearchCheck } from "lucide-react";
 import Link from "next/link";
 
 import { FailureAnalysisExportButton } from "@/components/failure-analysis-export-button";
@@ -64,6 +64,11 @@ export default async function CaseAnalysisPage({
             <small>项目版本</small>
             <strong>{selectedVersion?.name ?? "尚未配置"}</strong>
           </span>
+          {hasPermission(identity, "audit.read", projectId) ? (
+            <Link className="ui-button ui-button-secondary" href="/case-analysis/statistics">
+              <BarChart3 aria-hidden="true" size={15} /> 分析统计
+            </Link>
+          ) : null}
         </div>
       </section>
 

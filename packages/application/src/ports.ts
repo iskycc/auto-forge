@@ -21,6 +21,7 @@ import type {
   AnalyticsFilter,
   AnalyticsExportJob,
   AnalyticsSummary,
+  DashboardSnapshot,
   ApiToken,
   CaseSuiteSchedule,
   GlobalSearchResult,
@@ -95,6 +96,7 @@ import type {
   FailureAnalysisCandidatePage,
   FailureAnalysisCompletionOrder,
   FailureAnalysisSort,
+  FailureAnalysisStatisticsPage,
 } from "@autoforge/contracts";
 import type {
   DdtCaseListPage,
@@ -838,6 +840,18 @@ export type DashboardSummary = {
   methodCount: number;
   enabledMethodCount: number;
 };
+
+export interface DashboardSnapshotRepository {
+  read(input: {
+    projectId: string;
+    projectVersionId: string;
+    timeZone: string;
+  }): Promise<DashboardSnapshot | null>;
+  write(snapshot: DashboardSnapshot): Promise<void>;
+  listRefreshTargets(
+    limit: number,
+  ): Promise<Array<{ projectId: string; projectVersionId: string; timeZone: string }>>;
+}
 
 export type PublicPlatformStatisticsSnapshot = DashboardSummary & {
   runnerCount: number;
@@ -1617,6 +1631,13 @@ export type RunBatchListPage = {
 };
 
 export interface FailureAnalysisRepository {
+  readStatistics(input: {
+    projectId: string;
+    projectVersionId?: string;
+    cursor?: string;
+    limit: number;
+    generatedAt: string;
+  }): Promise<FailureAnalysisStatisticsPage>;
   listBatches(input: {
     projectId: string;
     projectVersionId?: string;

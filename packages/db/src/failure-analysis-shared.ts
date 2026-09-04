@@ -2,12 +2,86 @@ import type {
   FailureAnalysisCandidate,
   FailureAnalysisCompletionOrder,
   FailureAnalysisSort,
+  FailureAnalysisStatisticsPage,
 } from "@autoforge/contracts";
 import type { FailureAnalysisClaim } from "@autoforge/domain";
 
 // 分析列表只承载失败概要；完整执行输出从弹窗日志/公开日志按需读取。限制单项概要可避免
 // 极端异常堆栈把 50 行分页响应膨胀到数十 MiB，同时仍保留足够的根因上下文。
 export const FAILURE_ANALYSIS_SUMMARY_MAXIMUM_CHARACTERS = 8_192;
+
+export type FailureAnalysisStatisticsCountRow = {
+  total: number | string | null;
+  claimed: number | string | null;
+  analyzing: number | string | null;
+  completed: number | string | null;
+  rerunPassed: number | string | null;
+  caseFixed: number | string | null;
+  codeIssueFiled: number | string | null;
+};
+
+export type FailureAnalysisAnalystRow = FailureAnalysisStatisticsCountRow & {
+  claimantId: string;
+  claimantUsername: string;
+  claimantDisplayName: string;
+  lastActivityAt: string;
+};
+
+export function statisticsPage(
+  summaryRow: FailureAnalysisStatisticsCountRow,
+  rows: readonly FailureAnalysisAnalystRow[],
+  limit: number,
+  generatedAt: string,
+): FailureAnalysisStatisticsPage {
+  const hasMore = rows.length > limit;
+  const pageRows = rows.slice(0, limit);
+  const last = pageRows.at(-1);
+  return {
+    summary: statisticsCounts(summaryRow),
+    analysts: pageRows.map((row) => ({
+      claimantId: row.claimantId,
+      claimantUsername: row.claimantUsername,
+      claimantDisplayName: row.claimantDisplayName,
+      ...statisticsCounts(row),
+      lastActivityAt: row.lastActivityAt,
+    })),
+    ...(hasMore && last
+      ? {
+          nextCursor: Buffer.from(
+            JSON.stringify({ createdAt: last.lastActivityAt, id: last.claimantId }),
+            "utf8",
+          ).toString("base64url"),
+        }
+      : {}),
+    generatedAt,
+  };
+}
+
+export function emptyStatisticsRow(): FailureAnalysisStatisticsCountRow {
+  return {
+    total: 0,
+    claimed: 0,
+    analyzing: 0,
+    completed: 0,
+    rerunPassed: 0,
+    caseFixed: 0,
+    codeIssueFiled: 0,
+  };
+}
+
+function statisticsCounts(row: FailureAnalysisStatisticsCountRow) {
+  return {
+    total: Number(row.total ?? 0),
+    claimed: Number(row.claimed ?? 0),
+    analyzing: Number(row.analyzing ?? 0),
+    completed: Number(row.completed ?? 0),
+    categories: {
+      rerunPassed: Number(row.rerunPassed ?? 0),
+      caseFixed: Number(row.caseFixed ?? 0),
+      codeIssueFiled: Number(row.codeIssueFiled ?? 0),
+    },
+  };
+}
 
 export type FailureAnalysisRow = {
   analysisId: string | null;

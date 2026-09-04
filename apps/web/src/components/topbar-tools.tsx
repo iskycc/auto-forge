@@ -3,7 +3,8 @@
 import { Button, Input } from "@/components/ui";
 
 import type { GlobalSearchResult, Notification } from "@autoforge/contracts";
-import { Bell, Check, Search, X } from "lucide-react";
+import type { Permission } from "@autoforge/domain";
+import { Bell, Check, Search, SlidersHorizontal, X } from "lucide-react";
 import Link from "next/link";
 import {
   useCallback,
@@ -15,12 +16,13 @@ import {
 
 import { notificationMessage, searchResultSubtitle } from "@/lib/topbar-presentation";
 import { formatPlatformDateTime } from "@/lib/platform-date-time";
+import { ConfigurationSearchDialog } from "@/components/configuration-search";
 
 type NotificationPage = { items: Notification[]; nextCursor?: string };
 type UnreadNotificationCount = { count: number };
 const NOTIFICATION_COUNT_REFRESH_INTERVAL_MS = 30_000;
 
-export function TopbarTools() {
+export function TopbarTools({ permissions = [] }: { permissions?: readonly Permission[] }) {
   const [query, setQuery] = useState("");
   const [searchItems, setSearchItems] = useState<GlobalSearchResult["items"]>([]);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -30,6 +32,8 @@ export function TopbarTools() {
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
   const [error, setError] = useState("");
+  const [configurationSearchOpen, setConfigurationSearchOpen] = useState(false);
+  const [configurationQuery, setConfigurationQuery] = useState("");
   const searchInput = useRef<HTMLInputElement>(null);
   const searchResults = useRef<HTMLDivElement>(null);
   const unreadCountRequestSequence = useRef(0);
@@ -238,6 +242,21 @@ export function TopbarTools() {
       </div>
       <div className="notification-shell">
         <Button
+          aria-label="搜索配置"
+          className="icon-button"
+          onClick={() => {
+            setConfigurationSearchOpen(true);
+            setSearchOpen(false);
+            setNotificationsOpen(false);
+          }}
+          title="搜索配置"
+          type="button"
+        >
+          <SlidersHorizontal size={18} />
+        </Button>
+      </div>
+      <div className="notification-shell">
+        <Button
           aria-expanded={notificationsOpen}
           aria-label={unreadCount > 0 ? `${unreadCount} 条未读通知` : "通知"}
           className="icon-button"
@@ -298,6 +317,13 @@ export function TopbarTools() {
           {error}
         </span>
       ) : null}
+      <ConfigurationSearchDialog
+        onClose={() => setConfigurationSearchOpen(false)}
+        onQueryChange={setConfigurationQuery}
+        open={configurationSearchOpen}
+        permissions={permissions}
+        query={configurationQuery}
+      />
     </div>
   );
 }

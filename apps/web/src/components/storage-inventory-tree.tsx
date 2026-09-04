@@ -94,6 +94,7 @@ function StorageLocationBranch({
   return (
     <details
       className="storage-tree-location"
+      data-tree-node-id={root.id}
       aria-selected={false}
       onToggle={(event) => setOpen(event.currentTarget.open)}
       open={renderedOpen}
@@ -136,6 +137,7 @@ function StorageDirectoryBranch({
   return (
     <details
       className="storage-tree-directory"
+      data-tree-node-id={directory.id}
       aria-selected={false}
       onToggle={(event) => setOpen(event.currentTarget.open)}
       open={renderedOpen}

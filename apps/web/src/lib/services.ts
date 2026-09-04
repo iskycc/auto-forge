@@ -10,6 +10,7 @@ import {
   CaseSuiteService,
   DdtCaseService,
   DdtImportService,
+  DashboardSnapshotService,
   ExecutionControlService,
   FailureAnalysisService,
   ImportTestNgJarService,
@@ -31,6 +32,7 @@ import {
   type CaseCatalogRepository,
   type CaseSuiteRepository,
   type DdtRepository,
+  type DashboardSnapshotRepository,
   type FailureAnalysisRepository,
   type JarObjectStorePort,
   type IdentityAccessRepository,
@@ -57,6 +59,7 @@ import {
   SqliteCaseCatalogRepository,
   SqliteCaseSuiteRepository,
   SqliteDdtRepository,
+  SqliteDashboardSnapshotRepository,
   SqliteExecutionControlRepository,
   SqliteFailureAnalysisRepository,
   SqliteIdentityAccessRepository,
@@ -113,6 +116,7 @@ async function createPlatformServices() {
   let catalog: CaseCatalogRepository;
   let suites: CaseSuiteRepository;
   let ddtRepository: DdtRepository;
+  let dashboardSnapshotRepository: DashboardSnapshotRepository;
   let failureAnalysisRepository: FailureAnalysisRepository;
   let runners: RunnerRepository;
   let runnerInstallationProfileRepository: RunnerInstallationProfileRepository;
@@ -141,6 +145,7 @@ async function createPlatformServices() {
     catalog = new SqliteCaseCatalogRepository(database);
     suites = new SqliteCaseSuiteRepository(database);
     ddtRepository = new SqliteDdtRepository(database);
+    dashboardSnapshotRepository = new SqliteDashboardSnapshotRepository(database);
     runners = new SqliteRunnerRepository(database);
     runnerInstallationProfileRepository = new SqliteRunnerInstallationProfileRepository(database);
     runnerGroupsRepository = new SqliteRunnerGroupRepository(database);
@@ -170,6 +175,7 @@ async function createPlatformServices() {
         PostgresCaseCatalogRepository,
         PostgresCaseSuiteRepository,
         PostgresDdtRepository,
+        PostgresDashboardSnapshotRepository,
         PostgresIdentityAccessRepository,
         PostgresExecutionControlRepository,
         PostgresFailureAnalysisRepository,
@@ -257,6 +263,7 @@ async function createPlatformServices() {
     catalog = new PostgresCaseCatalogRepository(database);
     suites = new PostgresCaseSuiteRepository(database);
     ddtRepository = new PostgresDdtRepository(database);
+    dashboardSnapshotRepository = new PostgresDashboardSnapshotRepository(database);
     runners = new PostgresRunnerRepository(database);
     runnerInstallationProfileRepository = new PostgresRunnerInstallationProfileRepository(database);
     runnerGroupsRepository = new PostgresRunnerGroupRepository(database);
@@ -433,6 +440,12 @@ async function createPlatformServices() {
     batches,
   );
   await platformOperations.initialize();
+  const dashboardSnapshots = new DashboardSnapshotService(
+    dashboardSnapshotRepository,
+    catalog,
+    operationsRepository,
+    clock,
+  );
   if (config.mode === "lite") {
     const workerAbort = new AbortController();
     let workerFailure: unknown;
@@ -548,6 +561,16 @@ async function createPlatformServices() {
           await operationsRepository.rebuildAnalyticsFacts(1_000);
         })
       : Promise.resolve();
+  const dashboardSnapshotLoop =
+    config.mode === "lite"
+      ? runPeriodic(
+          scheduleAbort.signal,
+          config.publicDashboardRefreshSeconds * 1_000,
+          async () => {
+            await dashboardSnapshots.refreshTracked();
+          },
+        )
+      : Promise.resolve();
   const retentionLoop =
     config.mode === "lite"
       ? runPeriodic(scheduleAbort.signal, 3_600_000, async () => {
@@ -559,7 +582,7 @@ async function createPlatformServices() {
     ready: () => runtimeInfrastructure.ready(),
     close: async () => {
       scheduleAbort.abort();
-      await Promise.all([scheduleLoop, retentionLoop, roundRecoveryLoop]);
+      await Promise.all([scheduleLoop, dashboardSnapshotLoop, retentionLoop, roundRecoveryLoop]);
       await runtimeInfrastructure.close();
     },
   };
@@ -604,6 +627,7 @@ async function createPlatformServices() {
     attemptLogShares,
     runBatchExport,
     publicStatistics,
+    dashboardSnapshots,
     platformOperations,
     webhooks,
     runBatches,

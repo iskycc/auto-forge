@@ -24,7 +24,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useId, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useId, useRef, useState, useSyncExternalStore } from "react";
 
 import { CLASS_PREVIEW_LIMIT, uniqueInspectionClasses } from "@/lib/class-preview";
 import { formatMethodSignature } from "@/lib/jvm-signature";
@@ -93,6 +93,8 @@ export function JarImporter({
   const [job, setJob] = useState<JarImportJob | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [uploadProgress, setUploadProgress] = useState<JarUploadProgress | null>(null);
+  const importProgressAnchor = useRef<HTMLDivElement>(null);
+  const importProgressRevealed = useRef(false);
   const projectId = initialProjectId ?? "";
 
   const applyJobState = useCallback(
@@ -126,6 +128,7 @@ export function JarImporter({
     setJob(null);
     setError(null);
     setUploadProgress(null);
+    importProgressRevealed.current = false;
     setPhase("idle");
   }
 
@@ -179,6 +182,7 @@ export function JarImporter({
   async function importJar(): Promise<void> {
     if (!file || !inspection || inspection.testClassCount === 0) return;
     setError(null);
+    importProgressRevealed.current = false;
     setPhase("importing");
     try {
       const response = await sendFile(
@@ -222,6 +226,14 @@ export function JarImporter({
     }, 1_000);
     return () => window.clearInterval(interval);
   }, [applyJobState, job]);
+
+  useEffect(() => {
+    if (phase !== "importing" || (!uploadProgress && !job) || importProgressRevealed.current) {
+      return;
+    }
+    importProgressRevealed.current = true;
+    importProgressAnchor.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }, [job, phase, uploadProgress]);
 
   async function cancelImport(): Promise<void> {
     if (!job) return;
@@ -357,46 +369,12 @@ export function JarImporter({
         </div>
       )}
 
-      {uploadProgress ? (
+      {uploadProgress && phase === "inspecting" ? (
         <OperationProgress
           detail={uploadProgress.detail}
           label={uploadProgress.label}
           value={uploadProgress.percent}
         />
-      ) : null}
-
-      {job && phase !== "done" ? (
-        <section className="card import-progress" aria-live="polite">
-          <div className="import-progress-heading">
-            <strong>后台导入 · {job.progressPercent}%</strong>
-            <span>{importJobStatus(job.status)}</span>
-          </div>
-          <ProgressBar label="导入进度" max={100} value={job.progressPercent} />
-          {workerWaitWarning(job) ? (
-            <div className="import-worker-warning" role="alert">
-              <AlertCircle size={17} aria-hidden="true" />
-              <span>
-                <strong>后台工作器尚未领取任务</strong>
-                <small>
-                  Lite 模式会自动恢复嵌入式工作器；若持续等待，请检查 Web readiness
-                  与错误日志。工作器恢复后，当前积压任务会自动继续。
-                </small>
-              </span>
-            </div>
-          ) : null}
-          <div className="import-progress-actions">
-            {["queued", "running", "cancel_requested"].includes(job.status) ? (
-              <Button className="button button-secondary" type="button" onClick={cancelImport}>
-                取消导入
-              </Button>
-            ) : null}
-            {job.status === "failed" || job.status === "cancelled" ? (
-              <Button className="button button-secondary" type="button" onClick={retryImport}>
-                幂等重试
-              </Button>
-            ) : null}
-          </div>
-        </section>
       ) : null}
 
       {inspection && (
@@ -544,6 +522,52 @@ export function JarImporter({
           </div>
         </section>
       )}
+
+      {(uploadProgress && phase === "importing") || (job && phase !== "done") ? (
+        <div className="import-progress-anchor" ref={importProgressAnchor}>
+          {uploadProgress && phase === "importing" ? (
+            <OperationProgress
+              detail={uploadProgress.detail}
+              label={uploadProgress.label}
+              value={uploadProgress.percent}
+            />
+          ) : null}
+
+          {job ? (
+            <section className="card import-progress" aria-live="polite">
+              <div className="import-progress-heading">
+                <strong>后台导入 · {job.progressPercent}%</strong>
+                <span>{importJobStatus(job.status)}</span>
+              </div>
+              <ProgressBar label="导入进度" max={100} value={job.progressPercent} />
+              {workerWaitWarning(job) ? (
+                <div className="import-worker-warning" role="alert">
+                  <AlertCircle size={17} aria-hidden="true" />
+                  <span>
+                    <strong>后台工作器尚未领取任务</strong>
+                    <small>
+                      Lite 模式会自动恢复嵌入式工作器；若持续等待，请检查 Web readiness
+                      与错误日志。工作器恢复后，当前积压任务会自动继续。
+                    </small>
+                  </span>
+                </div>
+              ) : null}
+              <div className="import-progress-actions">
+                {["queued", "running", "cancel_requested"].includes(job.status) ? (
+                  <Button className="button button-secondary" type="button" onClick={cancelImport}>
+                    取消导入
+                  </Button>
+                ) : null}
+                {job.status === "failed" || job.status === "cancelled" ? (
+                  <Button className="button button-secondary" type="button" onClick={retryImport}>
+                    幂等重试
+                  </Button>
+                ) : null}
+              </div>
+            </section>
+          ) : null}
+        </div>
+      ) : null}
 
       {result && (
         <div className="alert alert-success" role="status">

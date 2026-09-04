@@ -105,6 +105,39 @@ export const failureAnalysisClaimPageSchema = z.object({
   nextCursor: z.string().optional(),
 });
 
+export const failureAnalysisCategoryCountsSchema = z.object({
+  rerunPassed: z.number().int().nonnegative(),
+  caseFixed: z.number().int().nonnegative(),
+  codeIssueFiled: z.number().int().nonnegative(),
+});
+
+export const failureAnalysisStatisticsSummarySchema = z.object({
+  claimed: z.number().int().nonnegative(),
+  analyzing: z.number().int().nonnegative(),
+  completed: z.number().int().nonnegative(),
+  total: z.number().int().nonnegative(),
+  categories: failureAnalysisCategoryCountsSchema,
+});
+
+export const failureAnalysisAnalystStatisticsSchema = z.object({
+  claimantId: z.string().min(1),
+  claimantUsername: z.string().min(1),
+  claimantDisplayName: z.string().min(1),
+  total: z.number().int().nonnegative(),
+  claimed: z.number().int().nonnegative(),
+  analyzing: z.number().int().nonnegative(),
+  completed: z.number().int().nonnegative(),
+  categories: failureAnalysisCategoryCountsSchema,
+  lastActivityAt: z.string().datetime(),
+});
+
+export const failureAnalysisStatisticsPageSchema = z.object({
+  summary: failureAnalysisStatisticsSummarySchema,
+  analysts: z.array(failureAnalysisAnalystStatisticsSchema),
+  nextCursor: z.string().optional(),
+  generatedAt: z.string().datetime(),
+});
+
 export const failureAnalysisHistoryItemSchema = z.object({
   claim: failureAnalysisClaimSchema,
   batchSequenceNumber: z.number().int().positive(),
@@ -203,6 +236,15 @@ export type FailureAnalysisCandidatePage = z.infer<typeof failureAnalysisCandida
 export type FailureAnalysisBatch = z.infer<typeof failureAnalysisBatchSchema>;
 export type FailureAnalysisBatchPage = z.infer<typeof failureAnalysisBatchPageSchema>;
 export type FailureAnalysisClaimView = z.infer<typeof failureAnalysisClaimSchema>;
+export type FailureAnalysisClaimPageView = z.infer<typeof failureAnalysisClaimPageSchema>;
+export type FailureAnalysisCategoryCounts = z.infer<typeof failureAnalysisCategoryCountsSchema>;
+export type FailureAnalysisStatisticsSummary = z.infer<
+  typeof failureAnalysisStatisticsSummarySchema
+>;
+export type FailureAnalysisAnalystStatistics = z.infer<
+  typeof failureAnalysisAnalystStatisticsSchema
+>;
+export type FailureAnalysisStatisticsPage = z.infer<typeof failureAnalysisStatisticsPageSchema>;
 export type FailureAnalysisHistoryItemView = z.infer<typeof failureAnalysisHistoryItemSchema>;
 export type FailureAnalysisHistoryPageView = z.infer<typeof failureAnalysisHistoryPageSchema>;
 export type ClaimFailureAnalysisResult = z.infer<typeof claimFailureAnalysisResultSchema>;
