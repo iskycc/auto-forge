@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { performance } from "node:perf_hooks";
 
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -19,11 +20,11 @@ afterEach(() => {
 });
 
 describe("SQLite platform operations", () => {
-  it("keeps dashboard analytics exact beyond one hundred thousand samples", async () => {
+  it("supports exact analytics and bounded homepage sampling beyond one hundred thousand facts", async () => {
     const { handle, repository } = fixture();
     try {
       // 分析事实的基数测试不需要复制 10 万条执行领域记录；仅在该隔离临时库关闭
-      // 外键，直接构造物化事实以验证工作台查询不存在隐藏的 100000 行截断。
+      // 外键，直接构造物化事实以同时验证完整查询不截断、首页查询主动限流。
       handle.client.pragma("foreign_keys = OFF");
       const insert = handle.client.prepare(
         `INSERT INTO analytics_facts
@@ -50,6 +51,23 @@ describe("SQLite platform operations", () => {
         successRate: 1,
         trend: [{ total: 100_005, passed: 100_005 }],
       });
+
+      const startedAt = performance.now();
+      const dashboardSummary = await repository.readAnalyticsOverview({
+        filter: { projectId: "project-1", timeZone: "Asia/Shanghai" },
+        projectIds: ["project-1"],
+        generatedAt: "2026-08-11T03:00:00.000Z",
+        maximumFacts: 10_000,
+      });
+      const elapsedMs = performance.now() - startedAt;
+      expect(dashboardSummary).toMatchObject({
+        sampleCount: 10_000,
+        passed: 10_000,
+        successRate: 1,
+        sampling: { strategy: "latest", limit: 10_000 },
+        trend: [{ total: 10_000, passed: 10_000 }],
+      });
+      expect(elapsedMs).toBeLessThan(750);
     } finally {
       handle.close();
     }

@@ -36,6 +36,8 @@ import { nextCronOccurrence, validateCronExpression } from "./schedule-expressio
 const MAXIMUM_TOKEN_LIFETIME_MS = 366 * 24 * 60 * 60 * 1_000;
 const ANALYTICS_EXPORT_MAXIMUM_ROWS = 25_000;
 const ANALYTICS_EXPORT_MAXIMUM_BYTES = 16 * 1024 * 1024;
+const ANALYTICS_OVERVIEW_MAXIMUM_FACTS = 100_000;
+export const DASHBOARD_ANALYTICS_SAMPLE_LIMIT = 10_000;
 const RETENTION_DEFAULTS: Record<
   RetentionCategory,
   { days: number; minimum: number; maximum: number }
@@ -484,14 +486,20 @@ export class PlatformOperationsService {
     });
   }
 
-  async analyticsOverview(actor: AuthenticatedIdentity, filterInput: AnalyticsFilter) {
+  async analyticsOverview(
+    actor: AuthenticatedIdentity,
+    filterInput: AnalyticsFilter,
+    options: { maximumFacts?: number } = {},
+  ) {
     requireScopedPermission(actor, "run.read", filterInput.projectId);
     const filter = analyticsFilterSchema.parse(filterInput);
     const projectIds = projectIdsForPermission(actor, "run.read");
+    const maximumFacts = analyticsOverviewMaximumFacts(options.maximumFacts);
     return this.repository.readAnalyticsOverview({
       filter,
       ...(projectIds ? { projectIds } : {}),
       generatedAt: this.clock.now().toISOString(),
+      ...(maximumFacts === undefined ? {} : { maximumFacts }),
     });
   }
 
@@ -781,6 +789,17 @@ function validatedPermissions(values: readonly string[]): Permission[] {
   const invalid = values.find((value) => !isPermission(value));
   if (invalid) throw new DomainError("PERMISSION_UNKNOWN", `未知权限：${invalid}`);
   return [...new Set(values as readonly Permission[])].sort();
+}
+
+function analyticsOverviewMaximumFacts(value: number | undefined): number | undefined {
+  if (value === undefined) return undefined;
+  if (!Number.isSafeInteger(value) || value < 1 || value > ANALYTICS_OVERVIEW_MAXIMUM_FACTS) {
+    throw new DomainError(
+      "ANALYTICS_OVERVIEW_LIMIT_INVALID",
+      `工作台分析样本上限必须为 1 至 ${ANALYTICS_OVERVIEW_MAXIMUM_FACTS} 的整数。`,
+    );
+  }
+  return value;
 }
 
 function validatedProjectPermissions(

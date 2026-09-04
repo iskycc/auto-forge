@@ -8,13 +8,13 @@ import { runnerGroupMembers, runnerGroups, runners } from "./schema";
 export class SqliteRunnerGroupRepository implements RunnerGroupRepository {
   constructor(private readonly handle: SqliteDatabaseHandle) {}
 
-  async list(): Promise<RunnerGroup[]> {
-    return this.handle.db
+  async list(limit?: number): Promise<RunnerGroup[]> {
+    const query = this.handle.db
       .select()
       .from(runnerGroups)
-      .orderBy(asc(runnerGroups.name), asc(runnerGroups.id))
-      .all()
-      .map((row) => this.mapGroup(row));
+      .orderBy(asc(runnerGroups.name), asc(runnerGroups.id));
+    const rows = limit === undefined ? query.all() : query.limit(runnerGroupListLimit(limit)).all();
+    return rows.map((row) => this.mapGroup(row));
   }
 
   async get(groupId: string): Promise<RunnerGroup | null> {
@@ -119,4 +119,11 @@ export class SqliteRunnerGroupRepository implements RunnerGroupRepository {
       updatedAt: row.updatedAt,
     };
   }
+}
+
+function runnerGroupListLimit(value: number): number {
+  if (!Number.isSafeInteger(value) || value < 1 || value > 1_000) {
+    throw new Error("Runner group list limit must be an integer from 1 to 1000.");
+  }
+  return value;
 }

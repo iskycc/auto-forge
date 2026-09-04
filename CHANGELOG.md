@@ -4,7 +4,7 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
-## Unreleased
+## 1.9.1 - 2026-09-04
 
 ### Added
 
@@ -18,6 +18,9 @@ and known limitations.
 
 ### Fixed
 
+- 工作概览的本周与上周统计改为分别聚合当前筛选下最新最多 10,000 条分析事实，近期批次和
+  执行机组也在数据库关联聚合前限制为页面实际需要的窗口；修复历史执行数据较多时首页长时间
+  加载并阻塞 Lite 控制面的问题。首页明确显示采样上限，质量洞察和导出仍保持完整精确查询。
 - 删除存储资源后直接局部更新目录树与空间汇总，不再重新扫描数据目录和对象存储，避免每删除
   一个文件都触发整页加载和目录展开状态丢失。
 - 用例管理的 TestNG 与 DDT 切换改为工作台内即时切换；访问过的面板保持挂载，TestNG 已加载目录、
@@ -32,9 +35,13 @@ and known limitations.
 
 - `DELETE /api/v1/settings/storage` 保留原有单项请求，并新增最多 100 项的批量请求；Lite 本地对象
   与 Full MinIO 对象继续使用同一应用层删除规则。未新增运行时依赖或离线资产。
+- 首页有界统计在 Lite/SQLite 与 Full/PostgreSQL 下使用相同契约；未改变 Runner Protocol、任务
+  调度和执行语义。
 
 ### Tests
 
+- 新增 100,005 条分析事实的首页有界读取与延迟回归门禁、SQLite/PostgreSQL 执行机组限量契约，
+  并扩展真实数据 Playwright 场景验证首页采样说明。
 - 新增批量删除契约、部分失败继续处理、客户端容量汇总修补测试，并扩展 Playwright 存储空间场景，
   验证悬浮批量操作、二次确认、对象删除，以及删除完成后不重新请求存储清单。
 - Playwright 新增自动安装弹窗、TestNG/DDT 无页面请求切换及长关键字搜索框宽度回归断言。

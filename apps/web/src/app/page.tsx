@@ -1,4 +1,5 @@
 import type { AnalyticsSummary } from "@autoforge/contracts";
+import { DASHBOARD_ANALYTICS_SAMPLE_LIMIT } from "@autoforge/application";
 import { hasPermission, type RunBatch, type Runner, type RunnerGroup } from "@autoforge/domain";
 import {
   Activity,
@@ -48,6 +49,9 @@ import {
 } from "@/lib/dashboard-presentation";
 
 export const dynamic = "force-dynamic";
+
+const DASHBOARD_RUN_BATCH_LIMIT = 8;
+const DASHBOARD_RUNNER_GROUP_LIMIT = 6;
 
 export default async function DashboardPage() {
   const services = await getPlatformServices();
@@ -102,27 +106,39 @@ export default async function DashboardPage() {
   ] = await Promise.all([
     services.catalog.getDashboardSummary(caseProjectIds),
     canReadRunners ? services.runnerControl.list(500) : Promise.resolve([]),
-    canReadRunners ? services.runnerGroups.list() : Promise.resolve([]),
+    canReadRunners ? services.runnerGroups.list(DASHBOARD_RUNNER_GROUP_LIMIT) : Promise.resolve([]),
     canReadRuns && hierarchy.projectVersionId
-      ? services.runBatches.list(20, runProjectIds, hierarchy.projectVersionId)
+      ? services.runBatches.list(
+          DASHBOARD_RUN_BATCH_LIMIT,
+          runProjectIds,
+          hierarchy.projectVersionId,
+        )
       : Promise.resolve([]),
     canReadSources ? services.catalog.listRecentSources(5, caseProjectIds) : Promise.resolve([]),
     canReadRuns && hierarchy.projectVersionId
-      ? services.platformOperations.analyticsOverview(identity, {
-          ...(runProjectIds?.[0] ? { projectId: runProjectIds[0] } : {}),
-          projectVersionId: hierarchy.projectVersionId,
-          completedAfter: currentWeekStartedAt,
-          timeZone,
-        })
+      ? services.platformOperations.analyticsOverview(
+          identity,
+          {
+            ...(runProjectIds?.[0] ? { projectId: runProjectIds[0] } : {}),
+            projectVersionId: hierarchy.projectVersionId,
+            completedAfter: currentWeekStartedAt,
+            timeZone,
+          },
+          { maximumFacts: DASHBOARD_ANALYTICS_SAMPLE_LIMIT },
+        )
       : Promise.resolve(null),
     canReadRuns && hierarchy.projectVersionId
-      ? services.platformOperations.analyticsOverview(identity, {
-          ...(runProjectIds?.[0] ? { projectId: runProjectIds[0] } : {}),
-          projectVersionId: hierarchy.projectVersionId,
-          completedAfter: previousWeekStartedAt,
-          completedBefore: currentWeekStartedAt,
-          timeZone,
-        })
+      ? services.platformOperations.analyticsOverview(
+          identity,
+          {
+            ...(runProjectIds?.[0] ? { projectId: runProjectIds[0] } : {}),
+            projectVersionId: hierarchy.projectVersionId,
+            completedAfter: previousWeekStartedAt,
+            completedBefore: currentWeekStartedAt,
+            timeZone,
+          },
+          { maximumFacts: DASHBOARD_ANALYTICS_SAMPLE_LIMIT },
+        )
       : Promise.resolve(null),
   ]);
 
@@ -288,7 +304,9 @@ export default async function DashboardPage() {
           </div>
           <p className="quality-caption">
             {currentAnalytics?.sampleCount
-              ? `基于 ${currentAnalytics.sampleCount} 次已确认执行样本`
+              ? currentAnalytics.sampling
+                ? `基于最近 ${currentAnalytics.sampleCount.toLocaleString("zh-CN")} 次已确认执行样本（首页最多读取 ${currentAnalytics.sampling.limit.toLocaleString("zh-CN")} 条）`
+                : `基于 ${currentAnalytics.sampleCount.toLocaleString("zh-CN")} 次已确认执行样本`
               : "完成首轮执行后生成质量趋势"}
           </p>
           <QualityTrend analytics={currentAnalytics} />

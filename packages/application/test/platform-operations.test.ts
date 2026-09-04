@@ -7,6 +7,37 @@ import type { PlatformOperationsRepository, RunBatchRepository } from "../src/po
 const timestamp = "2026-08-09T00:00:00.000Z";
 
 describe("PlatformOperationsService analytics", () => {
+  it("validates and forwards an explicitly bounded dashboard sample", async () => {
+    const readAnalyticsOverview = vi.fn(async () => emptyAnalyticsSummary());
+    const service = new PlatformOperationsService(
+      { readAnalyticsOverview } as unknown as PlatformOperationsRepository,
+      { now: () => new Date(timestamp) },
+      { next: () => "id" },
+      { issue: () => "token", hash: (value) => value },
+    );
+
+    await service.analyticsOverview(
+      projectIdentity,
+      { projectId: "project-1", timeZone: "Asia/Shanghai" },
+      { maximumFacts: 10_000 },
+    );
+
+    expect(readAnalyticsOverview).toHaveBeenCalledWith({
+      filter: { projectId: "project-1", timeZone: "Asia/Shanghai" },
+      projectIds: ["project-1"],
+      generatedAt: timestamp,
+      maximumFacts: 10_000,
+    });
+    await expect(
+      service.analyticsOverview(
+        projectIdentity,
+        { projectId: "project-1" },
+        { maximumFacts: 100_001 },
+      ),
+    ).rejects.toMatchObject({ code: "ANALYTICS_OVERVIEW_LIMIT_INVALID" });
+    expect(readAnalyticsOverview).toHaveBeenCalledTimes(1);
+  });
+
   it("accepts project-scoped read permissions for schedules and global search", async () => {
     const repository = {
       listSchedules: vi.fn(async () => []),
@@ -317,5 +348,22 @@ function attempt(
     durationMs,
     finishedAt: timestamp,
     createdAt: timestamp,
+  };
+}
+
+function emptyAnalyticsSummary() {
+  return {
+    sampleCount: 0,
+    passed: 0,
+    failed: 0,
+    skipped: 0,
+    successRate: 0,
+    failureRate: 0,
+    skippedRate: 0,
+    generatedAt: timestamp,
+    dimensions: { projects: [], suites: [], runners: [], outcomes: [] },
+    trend: [],
+    failures: [],
+    flakyCases: [],
   };
 }

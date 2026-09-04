@@ -322,6 +322,14 @@ export function aggregateAnalytics(
 
 const analyticsDateFormatters = new Map<string, Intl.DateTimeFormat>();
 
+export function analyticsOverviewFactLimit(value: number | undefined): number | undefined {
+  if (value === undefined) return undefined;
+  if (!Number.isSafeInteger(value) || value < 1 || value > 100_000) {
+    throw new Error("Analytics overview fact limit must be an integer from 1 to 100000.");
+  }
+  return value;
+}
+
 export function analyticsDateBucket(value: string, timeZone: string): string {
   const date = new Date(value);
   let formatter = analyticsDateFormatters.get(timeZone);

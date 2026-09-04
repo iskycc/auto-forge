@@ -26,6 +26,7 @@ import {
   ANALYTICS_FACT_SCHEMA_VERSION,
   analyticsDateBucket,
   analyticsExportProjectIds,
+  analyticsOverviewFactLimit,
   failureSignature,
   mapApiToken,
   mapAnalyticsExportJob,
@@ -857,7 +858,8 @@ export class SqlitePlatformOperationsRepository implements PlatformOperationsRep
     input: Parameters<PlatformOperationsRepository["readAnalyticsOverview"]>[0],
   ): Promise<AnalyticsSummary> {
     const selection = sqliteAnalyticsSelection(input.filter, input.projectIds);
-    if (!selection) return emptyAnalyticsSummary(input.generatedAt);
+    const maximumFacts = analyticsOverviewFactLimit(input.maximumFacts);
+    if (!selection) return emptyAnalyticsSummary(input.generatedAt, maximumFacts);
     const retryablePlaceholders = RETRYABLE_RUNNER_FAILURE_RESULT_CODES.map(() => "?").join(",");
     const qualityWhere = [
       ...selection.where,
@@ -865,13 +867,22 @@ export class SqlitePlatformOperationsRepository implements PlatformOperationsRep
     ];
     const parameters = [...selection.parameters, ...RETRYABLE_RUNNER_FAILURE_RESULT_CODES];
     const whereSql = `WHERE ${qualityWhere.join(" AND ")}`;
+    const selectedFactsSql = maximumFacts
+      ? `WITH selected_facts AS (
+           SELECT * FROM analytics_facts ${whereSql}
+           ORDER BY completed_at DESC LIMIT ?
+         )`
+      : "";
+    const factsTable = maximumFacts ? "selected_facts" : "analytics_facts";
+    const factParameters = maximumFacts ? [...parameters, maximumFacts] : parameters;
     const totals = this.handle.client
       .prepare(
-        `SELECT COUNT(*) AS sampleCount,COALESCE(SUM(passed),0) AS passed,
+        `${selectedFactsSql}
+         SELECT COUNT(*) AS sampleCount,COALESCE(SUM(passed),0) AS passed,
                 COALESCE(SUM(failed),0) AS failed,COALESCE(SUM(skipped),0) AS skipped
-         FROM analytics_facts ${whereSql}`,
+         FROM ${factsTable} ${maximumFacts ? "" : whereSql}`,
       )
-      .get(...parameters) as {
+      .get(...factParameters) as {
       sampleCount: number;
       passed: number;
       failed: number;
@@ -879,22 +890,35 @@ export class SqlitePlatformOperationsRepository implements PlatformOperationsRep
     };
     const trend = this.handle.client
       .prepare(
-        `SELECT autoforge_analytics_day(completed_at,?) AS bucket,
+        `${selectedFactsSql}
+         SELECT autoforge_analytics_day(completed_at,?) AS bucket,
                 SUM(passed+failed+skipped) AS total,SUM(passed) AS passed,
                 SUM(failed) AS failed,SUM(skipped) AS skipped
-         FROM analytics_facts ${whereSql}
+         FROM ${factsTable} ${maximumFacts ? "" : whereSql}
          GROUP BY bucket HAVING total>0 ORDER BY bucket`,
       )
-      .all(input.filter.timeZone ?? "UTC", ...parameters) as AnalyticsSummary["trend"];
-    const failures = this.handle.client
-      .prepare(
-        `WITH matching AS (
+      .all(
+        ...(maximumFacts
+          ? [...factParameters, input.filter.timeZone ?? "UTC"]
+          : [input.filter.timeZone ?? "UTC", ...parameters]),
+      ) as AnalyticsSummary["trend"];
+    const matchingFactsSql = maximumFacts
+      ? `${selectedFactsSql}, matching AS (
+           SELECT fact.failure_signature,fact.result_code,fact.completed_at,
+                  COALESCE(NULLIF(TRIM(attempt.result_summary),''),'执行失败，但执行机未提供错误描述。') AS description
+           FROM selected_facts fact LEFT JOIN run_attempts attempt ON attempt.id=fact.attempt_id
+           WHERE fact.failure_signature IS NOT NULL
+         )`
+      : `WITH matching AS (
            SELECT fact.failure_signature,fact.result_code,fact.completed_at,
                   COALESCE(NULLIF(TRIM(attempt.result_summary),''),'执行失败，但执行机未提供错误描述。') AS description
            FROM analytics_facts fact LEFT JOIN run_attempts attempt ON attempt.id=fact.attempt_id
            ${qualifySqliteAnalyticsWhere(whereSql)}
              AND fact.failure_signature IS NOT NULL
-         ), ranked AS (
+         )`;
+    const failures = this.handle.client
+      .prepare(
+        `${matchingFactsSql}, ranked AS (
            SELECT *,ROW_NUMBER() OVER (PARTITION BY failure_signature ORDER BY completed_at DESC) AS rank
            FROM matching
          )
@@ -905,10 +929,11 @@ export class SqlitePlatformOperationsRepository implements PlatformOperationsRep
          FROM ranked GROUP BY failure_signature
          ORDER BY count DESC,signature LIMIT 20`,
       )
-      .all(...parameters) as AnalyticsSummary["failures"];
+      .all(...factParameters) as AnalyticsSummary["failures"];
     const methodSamples = totals.passed + totals.failed + totals.skipped;
     return {
       ...totals,
+      ...(maximumFacts ? { sampling: { strategy: "latest" as const, limit: maximumFacts } } : {}),
       successRate: analyticsRatio(totals.passed, methodSamples),
       failureRate: analyticsRatio(totals.failed, methodSamples),
       skippedRate: analyticsRatio(totals.skipped, methodSamples),
@@ -1266,9 +1291,10 @@ function sqliteAnalyticsSelection(
   return { where: where.length > 0 ? where : ["1=1"], parameters };
 }
 
-function emptyAnalyticsSummary(generatedAt: string): AnalyticsSummary {
+function emptyAnalyticsSummary(generatedAt: string, maximumFacts?: number): AnalyticsSummary {
   return {
     sampleCount: 0,
+    ...(maximumFacts ? { sampling: { strategy: "latest", limit: maximumFacts } as const } : {}),
     passed: 0,
     failed: 0,
     skipped: 0,

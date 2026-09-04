@@ -16,8 +16,8 @@ export class RunnerGroupService {
     private readonly ids: IdGenerator,
   ) {}
 
-  list(): Promise<RunnerGroup[]> {
-    return this.groups.list();
+  list(limit?: number): Promise<RunnerGroup[]> {
+    return this.groups.list(limit);
   }
 
   async get(groupId: string): Promise<RunnerGroup> {

@@ -215,6 +215,12 @@ const analyticsDimensionSchema = z.object({
 
 export const analyticsSummarySchema = z.object({
   sampleCount: z.number().int().nonnegative(),
+  sampling: z
+    .object({
+      strategy: z.literal("latest"),
+      limit: z.number().int().positive(),
+    })
+    .optional(),
   passed: z.number().int().nonnegative(),
   failed: z.number().int().nonnegative(),
   skipped: z.number().int().nonnegative(),

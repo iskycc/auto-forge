@@ -937,6 +937,23 @@ describe.skipIf(!connectionString)("PostgreSQL platform repositories", () => {
         trend: [{ total: 1, passed: 1, failed: 0, skipped: 0 }],
       });
       await expect(
+        operations.readAnalyticsOverview({
+          filter: {
+            caseDefinitionId: `case-${runnerId}`,
+            projectVersionId: analyticsProjectVersion.id,
+            testStageId: analyticsTestStage.id,
+          },
+          generatedAt: "2026-08-09T00:02:00.000Z",
+          maximumFacts: 1,
+        }),
+      ).resolves.toMatchObject({
+        sampleCount: 1,
+        passed: 1,
+        successRate: 1,
+        sampling: { strategy: "latest", limit: 1 },
+        trend: [{ total: 1, passed: 1, failed: 0, skipped: 0 }],
+      });
+      await expect(
         operations.readAnalytics({
           filter: {
             caseDefinitionId: `case-${runnerId}`,

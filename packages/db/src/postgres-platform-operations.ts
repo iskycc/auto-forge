@@ -26,6 +26,7 @@ import type { PostgresDatabaseHandle } from "./postgres-database";
 import {
   ANALYTICS_FACT_SCHEMA_VERSION,
   analyticsExportProjectIds,
+  analyticsOverviewFactLimit,
   failureSignature,
   mapApiToken,
   mapAnalyticsExportJob,
@@ -849,7 +850,8 @@ export class PostgresPlatformOperationsRepository implements PlatformOperationsR
   ): Promise<AnalyticsSummary> {
     await this.ready();
     const selection = postgresAnalyticsSelection(input.filter, input.projectIds);
-    if (!selection) return emptyPostgresAnalyticsSummary(input.generatedAt);
+    const maximumFacts = analyticsOverviewFactLimit(input.maximumFacts);
+    if (!selection) return emptyPostgresAnalyticsSummary(input.generatedAt, maximumFacts);
     const values = [...selection.values, [...RETRYABLE_RUNNER_FAILURE_RESULT_CODES]];
     const retryableParameter = `$${values.length}`;
     const qualityWhere = [
@@ -857,8 +859,29 @@ export class PostgresPlatformOperationsRepository implements PlatformOperationsR
       `(result_code IS NULL OR NOT (result_code=ANY(${retryableParameter}::text[])))`,
     ];
     const whereSql = `WHERE ${qualityWhere.join(" AND ")}`;
-    const trendValues = [...values, input.filter.timeZone ?? "UTC"];
+    const factValues = maximumFacts ? [...values, maximumFacts] : values;
+    const selectedFactsSql = maximumFacts
+      ? `WITH selected_facts AS (
+           SELECT * FROM analytics_facts ${whereSql}
+           ORDER BY completed_at DESC LIMIT $${factValues.length}
+         )`
+      : "";
+    const factsTable = maximumFacts ? "selected_facts" : "analytics_facts";
+    const trendValues = [...factValues, input.filter.timeZone ?? "UTC"];
     const timeZoneParameter = `$${trendValues.length}`;
+    const matchingFactsSql = maximumFacts
+      ? `${selectedFactsSql}, matching AS (
+           SELECT fact.failure_signature,fact.result_code,fact.completed_at,
+                  COALESCE(NULLIF(BTRIM(attempt.result_summary),''),'执行失败，但执行机未提供错误描述。') AS description
+           FROM selected_facts fact LEFT JOIN run_attempts attempt ON attempt.id=fact.attempt_id
+           WHERE fact.failure_signature IS NOT NULL
+         )`
+      : `WITH matching AS (
+           SELECT fact.failure_signature,fact.result_code,fact.completed_at,
+                  COALESCE(NULLIF(BTRIM(attempt.result_summary),''),'执行失败，但执行机未提供错误描述。') AS description
+           FROM analytics_facts fact LEFT JOIN run_attempts attempt ON attempt.id=fact.attempt_id
+           ${qualifyPostgresAnalyticsWhere(whereSql)} AND fact.failure_signature IS NOT NULL
+         )`;
     const [totalsResult, trendResult, failuresResult] = await Promise.all([
       this.handle.pool.query<{
         sampleCount: string;
@@ -866,10 +889,11 @@ export class PostgresPlatformOperationsRepository implements PlatformOperationsR
         failed: string;
         skipped: string;
       }>(
-        `SELECT COUNT(*) AS "sampleCount",COALESCE(SUM(passed),0) AS passed,
+        `${selectedFactsSql}
+         SELECT COUNT(*) AS "sampleCount",COALESCE(SUM(passed),0) AS passed,
                   COALESCE(SUM(failed),0) AS failed,COALESCE(SUM(skipped),0) AS skipped
-           FROM analytics_facts ${whereSql}`,
-        values,
+         FROM ${factsTable} ${maximumFacts ? "" : whereSql}`,
+        factValues,
       ),
       this.handle.pool.query<{
         bucket: string;
@@ -878,12 +902,13 @@ export class PostgresPlatformOperationsRepository implements PlatformOperationsR
         failed: string;
         skipped: string;
       }>(
-        `SELECT TO_CHAR(completed_at::timestamptz AT TIME ZONE ${timeZoneParameter},'YYYY-MM-DD')
+        `${selectedFactsSql}
+         SELECT TO_CHAR(completed_at::timestamptz AT TIME ZONE ${timeZoneParameter},'YYYY-MM-DD')
                     || 'T00:00:00.000Z' AS bucket,
                   SUM(passed+failed+skipped) AS total,SUM(passed) AS passed,
                   SUM(failed) AS failed,SUM(skipped) AS skipped
-           FROM analytics_facts ${whereSql}
-           GROUP BY bucket HAVING SUM(passed+failed+skipped)>0 ORDER BY bucket`,
+         FROM ${factsTable} ${maximumFacts ? "" : whereSql}
+         GROUP BY bucket HAVING SUM(passed+failed+skipped)>0 ORDER BY bucket`,
         trendValues,
       ),
       this.handle.pool.query<{
@@ -893,12 +918,7 @@ export class PostgresPlatformOperationsRepository implements PlatformOperationsR
         count: string;
         lastSeenAt: Date | string;
       }>(
-        `WITH matching AS (
-             SELECT fact.failure_signature,fact.result_code,fact.completed_at,
-                    COALESCE(NULLIF(BTRIM(attempt.result_summary),''),'执行失败，但执行机未提供错误描述。') AS description
-             FROM analytics_facts fact LEFT JOIN run_attempts attempt ON attempt.id=fact.attempt_id
-             ${qualifyPostgresAnalyticsWhere(whereSql)} AND fact.failure_signature IS NOT NULL
-           ), ranked AS (
+        `${matchingFactsSql}, ranked AS (
              SELECT *,ROW_NUMBER() OVER (PARTITION BY failure_signature ORDER BY completed_at DESC) AS rank
              FROM matching
            )
@@ -907,7 +927,7 @@ export class PostgresPlatformOperationsRepository implements PlatformOperationsR
                   MAX(result_code) FILTER (WHERE rank=1) AS "resultCode",
                   COUNT(*) AS count,MAX(completed_at) AS "lastSeenAt"
            FROM ranked GROUP BY failure_signature ORDER BY count DESC,signature LIMIT 20`,
-        values,
+        factValues,
       ),
     ]);
     const totalsRow = totalsResult.rows[0];
@@ -920,6 +940,7 @@ export class PostgresPlatformOperationsRepository implements PlatformOperationsR
     const methodSamples = totals.passed + totals.failed + totals.skipped;
     return {
       ...totals,
+      ...(maximumFacts ? { sampling: { strategy: "latest" as const, limit: maximumFacts } } : {}),
       successRate: postgresAnalyticsRatio(totals.passed, methodSamples),
       failureRate: postgresAnalyticsRatio(totals.failed, methodSamples),
       skippedRate: postgresAnalyticsRatio(totals.skipped, methodSamples),
@@ -1302,9 +1323,13 @@ async function postgresAnalyticsDimensions(
   return result.rows.map((row) => ({ id: row.id, count: Number(row.count) }));
 }
 
-function emptyPostgresAnalyticsSummary(generatedAt: string): AnalyticsSummary {
+function emptyPostgresAnalyticsSummary(
+  generatedAt: string,
+  maximumFacts?: number,
+): AnalyticsSummary {
   return {
     sampleCount: 0,
+    ...(maximumFacts ? { sampling: { strategy: "latest", limit: maximumFacts } as const } : {}),
     passed: 0,
     failed: 0,
     skipped: 0,

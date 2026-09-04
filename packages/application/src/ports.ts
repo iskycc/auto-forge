@@ -1339,7 +1339,7 @@ export interface RunnerInstallationProfileRepository {
 }
 
 export interface RunnerGroupRepository {
-  list(): Promise<RunnerGroup[]>;
+  list(limit?: number): Promise<RunnerGroup[]>;
   get(groupId: string): Promise<RunnerGroup | null>;
   create(input: {
     id: string;
@@ -2172,6 +2172,7 @@ export interface PlatformOperationsRepository {
     filter: AnalyticsFilter;
     projectIds?: readonly string[];
     generatedAt: string;
+    maximumFacts?: number;
   }): Promise<AnalyticsSummary>;
   exportAnalytics(input: {
     filter: AnalyticsFilter;

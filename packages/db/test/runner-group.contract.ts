@@ -101,6 +101,29 @@ export function runnerGroupContract(adapterName: string, createHarness: HarnessF
       });
     });
 
+    it("limits list reads before loading group members", async () => {
+      await withHarness(createHarness, async ({ repository }) => {
+        await repository.create({
+          id: "group-b",
+          name: "资源池 B",
+          normalizedName: "pool-b",
+          description: "",
+          runnerIds: [],
+          recordedAt: CREATED_AT,
+        });
+        await repository.create({
+          id: "group-a",
+          name: "资源池 A",
+          normalizedName: "pool-a",
+          description: "",
+          runnerIds: [],
+          recordedAt: CREATED_AT,
+        });
+
+        await expect(repository.list(1)).resolves.toMatchObject([{ id: "group-a" }]);
+      });
+    });
+
     it("hides purged members and deletes groups idempotently", async () => {
       await withHarness(createHarness, async ({ repository, runnerIds, purgeRunner }) => {
         await repository.create({

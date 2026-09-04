@@ -1368,6 +1368,7 @@ public class MixedVisibleTest {
   await expect(page.getByRole("heading", { level: 1, name: /E2E Administrator/ })).toBeVisible();
   await expect(page.locator('[aria-label="关键状态"] .dashboard-pulse')).toHaveCount(4);
   await expect(page.locator(".quality-outcome-bar")).toBeVisible();
+  await expect(page.locator(".quality-caption")).toContainText("首页最多读取 10,000 条");
   await expect(page.locator(".dashboard-period-block time")).toContainText("数据截至");
   await expect(page.locator(".quality-trend-value")).toContainText("50.0%");
   await expect(page.locator(".quality-trend-chart > div.single")).toContainText("09-04");

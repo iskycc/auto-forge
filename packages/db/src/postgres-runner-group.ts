@@ -17,9 +17,18 @@ type RunnerGroupRow = {
 export class PostgresRunnerGroupRepository implements RunnerGroupRepository {
   constructor(private readonly handle: PostgresDatabaseHandle) {}
 
-  async list(): Promise<RunnerGroup[]> {
+  async list(limit?: number): Promise<RunnerGroup[]> {
     await this.handle.ready;
-    const result = await this.handle.pool.query<RunnerGroupRow>(runnerGroupSelect());
+    const normalizedLimit = limit === undefined ? undefined : runnerGroupListLimit(limit);
+    const result = await this.handle.pool.query<RunnerGroupRow>(
+      normalizedLimit === undefined
+        ? runnerGroupSelect()
+        : `WITH selected_groups AS (
+             SELECT * FROM runner_groups ORDER BY name, id LIMIT $1
+           )
+           ${runnerGroupSelect("", "selected_groups")}`,
+      normalizedLimit === undefined ? [] : [normalizedLimit],
+    );
     return result.rows.map(mapRunnerGroup);
   }
 
@@ -121,7 +130,7 @@ export class PostgresRunnerGroupRepository implements RunnerGroupRepository {
   }
 }
 
-function runnerGroupSelect(whereClause = ""): string {
+function runnerGroupSelect(whereClause = "", groupTable = "runner_groups"): string {
   return `SELECT
       g.id,
       g.name,
@@ -133,12 +142,19 @@ function runnerGroupSelect(whereClause = ""): string {
         array_agg(m.runner_id ORDER BY m.runner_id) FILTER (WHERE r.id IS NOT NULL),
         ARRAY[]::text[]
       ) AS runner_ids
-    FROM runner_groups g
+    FROM ${groupTable} g
     LEFT JOIN runner_group_members m ON m.group_id = g.id
     LEFT JOIN runners r ON r.id = m.runner_id AND r.purged_at IS NULL
     ${whereClause}
     GROUP BY g.id, g.name, g.description, g.revision, g.created_at, g.updated_at
     ORDER BY g.name, g.id`;
+}
+
+function runnerGroupListLimit(value: number): number {
+  if (!Number.isSafeInteger(value) || value < 1 || value > 1_000) {
+    throw new Error("Runner group list limit must be an integer from 1 to 1000.");
+  }
+  return value;
 }
 
 async function getRunnerGroup(client: PoolClient, groupId: string): Promise<RunnerGroup | null> {
