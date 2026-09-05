@@ -1,8 +1,11 @@
 package io.autoforge.jenkins.dependencies;
 
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import java.io.IOException;
+import java.io.StringWriter;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import org.jenkinsci.plugins.workflow.cps.CpsFlowDefinition;
@@ -41,8 +44,18 @@ class AutoForgePublishDependenciesPipelineE2ETest {
             """.formatted(baseUrl, "a".repeat(64)), true));
 
         WorkflowRun run = jenkins.buildAndAssertSuccess(job);
-        jenkins.assertLogContains("AutoForge: dependency archive replaced", run);
+        jenkins.assertLogContains("[AutoForge] ── 依赖发布完成", run);
+        jenkins.assertLogContains("4.0 KiB", run);
         jenkins.assertLogContains("asset-pipeline-e2e", run);
+        jenkins.assertLogContains("下载依赖包", run);
+        jenkins.assertLogNotContains("https://jenkins.example", run);
+        StringWriter console = new StringWriter();
+        run.getLogText().writeHtmlTo(0, console);
+        String html = console.toString();
+        assertTrue(html.contains("href='https://jenkins.example/job/1/artifact/dependencies.zip'"));
+        assertTrue(html.contains("target=\"_blank\""));
+        assertTrue(html.contains("rel=\"noopener noreferrer\""));
+        assertTrue(html.contains(">下载依赖包</a>"));
     }
 
     private static void respond(HttpExchange exchange, int status, String body) throws IOException {

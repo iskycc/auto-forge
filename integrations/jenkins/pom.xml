@@ -12,6 +12,7 @@
     <changelist>-SNAPSHOT</changelist>
   </properties>
   <modules>
+    <module>autoforge-console</module>
     <module>autoforge-execution</module>
     <module>autoforge-dependency-publisher</module>
   </modules>

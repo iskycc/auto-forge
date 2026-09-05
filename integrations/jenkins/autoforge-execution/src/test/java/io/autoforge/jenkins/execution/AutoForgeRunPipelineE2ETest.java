@@ -1,8 +1,12 @@
 package io.autoforge.jenkins.execution;
 
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import java.io.IOException;
+import java.io.StringWriter;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import org.jenkinsci.plugins.workflow.cps.CpsFlowDefinition;
@@ -48,11 +52,22 @@ class AutoForgeRunPipelineE2ETest {
             """.formatted(baseUrl), true));
 
         WorkflowRun run = jenkins.buildAndAssertSuccess(job);
-        jenkins.assertLogContains("AutoForge: task started", run);
+        jenkins.assertLogContains("[AutoForge] ── 开始执行", run);
         jenkins.assertLogContains("累计通过 3/3", run);
         jenkins.assertLogContains("batch-pipeline-e2e", run);
-        jenkins.assertLogContains("task completed | permanent result", run);
-        jenkins.assertLogContains("share/run/permanent-pipeline-e2e", run);
+        jenkins.assertLogContains("完整结果", run);
+        jenkins.assertLogNotContains("access_token=", run);
+        jenkins.assertLogNotContains("share/run/permanent-pipeline-e2e", run);
+
+        StringWriter console = new StringWriter();
+        run.getLogText().writeHtmlTo(0, console);
+        String html = console.toString();
+        assertTrue(html.contains("href='" + baseUrl + "share/run/permanent-pipeline-e2e'"));
+        assertTrue(html.contains("target=\"_blank\""));
+        assertTrue(html.contains("rel=\"noopener noreferrer\""));
+        assertTrue(html.contains(">完整结果</a>"));
+        assertTrue(html.contains(">实时进度</a>"));
+        assertFalse(html.contains("af_api_pipeline-e2e"));
     }
 
     private static void respond(HttpExchange exchange, int status, String body) throws IOException {

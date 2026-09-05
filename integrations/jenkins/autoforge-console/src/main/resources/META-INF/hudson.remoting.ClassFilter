@@ -1,0 +1,2 @@
+# Only this passive, Controller-signed console note crosses Jenkins' serialization boundary.
+io.autoforge.jenkins.console.ExternalLinkNote

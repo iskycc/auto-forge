@@ -1,6 +1,7 @@
 package io.autoforge.jenkins.execution;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -8,6 +9,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import hudson.AbortException;
+import hudson.console.ConsoleNote;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.PrintStream;
@@ -19,6 +21,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.IntFunction;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
@@ -77,11 +80,17 @@ class AutoForgeRunClientTest {
         assertEquals("succeeded", result.get("status"));
         assertEquals(1, result.get("finalFailed"));
         assertEquals(baseUrl + "share/run/permanent-result", result.get("resultUrl"));
-        String log = output.toString(StandardCharsets.UTF_8);
+        String log = ConsoleNote.removeNotes(output.toString(StandardCharsets.UTF_8));
+        assertTrue(log.contains("开始执行"));
         assertTrue(log.contains("第 2/2 轮"));
         assertTrue(log.contains("累计通过 9/10"));
-        assertTrue(log.contains("access_token=read-only"));
-        assertTrue(log.contains("task completed | permanent result " + baseUrl + "share/run/permanent-result"));
+        assertTrue(log.contains("最终失败 1"));
+        assertTrue(log.contains("90.0%"));
+        assertTrue(log.contains("完整结果"));
+        assertTrue(log.contains("仍有 1 项用例失败"));
+        assertFalse(log.contains("http://"));
+        assertFalse(log.contains("access_token="));
+        assertFalse(log.contains("Completed"));
     }
 
     @Test
@@ -108,8 +117,9 @@ class AutoForgeRunClientTest {
                     millis -> nowNanos.addAndGet(TimeUnit.MILLISECONDS.toNanos(millis)))
                 .runToCompletion("suite-timeout"));
 
-        assertTrue(failure.getMessage().contains("within 5 seconds"));
-        assertTrue(failure.getMessage().contains("progress/batch-timeout"));
+        assertTrue(failure.getMessage().contains("等待超时（5 秒）"));
+        assertTrue(failure.getMessage().contains("未取消"));
+        assertFalse(failure.getMessage().contains("http://"));
     }
 
     @Test
@@ -136,9 +146,79 @@ class AutoForgeRunClientTest {
                     millis -> {})
                 .runToCompletion("suite-failed"));
 
-        assertTrue(failure.getMessage().contains("status failed"));
-        assertTrue(failure.getMessage().contains("Finished"));
-        assertTrue(failure.getMessage().contains("share/run/permanent-failed"));
+        assertTrue(failure.getMessage().contains("执行异常"));
+        assertTrue(failure.getMessage().contains("完整结果"));
+        assertFalse(failure.getMessage().contains("Finished"));
+        assertFalse(failure.getMessage().contains("http://"));
+    }
+
+    @Test
+    void printsChangesAndMinuteRemindersWhileKeepingEveryScheduledPoll() throws Exception {
+        AtomicInteger progressRequests = new AtomicInteger();
+        String baseUrl = startRunServer(progressRequests, true, poll -> {
+            String response = progress(poll < 11, poll < 11 ? "running" : "succeeded", "Running", 1);
+            return poll < 4 ? response.replace("\"totalPassed\":9", "\"totalPassed\":8") : response;
+        });
+        AtomicLong now = new AtomicLong();
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+
+        client(baseUrl, 0, output, now, millis -> now.addAndGet(TimeUnit.MILLISECONDS.toNanos(millis)))
+            .runToCompletion("suite-1");
+
+        String log = ConsoleNote.removeNotes(output.toString(StandardCharsets.UTF_8));
+        assertEquals(12, progressRequests.get());
+        assertEquals(110, TimeUnit.NANOSECONDS.toSeconds(now.get()));
+        assertEquals(4, log.lines().filter(line -> line.contains("执行进度：")).count());
+        assertTrue(log.contains("已等待 1 分 40 秒"));
+    }
+
+    @Test
+    void labelsLegacyResultLinksAsTemporaryWithoutChangingReturnedUrls() throws Exception {
+        String baseUrl = startRunServer(new AtomicInteger(), false,
+            poll -> progress(false, "succeeded", "Completed", 0));
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+
+        Map<String, Object> result = client(baseUrl, 0, output, new AtomicLong(), millis -> {})
+            .runToCompletion("suite-1");
+
+        assertEquals(baseUrl + "progress/batch-1?access_token=read-only", result.get("resultUrl"));
+        String log = ConsoleNote.removeNotes(output.toString(StandardCharsets.UTF_8));
+        assertTrue(log.contains("执行结果（7 天内有效"));
+        assertFalse(log.contains("永久有效"));
+        assertFalse(log.contains("http://"));
+    }
+
+    @Test
+    void explainsInterruptedWaitingWithoutCancellingTheRemoteBatch() throws Exception {
+        AtomicInteger progressRequests = new AtomicInteger();
+        String baseUrl = startRunServer(progressRequests, true,
+            poll -> progress(true, "running", "Running", 0));
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+
+        assertThrows(InterruptedException.class, () -> client(baseUrl, 0, output, new AtomicLong(), millis -> {
+            throw new InterruptedException("Pipeline stopped");
+        }).runToCompletion("suite-1"));
+
+        assertEquals(1, progressRequests.get());
+        String log = ConsoleNote.removeNotes(output.toString(StandardCharsets.UTF_8));
+        assertTrue(log.contains("等待中断"));
+        assertTrue(log.contains("批次未取消"));
+    }
+
+    private String startRunServer(AtomicInteger progressRequests, boolean permanentResult, IntFunction<String> response)
+            throws IOException {
+        server = HttpServer.create(new InetSocketAddress(0), 0);
+        String baseUrl = "http://127.0.0.1:" + server.getAddress().getPort() + "/";
+        String resultField = permanentResult ? "\"resultUrl\":\"" + baseUrl + "share/run/permanent-result\"," : "";
+        server.createContext("/api/v1/jenkins/runs", exchange -> respond(exchange, 201, """
+            {"batchId":"batch-1","progressUrl":"%sprogress/batch-1?access_token=read-only",
+             %s"progressApiUrl":"%sapi/v1/run-batches/batch-1/progress",
+             "pollIntervalSeconds":10,"completionTimeoutSeconds":120}
+            """.formatted(baseUrl, resultField, baseUrl)));
+        server.createContext("/api/v1/run-batches/batch-1/progress", exchange ->
+            respond(exchange, 200, response.apply(progressRequests.getAndIncrement())));
+        server.start();
+        return baseUrl;
     }
 
     private static AutoForgeRunClient client(

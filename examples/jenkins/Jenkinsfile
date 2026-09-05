@@ -18,14 +18,14 @@ pipeline {
   }
 
   stages {
-    stage('Build and test') {
+    stage('构建与测试') {
       steps {
         sh 'mvn --batch-mode clean test dependency:copy-dependencies -DoutputDirectory=target/autoforge-dependencies'
         sh '(cd target/autoforge-dependencies && zip -q -r ../autoforge-dependencies.zip .)'
       }
     }
 
-    stage('Publish dependency archive') {
+    stage('发布依赖压缩包') {
       steps {
         archiveArtifacts artifacts: "${DEPENDENCY_ARCHIVE}", fingerprint: true
         script {
@@ -52,7 +52,7 @@ pipeline {
       }
     }
 
-    stage('Run AutoForge task') {
+    stage('执行 AutoForge 任务') {
       steps {
         script {
           withCredentials([string(credentialsId: 'autoforge-api-key', variable: 'AUTOFORGE_API_KEY')]) {
@@ -61,8 +61,8 @@ pipeline {
               apiKey: env.AUTOFORGE_API_KEY,
               suiteId: params.AUTOFORGE_SUITE_ID
             )
-            currentBuild.description = "AutoForge ${result.batchId}: ${result.totalPassed}/${result.totalCases} passed"
-            echo "AutoForge permanent result: ${result.resultUrl}"
+            currentBuild.description = "AutoForge：通过 ${result.totalPassed}/${result.totalCases}，最终失败 ${result.finalFailed}"
+            // 插件已输出可点击的“完整结果”，无需重复打印原始链接。
           }
         }
       }

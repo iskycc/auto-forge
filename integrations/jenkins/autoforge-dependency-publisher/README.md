@@ -61,7 +61,30 @@ autoforgePublishDependencies(
 - ZIP 是默认格式，最小示例只填写安全校验所必需的 SHA-256 与字节数。
 - 插件客户端固定使用 HTTP/1.1；服务端拒绝请求时，Pipeline 控制台与构建错误会包含经过
   安全提取的具体原因。
+- 日志统一使用中文阶段标题和字段，展示项目、版本、文件名、易读大小与资产编号；成功
+  后显示可点击的“下载依赖包”，不在正文铺开下载地址。在 Jenkins 经典控制台中，链接
+  使用原生控制台注解并在新标签页打开，带有 `noopener noreferrer`，无需额外日志插件。
+- 纯文本日志或不支持控制台注解的客户端只显示关键词；下载地址仍由 Pipeline 的
+  `dependencyUrl` 参数提供。外部错误与展示字段会去除换行/控制字符、限制长度，并隐藏
+  当前 API Key，避免错误内容破坏控制台布局。
 - 插件不会转发 Jenkins 登录 Cookie 或下载凭据。依赖 URL 若受保护，应在网络入口提供
   Runner 可使用的受控下载机制，不要把账号、密码或 API Key 拼接进 URL。
+
+控制台示例（“下载依赖包”为可点击关键词）：
+
+```text
+[AutoForge] ── 发布依赖 ────────────────────
+[AutoForge] 目标项目：018f-project-id
+[AutoForge] 项目版本：1.8.0
+[AutoForge] 依赖文件：autoforge-dependencies.zip（11.8 MiB）
+[AutoForge] ── 依赖发布完成 ────────────────────
+[AutoForge] 项目版本：1.8.0
+[AutoForge] 资产编号：018f-asset-id
+[AutoForge] 依赖下载：下载依赖包（在新标签页打开）
+[AutoForge] 发布说明：当前版本已更新为本次依赖，后续新建批次将使用最新配置。
+```
+
+共享日志库 `autoforge-console` 随 HPI 内置，不要求安装另一个 AutoForge 插件。
+开发构建使用 `mvn --file integrations/jenkins/pom.xml verify`。
 
 当前插件目录的 [`Jenkinsfile`](./Jenkinsfile) 是只包含必要参数的独立示例。完整构建、归档、发布依赖并执行任务的 Declarative Pipeline 见 [`examples/jenkins/Jenkinsfile`](../../../examples/jenkins/Jenkinsfile)。依赖 URL 必须能由执行该项目任务的 Runner 所在网络读取。

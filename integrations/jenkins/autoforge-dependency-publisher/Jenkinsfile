@@ -2,7 +2,7 @@ pipeline {
   agent any
 
   stages {
-    stage('Publish AutoForge dependencies') {
+    stage('发布 AutoForge 依赖') {
       steps {
         withCredentials([string(credentialsId: 'autoforge-api-key', variable: 'AUTOFORGE_API_KEY')]) {
           autoforgePublishDependencies(

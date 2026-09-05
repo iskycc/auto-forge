@@ -39,8 +39,8 @@ public final class AutoForgeRunStep extends Step {
     public void setTimeoutSeconds(long timeoutSeconds) {
         if (timeoutSeconds < 0 || timeoutSeconds > AutoForgeRunClient.MAXIMUM_COMPLETION_TIMEOUT_SECONDS) {
             throw new IllegalArgumentException(
-                "timeoutSeconds must be zero or between 1 and "
-                    + AutoForgeRunClient.MAXIMUM_COMPLETION_TIMEOUT_SECONDS);
+                "timeoutSeconds 必须为 0（采用平台建议值），或 1～"
+                    + AutoForgeRunClient.MAXIMUM_COMPLETION_TIMEOUT_SECONDS + " 秒。");
         }
         this.timeoutSeconds = timeoutSeconds;
     }
@@ -68,7 +68,7 @@ public final class AutoForgeRunStep extends Step {
         @Override
         protected Map<String, Object> run() throws Exception {
             TaskListener listener = getContext().get(TaskListener.class);
-            if (listener == null) throw new AbortException("Jenkins TaskListener is unavailable");
+            if (listener == null) throw new AbortException("无法获取 Jenkins 构建日志输出通道。");
             return new AutoForgeRunClient(
                     baseUrl,
                     apiKey.getPlainText(),
@@ -82,7 +82,7 @@ public final class AutoForgeRunStep extends Step {
     @Symbol("autoforgeRun")
     public static final class DescriptorImpl extends StepDescriptor {
         @Override public String getFunctionName() { return "autoforgeRun"; }
-        @Override public String getDisplayName() { return "Run an AutoForge task and wait for completion"; }
+        @Override public String getDisplayName() { return "执行 AutoForge 用例任务并等待完成"; }
         @Override public Set<? extends Class<?>> getRequiredContext() { return Set.of(TaskListener.class); }
     }
 }

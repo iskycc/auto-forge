@@ -20,6 +20,8 @@
     <revision>1.2.0</revision>
     <changelist>-SNAPSHOT</changelist>
     <jenkins.version>2.479.3</jenkins.version>
+    <hpi.bundledArtifacts>autoforge-console</hpi.bundledArtifacts>
+    <hpi.strictBundledArtifacts>true</hpi.strictBundledArtifacts>
   </properties>
   <licenses>
     <license><name>Apache License 2.0</name><url>https://www.apache.org/licenses/LICENSE-2.0</url></license>
@@ -43,6 +45,11 @@
     </pluginRepository>
   </pluginRepositories>
   <dependencies>
+    <dependency>
+      <groupId>io.autoforge.jenkins</groupId>
+      <artifactId>autoforge-console</artifactId>
+      <version>${project.version}</version>
+    </dependency>
     <dependency>
       <groupId>org.jenkins-ci.plugins.workflow</groupId>
       <artifactId>workflow-step-api</artifactId>

@@ -61,7 +61,7 @@ public final class AutoForgePublishDependenciesStep extends Step {
     @DataBoundSetter
     public void setFileName(String fileName) {
         if (fileName == null || fileName.isBlank()) {
-            throw new IllegalArgumentException("fileName must not be blank");
+            throw new IllegalArgumentException("fileName 不能为空。");
         }
         this.fileName = fileName;
     }
@@ -70,7 +70,7 @@ public final class AutoForgePublishDependenciesStep extends Step {
     @DataBoundSetter
     public void setArchiveFormat(String archiveFormat) {
         if (!"zip".equals(archiveFormat) && !"tar.gz".equals(archiveFormat)) {
-            throw new IllegalArgumentException("archiveFormat must be zip or tar.gz");
+            throw new IllegalArgumentException("archiveFormat 只支持 zip 或 tar.gz。");
         }
         this.archiveFormat = archiveFormat;
     }
@@ -108,8 +108,8 @@ public final class AutoForgePublishDependenciesStep extends Step {
         @Override
         protected Map<String, Object> run() throws Exception {
             TaskListener listener = getContext().get(TaskListener.class);
-            if (listener == null) throw new AbortException("Jenkins TaskListener is unavailable");
-            Map<String, Object> result = new AutoForgeDependencyClient(
+            if (listener == null) throw new AbortException("无法获取 Jenkins 构建日志输出通道。");
+            return new AutoForgeDependencyClient(
                     baseUrl, apiKey.getPlainText(), listener.getLogger())
                 .replace(
                     projectId,
@@ -119,12 +119,6 @@ public final class AutoForgePublishDependenciesStep extends Step {
                     sha256,
                     sizeBytes,
                     archiveFormat);
-            listener.getLogger().printf(
-                "AutoForge: dependency archive replaced | project %s | version %s | asset %s%n",
-                projectId,
-                version,
-                result.get("assetId"));
-            return result;
         }
     }
 
@@ -132,7 +126,7 @@ public final class AutoForgePublishDependenciesStep extends Step {
     @Symbol("autoforgePublishDependencies")
     public static final class DescriptorImpl extends StepDescriptor {
         @Override public String getFunctionName() { return "autoforgePublishDependencies"; }
-        @Override public String getDisplayName() { return "Replace AutoForge version dependencies"; }
+        @Override public String getDisplayName() { return "更新 AutoForge 项目版本依赖"; }
         @Override public Set<? extends Class<?>> getRequiredContext() { return Set.of(TaskListener.class); }
     }
 }
