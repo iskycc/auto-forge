@@ -12,16 +12,17 @@ await build({
   entryPoints: {
     index: new URL("./index.ts", serverDirectory).pathname,
     migrate: new URL("./migrate.ts", serverDirectory).pathname,
+    "prepare-node": new URL("./prepare-node.ts", serverDirectory).pathname,
   },
   bundle: true,
   platform: "node",
   format: "esm",
   target: "node24",
   splitting: true,
-  // NATS exposes a CommonJS entry point whose named exports are discovered by
+  // NATS and Redis expose CommonJS entry points whose named exports are discovered by
   // Node, but not when esbuild rewrites a dynamic import into a split ESM
   // chunk. Keep it external so Full mode receives Node's native interop.
-  external: ["better-sqlite3", "nats", "next"],
+  external: ["better-sqlite3", "nats", "redis", "next"],
   // Several bundled database and transport dependencies use dynamic require for
   // optional Node integrations. Production ESM output must provide a scoped
   // require without exposing build-time module resolution.

@@ -87,6 +87,10 @@ function redactSecrets(value: string): string {
 }
 
 function domainErrorStatus(code: string): number {
+  if (code === "PLATFORM_LOG_NODE_UNAVAILABLE") return 503;
+  if (code === "PLATFORM_NODE_AUTH_REJECTED") return 401;
+  if (code === "PLATFORM_LOG_OWNER_MISMATCH" || code === "PLATFORM_CONFIGURATION_MANAGED")
+    return 409;
   if (code === "REQUEST_BODY_TOO_LARGE" || code.endsWith("_TOO_LARGE")) return 413;
   if (code === "RATE_LIMITED") return 429;
   if (code === "RUNNER_AGENT_RESOURCE_UNAVAILABLE") return 503;

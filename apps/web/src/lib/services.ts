@@ -116,6 +116,8 @@ async function createPlatformServices() {
   const config = loadAppConfig();
   const dispatcher = workDispatcher();
   const configurationStore = appConfigurationStore(config);
+  let platformNodes: import("@autoforge/application").PlatformNodeRepository | undefined;
+  let nodeLogs: import("@autoforge/db/postgres").NodeAttemptLogStore | undefined;
   let catalog: CaseCatalogRepository;
   let suites: CaseSuiteRepository;
   let suiteActivityRepository: CaseSuiteActivityRepository;
@@ -176,6 +178,9 @@ async function createPlatformServices() {
     const [
       {
         createPostgresDatabase,
+        PostgresPlatformNodeRepository,
+        NodeAttemptLogStore,
+        createNodeLogTransport,
         PostgresAttemptLogShareRepository,
         PostgresCaseCatalogRepository,
         PostgresCaseSuiteRepository,
@@ -208,7 +213,11 @@ async function createPlatformServices() {
       import("nats"),
       import("redis"),
     ]);
-    const attemptLogs = createAttemptLogStore(join(config.dataDirectory, "attempt-logs"));
+    let attemptLogs:
+      | import("@autoforge/db/sqlite").AttemptLogStore
+      | import("@autoforge/db/postgres").NodeAttemptLogStore = createAttemptLogStore(
+      join(config.dataDirectory, "attempt-logs"),
+    );
     const database = createPostgresDatabase({
       connectionString: config.databaseUrl,
       migrationsFolder: config.migrationsFolder,
@@ -216,8 +225,23 @@ async function createPlatformServices() {
     });
     try {
       await database.ready;
+      if (config.distributed) {
+        if (!config.nodeId)
+          throw new Error("Distributed deployment requires a persistent node ID.");
+        platformNodes = new PostgresPlatformNodeRepository(database);
+        nodeLogs = new NodeAttemptLogStore(
+          database,
+          config.nodeId,
+          attemptLogs,
+          createNodeLogTransport(config.masterKey, config.nodeId),
+          join(config.dataDirectory, "attempt-logs"),
+        );
+        await nodeLogs.initialize(join(config.dataDirectory, "attempt-logs"));
+        attemptLogs = nodeLogs;
+      }
       const nats = await connect({
         servers: config.natsServers,
+        ...(config.natsToken ? { token: config.natsToken } : {}),
         timeout: 5_000,
         ...natsReconnectOptions,
       });
@@ -584,6 +608,9 @@ async function createPlatformServices() {
           },
         )
       : Promise.resolve();
+  const nodeCleanupLoop = nodeLogs
+    ? runPeriodic(scheduleAbort.signal, 60_000, () => nodeLogs!.cleanupOrphans())
+    : Promise.resolve();
   const retentionLoop =
     config.mode === "lite"
       ? runPeriodic(scheduleAbort.signal, 3_600_000, async () => {
@@ -595,7 +622,13 @@ async function createPlatformServices() {
     ready: () => runtimeInfrastructure.ready(),
     close: async () => {
       scheduleAbort.abort();
-      await Promise.all([scheduleLoop, dashboardSnapshotLoop, retentionLoop, roundRecoveryLoop]);
+      await Promise.all([
+        scheduleLoop,
+        dashboardSnapshotLoop,
+        retentionLoop,
+        roundRecoveryLoop,
+        nodeCleanupLoop,
+      ]);
       await runtimeInfrastructure.close();
     },
   };
@@ -613,6 +646,8 @@ async function createPlatformServices() {
   return {
     config,
     configurationStore,
+    platformNodes,
+    nodeLogs,
     catalog,
     discovery,
     objectStore,

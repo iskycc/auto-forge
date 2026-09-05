@@ -144,7 +144,16 @@ export function PlatformSettings({
         </div>
       ) : null}
 
-      <fieldset className="settings-form-fieldset" disabled={!canManage}>
+      {initial.configurationManaged ? (
+        <div className="implementation-notice" role="status">
+          分布式运行配置由部署文件统一管理。修改后请同步所有节点并重启；节点 IP
+          和端口可在“平台节点”中单独更新。
+        </div>
+      ) : null}
+      <fieldset
+        className="settings-form-fieldset"
+        disabled={!canManage || initial.configurationManaged}
+      >
         <section className="content-card settings-section">
           <div className="section-heading">
             <div>
@@ -257,6 +266,11 @@ export function PlatformSettings({
                 NATS 地址（逗号或换行分隔）
                 <Textarea name="natsServers" placeholder="nats://nats:4222" />
               </label>
+              <SecretInput
+                label="NATS Token（可选）"
+                name="natsToken"
+                configured={initial.fullConfigured}
+              />
               <SecretInput label="Redis URL" name="redisUrl" configured={initial.fullConfigured} />
               <label>
                 MinIO 地址
@@ -446,6 +460,7 @@ function SecretInput({
 
 function fullConfiguration(form: FormData): Record<string, string | string[]> {
   const fields = [
+    "natsToken",
     "databaseUrl",
     "redisUrl",
     "minioEndpoint",

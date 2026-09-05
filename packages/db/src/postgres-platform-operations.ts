@@ -1,3 +1,4 @@
+import type { NodeAttemptLogStore } from "./node-attempt-log-store";
 import type {
   AnalyticsFilter,
   AnalyticsSummary,
@@ -48,7 +49,7 @@ type CountRow = { count: string | number; bytes: string | number | null };
 export class PostgresPlatformOperationsRepository implements PlatformOperationsRepository {
   constructor(
     private readonly handle: PostgresDatabaseHandle,
-    private readonly attemptLogs?: AttemptLogStore,
+    private readonly attemptLogs?: AttemptLogStore | NodeAttemptLogStore,
   ) {}
 
   async readOperationalMetrics() {
@@ -78,7 +79,7 @@ export class PostgresPlatformOperationsRepository implements PlatformOperationsR
     ) as Awaited<ReturnType<PlatformOperationsRepository["readOperationalMetrics"]>>;
     // 用例日志保存在每批次独立 SQLite 文件中，磁盘占用按目录统计；旧表只保留历史数据。
     if (this.attemptLogs) {
-      metrics.storedLogBytes = this.attemptLogs.directoryBytes();
+      metrics.storedLogBytes = await this.attemptLogs.directoryBytes();
     }
     return metrics;
   }
@@ -603,7 +604,7 @@ export class PostgresPlatformOperationsRepository implements PlatformOperationsR
       const batchIds = await this.terminalBatchIdsBefore(input.cutoffAt);
       const limited = batchIds.slice(0, input.limit);
       for (const batchId of limited) {
-        this.attemptLogs.removeBatchStore(batchId);
+        await this.attemptLogs.removeBatchStore(batchId);
       }
       return { deletedRecords: limited.length, objectKeys: [] };
     }
@@ -612,7 +613,7 @@ export class PostgresPlatformOperationsRepository implements PlatformOperationsR
     );
     // 批次日志文件在数据库事务提交后删除；缺失文件时 removeBatchStore 为幂等 noop。
     for (const batchId of result.removedBatchStoreIds) {
-      this.attemptLogs?.removeBatchStore(batchId);
+      await this.attemptLogs?.removeBatchStore(batchId);
     }
     return { deletedRecords: result.deletedRecords, objectKeys: result.objectKeys };
   }
@@ -1191,7 +1192,7 @@ export class PostgresPlatformOperationsRepository implements PlatformOperationsR
     if (category === "log" && this.attemptLogs) {
       // 日志已迁移到每批次独立 SQLite 文件：按终态批次汇总文件大小。
       const batchIds = await this.terminalBatchIdsBefore(cutoffAt);
-      const stats = this.attemptLogs.batchStoreStats(batchIds);
+      const stats = await this.attemptLogs.batchStoreStats(batchIds);
       let bytes = 0;
       for (const value of stats.values()) bytes += value;
       return { count: batchIds.length, bytes };

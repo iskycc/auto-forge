@@ -1,3 +1,4 @@
+import { NodeAttemptLogStore } from "./node-attempt-log-store";
 import type {
   AttemptRecoveryReason,
   ClaimedAssignmentRecord,
@@ -121,7 +122,7 @@ export class PostgresExecutionControlRepository implements ExecutionControlRepos
 
   constructor(
     private readonly handle: PostgresDatabaseHandle,
-    private readonly attemptLogs: AttemptLogStore,
+    private readonly attemptLogs: AttemptLogStore | NodeAttemptLogStore,
   ) {}
 
   async claim(
@@ -462,7 +463,11 @@ export class PostgresExecutionControlRepository implements ExecutionControlRepos
         decisions.push({
           attemptId: local.attemptId,
           action,
-          acknowledgedLogSequence: this.logWatermarks(control.batch_id, local.attemptId),
+          acknowledgedLogSequence: await this.logWatermarks(
+            control.batch_id,
+            local.attemptId,
+            client,
+          ),
         });
       }
       return reconcileAttemptsResponseSchema.parse({ schemaVersion: 1, decisions });
@@ -608,7 +613,7 @@ export class PostgresExecutionControlRepository implements ExecutionControlRepos
     });
     return {
       items: page.items,
-      acknowledgedSequence: this.attemptLogs.acknowledgedSequence(
+      acknowledgedSequence: await this.attemptLogs.acknowledgedSequence(
         batchId,
         input.attemptId,
         input.stream,
@@ -634,7 +639,7 @@ export class PostgresExecutionControlRepository implements ExecutionControlRepos
 
   private async recordAttemptLogsPath(batchId: string): Promise<void> {
     if (this.recordedAttemptLogPaths.has(batchId)) return;
-    // 主库只保存批次日志文件相对数据目录的路径；日志内容在独立 SQLite 文件中。
+    // 此字段保留相对路径；分布式归属另存节点表，正文始终在所属节点的 SQLite 文件中。
     const path = this.attemptLogs.relativeStorePath(batchId);
     await this.handle.pool.query(
       `UPDATE run_batches SET attempt_logs_path = $1
@@ -644,11 +649,19 @@ export class PostgresExecutionControlRepository implements ExecutionControlRepos
     rememberBounded(this.recordedAttemptLogPaths, batchId);
   }
 
-  // reconcile 场景下水位来自批次日志文件；attempt 批次关联在 findAttemptControl 已解析。
-  private logWatermarks(
+  // 分布式水位在现有事务中读取，避免持有事务期间连接日志节点或申请第二条数据库连接。
+  private async logWatermarks(
     batchId: string,
     attemptId: string,
-  ): { stdout: number; stderr: number; agent: number } {
+    client: PoolClient,
+  ): Promise<{ stdout: number; stderr: number; agent: number }> {
+    if (this.attemptLogs instanceof NodeAttemptLogStore) {
+      return {
+        stdout: await this.attemptLogs.acknowledgedSequence(batchId, attemptId, "stdout", client),
+        stderr: await this.attemptLogs.acknowledgedSequence(batchId, attemptId, "stderr", client),
+        agent: await this.attemptLogs.acknowledgedSequence(batchId, attemptId, "agent", client),
+      };
+    }
     return {
       stdout: this.attemptLogs.acknowledgedSequence(batchId, attemptId, "stdout"),
       stderr: this.attemptLogs.acknowledgedSequence(batchId, attemptId, "stderr"),
@@ -1369,7 +1382,7 @@ function completionOpeningFromRow(
 
 async function persistCompletionWrites(
   client: PoolClient,
-  attemptLogs: AttemptLogStore,
+  attemptLogs: AttemptLogStore | NodeAttemptLogStore,
   control: AttemptControlRow,
   assignment: AssignmentRow,
   lease: LeaseRow,
@@ -1637,7 +1650,7 @@ async function executeSimpleStatementBundle(
 
 async function persistCompletionMetadata(
   client: PoolClient,
-  attemptLogs: AttemptLogStore,
+  attemptLogs: AttemptLogStore | NodeAttemptLogStore,
   batchId: string,
   attemptId: string,
   result: CompletionResult,
@@ -1662,13 +1675,15 @@ async function persistCompletionMetadata(
     );
   }
   if (result.logWatermarks) {
-    // Agent 上报的水位写入批次日志文件；主库不再保存日志水位。
-    attemptLogs.recordWatermarks({
-      batchId,
-      attemptId,
-      watermarks: result.logWatermarks,
-      recordedAt,
-    });
+    // 单机水位随本地日志保存；分布式水位与完成元数据共同写入 PostgreSQL。
+    const watermarks = { batchId, attemptId, watermarks: result.logWatermarks, recordedAt };
+    if (attemptLogs instanceof NodeAttemptLogStore) {
+      // Share completion metadata in the existing transaction; peer I/O happens only
+      // during log transfer, before its acknowledgement and outside control transactions.
+      await attemptLogs.recordWatermarks(watermarks, client);
+    } else {
+      attemptLogs.recordWatermarks(watermarks);
+    }
   }
 }
 

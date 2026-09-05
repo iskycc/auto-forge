@@ -21,7 +21,7 @@ operations/lite-restore.sh --input /secure/autoforge-lite-2026-08-11.tar.gz \
 备份把 SQLite（含 WAL/SHM）、对象目录、平台配置和密钥作为同一个停止状态集合。恢复拒绝非空
 目标，不会静默覆盖现有数据。启动前运行迁移，然后验证 readiness、登录、对象摘要和最近执行。
 
-## Full
+## Full 单机 Compose
 
 停止 `autoforge` 与 `worker`，保持 PostgreSQL/MinIO 可用：
 
@@ -32,10 +32,22 @@ operations/full-restore.sh --compose-file full/docker-compose.yml \
   --input /secure/autoforge-full-2026-08-11.tar.gz --platform-stopped --replace-existing
 ```
 
-Full 集合包含 PostgreSQL custom dump、MinIO 全量对象和共享平台配置。NATS 的调度投递与 Redis
+Full 集合包含 PostgreSQL custom dump、MinIO 全量对象以及平台配置和本地日志数据卷。NATS 的调度投递与 Redis
 缓存/限速状态可由 PostgreSQL outbox/权威表重建，不作为业务备份。恢复会清空目标 PostgreSQL
 public schema、平台数据卷和 MinIO bucket，因此必须显式传 `--replace-existing`，且只能针对核对
 过的 Compose 文件执行。
+
+## Full 多机器部署
+
+上述 `full-backup.sh` / `full-restore.sh` 只适用于单机 Full Compose，不能自动收集分布在各机器上的日志。
+分布式备份前暂停入口写入并停止全部 Web、worker；在同一停止窗口保存共享 PostgreSQL、MinIO，
+以及每个节点的 `config/platform.json` 和完整日志卷（含 SQLite WAL/SHM）。同时保存节点 ID 与机器、
+数据卷之间的对应关系。PostgreSQL 中的日志归属和水位不能还原日志正文，Redis 缓存也不能代替日志备份。
+
+恢复时先还原共享基础设施，再将各日志卷和原节点 ID 配对还原，使用同一构建的镜像启动节点。
+核对平台节点页面的地址、跨节点日志读取与 Runner 重连后再恢复入口流量。缺少任一节点的日志卷时，
+应保留该节点归属记录并明确标记恢复不完整，不能通过修改节点 ID 或清空归属表伪装成空日志。
+当前版本不提供分布式自动备份、节点日志迁移或日志多副本。
 
 ## 升级、失败与回滚
 

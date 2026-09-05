@@ -2,7 +2,7 @@
 
 set -Eeuo pipefail
 
-if [[ "${GITHUB_ACTIONS:-}" != "true" ]]; then
+if [[ "${GITHUB_ACTIONS:-}" != "true" && "${1:-all}" != "browser-distributed" ]]; then
   echo "Full acceptance is restricted to GitHub Actions because it builds production bundles and runs privileged infrastructure fault injection." >&2
   exit 1
 fi
@@ -10,7 +10,10 @@ fi
 readonly repository_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly temporary_directory="$(mktemp -d)"
 readonly acceptance_phase="${1:-all}"
+readonly evidence_directory="${repository_root}/test-results/distributed/${acceptance_phase}"
+mkdir -p "${evidence_directory}"
 readonly postgres_container="autoforge-full-postgres-$$"
+readonly nginx_container="autoforge-full-nginx-$$"
 readonly redis_container="autoforge-full-redis-$$"
 readonly postgres_image="postgres:15-alpine@sha256:df7bca0066e6f60cc3dd32faa70caddec20e2c22b58932f79498e5704b23854a"
 readonly redis_image="redis:7-alpine@sha256:6ab0b6e7381779332f97b8ca76193e45b0756f38d4c0dcda72dbb3c32061ab99"
@@ -52,6 +55,13 @@ cleanup() {
       fi
     done
   fi
+  for role in web web-replica; do
+    if [[ -s "${temporary_directory}/${role}.pid" ]]; then
+      if [[ "${role}" == web ]]; then read -r web_pid <"${temporary_directory}/${role}.pid";
+      else read -r web_replica_pid <"${temporary_directory}/${role}.pid"; fi
+    fi
+  done
+  node scripts/quality/collect-distributed-diagnostics.mjs "${temporary_directory}" "${evidence_directory}" "${exit_status}"
   for process_id in "${web_pid}" "${web_replica_pid}" "${worker_pid}" "${worker_replica_pid}"; do
     if [[ -n "${process_id}" ]]; then
       terminate_process_group "${process_id}"
@@ -67,7 +77,7 @@ cleanup() {
     kill "${minio_proxy_pid}" >/dev/null 2>&1
     wait "${minio_proxy_pid}" >/dev/null 2>&1
   fi
-  docker rm --force "${postgres_container}" "${redis_container}" >/dev/null 2>&1
+  docker rm --force "${postgres_container}" "${redis_container}" "${nginx_container}" >/dev/null 2>&1
   rm -rf -- "${temporary_directory}"
   return "${exit_status}"
 }
@@ -78,13 +88,24 @@ terminate_process_group() {
   kill -TERM -- "-${group_leader}" >/dev/null 2>&1
   for _ in $(seq 1 50); do
     if ! kill -0 -- "-${group_leader}" >/dev/null 2>&1; then
-      wait "${group_leader}" >/dev/null 2>&1
+      reap_stopped_process "${group_leader}"
       return
     fi
     sleep 0.1
   done
   kill -KILL -- "-${group_leader}" >/dev/null 2>&1
-  wait "${group_leader}" >/dev/null 2>&1
+  reap_stopped_process "${group_leader}"
+}
+
+reap_stopped_process() {
+  local status=0
+  wait "${1}" >/dev/null 2>&1 || status="$?"
+  # A controller subshell can stop a process owned by the outer fixture (127).
+  # SIGINT/SIGTERM/SIGKILL are also expected outcomes of an injected node stop.
+  case "${status}" in
+    0 | 127 | 130 | 137 | 143) return 0 ;;
+    *) printf 'Stopped process exited unexpectedly: %s\n' "${status}" >&2; return "${status}" ;;
+  esac
 }
 
 wait_until() {
@@ -114,11 +135,15 @@ wait_until_unready() {
 }
 
 start_nats() {
+  local authentication=()
+  if [[ "${acceptance_phase}" == "browser-distributed" || "${acceptance_phase}" == "distributed-agent" ]]; then
+    authentication=(--auth=autoforge-distributed-test-token)
+  fi
   "${temporary_directory}/nats-server-v2.14.3-linux-amd64/nats-server" \
     --jetstream \
     --store_dir "${temporary_directory}/nats-data" \
     --addr 127.0.0.1 \
-    --port 54229 >>"${temporary_directory}/nats.log" 2>&1 &
+    "${authentication[@]}" --port 54229 >>"${temporary_directory}/nats.log" 2>&1 &
   nats_pid="$!"
   wait_until NATS bash -c "exec 3<>/dev/tcp/127.0.0.1/54229"
 }
@@ -194,6 +219,23 @@ start_fault_controller() {
   (
     set -Eeuo pipefail
     while [[ ! -f "${fault_control_directory}/stop" ]]; do
+      if [[ -f "${fault_control_directory}/primary.stop" ]]; then
+        rm -- "${fault_control_directory}/primary.stop"
+        terminate_process_group "${web_pid}"
+        touch "${fault_control_directory}/primary.stopped"
+      fi
+      if [[ -f "${fault_control_directory}/primary.start" ]]; then
+        rm -- "${fault_control_directory}/primary.start"
+        start_platform_node web "${platform_data_directory}" 3199
+        web_pid="${started_web_pid}"
+        touch "${fault_control_directory}/primary.started"
+      fi
+      if [[ -f "${fault_control_directory}/redis.restart" ]]; then
+        rm -- "${fault_control_directory}/redis.restart"
+        docker restart --time 1 "${redis_container}" >/dev/null
+        wait_until Redis docker exec "${redis_container}" redis-cli ping
+        touch "${fault_control_directory}/redis.restarted"
+      fi
       if [[ -f "${fault_control_directory}/nats.pause" ]]; then
         rm -- "${fault_control_directory}/nats.pause"
         kill -STOP "${nats_pid}"
@@ -234,6 +276,7 @@ stop_fault_controller() {
   done
   wait "${fault_controller_pid}"
   fault_controller_pid=""
+  if [[ -s "${temporary_directory}/web.pid" ]]; then read -r web_pid <"${temporary_directory}/web.pid"; fi
 }
 
 run_adapter_tests() {
@@ -241,8 +284,11 @@ run_adapter_tests() {
   AUTOFORGE_TEST_MINIO_ENDPOINT=http://127.0.0.1:59009 \
   AUTOFORGE_TEST_MINIO_ACCESS_KEY=autoforge \
   AUTOFORGE_TEST_MINIO_SECRET_KEY=autoforge-secret \
+  AUTOFORGE_TEST_REDIS_URL=redis://127.0.0.1:56389 \
   AUTOFORGE_TEST_NATS_URL=nats://127.0.0.1:54229 \
     pnpm exec vitest run \
+      packages/db/test/node-attempt-log-store.integration.test.ts \
+      apps/web/server/log-stream-relay.integration.test.ts \
       packages/db/test/postgres-migrations.integration.test.ts \
       packages/db/test/postgres-ddt.integration.test.ts \
       packages/db/test/postgres-failure-analysis.integration.test.ts \
@@ -254,6 +300,22 @@ run_adapter_tests() {
       packages/db/test/scheduling-refill.integration.test.ts \
       packages/object-store/test/minio-object-store.integration.test.ts \
       packages/queue/test/jetstream-job-queue.integration.test.ts
+}
+
+run_distributed_contract_tests() {
+  AUTOFORGE_TEST_POSTGRES_URL=postgresql://autoforge:autoforge@127.0.0.1:55439/autoforge \
+  AUTOFORGE_TEST_REDIS_URL=redis://127.0.0.1:56389 \
+  AUTOFORGE_TEST_NATS_URL=nats://127.0.0.1:54229 \
+    pnpm exec vitest run --reporter=default --reporter=json \
+      --outputFile.json="${evidence_directory}/contracts.json" \
+      packages/db/test/node-attempt-log-store.integration.test.ts \
+      packages/db/test/attempt-log-store.integration.test.ts \
+      packages/db/test/platform-node-transport.test.ts \
+      packages/db/test/postgres-migrations.integration.test.ts \
+      packages/db/test/postgres-platform.integration.test.ts \
+      packages/queue/test/sqlite-job-queue.integration.test.ts \
+      packages/queue/test/jetstream-job-queue.integration.test.ts \
+      apps/web/server/log-stream-relay.integration.test.ts
 }
 
 run_capacity_tests() {
@@ -346,19 +408,73 @@ initialize_platform_configuration() {
   ' "${replica_platform_data_directory}"
 }
 
+
+initialize_distributed_configuration() {
+  node --input-type=module -e '
+    import { randomUUID } from "node:crypto";
+    import { PlatformConfigurationStore } from "./packages/platform-config/src/platform-configuration.ts";
+    for (const directory of process.argv.slice(1)) {
+      const store = new PlatformConfigurationStore(directory);
+      const current = store.read();
+      store.replace({ ...current, deployment: "distributed", nodeId: randomUUID(),
+        full: { ...current.full, natsToken: "autoforge-distributed-test-token" },
+        web: { ...current.web, publicBaseUrl: "http://127.0.0.1:3197", runnerBaseUrl: "http://127.0.0.1:3197" },
+      }, current.revision);
+    }
+  ' "${platform_data_directory}" "${replica_platform_data_directory}"
+}
+
+start_full_nginx() {
+  sed -e 's/10.20.0.11:3000/127.0.0.1:3199/g' \
+      -e 's/10.20.0.12:3000/127.0.0.1:3198/g' \
+      -e 's/listen 8080;/listen 3197;/' \
+    deploy/compose/distributed/edge/nginx.conf >"${temporary_directory}/nginx.conf"
+  docker run --detach --name "${nginx_container}" --network host \
+    --mount "type=bind,source=${temporary_directory}/nginx.conf,target=/etc/nginx/nginx.conf,readonly" \
+    nginx:1.28.2-alpine@sha256:5b4900b042ccfa8b0a73df622c3a60f2322faeb2be800cbee5aa7b44d241649e >/dev/null
+  wait_until "Nginx distributed platform" curl --fail --silent http://127.0.0.1:3197/api/v1/health/ready
+}
+
+run_full_distributed_flow() {
+  start_full_nginx
+  start_fault_controller
+  node --input-type=module -e '
+    import { readFileSync } from "node:fs";
+    import { spawnSync } from "node:child_process";
+    const [configurationFile, faults, originalDirectory, replicaDirectory, evidence] = process.argv.slice(1);
+    const config = JSON.parse(readFileSync(configurationFile, "utf8"));
+    const result = spawnSync("pnpm", ["exec", "playwright", "test", "--config", "playwright.full.config.ts", "tests/e2e/distributed-platform.spec.ts", "--reporter=line,json", "--output", `${evidence}/browser`], {
+      stdio: "inherit", env: { ...process.env,
+        E2E_BASE_URL: "http://127.0.0.1:3197", E2E_PRIMARY_BASE_URL: "http://127.0.0.1:3199", E2E_SECONDARY_BASE_URL: "http://127.0.0.1:3198",
+        E2E_ADMIN_BOOTSTRAP_TOKEN: config.secrets.adminBootstrapToken,
+        E2E_PLATFORM_MASTER_KEY: config.secrets.masterKey,
+        E2E_DISTRIBUTED_FAULT_DIR: faults,
+        E2E_DISTRIBUTED_LOG_DIRECTORIES: JSON.stringify([originalDirectory, replicaDirectory].map(path => `${path}/attempt-logs`)),
+        AUTOFORGE_E2E_POSTGRES_URL: config.full.databaseUrl,
+        PLAYWRIGHT_JSON_OUTPUT_NAME: `${evidence}/browser.json`,
+      },
+    });
+    process.exitCode = result.status ?? 1;
+  ' "${platform_data_directory}/config/platform.json" "${fault_control_directory}" \
+    "${platform_data_directory}" "${replica_platform_data_directory}" "${evidence_directory}"
+  stop_fault_controller
+}
+
+start_platform_node() {
+  local role="${1}" directory="${2}" port="${3}"
+  NODE_ENV=production setsid node apps/web/dist-server/server/index.js \
+    --data-dir="${directory}" >>"${temporary_directory}/${role}.log" 2>&1 &
+  started_web_pid="$!"
+  printf '%s\n' "${started_web_pid}" >"${temporary_directory}/${role}.pid"
+  wait_until "Full platform ${role}" curl --fail --silent "http://127.0.0.1:${port}/api/v1/health/ready"
+}
+
 start_full_platform() {
   pnpm --filter @autoforge/web build >"${temporary_directory}/web-build.log" 2>&1
-  # Keep the production server in one isolated group so cleanup releases every connection.
-  NODE_ENV=production setsid node apps/web/dist-server/server/index.js \
-    --data-dir="${platform_data_directory}" \
-    >"${temporary_directory}/web.log" 2>&1 &
-  web_pid="$!"
-  wait_until "Full platform" curl --fail --silent http://127.0.0.1:3199/api/v1/health/ready
-  NODE_ENV=production setsid node apps/web/dist-server/server/index.js \
-    --data-dir="${replica_platform_data_directory}" \
-    >"${temporary_directory}/web-replica.log" 2>&1 &
-  web_replica_pid="$!"
-  wait_until "Full platform replica" curl --fail --silent http://127.0.0.1:3198/api/v1/health/ready
+  start_platform_node web "${platform_data_directory}" 3199
+  web_pid="${started_web_pid}"
+  start_platform_node web-replica "${replica_platform_data_directory}" 3198
+  web_replica_pid="${started_web_pid}"
 }
 
 start_full_worker() {
@@ -443,7 +559,14 @@ run_full_real_agent_recovery() {
     "JSON.parse(require('node:fs').readFileSync(process.argv[1], 'utf8')).secrets.runnerBootstrapToken" \
     "${platform_data_directory}/config/platform.json")"
   start_fault_controller
-  E2E_REAL_AGENT_EXTERNAL_BASE_URL=http://127.0.0.1:3199 \
+  local base_url=http://127.0.0.1:3199
+  if [[ "${acceptance_phase}" == "distributed-agent" ]]; then
+    base_url=http://127.0.0.1:3197
+  fi
+  E2E_REAL_AGENT_EXTERNAL_BASE_URL="${base_url}" \
+  E2E_DISTRIBUTED_ACCEPTANCE="${acceptance_phase}" \
+  E2E_DISTRIBUTED_SECONDARY_URL=http://127.0.0.1:3198 \
+  PLAYWRIGHT_JSON_OUTPUT_NAME="${evidence_directory}/agent.json" \
   E2E_ADMIN_BOOTSTRAP_TOKEN="${admin_bootstrap_token}" \
   E2E_RUNNER_BOOTSTRAP_TOKEN="${runner_bootstrap_token}" \
   E2E_FULL_FAULT_CONTROL_DIR="${fault_control_directory}" \
@@ -523,11 +646,14 @@ download_dependencies
 start_dependencies
 
 case "${acceptance_phase}" in
+  distributed-contracts)
+    run_distributed_contract_tests
+    ;;
   contracts)
     run_capacity_tests
     run_adapter_tests
     ;;
-  browser-assets | browser-governance | browser-recovery | real-agent | ldap | dependency-recovery | runtime-agent | runtime-recovery | runtime-health | all)
+  distributed-agent | browser-distributed | browser-assets | browser-governance | browser-recovery | real-agent | ldap | dependency-recovery | runtime-agent | runtime-recovery | runtime-health | all)
     case "${acceptance_phase}" in
       runtime-health | all)
         run_capacity_tests
@@ -536,9 +662,18 @@ case "${acceptance_phase}" in
     esac
     create_platform_bucket
     initialize_platform_configuration
+    if [[ "${acceptance_phase}" == "browser-distributed" || "${acceptance_phase}" == "distributed-agent" ]]; then initialize_distributed_configuration; fi
     start_full_worker
     start_full_platform
     case "${acceptance_phase}" in
+      distributed-agent)
+        run_full_distributed_flow
+        rm -- "${fault_control_directory}/stop"
+        run_full_real_agent_recovery
+        ;;
+      browser-distributed)
+        run_full_distributed_flow
+        ;;
       browser-assets)
         run_full_browser_flow assets
         ;;

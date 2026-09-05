@@ -1,9 +1,11 @@
 # Docker Compose 部署
 
-本目录包含共享同一 AutoForge 后端镜像的两种部署方式：
+本目录包含共享同一 AutoForge 后端镜像的以下部署方式：
 
 - `lite/docker-compose.yml`：只启动 AutoForge，使用 SQLite、本地对象目录和进程内能力；
 - `full/docker-compose.yml`：启动 AutoForge Web、独立 dispatcher worker、PostgreSQL、NATS JetStream、MinIO、Redis，以及一次性创建 MinIO bucket 的初始化任务。
+
+- `distributed/`：多机器 Full，分离基础设施、平台节点和 Nginx；节点本地日志通过已认证的内部接口互访，详见[分布式部署说明](./distributed/README.md)。
 
 ## 准备离线镜像
 
@@ -80,4 +82,4 @@ Web、worker、外部 Runner 和用户浏览器访问。不要把只在 `core` �
 
 升级时先校验和导入新镜像，修改 `.env` 中的 `AUTOFORGE_BACKEND_IMAGE`，再执行 `docker compose up --detach`。不要在未备份时运行 `docker compose down --volumes`；该命令会删除数据库、JAR、日志和基础设施持久卷。
 
-当前 Compose 面向单机部署。Full 模式不会把 PostgreSQL、NATS、Redis 或 MinIO 端口暴露给宿主机；只有 AutoForge HTTP 端口通过 edge 网络发布。生产环境仍应在其前方配置企业内网 TLS 反向代理。
+上述 `lite/` 与 `full/` Compose 面向单机部署；多机器使用 `distributed/`。Full 模式不会把 PostgreSQL、NATS、Redis 或 MinIO 端口暴露给宿主机；只有 AutoForge HTTP 端口通过 edge 网络发布。生产环境仍应在其前方配置企业内网 TLS 反向代理。

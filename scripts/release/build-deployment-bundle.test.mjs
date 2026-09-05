@@ -74,6 +74,31 @@ test("builds a versioned deployment bundle with both Compose modes", async () =>
       /性能与稳定性基线/,
     );
     const packagedFiles = await readdir(packageDirectory, { recursive: true });
+    for (const template of [
+      "distributed/platform/docker-compose.yml",
+      "distributed/infrastructure/docker-compose.yml",
+      "distributed/infrastructure/prepare-secrets.mjs",
+      "distributed/edge/nginx.conf",
+      "docs/adr/0012-full-distributed-node-local-logs.md",
+    ])
+      assert.ok(
+        packagedFiles.includes(template),
+        `missing distributed deployment asset: ${template}`,
+      );
+    assert.ok(
+      !packagedFiles.some(
+        (name) =>
+          name.endsWith("/.env") || name.includes("/secrets/") || name.endsWith("/platform.json"),
+      ),
+    );
+    assert.match(
+      await readFile(resolve(packageDirectory, "distributed/platform/.env.example"), "utf8"),
+      /autoforge\/backend:1\.2\.3-amd64/,
+    );
+    assert.match(
+      await readFile(resolve(packageDirectory, "distributed/README.md"), "utf8"),
+      /\]\(\.\.\/docs\/adr\/0012-full-distributed-node-local-logs\.md\)/,
+    );
     assert.ok(!packagedFiles.includes("docs/design/autoforge-apple-like-e-dashboard.png"));
     assert.ok(!packagedFiles.some((name) => name.startsWith("docs/archive/")));
     assert.ok(!packagedFiles.includes("docs/project-roadmap.md"));

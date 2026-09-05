@@ -1,0 +1,173 @@
+name: autoforge-infrastructure
+services:
+  postgres:
+    profiles: ["postgres"]
+    image: postgres:15-alpine@sha256:df7bca0066e6f60cc3dd32faa70caddec20e2c22b58932f79498e5704b23854a
+    ports:
+      - "${AUTOFORGE_SERVICE_BIND:?set the service host private IP}:5432:5432"
+    pull_policy: never
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: autoforge
+      POSTGRES_USER: autoforge
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres-password
+    secrets:
+      - postgres-password
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U autoforge -d autoforge"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+    networks:
+      - infrastructure
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 30s
+
+  nats:
+    profiles: ["nats"]
+    image: nats:2.14.3-alpine3.22@sha256:c11af972c99ae542de8925e6a7d9c533aa1eb039660420d2074beed6089b3bf0
+    ports:
+      - "${AUTOFORGE_SERVICE_BIND:?set the service host private IP}:4222:4222"
+    pull_policy: never
+    restart: unless-stopped
+    command: ["--config", "/run/secrets/nats.conf"]
+    secrets:
+      - source: nats-config
+        target: nats.conf
+    volumes:
+      - nats-data:/data
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--spider", "http://127.0.0.1:8222/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+    networks:
+      - infrastructure
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    stop_grace_period: 30s
+
+  redis:
+    profiles: ["redis"]
+    image: redis:7-alpine@sha256:6ab0b6e7381779332f97b8ca76193e45b0756f38d4c0dcda72dbb3c32061ab99
+    ports:
+      - "${AUTOFORGE_SERVICE_BIND:?set the service host private IP}:6379:6379"
+    pull_policy: never
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        cp /run/secrets/redis.conf /tmp/redis.conf
+        chown redis:redis /tmp/redis.conf
+        exec /usr/local/bin/docker-entrypoint.sh redis-server /tmp/redis.conf
+    secrets:
+      - source: redis-config
+        target: redis.conf
+      - redis-password
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          'REDISCLI_AUTH="$$(cat /run/secrets/redis-password)" redis-cli ping | grep -q PONG',
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+    networks:
+      - infrastructure
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 30s
+
+  minio:
+    profiles: ["minio"]
+    image: quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z@sha256:a1ea29fa28355559ef137d71fc570e508a214ec84ff8083e39bc5428980b015e
+    ports:
+      - "${AUTOFORGE_SERVICE_BIND:?set the service host private IP}:9000:9000"
+    pull_policy: never
+    restart: unless-stopped
+    command: ["server", "/data", "--address", ":9000", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER_FILE: /run/secrets/minio-root-user
+      MINIO_ROOT_PASSWORD_FILE: /run/secrets/minio-root-password
+    secrets:
+      - minio-root-user
+      - minio-root-password
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:9000/minio/health/live"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+    networks:
+      - infrastructure
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    stop_grace_period: 30s
+
+  minio-init:
+    profiles: ["minio"]
+    image: quay.io/minio/mc:RELEASE.2025-04-16T18-13-26Z@sha256:aead63c77f9db9107f1696fb08ecb0faeda23729cde94b0f663edf4fe09728e3
+    pull_policy: never
+    depends_on:
+      minio:
+        condition: service_healthy
+    restart: "no"
+    entrypoint: ["/bin/sh", "-eu", "-c"]
+    command:
+      - >-
+        minio_user="$$(cat /run/secrets/minio-root-user)";
+        minio_password="$$(cat /run/secrets/minio-root-password)";
+        mc --config-dir /tmp/.mc alias set autoforge http://minio:9000 "$${minio_user}" "$${minio_password}";
+        mc --config-dir /tmp/.mc mb --ignore-existing --region us-east-1 autoforge/autoforge-objects
+    secrets:
+      - minio-root-user
+      - minio-root-password
+    networks:
+      - infrastructure
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+volumes:
+  postgres-data:
+    name: ${AUTOFORGE_POSTGRES_VOLUME:-autoforge-postgres-data}
+  nats-data:
+    name: ${AUTOFORGE_NATS_VOLUME:-autoforge-nats-data}
+  redis-data:
+    name: ${AUTOFORGE_REDIS_VOLUME:-autoforge-redis-data}
+  minio-data:
+    name: ${AUTOFORGE_MINIO_VOLUME:-autoforge-minio-data}
+
+networks:
+  infrastructure:
+
+secrets:
+  postgres-password:
+    file: ./secrets/postgres-password
+  minio-root-user:
+    file: ./secrets/minio-root-user
+  minio-root-password:
+    file: ./secrets/minio-root-password
+
+  nats-config:
+    file: ./secrets/nats.conf
+  redis-config:
+    file: ./secrets/redis.conf
+  redis-password:
+    file: ./secrets/redis-password

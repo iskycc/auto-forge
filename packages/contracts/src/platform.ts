@@ -71,6 +71,7 @@ export const updatePlatformConfigurationInputSchema = z.object({
     .object({
       databaseUrl: z.string().trim().min(1).max(4_096).optional(),
       natsServers: z.array(z.string().trim().min(1).max(1_024)).min(1).max(8).optional(),
+      natsToken: z.string().min(16).max(4096).optional(),
       redisUrl: z.url().max(2_048).optional(),
       minioEndpoint: z.url().max(2_048).optional(),
       minioAccessKey: z.string().min(1).max(1_024).optional(),
@@ -103,6 +104,7 @@ export const platformConfigurationViewSchema = updatePlatformConfigurationInputS
       runnerBaseUrl: platformHttpBaseUrlSchema.optional(),
     }),
     configurationFile: z.string().min(1),
+    configurationManaged: z.boolean().optional(),
     fullConfigured: z.boolean(),
     restartRequired: z.boolean(),
     appliedImmediatelyFields: z.array(z.string().min(1).max(120)).max(20).default([]),

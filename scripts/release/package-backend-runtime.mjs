@@ -40,7 +40,7 @@ const explicitlyExternalModules = [
   "apps/web/node_modules/next",
 ];
 
-const externalModuleClosures = ["apps/web/node_modules/nats"];
+const externalModuleClosures = ["apps/web/node_modules/nats", "apps/web/node_modules/redis"];
 
 export function isExcludedRuntimePath(relativePath) {
   const normalized = relativePath.replaceAll("\\", "/");
@@ -239,12 +239,22 @@ async function addExternalModuleClosure(runtimeFiles, moduleLink, visited = new 
   const packageManifest = JSON.parse(
     await readFile(join(packageDirectory, "package.json"), "utf8"),
   );
-  const requiredDependencyNames = new Set(Object.keys(packageManifest.dependencies ?? {}));
-  const optionalDependencyNames = new Set(Object.keys(packageManifest.optionalDependencies ?? {}));
+  const optionalDependencyNames = new Set([
+    ...Object.keys(packageManifest.optionalDependencies ?? {}),
+    ...Object.entries(packageManifest.peerDependenciesMeta ?? {})
+      .filter(([, metadata]) => metadata.optional)
+      .map(([name]) => name),
+  ]);
+  const requiredDependencyNames = new Set(
+    [
+      ...Object.keys(packageManifest.dependencies ?? {}),
+      ...Object.keys(packageManifest.peerDependencies ?? {}),
+    ].filter((name) => !optionalDependencyNames.has(name)),
+  );
   const dependencyNames = new Set([...requiredDependencyNames, ...optionalDependencyNames]);
   for (const dependencyName of [...dependencyNames].sort()) {
-    const dependencyLink = join(dirname(packageDirectory), dependencyName);
-    if (!(await exists(dependencyLink))) {
+    const dependencyLink = await resolveExternalDependencyLink(packageDirectory, dependencyName);
+    if (!dependencyLink) {
       if (!requiredDependencyNames.has(dependencyName)) continue;
       throw new Error(
         `Runtime dependency ${dependencyName} is missing for ${repositoryRelativePath(packageDirectory)}`,
@@ -252,6 +262,17 @@ async function addExternalModuleClosure(runtimeFiles, moduleLink, visited = new 
     }
     await addExternalModuleClosure(runtimeFiles, dependencyLink, visited);
   }
+}
+
+export async function resolveExternalDependencyLink(packageDirectory, dependencyName) {
+  // Node's search paths handle scoped packages and nested node_modules. Preserve
+  // the actual dependency link as well as its target in the offline closure.
+  const dependencyRequire = createRequire(join(packageDirectory, "package.json"));
+  for (const modulesDirectory of dependencyRequire.resolve.paths(dependencyName) ?? []) {
+    const candidate = join(modulesDirectory, dependencyName);
+    if (await exists(candidate)) return candidate;
+  }
+  return undefined;
 }
 
 async function addTraceFiles(runtimeFiles, traceFile) {

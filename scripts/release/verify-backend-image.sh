@@ -5,13 +5,29 @@ set -Eeuo pipefail
 readonly image_reference="${1:?usage: verify-backend-image.sh IMAGE PLATFORM}"
 readonly platform="${2:?usage: verify-backend-image.sh IMAGE PLATFORM}"
 container_id=""
+configuration_fixture=""
 
 cleanup() {
   if [[ -n "${container_id}" ]]; then
     docker rm --force "${container_id}" >/dev/null 2>&1 || true
   fi
+  if [[ -n "${configuration_fixture}" ]]; then rm -f -- "${configuration_fixture}"; fi
 }
 trap cleanup EXIT
+
+# Match distributed deployment's nested read-only bind mount on a fresh image volume.
+# The unprivileged application must own the parent directory before startup.
+configuration_fixture="$(mktemp)"
+printf '{}\n' >"${configuration_fixture}"
+chmod 0444 "${configuration_fixture}"
+docker run --rm --network none --platform "${platform}" \
+  --mount "type=bind,source=${configuration_fixture},target=/var/lib/autoforge/config/platform.json,readonly" \
+  "${image_reference}" node -e '
+    const fs = require("node:fs");
+    const directory = "/var/lib/autoforge/config";
+    if (fs.statSync(directory).uid !== process.getuid()) throw new Error("Configuration directory must belong to the application user.");
+    fs.chmodSync(directory, 0o700);
+  '
 
 container_id="$(docker run --detach --network none --platform "${platform}" "${image_reference}")"
 
@@ -23,6 +39,8 @@ for _ in $(seq 1 60); do
         --data-dir=/tmp/autoforge-migration-check
       docker exec --workdir /app/apps/web "${container_id}" node --input-type=module -e '
         const nats = await import("nats");
+        const redis = await import("redis");
+        if (typeof redis.createClient !== "function") throw new Error("Redis runtime dependency is incomplete.");
         if (typeof nats.connect !== "function" || typeof nats.JSONCodec !== "function") {
           throw new Error("NATS runtime exports are incomplete");
         }

@@ -1,3 +1,4 @@
+import { redactLogChunks } from "@autoforge/application";
 import { uploadLogChunksInputSchema } from "@autoforge/contracts";
 import { DomainError } from "@autoforge/domain";
 
@@ -106,7 +107,7 @@ async function execute(
         attemptId,
         input,
       );
-      globalHandles.__autoforgePublishAttemptLogs?.(attemptId, input.chunks);
+      globalHandles.__autoforgePublishAttemptLogs?.(attemptId, redactLogChunks(input.chunks, []));
       return result;
     }
     case "complete": {

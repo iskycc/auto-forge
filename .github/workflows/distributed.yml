@@ -1,0 +1,118 @@
+name: Full distributed acceptance
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/workflows/distributed.yml"
+      - "apps/**"
+      - "packages/**"
+      - "deploy/**"
+      - "scripts/quality/**"
+      - "scripts/release/**"
+      - "tests/e2e/**"
+      - "package.json"
+      - "playwright.full.config.ts"
+      - "pnpm-lock.yaml"
+  push:
+    branches: ["**"]
+    paths:
+      - ".github/workflows/distributed.yml"
+      - "apps/**"
+      - "packages/**"
+      - "deploy/**"
+      - "scripts/quality/**"
+      - "scripts/release/**"
+      - "tests/e2e/**"
+      - "package.json"
+      - "playwright.full.config.ts"
+      - "pnpm-lock.yaml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: distributed-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  acceptance:
+    name: Distributed · ${{ matrix.name }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: storage and queue contracts
+            phase: distributed-contracts
+          - name: two-node browser and fault recovery
+            phase: browser-distributed
+          - name: real Go Agent through Nginx
+            phase: distributed-agent
+    steps:
+      - name: Check out exact source under test
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.16.0
+
+      - name: Set up Go
+        if: matrix.phase == 'distributed-agent'
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: 1.26.5
+          cache-dependency-path: apps/runner-agent/go.mod
+
+      - name: Set up Java for real TestNG execution
+        if: matrix.phase == 'distributed-agent'
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+
+      - name: Install locked dependencies
+        run: |
+          corepack enable
+          pnpm install --frozen-lockfile
+
+      - name: Locate preinstalled Chromium
+        if: matrix.phase != 'distributed-contracts'
+        run: |
+          browser_path="$(command -v google-chrome || command -v chromium || true)"
+          test -n "${browser_path}"
+          echo "PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=${browser_path}" >> "${GITHUB_ENV}"
+
+      - name: Run isolated distributed acceptance
+        env:
+          ACCEPTANCE_PHASE: ${{ matrix.phase }}
+        run: bash scripts/quality/test-full.sh "${ACCEPTANCE_PHASE}"
+
+      - name: Require executed tests and no skipped cases
+        env:
+          ACCEPTANCE_PHASE: ${{ matrix.phase }}
+        run: node scripts/quality/verify-distributed-results.mjs "${ACCEPTANCE_PHASE}"
+
+      - name: Preserve evidence on success or failure
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: distributed-${{ matrix.phase }}-${{ github.run_attempt }}
+          path: test-results
+          if-no-files-found: warn
+          retention-days: 7
+
+  distributed-gate:
+    name: Distributed acceptance gate
+    if: always()
+    needs: acceptance
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - name: Require every distributed partition
+        env:
+          ACCEPTANCE_RESULT: ${{ needs.acceptance.result }}
+        run: test "${ACCEPTANCE_RESULT}" = success

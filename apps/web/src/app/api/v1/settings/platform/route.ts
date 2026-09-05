@@ -1,12 +1,11 @@
 import { updatePlatformConfigurationInputSchema } from "@autoforge/contracts";
-import { DomainError } from "@autoforge/domain";
-import { isPlatformConfigurationConflictError } from "@autoforge/platform-config";
 import { NextResponse } from "next/server";
 
 import { authorizeRequest, requestId, requireSameOrigin } from "@/lib/auth";
 import { apiErrorResponse, readJsonBody } from "@/lib/api-response";
 import {
   platformConfigurationActivation,
+  platformConfigurationError,
   mergePlatformConfiguration,
   platformConfigurationView,
 } from "@/lib/platform-configuration";
@@ -24,11 +23,6 @@ export async function GET(request: Request): Promise<NextResponse> {
   } catch (error) {
     return apiErrorResponse(platformConfigurationError(error), currentRequestId);
   }
-}
-
-function platformConfigurationError(error: unknown): unknown {
-  if (!isPlatformConfigurationConflictError(error)) return error;
-  return new DomainError("PLATFORM_CONFIGURATION_CONFLICT", error.message, { cause: error });
 }
 
 export async function PATCH(request: Request): Promise<NextResponse> {

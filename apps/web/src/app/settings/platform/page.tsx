@@ -1,3 +1,5 @@
+import Link from "next/link";
+import { PlatformNodes } from "@/components/platform-nodes";
 import { hasPermission } from "@autoforge/domain";
 
 import { PlatformSettings } from "@/components/platform-settings";
@@ -10,12 +12,19 @@ import { getPlatformServices } from "@/lib/services";
 import { SectionTabs } from "@/components/section-tabs";
 import { storageInventoryCategorySchema } from "@autoforge/contracts";
 
-type PlatformSection = "configuration" | "accounts" | "retention" | "diagnostics" | "storage";
+type PlatformSection =
+  "nodes" | "configuration" | "accounts" | "retention" | "diagnostics" | "storage";
 
 export default async function PlatformSettingsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ section?: string; category?: string; query?: string; focus?: string }>;
+  searchParams: Promise<{
+    section?: string;
+    category?: string;
+    query?: string;
+    focus?: string;
+    nodeCursor?: string;
+  }>;
 }) {
   const identity = await requirePagePermission("settings.read", undefined);
   const services = await getPlatformServices();
@@ -23,6 +32,7 @@ export default async function PlatformSettingsPage({
   const parameters = await searchParams;
   const requestedSection = parameters.section;
   const activeSection: PlatformSection =
+    (requestedSection === "nodes" && Boolean(services.platformNodes)) ||
     requestedSection === "accounts" ||
     requestedSection === "retention" ||
     requestedSection === "diagnostics" ||
@@ -31,6 +41,10 @@ export default async function PlatformSettingsPage({
       : requestedSection === "automation"
         ? "accounts"
         : "configuration";
+  const nodePage =
+    activeSection === "nodes" && services.platformNodes
+      ? await services.platformNodes.list(parameters.nodeCursor)
+      : { items: [] };
   const heading = platformSectionHeading(activeSection);
   const storageCategory = storageInventoryCategorySchema.safeParse(parameters.category).data;
   const platformView = platformConfigurationView(
@@ -64,6 +78,15 @@ export default async function PlatformSettingsPage({
       <SectionTabs
         label="平台设置模块"
         tabs={[
+          ...(services.platformNodes
+            ? [
+                {
+                  href: "/settings/platform?section=nodes",
+                  label: "平台节点",
+                  active: activeSection === "nodes",
+                },
+              ]
+            : []),
           {
             href: "/settings/platform?section=configuration",
             label: "平台配置",
@@ -91,6 +114,21 @@ export default async function PlatformSettingsPage({
           },
         ]}
       />
+      {activeSection === "nodes" ? (
+        <>
+          <PlatformNodes
+            nodes={nodePage.items}
+            canManage={hasPermission(identity, "settings.manage")}
+          />
+          {nodePage.nextCursor ? (
+            <Link
+              href={`/settings/platform?section=nodes&nodeCursor=${encodeURIComponent(nodePage.nextCursor)}`}
+            >
+              下一页节点
+            </Link>
+          ) : null}
+        </>
+      ) : null}
       {activeSection === "configuration" ? (
         <PlatformSettings
           canManage={hasPermission(identity, "settings.manage")}
@@ -126,6 +164,11 @@ export default async function PlatformSettingsPage({
 
 function platformSectionHeading(section: PlatformSection): { title: string; description: string } {
   switch (section) {
+    case "nodes":
+      return {
+        title: "平台节点",
+        description: "管理平台节点之间的访问地址，让执行日志始终可从所属节点读取。",
+      };
     case "configuration":
       return {
         title: "平台配置",

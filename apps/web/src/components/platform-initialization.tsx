@@ -70,6 +70,14 @@ export function PlatformInitialization({ initial }: { initial: PlatformConfigura
     }
   }
 
+  if (initial.configurationManaged) {
+    return (
+      <div className="implementation-notice" role="status">
+        分布式平台已由部署文件配置。请在右侧创建首位管理员，随后在“平台节点”中填写节点 IP 和端口。
+      </div>
+    );
+  }
+
   return (
     <section className="setup-card setup-runtime-card" aria-labelledby="platform-setup-title">
       <div className="setup-card-heading">
@@ -193,6 +201,10 @@ function FullInfrastructureFields({ configured }: { configured: boolean }) {
         <Input name="natsServers" placeholder="nats://nats:4222" required={required} />
       </label>
       <label>
+        NATS Token（可选）
+        <Input name="natsToken" type="password" autoComplete="off" />
+      </label>
+      <label>
         Redis URL
         <Input
           autoComplete="off"
@@ -246,6 +258,7 @@ function FullInfrastructureFields({ configured }: { configured: boolean }) {
 function fullConfiguration(form: FormData): Record<string, string | string[]> {
   const result: Record<string, string | string[]> = {};
   for (const name of [
+    "natsToken",
     "databaseUrl",
     "redisUrl",
     "minioEndpoint",

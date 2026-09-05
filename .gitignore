@@ -19,6 +19,8 @@ test-results/
 # Local configuration and secrets. Versioned examples stay tracked.
 .env*
 !**/.env.example
+/deploy/compose/**/secrets/
+/deploy/compose/distributed/platform/config/
 
 # AutoForge runtime state
 data/

@@ -27,6 +27,11 @@ export class LogStreamGateway {
   private readonly subscribers = new Map<string, Set<WebSocket>>();
   private readonly liveness = new Map<WebSocket, boolean>();
   private readonly keepalive: NodeJS.Timeout;
+  private replay?: (attemptId: string) => Promise<LogChunk[]>;
+
+  setReplay(replay: (attemptId: string) => Promise<LogChunk[]>): void {
+    this.replay = replay;
+  }
 
   constructor(
     private readonly secret: string | undefined,
@@ -85,6 +90,30 @@ export class LogStreamGateway {
         });
       });
       websocket.send(JSON.stringify({ schemaVersion: 1, type: "ready" }));
+      if (this.replay) {
+        void this.replay(ticket.attemptId)
+          .then((chunks) => {
+            if (
+              chunks.length &&
+              websocket.readyState === WebSocket.OPEN &&
+              websocket.bufferedAmount < 1024 * 1024
+            ) {
+              websocket.send(
+                JSON.stringify({
+                  schemaVersion: 1,
+                  type: "chunks",
+                  attemptId: ticket.attemptId,
+                  chunks,
+                }),
+              );
+            }
+          })
+          .catch((error: unknown) =>
+            this.logger("warn", "Recent log cache unavailable; use persisted log pages", {
+              error: error instanceof Error ? error.message : "Unknown error",
+            }),
+          );
+      }
     });
   }
 

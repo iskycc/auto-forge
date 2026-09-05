@@ -1,3 +1,4 @@
+import { redactLogChunks } from "@autoforge/application";
 import {
   attemptLogQuerySchema,
   RUNNER_LOG_UPLOAD_BODY_LIMIT_BYTES,
@@ -67,7 +68,7 @@ export async function POST(request: Request, context: Context): Promise<NextResp
         }>,
       ) => void;
     };
-    runtime.__autoforgePublishAttemptLogs?.(attemptId, input.chunks);
+    runtime.__autoforgePublishAttemptLogs?.(attemptId, redactLogChunks(input.chunks, []));
     return NextResponse.json(result);
   } catch (error) {
     return apiErrorResponse(error);

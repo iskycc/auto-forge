@@ -39,6 +39,12 @@ const workPool = new WorkerPool(
       ? { sqlite: { databasePath: platformConfiguration.databasePath } }
       : {
           full: {
+            ...(platformConfiguration.distributed
+              ? {
+                  nodeId: platformConfiguration.nodeId!,
+                  masterKey: platformConfiguration.masterKey,
+                }
+              : {}),
             databaseUrl: platformConfiguration.databaseUrl,
             // WorkerPool 会把这一总预算均分给 Full 调度车道，不为每条车道重复
             // 创建同样大的连接池。
@@ -71,9 +77,7 @@ const terminalGateway = new TerminalGateway(
 const logStreamGateway = new LogStreamGateway(platformConfiguration.terminalAccessToken, log);
 const logStreamRelay = await LogStreamRelay.create({
   mode: platformConfiguration.mode,
-  ...(platformConfiguration.mode === "full"
-    ? { natsServers: platformConfiguration.natsServers }
-    : {}),
+  ...(platformConfiguration.mode === "full" ? { redisUrl: platformConfiguration.redisUrl } : {}),
   gateway: logStreamGateway,
   logger: log,
 });
@@ -92,6 +96,9 @@ const server = createServer((request, response) => {
   const currentRequestId = requestId(request.headers["x-request-id"]);
   request.headers["x-request-id"] = currentRequestId;
   response.setHeader("X-Request-Id", currentRequestId);
+  if (platformConfiguration.mode === "full" && platformConfiguration.nodeId) {
+    response.setHeader("X-Autoforge-Node", platformConfiguration.nodeId);
+  }
   response.once("finish", () => {
     const path = request.url ? new URL(request.url, "http://localhost").pathname : "/";
     const durationMs = Math.round(performance.now() - startedAt);

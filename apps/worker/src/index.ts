@@ -15,6 +15,8 @@ import {
 import {
   createAttemptLogStore,
   createPostgresDatabase,
+  NodeAttemptLogStore,
+  createNodeLogTransport,
   PostgresCaseCatalogRepository,
   PostgresCaseSuiteRepository,
   PostgresDdtRepository,
@@ -58,6 +60,7 @@ database.pool.on("error", (error) => {
 await database.ready;
 const nats = await connect({
   servers: config.natsServers,
+  ...(config.natsToken ? { token: config.natsToken } : {}),
   timeout: 5_000,
   reconnect: true,
   maxReconnectAttempts: 60,
@@ -87,7 +90,19 @@ const batches = new RunBatchSchedulingService(
   config.caseExecutionTimeoutSeconds * 1_000,
   config.artifactCollectionEnabled,
 );
-const attemptLogs = createAttemptLogStore(join(config.dataDirectory, "attempt-logs"));
+const localAttemptLogs = createAttemptLogStore(join(config.dataDirectory, "attempt-logs"));
+const nodeLogs =
+  config.distributed && config.nodeId
+    ? new NodeAttemptLogStore(
+        database,
+        config.nodeId,
+        localAttemptLogs,
+        createNodeLogTransport(config.masterKey, config.nodeId),
+        join(config.dataDirectory, "attempt-logs"),
+      )
+    : undefined;
+if (nodeLogs) await nodeLogs.initialize(join(config.dataDirectory, "attempt-logs"));
+const attemptLogs = nodeLogs ?? localAttemptLogs;
 const platformOperationsRepository = new PostgresPlatformOperationsRepository(
   database,
   attemptLogs,
@@ -203,6 +218,9 @@ const health = {
 };
 const healthServer = await startHealthServer(config.healthPort, health);
 const loops = Promise.all([
+  nodeLogs
+    ? runPeriodic(shutdown.signal, 60_000, () => nodeLogs.cleanupOrphans())
+    : Promise.resolve(),
   runWithTransientRecovery(shutdown.signal, () => jobWorker.run(shutdown.signal), logger, {
     operationName: "job consumer",
   }),

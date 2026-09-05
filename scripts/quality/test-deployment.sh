@@ -26,6 +26,13 @@ docker compose \
   --file deploy/compose/full/docker-compose.yml \
   config --quiet
 
+for component in platform infrastructure edge; do
+  docker compose \
+    --env-file "deploy/compose/distributed/${component}/.env.example" \
+    --file "deploy/compose/distributed/${component}/docker-compose.yml" \
+    config --quiet
+done
+
 mkdir -p "${temporary_directory}/first" "${temporary_directory}/second"
 SOURCE_DATE_EPOCH=1786233600 \
   bash scripts/release/build-deployment-bundle.sh 1.2.3 "${temporary_directory}/first"

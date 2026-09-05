@@ -53,7 +53,7 @@ AutoForge 是一个面向自动化测试场景的用例工厂，用于统一管�
 - Go 1.26 Runner Agent 的版本信息、配置诊断、受控工作目录、无 Shell 命令执行、日志上限、超时与 Linux 进程组清理。
 - Agent 的有界 claim/退避/并发槽位、独立 lease 续租、重启 reconcile、权威测试/依赖 JAR 下载校验、离线工具链 capability，以及按 `methodName+JVM descriptor` 精确选择重载方法的 TestNG 完成上报。控制面使用已认证 claim 携带的实时空闲槽位修正心跳容量滞后，同时始终以数据库中的活跃 reservation 为占用下限；本地 attempt 结束会立即唤醒领取循环，避免继续等待空轮询退避时间。
 - CoTest Adapter 的启用状态、Suite、Test 与多个环境地址保存在用例任务中；首轮按稳定用例顺序分散地址，同一用例的后续 attempt 再沿完整环境池轮询，避免重试固定命中同一环境。每个项目版本独立保存上传或 HTTP(S) 链接登记的 JDK/完整 JAR 压缩包，也可显式从同项目其他版本继承共享对象引用，并可分别删除当前版本资源。上传采用流式处理且没有固定业务大小上限，Runner 仍按任务工作区配额校验、下载和安全解压；同一批次在同一 Runner 上只下载一次输入并只解压一次依赖包/JDK，各 attempt 通过批次目录复用 `test-jars`，Agent 重启后仍保留未终态批次的已校验运行时。完成响应、heartbeat 或 claim 确认该批次不再可能派发到本机后才回收。每个用例仍在独立进程和独立子优先 ClassLoader 中执行，主用例 JAR 固定处于 classpath 首位。
-- Agent stdout/stderr/诊断流的 UTF-8 分块、精确的双层秘密脱敏、有界异步磁盘 spool、连续确认水位和断线重传；子进程输出与 spool 持久化解耦，不同 attempt 不再共用全局落盘锁，已有 sink 时不保留第二份完整内存日志，普通 Java 类路径不会被误判为 JWT 或因固定尾部缓冲而延迟显示。执行期间每 500 ms 尝试上传新增块，控制面先持久化，再由 Lite 进程内通道或 Full NATS 跨副本广播通过同源、短时票据 WebSocket 推送到执行详情。每批次日志 SQLite 对达到 1 KiB 且有实际收益的新日志块选择性使用内置 gzip 保存；编解码通过有界并发和读写公平调度避免批跑积压阻塞公开页或平台共享工作队列。读取、分页、搜索、公开分享和 Runner Protocol 保持原有明文语义，旧版未压缩日志库可直接读取。
+- Agent stdout/stderr/诊断流的 UTF-8 分块、精确的双层秘密脱敏、有界异步磁盘 spool、连续确认水位和断线重传；子进程输出与 spool 持久化解耦，不同 attempt 不再共用全局落盘锁，已有 sink 时不保留第二份完整内存日志，普通 Java 类路径不会被误判为 JWT 或因固定尾部缓冲而延迟显示。执行期间每 500 ms 尝试上传新增块，控制面先持久化，再由 Lite 进程内通道或 Full Redis 缓存与跨副本广播通过同源、短时票据 WebSocket 推送到执行详情。每批次日志 SQLite 对达到 1 KiB 且有实际收益的新日志块选择性使用内置 gzip 保存；编解码通过有界并发和读写公平调度避免批跑积压阻塞公开页或平台共享工作队列。读取、分页、搜索、公开分享和 Runner Protocol 保持原有明文语义，旧版未压缩日志库可直接读取。
 - 产物安全发现、SHA-256 声明和鉴权下载；Lite 经控制面流式写入本地对象目录，Full 使用 15 分钟单对象 MinIO 预签名目标，Agent 不持有长期凭据，finalize 前由控制面重新核对大小和 SHA-256。TestNG XML 以禁用 DTD/实体的有界流式解析器提取 suite/test/class/method、耗时和汇总，结果由 SQLite/PostgreSQL 持久化并在执行详情展示，原始 XML 保留为产物。
 - SQLite 持久任务和 Lite 嵌入式 worker；PostgreSQL transactional outbox、JetStream 显式确认和 Full 独立 worker。SQLite 队列使用短写事务与 `SQLITE_BUSY`/`SQLITE_LOCKED` 退避，持续锁竞争解除后内嵌 worker 自动恢复。系统诊断会显示死信类型、关联对象与最后错误，管理员确认故障已修复后可重新投递；SQLite/JetStream 运行同一套至少一次投递契约测试，覆盖去重、延迟、租约恢复、死信、重投和关闭排空。
 - 管理员存储空间页汇总平台实际占用与内容逻辑大小，并按数据目录、对象存储和外部引用直接生成可折叠目录树，不再暴露分页控件；后台使用有界游标批次自动续读，单个目录按需展开，避免大量文件一次性渲染。目录覆盖全部常规文件、Lite/Full 每批次日志 SQLite、Lite 受管对象、Full MinIO 对象及 URL 型 JDK/依赖引用；批次日志节点显示自然数字批次编号而非内部 UUID，展开后可直接进入对应批次详情，其他文件也可查看逻辑路径、物理位置、大小和磁盘块占用。具有平台设置管理权限的管理员可单项删除，或勾选多个 JDK/依赖资源后通过悬浮操作条批量删除；上传资源同时清理对象，URL 资源只清理登记，仍在使用的资源会被逐项拒绝且不影响其他项。删除成功后目录与容量统计在本地更新，不会重新扫描或打断当前查看位置。
@@ -420,7 +420,7 @@ pnpm start -- --data-dir=/var/lib/autoforge
 - `platform.json`：schema v1 平台配置，权限 `0600`；包含模式、Web、容量、调度、worker、Full 基础设施和随机秘密；
 - `initial-admin-token`：权限 `0600` 的首位管理员一次性令牌，管理员创建成功后删除。
 
-没有显式参数时，已存在的 `/var/lib/autoforge` 优先，否则使用当前目录的 `data`。默认配置为 Lite，可在没有 PostgreSQL、NATS、MinIO 或 Redis 的条件下独立启动。管理员通过 `/settings/platform` 管理监听地址、外部访问地址、Runner 内部访问地址、平台时区、Lite/Full 模式、Full 连接信息、容量与调度阈值；秘密字段只写不回显。外部访问地址用于匿名分享、XLSX 导出日志和 Jenkins 返回链接，内部访问地址用于安装或重新安装 Runner Agent 时写入控制面地址；未配置内部地址的旧部署兼容回退到外部地址。平台时区使用 IANA 名称，默认 `Asia/Shanghai`（东八区），统一控制 Web 页面、匿名分享页、时间筛选和质量趋势的自然日边界；任务 Cron 仍可保存自己的时区。配置采用 revision 条件和原子替换：平台时区、外部/内部访问地址及产物收集保存后立即生效，产物开关只影响新批次并固化进批次快照；监听端口、基础设施、容量、调度与 worker 参数保存后会明确提示需要重启。HTTP/IP 直连仅适用于可信内网，跨不可信网络应使用 HTTPS。
+没有显式参数时，已存在的 `/var/lib/autoforge` 优先，否则使用当前目录的 `data`。默认配置为 Lite，可在没有 PostgreSQL、NATS、MinIO 或 Redis 的条件下独立启动。管理员通过 `/settings/platform` 管理监听地址、外部访问地址、Runner 内部访问地址、平台时区、Lite/Full 模式、Full 连接信息、容量与调度阈值；秘密字段只写不回显。外部访问地址用于匿名分享、XLSX 导出日志和 Jenkins 返回链接，内部访问地址用于安装或重新安装 Runner Agent 时写入控制面地址；未配置内部地址的旧部署兼容回退到外部地址。平台时区使用 IANA 名称，默认 `Asia/Shanghai`（东八区），统一控制 Web 页面、匿名分享页、时间筛选和质量趋势的自然日边界；任务 Cron 仍可保存自己的时区。单机配置采用 revision 条件和原子替换：平台时区、外部/内部访问地址及产物收集保存后立即生效，产物开关只影响新批次并固化进批次快照；监听端口、基础设施、容量、调度与 worker 参数保存后会明确提示需要重启。分布式 Full 的公共配置由部署文件统一管理，页面只读；节点地址单独存于 PostgreSQL 并可在平台设置中修改。HTTP/IP 直连仅适用于可信内网，跨不可信网络应使用 HTTPS。
 
 Runner Agent 由主平台自动生成独立 JSON 配置并以 `--config /etc/autoforge-agent/config.json` 启动，不复用服务端数据库或基础设施凭据。自动安装支持已有 SSH、Bash、systemd 和基础系统命令的 Ubuntu/openSUSE；cgroup v2 可用时自动启用，缺失时使用降级隔离。服务默认使用专用非特权账号，管理员也可显式选择 root 模式；安装过程不会联网或调用系统包管理器。JDK/TestNG 与业务依赖可由项目上传或登记 Runner 可访问的内网链接，也可使用执行机本地预置工具链作为后备。
 
@@ -471,7 +471,7 @@ Runner Agent 由主平台自动生成独立 JSON 配置并以 `--config /etc/aut
 2. **TestNG 用例资产（已完成首版）**：JAR 静态扫描、SQLite 用例库、本地来源对象和导入 UI。
 3. **Lite 执行闭环（已完成首版）**：执行领域、SQLite 队列、Agent 执行、本地产物、日志和基本结果页已接通；资源硬限制与完整 E2E 仍待验收。
 4. **Runner 控制面（已完成首版）**：assignment、claim、lease、reconcile、取消、日志、产物、幂等完成、失败重排与批次聚合已落地。
-5. **Full 执行适配器（已完成首版）**：PostgreSQL、MinIO、transactional outbox、JetStream、Redis 与独立 worker 已接通；水平扩展和故障注入仍待验收。
+5. **Full 执行适配器（已完成首版）**：PostgreSQL、MinIO、transactional outbox、JetStream、Redis 与独立 worker 已接通；新增 Full 多节点部署首版；日志节点离线时明确不可用，不声明日志副本、终端会话迁移或基础设施高可用。
 6. **分析能力**：趋势、筛选、失败分类、批次对比和数据保留策略。
 7. **离线交付（构建流水线已完成）**：继续补齐安装升级、备份恢复和断网端到端验收。
 
@@ -512,12 +512,14 @@ pnpm build
 
 ## Docker Compose 部署
 
-仓库提供两套不会混淆运行边界的单机模板：
+仓库提供 Lite、单机 Full 和多机器 Full 模板：
 
 - [Lite Compose](./deploy/compose/lite/docker-compose.yml) 只启动 AutoForge，持久化 SQLite 和本地对象目录；
 - [Full Compose](./deploy/compose/full/docker-compose.yml) 启动 AutoForge、PostgreSQL、NATS JetStream、MinIO 和 Redis，并通过一次性初始化任务创建对象 bucket。
+- [Full 多机器部署](./deploy/compose/distributed/README.md) 分别部署基础设施、多个平台 Web/worker 和 Nginx；各平台共享 PostgreSQL/Redis/NATS/MinIO，并在“平台设置 → 平台节点”管理彼此的 IP 和端口。日志正文仍保存在所属节点本地，PostgreSQL 记录节点归属与确认水位，Redis 缓存并转发近期实时日志。
+- 独立 [Full distributed acceptance](./.github/workflows/distributed.yml) 流水线分别验证存储/队列契约、双平台故障恢复及经 Nginx 执行的真实 Go Runner；任何失败、跳过或缺失测试报告都会阻止专用验收门通过。
 
-两套模板都直接使用 Release 中导入的 AutoForge 镜像，并设置 `pull_policy: never`。Full 的基础设施镜像也固定到精确 digest，不会在离线启动时回退到可变 tag 或自动拉取。凭据生成、镜像准备、启动、升级和卷保护步骤见 [Compose 部署说明](./deploy/compose/README.md)。
+上述模板都直接使用 Release 中导入的 AutoForge 镜像，并设置 `pull_policy: never`。Full 的基础设施镜像也固定到精确 digest，不会在离线启动时回退到可变 tag 或自动拉取。凭据生成、镜像准备、启动、升级和卷保护步骤见 [Compose 部署说明](./deploy/compose/README.md)。
 
 Playwright 首次运行需要已有 Chromium。联网开发机可按 Playwright 官方方式准备浏览器；离线环境应随测试工具包预置浏览器，并通过 `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` 指向该可执行文件，运行时不会自动下载。
 

@@ -1,24 +1,47 @@
-import type { NatsConnection, Subscription } from "nats";
-
-import { natsReconnectOptions } from "../src/lib/resilient-connections.ts";
+import { redisReconnectDelay } from "../src/lib/resilient-connections.ts";
 import type { LogChunk, LogStreamGateway } from "./log-stream-gateway.ts";
 
-const LIVE_LOG_SUBJECT = "autoforge.logs.v1.live";
-const MAXIMUM_RELAY_MESSAGE_BYTES = 900 * 1024;
+const CHANNEL = "autoforge:logs:v1:live";
+const CACHE_PREFIX = "autoforge:logs:v1:recent:";
+// This cache is expendable: at most 128 attempts, 256 KiB / 32 frames each,
+// with a two-minute TTL. PostgreSQL locations and local files remain authoritative.
+const CACHE_AND_PUBLISH = `
+local size = string.len(ARGV[1])
+if size <= 262144 then
+  redis.call('RPUSH', KEYS[1], ARGV[1])
+  local bytes = redis.call('INCRBY', KEYS[2], size)
+  while bytes > 262144 or redis.call('LLEN', KEYS[1]) > 32 do
+    local removed = redis.call('LPOP', KEYS[1])
+    if not removed then break end
+    bytes = redis.call('DECRBY', KEYS[2], string.len(removed))
+  end
+  redis.call('EXPIRE', KEYS[1], 120)
+  redis.call('EXPIRE', KEYS[2], 120)
+  redis.call('ZADD', KEYS[3], ARGV[2], KEYS[1])
+  while redis.call('ZCARD', KEYS[3]) > 128 do
+    local oldest = redis.call('ZPOPMIN', KEYS[3], 1)
+    redis.call('DEL', oldest[1], oldest[1] .. ':bytes')
+  end
+  redis.call('EXPIRE', KEYS[3], 120)
+end
+redis.call('PUBLISH', ARGV[3], ARGV[1])
+return 1
+`;
 
 type Logger = (level: "info" | "warn" | "error", message: string, fields?: object) => void;
-type RelayMessage = {
-  schemaVersion: 1;
-  attemptId: string;
-  chunks: LogChunk[];
+type RelayMessage = { schemaVersion: 1; attemptId: string; chunks: LogChunk[] };
+type RedisConnection = {
+  isReady: boolean;
+  isOpen: boolean;
+  destroy(): void;
+  eval(script: string, options: { keys: string[]; arguments: string[] }): Promise<unknown>;
+  lRange(key: string, start: number, stop: number): Promise<string[]>;
 };
 
 export class LogStreamRelay {
-  private connection?: NatsConnection;
-  private subscription?: Subscription;
-  private consumeTask?: Promise<void>;
-  private encode?: (message: RelayMessage) => Uint8Array;
-  private decode?: (payload: Uint8Array) => RelayMessage;
+  private publisher?: RedisConnection;
+  private subscriber?: RedisConnection;
+  private readonly pending = new Set<Promise<unknown>>();
 
   private constructor(
     private readonly gateway: LogStreamGateway,
@@ -27,86 +50,90 @@ export class LogStreamRelay {
 
   static async create(input: {
     mode: "lite" | "full";
-    natsServers?: string[];
+    redisUrl?: string;
     gateway: LogStreamGateway;
     logger: Logger;
   }): Promise<LogStreamRelay> {
     const relay = new LogStreamRelay(input.gateway, input.logger);
     if (input.mode === "lite") return relay;
-    if (!input.natsServers?.length) throw new Error("Full log relay requires NATS servers.");
-    const { connect, JSONCodec } = await import("nats");
-    const connection = await connect({
-      servers: input.natsServers,
-      timeout: 5_000,
-      ...natsReconnectOptions,
+    if (!input.redisUrl) throw new Error("Full log relay requires Redis.");
+    const { createClient } = await import("redis");
+    const publisher = createClient({
+      url: input.redisUrl,
+      disableOfflineQueue: true,
+      commandsQueueMaxLength: 64,
+      commandOptions: { timeout: 3000 },
+      socket: { connectTimeout: 5000, reconnectStrategy: redisReconnectDelay },
     });
-    const codec = JSONCodec<RelayMessage>();
-    relay.connection = connection;
-    relay.encode = (message) => codec.encode(message);
-    relay.decode = (payload) => codec.decode(payload);
-    relay.subscription = connection.subscribe(LIVE_LOG_SUBJECT);
-    relay.consumeTask = relay.consume(relay.subscription);
-    return relay;
+    const subscriber = publisher.duplicate();
+    for (const client of [publisher, subscriber])
+      client.on("error", (error: Error) =>
+        input.logger("warn", "Redis log transport interrupted", { error: error.message }),
+      );
+    try {
+      await Promise.all([publisher.connect(), subscriber.connect()]);
+      await subscriber.subscribe(CHANNEL, (payload) => {
+        if (Buffer.byteLength(payload) > 3 * 1024 * 1024) return;
+        try {
+          const message: unknown = JSON.parse(payload);
+          if (isRelayMessage(message)) input.gateway.publish(message.attemptId, message.chunks);
+        } catch (error) {
+          input.logger("warn", "Ignored invalid Redis log frame", {
+            error: error instanceof Error ? error.message : "Invalid frame",
+          });
+        }
+      });
+      relay.publisher = publisher;
+      relay.subscriber = subscriber;
+      input.gateway.setReplay((attemptId) => relay.recent(attemptId));
+      return relay;
+    } catch (error) {
+      for (const client of [publisher, subscriber]) if (client.isOpen) client.destroy();
+      throw new Error("Unable to initialize Redis live logs.", { cause: error });
+    }
   }
 
   publish(attemptId: string, chunks: LogChunk[]): void {
-    if (!this.connection || !this.encode) {
-      this.gateway.publish(attemptId, chunks);
+    const sanitized = chunks;
+    if (!this.publisher?.isReady || this.pending.size >= 32) {
+      this.gateway.publish(attemptId, sanitized);
       return;
     }
-    for (const chunk of chunks) {
-      try {
-        const message = this.encode({ schemaVersion: 1, attemptId, chunks: [chunk] });
-        if (message.byteLength > MAXIMUM_RELAY_MESSAGE_BYTES) {
-          this.logger("warn", "Live log chunk exceeds the cross-replica relay limit", {
-            attemptId,
-            sequence: chunk.sequence,
-            stream: chunk.stream,
-            sizeBytes: message.byteLength,
-          });
-          this.gateway.publish(attemptId, [chunk]);
-          continue;
-        }
-        this.connection.publish(LIVE_LOG_SUBJECT, message);
-      } catch (error) {
-        this.logger("warn", "Live log relay publish failed", {
-          attemptId,
-          sequence: chunk.sequence,
-          stream: chunk.stream,
+    const key = CACHE_PREFIX + attemptId;
+    const operation = this.publisher
+      .eval(CACHE_AND_PUBLISH, {
+        keys: [key, key + ":bytes", CACHE_PREFIX + "active"],
+        arguments: [
+          JSON.stringify({ schemaVersion: 1, attemptId, chunks: sanitized }),
+          String(Date.now()),
+          CHANNEL,
+        ],
+      })
+      .catch((error: unknown) => {
+        this.logger("warn", "Live log cache write failed; persisted logs remain available", {
           error: error instanceof Error ? error.message : "Unknown error",
         });
-        this.gateway.publish(attemptId, [chunk]);
-      }
+        this.gateway.publish(attemptId, sanitized);
+      })
+      .finally(() => this.pending.delete(operation));
+    this.pending.add(operation);
+  }
+
+  async recent(attemptId: string): Promise<LogChunk[]> {
+    if (!this.publisher?.isReady) return [];
+    const frames = await this.publisher.lRange(CACHE_PREFIX + attemptId, 0, 31);
+    const chunks: LogChunk[] = [];
+    for (const frame of frames) {
+      const message: unknown = JSON.parse(frame);
+      if (isRelayMessage(message) && message.attemptId === attemptId)
+        chunks.push(...message.chunks);
     }
+    return chunks;
   }
 
   async close(): Promise<void> {
-    if (!this.connection) return;
-    await this.connection.drain();
-    await this.consumeTask;
-  }
-
-  private async consume(subscription: Subscription): Promise<void> {
-    try {
-      for await (const message of subscription) {
-        try {
-          const decoded = this.decode?.(message.data);
-          if (!isRelayMessage(decoded)) {
-            this.logger("warn", "Ignored an invalid live log relay message");
-            continue;
-          }
-          this.gateway.publish(decoded.attemptId, decoded.chunks);
-        } catch (error) {
-          this.logger("warn", "Ignored an unreadable live log relay message", {
-            error: error instanceof Error ? error.message : "Unknown error",
-          });
-        }
-      }
-    } catch (error) {
-      this.logger("error", "Live log relay subscription stopped", {
-        error: error instanceof Error ? error.message : "Unknown error",
-      });
-    }
+    await Promise.allSettled([...this.pending]);
+    for (const client of [this.subscriber, this.publisher]) if (client?.isOpen) client.destroy();
   }
 }
 
@@ -119,7 +146,7 @@ function isRelayMessage(value: unknown): value is RelayMessage {
     message.attemptId.length > 0 &&
     message.attemptId.length <= 128 &&
     Array.isArray(message.chunks) &&
-    message.chunks.length === 1 &&
+    message.chunks.length <= 256 &&
     message.chunks.every(isLogChunk)
   );
 }

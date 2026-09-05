@@ -4,6 +4,33 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## Unreleased
+
+### Added
+
+- Full 多机器部署模板：独立 PostgreSQL、Redis、NATS JetStream、MinIO，多个 Web/worker 共享服务，并通过 Nginx 分发请求。
+- 平台节点管理：持久节点 ID、名称、IP 和端口，使用共享 PostgreSQL 保存、revision 防并发覆盖和审计。
+- 节点本地日志路由：正文继续保存在所属节点 SQLite 文件中；PostgreSQL 保存批次归属与确认水位，内部 HMAC 请求转发日志，支持旧文件登记及节点恢复后的继续读取。
+- Redis 实时日志转发和有界近期缓存；发布前复用持久日志的脱敏规则。
+- 新增可选 NATS Token 配置；分布式平台公共配置由文件统一管理，提供保留共享密钥并生成独立节点身份的准备命令。
+
+### Fixed
+
+- 离线运行包完整收集 Redis 的 scoped package、间接依赖与 peer dependencies；发布验证在断网容器中检查 Redis/NATS 可加载。
+- 镜像预建应用账号所属的配置目录，确保新数据卷挂载只读节点配置后正常启动；部署包排除实际配置、生成凭据和节点数据。
+
+### Database and operations
+
+- PostgreSQL `0061_platform_log_nodes.sql`、SQLite `0062_platform_log_nodes.sql` 增加节点与日志位置元数据；不搬移日志正文。
+- 从单机 Full 升级时停止旧实例，备份全部状态并先启动原日志节点；配置与各节点日志卷必须分别保留。
+- 首版终端网关固定在一个节点，未实现日志副本或自动迁移；节点离线时所属历史日志明确返回不可用。
+
+### Tests
+
+- 增加双节点独立日志目录契约、内部请求认证、Redis 实时缓存和 Nginx 后的节点管理 / 跨节点日志 Playwright 验收。
+- `pnpm test:distributed` 和 CI / Release checks 增加独立分布式部署验收。
+- 新增 `Full distributed acceptance` 独立流水线与强制结果门：覆盖双节点 WebSocket、Redis 重启、日志节点停止/恢复，以及通过 Nginx 执行的真实 Go Runner；保留脱敏诊断并拒绝跳过、空报告与重试掩盖失败。
+
 ## 1.9.6 - 2026-09-05
 
 ### Fixed

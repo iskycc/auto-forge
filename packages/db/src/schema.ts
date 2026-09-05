@@ -1901,3 +1901,24 @@ export const schema = {
   ddtCaseTemplates,
   ddtImportCaseIds,
 };
+
+export const platformNodes = sqliteTable("platform_nodes", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  internalBaseUrl: text("internal_base_url"),
+  revision: integer("revision").notNull().default(1),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+});
+
+export const runBatchLogLocations = sqliteTable(
+  "run_batch_log_locations",
+  {
+    batchId: text("batch_id").primaryKey(),
+    nodeId: text("node_id")
+      .notNull()
+      .references(() => platformNodes.id),
+    storedBytes: integer("stored_bytes").notNull().default(0),
+  },
+  (table) => [index("run_batch_log_locations_node_idx").on(table.nodeId, table.batchId)],
+);

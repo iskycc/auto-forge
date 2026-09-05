@@ -26,6 +26,8 @@ import {
 } from "@autoforge/db/sqlite";
 import {
   createPostgresDatabase,
+  NodeAttemptLogStore,
+  createNodeLogTransport,
   PostgresCaseCatalogRepository,
   PostgresCaseSuiteRepository,
   PostgresExecutionControlRepository,
@@ -57,6 +59,7 @@ let liteDatabase: SqliteDatabaseHandle | undefined;
 let postgresDatabase: PostgresDatabaseHandle | undefined;
 let scheduler: RunBatchSchedulingService | undefined;
 let attemptLogs: AttemptLogStore | undefined;
+let nodeLogs: NodeAttemptLogStore | undefined;
 let executionControl:
   SqliteExecutionControlRepository | PostgresExecutionControlRepository | undefined;
 let work = Promise.resolve();
@@ -215,7 +218,7 @@ function executionRepository():
   if (!executionControl) {
     executionControl =
       configuration.mode === "full"
-        ? new PostgresExecutionControlRepository(postgresHandle(), logStore())
+        ? new PostgresExecutionControlRepository(postgresHandle(), fullLogStore())
         : new SqliteExecutionControlRepository(sqliteHandle(), logStore());
   }
   return executionControl;
@@ -244,6 +247,19 @@ function postgresHandle(): PostgresDatabaseHandle {
 function fullSettings(): NonNullable<WorkThreadConfiguration["full"]> {
   if (!configuration.full) throw new Error("Work thread is missing Full configuration.");
   return configuration.full;
+}
+
+function fullLogStore(): AttemptLogStore | NodeAttemptLogStore {
+  const settings = fullSettings();
+  if (!settings.nodeId || !settings.masterKey) return logStore();
+  nodeLogs ??= new NodeAttemptLogStore(
+    postgresHandle(),
+    settings.nodeId,
+    logStore(),
+    createNodeLogTransport(settings.masterKey, settings.nodeId),
+    configuration.attemptLogsDirectory,
+  );
+  return nodeLogs;
 }
 
 function logStore(): AttemptLogStore {

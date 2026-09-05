@@ -53,9 +53,12 @@ export type AppConfig = CommonConfig &
       }
     | {
         mode: "full";
+        distributed: boolean;
+        nodeId?: string;
         databaseUrl: string;
         databasePoolMax: number;
         natsServers: string[];
+        natsToken?: string;
         redisUrl: string;
         migrationsFolder: string;
         minio: {
@@ -117,9 +120,12 @@ export function loadAppConfig(options: LoadPlatformConfigurationOptions = {}): A
   return {
     ...common,
     mode: "full",
+    distributed: persisted.deployment === "distributed",
+    ...(persisted.nodeId ? { nodeId: persisted.nodeId } : {}),
     databaseUrl: persisted.full.databaseUrl,
     databasePoolMax: persisted.full.databasePoolMax,
     natsServers: [...persisted.full.natsServers],
+    ...(persisted.full.natsToken ? { natsToken: persisted.full.natsToken } : {}),
     redisUrl: validatedRedisUrl(persisted.full.redisUrl),
     migrationsFolder: runtime.migrationsFolder,
     minio: {

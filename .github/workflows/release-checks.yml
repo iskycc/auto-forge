@@ -83,6 +83,8 @@ jobs:
             command: bash scripts/quality/test-full.sh contracts
           - name: Full asset lifecycle
             command: bash scripts/quality/test-full.sh browser-assets
+          - name: Full distributed deployment
+            command: pnpm test:distributed
           - name: Full governance
             command: bash scripts/quality/test-full.sh browser-governance
           - name: Full execution recovery

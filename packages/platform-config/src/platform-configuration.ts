@@ -1,4 +1,4 @@
-import { randomBytes } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import {
   chmodSync,
   existsSync,
@@ -52,6 +52,7 @@ const fullInfrastructureSchema = z.object({
   // PostgreSQL 连接池上限；旧配置文件缺失时沿用历史硬编码的 10。
   databasePoolMax: z.number().int().min(1).max(100).default(10),
   natsServers: z.array(z.string().min(1).max(1_024)).min(1).max(8),
+  natsToken: z.string().min(16).max(4096).optional(),
   redisUrl: z.url().max(2_048),
   minio: z.object({
     endpoint: z.url().max(2_048),
@@ -67,6 +68,8 @@ export const persistedPlatformConfigurationSchema = z
     schemaVersion: z.literal(PLATFORM_CONFIGURATION_SCHEMA_VERSION),
     revision: z.number().int().positive(),
     mode: z.enum(["lite", "full"]),
+    deployment: z.enum(["single-host", "distributed"]).optional(),
+    nodeId: z.string().uuid().optional(),
     web: z.object({
       hostname: z.string().min(1).max(255),
       port: z.number().int().min(1).max(65_535),
@@ -119,6 +122,20 @@ export const persistedPlatformConfigurationSchema = z
     updatedAt: z.iso.datetime({ offset: true }),
   })
   .superRefine((configuration, context) => {
+    if (configuration.deployment === "distributed" && !configuration.nodeId) {
+      context.addIssue({
+        code: "custom",
+        path: ["nodeId"],
+        message: "分布式部署需要持久、唯一的平台节点 ID。",
+      });
+    }
+    if (configuration.deployment === "distributed" && configuration.mode !== "full") {
+      context.addIssue({
+        code: "custom",
+        path: ["deployment"],
+        message: "分布式部署必须使用 Full 模式。",
+      });
+    }
     if (configuration.mode === "full" && !configuration.full) {
       context.addIssue({
         code: "custom",
@@ -156,6 +173,19 @@ export class PlatformConfigurationConflictError extends Error {
     super("平台配置已被其他管理员修改，请刷新后重试。");
     this.name = "PlatformConfigurationConflictError";
   }
+}
+
+export class PlatformConfigurationManagedError extends Error {
+  constructor() {
+    super("分布式平台配置由部署文件统一管理，请更新所有节点的配置文件并重启 Web 和 worker。");
+    this.name = "PlatformConfigurationManagedError";
+  }
+}
+
+export function isPlatformConfigurationManagedError(
+  error: unknown,
+): error is PlatformConfigurationManagedError {
+  return error instanceof Error && error.name === "PlatformConfigurationManagedError";
 }
 
 export function isPlatformConfigurationConflictError(
@@ -213,6 +243,7 @@ export class PlatformConfigurationStore {
     now = new Date(),
   ): PersistedPlatformConfiguration {
     const current = this.read();
+    if (current.deployment === "distributed") throw new PlatformConfigurationManagedError();
     if (current.revision !== expectedRevision) {
       throw new PlatformConfigurationConflictError();
     }
@@ -280,6 +311,7 @@ function defaultConfiguration(
   return {
     schemaVersion: PLATFORM_CONFIGURATION_SCHEMA_VERSION,
     revision: 1,
+    nodeId: randomUUID(),
     mode: "lite",
     web: {
       hostname: "0.0.0.0",

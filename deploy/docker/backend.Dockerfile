@@ -55,7 +55,11 @@ WORKDIR /app
 
 COPY --from=builder --chown=node:node /workspace/backend-runtime ./
 
-RUN mkdir -p /var/lib/autoforge && chown node:node /var/lib/autoforge
+# The distributed template bind-mounts a read-only configuration file. Seed its
+# parent in new data volumes so Docker does not create a root-owned directory.
+RUN mkdir -p /var/lib/autoforge/config && \
+    chmod 0700 /var/lib/autoforge/config && \
+    chown -R node:node /var/lib/autoforge
 
 USER node
 

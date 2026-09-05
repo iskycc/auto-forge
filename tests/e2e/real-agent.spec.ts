@@ -44,6 +44,24 @@ test("executes a TestNG JAR through the real Go Agent", async ({ page }, testInf
       .toContain("REAL_AGENT_STDOUT_中文_完成:10.0.0.11");
 
     const details = await waitForSucceededBatch(page, batchId, agent);
+    if (process.env.E2E_DISTRIBUTED_ACCEPTANCE === "distributed-agent") {
+      const replica = process.env.E2E_DISTRIBUTED_SECONDARY_URL;
+      if (!replica)
+        throw new Error("Distributed real Agent acceptance requires the second platform.");
+      const batch = await page.request.get(`${replica}/api/v1/run-batches/${batchId}`);
+      expect(batch.status()).toBe(200);
+      const replicaDetails = (await batch.json()) as BatchDetails;
+      expect(replicaDetails.status).toBe("succeeded");
+      expect(replicaDetails.attempts.map((attempt) => attempt.id)).toEqual(
+        details.attempts.map((attempt) => attempt.id),
+      );
+      expect(replicaDetails.attempts).toHaveLength(1);
+      const logs = await page.request.get(
+        `${replica}/api/v1/run-attempts/${details.attempts[0]!.id}/logs?stream=stdout`,
+      );
+      expect(logs.status()).toBe(200);
+      expect(JSON.stringify(await logs.json())).toContain("REAL_AGENT_STDOUT_中文_完成:10.0.0.11");
+    }
 
     expect(details.attempts[0]?.testNg).toMatchObject({
       total: 1,

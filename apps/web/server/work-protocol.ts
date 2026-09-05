@@ -21,6 +21,8 @@ export type WorkThreadConfiguration = {
   };
   sqlite?: { databasePath: string };
   full?: {
+    nodeId?: string;
+    masterKey?: string;
     databaseUrl: string;
     /** Full 调度工作线程的总连接预算；线程池按实际车道数均分。 */
     databasePoolMax: number;

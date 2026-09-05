@@ -9,7 +9,30 @@ import {
   assertSafeRuntimeDestination,
   isExcludedRuntimePath,
   isNextTraceFile,
+  resolveExternalDependencyLink,
 } from "./package-backend-runtime.mjs";
+
+test("resolves offline dependency links from scoped packages and nested node_modules", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "autoforge-runtime-dependencies-"));
+  try {
+    const client = join(directory, "node_modules/@redis/client");
+    const sibling = join(directory, "node_modules/cluster-key-slot");
+    const nested = join(client, "node_modules/nested-dependency");
+    await Promise.all([
+      mkdir(client, { recursive: true }),
+      mkdir(sibling, { recursive: true }),
+      mkdir(nested, { recursive: true }),
+    ]);
+    assert.equal(await resolveExternalDependencyLink(client, "cluster-key-slot"), sibling);
+    assert.equal(await resolveExternalDependencyLink(client, "nested-dependency"), nested);
+    assert.equal(
+      await resolveExternalDependencyLink(client, "autoforge-missing-test-dependency"),
+      undefined,
+    );
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
 
 test("packages only the traced custom-server runtime", async () => {
   const [dockerfile, nextConfiguration, webPackage, serverBuild, runtimePackager] =
@@ -57,7 +80,10 @@ test("packages only the traced custom-server runtime", async () => {
   assert.match(scripts.build, /next build && pnpm run build:server/);
   assert.match(scripts["build:server"], /build-server\.mjs/);
   assert.match(serverBuild, /external:\s*\[[^\]]*"nats"/s);
-  assert.match(runtimePackager, /externalModuleClosures\s*=\s*\["apps\/web\/node_modules\/nats"\]/);
+  assert.match(
+    runtimePackager,
+    /externalModuleClosures\s*=\s*\[[^\]]*"apps\/web\/node_modules\/nats"[^\]]*"apps\/web\/node_modules\/redis"\]/,
+  );
 });
 
 test("excludes development output and protects runtime packaging destinations", () => {
@@ -124,6 +150,8 @@ test("executes the migration entry point while verifying a release image", async
   assert.match(verificationScript, /node \/app\/apps\/web\/dist-server\/server\/migrate\.js/);
   assert.match(verificationScript, /--workdir \/app\/apps\/web/);
   assert.match(verificationScript, /await import\("nats"\)/);
+  assert.match(verificationScript, /await import\("redis"\)/);
+  assert.match(verificationScript, /target=\/var\/lib\/autoforge\/config\/platform\.json,readonly/);
   assert.doesNotMatch(
     verificationScript,
     /test -f \/app\/apps\/web\/dist-server\/server\/migrate\.js/,

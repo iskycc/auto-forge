@@ -6,6 +6,7 @@ export * from "./failure-analysis";
 export * from "./management";
 export * from "./scheduling";
 export * from "./platform";
+export * from "./platform-node";
 export * from "./operations";
 export * from "./project-structure";
 export * from "./attempt-log-share";

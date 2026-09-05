@@ -1829,7 +1829,30 @@ export const pgDdtImportCaseIds = pgTable(
   ],
 );
 
+export const pgPlatformNodes = pgTable("platform_nodes", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  internalBaseUrl: text("internal_base_url"),
+  revision: integer("revision").notNull().default(1),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+});
+
+export const pgRunBatchLogLocations = pgTable(
+  "run_batch_log_locations",
+  {
+    batchId: text("batch_id").primaryKey(),
+    nodeId: text("node_id")
+      .notNull()
+      .references(() => pgPlatformNodes.id),
+    storedBytes: bigint("stored_bytes", { mode: "number" }).notNull().default(0),
+  },
+  (table) => [index("run_batch_log_locations_node_idx").on(table.nodeId, table.batchId)],
+);
+
 export const postgresSchema = {
+  platformNodes: pgPlatformNodes,
+  runBatchLogLocations: pgRunBatchLogLocations,
   projects: pgProjects,
   projectVersions: pgProjectVersions,
   testStages: pgTestStages,

@@ -13,6 +13,7 @@ readonly output_path="${output_directory}/${package_name}.tar.gz"
 readonly staging_directory="$(mktemp -d)"
 readonly package_directory="${staging_directory}/${package_name}"
 readonly -a deployment_documentation=(
+  "docs/adr/0012-full-distributed-node-local-logs.md"
   "docs/architecture/ddt-management.md"
   "docs/legal/runner-toolchain-notices.md"
   "docs/manuals/administrator.md"
@@ -38,7 +39,17 @@ trap cleanup EXIT
 
 release_created_at >/dev/null
 mkdir -p -- "${output_directory}"
-cp -R -- "${repository_root}/deploy/compose" "${package_directory}"
+mkdir -p -- "${package_directory}"
+# Package templates only: local .env, generated secrets and mounted node data must never enter a release.
+while IFS= read -r -d '' template_path; do
+  relative_path="${template_path#"${repository_root}/deploy/compose/"}"
+  mkdir -p -- "$(dirname -- "${package_directory}/${relative_path}")"
+  cp -- "${template_path}" "${package_directory}/${relative_path}"
+done < <(find "${repository_root}/deploy/compose" \
+  -type d \( -name secrets -o -name config -o -name node-data \) -prune -o \
+  -type f \( -name docker-compose.yml -o -name .env.example -o -name README.md \
+    -o -name nginx.conf -o -name prepare-secrets.mjs \) -print0)
+sed -i 's|../../../docs/|../docs/|g' "${package_directory}/distributed/README.md"
 cp -R -- "${repository_root}/scripts/operations" "${package_directory}/operations"
 for documentation_path in "${deployment_documentation[@]}"; do
   destination_path="${package_directory}/${documentation_path}"

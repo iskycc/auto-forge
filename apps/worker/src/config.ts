@@ -24,9 +24,13 @@ export function loadWorkerConfig(options: LoadPlatformConfigurationOptions = {})
   }
   return {
     databaseUrl: configuration.full.databaseUrl,
+    distributed: configuration.deployment === "distributed",
+    nodeId: configuration.nodeId,
+    masterKey: configuration.secrets.masterKey,
     databasePoolMax: configuration.full.databasePoolMax,
     dataDirectory: runtime.paths.dataDirectory,
     natsServers: [...configuration.full.natsServers],
+    ...(configuration.full.natsToken ? { natsToken: configuration.full.natsToken } : {}),
     workerId: `full-worker-${hostname()}-${process.pid}`,
     concurrency: configuration.worker.concurrency,
     healthPort: configuration.worker.healthPort,

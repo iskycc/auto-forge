@@ -5,6 +5,7 @@ import { apiErrorResponse, readJsonBody, rejectRateLimited } from "@/lib/api-res
 import { clientAddress, requestId, requireSameOrigin } from "@/lib/auth";
 import {
   mergePlatformConfiguration,
+  platformConfigurationError,
   platformConfigurationView,
 } from "@/lib/platform-configuration";
 import { getPlatformServices } from "@/lib/services";
@@ -41,6 +42,6 @@ export async function POST(request: Request): Promise<NextResponse> {
       platformConfigurationView(saved, services.configurationStore.paths.configurationFile, true),
     );
   } catch (error) {
-    return apiErrorResponse(error, currentRequestId);
+    return apiErrorResponse(platformConfigurationError(error), currentRequestId);
   }
 }

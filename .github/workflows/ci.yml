@@ -506,6 +506,8 @@ jobs:
             command: bash scripts/quality/test-full-business-recovery.sh runtime-recovery
           - name: Full · asset lifecycle
             command: bash scripts/quality/test-full-business-recovery.sh browser-assets
+          - name: Full distributed deployment
+            command: pnpm test:distributed
           - name: Full · governance
             command: bash scripts/quality/test-full-business-recovery.sh browser-governance
           - name: Network-blocked Lite · assets

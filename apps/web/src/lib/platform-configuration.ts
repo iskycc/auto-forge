@@ -1,6 +1,17 @@
 import type { UpdatePlatformConfigurationInput } from "@autoforge/contracts";
 import { DomainError } from "@autoforge/domain";
-import type { PersistedPlatformConfiguration } from "@autoforge/platform-config";
+import {
+  isPlatformConfigurationConflictError,
+  isPlatformConfigurationManagedError,
+  type PersistedPlatformConfiguration,
+} from "@autoforge/platform-config";
+
+export function platformConfigurationError(error: unknown): unknown {
+  if (isPlatformConfigurationManagedError(error))
+    return new DomainError("PLATFORM_CONFIGURATION_MANAGED", error.message, { cause: error });
+  if (!isPlatformConfigurationConflictError(error)) return error;
+  return new DomainError("PLATFORM_CONFIGURATION_CONFLICT", error.message, { cause: error });
+}
 
 export function platformConfigurationView(
   configuration: PersistedPlatformConfiguration,
@@ -14,6 +25,7 @@ export function platformConfigurationView(
   return {
     revision: configuration.revision,
     mode: configuration.mode,
+    configurationManaged: configuration.deployment === "distributed",
     web: { ...configuration.web },
     limits: { ...configuration.limits },
     scheduler: { ...configuration.scheduler },
@@ -117,6 +129,7 @@ function mergedFullConfiguration(
 ): NonNullable<PersistedPlatformConfiguration["full"]> {
   const databaseUrl = input?.databaseUrl ?? current?.databaseUrl;
   const natsServers = input?.natsServers ?? current?.natsServers;
+  const natsToken = input?.natsToken ?? current?.natsToken;
   const redisUrl = input?.redisUrl ?? current?.redisUrl;
   const endpoint = input?.minioEndpoint ?? current?.minio.endpoint;
   const accessKey = input?.minioAccessKey ?? current?.minio.accessKey;
@@ -147,6 +160,7 @@ function mergedFullConfiguration(
     databaseUrl,
     databasePoolMax,
     natsServers: [...natsServers],
+    ...(natsToken ? { natsToken } : {}),
     redisUrl,
     minio: { endpoint, accessKey, secretKey, bucket, region },
   };

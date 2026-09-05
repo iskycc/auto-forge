@@ -641,7 +641,7 @@ export function redactLogContent(content: string, secrets: readonly string[]): s
   return redacted;
 }
 
-function redactLogChunks(
+export function redactLogChunks(
   chunks: UploadLogChunksInput["chunks"],
   secrets: readonly string[],
 ): UploadLogChunksInput["chunks"] {
