@@ -1,3 +1,4 @@
+import { readReadyModel } from "@/lib/read-ready-model";
 import {
   bulkDdtCaseIdsInputSchema,
   bulkUpdateDdtCasesInputSchema,
@@ -39,7 +40,13 @@ export async function GET(request: Request, context: Context): Promise<NextRespo
     const path = await pathSegments(context);
 
     if (matches(path, "dashboard"))
-      return NextResponse.json(await services.ddtCases.dashboard(scope));
+      return NextResponse.json(
+        await readReadyModel(
+          services.readModels,
+          { kind: "ddt_dashboard", ...scope },
+          request.signal,
+        ),
+      );
     if (matches(path, "groups")) {
       return NextResponse.json({
         items: await services.ddtCases.groups(

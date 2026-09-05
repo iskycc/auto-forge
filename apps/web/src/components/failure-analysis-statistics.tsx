@@ -18,13 +18,18 @@ type ClaimPage = FailureAnalysisClaimPageView;
 
 export function FailureAnalysisStatistics({
   initialPage,
+  failedRuns,
+  batchId,
   projectId,
   projectVersionId,
 }: {
   initialPage: FailureAnalysisStatisticsPage;
+  failedRuns: number;
   projectId: string;
+  batchId: string;
   projectVersionId?: string;
 }) {
+  const [previousPage, setPreviousPage] = useState(initialPage);
   const [analysts, setAnalysts] = useState(initialPage.analysts);
   const [nextCursor, setNextCursor] = useState(initialPage.nextCursor);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -33,8 +38,13 @@ export function FailureAnalysisStatistics({
   const [claimCursor, setClaimCursor] = useState<string>();
   const [claimsLoading, setClaimsLoading] = useState(false);
   const [error, setError] = useState("");
+  if (previousPage !== initialPage) {
+    setPreviousPage(initialPage);
+    setAnalysts(initialPage.analysts);
+    setNextCursor(initialPage.nextCursor);
+  }
   const summary = initialPage.summary;
-  const completionRate = percent(summary.completed, summary.total);
+  const completionRate = percent(summary.completed, failedRuns);
 
   async function loadMoreAnalysts(): Promise<void> {
     if (!nextCursor || loadingMore) return;
@@ -98,7 +108,7 @@ export function FailureAnalysisStatistics({
   }
 
   function scopeParameters(): URLSearchParams {
-    const parameters = new URLSearchParams({ projectId });
+    const parameters = new URLSearchParams({ projectId, batchId });
     if (projectVersionId) parameters.set("projectVersionId", projectVersionId);
     return parameters;
   }
@@ -106,7 +116,9 @@ export function FailureAnalysisStatistics({
   return (
     <>
       <section className="failure-analysis-stat-summary" aria-label="分析总览">
-        <StatisticMetric label="累计认领" value={summary.total} />
+        <StatisticMetric label="待分析用例总数" value={failedRuns} />
+        <StatisticMetric label="尚未认领或分配" value={Math.max(0, failedRuns - summary.total)} />
+        <StatisticMetric label="已认领或分配" value={summary.total} />
         <StatisticMetric label="已完成分析" value={summary.completed} />
         <StatisticMetric label="正在分析" value={summary.analyzing} />
         <StatisticMetric label="完成率" value={`${completionRate}%`} />

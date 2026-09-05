@@ -330,6 +330,8 @@ export interface IdentityAccessRepository {
   findSession(sessionId: string): Promise<UserSession | null>;
   listUsers(input: {
     query?: string;
+    analysisProjectId?: string;
+    userId?: string;
     source?: "local" | "ldap";
     cursor?: string;
     limit: number;
@@ -378,7 +380,10 @@ export interface IdentityAccessRepository {
     assignedAt: string;
   }): Promise<void>;
   removeProjectRole(userId: string, projectId: string, roleId: string): Promise<boolean>;
-  listProjectMemberships(projectId: string): Promise<Array<{ user: User; roleIds: string[] }>>;
+  listProjectMemberships(
+    projectId: string,
+    page?: { afterUserId?: string; query?: string; limit: number },
+  ): Promise<Array<{ user: User; roleIds: string[] }>>;
   listProjects(projectIds?: readonly string[]): Promise<Project[]>;
   createProject(input: {
     id: string;
@@ -394,7 +399,14 @@ export interface IdentityAccessRepository {
     updatedAt: string;
   }): Promise<Project>;
   listSystemRoleBindingsForActiveUsers(): Promise<SystemRoleBindingView[]>;
-  listSystemRoleBindings(): Promise<Array<{ userId: string; roleId: string }>>;
+  listSystemRoleBindings(
+    userIds?: readonly string[],
+    page?: { afterUserId?: string; limit: number },
+  ): Promise<Array<{ userId: string; roleId: string }>>;
+  listUserProjectRoleBindings(
+    userIds: readonly string[],
+    projectIds?: readonly string[],
+  ): Promise<Array<{ projectId: string; userId: string; roleId: string }>>;
   getLdapConfiguration(): Promise<StoredLdapConfiguration | null>;
   saveLdapConfiguration(
     input: Omit<StoredLdapConfiguration, "createdAt" | "updatedAt" | "version"> & {
@@ -965,6 +977,15 @@ export interface CaseCatalogRepository {
     projectId?: string,
     projectVersionId?: string,
   ): Promise<string[]>;
+  getSourceExecutable(sourceId: string, projectIds?: readonly string[]): Promise<boolean | null>;
+  getSourceSummary(sourceId: string, projectIds?: readonly string[]): Promise<CaseSource | null>;
+  listSourceObjectsPage(
+    input: { cursor?: string; limit: number; prefix?: string },
+    projectIds?: readonly string[],
+  ): Promise<{
+    items: Array<{ objectKey: string; sizeBytes: number; lastModified: string; etag: string }>;
+    nextCursor?: string;
+  }>;
   listRecentSources(limit: number, projectIds?: readonly string[]): Promise<CaseSource[]>;
   listSources(limit: number, projectIds?: readonly string[]): Promise<CaseSource[]>;
   getSource(
@@ -1180,7 +1201,18 @@ export interface DdtRepository {
   ): Promise<Array<{ caseId: string; outcome: DdtImportCaseOutcome }>>;
 }
 
+export type CaseSuiteMemberPageQuery = {
+  suiteId: string;
+  projectIds?: readonly string[];
+  afterCaseMemberId?: string;
+  afterDdtMemberId?: string;
+  limit: number;
+};
+
 export interface CaseSuiteRepository {
+  listMemberPage(
+    input: CaseSuiteMemberPageQuery,
+  ): Promise<Pick<CaseSuiteDetails, "items" | "ddtItems"> | null>;
   create(record: CreateCaseSuiteRecord): Promise<CaseSuite>;
   list(
     limit: number,
@@ -1643,8 +1675,20 @@ export type RunBatchListPage = {
 };
 
 export interface FailureAnalysisRepository {
+  readBatchProgress(
+    projectId: string,
+    batchId: string,
+  ): Promise<{ claimedRuns: number; completedRuns: number }>;
+  startBatch(input: {
+    projectId: string;
+    projectVersionId: string;
+    batchId: string;
+    startedBy: string;
+    startedAt: string;
+  }): Promise<{ batch: FailureAnalysisBatch; created: boolean } | null>;
   readStatistics(input: {
     projectId: string;
+    batchId: string;
     projectVersionId?: string;
     cursor?: string;
     limit: number;
@@ -1652,6 +1696,7 @@ export interface FailureAnalysisRepository {
   }): Promise<FailureAnalysisStatisticsPage>;
   listBatches(input: {
     projectId: string;
+    view?: "started" | "available";
     projectVersionId?: string;
     cursor?: string;
     limit: number;
@@ -1862,7 +1907,29 @@ export interface RunBatchDisplayIdentityLookupPort {
   listDisplayIdentities(batchIds: readonly string[]): Promise<RunBatchDisplayIdentity[]>;
 }
 
+export type RunBatchCounters = Pick<
+  RunBatch,
+  | "queuedRuns"
+  | "assignedRuns"
+  | "runningRuns"
+  | "succeededRuns"
+  | "failedRuns"
+  | "timedOutRuns"
+  | "cancelledRuns"
+>;
+export type RunBatchMetadata = Omit<RunBatch, keyof RunBatchCounters>;
+
+export type ExecutionCasePageKey = { runId: string; attemptId?: string; round: number };
+
 export interface RunBatchRepository {
+  readCasePageEntries(
+    batchId: string,
+    keys: readonly ExecutionCasePageKey[],
+  ): Promise<RunBatchCasePage["items"]>;
+  listMetadataPage(
+    input: RunBatchListQuery,
+  ): Promise<{ items: RunBatchMetadata[]; nextCursor?: string }>;
+  getMetadata(batchId: string, projectIds?: readonly string[]): Promise<RunBatchMetadata | null>;
   create(record: CreateRunBatchRecord): Promise<RunBatch>;
   resolveAttemptRerunSource(attemptId: string): Promise<AttemptRerunSource | null>;
   getRerunSnapshot(

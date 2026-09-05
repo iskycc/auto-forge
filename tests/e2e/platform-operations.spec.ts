@@ -436,7 +436,11 @@ async function verifyRuntimeAssetDeletion(input: {
   await input.page
     .getByLabel("搜索文件名称或路径")
     .fill(input.category === "JDK 包" ? "e2e-removable-jdk" : input.fileName);
-  await input.page.getByRole("button", { name: "应用筛选" }).click();
+  if (input.category === "JDK 包") {
+    await applyStorageFilterWithDelayedPage(input.page);
+  } else {
+    await input.page.getByRole("button", { name: "应用筛选" }).click();
+  }
   const file = input.storageTree
     .locator("details.storage-tree-file")
     .filter({ hasText: input.fileName });
@@ -514,6 +518,37 @@ async function captureUi(page: Page, name: string): Promise<void> {
   if (!screenshotDirectory) return;
   mkdirSync(screenshotDirectory, { recursive: true });
   await page.screenshot({ path: resolve(screenshotDirectory, `${name}.png`), fullPage: false });
+}
+
+async function applyStorageFilterWithDelayedPage(page: Page): Promise<void> {
+  let releasePage: () => void = () => undefined;
+  let requestedNextPage = false;
+  const nextPageGate = new Promise<void>((resolve) => {
+    releasePage = resolve;
+  });
+  const matchesInventory = (url: URL) =>
+    url.pathname === "/api/v1/settings/storage" &&
+    url.searchParams.get("query") === "e2e-removable-jdk";
+  await page.route(matchesInventory, async (route) => {
+    const url = new URL(route.request().url());
+    url.searchParams.set("limit", "1");
+    if (url.searchParams.has("cursor")) {
+      requestedNextPage = true;
+      await nextPageGate;
+    }
+    await route.continue({ url: url.toString() });
+  });
+  try {
+    await page.getByRole("button", { name: "应用筛选" }).click();
+    await expect.poll(() => requestedNextPage).toBe(true);
+    await expect(page.locator(".storage-inventory")).toHaveAttribute("aria-busy", "true");
+    await expect(page.getByLabel("选择当前结果中的全部可删除资源")).toBeDisabled();
+  } finally {
+    releasePage();
+    await page.unrouteAll({ behavior: "wait" });
+  }
+  await expect(page.locator(".storage-inventory")).toHaveAttribute("aria-busy", "false");
+  await expect(page.getByLabel("选择当前结果中的全部可删除资源")).toBeEnabled();
 }
 
 async function verifyRuntimeAssetBatchDeletion(input: {

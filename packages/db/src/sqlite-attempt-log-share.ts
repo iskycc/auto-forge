@@ -18,11 +18,13 @@ export class SqliteAttemptLogShareRepository implements AttemptLogShareRepositor
   async createMany(records: readonly AttemptLogShareRecord[]): Promise<void> {
     if (records.length === 0) return;
     // 分批插入只为绕开绑定变量上限，整体仍在一个事务内：要么全部可见，要么整体回滚。
-    this.handle.client.transaction(() => {
-      for (const chunk of splitIntoChunks(records, INSERT_ROWS_PER_STATEMENT)) {
-        this.handle.db.insert(attemptLogShares).values(chunk).run();
-      }
-    })();
+    this.handle.client
+      .transaction(() => {
+        for (const chunk of splitIntoChunks(records, INSERT_ROWS_PER_STATEMENT)) {
+          this.handle.db.insert(attemptLogShares).values(chunk).run();
+        }
+      })
+      .immediate();
   }
 
   async findActiveByAttemptId(

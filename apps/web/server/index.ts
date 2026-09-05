@@ -14,6 +14,7 @@ import { rejectH2cUpgrade } from "./http-upgrade.ts";
 import { LogStreamGateway } from "./log-stream-gateway.ts";
 import { LogStreamRelay } from "./log-stream-relay.ts";
 import { WorkerPool } from "./worker-pool.ts";
+import { ReadModelWorkerHost } from "./read-model-worker-host.ts";
 import {
   FastPathUnavailable,
   handleRunnerFastPath,
@@ -58,6 +59,20 @@ const workPool = new WorkerPool(
   platformConfiguration.worker.shutdownGraceMs,
 );
 registerWorkDispatcher(workPool);
+const readModelWorker = new ReadModelWorkerHost(
+  platformConfiguration.mode === "lite"
+    ? {
+        mode: "lite",
+        databasePath: platformConfiguration.databasePath,
+        migrationsFolder: platformConfiguration.migrationsFolder,
+      }
+    : {
+        mode: "full",
+        databaseUrl: platformConfiguration.databaseUrl,
+        migrationsFolder: platformConfiguration.migrationsFolder,
+      },
+  (error) => log("error", "Read model worker unavailable", { error: errorMessage(error) }),
+);
 // 后台预热工作线程（建池、迁移校验、连接预热），不阻塞端口监听；预热失败时
 // 首个真实任务退回冷启动，行为与未预热一致。
 void workPool.warmup();
@@ -211,6 +226,7 @@ async function shutdown(signal: "SIGINT" | "SIGTERM"): Promise<void> {
   const results = await Promise.allSettled([
     app.close(),
     workPool.close(),
+    readModelWorker.close(),
     serviceRuntime.__autoforgeClosePlatformServices?.() ?? Promise.resolve(),
   ]);
   const failures = results.filter((result) => result.status === "rejected");

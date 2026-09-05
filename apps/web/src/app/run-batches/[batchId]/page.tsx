@@ -19,7 +19,7 @@ export default async function RunBatchDetailsPage({
   const services = await getPlatformServices();
   let overview;
   try {
-    overview = await services.runBatches.getDetailOverview(batchId, projectIds);
+    overview = await services.executionOverview(batchId, projectIds);
   } catch {
     notFound();
   }
@@ -54,6 +54,20 @@ export default async function RunBatchDetailsPage({
       <ExecutionBatchDetails
         batch={toExecutionBatchView(overview)}
         retrySuiteId={batch.suiteId}
+        {...((batch.kind ?? "standard") === "standard" &&
+        !batch.suiteId.startsWith("single:") &&
+        batch.policy?.projectVersionId &&
+        canAuthorize(() =>
+          services.identityAccess.authorize(identity, "analysis.manage", batch.projectId),
+        )
+          ? {
+              analysisScope: {
+                projectId: batch.projectId,
+                projectVersionId: batch.policy.projectVersionId,
+                batchId: batch.id,
+              },
+            }
+          : {})}
         {...(batch.policy
           ? {
               rerunConfiguration: {

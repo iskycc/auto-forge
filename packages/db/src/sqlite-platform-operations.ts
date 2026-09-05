@@ -203,32 +203,35 @@ export class SqlitePlatformOperationsRepository implements PlatformOperationsRep
   async authenticateApiToken(
     input: Parameters<PlatformOperationsRepository["authenticateApiToken"]>[0],
   ) {
-    return this.handle.client.transaction(() => {
-      const row = this.handle.client
-        .prepare(
-          `SELECT t.* FROM api_tokens t
+    return this.handle.client
+      .transaction(() => {
+        const row = this.handle.client
+          .prepare(
+            `SELECT t.* FROM api_tokens t
            JOIN service_accounts a ON a.id = t.service_account_id
            WHERE t.token_hash = ? AND t.revoked_at IS NULL AND t.expires_at > ?
              AND a.status = 'active'`,
-        )
-        .get(input.tokenHash, input.usedAt) as ApiTokenRow | undefined;
-      if (!row) return null;
-      this.handle.client
-        .prepare("UPDATE api_tokens SET last_used_at = ? WHERE id = ?")
-        .run(input.usedAt, row.id);
-      const account = mapServiceAccount(this.requiredServiceAccountRow(row.service_account_id));
-      const token = mapApiToken({ ...row, last_used_at: input.usedAt });
-      const allowed = new Set<Permission>(
-        [...account.systemPermissions, ...Object.values(account.projectPermissions).flat()].filter(
-          isPermission,
-        ),
-      );
-      return {
-        serviceAccount: account,
-        token,
-        effectiveScopes: token.scopes.filter(isPermission).filter((scope) => allowed.has(scope)),
-      };
-    })();
+          )
+          .get(input.tokenHash, input.usedAt) as ApiTokenRow | undefined;
+        if (!row) return null;
+        this.handle.client
+          .prepare("UPDATE api_tokens SET last_used_at = ? WHERE id = ?")
+          .run(input.usedAt, row.id);
+        const account = mapServiceAccount(this.requiredServiceAccountRow(row.service_account_id));
+        const token = mapApiToken({ ...row, last_used_at: input.usedAt });
+        const allowed = new Set<Permission>(
+          [
+            ...account.systemPermissions,
+            ...Object.values(account.projectPermissions).flat(),
+          ].filter(isPermission),
+        );
+        return {
+          serviceAccount: account,
+          token,
+          effectiveScopes: token.scopes.filter(isPermission).filter((scope) => allowed.has(scope)),
+        };
+      })
+      .immediate();
   }
 
   async listSchedules(projectIds?: readonly string[]): Promise<CaseSuiteSchedule[]> {
@@ -342,40 +345,42 @@ export class SqlitePlatformOperationsRepository implements PlatformOperationsRep
   async completeScheduleTrigger(
     input: Parameters<PlatformOperationsRepository["completeScheduleTrigger"]>[0],
   ): Promise<boolean> {
-    return this.handle.client.transaction(() => {
-      const claim = this.handle.client
-        .prepare(
-          "SELECT claim_id FROM schedule_trigger_claims WHERE schedule_id=? AND scheduled_for=?",
-        )
-        .get(input.scheduleId, input.scheduledFor) as { claim_id: string } | undefined;
-      if (claim?.claim_id !== input.claimId) return false;
-      const inserted = this.handle.client
-        .prepare(
-          `INSERT OR IGNORE INTO scheduled_trigger_receipts
+    return this.handle.client
+      .transaction(() => {
+        const claim = this.handle.client
+          .prepare(
+            "SELECT claim_id FROM schedule_trigger_claims WHERE schedule_id=? AND scheduled_for=?",
+          )
+          .get(input.scheduleId, input.scheduledFor) as { claim_id: string } | undefined;
+        if (claim?.claim_id !== input.claimId) return false;
+        const inserted = this.handle.client
+          .prepare(
+            `INSERT OR IGNORE INTO scheduled_trigger_receipts
            (schedule_id, scheduled_for, batch_id, status, created_at) VALUES (?, ?, ?, ?, ?)`,
-        )
-        .run(
-          input.scheduleId,
-          input.scheduledFor,
-          input.batchId ?? null,
-          input.status,
-          input.recordedAt,
-        );
-      if (inserted.changes !== 1) return false;
-      this.handle.client
-        .prepare(
-          `UPDATE case_suite_schedules
+          )
+          .run(
+            input.scheduleId,
+            input.scheduledFor,
+            input.batchId ?? null,
+            input.status,
+            input.recordedAt,
+          );
+        if (inserted.changes !== 1) return false;
+        this.handle.client
+          .prepare(
+            `UPDATE case_suite_schedules
            SET last_trigger_at = ?, next_trigger_at = ?, revision = revision + 1, updated_at = ?
            WHERE id = ?`,
-        )
-        .run(input.scheduledFor, input.nextTriggerAt, input.recordedAt, input.scheduleId);
-      this.handle.client
-        .prepare(
-          "DELETE FROM schedule_trigger_claims WHERE schedule_id=? AND scheduled_for=? AND claim_id=?",
-        )
-        .run(input.scheduleId, input.scheduledFor, input.claimId);
-      return true;
-    })();
+          )
+          .run(input.scheduledFor, input.nextTriggerAt, input.recordedAt, input.scheduleId);
+        this.handle.client
+          .prepare(
+            "DELETE FROM schedule_trigger_claims WHERE schedule_id=? AND scheduled_for=? AND claim_id=?",
+          )
+          .run(input.scheduleId, input.scheduledFor, input.claimId);
+        return true;
+      })
+      .immediate();
   }
 
   async listNotifications(input: Parameters<PlatformOperationsRepository["listNotifications"]>[0]) {
@@ -454,11 +459,12 @@ export class SqlitePlatformOperationsRepository implements PlatformOperationsRep
   async generateNotifications(
     input: Parameters<PlatformOperationsRepository["generateNotifications"]>[0],
   ): Promise<number> {
-    return this.handle.client.transaction(() => {
-      let inserted = 0;
-      inserted += this.handle.client
-        .prepare(
-          `INSERT OR IGNORE INTO notifications
+    return this.handle.client
+      .transaction(() => {
+        let inserted = 0;
+        inserted += this.handle.client
+          .prepare(
+            `INSERT OR IGNORE INTO notifications
            (id,user_id,project_id,kind,severity,title,message,resource_type,resource_id,created_at)
            SELECT 'notice-batch-' || recipients.user_id || '-' || b.id,
                   recipients.user_id,b.project_id,'batch.completed',
@@ -472,11 +478,11 @@ export class SqlitePlatformOperationsRepository implements PlatformOperationsRep
            WHERE b.status IN ('succeeded','failed','cancelled')
              AND b.batch_kind <> 'case_log_rerun'
            ORDER BY b.updated_at DESC LIMIT ?`,
-        )
-        .run(input.now, input.limit).changes;
-      inserted += this.handle.client
-        .prepare(
-          `INSERT OR IGNORE INTO notifications
+          )
+          .run(input.now, input.limit).changes;
+        inserted += this.handle.client
+          .prepare(
+            `INSERT OR IGNORE INTO notifications
            (id,user_id,kind,severity,title,message,resource_type,resource_id,created_at)
            SELECT 'notice-runner-' || u.id || '-' || r.id,u.id,'runner.offline','critical',
                   'Runner 已离线',r.name || ' 最近心跳：' || r.last_seen_at,'runner',r.id,?
@@ -487,11 +493,11 @@ export class SqlitePlatformOperationsRepository implements PlatformOperationsRep
                WHERE usr.user_id=u.id AND instr(role.permissions_json,'runner.read')>0
              )
            ORDER BY r.last_seen_at LIMIT ?`,
-        )
-        .run(input.now, input.runnerOfflineBefore, input.limit).changes;
-      inserted += this.handle.client
-        .prepare(
-          `INSERT OR IGNORE INTO notifications
+          )
+          .run(input.now, input.runnerOfflineBefore, input.limit).changes;
+        inserted += this.handle.client
+          .prepare(
+            `INSERT OR IGNORE INTO notifications
            (id,user_id,kind,severity,title,message,resource_type,resource_id,created_at)
            SELECT 'notice-cleanup-' || u.id || '-' || j.id,u.id,'cleanup.dead_letter','critical',
                   '清理任务进入死信',j.category || ' / ' || j.resource_type,'cleanup_job',j.id,?
@@ -500,10 +506,11 @@ export class SqlitePlatformOperationsRepository implements PlatformOperationsRep
              SELECT 1 FROM user_system_roles usr JOIN roles role ON role.id=usr.role_id
              WHERE usr.user_id=u.id AND instr(role.permissions_json,'settings.manage')>0
            ) ORDER BY j.updated_at DESC LIMIT ?`,
-        )
-        .run(input.now, input.limit).changes;
-      return inserted;
-    })();
+          )
+          .run(input.now, input.limit).changes;
+        return inserted;
+      })
+      .immediate();
   }
 
   async markNotificationRead(input: { notificationId: string; userId: string; readAt: string }) {
@@ -523,19 +530,21 @@ export class SqlitePlatformOperationsRepository implements PlatformOperationsRep
        (category, retention_days, minimum_days, maximum_days, updated_by, updated_at, revision)
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
     );
-    this.handle.client.transaction(() => {
-      for (const record of records) {
-        insert.run(
-          record.category,
-          record.retentionDays,
-          record.minimumDays,
-          record.maximumDays,
-          record.updatedBy ?? null,
-          record.updatedAt,
-          record.revision,
-        );
-      }
-    })();
+    this.handle.client
+      .transaction(() => {
+        for (const record of records) {
+          insert.run(
+            record.category,
+            record.retentionDays,
+            record.minimumDays,
+            record.maximumDays,
+            record.updatedBy ?? null,
+            record.updatedAt,
+            record.revision,
+          );
+        }
+      })
+      .immediate();
   }
 
   async listRetentionPolicies(): Promise<RetentionPolicy[]> {
@@ -595,9 +604,9 @@ export class SqlitePlatformOperationsRepository implements PlatformOperationsRep
   }
 
   async executeRetention(input: Parameters<PlatformOperationsRepository["executeRetention"]>[0]) {
-    const result = this.handle.client.transaction(() =>
-      executeSqliteRetention(this.handle, input),
-    )();
+    const result = this.handle.client
+      .transaction(() => executeSqliteRetention(this.handle, input))
+      .immediate();
     // 批次日志文件在数据库事务提交后删除；缺失文件时 removeBatchStore 为幂等 noop。
     for (const batchId of result.removedBatchStoreIds) {
       this.attemptLogs?.removeBatchStore(batchId);
@@ -608,48 +617,56 @@ export class SqlitePlatformOperationsRepository implements PlatformOperationsRep
   async claimRetentionCleanupJobs(
     input: Parameters<PlatformOperationsRepository["claimRetentionCleanupJobs"]>[0],
   ): ReturnType<PlatformOperationsRepository["claimRetentionCleanupJobs"]> {
-    return this.handle.client.transaction(() => {
-      const rows = this.handle.client
-        .prepare(
-          `SELECT id FROM cleanup_jobs
+    return this.handle.client
+      .transaction(() => {
+        const rows = this.handle.client
+          .prepare(
+            `SELECT id FROM cleanup_jobs
            WHERE category LIKE 'retention-%' AND object_key IS NOT NULL AND available_at <= ?
              AND (status IN ('pending','failed') OR (status='leased' AND lease_expires_at <= ?))
            ORDER BY available_at,id LIMIT ?`,
-        )
-        .all(input.now, input.now, input.limit) as Array<{ id: string }>;
-      const claimed: Awaited<
-        ReturnType<PlatformOperationsRepository["claimRetentionCleanupJobs"]>
-      > = [];
-      const update = this.handle.client.prepare(
-        `UPDATE cleanup_jobs SET status='leased', lease_owner=?, lease_expires_at=?,
+          )
+          .all(input.now, input.now, input.limit) as Array<{ id: string }>;
+        const claimed: Awaited<
+          ReturnType<PlatformOperationsRepository["claimRetentionCleanupJobs"]>
+        > = [];
+        const update = this.handle.client.prepare(
+          `UPDATE cleanup_jobs SET status='leased', lease_owner=?, lease_expires_at=?,
           attempt_count=attempt_count+1, updated_at=? WHERE id=?
           AND (status IN ('pending','failed') OR (status='leased' AND lease_expires_at <= ?))
           RETURNING id,category,resource_type,resource_id,object_key,attempt_count`,
-      );
-      for (const row of rows) {
-        const job = update.get(input.owner, input.leaseExpiresAt, input.now, row.id, input.now) as
-          | {
-              id: string;
-              category: string;
-              resource_type: string;
-              resource_id: string;
-              object_key: string;
-              attempt_count: number;
-            }
-          | undefined;
-        if (job) {
-          claimed.push({
-            id: job.id,
-            category: job.category,
-            resourceType: job.resource_type,
-            resourceId: job.resource_id,
-            objectKey: job.object_key,
-            attemptCount: job.attempt_count,
-          });
+        );
+        for (const row of rows) {
+          const job = update.get(
+            input.owner,
+            input.leaseExpiresAt,
+            input.now,
+            row.id,
+            input.now,
+          ) as
+            | {
+                id: string;
+                category: string;
+                resource_type: string;
+                resource_id: string;
+                object_key: string;
+                attempt_count: number;
+              }
+            | undefined;
+          if (job) {
+            claimed.push({
+              id: job.id,
+              category: job.category,
+              resourceType: job.resource_type,
+              resourceId: job.resource_id,
+              objectKey: job.object_key,
+              attemptCount: job.attempt_count,
+            });
+          }
         }
-      }
-      return claimed;
-    })();
+        return claimed;
+      })
+      .immediate();
   }
 
   async completeRetentionCleanupJob(
@@ -729,33 +746,35 @@ export class SqlitePlatformOperationsRepository implements PlatformOperationsRep
          schema_version=excluded.schema_version
        WHERE analytics_facts.schema_version < excluded.schema_version`,
     );
-    return this.handle.client.transaction(() => {
-      let inserted = 0;
-      for (const row of rows) {
-        const counts = resultCounts(row.testng_result_json);
-        inserted += writeFact.run(
-          row.attempt_id,
-          row.project_id,
-          row.batch_id,
-          row.run_id,
-          row.suite_id,
-          row.case_definition_id,
-          row.case_version,
-          row.runner_id,
-          row.environment_version_id,
-          row.outcome,
-          row.result_code,
-          failureSignature(row.outcome, row.result_code, row.result_summary),
-          row.duration_ms,
-          counts.passed,
-          counts.failed,
-          counts.skipped,
-          row.finished_at,
-          ANALYTICS_FACT_SCHEMA_VERSION,
-        ).changes;
-      }
-      return inserted;
-    })();
+    return this.handle.client
+      .transaction(() => {
+        let inserted = 0;
+        for (const row of rows) {
+          const counts = resultCounts(row.testng_result_json);
+          inserted += writeFact.run(
+            row.attempt_id,
+            row.project_id,
+            row.batch_id,
+            row.run_id,
+            row.suite_id,
+            row.case_definition_id,
+            row.case_version,
+            row.runner_id,
+            row.environment_version_id,
+            row.outcome,
+            row.result_code,
+            failureSignature(row.outcome, row.result_code, row.result_summary),
+            row.duration_ms,
+            counts.passed,
+            counts.failed,
+            counts.skipped,
+            row.finished_at,
+            ANALYTICS_FACT_SCHEMA_VERSION,
+          ).changes;
+        }
+        return inserted;
+      })
+      .immediate();
   }
 
   async readAnalytics(input: Parameters<PlatformOperationsRepository["readAnalytics"]>[0]) {
@@ -948,48 +967,50 @@ export class SqlitePlatformOperationsRepository implements PlatformOperationsRep
   async createAnalyticsExportJob(
     record: Parameters<PlatformOperationsRepository["createAnalyticsExportJob"]>[0],
   ) {
-    this.handle.client.transaction(() => {
-      const inserted = this.handle.client
-        .prepare(
-          `INSERT OR IGNORE INTO analytics_export_jobs
+    this.handle.client
+      .transaction(() => {
+        const inserted = this.handle.client
+          .prepare(
+            `INSERT OR IGNORE INTO analytics_export_jobs
            (id,requested_by,project_ids_json,filter_json,format,idempotency_key,status,
             progress_percent,created_at,updated_at)
            VALUES (?,?,?,?,?,?,?,?,?,?)`,
-        )
-        .run(
-          record.job.id,
-          record.job.requestedBy,
-          record.projectIds === undefined ? null : JSON.stringify(record.projectIds),
-          JSON.stringify(record.job.filter),
-          record.job.format,
-          record.idempotencyKey,
-          record.job.status,
-          record.job.progressPercent,
-          record.job.createdAt,
-          record.job.updatedAt,
-        );
-      if (inserted.changes === 0) return;
-      this.handle.client
-        .prepare(
-          `INSERT INTO queue_jobs
+          )
+          .run(
+            record.job.id,
+            record.job.requestedBy,
+            record.projectIds === undefined ? null : JSON.stringify(record.projectIds),
+            JSON.stringify(record.job.filter),
+            record.job.format,
+            record.idempotencyKey,
+            record.job.status,
+            record.job.progressPercent,
+            record.job.createdAt,
+            record.job.updatedAt,
+          );
+        if (inserted.changes === 0) return;
+        this.handle.client
+          .prepare(
+            `INSERT INTO queue_jobs
            (message_id,run_id,attempt,schema_version,kind,payload_json,priority,deduplication_key,
             status,available_at,created_at,updated_at)
            VALUES (?,?,?,?,?,?,?,?,'available',?,?,?)`,
-        )
-        .run(
-          record.dispatchJob.messageId,
-          record.dispatchJob.runId,
-          record.dispatchJob.attempt,
-          record.dispatchJob.schemaVersion,
-          record.dispatchJob.kind,
-          JSON.stringify(record.dispatchJob.payload),
-          record.dispatchJob.priority,
-          record.dispatchJob.deduplicationKey,
-          record.dispatchJob.createdAt,
-          record.dispatchJob.createdAt,
-          record.dispatchJob.createdAt,
-        );
-    })();
+          )
+          .run(
+            record.dispatchJob.messageId,
+            record.dispatchJob.runId,
+            record.dispatchJob.attempt,
+            record.dispatchJob.schemaVersion,
+            record.dispatchJob.kind,
+            JSON.stringify(record.dispatchJob.payload),
+            record.dispatchJob.priority,
+            record.dispatchJob.deduplicationKey,
+            record.dispatchJob.createdAt,
+            record.dispatchJob.createdAt,
+            record.dispatchJob.createdAt,
+          );
+      })
+      .immediate();
     const row = this.handle.client
       .prepare("SELECT * FROM analytics_export_jobs WHERE requested_by=? AND idempotency_key=?")
       .get(record.job.requestedBy, record.idempotencyKey) as AnalyticsExportJobRow | undefined;

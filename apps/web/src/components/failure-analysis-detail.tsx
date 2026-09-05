@@ -18,6 +18,9 @@ import {
 export function FailureAnalysisDetail({
   batch,
   canManage,
+  canAssign,
+  canReadStatistics,
+  currentUserId,
   projectId,
   projectVersionId,
   initialCandidatePage,
@@ -28,6 +31,9 @@ export function FailureAnalysisDetail({
 }: {
   batch: FailureAnalysisBatch;
   canManage: boolean;
+  canAssign: boolean;
+  canReadStatistics: boolean;
+  currentUserId: string;
   projectId: string;
   projectVersionId: string;
   initialCandidatePage: FailureAnalysisCandidatePage | null | undefined;
@@ -64,6 +70,22 @@ export function FailureAnalysisDetail({
           </div>
         </div>
         <div className="failure-analysis-detail-actions">
+          <Link
+            className="ui-button ui-button-secondary"
+            prefetch={false}
+            href={`/run-batches/${encodeURIComponent(batch.id)}`}
+          >
+            执行详情
+          </Link>
+          {canReadStatistics ? (
+            <Link
+              className="ui-button ui-button-secondary"
+              prefetch={false}
+              href={`/case-analysis/${encodeURIComponent(batch.id)}/statistics`}
+            >
+              分析统计
+            </Link>
+          ) : null}
           <FailureAnalysisExportButton batchId={batch.id} />
           <span className="hero-icon violet">
             <SearchCheck size={24} />
@@ -72,6 +94,8 @@ export function FailureAnalysisDetail({
       </section>
       <FailureAnalysisWorkspace
         canManage={canManage}
+        canAssign={canAssign}
+        currentUserId={currentUserId}
         initialCandidatePage={initialCandidatePage}
         initialBatchId={batch.id}
         initialClaimPage={initialClaimPage}

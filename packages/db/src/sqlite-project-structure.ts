@@ -179,40 +179,42 @@ export class SqliteProjectStructureRepository implements ProjectStructureReposit
 
   async createStage(record: CreateTestStageRecord): Promise<TestStage> {
     try {
-      return this.handle.client.transaction(() => {
-        const version = this.handle.client
-          .prepare("SELECT id FROM project_versions WHERE id = ? AND project_id = ?")
-          .get(record.projectVersionId, record.projectId);
-        if (!version) {
-          throw new DomainError("PROJECT_VERSION_NOT_FOUND", "指定的项目版本不存在。");
-        }
-        const position = (
+      return this.handle.client
+        .transaction(() => {
+          const version = this.handle.client
+            .prepare("SELECT id FROM project_versions WHERE id = ? AND project_id = ?")
+            .get(record.projectVersionId, record.projectId);
+          if (!version) {
+            throw new DomainError("PROJECT_VERSION_NOT_FOUND", "指定的项目版本不存在。");
+          }
+          const position = (
+            this.handle.client
+              .prepare(
+                "SELECT COALESCE(MAX(position), 0) + 1 AS position FROM test_stages WHERE project_version_id = ?",
+              )
+              .get(record.projectVersionId) as { position: number }
+          ).position;
           this.handle.client
             .prepare(
-              "SELECT COALESCE(MAX(position), 0) + 1 AS position FROM test_stages WHERE project_version_id = ?",
-            )
-            .get(record.projectVersionId) as { position: number }
-        ).position;
-        this.handle.client
-          .prepare(
-            `INSERT INTO test_stages
+              `INSERT INTO test_stages
              (id, project_id, project_version_id, name, normalized_name, description, position,
               status, revision, created_at, updated_at)
              VALUES (?, ?, ?, ?, ?, ?, ?, 'active', 1, ?, ?)`,
-          )
-          .run(
-            record.id,
-            record.projectId,
-            record.projectVersionId,
-            record.name,
-            record.normalizedName,
-            record.description,
-            position,
-            record.recordedAt,
-            record.recordedAt,
-          );
-        return this.requiredStage(record.id);
-      })();
+            )
+            .run(
+              record.id,
+              record.projectId,
+              record.projectVersionId,
+              record.name,
+              record.normalizedName,
+              record.description,
+              position,
+              record.recordedAt,
+              record.recordedAt,
+            );
+          return this.requiredStage(record.id);
+        })
+        .immediate();
     } catch (error) {
       if (error instanceof DomainError) throw error;
       throw mapStructureWriteError(error);
@@ -309,46 +311,48 @@ export class SqliteProjectStructureRepository implements ProjectStructureReposit
       });
     }
     try {
-      return this.handle.client.transaction(() => {
-        this.validateAsset(input.projectId, input.jdkAssetId, "jdk");
-        this.validateAsset(input.projectId, input.jarBundleAssetId, "jar-bundle");
-        const current = this.configurationRow(input.projectId);
-        if (!current) {
-          if (input.expectedRevision !== 0) throw revisionConflict();
-          this.handle.client
-            .prepare(
-              `INSERT INTO project_adapter_configurations
+      return this.handle.client
+        .transaction(() => {
+          this.validateAsset(input.projectId, input.jdkAssetId, "jdk");
+          this.validateAsset(input.projectId, input.jarBundleAssetId, "jar-bundle");
+          const current = this.configurationRow(input.projectId);
+          if (!current) {
+            if (input.expectedRevision !== 0) throw revisionConflict();
+            this.handle.client
+              .prepare(
+                `INSERT INTO project_adapter_configurations
                (project_id, suite_name, test_name, environment_address, jdk_asset_id,
                 jar_bundle_asset_id, revision, updated_by, updated_at)
                VALUES (?, '', '', '', ?, ?, 1, ?, ?)`,
-            )
-            .run(
-              input.projectId,
-              input.jdkAssetId ?? null,
-              input.jarBundleAssetId ?? null,
-              input.actorId ?? null,
-              input.updatedAt,
-            );
-        } else {
-          const changed = this.handle.client
-            .prepare(
-              `UPDATE project_adapter_configurations
+              )
+              .run(
+                input.projectId,
+                input.jdkAssetId ?? null,
+                input.jarBundleAssetId ?? null,
+                input.actorId ?? null,
+                input.updatedAt,
+              );
+          } else {
+            const changed = this.handle.client
+              .prepare(
+                `UPDATE project_adapter_configurations
                SET suite_name = '', test_name = '', environment_address = '', jdk_asset_id = ?,
                    jar_bundle_asset_id = ?, revision = revision + 1, updated_by = ?, updated_at = ?
                WHERE project_id = ? AND revision = ?`,
-            )
-            .run(
-              input.jdkAssetId ?? null,
-              input.jarBundleAssetId ?? null,
-              input.actorId ?? null,
-              input.updatedAt,
-              input.projectId,
-              input.expectedRevision,
-            );
-          if (changed.changes !== 1) throw revisionConflict();
-        }
-        return this.requiredConfiguration(input.projectId);
-      })();
+              )
+              .run(
+                input.jdkAssetId ?? null,
+                input.jarBundleAssetId ?? null,
+                input.actorId ?? null,
+                input.updatedAt,
+                input.projectId,
+                input.expectedRevision,
+              );
+            if (changed.changes !== 1) throw revisionConflict();
+          }
+          return this.requiredConfiguration(input.projectId);
+        })
+        .immediate();
     } catch (error) {
       if (error instanceof DomainError) throw error;
       throw mapStructureWriteError(error);
@@ -392,30 +396,32 @@ export class SqliteProjectStructureRepository implements ProjectStructureReposit
     input: Parameters<ProjectStructureRepository["inheritAdapterConfiguration"]>[0],
   ): Promise<ProjectAdapterConfiguration> {
     try {
-      return this.handle.client.transaction(() => {
-        this.requireVersionInProject(input.sourceProjectVersionId, input.projectId);
-        this.requireVersionInProject(input.targetProjectVersionId, input.projectId);
-        const source = this.versionRuntimeRow(input.sourceProjectVersionId);
-        if (!source) {
-          throw new DomainError(
-            "PROJECT_VERSION_RUNTIME_ASSETS_MISSING",
-            "来源版本尚未配置 JDK 或依赖 JAR 压缩包。",
-          );
-        }
-        const current = this.versionRuntimeRow(input.targetProjectVersionId);
-        if ((current?.revision ?? 0) !== input.expectedRevision) throw revisionConflict();
-        this.writeVersionConfiguration({
-          projectId: input.projectId,
-          projectVersionId: input.targetProjectVersionId,
-          ...(source.jdk_asset_id ? { jdkAssetId: source.jdk_asset_id } : {}),
-          ...(source.jar_bundle_asset_id ? { jarBundleAssetId: source.jar_bundle_asset_id } : {}),
-          inheritedFromProjectVersionId: input.sourceProjectVersionId,
-          expectedRevision: input.expectedRevision,
-          ...(input.actorId ? { actorId: input.actorId } : {}),
-          updatedAt: input.updatedAt,
-        });
-        return this.requiredVersionConfiguration(input.projectId, input.targetProjectVersionId);
-      })();
+      return this.handle.client
+        .transaction(() => {
+          this.requireVersionInProject(input.sourceProjectVersionId, input.projectId);
+          this.requireVersionInProject(input.targetProjectVersionId, input.projectId);
+          const source = this.versionRuntimeRow(input.sourceProjectVersionId);
+          if (!source) {
+            throw new DomainError(
+              "PROJECT_VERSION_RUNTIME_ASSETS_MISSING",
+              "来源版本尚未配置 JDK 或依赖 JAR 压缩包。",
+            );
+          }
+          const current = this.versionRuntimeRow(input.targetProjectVersionId);
+          if ((current?.revision ?? 0) !== input.expectedRevision) throw revisionConflict();
+          this.writeVersionConfiguration({
+            projectId: input.projectId,
+            projectVersionId: input.targetProjectVersionId,
+            ...(source.jdk_asset_id ? { jdkAssetId: source.jdk_asset_id } : {}),
+            ...(source.jar_bundle_asset_id ? { jarBundleAssetId: source.jar_bundle_asset_id } : {}),
+            inheritedFromProjectVersionId: input.sourceProjectVersionId,
+            expectedRevision: input.expectedRevision,
+            ...(input.actorId ? { actorId: input.actorId } : {}),
+            updatedAt: input.updatedAt,
+          });
+          return this.requiredVersionConfiguration(input.projectId, input.targetProjectVersionId);
+        })
+        .immediate();
     } catch (error) {
       if (error instanceof DomainError) throw error;
       throw mapStructureWriteError(error);
@@ -429,48 +435,53 @@ export class SqliteProjectStructureRepository implements ProjectStructureReposit
     orphanedAsset?: ProjectRuntimeAsset;
   }> {
     try {
-      return this.handle.client.transaction(() => {
-        this.requireVersionInProject(input.projectVersionId, input.projectId);
-        const current = this.versionRuntimeRow(input.projectVersionId);
-        if (!current) {
-          throw new DomainError(
-            "PROJECT_VERSION_RUNTIME_ASSETS_MISSING",
-            "当前版本没有可删除的资源。",
+      return this.handle.client
+        .transaction(() => {
+          this.requireVersionInProject(input.projectVersionId, input.projectId);
+          const current = this.versionRuntimeRow(input.projectVersionId);
+          if (!current) {
+            throw new DomainError(
+              "PROJECT_VERSION_RUNTIME_ASSETS_MISSING",
+              "当前版本没有可删除的资源。",
+            );
+          }
+          if (current.revision !== input.expectedRevision) throw revisionConflict();
+          const assetId = input.kind === "jdk" ? current.jdk_asset_id : current.jar_bundle_asset_id;
+          if (!assetId) {
+            throw new DomainError(
+              "PROJECT_VERSION_RUNTIME_ASSET_MISSING",
+              "当前版本未配置该资源。",
+            );
+          }
+          const jdkAssetId = input.kind === "jdk" ? undefined : (current.jdk_asset_id ?? undefined);
+          const jarBundleAssetId =
+            input.kind === "jar-bundle" ? undefined : (current.jar_bundle_asset_id ?? undefined);
+          if (!jdkAssetId && !jarBundleAssetId) {
+            this.handle.client
+              .prepare(
+                "DELETE FROM project_version_runtime_assets WHERE project_version_id = ? AND revision = ?",
+              )
+              .run(input.projectVersionId, input.expectedRevision);
+          } else {
+            this.writeVersionConfiguration({
+              projectId: input.projectId,
+              projectVersionId: input.projectVersionId,
+              ...(jdkAssetId ? { jdkAssetId } : {}),
+              ...(jarBundleAssetId ? { jarBundleAssetId } : {}),
+              expectedRevision: input.expectedRevision,
+              ...(input.actorId ? { actorId: input.actorId } : {}),
+              updatedAt: input.updatedAt,
+            });
+          }
+          const configuration = this.requiredVersionConfiguration(
+            input.projectId,
+            input.projectVersionId,
+            true,
           );
-        }
-        if (current.revision !== input.expectedRevision) throw revisionConflict();
-        const assetId = input.kind === "jdk" ? current.jdk_asset_id : current.jar_bundle_asset_id;
-        if (!assetId) {
-          throw new DomainError("PROJECT_VERSION_RUNTIME_ASSET_MISSING", "当前版本未配置该资源。");
-        }
-        const jdkAssetId = input.kind === "jdk" ? undefined : (current.jdk_asset_id ?? undefined);
-        const jarBundleAssetId =
-          input.kind === "jar-bundle" ? undefined : (current.jar_bundle_asset_id ?? undefined);
-        if (!jdkAssetId && !jarBundleAssetId) {
-          this.handle.client
-            .prepare(
-              "DELETE FROM project_version_runtime_assets WHERE project_version_id = ? AND revision = ?",
-            )
-            .run(input.projectVersionId, input.expectedRevision);
-        } else {
-          this.writeVersionConfiguration({
-            projectId: input.projectId,
-            projectVersionId: input.projectVersionId,
-            ...(jdkAssetId ? { jdkAssetId } : {}),
-            ...(jarBundleAssetId ? { jarBundleAssetId } : {}),
-            expectedRevision: input.expectedRevision,
-            ...(input.actorId ? { actorId: input.actorId } : {}),
-            updatedAt: input.updatedAt,
-          });
-        }
-        const configuration = this.requiredVersionConfiguration(
-          input.projectId,
-          input.projectVersionId,
-          true,
-        );
-        const orphanedAsset = this.findUnreferencedAsset(assetId);
-        return { configuration, ...(orphanedAsset ? { orphanedAsset } : {}) };
-      })();
+          const orphanedAsset = this.findUnreferencedAsset(assetId);
+          return { configuration, ...(orphanedAsset ? { orphanedAsset } : {}) };
+        })
+        .immediate();
     } catch (error) {
       if (error instanceof DomainError) throw error;
       throw mapStructureWriteError(error);
@@ -478,12 +489,16 @@ export class SqliteProjectStructureRepository implements ProjectStructureReposit
   }
 
   async deleteRuntimeAssetMetadata(assetId: string): Promise<void> {
-    this.handle.client.transaction(() => {
-      const orphan = this.findUnreferencedAsset(assetId);
-      if (orphan) {
-        this.handle.client.prepare("DELETE FROM project_runtime_assets WHERE id = ?").run(assetId);
-      }
-    })();
+    this.handle.client
+      .transaction(() => {
+        const orphan = this.findUnreferencedAsset(assetId);
+        if (orphan) {
+          this.handle.client
+            .prepare("DELETE FROM project_runtime_assets WHERE id = ?")
+            .run(assetId);
+        }
+      })
+      .immediate();
   }
 
   async deleteRuntimeAssetIfUnreferenced(
@@ -516,13 +531,15 @@ export class SqliteProjectStructureRepository implements ProjectStructureReposit
     },
   ): ProjectAdapterConfiguration {
     try {
-      return this.handle.client.transaction(() => {
-        this.requireVersionInProject(input.projectVersionId, input.projectId);
-        this.validateAsset(input.projectId, input.jdkAssetId, "jdk");
-        this.validateAsset(input.projectId, input.jarBundleAssetId, "jar-bundle");
-        this.writeVersionConfiguration(input);
-        return this.requiredVersionConfiguration(input.projectId, input.projectVersionId);
-      })();
+      return this.handle.client
+        .transaction(() => {
+          this.requireVersionInProject(input.projectVersionId, input.projectId);
+          this.validateAsset(input.projectId, input.jdkAssetId, "jdk");
+          this.validateAsset(input.projectId, input.jarBundleAssetId, "jar-bundle");
+          this.writeVersionConfiguration(input);
+          return this.requiredVersionConfiguration(input.projectId, input.projectVersionId);
+        })
+        .immediate();
     } catch (error) {
       if (error instanceof DomainError) throw error;
       throw mapStructureWriteError(error);

@@ -5,7 +5,9 @@ import { formatBatchDuration } from "./run-batch-presentation";
 import { columnCharacterWidthAtCoverage } from "./table-column-width";
 
 export type ExecutionRecordRow = {
+  statisticsPending?: boolean;
   id: string;
+  analysisScope?: { projectId: string; projectVersionId: string; batchId: string };
   sequenceNumber: number;
   suiteName: string;
   suiteVersion: number;
@@ -144,7 +146,12 @@ export const EXECUTION_RECORD_COLUMNS: readonly ExecutionRecordColumnDefinition[
     defaultWidth: 270,
     minWidth: 190,
     maxWidth: 360,
-    text: (row) => (executionRecordIsActive(row.status) ? "详情 分享 终止任务" : "详情 分享"),
+    text: (row) =>
+      executionRecordIsActive(row.status)
+        ? "详情 分享 终止任务"
+        : row.analysisScope
+          ? "详情 分享 开始分析"
+          : "详情 分享",
   },
 ];
 

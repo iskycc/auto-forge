@@ -2,16 +2,17 @@
 
 import { Button, Input } from "@/components/ui";
 
-import { apiErrorSchema } from "@autoforge/contracts";
-import type {
-  CaseSuite,
-  CaseSuiteDdtItem,
-  CaseSuiteDetails,
-  CaseSuiteItem,
-} from "@autoforge/domain";
+import type { CaseSuite } from "@autoforge/domain";
+import type { SuiteDirectoryPart } from "@autoforge/contracts";
+type CaseSuiteItem = SuiteDirectoryPart["items"][number];
+type CaseSuiteDdtItem = SuiteDirectoryPart["ddtItems"][number];
+type CaseSuiteDetails = CaseSuite & SuiteDirectoryPart;
 import { ChevronRight, DatabaseZap, FolderTree, LoaderCircle, Search, Trash2 } from "lucide-react";
 import { useDeferredValue, useMemo, useState } from "react";
 import { useConfirm } from "@/components/ui-feedback";
+import { useCaseSuiteRevision } from "@/components/case-suite-revision";
+import { useConcurrentModificationFeedback } from "@/components/concurrent-modification-feedback";
+import { throwApiErrorResponse } from "@/lib/client-api";
 
 const SUITE_TREE_GROUP_PAGE_SIZE = 250;
 // A package row contains several interactive elements, so mounting 250 rows in one click can still
@@ -27,7 +28,14 @@ export function CaseSuiteDetailsView({
   initialSuite: CaseSuiteDetails;
 }) {
   const confirmAction = useConfirm();
+  const showConcurrentModification = useConcurrentModificationFeedback();
+  const { revision, acceptMutation } = useCaseSuiteRevision();
   const [suite, setSuite] = useState(initialSuite);
+  const [previousInitialSuite, setPreviousInitialSuite] = useState(initialSuite);
+  if (previousInitialSuite !== initialSuite) {
+    setPreviousInitialSuite(initialSuite);
+    if (initialSuite.revision >= suite.revision) setSuite(initialSuite);
+  }
   const [query, setQuery] = useState("");
   const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(new Set());
   const [selectedDdtIds, setSelectedDdtIds] = useState<ReadonlySet<string>>(new Set());
@@ -74,14 +82,9 @@ export function CaseSuiteDetailsView({
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ caseDefinitionIds }),
       });
-      if (!response.ok) {
-        const payload: unknown = await response.json().catch(() => null);
-        const parsed = apiErrorSchema.safeParse(payload);
-        throw new Error(
-          parsed.success ? parsed.data.error.message : `请求失败（HTTP ${response.status}）。`,
-        );
-      }
+      if (!response.ok) await throwApiErrorResponse(response, "移除用例失败。");
       const summary = (await response.json()) as CaseSuite;
+      acceptMutation(revision, summary.revision);
       const removedIds = new Set(caseDefinitionIds);
       setSuite((current) => ({
         ...current,
@@ -90,6 +93,7 @@ export function CaseSuiteDetailsView({
       }));
       setSelectedIds(new Set());
     } catch (caught) {
+      if (await showConcurrentModification(caught)) return;
       setError(caught instanceof Error ? caught.message : "移除用例失败。");
     } finally {
       setRemoving(false);
@@ -118,14 +122,9 @@ export function CaseSuiteDetailsView({
           body: JSON.stringify({ ddtCaseIds }),
         },
       );
-      if (!response.ok) {
-        const payload: unknown = await response.json().catch(() => null);
-        const parsed = apiErrorSchema.safeParse(payload);
-        throw new Error(
-          parsed.success ? parsed.data.error.message : `请求失败（HTTP ${response.status}）。`,
-        );
-      }
+      if (!response.ok) await throwApiErrorResponse(response, "移除用例失败。");
       const summary = (await response.json()) as CaseSuite;
+      acceptMutation(revision, summary.revision);
       const removedIds = new Set(ddtCaseIds);
       setSuite((current) => ({
         ...current,
@@ -134,6 +133,7 @@ export function CaseSuiteDetailsView({
       }));
       setSelectedDdtIds(new Set());
     } catch (caught) {
+      if (await showConcurrentModification(caught)) return;
       setError(caught instanceof Error ? caught.message : "移除 DDT 用例失败。");
     } finally {
       setRemoving(false);
@@ -405,7 +405,7 @@ function SuitePackageGroup({
                 <code>{item.caseDefinition.className}</code>
               </span>
               <span className="suite-case-type testng">普通用例</span>
-              <small>{item.caseDefinition.methods.length} 个方法</small>
+              <small>{item.caseDefinition.methodCount} 个方法</small>
               {canManage ? (
                 <Button
                   aria-label={`移除 ${item.caseDefinition.displayName}`}

@@ -34,23 +34,25 @@ export class SqliteRunnerGroupRepository implements RunnerGroupRepository {
     runnerIds: string[];
     recordedAt: string;
   }): Promise<RunnerGroup> {
-    return this.handle.client.transaction(() => {
-      const row = this.handle.db
-        .insert(runnerGroups)
-        .values({
-          id: input.id,
-          name: input.name,
-          normalizedName: input.normalizedName,
-          description: input.description,
-          revision: 1,
-          createdAt: input.recordedAt,
-          updatedAt: input.recordedAt,
-        })
-        .returning()
-        .get();
-      this.replaceMembers(input.id, input.runnerIds, input.recordedAt);
-      return this.mapGroup(row);
-    })();
+    return this.handle.client
+      .transaction(() => {
+        const row = this.handle.db
+          .insert(runnerGroups)
+          .values({
+            id: input.id,
+            name: input.name,
+            normalizedName: input.normalizedName,
+            description: input.description,
+            revision: 1,
+            createdAt: input.recordedAt,
+            updatedAt: input.recordedAt,
+          })
+          .returning()
+          .get();
+        this.replaceMembers(input.id, input.runnerIds, input.recordedAt);
+        return this.mapGroup(row);
+      })
+      .immediate();
   }
 
   async update(input: {
@@ -62,28 +64,30 @@ export class SqliteRunnerGroupRepository implements RunnerGroupRepository {
     runnerIds?: string[];
     updatedAt: string;
   }): Promise<RunnerGroup | null> {
-    return this.handle.client.transaction(() => {
-      const row = this.handle.db
-        .update(runnerGroups)
-        .set({
-          ...(input.name !== undefined ? { name: input.name } : {}),
-          ...(input.normalizedName !== undefined ? { normalizedName: input.normalizedName } : {}),
-          ...(input.description !== undefined ? { description: input.description } : {}),
-          revision: sql`${runnerGroups.revision} + 1`,
-          updatedAt: input.updatedAt,
-        })
-        .where(
-          and(
-            eq(runnerGroups.id, input.groupId),
-            eq(runnerGroups.revision, input.expectedRevision),
-          ),
-        )
-        .returning()
-        .get();
-      if (!row) return null;
-      if (input.runnerIds) this.replaceMembers(input.groupId, input.runnerIds, input.updatedAt);
-      return this.mapGroup(row);
-    })();
+    return this.handle.client
+      .transaction(() => {
+        const row = this.handle.db
+          .update(runnerGroups)
+          .set({
+            ...(input.name !== undefined ? { name: input.name } : {}),
+            ...(input.normalizedName !== undefined ? { normalizedName: input.normalizedName } : {}),
+            ...(input.description !== undefined ? { description: input.description } : {}),
+            revision: sql`${runnerGroups.revision} + 1`,
+            updatedAt: input.updatedAt,
+          })
+          .where(
+            and(
+              eq(runnerGroups.id, input.groupId),
+              eq(runnerGroups.revision, input.expectedRevision),
+            ),
+          )
+          .returning()
+          .get();
+        if (!row) return null;
+        if (input.runnerIds) this.replaceMembers(input.groupId, input.runnerIds, input.updatedAt);
+        return this.mapGroup(row);
+      })
+      .immediate();
   }
 
   async delete(groupId: string): Promise<boolean> {

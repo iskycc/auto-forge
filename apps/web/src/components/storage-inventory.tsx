@@ -1,5 +1,13 @@
 "use client";
 
+import { storageInventoryPageSchema } from "@autoforge/contracts";
+import {
+  browserCacheEpoch,
+  clearBrowserSnapshots,
+  readBrowserSnapshot,
+  writeBrowserSnapshot,
+} from "@/lib/browser-read-cache";
+
 import type {
   DeleteStorageRuntimeAssetResult,
   DeleteStorageRuntimeAssetsResult,
@@ -21,7 +29,6 @@ import { buildStorageInventoryTree } from "@/components/storage-inventory-tree-m
 import { readApiErrorMessage } from "@/lib/client-api";
 
 const INVENTORY_READ_BATCH_SIZE = 500;
-const INVENTORY_RENDER_COMMIT_SIZE = 2_000;
 const RUNTIME_ASSET_DELETE_BATCH_SIZE = 100;
 
 const CATEGORY_LABELS: Record<StorageInventoryCategory, string> = {
@@ -58,6 +65,8 @@ export function StorageInventory({
   const [draftQuery, setDraftQuery] = useState(initialQuery);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [snapshotState, setSnapshotState] =
+    useState<StorageInventoryPage["snapshotState"]>("pending");
   const [refreshSequence, setRefreshSequence] = useState(0);
   const [selectedRuntimeAssetIds, setSelectedRuntimeAssetIds] = useState<Set<string>>(
     () => new Set(),
@@ -66,6 +75,8 @@ export function StorageInventory({
     () => new Set(),
   );
   const handledRefreshSequence = useRef(0);
+  const removedRuntimeAssets = useRef(new Set<string>());
+  const inventoryAbort = useRef<AbortController | undefined>(undefined);
   const deletionScrollPosition = useRef<number | undefined>(undefined);
 
   useLayoutEffect(() => {
@@ -77,16 +88,23 @@ export function StorageInventory({
 
   useEffect(() => {
     const abort = new AbortController();
+    inventoryAbort.current = abort;
     const refreshSummary = refreshSequence > handledRefreshSequence.current;
     void loadCompleteInventory({
       signal: abort.signal,
       initialCategory,
       initialQuery,
       refreshSummary,
+      onState: setSnapshotState,
       onBatch(batch, nextSummary) {
         if (abort.signal.aborted) return;
-        setItems((current) => [...current, ...batch]);
-        setSummary(nextSummary);
+        const visible = removeRuntimeAssetsFromInventory(
+          batch,
+          nextSummary,
+          removedRuntimeAssets.current,
+        );
+        setItems(visible.items);
+        setSummary(visible.summary);
       },
     })
       .then(() => {
@@ -149,8 +167,7 @@ export function StorageInventory({
 
   function refreshInventory(): void {
     setSelectedRuntimeAssetIds(new Set());
-    setItems([]);
-    setSummary(undefined);
+    clearBrowserSnapshots();
     setLoading(true);
     setError("");
     setRefreshSequence((value) => value + 1);
@@ -278,7 +295,10 @@ export function StorageInventory({
   }
 
   function applyDeletedRuntimeAssets(runtimeAssetIds: ReadonlySet<string>): void {
+    clearBrowserSnapshots();
+    inventoryAbort.current?.abort();
     if (runtimeAssetIds.size === 0 || !summary) return;
+    for (const id of runtimeAssetIds) removedRuntimeAssets.current.add(id);
     // Removing an expanded file can shorten the document before the browser restores focus,
     // which previously made the whole settings page jump to the top. Keep the viewport and let
     // keyed tree branches retain their own expanded state while applying the local patch.
@@ -324,6 +344,15 @@ export function StorageInventory({
             {error}
           </p>
         ) : null}
+        <p role="status">
+          {snapshotState === "pending"
+            ? "后台正在扫描存储清单，扫描结果会自动显示。"
+            : snapshotState === "stale"
+              ? "后台扫描中，当前显示上次完成的清单。"
+              : snapshotState === "failed"
+                ? "后台扫描失败，保留上次清单，请重新扫描。"
+                : ""}
+        </p>
         {summary ? (
           <>
             <div className="storage-summary-grid">
@@ -443,7 +472,7 @@ export function StorageInventory({
         {loading && summary ? (
           <div className="storage-tree-loading" role="status">
             <LoaderCircle aria-hidden="true" className="spin" size={15} />
-            正在继续扫描目录，已载入 {items.length.toLocaleString()} 个文件与引用…
+            正在载入目录，已载入 {items.length.toLocaleString()} 个文件与引用…
           </div>
         ) : null}
         {tree.length > 0 ? (
@@ -540,47 +569,90 @@ async function loadCompleteInventory({
   initialQuery,
   refreshSummary,
   onBatch,
+  onState,
 }: {
   signal: AbortSignal;
   initialCategory: StorageInventoryCategory | undefined;
   initialQuery: string;
   refreshSummary: boolean;
   onBatch: (items: StorageInventoryItem[], summary: StorageInventorySummary) => void;
+  onState: (state: StorageInventoryPage["snapshotState"]) => void;
 }): Promise<void> {
-  let cursor: string | undefined;
-  const visitedCursors = new Set<string>();
+  const scopeKey = `storage-inventory:v1:${initialCategory ?? ""}:${initialQuery}`;
+  const epoch = browserCacheEpoch();
+  const cached = readBrowserSnapshot(scopeKey) as
+    | { items: StorageInventoryItem[]; summary: StorageInventorySummary; generation?: string }
+    | undefined;
+  if (cached) onBatch(cached.items, cached.summary);
+  let displayedGeneration = cached?.generation;
   let firstRequest = true;
-  let bufferedItems: StorageInventoryItem[] = [];
-
-  do {
+  let nodeId: string | undefined;
+  for (;;) {
+    signal.throwIfAborted();
     const parameters = new URLSearchParams({ limit: String(INVENTORY_READ_BATCH_SIZE) });
-    if (cursor) parameters.set("cursor", cursor);
+    if (nodeId) parameters.set("nodeId", nodeId);
     if (initialCategory) parameters.set("category", initialCategory);
     if (initialQuery) parameters.set("query", initialQuery);
     if (firstRequest && refreshSummary) parameters.set("refresh", "1");
-
-    const response = await fetch(`/api/v1/settings/storage?${parameters}`, {
-      cache: "no-store",
-      signal,
-    });
-    const body = (await response.json()) as StorageInventoryPage & {
-      error?: { message?: string };
-    };
-    if (!response.ok) {
-      throw new Error(body.error?.message ?? "存储清单读取失败。");
-    }
-    bufferedItems.push(...body.items);
-    cursor = body.nextCursor;
-    if (firstRequest || bufferedItems.length >= INVENTORY_RENDER_COMMIT_SIZE || !cursor) {
-      onBatch(bufferedItems, body.summary);
-      bufferedItems = [];
-    }
+    const first = await fetchInventory(parameters, signal);
     firstRequest = false;
-    if (cursor) {
-      if (visitedCursors.has(cursor)) {
-        throw new Error("存储清单返回了重复游标，目录加载已停止。");
+    nodeId = first.nodeId;
+    if (nodeId) parameters.set("nodeId", nodeId);
+    onState(first.snapshotState);
+    if (first.snapshotState === "failed")
+      throw new Error("后台扫描失败，请重新扫描；已加载的清单仍可查看。");
+    if (first.generation && first.generation !== displayedGeneration) {
+      const items = [...first.items];
+      onBatch([...items], first.summary);
+      let cursor = first.nextCursor;
+      const visited = new Set<string>();
+      while (cursor) {
+        if (visited.has(cursor)) throw new Error("存储清单返回重复游标，已停止读取。");
+        visited.add(cursor);
+        parameters.delete("refresh");
+        parameters.set("cursor", cursor);
+        const key = `${scopeKey}:${cursor}`;
+        const cachedPage = readBrowserSnapshot(key);
+        const page = cachedPage
+          ? storageInventoryPageSchema.parse(cachedPage)
+          : await fetchInventory(parameters, signal);
+        writeBrowserSnapshot(key, page, epoch);
+        items.push(...page.items);
+        cursor = page.nextCursor;
       }
-      visitedCursors.add(cursor);
+      signal.throwIfAborted();
+      onBatch(items, first.summary);
+      writeBrowserSnapshot(
+        scopeKey,
+        { items, summary: first.summary, generation: first.generation },
+        epoch,
+      );
+      displayedGeneration = first.generation;
     }
-  } while (cursor);
+    if (first.snapshotState !== "pending" && first.snapshotState !== "stale") return;
+    await new Promise<void>((resolve, reject) => {
+      const abort = () => {
+        window.clearTimeout(timer);
+        reject(signal.reason);
+      };
+      const timer = window.setTimeout(() => {
+        signal.removeEventListener("abort", abort);
+        resolve();
+      }, 1_000);
+      signal.addEventListener("abort", abort, { once: true });
+    });
+  }
+}
+
+async function fetchInventory(
+  parameters: URLSearchParams,
+  signal: AbortSignal,
+): Promise<StorageInventoryPage> {
+  const response = await fetch(`/api/v1/settings/storage?${parameters}`, {
+    cache: "no-store",
+    signal,
+  });
+  const error = await readApiErrorMessage(response, "存储清单读取失败。");
+  if (error) throw new Error(error);
+  return storageInventoryPageSchema.parse(await response.json());
 }

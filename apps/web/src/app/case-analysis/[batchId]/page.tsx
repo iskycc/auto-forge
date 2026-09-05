@@ -1,5 +1,7 @@
+import { ReadModelStatusBar } from "@/components/read-model-status";
 import {
   failureAnalysisClaimSchema,
+  failureAnalysisBatchSchema,
   failureAnalysisCompletionOrderSchema,
   failureAnalysisSortSchema,
 } from "@autoforge/contracts";
@@ -52,49 +54,59 @@ export default async function CaseAnalysisDetailPage({
     ),
     includeCompleted: singleParameter(parameters.includeCompleted) !== "false",
   } as const;
-  const [batch, initialCandidatePage, initialClaimPage, initialMyClaimCount] = await Promise.all([
-    services.failureAnalysis.getBatch({
-      projectId,
-      projectVersionId: hierarchy.projectVersionId,
-      batchId,
-    }),
-    initialView === "claim"
-      ? services.failureAnalysis.listCandidates({
-          projectId,
-          projectVersionId: hierarchy.projectVersionId,
-          batchId,
-          sort: initialFilters.candidateSort,
-          direction: initialFilters.candidateDirection,
-          limit: 50,
-          ...(initialFilters.candidateQuery ? { query: initialFilters.candidateQuery } : {}),
-        })
-      : undefined,
-    initialView === "workbench"
-      ? services.failureAnalysis.listMyClaims({
-          projectId,
-          projectVersionId: hierarchy.projectVersionId,
-          claimantId: identity.user.id,
-          batchId,
-          sort: initialFilters.analysisSort,
-          direction: initialFilters.analysisDirection,
-          completionOrder: initialFilters.completionOrder,
-          includeCompleted: initialFilters.includeCompleted,
-          limit: 50,
-          ...(initialFilters.analysisQuery ? { query: initialFilters.analysisQuery } : {}),
-        })
-      : undefined,
-    services.failureAnalysis.countMyClaims({
-      projectId,
-      projectVersionId: hierarchy.projectVersionId,
-      claimantId: identity.user.id,
-      batchId,
-    }),
-  ]);
+  const projection = await services.readModels.read({
+    kind: "analysis_batch",
+    projectId,
+    projectVersionId: hierarchy.projectVersionId,
+    batchId,
+  });
+  if (!projection.generation) return <ReadModelStatusBar snapshots={[projection.status]} />;
+  const batch = projection.payload ? failureAnalysisBatchSchema.parse(projection.payload) : null;
+  if (!batch) notFound();
+  const [initialCandidatePage, initialClaimPage, initialMyClaimCount, progress] = await Promise.all(
+    [
+      initialView === "claim"
+        ? services.failureAnalysis.listCandidates({
+            projectId,
+            projectVersionId: hierarchy.projectVersionId,
+            batchId,
+            sort: initialFilters.candidateSort,
+            direction: initialFilters.candidateDirection,
+            limit: 50,
+            ...(initialFilters.candidateQuery ? { query: initialFilters.candidateQuery } : {}),
+          })
+        : undefined,
+      initialView === "workbench"
+        ? services.failureAnalysis.listMyClaims({
+            projectId,
+            projectVersionId: hierarchy.projectVersionId,
+            claimantId: identity.user.id,
+            batchId,
+            sort: initialFilters.analysisSort,
+            direction: initialFilters.analysisDirection,
+            completionOrder: initialFilters.completionOrder,
+            includeCompleted: initialFilters.includeCompleted,
+            limit: 50,
+            ...(initialFilters.analysisQuery ? { query: initialFilters.analysisQuery } : {}),
+          })
+        : undefined,
+      services.failureAnalysis.countMyClaims({
+        projectId,
+        projectVersionId: hierarchy.projectVersionId,
+        claimantId: identity.user.id,
+        batchId,
+      }),
+      services.failureAnalysis.readBatchProgress(projectId, batchId),
+    ],
+  );
   if (!batch) notFound();
 
   return (
     <FailureAnalysisDetail
-      batch={batch}
+      batch={{ ...batch, ...progress }}
+      currentUserId={identity.user.id}
+      canAssign={hasPermission(identity, "analysis.assign", projectId)}
+      canReadStatistics={hasPermission(identity, "audit.read", projectId)}
       canManage={hasPermission(identity, "analysis.manage", projectId)}
       initialCandidatePage={initialCandidatePage}
       initialClaimPage={

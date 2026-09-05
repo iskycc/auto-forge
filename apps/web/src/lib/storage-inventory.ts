@@ -1,3 +1,6 @@
+import { setImmediate as yieldToRequests } from "node:timers/promises";
+import { StorageInventoryIndex } from "./storage-inventory-index";
+import { DomainError } from "@autoforge/domain";
 import { opendir, stat } from "node:fs/promises";
 import { basename, relative, resolve, sep } from "node:path";
 
@@ -16,9 +19,6 @@ import type { ProjectRuntimeAsset } from "@autoforge/domain";
 
 const SOURCE_ORDER = ["local", "object", "external"] as const;
 const INVENTORY_BATCH_SIZE = 200;
-// 完整汇总需要遍历数据目录和 MinIO；目录树通过游标分批读取并在前端自动合并，
-// 五分钟内复用汇总，管理员仍可通过“重新扫描”显式失效缓存。
-const SUMMARY_CACHE_MS = 5 * 60_000;
 
 type InventorySource = (typeof SOURCE_ORDER)[number];
 type InventoryCursor = { source: InventorySource; key: string };
@@ -33,9 +33,9 @@ export type StorageInventoryQuery = {
 };
 
 export class StorageInventoryService {
-  private summaryCache: { expiresAt: number; value: StorageInventorySummary } | undefined;
-  private summaryInFlight: Promise<StorageInventorySummary> | undefined;
-  private summaryGeneration = 0;
+  private readonly index: StorageInventoryIndex;
+  private refreshInFlight: Promise<void> | undefined;
+  private closed = false;
 
   constructor(
     private readonly options: {
@@ -49,24 +49,96 @@ export class StorageInventoryService {
       objectStoreRoot: string;
       now?: () => Date;
     },
-  ) {}
+  ) {
+    this.index = new StorageInventoryIndex(
+      resolve(options.dataDirectory, ".cache/storage-inventory-v1.sqlite"),
+    );
+  }
 
   async list(input: StorageInventoryQuery): Promise<StorageInventoryPage> {
     assertQuery(input);
     if (input.refresh) this.invalidateSummary();
-    const cursor = input.cursor ? decodeCursor(input.cursor) : undefined;
-    const items: InventoryEntry[] = [];
-    for await (const entry of this.entries(cursor)) {
-      if (!matches(entry.item, input.category, input.query)) continue;
-      items.push(entry);
-      if (items.length > input.limit) break;
+    this.scheduleRefresh();
+    const status = this.index.status();
+    let generation = status.generation;
+    let after = -1;
+    if (input.cursor) {
+      const parsed = input.cursor.match(/^([a-f0-9-]{36}):(\d+)$/u);
+      if (!parsed)
+        throw new DomainError("READ_MODEL_GENERATION_CONFLICT", "存储清单游标无效，请重新扫描。");
+      generation = parsed[1]!;
+      after = Number(parsed[2]);
     }
-    const pageEntries = items.slice(0, input.limit);
-    const last = pageEntries.at(-1);
+    const snapshotState = status.failed
+      ? "failed"
+      : !status.generation
+        ? "pending"
+        : status.refreshAfter <= Date.now()
+          ? "stale"
+          : "ready";
+    if (!generation) return { items: [], summary: this.emptySummary(), snapshotState };
+    const page = this.index.page(generation, {
+      after,
+      limit: input.limit,
+      ...(input.category ? { category: input.category } : {}),
+      ...(input.query ? { query: input.query } : {}),
+    });
     return {
-      items: await this.attachRunBatchSequenceNumbers(pageEntries.map((entry) => entry.item)),
-      ...(items.length > input.limit && last ? { nextCursor: encodeCursor(last.cursor) } : {}),
-      summary: await this.summary(),
+      items: page.items,
+      summary: page.summary,
+      generation,
+      snapshotState,
+      ...(page.nextOrdinal === undefined
+        ? {}
+        : { nextCursor: `${generation}:${page.nextOrdinal}` }),
+    };
+  }
+
+  private scheduleRefresh(): void {
+    if (this.refreshInFlight || this.closed) return;
+    this.refreshInFlight = yieldToRequests()
+      .then(async () => {
+        if (this.closed) return;
+        const token = this.index.claim(Date.now());
+        if (!token) return;
+        try {
+          await this.buildSummary(token);
+        } catch (error) {
+          this.index.fail(token, Date.now());
+          process.stderr.write(
+            `${JSON.stringify({ timestamp: new Date().toISOString(), level: "error", requestId: "storage-inventory", message: "Storage inventory refresh failed", error: error instanceof Error ? error.message : String(error) })}\n`,
+          );
+        }
+      })
+      .finally(() => {
+        this.refreshInFlight = undefined;
+      });
+  }
+
+  async close(): Promise<void> {
+    this.closed = true;
+    await this.refreshInFlight;
+    this.index.close();
+  }
+
+  /** Explicit worker/test entrypoint; HTTP readers never await this operation. */
+  async refresh(): Promise<void> {
+    this.scheduleRefresh();
+    await this.refreshInFlight;
+  }
+
+  private emptySummary(): StorageInventorySummary {
+    return {
+      generatedAt: (this.options.now?.() ?? new Date()).toISOString(),
+      dataDirectory: resolve(this.options.dataDirectory),
+      objectStore: this.options.objectStore.storageKind,
+      objectStoreRoot: this.options.objectStoreRoot,
+      fileCount: 0,
+      logicalBytes: 0,
+      allocatedBytes: 0,
+      externalReferenceCount: 0,
+      externalReferenceBytes: 0,
+      categories: [],
     };
   }
 
@@ -86,30 +158,19 @@ export class StorageInventoryService {
   }
 
   invalidateSummary(): void {
-    this.summaryGeneration += 1;
-    this.summaryCache = undefined;
-    this.summaryInFlight = undefined;
+    this.index.invalidate();
   }
 
-  private async summary(): Promise<StorageInventorySummary> {
-    const now = Date.now();
-    if (this.summaryCache && this.summaryCache.expiresAt > now) return this.summaryCache.value;
-    if (this.summaryInFlight) return this.summaryInFlight;
-    const generation = this.summaryGeneration;
-    const summaryInFlight = this.buildSummary();
-    this.summaryInFlight = summaryInFlight;
-    try {
-      const value = await summaryInFlight;
-      if (generation === this.summaryGeneration) {
-        this.summaryCache = { expiresAt: now + SUMMARY_CACHE_MS, value };
-      }
-      return value;
-    } finally {
-      if (this.summaryInFlight === summaryInFlight) this.summaryInFlight = undefined;
-    }
-  }
-
-  private async buildSummary(): Promise<StorageInventorySummary> {
+  private async buildSummary(token: string): Promise<void> {
+    let pending: StorageInventoryItem[] = [];
+    let ordinal = 0;
+    const flush = async () => {
+      const items = await this.attachRunBatchSequenceNumbers(pending);
+      this.index.append(token, ordinal, items, Date.now());
+      ordinal += items.length;
+      pending = [];
+      await yieldToRequests();
+    };
     const categories = new Map<
       StorageInventoryCategory,
       { fileCount: number; logicalBytes: number; allocatedBytes: number }
@@ -120,6 +181,12 @@ export class StorageInventoryService {
     let externalReferenceCount = 0;
     let externalReferenceBytes = 0;
     for await (const { item } of this.entries()) {
+      if (this.closed) {
+        this.index.fail(token, Date.now());
+        return;
+      }
+      pending.push(item);
+      if (pending.length === INVENTORY_BATCH_SIZE) await flush();
       fileCount += 1;
       logicalBytes = addBytes(logicalBytes, item.sizeBytes);
       allocatedBytes = addBytes(allocatedBytes, item.allocatedBytes);
@@ -137,24 +204,29 @@ export class StorageInventoryService {
       category.allocatedBytes = addBytes(category.allocatedBytes, item.allocatedBytes);
       categories.set(item.category, category);
     }
-    return {
-      generatedAt: (this.options.now?.() ?? new Date()).toISOString(),
-      dataDirectory: resolve(this.options.dataDirectory),
-      objectStore: this.options.objectStore.storageKind,
-      objectStoreRoot: this.options.objectStoreRoot,
-      fileCount,
-      logicalBytes,
-      allocatedBytes,
-      externalReferenceCount,
-      externalReferenceBytes,
-      categories: [...categories.entries()]
-        .map(([category, values]) => ({ category, ...values }))
-        .sort(
-          (left, right) =>
-            right.allocatedBytes - left.allocatedBytes ||
-            left.category.localeCompare(right.category),
-        ),
-    };
+    if (pending.length) await flush();
+    this.index.publish(
+      token,
+      {
+        generatedAt: (this.options.now?.() ?? new Date()).toISOString(),
+        dataDirectory: resolve(this.options.dataDirectory),
+        objectStore: this.options.objectStore.storageKind,
+        objectStoreRoot: this.options.objectStoreRoot,
+        fileCount,
+        logicalBytes,
+        allocatedBytes,
+        externalReferenceCount,
+        externalReferenceBytes,
+        categories: [...categories.entries()]
+          .map(([category, values]) => ({ category, ...values }))
+          .sort(
+            (left, right) =>
+              right.allocatedBytes - left.allocatedBytes ||
+              left.category.localeCompare(right.category),
+          ),
+      },
+      Date.now(),
+    );
   }
 
   private async *entries(after?: InventoryCursor): AsyncGenerator<InventoryEntry> {
@@ -173,6 +245,7 @@ export class StorageInventoryService {
     let pending: LocalFile[] = [];
     const root = resolve(this.options.dataDirectory);
     for await (const file of walkFiles(root, root, afterPath?.split("/"))) {
+      if (file.logicalPath.startsWith(".cache/storage-inventory-v1.sqlite")) continue;
       pending.push(file);
       if (pending.length < INVENTORY_BATCH_SIZE) continue;
       yield* this.mapLocalBatch(pending);
@@ -428,49 +501,9 @@ function safeExternalPath(value: string | undefined): string {
   }
 }
 
-function matches(
-  item: StorageInventoryItem,
-  category: StorageInventoryCategory | undefined,
-  query: string | undefined,
-): boolean {
-  if (category && item.category !== category) return false;
-  const normalized = query?.trim().toLocaleLowerCase("zh-CN");
-  if (!normalized) return true;
-  return [
-    item.name,
-    item.logicalPath,
-    item.storagePath,
-    item.runBatchId ?? "",
-    item.projectId ?? "",
-    item.detail ?? "",
-  ]
-    .join("\n")
-    .toLocaleLowerCase("zh-CN")
-    .includes(normalized);
-}
-
 function sourceCanFollow(after: InventoryCursor | undefined, source: InventorySource): boolean {
   if (!after) return true;
   return SOURCE_ORDER.indexOf(source) >= SOURCE_ORDER.indexOf(after.source);
-}
-
-function encodeCursor(cursor: InventoryCursor): string {
-  return Buffer.from(JSON.stringify(cursor), "utf8").toString("base64url");
-}
-
-function decodeCursor(value: string): InventoryCursor {
-  try {
-    const parsed: unknown = JSON.parse(Buffer.from(value, "base64url").toString("utf8"));
-    if (!parsed || typeof parsed !== "object") throw new Error("invalid");
-    const source = Reflect.get(parsed, "source");
-    const key = Reflect.get(parsed, "key");
-    if (!SOURCE_ORDER.includes(source as InventorySource) || typeof key !== "string" || !key) {
-      throw new Error("invalid");
-    }
-    return { source: source as InventorySource, key };
-  } catch {
-    throw new Error("存储清单游标无效。");
-  }
 }
 
 function assertQuery(input: StorageInventoryQuery): void {

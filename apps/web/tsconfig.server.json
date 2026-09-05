@@ -12,5 +12,5 @@
     "noEmit": false
   },
   "include": ["server/**/*.ts", "src/lib/work-runtime.ts", "src/lib/terminal-ticket.ts"],
-  "exclude": ["server/work-thread.ts", "server/**/*.test.ts"]
+  "exclude": ["server/work-thread.ts", "server/read-model-thread.ts", "server/**/*.test.ts"]
 }

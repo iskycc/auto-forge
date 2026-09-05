@@ -1,3 +1,4 @@
+import { summarizeRunBatchCounters } from "@autoforge/domain";
 import type {
   CreateRunBatchRecord,
   ReserveAssignmentsOutcome,
@@ -357,9 +358,9 @@ export class PostgresRunBatchRepository
     return this.mapBatches(rows);
   }
 
-  async listPage(input: RunBatchListQuery) {
+  private async readBatchPageRows(input: RunBatchListQuery) {
     await this.ready();
-    if (input.projectIds?.length === 0) return { items: [] };
+    if (input.projectIds?.length === 0) return [];
     const cursor = decodeRunBatchCursor(input.cursor);
     const conditions = [
       sql`${pgRunBatches.batchKind} <> 'case_log_rerun'`,
@@ -406,6 +407,11 @@ export class PostgresRunBatchRepository
       .where(conditions.length > 0 ? and(...conditions) : undefined)
       .orderBy(desc(pgRunBatches.createdAt), desc(pgRunBatches.id))
       .limit(input.limit + 1);
+    return rows;
+  }
+
+  async listPage(input: RunBatchListQuery) {
+    const rows = await this.readBatchPageRows(input);
     const hasMore = rows.length > input.limit;
     const pageRows = rows.slice(0, input.limit);
     const runnerIdsByBatch = new Map<string, string[]>(
@@ -416,6 +422,19 @@ export class PostgresRunBatchRepository
     return {
       items,
       ...(hasMore && last
+        ? { nextCursor: encodeRunBatchCursor({ createdAt: last.createdAt, id: last.id }) }
+        : {}),
+    };
+  }
+
+  async listMetadataPage(input: RunBatchListQuery) {
+    const rows = await this.readBatchPageRows(input);
+    const pageRows = rows.slice(0, input.limit);
+    const items = pageRows.map((row) => this.mapBatchMetadataRow(row, row.selectedRunnerIds ?? []));
+    const last = pageRows.at(-1);
+    return {
+      items,
+      ...(rows.length > input.limit && last
         ? { nextCursor: encodeRunBatchCursor({ createdAt: last.createdAt, id: last.id }) }
         : {}),
     };
@@ -617,6 +636,32 @@ export class PostgresRunBatchRepository
     return rows.map(toRunAttempt);
   }
 
+  async getMetadata(batchId: string, projectIds?: readonly string[]) {
+    await this.ready();
+    if (projectIds?.length === 0) return null;
+    const rows = await this.handle.db
+      .select()
+      .from(pgRunBatches)
+      .where(
+        and(
+          eq(pgRunBatches.id, batchId),
+          ...(projectIds ? [inArray(pgRunBatches.projectId, [...projectIds])] : []),
+        ),
+      )
+      .limit(1);
+    const row = rows[0];
+    if (!row) return null;
+    const runners = await this.handle.db
+      .select({ id: pgRunBatchRunners.runnerId })
+      .from(pgRunBatchRunners)
+      .where(eq(pgRunBatchRunners.batchId, batchId))
+      .orderBy(pgRunBatchRunners.runnerId);
+    return this.mapBatchMetadataRow(
+      row,
+      runners.map((runner) => runner.id),
+    );
+  }
+
   async getSummary(batchId: string, projectIds?: readonly string[]): Promise<RunBatch | null> {
     await this.ready();
     if (projectIds?.length === 0) return null;
@@ -769,7 +814,7 @@ export class PostgresRunBatchRepository
       batch,
       roundSummaries,
       allRoundsSummary: postgresAllRoundsSummary(roundSummaries),
-      finalSummary: postgresFinalSummaryFromBatch(batch),
+      finalSummary: summarizeRunBatchCounters(batch),
       roundRecoveries,
       roundConcurrencies: concurrencyRows.map(toRoundConcurrency),
       runnerRoundSummaries: runnerResult.rows.map((row) => ({
@@ -797,7 +842,7 @@ export class PostgresRunBatchRepository
 
   async listCasePage(input: RunBatchCasePageQuery) {
     await this.ready();
-    const batch = await this.getSummary(input.batchId, input.projectIds);
+    const batch = await this.getMetadata(input.batchId, input.projectIds);
     if (!batch) return null;
     const query = postgresCasePageQuery(input);
     const result = await this.handle.pool.query<{
@@ -807,25 +852,51 @@ export class PostgresRunBatchRepository
       total: string;
     }>(query.sqlText, query.parameters);
     if (result.rows.length === 0) return { items: [], total: 0 };
-    const runIds = [...new Set(result.rows.map((row) => row.runId))];
-    const attemptIds = result.rows.flatMap((row) => (row.attemptId ? [row.attemptId] : []));
+    return {
+      items: await this.readCasePageEntries(
+        input.batchId,
+        result.rows.map((key) => ({
+          runId: key.runId,
+          round: Number(key.round),
+          ...(key.attemptId ? { attemptId: key.attemptId } : {}),
+        })),
+      ),
+      total: Number(result.rows[0]?.total ?? 0),
+    };
+  }
+
+  async readCasePageEntries(
+    batchId: string,
+    keys: readonly import("@autoforge/application").ExecutionCasePageKey[],
+  ) {
+    await this.ready();
+    if (!keys.length) return [];
+    if (keys.length > 500) throw new Error("Execution case page exceeds 500 rows.");
+    const runIds = [...new Set(keys.map((row) => row.runId))];
+    const attemptIds = keys.flatMap((row) => (row.attemptId ? [row.attemptId] : []));
     const [runRows, attemptRows] = await Promise.all([
-      this.handle.db.select().from(pgExecutionRuns).where(inArray(pgExecutionRuns.id, runIds)),
+      this.handle.db
+        .select()
+        .from(pgExecutionRuns)
+        .where(and(eq(pgExecutionRuns.batchId, batchId), inArray(pgExecutionRuns.id, runIds))),
       attemptIds.length === 0
         ? Promise.resolve([])
         : this.handle.db.select().from(pgRunAttempts).where(inArray(pgRunAttempts.id, attemptIds)),
     ]);
     const runsById = new Map(runRows.map((row) => [row.id, toExecutionRun(row)]));
     const attemptsById = new Map(attemptRows.map((row) => [row.id, toRunAttempt(row)]));
-    return {
-      items: result.rows.flatMap((key) => {
-        const run = runsById.get(key.runId);
-        if (!run) return [];
-        const attempt = key.attemptId ? attemptsById.get(key.attemptId) : undefined;
-        return [{ run, ...(attempt ? { attempt } : {}), round: Number(key.round) }];
-      }),
-      total: Number(result.rows[0]?.total ?? 0),
-    };
+    return keys.flatMap((key) => {
+      const run = runsById.get(key.runId);
+      if (!run) return [];
+      const attempt = key.attemptId ? attemptsById.get(key.attemptId) : undefined;
+      return [
+        {
+          run,
+          ...(attempt?.executionRunId === run.id ? { attempt } : {}),
+          round: Number(key.round),
+        },
+      ];
+    });
   }
 
   async listReusableBatchIdsForRunner(
@@ -1669,6 +1740,22 @@ export class PostgresRunBatchRepository
     byStatus: Map<string, number>,
     outcomeCount: FinalOutcomeCounts | undefined,
   ): RunBatch {
+    return {
+      ...this.mapBatchMetadataRow(row, selectedRunnerIds),
+      queuedRuns: byStatus.get("queued") ?? 0,
+      assignedRuns: (byStatus.get("assigned") ?? 0) + (byStatus.get("running") ?? 0),
+      runningRuns: byStatus.get("running") ?? 0,
+      succeededRuns: Number(outcomeCount?.succeeded ?? byStatus.get("succeeded") ?? 0),
+      failedRuns: Number(outcomeCount?.failed ?? 0),
+      timedOutRuns: Number(outcomeCount?.timedOut ?? 0),
+      cancelledRuns: Number(outcomeCount?.cancelled ?? byStatus.get("cancelled") ?? 0),
+    };
+  }
+
+  private mapBatchMetadataRow(
+    row: typeof pgRunBatches.$inferSelect,
+    selectedRunnerIds: string[],
+  ): import("@autoforge/application").RunBatchMetadata {
     const policy = batchPolicy(row.policyJson);
     return {
       id: row.id,
@@ -1704,13 +1791,6 @@ export class PostgresRunBatchRepository
       selectedRunnerIds,
       ...(policy ? { policy } : {}),
       totalRuns: row.totalRuns,
-      queuedRuns: byStatus.get("queued") ?? 0,
-      assignedRuns: (byStatus.get("assigned") ?? 0) + (byStatus.get("running") ?? 0),
-      runningRuns: byStatus.get("running") ?? 0,
-      succeededRuns: Number(outcomeCount?.succeeded ?? byStatus.get("succeeded") ?? 0),
-      failedRuns: Number(outcomeCount?.failed ?? 0),
-      timedOutRuns: Number(outcomeCount?.timedOut ?? 0),
-      cancelledRuns: Number(outcomeCount?.cancelled ?? byStatus.get("cancelled") ?? 0),
       ...(row.cancelRequestedAt ? { terminationRequestedAt: row.cancelRequestedAt } : {}),
       version: row.version,
       scheduledFor: row.scheduledFor,
@@ -1731,6 +1811,8 @@ export class PostgresRunBatchRepository
     outcomeRows: FinalOutcomeCounts[];
   }> {
     if (batchIds.length === 0) return { statusRows: [], outcomeRows: [] };
+    // A newly bulk-loaded batch can have stale planner estimates. Materialize once so an
+    // empty retry set cannot be re-evaluated for every one of its 100,000 execution rows.
     const mergedRows = (
       await Promise.all(
         batchesOf(batchIds, RELATIONAL_ID_QUERY_BATCH_SIZE).map((ids) =>
@@ -1740,7 +1822,7 @@ export class PostgresRunBatchRepository
             finalOutcome: string | null;
             value: string;
           }>(
-            `WITH ranked_attempts AS (
+            `WITH ranked_attempts AS MATERIALIZED (
                SELECT attempt.execution_run_id,
                       COALESCE(attempt.outcome, attempt.status) AS attempt_outcome,
                       ROW_NUMBER() OVER (
@@ -1936,20 +2018,6 @@ function postgresAllRoundsSummary(summaries: readonly RunBatchRoundSummary[]) {
   return {
     ...values,
     passRate: values.totalRuns === 0 ? 0 : Math.round((values.passed / values.totalRuns) * 100),
-  };
-}
-
-function postgresFinalSummaryFromBatch(batch: RunBatch) {
-  const terminal =
-    batch.succeededRuns + batch.failedRuns + batch.timedOutRuns + batch.cancelledRuns;
-  return {
-    totalRuns: batch.totalRuns,
-    passed: batch.succeededRuns,
-    failed: batch.failedRuns,
-    timedOut: batch.timedOutRuns,
-    cancelled: batch.cancelledRuns,
-    notExecuted: Math.max(0, batch.totalRuns - terminal),
-    passRate: batch.totalRuns === 0 ? 0 : Math.round((batch.succeededRuns / batch.totalRuns) * 100),
   };
 }
 

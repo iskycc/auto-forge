@@ -1,5 +1,6 @@
 "use client";
 
+import { StartFailureAnalysisButton } from "./start-failure-analysis-button";
 import { usePlatformNow } from "./platform-time";
 
 import { ExternalLink, LoaderCircle, OctagonX } from "lucide-react";
@@ -251,9 +252,11 @@ export function ExecutionRecordsTable({
                     {executionRecordStatusLabel({ ...row, observedAt })}
                   </span>
                 </td>
-                <td>{executionRecordPassRate(row)}%</td>
-                <td>{row.succeededRuns}</td>
-                <td>{row.failedRuns + row.timedOutRuns}</td>
+                <td title={row.statisticsPending ? "统计准备中" : undefined}>
+                  {row.statisticsPending ? "—" : `${executionRecordPassRate(row)}%`}
+                </td>
+                <td>{row.statisticsPending ? "—" : row.succeededRuns}</td>
+                <td>{row.statisticsPending ? "—" : row.failedRuns + row.timedOutRuns}</td>
                 <td>{row.retryMode === "round" ? `第 ${row.currentRound} 轮` : "-"}</td>
                 <td>{row.retryMode === "round" ? "整轮轮次" : "立即重跑"}</td>
                 <td>{row.selectedRunnerCount}</td>
@@ -273,6 +276,11 @@ export function ExecutionRecordsTable({
                       <ExternalLink size={14} aria-hidden="true" /> 详情
                     </Link>
                     <RunBatchPermanentShare batchId={row.id} sequenceNumber={row.sequenceNumber} />
+                    {row.analysisScope &&
+                    !executionRecordIsActive(row.status) &&
+                    row.failedRuns > 0 ? (
+                      <StartFailureAnalysisButton scope={row.analysisScope} />
+                    ) : null}
                     {canTerminate && executionRecordIsActive(row.status) ? (
                       <Button
                         className="button button-danger-quiet compact-button"

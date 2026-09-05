@@ -1,3 +1,4 @@
+import { LazyCaseSource } from "@/components/lazy-case-source";
 import { failureAnalysisHistoryPageSchema } from "@autoforge/contracts";
 import { hasPermission, isDomainError } from "@autoforge/domain";
 import { AlertCircle, ArrowLeft, FileCode2 } from "lucide-react";
@@ -73,19 +74,7 @@ export default async function CaseDetailPage({ params }: CaseDetailPageProps) {
   const canReadLogs = hasPermission(identity, "log.read", definition.projectId);
   const canReadAnalysisEvidence = hasPermission(identity, "run.read", definition.projectId);
   const canReadSource = hasPermission(identity, "case_source.read", definition.projectId);
-  const sourceRecord = await services.caseSources.get(definition.sourceId, projectIds);
-  const executable = sourceRecord.inspection.executable !== false;
-  let sourceView: Awaited<ReturnType<typeof services.caseSources.readClassSource>> = null;
-  let sourceViewError: string | undefined;
-  try {
-    sourceView = await services.caseSources.readClassSource(
-      definition.sourceId,
-      definition.className,
-      projectIds,
-    );
-  } catch (error) {
-    sourceViewError = error instanceof Error ? error.message : "源码读取失败。";
-  }
+  const executable = await services.caseSources.executable(definition.sourceId, projectIds);
 
   return (
     <div className="page-stack case-detail-page">
@@ -227,25 +216,8 @@ export default async function CaseDetailPage({ params }: CaseDetailPageProps) {
         </div>
       </section>
 
-      {sourceView ? (
-        <section className="card source-code-card">
-          <div className="card-heading">
-            <div>
-              <span className="eyebrow">Java Source</span>
-              <h2>用例源码</h2>
-              <p>{sourceView.reference.entryPath}</p>
-            </div>
-            <FileCode2 size={22} aria-hidden="true" />
-          </div>
-          <pre className="source-code-viewer" tabIndex={0}>
-            <code>{sourceView.content}</code>
-          </pre>
-        </section>
-      ) : sourceViewError ? (
-        <div className="alert alert-error" role="alert">
-          <AlertCircle size={17} aria-hidden="true" />
-          <span>{sourceViewError}</span>
-        </div>
+      {canReadSource ? (
+        <LazyCaseSource caseDefinitionId={definition.id} revision={definition.revision} />
       ) : null}
 
       {canManage ? (

@@ -4,19 +4,149 @@ import { join, resolve } from "node:path";
 
 import type { JarObjectStorePort, ProjectStructureService } from "@autoforge/application";
 import type { ProjectRuntimeAsset } from "@autoforge/domain";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { StorageInventoryService } from "./storage-inventory";
 
 const temporaryDirectories: string[] = [];
+const inventories: StorageInventoryService[] = [];
 
 afterEach(async () => {
+  await Promise.all(inventories.splice(0).map((inventory) => inventory.close()));
   await Promise.all(
     temporaryDirectories.splice(0).map((directory) => rm(directory, { recursive: true })),
   );
 });
 
 describe("storage inventory", () => {
+  it("returns a cold page before a slow scan finishes, reuses the durable index and fences invalidated scans", async () => {
+    const dataDirectory = await temporaryDataDirectory();
+    await writeDataFile(dataDirectory, "file.txt", "saved");
+    const listing = vi.fn(async () => ({
+      items: [
+        {
+          objectKey: "projects/p/jars/example.jar",
+          sizeBytes: 4,
+          lastModified: "2026-09-01T00:00:00.000Z",
+        },
+      ],
+    }));
+    const store = { ...objectStore("minio", []), list: listing };
+    const options = {
+      dataDirectory,
+      objectStore: store,
+      projectStructures: runtimeCatalog([]),
+      runBatchDisplayIdentities: batchDisplayIdentities({}),
+      objectStoreRoot: "minio://test",
+    };
+    const inventory = new StorageInventoryService(options);
+    inventories.push(inventory);
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    listing.mockImplementationOnce(async () => {
+      await gate;
+      return { items: [] };
+    });
+    try {
+      const cold = await inventory.list({ limit: 1 });
+      expect(cold).toMatchObject({ snapshotState: "pending", items: [] });
+      await vi.waitFor(() => expect(listing).toHaveBeenCalledTimes(1));
+      // A second HTTP read does not await, duplicate or restart the in-flight scan.
+      expect(await inventory.list({ limit: 1 })).toMatchObject({ snapshotState: "pending" });
+      inventory.invalidateSummary();
+      release();
+      await inventory.refresh();
+      expect(await inventory.list({ limit: 1 })).toMatchObject({ snapshotState: "pending" });
+      await inventory.refresh();
+      const published = await inventory.list({ limit: 1 });
+      expect(published).toMatchObject({ snapshotState: "ready", summary: { fileCount: 2 } });
+      expect(published.nextCursor).toBeTruthy();
+      const scans = listing.mock.calls.length;
+      for (let index = 0; index < 20; index++)
+        expect((await inventory.list({ limit: 1 })).generation).toBe(published.generation);
+      expect(listing).toHaveBeenCalledTimes(scans);
+      await inventory.close();
+      inventories.splice(inventories.indexOf(inventory), 1);
+      const restarted = new StorageInventoryService(options);
+      inventories.push(restarted);
+      expect((await restarted.list({ limit: 1 })).generation).toBe(published.generation);
+      expect(listing).toHaveBeenCalledTimes(scans);
+      const last = await restarted.list({ limit: 1, cursor: published.nextCursor! });
+      expect(last.items).toHaveLength(1);
+      const another = new StorageInventoryService({
+        ...options,
+        dataDirectory: await temporaryDataDirectory(),
+      });
+      inventories.push(another);
+      await expect(another.list({ limit: 1, cursor: published.nextCursor! })).rejects.toMatchObject(
+        { code: "READ_MODEL_GENERATION_CONFLICT" },
+      );
+    } finally {
+      release();
+    }
+  });
+
+  it("keeps a failed refresh observable and recovers the previous generation on explicit retry", async () => {
+    const dataDirectory = await temporaryDataDirectory();
+    const listing = vi.fn(async () => ({ items: [] }));
+    const inventory = new StorageInventoryService({
+      dataDirectory,
+      objectStore: { ...objectStore("minio", []), list: listing },
+      projectStructures: runtimeCatalog([]),
+      runBatchDisplayIdentities: batchDisplayIdentities({}),
+      objectStoreRoot: "minio://test",
+    });
+    inventories.push(inventory);
+    await inventory.refresh();
+    const saved = await inventory.list({ limit: 10 });
+    listing.mockRejectedValueOnce(new Error("fixture storage unavailable"));
+    inventory.invalidateSummary();
+    const diagnostic = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    try {
+      await inventory.refresh();
+      expect(await inventory.list({ limit: 10 })).toMatchObject({
+        generation: saved.generation,
+        snapshotState: "failed",
+      });
+      expect(diagnostic).toHaveBeenCalledWith(
+        expect.stringContaining("fixture storage unavailable"),
+      );
+      inventory.invalidateSummary();
+      await inventory.refresh();
+      expect((await inventory.list({ limit: 10 })).snapshotState).toBe("ready");
+    } finally {
+      diagnostic.mockRestore();
+    }
+  });
+
+  it("keeps the previous result usable during refresh and preserves paths containing wildcard characters", async () => {
+    const dataDirectory = await temporaryDataDirectory();
+    await writeDataFile(dataDirectory, "100%.txt", "one");
+    await writeDataFile(dataDirectory, "1000.txt", "two");
+    const inventory = new StorageInventoryService({
+      dataDirectory,
+      objectStore: objectStore("local", []),
+      projectStructures: runtimeCatalog([]),
+      runBatchDisplayIdentities: batchDisplayIdentities({}),
+      objectStoreRoot: dataDirectory,
+    });
+    inventories.push(inventory);
+    await inventory.refresh();
+    const previous = await inventory.list({ limit: 1 });
+    const refreshing = await inventory.list({ limit: 1, refresh: true });
+    expect(refreshing).toMatchObject({ generation: previous.generation, snapshotState: "stale" });
+    await inventory.refresh();
+    expect(
+      (await inventory.list({ limit: 50, query: "%" })).items.map((item) => item.name),
+    ).toEqual(["100%.txt"]);
+    expect((await inventory.list({ limit: 50 })).generation).not.toBe(previous.generation);
+    expect((await inventory.list({ limit: 1, cursor: previous.nextCursor! })).items).toHaveLength(
+      1,
+    );
+  });
+
   it("lists every Lite SQLite and managed file while distinguishing runtime assets", async () => {
     const dataDirectory = await temporaryDataDirectory();
     const jdkObjectKey = "projects/project-1/runtime-assets/jdk-1.zip";
@@ -48,6 +178,8 @@ describe("storage inventory", () => {
       now: () => new Date("2026-09-01T00:00:00.000Z"),
     });
 
+    inventories.push(inventory);
+    await inventory.refresh();
     const items = await allItems(inventory, 2);
 
     expect(items.map((item) => item.category)).toEqual(
@@ -133,6 +265,8 @@ describe("storage inventory", () => {
       objectStoreRoot: "minio://autoforge",
     });
 
+    inventories.push(inventory);
+    await inventory.refresh();
     const page = await inventory.list({ limit: 100 });
 
     expect(page.items).toEqual(
@@ -184,6 +318,8 @@ describe("storage inventory", () => {
       objectStoreRoot: join(dataDirectory, "objects"),
     });
 
+    inventories.push(inventory);
+    await inventory.refresh();
     const items = await allItems(inventory, 1);
 
     expect(items.map((item) => item.logicalPath)).toEqual(["a/inside.txt", "a.txt", "b/final.txt"]);

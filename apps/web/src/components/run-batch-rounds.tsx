@@ -1,5 +1,11 @@
 "use client";
 
+import {
+  browserCacheEpoch,
+  readBrowserSnapshot,
+  writeBrowserSnapshot,
+} from "@/lib/browser-read-cache";
+
 import type { AttemptArtifactList, AttemptEventPage } from "@autoforge/contracts";
 import type {
   RunAttempt,
@@ -314,6 +320,12 @@ export function RunBatchRounds({
     }
   }
 
+  if (batch.statistics && !batch.statistics.generation)
+    return (
+      <section className="content-card" aria-label="轮次列表">
+        <p role="status">后台正在准备轮次统计，执行控制仍可使用。</p>
+      </section>
+    );
   return (
     <>
       <section aria-label="轮次列表">
@@ -1260,6 +1272,7 @@ function RoundCasesTable({
 
   const casePageUrl = useMemo(() => {
     const parameters = new URLSearchParams({
+      cached: "1",
       scope: String(round),
       sort: sortSpec.key,
       direction: sortSpec.direction,
@@ -1281,7 +1294,7 @@ function RoundCasesTable({
     sortSpec.key,
     statusFilter,
   ]);
-  const requestKey = `${casePageUrl}\u0000${batch.updatedAt}`;
+  const requestKey = `${casePageUrl}\u0000${batch.updatedAt}\u0000${batch.statistics?.generation ?? ""}`;
   const [loadedPage, setLoadedPage] = useState<{
     requestKey: string;
     pageUrl: string;
@@ -1297,14 +1310,22 @@ function RoundCasesTable({
 
   useEffect(() => {
     const controller = new AbortController();
-    void fetch(casePageUrl, { signal: controller.signal })
-      .then(async (response) => {
-        if (!response.ok) {
-          throw new Error((await readApiErrorMessage(response, "读取用例列表失败。"))!);
-        }
-        return response.json() as Promise<{ items: RoundCaseRowModel[]; total: number }>;
-      })
+    const epoch = browserCacheEpoch();
+    const key = `batch-case-page:v1:${requestKey}`;
+    const cached = readBrowserSnapshot(key) as
+      { items: RoundCaseRowModel[]; total: number } | undefined;
+    const load = cached
+      ? Promise.resolve(cached)
+      : fetchCasePage(casePageUrl, controller.signal).then(async (response) => {
+          if (!response.ok) {
+            throw new Error((await readApiErrorMessage(response, "读取用例列表失败。"))!);
+          }
+          return response.json() as Promise<{ items: RoundCaseRowModel[]; total: number }>;
+        });
+    void load
       .then((result) => {
+        if (controller.signal.aborted) return;
+        writeBrowserSnapshot(key, result, epoch);
         setLoadedPage({
           requestKey,
           pageUrl: casePageUrl,
@@ -2090,4 +2111,15 @@ function eventLabel(eventType: string): string {
     "lease.expired": "租约已过期",
   };
   return labels[eventType] ?? eventType;
+}
+
+async function fetchCasePage(url: string, signal: AbortSignal): Promise<Response> {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const response = await fetch(url, { signal, cache: "no-store" });
+    if (response.status !== 503 || attempt === 2) return response;
+    const failure = (await response.clone().json()) as { error?: { code?: string } };
+    if (failure.error?.code !== "READ_MODEL_PENDING") return response;
+    await response.body?.cancel();
+  }
+  throw new Error("后台正在准备当前用例页，请稍后重试。");
 }

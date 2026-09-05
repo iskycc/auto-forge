@@ -1,5 +1,9 @@
 "use client";
 
+import {
+  StartFailureAnalysisButton,
+  type FailureAnalysisScope,
+} from "./start-failure-analysis-button";
 import { usePlatformNow } from "./platform-time";
 
 import { OctagonX, RotateCcw } from "lucide-react";
@@ -39,6 +43,7 @@ function batchFinishedAt(batch: ExecutionBatchView): string {
 export function ExecutionBatchDetails({
   batch: initialBatch,
   retrySuiteId,
+  analysisScope,
   rerunConfiguration,
   canCancelRuns,
   canCreateRuns,
@@ -51,6 +56,7 @@ export function ExecutionBatchDetails({
 }: {
   batch: ExecutionBatchView;
   retrySuiteId?: string;
+  analysisScope?: FailureAnalysisScope;
   rerunConfiguration?: {
     defaultConcurrency: number;
     hasRetryConcurrencyRules: boolean;
@@ -71,6 +77,8 @@ export function ExecutionBatchDetails({
   const [actionPending, setActionPending] = useState<"cancel" | "retry" | undefined>();
   const [finalFailuresDialogOpen, setFinalFailuresDialogOpen] = useState(false);
   const activeBatch = isActiveRunBatch(batch.status);
+  const statisticsState = batch.statistics?.state;
+  const statisticsPending = !!batch.statistics && !batch.statistics.generation;
   const startedAt = batchStartedAt(batch);
   const awaitingScheduledStart =
     batch.status === "queued" && Date.parse(batch.scheduledFor) > Date.parse(batch.updatedAt);
@@ -94,7 +102,9 @@ export function ExecutionBatchDetails({
       setBatch((current) =>
         current.updatedAt === next.updatedAt &&
         current.finishedAt === next.finishedAt &&
-        current.status === next.status
+        current.status === next.status &&
+        current.statistics?.generation === next.statistics?.generation &&
+        current.statistics?.state === next.statistics?.state
           ? current
           : next,
       );
@@ -104,26 +114,27 @@ export function ExecutionBatchDetails({
 
   // 只拉取有界概要并更新当前组件，不再 router.refresh() 重跑整页 Server Component。
   useEffect(() => {
-    if (!activeBatch) return;
+    if (!activeBatch && (!statisticsState || statisticsState === "ready")) return;
     const controller = new AbortController();
     let timer: number | undefined;
     const poll = async (): Promise<void> => {
       try {
-        await refreshBatch(controller.signal);
+        if (document.visibilityState === "visible") await refreshBatch(controller.signal);
       } catch (cause) {
         if (!(cause instanceof DOMException && cause.name === "AbortError")) {
           setActionError(cause instanceof Error ? cause.message : "刷新执行详情失败。");
         }
       } finally {
-        if (!controller.signal.aborted) timer = window.setTimeout(() => void poll(), 5_000);
+        if (!controller.signal.aborted)
+          timer = window.setTimeout(() => void poll(), statisticsPending ? 1_000 : 5_000);
       }
     };
-    timer = window.setTimeout(() => void poll(), 5_000);
+    timer = window.setTimeout(() => void poll(), statisticsPending ? 1_000 : 5_000);
     return () => {
       controller.abort();
       if (timer !== undefined) window.clearTimeout(timer);
     };
-  }, [activeBatch, refreshBatch]);
+  }, [activeBatch, statisticsPending, statisticsState, refreshBatch]);
 
   async function terminateBatch(): Promise<void> {
     if (
@@ -191,16 +202,35 @@ export function ExecutionBatchDetails({
 
   return (
     <div className="execution-detail-layout">
+      {batch.statistics ? (
+        <p role="status" className="muted">
+          {batch.statistics.generatedAt
+            ? `轮次统计更新于 ${formatLocalDateTime(batch.statistics.generatedAt)}`
+            : "正在准备轮次统计"}
+          {batch.statistics.state === "failed"
+            ? " · 后台统计暂时不可用"
+            : batch.statistics.state !== "ready"
+              ? " · 后台更新中"
+              : ""}
+        </p>
+      ) : null}
       <section className="batch-metrics-band" aria-label="批次概览">
         <Metric
           label="状态"
           value={awaitingScheduledStart ? "倒计时" : runBatchCompletionLabel(batch)}
         />
-        <Metric label="总通过率" value={`${runBatchPassRate(batch)}%`} />
+        <Metric
+          label="总通过率"
+          value={batch.statistics?.generation === null ? "—" : `${runBatchPassRate(batch)}%`}
+        />
         <Metric
           label="用例总数"
           value={String(batch.totalRuns)}
-          hint={`通过 ${batch.succeededRuns} · 失败 ${batch.failedRuns + batch.timedOutRuns}`}
+          hint={
+            batch.statistics?.generation === null
+              ? "统计准备中"
+              : `通过 ${batch.succeededRuns} · 失败 ${batch.failedRuns + batch.timedOutRuns}`
+          }
         />
         <Metric
           label="开始时间"
@@ -222,7 +252,10 @@ export function ExecutionBatchDetails({
         />
       </section>
 
-      {(canCancelRuns || (canCreateRuns && retrySuiteId) || canRerunFinalFailures) && (
+      {(analysisScope ||
+        canCancelRuns ||
+        (canCreateRuns && retrySuiteId) ||
+        canRerunFinalFailures) && (
         <section className="execution-detail-actions" aria-label="批次操作">
           <div>
             <strong>
@@ -239,6 +272,9 @@ export function ExecutionBatchDetails({
             </span>
           </div>
           <div className="button-row">
+            {analysisScope && !activeBatch && batch.failedRuns > 0 ? (
+              <StartFailureAnalysisButton scope={analysisScope} />
+            ) : null}
             {canCancelRuns && activeBatch ? (
               <Button
                 className="button button-danger-quiet"

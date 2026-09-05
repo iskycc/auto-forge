@@ -40,6 +40,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 
+import { FailureAnalysisAssignmentDialog } from "@/components/failure-analysis-assignment-dialog";
 import { AttemptLogViewer } from "@/components/attempt-log-viewer";
 import { FailureAnalysisConclusionPicker } from "@/components/failure-analysis-conclusion-picker";
 import { LoadingState } from "@/components/loading-state";
@@ -99,6 +100,8 @@ const CATEGORY_OPTIONS: Array<{
 
 export function FailureAnalysisWorkspace({
   canManage,
+  canAssign,
+  currentUserId,
   projectId,
   projectVersionId,
   initialCandidatePage,
@@ -111,6 +114,8 @@ export function FailureAnalysisWorkspace({
   onCompletedCountDelta,
 }: {
   canManage: boolean;
+  canAssign: boolean;
+  currentUserId: string;
   projectId: string;
   projectVersionId: string;
   initialCandidatePage: FailureAnalysisCandidatePage | null | undefined;
@@ -123,6 +128,7 @@ export function FailureAnalysisWorkspace({
   onCompletedCountDelta: (delta: number) => void;
 }) {
   const toast = useToast();
+  const [assignmentOpen, setAssignmentOpen] = useState(false);
   const [view, setView] = useState<WorkspaceView>(initialView);
   const [candidates, setCandidates] = useState<FailureAnalysisCandidate[]>(
     initialCandidatePage?.items ?? [],
@@ -395,6 +401,7 @@ export function FailureAnalysisWorkspace({
         ];
   }, [claims, completionOrder]);
   const modalOpen = Boolean(dialogClaims?.length || releaseDialogClaim);
+  const workspaceBlocked = modalOpen || assignmentOpen;
 
   useEffect(() => {
     if (!modalOpen) return;
@@ -604,9 +611,9 @@ export function FailureAnalysisWorkspace({
   return (
     <>
       <section
-        aria-hidden={modalOpen ? true : undefined}
+        aria-hidden={workspaceBlocked ? true : undefined}
         className="content-card failure-analysis-shell"
-        inert={modalOpen ? true : undefined}
+        inert={workspaceBlocked ? true : undefined}
       >
         <div className="failure-analysis-tabs" role="tablist" aria-label="用例分析步骤">
           <Button
@@ -673,7 +680,7 @@ export function FailureAnalysisWorkspace({
             ) : (
               <CandidateTable
                 allAvailableSelected={allAvailableSelected}
-                canManage={canManage}
+                canManage={canManage || canAssign}
                 candidates={candidates}
                 direction={direction}
                 onSelectAll={(checked) =>
@@ -929,15 +936,47 @@ export function FailureAnalysisWorkspace({
         )}
       </section>
 
-      {canManage && !modalOpen && view === "claim" && selectedRunIds.size > 0 ? (
-        <FloatingAction
-          count={selectedRunIds.size}
-          label="认领并进入分析"
-          loading={submitting}
-          onClick={() => void claimSelected()}
+      {assignmentOpen ? (
+        <FailureAnalysisAssignmentDialog
+          scope={{ projectId, projectVersionId, batchId: initialBatchId }}
+          executionRunIds={[...selectedRunIds]}
+          onClose={() => setAssignmentOpen(false)}
+          onAssigned={(result) => {
+            setAssignmentOpen(false);
+            setSelectedRunIds(new Set());
+            onClaimCountDelta(result.claimed.length);
+            setMyClaimCount(
+              (count) =>
+                count + result.claimed.filter((claim) => claim.claimantId === currentUserId).length,
+            );
+            void loadCandidates(candidatePageCursor);
+          }}
         />
       ) : null}
-      {canManage && !modalOpen && view === "workbench" && selectedAnalysisIds.size > 0 ? (
+      {(canManage || canAssign) &&
+      !workspaceBlocked &&
+      view === "claim" &&
+      selectedRunIds.size > 0 ? (
+        <div className="failure-analysis-floating-action">
+          <span>已选择 {selectedRunIds.size} 个用例</span>
+          {canAssign ? (
+            <Button onClick={() => setAssignmentOpen(true)} type="button">
+              分配给用户
+            </Button>
+          ) : null}
+          {canManage ? (
+            <Button
+              disabled={submitting}
+              onClick={() => void claimSelected()}
+              type="button"
+              variant="primary"
+            >
+              认领并进入分析
+            </Button>
+          ) : null}
+        </div>
+      ) : null}
+      {canManage && !workspaceBlocked && view === "workbench" && selectedAnalysisIds.size > 0 ? (
         <FloatingAction
           count={selectedAnalysisIds.size}
           label="批量分析"

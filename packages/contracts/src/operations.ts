@@ -465,6 +465,9 @@ export const storageInventorySummarySchema = z.object({
 });
 
 export const storageInventoryPageSchema = z.object({
+  nodeId: z.string().uuid().optional(),
+  generation: z.string().uuid().optional(),
+  snapshotState: z.enum(["pending", "ready", "stale", "failed"]).optional(),
   items: z.array(storageInventoryItemSchema),
   nextCursor: z.string().min(1).max(16_384).optional(),
   summary: storageInventorySummarySchema,

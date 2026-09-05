@@ -19,7 +19,7 @@ export default async function SharedRunPage({ params }: { params: Promise<{ toke
   const services = await getPlatformServices();
   const batchId = readPermanentShareToken(services.config.masterKey, token, "run_batch");
   if (!batchId) return <InvalidRunShare />;
-  const overview = await services.runBatches.getDetailOverview(batchId).catch(() => null);
+  const overview = await services.executionOverview(batchId).catch(() => null);
   if (!overview) return <InvalidRunShare />;
   const batch = overview.batch;
   const projectVersion = batch.policy?.projectVersionId

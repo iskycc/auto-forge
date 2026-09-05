@@ -114,6 +114,7 @@ export const platformConfigurationViewSchema = updatePlatformConfigurationInputS
 export type PlatformConfigurationView = z.infer<typeof platformConfigurationViewSchema>;
 
 export const publicPlatformStatisticsSchema = z.object({
+  snapshotState: z.enum(["pending", "ready", "stale", "failed"]).optional(),
   sourceCount: z.number().int().nonnegative(),
   caseCount: z.number().int().nonnegative(),
   methodCount: z.number().int().nonnegative(),

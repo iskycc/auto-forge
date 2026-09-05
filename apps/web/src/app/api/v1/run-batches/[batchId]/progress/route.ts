@@ -1,3 +1,4 @@
+import { readReadyModel } from "@/lib/read-ready-model";
 import { DomainError } from "@autoforge/domain";
 import { NextResponse } from "next/server";
 
@@ -31,12 +32,27 @@ export async function GET(request: Request, context: Context): Promise<NextRespo
       if (!validTemporaryToken && permanentBatchId !== batchId) {
         throw new DomainError("RUN_PROGRESS_TOKEN_INVALID", "执行进度访问令牌无效或已过期。");
       }
-      overview = await services.runBatches.getDetailOverview(batchId);
+      overview = await services.executionOverview(batchId);
     } else {
       const identity = await authenticateRequest(request);
       const projectIds = services.identityAccess.projectScope(identity, "run.read");
-      overview = await services.runBatches.getDetailOverview(batchId, projectIds);
+      overview = await services.executionOverview(batchId, projectIds);
       services.identityAccess.authorize(identity, "run.read", overview.batch.projectId);
+    }
+    if (!overview.statistics.generation) {
+      await readReadyModel(
+        services.readModels,
+        {
+          kind: "execution_overview",
+          projectId: overview.batch.projectId,
+          batchId,
+          ...(["succeeded", "failed", "cancelled"].includes(overview.batch.status)
+            ? { terminalVersion: overview.batch.version }
+            : {}),
+        },
+        request.signal,
+      );
+      overview = await services.executionOverview(batchId, [overview.batch.projectId]);
     }
     return NextResponse.json(buildRunProgressFromOverview(overview), {
       headers: { "Cache-Control": "private, no-store" },

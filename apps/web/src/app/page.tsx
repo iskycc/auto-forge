@@ -1,4 +1,5 @@
-import type { AnalyticsSummary } from "@autoforge/contracts";
+import { dashboardSnapshotSchema, type AnalyticsSummary } from "@autoforge/contracts";
+import { ReadModelStatusBar } from "@/components/read-model-status";
 import { hasPermission, type RunBatch, type Runner, type RunnerGroup } from "@autoforge/domain";
 import {
   Activity,
@@ -91,11 +92,12 @@ export default async function DashboardPage() {
   );
   const now = services.clock.now();
 
-  const [dashboardSnapshot, runners, runnerGroups, recentBatches, recentSources] =
+  const [dashboardProjection, runners, runnerGroups, recentBatchPage, recentSources] =
     await Promise.all([
       activeProjectId && hierarchy.projectVersionId && (canReadCases || canReadRuns)
-        ? services.dashboardSnapshots
+        ? services.readModels
             .read({
+              kind: "dashboard",
               projectId: activeProjectId,
               projectVersionId: hierarchy.projectVersionId,
               timeZone,
@@ -107,17 +109,21 @@ export default async function DashboardPage() {
         ? services.runnerGroups.list(DASHBOARD_RUNNER_GROUP_LIMIT)
         : Promise.resolve([]),
       canReadRuns && hierarchy.projectVersionId
-        ? services.runBatches.list(
-            DASHBOARD_RUN_BATCH_LIMIT,
-            runProjectIds,
-            hierarchy.projectVersionId,
-          )
-        : Promise.resolve([]),
+        ? services.executionBatchPage({
+            limit: DASHBOARD_RUN_BATCH_LIMIT,
+            ...(runProjectIds ? { projectIds: runProjectIds } : {}),
+            projectVersionId: hierarchy.projectVersionId,
+          })
+        : Promise.resolve({ items: [], statistics: undefined }),
       canReadSources && activeProjectId
         ? services.catalog.listRecentSources(5, [activeProjectId])
         : Promise.resolve([]),
     ]);
 
+  const recentBatches = recentBatchPage.items;
+  const dashboardSnapshot = dashboardProjection?.generation
+    ? dashboardSnapshotSchema.parse(dashboardProjection.payload)
+    : null;
   const emptyCatalogSummary = {
     sourceCount: 0,
     caseCount: 0,
@@ -159,6 +165,14 @@ export default async function DashboardPage() {
 
   return (
     <div className="dashboard-page">
+      {dashboardProjection ? (
+        <ReadModelStatusBar
+          snapshots={[
+            dashboardProjection.status,
+            ...(recentBatchPage.statistics ? [recentBatchPage.statistics] : []),
+          ]}
+        />
+      ) : null}
       <header className="dashboard-welcome">
         <div className="dashboard-welcome-copy">
           <div className="dashboard-welcome-meta">
@@ -773,7 +787,11 @@ function ActiveBatchSummary({ batch }: { batch: RunBatch }) {
   );
 }
 
-function IdleExecutionState({ latestBatch }: { latestBatch: RunBatch | undefined }) {
+function IdleExecutionState({
+  latestBatch,
+}: {
+  latestBatch: (RunBatch & { statisticsPending?: boolean }) | undefined;
+}) {
   const latestBatchTone = batchTone(latestBatch?.status);
   return (
     <div className="idle-execution-state">
@@ -799,7 +817,11 @@ function IdleExecutionState({ latestBatch }: { latestBatch: RunBatch | undefined
             </small>
             <strong title={latestBatch.suiteName}>{latestBatch.suiteName}</strong>
           </span>
-          <b className={latestBatchTone}>通过率 {runBatchPassRate(latestBatch)}%</b>
+          <b className={latestBatchTone}>
+            {latestBatch.statisticsPending
+              ? "统计准备中"
+              : `通过率 ${runBatchPassRate(latestBatch)}%`}
+          </b>
         </Link>
       ) : null}
     </div>

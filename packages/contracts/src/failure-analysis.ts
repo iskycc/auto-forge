@@ -70,6 +70,28 @@ export const failureAnalysisBatchPageSchema = z.object({
   nextCursor: z.string().optional(),
 });
 
+export const startFailureAnalysisBatchInputSchema = z.object({
+  projectId: z.string().min(1),
+  projectVersionId: z.string().min(1),
+  batchId: z.string().min(1),
+});
+
+export const startFailureAnalysisBatchResultSchema = z.object({
+  batch: failureAnalysisBatchSchema,
+  created: z.boolean(),
+});
+
+export const failureAnalysisAssigneePageSchema = z.object({
+  items: z.array(
+    z.object({
+      id: z.string().min(1),
+      username: z.string().min(1),
+      displayName: z.string().min(1),
+    }),
+  ),
+  nextCursor: z.string().optional(),
+});
+
 export const failureAnalysisClaimSchema = z.object({
   id: z.string().min(1),
   projectId: z.string().min(1),

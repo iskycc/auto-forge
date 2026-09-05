@@ -17,6 +17,11 @@ case "${acceptance_phase}" in
     readonly verify_ldap_directory=0
     readonly verify_backup_restore=0
     ;;
+  analysis)
+    readonly offline_e2e_specs="tests/e2e/failure-analysis.spec.ts tests/e2e/failure-analysis-assignment.spec.ts tests/e2e/read-model-cache.spec.ts"
+    readonly verify_ldap_directory=0
+    readonly verify_backup_restore=0
+    ;;
   governance)
     readonly offline_e2e_specs="tests/e2e/identity-rbac.spec.ts"
     readonly verify_ldap_directory=1
@@ -33,7 +38,7 @@ case "${acceptance_phase}" in
     readonly verify_backup_restore=0
     ;;
   all)
-    readonly offline_e2e_specs="tests/e2e/case-suite-lifecycle.spec.ts tests/e2e/execution-recovery.spec.ts tests/e2e/identity-rbac.spec.ts tests/e2e/jar-import.spec.ts tests/e2e/management-operations.spec.ts tests/e2e/platform-operations.spec.ts tests/e2e/project-isolation.spec.ts"
+    readonly offline_e2e_specs="tests/e2e/failure-analysis.spec.ts tests/e2e/failure-analysis-assignment.spec.ts tests/e2e/read-model-cache.spec.ts tests/e2e/case-suite-lifecycle.spec.ts tests/e2e/execution-recovery.spec.ts tests/e2e/identity-rbac.spec.ts tests/e2e/jar-import.spec.ts tests/e2e/management-operations.spec.ts tests/e2e/platform-operations.spec.ts tests/e2e/project-isolation.spec.ts"
     readonly verify_ldap_directory=1
     readonly verify_backup_restore=1
     ;;

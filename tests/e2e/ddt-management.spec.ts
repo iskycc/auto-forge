@@ -214,6 +214,23 @@ test("DDT workspace imports, edits, validates and recovers version-scoped cases"
   ).toBeVisible();
 
   await page.getByLabel(`选择 ${orderCaseId}`).check();
+  // Returning to the browser must not poll a hidden TestNG panel or clear DDT selection.
+  const hiddenPanelRequests: string[] = [];
+  const observeHiddenPanelRequest = (request: Request) => {
+    if (new URL(request.url()).pathname === "/api/v1/read-models/status")
+      hiddenPanelRequests.push(request.url());
+  };
+  page.on("request", observeHiddenPanelRequest);
+  await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+      ),
+  );
+  expect(hiddenPanelRequests).toEqual([]);
+  page.off("request", observeHiddenPanelRequest);
+  await expect(page.getByLabel(`选择 ${orderCaseId}`)).toBeChecked();
   await page.getByRole("button", { name: "加入用例任务" }).click();
   const suiteDialog = page.getByRole("dialog", { name: /将 1 条 DDT 用例加入任务/u });
   await suiteDialog.getByLabel("目标用例任务").selectOption(suite.id);

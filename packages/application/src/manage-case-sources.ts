@@ -36,25 +36,16 @@ export class CaseSourceService {
     input: { cursor?: string; limit: number; prefix?: string },
     projectIds?: readonly string[],
   ) {
-    const sources = await this.catalog.listSources(10_000, projectIds);
-    const matching = sources
-      .filter((source) => !input.prefix || source.objectKey.startsWith(input.prefix))
-      .sort((left, right) => left.objectKey.localeCompare(right.objectKey));
-    const cursor = input.cursor;
-    const start = cursor ? matching.findIndex((source) => source.objectKey > cursor) : 0;
-    const pageStart = start < 0 ? matching.length : start;
-    const pageSources = matching.slice(pageStart, pageStart + input.limit);
-    const hasNextPage = pageStart + pageSources.length < matching.length;
     return {
       storage: this.objectStore.storageKind,
-      items: pageSources.map((source) => ({
-        objectKey: source.objectKey,
-        sizeBytes: source.sizeBytes,
-        lastModified: source.updatedAt,
-        etag: source.sha256,
-      })),
-      ...(hasNextPage && pageSources.at(-1) ? { nextCursor: pageSources.at(-1)!.objectKey } : {}),
-    } as const;
+      ...(await this.catalog.listSourceObjectsPage(input, projectIds)),
+    };
+  }
+
+  async getSummary(sourceId: string, projectIds?: readonly string[]) {
+    const source = await this.catalog.getSourceSummary(sourceId, projectIds);
+    if (!source) throw new DomainError("CASE_SOURCE_NOT_FOUND", "指定的 JAR 来源不存在。");
+    return source;
   }
 
   async get(sourceId: string, projectIds?: readonly string[]) {
@@ -65,16 +56,27 @@ export class CaseSourceService {
     return source;
   }
 
-  async readClassSource(sourceId: string, className: string, projectIds?: readonly string[]) {
-    const record = await this.get(sourceId, projectIds);
-    const candidate = record.inspection.classes.find((item) => item.className === className);
-    if (!candidate?.source) return null;
-    if (!this.sourceReader) {
+  async executable(sourceId: string, projectIds?: readonly string[]) {
+    const executable = await this.catalog.getSourceExecutable(sourceId, projectIds);
+    if (executable === null)
+      throw new DomainError("CASE_SOURCE_NOT_FOUND", "指定的 JAR 来源不存在。");
+    return executable;
+  }
+
+  async readDefinitionSource(caseDefinitionId: string, projectIds?: readonly string[]) {
+    const definition = await this.catalog.getCaseDefinition(caseDefinitionId, projectIds);
+    if (!definition) throw new DomainError("CASE_DEFINITION_NOT_FOUND", "指定的用例不存在。");
+    const version = await this.catalog.getCaseVersion(caseDefinitionId, definition.currentVersion);
+    const candidate = testNgClassCandidateSchema.safeParse(version?.snapshot);
+    if (!candidate.success || !candidate.data.source || !version) return null;
+    const source = await this.getSummary(version.sourceId, projectIds);
+    if (!this.sourceReader)
       throw new DomainError("SOURCE_VIEW_UNAVAILABLE", "当前运行时未配置源码读取器。");
-    }
-    const archive = await this.objectStore.read(record.source.objectKey);
-    const content = await this.sourceReader.readSource(archive, candidate.source);
-    return { reference: candidate.source, content };
+    const archive = await this.objectStore.read(source.objectKey);
+    return {
+      reference: candidate.data.source,
+      content: await this.sourceReader.readSource(archive, candidate.data.source),
+    };
   }
 
   private async requireSource(sourceId: string, projectIds?: readonly string[]) {

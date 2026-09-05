@@ -69,7 +69,7 @@ export default async function RunnersPage({
       </div>
     );
   }
-  let recentBatches: Awaited<ReturnType<typeof services.runBatches.listPage>>["items"] = [];
+  let recentBatches: Awaited<ReturnType<typeof services.runBatches.listMetadataPage>>["items"] = [];
   try {
     const projects = await services.identities.listProjects(selectableProjectIds(identity));
     const projectId = await selectedProjectId(identity, projects, "run.read");
@@ -79,7 +79,7 @@ export default async function RunnersPage({
       );
       recentBatches = hierarchy.projectVersionId
         ? (
-            await services.runBatches.listPage({
+            await services.runBatches.listMetadataPage({
               limit: 200,
               projectId,
               projectIds: [projectId],
@@ -388,7 +388,10 @@ function runnerResourceSummary(runner: Runner): string {
   return `CPU ${runner.resourceSnapshot.cpuUtilizationPercent}% · 内存 ${runner.resourceSnapshot.memoryUtilizationPercent}% · 负载/CPU ${loadPerCpu.toFixed(2)}`;
 }
 
-function recentBatchLabel(batches: RunBatch[], runnerId: string): string {
+function recentBatchLabel(
+  batches: Pick<RunBatch, "selectedRunnerIds" | "suiteName" | "status">[],
+  runnerId: string,
+): string {
   const batch = batches.find((candidate) => candidate.selectedRunnerIds.includes(runnerId));
   return batch ? `${batch.suiteName} · ${runBatchStatusLabel(batch.status)}` : "暂无可见任务";
 }

@@ -1,3 +1,5 @@
+import { sourcePreviewSchema } from "@autoforge/contracts";
+import { ReadModelStatusBar } from "@/components/read-model-status";
 import { AlertCircle, Archive, ArrowLeft, CheckCircle2 } from "lucide-react";
 import Link from "next/link";
 
@@ -16,12 +18,35 @@ type Props = { params: Promise<{ sourceId: string }> };
 export default async function CaseSourcePage({ params }: Props) {
   const { identity, projectIds } = await requirePageProjectScope("case_source.read");
   const { sourceId } = await params;
-  const { source, inspection } = await (
-    await getPlatformServices()
-  ).caseSources.get(sourceId, projectIds);
+  const services = await getPlatformServices();
+  const source = await services.caseSources.getSummary(sourceId, projectIds);
+  const projection = await services.readModels.read({
+    kind: "source_preview",
+    projectId: source.projectId,
+    sourceId,
+  });
+  const inspection = projection.payload ? sourcePreviewSchema.parse(projection.payload) : null;
+  if (!inspection)
+    return (
+      <div className="page-stack narrow-page">
+        <section className="page-hero">
+          <div>
+            <Link className="back-link" href="/objects">
+              文件与来源
+            </Link>
+            <h1>{source.originalFileName}</h1>
+            <p>
+              {source.classCount} 个测试类 · {source.methodCount} 个方法
+            </p>
+          </div>
+        </section>
+        <ReadModelStatusBar snapshots={[projection.status]} />
+      </div>
+    );
   const canManage = hasPermission(identity, "case_source.manage", source.projectId);
   return (
     <div className="page-stack narrow-page">
+      <ReadModelStatusBar snapshots={[projection.status]} />
       <section className="page-hero">
         <div>
           <Link className="back-link" href="/objects">
@@ -133,9 +158,9 @@ export default async function CaseSourcePage({ params }: Props) {
           </div>
           <Archive size={22} />
         </div>
-        {inspection.classes.length > CLASS_PREVIEW_LIMIT ? (
+        {inspection.testClassCount > CLASS_PREVIEW_LIMIT ? (
           <div className="implementation-notice" role="status">
-            共识别 {inspection.classes.length} 个测试类，超过 {CLASS_PREVIEW_LIMIT}{" "}
+            共识别 {inspection.testClassCount} 个测试类，超过 {CLASS_PREVIEW_LIMIT}{" "}
             个不再逐条展示；识别异常见上方扫描警告。
           </div>
         ) : (

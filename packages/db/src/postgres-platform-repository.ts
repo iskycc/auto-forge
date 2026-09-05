@@ -1,3 +1,4 @@
+import { getTableColumns } from "drizzle-orm";
 import type {
   CaseCatalogRepository,
   CaseActivity,
@@ -143,7 +144,7 @@ function toMethod(row: typeof pgTestMethods.$inferSelect): TestMethod {
   };
 }
 
-function toSource(row: typeof pgCaseSources.$inferSelect): CaseSource {
+function toSource(row: Omit<typeof pgCaseSources.$inferSelect, "inspectionJson">): CaseSource {
   return {
     id: row.id,
     projectId: row.projectId,
@@ -1423,12 +1424,85 @@ export class PostgresCaseCatalogRepository implements CaseCatalogRepository {
     return existingIds;
   }
 
+  async getSourceExecutable(sourceId: string, projectIds?: readonly string[]) {
+    await this.ready();
+    if (projectIds?.length === 0) return null;
+    const rows = await this.handle.db
+      .select({
+        executable: sql<boolean>`COALESCE((${pgCaseSources.inspectionJson}::jsonb ->> 'executable')::boolean, TRUE)`,
+      })
+      .from(pgCaseSources)
+      .where(
+        and(
+          eq(pgCaseSources.id, sourceId),
+          ...(projectIds ? [inArray(pgCaseSources.projectId, [...projectIds])] : []),
+        ),
+      )
+      .limit(1);
+    return rows[0] ? Boolean(rows[0].executable) : null;
+  }
+
+  async getSourceSummary(sourceId: string, projectIds?: readonly string[]) {
+    await this.ready();
+    if (projectIds?.length === 0) return null;
+    // Source lists and authorization only need metadata, never the large inspection document.
+    const columns = { ...getTableColumns(pgCaseSources), inspectionJson: sql<string>`'{}'` };
+    const rows = await this.handle.db
+      .select(columns)
+      .from(pgCaseSources)
+      .where(
+        and(
+          eq(pgCaseSources.id, sourceId),
+          ...(projectIds ? [inArray(pgCaseSources.projectId, [...projectIds])] : []),
+        ),
+      )
+      .limit(1);
+    return rows[0] ? toSource(rows[0]) : null;
+  }
+
+  async listSourceObjectsPage(
+    input: { cursor?: string; limit: number; prefix?: string },
+    projectIds?: readonly string[],
+  ) {
+    await this.ready();
+    if (projectIds?.length === 0) return { items: [] };
+    const rows = await this.handle.db
+      .select({
+        objectKey: pgCaseSources.objectKey,
+        sizeBytes: sql<number>`MAX(${pgCaseSources.sizeBytes})`,
+        lastModified: sql<string>`MAX(${pgCaseSources.updatedAt})`,
+        etag: sql<string>`MAX(${pgCaseSources.sha256})`,
+      })
+      .from(pgCaseSources)
+      .where(
+        and(
+          ...(projectIds ? [inArray(pgCaseSources.projectId, [...projectIds])] : []),
+          ...(input.cursor ? [sql`${pgCaseSources.objectKey} > ${input.cursor}`] : []),
+          ...(input.prefix
+            ? [sql`substr(${pgCaseSources.objectKey},1,${input.prefix.length}) = ${input.prefix}`]
+            : []),
+        ),
+      )
+      .groupBy(pgCaseSources.objectKey)
+      .orderBy(asc(pgCaseSources.objectKey))
+      .limit(Math.max(1, Math.min(input.limit, 500)) + 1);
+    const items = rows
+      .slice(0, input.limit)
+      .map((row) => ({ ...row, sizeBytes: Number(row.sizeBytes) }));
+    return {
+      items,
+      ...(rows.length > input.limit && items.at(-1) ? { nextCursor: items.at(-1)!.objectKey } : {}),
+    };
+  }
+
   async listRecentSources(limit: number, projectIds?: readonly string[]): Promise<CaseSource[]> {
     await this.ready();
     if (projectIds?.length === 0) return [];
+    // Source lists and authorization only need metadata, never the large inspection document.
+    const columns = { ...getTableColumns(pgCaseSources), inspectionJson: sql<string>`'{}'` };
     return (
       await this.handle.db
-        .select()
+        .select(columns)
         .from(pgCaseSources)
         .where(projectIds ? inArray(pgCaseSources.projectId, [...projectIds]) : undefined)
         .orderBy(desc(pgCaseSources.createdAt))
@@ -1926,29 +2000,33 @@ export class PostgresCaseSuiteRepository implements CaseSuiteRepository {
   ): Promise<CaseSuite[]> {
     await this.ready();
     if (projectIds?.length === 0) return [];
-    const [rows, counts, ddtCounts] = await Promise.all([
-      this.handle.db
-        .select()
-        .from(pgCaseSuites)
-        .where(
-          and(
-            ...(projectIds ? [inArray(pgCaseSuites.projectId, [...projectIds])] : []),
-            ...(projectVersionId
-              ? [
-                  sql`(${pgCaseSuites.policyJson}::jsonb ->> 'projectVersionId') = ${projectVersionId}`,
-                ]
-              : []),
-          ),
-        )
-        .orderBy(desc(pgCaseSuites.updatedAt))
-        .limit(limit),
+    const rows = await this.handle.db
+      .select()
+      .from(pgCaseSuites)
+      .where(
+        and(
+          ...(projectIds ? [inArray(pgCaseSuites.projectId, [...projectIds])] : []),
+          ...(projectVersionId
+            ? [
+                sql`(${pgCaseSuites.policyJson}::jsonb ->> 'projectVersionId') = ${projectVersionId}`,
+              ]
+            : []),
+        ),
+      )
+      .orderBy(desc(pgCaseSuites.updatedAt))
+      .limit(limit);
+    if (!rows.length) return [];
+    const suiteIds = rows.map((row) => row.id);
+    const [counts, ddtCounts] = await Promise.all([
       this.handle.db
         .select({ suiteId: pgCaseSuiteItems.suiteId, value: count() })
         .from(pgCaseSuiteItems)
+        .where(inArray(pgCaseSuiteItems.suiteId, suiteIds))
         .groupBy(pgCaseSuiteItems.suiteId),
       this.handle.db
         .select({ suiteId: pgCaseSuiteDdtItems.suiteId, value: count() })
         .from(pgCaseSuiteDdtItems)
+        .where(inArray(pgCaseSuiteDdtItems.suiteId, suiteIds))
         .groupBy(pgCaseSuiteDdtItems.suiteId),
     ]);
     const countBySuite = new Map(counts.map((row) => [row.suiteId, row.value]));
@@ -2034,6 +2112,21 @@ export class PostgresCaseSuiteRepository implements CaseSuiteRepository {
   }
 
   async get(suiteId: string, projectIds?: readonly string[]): Promise<CaseSuiteDetails | null> {
+    return this.readDetails(suiteId, projectIds);
+  }
+
+  async listMemberPage(input: import("@autoforge/application").CaseSuiteMemberPageQuery) {
+    if (!Number.isInteger(input.limit) || input.limit < 1 || input.limit > 250)
+      throw new Error("Suite member page size must be between 1 and 250.");
+    const details = await this.readDetails(input.suiteId, input.projectIds, input);
+    return details ? { items: details.items, ddtItems: details.ddtItems } : null;
+  }
+
+  private async readDetails(
+    suiteId: string,
+    projectIds?: readonly string[],
+    page?: import("@autoforge/application").CaseSuiteMemberPageQuery,
+  ): Promise<CaseSuiteDetails | null> {
     await this.ready();
     if (projectIds?.length === 0) return null;
     const [suite] = await this.handle.db
@@ -2047,11 +2140,23 @@ export class PostgresCaseSuiteRepository implements CaseSuiteRepository {
       )
       .limit(1);
     if (!suite) return null;
-    const itemRows = await this.handle.db
+    const itemRowsQuery = this.handle.db
       .select()
       .from(pgCaseSuiteItems)
-      .where(eq(pgCaseSuiteItems.suiteId, suiteId))
-      .orderBy(asc(pgCaseSuiteItems.addedAt), asc(pgCaseSuiteItems.id));
+      .where(
+        and(
+          eq(pgCaseSuiteItems.suiteId, suiteId),
+          ...(page?.afterCaseMemberId ? [gt(pgCaseSuiteItems.id, page.afterCaseMemberId)] : []),
+        ),
+      )
+      .orderBy(
+        ...(page
+          ? [asc(pgCaseSuiteItems.id)]
+          : [asc(pgCaseSuiteItems.addedAt), asc(pgCaseSuiteItems.id)]),
+      )
+      .$dynamic();
+    if (page) itemRowsQuery.limit(page.limit);
+    const itemRows = await itemRowsQuery;
     const ids = itemRows.map((row) => row.caseDefinitionId);
     const definitions = [];
     const methodRows = [];
@@ -2109,11 +2214,23 @@ export class PostgresCaseSuiteRepository implements CaseSuiteRepository {
         ? [{ id: row.id, suiteId: row.suiteId, caseDefinition: definition, addedAt: row.addedAt }]
         : [];
     });
-    const ddtItemRows = await this.handle.db
+    const ddtItemRowsQuery = this.handle.db
       .select()
       .from(pgCaseSuiteDdtItems)
-      .where(eq(pgCaseSuiteDdtItems.suiteId, suiteId))
-      .orderBy(asc(pgCaseSuiteDdtItems.addedAt), asc(pgCaseSuiteDdtItems.id));
+      .where(
+        and(
+          eq(pgCaseSuiteDdtItems.suiteId, suiteId),
+          ...(page?.afterDdtMemberId ? [gt(pgCaseSuiteDdtItems.id, page.afterDdtMemberId)] : []),
+        ),
+      )
+      .orderBy(
+        ...(page
+          ? [asc(pgCaseSuiteDdtItems.id)]
+          : [asc(pgCaseSuiteDdtItems.addedAt), asc(pgCaseSuiteDdtItems.id)]),
+      )
+      .$dynamic();
+    if (page) ddtItemRowsQuery.limit(page.limit);
+    const ddtItemRows = await ddtItemRowsQuery;
     const ddtIds = ddtItemRows.map((item) => item.ddtCaseId);
     const ddtRows = [];
     for (const idBatch of batchesOf(ddtIds, RELATIONAL_ID_QUERY_BATCH_SIZE)) {

@@ -34,6 +34,7 @@ export class FailureAnalysisService {
 
   listBatches(input: {
     projectId: string;
+    view?: "started" | "available";
     projectVersionId?: string;
     cursor?: string;
     limit?: number;
@@ -46,12 +47,14 @@ export class FailureAnalysisService {
 
   statistics(input: {
     projectId: string;
+    batchId: string;
     projectVersionId?: string;
     cursor?: string;
     limit?: number;
   }) {
     return this.repository.readStatistics({
       projectId: input.projectId,
+      batchId: input.batchId,
       limit: boundedPageSize(input.limit),
       generatedAt: this.clock.now().toISOString(),
       ...(input.projectVersionId ? { projectVersionId: input.projectVersionId } : {}),
@@ -61,6 +64,7 @@ export class FailureAnalysisService {
 
   listAnalystClaims(input: {
     projectId: string;
+    batchId: string;
     projectVersionId?: string;
     claimantId: string;
     cursor?: string;
@@ -68,6 +72,7 @@ export class FailureAnalysisService {
   }) {
     return this.repository.listClaims({
       projectId: input.projectId,
+      batchId: input.batchId,
       claimantId: input.claimantId,
       sort: "case_name",
       direction: "asc",
@@ -79,8 +84,31 @@ export class FailureAnalysisService {
     });
   }
 
+  readBatchProgress(projectId: string, batchId: string) {
+    return this.repository.readBatchProgress(projectId, batchId);
+  }
+
   getBatch(input: { projectId: string; projectVersionId: string; batchId: string }) {
     return this.repository.getBatch(input);
+  }
+
+  async startBatch(input: {
+    projectId: string;
+    projectVersionId: string;
+    batchId: string;
+    startedBy: string;
+  }) {
+    const result = await this.repository.startBatch({
+      ...input,
+      startedAt: this.clock.now().toISOString(),
+    });
+    if (!result) {
+      throw new DomainError(
+        "FAILURE_ANALYSIS_BATCH_NOT_ELIGIBLE",
+        "该执行不存在、尚未结束或没有可分析的最终失败用例。",
+      );
+    }
+    return result;
   }
 
   listCandidates(input: {

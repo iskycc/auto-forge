@@ -23,6 +23,7 @@ import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import type { ReactNode } from "react";
 
+import { configureBrowserCacheScope } from "@/lib/browser-read-cache";
 import { LogoutButton } from "./logout-button";
 import { TopbarTools } from "./topbar-tools";
 import { GlobalRunDialog } from "./global-run-dialog";
@@ -176,6 +177,10 @@ export function AppShell({
   selectedTestStageId?: string | undefined;
 }) {
   configurePlatformTimeZone(timeZone);
+  if (typeof window !== "undefined")
+    configureBrowserCacheScope(
+      `${userId ?? "anonymous"}:${selectedProjectId ?? ""}:${selectedProjectVersionId ?? ""}:${selectedTestStageId ?? ""}:${permissions.join(",")}`,
+    );
   const pathname = usePathname();
   const currentSection = useSearchParams().get("section");
   // 保留 /run-batches/[id] 详情路由，但所有批次入口统一归属“执行记录”。

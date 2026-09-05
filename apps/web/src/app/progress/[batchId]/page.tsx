@@ -21,9 +21,13 @@ export default async function RunProgressPage({
     !verifyRunProgressToken(services.config.masterKey, accessToken, batchId, services.clock.now())
   )
     notFound();
-  const overview = await services.runBatches.getDetailOverview(batchId).catch(() => null);
+  const overview = await services.executionOverview(batchId).catch(() => null);
   if (!overview) notFound();
   return (
-    <PublicRunProgress accessToken={accessToken} initial={buildRunProgressFromOverview(overview)} />
+    <PublicRunProgress
+      statisticsPending={!overview.statistics.generation}
+      accessToken={accessToken}
+      initial={buildRunProgressFromOverview(overview)}
+    />
   );
 }

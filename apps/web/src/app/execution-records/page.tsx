@@ -1,3 +1,4 @@
+import { ReadModelStatusBar } from "@/components/read-model-status";
 import { Button, DatetimeInput, Input, Select } from "@/components/ui";
 import {
   ExecutionRecordsTable,
@@ -61,8 +62,8 @@ export default async function ExecutionRecordsPage({
   };
   const [batchPage, suites, runners] = await Promise.all([
     hierarchy.projectVersionId
-      ? services.runBatches.listPage(filter)
-      : Promise.resolve({ items: [], nextCursor: undefined }),
+      ? services.executionBatchPage(filter)
+      : Promise.resolve({ items: [], nextCursor: undefined, statistics: undefined }),
     hierarchy.projectVersionId
       ? services.caseSuites.list(200, projectId ? [projectId] : [], hierarchy.projectVersionId)
       : Promise.resolve([]),
@@ -74,12 +75,25 @@ export default async function ExecutionRecordsPage({
   const observedAt = services.clock.now().toISOString();
   const rows: ExecutionRecordRow[] = batchPage.items.map((batch) => ({
     id: batch.id,
+    ...((batch.kind ?? "standard") === "standard" &&
+    !batch.suiteId.startsWith("single:") &&
+    batch.policy?.projectVersionId &&
+    hasPermission(identity, "analysis.manage", batch.projectId)
+      ? {
+          analysisScope: {
+            projectId: batch.projectId,
+            projectVersionId: batch.policy.projectVersionId,
+            batchId: batch.id,
+          },
+        }
+      : {}),
     sequenceNumber: batch.sequenceNumber,
     suiteName: batch.suiteName,
     suiteVersion: batch.suiteVersion,
     status: batch.status,
     totalRuns: batch.totalRuns,
     succeededRuns: batch.succeededRuns,
+    statisticsPending: batch.statisticsPending,
     failedRuns: batch.failedRuns,
     timedOutRuns: batch.timedOutRuns,
     retryMode: batch.retryMode,
@@ -186,6 +200,7 @@ export default async function ExecutionRecordsPage({
           刷新
         </Link>
       </form>
+      {batchPage.statistics ? <ReadModelStatusBar snapshots={[batchPage.statistics]} /> : null}
       <section className="content-card execution-records-card">
         <div className="records-table-header">
           <h2>批次列表</h2>

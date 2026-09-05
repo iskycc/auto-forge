@@ -1,3 +1,4 @@
+import { getTableColumns } from "drizzle-orm";
 import type {
   CaseCatalogRepository,
   CaseActivity,
@@ -186,7 +187,7 @@ function toTestMethod(row: typeof testMethods.$inferSelect): TestMethod {
   return method;
 }
 
-function toCaseSource(row: typeof caseSources.$inferSelect): CaseSource {
+function toCaseSource(row: Omit<typeof caseSources.$inferSelect, "inspectionJson">): CaseSource {
   return {
     id: row.id,
     projectId: row.projectId,
@@ -299,56 +300,58 @@ export class SqliteCaseCatalogRepository implements CaseCatalogRepository {
   constructor(private readonly handle: SqliteDatabaseHandle) {}
 
   async createJarImportJob(record: Parameters<CaseCatalogRepository["createJarImportJob"]>[0]) {
-    this.handle.client.transaction(() => {
-      this.handle.client
-        .prepare(
-          `INSERT OR IGNORE INTO case_import_jobs
+    this.handle.client
+      .transaction(() => {
+        this.handle.client
+          .prepare(
+            `INSERT OR IGNORE INTO case_import_jobs
            (id, project_id, project_version_id, test_stage_id, idempotency_key, file_name,
             object_key, sha256, size_bytes, status, progress_percent, requested_by, created_at,
             updated_at)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        )
-        .run(
-          record.job.id,
-          record.job.projectId,
-          record.job.projectVersionId ?? null,
-          record.job.testStageId ?? null,
-          record.idempotencyKey,
-          record.job.fileName,
-          record.objectKey,
-          record.job.sha256,
-          record.job.sizeBytes,
-          record.job.status,
-          record.job.progressPercent,
-          record.job.requestedBy ?? null,
-          record.job.createdAt,
-          record.job.updatedAt,
-        );
-      const inserted = this.handle.client.prepare("SELECT changes() AS changes").get() as {
-        changes: number;
-      };
-      if (inserted.changes === 0) return;
-      this.handle.client
-        .prepare(
-          `INSERT INTO queue_jobs
+          )
+          .run(
+            record.job.id,
+            record.job.projectId,
+            record.job.projectVersionId ?? null,
+            record.job.testStageId ?? null,
+            record.idempotencyKey,
+            record.job.fileName,
+            record.objectKey,
+            record.job.sha256,
+            record.job.sizeBytes,
+            record.job.status,
+            record.job.progressPercent,
+            record.job.requestedBy ?? null,
+            record.job.createdAt,
+            record.job.updatedAt,
+          );
+        const inserted = this.handle.client.prepare("SELECT changes() AS changes").get() as {
+          changes: number;
+        };
+        if (inserted.changes === 0) return;
+        this.handle.client
+          .prepare(
+            `INSERT INTO queue_jobs
            (message_id, run_id, attempt, schema_version, kind, payload_json, priority,
             deduplication_key, status, available_at, created_at, updated_at)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'available', ?, ?, ?)`,
-        )
-        .run(
-          record.dispatchJob.messageId,
-          record.dispatchJob.runId,
-          record.dispatchJob.attempt,
-          record.dispatchJob.schemaVersion,
-          record.dispatchJob.kind,
-          JSON.stringify(record.dispatchJob.payload),
-          record.dispatchJob.priority,
-          record.dispatchJob.deduplicationKey,
-          record.dispatchJob.createdAt,
-          record.dispatchJob.createdAt,
-          record.dispatchJob.createdAt,
-        );
-    })();
+          )
+          .run(
+            record.dispatchJob.messageId,
+            record.dispatchJob.runId,
+            record.dispatchJob.attempt,
+            record.dispatchJob.schemaVersion,
+            record.dispatchJob.kind,
+            JSON.stringify(record.dispatchJob.payload),
+            record.dispatchJob.priority,
+            record.dispatchJob.deduplicationKey,
+            record.dispatchJob.createdAt,
+            record.dispatchJob.createdAt,
+            record.dispatchJob.createdAt,
+          );
+      })
+      .immediate();
     const row = this.handle.db
       .select()
       .from(caseImportJobs)
@@ -452,51 +455,53 @@ export class SqliteCaseCatalogRepository implements CaseCatalogRepository {
     const scope = input.projectIds
       ? inArray(caseImportJobs.projectId, [...input.projectIds])
       : undefined;
-    const updated = this.handle.client.transaction(() => {
-      const row = this.handle.db
-        .update(caseImportJobs)
-        .set({
-          status: "queued",
-          progressPercent: 0,
-          errorCode: null,
-          errorSummary: null,
-          resultJson: null,
-          startedAt: null,
-          finishedAt: null,
-          updatedAt: input.updatedAt,
-        })
-        .where(
-          and(
-            eq(caseImportJobs.id, input.jobId),
-            inArray(caseImportJobs.status, ["failed", "cancelled"]),
-            scope,
-          ),
-        )
-        .returning()
-        .get();
-      if (!row) return undefined;
-      this.handle.client
-        .prepare(
-          `INSERT INTO queue_jobs
+    const updated = this.handle.client
+      .transaction(() => {
+        const row = this.handle.db
+          .update(caseImportJobs)
+          .set({
+            status: "queued",
+            progressPercent: 0,
+            errorCode: null,
+            errorSummary: null,
+            resultJson: null,
+            startedAt: null,
+            finishedAt: null,
+            updatedAt: input.updatedAt,
+          })
+          .where(
+            and(
+              eq(caseImportJobs.id, input.jobId),
+              inArray(caseImportJobs.status, ["failed", "cancelled"]),
+              scope,
+            ),
+          )
+          .returning()
+          .get();
+        if (!row) return undefined;
+        this.handle.client
+          .prepare(
+            `INSERT INTO queue_jobs
            (message_id, run_id, attempt, schema_version, kind, payload_json, priority,
             deduplication_key, status, available_at, created_at, updated_at)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'available', ?, ?, ?)`,
-        )
-        .run(
-          input.dispatchJob.messageId,
-          input.dispatchJob.runId,
-          input.dispatchJob.attempt,
-          input.dispatchJob.schemaVersion,
-          input.dispatchJob.kind,
-          JSON.stringify(input.dispatchJob.payload),
-          input.dispatchJob.priority,
-          input.dispatchJob.deduplicationKey,
-          input.dispatchJob.createdAt,
-          input.dispatchJob.createdAt,
-          input.dispatchJob.createdAt,
-        );
-      return row;
-    })();
+          )
+          .run(
+            input.dispatchJob.messageId,
+            input.dispatchJob.runId,
+            input.dispatchJob.attempt,
+            input.dispatchJob.schemaVersion,
+            input.dispatchJob.kind,
+            JSON.stringify(input.dispatchJob.payload),
+            input.dispatchJob.priority,
+            input.dispatchJob.deduplicationKey,
+            input.dispatchJob.createdAt,
+            input.dispatchJob.createdAt,
+            input.dispatchJob.createdAt,
+          );
+        return row;
+      })
+      .immediate();
     if (!updated) {
       const current = await this.getJarImportJob(input.jobId, input.projectIds);
       if (current && ["queued", "running", "succeeded"].includes(current.status)) return current;
@@ -532,163 +537,172 @@ export class SqliteCaseCatalogRepository implements CaseCatalogRepository {
 
   async importCatalog(record: ImportCatalogRecord): Promise<void> {
     const projectId = record.projectId ?? DEFAULT_PROJECT_ID;
-    this.handle.client.transaction(() => {
-      this.handle.db
-        .insert(caseSources)
-        .values({
-          id: record.sourceId,
-          projectId,
-          ...(record.projectVersionId ? { projectVersionId: record.projectVersionId } : {}),
-          ...(record.testStageId ? { testStageId: record.testStageId } : {}),
-          displayName: record.displayName,
-          originalFileName: record.inspection.fileName,
-          objectKey: record.objectKey,
-          sha256: record.inspection.sha256,
-          sizeBytes: record.inspection.sizeBytes,
-          classCount: record.inspection.testClassCount,
-          methodCount: record.inspection.testMethodCount,
-          status: "ready",
-          warningsJson: JSON.stringify(record.inspection.warnings),
-          inspectionJson: JSON.stringify(record.inspection),
-          authoritative: false,
-          lifecycleStatus: "active",
-          revision: 1,
-          ...(record.importedBy ? { importedBy: record.importedBy } : {}),
-          createdAt: record.importedAt,
-          updatedAt: record.importedAt,
-        })
-        .run();
+    this.handle.client
+      .transaction(() => {
+        this.handle.db
+          .insert(caseSources)
+          .values({
+            id: record.sourceId,
+            projectId,
+            ...(record.projectVersionId ? { projectVersionId: record.projectVersionId } : {}),
+            ...(record.testStageId ? { testStageId: record.testStageId } : {}),
+            displayName: record.displayName,
+            originalFileName: record.inspection.fileName,
+            objectKey: record.objectKey,
+            sha256: record.inspection.sha256,
+            sizeBytes: record.inspection.sizeBytes,
+            classCount: record.inspection.testClassCount,
+            methodCount: record.inspection.testMethodCount,
+            status: "ready",
+            warningsJson: JSON.stringify(record.inspection.warnings),
+            inspectionJson: JSON.stringify(record.inspection),
+            authoritative: false,
+            lifecycleStatus: "active",
+            revision: 1,
+            ...(record.importedBy ? { importedBy: record.importedBy } : {}),
+            createdAt: record.importedAt,
+            updatedAt: record.importedAt,
+          })
+          .run();
 
-      const hierarchy =
-        record.projectVersionId && record.testStageId
-          ? and(
-              eq(caseDefinitions.projectVersionId, record.projectVersionId),
-              eq(caseDefinitions.testStageId, record.testStageId),
+        const hierarchy =
+          record.projectVersionId && record.testStageId
+            ? and(
+                eq(caseDefinitions.projectVersionId, record.projectVersionId),
+                eq(caseDefinitions.testStageId, record.testStageId),
+              )
+            : and(isNull(caseDefinitions.projectVersionId), isNull(caseDefinitions.testStageId));
+        const definitionsByClass = new Map<string, Array<typeof caseDefinitions.$inferSelect>>();
+        const importedClassNames = [
+          ...new Set(record.cases.map((importedCase) => importedCase.candidate.className)),
+        ];
+        for (const classNameBatch of batchesOf(
+          importedClassNames,
+          RELATIONAL_ID_QUERY_BATCH_SIZE,
+        )) {
+          const rows = this.handle.db
+            .select()
+            .from(caseDefinitions)
+            .where(
+              and(
+                eq(caseDefinitions.projectId, projectId),
+                inArray(caseDefinitions.className, classNameBatch),
+                hierarchy,
+              ),
             )
-          : and(isNull(caseDefinitions.projectVersionId), isNull(caseDefinitions.testStageId));
-      const definitionsByClass = new Map<string, Array<typeof caseDefinitions.$inferSelect>>();
-      const importedClassNames = [
-        ...new Set(record.cases.map((importedCase) => importedCase.candidate.className)),
-      ];
-      for (const classNameBatch of batchesOf(importedClassNames, RELATIONAL_ID_QUERY_BATCH_SIZE)) {
-        const rows = this.handle.db
-          .select()
-          .from(caseDefinitions)
-          .where(
-            and(
-              eq(caseDefinitions.projectId, projectId),
-              inArray(caseDefinitions.className, classNameBatch),
-              hierarchy,
-            ),
-          )
-          .orderBy(
-            asc(caseDefinitions.className),
-            asc(caseDefinitions.createdAt),
-            asc(caseDefinitions.id),
-          )
-          .all();
-        for (const row of rows) {
-          const matching = definitionsByClass.get(row.className) ?? [];
-          matching.push(row);
-          definitionsByClass.set(row.className, matching);
-        }
-      }
-
-      for (const importedCase of record.cases) {
-        const candidate = importedCase.candidate;
-        const matchingDefinitions = definitionsByClass.get(candidate.className) ?? [];
-        const existingDefinition = matchingDefinitions[0];
-        if (existingDefinition) {
-          // 旧版本曾按 source + class 建唯一约束，可能已经留下同层级重复用例。
-          // 首次重导时保留最早 ID，并把任务成员关系合并回这个稳定 ID。
-          let latestVersion = existingDefinition.currentVersion;
-          for (const duplicate of matchingDefinitions.slice(1)) {
-            latestVersion = this.mergeDuplicateCaseDefinition(
-              existingDefinition.id,
-              duplicate.id,
-              latestVersion,
-            );
+            .orderBy(
+              asc(caseDefinitions.className),
+              asc(caseDefinitions.createdAt),
+              asc(caseDefinitions.id),
+            )
+            .all();
+          for (const row of rows) {
+            const matching = definitionsByClass.get(row.className) ?? [];
+            matching.push(row);
+            definitionsByClass.set(row.className, matching);
           }
-          const nextVersion = latestVersion + 1;
+        }
+
+        for (const importedCase of record.cases) {
+          const candidate = importedCase.candidate;
+          const matchingDefinitions = definitionsByClass.get(candidate.className) ?? [];
+          const existingDefinition = matchingDefinitions[0];
+          if (existingDefinition) {
+            // 旧版本曾按 source + class 建唯一约束，可能已经留下同层级重复用例。
+            // 首次重导时保留最早 ID，并把任务成员关系合并回这个稳定 ID。
+            let latestVersion = existingDefinition.currentVersion;
+            for (const duplicate of matchingDefinitions.slice(1)) {
+              latestVersion = this.mergeDuplicateCaseDefinition(
+                existingDefinition.id,
+                duplicate.id,
+                latestVersion,
+              );
+            }
+            const nextVersion = latestVersion + 1;
+            this.handle.db
+              .update(caseDefinitions)
+              .set({
+                directoryPath: candidate.packageName.replaceAll(".", "/"),
+                sourceId: record.sourceId,
+                packageName: candidate.packageName,
+                parametersJson: JSON.stringify(candidate.parameters ?? {}),
+                enabled: candidate.enabled,
+                groupsJson: JSON.stringify(candidate.groups),
+                currentVersion: nextVersion,
+                revision: sql`${caseDefinitions.revision} + 1`,
+                ...(record.importedBy ? { updatedBy: record.importedBy } : {}),
+                updatedAt: record.importedAt,
+              })
+              .where(eq(caseDefinitions.id, existingDefinition.id))
+              .run();
+            this.handle.db
+              .insert(caseVersions)
+              .values({
+                id: importedCase.caseVersionId,
+                caseDefinitionId: existingDefinition.id,
+                sourceId: record.sourceId,
+                version: nextVersion,
+                snapshotJson: JSON.stringify(candidate),
+                ...(record.importedBy ? { createdBy: record.importedBy } : {}),
+                changeReason: "source.reimport",
+                createdAt: record.importedAt,
+              })
+              .run();
+            this.handle.db
+              .delete(testMethods)
+              .where(eq(testMethods.caseDefinitionId, existingDefinition.id))
+              .run();
+            this.insertImportedMethods(existingDefinition.id, importedCase, record.importedAt);
+            continue;
+          }
+
           this.handle.db
-            .update(caseDefinitions)
-            .set({
+            .insert(caseDefinitions)
+            .values({
+              id: importedCase.caseDefinitionId,
+              projectId,
+              ...(record.projectVersionId ? { projectVersionId: record.projectVersionId } : {}),
+              ...(record.testStageId ? { testStageId: record.testStageId } : {}),
               directoryPath: candidate.packageName.replaceAll(".", "/"),
               sourceId: record.sourceId,
+              className: candidate.className,
               packageName: candidate.packageName,
+              displayName: candidate.simpleName,
+              description: "",
+              tagsJson: "[]",
               parametersJson: JSON.stringify(candidate.parameters ?? {}),
               enabled: candidate.enabled,
-              groupsJson: JSON.stringify(candidate.groups),
-              currentVersion: nextVersion,
-              revision: sql`${caseDefinitions.revision} + 1`,
+              archived: false,
+              revision: 1,
               ...(record.importedBy ? { updatedBy: record.importedBy } : {}),
+              groupsJson: JSON.stringify(candidate.groups),
+              currentVersion: 1,
+              createdAt: record.importedAt,
               updatedAt: record.importedAt,
             })
-            .where(eq(caseDefinitions.id, existingDefinition.id))
             .run();
           this.handle.db
             .insert(caseVersions)
             .values({
               id: importedCase.caseVersionId,
-              caseDefinitionId: existingDefinition.id,
+              caseDefinitionId: importedCase.caseDefinitionId,
               sourceId: record.sourceId,
-              version: nextVersion,
+              version: 1,
               snapshotJson: JSON.stringify(candidate),
               ...(record.importedBy ? { createdBy: record.importedBy } : {}),
-              changeReason: "source.reimport",
+              changeReason: "source.import",
               createdAt: record.importedAt,
             })
             .run();
-          this.handle.db
-            .delete(testMethods)
-            .where(eq(testMethods.caseDefinitionId, existingDefinition.id))
-            .run();
-          this.insertImportedMethods(existingDefinition.id, importedCase, record.importedAt);
-          continue;
+
+          this.insertImportedMethods(
+            importedCase.caseDefinitionId,
+            importedCase,
+            record.importedAt,
+          );
         }
-
-        this.handle.db
-          .insert(caseDefinitions)
-          .values({
-            id: importedCase.caseDefinitionId,
-            projectId,
-            ...(record.projectVersionId ? { projectVersionId: record.projectVersionId } : {}),
-            ...(record.testStageId ? { testStageId: record.testStageId } : {}),
-            directoryPath: candidate.packageName.replaceAll(".", "/"),
-            sourceId: record.sourceId,
-            className: candidate.className,
-            packageName: candidate.packageName,
-            displayName: candidate.simpleName,
-            description: "",
-            tagsJson: "[]",
-            parametersJson: JSON.stringify(candidate.parameters ?? {}),
-            enabled: candidate.enabled,
-            archived: false,
-            revision: 1,
-            ...(record.importedBy ? { updatedBy: record.importedBy } : {}),
-            groupsJson: JSON.stringify(candidate.groups),
-            currentVersion: 1,
-            createdAt: record.importedAt,
-            updatedAt: record.importedAt,
-          })
-          .run();
-        this.handle.db
-          .insert(caseVersions)
-          .values({
-            id: importedCase.caseVersionId,
-            caseDefinitionId: importedCase.caseDefinitionId,
-            sourceId: record.sourceId,
-            version: 1,
-            snapshotJson: JSON.stringify(candidate),
-            ...(record.importedBy ? { createdBy: record.importedBy } : {}),
-            changeReason: "source.import",
-            createdAt: record.importedAt,
-          })
-          .run();
-
-        this.insertImportedMethods(importedCase.caseDefinitionId, importedCase, record.importedAt);
-      }
-    })();
+      })
+      .immediate();
   }
 
   private insertImportedMethods(
@@ -1338,75 +1352,77 @@ export class SqliteCaseCatalogRepository implements CaseCatalogRepository {
     if (input.methodIds.length !== input.snapshot.methods.length) {
       throw new Error("Restore method identifiers must match the snapshot method count.");
     }
-    return this.handle.client.transaction(() => {
-      const updated = this.handle.db
-        .update(caseDefinitions)
-        .set({
-          groupsJson: JSON.stringify(input.snapshot.groups),
-          parametersJson: JSON.stringify(input.snapshot.parameters ?? {}),
-          enabled: input.snapshot.enabled,
-          sourceId: input.sourceId,
-          currentVersion: input.version,
-          revision: sql`${caseDefinitions.revision} + 1`,
-          updatedBy: input.actorId,
-          updatedAt: input.restoredAt,
-        })
-        .where(
-          and(
-            eq(caseDefinitions.id, input.caseDefinitionId),
-            eq(caseDefinitions.revision, input.expectedRevision),
-          ),
-        )
-        .returning()
-        .get();
-      if (!updated) this.throwCaseDefinitionConflict(input.caseDefinitionId);
-      this.handle.db
-        .delete(testMethods)
-        .where(eq(testMethods.caseDefinitionId, input.caseDefinitionId))
-        .run();
-      if (input.snapshot.methods.length > 0) {
-        this.handle.db
-          .insert(testMethods)
-          .values(
-            input.snapshot.methods.map((method, index) =>
-              testMethodInsertValues({
-                id: input.methodIds[index]!,
-                caseDefinitionId: input.caseDefinitionId,
-                method,
-                createdAt: input.restoredAt,
-              }),
+    return this.handle.client
+      .transaction(() => {
+        const updated = this.handle.db
+          .update(caseDefinitions)
+          .set({
+            groupsJson: JSON.stringify(input.snapshot.groups),
+            parametersJson: JSON.stringify(input.snapshot.parameters ?? {}),
+            enabled: input.snapshot.enabled,
+            sourceId: input.sourceId,
+            currentVersion: input.version,
+            revision: sql`${caseDefinitions.revision} + 1`,
+            updatedBy: input.actorId,
+            updatedAt: input.restoredAt,
+          })
+          .where(
+            and(
+              eq(caseDefinitions.id, input.caseDefinitionId),
+              eq(caseDefinitions.revision, input.expectedRevision),
             ),
           )
+          .returning()
+          .get();
+        if (!updated) this.throwCaseDefinitionConflict(input.caseDefinitionId);
+        this.handle.db
+          .delete(testMethods)
+          .where(eq(testMethods.caseDefinitionId, input.caseDefinitionId))
           .run();
-      }
-      this.handle.db
-        .insert(caseVersions)
-        .values({
-          id: input.versionId,
-          caseDefinitionId: input.caseDefinitionId,
-          sourceId: input.sourceId,
-          version: input.version,
-          snapshotJson: JSON.stringify(input.snapshot),
-          createdBy: input.actorId,
-          changeReason: input.changeReason,
-          createdAt: input.restoredAt,
-        })
-        .run();
-      const row = this.handle.db
-        .select()
-        .from(caseDefinitions)
-        .where(eq(caseDefinitions.id, input.caseDefinitionId))
-        .get();
-      if (!row) throw new DomainError("CASE_DEFINITION_NOT_FOUND", "指定的用例不存在。");
-      const methods = this.handle.db
-        .select()
-        .from(testMethods)
-        .where(eq(testMethods.caseDefinitionId, row.id))
-        .all()
-        .map(toTestMethod)
-        .sort((left, right) => left.methodName.localeCompare(right.methodName));
-      return { ...toCaseDefinition(row), methods };
-    })();
+        if (input.snapshot.methods.length > 0) {
+          this.handle.db
+            .insert(testMethods)
+            .values(
+              input.snapshot.methods.map((method, index) =>
+                testMethodInsertValues({
+                  id: input.methodIds[index]!,
+                  caseDefinitionId: input.caseDefinitionId,
+                  method,
+                  createdAt: input.restoredAt,
+                }),
+              ),
+            )
+            .run();
+        }
+        this.handle.db
+          .insert(caseVersions)
+          .values({
+            id: input.versionId,
+            caseDefinitionId: input.caseDefinitionId,
+            sourceId: input.sourceId,
+            version: input.version,
+            snapshotJson: JSON.stringify(input.snapshot),
+            createdBy: input.actorId,
+            changeReason: input.changeReason,
+            createdAt: input.restoredAt,
+          })
+          .run();
+        const row = this.handle.db
+          .select()
+          .from(caseDefinitions)
+          .where(eq(caseDefinitions.id, input.caseDefinitionId))
+          .get();
+        if (!row) throw new DomainError("CASE_DEFINITION_NOT_FOUND", "指定的用例不存在。");
+        const methods = this.handle.db
+          .select()
+          .from(testMethods)
+          .where(eq(testMethods.caseDefinitionId, row.id))
+          .all()
+          .map(toTestMethod)
+          .sort((left, right) => left.methodName.localeCompare(right.methodName));
+        return { ...toCaseDefinition(row), methods };
+      })
+      .immediate();
   }
 
   private throwCaseDefinitionConflict(caseDefinitionId: string): never {
@@ -1441,10 +1457,83 @@ export class SqliteCaseCatalogRepository implements CaseCatalogRepository {
     );
   }
 
+  async getSourceExecutable(sourceId: string, projectIds?: readonly string[]) {
+    if (projectIds?.length === 0) return null;
+    const rows = this.handle.db
+      .select({
+        executable: sql<boolean>`COALESCE(json_extract(${caseSources.inspectionJson}, '$.executable'), 1)`,
+      })
+      .from(caseSources)
+      .where(
+        and(
+          eq(caseSources.id, sourceId),
+          ...(projectIds ? [inArray(caseSources.projectId, [...projectIds])] : []),
+        ),
+      )
+      .limit(1)
+      .all();
+    return rows[0] ? Boolean(rows[0].executable) : null;
+  }
+
+  async getSourceSummary(sourceId: string, projectIds?: readonly string[]) {
+    if (projectIds?.length === 0) return null;
+    // Source lists and authorization only need metadata, never the large inspection document.
+    const columns = { ...getTableColumns(caseSources), inspectionJson: sql<string>`'{}'` };
+    const rows = this.handle.db
+      .select(columns)
+      .from(caseSources)
+      .where(
+        and(
+          eq(caseSources.id, sourceId),
+          ...(projectIds ? [inArray(caseSources.projectId, [...projectIds])] : []),
+        ),
+      )
+      .limit(1)
+      .all();
+    return rows[0] ? toCaseSource(rows[0]) : null;
+  }
+
+  async listSourceObjectsPage(
+    input: { cursor?: string; limit: number; prefix?: string },
+    projectIds?: readonly string[],
+  ) {
+    if (projectIds?.length === 0) return { items: [] };
+    const rows = this.handle.db
+      .select({
+        objectKey: caseSources.objectKey,
+        sizeBytes: sql<number>`MAX(${caseSources.sizeBytes})`,
+        lastModified: sql<string>`MAX(${caseSources.updatedAt})`,
+        etag: sql<string>`MAX(${caseSources.sha256})`,
+      })
+      .from(caseSources)
+      .where(
+        and(
+          ...(projectIds ? [inArray(caseSources.projectId, [...projectIds])] : []),
+          ...(input.cursor ? [sql`${caseSources.objectKey} > ${input.cursor}`] : []),
+          ...(input.prefix
+            ? [sql`substr(${caseSources.objectKey},1,${input.prefix.length}) = ${input.prefix}`]
+            : []),
+        ),
+      )
+      .groupBy(caseSources.objectKey)
+      .orderBy(asc(caseSources.objectKey))
+      .limit(Math.max(1, Math.min(input.limit, 500)) + 1)
+      .all();
+    const items = rows
+      .slice(0, input.limit)
+      .map((row) => ({ ...row, sizeBytes: Number(row.sizeBytes) }));
+    return {
+      items,
+      ...(rows.length > input.limit && items.at(-1) ? { nextCursor: items.at(-1)!.objectKey } : {}),
+    };
+  }
+
   async listRecentSources(limit: number, projectIds?: readonly string[]): Promise<CaseSource[]> {
     if (projectIds?.length === 0) return [];
+    // Source lists and authorization only need metadata, never the large inspection document.
+    const columns = { ...getTableColumns(caseSources), inspectionJson: sql<string>`'{}'` };
     return this.handle.db
-      .select()
+      .select(columns)
       .from(caseSources)
       .where(projectIds ? inArray(caseSources.projectId, [...projectIds]) : undefined)
       .orderBy(desc(caseSources.createdAt))
@@ -1478,33 +1567,35 @@ export class SqliteCaseCatalogRepository implements CaseCatalogRepository {
   }
 
   async setAuthoritativeSource(sourceId: string, projectId?: string): Promise<CaseSource> {
-    return this.handle.client.transaction(() => {
-      const source = this.handle.db
-        .select()
-        .from(caseSources)
-        .where(eq(caseSources.id, sourceId))
-        .get();
-      if (!source || (projectId && source.projectId !== projectId)) {
-        throw new Error(`Case source ${sourceId} does not exist.`);
-      }
-      this.handle.db
-        .update(caseSources)
-        .set({ authoritative: false })
-        .where(eq(caseSources.projectId, source.projectId))
-        .run();
-      const updated = this.handle.db
-        .update(caseSources)
-        .set({
-          authoritative: true,
-          revision: source.revision + 1,
-          updatedAt: new Date().toISOString(),
-        })
-        .where(eq(caseSources.id, sourceId))
-        .returning()
-        .get();
-      if (!updated) throw new Error(`Case source ${sourceId} does not exist.`);
-      return toCaseSource(updated);
-    })();
+    return this.handle.client
+      .transaction(() => {
+        const source = this.handle.db
+          .select()
+          .from(caseSources)
+          .where(eq(caseSources.id, sourceId))
+          .get();
+        if (!source || (projectId && source.projectId !== projectId)) {
+          throw new Error(`Case source ${sourceId} does not exist.`);
+        }
+        this.handle.db
+          .update(caseSources)
+          .set({ authoritative: false })
+          .where(eq(caseSources.projectId, source.projectId))
+          .run();
+        const updated = this.handle.db
+          .update(caseSources)
+          .set({
+            authoritative: true,
+            revision: source.revision + 1,
+            updatedAt: new Date().toISOString(),
+          })
+          .where(eq(caseSources.id, sourceId))
+          .returning()
+          .get();
+        if (!updated) throw new Error(`Case source ${sourceId} does not exist.`);
+        return toCaseSource(updated);
+      })
+      .immediate();
   }
 
   async getAuthoritativeSource(projectId: string): Promise<CaseSource | null> {
@@ -1581,58 +1672,63 @@ export class SqliteCaseCatalogRepository implements CaseCatalogRepository {
     actorId?: string;
     versionMerges?: CaseSourceVersionMerge[];
   }): Promise<CaseSource> {
-    return this.handle.client.transaction(() => {
-      const target = this.handle.db
-        .select()
-        .from(caseSources)
-        .where(eq(caseSources.id, input.sourceId))
-        .get();
-      if (!target) throw new DomainError("CASE_SOURCE_NOT_FOUND", "指定的 JAR 来源不存在。");
-      if (target.revision !== input.expectedRevision) {
-        throwCaseSourceConflict(this.handle, input.sourceId);
-      }
-      const current = this.handle.db
-        .select({ id: caseSources.id })
-        .from(caseSources)
-        .where(
-          and(eq(caseSources.projectId, target.projectId), eq(caseSources.authoritative, true)),
-        )
-        .get();
-      for (const merge of input.versionMerges ?? []) {
-        this.mergeSourceVersion({
-          merge,
-          candidateSourceId: target.id,
-          ...(current ? { currentSourceId: current.id } : {}),
-          ...(input.actorId ? { actorId: input.actorId } : {}),
-          updatedAt: input.updatedAt,
-        });
-      }
-      this.handle.db
-        .update(caseSources)
-        .set({
-          authoritative: false,
-          revision: sql`${caseSources.revision} + 1`,
-          updatedAt: input.updatedAt,
-        })
-        .where(
-          and(eq(caseSources.projectId, target.projectId), eq(caseSources.authoritative, true)),
-        )
-        .run();
-      const updated = this.handle.db
-        .update(caseSources)
-        .set({
-          authoritative: true,
-          revision: sql`${caseSources.revision} + 1`,
-          updatedAt: input.updatedAt,
-        })
-        .where(
-          and(eq(caseSources.id, input.sourceId), eq(caseSources.revision, input.expectedRevision)),
-        )
-        .returning()
-        .get();
-      if (!updated) throwCaseSourceConflict(this.handle, input.sourceId);
-      return toCaseSource(updated);
-    })();
+    return this.handle.client
+      .transaction(() => {
+        const target = this.handle.db
+          .select()
+          .from(caseSources)
+          .where(eq(caseSources.id, input.sourceId))
+          .get();
+        if (!target) throw new DomainError("CASE_SOURCE_NOT_FOUND", "指定的 JAR 来源不存在。");
+        if (target.revision !== input.expectedRevision) {
+          throwCaseSourceConflict(this.handle, input.sourceId);
+        }
+        const current = this.handle.db
+          .select({ id: caseSources.id })
+          .from(caseSources)
+          .where(
+            and(eq(caseSources.projectId, target.projectId), eq(caseSources.authoritative, true)),
+          )
+          .get();
+        for (const merge of input.versionMerges ?? []) {
+          this.mergeSourceVersion({
+            merge,
+            candidateSourceId: target.id,
+            ...(current ? { currentSourceId: current.id } : {}),
+            ...(input.actorId ? { actorId: input.actorId } : {}),
+            updatedAt: input.updatedAt,
+          });
+        }
+        this.handle.db
+          .update(caseSources)
+          .set({
+            authoritative: false,
+            revision: sql`${caseSources.revision} + 1`,
+            updatedAt: input.updatedAt,
+          })
+          .where(
+            and(eq(caseSources.projectId, target.projectId), eq(caseSources.authoritative, true)),
+          )
+          .run();
+        const updated = this.handle.db
+          .update(caseSources)
+          .set({
+            authoritative: true,
+            revision: sql`${caseSources.revision} + 1`,
+            updatedAt: input.updatedAt,
+          })
+          .where(
+            and(
+              eq(caseSources.id, input.sourceId),
+              eq(caseSources.revision, input.expectedRevision),
+            ),
+          )
+          .returning()
+          .get();
+        if (!updated) throwCaseSourceConflict(this.handle, input.sourceId);
+        return toCaseSource(updated);
+      })
+      .immediate();
   }
 
   private mergeSourceVersion(input: {
@@ -1832,42 +1928,44 @@ export class SqliteCaseCatalogRepository implements CaseCatalogRepository {
     availableAt: string;
     updatedAt: string;
   }): Promise<CaseSource> {
-    return this.handle.client.transaction(() => {
-      const updated = this.handle.db
-        .update(caseSources)
-        .set({
-          lifecycleStatus: "deleting",
-          revision: sql`${caseSources.revision} + 1`,
-          updatedAt: input.updatedAt,
-        })
-        .where(
-          and(
-            eq(caseSources.id, input.sourceId),
-            eq(caseSources.revision, input.expectedRevision),
-            eq(caseSources.authoritative, false),
-          ),
-        )
-        .returning()
-        .get();
-      if (!updated) throwCaseSourceConflict(this.handle, input.sourceId);
-      this.handle.db
-        .insert(cleanupJobs)
-        .values({
-          id: input.cleanupJobId,
-          category: "case-source",
-          resourceType: "case-source",
-          resourceId: input.sourceId,
-          objectKey: input.objectKey,
-          status: "pending",
-          attemptCount: 0,
-          availableAt: input.availableAt,
-          createdAt: input.updatedAt,
-          updatedAt: input.updatedAt,
-        })
-        .onConflictDoNothing()
-        .run();
-      return toCaseSource(updated);
-    })();
+    return this.handle.client
+      .transaction(() => {
+        const updated = this.handle.db
+          .update(caseSources)
+          .set({
+            lifecycleStatus: "deleting",
+            revision: sql`${caseSources.revision} + 1`,
+            updatedAt: input.updatedAt,
+          })
+          .where(
+            and(
+              eq(caseSources.id, input.sourceId),
+              eq(caseSources.revision, input.expectedRevision),
+              eq(caseSources.authoritative, false),
+            ),
+          )
+          .returning()
+          .get();
+        if (!updated) throwCaseSourceConflict(this.handle, input.sourceId);
+        this.handle.db
+          .insert(cleanupJobs)
+          .values({
+            id: input.cleanupJobId,
+            category: "case-source",
+            resourceType: "case-source",
+            resourceId: input.sourceId,
+            objectKey: input.objectKey,
+            status: "pending",
+            attemptCount: 0,
+            availableAt: input.availableAt,
+            createdAt: input.updatedAt,
+            updatedAt: input.updatedAt,
+          })
+          .onConflictDoNothing()
+          .run();
+        return toCaseSource(updated);
+      })
+      .immediate();
   }
 
   async getCleanupJob(cleanupJobId: string): Promise<CleanupJob | null> {
@@ -1886,18 +1984,20 @@ export class SqliteCaseCatalogRepository implements CaseCatalogRepository {
     errorSummary?: string;
     finishedAt: string;
   }): Promise<void> {
-    this.handle.client.transaction(() => {
-      this.handle.db
-        .update(cleanupJobs)
-        .set({
-          status: input.status,
-          attemptCount: input.attemptCount,
-          errorSummary: input.errorSummary ?? null,
-          updatedAt: input.finishedAt,
-        })
-        .where(eq(cleanupJobs.id, input.id))
-        .run();
-    })();
+    this.handle.client
+      .transaction(() => {
+        this.handle.db
+          .update(cleanupJobs)
+          .set({
+            status: input.status,
+            attemptCount: input.attemptCount,
+            errorSummary: input.errorSummary ?? null,
+            updatedAt: input.finishedAt,
+          })
+          .where(eq(cleanupJobs.id, input.id))
+          .run();
+      })
+      .immediate();
   }
 
   async getDashboardSummary(projectIds?: readonly string[]): Promise<DashboardSummary> {

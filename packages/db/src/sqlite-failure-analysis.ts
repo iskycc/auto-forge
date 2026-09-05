@@ -41,11 +41,24 @@ type FailureAnalysisHistoryRow = FailureAnalysisRow & {
 export class SqliteFailureAnalysisRepository implements FailureAnalysisRepository {
   constructor(private readonly handle: SqliteDatabaseHandle) {}
 
+  async startBatch(input: Parameters<FailureAnalysisRepository["startBatch"]>[0]) {
+    const batch = await this.readBatch(input, "eligible");
+    if (!batch || batch.failedRuns === 0) return null;
+    // A terminal execution is immutable. The unique batch key makes concurrent starts idempotent.
+    const inserted = this.handle.client
+      .prepare(
+        `INSERT INTO failure_analysis_batches (batch_id,project_id,started_by,started_at)
+       VALUES (?,?,?,?) ON CONFLICT (batch_id) DO NOTHING`,
+      )
+      .run(input.batchId, input.projectId, input.startedBy, input.startedAt);
+    return { batch, created: inserted.changes > 0 };
+  }
+
   async readStatistics(
     input: Parameters<FailureAnalysisRepository["readStatistics"]>[0],
   ): Promise<FailureAnalysisStatisticsPage> {
-    const scope = ["claim.project_id=?"];
-    const scopeParameters: string[] = [input.projectId];
+    const scope = ["claim.project_id=?", "claim.batch_id=?"];
+    const scopeParameters: string[] = [input.projectId, input.batchId];
     if (input.projectVersionId) {
       scope.push("json_extract(batch.policy_json, '$.projectVersionId')=?");
       scopeParameters.push(input.projectVersionId);
@@ -56,9 +69,9 @@ export class SqliteFailureAnalysisRepository implements FailureAnalysisRepositor
                 SUM(CASE WHEN claim.status='claimed' THEN 1 ELSE 0 END) AS claimed,
                 SUM(CASE WHEN claim.status='analyzing' THEN 1 ELSE 0 END) AS analyzing,
                 SUM(CASE WHEN claim.status='completed' THEN 1 ELSE 0 END) AS completed,
-                SUM(CASE WHEN claim.category='rerun_passed' THEN 1 ELSE 0 END) AS rerunPassed,
-                SUM(CASE WHEN claim.category='case_fixed' THEN 1 ELSE 0 END) AS caseFixed,
-                SUM(CASE WHEN claim.category='code_issue_filed' THEN 1 ELSE 0 END) AS codeIssueFiled
+                SUM(CASE WHEN claim.status='completed' AND claim.category='rerun_passed' THEN 1 ELSE 0 END) AS rerunPassed,
+                SUM(CASE WHEN claim.status='completed' AND claim.category='case_fixed' THEN 1 ELSE 0 END) AS caseFixed,
+                SUM(CASE WHEN claim.status='completed' AND claim.category='code_issue_filed' THEN 1 ELSE 0 END) AS codeIssueFiled
          FROM failure_analysis_claims claim
          JOIN run_batches batch ON batch.id=claim.batch_id
          WHERE ${scope.join(" AND ")}`,
@@ -80,9 +93,9 @@ export class SqliteFailureAnalysisRepository implements FailureAnalysisRepositor
                 SUM(CASE WHEN claim.status='claimed' THEN 1 ELSE 0 END) AS claimed,
                 SUM(CASE WHEN claim.status='analyzing' THEN 1 ELSE 0 END) AS analyzing,
                 SUM(CASE WHEN claim.status='completed' THEN 1 ELSE 0 END) AS completed,
-                SUM(CASE WHEN claim.category='rerun_passed' THEN 1 ELSE 0 END) AS rerunPassed,
-                SUM(CASE WHEN claim.category='case_fixed' THEN 1 ELSE 0 END) AS caseFixed,
-                SUM(CASE WHEN claim.category='code_issue_filed' THEN 1 ELSE 0 END) AS codeIssueFiled,
+                SUM(CASE WHEN claim.status='completed' AND claim.category='rerun_passed' THEN 1 ELSE 0 END) AS rerunPassed,
+                SUM(CASE WHEN claim.status='completed' AND claim.category='case_fixed' THEN 1 ELSE 0 END) AS caseFixed,
+                SUM(CASE WHEN claim.status='completed' AND claim.category='code_issue_filed' THEN 1 ELSE 0 END) AS codeIssueFiled,
                 MAX(claim.updated_at) AS lastActivityAt
          FROM failure_analysis_claims claim
          JOIN run_batches batch ON batch.id=claim.batch_id
@@ -97,6 +110,7 @@ export class SqliteFailureAnalysisRepository implements FailureAnalysisRepositor
 
   async listBatches(input: {
     projectId: string;
+    view?: "started" | "available";
     projectVersionId?: string;
     cursor?: string;
     limit: number;
@@ -106,6 +120,7 @@ export class SqliteFailureAnalysisRepository implements FailureAnalysisRepositor
       "batch.project_id=?",
       "batch.status IN ('succeeded','failed','cancelled')",
       "batch.batch_kind='standard'",
+      ` ${input.view === "available" ? "NOT " : ""}EXISTS (SELECT 1 FROM failure_analysis_batches analysis WHERE analysis.batch_id=batch.id)`,
       "EXISTS (SELECT 1 FROM case_suites suite WHERE suite.id=batch.suite_id)",
       `EXISTS (SELECT 1 FROM execution_runs run
                JOIN run_attempts attempt ON attempt.execution_run_id=run.id
@@ -160,7 +175,22 @@ export class SqliteFailureAnalysisRepository implements FailureAnalysisRepositor
     };
   }
 
+  async readBatchProgress(projectId: string, batchId: string) {
+    return this.handle.client
+      .prepare(
+        `SELECT COUNT(*) AS claimedRuns,COALESCE(SUM(CASE WHEN status='completed' THEN 1 ELSE 0 END),0) AS completedRuns FROM failure_analysis_claims WHERE project_id=? AND batch_id=?`,
+      )
+      .get(projectId, batchId) as { claimedRuns: number; completedRuns: number };
+  }
+
   async getBatch(input: Parameters<FailureAnalysisRepository["getBatch"]>[0]) {
+    return this.readBatch(input, "started");
+  }
+
+  private async readBatch(
+    input: Parameters<FailureAnalysisRepository["getBatch"]>[0],
+    visibility: "started" | "eligible",
+  ) {
     const row = this.handle.client
       .prepare(
         `SELECT batch.id,batch.sequence_number AS sequenceNumber,batch.suite_name AS suiteName,
@@ -184,6 +214,7 @@ export class SqliteFailureAnalysisRepository implements FailureAnalysisRepositor
            AND json_extract(batch.policy_json, '$.projectVersionId')=?
            AND batch.status IN ('succeeded','failed','cancelled')
            AND batch.batch_kind='standard'
+         ${visibility === "started" ? "AND EXISTS (SELECT 1 FROM failure_analysis_batches analysis WHERE analysis.batch_id=batch.id)" : ""}
            AND EXISTS (SELECT 1 FROM case_suites suite WHERE suite.id=batch.suite_id)`,
       )
       .get(input.batchId, input.projectId, input.projectVersionId) as BatchRow | undefined;
@@ -209,6 +240,7 @@ export class SqliteFailureAnalysisRepository implements FailureAnalysisRepositor
       "json_extract(batch.policy_json, '$.projectVersionId')=?",
       "batch.status IN ('succeeded','failed','cancelled')",
       "batch.batch_kind='standard'",
+      "EXISTS (SELECT 1 FROM failure_analysis_batches analysis WHERE analysis.batch_id=batch.id)",
       "EXISTS (SELECT 1 FROM case_suites suite WHERE suite.id=batch.suite_id)",
       "run.terminal_outcome='failed'",
       "COALESCE(attempt.outcome,attempt.status)='failed'",
@@ -333,6 +365,7 @@ export class SqliteFailureAnalysisRepository implements FailureAnalysisRepositor
              AND json_extract(batch.policy_json, '$.projectVersionId')=?
              AND batch.status IN ('succeeded','failed','cancelled')
              AND batch.batch_kind='standard'
+             AND EXISTS (SELECT 1 FROM failure_analysis_batches analysis WHERE analysis.batch_id=batch.id)
              AND EXISTS (SELECT 1 FROM case_suites suite WHERE suite.id=batch.suite_id)
              AND COALESCE(attempt.outcome,attempt.status)='failed'
              AND run.id IN (${placeholders})`,
@@ -802,6 +835,7 @@ export class SqliteFailureAnalysisRepository implements FailureAnalysisRepositor
              AND json_extract(policy_json, '$.projectVersionId')=?
              AND status IN ('succeeded','failed','cancelled')
              AND batch_kind='standard'
+             AND EXISTS (SELECT 1 FROM failure_analysis_batches analysis WHERE analysis.batch_id=run_batches.id)
              AND EXISTS (SELECT 1 FROM case_suites suite WHERE suite.id=run_batches.suite_id)`,
         )
         .get(batchId, projectId, projectVersionId),

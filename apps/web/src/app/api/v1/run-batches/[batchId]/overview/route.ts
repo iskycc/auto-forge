@@ -32,7 +32,7 @@ export async function GET(request: Request, context: Context): Promise<NextRespo
       const identity = await authenticateRequest(request);
       projectIds = services.identityAccess.projectScope(identity, "run.read");
     }
-    const overview = await services.runBatches.getDetailOverview(batchId, projectIds);
+    const overview = await services.executionOverview(batchId, projectIds);
     return NextResponse.json(toExecutionBatchView(overview), {
       headers: { "Cache-Control": "private, no-store" },
     });

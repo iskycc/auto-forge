@@ -293,6 +293,9 @@ run_adapter_tests() {
       packages/db/test/postgres-migrations.integration.test.ts \
       packages/db/test/postgres-ddt.integration.test.ts \
       packages/db/test/postgres-failure-analysis.integration.test.ts \
+      packages/db/test/failure-analysis-migration.integration.test.ts \
+      packages/db/test/analysis-assignees.integration.test.ts \
+      packages/db/test/read-model-snapshots.integration.test.ts \
       packages/db/test/postgres-platform.integration.test.ts \
       packages/db/test/postgres-round-recovery.integration.test.ts \
       packages/db/test/postgres-webhook.integration.test.ts \
@@ -323,6 +326,8 @@ run_distributed_contract_tests() {
 run_capacity_tests() {
   AUTOFORGE_TEST_POSTGRES_URL=postgresql://autoforge:autoforge@127.0.0.1:55439/autoforge \
     pnpm exec vitest run packages/db/test/postgres-capacity.integration.test.ts
+  AUTOFORGE_TEST_POSTGRES_URL=postgresql://autoforge:autoforge@127.0.0.1:55439/autoforge \
+    pnpm exec vitest run --config vitest.performance.config.ts tests/performance/read-model-load.test.ts
 }
 
 create_platform_bucket() {

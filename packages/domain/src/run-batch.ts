@@ -545,3 +545,17 @@ export function statusAfterFailedAttempt(
   }
   return attemptNumber <= retryLimit ? "queued" : "failed";
 }
+
+export function summarizeRunBatchCounters(batch: RunBatch) {
+  const terminal =
+    batch.succeededRuns + batch.failedRuns + batch.timedOutRuns + batch.cancelledRuns;
+  return {
+    totalRuns: batch.totalRuns,
+    passed: batch.succeededRuns,
+    failed: batch.failedRuns,
+    timedOut: batch.timedOutRuns,
+    cancelled: batch.cancelledRuns,
+    notExecuted: Math.max(0, batch.totalRuns - terminal),
+    passRate: batch.totalRuns === 0 ? 0 : Math.round((batch.succeededRuns / batch.totalRuns) * 100),
+  };
+}

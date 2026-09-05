@@ -201,7 +201,11 @@ describe("shared UI controls", () => {
     const revisionProtectedEditors = typescriptReactFiles(join(SOURCE_ROOT, "components")).filter(
       (component) => {
         const source = readFileSync(component, "utf8");
-        return /\brevision\b/.test(source) && /\bfetch\s*\(/.test(source);
+        return (
+          /expectedRevision|\brevision\s*[:,]/.test(source) &&
+          /\bfetch\s*\(/.test(source) &&
+          /method:\s*["'](?:POST|PUT|PATCH|DELETE)/.test(source)
+        );
       },
     );
     expect(revisionProtectedEditors.length).toBeGreaterThanOrEqual(11);

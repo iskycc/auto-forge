@@ -1,3 +1,4 @@
+import type { ReadModelStatus } from "@autoforge/contracts";
 import type { RunBatchDetailOverview } from "@autoforge/application";
 import type { RunBatch } from "@autoforge/domain";
 
@@ -30,11 +31,14 @@ export type ExecutionBatchView = Pick<
     | "runnerRoundSummaries"
     | "runnerFaultIncidents"
     | "finishedAt"
-  > & { accessToken?: string };
+  > & { accessToken?: string; statistics?: ReadModelStatus };
 
-export function toExecutionBatchView(overview: RunBatchDetailOverview): ExecutionBatchView {
+export function toExecutionBatchView(
+  overview: RunBatchDetailOverview & { statistics?: ReadModelStatus },
+): ExecutionBatchView {
   const batch = overview.batch;
   return {
+    ...(overview.statistics ? { statistics: overview.statistics } : {}),
     id: batch.id,
     status: batch.status,
     retryLimit: batch.retryLimit,

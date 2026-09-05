@@ -1,3 +1,4 @@
+import { compareBatchCase } from "./compare-batch-case";
 import { createHash } from "node:crypto";
 
 import {
@@ -729,23 +730,13 @@ export class PlatformOperationsService {
       onlyLeftCaseCount: leftCases.size - commonCaseCount,
       onlyRightCaseCount: rightCases.size - commonCaseCount,
       comparableScope: leftCases.size === rightCases.size && commonCaseCount === leftCases.size,
-      cases: caseIds.map((caseDefinitionId) => {
-        const leftCase = leftCases.get(caseDefinitionId);
-        const rightCase = rightCases.get(caseDefinitionId);
-        return {
+      cases: caseIds.map((caseDefinitionId) =>
+        compareBatchCase(
           caseDefinitionId,
-          displayName: leftCase?.displayName ?? rightCase?.displayName ?? caseDefinitionId,
-          ...(leftCase ? { leftVersion: leftCase.version } : {}),
-          ...(rightCase ? { rightVersion: rightCase.version } : {}),
-          ...(leftCase?.outcome ? { leftOutcome: leftCase.outcome } : {}),
-          ...(rightCase?.outcome ? { rightOutcome: rightCase.outcome } : {}),
-          ...(leftCase?.durationMs === undefined ? {} : { leftDurationMs: leftCase.durationMs }),
-          ...(rightCase?.durationMs === undefined ? {} : { rightDurationMs: rightCase.durationMs }),
-          ...(leftCase?.durationMs === undefined || rightCase?.durationMs === undefined
-            ? {}
-            : { durationDeltaMs: rightCase.durationMs - leftCase.durationMs }),
-        };
-      }),
+          leftCases.get(caseDefinitionId),
+          rightCases.get(caseDefinitionId),
+        ),
+      ),
     };
   }
 

@@ -13,6 +13,10 @@ const PERMISSION_PRESENTATIONS = {
   "case_suite.read": { label: "查看用例任务", description: "查看任务配置和成员范围" },
   "case_suite.manage": { label: "管理用例任务", description: "创建、编辑、复制和归档任务" },
   "run.read": { label: "查看执行与质量洞察", description: "查看执行记录、状态和质量分析" },
+  "analysis.assign": {
+    label: "分配用例分析",
+    description: "将当前项目的失败用例分析分配给已有分析人员",
+  },
   "analysis.manage": { label: "认领与分析用例", description: "认领最终失败用例并记录分析类别" },
   "run.create": { label: "发起执行", description: "从任务或单用例发起执行" },
   "run.cancel": { label: "终止执行", description: "取消排队中或运行中的执行" },

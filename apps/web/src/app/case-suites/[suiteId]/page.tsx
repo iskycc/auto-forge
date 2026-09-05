@@ -1,8 +1,10 @@
 import { ArrowLeft, BookOpenText } from "lucide-react";
 import Link from "next/link";
 
-import { CaseSuiteDetailsView } from "@/components/case-suite-details";
+import { CachedSuiteDirectory } from "@/components/cached-suite-directory";
+import { suiteDirectoryManifestSchema } from "@autoforge/contracts";
 import { CaseSuiteEditor } from "@/components/case-suite-editor";
+import { CaseSuiteRevisionProvider } from "@/components/case-suite-revision";
 import { CaseSuiteWebhookBindings } from "@/components/case-suite-webhook-bindings";
 import { CaseSuiteSchedulePanel } from "@/components/case-suite-schedule-panel";
 import { getPlatformServices } from "@/lib/services";
@@ -17,7 +19,12 @@ export default async function CaseSuitePage({ params }: Props) {
   const { identity, projectIds } = await requirePageProjectScope("case_suite.read");
   const { suiteId } = await params;
   const services = await getPlatformServices();
-  const suite = await services.caseSuites.get(suiteId, projectIds);
+  const suite = await services.caseSuites.getSummary(suiteId, projectIds);
+  const directory = await services.readModels.read({
+    kind: "suite_directory",
+    projectId: suite.projectId,
+    suiteId,
+  });
   const canManage = hasPermission(identity, "case_suite.manage", suite.projectId);
   const [runners, runnerGroups, projectStructure, webhookConfigurations, webhookIds, schedule] =
     await Promise.all([
@@ -64,21 +71,31 @@ export default async function CaseSuitePage({ params }: Props) {
           archived: suite.status === "archived",
         }}
       />
-      <CaseSuiteEditor
-        artifactsEnabled={services.configurationStore.read().limits.artifactCollectionEnabled}
-        canManage={canManage}
-        projectVersions={projectStructure.versions}
-        runnerGroups={runnerGroups}
-        runners={runners}
-        suite={suite}
-      />
-      <CaseSuiteWebhookBindings
-        canManage={canManage}
-        configurations={webhookConfigurations}
-        initialWebhookIds={webhookIds}
-        suiteId={suiteId}
-      />
-      <CaseSuiteDetailsView canManage={canManage} initialSuite={suite} />
+      <CaseSuiteRevisionProvider initialRevision={suite.revision} key={suite.id}>
+        <CaseSuiteEditor
+          artifactsEnabled={services.configurationStore.read().limits.artifactCollectionEnabled}
+          canManage={canManage}
+          projectVersions={projectStructure.versions}
+          runnerGroups={runnerGroups}
+          runners={runners}
+          suite={suite}
+        />
+        <CaseSuiteWebhookBindings
+          canManage={canManage}
+          configurations={webhookConfigurations}
+          initialWebhookIds={webhookIds}
+          suiteId={suiteId}
+        />
+        <CachedSuiteDirectory
+          key={suite.id}
+          canManage={canManage}
+          suite={suite}
+          snapshot={directory.status}
+          manifest={
+            directory.payload ? suiteDirectoryManifestSchema.parse(directory.payload) : null
+          }
+        />
+      </CaseSuiteRevisionProvider>
     </div>
   );
 }

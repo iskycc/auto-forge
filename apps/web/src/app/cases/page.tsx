@@ -1,10 +1,9 @@
-import { DatabaseZap, FileArchive } from "lucide-react";
-import Link from "next/link";
+import { DatabaseZap } from "lucide-react";
 
-import { CaseSelectionTable } from "@/components/case-selection-table";
+import { CachedCaseDirectory } from "@/components/cached-case-directory";
+import { caseDirectoryManifestSchema } from "@autoforge/contracts";
 import { CaseManagementTabs } from "@/components/case-management-tabs";
 import { DdtManagementWorkspace } from "@/components/ddt-management-workspace";
-import { listCompleteCaseDirectory } from "@/lib/case-directory";
 import { getPlatformServices } from "@/lib/services";
 import { requireAuthorizedPageProjectScope, requirePageProjectScope } from "@/lib/auth";
 import {
@@ -13,7 +12,6 @@ import {
   selectedProjectId,
 } from "@/lib/selected-project";
 import { projectIdsForPermission } from "@autoforge/domain";
-import type { CaseLatestRun } from "@/lib/case-selection-stats";
 
 export const dynamic = "force-dynamic";
 
@@ -53,34 +51,22 @@ export default async function CasesPage({ searchParams }: CasesPageProps) {
     (version) => version.id === hierarchy.projectVersionId,
   );
   const testStage = projectVersion?.stages.find((stage) => stage.id === hierarchy.testStageId);
-  const [cases, suites] = await Promise.all([
-    listCompleteCaseDirectory(services.catalog, {
-      ...(effectiveProjectIds ? { projectIds: effectiveProjectIds } : {}),
-      ...(projectVersion ? { projectVersionId: projectVersion.id } : {}),
-      ...(testStage ? { testStageId: testStage.id } : {}),
-      scopedOnly: true,
-    }),
+  const [directoryProjection, suites] = await Promise.all([
+    projectId && projectVersion && testStage
+      ? services.readModels.read({
+          kind: "case_directory",
+          projectId,
+          projectVersionId: projectVersion.id,
+          testStageId: testStage.id,
+        })
+      : Promise.resolve(null),
     projectVersion
       ? services.caseSuites.list(200, effectiveProjectIds, projectVersion.id)
       : Promise.resolve([]),
   ]);
-  // 目录已按项目范围加载；这里直接取每用例最近终态执行结果，供筛选与统计使用。
-  const latestRunOutcomes =
-    cases.length > 0
-      ? await services.caseDefinitions.latestRunOutcomes(
-          cases.map((item) => item.id),
-          effectiveProjectIds,
-        )
-      : [];
-  const latestOutcomes = new Map<string, CaseLatestRun>(
-    latestRunOutcomes.map((entry) => [
-      entry.caseDefinitionId,
-      {
-        outcome: entry.outcome,
-        ...(entry.resultCode ? { resultCode: entry.resultCode } : {}),
-      },
-    ]),
-  );
+  const directoryManifest = directoryProjection?.generation
+    ? caseDirectoryManifestSchema.parse(directoryProjection.payload)
+    : null;
 
   return (
     <div className="page-stack">
@@ -89,6 +75,7 @@ export default async function CasesPage({ searchParams }: CasesPageProps) {
         ddtContent={
           projectId && projectVersion && testStage ? (
             <DdtManagementWorkspace
+              key={`${projectId}:${projectVersion.id}:${testStage.id}`}
               scope={{
                 projectId,
                 projectVersionId: projectVersion.id,
@@ -136,30 +123,25 @@ export default async function CasesPage({ searchParams }: CasesPageProps) {
           </section>
         }
         testngContent={
-          cases.length === 0 ? (
+          directoryProjection ? (
+            <CachedCaseDirectory
+              key={directoryProjection.id}
+              snapshot={directoryProjection.status}
+              manifest={directoryManifest}
+              userId={identity.user.id}
+              canImport={canImport}
+              suites={suites}
+              caseManagementProjectIds={caseManagementProjectIds}
+              suiteManagementProjectIds={suiteManagementProjectIds}
+              initialSearch={query ?? ""}
+            />
+          ) : (
             <section className="card case-library-empty-card">
-              <div className="empty-state case-library-empty">
-                <span className="empty-icon">
-                  <FileArchive size={27} />
-                </span>
-                <strong>当前项目层级还没有用例</strong>
-                <p>导入一个包含 TestNG @Test 注解的 JAR，或在顶栏调整项目版本与测试阶段。</p>
-                {canImport ? (
-                  <Link className="button button-primary" href="/cases/import">
-                    导入第一个 JAR
-                  </Link>
-                ) : null}
+              <div className="empty-state">
+                <strong>请先选择完整的项目层级</strong>
+                <p>请选择项目版本与测试阶段后查看用例。</p>
               </div>
             </section>
-          ) : (
-            <CaseSelectionTable
-              caseManagementProjectIds={caseManagementProjectIds}
-              cases={cases}
-              initialSearch={query ?? ""}
-              latestOutcomes={latestOutcomes}
-              suiteManagementProjectIds={suiteManagementProjectIds}
-              suites={suites}
-            />
           )
         }
       />

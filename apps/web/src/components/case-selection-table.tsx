@@ -1,5 +1,7 @@
 "use client";
 
+import { LazyCaseSource } from "./lazy-case-source";
+
 import { formatPlatformDateTime } from "@/lib/platform-date-time";
 
 import { Button, Input, OperationProgress, Select } from "@/components/ui";
@@ -834,18 +836,12 @@ function CaseInspector({
         </div>
       </details>
 
-      {detail.sourceView ? (
-        <details className="case-inspector-section">
-          <summary>用例源码</summary>
-          <p className="muted">{detail.sourceView.reference.entryPath}</p>
-          <pre className="source-code-viewer" tabIndex={0}>
-            <code>{detail.sourceView.content}</code>
-          </pre>
-        </details>
-      ) : detail.sourceViewError ? (
-        <div className="inline-feedback" role="alert">
-          {detail.sourceViewError}
-        </div>
+      {detail.canReadSource ? (
+        <LazyCaseSource
+          key={definition.id}
+          caseDefinitionId={definition.id}
+          revision={definition.revision}
+        />
       ) : null}
 
       {detail.canManage ? (

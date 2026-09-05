@@ -1,3 +1,6 @@
+import { DEFAULT_PROJECT_ID } from "@autoforge/domain";
+import { publicPlatformStatisticsSchema } from "@autoforge/contracts";
+import { readBatchPage, readExecutionOverview } from "@autoforge/application";
 import "server-only";
 
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
@@ -12,13 +15,14 @@ import {
   DdtCaseService,
   DdtImportService,
   DashboardSnapshotService,
+  ReadModelSnapshotService,
+  type ReadModelSnapshotRepository,
   ExecutionControlService,
   FailureAnalysisService,
   ImportTestNgJarService,
   IdentityAccessService,
   JobWorker,
   runWithTransientRecovery,
-  PublicPlatformStatisticsService,
   PlatformOperationsService,
   ProjectStructureService,
   RunBatchExportService,
@@ -48,7 +52,6 @@ import {
   type RunnerRepository,
   type RunnerInstallationProfileRepository,
   type RunnerGroupRepository,
-  type PlatformStatisticsRepository,
   type PlatformOperationsRepository,
   type ProjectStructureRepository,
   type WebhookRepository,
@@ -65,6 +68,7 @@ import {
   SqliteCaseSuiteActivityRepository,
   SqliteDdtRepository,
   SqliteDashboardSnapshotRepository,
+  SqliteReadModelSnapshotRepository,
   SqliteExecutionControlRepository,
   SqliteFailureAnalysisRepository,
   SqliteIdentityAccessRepository,
@@ -73,7 +77,6 @@ import {
   SqliteRunnerRepository,
   SqliteRunnerInstallationProfileRepository,
   SqliteRunnerGroupRepository,
-  SqlitePlatformStatisticsRepository,
   SqlitePlatformOperationsRepository,
   SqliteProjectStructureRepository,
   SqliteWebhookRepository,
@@ -90,6 +93,7 @@ import { appConfigurationStore, loadAppConfig } from "./config";
 import { LdapDirectory } from "./ldap-directory";
 import { JenkinsRebuildTransport } from "./jenkins-round-recovery";
 import { ScryptPasswordHasher } from "./password-hasher";
+import { createStorageInventoryReader } from "./storage-inventory-reader";
 import { StorageInventoryService } from "./storage-inventory";
 import { runnerControlPlaneUrl } from "./platform-configuration";
 import { MemoryRequestLimiter, RedisRequestLimiter, type RequestLimiter } from "./request-limiter";
@@ -127,6 +131,7 @@ async function createPlatformServices() {
   let suiteActivityRepository: CaseSuiteActivityRepository;
   let ddtRepository: DdtRepository;
   let dashboardSnapshotRepository: DashboardSnapshotRepository;
+  let readModelRepository: ReadModelSnapshotRepository;
   let failureAnalysisRepository: FailureAnalysisRepository;
   let runners: RunnerRepository;
   let runnerInstallationProfileRepository: RunnerInstallationProfileRepository;
@@ -139,7 +144,6 @@ async function createPlatformServices() {
   let objectStore: JarObjectStorePort;
   let jobQueue: JobQueuePort;
   let cache: CachePort;
-  let statisticsRepository: PlatformStatisticsRepository;
   let operationsRepository: PlatformOperationsRepository;
   let projectStructuresRepository: ProjectStructureRepository;
   let webhookRepository: WebhookRepository;
@@ -157,6 +161,7 @@ async function createPlatformServices() {
     suiteActivityRepository = new SqliteCaseSuiteActivityRepository(database);
     ddtRepository = new SqliteDdtRepository(database);
     dashboardSnapshotRepository = new SqliteDashboardSnapshotRepository(database);
+    readModelRepository = new SqliteReadModelSnapshotRepository(database);
     runners = new SqliteRunnerRepository(database);
     runnerInstallationProfileRepository = new SqliteRunnerInstallationProfileRepository(database);
     runnerGroupsRepository = new SqliteRunnerGroupRepository(database);
@@ -170,7 +175,6 @@ async function createPlatformServices() {
     objectStore = new LocalObjectStore(config.dataDirectory);
     jobQueue = new SqliteJobQueue(database);
     cache = new MemoryCache();
-    statisticsRepository = new SqlitePlatformStatisticsRepository(database);
     operationsRepository = new SqlitePlatformOperationsRepository(database, attemptLogs);
     projectStructuresRepository = new SqliteProjectStructureRepository(database);
     webhookRepository = new SqliteWebhookRepository(database);
@@ -192,6 +196,7 @@ async function createPlatformServices() {
         PostgresCaseSuiteActivityRepository,
         PostgresDdtRepository,
         PostgresDashboardSnapshotRepository,
+        PostgresReadModelSnapshotRepository,
         PostgresIdentityAccessRepository,
         PostgresExecutionControlRepository,
         PostgresFailureAnalysisRepository,
@@ -200,7 +205,6 @@ async function createPlatformServices() {
         PostgresRunnerRepository,
         PostgresRunnerInstallationProfileRepository,
         PostgresRunnerGroupRepository,
-        PostgresPlatformStatisticsRepository,
         PostgresPlatformOperationsRepository,
         PostgresProjectStructureRepository,
         PostgresWebhookRepository,
@@ -307,6 +311,7 @@ async function createPlatformServices() {
     suiteActivityRepository = new PostgresCaseSuiteActivityRepository(database);
     ddtRepository = new PostgresDdtRepository(database);
     dashboardSnapshotRepository = new PostgresDashboardSnapshotRepository(database);
+    readModelRepository = new PostgresReadModelSnapshotRepository(database);
     runners = new PostgresRunnerRepository(database);
     runnerInstallationProfileRepository = new PostgresRunnerInstallationProfileRepository(database);
     runnerGroupsRepository = new PostgresRunnerGroupRepository(database);
@@ -321,7 +326,6 @@ async function createPlatformServices() {
     roundRecoveries = new PostgresRoundRecoveryRepository(database);
     attemptLogSharesRepository = new PostgresAttemptLogShareRepository(database);
     objectStore = new MinioObjectStore(config.minio);
-    statisticsRepository = new PostgresPlatformStatisticsRepository(database);
     operationsRepository = new PostgresPlatformOperationsRepository(database, attemptLogs);
     projectStructuresRepository = new PostgresProjectStructureRepository(database);
     webhookRepository = new PostgresWebhookRepository(database);
@@ -358,7 +362,9 @@ async function createPlatformServices() {
     clock,
     ids,
   );
+  const readModels = new ReadModelSnapshotService(readModelRepository, clock);
   const importTestNgJar = new ImportTestNgJarService({
+    readModelInvalidation: readModels,
     discovery,
     objectStore,
     catalog,
@@ -389,6 +395,7 @@ async function createPlatformServices() {
     { parseUpload: parseDdtUpload },
     clock,
     ids,
+    readModels,
   );
   const projectStructures = new ProjectStructureService(
     projectStructuresRepository,
@@ -569,6 +576,7 @@ async function createPlatformServices() {
     clock,
     ids,
     config.sessionTtlHours,
+    readModels,
   );
   await identityAccess.initialize();
   globalServices.__autoforgeRecordTerminalAudit = (event) =>
@@ -586,12 +594,35 @@ async function createPlatformServices() {
   );
   const runnerProtocol = new RunnerProtocolController(executionControl);
   const runBatchExport = new RunBatchExportService(batches);
-  const publicStatistics = new PublicPlatformStatisticsService(
-    statisticsRepository,
-    clock,
-    60_000,
-    config.publicDashboardRefreshSeconds,
-  );
+  const publicStatistics = {
+    read: async () => {
+      const projection = await readModels.read({
+        kind: "public_statistics",
+        projectId: DEFAULT_PROJECT_ID,
+        refreshSeconds: config.publicDashboardRefreshSeconds,
+      });
+      return publicPlatformStatisticsSchema.parse({
+        ...(projection.payload ?? {
+          sourceCount: 0,
+          caseCount: 0,
+          methodCount: 0,
+          enabledMethodCount: 0,
+          runnerCount: 0,
+          onlineRunnerCount: 0,
+          busyRunnerCount: 0,
+          activeBatchCount: 0,
+          completedBatchCount: 0,
+          totalRunCount: 0,
+          succeededRunCount: 0,
+          failedRunCount: 0,
+          successRatePercent: 0,
+          generatedAt: clock.now().toISOString(),
+          refreshSeconds: 5,
+        }),
+        snapshotState: projection.state,
+      });
+    },
+  };
   const scheduleAbort = new AbortController();
   const roundRecoveryLoop = runPeriodic(scheduleAbort.signal, 5_000, async () => {
     await roundRecovery.dispatchDue(`web-${process.pid}-round-recovery`);
@@ -610,16 +641,6 @@ async function createPlatformServices() {
           await operationsRepository.rebuildAnalyticsFacts(1_000);
         })
       : Promise.resolve();
-  const dashboardSnapshotLoop =
-    config.mode === "lite"
-      ? runPeriodic(
-          scheduleAbort.signal,
-          config.publicDashboardRefreshSeconds * 1_000,
-          async () => {
-            await dashboardSnapshots.refreshTracked();
-          },
-        )
-      : Promise.resolve();
   const nodeCleanupLoop = nodeLogs
     ? runPeriodic(scheduleAbort.signal, 60_000, () => nodeLogs!.cleanupOrphans())
     : Promise.resolve();
@@ -637,13 +658,8 @@ async function createPlatformServices() {
     },
     close: async () => {
       scheduleAbort.abort();
-      await Promise.all([
-        scheduleLoop,
-        dashboardSnapshotLoop,
-        retentionLoop,
-        roundRecoveryLoop,
-        nodeCleanupLoop,
-      ]);
+      await Promise.all([scheduleLoop, retentionLoop, roundRecoveryLoop, nodeCleanupLoop]);
+      await storageInventory.close();
       await clock.close();
       await runtimeInfrastructure.close();
     },
@@ -680,6 +696,20 @@ async function createPlatformServices() {
     ddtImports,
     projectStructures,
     storageInventory,
+    readStorageInventory: createStorageInventoryReader({
+      local: storageInventory,
+      ...(platformNodes && config.mode === "full" && config.nodeId
+        ? { nodeId: config.nodeId, nodes: platformNodes }
+        : {}),
+    }),
+    executionCaseEntries: (
+      batchId: string,
+      keys: readonly import("@autoforge/application").ExecutionCasePageKey[],
+    ) => batches.readCasePageEntries(batchId, keys),
+    executionBatchPage: (input: import("@autoforge/application").RunBatchListQuery) =>
+      readBatchPage(batches, readModels, input),
+    executionOverview: (batchId: string, projectIds?: readonly string[]) =>
+      readExecutionOverview(batches, readModels, batchId, projectIds),
     runners,
     identities,
     executions,
@@ -695,6 +725,7 @@ async function createPlatformServices() {
     runBatchExport,
     publicStatistics,
     dashboardSnapshots,
+    readModels,
     platformOperations,
     webhooks,
     runBatches,

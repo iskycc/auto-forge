@@ -10,6 +10,7 @@ type Context = { params: Promise<{ claimantId: string }> };
 
 const querySchema = z.object({
   projectId: z.string().min(1),
+  batchId: z.string().min(1),
   projectVersionId: z.string().min(1).optional(),
   cursor: z.string().max(1_024).optional(),
   limit: z.coerce.number().int().min(1).max(100).default(30),
@@ -22,6 +23,7 @@ export async function GET(request: Request, context: Context): Promise<NextRespo
     const services = await getPlatformServices();
     const page = await services.failureAnalysis.listAnalystClaims({
       projectId: input.projectId,
+      batchId: input.batchId,
       limit: input.limit,
       claimantId: z
         .string()

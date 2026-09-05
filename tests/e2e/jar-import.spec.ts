@@ -451,11 +451,26 @@ public class MixedVisibleTest {
   });
   await page.getByRole("link", { name: "查看用例管理" }).click();
   await page.getByLabel("页内搜索用例").fill("MixedVisibleTest");
+  let sourceReads = 0;
+  page.on("request", (request) => {
+    if (/\/api\/v1\/case-definitions\/[^/]+\/source$/.test(new URL(request.url()).pathname))
+      sourceReads += 1;
+  });
   await page.getByRole("button", { name: "快速预览 MixedVisibleTest" }).click();
+  await expect(page.locator(".case-inspector-header")).toContainText("MixedVisibleTest");
+  expect(sourceReads).toBe(0);
   await page.locator(".case-inspector-section").getByText("用例源码", { exact: true }).click();
   await expect(page.locator(".case-inspector-pane .source-code-viewer").first()).toContainText(
     "AUTOFORGE_MIXED_SOURCE_E2E",
   );
+  expect(sourceReads).toBe(1);
+  const sourceToggle = page
+    .locator(".case-inspector-section")
+    .getByText("用例源码", { exact: true });
+  await sourceToggle.click();
+  await sourceToggle.click();
+  await expect(page.locator(".case-inspector-pane .source-code-viewer").first()).toBeVisible();
+  expect(sourceReads).toBe(1);
   await expect(
     page.locator(".case-inspector-section summary").getByText("立即执行", { exact: true }),
   ).toBeVisible();
@@ -1045,15 +1060,12 @@ public class MixedVisibleTest {
   await expect(trendRow.locator("td").nth(4)).toHaveText("0");
 
   await page.goto("/");
-  await expect
-    .poll(
-      async () => {
-        await page.reload();
-        return page.locator(".quality-score-row > strong").textContent();
-      },
-      { timeout: 15_000 },
-    )
-    .toBe("50.0");
+  // Document reloads reuse persisted statistics. Explicit refresh requests a new
+  // background projection after this scenario changes the execution samples.
+  await page.getByRole("button", { name: "刷新数据", exact: true }).click();
+  await expect(page.locator(".quality-score-row > strong")).toHaveText("50.0", {
+    timeout: 15_000,
+  });
   await expect(page.locator(".design-failure-card")).toContainText(
     "java.lang.AssertionError: 中文断言失败",
   );

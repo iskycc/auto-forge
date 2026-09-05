@@ -53,8 +53,7 @@ export default async function AccessSettingsPage({
   const needsRoles = activeSection === "users" || activeSection === "roles";
   const needsProjects = needsRoles;
   const needsLdap = activeSection === "ldap";
-  const needsRoleBindings = activeSection === "users" || activeSection === "roles";
-  const [userPage, roles, projects, ldap, sessions, systemRoleBindings] = await Promise.all([
+  const [userPage, roles, projects, ldap, sessions] = await Promise.all([
     needsUsers && capabilities.userRead
       ? services.identityAccess.listUsers(identity, {
           limit: 50,
@@ -75,19 +74,32 @@ export default async function AccessSettingsPage({
     activeSection === "sessions"
       ? services.identityAccess.listSessions(identity)
       : Promise.resolve([]),
-    needsRoleBindings && capabilities.roleRead
-      ? services.identityAccess.listSystemRoleBindings(identity)
-      : Promise.resolve([]),
   ]);
-  const projectMemberships =
-    activeSection === "users"
-      ? await Promise.all(
-          projects.map(async (project) => ({
-            projectId: project.id,
-            members: await services.identityAccess.listProjectMembers(identity, project.id),
-          })),
-        )
-      : [];
+  const userIds = userPage.items.map((user) => user.id);
+  const bindingsPage =
+    needsRoles && capabilities.roleRead && !capabilities.userRead
+      ? await services.identityAccess.listSystemRoleBindingsPage(identity, cursor)
+      : undefined;
+  const [systemRoleBindings, projectBindings] = await Promise.all([
+    needsRoles && capabilities.roleRead
+      ? (bindingsPage?.items ?? services.identityAccess.listSystemRoleBindings(identity, userIds))
+      : [],
+    activeSection === "users" && capabilities.projectRead
+      ? services.identityAccess.listUserProjectRoleBindings(identity, userIds)
+      : [],
+  ]);
+  const membershipsByProject = new Map<string, Map<string, string[]>>();
+  for (const binding of projectBindings) {
+    const members = membershipsByProject.get(binding.projectId) ?? new Map<string, string[]>();
+    members.set(binding.userId, [...(members.get(binding.userId) ?? []), binding.roleId]);
+    membershipsByProject.set(binding.projectId, members);
+  }
+  const projectMemberships = [...membershipsByProject].map(([projectId, members]) => ({
+    projectId,
+    members: userPage.items
+      .filter((user) => members.has(user.id))
+      .map((user) => ({ user, roleIds: members.get(user.id)! })),
+  }));
 
   return (
     <section className="page-stack">
@@ -118,7 +130,7 @@ export default async function AccessSettingsPage({
         users={userPage.items}
         userQuery={query ?? ""}
         userSource={source ?? ""}
-        nextUserCursor={userPage.nextCursor}
+        nextUserCursor={bindingsPage?.nextCursor ?? userPage.nextCursor}
         // Query-string Tab navigation preserves client component state. Include the LDAP
         // configuration version so entering the lazily loaded directory tab and saving a new
         // revision both remount controlled switches from the authoritative persisted values.

@@ -574,6 +574,25 @@ export function AccessSettings({
               </tbody>
             </table>
           </div>
+          {nextUserCursor ? (
+            <a
+              className="button button-secondary settings-next-page"
+              href={userPageHref(userQuery, userSource, nextUserCursor).replace(
+                "section=users",
+                "section=roles",
+              )}
+            >
+              下一页用户绑定
+            </a>
+          ) : null}
+          <form action="/settings/access" className="settings-user-filter" method="get">
+            <input name="section" type="hidden" value="roles" />
+            <label>
+              搜索用户绑定
+              <Input defaultValue={userQuery} maxLength={120} name="query" />
+            </label>
+            <Button type="submit">筛选绑定</Button>
+          </form>
           <ActionDialog
             description="自定义角色用于组合系统级或项目级权限。"
             onClose={() => !pending && setCreateDialog(null)}

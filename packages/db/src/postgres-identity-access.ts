@@ -574,6 +574,8 @@ export class PostgresIdentityAccessRepository implements IdentityAccessRepositor
 
   async listUsers(input: {
     query?: string;
+    analysisProjectId?: string;
+    userId?: string;
     source?: "local" | "ldap";
     cursor?: string;
     limit: number;
@@ -581,6 +583,27 @@ export class PostgresIdentityAccessRepository implements IdentityAccessRepositor
     await this.ready();
     const parameters: unknown[] = [];
     const conditions: string[] = [];
+    if (input.userId) {
+      parameters.push(input.userId);
+      conditions.push(`id=$${parameters.length}`);
+    }
+    if (input.analysisProjectId) {
+      parameters.push(input.analysisProjectId);
+      const projectParameter = `$${parameters.length}`;
+      conditions.push("status='active'");
+      for (const permission of ["run.read", "analysis.manage"]) {
+        parameters.push(permission);
+        conditions.push(`EXISTS (
+          SELECT 1 FROM roles role WHERE role.active=TRUE
+            AND role.permissions_json::jsonb ? $${parameters.length}
+            AND (EXISTS (SELECT 1 FROM user_system_roles binding
+                         WHERE binding.user_id=users.id AND binding.role_id=role.id)
+              OR EXISTS (SELECT 1 FROM project_role_bindings binding
+                         WHERE binding.user_id=users.id AND binding.role_id=role.id
+                           AND binding.project_id=${projectParameter}))
+        )`);
+      }
+    }
     if (input.query) {
       parameters.push(`%${input.query.trim()}%`);
       conditions.push(
@@ -797,13 +820,27 @@ export class PostgresIdentityAccessRepository implements IdentityAccessRepositor
 
   async listProjectMemberships(
     projectId: string,
+    page?: { afterUserId?: string; query?: string; limit: number },
   ): Promise<Array<{ user: User; roleIds: string[] }>> {
     await this.ready();
     const result = await this.handle.pool.query<UserDatabaseRow & { role_id: string }>(
       `SELECT u.*, b.role_id FROM project_role_bindings b
        JOIN users u ON u.id = b.user_id WHERE b.project_id = $1
-       ORDER BY u.display_name, b.role_id`,
-      [projectId],
+       ${
+         page
+           ? `AND u.id IN (SELECT DISTINCT candidate.id FROM users candidate JOIN project_role_bindings binding ON binding.user_id=candidate.id
+          WHERE binding.project_id=$1 AND candidate.id>$2 AND strpos(lower(candidate.display_name || ' ' || candidate.username),$3)>0 ORDER BY candidate.id LIMIT $4)`
+           : ""
+       }
+       ORDER BY ${page ? "u.id" : "u.display_name"}, b.role_id`,
+      page
+        ? [
+            projectId,
+            page.afterUserId ?? "",
+            (page.query ?? "").toLowerCase(),
+            Math.max(1, Math.min(page.limit, 201)),
+          ]
+        : [projectId],
     );
     const memberships = new Map<string, { user: User; roleIds: string[] }>();
     for (const row of result.rows) {
@@ -884,12 +921,40 @@ export class PostgresIdentityAccessRepository implements IdentityAccessRepositor
     }));
   }
 
-  async listSystemRoleBindings(): Promise<Array<{ userId: string; roleId: string }>> {
+  async listSystemRoleBindings(
+    userIds?: readonly string[],
+    page?: { afterUserId?: string; limit: number },
+  ): Promise<Array<{ userId: string; roleId: string }>> {
+    if (page) {
+      await this.ready();
+      const result = await this.handle.pool.query<{ id: string }>(
+        "SELECT DISTINCT user_id AS id FROM user_system_roles WHERE user_id>$1 ORDER BY user_id LIMIT $2",
+        [page.afterUserId ?? "", Math.min(201, Math.max(1, page.limit))],
+      );
+      return this.listSystemRoleBindings(result.rows.map((row) => row.id));
+    }
+    if (userIds?.length === 0) return [];
     await this.ready();
     const result = await this.handle.pool.query<{ user_id: string; role_id: string }>(
-      "SELECT user_id, role_id FROM user_system_roles ORDER BY user_id, role_id",
+      `SELECT user_id, role_id FROM user_system_roles ${userIds ? "WHERE user_id=ANY($1::text[])" : ""} ORDER BY user_id, role_id`,
+      userIds ? [[...userIds]] : [],
     );
     return result.rows.map((row) => ({ userId: row.user_id, roleId: row.role_id }));
+  }
+
+  async listUserProjectRoleBindings(userIds: readonly string[], projectIds?: readonly string[]) {
+    await this.ready();
+    if (!userIds.length || projectIds?.length === 0) return [];
+    if (userIds.length > 200) throw new Error("User role lookup exceeds page size.");
+    const result = await this.handle.pool.query<{
+      projectId: string;
+      userId: string;
+      roleId: string;
+    }>(
+      `SELECT project_id AS "projectId",user_id AS "userId",role_id AS "roleId" FROM project_role_bindings WHERE user_id=ANY($1::text[]) ${projectIds ? "AND project_id=ANY($2::text[])" : ""}`,
+      projectIds ? [[...userIds], [...projectIds]] : [[...userIds]],
+    );
+    return result.rows;
   }
 
   async getLdapConfiguration(): Promise<StoredLdapConfiguration | null> {

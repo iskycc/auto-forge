@@ -429,6 +429,17 @@ export class RunBatchSchedulingService {
     return batch;
   }
 
+  async listMetadataPage(input: import("./ports").RunBatchListQuery) {
+    return this.batches.listMetadataPage(input);
+  }
+
+  async getMetadata(batchId: string, projectIds?: readonly string[]) {
+    const batch = await this.batches.getMetadata(batchId, projectIds);
+    if (!batch || batch.kind === "case_log_rerun")
+      throw new DomainError("RUN_BATCH_NOT_FOUND", "指定的执行批次不存在。");
+    return batch;
+  }
+
   async getSummary(batchId: string, projectIds?: readonly string[]): Promise<RunBatch> {
     const batch = await this.batches.getSummary(batchId, projectIds);
     if (!batch || batch.kind === "case_log_rerun") {

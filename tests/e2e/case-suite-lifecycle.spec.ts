@@ -644,6 +644,24 @@ test("case metadata, immutable versions and suite policy survive lifecycle chang
   await acceptSystemDialog(page, "移除任务用例", "确认移除");
   await expect(page.getByText("任务中还没有用例")).toBeVisible();
 
+  // Removing members must advance the editor revision without a page reload.
+  await page.getByLabel("任务说明").fill("saved after removing members");
+  const savedAfterRemoval = page.waitForResponse(
+    (response) =>
+      response.request().method() === "PATCH" &&
+      new URL(response.url()).pathname === `/api/v1/case-suites/${copiedSuiteId}`,
+  );
+  await page.getByRole("button", { name: "保存修改" }).click();
+  expect((await savedAfterRemoval).status()).toBe(200);
+  const savedCopy = await browserJson<{ description: string; caseCount: number }>(
+    page,
+    `/api/v1/case-suites/${copiedSuiteId}`,
+  );
+  expect(savedCopy.body).toMatchObject({
+    description: "saved after removing members",
+    caseCount: 0,
+  });
+
   await page.goto(`/case-suites/${encodeURIComponent(suite.body.id)}`);
   await page.getByLabel(/启用（停用后/).uncheck();
   await page.getByLabel(/归档（保留历史记录/).check();

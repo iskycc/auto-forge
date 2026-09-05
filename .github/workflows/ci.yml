@@ -122,6 +122,10 @@ jobs:
             specs: tests/e2e/case-suite-lifecycle.spec.ts tests/e2e/jar-import.spec.ts tests/e2e/project-isolation.spec.ts
             project_maximum_concurrency: ""
             screenshots: true
+          - scenario: analysis
+            specs: tests/e2e/failure-analysis.spec.ts tests/e2e/failure-analysis-assignment.spec.ts tests/e2e/read-model-cache.spec.ts
+            project_maximum_concurrency: ""
+            screenshots: true
           - scenario: ddt
             specs: tests/e2e/ddt-management.spec.ts
             project_maximum_concurrency: ""

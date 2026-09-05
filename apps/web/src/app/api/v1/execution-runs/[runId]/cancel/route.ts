@@ -16,9 +16,15 @@ export async function POST(request: Request, context: Context): Promise<NextResp
     const input = cancelExecutionInputSchema.parse(await readJsonBody(request, 8 * 1024));
     const services = await getPlatformServices();
     const projectIds = services.identityAccess.projectScope(identity, "run.cancel");
-    await services.executionControl.cancelRun(identity.user.id, runId, input.reason, projectIds);
+    const cancelled = await services.executionControl.cancelRun(
+      identity.user.id,
+      runId,
+      input.reason,
+      projectIds,
+    );
     await services.identityAccess.recordAuthorizedOperation(identity, {
       action: "execution_run.cancel",
+      projectId: cancelled.projectId,
       resourceType: "execution_run",
       resourceId: runId,
       requestId: currentRequestId,

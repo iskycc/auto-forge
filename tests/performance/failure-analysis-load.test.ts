@@ -30,6 +30,13 @@ describe("failure analysis performance", () => {
     try {
       seedFailureAnalysisLoad(handle.client);
       const repository = new SqliteFailureAnalysisRepository(handle);
+      await repository.startBatch({
+        projectId: PROJECT_ID,
+        projectVersionId: VERSION_ID,
+        batchId: BATCH_ID,
+        startedBy: "load-analyst",
+        startedAt: RECORDED_AT,
+      });
 
       const homeStartedAt = performance.now();
       const batches = await repository.listBatches({

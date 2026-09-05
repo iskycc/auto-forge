@@ -4,6 +4,27 @@ import { describe, expect, it } from "vitest";
 import { mapApiError } from "./api-error-mapping";
 
 describe("API error mapping", () => {
+  it.each(["READ_MODEL_PENDING", "READ_MODEL_NODE_UNAVAILABLE"])(
+    "keeps %s retryable without presenting it as an invalid request",
+    (code) => {
+      expect(
+        mapApiError(new DomainError(code, "数据暂不可用。"), "snapshot-request"),
+      ).toMatchObject({
+        status: 503,
+        body: { error: { code, requestId: "snapshot-request" } },
+      });
+    },
+  );
+
+  it("distinguishes a cancelled snapshot read from an internal server failure", () => {
+    expect(
+      mapApiError(
+        new DomainError("READ_MODEL_REQUEST_CANCELLED", "数据读取已取消。"),
+        "cancel-request",
+      ),
+    ).toMatchObject({ status: 499, body: { error: { code: "READ_MODEL_REQUEST_CANCELLED" } } });
+  });
+
   it("returns retryable unavailability when the platform time basis expires", () => {
     expect(
       mapApiError(

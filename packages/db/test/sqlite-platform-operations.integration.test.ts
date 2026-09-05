@@ -1,10 +1,11 @@
+import Database from "better-sqlite3";
 import { randomBytes } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { performance } from "node:perf_hooks";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createAttemptLogStore } from "../src/attempt-log-store";
 import { createSqliteDatabase } from "../src/database";
@@ -100,11 +101,43 @@ describe("SQLite platform operations", () => {
         tokenHash: "hash-1",
       });
 
-      const authenticated = await repository.authenticateApiToken({
-        tokenHash: "hash-1",
-        usedAt: "2026-08-11T01:00:00.000Z",
+      const concurrentWriter = new Database(handle.client.name);
+      concurrentWriter.pragma("busy_timeout = 0");
+      concurrentWriter.exec("CREATE TABLE snapshot_write_probe(value INTEGER)");
+      const prepare = handle.client.prepare.bind(handle.client);
+      let competed = false;
+      const intercept = vi.spyOn(handle.client, "prepare").mockImplementation((statement) => {
+        const prepared = prepare(statement);
+        if (!statement.includes("SELECT t.* FROM api_tokens")) return prepared;
+        return new Proxy(prepared, {
+          get(target, property) {
+            if (property !== "get") return Reflect.get(target, property);
+            return (...parameters: unknown[]) => {
+              const row = Reflect.apply(target.get, target, parameters);
+              competed = true;
+              try {
+                concurrentWriter.exec("INSERT INTO snapshot_write_probe VALUES(1)");
+              } catch (error) {
+                if (!(error instanceof Error) || !("code" in error) || error.code !== "SQLITE_BUSY")
+                  throw error;
+              }
+              return row;
+            };
+          },
+        });
       });
-      expect(authenticated?.effectiveScopes).toEqual(["run.create", "run.read"]);
+      try {
+        const authenticated = await repository.authenticateApiToken({
+          tokenHash: "hash-1",
+          usedAt: "2026-08-11T01:00:00.000Z",
+        });
+        expect(authenticated?.effectiveScopes).toEqual(["run.create", "run.read"]);
+        expect(competed).toBe(true);
+      } finally {
+        intercept.mockRestore();
+        concurrentWriter.close();
+      }
+
       expect(JSON.stringify(await repository.listApiTokens(account.id))).not.toContain(raw);
       await repository.revokeApiToken({
         tokenId: "token-1",

@@ -66,37 +66,39 @@ export class SqliteIdentityAccessRepository implements IdentityAccessRepository 
     definitions: BuiltInRoleDefinition[],
     recordedAt: string,
   ): Promise<void> {
-    this.handle.client.transaction(() => {
-      for (const definition of definitions) {
-        this.handle.db
-          .insert(roles)
-          .values({
-            id: definition.id,
-            key: definition.key,
-            name: definition.name,
-            description: definition.description,
-            scope: definition.scope,
-            builtIn: true,
-            active: true,
-            permissionsJson: JSON.stringify(definition.permissions),
-            createdAt: recordedAt,
-            updatedAt: recordedAt,
-          })
-          .onConflictDoUpdate({
-            target: roles.id,
-            set: {
+    this.handle.client
+      .transaction(() => {
+        for (const definition of definitions) {
+          this.handle.db
+            .insert(roles)
+            .values({
+              id: definition.id,
+              key: definition.key,
               name: definition.name,
               description: definition.description,
               scope: definition.scope,
               builtIn: true,
               active: true,
               permissionsJson: JSON.stringify(definition.permissions),
+              createdAt: recordedAt,
               updatedAt: recordedAt,
-            },
-          })
-          .run();
-      }
-    })();
+            })
+            .onConflictDoUpdate({
+              target: roles.id,
+              set: {
+                name: definition.name,
+                description: definition.description,
+                scope: definition.scope,
+                builtIn: true,
+                active: true,
+                permissionsJson: JSON.stringify(definition.permissions),
+                updatedAt: recordedAt,
+              },
+            })
+            .run();
+        }
+      })
+      .immediate();
   }
 
   async hasUsers(): Promise<boolean> {
@@ -112,39 +114,41 @@ export class SqliteIdentityAccessRepository implements IdentityAccessRepository 
     projectRoleId: string;
     recordedAt: string;
   }): Promise<User | null> {
-    return this.handle.client.transaction(() => {
-      const existing = this.handle.db.select({ value: count() }).from(users).get()?.value ?? 0;
-      if (existing > 0) return null;
-      const use = this.handle.db
-        .insert(authBootstrapUses)
-        .values({ tokenHash: input.tokenHash, usedAt: input.recordedAt })
-        .onConflictDoNothing()
-        .run();
-      if (use.changes === 0) return null;
-      const user = this.insertLocalUser(input.user);
-      this.handle.db
-        .insert(userSystemRoles)
-        .values({
-          userId: user.id,
-          roleId: input.systemRoleId,
-          source: "manual",
-          assignedAt: input.recordedAt,
-          assignedBy: user.id,
-        })
-        .run();
-      this.handle.db
-        .insert(projectRoleBindings)
-        .values({
-          userId: user.id,
-          projectId: input.projectId,
-          roleId: input.projectRoleId,
-          source: "manual",
-          assignedAt: input.recordedAt,
-          assignedBy: user.id,
-        })
-        .run();
-      return mapUser(user);
-    })();
+    return this.handle.client
+      .transaction(() => {
+        const existing = this.handle.db.select({ value: count() }).from(users).get()?.value ?? 0;
+        if (existing > 0) return null;
+        const use = this.handle.db
+          .insert(authBootstrapUses)
+          .values({ tokenHash: input.tokenHash, usedAt: input.recordedAt })
+          .onConflictDoNothing()
+          .run();
+        if (use.changes === 0) return null;
+        const user = this.insertLocalUser(input.user);
+        this.handle.db
+          .insert(userSystemRoles)
+          .values({
+            userId: user.id,
+            roleId: input.systemRoleId,
+            source: "manual",
+            assignedAt: input.recordedAt,
+            assignedBy: user.id,
+          })
+          .run();
+        this.handle.db
+          .insert(projectRoleBindings)
+          .values({
+            userId: user.id,
+            projectId: input.projectId,
+            roleId: input.projectRoleId,
+            source: "manual",
+            assignedAt: input.recordedAt,
+            assignedBy: user.id,
+          })
+          .run();
+        return mapUser(user);
+      })
+      .immediate();
   }
 
   async findUserByUsername(normalizedUsername: string): Promise<StoredUserCredential | null> {
@@ -575,11 +579,29 @@ export class SqliteIdentityAccessRepository implements IdentityAccessRepository 
 
   async listUsers(input: {
     query?: string;
+    analysisProjectId?: string;
+    userId?: string;
     source?: "local" | "ldap";
     cursor?: string;
     limit: number;
   }): Promise<IdentityListPage> {
     const conditions: SQL[] = [];
+    if (input.userId) conditions.push(eq(users.id, input.userId));
+    if (input.analysisProjectId) {
+      conditions.push(eq(users.status, "active"));
+      for (const permission of ["run.read", "analysis.manage"]) {
+        conditions.push(sql`EXISTS (
+          SELECT 1 FROM roles role
+          WHERE role.active=1
+            AND EXISTS (SELECT 1 FROM json_each(role.permissions_json) WHERE value=${permission})
+            AND (EXISTS (SELECT 1 FROM user_system_roles binding
+                         WHERE binding.user_id=${users.id} AND binding.role_id=role.id)
+              OR EXISTS (SELECT 1 FROM project_role_bindings binding
+                         WHERE binding.user_id=${users.id} AND binding.role_id=role.id
+                           AND binding.project_id=${input.analysisProjectId}))
+        )`);
+      }
+    }
     if (input.query) {
       const pattern = `%${input.query.trim()}%`;
       const search = or(like(users.username, pattern), like(users.displayName, pattern));
@@ -609,22 +631,24 @@ export class SqliteIdentityAccessRepository implements IdentityAccessRepository 
   }
 
   async updateUserStatus(userId: string, status: UserStatus, updatedAt: string): Promise<User> {
-    return this.handle.client.transaction(() => {
-      if (status === "disabled") this.ensureNotLastAdministrator(userId);
-      const row = this.handle.db
-        .update(users)
-        .set({
-          status,
-          ...(status === "active" ? { failedLoginAttempts: 0, lockedUntil: null } : {}),
-          updatedAt,
-          version: sql`${users.version} + 1`,
-        })
-        .where(eq(users.id, userId))
-        .returning()
-        .get();
-      if (!row) throw new DomainError("USER_NOT_FOUND", "指定用户不存在。");
-      return mapUser(row);
-    })();
+    return this.handle.client
+      .transaction(() => {
+        if (status === "disabled") this.ensureNotLastAdministrator(userId);
+        const row = this.handle.db
+          .update(users)
+          .set({
+            status,
+            ...(status === "active" ? { failedLoginAttempts: 0, lockedUntil: null } : {}),
+            updatedAt,
+            version: sql`${users.version} + 1`,
+          })
+          .where(eq(users.id, userId))
+          .returning()
+          .get();
+        if (!row) throw new DomainError("USER_NOT_FOUND", "指定用户不存在。");
+        return mapUser(row);
+      })
+      .immediate();
   }
 
   async resetPassword(
@@ -786,15 +810,17 @@ export class SqliteIdentityAccessRepository implements IdentityAccessRepository 
   }
 
   async removeSystemRole(userId: string, roleId: string): Promise<boolean> {
-    return this.handle.client.transaction(() => {
-      if (roleId === SYSTEM_ADMIN_ROLE_ID) this.ensureNotLastAdministrator(userId);
-      return (
-        this.handle.db
-          .delete(userSystemRoles)
-          .where(and(eq(userSystemRoles.userId, userId), eq(userSystemRoles.roleId, roleId)))
-          .run().changes > 0
-      );
-    })();
+    return this.handle.client
+      .transaction(() => {
+        if (roleId === SYSTEM_ADMIN_ROLE_ID) this.ensureNotLastAdministrator(userId);
+        return (
+          this.handle.db
+            .delete(userSystemRoles)
+            .where(and(eq(userSystemRoles.userId, userId), eq(userSystemRoles.roleId, roleId)))
+            .run().changes > 0
+        );
+      })
+      .immediate();
   }
 
   async removeProjectRole(userId: string, projectId: string, roleId: string): Promise<boolean> {
@@ -814,13 +840,38 @@ export class SqliteIdentityAccessRepository implements IdentityAccessRepository 
 
   async listProjectMemberships(
     projectId: string,
+    page?: { afterUserId?: string; query?: string; limit: number },
   ): Promise<Array<{ user: User; roleIds: string[] }>> {
+    const pageUsers = page
+      ? this.handle.db
+          .selectDistinct({ id: users.id })
+          .from(users)
+          .innerJoin(projectRoleBindings, eq(projectRoleBindings.userId, users.id))
+          .where(
+            and(
+              eq(projectRoleBindings.projectId, projectId),
+              ...(page.afterUserId ? [sql`${users.id} > ${page.afterUserId}`] : []),
+              ...(page.query
+                ? [
+                    sql`instr(lower(${users.displayName} || ' ' || ${users.username}), ${page.query.toLowerCase()}) > 0`,
+                  ]
+                : []),
+            ),
+          )
+          .orderBy(users.id)
+          .limit(Math.max(1, Math.min(page.limit, 201)))
+      : undefined;
     const rows = this.handle.db
       .select({ user: users, roleId: projectRoleBindings.roleId })
       .from(projectRoleBindings)
       .innerJoin(users, eq(users.id, projectRoleBindings.userId))
-      .where(eq(projectRoleBindings.projectId, projectId))
-      .orderBy(users.displayName)
+      .where(
+        and(
+          eq(projectRoleBindings.projectId, projectId),
+          ...(pageUsers ? [inArray(users.id, pageUsers)] : []),
+        ),
+      )
+      .orderBy(page ? users.id : users.displayName)
       .all();
     const memberships = new Map<string, { user: User; roleIds: string[] }>();
     for (const row of rows) {
@@ -911,11 +962,45 @@ export class SqliteIdentityAccessRepository implements IdentityAccessRepository 
     }));
   }
 
-  async listSystemRoleBindings(): Promise<Array<{ userId: string; roleId: string }>> {
+  async listSystemRoleBindings(
+    userIds?: readonly string[],
+    page?: { afterUserId?: string; limit: number },
+  ): Promise<Array<{ userId: string; roleId: string }>> {
+    if (page) {
+      const ids = this.handle.client
+        .prepare(
+          "SELECT DISTINCT user_id AS id FROM user_system_roles WHERE user_id>? ORDER BY user_id LIMIT ?",
+        )
+        .all(page.afterUserId ?? "", Math.min(201, Math.max(1, page.limit))) as Array<{
+        id: string;
+      }>;
+      return this.listSystemRoleBindings(ids.map((row) => row.id));
+    }
+    if (userIds?.length === 0) return [];
     return this.handle.db
       .select({ userId: userSystemRoles.userId, roleId: userSystemRoles.roleId })
       .from(userSystemRoles)
+      .where(userIds ? inArray(userSystemRoles.userId, [...userIds]) : undefined)
       .orderBy(userSystemRoles.userId, userSystemRoles.roleId)
+      .all();
+  }
+
+  async listUserProjectRoleBindings(userIds: readonly string[], projectIds?: readonly string[]) {
+    if (!userIds.length || projectIds?.length === 0) return [];
+    if (userIds.length > 200) throw new Error("User role lookup exceeds page size.");
+    return this.handle.db
+      .select({
+        projectId: projectRoleBindings.projectId,
+        userId: projectRoleBindings.userId,
+        roleId: projectRoleBindings.roleId,
+      })
+      .from(projectRoleBindings)
+      .where(
+        and(
+          inArray(projectRoleBindings.userId, [...userIds]),
+          ...(projectIds ? [inArray(projectRoleBindings.projectId, [...projectIds])] : []),
+        ),
+      )
       .all();
   }
 

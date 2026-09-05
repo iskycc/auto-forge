@@ -83,26 +83,28 @@ export class SqliteRunnerInstallationProfileRepository implements RunnerInstalla
     runnerId: string;
     updatedAt: string;
   }): Promise<void> {
-    this.handle.client.transaction(() => {
-      const pending = this.handle.db
-        .select({ id: runnerInstallationProfiles.id })
-        .from(runnerInstallationProfiles)
-        .where(
-          and(
-            eq(runnerInstallationProfiles.runnerName, input.runnerName),
-            isNull(runnerInstallationProfiles.runnerId),
-          ),
-        )
-        .orderBy(desc(runnerInstallationProfiles.updatedAt))
-        .limit(1)
-        .get();
-      if (!pending) return;
-      this.handle.db
-        .update(runnerInstallationProfiles)
-        .set({ runnerId: input.runnerId, updatedAt: input.updatedAt })
-        .where(eq(runnerInstallationProfiles.id, pending.id))
-        .run();
-    })();
+    this.handle.client
+      .transaction(() => {
+        const pending = this.handle.db
+          .select({ id: runnerInstallationProfiles.id })
+          .from(runnerInstallationProfiles)
+          .where(
+            and(
+              eq(runnerInstallationProfiles.runnerName, input.runnerName),
+              isNull(runnerInstallationProfiles.runnerId),
+            ),
+          )
+          .orderBy(desc(runnerInstallationProfiles.updatedAt))
+          .limit(1)
+          .get();
+        if (!pending) return;
+        this.handle.db
+          .update(runnerInstallationProfiles)
+          .set({ runnerId: input.runnerId, updatedAt: input.updatedAt })
+          .where(eq(runnerInstallationProfiles.id, pending.id))
+          .run();
+      })
+      .immediate();
   }
 }
 

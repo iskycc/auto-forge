@@ -2,6 +2,7 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
+  experimental: { staleTimes: { dynamic: 60, static: 60 } },
   serverExternalPackages: ["better-sqlite3"],
   async headers() {
     return [

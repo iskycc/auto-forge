@@ -19,6 +19,54 @@ export function failureAnalysisContract(
   createHarness: () => Promise<FailureAnalysisHarness>,
 ): void {
   describe(name, () => {
+    it("only exposes explicitly started analyses and starts each batch once", async () => {
+      const harness = await createHarness();
+      const { repository, projectId, projectVersionId, batchId, activeBatchId } = harness;
+      try {
+        expect(
+          (await repository.listBatches({ projectId, projectVersionId, limit: 10 })).items,
+        ).toEqual([]);
+        const available = await repository.listBatches({
+          projectId,
+          projectVersionId,
+          view: "available",
+          limit: 10,
+        });
+        expect(available.items.map((batch) => batch.id)).toEqual([batchId]);
+        expect(await repository.getBatch({ projectId, projectVersionId, batchId })).toBeNull();
+        const input = {
+          projectId,
+          projectVersionId,
+          batchId,
+          startedBy: "analyst-a",
+          startedAt: "2026-09-01T01:00:00.000Z",
+        };
+        expect(await repository.startBatch({ ...input, batchId: activeBatchId })).toBeNull();
+        expect(await repository.startBatch({ ...input, projectId: "another-project" })).toBeNull();
+        const started = await Promise.all([
+          repository.startBatch(input),
+          repository.startBatch(input),
+        ]);
+        expect(started.filter((result) => result?.created)).toHaveLength(1);
+        expect(started.every((result) => result?.batch.id === batchId)).toBe(true);
+        expect(
+          (await repository.listBatches({ projectId, projectVersionId, limit: 10 })).items,
+        ).toHaveLength(1);
+        expect(
+          (
+            await repository.listBatches({
+              projectId,
+              projectVersionId,
+              view: "available",
+              limit: 10,
+            })
+          ).items,
+        ).toEqual([]);
+      } finally {
+        await harness.dispose();
+      }
+    });
+
     it("persists exclusive claims and their selected analysis category", async () => {
       const harness = await createHarness();
       const {
@@ -31,6 +79,13 @@ export function failureAnalysisContract(
         runIds,
       } = harness;
       try {
+        await repository.startBatch({
+          projectId,
+          projectVersionId,
+          batchId,
+          startedBy: "analyst-a",
+          startedAt: "2026-09-01T00:30:00.000Z",
+        });
         const batches = await repository.listBatches({
           projectId,
           projectVersionId,
@@ -423,6 +478,23 @@ export function failureAnalysisContract(
           }),
         ).resolves.toBeNull();
 
+        await expect(
+          repository.readStatistics({
+            projectId,
+            projectVersionId,
+            batchId,
+            limit: 10,
+            generatedAt: "2026-09-01T01:03:00.000Z",
+          }),
+        ).resolves.toMatchObject({
+          summary: { analyzing: 1, completed: 0, categories: { codeIssueFiled: 0 } },
+          analysts: [
+            expect.objectContaining({
+              categories: { rerunPassed: 0, caseFixed: 0, codeIssueFiled: 0 },
+            }),
+          ],
+        });
+
         const screenshot = {
           objectKey: "projects/project-a/failure-analysis/batch/proof.png",
           fileName: "重跑通过.png",
@@ -454,6 +526,9 @@ export function failureAnalysisContract(
           completedAt: "2026-09-01T01:05:00.000Z",
         });
         expect(completed).toHaveLength(2);
+        expect(await repository.readBatchProgress(projectId, batchId)).toMatchObject({
+          completedRuns: 2,
+        });
         expect(completed.every((claim) => claim.status === "completed")).toBe(true);
         expect(completed[0]).toMatchObject({
           category: "case_fixed",
@@ -476,6 +551,7 @@ export function failureAnalysisContract(
         expect(pendingClaim.claims).toHaveLength(1);
         const statistics = await repository.readStatistics({
           projectId,
+          batchId,
           projectVersionId,
           limit: 10,
           generatedAt: "2026-09-01T01:07:00.000Z",
@@ -503,6 +579,16 @@ export function failureAnalysisContract(
         await expect(
           repository.readStatistics({
             projectId,
+            projectVersionId,
+            batchId: activeBatchId,
+            limit: 10,
+            generatedAt: "2026-09-01T01:07:00.000Z",
+          }),
+        ).resolves.toMatchObject({ summary: { total: 0 }, analysts: [] });
+        await expect(
+          repository.readStatistics({
+            projectId,
+            batchId,
             projectVersionId: "another-version",
             limit: 10,
             generatedAt: "2026-09-01T01:07:00.000Z",

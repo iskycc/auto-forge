@@ -18,6 +18,7 @@ import type {
 } from "./ports";
 
 export type ImportTestNgJarDependencies = {
+  readModelInvalidation?: { invalidate(projectId: string): Promise<void> };
   discovery: JarDiscoveryPort;
   objectStore: JarObjectStorePort;
   catalog: CaseCatalogRepository;
@@ -239,6 +240,7 @@ export class ImportTestNgJarService {
           ...(claimed.job.testStageId ? { testStageId: claimed.job.testStageId } : {}),
           ...(claimed.job.requestedBy ? { actorId: claimed.job.requestedBy } : {}),
         });
+        await this.dependencies.readModelInvalidation?.invalidate(claimed.job.projectId);
         const finishedAt = this.dependencies.clock.now().toISOString();
         await this.dependencies.catalog.updateJarImportJob({
           jobId,

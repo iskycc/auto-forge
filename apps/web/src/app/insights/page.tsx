@@ -1,10 +1,12 @@
+import {
+  batchComparisonManifestSchema,
+  type BatchComparisonManifest,
+  analyticsSummarySchema,
+} from "@autoforge/contracts";
+import { ReadModelStatusBar, ReadModelPendingPage } from "@/components/read-model-status";
 import { DatetimeInput, Input, Select } from "@/components/ui";
 
-import type {
-  AnalyticsBatchComparison,
-  AnalyticsFilter,
-  AnalyticsSummary,
-} from "@autoforge/contracts";
+import type { AnalyticsFilter, AnalyticsSummary } from "@autoforge/contracts";
 import type { CaseDefinitionWithMethods } from "@autoforge/domain";
 import { BarChart3, FlaskConical, SlidersHorizontal, TrendingUp } from "lucide-react";
 import Link from "next/link";
@@ -15,7 +17,7 @@ import { getPlatformServices } from "@/lib/services";
 import { formatRate, type CaseLatestRun } from "@/lib/case-selection-stats";
 import { classifyAttemptResult } from "@autoforge/domain";
 import { AnalyticsExportControl } from "@/components/analytics-export-control";
-import { BatchComparisonDetails } from "@/components/batch-comparison-details";
+import { CachedBatchComparison } from "@/components/cached-batch-comparison";
 import { InsightDetailDialog } from "@/components/insight-detail-dialog";
 import { NavigationSubmitButton } from "@/components/navigation-submit-button";
 import { presentAnalyticsFailure } from "@/lib/analytics-failure-presentation";
@@ -94,8 +96,37 @@ export default async function InsightsPage({
       ? { completedBefore: dateTimeParameter(parameters.flakyCompletedBefore, timeZone) }
       : {}),
   };
-  const [summary, suites, runners, recentBatches] = await Promise.all([
-    services.platformOperations.analytics(identity, filter),
+  if (!caseProjectId || !hierarchy.projectVersionId)
+    return (
+      <section className="page-hero">
+        <div>
+          <h1>质量洞察</h1>
+          <p>请选择项目版本后查看统计。</p>
+        </div>
+      </section>
+    );
+  const projection = await services.readModels.read({
+    kind: "analytics",
+    projectId: caseProjectId,
+    projectVersionId: hierarchy.projectVersionId,
+    filter,
+  });
+  const flakyProjection = analyticsFiltersEqual(filter, flakyFilter)
+    ? projection
+    : await services.readModels.read({
+        kind: "analytics",
+        projectId: caseProjectId,
+        projectVersionId: hierarchy.projectVersionId,
+        filter: flakyFilter,
+      });
+  const projections =
+    projection.id === flakyProjection.id ? [projection] : [projection, flakyProjection];
+  if (projections.some((entry) => !entry.generation))
+    return (
+      <ReadModelPendingPage title="质量洞察" snapshots={projections.map((entry) => entry.status)} />
+    );
+  const summary = analyticsSummarySchema.parse(projection.payload);
+  const [suites, runners, recentBatches] = await Promise.all([
     hierarchy.projectVersionId
       ? services.caseSuites.list(
           500,
@@ -105,26 +136,30 @@ export default async function InsightsPage({
       : Promise.resolve([]),
     services.runnerControl.list(500),
     hierarchy.projectVersionId
-      ? services.runBatches.list(
-          100,
-          caseProjectId ? [caseProjectId] : [],
-          hierarchy.projectVersionId,
-        )
+      ? services.runBatches
+          .listMetadataPage({
+            limit: 100,
+            projectIds: caseProjectId ? [caseProjectId] : [],
+            projectVersionId: hierarchy.projectVersionId,
+          })
+          .then((page) => page.items)
       : Promise.resolve([]),
   ]);
-  // 默认不稳定用例范围与主筛选一致时复用同一份数据库聚合，避免洞察首屏把
-  // 大事实表完整统计两遍；用户单独调整范围后才执行第二次查询。
-  const flakySummary = analyticsFiltersEqual(filter, flakyFilter)
-    ? summary
-    : await services.platformOperations.analytics(identity, flakyFilter);
-  const comparison =
+  // 相同筛选复用同一份后台快照。
+  const flakySummary = analyticsSummarySchema.parse(flakyProjection.payload);
+  const comparisonProjection =
     typeof parameters.leftBatchId === "string" && typeof parameters.rightBatchId === "string"
-      ? await services.platformOperations.compareBatches(
-          identity,
-          parameters.leftBatchId,
-          parameters.rightBatchId,
-        )
+      ? await services.readModels.read({
+          kind: "batch_comparison",
+          projectId: caseProjectId,
+          projectVersionId: hierarchy.projectVersionId,
+          leftBatchId: parameters.leftBatchId,
+          rightBatchId: parameters.rightBatchId,
+        })
       : undefined;
+  const comparison = comparisonProjection?.generation
+    ? batchComparisonManifestSchema.parse(comparisonProjection.payload)
+    : undefined;
   const caseOutcomeReport = await loadCaseOutcomeReport({
     services,
     ...(caseProjectId ? { caseProjectId } : {}),
@@ -148,6 +183,7 @@ export default async function InsightsPage({
         <AnalyticsExportControl filter={filter} />
       </section>
 
+      <ReadModelStatusBar snapshots={projections.map((entry) => entry.status)} />
       <form className="content-card insight-filter" method="get">
         <div className="insight-primary-filters">
           <label>
@@ -490,12 +526,15 @@ export default async function InsightsPage({
               <span className="eyebrow">COMPARE</span>
               <h2>批次对比</h2>
             </div>
-            {comparison ? (
+            {comparison && comparisonProjection ? (
               <InsightDetailDialog
                 description="逐用例核对版本、结果与耗时变化。列宽随视口压缩，数据区域只进行纵向滚动。"
                 title="批次对比明细"
               >
-                <BatchComparisonDetails cases={comparison.cases} />
+                <CachedBatchComparison
+                  snapshot={comparisonProjection.status}
+                  partCount={comparison.partCount}
+                />
               </InsightDetailDialog>
             ) : null}
           </div>
@@ -534,6 +573,9 @@ export default async function InsightsPage({
             </NavigationSubmitButton>
           </form>
           <p className="muted">可选择当前项目最近 100 个批次；更早记录请先在执行记录中定位。</p>
+          {comparisonProjection ? (
+            <ReadModelStatusBar snapshots={[comparisonProjection.status]} />
+          ) : null}
           {comparison ? (
             <BatchComparisonChart comparison={comparison} />
           ) : (
@@ -784,31 +826,12 @@ function FlakyCaseChart({ cases }: { cases: AnalyticsSummary["flakyCases"] }) {
   );
 }
 
-function BatchComparisonChart({ comparison }: { comparison: AnalyticsBatchComparison }) {
-  const comparableCases = comparison.cases.filter(
-    (item) => item.leftVersion !== undefined && item.rightVersion !== undefined,
-  );
+function BatchComparisonChart({ comparison }: { comparison: BatchComparisonManifest }) {
   const changes = [
-    {
-      label: "结果变化",
-      count: comparableCases.filter((item) => item.leftOutcome !== item.rightOutcome).length,
-      tone: "danger",
-    },
-    {
-      label: "版本变化",
-      count: comparableCases.filter((item) => item.leftVersion !== item.rightVersion).length,
-      tone: "violet",
-    },
-    {
-      label: "耗时上升",
-      count: comparableCases.filter((item) => (item.durationDeltaMs ?? 0) > 0).length,
-      tone: "warning",
-    },
-    {
-      label: "耗时下降",
-      count: comparableCases.filter((item) => (item.durationDeltaMs ?? 0) < 0).length,
-      tone: "success",
-    },
+    { label: "结果变化", count: comparison.changes.outcome, tone: "danger" },
+    { label: "版本变化", count: comparison.changes.version, tone: "violet" },
+    { label: "耗时上升", count: comparison.changes.slower, tone: "warning" },
+    { label: "耗时下降", count: comparison.changes.faster, tone: "success" },
   ] as const;
   const comparisonMaximum = Math.max(1, ...changes.map((item) => item.count));
   const scopeTotal =

@@ -383,6 +383,7 @@ export const caseSources = sqliteTable(
     updatedAt: text("updated_at").notNull(),
   },
   (table) => [
+    index("case_sources_object_page_idx").on(table.projectId, table.objectKey),
     uniqueIndex("case_sources_legacy_project_sha256_uq")
       .on(table.projectId, table.sha256)
       .where(sql`${table.projectVersionId} IS NULL AND ${table.testStageId} IS NULL`),
@@ -1246,6 +1247,12 @@ export const caseDefinitions = sqliteTable(
       table.className,
     ),
     index("case_definitions_class_name_idx").on(table.className),
+    index("case_definitions_snapshot_page_idx").on(
+      table.projectId,
+      table.projectVersionId,
+      table.testStageId,
+      table.id,
+    ),
     index("case_definitions_stage_directory_idx").on(
       table.projectId,
       table.projectVersionId,
@@ -1270,6 +1277,8 @@ export const caseSuiteItems = sqliteTable(
   (table) => [
     uniqueIndex("case_suite_items_suite_case_uq").on(table.suiteId, table.caseDefinitionId),
     index("case_suite_items_suite_idx").on(table.suiteId),
+    index("case_suite_items_member_page_idx").on(table.suiteId, table.id),
+    index("case_suite_items_definition_idx").on(table.caseDefinitionId),
   ],
 );
 
@@ -1713,6 +1722,7 @@ export const caseSuiteDdtItems = sqliteTable(
   (table) => [
     uniqueIndex("case_suite_ddt_items_suite_case_uq").on(table.suiteId, table.ddtCaseId),
     index("case_suite_ddt_items_suite_idx").on(table.suiteId),
+    index("case_suite_ddt_items_member_page_idx").on(table.suiteId, table.id),
   ],
 );
 
@@ -1761,6 +1771,7 @@ export const ddtDeletedCases = sqliteTable(
     deletedAt: text("deleted_at").notNull(),
   },
   (table) => [
+    index("ddt_deleted_cases_execution_class_idx").on(table.executionCaseDefinitionId),
     index("ddt_deleted_cases_scope_idx").on(
       table.projectId,
       table.projectVersionId,

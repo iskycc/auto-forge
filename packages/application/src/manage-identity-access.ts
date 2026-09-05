@@ -74,6 +74,7 @@ export class IdentityAccessService {
     private readonly clock: Clock,
     private readonly ids: IdGenerator,
     private readonly sessionTtlHours: number,
+    private readonly readModelInvalidation?: { invalidate(projectId: string): Promise<void> },
   ) {}
 
   async initialize(): Promise<void> {
@@ -241,6 +242,40 @@ export class IdentityAccessService {
   ) {
     this.authorize(actor, "user.read");
     return this.repository.listUsers(input);
+  }
+
+  async listAnalysisAssignees(
+    actor: AuthenticatedIdentity,
+    input: { projectId: string; query?: string; cursor?: string; limit: number },
+  ) {
+    this.authorize(actor, "analysis.assign", input.projectId);
+    const page = await this.repository.listUsers({
+      analysisProjectId: input.projectId,
+      ...(input.query ? { query: input.query.trim().slice(0, 240) } : {}),
+      ...(input.cursor ? { cursor: input.cursor } : {}),
+      limit: Math.max(1, Math.min(50, input.limit)),
+    });
+    return {
+      ...page,
+      items: page.items.map(({ id, username, displayName }) => ({ id, username, displayName })),
+    };
+  }
+
+  async requireAnalysisAssignee(actor: AuthenticatedIdentity, projectId: string, userId: string) {
+    this.authorize(actor, "analysis.assign", projectId);
+    const page = await this.repository.listUsers({
+      analysisProjectId: projectId,
+      userId,
+      limit: 1,
+    });
+    const user = page.items[0];
+    if (!user) {
+      throw new DomainError(
+        "FAILURE_ANALYSIS_ASSIGNEE_UNAVAILABLE",
+        "请选择已启用且对当前项目有执行读取和用例分析权限的用户。",
+      );
+    }
+    return { id: user.id, username: user.username, displayName: user.displayName };
   }
 
   async createUser(actor: AuthenticatedIdentity, input: CreateUserInput, requestId?: string) {
@@ -420,9 +455,23 @@ export class IdentityAccessService {
     );
   }
 
-  async listSystemRoleBindings(actor: AuthenticatedIdentity) {
+  async listSystemRoleBindingsPage(actor: AuthenticatedIdentity, cursor?: string) {
     this.authorize(actor, "role.read");
-    return this.repository.listSystemRoleBindings();
+    const bindings = await this.repository.listSystemRoleBindings(undefined, {
+      limit: 51,
+      ...(cursor ? { afterUserId: cursor } : {}),
+    });
+    const userIds = [...new Set(bindings.map((binding) => binding.userId))];
+    const selected = new Set(userIds.slice(0, 50));
+    return {
+      items: bindings.filter((binding) => selected.has(binding.userId)),
+      nextCursor: userIds.length > 50 ? userIds[49] : undefined,
+    };
+  }
+
+  async listSystemRoleBindings(actor: AuthenticatedIdentity, userIds?: readonly string[]) {
+    this.authorize(actor, "role.read");
+    return this.repository.listSystemRoleBindings(userIds);
   }
 
   async recordPlatformConfigurationChange(
@@ -655,6 +704,31 @@ export class IdentityAccessService {
       requestId,
       details: { roleId },
     });
+  }
+
+  async listUserProjectRoleBindings(actor: AuthenticatedIdentity, userIds: readonly string[]) {
+    this.authorize(actor, "user.read");
+    const projectIds = this.projectScope(actor, "project.read");
+    return this.repository.listUserProjectRoleBindings(userIds, projectIds);
+  }
+
+  async listProjectMembersPage(
+    actor: AuthenticatedIdentity,
+    projectId: string,
+    input: { cursor?: string; query?: string; limit: number },
+  ) {
+    this.authorize(actor, "project.read", projectId);
+    const limit = Math.max(1, Math.min(input.limit, 200));
+    const members = await this.repository.listProjectMemberships(projectId, {
+      limit: limit + 1,
+      ...(input.cursor ? { afterUserId: input.cursor } : {}),
+      ...(input.query ? { query: input.query } : {}),
+    });
+    const items = members.slice(0, limit);
+    return {
+      items,
+      ...(members.length > limit && items.at(-1) ? { nextCursor: items.at(-1)!.user.id } : {}),
+    };
   }
 
   async listProjectMembers(actor: AuthenticatedIdentity, projectId: string) {
@@ -948,6 +1022,7 @@ export class IdentityAccessService {
       details?: AuditEvent["details"];
     },
   ): Promise<void> {
+    if (input.projectId) await this.readModelInvalidation?.invalidate(input.projectId);
     await this.audit({
       actorId: actor.user.id,
       action: input.action,

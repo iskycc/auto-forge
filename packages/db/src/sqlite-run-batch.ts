@@ -1,3 +1,4 @@
+import { summarizeRunBatchCounters } from "@autoforge/domain";
 import type {
   CreateRunBatchRecord,
   ReserveAssignmentsOutcome,
@@ -359,8 +360,8 @@ export class SqliteRunBatchRepository
     return this.mapBatches(rows);
   }
 
-  async listPage(input: RunBatchListQuery) {
-    if (input.projectIds?.length === 0) return { items: [] };
+  private async readBatchPageRows(input: RunBatchListQuery) {
+    if (input.projectIds?.length === 0) return [];
     const cursor = decodeRunBatchCursor(input.cursor);
     const conditions = [
       sql`${runBatches.batchKind} <> 'case_log_rerun'`,
@@ -401,6 +402,11 @@ export class SqliteRunBatchRepository
       .orderBy(desc(runBatches.createdAt), desc(runBatches.id))
       .limit(input.limit + 1)
       .all();
+    return rows;
+  }
+
+  async listPage(input: RunBatchListQuery) {
+    const rows = await this.readBatchPageRows(input);
     const hasMore = rows.length > input.limit;
     const pageRows = rows.slice(0, input.limit);
     const items = await this.mapBatches(pageRows);
@@ -408,6 +414,38 @@ export class SqliteRunBatchRepository
     return {
       items,
       ...(hasMore && last
+        ? { nextCursor: encodeRunBatchCursor({ createdAt: last.createdAt, id: last.id }) }
+        : {}),
+    };
+  }
+
+  async listMetadataPage(input: RunBatchListQuery) {
+    const rows = await this.readBatchPageRows(input);
+    const pageRows = rows.slice(0, input.limit);
+    const runnerRows = pageRows.length
+      ? this.handle.db
+          .select()
+          .from(runBatchRunners)
+          .where(
+            inArray(
+              runBatchRunners.batchId,
+              pageRows.map((row) => row.id),
+            ),
+          )
+          .orderBy(runBatchRunners.runnerId)
+          .all()
+      : [];
+    const runnerIds = new Map<string, string[]>();
+    for (const runner of runnerRows) {
+      const selected = runnerIds.get(runner.batchId) ?? [];
+      selected.push(runner.runnerId);
+      runnerIds.set(runner.batchId, selected);
+    }
+    const items = pageRows.map((row) => this.mapBatchMetadataRow(row, runnerIds.get(row.id) ?? []));
+    const last = pageRows.at(-1);
+    return {
+      items,
+      ...(rows.length > input.limit && last
         ? { nextCursor: encodeRunBatchCursor({ createdAt: last.createdAt, id: last.id }) }
         : {}),
     };
@@ -615,6 +653,33 @@ export class SqliteRunBatchRepository
       .map(toRunAttempt);
   }
 
+  async getMetadata(batchId: string, projectIds?: readonly string[]) {
+    if (projectIds?.length === 0) return null;
+    const rows = this.handle.db
+      .select()
+      .from(runBatches)
+      .where(
+        and(
+          eq(runBatches.id, batchId),
+          ...(projectIds ? [inArray(runBatches.projectId, [...projectIds])] : []),
+        ),
+      )
+      .limit(1)
+      .all();
+    const row = rows[0];
+    if (!row) return null;
+    const runners = this.handle.db
+      .select({ id: runBatchRunners.runnerId })
+      .from(runBatchRunners)
+      .where(eq(runBatchRunners.batchId, batchId))
+      .orderBy(runBatchRunners.runnerId)
+      .all();
+    return this.mapBatchMetadataRow(
+      row,
+      runners.map((runner) => runner.id),
+    );
+  }
+
   async getSummary(batchId: string, projectIds?: readonly string[]): Promise<RunBatch | null> {
     if (projectIds?.length === 0) return null;
     const row = this.handle.db
@@ -714,7 +779,7 @@ export class SqliteRunBatchRepository
         )
         .all(batchId) as Array<{ runnerId: string }>
     ).map(({ runnerId }) => runnerId);
-    const finalSummary = finalSummaryFromBatch(batch);
+    const finalSummary = summarizeRunBatchCounters(batch);
     return {
       batch,
       roundSummaries,
@@ -730,7 +795,7 @@ export class SqliteRunBatchRepository
   }
 
   async listCasePage(input: RunBatchCasePageQuery) {
-    const batch = await this.getSummary(input.batchId, input.projectIds);
+    const batch = await this.getMetadata(input.batchId, input.projectIds);
     if (!batch) return null;
     const { sqlText, parameters } = sqliteCasePageQuery(input);
     const keys = this.handle.client.prepare(sqlText).all(...parameters) as Array<{
@@ -740,12 +805,31 @@ export class SqliteRunBatchRepository
       total: number;
     }>;
     if (keys.length === 0) return { items: [], total: 0 };
+    return {
+      items: await this.readCasePageEntries(
+        input.batchId,
+        keys.map((key) => ({
+          runId: key.runId,
+          round: key.round,
+          ...(key.attemptId ? { attemptId: key.attemptId } : {}),
+        })),
+      ),
+      total: keys[0]?.total ?? 0,
+    };
+  }
+
+  async readCasePageEntries(
+    batchId: string,
+    keys: readonly import("@autoforge/application").ExecutionCasePageKey[],
+  ) {
+    if (!keys.length) return [];
+    if (keys.length > 500) throw new Error("Execution case page exceeds 500 rows.");
     const runIds = [...new Set(keys.map((row) => row.runId))];
     const attemptIds = keys.flatMap((row) => (row.attemptId ? [row.attemptId] : []));
     const runRows = this.handle.db
       .select()
       .from(executionRuns)
-      .where(inArray(executionRuns.id, runIds))
+      .where(and(eq(executionRuns.batchId, batchId), inArray(executionRuns.id, runIds)))
       .all();
     const attemptRows =
       attemptIds.length === 0
@@ -757,15 +841,14 @@ export class SqliteRunBatchRepository
             .all();
     const runsById = new Map(runRows.map((row) => [row.id, toExecutionRun(row)]));
     const attemptsById = new Map(attemptRows.map((row) => [row.id, toRunAttempt(row)]));
-    return {
-      items: keys.flatMap((key) => {
-        const run = runsById.get(key.runId);
-        if (!run) return [];
-        const attempt = key.attemptId ? attemptsById.get(key.attemptId) : undefined;
-        return [{ run, ...(attempt ? { attempt } : {}), round: key.round }];
-      }),
-      total: keys[0]?.total ?? 0,
-    };
+    return keys.flatMap((key) => {
+      const run = runsById.get(key.runId);
+      if (!run) return [];
+      const attempt = key.attemptId ? attemptsById.get(key.attemptId) : undefined;
+      return [
+        { run, ...(attempt?.executionRunId === run.id ? { attempt } : {}), round: key.round },
+      ];
+    });
   }
 
   private runnerFaultIncidents(batchId: string) {
@@ -1486,6 +1569,22 @@ export class SqliteRunBatchRepository
     byStatus: Map<string, number>,
     outcomeCounts: FinalOutcomeCounts | undefined,
   ): RunBatch {
+    return {
+      ...this.mapBatchMetadataRow(row, selectedRunnerIds),
+      queuedRuns: byStatus.get("queued") ?? 0,
+      assignedRuns: (byStatus.get("assigned") ?? 0) + (byStatus.get("running") ?? 0),
+      runningRuns: byStatus.get("running") ?? 0,
+      succeededRuns: Number(outcomeCounts?.succeeded ?? byStatus.get("succeeded") ?? 0),
+      failedRuns: Number(outcomeCounts?.failed ?? 0),
+      timedOutRuns: Number(outcomeCounts?.timedOut ?? 0),
+      cancelledRuns: Number(outcomeCounts?.cancelled ?? byStatus.get("cancelled") ?? 0),
+    };
+  }
+
+  private mapBatchMetadataRow(
+    row: typeof runBatches.$inferSelect,
+    selectedRunnerIds: string[],
+  ): import("@autoforge/application").RunBatchMetadata {
     const policy = batchPolicy(row.policyJson);
     return {
       id: row.id,
@@ -1521,13 +1620,6 @@ export class SqliteRunBatchRepository
       selectedRunnerIds,
       ...(policy ? { policy } : {}),
       totalRuns: row.totalRuns,
-      queuedRuns: byStatus.get("queued") ?? 0,
-      assignedRuns: (byStatus.get("assigned") ?? 0) + (byStatus.get("running") ?? 0),
-      runningRuns: byStatus.get("running") ?? 0,
-      succeededRuns: Number(outcomeCounts?.succeeded ?? byStatus.get("succeeded") ?? 0),
-      failedRuns: Number(outcomeCounts?.failed ?? 0),
-      timedOutRuns: Number(outcomeCounts?.timedOut ?? 0),
-      cancelledRuns: Number(outcomeCounts?.cancelled ?? byStatus.get("cancelled") ?? 0),
       ...(row.cancelRequestedAt ? { terminationRequestedAt: row.cancelRequestedAt } : {}),
       version: row.version,
       scheduledFor: row.scheduledFor,
@@ -1746,20 +1838,6 @@ function allRoundsSummary(summaries: readonly RunBatchRoundSummary[]) {
   return {
     ...values,
     passRate: values.totalRuns === 0 ? 0 : Math.round((values.passed / values.totalRuns) * 100),
-  };
-}
-
-function finalSummaryFromBatch(batch: RunBatch) {
-  const terminal =
-    batch.succeededRuns + batch.failedRuns + batch.timedOutRuns + batch.cancelledRuns;
-  return {
-    totalRuns: batch.totalRuns,
-    passed: batch.succeededRuns,
-    failed: batch.failedRuns,
-    timedOut: batch.timedOutRuns,
-    cancelled: batch.cancelledRuns,
-    notExecuted: Math.max(0, batch.totalRuns - terminal),
-    passRate: batch.totalRuns === 0 ? 0 : Math.round((batch.succeededRuns / batch.totalRuns) * 100),
   };
 }
 

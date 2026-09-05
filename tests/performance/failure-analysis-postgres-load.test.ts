@@ -92,6 +92,13 @@ if (!connectionString) {
           [runnerId, RECORDED_AT, RUN_COUNT],
         );
         const repository = new PostgresFailureAnalysisRepository(handle);
+        await repository.startBatch({
+          projectId: PROJECT_ID,
+          projectVersionId: VERSION_ID,
+          batchId: batchId,
+          startedBy: "load-analyst",
+          startedAt: RECORDED_AT,
+        });
 
         const homeStartedAt = performance.now();
         const batches = await repository.listBatches({

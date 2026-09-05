@@ -1,3 +1,4 @@
+import { buildBatchComparisonSnapshot } from "../src/build-batch-comparison-snapshot";
 import type { AuthenticatedIdentity, RunBatchDetails } from "@autoforge/domain";
 import type { CaseSuiteSchedule } from "@autoforge/contracts";
 import { describe, expect, it, vi } from "vitest";
@@ -113,6 +114,78 @@ describe("PlatformOperationsService analytics", () => {
       userId: reader.user.id,
       projectIds: ["project-1"],
     });
+  });
+
+  it("builds comparison summaries in the background and checks project version before reading cases", async () => {
+    const left = batch(
+      "left",
+      [run("left-a", "case-a", 1)],
+      [attempt("left-attempt", "left-a", "succeeded", 100)],
+    );
+    const right = batch(
+      "right",
+      [run("right-a", "case-a", 2), run("right-b", "case-b", 1)],
+      [attempt("right-attempt", "right-a", "failed", 160)],
+    );
+    for (const item of [left, right])
+      item.policy = {
+        executor: "testng",
+        concurrency: 1,
+        projectVersionId: "version-1",
+        runnerLabels: [],
+        artifactPatterns: [],
+      };
+    const listCasePage = vi.fn<RunBatchRepository["listCasePage"]>(async (input) => {
+      const selected = input.batchId === "left" ? left : right;
+      return {
+        total: selected.totalRuns,
+        items: selected.runs.slice(input.offset, input.offset + input.limit).map((run) => ({
+          run,
+          round: 1,
+          ...(selected.attempts.find((attempt) => attempt.executionRunId === run.id)
+            ? { attempt: selected.attempts.find((attempt) => attempt.executionRunId === run.id)! }
+            : {}),
+        })),
+      };
+    });
+    const repository = {
+      getSummary: vi.fn(async (id: string) => (id === "left" ? left : right)),
+      listCasePage,
+    };
+    const writePart = vi.fn(async () => undefined);
+    const query = {
+      kind: "batch_comparison",
+      projectId: "project-1",
+      projectVersionId: "version-1",
+      leftBatchId: "left",
+      rightBatchId: "right",
+    } as const;
+    const summary = await buildBatchComparisonSnapshot(repository, query, writePart);
+    expect(summary).toMatchObject({
+      commonCaseCount: 1,
+      onlyLeftCaseCount: 0,
+      onlyRightCaseCount: 1,
+      partCount: 1,
+      changes: { outcome: 1, version: 1, slower: 1, faster: 0 },
+    });
+    expect(writePart).toHaveBeenCalledWith(
+      0,
+      expect.arrayContaining([
+        expect.objectContaining({ caseDefinitionId: "case-a", durationDeltaMs: 60 }),
+      ]),
+    );
+    expect(listCasePage).toHaveBeenCalledWith(
+      expect.objectContaining({ projectIds: ["project-1"], limit: 250, scope: "summary" }),
+    );
+    listCasePage.mockClear();
+    await expect(
+      buildBatchComparisonSnapshot(
+        repository,
+        { ...query, projectVersionId: "other-version" },
+        writePart,
+      ),
+    ).rejects.toMatchObject({ code: "RUN_BATCH_NOT_FOUND" });
+    expect(listCasePage).not.toHaveBeenCalled();
   });
 
   it("compares only the common case scope and reports version/result/duration changes", async () => {

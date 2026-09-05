@@ -18040,6 +18040,7 @@ button.icon-button:disabled {
 .failure-analysis-batch-actions,
 .failure-analysis-detail-actions {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: flex-end;
   gap: 8px;
@@ -19007,7 +19008,7 @@ button.icon-button:disabled {
 
 .failure-analysis-stat-summary {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: var(--space-4);
 }
 
@@ -19293,4 +19294,78 @@ button.icon-button:disabled {
   .failure-analysis-analyst-row > span:nth-last-of-type(1) {
     display: none;
   }
+}
+
+.failure-analysis-start-dialog {
+  width: min(800px, calc(100vw - var(--space-4) * 2));
+}
+
+.failure-analysis-start-list,
+.failure-analysis-assignee-list {
+  display: grid;
+  gap: var(--space-3);
+  margin-block: var(--space-4);
+}
+
+.failure-analysis-start-row,
+.failure-analysis-assignee-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-medium);
+}
+
+.failure-analysis-start-row > div {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+  gap: var(--space-2);
+  overflow-wrap: anywhere;
+}
+
+.failure-analysis-start-row > .ui-button {
+  flex-shrink: 0;
+}
+
+.failure-analysis-start-row span,
+.failure-analysis-assignee-row span {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-control);
+}
+
+.failure-analysis-assignee-row {
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
+.failure-analysis-assignee-search {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--space-2);
+}
+
+.failure-analysis-assignee-identity {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-2);
+  overflow-wrap: anywhere;
+}
+
+.failure-analysis-assignee-identity > span {
+  color: var(--color-text-secondary);
+}
+
+.read-model-status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-control);
+  margin-block-end: var(--space-3);
+}
+.read-model-status > .ui-button {
+  flex-shrink: 0;
 }

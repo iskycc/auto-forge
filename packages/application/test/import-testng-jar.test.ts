@@ -214,6 +214,9 @@ function catalogFake(
 ): CaseCatalogRepository {
   const remainingSources = [...sources];
   return {
+    getSourceSummary: vi.fn(),
+    getSourceExecutable: vi.fn(),
+    listSourceObjectsPage: vi.fn(),
     createJarImportJob: vi.fn(),
     getJarImportJob: vi.fn(),
     claimJarImportJob: vi.fn(),

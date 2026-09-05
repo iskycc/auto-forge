@@ -1,3 +1,5 @@
+import { executionCaseKeysSchema } from "@autoforge/contracts";
+import { readReadyModel } from "@/lib/read-ready-model";
 import { DomainError } from "@autoforge/domain";
 import { NextResponse } from "next/server";
 import { z } from "zod";
@@ -10,6 +12,7 @@ import { getPlatformServices } from "@/lib/services";
 type Context = { params: Promise<{ batchId: string }> };
 
 const querySchema = z.object({
+  cached: z.enum(["1"]).optional(),
   scope: z.union([z.literal("all"), z.literal("summary"), z.coerce.number().int().positive()]),
   status: z
     .enum(["assigned", "running", "succeeded", "failed", "timed_out", "cancelled", "pending"])
@@ -41,6 +44,44 @@ export async function GET(request: Request, context: Context): Promise<NextRespo
     } else {
       const identity = await authenticateRequest(request);
       projectIds = services.identityAccess.projectScope(identity, "run.read");
+    }
+    if (input.cached) {
+      const batch = await services.runBatches.getMetadata(batchId, projectIds);
+      const snapshot = executionCaseKeysSchema.parse(
+        await readReadyModel(
+          services.readModels,
+          {
+            kind: "execution_case_page",
+            projectId: batch.projectId,
+            batchId,
+            ...(["succeeded", "failed", "cancelled"].includes(batch.status)
+              ? { terminalVersion: batch.version }
+              : {}),
+            filter: {
+              scope: input.scope,
+              sort: input.sort,
+              direction: input.direction,
+              offset: (input.page - 1) * input.pageSize,
+              limit: input.pageSize,
+              ...(input.status ? { status: input.status } : {}),
+              ...(input.query ? { query: input.query } : {}),
+            },
+          },
+          request.signal,
+        ),
+      );
+      const items = await services.executionCaseEntries(
+        batchId,
+        snapshot.keys.map((key) => ({
+          runId: key.runId,
+          round: key.round,
+          ...(key.attemptId ? { attemptId: key.attemptId } : {}),
+        })),
+      );
+      return NextResponse.json(
+        { items, total: snapshot.total },
+        { headers: { "Cache-Control": "private, no-store" } },
+      );
     }
     const result = await services.runBatches.listCasePage({
       batchId,

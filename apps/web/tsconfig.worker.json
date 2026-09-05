@@ -7,5 +7,5 @@
     "noEmit": true,
     "types": ["node"]
   },
-  "include": ["server/work-protocol.ts", "server/work-thread.ts"]
+  "include": ["server/work-protocol.ts", "server/work-thread.ts", "server/read-model-thread.ts"]
 }

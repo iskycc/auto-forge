@@ -1,5 +1,6 @@
 "use client";
 
+import { clearBrowserSnapshots } from "@/lib/browser-read-cache";
 import { Button } from "@/components/ui";
 
 import { LogOut } from "lucide-react";
@@ -10,6 +11,7 @@ export function LogoutButton() {
 
   async function logout() {
     setPending(true);
+    clearBrowserSnapshots();
     await fetch("/api/v1/auth/logout", { method: "POST" }).catch(() => undefined);
     // Reload the root layout after removing the HTTP-only session cookie.
     window.location.replace("/login");

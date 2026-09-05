@@ -42,12 +42,24 @@ type FailureAnalysisHistoryRow = FailureAnalysisRow & {
 export class PostgresFailureAnalysisRepository implements FailureAnalysisRepository {
   constructor(private readonly handle: PostgresDatabaseHandle) {}
 
+  async startBatch(input: Parameters<FailureAnalysisRepository["startBatch"]>[0]) {
+    const batch = await this.readBatch(input, "eligible");
+    if (!batch || batch.failedRuns === 0) return null;
+    // A terminal execution is immutable. The unique batch key makes concurrent starts idempotent.
+    const inserted = await this.handle.pool.query(
+      `INSERT INTO failure_analysis_batches (batch_id,project_id,started_by,started_at)
+       VALUES ($1,$2,$3,$4) ON CONFLICT (batch_id) DO NOTHING`,
+      [input.batchId, input.projectId, input.startedBy, input.startedAt],
+    );
+    return { batch, created: (inserted.rowCount ?? 0) > 0 };
+  }
+
   async readStatistics(
     input: Parameters<FailureAnalysisRepository["readStatistics"]>[0],
   ): Promise<FailureAnalysisStatisticsPage> {
     await this.handle.ready;
-    const parameters: unknown[] = [input.projectId];
-    const where = ["claim.project_id=$1"];
+    const parameters: unknown[] = [input.projectId, input.batchId];
+    const where = ["claim.project_id=$1", "claim.batch_id=$2"];
     if (input.projectVersionId) {
       parameters.push(input.projectVersionId);
       where.push(`batch.policy_json::jsonb ->> 'projectVersionId'=$${parameters.length}`);
@@ -57,9 +69,9 @@ export class PostgresFailureAnalysisRepository implements FailureAnalysisReposit
               COUNT(*) FILTER (WHERE claim.status='claimed') AS claimed,
               COUNT(*) FILTER (WHERE claim.status='analyzing') AS analyzing,
               COUNT(*) FILTER (WHERE claim.status='completed') AS completed,
-              COUNT(*) FILTER (WHERE claim.category='rerun_passed') AS "rerunPassed",
-              COUNT(*) FILTER (WHERE claim.category='case_fixed') AS "caseFixed",
-              COUNT(*) FILTER (WHERE claim.category='code_issue_filed') AS "codeIssueFiled"
+              COUNT(*) FILTER (WHERE claim.status='completed' AND claim.category='rerun_passed') AS "rerunPassed",
+              COUNT(*) FILTER (WHERE claim.status='completed' AND claim.category='case_fixed') AS "caseFixed",
+              COUNT(*) FILTER (WHERE claim.status='completed' AND claim.category='code_issue_filed') AS "codeIssueFiled"
        FROM failure_analysis_claims claim
        JOIN run_batches batch ON batch.id=claim.batch_id
        WHERE ${where.join(" AND ")}`,
@@ -82,9 +94,9 @@ export class PostgresFailureAnalysisRepository implements FailureAnalysisReposit
               COUNT(*) FILTER (WHERE claim.status='claimed') AS claimed,
               COUNT(*) FILTER (WHERE claim.status='analyzing') AS analyzing,
               COUNT(*) FILTER (WHERE claim.status='completed') AS completed,
-              COUNT(*) FILTER (WHERE claim.category='rerun_passed') AS "rerunPassed",
-              COUNT(*) FILTER (WHERE claim.category='case_fixed') AS "caseFixed",
-              COUNT(*) FILTER (WHERE claim.category='code_issue_filed') AS "codeIssueFiled",
+              COUNT(*) FILTER (WHERE claim.status='completed' AND claim.category='rerun_passed') AS "rerunPassed",
+              COUNT(*) FILTER (WHERE claim.status='completed' AND claim.category='case_fixed') AS "caseFixed",
+              COUNT(*) FILTER (WHERE claim.status='completed' AND claim.category='code_issue_filed') AS "codeIssueFiled",
               MAX(claim.updated_at) AS "lastActivityAt"
        FROM failure_analysis_claims claim
        JOIN run_batches batch ON batch.id=claim.batch_id
@@ -104,6 +116,7 @@ export class PostgresFailureAnalysisRepository implements FailureAnalysisReposit
 
   async listBatches(input: {
     projectId: string;
+    view?: "started" | "available";
     projectVersionId?: string;
     cursor?: string;
     limit: number;
@@ -115,6 +128,7 @@ export class PostgresFailureAnalysisRepository implements FailureAnalysisReposit
       "batch.project_id=$1",
       "batch.status IN ('succeeded','failed','cancelled')",
       "batch.batch_kind='standard'",
+      ` ${input.view === "available" ? "NOT " : ""}EXISTS (SELECT 1 FROM failure_analysis_batches analysis WHERE analysis.batch_id=batch.id)`,
       "EXISTS (SELECT 1 FROM case_suites suite WHERE suite.id=batch.suite_id)",
       `EXISTS (SELECT 1 FROM execution_runs run
                JOIN run_attempts attempt ON attempt.execution_run_id=run.id
@@ -170,7 +184,26 @@ export class PostgresFailureAnalysisRepository implements FailureAnalysisReposit
     };
   }
 
+  async readBatchProgress(projectId: string, batchId: string) {
+    await this.handle.ready;
+    const result = await this.handle.pool.query<{ claimedRuns: string; completedRuns: string }>(
+      `SELECT COUNT(*) AS "claimedRuns",COUNT(*) FILTER (WHERE status='completed') AS "completedRuns" FROM failure_analysis_claims WHERE project_id=$1 AND batch_id=$2`,
+      [projectId, batchId],
+    );
+    return {
+      claimedRuns: Number(result.rows[0]!.claimedRuns),
+      completedRuns: Number(result.rows[0]!.completedRuns),
+    };
+  }
+
   async getBatch(input: Parameters<FailureAnalysisRepository["getBatch"]>[0]) {
+    return this.readBatch(input, "started");
+  }
+
+  private async readBatch(
+    input: Parameters<FailureAnalysisRepository["getBatch"]>[0],
+    visibility: "started" | "eligible",
+  ) {
     await this.handle.ready;
     const result = await this.handle.pool.query<BatchRow>(
       `SELECT batch.id,batch.sequence_number AS "sequenceNumber",batch.suite_name AS "suiteName",
@@ -194,6 +227,7 @@ export class PostgresFailureAnalysisRepository implements FailureAnalysisReposit
          AND batch.policy_json::jsonb ->> 'projectVersionId'=$3
          AND batch.status IN ('succeeded','failed','cancelled')
          AND batch.batch_kind='standard'
+         ${visibility === "started" ? "AND EXISTS (SELECT 1 FROM failure_analysis_batches analysis WHERE analysis.batch_id=batch.id)" : ""}
          AND EXISTS (SELECT 1 FROM case_suites suite WHERE suite.id=batch.suite_id)`,
       [input.batchId, input.projectId, input.projectVersionId],
     );
@@ -221,6 +255,7 @@ export class PostgresFailureAnalysisRepository implements FailureAnalysisReposit
       "batch.policy_json::jsonb ->> 'projectVersionId'=$3",
       "batch.status IN ('succeeded','failed','cancelled')",
       "batch.batch_kind='standard'",
+      "EXISTS (SELECT 1 FROM failure_analysis_batches analysis WHERE analysis.batch_id=batch.id)",
       "EXISTS (SELECT 1 FROM case_suites suite WHERE suite.id=batch.suite_id)",
       "run.terminal_outcome='failed'",
       "COALESCE(attempt.outcome,attempt.status)='failed'",
@@ -342,6 +377,7 @@ export class PostgresFailureAnalysisRepository implements FailureAnalysisReposit
            AND batch.policy_json::jsonb ->> 'projectVersionId'=$3
            AND batch.status IN ('succeeded','failed','cancelled')
            AND batch.batch_kind='standard'
+             AND EXISTS (SELECT 1 FROM failure_analysis_batches analysis WHERE analysis.batch_id=batch.id)
            AND EXISTS (SELECT 1 FROM case_suites suite WHERE suite.id=batch.suite_id)
            AND COALESCE(attempt.outcome,attempt.status)='failed'
          ON CONFLICT (execution_run_id) DO NOTHING`,
@@ -804,6 +840,7 @@ export class PostgresFailureAnalysisRepository implements FailureAnalysisReposit
        WHERE id=$1 AND project_id=$2 AND policy_json::jsonb ->> 'projectVersionId'=$3
          AND status IN ('succeeded','failed','cancelled')
          AND batch_kind='standard'
+             AND EXISTS (SELECT 1 FROM failure_analysis_batches analysis WHERE analysis.batch_id=run_batches.id)
          AND EXISTS (SELECT 1 FROM case_suites suite WHERE suite.id=run_batches.suite_id)`,
       [batchId, projectId, projectVersionId],
     );

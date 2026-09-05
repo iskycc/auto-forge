@@ -110,7 +110,12 @@ export function PublicDashboard({
               {setupRequired ? "开始初始化" : "进入管理平台"} <ArrowRight size={17} />
             </Link>
             <span>
-              <Clock3 size={15} /> 最近同步 {formatTime(statistics.generatedAt)}
+              <Clock3 size={15} />{" "}
+              {statistics.snapshotState === "pending"
+                ? "正在准备平台统计"
+                : statistics.snapshotState === "failed"
+                  ? "统计暂时不可用"
+                  : `最近同步 ${formatTime(statistics.generatedAt)}`}
             </span>
           </div>
         </div>

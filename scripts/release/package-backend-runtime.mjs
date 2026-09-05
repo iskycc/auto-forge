@@ -187,6 +187,7 @@ async function assertBuildOutputsExist() {
     "apps/web/dist-server/server/index.js",
     "apps/web/dist-server/server/migrate.js",
     "apps/web/dist-server/server/work-thread.js",
+    "apps/web/dist-server/server/read-model-thread.js",
     "apps/worker/dist/worker.mjs",
     "resources/agents/manifest.json",
   ]) {
@@ -208,6 +209,7 @@ async function assertPackagedRuntime(destination, sqlitePrebuild) {
     "apps/web/dist-server/server/index.js",
     "apps/web/dist-server/server/migrate.js",
     "apps/web/dist-server/server/work-thread.js",
+    "apps/web/dist-server/server/read-model-thread.js",
     "apps/worker/dist/worker.mjs",
     "apps/web/node_modules/nats",
     sqlitePrebuildPath,

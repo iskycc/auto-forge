@@ -20,37 +20,21 @@ export async function GET(request: Request, context: Context): Promise<NextRespo
     const canRun = hasPermission(identity, "run.create", definition.projectId);
     const canReadSource = hasPermission(identity, "case_source.read", definition.projectId);
 
-    const [versions, activity, structure, sourceRecord, failureAnalysisHistory] = await Promise.all(
-      [
-        services.caseDefinitions.listVersions(caseDefinitionId, projectIds),
-        services.caseDefinitions.listActivity(caseDefinitionId, projectIds),
-        services.projectStructures.list(definition.projectId),
-        services.caseSources.get(definition.sourceId, projectIds),
-        services.failureAnalysis.listCaseHistory({
-          projectId: definition.projectId,
-          caseDefinitionId,
-          limit: 10,
-        }),
-      ],
-    );
+    const [versions, activity, structure, executable, failureAnalysisHistory] = await Promise.all([
+      services.caseDefinitions.listVersions(caseDefinitionId, projectIds),
+      services.caseDefinitions.listActivity(caseDefinitionId, projectIds),
+      services.projectStructures.list(definition.projectId),
+      services.caseSources.executable(definition.sourceId, projectIds),
+      services.failureAnalysis.listCaseHistory({
+        projectId: definition.projectId,
+        caseDefinitionId,
+        limit: 10,
+      }),
+    ]);
     const projectVersion = structure.versions.find(
       (version) => version.id === definition.projectVersionId,
     );
     const testStage = projectVersion?.stages.find((stage) => stage.id === definition.testStageId);
-    const executable = sourceRecord.inspection.executable !== false;
-    let sourceView: Awaited<ReturnType<typeof services.caseSources.readClassSource>> = null;
-    let sourceViewError: string | undefined;
-    if (canReadSource) {
-      try {
-        sourceView = await services.caseSources.readClassSource(
-          definition.sourceId,
-          definition.className,
-          projectIds,
-        );
-      } catch (error) {
-        sourceViewError = error instanceof Error ? error.message : "源码读取失败。";
-      }
-    }
 
     return NextResponse.json({
       definition,
@@ -65,8 +49,7 @@ export async function GET(request: Request, context: Context): Promise<NextRespo
       canManage,
       canRun,
       canReadSource,
-      sourceView,
-      ...(sourceViewError ? { sourceViewError } : {}),
+      sourceView: null,
     });
   } catch (error) {
     return apiErrorResponse(error);

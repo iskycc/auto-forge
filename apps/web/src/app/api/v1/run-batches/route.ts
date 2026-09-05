@@ -1,3 +1,4 @@
+import { readReadyModel } from "@/lib/read-ready-model";
 import { createRunBatchInputSchema } from "@autoforge/contracts";
 import { apiErrorResponse, readJsonBody } from "@/lib/api-response";
 import { getPlatformServices } from "@/lib/services";
@@ -25,7 +26,7 @@ export async function GET(request: Request): Promise<NextResponse> {
     const query = querySchema.parse(Object.fromEntries(url.searchParams));
     const services = await getPlatformServices();
     const projectIds = services.identityAccess.projectScope(identity, "run.read");
-    const result = await services.runBatches.listPage({
+    const filter = {
       limit: query.limit,
       ...(projectIds ? { projectIds } : {}),
       ...(query.cursor ? { cursor: query.cursor } : {}),
@@ -37,8 +38,16 @@ export async function GET(request: Request): Promise<NextResponse> {
       ...(query.runnerId ? { runnerId: query.runnerId } : {}),
       ...(query.createdAfter ? { createdAfter: query.createdAfter } : {}),
       ...(query.createdBefore ? { createdBefore: query.createdBefore } : {}),
-    });
-    return NextResponse.json(result);
+    };
+    let result = await services.executionBatchPage(filter);
+    if (result.query && result.items.some((batch) => batch.statisticsPending)) {
+      await readReadyModel(services.readModels, result.query, request.signal);
+      result = await services.executionBatchPage(filter);
+    }
+    return NextResponse.json(
+      { items: result.items, ...(result.nextCursor ? { nextCursor: result.nextCursor } : {}) },
+      { headers: { "Cache-Control": "private, no-store" } },
+    );
   } catch (error) {
     return apiErrorResponse(error);
   }

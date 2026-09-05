@@ -1,3 +1,4 @@
+import { PostgresPlatformStatisticsRepository } from "@autoforge/db/postgres";
 import { createHash, randomBytes } from "node:crypto";
 import { join } from "node:path";
 
@@ -5,6 +6,10 @@ import {
   CaseSourceService,
   DdtImportService,
   DashboardSnapshotService,
+  CaseSuiteActivityService,
+  ReadModelSnapshotWorker,
+  ReadModelSnapshotService,
+  createReadModelBuilder,
   ImportTestNgJarService,
   JobWorker,
   PlatformOperationsService,
@@ -22,6 +27,9 @@ import {
   PostgresCaseSuiteRepository,
   PostgresDdtRepository,
   PostgresDashboardSnapshotRepository,
+  PostgresReadModelSnapshotRepository,
+  PostgresCaseSuiteActivityRepository,
+  PostgresFailureAnalysisRepository,
   PostgresRunBatchRepository,
   PostgresRunnerRepository,
   PostgresPlatformOperationsRepository,
@@ -151,8 +159,41 @@ const dashboardSnapshots = new DashboardSnapshotService(
   platformOperationsRepository,
   clock,
 );
+const readModels = new ReadModelSnapshotService(
+  new PostgresReadModelSnapshotRepository(database),
+  clock,
+);
+const readModelWorker = new ReadModelSnapshotWorker(
+  new PostgresReadModelSnapshotRepository(database),
+  createReadModelBuilder({
+    statistics: new PostgresPlatformStatisticsRepository(database),
+    suites: new PostgresCaseSuiteRepository(database),
+    batches: new PostgresRunBatchRepository(database),
+    catalog,
+    ddt: new PostgresDdtRepository(database),
+    operations: platformOperationsRepository,
+    dashboard: dashboardSnapshots,
+    suiteActivity: new CaseSuiteActivityService(
+      new PostgresCaseSuiteActivityRepository(database),
+      new PostgresCaseSuiteRepository(database),
+      new PostgresRunBatchRepository(database),
+      clock,
+    ),
+    analysis: new PostgresFailureAnalysisRepository(database),
+    clock,
+  }),
+  clock,
+  ids,
+  (error, query) =>
+    logger.error("Read model refresh failed", {
+      kind: query.kind,
+      projectId: query.projectId,
+      error: error instanceof Error ? error.message : String(error),
+    }),
+);
 const caseSources = new CaseSourceService(catalog, objectStore, clock, ids);
 const jarImports = new ImportTestNgJarService({
+  readModelInvalidation: readModels,
   catalog,
   objectStore,
   clock,
@@ -168,6 +209,7 @@ const ddtImports = new DdtImportService(
   { parseUpload: parseDdtUpload },
   clock,
   ids,
+  readModels,
 );
 const jobWorker = new JobWorker(
   queue,
@@ -246,8 +288,11 @@ const loops = Promise.all([
     await webhooks.dispatchDue(`${config.workerId}-webhooks`);
     await platformOperationsRepository.rebuildAnalyticsFacts(1_000);
   }),
-  runPeriodic(shutdown.signal, config.dashboardRefreshIntervalMs, async () => {
-    await dashboardSnapshots.refreshTracked();
+  runPeriodic(shutdown.signal, 1_000, async () => {
+    await readModelWorker.refreshOne();
+  }),
+  runPeriodic(shutdown.signal, 60_000, async () => {
+    await readModelWorker.cleanup();
   }),
   runPeriodic(shutdown.signal, 3_600_000, async () => {
     await platformOperations.runRetentionCycle();

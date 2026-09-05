@@ -595,12 +595,10 @@ export class ExecutionControlService {
     runId: string,
     reason: string,
     projectIds?: readonly string[],
-  ): Promise<void> {
-    if (projectIds) {
-      const projectId = await this.executions.resolveExecutionRunProjectId(runId);
-      if (!projectId || !projectIds.includes(projectId)) {
-        throw new DomainError("EXECUTION_RUN_NOT_FOUND", "指定的执行记录不存在。");
-      }
+  ): Promise<{ projectId: string }> {
+    const projectId = await this.executions.resolveExecutionRunProjectId(runId);
+    if (!projectId || (projectIds && !projectIds.includes(projectId))) {
+      throw new DomainError("EXECUTION_RUN_NOT_FOUND", "指定的执行记录不存在。");
     }
     const cancelled = await this.executions.cancelRun({
       runId,
@@ -610,6 +608,7 @@ export class ExecutionControlService {
       requestedAt: this.clock.now().toISOString(),
     });
     if (!cancelled) throw new DomainError("EXECUTION_RUN_NOT_FOUND", "指定的执行记录不存在。");
+    return { projectId };
   }
 
   private async authenticateRunner(runnerId: string, credential: string) {

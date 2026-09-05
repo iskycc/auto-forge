@@ -1,5 +1,11 @@
 "use client";
 
+import {
+  browserCacheEpoch,
+  readBrowserSnapshot,
+  writeBrowserSnapshot,
+  clearBrowserSnapshots,
+} from "@/lib/browser-read-cache";
 import { formatPlatformDateTime } from "@/lib/platform-date-time";
 
 import {
@@ -209,20 +215,31 @@ export function DdtManagementWorkspace({
     label: string;
   }>();
   const hasLoaded = useRef(false);
+  const loadGeneration = useRef(0);
 
+  const { projectId, projectVersionId, testStageId } = scope;
   const endpoint = useCallback(
     (path: string, extra?: URLSearchParams) => {
-      const parameters = new URLSearchParams(scope);
+      const parameters = new URLSearchParams({ projectId, projectVersionId, testStageId });
       extra?.forEach((value, key) => parameters.append(key, value));
       return `/api/v1/ddt/${path}?${parameters.toString()}`;
     },
-    [scope],
+    [projectId, projectVersionId, testStageId],
   );
 
   const load = useCallback(async () => {
+    const generation = ++loadGeneration.current;
     if (hasLoaded.current) setRefreshing(true);
     else setBusy(true);
     setError("");
+    // A cold statistical projection must not delay the bounded case list.
+    const dashboardRefresh = requestJson<Dashboard>(endpoint("dashboard"))
+      .then((next) => {
+        if (generation === loadGeneration.current) setDashboard(next);
+      })
+      .catch((error: unknown) => {
+        if (generation === loadGeneration.current) setError(messageOf(error));
+      });
     try {
       const caseParameters = new URLSearchParams({ limit: "60" });
       if (query.trim()) caseParameters.set("query", query.trim());
@@ -239,8 +256,7 @@ export function DdtManagementWorkspace({
           ]),
         );
       }
-      const [nextDashboard, casePage, templatePage, importPage, recyclePage] = await Promise.all([
-        requestJson<Dashboard>(endpoint("dashboard")),
+      const [casePage, templatePage, importPage, recyclePage] = await Promise.all([
         requestJson<{ items: CaseSummary[]; nextCursor?: string }>(
           endpoint("cases", caseParameters),
         ),
@@ -248,33 +264,65 @@ export function DdtManagementWorkspace({
         requestJson<{ items: ImportJob[] }>(endpoint("imports")),
         requestJson<{ items: DeletedCase[] }>(endpoint("recycle")),
       ]);
-      setDashboard(nextDashboard);
+      if (generation !== loadGeneration.current) return;
       setCases(casePage.items);
       setNextCursor(casePage.nextCursor);
       setTemplates(templatePage.items);
       setImports(importPage.items);
       setDeletedCases(recyclePage.items);
-      setSelected(new Set());
     } catch (loadError) {
-      setError(messageOf(loadError));
+      if (generation === loadGeneration.current) setError(messageOf(loadError));
     } finally {
-      hasLoaded.current = true;
-      setBusy(false);
-      setRefreshing(false);
+      if (generation === loadGeneration.current) {
+        hasLoaded.current = true;
+        setBusy(false);
+        setRefreshing(false);
+      }
     }
+    await dashboardRefresh;
   }, [advancedField, advancedOperator, advancedValue, endpoint, query, srNum]);
 
   useEffect(() => {
-    const timer = window.setTimeout(() => void load(), 0);
-    return () => window.clearTimeout(timer);
+    const timer = window.setTimeout(() => {
+      setSelected(new Set());
+      void load();
+    }, 0);
+    return () => {
+      window.clearTimeout(timer);
+      loadGeneration.current += 1;
+    };
   }, [load]);
 
   useEffect(() => {
     if (!imports.some((job) => ["queued", "running", "cancel_requested"].includes(job.status)))
       return;
-    const timer = window.setInterval(() => void load(), 2_000);
+    const timer = window.setInterval(() => {
+      clearBrowserSnapshots();
+      void load();
+    }, 2_000);
     return () => window.clearInterval(timer);
   }, [imports, load]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    const timer = window.setInterval(() => {
+      if (document.visibilityState !== "visible") return;
+      void requestJson<Dashboard>(endpoint("dashboard"), {
+        cache: "reload",
+        signal: controller.signal,
+      })
+        .then((next) => {
+          if (!controller.signal.aborted) setDashboard(next);
+        })
+        .catch((error: unknown) => {
+          if (!controller.signal.aborted) setError(messageOf(error));
+        });
+    }, 60_000);
+    return () => {
+      controller.abort();
+      window.clearInterval(timer);
+    };
+  }, [endpoint]);
 
   const openCase = async (caseId: string) => {
     setError("");
@@ -379,7 +427,10 @@ export function DdtManagementWorkspace({
         <Button
           className="button button-secondary"
           type="button"
-          onClick={() => void load()}
+          onClick={() => {
+            clearBrowserSnapshots();
+            void load();
+          }}
           disabled={busy || refreshing}
         >
           <RefreshCw size={15} className={busy || refreshing ? "spin" : ""} /> 刷新
@@ -2334,10 +2385,20 @@ function Dialog({
 const jsonHeaders = { "content-type": "application/json" };
 
 async function requestJson<Result = unknown>(url: string, init?: RequestInit): Promise<Result> {
+  const read = !init?.method || init.method === "GET";
+  const cacheable = read && /\/ddt\/(?:dashboard|cases|groups|templates|recycle)\?/.test(url);
+  if (cacheable && init?.cache !== "reload") {
+    const cached = readBrowserSnapshot(url);
+    if (cached !== undefined) return cached as Result;
+  }
+  if (!read) clearBrowserSnapshots();
+  const epoch = browserCacheEpoch();
   const response = await fetch(url, init);
   if (!response.ok) throw await responseError(response);
   if (response.status === 204) return undefined as Result;
-  return response.json() as Promise<Result>;
+  const result = (await response.json()) as Result;
+  if (cacheable) writeBrowserSnapshot(url, result, epoch);
+  return result;
 }
 
 async function responseError(response: Response): Promise<Error> {

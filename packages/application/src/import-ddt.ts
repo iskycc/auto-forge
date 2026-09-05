@@ -44,6 +44,7 @@ export class DdtImportService {
     private readonly spreadsheets: DdtSpreadsheetPort,
     private readonly clock: Clock,
     private readonly ids: IdGenerator,
+    private readonly readModelInvalidation?: { invalidate(projectId: string): Promise<void> },
   ) {}
 
   async preview(scope: DdtScope, uploads: DdtUpload[], actorId?: string): Promise<DdtImportJob> {
@@ -399,6 +400,7 @@ export class DdtImportService {
         updatedAt: this.clock.now().toISOString(),
       });
     }
+    await this.readModelInvalidation?.invalidate(job.projectId);
     const finishedAt = this.clock.now().toISOString();
     await this.repository.updateImportJob({
       jobId: job.id,

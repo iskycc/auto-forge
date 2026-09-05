@@ -1,3 +1,5 @@
+import { caseSuiteActivitySummarySchema } from "@autoforge/contracts";
+import { ReadModelStatusBar } from "@/components/read-model-status";
 import { Layers3 } from "lucide-react";
 
 import { CaseSuiteManager } from "@/components/case-suite-manager";
@@ -34,13 +36,18 @@ export default async function CaseSuitesPage() {
     (version) => version.id === hierarchy.projectVersionId,
   );
   const canReadExecutions = hasPermission(identity, "run.read", activeProjectId);
-  const activitySummary =
+  const activityProjection =
     canReadExecutions && hierarchy.projectVersionId
-      ? await services.caseSuiteActivity.readSummary(
-          { projectId: activeProjectId, projectVersionId: hierarchy.projectVersionId },
-          suites.map((suite) => suite.id),
-        )
+      ? await services.readModels.read({
+          kind: "suite_activity",
+          projectId: activeProjectId,
+          projectVersionId: hierarchy.projectVersionId,
+          suiteIds: suites.map((suite) => suite.id),
+        })
       : undefined;
+  const activitySummary = activityProjection?.generation
+    ? caseSuiteActivitySummarySchema.parse(activityProjection.payload)
+    : undefined;
   return (
     <div className="page-stack">
       <section className="page-hero">
@@ -53,6 +60,7 @@ export default async function CaseSuitesPage() {
           <Layers3 size={24} />
         </span>
       </section>
+      {activityProjection ? <ReadModelStatusBar snapshots={[activityProjection.status]} /> : null}
       <CaseSuiteManager
         key={`${activeProjectId}:${hierarchy.projectVersionId ?? ""}`}
         canManage={hasPermission(identity, "case_suite.manage", activeProjectId)}

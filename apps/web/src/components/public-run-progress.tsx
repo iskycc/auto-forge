@@ -11,16 +11,19 @@ export function PublicRunProgress({
   initial,
   accessToken,
   permanent = false,
+  statisticsPending = false,
 }: {
   initial: RunProgress;
   accessToken: string;
   permanent?: boolean;
+  statisticsPending?: boolean;
 }) {
+  const [pending, setPending] = useState(statisticsPending);
   const [progress, setProgress] = useState(initial);
   const [refreshError, setRefreshError] = useState("");
 
   useEffect(() => {
-    if (!progress.active) return;
+    if (!progress.active && !pending) return;
     const refresh = async () => {
       try {
         const response = await fetch(
@@ -30,13 +33,15 @@ export function PublicRunProgress({
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         setProgress((await response.json()) as RunProgress);
         setRefreshError("");
+        setPending(false);
       } catch {
         setRefreshError("进度刷新暂时失败，页面将在下一周期自动重试。");
       }
     };
+    if (pending) void refresh();
     const timer = window.setInterval(() => void refresh(), 30_000);
     return () => window.clearInterval(timer);
-  }, [accessToken, progress.active, progress.batchId]);
+  }, [accessToken, pending, progress.active, progress.batchId]);
 
   const completionPercent =
     progress.totalCases === 0
@@ -67,9 +72,9 @@ export function PublicRunProgress({
           <span style={{ width: `${completionPercent}%` }} />
         </div>
         <div className="public-progress-percent">
-          <strong>{completionPercent}%</strong>
+          <strong>{pending ? "统计准备中" : `${completionPercent}%`}</strong>
           <span>
-            {progress.completedCases} / {progress.totalCases} 个用例已结束
+            {pending ? "—" : progress.completedCases} / {progress.totalCases} 个用例已结束
           </span>
         </div>
 

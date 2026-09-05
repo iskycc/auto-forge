@@ -19,6 +19,7 @@ import { getPlatformServices } from "@/lib/services";
 export const runtime = "nodejs";
 
 const querySchema = z.object({
+  nodeId: z.string().uuid().optional(),
   cursor: z.string().min(1).max(16_384).optional(),
   limit: z.coerce.number().int().min(1).max(500).default(100),
   category: storageInventoryCategorySchema.optional(),
@@ -37,6 +38,7 @@ export async function GET(request: Request): Promise<NextResponse> {
     await authorizeRequest(request, "settings.read");
     const url = new URL(request.url);
     const input = querySchema.parse({
+      nodeId: url.searchParams.get("nodeId") ?? undefined,
       cursor: url.searchParams.get("cursor") ?? undefined,
       limit: url.searchParams.get("limit") ?? undefined,
       category: url.searchParams.get("category") || undefined,
@@ -46,13 +48,17 @@ export async function GET(request: Request): Promise<NextResponse> {
     const services = await getPlatformServices();
     return NextResponse.json(
       storageInventoryPageSchema.parse(
-        await services.storageInventory.list({
-          limit: input.limit,
-          ...(input.cursor ? { cursor: input.cursor } : {}),
-          ...(input.category ? { category: input.category } : {}),
-          ...(input.query ? { query: input.query } : {}),
-          refresh: input.refresh === "1",
-        }),
+        await services.readStorageInventory(
+          {
+            ...(input.nodeId ? { nodeId: input.nodeId } : {}),
+            limit: input.limit,
+            ...(input.cursor ? { cursor: input.cursor } : {}),
+            ...(input.category ? { category: input.category } : {}),
+            ...(input.query ? { query: input.query } : {}),
+            refresh: input.refresh === "1",
+          },
+          request.headers,
+        ),
       ),
     );
   } catch (error) {

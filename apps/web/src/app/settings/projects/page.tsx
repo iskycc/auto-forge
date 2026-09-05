@@ -1,3 +1,5 @@
+import { Button, Input } from "@/components/ui";
+import Link from "next/link";
 import { ProjectMembershipManager } from "@/components/project-membership-manager";
 import { ProjectStructureManager } from "@/components/project-structure-manager";
 import { SectionTabs } from "@/components/section-tabs";
@@ -12,7 +14,7 @@ import {
 export default async function ProjectMembershipsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ section?: string }>;
+  searchParams: Promise<{ section?: string; cursor?: string; query?: string }>;
 }) {
   const { identity } = await requirePageProjectScope("project.read");
   const services = await getPlatformServices();
@@ -38,10 +40,14 @@ export default async function ProjectMembershipsPage({
   }
 
   const canManage = canManageProject(services, identity, selectedProject.id);
-  const [members, roles, structure] = await Promise.all([
+  const [memberPage, roles, structure] = await Promise.all([
     activeSection === "members"
-      ? services.identityAccess.listProjectMembers(identity, selectedProject.id)
-      : Promise.resolve([]),
+      ? services.identityAccess.listProjectMembersPage(identity, selectedProject.id, {
+          limit: 50,
+          ...(parameters.cursor ? { cursor: parameters.cursor.slice(0, 160) } : {}),
+          ...(parameters.query ? { query: parameters.query.slice(0, 120) } : {}),
+        })
+      : Promise.resolve({ items: [], nextCursor: undefined }),
     activeSection === "members"
       ? services.identityAccess.listProjectRolesForMemberManagement(identity, selectedProject.id)
       : Promise.resolve([]),
@@ -64,6 +70,24 @@ export default async function ProjectMembershipsPage({
           </p>
         </div>
       </header>
+      {activeSection === "members" ? (
+        <form action="/settings/projects" className="settings-user-filter" method="get">
+          <input name="section" type="hidden" value="members" />
+          <label>
+            搜索项目成员
+            <Input name="query" defaultValue={parameters.query ?? ""} maxLength={120} />
+          </label>
+          <Button type="submit">筛选</Button>
+          {memberPage.nextCursor ? (
+            <Link
+              className="button button-secondary"
+              href={`/settings/projects?${new URLSearchParams({ section: "members", query: parameters.query ?? "", cursor: memberPage.nextCursor })}`}
+            >
+              下一页成员
+            </Link>
+          ) : null}
+        </form>
+      ) : null}
       <SectionTabs
         label="项目管理模块"
         tabs={[
@@ -87,7 +111,7 @@ export default async function ProjectMembershipsPage({
         <ProjectMembershipManager
           canManage={canManage}
           canCreateProject={identity.systemPermissions.includes("project.manage")}
-          members={members}
+          members={memberPage.items}
           project={selectedProject}
           roles={roles}
         />

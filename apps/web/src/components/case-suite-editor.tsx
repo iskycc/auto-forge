@@ -5,13 +5,7 @@ import { formatPlatformDateTime } from "@/lib/platform-date-time";
 import { Button, Input, Select, Textarea } from "@/components/ui";
 
 import { jenkinsJobInspectionSchema, type JenkinsJobInspection } from "@autoforge/contracts";
-import type {
-  CaseSuite,
-  CaseSuiteDetails,
-  ProjectVersion,
-  Runner,
-  RunnerGroup,
-} from "@autoforge/domain";
+import type { CaseSuite, ProjectVersion, Runner, RunnerGroup } from "@autoforge/domain";
 import {
   ArrowDown,
   ArrowUp,
@@ -29,6 +23,7 @@ import { useRouter } from "next/navigation";
 import { FormEvent, useState } from "react";
 
 import { ActionDialog } from "@/components/action-dialog";
+import { useCaseSuiteRevision } from "@/components/case-suite-revision";
 import { useConcurrentModificationFeedback } from "@/components/concurrent-modification-feedback";
 import { useToast } from "@/components/ui-feedback";
 import { throwApiErrorResponse } from "@/lib/client-api";
@@ -63,7 +58,7 @@ export function CaseSuiteEditor({
   artifactsEnabled,
   canManage,
 }: {
-  suite: CaseSuiteDetails;
+  suite: CaseSuite;
   runners: Runner[];
   runnerGroups: RunnerGroup[];
   projectVersions: ProjectVersion[];
@@ -71,6 +66,7 @@ export function CaseSuiteEditor({
   canManage: boolean;
 }) {
   const router = useRouter();
+  const { revision, acceptMutation } = useCaseSuiteRevision();
   const showConcurrentModification = useConcurrentModificationFeedback();
   const toast = useToast();
   const [pending, setPending] = useState(false);
@@ -171,12 +167,14 @@ export function CaseSuiteEditor({
             retryConcurrencyRules: retryConcurrencyRules.map(toRetryConcurrencyRuleInput),
             roundRecoveryRules: roundRecoveryRules.map(toRoundRecoveryRuleInput),
           },
-          expectedRevision: suite.revision,
+          expectedRevision: revision,
         }),
       });
       if (!response.ok) {
         await throwApiErrorResponse(response, `请求失败（HTTP ${response.status}）。`);
       }
+      const savedSuite = (await response.json()) as CaseSuite;
+      acceptMutation(revision, savedSuite.revision);
       toast.success("用例任务已更新，配置已保存并立即用于后续批次。");
       router.refresh();
     } catch (caught) {

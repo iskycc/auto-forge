@@ -1381,7 +1381,9 @@ test("all-rounds virtual round annotates every record and later rounds hide prev
     new URL(diagnosticResponse.url()).pathname.split("/").at(-2)!,
   );
   const diagnosticBatchId = ((await diagnosticResponse.json()) as { batchId: string }).batchId;
-  await expect(page.getByRole("status")).toContainText(/手动执行|等待调度/);
+  await expect(page.locator(".toast-viewport").getByRole("status")).toContainText(
+    /手动执行|等待调度/,
+  );
 
   const visibleBatchPage = await browserJson<{ items: Array<{ id: string }> }>(
     page,
