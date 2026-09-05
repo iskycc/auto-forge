@@ -32,6 +32,7 @@ import {
   mapAnalyticsExportJob,
   mapNotification,
   mapSchedule,
+  SCHEDULE_WITH_LAST_TRIGGER_SELECT,
   mapServiceAccount,
   resultCounts,
   type AnalyticsFactRow,
@@ -235,23 +236,14 @@ export class SqlitePlatformOperationsRepository implements PlatformOperationsRep
     const { clause, parameters } = inClause("s.project_id", projectIds);
     return (
       this.handle.client
-        .prepare(
-          `SELECT s.*,
-             (SELECT receipt.status FROM scheduled_trigger_receipts receipt
-              WHERE receipt.schedule_id=s.id ORDER BY receipt.scheduled_for DESC LIMIT 1)
-               AS last_trigger_status,
-             (SELECT receipt.batch_id FROM scheduled_trigger_receipts receipt
-              WHERE receipt.schedule_id=s.id ORDER BY receipt.scheduled_for DESC LIMIT 1)
-               AS last_batch_id
-           FROM case_suite_schedules s ${clause} ORDER BY s.next_trigger_at, s.id`,
-        )
+        .prepare(`${SCHEDULE_WITH_LAST_TRIGGER_SELECT} ${clause} ORDER BY s.next_trigger_at, s.id`)
         .all(...parameters) as ScheduleRow[]
     ).map(mapSchedule);
   }
 
   async findScheduleBySuite(suiteId: string): Promise<CaseSuiteSchedule | null> {
     const row = this.handle.client
-      .prepare("SELECT * FROM case_suite_schedules WHERE suite_id = ?")
+      .prepare(`${SCHEDULE_WITH_LAST_TRIGGER_SELECT} WHERE s.suite_id = ?`)
       .get(suiteId) as ScheduleRow | undefined;
     return row ? mapSchedule(row) : null;
   }

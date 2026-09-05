@@ -21,6 +21,8 @@ import { SqliteCaseSuiteRepository } from "../src/sqlite-case-suite";
 import { PostgresCaseSuiteRepository } from "../src/postgres-platform-repository";
 import { SqliteRunBatchRepository } from "../src/sqlite-run-batch";
 import { PostgresRunBatchRepository } from "../src/postgres-run-batch";
+import { SqlitePlatformOperationsRepository } from "../src/sqlite-platform-operations";
+import { PostgresPlatformOperationsRepository } from "../src/postgres-platform-operations";
 import { executionRuns, projects, runAttempts, runBatches, runners } from "../src/schema";
 import {
   pgCaseSuites,
@@ -158,9 +160,88 @@ for (const adapter of ["SQLite", "PostgreSQL"] as const) {
           await seedBatch({ id: "zz-project", projectId: "other-project" });
           await seedBatch({ id: "zz-version", projectVersionId: "other-version" });
           const result = await service.readRecentExecutions(suiteId, scope);
-          expect(result.items.map((batch) => batch.id)).toEqual(ids.reverse().slice(0, 10));
+          const newestFirst = [...ids].reverse();
+          expect(result.items.map((batch) => batch.id)).toEqual(newestFirst.slice(0, 10));
           expect(result.items[0]?.kind).toBe("final_failure_rerun");
           expect(result.items[0]).not.toHaveProperty("environmentVariables");
+          expect(result.nextCursor).toBeTruthy();
+          const older = await service.readRecentExecutions(suiteId, {
+            ...scope,
+            cursor: result.nextCursor,
+          });
+          expect(older.items.map((batch) => batch.id)).toEqual(newestFirst.slice(10));
+          expect(older.nextCursor).toBeUndefined();
+        });
+      });
+
+      it("reads the latest trigger for one suite and keeps execution history after plan deletion", async () => {
+        await withHarness(adapter, async ({ schedules, seedBatch, service, suiteId }) => {
+          expect(await schedules.findScheduleBySuite(suiteId)).toBeNull();
+          const batchId = await seedBatch({ id: "scheduled" });
+          let schedule = await schedules.upsertSchedule({
+            id: `schedule-${suiteId}`,
+            suiteId,
+            projectId: scope.projectId,
+            cronExpression: "0 12 * * *",
+            timeZone: "UTC",
+            missedRunPolicy: "run-once",
+            enabled: true,
+            nextTriggerAt: NOW,
+            revision: 1,
+            createdAt: NOW,
+            updatedAt: NOW,
+          });
+          for (const [index, status] of (["created", "skipped", "failed"] as const).entries()) {
+            const scheduledFor = schedule.nextTriggerAt;
+            const nextTriggerAt = `2026-09-0${6 + index}T12:00:00.000Z`;
+            const claimId = `claim-${suiteId}-${index}`;
+            expect(
+              await schedules.claimScheduleTrigger({
+                scheduleId: schedule.id,
+                scheduledFor,
+                claimId,
+                claimedAt: scheduledFor,
+                leaseExpiresAt: scheduledFor.replace("12:00:", "12:01:"),
+              }),
+            ).toBe(true);
+            expect(
+              await schedules.completeScheduleTrigger({
+                scheduleId: schedule.id,
+                scheduledFor,
+                claimId,
+                status,
+                nextTriggerAt,
+                ...(status === "created" ? { batchId } : {}),
+                recordedAt: scheduledFor,
+              }),
+            ).toBe(true);
+            const latest = await schedules.findScheduleBySuite(suiteId);
+            expect(latest).toMatchObject({
+              lastTriggerAt: scheduledFor,
+              lastTriggerStatus: status,
+              nextTriggerAt,
+            });
+            expect(latest?.lastBatchId).toBe(status === "created" ? batchId : undefined);
+            expect(latest).toEqual(
+              (await schedules.listSchedules([scope.projectId])).find(
+                (entry) => entry.suiteId === suiteId,
+              ),
+            );
+            schedule = latest!;
+          }
+          const paused = await schedules.upsertSchedule(
+            { ...schedule, enabled: false, revision: schedule.revision + 1 },
+            schedule.revision,
+          );
+          expect(await schedules.findScheduleBySuite(suiteId)).toMatchObject({
+            enabled: false,
+            lastTriggerStatus: "failed",
+          });
+          await schedules.deleteSchedule(paused.id, paused.revision);
+          expect(await schedules.findScheduleBySuite(suiteId)).toBeNull();
+          expect(
+            (await service.readRecentExecutions(suiteId, scope)).items.map((entry) => entry.id),
+          ).toEqual([batchId]);
         });
       });
     },
@@ -219,6 +300,9 @@ async function createHarness(adapter: Adapter) {
   const batches = sqlite
     ? new SqliteRunBatchRepository(sqlite)
     : new PostgresRunBatchRepository(postgres!);
+  const schedules = sqlite
+    ? new SqlitePlatformOperationsRepository(sqlite)
+    : new PostgresPlatformOperationsRepository(postgres!);
   const service = new CaseSuiteActivityService(repository, suiteRepository, batches, {
     now: () => new Date(NOW),
   });
@@ -250,6 +334,7 @@ async function createHarness(adapter: Adapter) {
   return {
     suiteId,
     service,
+    schedules,
     async seedBatch(input: BatchFixture): Promise<string> {
       const id = `${suffix}-${input.id}`;
       batchIds.push(id);

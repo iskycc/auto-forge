@@ -20,7 +20,6 @@ const CASE_SUITE_DETAILS = join(SOURCE_ROOT, "components", "case-suite-details.t
 const ROUTE_LOADING_SKELETON = join(SOURCE_ROOT, "components", "route-loading-skeleton.tsx");
 const UI_FEEDBACK = join(SOURCE_ROOT, "components", "ui-feedback.tsx");
 const AUTOMATION_PAGE = join(SOURCE_ROOT, "app", "settings", "automation", "page.tsx");
-const AUTOMATION_OPERATIONS = join(SOURCE_ROOT, "components", "automation-operations.tsx");
 const INSIGHTS_PAGE = join(SOURCE_ROOT, "app", "insights", "page.tsx");
 const PROJECT_SWITCH_FREE_FILES = [
   join(SOURCE_ROOT, "app", "cases", "page.tsx"),
@@ -123,7 +122,7 @@ describe("shared UI controls", () => {
 
     expect(appShell).toContain('label: "安全审计"');
     expect(appShell).toContain('label: "执行机组"');
-    expect(appShell).toContain('label: "运维计划"');
+    expect(appShell).not.toContain('label: "运维计划"');
     expect(appShell).not.toContain('label: "用例批跑"');
     expect(appShell).toContain("<GlobalProjectSwitcher");
     expect(appShell).toContain("projectVersions={projectVersions}");
@@ -159,13 +158,9 @@ describe("shared UI controls", () => {
     expect(caseSelection).toContain("重跑策略与 Adapter 地址");
   });
 
-  it("keeps operations free of stale platform and LDAP configuration shortcuts", () => {
-    const operationsSource = [AUTOMATION_PAGE, AUTOMATION_OPERATIONS]
-      .map((file) => readFileSync(file, "utf8"))
-      .join("\n");
-
-    expect(operationsSource).not.toContain('href="/settings/platform');
-    expect(operationsSource).not.toContain('href="/settings/access?section=ldap');
+  it("redirects the retired plan overview to individual task management", () => {
+    const operationsSource = readFileSync(AUTOMATION_PAGE, "utf8");
+    expect(operationsSource).toContain('redirect("/case-suites")');
   });
 
   it("keeps low-frequency management actions in dialogs", () => {

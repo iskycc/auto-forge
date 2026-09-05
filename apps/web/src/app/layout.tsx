@@ -68,6 +68,7 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
             {...(identity
               ? {
                   userName: identity.user.displayName,
+                  userId: identity.user.id,
                   permissions,
                   forcePasswordChange: identity.user.forcePasswordChange,
                   projects: projects.map(({ id, name }) => ({ id, name })),

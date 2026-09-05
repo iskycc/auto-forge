@@ -82,13 +82,6 @@ const administrationNavigation: NavigationItem[] = [
     permission: "project.read",
   },
   {
-    label: "运维计划",
-    href: "/settings/automation",
-    icon: FileCog,
-    anyPermissions: ["case_suite.read", "ldap.read"],
-    activePrefixes: ["/settings/automation"],
-  },
-  {
     label: "执行机组",
     href: "/runners?section=groups",
     icon: Server,
@@ -156,6 +149,7 @@ export function AppShell({
   mode,
   timeZone,
   userName,
+  userId,
   permissions = [],
   forcePasswordChange = false,
   projects = [],
@@ -168,6 +162,7 @@ export function AppShell({
   mode: "lite" | "full";
   timeZone: string;
   userName?: string;
+  userId?: string;
   permissions?: Permission[] | undefined;
   forcePasswordChange?: boolean;
   projects?: Array<{ id: string; name: string }>;
@@ -298,6 +293,7 @@ export function AppShell({
           <div className="topbar-actions">
             {!forcePasswordChange ? (
               <GlobalRunDialog
+                userId={userId ?? ""}
                 enabled={granted.has("run.create")}
                 {...(selectedProjectId ? { projectId: selectedProjectId } : {})}
                 {...(selectedProjectVersionId

@@ -48,6 +48,7 @@
   --radius-pill: 999px;
   --font-size-suite-statistic: 24px;
   --suite-history-max-height: 480px;
+  --suite-schedule-dialog-width: 860px;
   --motion-suite-disclosure: 150ms ease;
 }
 
@@ -2073,22 +2074,25 @@
 
 .role-card {
   display: grid;
+  min-width: 0;
   gap: 10px;
   padding: 16px;
   border: 1px solid var(--color-border);
   border-radius: 14px;
+  overflow-wrap: anywhere;
 }
 
 .role-card > div:first-child {
   display: flex;
+  flex-wrap: wrap;
   align-items: baseline;
   justify-content: space-between;
   gap: 12px;
 }
 
 .role-card > div:first-child strong {
-  flex: 0 0 auto;
-  white-space: nowrap;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .role-card small,
@@ -4324,23 +4328,23 @@ button.icon-button:disabled {
   color: var(--color-text-tertiary);
 }
 
-.suite-card .status-badge {
+:is(.suite-card, .suite-schedule-dialog) .status-badge {
   flex-shrink: 0;
   background: var(--color-success-soft);
   color: var(--color-success);
 }
 
-.suite-card .status-badge.info {
+:is(.suite-card, .suite-schedule-dialog) .status-badge.info {
   background: var(--color-info-soft);
   color: var(--color-info);
 }
 
-.suite-card .status-badge.warning {
+:is(.suite-card, .suite-schedule-dialog) .status-badge.warning {
   background: var(--color-warning-soft);
   color: var(--color-warning);
 }
 
-.suite-card .status-badge.danger {
+:is(.suite-card, .suite-schedule-dialog) .status-badge.danger {
   background: var(--color-danger-soft);
   color: var(--color-danger);
 }
@@ -7388,67 +7392,154 @@ button.icon-button:disabled {
 
 .schedule-form {
   display: grid;
-  grid-template-columns: 1.25fr 1fr 1fr;
-  gap: 12px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-4);
   align-items: end;
-  margin-top: 18px;
-  /* 16px horizontal padding mirrors the policy grid form's internal padding so
-     every label and button in the card shares one left/right alignment edge. */
-  padding: 18px 16px 0;
+  padding: var(--space-5);
   border-top: 1px solid var(--color-border);
 }
 
-.schedule-form .section-title-row {
-  grid-column: 1 / -1;
-  /* Inside the padded schedule form this is a subheading, not a card header:
-     drop the full-width header chrome (76px band, double padding, divider). */
-  min-height: 0;
-  padding: 0;
-  border-bottom: 0;
-}
-
-.schedule-form .section-title-row > span {
+.suite-schedule-panel > .section-heading,
+.suite-schedule-panel h2 {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-3);
+}
+
+.suite-schedule-panel > .section-heading {
+  justify-content: space-between;
+  flex-wrap: wrap;
+  margin: 0;
+  padding: var(--space-5);
+}
+
+.suite-schedule-panel h2 {
+  margin: 0;
+}
+
+.suite-schedule-panel > .section-heading > div {
+  display: block;
+  min-width: 0;
+}
+
+.suite-schedule-panel .section-heading p {
+  margin: var(--space-2) 0 0;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-control);
+}
+
+.suite-schedule-hint,
+.suite-schedule-summary > p {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-caption);
+  line-height: 1.6;
+}
+
+.suite-schedule-panel > .suite-schedule-hint,
+.suite-schedule-error {
+  margin: 0;
+  padding: 0 var(--space-5) var(--space-5);
+}
+
+.suite-schedule-error {
+  color: var(--color-danger);
+}
+
+.action-dialog.suite-schedule-dialog {
+  width: min(var(--suite-schedule-dialog-width), calc(100vw - 2 * var(--space-5)));
+}
+
+.suite-schedule-dialog-content,
+.suite-schedule-summary {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.suite-schedule-dialog-content > .button-row {
+  justify-content: flex-end;
+}
+
+.suite-schedule-summary {
+  padding: var(--space-5);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-medium);
+  background: var(--color-surface-muted);
+}
+
+.suite-schedule-summary h3,
+.suite-schedule-summary dl {
+  margin: 0;
+}
+
+.suite-schedule-summary dl {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-4);
+}
+
+.suite-schedule-summary dt {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-caption);
+}
+
+.suite-schedule-summary dd {
+  margin: var(--space-2) 0 0;
+  font-size: var(--font-size-body);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.suite-schedule-summary a {
+  color: var(--color-info);
+}
+
+.suite-schedule-dialog .suite-recent-executions {
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-medium);
+}
+
+.suite-history-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  border-top: 1px solid var(--color-border);
+  padding: var(--space-3) var(--space-5);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-caption);
 }
 
 .schedule-form label {
   display: grid;
-  gap: 6px;
+  gap: var(--space-2);
   color: var(--color-text-secondary);
-  font-size: 12px;
+  font-size: var(--font-size-caption);
   font-weight: 650;
 }
 
 .schedule-actions {
   display: flex;
-  gap: 8px;
+  gap: var(--space-2);
   grid-column: 1 / -1;
   align-items: center;
   justify-content: flex-end;
 }
 
-/* The enable checkbox gets its own grid row, mirroring the 启用/归档 row of the
-   main policy form above; the actions row stays reserved for right-aligned buttons. */
 .schedule-form .schedule-enable-field {
   grid-column: 1 / -1;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-2);
   white-space: nowrap;
 }
 
-/* The suite settings card follows the content-card settings-section pattern:
-   all three bottom forms get the standard 24px horizontal inset instead of
-   running flush against the card border. */
 .suite-settings-body {
   padding: 20px 24px 24px;
 }
 
-/* The copy form sits between the policy form and the schedule form; give it the
-   same top separator and horizontal inset so the three blocks share one
-   alignment edge with the policy form's inner content. */
 .suite-copy-form {
   /* inline-flex would shrink the box (and its separator) to the content;
      block-level flex keeps the row layout while spanning the padded width. */
@@ -9396,9 +9487,19 @@ button.icon-button:disabled {
 }
 
 .case-browser-pane {
-  display: grid;
+  display: flex;
+  flex-direction: column;
   min-height: 0;
-  grid-template-rows: auto auto auto auto minmax(0, 1fr);
+}
+
+/* Feedback, progress and selection statistics are conditional; only the directory
+   should consume remaining height regardless of how many header rows are present. */
+.case-browser-pane > * {
+  flex: 0 0 auto;
+}
+
+.case-browser-pane > .case-directory-scroll {
+  flex: 1 1 0;
 }
 
 .case-browser-search {
@@ -12361,8 +12462,9 @@ button.icon-button:disabled {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
-  padding: 8px 14px;
+  align-content: flex-start;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
   border-bottom: 1px solid var(--color-border);
   background: var(--color-surface-muted);
   color: var(--color-text-secondary);

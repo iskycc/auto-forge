@@ -3,6 +3,7 @@
 import {
   caseSuiteRecentExecutionsSchema,
   type CaseSuiteRecentExecution,
+  type CaseSuiteRecentExecutions as ExecutionPage,
 } from "@autoforge/contracts";
 import { ArrowRight, History, LoaderCircle, RefreshCw } from "lucide-react";
 import Link from "next/link";
@@ -21,24 +22,29 @@ import {
 type HistoryState =
   | { status: "loading" }
   | { status: "error"; message: string }
-  | { status: "ready"; items: CaseSuiteRecentExecution[] };
+  | ({ status: "ready" } & ExecutionPage);
 
 export function CaseSuiteRecentExecutions({
   suiteId,
   projectId,
   projectVersionId,
+  view = "recent",
 }: {
   suiteId: string;
   projectId: string;
   projectVersionId: string;
+  view?: "recent" | "history";
 }) {
   const [state, setState] = useState<HistoryState>({ status: "loading" });
   const [refreshSequence, setRefreshSequence] = useState(0);
+  const [pageCursors, setPageCursors] = useState<Array<string | undefined>>([undefined]);
+  const cursor = pageCursors.at(-1);
   const query = new URLSearchParams({ projectId, projectVersionId, suiteId });
 
   useEffect(() => {
     const controller = new AbortController();
     const scope = new URLSearchParams({ projectId, projectVersionId });
+    if (cursor) scope.set("cursor", cursor);
     async function load(): Promise<void> {
       try {
         const response = await fetch(
@@ -51,7 +57,7 @@ export function CaseSuiteRecentExecutions({
         const failure = await readApiError(response, "最近执行记录加载失败，请重试。");
         if (failure) throw failure;
         const result = caseSuiteRecentExecutionsSchema.parse(await response.json());
-        if (!controller.signal.aborted) setState({ status: "ready", items: result.items });
+        if (!controller.signal.aborted) setState({ status: "ready", ...result });
       } catch (error) {
         if (!controller.signal.aborted)
           setState({
@@ -67,21 +73,22 @@ export function CaseSuiteRecentExecutions({
     }
     void load();
     return () => controller.abort();
-  }, [suiteId, projectId, projectVersionId, refreshSequence]);
+  }, [suiteId, projectId, projectVersionId, refreshSequence, cursor]);
 
   function refresh(): void {
     setState({ status: "loading" });
+    setPageCursors([undefined]);
     setRefreshSequence((current) => current + 1);
   }
 
   return (
     <section
       className="suite-recent-executions"
-      aria-label="最近执行记录"
+      aria-label={view === "history" ? "任务执行历史" : "最近执行记录"}
       aria-busy={state.status === "loading"}
     >
       <header>
-        <strong>最近 10 次执行</strong>
+        <strong>{view === "history" ? "执行历史" : "最近 10 次执行"}</strong>
         <span>
           <Button
             aria-label="刷新最近执行"
@@ -121,6 +128,32 @@ export function CaseSuiteRecentExecutions({
             <RecentExecution key={batch.id} batch={batch} />
           ))}
         </ol>
+      ) : null}
+      {view === "history" ? (
+        <footer className="suite-history-pagination" aria-label="执行历史分页">
+          <span>第 {pageCursors.length} 页 · 每页最多 10 条</span>
+          <Button
+            disabled={state.status === "loading" || pageCursors.length === 1}
+            onClick={() => {
+              setState({ status: "loading" });
+              setPageCursors((current) => current.slice(0, -1));
+            }}
+            type="button"
+          >
+            上一页
+          </Button>
+          <Button
+            disabled={state.status !== "ready" || !state.nextCursor}
+            onClick={() => {
+              if (state.status !== "ready" || !state.nextCursor) return;
+              setPageCursors((current) => [...current, state.nextCursor]);
+              setState({ status: "loading" });
+            }}
+            type="button"
+          >
+            下一页
+          </Button>
+        </footer>
       ) : null}
     </section>
   );

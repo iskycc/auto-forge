@@ -4,6 +4,7 @@ import Link from "next/link";
 import { CaseSuiteDetailsView } from "@/components/case-suite-details";
 import { CaseSuiteEditor } from "@/components/case-suite-editor";
 import { CaseSuiteWebhookBindings } from "@/components/case-suite-webhook-bindings";
+import { CaseSuiteSchedulePanel } from "@/components/case-suite-schedule-panel";
 import { getPlatformServices } from "@/lib/services";
 import { requirePageProjectScope } from "@/lib/auth";
 import { hasPermission } from "@autoforge/domain";
@@ -18,17 +19,15 @@ export default async function CaseSuitePage({ params }: Props) {
   const services = await getPlatformServices();
   const suite = await services.caseSuites.get(suiteId, projectIds);
   const canManage = hasPermission(identity, "case_suite.manage", suite.projectId);
-  const [runners, runnerGroups, projectStructure, webhookConfigurations, webhookIds] =
+  const [runners, runnerGroups, projectStructure, webhookConfigurations, webhookIds, schedule] =
     await Promise.all([
       services.runnerControl.list(500),
       services.runnerGroups.list(),
       services.projectStructures.list(suite.projectId),
       services.webhooks.listConfigurations(suite.projectId),
       services.webhooks.listSuiteBindings(suiteId, projectIds),
+      services.platformOperations.readSuiteSchedule(identity, suite),
     ]);
-  const schedule = (await services.platformOperations.listSchedules(identity)).find(
-    (candidate) => candidate.suiteId === suiteId,
-  );
   const projectVersion = projectStructure.versions.find(
     (version) => version.id === suite.policy.projectVersionId,
   );
@@ -51,13 +50,26 @@ export default async function CaseSuitePage({ params }: Props) {
           </Link>
         ) : null}
       </section>
+      <CaseSuiteSchedulePanel
+        key={`${suite.id}:${suite.revision}:${schedule?.revision ?? "none"}`}
+        canManage={canManage}
+        canReadExecutions={hasPermission(identity, "run.read", suite.projectId)}
+        initialSchedule={schedule}
+        suite={{
+          id: suite.id,
+          name: suite.name,
+          projectId: suite.projectId,
+          projectVersionId: suite.policy.projectVersionId ?? "",
+          enabled: suite.enabled,
+          archived: suite.status === "archived",
+        }}
+      />
       <CaseSuiteEditor
         artifactsEnabled={services.configurationStore.read().limits.artifactCollectionEnabled}
         canManage={canManage}
         projectVersions={projectStructure.versions}
         runnerGroups={runnerGroups}
         runners={runners}
-        {...(schedule ? { schedule } : {})}
         suite={suite}
       />
       <CaseSuiteWebhookBindings

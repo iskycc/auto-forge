@@ -106,6 +106,8 @@ AutoForge 是一个面向自动化测试场景的用例工厂，用于统一管�
 | `GET`          | `/api/v1/case-definitions/{caseDefinitionId}/failure-analyses` | 分页读取一个用例的全部人工分析结论                   |
 | `POST`         | `/api/v1/case-suites`                                          | 创建用例任务                                         |
 | `GET`          | `/api/v1/case-suites/{suiteId}`                                | 查询用例任务及其用例                                 |
+| `GET/PUT/DELETE` | `/api/v1/case-suites/{suiteId}/schedule`                     | 查询、保存或删除当前任务的执行计划                   |
+| `GET`          | `/api/v1/case-suites/{suiteId}/executions`                     | 按项目/版本查询任务执行历史，每页最多 10 条，支持 cursor |
 | `POST`         | `/api/v1/case-suites/{suiteId}/cases`                          | 批量添加勾选用例                                     |
 | `POST`         | `/api/v1/case-suites/{suiteId}/cases/missing`                  | 从候选集合反向筛选尚未加入任务的用例                 |
 | `DELETE`       | `/api/v1/case-suites/{suiteId}/cases/{caseDefinitionId}`       | 删除任务内用例                                       |
@@ -180,6 +182,11 @@ SQLite WAL 和短事务仍是权威并发边界，Web 主线程主要负责鉴�
 ## 目标功能范围
 
 ### 用例与任务管理
+
+自动执行计划统一在各任务详情的“执行计划”中管理，支持 Cron、时区、错过策略、暂停/恢复和删除。
+点击“执行历史与计划”可在弹窗查看下次执行、上次触发及结果，并分页查询该任务的执行批次。
+导航不再提供“运维计划”；旧 `/settings/automation` 地址重定向至用例任务列表。
+Lite 与 Full 共享接口和调度规则，继续使用现有持久化计划与批次记录，无需新增迁移或 Runner 协议变更。
 
 - 用例定义、版本、标签、分组和启停状态。
 - Runner/Runner Group、项目版本、Adapter 地址与执行前校验。
