@@ -4,6 +4,16 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## 1.10.2 - 2026-09-05
+
+### Fixed
+
+- 修复 Java Adapter 超时测试的清理竞态：通过真实 Java 子进程验证超时退出码，并在进程结束后清理临时报告目录。避免 TestNG 后台写入与 JUnit 目录回收冲突，生产执行逻辑不变。
+
+### Compatibility and release status
+
+- 包含下述 1.10.1 的全部计时修复，无额外数据库、配置或协议变更。1.10.1 标签构建因上述测试清理错误失败，未发布 Release 资产；其标签保留，修复通过新版本发布。
+
 ## 1.10.1 - 2026-09-05
 
 ### Fixed

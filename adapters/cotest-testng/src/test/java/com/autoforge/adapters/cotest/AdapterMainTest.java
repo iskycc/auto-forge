@@ -7,8 +7,11 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.PrintStream;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.util.concurrent.TimeUnit;
 import java.util.jar.JarEntry;
 import java.util.jar.JarOutputStream;
 import org.junit.jupiter.api.Test;
@@ -28,29 +31,37 @@ class AdapterMainTest {
   }
 
   @Test
-  void abortsWithTheTimeoutExitCodeWhenTheCaseExceedsTheLimit() throws IOException {
+  void abortsWithTheTimeoutExitCodeWhenTheCaseExceedsTheLimit()
+      throws IOException, InterruptedException {
     Path jarDirectory = createJarDirectory("fixture/AdapterSlowCase.class");
-    ByteArrayOutputStream standardOutput = new ByteArrayOutputStream();
-    ByteArrayOutputStream errorOutput = new ByteArrayOutputStream();
-
-    int exitCode;
-    try (PrintStream output = AdapterMain.utf8PrintStream(standardOutput);
-        PrintStream errors = AdapterMain.utf8PrintStream(errorOutput)) {
-      exitCode =
-          AdapterMain.run(
-              new String[] {
+    Path consoleLog = temporaryDirectory.resolve("adapter-console.log");
+    String javaExecutable = Paths.get(System.getProperty("java.home"), "bin", "java").toString();
+    String classPath =
+        System.getProperty("surefire.test.class.path", System.getProperty("java.class.path"));
+    // Timeout cleanup belongs to main's process exit; run() alone leaves TestNG threads alive.
+    Process adapter =
+        new ProcessBuilder(
+                javaExecutable,
+                "-cp", classPath,
+                AdapterMain.class.getName(),
                 "--jars", jarDirectory.toString(),
                 "--class", "fixture.AdapterSlowCase",
                 "--output", temporaryDirectory.resolve("reports").toString(),
-                "--case-timeout-seconds", "1"
-              },
-              output,
-              errors);
+                "--case-timeout-seconds", "1")
+            .redirectErrorStream(true)
+            .redirectOutput(consoleLog.toFile())
+            .start();
+    try {
+      assertTrue(adapter.waitFor(20, TimeUnit.SECONDS), "Adapter did not exit after its timeout");
+      String stdout = new String(Files.readAllBytes(consoleLog), StandardCharsets.UTF_8);
+      assertEquals(AdapterMain.CASE_TIMEOUT_EXIT_CODE, adapter.exitValue(), stdout);
+      assertTrue(stdout.contains("TestCase Execution Timeout"), stdout);
+    } finally {
+      if (adapter.isAlive()) {
+        adapter.destroyForcibly();
+        assertTrue(adapter.waitFor(5, TimeUnit.SECONDS), "Unable to stop the Adapter test process");
+      }
     }
-
-    String stdout = Utf8TestIO.decode(standardOutput);
-    assertEquals(AdapterMain.CASE_TIMEOUT_EXIT_CODE, exitCode, stdout);
-    assertTrue(stdout.contains("TestCase Execution Timeout"), stdout);
   }
 
   @Test
