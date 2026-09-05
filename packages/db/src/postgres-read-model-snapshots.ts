@@ -8,17 +8,18 @@ export class PostgresReadModelSnapshotRepository implements ReadModelSnapshotRep
 
   async request(id: string, query: ReadModelQuery, now: string) {
     await this.handle.ready;
+    const activeSince = new Date(Date.parse(now) - 60_000).toISOString();
+    // Even a no-op ON CONFLICT takes a row lock. Hot reads must stay read-only.
+    const recent = await this.handle.pool.query<ReadModelSnapshotRow>(
+      "SELECT * FROM read_model_snapshots WHERE id=$1 AND accessed_at>=$2",
+      [id, activeSince],
+    );
+    if (recent.rows[0]) return readModelSnapshotFromRow(recent.rows[0]);
     await this.handle.pool.query(
       `INSERT INTO read_model_snapshots (id,project_id,query_json,accessed_at,refresh_after)
       VALUES ($1,$2,$3,$4,$4) ON CONFLICT(id) DO UPDATE SET accessed_at=excluded.accessed_at
       WHERE read_model_snapshots.accessed_at<$5`,
-      [
-        id,
-        query.projectId,
-        JSON.stringify(query),
-        now,
-        new Date(Date.parse(now) - 60_000).toISOString(),
-      ],
+      [id, query.projectId, JSON.stringify(query), now, activeSince],
     );
     const snapshot = await this.get(id);
     if (!snapshot) throw new Error(`Read model ${id} disappeared after registration.`);

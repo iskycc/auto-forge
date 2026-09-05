@@ -22,6 +22,43 @@ for (const dialect of ["sqlite", "postgres"] as const) {
   describe.skipIf(dialect === "postgres" && !process.env.AUTOFORGE_TEST_POSTGRES_URL)(
     `${dialect} background read model snapshots`,
     () => {
+      it("reads recently accessed snapshots without acquiring write access and renews idle interest", async () => {
+        const harness = await database(dialect);
+        const query: ReadModelQuery = {
+          kind: "dashboard",
+          projectId,
+          projectVersionId: randomUUID(),
+          timeZone: "UTC",
+        };
+        const id = readModelKey(query);
+        try {
+          const initial = await harness.repository.request(id, query, now);
+          await harness.repository.invalidate(projectId, now);
+          await harness.execute(
+            dialect === "sqlite"
+              ? `CREATE TRIGGER reject_snapshot_insert BEFORE INSERT ON read_model_snapshots BEGIN SELECT RAISE(ABORT,'unexpected snapshot write'); END;
+                 CREATE TRIGGER reject_snapshot_update BEFORE UPDATE ON read_model_snapshots BEGIN SELECT RAISE(ABORT,'unexpected snapshot write'); END;`
+              : `CREATE FUNCTION reject_snapshot_write() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'unexpected snapshot write'; END $$;
+                 CREATE TRIGGER reject_snapshot_write BEFORE INSERT OR UPDATE ON read_model_snapshots FOR EACH ROW EXECUTE FUNCTION reject_snapshot_write();`,
+          );
+          expect(await harness.repository.request(id, query, now)).toMatchObject({
+            requestedRevision: initial.requestedRevision + 1,
+          });
+          await harness.execute(
+            dialect === "sqlite"
+              ? "DROP TRIGGER reject_snapshot_insert; DROP TRIGGER reject_snapshot_update;"
+              : "DROP TRIGGER reject_snapshot_write ON read_model_snapshots; DROP FUNCTION reject_snapshot_write();",
+          );
+          const resumedAt = "2026-09-05T00:06:00.000Z";
+          await harness.repository.request(id, query, resumedAt);
+          expect(
+            await harness.repository.claim(resumedAt, "2026-09-05T00:07:00.000Z", "resumed"),
+          ).toMatchObject({ id });
+        } finally {
+          await harness.close();
+        }
+      });
+
       it("upgrades an existing schema transactionally and recovers from a failed migration", async () => {
         const harness = await database(dialect);
         try {

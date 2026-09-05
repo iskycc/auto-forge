@@ -9186,6 +9186,15 @@ button.icon-button:disabled {
 }
 
 @media (max-width: 1500px) {
+  .topbar-tools {
+    flex: 0 0 auto;
+    grid-template-columns: repeat(2, auto);
+  }
+
+  .global-search-shell {
+    display: none;
+  }
+
   .insight-filter {
     grid-template-columns: repeat(3, minmax(180px, 1fr));
   }
@@ -16562,12 +16571,6 @@ button.icon-button:disabled {
     grid-template-columns: minmax(0, 1.3fr) repeat(2, minmax(0, 1fr));
   }
 
-  .topbar-tools {
-    flex: 0 0 auto;
-    grid-template-columns: repeat(2, auto);
-  }
-
-  .global-search-shell,
   .global-search kbd,
   .admin-label {
     display: none;

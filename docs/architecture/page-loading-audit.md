@@ -73,4 +73,8 @@
 
 Full CI 的连续容量测试还复现了 PostgreSQL `PANIC: No space left on device`：两组十万条夹具及 WAL 写满了原先 1 GiB tmpfs。验收脚本改为独立磁盘卷，清理时删除该卷，失败证据保留数据库日志；本地按相同顺序复测两组容量测试均通过。生产部署的数据库卷配置未变。
 
+磁盘卷恢复容量验收后，CI 检出 100 轮组合热读耗时 4.5 秒，超过原有 3 秒预算。命中请求中的条件 UPSERT 即使不更新字段，仍可能取得 PostgreSQL 行锁并产生 WAL。双数据库现在先读取最近一分钟访问过的快照，仅冷请求或访问登记过期时执行注册写入。共享契约通过拒绝 INSERT / UPDATE 的数据库触发器验证命中不写入，同时验证失效修订号立即可见，以及空闲六分钟后再次访问仍可被后台领取；保留原性能预算。
+
+补丁最终验证：快照契约 18 项通过；连续容量与读模型测试 4 项通过，100 轮组合热读 SQLite 210ms、PostgreSQL 464ms。顶栏覆盖 1024、1180、1181、1280、1500、1501、1536px 并切回 1024px；空间不足时收起搜索框，展开时验证输入区仍可阅读。执行轮次、分析和计划弹框复测通过，最终构建及静态检查通过。
+
 本地原始日志与截图保存在忽略目录 `.local/page-load-audit/`，主要记录为 `unit-final.log`、`integration-clean.log`、`performance-final.log`、`e2e-delivery.log`、`e2e-acceptance.log`、`build-final.log` 及 `delivery-ui/`。这些记录没有提交到仓库。独立 PostgreSQL 容器和浏览器验证服务在结束后清理。

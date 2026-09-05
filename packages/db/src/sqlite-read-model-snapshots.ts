@@ -7,6 +7,11 @@ export class SqliteReadModelSnapshotRepository implements ReadModelSnapshotRepos
   constructor(private readonly handle: SqliteDatabaseHandle) {}
 
   async request(id: string, query: ReadModelQuery, now: string) {
+    const activeSince = new Date(Date.parse(now) - 60_000).toISOString();
+    const recent = this.handle.client
+      .prepare("SELECT * FROM read_model_snapshots WHERE id=? AND accessed_at>=?")
+      .get(id, activeSince) as ReadModelSnapshotRow | undefined;
+    if (recent) return readModelSnapshotFromRow(recent);
     await retrySqliteLockContention(() =>
       this.handle.client
         .prepare(
@@ -15,14 +20,7 @@ export class SqliteReadModelSnapshotRepository implements ReadModelSnapshotRepos
       ON CONFLICT(id) DO UPDATE SET accessed_at=excluded.accessed_at
       WHERE read_model_snapshots.accessed_at<?`,
         )
-        .run(
-          id,
-          query.projectId,
-          JSON.stringify(query),
-          now,
-          now,
-          new Date(Date.parse(now) - 60_000).toISOString(),
-        ),
+        .run(id, query.projectId, JSON.stringify(query), now, now, activeSince),
     );
     const snapshot = await this.get(id);
     if (!snapshot) throw new Error(`Read model ${id} disappeared after registration.`);
