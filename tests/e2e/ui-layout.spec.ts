@@ -339,6 +339,26 @@ test("homepage mirrors the designed six-card workspace and exposes global execut
   await expect(page.getByRole("button", { name: "开始执行", exact: true })).toBeVisible();
 });
 
+test("topbar tools remain separate from execution controls across desktop widths", async ({
+  page,
+}) => {
+  await page.route("**/api/v1/notifications/unread-count", (route) =>
+    route.fulfill({ json: { count: 2 } }),
+  );
+  await ensureAdministrator(page);
+  await expect(page.getByRole("button", { name: "2 条未读通知" })).toBeVisible();
+  for (const width of [1024, 1180, 1280, 1536, 1024]) {
+    await page.setViewportSize({ width, height: width === 1024 ? 768 : 1024 });
+    const tools = page.locator(".topbar-tools");
+    const actions = page.locator(".topbar-actions");
+    await expect(tools.getByRole("button", { name: "搜索配置" })).toBeVisible();
+    await expect(tools.getByRole("button", { name: /通知$/ })).toBeVisible();
+    await expect(actions.getByRole("button", { name: "开始执行", exact: true })).toBeVisible();
+    await expectUiIntegrity(page);
+    await captureUi(page, "/topbar-controls", width, false);
+  }
+});
+
 test("global execution dialog covers and centers within the whole viewport", async ({ page }) => {
   await ensureAdministrator(page);
   await page.goto("/cases");

@@ -1427,7 +1427,19 @@ public class MixedVisibleTest {
   await expect(page.locator(".quality-caption")).toContainText("首页最多读取 10,000 条");
   await expect(page.locator(".dashboard-period-block time")).toContainText("数据截至");
   await expect(page.locator(".quality-trend-value")).toContainText("50.0%");
-  await expect(page.locator(".quality-trend-chart > div.single")).toContainText("09-04");
+  const dashboardAnalytics = await browserJson<{ trend: Array<{ bucket: string }> }>(
+    page,
+    `/api/v1/analytics?${new URLSearchParams({
+      projectId: DEFAULT_PROJECT_ID,
+      projectVersionId: primaryHierarchy.projectVersionId,
+    })}`,
+  );
+  expect(dashboardAnalytics.status).toBe(200);
+  expect(dashboardAnalytics.body.trend.length).toBeGreaterThan(0);
+  // Use the persisted execution dates in the platform time zone, including runs that cross midnight.
+  await expect(page.locator(".quality-trend-chart > div > span")).toHaveText(
+    dashboardAnalytics.body.trend.map(({ bucket }) => bucket.slice(5, 10)),
+  );
   await expect(page.locator(".runner-capacity-overview")).toBeVisible();
   await expect(page.locator(".dashboard-runner-snapshots")).toContainText("未分组执行机");
   await expect(page.locator(".dashboard-runner-snapshots time").first()).toBeVisible();

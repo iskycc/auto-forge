@@ -16,6 +16,14 @@ type UiIntegrityReport = {
 };
 
 export async function expectUiIntegrity(page: Page): Promise<void> {
+  // Viewport resizing can briefly expose old flex positions alongside the new media query sizes.
+  // Inspect after the browser has painted the responsive layout, rather than that intermediate frame.
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve) => {
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+      }),
+  );
   const report = await page.evaluate((): UiIntegrityReport => {
     const minimumFontSize = 12;
     const minimumControlHeight = 32;

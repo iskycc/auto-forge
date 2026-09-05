@@ -16452,8 +16452,13 @@ button.icon-button:disabled {
 
   .global-project-switcher {
     width: 390px;
+    min-width: 0;
     flex-basis: 390px;
-    grid-template-columns: minmax(140px, 1.3fr) minmax(105px, 1fr) minmax(105px, 1fr);
+    grid-template-columns: minmax(0, 1.3fr) repeat(2, minmax(0, 1fr));
+  }
+
+  .topbar-tools {
+    flex: 0 0 auto;
   }
 
   .global-search-shell,

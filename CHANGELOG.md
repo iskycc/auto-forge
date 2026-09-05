@@ -4,6 +4,30 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## 1.9.6 - 2026-09-05
+
+### Fixed
+
+- 修复窄桌面顶栏的工具区被压缩后，通知按钮与“开始执行”按钮发生重叠的问题；配置搜索与
+  通知按钮保留所需宽度，项目、版本和阶段选择器在剩余空间内缩放并保留文本省略。
+- 首页趋势 E2E 改为核对真实执行数据按平台时区聚合后的日期，移除固定的 `09-04` 断言，
+  避免日期变化导致 Lite、Full 和发布资产验收误报失败。
+
+### Database and persisted configuration
+
+- 无数据库迁移或持久化配置变化。
+
+### Compatibility and offline assets
+
+- 不改变 HTTP API、Runner Protocol 或任务执行语义；未新增依赖或远程资源。
+
+### Tests
+
+- 新增带未读通知的顶栏桌面宽度回归场景，检查 1024px、1180px、1280px 和 1536px。
+- 布局检查等待浏览器完成响应式布局绘制后再采集几何尺寸，避免在调整视口的中间帧误报控件
+  重叠；字号、控件尺寸、重叠和页面溢出检查保持不变。
+- 保留完整轮次流程与 JAR 导入闭环的布局、通过率和日期断言。
+
 ## 1.9.5 - 2026-09-05
 
 ### Added
