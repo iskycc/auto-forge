@@ -4,6 +4,50 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## 1.9.5 - 2026-09-05
+
+### Added
+
+- 用例任务采用更大的统计卡片，展示近 7 天执行次数、平均通过率和平均通过用例数；点击
+  “最近执行”可在卡片下方展开最近 10 次执行的状态、通过用例数、轮次、时间和耗时，并跳转
+  批次详情或当前任务的完整执行记录。支持加载失败重试、空记录提示和键盘展开/收起。
+- DDT 表格预检发现大小写不敏感的重复列名时，打开人工处理弹窗，并排显示冲突列的位置、非空
+  数量和有界内容样例；每列可改名保留或整列删除，每组至少保留一列，重新预检通过后才允许启动
+  后台导入。
+
+### Changed
+
+- Jenkins 执行与依赖发布插件共用控制台日志组件，按开始、进度和结果分段展示中文日志；
+  实时进度和完整结果使用 Jenkins 原生控制台超链接，保留 Pipeline 返回的 URL 字段。
+
+### Database and persisted configuration
+
+- 无数据库迁移。人工列名映射和删除选择复用导入任务已有的 `uploads_json` 持久化，Lite SQLite
+  与 Full PostgreSQL 使用相同语义；后台 Worker 按预检确认的选择再次解析原始文件。
+- 任务统计直接聚合已有批次和执行事实，Lite/Full 使用同一口径，不新增持久化配置或缓存事实。
+
+### Compatibility and offline assets
+
+- 新增 `POST /api/v1/ddt/imports/{jobId}/resolve-columns`；原预检和确认 API 保持兼容。处理过程直接
+  读取 ObjectStore 中已保存的原文件，不要求浏览器重复上传，也未新增运行时依赖或远程资源。
+- 新增 `GET /api/v1/case-suites/{suiteId}/executions`，同时校验任务与执行记录读取权限，并限制
+  项目和项目版本范围。Runner Protocol 与已有任务执行语义保持兼容。
+- Jenkins 共享控制台库随两个现有 HPI 打包，不增加独立插件安装项。
+
+### Known limitations
+
+- 近 7 天次数按批次创建时间统计，均值只对已结束且包含用例的批次等权计算；包含异常、终止
+  和最后失败再次执行，排除日志诊断重跑。没有已结束样本时显示“—”。
+
+### Tests
+
+- 新增任务统计应用测试、SQLite/PostgreSQL 共享仓储契约与 API 权限/版本隔离测试；Playwright
+  覆盖展开、重试和记录跳转，并人工检查 1024px、1280px、1536px、1920px 桌面截图。
+- 解析器覆盖 XLSX 大小写重复列、内容样例、保留/删除选择和 ZIP 内 CSV 重复列；
+  SQLite/PostgreSQL 仓储覆盖预检替换语义。
+- Playwright 构造双“环境”列，验证弹窗同时展示两列内容、重复的新名称会被前端阻止、删除其中
+  一列后可重新预检和后台导入，并确认被删除列的数据未进入用例。
+
 ## 1.9.4 - 2026-09-04
 
 ### Added

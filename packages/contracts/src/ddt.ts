@@ -5,6 +5,7 @@ export const DDT_IMPORT_FILE_BYTES = 128 * 1_024 * 1_024;
 export const DDT_IMPORT_TOTAL_BYTES = 512 * 1_024 * 1_024;
 export const DDT_IMPORT_ARCHIVE_ENTRY_LIMIT = 10_000;
 export const DDT_BULK_MUTATION_LIMIT = 5_000;
+export const DDT_IMPORT_COLUMN_RESOLUTION_LIMIT = 5_000;
 
 export const ddtCellValueSchema = z.union([
   z.string().max(1_000_000),
@@ -110,6 +111,52 @@ export const confirmDdtImportInputSchema = z.object({
   conflictStrategy: z.enum(["overwrite", "skip", "error"]),
 });
 
+export const ddtImportColumnResolutionSchema = z.object({
+  uploadIndex: z
+    .number()
+    .int()
+    .min(0)
+    .max(DDT_IMPORT_FILE_LIMIT - 1),
+  archiveEntryName: z.string().trim().min(1).max(1_024).optional(),
+  sheetName: z.string().trim().min(1).max(256),
+  columnIndex: z.number().int().min(0).max(16_383),
+  resolvedName: z.string().trim().min(1).max(256),
+  deleteColumn: z.boolean().optional(),
+});
+
+export const resolveDdtImportColumnsInputSchema = z.object({
+  columnResolutions: z
+    .array(ddtImportColumnResolutionSchema)
+    .min(1)
+    .max(DDT_IMPORT_COLUMN_RESOLUTION_LIMIT),
+});
+
+export const ddtImportColumnConflictSchema = z.object({
+  archiveEntryName: z.string().min(1).max(1_024).optional(),
+  sheetName: z.string().min(1).max(256),
+  normalizedName: z.string().min(1).max(256),
+  columns: z
+    .array(
+      z.object({
+        columnIndex: z.number().int().min(0).max(16_383),
+        originalName: z.string().max(256),
+        currentName: z.string().min(1).max(256),
+        suggestedName: z.string().min(1).max(256),
+        nonEmptyCount: z.number().int().min(0),
+        sampleValues: z
+          .array(
+            z.object({
+              rowNumber: z.number().int().min(2),
+              value: z.string().max(256),
+            }),
+          )
+          .max(8),
+      }),
+    )
+    .min(2)
+    .max(16_384),
+});
+
 export const ddtImportJobStatusSchema = z.enum([
   "previewed",
   "queued",
@@ -125,4 +172,7 @@ export type DdtCaseListInput = z.infer<typeof ddtCaseListInputSchema>;
 export type DdtCellValue = z.infer<typeof ddtCellValueSchema>;
 export type DdtSearchFilter = z.infer<typeof ddtSearchFilterSchema>;
 export type DdtImportJobStatus = z.infer<typeof ddtImportJobStatusSchema>;
+export type DdtImportColumnResolution = z.infer<typeof ddtImportColumnResolutionSchema>;
+export type DdtImportColumnConflict = z.infer<typeof ddtImportColumnConflictSchema>;
+export type DdtColumnResolution = Omit<DdtImportColumnResolution, "uploadIndex">;
 export type UpsertDdtTemplateInput = z.infer<typeof upsertDdtTemplateInputSchema>;

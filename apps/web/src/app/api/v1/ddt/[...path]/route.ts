@@ -3,6 +3,7 @@ import {
   bulkUpdateDdtCasesInputSchema,
   confirmDdtImportInputSchema,
   ddtCaseListInputSchema,
+  resolveDdtImportColumnsInputSchema,
   setDdtExecutionClassInputSchema,
   updateDdtCaseInputSchema,
   upsertDdtTemplateInputSchema,
@@ -222,6 +223,23 @@ export async function POST(request: Request, context: Context): Promise<NextResp
           totalFiles: job.totalFiles,
         });
         return NextResponse.json(job, { status: 201 });
+      }
+      if (path[0] === "imports" && path[1] && path[2] === "resolve-columns") {
+        const input = resolveDdtImportColumnsInputSchema.parse(
+          await readJsonBody(request, 2 * 1_024 * 1_024),
+        );
+        const current = await services.ddtImports.get(path[1], [scope.projectId]);
+        assertJobScope(current, scope);
+        const job = await services.ddtImports.resolveColumnConflicts(
+          path[1],
+          input.columnResolutions,
+          [scope.projectId],
+        );
+        await audit(identity, services, scope, currentRequestId, "ddt_import.resolve_columns", {
+          jobId: job.id,
+          resolvedColumnCount: input.columnResolutions.length,
+        });
+        return NextResponse.json(job);
       }
       if (path[0] === "imports" && path[1] && path[2] === "confirm") {
         const input = confirmDdtImportInputSchema.parse(await readJsonBody(request, 16 * 1_024));

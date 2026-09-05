@@ -1,4 +1,9 @@
-import type { DdtImportJobStatus, DdtSearchFilter } from "@autoforge/contracts";
+import type {
+  DdtColumnResolution,
+  DdtImportColumnConflict,
+  DdtImportJobStatus,
+  DdtSearchFilter,
+} from "@autoforge/contracts";
 import type {
   DdtCase,
   DdtCaseData,
@@ -53,6 +58,8 @@ export type DdtUploadReference = {
   sha256: string;
   sizeBytes: number;
   mediaType: string;
+  columnResolutions?: DdtColumnResolution[];
+  columnConflicts?: DdtImportColumnConflict[];
 };
 
 export type DdtImportFile = {

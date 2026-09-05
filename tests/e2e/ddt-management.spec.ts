@@ -1,3 +1,6 @@
+import { mkdir } from "node:fs/promises";
+import { resolve } from "node:path";
+
 import { expect, test, type Locator, type Page, type Request, type Route } from "@playwright/test";
 import { zipSync } from "fflate";
 
@@ -12,6 +15,100 @@ import {
   uniqueName,
 } from "./support/session";
 import { expectUiIntegrity } from "./support/ui-guard";
+
+test("DDT import resolves duplicate column names before background import", async ({ page }) => {
+  test.setTimeout(120_000);
+  await ensureAdministrator(page);
+  const hierarchy = await createHierarchy(page);
+  await selectProjectContext(page, hierarchy.projectId, hierarchy.versionId, hierarchy.stageId);
+  await page.goto("/cases?tab=testng");
+  await page.getByRole("link", { name: "DDT 管理" }).click();
+
+  await page.getByRole("button", { name: "导入表格" }).click();
+  const importDialog = page.getByRole("dialog", { name: "导入 DDT 用例" });
+  const fileName = `ddt-duplicate-columns-${hierarchy.suffix}.csv`;
+  await importDialog.locator('input[type="file"]').setInputFiles({
+    name: fileName,
+    mimeType: "text/csv",
+    buffer: Buffer.from(
+      `CaseID,srNum,环境,环境\nDUPLICATE-${hierarchy.suffix},CORE,test,production\n`,
+      "utf8",
+    ),
+  });
+  await importDialog.getByRole("button", { name: "开始预检" }).click();
+
+  const conflictDialog = page.getByRole("dialog", { name: "解决重复列名" });
+  await expect(conflictDialog).toBeVisible();
+  await expect(conflictDialog).toContainText("检测到 1 组冲突");
+  const columnChoices = conflictDialog.locator(".ddt-column-choice");
+  await expect(columnChoices).toHaveCount(2);
+  await expect(columnChoices.nth(0)).toContainText("test");
+  await expect(columnChoices.nth(1)).toContainText("production");
+  await expect(columnChoices.nth(0)).toContainText("1 个非空单元格");
+  await expect(columnChoices.nth(1)).toContainText("1 个非空单元格");
+  const firstColumn = conflictDialog.getByLabel(`${fileName} Sheet1 Sheet 第 3 列的新列名`);
+  const secondColumn = conflictDialog.getByLabel(`${fileName} Sheet1 Sheet 第 4 列的新列名`);
+  await expect(firstColumn).toHaveValue("环境");
+  await expect(secondColumn).toHaveValue("环境_2");
+
+  await secondColumn.fill("环境");
+  await conflictDialog.getByRole("button", { name: "应用并重新预检" }).click();
+  await expect(conflictDialog.getByRole("alert")).toContainText("仍然重复");
+  const firstDelete = conflictDialog.getByLabel(`${fileName} Sheet1 Sheet 删除第 3 列 环境`);
+  const secondDelete = conflictDialog.getByLabel(`${fileName} Sheet1 Sheet 删除第 4 列 环境`);
+  await firstDelete.check();
+  await secondDelete.check();
+  await conflictDialog.getByRole("button", { name: "应用并重新预检" }).click();
+  await expect(conflictDialog.getByRole("alert")).toContainText("至少需要保留一列");
+  await firstDelete.uncheck();
+  await expect(secondDelete).toBeChecked();
+  await expect(secondColumn).toBeDisabled();
+  await expect(columnChoices.nth(1)).toContainText("该列将在导入时忽略");
+  await expect(conflictDialog.getByRole("alert")).toBeHidden();
+  await captureDdtUi(page, "ddt-duplicate-column-resolution-1536");
+  await page.setViewportSize({ width: 1024, height: 768 });
+  await captureDdtUi(page, "ddt-duplicate-column-resolution-1024");
+  await expectUiIntegrity(page);
+  await conflictDialog.getByRole("button", { name: "应用并重新预检" }).click();
+
+  await expect(conflictDialog).toBeHidden();
+  await expect(importDialog.locator(".ddt-preview-summary")).toContainText("1 / 1");
+  await expect(importDialog.locator(".ddt-preview-files")).toContainText("可导入");
+  await expect(importDialog.getByRole("button", { name: "确认并后台导入" })).toBeEnabled();
+  await importDialog.getByRole("button", { name: "确认并后台导入" }).click();
+
+  await expect(page.locator(".ddt-status.succeeded", { hasText: "已完成" })).toBeVisible({
+    timeout: 30_000,
+  });
+  const importJobs = await browserJson<{
+    items: Array<{
+      uploads: Array<{
+        columnResolutions?: Array<{
+          sheetName: string;
+          columnIndex: number;
+          resolvedName: string;
+          deleteColumn?: boolean;
+        }>;
+      }>;
+    }>;
+  }>(page, ddtPath(hierarchy, "imports"));
+  expect(importJobs.status).toBe(200);
+  expect(importJobs.body.items).toHaveLength(1);
+  expect(importJobs.body.items[0]?.uploads[0]?.columnResolutions).toContainEqual({
+    sheetName: "Sheet1",
+    columnIndex: 3,
+    resolvedName: "环境",
+    deleteColumn: true,
+  });
+  const imported = await browserJson<{
+    caseId: string;
+    data: Record<string, unknown>;
+  }>(page, ddtPath(hierarchy, `cases/${encodeURIComponent(`DUPLICATE-${hierarchy.suffix}`)}`));
+  expect(imported.status).toBe(200);
+  expect(imported.body.data).toMatchObject({ 环境: "test" });
+  expect(imported.body.data).not.toHaveProperty("目标环境");
+  expect(Object.values(imported.body.data)).not.toContain("production");
+});
 
 test("DDT workspace imports, edits, validates and recovers version-scoped cases", async ({
   page,
@@ -489,4 +586,16 @@ function ddtPath(
     testStageId: hierarchy.stageId,
   });
   return `/api/v1/ddt/${path}?${query.toString()}`;
+}
+
+async function captureDdtUi(page: Page, name: string): Promise<void> {
+  const screenshotDirectory = process.env.AUTOFORGE_UI_SCREENSHOT_DIR;
+  if (!screenshotDirectory) return;
+  const directory = resolve(screenshotDirectory);
+  await mkdir(directory, { recursive: true });
+  await page.screenshot({
+    path: resolve(directory, `${name}.png`),
+    fullPage: false,
+    animations: "disabled",
+  });
 }

@@ -25,6 +25,7 @@ export * from "./ports";
 export * from "./recovery-scheduling-events";
 export * from "./schedule-run-batches";
 export * from "./read-public-statistics";
+export * from "./read-case-suite-activity";
 export * from "./run-job-worker";
 export * from "./transient-recovery";
 export * from "./platform-operations";

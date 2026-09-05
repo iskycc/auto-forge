@@ -33,20 +33,31 @@ export default async function CaseSuitesPage() {
   const selectedVersion = structure.versions.find(
     (version) => version.id === hierarchy.projectVersionId,
   );
+  const canReadExecutions = hasPermission(identity, "run.read", activeProjectId);
+  const activitySummary =
+    canReadExecutions && hierarchy.projectVersionId
+      ? await services.caseSuiteActivity.readSummary(
+          { projectId: activeProjectId, projectVersionId: hierarchy.projectVersionId },
+          suites.map((suite) => suite.id),
+        )
+      : undefined;
   return (
     <div className="page-stack">
       <section className="page-hero">
         <div>
           <span className="eyebrow">CaseSuite</span>
           <h1>用例任务</h1>
-          <p>创建可复用的测试集合，从用例管理批量添加或随时移除用例。</p>
+          <p>管理可复用的测试集合，查看近 7 天执行表现与最近执行记录。</p>
         </div>
         <span className="hero-icon violet">
           <Layers3 size={24} />
         </span>
       </section>
       <CaseSuiteManager
+        key={`${activeProjectId}:${hierarchy.projectVersionId ?? ""}`}
         canManage={hasPermission(identity, "case_suite.manage", activeProjectId)}
+        canReadExecutions={canReadExecutions}
+        {...(activitySummary ? { activitySummary } : {})}
         initialSuites={suites}
         projectId={activeProjectId}
         {...(hierarchy.projectVersionId

@@ -3,31 +3,41 @@
 import { Button, Input, Select, Textarea } from "@/components/ui";
 import { ActionDialog } from "@/components/action-dialog";
 
-import { apiErrorSchema } from "@autoforge/contracts";
+import { apiErrorSchema, type CaseSuiteActivitySummary } from "@autoforge/contracts";
 import type { CaseSuite } from "@autoforge/domain";
-import { ArrowRight, Copy, Download, Layers3, LoaderCircle, Plus } from "lucide-react";
-import Link from "next/link";
+import { Copy, Layers3, LoaderCircle, Plus, RefreshCw } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useState, useTransition } from "react";
 
-import { formatLocalDateTime } from "@/lib/run-batch-presentation";
+import { CaseSuiteCard } from "./case-suite-card";
 import { parseExportFilename } from "@/lib/run-batch-export";
 
 export function CaseSuiteManager({
   canManage,
+  canReadExecutions,
+  activitySummary,
   initialSuites,
   projectId: initialProjectId,
   selectedProjectVersionId,
   selectedProjectVersionName,
 }: {
   canManage: boolean;
+  canReadExecutions: boolean;
+  activitySummary?: CaseSuiteActivitySummary;
   initialSuites: CaseSuite[];
   projectId?: string | undefined;
   selectedProjectVersionId?: string | undefined;
   selectedProjectVersionName?: string | undefined;
 }) {
   const router = useRouter();
-  const [suites, setSuites] = useState(initialSuites);
+  const [createdSuites, setCreatedSuites] = useState<CaseSuite[]>([]);
+  const initialSuiteIds = new Set(initialSuites.map((suite) => suite.id));
+  const suites = [
+    ...createdSuites.filter((suite) => !initialSuiteIds.has(suite.id)),
+    ...initialSuites,
+  ];
+  const statisticsBySuite = new Map(activitySummary?.items.map((entry) => [entry.suiteId, entry]));
+  const [refreshing, startRefresh] = useTransition();
   const [createMode, setCreateMode] = useState<"blank" | "copy">("blank");
   const [sourceSuiteId, setSourceSuiteId] = useState(initialSuites[0]?.id ?? "");
   const [name, setName] = useState("");
@@ -90,7 +100,7 @@ export function CaseSuiteManager({
       });
       if (!response.ok) throw await caseSuiteRequestError(response, "创建用例任务失败。");
       const suite = (await response.json()) as CaseSuite;
-      setSuites((current) => [suite, ...current]);
+      setCreatedSuites((current) => [suite, ...current]);
       setName("");
       setDescription("");
       setAdapterEnabled(false);
@@ -134,15 +144,32 @@ export function CaseSuiteManager({
 
   return (
     <div className="suite-manager">
-      {canManage ? (
-        <div className="suite-manager-toolbar">
-          <span>
-            当前版本「{selectedProjectVersionName ?? "尚未配置"}」共 {suites.length} 个任务
-          </span>
-          <Button onClick={openCreateDialog} type="button" variant="primary">
-            <Plus size={16} /> 创建任务
+      <div className="suite-manager-toolbar">
+        <span>
+          当前版本「{selectedProjectVersionName ?? "尚未配置"}」共 {suites.length} 个任务
+        </span>
+        <div className="suite-manager-actions">
+          <Button
+            disabled={refreshing}
+            onClick={() => startRefresh(() => router.refresh())}
+            type="button"
+            variant="ghost"
+          >
+            <RefreshCw className={refreshing ? "spin" : ""} size={15} />{" "}
+            {canReadExecutions ? "刷新统计" : "刷新列表"}
           </Button>
+          {canManage ? (
+            <Button onClick={openCreateDialog} type="button" variant="primary">
+              <Plus size={16} /> 创建任务
+            </Button>
+          ) : null}
         </div>
+      </div>
+      {canReadExecutions ? (
+        <p className="suite-statistics-explanation">
+          近 7
+          天按批次创建时间统计；均值为已结束且有用例的批次等权平均，包含执行异常与终止，不含日志诊断重跑。
+        </p>
       ) : null}
       <ActionDialog
         description="创建空白任务，或将已有任务复制为可以独立修改的新任务。"
@@ -318,50 +345,15 @@ export function CaseSuiteManager({
           </div>
         ) : (
           suites.map((suite) => (
-            <article
-              className={`card suite-card ${suite.status === "archived" ? "suite-card-archived" : ""} ${!suite.enabled ? "suite-card-disabled" : ""}`.trim()}
+            <CaseSuiteCard
               key={suite.id}
-            >
-              <Link className="suite-card-link" href={`/case-suites/${suite.id}`}>
-                <span className="suite-icon">
-                  <Layers3 size={20} />
-                </span>
-                <span className="suite-copy">
-                  <span className="suite-title-line">
-                    <strong>{suite.name}</strong>
-                    <span
-                      className={`status-badge ${suite.status === "archived" || !suite.enabled ? "warning" : ""}`.trim()}
-                    >
-                      {suite.status === "archived" ? "已归档" : suite.enabled ? "已启用" : "已停用"}
-                    </span>
-                  </span>
-                  <small>{suite.description || "暂无说明"}</small>
-                  <small>
-                    v{suite.version} · 更新于 {formatLocalDateTime(suite.updatedAt)}
-                  </small>
-                </span>
-                <span className="suite-count">
-                  <strong>{suite.caseCount}</strong>
-                  <small>个用例</small>
-                </span>
-                <ArrowRight size={18} className="muted" />
-              </Link>
-              <Button
-                aria-label={`导出 ${suite.name} 用例`}
-                className="suite-card-export"
-                disabled={exportingSuiteId !== null}
-                onClick={() => void exportSuiteCases(suite)}
-                type="button"
-                variant="ghost"
-              >
-                {exportingSuiteId === suite.id ? (
-                  <LoaderCircle className="spin" size={15} />
-                ) : (
-                  <Download size={15} />
-                )}
-                {exportingSuiteId === suite.id ? "导出中" : "导出"}
-              </Button>
-            </article>
+              suite={suite}
+              statistics={statisticsBySuite.get(suite.id)}
+              canReadExecutions={canReadExecutions}
+              exporting={exportingSuiteId === suite.id}
+              exportDisabled={exportingSuiteId !== null}
+              onExport={() => void exportSuiteCases(suite)}
+            />
           ))
         )}
       </section>

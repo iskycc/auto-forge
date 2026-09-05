@@ -4,6 +4,7 @@ export * from "./schema";
 export * from "./sqlite-case-catalog";
 export * from "./sqlite-dashboard-snapshot";
 export * from "./sqlite-case-suite";
+export * from "./sqlite-case-suite-activity";
 export * from "./sqlite-ddt";
 export * from "./sqlite-identity-access";
 export * from "./sqlite-execution-control";

@@ -38,7 +38,16 @@ describe.skipIf(!connectionString)("PostgreSQL DDT repository", () => {
           ...scope,
           id: jobId,
           status: "previewed",
-          uploads: [],
+          uploads: [
+            {
+              id: `upload-${suffix}`,
+              fileName: "data.xlsx",
+              objectKey: `ddt/${suffix}/data.xlsx`,
+              sha256: "a".repeat(64),
+              sizeBytes: 128,
+              mediaType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            },
+          ],
           progressPercent: 0,
           totalFiles: 1,
           validFiles: 1,
@@ -62,6 +71,60 @@ describe.skipIf(!connectionString)("PostgreSQL DDT repository", () => {
             unchangedCount: 0,
           },
         ],
+      });
+      await expect(
+        repository.replaceImportPreview({
+          jobId,
+          uploads: [
+            {
+              id: `upload-${suffix}`,
+              fileName: "data.xlsx",
+              objectKey: `ddt/${suffix}/data.xlsx`,
+              sha256: "a".repeat(64),
+              sizeBytes: 128,
+              mediaType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+              columnResolutions: [
+                {
+                  sheetName: "data",
+                  columnIndex: 3,
+                  resolvedName: "环境",
+                  deleteColumn: true,
+                },
+              ],
+            },
+          ],
+          files: [
+            {
+              id: fileId,
+              uploadId: `upload-${suffix}`,
+              fileName: "data.xlsx",
+              rowCount: 2,
+              insertedCount: 2,
+              updatedCount: 0,
+              unchangedCount: 0,
+            },
+          ],
+          totalFiles: 1,
+          validFiles: 1,
+          totalRows: 2,
+          failedFiles: 0,
+          updatedAt: now,
+          projectIds: [DEFAULT_PROJECT_ID],
+        }),
+      ).resolves.toMatchObject({
+        uploads: [
+          {
+            columnResolutions: [
+              {
+                sheetName: "data",
+                columnIndex: 3,
+                resolvedName: "环境",
+                deleteColumn: true,
+              },
+            ],
+          },
+        ],
+        files: [{ id: fileId, status: "valid" }],
       });
       await expect(
         repository.importFile({

@@ -112,6 +112,48 @@ test("tasks and execution history follow the selected project version", async ({
   await expect(page.getByText(firstSuiteName, { exact: true })).toBeVisible();
   await expect(page.getByText(secondSuiteName, { exact: true })).toHaveCount(0);
   await expect(page.getByText(/当前版本「Lifecycle version」共 1 个任务/u)).toBeVisible();
+  const suiteCard = page.getByRole("article", { name: `任务 ${firstSuiteName}`, exact: true });
+  await expect(suiteCard.getByLabel("近 7 天执行统计")).toContainText("7 天执行次数");
+  await expect(suiteCard.locator(".suite-statistics dd").first()).toHaveText("1次");
+  await expect(suiteCard.getByRole("region", { name: "最近执行记录" })).toHaveCount(0);
+  const recentExecutionsRoute = `**/api/v1/case-suites/${firstSuite.id}/executions?*`;
+  await page.route(
+    recentExecutionsRoute,
+    (route) =>
+      route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: JSON.stringify({
+          error: {
+            code: "UNAVAILABLE",
+            message: "执行记录暂时不可用",
+            requestId: "suite-history-fixture",
+          },
+        }),
+      }),
+    { times: 1 },
+  );
+  await suiteCard.getByRole("button", { name: "最近执行", exact: true }).click();
+  await expect(suiteCard.getByRole("alert")).toContainText("执行记录暂时不可用");
+  await suiteCard.getByRole("button", { name: "重试", exact: true }).click();
+  const recentExecutions = suiteCard.getByRole("region", { name: "最近执行记录" });
+  await expect(recentExecutions.locator(".suite-history-record")).toHaveCount(1);
+  await expect(recentExecutions).toContainText("第 1 / 1 轮");
+  await expect(recentExecutions.getByRole("link", { name: "全部记录" })).toHaveAttribute(
+    "href",
+    new RegExp(`suiteId=${firstSuite.id}`),
+  );
+  const crossVersionHistory = await page.request.get(
+    `/api/v1/case-suites/${firstSuite.id}/executions?projectId=${project.id}&projectVersionId=${secondVersion.body.id}`,
+  );
+  expect(crossVersionHistory.status()).toBe(404);
+  const historyToggle = suiteCard.getByRole("button", { name: "最近执行", exact: true });
+  await historyToggle.focus();
+  await historyToggle.press("Enter");
+  await expect(historyToggle).toHaveAttribute("aria-expanded", "false");
+  await expect(recentExecutions).toHaveCount(0);
+  await historyToggle.press("Enter");
+  await expect(recentExecutions.locator(".suite-history-record")).toHaveCount(1);
   const suiteExportDownload = page.waitForEvent("download");
   await page.getByRole("button", { name: `导出 ${firstSuiteName} 用例` }).click();
   const downloadedWorkbook = await suiteExportDownload;
@@ -132,6 +174,10 @@ test("tasks and execution history follow the selected project version", async ({
     await expectUiIntegrity(page);
     await captureUi(page, `version-scoped-case-suites-${viewport.width}`);
   }
+  await recentExecutions.locator(".suite-history-record").first().click();
+  await expect(page).toHaveURL(new RegExp(`/run-batches/${firstBatch.id}$`));
+  await page.goBack();
+  await expect(suiteCard.getByRole("button", { name: "最近执行", exact: true })).toBeVisible();
   await page.goto(`/case-suites/${encodeURIComponent(firstSuite.id)}`);
   await expect(page.locator(".execution-detail-hero, .page-hero").first()).toContainText(
     "项目版本「Lifecycle version」",

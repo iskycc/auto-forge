@@ -4,6 +4,7 @@ import { formatPlatformDateTime } from "@/lib/platform-date-time";
 
 import {
   ArchiveRestore,
+  AlertTriangle,
   BarChart3,
   Boxes,
   ChevronRight,
@@ -24,7 +25,7 @@ import {
   Upload,
   X,
 } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import type { DragEvent as ReactDragEvent, ReactNode } from "react";
 
 import { Button, Input, OperationProgress, Select, Textarea } from "@/components/ui";
@@ -76,6 +77,36 @@ type ImportFile = {
   unchangedCount: number;
   errorSummary?: string;
 };
+type ColumnConflict = {
+  archiveEntryName?: string;
+  sheetName: string;
+  normalizedName: string;
+  columns: Array<{
+    columnIndex: number;
+    originalName: string;
+    currentName: string;
+    suggestedName: string;
+    nonEmptyCount: number;
+    sampleValues: Array<{ rowNumber: number; value: string }>;
+  }>;
+};
+type ColumnResolution = {
+  uploadIndex: number;
+  archiveEntryName?: string;
+  sheetName: string;
+  columnIndex: number;
+  resolvedName: string;
+  deleteColumn?: boolean;
+};
+type ImportUpload = {
+  id: string;
+  fileName: string;
+  columnConflicts?: ColumnConflict[];
+};
+type LocatedColumnConflict = ColumnConflict & {
+  uploadIndex: number;
+  uploadName: string;
+};
 type ImportJob = Scope & {
   id: string;
   status: string;
@@ -88,6 +119,7 @@ type ImportJob = Scope & {
   unchangedCount: number;
   skippedCount: number;
   failedFiles: number;
+  uploads: ImportUpload[];
   files: ImportFile[];
   createdAt: string;
 };
@@ -1330,10 +1362,14 @@ function ImportDialog({
   const [strategy, setStrategy] = useState("overwrite");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [showColumnConflicts, setShowColumnConflicts] = useState(false);
+  const [columnConflictError, setColumnConflictError] = useState("");
+  const [columnResolutions, setColumnResolutions] = useState<ColumnResolution[]>([]);
   const [uploadProgress, setUploadProgress] = useState<{
     label: string;
     detail: string;
     percent: number;
+    indeterminate?: boolean;
   }>();
   const selectFiles = (selectedFiles: File[]) => {
     if (!selectedFiles.length) return;
@@ -1345,6 +1381,9 @@ function ImportDialog({
       return;
     }
     setFiles(selectedFiles);
+    setJob(undefined);
+    setShowColumnConflicts(false);
+    setColumnResolutions([]);
     setError("");
   };
   const handleDragEnter = (event: ReactDragEvent<HTMLButtonElement>) => {
@@ -1378,6 +1417,20 @@ function ImportDialog({
     }
     selectFiles(droppedFiles);
   };
+  const acceptPreview = (
+    nextJob: ImportJob,
+    previousResolutions: readonly ColumnResolution[] = [],
+  ) => {
+    const conflicts = importColumnConflicts(nextJob);
+    setJob(nextJob);
+    if (conflicts.length) {
+      setColumnResolutions(defaultColumnResolutions(conflicts, previousResolutions));
+      setColumnConflictError("");
+      setShowColumnConflicts(true);
+    } else {
+      setShowColumnConflicts(false);
+    }
+  };
   const preview = async () => {
     setBusy(true);
     setError("");
@@ -1400,12 +1453,48 @@ function ImportDialog({
           }),
       });
       if (!response.ok) throw await responseError(response);
-      setJob((await response.json()) as ImportJob);
+      acceptPreview((await response.json()) as ImportJob);
       setUploadProgress(undefined);
     } catch (previewError) {
       setError(messageOf(previewError));
       setUploadProgress(undefined);
     } finally {
+      setBusy(false);
+    }
+  };
+  const resolveColumns = async () => {
+    if (!job) return;
+    const validationError = validateColumnResolutions(
+      columnResolutions,
+      importColumnConflicts(job),
+    );
+    if (validationError) {
+      setColumnConflictError(validationError);
+      return;
+    }
+    const normalizedResolutions = columnResolutions.map((resolution) => ({
+      ...resolution,
+      resolvedName: resolution.resolvedName.trim(),
+    }));
+    setBusy(true);
+    setColumnConflictError("");
+    setUploadProgress({
+      label: "正在应用并重新预检",
+      detail: "使用服务器已保存的原始文件，无需重新上传",
+      percent: 0,
+      indeterminate: true,
+    });
+    try {
+      const nextJob = await requestJson<ImportJob>(endpoint(`imports/${job.id}/resolve-columns`), {
+        method: "POST",
+        headers: jsonHeaders,
+        body: JSON.stringify({ columnResolutions: normalizedResolutions }),
+      });
+      acceptPreview(nextJob, normalizedResolutions);
+    } catch (resolutionError) {
+      setColumnConflictError(messageOf(resolutionError));
+    } finally {
+      setUploadProgress(undefined);
       setBusy(false);
     }
   };
@@ -1424,145 +1513,378 @@ function ImportDialog({
       setBusy(false);
     }
   };
+  const unresolvedColumnConflicts = job ? importColumnConflicts(job) : [];
   return (
-    <Dialog title="导入 DDT 用例" subtitle="先预检，再选择冲突策略启动后台导入" onClose={onClose}>
-      <div className="ddt-import-dialog">
-        {error ? <div className="inline-notice error">{error}</div> : null}
-        {!job ? (
-          <>
-            <Button
-              className={`ddt-dropzone${dragActive ? " drag-active" : ""}`}
-              type="button"
-              aria-busy={busy}
-              aria-describedby="ddt-import-file-help"
-              disabled={busy}
-              onDragEnter={handleDragEnter}
-              onDragLeave={handleDragLeave}
-              onDragOver={handleDragOver}
-              onDrop={handleDrop}
-              onClick={() => inputRef.current?.click()}
-            >
-              <Upload size={28} />
-              <strong>{dragActive ? "松开即可添加文件" : "选择或拖入表格、ZIP 压缩包"}</strong>
-              <span id="ddt-import-file-help">
-                支持 XLSX、XLS、XLSB、CSV、ODS；ZIP 可包含根目录或一层子目录
-              </span>
-            </Button>
-            <Input
-              ref={inputRef}
-              hidden
-              multiple
-              type="file"
-              accept={DDT_IMPORT_FILE_ACCEPT}
-              onChange={(event) => {
-                selectFiles([...(event.target.files ?? [])]);
-                event.target.value = "";
-              }}
-            />
-            {files.length ? (
-              <div className="ddt-picked-files">
-                {files.map((file) => (
-                  <span key={`${file.name}-${file.size}`}>
-                    <FileSpreadsheet size={14} /> {file.name}
-                    <small>{formatBytes(file.size)}</small>
+    <>
+      <Dialog
+        title="导入 DDT 用例"
+        subtitle="先预检，再选择冲突策略启动后台导入"
+        onClose={onClose}
+        inactive={showColumnConflicts}
+      >
+        <div className="ddt-import-dialog">
+          {error ? <div className="inline-notice error">{error}</div> : null}
+          {!job ? (
+            <>
+              <Button
+                className={`ddt-dropzone${dragActive ? " drag-active" : ""}`}
+                type="button"
+                aria-busy={busy}
+                aria-describedby="ddt-import-file-help"
+                disabled={busy}
+                onDragEnter={handleDragEnter}
+                onDragLeave={handleDragLeave}
+                onDragOver={handleDragOver}
+                onDrop={handleDrop}
+                onClick={() => inputRef.current?.click()}
+              >
+                <Upload size={28} />
+                <strong>{dragActive ? "松开即可添加文件" : "选择或拖入表格、ZIP 压缩包"}</strong>
+                <span id="ddt-import-file-help">
+                  支持 XLSX、XLS、XLSB、CSV、ODS；ZIP 可包含根目录或一层子目录
+                </span>
+              </Button>
+              <Input
+                ref={inputRef}
+                hidden
+                multiple
+                type="file"
+                accept={DDT_IMPORT_FILE_ACCEPT}
+                onChange={(event) => {
+                  selectFiles([...(event.target.files ?? [])]);
+                  event.target.value = "";
+                }}
+              />
+              {files.length ? (
+                <div className="ddt-picked-files">
+                  {files.map((file) => (
+                    <span key={`${file.name}-${file.size}`}>
+                      <FileSpreadsheet size={14} /> {file.name}
+                      <small>{formatBytes(file.size)}</small>
+                    </span>
+                  ))}
+                </div>
+              ) : null}
+              {uploadProgress ? (
+                <OperationProgress
+                  detail={uploadProgress.detail}
+                  {...(uploadProgress.indeterminate ? { indeterminate: true } : {})}
+                  label={uploadProgress.label}
+                  value={uploadProgress.percent}
+                />
+              ) : null}
+              <footer>
+                <Button className="button button-secondary" type="button" onClick={onClose}>
+                  取消
+                </Button>
+                <Button
+                  className="button button-primary"
+                  type="button"
+                  disabled={!files.length || busy}
+                  onClick={() => void preview()}
+                >
+                  {busy ? <LoaderCircle className="spin" size={15} /> : null}开始预检
+                </Button>
+              </footer>
+            </>
+          ) : (
+            <>
+              {unresolvedColumnConflicts.length ? (
+                <div className="ddt-column-conflict-notice" role="alert">
+                  <AlertTriangle size={18} />
+                  <span>
+                    <strong>发现重复列名</strong>
+                    <small>需要先对照内容并选择保留、改名或删除，才能启动导入。</small>
                   </span>
+                  <Button
+                    className="button button-secondary"
+                    type="button"
+                    onClick={() => setShowColumnConflicts(true)}
+                  >
+                    处理重复列名
+                  </Button>
+                </div>
+              ) : null}
+              <div className="ddt-preview-summary">
+                <span>
+                  <small>有效表格</small>
+                  <strong>
+                    {job.validFiles} / {job.totalFiles}
+                  </strong>
+                </span>
+                <span>
+                  <small>数据行</small>
+                  <strong>{job.totalRows}</strong>
+                </span>
+                <span>
+                  <small>预计新增</small>
+                  <strong>{job.files.reduce((sum, file) => sum + file.insertedCount, 0)}</strong>
+                </span>
+                <span>
+                  <small>预计更新</small>
+                  <strong>{job.files.reduce((sum, file) => sum + file.updatedCount, 0)}</strong>
+                </span>
+              </div>
+              <div className="ddt-preview-files">
+                {job.files.map((file) => (
+                  <div key={file.id}>
+                    <strong>{file.archiveEntryName ?? file.fileName}</strong>
+                    <span>{file.rowCount} 行</span>
+                    {file.errorSummary ? <small>{file.errorSummary}</small> : <i>可导入</i>}
+                  </div>
                 ))}
               </div>
-            ) : null}
-            {uploadProgress ? (
-              <OperationProgress
-                detail={uploadProgress.detail}
-                label={uploadProgress.label}
-                value={uploadProgress.percent}
-              />
-            ) : null}
-            <footer>
-              <Button className="button button-secondary" type="button" onClick={onClose}>
-                取消
-              </Button>
-              <Button
-                className="button button-primary"
-                type="button"
-                disabled={!files.length || busy}
-                onClick={() => void preview()}
+              <fieldset className="ddt-strategy">
+                <legend>CaseID 冲突时</legend>
+                {(
+                  [
+                    ["overwrite", "覆盖并保留历史"],
+                    ["skip", "跳过已有用例"],
+                    ["error", "遇到冲突终止"],
+                  ] as const
+                ).map(([value, label]) => (
+                  <label key={value}>
+                    <Input
+                      type="radio"
+                      name="strategy"
+                      value={value}
+                      checked={strategy === value}
+                      onChange={() => setStrategy(value)}
+                    />
+                    <span>
+                      <strong>{label}</strong>
+                    </span>
+                  </label>
+                ))}
+              </fieldset>
+              <footer>
+                <Button
+                  className="button button-secondary"
+                  type="button"
+                  onClick={() => setJob(undefined)}
+                >
+                  重新选择
+                </Button>
+                <Button
+                  className="button button-primary"
+                  type="button"
+                  disabled={!job.validFiles || busy || unresolvedColumnConflicts.length > 0}
+                  onClick={() => void confirm()}
+                >
+                  {busy ? <LoaderCircle className="spin" size={15} /> : null}确认并后台导入
+                </Button>
+              </footer>
+            </>
+          )}
+        </div>
+      </Dialog>
+      {showColumnConflicts && job ? (
+        <ColumnConflictDialog
+          conflicts={unresolvedColumnConflicts}
+          resolutions={columnResolutions}
+          busy={busy}
+          error={columnConflictError}
+          {...(uploadProgress ? { uploadProgress } : {})}
+          onChange={(resolutions) => {
+            setColumnConflictError("");
+            setColumnResolutions(resolutions);
+          }}
+          onClose={() => setShowColumnConflicts(false)}
+          onConfirm={() => void resolveColumns()}
+        />
+      ) : null}
+    </>
+  );
+}
+
+function ColumnConflictDialog({
+  conflicts,
+  resolutions,
+  busy,
+  error,
+  uploadProgress,
+  onChange,
+  onClose,
+  onConfirm,
+}: {
+  conflicts: LocatedColumnConflict[];
+  resolutions: ColumnResolution[];
+  busy: boolean;
+  error: string;
+  uploadProgress?: {
+    label: string;
+    detail: string;
+    percent: number;
+    indeterminate?: boolean;
+  };
+  onChange(resolutions: ColumnResolution[]): void;
+  onClose(): void;
+  onConfirm(): void;
+}) {
+  const firstColumn = conflicts[0]?.columns[0];
+  const firstColumnKey = firstColumn
+    ? columnResolutionKey({
+        uploadIndex: conflicts[0]!.uploadIndex,
+        ...(conflicts[0]!.archiveEntryName
+          ? { archiveEntryName: conflicts[0]!.archiveEntryName }
+          : {}),
+        sheetName: conflicts[0]!.sheetName,
+        columnIndex: firstColumn.columnIndex,
+      })
+    : "";
+  return (
+    <Dialog
+      title="解决重复列名"
+      subtitle="对照两列内容后选择改名保留或删除，平台会使用已保存的原文件重新预检"
+      onClose={onClose}
+      backdropClassName="ddt-column-conflict-backdrop"
+    >
+      <div className="ddt-column-conflict-dialog">
+        <div className="ddt-column-conflict-guidance">
+          <AlertTriangle size={18} />
+          <p>
+            <strong>检测到 {conflicts.length} 组冲突</strong>
+            <span>每组至少保留一列；列名不区分大小写，CaseID 与 srNum 必须保留一个原始列名。</span>
+          </p>
+        </div>
+        {error ? (
+          <div className="inline-notice error" role="alert">
+            {error}
+          </div>
+        ) : null}
+        <div className="ddt-column-conflict-list">
+          {conflicts.map((conflict) => {
+            const location = conflict.archiveEntryName ?? conflict.uploadName;
+            return (
+              <section
+                key={`${conflict.uploadIndex}-${location}-${conflict.sheetName}-${conflict.normalizedName}`}
               >
-                {busy ? <LoaderCircle className="spin" size={15} /> : null}开始预检
-              </Button>
-            </footer>
-          </>
-        ) : (
-          <>
-            <div className="ddt-preview-summary">
-              <span>
-                <small>有效表格</small>
-                <strong>
-                  {job.validFiles} / {job.totalFiles}
-                </strong>
-              </span>
-              <span>
-                <small>数据行</small>
-                <strong>{job.totalRows}</strong>
-              </span>
-              <span>
-                <small>预计新增</small>
-                <strong>{job.files.reduce((sum, file) => sum + file.insertedCount, 0)}</strong>
-              </span>
-              <span>
-                <small>预计更新</small>
-                <strong>{job.files.reduce((sum, file) => sum + file.updatedCount, 0)}</strong>
-              </span>
-            </div>
-            <div className="ddt-preview-files">
-              {job.files.map((file) => (
-                <div key={file.id}>
-                  <strong>{file.archiveEntryName ?? file.fileName}</strong>
-                  <span>{file.rowCount} 行</span>
-                  {file.errorSummary ? <small>{file.errorSummary}</small> : <i>可导入</i>}
-                </div>
-              ))}
-            </div>
-            <fieldset className="ddt-strategy">
-              <legend>CaseID 冲突时</legend>
-              {(
-                [
-                  ["overwrite", "覆盖并保留历史"],
-                  ["skip", "跳过已有用例"],
-                  ["error", "遇到冲突终止"],
-                ] as const
-              ).map(([value, label]) => (
-                <label key={value}>
-                  <Input
-                    type="radio"
-                    name="strategy"
-                    value={value}
-                    checked={strategy === value}
-                    onChange={() => setStrategy(value)}
-                  />
+                <header>
                   <span>
-                    <strong>{label}</strong>
+                    <FileSpreadsheet size={16} />
+                    <strong title={location}>{location}</strong>
                   </span>
-                </label>
-              ))}
-            </fieldset>
-            <footer>
-              <Button
-                className="button button-secondary"
-                type="button"
-                onClick={() => setJob(undefined)}
-              >
-                重新选择
-              </Button>
-              <Button
-                className="button button-primary"
-                type="button"
-                disabled={!job.validFiles || busy}
-                onClick={() => void confirm()}
-              >
-                {busy ? <LoaderCircle className="spin" size={15} /> : null}确认并后台导入
-              </Button>
-            </footer>
-          </>
-        )}
+                  <small>
+                    {conflict.sheetName} Sheet · “{conflict.columns[0]?.currentName}”重复
+                  </small>
+                </header>
+                <div>
+                  {conflict.columns.map((column) => {
+                    const identity = {
+                      uploadIndex: conflict.uploadIndex,
+                      ...(conflict.archiveEntryName
+                        ? { archiveEntryName: conflict.archiveEntryName }
+                        : {}),
+                      sheetName: conflict.sheetName,
+                      columnIndex: column.columnIndex,
+                    };
+                    const key = columnResolutionKey(identity);
+                    const resolution = resolutions.find(
+                      (candidate) => columnResolutionKey(candidate) === key,
+                    );
+                    const resolvedName = resolution?.resolvedName ?? column.suggestedName;
+                    const deleteColumn = resolution?.deleteColumn === true;
+                    return (
+                      <article
+                        className={`ddt-column-choice${deleteColumn ? " is-deleted" : ""}`}
+                        key={key}
+                      >
+                        <div className="ddt-column-choice-heading">
+                          <span>
+                            <small>第 {column.columnIndex + 1} 列</small>
+                            <strong title={column.originalName}>{column.originalName}</strong>
+                          </span>
+                          <label className="ddt-column-delete-option">
+                            <Input
+                              type="checkbox"
+                              checked={deleteColumn}
+                              aria-label={`${location} ${conflict.sheetName} Sheet 删除第 ${column.columnIndex + 1} 列 ${column.originalName}`}
+                              onChange={(event) =>
+                                onChange(
+                                  replaceColumnResolution(resolutions, {
+                                    ...identity,
+                                    resolvedName,
+                                    deleteColumn: event.target.checked,
+                                  }),
+                                )
+                              }
+                            />
+                            <Trash2 size={14} aria-hidden="true" />
+                            删除此列
+                          </label>
+                        </div>
+                        <div className="ddt-column-samples">
+                          <header>
+                            <span>内容预览</span>
+                            <small>{column.nonEmptyCount} 个非空单元格</small>
+                          </header>
+                          {column.sampleValues.length ? (
+                            <ul>
+                              {column.sampleValues.map((sample) => (
+                                <li key={`${sample.rowNumber}-${sample.value}`}>
+                                  <small>行 {sample.rowNumber}</small>
+                                  <span title={sample.value}>{sample.value}</span>
+                                </li>
+                              ))}
+                            </ul>
+                          ) : (
+                            <p>该列没有非空内容</p>
+                          )}
+                        </div>
+                        <label className="ddt-column-name-field">
+                          <span>{deleteColumn ? "该列将在导入时忽略" : "保留后的列名"}</span>
+                          <Input
+                            autoFocus={key === firstColumnKey}
+                            disabled={deleteColumn}
+                            maxLength={256}
+                            value={resolvedName}
+                            aria-label={`${location} ${conflict.sheetName} Sheet 第 ${column.columnIndex + 1} 列的新列名`}
+                            onChange={(event) =>
+                              onChange(
+                                replaceColumnResolution(resolutions, {
+                                  ...identity,
+                                  resolvedName: event.target.value,
+                                  ...(deleteColumn ? { deleteColumn: true } : {}),
+                                }),
+                              )
+                            }
+                          />
+                        </label>
+                      </article>
+                    );
+                  })}
+                </div>
+              </section>
+            );
+          })}
+        </div>
+        {uploadProgress ? (
+          <OperationProgress
+            detail={uploadProgress.detail}
+            {...(uploadProgress.indeterminate ? { indeterminate: true } : {})}
+            label={uploadProgress.label}
+            value={uploadProgress.percent}
+          />
+        ) : null}
+        <footer>
+          <Button
+            className="button button-secondary"
+            type="button"
+            disabled={busy}
+            onClick={onClose}
+          >
+            暂不处理
+          </Button>
+          <Button
+            className="button button-primary"
+            type="button"
+            disabled={busy || conflicts.length === 0}
+            onClick={onConfirm}
+          >
+            {busy ? <LoaderCircle className="spin" size={15} /> : null}
+            应用并重新预检
+          </Button>
+        </footer>
       </div>
     </Dialog>
   );
@@ -1967,15 +2289,20 @@ function Dialog({
   subtitle,
   onClose,
   children,
+  inactive = false,
+  backdropClassName,
 }: {
   title: string;
   subtitle: string;
   onClose(): void;
   children: ReactNode;
+  inactive?: boolean;
+  backdropClassName?: string;
 }) {
+  const titleId = useId();
   return (
     <div
-      className="modal-backdrop"
+      className={`modal-backdrop${backdropClassName ? ` ${backdropClassName}` : ""}`}
       role="presentation"
       onMouseDown={(event) => {
         if (event.target === event.currentTarget) onClose();
@@ -1984,12 +2311,14 @@ function Dialog({
       <section
         className="modal-card ddt-dialog"
         role="dialog"
-        aria-modal="true"
-        aria-labelledby="ddt-dialog-title"
+        aria-modal={!inactive}
+        aria-hidden={inactive || undefined}
+        inert={inactive}
+        aria-labelledby={titleId}
       >
         <header>
           <div>
-            <h2 id="ddt-dialog-title">{title}</h2>
+            <h2 id={titleId}>{title}</h2>
             <p>{subtitle}</p>
           </div>
           <Button className="icon-button" type="button" aria-label="关闭弹窗" onClick={onClose}>
@@ -2016,6 +2345,130 @@ async function responseError(response: Response): Promise<Error> {
     (await readApiError(response, `请求失败（${response.status}）`)) ??
     new Error(`请求失败（${response.status}）`)
   );
+}
+
+function importColumnConflicts(job: ImportJob): LocatedColumnConflict[] {
+  return job.uploads.flatMap((upload, uploadIndex) =>
+    (upload.columnConflicts ?? []).map((conflict) => ({
+      ...conflict,
+      uploadIndex,
+      uploadName: upload.fileName,
+    })),
+  );
+}
+
+function defaultColumnResolutions(
+  conflicts: readonly LocatedColumnConflict[],
+  previous: readonly ColumnResolution[] = [],
+): ColumnResolution[] {
+  const byColumn = new Map(
+    previous.map((resolution) => [columnResolutionKey(resolution), resolution]),
+  );
+  for (const conflict of conflicts) {
+    for (const column of conflict.columns) {
+      const resolution: ColumnResolution = {
+        uploadIndex: conflict.uploadIndex,
+        ...(conflict.archiveEntryName ? { archiveEntryName: conflict.archiveEntryName } : {}),
+        sheetName: conflict.sheetName,
+        columnIndex: column.columnIndex,
+        resolvedName: column.suggestedName,
+      };
+      const key = columnResolutionKey(resolution);
+      if (!byColumn.has(key)) byColumn.set(key, resolution);
+    }
+  }
+  return [...byColumn.values()].sort(
+    (left, right) =>
+      left.uploadIndex - right.uploadIndex ||
+      (left.archiveEntryName ?? "").localeCompare(right.archiveEntryName ?? "") ||
+      left.sheetName.localeCompare(right.sheetName) ||
+      left.columnIndex - right.columnIndex,
+  );
+}
+
+function replaceColumnResolution(
+  resolutions: readonly ColumnResolution[],
+  replacement: ColumnResolution,
+): ColumnResolution[] {
+  const key = columnResolutionKey(replacement);
+  return resolutions.map((resolution) =>
+    columnResolutionKey(resolution) === key ? replacement : resolution,
+  );
+}
+
+function validateColumnResolutions(
+  resolutions: readonly ColumnResolution[],
+  conflicts: readonly LocatedColumnConflict[],
+): string | undefined {
+  const namesBySheet = new Map<string, Set<string>>();
+  for (const resolution of resolutions) {
+    if (resolution.deleteColumn) continue;
+    const resolvedName = resolution.resolvedName.trim();
+    if (!resolvedName) {
+      return `${resolution.sheetName} Sheet 第 ${resolution.columnIndex + 1} 列的新列名不能为空。`;
+    }
+    const sheetKey = [
+      resolution.uploadIndex,
+      resolution.archiveEntryName ?? "",
+      resolution.sheetName,
+    ].join("\u0000");
+    const names = namesBySheet.get(sheetKey) ?? new Set<string>();
+    const normalizedName = resolvedName.toLocaleLowerCase("en-US");
+    if (names.has(normalizedName)) {
+      return `${resolution.sheetName} Sheet 的新列名“${resolvedName}”仍然重复。`;
+    }
+    names.add(normalizedName);
+    namesBySheet.set(sheetKey, names);
+  }
+  const resolutionsByColumn = new Map(
+    resolutions.map((resolution) => [columnResolutionKey(resolution), resolution]),
+  );
+  for (const conflict of conflicts) {
+    const conflictResolutions = conflict.columns.flatMap((column) => {
+      const key = columnResolutionKey({
+        uploadIndex: conflict.uploadIndex,
+        ...(conflict.archiveEntryName ? { archiveEntryName: conflict.archiveEntryName } : {}),
+        sheetName: conflict.sheetName,
+        columnIndex: column.columnIndex,
+      });
+      const resolution = resolutionsByColumn.get(key);
+      return resolution ? [resolution] : [];
+    });
+    const retainedResolutions = conflictResolutions.filter(
+      (resolution) => !resolution.deleteColumn,
+    );
+    if (conflictResolutions.length && !retainedResolutions.length) {
+      return `${conflict.sheetName} Sheet 的重复列“${conflict.columns[0]?.currentName ?? conflict.normalizedName}”至少需要保留一列。`;
+    }
+    const requiredName =
+      conflict.normalizedName === "caseid"
+        ? "CaseID"
+        : conflict.normalizedName === "srnum"
+          ? "srNum"
+          : undefined;
+    if (!requiredName) continue;
+    const conflictResolvedNames = retainedResolutions.map((resolution) =>
+      resolution.resolvedName.trim(),
+    );
+    if (conflictResolvedNames.length && !conflictResolvedNames.includes(requiredName)) {
+      return `${conflict.sheetName} Sheet 必须保留一列名为 ${requiredName}。`;
+    }
+  }
+  return undefined;
+}
+
+function columnResolutionKey(
+  resolution: Pick<
+    ColumnResolution,
+    "uploadIndex" | "archiveEntryName" | "sheetName" | "columnIndex"
+  >,
+): string {
+  return [
+    resolution.uploadIndex,
+    resolution.archiveEntryName ?? "",
+    resolution.sheetName,
+    resolution.columnIndex,
+  ].join("\u0000");
 }
 
 function toggleSet(current: Set<string>, value: string): Set<string> {

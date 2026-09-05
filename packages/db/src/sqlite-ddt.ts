@@ -714,6 +714,70 @@ export class SqliteDdtRepository implements DdtRepository {
     return job;
   }
 
+  async replaceImportPreview(input: Parameters<DdtRepository["replaceImportPreview"]>[0]) {
+    runSqliteWriteTransaction(this.handle, () => {
+      if (input.projectIds?.length === 0) {
+        throw new DomainError("DDT_IMPORT_NOT_FOUND", "导入任务不存在。");
+      }
+      const scope = input.projectIds
+        ? `AND project_id IN (${input.projectIds.map(() => "?").join(",")})`
+        : "";
+      const updated = this.handle.client
+        .prepare(
+          `UPDATE ddt_import_jobs
+           SET uploads_json = ?, progress_percent = 0, total_files = ?, valid_files = ?,
+               total_rows = ?, inserted_count = 0, updated_count = 0, unchanged_count = 0,
+               skipped_count = 0, failed_files = ?, error_code = NULL, error_summary = NULL,
+               updated_at = ?
+           WHERE id = ? AND status = 'previewed' ${scope}`,
+        )
+        .run(
+          JSON.stringify(input.uploads),
+          input.totalFiles,
+          input.validFiles,
+          input.totalRows,
+          input.failedFiles,
+          input.updatedAt,
+          input.jobId,
+          ...(input.projectIds ?? []),
+        );
+      if (updated.changes !== 1) {
+        throw new DomainError(
+          "DDT_IMPORT_STATE_CONFLICT",
+          "导入预检不存在或已启动，无法更新列名处理结果。",
+        );
+      }
+      this.handle.client.prepare("DELETE FROM ddt_import_files WHERE job_id = ?").run(input.jobId);
+      const insertFile = this.handle.client.prepare(
+        `INSERT INTO ddt_import_files
+         (id, job_id, upload_id, file_name, archive_entry_name, status, row_count,
+          inserted_count, updated_count, unchanged_count, skipped_count, error_summary,
+          created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)`,
+      );
+      for (const file of input.files) {
+        insertFile.run(
+          file.id,
+          input.jobId,
+          file.uploadId,
+          file.fileName,
+          file.archiveEntryName ?? null,
+          file.errorSummary ? "excluded" : "valid",
+          file.rowCount,
+          file.insertedCount,
+          file.updatedCount,
+          file.unchangedCount,
+          file.errorSummary ?? null,
+          input.updatedAt,
+          input.updatedAt,
+        );
+      }
+    });
+    const job = await this.getImportJob(input.jobId, input.projectIds);
+    if (!job) throw new Error("DDT import preview replacement was not persisted.");
+    return job;
+  }
+
   async confirmImport(input: Parameters<DdtRepository["confirmImport"]>[0]) {
     runSqliteWriteTransaction(this.handle, () => {
       const scope = input.projectIds

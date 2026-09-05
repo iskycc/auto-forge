@@ -8,6 +8,7 @@ import {
   CaseDefinitionService,
   CaseSourceService,
   CaseSuiteService,
+  CaseSuiteActivityService,
   DdtCaseService,
   DdtImportService,
   DashboardSnapshotService,
@@ -31,6 +32,7 @@ import {
   type AttemptLogShareRepository,
   type CaseCatalogRepository,
   type CaseSuiteRepository,
+  type CaseSuiteActivityRepository,
   type DdtRepository,
   type DashboardSnapshotRepository,
   type FailureAnalysisRepository,
@@ -58,6 +60,7 @@ import {
   SqliteAttemptLogShareRepository,
   SqliteCaseCatalogRepository,
   SqliteCaseSuiteRepository,
+  SqliteCaseSuiteActivityRepository,
   SqliteDdtRepository,
   SqliteDashboardSnapshotRepository,
   SqliteExecutionControlRepository,
@@ -115,6 +118,7 @@ async function createPlatformServices() {
   const configurationStore = appConfigurationStore(config);
   let catalog: CaseCatalogRepository;
   let suites: CaseSuiteRepository;
+  let suiteActivityRepository: CaseSuiteActivityRepository;
   let ddtRepository: DdtRepository;
   let dashboardSnapshotRepository: DashboardSnapshotRepository;
   let failureAnalysisRepository: FailureAnalysisRepository;
@@ -144,6 +148,7 @@ async function createPlatformServices() {
     const attemptLogs = createAttemptLogStore(join(config.dataDirectory, "attempt-logs"));
     catalog = new SqliteCaseCatalogRepository(database);
     suites = new SqliteCaseSuiteRepository(database);
+    suiteActivityRepository = new SqliteCaseSuiteActivityRepository(database);
     ddtRepository = new SqliteDdtRepository(database);
     dashboardSnapshotRepository = new SqliteDashboardSnapshotRepository(database);
     runners = new SqliteRunnerRepository(database);
@@ -174,6 +179,7 @@ async function createPlatformServices() {
         PostgresAttemptLogShareRepository,
         PostgresCaseCatalogRepository,
         PostgresCaseSuiteRepository,
+        PostgresCaseSuiteActivityRepository,
         PostgresDdtRepository,
         PostgresDashboardSnapshotRepository,
         PostgresIdentityAccessRepository,
@@ -262,6 +268,7 @@ async function createPlatformServices() {
     }
     catalog = new PostgresCaseCatalogRepository(database);
     suites = new PostgresCaseSuiteRepository(database);
+    suiteActivityRepository = new PostgresCaseSuiteActivityRepository(database);
     ddtRepository = new PostgresDdtRepository(database);
     dashboardSnapshotRepository = new PostgresDashboardSnapshotRepository(database);
     runners = new PostgresRunnerRepository(database);
@@ -288,6 +295,12 @@ async function createPlatformServices() {
     targetJavaVersion: config.testNgTargetJavaVersion,
   });
   const clock = { now: () => new Date() };
+  const caseSuiteActivity = new CaseSuiteActivityService(
+    suiteActivityRepository,
+    suites,
+    batches,
+    clock,
+  );
   const ids = { next: () => uuidV7() };
   const secretCipher = new AesGcmSecretCipher(config.masterKey);
   const webhooks = new WebhookNotificationService(
@@ -607,6 +620,7 @@ async function createPlatformServices() {
     caseSources,
     suites,
     caseSuites,
+    caseSuiteActivity,
     roundRecoveryConfigurationInspector,
     caseDefinitions,
     ddtCases,

@@ -93,6 +93,54 @@ describe("SQLite DDT repository", () => {
         ],
       });
       expect(preview).toMatchObject({ status: "previewed", validFiles: 1, totalRows: 2 });
+      const resolvedPreview = await repository.replaceImportPreview({
+        jobId: "ddt-job",
+        uploads: [
+          {
+            ...preview.uploads[0]!,
+            columnResolutions: [
+              {
+                sheetName: "data",
+                columnIndex: 3,
+                resolvedName: "环境",
+                deleteColumn: true,
+              },
+            ],
+          },
+        ],
+        files: [
+          {
+            id: "ddt-file",
+            uploadId: "upload-1",
+            fileName: "订单.xlsx",
+            rowCount: 2,
+            insertedCount: 2,
+            updatedCount: 0,
+            unchangedCount: 0,
+          },
+        ],
+        totalFiles: 1,
+        validFiles: 1,
+        totalRows: 2,
+        failedFiles: 0,
+        updatedAt: now,
+        projectIds: [DEFAULT_PROJECT_ID],
+      });
+      expect(resolvedPreview).toMatchObject({
+        uploads: [
+          {
+            columnResolutions: [
+              {
+                sheetName: "data",
+                columnIndex: 3,
+                resolvedName: "环境",
+                deleteColumn: true,
+              },
+            ],
+          },
+        ],
+        files: [{ id: "ddt-file", status: "valid" }],
+      });
 
       const envelope: JobEnvelope = {
         messageId: "ddt-message",

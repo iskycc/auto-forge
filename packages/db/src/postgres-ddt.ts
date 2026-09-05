@@ -583,6 +583,69 @@ export class PostgresDdtRepository implements DdtRepository {
     return job;
   }
 
+  async replaceImportPreview(input: Parameters<DdtRepository["replaceImportPreview"]>[0]) {
+    await this.ready();
+    if (input.projectIds?.length === 0) {
+      throw new DomainError("DDT_IMPORT_NOT_FOUND", "导入任务不存在。");
+    }
+    await transaction(this.handle, async (client) => {
+      const values: PgValue[] = [
+        JSON.stringify(input.uploads),
+        input.totalFiles,
+        input.validFiles,
+        input.totalRows,
+        input.failedFiles,
+        input.updatedAt,
+        input.jobId,
+      ];
+      const scope = input.projectIds
+        ? `AND project_id = ANY($${values.push([...input.projectIds])}::text[])`
+        : "";
+      const updated = await client.query(
+        `UPDATE ddt_import_jobs
+         SET uploads_json = $1, progress_percent = 0, total_files = $2, valid_files = $3,
+             total_rows = $4, inserted_count = 0, updated_count = 0, unchanged_count = 0,
+             skipped_count = 0, failed_files = $5, error_code = NULL, error_summary = NULL,
+             updated_at = $6
+         WHERE id = $7 AND status = 'previewed' ${scope}`,
+        values,
+      );
+      if (updated.rowCount !== 1) {
+        throw new DomainError(
+          "DDT_IMPORT_STATE_CONFLICT",
+          "导入预检不存在或已启动，无法更新列名处理结果。",
+        );
+      }
+      await client.query("DELETE FROM ddt_import_files WHERE job_id = $1", [input.jobId]);
+      for (const file of input.files) {
+        await client.query(
+          `INSERT INTO ddt_import_files
+           (id, job_id, upload_id, file_name, archive_entry_name, status, row_count,
+            inserted_count, updated_count, unchanged_count, skipped_count, error_summary,
+            created_at, updated_at)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,0,$11,$12,$12)`,
+          [
+            file.id,
+            input.jobId,
+            file.uploadId,
+            file.fileName,
+            file.archiveEntryName ?? null,
+            file.errorSummary ? "excluded" : "valid",
+            file.rowCount,
+            file.insertedCount,
+            file.updatedCount,
+            file.unchangedCount,
+            file.errorSummary ?? null,
+            input.updatedAt,
+          ],
+        );
+      }
+    });
+    const job = await this.getImportJob(input.jobId, input.projectIds);
+    if (!job) throw new Error("DDT import preview replacement was not persisted.");
+    return job;
+  }
+
   async confirmImport(input: Parameters<DdtRepository["confirmImport"]>[0]) {
     await this.ready();
     if (input.projectIds?.length === 0)

@@ -1,5 +1,10 @@
 import * as XLSX from "xlsx";
 import {
+  DDT_IMPORT_COLUMN_RESOLUTION_LIMIT,
+  type DdtColumnResolution,
+  type DdtImportColumnConflict,
+} from "@autoforge/contracts";
+import {
   createDdtJourney as createJourneyCase,
   ddtCaseCell as getCaseCell,
   ddtJourneySteps as getJourneySteps,
@@ -13,6 +18,8 @@ import {
 
 const SUPPORTED_EXTENSIONS = new Set(["xlsx", "xls", "xlsb", "csv", "ods"]);
 const EXPORTED_STEP_PRESENT_COLUMN = "__DDT_INSIGHT_STEP_PRESENT__";
+const COLUMN_SAMPLE_LIMIT = 8;
+const COLUMN_SAMPLE_VALUE_LENGTH = 256;
 const utf8CsvDecoder = new TextDecoder("utf-8", { fatal: true });
 const utf16LeCsvDecoder = new TextDecoder("utf-16le", { fatal: true });
 const utf16BeCsvDecoder = new TextDecoder("utf-16be", { fatal: true });
@@ -25,6 +32,22 @@ export interface ParsedSpreadsheet {
   columns: string[];
   rows: CaseData[];
   startedAt: number;
+}
+
+export class DdtDuplicateColumnsError extends Error {
+  readonly code = "DDT_DUPLICATE_COLUMNS";
+
+  constructor(
+    readonly fileName: string,
+    readonly conflicts: DdtImportColumnConflict[],
+  ) {
+    const locations = conflicts.map(
+      (conflict) =>
+        `${conflict.sheetName} Sheet 的“${conflict.columns[0]?.currentName ?? conflict.normalizedName}”`,
+    );
+    super(`存在重复列名：${locations.join("、")}，请人工确认列名后重试`);
+    this.name = "DdtDuplicateColumnsError";
+  }
 }
 
 function extensionOf(fileName: string) {
@@ -93,7 +116,106 @@ interface ParsedSheet {
   rows: CaseStepData[];
 }
 
-function parseCaseSheet(workbook: XLSX.WorkBook, sheetName: string): ParsedSheet {
+function duplicateColumnConflicts(
+  sheetName: string,
+  originalColumns: readonly string[],
+  columns: readonly (string | undefined)[],
+  matrix: readonly unknown[][],
+): DdtImportColumnConflict[] {
+  const indexesByName = new Map<string, number[]>();
+  columns.forEach((column, columnIndex) => {
+    if (column === undefined) return;
+    const normalized = column.toLocaleLowerCase("en-US");
+    indexesByName.set(normalized, [...(indexesByName.get(normalized) ?? []), columnIndex]);
+  });
+  const duplicateIndexes = new Set(
+    [...indexesByName.values()].filter((indexes) => indexes.length > 1).flat(),
+  );
+  const usedNames = new Set(
+    columns
+      .filter(
+        (column, columnIndex): column is string =>
+          column !== undefined && !duplicateIndexes.has(columnIndex),
+      )
+      .map((column) => column.toLocaleLowerCase("en-US")),
+  );
+
+  return [...indexesByName.entries()]
+    .filter(([, indexes]) => indexes.length > 1)
+    .map(([normalizedName, indexes]) => ({
+      sheetName,
+      normalizedName: normalizedName.slice(0, 256),
+      columns: indexes.map((columnIndex, occurrenceIndex) => {
+        const currentName = columns[columnIndex]!;
+        const suggestedName = availableColumnName(currentName, occurrenceIndex + 1, usedNames);
+        usedNames.add(suggestedName.toLocaleLowerCase("en-US"));
+        return {
+          columnIndex,
+          originalName: originalColumns[columnIndex]!,
+          currentName,
+          suggestedName,
+          ...columnContentSummary(matrix, columnIndex),
+        };
+      }),
+    }));
+}
+
+function columnContentSummary(
+  matrix: readonly unknown[][],
+  columnIndex: number,
+): Pick<DdtImportColumnConflict["columns"][number], "nonEmptyCount" | "sampleValues"> {
+  let nonEmptyCount = 0;
+  const sampleValues: Array<{ rowNumber: number; value: string }> = [];
+  for (let rowIndex = 1; rowIndex < matrix.length; rowIndex += 1) {
+    const value = String(matrix[rowIndex]?.[columnIndex] ?? "").trim();
+    if (!value) continue;
+    nonEmptyCount += 1;
+    if (sampleValues.length < COLUMN_SAMPLE_LIMIT) {
+      sampleValues.push({
+        rowNumber: rowIndex + 1,
+        value: value.replace(/\s+/gu, " ").slice(0, COLUMN_SAMPLE_VALUE_LENGTH),
+      });
+    }
+  }
+  return { nonEmptyCount, sampleValues };
+}
+
+export function assertResolvableColumnConflictLimit(
+  conflicts: readonly DdtImportColumnConflict[],
+  location: string,
+): void {
+  const conflictColumnCount = conflicts.reduce(
+    (total, conflict) => total + conflict.columns.length,
+    0,
+  );
+  if (conflictColumnCount > DDT_IMPORT_COLUMN_RESOLUTION_LIMIT) {
+    throw new Error(
+      `${location}中的重复列超过 ${DDT_IMPORT_COLUMN_RESOLUTION_LIMIT} 列，请先在表格中整理列名`,
+    );
+  }
+}
+
+function availableColumnName(baseName: string, occurrence: number, usedNames: Set<string>): string {
+  let suffix = occurrence;
+  let candidate = occurrence === 1 ? baseName : columnNameWithSuffix(baseName, occurrence);
+  while (usedNames.has(candidate.toLocaleLowerCase("en-US"))) {
+    suffix += 1;
+    candidate = columnNameWithSuffix(baseName, suffix);
+  }
+  return candidate;
+}
+
+function columnNameWithSuffix(baseName: string, suffix: number): string {
+  const ending = `_${suffix}`;
+  return `${baseName.slice(0, 256 - ending.length)}${ending}`;
+}
+
+function parseCaseSheet(
+  workbook: XLSX.WorkBook,
+  sheetName: string,
+  fileName: string,
+  columnResolutions: readonly DdtColumnResolution[],
+): ParsedSheet {
   const sheet = workbook.Sheets[sheetName];
   if (!sheet) throw new Error(`找不到 ${sheetName} Sheet`);
   const matrix = XLSX.utils.sheet_to_json<unknown[]>(sheet, {
@@ -107,22 +229,49 @@ function parseCaseSheet(workbook: XLSX.WorkBook, sheetName: string): ParsedSheet
     throw new Error(`${sheetName} Sheet 中没有可导入的用例数据`);
   }
 
-  const columns = matrix[0]!.map((cell) => String(cell ?? "").trim());
-  const emptyHeaderIndex = columns.findIndex((column) => !column);
+  const originalColumns = matrix[0]!.map((cell) => String(cell ?? "").trim());
+  const emptyHeaderIndex = originalColumns.findIndex((column) => !column);
   if (emptyHeaderIndex >= 0) {
     throw new Error(`${sheetName} Sheet 第 ${emptyHeaderIndex + 1} 列缺少列名`);
   }
-
-  const columnGroups = new Map<string, string[]>();
-  for (const column of columns) {
-    const normalized = column.toLocaleLowerCase("en-US");
-    columnGroups.set(normalized, [...(columnGroups.get(normalized) ?? []), column]);
+  const longHeaderIndex = originalColumns.findIndex((column) => column.length > 256);
+  if (longHeaderIndex >= 0) {
+    throw new Error(`${sheetName} Sheet 第 ${longHeaderIndex + 1} 列的列名超过 256 个字符`);
   }
-  const duplicateColumns = [...columnGroups.values()]
-    .filter((group) => group.length > 1)
-    .map((group) => [...new Set(group)].map((column) => `“${column}”`).join(" / "));
-  if (duplicateColumns.length) {
-    throw new Error(`${sheetName} Sheet 中存在重复列名：${duplicateColumns.join("、")}`);
+
+  const resolutions = columnResolutions.filter((resolution) => resolution.sheetName === sheetName);
+  const resolutionByIndex = new Map<number, { deleteColumn: boolean; resolvedName: string }>();
+  for (const resolution of resolutions) {
+    if (resolution.columnIndex >= originalColumns.length) {
+      throw new Error(
+        `${sheetName} Sheet 不存在第 ${resolution.columnIndex + 1} 列，无法应用列名冲突处理结果`,
+      );
+    }
+    const resolvedName = resolution.resolvedName.trim();
+    if (!resolvedName || resolvedName.length > 256) {
+      throw new Error(`${sheetName} Sheet 第 ${resolution.columnIndex + 1} 列的新列名无效`);
+    }
+    if (resolutionByIndex.has(resolution.columnIndex)) {
+      throw new Error(`${sheetName} Sheet 第 ${resolution.columnIndex + 1} 列存在重复处理结果`);
+    }
+    resolutionByIndex.set(resolution.columnIndex, {
+      deleteColumn: resolution.deleteColumn === true,
+      resolvedName,
+    });
+  }
+  const columns = originalColumns.map((column, columnIndex) => {
+    const resolution = resolutionByIndex.get(columnIndex);
+    if (resolution?.deleteColumn) return undefined;
+    return resolution?.resolvedName ?? column;
+  });
+  const removedConflictName = fullyRemovedDuplicateColumnName(originalColumns, columns);
+  if (removedConflictName) {
+    throw new Error(`${sheetName} Sheet 的重复列“${removedConflictName}”至少需要保留一列`);
+  }
+  const conflicts = duplicateColumnConflicts(sheetName, originalColumns, columns, matrix);
+  if (conflicts.length) {
+    assertResolvableColumnConflictLimit(conflicts, `${sheetName} Sheet `);
+    throw new DdtDuplicateColumnsError(fileName, conflicts);
   }
 
   const caseIdIndex = columns.findIndex((column) => column === "CaseID");
@@ -163,6 +312,7 @@ function parseCaseSheet(workbook: XLSX.WorkBook, sheetName: string): ParsedSheet
 
     const row: CaseStepData = {};
     columns.forEach((column, columnIndex) => {
+      if (column === undefined) return;
       row[column] = normalizeCell(sourceRow[columnIndex]);
     });
     row.CaseID = caseId;
@@ -173,10 +323,30 @@ function parseCaseSheet(workbook: XLSX.WorkBook, sheetName: string): ParsedSheet
   if (!rows.length) {
     throw new Error(`${sheetName} Sheet 中没有可导入的有效用例`);
   }
-  return { name: sheetName, columns, rows };
+  return { name: sheetName, columns: columns.filter((column) => column !== undefined), rows };
 }
 
-export function parseSpreadsheet(buffer: Buffer, fileName: string): ParsedSpreadsheet {
+function fullyRemovedDuplicateColumnName(
+  originalColumns: readonly string[],
+  columns: readonly (string | undefined)[],
+): string | undefined {
+  const indexesByName = new Map<string, number[]>();
+  originalColumns.forEach((column, columnIndex) => {
+    const normalized = column.toLocaleLowerCase("en-US");
+    indexesByName.set(normalized, [...(indexesByName.get(normalized) ?? []), columnIndex]);
+  });
+  const removed = [...indexesByName.values()].find(
+    (indexes) =>
+      indexes.length > 1 && indexes.every((columnIndex) => columns[columnIndex] === undefined),
+  );
+  return removed ? originalColumns[removed[0]!] : undefined;
+}
+
+export function parseSpreadsheet(
+  buffer: Buffer,
+  fileName: string,
+  columnResolutions: readonly DdtColumnResolution[] = [],
+): ParsedSpreadsheet {
   const startedAt = Date.now();
   const extension = extensionOf(fileName);
 
@@ -234,13 +404,36 @@ export function parseSpreadsheet(buffer: Buffer, fileName: string): ParsedSpread
     throw new Error("未找到 data Sheet，也未找到从 step1 开始的用户旅程 Sheet");
   }
 
+  const columnConflicts: DdtImportColumnConflict[] = [];
+  const parseSelectedSheet = (sheetName: string): ParsedSheet | undefined => {
+    try {
+      return parseCaseSheet(workbook, sheetName, fileName, columnResolutions);
+    } catch (error) {
+      if (!(error instanceof DdtDuplicateColumnsError)) throw error;
+      columnConflicts.push(...error.conflicts);
+      return undefined;
+    }
+  };
+  const parsedDataSheet = dataSheetName ? parseSelectedSheet(dataSheetName) : undefined;
+  const parsedStepCandidates = orderedStepSheets.map((entry) => ({
+    normalized: entry.normalized,
+    sheet: parseSelectedSheet(entry.original),
+  }));
+  if (columnConflicts.length) {
+    assertResolvableColumnConflictLimit(columnConflicts, "当前表格");
+    throw new DdtDuplicateColumnsError(fileName, columnConflicts);
+  }
+  const parsedSteps = parsedStepCandidates.map(({ normalized, sheet }) => ({
+    normalized,
+    sheet: sheet!,
+  }));
+
   const columns: string[] = [];
   const rows: CaseData[] = [];
   const seenCaseIds = new Set<string>();
-  if (dataSheetName) {
-    const dataSheet = parseCaseSheet(workbook, dataSheetName);
-    columns.push(...dataSheet.columns);
-    for (const row of dataSheet.rows) {
+  if (parsedDataSheet) {
+    columns.push(...parsedDataSheet.columns);
+    for (const row of parsedDataSheet.rows) {
       const caseId = String(row.CaseID);
       const normalizedCaseId = caseId.toLocaleLowerCase("en-US");
       if (seenCaseIds.has(normalizedCaseId)) {
@@ -251,11 +444,7 @@ export function parseSpreadsheet(buffer: Buffer, fileName: string): ParsedSpread
     }
   }
 
-  if (orderedStepSheets.length) {
-    const parsedSteps = orderedStepSheets.map((entry) => ({
-      normalized: entry.normalized,
-      sheet: parseCaseSheet(workbook, entry.original),
-    }));
+  if (parsedSteps.length) {
     const firstParsedStep = parsedSteps[0]!;
     const expectedRows = firstParsedStep.sheet.rows.length;
     const mismatched = parsedSteps.find(({ sheet }) => sheet.rows.length !== expectedRows);

@@ -16,7 +16,7 @@ AutoForge `1.1.0` 将 `iskycc/ddt-insight` 在提交 `705f552` 中的差异化�
 | `data` 普通表格、`step1…stepN` 用户旅程    | 共享 DDT 领域模型；身份字段自动同步到每个 Step                                                                                 |
 | XLSX/XLS/XLSB/CSV/ODS                      | 离线内置 `@autoforge/ddt-import` 解析器                                                                                        |
 | ZIP、中文文件名、常见中文 CSV 编码         | 有界 ZIP64/CRC/路径校验和 UTF-8、UTF-16、GB18030、Windows-1252 解码                                                            |
-| 局部预检和覆盖/跳过/报错策略               | 导入浮窗逐文件预检；确认后进入持久异步任务                                                                                     |
+| 局部预检和覆盖/跳过/报错策略               | 导入浮窗逐文件预检；重复列在弹窗中对照内容后改名保留或整列删除并再次预检；确认后进入持久异步任务                               |
 | 导入取消、恢复、来源追踪、任务 CaseID 导出 | Lite SQLite 队列或 Full outbox/JetStream；原始上传保存在 ObjectStore；文件写入与成功状态同事务；可导出每次任务的 CaseID 与结果 |
 | 分页、业务分组、动态字段高级搜索           | 有界游标页、srNum 排名、JSON 动态字段操作符；不会一次渲染全部 DOM                                                              |
 | 单条/批量更新、删除和导出                  | 修订号冲突保护、最多 5,000 条单次变更、XLSX 导出                                                                               |
@@ -44,6 +44,13 @@ AutoForge `1.1.0` 将 `iskycc/ddt-insight` 在提交 `705f552` 中的差异化�
 上传边界为单文件 128 MiB、单请求 200 个文件、总计 512 MiB、ZIP 10,000 个目录项；压缩包内容还受单文件和总解压大小约束。文件名只用于展示，ObjectStore 键由项目、任务、服务端 ID 和 SHA-256 构造。原始上传作为来源证据保留，随项目备份；业务记录与对象清理不假设跨存储事务。
 
 Lite 的预检、确认和导入状态保存在 SQLite，确认事务同时写入 SQLite 持久队列。Full 的确认事务同时写 PostgreSQL outbox，再由 relay 发送到 JetStream。工作器续租队列消息；若进程中断，重投可重新领取 `running` 任务，只处理 `valid/importing` 文件。单个文件的用例写入、覆盖历史、CaseID 结果和文件成功状态在同一数据库事务内完成，因此恢复不会把半个文件误报为成功。
+
+表格列名按大小写不敏感规则判重。发生冲突时，预检任务在 `uploads_json` 中保存文件、ZIP 条目、
+Sheet、零基列位置、建议名称、整列非空数量和最多 8 个、单值最多 256 字符的非空内容样例。页面并排
+展示冲突列，允许逐列改名保留或删除整列，但每组至少保留一列，`CaseID`/`srNum` 仍须保留一个规范
+列名。处理请求直接读取 ObjectStore 中的原始文件并原子替换同一个预检任务的逐文件结果，不重复
+上传或创建遗留任务；选择随任务保存，后台 Worker 再次解析时使用完全相同的保留/删除结果，因此
+预检结果不会与实际导入分叉。内容样例只返回给当前有管理权限的导入操作者，不写审计日志。
 
 ## DDT 执行快照
 
@@ -79,6 +86,7 @@ Full 使用同一领域和协议语义持久化到 PostgreSQL。两种模式都�
 - `GET /api/v1/ddt/cases/{CaseID}/history`
 - `POST /api/v1/ddt/cases/{CaseID}/history/{historyId}/restore`
 - `POST /api/v1/ddt/imports/preview`（`multipart/form-data` 的 `files`）
+- `POST /api/v1/ddt/imports/{jobId}/resolve-columns`
 - `POST /api/v1/ddt/imports/{jobId}/confirm|cancel`
 - `GET /api/v1/ddt/imports/{jobId}/case-ids`
 - `POST/PATCH/DELETE /api/v1/ddt/templates/{templateId?}`

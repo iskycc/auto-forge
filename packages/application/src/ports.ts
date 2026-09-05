@@ -109,6 +109,7 @@ import type {
   DdtImportFileResult,
   DdtImportJob,
   DdtImportPreviewFile,
+  DdtUploadReference,
   DdtImportedRow,
   DdtTemplateWriteRecord,
 } from "./ddt-types";
@@ -1111,6 +1112,17 @@ export interface DdtRepository {
   createImportPreview(input: {
     job: Omit<DdtImportJob, "files">;
     files: DdtImportPreviewFile[];
+  }): Promise<DdtImportJob>;
+  replaceImportPreview(input: {
+    jobId: string;
+    uploads: DdtUploadReference[];
+    files: DdtImportPreviewFile[];
+    totalFiles: number;
+    validFiles: number;
+    totalRows: number;
+    failedFiles: number;
+    updatedAt: string;
+    projectIds?: readonly string[];
   }): Promise<DdtImportJob>;
   confirmImport(input: {
     jobId: string;

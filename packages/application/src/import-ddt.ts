@@ -1,6 +1,12 @@
 import { createHash } from "node:crypto";
 
-import type { JobEnvelope } from "@autoforge/contracts";
+import {
+  ddtImportColumnConflictSchema,
+  type DdtColumnResolution,
+  type DdtImportColumnConflict,
+  type DdtImportColumnResolution,
+  type JobEnvelope,
+} from "@autoforge/contracts";
 import {
   DomainError,
   ddtCaseCell,
@@ -18,6 +24,7 @@ export type DdtUpload = {
   fileName: string;
   mediaType: string;
   content: Uint8Array;
+  columnResolutions?: DdtColumnResolution[];
 };
 
 export type ParsedDdtFile = {
@@ -60,15 +67,24 @@ export class DdtImportService {
         try {
           parsedFiles = await this.spreadsheets.parseUpload(upload);
         } catch (error) {
+          const duplicateColumns = duplicateColumnError(error);
+          if (duplicateColumns) {
+            storedUploads[storedUploads.length - 1] = {
+              ...uploadReference,
+              columnConflicts: duplicateColumns.conflicts,
+            };
+          }
           previewFiles.push({
             id: this.ids.next(),
             uploadId: uploadReference.id,
-            fileName: upload.fileName,
+            fileName: duplicateColumns?.fileName ?? upload.fileName,
             rowCount: 0,
             insertedCount: 0,
             updatedCount: 0,
             unchangedCount: 0,
-            errorSummary: errorMessage(error),
+            errorSummary: duplicateColumns
+              ? "发现重复列名，请人工选择保留、改名或删除冲突列。"
+              : errorMessage(error),
           });
           continue;
         }
@@ -116,6 +132,89 @@ export class DdtImportService {
       jobId,
       conflictStrategy,
       dispatchJob: this.jobEnvelope(jobId, now),
+      updatedAt: now,
+      ...(projectIds ? { projectIds } : {}),
+    });
+  }
+
+  async resolveColumnConflicts(
+    jobId: string,
+    resolutions: readonly DdtImportColumnResolution[],
+    projectIds?: readonly string[],
+  ): Promise<DdtImportJob> {
+    const current = await this.repository.getImportJob(jobId, projectIds);
+    if (!current) throw new DomainError("DDT_IMPORT_NOT_FOUND", "导入任务不存在。");
+    if (current.status !== "previewed") {
+      throw new DomainError("DDT_IMPORT_STATE_CONFLICT", "导入任务已启动或结束，不能再修改列名。");
+    }
+    validateColumnResolutionTargets(current, resolutions);
+
+    const now = this.clock.now().toISOString();
+    const templates = new Map(
+      (await this.repository.listTemplates(current)).map((template) => [
+        template.srNum.toLocaleLowerCase("en-US"),
+        template,
+      ]),
+    );
+    const resolutionsByUpload = groupColumnResolutions(resolutions);
+    const uploads: DdtUploadReference[] = [];
+    const previewFiles: DdtImportPreviewFile[] = [];
+    const seenCaseIds = new Set<string>();
+
+    for (const [uploadIndex, storedUpload] of current.uploads.entries()) {
+      const content = await this.objectStore.read(storedUpload.objectKey);
+      const columnResolutions = resolutionsByUpload.get(uploadIndex) ?? [];
+      let nextUpload: DdtUploadReference = {
+        id: storedUpload.id,
+        fileName: storedUpload.fileName,
+        objectKey: storedUpload.objectKey,
+        sha256: storedUpload.sha256,
+        sizeBytes: storedUpload.sizeBytes,
+        mediaType: storedUpload.mediaType,
+        ...(columnResolutions.length ? { columnResolutions } : {}),
+      };
+      try {
+        const parsedFiles = await this.spreadsheets.parseUpload({
+          fileName: storedUpload.fileName,
+          mediaType: storedUpload.mediaType,
+          content,
+          ...(columnResolutions.length ? { columnResolutions } : {}),
+        });
+        for (const parsed of parsedFiles) {
+          previewFiles.push(
+            await this.previewParsedFile(current, storedUpload.id, parsed, seenCaseIds, templates),
+          );
+        }
+      } catch (error) {
+        const duplicateColumns = duplicateColumnError(error);
+        if (duplicateColumns) {
+          nextUpload = { ...nextUpload, columnConflicts: duplicateColumns.conflicts };
+        }
+        previewFiles.push({
+          id: this.ids.next(),
+          uploadId: storedUpload.id,
+          fileName: duplicateColumns?.fileName ?? storedUpload.fileName,
+          rowCount: 0,
+          insertedCount: 0,
+          updatedCount: 0,
+          unchangedCount: 0,
+          errorSummary: duplicateColumns
+            ? "发现重复列名，请人工选择保留、改名或删除冲突列。"
+            : errorMessage(error),
+        });
+      }
+      uploads.push(nextUpload);
+    }
+
+    const validFiles = previewFiles.filter((file) => !file.errorSummary);
+    return this.repository.replaceImportPreview({
+      jobId,
+      uploads,
+      files: previewFiles,
+      totalFiles: previewFiles.length,
+      validFiles: validFiles.length,
+      totalRows: validFiles.reduce((total, file) => total + file.rowCount, 0),
+      failedFiles: previewFiles.length - validFiles.length,
       updatedAt: now,
       ...(projectIds ? { projectIds } : {}),
     });
@@ -399,6 +498,7 @@ export class DdtImportService {
         fileName: upload.fileName,
         mediaType: upload.mediaType,
         content,
+        ...(upload.columnResolutions ? { columnResolutions: upload.columnResolutions } : {}),
       });
       const expected = job.files.filter((file) => file.uploadId === upload.id);
       for (const file of expected) {
@@ -444,6 +544,7 @@ export class DdtImportService {
       sha256,
       sizeBytes: upload.content.byteLength,
       mediaType: upload.mediaType || "application/octet-stream",
+      ...(upload.columnResolutions ? { columnResolutions: upload.columnResolutions } : {}),
     };
   }
 
@@ -474,6 +575,159 @@ function safeExtension(fileName: string): string {
 
 function errorMessage(error: unknown): string {
   return (error instanceof Error ? error.message : "DDT 导入失败。").slice(0, 1_000);
+}
+
+function duplicateColumnError(
+  error: unknown,
+): { fileName: string; conflicts: DdtImportColumnConflict[] } | undefined {
+  if (
+    !(error instanceof Error) ||
+    !("code" in error) ||
+    error.code !== "DDT_DUPLICATE_COLUMNS" ||
+    !("fileName" in error) ||
+    typeof error.fileName !== "string" ||
+    !("conflicts" in error)
+  ) {
+    return undefined;
+  }
+  const parsed = ddtImportColumnConflictSchema.array().safeParse(error.conflicts);
+  return parsed.success ? { fileName: error.fileName, conflicts: parsed.data } : undefined;
+}
+
+function validateColumnResolutionTargets(
+  job: DdtImportJob,
+  resolutions: readonly DdtImportColumnResolution[],
+): void {
+  const allowed = new Set<string>();
+  const required = new Set<string>();
+  for (const [uploadIndex, upload] of job.uploads.entries()) {
+    for (const resolution of upload.columnResolutions ?? []) {
+      allowed.add(columnTargetKey(uploadIndex, resolution));
+    }
+    for (const conflict of upload.columnConflicts ?? []) {
+      for (const column of conflict.columns) {
+        const target = {
+          ...(conflict.archiveEntryName ? { archiveEntryName: conflict.archiveEntryName } : {}),
+          sheetName: conflict.sheetName,
+          columnIndex: column.columnIndex,
+        };
+        const key = columnTargetKey(uploadIndex, target);
+        allowed.add(key);
+        required.add(key);
+      }
+    }
+  }
+
+  const submitted = new Set<string>();
+  for (const resolution of resolutions) {
+    const key = columnTargetKey(resolution.uploadIndex, resolution);
+    if (!allowed.has(key)) {
+      throw new DomainError(
+        "DDT_COLUMN_RESOLUTION_INVALID",
+        "列名处理结果与当前导入任务中的冲突列不匹配，请刷新后重试。",
+      );
+    }
+    if (submitted.has(key)) {
+      throw new DomainError(
+        "DDT_COLUMN_RESOLUTION_INVALID",
+        "同一列存在多个处理结果，请仅保留一个新列名。",
+      );
+    }
+    submitted.add(key);
+  }
+  if ([...required].some((key) => !submitted.has(key))) {
+    throw new DomainError("DDT_COLUMN_RESOLUTION_REQUIRED", "请处理当前所有重复列。");
+  }
+  validateRetainedConflictColumns(job, resolutions);
+  validateRequiredIdentityColumnNames(job, resolutions);
+}
+
+function validateRetainedConflictColumns(
+  job: DdtImportJob,
+  resolutions: readonly DdtImportColumnResolution[],
+): void {
+  const resolutionsByColumn = new Map(
+    resolutions.map((resolution) => [
+      columnTargetKey(resolution.uploadIndex, resolution),
+      resolution,
+    ]),
+  );
+  for (const [uploadIndex, upload] of job.uploads.entries()) {
+    for (const conflict of upload.columnConflicts ?? []) {
+      const retainedColumn = conflict.columns.some((column) => {
+        const key = columnTargetKey(uploadIndex, {
+          ...(conflict.archiveEntryName ? { archiveEntryName: conflict.archiveEntryName } : {}),
+          sheetName: conflict.sheetName,
+          columnIndex: column.columnIndex,
+        });
+        return resolutionsByColumn.get(key)?.deleteColumn !== true;
+      });
+      if (!retainedColumn) {
+        throw new DomainError(
+          "DDT_COLUMN_DELETE_INVALID",
+          `${conflict.sheetName} Sheet 的重复列“${conflict.columns[0]?.currentName ?? conflict.normalizedName}”至少需要保留一列。`,
+        );
+      }
+    }
+  }
+}
+
+function validateRequiredIdentityColumnNames(
+  job: DdtImportJob,
+  resolutions: readonly DdtImportColumnResolution[],
+): void {
+  const resolutionsByColumn = new Map(
+    resolutions.map((resolution) => [
+      columnTargetKey(resolution.uploadIndex, resolution),
+      resolution,
+    ]),
+  );
+  for (const [uploadIndex, upload] of job.uploads.entries()) {
+    for (const conflict of upload.columnConflicts ?? []) {
+      const requiredName =
+        conflict.normalizedName === "caseid"
+          ? "CaseID"
+          : conflict.normalizedName === "srnum"
+            ? "srNum"
+            : undefined;
+      if (!requiredName) continue;
+      const preservesRequiredName = conflict.columns.some((column) => {
+        const key = columnTargetKey(uploadIndex, {
+          ...(conflict.archiveEntryName ? { archiveEntryName: conflict.archiveEntryName } : {}),
+          sheetName: conflict.sheetName,
+          columnIndex: column.columnIndex,
+        });
+        const resolution = resolutionsByColumn.get(key);
+        return resolution?.deleteColumn !== true && resolution?.resolvedName === requiredName;
+      });
+      if (!preservesRequiredName) {
+        throw new DomainError(
+          "DDT_REQUIRED_COLUMN_RENAME_INVALID",
+          `${conflict.sheetName} Sheet 必须保留一列名为 ${requiredName}。`,
+        );
+      }
+    }
+  }
+}
+
+function groupColumnResolutions(
+  resolutions: readonly DdtImportColumnResolution[],
+): Map<number, DdtColumnResolution[]> {
+  const grouped = new Map<number, DdtColumnResolution[]>();
+  for (const resolution of resolutions) {
+    const { uploadIndex, ...columnResolution } = resolution;
+    grouped.set(uploadIndex, [...(grouped.get(uploadIndex) ?? []), columnResolution]);
+  }
+  return grouped;
+}
+
+function columnTargetKey(
+  uploadIndex: number,
+  target: Pick<DdtColumnResolution, "archiveEntryName" | "sheetName" | "columnIndex">,
+): string {
+  return [uploadIndex, target.archiveEntryName ?? "", target.sheetName, target.columnIndex].join(
+    "\u0000",
+  );
 }
 
 class DdtImportCancellationError extends Error {}
