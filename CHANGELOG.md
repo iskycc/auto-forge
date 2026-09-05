@@ -4,6 +4,17 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## 1.11.2 - 2026-09-06
+
+### Fixed
+
+- 分析页面验收在验证右上角成功反馈后主动关闭横幅，再检查页面布局，消除横幅停留时间与测试速度造成的遮挡误报；保留反馈、布局及导出功能断言。
+- 包含 1.11.0 的分析与页面缓存功能，以及 1.11.1 的布局、刷新竞争和双数据库快照读取修复。
+
+### Database, compatibility and offline assets
+
+- 无生产逻辑、数据库迁移、配置字段、依赖或 Runner 协议变更；沿用 1.11.0 / 1.11.1 升级步骤与双架构离线资产矩阵。
+
 ## 1.11.1 - 2026-09-06
 
 ### Fixed

@@ -48,7 +48,11 @@ test("terminal task failures support durable single and batch analysis with evid
     .filter({ hasText: fixture.suiteName })
     .getByRole("button", { name: "开始分析" })
     .click();
-  await expect(page.locator(".toast-viewport").getByRole("status")).toContainText("已开始分析");
+  const feedback = page.locator(".toast-viewport").getByRole("status");
+  await expect(feedback).toContainText("已开始分析");
+  // A floating confirmation intentionally overlays the page; acknowledge it before checking page layout.
+  await feedback.getByRole("button", { name: "关闭通知" }).click();
+  await expect(feedback).toHaveCount(0);
   await expect(taskCard).toContainText("最终失败");
   await expect(taskCard.getByRole("button", { name: "导出分析结果" })).toBeVisible();
   for (const viewport of [
