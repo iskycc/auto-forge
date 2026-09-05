@@ -238,14 +238,16 @@ async function createContainerSuite(
   await suiteLink.click();
   await page.locator('select[name="executor"]').selectOption("testng-container");
   await page.getByRole("button", { name: "保存修改" }).click();
-  await expect(page.getByRole("status")).toContainText("用例任务已更新");
+  await expect(page.locator(".toast-viewport").getByRole("status")).toContainText("用例任务已更新");
 
   await page.goto("/cases");
   await page.getByLabel("页内搜索用例").fill(caseDisplayName);
   await page.getByLabel(`选择 ${caseDisplayName}`).check();
   await page.locator('select[aria-label="目标用例任务"]').selectOption({ label: suiteName });
   await page.getByRole("button", { name: "加入任务" }).click();
-  await expect(page.getByRole("status")).toContainText("已将 1 个用例加入任务");
+  await expect(page.locator(".toast-viewport").getByRole("status")).toContainText(
+    "已将 1 个用例加入任务",
+  );
 }
 
 async function scheduleExecution(page: Page, suiteName: string): Promise<string> {

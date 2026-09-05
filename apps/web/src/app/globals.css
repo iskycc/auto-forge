@@ -8869,11 +8869,12 @@ button.icon-button:disabled {
 
 .topbar-tools {
   position: relative;
-  display: flex;
+  display: grid;
   flex: 1 1 auto;
+  grid-template-columns: minmax(0, 1fr) repeat(2, auto);
   align-items: center;
   gap: 10px;
-  min-width: 0;
+  min-width: min-content;
 }
 
 .global-search-shell,
@@ -8890,6 +8891,7 @@ button.icon-button:disabled {
 
 .global-search-shell .global-search {
   width: 100%;
+  overflow: hidden;
 }
 
 .notification-shell {
@@ -15719,8 +15721,9 @@ button.icon-button:disabled {
 .global-project-switcher {
   display: grid;
   width: clamp(410px, 42vw, 620px);
+  min-width: 0;
   flex: 0 1 620px;
-  grid-template-columns: minmax(150px, 1.35fr) minmax(110px, 1fr) minmax(110px, 1fr);
+  grid-template-columns: minmax(0, 1.35fr) repeat(2, minmax(0, 1fr));
   align-items: end;
   gap: 7px;
 }
@@ -16561,6 +16564,7 @@ button.icon-button:disabled {
 
   .topbar-tools {
     flex: 0 0 auto;
+    grid-template-columns: repeat(2, auto);
   }
 
   .global-search-shell,
@@ -17853,6 +17857,7 @@ button.icon-button:disabled {
   display: grid;
   grid-template-columns: 1fr;
   gap: 3px;
+  line-height: 1.3;
 }
 
 .failure-analysis-card dl > div {

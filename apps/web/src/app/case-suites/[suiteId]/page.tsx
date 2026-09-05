@@ -58,7 +58,7 @@ export default async function CaseSuitePage({ params }: Props) {
         ) : null}
       </section>
       <CaseSuiteSchedulePanel
-        key={`${suite.id}:${suite.revision}:${schedule?.revision ?? "none"}`}
+        key={suite.id}
         canManage={canManage}
         canReadExecutions={hasPermission(identity, "run.read", suite.projectId)}
         initialSchedule={schedule}

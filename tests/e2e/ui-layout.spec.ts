@@ -351,13 +351,30 @@ test("topbar tools remain separate from execution controls across desktop widths
   );
   await ensureAdministrator(page);
   await expect(page.getByRole("button", { name: "2 条未读通知" })).toBeVisible();
-  for (const width of [1024, 1180, 1280, 1536, 1024]) {
+  for (const width of [1024, 1180, 1181, 1280, 1536, 1024]) {
     await page.setViewportSize({ width, height: width === 1024 ? 768 : 1024 });
     const tools = page.locator(".topbar-tools");
     const actions = page.locator(".topbar-actions");
     await expect(tools.getByRole("button", { name: "搜索配置" })).toBeVisible();
     await expect(tools.getByRole("button", { name: /通知$/ })).toBeVisible();
     await expect(actions.getByRole("button", { name: "开始执行", exact: true })).toBeVisible();
+    const toolbarGeometry = await tools.evaluate((toolbar) => {
+      const bounds = toolbar.getBoundingClientRect();
+      return Array.from(toolbar.querySelectorAll(".notification-shell")).map((control) => {
+        const controlBounds = control.getBoundingClientRect();
+        return {
+          left: controlBounds.left - bounds.left,
+          right: bounds.right - controlBounds.right,
+        };
+      });
+    });
+    for (const control of toolbarGeometry) {
+      expect(control.left, "toolbar must reserve space for each icon").toBeGreaterThanOrEqual(0);
+      expect(
+        control.right,
+        "toolbar icons must stay inside their allocated width",
+      ).toBeGreaterThanOrEqual(0);
+    }
     await expectUiIntegrity(page);
     await captureUi(page, "/topbar-controls", width, false);
   }

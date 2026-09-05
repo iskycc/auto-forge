@@ -422,7 +422,7 @@ async function createSharedSuite(page: Page): Promise<void> {
   await suiteLink.click();
   await page.getByLabel("重试次数上限").fill("0");
   await page.getByRole("button", { name: "保存修改" }).click();
-  await expect(page.getByRole("status")).toContainText("用例任务已更新");
+  await expect(page.locator(".toast-viewport").getByRole("status")).toContainText("用例任务已更新");
 
   // 搜索 "Concurrent" 同时命中 Alpha/Beta/Gamma，全选加入同一任务；Runner
   // 并发度为 2，因此 Gamma 会成为首轮完成后才补派的后续 attempt。
@@ -431,7 +431,9 @@ async function createSharedSuite(page: Page): Promise<void> {
   await page.getByLabel("选择当前搜索结果中的全部用例").check();
   await page.locator('select[aria-label="目标用例任务"]').selectOption({ label: suiteName });
   await page.getByRole("button", { name: "加入任务" }).click();
-  await expect(page.getByRole("status")).toContainText("已将 3 个用例加入任务");
+  await expect(page.locator(".toast-viewport").getByRole("status")).toContainText(
+    "已将 3 个用例加入任务",
+  );
 }
 
 async function scheduleExecution(page: Page): Promise<string> {

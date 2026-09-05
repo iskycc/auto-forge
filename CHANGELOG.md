@@ -4,6 +4,20 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## 1.11.1 - 2026-09-06
+
+### Fixed
+
+- 顶栏为搜索配置和通知保留独立布局空间，修复桌面宽度切换及响应式边界处与执行按钮重叠的问题；分析卡片明确时间与结论行高，保持列表密度。
+- 后台快照刷新保留已打开的任务执行历史与计划弹框，计划数据按修订号同步，避免暂停计划后弹框被组件重新挂载关闭。
+- Agent、批次共享及任务操作验收将成功反馈限定到右上角横幅，兼容任务成员独立加载状态。
+- Full 容量验收改用独立、测试结束后删除的 PostgreSQL 磁盘卷，避免连续十万条数据夹具与 WAL 写满 1 GiB 临时文件系统；失败诊断增加数据库日志。
+
+### Database, compatibility and offline assets
+
+- 无新增数据库迁移、生产依赖、配置字段或 Runner 协议变更；沿用 1.11.0 升级步骤。
+- 发布资产继续包含 amd64 / arm64 离线镜像、五主机部署文件、Jenkins 插件及签名校验和与 SBOM。
+
 ## 1.11.0 - 2026-09-06
 
 ### Added

@@ -486,7 +486,7 @@ async function createConfiguredSuite(
   await page.getByLabel("重试次数上限").fill(String(retryLimit));
   await page.getByLabel("产物规则（每行一个相对路径 glob）").fill(artifactPatterns.join("\n"));
   await page.getByRole("button", { name: "保存修改" }).click();
-  await expect(page.getByRole("status")).toContainText("用例任务已更新");
+  await expect(page.locator(".toast-viewport").getByRole("status")).toContainText("用例任务已更新");
   return suiteId;
 }
 
@@ -500,7 +500,9 @@ async function addOrdinaryCaseToSuite(
   await page.getByLabel(`选择 ${caseDisplayName}`).first().check();
   await page.locator('select[aria-label="目标用例任务"]').selectOption({ label: suiteName });
   await page.getByRole("button", { name: "加入任务" }).click();
-  await expect(page.getByRole("status")).toContainText("已将 1 个用例加入任务");
+  await expect(page.locator(".toast-viewport").getByRole("status")).toContainText(
+    "已将 1 个用例加入任务",
+  );
 }
 
 function requiresEnvironmentAddress(testName: string): boolean {

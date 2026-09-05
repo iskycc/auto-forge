@@ -27,6 +27,21 @@ export function CaseSuiteSchedulePanel({
   canReadExecutions: boolean;
 }) {
   const [schedule, setSchedule] = useState(initialSchedule);
+  const [previousSchedule, setPreviousSchedule] = useState(initialSchedule);
+  if (
+    previousSchedule?.id !== initialSchedule?.id ||
+    previousSchedule?.revision !== initialSchedule?.revision
+  ) {
+    setPreviousSchedule(initialSchedule);
+    if (
+      !initialSchedule ||
+      !schedule ||
+      initialSchedule.id !== schedule.id ||
+      initialSchedule.revision >= schedule.revision
+    ) {
+      setSchedule(initialSchedule);
+    }
+  }
   const [dialogOpen, setDialogOpen] = useState(false);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);

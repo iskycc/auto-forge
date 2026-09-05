@@ -517,7 +517,7 @@ test("case metadata, immutable versions and suite policy survive lifecycle chang
   await page.setViewportSize({ width: 1536, height: 1024 });
   await page.getByLabel("产物规则（每行一个相对路径 glob）").fill("reports/**/*.xml");
   await page.getByRole("button", { name: "保存修改" }).click();
-  await expect(page.getByRole("status")).toContainText("用例任务已更新");
+  await expect(page.locator(".toast-viewport").getByRole("status")).toContainText("用例任务已更新");
   const retryPolicy = await browserJson<{
     policy: {
       retryConcurrencyRules: Array<{ concurrency: number; remainingRunsMinimum?: number }>;
@@ -577,7 +577,7 @@ test("case metadata, immutable versions and suite policy survive lifecycle chang
   await page.getByLabel("IANA 时区").fill("Asia/Shanghai");
   await page.getByLabel("错过触发").selectOption("skip");
   await page.getByRole("button", { name: "保存计划" }).click();
-  await expect(page.getByRole("status")).toContainText("计划触发已保存");
+  await expect(page.locator(".toast-viewport").getByRole("status")).toContainText("计划触发已保存");
 
   const copyName = `${suiteName} copy`;
   await page.goto("/case-suites");
@@ -603,7 +603,7 @@ test("case metadata, immutable versions and suite policy survive lifecycle chang
   await page.getByLabel("并发度（同时在途执行数）").fill("5");
   await page.getByLabel("任务说明").fill("independently edited task copy");
   await page.getByRole("button", { name: "保存修改" }).click();
-  await expect(page.getByRole("status")).toContainText("用例任务已更新");
+  await expect(page.locator(".toast-viewport").getByRole("status")).toContainText("用例任务已更新");
   const [copiedDetails, unchangedSource] = await Promise.all([
     browserJson<{ description: string; policy: { concurrency: number } }>(
       page,
@@ -666,7 +666,7 @@ test("case metadata, immutable versions and suite policy survive lifecycle chang
   await page.getByLabel(/启用（停用后/).uncheck();
   await page.getByLabel(/归档（保留历史记录/).check();
   await page.getByRole("button", { name: "保存修改" }).click();
-  await expect(page.getByRole("status")).toContainText("用例任务已更新");
+  await expect(page.locator(".toast-viewport").getByRole("status")).toContainText("用例任务已更新");
   const disabledSuite = await browserJson<{
     enabled: boolean;
     status: string;

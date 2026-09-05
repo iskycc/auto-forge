@@ -21,6 +21,7 @@ for (const name of [
   "web-replica",
   "worker",
   "worker-replica",
+  "postgres",
   "nats",
   "minio",
   "minio-proxy",

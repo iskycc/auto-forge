@@ -69,6 +69,8 @@
 
 最终浏览器命令为 `pnpm exec playwright test tests/e2e/all-rounds.spec.ts tests/e2e/platform-operations.spec.ts tests/e2e/read-model-cache.spec.ts tests/e2e/ui-layout.spec.ts --grep 'all-rounds virtual|configuration conflicts|large pages|topbar tools'`。没有关闭断言、配置自动重试或提高布局容差。已人工查看用例目录、任务详情、概览、洞察、存储删除及执行分享截图，覆盖 1024 / 1536 桌面宽度。
 
-一次中间复测曾在宽度切换时捕获顶栏通知与执行按钮重叠；同一页面连续六次尺寸切换的坐标检查未复现，最终完整轮次及专项顶栏场景均通过。这条观察保留在本地追踪记录中，不将一次通过解释为对所有浏览器和负载的绝对保证。
+发布 CI 再次捕获顶栏重叠后，补充了 1181px 响应式边界与图标必须位于工具栏内部的断言，旧实现可稳定复现向外溢出约 27px。工具栏改为为图标保留独立网格列，项目层级选择器允许收缩；分析卡片明确行高。后台刷新曾因计划面板使用修订号作为 React key 而关闭已打开弹框，现使用稳定任务 ID 并同步计划修订号，回归测试延迟服务器刷新响应以覆盖这一竞争。
+
+Full CI 的连续容量测试还复现了 PostgreSQL `PANIC: No space left on device`：两组十万条夹具及 WAL 写满了原先 1 GiB tmpfs。验收脚本改为独立磁盘卷，清理时删除该卷，失败证据保留数据库日志；本地按相同顺序复测两组容量测试均通过。生产部署的数据库卷配置未变。
 
 本地原始日志与截图保存在忽略目录 `.local/page-load-audit/`，主要记录为 `unit-final.log`、`integration-clean.log`、`performance-final.log`、`e2e-delivery.log`、`e2e-acceptance.log`、`build-final.log` 及 `delivery-ui/`。这些记录没有提交到仓库。独立 PostgreSQL 容器和浏览器验证服务在结束后清理。

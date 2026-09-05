@@ -13,6 +13,7 @@ readonly acceptance_phase="${1:-all}"
 readonly evidence_directory="${repository_root}/test-results/distributed/${acceptance_phase}"
 mkdir -p "${evidence_directory}"
 readonly postgres_container="autoforge-full-postgres-$$"
+readonly postgres_volume="autoforge-full-postgres-data-$$"
 readonly nginx_container="autoforge-full-nginx-$$"
 readonly redis_container="autoforge-full-redis-$$"
 readonly postgres_image="postgres:15-alpine@sha256:df7bca0066e6f60cc3dd32faa70caddec20e2c22b58932f79498e5704b23854a"
@@ -48,7 +49,8 @@ cleanup() {
     wait "${fault_controller_pid}" >/dev/null 2>&1
   fi
   if [[ "${exit_status}" -ne 0 ]]; then
-    for diagnostic_log in web-build web web-replica worker worker-replica nats minio minio-proxy fault-controller; do
+    docker logs --tail 400 "${postgres_container}" >"${temporary_directory}/postgres.log" 2>&1
+    for diagnostic_log in web-build web web-replica worker worker-replica postgres nats minio minio-proxy fault-controller; do
       if [[ -f "${temporary_directory}/${diagnostic_log}.log" ]]; then
         echo "=== ${diagnostic_log}.log (last 400 lines) ===" >&2
         tail -n 400 "${temporary_directory}/${diagnostic_log}.log" >&2
@@ -78,6 +80,7 @@ cleanup() {
     wait "${minio_proxy_pid}" >/dev/null 2>&1
   fi
   docker rm --force "${postgres_container}" "${redis_container}" "${nginx_container}" >/dev/null 2>&1
+  docker volume rm "${postgres_volume}" >/dev/null 2>&1
   rm -rf -- "${temporary_directory}"
   return "${exit_status}"
 }
@@ -192,9 +195,11 @@ download_dependencies() {
 }
 
 start_dependencies() {
+  # Both 100,000-row fixtures retain tables and WAL until cleanup. A 1 GiB tmpfs
+  # exhausts its storage during the second fixture and crashes PostgreSQL.
   docker run --detach \
     --name "${postgres_container}" \
-    --tmpfs /var/lib/postgresql/data:rw,noexec,nosuid,size=1g \
+    --mount "type=volume,source=${postgres_volume},target=/var/lib/postgresql/data" \
     --publish 127.0.0.1:55439:5432 \
     --env POSTGRES_DB=autoforge \
     --env POSTGRES_USER=autoforge \
@@ -641,8 +646,7 @@ verify_dependency_recovery() {
     http://127.0.0.1:3201/health/ready
 
   printf 'Verifying PostgreSQL interruption and recovery...\n'
-  # PostgreSQL uses a tmpfs fixture. pause/unpause simulates a network/service
-  # stall without turning a transient recovery test into intentional data loss.
+  # pause/unpause simulates a network/service stall while retaining the database.
   docker pause "${postgres_container}" >/dev/null
   wait_until_unready "primary Web after PostgreSQL interruption" \
     http://127.0.0.1:3199/api/v1/health/ready

@@ -179,8 +179,37 @@ test("task details manage their own plan and show execution history in a dialog"
 
   await plan.getByRole("button", { name: "暂停计划" }).click();
   await expect(page.getByText("计划已暂停。")).toBeVisible();
-  await openHistory.click();
-  await expect(dialog).toContainText("计划已暂停，不会自动执行");
+  const currentSuite = await browserJson<{ revision: number }>(
+    page,
+    `/api/v1/case-suites/${suite.body.id}`,
+  );
+  const refreshedDescription = "Schedule dialog survives background refresh";
+  const updatedSuite = await browserJson(page, `/api/v1/case-suites/${suite.body.id}`, {
+    method: "PATCH",
+    body: { description: refreshedDescription, expectedRevision: currentSuite.body.revision },
+  });
+  expect(updatedSuite.status).toBe(200);
+  let releaseRefresh!: () => void;
+  const refreshGate = new Promise<void>((resolve) => {
+    releaseRefresh = resolve;
+  });
+  const suitePageUrl = (url: URL) => url.pathname === `/case-suites/${suite.body.id}`;
+  await page.route(suitePageUrl, async (route) => {
+    const response = await route.fetch();
+    await refreshGate;
+    await route.fulfill({ response });
+  });
+  try {
+    await page.locator(".read-model-status").getByRole("button", { name: "刷新数据" }).click();
+    await openHistory.click();
+    await expect(dialog).toContainText("计划已暂停，不会自动执行");
+    releaseRefresh();
+    await expect(page.locator(".page-hero")).toContainText(refreshedDescription);
+    await expect(dialog).toContainText("计划已暂停，不会自动执行");
+  } finally {
+    releaseRefresh();
+    await page.unroute(suitePageUrl);
+  }
   await page.keyboard.press("Escape");
   await expect(dialog).toHaveCount(0);
   await expect(openHistory).toBeFocused();
