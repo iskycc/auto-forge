@@ -8,6 +8,7 @@ and known limitations.
 
 ### Added
 
+- Full 五主机完整部署模板：三个默认启动 Web/worker 的主平台、一台无域名 Nginx、一台集中 PostgreSQL/Redis/NATS/MinIO 的主机；每台附独立 Compose 和环境示例，统一纳入版本化 Release 部署包。
 - Full 多机器部署模板：独立 PostgreSQL、Redis、NATS JetStream、MinIO，多个 Web/worker 共享服务，并通过 Nginx 分发请求。
 - 平台节点管理：持久节点 ID、名称、IP 和端口，使用共享 PostgreSQL 保存、revision 防并发覆盖和审计。
 - 节点本地日志路由：正文继续保存在所属节点 SQLite 文件中；PostgreSQL 保存批次归属与确认水位，内部 HMAC 请求转发日志，支持旧文件登记及节点恢复后的继续读取。
@@ -27,6 +28,7 @@ and known limitations.
 
 ### Tests
 
+- Release 打包检查五主机文件完整性、镜像版本替换和敏感文件排除；部署验收解析全部五份 Compose。
 - 增加双节点独立日志目录契约、内部请求认证、Redis 实时缓存和 Nginx 后的节点管理 / 跨节点日志 Playwright 验收。
 - `pnpm test:distributed` 和 CI / Release checks 增加独立分布式部署验收。
 - 新增 `Full distributed acceptance` 独立流水线与强制结果门：覆盖双节点 WebSocket、Redis 重启、日志节点停止/恢复，以及通过 Nginx 执行的真实 Go Runner；保留脱敏诊断并拒绝跳过、空报告与重试掩盖失败。

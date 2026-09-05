@@ -517,6 +517,7 @@ pnpm build
 - [Lite Compose](./deploy/compose/lite/docker-compose.yml) 只启动 AutoForge，持久化 SQLite 和本地对象目录；
 - [Full Compose](./deploy/compose/full/docker-compose.yml) 启动 AutoForge、PostgreSQL、NATS JetStream、MinIO 和 Redis，并通过一次性初始化任务创建对象 bucket。
 - [Full 多机器部署](./deploy/compose/distributed/README.md) 分别部署基础设施、多个平台 Web/worker 和 Nginx；各平台共享 PostgreSQL/Redis/NATS/MinIO，并在“平台设置 → 平台节点”管理彼此的 IP 和端口。日志正文仍保存在所属节点本地，PostgreSQL 记录节点归属与确认水位，Redis 缓存并转发近期实时日志。
+- [Full 五主机部署](./deploy/compose/full-five-hosts/README.md) 提供三个主平台、一台 Nginx、一台数据库与中间件主机各自完整的 Compose 和环境模板；Nginx 使用 IP，无需域名，五套文件一起纳入 Release 部署包。
 - 独立 [Full distributed acceptance](./.github/workflows/distributed.yml) 流水线分别验证存储/队列契约、双平台故障恢复及经 Nginx 执行的真实 Go Runner；任何失败、跳过或缺失测试报告都会阻止专用验收门通过。
 
 上述模板都直接使用 Release 中导入的 AutoForge 镜像，并设置 `pull_policy: never`。Full 的基础设施镜像也固定到精确 digest，不会在离线启动时回退到可变 tag 或自动拉取。凭据生成、镜像准备、启动、升级和卷保护步骤见 [Compose 部署说明](./deploy/compose/README.md)。

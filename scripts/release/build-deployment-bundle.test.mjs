@@ -8,7 +8,7 @@ import test from "node:test";
 
 const execute = promisify(execFile);
 
-test("builds a versioned deployment bundle with both Compose modes", async () => {
+test("builds a versioned deployment bundle with Lite, Full and five-host templates", async () => {
   const outputDirectory = await mkdtemp(resolve(tmpdir(), "autoforge-deploy-output-"));
   const extractedDirectory = await mkdtemp(resolve(tmpdir(), "autoforge-deploy-extract-"));
   try {
@@ -74,6 +74,7 @@ test("builds a versioned deployment bundle with both Compose modes", async () =>
       /性能与稳定性基线/,
     );
     const packagedFiles = await readdir(packageDirectory, { recursive: true });
+    await assertFiveHostTemplates(packageDirectory, packagedFiles);
     for (const template of [
       "distributed/platform/docker-compose.yml",
       "distributed/infrastructure/docker-compose.yml",
@@ -107,3 +108,40 @@ test("builds a versioned deployment bundle with both Compose modes", async () =>
     await rm(extractedDirectory, { recursive: true, force: true });
   }
 });
+
+async function assertFiveHostTemplates(packageDirectory, packagedFiles) {
+  for (const host of ["platform-1", "platform-2", "platform-3", "nginx", "infrastructure"]) {
+    for (const template of ["docker-compose.yml", ".env.example"]) {
+      const templatePath = `full-five-hosts/${host}/${template}`;
+      assert.ok(packagedFiles.includes(templatePath), `missing host asset: ${templatePath}`);
+    }
+  }
+
+  for (const nodeNumber of [1, 2, 3]) {
+    const hostDirectory = resolve(packageDirectory, `full-five-hosts/platform-${nodeNumber}`);
+    assert.match(
+      await readFile(resolve(hostDirectory, ".env.example"), "utf8"),
+      /AUTOFORGE_BACKEND_IMAGE=autoforge\/backend:1\.2\.3-amd64/,
+    );
+  }
+
+  const nginxConfiguration = await readFile(
+    resolve(packageDirectory, "full-five-hosts/nginx/nginx.conf"),
+    "utf8",
+  );
+  const platformUpstream = nginxConfiguration.match(/upstream platform \{([^}]+)\}/)?.[1];
+  assert.ok(platformUpstream, "IP gateway must include the three platform upstreams");
+  assert.deepEqual(
+    [...platformUpstream.matchAll(/server ([^; ]+)/g)].map((match) => match[1]),
+    ["10.20.0.11:3000", "10.20.0.12:3000", "10.20.0.13:3000"],
+  );
+  assert.match(nginxConfiguration, /listen 8080 default_server;/);
+  assert.match(nginxConfiguration, /server_name _;/);
+
+  const instructions = await readFile(
+    resolve(packageDirectory, "full-five-hosts/README.md"),
+    "utf8",
+  );
+  assert.match(instructions, /\.\.\/distributed\/infrastructure\/prepare-secrets\.mjs/);
+  assert.ok(packagedFiles.includes("distributed/infrastructure/prepare-secrets.mjs"));
+}

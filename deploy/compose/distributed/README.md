@@ -4,6 +4,9 @@
 每个组件可放在独立机器；多个平台节点连接同一套基础设施。日志正文留在所属节点的本地
 SQLite 文件中，节点归属和确认水位保存在 PostgreSQL，Redis 缓存并转发近期实时日志。
 
+需要“三个主平台 + 一台 Nginx + 一台共享基础设施”的固定布局时，使用
+[五主机完整模板](../full-five-hosts/README.md)，其中已分别提供五台主机的 Compose、环境示例和 IP 入口配置。
+
 ```mermaid
 flowchart LR
   U[浏览器 / Runner] --> N[Nginx]

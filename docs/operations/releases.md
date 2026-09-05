@@ -38,8 +38,10 @@ ELF 无程序解释器和动态库依赖，不需要复制一份仅有 `musl` �
 - Docker config 内容摘要形式的不可变 image ID、平台和 OCI 标签统一记录在
   `release-manifest.json#backendImages`，不再为每个平台发布零散的 `image.json`。
 
-每个版本还生成一份 `autoforge-deploy-VERSION.tar.gz`，其中只包含 Lite/Full
-`docker-compose.yml`、环境模板、运维脚本、许可证和部署所需手册，不携带设计图、归档审计、
+每个版本还生成一份 `autoforge-deploy-VERSION.tar.gz`，其中包含 Lite、单机 Full、通用分布式及
+`full-five-hosts/` 五主机方案的 `docker-compose.yml`、环境模板、Nginx IP 配置、凭据生成器、
+运维脚本、许可证和部署所需手册。五主机目录提供三个主平台、一台 Nginx 和一台集中基础设施
+的完整文件；打包时检查文件齐全并替换后端镜像版本，排除实际配置、密码和数据。不携带设计图、归档审计、
 roadmap 或内部实现资料。`autoforge-release-metadata-VERSION.tar.gz` 集中保存两个架构镜像、
 部署包与两个 Jenkins HPI 的 SPDX JSON SBOM，以及 `LICENSE`、`NOTICE`、第三方许可证清单、
 兼容矩阵和变更记录。SBOM 内容没有删除，只是不再平铺为多个顶层 Release 资产。

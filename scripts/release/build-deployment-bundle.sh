@@ -50,6 +50,19 @@ done < <(find "${repository_root}/deploy/compose" \
   -type f \( -name docker-compose.yml -o -name .env.example -o -name README.md \
     -o -name nginx.conf -o -name prepare-secrets.mjs \) -print0)
 sed -i 's|../../../docs/|../docs/|g' "${package_directory}/distributed/README.md"
+# Five-host deployment is part of the standard signed deployment asset. Fail the
+# release build if a host template or its IP-only proxy configuration is missing.
+required_five_host_templates=(README.md nginx/nginx.conf)
+for host in platform-1 platform-2 platform-3 nginx infrastructure; do
+  required_five_host_templates+=("${host}/docker-compose.yml" "${host}/.env.example")
+done
+for template in "${required_five_host_templates[@]}"; do
+  required_template="${package_directory}/full-five-hosts/${template}"
+  if [[ ! -s "${required_template}" ]]; then
+    printf 'Missing five-host release template: %s\n' "${required_template}" >&2
+    exit 1
+  fi
+done
 cp -R -- "${repository_root}/scripts/operations" "${package_directory}/operations"
 for documentation_path in "${deployment_documentation[@]}"; do
   destination_path="${package_directory}/${documentation_path}"

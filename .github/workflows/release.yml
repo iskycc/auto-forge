@@ -264,7 +264,7 @@ jobs:
           path: release
           merge-multiple: true
 
-      - name: Build versioned Compose deployment bundle
+      - name: Build Lite, Full and five-host Compose deployment bundle
         run: bash scripts/release/build-deployment-bundle.sh "${{ needs.prepare.outputs.version }}" release
 
       - name: Extract deployment bundle for SBOM

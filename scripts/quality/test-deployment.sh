@@ -33,6 +33,13 @@ for component in platform infrastructure edge; do
     config --quiet
 done
 
+for host in platform-1 platform-2 platform-3 nginx infrastructure; do
+  docker compose \
+    --env-file "deploy/compose/full-five-hosts/${host}/.env.example" \
+    --file "deploy/compose/full-five-hosts/${host}/docker-compose.yml" \
+    config --quiet
+done
+
 mkdir -p "${temporary_directory}/first" "${temporary_directory}/second"
 SOURCE_DATE_EPOCH=1786233600 \
   bash scripts/release/build-deployment-bundle.sh 1.2.3 "${temporary_directory}/first"

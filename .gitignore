@@ -20,7 +20,7 @@ test-results/
 .env*
 !**/.env.example
 /deploy/compose/**/secrets/
-/deploy/compose/distributed/platform/config/
+/deploy/compose/**/config/
 
 # AutoForge runtime state
 data/
