@@ -1,8 +1,10 @@
 import {
   caseSuiteActivityScopeSchema,
   caseSuiteActivitySummarySchema,
+  caseSuiteExecutionPageQuerySchema,
   caseSuiteRecentExecutionsSchema,
   type CaseSuiteActivityScope,
+  type CaseSuiteExecutionPageQuery,
   type CaseSuiteActivitySummary,
   type CaseSuiteExecutionStatistics,
   type CaseSuiteRecentExecutions,
@@ -73,19 +75,22 @@ export class CaseSuiteActivityService {
 
   async readRecentExecutions(
     suiteId: string,
-    scope: CaseSuiteActivityScope,
+    scope: CaseSuiteExecutionPageQuery,
   ): Promise<CaseSuiteRecentExecutions> {
-    const validatedScope = caseSuiteActivityScopeSchema.parse(scope);
+    const validatedScope = caseSuiteExecutionPageQuerySchema.parse(scope);
     const suite = await this.suites.getSummary(suiteId, [validatedScope.projectId]);
     if (!suite || suite.policy.projectVersionId !== validatedScope.projectVersionId) {
       throw new DomainError("CASE_SUITE_NOT_FOUND", "指定项目版本下的用例任务不存在。");
     }
     const page = await this.batches.listPage({
-      ...validatedScope,
+      projectId: validatedScope.projectId,
+      projectVersionId: validatedScope.projectVersionId,
+      ...(validatedScope.cursor ? { cursor: validatedScope.cursor } : {}),
       suiteId,
       limit: RECENT_EXECUTION_LIMIT,
     });
     return caseSuiteRecentExecutionsSchema.parse({
+      ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}),
       items: page.items.map((batch) => ({
         id: batch.id,
         sequenceNumber: batch.sequenceNumber,

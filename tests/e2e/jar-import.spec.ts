@@ -1570,14 +1570,9 @@ public class MixedVisibleTest {
 
   await page.goto("/audit");
   await expect(page.getByRole("navigation", { name: "运维审计" })).toHaveCount(0);
-  await page
-    .getByRole("navigation", { name: "主导航" })
-    .getByRole("link", { name: "运维计划" })
-    .click();
   await expect(
-    page.getByRole("heading", { level: 1, name: "计划任务", exact: true }),
-  ).toBeVisible();
-  await expect(page.getByRole("navigation", { name: "运维审计" })).toHaveCount(0);
+    page.getByRole("navigation", { name: "主导航" }).getByRole("link", { name: "运维计划" }),
+  ).toHaveCount(0);
 
   for (const route of ["/settings/platform", "/settings/access"]) {
     await page.goto(route);

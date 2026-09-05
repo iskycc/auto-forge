@@ -1,4 +1,4 @@
-import { caseSuiteActivityScopeSchema } from "@autoforge/contracts";
+import { caseSuiteExecutionPageQuerySchema } from "@autoforge/contracts";
 import { NextResponse } from "next/server";
 
 import { apiErrorResponse } from "@/lib/api-response";
@@ -10,7 +10,7 @@ type Context = { params: Promise<{ suiteId: string }> };
 export async function GET(request: Request, context: Context): Promise<NextResponse> {
   try {
     const identity = await authenticateRequest(request);
-    const scope = caseSuiteActivityScopeSchema.parse(
+    const scope = caseSuiteExecutionPageQuerySchema.parse(
       Object.fromEntries(new URL(request.url).searchParams),
     );
     authorizedProjectScope(identity, "case_suite.read", scope.projectId);

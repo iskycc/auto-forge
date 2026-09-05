@@ -1,6 +1,9 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { mkdir } from "node:fs/promises";
 import { resolve } from "node:path";
+import { zipSync } from "fflate";
+import { buildClassFile } from "../../packages/testng-discovery/test/class-fixture";
+import { selectJarForInspection } from "./support/jar-import";
 
 import {
   browserJson,
@@ -21,7 +24,6 @@ const primaryRoutes = [
   "/runners?section=groups",
   "/insights",
   "/case-analysis",
-  "/settings/automation",
   "/settings/webhooks",
   "/audit",
   "/settings/projects?section=members",
@@ -48,7 +50,6 @@ test("administration entries are exposed as four-character first-level navigatio
     "项目管理",
     "访问管理",
     "回调通知",
-    "运维计划",
     "执行机组",
     "安全审计",
     "平台设置",
@@ -57,6 +58,7 @@ test("administration entries are exposed as four-character first-level navigatio
     await expect(navigation.getByRole("link", { name: label, exact: true })).toBeVisible();
   }
   await expect(navigation.getByRole("button")).toHaveCount(0);
+  await expect(navigation.getByRole("link", { name: "运维计划", exact: true })).toHaveCount(0);
   await expect(navigation.locator(".nav-item-nested, .nav-group")).toHaveCount(0);
 
   await page.goto("/settings/access?section=roles");
@@ -74,9 +76,8 @@ test("administration entries are exposed as four-character first-level navigatio
   await expect(page.getByRole("heading", { name: "保留与清理策略" })).toBeVisible();
 
   await page.goto("/settings/automation");
-  const automationPage = page.getByRole("main");
-  await expect(automationPage.getByRole("link", { name: "平台配置", exact: true })).toHaveCount(0);
-  await expect(automationPage.getByRole("link", { name: "LDAP 配置", exact: true })).toHaveCount(0);
+  await expect(page).toHaveURL(/\/case-suites(?:\?|$)/u);
+  await expect(page.getByRole("heading", { name: "用例任务", exact: true })).toBeVisible();
 });
 
 test("audit findings use bounded, localized, and unambiguous controls", async ({ page }) => {
@@ -209,6 +210,9 @@ test("top-bar project context persists across pages and removes local project sw
   expect((await versionSwitched).status()).toBe(200);
   await expect(switcher).toContainText("2.0.0");
   await expect(switcher).toContainText("回归测试");
+  // The picker updates optimistically; wait until the refreshed case page uses the new scope.
+  await expect(page.getByLabel("当前用例层级")).toContainText("2.0.0");
+  await expect(page.getByLabel("当前用例层级")).toContainText("回归测试");
 
   await switcher.getByRole("button", { name: "当前测试阶段" }).click();
   const stageSwitched = page.waitForResponse(
@@ -545,6 +549,41 @@ test("remaining low-frequency management actions expose reviewable dialogs", asy
   }
 });
 
+test("role cards keep long names and identifiers within desktop layout boundaries", async ({
+  page,
+}, testInfo) => {
+  await ensureAdministrator(page);
+  const roleName = uniqueName("ReleaseValidationRole".repeat(4));
+  const created = await browserJson<{ id: string }>(page, "/api/v1/roles", {
+    method: "POST",
+    body: {
+      key: `${uniqueName("layout-role")}-${"x".repeat(30)}`,
+      name: roleName,
+      scope: "project",
+      permissions: ["case_suite.read"],
+      description: "LongDescriptionWithoutSpaces".repeat(8),
+    },
+  });
+  expect(created.status).toBe(201);
+  await page.goto("/settings/access?section=roles");
+  const card = page
+    .locator(".role-card")
+    .filter({ has: page.getByText(roleName, { exact: true }) });
+  await expect(card).toBeVisible();
+  for (const width of [1024, 1536, 1920]) {
+    await page.setViewportSize({ width, height: width === 1024 ? 768 : 1024 });
+    // Card screenshots scroll the document; inspect the page before content passes under its sticky bar.
+    await page.evaluate(() => window.scrollTo({ top: 0, behavior: "instant" }));
+    await expectUiIntegrity(page);
+    const bounds = await card.evaluate((element) => ({
+      width: element.clientWidth,
+      contentWidth: element.scrollWidth,
+    }));
+    expect(bounds.contentWidth).toBeLessThanOrEqual(bounds.width + 2);
+    await card.screenshot({ path: testInfo.outputPath(`long-role-${width}.png`) });
+  }
+});
+
 test("primary product and administration routes pass the shared layout guard", async ({ page }) => {
   test.setTimeout(300_000);
   await ensureAdministrator(page);
@@ -714,6 +753,207 @@ test("specified dense pages expose stable product controls", async ({ page }) =>
   await expect(page.getByRole("heading", { name: "项目执行配置" })).toBeVisible();
   await expect(page.locator(".project-structure-manager")).toBeVisible();
 });
+
+test("imported case selection keeps counts compact before adding to a task", async ({
+  page,
+}, testInfo) => {
+  await ensureAdministrator(page);
+  const scope = await createUiProject(page);
+  const classes = Array.from(
+    { length: 8 },
+    (_, index) => `com.example.selection.Selection${index}Test`,
+  );
+  const jar = zipSync(
+    Object.fromEntries(
+      classes.map((className) => [
+        `${className.replaceAll(".", "/")}.class`,
+        buildClassFile({
+          className,
+          methods: [{ name: "verify", annotations: [{ type: "Test", values: {} }] }],
+        }),
+      ]),
+    ),
+  );
+  await page.goto("/cases/import");
+  await selectJarForInspection(page, {
+    name: "selection-layout.jar",
+    mimeType: "application/java-archive",
+    buffer: Buffer.from(jar),
+  });
+  await page.getByRole("button", { name: "扫描测试类" }).click();
+  await expect(page.getByText(classes[0]!, { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "确认导入" }).click();
+  await expect(page.getByRole("status")).toContainText(/已导入|已返回现有用例/, {
+    timeout: 60_000,
+  });
+  const suite = await createUiSuite(page, scope, "勾选布局验证任务");
+  await page.goto("/cases");
+  const pane = page.getByRole("region", { name: "用例目录工作区" });
+  const checkbox = page.getByRole("checkbox", { name: "选择当前搜索结果中的全部用例" });
+  for (const viewport of [
+    { width: 1024, height: 768 },
+    { width: 1536, height: 1024 },
+    { width: 1920, height: 1080 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await page.getByRole("button", { name: "导入用例", exact: true }).click();
+    const importDialog = page.getByRole("dialog", { name: "导入用例", exact: true });
+    await importDialog.getByLabel("粘贴用例路径").fill(classes.join("\n"));
+    await importDialog.getByRole("button", { name: "解析并预览" }).click();
+    await importDialog.getByRole("button", { name: "勾选匹配用例" }).click();
+    const stats = page.getByRole("status", { name: "已勾选用例的执行统计" });
+    await expect(stats).toContainText("已勾选 8 个用例");
+    await expect(stats).toContainText("未执行 8");
+    await expect(checkbox).toBeChecked();
+    await expect(page.getByRole("button", { name: "加入任务", exact: true })).toBeEnabled();
+    await page.screenshot({
+      path: testInfo.outputPath(`selected-cases-${viewport.width}.png`),
+      fullPage: true,
+    });
+    await expectUiIntegrity(page);
+    const [statsBox, treeBox, paneBox] = await Promise.all([
+      stats.boundingBox(),
+      pane.locator(".case-directory-scroll").boundingBox(),
+      pane.boundingBox(),
+    ]);
+    expect(
+      statsBox!.height,
+      "selection counts must not stretch into the directory's free space",
+    ).toBeLessThan(140);
+    expect(treeBox!.height, "case directory remains usable after selection").toBeGreaterThan(160);
+    expect(treeBox!.y).toBeGreaterThanOrEqual(statsBox!.y + statsBox!.height - 1);
+    expect(treeBox!.y + treeBox!.height).toBeLessThanOrEqual(paneBox!.y + paneBox!.height);
+    await checkbox.uncheck();
+    await expect(stats).toHaveCount(0);
+  }
+  expect(
+    (await browserJson<{ caseCount: number }>(page, `/api/v1/case-suites/${suite.id}`)).body
+      .caseCount,
+  ).toBe(0);
+});
+
+test("execution dialog remembers the last chosen task across reopening, edits and project versions", async ({
+  page,
+}) => {
+  await ensureAdministrator(page);
+  const scope = await createUiProject(page);
+  const first = await createUiSuite(page, scope, "上次选择的任务");
+  const newest = await createUiSuite(page, scope, "随后修改的任务");
+  await page.goto("/case-suites");
+  const open = () => page.getByRole("button", { name: "开始执行", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "开始执行", exact: true });
+  const select = dialog.locator('select[aria-label="执行用例任务"]');
+  await open();
+  await select.selectOption(first.id);
+  await dialog.getByRole("button", { name: "关闭执行弹窗" }).click();
+  const current = await browserJson<{ revision: number }>(page, `/api/v1/case-suites/${newest.id}`);
+  expect(
+    (
+      await browserJson(page, `/api/v1/case-suites/${newest.id}`, {
+        method: "PATCH",
+        body: { description: "最新修改不应改变执行选择", expectedRevision: current.body.revision },
+      })
+    ).status,
+  ).toBe(200);
+  await open();
+  await expect(select).toHaveValue(first.id);
+  await dialog.getByRole("button", { name: "关闭执行弹窗" }).click();
+  await page.reload();
+  await open();
+  await expect(select).toHaveValue(first.id);
+  await dialog.getByRole("button", { name: "关闭执行弹窗" }).click();
+  const otherVersion = await browserJson<{ id: string }>(
+    page,
+    `/api/v1/projects/${scope.projectId}/versions`,
+    {
+      method: "POST",
+      body: { name: "独立记忆的项目版本" },
+    },
+  );
+  expect(otherVersion.status).toBe(201);
+  const versionTask = await createUiSuite(
+    page,
+    { ...scope, projectVersionId: otherVersion.body.id },
+    "另一版本的任务",
+  );
+  await selectProjectContext(page, scope.projectId, otherVersion.body.id);
+  await page.reload();
+  await open();
+  await select.selectOption(versionTask.id);
+  await dialog.getByRole("button", { name: "关闭执行弹窗" }).click();
+  await selectProjectContext(page, scope.projectId, scope.projectVersionId, scope.testStageId);
+  await page.reload();
+  await open();
+  await expect(select).toHaveValue(first.id);
+  await dialog.getByRole("button", { name: "关闭执行弹窗" }).click();
+  const otherScope = await createUiProject(page);
+  const otherTask = await createUiSuite(page, otherScope, "另一个项目的任务");
+  await page.goto("/case-suites");
+  await open();
+  await select.selectOption(otherTask.id);
+  await dialog.getByRole("button", { name: "关闭执行弹窗" }).click();
+  await selectProjectContext(page, scope.projectId, scope.projectVersionId, scope.testStageId);
+  await page.reload();
+  await open();
+  await expect(select).toHaveValue(first.id);
+  await dialog.getByRole("button", { name: "关闭执行弹窗" }).click();
+  const firstVersion = await browserJson<{ revision: number }>(
+    page,
+    `/api/v1/case-suites/${first.id}`,
+  );
+  expect(
+    (
+      await browserJson(page, `/api/v1/case-suites/${first.id}`, {
+        method: "PATCH",
+        body: { enabled: false, expectedRevision: firstVersion.body.revision },
+      })
+    ).status,
+  ).toBe(200);
+  await open();
+  await expect(select).toHaveValue("");
+  await expect(dialog).toContainText("上次选择的任务当前不可用，请重新选择可执行任务");
+  await expect(dialog.getByRole("button", { name: "确认并开始执行" })).toBeDisabled();
+});
+
+async function createUiProject(page: Page) {
+  const name = uniqueName("ui-selection");
+  const project = await browserJson<{ id: string }>(page, "/api/v1/projects", {
+    method: "POST",
+    body: { name, slug: name },
+  });
+  expect(project.status).toBe(201);
+  const version = await browserJson<{ id: string }>(
+    page,
+    `/api/v1/projects/${project.body.id}/versions`,
+    { method: "POST", body: { name: "UI 验证版本" } },
+  );
+  expect(version.status).toBe(201);
+  const stage = await browserJson<{ id: string }>(
+    page,
+    `/api/v1/projects/${project.body.id}/versions/${version.body.id}/stages`,
+    { method: "POST", body: { name: "UI 验证阶段" } },
+  );
+  expect(stage.status).toBe(201);
+  await selectProjectContext(page, project.body.id, version.body.id, stage.body.id);
+  return {
+    projectId: project.body.id,
+    projectVersionId: version.body.id,
+    testStageId: stage.body.id,
+  };
+}
+
+async function createUiSuite(
+  page: Page,
+  scope: { projectId: string; projectVersionId: string },
+  name: string,
+) {
+  const result = await browserJson<{ id: string }>(page, "/api/v1/case-suites", {
+    method: "POST",
+    body: { projectId: scope.projectId, projectVersionId: scope.projectVersionId, name },
+  });
+  expect(result.status).toBe(201);
+  return result.body;
+}
 
 async function captureUi(page: Page, route: string, width: number, fullPage = true): Promise<void> {
   const screenshotDirectory = process.env.AUTOFORGE_UI_SCREENSHOT_DIR;

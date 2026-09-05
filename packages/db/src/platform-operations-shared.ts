@@ -60,6 +60,14 @@ export type ScheduleRow = {
   updated_at: string;
 };
 
+// The list and per-suite view must report the same latest trigger, including skips and failures.
+export const SCHEDULE_WITH_LAST_TRIGGER_SELECT = `SELECT s.*,
+  (SELECT receipt.status FROM scheduled_trigger_receipts receipt
+   WHERE receipt.schedule_id=s.id ORDER BY receipt.scheduled_for DESC LIMIT 1) AS last_trigger_status,
+  (SELECT receipt.batch_id FROM scheduled_trigger_receipts receipt
+   WHERE receipt.schedule_id=s.id ORDER BY receipt.scheduled_for DESC LIMIT 1) AS last_batch_id
+  FROM case_suite_schedules s`;
+
 export type NotificationRow = {
   id: string;
   user_id: string;

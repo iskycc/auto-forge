@@ -34,6 +34,19 @@ describe("case suite recent executions API", () => {
     });
   });
 
+  it("passes a bounded cursor through without losing the project/version scope", async () => {
+    authenticateRequest.mockResolvedValue(identityWith(["case_suite.read", "run.read"]));
+    expect((await GET(new Request(`${url}&cursor=older-page`), context)).status).toBe(200);
+    expect(readRecentExecutions).toHaveBeenCalledWith("suite-a", {
+      projectId: "project-a",
+      projectVersionId: "version-a",
+      cursor: "older-page",
+    });
+    readRecentExecutions.mockClear();
+    expect((await GET(new Request(`${url}&cursor=${"x".repeat(513)}`), context)).status).toBe(400);
+    expect(readRecentExecutions).not.toHaveBeenCalled();
+  });
+
   it.each<Permission[]>([["case_suite.read"], ["run.read"]])(
     "rejects incomplete permission set %s before reading executions",
     async (...permissions) => {

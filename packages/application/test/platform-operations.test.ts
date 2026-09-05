@@ -1,10 +1,53 @@
 import type { AuthenticatedIdentity, RunBatchDetails } from "@autoforge/domain";
+import type { CaseSuiteSchedule } from "@autoforge/contracts";
 import { describe, expect, it, vi } from "vitest";
 
 import { PlatformOperationsService } from "../src/platform-operations";
 import type { PlatformOperationsRepository, RunBatchRepository } from "../src/ports";
 
 const timestamp = "2026-08-09T00:00:00.000Z";
+
+describe("per-suite schedule access", () => {
+  function fixture() {
+    const findScheduleBySuite = vi
+      .fn<PlatformOperationsRepository["findScheduleBySuite"]>()
+      .mockResolvedValue(null);
+    const service = new PlatformOperationsService(
+      { findScheduleBySuite } as unknown as PlatformOperationsRepository,
+      { now: () => new Date(timestamp) },
+      { next: () => "id" },
+      { issue: () => "token", hash: (value) => value },
+    );
+    const reader: AuthenticatedIdentity = {
+      ...projectIdentity,
+      projectPermissions: { "project-1": ["case_suite.read"] },
+    };
+    return { findScheduleBySuite, service, reader };
+  }
+
+  it("reads only the requested suite and supports readers with no management permission", async () => {
+    const { service, reader, findScheduleBySuite } = fixture();
+    const suite = { id: "suite-1", projectId: "project-1" };
+    await expect(service.readSuiteSchedule(reader, suite)).resolves.toBeNull();
+    expect(findScheduleBySuite).toHaveBeenCalledExactlyOnceWith("suite-1");
+  });
+
+  it("rejects another project before querying its plan", async () => {
+    const { service, reader, findScheduleBySuite } = fixture();
+    await expect(
+      service.readSuiteSchedule(reader, { id: "suite-2", projectId: "project-2" }),
+    ).rejects.toMatchObject({ code: "AUTH_FORBIDDEN" });
+    expect(findScheduleBySuite).not.toHaveBeenCalled();
+  });
+
+  it("does not expose a plan whose stored project differs from the suite", async () => {
+    const { service, reader, findScheduleBySuite } = fixture();
+    findScheduleBySuite.mockResolvedValue({ projectId: "project-2" } as CaseSuiteSchedule);
+    await expect(
+      service.readSuiteSchedule(reader, { id: "suite-1", projectId: "project-1" }),
+    ).rejects.toMatchObject({ code: "CASE_SUITE_NOT_FOUND" });
+  });
+});
 
 describe("PlatformOperationsService analytics", () => {
   it("validates and forwards an explicitly bounded dashboard sample", async () => {

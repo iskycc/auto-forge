@@ -1,10 +1,12 @@
 import { expect, test, type Page } from "@playwright/test";
 import { createServer } from "node:http";
+import { expectUiIntegrity } from "./support/ui-guard";
 
 import {
   acceptSystemDialog,
   browserJson,
   ensureAdministrator,
+  login,
   selectProjectContext,
   uniqueName,
 } from "./support/session";
@@ -134,9 +136,11 @@ test("service account lifecycle immediately narrows token access and produces ex
   expect(account.id).toBeTruthy();
 });
 
-test("schedule overview can pause and delete plans while LDAP failures remain diagnosable", async ({
+test("task details manage their own plan and show execution history in a dialog", async ({
   page,
-}) => {
+}, testInfo) => {
+  const browserErrors: string[] = [];
+  page.on("pageerror", (error) => browserErrors.push(error.message));
   await ensureAdministrator(page);
   const projectVersionId = await ensureDefaultProjectVersion(page);
   await selectProjectContext(page, DEFAULT_PROJECT_ID, projectVersionId);
@@ -151,35 +155,224 @@ test("schedule overview can pause and delete plans while LDAP failures remain di
     },
   });
   expect(suite.status).toBe(201);
-  const schedule = await browserJson<{ id: string; revision: number }>(
-    page,
-    `/api/v1/case-suites/${suite.body.id}/schedule`,
-    {
-      method: "PUT",
-      body: {
-        cronExpression: "0 9 * * 1-5",
-        timeZone: "Asia/Shanghai",
-        missedRunPolicy: "run-once",
-        enabled: true,
-      },
-    },
-  );
-  expect(schedule.status).toBe(200);
+  await page.goto(`/case-suites/${suite.body.id}`);
+  await expect(
+    page.getByRole("navigation", { name: "主导航" }).getByRole("link", { name: "运维计划" }),
+  ).toHaveCount(0);
+  const plan = page.getByRole("region", { name: "任务执行计划" });
+  await plan.getByLabel("Cron（分 时 日 月 周）").fill("0 9 * * 1-5");
+  await plan.getByLabel("IANA 时区").fill("Asia/Shanghai");
+  await plan.getByLabel("错过触发").selectOption("run-once");
+  await plan.getByRole("button", { name: "保存计划", exact: true }).click();
+  await expect(page.getByText("计划触发已保存。", { exact: true })).toBeVisible();
+  const openHistory = plan.getByRole("button", { name: "执行历史与计划", exact: true });
+  await openHistory.click();
+  const dialog = page.getByRole("dialog", { name: "执行历史与计划", exact: true });
+  await expect(dialog).toContainText(suiteName);
+  await expect(dialog).toContainText("恢复后补跑一次");
+  await expect(dialog).toContainText("Asia/Shanghai");
+  await expect(dialog).toContainText("下次执行");
+  await expect(dialog).toContainText("尚未触发");
+  await expect(dialog).toContainText("暂无执行记录");
+  await dialog.getByRole("button", { name: "关闭执行历史与计划" }).click();
+  await expect(openHistory).toBeFocused();
 
-  await page.goto("/settings/automation");
-  const scheduleRow = page.getByRole("row", { name: new RegExp(suiteName) });
-  await expect(scheduleRow).toContainText("错过后补跑一次");
-  await expect(scheduleRow).toContainText("Asia/Shanghai");
-  await scheduleRow.getByRole("button", { name: "暂停" }).click();
+  await plan.getByRole("button", { name: "暂停计划" }).click();
   await expect(page.getByText("计划已暂停。")).toBeVisible();
-  await expect(page.getByRole("row", { name: new RegExp(suiteName) })).toContainText("暂停");
-  await page
-    .getByRole("row", { name: new RegExp(suiteName) })
-    .getByRole("button", { name: "删除" })
-    .click();
-  await acceptSystemDialog(page, "删除计划任务", "确认删除");
-  await expect(page.getByText("计划任务已删除。")).toBeVisible();
-  await expect(page.getByRole("row", { name: new RegExp(suiteName) })).toHaveCount(0);
+  await openHistory.click();
+  await expect(dialog).toContainText("计划已暂停，不会自动执行");
+  await page.keyboard.press("Escape");
+  await expect(dialog).toHaveCount(0);
+  await expect(openHistory).toBeFocused();
+  await plan.getByRole("button", { name: "恢复计划" }).click();
+  await expect(page.getByText("计划已启用。")).toBeVisible();
+  await page.reload();
+  await expect(plan.getByRole("button", { name: "暂停计划" })).toBeVisible();
+
+  // Only the history transport is stubbed here; repository contracts verify scoped pagination.
+  const historyUrl = `**/api/v1/case-suites/${suite.body.id}/executions?*`;
+  let failHistory = true;
+  await page.route(historyUrl, async (route) => {
+    const query = new URL(route.request().url()).searchParams;
+    expect(query.get("projectId")).toBe(DEFAULT_PROJECT_ID);
+    expect(query.get("projectVersionId")).toBe(projectVersionId);
+    if (failHistory) {
+      failHistory = false;
+      await route.fulfill({
+        status: 503,
+        json: {
+          error: {
+            code: "TEST_UNAVAILABLE",
+            message: "执行历史暂时不可用",
+            requestId: "history-test",
+          },
+        },
+      });
+      return;
+    }
+    const cursor = query.get("cursor");
+    const sequences = cursor ? [1] : [11, 10, 9, 8, 7, 6, 5, 4, 3, 2];
+    if (cursor) expect(cursor).toBe("history-page-2");
+    await route.fulfill({
+      json: {
+        items: sequences.map((sequenceNumber) => ({
+          id: `history-${sequenceNumber}`,
+          sequenceNumber,
+          status: "succeeded",
+          kind: "standard",
+          totalRuns: 1,
+          succeededRuns: 1,
+          failedRuns: 0,
+          timedOutRuns: 0,
+          cancelledRuns: 0,
+          currentRound: 1,
+          retryLimit: 0,
+          scheduledFor: "2026-09-05T00:00:00.000Z",
+          createdAt: "2026-09-05T00:00:00.000Z",
+          updatedAt: "2026-09-05T00:01:00.000Z",
+        })),
+        ...(!cursor ? { nextCursor: "history-page-2" } : {}),
+      },
+    });
+  });
+  await openHistory.click();
+  const history = dialog.getByRole("region", { name: "任务执行历史" });
+  await expect(history.getByRole("alert")).toContainText("执行历史暂时不可用");
+  await history.getByRole("button", { name: "重试", exact: true }).click();
+  await expect(history.getByRole("link", { name: /查看执行记录/ })).toHaveCount(10);
+  await history.getByRole("button", { name: "下一页" }).click();
+  await expect(history.getByRole("link", { name: /查看执行记录/ })).toHaveCount(1);
+  await expect(history.getByRole("button", { name: "下一页" })).toBeDisabled();
+  await history.getByRole("button", { name: "上一页" }).click();
+  await expect(history.getByRole("link", { name: /查看执行记录/ })).toHaveCount(10);
+  await dialog.getByRole("button", { name: "刷新计划与历史" }).click();
+  await expect(history.getByRole("link", { name: /查看执行记录/ })).toHaveCount(10);
+  await expect(history.getByRole("button", { name: "上一页" })).toBeDisabled();
+
+  for (const viewport of [
+    { width: 1024, height: 768 },
+    { width: 1536, height: 1024 },
+    { width: 1920, height: 1080 },
+    { width: 2560, height: 1440 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await expectUiIntegrity(page);
+    const bounds = await dialog.boundingBox();
+    expect(bounds).not.toBeNull();
+    expect(bounds!.x).toBeGreaterThanOrEqual(0);
+    expect(bounds!.y).toBeGreaterThanOrEqual(0);
+    expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(viewport.width);
+    expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(viewport.height);
+    await page.screenshot({ path: testInfo.outputPath(`schedule-history-${viewport.width}.png`) });
+    await page.keyboard.press("Escape");
+    await expect(openHistory).toBeFocused();
+    await expectUiIntegrity(page);
+    await page.screenshot({ path: testInfo.outputPath(`schedule-detail-${viewport.width}.png`) });
+    await openHistory.click();
+    await expect(history.getByRole("link", { name: /查看执行记录/ })).toHaveCount(10);
+  }
+  await page.keyboard.press("Escape");
+  await page.unroute(historyUrl);
+
+  await plan.getByRole("button", { name: "删除计划" }).click();
+  await acceptSystemDialog(page, "删除执行计划", "确认删除");
+  await expect(page.getByText("执行计划已删除。")).toBeVisible();
+  await expect(plan.getByRole("button", { name: "删除计划" })).toHaveCount(0);
+  await openHistory.click();
+  await expect(dialog).toContainText("尚未配置自动执行计划");
+  await expect(dialog).toContainText("暂无执行记录");
+  expect(browserErrors).toEqual([]);
+});
+
+test("task schedule dialog keeps read permissions separate from execution history and management", async ({
+  page,
+  browser,
+}, testInfo) => {
+  await ensureAdministrator(page);
+  const projectVersionId = await ensureDefaultProjectVersion(page);
+  const suite = await browserJson<{ id: string }>(page, "/api/v1/case-suites", {
+    method: "POST",
+    body: { projectId: DEFAULT_PROJECT_ID, projectVersionId, name: uniqueName("read-only-plan") },
+  });
+  expect(suite.status).toBe(201);
+  for (const canReadExecutions of [false, true]) {
+    const username = uniqueName(canReadExecutions ? "history-reader" : "plan-reader");
+    const password = "ScheduleReader!Password123";
+    const role = await browserJson<{ id: string }>(page, "/api/v1/roles", {
+      method: "POST",
+      body: {
+        key: username,
+        name: username,
+        scope: "project",
+        permissions: ["case_suite.read", ...(canReadExecutions ? ["run.read"] : [])],
+      },
+    });
+    expect(role.status).toBe(201);
+    const user = await browserJson<{ id: string }>(page, "/api/v1/users", {
+      method: "POST",
+      body: { username, displayName: username, password, forcePasswordChange: false },
+    });
+    expect(user.status).toBe(201);
+    expect(
+      (
+        await browserJson(page, `/api/v1/users/${user.body.id}/project-roles`, {
+          method: "POST",
+          body: { projectId: DEFAULT_PROJECT_ID, roleId: role.body.id },
+        })
+      ).status,
+    ).toBe(204);
+    const readerContext = await browser.newContext({
+      baseURL: new URL(page.url()).origin,
+      viewport: { width: 1024, height: 768 },
+    });
+    try {
+      const readerPage = await readerContext.newPage();
+      await readerPage.goto("/login");
+      await login(readerPage, username, password);
+      // History readers pass through /run-batches before its client redirect completes.
+      await expect(readerPage).toHaveURL(
+        canReadExecutions ? /\/execution-records(?:\?|$)/u : /\/account\/security(?:\?|$)/u,
+      );
+      await expect(readerPage.getByRole("navigation", { name: "主导航" })).toBeVisible();
+      await readerPage.goto(`/case-suites/${suite.body.id}`);
+      const plan = readerPage.getByRole("region", { name: "任务执行计划" });
+      await expect(plan.getByRole("button", { name: "保存计划" })).toHaveCount(0);
+      await plan.getByRole("button", { name: "执行历史与计划", exact: true }).click();
+      const dialog = readerPage.getByRole("dialog", { name: "执行历史与计划", exact: true });
+      await expect(dialog).toContainText("尚未配置自动执行计划");
+      if (canReadExecutions) await expect(dialog).toContainText("暂无执行记录");
+      else {
+        await expect(dialog).toContainText("当前账号无执行记录查看权限");
+        await expect(dialog.getByRole("region", { name: "任务执行历史" })).toHaveCount(0);
+      }
+      await expectUiIntegrity(readerPage);
+      await readerPage.screenshot({
+        path: testInfo.outputPath(`schedule-reader-${canReadExecutions ? "history" : "plan"}.png`),
+      });
+      const endpoint = `/api/v1/case-suites/${suite.body.id}/schedule`;
+      expect(
+        (
+          await browserJson(readerPage, endpoint, {
+            method: "PUT",
+            body: {
+              cronExpression: "0 9 * * *",
+              timeZone: "Asia/Shanghai",
+              enabled: true,
+              missedRunPolicy: "skip",
+            },
+          })
+        ).status,
+      ).toBe(403);
+      expect((await browserJson(readerPage, endpoint, { method: "DELETE" })).status).toBe(403);
+      const history = await browserJson(
+        readerPage,
+        `/api/v1/case-suites/${suite.body.id}/executions?projectId=${DEFAULT_PROJECT_ID}&projectVersionId=${projectVersionId}`,
+      );
+      expect(history.status).toBe(canReadExecutions ? 200 : 403);
+    } finally {
+      await readerContext.close();
+    }
+  }
 });
 
 test("project webhooks support custom POST bodies and task binding", async ({ page }) => {

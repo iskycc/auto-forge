@@ -5,6 +5,10 @@ export const caseSuiteActivityScopeSchema = z.object({
   projectVersionId: z.string().min(1).max(128),
 });
 
+export const caseSuiteExecutionPageQuerySchema = caseSuiteActivityScopeSchema.extend({
+  cursor: z.string().min(1).max(512).optional(),
+});
+
 export const caseSuiteExecutionStatisticsSchema = z.object({
   suiteId: z.string().min(1),
   executionCount: z.number().int().nonnegative(),
@@ -48,9 +52,11 @@ export const caseSuiteRecentExecutionSchema = z.object({
 
 export const caseSuiteRecentExecutionsSchema = z.object({
   items: z.array(caseSuiteRecentExecutionSchema).max(10),
+  nextCursor: z.string().max(512).optional(),
 });
 
 export type CaseSuiteActivityScope = z.infer<typeof caseSuiteActivityScopeSchema>;
+export type CaseSuiteExecutionPageQuery = z.infer<typeof caseSuiteExecutionPageQuerySchema>;
 export type CaseSuiteExecutionStatistics = z.infer<typeof caseSuiteExecutionStatisticsSchema>;
 export type CaseSuiteActivitySummary = z.infer<typeof caseSuiteActivitySummarySchema>;
 export type CaseSuiteRecentExecution = z.infer<typeof caseSuiteRecentExecutionSchema>;

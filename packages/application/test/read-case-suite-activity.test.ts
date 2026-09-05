@@ -83,5 +83,18 @@ describe("case suite execution activity", () => {
     });
     expect(await service.readRecentExecutions("suite-a", scope)).toEqual({ items: [] });
     expect(batches.listPage).toHaveBeenCalledWith({ ...scope, suiteId: "suite-a", limit: 10 });
+    batches.listPage.mockResolvedValue({ items: [], nextCursor: "next-page" });
+    expect(
+      await service.readRecentExecutions("suite-a", { ...scope, cursor: "older-page" }),
+    ).toEqual({
+      items: [],
+      nextCursor: "next-page",
+    });
+    expect(batches.listPage).toHaveBeenLastCalledWith({
+      ...scope,
+      suiteId: "suite-a",
+      limit: 10,
+      cursor: "older-page",
+    });
   });
 });

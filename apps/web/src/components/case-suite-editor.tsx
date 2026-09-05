@@ -1,14 +1,10 @@
 "use client";
 
-import { activePlatformTimeZone, formatPlatformDateTime } from "@/lib/platform-date-time";
+import { formatPlatformDateTime } from "@/lib/platform-date-time";
 
 import { Button, Input, Select, Textarea } from "@/components/ui";
 
-import {
-  jenkinsJobInspectionSchema,
-  type CaseSuiteSchedule,
-  type JenkinsJobInspection,
-} from "@autoforge/contracts";
+import { jenkinsJobInspectionSchema, type JenkinsJobInspection } from "@autoforge/contracts";
 import type {
   CaseSuite,
   CaseSuiteDetails,
@@ -19,7 +15,6 @@ import type {
 import {
   ArrowDown,
   ArrowUp,
-  CalendarClock,
   CircleAlert,
   CircleCheck,
   Copy,
@@ -35,7 +30,7 @@ import { FormEvent, useState } from "react";
 
 import { ActionDialog } from "@/components/action-dialog";
 import { useConcurrentModificationFeedback } from "@/components/concurrent-modification-feedback";
-import { useConfirm, useToast } from "@/components/ui-feedback";
+import { useToast } from "@/components/ui-feedback";
 import { throwApiErrorResponse } from "@/lib/client-api";
 
 type EditableRetryConcurrencyRule = {
@@ -62,7 +57,6 @@ type RecoveryInspectionState =
 
 export function CaseSuiteEditor({
   suite,
-  schedule,
   runners,
   runnerGroups,
   projectVersions,
@@ -70,7 +64,6 @@ export function CaseSuiteEditor({
   canManage,
 }: {
   suite: CaseSuiteDetails;
-  schedule?: CaseSuiteSchedule;
   runners: Runner[];
   runnerGroups: RunnerGroup[];
   projectVersions: ProjectVersion[];
@@ -78,7 +71,6 @@ export function CaseSuiteEditor({
   canManage: boolean;
 }) {
   const router = useRouter();
-  const confirmAction = useConfirm();
   const showConcurrentModification = useConcurrentModificationFeedback();
   const toast = useToast();
   const [pending, setPending] = useState(false);
@@ -216,62 +208,6 @@ export function CaseSuiteEditor({
       setError(caught instanceof Error ? caught.message : "复制用例任务失败。");
     } finally {
       setCopying(false);
-    }
-  }
-
-  async function saveSchedule(event: FormEvent<HTMLFormElement>): Promise<void> {
-    event.preventDefault();
-    const form = new FormData(event.currentTarget);
-    await scheduleMutation(
-      fetch(`/api/v1/case-suites/${encodeURIComponent(suite.id)}/schedule`, {
-        method: "PUT",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          cronExpression: form.get("cronExpression"),
-          timeZone: form.get("timeZone"),
-          missedRunPolicy: form.get("missedRunPolicy"),
-          enabled: form.get("scheduleEnabled") === "on",
-          ...(schedule ? { expectedRevision: schedule.revision } : {}),
-        }),
-      }),
-      "计划触发已保存。",
-    );
-  }
-
-  async function deleteSchedule(): Promise<void> {
-    if (!schedule) return;
-    if (
-      !(await confirmAction({
-        title: "删除计划触发",
-        description: "删除后任务不再自动触发，历史触发记录与执行记录仍会保留。",
-        confirmLabel: "确认删除",
-        tone: "danger",
-      }))
-    )
-      return;
-    await scheduleMutation(
-      fetch(`/api/v1/case-suites/${encodeURIComponent(suite.id)}/schedule`, {
-        method: "DELETE",
-      }),
-      "计划触发已删除。",
-    );
-  }
-
-  async function scheduleMutation(responsePromise: Promise<Response>, success: string) {
-    setPending(true);
-    setError(null);
-    try {
-      const response = await responsePromise;
-      if (!response.ok) {
-        await throwApiErrorResponse(response, "计划操作失败。");
-      }
-      toast.success(success);
-      router.refresh();
-    } catch (caught) {
-      if (await showConcurrentModification(caught)) return;
-      setError(caught instanceof Error ? caught.message : "计划操作失败。");
-    } finally {
-      setPending(false);
     }
   }
 
@@ -932,67 +868,6 @@ export function CaseSuiteEditor({
               </Button>
             </form>
           </ActionDialog>
-          <form className="schedule-form" onSubmit={(event) => void saveSchedule(event)}>
-            <div className="section-title-row">
-              <span>
-                <CalendarClock size={18} />
-                <strong>离线计划触发</strong>
-              </span>
-              {schedule ? (
-                <small>
-                  下次：{formatDate(schedule.nextTriggerAt)} · UTC {schedule.nextTriggerAt}
-                </small>
-              ) : (
-                <small>尚未配置</small>
-              )}
-            </div>
-            <label>
-              Cron（分 时 日 月 周）
-              <Input
-                defaultValue={schedule?.cronExpression ?? "0 9 * * 1-5"}
-                name="cronExpression"
-                required
-              />
-            </label>
-            <label>
-              IANA 时区
-              <Input
-                defaultValue={schedule?.timeZone ?? activePlatformTimeZone()}
-                name="timeZone"
-                required
-              />
-            </label>
-            <label>
-              错过触发
-              <Select defaultValue={schedule?.missedRunPolicy ?? "run-once"} name="missedRunPolicy">
-                <option value="run-once">恢复后补跑一次</option>
-                <option value="skip">跳过错过时刻</option>
-              </Select>
-            </label>
-            <label className="checkbox-field schedule-enable-field">
-              <Input
-                defaultChecked={schedule?.enabled ?? true}
-                name="scheduleEnabled"
-                type="checkbox"
-              />
-              启用计划
-            </label>
-            <span className="schedule-actions">
-              <Button className="button button-primary" disabled={pending} type="submit">
-                <Save size={15} /> 保存计划
-              </Button>
-              {schedule ? (
-                <Button
-                  className="button button-danger"
-                  disabled={pending}
-                  onClick={() => void deleteSchedule()}
-                  type="button"
-                >
-                  <Trash2 size={15} /> 删除
-                </Button>
-              ) : null}
-            </span>
-          </form>
         </div>
       </fieldset>
     </section>

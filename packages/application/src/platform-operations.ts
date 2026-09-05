@@ -184,6 +184,15 @@ export class PlatformOperationsService {
     return this.repository.listSchedules(projectIdsForPermission(actor, "case_suite.read"));
   }
 
+  async readSuiteSchedule(actor: AuthenticatedIdentity, suite: { id: string; projectId: string }) {
+    requirePermission(actor, "case_suite.read", suite.projectId);
+    const schedule = await this.repository.findScheduleBySuite(suite.id);
+    if (schedule && schedule.projectId !== suite.projectId) {
+      throw new DomainError("CASE_SUITE_NOT_FOUND", "指定项目下的用例任务不存在。");
+    }
+    return schedule;
+  }
+
   async upsertSchedule(
     actor: AuthenticatedIdentity,
     suite: { id: string; projectId: string },

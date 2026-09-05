@@ -4,7 +4,7 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
-## Unreleased
+## 1.10.0 - 2026-09-05
 
 ### Added
 
@@ -26,12 +26,60 @@ and known limitations.
 - 从单机 Full 升级时停止旧实例，备份全部状态并先启动原日志节点；配置与各节点日志卷必须分别保留。
 - 首版终端网关固定在一个节点，未实现日志副本或自动迁移；节点离线时所属历史日志明确返回不可用。
 
+### Compatibility and offline assets
+
+- Lite 继续独立运行，不依赖 Full 基础设施；同一个 Runner Agent 与既有执行协议保持兼容。
+- 平台配置兼容新增节点 ID、部署方式与可选 NATS Token；分布式模式启用后公共配置由文件管理。
+- 版本化部署包包含五主机 Compose、IP 入口 Nginx 配置和操作说明；实际配置、秘密和数据不进入发布包。
+
 ### Tests
 
 - Release 打包检查五主机文件完整性、镜像版本替换和敏感文件排除；部署验收解析全部五份 Compose。
 - 增加双节点独立日志目录契约、内部请求认证、Redis 实时缓存和 Nginx 后的节点管理 / 跨节点日志 Playwright 验收。
 - `pnpm test:distributed` 和 CI / Release checks 增加独立分布式部署验收。
 - 新增 `Full distributed acceptance` 独立流水线与强制结果门：覆盖双节点 WebSocket、Redis 重启、日志节点停止/恢复，以及通过 Nginx 执行的真实 Go Runner；保留脱敏诊断并拒绝跳过、空报告与重试掩盖失败。
+
+## 1.9.7 - 2026-09-05
+
+### Changed
+
+- 将“运维计划”从全局导航整合到各任务详情页，按任务保存、暂停、恢复和删除计划；原页面地址
+  跳转到用例任务列表。任务内提供弹窗查看下一次触发、最近触发结果和可分页的执行历史，支持
+  刷新、加载失败重试及只读访问；执行历史仍单独校验执行记录读取权限。
+
+### Fixed
+
+- 修复用例管理导入并勾选用例后、尚未加入任务时，勾选数量及成功等统计信息与用例目录重叠的
+  布局问题；目录按剩余高度滚动，统计区保持完整可读。
+- 顶栏执行弹窗记住当前用户在当前项目和项目版本下上次选择的任务，重新打开、刷新页面和其他
+  任务更新后保持选择；原任务不再可选时明确要求重新选择，避免自动改选其他任务。
+- 修复访问管理中较长角色名称、标识及描述撑破卡片的问题，内容按可用宽度换行并保持完整可读。
+
+### Database and persisted configuration
+
+- 无数据库迁移。计划和执行历史复用 Lite SQLite / Full PostgreSQL 的既有权威记录，单任务
+  查询补齐最近触发结果，历史按每页 10 条有界读取。
+- 任务选择偏好保存在当前浏览器的本地存储中，并按用户、项目及项目版本隔离；浏览器禁止存储时
+  仅在当前页面内记忆，不影响手动选择和执行。
+
+### Compatibility and offline assets
+
+- 新增单任务计划 GET 查询；执行历史 API 兼容新增游标与下一页字段。Runner Protocol 和任务
+  执行快照语义不变，未新增依赖或远程资源。
+
+### Known limitations
+
+- 已停用、归档或不在当前有界可选列表中的历史任务需要重新选择；偏好不跨浏览器同步。
+- 浏览器回归中的历史分页与加载失败使用受控响应；真实分页和最近触发结果另由 SQLite /
+  PostgreSQL 共享契约测试验证，不将该浏览器场景声明为真实 Runner 执行验收。
+
+### Tests
+
+- Playwright 覆盖任务计划管理、历史弹窗和权限隔离、旧入口跳转、导入后勾选布局，以及任务选择
+  在重开、刷新、任务更新和项目版本切换后的恢复；桌面布局覆盖 1024px 及以上视口。
+- 补充计划与执行历史 API、应用权限、双数据库契约和浏览器偏好单元回归测试。
+- 桌面布局巡检覆盖较长角色名称、标识和无空格描述；测试等待登录最终页面和项目版本刷新后的
+  实际内容，避免与中间跳转或乐观状态竞争。
 
 ## 1.9.6 - 2026-09-05
 

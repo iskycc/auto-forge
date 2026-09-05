@@ -11,11 +11,25 @@ import type {
 } from "@autoforge/domain";
 import { Check, Clock3, LoaderCircle, Play, Server, UsersRound, X } from "lucide-react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type FormEvent,
+  type ReactNode,
+} from "react";
 import { createPortal } from "react-dom";
 
 import { Button, Input, Select, Textarea } from "./ui";
 import { LoadingState } from "./loading-state";
+import {
+  executionSuitePreferenceKey,
+  preferredExecutionSuiteId,
+  readExecutionSuitePreference,
+  writeExecutionSuitePreference,
+} from "@/lib/execution-suite-preference";
 
 const OPEN_RUN_DIALOG_EVENT = "autoforge:open-run-dialog";
 
@@ -63,11 +77,13 @@ export function OpenRunDialogButton({
 
 export function GlobalRunDialog({
   enabled,
+  userId,
   projectId,
   projectVersionId,
   testStageId,
 }: {
   enabled: boolean;
+  userId: string;
   projectId?: string;
   projectVersionId?: string;
   testStageId?: string;
@@ -97,7 +113,13 @@ export function GlobalRunDialog({
   const [delayMinutes, setDelayMinutes] = useState(5);
   const [delaySecondsPart, setDelaySecondsPart] = useState(0);
   const [previewNowMs, setPreviewNowMs] = useState(() => Date.now());
-  const contextKey = `${projectId ?? ""}:${projectVersionId ?? ""}:${testStageId ?? ""}`;
+  const preferenceKey = executionSuitePreferenceKey({
+    userId,
+    projectId: projectId ?? "",
+    projectVersionId: projectVersionId ?? "",
+  });
+  const rememberedSuites = useRef(new Map<string, string>());
+  const contextKey = `${preferenceKey}:${testStageId ?? ""}`;
   const options = projectOptions?.contextKey === contextKey ? projectOptions.value : undefined;
 
   const selectedSuite = options?.suites.find((suite) => suite.id === suiteId);
@@ -132,7 +154,15 @@ export function GlobalRunDialog({
       void loadRunOptions(requestedCaseId, projectId, projectVersionId, testStageId)
         .then((loaded) => {
           setProjectOptions({ contextKey, value: loaded });
-          setSuiteId(loaded.suites[0]?.id ?? "");
+          const remembered =
+            rememberedSuites.current.get(preferenceKey) ??
+            readExecutionSuitePreference(() => window.localStorage, preferenceKey);
+          const selectedId = preferredExecutionSuiteId(loaded.suites, remembered);
+          setSuiteId(selectedId);
+          if (selectedId) {
+            rememberedSuites.current.set(preferenceKey, selectedId);
+            writeExecutionSuitePreference(() => window.localStorage, preferenceKey, selectedId);
+          }
           setCaseDefinitionId(
             requestedCaseId && loaded.cases.some((candidate) => candidate.id === requestedCaseId)
               ? requestedCaseId
@@ -144,7 +174,7 @@ export function GlobalRunDialog({
         })
         .finally(() => setLoading(false));
     },
-    [contextKey, loading, projectId, projectVersionId, testStageId],
+    [contextKey, loading, preferenceKey, projectId, projectVersionId, testStageId],
   );
 
   useEffect(() => {
@@ -358,10 +388,20 @@ export function GlobalRunDialog({
                           <Select
                             aria-label="执行用例任务"
                             onChange={(event) => {
-                              setSuiteId(event.target.value);
+                              const selectedId = event.target.value;
+                              setSuiteId(selectedId);
+                              rememberedSuites.current.set(preferenceKey, selectedId);
+                              writeExecutionSuitePreference(
+                                () => window.localStorage,
+                                preferenceKey,
+                                selectedId,
+                              );
                             }}
                             value={suiteId}
                           >
+                            <option value="" disabled>
+                              请选择可执行任务
+                            </option>
                             {(options?.suites ?? []).map((suite) => (
                               <option key={suite.id} value={suite.id}>
                                 {suite.name} · {suite.caseCount} 个用例 · v{suite.version}
@@ -449,7 +489,13 @@ export function GlobalRunDialog({
                               </div>
                             </dl>
                           </>
-                        ) : null}
+                        ) : (
+                          <p className="inline-notice warning-notice" role="status">
+                            {options?.suites.length
+                              ? "上次选择的任务当前不可用，请重新选择可执行任务。"
+                              : "当前项目版本暂无可执行任务，请先创建或启用任务。"}
+                          </p>
+                        )}
                       </section>
                     ) : (
                       <>
