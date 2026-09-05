@@ -1,6 +1,7 @@
 import { parentPort, workerData } from "node:worker_threads";
 
 import type {
+  ManagedPlatformClock,
   CaseCatalogRepository,
   CaseSuiteRepository,
   ExecutionControlRepository,
@@ -12,6 +13,7 @@ import type {
 } from "@autoforge/application";
 import { buildAttemptCompletionEvents, RunBatchSchedulingService } from "@autoforge/application";
 import {
+  createLocalClock,
   createAttemptLogStore,
   SqliteCaseCatalogRepository,
   SqliteCaseSuiteRepository,
@@ -26,6 +28,7 @@ import {
 } from "@autoforge/db/sqlite";
 import {
   createPostgresDatabase,
+  createPostgresClock,
   NodeAttemptLogStore,
   createNodeLogTransport,
   PostgresCaseCatalogRepository,
@@ -63,6 +66,8 @@ let nodeLogs: NodeAttemptLogStore | undefined;
 let executionControl:
   SqliteExecutionControlRepository | PostgresExecutionControlRepository | undefined;
 let work = Promise.resolve();
+let clock: ManagedPlatformClock;
+let clockInitialization: Promise<void> | undefined;
 
 port.on("message", (request: WorkRequest) => {
   // Full 模式的数据库客户端支持并发事务，线程内并行处理以保留 PostgreSQL
@@ -88,6 +93,12 @@ async function processRequest(request: WorkRequest): Promise<void> {
 }
 
 async function execute(task: WorkTask): Promise<unknown> {
+  clockInitialization ??= initializeClock().catch((error: unknown) => {
+    clockInitialization = undefined;
+    throw error;
+  });
+  await clockInitialization;
+  clock.now();
   switch (task.kind) {
     case "warmup": {
       // 启动预热：提前完成数据库句柄构建、迁移校验、连接池预热与调度协作者
@@ -122,7 +133,7 @@ async function execute(task: WorkTask): Promise<unknown> {
       >[0];
       return executionRepository().completeAttempt(completionInput, (context, retryScheduled) =>
         buildAttemptCompletionEvents(
-          { nextId: () => uuidV7(), now: () => new Date().toISOString() },
+          { nextId: () => uuidV7(), now: () => clock.now().toISOString() },
           completionInput.attemptId,
           context,
           completionInput.result,
@@ -168,7 +179,7 @@ function schedulingService(): RunBatchSchedulingService {
       collaborators.batches,
       collaborators.suites,
       collaborators.runners,
-      { now: () => new Date() },
+      clock,
       { next: () => uuidV7() },
       {
         maximumCpuUtilizationPercent: configuration.scheduler.maximumCpuUtilizationPercent,
@@ -256,8 +267,9 @@ function fullLogStore(): AttemptLogStore | NodeAttemptLogStore {
     postgresHandle(),
     settings.nodeId,
     logStore(),
-    createNodeLogTransport(settings.masterKey, settings.nodeId),
+    createNodeLogTransport(settings.masterKey, settings.nodeId, clock),
     configuration.attemptLogsDirectory,
+    clock,
   );
   return nodeLogs;
 }
@@ -293,3 +305,14 @@ process.once("exit", () => {
   // 进程退出事件循环已近终止，连接池尽力关闭即可；未完成的套接字随进程回收。
   void postgresDatabase?.close();
 });
+
+async function initializeClock(): Promise<void> {
+  clock =
+    configuration.mode === "lite"
+      ? createLocalClock()
+      : await createPostgresClock(postgresHandle(), (error) => {
+          process.stderr.write(
+            `${JSON.stringify({ timestamp: new Date().toISOString(), level: "error", message: "Work thread clock synchronization failed", error: error instanceof Error ? error.message : "Unknown clock error" })}\n`,
+          );
+        });
+}

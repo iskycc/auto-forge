@@ -13,13 +13,14 @@ export async function handlePlatformNodeLogs(request: Request) {
   }
   const { verifyNodeLogRequest, NODE_LOG_REQUEST_BYTES } = await import("@autoforge/db/postgres");
   const body: unknown = await readJsonBody(request, NODE_LOG_REQUEST_BYTES);
+  const services = await getPlatformServices();
   const authentication = verifyNodeLogRequest(
     config.masterKey,
     config.nodeId,
     request.headers,
     JSON.stringify(body),
+    services.clock.now().getTime(),
   );
-  const services = await getPlatformServices();
   if (
     !services.platformNodes ||
     !services.nodeLogs ||

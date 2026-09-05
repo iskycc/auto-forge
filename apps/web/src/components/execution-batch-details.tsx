@@ -1,5 +1,7 @@
 "use client";
 
+import { usePlatformNow } from "./platform-time";
+
 import { OctagonX, RotateCcw } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
@@ -314,12 +316,7 @@ export function ExecutionBatchDetails({
 // 倒计时只更新这一张指标卡；不能把每秒时钟放在详情根组件，否则 500 行用例表、
 // 图表和轮次树都会跟着每秒重渲染。
 function CountdownMetric({ scheduledFor }: { scheduledFor: string }) {
-  const [nowMs, setNowMs] = useState(() => Date.now());
-
-  useEffect(() => {
-    const timer = window.setInterval(() => setNowMs(Date.now()), 1_000);
-    return () => window.clearInterval(timer);
-  }, []);
+  const nowMs = usePlatformNow();
 
   return (
     <Metric
@@ -360,13 +357,7 @@ function ElapsedMetric({
   startedAt: string;
 }) {
   const terminal = isTerminalRunBatch(batch.status);
-  const [nowMs, setNowMs] = useState(() => Date.now());
-
-  useEffect(() => {
-    if (!active) return;
-    const timer = window.setInterval(() => setNowMs(Date.now()), 1_000);
-    return () => window.clearInterval(timer);
-  }, [active]);
+  const nowMs = usePlatformNow(active);
 
   const endMs = terminal ? Date.parse(batchFinishedAt(batch)) : nowMs;
   const durationMs = Math.max(0, endMs - Date.parse(startedAt));

@@ -18,7 +18,11 @@ export async function PATCH(
       throw new DomainError("PLATFORM_NODE_NOT_FOUND", "分布式平台节点管理未启用。");
     const id = platformNodeIdSchema.parse((await context.params).nodeId);
     const input = updatePlatformNodeSchema.parse(await readJsonBody(request, 4096));
-    const saved = await services.platformNodes.update(id, input, new Date().toISOString());
+    const saved = await services.platformNodes.update(
+      id,
+      input,
+      services.clock.now().toISOString(),
+    );
     await services.identityAccess.recordAuthorizedOperation(identity, {
       action: "platform.node_updated",
       resourceType: "platform_node",

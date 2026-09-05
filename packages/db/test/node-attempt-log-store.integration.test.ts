@@ -261,6 +261,7 @@ async function createFixture() {
       createAttemptLogStore(directory),
       transport,
       directory,
+      { now: () => new Date(now) },
     );
     await node.initialize(directory);
     nodes.push(node);

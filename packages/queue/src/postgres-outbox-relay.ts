@@ -1,4 +1,4 @@
-import type { JobQueuePort, WorkerLogger } from "@autoforge/application";
+import type { Clock, JobQueuePort, WorkerLogger } from "@autoforge/application";
 import { jobEnvelopeSchema, type JobEnvelope } from "@autoforge/contracts";
 import type { PostgresDatabaseHandle } from "@autoforge/db";
 
@@ -20,6 +20,7 @@ export class PostgresOutboxRelay {
       batchSize: number;
     },
     private readonly logger: WorkerLogger,
+    private readonly clock: Clock,
   ) {
     if (options.batchSize < 1 || options.batchSize > 256) {
       throw new Error("Outbox relay batch size must be between 1 and 256.");
@@ -29,7 +30,7 @@ export class PostgresOutboxRelay {
   async run(signal: AbortSignal): Promise<void> {
     await this.database.ready;
     while (!signal.aborted) {
-      const now = new Date();
+      const now = this.clock.now();
       const relayed = await this.relayOnce(now);
       if (relayed === 0) await delay(this.options.pollIntervalMs, signal);
     }

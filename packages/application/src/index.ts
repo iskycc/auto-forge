@@ -31,3 +31,8 @@ export * from "./transient-recovery";
 export * from "./platform-operations";
 export * from "./platform-nodes";
 export * from "./schedule-expression";
+export {
+  PlatformClock,
+  type PlatformClockStatus,
+  type ManagedPlatformClock,
+} from "./platform-clock";

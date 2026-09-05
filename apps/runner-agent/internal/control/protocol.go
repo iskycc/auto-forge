@@ -1,5 +1,7 @@
 package control
 
+import "time"
+
 type ExecutionInput struct {
 	InputID     string `json:"inputId"`
 	Kind        string `json:"kind"`
@@ -89,10 +91,12 @@ type Assignment struct {
 }
 
 type Lease struct {
-	LeaseID   string `json:"leaseId"`
-	Token     string `json:"token"`
-	Version   int    `json:"version"`
-	ExpiresAt string `json:"expiresAt"`
+	ServerTime    string    `json:"serverTime,omitempty"`
+	LocalDeadline time.Time `json:"-"`
+	LeaseID       string    `json:"leaseId"`
+	Token         string    `json:"token"`
+	Version       int       `json:"version"`
+	ExpiresAt     string    `json:"expiresAt"`
 }
 
 type ClaimedAssignment struct {
@@ -126,11 +130,13 @@ type renewLeaseRequest struct {
 }
 
 type RenewLeaseResponse struct {
-	SchemaVersion int    `json:"schemaVersion"`
-	AcceptedAt    string `json:"acceptedAt"`
-	LeaseVersion  int    `json:"leaseVersion"`
-	ExpiresAt     string `json:"expiresAt"`
-	Instruction   string `json:"instruction"`
+	ServerTime    string    `json:"serverTime,omitempty"`
+	LocalDeadline time.Time `json:"-"`
+	SchemaVersion int       `json:"schemaVersion"`
+	AcceptedAt    string    `json:"acceptedAt"`
+	LeaseVersion  int       `json:"leaseVersion"`
+	ExpiresAt     string    `json:"expiresAt"`
+	Instruction   string    `json:"instruction"`
 }
 
 type completionResult struct {
@@ -285,6 +291,8 @@ type ReconcileDecision struct {
 }
 
 type ReconcileResponse struct {
+	ServerTime    string              `json:"serverTime,omitempty"`
+	RequestedAt   time.Time           `json:"-"`
 	SchemaVersion int                 `json:"schemaVersion"`
 	Decisions     []ReconcileDecision `json:"decisions"`
 }

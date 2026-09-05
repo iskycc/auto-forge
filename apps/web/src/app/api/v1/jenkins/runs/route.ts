@@ -20,7 +20,11 @@ export async function POST(request: Request): Promise<NextResponse> {
     const suite = await services.caseSuites.getSummary(input.suiteId, projectScope);
     services.identityAccess.authorize(identity, "run.create", suite.projectId);
     const batch = await services.runBatches.create(input);
-    const progressToken = issueRunProgressToken(services.config.masterKey, batch.id);
+    const progressToken = issueRunProgressToken(
+      services.config.masterKey,
+      batch.id,
+      services.clock.now(),
+    );
     const resultToken = issuePermanentShareToken(services.config.masterKey, "run_batch", batch.id);
     const baseUrl = publicLinkBase(services.configurationStore.read().web.publicBaseUrl, request);
     const progressUrl = new URL(`/progress/${encodeURIComponent(batch.id)}`, baseUrl);

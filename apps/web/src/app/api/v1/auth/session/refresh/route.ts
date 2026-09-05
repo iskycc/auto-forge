@@ -18,7 +18,9 @@ export async function POST(request: Request): Promise<NextResponse> {
     const response = NextResponse.json(refreshSessionResultSchema.parse(refreshed), {
       headers: { "Cache-Control": "private, no-store" },
     });
-    response.cookies.set(sessionCookie(sessionToken, refreshed.expiresAt, request));
+    response.cookies.set(
+      sessionCookie(sessionToken, refreshed.expiresAt, request, services.clock.now()),
+    );
     return response;
   } catch (error) {
     return apiErrorResponse(error, currentRequestId);

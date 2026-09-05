@@ -1,4 +1,5 @@
 import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto";
+import type { Clock } from "@autoforge/application";
 import { DomainError } from "@autoforge/domain";
 import {
   nodeLogResponseSchema,
@@ -95,7 +96,11 @@ function signature(
     .digest("hex");
 }
 
-export function createNodeLogTransport(secret: string, sourceNodeId: string): NodeLogTransport {
+export function createNodeLogTransport(
+  secret: string,
+  sourceNodeId: string,
+  clock: Clock,
+): NodeLogTransport {
   return async (node, request) => {
     const body = JSON.stringify(request);
     if (Buffer.byteLength(body) > NODE_LOG_REQUEST_BYTES)
@@ -106,7 +111,7 @@ export function createNodeLogTransport(secret: string, sourceNodeId: string): No
         method: "POST",
         redirect: "error",
         signal: AbortSignal.timeout(10_000),
-        headers: signNodeLogRequest(secret, sourceNodeId, node.id, body),
+        headers: signNodeLogRequest(secret, sourceNodeId, node.id, body, clock.now().getTime()),
         body,
       });
       const payload: unknown = JSON.parse(await readNodeResponse(response));

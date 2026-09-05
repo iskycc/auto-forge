@@ -71,7 +71,7 @@ export default async function ExecutionRecordsPage({
   const refreshQuery = refreshQueryFromFilter(filter);
   const nextQuery = new URLSearchParams(refreshQuery);
   if (batchPage.nextCursor) nextQuery.set("cursor", batchPage.nextCursor);
-  const observedAt = new Date().toISOString();
+  const observedAt = services.clock.now().toISOString();
   const rows: ExecutionRecordRow[] = batchPage.items.map((batch) => ({
     id: batch.id,
     sequenceNumber: batch.sequenceNumber,

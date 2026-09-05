@@ -14,6 +14,7 @@ readonly staging_directory="$(mktemp -d)"
 readonly package_directory="${staging_directory}/${package_name}"
 readonly -a deployment_documentation=(
   "docs/adr/0012-full-distributed-node-local-logs.md"
+  "docs/adr/0013-platform-time-authority.md"
   "docs/architecture/ddt-management.md"
   "docs/legal/runner-toolchain-notices.md"
   "docs/manuals/administrator.md"
@@ -49,7 +50,9 @@ done < <(find "${repository_root}/deploy/compose" \
   -type d \( -name secrets -o -name config -o -name node-data \) -prune -o \
   -type f \( -name docker-compose.yml -o -name .env.example -o -name README.md \
     -o -name nginx.conf -o -name prepare-secrets.mjs \) -print0)
-sed -i 's|../../../docs/|../docs/|g' "${package_directory}/distributed/README.md"
+sed -i 's|../../../docs/|../docs/|g' \
+  "${package_directory}/distributed/README.md" \
+  "${package_directory}/full-five-hosts/README.md"
 # Five-host deployment is part of the standard signed deployment asset. Fail the
 # release build if a host template or its IP-only proxy configuration is missing.
 required_five_host_templates=(README.md nginx/nginx.conf)

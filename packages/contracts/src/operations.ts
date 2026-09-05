@@ -330,6 +330,15 @@ export const globalSearchResultSchema = z.object({
 });
 
 export const systemDiagnosticSchema = z.object({
+  clock: z
+    .object({
+      source: z.enum(["local", "postgres"]),
+      state: z.enum(["synchronized", "holdover", "unavailable"]),
+      lastSynchronizedAt: z.string().datetime().nullable(),
+      sampleAgeMs: z.number().int().nonnegative().nullable(),
+      hostOffsetMs: z.number().int(),
+    })
+    .optional(),
   generatedAt: z.string().datetime(),
   mode: z.enum(["lite", "full"]),
   version: z.string().min(1),

@@ -7,11 +7,29 @@ import { expiredSessionCookie, sessionCookie } from "./auth";
 afterEach(() => vi.unstubAllEnvs());
 
 describe("session cookie transport security", () => {
+  it("retains the platform session lifetime when browser and platform dates differ", () => {
+    const request = new Request("http://autoforge.internal/api/v1/auth/login");
+    const cookie = sessionCookie(
+      "session-token",
+      "2000-01-02T00:00:00Z",
+      request,
+      new Date("2000-01-01T00:00:00Z"),
+    );
+    expect(cookie.maxAge).toBe(86_400);
+    expect(cookie).not.toHaveProperty("expires");
+  });
   it("allows a production deployment reached directly over HTTP to retain the session", () => {
     vi.stubEnv("NODE_ENV", "production");
     const request = new Request("http://autoforge.internal/api/v1/auth/login");
 
-    expect(sessionCookie("session-token", "2030-01-01T00:00:00.000Z", request).secure).toBe(false);
+    expect(
+      sessionCookie(
+        "session-token",
+        "2030-01-01T00:00:00.000Z",
+        request,
+        new Date("2026-09-05T00:00:00Z"),
+      ).secure,
+    ).toBe(false);
     expect(expiredSessionCookie(request).secure).toBe(false);
   });
 
@@ -21,7 +39,14 @@ describe("session cookie transport security", () => {
       headers: { "x-forwarded-proto": "https" },
     });
 
-    expect(sessionCookie("session-token", "2030-01-01T00:00:00.000Z", request).secure).toBe(true);
+    expect(
+      sessionCookie(
+        "session-token",
+        "2030-01-01T00:00:00.000Z",
+        request,
+        new Date("2026-09-05T00:00:00Z"),
+      ).secure,
+    ).toBe(true);
     expect(expiredSessionCookie(request).secure).toBe(true);
   });
 
@@ -30,6 +55,13 @@ describe("session cookie transport security", () => {
       headers: { "x-forwarded-proto": "http" },
     });
 
-    expect(sessionCookie("session-token", "2030-01-01T00:00:00.000Z", request).secure).toBe(true);
+    expect(
+      sessionCookie(
+        "session-token",
+        "2030-01-01T00:00:00.000Z",
+        request,
+        new Date("2026-09-05T00:00:00Z"),
+      ).secure,
+    ).toBe(true);
   });
 });

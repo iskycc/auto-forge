@@ -42,7 +42,7 @@ export async function POST(request: Request): Promise<NextResponse> {
       throw new DomainError("RUNNER_TERMINAL_DISABLED", "该执行机未启用直连终端。");
     }
     const sessionId = uuidV7();
-    const issuedAt = new Date();
+    const issuedAt = services.clock.now();
     await services.identityAccess.recordTerminalSession(
       identity,
       runner.id,

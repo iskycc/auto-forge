@@ -29,6 +29,7 @@ import {
   RunnerInstallationProfileService,
   RunnerGroupService,
   WebhookNotificationService,
+  type ManagedPlatformClock,
   type AttemptLogShareRepository,
   type CaseCatalogRepository,
   type CaseSuiteRepository,
@@ -54,6 +55,7 @@ import {
 } from "@autoforge/application";
 import { MemoryCache } from "@autoforge/cache/memory";
 import {
+  createLocalClock,
   createAttemptLogStore,
   createSqliteDatabase,
   isSqliteLockContentionError,
@@ -83,6 +85,7 @@ import { TestNgJarDiscovery } from "@autoforge/testng-discovery";
 import { RunnerProtocolController } from "@autoforge/runner-sdk";
 import { uuidV7 } from "@autoforge/ids";
 
+import { registerPlatformClock } from "./platform-clock-runtime";
 import { appConfigurationStore, loadAppConfig } from "./config";
 import { LdapDirectory } from "./ldap-directory";
 import { JenkinsRebuildTransport } from "./jenkins-round-recovery";
@@ -114,6 +117,7 @@ type RuntimeInfrastructure = {
 
 async function createPlatformServices() {
   const config = loadAppConfig();
+  let clock: ManagedPlatformClock = createLocalClock();
   const dispatcher = workDispatcher();
   const configurationStore = appConfigurationStore(config);
   let platformNodes: import("@autoforge/application").PlatformNodeRepository | undefined;
@@ -178,6 +182,7 @@ async function createPlatformServices() {
     const [
       {
         createPostgresDatabase,
+        createPostgresClock,
         PostgresPlatformNodeRepository,
         NodeAttemptLogStore,
         createNodeLogTransport,
@@ -225,6 +230,11 @@ async function createPlatformServices() {
     });
     try {
       await database.ready;
+      clock = await createPostgresClock(database, (error) => {
+        workerLogger.error("Platform clock synchronization failed", {
+          error: error instanceof Error ? error.message : "Unknown clock error",
+        });
+      });
       if (config.distributed) {
         if (!config.nodeId)
           throw new Error("Distributed deployment requires a persistent node ID.");
@@ -233,8 +243,9 @@ async function createPlatformServices() {
           database,
           config.nodeId,
           attemptLogs,
-          createNodeLogTransport(config.masterKey, config.nodeId),
+          createNodeLogTransport(config.masterKey, config.nodeId, clock),
           join(config.dataDirectory, "attempt-logs"),
+          clock,
         );
         await nodeLogs.initialize(join(config.dataDirectory, "attempt-logs"));
         attemptLogs = nodeLogs;
@@ -287,6 +298,7 @@ async function createPlatformServices() {
         },
       };
     } catch (error) {
+      await clock.close();
       await database.close();
       throw new Error("无法初始化 Full 模式基础设施。", { cause: error });
     }
@@ -318,7 +330,7 @@ async function createPlatformServices() {
     maxJarBytes: config.maxJarBytes,
     targetJavaVersion: config.testNgTargetJavaVersion,
   });
-  const clock = { now: () => new Date() };
+
   const caseSuiteActivity = new CaseSuiteActivityService(
     suiteActivityRepository,
     suites,
@@ -619,7 +631,10 @@ async function createPlatformServices() {
       : Promise.resolve();
   const runtimeInfrastructure = infrastructure;
   infrastructure = {
-    ready: () => runtimeInfrastructure.ready(),
+    ready: async () => {
+      clock.now();
+      await runtimeInfrastructure.ready();
+    },
     close: async () => {
       scheduleAbort.abort();
       await Promise.all([
@@ -629,6 +644,7 @@ async function createPlatformServices() {
         roundRecoveryLoop,
         nodeCleanupLoop,
       ]);
+      await clock.close();
       await runtimeInfrastructure.close();
     },
   };
@@ -643,7 +659,9 @@ async function createPlatformServices() {
       runnerControl.issueBootstrapToken(replacementRunnerId),
   });
 
+  registerPlatformClock(clock);
   return {
+    clock,
     config,
     configurationStore,
     platformNodes,

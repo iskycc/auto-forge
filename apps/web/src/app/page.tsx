@@ -89,7 +89,7 @@ export default async function DashboardPage() {
   const canManageSources = Boolean(
     activeProjectId && hasPermission(identity, "case_source.manage", activeProjectId),
   );
-  const now = new Date();
+  const now = services.clock.now();
 
   const [dashboardSnapshot, runners, runnerGroups, recentBatches, recentSources] =
     await Promise.all([

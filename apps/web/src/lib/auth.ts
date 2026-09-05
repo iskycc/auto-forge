@@ -202,7 +202,7 @@ export function requireSameOrigin(request: Request): void {
   }
 }
 
-export function sessionCookie(token: string, expiresAt: string, request: Request) {
+export function sessionCookie(token: string, expiresAt: string, request: Request, now: Date) {
   return {
     name: SESSION_COOKIE_NAME,
     value: token,
@@ -210,7 +210,7 @@ export function sessionCookie(token: string, expiresAt: string, request: Request
     sameSite: "strict" as const,
     secure: requestUsesHttps(request),
     path: "/",
-    expires: new Date(expiresAt),
+    maxAge: Math.max(0, Math.floor((Date.parse(expiresAt) - now.getTime()) / 1_000)),
   };
 }
 

@@ -61,7 +61,12 @@ export class TerminalGateway {
   private readonly logger: Logger;
   private readonly auditor: TerminalAuditor;
 
-  constructor(secret: string | undefined, logger: Logger, auditor: TerminalAuditor) {
+  constructor(
+    secret: string | undefined,
+    logger: Logger,
+    auditor: TerminalAuditor,
+    private readonly now: () => Date = () => new Date(),
+  ) {
     this.secret = secret;
     this.logger = logger;
     this.auditor = auditor;
@@ -85,8 +90,15 @@ export class TerminalGateway {
       rejectUpgrade(socket, 503, "Terminal gateway is disabled");
       return;
     }
-    const ticket = this.authenticate(request);
-    if (!ticket || !this.consumeNonce(ticket)) {
+    let now: Date;
+    try {
+      now = this.now();
+    } catch {
+      rejectUpgrade(socket, 503, "Platform clock is unavailable");
+      return;
+    }
+    const ticket = this.authenticate(request, now);
+    if (!ticket || !this.consumeNonce(ticket, now)) {
       rejectUpgrade(socket, 401, "Terminal ticket is invalid");
       return;
     }
@@ -117,13 +129,13 @@ export class TerminalGateway {
     await Promise.allSettled([...this.pendingAudits]);
   }
 
-  private authenticate(request: IncomingMessage): TerminalTicket | null {
-    const ticket = verifyTerminalUpgradeTicket(this.secret!, request.headers);
+  private authenticate(request: IncomingMessage, now: Date): TerminalTicket | null {
+    const ticket = verifyTerminalUpgradeTicket(this.secret!, request.headers, now);
     return ticket?.role === "browser" || ticket?.role === "agent" ? ticket : null;
   }
 
   private allowUpgrade(remoteAddress: string): boolean {
-    const now = Date.now();
+    const now = performance.now();
     for (const [address, window] of this.upgradeWindows) {
       if (window.startedAt + UPGRADE_WINDOW_MS <= now) this.upgradeWindows.delete(address);
     }
@@ -136,8 +148,8 @@ export class TerminalGateway {
     return current.attempts <= MAXIMUM_UPGRADES_PER_WINDOW;
   }
 
-  private consumeNonce(ticket: TerminalTicket): boolean {
-    const now = Math.floor(Date.now() / 1000);
+  private consumeNonce(ticket: TerminalTicket, observedAt: Date): boolean {
+    const now = Math.floor(observedAt.getTime() / 1000);
     for (const [nonce, expiresAt] of this.consumedNonces) {
       if (expiresAt <= now) this.consumedNonces.delete(nonce);
     }

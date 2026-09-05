@@ -293,6 +293,7 @@ export const claimAssignmentsInputSchema = z.object({
 });
 
 export const leaseSchema = z.object({
+  serverTime: isoTimestampSchema.optional(),
   leaseId: identifierSchema,
   token: z.string().min(32).max(256),
   version: z.number().int().positive(),
@@ -320,6 +321,7 @@ export const renewLeaseInputSchema = z.object({
 });
 
 export const renewLeaseResponseSchema = z.object({
+  serverTime: isoTimestampSchema.optional(),
   schemaVersion: protocolVersionSchema,
   acceptedAt: isoTimestampSchema,
   leaseVersion: z.number().int().positive(),
@@ -565,6 +567,7 @@ export const reconcileAttemptsInputSchema = z.object({
 });
 
 export const reconcileAttemptsResponseSchema = z.object({
+  serverTime: isoTimestampSchema.optional(),
   schemaVersion: protocolVersionSchema,
   decisions: z
     .array(

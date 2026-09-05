@@ -816,7 +816,7 @@ func (supervisor *attemptSupervisor) renewLease(
 	lease := state.Claimed.Lease
 	stateMutex.Unlock()
 	for {
-		expiresAt, err := time.Parse(time.RFC3339Nano, lease.ExpiresAt)
+		expiresAt, err := lease.deadline()
 		if err != nil {
 			reportAllowed.Store(false)
 			cancelExecution()
@@ -848,6 +848,8 @@ func (supervisor *attemptSupervisor) renewLease(
 		}
 		lease.Version = response.LeaseVersion
 		lease.ExpiresAt = response.ExpiresAt
+		lease.ServerTime = response.ServerTime
+		lease.LocalDeadline = response.LocalDeadline
 		stateMutex.Lock()
 		state.Claimed.Lease = lease
 		if err := supervisor.store.save(*state); err != nil {
@@ -883,7 +885,7 @@ func (supervisor *attemptSupervisor) reportCompletion(ctx context.Context, state
 	if state.Result == nil || state.CompletionID == "" {
 		return false
 	}
-	expiresAt, err := time.Parse(time.RFC3339Nano, state.Claimed.Lease.ExpiresAt)
+	expiresAt, err := state.Claimed.Lease.deadline()
 	if err != nil {
 		return false
 	}
@@ -959,6 +961,13 @@ func (supervisor *attemptSupervisor) reconcilePage(ctx context.Context, states [
 				return err
 			}
 		case "continue", "cancel", "retransmit":
+			if response.ServerTime != "" {
+				deadline, err := leaseDeadline(state.Claimed.Lease.ExpiresAt, response.ServerTime, response.RequestedAt)
+				if err != nil {
+					return fmt.Errorf("reconcile lease time for %s: %w", decision.AttemptID, err)
+				}
+				state.Claimed.Lease.LocalDeadline = deadline
+			}
 			if decision.AcknowledgedLogSequence != nil {
 				if err := supervisor.logSpool.acknowledge(
 					decision.AttemptID,

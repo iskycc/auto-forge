@@ -36,6 +36,7 @@ export class LogStreamGateway {
   constructor(
     private readonly secret: string | undefined,
     private readonly logger: Logger,
+    private readonly now: () => Date = () => new Date(),
   ) {
     this.keepalive = setInterval(() => this.ping(), KEEPALIVE_INTERVAL_MS);
     this.keepalive.unref();
@@ -57,12 +58,19 @@ export class LogStreamGateway {
       reject(socket, 403, "Log stream origin is not allowed");
       return;
     }
+    let now: Date;
+    try {
+      now = this.now();
+    } catch {
+      reject(socket, 503, "Platform clock is unavailable");
+      return;
+    }
     const protocol = String(request.headers["sec-websocket-protocol"] ?? "")
       .split(",")
       .map((value) => value.trim())
       .find((value) => value.startsWith("autoforge-log."));
     const ticket = protocol
-      ? verifyLogStreamTicket(this.secret, protocol.slice("autoforge-log.".length))
+      ? verifyLogStreamTicket(this.secret, protocol.slice("autoforge-log.".length), now)
       : null;
     if (!ticket) {
       reject(socket, 401, "Log stream ticket is invalid");

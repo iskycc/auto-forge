@@ -15,6 +15,7 @@ import {
 import {
   createAttemptLogStore,
   createPostgresDatabase,
+  createPostgresClock,
   NodeAttemptLogStore,
   createNodeLogTransport,
   PostgresCaseCatalogRepository,
@@ -67,7 +68,11 @@ const nats = await connect({
   reconnectTimeWait: 250,
 });
 const queue = await JetStreamJobQueue.create(nats.jetstream(), await nats.jetstreamManager());
-const clock = { now: () => new Date() };
+const clock = await createPostgresClock(database, (error) => {
+  logger.error("Platform clock synchronization failed", {
+    error: error instanceof Error ? error.message : "Unknown clock error",
+  });
+});
 const ids = { next: () => uuidV7() };
 const runnerRepository = new PostgresRunnerRepository(database);
 const batches = new RunBatchSchedulingService(
@@ -97,8 +102,9 @@ const nodeLogs =
         database,
         config.nodeId,
         localAttemptLogs,
-        createNodeLogTransport(config.masterKey, config.nodeId),
+        createNodeLogTransport(config.masterKey, config.nodeId, clock),
         join(config.dataDirectory, "attempt-logs"),
+        clock,
       )
     : undefined;
 if (nodeLogs) await nodeLogs.initialize(join(config.dataDirectory, "attempt-logs"));
@@ -196,11 +202,13 @@ const outboxRelay = new PostgresOutboxRelay(
     batchSize: 100,
   },
   logger,
+  clock,
 );
 const health = {
   ready: false,
   metricsEnabled: config.metricsEnabled,
   checkDependencies: async () => {
+    clock.now();
     await Promise.all([database.pool.query("SELECT 1"), queue.ready(), objectStore.ready()]);
   },
   readMetrics: async () => {
@@ -260,6 +268,7 @@ await waitForAbort(shutdown.signal);
 health.ready = false;
 await closeServer(healthServer);
 await withGracePeriod(loops, config.shutdownGraceMs, logger);
+await clock.close();
 await Promise.allSettled([queue.close(), nats.drain(), database.close()]);
 attemptLogs.close();
 if (fatalError) throw fatalError;

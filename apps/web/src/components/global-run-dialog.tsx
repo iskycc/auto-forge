@@ -1,5 +1,7 @@
 "use client";
 
+import { usePlatformNow } from "./platform-time";
+
 import { formatPlatformDateTime } from "@/lib/platform-date-time";
 
 import type {
@@ -112,7 +114,7 @@ export function GlobalRunDialog({
   const [startMode, setStartMode] = useState<StartMode>("immediate");
   const [delayMinutes, setDelayMinutes] = useState(5);
   const [delaySecondsPart, setDelaySecondsPart] = useState(0);
-  const [previewNowMs, setPreviewNowMs] = useState(() => Date.now());
+  const previewNowMs = usePlatformNow(open && startMode === "delayed");
   const preferenceKey = executionSuitePreferenceKey({
     userId,
     projectId: projectId ?? "",
@@ -146,7 +148,6 @@ export function GlobalRunDialog({
         setRunKind("case");
         setCaseDefinitionId(requestedCaseId);
       }
-      setPreviewNowMs(Date.now());
       setOpen(true);
       if (loading) return;
       setLoading(true);
@@ -222,12 +223,6 @@ export function GlobalRunDialog({
       window.removeEventListener("keydown", onKeyDown);
     };
   }, [closeDialog, open, submitting]);
-
-  useEffect(() => {
-    if (!open || startMode !== "delayed") return;
-    const timer = window.setInterval(() => setPreviewNowMs(Date.now()), 1_000);
-    return () => window.clearInterval(timer);
-  }, [open, startMode]);
 
   function toggleRunner(runnerId: string): void {
     setRunnerIds((current) =>

@@ -23,7 +23,11 @@ export async function GET(request: Request): Promise<NextResponse> {
     const deadLetters =
       queueDepth && queueDepth.deadLetter > 0 ? await services.jobQueue.listDeadLetters(20) : [];
     const dataDisk = await readDiskCapacity(services.config.dataDirectory);
-    const generatedAt = new Date().toISOString();
+    const generatedAt = services.clock.now().toISOString();
+    const clock = {
+      ...services.clock.status(),
+      hostOffsetMs: Date.now() - Date.parse(generatedAt),
+    };
     const recentErrors: SystemDiagnostic["recentErrors"] = checks
       .filter((check) => !check.ready)
       .map((check) => ({
@@ -38,6 +42,16 @@ export async function GET(request: Request): Promise<NextResponse> {
         summary: `队列中有 ${queueDepth.deadLetter} 个死信任务。`,
       });
     }
+    if (clock.state === "holdover" || Math.abs(clock.hostOffsetMs) >= 5_000) {
+      recentErrors.push({
+        timestamp: generatedAt,
+        code: clock.state === "holdover" ? "PLATFORM_CLOCK_HOLDOVER" : "HOST_CLOCK_SKEW",
+        summary:
+          clock.state === "holdover"
+            ? "统一时间采样暂不可用，正在按单调时钟继续计时；120 秒内需要恢复采样。"
+            : `本机系统时间比平台时间${clock.hostOffsetMs > 0 ? "快" : "慢"} ${Math.round(Math.abs(clock.hostOffsetMs) / 1_000)} 秒，请检查宿主机校时。`,
+      });
+    }
     if (dataDisk.status !== "ok") {
       recentErrors.push({
         timestamp: generatedAt,
@@ -46,6 +60,7 @@ export async function GET(request: Request): Promise<NextResponse> {
       });
     }
     const diagnostic = systemDiagnosticSchema.parse({
+      clock,
       generatedAt,
       mode: services.config.mode,
       version: platformVersion,
@@ -86,7 +101,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     const identity = await authorizeRequest(request, "settings.manage");
     const services = await getPlatformServices();
     const redriven = await services.jobQueue.redriveDeadLetters({
-      redrivenAt: new Date().toISOString(),
+      redrivenAt: services.clock.now().toISOString(),
       limit: 100,
     });
     await services.identityAccess.recordQueueDeadLetterRedrive(

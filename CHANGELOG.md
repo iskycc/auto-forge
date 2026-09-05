@@ -4,6 +4,34 @@ All user-visible changes are recorded here. AutoForge follows semantic versionin
 also list database migrations, persisted-configuration changes, compatibility changes, offline assets,
 and known limitations.
 
+## 1.10.1 - 2026-09-05
+
+### Fixed
+
+- 执行耗时和延迟执行倒计时使用平台时间与浏览器单调时钟，修复浏览器与宿主机相差十分钟时新任务立即显示十分钟耗时，以及运行中校时导致计时跳变的问题。
+- Full 的 Web、worker、调度、跨节点日志认证和短期票据统一使用共享 PostgreSQL 时间；Lite 使用本地时间原点与单调增量，不增加外部服务依赖。
+- Runner 领取、续租和重连根据服务端剩余租期生成本地单调截止时间，容忍执行机与平台的绝对时间偏差；会话 Cookie 改用相对有效期。
+
+### Added
+
+- 系统诊断展示时间来源、同步状态和宿主机偏差。Full 时间采样暂时失败时保持单调推进，超过 120 秒未获得有效采样则返回不可用，恢复有效采样后自动恢复。
+- 分布式验收对两个 Web/worker 节点分别注入正负十分钟偏差，并覆盖浏览器时差、运行中校时、跨节点通信和故障恢复。
+
+### Database and operations
+
+- 无数据库迁移、持久配置变更或新增生产依赖；旧记录中的错误绝对时间不自动改写。
+- 升级前排空在途任务并更新主平台、worker 和内置 Runner；完整租约容错需要新版 Runner。Runner Protocol v1 兼容新增可选 `serverTime` 字段，旧端保留原有行为。
+- PostgreSQL 自身时间错误时无法推断真实 UTC；TLS、S3 签名及中间件 TTL 仍需要可靠校时。超过两秒的数据库时间跳变不会在运行中直接采用，计划校正数据库时间时应排空任务、停止所有平台和 worker，校时后统一重启。
+
+### Offline assets
+
+- 双架构后端镜像继续内置两个架构的静态 Runner。Compose 部署包增加统一时间设计和运维说明，五主机方案同步说明升级与校时步骤。
+
+### Tests
+
+- 本地格式、lint、类型检查、构建、739 项 Vitest、Go 测试和 28 项 Node 测试通过；隔离 PostgreSQL 集成测试 231 项通过，7 项未配置其他中间件地址的专项测试跳过。
+- Lite 与 Full 计时 Playwright 回归通过，Full 双节点日志与故障恢复验收通过；人工检查 1024px 执行页、1536px 倒计时页及系统诊断页。
+
 ## 1.10.0 - 2026-09-05
 
 ### Added

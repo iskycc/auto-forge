@@ -5,6 +5,7 @@ import { join, resolve } from "node:path";
 
 import next from "next";
 
+import { platformClockNow } from "../src/lib/platform-clock-runtime.ts";
 import { loadAppConfig } from "../src/lib/config.ts";
 import { registerWorkDispatcher, unregisterWorkDispatcher } from "../src/lib/work-runtime.ts";
 import { recordHttpRequest } from "../src/lib/runtime-metrics.ts";
@@ -73,8 +74,13 @@ const terminalGateway = new TerminalGateway(
   platformConfiguration.terminalAccessToken,
   log,
   recordTerminalAudit,
+  platformClockNow,
 );
-const logStreamGateway = new LogStreamGateway(platformConfiguration.terminalAccessToken, log);
+const logStreamGateway = new LogStreamGateway(
+  platformConfiguration.terminalAccessToken,
+  log,
+  platformClockNow,
+);
 const logStreamRelay = await LogStreamRelay.create({
   mode: platformConfiguration.mode,
   ...(platformConfiguration.mode === "full" ? { redisUrl: platformConfiguration.redisUrl } : {}),

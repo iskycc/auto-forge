@@ -81,6 +81,7 @@ test("builds a versioned deployment bundle with Lite, Full and five-host templat
       "distributed/infrastructure/prepare-secrets.mjs",
       "distributed/edge/nginx.conf",
       "docs/adr/0012-full-distributed-node-local-logs.md",
+      "docs/adr/0013-platform-time-authority.md",
     ])
       assert.ok(
         packagedFiles.includes(template),
@@ -101,6 +102,10 @@ test("builds a versioned deployment bundle with Lite, Full and five-host templat
       /\]\(\.\.\/docs\/adr\/0012-full-distributed-node-local-logs\.md\)/,
     );
     assert.ok(!packagedFiles.includes("docs/design/autoforge-apple-like-e-dashboard.png"));
+    assert.match(
+      await readFile(resolve(packageDirectory, "full-five-hosts/README.md"), "utf8"),
+      /\]\(\.\.\/docs\/adr\/0013-platform-time-authority\.md\)/,
+    );
     assert.ok(!packagedFiles.some((name) => name.startsWith("docs/archive/")));
     assert.ok(!packagedFiles.includes("docs/project-roadmap.md"));
   } finally {

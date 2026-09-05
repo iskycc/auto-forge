@@ -87,7 +87,7 @@ function redactSecrets(value: string): string {
 }
 
 function domainErrorStatus(code: string): number {
-  if (code === "PLATFORM_LOG_NODE_UNAVAILABLE") return 503;
+  if (code === "PLATFORM_LOG_NODE_UNAVAILABLE" || code === "PLATFORM_CLOCK_UNAVAILABLE") return 503;
   if (code === "PLATFORM_NODE_AUTH_REJECTED") return 401;
   if (code === "PLATFORM_LOG_OWNER_MISMATCH" || code === "PLATFORM_CONFIGURATION_MANAGED")
     return 409;

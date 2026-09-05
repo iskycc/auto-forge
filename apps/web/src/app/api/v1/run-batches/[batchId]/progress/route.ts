@@ -21,6 +21,7 @@ export async function GET(request: Request, context: Context): Promise<NextRespo
         services.config.masterKey,
         accessToken,
         batchId,
+        services.clock.now(),
       );
       const permanentBatchId = readPermanentShareToken(
         services.config.masterKey,

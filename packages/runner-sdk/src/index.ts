@@ -17,22 +17,26 @@ export class RunnerProtocolController {
 
   async claim(runnerId: string, credential: string, rawInput: unknown) {
     const input = claimAssignmentsInputSchema.parse(rawInput);
-    const deadline = Date.now() + input.waitSeconds * 1_000;
+    const deadline = performance.now() + input.waitSeconds * 1_000;
     do {
       const response = await this.executions.claim(runnerId, credential, {
         ...input,
         waitSeconds: 0,
       });
       const closedBatchIds = response.closedBatchIds ?? [];
-      if (response.assignments.length > 0 || closedBatchIds.length > 0 || Date.now() >= deadline) {
+      if (
+        response.assignments.length > 0 ||
+        closedBatchIds.length > 0 ||
+        performance.now() >= deadline
+      ) {
         return {
           ...response,
           closedBatchIds,
           retryAfterMs: response.assignments.length > 0 ? 100 : 1_000,
         };
       }
-      await delay(Math.min(POLL_INTERVAL_MS, Math.max(0, deadline - Date.now())));
-    } while (Date.now() < deadline);
+      await delay(Math.min(POLL_INTERVAL_MS, Math.max(0, deadline - performance.now())));
+    } while (performance.now() < deadline);
     return this.executions.claim(runnerId, credential, { ...input, waitSeconds: 0 });
   }
 

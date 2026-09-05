@@ -87,8 +87,9 @@ export async function distributedLogFixture(nodeIds: [string, string]) {
     handle,
     nodeIds[1],
     createAttemptLogStore(directory),
-    createNodeLogTransport(masterKey, nodeIds[1]),
+    createNodeLogTransport(masterKey, nodeIds[1], { now: () => new Date() }),
     directory,
+    { now: () => new Date() },
   );
   return {
     batchId,

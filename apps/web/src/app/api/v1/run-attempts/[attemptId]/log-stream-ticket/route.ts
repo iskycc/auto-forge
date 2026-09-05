@@ -36,6 +36,7 @@ export async function POST(request: Request, context: Context): Promise<NextResp
         attemptId,
         actorId: identity.user.id,
         ttlSeconds: 120,
+        now: services.clock.now(),
       }),
     });
   } catch (error) {

@@ -287,6 +287,7 @@ run_adapter_tests() {
   AUTOFORGE_TEST_REDIS_URL=redis://127.0.0.1:56389 \
   AUTOFORGE_TEST_NATS_URL=nats://127.0.0.1:54229 \
     pnpm exec vitest run \
+      packages/db/test/platform-clock.integration.test.ts \
       packages/db/test/node-attempt-log-store.integration.test.ts \
       apps/web/server/log-stream-relay.integration.test.ts \
       packages/db/test/postgres-migrations.integration.test.ts \
@@ -308,6 +309,7 @@ run_distributed_contract_tests() {
   AUTOFORGE_TEST_NATS_URL=nats://127.0.0.1:54229 \
     pnpm exec vitest run --reporter=default --reporter=json \
       --outputFile.json="${evidence_directory}/contracts.json" \
+      packages/db/test/platform-clock.integration.test.ts \
       packages/db/test/node-attempt-log-store.integration.test.ts \
       packages/db/test/attempt-log-store.integration.test.ts \
       packages/db/test/platform-node-transport.test.ts \
@@ -443,11 +445,12 @@ run_full_distributed_flow() {
     import { spawnSync } from "node:child_process";
     const [configurationFile, faults, originalDirectory, replicaDirectory, evidence] = process.argv.slice(1);
     const config = JSON.parse(readFileSync(configurationFile, "utf8"));
-    const result = spawnSync("pnpm", ["exec", "playwright", "test", "--config", "playwright.full.config.ts", "tests/e2e/distributed-platform.spec.ts", "--reporter=line,json", "--output", `${evidence}/browser`], {
+    const result = spawnSync("pnpm", ["exec", "playwright", "test", "--config", "playwright.full.config.ts", "tests/e2e/distributed-platform.spec.ts", "tests/e2e/execution-recovery.spec.ts", "--grep", "manages node addresses|execution duration and countdown", "--reporter=line,json", "--output", `${evidence}/browser`], {
       stdio: "inherit", env: { ...process.env,
         E2E_BASE_URL: "http://127.0.0.1:3197", E2E_PRIMARY_BASE_URL: "http://127.0.0.1:3199", E2E_SECONDARY_BASE_URL: "http://127.0.0.1:3198",
         E2E_ADMIN_BOOTSTRAP_TOKEN: config.secrets.adminBootstrapToken,
         E2E_PLATFORM_MASTER_KEY: config.secrets.masterKey,
+        E2E_RUNNER_BOOTSTRAP_MASTER_KEY: config.secrets.masterKey,
         E2E_DISTRIBUTED_FAULT_DIR: faults,
         E2E_DISTRIBUTED_LOG_DIRECTORIES: JSON.stringify([originalDirectory, replicaDirectory].map(path => `${path}/attempt-logs`)),
         AUTOFORGE_E2E_POSTGRES_URL: config.full.databaseUrl,
@@ -462,7 +465,10 @@ run_full_distributed_flow() {
 
 start_platform_node() {
   local role="${1}" directory="${2}" port="${3}"
-  NODE_ENV=production setsid node apps/web/dist-server/server/index.js \
+  local clock_offset_ms=600000
+  if [[ "${role}" == "web-replica" ]]; then clock_offset_ms=-600000; fi
+  AUTOFORGE_TEST_WALL_CLOCK_OFFSET_MS="${clock_offset_ms}" NODE_ENV=production \
+    setsid node --import "${repository_root}/scripts/quality/clock-skew-fixture.mjs" apps/web/dist-server/server/index.js \
     --data-dir="${directory}" >>"${temporary_directory}/${role}.log" 2>&1 &
   started_web_pid="$!"
   printf '%s\n' "${started_web_pid}" >"${temporary_directory}/${role}.pid"
@@ -479,11 +485,15 @@ start_full_platform() {
 
 start_full_worker() {
   pnpm --filter @autoforge/worker build >/dev/null
-  setsid node apps/worker/dist/worker.mjs --data-dir="${platform_data_directory}" \
+  AUTOFORGE_TEST_WALL_CLOCK_OFFSET_MS=600000 setsid node \
+    --import "${repository_root}/scripts/quality/clock-skew-fixture.mjs" \
+    apps/worker/dist/worker.mjs --data-dir="${platform_data_directory}" \
     >"${temporary_directory}/worker.log" 2>&1 &
   worker_pid="$!"
   wait_until "Full worker" curl --fail --silent http://127.0.0.1:3201/health/ready
-  setsid node apps/worker/dist/worker.mjs --data-dir="${replica_platform_data_directory}" \
+  AUTOFORGE_TEST_WALL_CLOCK_OFFSET_MS=-600000 setsid node \
+    --import "${repository_root}/scripts/quality/clock-skew-fixture.mjs" \
+    apps/worker/dist/worker.mjs --data-dir="${replica_platform_data_directory}" \
     >"${temporary_directory}/worker-replica.log" 2>&1 &
   worker_replica_pid="$!"
   wait_until "Full worker replica" curl --fail --silent http://127.0.0.1:3202/health/ready

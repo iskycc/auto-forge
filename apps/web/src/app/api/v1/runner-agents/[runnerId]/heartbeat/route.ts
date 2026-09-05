@@ -36,6 +36,7 @@ export async function POST(request: Request, context: Context): Promise<NextResp
             role: "agent",
             runnerId,
             ttlSeconds: 90,
+            now: services.clock.now(),
           })
         : undefined;
     return NextResponse.json({

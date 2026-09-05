@@ -26,7 +26,9 @@ export async function POST(request: Request): Promise<NextResponse> {
     const input = loginInputSchema.parse(await readJsonBody(request, 16 * 1024));
     const session = await services.identityAccess.login(input, currentRequestId);
     const response = NextResponse.json({ userId: session.userId });
-    response.cookies.set(sessionCookie(session.token, session.expiresAt, request));
+    response.cookies.set(
+      sessionCookie(session.token, session.expiresAt, request, services.clock.now()),
+    );
     return response;
   } catch (error) {
     if (

@@ -1,6 +1,7 @@
 import { opendir } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import type { Clock } from "@autoforge/application";
 import type { PoolClient } from "pg";
 import { DomainError } from "@autoforge/domain";
 import {
@@ -24,12 +25,13 @@ export class NodeAttemptLogStore {
     private readonly local: AttemptLogStore,
     private readonly transport: NodeLogTransport,
     private readonly directory: string,
+    private readonly clock: Clock,
   ) {}
 
   async initialize(directory: string): Promise<void> {
     await new PostgresPlatformNodeRepository(this.database).register(
       this.nodeId,
-      new Date().toISOString(),
+      this.clock.now().toISOString(),
     );
     // Existing files identify their original owner during a single-host upgrade. Never copy
     // these directories to a replica: conflicting ownership is rejected instead of overwritten.
@@ -55,7 +57,7 @@ export class NodeAttemptLogStore {
           await this.recordWatermarks({
             batchId,
             attemptId: id,
-            recordedAt: new Date().toISOString(),
+            recordedAt: this.clock.now().toISOString(),
             watermarks: {
               stdout: this.local.acknowledgedSequence(batchId, id, "stdout"),
               stderr: this.local.acknowledgedSequence(batchId, id, "stderr"),

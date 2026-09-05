@@ -30,6 +30,26 @@ test("manages node addresses behind Nginx and reads owner-local logs through eit
   ];
   expect(ids[0]).toBeTruthy();
   expect(ids[1]).not.toBe(ids[0]);
+  const nodeTimes = await Promise.all(
+    [primary, secondary].map(async (baseUrl) => {
+      const response = await page.request.get(`${baseUrl}/api/v1/time`);
+      expect(response.status()).toBe(200);
+      return Date.parse(((await response.json()) as { serverTime: string }).serverTime);
+    }),
+  );
+  expect(Math.abs(nodeTimes[0]! - nodeTimes[1]!)).toBeLessThan(2_000);
+  for (const [index, baseUrl] of [primary, secondary].entries()) {
+    const response = await page.request.get(`${baseUrl}/api/v1/settings/diagnostics`);
+    expect(response.status()).toBe(200);
+    const diagnostic = (await response.json()) as {
+      clock: { source: string; state: string; hostOffsetMs: number };
+    };
+    expect(diagnostic.clock.source).toBe("postgres");
+    expect(diagnostic.clock.state).toBe("synchronized");
+    expect(
+      Math.abs(diagnostic.clock.hostOffsetMs - (index === 0 ? 600_000 : -600_000)),
+    ).toBeLessThan(2_000);
+  }
   const nodes = (await (await page.request.get("/api/v1/settings/platform-nodes")).json()) as {
     enabled: boolean;
     items: PlatformNode[];

@@ -17,7 +17,10 @@ export default async function RunProgressPage({
   const [{ batchId }, query] = await Promise.all([params, searchParams]);
   const accessToken = query.access_token ?? "";
   const services = await getPlatformServices();
-  if (!verifyRunProgressToken(services.config.masterKey, accessToken, batchId)) notFound();
+  if (
+    !verifyRunProgressToken(services.config.masterKey, accessToken, batchId, services.clock.now())
+  )
+    notFound();
   const overview = await services.runBatches.getDetailOverview(batchId).catch(() => null);
   if (!overview) notFound();
   return (

@@ -19,6 +19,63 @@ const runnerCapabilities = [
   "testng:7.11.0",
 ];
 
+test("execution duration and countdown tolerate browser clock skew and wall clock steps", async ({
+  page,
+}, testInfo) => {
+  await ensureAdministrator(page);
+  const fixture = await createExecutableFixture(page);
+  const runner = await registerRunner(page, "Clock tolerance Runner", runnerCapabilities);
+  await heartbeatRunner(page, runner, runnerCapabilities);
+  const timeResponse = await page.request.get("/api/v1/time");
+  expect(timeResponse.status()).toBe(200);
+  const { serverTime } = (await timeResponse.json()) as { serverTime: string };
+  const baselineMs = Date.parse(serverTime);
+  await page.clock.setFixedTime(new Date(baselineMs + 600_000));
+  const batchId = await createBatch(page, fixture, runner.runnerId, {});
+  await page.goto(`/run-batches/${batchId}`);
+  const elapsed = page
+    .locator(".batch-metric")
+    .filter({ has: page.getByText("已运行时长", { exact: true }) })
+    .locator("strong");
+  await expect(elapsed).toHaveText(/^\d+s$/);
+  await page.clock.setFixedTime(new Date(baselineMs - 600_000));
+  await expect
+    .poll(async () => Number((await elapsed.innerText()).replace("s", "")))
+    .toBeGreaterThan(0);
+  await expect(elapsed).toHaveText(/^\d+s$/);
+  await page.setViewportSize({ width: 1024, height: 900 });
+  await page.screenshot({
+    path: testInfo.outputPath("clock-skew-running-1024.png"),
+    fullPage: true,
+  });
+  await complete(page, runner, await claimAssignment(page, runner), randomUUID());
+  await waitForBatchStatus(page, batchId, "succeeded");
+
+  const delayed = await browserJson<{ id: string }>(page, "/api/v1/run-batches", {
+    method: "POST",
+    body: { suiteId: fixture.suiteId, delaySeconds: 120 },
+  });
+  expect(delayed.status).toBe(201);
+  await page.goto(`/run-batches/${delayed.body.id}`);
+  const countdown = page
+    .locator(".batch-metric")
+    .filter({ has: page.getByText("距离开始", { exact: true }) })
+    .locator("strong");
+  await expect(countdown).toHaveText(/^1m \d+s$/);
+  await page.clock.setFixedTime(new Date(baselineMs + 3_600_000));
+  await expect(countdown).toHaveText(/^1m \d+s$/);
+  await page.setViewportSize({ width: 1536, height: 1024 });
+  await page.screenshot({
+    path: testInfo.outputPath("clock-skew-countdown-1536.png"),
+    fullPage: true,
+  });
+  const cancelled = await browserJson(page, `/api/v1/run-batches/${delayed.body.id}/cancel`, {
+    method: "POST",
+    body: { reason: "Clock tolerance acceptance cleanup" },
+  });
+  expect(cancelled.status).toBe(200);
+});
+
 test("authoritative execution recovery handles every timeout and idempotent race", async ({
   page,
 }) => {

@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import type { Permission } from "@autoforge/domain";
 import { connection } from "next/server";
 
+import { PlatformTimeProvider } from "@/components/platform-time";
 import { AppShell } from "@/components/app-shell";
 import { UiFeedbackProvider } from "@/components/ui-feedback";
 import { currentIdentity } from "@/lib/auth";
@@ -61,27 +62,29 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
   return (
     <html data-time-zone={platformTimeZone} lang="zh-CN">
       <body>
-        <UiFeedbackProvider>
-          <AppShell
-            mode={services.config.mode}
-            timeZone={platformTimeZone}
-            {...(identity
-              ? {
-                  userName: identity.user.displayName,
-                  userId: identity.user.id,
-                  permissions,
-                  forcePasswordChange: identity.user.forcePasswordChange,
-                  projects: projects.map(({ id, name }) => ({ id, name })),
-                  selectedProjectId: activeProjectId,
-                  projectVersions,
-                  selectedProjectVersionId: activeHierarchy.projectVersionId,
-                  selectedTestStageId: activeHierarchy.testStageId,
-                }
-              : {})}
-          >
-            {children}
-          </AppShell>
-        </UiFeedbackProvider>
+        <PlatformTimeProvider serverTime={services.clock.now().toISOString()}>
+          <UiFeedbackProvider>
+            <AppShell
+              mode={services.config.mode}
+              timeZone={platformTimeZone}
+              {...(identity
+                ? {
+                    userName: identity.user.displayName,
+                    userId: identity.user.id,
+                    permissions,
+                    forcePasswordChange: identity.user.forcePasswordChange,
+                    projects: projects.map(({ id, name }) => ({ id, name })),
+                    selectedProjectId: activeProjectId,
+                    projectVersions,
+                    selectedProjectVersionId: activeHierarchy.projectVersionId,
+                    selectedTestStageId: activeHierarchy.testStageId,
+                  }
+                : {})}
+            >
+              {children}
+            </AppShell>
+          </UiFeedbackProvider>
+        </PlatformTimeProvider>
       </body>
     </html>
   );

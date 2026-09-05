@@ -4,6 +4,17 @@ import { describe, expect, it } from "vitest";
 import { mapApiError } from "./api-error-mapping";
 
 describe("API error mapping", () => {
+  it("returns retryable unavailability when the platform time basis expires", () => {
+    expect(
+      mapApiError(
+        new DomainError("PLATFORM_CLOCK_UNAVAILABLE", "统一时间基准不可用。"),
+        "clock-request",
+      ),
+    ).toMatchObject({
+      status: 503,
+      body: { error: { code: "PLATFORM_CLOCK_UNAVAILABLE", requestId: "clock-request" } },
+    });
+  });
   it("keeps an LDAP finalization failure actionable while returning a server status", () => {
     const mapped = mapApiError(
       new DomainError(

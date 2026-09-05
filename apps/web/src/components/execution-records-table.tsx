@@ -1,5 +1,7 @@
 "use client";
 
+import { usePlatformNow } from "./platform-time";
+
 import { ExternalLink, LoaderCircle, OctagonX } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -93,7 +95,8 @@ export function ExecutionRecordsTable({
   const confirmAction = useConfirm();
   const [terminatingBatchId, setTerminatingBatchId] = useState<string>();
   const [actionError, setActionError] = useState("");
-  const [observedAt, setObservedAt] = useState(rows[0]?.observedAt ?? "1970-01-01T00:00:00.000Z");
+  const nowMs = usePlatformNow(rows.some((row) => executionRecordIsActive(row.status)));
+  const observedAt = new Date(nowMs).toISOString();
   // 持久化列宽通过外部 store 读取，服务端快照恒为空，避免首屏水合不一致。
   const storedWidths = useSyncExternalStore(
     subscribeColumnWidths,
@@ -135,12 +138,6 @@ export function ExecutionRecordsTable({
       window.removeEventListener("mouseup", onUp);
     };
   }, []);
-
-  useEffect(() => {
-    if (!rows.some((row) => executionRecordIsActive(row.status))) return;
-    const intervalId = window.setInterval(() => setObservedAt(new Date().toISOString()), 1_000);
-    return () => window.clearInterval(intervalId);
-  }, [rows]);
 
   const startResize = useCallback(
     (event: React.MouseEvent, column: ExecutionRecordColumnDefinition) => {

@@ -163,6 +163,7 @@ export class ExecutionControlService {
           ),
           version: record.lease.version,
           expiresAt: record.lease.expiresAt,
+          serverTime: this.clock.now().toISOString(),
         },
       })),
       retryAfterMs: claimed.length === 0 ? Math.max(500, input.waitSeconds * 1_000) : 100,
@@ -181,9 +182,14 @@ export class ExecutionControlService {
       now: now.toISOString(),
       expiresAt: new Date(now.getTime() + LEASE_DURATION_MS).toISOString(),
     });
-    return runner.state === "draining" && renewed.instruction === "continue"
-      ? { ...renewed, instruction: "drain" as const }
-      : renewed;
+    return {
+      ...renewed,
+      serverTime: this.clock.now().toISOString(),
+      instruction:
+        runner.state === "draining" && renewed.instruction === "continue"
+          ? ("drain" as const)
+          : renewed.instruction,
+    };
   }
 
   async complete(
@@ -308,11 +314,12 @@ export class ExecutionControlService {
 
   async reconcile(runnerId: string, credential: string, input: ReconcileAttemptsInput) {
     await this.authenticateRunner(runnerId, credential);
-    return this.executions.reconcile({
+    const response = await this.executions.reconcile({
       runnerId,
       request: input,
       now: this.clock.now().toISOString(),
     });
+    return { ...response, serverTime: this.clock.now().toISOString() };
   }
 
   async resolveInput(

@@ -93,6 +93,22 @@ export function SystemDiagnostics({ canManage }: { canManage: boolean }) {
             <span>UTC {diagnostic.generatedAt}</span>
           </div>
           <div className="diagnostic-grid">
+            {diagnostic.clock ? (
+              <div>
+                <span>平台时间基准</span>
+                <strong>
+                  {diagnostic.clock.source === "postgres" ? "共享 PostgreSQL" : "本地单调时钟"}
+                </strong>
+                <small>
+                  {diagnostic.clock.state === "synchronized"
+                    ? "正常"
+                    : diagnostic.clock.state === "holdover"
+                      ? "采样中断，容错计时中"
+                      : "不可用"}
+                  {" · "}宿主机偏差 {Math.round(diagnostic.clock.hostOffsetMs / 1_000)} 秒
+                </small>
+              </div>
+            ) : null}
             {Object.entries({
               数据库: diagnostic.database,
               对象存储: diagnostic.objectStore,

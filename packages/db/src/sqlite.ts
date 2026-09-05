@@ -19,3 +19,4 @@ export * from "./sqlite-platform-operations";
 export * from "./sqlite-project-structure";
 export * from "./sqlite-attempt-log-share";
 export * from "./sqlite-webhook";
+export { createLocalClock } from "./local-clock";

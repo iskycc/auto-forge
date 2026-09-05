@@ -249,6 +249,7 @@ func (client *Client) Claim(
 		CachedBatchIDs: append([]string(nil), cachedBatchIDs...),
 	}
 	var response ClaimResponse
+	requestedAt := time.Now()
 	path := fmt.Sprintf("/api/v1/runner-agents/%s/claims", url.PathEscape(identity.RunnerID))
 	if err := client.postWithTimeout(ctx, configuration.Claim.WaitDuration+15*time.Second, path, identity.Credential, request, &response); err != nil {
 		return ClaimResponse{}, fmt.Errorf("claim assignments: %w", err)
@@ -261,6 +262,14 @@ func (client *Client) Claim(
 	}
 	if !closedBatchIDsBelongToCache(cachedBatchIDs, response.ClosedBatchIDs) {
 		return ClaimResponse{}, errors.New("claim assignments: control plane returned an unknown cached batch")
+	}
+	for index := range response.Assignments {
+		lease := &response.Assignments[index].Lease
+		deadline, err := leaseDeadline(lease.ExpiresAt, lease.ServerTime, requestedAt)
+		if err != nil {
+			return ClaimResponse{}, fmt.Errorf("claim assignments: %w", err)
+		}
+		lease.LocalDeadline = deadline
 	}
 	return response, nil
 }
@@ -285,6 +294,7 @@ func (client *Client) RenewLease(ctx context.Context, identity Identity, lease L
 	}
 	request := renewLeaseRequest{SchemaVersion: protocolVersion, RequestID: requestID, LeaseToken: lease.Token, LeaseVersion: lease.Version}
 	var response RenewLeaseResponse
+	requestedAt := time.Now()
 	path := fmt.Sprintf("/api/v1/runner-agents/%s/leases/%s/renew", url.PathEscape(identity.RunnerID), url.PathEscape(lease.LeaseID))
 	if err := client.post(ctx, path, identity.Credential, request, &response); err != nil {
 		return RenewLeaseResponse{}, fmt.Errorf("renew lease: %w", err)
@@ -292,6 +302,11 @@ func (client *Client) RenewLease(ctx context.Context, identity Identity, lease L
 	if response.SchemaVersion != protocolVersion || response.LeaseVersion <= lease.Version || (response.Instruction != "continue" && response.Instruction != "cancel" && response.Instruction != "drain") {
 		return RenewLeaseResponse{}, errors.New("renew lease: incompatible protocol response")
 	}
+	deadline, deadlineErr := leaseDeadline(response.ExpiresAt, response.ServerTime, requestedAt)
+	if deadlineErr != nil {
+		return RenewLeaseResponse{}, fmt.Errorf("renew lease: %w", deadlineErr)
+	}
+	response.LocalDeadline = deadline
 	return response, nil
 }
 
@@ -489,6 +504,7 @@ func (client *Client) Reconcile(ctx context.Context, identity Identity, attempts
 	}
 	request := reconcileRequest{SchemaVersion: protocolVersion, RequestID: requestID, Attempts: attempts}
 	var response ReconcileResponse
+	response.RequestedAt = time.Now()
 	path := fmt.Sprintf("/api/v1/runner-agents/%s/reconcile", url.PathEscape(identity.RunnerID))
 	if err := client.post(ctx, path, identity.Credential, request, &response); err != nil {
 		return ReconcileResponse{}, fmt.Errorf("reconcile attempts: %w", err)
